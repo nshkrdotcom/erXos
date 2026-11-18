@@ -531,149 +531,93 @@ where macOS writes at the offset, and `file:allocate/3` answering
 Each case is paired with a seeded fault that it must catch, which shows
 the code under test ran.
 
-* **Core, on the host.** EUnit cases of `erx_ramfs_core` run against
-  plain tree values, one per row of the callback table: for each error,
-  the condition that causes it and the unchanged tree after it; for each
-  success, the reply and `check/1`, which also checks that every stored
-  chunk, name and text references no more bytes than its own
+* **Core, on the host.** EUnit cases of `erx_ramfs_core` over plain tree
+  values, one per row of the callback table: each error with its cause
+  and the tree unchanged after it, each success with its reply and
+  `check/1`, which also checks that every stored chunk, name and text
+  references no more bytes than its own
   (`binary:referenced_byte_size/1`). Seeded: a rename that does not lower
-  the replaced node's `links`, which `check/1`'s link count fails; an
-  ancestor check that compares only the immediate parent, which the
-  rename-into-grandchild case catches; a write that charges every touched
-  chunk, which the overwrite-costs-nothing case catches; a name stored
-  without copying, which the referenced-size check catches; a chunk
-  written whole and stored without copying, which the referenced-size
-  check catches in the case that builds chunks by whole, partial and
-  spanning writes and by a truncation, then reads each back to compare
-  its bytes.
-* **Sequences.** Random sequences of up to 64 operations over a few names
-  and directories, with offsets and sizes drawn to include 0, chunk
-  boundaries, 2^63 - 1 and negative values, and fids kept across removals,
-  run through `step/4` with `check/1` after each step and the cap set low.
-  Seeded: a truncate that does not return the freed chunks' charge, which
-  the recomputed `held` catches.
+  the replaced node's `links`; an ancestor check of the immediate parent
+  only; a write that charges every touched chunk; a name or a whole
+  chunk stored without copying.
+* **Sequences**, the tree's fuzz target, run by `make check-fuzz` for its
+  budget: random sequences of up to 64 operations over a few names and
+  directories, with offsets and sizes at 0, chunk boundaries, 2^63 - 1
+  and negative values, and fids kept across removals, through `step/4`
+  with `check/1` after each step and the cap set low. Seeded: a truncate
+  that does not return the freed chunks' charge.
 * **Against stock OTP.** The same sequences, as `file` calls, run in the
-  hosted runtime under `/tmp` and in stock OTP 29.1.2
-  (`build/oracle/jit/install`) in a fresh host directory, and their
-  results, `#file_info{}` records included, are compared after mapping
-  the listed differences; every other difference fails the test. Cases
-  added for the client's rules: `rename("/", "x")`, `del_dir(".")`,
-  `del_dir("missing/.")`, `del_dir("child/..")` from the directory
-  holding `child`, `delete("file/.")`, `delete("child/.")`,
-  `delete("child/..")`, `read_file_info("link/../x")` with `link` a
-  link to a directory elsewhere, `read_file_info("file/..")`,
-  `read_file_info("missing/../x")`, `set_cwd("link")` and then
-  `get_cwd()`, `make_link("link", "new")`, `rename("child/..", "x")`,
-  `rename("x", "child/.")`, `make_dir("child/.")`,
-  `make_dir("missing/..")`, `make_symlink("t", "child/..")`,
-  `make_link("file", "child/.")`, `make_link("child/.", "new")`,
-  `del_dir("file/.")`, `rename("file/.", "x")`, with `dlnk` a link to
-  a directory and `flnk` to a file `delete("dlnk/")`, `delete("flnk/")`,
-  `rename("dlnk/", "z")` and `del_dir("dlnk/")`, `make_dir("file/")`,
-  `make_dir("dangle/")` with `dangle` a dangling link, `make_dir("/")`,
-  `del_dir("r/")` with `r` a link to `/`, `read_file_info("l1")` with
-  `l1` a link to `l2/` and `l2` a link to a file, the removal of an
-  empty working directory, then `set_cwd("..")`, and of a non-empty one,
-  `delete("missing/victim")` while
-  `victim` exists, a truncate through a read-only descriptor and through
-  a writable one after `chmod 0444`, and `write_file_info` of a record
-  read with `read_file_info`. Seeded: the client without its
-  `ENOTEMPTY`-to-`eexist` rule, which the `del_dir` of a non-empty
-  directory catches; a machine that answers a last `.` or `..` before
-  walking the names before it, which `del_dir("missing/.")` catches; one
-  that removes a name on `..` before walking it, which
-  `read_file_info("missing/../x")` catches; one that sends `delete` with
-  the walk of `file/.`'s names, which `delete("file/.")` catches as the
-  file removed; a path operation that walks its fid in place, which
-  the `victim` case catches as `victim` removed; `setattr` checking the
-  node's mode for an open handle, which the `chmod 0444` case catches.
-  `/tmp`'s own cases, which stock has no counterpart for: the top of the
-  mount, where `del_dir("/tmp")` answers `ebusy`, `delete("/tmp")`
-  `eperm`, `rename("/tmp", "/x")` and `rename("/x", "/tmp")` `ebusy`
-  and `make_dir("/tmp")` `eexist`, and `/tmp/..` reaches `/`, none of them asking the tree.
-  Seeded: a machine that treats a top as an ordinary last name, whose
-  `del_dir("/tmp")` then goes to the release's `/` and answers `erofs`.
-* **Fids and nodes.** A fid walked to a file, the file removed, then a
-  `getattr` through the fid, which answers with `nlink` 0, and an `lopen`,
-  which opens the file; once the fid is clunked, a new file takes
-  another inode number. Seeded: a tree that gives the next node a freed
-  inode number. A `stat` whose walk and `getattr` a rename over the name
-  falls between finds the old file (seeded: a walk that holds nothing),
-  and so does an open whose walk and `lopen` it falls between, which reads
-  the old file's bytes (`prim_file_compare.erl`'s rename race runs the
-  same through `prim_file:read_file`);
-  a walk that stops after its first name keeps nothing; `..` from a
-  removed directory returns to its parent and lets the directory go; a
-  removed file stays until the last fid naming it is clunked (seeded: a
-  grant that never forgets); and a file two grants hold needs both to let
-  go, the second by ending (seeded: a tree that keeps a dead grant's
-  holds).
-* **Open after unlink and rename.** A file opened, removed, written and
-  read through its handle, then closed, after which `held` is back where
-  it started; a file renamed over another that is open, whose handle
-  still reads the old bytes; a process that opens a file, removes it and
-  is killed, after which `held` is back too. Seeded: a clunk that does
-  not free a node with no links; a grant that does not clunk a dead
-  owner's fids, which the killed process's case catches.
-* **Creating.** Two processes open one new name with `[read, write]` at
-  once, many times: both succeed and reach one file. `exclusive` on a
-  dangling link answers `eexist`, and the link's target is not made.
-  `delete`, `rename` and `read_link_info` of a link act on the link.
-  Seeded: an `lcreate` that answers `EEXIST` without `O_EXCL`, which the
-  two openers catch; a client that follows the last link for `delete`,
-  which removes the target and fails the case.
-* **Appends.** Two processes append one distinct byte each, many times,
-  and after each write read the byte before their position, which must
-  be their own. Seeded: a client that sets the offset from a `getattr`'s
-  size, which reads the other's byte.
-* **A write past the cap.** A 128 KiB `file:write/2` with room for 64
-  KiB: `{error, enospc}`, the first 64 KiB in the file and the position
-  after them. Seeded: a client that leaves the position unchanged on an
-  error.
-* **Concurrency.** Eight processes each repeatedly write a fresh file
-  and rename it over `b` while eight others stat `b`: every stat finds
-  `b`, as POSIX requires of `rename` over an existing name; writers
-  filling the tree concurrently stop at the cap together, and `check/1`
-  holds after. Seeded: a rename split into two steps, remove then add,
-  which a stat that misses `b` catches.
+  hosted runtime under `/tmp` and in stock OTP 29.1.2 in a fresh host
+  directory, and their results, `#file_info{}` records included, are
+  compared after mapping the listed differences; every other difference
+  fails. Added cases cover the client's rules of [design-files.md](design-files.md#erlang-clients-prim_file-and-erx_file_remote):
+  a last `.` or `..` of every operation that removes, renames or makes a
+  name, `..` after a link and after a missing name, a trailing `/` after
+  a file, a link to a directory, a link to a file and a dangling link,
+  `set_cwd` through a link, removing the working directory, a
+  `delete("missing/victim")` while `victim` exists, truncation through a
+  read-only descriptor and after `chmod 0444`, and the top of the mount,
+  which no stock case has: `del_dir("/tmp")` answers `ebusy`,
+  `delete("/tmp")` `eperm`, a rename of `/tmp` either way `ebusy`,
+  `make_dir("/tmp")` `eexist`, and `/tmp/..` reaches `/`, none asking
+  the tree. Seeded: the client without its `ENOTEMPTY`-to-`eexist` rule;
+  a resolver that answers a last `.` or `..` before walking the names
+  before it, or removes a name on `..` before walking it; a `delete` sent
+  with the walk of `file/.`'s names; a path operation that walks its fid
+  in place; `setattr` checking the node's mode for an open handle; a top
+  treated as an ordinary last name.
+* **Fids and nodes.** A removed file stays reachable through a fid
+  (`getattr` answers `nlink` 0, `lopen` opens it) until the last fid
+  naming it is clunked, and its inode number is never given again; a
+  rename between a walk and its `getattr` or `lopen` finds the old file;
+  a walk that stops keeps nothing; `..` from a removed directory returns
+  to its parent; a file two grants hold needs both to let go, the second
+  by ending. Seeded: a freed inode number reused; a walk that holds
+  nothing; a grant that never forgets; a tree that keeps a dead grant's
+  holds.
+* **Open after unlink and rename, and killed openers.** `held` returns to
+  where it started after a removed file's handle is closed and after its
+  opener is killed. Seeded: a clunk that does not free a node with no
+  links; a grant that does not clunk a dead owner's fids.
+* **Creating, appending and the cap.** Two processes opening one new name
+  at once both succeed and reach one file; `exclusive` on a dangling link
+  answers `eexist`; `delete`, `rename` and `read_link_info` act on a
+  link itself; two appenders each find their own byte before their
+  position; a 128 KiB write with room for 64 KiB answers `enospc` with
+  the first 64 KiB written and the position after them. Seeded: an
+  `lcreate` that answers `EEXIST` without `O_EXCL`; a `delete` that
+  follows a last link; an append offset taken from a `getattr`; a
+  position left unchanged on an error.
+* **Concurrency.** Eight writers renaming fresh files over `b` while
+  eight others stat it: every stat finds `b`; writers filling the tree
+  stop at the cap together and `check/1` holds. Seeded: a rename split
+  into remove then add.
 * **Restart.** The tree process killed with files open: their operations
-  answer `eio`, `/tmp` is mounted again and empty, no process of the old tree is alive,
-  and new files' inode numbers are above every old one. Seeded: inode
-  numbers drawn from a counter in the tree state.
+  answer `eio`, `/tmp` is mounted again and empty, and new inode numbers
+  lie above every old one. Seeded: inode numbers drawn from a counter in
+  the tree state.
 * **Code from `/tmp`, cold.** In a fresh hosted runtime whose first use
-  of `/tmp` is the code server's: `code:add_patha("/tmp")`, then
-  `code:ensure_loaded/1` of a module that exists nowhere, which makes the
-  code server list `/tmp` and read a missing file in its own process,
-  under a 30-second deadline, and must answer `{error, nofile}`; then a
-  module written into `/tmp` as a prepared `.beam` and loaded with
-  `code:load_abs/1`. The test records `erlang:loaded()` before and after
-  and fails if any module of `xref`'s serving or client set was loaded
-  by them. Seeded: a start that skips one module of the generated list, which
-  the deadline or the loaded-module check catches; a module
-  `erx_file_remote` calls left out of the preload list, which halts the
-  node with the error handler's message.
-* **Grammar on the local route.** Names with NUL, `/`, `.`, `..`, invalid
-  UTF-8, and of 256 bytes, and link texts of 4,096 bytes, sent to `/tmp`'s
-  grant as local messages, each refused before a callback; a name of 255
-  bytes and a link text of 4,095 bytes are accepted and made. Seeded: a grant that skips the checks for a sender in its own
-  domain.
+  of `/tmp` is the code server's, a lookup of a missing module through
+  `/tmp` on the code path answers `{error, nofile}` within a deadline,
+  and a module written there loads, with no module of `xref`'s serving
+  or client set loaded by either. Seeded: a start that skips one module
+  of the generated list; a module `erx_file_remote` calls left out of
+  the preload list.
+* **Grammar on the local route.** Names and link texts over every bound
+  or holding forbidden bytes, sent to `/tmp`'s grant as local messages,
+  each refused before a callback, and the largest valid ones accepted.
+  Seeded: a grant that skips the checks for a sender in its own domain.
 * **OTP's suites.** `file_SUITE`, `filelib_SUITE` and a Common Test run
-  with each `priv_dir` under `/tmp` and its logs on a RAM file system
-  of their own, so a suite that fills `/tmp` fails only its own cases,
-  compared case by case
-  with stock OTP 29.1.2 on the host by `tools/erx oracle hosted`
-  (`make check-oracle-hosted`), the fast route on the hosted runtime;
-  a difference not in its table of known differences, each listed with
-  its reason, fails it. `make check-oracle` runs them on the target:
-  `tools/erx oracle qemu` boots a test image, the production image with
-  Common Test, the reporter and the suites added to its release, runs
-  them in the system domain and judges them against the same table.
+  with each `priv_dir` under `/tmp` and its logs on a RAM file system of
+  their own, so a suite that fills `/tmp` fails only its own cases,
+  compared case by case with stock OTP 29.1.2 by `tools/erx oracle
+  hosted` on the hosted runtime and by `make check-oracle` on the
+  target; a difference not in the table of known differences, each
+  listed with its reason, fails.
 
 The tree parses no bytes: names and payloads reach it only through
 `erx_fs`'s grammar, whose fuzz target feeds both local messages and
-frames, and paths only through `erx_path`, which has its own. The
-sequence test is the tree's fuzz target, run by `make check-fuzz` for
-its budget.
+frames, and paths only through `erx_path`, which has its own.
 
 ## References
 

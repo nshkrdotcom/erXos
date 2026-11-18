@@ -21,87 +21,47 @@ programs as ports of their session in
 that the live machine serves, the command shell that uses them, and the
 host's side of 9P2000.L in [design-live.md](design-live.md).
 
-Decisions every reader of this document needs:
+Decisions every reader of this document needs, each owned by the
+section linked:
 
-* **A namespace is per domain and private.** It maps mount points to
-  local providers (the release file system, and EROFS images read from
-  files the domain reaches through a grant, both read-only) and to
-  grants at file servers, named by pid, the domain's
-  own RAM file server at `/tmp` among them. The domain service
-  builds it at creation from the domain's grants; the domain may bind,
-  mount a server it holds and unmount, none of which adds authority. A
-  native program's namespace is a table its handler keeps for it, of fids
-  the handler walked from its starter's.
-* **Holding a path is holding a pid.** A request to a file server is a
-  frame to a **grant**, a process of the server that serves a subtree with
-  a set of rights to the domain it was made for. The frame travels on the
-  connection between the client's domain and the server's, addressed to a
-  grant pid the server exported to that domain, and the server's funnel
-  refuses anything else ([design-domains.md](design-domains.md#exports)).
-  A namespace entry for a grant the domain was never introduced to reaches
-  nothing, so no check elsewhere is needed.
-* **The server roots every grant.** A grant's root and rights live at the
-  server, fixed when the grant is made. erXos's clients walk only plain
-  names below it, and a walk of `..`, which a client from outside erXos
-  may send, stays at the root when it is made there, as 9P's
-  walk(5) specifies and 9P2000.L keeps, so no request reaches above it.
-* **The file protocol is 9P2000.L, exactly.** Its operations are
-  9P2000.L's, with 9P2000.L's fields and semantics, `symlink`, `link`,
-  `lock` and the extended attributes included, and erXos adds none.
-  Inside the machine a `version` resets nothing, since every process of
-  a domain shares the domain's grants: the one deliberate difference
-  ([Version and attach](#version-and-attach)). On a
-  connection each message is an Erlang term with the message's fields,
-  checked by one generated grammar; at the host link and on the network it
-  is 9P2000.L's bytes, through one codec, `erx_9p`, so QEMU's virtio-9p
-  serves the development host's tree to the machine and any 9P2000.L
-  client mounts an erXos server
-  ([design-live.md](design-live.md#files-between-the-host-and-the-machine)).
+* **A namespace is per domain and private**: mount points to local
+  providers (the release slice and EROFS images, read-only) and to
+  grants at file servers, named by pid; binding, mounting and unmounting
+  add no authority ([Namespaces](#namespaces), [Building, binding and
+  mounting](#building-binding-and-mounting)).
+* **Holding a path is holding a pid.** A request is a frame to a
+  **grant**, a process of the server that serves one subtree with fixed
+  rights to the one domain it was made for, and the server's funnel
+  admits it only from that domain (F1, [Who a grant is
+  for](#who-a-grant-is-for)).
+* **The server roots every grant**, and no request reaches above the
+  root (F2).
+* **The file protocol is 9P2000.L, exactly**, with one deliberate
+  difference inside the machine, a `version` that resets nothing, and
+  one added reply field, `write`'s offset ([The file
+  protocol](#the-file-protocol)); one codec, `erx_9p`, carries its bytes
+  at the edges ([The codec](#the-codec)).
 * **A program's file server is its session.** A program holds no grant,
-  no fid and no namespace: every file request it makes is a message on
-  its channel to its handler, an Erlang process of the session, which
-  checks the program's own table, relays the request to the real server
-  over the session's connection, and moves the bytes through memory the
-  session mapped into the program's sub-space
-  ([design-programs.md](design-programs.md#the-handler)). The handler
-  narrows the program's namespace by giving it only fids walked from its
-  starter's, so a program cannot be a confused deputy for a file
-  server, and a server never sees a program.
-* **Resolution is physical, as FreeBSD's.** A path resolves one name at a
-  time, as FreeBSD's `namei` resolves it: `.` and `..` act on the
-  directory the resolution has reached, so `..` after a symbolic link
-  names the parent of the link's target, `..` at the top of a mount or a
-  bind steps out to the parent of its mount point, and `..` at the
-  domain's `/` stays there, as at a chrooted process's root. They act on
-  the client's own record of where it stands, so a server receives only
-  plain names, and a server never follows a symbolic link during a walk
-  or an open: the client reads the link and resolves its text through
-  its own namespace ([Resolving a path](#resolving-a-path)).
-* **One resolver, one grammar, one codec.** `erx_path`, a pure,
-  preloaded Erlang module with a fuzz target, resolves every path for
-  `prim_file` in every runtime and for the handlers of every session,
-  over every provider, against one snapshot of the namespace's table. The protocol's terms have one grammar and one
-  set of bounds for every client and server, every request goes to a fresh
-  alias, so no reply can be forged or reused, and one codec turns the
-  terms into 9P2000.L's bytes and back at the edges.
-* **One server behaviour.** Every file server is an Erlang callback
-  module of `erx_fs`: the storage services, the FAT server, `/proc`,
-  `/dev` and a session's export, so one implementation decodes and checks
-  the protocol, and every grant is a process that can be inspected,
-  traced and supervised like any other.
+  no fid and no namespace; its handler keeps its table, narrowed from its
+  starter's, so a program cannot be a confused deputy and a server never
+  sees a program (F9, [Narrowing for a
+  program](#narrowing-for-a-program)).
+* **Resolution is physical, as FreeBSD's `namei`**, done by the client
+  over its own record of where it stands, so a server receives only plain
+  names and never follows a link ([Resolving a path](#resolving-a-path)).
+* **One resolver, one grammar, one codec, one server behaviour**:
+  `erx_path` resolves every path in every runtime and handler; every
+  request goes to a fresh alias, so no reply can be forged or reused; and
+  every file server is an `erx_fs` callback module, so every grant is a
+  process that can be inspected, traced and supervised
+  ([Serving](#serving-the-erx_fs-behaviour)).
 * **Files are a view.** Erlang messages stay each service's primary API;
   a file tree is how people and tools reach the same state.
-* **A session serves its programs' shared mappings.** `MAP_SHARED` of a
-  file is served by the program's session, not by the file's server: the
-  session holds one memory object for each file any of its programs maps
-  shared, fills it with ordinary reads, maps it into every program of the
-  session that maps the file, and writes it back with ordinary writes.
-  Programs of one session see one another's stores at once; every other
-  domain, a second session that maps the file shared included, sees them
-  once they are written back, page by page, as two machines sharing a
-  network file system do ([Shared mappings](#shared-mappings)).
-* **Names are UTF-8 bytes, never normalised.** A file name is the bytes it
-  was given, valid UTF-8 without NUL or `/`, at most 255 bytes.
+* **A session serves its programs' shared mappings**, coherent within the
+  session and written back to the server as ordinary writes ([Shared
+  mappings](#shared-mappings)).
+* **Names are UTF-8 bytes, never normalised**, at most 255 bytes,
+  without NUL or `/` ([Text in file names](#text-in-file-names)).
 
 ## Context
 
@@ -407,7 +367,7 @@ names the offset its bytes were written at ([Open files and
 offsets](#open-files-and-offsets)). Inside the machine each message is an
 Erlang term whose fields are the message's fields in 9P2000.L's order,
 decoded on both sides by the funnel's grammar and then by the protocol's own, the **frame profile** of
-`abi/erx_abi.txt`, so every field is checked once against the table below.
+`abi/protocols/9p.txt`, so every field is checked once against the table below.
 A request travels as `{erx_9p, Alias, Owner, Request}` to a grant and its
 reply as `{erx_9p, Alias, Reply}` to `Alias`, which plays the part of 9P's
 tag; `Owner` is the process that will hold any fid the request makes
@@ -455,7 +415,7 @@ version and 64-bit path. Fids, modes, flags and masks are the integers
 translating it, but for the error numbers. A request on a fid the grant
 does not hold fails with `ebadf`. 9P2000.L's wire constants, its message
 type numbers, `NOTAG`, `NOFID`, `MAXWELEM` and `getattr`'s mask bits,
-live in `abi/erx_abi.txt` with the operation table, and every client,
+live in `abi/protocols/9p.txt` with the operation table, and every client,
 server and codec takes them from there.
 
 #### Flags
@@ -483,9 +443,9 @@ server from the moment the server makes it, and every process of the
 client domain shares it, so a `version` there is
 answered with the protocol's name and the smaller of the client's message
 size and 65,560, and resets nothing: one process's `version` must not
-clunk the fids of the many processes that share the grant. That is the
-one deliberate difference from 9P2000.L inside the machine; every other
-operation has its full meaning.
+clunk the fids of the many processes that share the grant. That and
+`write`'s `At` are the two deliberate differences from 9P2000.L inside
+the machine; every other operation has its full meaning.
 
 `attach`'s `Aname` names a **tree**: one file system that a server
 serves, such as a partition's volume, an image or `/proc`. One domain
@@ -964,7 +924,7 @@ the edges where 9P2000.L crosses: the host link, virtio-9p and the
 network ([design-live.md](design-live.md#files-between-the-host-and-the-machine),
 [design.md](design.md#networking)). It is one Erlang module, generated
 by the Ruby generator that produces the frame profile's decoder, from the
-same operation table of `abi/erx_abi.txt`, which records each message's
+same operation table of `abi/protocols/9p.txt`, which records each message's
 9P2000.L layout, so the terms and the bytes can never disagree. Decoding
 reads the message's size, checks it against the negotiated `msize` and
 the bytes received, then each string's length and each count against
@@ -1149,9 +1109,7 @@ has found.
 
 The resolver reads a path's names in this order:
 
-1. **Start.** The resolver refuses a path over `ERX_PATH_MAX` bytes
-   (`enametoolong`), one that is not valid UTF-8 or contains NUL
-   (`einval`), and an empty one (`enoent`, as POSIX says). The place
+1. **Start.** Once the path passes the checks above, the place
    starts at `/` for an absolute path and at the working directory for a
    relative one, and the names to read are the path's, split on `/` with
    empty names dropped.
@@ -1240,15 +1198,10 @@ The resolver reads a path's names in this order:
      for itself without asking (step 3 of the client's
      [errors](#erlang-clients-prim_file-and-erx_file_remote)).
 
-   A target or parent walk that stops at a link makes no new fid, so the
-   operation sent with it fails with `ebadf` and changes nothing
-   ([Pipelined requests](#pipelined-requests)); one that ends on a last
-   link the operation follows makes its fid on the link, where nothing
-   sent with it acts through the link, and the caller sets the
-   operation's answer aside. Either way the caller calls the resumption
-   with the walk's reply and the resolver follows the link. An operation is
-   never sent with
-   a walk whose names still need a check of their own, so
+   A target or parent walk that stops at or ends on a link goes back to
+   the resumption as the action's walk does (above), and the resolver
+   follows the link. An operation is never sent with a walk whose names
+   still need a check of their own, so
    `change_mode("file/.")` answers `enotdir` from a walk of its own and
    changes no mode.
 
@@ -1633,18 +1586,16 @@ added:
   no name reaches above `/home`, and maps `root` to `/root`. A grant
   of `home` whose row states no tree has no root and is not started,
   so no grant reaches the homes as a whole.
-* **The row.** The build derives a facet row `home`, read-write, of the
-  manifest's service named `home_service`, with `tree home`, for every
-  session template other than the app template, whose sessions have
-  their own directory among `apps/`
+* **The row.** The build derives a read-write facet row `home` of the
+  manifest's service `home_service`, with `tree home`, for every session
+  template but the app template, whose sessions have their own directory
+  among `apps/`
   ([design-packaging.md](design-packaging.md#where-an-apps-files-lie)).
-  Property 19 refuses a source facet row of `home_service` and lets only
-  the rows the build derives state a tree, so no source row roots a home
-  grant elsewhere, and every user's session holds its home by
-  construction. Its tenth clause grants the service named
-  `data_service`, the whole volume, to the system domain and, in a
-  development manifest only, to root's template, and to no other
-  grantee
+  The build's check refuses a source row of `home_service` and lets only
+  derived rows state a tree, so no row roots a home grant elsewhere and
+  every user's session holds its home by construction; it refuses a row
+  of `data_service`, the whole volume, for any grantee but the system
+  domain and, in a development manifest, root's template
   ([design-packaging.md](design-packaging.md#the-builds-check)).
 * **The entry.** A session mounts its `home` facet at its home's path,
   which `erx_ns:home_place/1` makes from the session's login name, the
@@ -1782,10 +1733,7 @@ operation that names one of the export's names at those places goes to
 the export, never to the grant: a create of an existing device opens it,
 so `>/dev/null` reaches `null`, and every other create, a `mkdir`,
 `symlink`, `mknod` or a link's destination, answers `eacces`, and a
-rename or remove of one `eperm`, as the export's tree answers them
-(`erlang/apps/erx_session/src/erx_session_export.erl:225-233`, and
-`erlang/apps/erx_files/src/erx_fs_grant.erl:760-769` for a tree with no
-callback for the change). This
+rename or remove of one `eperm`, as the export's tree answers them. This
 is the one place a program's namespace joins two servers, and the names
 the export takes there are its own, fixed; it is no union mount
 (Non-goals). Nor does an entry hide one: a start whose narrowed table
@@ -1854,12 +1802,10 @@ connection's `draw` and `ctl` and its window's `kbd`, `mouse`, `wctl`
 and `label` at `/dev/draw`, `/dev/ctl`, `/dev/kbd` and so on, and
 `/dev/clipboard` when the session's grant on the display carries
 `clipboard` ([design-display.md](design-display.md#the-window-tree), "A
-program's `/dev`"): the handler learns that when it starts the tree, by a
-walk of `clipboard` from a root of that grant
-(`erx_win:clipboard/1`), whose fids it clunks at once. The window's
-directory holds one more file the
-program must not reach: the window's own `ctl`, which presents any range
-of the session's whole pixel area
+program's `/dev`"), which the handler learns by a walk of `clipboard`
+from a root of that grant when it starts the tree. The window's
+directory holds one more file the program must not reach: the window's
+own `ctl`, which presents any range of the session's whole pixel area
 ([design-display.md](design-display.md#the-window-tree), "`ctl`"), so a
 program holding it could show another program's buffer in its own
 window. **A program reaches only its own window's files, and of them not
@@ -1877,7 +1823,7 @@ through its table and its open table, both kept by its handler
   so none is on a window tree, a directory's included: no starter can
   hand a program an open of a window's `ctl`, or of a window's directory
   to walk to it from, by a spawn, a fork, a passed descriptor or
-  `start/1`;
+  `start/1`, which refuses such a descriptor with `EINVAL`;
 * the program's `/dev` is a tree of its own, which holds its window and
   its draw connection rather than a path to either, and serves from them
   exactly the files above, so no name in it leads into the window's
@@ -1905,10 +1851,9 @@ window's names, and nothing else; the program's `/bin` and `/etc` stay on
 the shared tree's grants, and only its `/dev` entry names this tree. The
 names no entry of the program's table may stand at or below are the
 devices' and every window name, `clipboard` included whether or not the
-session's grant carries it (`erx_prog_handler_core:exported/1`), so the
-check does not depend on the display. Its qid paths are drawn from
-the domain's counter when its grant starts
-(`erlang/apps/erx_session/src/erx_session_export.erl:110-140`), as the
+session's grant carries it, so the check does not depend on the display;
+a table with such an entry refuses the start with `EINVAL`. Its qid
+paths are drawn from the domain's counter when its grant starts, as the
 shared tree's are, so its tree's name, `export`, may be the shared
 tree's and the domain, tree and path of each of its files still name no
 other file ([Identity and version](#identity-and-version)). Its window
@@ -1916,118 +1861,96 @@ files are:
 
 | Name | What a request does | Opens |
 | --- | --- | --- |
-| `draw` | a write is one `erx_draw_conn:write/2` of its bytes, a read one `erx_draw_conn:read/2` | read and write |
-| `ctl` | a read answers the connection's `erx_draw_core:ctl/1` text | read only |
-| `kbd`, `mouse`, `wctl`, `label` | a read or a write, at the program's offset, is one read or write of the window handle's open fid of that name: a read of `kbd` or `mouse` waits at the draw connection, which sends it with `erx_win:send_read/4`, and the others are one `erx_win:read_at/4` or `erx_win:write_at/4` | `kbd` and `mouse` read only, as the display opens them (`erlang/apps/erx_display/src/erx_winfs.erl:638-642`); `wctl` and `label` read and write |
+| `draw` | a write is one write of the draw connection, a read one read of it | read and write |
+| `ctl` | a read answers the connection's `ctl` text, not the window's | read only |
+| `kbd`, `mouse`, `wctl`, `label` | a read or a write, at the program's offset, is one read or write of the window handle's open fid of that name; a read of `kbd` or `mouse` waits at the draw connection | `kbd` and `mouse` read only, as the display opens them; `wctl` and `label` read and write |
 | `clipboard`, when that grant carries `clipboard` | relayed to the display's `clipboard`, on a fid opened for the open | read and write |
 
 **The relayed fids.** `erx_win:open/2` walks and opens the window's
 `ctl`, `mouse`, `kbd`, `wctl` and `label` from the window's directory
 when it makes the window, keeps those fids in the handle and clunks the
-directory's (`erlang/apps/erx_win/src/erx_win.erl:248-264, 288-301`), so
-the handle names the window by fids opened on it, never by its
-directory's name. The display binds each such fid to the window it was
-walked in, its id and process
-(`erlang/apps/erx_display/src/erx_winfs.erl:608-621, 687-690`), so a
-window removed and another made under the same name is never reached
-through the old handle: its fids answer what the display answers for a
-window that is gone. The tree relays `kbd`, `mouse`, `wctl` and `label`
-on those fids through `erx_win:read_at(Window, File, Offset, Count)` and
-`erx_win:write_at(Window, File, Offset, Bytes)`, and the draw connection
-relays the reads of `kbd` and `mouse` through `erx_win:send_read(Window,
-File, Offset, Count)` (below), functions of `erx_win`, which owns the
-handle's representation, whose `File` is one of `kbd`, `mouse`, `wctl`
-and `label`: no clause takes `ctl`, so no request
-a program sends reaches the window's `ctl`, which only the draw
-connection's presents write. The tree walks nothing in
-the window's directory and opens nothing there: every program open of
-those four names shares the handle's fid of that name, which the window's
-files allow, since a window's file keeps no state for a fid and answers
-each read and write from the window's process
-(`erlang/apps/erx_display/src/erx_winfs.erl:687-714`). Their `Owner` is
+directory's, so the handle names the window by fids opened on it, never
+by its directory's name. The display binds each such fid to the window
+it was walked in, so a window removed and another made under the same
+name is never reached through the old handle: its fids answer what the
+display answers for a window that is gone. The tree relays `kbd`,
+`mouse`, `wctl` and `label` through functions of `erx_win`, which owns
+the handle's representation, and which take no `ctl`, so no request a
+program sends reaches the window's `ctl`, which only the draw
+connection's presents write. The tree walks nothing in the window's
+directory and opens nothing there: every program open of those four
+names shares the handle's fid of that name, which the window's files
+allow, since a window's file keeps no state for a fid. Their `Owner` is
 the handler, which opened the window, so they end with the handler, as
 the window does, and a program's close of one clunks nothing.
 
 The clipboard is the display's, not the window's, and an open of it with
-`O_TRUNC` empties it (`erlang/apps/erx_display/src/erx_winfs.erl:643-648,
-676-684`), so each program open of `/dev/clipboard` gets a fid of its
-own: the tree's `open` of `clipboard` attaches a root fid on the grant
-`erx:cap(Display)` names, as `erx_win:open/2` does
-(`erlang/apps/erx_win/src/erx_win.erl:107-111`), walks `clipboard` from it
-and opens that with the program's flags, each fid with the tree's grant
-as its `Owner`, clunks the root fid once the walk is answered, and keeps
-the opened fid in the open's handle. A walk or an open that fails clunks
-every fid the attempt made and answers the program's open with the
-display's error; the program's close, the tree's `clunk` of the handle,
-clunks the opened fid; and the end of the tree's grant ends whatever it
-still holds, by the display grant's monitor of the fids' owner ([Fid
-owners](#fid-owners)).
+`O_TRUNC` empties it, so each program open of `/dev/clipboard` gets a fid
+of its own: the tree attaches a root fid on the session's display grant,
+walks `clipboard`, opens it with the program's flags, each fid owned by
+the tree's grant, clunks the root fid, and keeps the opened fid in the
+open's handle. A walk or an open that fails clunks every fid the attempt
+made and answers with the display's error; the program's close clunks
+the opened fid; and the end of the tree's grant ends whatever it still
+holds ([Fid owners](#fid-owners)).
 
 Every relayed fid lies on a grant the session already holds, so the tree
-reaches nothing the starter could not. A read of `kbd` or `mouse`
-waits for a record at the display, and what the display answers it
-with is taken from the window's queue, so the tree's `read` answers it
-as a waiting request ([Serving](#serving-the-erx_fs-behaviour),
-"Waiting requests") whose keeper is the window's draw connection, a
-process the tree already has
-(`erlang/apps/erx_session/src/erx_session_export.erl:125`): the
-connection holds it, and keeps at most one read of each file at the
-display, as the window serves its own readers one record at a time:
-the first it marks begun and sends on the handle's fid with
-`erx_win:send_read/4`, which returns an opaque request id without
-waiting for the reply, and the rest wait in arrival order until the
-display has answered the one before. It answers each program's request
-with the display's reply, after it has made image 0 anew for an `r`
-record in it ("A resize", below), a step of its own. So a window's
-waiting reads take at most two of the session's display grant's
-requests in flight, however many the program keeps. The program's
-close of an open whose read the connection holds flushes it there
-(rule 5): a read still waiting at the connection is answered `eintr`
-at once, and of the one sent on the connection sends the display a
-flush, so the window process settles it, with `eintr` or with the
-record it had already taken, and no key goes to a closed open. A read
-waiting on one file thus holds up no other, nor the file's close. A read of
-`wctl` or `label` answers at once at the display
-([design-display.md](design-display.md#the-window-tree)), so
-the tree relays it within its callback. A write of `draw` runs within
-its callback too, as a write of a local file system runs to its disk:
-a `v` in it waits for its present, which the screen answers once the
-device has taken the frame, at once for a hidden window, and with an
-error when the device's driver misses its frame deadline and ends
+reaches nothing the starter could not. A read of `kbd` or `mouse` waits
+for a record at the display, so the tree's `read` answers it as a
+waiting request ([Serving](#serving-the-erx_fs-behaviour), "Waiting
+requests") whose keeper is the window's draw connection. The connection
+keeps at most one read of each file at the display, as the window serves
+its own readers one record at a time: the first it marks begun and sends
+without waiting for the reply, and the rest wait in arrival order until
+the display has answered the one before. It answers each program's
+request with the display's reply, after it has made image 0 anew for an
+`r` record in it ("A resize", below). So a window's waiting reads take
+at most two of the session's display grant's requests in flight, however
+many the program keeps. The program's close of an open whose read the
+connection holds flushes it there (rule 5): a read still waiting at the
+connection is answered `eintr` at once, and for the one sent the
+connection sends the display a flush, so the window process settles it,
+with `eintr` or with the record it had already taken, and no key goes to
+a closed open. A read waiting on one file thus holds up no other, nor
+the file's close. A read of `wctl` or `label` answers at once at the
+display ([design-display.md](design-display.md#the-window-tree)), so the
+tree relays it within its callback. A write of `draw` runs within its
+callback too, as a write of a local file system runs to its disk: a `v`
+in it waits for its present, which the screen answers once the device
+has taken the frame, at once for a hidden window, and with an error when
+the device's driver misses its frame deadline and ends
 ([design-display.md](design-display.md#the-screen-and-its-one-path-to-the-device)).
 So a draw write holds its grant's later requests, a `kbd` clunk among
 them, for at most one present, and the connection takes a flush that
 arrives meanwhile once the present is answered; the program's input
-waits for a frame of the device, never for an event. The files of `draw` and
-`ctl`, their units and their answers are
+waits for a frame of the device, never for an event. The files of `draw`
+and `ctl`, their units and their answers are
 [design-display.md](design-display.md#the-draw-connection)'s ("The
-connection's files"). Every operation on a name of the tree has the
-answer the fixed tree gives its devices ([Narrowing for a
+connection's files"); an open of `/dev/ctl` for writing answers
+`EACCES`. Every operation on a name of the tree has the answer the fixed
+tree gives its devices ([Narrowing for a
 program](#narrowing-for-a-program)), so `>/dev/draw` opens `draw`, and
 the resolver handles the tree as any other: it is a directory provider
 at `/dev`, joined with a grant at `/dev` where the session holds one,
 and its names are among the export's names there.
 
 **A resize.** The connection's image 0 has the window's size only after
-`erx_draw_conn:resized/1`
-(`erlang/apps/erx_win/src/erx_draw_conn.erl:153-160, 207-209, 291-301`), and a
-program learns of a resize from an `r` record of `mouse`
-([design-display.md](design-display.md#the-window-tree)). The
-connection is the one place both meet, since it keeps every read of
-`mouse`: when the display's reply to one holds a record whose kind byte
-is `r`, the connection makes image 0 anew, `resized/1`'s step, before it
-answers the read. So the program never sees an `r` before image 0 has
-the new size: a read of `ctl` after it shows the new rectangle, and a
-write after it draws on the new image. The connection takes its steps
-one at a time, so a write already running finishes on the old image 0
-and the next starts on the new. A resize whose record no read has
-yet taken leaves image 0 as it was until a read takes it, and a
-resize that fails, for a window that has gone or whose rectangle
-cannot be read (`erlang/apps/erx_win/src/erx_win.erl:347-354`),
-leaves image 0 as it was; the read answers
-the record either way. Then `ctl` shows the size image 0 has, and a
-frame drawn at it is shown clipped to the window, as the display shows
-any frame drawn for an earlier size
+the connection makes it anew, and a program learns of a resize from an
+`r` record of `mouse`
+([design-display.md](design-display.md#the-window-tree)). The connection
+is the one place both meet, since it keeps every read of `mouse`: when
+the display's reply to one holds a record whose kind byte is `r`, the
+connection makes image 0 anew before it answers the read. So the program
+never sees an `r` before image 0 has the new size: a read of `ctl` after
+it shows the new rectangle, and a write after it draws on the new image.
+The connection takes its steps one at a time, so a write already running
+finishes on the old image 0 and the next starts on the new. A resize
+whose record no read has yet taken leaves image 0 as it was until a read
+takes it, and a resize that fails, for a window that has gone or whose
+rectangle cannot be read, leaves image 0 as it was; the read answers the
+record either way. Then `ctl` shows the size image 0 has, and a frame
+drawn at it is shown clipped to the window, as the display shows any
+frame drawn for an earlier size
 ([design-display.md](design-display.md#the-window-tree), "`ctl`").
 
 **Starting.** When it reserves the program's grants (step 5 of
@@ -2035,11 +1958,9 @@ any frame drawn for an earlier size
 handler, after building the program's table:
 
 1. opens the window with `erx_win:open/2`, as its holder;
-2. starts the connection on it with `erx_draw_conn:start/1`, as its
-   starter;
-3. starts the `/dev` tree's grant with `erx_fs:start_link/4`, for its own
-   domain (`client => own`), `rw`, ending with the handler (`ends_with =>
-   self()`);
+2. starts the connection on it, as its starter;
+3. starts the `/dev` tree's grant for its own domain (`client => own`),
+   `rw`, ending with the handler (`ends_with => self()`);
 4. puts in the program's table, at `/dev`, the entry `{grant, DevGrant,
    <<"export">>}` with `root` `[<<"dev">>]` and rights `rw`, in place of
    every entry at exactly `/dev`, or beside the others when the
@@ -2057,31 +1978,32 @@ there, `/dev` is the export's, whose names reach every program whatever
 its narrowing ([Where the export and a grant meet](#narrowing-for-a-program)),
 and the window's tree stands in its place, so the entry widens nothing
 and the window starts. That is the case of a session that has mounted
-nothing at `/dev`: its table, like the boot table that holds the release
-slice at `/`, read-only, alone
-(`otp/erts/preloaded/src/prim_file.erl:974-975`), has no entry there,
-and an entry above `/dev`, such as that read-only root, does not cap the
-entry. An entry at exactly `/dev`, the starter's or one its narrowing
-left, caps it: a
+nothing at `/dev`, whose table, like the boot table that holds the
+release slice at `/` read-only alone, has no entry there; an entry above
+`/dev`, such as that read-only root, does not cap the entry. An entry at
+exactly `/dev`, the starter's or one its narrowing left, caps it: a
 program draws by writing `draw`, so a window is useful only at `rw`, and
 a table with an entry at exactly `/dev` that cannot write refuses the
 start with `EACCES` when the handler builds the program's table, before
-step 1 opens anything, rather than start a window nothing can draw to
-(`erx_prog_handler_core:writes_dev/2`).
+step 1 opens anything, rather than start a window nothing can draw to;
+an entry at or below one of the tree's names refuses the start with
+`EINVAL` before that check. An entry below `/dev` that names none of the
+tree's names stays.
 
-The handler does not yet join the export and a grant at `/dev` ([Where
-the export and a grant meet](#narrowing-for-a-program), TODO.md), so a
-grant the session mounts at `/dev` itself, such as an administrator's
-device tree, is among the entries step 4 replaces: a program with a
-window loses it and gains nothing, which fails safe. An entry below
-`/dev` that names none of the tree's names stays.
+The join of the export and a grant at `/dev` for a program's handler is
+open work ([Where the export and a grant meet](#narrowing-for-a-program),
+TODO.md): a handler without it counts a grant the session mounts at
+exactly `/dev` itself, such as an administrator's device tree, among the
+entries step 4 replaces, so a program with a window loses that grant and
+gains nothing, which fails safe. Whether a windowed start still refuses
+a read-only entry at exactly `/dev` once the join exists is decided with
+the join.
 
 A table at `ERX_NS_MOUNTS_MAX` entries with none at `/dev` cannot take
 the entry, and the start is refused with `EINVAL` before the window is
 opened. A step that fails refuses the start with its errno: the window's
 as [design-programs.md](design-programs.md#the-handler) lists them, the
-connection's (`ENOMEM` when image 0 cannot be made,
-`erlang/apps/erx_win/src/erx_draw_conn.erl:182-193`), and `EIO` for a
+connection's (`ENOMEM` when image 0 cannot be made), and `EIO` for a
 grant that does not start. The handler undoes nothing by hand: a refused
 start ends it, and what it made ends with it, as follows.
 
@@ -2090,23 +2012,18 @@ the connection and the tree's grant, and each watches the handler with
 a monitor, so each ends at the handler's end whatever its reason. The
 handler in turn ends at the end of the connection or of the tree's
 grant, whatever its reason, since it is linked to both and neither
-ends `normal` before the handler does, so the four share
-one life. The connection
-relays the program's input reads on the window handle's fids, whose
-owner is the handler, so a connection that ended while the handler
+ends `normal` before the handler does, so the four share one life. The
+connection relays the program's input reads on the window handle's fids,
+whose owner is the handler, so a connection that ended while the handler
 ran would leave its reads at the display, where the next key would go
 to no one; with one life there is no such state, and no request the
 connection passed on outlives the grant that asked for it (rule 7 of
-"Waiting requests"). That
-matters for a refused start, which ends the handler with `normal`
-(`erlang/apps/erx/src/erx_prog_handler_core.erl:332-333`), a reason that
-reaches a linked process as a signal it ignores
-(`otp/erts/emulator/beam/erl_proc_sig_queue.c:4711-4716`). The display
-ends the window when its holder ends
+"Waiting requests"). The monitors matter for a refused start, which ends
+the handler with `normal`, a reason that reaches a linked process as a
+signal it ignores. The display ends the window when its holder ends
 ([design-display.md](design-display.md#the-window-tree)); the connection
-monitors its starter and stops at its end
-(`erlang/apps/erx_win/src/erx_draw_conn.erl:183, 220-221`), giving back
-its buffer's lease, after which the buffer's range is free
+monitors its starter and stops at its end, giving back its buffer's
+lease, after which the buffer's range is free
 ([design-display.md](design-display.md#the-pixel-area)); and the tree's
 grant ends with what its `ends_with` names
 ([Interfaces](#interfaces)), whose end ends every fid on it and every
@@ -2115,11 +2032,9 @@ no order, and nothing is unregistered, since nothing was registered: the
 grant's pid is written into this program's table and nowhere else, and
 a program holds no pid (F9). While the program runs:
 
-* a connection that ends, for an allocation that failed after its plan
-  (`erlang/apps/erx_win/src/erx_draw_conn.erl:321-323`) or any other
-  reason, ends the handler, and the program with it, and the
-  starter's `'DOWN'` carries the connection's reason as the handler's
-  own end; nothing restarts the connection;
+* a connection that ends, for any reason, ends the handler, and the
+  program with it, and the starter's `'DOWN'` carries the connection's
+  reason as the handler's own end; nothing restarts the connection;
 * a window that ends alone, its display lost, leaves the connection
   running with each present failing
   ([design-display.md](design-display.md#the-draw-connection)), and
@@ -2293,8 +2208,7 @@ other client's request can come between its parts:
   `max_heap_size`. An open is the handle the tree's `open` or `make`
   answered, kept with the opened fid, so the fid is the open's one name,
   and two opens whose handles are equal, as every open of one window
-  file's is (`erlang/apps/erx_display/src/erx_winfs.erl:663`), stay two
-  opens. The grant alone ends a fid ([Fid owners](#fid-owners)), and the
+  file's is, stay two opens. The grant alone ends a fid ([Fid owners](#fid-owners)), and the
   module hears of an open fid's end through `clunk`.
 * **Waiting requests.** Nothing in a grant waits for an event. A
   callback does bounded work: a step of its tree's process, a call that
@@ -2485,14 +2399,7 @@ other client's request can come between its parts:
   that keeps one, its position; the file's size, blocks and bytes are
   the file's, which every open reads, so a read through one open
   answered after a write through another sees that write, as OTP's
-  `file_SUITE` checks through a reader opened before the writes
-  (`otp/lib/kernel/test/file_SUITE.erl:3393-3397, 3516-3520`).
-  littlefs's port does not have this property yet: each open is a
-  littlefs file of its own, a write changes only the file it was made
-  through (`otp/erts/emulator/nifs/erxos/erx_littlefs_nif.c:707`), and
-  a read of another open of the same file stops at that open's own
-  recorded size (`littlefs/lfs.c:3505`), so running the calls one at a
-  time does not show one open's write to another (TODO.md).
+  `file_SUITE` checks through a reader opened before the writes.
 * **One handle per grant.** `init/1` answers the grant's handle, `Fs`,
   once for each grant, and it never changes: every callback receives it
   and answers only its result, never a next state. Every grant calls the
@@ -3323,28 +3230,16 @@ recovers a value's exact bytes
   lock table (`locks`, absent for a grant that is a tree of its own,
   which starts its own); every file server is one. A keeper keeps its
   waiting requests in `erx_fs_waits` and answers them only through it:
-  `new/0`; `hold/2`, which takes an `{erx_fs_wait, Wait, Request}`
-  message and monitors the grant that sent it, once for all of that
-  grant's requests, where `Wait` is `{Grant, Alias}`; `began/2`, which
-  marks a request begun; `answer/3`, which sends `{erx_fs_answer, Alias,
-  Result}` to the request's alias, forgets the request and releases its
-  grant's monitor with that grant's last request; `info/2`, which takes
-  an `{erx_fs_flush, Wait}` or a grant's `DOWN` and answers `{flushed,
-  Waits}` when the flush needs nothing of the keeper: the set has
-  answered a request not yet begun `eintr` itself, or the request is
-  answered already, or its first flush is already the keeper's;
-  `{begun, Wait, Request, Waits}` for the first flush of a begun one,
-  which the keeper's answer to it settles and which a keeper that passed
-  it on flushes at that server, `{dropped, Waits}` or `unknown`; and
-  `list/1`, its requests in the order they arrived, each as `{Wait,
-  Request, waiting | begun}`
-  ([Serving](#serving-the-erx_fs-behaviour), "Waiting requests").
-  The three messages between a grant and a keeper, `{erx_fs_wait, Wait,
-  Request}`, `{erx_fs_flush, Wait}` and `{erx_fs_answer, Alias, Result}`,
-  are defined once, as the macros `ERX_FS_WAIT`, `ERX_FS_FLUSH` and
-  `ERX_FS_ANSWER` of `erx`'s header `erx_fs_waits.hrl`, which `erx_fs`,
-  `erx_fs_waits` and every keeper include: a keeper matches `ERX_FS_WAIT`
-  in its receive to hand the message to `hold/2`.
+  it holds a grant's request and monitors that grant once for all its
+  requests, marks a request begun, answers a request to its alias and
+  forgets it, takes a flush or a grant's `DOWN` and says whether the
+  flush still needs the keeper (a begun request's first flush, which the
+  keeper's answer settles), and lists its requests in arrival order
+  ([Serving](#serving-the-erx_fs-behaviour), "Waiting requests"). The
+  three messages between a grant and a keeper, a request to wait, a
+  flush and an answer, are defined once, in `erx`'s header
+  `erx_fs_waits.hrl`, which `erx_fs`, `erx_fs_waits` and every keeper
+  include.
   `erx_fs_locks` is a tree's lock table, a keeper of the grants' `lock`
   and `getlock` requests: `start_link/0`, and the release of a fid's
   locks a grant sends it at the fid's clunk ([Locks](#locks)).
@@ -3357,18 +3252,15 @@ recovers a value's exact bytes
   `erx_fs_version:init/0` makes the domain's
   file version counter and `erx_fs_version:draw/0` draws from it
   ([Identity and version](#identity-and-version)).
-* **The file protocol**, 9P2000.L, as a **frame profile** of
-  `abi/erx_abi.txt`: the operation table, with each message's fields,
+* **The file protocol**, 9P2000.L, as a **frame profile**,
+  `abi/protocols/9p.txt`: the operation table, with each message's fields,
   bounds, 9P2000.L layout and whether it writes, from which a Ruby
   generator produces the Erlang decoder that `erx_fs` and
   `erx_file_remote` use, the refusal set of F5, the per-operation reply
   checks of [Bounds](#bounds) and `erx_9p`, so every
-  client, server and edge shares one definition. It also generates client
-  construction/reply helpers, server dispatch declarations, operation/field
-  reference tables and bounded-input builders, boundary mutations and fuzz
-  entry points. Server callbacks keep file semantics and authorization
-  decisions, and Linux's client/server and independent byte fixtures check
-  the generated codec ([design-generation.md](design-generation.md)).
+  client, server and edge shares one definition; server callbacks keep
+  file semantics and authorization decisions
+  ([design-generation.md](design-generation.md)).
   The program protocol
   between `liberx` and a handler is a frame profile too
   ([design-programs.md](design-programs.md#the-channel)).
@@ -3577,561 +3469,226 @@ since the session filled it, as a network file system's client does.
 
 ## Verification and testing
 
-Each test below names the failure seeded into it, which the test must
-report, so a passing run shows the code under test ran.
+Every test names the fault seeded into it, which it must report, so a
+passing run shows the code under test ran. The approach has five parts:
+oracles for behavior, fuzz targets for every parser of untrusted input,
+exhaustive models of the protocol state machines, source checks for the
+chokepoints, and hostile-client and hostile-server tests for the bounds
+and the invariants.
 
-* `erx_path`: a fuzz target in Erlang, built and run on the host by
-  `make check-fuzz` for its budget, in the style of
-  `test/erlang/erx_file_remote_fuzz.erl`, that builds a random model tree
-  (directories, files, and relative, absolute, empty and looping links),
-  a random table over it (entries, binds with roots, a narrowed table
-  with no `/`), each point a directory, reached without a link, of the
-  entries whose points lie above it, as a mount of FreeBSD's needs, and
-  a working directory, and random paths of plain names, `.`, `..`,
-  doubled and trailing `/`, each with a random
-  `nameiop`, `FOLLOW` and `WILLBEDIR`. It runs the resolver, answering
-  its walks and link reads from the model tree through the callbacks and
-  calling each resumption as an executor would, and compares the
-  outcome, the last action's entry, names and kind or the error, with a
-  reference model: a direct transcription into Erlang of FreeBSD's
-  `vfs_lookup` over the same tree,
-  written from `sys/kern/vfs_lookup.c`, which keeps a current directory
-  node with its parent, takes `..` through the node's parent, crosses
-  an entry's top back through the node its mount point covers, stops at
-  `/`, follows a last link under `FOLLOW` or `TRAILINGSLASH`, and
-  refuses a last `.` or `..` of `DELETE` and `RENAME` once the name
-  before it is found to be a directory. That last rule is where the
-  model departs from `vfs_lookup`'s text: FreeBSD's slow lookup refuses
-  such a name before it checks the name before it, and its lockless
-  name-cache lookup checks that name first and, by a reading of its
-  source not yet run on FreeBSD, can hand the parent on to `rmdir` or
-  `rename` for a last `..`, so FreeBSD answers one path differently by
-  what its cache holds; the model takes the order of
-  the cache lookup and the answers that rmdir(2), rename(2) and
-  unlink(2) document. The same target feeds the resolver's untrusted
-  inputs raw: paths and link texts of arbitrary bytes, NUL, invalid
-  UTF-8, empty and over every bound among them, and walk replies longer
-  than their walks, each answered with an error and never a crash; it
-  changes the namespace's persistent term from inside a walk callback;
-  and it checks the properties above: no walk names `.`, `..` or an
+**Oracles.**
+
+* **FreeBSD's lookup.** The resolver is compared with a reference model:
+  a direct transcription into Erlang of FreeBSD's `vfs_lookup`, written
+  from `sys/kern/vfs_lookup.c`, which keeps a current directory node with
+  its parent, takes `..` through the node's parent, crosses an entry's
+  top back through the node its mount point covers, stops at `/`, follows
+  a last link under `FOLLOW` or `TRAILINGSLASH`, and refuses a last `.`
+  or `..` of `DELETE` and `RENAME` once the name before it is found to be
+  a directory. That last rule departs from `vfs_lookup`'s text: FreeBSD's
+  slow lookup refuses such a name before it checks the name before it,
+  while its lockless name-cache lookup checks that name first and, by a
+  reading of its source not yet run on FreeBSD, can hand the parent on to
+  `rmdir` or `rename` for a last `..`, so FreeBSD answers one path
+  differently by what its cache holds. The model takes the cache lookup's
+  order and the answers that rmdir(2), rename(2) and unlink(2) document.
+* **9P2000.L.** Under QEMU the machine mounts a host directory through
+  virtio-9p, so QEMU's 9P2000.L server checks erXos's client side, and
+  runs OTP's `file_SUITE` over it, the offset rule for `At` = `unknown`
+  among its cases. Linux's own 9P2000.L client in the oracle guest mounts
+  an erXos server through the host link's bridge and runs a
+  file-semantics corpus, compared with the same corpus on a Linux
+  `tmpfs`, and independent byte fixtures check the generated codec
+  ([design-generation.md](design-generation.md)). Seeded: a server that
+  answers a `walk` of `..` at its root with the parent's qid, which both
+  catch.
+* **Stock OTP.** OTP's `file_SUITE` and `filelib_SUITE` run with their
+  working directory on an `erx_fs` server backed by a RAM tree, compared
+  case by case with the same suites on a local mount; every difference
+  is one listed under [Compatibility](#compatibility-and-migration).
+  Hosted, `tools/erx oracle hosted` compares them with stock OTP 29.1.2
+  on the development host; its list of known differences holds a case of
+  `.`, `..` or links only where macOS answers otherwise than FreeBSD, its
+  row naming FreeBSD's answer, and a listed case that agrees with stock
+  fails the comparison. The cases of the first bullet under
+  [Compatibility](#compatibility-and-migration), which no case of either
+  suite reaches, are compared by [/tmp's oracle
+  cases](design-tmp.md#verification).
+* **Native programs.** toybox's own tests for its file applets
+  ([design-programs.md](design-programs.md)) and musl's `libc-test` file
+  cases run with each program served by a handler over an `erx_fs`
+  server.
+
+**Fuzz targets**, each built for the host and run by `make check-fuzz`:
+
+* `erx_path`, in Erlang: a random model tree (directories, files, and
+  relative, absolute, empty and looping links), a random table over it
+  (entries, binds with roots, a narrowed table with no `/`), a working
+  directory and random paths of plain names, `.`, `..`, doubled and
+  trailing `/`, each with a random `nameiop`, `FOLLOW` and `WILLBEDIR`,
+  compared with the FreeBSD model above. The same target feeds the
+  resolver's untrusted inputs raw (paths and link texts of arbitrary
+  bytes, NUL, invalid UTF-8, empty and over every bound; walk replies
+  longer than their walks), each answered with an error and never a
+  crash; changes the namespace's persistent term from inside a walk
+  callback; and checks the properties: no walk names `.`, `..` or an
   empty name, every walk lies at or below its entry's `root`, a place
   never outgrows its bounds, and every action names an entry of the
-  table the resolution was handed. Listings across mounts have a
-  property test of their own. Seeded: a resolver
-  that removes a run's name on `..` before its walk, which
-  `missing/..` catches; one that takes `..` before following the link
-  ahead of it, which `link/..` catches; one that walks `..` past a
-  bind's root to the server, which the walk property catches; one that
-  answers a last `.` of `DELETE` before checking that the name before
-  it is a directory, which `file/.` catches; one that takes a link's
-  text without checking it, which a text holding NUL catches; and one
-  that reads the namespace's term again at a link instead of the table
-  it was handed, which the change made inside a walk catches.
-* The executor in `erx_file_remote`, hosted against an `erx_fs` server
-  whose tree holds links and binds: `..` after a link to another
-  directory and to another entry; `x/..` and `x/.` with `x` a file, a
-  missing name and a link; `..` at a bind's top and at `/`; 32 links
-  followed and the 33rd answering `eloop`; `change_mode("file/.")`,
-  which answers `enotdir` and leaves the mode; `set_cwd` through a
-  link, after which `get_cwd` answers the target's path; a rename
-  whose source and destination resolve through links onto two entries,
-  answering `exdev`; `del_dir("dlnk/")` with `dlnk` a link to an empty
-  directory, which removes that directory, and `delete("dlnk/")`, which
-  answers `eperm`; a rename of a bind's top, as source and as
-  destination, answering `ebusy`; a bind whose `From` passes a
-  link, whose entry roots at the link's target; an unmount made while a
-  resolution waits on a slow walk, which the resolution finishes on the
-  entry it began with while one started after the unmount answers as
-  the new table says; a grant ended while a resolution holds its entry,
-  which answers `eio`; and a walk of `..` handed straight to the
-  client's request function, which answers `einval` and sends nothing.
-  Seeded: a resolver that follows a last link only under `FOLLOW`, which
-  the `del_dir` case catches as `enotdir`; an executor that sends an
-  operation with a walk whose names still needed a check, which the
-  `change_mode` case catches as the mode changed; one that stores the
-  path as written as the working directory, which the `get_cwd` case
-  catches; and a request function without its refusal of `.` and `..`,
-  which the `..` case catches as a walk sent.
-* The release NIFs' decoder of name lists: a fuzz target that hands
-  `release_walk_nif` and the operations' NIFs arbitrary terms, lists of
-  257 names and names holding `/`, NUL, `.`, `..`, invalid UTF-8 or 256
-  bytes, each answered `einval` without reaching the core, under
-  AddressSanitizer. Seeded: a decoder without its count check, which the
-  257-name list catches.
-* Two source checks of [design.md](design.md#chokepoint-checks), each
-  with a seeded violation: only `erx_ns`'s process writes the
-  namespace's persistent term and only `prim_file:set_cwd/1` calls the
-  NIF that stores the working directory, which a `persistent_term:put/2`
-  of the table's key and a call of `erx_set_cwd_nif/1` added elsewhere in
-  `prim_file` each catch; and `erx_file_remote` sends a request only
-  from its one request function, which a send added to another of its
-  functions catches.
-* The frame profile and `erx_9p`: a fuzz target for the server's decoder,
-  one for the client's and one for the codec, built for the host; every
-  operation of the table has an encoding test, term to bytes and back; a
-  message whose size field exceeds `msize` or the bytes received, a string
-  that runs past its message, and a count past what remains, each refused;
-  seeded: a codec that skips the size check, which the oversized case
-  catches.
-* 9P2000.L against its oracles: under QEMU, the machine mounts a host
-  directory through virtio-9p, so QEMU's 9P2000.L server checks erXos's
-  client side, and runs OTP's `file_SUITE` over it; Linux's own 9P2000.L
-  client in the oracle guest mounts an erXos server through the host
-  link's bridge and runs a file-semantics corpus, compared with the same
-  corpus on a Linux `tmpfs`; seeded: a server that answers `walk` of `..`
-  at its root with the parent's qid, which both catch. Through the host
-  directory, an ordinary write, a `file:pwrite/3` and an append, each
-  followed by `file:position(Fd, cur)`, leave the offsets the offset rule
-  gives for `At` = `unknown`; seeded: a client that applies the numeric
-  rule to `unknown`, which the ordinary write catches.
-* The exchange in `erx_file_remote`, against a server process of the
-  test's that puts its replies in envelopes as a connection does: a
-  reply bare and in one envelope of any domain is taken and held to its
-  request, and one at another alias, in two envelopes or of another
-  shape is not, its request answering `eio` once the server ends; the
-  fuzz target drives the same exchange with random messages; seeded: a
-  client that takes replies only bare, and one that takes another
-  alias's reply out of an envelope, which both catch.
-* `erx_fs`: hostile-client tests (bounds, fid floods, lock floods, walks
-  with `..` at the root and `/` inside names, writes through read-only
-  grants, slow clients, clients that die, client processes that end with fids and with
-  fid-making requests in flight, owners named on another's behalf that
-  have already ended, clients that never read their
-  replies, replies sent to another domain's alias, frames in a third
-  domain's envelope and bare frames at a grant for another domain, each
-  dropped and counted, a pipelined `lopen`
-  after a walk that stopped at a link, 100,000 short-lived owners that
-  each make and clunk one fid, after which the grant holds no monitor),
-  and an exhaustive model of a
-  grant's fid table under every request and every owner's end in
-  every state up to depth 6;
-  seeded: a grant that keeps a fid after a failed walk, which the model
-  catches; a grant that, after an owner's `DOWN`, records a later fid
-  made for that owner without monitoring it again, which the ended-owner
-  case catches as a fid that stays; a grant that keeps an owner's monitor
-  after its last fid, which the short-lived owners case catches; a grant
-  that takes a frame out of any domain's envelope, and one for another
-  domain that takes its own domain's bare frames, which the envelope
-  cases catch. A tree whose `clunk` answers `{error, eio}` for an opened
-  file makes the client's close answer `eio`, after a write sent before
-  it has run, and the fid is gone; seeded: a grant that answers the
-  clunk `ok` before the tree's `clunk` has run. A tree
-  whose callbacks answer with a next state appended is answered `eio`
-  at the client and the grant goes on
-  serving; seeded: a grant that takes a directory's `make` answering
-  `{ok, Node, Qid, State1}` for a file's, and one that crashes on an
-  answer that is not an error, which that case catches. Each operation
-  whose directory fid names a file or a link is answered `enotdir` and
-  the tree records no call; seeded: a protocol table that leaves
-  `renameat`'s new directory or `readdir`'s fid marked `node`, or marks
-  `link`'s source in place of its directory, regenerated, which that
-  case catches. A tree that
-  answers root, walk or `lcreate` with a malformed qid is answered `eio`
-  and the grant records no fid, opens nothing
-  and clunks the handle the tree opened; a `remove` whose tree answers
-  an error 9P2000.L does not carry is answered `eio` and still clunks
-  its fid; and a listing whose tail is not a list is answered `eio` by
-  the grant; seeded: a grant that keeps what an operation built
-  when the reply check rejects its reply, one that undoes a remove's
-  clunk then, one that leaves a rejected `lcreate`'s handle open, and a
-  listing check that crashes on an improper tail, which those cases
-  catch. The
-  fid counter's property test, over a space a test hook shrinks to 256
-  numbers, draws from many processes at once, keeps some fids alive past
-  a wrap and ends others with their owners, and finds no number drawn
-  again before every other number has been drawn, `NOFID` never drawn,
-  and every new fid that meets a live one refused with `einval` and
-  nothing shared; seeded: a counter that hands out the lowest number not
-  in the grant's table, which the test catches.
-* F4: a tiny request whose callback is slow, sent in a flood by one
-  client, which delays that client's grant and no other, and spends no
-  more than the server's grant; seeded: a server that runs every grant's
-  callbacks in one process, which the second client's latency exposes. A client with
-  64 reads waiting at a stream's keeper holds its 64 slots, 64 entries of
-  the keeper's `erx_fs_waits` and no process of the server beyond its
-  grant and the keeper; seeded: a grant that runs each waiting
-  read in a process of its own, which the server's process count
-  catches.
+  table the resolution was handed.
+* The release NIFs' decoder of name lists, under AddressSanitizer:
+  arbitrary terms, 257 names, names holding `/`, NUL, `.`, `..`, invalid
+  UTF-8 or 256 bytes, each answered `einval` without reaching the core.
+* The frame profile's server and client decoders and `erx_9p`: every
+  operation round-trips term to bytes and back, and a size past `msize`
+  or the bytes received, a string past its message and a count past what
+  remains are each refused.
+* `erx_file_remote`'s exchange, driven with random messages: a reply bare
+  or in one envelope is taken and held to its request; one at another
+  alias, in two envelopes or of another shape is not.
+
+**Exhaustive models.** A grant's fid table under every request and every
+owner's end, up to depth 6 (F10). The grant's core, `erx_fs_grant`, with
+a model keeper, over every order of requests that wait and that are
+answered at once on two fids with equal handles, a request the keeper
+begins, flushes of waiting and answered requests, a clunk and its flush,
+a walk that reuses a clunked number, the keeper's answers, a second
+answer, the keeper's end and the client's end; its properties are the
+rules of [Flush](#flush) and "Waiting requests": every request answered
+exactly once, a flush after its request, nothing of a fid waiting once
+its clunk has run, a begun request answered only with the keeper's answer
+or `eio`, each fid's `clunk` callback once after its last request, and a
+fid number free only after its clunk's answer. One mapper, its object and
+its server under interleaved stores, reads, writes taken whole, in part
+or not at all, extensions, truncations, failed fills and write-backs, up
+to depth 8, against a flat file (F7).
+
+**Source checks** of [design.md](design.md#chokepoint-checks), each with
+a seeded violation: only `erx_ns`'s process writes the namespace's
+persistent term; only `prim_file:set_cwd/1` calls the NIF that stores the
+working directory; `erx_file_remote` sends a request only from its one
+request function.
+
+**Hostile clients, servers and programs.**
+
+* F1 to F3 and F9: a mounted pid the domain was not introduced to reaches
+  nothing; a program given `/data/logs` reaches nothing of `/data`
+  outside `logs` through `..`, links or other programs' file numbers;
+  a program's sub-space holds only its channel, data area, pipe ends and
+  mapped memory; a starter's table with a display facet mounted and bound
+  elsewhere gives the program no entry on the `windows` tree.
+* F4: fid floods, lock floods, retained `/proc` results, clients that
+  never read their replies, 100,000 short-lived owners after which the
+  grant holds no monitor, a flood of a tiny slow request that delays only
+  its own client's grant, and a window of 64 waiting reads that holds no
+  server process beyond its grant and the keeper and can still be flushed
+  and clunked.
 * F5 and F6: every writing operation through an `ro` and an `rx` grant,
-  each refused before its callback; running a file through an `ro` and an
-  `rw` mount, which fails with `EACCES`; running a file the session wrote
-  through an `rx` mount of its `data` facet, which fails with `EACCES`
-  because the grant beneath is `rw`, seeded with a resolution that keeps
-  the rights a facet's mount asked; an `rx` EROFS mount of a file of
-  `/apps`, refused with `eacces`, and a `{header, Path}` mount of a
-  package-shaped file the session wrote under `/tmp`, refused with
-  `einval`, so neither runs code the session wrote, seeded with a mount
-  that takes its rights from its options alone; seeded: an operation removed from
-  the table's writing marks, which the generated refusal test catches.
-* Symbolic links: `symlink`, then a walk that meets the link in its
-  middle, which stops there, and one that ends on it, whose fid the client
-  reads; a link to a link, a relative and an absolute link, and a loop
-  that fails with `eloop`; a walk, an `lopen` with truncation and a write
-  sent together for a path through a link before its last name, which
-  fail past the walk with `ebadf` and leave the link and its target
-  unchanged; `ln -s`, `file:make_symlink/2` and OTP's suites that use
-  them; seeded: a server that follows a link during a walk, which the
-  link-above-the-root case catches.
-* Locks: two programs of one session, and two domains, through two
-  grants of one tree, contending for read
-  and write locks; a lock with `BLOCK` that waits at the tree's lock
-  table as a waiting request, granted when the holder unlocks and ended by a flush;
-  one without it, answered `blocked` at once; a lock released by the
-  holder's clunk, by its grant's end, a grant killed included, by its program closing another
-  descriptor of the file, and by its program closing one of two
-  descriptors that a `dup` made of one open; a lock that outlives an
-  `fcntl(F_SETFL)` setting and clearing `O_APPEND` on its description, so
-  another program's conflicting lock still fails; a program that ends
-  while a sibling keeps the description its lock was taken through, after
-  which a third program takes a conflicting lock at once; a `ClientId`
-  naming another domain, which releases nothing; a write lock granted
-  to one domain's grant, then the lock table killed: every grant of the
-  tree has ended before the restarted table answers a request, and the
-  second domain's conflicting lock is granted on a new grant only;
-  seeded: a table restarted alone, `one_for_one`, beside which the
-  first grant, still running with the lock it believes it holds, sees
-  the second domain granted the same range; seeded: a lock table
-  kept in each grant, which the two domains' case finds as two
-  conflicting write locks both granted; a lock table that keeps a
-  killed grant's locks, which the killed grant's case finds as a lock
-  no one releases; a lock table keyed
-  by `ClientId`, which the `ClientId` case catches; a handler that leaves
-  a program's locks to the description's clunk, which the sibling case
-  catches; a `liberx` that tells its handler only of an open's last
-  reference, which the `dup` case catches; and a description that clunks
-  the opened fid an `F_SETFL` replaces, which the `O_APPEND` case
-  catches.
-* Flush: a blocking lock request flushed before the holder unlocks,
-  which is answered `eintr` before the flush's answer, and one flushed as
-  the holder unlocks, whose reply grants the lock before the flush's
-  answer; seeded: a server that answers the flush before the request it
-  granted, which leaves the lock taken with no owner who knows it and
-  fails the test.
-* Waiting requests. Each case runs through a real `erx_fs` grant over a
-  test stream tree whose keeper keeps its requests in `erx_fs_waits` and
-  takes bytes the test hands it, and each wait the test asserts on has a
-  deadline of 1 s.
-  * The regression, written first and seen to fail before waiting
-    requests are built: one grant, two fids opened on one stream file, a
-    read sent on the empty stream and then a write; the write is
-    answered while the read still waits, and the bytes the test then
-    hands the keeper answer the read, once. Seeded: a tree whose `read`
-    waits inside its callback, which makes the write miss its deadline.
-  * The grant's core, `erx_fs_grant`, with a model keeper, explored over
-    every order of three requests on two fids whose handles are equal
-    (two that wait, one answered at once), a request the keeper begins,
-    two flushes (one of a waiting request, one of an answered one), a
-    clunk of one fid, a flush of that clunk, a walk that reuses the
-    clunked fid's number, the keeper's answers at every point, a second
-    answer from the keeper, the keeper's end and the client's end: every
-    request is answered exactly once; a flush is answered after its
-    request; the keeper receives each flush after the request it names;
-    no request of a fid waits once its clunk has run; a clunk of one fid
-    answers no request of the other; a begun request is answered only
-    with the keeper's answer or `eio`; the other fid's requests run while
-    a clunk waits for a begun request; each fid's `clunk` callback runs
-    once, after its fid's last request is answered, the client's end
-    included; a flush of a waiting clunk is answered after the clunk,
-    the keeper's end included; a walk to a clunked fid's number fails
-    with `einval` before the clunk's answer and succeeds after it.
-    Seeded, each caught by the property named: a grant that
-    answers a flush of a waiting clunk at once (a flush is answered after
-    its request); a grant that frees a fid's number when it takes the
-    clunk (a walk to the number fails before the clunk's answer); a grant that
-    answers a flush before the keeper's answer (flush after its
-    request); a clunk that runs without flushing its fid's waits (nothing
-    waits after a clunk); a grant that keys waits by handle (a clunk
-    answers no request of the other); a grant that takes no other frame
-    while a clunk waits (the other fid's requests run); a grant that does
-    not monitor its keeper, at the keeper's end (answered exactly once);
-    an alias without `reply_demonitor`, which takes the keeper's second
-    answer (answered exactly once); a grant that ends at its client's end
-    without its fids' clunks (each `clunk` runs once).
-  * A flush sent in one batch right behind its read reaches the keeper
-    after the read: the read is answered `eintr`, then the flush `ok`.
-    Seeded: an `erx_fs_waits` whose `info/2` ignores a flush, which
-    leaves the read waiting past the deadline.
-  * A read flushed as the keeper answers it: the read's bytes, then the
-    flush's `ok`, and the bytes are not handed to anyone else. With
-    bytes already held by the keeper, a read and its flush sent in one
-    batch: the read's bytes, then the flush. A request the keeper has
-    begun, flushed: the flush waits for the keeper's answer, and the
-    request gets that answer. Seeded: an `erx_fs_waits` that answers a
-    begun request `eintr` at its flush, which the third case finds
-    before the keeper's answer; a keeper that holds a read while it
-    holds bytes and answers it only at its next input, which the second
-    case finds answered `eintr` with the bytes still held.
-  * A clunk of a fid whose read waits is answered within the deadline,
-    after the read's `eintr`, and the tree's `clunk` runs once, when
-    its keeper holds nothing of that fid; seeded: a grant that runs
-    the clunk while the read still waits, which the test tree's check at
-    `clunk` catches.
-  * A grant killed while its read waits at the keeper; a second grant
-    opens the file and reads; the bytes the test then hands the keeper
-    answer the second read whole. Seeded: an `erx_fs_waits` that does
-    not monitor the grant, whose dead request takes the bytes.
-  * A keeper killed while two reads wait: each is answered `eio`, and
-    the file's next read waits at the restarted keeper.
-  * A keeper that answers 1,000 reads one by one holds no request and no
-    monitor afterwards; seeded: an `answer/3` that leaves its entry,
-    which the set's size after the run finds.
-  * Bounds, in the grant's core: 64 waiting reads fill a grant's window
-    and a 65th request is answered `emfile`, while a clunk of one of
-    their fids is admitted and answered after that read's `eintr`, and
-    a walk sent after the clunk's answer reuses its number; seeded: a
-    grant that counts clunks in the window, which answers the clunk
-    `emfile` with its read still waiting. A flush of each is then
-    admitted and answered after its read's `eintr`, in the order the
-    flushes came; a second flush of one of them is dropped and counted,
-    and that read's first flush is still answered after it; a request
-    sent on the alias of a waiting flush is dropped and counted, and
-    the alias gets one answer, the flush's. Seeded: flushes counted in
-    the requests' window, whose first flush is answered `emfile`; a
-    second flush answered `ok` at once, which precedes its read's
-    answer; a grant that checks only requests' aliases, which sends the
-    reused alias two answers.
-  * The stream trees that use waiting requests run their own cases over
-    a real grant: a window's `kbd` read on a hidden window, whose clunk
-    is answered within the deadline, a window's held `ctl` writes, a
-    program's `/dev/kbd` read kept by its window's draw connection, the
-    same read beside a `/dev/draw` write whose present the screen
-    holds, and the connection's end while that read waits
-    ([design-display.md](design-display.md#verification-and-testing)),
-    and the Bluetooth line's reader and writer on one `data` file and
-    its `reset`
-    ([design-bluetooth.md](design-bluetooth.md#verification)).
-* The export answers an `lopen` of `/dev/tty` with `enxio`; seeded: an
-  export that opens it, which the case catches.
-* F1: a domain test that a mounted pid the domain was not introduced to
-  reaches nothing. F2 and F3: a program given `/data/logs` whose requests
-  try every path above it, through `..`, links and other programs' file
-  numbers, reaching nothing of `/data` outside `logs`, and whose `ls ..`
-  from `/data/logs` lists `logs` alone. F9: a program's sub-space holds
-  only its channel, data area, pipe ends and mapped memory. Seeded: a
-  handler that walks the raw path, and one that sends a `..` at the
-  program's top to the server, which the `..` cases catch.
-* The empty root: a program started with `/data/logs` alone, whose `ls /`
-  lists `data`, whose `cd /data` works, whose `open` of `/etc/passwd`
-  fails with `enoent`, and whose `mkdir /new` fails with `erofs` and
-  `mkdir /data` with `eexist`, and one started with no mount at all, as
-  `within -f inspect -- ps` starts it, whose every path but `/` fails with
-  `enoent`.
-* The export over a grant: a session with a writable fixture grant at
-  `/etc` whose tree holds `start.conf` and its own `passwd`, and one at
-  `/dev` holding `null` and `draw`. A native program's read of
-  `/etc/passwd` gets the export's text, its read of `/etc/start.conf` the
-  grant's, and its edit of `/etc/start.conf` reaches the grant; its listing
-  of `/etc` shows `passwd` once, with the export's qid, and every name
-  it lists opens; `/dev/zero` and
-  `/dev/urandom` read as theirs, `/dev/draw` reaches the grant, and a
-  write to `/dev/null`, through a create as `>/dev/null` makes it,
-  reaches no grant; a create of `/etc/passwd` answers `eacces` and a
-  remove `eperm`, and the fixture's `passwd` is unchanged; a program
-  narrowed to the grant read-only gets `erofs` on the edit; and a
-  starter's table with a bind at `/dev/null`, or one at `/dev/tty/x`,
-  refuses the start with `EINVAL`. Seeded: a join that asks the grant
-  first, which reads the fixture's `passwd`; a listing that leaves the
-  grant's `passwd` in, which lists it twice; and a check that refuses
-  only an entry exactly at an export name, which the `/dev/tty/x` case
-  catches.
-* No display in a program's table, in the handler's host tests of the
-  table it builds: a starter's table holding `data` at `/data`, a
-  fixture display facet mounted at `/n/display` on the tree `windows`,
-  and a bind of its client directory at `/mnt/w`, an alias that keeps
-  the facet's provider. Started with the whole table and started
-  narrowed to `/n` and `/mnt`, the program's table holds the `data`
-  entry, or nothing, and no entry whose tree is `windows`; a test program
-  started on the whole table finds `/n/display/w1/ctl` and `/mnt/w/w1/ctl`
-  answer `enoent` while the fixture records no walk. Seeded: a builder
-  that drops the display's mount by its point, which keeps the bind at
-  `/mnt/w` and fails the alias case.
-* A program's window, the handler over a fixture display tree that
-  records every walk and every write, and a test program. The program's
-  `/dev` lists `null`, `tty`, `urandom`, `zero`, `draw`, `ctl`, `kbd`,
-  `mouse`, `wctl` and `label`, and `clipboard` only when the fixture
-  grant carries it. The program opens or tries every path of a corpus
-  (`/dev/ctl`, `/dev/kbd/../ctl`, `/dev/./wctl`, `/dev/kbd/x`,
-  `/dev/w1/ctl`, `mkdir /dev/w1`, `/dev`'s listing and each name in it,
-  and a write of a `present` line to `/dev/ctl`), and once the start has
-  answered, the fixture records no walk but `[clipboard]` from the root
-  and no write of the window's `ctl` but the connection's presents of
-  image 0's buffer, so the window's `ctl` and directory are never
-  reached; `/dev/ctl` reads the connection's 144 bytes, not the
-  display's channel line, and its open for the `present` write answers
-  `EACCES`; `>/dev/draw` opens `draw`;
-  and the `mkdir` answers `eacces`. Seeded: a tree that relays any name
-  to the window's directory, whose walks the corpus's `/dev/ctl` and the
-  `mkdir` make. A starter's table with an entry at `/dev/kbd/x` refuses
-  the start with `EINVAL`, and the window, the connection and the grant
-  end as in the lifetime case below; seeded: a check of exact points
-  only, which starts it. In the handler's core tests, over a table shaped
-  like a session's, the release slice read-only at `/`: a table with no
-  entry at `/dev`, a narrowing to `/data` alone, a read-write entry at
-  exactly `/dev` and a narrowing to `/dev` read-write each start a
-  windowed program, as does a read-only entry at `/dev` on a window
-  tree, which passes to no program; a read-only or `rx` entry at exactly
-  `/dev`, a narrowing to `/dev` read-only and one to `/` read-only each
-  refuse it with `EACCES` before the `window` action, and with an entry
-  at `/dev/kbd` beside the read-only one the start is refused with
-  `EINVAL` first; seeded: a core that admits the
-  table whatever its rights at `/dev`, which starts the read-only cases,
-  and one that measures against the deepest entry covering `/dev`, which
-  refuses the table with no entry there.
-* A window removed under a running program: the test removes `w1`
-  through the session's grant on the fixture and makes another window
-  named `w1`, and the program's next read of `/dev/label` and write of
-  `/dev/wctl` answer the fixture's error for a window that is gone,
-  while the new window's label and rectangle stay as the test set them
-  and the fixture records no request on them from the program's tree.
-  Seeded: a tree that walks each relayed open from the window's
-  directory by name, which writes the new window's `wctl`.
-* No window file by a descriptor: a session process whose namespace
-  mounts the fixture display opens `w1/ctl` for writing and the `w1`
-  directory, and names each among a start's descriptors, as a file and
-  as a directory; `start/1` refuses each with `EINVAL`, as a descriptor
-  of a form it does not take
-  (`erlang/apps/erx/src/erx_prog_handler.erl:86-93`), with no handler
-  left and no request of a handler's at the fixture. Seeded: a `start/1`
-  that admits a file it is handed into the program's open table, after
-  which the test program's write of a `present` line to that descriptor
-  reaches the fixture.
-* A resize through the real path: the fixture display resizes the
-  window, the program reads the `r` record from `/dev/mouse`, then reads
-  `/dev/ctl`, which shows the new rectangle, and draws a `d` over the
-  rectangle `ctl` gave and flushes, and the fixture records a present
-  whose buffer has the new size. Seeded: a draw connection that answers a `mouse` read
-  without making image 0 anew, whose `ctl` read shows the old rectangle.
-  A window whose rectangle the fixture refuses to answer after the
-  resize still hands the program its `r`, and `ctl` keeps the old
-  rectangle.
-* A window's lifetime. The test takes a monitor on the tree's grant
-  (found among the session's processes by its module), the connection
-  and the fixture's window once the start has made them, and awaits each
-  end within 5 seconds, in any order and in no order against the
-  starter's `'DOWN'`, since each sees the handler's end on its own. Once
-  the program exits, all three end. A start refused at its last step, by
-  a start stub that answers `ENOMEM` after the tree's grant has started,
-  answers the starter `ENOMEM`, and all three end; seeded: a grant
-  started without `ends_with`, which the handler's `normal` exit leaves
-  alive past the deadline. A connection killed under a running program
-  makes its write to `/dev/draw` fail with `EBADF` while the program
-  goes on and exits 0; seeded: a tree that answers `eio` for an ended
-  connection. A fixture whose image 0 cannot be made refuses the start
-  with `ENOMEM`, and a starter's table at `ERX_NS_MOUNTS_MAX` entries
-  with none at `/dev` with `EINVAL`, and what each start made ends
-  within the same deadline.
-* A child of a program with a window: a forked child, and a child the
-  program spawns with its whole table, list the parent's `/dev` with
-  `draw` and the window's names, and a `d` the child writes to
-  `/dev/draw` and flushes reaches the window as the parent's does; a
-  child spawned narrowed away from `/dev` lists no `/dev`. When the
-  parent exits, the child ends before the tree's grant does. Seeded: a
-  fork that puts the shared tree's `/dev` in the child's table, which
-  the listing catches.
-* The data area: a program with one slot whose two threads read at once,
-  one waiting for the other's slot; reads and writes of every size from 1
-  byte to 64 KiB and across slot boundaries, compared with the file; a
-  program that names a slot it does not have, refused with `EINVAL`.
-* Shared offsets: two programs given one description write in turn, and
-  the file holds both outputs in order; a forked child and its parent do
-  the same; an `O_APPEND` description whose writes all land at the end
-  while another domain appends, and whose offset after each write is
-  just past its own bytes; seeded: a handler that takes the offset from a
-  `getattr` after the write, which catches the other domain's append that
-  a test hook in the server lands between the two.
-* Identity: for each of the storage services and the FAT server, a file
-  written, renamed, removed and created again under one name, and a server
-  restarted between two `getattr`s, never shows one domain, tree, path and
-  version for two different contents, checked against a model that
-  records every content each of them named; one domain serving two trees
-  whose files share a qid path, which a session's file table keeps apart;
-  a test hook that starts the
-  counter at 2^63 shows versions above 2^32 round-trip, and one at
-  2^64 - 1 shows the server refusing a change with `eio`; seeded: a
-  counter kept in the server's process, which the restart case catches,
-  and a file table keyed without the tree, which the two-tree case
-  catches.
-* FAT and littlefs paths: a file a fid names keeps its path across a
-  rename; a server whose table holds 65,536 entries refuses a walk to a
-  file it does not hold with `enfile` and keeps every entry; seeded: a
-  table that evicts its least recently met entry when full, which the
-  full-table case catches.
-* `attach`: inside the machine, an `attach` naming a tree other than the
-  grant's fails with `enoent`; seeded: a grant that ignores `Aname`,
-  which that case catches.
-* A hostile server: replies whose read `Data` exceeds the request's
-  `Count`, whose write `Count` exceeds the bytes sent, whose walk lists
-  more qids than names and whose `readdir` entries exceed `Count` bytes,
-  each failed with `eio` by `erx_file_remote`, by the host link's bridge
-  and by the host-tree domain's bridge; a handler answering a program a
-  count larger than it asked for, which `liberx` clamps; seeded: one
-  operation's check removed from the generated table, which that
-  operation's case catches.
-* `lcreate`: a rename of the created name to another file between the
-  `lcreate` and the walk that follows, after which the description keeps
-  its opened fid alone, reads and writes it, and answers an
-  `fcntl(F_SETFL, O_APPEND)` and an `mmap` with `ESTALE`; seeded: a
-  handler that skips the qid comparison, whose `mmap` then maps the other
-  file.
-* Shared mappings (F7): the exhaustive model of one mapper, its object and
-  its server under interleaved stores, descriptor reads and writes,
-  truncations, extensions and write-backs up to depth 8, against a flat
-  file; two programs of one session, one storing through a mapping and one
-  reading through a descriptor, which sees the store at once; a forked
-  child's stores seen by its parent; a mapping whose fill fails at its
-  second read, followed by a mapping of the same range, which reads the
-  range from the server again and shows the file's bytes; a descriptor
-  write the server refuses and one it takes in part, after which a
-  mapping shows the acknowledged prefix alone; a write that starts past
-  the end, whose mapping shows zeros in the hole and the written bytes
-  after it; seeded: a handler that relays a read of a mapped file to the
-  server, which the model catches; a mapper that moves the filled extent
-  before its reads complete, which the failed-fill case catches; one that
-  copies a write into the object before the server answers, which the
-  refused-write case catches; and one that zeroes up to the new size
-  after an extending write, which the hole case catches.
-* Write-back (F8): each write-back point followed by a read from
-  another domain, which sees the stores; a program killed while it holds
-  the only writable mapping, whose stores the other domain then sees; a
-  server that fails writes, after which `msync`, `close` and the last
-  `munmap` return `EIO` and a program's end leaves the log line and the
-  count; a write-back after a truncation by another domain, which writes
-  nothing past the new size; another domain's write into a page no
-  program stored to, which survives the session's write-back; a store
-  made while a write-back runs, which the next one carries; a file mapped,
-  written through a descriptor and truncated but never stored to through
-  a mapping, whose write-backs send the server no write; seeded: a
-  mapper that deletes its object before its last write-back, which the
-  killed-program case catches, an `erx_mem_dirty` that clears a mark
-  it did not report, which the racing store catches, and a mapper that
-  fills the object through a mapping of its own, which the never-stored
-  case catches.
-* Two sessions: each maps one file shared and stores to different
-  pages; after both write back and map afresh, each sees both stores, and
-  a page both stored to holds the later write-back's.
-* Mapping resources: a mapping beyond the session's budget fails with
-  `ENOMEM` and leaves nothing; repeated failing maps leave no mapper; a
-  one-page mapping at a high offset charges the object up to its end,
-  which gate GQ measures.
-* `prim_file` over a server: OTP's `file_SUITE` and `filelib_SUITE` run
-  with their working directory on an `erx_fs` server backed by a RAM
-  tree, compared case by case with the same suites on a local mount; every
-  difference is one listed under [Compatibility](#compatibility-and-migration).
-  Hosted, `tools/erx oracle hosted` compares them with stock OTP 29.1.2 on
-  the development host; its list of known differences
-  (`test/oracle/hosted_known_differences/`) holds a case of `.`, `..`
-  or links only where macOS answers otherwise than FreeBSD, its row
-  naming FreeBSD's answer. The cases of the first bullet under
-  [Compatibility](#compatibility-and-migration) are such cases, which no
-  case of either suite reaches; [/tmp's oracle
-  cases](design-tmp.md#verification) compare them. A listed case that
-  agrees with stock fails the comparison, so `filelib_SUITE`'s `wildcard_one` and `wildcard_two`,
-  which expect `..` after a link to name the target's parent, pass
-  without a row. Seeded: a resolver that takes `..` before following the
-  link ahead of it, which both cases catch.
-* `liberx`'s file client: toybox's own tests for its file applets
-  ([design-programs.md](design-programs.md)), and musl's `libc-test` file
-  cases, each program served by a handler over an `erx_fs` server.
+  refused before its callback by a refusal test generated from the
+  operation table; running a file through an `ro` or `rw` mount, through
+  an `rx` mount of the session's `data` facet, and through an `rx` EROFS
+  mount of a file of `/apps`, each refused.
+* Envelopes and owners: frames in a third domain's envelope and bare
+  frames at a grant for another domain, dropped and counted; owners named
+  on another's behalf that have already ended, whose fids still end.
+* A hostile tree: callbacks that answer malformed qids, errors 9P2000.L
+  does not carry, improper listings or extra state, each answered `eio`
+  with nothing kept and the grant still serving; an operation whose
+  directory fid names a file, answered `enotdir` before any callback.
+* A hostile server: replies longer than their requests, failed with
+  `eio` by `erx_file_remote` and by both bridges, and a handler that
+  answers a program a larger count, which `liberx` clamps.
+* Locks: contention between two programs of one session and between two
+  domains through two grants of one tree; release by unlock, clunk, the
+  grant's end, the program's close of any descriptor of the file and the
+  program's end; a lock that survives an `F_SETFL` change of `O_APPEND`;
+  a `ClientId` that releases nothing; and the lock table killed under a
+  granted lock, after which every grant of the tree has ended before the
+  restarted table answers.
+* A program's window and `/dev`: the window's `ctl` and directory are
+  never reached from the program's tree; a table that would put an entry
+  under the window's names, or that lacks write at `/dev`, is refused at
+  the start; a window removed and re-created under a running program
+  takes no request from it; no window file passes by a descriptor; a
+  resize reaches the program through the real path; and the window, the
+  connection and the tree's grant end with the program or a refused
+  start.
+
+**Seeded faults**, each caught by the case or property named:
+
+* resolver: a `..` that removes a run's name before its walk
+  (`missing/..`); `..` taken before the link ahead of it (`link/..`, and
+  `filelib_SUITE`'s `wildcard_one` and `wildcard_two`); a walk of `..`
+  past a bind's root (the walk property); a last `.` of `DELETE` answered
+  before the name before it is checked (`file/.`); a link's text taken
+  unchecked (a text holding NUL); the namespace's term read again at a
+  link (the change made inside a walk); a last link followed only under
+  `FOLLOW` (`del_dir("dlnk/")`); a working directory stored as written
+  (`get_cwd` after `set_cwd` through a link);
+* client: a request function without its refusal of `.` and `..`; an
+  operation sent with a walk whose names still needed a check; replies
+  taken only bare, or another alias's taken out of an envelope; the
+  numeric offset rule applied to `At` = `unknown`; one operation's reply
+  check removed from the generated table; a codec without its size check;
+  a name decoder without its count check;
+* grant: a fid kept after a failed walk; a later fid made for an ended
+  owner without monitoring it again; an owner's monitor kept after its
+  last fid; a frame taken out of any domain's envelope; a clunk answered
+  `ok` before the tree's `clunk` ran; a fid counter that hands out the
+  lowest free number; a protocol table that marks a directory fid
+  `node`; a flush answered before its request, or a flush of a waiting
+  clunk answered at once; a fid's number freed when its clunk is taken;
+  waits keyed by handle; a grant that does not monitor its keeper; an
+  alias without `reply_demonitor`; flushes or clunks counted in the
+  requests' window; a server that runs every grant's callbacks in one
+  process, or each waiting read in a process of its own;
+* waiting requests: a tree whose `read` waits inside its callback,
+  which makes a write on the same grant miss its deadline; an
+  `erx_fs_waits` whose `info/2` ignores a flush, that answers a begun
+  request `eintr` at its flush, that does not monitor the grant, or
+  whose `answer/3` leaves its entry; a keeper that holds a read while it
+  holds bytes; a grant that runs a clunk while its fid's read still
+  waits, takes no other frame while a clunk waits, ends at its client's
+  end without its fids' clunks, checks only requests' aliases, or
+  answers a second flush `ok` at once;
+* reply checks and hostile trees: a grant that keeps what an operation
+  built when the reply check rejects the tree's reply, undoes a remove's
+  clunk then, or leaves a rejected `lcreate`'s handle open; a listing
+  check that crashes on an improper tail; a grant that takes a
+  directory's `make` answer for a file's, or crashes on an answer that
+  is not an error; a server that follows a link during a walk; an export
+  that opens `/dev/tty`;
+* locks: a table restarted alone, `one_for_one`; a table kept in each
+  grant; a table that keeps a killed grant's locks or keys locks by
+  `ClientId`; a handler that leaves a program's locks to the
+  description's clunk; a `liberx` that reports only an open's last
+  reference;
+* rights: a resolution that keeps the rights a facet's mount asked; an
+  EROFS mount whose rights come from its options alone; an operation removed from the table's writing marks;
+* program tables and windows: a handler that walks the raw path or sends
+  a `..` at the program's top; a join that asks the grant first or lists
+  a name twice; a check that refuses only exact points under `/dev`; a core that admits a
+  table whatever its rights at `/dev`, or measures against the deepest
+  entry covering `/dev`; a
+  table builder that drops the display's mount by its point; a tree that
+  relays any name to the window's directory, or walks each relayed open
+  by name; a `start/1` that admits a passed file into the open table; a
+  draw connection that answers a `mouse` read without making image 0
+  anew; a grant started without `ends_with`; a fork that copies the
+  shared tree's `/dev`;
+* descriptions, identity and mappings: an offset taken from a `getattr`
+  after an append; an `lcreate` without the qid comparison; a version
+  counter kept in the server's process; a file table keyed without the
+  tree; a path table that evicts when full; a grant that ignores
+  `Aname`; a read of a mapped file relayed past the mapper; a filled
+  extent moved before its reads complete; a write copied into the object
+  before the server answers; zeroes written up to an extending write's
+  size; an object deleted before its last write-back; an `erx_mem_dirty`
+  that clears a mark it did not report; a mapper that fills the object
+  through a mapping of its own.
+
+The stream trees that use waiting requests run their own cases over a
+real grant ([design-display.md](design-display.md#verification-and-testing),
+[design-bluetooth.md](design-bluetooth.md#verification)).
 
 ## Performance
 
@@ -4192,14 +3749,6 @@ on QEMU under HVF for files of 64 KiB to 1 GiB, against reads and writes
 of the same bytes through a descriptor as the baseline, at
 [gate GQ](plan.md#track-q-the-second-tier).
 
-## Dependencies
-
-No new dependencies: the resolver, the frame profile, `erx_9p` and
-`erx_fs` are erXos's own, over connections, the funnel, programs as ports
-and `prim_file`, which exist. 9P2000.L is a published protocol, not a
-library; its oracles, QEMU's virtio-9p server and Linux's 9P client in the
-oracle guest, are already dependencies of the harness.
-
 ## Alternatives considered
 
 **One machine-wide tree with permission bits.** Every domain would see the
@@ -4214,12 +3763,11 @@ grants passing an open file with its offset, readiness reports for
 terminals, server-side offsets and a registration for shared mappings. It
 loses: each addition needs its own grammar, its own client in every tool
 and a translation wherever the host and the network speak 9P2000.L, while
-what it buys is already there. A program holds no fid, so the handler that
-is its file server narrows its namespace by walking fids; offsets shared
-by programs live in the session that holds every program sharing them;
-a terminal is no file of the protocol, and its readiness reports are the
-program protocol's, served by the terminal relay; and a
-shared mapping is the session's.
+what it buys is already there. The handler narrows a program's namespace
+by walking fids; offsets shared by programs live in the session that
+holds every program sharing them; a terminal is no file of the protocol,
+and its readiness reports are the program protocol's; and a shared
+mapping is the session's.
 
 **9P2000.L's bytes on connections too.** Every server would decode
 9P2000.L's binary messages. It loses because frames already carry Erlang
@@ -4228,79 +3776,61 @@ would add a parser without adding expressiveness; the codec runs only at
 the edges.
 
 **Grants derived at the server for each program.** The handler would ask
-the server for a grant rooted at each of a program's mounts, so the
-server would hold the program's root. It needs an operation 9P2000.L does
-not have, and protects against nothing: a program holds no fid and
+the server for a grant rooted at each of a program's mounts. It needs an
+operation 9P2000.L does not have, and protects against nothing: a program
 reaches a server only through its handler, which walks only from the
-roots of the program's own entries, so the narrowing is enforced by the program's file
-server, and a compromised session holds the session's grants anyway.
+roots of the program's own entries, and a compromised session holds the
+session's grants anyway.
 
 **A program that speaks the file protocol itself.** Each program would
-hold the pids of its grants and send frames to the servers, as an Erlang
-domain does. It loses: a program would then be a domain, with a lane to
-every server, a place in every server's export table and an identity
-servers must check, and a compromised program could speak to any server
-it held a grant on; its session, which holds the grants anyway, relays
-small terms at the cost of one ring round trip per request.
+hold the pids of its grants and send frames to the servers. It loses: a
+program would then be a domain, with a lane to every server, a place in
+every server's export table and an identity servers must check, and a
+compromised program could speak to any server it held a grant on; its
+session, which holds the grants anyway, relays small terms at the cost
+of one ring round trip per request.
 
 **Per-open buffers the server maps for the program.** The server would
 create a memory object for each open file and the session would map it
-into the program, so the bytes never touch the session. It loses: a
-kernel object, a capability pass and a mapping per open, and a server
-that must write into memory it did not allocate. The data area is one
-object per program, from the session's budget, and keeps every server a
-plain process speaking frames.
+into the program. It loses: a kernel object, a capability pass and a
+mapping per open, and a server that must write into memory it did not
+allocate. The data area is one object per program, from the session's
+budget, and keeps every server a plain process speaking frames.
 
 **Resolving `.` and `..` on the text.** The resolver would normalise a
-path before any walk, one pure function and no round trip. It loses on
-behaviour and on what a maintainer must hold. `..` after a link names the
-parent of the link's own directory, not of its target, which OTP's
-`filelib` wildcard cases see; `file/.`, `file/` and `missing/../x`
-resolve where FreeBSD and macOS refuse them. And every operation that
-removes, renames or makes a name must keep the path as written beside the
-normalised one, to answer for a last `.` or `..` that normalising erased:
-a second view of each path, helpers that find its last name, a table of
-answers per operation, and a second resolution of the path without its
-last name. The place makes each of those the ordinary path through the
-resolver.
+path before any walk. It loses on behaviour: `..` after a link would name
+the parent of the link's own directory, not of its target, which OTP's
+`filelib` wildcard cases see, and `file/.`, `file/` and `missing/../x`
+would resolve where FreeBSD and macOS refuse them. It also loses on what
+a maintainer must hold: every operation that removes, renames or makes a
+name would keep the path as written beside the normalised one, to answer
+for a last `.` or `..` that normalising erased, with a table of answers
+per operation and a second resolution. The place makes each of those the
+ordinary path through the resolver.
 
-**The resolver in C17 behind a NIF.** A pure C17 step machine in
-`liberx` would take one step of a resolution at a time, under a
-read-write lock on a table held in C by `prim_file`'s NIF, and hand its
-state back between steps as a cursor of the place, the names still to
-read and the counts. It loses on what a maintainer must hold. The
-executor is Erlang whatever the resolver is, since a NIF cannot wait
-for a server's reply (**`prim_file` reaching servers from its NIF**,
-below), so every step
-would cross from Erlang into C and back: the cursor would be input that
-any process of the runtime could forge, needing checks of its own, a
-decoder from Erlang terms and a fuzz target for both; each step would
-copy its entry out under the lock; a walk in flight would need a count
-of its own, so that its reply is read against the walk that was sent
-when a mount or unmount came between two steps; a rename's two paths
-would need placing again together under one hold of the lock; and a
-chokepoint check would have to keep every other writer off the result
-the machine fills in. In Erlang the state between two names is a
-closure of the resolver's own, the table is a term one resolution holds
-from start to end, and a rename's two paths are two entries of one
-table, so each of those goes rather than being checked. Speed does not
-favour C: a resolution's own work is list operations over a table of at
-most 64 entries beside walks that cost a round trip each, and on the
-release file system, where nothing hides it, a path without `.` or `..`
-costs the one NIF call it costs in C. Nor does reuse: erXos's kernel
-never sees a path, and the session's handlers, which resolve programs'
-paths, are Erlang too.
+**The resolver in C17 behind a NIF.** A C17 step machine in `liberx`
+would take one step at a time under a lock on a table held in C. It
+loses on what a maintainer must hold. The executor is Erlang whatever
+the resolver is, since a NIF cannot wait for a server's reply, so every
+step would cross into C and back: the cursor between steps would be input
+any process could forge, needing its own checks, decoder and fuzz
+target; a walk in flight would need a count of its own against mounts
+made between steps; and a rename's two paths would need placing again
+under one hold of the lock. In Erlang the state between two names is a
+closure of the resolver's own and the table is one term a resolution
+holds from start to end, so each of those goes rather than being checked.
+Speed does not favour C, since a resolution's own work is list work
+beside walks that cost a round trip each, and on the release file system
+a path without `.` or `..` costs the one NIF call it costs in C; nor does
+reuse, since the kernel never sees a path and the handlers are Erlang.
 
 **Walking `..` at the server.** The client would hold a fid on the place
-and send `..` in its walks, which the grant answers from the fid's
-record of the directories it was walked through, and step out of an entry
-only at its top. It would save the walk of its own that a `..` after a
-new name costs, and would follow a directory through a rename as far as
-that record does: back to the directory the fid came through, still not
-FreeBSD's current parent. It loses: whether a walk stays within a bind's
-root or a narrowed program's mount would rest on the client's count of
-how deep it stands below the entry's top, where no walk now carries `..`
-at all (F2, F3); and the place would hold a fid whose owner must end it.
+and send `..` in its walks. It would save a walk and follow a directory
+through a rename as far as the fid's record does, still not to FreeBSD's
+current parent. It loses: whether a walk stays within a bind's root or a
+narrowed program's mount would rest on the client's count of how deep it
+stands below the entry's top, where no walk carries `..` at all (F2,
+F3); and the place would hold a fid whose owner must end it.
 
 **A walk plan from the namespace.** The namespace would turn a path into
 its whole list of walks at once. It loses: only the walks tell which
@@ -4327,81 +3857,65 @@ per program because a program is confined by its handler, not by a table
 it could read.
 
 **One object for each file, at its server, paged through the kernel.**
-The server would keep one writable object for each file that programs map
-shared, every mapping in every session would map it, and the server's own
-reads and writes would go through it. It buys coherence across sessions,
-and between every mapping and every read and write anywhere. It costs a
-kernel pager, a fault that waits on another domain with a deadline, so a
-server can stall a program for that long; a claim gate and keys to hand
-the object's capability to the session; a fault worker, a cache budget
-and mapping quotas at every server; and a version that means "mapped for
-writing". The session's object needs none of these, and the coherence it
-gives up is between sessions, which meet page by page at each write-back,
-as clients of a network file system do.
+Every mapping in every session would map the server's one object for the
+file, buying coherence across sessions. It costs a kernel pager whose
+fault waits on another domain, so a server can stall a program; a claim
+gate and keys to hand the object to the session; a fault worker, a cache
+budget and mapping quotas at every server; and a version that means
+"mapped for writing". The session's object needs none of these, and the
+coherence it gives up is between sessions, which meet page by page at
+each write-back, as clients of a network file system do.
 
 **Refusing a second session's mapping.** A session would hold a mark at
-the server while it maps a file, and another session's shared mapping
-would be refused. It loses: the server must keep state that no 9P2000.L
-operation names, so the protocol would stop being 9P2000.L, and a domain
-that holds the mark could keep every session from mapping the file.
+the server while it maps a file. It loses: the server must keep state no
+9P2000.L operation names, and a domain that holds the mark could keep
+every session from mapping the file.
 
-**An object for each program.** Each program would map an object of its
-own, filled by its handler. It loses: two programs of one session that
-share a file, a parent and its forked child above all, would not see each
-other's stores, which POSIX promises within the processes that map a file
-shared.
+**An object for each program.** It loses: two programs of one session
+that share a file, a parent and its forked child above all, would not
+see each other's stores, which POSIX promises.
 
 **Write-back of the whole range.** The mapper would write back every
 page the object covers, needing no report from the kernel. It loses: a
 write another domain made anywhere in the range would be overwritten at
-every write-back, and the cost of an `msync` would follow the mapping's
-size, not what changed.
+every write-back, and an `msync` would cost the mapping's size, not what
+changed.
 
-**A process for each open file.** Each open file would have a process,
-shared by every grant that opens it, that runs the file's reads,
-writes, size changes and locks in turn, with slow reads of a medium in
-helpers whose results it takes only while the file has not changed. It
-loses: every tree that changes already orders its requests in a process
-of its own, `/tmp`'s tree process, littlefs's worker and F2FS's volume,
-so it would order again what is ordered; finding a file's process from
-every grant needs a registry, counts of attaches and a rule for the
-process's end; two opens with equal handles need names of their own to
-stay two; and a callback would run away from the grant that holds its
-client's context. Locks, the one state that needs every grant's opens of
-a file in one place, have a table of their own ([Locks](#locks)).
+**A process for each open file**, shared by every grant that opens it,
+running the file's requests in turn. It loses: every tree that changes
+already orders its requests in a process of its own, so it would order
+again what is ordered; finding a file's process from every grant needs a
+registry and a rule for the process's end; and a callback would run away
+from the grant that holds its client's context. Locks, the one state that
+needs every grant's opens of a file in one place, have a table of their
+own ([Locks](#locks)).
 
-**A stream's reads and writes in separate processes.** The grant would
-run a stream's reads in one process and its writes in another, so a
-read that waits holds up no write. It loses: a reset, a clunk and a
-flush would then coordinate two processes over one stream's state, and
-a read that waits would still hold up the next read and every clunk.
+**A stream's reads and writes in separate processes.** It loses: a reset,
+a clunk and a flush would coordinate two processes over one stream's
+state, and a read that waits would still hold up the next read and every
+clunk.
 
 **Helper reads for streams.** Each waiting read would run in a helper
-the grant starts, and a flush would end the helper. It loses: ending a
-helper does not say whether it took bytes, so a flush could lose input,
-and making it say so needs the stream's owner to decide, which is a
-keeper with a process more. Plan 9's 9front shows the keeper's form:
-kbdfs hands a waiting read to the thread that owns the keyboard's bytes
-and cancels it there at a flush (9front commit
+that a flush ends. It loses: ending a helper does not say whether it took
+bytes, so a flush could lose input, and making it say so needs the
+stream's owner to decide, which is a keeper with a process more. 9front's
+kbdfs takes the keeper's form, handing a waiting read to the thread that
+owns the keyboard's bytes and cancelling it there at a flush (9front commit
 `eb49f1f8788ccbb2f86ce5767d2f046c3593162e`, `sys/src/cmd/aux/kbdfs/kbdfs.c`,
 lines 1023-1040 and 1444-1469, as the research for this section read
 it; unverified here).
 
-**Two files, `rx` and `tx`, for each stream.** A stream would split its
-reads and writes into two files. It loses: the interface would follow a
-limit of the server, each stream would pay for it, and a read that
-waits in its callback would still hold up its grant.
+**Two files, `rx` and `tx`, for each stream.** It loses: the interface
+would follow a limit of the server, and a read that waits in its callback
+would still hold up its grant.
 
-**A process for each request.** Every request would run in a process of
-its own, so nothing waits behind anything. It loses: regular files would
-need their atomicity rebuilt, a process would start for every read, and
-ending a process at a flush says nothing of what it took.
+**A process for each request.** It loses: regular files would need their
+atomicity rebuilt, a process would start for every read, and ending a
+process at a flush says nothing of what it took.
 
-**A clunk that holds the whole grant until its waits are settled.** The
-grant would take no other request while a closing fid's requests are
-answered. It loses: a begun request whose effect takes its time, a
-present or a reset, would stall every other fid of the client for one
-fid's close.
+**A clunk that holds the whole grant until its waits are settled.** It
+loses: a begun request whose effect takes its time, a present or a reset,
+would stall every other fid of the client for one fid's close.
 
 ## Risks and open questions
 
