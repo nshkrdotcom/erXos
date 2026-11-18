@@ -8604,8 +8604,8 @@ is MIT, as `fiasco/kernel/LICENSE.spdx` declares; its GPL and LGPL parts
 are excluded from the import, and of Fiasco's code in the Fiasco build
 only two files are GPL-2.0, by their own notices: `src/kern/kobject_rpc.h`
 in every build, and the kernel debugger's `jdb_object.cpp`, which
-`Modules.generic` lists for every kernel and no kernel's build
-compiles ([design-fiasco.md](design-fiasco.md#the-releases-fiasco-build),
+`Modules.generic` lists for every kernel and the shipped kernel's build
+leaves out ([design-fiasco.md](design-fiasco.md#the-releases-fiasco-build),
 [dependency table](design.md#dependencies)).
 
 ### The ledger
@@ -8673,7 +8673,7 @@ Fiasco* (erXos takes Fiasco's way), or *decided*. No departure rests on taste al
 | Watchdog | no kernel watchdog; L4Re leaves a board's watchdog to a driver | a kernel watchdog the root task pets, armed when the root task starts, with a boot deadline, whose missed deadline ends the machine after a crash record, and the board's hardware watchdog reloaded by the kernel from its own timer for as long as the kernel runs ([The watchdog](#the-watchdog)) | a hung system runtime is otherwise an up machine that answers nothing; the two timers have one owner each, so a kernel hang and a runtime hang both end in a reset and the runtime's never fires without its record | a hung root task would stay hung until a human resets the board | decided |
 | The ABI | hand-written `l4sys` headers | every call, right, status and layout generated from `abi/erx_abi.txt` into the build tree ([The ABI file](#the-abi-file)) | one source for the kernel, `liberx`, the runtimes and Erlang | headers that drift from the kernel | needed by erXos |
 | Code mappings | a flexpage may carry read, write and execute together, so a pager may map a page writable and executable | no mapping is writable and executable, and no page is executable while another mapping or a confined device can write it (K8): code lives in the boot image's slices and in sealed paged objects, and a JIT object is writable at one address and executable at another of its one space, which no other space and no device can map, its runtime publishing code by an explicit step | no code is writable where it runs, or anywhere else | a pager could map writable code, and a writable alias could change code a mapping executes | needed by erXos |
-| Kernel debugger | JDB, an in-kernel debugger | none in erXos's kernel; inspection through `INSPECT`, the trace ring and the host's tools; Fiasco is built without JDB in every build | less code and less to attack in kernel mode | interactive debugging in the kernel | defensible |
+| Kernel debugger | JDB, an in-kernel debugger | none in erXos's kernel; inspection through `INSPECT`, the trace ring and the host's tools; Fiasco keeps JDB in development builds | less code and less to attack in kernel mode | interactive debugging in the kernel | defensible |
 
 Notes:
 

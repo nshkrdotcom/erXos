@@ -5,11 +5,15 @@
 require 'minitest/autorun'
 require 'rbconfig'
 require 'tmpdir'
+require_relative '../../tools/lib/erx/build_kind'
 require_relative '../../tools/lib/erx/fiasco_config'
 require_relative '../../tools/lib/erx/runner'
 
 class FiascoConfigTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
+  DEVELOPMENT = Erx::BuildKind::DEVELOPMENT
+  RELEASE = Erx::BuildKind::RELEASE
+
   # A resolved configuration as Kconfig writes it: a header comment, every
   # required option set and every forbidden one written as not set.
   RESOLVED = <<~CONFIG
@@ -44,7 +48,8 @@ class FiascoConfigTest < Minitest::Test
     from.lines.reject { |text| text.match?(/\b#{name}\b/) }.join
   end
 
-  def violations(text) = Erx::FiascoConfig.violations(text)
+  # The check of a development kernel's configuration, unless kind says otherwise.
+  def violations(text, kind: DEVELOPMENT) = Erx::FiascoConfig.violations(text, kind: kind)
 
   def test_the_forks_resolved_configuration_passes
     assert_empty violations(RESOLVED)
@@ -99,23 +104,59 @@ class FiascoConfigTest < Minitest::Test
                  violations(resolved)
   end
 
-  # Seeded faults: either option on keeps a panic on the console with
-  # interrupts off instead of rebooting, so no kernel may have it. JDB
-  # selects INPUT, so a configuration with the debugger has both.
-  def test_the_debugger_or_console_input_fails
-    %w[CONFIG_JDB CONFIG_INPUT].each do |name|
-      assert_equal ["#{name} must be unset, found \"y\""], violations("#{RESOLVED}#{name}=y\n")
-    end
-    assert_equal ['CONFIG_JDB must be unset, found "y"', 'CONFIG_INPUT must be unset, found "y"'],
-                 violations("#{RESOLVED}CONFIG_INPUT=y\nCONFIG_JDB=y\n")
+  # A release kernel is RESOLVED with the debugger and console input written
+  # as not set, as Kconfig writes them from FiascoConfig.release_defconfig.
+  RELEASE_RESOLVED = "#{RESOLVED}# CONFIG_INPUT is not set\n# CONFIG_JDB is not set\n".freeze
+
+  def test_a_release_configuration_without_the_debugger_and_input_passes
+    assert_empty violations(RELEASE_RESOLVED, kind: RELEASE)
+    assert_empty violations(RESOLVED, kind: RELEASE)
   end
 
-  # The checked-in defconfig states both options unset, so Kconfig's defaults,
-  # which turn both on, never reach a kernel.
-  def test_the_checked_in_defconfig_leaves_the_debugger_and_input_unset
-    lines = File.binread(File.join(ROOT, 'config/fiasco/kernel.defconfig')).lines
-    assert_includes lines, "# CONFIG_JDB is not set\n"
-    assert_includes lines, "# CONFIG_INPUT is not set\n"
+  # Seeded faults: either option on keeps a panic on the console with
+  # interrupts off instead of rebooting, so a release kernel refuses it.
+  def test_a_release_configuration_with_the_debugger_or_input_fails
+    %w[CONFIG_JDB CONFIG_INPUT].each do |name|
+      resolved = RELEASE_RESOLVED.sub("# #{name} is not set\n", "#{name}=y\n")
+      assert_equal ["#{name} must be unset, found \"y\""], violations(resolved, kind: RELEASE)
+      assert_empty violations(resolved, kind: DEVELOPMENT)
+    end
+  end
+
+  # What a resolved development configuration holds: JDB selects INPUT.
+  def test_the_development_debugger_fails_the_release_check
+    resolved = "#{RESOLVED}CONFIG_INPUT=y\nCONFIG_JDB=y\n"
+    assert_empty violations(resolved)
+    assert_equal ['CONFIG_JDB must be unset, found "y"', 'CONFIG_INPUT must be unset, found "y"'],
+                 violations(resolved, kind: RELEASE)
+  end
+
+  def test_an_unknown_build_kind_is_refused
+    assert_raises(Erx::Error) { violations(RESOLVED, kind: 'production') }
+  end
+
+  def test_the_release_defconfig_is_the_development_one_with_the_differences_appended
+    development = "# A comment\nCONFIG_ARM=y\n# CONFIG_COV is not set\n"
+    assert_equal "#{development}# CONFIG_JDB is not set\n# CONFIG_INPUT is not set\n",
+                 Erx::FiascoConfig.release_defconfig(development)
+    assert_equal "CONFIG_ARM=y\n# CONFIG_JDB is not set\n# CONFIG_INPUT is not set\n",
+                 Erx::FiascoConfig.release_defconfig('CONFIG_ARM=y')
+  end
+
+  # The release's differences are stated once: a development defconfig that
+  # names one of them would leave the release defconfig naming it twice.
+  def test_a_development_defconfig_naming_a_release_difference_is_refused
+    { "CONFIG_JDB=y\n" => 'CONFIG_JDB', "# CONFIG_INPUT is not set\n" => 'CONFIG_INPUT' }.each do |line, name|
+      error = assert_raises(Erx::Error) { Erx::FiascoConfig.release_defconfig("CONFIG_ARM=y\n#{line}") }
+      assert_includes error.message, name
+    end
+  end
+
+  def test_the_checked_in_defconfig_derives_a_release_defconfig
+    development = File.binread(File.join(ROOT, 'config/fiasco/kernel.defconfig'))
+    release = Erx::FiascoConfig.release_defconfig(development)
+    assert release.start_with?(development)
+    assert_empty violations(release, kind: RELEASE)
   end
 
   def test_an_option_named_twice_is_refused
@@ -143,9 +184,9 @@ class FiascoConfigTest < Minitest::Test
     Dir.mktmpdir('erx-fiasco-config-') do |directory|
       path = File.join(directory, 'globalconfig.out')
       File.write(path, RESOLVED)
-      assert_nil Erx::FiascoConfig.check(path)
+      assert_nil Erx::FiascoConfig.check(path, kind: DEVELOPMENT)
       File.write(path, RESOLVED.sub("CONFIG_FPU=y\n", "CONFIG_FPU=y\nCONFIG_LAZY_FPU=y\n"))
-      error = assert_raises(Erx::FiascoConfig::Violation) { Erx::FiascoConfig.check(path) }
+      error = assert_raises(Erx::FiascoConfig::Violation) { Erx::FiascoConfig.check(path, kind: DEVELOPMENT) }
       assert_includes error.message, path
       assert_includes error.message, 'CONFIG_LAZY_FPU must be unset'
     end

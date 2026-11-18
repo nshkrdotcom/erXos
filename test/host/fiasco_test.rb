@@ -176,13 +176,15 @@ class FiascoTest < Minitest::Test
     refute(@runner.commands.any? { |command| command.fetch(:options).fetch(:name) == 'fiasco-kernel-config' })
   end
 
-  # The release kernel is configured from the one checked-in defconfig, in a
-  # directory of its own, and leaves the development kernel alone.
-  def test_release_kernel_is_configured_from_the_checked_in_defconfig
+  # The release kernel is configured from the development defconfig with the
+  # debugger and console input written as not set, in a directory of its own,
+  # and leaves the development kernel alone.
+  def test_release_kernel_is_configured_from_the_development_defconfig_without_the_debugger
     path = @fiasco.build_release_kernel(jobs: 2)
     directory = Erx::Fiasco.kernel_directory(root: @directory, kind: Erx::BuildKind::RELEASE)
     assert_equal File.join(directory, 'fiasco'), path
-    assert_equal KERNEL_CONFIG, File.read(File.join(directory, 'globalconfig.out'))
+    assert_equal "#{KERNEL_CONFIG}# CONFIG_JDB is not set\n# CONFIG_INPUT is not set\n",
+                 File.read(File.join(directory, 'globalconfig.out'))
     names = @runner.commands.map { |command| command.fetch(:options).fetch(:name) }
     assert_includes names, 'fiasco-kernel-release-build'
     refute_includes names, 'fiasco-kernel-build'
@@ -208,31 +210,31 @@ class FiascoTest < Minitest::Test
     refute File.exist?(record)
   end
 
-  # Seeded fault: a defconfig that turns the debugger on stops the kernel's
-  # build after its configuration step, before the kernel make.
-  def test_a_defconfig_turning_the_debugger_on_stops_the_kernel_build
+  # Seeded fault: a development defconfig that turns the debugger on would
+  # leave it on in the release kernel; that build stops before any make.
+  def test_release_kernel_refuses_a_development_defconfig_naming_the_debugger
     File.write(kernel_config, KERNEL_CONFIG + "CONFIG_JDB=y\n")
-    error = assert_raises(Erx::FiascoConfig::Violation) { @fiasco.build }
-    assert_includes error.message, 'CONFIG_JDB must be unset'
-    refute(@runner.commands.any? { |command| command.fetch(:options).fetch(:name) == 'fiasco-kernel-build' })
+    error = assert_raises(Erx::Error) { @fiasco.build_release_kernel }
+    assert_includes error.message, 'CONFIG_JDB'
+    refute(@runner.commands.any? { |command| command.fetch(:options).fetch(:name).start_with?('fiasco-kernel-release') })
   end
 
   # The case a `select` produces: the resolved release configuration has
-  # console input on although the defconfig says it is not set.
+  # console input on although the derived defconfig says it is not set.
   class SelectingRunner < RecordingRunner
     def run(argv, **options)
       result = super
       if options.fetch(:name) == 'fiasco-kernel-release-config'
         directory = argv.find { |argument| argument.start_with?('B=') }.delete_prefix('B=')
         resolved = File.join(directory, 'globalconfig.out')
-        File.write(resolved, File.read(resolved) + "CONFIG_INPUT=y\n")
+        File.write(resolved, File.read(resolved).sub("# CONFIG_INPUT is not set\n", "CONFIG_INPUT=y\n"))
       end
       result
     end
   end
 
-  # Seeded fault: the build checks the release kernel's resolved file and
-  # stops before the kernel make.
+  # Seeded fault: the build checks the release kernel's resolved file with the
+  # release rules and stops before the kernel make.
   def test_release_kernel_whose_resolved_configuration_has_input_stops_the_build
     runner = SelectingRunner.new
     fiasco = FixtureBuild.new(root: @directory, runner: runner, compiler: '/fixture/clang')

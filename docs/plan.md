@@ -225,7 +225,7 @@ The order reaches a usable system first:
   the kernel's GPL files out, brought forward from 0.2.
 * 0.2 ships that system as erXos's first full release on Fiasco: the backend
   moves onto Fiasco's own capabilities, factories, interrupts and DMA
-  spaces, the Fiasco build drops the debugger and the GPL files, and
+  spaces, the release build drops the debugger and the GPL files, and
   the security closure is reached in its Fiasco form. It also takes,
   in their Fiasco form, the user-facing milestones that would otherwise
   wait for erXos's kernel: M9's devices, the rest of track P, M10, M12
@@ -1578,14 +1578,17 @@ its code, and the item's work waits on it.
   requested power-off halts the board in the firmware and the watchdog
   resets it about 4 s later. Updates are by reflashing the card, which takes `/data`
   with it; no update service and no trial boot.
-* **The preview's kernel.**
-  [design-fiasco.md](design-fiasco.md#boot-handoff) names 0.1's kernel
-  configuration: the one configuration of every kernel, with
-  `CONFIG_JDB` and `CONFIG_INPUT` off, so the kernel has no debugger and
-  no console input of its own and a panic reboots instead of waiting on
-  the console (`fiasco/kernel/src/kern/terminate.cpp`), with the
-  configuration check refusing either option in every kernel. Two
-  gaps stay open there. A panic before `Psci::init` and `Dt::init` in
+* **The preview's kernel.** **No design**:
+  [design-fiasco.md](design-fiasco.md#the-releases-fiasco-build) has
+  development builds keep the debugger, and 0.1's published images are
+  development builds, so design-fiasco.md first names 0.1's kernel
+  configuration. Its starting point is the development configuration
+  with `CONFIG_JDB` and `CONFIG_INPUT` off, so the kernel has no
+  debugger and no console input of its own and a panic reboots instead
+  of waiting on the console (`fiasco/kernel/src/kern/terminate.cpp`),
+  with the configuration check refusing either option in that kernel,
+  a build step that builds it, and the image build packing it. Two gaps
+  stay open there. A panic before `Psci::init` and `Dt::init` in
   `Startup::stage2` (`kern/arm/startup-arm.cpp`), the handoff checks of
   `erx/erx_handoff.cpp` among them, finds no reset method and loops
   (`kern/arm/bsp/gen/reset-arm-gen.cpp`), as `TODO.md` records. And
@@ -1603,7 +1606,7 @@ its code, and the item's work waits on it.
   clean-room under MIT, and `jdb_object.cpp` dropped from the shipped
   kernel's build. Turning the debugger off does not drop it, since
   `Modules.generic` lists it for every kernel
-  (`fiasco/kernel/src/Modules.generic:62-63`); taking it out of that list
+  (`fiasco/kernel/src/Modules.generic:58`); taking it out of that list
   for the shipped kernel is the whole change, because no MIT file of the
   kernel refers to it and the capability slot it fills, 10, is then
   empty, which `std_workload.cpp` already allows. sigma0's calls that
