@@ -34,6 +34,18 @@ const CMDLINE = "erx.watchdog=1,30,600";
 // that fails while the JIT compiles guest code from one that fails otherwise.
 // The arm64 core reads only its jit_switches, so the switch is a64_page.
 function jit_disabled() { return new URLSearchParams(location.search).get("jit") === "0"; }
+// v64 compiles each guest code page it finds hot into a WebAssembly module
+// of its own, and each module costs the browser far more than its code; at
+// v64's defaults a phone's tab runs out of memory during the boot. The
+// page compiles fewer pages (a64_page_hot: interpreted instructions on a
+// page before it is compiled; v64's default is 2000) and keeps at most
+// 8 MiB of their code, the least recently used going first
+// (a64_page_code_mb; v64's default is 160 and 8 its lowest, so a v64 that
+// raises the floor refuses it and the boot fails loudly). The trade is a
+// slower boot. v64's threshold is a64_page_hot << backoff, a u32: for
+// this value it truncates from a page's 17th compile to a still-large
+// threshold, so such a page recompiles sooner, which costs time only.
+const JIT_SWITCHES = { a64_page_hot: 1_000_000, a64_page_code_mb: 8 };
 // ?log=console also writes the guest's serial output to the browser's
 // console, one line per line, for a browser whose console outlives the tab.
 function log_to_console() { return new URLSearchParams(location.search).get("log") === "console"; }
@@ -866,7 +878,7 @@ const machine = {
             cpu_type: "arm64", graphics_adapter: "none", cpu_cores: CPU_CORES,
             memory_size: RAM_MIB << 20, log_level: 0, wasm_path: site_url(this.manifest.emulator.wasm),
             kernel: { buffer: kernel }, cmdline: CMDLINE, virtio_disks: virtio_disks(this.disk),
-            net_device: { ...NET_DEVICE }, jit_switches: { a64_page: jit_disabled() ? 0 : 1 }, autostart: true,
+            net_device: { ...NET_DEVICE }, jit_switches: { ...JIT_SWITCHES, a64_page: jit_disabled() ? 0 : 1 }, autostart: true,
         });
         if(log_to_console()) {
             const log = serial_lines(line => console.log("%s", line));
