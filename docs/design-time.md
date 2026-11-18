@@ -724,7 +724,17 @@ deadline, and for the run, the addresses still usable:
   address found is polled as soon as its name resolves and a name whose
   resolution times out delays only the names after it. A round that
   ends with no usable address, none found or every one denied, starts
-  again after 15 s, doubling to 1024 s. The first poll of an address is a burst of up to four
+  again after 2 s while the run has polled no address, at most 30
+  times, and otherwise after 15 s, doubling to 1024 s. Before the first
+  poll a round that finds nothing is most often a network that has no
+  address yet, whose resolver has no name server to ask: the 2 s wait
+  asks again within 2 s of the address, and the bound of 30 rounds, a
+  minute of waits, holds what a name list that never resolves costs its
+  name servers to 30 rounds, each resolving every name, more than the
+  backoff would make. An IPv4 literal, or a name the hosts file holds,
+  resolves without the network, so its first poll ends the quick
+  rounds and a network that gets its address later is found only after
+  the poll interval's backoff. The first poll of an address is a burst of up to four
   exchanges 2 s apart, RFC 5905's `iburst` spacing, and the poll's sample
   is the valid reply of least delay. Every later poll is one exchange.
 * **Interval.** 64 s after the first sample, doubling after each valid
@@ -781,7 +791,8 @@ or a name whose resolution times out ahead of it, delays it past the
 minute, since the client asks one address at a time
 ([Server list](#server-list)). One that becomes
 reachable later is found within the wait then in effect, at most
-1024 s. The client watches
+1024 s, and within 2 s of the network's address when the network gets
+one during the first 30 rounds and the names are resolved through DNS. The client watches
 for no network event; a later design may connect the schedule to one
 the network stack offers.
 
@@ -968,7 +979,7 @@ reported by ntpd's session from `erx_ntp_core:status/1`:
 | `servers` | the names of the start flags, as the session read them |
 | `addresses` | the addresses in use, the current first; `denied`, the ones `DENY` or `RSTR` removed |
 | `last` | the address that last answered and how: `sample`, a drop reason of [Checks on a reply](#checks-on-a-reply), `deny`, `rate`, `other` for any other kiss, or `no_reply` |
-| `interval_s`, `resolve_wait_s` | the poll interval and the resolution backoff in effect |
+| `interval_s`, `resolve_wait_s` | the poll interval, and the wait after a round that finds no usable address, in effect |
 | `samples`, `dropped`, `kisses`, `silent` | replies that gave a sample, replies dropped, kisses, and exchanges with no reply, since the session started |
 
 The counts and `last` start empty with each session, `unknown` before
@@ -1255,7 +1266,7 @@ The arguments choose the source of a step, and nothing else does
   `/proc/ntp` ([What /proc shows](#what-proc-shows)), with erXos's
   attributes rather than an imitation of OpenBSD's columns, which name
   values erXos's ntpd does not keep. `status` writes the servers, the
-  last answer, the poll interval and resolution backoff, and the counts:
+  last answer, the poll interval and the resolution wait, and the counts:
 
   ```text
   servers pool.ntp.org
@@ -1464,7 +1475,7 @@ that proves it ran.
 | decide | every row of [Steps](#steps), over `Cold`, the floor, the three distance bands and the three `excess` values | dropping the two-sample rule steps on a single 200 ms sample; dropping the floor row steps a cold clock to 1999 |
 | restart | a record emptied as a restarted service's is, with `Cold` false, refuses a sample 2000 s off | deciding cold from an empty record instead of the page steps it |
 | approximate start | `start/2` steps a cold page reading before the floor, at 1970 or a real-time clock's earlier reading, to the floor, and leaves a cold page at or past the floor, every page changed this boot and every page when the floor is 0; `state/2` reads each page's state; an approximate page meets a sample 2000 s or 56 years off as a cold one does and one before the floor is refused; the floor is the record's | a start without the floor's comparison moves a boot clock past the floor back to it; a start over any page renews it on a page set below the floor; dropping the approximate clause refuses the 2000 s sample as panic; a constant floor admits a sample the record's later floor refuses |
-| schedule | over generated event sequences, no two polls to an address closer than 64 s, a burst only on an address's first poll, re-resolution not before the TTL, and an error answer leaves the interval unchanged; in simulated time, the first sample within T-R1's minute behind a silent address and from a reachable name listed before names whose resolution times out; and no denied address polled again past the denied list's bound | a floor of 8 s fails the spacing property; admitting any address not denied once the denied list is full fails the bound case |
+| schedule | over generated event sequences, no two polls to an address closer than 64 s, a burst only on an address's first poll, re-resolution not before the TTL, and an error answer leaves the interval unchanged; in simulated time, the first sample within T-R1's minute behind a silent address and from a reachable name listed before names whose resolution times out, and a name first answered 20 s into the run asked within 2 s of that; and no denied address polled again past the denied list's bound | a floor of 8 s fails the spacing property; admitting any address not denied once the denied list is full fails the bound case; a 15 s wait in place of 2 s before the first poll fails the late-network case |
 | flags | `ERX_START_FLAGS` values give their server lists; empty, nine entries, a bad label and a 254-byte name end with their reasons | accepting a ninth entry passes the nine-entry case |
 | facet decode | every bound is refused one past its edge, `W` at `time_offset_max + 1` and `Distance` at `clock_distance_max_ns` included, for `sample` and `set` alike | dropping `W`'s upper bound accepts `time_offset_max + 1` |
 | `date` operands | every even count of 2 to 12 digits, with and without `.SS`, gives its named time from a fixed current time; each field at its bound passes and one past it is refused; a non-digit at each position, a second dot, a one- or three-digit `.SS`, an empty operand, every odd count of 1 to 13 digits and 14 digits are refused; `yy` 68 and 69 fall either side of the pivot; month and day `00`, `0229` and `0230` in a leap and a common year, and second 60 and 61 normalize as `mktime(3)` does; `+format` before and after the operand, `-j` and `-u`, and every flag not offered | a pivot of 70 makes `69` 2069; dropping the month bound accepts `13` |
