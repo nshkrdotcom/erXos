@@ -65,7 +65,8 @@
       <code>authorized_keys</code> on the card's <code>ERXOS</code> volume,
       which the first boot copies into <code>/root/.ssh/authorized_keys</code>.</li>
       <li><strong>The clock.</strong> It starts at the build's date at each
-      boot, so HTTPS works at once; root sets the exact time with
+      boot, so HTTPS works at once; on the Pi 4 <code>ntpd</code> then sets it
+      from <code>pool.ntp.org</code>, and root can set it with
       <code>date</code>.</li>
       <li><strong>Files that survive.</strong> <code>/data</code> is a
       littlefs volume on the card: a file you synced survives a power cut.
@@ -74,16 +75,12 @@
       board, which boots back to the kiosk. On the Pi 4 the hardware
       watchdog resets a hang of the kernel or the root within about 4
       seconds.</li>
-      <li><strong>Doom, built by you.</strong> On QEMU, from a clone of the
-      repository, with the virtio keyboard; on the Pi, on a card you build, as
-      its demo loop with no keyboard. Doom is never in the published
-      images. <!-- unverified: no card build takes Doom yet (TODO.md, "0.1, Doom's demo loop on the Pi"). --></li>
+      <li><strong>Doom.</strong> The Pi 4 card and the QEMU release medium
+      carry Doom: type <code>doom</code> in <code>rc</code>; the browser demo
+      does not. On QEMU it takes keys from the virtio keyboard; on the Pi,
+      which has no keyboard in 0.1, it runs its demo loop. It is an example,
+      not part of erXos.</li>
     </ul>
-    <p>The soak: <!-- unverified: the soak's result; the sentence is the request's wording and no soak record is in the tree (docs/design-platforms.md, The soak, only specifies it). Fill in from the run's record. -->
-    the published card soaked a day on the Pi 4 and four hours on QEMU under
-    this workload (the kiosk with its quotes, SSH sessions running
-    <code>ps</code> and <code>top</code>, files written under
-    <code>/data</code>), with no reset.</p>
   </div>
 </section>
 
@@ -119,7 +116,7 @@
     QEMU shows the display in its window with the virtio keyboard and tablet,
     the serial console is on your terminal, and your port 2222 reaches the
     guest's SSH. Add <code>--print</code> for the plain
-    <code>qemu-system-aarch64</code> command. <!-- unverified: the page does not offer the medium yet. --></p>
+    <code>qemu-system-aarch64</code> command. The page does not offer the medium for download yet.</p>
   </div>
 </section>
 
@@ -158,7 +155,7 @@
       only a counter, the SSH host key made at first boot comes from a weak seed
       (<a href="https://github.com/stass/erXos/blob/master/docs/design-ssh.md#host-keys">host keys</a>).</li>
       <li><strong>DMA.</strong> The evidence of how each board's firmware leaves
-      its DMA-capable devices at handover is not recorded. <!-- unverified: the TODO.md item this points to; the plan names it as "DMA handover evidence not recorded for the boards" without a TODO line. --></li>
+      its DMA-capable devices at handover is not recorded.</li>
     </ul>
     <p>Behavior.</p>
     <ul>
@@ -182,8 +179,7 @@
       <li><strong>Left to 0.2 and later.</strong> The release build without the
       development banner, a login on the console, untrusted apps, the vault,
       installing an app at run time (unless it
-      lands first), network time, the desktop and toybox's applets.
-      <!-- unverified: "the desktop" is 1b-F in plan.md's "Left to 0.2" list, worded loosely. --></li>
+      lands first), the desktop and toybox's applets.</li>
     </ul>
   </div>
 </section>
@@ -195,14 +191,18 @@
   </header>
   <div class="prose">
     <p>erXos's own code is BSD-2-Clause. Every image carries a
-    <code>NOTICES</code> file with the third-party notices, and the file sits
-    beside each downloaded image. The Pi 4's device tree is GPL-2.0, shipped with
-    its source; the Raspberry Pi firmware is under
-    Broadcom's license. The browser demo's notices are in
+    <code>NOTICES</code> file with the third-party notices. The Pi 4's device
+    tree is GPL-2.0, shipped with its source; the Raspberry Pi firmware is
+    under Broadcom's license. The kernel, a modified Fiasco, is MIT, except
+    its debugger's object listing, which is GPL-2.0; the debugger is built in
+    for this preview. The browser demo's notices are in
     <a href="v64/NOTICES.txt">v64/NOTICES.txt</a>. Imported source trees
     in the repository each keep their notices and an <code>ORIGIN.md</code>
-    with where they came from. Doom, which is GPL-2.0, is never in an image.
-    <!-- unverified: that NOTICES is published beside each download and that the card's source offer is on the page; design.md says so for the boot image and the GPL-2.0 files, but this page's download links are not built yet. --></p>
+    with where they came from. Doom is GPL-2.0-or-later and its Freedoom data
+    BSD-3-Clause; its source is <a href="https://github.com/stass/erxos-doom">erXos's fork of
+    doomgeneric</a> at commit <code>5d58740fb0022a43d6bb9066d535768c220f43aa</code>,
+    the one the images are built from. Each download links the erXos source
+    it was built from.</p>
   </div>
 </section>
 
