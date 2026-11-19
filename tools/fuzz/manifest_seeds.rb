@@ -64,8 +64,8 @@ module Erx
       pi = Manifest.admit(source: Platform.load(root: repository, name: 'raspi4b').manifest_source(repository),
                           codec: codec, context: Manifest::Context.new(**fixture, platform: platform_of(repository, 'raspi4b')),
                           planner: ManifestContextFixture.accepting_planner)
-      empty = Manifest.structural_fixture(source: File.binread(File.join(repository, 'test/fixtures/manifest_empty.txt')),
-                                          codec: codec, context: Manifest::Context.new(**fixture))
+      empty = Manifest.admit(source: File.binread(File.join(repository, 'test/fixtures/manifest_empty.txt')),
+                             codec: codec, context: Manifest::Context.new(**fixture))
       domain_context = Manifest::Context.new(**ManifestContextFixture.arguments(codec), platform: platform)
       domains = Manifest.admit(source: ManifestContextFixture.domain_source(source), codec: codec,
                                context: domain_context, planner: ManifestContextFixture.accepting_planner)

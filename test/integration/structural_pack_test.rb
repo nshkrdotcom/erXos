@@ -74,7 +74,7 @@ class StructuralPackTest < Minitest::Test
                  'artifact' => native.fetch('artifact'), 'receipt' => native.fetch('receipt') }]
     error = assert_raises(Erx::Manifest::Unsupported) do
       production.build(entries: entries, root_path: 'system/root', build_kind: 'development',
-                       platform: ManifestContextFixture.platform,
+                       platform: ManifestContextFixture.platform.except('fiasco_reserve'),
                        artifacts: { 'root' => { 'kind' => 'executable', 'entry' => 2 } }.merge(ManifestContextFixture.images),
                        manifest_source: structural.fetch('manifest_source'), output: output)
     end
@@ -102,7 +102,7 @@ class StructuralPackTest < Minitest::Test
                               artifacts: { 'root' => { 'kind' => 'executable', 'entry' => 2 } }.merge(ManifestContextFixture.images),
                               manifest_source: ManifestContextFixture.domainless(Erx::ProductionImage.sessionless_manifest(@root, platform: Erx::Platform.development(@root))),
                               output: output)
-    assert_equal 'declared', result.fetch('manifest').fetch('root_startup')
+    assert_equal 0, result.fetch('manifest').fetch('child_plan_instances')
     bytes = File.binread(output)
     assert_equal "ERXPACK\0".b, bytes.byteslice(0, 8)
     assert_equal bytes.bytesize, @codec.decode_layout('erx_pack_header', bytes).fetch('total_size')

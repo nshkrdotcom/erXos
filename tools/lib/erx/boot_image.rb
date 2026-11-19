@@ -16,9 +16,9 @@ require_relative '../../../test/fixtures/structural_pack'
 module Erx
   # A bootable file for Fiasco from what the build holds: bootstrap as the
   # first stage and an archive of the kernel, sigma0 and, for a guest test, a
-  # root task that bootstrap places. The archive is the structural recipe's,
-  # never checked: production packing waits for the root startup, so its
-  # manifest and its own root entry say nothing about what runs.
+  # root task that bootstrap places. The archive is the structural recipe's:
+  # its empty manifest passes the manifest check like any other, but it and
+  # the archive's own root entry say nothing about what runs.
   class BootImage
     Built = Data.define(:single, :archive, :first_stage, :index_hash, :build_id, :flags) do
       def fetch(name) = public_send(name)

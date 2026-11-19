@@ -295,8 +295,7 @@ module Erx
                                    machine: ProductionImage::Machine.board(platform), fiasco: fiasco)
                               .check_reproducible(directory: Dir.mktmpdir('production-', parent))
       Terminal.puts("production image: byte-identical; #{report.fetch('report')}")
-      claims = report.fetch('manifest')
-      Terminal.puts("root_startup: #{claims.fetch('root_startup')}; child_plan_instances: #{claims.fetch('child_plan_instances')}")
+      Terminal.puts("child_plan_instances: #{report.fetch('manifest').fetch('child_plan_instances')}")
       0
     end
 
@@ -641,7 +640,7 @@ module Erx
                                              linker: environment.fetch('ERX_LLD'), platform: platform, medium: medium,
                                              apps: apps)
       built, written = medium ? result : [result, nil]
-      Terminal.puts("production image: #{built.single}; root_startup: #{built.report.fetch('manifest').fetch('root_startup')}")
+      Terminal.puts("production image: #{built.single}")
       case written
       in nil
         nil

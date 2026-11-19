@@ -414,7 +414,7 @@ archive that erXos's packer appends
 Fiasco modules. Starting `liberx`'s root-task entry is the root startup's;
 for a guest test, `tools/lib/erx/boot_image.rb` packs the kernel and
 `sigma0`, and the test's root task, as files bootstrap places, over the
-structural fixture's unchecked manifest. The banner image has no root to place, so
+test fixtures' empty manifest, which passes the same manifest check. The banner image has no root to place, so
 Fiasco starts `sigma0` and returns without creating a root task when its root
 entry is zero, and the harness ends this guest at its named banner checkpoint.
 
@@ -528,12 +528,13 @@ validator checks the same format independently and runs on the host under
 sanitizers and a fuzzer.
 
 The manifest's child-feasibility check invokes the production domain
-planner only for child specifications actually present. An empty native
-partial boot has none, but initial-root feasibility still requires its
+planner only for child specifications actually present. An empty
+partial boot, the test fixtures', has none, but initial-root feasibility still requires its
 production bootstrap plan and backend/ABI-bound charge evidence. A
 source-declared baseline is not that evidence. Unavailable required
-planning fails as unsupported; structural fixtures cannot mint an
-admission token or enter the production publisher. Until
+planning fails as unsupported. Test fixtures go through the same check,
+and the production publisher packs only the bytes its own call of the
+check returns. Until
 [track K](plan.md#track-k-erxoss-kernel) brings `erx_root_plan` with its
 charge evidence, the Phase 1 manifest check's root startup rule stands in
 for the initial root's feasibility and charge plan; child planning is

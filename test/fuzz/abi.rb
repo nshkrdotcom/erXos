@@ -61,7 +61,7 @@ module AbiFuzz
           parsed = Erx::ABI::SourceSet.new(declarations: declarations, inputs: {}).freeze
           Erx::ABI::Model.validate(parsed)
         when 1
-          Erx::Manifest.structural_fixture(source: mutate(manifest_seed, random), codec: codec, context: context)
+          Erx::Manifest.admit(source: mutate(manifest_seed, random), codec: codec, context: context)
         when 2
           view = codec.open('manifest', mutate(wire_seeds.fetch(random.rand(wire_seeds.size)), random))
           schema.readers.find { |reader| reader.name == 'manifest' }.tables.each_key do |table|

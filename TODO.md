@@ -1093,11 +1093,10 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   platform record's register windows and RAM, not against the board tree's every `reg` and `ranges` (the GIC, the
   local peripherals, PCIe windows), which the record does not list; checking it against the board's own tree
   (`board_tree.rb`) would make the window's isolation hold by construction.
-* [Medium] `tools/lib/erx/manifest.rb`, `EmptyNative#check_mode` and `Check#check_mode`'s partial path: each
-  lists the record kinds it refuses, so a record kind the grammar gains is admitted in an empty-native or
-  partial boot until someone adds it to the list (and in an empty-native boot left out of the packed manifest,
-  whose `check_and_place` packs nothing). Make each mode an allowlist of the kinds it takes, every other
-  kind refused, keeping each refused kind's property and reason in one table per mode.
+* [Medium] `tools/lib/erx/manifest.rb`, `Check#check_mode`'s partial path lists the record kinds it
+  refuses, so a record kind the grammar gains is admitted in a partial boot until someone adds it to the
+  list. Make the partial mode an allowlist of the kinds it takes, every other kind refused, keeping each
+  refused kind's reason in one table.
 * [Medium] `tools/lib/erx/release_medium.rb`, `system_partition`: its refusal of an image and tree larger than
   the system partition has no test, because reaching it takes an image near the partition's 63 MiB
   (`medium_system_sectors`), which the function reads whole and hashes. Take the partition's size from
@@ -7435,7 +7434,7 @@ to the corpus and follow rc
   whether the image keeps the two entries, which that kernel would ignore,
   or drops them with their ABI paths and the recipe in
   `tools/lib/erx/boot_image.rb`. `tools/lib/erx/boot_image.rb` builds on
-  the structural fixture's unchecked manifest until production packing
+  the test fixtures' empty manifest until production packing
   lands.
 * [Medium] kernel boot, `kernel/core/boot_place.c`: the handoff record's
   `pool_usable`, `pool_heap` and `pool_regions` are zero in Phase 1, which
@@ -7451,8 +7450,8 @@ to the corpus and follow rc
   whole range, since one range cannot tell its segments apart, gaps between
   segments included, which nothing zeroes. Delete both roles, their ABI paths and the record of the recipe in
   `tools/lib/erx/boot_image.rb` when the kernel maps the root task from the
-  startup plan. `tools/lib/erx/boot_image.rb` builds on the structural fixture's
-  unchecked manifest until production packing lands.
+  startup plan. `tools/lib/erx/boot_image.rb` builds on the test fixtures'
+  empty manifest until production packing lands.
 * [Medium] Fiasco boot, `kernel/core/boot_place.c`: the handoff record's
   `pool_usable`, `pool_heap` and `pool_regions` are zero and `kmemsize` keeps
   Fiasco's default until `erx_pool_plan` and `abi/backend/fiasco.txt` land; the

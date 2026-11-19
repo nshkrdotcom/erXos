@@ -16,12 +16,12 @@ class ManifestTest < Minitest::Test
   end
 
   def fixture(source = @source, context = @context)
-    Erx::Manifest.structural_fixture(source: source, codec: @codec, context: context)
+    Erx::Manifest.admit(source: source, codec: @codec, context: context)
   end
 
-  def test_empty_native_configuration_has_no_planning
+  def test_the_empty_fixture_plans_nothing
     result = fixture
-    assert_instance_of Erx::Manifest::StructuralFixture, result
+    assert_instance_of Erx::Manifest::Admitted, result
     assert result.bytes.frozen?
     assert_equal 0, result.report.fetch('child_plan_instances')
     view = @codec.open('manifest', result.bytes)
@@ -66,21 +66,16 @@ class ManifestTest < Minitest::Test
     assert_raises(Erx::Manifest::Invalid) { fixture(@source, release_context) }
   end
 
-  # Property 17: the empty native boot is a partial boot, which starts no row.
-  def test_empty_native_boot_starts_no_row
+  # Property 17: the empty fixture is a partial boot, which starts no row.
+  def test_a_partial_boot_starts_no_row
     error = assert_raises(Erx::Manifest::Invalid) { fixture(@source + "start root\n") }
     assert_equal 'start', error.field
   end
 
-  def test_nonempty_native_boot_requires_real_planning
+  def test_a_partial_boot_record_is_not_supported
     source = @source + "partial_boot probe\n  image @artifact.root\n"
     error = assert_raises(Erx::Manifest::Unsupported) { fixture(source) }
     assert_equal 'partial_boot', error.field
-  end
-
-  def test_missing_sizing_for_full_boot_is_not_a_success
-    source = @source.sub('flags development,partial_boot', 'flags development')
-    assert_raises(Erx::Manifest::Unsupported) { fixture(source) }
   end
 
   def test_zero_cpuset_uses_parent_before_rate_comparison
@@ -115,10 +110,10 @@ class ManifestTest < Minitest::Test
     assert_equal 'machine.system_baseline', error.field
   end
 
-  def test_real_admission_requires_the_real_initial_root_plan
-    error = assert_raises(Erx::Manifest::Unsupported) do
-      Erx::Manifest.admit(source: @source, codec: @codec, context: @context)
-    end
+  def test_a_platform_that_states_no_ram_is_not_supported
+    platform = @context.platform.except('ram_bytes', 'fiasco_reserve')
+    context = Erx::Manifest::Context.new(**ManifestContextFixture.arguments(@codec), platform: platform)
+    error = assert_raises(Erx::Manifest::Unsupported) { fixture(@source, context) }
     assert_equal 'root_startup', error.field
   end
 end

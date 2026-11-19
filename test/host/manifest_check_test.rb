@@ -172,7 +172,6 @@ class ManifestCheckTest < Minitest::Test
 
   def test_the_report_carries_the_checked_numbers
     report = admit.report
-    assert_equal 'declared', report.fetch('root_startup')
     assert_equal 4, report.fetch('child_plan_instances')
     assert_equal @platform.fetch('fiasco_reserve'), report.fetch('fiasco_reserve')
     assert_equal @platform.fetch('ram_bytes'), report.fetch('ram_bytes')
@@ -216,13 +215,6 @@ class ManifestCheckTest < Minitest::Test
   def test_a_liveness_record_is_refused_because_nothing_reads_it
     refused(Erx::Manifest::Unsupported, 'liveness', @source + SERVICE + "liveness @service.probe\n",
             message: /watchdog/)
-  end
-
-  def test_the_structural_fixture_rules_do_not_change
-    error = assert_raises(Erx::Manifest::Unsupported) do
-      Erx::Manifest.structural_fixture(source: @source, codec: @codec, context: @context)
-    end
-    assert_equal 'mode', error.field
   end
 
   # Property 1: one holder per device and unit.

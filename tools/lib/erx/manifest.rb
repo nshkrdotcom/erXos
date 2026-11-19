@@ -149,32 +149,9 @@ module Erx
     end
 
 
-    # Structural fixtures exercise canonical bytes without claiming that an
-    # initial-root startup or a machine configuration has passed the check.
-    class StructuralFixture
-      attr_reader :bytes, :report
-
-      def self.prepare(source:, codec:, context:)
-        raise Invalid.new('checked context required', field: 'context.input') unless context.is_a?(Context)
-        parsed = Frontend.parse(source, version: codec.constant('manifest_version'))
-        normalized, report = EmptyNative.new(parsed, codec: codec, context: context, planner: nil).check
-        bytes = Encoder.new(codec).encode(normalized)
-        codec.open('manifest', bytes)
-        new(bytes: bytes, report: report)
-      end
-
-      def initialize(bytes:, report:)
-        @bytes = bytes.freeze
-        @report = Snapshot.copy(report)
-        freeze
-      end
-      private_class_method :new
-    end
-
     # The root startup rule on Fiasco: a declared sanity check, not a proof. It compares
     # the manifest's numbers with the platform record's, so a wrong
-    # fiasco_reserve shows at boot, when the root's pool falls short. A report
-    # therefore says root_startup: declared, never validated.
+    # fiasco_reserve shows at boot, when the root's pool falls short.
     module RootStartup
       module_function
 
@@ -340,7 +317,7 @@ module Erx
 
     # Phase 1's manifest check: Check over a manifest with the system domain and
     # its configured domains, and the declared root startup rule. Its constructor is private,
-    # so only this factory makes one, and a structural fixture cannot pass for it.
+    # so only this factory makes one.
     class Admitted
       attr_reader :bytes, :report
 
@@ -391,16 +368,16 @@ module Erx
     end
     private_class_method :release_reference, :word
 
-    def self.structural_fixture(source:, codec:, context:)
-      StructuralFixture.prepare(source: source, codec: codec, context: context)
-    end
-
-    # The readers and the normalization every check shares. A unit's holder is the
-    # system domain or a configured domain, and nothing is reserved for a child. A subclass
-    # states which modes and records it takes (check_mode), what it allows of a
-    # platform device (check_device), what else it places (check_and_place)
-    # and what its report claims (claims).
-    class SystemDomainCheck
+    # The manifest check (docs/design-fiasco.md, "The Phase 1 manifest check"): a
+    # development manifest, full or partial boot, with the system domain and its
+    # configured domains; test fixtures go through it too. A unit's holder or a service's
+    # server is the system domain or a configured domain, nothing is reserved for a child,
+    # and a grantee is one of those or a session template; a domain row's runtime and
+    # release name artifacts of this pack;
+    # the configured domains are ordered (10), checked against the rescue configuration
+    # (11), planned by the domain library's host build (12) and held to the headroom in
+    # system (13). What Phase 1 does not bring is refused here.
+    class Check
       TABLES = { 'principal' => 'principals', 'limits' => 'limits',
                  'runtime_limits' => 'runtime_limits', 'lane_class' => 'lane_classes',
                  'image' => 'images', 'domain' => 'domains' }.freeze
@@ -428,6 +405,110 @@ module Erx
       # The name the machine gives the build's development package key
       # (erx_pkg_header:signer/0), which no signer row may take.
       DEVELOPMENT_SIGNER = 'development'
+
+      REFUSED = {
+        'partial_boot' => 'child domains of a partial boot arrive at M5',
+        'liveness' => 'the system domain\'s watchdog pets without reading liveness records, which a later milestone brings'
+      }.freeze
+
+      # Who may hold a granted facet row of a well-known service (check_granted_rows), and
+      # why: the system domain, and root's session template, the system principal's,
+      # always (root :always) or only in a development build (root :development); with
+      # read_only, every such row states rights ro, a row that states none being rw
+      # (abi/services/files.txt). why completes the refusal "grants NAME, whose ...".
+      SourceGrants = Data.define(:root, :read_only, :why) do
+        def initialize(root:, read_only:, why:)
+          raise Erx::Error, "SourceGrants root #{root.inspect} is not :always or :development" unless
+            %i[always development].include?(root)
+          raise Erx::Error, "SourceGrants read_only #{read_only.inspect} is not a boolean" unless [true, false].include?(read_only)
+
+          super
+        end
+      end
+
+      # A row the build derives of a well-known service: its grantee, :system (the system
+      # domain), :app_template or :user_templates (every session template but the app
+      # template), and its parameter values.
+      Derived = Data.define(:grantee, :values) do
+        def initialize(grantee:, values:)
+          raise Erx::Error, "Derived grantee #{grantee.inspect} is not one derived_grantees names" unless
+            %i[system app_template user_templates].include?(grantee)
+
+          super
+        end
+      end
+
+      # A service of the files interface that the machine knows by a fixed name, and what
+      # the manifest check requires of it beyond what it requires of every service:
+      #
+      # * constant, the abi/manifest.txt constant that holds its name;
+      # * needs, what makes the manifest hold exactly one service of the name, of the
+      #   files interface, and the build derive its rows: an apps row (:apps), the name
+      #   being served at all (:served), or nothing (nil), when it derives none;
+      # * window, the window role whose holder serves it, when one does: a manifest with
+      #   that window holds exactly one service of the name, of the files interface,
+      #   served by the window's holder, and one without it holds none, so an apps row
+      #   that needs the service needs the window too;
+      # * derived, the Derived rows the build derives of it. An apps row names no service
+      #   with an :app_template row, since every app holds that grant already; the apps
+      #   row packs the template's packages and system rows in fields of their own
+      #   (apps_rows), so a new service with such a row needs a field there too;
+      # * source, which granted rows (check_granted_rows) may grant it: :any, :none (only
+      #   the derived rows do), or a SourceGrants.
+      #
+      # A row with neither needs nor window is not checked to be of the files interface.
+      WellKnown = Data.define(:constant, :needs, :window, :derived, :source) do
+        def initialize(constant:, needs:, window:, derived:, source:)
+          raise Erx::Error, "WellKnown #{constant} needs #{needs.inspect}" unless [:apps, :served, nil].include?(needs)
+          raise Erx::Error, "WellKnown #{constant} source #{source.inspect}" unless
+            [:any, :none].include?(source) || source.is_a?(SourceGrants)
+          raise Erx::Error, "WellKnown #{constant} derives rows that are not Derived" unless derived.all?(Derived)
+          raise Erx::Error, "WellKnown #{constant} derives rows it never needs" unless needs || derived.empty?
+
+          super
+        end
+      end
+
+      # The well-known services, one row each (docs/design-packaging.md, "The apps row"
+      # and "The build's check"; docs/design-files.md, "A user's home";
+      # docs/design-ssh.md, "Who publishes it").
+      WELL_KNOWN = Ractor.make_shareable([
+        # Property 19's first clause and "The apps row": the system domain's grant rw at
+        # the tree's root, and the app template's rx, rooted at installed/, where no upload
+        # in progress lies: an app's session mounts its installed package at /app through
+        # it (design-files.md F6: an rx mount only through an rx grant).
+        WellKnown.new(constant: 'packages_service', needs: :apps, window: nil,
+                      derived: [Derived.new(grantee: :system, values: { 'rights' => 'rw' }),
+                                Derived.new(grantee: :app_template, values: { 'rights' => 'rx', 'tree' => 'installed' })],
+                      source: :any),
+        # Property 19's eighth clause: served by the system window's holder, the domain
+        # whose block driver serves the system partition; the app template's rx grant
+        # mounts an image package at /app.
+        WellKnown.new(constant: 'system_service', needs: :apps, window: 'system',
+                      derived: [Derived.new(grantee: :system, values: { 'rights' => 'ro' }),
+                                Derived.new(grantee: :app_template, values: { 'rights' => 'rx' })],
+                      source: :none),
+        # Property 19's seventh clause: every user's template is granted its user's home.
+        WellKnown.new(constant: 'home_service', needs: :served, window: nil,
+                      derived: [Derived.new(grantee: :user_templates, values: { 'rights' => 'rw', 'tree' => 'home' })],
+                      source: :none),
+        # Property 19's tenth clause: a user's one place on the data volume is its home,
+        # so a grant that reaches the whole volume is the system domain's, or root's in
+        # development.
+        WellKnown.new(constant: 'data_service', needs: nil, window: nil, derived: [],
+                      source: SourceGrants.new(root: :development, read_only: false,
+                                               why: 'grants state no tree and so reach the whole volume')),
+        # Property 8's: the system domain and the import of SSH's stage 1 in root's
+        # sessions read root's login keys, and nothing writes them (docs/design-ssh.md,
+        # "Invariants", H8).
+        WellKnown.new(constant: 'login_keys_service', needs: nil, window: 'record_volume', derived: [],
+                      source: SourceGrants.new(root: :always, read_only: true, why: 'tree holds root\'s login keys'))
+      ])
+
+      # The interface, and the name, of the facet the domain service grants every session
+      # by its own policy, with no facet row (docs/design-system.md, "The code_objects
+      # facet"): it serves the facet under its interface's name.
+      CODE_OBJECTS = 'code_objects'
 
       def initialize(source, codec:, context:, planner:)
         @source = source
@@ -504,7 +585,7 @@ module Erx
         end
         invalid('duplicate shell principal', 'shell_principals') unless shell.map { |row| row.fetch('principal') }.uniq.size == shell.size
         rows['shell_principals'] = shell.sort_by { |row| row.fetch('principal') }
-        check_and_place(rows, root_memory: root_memory, baseline: baseline, max_domains: max_domains)
+        check_and_place(rows, root_memory: root_memory, baseline: baseline)
         check_pin_controller(rows, console, hostlink)
         system_principal = reference(machine, 'system_principal', 'principal')
         # The system principal's sessions are root_N (erx_domain_core:session_prefix/3),
@@ -530,15 +611,95 @@ module Erx
         %w[system_queue peer_held].each do |key|
           invalid('limit must be positive', "machine.#{key}") unless header.fetch(key).positive?
         end
-        report = { 'child_plan_instances' => 0,
-                   'root_image_private_bytes' => root_private_bytes, 'root_memory' => root_memory,
+        report = { 'root_image_private_bytes' => root_private_bytes, 'root_memory' => root_memory,
                    'dma_memory' => device_memory, 'promised_memory' => promised,
                    'effective_system_cpuset' => system_cpus,
-                   'effective_users_cpuset' => users_cpus }.merge(claims)
+                   'effective_users_cpuset' => users_cpus }.merge(placed_report)
         [{ 'header' => header, 'tables' => rows }, report]
       end
 
       private
+
+      def check_mode(development:, partial:)
+        unless development
+          raise Unsupported.new('a release build needs the confinement check that M11 brings', field: 'machine.flags')
+        end
+        REFUSED.each { |kind, reason| unsupported(reason, kind) unless records(kind).empty? }
+        return unless partial
+
+        invalid('a partial boot configures no domains', 'domain') unless records('domain').empty?
+        invalid('a partial boot makes no sessions', 'session') unless records('session').empty?
+        invalid('a partial boot starts no row', 'start') unless records('start').empty?
+        %w[apps package signer].each do |kind|
+          invalid('a partial boot takes no packages', kind) unless records(kind).empty?
+        end
+        %w[service facet introduce liveness display].each do |kind|
+          invalid('a partial boot runs no services', kind) unless records(kind).empty?
+        end
+        invalid('a partial boot has no domain to hold the system partition', 'system_image') unless records('system_image').empty?
+      end
+
+      def check_device(device)
+        invalid('no domain holds a PCIe function until M9', 'devices.selector') if device.fetch('selector') == @codec.member('mf_selector', 'pci')
+        role = device.fetch('role')
+        invalid('no domain holds PCIe configuration space until M9', 'devices.role') if role == device_role('configuration')
+        invalid('no domain holds a TPM until M11', 'devices.role') if role == device_role('tpm')
+        case device.fetch('dma')
+        when @codec.member('mf_dma', 'confined')
+          unsupported('a confined device needs a DMA window, which M9 brings', 'devices.dma')
+        when @codec.member('mf_dma', 'unconfined')
+          invalid('an unconfined device needs a memory reservation', 'devices.dma_memory') unless device.fetch('dma_memory').positive?
+          # The domain library gives it as one contiguous object.
+          if device.fetch('dma_memory') > @codec.constant('mem_contiguous_max')
+            invalid('a device memory reservation exceeds mem_contiguous_max', 'devices.dma_memory')
+          end
+        else
+          invalid('non-DMA device has a DMA reservation', 'devices.dma_memory') unless device.fetch('dma_memory').zero?
+        end
+      end
+
+      def check_and_place(rows, root_memory:, baseline:)
+        check_identity(rows.fetch('devices'))
+        rows['domains'] = normalize_domains(rows)
+        rows['sessions'] = normalize_sessions(rows)
+        services = records('service').map { |record| [record, normalize_service(record)] }
+                                     .sort_by { |_record, row| [row.fetch('name'), row.fetch('server')] }
+        rows['services'] = services.map(&:last)
+        invalid('two services of one server share a name', 'service.name') unless
+          rows['services'].map { |row| row.values_at('server', 'name') }.uniq.size == services.size
+        rows['introductions'] = normalize_introductions
+        app_services = check_apps(rows)
+        rows['facets'], rows['facet_operations'], rows['facet_parameters'], facet_values =
+          normalize_facets(services.map(&:first), rows, app_services)
+        rows['starts'] = normalize_starts(services.map(&:first), rows)
+        rows['apps'], rows['app_services'] = apps_rows(app_services, rows)
+        check_app_start_rows
+        rows['signers'] = signer_rows
+        rows['development_key'] = @development_key = development_key_rows
+        @packages = check_packages
+        rows['packages'] = @packages.map { |package| package_row(package) }
+        rows['displays'] = normalize_displays(services.map(&:first), rows, facet_values)
+        edges = boot_edges(rows['facets'], rows['services'])
+        rows['boot_order'] = boot_order(rows['domains'], edges)
+        check_rescue(rows['domains'], edges)
+        check_facets_supported(rows)
+        rows['images'], rows['extents'] = normalize_images(rows.fetch('devices'))
+        rows['system_image'] = system_image_rows
+        rows['windows'] = normalize_windows(rows)
+        check_window_services(rows)
+        RootStartup.check(loadable: root_loadable_bytes, baseline: baseline,
+                          root_memory: root_memory, platform: @context.platform)
+      end
+
+      # The report's numbers of what check_and_place placed: the configured domains,
+      # the root image, the packages and the keys the image trusts.
+      def placed_report
+        { 'child_plan_instances' => records('domain').size,
+          'root_image_loadable_bytes' => root_loadable_bytes,
+          'packages' => @packages.map { |package| package.to_h.except(:memory).transform_keys(&:to_s) },
+          'signers' => records('signer').map(&:name).sort,
+          'development_key' => !@development_key.empty? }.merge(RootStartup.declared(@context.platform))
+      end
 
       def invalid(message, field)
         raise Invalid.new(message, field: field)
@@ -1121,227 +1282,6 @@ module Erx
             0
           end
         end
-      end
-    end
-
-    # M0's structural fixtures: a partial boot with no services or children.
-    class EmptyNative < SystemDomainCheck
-      private
-
-      def check_mode(development:, partial:)
-        unless partial
-          unsupported('full boot needs the production sizing, planner and service consumers', 'mode')
-        end
-        %w[domain session partial_boot].each do |kind|
-          unsupported('child domain planning is unavailable', kind) unless records(kind).empty?
-        end
-        %w[window service facet introduce image system_image liveness display apps package signer].each do |kind|
-          invalid('empty native boot has no service or child assignments', kind) unless records(kind).empty?
-        end
-        invalid('a partial boot starts no row', 'start') unless records('start').empty?
-      end
-
-      def check_device(device)
-        unsupported('device allocation needs a checked sizing provider', 'devices.dma') unless device.fetch('dma') == @codec.member('mf_dma', 'none')
-        invalid('non-DMA device has a DMA reservation', 'devices.dma_memory') unless device.fetch('dma_memory').zero?
-      end
-
-      def check_and_place(_rows, root_memory:, baseline:, max_domains:) = nil
-
-      def claims = {}
-    end
-
-    # The manifest check (docs/design-fiasco.md, "The Phase 1 manifest check"): a
-    # development manifest, full or partial boot, with the system domain and its
-    # configured domains. A holder or server is the system domain or a configured
-    # domain, and a grantee one of those or a session template; a domain row's runtime and release name artifacts of this
-    # pack; the configured domains are ordered (10), checked against the rescue
-    # configuration (11), planned by the domain library's host build (12) and held to
-    # the headroom in system (13). What Phase 1 does not bring is refused here.
-    class Check < SystemDomainCheck
-      REFUSED = {
-        'partial_boot' => 'child domains of a partial boot arrive at M5',
-        'liveness' => 'the system domain\'s watchdog pets without reading liveness records, which a later milestone brings'
-      }.freeze
-
-      # Who may hold a granted facet row of a well-known service (check_granted_rows), and
-      # why: the system domain, and root's session template, the system principal's,
-      # always (root :always) or only in a development build (root :development); with
-      # read_only, every such row states rights ro, a row that states none being rw
-      # (abi/services/files.txt). why completes the refusal "grants NAME, whose ...".
-      SourceGrants = Data.define(:root, :read_only, :why) do
-        def initialize(root:, read_only:, why:)
-          raise Erx::Error, "SourceGrants root #{root.inspect} is not :always or :development" unless
-            %i[always development].include?(root)
-          raise Erx::Error, "SourceGrants read_only #{read_only.inspect} is not a boolean" unless [true, false].include?(read_only)
-
-          super
-        end
-      end
-
-      # A row the build derives of a well-known service: its grantee, :system (the system
-      # domain), :app_template or :user_templates (every session template but the app
-      # template), and its parameter values.
-      Derived = Data.define(:grantee, :values) do
-        def initialize(grantee:, values:)
-          raise Erx::Error, "Derived grantee #{grantee.inspect} is not one derived_grantees names" unless
-            %i[system app_template user_templates].include?(grantee)
-
-          super
-        end
-      end
-
-      # A service of the files interface that the machine knows by a fixed name, and what
-      # the manifest check requires of it beyond what it requires of every service:
-      #
-      # * constant, the abi/manifest.txt constant that holds its name;
-      # * needs, what makes the manifest hold exactly one service of the name, of the
-      #   files interface, and the build derive its rows: an apps row (:apps), the name
-      #   being served at all (:served), or nothing (nil), when it derives none;
-      # * window, the window role whose holder serves it, when one does: a manifest with
-      #   that window holds exactly one service of the name, of the files interface,
-      #   served by the window's holder, and one without it holds none, so an apps row
-      #   that needs the service needs the window too;
-      # * derived, the Derived rows the build derives of it. An apps row names no service
-      #   with an :app_template row, since every app holds that grant already; the apps
-      #   row packs the template's packages and system rows in fields of their own
-      #   (apps_rows), so a new service with such a row needs a field there too;
-      # * source, which granted rows (check_granted_rows) may grant it: :any, :none (only
-      #   the derived rows do), or a SourceGrants.
-      #
-      # A row with neither needs nor window is not checked to be of the files interface.
-      WellKnown = Data.define(:constant, :needs, :window, :derived, :source) do
-        def initialize(constant:, needs:, window:, derived:, source:)
-          raise Erx::Error, "WellKnown #{constant} needs #{needs.inspect}" unless [:apps, :served, nil].include?(needs)
-          raise Erx::Error, "WellKnown #{constant} source #{source.inspect}" unless
-            [:any, :none].include?(source) || source.is_a?(SourceGrants)
-          raise Erx::Error, "WellKnown #{constant} derives rows that are not Derived" unless derived.all?(Derived)
-          raise Erx::Error, "WellKnown #{constant} derives rows it never needs" unless needs || derived.empty?
-
-          super
-        end
-      end
-
-      # The well-known services, one row each (docs/design-packaging.md, "The apps row"
-      # and "The build's check"; docs/design-files.md, "A user's home";
-      # docs/design-ssh.md, "Who publishes it").
-      WELL_KNOWN = Ractor.make_shareable([
-        # Property 19's first clause and "The apps row": the system domain's grant rw at
-        # the tree's root, and the app template's rx, rooted at installed/, where no upload
-        # in progress lies: an app's session mounts its installed package at /app through
-        # it (design-files.md F6: an rx mount only through an rx grant).
-        WellKnown.new(constant: 'packages_service', needs: :apps, window: nil,
-                      derived: [Derived.new(grantee: :system, values: { 'rights' => 'rw' }),
-                                Derived.new(grantee: :app_template, values: { 'rights' => 'rx', 'tree' => 'installed' })],
-                      source: :any),
-        # Property 19's eighth clause: served by the system window's holder, the domain
-        # whose block driver serves the system partition; the app template's rx grant
-        # mounts an image package at /app.
-        WellKnown.new(constant: 'system_service', needs: :apps, window: 'system',
-                      derived: [Derived.new(grantee: :system, values: { 'rights' => 'ro' }),
-                                Derived.new(grantee: :app_template, values: { 'rights' => 'rx' })],
-                      source: :none),
-        # Property 19's seventh clause: every user's template is granted its user's home.
-        WellKnown.new(constant: 'home_service', needs: :served, window: nil,
-                      derived: [Derived.new(grantee: :user_templates, values: { 'rights' => 'rw', 'tree' => 'home' })],
-                      source: :none),
-        # Property 19's tenth clause: a user's one place on the data volume is its home,
-        # so a grant that reaches the whole volume is the system domain's, or root's in
-        # development.
-        WellKnown.new(constant: 'data_service', needs: nil, window: nil, derived: [],
-                      source: SourceGrants.new(root: :development, read_only: false,
-                                               why: 'grants state no tree and so reach the whole volume')),
-        # Property 8's: the system domain and the import of SSH's stage 1 in root's
-        # sessions read root's login keys, and nothing writes them (docs/design-ssh.md,
-        # "Invariants", H8).
-        WellKnown.new(constant: 'login_keys_service', needs: nil, window: 'record_volume', derived: [],
-                      source: SourceGrants.new(root: :always, read_only: true, why: 'tree holds root\'s login keys'))
-      ])
-
-      # The interface, and the name, of the facet the domain service grants every session
-      # by its own policy, with no facet row (docs/design-system.md, "The code_objects
-      # facet"): it serves the facet under its interface's name.
-      CODE_OBJECTS = 'code_objects'
-
-      private
-
-      def check_mode(development:, partial:)
-        unless development
-          raise Unsupported.new('a release build needs the confinement check that M11 brings', field: 'machine.flags')
-        end
-        REFUSED.each { |kind, reason| unsupported(reason, kind) unless records(kind).empty? }
-        return unless partial
-
-        invalid('a partial boot configures no domains', 'domain') unless records('domain').empty?
-        invalid('a partial boot makes no sessions', 'session') unless records('session').empty?
-        invalid('a partial boot starts no row', 'start') unless records('start').empty?
-        %w[apps package signer].each do |kind|
-          invalid('a partial boot takes no packages', kind) unless records(kind).empty?
-        end
-        %w[service facet introduce liveness display].each do |kind|
-          invalid('a partial boot runs no services', kind) unless records(kind).empty?
-        end
-        invalid('a partial boot has no domain to hold the system partition', 'system_image') unless records('system_image').empty?
-      end
-
-      def check_device(device)
-        invalid('no domain holds a PCIe function until M9', 'devices.selector') if device.fetch('selector') == @codec.member('mf_selector', 'pci')
-        role = device.fetch('role')
-        invalid('no domain holds PCIe configuration space until M9', 'devices.role') if role == device_role('configuration')
-        invalid('no domain holds a TPM until M11', 'devices.role') if role == device_role('tpm')
-        case device.fetch('dma')
-        when @codec.member('mf_dma', 'confined')
-          unsupported('a confined device needs a DMA window, which M9 brings', 'devices.dma')
-        when @codec.member('mf_dma', 'unconfined')
-          invalid('an unconfined device needs a memory reservation', 'devices.dma_memory') unless device.fetch('dma_memory').positive?
-          # The domain library gives it as one contiguous object.
-          if device.fetch('dma_memory') > @codec.constant('mem_contiguous_max')
-            invalid('a device memory reservation exceeds mem_contiguous_max', 'devices.dma_memory')
-          end
-        else
-          invalid('non-DMA device has a DMA reservation', 'devices.dma_memory') unless device.fetch('dma_memory').zero?
-        end
-      end
-
-      def check_and_place(rows, root_memory:, baseline:, max_domains:)
-        check_identity(rows.fetch('devices'))
-        rows['domains'] = normalize_domains(rows)
-        rows['sessions'] = normalize_sessions(rows)
-        services = records('service').map { |record| [record, normalize_service(record)] }
-                                     .sort_by { |_record, row| [row.fetch('name'), row.fetch('server')] }
-        rows['services'] = services.map(&:last)
-        invalid('two services of one server share a name', 'service.name') unless
-          rows['services'].map { |row| row.values_at('server', 'name') }.uniq.size == services.size
-        rows['introductions'] = normalize_introductions
-        app_services = check_apps(rows)
-        rows['facets'], rows['facet_operations'], rows['facet_parameters'], facet_values =
-          normalize_facets(services.map(&:first), rows, app_services)
-        rows['starts'] = normalize_starts(services.map(&:first), rows)
-        rows['apps'], rows['app_services'] = apps_rows(app_services, rows)
-        check_app_start_rows
-        rows['signers'] = signer_rows
-        rows['development_key'] = @development_key = development_key_rows
-        @packages = check_packages
-        rows['packages'] = @packages.map { |package| package_row(package) }
-        rows['displays'] = normalize_displays(services.map(&:first), rows, facet_values)
-        edges = boot_edges(rows['facets'], rows['services'])
-        rows['boot_order'] = boot_order(rows['domains'], edges)
-        check_rescue(rows['domains'], edges)
-        check_facets_supported(rows)
-        rows['images'], rows['extents'] = normalize_images(rows.fetch('devices'))
-        rows['system_image'] = system_image_rows
-        rows['windows'] = normalize_windows(rows)
-        check_window_services(rows)
-        RootStartup.check(loadable: root_loadable_bytes, baseline: baseline,
-                          root_memory: root_memory, platform: @context.platform)
-      end
-
-      def claims
-        { 'root_startup' => 'declared', 'child_plan_instances' => records('domain').size,
-          'root_image_loadable_bytes' => root_loadable_bytes,
-          'packages' => @packages.map { |package| package.to_h.except(:memory).transform_keys(&:to_s) },
-          'signers' => records('signer').map(&:name).sort,
-          'development_key' => !@development_key.empty? }.merge(RootStartup.declared(@context.platform))
       end
 
       def check_identity(devices)

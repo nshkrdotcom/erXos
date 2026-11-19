@@ -83,9 +83,7 @@ class ErxBuildPrincipalsTest < Minitest::Test
   private
 
   def packed(source)
-    fixture = Erx::Manifest.structural_fixture(source: source, codec: @codec, context: @context)
-    assert_kind_of Erx::Manifest::StructuralFixture, fixture
-    fixture.bytes
+    Erx::Manifest.admit(source: source, codec: @codec, context: @context).bytes
   end
 
   # erx_build:principals({ok, Bytes}) as the oracle's emulator prints it.

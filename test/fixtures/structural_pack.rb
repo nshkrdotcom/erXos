@@ -57,7 +57,7 @@ module StructuralPackFixture
                                          artifacts: { 'root' => { 'kind' => 'executable', 'entry' => root_entry } }.merge(ManifestContextFixture.images),
                                          provenance: provenance, device_kinds: ManifestContextFixture.device_kinds)
     source = File.binread(File.join(root, 'test/fixtures/manifest_empty.txt'))
-    structural = Erx::Manifest.structural_fixture(source: source, codec: codec, context: context)
+    structural = Erx::Manifest.admit(source: source, codec: codec, context: context)
     manifest_path = File.join(directory, 'manifest.bin')
     notices_path = File.join(directory, 'NOTICES')
     File.binwrite(manifest_path, structural.bytes)

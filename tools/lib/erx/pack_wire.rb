@@ -41,7 +41,7 @@ module Erx
 
   # Canonical wire serialization has no check or publication authority.
   # Pack.build owns the production manifest check and atomic publication. Test tooling
-  # can serialize a structural fixture without manufacturing an Admitted value.
+  # serializes its fixtures' archives here, their manifests checked by the same check.
   #
   # The archive (ERXPACK version 2, design-kernel.md, The boot image) is its
   # index run, the header, entries and strings to the first page boundary,

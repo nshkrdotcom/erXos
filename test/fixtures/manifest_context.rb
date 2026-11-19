@@ -24,6 +24,7 @@ module ManifestContextFixture
 
   def platform
     { 'name' => 'fixture', 'cpuset' => 1, 'console' => '/uart@0', 'hostlink' => '',
+      'ram_bytes' => 1 << 30, 'fiasco_reserve' => 64 << 20,
       'units' => [{ 'key' => 'uart0', 'devices' => [
         { 'selector' => 'dt', 'role' => 'uart', 'path' => '/uart@0', 'bridge' => '',
           'compatible' => 'arm,pl011', 'bus' => 0, 'device' => 0, 'function' => 0,

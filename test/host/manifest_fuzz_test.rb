@@ -18,7 +18,7 @@ require_relative '../../tools/fuzz/erx_manifest'
 # manifest, and either stops every run of the target before its mutants.
 class ManifestFuzzTest < Minitest::Test
   # The valid seeds, each of which the C reader must accept: those the manifest
-  # check accepts, and the structural fixture's empty manifest.
+  # check accepts, the test fixtures' empty manifest among them.
   ADMITTED = %w[valid raspi4b domains start-row session-grantee system-args-escape windows-grant line-grant operations-grant empty].freeze
 
   def test_the_c_half_runs_clean_over_the_seeds

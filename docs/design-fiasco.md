@@ -1096,13 +1096,12 @@ sends it. erXos's kernel needs no such word: it lists a UART only when the devic
 
 ## The Phase 1 manifest check
 
-Two things stop a production image without it: `Admitted.admit` refuses every
-manifest for `root_startup` (`manifest.rb`, and `Pack#build` requires the
-admitted bytes), and before that `EmptyNative#check` refuses a full boot and
-every `domain`, `partial_boot`, `window`, `service`, `facet`, `introduce`
-and `liveness` record. **`Check`** sits beside `EmptyNative` and
-shares its readers: a development manifest, full or partial boot, with the
-system domain and its configured domains. It accepts the records the system
+`Pack#build` packs only the manifest bytes `Manifest.admit` returns
+(`manifest.rb`), so no image `Pack#build` publishes carries a manifest that has
+not passed the check.
+**`Check`** is that one check, and test fixtures go through it too: a
+development manifest, full or partial boot, with the system domain and its
+configured domains. It accepts the records the system
 release's services and the configured domains need, `domain`, `window`,
 `service`, `facet` and `introduce` among them, and refuses
 `partial_boot` and `liveness` records with a diagnostic naming the milestone
@@ -1222,9 +1221,8 @@ the pool's free pages and its image, what `root_memory_fits` counted, and the pr
 (`RootStartup.check_boot`, seeded in `test/host/production_image_test.rb`) fails a boot whose RAM less
 `fiasco_reserve`, the archive, those pages and the image is more than `root_withheld`, the contiguous pool and
 the page index.
-`root_withheld` is in bytes, and a platform record without it is refused when it is loaded. The
-`Admitted` value records `root_startup: declared` in its report, and
-`erx_root_plan` replaces the rule behind the same value in Track K.
+`root_withheld` is in bytes, and a platform record without it is refused when it is loaded.
+`erx_root_plan` replaces the rule behind the same check in Track K.
 
 A test task's program is a boot-image entry named by the boot argument
 `erx.test=PATH`, not a `partial_boot` record.
@@ -1235,7 +1233,7 @@ A test task's program is a boot-image entry named by the boot argument
 system boots from, and `tools/erx pack` and `make check-reproducible` run it. Its archive
 comes through `Pack#build`, the one funnel that takes `Manifest::Admitted`, so nothing
 reaches it unchecked. Test images keep `BootImage` and the structural recipe
-under `test/fixtures`, which `Manifest::StructuralFixture` feeds; the production path loads
+under `test/fixtures`, whose empty manifest passes the same `Manifest.admit`; the production path loads
 nothing from `test/fixtures`, and `production_image_test.rb` checks the loaded files.
 
 No production image carries test code, by construction rather than by a caller's
