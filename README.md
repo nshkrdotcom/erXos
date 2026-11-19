@@ -525,7 +525,7 @@ for download yet; build it as above.
   sets it. Set it by hand with FreeBSD's syntax, `date [[[[[cc]yy]mm]dd]HH]MM[.SS]`, for
   example `date 202611161530`. It is not kept across a reboot.
 * `ps` and `top` list your session's processes; `erl` starts an Erlang
-  shell where `erx:domains()` lists every domain of the machine.
+  shell, where `erx:i()` prints the machine, its CPUs and processes.
 * Your home directory is `/root` for root, and `/home/NAME` for other
   users. Files under `/data` and in the home directories survive a power
   cut once they are closed.

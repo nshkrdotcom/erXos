@@ -8819,12 +8819,12 @@ document's "residual risks accepted" paragraph.
   session sees it, the import with its source record, and the `certctl` equivalent. The store's
   "a root only with a consumer" rule gives way to this for the system store; a kiosk or app may
   still pin its own roots.
-* [High] 0.1, Doom from `rc` ([plan.md](docs/plan.md#01-the-preview)): both published media carry `/bin/doom`
-  (`ProductionImage::MediumKind.published`), but `rc` gives a program no window yet, so `doom` typed at the QEMU
-  medium's console prints nothing and ends with status 10, its `EXIT_OPEN` (a file of `/dev` did not open,
-  `examples/doom/doom/doomgeneric/doomgeneric_erxos.c`). Neither the QEMU play with the virtio keyboard nor the
-  Pi's demo loop runs until `rc` starts a program with a window of its own whose `/dev` holds `draw`, `ctl` and
-  `kbd`.
+* [High] 0.1, Doom on the Pi 4 ([plan.md](docs/plan.md#01-the-preview)): `doom` in `rc` on the published card
+  flashes the screen and ends with status 12, the port's `EXIT_WINDOW` (`examples/doom/doom`, erXos's fork): the
+  port takes only a window whose channel is `x8r8g8b8`, and the Pi's firmware framebuffer is `a8r8g8b8`
+  (`erx_fb: framebuffer 1920x1080 stride 7680 a8r8g8b8` on the board). The bytes are laid out alike; the fork's
+  port also takes `a8r8g8b8`, or the display gives a window `x8r8g8b8` whatever the screen's channel. The site and
+  release notes say Doom runs on QEMU until a card with the fix is published. On QEMU it plays.
 * [Medium] bluetooth, the line's service side (docs/design-bluetooth.md "The controller's line"): the line tree,
   `erx_line_fs`, and its keeper, `erx_line`, run in their UART's line group under `erx_uart_sup`, which starts the
   keeper on the root's `line` record with the rate and flow of the grant of the system domain's service named

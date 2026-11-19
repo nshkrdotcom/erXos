@@ -91,9 +91,8 @@
       <li><strong>Reproducible.</strong> The same commit builds
       byte-identical images.</li>
       <li><strong>SSH to <code>rc</code>.</strong> <code>ssh -p 2222
-      root@HOST</code> gives root's command shell, with <code>ps</code> and
-      <code>top</code>, and <code>erl</code>'s <code>erx:domains()</code>
-      lists every domain of the machine. Your key comes from
+      root@HOST</code> gives root's command shell, with <code>ps</code>,
+      <code>top</code> and <code>erl</code>. Your key comes from
       <code>authorized_keys</code> on the card's <code>ERXOS</code> volume,
       which the first boot copies into <code>/root/.ssh/authorized_keys</code>.</li>
       <li><strong>The clock.</strong> On QEMU <code>virt</code> it is read
