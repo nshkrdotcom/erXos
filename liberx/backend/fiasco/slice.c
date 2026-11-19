@@ -9,7 +9,10 @@
  * a run of whole archive entries whose pages are the archive's own, so a map of it
  * reads the archive's bytes (vm.c); its record keeps the run, from which a task's
  * erx_release_entry is answered, since a task holds no index. Only the service thread
- * runs these bodies, one at a time.
+ * runs these bodies, one at a time. The root's file verdicts (verdict.h) are kept here:
+ * the bodies read them and the release entry's check sets them, and
+ * erx_fiasco_image_check, which a root thread runs before its image map, sets them in
+ * that thread.
  */
 
 #include <stdbool.h>
@@ -21,9 +24,11 @@
 #include "erx/pack.h"
 #include "liberx/backend/fiasco/cache.h"
 #include "liberx/backend/fiasco/object.h"
+#include "liberx/backend/fiasco/service.h"
 #include "liberx/backend/fiasco/service_task.h"
 #include "liberx/backend/fiasco/slice.h"
 #include "liberx/backend/fiasco/thread.h"
+#include "liberx/backend/fiasco/verdict.h"
 #include "liberx/backend/fiasco/vm.h"
 
 #define SLICE_PAGE_MASK		((uint64_t)ERX_PAGE_SIZE - 1)
@@ -43,8 +48,10 @@ static bool	slice_holds_image(const slice_fill_t *);
 static int	slice_fill(uint32_t, const void *);
 static size_t	slice_prefix(const uint8_t *, size_t);
 
-/* The file checks' hasher: large for the service's stack, and one body runs at a time. */
+/* The service's hasher for a task's file check: large for its stack, and one body runs at a time. */
 static erx_blake3_ctx_t slice_hasher;
+/* Which archive files have passed their check, for every thread of the root. */
+static erx_fiasco_verdicts_t slice_verdicts;
 
 int
 erx_fiasco_slice_create_body(uint32_t caller, const erx_fiasco_image_slice_request_t *request, uint64_t *slice)
@@ -64,8 +71,28 @@ erx_fiasco_slice_create_body(uint32_t caller, const erx_fiasco_image_slice_reque
 }
 
 /*
- * The entry's file is checked first, its hash, its padding and the image layout
- * erx_pack_file_check reads, since the map shows its pages as they are. The slice is
+ * A root thread's check of the image entry its map names by archive index (the domain
+ * library's runtime image), in that thread, before the request: the file's hash, its
+ * padding and the image layout erx_pack_file_check reads, since the map shows its pages
+ * as they are. The service makes the entry's slice only from the verdict this leaves,
+ * so the one thread that serves every task never hashes a runtime image. Any other map
+ * has nothing to check here, and the service answers it.
+ */
+int
+erx_fiasco_image_check(uint64_t image, uint64_t entry)
+{
+	const erx_pack_view_t *const archive = erx_fiasco_task_archive();
+	erx_blake3_ctx_t hasher;
+	erx_pack_entry_t file;
+
+	if (image != ERX_CAP_NULL || archive == NULL || entry >= archive->header.nentries ||
+	    !erx_pack_entry_at(archive, (uint32_t)entry, &file) || file.kind != ERX_ENTRY_IMAGE)
+		return (ERX_OK);
+	return (erx_fiasco_verdict_check(&slice_verdicts, archive, (uint32_t)entry, &hasher));
+}
+
+/*
+ * The entry's file has its verdict first (erx_fiasco_image_check). The slice is
  * the root's and its one handle goes at once: it is kept (erx_fiasco_object_keep), and
  * with no handle no destroy can name it. The keep comes before the close, which would
  * otherwise end an object with no reference. The root's budget is
@@ -76,12 +103,11 @@ erx_fiasco_slice_image(uint32_t entry, uint32_t *object)
 {
 	const erx_fiasco_image_slice_request_t request = { .caller = ERX_FIASCO_TASK_ROOT, .budget = ERX_CAP_SELF,
 	    .first = entry, .count = 1 };
-	erx_pack_error_t error;
 	slice_fill_t fill;
 	uint64_t handle;
 	int status;
 
-	if (!erx_pack_file_check(erx_fiasco_task_archive(), entry, &slice_hasher, &error))
+	if (!erx_fiasco_verdict_good(&slice_verdicts, entry))
 		return (ERX_ECORRUPT);
 	status = slice_run(&request, &fill);
 	if (status == ERX_OK)
@@ -184,14 +210,14 @@ erx_fiasco_mem_supply_body(uint32_t caller, const erx_fiasco_mem_copy_request_t 
 /*
  * The entry's numbers in the reply and its path's piece in the caller's public UTCB.
  * The offset counts from the slice's first byte, where the task mapped it; the file
- * check is erx_pack_file_check's, the one the root's erx_release_check makes.
+ * check is the root's verdict, erx_pack_file_check's, the one the root's
+ * erx_release_check makes, so a file already checked is not hashed again.
  */
 int
 erx_fiasco_release_entry_body(uint32_t task, const erx_fiasco_release_entry_request_t *request, erx_fiasco_reply_t *reply)
 {
 	const erx_pack_view_t *const archive = erx_fiasco_task_archive();
 	erx_fiasco_thread_record_t *const record = erx_fiasco_task_record(task, (uint32_t)request->caller);
-	erx_pack_error_t error = { .reason = "file", .entry = UINT32_MAX };
 	erx_pack_entry_t base, entry;
 	const uint8_t *path;
 	size_t length, prefix, relative;
@@ -215,8 +241,11 @@ erx_fiasco_release_entry_body(uint32_t task, const erx_fiasco_release_entry_requ
 	relative = length - prefix;
 	if (request->piece > relative)
 		return (ERX_ERANGE);
-	if (request->check == 1 && !erx_pack_file_check(archive, index, &slice_hasher, &error))
-		return (ERX_ECORRUPT);
+	if (request->check == 1) {
+		status = erx_fiasco_verdict_check(&slice_verdicts, archive, index, &slice_hasher);
+		if (status != ERX_OK)
+			return (status);
+	}
 	for (size_t done = 0; done < ERX_UTCB_BYTES_MAX && request->piece + done < relative;
 	    done += sizeof(uint64_t)) {
 		const size_t left = relative - (size_t)request->piece - done;

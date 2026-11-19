@@ -8,7 +8,8 @@
  * thread readies its own record, starts the task's reaper and its dispatcher through
  * the ordinary calls, runs the program, and stops the task with the program's status.
  * A task reaches the service through the gate the root mapped at the pager's slot, and
- * makes its groups here, where the root's own stubs in group.c are not linked.
+ * makes its groups here, where the root's own stubs in group.c are not linked, as it
+ * answers erx_image_map's check here, where the root's in slice.c is not.
  */
 
 #include <stdint.h>
@@ -55,6 +56,15 @@ erx_group_create(uint64_t budget, uint64_t parent, uint64_t *group)
 	if (status == ERX_OK)
 		*group = reply.first;
 	return (status);
+}
+
+/* A task has no file of its own to check before an image map (service.h). */
+int
+erx_fiasco_image_check(uint64_t image, uint64_t entry)
+{
+	(void)image;
+	(void)entry;
+	return (ERX_OK);
 }
 
 /* The service mapped it at the task's creation (time_page.c). */

@@ -77,6 +77,15 @@ uint64_t	erx_fiasco_service_thread(void);
 int	erx_space_create(uint64_t budget, uint64_t parent, uint64_t fault, uint64_t label, uint32_t flags,
 	    uint32_t cap_limit, uint64_t *space) ERX_WARN_UNUSED_RESULT;
 int	erx_image_map(uint64_t space, uint64_t image, uint64_t entry, uint64_t *start) ERX_WARN_UNUSED_RESULT;
+/*
+ * What erx_image_map checks in the calling thread before its request: in the root
+ * (slice.c), an image entry named by archive index has its file checked once, so the
+ * service, which maps it only with a good verdict, never hashes it; ERX_ECORRUPT for a
+ * damaged file, ERX_OK otherwise. A task holds no archive, and its own is always ERX_OK
+ * (task_start.c): the service refuses an archive index from a task, and a slice holds
+ * no image entry.
+ */
+int	erx_fiasco_image_check(uint64_t image, uint64_t entry) ERX_WARN_UNUSED_RESULT;
 int	erx_space_stop(uint64_t space, int64_t status);
 
 /*

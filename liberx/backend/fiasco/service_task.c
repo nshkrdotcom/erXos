@@ -509,14 +509,17 @@ erx_fiasco_task_image_map_body(uint32_t caller, uint64_t space, uint64_t image, 
 	if (task == caller || task_archive == NULL || !erx_pack_entry_at(task_archive, index, &file))
 		return (ERX_EINVAL);
 	bytes = task_archive->bytes + file.data_off;
-	if (file.kind == ERX_ENTRY_IMAGE)
+	/* An image entry is read only once its slice exists, which takes its file's good verdict. */
+	if (file.kind == ERX_ENTRY_IMAGE) {
+		status = task_image_slice(index, &slice);
+		if (status != ERX_OK)
+			return (status);
 		planned = erx_image_plan(bytes, (size_t)file.data_size, &task_plan, &error);
-	else
+	} else {
 		planned = erx_elf_plan(bytes, (size_t)file.data_size, UINT64_MAX, &task_plan, &error);
+	}
 	if (!planned || (task_plan.flags & ERX_IMAGE_FIXED) == 0)
 		return (ERX_EINVAL);
-	if (file.kind == ERX_ENTRY_IMAGE && task_image_slice(index, &slice) != ERX_OK)
-		return (ERX_ENOMEM);
 	for (uint32_t step = 0; step < task_plan.nloads; step++) {
 		const erx_elf_load_t *const load = &task_plan.loads[step];
 		bool loaded;

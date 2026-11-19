@@ -2475,22 +2475,31 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
 
 ## Bugs by subsystem
 
-* [High] Fiasco backend, the watchdog pet stops while the root service checks a domain's image
-  (`liberx/backend/fiasco/service.c` `service_main`, `erx_fiasco_task_image_map_body`,
-  `task_image_slice`, `erx_fiasco_slice_image`, `erx_pack_file_check`): with prepare_loading on a
-  dirty scheduler (edit 76 of docs/design-runtime.md), the website's image under TCG with
-  `-icount shift=9` and `erx.watchdog=1,30,600` still resets at 904 s uptime, its last pet at
-  873 s, about 150 s after `erx_clock` steps the clock, while the dirty CPU scheduler builds the
-  first configured domain (`configured_create_nif`). Every sample of those 30 s is the root
-  service thread hashing the domain's runtime image with BLAKE3 (`erx_pack_file_check` under
-  `erx_fiasco_task_image_map_body`); the normal scheduler is never sampled running. This is the
-  in-browser emulator's 4x JIT-off stall between the clock and the first domain start. Not yet
-  known: what the normal scheduler waits on while the one service thread hashes (a service call of
-  its own, such as a commit, or a lock the domain library's call holds). Find it by sampling the
-  guest through QEMU's monitor (`info registers`, a frame-pointer walk with `x`, and `xp` of the
-  root's `watchdog_pet_ns` to time the stall) against the root ELF's symbols, then take the
-  image's check off the path a normal scheduler waits on, or check each archive file once
-  rather than at every map.
+* [Low] Fiasco backend, a task's first check of a release file still hashes on the service
+  thread (`liberx/backend/fiasco/slice.c` `erx_fiasco_release_entry_body`, `check == 1`), so
+  every other call of every task and of the root waits for that file's hash. The website's
+  domain releases hold only small files (the largest 37 KB), so each wait is short; a release
+  that ships a file of megabytes would stall the system domain's log take, and so its watchdog
+  pet, as the runtime image's check did. The task could hash its file over its own mapping of
+  the slice, with the file's hash in the reply, and the verdict then be the task's own.
+* [Medium] Fiasco backend, no test reaches the service's refusal of an image entry without a
+  good verdict (`liberx/backend/fiasco/slice.c` `erx_fiasco_slice_image`, and
+  `erx_fiasco_task_image_map_body` making the slice before `erx_image_plan` reads the entry):
+  the root's `erx_image_map` checks first, so no suite sends the service an unchecked image
+  entry, and deleting either guard fails nothing. A native_space case that calls
+  `erx_fiasco_service_call(ERX_FIASCO_CALL_IMAGE_MAP)` directly for a damaged image entry and
+  expects `ERX_ECORRUPT`, seeded once with the guard removed, would pin both.
+* [Medium] Fiasco backend, the website's image under TCG with `-icount shift=9` and
+  `erx.watchdog=1,30,600` reaches the rc banner, but none of its configured domains reports
+  ready in time: network and storage are stopped and restarted from 1087 s uptime until each is
+  left down at about 1600 s, and each stop holds the watchdog pet off for 21 to 26 s, within 5 s
+  of the deadline. QEMU monitor samples of the longest gap (25.5 s, ending at 1088 s) show the
+  root service in the stopped task's teardown (`task_stop_tree`, `erx_fiasco_vm_task_close`,
+  `erx_backend_vm_table_clear`, `apply_plan`) and the domain's own threads; what the normal
+  scheduler waits on there is not yet known (recording each root thread's current service call
+  or umtx wait where the monitor reads it, as found the log take behind the image check, would
+  show it). Decide whether the ready deadline should scale with the
+  machine, and take the teardown off the path the normal scheduler waits on.
 * [Medium] runtime, `test/integration/runtime_hosted_smoke_test.rb` fails twice on the hosted
   runtime: `gen_tcp:listen(0, [])` raises `undefined function erx_gen_tcp:listen/2` where the
   test expects `{error,enotsup}`, and `erx_device.o` imports `aligned_alloc`, which the seam's

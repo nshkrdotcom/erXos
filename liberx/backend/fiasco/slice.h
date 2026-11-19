@@ -28,7 +28,9 @@ int	erx_fiasco_slice_create_body(uint32_t caller, const erx_fiasco_image_slice_r
  * The service's own slice of one image entry, which erx_image_map maps every space's
  * read-only segments of the entry from: charged to the root's budget, named by no
  * handle and kept (erx_fiasco_object_keep), so it lasts until the machine ends, and
- * its pages made coherent for instruction fetch. Its record's index in *object; a file whose check fails ERX_ECORRUPT, or a create's refusal.
+ * its pages made coherent for instruction fetch. Its record's index in *object; an
+ * entry without a good verdict ERX_ECORRUPT, or a create's refusal. It hashes nothing:
+ * the root's erx_image_map checked the file first (erx_fiasco_image_check, service.h).
  */
 int	erx_fiasco_slice_image(uint32_t entry, uint32_t *object) ERX_WARN_UNUSED_RESULT;
 /* One request of a copy between two memory objects the caller holds: erx_fiasco_vm_object_copy's results. */

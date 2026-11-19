@@ -331,8 +331,10 @@ erx_image_map(uint64_t space, uint64_t image, uint64_t entry, uint64_t *start)
 	const erx_fiasco_image_map_request_t request = { .caller = erx_fiasco_thread_self()->index, .space = space,
 	    .image = image, .entry = entry };
 	erx_fiasco_reply_t reply;
-	const int status = erx_fiasco_service_call(ERX_FIASCO_CALL_IMAGE_MAP, &request, sizeof(request), &reply);
+	int status = erx_fiasco_image_check(image, entry);
 
+	if (status == ERX_OK)
+		status = erx_fiasco_service_call(ERX_FIASCO_CALL_IMAGE_MAP, &request, sizeof(request), &reply);
 	if (status == ERX_OK)
 		*start = reply.first;
 	return (status);

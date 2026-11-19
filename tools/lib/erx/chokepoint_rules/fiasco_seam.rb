@@ -133,6 +133,8 @@ module Erx
         liberx/backend/fiasco/umtx.h
         liberx/backend/fiasco/umtx_table.c
         liberx/backend/fiasco/umtx_table.h
+        liberx/backend/fiasco/verdict.c
+        liberx/backend/fiasco/verdict.h
         liberx/backend/fiasco/watchdog_thread.c
         liberx/backend/fiasco/watchdog_thread.h
         liberx/backend/fiasco/vm.c
