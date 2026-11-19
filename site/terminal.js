@@ -34,8 +34,13 @@ const CPU_CORES = 1;
 const CMDLINE = "erx.watchdog=1,120,600";
 // ?jit=0 in the page's address runs v64 without its JIT, for telling a browser
 // that fails while the JIT compiles guest code from one that fails otherwise.
+// On a device whose main pointer is a finger (a phone or tablet) the JIT is
+// off unless ?jit=1 asks for it: iOS's tab does not survive the JIT's boot.
 // The arm64 core reads only its jit_switches, so the switch is a64_page.
-function jit_disabled() { return new URLSearchParams(location.search).get("jit") === "0"; }
+function jit_disabled() {
+    const asked = new URLSearchParams(location.search).get("jit");
+    return asked === "0" || (asked !== "1" && matchMedia("(pointer: coarse)").matches);
+}
 // v64 compiles each guest code page it finds hot into a WebAssembly module
 // of its own, and each module costs the browser far more than its code; at
 // v64's defaults a phone's tab runs out of memory during the boot. On a
