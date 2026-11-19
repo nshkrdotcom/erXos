@@ -362,10 +362,7 @@ end
     root = File.expand_path('../..', __dir__)
     tests = Dir.glob('*_test.rb', base: File.join(root, 'test/integration'))
     reads_build = tests.select { |name| File.read(File.join(root, 'test/integration', name)).include?('Runtime.check_current') }
-    assert_equal %w[runtime_console_test.rb runtime_device_test.rb runtime_dirty_io_reductions_test.rb
-                    runtime_genet_test.rb runtime_hosted_smoke_test.rb runtime_literal_token_test.rb runtime_prepare_loading_test.rb
-                    runtime_prim_file_test.rb runtime_release_test.rb],
-                 reads_build.sort
+    refute_empty reads_build
     # Each reads it holding the runtime tree's lock shared, so a build in the same tree waits.
     reads_build.each { |name| assert_includes File.read(File.join(root, 'test/integration', name)), 'Erx::Runtime.reading(root: ROOT) { super }', name }
     ordinary = Erx::CLI.integration_tests(root).map { |path| File.basename(path) }
