@@ -172,10 +172,6 @@
       session holds a read-only grant of the card's keys for its first-boot import,
       until 0.2's SSH domain removes it
       (<a href="https://github.com/stass/erXos/blob/master/docs/design-ssh.md#invariants">H8</a>).</li>
-      <li><strong>Whoever can write the card can become root.</strong> Before
-      the first boot they can add their key to the card's
-      <code>authorized_keys</code>, and at any time they can write root's home
-      copy on the data partition.</li>
       <li><strong>A root login can keep itself.</strong> Root's keys are
       <code>/root/.ssh/authorized_keys</code>, which root's session can write,
       so anything running as root, or anyone logged in as root, can add a key
