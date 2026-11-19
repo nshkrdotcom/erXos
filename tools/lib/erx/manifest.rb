@@ -15,6 +15,8 @@ module Erx
   module Manifest
     class Unsupported < Invalid; end
 
+    # A deep, frozen copy of the build's context, string keys in sorted order, so nothing
+    # the build changes after making the context changes what was checked.
     module Snapshot
       module_function
 
@@ -38,35 +40,6 @@ module Erx
           raise Invalid.new('context contains an unsupported value', property: 'context', field: 'input')
         end
       end
-
-      # Length framing preserves arbitrary original notice/path bytes without
-      # treating a binary notice as JSON text or relying on hash insertion order.
-      def digest(value)
-        hash = Digest::SHA256.new
-        append(hash, value)
-        hash.hexdigest.freeze
-      end
-
-      def append(hash, value)
-        case value
-        when Hash
-          hash << "h#{value.size}:"
-          value.sort_by { |key, _item| key.b }.each do |key, item|
-            append(hash, key)
-            append(hash, item)
-          end
-        when Array
-          hash << "a#{value.size}:"
-          value.each { |item| append(hash, item) }
-        when String
-          hash << "s#{value.bytesize}:" << value.b
-        when Integer
-          hash << "i#{value};"
-        when TrueClass then hash << 't'
-        when FalseClass then hash << 'f'
-        when NilClass then hash << 'n'
-        end
-      end
     end
 
     # Context is supplied by the build's checked artifact/platform boundaries,
@@ -79,10 +52,10 @@ module Erx
     # only in a development build (docs/design-packaging.md, "The SDK").
     class Context
       attr_reader :build_kind, :platform, :catalog, :root_entry, :artifacts,
-                  :provenance, :sizing, :device_kinds, :development_key, :fingerprint
+                  :provenance, :device_kinds, :development_key
 
       def initialize(build_kind:, platform:, catalog:, root_entry:, artifacts:,
-                     provenance:, device_kinds:, sizing: nil, development_key: nil)
+                     provenance:, device_kinds:, development_key: nil)
         build_kind = BuildKind.fetch(build_kind)
         unless platform.is_a?(Hash) && catalog.is_a?(Array) && artifacts.is_a?(Hash) &&
                provenance.is_a?(Array) && root_entry.is_a?(Integer) && root_entry.between?(0, catalog.size - 1) &&
@@ -114,15 +87,9 @@ module Erx
         @root_entry = root_entry
         @artifacts = Snapshot.copy(artifacts)
         @provenance = Snapshot.copy(notices)
-        @sizing = Snapshot.copy(sizing)
         @device_kinds = Snapshot.copy(device_kinds)
         @development_key = development_key&.b&.freeze
         validate_catalog_shape
-        @fingerprint = Snapshot.digest('build_kind' => @build_kind, 'platform' => @platform,
-                                        'catalog' => @catalog, 'root_entry' => @root_entry,
-                                        'artifacts' => @artifacts, 'provenance' => @provenance,
-                                        'sizing' => @sizing, 'device_kinds' => @device_kinds,
-                                        'development_key' => @development_key&.unpack1('H*'))
         freeze
       end
 
@@ -185,28 +152,21 @@ module Erx
     class StructuralFixture
       attr_reader :bytes, :report
 
-      def self.prepare(source:, codec:, context:, planner: nil, consumers: {})
+      def self.prepare(source:, codec:, context:)
         raise Invalid.new('checked context required', property: 'context', field: 'input') unless context.is_a?(Context)
         parsed = Frontend.parse(source, version: codec.constant('manifest_version'))
-        checker = EmptyNative.new(parsed, codec: codec, context: context,
-                                  planner: planner, consumers: consumers)
-        normalized, report = checker.check
+        normalized, report = EmptyNative.new(parsed, codec: codec, context: context, planner: nil).check
         bytes = Encoder.new(codec).encode(normalized)
         codec.open('manifest', bytes)
-        new(bytes: bytes, report: report, context: context)
+        new(bytes: bytes, report: report)
       end
 
-      def initialize(bytes:, report:, context:)
+      def initialize(bytes:, report:)
         @bytes = bytes.freeze
         @report = Snapshot.copy(report)
-        @fingerprint = context.fingerprint
         freeze
       end
       private_class_method :new
-
-      def matches?(context)
-        context.is_a?(Context) && context.fingerprint == @fingerprint
-      end
     end
 
     # The root startup rule on Fiasco: a declared sanity check, not a proof. It compares
@@ -377,40 +337,33 @@ module Erx
     end
 
     # Phase 1's manifest check: Check over a manifest with the system domain and
-    # its configured domains, and the declared root startup rule. This factory alone mints the
-    # private publication token, so a structural fixture cannot pass for it.
+    # its configured domains, and the declared root startup rule. Its constructor is private,
+    # so only this factory makes one, and a structural fixture cannot pass for it.
     class Admitted
       attr_reader :bytes, :report
 
-      def self.admit(source:, codec:, context:, planner: nil, consumers: {})
+      def self.admit(source:, codec:, context:, planner: nil)
         raise Invalid.new('checked context required', property: 'context', field: 'input') unless context.is_a?(Context)
         RootStartup.declared(context.platform)
         parsed = Frontend.parse(source, version: codec.constant('manifest_version'))
-        checker = Check.new(parsed, codec: codec, context: context,
-                            planner: planner, consumers: consumers)
+        checker = Check.new(parsed, codec: codec, context: context, planner: planner)
         normalized, report = checker.check
         bytes = Encoder.new(codec).encode(normalized)
         codec.open('manifest', bytes)
         checker.check_plans(bytes, normalized)
-        new(bytes: bytes, report: report, context: context)
+        new(bytes: bytes, report: report)
       end
 
-      def initialize(bytes:, report:, context:)
+      def initialize(bytes:, report:)
         @bytes = bytes.freeze
         @report = Snapshot.copy(report)
-        @fingerprint = context.fingerprint
         freeze
       end
       private_class_method :new
-
-      def matches?(context)
-        context.is_a?(Context) && context.fingerprint == @fingerprint
-      end
     end
 
-    def self.admit(source:, codec:, context:, planner: nil, consumers: {})
-      Admitted.admit(source: source, codec: codec, context: context,
-                    planner: planner, consumers: consumers)
+    def self.admit(source:, codec:, context:, planner: nil)
+      Admitted.admit(source: source, codec: codec, context: context, planner: planner)
     end
 
     # The artifact names the source's domain rows and session templates give as
@@ -474,12 +427,11 @@ module Erx
       # (erx_pkg_header:signer/0), which no signer row may take.
       DEVELOPMENT_SIGNER = 'development'
 
-      def initialize(source, codec:, context:, planner:, consumers:)
+      def initialize(source, codec:, context:, planner:)
         @source = source
         @codec = codec
         @context = context
         @planner = planner
-        @consumers = consumers
         @reader = codec.schema.readers.find { |item| item.name == 'manifest' }
         @shares = records('share').to_h { |record| [record.name, share_record(record)] }
         @indices = TABLES.keys.to_h do |kind|
@@ -576,15 +528,11 @@ module Erx
         %w[system_queue peer_held].each do |key|
           invalid('limit must be positive', 4, "machine.#{key}") unless header.fetch(key).positive?
         end
-        report = { 'structure' => 'validated',
-                   'executable' => 'supplied_catalog', 'provenance' => 'supplied_context',
-                   'policy_admission' => 'unsupported',
-                   'child_plan_instances' => 0, 'dynamic_domain_reservation' => 0,
+        report = { 'child_plan_instances' => 0,
                    'root_image_private_bytes' => root_private_bytes, 'root_memory' => root_memory,
                    'dma_memory' => device_memory, 'promised_memory' => promised,
                    'effective_system_cpuset' => system_cpus,
-                   'effective_users_cpuset' => users_cpus,
-                   'context_sha256' => @context.fingerprint }.merge(claims)
+                   'effective_users_cpuset' => users_cpus }.merge(claims)
         [{ 'header' => header, 'tables' => rows }, report]
       end
 
@@ -1199,7 +1147,7 @@ module Erx
 
       def check_and_place(_rows, root_memory:, baseline:, max_domains:) = nil
 
-      def claims = { 'mode' => 'empty_native', 'root_startup' => 'unsupported' }
+      def claims = {}
     end
 
     # The manifest check (docs/design-fiasco.md, "The Phase 1 manifest check"): a
@@ -1389,7 +1337,7 @@ module Erx
       end
 
       def claims
-        { 'mode' => 'check', 'root_startup' => 'declared', 'child_plan_instances' => records('domain').size,
+        { 'root_startup' => 'declared', 'child_plan_instances' => records('domain').size,
           'root_image_loadable_bytes' => root_loadable_bytes,
           'packages' => @packages.map { |package| package.to_h.except(:memory).transform_keys(&:to_s) },
           'signers' => records('signer').map(&:name).sort,

@@ -19,15 +19,11 @@ class ManifestTest < Minitest::Test
     Erx::Manifest.structural_fixture(source: source, codec: @codec, context: context)
   end
 
-  def test_empty_native_configuration_has_no_planning_or_dynamic_reservation
+  def test_empty_native_configuration_has_no_planning
     result = fixture
     assert_instance_of Erx::Manifest::StructuralFixture, result
-    assert result.matches?(@context)
     assert result.bytes.frozen?
     assert_equal 0, result.report.fetch('child_plan_instances')
-    assert_equal 0, result.report.fetch('dynamic_domain_reservation')
-    assert_equal 'unsupported', result.report.fetch('root_startup')
-    assert_equal 'unsupported', result.report.fetch('policy_admission')
     view = @codec.open('manifest', result.bytes)
     assert_equal 0, view.count('domains')
     assert_equal 0, view.count('partial_boot')
@@ -45,16 +41,8 @@ class ManifestTest < Minitest::Test
     assert_operator device.fetch('path').fetch('offset'), :<, device.fetch('compatible').fetch('offset')
   end
 
-  def test_catalog_change_invalidates_fixture_binding
-    arguments = ManifestContextFixture.arguments(@codec)
-    arguments.fetch(:catalog).last.fetch('source')['sha256'] = 'b' * 64
-    other = Erx::Manifest::Context.new(**arguments)
-    refute fixture.matches?(other)
-  end
-
   # A boot script's artifact records what the script starts, which property 18 reads, so
-  # a context whose release artifact records nothing is refused, and one whose script
-  # starts other applications is a different context.
+  # a context whose release artifact records nothing is refused.
   def test_a_release_artifact_records_what_its_script_starts
     arguments = ManifestContextFixture.arguments(@codec)
     artifacts = arguments.fetch(:artifacts)
@@ -62,9 +50,6 @@ class ManifestTest < Minitest::Test
       Erx::Manifest::Context.new(**arguments, artifacts: artifacts.merge('session' => artifacts.fetch('session').except('started')))
     end
     assert_equal %w[context input], [error.property, error.field]
-    other = Erx::Manifest::Context.new(**arguments, artifacts: artifacts.merge('session' => artifacts.fetch('session')
-                                                                                             .merge('started' => %w[kernel])))
-    refute_equal @context.fingerprint, other.fingerprint
   end
 
   def test_notice_binding_accepts_original_non_utf8_bytes_without_exposing_them

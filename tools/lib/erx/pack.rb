@@ -86,9 +86,6 @@ module Erx
                                         artifacts: artifacts, provenance: records,
                                         device_kinds: DeviceKinds.context_rows(@root))
         checked = Manifest.admit(source: manifest_source, codec: @codec, context: context, planner: @domain_planner)
-        unless checked.is_a?(Manifest::Admitted) && checked.matches?(context)
-          raise Error, 'system manifest has not passed the manifest check for this pack'
-        end
         generated = { generated_path => checked.bytes, notices_path => @provenance.notices(records, budget: budget) }
         rows.each do |row|
           next unless row.fetch('source').fetch('kind') == 'generated'

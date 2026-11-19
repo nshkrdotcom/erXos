@@ -58,9 +58,6 @@ module StructuralPackFixture
                                          provenance: provenance, device_kinds: ManifestContextFixture.device_kinds)
     source = File.binread(File.join(root, 'test/fixtures/manifest_empty.txt'))
     structural = Erx::Manifest.structural_fixture(source: source, codec: codec, context: context)
-    unless structural.is_a?(Erx::Manifest::StructuralFixture) && !structural.is_a?(Erx::Manifest::Admitted) && structural.matches?(context)
-      raise Erx::Error, 'structural fixture is not bound to its exact catalog'
-    end
     manifest_path = File.join(directory, 'manifest.bin')
     notices_path = File.join(directory, 'NOTICES')
     File.binwrite(manifest_path, structural.bytes)
@@ -92,9 +89,7 @@ module StructuralPackFixture
     report = { 'kind' => 'structural_test_fixture', 'path' => output_path, 'single_path' => single_path,
                'single_sha256' => Digest::SHA256.file(single_path).hexdigest,
                'sha256' => Digest::SHA256.file(output_path).hexdigest, 'size' => File.size(output_path),
-               'structure' => 'validated', 'executable' => 'validated', 'provenance' => 'validated',
-               'root_startup' => 'unsupported', 'policy_admission' => 'unsupported',
-               'child_plan_instances' => 0, 'entries' => rows.size,
+               'entries' => rows.size,
                'manifest_sha256' => Digest::SHA256.hexdigest(structural.bytes),
                'configuration_sha256' => Digest::SHA256.hexdigest(source),
                'manifest' => structural.report }

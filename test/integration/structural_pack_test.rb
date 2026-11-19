@@ -50,10 +50,6 @@ class StructuralPackTest < Minitest::Test
     assert File.binread(left.fetch('single_path')).end_with?(File.binread(left.fetch('path')))
     assert_equal left.fetch('sha256'), right.fetch('sha256')
     assert_equal left.fetch('manifest_sha256'), right.fetch('manifest_sha256')
-    assert_equal first.fetch('context').fingerprint, second.fetch('context').fingerprint
-    %w[structure executable provenance].each { |check| assert_equal 'validated', left.fetch(check) }
-    %w[root_startup policy_admission].each { |check| assert_equal 'unsupported', left.fetch(check) }
-    assert_equal 0, left.fetch('child_plan_instances')
     assert_equal 3, left.fetch('entries')
     bytes = File.binread(left.fetch('path'))
     assert_equal "ERXPACK\0".b, bytes.byteslice(0, 8)
@@ -107,7 +103,6 @@ class StructuralPackTest < Minitest::Test
                               artifacts: { 'root' => { 'kind' => 'executable', 'entry' => 2 } }.merge(ManifestContextFixture.images),
                               manifest_source: ManifestContextFixture.domainless(Erx::ProductionImage.sessionless_manifest(@root, platform: Erx::Platform.development(@root))),
                               output: output)
-    assert_equal 'check', result.fetch('manifest').fetch('mode')
     assert_equal 'declared', result.fetch('manifest').fetch('root_startup')
     bytes = File.binread(output)
     assert_equal "ERXPACK\0".b, bytes.byteslice(0, 8)

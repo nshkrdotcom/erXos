@@ -135,7 +135,6 @@ class ManifestCheckTest < Minitest::Test
   def test_the_real_development_manifest_is_accepted
     result = admit
     assert_instance_of Erx::Manifest::Admitted, result
-    assert result.matches?(@context)
     assert result.bytes.frozen?
     view = @codec.open('manifest', result.bytes)
     assert_equal 4, view.count('domains')
@@ -149,7 +148,6 @@ class ManifestCheckTest < Minitest::Test
   # display unit's, which lists every transport on the gpu's register page.
   def test_the_real_site_manifest_is_accepted
     result = admit(site_manifest)
-    assert result.matches?(@context)
     view = @codec.open('manifest', result.bytes)
     assert_equal 2, view.count('domains')
     assert_equal 5, view.count('devices')
@@ -173,15 +171,10 @@ class ManifestCheckTest < Minitest::Test
     Erx::Platform.development(ROOT).site_manifest_source(ROOT)
   end
 
-  def test_the_report_claims_only_what_was_checked
+  def test_the_report_carries_the_checked_numbers
     report = admit.report
-    assert_equal 'check', report.fetch('mode')
     assert_equal 'declared', report.fetch('root_startup')
-    assert_equal 'supplied_catalog', report.fetch('executable')
-    assert_equal 'supplied_context', report.fetch('provenance')
-    assert_equal 'unsupported', report.fetch('policy_admission')
     assert_equal 4, report.fetch('child_plan_instances')
-    assert_equal 0, report.fetch('dynamic_domain_reservation')
     assert_equal @platform.fetch('fiasco_reserve'), report.fetch('fiasco_reserve')
     assert_equal @platform.fetch('ram_bytes'), report.fetch('ram_bytes')
     assert_equal 4096, report.fetch('root_image_loadable_bytes')
@@ -198,8 +191,7 @@ class ManifestCheckTest < Minitest::Test
   end
 
   def test_a_partial_boot_flag_without_partial_boot_records_is_accepted
-    source = partial_boot
-    assert_equal 'check', admit(source).report.fetch('mode')
+    assert_equal 0, admit(partial_boot).report.fetch('child_plan_instances')
   end
 
   def test_a_partial_boot_has_no_system_image

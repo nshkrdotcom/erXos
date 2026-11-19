@@ -296,8 +296,7 @@ module Erx
                               .check_reproducible(directory: Dir.mktmpdir('production-', parent))
       Terminal.puts("production image: byte-identical; #{report.fetch('report')}")
       claims = report.fetch('manifest')
-      Terminal.puts("root_startup: #{claims.fetch('root_startup')}; policy_admission: #{claims.fetch('policy_admission')}; " \
-                    "child_plan_instances: #{claims.fetch('child_plan_instances')}")
+      Terminal.puts("root_startup: #{claims.fetch('root_startup')}; child_plan_instances: #{claims.fetch('child_plan_instances')}")
       0
     end
 

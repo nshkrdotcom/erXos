@@ -114,9 +114,7 @@ class ManifestDomainsTest < Minitest::Test
   end
 
   def test_the_report_counts_the_planned_domains
-    report = admit.report
-    assert_equal 'check', report.fetch('mode')
-    assert_equal 2, report.fetch('child_plan_instances')
+    assert_equal 2, admit.report.fetch('child_plan_instances')
   end
 
   # Property 12's view: the packed manifest itself, which the library's own builder
@@ -416,7 +414,7 @@ class ManifestDomainsTest < Minitest::Test
   # The order places every server before its clients and breaks ties by name order.
   def test_the_boot_order_puts_servers_first_and_names_break_ties
     parsed = Erx::Manifest::Frontend.parse(@source, version: @codec.constant('manifest_version'))
-    check = Erx::Manifest::Check.new(parsed, codec: @codec, context: @context, planner: nil, consumers: {})
+    check = Erx::Manifest::Check.new(parsed, codec: @codec, context: @context, planner: nil)
     none = @codec.constant('mf_none')
     order = check.send(:boot_order, [{}, {}, {}, {}], [[0, 2], [2, 1], [3, none]])
     assert_equal [1, 2, 0, 3], order.map { |row| row.fetch('domain') }
@@ -969,7 +967,7 @@ class ManifestDomainsTest < Minitest::Test
     check = lambda do |sb|
       parsed = Erx::Manifest::Frontend.parse(with_windows(sb: sb).sub('flags development', 'flags none'),
                                              version: @codec.constant('manifest_version'))
-      release.new(parsed, codec: @codec, context: context, planner: @planner, consumers: {}).check
+      release.new(parsed, codec: @codec, context: context, planner: @planner).check
     end
     check.call("  parameter pixels 4096\n")
     error = assert_raises(Erx::Manifest::Invalid) { check.call(front) }
@@ -1212,7 +1210,7 @@ class ManifestDomainsTest < Minitest::Test
     check = lambda do |grants|
       parsed = Erx::Manifest::Frontend.parse(with_display(served: data, grants: grants).sub('flags development', 'flags none'),
                                              version: @codec.constant('manifest_version'))
-      release.new(parsed, codec: @codec, context: context, planner: @planner, consumers: {}).check
+      release.new(parsed, codec: @codec, context: context, planner: @planner).check
     end
     check.call([system])
     error = assert_raises(Erx::Manifest::Invalid) { check.call([system, root]) }
