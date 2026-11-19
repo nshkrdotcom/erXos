@@ -246,9 +246,9 @@
                 %% connected once it has had the line, and only then started again when
                 %% it ends.
                 login = none :: none | starting | {started | connected, pos_integer()},
-                %% The monotonic seconds of the login's restarts after a timeout, only
-                %% those still within the intensity's window (login_timed_out/1).
-                login_restarts = [] :: [integer()],
+                %% The login's restarts after a timeout since its session last reported
+                %% ready (login_timed_out/1).
+                login_restarts = [] :: [erx_domain_core:restart()],
                 %% The process behind every session's console facet (facet_endpoint/1).
                 endpoint :: pid(),
                 %% The domain a pid belongs to (config()).
@@ -1247,9 +1247,10 @@ ask_service(Call) ->
 %% itself by now (take_login_line/2), and otherwise once it does. A session whose domain
 %% pid has ended by now leaves nothing to show, and a login's is a start that failed. A
 %% refusal is a start that failed (start_failed/3), but a login's timeout starts it
-%% again within an intensity (login_timed_out/1). A login at a line whose principal
-%% has no session template (no_template), or in a runtime with no domain service or
-%% library (enotsup), starts nothing and says nothing.
+%% again within an intensity (login_timed_out/1), whose count of timeouts in a row a
+%% login session that reported ready ends. A login at a line whose principal has no
+%% session template (no_template), or in a runtime with no domain service or library
+%% (enotsup), starts nothing and says nothing.
 session_started(Why, Principal, {ok, Domain}, State) ->
     Id = erx_domain:id(Domain),
     [Name | _] = binary:split(atom_to_binary(erx_domain:node(Domain)), <<"@">>),
@@ -1257,7 +1258,8 @@ session_started(Why, Principal, {ok, Domain}, State) ->
     case {is_process_alive(Pid), Why} of
         {true, login} ->
             Named = named(Id, #{name => Name, principal => Principal, domain_pid => Pid}, State),
-            take_login_line(Id, redraw_if_listed(Id, Named#state{login = {started, Id}}));
+            Ready = Named#state{login = {started, Id}, login_restarts = []},
+            take_login_line(Id, redraw_if_listed(Id, Ready));
         {true, menu} ->
             redraw_if_listed(Id, named(Id, #{name => Name, principal => Principal, domain_pid => Pid}, State));
         {false, login} ->
@@ -1275,14 +1277,16 @@ session_started(Why, _Principal, {error, Reason}, State) ->
 %% The login's session did not report ready within the machine's boot timeout, as on
 %% a machine merely slower than its manifest allows for: it is started again, as the
 %% domain service restarts a configured domain, within a start row's default intensity
-%% (abi/manifest.txt, start_restarts_default within start_period_default_s), whose
-%% window grows with that timeout as a configured row's does (erx_domain_core:intensity/3),
-%% so a login that hangs is given up; each start is bounded by the timeout, and past the
-%% intensity the start has failed as any other does.
+%% (abi/manifest.txt, start_restarts_default), which counts restarts after a timeout
+%% until a login session reports ready, as for a configured row
+%% (erx_domain_core:intensity/4), so a login that hangs every time is given up after
+%% that many restarts in a row, whatever the boot timeout; each start is bounded by the
+%% timeout, and past the intensity the start has failed as any other does. The login
+%% counts only timeouts, so the intensity's period, which ages other restarts, never
+%% applies to it.
 login_timed_out(State = #state{login_restarts = Earlier}) ->
-    Intensity = #{restarts => ?ERX_START_RESTARTS_DEFAULT, period_s => ?ERX_START_PERIOD_DEFAULT_S,
-                  boot_timeout_s => erx_build:boot_timeout()},
-    case erx_domain_core:intensity(Earlier, Intensity, erlang:monotonic_time(second)) of
+    Intensity = #{restarts => ?ERX_START_RESTARTS_DEFAULT, period_s => ?ERX_START_PERIOD_DEFAULT_S},
+    case erx_domain_core:intensity(Earlier, Intensity, timed_out, erlang:monotonic_time(second)) of
         {yes, Kept} ->
             logger:notice("erx_console: the login session did not start in time; starting it again"),
             start_login(State#state{login_restarts = Kept});

@@ -1447,7 +1447,7 @@ ended(Id, End, Where, #{lib := Lib, core := Core, links := Links} = State) ->
             {Unlinked, Actions} = erx_domain_links:ended(Id, Info, Links),
             Told = unprovide(Origin, Id, perform(Actions, State#{core := Ended, links := Unlinked})),
             _ = retire(Lib, Id),
-            release(restart(Origin, Id, Info, Where, waiter_ended(Id, Life, Info, Told)))
+            release(restart(Origin, Id, Life, Info, Where, waiter_ended(Id, Life, Info, Told)))
     end.
 
 %% A crash's slogan, from its crash area, which goes at the retire after it.
@@ -1485,16 +1485,16 @@ disconnect(Lib, Connection) ->
 %% the failure table): the domain's name and id, Info as in {domain_down, Id, Info}, for a
 %% fault where it struck (Where, erx_domain_core:fault_where/2), and whether the service
 %% starts it again or, its restart intensity spent, leaves it down, which is a warning,
-%% since nothing starts it again. The restart intensity bounds the lines.
-restart(request, _Id, _Info, _Where, State) ->
+%% since nothing starts it again. The restart intensity bounds the lines' rate. Life is the
+%% domain's at its end, which says how far its boot got (erx_domain_core:restart/5).
+restart(request, _Id, _Life, _Info, _Where, State) ->
     State;
-restart({session, _Template}, _Id, _Info, _Where, State) ->
+restart({session, _Template}, _Id, _Life, _Info, _Where, State) ->
     State;
-restart({configured, Row}, Id, Info, Where,
-        #{core := Core, configured := Configured, boot_timeout := BootTimeout} = State) ->
+restart({configured, Row}, Id, Life, Info, Where, #{core := Core, configured := Configured} = State) ->
     #{Row := #{name := Name, restarts := Restarts, restart_period_s := Period} = Entry} = Configured,
-    Intensity = #{restarts => Restarts, period_s => Period, boot_timeout_s => BootTimeout div 1000},
-    case erx_domain_core:restart(Row, Intensity, erlang:monotonic_time(second), Core) of
+    Intensity = #{restarts => Restarts, period_s => Period},
+    case erx_domain_core:restart(Row, Intensity, Life, erlang:monotonic_time(second), Core) of
         {yes, Next} ->
             log_end(notice, Name, Id, Info, Where, "restarting it"),
             start_configured(Entry, State#{core := Next});

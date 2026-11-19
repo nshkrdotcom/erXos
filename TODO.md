@@ -4497,7 +4497,7 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   down, so its ended record keeps its view slot and its principal's domain count, and
   `retire/1` needs an id nobody heard. Keep a reported flag per record in the view, set when
   the report is sent, and have `register/0` send every ended record not yet reported.
-* [Low] domain service, `erx_domain_srv:restart/4` and `liberx/system/dom_boot_view.c`: a
+* [Low] domain service, `erx_domain_srv:restart/6` and `liberx/system/dom_boot_view.c`: a
   configured domain the manifest marks `required` (`mf_domain_flags`, `abi/manifest.txt`) is
   left down beyond its restart intensity like any other, where design-system.md "Boot failure"
   ends the machine. The boot view's configured row carries no flags, so `erx_domain_lib`'s
@@ -4590,18 +4590,13 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   decides nothing a test can see, since `attenuated/2` refuses every name of the table too.
   Missing besides: `erx_domain:grant/4`. Init waits at most 5 s for the answer and then
   runs with none.
-* [Medium] starter and console, `erx_starter_row:init/1` and `erx_console:login_timed_out/1`:
-  a start-table row's supervisor counts its `restarts` within `restart_period_s` as OTP does,
-  and a session boot that hangs ends its keeper (`{refused, timeout}`) only after the
-  machine's boot timeout, so on a machine whose boot timeout is 120 s or more (the website's
-  is 600 s) a start row of 5 in 600 s restarts a hung session without end. The domain service
-  and the login count in `erx_domain_core:intensity/3`'s widened window instead. The login
-  reads the boot timeout through `erx_build:boot_timeout/0` from the system manifest, beside
-  the domain service's own reading, and falls back to the default if that read fails, which
-  narrows its window again. It cannot ask the service from its own process, which the service
-  calls. Holding the property by construction would cover all three counters: leave a row
-  down after `restarts` consecutive boot timeouts with no ready report between them, whatever
-  their spacing, and count only ends after ready in the period.
+* [Medium] starter, `erx_starter_row:init/1` and `erx_starter_keeper`: a start-table row's
+  supervisor counts its `restarts` within `restart_period_s` as OTP does, and a session boot
+  that hangs ends its keeper (`{refused, timeout}`) only after the machine's boot timeout, so
+  on a machine whose boot timeout is 120 s or more (the website's is 600 s) a start row of 5
+  in 600 s restarts a hung session without end. Configured rows and the console's login
+  count restarts after a timeout in a row until a boot reports ready
+  (`erx_domain_core:intensity/4`); a start row's keeper would count the same way.
 * [Medium] domains, `liberx/system/dom_life.c` (`life_connections`) and design-domains'
   limits table: the table says a domain's `connections` counts the system connection,
   and `life_connections` leaves it out of the quota, which the development manifest's
@@ -4638,7 +4633,7 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   library's view does not expose yet. Expose it in `configured/0` (or a principal entry) and
   use it.
 * [Medium] domain service, `erlang/apps/erx_domain/src/erx_domain_srv.erl`
-  (`start_configured/2`, `restart/2`): a configured domain that fails to start, or ends
+  (`start_configured/2`, `restart/6`): a configured domain that fails to start, or ends
   beyond its restart intensity, is only logged, also when the manifest marks it `required`,
   which `configured/0` does not report yet; design-system.md has a required domain end the
   machine as a fault would. Report the mark and end the machine on it.

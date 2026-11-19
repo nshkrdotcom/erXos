@@ -193,10 +193,10 @@
 # hash tree; the packer takes its extent from the image it builds
 # (ReleaseMedium.image), and the storage domain holds a read-only window on it.
 #
-# The storage, network, web and display domains restart at most 5 times in 600 s, a window the
-# domain service widens by one boot timeout per restart, so a boot that hangs, stopped only at
-# each timeout, is left down after its 5 restarts whatever the machine's boot timeout, while a
-# stop and the next start take under 120 s (docs/design-system.md, "Boot").
+# The storage, network, web and display domains restart at most 5 times in 600 s, where a restart
+# after a boot timeout counts, however long ago, until a boot that reached ready ends, so a boot
+# that hangs, stopped only at each timeout, is left down after 5 restarts in a row whatever the
+# machine's boot timeout (docs/design-system.md, "Boot").
 share web
   quota_ns 1500000
   period_ns 10000000

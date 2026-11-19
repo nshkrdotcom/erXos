@@ -191,29 +191,44 @@ inspect_scope_test() ->
                   {Principal, Roots, Development, erx_domain_core:inspect_scope(Principal, Roots, Development)})
      || {Principal, Roots, Development, Scope} <- Cases].
 
-%% At most 2 restarts within 10 s plus 2 boot timeouts of 1 s: a window of 12 s.
+%% Restarts after ends that were not boot timeouts: at most 2 within 10 s, as OTP
+%% counts them, whether the domain had reported ready or was still booting.
 restart_test() ->
     Core0 = erx_domain_core:new(<<"erxos">>),
-    Two = #{restarts => 2, period_s => 10, boot_timeout_s => 1},
-    {yes, Core1} = erx_domain_core:restart(0, Two, 100, Core0),
-    {yes, Core2} = erx_domain_core:restart(0, Two, 105, Core1),
-    {no, Core3} = erx_domain_core:restart(0, Two, 111, Core2),
-    {yes, _} = erx_domain_core:restart(0, Two, 112, Core3),
-    {no, _} = erx_domain_core:restart(1, Two#{restarts := 0}, 100, Core0).
+    Two = #{restarts => 2, period_s => 10},
+    {yes, Core1} = erx_domain_core:restart(0, Two, ready, 100, Core0),
+    {yes, Core2} = erx_domain_core:restart(0, Two, running, 105, Core1),
+    {no, Core3} = erx_domain_core:restart(0, Two, ready, 109, Core2),
+    {yes, _} = erx_domain_core:restart(0, Two, ready, 110, Core3),
+    {no, _} = erx_domain_core:restart(1, Two#{restarts := 0}, ready, 100, Core0).
 
-%% A boot that hangs waits out its boot timeout before each restart, so its restarts
-%% come a boot timeout apart: with 5 restarts in 1 s and a 60 s boot timeout, a window
-%% of the period alone would never hold two of them, and the window that adds a boot
-%% timeout per restart fills after 5, however long the boot timeout.
-a_hung_boot_is_left_down_after_its_restarts_test() ->
-    [begin
-         Intensity = #{restarts => 5, period_s => 1, boot_timeout_s => Timeout},
-         Answers = element(1, lists:foldl(fun(At, {Said, Earlier}) ->
-                                                  {Answer, Kept} = erx_domain_core:intensity(Earlier, Intensity, At),
-                                                  {Said ++ [Answer], Kept}
-                                          end, {[], []}, [N * Timeout + 1 || N <- lists:seq(1, 6)])),
-         ?assertEqual({Timeout, [yes, yes, yes, yes, yes, no]}, {Timeout, Answers})
-     end || Timeout <- [1, 60, 600, 3600]].
+%% The answers to ends at the times and boots of Ends, in turn, from no restarts.
+answers(Intensity, Ends) ->
+    {Answers, _} = lists:mapfoldl(fun({At, Boot}, Earlier) ->
+                                          erx_domain_core:intensity(Earlier, Intensity, Boot, At)
+                                  end, [], Ends),
+    Answers.
+
+%% A boot that hangs is stopped only at each boot timeout, so its restarts come a boot
+%% timeout apart: however far apart, 5 restarts that timed out in a row are the limit,
+%% and the sixth timeout leaves it down.
+timeouts_in_a_row_are_the_limit_test() ->
+    Five = #{restarts => 5, period_s => 1},
+    [?assertEqual({Apart, [yes, yes, yes, yes, yes, no]},
+                  {Apart, answers(Five, [{N * Apart, timed_out} || N <- lists:seq(1, 6)])})
+     || Apart <- [1, 60, 600, 3600, 86400]].
+
+%% A boot that reached ready ends the run of timeouts: its own end is counted by time
+%% alone, and the timeouts after it count from none. An end before ready does not end
+%% the run.
+a_ready_boot_ends_the_timeouts_in_a_row_test() ->
+    Two = #{restarts => 2, period_s => 10},
+    ?assertEqual([yes, yes, yes, yes, yes, no],
+                 answers(Two, [{100, timed_out}, {200, timed_out}, {300, ready},
+                               {400, timed_out}, {500, timed_out}, {600, timed_out}])),
+    ?assertEqual([yes, yes, yes, no],
+                 answers(Two, [{100, timed_out}, {200, before_ready}, {300, timed_out}, {400, timed_out}])),
+    ?assertEqual([yes, yes, no], answers(Two, [{100, ready}, {105, timed_out}, {106, timed_out}])).
 
 %% The domain service is the supervisor's significant child and is never
 %% restarted: its end, however it comes, shuts the supervisor down, which ends
@@ -285,18 +300,17 @@ configured_boot_timeout_test_() ->
      end,
      {timeout, 30, fun configured_boot_timeout/0}}.
 
-%% A configured row whose boot hangs, on a machine whose boot timeout of 1 s times its 5
-%% restarts is as long as its restart period of 5 s, is stopped at each timeout and
-%% restarted 5 times, then left down: six starts, and no seventh. A whole second per
-%% restart is left for stopping and rebuilding the domain, against the whole seconds
-%% the intensity counts in.
+%% A configured row whose boot hangs, on a machine with a boot timeout of 1 s, is
+%% stopped at each timeout and restarted 5 times in a row, then left down: six starts,
+%% and no seventh, though its restart period of 1 s is shorter than the time between
+%% them.
 hung_row_left_down_test_() ->
     {setup,
      fun() ->
              persistent_term:put({erx_domain_fake_lib, boot},
                                  #{boot_timeout_s => 1,
                                    domains => [#{row => 0, place => 0, name => <<"silent">>, principal => 1,
-                                                 kind => service, restarts => 5, restart_period_s => 5}]}),
+                                                 kind => service, restarts => 5, restart_period_s => 1}]}),
              Log = erx_domain_fake_lib:start_log(),
              {ok, Service} = erx_domain_srv:start_link(#{lib => erx_domain_fake_lib, agent => erx_domain_fake_lib,
                                                           exports => erx_domain_fake_lib,
@@ -322,6 +336,60 @@ hung_row_left_down() ->
               end || _ <- lists:seq(0, 5)],
     ?assertEqual(lists:seq(5, 10), Starts),
     ?assertEqual(timeout, next_call()).
+
+%% A configured row allowed one restart in 600 s, whose first boot hangs and whose later
+%% boots report ready (erx_domain_fake_lib's slow): the timeout restarts it, and a boot
+%% that reached ready ends the timeouts in a row, so that boot's end restarts it again;
+%% the next end, within the period, leaves it down.
+ready_boot_ends_the_timeouts_test_() ->
+    {setup,
+     fun() ->
+             persistent_term:put({erx_domain_fake_lib, boot},
+                                 #{boot_timeout_s => 1,
+                                   domains => [#{row => 0, place => 0, name => <<"slow">>, principal => 1,
+                                                 kind => service, restarts => 1, restart_period_s => 600}]}),
+             Log = erx_domain_fake_lib:start_log(),
+             {ok, Service} = erx_domain_srv:start_link(#{lib => erx_domain_fake_lib, agent => erx_domain_fake_lib,
+                                                          exports => erx_domain_fake_lib,
+                                                          principals => ?PRINCIPALS}),
+             unlink(Service),
+             {Log, Service}
+     end,
+     fun(Started) ->
+             stop_service(Started),
+             persistent_term:erase({erx_domain_fake_lib, boot})
+     end,
+     {timeout, 30, fun ready_boot_ends_the_timeouts/0}}.
+
+ready_boot_ends_the_timeouts() ->
+    Started = fun(Id) ->
+                      [{configured, Id, 0}, {open_side, Id, 'slow@erxos', _}, {export, Id, [send]}, {start, Id}] =
+                          [next_call() || _ <- lists:seq(1, 4)]
+              end,
+    Retired = fun(Id) ->
+                      [{close_side, Id, {domain_down, Id, _}}, {disconnect, _}, {retire, Id}] =
+                          [next_call() || _ <- lists:seq(1, 3)]
+              end,
+    Started(5),
+    ?assertEqual({stop, 5}, next_call()),
+    Retired(5),
+    Started(6),
+    ok = ready(6),
+    erx_domain_srv ! {domain_ended, 6, {halt, 1}, #{}},
+    Retired(6),
+    Started(7),
+    ok = ready(7),
+    erx_domain_srv ! {domain_ended, 7, {halt, 1}, #{}},
+    Retired(7),
+    ?assertEqual(timeout, next_call()).
+
+%% Waits until domain Id has reported ready to the domain service.
+ready(Id) ->
+    #{core := Core} = sys:get_state(erx_domain_srv),
+    case erx_domain_core:fetch(Id, Core) of
+        {ok, #{state := ready}} -> ok;
+        _ -> timer:sleep(10), ready(Id)
+    end.
 
 configured_boot_timeout() ->
     Self = self(),

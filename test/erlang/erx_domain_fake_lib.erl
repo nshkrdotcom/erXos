@@ -12,6 +12,8 @@
 %% reports ready to its domain pid at once, in its envelope from the domain,
 %% naming an agent of the domain's node, unless the domain is named silent
 %% or late, whose init never reports (a test sends late's report itself), or
+%% slow, whose first start of the service's life never reports and every later
+%% one does, or
 %% overtaken, which ends at its start and whose report its side hands the
 %% domain pid only at close_side, as the lane
 %% driver's finish reads the lane to its end, or behind, which ends at its start
@@ -115,6 +117,11 @@ create(#{id := Id, name := Name, domain_pid := DomainPid} = Spec) ->
 start(Id) ->
     case get({domain, Id}) of
         {_, Quiet} when Quiet =:= <<"silent">>; Quiet =:= <<"late">> -> ok;
+        {DomainPid, <<"slow">> = Name} ->
+            case put(slow_started, true) of
+                undefined -> ok;
+                true -> DomainPid ! {erx_origin, Id, {erx_ready, ready_report(Name, Id)}}
+            end;
         {_, Ends} when Ends =:= <<"overtaken">>; Ends =:= <<"behind">> ->
             self() ! {domain_ended, Id, {halt, 0}, #{}};
         {DomainPid, Name} -> DomainPid ! {erx_origin, Id, {erx_ready, ready_report(Name, Id)}}

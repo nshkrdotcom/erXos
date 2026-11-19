@@ -38,7 +38,6 @@ has no such file, such as a hosted one, has
 -export([facts/0, parse_facts/1]).
 -export([development/0, development/1, development_flag/1, development_facts/1]).
 -export([shell_principals/0, shell_principals/1, principals/0, principals/1, system_manifest/0]).
--export([boot_timeout/0, boot_timeout/1]).
 
 -export_type([facts/0, principals/0]).
 
@@ -145,33 +144,6 @@ shell_principals({ok, Manifest}) ->
     end;
 shell_principals({error, _}) ->
     [].
-
--doc """
-The machine's boot timeout, the seconds a domain's init has to report ready,
-read from the system manifest as development/0 reads it, so only the system
-domain's answer is the build's: what the console's login counts its restarts
-against (erx_console). The manifest's default, boot_timeout_default_s, when the
-manifest cannot be read or does not parse.
-""".
--spec boot_timeout() -> pos_integer().
-boot_timeout() ->
-    boot_timeout(system_manifest()).
-
--doc """
-The boot timeout of the system manifest `file:read_file/1` returned, the
-manifest's default for one it could not read or parse. Pure, for its tests.
-""".
--spec boot_timeout({ok, binary()} | {error, term()}) -> pos_integer().
-boot_timeout({ok, Manifest}) ->
-    maybe
-        {ok, View} ?= erx_manifest:open(Manifest),
-        {ok, #{boot_timeout_s := Seconds}} ?= erx_manifest:header(View),
-        Seconds
-    else
-        _ -> ?ERX_BOOT_TIMEOUT_DEFAULT_S
-    end;
-boot_timeout({error, _}) ->
-    ?ERX_BOOT_TIMEOUT_DEFAULT_S.
 
 -doc """
 The system manifest's principals, read as development/0 reads the

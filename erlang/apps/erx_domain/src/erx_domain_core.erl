@@ -37,11 +37,11 @@ state is a bug of the caller and fails with a badmatch.
 """.
 
 -export([new/1, host/1, admit/4, built/5, running/2, ready/3, stopping/2, failed/2, ended/5,
-         restart/4, intensity/3, fetch/2, find_pid/2, deaths/2, domains/1, info/1, fault_where/2, session_prefix/3,
+         restart/5, intensity/4, fetch/2, find_pid/2, deaths/2, domains/1, info/1, fault_where/2, session_prefix/3,
          session_name/3, session_reserved/1, names_quota/0, system_user/0, app_session/4]).
 -export([inspect_scope/3, inspect_view/2]).
 -export_type([state/0, domain/0, origin/0, info/0, slogan/0, inspect_scope/0, inspect_entry/0,
-              app_session/1, session_row/0, intensity/0]).
+              app_session/1, session_row/0, intensity/0, reached/0, restart/0]).
 
 -include("generated/erx_abi.hrl").
 
@@ -55,10 +55,14 @@ state is a bug of the caller and fails with a badmatch.
 -type origin() :: request | {configured, Row :: non_neg_integer()} | {session, Template :: non_neg_integer()}.
 -type life() :: building | built | running | ready | stopping.
 -type info() :: {halt, integer()} | crash | {fault, integer()} | stopped.
-%% A restart intensity (intensity/3): at most restarts restarts within period_s seconds
-%% plus restarts times the machine's boot timeout, boot_timeout_s.
--type intensity() :: #{restarts := non_neg_integer(), period_s := non_neg_integer(),
-                       boot_timeout_s := pos_integer()}.
+%% A restart intensity (intensity/4): at most restarts restarts that still count.
+-type intensity() :: #{restarts := non_neg_integer(), period_s := non_neg_integer()}.
+%% How far the boot of what ended got: stopped at its boot timeout, ended before its
+%% init reported ready, or ended after.
+-type reached() :: timed_out | before_ready | ready.
+%% A restart a history keeps: timed_out for one after a boot timeout, which no time
+%% ages, or the monotonic second of any other.
+-type restart() :: timed_out | integer().
 -type domain() :: #{id := pos_integer(), name := erx_ident:t(), node := node(),
                     principal := pos_integer(), origin := origin(), state := life(),
                     pid := pid() | undefined, ref := reference() | undefined,
@@ -97,7 +101,7 @@ state is a bug of the caller and fails with a badmatch.
                      bound := #{pos_integer() => non_neg_integer()},
                      domains := #{pos_integer() => domain()},
                      deaths := #{pos_integer() => [death()]},
-                     restarts := #{non_neg_integer() => [integer()]}}.
+                     restarts := #{non_neg_integer() => [restart()]}}.
 
 -doc "The state of a boot whose machine is named Host, an identifier.".
 -spec new(binary()) -> state().
@@ -312,35 +316,51 @@ ended(Id, End, Slogan, Now, #{domains := Domains, deaths := Deaths} = State) ->
 
 -doc """
 Whether configured row Row restarts at Now, in seconds, within Intensity
-(intensity/3), recording this restart if it does.
+(intensity/4), after one of its domains ended in life Life (ended/5),
+recording this restart if it does.
 """.
--spec restart(non_neg_integer(), intensity(), integer(), state()) -> {yes | no, state()}.
-restart(Row, Intensity, Now, #{restarts := History} = State) ->
-    {Answer, Kept} = intensity(maps:get(Row, History, []), Intensity, Now),
+-spec restart(non_neg_integer(), intensity(), life(), integer(), state()) -> {yes | no, state()}.
+restart(Row, Intensity, Life, Now, #{restarts := History} = State) ->
+    {Answer, Kept} = intensity(maps:get(Row, History, []), Intensity, reached(Life), Now),
     {Answer, State#{restarts := History#{Row => Kept}}}.
 
--doc """
-The restart intensity, as OTP's supervisors count it, but over a window that
-grows with the boot timeout. It decides whether something whose earlier
-restarts were at the times Earlier, in seconds, restarts at Now, given at most
-restarts restarts within the window: yes while fewer than restarts of them fell
-within it, with Now kept beside those; no with those alone. A configured row's
-restarts (restart/4) and the console's login (erx_console) are counted here.
+%% How far an ended domain's boot got, from its life at its end: a stopping domain is
+%% one stopped at its boot timeout (stopping/2).
+reached(stopping) -> timed_out;
+reached(ready) -> ready;
+reached(Life) when Life =:= built; Life =:= running -> before_ready.
 
-The window is period_s plus restarts times boot_timeout_s, the machine's boot
-timeout. Each restart of a boot that hangs waits out that timeout before it is
-stopped, so its restarts come a boot timeout apart. The window holds them all,
-and the hang is left down, as long as less than period_s / restarts seconds
-pass between each stop and the next start.
+-doc """
+The restart intensity, as OTP's supervisors count it, except for boots that
+time out. It decides whether something with the earlier restarts Earlier
+restarts at Now, in seconds, after an end whose boot reached Reached: yes
+while fewer than restarts of them still count, with this restart kept beside
+them; no with those alone. A configured row's restarts (restart/5) and the
+console's login (erx_console) are counted here.
+
+A restart after a boot timeout counts until a boot that reached ready ends,
+however long that takes and however briefly that boot was ready; a restart
+after any other end counts for period_s seconds. A boot that hangs is stopped
+only at each timeout, so its restarts come a boot timeout apart, and counting
+them by time would restart it without end on a machine whose boot timeout is
+long against period_s / restarts. Counted this way, a boot that hangs every
+time is left down after restarts restarts in a row, whatever the boot timeout.
 """.
--spec intensity([integer()], intensity(), integer()) -> {yes | no, [integer()]}.
-intensity(Earlier, #{restarts := Restarts, period_s := PeriodS, boot_timeout_s := BootTimeoutS}, Now) ->
-    Window = PeriodS + Restarts * BootTimeoutS,
-    Recent = [At || At <- Earlier, Now - At < Window],
-    case length(Recent) < Restarts of
-        true -> {yes, [Now | Recent]};
-        false -> {no, Recent}
+-spec intensity([restart()], intensity(), reached(), integer()) -> {yes | no, [restart()]}.
+intensity(Earlier, #{restarts := Restarts, period_s := PeriodS}, Reached, Now) ->
+    Counted = [Restart || Restart <- Earlier, counts(Restart, Reached, Now, PeriodS)],
+    case length(Counted) < Restarts of
+        true -> {yes, [record(Reached, Now) | Counted]};
+        false -> {no, Counted}
     end.
+
+%% Whether an earlier restart still counts at an end whose boot reached Reached.
+counts(timed_out, Reached, _Now, _PeriodS) -> Reached =/= ready;
+counts(At, _Reached, Now, PeriodS) -> Now - At < PeriodS.
+
+%% The restart a history keeps for one at Now after an end whose boot reached Reached.
+record(timed_out, _Now) -> timed_out;
+record(_Reached, Now) -> Now.
 
 -doc "Domain Id's record, or none.".
 -spec fetch(pos_integer(), state()) -> {ok, domain()} | none.

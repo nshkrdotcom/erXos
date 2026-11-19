@@ -1031,13 +1031,14 @@ the harness, which plays the firmware, also stops a run that loops
 stops its space; the kernel writes the crash record and ends the machine
 by `erx.panic`, because there is nothing to restart to. A configured domain
 that fails to start, or ends later, the domain service restarts within the
-intensity the manifest gives, as a supervisor restarts a child. Its
-`restarts` are counted in a window of its `restart_period_s` plus one
-machine boot timeout per restart. A boot that hangs is stopped only at each
-timeout, so its restarts come a boot timeout apart; the wider window holds
-them all, however long the machine's boot timeout, as long as stopping a
-domain and building the next takes less than `restart_period_s` /
-`restarts` seconds. Beyond the intensity,
+intensity the manifest gives, as a supervisor restarts a child: at most
+`restarts` restarts within `restart_period_s`, except that a restart after
+a boot timeout counts until a boot of the row reports ready and then ends,
+however long that takes. A boot that hangs is stopped only at each timeout,
+so its restarts come a boot timeout apart, and a period could not hold them
+on a machine whose boot timeout is long; counted in a row, they leave a
+domain that hangs every time down after `restarts` restarts, whatever the
+boot timeout. Beyond the intensity,
 a domain the manifest marks `required` ends the machine the same way, with
 the reason in the log, and any other is left down and shown so in the
 inspector, since a machine without its network is still a machine an

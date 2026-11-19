@@ -1043,12 +1043,12 @@ through the log service, `erx_syslog`, which takes the kernel's ring with
   ([design-system.md](design-system.md#the-manifest)), as on a machine
   merely slower than its manifest allows for, is started again, as the
   domain service restarts a configured domain, within a start row's
-  default intensity: again up to `start_restarts_default` times within
-  `start_period_default_s`, 5 in 600 s, a window widened by one boot
-  timeout per restart as a configured domain's is
-  ([design-system.md](design-system.md#boot)), so a login that hangs is
-  given up whatever the machine's boot timeout; each start is stopped at
-  that timeout. A login session that cannot start, or still times out past the
+  default intensity: again up to `start_restarts_default` times, 5, in a
+  row, counted as a configured domain's timeouts are until a login session
+  reports ready ([design-system.md](design-system.md#boot)), so a login
+  that hangs is given up whatever the machine's boot timeout; each start
+  is stopped at that timeout. A login session that cannot start, or still
+  times out past the
   intensity, leaves the line with the system's command shell after one
   line saying why. When a login's session that has had the line ends,
   the console logs `root` in again, as getty starts another login, and the
