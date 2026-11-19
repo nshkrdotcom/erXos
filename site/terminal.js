@@ -29,7 +29,9 @@ const RAM_MIB = 256;
 const CPU_CORES = 1;
 // No erx.hostlink=1: v64's machine has one UART, the console, so there is
 // no host link UART to drive (docs/design-fiasco.md, "The command line").
-const CMDLINE = "erx.watchdog=1,30,600";
+// The watchdog's 120 s pet interval leaves room for a slow phone's boot,
+// where 30 s reset the machine before any domain started.
+const CMDLINE = "erx.watchdog=1,120,600";
 // ?jit=0 in the page's address runs v64 without its JIT, for telling a browser
 // that fails while the JIT compiles guest code from one that fails otherwise.
 // The arm64 core reads only its jit_switches, so the switch is a64_page.
@@ -39,16 +41,15 @@ function jit_disabled() { return new URLSearchParams(location.search).get("jit")
 // v64's defaults a phone's tab runs out of memory during the boot. On a
 // device whose main pointer is a finger (a phone or tablet), the page
 // compiles fewer pages (a64_page_hot: interpreted instructions on a
-// page before it is compiled; v64's default is 2000) and keeps at most
-// 8 MiB of their code, the least recently used going first
-// (a64_page_code_mb; v64's default is 160 and 8 its lowest, so a v64 that
-// raises the floor refuses it and the boot fails loudly). The trade is a
-// slower boot. v64's threshold is a64_page_hot << backoff, a u32: for
-// this value it truncates from a page's 17th compile to a still-large
-// threshold, so such a page recompiles sooner, which costs time only.
-// Elsewhere v64's defaults stand, which boot about twice as fast.
+// page before it is compiled; v64's default is 2000). It sets no code cap
+// (a64_page_code_mb): evicted modules are freed late, so a cap raises the
+// peak instead of lowering it. The trade is a slower boot. v64's threshold
+// is a64_page_hot << backoff, a u32: for this value it truncates from a
+// page's 17th compile to a still-large threshold, so such a page
+// recompiles sooner, which costs time only. Elsewhere v64's defaults
+// stand, which boot about twice as fast.
 function jit_switches() {
-    return matchMedia("(pointer: coarse)").matches ? { a64_page_hot: 1_000_000, a64_page_code_mb: 8 } : {};
+    return matchMedia("(pointer: coarse)").matches ? { a64_page_hot: 1_000_000 } : {};
 }
 // ?log=console also writes the guest's serial output to the browser's
 // console, one line per line, for a browser whose console outlives the tab.
