@@ -32,7 +32,9 @@ limit start_ctl_max u32 4096
 limit start_restarts_max u32 100
 limit start_period_max_s u32 86400
 # The intensity of a start row that states none, a manifest row's or a package's
-# (docs/design-packaging.md, "The declaration"): 5 ends within 600 seconds.
+# (docs/design-packaging.md, "The declaration"): 5 ends within 600 seconds. The
+# console's login takes it too: it starts again after a boot timeout within it
+# (docs/design-live.md, "The console").
 limit start_restarts_default u32 5
 limit start_period_default_s u32 600
 # The seconds a domain's init has to report ready to the domain service: the

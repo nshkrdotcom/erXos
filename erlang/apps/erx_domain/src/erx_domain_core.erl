@@ -37,7 +37,7 @@ state is a bug of the caller and fails with a badmatch.
 """.
 
 -export([new/1, host/1, admit/4, built/5, running/2, ready/3, stopping/2, failed/2, ended/5,
-         restart/5, fetch/2, find_pid/2, deaths/2, domains/1, info/1, fault_where/2, session_prefix/3,
+         restart/5, intensity/4, fetch/2, find_pid/2, deaths/2, domains/1, info/1, fault_where/2, session_prefix/3,
          session_name/3, session_reserved/1, names_quota/0, system_user/0, app_session/4]).
 -export([inspect_scope/3, inspect_view/2]).
 -export_type([state/0, domain/0, origin/0, info/0, slogan/0, inspect_scope/0, inspect_entry/0,
@@ -314,10 +314,23 @@ one; no otherwise.
 -spec restart(non_neg_integer(), non_neg_integer(), non_neg_integer(), integer(), state()) ->
           {yes | no, state()}.
 restart(Row, Restarts, PeriodS, Now, #{restarts := History} = State) ->
-    Recent = [At || At <- maps:get(Row, History, []), Now - At < PeriodS],
+    {Answer, Kept} = intensity(maps:get(Row, History, []), Restarts, PeriodS, Now),
+    {Answer, State#{restarts := History#{Row => Kept}}}.
+
+-doc """
+The restart intensity, as OTP's supervisors count it: whether something whose
+earlier restarts were at the times Earlier, in seconds, restarts at Now, given at
+most Restarts restarts within PeriodS seconds. yes while fewer than Restarts of
+them fell within the last PeriodS seconds, with Now kept beside those; no with
+those alone. A configured row's restarts (restart/5) and the console's login
+(erx_console) keep their times through it.
+""".
+-spec intensity([integer()], non_neg_integer(), non_neg_integer(), integer()) -> {yes | no, [integer()]}.
+intensity(Earlier, Restarts, PeriodS, Now) ->
+    Recent = [At || At <- Earlier, Now - At < PeriodS],
     case length(Recent) < Restarts of
-        true -> {yes, State#{restarts := History#{Row => [Now | Recent]}}};
-        false -> {no, State#{restarts := History#{Row => Recent}}}
+        true -> {yes, [Now | Recent]};
+        false -> {no, Recent}
     end.
 
 -doc "Domain Id's record, or none.".

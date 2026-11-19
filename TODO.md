@@ -4590,13 +4590,16 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   decides nothing a test can see, since `attenuated/2` refuses every name of the table too.
   Missing besides: `erx_domain:grant/4`. Init waits at most 5 s for the answer and then
   runs with none.
-* [Medium] domain service and manifest check, `erx_domain_core:restart/5` and `tools/lib/erx/manifest.rb`
+* [Medium] domain service, console and manifest check, `erx_domain_core:intensity/4` and `tools/lib/erx/manifest.rb`
   (`normalize_domains`): a configured row may restart `restarts` times within `restart_period_s`, and
   a boot that hangs is stopped only after the machine's `boot_timeout_s`, so a row with `restarts`
   above 0 and `restart_period_s` at most `restarts` times `boot_timeout_s` never reaches its limit and
   restarts a hung boot without end, each start still stopped at the deadline. The website's image
-  is such a machine: its 600 s boot timeout against the rows' 5 restarts in 600 s. Refuse such a row
-  in the manifest check, or size the period from the boot timeout; the test rows derived from MediumBoot's with
+  is such a machine: its 600 s boot timeout against the rows' 5 restarts in 600 s. The console's
+  login, which starts again after a timeout within the same 5 in 600 s (`erx_console`,
+  `login_timed_out/1`), loops the same way on any machine whose boot timeout is 120 s (600 / 5)
+  or more. Refuse such a row in the manifest check, or size the period from the boot timeout,
+  which alone covers the login, since it has no row; the test rows derived from MediumBoot's with
   `restarts 1` and `restart_period_s 5` (`system_domain_regrant.rb`, `device_give.rb`) then need a
   longer period.
 * [Medium] domains, `liberx/system/dom_life.c` (`life_connections`) and design-domains'

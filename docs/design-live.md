@@ -1039,11 +1039,19 @@ through the log service, `erx_syslog`, which takes the kernel's ring with
   the first prompt a person answers is the session's command shell, and
   V6 holds in the session's own shells; the system domain's command shell,
   with the system shell one `erl` away, is the menu's `s`. A login session
-  that cannot start leaves the line with the system's command shell after
-  one line saying why. When a login's session that has had the line ends,
+  that does not report ready within the machine's boot timeout
+  ([design-system.md](design-system.md#the-manifest)), as on a machine
+  merely slower than its manifest allows for, is started again, as the
+  domain service restarts a configured domain, within a start row's
+  default intensity: again up to `start_restarts_default` times within
+  `start_period_default_s`, 5 in 600 s; each start is stopped at that
+  timeout. A login session that cannot start, or still times out past the
+  intensity, leaves the line with the system's command shell after one
+  line saying why. When a login's session that has had the line ends,
   the console logs `root` in again, as getty starts another login, and the
   new session takes the line; one that ended before it ever had the line
-  is not started again, so a session that cannot come up does not loop. A
+  is not started again, so a session that ends as it comes up does not
+  loop. A
   new session, from the login or the menu, takes the lowest name no living
   session holds: `root_1` again once it has ended, `root_2` beside it,
   within the principal's domain quota. Logins at a

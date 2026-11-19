@@ -246,6 +246,9 @@
                 %% connected once it has had the line, and only then started again when
                 %% it ends.
                 login = none :: none | starting | {started | connected, pos_integer()},
+                %% The monotonic seconds of the login's restarts after a timeout, only
+                %% those still within the intensity's period (login_timed_out/1).
+                login_restarts = [] :: [integer()],
                 %% The process behind every session's console facet (facet_endpoint/1).
                 endpoint :: pid(),
                 %% The domain a pid belongs to (config()).
@@ -374,8 +377,10 @@ add_session(Domain, Spec = #{name := Name, principal := Principal, domain_pid :=
 Boot step 4 (docs/design-system.md, "Boot"), once the domain service runs: the
 console logs the line's principal in at the line, root at the UART in a development
 build, which starts that principal's session (erx_domain:start_session/2). The session
-takes the line once its tty names itself, and is started again whenever it ends; if it
-cannot start, the line stays with the system shell after one line saying why.
+takes the line once its tty names itself, and is started again whenever it ends; one
+that does not report ready within the machine's boot timeout is started again within a
+start row's default restart intensity; if it cannot start, the line stays with the system
+shell after one line saying why.
 """.
 -spec login() -> ok.
 login() ->
@@ -1087,7 +1092,8 @@ new_line(Notice, #state{driver = Driver}) ->
 %% session the menu does not show, another principal's, is not named on this line. The
 %% login's session is started again (start_login/1), which takes the line when it is up,
 %% if it ever had the line; one that never had it, which ended as it came up, is not
-%% started again, so a session that cannot come up does not loop, and the line stays
+%% started again, so a session that ends as it comes up does not loop (one that times
+%% out is restarted within an intensity instead, login_timed_out/1), and the line stays
 %% with the system shell after the same one line (login_ended/2).
 session_ended(Domain, Reason, State0 = #state{line = Line, sessions = Sessions}) ->
     Principal = maps:get(principal, maps:get(Domain, Sessions)),
@@ -1240,7 +1246,8 @@ ask_service(Call) ->
 %% again if it lists it; the login's session also takes the line if its tty has named
 %% itself by now (take_login_line/2), and otherwise once it does. A session whose domain
 %% pid has ended by now leaves nothing to show, and a login's is a start that failed. A
-%% refusal is a start that failed (start_failed/3). A login at a line whose principal
+%% refusal is a start that failed (start_failed/3), but a login's timeout starts it
+%% again within an intensity (login_timed_out/1). A login at a line whose principal
 %% has no session template (no_template), or in a runtime with no domain service or
 %% library (enotsup), starts nothing and says nothing.
 session_started(Why, Principal, {ok, Domain}, State) ->
@@ -1260,8 +1267,25 @@ session_started(Why, Principal, {ok, Domain}, State) ->
     end;
 session_started(login, _Principal, {error, Quiet}, State) when Quiet =:= no_template; Quiet =:= enotsup ->
     State#state{login = none};
+session_started(login, _Principal, {error, timeout}, State) ->
+    login_timed_out(State);
 session_started(Why, _Principal, {error, Reason}, State) ->
     start_failed(Why, Reason, State).
+
+%% The login's session did not report ready within the machine's boot timeout, as on
+%% a machine merely slower than its manifest allows for: it is started again, as the
+%% domain service restarts a configured domain, within a start row's default intensity
+%% (abi/manifest.txt, start_restarts_default within start_period_default_s), each
+%% start bounded by that timeout; past it, the start has failed as any other does.
+login_timed_out(State = #state{login_restarts = Earlier}) ->
+    case erx_domain_core:intensity(Earlier, ?ERX_START_RESTARTS_DEFAULT, ?ERX_START_PERIOD_DEFAULT_S,
+                                   erlang:monotonic_time(second)) of
+        {yes, Kept} ->
+            logger:notice("erx_console: the login session did not start in time; starting it again"),
+            start_login(State#state{login_restarts = Kept});
+        {no, Kept} ->
+            start_failed(login, timeout, State#state{login_restarts = Kept})
+    end.
 
 %% A start that failed, for Reason. A login's leaves the line with the system shell, after
 %% one line saying why if the shell has the line, so the line is never left without a
