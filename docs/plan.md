@@ -1629,8 +1629,7 @@ its code, and the item's work waits on it.
   downloads, its source under `site/`. They carry 0.1's known
   limitations: what it leaves to 0.2 and later (below); the Pi's clock, at
   the build's date at each boot until `ntpd` or root sets it, so a certificate that
-  expired since the build is accepted until then; a requested off on the Pi reboots it, which only
-  cutting the power turns off; and the security residuals a user of 0.1 is exposed
+  expired since the build is accepted until then; and the security residuals a user of 0.1 is exposed
   to, each pointing to its design section or its
   `TODO.md` item rather than copying it: a development build, which runs
   only trusted code because it carries development-only grants and its
@@ -1700,8 +1699,8 @@ its code, and the item's work waits on it.
 * By hand on the 4 GB Pi, a development image whose root stops its
   watchdog thread once it has armed the hardware watchdog resets within
   4 s and boots back to the kiosk; seeded: the arming skipped, the board
-  stays hung. After a requested off, the board restarts within about
-  5 s.
+  stays hung. After a requested off, the console shows `erx: end off`
+  and the board stays halted.
 * By hand on QEMU, with the published image, `doom` typed in `rc` shows
   Doom's title, and a key from the virtio keyboard moves its menu. No
   gate builds Doom ([design-packaging.md](design-packaging.md#examples)).

@@ -195,9 +195,8 @@
       <li><strong>SSH is on port 2222</strong>, not 22, and gives an
       interactive session only: a command given to <code>ssh</code> is
       refused.</li>
-      <li><strong>Requested power-off.</strong> On the Pi a requested power-off
-      halts the board in the firmware and the watchdog restarts it about 4
-      seconds later. Only cutting the power turns it off.</li>
+      <li><strong>Power-off.</strong> On the Pi, <code>halt</code> stops the
+      board; cycle the power to start it again.</li>
       <li><strong>Recovery gaps.</strong> A hang before the root's watchdog
       starts stays hung until the power is cycled, and a kernel panic that
       early loops instead of resetting.</li>
