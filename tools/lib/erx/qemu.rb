@@ -61,10 +61,9 @@ module Erx
     # between the two and Ctrl-A X quits QEMU. For a person at a terminal,
     # never for a harness, which reads the line from a file.
     CONSOLE = :console
-    # As serial, the guest's serial line on QEMU's own standard input and output, for a
-    # QEMU on another host whose line ssh carries (QemuRemote); its input comes on
-    # standard input too, so the plan takes no serial_input. Also for the boot benchmark
-    # (BenchBoot), which reads the line from a pipe to stamp each chunk with the host's clock.
+    # As serial, the guest's serial line on QEMU's own standard input and output, for the
+    # boot benchmark (BenchBoot), which reads the line from a pipe to stamp each chunk with
+    # the host's clock; its input comes on standard input too, so the plan takes no serial_input.
     STDIO = :stdio
     # The kernel command line's word for deterministic mode (docs/design-fiasco.md,
     # "Deterministic mode"). A plan whose line carries it, split on spaces as the guest
@@ -653,11 +652,13 @@ module Erx
       [BootstrapMemory.checkpoint(ram_bytes: memory_mib << 20), *BANNER, *(test_image ? [TEST_IMAGE_BANNER] : [])].freeze
     end
 
+    # remote_clock is the clock a remote boot waits on (QemuRemote::Clock).
     def initialize(root:, runner: Runner.new(owner_root: root, log_dir: File.join(root, 'build/logs')),
-                   program: 'qemu-system-aarch64', initrd: nil)
+                   program: 'qemu-system-aarch64', initrd: nil, remote_clock: QemuRemote::Clock)
       @root = File.expand_path(root)
       @runner = runner
       @program = program
+      @remote_clock = remote_clock
     end
 
     # With machine_end the guest must end the machine itself: the run lasts
@@ -690,10 +691,12 @@ module Erx
     # the run's serial log and replayed, and the report names it under
     # 'reused_from'.
     #
-    # With remote, a QemuRemote::Host, QEMU runs on that host (QemuRemote) and its
-    # serial line reaches the run's serial log over ssh. Only a boot that QEMU's inputs
-    # alone determine runs there: no disk, network device or host link session. A host
-    # that cannot be reached, or refuses the boot's setup, raises QemuRemote::Unreachable.
+    # With remote, a QemuRemote::Host, QEMU runs on that host (QemuRemote::Run), detached
+    # from ssh, and short polls copy its serial line into the run's serial log, which the
+    # transcript judges by the times that host wrote each byte. Only a boot
+    # that QEMU's inputs alone determine runs there: no disk, network device or host link
+    # session. A host that cannot be reached, refuses the boot's setup, or is lost for good
+    # during the boot raises QemuRemote::Unreachable.
     def run(platform:, accel:, image:, cpus: 1, memory_mib: QemuPlan.memory_of(platform), checkpoints: nil, initrd: nil, machine_end: false, directory: nil, command_line: nil,
             dtb: nil, disks: [], link: nil, link_seconds: 0, hostlink: nil, nic: nil, remote: nil, stub: nil, firmware: nil, display: nil)
       raise Error, 'a run with a host link session ends when the session does, not with machine_end' if link && machine_end
@@ -716,12 +719,14 @@ module Erx
       File.write(serial, '', perm: 0o600)
       socket = link && File.join(directory, 'hostlink.sock')
       keyboard = matcher.types? ? File.join(directory, 'keyboard') : nil
-      remote_boot = remote && QemuRemote::Boot.new(host: remote)
+      remote_run = remote && QemuRemote::Run.new(boot: QemuRemote::Boot.new(host: remote), runner: @runner, clock: @remote_clock,
+                                                 directory: directory)
+      remote_boot = remote_run&.boot
       plan = { platform: platform, accel: accel, cpus: cpus, memory_mib: memory_mib, program: remote_boot ? remote.program : @program,
                command_line: command_line }
       argv = if remote_boot
-               QemuPlan.argv(**plan, image: remote_boot.path('image'), serial: QemuPlan::STDIO, initrd: initrd && remote_boot.path('initrd'),
-                                     dtb: dtb && remote_boot.path('dtb'), hostlink: hostlink)
+               QemuPlan.argv(**plan, image: remote_boot.path('image'), serial: remote_boot.serial, serial_input: remote_boot.keyboard,
+                                     initrd: initrd && remote_boot.path('initrd'), dtb: dtb && remote_boot.path('dtb'), hostlink: hostlink)
              else
                QemuPlan.argv(**plan, image: image, serial: serial, serial_input: keyboard, initrd: initrd, dtb: dtb,
                                      disks: disks, hostlink: socket || hostlink, nic: nic, stub: stub, firmware: firmware, display: display)
@@ -732,7 +737,7 @@ module Erx
       reuse = QemuReuse.active
       key = nil
       if reuse && reusable?(link: link, nic: nic, disks: disks, hostlink: hostlink, display: display, firmware: firmware)
-        key = boot_key(reuse, plan: plan, remote_boot: remote_boot, image_sha256: report.fetch('image_sha256'), typed: matcher.types?, initrd: initrd,
+        key = boot_key(reuse, plan: plan, remote_run: remote_run, image_sha256: report.fetch('image_sha256'), typed: matcher.types?, initrd: initrd,
                               dtb: dtb, stub: stub, hostlink: hostlink, checkpoints: checkpoints, machine_end: machine_end)
         stored = stored_boot(reuse, key, report: report, checkpoints: checkpoints, directory: directory) if key
         return stored if stored
@@ -742,31 +747,32 @@ module Erx
       typing = nil
       session = nil
       begin
-        typing = keyboard && open_keyboard(keyboard)
-        version = if remote_boot
-                    upload_inputs(remote_boot, { 'image' => image, 'initrd' => initrd, 'dtb' => dtb }.compact)
-                    remote_step(remote_boot, remote_boot.version_argv, name: 'qemu-version', deadline: 30)
+        typing = keyboard && (remote_run ? remote_run.keyboard : open_keyboard(keyboard))
+        version = if remote_run
+                    remote_run.upload({ 'image' => image, 'initrd' => initrd, 'dtb' => dtb }.compact)
+                    remote_run.version
                   else
                     @runner.run([@program, '--version'], name: 'qemu-version', deadline: 10)
                   end
         report['qemu_version'] = File.binread(version.fetch('log')).lines.first.to_s.strip
         guest_started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
-        stop_guest = lambda do |_log|
-          transcript_whole = matcher.consume(serial, elapsed: elapsed(guest_started))
+        # guest_seconds is how long the guest had run when the serial log held what it holds.
+        stop_guest = lambda do |guest_seconds|
+          transcript_whole = matcher.consume(serial, elapsed: guest_seconds)
           typing&.write(matcher.take_typed)
           next transcript_whole && !machine_end unless link
 
           session ||= start_link(link, socket) if transcript_whole
           !session.nil? && !session.alive?
         end
-        record = if remote_boot
-                   @runner.run(remote_boot.boot_argv(argv, deadline: deadline), name: "qemu-#{accel}-remote", deadline: deadline,
-                                                                                 success: stop_guest, stdin: keyboard, stdout: serial)
+        record = if remote_run
+                   remote_run.run(argv, deadline: deadline, serial: serial, stop: stop_guest)
                  else
-                   @runner.run(argv, name: "qemu-#{accel}", deadline: deadline, success: stop_guest)
+                   @runner.run(argv, name: "qemu-#{accel}", deadline: deadline, success: ->(_log) { stop_guest.call(elapsed(guest_started)) })
                  end
         report['link'] = session.value if session
-        matcher.drain(serial, elapsed: elapsed(guest_started))
+        # A remote boot's log was judged on the remote host's clock, up to its last sample.
+        matcher.drain(serial, elapsed: remote_run ? remote_run.guest_seconds.to_i : elapsed(guest_started))
         raise Error, early_end_message(record.fetch('log')) unless matcher.done?
         report['state'] = 'passed'
         report['elapsed_seconds'] = elapsed(started)
@@ -786,7 +792,7 @@ module Erx
       ensure
         session&.kill&.join
         typing&.close
-        clean_remote(remote_boot) if remote_boot&.prepared?
+        remote_run.cleanup if remote_run&.prepared?
         report['state'] = 'cancelled' if report['state'] == 'running'
         report['elapsed_seconds'] = elapsed(started)
         File.write(File.join(directory, 'report.json'), JSON.pretty_generate(report) + "\n")
@@ -807,8 +813,8 @@ module Erx
     # to QemuPlan.argv) with each input file by its SHA-256 and the run's own
     # paths by fixed names. Nil, so the boot runs, when QEMU, an initrd, a
     # device tree or a boot stub is not a file.
-    def boot_key(reuse, plan:, remote_boot:, image_sha256:, typed:, initrd:, dtb:, stub:, hostlink:, checkpoints:, machine_end:)
-      qemu = remote_boot ? remote_identity(remote_boot) : QemuReuse.qemu_identity(@program)
+    def boot_key(reuse, plan:, remote_run:, image_sha256:, typed:, initrd:, dtb:, stub:, hostlink:, checkpoints:, machine_end:)
+      qemu = remote_run ? remote_run.identity : QemuReuse.qemu_identity(@program)
       return nil unless qemu && [initrd, dtb, stub].compact.all? { |path| File.file?(path) }
 
       by_digest = ->(path) { path && "sha256:#{Digest::SHA256.file(path).hexdigest}" }
@@ -864,41 +870,6 @@ module Erx
       end
     rescue SystemCallError
       ''
-    end
-
-    # A remote QEMU as reuse keys name it: the host, the program and its SHA-256, so
-    # boots on different hosts or QEMUs never share a record.
-    def remote_identity(boot)
-      log = remote_step(boot, boot.digest_argv, name: 'qemu-remote-digest', deadline: 60).fetch('log')
-      digest = File.binread(log, 64)
-      raise QemuRemote::Unreachable, "no SHA-256 of the remote QEMU in #{log}" unless digest&.match?(/\A\h{64}\z/)
-
-      "remote #{boot.host.destination} #{boot.host.program} #{digest}"
-    end
-
-    # The run directory on the remote host, holding each input file. Once mkdir has
-    # made it, the boot is prepared and cleanup removes it; a directory this boot
-    # did not make is never removed.
-    def upload_inputs(boot, files)
-      remote_step(boot, boot.prepare_argv, name: 'qemu-remote-prepare', deadline: 60)
-      boot.prepared!
-      files.each { |name, local| remote_step(boot, boot.upload_argv(name), name: 'qemu-remote-upload', deadline: 300, stdin: local) }
-    end
-
-    # One setup command on the remote host; its failure means the boot cannot start there.
-    def remote_step(boot, argv, name:, deadline:, stdin: nil)
-      @runner.run(argv, name: name, deadline: deadline, stdin: stdin)
-    rescue CommandError => e
-      raise QemuRemote::Unreachable, "remote host #{boot.host.destination}: #{e.message}"
-    end
-
-    # Ends the boot's remote QEMU and removes its run directory. A failure is reported and
-    # not raised, so it never hides the boot's own result; the remote timeout then ends
-    # the QEMU, and the directory stays for the next look.
-    def clean_remote(boot)
-      @runner.run(boot.cleanup_argv, name: 'qemu-remote-cleanup', deadline: 60)
-    rescue CommandError => e
-      Terminal.puts("remote cleanup of #{boot.host.destination}:#{boot.directory} failed: #{e.message}")
     end
 
     # The host link session in a thread of its own, its socket's failures as Erx::Error.

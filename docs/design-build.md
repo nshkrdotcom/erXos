@@ -186,10 +186,27 @@ TCG is a bug until it is explained, as any other.
 Only QEMU runs on the other host (`tools/lib/erx/qemu_remote.rb`). The
 harness here builds the image, makes an owner-only run directory with a
 random name under the remote work directory, copies the image, initrd and
-device tree into it over ssh, and starts the remote QEMU with its serial
-line on ssh's standard input and output: the serial log fills here as a
-local boot's does, the transcript types through ssh's standard input, and
-the tree's own checkpoints and verifiers judge it here. Only a boot whose
+device tree into it over ssh, with a start script
+(`tools/lib/erx/qemu_remote_start.sh`), and runs that script there under
+`nohup`, detached from ssh. The script runs QEMU with its serial line in a
+file of the run directory, and a sampler beside it records that file's size
+once a second on the remote host's clock. Short polls copy the new bytes
+here one sample at a time, and the tree's own checkpoints and verifiers
+judge each byte here by the second the remote host wrote it. The
+transcript types into a file of the run directory, each piece written at
+its own offset, which a feeder beside QEMU passes to QEMU's serial input
+through a FIFO.
+
+The connection to the other host drops now and then, so no ssh session
+outlives one short step and every step is safe to repeat. A step whose
+connection is lost (ssh exits 255, or the step outlives its deadline) runs
+again, up to five times with growing waits; an input file goes up in 4 MiB
+pieces, each written at its offset and retried alone, and is then checked
+whole by its SHA-256; the start runs QEMU only once, however often it is
+repeated. A poll that loses the connection is followed by the next. Since
+the transcript judges by the remote clock, a lost connection delays a
+checkpoint's verdict but never changes it, and the boot's deadline, too,
+is read on the remote clock. Only a boot whose
 QEMU inputs alone decide its result moves, the same boots reuse keys: one
 with no disk, network device or host link (`Qemu#run` refuses a remote
 boot with any of them); a suite whose cells need those keeps them here. Reuse keys a
@@ -207,15 +224,22 @@ leading dash and no `..` component. Guest output reaches this terminal only
 through the gate's escaping, as a local boot's does. The gate opens no
 connection but ssh to the configured host.
 
-Nothing of a remote boot outlives it. The remote QEMU runs under the remote
-host's GNU timeout, set 30 s past the local deadline, and writes a pid file
-it deletes when it exits; after every boot, passed, failed, timed out or
-interrupted, the harness kills the QEMU that pid file names (by pid and
-QEMU's process name together) and removes the run directory. A harness
-killed outright leaves the remote QEMU to that timeout and its directory
-behind. A host that cannot be reached, or refuses the setup, leaves its
-cell not run, with a line naming why, and the suite incomplete; a remote
-boot that starts and fails fails the suite. The gate starts at most one
+Nothing of a remote boot outlives it. The remote QEMU and the keyboard
+feeder run under the remote host's GNU timeout, set 30 s past the local
+deadline, the sampler for a bounded count of seconds, and QEMU's exit
+status lands in a file the polls read. Every lasting process of the boot
+has the run directory's random name in its arguments, and no other process
+does; after every boot, passed, failed, timed out or interrupted, the
+harness kills each process whose arguments carry that name and removes the
+run directory, retrying while QEMU could still run. The cleanup command's
+own shell carries the name too and survives only because BSD `pkill` never
+signals its ancestors, so the remote host is macOS or FreeBSD. Polls go on until the
+remote timeout has surely ended QEMU and a minute more, so a cell that
+gives up on its host never leaves a QEMU running there. A harness killed
+outright leaves the remote QEMU to that timeout and its directory behind.
+A host that cannot be reached, cannot set the boot up or run QEMU, or is
+lost until then leaves its cell not run, with a line naming why, and the
+suite incomplete; a remote boot that starts and fails fails the suite. The gate starts at most one
 remote boot per suite at a time.
 
 The remote host, the work directory (`erxos-qemu` under the remote home),
