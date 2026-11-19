@@ -1629,14 +1629,12 @@ its code, and the item's work waits on it.
   downloads, its source under `site/`. They carry 0.1's known
   limitations: what it leaves to 0.2 and later (below); the Pi's clock, at
   the build's date at each boot until `ntpd` or root sets it, so a certificate that
-  expired since the build is accepted until then; whoever can write the card can make
-  themselves root; a requested off on the Pi reboots it, which only
+  expired since the build is accepted until then; a requested off on the Pi reboots it, which only
   cutting the power turns off; and the security residuals a user of 0.1 is exposed
-  to, each pointing to its row in the
-  [downsides](design-fiasco.md#downsides-against-erxoss-kernel) or its
-  `TODO.md` item rather than copying it: a development build, in which
-  nothing enforces isolation between domains; a root `rc` reachable
-  over the network by any key in `authorized_keys`; SSH's network-facing code, OTP's transport and authentication included, running in root's own session with root's authority, so a flaw in it reached before login is root's session ([design-ssh.md](design-ssh.md#stages), stage 1); root's session holding a read-only grant of the card's login keys (`login_keys`) for its first-boot import, so the keys are readable in a session beside the system domain, until the SSH domain of 0.2 removes the grant ([design-ssh.md](design-ssh.md#invariants), H8); the DMA handover
+  to, each pointing to its design section or its
+  `TODO.md` item rather than copying it: a development build, which runs
+  only trusted code because it carries development-only grants and its
+  isolation is hardened and reviewed only for 0.2; SSH's network-facing code, OTP's transport and authentication included, running in root's own session with root's authority, so a flaw in it reached before login is root's session ([design-ssh.md](design-ssh.md#stages), stage 1); root's session holding a read-only grant of the card's login keys (`login_keys`) for its first-boot import, so the keys are readable in a session beside the system domain, until the SSH domain of 0.2 removes the grant ([design-ssh.md](design-ssh.md#invariants), H8); the DMA handover
   evidence not recorded for the boards; and a host key made on a weak
   seed ([design-ssh.md](design-ssh.md#host-keys)) when a boot's seed is
   the counter alone
