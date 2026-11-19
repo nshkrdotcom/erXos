@@ -216,6 +216,8 @@ gh workflow run site.yml -f image_url=URL -f image_sha256=DIGEST -f image_source
   progress bar's easing stop under `prefers-reduced-motion`.
 * `favicon.svg` is the tab icon: the orange square of the header bar's
   mark on the page's ink.
+* `kiosk.png` and `doom.png` are the Apps section's screenshots, taken on
+  QEMU `virt` at 1280x800. Doom's shows Freedoom's graphics, BSD-3-Clause.
 * `terminal.js` runs the console window (below).
 
 The text follows the README's "Current status". When that section

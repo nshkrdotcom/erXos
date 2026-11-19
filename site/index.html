@@ -25,6 +25,7 @@
     <a href="#principles">Principles</a>
     <a href="#architecture">Architecture</a>
     <a href="#status">Status</a>
+    <a href="#apps">Apps</a>
     <a href="#correctness">Correctness</a>
     <a href="#try">Try it</a>
     <a href="https://github.com/stass/erXos">GitHub</a>
@@ -348,9 +349,42 @@ Error in process &lt;0.150.0&gt; with exit value:
   </div>
 </section>
 
+<section class="section" id="apps" aria-labelledby="apps-title">
+  <header>
+    <span class="label"><b>05</b> / Apps</span>
+    <h2 id="apps-title">Two example apps.</h2>
+  </header>
+  <div>
+    <div class="prose">
+      <p>The Pi 4 card and the QEMU image carry two example apps, each in a
+      session of its own. Screenshots from QEMU <code>virt</code>.</p>
+    </div>
+    <div class="cells apps">
+      <div>
+        <img src="kiosk.png" width="1280" height="800" loading="lazy"
+          alt="The kiosk: an analog clock and the date on the left, live Bitcoin, Ether and Solana prices with 24-hour charts on the right.">
+        <span class="label"><b>E1</b></span>
+        <h3>Kiosk</h3>
+        <p>The screen a board boots to: a clock and live prices, fetched
+        over HTTPS through erXos's TCP/IP stack. Written in Erlang, drawn
+        with LVGL.</p>
+      </div>
+      <div>
+        <img src="doom.png" width="1280" height="800" loading="lazy"
+          alt="Doom running on erXos under QEMU, with Freedoom's graphics.">
+        <span class="label"><b>E2</b></span>
+        <h3>Doom</h3>
+        <p>A native program: type <code>doom</code> in <code>rc</code> and
+        it opens a window over the kiosk. doomgeneric with Freedoom's
+        data.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
 <section class="section" id="correctness" aria-labelledby="correctness-title">
   <header>
-    <span class="label"><b>05</b> / Correctness</span>
+    <span class="label"><b>06</b> / Correctness</span>
     <h2 id="correctness-title">Checked against answers the code did not write.</h2>
   </header>
   <div>
@@ -416,7 +450,7 @@ Error in process &lt;0.150.0&gt; with exit value:
 
 <section class="section" id="try" aria-labelledby="try-title">
   <header>
-    <span class="label"><b>06</b> / Try it</span>
+    <span class="label"><b>07</b> / Try it</span>
     <h2 id="try-title">The real thing, in your browser.</h2>
   </header>
   <div>
@@ -499,7 +533,7 @@ Error in process &lt;0.150.0&gt; with exit value:
 
 <section class="section" id="downloads" aria-labelledby="downloads-title">
   <header>
-    <span class="label"><b>07</b> / Download</span>
+    <span class="label"><b>08</b> / Download</span>
     <h2 id="downloads-title">Run it on your own machine.</h2>
   </header>
   <div>

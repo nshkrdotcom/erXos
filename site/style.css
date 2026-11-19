@@ -435,6 +435,19 @@ p:last-child {
   margin-top: 36px;
 }
 
+/* The example apps: a screenshot heads each cell. */
+.cells.apps {
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 380px), 1fr));
+}
+
+.cells.apps img {
+  display: block;
+  width: 100%;
+  height: auto;
+  margin-bottom: 14px;
+  border: 1px solid var(--rule);
+}
+
 /* ---- Architecture sketch ----------------------------------------------- */
 
 .stack {

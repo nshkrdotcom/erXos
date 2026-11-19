@@ -51,7 +51,7 @@ module Erx
   # from, a release tag or a commit, beside each download (docs/design.md,
   # "Licenses and notices").
   module Site
-    PAGE_FILES = %w[index.html release-notes.html style.css favicon.svg terminal.js].freeze
+    PAGE_FILES = %w[index.html release-notes.html style.css favicon.svg terminal.js kiosk.png doom.png].freeze
     # What marks a statement of a page source that no source in the tree confirms yet. A
     # page that holds one is a draft, and the site publishes no draft (CLAUDE.md, "Never
     # fabricate").
@@ -208,6 +208,7 @@ module Erx
       entries = [Entry.new(path: 'release-notes.html', source: page.fetch('release-notes.html'), compression: nil),
                  Entry.new(path: 'style.css', source: page.fetch('style.css'), compression: nil),
                  Entry.new(path: 'favicon.svg', source: page.fetch('favicon.svg'), compression: nil),
+                 *%w[kiosk.png doom.png].map { |name| Entry.new(path: name, source: page.fetch(name), compression: nil) },
                  Entry.new(path: names.fetch('terminal.js'), source: page.fetch('terminal.js'), compression: nil),
                  *emulator.map { |name, path| Entry.new(path: names.fetch(name), source: path, compression: nil) },
                  *notices.map { |name, path| Entry.new(path: "v64/#{name}", source: path, compression: nil) },
@@ -322,7 +323,7 @@ module Erx
     private_class_method :write
 
     CONTENT_TYPES = {
-      '.html' => 'text/html; charset=utf-8', '.css' => 'text/css', '.svg' => 'image/svg+xml',
+      '.html' => 'text/html; charset=utf-8', '.css' => 'text/css', '.svg' => 'image/svg+xml', '.png' => 'image/png',
       '.js' => 'text/javascript',
       '.mjs' => 'text/javascript', '.wasm' => 'application/wasm', '.json' => 'application/json',
       '.gz' => 'application/gzip', '.xz' => 'application/x-xz', '.bin' => 'application/octet-stream'
