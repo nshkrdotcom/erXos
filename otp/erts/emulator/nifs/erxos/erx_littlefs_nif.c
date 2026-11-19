@@ -21,7 +21,11 @@
  * dirty, NIF) or the deadline passes. The owner serves the request through
  * the block service on normal schedulers and never waits for the worker, so
  * the one dirty thread an operation holds waits for nothing that needs a
- * second dirty thread: that is the deadlock argument.
+ * second dirty thread: that is the deadlock argument. A log line of the
+ * owner's or the block service's takes a dirty I/O thread of its own, since
+ * erx_log's calls are dirty I/O NIFs; a runtime has two
+ * (ERX_BOOT_ERTS_DIRTY_IO) and one volume, so the line takes the second and
+ * never waits for the operation.
  *
  * Any block failure (an error answer, a deadline, an owner that is gone)
  * marks the volume broken: the failing operation and every later one answer

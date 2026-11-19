@@ -5,7 +5,10 @@
  * The calls under erx_clock_nif (docs/design-time.md, "The NIF and the liberx calls"):
  * the reading side, which needs nothing beyond the time page every domain maps, and the
  * setter, the runtime's one call of erx_time_set_offset (imports.txt, only_erx_clock_nif),
- * which erXos's kernel admits only with WRITE on the page.
+ * which erXos's kernel admits only with WRITE on the page. The setter is a dirty I/O NIF: on
+ * Fiasco it is a round trip to the root's one service thread, which answers only after the
+ * body it is running, so on a normal scheduler it would hold every process there behind a
+ * stopped domain's teardown (docs/design-fiasco.md, "The loop").
  */
 
 #define STATIC_ERLANG_NIF 1
@@ -75,7 +78,7 @@ set_offset_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
 
 static ErlNifFunc nif_funcs[] = {
 	{ "read_nif", 0, read_nif, 0 },
-	{ "set_offset_nif", 1, set_offset_nif, 0 },
+	{ "set_offset_nif", 1, set_offset_nif, ERL_NIF_DIRTY_JOB_IO_BOUND },
 };
 
 ERL_NIF_INIT(erx_clock_nif, nif_funcs, NULL, NULL, NULL, NULL)

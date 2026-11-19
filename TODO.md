@@ -2479,8 +2479,9 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   thread (`liberx/backend/fiasco/slice.c` `erx_fiasco_release_entry_body`, `check == 1`), so
   every other call of every task and of the root waits for that file's hash. The website's
   domain releases hold only small files (the largest 37 KB), so each wait is short; a release
-  that ships a file of megabytes would stall the system domain's log take, and so its watchdog
-  pet, as the runtime image's check did. The task could hash its file over its own mapping of
+  that ships a file of megabytes would hold every task's calls for the hash, and with them any
+  wait of the system domain's normal scheduler on the service (the allocator's, below). The
+  task could hash its file over its own mapping of
   the slice, with the file's hash in the reply, and the verdict then be the task's own.
 * [Medium] Fiasco backend, no test reaches the service's refusal of an image entry without a
   good verdict (`liberx/backend/fiasco/slice.c` `erx_fiasco_slice_image`, and
@@ -2491,15 +2492,35 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   expects `ERX_ECORRUPT`, seeded once with the guard removed, would pin both.
 * [Medium] Fiasco backend, the website's image under TCG with `-icount shift=9` and
   `erx.watchdog=1,30,600` reaches the rc banner, but none of its configured domains reports
-  ready in time: network and storage are stopped and restarted from 1087 s uptime until each is
-  left down at about 1600 s, and each stop holds the watchdog pet off for 21 to 26 s, within 5 s
-  of the deadline. QEMU monitor samples of the longest gap (25.5 s, ending at 1088 s) show the
-  root service in the stopped task's teardown (`task_stop_tree`, `erx_fiasco_vm_task_close`,
-  `erx_backend_vm_table_clear`, `apply_plan`) and the domain's own threads; what the normal
-  scheduler waits on there is not yet known (recording each root thread's current service call
-  or umtx wait where the monitor reads it, as found the log take behind the image check, would
-  show it). Decide whether the ready deadline should scale with the
-  machine, and take the teardown off the path the normal scheduler waits on.
+  ready in time: network and storage are stopped and restarted from about 1100 s uptime until
+  each is left down. Decide whether the ready deadline should scale with the machine. A stop's
+  teardown holds the root service for 12 to 26 s there; PC samples put most of it in Fiasco's
+  kernel deleting the task and the rest in `erx_backend_vm_table_clear`, so it is not cut short
+  in user mode, and while it lasts every task's calls wait, the restarted domains' among them.
+* [Medium] Fiasco backend, a long service body, a stopped domain's teardown above, holds the
+  system domain's watchdog pet off whenever the one normal scheduler makes a service call
+  during it. With `erx_log`'s calls on a dirty I/O scheduler, the same TCG boot (Apple M3 Max,
+  QEMU 11.1.3, Homebrew clang 23.1.3, one CPU) shows a stop's longest pet gap at 2.0 s at the
+  median of 22 stops, against 12.4 s of 13 before; six are 5.5 to 15 s and one 22 s.
+  - What holds it: a table of each root thread's current service call, read through QEMU's
+    monitor during the 22 s gap, shows the normal scheduler in `erx_vm_reserve <
+    os_mmap_aligned`, ERTS's allocator taking a carrier.
+  - Every other service call a normal scheduler makes is the same: `erl_mmap.c`'s `erx_vm_*`;
+    the port drivers' (`erx_lane_drv.c`, `erx_program_drv.c`); the setup NIFs of `erx_pipe_nif`
+    (`make_lane`, `make_bell`, `close`, `hand_make`, `open_end`), `erx_area` (`map`, `lend`,
+    `unlend`) and `erx_device` (`open`, `irq_bind`, `irq_bind_owner`, `queue_create`,
+    `region`, `framebuffer`, `negotiate`), which could take the dirty I/O flag once each is
+    checked on a dirty thread; their per-event doorbells and acknowledgements, where the flag
+    would cost every event; their resource destructors, which the garbage collector runs; and
+    a page fault, since the service is the root's pager.
+  - Which NIFs must be dirty is a list kept by hand, the C tables and the probe of
+    `test/integration/runtime_service_nifs_test.rb`. Counting the root's executor-class
+    service calls by number in `erx_fiasco_service_call` and showing the count as an
+    inspection path would let a QEMU test hold an allowlist.
+  - The fix of the class: the root's own memory calls stop waiting behind other tasks' bodies
+    (a super carrier reserved and committed at start, or the root's calls on its own table run
+    in the calling thread), or no service body stays long (a teardown the service runs in
+    steps between other calls).
 * [Medium] runtime, `test/integration/runtime_hosted_smoke_test.rb` fails twice on the hosted
   runtime: `gen_tcp:listen(0, [])` raises `undefined function erx_gen_tcp:listen/2` where the
   test expects `{error,enotsup}`, and `erx_device.o` imports `aligned_alloc`, which the seam's

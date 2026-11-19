@@ -7,6 +7,11 @@
  * liberx. The NIF takes nothing apart: erx_schema:decode_report/2, generated from the
  * ABI, reads the bytes in Erlang, and the collector erx_kernel_records turns the two
  * masks into statuses. Both are rare, so a NIF's call costs nothing that counts.
+ *
+ * info_nif is a dirty I/O NIF: on Fiasco every topic but the group's is a round trip to the
+ * root's one service thread, which answers only after the body it is running, so on a
+ * normal scheduler it would hold every process there behind a stopped domain's teardown
+ * (docs/design-fiasco.md, "The loop"). partial_nif answers from the backend's own table.
  */
 
 #define STATIC_ERLANG_NIF 1
@@ -63,7 +68,7 @@ partial_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
 }
 
 static ErlNifFunc nif_funcs[] = {
-	{ "info_nif", 4, info_nif, 0 },
+	{ "info_nif", 4, info_nif, ERL_NIF_DIRTY_JOB_IO_BOUND },
 	{ "partial_nif", 1, partial_nif, 0 },
 };
 

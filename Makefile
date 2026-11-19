@@ -108,6 +108,7 @@ check-runtime-hosted:
 	$(RUBY) test/integration/runtime_literal_token_test.rb
 	$(RUBY) test/integration/runtime_dirty_io_reductions_test.rb
 	$(RUBY) test/integration/runtime_prepare_loading_test.rb
+	$(RUBY) test/integration/runtime_service_nifs_test.rb
 	$(RUBY) tools/erx check-runtime-seam
 
 check-conformance:

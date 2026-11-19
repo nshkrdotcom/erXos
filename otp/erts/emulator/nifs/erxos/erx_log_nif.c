@@ -9,8 +9,13 @@
  * only one between a record and Erlang, and no byte of a record's text reaches Erlang
  * unescaped.
  *
- * Both are rare, a read a few times a second at most, so a NIF's call costs nothing that
- * counts.
+ * Each entry is a dirty I/O NIF. On Fiasco each call is a round trip to the root's one
+ * service thread, which answers it only after the body it is running, a stopped domain's
+ * teardown for seconds on a slow machine (docs/design-fiasco.md, "The loop"). The log
+ * service takes every 100 ms and every logger line is a debug record, so on a normal
+ * scheduler these calls would hold it, and the system domain's watchdog pet on it, behind
+ * every long body. The calls come at most tens a second outside a boot's burst of lines, so
+ * the hand-off costs nothing that counts.
  */
 
 #define STATIC_ERLANG_NIF 1
@@ -139,9 +144,9 @@ take_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
 }
 
 static ErlNifFunc nif_funcs[] = {
-	{ "debug_nif", 1, debug_nif, 0 },
-	{ "read_nif", 1, read_nif, 0 },
-	{ "take_nif", 0, take_nif, 0 },
+	{ "debug_nif", 1, debug_nif, ERL_NIF_DIRTY_JOB_IO_BOUND },
+	{ "read_nif", 1, read_nif, ERL_NIF_DIRTY_JOB_IO_BOUND },
+	{ "take_nif", 0, take_nif, ERL_NIF_DIRTY_JOB_IO_BOUND },
 };
 
 ERL_NIF_INIT(erx_log, nif_funcs, NULL, NULL, NULL, NULL)
