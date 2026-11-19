@@ -161,8 +161,6 @@
       <li><strong>Trusted code only.</strong> Domains run in address spaces
       of their own, but a development build carries development-only grants,
       and its isolation is hardened and reviewed only for 0.2.</li>
-      <li><strong>Any key in <code>authorized_keys</code> is root.</strong> The
-      key opens root's <code>rc</code> over the network.</li>
       <li><strong>SSH runs in root's session.</strong> OTP's SSH daemon, its
       transport and authentication included, runs with root's authority, so a
       flaw in it that is reached before login is root's session. A separate
