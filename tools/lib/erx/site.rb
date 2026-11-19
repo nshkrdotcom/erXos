@@ -52,6 +52,10 @@ module Erx
   # "Licenses and notices").
   module Site
     PAGE_FILES = %w[index.html release-notes.html style.css favicon.svg terminal.js].freeze
+    # What marks a statement of a page source that no source in the tree confirms yet. A
+    # page that holds one is a draft, and the site publishes no draft (CLAUDE.md, "Never
+    # fabricate").
+    UNVERIFIED = '<!-- unverified'
     MANIFEST = 'boot.json'
     # Marks a directory this step built; the server's route table skips it.
     MARKER = '.erx-site'
@@ -186,6 +190,9 @@ module Erx
       notices = SiteV64::NOTICES.transform_values { |path| File.join(v64, path) }
       missing = [*page.values, *emulator.values, *notices.values, image, image_record, card, card_record].compact.reject { |path| File.file?(path) }
       raise Error, "site input missing: #{missing.first}" unless missing.empty?
+
+      draft = page.keys.find { |name| File.read(page.fetch(name)).include?(UNVERIFIED) }
+      raise Error, "site/#{draft} holds a statement marked #{UNVERIFIED}; settle it before publishing" if draft
 
       digest = ->(path) { Digest::SHA256.file(path).hexdigest }
       image_sha256 = digest.(image)

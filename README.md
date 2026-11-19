@@ -489,7 +489,8 @@ USB-serial adapter gives you the console
    ```
 
    You get `rc`, the command shell. Port 2222, not 22, is where 0.1
-   listens. <!-- unverified: how a user finds BOARD-ADDRESS (DHCP lease on the router, or `ifconfig` on the serial console); no document of the tree says which. -->
+   listens. BOARD-ADDRESS is the address your network's DHCP server gave
+   the board; your router lists it.
 
 **QEMU.** From a clone of the repository,
 
@@ -514,8 +515,8 @@ instead; its kernel and device tree, which names the booted slot as the
 firmware would, lie in the tree's `build/production-image/medium-boot` until
 the next `--medium`, and its disk is the copy. To log in over SSH, the medium needs your
 `authorized_keys` on its first FAT volume, labelled `ERXOS`, as on the card; then
-`ssh -p 2222 root@127.0.0.1`.
-<!-- unverified: the website does not offer the medium as a download yet (TODO.md, "site, the QEMU virt download"). -->
+`ssh -p 2222 root@127.0.0.1`. The website does not offer the QEMU medium
+for download yet; build it as above.
 
 **What to try.** In the SSH session or on the serial console:
 
@@ -530,8 +531,7 @@ the next `--medium`, and its disk is the copy. To log in over SSH, the medium ne
   cut once they are synced.
 
 **Doom.** The QEMU release medium and the Pi 4 card carry Doom as
-`/bin/doom`: type `doom` in `rc`. The website's image, which the browser
-demo boots, does not. It is an example, not part of erXos: doomgeneric under
+`/bin/doom`: type `doom` in `rc`. It is an example, not part of erXos: doomgeneric under
 GPL-2.0-or-later with Freedoom's data file under BSD-3-Clause, both
 licenses in the image's `NOTICES`, and its source is erXos's fork,
 [https://github.com/stass/erxos-doom](https://github.com/stass/erxos-doom), at the commit the tree's gitlink for
@@ -542,7 +542,6 @@ Freedoom's WAD; `make pack` (`tools/erx pack --published`) refuses without
 them, or with a fork that does not hold that commit. `tools/erx pack
 --medium` packs your own development medium, which carries no Doom and
 needs neither.
-<!-- unverified: the demo loop on the Pi 4 card (shown on QEMU's published medium only). -->
 
 ## Correctness and testing
 

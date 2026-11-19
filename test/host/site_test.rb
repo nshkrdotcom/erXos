@@ -378,6 +378,15 @@ class SiteTest < Minitest::Test
     end
   end
 
+  # A page whose source still marks a statement unverified is a draft and is not published.
+  def test_a_page_with_an_unverified_statement_is_refused
+    with_inputs do |root, image|
+      File.write(File.join(root, 'site/release-notes.html'), "<p>It soaked a day. <!-- unverified: no record --></p>\n")
+      error = assert_raises(Erx::Error) { inventory(root, image) }
+      assert_match %r{site/release-notes\.html holds a statement marked <!-- unverified}, error.message
+    end
+  end
+
   def test_a_missing_input_is_named
     with_inputs do |root, image|
       File.delete(File.join(root, 'v64/build/NOTICES'))
