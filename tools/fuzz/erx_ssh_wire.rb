@@ -17,6 +17,8 @@ module ErxSshWireFuzz
   ROOT = File.expand_path('../..', __dir__)
   CORE = 'erlang/apps/erx_ssh_login/src/erx_ssh_wire.erl'
   FUZZ = 'test/erlang/erx_ssh_wire_fuzz.erl'
+  # The key blob's matcher, which key_blob/1 calls.
+  BLOB = 'erlang/apps/erx/src/erx_boot_keys.erl'
   CHECKED = 'string(<<Length:32, Rest/binary>>) when Length =< byte_size(Rest) ->'
   UNCHECKED = 'string(<<Length:32, Rest/binary>>) ->'
   DEADLINE_SECONDS = '120'
@@ -43,7 +45,7 @@ module ErxSshWireFuzz
       File.binwrite(core_path, core_text)
       include = Erx::Generated.path('erlang/apps/erx/include', root: ROOT)
       output, status = Open3.capture2e(ENV.fetch('ERX_ERLC'), '-I', include, '-o', work, core_path,
-                                       File.join(ROOT, FUZZ), stdin_data: '')
+                                       File.join(ROOT, BLOB), File.join(ROOT, FUZZ), stdin_data: '')
       raise output unless status.success?
 
       Open3.capture2e('gtimeout', '-k', '10', DEADLINE_SECONDS, ENV.fetch('ERX_ERL'), '-noshell', '-pa', work,

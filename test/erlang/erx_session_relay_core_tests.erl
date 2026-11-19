@@ -217,7 +217,7 @@ events_test() ->
     T1 = ev({master, {tty_size, 30, 100}}, type(<<3, 26, 28>>, type(Info, T0))),
     {Events, T2} = take(s1, T1),
     ?assertEqual([{erx_tty_event, a, E} || E <- [info, interrupt, suspend, quit, winch]], Events),
-    {[{erx_console_size, 100, 30}], T3} = take(console, T2),
+    {[{erx_console_size, 30, 100}], T3} = take(console, T2),
     T4 = fg(s1, {a, current}, {g1, 3}, T3),
     {_, _, T5} = report(pa, ar, type(<<"k\n">>, T4)),
     T6 = type(?CTRL_C, fg(s1, {b, cooked}, {g1, 3}, T5)),

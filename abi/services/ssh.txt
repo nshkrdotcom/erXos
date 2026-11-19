@@ -24,3 +24,13 @@ service ssh_line 12
 # The signals a signaled names are abi/signals.txt's signal set ssh_line, each by its name
 # with sig before it, as a program's end names it (docs/design-programs.md, "A program's
 # end"); the channel sends it as SSH's exit-signal, by the name without sig in capitals.
+# The line's bounds (docs/design-ssh.md, "Sessions, ttys and shells" and "Limits and who
+# pays"): a connection holds at most ssh_line_max_channels channels open, FreeBSD's
+# MaxSessions, and the line answers limited past them; an exec's command is 1 to
+# ssh_line_command_max bytes. A pty-req's TERM is at most ssh_term_max bytes, terminfo's
+# names being short, and its rows and columns each at most console_side_max (console.txt),
+# a side of zero taken as the default; the session's own first stage, erx_ssh_dev_channel,
+# takes a pty-req under the same bounds.
+limit ssh_line_max_channels u32 10
+limit ssh_line_command_max u32 32768
+limit ssh_term_max u32 64

@@ -114,7 +114,7 @@ message, and a drain is answered at once. `size`, {Rows, Columns}, is the
 tty's window size from the start, as a master's first report would make it;
 without it the tty has erx_tty's default.
 """.
--spec new(term(), #{master := none | present, size => {1..65535, 1..65535}}) -> core().
+-spec new(term(), #{master := none | present, size => erx_console:size()}) -> core().
 new(Console, #{master := Master} = Options) ->
     Tty = case Options of
               #{size := {Rows, Columns}} ->
@@ -506,7 +506,7 @@ typed(Bytes, #core{tty = Tty, link = Link} = Core) ->
 resize(Rows, Columns, #core{tty = Tty, console = Console} = Core) ->
     {ok, Actions, Tty1} = erx_tty:size(Rows, Columns, Tty),
     {Done, Core1} = carry(Actions, Core#core{tty = Tty1}),
-    {Done ++ [{send, Console, {erx_console_size, Columns, Rows}}], Core1}.
+    {Done ++ [{send, Console, {erx_console_size, Rows, Columns}}], Core1}.
 
 %% The line discipline's actions, in order.
 carry(Actions, Core) ->

@@ -10,8 +10,9 @@ test/erlang/erx_ssh_wire_fuzz.erl.
 
 `key_blob/1` and `signature_blob/1` compare a fixed blob whole against its one
 layout (RFC 8709, sections 4 and 6): the name `ssh-ed25519` and 32 key bytes in
-51 bytes, the same name and 64 signature bytes in 83. The key's bytes are only
-bytes here; the Ed25519 verifier decodes them as a point.
+51 bytes, the same name and 64 signature bytes in 83. The key blob's matcher is
+erx_boot_keys:key_blob/1, which the readers of root's login keys share. The
+key's bytes are only bytes here; the Ed25519 verifier decodes them as a point.
 
 `exchange/1` reads the hash input of a connection's first key exchange, at most
 64 KiB, through a cursor: five length-prefixed strings (RFC 4251, section 5), each
@@ -33,8 +34,7 @@ an atom.
 
 -define(NAME_SIZE, ?ERX_SSH_ED25519_NAME_SIZE).
 
--doc "An Ed25519 public key's 32 bytes, undecoded.".
--type key() :: <<_:(?ERX_SSH_ED25519_KEY_SIZE * 8)>>.
+-type key() :: erx_boot_keys:key().
 -doc "An Ed25519 signature's 64 bytes, `R` then `S`.".
 -type signature() :: <<_:(?ERX_SSH_ED25519_SIGNATURE_SIZE * 8)>>.
 -doc """
@@ -48,11 +48,8 @@ names of what each holds, and the cookie of the server's KEXINIT payload.
 
 -doc "The 32 key bytes of a 51-byte `ssh-ed25519` key blob.".
 -spec key_blob(term()) -> {ok, key()} | {error, badarg}.
-key_blob(<<?NAME_SIZE:32, Name:?NAME_SIZE/binary, ?ERX_SSH_ED25519_KEY_SIZE:32, Key:?ERX_SSH_ED25519_KEY_SIZE/binary>>)
-    when Name =:= ?ERX_SSH_ED25519_NAME_BYTES ->
-    {ok, Key};
-key_blob(_) ->
-    {error, badarg}.
+key_blob(Blob) ->
+    erx_boot_keys:key_blob(Blob).
 
 -doc "The 64 signature bytes of an 83-byte `ssh-ed25519` signature blob.".
 -spec signature_blob(term()) -> {ok, signature()} | {error, badarg}.

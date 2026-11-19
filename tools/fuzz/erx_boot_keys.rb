@@ -17,9 +17,10 @@ module ErxBootKeysFuzz
   ROOT = File.expand_path('../..', __dir__)
   CORE = 'erlang/apps/erx/src/erx_boot_keys.erl'
   FUZZ = 'test/erlang/erx_boot_keys_fuzz.erl'
-  CHECKED = "blob(<<NameSize:32, Name:NameSize/binary, KeySize:32, _:KeySize/binary>> = Blob)\n  " \
-            'when Name =:= ?ERX_SSH_ED25519_NAME_BYTES, KeySize =:= ?ERX_SSH_ED25519_KEY_SIZE ->'
-  UNCHECKED = 'blob(<<_:51/binary>> = Blob) ->'
+  CHECKED = "key_blob(<<?ERX_SSH_ED25519_NAME_SIZE:32, Name:?ERX_SSH_ED25519_NAME_SIZE/binary,\n           " \
+            "?ERX_SSH_ED25519_KEY_SIZE:32, Key:?ERX_SSH_ED25519_KEY_SIZE/binary>>)\n  " \
+            'when Name =:= ?ERX_SSH_ED25519_NAME_BYTES ->'
+  UNCHECKED = 'key_blob(<<_:19/binary, Key:32/binary>>) ->'
   DEADLINE_SECONDS = '120'
   VERDICT = 'not_a_key_blob'
 

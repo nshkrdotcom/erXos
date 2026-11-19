@@ -35,17 +35,21 @@ reaches a log. A refusal leaves the decoder through one throw,
 
 -include("generated/erx_abi.hrl").
 
--export([decode/1, file_max/0]).
--export_type([blob/0, finding/0, refusal/0]).
+-export([decode/1, file_max/0, key_blob/1, blob_size/0]).
+-export_type([blob/0, key/0, finding/0, refusal/0]).
 
 -define(FILE_MAX, 16384).
 -define(LINE_MAX, 1024).
--define(KEYS_MAX, 16).
+%% A key blob (RFC 8709, section 4): the name and the key, each a string with its
+%% 32-bit length (RFC 4251, section 5), 51 bytes.
+-define(BLOB_SIZE, (4 + ?ERX_SSH_ED25519_NAME_SIZE + 4 + ?ERX_SSH_ED25519_KEY_SIZE)).
 %% 51 bytes are 17 groups of three, so 68 characters with no padding and no spare
 %% bits: each blob has one spelling.
 -define(KEY_CHARS, 68).
 
--type blob() :: <<_:408>>.
+-type blob() :: <<_:(?BLOB_SIZE * 8)>>.
+-doc "An Ed25519 public key's 32 bytes, undecoded.".
+-type key() :: <<_:(?ERX_SSH_ED25519_KEY_SIZE * 8)>>.
 -type finding() :: {pos_integer(), not_a_plain_key | does_not_decode | line_too_long}.
 -type refusal() :: too_long | too_many_keys.
 
@@ -69,6 +73,25 @@ refuse(Refusal) -> throw({?MODULE, Refusal}).
 -spec file_max() -> pos_integer().
 file_max() -> ?FILE_MAX.
 
+-doc """
+The 32 key bytes of Blob when it is an `ssh-ed25519` key blob, the name and the
+key in their one layout, compared whole. This is the blob's one matcher: the
+decoder takes a key by it, the login facet's erx_ssh_wire:key_blob/1 is it, and
+a reader of the login_keys tree, whose file is the blobs end to end, cuts it at
+blob_size/0.
+""".
+-spec key_blob(term()) -> {ok, key()} | {error, badarg}.
+key_blob(<<?ERX_SSH_ED25519_NAME_SIZE:32, Name:?ERX_SSH_ED25519_NAME_SIZE/binary,
+           ?ERX_SSH_ED25519_KEY_SIZE:32, Key:?ERX_SSH_ED25519_KEY_SIZE/binary>>)
+  when Name =:= ?ERX_SSH_ED25519_NAME_BYTES ->
+    {ok, Key};
+key_blob(_) ->
+    {error, badarg}.
+
+-doc "The size of a key blob, in bytes.".
+-spec blob_size() -> pos_integer().
+blob_size() -> ?BLOB_SIZE.
+
 %% The cursor over the file's lines: File is what follows the end of line Number - 1.
 lines(<<>>, _Number, Keys, Findings) ->
     {lists:reverse(Keys), lists:reverse(Findings)};
@@ -77,7 +100,7 @@ lines(File, Number, Keys, Findings) ->
     case line(Line, Length) of
         ignored ->
             lines(Rest, Number + 1, Keys, Findings);
-        {key, Blob} when length(Keys) < ?KEYS_MAX ->
+        {key, Blob} when length(Keys) < ?ERX_SSH_AUTHORIZED_KEYS_MAX ->
             lines(Rest, Number + 1, [Blob | Keys], Findings);
         {key, _} ->
             refuse(too_many_keys);
@@ -138,11 +161,11 @@ key(Chars) when byte_size(Chars) =:= ?KEY_CHARS ->
 key(_Chars) ->
     {skipped, does_not_decode}.
 
-blob(<<NameSize:32, Name:NameSize/binary, KeySize:32, _:KeySize/binary>> = Blob)
-  when Name =:= ?ERX_SSH_ED25519_NAME_BYTES, KeySize =:= ?ERX_SSH_ED25519_KEY_SIZE ->
-    {key, Blob};
-blob(_Bytes) ->
-    {skipped, does_not_decode}.
+blob(Bytes) ->
+    case key_blob(Bytes) of
+        {ok, _Key} -> {key, Bytes};
+        {error, badarg} -> {skipped, does_not_decode}
+    end.
 
 is_base64(C) ->
     (C >= $A andalso C =< $Z) orelse (C >= $a andalso C =< $z) orelse (C >= $0 andalso C =< $9)

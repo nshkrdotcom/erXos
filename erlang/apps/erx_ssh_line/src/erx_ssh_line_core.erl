@@ -13,14 +13,14 @@ peer is untrusted, so request/4 checks its whole shape before anything acts
 on it, and answers
 `{error, badarg}` for any shape but the one below, and for a channel that is
 no process of the peer's: a channel of a third domain would make the session
-send a tty's bytes there. Past ?MAX_CHANNELS open channels, `max_channels`,
-it answers `{error, limited}`.
+send a tty's bytes there. Past ssh_line_max_channels open channels,
+`max_channels`, it answers `{error, limited}`.
 
 * `{open_tty, Channel, Run, Term, Rows, Columns}`: Channel a pid of the
   peer's, Run `shell` or `{exec, Command}` with Command a binary of 1 to
-  ?MAX_COMMAND bytes holding no NUL, Term a binary of at most ?MAX_TERM
-  bytes, and Rows and Columns integers from 0, which `pty-req` allows, to
-  ?MAX_SIDE.
+  ssh_line_command_max bytes holding no NUL, Term a binary of at most
+  ssh_term_max bytes, and Rows and Columns integers from 0, which `pty-req`
+  allows, to console_side_max (abi/services/ssh.txt and console.txt).
 
 The tty opens at Rows by Columns, a side of zero taken as 24 rows or 80
 columns, and its shell's TERM is Term when abi/terminal.txt lists it and
@@ -34,14 +34,8 @@ goes to that channel alone (report/2).
 -export([new/0, request/4, tty/4, term/1, opened/3, ended/2, report/2]).
 -export_type([core/0]).
 
-%% `max_channels`: the channels one connection may hold open (design-ssh.md).
--define(MAX_CHANNELS, 10).
-%% An exec request's command, at most 32 KiB, as design-ssh.md bounds it.
--define(MAX_COMMAND, 32768).
-%% A TERM name; terminfo's names are short.
--define(MAX_TERM, 64).
-%% A side of the window, as the tty bounds it (erx_tty_link).
--define(MAX_SIDE, 65535).
+-include("generated/erx_abi.hrl").
+
 %% A pseudo-terminal's size when pty-req gives a side as zero.
 -define(DEFAULT_ROWS, 24).
 -define(DEFAULT_COLUMNS, 80).
@@ -60,11 +54,11 @@ of a pid: open a tty on the channel, or answer the error.
 -spec request(term(), pos_integer(), fun((pid()) -> non_neg_integer()), core()) ->
           {open_tty, pid(), erx_session_tty:channel()} | {error, limited | badarg}.
 request({open_tty, Channel, Run, Term, Rows, Columns}, Peer, Owner, #{ttys := Ttys})
-  when is_pid(Channel), is_binary(Term), byte_size(Term) =< ?MAX_TERM,
-       is_integer(Rows), Rows >= 0, Rows =< ?MAX_SIDE,
-       is_integer(Columns), Columns >= 0, Columns =< ?MAX_SIDE ->
+  when is_pid(Channel), is_binary(Term), byte_size(Term) =< ?ERX_SSH_TERM_MAX,
+       is_integer(Rows), Rows >= 0, Rows =< ?ERX_CONSOLE_SIDE_MAX,
+       is_integer(Columns), Columns >= 0, Columns =< ?ERX_CONSOLE_SIDE_MAX ->
     case {valid_run(Run), Owner(Channel) =:= Peer} of
-        {true, true} when map_size(Ttys) >= ?MAX_CHANNELS -> {error, limited};
+        {true, true} when map_size(Ttys) >= ?ERX_SSH_LINE_MAX_CHANNELS -> {error, limited};
         {true, true} -> {open_tty, Channel, tty(Run, Term, Rows, Columns)};
         _ -> {error, badarg}
     end;
@@ -77,7 +71,8 @@ taken as 24 rows or 80 columns, its shell's TERM from Term (term/1). The
 caller has bounded Term and the sides, as request/4 does; erx_ssh_dev_channel,
 SSH's first stage in the session, takes its ttys from here too.
 """.
--spec tty(erx_session_tty:run(), binary(), 0..?MAX_SIDE, 0..?MAX_SIDE) -> erx_session_tty:channel().
+-spec tty(erx_session_tty:run(), binary(), 0..?ERX_CONSOLE_SIDE_MAX, 0..?ERX_CONSOLE_SIDE_MAX) ->
+          erx_session_tty:channel().
 tty(Run, Term, Rows, Columns) ->
     #{run => Run, size => {side(Rows, ?DEFAULT_ROWS), side(Columns, ?DEFAULT_COLUMNS)},
       vars => #{<<"TERM">> => [term(Term)]}}.
@@ -97,7 +92,8 @@ side(0, Default) -> Default;
 side(Side, _Default) -> Side.
 
 valid_run(shell) -> true;
-valid_run({exec, Command}) when is_binary(Command), byte_size(Command) >= 1, byte_size(Command) =< ?MAX_COMMAND ->
+valid_run({exec, Command})
+  when is_binary(Command), byte_size(Command) >= 1, byte_size(Command) =< ?ERX_SSH_LINE_COMMAND_MAX ->
     binary:match(Command, <<0>>) =:= nomatch;
 valid_run(_Run) -> false.
 

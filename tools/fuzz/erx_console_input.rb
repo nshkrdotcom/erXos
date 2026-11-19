@@ -6,6 +6,7 @@ require 'fileutils'
 require 'open3'
 require 'optparse'
 require 'tmpdir'
+require_relative '../lib/erx/generated'
 
 # The fuzz target of erx_console:input/2, the one parser of console input bytes, compiled
 # from source and run alone on stock's emulator (ERX_ERL and ERX_ERLC, the oracle's), so it
@@ -18,11 +19,14 @@ module ErxConsoleInputFuzz
   TARGET_SOURCE = File.join(ROOT, 'test/erlang/erx_console_input_fuzz.erl')
   LATIN1_BRANCH = 'data(latin1(<<Bad>>))'
   WRONG_BRANCH = 'data(<<(Bad band 16#7f)>>)'
+  # The module includes the generated ABI header.
+  INCLUDE = 'erlang/apps/erx/include'
   DEADLINE_SECONDS = '120'
 
   module_function
 
   def run(seed:)
+    Erx::Generated.ensure(root: ROOT)
     source = File.binread(MODULE_SOURCE)
     raise "no latin-1 branch in #{MODULE_SOURCE}" unless source.include?(LATIN1_BRANCH)
 
@@ -38,7 +42,8 @@ module ErxConsoleInputFuzz
     Dir.mktmpdir('erx-console-fuzz') do |work|
       module_path = File.join(work, 'erx_console.erl')
       File.binwrite(module_path, module_text)
-      output, status = Open3.capture2e(ENV.fetch('ERX_ERLC'), '-o', work, module_path, TARGET_SOURCE, stdin_data: '')
+      output, status = Open3.capture2e(ENV.fetch('ERX_ERLC'), '-I', Erx::Generated.path(INCLUDE, root: ROOT), '-o', work,
+                                       module_path, TARGET_SOURCE, stdin_data: '')
       raise output unless status.success?
 
       Open3.capture2e('gtimeout', '-k', '10', DEADLINE_SECONDS, ENV.fetch('ERX_ERL'), '-noshell', '-pa', work,

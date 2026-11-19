@@ -67,6 +67,8 @@ and takes no flow control.
          hangup/1, waiting/1, dropped/1]).
 -export_type([tty/0, termios/0, open/0, timer/0, room/0, action/0]).
 
+-include("generated/erx_abi.hrl").
+
 %% Bytes held: complete lines unread and the line being edited.
 -define(MAX_INPUT, 4096).
 %% Bytes the owner holds for the master at most (docs/design-shell.md,
@@ -75,7 +77,6 @@ and takes no flow control.
 %% FreeBSD's _POSIX_VDISABLE (sys/sys/_termios.h:77).
 -define(VDISABLE, 16#ff).
 -define(MAX_SPEED, 16#ffffffff).
--define(MAX_SIDE, 65535).
 %% FreeBSD prints a status line only with this much room
 %% (sys/kern/tty.c:2057-2062).
 -define(STATUS_ROOM, 256).
@@ -117,7 +118,7 @@ and echo still fill the room and nothing goes to the master.
 
 -record(tty, {
     termios :: termios(),
-    size = {24, 80} :: {1..?MAX_SIDE, 1..?MAX_SIDE},
+    size = {24, 80} :: erx_console:size(),
     ready = <<>> :: binary(),
     line = <<>> :: binary(),
     %% The output column, the column after the last write, and how much of
@@ -208,7 +209,7 @@ set(Candidate, Tty) ->
     end.
 
 -doc "The window size the master last reported, as {Rows, Columns}.".
--spec winsize(tty()) -> {1..?MAX_SIDE, 1..?MAX_SIDE}.
+-spec winsize(tty()) -> erx_console:size().
 winsize(#tty{size = Size}) -> Size.
 
 -doc """
@@ -219,8 +220,8 @@ FreeBSD (sys/kern/tty.c:1646, :1536-1538).
 """.
 -spec size(term(), term(), tty()) -> {ok, [action()], tty()} | {error, einval}.
 size(Rows, Columns, #tty{size = Size} = Tty)
-  when is_integer(Rows), Rows >= 1, Rows =< ?MAX_SIDE,
-       is_integer(Columns), Columns >= 1, Columns =< ?MAX_SIDE ->
+  when is_integer(Rows), Rows >= 1, Rows =< ?ERX_CONSOLE_SIDE_MAX,
+       is_integer(Columns), Columns >= 1, Columns =< ?ERX_CONSOLE_SIDE_MAX ->
     case Size of
         {Rows, Columns} -> {ok, [], Tty};
         _ ->

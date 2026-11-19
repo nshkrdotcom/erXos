@@ -51,7 +51,7 @@
 %%   to the driver:   {erx_console_output, From, Bytes}, written whole and in order
 %%   from the driver: {erx_console_written, From}, once those bytes are written
 %%                    {erx_console_input, Bytes}, the bytes as they were read
-%%                    {erx_console_size, Columns, Rows}, when the line's size changes
+%%                    {erx_console_size, Rows, Columns}, when the line's size changes
 %%                    erx_console_eof, after every byte read before the end
 %%
 %% Before the driver the console starts the owners of the shared lines its records name
@@ -115,7 +115,7 @@
 -export([input/2, first_shell/1, shell_end/4, shell_ending/1, erlang_shell_group/1, console_driver/1]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2]).
 
--export_type([input_event/0, first_shell/0, on_shell_end/0, shell_end/0, shell/0, config/0, terminal/0]).
+-export_type([input_event/0, first_shell/0, on_shell_end/0, shell_end/0, shell/0, config/0, terminal/0, size/0]).
 
 -include("generated/erx_abi.hrl").
 
@@ -167,7 +167,7 @@
 %% which a tty of an SSH channel passes (docs/design-ssh.md, "Sessions, ttys and
 %% shells"), waits until the relay's master has taken the tty's last output, calls
 %% Notify with how the shell ended (shell_ending/1) and stops, its relay with it.
-%% `size` is the terminal's first size as {Columns, Rows}, 80 by 24 by default; the
+%% `size` is the terminal's first size (size()), 24 rows by 80 columns by default; the
 %% driver's size reports change it from then on.
 -type config() :: #{role := system | session,
                     menu => boolean(),
@@ -179,11 +179,16 @@
                     line_owners => fun(() -> {ok, [pid()]} | {error, term()}),
                     first_shell := first_shell() | shell() | fun((terminal()) -> shell()),
                     on_shell_end => on_shell_end(),
-                    size => {pos_integer(), pos_integer()},
+                    size => size(),
                     user => replace | take | none}.
 
--define(DEFAULT_SIZE, {80, 24}).
--define(MAX_SIDE, 65535).
+%% A terminal's size as {Rows, Columns}, the order of POSIX's struct winsize and of
+%% tty_size, each side 1 to console_side_max (abi/services/console.txt). Every erXos
+%% module that holds a size holds this; only OTP's terminal code takes {Columns, Rows},
+%% which otp_geometry/1 alone turns it into.
+-type size() :: {Rows :: 1..?ERX_CONSOLE_SIDE_MAX, Columns :: 1..?ERX_CONSOLE_SIDE_MAX}.
+
+-define(DEFAULT_SIZE, {24, 80}).
 %% How long the console waits to ask again when the log service is not running.
 -define(LOG_ASK_MS, 1000).
 -define(ESC, 16#1B).
@@ -206,7 +211,7 @@
                 %% domain, started with -nouser, has no other.
                 user :: pid() | undefined,
                 tty :: prim_tty:state(),
-                size :: {pos_integer(), pos_integer()},
+                size :: size(),
                 terminal :: boolean(),
                 %% The groups run_shell/1 started, innermost first, each with its caller
                 %% to answer when it ends and the shell it runs. The innermost gets the
@@ -431,7 +436,7 @@ init(Config = #{role := Role, driver := Start, first_shell := First}) ->
     %% As user_drv does for a line with no terminal on it: no editing, no echo and bytes
     %% as they are.
     Size = maps:get(size, Config, ?DEFAULT_SIZE),
-    TTY = banner(Role, prim_tty:init_ssh(tty_options(Terminal), Size, utf8), DriverPid),
+    TTY = banner(Role, prim_tty:init_ssh(tty_options(Terminal), otp_geometry(Size), utf8), DriverPid),
     User = start_user(maps:get(user, Config, take)),
     Group = case FirstShell of
                 none -> User;
@@ -676,16 +681,18 @@ info(erx_console_eof, State = #state{pending = Pending}) ->
     %% What began a character will never end it, so it reads as stock reads a bad byte.
     [deliver({data, latin1(Pending)}, State) || Pending =/= <<>>],
     {noreply, gets_input(State#state{pending = <<>>, input_ended = true})};
-info({erx_console_size, Columns, Rows}, State = #state{tty = TTY, size = Held})
-  when is_integer(Columns), is_integer(Rows),
-       Columns >= 1, Columns =< ?MAX_SIDE, Rows >= 1, Rows =< ?MAX_SIDE ->
-    State1 = State#state{tty = prim_tty:update_geometry(TTY, Columns, Rows), size = {Columns, Rows}},
+info({erx_console_size, Rows, Columns}, State = #state{tty = TTY, size = Held})
+  when is_integer(Rows), is_integer(Columns),
+       Rows >= 1, Rows =< ?ERX_CONSOLE_SIDE_MAX, Columns >= 1, Columns =< ?ERX_CONSOLE_SIDE_MAX ->
+    Size = {Rows, Columns},
+    {Width, Height} = otp_geometry(Size),
+    State1 = State#state{tty = prim_tty:update_geometry(TTY, Width, Height), size = Size},
     %% Only a size that differs from the one held is a change, so a repeated
     %% report sends the shell nothing (docs/design-shell.md, "Window size"); a line
     %% handed to a session passes the size on to it instead.
-    [deliver(winch, State1) || {Columns, Rows} =/= Held, State1#state.line =:= system],
+    [deliver(winch, State1) || Size =/= Held, State1#state.line =:= system],
     {noreply, session_size(State1)};
-info({erx_console_size, _Columns, _Rows}, State) ->
+info({erx_console_size, _Rows, _Columns}, State) ->
     {noreply, State};
 info(erx_console_log_ask, State = #state{log = idle}) ->
     {noreply, State#state{log = log_ask()}};
@@ -1008,9 +1015,9 @@ to_session(Domain, Bytes, State = #state{sessions = Sessions}) ->
     carry_out(Domain, erx_tty_master:input(Bytes, Master), State).
 
 %% The line's size, for the session that has the line.
-session_size(State = #state{line = {session, Domain}, size = {Columns, Rows}, sessions = Sessions}) ->
+session_size(State = #state{line = {session, Domain}, size = Size, sessions = Sessions}) ->
     #{Domain := #{master := Master}} = Sessions,
-    carry_out(Domain, erx_tty_master:size({Rows, Columns}, Master), State);
+    carry_out(Domain, erx_tty_master:size(Size, Master), State);
 session_size(State) ->
     State.
 
@@ -1033,8 +1040,8 @@ connect_session(Domain, State0 = #state{sessions = Sessions}) ->
                     %% held output, which starts on a line of its own.
                     ok = new_line(none, State0),
                     State = login_connected(Domain, (release(State0))#state{line = {session, Domain}}),
-                    #state{size = {Columns, Rows}, sessions = #{Domain := #{master := Disconnected}}} = State,
-                    {ok, carry_out(Domain, erx_tty_master:connect({Rows, Columns}, Disconnected), State)}
+                    #state{size = Size, sessions = #{Domain := #{master := Disconnected}}} = State,
+                    {ok, carry_out(Domain, erx_tty_master:connect(Size, Disconnected), State)}
             end;
         #{} ->
             {{error, unknown}, State0}
@@ -1511,7 +1518,7 @@ log_batch(Lines, State = #state{driver = Driver}) ->
     State#state{log = writing}.
 
 group_request(tty_geometry, Pid, State = #state{size = Size}) ->
-    Pid ! {self(), tty_geometry, Size},
+    Pid ! {self(), tty_geometry, otp_geometry(Size)},
     State;
 group_request(get_unicode_state, Pid, State = #state{tty = TTY}) ->
     Pid ! {self(), get_unicode_state, prim_tty:unicode(TTY)},
@@ -1546,6 +1553,10 @@ group_request({put_ansi_sync, Options, Ansi, Reply}, Pid, State) ->
 group_request(Request, _Pid, State = #state{tty = TTY}) ->
     {Bytes, NewTTY} = prim_tty:handle_request(TTY, tty_request(Request)),
     write(none, Bytes, State#state{tty = NewTTY}).
+
+%% Size as OTP's terminal code takes a geometry, {Columns, Rows}: prim_tty's and a
+%% group's tty_geometry answer, as user_drv gives it.
+otp_geometry({Rows, Columns}) -> {Columns, Rows}.
 
 write(From, Bytes, State = #state{driver = Driver}) ->
     Driver ! {erx_console_output, From, Bytes},

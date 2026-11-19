@@ -50,9 +50,9 @@ then itself, its relay with it, and the session's other ttys run on.
 
 %% What runs on a channel's tty: the command shell, or rc on one command.
 -type run() :: shell | {exec, binary()}.
-%% A channel's tty: what runs on it, its first window size as {Rows, Columns}, and the
-%% shell's first variables (erx_shell_script:first_vars/1).
--type channel() :: #{run := run(), size := {1..65535, 1..65535}, vars := erx_shell_script:vars()}.
+%% A channel's tty: what runs on it, its first window size, and the shell's first
+%% variables (erx_shell_script:first_vars/1).
+-type channel() :: #{run := run(), size := erx_console:size(), vars := erx_shell_script:vars()}.
 
 -doc """
 Starts the session's console tty, with the master erx:cap(console) names, as the
@@ -107,11 +107,11 @@ open_channel(Channel, Tty, Notify) when is_pid(Channel), is_function(Notify, 1) 
                              modules => [?MODULE, erx_console, erx_session_relay]}).
 
 -doc false.
-start_channel(Channel, #{run := Run, size := {Rows, Columns} = Size, vars := Vars}, Notify) ->
+start_channel(Channel, #{run := Run, size := Size, vars := Vars}, Notify) ->
     %% The relay's tty and the console's terminal both start at the size.
     erx_console:start_link(#{role => session, user => none,
                              on_shell_end => {exit, Notify},
-                             size => {Columns, Rows},
+                             size => Size,
                              driver => relay(Channel, #{size => Size}),
                              first_shell => fun(Terminal) -> shell_of(Run, Terminal#{vars => Vars}, erx_session_sup:home()) end}).
 

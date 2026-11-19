@@ -25,7 +25,7 @@ class ErxBootKeysTest < Minitest::Test
               from: '<<"#", _/binary>> -> ignored;', to: '<<"#!", _/binary>> -> ignored;',
               caught_by: 'a_hash_line_is_ignored_test'),
     Fault.new(name: 'the 16-key bound checked with >=',
-              from: 'length(Keys) < ?KEYS_MAX', to: 'length(Keys) < ?KEYS_MAX - 1',
+              from: 'length(Keys) < ?ERX_SSH_AUTHORIZED_KEYS_MAX', to: 'length(Keys) < ?ERX_SSH_AUTHORIZED_KEYS_MAX - 1',
               caught_by: 'sixteen_keys_are_taken_and_seventeen_refuse_the_file_test'),
     Fault.new(name: 'the line bound off by one',
               from: 'Length > ?LINE_MAX', to: 'Length >= ?LINE_MAX',

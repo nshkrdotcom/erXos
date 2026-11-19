@@ -64,13 +64,14 @@ anywhere, so an owner waits for output to drain only while it does.
 
 -export_type([link/0, writer/0, action/0, master_message/0]).
 
+-include("generated/erx_abi.hrl").
+
 %% At most this many bytes are held, the outstanding output among them: the
 %% room the line discipline gives echo.
 -define(MAX_HELD, erx_tty:master_room()).
 %% At most this many bytes wait in writes nobody waits on.
 -define(MAX_WAITING, 65536).
 -define(MAX_INPUT, 4096).
--define(MAX_SIDE, 65535).
 
 %% Who waits on a write: a term the relay hands back, or none.
 -type writer() :: term().
@@ -100,7 +101,7 @@ anywhere, so an owner waits for output to drain only while it does.
           waiting = queue:new() :: queue:queue({writer(), binary()}),
           %% The bytes of the `none` writes among them.
           unowned = 0 :: non_neg_integer(),
-          size = none :: none | {pos_integer(), pos_integer()},
+          size = none :: none | erx_console:size(),
           hung_up = false :: boolean(),
           %% Output stopped by VSTOP: held bytes wait and none is sent.
           stopped = false :: boolean(),
@@ -154,8 +155,8 @@ master({tty_input, _Bytes}, L = #link{counts = Counts}) ->
 master({tty_size, Rows, Columns}, L = #link{size = {Rows, Columns}}) ->
     {[], L};
 master({tty_size, Rows, Columns}, L)
-  when is_integer(Rows), Rows >= 1, Rows =< ?MAX_SIDE,
-       is_integer(Columns), Columns >= 1, Columns =< ?MAX_SIDE ->
+  when is_integer(Rows), Rows >= 1, Rows =< ?ERX_CONSOLE_SIDE_MAX,
+       is_integer(Columns), Columns >= 1, Columns =< ?ERX_CONSOLE_SIDE_MAX ->
     {[{size, Rows, Columns}], L#link{size = {Rows, Columns}}};
 master({tty_size, _Rows, _Columns}, L = #link{counts = Counts}) ->
     {[], L#link{counts = bump(size_refused, Counts)}};

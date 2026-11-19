@@ -9727,10 +9727,6 @@ document's "residual risks accepted" paragraph.
   the design's row reads volumes fsimg writes; a shared misreading would refuse every real card. Add a case over
   the record volume `RecordVolume::ARGUMENTS` has fsimg write (`not_found` proves its layout is admitted), and one
   that finds an `authorized_keys` fsimg placed beside the record.
-* [Low] SSH, the boot keys' fuzz target (`test/erlang/erx_boot_keys_fuzz.erl`, `key_blob/1`;
-  [design-ssh.md](docs/design-ssh.md#verification)): it checks each blob's layout itself, where the design has
-  `erx_ssh_wire` accept it; that decoder and `abi/formats/ssh.txt` are on another branch, and when they land the
-  target calls it, as `erx_boot_keys` then takes the blob layout's macros from the generated header.
 * [Medium] tooling, fsimg's append mode (`~/projects/fsimg`, pinned in `deps.lock`;
   [design-ssh.md](docs/design-ssh.md#verification)): fsimg has no mode that adds a file to an existing image
   (its modes are `c`, `x`, `t`, `W` and `i`, `docs/fsimg.1`), which the downloadable-medium row needs to add
@@ -10065,11 +10061,6 @@ document's "residual risks accepted" paragraph.
   second element and a boolean third) instead of matching the request
   shapes OTP's `ssh_connection` delivers, so a request of another shape is
   silently ignored.
-* [Low] SSH stage 1, copied limits
-  (`erlang/apps/erx_session/src/erx_ssh_dev_channel.erl`): `MAX_TERM`
-  repeats `erx_ssh_line_core`'s and `MAX_SIDE` repeats `erx_tty`'s and
-  `erx_tty_link`'s; one owner exported or generated would make each one
-  fact.
 * [Low] SSH stage 1, empty output
   (`erlang/apps/erx_session/src/erx_ssh_dev_channel.erl`, `tty_output`):
   an empty piece of the tty's output is sent as a zero-length channel

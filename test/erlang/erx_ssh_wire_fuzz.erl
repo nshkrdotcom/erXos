@@ -21,7 +21,7 @@
 run([Seed]) ->
     rand:seed(exsss, {20, 26, list_to_integer(Seed)}),
     %% Loaded before the first round counts atoms, since loading a module makes its atoms.
-    [{module, _} = code:ensure_loaded(Module) || Module <- [erx_ssh_wire, binary, lists, maps]],
+    [{module, _} = code:ensure_loaded(Module) || Module <- [erx_ssh_wire, erx_boot_keys, binary, lists, maps]],
     Accepted = lists:sum([round_of() || _ <- lists:seq(1, ?ROUNDS)]),
     case Accepted >= ?MIN_ACCEPTED of
         true -> io:format("fuzz: ~p rounds ok, ~p accepted~n", [?ROUNDS * 3, Accepted]);

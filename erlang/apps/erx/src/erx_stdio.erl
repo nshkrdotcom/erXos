@@ -53,7 +53,7 @@ deliver({Bytes, Size, End}, Console) ->
     input_ended(End, Console).
 
 size_changed(unchanged, _Console) -> ok;
-size_changed({Columns, Rows}, Console) -> Console ! {erx_console_size, Columns, Rows}.
+size_changed({Rows, Columns}, Console) -> Console ! {erx_console_size, Rows, Columns}.
 
 input_ended(none, _Console) ->
     ok;

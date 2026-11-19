@@ -25,6 +25,9 @@ module ErxTtyLinkFuzz
   # The core takes a shell's TERM from erx_text_tables, which the build generates from
   # abi/terminal.txt into build/gen.
   TEXT_TABLES = 'erlang/apps/erx/src/erx_text_tables.erl'
+  # The modules take their bounds from the generated ABI header (abi/services/console.txt
+  # and ssh.txt).
+  INCLUDE = 'erlang/apps/erx/include'
   # A broken guarantee: the text that keeps it, what replaces it, and the property that must
   # then fail, as the target names it.
   Seed = Data.define(:text, :broken, :property)
@@ -32,7 +35,7 @@ module ErxTtyLinkFuzz
     'the 4 KiB input bound' => Seed.new(text: 'when is_binary(Bytes), byte_size(Bytes) =< ?MAX_INPUT ->',
                                         broken: 'when is_binary(Bytes) ->',
                                         property: 'input_over_bound'),
-    'the window size bounds' => Seed.new(text: 'when is_integer(Rows), Rows >= 1, Rows =< ?MAX_SIDE,',
+    'the window size bounds' => Seed.new(text: 'when is_integer(Rows), Rows >= 1, Rows =< ?ERX_CONSOLE_SIDE_MAX,',
                                          broken: 'when is_integer(Rows), Rows >= 0,',
                                          property: 'size_out_of_range'),
     'the 4 KiB held bound' => Seed.new(text: 'Room = ?MAX_HELD - held(L),', broken: 'Room = 2 * ?MAX_HELD - held(L),',
@@ -61,8 +64,9 @@ module ErxTtyLinkFuzz
                                                property: 'foreign_channel'),
     'a command holding no NUL' => Seed.new(text: 'binary:match(Command, <<0>>) =:= nomatch;', broken: 'true;',
                                            property: 'bad_run'),
-    'ten channels at most' => Seed.new(text: 'when map_size(Ttys) >= ?MAX_CHANNELS ->',
-                                       broken: 'when map_size(Ttys) > ?MAX_CHANNELS ->', property: 'over_limit'),
+    'ten channels at most' => Seed.new(text: 'when map_size(Ttys) >= ?ERX_SSH_LINE_MAX_CHANNELS ->',
+                                       broken: 'when map_size(Ttys) > ?ERX_SSH_LINE_MAX_CHANNELS ->',
+                                       property: 'over_limit'),
     'a zero side taken as the default' => Seed.new(text: 'side(0, Default) -> Default;',
                                                    broken: 'side(0, _Default) -> 0;', property: 'size_out_of_range')
   }.freeze
@@ -100,7 +104,8 @@ module ErxTtyLinkFuzz
       module_paths = sources.map do |path, text|
         File.join(work, File.basename(path)).tap { |copy| File.binwrite(copy, text) }
       end
-      output, status = Open3.capture2e('gtimeout', '-k', '10', DEADLINE_SECONDS, ENV.fetch('ERX_ERLC'), '-o', work,
+      output, status = Open3.capture2e('gtimeout', '-k', '10', DEADLINE_SECONDS, ENV.fetch('ERX_ERLC'),
+                                       '-I', Erx::Generated.path(INCLUDE, root: ROOT), '-o', work,
                                        *module_paths, TTY_SOURCE, Erx::Generated.path(TEXT_TABLES, root: ROOT),
                                        TARGET_SOURCE, stdin_data: '')
       raise output unless status.success?

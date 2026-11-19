@@ -12,3 +12,8 @@ service console 11
   operation tty_input 4
   operation tty_size 5
   operation tty_hangup 6
+# A tty's window size is Rows then Columns, the order of POSIX's struct winsize, in
+# tty_size and wherever erXos holds a size; each side is 1 to console_side_max
+# (docs/design-live.md, "Between domains"). Only OTP's own code takes {Columns, Rows}:
+# prim_tty, a group's tty_geometry, and ssh_connection's pty and window_change.
+limit console_side_max u32 65535

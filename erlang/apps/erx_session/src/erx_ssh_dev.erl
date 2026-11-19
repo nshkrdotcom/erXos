@@ -37,11 +37,12 @@ volume, as on Raspberry Pi OS, and the storage domain serves its keys as the
 writes them into the home copy only while there is none: a home copy that is
 there, whatever it holds, is never read for the import or replaced, so
 deleting it imports the medium's keys again at the next boot. With no home
-copy it reads `root` for at most MEDIUM_READ bytes, one past 16 keys'; a
-read that fails (`eagain` while the storage domain's reader runs, `eio`, no
-grant yet) writes nothing and is tried again, and an answer of no key, of no
-whole number of blobs within 16, or of blobs that are no Ed25519 key, writes
-nothing at all, so no empty home copy shuts the medium's keys out. The keys
+copy it reads `root` for at most MEDIUM_READ bytes, one past the blobs of
+ssh_authorized_keys_max (abi/formats/ssh.txt) keys; a read that fails
+(`eagain` while the storage domain's reader runs, `eio`, no grant yet)
+writes nothing and is tried again, and an answer of no key, of no whole
+number of blobs within that count, or of blobs that are no Ed25519 key,
+writes nothing at all, so no empty home copy shuts the medium's keys out. The keys
 are written one canonical line each, `ssh-ed25519` and the blob's base64,
 whole and synced under a name of their own and renamed into place, so the
 home copy is either absent or whole. Root's session can write the home copy,
@@ -84,9 +85,7 @@ narrowed by that: any code it runs may start OTP's daemon with keys of its choos
 %% number are abi/erx_abi.txt's `uname_sysname` and `uname_release`, and the case
 %% erx_ssh_dev_tests:the_banner_names_erxos checks the line against those limits.
 -define(ID_STRING, binary_to_list(<<?ERX_UNAME_SYSNAME_BYTES/binary, "_", ?ERX_UNAME_RELEASE_BYTES/binary>>)).
--define(BLOB_SIZE, (4 + ?ERX_SSH_ED25519_NAME_SIZE + 4 + ?ERX_SSH_ED25519_KEY_SIZE)).
--define(MEDIUM_KEYS_MAX, 16).
--define(MEDIUM_READ, (?MEDIUM_KEYS_MAX * ?BLOB_SIZE + 1)).
+-define(MEDIUM_READ, (?ERX_SSH_AUTHORIZED_KEYS_MAX * erx_boot_keys:blob_size() + 1)).
 %% How boot/1 waits for the session's facets, and the import for the medium: a look
 %% every GRANT_POLL_MS, at most GRANT_POLLS of them, ten minutes, after which it stops.
 -define(GRANT_POLL_MS, 500).
@@ -256,12 +255,13 @@ import_keys(Home, {ok, Bytes}) ->
     end.
 
 %% The medium's key blobs in Bytes, the bytes of the tree's `root`: none when they
-%% are no whole number of blobs within 16.
-medium_keys(Bytes) when byte_size(Bytes) rem ?BLOB_SIZE =:= 0,
-                        byte_size(Bytes) =< ?MEDIUM_KEYS_MAX * ?BLOB_SIZE ->
-    [Blob || <<Blob:?BLOB_SIZE/binary>> <= Bytes];
-medium_keys(_Bytes) ->
-    [].
+%% are no whole number of blobs within ssh_authorized_keys_max.
+medium_keys(Bytes) ->
+    Size = erx_boot_keys:blob_size(),
+    case byte_size(Bytes) rem Size =:= 0 andalso byte_size(Bytes) =< ?ERX_SSH_AUTHORIZED_KEYS_MAX * Size of
+        true -> [Blob || <<Blob:Size/binary>> <= Bytes];
+        false -> []
+    end.
 
 %% The home copy's text for Blobs, one `ssh-ed25519 BASE64` line each, and its count
 %% of keys: the lines are decoded as a login reads them and only the keys that decode

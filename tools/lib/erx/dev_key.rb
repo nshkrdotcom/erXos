@@ -5,6 +5,7 @@
 require 'fileutils'
 require 'securerandom'
 require_relative 'error'
+require_relative 'generated_abi'
 require_relative 'git_environment'
 require_relative 'key_directory'
 require_relative 'source_revision'
@@ -33,10 +34,15 @@ module Erx
     PUBLIC = "#{PRIVATE}.pub".freeze
     # The private file's comment; the image's line has none.
     COMMENT = 'erxos-development'
-    TYPE = 'ssh-ed25519'
+    CODEC = ABI::Generated::CODEC
+    private_constant :CODEC
+    TYPE = CODEC.fixed_bytes('ssh_ed25519_name').freeze
     # The wire form of an Ed25519 public key (RFC 8709, section 4): the type and the
-    # 32-byte key, each a string with its 32-bit length.
-    BLOB_BYTES = 4 + TYPE.bytesize + 4 + 32
+    # key, each a string with its 32-bit length, as abi/formats/ssh.txt sizes them. Every
+    # blob opens with BLOB_PREFIX, the type and the key's length, and the key follows.
+    KEY_BYTES = CODEC.constant('ssh_ed25519_key_size')
+    BLOB_PREFIX = ([TYPE.bytesize].pack('N') + TYPE + [KEY_BYTES].pack('N')).freeze
+    BLOB_BYTES = BLOB_PREFIX.bytesize + KEY_BYTES
     DEADLINE = 60
 
     # The pair at directory: the private key's path and the public half as the image
@@ -146,7 +152,7 @@ module Erx
       type, encoded = text.split(/[ \t]+/, 3)
       blob = encoded.to_s.chomp.unpack1('m0')
       raise Error, "#{source} is not one Ed25519 public key" unless
-        type == TYPE && blob.bytesize == BLOB_BYTES && blob.byteslice(0, 4 + TYPE.bytesize) == [TYPE.bytesize].pack('N') + TYPE
+        type == TYPE && blob.bytesize == BLOB_BYTES && blob.start_with?(BLOB_PREFIX)
       "#{TYPE} #{[blob].pack('m0')}"
     rescue ArgumentError
       raise Error, "#{source} is not one Ed25519 public key"

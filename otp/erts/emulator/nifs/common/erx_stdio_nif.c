@@ -175,7 +175,8 @@ window_size_term(ErlNifEnv *env)
 	if ((ioctl(STDIN_FILENO, TIOCGWINSZ, &size) != 0 && ioctl(STDOUT_FILENO, TIOCGWINSZ, &size) != 0)
 	    || size.ws_col == 0 || size.ws_row == 0)
 		return (enif_make_atom(env, "unchanged"));
-	return (enif_make_tuple2(env, enif_make_uint(env, size.ws_col), enif_make_uint(env, size.ws_row)));
+	/* Rows then columns, as struct winsize and erx_console:size() order them. */
+	return (enif_make_tuple2(env, enif_make_uint(env, size.ws_row), enif_make_uint(env, size.ws_col)));
 }
 
 static int
@@ -253,7 +254,7 @@ start_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
 	    enif_make_atom(env, stdin_is_terminal ? "true" : "false")));
 }
 
-/* {Bytes, unchanged | {Columns, Rows}, none | eof | {error, Reason}} */
+/* {Bytes, unchanged | {Rows, Columns}, none | eof | {error, Reason}} */
 static ERL_NIF_TERM
 take_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
 {

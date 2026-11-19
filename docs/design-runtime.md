@@ -2576,7 +2576,7 @@ speak these messages:
 | `{erx_console_output, From, Bytes}` | to the driver | write these bytes, whole and in order; `From` is opaque to the driver |
 | `{erx_console_written, From}` | to `erx_console` | those bytes are written or the line is gone; every output message gets this answer |
 | `{erx_console_input, Bytes}` | to `erx_console` | bytes as read, in order, cut anywhere |
-| `{erx_console_size, Columns, Rows}` | to `erx_console` | the line's size is known or has changed; `erx_console` ignores a side outside 1 to 65,535 |
+| `{erx_console_size, Rows, Columns}` | to `erx_console` | the line's size is known or has changed, rows first as in `struct winsize`; `erx_console` ignores a side outside 1 to 65,535 (`console_side_max`) |
 | `erx_console_eof` | to `erx_console` | input has ended, after every byte read before it |
 
 They send input as it arrives, since nothing else reads their line, and

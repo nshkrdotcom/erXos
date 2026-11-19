@@ -40,7 +40,6 @@ answers nothing and is never connected again.
 %% The largest output number max_message/0 allows for: no tty sends more outputs.
 -define(MAX_NUMBER, (1 bsl 64) - 1).
 
--type size() :: {Rows :: pos_integer(), Columns :: pos_integer()}.
 -type action() :: {write, non_neg_integer(), binary()}   % write the bytes, then written(N)
                 | {send, {tty_taken, non_neg_integer()}  % to the tty
                        | {tty_input, binary()}
@@ -55,7 +54,7 @@ answers nothing and is never connected again.
           output = none :: none | {held, non_neg_integer(), binary()} | {writing, non_neg_integer()},
           connected = false :: boolean(),
           %% The size last sent to the tty, which a repeated answer carries again.
-          size = none :: none | size(),
+          size = none :: none | erx_console:size(),
           refused = false :: boolean()}).
 
 -opaque master() :: #master{}.
@@ -107,7 +106,7 @@ written(_N, M) ->
 The session is connected to a line of size Size: the tty gets the size if it is new,
 and then the output held is written. A refused tty is never connected.
 """.
--spec connect(size(), master()) -> {[action()], master()}.
+-spec connect(erx_console:size(), master()) -> {[action()], master()}.
 connect(_Size, M = #master{refused = true}) ->
     {[], M};
 connect(Size, M0) ->
@@ -134,7 +133,7 @@ input(_Bytes, M) ->
     {[], M}.
 
 -doc "The line's size, sent to a connected tty when it changes.".
--spec size(size(), master()) -> {[action()], master()}.
+-spec size(erx_console:size(), master()) -> {[action()], master()}.
 size(Size, M = #master{connected = true, size = Sent}) when Size =/= Sent ->
     {Rows, Columns} = Size,
     {[{send, {tty_size, Rows, Columns}}], M#master{size = Size}};

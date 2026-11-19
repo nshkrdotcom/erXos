@@ -22,6 +22,8 @@ module ErxTtyFuzz
               'erx_abi_termios.erl' => File.join(ROOT, 'build/gen/erlang/apps/erx/src/generated/erx_abi_termios.erl') }
             .freeze
   TARGET_SOURCE = File.join(ROOT, 'test/erlang/erx_tty_fuzz.erl')
+  # erx_tty takes its window bound from the generated ABI header (abi/services/console.txt).
+  INCLUDE = 'erlang/apps/erx/include'
   # A broken guarantee: the module that keeps it, the text that keeps it,
   # what replaces it, and the property that must then fail, as the target
   # names it.
@@ -99,8 +101,9 @@ module ErxTtyFuzz
       paths = sources.map do |name, text|
         File.join(work, name).tap { |path| File.binwrite(path, text) }
       end
-      output, status = Open3.capture2e('gtimeout', '-k', '10', DEADLINE_SECONDS, ENV.fetch('ERX_ERLC'), '-o', work,
-                                       *paths, TARGET_SOURCE, stdin_data: '')
+      output, status = Open3.capture2e('gtimeout', '-k', '10', DEADLINE_SECONDS, ENV.fetch('ERX_ERLC'),
+                                       '-I', Erx::Generated.path(INCLUDE, root: ROOT),
+                                       '-o', work, *paths, TARGET_SOURCE, stdin_data: '')
       raise output unless status.success?
 
       Open3.capture2e('gtimeout', '-k', '10', DEADLINE_SECONDS, ENV.fetch('ERX_ERL'), '-noshell', '-pa', work,

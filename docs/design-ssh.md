@@ -413,7 +413,9 @@ Against the requirements:
   83 bytes (the same name and 64 bytes) and an exchange input of at most
   64 KiB, each decoded by one bounded Erlang decoder of the facet's,
   `erx_ssh_wire`, with a fuzz target. The decoder compares the fixed
-  blobs whole against their one layout, and for each of the five strings
+  blobs whole against their one layout (the key blob's matcher is
+  `erx_boot_keys:key_blob/1`, which every reader of root's login keys
+  shares and `erx_ssh_wire:key_blob/1` calls), and for each of the five strings
   checks its length against the bytes that remain before it takes the
   string; beyond its five strings the exchange input is only hashed. The
   decoder reads a key blob's 32 bytes only as bytes; the verifier decodes
@@ -1282,7 +1284,8 @@ and `sshkeys` parses its key line with OTP's `ssh_file`. The targets:
 `badarg` for what does not fit, every accepted blob re-encodes to its
 input and every accepted exchange input's five strings to its prefix);
 `erx_boot_keys:decode/1` and the FAT lookup (no crash, every blob 51
-bytes that `erx_ssh_wire` accepts, no lookup past 32 clusters); and
+bytes of the key blob's layout, checked by the target's own matcher
+rather than the decoder's, no lookup past 32 clusters); and
 `erx_ssh_login:medium_keys/1` (no crash on concatenations of up to 1 KiB;
 every accepted list at most 16 keys, none of small order; a length not a
 multiple of 51 or past 816 bytes refused).

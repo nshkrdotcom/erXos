@@ -31,9 +31,9 @@ ends, and its end is the tty's hangup: the relay watches its master.
 
 -export([init/1, handle_msg/2, handle_ssh_msg/2, terminate/2]).
 
+-include("generated/erx_abi.hrl").
+
 -define(EXEC_REFUSED, <<"exec is not supported in 0.1\r\n">>).
--define(MAX_TERM, 64).
--define(MAX_SIDE, 65535).
 
 %% open opens a tty for a channel, erx_session_tty:open_channel/3 or a host
 %% test's stand-in. pty is the tty a pty-req asked for, the default one until
@@ -74,8 +74,9 @@ handle_msg(_Message, State) ->
 
 -doc false.
 handle_ssh_msg({ssh_cm, Connection, {pty, Channel, WantReply, {Term, Columns, Rows, _, _, _}}}, State)
-  when is_list(Term), length(Term) =< ?MAX_TERM, is_integer(Rows), Rows >= 0, Rows =< ?MAX_SIDE,
-       is_integer(Columns), Columns >= 0, Columns =< ?MAX_SIDE ->
+  when is_list(Term), length(Term) =< ?ERX_SSH_TERM_MAX,
+       is_integer(Rows), Rows >= 0, Rows =< ?ERX_CONSOLE_SIDE_MAX,
+       is_integer(Columns), Columns >= 0, Columns =< ?ERX_CONSOLE_SIDE_MAX ->
     ssh_connection:reply_request(Connection, WantReply, success, Channel),
     {ok, State#state{pty = erx_ssh_line_core:tty(shell, list_to_binary(Term), Rows, Columns)}};
 handle_ssh_msg({ssh_cm, Connection, {shell, Channel, WantReply}}, #state{tty = none} = State) ->
@@ -99,8 +100,8 @@ handle_ssh_msg({ssh_cm, Connection, {exec, Channel, WantReply, _Command}}, #stat
     _ = ssh_connection:send_eof(Connection, Channel),
     {stop, Channel, State};
 handle_ssh_msg({ssh_cm, _Connection, {window_change, _Channel, Columns, Rows, _, _}}, #state{tty = Tty} = State)
-  when is_pid(Tty), is_integer(Rows), Rows > 0, Rows =< ?MAX_SIDE,
-       is_integer(Columns), Columns > 0, Columns =< ?MAX_SIDE ->
+  when is_pid(Tty), is_integer(Rows), Rows > 0, Rows =< ?ERX_CONSOLE_SIDE_MAX,
+       is_integer(Columns), Columns > 0, Columns =< ?ERX_CONSOLE_SIDE_MAX ->
     Tty ! {tty_size, Rows, Columns},
     {ok, State};
 handle_ssh_msg({ssh_cm, Connection, {data, Channel, 0, Data}}, #state{tty = Tty} = State) ->

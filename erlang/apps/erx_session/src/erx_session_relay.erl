@@ -90,7 +90,7 @@ no name. Options' `size`, {Rows, Columns}, is the tty's first window size
 (erx_session_relay_core:new/2).
 """.
 -spec start_link(pid(), pid() | undefined,
-                 #{domain_line => boolean(), size => {1..65535, 1..65535}}) -> gen_server:start_ret().
+                 #{domain_line => boolean(), size => erx_console:size()}) -> gen_server:start_ret().
 start_link(Console, Master, Options) when is_pid(Console) ->
     Init = {Console, origin(Master), maps:with([size], Options)},
     case Options of

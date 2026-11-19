@@ -42,7 +42,7 @@ class ErxSshDevTest < Minitest::Test
               from: '{ok, Keys, _Findings} = erx_boot_keys:decode(iolist_to_binary(Lines)),',
               to: 'Keys = [Blob || [_, Encoded, _] <- Lines, Blob <- [base64:decode(Encoded)]],'),
     Fault.new(name: 'a medium file of any length read as blobs', source: DEV,
-              from: 'when byte_size(Bytes) rem ?BLOB_SIZE =:= 0,', to: 'when true,'),
+              from: 'byte_size(Bytes) rem Size =:= 0 andalso', to: 'true andalso'),
     Fault.new(name: 'a keys file read by ssh_file', source: DEV,
               from: '{ok, Blobs, _Findings} ?= erx_boot_keys:decode(Bytes),',
               to: 'Blobs = [ssh_file:encode(K, ssh2_pubkey) || {K, _} <- ssh_file:decode(Bytes, auth_keys)],'),

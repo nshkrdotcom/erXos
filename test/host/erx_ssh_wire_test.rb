@@ -21,6 +21,8 @@ class ErxSshWireTest < Minitest::Test
   Fault = Data.define(:name, :from, :to, :caught_by)
 
   # Each fault replaces one passage of erx_ssh_wire; the case named in caught_by must fail.
+  # key_blob/1 is erx_boot_keys:key_blob/1, whose unchecked name test/host/erx_boot_keys_test.rb
+  # seeds.
   FAULTS = [
     Fault.new(name: 'the length check off by one',
               from: STRING, to: 'string(<<Length:32, Rest/binary>>) when Length < byte_size(Rest) ->',
@@ -33,11 +35,7 @@ class ErxSshWireTest < Minitest::Test
               caught_by: 'an_input_of_64_kib_decodes_and_one_byte_more_is_refused_test'),
     Fault.new(name: "the server KEXINIT's message number unchecked",
               from: 'cookie(<<?ERX_SSH_MSG_KEXINIT, Cookie', to: 'cookie(<<_, Cookie',
-              caught_by: 'a_server_kexinit_without_its_message_number_and_cookie_is_refused_test'),
-    Fault.new(name: "the key blob's name unchecked",
-              from: "Key:?ERX_SSH_ED25519_KEY_SIZE/binary>>)\n    when Name =:= ?ERX_SSH_ED25519_NAME_BYTES ->",
-              to: "Key:?ERX_SSH_ED25519_KEY_SIZE/binary>>)\n    when is_binary(Name) ->",
-              caught_by: 'a_key_blob_of_another_length_or_name_is_refused_test')
+              caught_by: 'a_server_kexinit_without_its_message_number_and_cookie_is_refused_test')
   ].freeze
 
   def test_the_cases_pass
