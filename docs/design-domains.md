@@ -2987,6 +2987,12 @@ from a control slot, and the agent acts only on the system domain's.
   port, its creation (D1), local names included. It is how an owner of a
   protocol checks that a name in a message from another domain belongs to
   the message's origin `D`.
+* `erx:call_from(D, From, Owner)` is that check for a call:
+  `{'$gen_call', From, Req}` in `D`'s envelope is `D`'s own when `From`
+  is a caller and a reply alias that `Owner`, `erx:owner/1` or the owner
+  function of the caller's export-table module, gives `D` for both, so no
+  reply goes to a third domain. A facet and a session's line ask it of
+  each call they take.
 * `{erx_serve, any}` starts a `gen_server` or `gen_statem` that serves
   other domains: it takes their calls and casts as its own domain's, a
   call only when every name its reply goes to is of the caller's domain

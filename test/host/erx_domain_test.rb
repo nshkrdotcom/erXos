@@ -162,6 +162,13 @@ class ErxDomainTest < Minitest::Test
               from: 'loop(replied(Monitor, {error, failed}, State));',
               to: 'loop(State#{forwards := maps:remove(Monitor, Forwards)});',
               tests: 'erx_facet_tests', caught_by: 'a_forwards_service_that_ends_answers_failed_test'),
+    # The check of a call from another domain that erx_facet and erx_session_line share
+    # (erx:call_from/3): one that does not compare its reply alias's domain lets the
+    # grantee have the facet's reply go to a third domain.
+    Fault.new(name: "a call check that does not compare the reply alias's domain",
+              file: 'erlang/apps/erx/src/erx.erl',
+              from: 'Owner(Caller) =:= D andalso Owner(Alias) =:= D;', to: 'Owner(Caller) =:= D;',
+              tests: 'erx_facet_tests', caught_by: 'admits_only_its_grantee_test'),
     # A request past the limit in flight answered as a malformed one: the grantee cannot
     # tell a full facet, which a retry may pass, from a request it must not repeat.
     Fault.new(name: 'a request past the limit in flight refused as badarg',

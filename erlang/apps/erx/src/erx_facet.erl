@@ -35,7 +35,7 @@ What arrives is sorted by its shape before the callback sees a request:
 * a request: {erx_origin, D, {'$gen_call', {Pid, [alias | Alias]}, Request}},
   a gen_server call from the grantee. D, which the connection sets, must be
   the grantee, the message's encoded size at most the grant's max_request,
-  and the caller's pid and alias both names of the grantee's (erx:owner/1),
+  and the caller's pid and alias both names of the grantee's (erx:call_from/3),
   so the reply goes to the grantee and never to a third domain. Anything
   else is dropped and counted, with no answer, since an answer would go to
   a name the sender chose. A request past the grant's limit in flight is
@@ -316,12 +316,12 @@ replied(Alias, Reply, #{forwards := Forwards} = State) ->
 %% A message that is no reply, signal or info: a request if the grantee sent it in the
 %% shape a request has, within the size the grant allows, and its reply goes to a name of
 %% the grantee's; a message of the grantee's if it is in no call's shape; dropped and
-%% counted otherwise.
-request({erx_origin, Grantee, {'$gen_call', {Pid, [alias | Alias]} = From, Request} = Message},
-        #{grantee := Grantee, max_request := MaxRequest, exports := Exports} = State)
-  when is_pid(Pid), is_reference(Alias) ->
+%% counted otherwise. erx:call_from/3 admits only a From of {Pid, [alias | Alias]},
+%% the shape admit/3 and a forward rely on.
+request({erx_origin, Grantee, {'$gen_call', From, Request} = Message},
+        #{grantee := Grantee, max_request := MaxRequest, exports := Exports} = State) ->
     case erlang:external_size(Message) =< MaxRequest andalso
-         Exports:owner(Pid) =:= Grantee andalso Exports:owner(Alias) =:= Grantee of
+         erx:call_from(Grantee, From, fun Exports:owner/1) of
         true -> admit(Request, From, State);
         false -> dropped(State)
     end;

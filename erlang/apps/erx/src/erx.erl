@@ -6,10 +6,13 @@
 erXos's functions for a person at an Erlang shell in any domain
 (docs/design-live.md, "Erlang, in every domain"). Each is a thin entry
 to the module that does the work, with that module's authority and no
-authority of its own.
+authority of its own. The exception is call_from/3, the check of a call
+from another domain that erx_facet and erx_session_line share, which does
+its small work itself.
 """.
 
--export([i/0, i/1, inspect/2, source/1, trace/1, trace_stop/1, export/3, exports/1, owner/1, cap/1, caps/0, granted/0, app/0]).
+-export([i/0, i/1, inspect/2, source/1, trace/1, trace_stop/1, export/3, exports/1, owner/1,
+         call_from/3, cap/1, caps/0, granted/0, app/0]).
 -export_type([app_record/0]).
 
 %%% Source lines: erx:source/1.
@@ -142,6 +145,27 @@ that name claims, so a reply sent to a forged name goes to no third domain.
 -spec owner(pid() | reference() | port()) -> non_neg_integer().
 owner(Name) ->
     erx_dist:owner(Name).
+
+-doc """
+Whether a call that arrived in domain `D`'s envelope, `{erx_origin, D,
+{'$gen_call', From, Request}}`, is `D`'s own: `From` is `{Caller, [alias |
+Alias]}`, the reply alias gen:call/3 makes, and `Owner`, `fun owner/1` or a
+host test's stand-in for it, gives `D` for both `Caller` and `Alias`.
+gen:reply/2 answers at the alias and a server may answer the caller, so a
+call either of whose names claims another domain could have a reply go to a
+third domain; call_from/3 returns false for such a call, as for a `From` of
+any other shape, and calls `Owner` only on a pid and a reference. A true
+answer is the caller's guarantee that `From` is `{Pid, [alias | Ref]}`. The
+protocol's owner takes the envelope off its own shapes and asks this of the
+call it finds inside; `D` is `none` for a session's line that serves no
+peer yet, and no call is then `D`'s.
+""".
+-spec call_from(pos_integer() | none, term(), fun((pid() | reference()) -> non_neg_integer())) ->
+    boolean().
+call_from(D, {Caller, [alias | Alias]}, Owner) when is_pid(Caller), is_reference(Alias) ->
+    Owner(Caller) =:= D andalso Owner(Alias) =:= D;
+call_from(_D, _From, _Owner) ->
+    false.
 
 %%% Facets (docs/design-domains.md, "Facets").
 

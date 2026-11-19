@@ -108,18 +108,21 @@ call(Facet, Request) ->
 
 %% The grantee's call is forwarded to the process behind and its reply returned; what any
 %% other domain sends, what the grantee sends naming another domain's caller or reply
-%% alias, which is where the reply would go, a message
-%% past max_request and a local call are dropped and counted, with no answer.
+%% alias, which is where the reply would go, a call whose tag is no reply alias or whose
+%% caller is no pid, a message past max_request and a local call are dropped and counted,
+%% with no answer; none reaches the process behind as a message.
 admits_only_its_grantee_test() ->
     Facet = facet(echo(), domain_pid(), #{max_request => 4096}),
     ?assertEqual({echo, ping}, call(Facet, ping)),
     ?assertEqual(none, call(Facet, ?OTHER, self(), ping)),
     ?assertEqual(none, call(Facet, ?GRANTEE, remote_pid(?OTHER), ping)),
     Facet ! {erx_origin, ?GRANTEE, {'$gen_call', {self(), [alias | remote_ref(?OTHER)]}, ping}},
+    Facet ! {erx_origin, ?GRANTEE, {'$gen_call', {self(), make_ref()}, ping}},
+    Facet ! {erx_origin, ?GRANTEE, {'$gen_call', {not_a_pid, [alias | make_ref()]}, ping}},
     ?assertEqual(none, call(Facet, binary:copy(<<0>>, 4096))),
     ?assertEqual({echo, small}, call(Facet, small)),
     ?assertEqual(none, try gen_server:call(Facet, ping, 300) catch exit:{timeout, _} -> none end),
-    ?assertMatch(#{grantee := ?GRANTEE, dropped := 5, refused := 0, outstanding := 0}, erx_facet:info(Facet)).
+    ?assertMatch(#{grantee := ?GRANTEE, dropped := 7, refused := 0, outstanding := 0}, erx_facet:info(Facet)).
 
 %% A message of the grantee's that is no call reaches the process behind, here the test,
 %% as {'$erx_facet_message', ReplyTo, Grantee, Message}, whose answer the facet takes and

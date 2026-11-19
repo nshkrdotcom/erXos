@@ -21,10 +21,11 @@ a Peer that is another domain, so no other domain, and no process of the
 session, chooses who reaches it.
 
 From its peer the line takes a request only as a call in the peer's envelope
-whose caller and alias are names of the peer's (as erx_facet checks a
-grantee's calls), so a reply never goes to a third domain, and hands it to
-the callback's request/4. Anything else in an envelope, from the peer or any
-other domain, is dropped here: no message of another domain reaches the
+whose caller and alias are names of the peer's (erx:call_from/3, as
+erx_facet checks a grantee's calls), so a reply never goes to a third
+domain, and hands it to the callback's request/4. Anything else in an
+envelope, from the peer or any other domain, is dropped here: no message
+of another domain reaches the
 callback but an admitted request. Every message not in an envelope, which
 is a message of the session's own domain, goes to the callback's info/3,
 the 'EXIT' of a linked process among them, since the line traps exits; the
@@ -88,9 +89,8 @@ line(Parent, Module, #{peer := Peer, system := System, exports := Exports} = Lin
             {Reply, Next} = export(Domain, Line),
             gen:reply(From, Reply),
             line(Parent, Module, Next, State);
-        {erx_origin, Peer, {'$gen_call', {Caller, [alias | Alias]} = From, Request}}
-          when is_pid(Caller), is_reference(Alias) ->
-            case Exports:owner(Caller) =:= Peer andalso Exports:owner(Alias) =:= Peer of
+        {erx_origin, Peer, {'$gen_call', From, Request}} ->
+            case erx:call_from(Peer, From, fun Exports:owner/1) of
                 true -> line(Parent, Module, Line, Module:request(From, Request, Peer, State));
                 false -> line(Parent, Module, Line, State)
             end;
