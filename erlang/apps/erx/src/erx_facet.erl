@@ -64,7 +64,7 @@ and counted: a facet acts for its grantee alone.
 
 A grant's operations, the names its manifest row lists (erx_domain_lib:configured/0),
 are checked through the callback's operation/1, which maps a request or a message of
-the grantee's to the interface operation it invokes (docs/design-time.md, "Phase 1").
+the grantee's to the interface operation it invokes (docs/design-time.md, "On Fiasco").
 For a callback with operation/1 the facet admits only the operations the grant lists,
 none when it lists none: a request of any other is refused with {error, eperm}, one
 that names no operation of the interface with {error, badarg}, and such a message is

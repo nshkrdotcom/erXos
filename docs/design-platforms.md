@@ -1608,10 +1608,10 @@ user adds it, root's `authorized_keys`, and each slot holds its own
 `tryboot_a_b`: the 2022-10-18 beta first loaded `config.txt` in that mode,
 and the 2022-12-01 release made it the default
 ([research](research-boards-storage.md#booting-a-chosen-partition-on-the-raspberry-pi)).
-On a Pi 4 (board revision c03112) with such a bootloader the card showed
-nothing on the UART and the green LED stayed on; after a reflash the same
-card booted. A card with one boot partition still boots on such a board,
-which tells a bootloader that is too old from a bad card. The bootloader's
+A Pi 4 with such a bootloader shows nothing on the UART and its green LED
+stays on, and the same card boots after a reflash (the
+[guide](guide/raspberry-pi-4.md) has the steps). A card with one boot
+partition still boots on such a board, which tells a bootloader that is too old from a bad card. The bootloader's
 build date is `/proc/device-tree/chosen/bootloader/build-timestamp` on a
 system that has it.
 
@@ -1755,9 +1755,8 @@ the installation's microSD-only boot order
 ([design-usb.md](design-usb.md#the-bcm2711-bridge)).
 
 A network boot loads no slot's partition, so the boot is taken to name no
-slot and come up as an unknown boot ([The booted
-slot](design-fiasco.md#the-booted-slot)), which the first netboot is to
-confirm: the block service starts no
+slot (unverified) and come up as an unknown boot ([The booted
+slot](design-fiasco.md#the-booted-slot)): the block service starts no
 `system` window, so the `system` tree is empty and the image packages the
 card carries in its system partition, the kiosk among them, are absent.
 `/data` and the `ERXOS` volume, root's `authorized_keys` with it, still come
@@ -1765,13 +1764,10 @@ from the card. A/B slots and trials are tried only with the card first in
 the boot order: with the network first, a system update's trial reboot
 boots the staged build, not the trial slot.
 
-The first netboot's console log and `dnsmasq`'s log, with the home
-directory cut from the paths, are what settle the two unverified points of
-this section. `TFTP_IP` in the EEPROM's configuration overrides the TFTP server the DHCP
+`TFTP_IP` in the EEPROM's configuration overrides the TFTP server the DHCP
 reply names, so Internet Sharing's DHCP server, which knows nothing of TFTP,
-is taken to be enough; that is to be confirmed on the first netboot, since
-the bootloader matches the reply on its option 43, which Internet Sharing
-does not send. A bootloader of 2025-09-23 or later is needed, whose TFTP
+is taken to be enough (unverified): the bootloader matches the reply on its
+option 43, which Internet Sharing does not send. A bootloader of 2025-09-23 or later is needed, whose TFTP
 lets the block counter roll over for large files.
 
 #### The soak
@@ -1830,7 +1826,7 @@ soak with an unknown check is not a pass.
   its last.
 
 **What it does not prove.** Power cuts are the power-cut checklist's;
-repeated boots are no one's yet (the soak boots once); it is no wear or
+it says nothing of repeated boots, since it boots the machine once; it is no wear or
 full-volume test; Fiasco's own kernel memory is not reported to user mode
 ([design-fiasco.md](design-fiasco.md#reporting-a-budget)), so a leak there
 shows only once a session or a call is refused; the board's temperature
@@ -2346,14 +2342,13 @@ running (PL4).
 | RP1, one unit, puts the Raspberry Pi 5's Ethernet, USB hosts and RP1's slow devices in one domain | certain | a register abort of any of RP1's devices ends the domain and every RP1 driver with it, and a reset of one RP1 device resets all | the domain service restarts the domain from the manifest, and each RP1 driver resets its device as it starts; RP1's devices cannot be given apart, since they share one function, one reset and one interrupt boundary |
 | An Erlang driver misses a board device's timing | medium | a device the Erlang driver cannot serve | gate G9's measurement per device; a native shim in a sub-space port of the driver's domain as the exception the driver table records ([design-system.md](design-system.md#the-driver-table)) |
 
-Two questions are with the user, each decided provisionally in
-[design.md](design.md#risks-and-open-questions): whether the device-secret
-page, a departure from Fiasco that the kernel's
-[L4 lineage](design-kernel.md#l4-lineage) records, stays as designed; and
-whether a late asynchronous error on the Raspberry Pi 4, which reads no
-error records, stops the thread a window presumes, as
+Two decisions of [design.md](design.md#risks-and-open-questions) shape
+this document: the device-secret page, a departure from Fiasco that the
+kernel's [L4 lineage](design-kernel.md#l4-lineage) records, stays as
+designed; and a late asynchronous error on the Raspberry Pi 4, which reads
+no error records, stops the thread a window presumes, as
 [design-kernel.md](design-kernel.md#interrupts-time-and-entropy)
-describes, or whether the board's devices are contained instead.
+describes, rather than containing the board's devices.
 
 ## References
 

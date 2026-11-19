@@ -91,7 +91,7 @@ erx_fiasco_time_page_map(uint32_t task)
 }
 
 /*
- * The root's check of the caller's WRITE right on the time page (docs/design-time.md, "Phase 1")
+ * The root's check of the caller's WRITE right on the time page (docs/design-time.md, "On Fiasco")
  * is not built: the backend checks no right, so time_page_cap names nothing here (TODO.md).
  */
 int

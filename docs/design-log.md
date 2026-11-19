@@ -651,7 +651,7 @@ is lost, as for any consumer.
   once `/tmp` (from `kernel`'s safe supervisor) and `/data` (from the
   domain service's boot) are in the system domain's namespace.
 
-## Phase 1
+## On Fiasco
 
 Everything here is Erlang in the system domain, so erXos's kernel
 changes none of it. On Fiasco the kernel ring is Fiasco's, polled since

@@ -20,21 +20,16 @@ and a `ctl` file for one-shot control". The decision row of
 
 ## Context
 
-### What exists
+### What the design rests on
 
-* **An app's state does not fit an inspection kind.** A kind `ntp` at
-  the machine path `[ntp]`, reported by `runtime`, is answered in the
-  system domain's own runtime, where no ntpd runs, so every attribute
-  reads `unsupported` and `ntpctl -s` writes
-  `ntpctl: /proc/ntp: unsupported`. Routing the path to ntpd's session
-  would need the inspector to find an app's domain and an agent bound
-  that admits a machine path, which no design names. And ntpd's status
-  call asks its main loop, which answers only while it waits, so a read
-  during a resolution or an exchange times out.
-* **Every other kind a runtime reports is about that runtime's own
-  domain**: `domain`, `module` and `process`, at paths under a domain id
-  or a process id. `ntp` is the one kind a runtime reports at a machine
-  path.
+* **`/proc` shows only what the system observes, so an app's state does
+  not fit an inspection kind.** A kind at a machine path, reported by
+  `runtime`, would be answered in the system domain's own runtime, where
+  no app runs, so every attribute would read `unsupported`. Routing the
+  path to an app's session would need the inspector to find an app's
+  domain and an agent bound that admits a machine path, which no design
+  names. And a status call into an app's main loop is answered only while
+  the loop waits, so a read while the app is busy would time out.
 * **The start table's record** is at `/proc/apps` and `/proc/apps/NAME`,
   reported by the start service and readable by an inspect facet whose
   session template holds `start`
@@ -430,8 +425,8 @@ and the rest of the report stands.
 **NAME's provider is the row's current session**: the session the
 domain service last made for a keeper's start of NAME's row, while it
 stands and its report provided `svc`. The row runs at most one session
-at a time ([What exists](#what-exists)), and the domain service makes
-the next only after the last one's facets have ended: a keeper starts
+at a time ([What the design rests on](#what-the-design-rests-on)), and
+the domain service makes the next only after the last one's facets have ended: a keeper starts
 again only once the end reached it through its link to the domain pid,
 which the domain service ends after it has taken the domain's
 connections down, and with them its facets
@@ -887,10 +882,10 @@ Each test is paired with the fault that proves the code ran.
   checked text: puts an untrusted parser and a waiting hop in the trusted
   base, and still needs the deadline.
 * **An app's own `erx_fs` callback module** as its tree: every read would
-  run app code, so a busy app would stall its own `status`, as ntpd's
-  `status/1` stalls today, and each app would have to get the server's
-  bounds right. The flat tree `erx_svc` serves from what the app set does
-  neither.
+  run app code, so a busy app would stall its own `status`, as a call into
+  an app's main loop stalls while the loop is busy, and each app would
+  have to get the server's bounds right. The flat tree `erx_svc` serves
+  from what the app set does neither.
 * **`Tflush` as the deadline**: a server that hangs answers no flush
   ([design-files.md](design-files.md#flush)); ending the reading process
   is the bound that needs nothing from the server.

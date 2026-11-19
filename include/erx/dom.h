@@ -514,7 +514,7 @@ typedef struct erx_dom_parameter {
  * in its ready answer (property 14). Its operations are declarations of
  * the service's interface, in ascending number order, each once; only a
  * service the system domain serves has any, since only its erx_facet
- * checks them on Fiasco (docs/design-time.md, "Phase 1").
+ * checks them on Fiasco (docs/design-time.md, "On Fiasco").
  */
 typedef struct erx_dom_facet {
 	uint32_t	grantee_kind;	/* ERX_MF_GRANTEE_SYSTEM, _DOMAIN or _SESSION */

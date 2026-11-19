@@ -1046,7 +1046,7 @@ boot_parameter(const erx_mf_parameter_t *row, const erx_service_parameter_t *par
  * the first row not yet matched, matches each row to its declaration and
  * leaves over only a row that is undeclared, repeated or out of order. On
  * Fiasco only the system domain's erx_facet checks a grant's
- * operations (docs/design-time.md, "Phase 1"), so a facet of a service a
+ * operations (docs/design-time.md, "On Fiasco"), so a facet of a service a
  * configured domain serves names none; a tree's interface declares none
  * (abi_contracts.rb).
  */

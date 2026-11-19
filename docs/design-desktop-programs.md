@@ -1128,7 +1128,7 @@ setting, so clock shows UTC and says so ([Decisions](#decisions), 5).
 state, the `[time]` record's `state`, and the worker that asks reads
 the wall clock after the answer, `os:system_time(millisecond)`, which
 is the time page's wall clock in ERTS
-([design-time.md](design-time.md#what-erxos-already-has)); clock shows
+([design-time.md](design-time.md#what-the-design-rests-on)); clock shows
 that wall reading. The order is what makes a reading safe. The state only
 moves forward within a boot, from `unset` to `approximate`, and from
 either or `boot` to `set`, but for a set that lands exactly on the
@@ -1153,7 +1153,7 @@ it as a date would be a wrong answer shown as a right one; clock shows
 it as what it is.
 
 **Ticking.** Erlang's timers run on monotonic time, which a step of the
-wall clock does not move ([design-time.md](design-time.md#what-erxos-already-has)),
+wall clock does not move ([design-time.md](design-time.md#what-the-design-rests-on)),
 so clock does not ask for a wall-clock instant. After each tick the core
 computes, from the wall reading `Now` it just took, the delay to the
 start of the next minute, `60000 - Now rem 60000` milliseconds, and asks

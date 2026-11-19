@@ -799,7 +799,7 @@ the function table inside a module's code, and nothing rules that out
 during a swap. On erXos's kernel such a read is harmless, since the swap
 is one mapping call that replaces the image's pages with a copy of the
 same bytes and never leaves the range unmapped. On Fiasco it joins
-the residual of [Phase 1](#phase-1-on-fiasco). The purge's release
+the residual of [On Fiasco](#on-fiasco). The purge's release
 of an image instance runs under code modification permission, after the
 purge has established that no process runs the instance, as stock OTP's
 `erts_free` of the same code does.
@@ -846,7 +846,7 @@ breakpoint BIFs, `{error, {load_failed, Text}}` from `load_nif/2`. On
 Fiasco only, a refusal after the image's pages are released and before
 the copy is in place, or a read of the module's code by a thread that
 blocking thread progress does not stop, ends the domain with a diagnostic
-([Phase 1](#phase-1-on-fiasco)). The purge of an image instance
+([On Fiasco](#on-fiasco)). The purge of an image instance
 reports as usual.
 
 ## Security
@@ -978,7 +978,7 @@ build host, the build run's duration. Adoption's cost, privatising's cost
 and the per-domain cells belong on the performance watch list until it
 runs.
 
-## Phase 1, on Fiasco
+## On Fiasco
 
 The Fiasco backend has what the image needs. `erx_vm_map` of a slice
 maps the archive's own pages read-only with `l4_task_map` from the root

@@ -42,7 +42,7 @@ erx_group_info(uint64_t group)
 	return (ERX_ENOTSUP);
 }
 
-/* The wall clock is the system domain's to set, and no other's (docs/design-time.md, "Phase 1"). */
+/* The wall clock is the system domain's to set, and no other's (docs/design-time.md, "On Fiasco"). */
 int
 erx_time_set_offset(erx_cap_t time_page, uint64_t offset_ns)
 {

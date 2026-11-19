@@ -8299,7 +8299,7 @@ The rules are data in one registry, one file per group under
 forbids there, the sites allowed to do it and the seeded violation its
 test must catch. A row below that names a registry rule leaves its
 mechanism to the registry; a row that names only a kind of evidence
-states what its check, not yet built, must require.
+states what its check must require.
 Each core has a group named after its source, stating its rules or why it
 has none, and a core with no group stops the load, so a rule cannot vanish
 with its file. Text rules read sources after comment removal, with every
@@ -9282,7 +9282,7 @@ Fiasco's scheduling:
 
 Open questions:
 
-* **Choices made provisionally, for the user to confirm.** A space's
+* **Choices.** A space's
   capability leaves its creator's table with `INSPECT` alone, so `CAPS`
   has one holder (K17); the device-secret page, which the kernel derives at boot and hands the
   root task ([The root task](#the-root-task)); and a late asynchronous

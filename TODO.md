@@ -593,6 +593,14 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
 * [High] 0.2, littlefs, the restart-intensity test: the storage domain ended six times within 600 seconds is restarted
   five times and then stays down, reported by the domain service; the intensity not applied, so the sixth end is
   restarted, fails it ([design-stopgap.md](docs/design-stopgap.md#release-contract), Failure).
+* [High] 0.2, littlefs, the Input row of the release contract
+  ([design-stopgap.md](docs/design-stopgap.md#release-contract)): the seeded fault of the image fuzz target, a
+  bound removed from littlefs's directory-entry read, which the target must report under AddressSanitizer;
+  `tools/fuzz/lfs_image_target.rb` and `test/host/gate_baseline_test.rb` carry seeds only.
+* [High] 0.2, littlefs, the vault's partition, the Keys row of the release contract
+  ([design-stopgap.md](docs/design-stopgap.md#release-contract)): a test that reads the vault's files raw
+  from the partition and finds no key in the clear, with a file written unsealed as the seeded failure
+  ([design-system.md](docs/design-system.md#the-vault)).
 * [Medium] 0.2 on Fiasco, `liberx/backend/fiasco`: the root takes a task's free slots oldest-freed first, with the
   *Slot reuse* case ([design-fiasco.md](docs/design-fiasco.md#handles-are-slots), FD1).
 * [Medium] 0.2 on Fiasco, `liberx/backend/fiasco/service_task.c` (`:747-750`): a memory object records its
@@ -605,7 +613,7 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   setter takes no handle, its dispatch passes the body the request's `wall_ns` alone, and it checks no right,
   so any task sets the wall clock. Make it a call on the time page's handle that checks `WRITE` and answers
   `ERX_ERIGHTS` without it, with the release case "the wall clock"
-  ([design-fiasco.md](docs/design-fiasco.md#the-releases-cases), [design-time.md](docs/design-time.md#phase-1)).
+  ([design-fiasco.md](docs/design-fiasco.md#the-releases-cases), [design-time.md](docs/design-time.md#on-fiasco)).
 * [High] 0.2 on Fiasco, `liberx/backend/fiasco` (`vm.c:673`, `irq.c:174`, `watchdog_thread.c:81`, `service.c:186-219`, `:690-694`,
   `service_task.c:291-295`): the Fiasco calls that charge a task's quota are spread over five files, and a map
   Fiasco refuses under a range call ends the machine. Move every `l4_task_map`, `l4_factory_create` form and
@@ -2355,6 +2363,19 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   software reset when local loopback is set by one write before it (FreeBSD sets both in one
   write), whether short frames are padded to 60 bytes by the controller, and that the PHY answers
   at that address with the BCM54213PE's ID.
+* [Medium] platforms, netboot from a Mac (`tools/erx netboot`,
+  [design-platforms.md](docs/design-platforms.md#netbooting-from-a-mac)): two points of the section are
+  unverified and wait for the first netboot, whose console log and `dnsmasq`'s log (with the home
+  directory cut from the paths) settle them. (1) A network boot names no slot and comes up as an
+  unknown boot: the block service starts no `system` window, the `system` tree is empty and the card's
+  system-partition packages are absent, while `/data` and the `ERXOS` volume still come from the card;
+  the GENET item above reads the `erx: boot value` line for the same netboot. (2) `TFTP_IP` in the EEPROM's configuration is enough with Internet
+  Sharing's DHCP server, which sends no option 43 and knows nothing of TFTP, though the bootloader
+  matches the reply on its option 43. Where either fails, change the section to what the boot did.
+* [Low] platforms, the soak (`docs/design-platforms.md`, "The soak"): nothing tests repeated boots of the
+  board: the soak boots it once and the power-cut checklist covers power cuts, so no test
+  boots the machine many times in a row. Add a repeated-boot check to the soak's rounds, judged by
+  the same pure judge, or decide that the preview needs none.
 * [Low] liberx, `liberx/backend/fiasco/vm.h`, `vm.c`, `thread.c`: the backend's fixed addresses
   (`ERX_FIASCO_KIP_WINDOW`, the device window, the UTCB area, the VM window, the area start) are spread over
   three files, and only the KIP window's place below the device window is asserted. Gather them in one layout
@@ -4738,7 +4759,7 @@ handing call's socket process exit and its connection's, is not yet looked for. 
 * [Medium] manifest check, `tools/lib/erx/manifest.rb` (`Check#check_facets_supported`):
   a facet that names operations of a service a configured domain serves, or of a tree,
   is refused (`unsupported`), as the boot view refuses it, since only the system
-  domain's `erx_facet` checks a grant's operations (design-time.md, "Phase 1"); a mint
+  domain's `erx_facet` checks a grant's operations (design-time.md, "On Fiasco"); a mint
   in a configured domain and an `erx_fs` grant check none, so such a row would grant
   every operation. The server's release is not checked to supply the service's
   interface.
@@ -5235,15 +5256,6 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   (`otp/lib/kernel/test/file_SUITE.erl:3393-3397, 3516-3520`). Make the file's state shared across its opens in the
   port, keeping access modes and positions per open, with tests of two opens reading and writing one file, disjoint
   writes, a truncate and appends from both, regression first.
-* [Medium] storage, littlefs: a crafted image whose directory tail points back at itself,
-  off the list mount checks, makes `lfs_dir_find` and `lfs_dir_read` loop forever on a
-  dirty I/O thread, and every caller of `/data` waits with it (`erx_lfs` calls have no
-  timeout). Not reproduced; add a seed to `tools/fuzz/lfs_image_target.rb`. littlefs's
-  `LFS_ASSERT`s on disk state stay live, so one reachable from a damaged image resets the
-  machine, at every boot if it is reached at mount, while it runs in the system domain; in either
-  R1 form it ends the port or the storage domain. Whether each of the two is a published downside or a
-  residual that blocks R1 is an open decision
-  ([design-stopgap.md](docs/design-stopgap.md#open-decisions), "A crafted image that loops or asserts").
 * [Medium] storage, `erx_lfs`: once the qid table is full, `listing/4` leaves out entries it
   cannot draw a qid for and numbers the next offset from the entries kept, so a listing
   repeats entries or ends early instead of answering `enfile`.
@@ -7785,7 +7797,7 @@ to the corpus and follow rc
   blocks 0.2: the dispatch passes the body the request's `offset_ns` alone, never its `caller`, and checks
   no right, so any task sets the wall clock, against 0.2's contract that an app cannot
   ([design-fiasco.md](docs/design-fiasco.md), the release's cases) and the root's `WRITE` check of
-  [design-time.md](docs/design-time.md#phase-1); certificate checks follow the clock. Pass the caller, check
+  [design-time.md](docs/design-time.md#on-fiasco); certificate checks follow the clock. Pass the caller, check
   `WRITE` on its time-page handle, answer `ERX_ERIGHTS` without it, with a backend case.
 * [Low] build, the source revision of a tree holding the Doom fork (`tools/lib/erx/source_revision.rb`):
   its `git status` recurses into `examples/doom/doom` and runs there under the fork's own
@@ -7957,6 +7969,15 @@ to the corpus and follow rc
   alone, so a tree that names another device's page under one of those strings would have the kernel drive
   that page. On Fiasco the root confirms the RNG200's checked-in platform row against the tree
   (`erx_dt_registers`); release needs the kernel's bindings confirmed against checked-in rows the same way.
+* [Medium] design, decisions made on the user's behalf and awaiting confirmation: the list that follows the
+  risks table of [design.md](docs/design.md#risks-and-open-questions) (translating from Fiasco, login
+  credentials, the device secret through the root task, the vault's partition in the extended partition,
+  secure boot as an option, late errors on the Raspberry Pi 4, and every other entry of that list), the
+  three that [design-kernel.md](docs/design-kernel.md)'s open questions repeat (`CAPS` with one holder,
+  the device-secret page, late asynchronous errors), and the two that
+  [design-system.md](docs/design-system.md) still calls provisional (the first-enrolment rule at the
+  console's UART, and the rejection of a sealing call in the kernel). Put each to the user; a decision the user changes
+  changes the document it names.
 * [High] apps, the file check under `{signers, Keys}`, `erlang/apps/erx/src/erx_pkg_header.erl`
   (`check_file/2`; [design-packaging.md](docs/design-packaging.md#the-package)): no signature is checked,
   since no Ed25519 verifier runs on the machine; the check only requires the header's key to be a trusted

@@ -168,7 +168,7 @@ class ErxDomainTest < Minitest::Test
               file: 'erlang/apps/erx/src/erx_facet.erl',
               from: 'refuse(From, busy, State);', to: 'refuse(From, badarg, State);',
               tests: 'erx_facet_tests', caught_by: 'limits_its_forwards_test'),
-    # A grant's operations (docs/design-time.md, "Phase 1"): a facet that admits an
+    # A grant's operations (docs/design-time.md, "On Fiasco"): a facet that admits an
     # operation its grant does not list lets a holder of one operation call every other.
     Fault.new(name: 'a facet that admits an operation its grant does not list',
               file: 'erlang/apps/erx/src/erx_facet.erl',

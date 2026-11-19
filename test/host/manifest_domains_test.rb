@@ -276,7 +276,7 @@ class ManifestDomainsTest < Minitest::Test
   end
 
   # Only the system domain's erx_facet checks a grant's operations (docs/design-time.md,
-  # "Phase 1"), so a row naming operations of a service a configured domain serves is
+  # "On Fiasco"), so a row naming operations of a service a configured domain serves is
   # refused, as is one of a tree, whose interfaces declare none.
   def test_operations_only_the_system_domain_checks_are_accepted
     web = "service w\n  server @domain.beta\n  interface web\n"

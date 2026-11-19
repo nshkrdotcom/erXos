@@ -168,7 +168,7 @@ read for this design.
   time: "Any issue with the time at the source will be passed on to the
   client" (section 3.2).
 
-### What erXos already has
+### What the design rests on
 
 * **The time page** is one read-only page every domain maps: the
   counter's scale and `wall_offset_ns`, "wall time minus monotonic time".
@@ -385,7 +385,7 @@ The special cases this removes:
   that calls `erx_time_set_offset`, as `erx_watchdog_nif.c` is the one
   that pets the watchdog. On erXos's kernel only the system domain holds
   the time page's `WRITE` right, so wherever else the NIF is linked the
-  call fails, on Fiasco as on erXos's kernel ([Phase 1](#phase-1)).
+  call fails, on Fiasco as on erXos's kernel ([On Fiasco](#on-fiasco)).
 
 Why an app and not the network domain: the network domain is the stack,
 an OTP application usable outside erXos, and the domain that parses every
@@ -1105,7 +1105,7 @@ cold start, then up to 1000 s every two polls, given a server the machine
 reaches. The grant adds what the step rules refuse: a time below the
 floor and an immediate step of any size, with no network. On erXos's
 kernel the facet row is the authority; on Fiasco it is held, not
-enforced, since any task's call writes the page ([Phase 1](#phase-1)),
+enforced, since any task's call writes the page ([On Fiasco](#on-fiasco)),
 so there a session's `eperm` is how `date` behaves, not a bound on what
 the session's code can do. A session without
 the grant writes `date: clock_settime: ` and the text of `eperm`, status
@@ -1136,7 +1136,7 @@ both thresholds included, does not apply to it. The answer is `{ok,
   which every domain maps, so `os:system_time/1` in every domain reads
   the new time from the next call, and `erlang:system_time/1` within
   about a minute, through ERTS's time supervisor
-  ([What erXos already has](#what-erxos-already-has)).
+  ([What the design rests on](#what-the-design-rests-on)).
 * **Monotonic time does not move.** Neither the kernel's counter nor
   Erlang monotonic time nor any timer changes; a set backward is seen
   only by readers of wall time.
@@ -1394,7 +1394,7 @@ ntpdate: the boot-time path is ntpd's first sample
   over time. The thresholds guard an honest client against one bad
   measurement, not the system against the client. On erXos's kernel the
   authority is the facet row; on Fiasco it is held, not enforced
-  ([Phase 1](#phase-1)).
+  ([On Fiasco](#on-fiasco)).
 * **The server decides the time, and so does anyone on its path.** This
   is the residual, recorded in [design.md](design.md#residual-risks) and
   `TODO.md`. SNTP without authentication cannot tell a forged reply from
@@ -1428,7 +1428,7 @@ ntpdate: the boot-time path is ntpd's first sample
   log service's escaping and `/proc` only through the inspector's;
   addresses are integers.
 
-## Phase 1
+## On Fiasco
 
 On the Fiasco backend the setter is a service call on the time page's
 handle: the root checks the caller's `WRITE` right on that handle and

@@ -2348,8 +2348,7 @@ processes.
 | Recombinations break Erlang semantics subtly | medium | high | a fast subset of the oracle on every change and the full suites at every major change; deterministic mode for reproduction |
 | HVF lacks something the design assumes (MSIs through QEMU `virt`'s MSI frame, timer behaviour) | medium | medium | virtio-mmio with ordinary interrupts wherever no driver for the MSI frame exists; every suite runs under HVF |
 
-Decided provisionally on the user's behalf, each to be confirmed by the
-user, with its detail in the document named:
+Further decisions, each with its detail in the document named:
 
 * **Translating from Fiasco.** erXos's kernel translates or copies code
   only from Fiasco files whose effective license is permissive, judged by

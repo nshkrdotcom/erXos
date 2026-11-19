@@ -2659,7 +2659,7 @@ module Erx
       end
 
       # What the check cannot honour on Fiasco, refused once properties 2, 10 and 11 hold
-      # (docs/design-time.md, "Phase 1"): a facet that names operations of a service a
+      # (docs/design-time.md, "On Fiasco"): a facet that names operations of a service a
       # configured domain serves, since only the system domain's erx_facet checks a
       # grant's operations, so the row would grant every operation. A tree's interface
       # declares none (facet_operations). Its parameters are resolved (facet_parameters).
