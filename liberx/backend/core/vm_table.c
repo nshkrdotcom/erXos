@@ -488,17 +488,47 @@ erx_backend_vm_mappings_of(const erx_backend_vm_table_t *table, uint32_t object)
 void
 erx_backend_vm_table_clear(erx_backend_vm_table_t *table, const erx_backend_vm_effects_t *effects)
 {
-	mappings_drop(table, effects, table->area_start, table->area_end);
-	/* The last run first, so removing it moves no other. */
-	while (table->nranges > 0) {
-		const erx_backend_vm_range_t *const last = run_at(table, table->nranges - 1);
-		const erx_backend_vm_plan_t plan = { .op = ERX_BACKEND_VM_RELEASE, .target = ERX_BACKEND_PAGE_UNCOMMITTED,
-		    .start = last->start, .end = last->end };
+	erx_backend_vm_range_t piece;
 
-		apply_plan(table, effects, &plan);
-	}
+	while (erx_backend_vm_shed_piece(table, UINT64_MAX, &piece))
+		erx_backend_vm_shed(table, effects, &piece);
 	erx_backend_grow_table_clear(&table->runs);
 	erx_backend_grow_table_clear(&table->mappings);
+}
+
+/* The last run's end, so releasing it moves no other run and splits none. */
+bool
+erx_backend_vm_shed_piece(const erx_backend_vm_table_t *table, uint64_t max_pages, erx_backend_vm_range_t *piece)
+{
+	const erx_backend_vm_range_t *last;
+	uint64_t pages;
+
+	if (table->nranges == 0)
+		return (false);
+	last = run_at(table, table->nranges - 1);
+	pages = (last->end - last->start) / ERX_PAGE_SIZE;
+	*piece = (erx_backend_vm_range_t){ .start = pages > max_pages ? last->end - max_pages * ERX_PAGE_SIZE : last->start,
+	    .end = last->end };
+	return (true);
+}
+
+void
+erx_backend_vm_shed(erx_backend_vm_table_t *table, const erx_backend_vm_effects_t *effects,
+    const erx_backend_vm_range_t *piece)
+{
+	const uint32_t first = mappings_first_after(table, piece->start);
+	const erx_backend_vm_plan_t plan = { .op = ERX_BACKEND_VM_RELEASE, .target = ERX_BACKEND_PAGE_UNCOMMITTED,
+	    .start = piece->start, .end = piece->end };
+
+	/* A mapping across the piece's start loses only its part inside, so its record stays and its object hears nothing. */
+	if (first < table->nmappings && mapping_at(table, first)->start < piece->start) {
+		erx_backend_vm_mapping_t *const cut = mapping_at(table, first);
+
+		for (uint64_t addr = piece->start; addr < cut->end; addr += ERX_PAGE_SIZE)
+			effects->unmap(table->label, addr, VM_RIGHTS_ALL);
+		cut->end = piece->start;
+	}
+	apply_plan(table, effects, &plan);
 }
 
 /* The area's lowest free range of this size. */

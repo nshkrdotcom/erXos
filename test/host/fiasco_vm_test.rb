@@ -74,7 +74,10 @@ class FiascoVmTest < Minitest::Test
     'the index ignores the label' => ['vm_table.c', "\treturn (addr | table->label);\n", "\t(void)table;\n\treturn (addr);\n", 'two tables share a page'],
     'an alias over a committed page admitted' => ['vm_table.c', 'count_takes(table, addr, end, ERX_BACKEND_PAGE_RW) != size / ERX_PAGE_SIZE || mappings_meet', 'mappings_meet', 'an alias over a committed page passed'],
     'an alias of addresses not reserved admitted' => ['vm_table.c', "\tif (!range_reserved(table, addr, end) || __builtin_add_overflow(object->area_start, offset, &first))\n", "\tif (__builtin_add_overflow(object->area_start, offset, &first))\n", 'a bad alias passed'],
-    'clearing leaves the pages' => ['vm_table.c', "\t\tapply_plan(table, effects, &plan);\n\t}\n\terx_backend_grow_table_clear", "\t\t(void)plan;\n\t\t(void)effects;\n\t\ttable->nranges--;\n\t}\n\terx_backend_grow_table_clear", 'clearing one table reached'],
+    'clearing leaves the pages' => ['vm_table.c', "\t\terx_backend_vm_shed(table, effects, &piece);\n", "\t\t(void)effects, table->nranges--;\n", 'clearing one table reached'],
+    'a piece past the cap' => ['vm_table.c', 'last->end - max_pages * ERX_PAGE_SIZE', 'last->end - (max_pages + 1) * ERX_PAGE_SIZE', "a piece is not the last run's last pages"],
+    'a cut mapping dropped whole' => ['vm_table.c', "\t\tcut->end = piece->start;\n", "\t\t(void)cut;\n", 'a shed changed a page below its piece'],
+    'a cut tail left mapped' => ['vm_table.c', "\t\t\teffects->unmap(table->label, addr, VM_RIGHTS_ALL);\n\t\tcut->end", "\t\t\t(void)addr;\n\t\tcut->end", 'a shed left a page of its piece mapped'],
     'a free range too small accepted' => ['vm_table.c', 'if (gap <= range->start && range->start - gap >= size) {', 'if (gap <= range->start && range->start - gap > 0) {', 'a non-fixed reserve landed wrong'],
   }.freeze
   MEMORY_ERRORS = ['a splitting release takes no room', 'a reserve takes no room'].freeze

@@ -56,6 +56,12 @@ extern const erx_backend_grow_pages_t erx_fiasco_vm_records;
 int	erx_fiasco_vm_task_open(uint32_t task) ERX_WARN_UNUSED_RESULT;
 /* Gives back every page of a task's range table: the task's space must be gone. */
 void	erx_fiasco_vm_task_close(uint32_t task);
+/*
+ * One piece of a stopped task's teardown (docs/design-fiasco.md, "Task exit"): the next
+ * piece of its range table, unmapped from its space and then given back. False, with
+ * nothing done, once the table is empty. No thread of the task may run.
+ */
+bool	erx_fiasco_vm_task_shed(uint32_t task);
 /* The window page behind a task's committed address, or 0. */
 uintptr_t	erx_fiasco_vm_task_window(uint32_t task, uint64_t addr);
 /* The window page behind a committed offset of the memory object at index, or 0. */

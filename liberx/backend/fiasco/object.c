@@ -15,9 +15,10 @@
  *
  * No budget or space ends inside a task's end. The close of a task's handle table
  * ends nothing: it marks the records it frees and those the task created, and the
- * service ends the marked records once the request or fault that ended the task is
- * over, before it answers (erx_fiasco_object_drain). The task's end still ends memory
- * whose last mapping it drops and its home group, neither of which stops a task. A
+ * service ends the marked records once the request, fault or teardown piece that
+ * ended the task is over, before it answers or receives (erx_fiasco_object_drain).
+ * The task's end still ends memory whose last mapping it drops and its home group,
+ * neither of which stops a task. A
  * task can hold the last handle of a budget, its own space's included, and a budget's
  * end stops and deletes the spaces below it: inside the task's end it would reach the
  * task's own space while its row is live, and spaces on a stop walk's path. After it,

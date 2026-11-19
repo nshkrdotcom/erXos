@@ -5,8 +5,9 @@
 
 /*
  * The root service's thread: the root's first steps up to it, its loop, and the
- * calls' bodies. It runs each body to its end before the next receive, so what
- * only it touches needs no lock, and a body never sends a request. A fault is one
+ * calls' bodies. It runs each body, and each piece of a stopped task's teardown, to
+ * its end before the next receive, so what only it touches needs no lock, and a body
+ * never sends a request. A fault is one
  * more message, never answered: every committed page is already mapped, so the
  * fault of a root thread ends the machine, and a task's goes to its fault gate or,
  * with none, ends the task. The
@@ -79,6 +80,7 @@ extern char erx_fiasco_image_start[];
 extern char erx_fiasco_image_end[];
 
 static void	service_main(void);
+static bool	service_message(l4_msgtag_t, l4_umword_t, const l4_msg_regs_t *, erx_fiasco_reply_t *);
 static int	service_run(const erx_fiasco_wire_decoded_t *, erx_fiasco_reply_t *);
 static int	service_vm(uint32_t, uint64_t, erx_backend_vm_op_t, uint64_t, uint64_t, uint32_t, uint64_t *);
 static bool	service_thread_name(uint32_t, uint64_t, uint32_t *, uint32_t *);
@@ -245,66 +247,83 @@ service_start(void)
 	return (NULL);
 }
 
+/*
+ * The loop (docs/design-fiasco.md, "The root service"). After each message, and while a
+ * stopped task's teardown is pending after each receive that found none, the service
+ * runs one piece of the teardown, then ends what the message or the piece marked, before
+ * it answers or receives. While a teardown is pending every receive has a zero timeout,
+ * and one that finds no message first gives the CPU to the ready threads of the
+ * service's priority, so the threads it answered run before the next piece.
+ */
 static void
 service_main(void)
 {
 	l4_utcb_t *const utcb = l4_utcb();
 	l4_msg_regs_t *const mr = l4_utcb_mr_u(utcb);
-	erx_fiasco_wire_decoded_t decoded;
 	erx_fiasco_reply_t reply;
 	l4_umword_t label;
 	l4_msgtag_t tag;
-	int status;
+	bool answer, teardown_pending;
 
 	tag = l4_ipc_wait(utcb, &label, L4_IPC_NEVER);
 	for (;;) {
-		/* A failed reply never reaches the receive: wait afresh. */
-		if (l4_ipc_error(tag, utcb) != 0) {
-			tag = l4_ipc_wait(utcb, &label, L4_IPC_NEVER);
+		answer = false;
+		/* An error is no message: a failed reply, or a receive that timed out. */
+		if (l4_ipc_error(tag, utcb) == 0)
+			answer = service_message(tag, label, mr, &reply);
+		else if (erx_fiasco_task_teardown_pending())
+			(void)l4_thread_yield();
+		erx_fiasco_task_teardown_step();
+		erx_fiasco_object_drain();
+		teardown_pending = erx_fiasco_task_teardown_pending();
+		if (!answer) {
+			tag = l4_ipc_wait(utcb, &label, teardown_pending ? L4_IPC_RECV_TIMEOUT_0 : L4_IPC_NEVER);
 			continue;
-		}
-		const erx_fiasco_wire_input_t input = { .label = label, .tag_label = l4_msgtag_label(tag),
-		    .words = (uint32_t)l4_msgtag_words(tag), .task_live = erx_fiasco_task_live,
-		    .mr = (const uint64_t *)mr->mr };
-
-		decoded = erx_fiasco_wire_decode(&input);
-		switch (decoded.kind) {
-		case ERX_FIASCO_WIRE_DROP:
-			atomic_fetch_add_explicit(&service_dropped, 1, memory_order_relaxed);
-			tag = l4_ipc_wait(utcb, &label, L4_IPC_NEVER);
-			continue;
-		/* Each fault and request ends what a task's end in it marked, before the service answers or waits. */
-		case ERX_FIASCO_WIRE_FAULT_PAGE:
-			service_page_fault(mr, decoded.task);
-			erx_fiasco_object_drain();
-			tag = l4_ipc_wait(utcb, &label, L4_IPC_NEVER);
-			continue;
-		case ERX_FIASCO_WIRE_FAULT_EXCEPTION:
-			service_exception(l4_utcb_exc_u(utcb), decoded.task);
-			erx_fiasco_object_drain();
-			tag = l4_ipc_wait(utcb, &label, L4_IPC_NEVER);
-			continue;
-		case ERX_FIASCO_WIRE_REFUSE:
-			reply = (erx_fiasco_reply_t){ .status = decoded.status };
-			break;
-		case ERX_FIASCO_WIRE_REQUEST:
-			reply = (erx_fiasco_reply_t){ .status = 0 };
-			status = service_run(&decoded, &reply);
-			erx_fiasco_object_drain();
-			if (status == ERX_FIASCO_NO_REPLY) {
-				tag = l4_ipc_wait(utcb, &label, L4_IPC_NEVER);
-				continue;
-			}
-			reply.status = status;
-			break;
 		}
 		mr->mr[0] = (l4_umword_t)reply.status;
 		mr->mr[1] = reply.first;
 		mr->mr[2] = reply.second;
 		mr->mr[3] = reply.third;
 		mr->mr[4] = reply.fourth;
-		tag = l4_ipc_reply_and_wait(utcb, l4_msgtag(0, 5, 0, 0), &label, L4_IPC_SEND_TIMEOUT_0);
+		tag = l4_ipc_reply_and_wait(utcb, l4_msgtag(0, 5, 0, 0), &label,
+		    teardown_pending ? L4_IPC_BOTH_TIMEOUT_0 : L4_IPC_SEND_TIMEOUT_0);
 	}
+}
+
+/*
+ * One message the receive took: a request's body, or a fault's. Whether it is owed a
+ * reply, which is then in *reply; the loop ends what the body marked.
+ */
+static bool
+service_message(l4_msgtag_t tag, l4_umword_t label, const l4_msg_regs_t *mr, erx_fiasco_reply_t *reply)
+{
+	const erx_fiasco_wire_input_t input = { .label = label, .tag_label = l4_msgtag_label(tag),
+	    .words = (uint32_t)l4_msgtag_words(tag), .task_live = erx_fiasco_task_live, .mr = (const uint64_t *)mr->mr };
+	const erx_fiasco_wire_decoded_t decoded = erx_fiasco_wire_decode(&input);
+	int status;
+
+	switch (decoded.kind) {
+	case ERX_FIASCO_WIRE_DROP:
+		atomic_fetch_add_explicit(&service_dropped, 1, memory_order_relaxed);
+		return (false);
+	case ERX_FIASCO_WIRE_FAULT_PAGE:
+		service_page_fault(mr, decoded.task);
+		return (false);
+	case ERX_FIASCO_WIRE_FAULT_EXCEPTION:
+		service_exception(l4_utcb_exc_u(l4_utcb()), decoded.task);
+		return (false);
+	case ERX_FIASCO_WIRE_REFUSE:
+		*reply = (erx_fiasco_reply_t){ .status = decoded.status };
+		return (true);
+	case ERX_FIASCO_WIRE_REQUEST:
+		*reply = (erx_fiasco_reply_t){ .status = 0 };
+		status = service_run(&decoded, reply);
+		if (status == ERX_FIASCO_NO_REPLY)
+			return (false);
+		reply->status = status;
+		return (true);
+	}
+	return (false);
 }
 
 /*

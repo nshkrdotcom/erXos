@@ -65,6 +65,11 @@
 #define VM_DEVICE_BASE	UINT64_C(0xE00000000)
 #define VM_DEVICE_PAGES	4096u
 #define VM_CONTIG_BASE	(VM_WINDOW_BASE - (UINT64_C(1) << ERX_FIASCO_CONTIG_ORDER_MAX))
+/*
+ * A teardown piece's pages: 2 MiB, one flexpage where it is aligned, whose walk of the
+ * page index and of the task's page tables is the longest any other call waits behind.
+ */
+#define VM_SHED_PAGES	512u
 /* The window's two grains: sigma0 gives 2 MiB until refused, then 4 KiB until refused. */
 #define VM_SUPERPAGE_ORDER	21u
 /* An object's offsets, as addresses of its own table: page zero stays an empty key. */
@@ -108,6 +113,7 @@ _Static_assert(sizeof(vm_object_t) <= ERX_PAGE_SIZE, "an object's record fits a 
 static unsigned	fpage_rights(uint32_t);
 static void	vm_map(uint32_t, uintptr_t, uint64_t, uint32_t);
 static void	vm_unmap(uint32_t, uint64_t, uint32_t);
+static void	vm_unmap_range(uint32_t, uint64_t, uint64_t);
 static void	vm_no_map(uint32_t, uintptr_t, uint64_t, uint32_t);
 static void	vm_no_unmap(uint32_t, uint64_t, uint32_t);
 static uintptr_t vm_take(uint64_t);
@@ -131,7 +137,7 @@ const erx_backend_grow_pages_t erx_fiasco_vm_records = { .take = vm_record_take,
 
 static const erx_backend_vm_effects_t vm_effects = { .map = vm_map, .unmap = vm_unmap, .take = vm_take,
     .give = vm_give, .free_pages = erx_fiasco_vm_free_pages, .unmapped = vm_unmapped };
-/* For a table no space sees: an object's, or a task's whose mappings went with it. */
+/* For a table no space sees: an object's, a task's whose mappings went with it, or a piece a shed has unmapped. */
 static const erx_backend_vm_effects_t vm_no_effects = { .map = vm_no_map, .unmap = vm_no_unmap, .take = vm_take,
     .give = vm_give, .free_pages = erx_fiasco_vm_free_pages, .unmapped = vm_unmapped };
 /* For an object over a run: its pages are the run's, in order, from vm_run_window. */
@@ -308,6 +314,20 @@ erx_fiasco_vm_task_close(uint32_t task)
 
 	erx_backend_vm_table_clear(&row->table, &vm_no_effects);
 	vm_label_put(row->table.label);
+}
+
+bool
+erx_fiasco_vm_task_shed(uint32_t task)
+{
+	erx_backend_vm_table_t *const table = &vm_task(task)->table;
+	erx_backend_vm_range_t piece;
+
+	if (!erx_backend_vm_shed_piece(table, VM_SHED_PAGES, &piece))
+		return (false);
+	/* Out of the task's space first, so no page goes back to the pool while the task maps it. */
+	vm_unmap_range(task, piece.start, piece.end);
+	erx_backend_vm_shed(table, &vm_no_effects, &piece);
+	return (true);
 }
 
 void
@@ -727,6 +747,24 @@ vm_unmap(uint32_t label, uint64_t addr, uint32_t rights)
 
 	if (l4_error(tag) < 0)
 		vm_refused("erx: memory: the kernel refused an unmap\n");
+}
+
+/* Every right of [start, end) of a task, page-aligned, by the largest aligned flexpages that tile it. */
+static void
+vm_unmap_range(uint32_t task, uint64_t start, uint64_t end)
+{
+	for (uint64_t addr = start; addr < end;) {
+		/* An address above zero: its lowest set bit is its alignment. */
+		unsigned order = (unsigned)__builtin_ctzll(addr);
+		l4_msgtag_t tag;
+
+		while (end - addr < UINT64_C(1) << order)
+			order--;
+		tag = l4_task_unmap(erx_fiasco_task_cap(task), l4_fpage(addr, order, L4_FPAGE_RWX), L4_FP_ALL_SPACES);
+		if (l4_error(tag) < 0)
+			vm_refused("erx: memory: the kernel refused an unmap\n");
+		addr += UINT64_C(1) << order;
+	}
 }
 
 /* The kernel spells rights differently from ERX_PROT_*: read 4, write 2, execute 1. */

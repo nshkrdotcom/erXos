@@ -67,8 +67,8 @@ void	erx_fiasco_object_end(uint32_t index);
 
 /*
  * Ends the records a task's end left marked: what its handles' close freed and what it
- * created. The service runs it after each request and fault, before it answers, so no
- * record ends inside a task's end.
+ * created. The service runs it after each request, fault and teardown piece, before it
+ * answers or receives, so no record ends inside a task's end.
  */
 void	erx_fiasco_object_drain(void);
 

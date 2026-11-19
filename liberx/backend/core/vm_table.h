@@ -247,8 +247,25 @@ uint32_t	erx_backend_vm_mappings_of(const erx_backend_vm_table_t *, uint32_t);
 
 /*
  * Releases every run, mappings included, so the table's pages and its records' pages go
- * back and its label is free.
+ * back and its label is free: the pieces of erx_backend_vm_shed_piece, each as large as its run.
  */
 void	erx_backend_vm_table_clear(erx_backend_vm_table_t *, const erx_backend_vm_effects_t *);
+
+/*
+ * The next piece of emptying the table a piece at a time, as a stopped task's teardown
+ * does (docs/design-fiasco.md, "Task exit"): the last run's last max_pages pages, max_pages
+ * above zero, or the whole run when it is shorter. False when the table holds no run.
+ * Changes nothing.
+ */
+bool	erx_backend_vm_shed_piece(const erx_backend_vm_table_t *, uint64_t max_pages, erx_backend_vm_range_t *piece);
+
+/*
+ * Releases a piece that erx_backend_vm_shed_piece gave for this table, through these
+ * effects: its pages are unmapped and go back, each mapping inside it is unmapped and
+ * dropped, and a mapping reaching across its start keeps the part below it, its object
+ * hearing nothing until that part goes too. A piece is its run's end, so it needs no room
+ * and cannot fail.
+ */
+void	erx_backend_vm_shed(erx_backend_vm_table_t *, const erx_backend_vm_effects_t *, const erx_backend_vm_range_t *piece);
 
 #endif /* ERX_BACKEND_VM_TABLE_H */

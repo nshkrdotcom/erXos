@@ -26,7 +26,7 @@ module Erx
                     'liberx/backend/core/refused.c', 'test/guest/native_space/guest.c'].freeze
     PROGRAM_SOURCES = [*NativeRoot::TASK, 'test/guest/native_space/program.c'].freeze
     CASES = %w[program_found writer_released between_tasks bounds revoke gate_refusals gate_queue
-               created space_refusals released first_thread budget_calls budget_destroy groups passing time budget_held
+               created space_refusals released stop_steps first_thread budget_calls budget_destroy groups passing time budget_held
                doorbells made slices copy code_objects supply_bounds child_objects child_offset image_shared].freeze
     # The image's domains/sample/ release, as test/guest/native_space/modes.h describes it.
     RELEASE_FILES = { 'domains/sample/alpha' => "alpha file\n",

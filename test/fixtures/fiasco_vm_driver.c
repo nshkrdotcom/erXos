@@ -891,6 +891,74 @@ check_mappings(void)
 }
 
 /*
+ * Table 1 of mappings_world as a stopped task leaves it: two runs, [0, 5) and [6, 12), with
+ * committed pages 0 (read-only), 1, 10 and 11, the object's pages 0 and 1 mapped at [2, 4)
+ * and its pages 1 to 3 at [7, 10).
+ */
+static void
+shed_world(erx_backend_vm_table_t *a, erx_backend_vm_table_t *object)
+{
+	mappings_world(a, object);
+	if (table_call(a, ERX_BACKEND_VM_RELEASE, AREA_START + 5 * PAGE, PAGE, 0, 0) != 0 ||
+	    table_call(a, ERX_BACKEND_VM_COMMIT, AREA_START, 2 * PAGE, 0, 0) != 0 ||
+	    table_call(a, ERX_BACKEND_VM_PROTECT, AREA_START, PAGE, 0, ERX_PROT_R) != 0 ||
+	    table_call(a, ERX_BACKEND_VM_COMMIT, AREA_START + 10 * PAGE, 2 * PAGE, 0, 0) != 0 ||
+	    map_into(a, object, 2, 2, 0, ERX_PROT_RW) != 0 || map_into(a, object, 7, 3, 1, ERX_PROT_R) != 0)
+		fail("a shed world was refused", 0);
+}
+
+/*
+ * Emptying a table a piece at a time, at every cap from one page to more than the table:
+ * each piece is the last run's last pages, at most the cap; it unmaps and gives back
+ * every page it covers and changes none below it; a mapping reaching across its start
+ * keeps its part below, and the object hears of a mapping exactly when its last part
+ * goes; and the pieces end with no run, no mapping, and every page back.
+ */
+static void
+check_shed(void)
+{
+	erx_backend_vm_table_t a, object;
+	erx_backend_vm_range_t piece;
+
+	current_case = "shed";
+	for (uint64_t cap = 1; cap <= MAPPING_AREA + 1; cap++) {
+		shed_world(&a, &object);
+		while (erx_backend_vm_shed_piece(&a, cap, &piece)) {
+			const erx_backend_vm_range_t last = *(const erx_backend_vm_range_t *)erx_backend_grow_table_at(&a.runs,
+			    a.nranges - 1);
+			const uint64_t first = (piece.start - AREA_START) / PAGE;
+			const uint32_t records_before = erx_backend_vm_mappings_of(&a, 3);
+			const uint32_t told_before = unmapped_count[3];
+			uint32_t rights_below[MAPPING_AREA];
+			uintptr_t windows_below[MAPPING_AREA];
+
+			checks++;
+			if (piece.end != last.end || piece.start < last.start || piece.start >= piece.end ||
+			    (piece.end - piece.start) / PAGE > cap ||
+			    (piece.start != last.start && (piece.end - piece.start) / PAGE != cap))
+				fail("a piece is not the last run's last pages up to the cap", piece.start);
+			for (uint64_t page = 0; page < first; page++) {
+				rights_below[page] = label_rights[page];
+				windows_below[page] = erx_backend_vm_window(&a, AREA_START + page * PAGE);
+			}
+			erx_backend_vm_shed(&a, &label_effects, &piece);
+			for (uint64_t page = 0; page < first; page++)
+				if (label_rights[page] != rights_below[page] ||
+				    erx_backend_vm_window(&a, AREA_START + page * PAGE) != windows_below[page])
+					fail("a shed changed a page below its piece", page);
+			for (uint64_t page = first; page < (piece.end - AREA_START) / PAGE; page++)
+				if (label_rights[page] != 0 || erx_backend_vm_window(&a, AREA_START + page * PAGE) != 0)
+					fail("a shed left a page of its piece mapped or committed", page);
+			if (unmapped_count[3] - told_before != records_before - erx_backend_vm_mappings_of(&a, 3))
+				fail("an object heard of a mapping that is not gone, or not of one that is", cap);
+		}
+		if (a.nranges != 0 || a.nmappings != 0 || unmapped_count[3] != 2)
+			fail("the pieces left a run or a mapping", cap);
+		mappings_world_clear(&a, &object, POOL_PAGES);
+	}
+}
+
+/*
  * The object rules (vm_rules.c) over every kind, code and sealed flag and protection,
  * judged by what each must never allow: nothing writes a paged object through a
  * mapping or after its seal, an unsealed one maps nowhere, only pool pages and a
@@ -1177,6 +1245,7 @@ main(int argc, char **argv)
 	check_labels();
 	check_mappings_every_range();
 	check_mappings();
+	check_shed();
 	erx_backend_grow_table_clear(&table.runs);
 	if (records_held != 0)
 		fail("record pages left after every table was cleared", records_held);

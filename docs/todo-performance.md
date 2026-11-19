@@ -110,6 +110,16 @@ of its run) are in the full list as it stood before it was grouped,
 * **[Low] liberx, the second ISB of every clock read.** `erx_fiasco_counter` (`liberx/backend/fiasco/arch/aarch64/clock.c`) reads the counter between two `ISB`s and is never inlined, so every clock read (pipe stamps, `erlang:monotonic_time/0`, timers) pays a second pipeline flush and a call. Settled by loops of 1,000,000 `erx_fiasco_counter` calls and of `erlang:monotonic_time/0` on HVF and the Pi 4, against the parent. Fix: read `CNTVCTSS_EL0` without the first `ISB` where the CPU has `ECV`; Linux's dependent dummy load and `DMB ISHLD` is ruled out.
 * **Hosted commits take a host call per host page** (`liberx/backend/hosted/vm.c`, `host_refresh`): one protection per page where a run could be one `mprotect`. Settled by a hosted boot's commit time against a coalesced version.
 * [Low] `liberx/backend/hosted/vm.c`, `liberx/backend/core/vm_table.c`: each hosted start clears the range table's 64 MiB index, sized from the 8 GiB pool, though a fresh `mmap` is already zero. Settled by boot time with and without the clear.
+* **[Medium] Fiasco backend, a teardown's cost follows reserved addresses, not memory held**
+  (`erx_backend_vm_shed_piece`, `liberx/backend/core/vm_table.c`; `erx_fiasco_vm_task_shed`):
+  a piece is 512 pages of addresses, each looked up in the page index whether committed or
+  not, and Fiasco's unmap visits every entry of a page table that exists. A website domain
+  reserves about 272,000 pages, so its teardown is about 530 pieces and 20 to 35 s under TCG
+  with `-icount shift=9`, one CPU, and every later stop's exit record waits behind it (probe,
+  a throwaway timing of the one-body teardown). Settled by timing a stopped domain's teardown
+  and its pieces under HVF and TCG. Fixes: size a piece by committed pages and mappings and
+  pass over stretches the index and the mapping records show empty; shrink ERTS's
+  reservations.
 
 ## liberx program layer, pipes and lanes
 

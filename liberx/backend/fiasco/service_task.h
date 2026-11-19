@@ -39,6 +39,7 @@ typedef enum erx_fiasco_task_thread {
 typedef enum erx_fiasco_task_state {
 	ERX_FIASCO_TASK_ABSENT = 0,
 	ERX_FIASCO_TASK_LIVE,
+	ERX_FIASCO_TASK_STOPPING,	/* no thread of it runs, and its teardown gives its memory back */
 	ERX_FIASCO_TASK_ENDED	/* its status waits for erx_fiasco_task_join */
 } erx_fiasco_task_state_t;
 
@@ -64,6 +65,8 @@ typedef struct erx_fiasco_task {
 	erx_fiasco_task_tree_t	 tree;
 	bool			 first_made;	/* its creator made index 0, so another create there is ERX_ENOTSUP */
 	int64_t			 status;
+	uint32_t		 stopper;	/* while stopping: the task that stopped it, whom its exit record names */
+	uint64_t		 stop_order;	/* while stopping: the count of stops when it stopped, which orders the teardowns */
 	erx_fiasco_task_thread_t threads[ERX_FIASCO_THREADS_MAX];
 	uint64_t		 affinity[ERX_FIASCO_THREADS_MAX];	/* as last set, 0 for wherever it was created */
 	erx_log_rate_t		 log_rate;	/* what its erx_debug_log lines have cost, zero at its start */
@@ -140,10 +143,19 @@ int	erx_fiasco_task_space_target(uint32_t caller, uint64_t space, uint32_t *task
 bool	erx_fiasco_task_created_by(uint32_t task, uint32_t caller);
 /*
  * A space record's end, from object.c: the last handle's close or its creator's
- * destroy or end releases the space, which stops with ERX_EXIT_RELEASED if it runs and
- * is deleted with every space below it. A record whose space was deleted first is no-op.
+ * destroy or end releases the space, which stops with ERX_EXIT_RELEASED if it runs,
+ * finishes its teardown in this call, and is deleted with every space below it. A
+ * record whose space was deleted first is no-op.
  */
 void	erx_fiasco_task_space_release(uint32_t record);
+/*
+ * One piece of the teardown of the stopping task that stopped first (docs/design-fiasco.md,
+ * "Task exit"), its end once its memory is back, or nothing when no task is stopping. The
+ * service's loop runs it between requests.
+ */
+void	erx_fiasco_task_teardown_step(void);
+/* Whether any task is stopping, so the loop has a piece to run. */
+bool	erx_fiasco_task_teardown_pending(void);
 int	erx_fiasco_task_mem_create_body(uint32_t caller, const erx_fiasco_mem_create_request_t *request, uint64_t *mem);
 /*
  * erx_mem_create_paged and erx_mem_seal (docs/design-fiasco.md, "The call table"):

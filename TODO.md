@@ -2494,17 +2494,24 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   `erx.watchdog=1,30,600` reaches the rc banner, but none of its configured domains reports
   ready in time: network and storage are stopped and restarted from about 1100 s uptime until
   each is left down. Decide whether the ready deadline should scale with the machine. A stop's
-  teardown holds the root service for 12 to 26 s there; PC samples put most of it in Fiasco's
-  kernel deleting the task and the rest in `erx_backend_vm_table_clear`, so it is not cut short
-  in user mode, and while it lasts every task's calls wait, the restarted domains' among them.
-* [Medium] Fiasco backend, a long service body, a stopped domain's teardown above, holds the
-  system domain's watchdog pet off whenever the one normal scheduler makes a service call
-  during it. With `erx_log`'s calls on a dirty I/O scheduler, the same TCG boot (Apple M3 Max,
-  QEMU 11.1.3, Homebrew clang 23.1.3, one CPU) shows a stop's longest pet gap at 2.0 s at the
-  median of 22 stops, against 12.4 s of 13 before; six are 5.5 to 15 s and one 22 s.
+  teardown takes 20 to 35 s there, about half in Fiasco's unmaps of the task and half in the
+  root's walk of its range table, over about 272,000 pages of reserved addresses per domain;
+  the service runs it in pieces between other calls, so the restarted domains' calls do not
+  wait behind it, but their start waits for the exit record that ends it.
+* [Medium] Fiasco backend, a long service body holds the system domain's watchdog pet off
+  whenever the one normal scheduler makes a service call during it. A stopped domain's
+  teardown runs in pieces (docs/design-fiasco.md, "Task exit"); on the same TCG boot (Apple M3
+  Max, QEMU 11.1.3, Homebrew clang 23.1.3, one CPU, `-icount shift=9`) a stop's longest pet
+  gap is 2.2 s at the median of 25 stops, 3 over 5 s, the worst 17.9 s, which starts 4 s after
+  the stopped domain's exit record, while it restarts, against 3.1 s at the median of 19, 9
+  over 5 s and the worst 21.7 s with the teardown as one body. What holds the remaining gaps
+  is not yet attributed: the longest piece left, Fiasco's deletion of the emptied task, takes
+  1.5 to 4 s there (it walks every page table the task touched), a space's release and a
+  budget's destroy finish their spaces' teardowns in one body, and the restarted domain's own
+  start runs beside them.
   - What holds it: a table of each root thread's current service call, read through QEMU's
-    monitor during the 22 s gap, shows the normal scheduler in `erx_vm_reserve <
-    os_mmap_aligned`, ERTS's allocator taking a carrier.
+    monitor during a 22 s gap of the one-body teardown, shows the normal scheduler in
+    `erx_vm_reserve < os_mmap_aligned`, ERTS's allocator taking a carrier.
   - Every other service call a normal scheduler makes is the same: `erl_mmap.c`'s `erx_vm_*`;
     the port drivers' (`erx_lane_drv.c`, `erx_program_drv.c`); the setup NIFs of `erx_pipe_nif`
     (`make_lane`, `make_bell`, `close`, `hand_make`, `open_end`), `erx_area` (`map`, `lend`,
@@ -2519,8 +2526,14 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
     inspection path would let a QEMU test hold an allowlist.
   - The fix of the class: the root's own memory calls stop waiting behind other tasks' bodies
     (a super carrier reserved and committed at start, or the root's calls on its own table run
-    in the calling thread), or no service body stays long (a teardown the service runs in
-    steps between other calls).
+    in the calling thread), or no service body stays long, as the stepped teardown does for a
+    stop.
+* [Medium] Fiasco backend, `erx_fiasco_vm_task_shed` (`liberx/backend/fiasco/vm.c`): that no
+  page of a teardown piece returns to the pool while the task maps it rests on the caller
+  unmapping the piece by flexpages before `erx_backend_vm_shed` runs with no effects, an order
+  of two lines no host test sees; `check_shed` and its mutants cover only the core's per-page
+  unmaps. A range-unmap effect that `erx_backend_vm_shed` calls before it gives pages back
+  would put the order in the core, where a mutant can prove it.
 * [Medium] runtime, `test/integration/runtime_hosted_smoke_test.rb` fails twice on the hosted
   runtime: `gen_tcp:listen(0, [])` raises `undefined function erx_gen_tcp:listen/2` where the
   test expects `{error,enotsup}`, and `erx_device.o` imports `aligned_alloc`, which the seam's

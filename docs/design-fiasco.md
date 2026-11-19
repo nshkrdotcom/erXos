@@ -564,10 +564,10 @@ app sees. Release notes and the user documentation carry it.
 | FD14 | D12, K3 | a domain's objects are bounded by its budget alone | they are bounded also by its row's thread, object and mapping limits ([Memory and budgets](#memory-and-budgets)); a task holds at most 128 threads, a record waits for Fiasco's marker write before reuse, and a failed start that did not reach Fiasco's kill path loses its index until the task ends ([Table sizes](#table-sizes)) | a domain is refused at a limit while its budget has memory free, so its row is sized at its largest; D12's bounds hold at those limits | erXos's kernel |
 | FD15 | CLAUDE.md "Trust placement", CLAUDE.md "ERTS is a parts bin" | CPU grants to runtime groups, quotas charged up the group tree, own-group charging, `erx_group_configure` enforced with usage reported, a group's threads in any space, a thread on any CPU of its mask | per-domain priority bands, CPU sets and thread limits ([Threads, bands and stops](#threads-bands-and-stops)); a group's grant is a record, its threads run in its home task, and affinity runs a thread on one CPU of its mask, narrowed to its domain's CPU set | a domain spinning at its band's top takes its CPUs from every lower band and shares its band round robin in proportion to its threads; CPU use per domain is reported as `unsupported`; M10's "one runs out of CPU alone" holds between bands, not within one | stage 5 of [the scheduler](#stages-beyond-bands), or erXos's kernel |
 | FD16 | none (performance) | the cooperation ladder: status words, deferred preemption, published urgency within the group's ceiling, group park in the kernel with the executor switched, capacity advice the kernel stands behind | none in the first release; park and wake go through semaphores and a dispatcher thread per task ([The park protocol](#the-park-protocol)) | ERTS behaves as stock BEAM does on a general-purpose kernel: it spins briefly and backs off on a lock whose holder is preempted, and a wake, a doorbell's included, goes through one more thread switch | stages 1 to 4, or erXos's kernel |
-| FD17 | K31, CLAUDE.md "Untrusted input" | a kernel call runs on the caller's own thread and is charged to its own group, so what one domain makes another spend is bounded and declared; a fault of the root task ends the machine at once (K31) | setup, faults, copies and every service call run on the root service's one thread at the root's band, and a program's start costs one service request per object; a long body (a stop of a large tree, a budget's destroy and its sweeps of the object table) delays every other | an app flooding the root with requests or faults takes CPU from every lower band on the root's CPU, the system domain, the drivers and the display included, and delays every other domain's setup and faults, which 0.2 accepts; a fault of the root service hangs every client until the watchdog or the harness's deadline ends the run | erXos's kernel |
+| FD17 | K31, CLAUDE.md "Untrusted input" | a kernel call runs on the caller's own thread and is charged to its own group, so what one domain makes another spend is bounded and declared; a fault of the root task ends the machine at once (K31) | setup, faults, copies and every service call run on the root service's one thread at the root's band, and a program's start costs one service request per object; a long body (a space's release, which finishes its tree's teardown, a budget's destroy and its sweeps of the object table, and a stopped task's deletion, the teardown's longest piece) delays every other | an app flooding the root with requests or faults takes CPU from every lower band on the root's CPU, the system domain, the drivers and the display included, and delays every other domain's setup and faults, which 0.2 accepts; a fault of the root service hangs every client until the watchdog or the harness's deadline ends the run | erXos's kernel |
 | FD18 | K20 | the executor rule refused by the kernel | `liberx`'s stub refuses it | a runtime that bypasses `liberx` can stall its own executors, harming only itself | erXos's kernel |
 | FD19 | none (missing calls) | threads are backed and charged at their create, any number run in a space the caller holds, a start resumes a repaired thread, and `erx_thread_stop`, `_read` and `_write` work | a creator starts only a space's first thread; a faulting thread waits until its space stops; no stop, read or write of a thread; a gate's thread is of the gate's own task | no debugger or pager repairs a thread | erXos's kernel |
-| FD20 | D7, D17, K18, K27, K28 | a stop's bounded finishing path (K18, K27) and fault and exit records from the kernel with the thread's identity (K28) | the root ends a tree children first and posts each exit record, at the gate fixed at creation, after every thread's deletion has returned; a fault's record comes from a pool of its space; a fault message's words are the task's own | an exit record arrives when the root's walk completes, with no bound under hostile load, so D7 and D17 hold without their bound; a dead domain's write position is final when its end is reported; a task that reaps faulted threads and faults again can run its own pool out and lose its own records, and its raw IPC can put stale numbers in its own crash record | erXos's kernel |
+| FD20 | D7, D17, K18, K27, K28 | a stop's bounded finishing path (K18, K27) and fault and exit records from the kernel with the thread's identity (K28) | the root stops a tree children first and posts each exit record, at the gate fixed at creation, after every thread's deletion has returned and the space's teardown has given its memory back; a fault's record comes from a pool of its space; a fault message's words are the task's own | an exit record arrives when the root's teardown of the space completes, with no bound under hostile load, so D7 and D17 hold without their bound; a dead domain's write position is final when its end is reported; a task that reaps faulted threads and faults again can run its own pool out and lose its own records, and its raw IPC can put stale numbers in its own crash record | erXos's kernel |
 | FD21 | K30 | a whole-space hold that every call it started runs out under (K30) | the root holds each thread at its gate ([The pause](#threads-bands-and-stops)) | `fork` and job control work; a thread in a kernel call is cancelled out of it and retries after the resume; a thread of the paused space can make its own space's pause return early, and a space whose threads do not all arrive within the deadline ends | erXos's kernel |
 | FD22 | none (a missing call) | umtx in the kernel, across spaces, with `ERX_EFAULT`, `ERX_ESTALE` and `ERX_EINTR` | umtx within a task ([The umtx table](#the-umtx-table)) | no futex in memory shared between programs | erXos's kernel |
 | FD23 | K29 | vCPU upcalls with no event lost (K29), events ending a wait | the subset of [vCPU upcalls on Fiasco](#vcpu-upcalls-on-fiasco), over a vCPU state area its program can write, harming only itself, since the resume validates the frame and Fiasco sanitizes what it restores (`task.cpp:93-116`, `arm/64/context-arm-hyp-64.cpp:27-35`) | signals in programs arrive late around waits and raw kernel calls, and `sem_wait` never fails with `EINTR` | erXos's kernel |
@@ -1783,45 +1783,69 @@ never uses `FUTEX_REQUEUE`, so neither umtx needs a requeue. The cost, one extra
 #### Task exit
 
 Deleting a task capability does not delete its threads, which the root holds and which keep references to the task
-(`task.cpp:686-699`, `thread.cpp:306`). So exit is one service body, reached by a thread's `erx_space_stop(ERX_CAP_SELF,
-status)`, which musl's `exit` does, its creator's `erx_space_stop(task, status)`, a fault in a task with no fault gate,
-the destroy of the budget its space was created from, or its parent's exit. In the root it is `erx_machine_end`.
+(`task.cpp:686-699`, `thread.cpp:306`). So a task's end starts in one service body, reached by a thread's
+`erx_space_stop(ERX_CAP_SELF, status)`, which musl's `exit` does, its creator's `erx_space_stop(task, status)`, a
+fault in a task with no fault gate, the destroy of the budget its space was created from, or its parent's exit, and
+finishes in a **teardown** that the service carries out a piece at a time between other requests
+([The root service](#the-root-service), "The loop"). In the root it is `erx_machine_end`.
 
-The body walks the tree below the task, iteratively and children first, so a space never outlives its parent, and
-runs these steps for each task, a child with the status `ERX_EXIT_PARENT`:
+The stop's body walks the tree below the task, iteratively and children first, so a space never outlives its parent,
+and runs step 1 for each task, a child with the status `ERX_EXIT_PARENT`. The task is then **stopping**: the
+teardown runs steps 2 to 4 for each stopping task in the order of their stops, which the row records as a count of
+the service's stops, so a child's end finishes before its parent's and the loop posts exit records in the order of
+the stops (a space's release finishes its own tree first, and withdraws the records that posts):
 
-1. **The threads.** First `l4_irq_detach` on every IRQ object bound to the task's dispatcher or to one of its
-   threads, whoever created the object, so no delivery is ever bound to a deleted thread; then `l4_task_delete_obj` on
-   each thread of the task, newest first, reaper and dispatcher included. Each return means that thread never reaches
-   user mode again (`thread_object.cpp:157-166`).
-2. **The objects.** Every object the task created goes, once the stop is over (step 3), as the [object table](#shared-objects-and-the-jit-alias)'s third
-   row says, its mappings in other tasks revoked first; then its semaphores, gate and home group, as
-   [Budgets and groups as records](#budgets-and-groups-as-records) deletes one, its bind records with it, so an IRQ
-   object that outlives the task, a connection's bell that the domain library created, is left unbound, and a
-   trigger of it waits at the object; then the task object, which unmaps everything before the call returns (`task.cpp:686-699`).
-3. **The memory.** Its pages return to the pool; each of its mapping records is dropped from its object's list, which
-   frees an object whose last reference that was; its handle table is emptied, each entry dropping its object's count,
-   and freed with its runs. The objects of step 2 and those whose last entry this drops are only marked here: the
-   service ends the marked objects once the request or fault that stopped the task is over, every space of the
-   stop walked and every row reset, and before it answers, so an end that stops further spaces, a budget's
-   included, never runs inside another task's end.
+1. **The threads.** `l4_task_delete_obj` on each thread of the task, newest first, reaper and dispatcher included.
+   Each return means that thread never reaches user mode again (`thread_object.cpp:157-166`). Then its semaphores
+   and gate, and its home group, as [Budgets and groups as records](#budgets-and-groups-as-records) deletes one, its
+   bind records with it, so each IRQ object bound to it is detached, and one that outlives the task, a
+   connection's bell that the domain library created, is left unbound, and a trigger of it waits at the object.
+   The row keeps only its place in the tree, the status, the stopper and its stop's count.
+2. **The memory, a piece at a time.** Each piece is the last 512 pages of the task's last run, or the whole run
+   when it is shorter (`erx_backend_vm_shed_piece`, `liberx/backend/core/vm_table.c`). The service unmaps the
+   piece from the task, by the largest flexpages that tile it, and only then releases it in the range table
+   (`erx_backend_vm_shed`): its pages return to the pool, each of its mapping records is dropped from its object's
+   list, which frees an object whose last reference that was, and a mapping reaching across the piece's start keeps
+   its part below. So a page returns to the pool only once no space maps it, and a piece costs its 512 pages of
+   addresses, in the root's walk of its page index and in Fiasco's of the task's page tables (`map_util.cpp:866-886`
+   visits every entry of a table that exists), and the end of an object whose last mapping it drops.
+3. **The objects.** Once the table is empty, the task object, whose deletion unmaps what is left and frees its
+   page tables before the call returns (`task.cpp:686-699`). Step 2's unmaps clear entries and free no table
+   (`arm/mem_space-arm.cpp:322-341`), so the deletion still walks every entry of the tables the task touched
+   before it frees them (`arm/mem_space-arm.cpp:346-356`), which makes this the teardown's longest piece; then
+   the handle table is emptied, each entry dropping its object's count, and freed with its runs, and every object
+   the task created goes, as the [object table](#shared-objects-and-the-jit-alias)'s third row says, its mappings
+   in other tasks revoked first.
+   The objects the task created and those whose last entry this drops are only marked here: the service ends the
+   marked objects once the piece is over, before it answers or receives, so an end that stops further spaces, a
+   budget's included, never runs inside another task's end.
 4. **The status.** The exit record, an `erx_fault` of kind `exit` with the first stop's status, goes to the space's
-   fault gate ([Fault gates](#fault-gates)), after step 1, so it comes only once no thread of the space can run. A
-   test task, which has no fault gate, gives its status as a test's transcript line: the end ups a semaphore of the
-   root's, and the launcher's `erx_fiasco_task_join` asks the service, which answers `ERX_EBUSY` with the task's index
-   while the space runs, so the stub waits on that semaphore and asks again; the second answer takes the status,
+   fault gate ([Fault gates](#fault-gates)), after step 3, so it comes only once no thread of the space can run and
+   its memory is back: a creator that restarts a domain on its record finds the pages it needs. A test task, which
+   has no fault gate, gives its status as a test's transcript line: the end ups a semaphore of the root's, and the
+   launcher's `erx_fiasco_task_join` asks the service, which answers `ERX_EBUSY` with the task's index while the
+   space runs or stops, so the stub waits on that semaphore and asks again; the second answer takes the status,
    deletes the space with every space below it, freeing their labels, and closes the root's handle. A space that
    held the last handle of the budget it is charged to goes with that budget once its stop is over, and as every
-   deletion does, the deletion withdraws its exit record: its creator sees no record, and a join answers `ERX_ESTALE`.
-   A thread that stopped its own task gets no reply.
+   deletion does, the deletion withdraws its exit record: its creator sees no record, and a join answers
+   `ERX_ESTALE`. A thread that stopped its own task gets no reply.
 
-**A request cannot race this.** The service runs each request or fault to completion before it receives the next, finds
-the task from the gate's label and each handle in that task's table, and keeps no pointer across a receive. Fiasco IPC
-queues no messages: a request is a live thread blocked on the gate, and deleting the thread removes it. So once a stop
-returns to the receive, nothing can name that task, and its label is reusable once its exit record or status is taken.
-A space handle is a slot of the creator's object space and names the stopped space's record until the creator closes it,
-which frees the record; the root frees no slot before its holder's close ([Handles are slots](#handles-are-slots)), so the
-handle never names a later space.
+**A space's release finishes its teardown.** The end of a space record, by its last handle's close, its creator's
+destroy or end, or its budget's destroy, stops the space if it runs and then runs the teardown of the space and of
+the spaces below it, which stopped before it, in that body, before it deletes them all; another space's pending
+teardown waits for the loop. So a budget's end returns its guarantee only with its spaces' pages back in the
+pool, and a deleted row is never a stopping one.
+
+**A request cannot race this.** The service runs each request, fault and piece to completion before it receives the
+next, finds the task from the gate's label and each handle in that task's table, and keeps no pointer across a
+receive. Fiasco IPC queues no messages: a request is a live thread blocked on the gate, and deleting the thread
+removes it. So once a stop returns to the receive, no request or fault comes from that task, and no call reaches it:
+the decoder drops a label naming no live task, a stopping space is no call's target (`ERX_EINVAL`), takes no child
+and is not stopped again, a join answers `ERX_EBUSY`, and the stopping task's handles and objects stay as they
+were until step 3, which ends them in one piece. Its label is reusable once its exit record or status is taken.
+A space handle is a slot of the creator's object space and names the stopped space's record until the creator
+closes it, which frees the record; the root frees no slot before its holder's close
+([Handles are slots](#handles-are-slots)), so the handle never names a later space.
 
 ### musl over the backend
 
@@ -2067,7 +2091,7 @@ through the object's window addresses. The caller's task can write its public UT
 copies what a request takes from it, the length first and then at most that many bytes, into the service's own buffer once, and
 every check and the body read only that copy; nothing is read from the public UTCB a second time for the same request.
 
-**The loop.** `l4_ipc_wait`; decode; run the body; `l4_ipc_reply_and_wait` with `L4_IPC_SEND_TIMEOUT_0`. A body never calls a stub, and never hashes an image entry: the root's caller checks one in its own thread first ([The call table](#the-call-table), `erx_image_map`), because a hash a whole image long would hold every other call of every task and of the root behind it. A body that stays long, a stopped task's teardown, holds them all the same, and a root thread that waits on it holds what it runs: on the root's normal scheduler, the watchdog pet ([The watchdog](#the-watchdog)). So the NIFs a runtime calls all through its life whose call is a service round trip, `erx_log`'s three calls, `erx_object_info`'s report and `erx_clock_nif`'s setter, are dirty I/O NIFs in every domain's runtime, and the domain library's entries are dirty CPU NIFs.
+**The loop.** `l4_ipc_wait`; decode; run the body; run one piece of a pending teardown; end what the body and the piece marked; `l4_ipc_reply_and_wait` with `L4_IPC_SEND_TIMEOUT_0`, or with `L4_IPC_BOTH_TIMEOUT_0` while a teardown is pending. A body never calls a stub, and never hashes an image entry: the root's caller checks one in its own thread first ([The call table](#the-call-table), `erx_image_map`), because a hash a whole image long would hold every other call of every task and of the root behind it. For the same reason a stopped task's teardown is no body but pieces ([Task exit](#task-exit)): the stopping tasks are the service's pending work, taken in the order of their stops, and while any is pending every receive has a zero timeout, and one that finds no message yields the CPU to the ready threads of the service's priority before the next piece. So a call waits behind at most one piece, the longest of which is the task object's deletion, unless it comes behind a space's release or a budget's destroy, which finish the teardown of the spaces they delete in their own body. A body that stays long holds every call all the same, and a root thread that waits on it holds what it runs: on the root's normal scheduler, the watchdog pet ([The watchdog](#the-watchdog)). So the NIFs a runtime calls all through its life whose call is a service round trip, `erx_log`'s three calls, `erx_object_info`'s report and `erx_clock_nif`'s setter, are dirty I/O NIFs in every domain's runtime, and the domain library's entries are dirty CPU NIFs.
 
 **Refusals.** A label naming no live task is dropped with a counted diagnostic and no reply. An unknown call number, a word count
 that differs from the ABI's, a thread index past the table or a payload length past `utcb_bytes_max` is `ERX_EINVAL`; a call without a

@@ -482,6 +482,49 @@ case_released(void)
 	say_case("released", passed);
 }
 
+/*
+ * Where case_stop_steps reserves its task's addresses, 256 MiB of them, 128 of the
+ * service's teardown pieces, and the pages it commits at their start, which the last
+ * pieces give back.
+ */
+#define STEPS_ADDR	UINT64_C(0x4100000000)
+#define STEPS_RESERVED	UINT64_C(65536)
+#define STEPS_PAGES	UINT64_C(4096)
+#define STEPS_STATUS	23
+
+/*
+ * A stop answers before its space's memory is back, and the service answers other calls
+ * while it gives the pages back a piece at a time: the free count the root reads between
+ * its joins rises while the space is still stopping. Another space's release right after
+ * the stop finishes only that space's teardown, so the first is still stopping after it.
+ * The join that takes the status finds every page back.
+ */
+static void
+case_stop_steps(void)
+{
+	const uint64_t before = erx_fiasco_vm_free_pages();
+	uint64_t space, released, seen, last = 0, rises = 0, deadline;
+	int64_t status = INT64_MIN;
+	int joined = ERX_ETIMEDOUT;
+	bool passed = task_make(&space, STEPS_ADDR, STEPS_RESERVED) &&
+	    erx_vm_commit(space, STEPS_ADDR, STEPS_PAGES * PAGE) == ERX_OK && task_make(&released, STEPS_ADDR, 1);
+
+	passed = passed && erx_space_stop(space, STEPS_STATUS) == ERX_OK && handle_close(released) == ERX_OK &&
+	    erx_fiasco_task_join_until(space, erx_fiasco_clock_ns(), &status) == ERX_ETIMEDOUT;
+
+	deadline = erx_fiasco_clock_ns() + WAIT_NS;
+	while (passed && joined == ERX_ETIMEDOUT) {
+		seen = erx_fiasco_vm_free_pages();
+		rises += last != 0 && seen > last;
+		last = seen;
+		joined = erx_fiasco_task_join_until(space, erx_fiasco_clock_ns(), &status);
+		passed = erx_fiasco_clock_ns() < deadline;
+	}
+	say_count("stop_steps_rises", rises);
+	say_case("stop_steps", passed && joined == ERX_OK && status == STEPS_STATUS && rises > 0 &&
+	    erx_fiasco_vm_free_pages() == before);
+}
+
 /* Starts the first thread of a task the launcher made, in group, at the program's entry with the argument. */
 static bool
 group_start(uint64_t space, uint64_t group, uint64_t argument)
@@ -1327,6 +1370,7 @@ erx_fiasco_root_main(void)
 	case_created();
 	case_space_refusals();
 	case_released();
+	case_stop_steps();
 	case_first_thread();
 	case_budget_calls();
 	case_budget_destroy();
