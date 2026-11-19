@@ -3,10 +3,8 @@
 # frozen_string_literal: true
 
 require 'minitest/autorun'
-require 'open3'
-require 'tmpdir'
-require_relative '../../tools/lib/erx/oracle'
 require_relative '../../tools/lib/erx/runtime'
+require_relative '../fixtures/runtime_probe'
 
 # A queued message whose term is a literal and whose seq_trace token is on the receiver's
 # heap keeps its token through the collection of the literal's area
@@ -20,11 +18,9 @@ require_relative '../../tools/lib/erx/runtime'
 # tree, it fails: nothing is skipped.
 class RuntimeLiteralTokenTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
-  OUTPUT = Erx::Runtime.output(root: ROOT)
   PROBE = 'literal_token_probe'
   # Twenty rounds take well under a second; the budget is a boot on a loaded host.
   BUDGET_SECONDS = 60
-  COMPILE_SECONDS = 120
 
   # Each test reads the hosted build, so it runs holding the runtime tree's lock
   # shared, and a build waits for it (Runtime.reading).
@@ -33,28 +29,9 @@ class RuntimeLiteralTokenTest < Minitest::Test
   def setup = Erx::Runtime.check_current(root: ROOT)
 
   def test_a_queued_literal_keeps_its_token_through_the_area_collection
-    load_probe = "{module, #{PROBE}} = code:load_binary(#{PROBE}, \"#{PROBE}\", " \
-                 "base64:decode(string:trim(io:get_line(\"\"))))"
-    environment = Erx::Oracle::CLEAN_ERLANG_ENV.merge('ERL_CRASH_DUMP_BYTES' => '0')
-    output, status = Open3.capture2e(environment, 'gtimeout', '-k', '10', BUDGET_SECONDS.to_s, OUTPUT.beam,
-                                     OUTPUT.archive, '-noshell', '-eval', "#{load_probe}, #{PROBE}:main().",
-                                     stdin_data: "#{compiled_probe}\n")
+    output, status = RuntimeProbe.run(PROBE, budget_seconds: BUDGET_SECONDS)
     assert status.success?, "exit #{status.exitstatus.inspect} (124 is the deadline), " \
                             "signal #{status.termsig.inspect}\n#{output}"
     assert_match(/^literal token probe: \d+ rounds, token intact$/, output)
-  end
-
-  private
-
-  # The probe's BEAM, in base64, for standard input: the release has no compiler and reaches no
-  # host file, and the boot page's limit on strings leaves no room for it among the arguments.
-  def compiled_probe
-    erlc = File.join(File.dirname(Erx::Oracle.new(root: ROOT).erl_path(Erx::Runtime::HOST_OTP_FLAVOUR)), 'erlc')
-    Dir.mktmpdir('erx-literal-token-') do |directory|
-      log, status = Open3.capture2e(Erx::Oracle::CLEAN_ERLANG_ENV, 'gtimeout', '-k', '10', COMPILE_SECONDS.to_s, erlc,
-                                    '-o', directory, File.join(ROOT, 'test/fixtures', "#{PROBE}.erl"), stdin_data: '')
-      assert status.success?, "erlc exit #{status.exitstatus} (124 is the deadline)\n#{log}"
-      [File.binread(File.join(directory, "#{PROBE}.beam"))].pack('m0')
-    end
   end
 end

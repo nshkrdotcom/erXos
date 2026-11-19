@@ -17,6 +17,9 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
+ * Modified by erXos: a dirty call's shadow process carries its caller's
+ * group leader (edit 76 of docs/design-runtime.md).
+ *
  * %CopyrightEnd%
  */
 
@@ -264,6 +267,10 @@ erts_cache_dirty_shadow_proc(Process *sproc)
     sproc->old_hend = c_p->old_hend;
     sproc->old_htop = c_p->old_htop;
     sproc->old_heap = c_p->old_heap;
+    /* erXos: a dirty call sees its caller's group leader as a call on a
+     * normal scheduler does; the prepare_loading BIF reports a bad module
+     * to it (edit 76). */
+    sproc->group_leader = c_p->group_leader;
     sproc->mbuf = NULL;
     sproc->mbuf_sz = 0;
     ERTS_INIT_OFF_HEAP(&sproc->off_heap);

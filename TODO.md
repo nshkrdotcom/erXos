@@ -2228,11 +2228,10 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
 * [Medium] platforms, QEMU `virt`'s record RAM (`config/platforms/qemu-virt.json`,
   `ProductionImage::BOARD_QEMU_MIB`): the record's 512 MiB leave beside the development
   manifest's `root_memory` (423.41 MiB) room for an archive of about 34 MiB, and the production
-  image's is about 67 MiB, so every pack of the board's manifest, `tools/erx boot`, the benches
-  and every QEMU suite that boots it run on the board machine (`Machine.board`, 640 MiB). The
-  record's RAM is still what `Platform#memory_mib` and `QemuPlan.memory_of` (QEMU's default `-m`)
-  give, and what the hosted runtime release's manifest check (`release.rb`, `platform.record`)
-  proves against, with a few MiB to spare (unverified); docs/design-fiasco.md ("The root startup rule"),
+  image's is about 67 MiB, so every pack of the board's manifest, the hosted runtime's release
+  (41 MiB) included, `tools/erx boot`, the benches and every QEMU suite that boots it run on the
+  board machine (`Machine.board`, 640 MiB). The record's RAM is still what `Platform#memory_mib`
+  and `QemuPlan.memory_of` (QEMU's default `-m`) give; docs/design-fiasco.md ("The root startup rule"),
   design-packaging.md and design-build.md say the production image is packed on the record's own
   machine. Raise the record's `ram_bytes` and `fiasco_reserve` to the board machine's, which
   makes `Machine.board` the record's own on every board and deletes `BOARD_QEMU_MIB`, or shrink
@@ -2476,6 +2475,29 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
 
 ## Bugs by subsystem
 
+* [High] Fiasco backend, the watchdog pet stops while the root service checks a domain's image
+  (`liberx/backend/fiasco/service.c` `service_main`, `erx_fiasco_task_image_map_body`,
+  `task_image_slice`, `erx_fiasco_slice_image`, `erx_pack_file_check`): with prepare_loading on a
+  dirty scheduler (edit 76 of docs/design-runtime.md), the website's image under TCG with
+  `-icount shift=9` and `erx.watchdog=1,30,600` still resets at 904 s uptime, its last pet at
+  873 s, about 150 s after `erx_clock` steps the clock, while the dirty CPU scheduler builds the
+  first configured domain (`configured_create_nif`). Every sample of those 30 s is the root
+  service thread hashing the domain's runtime image with BLAKE3 (`erx_pack_file_check` under
+  `erx_fiasco_task_image_map_body`); the normal scheduler is never sampled running. This is the
+  in-browser emulator's 4x JIT-off stall between the clock and the first domain start. Not yet
+  known: what the normal scheduler waits on while the one service thread hashes (a service call of
+  its own, such as a commit, or a lock the domain library's call holds). Find it by sampling the
+  guest through QEMU's monitor (`info registers`, a frame-pointer walk with `x`, and `xp` of the
+  root's `watchdog_pet_ns` to time the stall) against the root ELF's symbols, then take the
+  image's check off the path a normal scheduler waits on, or check each archive file once
+  rather than at every map.
+* [Medium] runtime, `test/integration/runtime_hosted_smoke_test.rb` fails twice on the hosted
+  runtime: `gen_tcp:listen(0, [])` raises `undefined function erx_gen_tcp:listen/2` where the
+  test expects `{error,enotsup}`, and `erx_device.o` imports `aligned_alloc`, which the seam's
+  import list lacks. Neither touches code loading; both were hidden while `tools/erx build
+  runtime` could not pack its release on the record's 512 MiB.
+* [Low] docs, `docs/design-runtime.md` "The edits outside `sys/erxos`": edits 66, 67 and 68 each
+  name two changes, so a citation of one of them is ambiguous. Renumber the later of each pair.
 * [Medium] build, the manifest checker's release artifacts (`tools/lib/erx/release_files.rb`
   `domain_artifacts`, `ProductionImage` `assemble`, `Release#build`): the archive's boot scripts
   and the `started` lists the checker reads agree only because both callers pass the same boots

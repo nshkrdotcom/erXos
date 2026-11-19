@@ -561,6 +561,20 @@ interpreter. 48. The generated `erl_parse` has no `-file` line naming the
 machine that generated it, since `stdlib` would not rebuild after a source
 edit with one. 49. `erlang:system_info(compile_info)` answers `N/A` for the
 flags and `config.h`, which name host paths, on erXos's targets.
+76\. `erts_internal:prepare_loading/2`, which parses a module and builds its
+code in one call that never yields, runs on a dirty CPU scheduler, as stock
+already runs a large `integer_to_binary/1`, so a normal scheduler keeps
+running processes while a module is prepared. Stock prepares on the calling
+normal scheduler, which runs nothing else until the call returns, so on a
+slow machine with one normal scheduler a large module would hold the system
+domain's watchdog pet past its deadline
+([design-fiasco.md](design-fiasco.md#the-watchdog)). A dirty call's shadow
+process carries its caller's group leader, so the loader reports a refused
+module to the caller's group leader, as on a normal scheduler. A load shows
+as a dirty call does: edit 68 charges it its elapsed time in reductions,
+where stock charges one, and a trace of running processes sees the caller
+scheduled out and in around it.
+`test/integration/runtime_prepare_loading_test.rb` pins it.
 
 **Ports, NIFs and drivers** ([Programs as ports](#programs-as-ports),
 [The event table](#the-event-table)). 22. `enif_select` is removed; the

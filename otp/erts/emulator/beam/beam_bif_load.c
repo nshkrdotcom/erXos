@@ -17,6 +17,9 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
+ * Modified by erXos: erts_internal:prepare_loading/2 runs on a dirty CPU
+ * scheduler (edit 76 of docs/design-runtime.md).
+ *
  * %CopyrightEnd%
  */
 
@@ -240,6 +243,16 @@ erts_internal_prepare_loading_2(BIF_ALIST_2)
 
     if (is_not_atom(BIF_ARG_1)) {
         BIF_ERROR(BIF_P, BADARG);
+    }
+
+    /* erXos: preparing a module never yields (edit 76), so it runs on a
+     * dirty CPU scheduler and the normal scheduler keeps running other
+     * processes, the system domain's watchdog pet among them. */
+    if (erts_get_scheduler_data()->type == ERTS_SCHED_NORMAL) {
+        return erts_reschedule_bif(BIF_P, BIF__ARGS, BIF_I,
+                                   &BIF_TRAP_EXPORT(BIF_erts_internal_prepare_loading_2)->info.mfa,
+                                   erts_internal_prepare_loading_2,
+                                   ERTS_SCHED_DIRTY_CPU);
     }
 
     code = erts_get_aligned_binary_bytes(BIF_ARG_2, &size, &temp_alloc);
