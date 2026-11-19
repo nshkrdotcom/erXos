@@ -191,13 +191,29 @@ inspect_scope_test() ->
                   {Principal, Roots, Development, erx_domain_core:inspect_scope(Principal, Roots, Development)})
      || {Principal, Roots, Development, Scope} <- Cases].
 
+%% At most 2 restarts within 10 s plus 2 boot timeouts of 1 s: a window of 12 s.
 restart_test() ->
     Core0 = erx_domain_core:new(<<"erxos">>),
-    {yes, Core1} = erx_domain_core:restart(0, 2, 10, 100, Core0),
-    {yes, Core2} = erx_domain_core:restart(0, 2, 10, 105, Core1),
-    {no, Core3} = erx_domain_core:restart(0, 2, 10, 109, Core2),
-    {yes, _} = erx_domain_core:restart(0, 2, 10, 111, Core3),
-    {no, _} = erx_domain_core:restart(1, 0, 10, 100, Core0).
+    Two = #{restarts => 2, period_s => 10, boot_timeout_s => 1},
+    {yes, Core1} = erx_domain_core:restart(0, Two, 100, Core0),
+    {yes, Core2} = erx_domain_core:restart(0, Two, 105, Core1),
+    {no, Core3} = erx_domain_core:restart(0, Two, 111, Core2),
+    {yes, _} = erx_domain_core:restart(0, Two, 112, Core3),
+    {no, _} = erx_domain_core:restart(1, Two#{restarts := 0}, 100, Core0).
+
+%% A boot that hangs waits out its boot timeout before each restart, so its restarts
+%% come a boot timeout apart: with 5 restarts in 1 s and a 60 s boot timeout, a window
+%% of the period alone would never hold two of them, and the window that adds a boot
+%% timeout per restart fills after 5, however long the boot timeout.
+a_hung_boot_is_left_down_after_its_restarts_test() ->
+    [begin
+         Intensity = #{restarts => 5, period_s => 1, boot_timeout_s => Timeout},
+         Answers = element(1, lists:foldl(fun(At, {Said, Earlier}) ->
+                                                  {Answer, Kept} = erx_domain_core:intensity(Earlier, Intensity, At),
+                                                  {Said ++ [Answer], Kept}
+                                          end, {[], []}, [N * Timeout + 1 || N <- lists:seq(1, 6)])),
+         ?assertEqual({Timeout, [yes, yes, yes, yes, yes, no]}, {Timeout, Answers})
+     end || Timeout <- [1, 60, 600, 3600]].
 
 %% The domain service is the supervisor's significant child and is never
 %% restarted: its end, however it comes, shuts the supervisor down, which ends
@@ -268,6 +284,44 @@ configured_boot_timeout_test_() ->
              persistent_term:erase({erx_domain_fake_lib, boot})
      end,
      {timeout, 30, fun configured_boot_timeout/0}}.
+
+%% A configured row whose boot hangs, on a machine whose boot timeout of 1 s times its 5
+%% restarts is as long as its restart period of 5 s, is stopped at each timeout and
+%% restarted 5 times, then left down: six starts, and no seventh. A whole second per
+%% restart is left for stopping and rebuilding the domain, against the whole seconds
+%% the intensity counts in.
+hung_row_left_down_test_() ->
+    {setup,
+     fun() ->
+             persistent_term:put({erx_domain_fake_lib, boot},
+                                 #{boot_timeout_s => 1,
+                                   domains => [#{row => 0, place => 0, name => <<"silent">>, principal => 1,
+                                                 kind => service, restarts => 5, restart_period_s => 5}]}),
+             Log = erx_domain_fake_lib:start_log(),
+             {ok, Service} = erx_domain_srv:start_link(#{lib => erx_domain_fake_lib, agent => erx_domain_fake_lib,
+                                                          exports => erx_domain_fake_lib,
+                                                          principals => ?PRINCIPALS}),
+             unlink(Service),
+             {Log, Service}
+     end,
+     fun(Started) ->
+             stop_service(Started),
+             persistent_term:erase({erx_domain_fake_lib, boot})
+     end,
+     {timeout, 60, fun hung_row_left_down/0}}.
+
+hung_row_left_down() ->
+    %% Each start: configure, open, export, start, then at its timeout stop, close,
+    %% disconnect and retire.
+    Starts = [begin
+                  {configured, Id, 0} = next_call(),
+                  [{open_side, Id, 'silent@erxos', _}, {export, Id, [send]}, {start, Id}, {stop, Id},
+                   {close_side, Id, {domain_down, Id, stopped}}, {disconnect, _}, {retire, Id}] =
+                      [next_call() || _ <- lists:seq(1, 7)],
+                  Id
+              end || _ <- lists:seq(0, 5)],
+    ?assertEqual(lists:seq(5, 10), Starts),
+    ?assertEqual(timeout, next_call()).
 
 configured_boot_timeout() ->
     Self = self(),

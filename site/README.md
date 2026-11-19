@@ -69,7 +69,7 @@ ruby tools/build_site.rb --no-card [--image IMAGE] [--serve 8000]
   as over the development manifest, so the check proves what the site
   ships, and a change to the development manifest reaches the site's at
   once. The site's manifest also gives each domain 600 s to report ready
-  instead of 60 (`SITE_BOOT_TIMEOUT_S` in `tools/lib/erx/interactive_boot.rb`),
+  instead of 60 (`Machine.site` in `tools/lib/erx/production_image.rb`, beside its RAM),
   since the emulator boots domains far slower than QEMU: on a phone, and
   anywhere with v64's JIT turned off (`?jit=0`), the 60 s default is too
   short. The development image of a plain

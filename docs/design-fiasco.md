@@ -1130,7 +1130,7 @@ development manifest without the configured domains the platform record's
 `site_leaves_out` names and without its `apps` row
 ([design-packaging.md](design-packaging.md#the-apps-row)), each taken out with
 the room it took, which the same check accepts. The image states the boot timeout
-of the website's machine, 600 s (`InteractiveBoot::SITE_BOOT_TIMEOUT_S`), since
+of the website's machine, 600 s (`ProductionImage::Machine.site`), since
 the emulator boots its domains several times slower than the 60 s default allows
 ([design-system.md](design-system.md#the-manifest)). On QEMU `virt` those domains are
 the web domain, since the website's page has no host link and the web facet is

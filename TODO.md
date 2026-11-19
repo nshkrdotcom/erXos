@@ -4590,18 +4590,18 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   decides nothing a test can see, since `attenuated/2` refuses every name of the table too.
   Missing besides: `erx_domain:grant/4`. Init waits at most 5 s for the answer and then
   runs with none.
-* [Medium] domain service, console and manifest check, `erx_domain_core:intensity/4` and `tools/lib/erx/manifest.rb`
-  (`normalize_domains`): a configured row may restart `restarts` times within `restart_period_s`, and
-  a boot that hangs is stopped only after the machine's `boot_timeout_s`, so a row with `restarts`
-  above 0 and `restart_period_s` at most `restarts` times `boot_timeout_s` never reaches its limit and
-  restarts a hung boot without end, each start still stopped at the deadline. The website's image
-  is such a machine: its 600 s boot timeout against the rows' 5 restarts in 600 s. The console's
-  login, which starts again after a timeout within the same 5 in 600 s (`erx_console`,
-  `login_timed_out/1`), loops the same way on any machine whose boot timeout is 120 s (600 / 5)
-  or more. Refuse such a row in the manifest check, or size the period from the boot timeout,
-  which alone covers the login, since it has no row; the test rows derived from MediumBoot's with
-  `restarts 1` and `restart_period_s 5` (`system_domain_regrant.rb`, `device_give.rb`) then need a
-  longer period.
+* [Medium] starter and console, `erx_starter_row:init/1` and `erx_console:login_timed_out/1`:
+  a start-table row's supervisor counts its `restarts` within `restart_period_s` as OTP does,
+  and a session boot that hangs ends its keeper (`{refused, timeout}`) only after the
+  machine's boot timeout, so on a machine whose boot timeout is 120 s or more (the website's
+  is 600 s) a start row of 5 in 600 s restarts a hung session without end. The domain service
+  and the login count in `erx_domain_core:intensity/3`'s widened window instead. The login
+  reads the boot timeout through `erx_build:boot_timeout/0` from the system manifest, beside
+  the domain service's own reading, and falls back to the default if that read fails, which
+  narrows its window again. It cannot ask the service from its own process, which the service
+  calls. Holding the property by construction would cover all three counters: leave a row
+  down after `restarts` consecutive boot timeouts with no ready report between them, whatever
+  their spacing, and count only ends after ready in the period.
 * [Medium] domains, `liberx/system/dom_life.c` (`life_connections`) and design-domains'
   limits table: the table says a domain's `connections` counts the system connection,
   and `life_connections` leaves it out of the quota, which the development manifest's

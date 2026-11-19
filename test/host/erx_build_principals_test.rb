@@ -14,7 +14,8 @@ require_relative '../fixtures/erlang_build'
 # "Principals, sessions and quotas"), over manifests the packer made: each principal's
 # number is its index plus one, in the packer's name order, and the system principal is
 # the manifest's root.system_principal, which need not be the first. A manifest that does
-# not parse names no principal.
+# not parse names no principal. erx_build:boot_timeout/1, which the console's login counts
+# its restarts against, reads the machine's boot timeout, or the manifest's default.
 class ErxBuildPrincipalsTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
   FIXTURE = File.join(ROOT, 'test/fixtures/manifest_empty.txt')
@@ -80,19 +81,29 @@ class ErxBuildPrincipalsTest < Minitest::Test
     assert_equal '{error,malformed}', principals('junk'.b)
   end
 
+  def test_the_boot_timeout_is_the_machines_or_the_default
+    stated = File.binread(FIXTURE).sub(/^(  max_connections \d+\n)/) { "#{Regexp.last_match(1)}  boot_timeout_s 600\n" }
+    assert_equal '600', read(:boot_timeout, packed(stated))
+    default = @codec.constant('boot_timeout_default_s').to_s
+    assert_equal default, read(:boot_timeout, packed(File.binread(FIXTURE)))
+    assert_equal default, read(:boot_timeout, 'junk'.b)
+  end
+
   private
 
   def packed(source)
     Erx::Manifest.admit(source: source, codec: @codec, context: @context).bytes
   end
 
-  # erx_build:principals({ok, Bytes}) as the oracle's emulator prints it.
-  def principals(bytes)
+  def principals(bytes) = read(:principals, bytes)
+
+  # erx_build:Reader({ok, Bytes}) as the oracle's emulator prints it.
+  def read(reader, bytes)
     Dir.mktmpdir('erx-build-principals') do |work|
       ErlangBuild.compile(work, applications: APPLICATIONS)
       File.binwrite(File.join(work, 'manifest'), bytes)
       output, status = Open3.capture2e('gtimeout', '-k', '10', '60', ENV.fetch('ERX_ERL'), '-noshell', '-pa', work,
-                                       '-eval', 'io:format("~0p", [erx_build:principals(file:read_file("manifest"))]), ' \
+                                       '-eval', "io:format(\"~0p\", [erx_build:#{reader}(file:read_file(\"manifest\"))]), " \
                                                 'halt().',
                                        chdir: work, stdin_data: '')
       assert status.success?, output

@@ -39,14 +39,6 @@ module Erx
     # Where --without-web builds the website's image, apart from DIRECTORY, so a later
     # development boot never replaces the image tools/build_site.rb publishes.
     SITE_DIRECTORY = 'build/production-image/site'
-    # The website's machine's boot timeout (docs/design-system.md, "The manifest"), the
-    # seconds each domain of its image has to report ready. The website's emulator runs the
-    # guest far slower than QEMU: with v64's JIT off (the page's ?jit=0), the network and
-    # storage domains and the login session missed the 60 s default even on a fast desktop
-    # host, and a phone is several times slower again. 600 s, about five times the slowest
-    # boot measured there, leaves room for such a phone; the cost is that a domain whose boot
-    # hangs on the page is stopped only after 10 minutes, which the visitor sees on the console.
-    SITE_BOOT_TIMEOUT_S = 600
     QUIT_HINT = 'quit QEMU with Ctrl-A then X'
     # How long QEMU has to exit after SIGTERM before it is killed.
     STOP_SECONDS = 10
@@ -263,11 +255,11 @@ module Erx
     # The system manifest the image is built from: when without_web, the website's
     # manifest, which the platform makes from its development manifest
     # (Platform#site_manifest_source), with the website's machine's boot timeout
-    # (SITE_BOOT_TIMEOUT_S), else the development manifest as checked in for platform's board.
+    # (Machine#with_boot_timeout), else the development manifest as checked in for platform's board.
     def manifest_source(root:, platform:, without_web:)
       return platform.manifest_source(root) unless without_web
 
-      Manifest::Edit.set(platform.site_manifest_source(root), { %w[machine boot_timeout_s] => SITE_BOOT_TIMEOUT_S })
+      machine(platform: platform, without_web: true).with_boot_timeout(platform.site_manifest_source(root))
     end
 
     # The machine the image is packed and checked on, and boots on: the website's

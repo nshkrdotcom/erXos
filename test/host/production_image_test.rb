@@ -967,6 +967,18 @@ class ProductionImageTest < Minitest::Test
     assert_operator site.memory_mib, :<, DEVELOPMENT.memory_mib
   end
 
+  # Only the website's machine states a boot timeout of its own; every other keeps its
+  # manifest's, so its image's manifest is the source unchanged.
+  def test_only_the_site_machine_states_its_boot_timeout
+    source = PLATFORM.site_manifest_source(ROOT)
+    stated = Erx::ProductionImage::Machine.site(PLATFORM).with_boot_timeout(source)
+    assert_equal 600, Erx::Manifest::Edit.value(stated, record: 'machine', field: 'boot_timeout_s')
+    [DEVELOPMENT, Erx::ProductionImage::Machine.board(PLATFORM)].each do |machine|
+      assert_nil machine.boot_timeout_s
+      assert_same source, machine.with_boot_timeout(source)
+    end
+  end
+
   # QEMU virt's board machine, which every image of the board's manifest but the
   # website's is packed for, has 640 MiB beside the record's 512; a card's is its record's.
   def test_qemu_virts_board_machine_has_640_mib_and_a_cards_its_records_ram

@@ -1490,9 +1490,11 @@ restart(request, _Id, _Info, _Where, State) ->
     State;
 restart({session, _Template}, _Id, _Info, _Where, State) ->
     State;
-restart({configured, Row}, Id, Info, Where, #{core := Core, configured := Configured} = State) ->
+restart({configured, Row}, Id, Info, Where,
+        #{core := Core, configured := Configured, boot_timeout := BootTimeout} = State) ->
     #{Row := #{name := Name, restarts := Restarts, restart_period_s := Period} = Entry} = Configured,
-    case erx_domain_core:restart(Row, Restarts, Period, erlang:monotonic_time(second), Core) of
+    Intensity = #{restarts => Restarts, period_s => Period, boot_timeout_s => BootTimeout div 1000},
+    case erx_domain_core:restart(Row, Intensity, erlang:monotonic_time(second), Core) of
         {yes, Next} ->
             log_end(notice, Name, Id, Info, Where, "restarting it"),
             start_configured(Entry, State#{core := Next});

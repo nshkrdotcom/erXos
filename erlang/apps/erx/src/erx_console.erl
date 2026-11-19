@@ -247,7 +247,7 @@
                 %% it ends.
                 login = none :: none | starting | {started | connected, pos_integer()},
                 %% The monotonic seconds of the login's restarts after a timeout, only
-                %% those still within the intensity's period (login_timed_out/1).
+                %% those still within the intensity's window (login_timed_out/1).
                 login_restarts = [] :: [integer()],
                 %% The process behind every session's console facet (facet_endpoint/1).
                 endpoint :: pid(),
@@ -1275,11 +1275,14 @@ session_started(Why, _Principal, {error, Reason}, State) ->
 %% The login's session did not report ready within the machine's boot timeout, as on
 %% a machine merely slower than its manifest allows for: it is started again, as the
 %% domain service restarts a configured domain, within a start row's default intensity
-%% (abi/manifest.txt, start_restarts_default within start_period_default_s), each
-%% start bounded by that timeout; past it, the start has failed as any other does.
+%% (abi/manifest.txt, start_restarts_default within start_period_default_s), whose
+%% window grows with that timeout as a configured row's does (erx_domain_core:intensity/3),
+%% so a login that hangs is given up; each start is bounded by the timeout, and past the
+%% intensity the start has failed as any other does.
 login_timed_out(State = #state{login_restarts = Earlier}) ->
-    case erx_domain_core:intensity(Earlier, ?ERX_START_RESTARTS_DEFAULT, ?ERX_START_PERIOD_DEFAULT_S,
-                                   erlang:monotonic_time(second)) of
+    Intensity = #{restarts => ?ERX_START_RESTARTS_DEFAULT, period_s => ?ERX_START_PERIOD_DEFAULT_S,
+                  boot_timeout_s => erx_build:boot_timeout()},
+    case erx_domain_core:intensity(Earlier, Intensity, erlang:monotonic_time(second)) of
         {yes, Kept} ->
             logger:notice("erx_console: the login session did not start in time; starting it again"),
             start_login(State#state{login_restarts = Kept});

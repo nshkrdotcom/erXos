@@ -275,8 +275,11 @@ module Erx
     # larger one on QEMU virt; a test image whose suites need more memory or carry a
     # larger archive (OracleQemu) names a larger one, and Pack's manifest check proves
     # the grown manifest against the platform record of that machine as it proves the
-    # development one.
-    Machine = Data.define(:platform, :memory_mib, :system_growth_mib, :tmp_growth_mib, :root_mib) do
+    # development one. boot_timeout_s is the machine's boot timeout where its manifest's
+    # is too short for it (docs/design-system.md, "The manifest"), which its image's
+    # manifest states (with_boot_timeout), and nil on a machine that keeps its manifest's.
+    Machine = Data.define(:platform, :memory_mib, :system_growth_mib, :tmp_growth_mib, :root_mib,
+                          :boot_timeout_s) do
       # The record's own machine: its RAM, the root at NativeRoot's
       # development place.
       def self.development(platform)
@@ -285,9 +288,15 @@ module Erx
       end
 
       # The machine the website's emulator boots the site image on: the RAM site/terminal.js
-      # gives its guest (RAM_MIB, which test/host/site_test.rb holds to this), and the root
-      # at the development place.
-      def self.site(platform) = development(platform).with(memory_mib: 256)
+      # gives its guest (RAM_MIB, which test/host/site_test.rb holds to this), the root at
+      # the development place, and a boot timeout of 600 s. The emulator runs the guest far
+      # slower than QEMU: with v64's JIT off (the page's ?jit=0), the network and storage
+      # domains and the login session missed the 60 s default even on a fast desktop host,
+      # and a phone is several times slower again. 600 s, about five times the slowest boot
+      # measured there, leaves room for such a phone; the cost is that a domain whose boot
+      # hangs on the page is stopped only after 10 minutes, which the visitor sees on the
+      # console.
+      def self.site(platform) = development(platform).with(memory_mib: 256, boot_timeout_s: 600)
 
       # The board machine: the one the board's own manifest (Platform#manifest_source) is
       # packed for and boots on, every medium kind's (MediumKind) and every image's of that
@@ -301,7 +310,7 @@ module Erx
         development(platform).with(memory_mib: BOARD_QEMU_MIB)
       end
 
-      def initialize(platform:, **numbers)
+      def initialize(platform:, boot_timeout_s: nil, **numbers)
         raise Error, 'a machine is on a Platform' unless platform.is_a?(Platform)
 
         super
@@ -369,6 +378,14 @@ module Erx
         return [tree, "the loader's device tree"] if tree && tree > load_address && tree < ram_end
 
         [ram_end, 'the end of RAM']
+      end
+
+      # source with this machine's boot timeout stated in its machine record, or source
+      # itself on a machine that keeps its manifest's.
+      def with_boot_timeout(source)
+        return source unless boot_timeout_s
+
+        Manifest::Edit.set(source, { %w[machine boot_timeout_s] => boot_timeout_s })
       end
 
       # The platform record as Pack's manifest check proves this machine's manifest against it.
