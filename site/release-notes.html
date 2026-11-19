@@ -102,7 +102,8 @@
       once, and <code>ntpd</code> then sets it from <code>pool.ntp.org</code>.
       Root can set it with <code>date</code>.</li>
       <li><strong>Files that survive.</strong> <code>/data</code> is a
-      littlefs volume on the card: a file you synced survives a power cut.
+      littlefs volume on the card: a file survives a power cut once it is
+      closed.
       Home directories are <code>/root</code> and <code>/home/NAME</code>.</li>
       <li><strong>Recovery.</strong> A fault of the system domain resets the
       board, which boots back to the kiosk. On the Pi 4 the hardware

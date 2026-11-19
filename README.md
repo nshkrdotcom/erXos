@@ -528,7 +528,7 @@ for download yet; build it as above.
   shell where `erx:domains()` lists every domain of the machine.
 * Your home directory is `/root` for root, and `/home/NAME` for other
   users. Files under `/data` and in the home directories survive a power
-  cut once they are synced.
+  cut once they are closed.
 
 **Doom.** The QEMU release medium and the Pi 4 card carry Doom as
 `/bin/doom`: type `doom` in `rc`. It is an example, not part of erXos: doomgeneric under
