@@ -1779,13 +1779,6 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   `center` and `end` are not placed; `node_size()` only tells `fill` from a node's own size, and LVGL's flex
   layout places every child at the start of the cross axis. `examples/dashboard` centres its clock and right-aligns
   its prices with weighted spacers meanwhile. Place a non-`fill` child within its slot, as `erx_ui_layout` does.
-* [High] `display/lvgl/erx_lvgl.c` and `display/lvgl/lv_conf.h`, [LVGL's release
-  contract](docs/design-display.md#lvgls-release-contract): an `image` node's PNG is decoded by LVGL's lodepng,
-  which has no fuzz target, and an application may be untrusted; a defect stays in its own session, but every
-  parser of untrusted input has a target, so this blocks the release. Add one that drives `erx-lvgl`'s
-  `set_picture()` path over arbitrary and mutated PNGs within `ui_picture_bytes`. Also refuse, before decoding, a
-  PNG whose header declares a size beyond the screen: lodepng sizes its output from the header, so a 48 KiB
-  picture can make every draw allocate about 1.6 GB (memory exhaustion confined to the session, unmeasured).
 * [Medium] `display/lvgl/erx_lvgl.c`, review findings left open. (1) A slider whose `max - min` exceeds a signed 32-bit
   integer overflows inside LVGL (`lv_bar.c`), which the sanitized build aborts on; scale such a range. (2) `set_slider`
   re-applies the last `value` the server sent on any set of the slider, undoing the user's drag, and `items` alone
