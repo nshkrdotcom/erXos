@@ -37,12 +37,8 @@
     <h2 id="what-title">erXos 0.1, a preview.</h2>
   </header>
   <div class="prose">
-    <p class="big">0.1 is a development preview for the Raspberry Pi 4 and
-    for QEMU <code>virt</code>. It is not a release for use.</p>
-    <p>Every boot prints <code>development build: trusted code only</code>.
-    Run only code you trust on it, on a network you trust. Nothing in a
-    development build enforces isolation between its domains, and the
-    limitations below say what else a user of 0.1 is exposed to.</p>
+    <p class="big">0.1 is a development preview of erXos for the Raspberry
+    Pi 4 and QEMU <code>virt</code>.</p>
     <p>The downloads, and the build record beside each, name the commit they
     were built from and the SHA-256 of every file.</p>
   </div>
@@ -55,9 +51,45 @@
   </header>
   <div class="prose">
     <ul>
+      <li><strong>Erlang all the way up.</strong> Above the kernel, the
+      system is Erlang on OTP 29 in user mode: the system services, the
+      drivers, the network stack, the file systems and the shell.</li>
+      <li><strong>Domains.</strong> Storage, network, display and each login
+      session run their own Erlang runtime in an address space of their
+      own, and message each other as Erlang nodes do.</li>
+      <li><strong>A network stack in Erlang.</strong> A redesign of
+      FreeBSD's: Ethernet, ARP, IPv4, IPv6 neighbour discovery, ICMP, UDP,
+      TCP and DHCP, with <code>ifconfig</code>, <code>ping</code>,
+      <code>host</code> and <code>gen_tcp</code>.</li>
+      <li><strong>Drivers in Erlang.</strong> Each driver is a supervised
+      Erlang process over a thin device shim: the serial console, virtio
+      block, net, gpu, keyboard and tablet on QEMU, and the SD card, GENET
+      Ethernet and framebuffer on the Pi 4.</li>
+      <li><strong>SSH in Erlang.</strong> OTP's SSH daemon logs root in to
+      the command shell over the network.</li>
+      <li><strong>HTTPS.</strong> OTP's <code>ssl</code> and
+      <code>inets</code>, with a trust store, in every domain.</li>
+      <li><strong>Network time.</strong> <code>ntpd</code> sets the clock at
+      boot, and <code>ntpctl</code> steps it or shows its status.</li>
+      <li><strong>Graphics.</strong> A window server serves windows as
+      files; clients draw with Plan 9's draw protocol, and apps build their
+      interface from LVGL widgets.</li>
       <li><strong>The kiosk.</strong> The screen shows a clock and a panel of
       live quotes fetched over HTTPS, on QEMU's virtio-gpu and on the Pi's
       HDMI0 through the firmware's framebuffer.</li>
+      <li><strong>rc, in Erlang.</strong> The command shell has job control,
+      text pipes and commands that follow FreeBSD's output
+      (<code>ls</code>, <code>grep</code>, <code>ps</code>, <code>top</code>,
+      <code>dmesg</code> and more), and runs native programs in pipelines
+      with them. <code>erl</code> starts the Erlang shell.</li>
+      <li><strong>A live machine.</strong> <code>/proc</code>,
+      <code>erx:i()</code> and <code>erx:trace/1</code> show processes,
+      domains and kernel objects as they run.</li>
+      <li><strong>Verified system files.</strong> The system partition is an
+      EROFS image whose blocks are checked against a dm-verity tree as they
+      are read.</li>
+      <li><strong>Reproducible.</strong> The same commit builds
+      byte-identical images.</li>
       <li><strong>SSH to <code>rc</code>.</strong> <code>ssh -p 2222
       root@HOST</code> gives root's command shell, with <code>ps</code> and
       <code>top</code>, and <code>erl</code>'s <code>erx:domains()</code>
@@ -129,9 +161,9 @@
   <div class="prose">
     <p>Security. Each item names where the project records it.</p>
     <ul>
-      <li><strong>Trusted code only.</strong> A development build enforces no
-      isolation between domains
-      (<a href="https://github.com/stass/erXos/blob/master/docs/design-fiasco.md#downsides-against-erxoss-kernel">the downsides of Fiasco</a>).</li>
+      <li><strong>Trusted code only.</strong> Domains run in address spaces
+      of their own, but a development build carries development-only grants,
+      and its isolation is hardened and reviewed only for 0.2.</li>
       <li><strong>Any key in <code>authorized_keys</code> is root.</strong> The
       key opens root's <code>rc</code> over the network.</li>
       <li><strong>SSH runs in root's session.</strong> OTP's SSH daemon, its
@@ -224,7 +256,6 @@
     <ul class="label">
       <li><a href="index.html">erXos</a></li>
       <li><a href="https://github.com/stass/erXos">Source</a></li>
-      <li><a href="https://github.com/stass/erXos/blob/master/docs/plan.md#01-the-preview">The 0.1 plan</a></li>
     </ul>
     <p>erXos is early work, and it runs trusted code only.</p>
   </div>
