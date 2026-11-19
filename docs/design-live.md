@@ -1105,8 +1105,9 @@ through the log service, `erx_syslog`, which takes the kernel's ring with
   * `logger_simple_h`, which holds and prints a runtime's log events until
     `erx_log_h` is added, displays them with `erlang:display_string/2`
     (`logger_simple_h.erl:179`, `:230`). Edit 43 makes it build each event's
-    text on one line and print `erx_text:escape_line/1` of it and a CR-LF in one
-    call, so a boot's early log is attributed text at its display like any other.
+    text on one line, a format string applied to its arguments, and print
+    `erx_text:escape_line/1` of it and a CR-LF in one call, so a boot's early log is
+    attributed text at its display like any other.
   * `logger_std_h`, which writes to `user` and falls back to `standard_error`
     (`logger_std_h.erl:680`), is in no domain's default configuration. Given a
     file, it writes data; given a standard device by a principal in that

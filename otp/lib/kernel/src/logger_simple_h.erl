@@ -17,8 +17,8 @@
 %% See the License for the specific language governing permissions and
 %% limitations under the License.
 %%
-%% Modified by erXos: each event's text is built on one line and shown with the line
-%% escape and a CR-LF in one write.
+%% Modified by erXos: each event's text is built on one line, its format string applied
+%% to its arguments, and shown with the line escape and a CR-LF in one write.
 %%
 %% %CopyrightEnd%
 %%
@@ -28,6 +28,10 @@
 -export([adding_handler/1, removing_handler/1, log/2]).
 
 -behaviour(logger_handler).
+
+%% erXos: what format_text/2 may build for one message: characters, and words of heap.
+-define(FORMAT_CHARS, 4096).
+-define(FORMAT_HEAP_WORDS, 1000000).
 
 %% This module implements a simple handler for logger. It is the
 %% default used during system start.
@@ -108,7 +112,7 @@ do_log(_) ->
 init(Starter) ->
     register(?MODULE,self()),
     Starter ! {self(),started},
-    load_escape(),
+    load_display(),
     loop(rich, #{buffer_size=>20,dropped=>0,buffer=>[]}).
 
 loop(Mode, Buffer) ->
@@ -215,14 +219,17 @@ display_line(Text) ->
            end,
     erlang:display_string(stdout, unicode:characters_to_list([Line, "\r\n"])).
 
-%% erXos: loads erx_text and its tables when the handler starts, so an event shown
-%% later while init is busy, when loading code would block, finds them loaded. The
-%% handler starts before the code server, so the load goes through error_handler and
-%% init:ensure_loaded/1 from the release's code path; should it fail, display_line/1
-%% shows its fixed line.
-load_escape() ->
-    try erx_text:escape_line(<<>>) of
-        _Empty -> ok
+%% erXos: loads erx_text and its tables, and the modules that format a message
+%% (format_text/2), when the handler starts, so an event shown later while init is busy,
+%% when loading code would block, finds them loaded; format_text/2 is cut off should it
+%% still wait for code. The handler starts before the code server, so the load goes
+%% through error_handler and init:ensure_loaded/1 from the release's code path; should it
+%% fail, display_line/1 shows its fixed line.
+load_display() ->
+    try
+        _ = erx_text:escape_line(<<>>),
+        _ = io_lib:format("~ts~tp", ["", ok]),
+        ok
     catch
         error:_ -> ok
     end.
@@ -256,8 +263,10 @@ pad(Str,Size) when length(Str)==Size ->
 pad(Str,Size) ->
     pad([$0|Str],Size).
 
-%% A message as stock's simple mode shows it, unformatted: a format string with each
-%% argument after it, or a report's terms, on one line.
+%% A message on one line: a format string applied to its arguments (erXos; stock's
+%% simple mode shows the string and each argument after it), or, when they do not fit or
+%% formatting does not finish (format_text/2), as stock shows it, the string with each
+%% argument after it; or a report's terms.
 msg_text({string,Chardata}) ->
     try unicode:characters_to_list(Chardata) of
         String when is_list(String) -> String;
@@ -268,8 +277,38 @@ msg_text({report,Report}) when is_map(Report) ->
     report_text(maps:to_list(Report));
 msg_text({report,Report}) ->
     report_text(Report);
-msg_text({F, A}) when is_list(F), is_list(A) ->
-    [F | [[$\s, term_text(Arg)] || Arg <- A]].
+msg_text({F, A}) when is_list(F) orelse is_binary(F), is_list(A) ->
+    case format_text(F, A) of
+        {ok, Text} -> Text;
+        error -> [F | [[$\s, term_text(Arg)] || Arg <- A]]
+    end.
+
+%% F applied to A as characters, or error. io_lib:format/3 can load code, call the code
+%% server or build a text without bound, none of which this handler may wait for, so it
+%% runs in a helper, as the rich display does: limited in the text it builds and the
+%% memory it takes, and cut off after the time the rich display allows. The text is
+%% checked as characters here, so a message that is none gives error and not a fixed line.
+format_text(F, A) ->
+    {Pid, Ref} = spawn_opt(fun() -> exit({formatted, formatted(F, A)}) end,
+                           [monitor, {max_heap_size, #{size => ?FORMAT_HEAP_WORDS, kill => true,
+                                                       error_logger => false}}]),
+    receive
+        {'DOWN', Ref, _, _, {formatted, Result}} ->
+            Result;
+        {'DOWN', Ref, _, _, _Else} ->
+            error
+    after 300 ->
+            exit(Pid, kill),
+            receive {'DOWN', Ref, _, _, _} -> error end
+    end.
+
+formatted(F, A) ->
+    try unicode:characters_to_list(io_lib:format(F, A, [{chars_limit, ?FORMAT_CHARS}])) of
+        Text when is_list(Text) -> {ok, Text};
+        _Invalid -> error
+    catch
+        _:_ -> error
+    end.
 
 report_text(Atom, A) when is_atom(Atom) ->
     %% The widest atom seems to be 'supervisor_report' at 17.

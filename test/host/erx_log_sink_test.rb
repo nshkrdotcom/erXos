@@ -32,6 +32,22 @@ class ErxLogSinkTest < Minitest::Test
     halt(0).
   ERLANG
 
+  # A logger_formatter that always fails, which sends the handler to its raw display
+  # (a formatter that takes too long does the same).
+  FAILING_FORMATTER = { 'test/host/stub/logger_formatter.erl' => <<~ERLANG }.freeze
+    -module(logger_formatter).
+    -export([format/2]).
+    format(_Event, _Config) -> exit(boom).
+  ERLANG
+  # SIMPLE_EVAL on the failing formatter, logging Call.
+  RAW_EVAL = lambda do |call|
+    <<~ERLANG
+      code:unstick_mod(logger_formatter),
+      {module, logger_formatter} = code:load_abs("logger_formatter"),
+      #{SIMPLE_EVAL.sub(/^logger:error.*$/) { call }}
+    ERLANG
+  end
+
   def test_sink_cases_pass_under_eunit
     Dir.mktmpdir('erx-log-sink-test') do |work|
       ErlangBuild.compile(work, applications: APPLICATIONS, tests: SINK_TESTS)
@@ -49,7 +65,42 @@ class ErxLogSinkTest < Minitest::Test
     end
   end
 
+  # The raw display, which a failing or slow formatter sends the handler to, applies the
+  # event's format string to its arguments as the rich display does, and shows the
+  # result as one escaped line.
+  def test_the_raw_early_log_formats_the_message
+    output = raw_early_log('logger:error("date ~s, tab\\there esc\\e[31mred nl~s", ["2026-11-19", "\\nend"]),')
+    assert_match(/ date 2026-11-19, tab<U\+0009>here esc<U\+001B>\[31mred nl<U\+000A>end\r\n/, output)
+    refute_includes output, "\e"
+  end
+
+  # A format string its arguments do not fit is shown as it came, unformatted.
+  def test_the_raw_early_log_shows_an_unformattable_message_as_it_came
+    assert_match(/ bad ~s #Ref</, raw_early_log('logger:error("bad ~s", [make_ref()]),'))
+  end
+
+  # A binary format string is formatted too, and a message that formats to an enormous
+  # text does not stop the handler: the next event is shown.
+  def test_the_raw_early_log_formats_a_binary_format_string
+    assert_match(/ bin 7\r\n/, raw_early_log('logger:error(<<"bin ~w">>, [7]),'))
+  end
+
+  def test_the_raw_early_log_survives_a_deeply_nested_message
+    deep = 'lists:foldl(fun(_, T) -> [T, x] end, [], lists:seq(1, 20000))'
+    output = raw_early_log("logger:error(\"deep ~p\", [#{deep}]), logger:error(\"after ~w\", [1]),")
+    assert_match(/ after 1\r\n/, output)
+  end
+
   private
+
+  # What the simple handler prints for one logger call when its formatter fails.
+  def raw_early_log(call)
+    Dir.mktmpdir('erx-log-raw-test') do |work|
+      ErlangBuild.compile(work, applications: APPLICATIONS, tests: [*SIMPLE_HANDLER, *FAILING_FORMATTER.keys],
+                                replaced: FAILING_FORMATTER)
+      run_erl(work, RAW_EVAL.call(call))
+    end
+  end
 
   def run_erl(work, eval)
     output, status = Open3.capture2e('gtimeout', '-k', '10', '120', ENV.fetch('ERX_ERL'), '-noshell', '-pa', work,

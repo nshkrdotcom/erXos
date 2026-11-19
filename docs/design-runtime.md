@@ -608,8 +608,8 @@ writes with `erlang:display_string(stderr, Bytes)`, which waits as any
 process's write does. 42. While another process holds `erx_tty_owner`,
 `halt/2` with `{flush, true}` traps to `erx_output:halt/2`, which drains the
 tty before it halts. 43. `logger_simple_h` builds each event's text on one
-line and prints its `erx_text:escape_line/1` and a CR-LF in one
-`erlang:display_string/2` ([design-live.md](design-live.md#the-console)).
+line, a format string applied to its arguments, and prints its
+`erx_text:escape_line/1` and a CR-LF in one `erlang:display_string/2` ([design-live.md](design-live.md#the-console)).
 44\. `shell:prompt_width/1` asks no group when `erx_console` calls it.
 45\. `user_sup` starts `erx_console_sup` in place of `user` when the flags
 hold `-user erx_console`, whatever `-noshell`, `-noinput` and their kin say,
