@@ -130,7 +130,9 @@
       2022-12-01 or later.</li>
       <li>Copy your public key, an <code>ssh-ed25519</code> line, to a file
       named <code>authorized_keys</code> in the root of the card's
-      <code>ERXOS</code> volume. The published images carry no key, so
+      <code>ERXOS</code> volume. On macOS, insert the card again and run
+      <code>cp ~/.ssh/id_ed25519.pub /Volumes/ERXOS/authorized_keys</code>,
+      then <code>diskutil eject /Volumes/ERXOS</code>. The published images carry no key, so
       without this file no login works. The first boot copies the keys into
       root's <code>/root/.ssh/authorized_keys</code>, and from then on SSH
       reads only that copy.</li>

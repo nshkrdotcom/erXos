@@ -473,6 +473,13 @@ USB-serial adapter gives you the console
 4. To log in over SSH, put your public key on the card before the first
    boot: copy a file named `authorized_keys`, with one `ssh-ed25519` key
    per line, to the root directory of the FAT volume labelled `ERXOS`.
+   On macOS, insert the card again, then:
+
+   ```sh
+   cp ~/.ssh/id_ed25519.pub /Volumes/ERXOS/authorized_keys
+   diskutil eject /Volumes/ERXOS
+   ```
+
    The published card has no key, so without this file no SSH login
    works. The first boot copies its keys into root's home,
    `/root/.ssh/authorized_keys`, and from then on SSH reads only that
