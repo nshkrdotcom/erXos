@@ -311,17 +311,19 @@ Third-party components are allowed when they pay for themselves.
   * Assembly for the target architecture, only where C cannot express the
     operation: the boot entry, exception vectors, context switch, and
     sequences the architecture prescribes.
-  * Ruby for host tooling: build orchestration, image packing, the QEMU
-    harness, test runners (except the web client's own), generators,
-    benchmarks, and the host console and upload client. Ruby never runs on
-    the target.
+  * Ruby for the rest of host tooling: build orchestration, image
+    packing, the QEMU harness, test runners (except the web client's
+    own), generators, benchmarks, and the host console and upload
+    client. Ruby never runs on the target.
   * TypeScript for the web client of [design-web.md](docs/design-web.md),
     because the browser runs only JavaScript. Its own tests and fuzz
     harness run under Node and Playwright. TypeScript never runs on the
     target or in host tooling.
   * Python only for the Bumble Bluetooth test peer; never on the target,
     and in build tooling only as Mesa's own generators.
-  * `make`, minimal POSIX shell and linker scripts for build glue.
+  * POSIX shell wherever it is the simpler tool: build glue, and short
+    scripts for a host that may have nothing else, such as the remote
+    side of a test run. `make` and linker scripts for build glue.
   * Inherited code keeps its languages and may be edited: OTP's BeamAsm JIT
     and asmjit (C++) with OTP's Perl generators and autoconf machinery, and
     Fiasco (C++), the release kernel, with its Perl preprocessor and make system,
