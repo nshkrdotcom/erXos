@@ -42,9 +42,8 @@ class ManifestCheckTest < Minitest::Test
     Erx::Manifest.admit(source: source, codec: @codec, context: against, planner: ManifestContextFixture.accepting_planner)
   end
 
-  def refused(klass, property, field, source = @source, against = @context, message: nil)
+  def refused(klass, field, source = @source, against = @context, message: nil)
     error = assert_raises(klass) { admit(source, against) }
-    assert_equal property, error.property, error.message
     assert_equal field, error.field, error.message
     assert_match message, error.message if message
     error
@@ -77,13 +76,13 @@ class ManifestCheckTest < Minitest::Test
   def test_a_device_tree_row_must_carry_its_window_and_line
     %w[base size line].each do |field|
       platform = platform_with { |value| value.fetch('units').first.fetch('devices').first.delete(field) }
-      refused(Erx::Manifest::Invalid, 'context', 'platform.devices', @source, context(platform: platform), message: /lacks #{field}/)
+      refused(Erx::Manifest::Invalid, 'context.platform.devices', @source, context(platform: platform), message: /lacks #{field}/)
     end
   end
 
   def test_a_device_tree_row_must_have_a_window
     platform = platform_with { |value| value.fetch('units').first.fetch('devices').first['size'] = 0 }
-    refused(Erx::Manifest::Invalid, 'context', 'platform.devices', @source, context(platform: platform), message: /empty window/)
+    refused(Erx::Manifest::Invalid, 'context.platform.devices', @source, context(platform: platform), message: /empty window/)
   end
 
   # A device's path is the PATH of its device record, its name to its driver
@@ -96,7 +95,7 @@ class ManifestCheckTest < Minitest::Test
     admit(*with_extra_device(path: longest))
     [longest + 'a', '', 'extra@0', "/extra@0\e[2J", nil].each do |path|
       source, against = with_extra_device(path: path)
-      refused(Erx::Manifest::Invalid, 'context', 'platform.devices', source, against, message: /path is not a node path/)
+      refused(Erx::Manifest::Invalid, 'context.platform.devices', source, against, message: /path is not a node path/)
     end
   end
 
@@ -105,7 +104,7 @@ class ManifestCheckTest < Minitest::Test
   def test_a_device_in_two_units_is_refused
     first = @platform.fetch('units').first.fetch('devices').first
     source, against = with_extra_device(path: first.fetch('path'))
-    refused(Erx::Manifest::Invalid, 1, 'devices.path', source, against, message: /more than one unit/)
+    refused(Erx::Manifest::Invalid, 'devices.path', source, against, message: /more than one unit/)
   end
 
   # A PL011's driver times characters and divides its baud rate from the UART's clock, which
@@ -116,20 +115,20 @@ class ManifestCheckTest < Minitest::Test
         device = value.fetch('units').first.fetch('devices').first
         clock.nil? ? device.delete('clock') : device['clock'] = clock
       end
-      refused(Erx::Manifest::Invalid, 'context', 'platform.devices', @source, context(platform: platform), message: /arm,pl011 device .*clock/)
+      refused(Erx::Manifest::Invalid, 'context.platform.devices', @source, context(platform: platform), message: /arm,pl011 device .*clock/)
     end
   end
 
   # Only a driver of a clocked kind reads a clock, so any other row's clock is 0.
   def test_a_row_of_another_device_carries_no_clock
     source, against = with_extra_device(compatible: 'virtio,mmio', clock: 24_000_000)
-    refused(Erx::Manifest::Invalid, 'context', 'platform.devices', source, against, message: /clock/)
+    refused(Erx::Manifest::Invalid, 'context.platform.devices', source, against, message: /clock/)
   end
 
   # Configuration space gives a PCIe function its window, so a platform row that names one is wrong.
   def test_a_pci_row_must_not_carry_a_window
     source, against = with_extra_device(selector: 'pci', role: 'ordinary', bridge: '/pcie@0', path: '')
-    refused(Erx::Manifest::Invalid, 'context', 'platform.devices', source, against, message: /PCIe function carries/)
+    refused(Erx::Manifest::Invalid, 'context.platform.devices', source, against, message: /PCIe function carries/)
   end
 
   def test_the_real_development_manifest_is_accepted
@@ -195,12 +194,13 @@ class ManifestCheckTest < Minitest::Test
   end
 
   def test_a_partial_boot_has_no_system_image
-    refused(Erx::Manifest::Invalid, 8, 'system_image', partial_boot + "system_image\n  input @artifact.release\n")
+    refused(Erx::Manifest::Invalid, 'system_image', partial_boot + "system_image\n  input @artifact.release\n",
+            message: /a partial boot has no domain to hold the system partition/)
   end
 
   def test_a_partial_boot_runs_no_services
     source = partial_boot + SERVICE
-    refused(Erx::Manifest::Invalid, 2, 'service', source)
+    refused(Erx::Manifest::Invalid, 'service', source, message: /a partial boot runs no services/)
   end
 
   def test_accepted_services_reach_the_encoded_manifest
@@ -214,7 +214,7 @@ class ManifestCheckTest < Minitest::Test
 
   # The watchdog pets whether or not a service lives, so a record that says it watches one is refused.
   def test_a_liveness_record_is_refused_because_nothing_reads_it
-    refused(Erx::Manifest::Unsupported, 'unsupported', 'liveness', @source + SERVICE + "liveness @service.probe\n",
+    refused(Erx::Manifest::Unsupported, 'liveness', @source + SERVICE + "liveness @service.probe\n",
             message: /watchdog/)
   end
 
@@ -227,27 +227,30 @@ class ManifestCheckTest < Minitest::Test
 
   # Property 1: one holder per device and unit.
   def test_a_unit_held_by_another_domain_is_refused
-    refused(Erx::Manifest::Invalid, 1, 'unit.holder', changed(@source.sub("placement \"net\"\n  holder @domain.network", "placement \"net\"\n  holder other")))
+    refused(Erx::Manifest::Invalid, 'unit.holder', changed(@source.sub("placement \"net\"\n  holder @domain.network", "placement \"net\"\n  holder other")),
+            message: /names neither the system domain nor a configured domain/)
   end
 
   def test_a_unit_placed_twice_is_refused
-    refused(Erx::Manifest::Invalid, 1, 'unit.placement', @source + "unit again\n  placement \"block\"\n  holder system\n")
+    refused(Erx::Manifest::Invalid, 'unit.placement', @source + "unit again\n  placement \"block\"\n  holder system\n",
+            message: /unit is assigned more than once/)
   end
 
   def test_a_device_in_two_units_is_refused
     source, against = with_extra_device(path: BLOCK)
-    refused(Erx::Manifest::Invalid, 1, 'devices.path', source, against)
+    refused(Erx::Manifest::Invalid, 'devices.path', source, against, message: /a device appears in more than one unit/)
   end
 
   # Property 2: facets name servers, and no introductions.
   def test_a_service_on_another_server_is_refused
-    refused(Erx::Manifest::Invalid, 2, 'service.server', @source + SERVICE.sub('server system', 'server storage'))
+    refused(Erx::Manifest::Invalid, 'service.server', @source + SERVICE.sub('server system', 'server storage'),
+            message: /names neither the system domain nor a configured domain/)
   end
 
   # Property 3: no holder of PCIe configuration space.
   def test_a_configuration_space_holder_is_refused
     source, against = with_extra_device(role: 'configuration')
-    refused(Erx::Manifest::Invalid, 3, 'devices.role', source, against, message: /M9/)
+    refused(Erx::Manifest::Invalid, 'devices.role', source, against, message: /M9/)
   end
 
   # Property 4: budgets, grants and the root startup rule.
@@ -260,7 +263,8 @@ class ManifestCheckTest < Minitest::Test
   def with_system_memory(bytes) = changed(@source.sub(/^(principal system\n  memory )\d+$/) { "#{Regexp.last_match(1)}#{bytes}" })
 
   def test_budgets_over_root_memory_are_refused
-    refused(Erx::Manifest::Invalid, 4, 'principals.memory', with_system_memory(root_memory - baseline + 4096))
+    refused(Erx::Manifest::Invalid, 'principals.memory', with_system_memory(root_memory - baseline + 4096),
+            message: /principal budgets, the apps budget, system baseline and device/)
   end
 
   # The platform's DMA reservations, which property 4 counts beside the budgets.
@@ -276,12 +280,13 @@ class ManifestCheckTest < Minitest::Test
   # more does not.
   def test_device_memory_counts_against_root_memory
     assert admit(with_system_memory(root_memory - baseline - device_memory - apps_memory))
-    refused(Erx::Manifest::Invalid, 4, 'principals.memory',
-            with_system_memory(root_memory - baseline - device_memory - apps_memory + 4096))
+    refused(Erx::Manifest::Invalid, 'principals.memory',
+            with_system_memory(root_memory - baseline - device_memory - apps_memory + 4096), message: /principal budgets, the apps budget, system baseline and device/)
   end
 
   def test_a_principal_domain_quota_is_refused
-    refused(Erx::Manifest::Invalid, 4, 'principals.domains', changed(@source.sub(/^(principal system\n(?:  .*\n)*?  domains )(\d+)$/) { "#{Regexp.last_match(1)}#{Integer(Regexp.last_match(2)) + 1}" }))
+    refused(Erx::Manifest::Invalid, 'principals.domains', changed(@source.sub(/^(principal system\n(?:  .*\n)*?  domains )(\d+)$/) { "#{Regexp.last_match(1)}#{Integer(Regexp.last_match(2)) + 1}" }),
+            message: /principal domain quotas and the apps row's max exceed/)
   end
 
   # A principal row of the given name granted the share named share, small enough that
@@ -299,11 +304,12 @@ class ManifestCheckTest < Minitest::Test
 
   def test_a_principal_grant_over_users_is_refused
     over = @source.sub("principal system\n", "#{principal_row('guest', 'system')}principal system\n")
-    refused(Erx::Manifest::Invalid, 4, 'principal.grant', changed(over))
+    refused(Erx::Manifest::Invalid, 'principal.grant', changed(over), message: /principal grant exceeds users/)
   end
 
   def test_shares_over_the_root_rate_are_refused
-    refused(Erx::Manifest::Invalid, 4, 'machine.shares', @source.sub('quota_ns 30000000', 'quota_ns 40000000'))
+    refused(Erx::Manifest::Invalid, 'machine.shares', @source.sub('quota_ns 30000000', 'quota_ns 40000000'),
+            message: /system and users exceed the root CPU rate/)
   end
 
   # The development manifest with root_memory set to bytes.
@@ -311,7 +317,7 @@ class ManifestCheckTest < Minitest::Test
   def ram_less_the_reserve = @platform.fetch('ram_bytes') - @platform.fetch('fiasco_reserve')
 
   def test_root_memory_over_ram_less_the_reserve_is_refused
-    refused(Erx::Manifest::Invalid, 4, 'root_startup', with_root_memory(ram_less_the_reserve + 4096), message: /fiasco_reserve/)
+    refused(Erx::Manifest::Invalid, 'root_startup', with_root_memory(ram_less_the_reserve + 4096), message: /fiasco_reserve/)
   end
 
   def test_loadable_segments_and_baseline_over_root_memory_are_refused
@@ -321,17 +327,19 @@ class ManifestCheckTest < Minitest::Test
       image.fetch('segments') << { 'file_offset' => 8192, 'mem_offset' => 4096, 'file_size' => 0,
                                    'mem_size' => 536_870_912, 'prot' => @codec.member('prot', 'r'), 'flags' => 0 }
     end
-    refused(Erx::Manifest::Invalid, 4, 'root_startup', @source, against, message: /loadable/)
+    refused(Erx::Manifest::Invalid, 'root_startup', @source, against, message: /loadable/)
   end
 
   def test_a_platform_without_the_reserve_is_not_accepted
     against = context(platform: platform_with { |value| value.delete('fiasco_reserve') })
-    refused(Erx::Manifest::Unsupported, 4, 'root_startup', @source, against)
+    refused(Erx::Manifest::Unsupported, 'root_startup', @source, against,
+            message: /the platform record states no RAM size and fiasco_reserve to/)
   end
 
   def test_a_reserve_that_leaves_no_ram_is_not_accepted
     against = context(platform: platform_with { |value| value['fiasco_reserve'] = value.fetch('ram_bytes') })
-    refused(Erx::Manifest::Unsupported, 4, 'root_startup', @source, against)
+    refused(Erx::Manifest::Unsupported, 'root_startup', @source, against,
+            message: /the platform record states no RAM size and fiasco_reserve to/)
   end
 
   # The archive rule (RootStartup.check_archive) against boots of the development image
@@ -384,7 +392,7 @@ class ManifestCheckTest < Minitest::Test
     boot = BOOTS.fetch(:short)
     refute_predicate boot, :booted?
     error = assert_raises(Erx::Manifest::Invalid) { check_archive(boot) }
-    assert_equal [4, 'root_startup'], [error.property, error.field]
+    assert_equal 'root_startup', error.field
     assert_match(/the archive \(47\.69 MiB\) and root_memory \(186\.25 MiB\) exceed the 233\.50 MiB .* by 452 KiB\z/,
                  error.message)
   end
@@ -461,13 +469,13 @@ class ManifestCheckTest < Minitest::Test
   def test_a_device_memory_past_mem_contiguous_max_is_refused
     max = @codec.constant('mem_contiguous_max')
     source, against = with_extra_device(role: 'ordinary', dma: 'unconfined', flags: 1, dma_memory: max + 4096)
-    refused(Erx::Manifest::Invalid, 4, 'devices.dma_memory', source, against, message: /mem_contiguous_max/)
+    refused(Erx::Manifest::Invalid, 'devices.dma_memory', source, against, message: /mem_contiguous_max/)
   end
 
   def test_devices_memory_past_the_contiguous_pool_is_refused
     over = Erx::Manifest::RootStartup::CONTIGUOUS_POOL_MAX_BYTES - device_memory + 4096
     source, against = with_extra_device(role: 'ordinary', dma: 'unconfined', flags: 1, dma_memory: over)
-    refused(Erx::Manifest::Invalid, 4, 'devices.dma_memory', source, against, message: /contiguous pool/)
+    refused(Erx::Manifest::Invalid, 'devices.dma_memory', source, against, message: /contiguous pool/)
   end
 
   def test_a_platform_without_root_withheld_packs_nothing
@@ -478,16 +486,18 @@ class ManifestCheckTest < Minitest::Test
 
   # Property 5: names.
   def test_a_host_name_that_is_no_identifier_is_refused
-    refused(Erx::Manifest::Invalid, 5, 'machine.host', @source.sub('host "erxos"', 'host "Not An Identifier"'))
+    refused(Erx::Manifest::Invalid, 'machine.host', @source.sub('host "erxos"', 'host "Not An Identifier"'),
+            message: /host name is not a system identifier/)
   end
 
   def test_a_host_name_with_a_dot_is_refused
-    refused(Erx::Manifest::Invalid, 5, 'machine.host', @source.sub('host "erxos"', 'host "a.b"'))
+    refused(Erx::Manifest::Invalid, 'machine.host', @source.sub('host "erxos"', 'host "a.b"'),
+            message: /host name is not a system identifier/)
   end
 
   def test_two_services_sharing_a_name_are_refused
     second = "service other\n  name \"probe\"\n  server system\n  interface 2\n"
-    refused(Erx::Manifest::Invalid, 5, 'service.name', @source + SERVICE + second)
+    refused(Erx::Manifest::Invalid, 'service.name', @source + SERVICE + second, message: /two services of one server share a name/)
   end
 
   # Property 6: no JIT in the root.
@@ -495,34 +505,36 @@ class ManifestCheckTest < Minitest::Test
     against = context do |arguments|
       arguments.fetch(:catalog).last.fetch('image')['flags'] |= @codec.member('image_flags', 'jit')
     end
-    refused(Erx::Manifest::Invalid, 6, 'catalog.root', @source, against)
+    refused(Erx::Manifest::Invalid, 'catalog.root', @source, against, message: /root image has incompatible ABI or JIT authority/)
   end
 
   # Property 7: no sealing secret.
   def test_a_sealing_mode_is_refused
-    refused(Erx::Manifest::Invalid, 7, 'machine.sealing', @source.sub('sealing none', 'sealing device'))
+    refused(Erx::Manifest::Invalid, 'machine.sealing', @source.sub('sealing none', 'sealing device'),
+            message: /no sealing service exists to hold a sealing secret/)
   end
 
   def test_a_sealed_entry_is_refused
     against = context do |arguments|
       arguments.fetch(:catalog).first['flags'] |= @codec.member('entry_flags', 'seal')
     end
-    refused(Erx::Manifest::Invalid, 7, 'catalog.flags', @source, against, message: /M11/)
+    refused(Erx::Manifest::Invalid, 'catalog.flags', @source, against, message: /M11/)
   end
 
   def test_a_tpm_is_refused
     source, against = with_extra_device(role: 'tpm')
-    refused(Erx::Manifest::Invalid, 7, 'devices.role', source, against, message: /M11/)
+    refused(Erx::Manifest::Invalid, 'devices.role', source, against, message: /M11/)
   end
 
   # Property 8: the UARTs and the windows.
   def test_the_console_and_host_link_must_differ
-    refused(Erx::Manifest::Invalid, 8, 'machine.hostlink', @source.sub('hostlink "/pl011@9040000"', 'hostlink "/pl011@9000000"'))
+    refused(Erx::Manifest::Invalid, 'machine.hostlink', @source.sub('hostlink "/pl011@9040000"', 'hostlink "/pl011@9000000"'),
+            message: /console and host link must differ/)
   end
 
   def test_an_unassigned_console_is_refused
     source = @source.sub("unit console\n  placement \"console-uart\"\n  holder system\n", '')
-    refused(Erx::Manifest::Invalid, 8, 'machine.console', source)
+    refused(Erx::Manifest::Invalid, 'machine.console', source, message: /UART is not placed/)
   end
 
   # Property 8's line clause (docs/design-shared-devices.md, "Lines inside a domain"): the
@@ -540,7 +552,7 @@ class ManifestCheckTest < Minitest::Test
       units.delete(hostlink)
     end
     source = ManifestContextFixture.substitute(@source, /^unit hostlink\n  placement "hostlink-uart"\n  holder system\n/, '')
-    refused(Erx::Manifest::Invalid, 8, 'machine.hostlink', source, context(platform: platform),
+    refused(Erx::Manifest::Invalid, 'machine.hostlink', source, context(platform: platform),
             message: /share interrupt line 33/)
   end
 
@@ -582,7 +594,7 @@ class ManifestCheckTest < Minitest::Test
       record = pi_record_with('i2c', '/soc/i2c@7e804000') do |bsc1|
         clock.nil? ? bsc1.delete('clock') : bsc1['clock'] = clock
       end
-      refused(Erx::Manifest::Invalid, 'context', 'platform.devices', pi_source + pi_unit('i2c', 'system'),
+      refused(Erx::Manifest::Invalid, 'context.platform.devices', pi_source + pi_unit('i2c', 'system'),
               pi_context(record), message: %r{brcm,bcm2835-i2c device "/soc/i2c@7e804000" lacks its clock})
     end
   end
@@ -592,7 +604,7 @@ class ManifestCheckTest < Minitest::Test
   def test_a_bus_row_of_no_kind_carries_no_clock
     { 'i2c' => '/soc/i2c@7e205000', 'spi' => '/soc/spi@7e204600' }.each do |key, path|
       record = pi_record_with(key, path) { |device| device['clock'] = 500_000_000 }
-      refused(Erx::Manifest::Invalid, 'context', 'platform.devices', pi_source + pi_unit(key, 'system'),
+      refused(Erx::Manifest::Invalid, 'context.platform.devices', pi_source + pi_unit(key, 'system'),
               pi_context(record), message: /#{Regexp.escape(path)}" carries a clock/)
     end
   end
@@ -619,7 +631,7 @@ class ManifestCheckTest < Minitest::Test
   # The display domain, holding no other unit once the framebuffer is the system domain's,
   # still serves the display service of the windows interface, so it may not hold gpio.
   def test_a_pin_controller_holder_serving_a_service_is_refused
-    refused(Erx::Manifest::Invalid, 8, 'unit.holder', pi_display_holding_nothing + pi_unit('gpio', '@domain.display'),
+    refused(Erx::Manifest::Invalid, 'unit.holder', pi_display_holding_nothing + pi_unit('gpio', '@domain.display'),
             pi_context, message: /domain display .*a row of services \(display\) names it/)
   end
 
@@ -628,14 +640,14 @@ class ManifestCheckTest < Minitest::Test
   def test_a_pin_controller_holder_with_a_window_is_refused
     window = "window fat\n  holder @domain.pins\n  device \"/emmc2bus/mmc@7e340000\"\n  role fat\n  partition 1\n" \
              "  rights read\n  image none\n"
-    refused(Erx::Manifest::Invalid, 8, 'unit.holder', pi_source + pi_pins_domain + window + pi_unit('gpio', '@domain.pins'),
+    refused(Erx::Manifest::Invalid, 'unit.holder', pi_source + pi_pins_domain + window + pi_unit('gpio', '@domain.pins'),
             pi_context, message: /domain pins .*a row of windows names it/)
   end
 
   # A domain holding gpio that is introduced to another, so that the other's processes may
   # message it, may not hold gpio.
   def test_a_pin_controller_holder_introduced_to_another_is_refused
-    refused(Erx::Manifest::Invalid, 8, 'unit.holder',
+    refused(Erx::Manifest::Invalid, 'unit.holder',
             "#{pi_source}#{pi_pins_domain}#{pi_unit('gpio', '@domain.pins')}introduce @domain.pins @domain.display\n",
             pi_context, message: /domain pins .*a row of introductions names it/)
   end
@@ -646,21 +658,21 @@ class ManifestCheckTest < Minitest::Test
     facet = pi_source[/^facet net\n(?:  .*\n)*/]
     refute_nil facet
     grant = facet.sub('facet net', 'facet pins_net').sub(/^  grantee .*$/, '  grantee @domain.pins')
-    refused(Erx::Manifest::Invalid, 8, 'unit.holder', pi_source + pi_pins_domain + grant + pi_unit('gpio', '@domain.pins'),
+    refused(Erx::Manifest::Invalid, 'unit.holder', pi_source + pi_pins_domain + grant + pi_unit('gpio', '@domain.pins'),
             pi_context, message: /domain pins .*a row of facets \(pins_net\) names it/)
   end
 
   # A session runs from a template, which is no domain row, so no session holds gpio: a
   # unit naming a session template as its holder is refused before the clause is reached.
   def test_a_session_holds_no_pin_controller
-    refused(Erx::Manifest::Invalid, 1, 'unit.holder', pi_source + pi_unit('gpio', '@session.system'), pi_context,
+    refused(Erx::Manifest::Invalid, 'unit.holder', pi_source + pi_unit('gpio', '@session.system'), pi_context,
             message: /names neither the system domain nor a configured domain/)
   end
 
   # A domain holding gpio and another unit, here i2c, whose registers lie off the GPIO
   # page, may not hold gpio.
   def test_a_domain_holding_the_pin_controller_and_more_is_refused
-    refused(Erx::Manifest::Invalid, 8, 'unit.holder',
+    refused(Erx::Manifest::Invalid, 'unit.holder',
             pi_source + pi_pins_domain + pi_unit('gpio', '@domain.pins') + pi_unit('i2c', '@domain.pins'), pi_context,
             message: /unit gpio .*domain pins .*a row of units \(i2c\) names it/)
   end
@@ -674,7 +686,7 @@ class ManifestCheckTest < Minitest::Test
     gpio = units.find { |unit| unit.fetch('key') == 'gpio' }.fetch('devices').first
     units.find { |unit| unit.fetch('key') == 'i2c' }.fetch('devices') <<
       gpio.merge('path' => '/soc/gpiomem@7e200000', 'placement_key' => 'gpiomem')
-    refused(Erx::Manifest::Invalid, 8, 'unit.holder', pi_source + pi_unit('i2c', '@domain.display'),
+    refused(Erx::Manifest::Invalid, 'unit.holder', pi_source + pi_unit('i2c', '@domain.display'),
             pi_context(record), message: %r{unit i2c reaches pin controller /soc/gpio@7e200000})
   end
 
@@ -719,20 +731,20 @@ class ManifestCheckTest < Minitest::Test
   def test_a_framebuffer_window_meeting_registers_is_refused
     console = @platform.fetch('units').first.fetch('devices').first
     source, against = with_extra_device(**FRAMEBUFFER, base: console.fetch('base') & ~0xfff, size: 0x1000)
-    refused(Erx::Manifest::Invalid, 1, 'devices.base', source, against, message: /meets #{Regexp.escape(console.fetch('path'))}'s/)
+    refused(Erx::Manifest::Invalid, 'devices.base', source, against, message: /meets #{Regexp.escape(console.fetch('path'))}'s/)
 
     source, = with_extra_device(**FRAMEBUFFER)
     framebuffer = with_extra_device_platform(**FRAMEBUFFER)
     unplaced = console.merge('path' => '/unplaced@7e3ff000', 'base' => 0x7e3f_f000, 'size' => 0x10,
                              'placement_key' => 'unplaced')
     framebuffer.fetch('units') << { 'key' => 'unplaced', 'devices' => [unplaced] }
-    refused(Erx::Manifest::Invalid, 1, 'devices.base', source, context(platform: framebuffer),
+    refused(Erx::Manifest::Invalid, 'devices.base', source, context(platform: framebuffer),
             message: %r{meets /unplaced@7e3ff000's})
 
     # The console's selector written as the codec's number is the same device-tree row.
     numbered = with_extra_device_platform(**FRAMEBUFFER, base: console.fetch('base') & ~0xfff, size: 0x1000)
     numbered.fetch('units').first.fetch('devices').first['selector'] = @codec.member('mf_selector', 'dt')
-    refused(Erx::Manifest::Invalid, 1, 'devices.base', source, context(platform: numbered), message: /meets/)
+    refused(Erx::Manifest::Invalid, 'devices.base', source, context(platform: numbered), message: /meets/)
 
     # A device starting at the window's end does not meet it.
     after = with_extra_device_platform(**FRAMEBUFFER)
@@ -744,42 +756,47 @@ class ManifestCheckTest < Minitest::Test
   # A window over the platform's RAM, and a framebuffer row no manifest places, which is
   # checked all the same.
   def test_a_framebuffer_window_meeting_ram_or_unplaced_is_refused
-    refused(Erx::Manifest::Invalid, 1, 'devices.base', *with_extra_device(**FRAMEBUFFER, base: @platform.fetch('ram_first')),
+    refused(Erx::Manifest::Invalid, 'devices.base', *with_extra_device(**FRAMEBUFFER, base: @platform.fetch('ram_first')),
             message: /RAM/)
     unplaced = with_extra_device_platform(**FRAMEBUFFER, size: 0x40_0800)
-    refused(Erx::Manifest::Invalid, 'context', 'platform.devices', @source, context(platform: unplaced), message: /framebuffer/)
+    refused(Erx::Manifest::Invalid, 'context.platform.devices', @source, context(platform: unplaced), message: /framebuffer/)
   end
 
   def test_a_framebuffer_row_of_another_shape_is_refused
     [{ path: '/framebuffer@0' }, { compatible: 'virtio,mmio' }, { line: 40 }, { flags: 1 },
      { size: 0x40_0800 }, { base: 0x7e00_0800 }, { dma: 'unconfined', dma_memory: 4096 }].each do |change|
-      refused(Erx::Manifest::Invalid, 'context', 'platform.devices', *with_extra_device(**FRAMEBUFFER, **change),
+      refused(Erx::Manifest::Invalid, 'context.platform.devices', *with_extra_device(**FRAMEBUFFER, **change),
               message: /framebuffer/)
     end
   end
 
   def test_a_vault_window_is_refused
-    refused(Erx::Manifest::Invalid, 8, 'window.role', @source + window(role: 'vault'), message: /M11/)
+    refused(Erx::Manifest::Invalid, 'window.role', @source + window(role: 'vault'), message: /M11/)
   end
 
   def test_a_window_held_by_no_configured_domain_is_refused
-    refused(Erx::Manifest::Invalid, 8, 'window.holder', @source + window(role: 'fat', holder: '@domain.absent'))
+    refused(Erx::Manifest::Invalid, 'window.holder', @source + window(role: 'fat', holder: '@domain.absent'),
+            message: /names neither the system domain nor a configured domain/)
   end
 
   def test_a_window_on_no_placed_device_is_refused
-    refused(Erx::Manifest::Invalid, 8, 'window.device', @source + window(role: 'fat', device: '/absent@0'))
+    refused(Erx::Manifest::Invalid, 'window.device', @source + window(role: 'fat', device: '/absent@0'),
+            message: /window names no block device the manifest places/)
   end
 
   def test_a_window_on_a_device_that_is_no_block_device_is_refused
-    refused(Erx::Manifest::Invalid, 8, 'window.device', @source + window(role: 'fat', device: '/pl011@9000000'))
+    refused(Erx::Manifest::Invalid, 'window.device', @source + window(role: 'fat', device: '/pl011@9000000'),
+            message: /window names no block device the manifest places/)
   end
 
   def test_two_windows_on_one_partition_are_refused
-    refused(Erx::Manifest::Invalid, 8, 'window.partition', @source + window(role: 'data', partition: 0))
+    refused(Erx::Manifest::Invalid, 'window.partition', @source + window(role: 'data', partition: 0),
+            message: /two windows name one role and partition/)
   end
 
   def test_a_fixed_role_must_carry_partition_zero
-    refused(Erx::Manifest::Invalid, 8, 'window.partition', @source + window(role: 'boot_a', partition: 2))
+    refused(Erx::Manifest::Invalid, 'window.partition', @source + window(role: 'boot_a', partition: 2),
+            message: /a fixed role has partition 0 and FAT a primary partition, 1 to 4/)
   end
 
   # PW1 as the manifest states it: the slot writer's windows, the boot and system
@@ -787,7 +804,7 @@ class ManifestCheckTest < Minitest::Test
   def test_a_slot_writer_window_held_by_a_configured_domain_is_refused
     %w[boot_a boot_b system_a system_b boot_selection reset_count].each do |role|
       source = changed(@source.sub(/(window #{role}\n)  holder system/, "\\1  holder @domain.storage"))
-      refused(Erx::Manifest::Invalid, 8, 'window.holder', source)
+      refused(Erx::Manifest::Invalid, 'window.holder', source, message: /only the system domain, the slot writer, holds the slot windows/)
     end
   end
 
@@ -803,13 +820,13 @@ class ManifestCheckTest < Minitest::Test
   end
 
   def test_a_writable_system_window_is_refused
-    refused(Erx::Manifest::Invalid, 8, 'window.rights',
-            changed(@source.sub(/(window system\n(?:  .*\n)*?)  rights read\n/, "\\1  rights read,write\n")))
+    refused(Erx::Manifest::Invalid, 'window.rights',
+            changed(@source.sub(/(window system\n(?:  .*\n)*?)  rights read\n/, "\\1  rights read,write\n")), message: /a window of a role not marked writable grants read alone/)
   end
 
   def test_a_second_system_window_is_refused
     second = window(role: 'system', partition: 0, holder: '@domain.storage').sub('window seeded', 'window system_again')
-    refused(Erx::Manifest::Invalid, 8, 'window.role', @source + second, message: /at most one/)
+    refused(Erx::Manifest::Invalid, 'window.role', @source + second, message: /at most one/)
   end
 
   # Only the block device's holder runs the driver that serves the window, so a system
@@ -817,7 +834,7 @@ class ManifestCheckTest < Minitest::Test
   def test_a_system_window_held_by_another_domain_than_the_block_holder_is_refused
     %w[system @domain.network].each do |holder|
       source = changed(@source.sub(/(window system\n)  holder @domain.storage/, "\\1  holder #{holder}"))
-      refused(Erx::Manifest::Invalid, 8, 'window.holder', source)
+      refused(Erx::Manifest::Invalid, 'window.holder', source, message: /a system window is held by the configured domain that holds its/)
     end
   end
 
@@ -825,7 +842,7 @@ class ManifestCheckTest < Minitest::Test
   # window's holder, and only the derived rows grant it.
   def test_the_system_service_is_served_by_the_system_window_s_holder
     source = changed(@source.sub("service system\n  server @domain.storage", "service system\n  server @domain.network"))
-    refused(Erx::Manifest::Invalid, 19, 'service.server', source, message: /holder of the system window/)
+    refused(Erx::Manifest::Invalid, 'service.server', source, message: /holder of the system window/)
   end
 
   # The build's packages and system rows (docs/design-packaging.md, "The apps row"):
@@ -856,7 +873,7 @@ class ManifestCheckTest < Minitest::Test
   def test_a_source_facet_row_of_the_system_service_is_refused
     row = "facet system_tree\n  grantee @session.system\n  service @service.system\n  operations none\n  max_request 131072\n" \
           "  in_flight 16\n  reductions 100000\n  period_ns 1000000000\n  max_heap_size 262144\n"
-    refused(Erx::Manifest::Invalid, 19, 'facet.service', @source + row, message: /only the derived system rows/)
+    refused(Erx::Manifest::Invalid, 'facet.service', @source + row, message: /only the derived system rows/)
   end
 
   # The development manifest without its apps row, whose own check of the system service
@@ -867,15 +884,15 @@ class ManifestCheckTest < Minitest::Test
     source = appless.sub("service system\n  server @domain.storage\n  interface files",
                          "service system\n  server @domain.storage\n  interface driver_control")
     refute_equal appless, source
-    refused(Erx::Manifest::Invalid, 19, 'service.interface', source, message: /of the files interface/)
+    refused(Erx::Manifest::Invalid, 'service.interface', source, message: /of the files interface/)
   end
 
   # A second service record whose public name is system, under another label, on
   # another server, since property 5 refuses two names alike on one server first.
   def test_a_second_system_service_is_refused
     second = "service system_again\n  name \"system\"\n  server @domain.network\n  interface files\n"
-    refused(Erx::Manifest::Invalid, 19, 'service.name', appless + second, message: /a system window holds one service named system/)
-    refused(Erx::Manifest::Invalid, 19, 'service.name', @source + second, message: /an apps row holds one service named system/)
+    refused(Erx::Manifest::Invalid, 'service.name', appless + second, message: /a system window holds one service named system/)
+    refused(Erx::Manifest::Invalid, 'service.name', @source + second, message: /an apps row holds one service named system/)
   end
 
   # The apps row's system_facet is a facet index, never absent (docs/design-abi.md), so a
@@ -884,7 +901,7 @@ class ManifestCheckTest < Minitest::Test
   def test_an_apps_row_without_the_system_service_is_refused
     source = changed(@source.sub(/^window system\n(?:  .*\n)*/, '').sub("system_image\n  input @artifact.release\n", '')
                             .sub(/^service system\n(?:  .*\n)*/, ''))
-    refused(Erx::Manifest::Invalid, 19, 'service.name', source, message: /an apps row holds one service named system/)
+    refused(Erx::Manifest::Invalid, 'service.name', source, message: /an apps row holds one service named system/)
   end
 
   # The service with no window, with the apps row and without it.
@@ -893,25 +910,25 @@ class ManifestCheckTest < Minitest::Test
     windowless = lambda do |text|
       without_login_keys(text).sub(/^window system\n(?:  .*\n)*/, '').sub("system_image\n  input @artifact.release\n", '')
     end
-    refused(Erx::Manifest::Invalid, 19, 'apps', windowless.call(@source), message: /apps row needs a system window/)
-    refused(Erx::Manifest::Invalid, 19, 'service.name', windowless.call(appless), message: /without a system window holds no/)
+    refused(Erx::Manifest::Invalid, 'apps', windowless.call(@source), message: /apps row needs a system window/)
+    refused(Erx::Manifest::Invalid, 'service.name', windowless.call(appless), message: /without a system window holds no/)
   end
 
   def test_a_system_window_without_the_system_service_is_refused
     source = appless.sub(/^service system\n(?:  .*\n)*/, '')
     refute_equal appless, source
-    refused(Erx::Manifest::Invalid, 19, 'service.name', source, message: /a system window holds one service named system/)
+    refused(Erx::Manifest::Invalid, 'service.name', source, message: /a system window holds one service named system/)
   end
 
   # The storage domain mounts the system window through the system_image row's image
   # length, tree and root hash, so neither comes without the other.
   def test_a_system_window_without_a_system_image_row_is_refused
-    refused(Erx::Manifest::Invalid, 8, 'window.role', changed(@source.sub("system_image\n  input @artifact.release\n", '')),
+    refused(Erx::Manifest::Invalid, 'window.role', changed(@source.sub("system_image\n  input @artifact.release\n", '')),
             message: /system_image row/)
   end
 
   def test_a_system_image_row_without_a_system_window_is_refused
-    refused(Erx::Manifest::Invalid, 8, 'system_image', changed(@source.sub(/^window system\n(?:  .*\n)*/, '')),
+    refused(Erx::Manifest::Invalid, 'system_image', changed(@source.sub(/^window system\n(?:  .*\n)*/, '')),
             message: /system window it describes/)
   end
 
@@ -953,27 +970,28 @@ class ManifestCheckTest < Minitest::Test
 
   def test_a_writable_record_volume_window_is_refused
     window = record_volume.sub("  rights read\n", "  rights read,write\n")
-    refused(Erx::Manifest::Invalid, 8, 'window.rights', login_keys_source(window: window))
+    refused(Erx::Manifest::Invalid, 'window.rights', login_keys_source(window: window),
+            message: /a window of a role not marked writable grants read alone/)
   end
 
   def test_login_keys_served_by_another_domain_than_the_window_s_holder_is_refused
     %w[@domain.web @domain.network].each do |server|
       service = LOGIN_KEYS_SERVICE.sub('@domain.storage', server)
-      refused(Erx::Manifest::Invalid, 8, 'service.server', login_keys_source(service: service),
+      refused(Erx::Manifest::Invalid, 'service.server', login_keys_source(service: service),
               message: /holder of the record_volume window/)
     end
   end
 
   def test_a_login_keys_service_of_another_interface_is_refused
     service = LOGIN_KEYS_SERVICE.sub('interface files', 'interface driver_control')
-    refused(Erx::Manifest::Invalid, 8, 'service.interface', login_keys_source(service: service, facet: ''),
+    refused(Erx::Manifest::Invalid, 'service.interface', login_keys_source(service: service, facet: ''),
             message: /of the files interface/)
   end
 
   # A row that states no rights is rw (abi/services/files.txt).
   def test_a_login_keys_grant_that_is_not_read_only_is_refused
     ["  parameter rights rw\n", "  parameter rights rx\n", ''].each do |rights|
-      refused(Erx::Manifest::Invalid, 8, 'facet.parameter', login_keys_source(facet: login_keys_facet(rights: rights)),
+      refused(Erx::Manifest::Invalid, 'facet.parameter', login_keys_source(facet: login_keys_facet(rights: rights)),
               message: /read-only/)
     end
   end
@@ -992,7 +1010,7 @@ class ManifestCheckTest < Minitest::Test
   def test_a_login_keys_grant_to_root_s_session_that_is_not_read_only_is_refused
     ["  parameter rights rw\n", ''].each do |rights|
       facet = login_keys_facet(grantee: '@session.system', rights: rights)
-      refused(Erx::Manifest::Invalid, 8, 'facet.parameter', login_keys_source(facet: facet), message: /read-only/)
+      refused(Erx::Manifest::Invalid, 'facet.parameter', login_keys_source(facet: facet), message: /read-only/)
     end
   end
 
@@ -1003,16 +1021,16 @@ class ManifestCheckTest < Minitest::Test
     { '@domain.network' => @source, '@session.guest' => @source.sub("principal system\n", guest).sub("session system\n", session) }
       .each do |grantee, source|
         changed = without_login_keys(source) + record_volume + LOGIN_KEYS_SERVICE + login_keys_facet(grantee: grantee)
-        refused(Erx::Manifest::Invalid, 8, 'facet.grantee', changed, message: /session template/)
+        refused(Erx::Manifest::Invalid, 'facet.grantee', changed, message: /session template/)
       end
   end
 
   def test_a_login_keys_service_without_a_record_volume_window_is_refused
-    refused(Erx::Manifest::Invalid, 8, 'service.name', login_keys_source(window: ''), message: /record_volume window/)
+    refused(Erx::Manifest::Invalid, 'service.name', login_keys_source(window: ''), message: /record_volume window/)
   end
 
   def test_a_record_volume_window_without_its_login_keys_service_is_refused
-    refused(Erx::Manifest::Invalid, 8, 'service.name', login_keys_source(service: '', facet: ''),
+    refused(Erx::Manifest::Invalid, 'service.name', login_keys_source(service: '', facet: ''),
             message: /record_volume window/)
   end
 
@@ -1020,7 +1038,7 @@ class ManifestCheckTest < Minitest::Test
   # partition are refused as such, so the second window, on another holder, fails it.
   def test_a_second_record_volume_window_is_refused
     second = record_volume(holder: '@domain.network', label: 'record_volume_again')
-    refused(Erx::Manifest::Invalid, 8, 'window.role', login_keys_source(window: record_volume + second),
+    refused(Erx::Manifest::Invalid, 'window.role', login_keys_source(window: record_volume + second),
             message: /at most one record_volume window/)
   end
 
@@ -1029,25 +1047,27 @@ class ManifestCheckTest < Minitest::Test
   def test_a_record_volume_window_on_another_device_than_the_system_window_s_is_refused
     source, against = with_extra_device(role: 'block')
     window = record_volume.sub(BLOCK, '/extra@0')
-    refused(Erx::Manifest::Invalid, 8, 'window.holder',
+    refused(Erx::Manifest::Invalid, 'window.holder',
             without_login_keys(source) + window + LOGIN_KEYS_SERVICE + login_keys_facet, against, message: /on its device/)
   end
 
   def test_a_record_volume_window_on_another_domain_than_the_system_window_s_holder_is_refused
     %w[@domain.web @domain.network].each do |holder|
-      refused(Erx::Manifest::Invalid, 8, 'window.holder', login_keys_source(window: record_volume(holder: holder)),
+      refused(Erx::Manifest::Invalid, 'window.holder', login_keys_source(window: record_volume(holder: holder)),
               message: /holder of the system window/)
     end
   end
 
   def test_a_fat_window_must_name_a_primary_partition
     [0, 5].each do |partition|
-      refused(Erx::Manifest::Invalid, 8, 'window.partition', @source + window(role: 'fat', partition: partition))
+      refused(Erx::Manifest::Invalid, 'window.partition', @source + window(role: 'fat', partition: partition),
+              message: /a fixed role has partition 0 and FAT a primary partition, 1 to 4/)
     end
   end
 
   def test_a_window_must_grant_read
-    refused(Erx::Manifest::Invalid, 8, 'window.rights', @source + window(role: 'fat').sub('rights read', 'rights none'))
+    refused(Erx::Manifest::Invalid, 'window.rights', @source + window(role: 'fat').sub('rights read', 'rights none'),
+            message: /a window grants at least read/)
   end
 
   def test_windows_encode_in_contract_order_on_the_block_device
@@ -1092,16 +1112,17 @@ class ManifestCheckTest < Minitest::Test
 
   def test_a_pci_function_is_refused
     source, against = with_extra_device(selector: 'pci', role: 'ordinary', bridge: '/pcie@0', path: '', base: 0, size: 0, line: 0)
-    refused(Erx::Manifest::Invalid, 3, 'devices.selector', source, against, message: /M9/)
+    refused(Erx::Manifest::Invalid, 'devices.selector', source, against, message: /M9/)
   end
 
   def test_an_unassigned_host_link_is_refused
     source = @source.sub("unit hostlink\n  placement \"hostlink-uart\"\n  holder system\n", '')
-    refused(Erx::Manifest::Invalid, 8, 'machine.hostlink', source)
+    refused(Erx::Manifest::Invalid, 'machine.hostlink', source, message: /UART is not placed/)
   end
 
   def test_a_service_name_that_is_no_identifier_is_refused
-    refused(Erx::Manifest::Invalid, 5, 'service.name', @source + "service other\n  name \"Bad Name\"\n  server system\n  interface 2\n")
+    refused(Erx::Manifest::Invalid, 'service.name', @source + "service other\n  name \"Bad Name\"\n  server system\n  interface 2\n",
+            message: /service name is not a system identifier/)
   end
 
   def test_root_memory_up_to_ram_less_the_reserve_is_accepted
@@ -1111,16 +1132,17 @@ class ManifestCheckTest < Minitest::Test
   # Property 9: release builds wait for the confinement check.
   def test_a_release_build_is_refused_naming_its_milestone
     source = @source.sub('flags development', 'flags none')
-    refused(Erx::Manifest::Unsupported, 9, 'machine.flags', source, context(build_kind: 'release'), message: /M11/)
+    refused(Erx::Manifest::Unsupported, 'machine.flags', source, context(build_kind: 'release'), message: /M11/)
   end
 
   def test_a_build_kind_conflict_is_still_refused
-    refused(Erx::Manifest::Invalid, 9, 'machine.flags', @source, context(build_kind: 'release'))
+    refused(Erx::Manifest::Invalid, 'machine.flags', @source, context(build_kind: 'release'),
+            message: /configuration conflicts with checked build kind/)
   end
 
   def test_a_confined_device_is_refused_naming_its_milestone
     source, against = with_extra_device(role: 'ordinary', dma: 'confined')
-    refused(Erx::Manifest::Unsupported, 'unsupported', 'devices.dma', source, against, message: /M9/)
+    refused(Erx::Manifest::Unsupported, 'devices.dma', source, against, message: /M9/)
   end
 
   # A unit goes whole to one holder (property 1): a second unit row placing the same
@@ -1129,7 +1151,7 @@ class ManifestCheckTest < Minitest::Test
   # which dom_planner_test runs through the build's planner.
   def test_a_unit_on_two_holders_is_refused
     twice = @source + "unit net_again\n  placement \"net\"\n  holder system\n"
-    refused(Erx::Manifest::Invalid, 1, 'unit.placement', twice, message: /assigned more than once/)
+    refused(Erx::Manifest::Invalid, 'unit.placement', twice, message: /assigned more than once/)
     two = @source.sub(/^(unit net\n  placement "net"\n  holder @domain.network)$/, '\1 system')
     refute_equal @source, two
     error = assert_raises(Erx::ABI::SchemaError) { admit(two) }
@@ -1138,17 +1160,17 @@ class ManifestCheckTest < Minitest::Test
 
   def test_an_unconfined_device_without_memory_is_refused
     source, against = with_extra_device(role: 'ordinary', dma: 'unconfined', dma_memory: 0)
-    refused(Erx::Manifest::Invalid, 4, 'devices.dma_memory', source, against)
+    refused(Erx::Manifest::Invalid, 'devices.dma_memory', source, against, message: /an unconfined device needs a memory reservation/)
   end
 
   def test_a_device_with_no_dma_cannot_declare_dma_memory
     source, against = with_extra_device(role: 'ordinary', dma: 'none', dma_memory: 4096)
-    refused(Erx::Manifest::Invalid, 4, 'devices.dma_memory', source, against)
+    refused(Erx::Manifest::Invalid, 'devices.dma_memory', source, against, message: /non-DMA device has a DMA reservation/)
   end
 
   def test_a_partial_boot_record_is_refused_naming_its_milestone
     source = @source.sub('flags development', 'flags development,partial_boot') + "partial_boot probe\n  image @artifact.root\n"
-    refused(Erx::Manifest::Unsupported, 'unsupported', 'partial_boot', source, message: /M5/)
+    refused(Erx::Manifest::Unsupported, 'partial_boot', source, message: /M5/)
   end
 
   # The system_image row packs the release artifact's image and tree as the fixture
@@ -1171,7 +1193,7 @@ class ManifestCheckTest < Minitest::Test
      { 'tree' => tree.merge('root_hash' => '00') }, { 'tree' => tree.merge('length' => 1_048_576 * 512) }].each do |change|
       release = ManifestContextFixture.images.fetch('release').merge(change)
       against = context { |arguments| arguments[:artifacts] = arguments[:artifacts].merge('release' => release) }
-      refused(Erx::Manifest::Invalid, 8, 'system_image.input', @source, against)
+      refused(Erx::Manifest::Invalid, 'system_image.input', @source, against)
     end
   end
 
@@ -1181,11 +1203,12 @@ def test_a_system_image_with_no_extents_is_refused_under_its_own_field
   source = changed(@source.sub(/^image release\n(?:  .*\n)*/, '').sub(/^window release\n(?:  .*\n)*/, ''))
   release = ManifestContextFixture.images.fetch('release').merge('extents' => [])
   against = context { |arguments| arguments[:artifacts] = arguments[:artifacts].merge('release' => release) }
-  refused(Erx::Manifest::Invalid, 8, 'system_image.input', source, against, message: /at least one extent/)
+  refused(Erx::Manifest::Invalid, 'system_image.input', source, against, message: /at least one extent/)
 end
 
   def test_a_second_system_image_row_is_refused
-    refused(Erx::Manifest::Invalid, 8, 'system_image', @source + "system_image\n  input @artifact.release\n")
+    refused(Erx::Manifest::Invalid, 'system_image', @source + "system_image\n  input @artifact.release\n",
+            message: /at most one system_image row/)
   end
 
   # The release image (docs/design-fiasco.md, "The Phase 1 manifest check"): format
@@ -1207,7 +1230,8 @@ end
 
   def test_an_image_input_must_be_an_image_artifact_of_the_pack
     ['@artifact.root', '@artifact.absent', '"release"'].each do |input|
-      refused(Erx::Manifest::Invalid, 8, 'image.input', @source.sub('input @artifact.release', "input #{input}"))
+      refused(Erx::Manifest::Invalid, 'image.input', @source.sub('input @artifact.release', "input #{input}"),
+              message: /input names no erofs_image artifact of this pack/)
     end
   end
 
@@ -1218,17 +1242,21 @@ end
      [{ 'slot_offset' => 8192, 'length' => 4096 }, { 'slot_offset' => 0, 'length' => 4096 }],
      [{ 'slot_offset' => 0, 'length' => 4096 }, { 'slot_offset' => 2048, 'length' => 4096 }]].each do |extents|
       against = context { |arguments| arguments[:artifacts] = arguments[:artifacts].merge('release' => { 'kind' => 'erofs_image', 'extents' => extents }) }
-      refused(Erx::Manifest::Invalid, 8, 'image.input', @source, against)
+      refused(Erx::Manifest::Invalid, 'image.input', @source, against)
     end
   end
 
   def test_an_image_without_a_tree_takes_no_salt
-    refused(Erx::Manifest::Invalid, 8, 'image.salt', @source.sub("input @artifact.release\n", "input @artifact.release\n  salt 0x00\n"))
+    refused(Erx::Manifest::Invalid, 'image.salt', @source.sub("input @artifact.release\n", "input @artifact.release\n  salt 0x00\n"),
+            message: /an image without a hash tree takes no salt/)
   end
 
   def test_a_verified_image_window_is_read_only_and_names_its_image
-    refused(Erx::Manifest::Invalid, 8, 'window.rights', @source.sub("  rights read\n  image @image.release", "  rights read,write\n  image @image.release"))
-    refused(Erx::Manifest::Invalid, 8, 'window.image', @source.sub('image @image.release', 'image none'))
-    refused(Erx::Manifest::Invalid, 8, 'window.image', @source + window(role: 'fat', image: '@image.release'))
+    refused(Erx::Manifest::Invalid, 'window.rights', @source.sub("  rights read\n  image @image.release", "  rights read,write\n  image @image.release"),
+            message: /a window of a role not marked writable grants read alone/)
+    refused(Erx::Manifest::Invalid, 'window.image', @source.sub('image @image.release', 'image none'),
+            message: /a verified-image window names its image/)
+    refused(Erx::Manifest::Invalid, 'window.image', @source + window(role: 'fat', image: '@image.release'),
+            message: /only a verified-image window names an image/)
   end
 end

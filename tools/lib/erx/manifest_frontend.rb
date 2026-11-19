@@ -10,13 +10,15 @@ module Erx
   # It stands apart from the manifest check (manifest.rb), which needs the generated
   # ABI, so the build's own generators read the manifest with it too (FacetNames).
   module Manifest
+    # A manifest the check refuses: field names what the refusal is about, a record and
+    # field of the manifest, or context.NAME for the build's checked context, and the
+    # message says what is wrong with it.
     class Invalid < Erx::Error
-      attr_reader :property, :field
+      attr_reader :field
 
-      def initialize(message, property:, field:)
-        @property = property
+      def initialize(message, field:)
         @field = field.freeze
-        super("manifest #{property} #{field}: #{message}")
+        super("manifest #{field}: #{message}")
       end
     end
 
@@ -101,19 +103,19 @@ module Erx
         header = headers.first if headers.size == 1 && headers.first.args.size == 1 && headers.first.members.empty?
         declared = header && ABI::Syntax.integer(header.args.first, line: header.line)
         unless declared && (version.nil? || declared == version)
-          raise Invalid.new('one supported manifest version is required', property: 'source', field: 'version')
+          raise Invalid.new('one supported manifest version is required', field: 'version')
         end
         records = record_list(declarations).group_by(&:kind)
-        raise Invalid.new('one machine declaration is required', property: 'source', field: 'machine') unless
+        raise Invalid.new('one machine declaration is required', field: 'machine') unless
           records.fetch('machine', []).size == 1
         # Property 19's first clause (docs/design-packaging.md, "The build's check").
-        raise Invalid.new('at most one apps row', property: 19, field: 'apps') if records.fetch('apps', []).size > 1
-        raise Invalid.new('at most one system_image row', property: 8, field: 'system_image') if records.fetch('system_image', []).size > 1
+        raise Invalid.new('at most one apps row', field: 'apps') if records.fetch('apps', []).size > 1
+        raise Invalid.new('at most one system_image row', field: 'system_image') if records.fetch('system_image', []).size > 1
 
         records.each do |kind, list|
           next if kind == 'machine' || DIRECTIVES.key?(kind)
           unless list.map(&:name).uniq.size == list.size
-            raise Invalid.new('duplicate source alias', property: 'source', field: kind)
+            raise Invalid.new('duplicate source alias', field: kind)
           end
         end
         machine = records.delete('machine').first

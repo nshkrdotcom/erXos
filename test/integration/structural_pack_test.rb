@@ -78,7 +78,6 @@ class StructuralPackTest < Minitest::Test
                        artifacts: { 'root' => { 'kind' => 'executable', 'entry' => 2 } }.merge(ManifestContextFixture.images),
                        manifest_source: structural.fetch('manifest_source'), output: output)
     end
-    assert_equal 4, error.property
     assert_equal 'root_startup', error.field
     assert_equal 'existing output', File.binread(output)
   end

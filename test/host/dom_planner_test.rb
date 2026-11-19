@@ -117,7 +117,7 @@ class DomPlannerTest < Minitest::Test
 
   def refused(source, field, message)
     error = assert_raises(Erx::Manifest::Invalid) { admit(source) }
-    assert_equal [12, field], [error.property, error.field], error.message
+    assert_equal field, error.field, error.message
     assert_match message, error.message
   end
 
@@ -246,7 +246,7 @@ class DomPlannerTest < Minitest::Test
     refused = ->(bytes, name) { view_lines(bytes, name).grep(/\Arefused /) }
     { 'display' => 'dispXay', 'principal' => 'princXpal' }.each do |key, stand_in|
       error = assert_raises(Erx::Manifest::Invalid) { admit(with_env.call("LANG=C #{key}=other")) }
-      assert_equal [14, 'session.env'], [error.property, error.field]
+      assert_equal 'session.env', error.field
       bytes = admit(with_env.call("LANG=C #{stand_in}=other")).bytes
       assert_equal 1, bytes.scan("#{stand_in}=other").size
       assert_equal ['refused manifest: a session template\'s environment sets a variable its start gives it'],
@@ -367,7 +367,7 @@ class DomPlannerTest < Minitest::Test
     admit(source + "start system\n")
     admit(source + "start guest\n  enable NO\n")
     error = assert_raises(Erx::Manifest::Invalid) { admit(source + "start system\nstart guest\n") }
-    assert_equal [17, 'start'], [error.property, error.field], error.message
+    assert_equal 'start', error.field, error.message
     assert_match(/session of start row guest with nomem\b/i, error.message)
   end
 
@@ -387,11 +387,11 @@ class DomPlannerTest < Minitest::Test
     source = fixture.substitute(source, memory, "\\1#{2 * domain}")
     admit(source)
     error = assert_raises(Erx::Manifest::Invalid) { admit(source + "start system\n") }
-    assert_equal [17, 'start'], [error.property, error.field], error.message
+    assert_equal 'start', error.field, error.message
     assert_match(/session of start row system with nomem\b/i, error.message)
     alone = fixture.substitute(source, memory, "\\1#{domain}")
     error = assert_raises(Erx::Manifest::Invalid) { admit(alone) }
-    assert_equal [17, 'machine.console'], [error.property, error.field], error.message
+    assert_equal 'machine.console', error.field, error.message
     assert_match(/console's session of root with nomem\b/i, error.message)
     admit(fixture.substitute(alone, fixture::SESSION_TEMPLATE, ''))
   end
@@ -458,8 +458,8 @@ class DomPlannerTest < Minitest::Test
   # The Ruby check takes any byte count; the library takes only whole pages.
   def test_a_budget_the_library_refuses_fails_the_build
     error = assert_raises(Erx::Manifest::Invalid) { admit(@source.sub("limits app\n  memory 4194304", "limits app\n  memory 4194305")) }
-    assert_equal 12, error.property
-    assert_match(/alpha with inval/, error.message)
+    assert_equal 'domain', error.field
+    assert_match(/the domain library refuses configured domain alpha with inval/, error.message)
   end
 
   # Two grants whose exact rates sum to 2.25 CPUs, what system's 3 CPUs keep past the
@@ -535,7 +535,8 @@ class DomPlannerTest < Minitest::Test
       arguments.merge(platform: @context.platform,
                       catalog: arguments.fetch(:catalog).map { |row| row.fetch('path') == 'runtimes/emu' ? row.except('image') : row })
     end)
-    assert_equal 12, assert_raises(Erx::Manifest::Invalid) { admit(@source) }.property
+    error = assert_raises(Erx::Manifest::Invalid) { admit(@source) }
+    assert_match(/the domain library refuses configured domain alpha/, error.message)
   end
 
   # The seed the shared builder exists for: a principal the Ruby check accepts but
@@ -547,7 +548,7 @@ class DomPlannerTest < Minitest::Test
       principal = source.sub(/^(principal system\n(?:  .*\n)*?  memory )(\d+)$/) { "#{Regexp.last_match(1)}#{Integer(Regexp.last_match(2)) - 1}" }
       refute_equal source, principal
       error = assert_raises(Erx::Manifest::Invalid) { admit(principal) }
-      assert_equal [12, 'view'], [error.property, error.field], error.message
+      assert_equal 'view', error.field, error.message
       assert_match(/refuses a principal/, error.message)
     end
   end
@@ -566,7 +567,7 @@ class DomPlannerTest < Minitest::Test
     end
     [[@source, 19], [holder, 17]].each do |source, count|
       error = assert_raises(Erx::Manifest::Invalid) { admit(full.call(source, count)) }
-      assert_equal [12, 'view'], [error.property, error.field], error.message
+      assert_equal 'view', error.field, error.message
       assert_match(/reserve/, error.message)
     end
   end
@@ -603,7 +604,7 @@ class DomPlannerTest < Minitest::Test
     two = ManifestContextFixture.substitute(@source, /^(unit net\n  placement "net"\n  holder )system$/, '\1@domain.alpha')
     [@source, two].each do |source|
       error = assert_raises(Erx::Manifest::Invalid) { admit(source) }
-      assert_equal [12, 'view'], [error.property, error.field], error.message
+      assert_equal 'view', error.field, error.message
       assert_match(/share a register page are in two units/, error.message)
     end
   end
@@ -620,7 +621,7 @@ class DomPlannerTest < Minitest::Test
     two = ManifestContextFixture.substitute(@source, /^(unit net\n  placement "net"\n  holder )system$/, '\1@domain.alpha')
     [@source, two].each do |source|
       error = assert_raises(Erx::Manifest::Invalid) { admit(source) }
-      assert_equal [12, 'view'], [error.property, error.field], error.message
+      assert_equal 'view', error.field, error.message
       assert_match(/share an interrupt line are in two units/, error.message)
     end
   end
@@ -821,7 +822,7 @@ class DomPlannerTest < Minitest::Test
     with_env = ->(words) { ->(source) { source.sub("domain display\n", "domain display\n  env \"#{words}\"\n") } }
     ['display=other', 'LANG=C display_policy=single', 'LANG=C display_idle_off_s=1', 'display_palette=dark'].each do |words|
       error = assert_raises(Erx::Manifest::Invalid) { display_manifest(with_env.call(words)) }
-      assert_equal [18, 'domain.env'], [error.property, error.field], words
+      assert_equal 'domain.env', error.field, words
     end
     bytes = display_manifest(with_env.call('LANG=C dispXay_policy=single'))
     assert_equal 1, bytes.scan('dispXay_policy=single').size
@@ -899,7 +900,7 @@ class DomPlannerTest < Minitest::Test
     admit_development(source)
     true
   rescue Erx::Manifest::Invalid => e
-    raise unless [[12, 'view'], [12, 'domain.args']].include?([e.property, e.field])
+    raise unless %w[view domain.args].include?(e.field)
 
     false
   end

@@ -49,7 +49,7 @@ class ManifestTest < Minitest::Test
     error = assert_raises(Erx::Manifest::Invalid) do
       Erx::Manifest::Context.new(**arguments, artifacts: artifacts.merge('session' => artifacts.fetch('session').except('started')))
     end
-    assert_equal %w[context input], [error.property, error.field]
+    assert_equal 'context.input', error.field
   end
 
   def test_notice_binding_accepts_original_non_utf8_bytes_without_exposing_them
@@ -69,7 +69,7 @@ class ManifestTest < Minitest::Test
   # Property 17: the empty native boot is a partial boot, which starts no row.
   def test_empty_native_boot_starts_no_row
     error = assert_raises(Erx::Manifest::Invalid) { fixture(@source + "start root\n") }
-    assert_equal [17, 'start'], [error.property, error.field]
+    assert_equal 'start', error.field
   end
 
   def test_nonempty_native_boot_requires_real_planning
@@ -93,7 +93,7 @@ class ManifestTest < Minitest::Test
   def test_root_budget_overcommit_is_refused
     source = @source.sub('root_memory 402653184', 'root_memory 33554432')
     error = assert_raises(Erx::Manifest::Invalid) { fixture(source) }
-    assert_equal 4, error.property
+    assert_equal 'principals.memory', error.field
   end
 
   def test_raw_admitted_constructor_is_private
@@ -112,7 +112,6 @@ class ManifestTest < Minitest::Test
                     .sub('system_baseline 67108864', 'system_baseline 1')
                     .sub('memory 268435456', 'memory 0')
     error = assert_raises(Erx::Manifest::Invalid) { fixture(source, context) }
-    assert_equal 4, error.property
     assert_equal 'machine.system_baseline', error.field
   end
 
@@ -120,7 +119,6 @@ class ManifestTest < Minitest::Test
     error = assert_raises(Erx::Manifest::Unsupported) do
       Erx::Manifest.admit(source: @source, codec: @codec, context: @context)
     end
-    assert_equal 4, error.property
     assert_equal 'root_startup', error.field
   end
 end

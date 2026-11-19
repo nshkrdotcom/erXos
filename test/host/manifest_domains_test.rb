@@ -64,9 +64,8 @@ class ManifestDomainsTest < Minitest::Test
     Erx::Manifest.admit(source: source, codec: @codec, context: context, planner: planner)
   end
 
-  def refused(klass, property, field, source = @source, planner: @planner, message: nil)
+  def refused(klass, field, source = @source, planner: @planner, message: nil)
     error = assert_raises(klass) { admit(source, planner: planner) }
-    assert_equal property, error.property, error.message
     assert_equal field, error.field, error.message
     assert_match message, error.message if message
     error
@@ -108,8 +107,9 @@ class ManifestDomainsTest < Minitest::Test
     view = @codec.open('manifest', admit(@source.sub(alpha, "  restart_period_s 5\n  boot_timeout_s 90\ndomain beta")).bytes)
     assert_equal [90, @codec.constant('boot_timeout_default_s')], rows(view, 'domains').map { |row| row.fetch('boot_timeout_s') }
     [0, @codec.constant('boot_timeout_max_s') + 1].each do |seconds|
-      refused(Erx::Manifest::Invalid, 'source', 'domain.boot_timeout_s',
-              @source.sub(alpha, "  restart_period_s 5\n  boot_timeout_s #{seconds}\ndomain beta"))
+      refused(Erx::Manifest::Invalid, 'domain.boot_timeout_s',
+              @source.sub(alpha, "  restart_period_s 5\n  boot_timeout_s #{seconds}\ndomain beta"),
+              message: /boot timeout of #{seconds} s is outside/)
     end
   end
 
@@ -133,7 +133,8 @@ class ManifestDomainsTest < Minitest::Test
   end
 
   def test_a_refused_view_fails_the_build
-    error = refused(Erx::Manifest::Invalid, 12, 'view', planner: ->(_view) { { 'refused' => 'manifest: why' } })
+    error = refused(Erx::Manifest::Invalid, 'view', planner: ->(_view) { { 'refused' => 'manifest: why' } },
+                    message: /the domain library refuses the manifest's view: why/)
     assert_match(/refuses the manifest's view: why\z/, error.message)
   end
 
@@ -145,7 +146,8 @@ class ManifestDomainsTest < Minitest::Test
   # The system principal's template gives root's console session, which needs the
   # planner (property 17), so without one such a manifest fails closed.
   def test_root_s_console_session_needs_a_planner
-    refused(Erx::Manifest::Unsupported, 12, 'planner', @plain + self.class.session, planner: nil)
+    refused(Erx::Manifest::Unsupported, 'planner', @plain + self.class.session, planner: nil,
+            message: /configured domains and sessions need the domain library's host/)
   end
 
   # Property 1: a unit's holder is the system domain or a configured domain.
@@ -157,7 +159,7 @@ class ManifestDomainsTest < Minitest::Test
 
   def test_a_unit_held_by_no_configured_domain_is_refused
     source = @source.sub("placement \"block\"\n  holder system", "placement \"block\"\n  holder @domain.absent")
-    refused(Erx::Manifest::Invalid, 1, 'unit.holder', source)
+    refused(Erx::Manifest::Invalid, 'unit.holder', source, message: /names neither the system domain nor a configured domain/)
   end
 
   # Property 2: services, facets and introductions name what the manifest contains.
@@ -167,16 +169,18 @@ class ManifestDomainsTest < Minitest::Test
   end
 
   def test_a_service_of_no_configured_domain_is_refused
-    refused(Erx::Manifest::Invalid, 2, 'service.server', @source + service('probe', '@domain.absent'))
+    refused(Erx::Manifest::Invalid, 'service.server', @source + service('probe', '@domain.absent'),
+            message: /names neither the system domain nor a configured domain/)
   end
 
   def test_a_facet_naming_no_service_is_refused
-    refused(Erx::Manifest::Invalid, 2, 'facet.service', @source + facet('f', '@domain.alpha', '@service.absent'))
+    refused(Erx::Manifest::Invalid, 'facet.service', @source + facet('f', '@domain.alpha', '@service.absent'),
+            message: /facet names a service the manifest does not contain/)
   end
 
   def test_a_facet_granted_to_neither_the_system_domain_nor_a_configured_domain_is_refused
     source = @source + service('b', '@domain.beta') + facet('f', '@domain.absent', '@service.b')
-    refused(Erx::Manifest::Invalid, 2, 'facet.grantee', source)
+    refused(Erx::Manifest::Invalid, 'facet.grantee', source, message: /names neither the system domain, a configured domain nor a/)
   end
 
   # A configured domain's service granted to another configured domain and to the
@@ -200,11 +204,12 @@ class ManifestDomainsTest < Minitest::Test
   def test_two_facets_of_one_service_name_to_one_grantee_are_refused
     source = @source + service('b', '@domain.beta') + facet('ab', '@domain.alpha', '@service.b') +
              facet('ab2', '@domain.alpha', '@service.b')
-    refused(Erx::Manifest::Invalid, 2, 'facet.service', source)
+    refused(Erx::Manifest::Invalid, 'facet.service', source, message: /a grantee takes two facets of one service name/)
   end
 
   def test_a_facet_of_the_system_domains_own_service_to_it_is_refused
-    refused(Erx::Manifest::Invalid, 2, 'facet.grantee', @source + service('probe', 'system') + facet('f', 'system', '@service.probe'))
+    refused(Erx::Manifest::Invalid, 'facet.grantee', @source + service('probe', 'system') + facet('f', 'system', '@service.probe'),
+            message: /the system domain takes no facet of its own service/)
   end
 
   # Property 8: a facet of the driver-control interface stops and starts the drivers of
@@ -215,7 +220,8 @@ class ManifestDomainsTest < Minitest::Test
     view = @codec.open('manifest', admit(@source + control + facet('ctl', 'system', '@service.ctl')).bytes)
     assert_equal [2], rows(view, 'services').map { |row| row.fetch('interface') }
     [control, control.sub('interface driver_control', 'interface 2')].each do |row|
-      refused(Erx::Manifest::Invalid, 8, 'facet.grantee', @source + row + facet('ctl', '@domain.alpha', '@service.ctl'))
+      refused(Erx::Manifest::Invalid, 'facet.grantee', @source + row + facet('ctl', '@domain.alpha', '@service.ctl'),
+              message: /only the system domain holds a driver-control facet/)
     end
   end
 
@@ -226,7 +232,8 @@ class ManifestDomainsTest < Minitest::Test
     objects = service('code_objects', 'system').sub('interface 1', 'interface code_objects')
     assert_equal [14], rows(@codec.open('manifest', admit(@source + objects).bytes), 'services').map { |row| row.fetch('interface') }
     { @source => '@domain.alpha', with_session(self.class.session) => '@session.system' }.each do |source, grantee|
-      refused(Erx::Manifest::Invalid, 8, 'facet.service', source + objects + facet('objects', grantee, '@service.code_objects'))
+      refused(Erx::Manifest::Invalid, 'facet.service', source + objects + facet('objects', grantee, '@service.code_objects'),
+              message: /no facet row grants code_objects, which the domain service/)
     end
   end
 
@@ -236,7 +243,8 @@ class ManifestDomainsTest < Minitest::Test
     objects = service('code_objects', 'system').sub('interface 1', 'interface code_objects')
     [objects.sub('server system', 'server @domain.alpha'), objects.sub('service code_objects', 'service objects'),
      objects + objects.sub('service code_objects', 'service objects')].each do |row|
-      refused(Erx::Manifest::Invalid, 8, 'service.interface', @source + row)
+      refused(Erx::Manifest::Invalid, 'service.interface', @source + row,
+              message: /the manifest serves code_objects once, by that name, from the/)
     end
   end
 
@@ -269,7 +277,7 @@ class ManifestDomainsTest < Minitest::Test
 
   def test_a_facet_naming_an_undeclared_or_repeated_operation_is_refused
     %w[set inspect,set inspect,inspect inspect, ,inspect].each do |operations|
-      refused(Erx::Manifest::Invalid, 2, 'facet.operations', inspect_grant(operations), message: /facet i's operations name/)
+      refused(Erx::Manifest::Invalid, 'facet.operations', inspect_grant(operations), message: /facet i's operations name/)
     end
   end
 
@@ -279,11 +287,11 @@ class ManifestDomainsTest < Minitest::Test
   def test_operations_only_the_system_domain_checks_are_accepted
     web = "service w\n  server @domain.beta\n  interface web\n"
     named = facet('w', '@domain.alpha', '@service.w').sub('operations none', 'operations data')
-    refused(Erx::Manifest::Unsupported, 'unsupported', 'facet.operations', @source + web + named,
+    refused(Erx::Manifest::Unsupported, 'facet.operations', @source + web + named,
             message: /a service a configured domain serves/)
     files = "service f\n  server @domain.beta\n  interface files\n"
     tree = window_facet('f', '@domain.alpha', '@service.f').sub('operations none', 'operations read')
-    refused(Erx::Manifest::Invalid, 2, 'facet.operations', @source + files + tree, message: /does not declare/)
+    refused(Erx::Manifest::Invalid, 'facet.operations', @source + files + tree, message: /does not declare/)
   end
 
   def test_introductions_are_written_once_lower_index_first
@@ -292,28 +300,32 @@ class ManifestDomainsTest < Minitest::Test
   end
 
   def test_an_introduction_of_no_configured_domain_is_refused
-    refused(Erx::Manifest::Invalid, 2, 'introduce', "#{@source}introduce @domain.alpha @domain.absent\n")
+    refused(Erx::Manifest::Invalid, 'introduce', "#{@source}introduce @domain.alpha @domain.absent\n",
+            message: /introduction names no configured domain/)
   end
 
   def test_an_introduction_of_a_domain_to_itself_is_refused
-    refused(Erx::Manifest::Invalid, 2, 'introduce', "#{@source}introduce @domain.alpha @domain.alpha\n")
+    refused(Erx::Manifest::Invalid, 'introduce', "#{@source}introduce @domain.alpha @domain.alpha\n",
+            message: /an introduction joins two different domains/)
   end
 
   def test_one_pair_introduced_twice_is_refused
     source = "#{@source}introduce @domain.alpha @domain.beta\nintroduce @domain.beta @domain.alpha\n"
-    refused(Erx::Manifest::Invalid, 2, 'introduce', source)
+    refused(Erx::Manifest::Invalid, 'introduce', source, message: /two introductions join one pair/)
   end
 
   # Property 4: every living domain, configured or requested, is one of its
   # principal's quota, so the quotas alone sum within max_domains; the configured
   # domains' budgets and grants are the planner's (test/host/dom_planner_test.rb).
   def test_principal_quotas_over_max_domains_are_refused
-    refused(Erx::Manifest::Invalid, 4, 'principals.domains', @source.sub('max_domains 2', 'max_domains 1'))
+    refused(Erx::Manifest::Invalid, 'principals.domains', @source.sub('max_domains 2', 'max_domains 1'),
+            message: /principal domain quotas and the apps row's max exceed/)
   end
 
   # Property 5 over the configured domains and the services they serve.
   def test_a_domain_with_a_pooled_name_is_refused
-    refused(Erx::Manifest::Invalid, 5, 'domain.name', @source.sub('domain alpha', 'domain alice_1'))
+    refused(Erx::Manifest::Invalid, 'domain.name', @source.sub('domain alpha', 'domain alice_1'),
+            message: /a configured domain's name has a pooled name's form/)
   end
 
   def test_a_domain_name_with_a_dot_is_refused
@@ -322,7 +334,8 @@ class ManifestDomainsTest < Minitest::Test
   end
 
   def test_a_domain_named_as_a_principal_is_refused
-    refused(Erx::Manifest::Invalid, 5, 'domain.name', @source.sub('domain alpha', 'domain system'))
+    refused(Erx::Manifest::Invalid, 'domain.name', @source.sub('domain alpha', 'domain system'),
+            message: /a configured domain shares a principal's name/)
   end
 
   def test_one_name_on_two_servers_is_accepted
@@ -335,29 +348,31 @@ class ManifestDomainsTest < Minitest::Test
   def test_one_name_twice_on_one_server_is_refused
     source = @source + service('probe_a', '@domain.alpha').sub('service probe_a', "service probe_a\n  name \"probe\"") +
              service('probe_b', '@domain.alpha').sub('service probe_b', "service probe_b\n  name \"probe\"")
-    refused(Erx::Manifest::Invalid, 5, 'service.name', source)
+    refused(Erx::Manifest::Invalid, 'service.name', source, message: /two services of one server share a name/)
   end
 
   # Property 8: the console lines and the slot writer's windows stay the system domain's.
   def test_a_console_uart_held_by_a_configured_domain_is_refused
     %w[console hostlink].each do |unit|
       source = @source.sub(/(unit #{unit}\n  placement "[^"]*"\n)  holder system/, "\\1  holder @domain.alpha")
-      refused(Erx::Manifest::Invalid, 8, "machine.#{unit}", source)
+      refused(Erx::Manifest::Invalid, "machine.#{unit}", source, message: /UART is not assigned to the system domain/)
     end
   end
 
   def test_a_slot_window_held_by_a_configured_domain_is_refused
-    refused(Erx::Manifest::Invalid, 8, 'window.holder', @source.sub("window boot_a\n  holder system", "window boot_a\n  holder @domain.alpha"))
+    refused(Erx::Manifest::Invalid, 'window.holder', @source.sub("window boot_a\n  holder system", "window boot_a\n  holder @domain.alpha"),
+            message: /only the system domain, the slot writer, holds the slot windows/)
   end
 
   def test_a_domain_named_system_is_refused
     source = @source.sub('principal system', 'principal root').gsub('@principal.system', '@principal.root').sub('domain alpha', 'domain system')
-    refused(Erx::Manifest::Invalid, 5, 'domain.name', source)
+    refused(Erx::Manifest::Invalid, 'domain.name', source, message: /the system domain's name is not a configured domain's/)
   end
 
   def test_arguments_and_environment_over_the_boot_page_are_refused
     long = "  args \"#{'a' * 1500}\"\n  env \"X=#{'b' * 1500}\"\n"
-    refused(Erx::Manifest::Invalid, 12, 'domain.args', with_domains(self.class.domain('alpha') + long))
+    refused(Erx::Manifest::Invalid, 'domain.args', with_domains(self.class.domain('alpha') + long),
+            message: /arguments and environment exceed the boot page's strings/)
   end
 
   # A row's release names a boot script of the domain release, and the packer binds it:
@@ -375,7 +390,7 @@ class ManifestDomainsTest < Minitest::Test
 
   def test_a_domain_naming_boot_is_refused
     ['-boot /bin/session', '-x -boot /bin/app'].each do |args|
-      refused(Erx::Manifest::Invalid, 12, 'domain.args', with_domains(self.class.domain('alpha') + "  args \"#{args}\"\n"),
+      refused(Erx::Manifest::Invalid, 'domain.args', with_domains(self.class.domain('alpha') + "  args \"#{args}\"\n"),
               message: /-boot/)
     end
   end
@@ -383,13 +398,13 @@ class ManifestDomainsTest < Minitest::Test
   def test_a_session_template_boots_the_script_its_release_names
     view = @codec.open('manifest', admit(with_session(self.class.session)).bytes)
     assert_equal "-x\0y\0--\0-boot\0/bin/app\0--\0", view.string(rows(view, 'sessions').fetch(0).fetch('args'))
-    refused(Erx::Manifest::Invalid, 14, 'session.args', with_session(self.class.session.sub('-x y', '-boot /bin/app')),
+    refused(Erx::Manifest::Invalid, 'session.args', with_session(self.class.session.sub('-x y', '-boot /bin/app')),
             message: /-boot/)
   end
 
   # Property 7: no secret domain, since no entry carries the sealing secret.
   def test_a_secret_domain_is_refused_naming_its_milestone
-    refused(Erx::Manifest::Invalid, 7, 'domain.kind', with_domains(self.class.domain('vault', kind: 'secret')), message: /M11/)
+    refused(Erx::Manifest::Invalid, 'domain.kind', with_domains(self.class.domain('vault', kind: 'secret')), message: /M11/)
   end
 
   # A window's holder is the system domain or a configured domain.
@@ -403,12 +418,12 @@ class ManifestDomainsTest < Minitest::Test
   def test_facets_that_lead_back_are_refused
     source = @source + service('a', '@domain.alpha') + service('b', '@domain.beta') +
              facet('ab', '@domain.alpha', '@service.b') + facet('ba', '@domain.beta', '@service.a')
-    refused(Erx::Manifest::Invalid, 10, 'facet.service', source)
+    refused(Erx::Manifest::Invalid, 'facet.service', source, message: /a configured domain's facets lead back to it/)
   end
 
   def test_a_domain_holding_a_facet_of_its_own_service_is_refused
     source = @source + service('a', '@domain.alpha') + facet('aa', '@domain.alpha', '@service.a')
-    refused(Erx::Manifest::Invalid, 10, 'facet.service', source)
+    refused(Erx::Manifest::Invalid, 'facet.service', source, message: /a configured domain's facets lead back to it/)
   end
 
   # The order places every server before its clients and breaks ties by name order.
@@ -424,12 +439,12 @@ class ManifestDomainsTest < Minitest::Test
   # rescue domains.
   def test_a_rescue_domain_on_a_domain_rescue_does_not_start_is_refused
     source = @source + service('a', '@domain.alpha') + facet('ba', '@domain.beta', '@service.a')
-    refused(Erx::Manifest::Invalid, 11, 'facet.service', source)
+    refused(Erx::Manifest::Invalid, 'facet.service', source, message: /a rescue domain names a service of a domain the rescue/)
   end
 
   # A facet of a service the system domain serves, granted to a configured domain,
   # reaches the encoded manifest, which the domain service reads at boot.
-  def test_a_system_served_facet_of_a_rescue_domain_passes_property_eleven_and_is_encoded
+  def test_a_system_served_facet_of_a_rescue_domain_passes_the_rescue_rule_and_is_encoded
     source = @source + service('s', 'system') + facet('bs', '@domain.beta', '@service.s')
     view = @codec.open('manifest', admit(source).bytes)
     services = rows(view, 'services')
@@ -440,32 +455,36 @@ class ManifestDomainsTest < Minitest::Test
   # Property 12: what the domain library refuses fails the build, and without the
   # planner a manifest with domains fails closed.
   def test_a_domain_the_library_refuses_fails_the_build
-    error = refused(Erx::Manifest::Invalid, 12, 'domain', planner: RecordingPlanner.new([0, -6]))
+    error = refused(Erx::Manifest::Invalid, 'domain', planner: RecordingPlanner.new([0, -6]),
+                    message: /the domain library refuses configured domain beta with nomem/)
     assert_match(/beta with nomem/, error.message)
   end
 
   def test_an_introduction_the_library_refuses_fails_the_build
-    error = refused(Erx::Manifest::Invalid, 12, 'introduce', "#{@source}introduce @domain.alpha @domain.beta\n",
-                    planner: RecordingPlanner.new(introductions: [-7]))
+    error = refused(Erx::Manifest::Invalid, 'introduce', "#{@source}introduce @domain.alpha @domain.beta\n",
+                    planner: RecordingPlanner.new(introductions: [-7]), message: /the domain library refuses the introduction of alpha and beta/)
     assert_match(/introduction of alpha and beta with limit/, error.message)
   end
 
   def test_configured_domains_without_a_planner_fail_closed
-    refused(Erx::Manifest::Unsupported, 12, 'planner', planner: nil)
+    refused(Erx::Manifest::Unsupported, 'planner', planner: nil, message: /configured domains and sessions need the domain library's host/)
   end
 
   def test_a_runtime_that_names_no_executable_is_refused
-    refused(Erx::Manifest::Invalid, 12, 'domain.runtime', with_domains(self.class.domain('alpha', runtime: '@artifact.app')))
+    refused(Erx::Manifest::Invalid, 'domain.runtime', with_domains(self.class.domain('alpha', runtime: '@artifact.app')),
+            message: /runtime names no executable artifact of this pack/)
   end
 
   def test_a_release_that_names_no_domain_release_is_refused
     %w[@artifact.emu @artifact.absent "app"].each do |release|
-      refused(Erx::Manifest::Invalid, 12, 'domain.release', with_domains(self.class.domain('alpha', release: release)))
+      refused(Erx::Manifest::Invalid, 'domain.release', with_domains(self.class.domain('alpha', release: release)),
+              message: /release names no release artifact of this pack/)
     end
   end
 
   def test_a_partial_boot_configures_no_domains
-    refused(Erx::Manifest::Invalid, 12, 'domain', @source.sub('flags development', 'flags development,partial_boot'))
+    refused(Erx::Manifest::Invalid, 'domain', @source.sub('flags development', 'flags development,partial_boot'),
+            message: /a partial boot configures no domains/)
   end
 
   # Property 14: a session template is a record of its own table, keyed by its
@@ -489,20 +508,22 @@ class ManifestDomainsTest < Minitest::Test
   end
 
   def test_a_session_template_without_sub_spaces_is_refused
-    refused(Erx::Manifest::Invalid, 14, 'session.limits', with_session(self.class.session(limits: '@limits.app')))
+    refused(Erx::Manifest::Invalid, 'session.limits', with_session(self.class.session(limits: '@limits.app')),
+            message: /a session template's limits do not enable SPACES/)
   end
 
   def test_a_session_template_keyed_by_no_principal_is_refused
-    refused(Erx::Manifest::Invalid, 14, 'session.name', with_session(self.class.session('alpha')))
+    refused(Erx::Manifest::Invalid, 'session.name', with_session(self.class.session('alpha')),
+            message: /a session template names no principal/)
   end
 
   def test_two_session_templates_of_one_principal_are_refused
-    refused(Erx::Manifest::Invalid, 'source', 'session', with_session(self.class.session, self.class.session))
+    refused(Erx::Manifest::Invalid, 'session', with_session(self.class.session, self.class.session), message: /duplicate source alias/)
   end
 
   def test_a_partial_boot_makes_no_sessions
     source = @plain.sub('flags development', 'flags development,partial_boot') + APP_LIMITS + self.class.session
-    refused(Erx::Manifest::Invalid, 14, 'session', source)
+    refused(Erx::Manifest::Invalid, 'session', source, message: /a partial boot makes no sessions/)
   end
 
   # Holders, servers and introductions resolve through the domain table, which
@@ -510,10 +531,14 @@ class ManifestDomainsTest < Minitest::Test
   # own property as naming no configured domain.
   def test_nothing_names_a_session_template
     source = with_session(self.class.session)
-    refused(Erx::Manifest::Invalid, 2, 'introduce', "#{source}introduce @domain.alpha @session.system\n")
-    refused(Erx::Manifest::Invalid, 2, 'service.server', source + service('probe', '@session.system'))
-    refused(Erx::Manifest::Invalid, 8, 'window.holder', source.sub("window data\n  holder system", "window data\n  holder @session.system"))
-    refused(Erx::Manifest::Invalid, 1, 'unit.holder', source.sub(/(unit block\n(?:  .*\n)*?  holder )system/, '\1@session.system'))
+    refused(Erx::Manifest::Invalid, 'introduce', "#{source}introduce @domain.alpha @session.system\n",
+            message: /introduction names no configured domain/)
+    refused(Erx::Manifest::Invalid, 'service.server', source + service('probe', '@session.system'),
+            message: /names neither the system domain nor a configured domain/)
+    refused(Erx::Manifest::Invalid, 'window.holder', source.sub("window data\n  holder system", "window data\n  holder @session.system"),
+            message: /names neither the system domain nor a configured domain/)
+    refused(Erx::Manifest::Invalid, 'unit.holder', source.sub(/(unit block\n(?:  .*\n)*?  holder )system/, '\1@session.system'),
+            message: /names neither the system domain nor a configured domain/)
   end
 
   # A session template as a facet grantee, written @session.PRINCIPAL: the facet row
@@ -540,7 +565,7 @@ class ManifestDomainsTest < Minitest::Test
 
   def test_a_facet_granted_to_no_session_template_is_refused
     source = with_session(self.class.session) + service('b', '@domain.beta') + facet('f', '@session.nobody', '@service.b')
-    refused(Erx::Manifest::Invalid, 2, 'facet.grantee', source)
+    refused(Erx::Manifest::Invalid, 'facet.grantee', source, message: /names neither the system domain, a configured domain nor a/)
   end
 
   # Properties 2 and 14: a session template may hold a facet of a service the system
@@ -548,8 +573,8 @@ class ManifestDomainsTest < Minitest::Test
   # it may one of a configured domain's; no server takes a facet of its own service.
   def test_a_session_granted_a_system_domain_service_is_accepted
     admit(with_session(self.class.session) + service('s', 'system') + facet('f', '@session.system', '@service.s'))
-    refused(Erx::Manifest::Invalid, 2, 'facet.grantee',
-            with_session(self.class.session) + service('s', 'system') + facet('f', 'system', '@service.s'))
+    refused(Erx::Manifest::Invalid, 'facet.grantee',
+            with_session(self.class.session) + service('s', 'system') + facet('f', 'system', '@service.s'), message: /the system domain takes no facet of its own service/)
   end
 
   # Property 15: the system domain holds no facet of the net or netadmin interface,
@@ -558,7 +583,7 @@ class ManifestDomainsTest < Minitest::Test
     net = service('n', '@domain.beta')
     ['interface net', 'interface 3', 'interface netadmin', 'interface 4'].each do |interface|
       source = with_session(self.class.session) + net.sub('interface 1', interface) + facet('n', 'system', '@service.n')
-      refused(Erx::Manifest::Invalid, 15, 'facet.grantee', source, message: /facet n grants the system domain/)
+      refused(Erx::Manifest::Invalid, 'facet.grantee', source, message: /facet n grants the system domain/)
     end
   end
 
@@ -574,7 +599,7 @@ class ManifestDomainsTest < Minitest::Test
     admit(to_session)
     admit(to_alpha)
     [with_max_frame(to_session, 'session', floor - 1), with_max_frame(to_alpha, 'system', floor - 1)].each do |source|
-      refused(Erx::Manifest::Invalid, 15, 'runtime_limits.max_frame', source, message: /#{floor}/)
+      refused(Erx::Manifest::Invalid, 'runtime_limits.max_frame', source, message: /#{floor}/)
     end
   end
 
@@ -608,7 +633,7 @@ class ManifestDomainsTest < Minitest::Test
     { "  parameter sockets 0\n" => /outside 1 to 4096/, "  parameter sockets 4097\n" => /outside 1 to 4096/,
       "  parameter buffers 131071\n" => /outside 131072 to 67108864/,
       "  parameter buffers 67108865\n" => /outside 131072 to 67108864/ }.each do |line, message|
-      refused(Erx::Manifest::Invalid, 2, 'facet.parameter', granted.call(line), message: message)
+      refused(Erx::Manifest::Invalid, 'facet.parameter', granted.call(line), message: message)
     end
     ["  parameter sockets many\n", "  parameter sockets \"80\"\n"].each do |line|
       assert_raises(Erx::ABI::SchemaError, line) { admit(granted.call(line)) }
@@ -641,12 +666,12 @@ class ManifestDomainsTest < Minitest::Test
     { lines.call('ports', [0]) => /outside 1 to 65535/, lines.call('listen', [65_536]) => /outside 1 to 65535/,
       lines.call('ports', sixteen + [3000]) => /states over 16 values/,
       lines.call('ports', [2222, 5000, 2222]) => /states 2222 twice/ }.each do |line, message|
-      refused(Erx::Manifest::Invalid, 2, 'facet.parameter', granted.call(line), message: message)
+      refused(Erx::Manifest::Invalid, 'facet.parameter', granted.call(line), message: message)
     end
     { lines.call('listen', [1023]) => /listens on 1023, none of its ports/,
       lines.call('ports', [2222]) + lines.call('listen', [2222, 5000]) => /listens on 5000, none of its ports/ }
       .each do |line, message|
-      refused(Erx::Manifest::Invalid, 15, 'facet.parameter', granted.call(line), message: message)
+      refused(Erx::Manifest::Invalid, 'facet.parameter', granted.call(line), message: message)
     end
   end
 
@@ -666,9 +691,9 @@ class ManifestDomainsTest < Minitest::Test
     end
     admit(source.call('@domain.gamma', '@service.n', 23))
     admit(source.call('@domain.gamma', '@service.m', 22))
-    refused(Erx::Manifest::Invalid, 15, 'facet.parameter', source.call('@domain.gamma', '@service.n', 22),
+    refused(Erx::Manifest::Invalid, 'facet.parameter', source.call('@domain.gamma', '@service.n', 22),
             message: /privileged port 22 is listed by facets a, b of one network domain/)
-    refused(Erx::Manifest::Invalid, 15, 'facet.grantee', source.call('@session.system', '@service.m', 22),
+    refused(Erx::Manifest::Invalid, 'facet.grantee', source.call('@session.system', '@service.m', 22),
             message: /privileged ports to a session template/)
   end
 
@@ -682,14 +707,14 @@ class ManifestDomainsTest < Minitest::Test
     files = service('f', '@domain.beta').sub('interface 1', 'interface files')
     files_facet = ->(grantee) { facet('f', grantee, '@service.f').sub('max_request 1', "max_request #{floor}") }
     granted = ->(grantee) { with_session(self.class.session) + files + files_facet.call(grantee) }
-    refused(Erx::Manifest::Invalid, 16, 'facet.max_request', granted.call('system').sub("max_request #{floor}", "max_request #{floor - 1}"),
+    refused(Erx::Manifest::Invalid, 'facet.max_request', granted.call('system').sub("max_request #{floor}", "max_request #{floor - 1}"),
             message: /f's max_request #{floor - 1} .*#{floor}/)
     %w[system @domain.alpha @session.system].each { |grantee| admit(granted.call(grantee)) }
     admit(with_max_frame(granted.call('@domain.alpha'), 'session', floor - 1))
     [['grantee', with_max_frame(granted.call('@session.system'), 'session', floor - 1)],
      ['server', with_max_frame(granted.call('@session.system'), 'system', floor - 1)],
      ['grantee', with_max_frame(granted.call('system'), 'system', floor - 1)]].each do |role, source|
-      refused(Erx::Manifest::Invalid, 16, 'runtime_limits.max_frame', source, message: /f's #{role} .*#{floor}/)
+      refused(Erx::Manifest::Invalid, 'runtime_limits.max_frame', source, message: /f's #{role} .*#{floor}/)
     end
   end
 
@@ -709,9 +734,9 @@ class ManifestDomainsTest < Minitest::Test
     granted = with_session(self.class.session) + "service c\n  server system\n  interface carried\n" +
               facet('c', '@session.system', '@service.c').sub('max_request 1', "max_request #{floor}")
     admit(granted)
-    refused(Erx::Manifest::Invalid, 16, 'facet.max_request', granted.sub("max_request #{floor}", "max_request #{floor - 1}"),
+    refused(Erx::Manifest::Invalid, 'facet.max_request', granted.sub("max_request #{floor}", "max_request #{floor - 1}"),
             message: /c's max_request #{floor - 1} .*#{floor}/)
-    refused(Erx::Manifest::Invalid, 16, 'runtime_limits.max_frame', with_max_frame(granted, 'session', floor - 1),
+    refused(Erx::Manifest::Invalid, 'runtime_limits.max_frame', with_max_frame(granted, 'session', floor - 1),
             message: /c's grantee .*#{floor}/)
   end
 
@@ -748,11 +773,11 @@ class ManifestDomainsTest < Minitest::Test
     inspect = service('i', 'system').sub('interface 1', 'interface inspect')
     granted = with_session(self.class.session) + inspect + facet('i', '@session.system', '@service.i')
     admit(granted)
-    refused(Erx::Manifest::Invalid, 16, 'service.server', granted.sub("service i\n  server system", "service i\n  server @domain.beta"),
+    refused(Erx::Manifest::Invalid, 'service.server', granted.sub("service i\n  server system", "service i\n  server @domain.beta"),
             message: /only the system domain serves the inspect interface/)
     %w[system session].product(floors.keys).each do |name, field|
       role = name == 'system' ? 'server' : 'grantee'
-      refused(Erx::Manifest::Invalid, 16, "runtime_limits.#{field}",
+      refused(Erx::Manifest::Invalid, "runtime_limits.#{field}",
               with_runtime_limit(granted, name, field, floors.fetch(field) - 1),
               message: /i's #{role} runs with #{field} #{floors.fetch(field) - 1}, below inspect's floor/)
     end
@@ -825,17 +850,19 @@ class ManifestDomainsTest < Minitest::Test
   end
 
   def test_a_start_row_of_a_principal_without_a_session_template_is_refused
-    refused(Erx::Manifest::Invalid, 17, 'start.name', @source + self.class.start)
-    refused(Erx::Manifest::Invalid, 17, 'start.name', with_session(self.class.session) + self.class.start('alpha'))
+    refused(Erx::Manifest::Invalid, 'start.name', @source + self.class.start, message: /a start row's principal has no session template/)
+    refused(Erx::Manifest::Invalid, 'start.name', with_session(self.class.session) + self.class.start('alpha'),
+            message: /a start row names no principal/)
   end
 
   def test_a_start_row_s_restart_period_is_at_least_a_second
-    refused(Erx::Manifest::Invalid, 17, 'start.restart_period_s',
-            with_session(self.class.session) + self.class.start('system', "  restart_period_s 0\n"))
+    refused(Erx::Manifest::Invalid, 'start.restart_period_s',
+            with_session(self.class.session) + self.class.start('system', "  restart_period_s 0\n"), message: /a start row's restart period is under a second/)
   end
 
   def test_two_start_rows_of_one_principal_are_refused
-    refused(Erx::Manifest::Invalid, 'source', 'start', with_session(self.class.session) + self.class.start + self.class.start)
+    refused(Erx::Manifest::Invalid, 'start', with_session(self.class.session) + self.class.start + self.class.start,
+            message: /duplicate source alias/)
   end
 
   def test_a_start_row_s_intensity_past_its_ceilings_is_refused
@@ -843,8 +870,10 @@ class ManifestDomainsTest < Minitest::Test
     fields = %w[restarts restart_period_s]
     view = @codec.open('manifest', admit(base + self.class.start('system', "  restarts 100\n  restart_period_s 86400\n")).bytes)
     assert_equal [[100, 86_400]], rows(view, 'starts').map { |row| row.values_at(*fields) }
-    refused(Erx::Manifest::Invalid, 17, 'start.restarts', base + self.class.start('system', "  restarts 101\n"))
-    refused(Erx::Manifest::Invalid, 17, 'start.restart_period_s', base + self.class.start('system', "  restart_period_s 86401\n"))
+    refused(Erx::Manifest::Invalid, 'start.restarts', base + self.class.start('system', "  restarts 101\n"),
+            message: /a start row's restarts is over 100/)
+    refused(Erx::Manifest::Invalid, 'start.restart_period_s', base + self.class.start('system', "  restart_period_s 86401\n"),
+            message: /a start row's restart_period_s is over 86400/)
   end
 
   def test_a_start_row_s_enable_is_only_yes_or_no
@@ -860,20 +889,20 @@ class ManifestDomainsTest < Minitest::Test
 
   def test_a_start_row_s_display_is_a_windows_service_granted_to_its_template
     display = "  display @service.b\n"
-    refused(Erx::Manifest::Invalid, 17, 'start.display', with_display(self.class.start('system', display)),
+    refused(Erx::Manifest::Invalid, 'start.display', with_display(self.class.start('system', display)),
             message: /not a windows service/)
-    refused(Erx::Manifest::Invalid, 17, 'start.display', with_display(self.class.start('system', "  display @service.c\n")),
+    refused(Erx::Manifest::Invalid, 'start.display', with_display(self.class.start('system', "  display @service.c\n")),
             message: /does not contain/)
     other_only = with_display(self.class.start('system', display),
                               served: "service b\n  server @domain.beta\n  interface windows\n#{DISPLAY}",
                               grants: [window_facet('ob', '@session.other', '@service.b') + "  parameter pixels 4096\n"])
-    refused(Erx::Manifest::Invalid, 17, 'start.display', other_only, message: /not granted/)
+    refused(Erx::Manifest::Invalid, 'start.display', other_only, message: /not granted/)
   end
 
   # Two enabled rows on one display are refused; a disabled row holds no display.
   def test_two_enabled_start_rows_on_one_display_are_refused
     display = "  display @service.b\n"
-    refused(Erx::Manifest::Invalid, 17, 'start.display',
+    refused(Erx::Manifest::Invalid, 'start.display',
             with_windows(self.class.start('system', display), self.class.start('other', display)), message: /two enabled/)
     view = @codec.open('manifest', admit(with_windows(self.class.start('system', display),
                                                       self.class.start('other', "  enable NO\n#{display}"))).bytes)
@@ -881,8 +910,10 @@ class ManifestDomainsTest < Minitest::Test
   end
 
   def test_a_partial_boot_starts_no_row
-    refused(Erx::Manifest::Invalid, 17, 'start', @plain.sub('flags development', 'flags development,partial_boot') + self.class.start)
-    refused(Erx::Manifest::Invalid, 2, 'display', @plain.sub('flags development', 'flags development,partial_boot') + DISPLAY)
+    refused(Erx::Manifest::Invalid, 'start', @plain.sub('flags development', 'flags development,partial_boot') + self.class.start,
+            message: /a partial boot starts no row/)
+    refused(Erx::Manifest::Invalid, 'display', @plain.sub('flags development', 'flags development,partial_boot') + DISPLAY,
+            message: /a partial boot runs no services/)
   end
 
   # Property 18: the display record is packed by its service's index, with its policy,
@@ -909,18 +940,18 @@ class ManifestDomainsTest < Minitest::Test
     admit(with_windows(record: DISPLAY.sub('single', 'rio')))
     error = assert_raises(Erx::ABI::SchemaError) { admit(with_windows(record: DISPLAY.sub('single', 'tiled'))) }
     assert_match(/policy names no member of mf_display_policy/, error.message)
-    refused(Erx::Manifest::Invalid, 18, 'display.idle_off_s', with_windows(record: DISPLAY.sub('idle_off_s 600', 'idle_off_s 59')),
+    refused(Erx::Manifest::Invalid, 'display.idle_off_s', with_windows(record: DISPLAY.sub('idle_off_s 600', 'idle_off_s 59')),
             message: /off before it dims/)
   end
 
   # Seed: a windows service with no display record would have grants no sum counts.
   def test_every_windows_service_has_a_display_record_and_every_record_one
-    refused(Erx::Manifest::Invalid, 18, 'display.name', with_windows(record: ''), message: /has no display record/)
-    refused(Erx::Manifest::Invalid, 18, 'display.name', with_display(served: service('b', '@domain.beta') + DISPLAY),
+    refused(Erx::Manifest::Invalid, 'display.name', with_windows(record: ''), message: /has no display record/)
+    refused(Erx::Manifest::Invalid, 'display.name', with_display(served: service('b', '@domain.beta') + DISPLAY),
             message: /not checked by windows_grant/)
-    refused(Erx::Manifest::Invalid, 18, 'display.name', with_windows + DISPLAY.sub('display b', 'display c'),
+    refused(Erx::Manifest::Invalid, 'display.name', with_windows + DISPLAY.sub('display b', 'display c'),
             message: /does not contain/)
-    refused(Erx::Manifest::Invalid, 'source', 'display', with_windows + DISPLAY)
+    refused(Erx::Manifest::Invalid, 'display', with_windows + DISPLAY, message: /duplicate source alias/)
   end
 
   # Seed: a domain serving two displays would pay for both displays' grants out of one
@@ -928,12 +959,12 @@ class ManifestDomainsTest < Minitest::Test
   def test_one_domain_serves_one_display
     second = "service c\n  server @domain.beta\n  interface windows\n#{DISPLAY.sub('display b', 'display c')}" +
              window_facet('sc', '@session.system', '@service.c') + "  parameter pixels 4096\n"
-    refused(Erx::Manifest::Invalid, 18, 'display.name', with_windows + second, message: /one domain serves two displays/)
+    refused(Erx::Manifest::Invalid, 'display.name', with_windows + second, message: /one domain serves two displays/)
     admit(with_windows + second.gsub('@domain.beta', '@domain.alpha'))
   end
 
   def test_a_display_is_served_by_a_configured_domain
-    refused(Erx::Manifest::Invalid, 18, 'display.name', with_windows(server: 'system'), message: /system domain/)
+    refused(Erx::Manifest::Invalid, 'display.name', with_windows(server: 'system'), message: /system domain/)
   end
 
   # Seed: the system domain is connected to every domain at its creation, by no
@@ -941,12 +972,12 @@ class ManifestDomainsTest < Minitest::Test
   # "The pixel area"); a windows grant to it would be installed without one.
   def test_no_display_is_granted_to_the_system_domain
     granted = with_windows + window_facet('ys', 'system', '@service.b') + "  parameter pixels 4096\n"
-    refused(Erx::Manifest::Invalid, 18, 'facet.grantee', granted, message: /grants a display to the system domain/)
+    refused(Erx::Manifest::Invalid, 'facet.grantee', granted, message: /grants a display to the system domain/)
   end
 
   # Seed: the session parameter is the domain service's alone.
   def test_no_facet_row_sets_session
-    refused(Erx::Manifest::Invalid, 18, 'facet.parameter', with_windows(sb: "  parameter pixels 4096\n  parameter session no\n"),
+    refused(Erx::Manifest::Invalid, 'facet.parameter', with_windows(sb: "  parameter pixels 4096\n  parameter session no\n"),
             message: /sets session/)
   end
 
@@ -958,9 +989,9 @@ class ManifestDomainsTest < Minitest::Test
   def test_only_root_s_development_grant_sets_front
     front = "  parameter pixels 4096\n  parameter front yes\n"
     admit(with_windows(sb: front))
-    refused(Erx::Manifest::Invalid, 18, 'facet.parameter', with_windows(ob: front), message: /sets front/)
+    refused(Erx::Manifest::Invalid, 'facet.parameter', with_windows(ob: front), message: /sets front/)
     domain = with_windows + window_facet('ab', '@domain.alpha', '@service.b') + front
-    refused(Erx::Manifest::Invalid, 18, 'facet.parameter', domain, message: /sets front/)
+    refused(Erx::Manifest::Invalid, 'facet.parameter', domain, message: /sets front/)
     release = Class.new(Erx::Manifest::Check) { private def check_mode(development:, partial:) = nil }
     context = Erx::Manifest::Context.new(**ManifestContextFixture.arguments(@codec).merge(platform: @platform),
                                          build_kind: 'release')
@@ -971,7 +1002,8 @@ class ManifestDomainsTest < Minitest::Test
     end
     check.call("  parameter pixels 4096\n")
     error = assert_raises(Erx::Manifest::Invalid) { check.call(front) }
-    assert_equal [18, 'facet.parameter'], [error.property, error.field], error.message
+    assert_equal 'facet.parameter', error.field, error.message
+    assert_match(/sets front/, error.message)
   end
 
   # Seed: a template's grant costs its pixel area and the display's side once for each
@@ -980,9 +1012,9 @@ class ManifestDomainsTest < Minitest::Test
   # page more each passes it, which counting the template once would accept.
   def test_a_template_s_pixel_areas_count_once_for_each_session_it_can_have
     admit(with_windows(sb: "  parameter pixels #{127 * 4096}\n", ob: "  parameter pixels #{1 << 30}\n"))
-    refused(Erx::Manifest::Invalid, 18, 'facet.parameter', with_windows(sb: "  parameter pixels #{128 * 4096}\n"),
+    refused(Erx::Manifest::Invalid, 'facet.parameter', with_windows(sb: "  parameter pixels #{128 * 4096}\n"),
             message: /past its domain's outer budget/)
-    refused(Erx::Manifest::Invalid, 18, 'facet.parameter', with_windows(sb: ''), message: /past its domain's outer budget/)
+    refused(Erx::Manifest::Invalid, 'facet.parameter', with_windows(sb: ''), message: /past its domain's outer budget/)
   end
 
   # A facet's parameters, resolved against its service's declarations, are packed in
@@ -999,11 +1031,11 @@ class ManifestDomainsTest < Minitest::Test
   def test_a_facet_parameter_is_declared_stated_once_and_within_its_bound
     { "  parameter root \"/\"\n" => /not declared/, "  parameter windows 2\n  parameter windows 2\n" => /twice/,
       "  parameter windows 0\n" => /outside 1 to 4096/, "  parameter windows 4097\n" => /outside 1 to 4096/ }.each do |lines, message|
-      refused(Erx::Manifest::Invalid, 2, 'facet.parameter', with_windows(sb: "  parameter pixels 4096\n#{lines}"), message: message)
+      refused(Erx::Manifest::Invalid, 'facet.parameter', with_windows(sb: "  parameter pixels 4096\n#{lines}"), message: message)
     end
     assert_raises(Erx::ABI::SchemaError) { admit(with_windows(sb: "  parameter pixels 4096\n  parameter clipboard true\n")) }
     undeclared = facet('ab', '@domain.alpha', '@service.b') + "  parameter root \"/\"\n"
-    refused(Erx::Manifest::Invalid, 2, 'facet.parameter', @source + service('b', '@domain.beta') + undeclared, message: /not declared/)
+    refused(Erx::Manifest::Invalid, 'facet.parameter', @source + service('b', '@domain.beta') + undeclared, message: /not declared/)
   end
 
   # Property 19 (docs/design-packaging.md, "The build's check"): the apps row, its
@@ -1028,25 +1060,28 @@ class ManifestDomainsTest < Minitest::Test
     admit(for_apps(@source + self.class.apps, 8))
     admit(for_apps(@source + self.class.apps(max: 64), 64))
     # Seed: an app not counted as a principal with a domain quota of one.
-    refused(Erx::Manifest::Invalid, 4, 'principals.domains', for_apps(@source + self.class.apps, 7), message: /apps row's max/)
+    refused(Erx::Manifest::Invalid, 'principals.domains', for_apps(@source + self.class.apps, 7), message: /apps row's max/)
   end
 
   def test_an_apps_row_s_max_and_memory_are_bounded
-    refused(Erx::Manifest::Invalid, 19, 'apps.max', for_apps(@source + self.class.apps(max: 0), 8))
-    refused(Erx::Manifest::Invalid, 19, 'apps.max', for_apps(@source + self.class.apps(max: 65), 65))
-    refused(Erx::Manifest::Invalid, 19, 'apps.memory', for_apps(@source + self.class.apps(memory: 4097), 8))
-    refused(Erx::Manifest::Invalid, 19, 'apps.memory', for_apps(@source + self.class.apps(memory: 0), 8))
+    refused(Erx::Manifest::Invalid, 'apps.max', for_apps(@source + self.class.apps(max: 0), 8), message: /max is outside 1 to 64/)
+    refused(Erx::Manifest::Invalid, 'apps.max', for_apps(@source + self.class.apps(max: 65), 65), message: /max is outside 1 to 64/)
+    refused(Erx::Manifest::Invalid, 'apps.memory', for_apps(@source + self.class.apps(memory: 4097), 8),
+            message: /the apps budget must be positive and page-aligned/)
+    refused(Erx::Manifest::Invalid, 'apps.memory', for_apps(@source + self.class.apps(memory: 0), 8),
+            message: /the apps budget must be positive and page-aligned/)
   end
 
   # Seed: the apps budget left out of property 4's sum within root_memory.
   def test_the_apps_budget_counts_within_root_memory
     root_memory = Integer(@source[/^  root_memory (\d+)$/, 1])
-    refused(Erx::Manifest::Invalid, 4, 'principals.memory', for_apps(@source + self.class.apps(memory: root_memory), 8),
+    refused(Erx::Manifest::Invalid, 'principals.memory', for_apps(@source + self.class.apps(memory: root_memory), 8),
             message: /apps budget/)
   end
 
   def test_a_manifest_holds_at_most_one_apps_row
-    refused(Erx::Manifest::Invalid, 19, 'apps', for_apps(@source + self.class.apps + self.class.apps(packages: false), 8))
+    refused(Erx::Manifest::Invalid, 'apps', for_apps(@source + self.class.apps + self.class.apps(packages: false), 8),
+            message: /at most one apps row/)
   end
 
   # Seeds: services naming what would let an app command the start table, install
@@ -1055,25 +1090,26 @@ class ManifestDomainsTest < Minitest::Test
   # service.
   def test_an_apps_row_s_services_are_services_an_app_may_take
     %w[packages start apps etc machine].each do |name|
-      refused(Erx::Manifest::Invalid, 19, 'apps.services', for_apps(@source + self.class.apps(services: name), 8),
+      refused(Erx::Manifest::Invalid, 'apps.services', for_apps(@source + self.class.apps(services: name), 8),
               message: /services names #{name}:/)
     end
-    refused(Erx::Manifest::Invalid, 19, 'apps.services', for_apps(@source + self.class.apps(services: 'nowhere'), 8),
+    refused(Erx::Manifest::Invalid, 'apps.services', for_apps(@source + self.class.apps(services: 'nowhere'), 8),
             message: /not the name of one service/)
-    refused(Erx::Manifest::Invalid, 19, 'apps.services', for_apps(@source + self.class.apps(services: 'data data'), 8),
+    refused(Erx::Manifest::Invalid, 'apps.services', for_apps(@source + self.class.apps(services: 'data data'), 8),
             message: /twice/)
     # Seed: a files service accepted, whose grant no tree apps roots at the app's directory.
-    refused(Erx::Manifest::Unsupported, 'unsupported', 'apps.services',
+    refused(Erx::Manifest::Unsupported, 'apps.services',
             for_apps(with_display(grants: [], served: "service b\n  server @domain.beta\n  interface files\n") +
                       self.class.apps(services: 'b'), 8), message: /files interface/)
-    refused(Erx::Manifest::Invalid, 19, 'apps.services', for_apps(with_display(grants: []) + self.class.apps(services: 'b'), 8),
+    refused(Erx::Manifest::Invalid, 'apps.services', for_apps(with_display(grants: []) + self.class.apps(services: 'b'), 8),
             message: /no ABI file declares/)
     two = with_display(grants: [], served: "service b\n  server @domain.beta\n  interface files\n" \
                                          "service a2\n  name \"b\"\n  server @domain.alpha\n  interface files\n")
-    refused(Erx::Manifest::Invalid, 19, 'apps.services', for_apps(two + self.class.apps(services: 'b'), 8),
+    refused(Erx::Manifest::Invalid, 'apps.services', for_apps(two + self.class.apps(services: 'b'), 8),
             message: /not the name of one service/)
     inspect = "service seen\n  server system\n  interface inspect\n"
-    refused(Erx::Manifest::Unsupported, 'unsupported', 'apps.services', for_apps(@source + inspect + self.class.apps(services: 'seen'), 8))
+    refused(Erx::Manifest::Unsupported, 'apps.services', for_apps(@source + inspect + self.class.apps(services: 'seen'), 8),
+            message: /services names seen, of the inspect interface, whose scope for/)
   end
 
   # Seed: a service whose ABI file gives a parameter no default, which an app's row,
@@ -1091,7 +1127,7 @@ class ManifestDomainsTest < Minitest::Test
     error = assert_raises(Erx::Manifest::Invalid) do
       Erx::Manifest.admit(source: source, codec: codec, context: context, planner: @planner)
     end
-    assert_equal [19, 'apps.services'], [error.property, error.field], error.message
+    assert_equal 'apps.services', error.field, error.message
     assert_match(/gives depth no default/, error.message)
   end
 
@@ -1102,7 +1138,7 @@ class ManifestDomainsTest < Minitest::Test
     outer = 2 * (4096 + 4096) + @codec.constant('windows_pixels_default') + 4096
     roomy = ->(source) { source.sub("  memory 4194304\n  outer 1048576\n", "  memory 16777216\n  outer #{outer}\n") }
     admit(for_apps(roomy.call(with_windows + self.class.apps(services: 'b', max: 1)), 1))
-    refused(Erx::Manifest::Invalid, 18, 'apps.max', for_apps(roomy.call(with_windows + self.class.apps(services: 'b', max: 2)), 2),
+    refused(Erx::Manifest::Invalid, 'apps.max', for_apps(roomy.call(with_windows + self.class.apps(services: 'b', max: 2)), 2),
             message: /past its domain's outer budget/)
     admit(for_apps(roomy.call(with_windows + self.class.apps(max: 2)), 2))
   end
@@ -1171,7 +1207,7 @@ class ManifestDomainsTest < Minitest::Test
     granted = [@codec.member('files_rights', 'rw'), @codec.member('files_tree', 'home')]
     assert_equal users.map { |index| [@codec.member('mf_grantee', 'session'), index, granted] }, homes.sort
     row = window_facet('own_home', '@domain.alpha', '@service.home')
-    refused(Erx::Manifest::Invalid, 19, 'facet.service', for_apps(roomy + home + self.class.apps(max: 1) + row, 1),
+    refused(Erx::Manifest::Invalid, 'facet.service', for_apps(roomy + home + self.class.apps(max: 1) + row, 1),
             message: /home service/)
   end
 
@@ -1188,7 +1224,7 @@ class ManifestDomainsTest < Minitest::Test
   # service's interface.
   def test_an_apps_row_s_grant_of_data_is_refused_as_the_whole_volume
     data = "service #{@codec.fixed_bytes('data_service').delete("\0")}\n  server @domain.beta\n  interface net\n"
-    refused(Erx::Manifest::Invalid, 19, 'facet.grantee',
+    refused(Erx::Manifest::Invalid, 'facet.grantee',
             for_apps(with_display(served: data, grants: []) + self.class.apps(services: 'data'), 8), message: /whole volume/)
   end
 
@@ -1199,10 +1235,10 @@ class ManifestDomainsTest < Minitest::Test
     source = with_display(served: data, grants: [system, root])
     admit(source)
     other = window_facet('data_session', '@session.other', '@service.data')
-    refused(Erx::Manifest::Invalid, 19, 'facet.grantee', with_display(served: data, grants: [system, other]),
+    refused(Erx::Manifest::Invalid, 'facet.grantee', with_display(served: data, grants: [system, other]),
             message: /whole volume/)
     domain = window_facet('data_alpha', '@domain.alpha', '@service.data')
-    refused(Erx::Manifest::Invalid, 19, 'facet.grantee', with_display(served: data, grants: [system, domain]),
+    refused(Erx::Manifest::Invalid, 'facet.grantee', with_display(served: data, grants: [system, domain]),
             message: /whole volume/)
     release = Class.new(Erx::Manifest::Check) { private def check_mode(development:, partial:) = nil }
     context = Erx::Manifest::Context.new(**ManifestContextFixture.arguments(@codec).merge(platform: @platform),
@@ -1214,7 +1250,7 @@ class ManifestDomainsTest < Minitest::Test
     end
     check.call([system])
     error = assert_raises(Erx::Manifest::Invalid) { check.call([system, root]) }
-    assert_equal [19, 'facet.grantee'], [error.property, error.field], error.message
+    assert_equal 'facet.grantee', error.field, error.message
     assert_match(/whole volume/, error.message)
   end
 
@@ -1223,18 +1259,18 @@ class ManifestDomainsTest < Minitest::Test
   # which no @session.NAME reaches, since it names no principal; an apps row with no
   # limits session record, or one that does not enable SPACES; and a service whose ABI
   # file leaves a quantity out.
-  def test_property_19_refuses_what_would_derive_the_template_wrongly
+  def test_the_apps_rules_refuse_what_would_derive_the_template_wrongly
     %w[apps installed].each do |tree|
       row = facet('treed', '@domain.alpha', '@service.packages') + "  parameter tree #{tree}\n"
-      refused(Erx::Manifest::Invalid, 19, 'facet.parameter', for_apps(@source + self.class.apps + row, 8), message: /carries a tree/)
+      refused(Erx::Manifest::Invalid, 'facet.parameter', for_apps(@source + self.class.apps + row, 8), message: /carries a tree/)
     end
     app = facet('app_packages', '@session.app', '@service.packages')
     assert_raises(Erx::Manifest::Invalid) { admit(for_apps(@source + self.class.apps + app, 8)) }
     session = /^limits session\n(?:  .*\n)*/
-    refused(Erx::Manifest::Invalid, 19, 'apps', for_apps(@source.sub(session, '') + self.class.apps, 8), message: /limits session/)
+    refused(Erx::Manifest::Invalid, 'apps', for_apps(@source.sub(session, '') + self.class.apps, 8), message: /limits session/)
     flat = @source.sub(session) { |record| record.sub(/^  flags .*$/, '  flags none').sub(/^  spaces .*$/, '  spaces none') }
     refute_equal @source, flat
-    refused(Erx::Manifest::Invalid, 19, 'apps', for_apps(flat + self.class.apps, 8), message: /SPACES/)
+    refused(Erx::Manifest::Invalid, 'apps', for_apps(flat + self.class.apps, 8), message: /SPACES/)
     bare = Erx::ABI::Syntax.parse("service bare 98\n  served_as message\n", path: 'abi/services/bare.txt')
     sources = Erx::ABI::Sources.read(root: File.expand_path('../..', __dir__))
     codec = Erx::ABI::Codec.new(Erx::ABI::Model.validate(
@@ -1245,7 +1281,7 @@ class ManifestDomainsTest < Minitest::Test
     error = assert_raises(Erx::Manifest::Invalid) do
       Erx::Manifest.admit(source: source, codec: codec, context: context, planner: @planner)
     end
-    assert_equal [19, 'apps.services'], [error.property, error.field], error.message
+    assert_equal 'apps.services', error.field, error.message
     assert_match(/declares no max_request/, error.message)
   end
 
@@ -1261,15 +1297,16 @@ class ManifestDomainsTest < Minitest::Test
     end
     base = with_display(grants: []) + starts.join
     admit(for_apps(base + self.class.apps(max: max - 1), max - 1))
-    refused(Erx::Manifest::Invalid, 19, 'apps.max', for_apps(base + self.class.apps(max: max), max), message: /start_rows_max/)
+    refused(Erx::Manifest::Invalid, 'apps.max', for_apps(base + self.class.apps(max: max), max), message: /start_rows_max/)
   end
 
   def test_a_signer_row_holds_an_ed25519_public_key_under_a_unique_name
     key = ->(bytes) { "  key hex:#{'ab' * bytes}\n" }
     admit(@source + "signer dev\n#{key.call(32)}signer ops\n#{key.call(32)}")
-    refused(Erx::Manifest::Invalid, 19, 'signer.key', @source + "signer dev\n#{key.call(31)}")
-    refused(Erx::Manifest::Invalid, 19, 'signer.key', @source + "signer dev\n#{key.call(33)}")
-    refused(Erx::Manifest::Invalid, 'source', 'signer', @source + "signer dev\n#{key.call(32)}signer dev\n#{key.call(32)}")
+    refused(Erx::Manifest::Invalid, 'signer.key', @source + "signer dev\n#{key.call(31)}", message: /signer dev's key is not 32 bytes/)
+    refused(Erx::Manifest::Invalid, 'signer.key', @source + "signer dev\n#{key.call(33)}", message: /signer dev's key is not 32 bytes/)
+    refused(Erx::Manifest::Invalid, 'signer', @source + "signer dev\n#{key.call(32)}signer dev\n#{key.call(32)}",
+            message: /duplicate source alias/)
     assert_raises(Erx::ABI::SchemaError) { admit(@source + "signer dev\n  key \"#{'a' * 32}\"\n") }
   end
 
@@ -1278,14 +1315,16 @@ class ManifestDomainsTest < Minitest::Test
   # only in a development build, as an Ed25519 public key of signer_key_bytes, and a
   # manifest with no apps row, whose machine takes no packages, packs none.
   def test_the_development_key_comes_from_a_development_build_alone
-    refused(Erx::Manifest::Invalid, 19, 'signer.name', @source + "signer development\n  key hex:#{'ab' * 32}\n")
+    refused(Erx::Manifest::Invalid, 'signer.name', @source + "signer development\n  key hex:#{'ab' * 32}\n",
+            message: /signer development is the build's development package key,/)
     arguments = ManifestContextFixture.arguments(@codec).merge(platform: @platform)
     error = assert_raises(Erx::Manifest::Invalid) do
       Erx::Manifest::Context.new(**arguments, build_kind: 'release', development_key: "\x01".b * 32)
     end
-    assert_equal %w[context development_key], [error.property, error.field]
+    assert_equal 'context.development_key', error.field
     @context = Erx::Manifest::Context.new(**arguments, development_key: "\x01".b * 31)
-    refused(Erx::Manifest::Invalid, 19, 'context.development_key', for_apps(@source + self.class.apps, 8))
+    refused(Erx::Manifest::Invalid, 'context.development_key', for_apps(@source + self.class.apps, 8),
+            message: /the development package key is not 32 bytes/)
     @context = Erx::Manifest::Context.new(**arguments, development_key: "\x01".b * 32)
     assert_equal 0, @codec.open('manifest', admit.bytes).count('development_key')
     assert_equal false, admit.report.fetch('development_key')
@@ -1298,11 +1337,11 @@ class ManifestDomainsTest < Minitest::Test
   def test_the_published_package_key_is_never_a_trust_root
     published = Erx::PackageKey.published.public_key
     admit(@source + "signer deployer\n  key hex:#{'ab' * 32}\n")
-    refused(Erx::Manifest::Invalid, 19, 'signer.key', @source + "signer deployer\n  key hex:#{published.unpack1('H*')}\n",
+    refused(Erx::Manifest::Invalid, 'signer.key', @source + "signer deployer\n  key hex:#{published.unpack1('H*')}\n",
             message: /\bsigner deployer's key is the published package key, which nothing trusts\z/)
     arguments = ManifestContextFixture.arguments(@codec).merge(platform: @platform)
     @context = Erx::Manifest::Context.new(**arguments, development_key: published)
-    refused(Erx::Manifest::Invalid, 19, 'context.development_key', for_apps(@source + self.class.apps, 8),
+    refused(Erx::Manifest::Invalid, 'context.development_key', for_apps(@source + self.class.apps, 8),
             message: /\bthe development package key is the published package key, which nothing trusts\z/)
   end
 
@@ -1363,15 +1402,15 @@ class ManifestDomainsTest < Minitest::Test
   def test_a_package_row_is_refused_unless_its_package_fits_the_apps_row
     with_packages('clock' => 65_536, 'quotes' => 4096)
     apps = for_apps(@source + self.class.apps(max: 1), 1)
-    refused(Erx::Manifest::Invalid, 19, 'package.input', apps + self.class.package('clock', input: 'app'), message: /no package artifact/)
-    refused(Erx::Manifest::Invalid, 19, 'package.input', apps + self.class.package('clock', input: 'package-quotes'),
+    refused(Erx::Manifest::Invalid, 'package.input', apps + self.class.package('clock', input: 'app'), message: /no package artifact/)
+    refused(Erx::Manifest::Invalid, 'package.input', apps + self.class.package('clock', input: 'package-quotes'),
             message: /is the package of quotes/)
-    refused(Erx::Manifest::Invalid, 19, 'package', apps + self.class.package('clock') + self.class.package('quotes'),
+    refused(Erx::Manifest::Invalid, 'package', apps + self.class.package('clock') + self.class.package('quotes'),
             message: /pass the apps row's max, 1/)
-    refused(Erx::Manifest::Invalid, 19, 'package', @source + self.class.package('clock'), message: /max, 0/)
+    refused(Erx::Manifest::Invalid, 'package', @source + self.class.package('clock'), message: /max, 0/)
     roomy = for_apps(@source + self.class.apps(memory: 65_536, max: 2), 2)
     admit(roomy + self.class.package('clock', enable: 'YES') + self.class.package('quotes'))
-    refused(Erx::Manifest::Invalid, 19, 'package.enable',
+    refused(Erx::Manifest::Invalid, 'package.enable',
             roomy + self.class.package('clock', enable: 'YES') + self.class.package('quotes', enable: 'YES'),
             message: /declare 69632 bytes, past the apps budget of 65536/)
   end
@@ -1390,9 +1429,9 @@ class ManifestDomainsTest < Minitest::Test
     ManifestContextFixture.line_grant(*given, floor: @codec.constant('files_max_frame_min'), **options)
   end
 
-  def refused_line(property, field, source, message, context: line_context)
+  def refused_line(field, source, message, context: line_context)
     error = assert_raises(Erx::Manifest::Invalid) { admit(source, context: context) }
-    assert_equal [property, field], [error.property, error.field], error.message
+    assert_equal field, error.field, error.message
     assert_match message, error.message
   end
 
@@ -1408,14 +1447,14 @@ class ManifestDomainsTest < Minitest::Test
   # Seeds: a uart naming no placed device, a device that is no UART, the console's and
   # the host link's UARTs, a UART another domain holds, and a flow of neither word.
   def test_a_line_grant_names_a_uart_of_the_system_domain_s_that_no_other_use_takes
-    { '/pl011@9070000' => [2, /names no placed device/], '/virtio_mmio@a003e00' => [8, /names no UART/],
-      @platform.fetch('console') => [8, /console's or the host link's/],
-      @platform.fetch('hostlink') => [8, /console's or the host link's/] }.each do |uart, (property, message)|
-      refused_line(property, 'facet.parameter', with_line(line_grant('la', '@domain.alpha', uart)), message)
+    { '/pl011@9070000' => /names no placed device/, '/virtio_mmio@a003e00' => /names no UART/,
+      @platform.fetch('console') => /console's or the host link's/,
+      @platform.fetch('hostlink') => /console's or the host link's/ }.each do |uart, message|
+      refused_line('facet.parameter', with_line(line_grant('la', '@domain.alpha', uart)), message)
     end
-    refused_line(8, 'facet.parameter', with_line(line_grant('la', '@domain.alpha', '/pl011@9050000'), holders: { 'line_a' => '@domain.beta' }),
+    refused_line('facet.parameter', with_line(line_grant('la', '@domain.alpha', '/pl011@9050000'), holders: { 'line_a' => '@domain.beta' }),
                  /not the system domain's/)
-    refused_line(8, 'facet.parameter', with_line(line_grant('la', '@domain.alpha', '/pl011@9050000', flow: 'xon')), /none or rts_cts/)
+    refused_line('facet.parameter', with_line(line_grant('la', '@domain.alpha', '/pl011@9050000', flow: 'xon')), /none or rts_cts/)
     admit(with_line(line_grant('la', '@domain.alpha', '/pl011@9050000', flow: 'rts_cts')), context: line_context)
   end
 
@@ -1425,8 +1464,8 @@ class ManifestDomainsTest < Minitest::Test
     grant = with_line(line_grant('la', '@domain.alpha', '/pl011@9050000'))
     console_line = @platform.fetch('units').flat_map { |unit| unit.fetch('devices') }
                             .find { |device| device['path'] == @platform.fetch('console') }.fetch('line')
-    refused_line(8, 'facet.parameter', grant, /share interrupt line #{console_line}/, context: line_context(lines: { 'line_a' => console_line }))
-    refused_line(8, 'service.server', grant.sub("service line\n  server system\n", "service line\n  server @domain.beta\n"),
+    refused_line('facet.parameter', grant, /share interrupt line #{console_line}/, context: line_context(lines: { 'line_a' => console_line }))
+    refused_line('service.server', grant.sub("service line\n  server system\n", "service line\n  server @domain.beta\n"),
                  /only the system domain serves the line/)
   end
 
@@ -1437,21 +1476,21 @@ class ManifestDomainsTest < Minitest::Test
   def test_the_line_interface_s_service_is_named_line
     grant = with_line(line_grant('la', '@domain.alpha', '/pl011@9050000'))
     admit(grant, context: line_context)
-    refused_line(8, 'service.name', grant.sub("service line\n", "service bt_line\n").sub('@service.line', '@service.bt_line'),
+    refused_line('service.name', grant.sub("service line\n", "service bt_line\n").sub('@service.line', '@service.bt_line'),
                  /bt_line is named line exactly when it is of the line interface/)
-    refused_line(8, 'service.name', with_line.sub("interface line\n", "interface net\n"),
+    refused_line('service.name', with_line.sub("interface line\n", "interface net\n"),
                  /service line is named line exactly when/)
   end
 
   # Seeds: two grants of one UART; two line grants of different UARTs, since one line
   # service serves one line (TODO.md); and a grant to a session template.
   def test_a_manifest_grants_one_line_to_a_configured_domain
-    refused_line(8, 'facet.parameter', with_line(line_grant('la', '@domain.alpha', '/pl011@9050000'),
-                                                 line_grant('lb', '@domain.beta', '/pl011@9050000')), /two line grants/)
-    refused_line(8, 'facet.service', with_line(line_grant('la', '@domain.alpha', '/pl011@9050000'),
-                                               line_grant('lb', '@domain.beta', '/pl011@9060000')), /at most one line grant/)
-    refused_line(8, 'facet.grantee', with_line(line_grant('ls', '@session.system', '/pl011@9050000'),
-                                               base: with_session(self.class.session)), /no configured domain/)
+    refused_line('facet.parameter', with_line(line_grant('la', '@domain.alpha', '/pl011@9050000'),
+                                              line_grant('lb', '@domain.beta', '/pl011@9050000')), /two line grants/)
+    refused_line('facet.service', with_line(line_grant('la', '@domain.alpha', '/pl011@9050000'),
+                                            line_grant('lb', '@domain.beta', '/pl011@9060000')), /at most one line grant/)
+    refused_line('facet.grantee', with_line(line_grant('ls', '@session.system', '/pl011@9050000'),
+                                            base: with_session(self.class.session)), /no configured domain/)
   end
 
   # The codec of the tree's ABI with one more interface, declared by DECLARATION.
@@ -1476,7 +1515,7 @@ class ManifestDomainsTest < Minitest::Test
     error = assert_raises(Erx::Manifest::Invalid) do
       Erx::Manifest.admit(source: source, codec: codec, context: context, planner: @planner)
     end
-    assert_equal [8, 'facet.parameter'], [error.property, error.field], error.message
+    assert_equal 'facet.parameter', error.field, error.message
     assert_match(/console's or the host link's/, error.message)
   end
 
@@ -1490,7 +1529,7 @@ class ManifestDomainsTest < Minitest::Test
       Erx::Manifest.admit(source: @source + "service pn\n  server @domain.beta\n  interface pane\n", codec: codec,
                           context: context, planner: @planner)
     end
-    assert_equal [18, 'display.name'], [error.property, error.field], error.message
+    assert_equal 'display.name', error.field, error.message
   end
 
   # Seed: one service's parameters naming two checkers, which no dispatch could serve.

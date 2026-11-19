@@ -13,7 +13,10 @@ require_relative 'domain_startup'
 
 module Erx
   module Manifest
-    class Unsupported < Invalid; end
+    # A manifest that asks for what the check does not support, which its message says.
+    class Unsupported < Invalid
+      def initialize(message, field:) = super("not supported: #{message}", field: field)
+    end
 
     # A deep, frozen copy of the build's context, string keys in sorted order, so nothing
     # the build changes after making the context changes what was checked.
@@ -21,11 +24,11 @@ module Erx
       module_function
 
       def copy(value, depth: 0)
-        raise Invalid.new('context nesting exceeds 64', property: 'context', field: 'input') if depth > 64
+        raise Invalid.new('context nesting exceeds 64', field: 'context.input') if depth > 64
         case value
         when Hash
           unless value.keys.all? { |key| key.is_a?(String) }
-            raise Invalid.new('context keys must be strings', property: 'context', field: 'input')
+            raise Invalid.new('context keys must be strings', field: 'context.input')
           end
           value.sort_by { |key, _item| key.b }.to_h do |key, item|
             [key.dup.freeze, copy(item, depth: depth + 1)]
@@ -37,7 +40,7 @@ module Erx
         when Integer, TrueClass, FalseClass, NilClass
           value
         else
-          raise Invalid.new('context contains an unsupported value', property: 'context', field: 'input')
+          raise Invalid.new('context contains an unsupported value', field: 'context.input')
         end
       end
     end
@@ -61,21 +64,20 @@ module Erx
                provenance.is_a?(Array) && root_entry.is_a?(Integer) && root_entry.between?(0, catalog.size - 1) &&
                device_kinds.is_a?(Array) && !device_kinds.empty? && device_kinds.all? { |kind| device_kind?(kind) } &&
                artifacts.values.all? { |artifact| started_recorded?(artifact) }
-          raise Invalid.new('incomplete checked context', property: 'context', field: 'input')
+          raise Invalid.new('incomplete checked context', field: 'context.input')
         end
         unless development_key.nil? || (development_key.is_a?(String) && BuildKind.development?(build_kind))
-          raise Invalid.new('only a development build trusts a development package key', property: 'context',
-                                                                                          field: 'development_key')
+          raise Invalid.new('only a development build trusts a development package key', field: 'context.development_key')
         end
         notices = provenance.map do |record|
           unless record.is_a?(Hash)
-            raise Invalid.new('invalid provenance record', property: 'context', field: 'provenance')
+            raise Invalid.new('invalid provenance record', field: 'context.provenance')
           end
           normalized = record.reject { |key, _value| key == 'notice' }
           if record.key?('notice')
             notice = record.fetch('notice')
             unless notice.is_a?(String)
-              raise Invalid.new('notice must be bytes', property: 'context', field: 'provenance')
+              raise Invalid.new('notice must be bytes', field: 'context.provenance')
             end
             normalized = normalized.merge('notice_sha256' => Digest::SHA256.hexdigest(notice))
           end
@@ -117,11 +119,11 @@ module Erx
           unless row.is_a?(Hash) && (row.keys - %w[path kind flags source image]).empty? &&
                  row['path'].is_a?(String) && row['kind'].is_a?(Integer) &&
                  row['flags'].is_a?(Integer) && row['source'].is_a?(Hash)
-            raise Invalid.new('invalid catalog row', property: 'context', field: 'catalog')
+            raise Invalid.new('invalid catalog row', field: 'context.catalog')
           end
           path = row.fetch('path').b
           if previous && previous >= path
-            raise Invalid.new('catalog paths must ascend strictly', property: 'context', field: 'catalog')
+            raise Invalid.new('catalog paths must ascend strictly', field: 'context.catalog')
           end
           previous = path
           source = row.fetch('source')
@@ -129,18 +131,18 @@ module Erx
           when 'artifact'
             unless source.keys.sort == %w[id kind sha256] && source['id'].is_a?(String) &&
                    source['sha256'].is_a?(String) && source['sha256'].match?(/\A[0-9a-f]{64}\z/)
-              raise Invalid.new('invalid artifact identity', property: 'context', field: 'catalog.source')
+              raise Invalid.new('invalid artifact identity', field: 'context.catalog.source')
             end
           when 'generated'
             unless source.keys.sort == %w[kind producer] && %w[manifest notices].include?(source['producer'])
-              raise Invalid.new('unknown generated artifact', property: 'context', field: 'catalog.source')
+              raise Invalid.new('unknown generated artifact', field: 'context.catalog.source')
             end
           when 'directory'
             unless source.keys == %w[kind]
-              raise Invalid.new('invalid empty directory', property: 'context', field: 'catalog.source')
+              raise Invalid.new('invalid empty directory', field: 'context.catalog.source')
             end
           else
-            raise Invalid.new('unknown catalog origin', property: 'context', field: 'catalog.source')
+            raise Invalid.new('unknown catalog origin', field: 'context.catalog.source')
           end
         end
       end
@@ -153,7 +155,7 @@ module Erx
       attr_reader :bytes, :report
 
       def self.prepare(source:, codec:, context:)
-        raise Invalid.new('checked context required', property: 'context', field: 'input') unless context.is_a?(Context)
+        raise Invalid.new('checked context required', field: 'context.input') unless context.is_a?(Context)
         parsed = Frontend.parse(source, version: codec.constant('manifest_version'))
         normalized, report = EmptyNative.new(parsed, codec: codec, context: context, planner: nil).check
         bytes = Encoder.new(codec).encode(normalized)
@@ -182,7 +184,7 @@ module Erx
         ram, reserve = platform.values_at('ram_bytes', 'fiasco_reserve')
         unless ram.is_a?(Integer) && reserve.is_a?(Integer) && reserve.positive? && reserve < ram
           raise Unsupported.new('the platform record states no RAM size and fiasco_reserve to check root startup against',
-                                property: 4, field: 'root_startup')
+                                field: 'root_startup')
         end
         { 'ram_bytes' => ram, 'fiasco_reserve' => reserve }.freeze
       end
@@ -191,10 +193,10 @@ module Erx
         memory = declared(platform)
         if loadable + baseline > root_memory
           raise Invalid.new("the root's loadable segments and system_baseline exceed root_memory",
-                            property: 4, field: 'root_startup')
+                            field: 'root_startup')
         end
         if root_memory > memory.fetch('ram_bytes') - memory.fetch('fiasco_reserve')
-          raise Invalid.new('root_memory exceeds RAM less fiasco_reserve', property: 4, field: 'root_startup')
+          raise Invalid.new('root_memory exceeds RAM less fiasco_reserve', field: 'root_startup')
         end
       end
 
@@ -227,7 +229,7 @@ module Erx
         raise Invalid.new("the archive (#{mib(archive_bytes)}) and root_memory (#{mib(root_memory)}) exceed the " \
                           "#{mib(room)} this machine leaves them (RAM less fiasco_reserve and the #{mib(kept)} " \
                           "the boot keeps) by #{(short + 1023) / 1024} KiB",
-                          property: 4, field: 'root_startup')
+                          field: 'root_startup')
       end
 
       # What check_archive derived for an archive that fits, in bytes: the archive, the
@@ -282,7 +284,7 @@ module Erx
         withheld = platform['root_withheld']
         unless withheld.is_a?(Integer) && withheld.positive?
           raise Unsupported.new('the platform record states no root_withheld to check the archive against',
-                                property: 4, field: 'root_startup')
+                                field: 'root_startup')
         end
         { ram_bytes: memory.fetch('ram_bytes'), fiasco_reserve: memory.fetch('fiasco_reserve'),
           root_withheld: withheld }
@@ -343,7 +345,7 @@ module Erx
       attr_reader :bytes, :report
 
       def self.admit(source:, codec:, context:, planner: nil)
-        raise Invalid.new('checked context required', property: 'context', field: 'input') unless context.is_a?(Context)
+        raise Invalid.new('checked context required', field: 'context.input') unless context.is_a?(Context)
         RootStartup.declared(context.platform)
         parsed = Frontend.parse(source, version: codec.constant('manifest_version'))
         checker = Check.new(parsed, codec: codec, context: context, planner: planner)
@@ -444,32 +446,32 @@ module Erx
         flags = flags(machine, 'flags', 'manifest_flags')
         development = (flags & @codec.member('manifest_flags', 'development')) != 0
         unless development == BuildKind.development?(@context.build_kind)
-          invalid('configuration conflicts with checked build kind', 9, 'machine.flags')
+          invalid('configuration conflicts with checked build kind', 'machine.flags')
         end
         partial = (flags & @codec.member('manifest_flags', 'partial_boot')) != 0
-        invalid('partial boot requires development mode', 9, 'machine.flags') if partial && !development
+        invalid('partial boot requires development mode', 'machine.flags') if partial && !development
         check_mode(development: development, partial: partial)
         @apps = apps_row
         root_private_bytes = check_catalog
         platform_name = text(machine, 'platform')
-        invalid('configuration names a different checked platform', 1, 'machine.platform') unless platform_name == @context.platform['name']
+        invalid('configuration names a different checked platform', 'machine.platform') unless platform_name == @context.platform['name']
         parent_cpus = @context.platform['cpuset']
         unless parent_cpus.is_a?(Integer) && parent_cpus.between?(1, (1 << 64) - 1)
-          invalid('checked platform requires a nonempty CPU set', 'context', 'platform.cpuset')
+          invalid('checked platform requires a nonempty CPU set', 'context.platform.cpuset')
         end
         system_share = share(machine, 'system_share')
         users_share = share(machine, 'users_share')
         system_cpus, system_rate = effective_share(system_share, parent_cpus)
         users_cpus, users_rate = effective_share(users_share, parent_cpus)
-        invalid('system grant has no execution capacity', 4, 'machine.system_share') unless system_rate.positive?
-        invalid('system and users exceed the root CPU rate', 4, 'machine.shares') if system_rate + users_rate > population(parent_cpus)
+        invalid('system grant has no execution capacity', 'machine.system_share') unless system_rate.positive?
+        invalid('system and users exceed the root CPU rate', 'machine.shares') if system_rate + users_rate > population(parent_cpus)
         root_memory = number(machine, 'root_memory')
         baseline = number(machine, 'system_baseline')
         page = @codec.constant('page_size')
-        invalid('root memory must be positive and page-aligned', 4, 'machine.root_memory') unless root_memory.positive? && (root_memory % page).zero?
-        invalid('system baseline must be positive', 4, 'machine.system_baseline') unless baseline.positive?
+        invalid('root memory must be positive and page-aligned', 'machine.root_memory') unless root_memory.positive? && (root_memory % page).zero?
+        invalid('system baseline must be positive', 'machine.system_baseline') unless baseline.positive?
         if baseline < root_private_bytes
-          invalid('baseline is smaller than the checked private image memory', 4, 'machine.system_baseline')
+          invalid('baseline is smaller than the checked private image memory', 'machine.system_baseline')
         end
         rows = @reader.tables.keys.to_h { |name| [name, []] }
         normalize_profiles(rows)
@@ -478,29 +480,29 @@ module Erx
         # Every living domain, configured or requested, is one of its principal's quota,
         # and every app is a principal with a quota of one (property 19's second clause).
         if principals.sum { |row| row.fetch('domains') } + @apps.max > max_domains
-          invalid('principal domain quotas and the apps row\'s max exceed max_domains', 4, 'principals.domains')
+          invalid('principal domain quotas and the apps row\'s max exceed max_domains', 'principals.domains')
         end
         normalize_units(rows)
         device_memory = rows.fetch('devices').sum { |device| device.fetch('dma_memory') }
         # The Fiasco backend's contiguous pool holds every device's memory at once (RootStartup.contiguous_pool_bytes).
         if device_memory > RootStartup::CONTIGUOUS_POOL_MAX_BYTES
-          invalid("device memory exceeds the #{RootStartup::CONTIGUOUS_POOL_MAX_BYTES >> 20} MiB contiguous pool", 4, 'devices.dma_memory')
+          invalid("device memory exceeds the #{RootStartup::CONTIGUOUS_POOL_MAX_BYTES >> 20} MiB contiguous pool", 'devices.dma_memory')
         end
         # The apps budget is carved from root_memory as a principal's is (property 19).
         promised = principals.sum { |row| row.fetch('memory') } + @apps.memory + baseline + device_memory
         if promised > root_memory
-          invalid('principal budgets, the apps budget, system baseline and device memory exceed root memory', 4, 'principals.memory')
+          invalid('principal budgets, the apps budget, system baseline and device memory exceed root memory', 'principals.memory')
         end
         console = text(machine, 'console')
         hostlink = text(machine, 'hostlink')
         check_uarts(rows, console, hostlink)
         unless enum(machine, 'sealing', 'seal') == @codec.member('seal', 'none')
-          invalid('no sealing service exists to hold a sealing secret', 7, 'machine.sealing')
+          invalid('no sealing service exists to hold a sealing secret', 'machine.sealing')
         end
         shell = records('shell_principal').map do |record|
           { 'principal' => reference_token(record.properties.fetch('targets').first, 'principal', record.line) }
         end
-        invalid('duplicate shell principal', 5, 'shell_principals') unless shell.map { |row| row.fetch('principal') }.uniq.size == shell.size
+        invalid('duplicate shell principal', 'shell_principals') unless shell.map { |row| row.fetch('principal') }.uniq.size == shell.size
         rows['shell_principals'] = shell.sort_by { |row| row.fetch('principal') }
         check_and_place(rows, root_memory: root_memory, baseline: baseline, max_domains: max_domains)
         check_pin_controller(rows, console, hostlink)
@@ -508,7 +510,7 @@ module Erx
         # The system principal's sessions are root_N (erx_domain_core:session_prefix/3),
         # so a principal named root must be the system principal.
         root = @indices.fetch('principal').fetch('root', system_principal)
-        invalid('only the system principal may be named root', 5, 'principal.name') unless root == system_principal
+        invalid('only the system principal may be named root', 'principal.name') unless root == system_principal
         header = {
           'magic' => @codec.constant('manifest_magic'), 'version' => @codec.constant('manifest_version'),
           'flags' => flags, 'host' => text(machine, 'host'), 'system_args' => words(machine, 'system_args'),
@@ -526,7 +528,7 @@ module Erx
         }
         check_lane(header.fetch('system_lane'), 'machine.system_lane')
         %w[system_queue peer_held].each do |key|
-          invalid('limit must be positive', 4, "machine.#{key}") unless header.fetch(key).positive?
+          invalid('limit must be positive', "machine.#{key}") unless header.fetch(key).positive?
         end
         report = { 'child_plan_instances' => 0,
                    'root_image_private_bytes' => root_private_bytes, 'root_memory' => root_memory,
@@ -538,12 +540,12 @@ module Erx
 
       private
 
-      def invalid(message, property, field)
-        raise Invalid.new(message, property: property, field: field)
+      def invalid(message, field)
+        raise Invalid.new(message, field: field)
       end
 
       def unsupported(message, field)
-        raise Unsupported.new(message, property: 'unsupported', field: field)
+        raise Unsupported.new(message, field: field)
       end
 
       def records(kind)
@@ -558,16 +560,16 @@ module Erx
         return NO_APPS unless record
 
         memory = number(record, 'memory')
-        invalid('the apps budget must be positive and page-aligned', 19, 'apps.memory') unless
+        invalid('the apps budget must be positive and page-aligned', 'apps.memory') unless
           memory.positive? && (memory % @codec.constant('page_size')).zero?
         max = record.properties.key?('max') ? number(record, 'max') : @codec.constant('apps_max_default')
         limit = @codec.constant('apps_max_limit')
-        invalid("max is outside 1 to #{limit}", 19, 'apps.max') unless max.between?(1, limit)
+        invalid("max is outside 1 to #{limit}", 'apps.max') unless max.between?(1, limit)
         services = record.properties.fetch('services', []).map do |token|
           record.line.fail!('services requires service names') if token.quoted || !token.value.match?(Frontend::IDENTIFIER)
           token.value
         end
-        invalid('services names a service twice', 19, 'apps.services') unless services.uniq.size == services.size
+        invalid('services names a service twice', 'apps.services') unless services.uniq.size == services.size
         AppsRow.new(memory: memory, services: services.freeze, max: max)
       end
 
@@ -602,7 +604,7 @@ module Erx
         token = one(record, key)
         record.line.fail!("#{key} requires an integer") if token.quoted
         value = ABI::Syntax.integer(token.value, line: record.line)
-        invalid('value is outside unsigned 64-bit range', 'source', key) unless value.between?(0, (1 << 64) - 1)
+        invalid('value is outside unsigned 64-bit range', key) unless value.between?(0, (1 << 64) - 1)
         value
       end
 
@@ -611,7 +613,7 @@ module Erx
         record.line.fail!('flag list cannot be quoted') if token.quoted
         return 0 if token.value == 'none'
         names = token.value.split(',', -1)
-        invalid('duplicate flag', 'source', key) unless names.uniq.size == names.size
+        invalid('duplicate flag', key) unless names.uniq.size == names.size
         names.reduce(0) { |mask, name| mask | member(record.line, key, type, name) }
       end
 
@@ -641,10 +643,10 @@ module Erx
 
       # A holder or server: literal system, the system domain, or @domain.NAME, a
       # configured domain's index.
-      def holder_index(token, property:, field:)
+      def holder_index(token, field:)
         return @codec.constant('mf_none') if !token.quoted && token.value == 'system'
 
-        domain_index(token) || invalid('names neither the system domain nor a configured domain', property, field)
+        domain_index(token) || invalid('names neither the system domain nor a configured domain', field)
       end
 
       # A configured domain's index, or nil when the token names none.
@@ -675,11 +677,11 @@ module Erx
                    'grace_us' => %w[grace_min_us grace_max_us] }
         checks.each do |field, bounds|
           unless values.fetch(field).between?(*bounds.map { |name| @codec.constant(name) })
-            invalid('grant value requires kernel clamping', 4, "share.#{field}")
+            invalid('grant value requires kernel clamping', "share.#{field}")
           end
         end
         unless values.fetch('base') <= values.fetch('ceiling') && values.fetch('ceiling') <= @codec.constant('urgency_max')
-          invalid('invalid urgency bounds', 4, 'share.urgency')
+          invalid('invalid urgency bounds', 'share.urgency')
         end
         @codec.encode_layout('erx_share', values)
         values.freeze
@@ -713,10 +715,10 @@ module Erx
           spaces = one(record, 'spaces')
           enabled = (values.fetch('flags') & @codec.member('mf_limits_flags', 'spaces')) != 0
           if spaces.value == 'none' && !spaces.quoted
-            invalid('enabled sub-spaces need a grant', 4, 'limits.spaces') if enabled
+            invalid('enabled sub-spaces need a grant', 'limits.spaces') if enabled
             values['spaces'] = @codec.schema.types.fetch('erx_share').fields.to_h { |field| [field.name, 0] }
           else
-            invalid('disabled sub-spaces must have no grant', 4, 'limits.spaces') unless enabled
+            invalid('disabled sub-spaces must have no grant', 'limits.spaces') unless enabled
             values['spaces'] = share(record, 'spaces')
           end
           check_lane(values.fetch('lane'), 'limits.lane')
@@ -733,13 +735,13 @@ module Erx
         result = records('principal').sort_by(&:name).map do |record|
           grant = share(record, 'grant')
           cpus, rate = effective_share(grant, parent_cpus)
-          invalid('principal grant exceeds users', 4, 'principal.grant') if rate > parent_rate
+          invalid('principal grant exceeds users', 'principal.grant') if rate > parent_rate
           values = { 'name' => record.name, 'memory' => number(record, 'memory'), 'grant' => grant,
                      'domains' => number(record, 'domains'), 'names' => number(record, 'names'),
                      'default_limits' => reference(record, 'default_limits', 'limits'),
                      'ceiling_limits' => reference(record, 'ceiling_limits', 'limits') }
           pooled = "#{record.name}_#{values.fetch('names')}"
-          invalid('name pool exceeds identifier bound', 5, 'principal.names') unless pooled.bytesize <= 63
+          invalid('name pool exceeds identifier bound', 'principal.names') unless pooled.bytesize <= 63
           defaults = rows.fetch('limits').fetch(values.fetch('default_limits'))
           ceilings = rows.fetch('limits').fetch(values.fetch('ceiling_limits'))
           check_limits(defaults, ceilings, cpus, rate, rows.fetch('runtime_limits'))
@@ -750,45 +752,45 @@ module Erx
 
       def check_limits(defaults, ceilings, cpus, parent_rate, runtime_limits)
         %w[memory outer lane connections crash peer_held peer_held_total].each do |field|
-          invalid('default exceeds principal ceiling', 4, "limits.#{field}") if defaults.fetch(field) > ceilings.fetch(field)
+          invalid('default exceeds principal ceiling', "limits.#{field}") if defaults.fetch(field) > ceilings.fetch(field)
         end
-        invalid('default flags exceed principal ceiling', 4, 'limits.flags') unless (defaults.fetch('flags') & ~ceilings.fetch('flags')).zero?
+        invalid('default flags exceed principal ceiling', 'limits.flags') unless (defaults.fetch('flags') & ~ceilings.fetch('flags')).zero?
         default_cpus, default_rate = effective_share(defaults.fetch('grant'), cpus)
         ceiling_cpus, ceiling_rate = effective_share(ceilings.fetch('grant'), cpus)
         if default_rate > ceiling_rate || ceiling_rate > parent_rate || (default_cpus & ~ceiling_cpus) != 0 ||
            defaults.fetch('grant').fetch('ceiling') > ceilings.fetch('grant').fetch('ceiling')
-          invalid('default CPU grant exceeds principal ceiling', 4, 'limits.grant')
+          invalid('default CPU grant exceeds principal ceiling', 'limits.grant')
         end
         if (defaults.fetch('flags') & @codec.member('mf_limits_flags', 'spaces')) != 0
           _, child_rate = effective_share(defaults.fetch('spaces'), default_cpus)
-          invalid('sub-space grant exceeds domain', 4, 'limits.spaces') if child_rate > default_rate
+          invalid('sub-space grant exceeds domain', 'limits.spaces') if child_rate > default_rate
         end
         left = runtime_limits.fetch(defaults.fetch('runtime_limits'))
         right = runtime_limits.fetch(ceilings.fetch('runtime_limits'))
         Frontend::FIELDS.fetch('runtime_limits').each do |field|
-          invalid('runtime default exceeds ceiling', 4, "runtime_limits.#{field}") if left.fetch(field) > right.fetch(field)
+          invalid('runtime default exceeds ceiling', "runtime_limits.#{field}") if left.fetch(field) > right.fetch(field)
         end
       end
 
       def normalize_units(rows)
         units = @context.platform['units']
-        invalid('checked platform needs a unit roster', 'context', 'platform.units') unless units.is_a?(Array)
+        invalid('checked platform needs a unit roster', 'context.platform.units') unless units.is_a?(Array)
         by_key = {}
         units.each do |unit|
           unless unit.is_a?(Hash) && unit['key'].is_a?(String) && unit['devices'].is_a?(Array) && !by_key.key?(unit['key'])
-            invalid('invalid checked platform unit', 'context', 'platform.units')
+            invalid('invalid checked platform unit', 'context.platform.units')
           end
           by_key[unit.fetch('key')] = unit
         end
         placed = []
         records('unit').sort_by(&:name).each do |record|
           key = text(record, 'placement')
-          unit = by_key[key] || invalid('unit is absent from checked placement', 1, 'unit.placement')
-          invalid('unit is assigned more than once', 1, 'unit.placement') if placed.include?(key)
+          unit = by_key[key] || invalid('unit is absent from checked placement', 'unit.placement')
+          invalid('unit is assigned more than once', 'unit.placement') if placed.include?(key)
           placed << key
-          holder = holder_index(one(record, 'holder'), property: 1, field: 'unit.holder')
+          holder = holder_index(one(record, 'holder'), field: 'unit.holder')
           first = rows.fetch('devices').size
-          invalid('platform unit has no devices', 'context', 'platform.units') if unit.fetch('devices').empty?
+          invalid('platform unit has no devices', 'context.platform.units') if unit.fetch('devices').empty?
           unit.fetch('devices').sort_by { |device| device.fetch('placement_key').b }.each do |device|
             normalized = platform_device(device)
             normalized['clock'] = device_clock(normalized)
@@ -810,15 +812,15 @@ module Erx
 
         unless device.fetch('selector') == @codec.member('mf_selector', 'dt') && device['path'] == FRAMEBUFFER_PATH &&
                device['compatible'] == FRAMEBUFFER_COMPATIBLE
-          invalid("a framebuffer row names #{FRAMEBUFFER_PATH} and #{FRAMEBUFFER_COMPATIBLE}", 'context', 'platform.devices')
+          invalid("a framebuffer row names #{FRAMEBUFFER_PATH} and #{FRAMEBUFFER_COMPATIBLE}", 'context.platform.devices')
         end
         unless device.fetch('dma') == @codec.member('mf_dma', 'none') && device.fetch('line').zero? && device.fetch('flags').zero?
-          invalid('a framebuffer row has no DMA, line or flags', 'context', 'platform.devices')
+          invalid('a framebuffer row has no DMA, line or flags', 'context.platform.devices')
         end
         page = @codec.constant('page_size')
         return if (device.fetch('base') % page).zero? && (device.fetch('size') % page).zero?
 
-        invalid('a framebuffer window is whole pages', 'context', 'platform.devices')
+        invalid('a framebuffer window is whole pages', 'context.platform.devices')
       end
 
       # Property 1 for a framebuffer's window: the root maps for the window's holder whatever
@@ -838,12 +840,12 @@ module Erx
           check_framebuffer(row)
           base = row.fetch('base')
           limit = base + row.fetch('size')
-          invalid('a framebuffer window meets the platform\'s RAM', 1, 'devices.base') if meets_ram?(base, limit)
+          invalid('a framebuffer window meets the platform\'s RAM', 'devices.base') if meets_ram?(base, limit)
           devices.each do |device|
             next if device.fetch('role') == framebuffer || device.fetch('selector') != device_tree
             next unless device.fetch('base') < limit && base < device.fetch('base') + device.fetch('size')
 
-            invalid("a framebuffer window meets #{device['path']}'s registers", 1, 'devices.base')
+            invalid("a framebuffer window meets #{device['path']}'s registers", 'devices.base')
           end
         end
       end
@@ -851,7 +853,7 @@ module Erx
       # Whether [base, limit) meets the RAM the platform record states.
       def meets_ram?(base, limit)
         first, bytes = @context.platform.values_at('ram_first', 'ram_bytes')
-        invalid('checked platform needs its RAM', 'context', 'platform.ram_first') unless
+        invalid('checked platform needs its RAM', 'context.platform.ram_first') unless
           first.is_a?(Integer) && bytes.is_a?(Integer)
         base < first + bytes && first < limit
       end
@@ -860,7 +862,7 @@ module Erx
       # DMA kind as the codec's numbers, flags and DMA memory defaulted to 0, and a
       # device-tree row's window and line checked integers (device_window).
       def platform_device(device)
-        invalid('invalid checked device row', 'context', 'platform.devices') unless device.is_a?(Hash)
+        invalid('invalid checked device row', 'context.platform.devices') unless device.is_a?(Hash)
         normalized = device.dup
         { 'selector' => 'mf_selector', 'role' => 'mf_device_role', 'dma' => 'mf_dma' }.each do |field, type|
           normalized[field] = @codec.member(type, normalized.fetch(field)) if normalized[field].is_a?(String)
@@ -876,22 +878,21 @@ module Erx
       def device_window(device)
         fields = %w[base size line]
         unless device.fetch('selector') == @codec.member('mf_selector', 'dt')
-          invalid('a PCIe function carries a window or line', 'context', 'platform.devices') if fields.any? { |field| device.fetch(field, 0) != 0 }
+          invalid('a PCIe function carries a window or line', 'context.platform.devices') if fields.any? { |field| device.fetch(field, 0) != 0 }
           return fields.to_h { |field| [field, 0] }
         end
 
         missing = fields.reject { |field| device[field].is_a?(Integer) }
-        invalid("device-tree device lacks #{missing.join(', ')}", 'context', 'platform.devices') unless missing.empty?
-        invalid('device-tree device has an empty window', 'context', 'platform.devices') if device.fetch('size').zero?
+        invalid("device-tree device lacks #{missing.join(', ')}", 'context.platform.devices') unless missing.empty?
+        invalid('device-tree device has an empty window', 'context.platform.devices') if device.fetch('size').zero?
         # Line 0 is no line (docs/design-abi.md, "Devices and partition windows"), so only a
         # row no driver binds a line for, of the ordinary role, which no device kind has, or a
         # framebuffer's, carries it.
         if device.fetch('line').zero? && ![device_role('ordinary'), device_role('framebuffer')].include?(device.fetch('role'))
-          invalid('a driven device-tree device names no interrupt line', 'context', 'platform.devices')
+          invalid('a driven device-tree device names no interrupt line', 'context.platform.devices')
         end
         unless device_path?(device['path'])
-          invalid("device-tree device's path is not a node path of at most #{@codec.constant('device_path_max')} bytes",
-                  'context', 'platform.devices')
+          invalid("device-tree device's path is not a node path of at most #{@codec.constant('device_path_max')} bytes", 'context.platform.devices')
         end
         device.slice(*fields)
       end
@@ -911,9 +912,9 @@ module Erx
         clock = device.fetch('clock', 0)
         named = "#{device['compatible']} device #{device['path'].inspect}"
         if clocked?(device)
-          invalid("#{named} lacks its clock in hertz", 'context', 'platform.devices') unless clock.is_a?(Integer) && clock.positive?
+          invalid("#{named} lacks its clock in hertz", 'context.platform.devices') unless clock.is_a?(Integer) && clock.positive?
         else
-          invalid("#{named} carries a clock, which no driver of its kind reads", 'context', 'platform.devices') unless clock == 0
+          invalid("#{named} carries a clock, which no driver of its kind reads", 'context.platform.devices') unless clock == 0
         end
         clock
       end
@@ -928,18 +929,18 @@ module Erx
       end
 
       def check_uarts(rows, console, hostlink)
-        invalid('console and host link must differ', 8, 'machine.hostlink') if !hostlink.empty? && hostlink == console
+        invalid('console and host link must differ', 'machine.hostlink') if !hostlink.empty? && hostlink == console
         paths = rows.fetch('devices').select do |device|
           device.fetch('selector') == @codec.member('mf_selector', 'dt') && device.fetch('role') == @codec.member('mf_device_role', 'uart')
         end.map { |device| device.fetch('path') }
         [console, hostlink].reject(&:empty?).each do |path|
           field = path == console ? 'machine.console' : 'machine.hostlink'
-          invalid('UART is not placed', 8, field) unless paths.include?(path)
-          invalid('UART is not assigned to the system domain', 8, field) unless unit_holder(rows, path) == @codec.constant('mf_none')
+          invalid('UART is not placed', field) unless paths.include?(path)
+          invalid('UART is not assigned to the system domain', field) unless unit_holder(rows, path) == @codec.constant('mf_none')
         end
         check_console_kind(rows, console)
         unless @context.platform['console'] == console && (@context.platform.fetch('hostlink', '') == hostlink)
-          invalid('UART paths disagree with checked platform', 8, 'machine.console')
+          invalid('UART paths disagree with checked platform', 'machine.console')
         end
         check_uart_lines(rows, console, hostlink.empty? ? {} : { hostlink => 'machine.hostlink' })
       end
@@ -966,7 +967,7 @@ module Erx
         controller = header.fetch('controller')
         device_tree = @codec.member('mf_selector', 'dt')
         row = platform_device(record_device(controller))
-        invalid("pin controller #{controller.inspect} is no device-tree row", 'context', 'platform.header') unless
+        invalid("pin controller #{controller.inspect} is no device-tree row", 'context.platform.header') unless
           row.fetch('selector') == device_tree
         page = register_pages(row)
         controlling = lambda do |unit|
@@ -985,7 +986,7 @@ module Erx
           domain = @indices.fetch('domain').key(holder)
           invalid("unit #{unit.fetch('name')} reaches pin controller #{controller}'s registers, which set the console's " \
                   "and host link's pins, so its holder domain #{domain} is a domain of its own, but a row of #{table}" \
-                  "#{" (#{other.fetch('name')})" if other.key?('name')} names it", 8, 'unit.holder')
+                  "#{" (#{other.fetch('name')})" if other.key?('name')} names it", 'unit.holder')
         end
       end
 
@@ -1030,7 +1031,7 @@ module Erx
       # The checked platform's device row at path, placed or not.
       def record_device(path)
         @context.platform.fetch('units').flat_map { |unit| unit.fetch('devices') }.find { |device| device['path'] == path } ||
-          invalid("pin controller #{path} is no device of the checked platform", 'context', 'platform.header')
+          invalid("pin controller #{path} is no device of the checked platform", 'context.platform.header')
       end
 
       # The whole pages a normalized row's register window [base, base + size) lies in, as a
@@ -1056,7 +1057,7 @@ module Erx
         compatible = rows.fetch('devices').find { |device| device['path'] == console }.fetch('compatible')
         return if @context.device_kinds.any? { |kind| kind.fetch('role') == 'uart' && kind.fetch('compatible') == compatible }
 
-        invalid("console UART #{console} is #{compatible}, which no UART kind of #{DeviceKinds::SOURCE} names", 8,
+        invalid("console UART #{console} is #{compatible}, which no UART kind of #{DeviceKinds::SOURCE} names",
                 'machine.console')
       end
 
@@ -1073,7 +1074,7 @@ module Erx
         others.each do |path, field|
           next unless line_of.call(path) == line_of.call(console)
 
-          invalid("console #{console} and UART #{path} share interrupt line #{line_of.call(console)}", 8, field)
+          invalid("console #{console} and UART #{path} share interrupt line #{line_of.call(console)}", field)
         end
       end
 
@@ -1086,7 +1087,7 @@ module Erx
 
       def check_lane(value, field)
         unless value.between?(@codec.constant('lane_min'), @codec.constant('lane_max')) && (value & (value - 1)).zero?
-          invalid('lane must be a bounded power of two', 4, field)
+          invalid('lane must be a bounded power of two', field)
         end
       end
 
@@ -1096,25 +1097,25 @@ module Erx
         unless entries.size == 1 && entries.first.fetch('kind') == @codec.member('entry_kind', 'file') &&
                entries.first.fetch('flags') == @codec.member('entry_flags', 'system') &&
                entries.first.fetch('source') == { 'kind' => 'generated', 'producer' => 'manifest' }
-          invalid('reserved manifest path must have its generated system-file row', 1, 'catalog.manifest')
+          invalid('reserved manifest path must have its generated system-file row', 'catalog.manifest')
         end
         root = @context.catalog.fetch(@context.root_entry)
         unless root.fetch('kind') == @codec.member('entry_kind', 'image') &&
                (root.fetch('flags') & @codec.member('entry_flags', 'system')) != 0 && root['image'].is_a?(Hash)
-          invalid('root is not a system executable', 6, 'catalog.root')
+          invalid('root is not a system executable', 'catalog.root')
         end
         image = root.fetch('image')
         unless image['magic'] == @codec.constant('image_magic') && image['version'] == @codec.constant('image_version') &&
                image['abi_version'] == @codec.abi_version &&
                image['flags'].is_a?(Integer) && (image.fetch('flags') & @codec.member('image_flags', 'jit')).zero?
-          invalid('root image has incompatible ABI or JIT authority', 6, 'catalog.root')
+          invalid('root image has incompatible ABI or JIT authority', 'catalog.root')
         end
         @codec.encode_layout('erx_image_manifest', image)
         page = @codec.constant('page_size')
         image.fetch('segments').sum do |segment|
           if segment.fetch('prot') == @codec.member('prot', 'rw')
             bytes = segment.fetch('mem_size')
-            invalid('root writable segment exceeds its bound', 6, 'catalog.root') if bytes > @codec.constant('image_writable_max')
+            invalid('root writable segment exceeds its bound', 'catalog.root') if bytes > @codec.constant('image_writable_max')
             ((bytes + page - 1) / page) * page
           else
             0
@@ -1135,14 +1136,14 @@ module Erx
           unsupported('child domain planning is unavailable', kind) unless records(kind).empty?
         end
         %w[window service facet introduce image system_image liveness display apps package signer].each do |kind|
-          invalid('empty native boot has no service or child assignments', 9, kind) unless records(kind).empty?
+          invalid('empty native boot has no service or child assignments', kind) unless records(kind).empty?
         end
-        invalid('a partial boot starts no row', 17, 'start') unless records('start').empty?
+        invalid('a partial boot starts no row', 'start') unless records('start').empty?
       end
 
       def check_device(device)
         unsupported('device allocation needs a checked sizing provider', 'devices.dma') unless device.fetch('dma') == @codec.member('mf_dma', 'none')
-        invalid('non-DMA device has a DMA reservation', 4, 'devices.dma_memory') unless device.fetch('dma_memory').zero?
+        invalid('non-DMA device has a DMA reservation', 'devices.dma_memory') unless device.fetch('dma_memory').zero?
       end
 
       def check_and_place(_rows, root_memory:, baseline:, max_domains:) = nil
@@ -1194,7 +1195,6 @@ module Erx
       # the manifest check requires of it beyond what it requires of every service:
       #
       # * constant, the abi/manifest.txt constant that holds its name;
-      # * property, the property its clauses are numbered under;
       # * needs, what makes the manifest hold exactly one service of the name, of the
       #   files interface, and the build derive its rows: an apps row (:apps), the name
       #   being served at all (:served), or nothing (nil), when it derives none;
@@ -1210,8 +1210,8 @@ module Erx
       #   the derived rows do), or a SourceGrants.
       #
       # A row with neither needs nor window is not checked to be of the files interface.
-      WellKnown = Data.define(:constant, :property, :needs, :window, :derived, :source) do
-        def initialize(constant:, property:, needs:, window:, derived:, source:)
+      WellKnown = Data.define(:constant, :needs, :window, :derived, :source) do
+        def initialize(constant:, needs:, window:, derived:, source:)
           raise Erx::Error, "WellKnown #{constant} needs #{needs.inspect}" unless [:apps, :served, nil].include?(needs)
           raise Erx::Error, "WellKnown #{constant} source #{source.inspect}" unless
             [:any, :none].include?(source) || source.is_a?(SourceGrants)
@@ -1230,31 +1230,31 @@ module Erx
         # the tree's root, and the app template's rx, rooted at installed/, where no upload
         # in progress lies: an app's session mounts its installed package at /app through
         # it (design-files.md F6: an rx mount only through an rx grant).
-        WellKnown.new(constant: 'packages_service', property: 19, needs: :apps, window: nil,
+        WellKnown.new(constant: 'packages_service', needs: :apps, window: nil,
                       derived: [Derived.new(grantee: :system, values: { 'rights' => 'rw' }),
                                 Derived.new(grantee: :app_template, values: { 'rights' => 'rx', 'tree' => 'installed' })],
                       source: :any),
         # Property 19's eighth clause: served by the system window's holder, the domain
         # whose block driver serves the system partition; the app template's rx grant
         # mounts an image package at /app.
-        WellKnown.new(constant: 'system_service', property: 19, needs: :apps, window: 'system',
+        WellKnown.new(constant: 'system_service', needs: :apps, window: 'system',
                       derived: [Derived.new(grantee: :system, values: { 'rights' => 'ro' }),
                                 Derived.new(grantee: :app_template, values: { 'rights' => 'rx' })],
                       source: :none),
         # Property 19's seventh clause: every user's template is granted its user's home.
-        WellKnown.new(constant: 'home_service', property: 19, needs: :served, window: nil,
+        WellKnown.new(constant: 'home_service', needs: :served, window: nil,
                       derived: [Derived.new(grantee: :user_templates, values: { 'rights' => 'rw', 'tree' => 'home' })],
                       source: :none),
         # Property 19's tenth clause: a user's one place on the data volume is its home,
         # so a grant that reaches the whole volume is the system domain's, or root's in
         # development.
-        WellKnown.new(constant: 'data_service', property: 19, needs: nil, window: nil, derived: [],
+        WellKnown.new(constant: 'data_service', needs: nil, window: nil, derived: [],
                       source: SourceGrants.new(root: :development, read_only: false,
                                                why: 'grants state no tree and so reach the whole volume')),
         # Property 8's: the system domain and the import of SSH's stage 1 in root's
         # sessions read root's login keys, and nothing writes them (docs/design-ssh.md,
         # "Invariants", H8).
-        WellKnown.new(constant: 'login_keys_service', property: 8, needs: nil, window: 'record_volume', derived: [],
+        WellKnown.new(constant: 'login_keys_service', needs: nil, window: 'record_volume', derived: [],
                       source: SourceGrants.new(root: :always, read_only: true, why: 'tree holds root\'s login keys'))
       ])
 
@@ -1267,39 +1267,39 @@ module Erx
 
       def check_mode(development:, partial:)
         unless development
-          raise Unsupported.new('a release build needs the confinement check that M11 brings', property: 9, field: 'machine.flags')
+          raise Unsupported.new('a release build needs the confinement check that M11 brings', field: 'machine.flags')
         end
         REFUSED.each { |kind, reason| unsupported(reason, kind) unless records(kind).empty? }
         return unless partial
 
-        invalid('a partial boot configures no domains', 12, 'domain') unless records('domain').empty?
-        invalid('a partial boot makes no sessions', 14, 'session') unless records('session').empty?
-        invalid('a partial boot starts no row', 17, 'start') unless records('start').empty?
+        invalid('a partial boot configures no domains', 'domain') unless records('domain').empty?
+        invalid('a partial boot makes no sessions', 'session') unless records('session').empty?
+        invalid('a partial boot starts no row', 'start') unless records('start').empty?
         %w[apps package signer].each do |kind|
-          invalid('a partial boot takes no packages', 19, kind) unless records(kind).empty?
+          invalid('a partial boot takes no packages', kind) unless records(kind).empty?
         end
         %w[service facet introduce liveness display].each do |kind|
-          invalid('a partial boot runs no services', 2, kind) unless records(kind).empty?
+          invalid('a partial boot runs no services', kind) unless records(kind).empty?
         end
-        invalid('a partial boot has no domain to hold the system partition', 8, 'system_image') unless records('system_image').empty?
+        invalid('a partial boot has no domain to hold the system partition', 'system_image') unless records('system_image').empty?
       end
 
       def check_device(device)
-        invalid('no domain holds a PCIe function until M9', 3, 'devices.selector') if device.fetch('selector') == @codec.member('mf_selector', 'pci')
+        invalid('no domain holds a PCIe function until M9', 'devices.selector') if device.fetch('selector') == @codec.member('mf_selector', 'pci')
         role = device.fetch('role')
-        invalid('no domain holds PCIe configuration space until M9', 3, 'devices.role') if role == device_role('configuration')
-        invalid('no domain holds a TPM until M11', 7, 'devices.role') if role == device_role('tpm')
+        invalid('no domain holds PCIe configuration space until M9', 'devices.role') if role == device_role('configuration')
+        invalid('no domain holds a TPM until M11', 'devices.role') if role == device_role('tpm')
         case device.fetch('dma')
         when @codec.member('mf_dma', 'confined')
           unsupported('a confined device needs a DMA window, which M9 brings', 'devices.dma')
         when @codec.member('mf_dma', 'unconfined')
-          invalid('an unconfined device needs a memory reservation', 4, 'devices.dma_memory') unless device.fetch('dma_memory').positive?
+          invalid('an unconfined device needs a memory reservation', 'devices.dma_memory') unless device.fetch('dma_memory').positive?
           # The domain library gives it as one contiguous object.
           if device.fetch('dma_memory') > @codec.constant('mem_contiguous_max')
-            invalid('a device memory reservation exceeds mem_contiguous_max', 4, 'devices.dma_memory')
+            invalid('a device memory reservation exceeds mem_contiguous_max', 'devices.dma_memory')
           end
         else
-          invalid('non-DMA device has a DMA reservation', 4, 'devices.dma_memory') unless device.fetch('dma_memory').zero?
+          invalid('non-DMA device has a DMA reservation', 'devices.dma_memory') unless device.fetch('dma_memory').zero?
         end
       end
 
@@ -1310,7 +1310,7 @@ module Erx
         services = records('service').map { |record| [record, normalize_service(record)] }
                                      .sort_by { |_record, row| [row.fetch('name'), row.fetch('server')] }
         rows['services'] = services.map(&:last)
-        invalid('two services of one server share a name', 5, 'service.name') unless
+        invalid('two services of one server share a name', 'service.name') unless
           rows['services'].map { |row| row.values_at('server', 'name') }.uniq.size == services.size
         rows['introductions'] = normalize_introductions
         app_services = check_apps(rows)
@@ -1345,7 +1345,7 @@ module Erx
       end
 
       def check_identity(devices)
-        invalid('host name is not a system identifier', 5, 'machine.host') unless text(@source.machine, 'host').match?(Frontend::IDENTIFIER)
+        invalid('host name is not a system identifier', 'machine.host') unless text(@source.machine, 'host').match?(Frontend::IDENTIFIER)
         check_one_holder(devices)
         check_no_sealed_entry
       end
@@ -1363,13 +1363,13 @@ module Erx
 
       def check_one_holder(devices)
         paths = devices.filter_map { |device| device['path'] }
-        invalid('a device appears in more than one unit', 1, 'devices.path') unless paths.uniq.size == paths.size
+        invalid('a device appears in more than one unit', 'devices.path') unless paths.uniq.size == paths.size
       end
 
       def check_no_sealed_entry
         seal = @codec.member('entry_flags', 'seal')
         return if @context.catalog.none? { |row| (row.fetch('flags') & seal) != 0 }
-        invalid('no entry carries the sealing secret until the vault at M11', 7, 'catalog.flags')
+        invalid('no entry carries the sealing secret until the vault at M11', 'catalog.flags')
       end
 
       # A pooled name: an identifier, an underscore and decimal digits (docs/design-system.md,
@@ -1383,17 +1383,17 @@ module Erx
         principals = rows.fetch('principals').map { |row| row.fetch('name') }
         records('domain').sort_by(&:name).map do |record|
           pooled = record.name.match(POOLED)
-          invalid('a configured domain\'s name has a pooled name\'s form', 5, 'domain.name') if pooled&.[](:stem)&.match?(Frontend::IDENTIFIER)
-          invalid('a configured domain shares a principal\'s name', 5, 'domain.name') if principals.include?(record.name)
-          invalid('the system domain\'s name is not a configured domain\'s', 5, 'domain.name') if record.name == 'system'
-          args = boot_args(record, property: 12, field: 'domain.args')
+          invalid('a configured domain\'s name has a pooled name\'s form', 'domain.name') if pooled&.[](:stem)&.match?(Frontend::IDENTIFIER)
+          invalid('a configured domain shares a principal\'s name', 'domain.name') if principals.include?(record.name)
+          invalid('the system domain\'s name is not a configured domain\'s', 'domain.name') if record.name == 'system'
+          args = boot_args(record, field: 'domain.args')
           strings = args.bytesize + words(record, 'env').bytesize
-          invalid('arguments and environment exceed the boot page\'s strings', 12, 'domain.args') if
+          invalid('arguments and environment exceed the boot page\'s strings', 'domain.args') if
             strings > @codec.constant('boot_strings_max')
           kind = enum(record, 'kind', 'mf_kind')
-          invalid('no secret domain until the vault at M11', 7, 'domain.kind') unless kind == @codec.member('mf_kind', 'service')
-          runtime = artifact(record, 'runtime', 'executable', property: 12, field: 'domain.runtime')
-          release = artifact(record, 'release', 'release', property: 12, field: 'domain.release')
+          invalid('no secret domain until the vault at M11', 'domain.kind') unless kind == @codec.member('mf_kind', 'service')
+          runtime = artifact(record, 'runtime', 'executable', field: 'domain.runtime')
+          release = artifact(record, 'release', 'release', field: 'domain.release')
           { 'name' => record.name, 'principal' => reference(record, 'principal', 'principal'), 'kind' => kind,
             'flags' => flags(record, 'flags', 'mf_domain_flags'), 'runtime' => runtime.fetch('entry'),
             'release' => release.fetch('entry'), 'release_files' => release.fetch('files'),
@@ -1415,7 +1415,7 @@ module Erx
         maximum = @codec.constant('boot_timeout_max_s')
         return seconds if seconds.between?(1, maximum)
 
-        invalid("a configured domain's boot timeout of #{seconds} s is outside 1 to #{maximum} s", 'source',
+        invalid("a configured domain's boot timeout of #{seconds} s is outside 1 to #{maximum} s",
                 'domain.boot_timeout_s')
       end
 
@@ -1434,20 +1434,20 @@ module Erx
         spaces = @codec.member('mf_limits_flags', 'spaces')
         templates = records('session').map do |record|
           principal = @indices.fetch('principal')[record.name] ||
-                      invalid('a session template names no principal', 14, 'session.name')
+                      invalid('a session template names no principal', 'session.name')
           limits = reference(record, 'limits', 'limits')
-          invalid('a session template\'s limits do not enable SPACES', 14, 'session.limits') if
+          invalid('a session template\'s limits do not enable SPACES', 'session.limits') if
             (rows.fetch('limits').fetch(limits).fetch('flags') & spaces).zero?
-          args = boot_args(record, property: 14, field: 'session.args')
-          invalid('arguments and environment exceed the boot page\'s strings', 14, 'session.args') if
+          args = boot_args(record, field: 'session.args')
+          invalid('arguments and environment exceed the boot page\'s strings', 'session.args') if
             args.bytesize + words(record, 'env').bytesize > @codec.constant('boot_strings_max')
           # A session's start gives it its principal and display variables after the template's words, which may
           # not shadow them.
           started = %w[principal_key display_key].map { |key| @codec.fixed_bytes(key) }
-          invalid('a session template\'s environment sets a variable its start gives it', 14, 'session.env') if
+          invalid('a session template\'s environment sets a variable its start gives it', 'session.env') if
             words(record, 'env').split("\0").any? { |word| started.include?(word.partition('=').first) }
-          runtime = artifact(record, 'runtime', 'executable', property: 14, field: 'session.runtime')
-          release = artifact(record, 'release', 'release', property: 14, field: 'session.release')
+          runtime = artifact(record, 'runtime', 'executable', field: 'session.runtime')
+          release = artifact(record, 'release', 'release', field: 'session.release')
           { 'principal' => principal, 'limits' => limits, 'runtime' => runtime.fetch('entry'),
             'release' => release.fetch('entry'), 'release_files' => release.fetch('files'),
             'args' => args, 'env' => words(record, 'env') }
@@ -1463,11 +1463,11 @@ module Erx
       def app_template(rows)
         recipe = DomainStartup::APP_TEMPLATE
         limits = @indices.fetch('limits')['session'] ||
-                 invalid('the apps row needs the limits session record its template takes', 19, 'apps')
-        invalid('the limits session record the app template takes does not enable SPACES', 19, 'apps') if
+                 invalid('the apps row needs the limits session record its template takes', 'apps')
+        invalid('the limits session record the app template takes does not enable SPACES', 'apps') if
           (rows.fetch('limits').fetch(limits).fetch('flags') & @codec.member('mf_limits_flags', 'spaces')).zero?
-        runtime = named_artifact(recipe.runtime, 'executable', property: 19, field: 'apps')
-        release = named_artifact(recipe.release, 'release', property: 19, field: 'apps')
+        runtime = named_artifact(recipe.runtime, 'executable', field: 'apps')
+        release = named_artifact(recipe.release, 'release', field: 'apps')
         { 'principal' => @codec.constant('mf_none'), 'limits' => limits, 'runtime' => runtime.fetch('entry'),
           'release' => release.fetch('entry'), 'release_files' => release.fetch('files'),
           'args' => boot_page_args(recipe.args.split(' '), recipe.release), 'env' => recipe.env.b }
@@ -1494,10 +1494,10 @@ module Erx
       # can make it a plain argument and leave init to its default script. Its own
       # arguments naming -boot are refused, since its release names the script.
       # erx_domain_srv:boot_args/2 binds a created domain's the same way.
-      def boot_args(record, property:, field:)
+      def boot_args(record, field:)
         args = words(record, 'args').split("\0")
-        invalid('the arguments name -boot, which the release sets', property, field) if args.include?('-boot')
-        boot_page_args(args, release_name(record, property: property, field: field.sub('args', 'release')))
+        invalid('the arguments name -boot, which the release sets', field) if args.include?('-boot')
+        boot_page_args(args, release_name(record, field: field.sub('args', 'release')))
       end
 
       # A word list bound to the boot script of the release named name, as boot_args
@@ -1509,31 +1509,31 @@ module Erx
 
       # The <name> of a record's `release @artifact.<name>`, once artifact has checked that
       # it names a release.
-      def release_name(record, property:, field:)
-        artifact(record, 'release', 'release', property: property, field: field)
+      def release_name(record, field:)
+        artifact(record, 'release', 'release', field: field)
         one(record, 'release').value.delete_prefix('@artifact.')
       end
 
       # The artifact a record's key names, of the kind the packer recorded for it.
-      def artifact(record, key, kind, property:, field:)
+      def artifact(record, key, kind, field:)
         token = one(record, key)
         named = !token.quoted && token.value.start_with?('@artifact.')
         artifact = named ? @context.artifacts[token.value.delete_prefix('@artifact.')] : nil
-        invalid("#{key} names no #{kind} artifact of this pack", property, field) unless artifact.is_a?(Hash) && artifact['kind'] == kind
+        invalid("#{key} names no #{kind} artifact of this pack", field) unless artifact.is_a?(Hash) && artifact['kind'] == kind
         artifact
       end
 
       # The artifact of this pack named name, of the kind the packer recorded for it.
-      def named_artifact(name, kind, property:, field:)
+      def named_artifact(name, kind, field:)
         artifact = @context.artifacts[name]
-        invalid("no #{kind} artifact #{name} in this pack", property, field) unless artifact.is_a?(Hash) && artifact['kind'] == kind
+        invalid("no #{kind} artifact #{name} in this pack", field) unless artifact.is_a?(Hash) && artifact['kind'] == kind
         artifact
       end
 
       def normalize_service(record)
         name = service_name(record)
-        invalid('service name is not a system identifier', 5, 'service.name') unless name.match?(Frontend::IDENTIFIER)
-        { 'name' => name, 'server' => holder_index(one(record, 'server'), property: 2, field: 'service.server'),
+        invalid('service name is not a system identifier', 'service.name') unless name.match?(Frontend::IDENTIFIER)
+        { 'name' => name, 'server' => holder_index(one(record, 'server'), field: 'service.server'),
           'interface' => interface_number(record) }
       end
 
@@ -1578,15 +1578,15 @@ module Erx
       # the files interface until the storage service's `tree apps` roots its grant at
       # the app's own directory, by interface, whatever its name.
       def check_apps(tables)
-        invalid('a facet of the source carries a tree, which only the rows the build derives may', 19, 'facet.parameter') if
+        invalid('a facet of the source carries a tree, which only the rows the build derives may', 'facet.parameter') if
           records('facet').any? { |record| record.parameters.any? { |key, _value| key.value == 'tree' } }
         service_rows = tables.fetch('services')
         refused = app_services_refused
         indices = @apps.services.map do |name|
           reason = refused[name.b]
-          invalid("services names #{name}: #{reason}", 19, 'apps.services') if reason
+          invalid("services names #{name}: #{reason}", 'apps.services') if reason
           matching = service_rows.each_index.select { |index| service_rows.fetch(index).fetch('name') == name.b }
-          invalid("services names #{name}, which is not the name of one service of the manifest", 19, 'apps.services') unless
+          invalid("services names #{name}, which is not the name of one service of the manifest", 'apps.services') unless
             matching.size == 1
           interface = service_rows.fetch(matching.first).fetch('interface')
           unsupported("services names #{name}, of the inspect interface, whose scope for an app is not checked", 'apps.services') if
@@ -1594,9 +1594,9 @@ module Erx
           unsupported("services names #{name}, of the files interface, whose grant no tree apps roots yet", 'apps.services') if
             interface == fetch_interface('files')
           declared = declared_parameters(interface) ||
-                     invalid("services names #{name}, whose interface no ABI file declares", 19, 'apps.services')
+                     invalid("services names #{name}, whose interface no ABI file declares", 'apps.services')
           required = declared.select { |_key, parameter| parameter.fetch(:cardinality) == 'one' }.keys
-          invalid("services names #{name}, whose interface gives #{required.join(', ')} no default", 19, 'apps.services') unless
+          invalid("services names #{name}, whose interface gives #{required.join(', ')} no default", 'apps.services') unless
             required.empty?
           derived_quantities(interface, name)
           matching.first
@@ -1611,7 +1611,7 @@ module Erx
       def derived_quantities(interface, name)
         declared = @codec.schema.services.find { |service| service.fetch(:number) == interface }&.fetch(:quantities) || {}
         missing = ABI::Contracts::FACET_QUANTITIES - declared.keys
-        invalid("services names #{name}, whose interface declares no #{missing.join(', ')}", 19, 'apps.services') unless
+        invalid("services names #{name}, whose interface declares no #{missing.join(', ')}", 'apps.services') unless
           missing.empty?
         declared.merge('queue' => number(@source.machine, 'system_queue'))
       end
@@ -1691,8 +1691,7 @@ module Erx
         case known.source
         in :any then nil
         in :none
-          invalid("facet #{row.fetch('name')} grants the #{name} service: only the derived #{name} rows do",
-                  known.property, 'facet.service')
+          invalid("facet #{row.fetch('name')} grants the #{name} service: only the derived #{name} rows do", 'facet.service')
         in SourceGrants(root:, read_only:, why:)
           grantee = row.values_at('grantee_kind', 'grantee')
           root_may, holders = case root
@@ -1701,9 +1700,8 @@ module Erx
                                 [development_root?(*grantee, tables),
                                  "the system domain or, in a development manifest, root's session template"]
                               end
-          invalid("facet #{row.fetch('name')} grants #{name}, whose #{why}, to another grantee than #{holders}",
-                  known.property, 'facet.grantee') unless grantee.first == grantee_kind('system') || root_may
-          invalid("facet #{row.fetch('name')} grants #{name} other than read-only", known.property, 'facet.parameter') if
+          invalid("facet #{row.fetch('name')} grants #{name}, whose #{why}, to another grantee than #{holders}", 'facet.grantee') unless grantee.first == grantee_kind('system') || root_may
+          invalid("facet #{row.fetch('name')} grants #{name} other than read-only", 'facet.parameter') if
             read_only && stated.fetch('rights', 'rw') != 'ro'
         end
       end
@@ -1725,9 +1723,9 @@ module Erx
       def fetch_well_known(service_rows, known, required_by:)
         name = name_of(known)
         named = service_rows.each_index.select { |index| service_rows.fetch(index).fetch('name') == name }
-        invalid("a manifest with #{required_by} holds one service named #{name}", known.property, 'service.name') unless
+        invalid("a manifest with #{required_by} holds one service named #{name}", 'service.name') unless
           named.size == 1
-        invalid("the service named #{name} is of the files interface", known.property, 'service.interface') unless
+        invalid("the service named #{name} is of the files interface", 'service.interface') unless
           service_rows.fetch(named.first).fetch('interface') == fetch_interface('files')
         named.first
       end
@@ -1745,15 +1743,15 @@ module Erx
           role = known.window
           window = tables.fetch('windows').find { |row| row.fetch('role') == @codec.member('mf_window_role', role) }
           unless window
-            invalid("an apps row needs a #{role} window, whose holder serves #{name}", known.property, 'apps') if
+            invalid("an apps row needs a #{role} window, whose holder serves #{name}", 'apps') if
               known.needs == :apps && derives?(known, service_rows)
-            invalid("a manifest without a #{role} window holds no service named #{name}", known.property, 'service.name') if
+            invalid("a manifest without a #{role} window holds no service named #{name}", 'service.name') if
               service_rows.any? { |row| row.fetch('name') == name }
             next
           end
 
           service = service_rows.fetch(fetch_well_known(service_rows, known, required_by: "a #{role} window"))
-          invalid("the service named #{name} is served by the holder of the #{role} window", known.property,
+          invalid("the service named #{name} is served by the holder of the #{role} window",
                   'service.server') unless window.fetch('holder') == service.fetch('server')
         end
       end
@@ -1761,7 +1759,7 @@ module Erx
       # Property 19's third clause: the start rows and every app's row fit the start table.
       def check_app_start_rows
         rows_max = @codec.constant('start_rows_max')
-        invalid("the start rows and the apps row's max pass start_rows_max, #{rows_max}", 19, 'apps.max') if
+        invalid("the start rows and the apps row's max pass start_rows_max, #{rows_max}", 'apps.max') if
           records('start').size + @apps.max > rows_max
       end
 
@@ -1800,12 +1798,12 @@ module Erx
       def signer_rows
         size = @codec.constant('signer_key_bytes')
         records('signer').sort_by { |record| record.name.b }.map do |record|
-          invalid("signer #{DEVELOPMENT_SIGNER} is the build's development package key, never a row", 19, 'signer.name') if
+          invalid("signer #{DEVELOPMENT_SIGNER} is the build's development package key, never a row", 'signer.name') if
             record.name == DEVELOPMENT_SIGNER
           record.line.fail!('key requires hexadecimal bytes, hex:...') if one(record, 'key').quoted
           key = text(record, 'key')
-          invalid("signer #{record.name}'s key is not #{size} bytes", 19, 'signer.key') unless key.bytesize == size
-          invalid("signer #{record.name}'s key is the published package key, which nothing trusts", 19, 'signer.key') if
+          invalid("signer #{record.name}'s key is not #{size} bytes", 'signer.key') unless key.bytesize == size
+          invalid("signer #{record.name}'s key is the published package key, which nothing trusts", 'signer.key') if
             PackageKey.published?(key)
           { 'name' => record.name, 'key' => key.bytes }
         end
@@ -1823,8 +1821,8 @@ module Erx
         return [] if key.nil? || @apps == NO_APPS
 
         size = @codec.constant('signer_key_bytes')
-        invalid("the development package key is not #{size} bytes", 19, 'context.development_key') unless key.bytesize == size
-        invalid('the development package key is the published package key, which nothing trusts', 19,
+        invalid("the development package key is not #{size} bytes", 'context.development_key') unless key.bytesize == size
+        invalid('the development package key is the published package key, which nothing trusts',
                 'context.development_key') if PackageKey.published?(key)
         [{ 'key' => key.bytes }]
       end
@@ -1841,19 +1839,19 @@ module Erx
         record = records('system_image').first
         return [] unless record
 
-        artifact = artifact(record, 'input', 'erofs_image', property: 8, field: 'system_image.input')
+        artifact = artifact(record, 'input', 'erofs_image', field: 'system_image.input')
         extents = checked_extents(artifact, field: 'system_image.input')
-        invalid('the system image is one extent at its partition\'s start', 8, 'system_image.input') unless
+        invalid('the system image is one extent at its partition\'s start', 'system_image.input') unless
           extents.size == 1 && extents.first.fetch('slot_offset').zero?
         length = extents.first.fetch('length')
         tree = artifact['tree']
         case tree.is_a?(Hash) && tree.values_at('offset', 'length', 'salt', 'root_hash')
         in [Integer => offset, Integer => bytes, /\A(?:[0-9a-f]{2}){1,32}\z/ => salt, /\A[0-9a-f]{64}\z/ => root]
           partition = @codec.constant('medium_system_sectors') * @codec.constant('mbr_sector_size')
-          invalid('the system image\'s tree is whole blocks from the image\'s end, inside the partition', 8, 'system_image.input') unless
+          invalid('the system image\'s tree is whole blocks from the image\'s end, inside the partition', 'system_image.input') unless
             offset == length && !bytes.negative? && (bytes % @codec.constant('page_size')).zero? && offset + bytes <= partition
         else
-          invalid('the system image\'s tree names its offset, length, salt and root hash', 8, 'system_image.input')
+          invalid('the system image\'s tree names its offset, length, salt and root hash', 'system_image.input')
         end
         salt = [salt].pack('H*')
         [{ 'image_length' => length, 'tree_offset' => offset, 'tree_length' => bytes, 'salt_length' => salt.bytesize,
@@ -1874,16 +1872,16 @@ module Erx
       # apps budget. Answers each row as a Package, sorted by name.
       def check_packages
         packages = records('package').sort_by { |record| record.name.b }
-        invalid("the package rows pass the apps row's max, #{@apps.max}", 19, 'package') if packages.size > @apps.max
+        invalid("the package rows pass the apps row's max, #{@apps.max}", 'package') if packages.size > @apps.max
         rows = packages.map do |record|
-          package = artifact(record, 'input', 'package', property: 19, field: 'package.input')
-          invalid("package #{record.name}'s input is the package of #{package['name']}", 19, 'package.input') unless
+          package = artifact(record, 'input', 'package', field: 'package.input')
+          invalid("package #{record.name}'s input is the package of #{package['name']}", 'package.input') unless
             package['name'] == record.name
           enabled = record.properties.key?('enable') && start_flags(record).positive?
           Package.new(name: record.name, sha256: package.fetch('sha256'), enabled: enabled, memory: package.fetch('memory'))
         end
         memory = rows.select(&:enabled).sum(&:memory)
-        invalid("the enabled packages declare #{memory} bytes, past the apps budget of #{@apps.memory}", 19, 'package.enable') if
+        invalid("the enabled packages declare #{memory} bytes, past the apps budget of #{@apps.memory}", 'package.enable') if
           memory > @apps.memory
         rows.freeze
       end
@@ -1913,7 +1911,7 @@ module Erx
         enabled = @codec.member('mf_start_flags', 'enabled')
         none = @codec.constant('mf_none')
         displays = rows.select { |row| (row.fetch('flags') & enabled) != 0 }.map { |row| row.fetch('display') } - [none]
-        invalid('two enabled start rows name one display', 17, 'start.display') unless displays.uniq.size == displays.size
+        invalid('two enabled start rows name one display', 'start.display') unless displays.uniq.size == displays.size
         rows.reject { |row| row.fetch('display') == none }.each { |row| check_start_display(row, tables) }
         rows.sort_by { |row| row.fetch('principal') }
       end
@@ -1923,8 +1921,8 @@ module Erx
       # since the row's supervisor takes it as its own, and neither field is past its
       # ceiling in abi/manifest.txt, which the reader and the start table also hold to.
       def start_row(record, services, sessions)
-        principal = @indices.fetch('principal')[record.name] || invalid('a start row names no principal', 17, 'start.name')
-        invalid('a start row\'s principal has no session template', 17, 'start.name') unless
+        principal = @indices.fetch('principal')[record.name] || invalid('a start row names no principal', 'start.name')
+        invalid('a start row\'s principal has no session template', 'start.name') unless
           sessions.any? { |row| row.fetch('principal') == principal }
         stated = ->(key, default, &value) { record.properties.key?(key) ? value.call(key) : default }
         row = { 'principal' => principal,
@@ -1932,7 +1930,7 @@ module Erx
                 'display' => stated.call('display', @codec.constant('mf_none')) { start_display(record, services) },
                 'restarts' => stated.call('restarts', @codec.constant('start_restarts_default')) { |key| number(record, key) },
                 'restart_period_s' => stated.call('restart_period_s', @codec.constant('start_period_default_s')) { |key| number(record, key) } }
-        invalid('a start row\'s restart period is under a second', 17, 'start.restart_period_s') if row.fetch('restart_period_s').zero?
+        invalid('a start row\'s restart period is under a second', 'start.restart_period_s') if row.fetch('restart_period_s').zero?
         check_start_ceiling(row, 'restarts', 'start_restarts_max')
         check_start_ceiling(row, 'restart_period_s', 'start_period_max_s')
         row
@@ -1941,7 +1939,7 @@ module Erx
       # A start row's field Key is at most the ABI's limit Limit.
       def check_start_ceiling(row, key, limit)
         ceiling = @codec.constant(limit)
-        invalid("a start row's #{key} is over #{ceiling}", 17, "start.#{key}") if row.fetch(key) > ceiling
+        invalid("a start row's #{key} is over #{ceiling}", "start.#{key}") if row.fetch(key) > ceiling
       end
 
       # A row's enable: YES or NO, as rc.conf(5) writes it.
@@ -1955,20 +1953,20 @@ module Erx
       def start_display(record, services)
         token = one(record, 'display')
         services.index { |service| !token.quoted && "@service.#{service.name}" == token.value } ||
-          invalid('a start row\'s display names a service the manifest does not contain', 17, 'start.display')
+          invalid('a start row\'s display names a service the manifest does not contain', 'start.display')
       end
 
       # A row's display: a service of the windows interface, granted to the row's
       # principal's session template by a facet row.
       def check_start_display(row, tables)
         windows = find_interface('windows') ||
-                  invalid('a start row names a display, and abi/services declares no windows interface', 17, 'start.display')
+                  invalid('a start row names a display, and abi/services declares no windows interface', 'start.display')
         display = row.fetch('display')
-        invalid('a start row\'s display is not a windows service', 17, 'start.display') unless
+        invalid('a start row\'s display is not a windows service', 'start.display') unless
           tables.fetch('services').fetch(display).fetch('interface') == windows
         session = tables.fetch('sessions').index { |template| template.fetch('principal') == row.fetch('principal') }
         grant = [grantee_kind('session'), session, display]
-        invalid('a start row\'s display is not granted to its principal\'s session template', 17, 'start.display') unless
+        invalid('a start row\'s display is not granted to its principal\'s session template', 'start.display') unless
           tables.fetch('facets').any? { |facet| facet.values_at('grantee_kind', 'grantee', 'service') == grant }
       end
 
@@ -1977,12 +1975,12 @@ module Erx
       def normalize_introductions
         rows = records('introduce').map do |record|
           pair = record.properties.fetch('targets').map do |token|
-            domain_index(token) || invalid('introduction names no configured domain', 2, 'introduce')
+            domain_index(token) || invalid('introduction names no configured domain', 'introduce')
           end
-          invalid('an introduction joins two different domains', 2, 'introduce') unless pair.uniq.size == 2
+          invalid('an introduction joins two different domains', 'introduce') unless pair.uniq.size == 2
           { 'from' => pair.min, 'to' => pair.max }
         end
-        invalid('two introductions join one pair', 2, 'introduce') unless rows.uniq.size == rows.size
+        invalid('two introductions join one pair', 'introduce') unless rows.uniq.size == rows.size
         rows.sort_by { |row| row.values_at('from', 'to') }
       end
 
@@ -2008,7 +2006,7 @@ module Erx
         sources = records('facet').map do |record|
           token = one(record, 'service')
           index = services.index { |service| !token.quoted && "@service.#{service.name}" == token.value }
-          invalid('facet names a service the manifest does not contain', 2, 'facet.service') unless index
+          invalid('facet names a service the manifest does not contain', 'facet.service') unless index
           facet_row(record, index, tables.fetch('sessions'))
         end
         known = well_known_facets(tables)
@@ -2026,19 +2024,19 @@ module Erx
         grantee = ->(row) { row.values_at('grantee_kind', 'grantee') }
         server = ->(row) { service_rows.fetch(row.fetch('service')).fetch('server') }
         none = @codec.constant('mf_none')
-        invalid('two facets of one grantee share a name', 5, 'facet.name') unless
+        invalid('two facets of one grantee share a name', 'facet.name') unless
           rows.map { |row| [grantee.call(row), row.fetch('name')] }.uniq.size == rows.size
         taken = rows.map { |row| [grantee.call(row), service_rows.fetch(row.fetch('service')).fetch('name')] }
-        invalid('a grantee takes two facets of one service name', 2, 'facet.service') unless taken.uniq.size == taken.size
-        invalid('the system domain takes no facet of its own service', 2, 'facet.grantee') if
+        invalid('a grantee takes two facets of one service name', 'facet.service') unless taken.uniq.size == taken.size
+        invalid('the system domain takes no facet of its own service', 'facet.grantee') if
           rows.any? { |row| row.fetch('grantee_kind') == grantee_kind('system') && server.call(row) == none }
         control = fetch_interface('driver_control')
-        invalid('only the system domain holds a driver-control facet', 8, 'facet.grantee') if
+        invalid('only the system domain holds a driver-control facet', 'facet.grantee') if
           rows.any? { |row| row.fetch('grantee_kind') != grantee_kind('system') && service_rows.fetch(row.fetch('service')).fetch('interface') == control }
         # The domain service grants every session its code_objects facet by its own policy
         # (docs/design-system.md, "The code_objects facet"), so no row grants one: not to a
         # configured domain, and not to a template, whose limits would replace the service's.
-        invalid("no facet row grants #{CODE_OBJECTS}, which the domain service grants every session", 8, 'facet.service') unless
+        invalid("no facet row grants #{CODE_OBJECTS}, which the domain service grants every session", 'facet.service') unless
           facets_of(rows, CODE_OBJECTS, tables).empty?
         check_code_objects_service(service_rows)
         check_network_grants(rows, packed.map(&:first), tables)
@@ -2077,9 +2075,9 @@ module Erx
         record.line.fail!('operations requires none or unquoted operation names') if token.quoted
         names = token.value.split(',', -1)
         numbers = names.map { |name| declared[name] }
-        invalid("facet #{row.fetch('name')}'s operations name an operation its interface does not declare", 2, 'facet.operations') if
+        invalid("facet #{row.fetch('name')}'s operations name an operation its interface does not declare", 'facet.operations') if
           names.empty? || numbers.include?(nil)
-        invalid("facet #{row.fetch('name')}'s operations name one twice", 2, 'facet.operations') unless names.uniq.size == names.size
+        invalid("facet #{row.fetch('name')}'s operations name one twice", 'facet.operations') unless names.uniq.size == names.size
         numbers.sort
       end
 
@@ -2139,21 +2137,21 @@ module Erx
         values = record.parameters.each_with_object({}) do |(key_token, value_token), result|
           key = key_token.value
           parameter = (!key_token.quoted && declared[key]) ||
-                      invalid("facet parameter #{key} is not declared by its service", 2, 'facet.parameter')
+                      invalid("facet parameter #{key} is not declared by its service", 'facet.parameter')
           value = parameter_value(key, parameter, value_token, record.line, devices)
           if parameter.fetch(:cardinality) == 'set'
             set = result.fetch(key, [])
-            invalid("facet parameter #{key} states #{value} twice", 2, 'facet.parameter') if set.include?(value)
-            invalid("facet parameter #{key} states over #{parameter.fetch(:maximum_count)} values", 2, 'facet.parameter') if
+            invalid("facet parameter #{key} states #{value} twice", 'facet.parameter') if set.include?(value)
+            invalid("facet parameter #{key} states over #{parameter.fetch(:maximum_count)} values", 'facet.parameter') if
               set.size == parameter.fetch(:maximum_count)
             result[key] = (set + [value]).sort.freeze
           else
-            invalid("facet parameter #{key} is stated twice", 2, 'facet.parameter') if result.key?(key)
+            invalid("facet parameter #{key} is stated twice", 'facet.parameter') if result.key?(key)
             result[key] = value
           end
         end
         declared.each do |key, parameter|
-          invalid("facet parameter #{key} is required", 2, 'facet.parameter') if parameter.fetch(:cardinality) == 'one' && !values.key?(key)
+          invalid("facet parameter #{key} is required", 'facet.parameter') if parameter.fetch(:cardinality) == 'one' && !values.key?(key)
         end
         values
       end
@@ -2173,7 +2171,7 @@ module Erx
           line.fail!("parameter #{key} requires an integer") if token.quoted
           value = ABI::Syntax.integer(token.value, line: line)
           low, high = parameter.fetch(:bound).drop(1).map { |word| ABI::Syntax.integer(word, line: line) }
-          invalid("facet parameter #{key} is outside #{low} to #{high}", 2, 'facet.parameter') unless value.between?(low, high)
+          invalid("facet parameter #{key} is outside #{low} to #{high}", 'facet.parameter') unless value.between?(low, high)
           value
         when 'boolean'
           line.fail!("parameter #{key} is yes or no") if token.quoted || !%w[yes no].include?(token.value)
@@ -2182,7 +2180,7 @@ module Erx
           line.fail!("parameter #{key} requires quoted bytes") unless token.quoted
           value = token.value.b
           maximum = Integer(parameter.fetch(:bound).last)
-          invalid("facet parameter #{key} is empty or over #{maximum} bytes", 2, 'facet.parameter') unless
+          invalid("facet parameter #{key} is empty or over #{maximum} bytes", 'facet.parameter') unless
             value.bytesize.between?(kind == 'bytes' ? 0 : 1, maximum)
           value
         when 'member'
@@ -2193,7 +2191,7 @@ module Erx
           line.fail!("parameter #{key} requires a quoted device-tree path") unless token.quoted
           dt = @codec.member('mf_selector', 'dt')
           devices.index { |device| device.fetch('selector') == dt && device['path'] == token.value } ||
-            invalid("facet parameter #{key} names no placed device", 2, 'facet.parameter')
+            invalid("facet parameter #{key} names no placed device", 'facet.parameter')
         else
           unsupported("facet parameter #{key} is a #{kind} reference, which no service declares", 'facet.parameter')
         end
@@ -2231,7 +2229,7 @@ module Erx
         line = ->(service) { grant_checker(service.fetch('interface')) == 'line_grant' }
         system = @codec.constant('mf_none')
         if tables.fetch('services').any? { |row| line.call(row) && row.fetch('server') != system }
-          invalid('only the system domain serves the line interface', 8, 'service.server')
+          invalid('only the system domain serves the line interface', 'service.server')
         end
         interface = find_interface('line')
         misnamed = tables.fetch('services').find do |row|
@@ -2239,27 +2237,27 @@ module Erx
         end
         if misnamed
           invalid("the system domain's service #{misnamed.fetch('name')} is named line exactly when it is of the line " \
-                  'interface', 8, 'service.name')
+                  'interface', 'service.name')
         end
         grants = facets.zip(values).select { |row, _| line.call(tables.fetch('services').fetch(row.fetch('service'))) }
         console = @context.platform['console']
         reserved = [console, @context.platform.fetch('hostlink', '')]
         uarts = grants.map do |row, given|
           named = "line grant #{row.fetch('name')}"
-          invalid("#{named} is granted to no configured domain", 8, 'facet.grantee') unless row.fetch('grantee_kind') == grantee_kind('domain')
+          invalid("#{named} is granted to no configured domain", 'facet.grantee') unless row.fetch('grantee_kind') == grantee_kind('domain')
           device = tables.fetch('devices').fetch(given.fetch('uart'))
           path = device.fetch('path')
-          invalid("#{named}'s uart #{path} names no UART", 8, 'facet.parameter') unless device.fetch('role') == device_role('uart')
-          invalid("#{named}'s uart #{path} is the console's or the host link's", 8, 'facet.parameter') if reserved.include?(path)
+          invalid("#{named}'s uart #{path} names no UART", 'facet.parameter') unless device.fetch('role') == device_role('uart')
+          invalid("#{named}'s uart #{path} is the console's or the host link's", 'facet.parameter') if reserved.include?(path)
           unless unit_holder(tables, path) == @codec.constant('mf_none')
-            invalid("#{named}'s uart #{path} is not the system domain's", 8, 'facet.parameter')
+            invalid("#{named}'s uart #{path} is not the system domain's", 'facet.parameter')
           end
-          invalid("#{named}'s flow is none or rts_cts", 8, 'facet.parameter') unless %w[none rts_cts].include?(given.fetch('flow'))
+          invalid("#{named}'s flow is none or rts_cts", 'facet.parameter') unless %w[none rts_cts].include?(given.fetch('flow'))
           given.fetch('uart')
         end
         check_uart_lines(tables, console, uarts.to_h { |uart| [tables.fetch('devices').fetch(uart).fetch('path'), 'facet.parameter'] })
-        invalid('two line grants name one UART', 8, 'facet.parameter') unless uarts.uniq.size == uarts.size
-        invalid('a manifest holds at most one line grant', 8, 'facet.service') if grants.size > 1
+        invalid('two line grants name one UART', 'facet.parameter') unless uarts.uniq.size == uarts.size
+        invalid('a manifest holds at most one line grant', 'facet.service') if grants.size > 1
       end
 
       # The displays (docs/design-display.md, "A display's session"), sorted by their
@@ -2274,18 +2272,18 @@ module Erx
         display = ->(service) { grant_checker(service.fetch('interface')) == 'windows_grant' }
         rows = records('display').map do |record|
           index = services.index { |service| service.name == record.name } ||
-                  invalid('a display record names a service the manifest does not contain', 18, 'display.name')
-          invalid('a display record names a service whose parameters are not checked by windows_grant', 18, 'display.name') unless
+                  invalid('a display record names a service the manifest does not contain', 'display.name')
+          invalid('a display record names a service whose parameters are not checked by windows_grant', 'display.name') unless
             display.call(tables.fetch('services').fetch(index))
           display_row(record, index)
         end
         tables.fetch('services').each_with_index do |service, index|
           next unless display.call(service)
-          invalid("service #{service.fetch('name')}, checked by windows_grant, has no display record", 18, 'display.name') unless
+          invalid("service #{service.fetch('name')}, checked by windows_grant, has no display record", 'display.name') unless
             rows.any? { |row| row.fetch('service') == index }
         end
         servers = rows.map { |row| tables.fetch('services').fetch(row.fetch('service')).fetch('server') }
-        invalid('one domain serves two displays', 18, 'display.name') unless servers.uniq.size == servers.size
+        invalid('one domain serves two displays', 'display.name') unless servers.uniq.size == servers.size
         rows.each { |row| check_display_grants(row, tables, facet_values) }
         rows.sort_by { |row| row.fetch('service') }
       end
@@ -2298,9 +2296,9 @@ module Erx
         row = { 'service' => service, 'policy' => enum(record, 'policy', 'mf_display_policy'), 'palette' => palette }
         %w[idle_dim_s idle_off_s].each do |key|
           row[key] = number(record, key)
-          invalid("a display's #{key} is over #{(1 << 32) - 1}", 18, "display.#{key}") if row.fetch(key) >= (1 << 32)
+          invalid("a display's #{key} is over #{(1 << 32) - 1}", "display.#{key}") if row.fetch(key) >= (1 << 32)
         end
-        invalid('a display turns its panel off before it dims it', 18, 'display.idle_off_s') unless
+        invalid('a display turns its panel off before it dims it', 'display.idle_off_s') unless
           row.fetch('idle_off_s').zero? || row.fetch('idle_off_s') >= row.fetch('idle_dim_s')
         row
       end
@@ -2326,20 +2324,19 @@ module Erx
       def check_display_grants(display, tables, facet_values)
         service = tables.fetch('services').fetch(display.fetch('service'))
         server = service.fetch('server')
-        invalid("display #{service.fetch('name')} is served by the system domain, not a display domain", 18, 'display.name') if
+        invalid("display #{service.fetch('name')} is served by the system domain, not a display domain", 'display.name') if
           server == @codec.constant('mf_none')
         domain = tables.fetch('domains').fetch(server)
-        invalid("display #{service.fetch('name')}'s domain sets a key its display record gives it", 18, 'domain.env') if
+        invalid("display #{service.fetch('name')}'s domain sets a key its display record gives it", 'domain.env') if
           domain.fetch('env').split("\0").any? { |word| display_keys.include?(word.partition('=').first) }
         limits = tables.fetch('limits').fetch(domain.fetch('limits'))
         grants = tables.fetch('facets').zip(facet_values).select { |facet, _values| facet.fetch('service') == display.fetch('service') }
         counted = grants.map do |facet, values|
-          invalid("facet #{facet.fetch('name')} grants a display to the system domain, whose connections carry no pixel area", 18,
+          invalid("facet #{facet.fetch('name')} grants a display to the system domain, whose connections carry no pixel area",
                   'facet.grantee') if facet.fetch('grantee_kind') == grantee_kind('system')
-          invalid("facet #{facet.fetch('name')} sets session, which the domain service alone sets", 18, 'facet.parameter') if
+          invalid("facet #{facet.fetch('name')} sets session, which the domain service alone sets", 'facet.parameter') if
             values.key?('session')
-          invalid("facet #{facet.fetch('name')} sets front, which only root's template's grant takes, in a development build",
-                  18, 'facet.parameter') if values.key?('front') && !front_grantee?(facet, tables)
+          invalid("facet #{facet.fetch('name')} sets front, which only root's template's grant takes, in a development build", 'facet.parameter') if values.key?('front') && !front_grantee?(facet, tables)
           check_display_client(facet, tables)
           [grant_instances(facet, tables), values]
         end
@@ -2351,7 +2348,7 @@ module Erx
         return if cost <= limits.fetch('outer')
 
         invalid("display #{service.fetch('name')}'s grants#{' and the apps row\'s max apps' if apps} cost #{cost} bytes, " \
-                "past its domain's outer budget of #{limits.fetch('outer')}", 18, apps ? 'apps.max' : 'facet.parameter')
+                "past its domain's outer budget of #{limits.fetch('outer')}", apps ? 'apps.max' : 'facet.parameter')
       end
 
       # Property 18's client clause: the release script a display grant's holder boots, a
@@ -2367,7 +2364,7 @@ module Erx
         return if missing.empty?
 
         invalid("facet #{facet.fetch('name')} grants a display to a holder whose release #{release} does not start " \
-                "#{missing.join(', ')}", 18, app_template?(facet, tables) ? 'apps.services' : 'facet.grantee')
+                "#{missing.join(', ')}", app_template?(facet, tables) ? 'apps.services' : 'facet.grantee')
       end
 
       # The release artifact a facet row's grantee boots, a configured domain or a session
@@ -2385,7 +2382,7 @@ module Erx
                        principal = tables.fetch('sessions').fetch(grantee).fetch('principal')
                        ['session', tables.fetch('principals').fetch(principal).fetch('name')]
                      end
-        release_name(records(kind).find { |record| record.name == name }, property: 18, field: "#{kind}.release")
+        release_name(records(kind).find { |record| record.name == name }, field: "#{kind}.release")
       end
 
       # Whether a facet row may set front: a development build's row granting the display to
@@ -2434,10 +2431,10 @@ module Erx
         facets.each do |row|
           next unless row.fetch('grantee_kind') == grantee_kind('system') && [net, netadmin].include?(interface.call(row))
 
-          invalid("facet #{row.fetch('name')} grants the system domain a network interface, which it never holds", 15, 'facet.grantee')
+          invalid("facet #{row.fetch('name')} grants the system domain a network interface, which it never holds", 'facet.grantee')
         end
         floor = @codec.constant('net_max_frame_min')
-        facets_of(facets, 'net', tables).each { |row| check_receiver_floors(row, tables, 'net', { 'max_frame' => floor }, property: 15) }
+        facets_of(facets, 'net', tables).each { |row| check_receiver_floors(row, tables, 'net', { 'max_frame' => floor }) }
         check_net_ports(facets.zip(values).select { |row, _| interface.call(row) == net }, tables)
       end
 
@@ -2455,17 +2452,16 @@ module Erx
           server = tables.fetch('services').fetch(row.fetch('service')).fetch('server')
           ports = stated['ports']
           unbound = stated.fetch('listen', []).reject { |port| ports ? ports.include?(port) : port >= unprivileged }
-          invalid("facet #{row.fetch('name')} listens on #{unbound.join(', ')}, none of its ports", 15, 'facet.parameter') unless
+          invalid("facet #{row.fetch('name')} listens on #{unbound.join(', ')}, none of its ports", 'facet.parameter') unless
             unbound.empty?
           low = (ports || []).select { |port| port < unprivileged }
-          invalid("facet #{row.fetch('name')} grants privileged ports to a session template", 15, 'facet.grantee') if
+          invalid("facet #{row.fetch('name')} grants privileged ports to a session template", 'facet.grantee') if
             !low.empty? && row.fetch('grantee_kind') != grantee_kind('domain')
           low.map { |port| [[server, port], row.fetch('name')] }
         end
         shared = privileged.group_by(&:first).select { |_held, holders| holders.size > 1 }
         shared.each do |(_server, port), holders|
-          invalid("privileged port #{port} is listed by facets #{holders.map(&:last).join(', ')} of one network domain",
-                  15, 'facet.parameter')
+          invalid("privileged port #{port} is listed by facets #{holders.map(&:last).join(', ')} of one network domain", 'facet.parameter')
         end
       end
 
@@ -2483,9 +2479,9 @@ module Erx
           facets_of(facets, service.fetch(:name), tables).each do |row|
             if row.fetch('max_request') < floor
               invalid("facet #{row.fetch('name')}'s max_request #{row.fetch('max_request')} is below " \
-                      "#{service.fetch(:name)}'s floor of #{floor}", 16, 'facet.max_request')
+                      "#{service.fetch(:name)}'s floor of #{floor}", 'facet.max_request')
             end
-            check_receiver_floors(row, tables, service.fetch(:name), { 'max_frame' => floor }, property: 16)
+            check_receiver_floors(row, tables, service.fetch(:name), { 'max_frame' => floor })
           end
         end
       end
@@ -2503,9 +2499,9 @@ module Erx
                    'funnel_depth' => @codec.constant('inspect_funnel_depth_min') }
         inspect = fetch_interface('inspect')
         if tables.fetch('services').any? { |row| row.fetch('interface') == inspect && row.fetch('server') != @codec.constant('mf_none') }
-          invalid('only the system domain serves the inspect interface', 16, 'service.server')
+          invalid('only the system domain serves the inspect interface', 'service.server')
         end
-        facets_of(facets, 'inspect', tables).each { |row| check_receiver_floors(row, tables, 'inspect', floors, property: 16) }
+        facets_of(facets, 'inspect', tables).each { |row| check_receiver_floors(row, tables, 'inspect', floors) }
       end
 
       # At most one service of the code_objects interface, named code_objects and served by
@@ -2518,7 +2514,7 @@ module Erx
         return if found.empty?
         return if found.size == 1 && found.first.fetch('name') == CODE_OBJECTS.b && found.first.fetch('server') == system
 
-        invalid("the manifest serves #{CODE_OBJECTS} once, by that name, from the system domain", 8, 'service.interface')
+        invalid("the manifest serves #{CODE_OBJECTS} once, by that name, from the system domain", 'service.interface')
       end
 
       # The facet rows of the interface abi/services declares as NAME, compared by number.
@@ -2530,7 +2526,7 @@ module Erx
       # Refuses, as PROPERTY, a facet whose grantee or server runs a runtime limit below
       # the interface's floor for it (docs/design-domains.md, "Floors from a protocol": a
       # floor binds both receivers). FLOORS maps a runtime_limits field to its floor.
-      def check_receiver_floors(row, tables, interface, floors, property:)
+      def check_receiver_floors(row, tables, interface, floors)
         server = tables.fetch('services').fetch(row.fetch('service')).fetch('server')
         server_kind = server == @codec.constant('mf_none') ? grantee_kind('system') : grantee_kind('domain')
         receivers = { 'grantee' => receiver_limits(row.fetch('grantee_kind'), row.fetch('grantee'), tables),
@@ -2540,7 +2536,7 @@ module Erx
             next if limits.fetch(field) >= floor
 
             invalid("facet #{row.fetch('name')}'s #{role} runs with #{field} #{limits.fetch(field)}, " \
-                    "below #{interface}'s floor of #{floor}", property, "runtime_limits.#{field}")
+                    "below #{interface}'s floor of #{floor}", "runtime_limits.#{field}")
           end
         end
       end
@@ -2584,7 +2580,7 @@ module Erx
         session = session_index(token, sessions)
         return [grantee_kind('session'), session] if session
 
-        invalid('names neither the system domain, a configured domain nor a session template', 2, 'facet.grantee')
+        invalid('names neither the system domain, a configured domain nor a session template', 'facet.grantee')
       end
 
       # A session template's index, or nil when the token names none.
@@ -2597,7 +2593,7 @@ module Erx
 
       def facet_row(record, service, sessions)
         name = record.properties.key?('name') ? text(record, 'name') : record.name.b
-        invalid('facet name is not a system identifier', 5, 'facet.name') unless name.match?(Frontend::IDENTIFIER)
+        invalid('facet name is not a system identifier', 'facet.name') unless name.match?(Frontend::IDENTIFIER)
         queue = record.properties.key?('queue') ? number(record, 'queue') : number(@source.machine, 'system_queue')
         kind, index = facet_grantee(one(record, 'grantee'), sessions)
         { 'name' => name, 'grantee_kind' => kind, 'grantee' => index,
@@ -2629,7 +2625,7 @@ module Erx
         servers = edges.group_by(&:first).transform_values { |pairs| pairs.map(&:last) - [@codec.constant('mf_none')] }
         domains.each_index.each_with_object([]) do |_step, placed|
           ready = (domains.each_index.to_a - placed).find { |domain| (servers.fetch(domain, []) - placed).empty? }
-          invalid('a configured domain\'s facets lead back to it', 10, 'facet.service') unless ready
+          invalid('a configured domain\'s facets lead back to it', 'facet.service') unless ready
           placed << ready
         end.map { |domain| { 'domain' => domain } }
       end
@@ -2643,7 +2639,7 @@ module Erx
         edges.each do |client, server|
           next unless client != none && server != none && rescued.call(client) && !rescued.call(server)
 
-          invalid('a rescue domain names a service of a domain the rescue configuration does not start', 11, 'facet.service')
+          invalid('a rescue domain names a service of a domain the rescue configuration does not start', 'facet.service')
         end
       end
 
@@ -2671,13 +2667,13 @@ module Erx
           return if domains.empty? && sessions.empty?
 
           raise Unsupported.new('configured domains and sessions need the domain library\'s host planner',
-                                property: 12, field: 'planner')
+                                field: 'planner')
         end
 
         order = rows.fetch('boot_order').map { |step| step.fetch('domain') }
         statuses = @planner.call(plan_view(bytes, rows, order: order,
                                            templates: sessions.map { |session| session.fetch('template') }))
-        invalid("the domain library refuses the manifest's view: #{statuses.fetch('refused').delete_prefix('manifest: ')}", 12, 'view') if statuses.key?('refused')
+        invalid("the domain library refuses the manifest's view: #{statuses.fetch('refused').delete_prefix('manifest: ')}", 'view') if statuses.key?('refused')
         order.zip(statuses.fetch('domains')).each do |index, status|
           refuse_plan(status, "configured domain #{domains.fetch(index).fetch('name')}", 'domain')
         end
@@ -2686,7 +2682,7 @@ module Erx
           refuse_plan(status, "the introduction of #{names.join(' and ')}", 'introduce')
         end
         sessions.each_with_index do |session, index|
-          refuse_plan(statuses.fetch('sessions').fetch(index), session.fetch('what'), session.fetch('field'), property: 17)
+          refuse_plan(statuses.fetch('sessions').fetch(index), session.fetch('what'), session.fetch('field'))
         end
       end
 
@@ -2722,11 +2718,11 @@ module Erx
       end
 
       # Refuses the manifest naming what the library refused; status 0 passes.
-      def refuse_plan(status, what, field, property: 12)
+      def refuse_plan(status, what, field)
         return if status.zero?
 
         name = (@codec.schema.statuses || {}).key(status) || status
-        invalid("the domain library refuses #{what} with #{name}", property, field)
+        invalid("the domain library refuses #{what} with #{name}", field)
       end
 
       # The planner's view (DomainPlanner#call): the packed manifest, each archive entry
@@ -2760,9 +2756,9 @@ module Erx
         rows = records('window').map do |record|
           role = window_role(record)
           slot_writer = !@codec.attribute?('mf_window_role', role, 'configured')
-          invalid('only the system domain, the slot writer, holds the slot windows', 8, 'window.holder') if
+          invalid('only the system domain, the slot writer, holds the slot windows', 'window.holder') if
             slot_writer && !(one(record, 'holder').value == 'system' && !one(record, 'holder').quoted)
-          { 'holder' => holder_index(one(record, 'holder'), property: 8, field: 'window.holder'),
+          { 'holder' => holder_index(one(record, 'holder'), field: 'window.holder'),
             'device' => window_device(record, devices), 'role' => role, 'partition' => window_partition(record, role),
             'rights' => window_rights(record, role), 'image' => window_image(record, role) }
             .tap { |row| check_image_device(row, tables.fetch('images')) }
@@ -2770,7 +2766,7 @@ module Erx
         check_system_window(rows, tables)
         check_record_volume_window(rows)
         placed = rows.map { |row| row.values_at('device', 'role', 'partition', 'image') }
-        invalid('two windows name one role and partition', 8, 'window.partition') unless placed.uniq.size == placed.size
+        invalid('two windows name one role and partition', 'window.partition') unless placed.uniq.size == placed.size
         rows.sort_by { |row| row.values_at('holder', 'device', 'role', 'partition', 'image') }
       end
 
@@ -2779,16 +2775,16 @@ module Erx
       def window_partition(record, role)
         partition = number(record, 'partition')
         allowed = role == @codec.member('mf_window_role', 'fat') ? (1..4) : (0..0)
-        invalid('a fixed role has partition 0 and FAT a primary partition, 1 to 4', 8, 'window.partition') unless allowed.cover?(partition)
+        invalid('a fixed role has partition 0 and FAT a primary partition, 1 to 4', 'window.partition') unless allowed.cover?(partition)
         partition
       end
 
       def window_rights(record, role)
         rights = flags(record, 'rights', 'mf_window_rights')
         read = @codec.member('mf_window_rights', 'read')
-        invalid('a window grants at least read', 8, 'window.rights') if (rights & read).zero?
+        invalid('a window grants at least read', 'window.rights') if (rights & read).zero?
         writable = @codec.attribute?('mf_window_role', role, 'writable')
-        invalid('a window of a role not marked writable grants read alone', 8, 'window.rights') if !writable && rights != read
+        invalid('a window of a role not marked writable grants read alone', 'window.rights') if !writable && rights != read
         rights
       end
 
@@ -2798,14 +2794,14 @@ module Erx
       # that row (docs/design-fiasco.md, "The booted slot").
       def check_system_window(rows, tables)
         system = rows.select { |row| row.fetch('role') == system_role }
-        invalid('a manifest has at most one system window', 8, 'window.role') if system.size > 1
+        invalid('a manifest has at most one system window', 'window.role') if system.size > 1
         described = !records('system_image').empty?
-        invalid('a system window needs the system_image row that describes its image', 8, 'window.role') if system.any? && !described
-        invalid('a system_image row needs the system window it describes', 8, 'system_image') if system.empty? && described
+        invalid('a system window needs the system_image row that describes its image', 'window.role') if system.any? && !described
+        invalid('a system_image row needs the system window it describes', 'system_image') if system.empty? && described
         system.each do |row|
           holder = row.fetch('holder')
           device = tables.fetch('devices').fetch(row.fetch('device')).fetch('path')
-          invalid('a system window is held by the configured domain that holds its block device', 8, 'window.holder') unless
+          invalid('a system window is held by the configured domain that holds its block device', 'window.holder') unless
             holder != @codec.constant('mf_none') && holder == unit_holder(tables, device)
         end
       end
@@ -2815,21 +2811,21 @@ module Erx
       # domain that reads the record partition is the one whose block driver serves it.
       def check_record_volume_window(rows)
         volumes = rows.select { |row| row.fetch('role') == record_volume_role }
-        invalid('a manifest has at most one record_volume window', 8, 'window.role') if volumes.size > 1
+        invalid('a manifest has at most one record_volume window', 'window.role') if volumes.size > 1
         system = rows.find { |row| row.fetch('role') == system_role }
-        invalid('the record_volume window is held by the holder of the system window, on its device', 8, 'window.holder') if
+        invalid('the record_volume window is held by the holder of the system window, on its device', 'window.holder') if
           volumes.any? { |volume| system.nil? || volume.values_at('holder', 'device') != system.values_at('holder', 'device') }
       end
 
       def window_device(record, devices)
-        block_device(text(record, 'device'), devices) || invalid('window names no block device the manifest places', 8, 'window.device')
+        block_device(text(record, 'device'), devices) || invalid('window names no block device the manifest places', 'window.device')
       end
 
       def block_device(path, devices) = devices.index { |device| device['path'] == path && device.fetch('role') == device_role('block') }
 
       def window_role(record)
         role = enum(record, 'role', 'mf_window_role')
-        invalid('no vault partition until M11', 8, 'window.role') if role == @codec.member('mf_window_role', 'vault')
+        invalid('no vault partition until M11', 'window.role') if role == @codec.member('mf_window_role', 'vault')
         role
       end
 
@@ -2839,10 +2835,10 @@ module Erx
         token = one(record, 'image')
         absent = !token.quoted && token.value == 'none'
         if role == image_role
-          invalid('a verified-image window names its image', 8, 'window.image') if absent
+          invalid('a verified-image window names its image', 'window.image') if absent
           reference_token(token, 'image', record.line)
         else
-          invalid('only a verified-image window names an image', 8, 'window.image') unless absent
+          invalid('only a verified-image window names an image', 'window.image') unless absent
           @codec.constant('mf_none')
         end
       end
@@ -2852,7 +2848,7 @@ module Erx
       def check_image_device(row, images)
         return if row.fetch('role') != image_role || images.fetch(row.fetch('image')).fetch('device') == row.fetch('device')
 
-        invalid("a verified-image window names its image's device", 8, 'window.device')
+        invalid("a verified-image window names its image's device", 'window.device')
       end
 
       # An image's tree fields when the packer writes no tree.
@@ -2871,12 +2867,12 @@ module Erx
       def normalize_images(devices)
         block_size = @codec.constant('page_size')
         records('image').sort_by { |record| record.name.b }.each_with_object([[], []]) do |record, (images, extents)|
-          invalid('image name is not a system identifier', 5, 'image.name') unless record.name.match?(Frontend::IDENTIFIER)
-          invalid('an image without a hash tree takes no salt', 8, 'image.salt') if record.properties.key?('salt')
-          placed = checked_extents(artifact(record, 'input', 'erofs_image', property: 8, field: 'image.input'), field: 'image.input')
+          invalid('image name is not a system identifier', 'image.name') unless record.name.match?(Frontend::IDENTIFIER)
+          invalid('an image without a hash tree takes no salt', 'image.salt') if record.properties.key?('salt')
+          placed = checked_extents(artifact(record, 'input', 'erofs_image', field: 'image.input'), field: 'image.input')
           bytes = placed.sum { |extent| extent.fetch('length') }
-          invalid('an image is whole blocks', 8, 'image.input') unless (bytes % block_size).zero?
-          device = block_device(text(record, 'device'), devices) || invalid('image names no block device the manifest places', 8, 'image.device')
+          invalid('an image is whole blocks', 'image.input') unless (bytes % block_size).zero?
+          device = block_device(text(record, 'device'), devices) || invalid('image names no block device the manifest places', 'image.device')
           images << { 'name' => record.name.b, 'device' => device,
                       'format' => @codec.member('mf_image_format', 'erofs_unchecked'),
                       'extents' => { 'table' => 'extents', 'first' => extents.size, 'count' => placed.size },
@@ -2892,13 +2888,13 @@ module Erx
         sector = @codec.constant('mbr_sector_size')
         slot = @codec.constant('medium_system_sectors') * sector
         extents = artifact['extents']
-        invalid('an image has at least one extent', 8, field) unless extents.is_a?(Array) && !extents.empty?
+        invalid('an image has at least one extent', field) unless extents.is_a?(Array) && !extents.empty?
         extents.each_with_object([]) do |extent, placed|
           offset, length = extent.values_at('slot_offset', 'length') if extent.is_a?(Hash)
           floor = placed.empty? ? 0 : placed.last.fetch('slot_offset') + placed.last.fetch('length')
           unless offset.is_a?(Integer) && length.is_a?(Integer) && length.positive? && offset >= floor &&
                  (offset % sector).zero? && (length % sector).zero? && offset + length <= slot
-            invalid('image extents are sorted, disjoint whole sectors inside a slot', 8, field)
+            invalid('image extents are sorted, disjoint whole sectors inside a slot', field)
           end
           placed << { 'slot_offset' => offset, 'length' => length }
         end
@@ -2922,12 +2918,12 @@ module Erx
           next unless @reader.tables.key?(name)
           table = @reader.tables.fetch(name)
           count = rows.fetch(name).size
-          raise Invalid.new('table exceeds bound', property: 'encoding', field: name) if count > table.fetch(:maximum)
+          raise Invalid.new('table exceeds bound', field: name) if count > table.fetch(:maximum)
           cursor += (table.fetch(:alignment) - cursor % table.fetch(:alignment)) % table.fetch(:alignment)
           positions[name] = { 'offset' => cursor, 'count' => count }
           cursor += count * table.fetch(:type).size
         end
-        raise Invalid.new('tables exceed manifest byte bound', property: 'encoding', field: 'length') if cursor > @reader.maximum
+        raise Invalid.new('tables exceed manifest byte bound', field: 'length') if cursor > @reader.maximum
         strings = +''.b
         string_budget = [@codec.constant('manifest_strings_max'), @reader.maximum - cursor].min
         header = configuration.fetch('header').merge('length' => 0, 'header_size' => @reader.root.size,
@@ -2958,7 +2954,7 @@ module Erx
 
       def materialize(type, values, positions, strings, budget)
         unless (values.keys - type.fields.map(&:name)).empty?
-          raise Invalid.new('unknown normalized field', property: 'encoding', field: type.name)
+          raise Invalid.new('unknown normalized field', field: type.name)
         end
         type.fields.each_with_object({}) do |field, result|
           key = field.name
@@ -2966,7 +2962,7 @@ module Erx
           value = values.fetch(key)
           if field.type.name == 'erx_mf_str'
             unless value.is_a?(String) && value.bytesize <= budget - strings.bytesize
-              raise Invalid.new('string table exceeds bound', property: 'encoding', field: key)
+              raise Invalid.new('string table exceeds bound', field: key)
             end
             result[key] = { 'offset' => value.empty? ? 0 : strings.bytesize, 'length' => value.bytesize }
             strings << value.b
@@ -2976,7 +2972,7 @@ module Erx
             first = value.fetch('first')
             count = value.fetch('count')
             unless first.between?(0, extent.fetch('count')) && count.between?(0, extent.fetch('count') - first)
-              raise Invalid.new('normalized slice is outside its table', property: 'encoding', field: key)
+              raise Invalid.new('normalized slice is outside its table', field: key)
             end
             result[key] = { 'offset' => extent.fetch('offset') + first * table.fetch(:type).size, 'count' => count }
           else

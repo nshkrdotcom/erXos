@@ -742,7 +742,7 @@ class ProductionImageTest < Minitest::Test
     end
     refused = lambda do |source, given, field, message|
       error = assert_raises(Erx::Manifest::Invalid) { admit.call(source, given) }
-      assert_equal [18, field], [error.property, error.field], error.message
+      assert_equal field, error.field, error.message
       assert_match message, error.message
     end
     source = PLATFORM.manifest_source(ROOT)
