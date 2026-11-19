@@ -8819,12 +8819,11 @@ document's "residual risks accepted" paragraph.
   session sees it, the import with its source record, and the `certctl` equivalent. The store's
   "a root only with a consumer" rule gives way to this for the system store; a kiosk or app may
   still pin its own roots.
-* [High] 0.1, Doom on the Pi 4 ([plan.md](docs/plan.md#01-the-preview)): `doom` in `rc` on the published card
-  flashes the screen and ends with status 12, the port's `EXIT_WINDOW` (`examples/doom/doom`, erXos's fork): the
-  port takes only a window whose channel is `x8r8g8b8`, and the Pi's firmware framebuffer is `a8r8g8b8`
-  (`erx_fb: framebuffer 1920x1080 stride 7680 a8r8g8b8` on the board). The bytes are laid out alike; the fork's
-  port also takes `a8r8g8b8`, or the display gives a window `x8r8g8b8` whatever the screen's channel. The site and
-  release notes say Doom runs on QEMU until a card with the fix is published. On QEMU it plays.
+* [Medium] Doom on the Pi 4 is very slow (`examples/doom/doom`, erXos's fork; the firmware framebuffer driver,
+  `erlang/apps/erx_fb/src/erx_firmware_fb_core.erl`): its demo loop runs, over the 1920x1080 `a8r8g8b8` screen, at
+  a frame rate far below QEMU's. Unmeasured is where the time goes: the port's scaled frames written through
+  `/dev/draw` in 64 KiB bands, the display's composition, or the driver's copy of each changed rectangle into the
+  framebuffer. Measure frames a second on the board first ([docs/todo-performance.md](docs/todo-performance.md)).
 * [Medium] bluetooth, the line's service side (docs/design-bluetooth.md "The controller's line"): the line tree,
   `erx_line_fs`, and its keeper, `erx_line`, run in their UART's line group under `erx_uart_sup`, which starts the
   keeper on the root's `line` record with the rate and flow of the grant of the system domain's service named
