@@ -72,11 +72,11 @@ register() -> ok.
 %% The boot's configured rows, and anything the persistent term {?MODULE, boot} sets
 %% over them: erx_domain_mints_srv_tests' service and facet rows and restarts.
 configured() ->
-    {ok, maps:merge(#{host => <<"erxos">>,
+    {ok, maps:merge(#{host => <<"erxos">>, boot_timeout_s => 60,
                       domains => [#{row => 0, place => 1, name => <<"b">>, principal => 1, kind => service,
-                                    restarts => 1, restart_period_s => 60, boot_timeout_s => 60},
+                                    restarts => 1, restart_period_s => 60},
                                   #{row => 1, place => 0, name => <<"a">>, principal => 1, kind => service,
-                                    restarts => 1, restart_period_s => 60, boot_timeout_s => 60}]},
+                                    restarts => 1, restart_period_s => 60}]},
                     persistent_term:get({?MODULE, boot}, #{}))}.
 %% Principal 1's template, or the templates the persistent term {?MODULE, templates} sets.
 templates() -> {ok, persistent_term:get({?MODULE, templates}, [#{template => 0, principal => 1}])}.

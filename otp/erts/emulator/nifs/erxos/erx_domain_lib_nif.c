@@ -388,9 +388,10 @@ created_term(ErlNifEnv *env, const erx_dom_created_t *created)
 /*
  * What the domain service reads of the manifest's configured domains:
  * {ok, #{host => Host, domains => Rows, services => Services, grants =>
- * Grants}}, Rows in row order, each #{row, place, name, principal, kind,
- * restarts, restart_period_s, boot_timeout_s}, place its place in the boot
- * order, and Services and Grants as erx_domain_served_terms makes them. The view is
+ * Grants, boot_timeout_s => Seconds}}, Rows in row order, each #{row, place,
+ * name, principal, kind, restarts, restart_period_s}, place its place in the
+ * boot order, Services and Grants as erx_domain_served_terms makes them, and
+ * Seconds the machine's boot timeout. The view is
  * fixed at boot, so this reads it without the lock.
  */
 static ERL_NIF_TERM
@@ -422,8 +423,7 @@ configured_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
 		keys[4] = atom(env, "restarts"), values[4] = enif_make_uint(env, configured->restarts);
 		keys[5] = atom(env, "restart_period_s"), values[5] = enif_make_uint(env, configured->restart_period_s);
 		keys[6] = atom(env, "place"), values[6] = enif_make_uint(env, configured->place);
-		keys[7] = atom(env, "boot_timeout_s"), values[7] = enif_make_uint(env, configured->boot_timeout_s);
-		if (!enif_make_map_from_arrays(env, keys, values, 8, &row))
+		if (!enif_make_map_from_arrays(env, keys, values, 7, &row))
 			return (enif_make_badarg(env));
 		rows = enif_make_list_cell(env, row, rows);
 	}
@@ -437,7 +437,8 @@ configured_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
 	keys[1] = atom(env, "domains"), values[1] = rows;
 	keys[2] = atom(env, "services"), values[2] = services;
 	keys[3] = atom(env, "grants"), values[3] = grants;
-	if (!enif_make_map_from_arrays(env, keys, values, 4, &result))
+	keys[4] = atom(env, "boot_timeout_s"), values[4] = enif_make_uint(env, lib->boot_timeout_s);
+	if (!enif_make_map_from_arrays(env, keys, values, 5, &result))
 		return (enif_make_badarg(env));
 	return (enif_make_tuple2(env, atom(env, "ok"), result));
 }

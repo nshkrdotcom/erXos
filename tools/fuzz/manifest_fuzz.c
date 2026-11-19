@@ -209,6 +209,9 @@ view_check(const erx_manifest_view_t *view, const erx_dom_lib_t *lib)
 	erx_mf_facet_t facet_row;
 	erx_mf_unit_t unit;
 
+	/* The domain service makes the machine's boot timeout milliseconds of an Erlang timer. */
+	if (lib->boot_timeout_s < 1 || lib->boot_timeout_s > ERX_BOOT_TIMEOUT_MAX_S)
+		abort();
 	if (dom->ndevices != view->header.devices.count ||
 	    dom->nservices != view->header.services.count || dom->nfacets != view->header.facets.count)
 		abort();
@@ -246,9 +249,6 @@ view_check(const erx_manifest_view_t *view, const erx_dom_lib_t *lib)
 	for (uint32_t index = 0; index < dom->nconfigured; index++) {
 		row = &dom->configured[index];
 		if ((uint64_t)row->args_len + row->env_len + 2u * ERX_DOM_NODE_MAX > ERX_BOOT_STRINGS_MAX)
-			abort();
-		/* The domain service makes it milliseconds of an Erlang timer. */
-		if (row->boot_timeout_s < 1 || row->boot_timeout_s > ERX_BOOT_TIMEOUT_MAX_S)
 			abort();
 	}
 }

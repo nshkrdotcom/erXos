@@ -58,13 +58,13 @@ module Erx
 
     module Frontend
       FIELDS = {
-        'machine' => %w[flags host console hostlink platform root_memory system_baseline system_share users_share system_principal max_domains max_connections system_lane system_queue peer_held system_reserve sealing system_runtime_limits native_limits system_args],
+        'machine' => %w[flags host console hostlink platform root_memory system_baseline system_share users_share system_principal max_domains max_connections system_lane system_queue peer_held system_reserve sealing system_runtime_limits native_limits system_args boot_timeout_s],
         'share' => %w[quota_ns period_ns cpuset capacity_mcpu capacity_first slice_us grace_us base ceiling flags],
         'principal' => %w[memory grant domains names default_limits ceiling_limits],
         'runtime_limits' => %w[max_frame max_message_heap funnel_depth exports tmp overlay atoms foreign_atoms processes],
         'limits' => %w[memory outer grant spaces lane connections crash flags runtime_limits peer_held peer_held_total],
         'lane_class' => %w[lane],
-        'domain' => %w[principal limits kind flags runtime release restarts restart_period_s boot_timeout_s args env],
+        'domain' => %w[principal limits kind flags runtime release restarts restart_period_s args env],
         'session' => %w[limits runtime release args env],
         'unit' => %w[placement holder],
         'window' => %w[holder device role partition rights image],
@@ -79,7 +79,7 @@ module Erx
         'signer' => %w[key],
         'system_image' => %w[input]
       }.freeze
-      OPTIONAL = { 'machine' => %w[system_args], 'domain' => %w[boot_timeout_s args env], 'session' => %w[args env], 'service' => %w[name],
+      OPTIONAL = { 'machine' => %w[system_args boot_timeout_s], 'domain' => %w[args env], 'session' => %w[args env], 'service' => %w[name],
                    'facet' => %w[name queue], 'image' => %w[salt],
                    'start' => %w[enable display restarts restart_period_s],
                    'apps' => %w[services max], 'package' => %w[enable], 'display' => %w[palette] }.freeze

@@ -605,7 +605,8 @@ module Erx
           'peer_held' => number(machine, 'peer_held'), 'system_reserve' => number(machine, 'system_reserve'),
           'sealing' => @codec.member('seal', 'none'),
           'system_runtime_limits' => reference(machine, 'system_runtime_limits', 'runtime_limits'),
-          'native_limits' => reference(machine, 'native_limits', 'limits')
+          'native_limits' => reference(machine, 'native_limits', 'limits'),
+          'boot_timeout_s' => boot_timeout(machine)
         }
         check_lane(header.fetch('system_lane'), 'machine.system_lane')
         %w[system_queue peer_held].each do |key|
@@ -619,6 +620,21 @@ module Erx
       end
 
       private
+
+      # The seconds every domain's init has to report ready unless its request sets its
+      # own: the machine's boot_timeout_s, or boot_timeout_default_s where the machine
+      # states none, from 1 to boot_timeout_max_s, the reader's bound (abi/manifest.txt).
+      def boot_timeout(machine)
+        seconds = if machine.properties.key?('boot_timeout_s')
+                    number(machine, 'boot_timeout_s')
+                  else
+                    @codec.constant('boot_timeout_default_s')
+                  end
+        maximum = @codec.constant('boot_timeout_max_s')
+        return seconds if seconds.between?(1, maximum)
+
+        invalid("the machine's boot timeout of #{seconds} s is outside 1 to #{maximum} s", 'machine.boot_timeout_s')
+      end
 
       def check_mode(development:, partial:)
         unless development
@@ -1338,25 +1354,9 @@ module Erx
             'flags' => flags(record, 'flags', 'mf_domain_flags'), 'runtime' => runtime.fetch('entry'),
             'release' => release.fetch('entry'), 'release_files' => release.fetch('files'),
             'limits' => reference(record, 'limits', 'limits'), 'restarts' => number(record, 'restarts'),
-            'restart_period_s' => number(record, 'restart_period_s'), 'boot_timeout_s' => boot_timeout(record),
+            'restart_period_s' => number(record, 'restart_period_s'),
             'args' => args, 'env' => words(record, 'env') }
         end
-      end
-
-      # The seconds a configured domain's init has to report ready: its row's own, or
-      # boot_timeout_default_s where the row states none, from 1 to boot_timeout_max_s,
-      # the reader's bound (abi/manifest.txt).
-      def boot_timeout(record)
-        seconds = if record.properties.key?('boot_timeout_s')
-                    number(record, 'boot_timeout_s')
-                  else
-                    @codec.constant('boot_timeout_default_s')
-                  end
-        maximum = @codec.constant('boot_timeout_max_s')
-        return seconds if seconds.between?(1, maximum)
-
-        invalid("a configured domain's boot timeout of #{seconds} s is outside 1 to #{maximum} s",
-                'domain.boot_timeout_s')
       end
 
       # Property 14: each session template, keyed by its principal, from which the

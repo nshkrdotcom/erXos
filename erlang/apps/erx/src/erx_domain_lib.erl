@@ -100,15 +100,12 @@ lanes the domain and the system domain read.
 -doc """
 A configured domain of the system manifest: its row in the manifest's domain
 table, its place in the boot order (from 0), its name, an identifier the
-manifest check accepted, its principal, its kind, its restart intensity:
-at most restarts restarts within restart_period_s seconds, and the seconds
-its init has to report ready, from 1 to the manifest reader's
-boot_timeout_max_s.
+manifest check accepted, its principal, its kind, and its restart intensity:
+at most restarts restarts within restart_period_s seconds.
 """.
 -type configured() :: #{row := non_neg_integer(), place := non_neg_integer(), name := binary(),
                         principal := pos_integer(), kind := service | secret,
-                        restarts := non_neg_integer(), restart_period_s := non_neg_integer(),
-                        boot_timeout_s := pos_integer()}.
+                        restarts := non_neg_integer(), restart_period_s := non_neg_integer()}.
 
 -doc """
 A session template of the system manifest, from which each session of its
@@ -229,7 +226,10 @@ disconnect(Number) ->
     disconnect_nif(Number).
 
 -doc """
-What the domain service reads of the system manifest at boot: the machine's
+What the domain service reads of the system manifest at boot. boot_timeout_s
+is the machine's boot timeout: the seconds each domain's init has to report
+ready unless its request sets its own, from 1 to the manifest reader's
+boot_timeout_max_s. The rest: the machine's
 host name, the configured domains, in row order, the services, each its
 server, a configured domain's row or system, its name and the abi/services
 number of the interface it serves (erx_abi.hrl's ERX_SERVICE_* macros, so
@@ -247,7 +247,7 @@ integer, a boolean as true or false, text or bytes as a binary, and a device
 reference as the index of its row in the manifest's device table
 (docs/design-system.md, "Facets a configured domain serves").
 """.
--spec configured() -> {ok, #{host := binary(), domains := [configured()],
+-spec configured() -> {ok, #{host := binary(), boot_timeout_s := pos_integer(), domains := [configured()],
                              services := [{non_neg_integer() | system, atom(), non_neg_integer()}],
                              grants := [{non_neg_integer() | system | {template, non_neg_integer()}, atom(),
                                          non_neg_integer() | system, map()}]}}

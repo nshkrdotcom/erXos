@@ -245,19 +245,17 @@ load_no_library_module() ->
     {ok, erx_domain_lib, Beam} = compile:forms(Forms),
     {module, erx_domain_lib} = code:load_binary(erx_domain_lib, "erx_domain_lib.erl", Beam).
 
-%% Each configured domain has its own row's boot_timeout_s to report ready, not the
-%% default a request gets: silent (row 1, 1 s) never reports and is stopped after 1 s,
-%% while late (row 0, first in the boot order, 5 s) reports after 2 s, past silent's
-%% deadline, and is ready, not stopped. Neither may restart, so nothing else reaches
-%% the library.
+%% Every domain has the machine's boot timeout to report ready, not the manifest's
+%% default: with the machine's 1 s, configured row silent never reports and is stopped
+%% after 1 s, as is a created domain whose request sets no boot_timeout, which answers
+%% timeout. The row may not restart, so nothing else reaches the library.
 configured_boot_timeout_test_() ->
     {setup,
      fun() ->
-             Row = fun(Row, Name, Seconds) -> #{row => Row, place => Row, name => Name, principal => 1,
-                                                kind => service, restarts => 0, restart_period_s => 60,
-                                                boot_timeout_s => Seconds} end,
              persistent_term:put({erx_domain_fake_lib, boot},
-                                 #{domains => [Row(0, <<"late">>, 5), Row(1, <<"silent">>, 1)]}),
+                                 #{boot_timeout_s => 1,
+                                   domains => [#{row => 0, place => 0, name => <<"silent">>, principal => 1,
+                                                 kind => service, restarts => 0, restart_period_s => 60}]}),
              Log = erx_domain_fake_lib:start_log(),
              {ok, Service} = erx_domain_srv:start_link(#{lib => erx_domain_fake_lib, agent => erx_domain_fake_lib,
                                                           exports => erx_domain_fake_lib,
@@ -272,20 +270,22 @@ configured_boot_timeout_test_() ->
      {timeout, 30, fun configured_boot_timeout/0}}.
 
 configured_boot_timeout() ->
-    Booted = erlang:monotonic_time(millisecond),
-    [?assertEqual(Call, next_call()) || Call <- [{configured, 5, 0}, {open_side, 5, 'late@erxos', 50},
-                                                 {export, 5, [send]}, {start, 5},
-                                                 {configured, 6, 1}, {open_side, 6, 'silent@erxos', 60},
-                                                 {export, 6, [send]}, {start, 6}]],
-    [?assertEqual(Call, next_call()) || Call <- [{stop, 6}, {close_side, 6, {domain_down, 6, stopped}},
-                                                 {disconnect, 60}, {retire, 6}]],
-    timer:sleep(max(0, Booted + 2000 - erlang:monotonic_time(millisecond))),
-    #{core := Core} = sys:get_state(erx_domain_srv),
-    {ok, #{pid := Late, state := running}} = erx_domain_core:fetch(5, Core),
-    Late ! {erx_origin, 5, {erx_ready, #{connections => erx_domain_fake_lib:agent(<<"late">>, 5)}}},
-    ?assertMatch({ok, #{connections := Agent}} when Agent =/= none, gen_server:call(erx_domain_srv, {info, 5})),
-    #{core := Ready} = sys:get_state(erx_domain_srv),
-    ?assertMatch({ok, #{state := ready}}, erx_domain_core:fetch(5, Ready)).
+    Self = self(),
+    Started = erlang:monotonic_time(millisecond),
+    [?assertEqual(Call, next_call()) || Call <- [{configured, 5, 0}, {open_side, 5, 'silent@erxos', 50},
+                                                 {export, 5, [send]}, {start, 5}]],
+    spawn_link(fun() -> Self ! {created, erx_domain:create(#{boot => <<"base">>, name => <<"late">>,
+                                                             memory => 4096})} end),
+    {create, #{id := 6}} = next_call(),
+    [?assertEqual(Call, next_call()) || Call <- [{open_side, 6, 'late@erxos', 60}, {export, 6, [send]}, {start, 6}]],
+    %% The two stops come about together, so their calls may interleave; each domain's
+    %% come in its own order.
+    Stops = [next_call() || _ <- lists:seq(1, 8)],
+    [?assertEqual([{stop, Id}, {close_side, Id, {domain_down, Id, stopped}}, {disconnect, Id * 10}, {retire, Id}],
+                  [Call || Call <- Stops, lists:member(element(2, Call), [Id, Id * 10])]) || Id <- [5, 6]],
+    ?assertEqual({created, {error, timeout}}, receive {created, _} = Created -> Created after 5000 -> none end),
+    %% Both within a few seconds, so neither waited for the manifest's 60 s default.
+    ?assert(erlang:monotonic_time(millisecond) - Started < 10000).
 
 %% A session's name is its principal's name in the system manifest, and root for the
 %% system principal (docs/design-apps.md, "Starting a session").

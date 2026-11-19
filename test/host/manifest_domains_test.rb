@@ -100,17 +100,21 @@ class ManifestDomainsTest < Minitest::Test
     assert_equal 2, view.header.fetch('max_domains')
   end
 
-  # A row's boot_timeout_s reaches the encoded row; a row without one gets
-  # boot_timeout_default_s; 0 and anything past boot_timeout_max_s are refused.
-  def test_a_configured_domains_boot_timeout_is_its_own_or_the_default_within_bounds
-    alpha = "  restart_period_s 5\ndomain beta"
-    view = @codec.open('manifest', admit(@source.sub(alpha, "  restart_period_s 5\n  boot_timeout_s 90\ndomain beta")).bytes)
-    assert_equal [90, @codec.constant('boot_timeout_default_s')], rows(view, 'domains').map { |row| row.fetch('boot_timeout_s') }
+  # The machine's boot_timeout_s, which every configured domain takes, reaches the
+  # encoded header; a machine without one gets boot_timeout_default_s; 0 and anything
+  # past boot_timeout_max_s are refused. A domain row takes no boot timeout of its own.
+  def test_the_machines_boot_timeout_is_its_own_or_the_default_within_bounds
+    stated = ->(seconds) { @source.sub(/^(  max_connections \d+\n)/) { "#{Regexp.last_match(1)}  boot_timeout_s #{seconds}\n" } }
+    assert_equal 600, @codec.open('manifest', admit(stated.call(600)).bytes).header.fetch('boot_timeout_s')
+    assert_equal @codec.constant('boot_timeout_default_s'), @codec.open('manifest', admit.bytes).header.fetch('boot_timeout_s')
     [0, @codec.constant('boot_timeout_max_s') + 1].each do |seconds|
-      refused(Erx::Manifest::Invalid, 'domain.boot_timeout_s',
-              @source.sub(alpha, "  restart_period_s 5\n  boot_timeout_s #{seconds}\ndomain beta"),
+      refused(Erx::Manifest::Invalid, 'machine.boot_timeout_s', stated.call(seconds),
               message: /boot timeout of #{seconds} s is outside/)
     end
+    error = assert_raises(Erx::ABI::SchemaError) do
+      admit(@source.sub("  restart_period_s 5\ndomain beta", "  restart_period_s 5\n  boot_timeout_s 90\ndomain beta"))
+    end
+    assert_match(/unknown or duplicate manifest property/, error.message)
   end
 
   def test_the_report_counts_the_planned_domains

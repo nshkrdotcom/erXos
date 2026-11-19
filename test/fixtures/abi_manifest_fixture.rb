@@ -24,12 +24,12 @@ module AbiManifestFixture
 
   def valid
     text = 'node/uart@0fixturerootnativenative'.b
-    bytes = "\0".b * (744 + text.bytesize)
+    bytes = "\0".b * (752 + text.bytesize)
     integer(bytes, 0, 0x4d585245)
     integer(bytes, 4, 1, width: 2)
     integer(bytes, 6, 3, width: 2)
     integer(bytes, 8, bytes.bytesize)
-    integer(bytes, 12, 448)
+    integer(bytes, 12, 456)
     span(bytes, 16, 0, 4)
     span(bytes, 24, 4, 7)
     span(bytes, 32, 11, 0)
@@ -44,36 +44,37 @@ module AbiManifestFixture
     integer(bytes, 184, 16384)
     integer(bytes, 188, 4096)
     integer(bytes, 192, 250)
-    span(bytes, 208, 448, 1)
-    span(bytes, 216, 528, 0)
-    span(bytes, 224, 528, 1)
-    span(bytes, 232, 688, 1)
-    (240..352).step(8) { |offset| span(bytes, offset, 744, 0) }
-    span(bytes, 360, 744, text.bytesize)
-    span(bytes, 376, 528, 0)
-    span(bytes, 384, 744, 0)
-    span(bytes, 392, 744, 0)
-    (400..440).step(8) { |offset| span(bytes, offset, 744, 0) }
-    span(bytes, 448, 18, 4)
-    integer(bytes, 456, 268_435_456, width: 8)
-    share(bytes, 464, quota: 8_000_000, capacity: 800, base: 16, ceiling: 31)
-    integer(bytes, 512, 4)
-    integer(bytes, 516, 4)
-    span(bytes, 528, 22, 6)
-    integer(bytes, 536, 16_777_216, width: 8)
-    integer(bytes, 544, 1_048_576, width: 8)
-    share(bytes, 552, quota: 8_000_000, capacity: 800, base: 16, ceiling: 31)
-    integer(bytes, 648, 4096)
-    integer(bytes, 672, 4096, width: 8)
+    span(bytes, 208, 456, 1)
+    span(bytes, 216, 536, 0)
+    span(bytes, 224, 536, 1)
+    span(bytes, 232, 696, 1)
+    (240..352).step(8) { |offset| span(bytes, offset, 752, 0) }
+    span(bytes, 360, 752, text.bytesize)
+    span(bytes, 376, 536, 0)
+    span(bytes, 384, 752, 0)
+    span(bytes, 392, 752, 0)
+    (400..440).step(8) { |offset| span(bytes, offset, 752, 0) }
+    integer(bytes, 448, 60) # the machine's boot_timeout_s, which the reader takes from 1
+    span(bytes, 456, 18, 4)
+    integer(bytes, 464, 268_435_456, width: 8)
+    share(bytes, 472, quota: 8_000_000, capacity: 800, base: 16, ceiling: 31)
+    integer(bytes, 520, 4)
+    integer(bytes, 524, 4)
+    span(bytes, 536, 22, 6)
+    integer(bytes, 544, 16_777_216, width: 8)
+    integer(bytes, 552, 1_048_576, width: 8)
+    share(bytes, 560, quota: 8_000_000, capacity: 800, base: 16, ceiling: 31)
+    integer(bytes, 656, 4096)
     integer(bytes, 680, 4096, width: 8)
-    span(bytes, 688, 28, 6)
-    integer(bytes, 696, 4096)
-    integer(bytes, 700, 8192)
-    integer(bytes, 704, 64)
-    integer(bytes, 708, 64)
-    integer(bytes, 728, 1024)
-    integer(bytes, 732, 64)
-    bytes[744, text.bytesize] = text
+    integer(bytes, 688, 4096, width: 8)
+    span(bytes, 696, 28, 6)
+    integer(bytes, 704, 4096)
+    integer(bytes, 708, 8192)
+    integer(bytes, 712, 64)
+    integer(bytes, 716, 64)
+    integer(bytes, 736, 1024)
+    integer(bytes, 740, 64)
+    bytes[752, text.bytesize] = text
     bytes
   end
 
@@ -86,17 +87,17 @@ module AbiManifestFixture
   def unit_partition(overlap: false, orphan: false)
     original = valid
     units = orphan ? 1 : 2
-    device_offset = 744 + units * 24
+    device_offset = 752 + units * 24
     strings_offset = device_offset + 2 * DEVICE_ROW
-    text = original.byteslice(744..-1) + (orphan ? 'unit0' : 'unit0unit1')
-    bytes = original.byteslice(0, 744) + "\0".b * (strings_offset - 744) + text
+    text = original.byteslice(752..-1) + (orphan ? 'unit0' : 'unit0unit1')
+    bytes = original.byteslice(0, 752) + "\0".b * (strings_offset - 752) + text
     integer(bytes, 8, bytes.bytesize)
-    span(bytes, 248, 744, units)
+    span(bytes, 248, 752, units)
     span(bytes, 256, device_offset, 2)
     [*(264..352).step(8), *(384..440).step(8)].each { |offset| span(bytes, offset, strings_offset, 0) }
     span(bytes, 360, strings_offset, text.bytesize)
     units.times do |index|
-      base = 744 + index * 24
+      base = 752 + index * 24
       span(bytes, base, 34 + index * 5, 5)
       integer(bytes, base + 8, 0xffffffff)
       first = overlap ? device_offset : device_offset + index * DEVICE_ROW
@@ -119,61 +120,60 @@ module AbiManifestFixture
     domain = "\0".b * 64
     span(domain, 0, 18, 4)
     integer(domain, 12, 2)
-    integer(domain, 44, 10) # boot_timeout_s, which the reader takes from 1
     service = "\0".b * 24
     span(service, 0, 18, 4)
     integer(service, 8, 0xffffffff)
     facet = "\0".b * 80
     span(facet, 0, 18, 4)
-    # Header448, principal80, domain64, limits160, runtime-limits56,
+    # Header456, principal80, domain64, limits160, runtime-limits56,
     # service24, facet80, parameter32, then strings.
-    span(facet, 16, 912, 0)
-    span(facet, 24, 912, 1)
+    span(facet, 16, 920, 0)
+    span(facet, 24, 920, 1)
     parameter = "\0".b * 32
     integer(parameter, 4, kind)
     integer(parameter, 8, scalar, width: 8)
     span(parameter, 16, 34, text.bytesize) unless text.empty?
     integer(parameter, 24, index)
-    strings = original.byteslice(744..-1) + text
-    bytes = original.byteslice(0, 528) + domain + original.byteslice(528, 216) + service + facet + parameter + strings
+    strings = original.byteslice(752..-1) + text
+    bytes = original.byteslice(0, 536) + domain + original.byteslice(536, 216) + service + facet + parameter + strings
     integer(bytes, 8, bytes.bytesize)
     integer(bytes, 6, 1, width: 2)
-    span(bytes, 216, 528, 1)
-    span(bytes, 224, 592, 1)
-    span(bytes, 232, 752, 1)
-    (240..264).step(8) { |offset| span(bytes, offset, 808, 0) }
-    span(bytes, 272, 808, 1)
-    span(bytes, 280, 832, 1)
-    span(bytes, 288, 912, 0)
-    span(bytes, 296, 912, 1)
-    (304..352).step(8) { |offset| span(bytes, offset, 944, 0) }
-    span(bytes, 360, 944, strings.bytesize)
-    span(bytes, 376, 592, 0)
-    span(bytes, 384, 944, 0)
-    span(bytes, 392, 944, 0)
-    (400..440).step(8) { |offset| span(bytes, offset, 944, 0) }
+    span(bytes, 216, 536, 1)
+    span(bytes, 224, 600, 1)
+    span(bytes, 232, 760, 1)
+    (240..264).step(8) { |offset| span(bytes, offset, 816, 0) }
+    span(bytes, 272, 816, 1)
+    span(bytes, 280, 840, 1)
+    span(bytes, 288, 920, 0)
+    span(bytes, 296, 920, 1)
+    (304..352).step(8) { |offset| span(bytes, offset, 952, 0) }
+    span(bytes, 360, 952, strings.bytesize)
+    span(bytes, 376, 600, 0)
+    span(bytes, 384, 952, 0)
+    span(bytes, 392, 952, 0)
+    (400..440).step(8) { |offset| span(bytes, offset, 952, 0) }
     bytes
   end
 
   # The valid fixture plus one session record; every field index is 0 and
-  # args and env are empty. Header448, principal80, sessions40, limits160,
+  # args and env are empty. Header456, principal80, sessions40, limits160,
   # runtime-limits56, then strings.
   def session_template(**fields)
     original = valid
     session = "\0".b * 40
     fields.each { |name, value| integer(session, SESSION_FIELDS.fetch(name), value) }
-    strings = original.byteslice(744..-1)
-    bytes = original.byteslice(0, 528) + session + original.byteslice(528, 216) + strings
+    strings = original.byteslice(752..-1)
+    bytes = original.byteslice(0, 536) + session + original.byteslice(536, 216) + strings
     integer(bytes, 8, bytes.bytesize)
     integer(bytes, 6, 1, width: 2)
-    span(bytes, 224, 568, 1)
-    span(bytes, 232, 728, 1)
-    (240..352).step(8) { |offset| span(bytes, offset, 784, 0) }
-    span(bytes, 360, 784, strings.bytesize)
-    span(bytes, 376, 528, 1)
-    span(bytes, 384, 784, 0)
-    span(bytes, 392, 784, 0)
-    (400..440).step(8) { |offset| span(bytes, offset, 784, 0) }
+    span(bytes, 224, 576, 1)
+    span(bytes, 232, 736, 1)
+    (240..352).step(8) { |offset| span(bytes, offset, 792, 0) }
+    span(bytes, 360, 792, strings.bytesize)
+    span(bytes, 376, 536, 1)
+    span(bytes, 384, 792, 0)
+    span(bytes, 392, 792, 0)
+    (400..440).step(8) { |offset| span(bytes, offset, 792, 0) }
     bytes
   end
 
@@ -183,7 +183,7 @@ module AbiManifestFixture
 
   # The valid fixture as a development manifest plus count start rows, each
   # enabled, of principal 0, with no display and 5 restarts in 600 s, and fields
-  # overriding the first row. Header448, principal80, limits160,
+  # overriding the first row. Header456, principal80, limits160,
   # runtime-limits56, the start rows, then strings.
   def start_rows(count: 1, partial: false, **fields)
     original = valid
@@ -194,13 +194,13 @@ module AbiManifestFixture
         .each { |name, value| integer(row, START_FIELDS.fetch(name), value) }
       row
     end.join
-    strings_offset = 744 + rows.bytesize
-    strings = original.byteslice(744..-1)
-    bytes = original.byteslice(0, 744) + rows + strings
+    strings_offset = 752 + rows.bytesize
+    strings = original.byteslice(752..-1)
+    bytes = original.byteslice(0, 752) + rows + strings
     integer(bytes, 8, bytes.bytesize)
     integer(bytes, 6, partial ? 3 : 1, width: 2)
     span(bytes, 360, strings_offset, strings.bytesize)
-    span(bytes, 384, 744, count)
+    span(bytes, 384, 752, count)
     span(bytes, 392, strings_offset, 0)
     (400..440).step(8) { |offset| span(bytes, offset, strings_offset, 0) }
     bytes
@@ -224,7 +224,7 @@ module AbiManifestFixture
   # table. counts overrides the count a table's span claims. The block, given the bytes
   # and each table's offset, writes the fields that name another table's place.
   def layout(flags:, rows:, text:, counts: {})
-    bytes = valid.byteslice(0, 448)
+    bytes = valid.byteslice(0, 456)
     integer(bytes, 6, flags, width: 2)
     offsets = TABLES.to_h do |table, (field, alignment)|
       bytes << ("\0".b * (-bytes.bytesize % alignment))
@@ -255,7 +255,7 @@ module AbiManifestFixture
   # whose span claims apps rows, which the reader bounds to 1; the enabled package clock and the package quotes; the
   # signer ops; and the development key of 7s when development is true.
   def packages(flags: 1, apps: 1, development: true)
-    text = valid.byteslice(744..-1)
+    text = valid.byteslice(752..-1)
     names = {}
     PACKAGE_NAMES.each do |label|
       names[label] = [text.bytesize, label.bytesize]
@@ -266,11 +266,11 @@ module AbiManifestFixture
       (name.(label) + [grantee, service].pack('V2') + "\0".b * 56 + [kind, 0].pack('V2')).b
     end
     rows = {
-      principals: [valid.byteslice(448, 80)],
-      domains: [name.('storage') + [0, 1, 0, 0, 0, 0, 0, 0, 0, 10, 0, 0, 0, 0].pack('V14')],
+      principals: [valid.byteslice(456, 80)],
+      domains: [name.('storage') + [0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0].pack('V14')],
       sessions: [[0xffffffff, *[0] * 9], [0] * 10].map { |fields| fields.pack('V10') },
-      limits: [valid.byteslice(528, 160)],
-      runtime_limits: [valid.byteslice(688, 56)],
+      limits: [valid.byteslice(536, 160)],
+      runtime_limits: [valid.byteslice(696, 56)],
       services: [['packages', 0, 5], ['display', 0xffffffff, 8], ['data', 0, 5], ['spare', 0, 5], ['system', 0, 5]]
         .map { |label, server, interface| name.(label) + [server, interface, 0].pack('V2Q<') },
       facets: [facet.('kiosk_display', kind: 2, grantee: 1, service: 1),

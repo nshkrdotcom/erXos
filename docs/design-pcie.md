@@ -1054,7 +1054,7 @@ callers beside those of `system_namespace/0`, which keeps its own rule
 over every `files` grant, and answers both after every step
 (`erx_domain_srv.erl:1372`). An operation in progress is bounded by the
 mint core's 10 s deadline (`erx_domain_mints.erl:113`), and `D` before
-its ready report by its row's boot timeout. On `{ok, Facet}` the device
+its ready report by the machine's boot timeout. On `{ok, Facet}` the device
 service records `D` as `answered` in each of the incarnation's bridges'
 catalogue entries ([Records](#records)), then answers, and calls
 `pcie` on `Facet` from then on, never on what `erx:cap/1` finds, which

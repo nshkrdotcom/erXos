@@ -221,10 +221,10 @@ class AbiErlangTest < Minitest::Test
   def write_partition_and_parameter_fixtures
     valid = AbiErlangFixture.devices(owners: 2, devices: 2)
     overlapping = valid.dup
-    AbiManifestFixture.integer(overlapping, 780, 792)
+    AbiManifestFixture.integer(overlapping, 788, 800)
     # The one unit claims the second device row, leaving the first unclaimed.
     gap = AbiErlangFixture.devices(owners: 1, devices: 2)
-    AbiManifestFixture.integer(gap, 756, 768 + AbiManifestFixture::DEVICE_ROW)
+    AbiManifestFixture.integer(gap, 764, 776 + AbiManifestFixture::DEVICE_ROW)
     fixtures = {
       'partition_valid' => valid,
       'partition_overlap' => overlapping,

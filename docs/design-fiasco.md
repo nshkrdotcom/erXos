@@ -1129,7 +1129,10 @@ whenever it is needed and never checked in (`Platform#site_manifest_source`): th
 development manifest without the configured domains the platform record's
 `site_leaves_out` names and without its `apps` row
 ([design-packaging.md](design-packaging.md#the-apps-row)), each taken out with
-the room it took, which the same check accepts. On QEMU `virt` those domains are
+the room it took, which the same check accepts. The image states the boot timeout
+of the website's machine, 600 s (`InteractiveBoot::SITE_BOOT_TIMEOUT_S`), since
+the emulator boots its domains several times slower than the 60 s default allows
+([design-system.md](design-system.md#the-manifest)). On QEMU `virt` those domains are
 the web domain, since the website's page has no host link and the web facet is
 all that domain serves, and the display domain, since the page has no gpu for it
 to drive; each would only cost boot time on the emulator's one core.

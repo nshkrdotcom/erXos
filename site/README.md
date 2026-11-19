@@ -68,7 +68,11 @@ ruby tools/build_site.rb --no-card [--image IMAGE] [--serve 8000]
   manifest check"). The image's build runs the same manifest check over it
   as over the development manifest, so the check proves what the site
   ships, and a change to the development manifest reaches the site's at
-  once. The development image of a plain
+  once. The site's manifest also gives each domain 600 s to report ready
+  instead of 60 (`SITE_BOOT_TIMEOUT_S` in `tools/lib/erx/interactive_boot.rb`),
+  since the emulator boots domains far slower than QEMU: on a phone, and
+  anywhere with v64's JIT turned off (`?jit=0`), the 60 s default is too
+  short. The development image of a plain
   `tools/erx boot` builds into `build/production-image/interactive/`, so
   it never replaces the website's.
 * `--image-record` is the image's build record, by default the image's
@@ -248,7 +252,7 @@ progress bar on the case; checks the image and the disk against
 `boot.json`; and boots the image with 256 MiB of guest memory and one
 core (`RAM_MIB` and `CPU_CORES`, the one place to change each, from which
 the readout is built too), v64's page-tier JIT on, the kernel command
-line `erx.watchdog=1,30,600`, the disk as its virtio block device and a
+line `erx.watchdog=1,120,600` (`CMDLINE`), the disk as its virtio block device and a
 virtio network device (below). The machine's serial console is attached
 to the terminal, and the status line follows boot milestones in the
 serial output. The terminal is 80 columns by 24 rows, the size the guest

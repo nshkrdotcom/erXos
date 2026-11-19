@@ -116,11 +116,9 @@ reach it only through facets, which arrive with the connections.
 %% id, principal and domain_pid, which the service sets, and facets, the service's own.
 -define(REQUEST_KEYS, [runtime, release, release_files, memory, outer, grant, lane, args, env,
                        connections, flags, spaces, limits, facets]).
-%% How long a session's init has to report ready, in milliseconds, and a requested
-%% domain's unless its request sets boot_timeout (docs/design-domains.md, "Erlang
-%% interface"): the manifest's default for a configured row, so every domain the
-%% machine boots has one default. A configured domain has its row's boot_timeout_s,
-%% which the manifest's reader bounds (abi/manifest.txt).
+%% The boot timeout the service starts with, in milliseconds: the manifest's default
+%% (abi/manifest.txt). booted/1 replaces it with the machine's, and it stays only when
+%% the library cannot answer configured/0.
 -define(BOOT_TIMEOUT, (?ERX_BOOT_TIMEOUT_DEFAULT_S * 1000)).
 %% How long an introduce/2 caller waits for the connection to come up at both ends, in
 %% milliseconds, unless start_link/1's introduce_timeout sets it (docs/design-domains.md,
@@ -199,8 +197,11 @@ state(Lib, Principals, Opts) ->
     %% max entries, as the library placed them (app_entries/1, the library's apps/0).
     %% Facet_rows holds every facet row of the manifest by its index in the facet table,
     %% from which each session's rows are decided once, as it is planned (session_rows/2).
+    %% Boot_timeout is the machine's boot timeout in milliseconds, which bounds every
+    %% domain's wait for its init's ready report unless its request sets its own.
     MintConfig = maps:merge(#{owner => fun erx_dist:owner/1}, maps:with([owner, deadline], maps:get(mints, Opts, #{}))),
     #{lib => Lib, agent => Agent, exports => Exports, node => erlang:is_alive(), core => undefined,
+      boot_timeout => ?BOOT_TIMEOUT,
       configured => #{}, templates => #{}, waiting => #{}, system_waiting => [], display_waiting => [],
       links => erx_domain_links:new(),
       introducing => #{}, introduce_timeout => maps:get(introduce_timeout, Opts, ?INTRODUCE_TIMEOUT),
@@ -281,7 +282,7 @@ handle_continue(boot, #{configured := Configured} = State) ->
 %% that cannot say leaves no configured domain, no grant and an empty host.
 booted(#{lib := Lib} = State) ->
     case {configured(Lib), templates(Lib)} of
-        {{ok, #{host := Host, domains := Rows} = Boot}, {ok, Templates}} ->
+        {{ok, #{host := Host, boot_timeout_s := Seconds, domains := Rows} = Boot}, {ok, Templates}} ->
             Configured = maps:from_list([{Row, Entry} || #{row := Row} = Entry <- Rows]),
             %% The manifest's service rows of configured domains and its facet rows,
             %% which the manifest check has proved consistent: a configured domain's
@@ -314,7 +315,8 @@ booted(#{lib := Lib} = State) ->
             Granted = erx_domain_mints:granted_names(system, Mints),
             ok = erx_ns:mount_facets(Granted),
             ok = mount_packages(Granted),
-            State#{core := erx_domain_core:new(Host), configured := Configured, mints := Mints, served := Served,
+            State#{core := erx_domain_core:new(Host), boot_timeout := Seconds * 1000, configured := Configured,
+                   mints := Mints, served := Served,
                    facet_rows := lists:enumerate(0, maps:get(grants, Boot, [])), trees := Trees,
                    templates := maps:from_list([{P, T} || #{principal := P} = T <- Templates])};
         {{error, _}, _} ->
@@ -556,8 +558,8 @@ handle_info(_Message, State) ->
 %% (grant_facets/3), and the library never sees them.
 create(_Spec, #{lib := none} = State) ->
     {{error, enotsup}, State};
-create(#{name := Name} = Spec, State) ->
-    Timeout = maps:get(boot_timeout, Spec, ?BOOT_TIMEOUT),
+create(#{name := Name} = Spec, #{boot_timeout := Default} = State) ->
+    Timeout = maps:get(boot_timeout, Spec, Default),
     Facets = facets(maps:get(facets, Spec, #{}), State),
     ValidFacets = Facets =/= invalid,
     Fields = maps:without([name, boot, boot_timeout], Spec),
@@ -699,7 +701,7 @@ grant(_Grant) ->
 start_session(_Principal, _Start, #{lib := none} = State) ->
     {{error, enotsup}, State};
 start_session(Principal, Start, #{templates := Templates, principals := #{system := System, names := Names},
-                                  lib := Lib, core := Core} = State) ->
+                                  lib := Lib, core := Core, boot_timeout := Timeout} = State) ->
     maybe
         #{Principal := #{template := Template}} ?= Templates,
         Rows = session_rows(Template, State),
@@ -710,7 +712,7 @@ start_session(Principal, Start, #{templates := Templates, principals := #{system
         true ?= Ident =/= {error, bad_identifier},
         Display = default_display(Displays),
         Make = fun(Id, Pid) -> Lib:session(Id, Template, Name, Display, Pid) end,
-        build(Ident, Principal, {session, Template}, Make, Record#{rows => Rows, app => none}, ?BOOT_TIMEOUT, State)
+        build(Ident, Principal, {session, Template}, Make, Record#{rows => Rows, app => none}, Timeout, State)
     else
         #{} -> {{error, no_template}, State};
         {error, _} = Refused -> {Refused, State};
@@ -733,7 +735,7 @@ session_rows(Template, #{facet_rows := Rows}) ->
 %% (answer_sessions/2). Only the start service's keepers start one (PK7, erx_domain:start_app/2).
 start_app(_Name, _Start, #{lib := none} = State) ->
     {{error, enotsup}, State};
-start_app(Name, Start, #{lib := Lib, core := Core} = State) ->
+start_app(Name, Start, #{lib := Lib, core := Core, boot_timeout := Timeout} = State) ->
     maybe
         {ok, #{entry := Entry, principal := Principal, prefix := Prefix, memory := Memory, rows := Rows,
                app := App}} ?= app_plan(Name, State),
@@ -744,7 +746,7 @@ start_app(Name, Start, #{lib := Lib, core := Core} = State) ->
         Display = default_display(Displays),
         Make = fun(Id, Pid) -> Lib:app_session(Id, Entry, Memory, SessionName, Display, Pid) end,
         #{app_entries := #{template := Template}} = State,
-        build(Ident, Principal, {session, Template}, Make, Record#{rows => Rows, app => App}, ?BOOT_TIMEOUT, State)
+        build(Ident, Principal, {session, Template}, Make, Record#{rows => Rows, app => App}, Timeout, State)
     else
         error -> {{error, no_app}, State};
         {error, _} = Refused -> {Refused, State};
@@ -791,16 +793,16 @@ default_display(#{display := Display}) -> Display;
 default_display(#{default_display := Display}) -> Display;
 default_display(#{}) -> none.
 
-%% A configured row, which has its own boot_timeout_s to report ready in.
-start_configured(#{row := Row, name := Name, principal := Principal, boot_timeout_s := Seconds},
-                 #{lib := Lib} = State) ->
+%% A configured row, which reports ready within the machine's boot timeout as every
+%% domain does.
+start_configured(#{row := Row, name := Name, principal := Principal}, #{lib := Lib, boot_timeout := Timeout} = State) ->
     case erx_ident:new(Name) of
         {error, bad_identifier} ->
             logger:error("erx_domain: configured row ~b has no identifier for a name", [Row]),
             State;
         Ident ->
             Make = fun(Id, Pid) -> Lib:configured(Id, Row, Pid) end,
-            case build(Ident, Principal, {configured, Row}, Make, #{}, Seconds * 1000, State) of
+            case build(Ident, Principal, {configured, Row}, Make, #{}, Timeout, State) of
                 {{error, Reason}, Next} ->
                     logger:error("erx_domain: configured domain ~ts did not start: ~0p", [Name, Reason]),
                     Next;

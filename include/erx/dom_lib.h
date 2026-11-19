@@ -109,6 +109,10 @@ typedef struct erx_dom_lib {
 	erx_dom_held_t	 held;
 	const char	*host;		/* the host part of a domain's node name */
 	size_t		 host_len;	/* at most ERX_DOM_HOST_MAX */
+	uint32_t	 boot_timeout_s; /* the machine's: each domain's init reports
+					 * ready within this many seconds unless its
+					 * request sets its own, 1 to
+					 * ERX_BOOT_TIMEOUT_MAX_S */
 	uint32_t	 pack_flags;	/* the boot image's, for each boot page */
 	erx_boot_pair_t	 boot;		/* the handoff's boot pair, for a block
 					 * holder's boot page */

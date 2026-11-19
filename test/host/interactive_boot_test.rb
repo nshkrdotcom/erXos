@@ -117,8 +117,12 @@ class InteractiveBootTest < Minitest::Test
     assert_raises(OptionParser::ParseError) { Erx::InteractiveBoot.request(%w[--without-web --hostlink]) }
     assert_equal PLATFORM.manifest_source(root),
                  Erx::InteractiveBoot.manifest_source(root: root, platform: PLATFORM, without_web: false)
-    assert_equal PLATFORM.site_manifest_source(root),
-                 Erx::InteractiveBoot.manifest_source(root: root, platform: PLATFORM, without_web: true)
+    # The website's image is the site manifest with the website's machine's boot timeout.
+    site = Erx::InteractiveBoot.manifest_source(root: root, platform: PLATFORM, without_web: true)
+    assert_equal Erx::InteractiveBoot::SITE_BOOT_TIMEOUT_S,
+                 Erx::Manifest::Edit.value(site, record: 'machine', field: 'boot_timeout_s')
+    assert_equal Erx::Manifest::Frontend.render(Erx::Manifest::Frontend.read(PLATFORM.site_manifest_source(root))),
+                 site.sub("  boot_timeout_s #{Erx::InteractiveBoot::SITE_BOOT_TIMEOUT_S}\n", '')
     assert_equal Erx::InteractiveBoot::DIRECTORY, Erx::InteractiveBoot.image_directory(without_web: false)
     assert_equal 'build/production-image/site', Erx::InteractiveBoot.image_directory(without_web: true)
     # The website's image is packed for, and boots on, the RAM the website gives it.

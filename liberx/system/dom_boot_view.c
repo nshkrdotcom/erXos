@@ -732,7 +732,6 @@ boot_configured(erx_dom_view_t *view, const erx_manifest_view_t *manifest, erx_d
 		row->kind = domain.kind;
 		row->restarts = domain.restarts;
 		row->restart_period_s = domain.restart_period_s;
-		row->boot_timeout_s = domain.boot_timeout_s;
 		row->place = UINT32_MAX;
 		view->nconfigured = index + 1;
 	}
@@ -1245,6 +1244,7 @@ erx_dom_view_build(erx_dom_lib_t *lib, const erx_manifest_view_t *manifest, uint
 	/* The reader checked every string against the string table; the manifest's bytes outlive the view. */
 	lib->host = (const char *)manifest->bytes + header->strings.offset + header->host.offset;
 	lib->host_len = header->host.length;
+	lib->boot_timeout_s = header->boot_timeout_s;
 	lib->cap_limit = BOOT_CAP_LIMIT;
 	lib->device_records = tables->device_records;
 #ifdef ERX_DOM_TEST_HOOKS

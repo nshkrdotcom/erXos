@@ -221,7 +221,13 @@ manifest holds:
   system domain's own limits,
   `max_domains`, `max_connections`, `system_lane`, `system_queue`,
   `peer_held` and `system_reserve`, the part of `system` the service
-  grants inside it leave to the system domain's own threads; the lane
+  grants inside it leave to the system domain's own threads; its **boot
+  timeout** (`boot_timeout_s`), the seconds a domain's runtime has to
+  report ready after its start, which every configured domain, every
+  session and every create request that sets none of its own takes: 60
+  unless the machine says otherwise, which suits hardware and QEMU, and
+  longer on a machine much slower than those, as the website's emulator
+  is, so only that machine waits longer for a hung boot; the lane
   size per class of domain; the
   vault's sealing backend; the services the watchdog process asks for
   liveness; the **system-shell principals**, whose login at a secure line
@@ -251,10 +257,7 @@ manifest holds:
   The band and the three limits are Fiasco's alone and leave the
   manifest with it: erXos's kernel bounds a domain by its budget and
   grant (FD14, FD15), and nothing above the domain library reads them; its
-  restart intensity, the seconds its runtime has to report ready (its
-  boot timeout, 60 unless the row says otherwise, a default sessions and
-  create requests share, long enough for an emulated machine), whether
-  it is `required`, and whether the rescue configuration starts it; its
+  restart intensity, whether it is `required`, and whether the rescue configuration starts it; its
   arguments and environment; its **devices**,
   given by unit ([Devices](#devices)), each by device-tree path or, for a
   PCIe function, by its place on a bus, with its compatible string, its
@@ -1137,7 +1140,7 @@ in place before anyone can connect to it.
   then is answered with an error, as a create whose domain ends before
   its report is, and the console treats it as any start that failed.
 * **Failure is bounded.** A server that fails or never comes up delays
-  the answer by at most its row's boot timeout (`boot_timeout_s`), after
+  the answer by at most the machine's boot timeout (`boot_timeout_s`), after
   which its start has ended; a grant whose introduction, mint or
   installation stalls fails at the mint core's deadline. Either way the
   session takes the console with that mount answering I/O error, as it
@@ -1174,7 +1177,7 @@ in place before anyone can connect to it.
   start; a name no configured row serves has nothing to wait for and is
   answered at once. The service checks the rule after each step of the
   mint core and each stop for a boot timeout, as it does for the
-  system domain's namespace, so the wait is bounded by the display row's
+  system domain's namespace, so the wait is bounded by the machine's
   boot timeout, and a display that is down never holds a row: the row
   starts all the same, its session's windows grant is installed when the
   server reports after a restart, as any grant is, and the row's keeper
@@ -4296,7 +4299,7 @@ reported as unreadable and dropped.
 | --- | --- | --- | --- | --- |
 | A malformed creation specification | the planning entries | nothing | none needed | the status code in the domain service; a counter |
 | A creation step fails | the step's status | nothing: the applied steps undone by destroying the domain's two budgets (A4) | the domain library | `erx_domain:create/1` returns the mapped error |
-| A domain's runtime never reports ready | the spec's boot timeout, or a configured domain's row's | the built domain | the domain service stops it, and it ends as any domain does | a log line; for a request, `{error, timeout}` |
+| A domain's runtime never reports ready | the spec's boot timeout, or else the machine's | the built domain | the domain service stops it, and it ends as any domain does | a log line; for a request, `{error, timeout}` |
 | A domain ends | the fault gate | nothing of its own budget, which the fault thread destroyed at once, its devices' objects with it; each connection's child budget of its outer budget until both parties have let go of that connection; its crash area until the domain service reads it at the retire; its outer budget, as its remains, until no connection names it | the library, the domain service | `{domain_down, D, Info}` in linked processes; `noconnection` across every connection of the domain; the death record in the inspector |
 | A peer never answers `connection_down` | the domain service's record, which shows the connection closing | that connection's child budget, its sides and bells, and with it the dead domain's outer budget as its remains, whose other children go as their parties let go; within the survivor's own `connections` quota; the dead domain itself is retired at its end, and a configured one restarts | the survivor, when it unmaps or ends; then the domain service asks `erx_dom_disconnect`, which destroys the remains with the last connection | the inspector shows the connection closing, with the party that holds it |
 | A domain sends the domain service a malformed message, or one about a connection it is not a party to | the generated admission and the connection's state | nothing | none needed: the message is dropped | a counter on the sending domain |

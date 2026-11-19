@@ -58,6 +58,15 @@ class ManifestEditTest < Minitest::Test
 
   # A record or field that is not there, a value that is not a decimal number, and a
   # result below zero are refused, never applied somewhere else.
+  # set states a number its record leaves out only where the record's kind may leave it
+  # out: the machine's boot timeout, but no field a domain row does not take.
+  def test_set_states_only_an_optional_field_left_out
+    stated = Edit.set(SOURCE, { %w[machine boot_timeout_s] => 600 })
+    assert_equal 600, value(stated, 'machine', 'boot_timeout_s')
+    assert_equal records(SOURCE).except(['machine', nil]), records(stated).except(['machine', nil])
+    assert_raises(Erx::Error) { Edit.set(SOURCE, { ['domain storage', 'boot_timeout_s'] => 600 }) }
+  end
+
   def test_an_edit_that_has_no_one_place_is_refused
     root = value(SOURCE, 'machine', 'root_memory')
     { %w[machine absent] => 1, ['principal absent', 'memory'] => 1, %w[nothing root_memory] => 1,

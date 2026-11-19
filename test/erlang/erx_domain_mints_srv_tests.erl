@@ -117,7 +117,7 @@ setup(Interface, Opts) -> setup(Interface, Opts, fun(Id) -> #{echo => pid('a@erx
 %% reports providing what Provides answers for the reporting incarnation's id.
 setup(Interface, Opts, Provides) ->
     Row = fun(Row, Place, Name) -> #{row => Row, place => Place, name => Name, principal => 1, kind => service,
-                                     restarts => 3, restart_period_s => 60, boot_timeout_s => 60} end,
+                                     restarts => 3, restart_period_s => 60} end,
     persistent_term:put({erx_domain_fake_lib, boot},
                         #{domains => [Row(0, 1, <<"b">>), Row(1, 0, <<"a">>)],
                           services => [{1, echo, Interface}],
@@ -343,7 +343,7 @@ served_test() ->
 
 served_setup() ->
     Row = fun(Row, Place, Name) -> #{row => Row, place => Place, name => Name, principal => 1, kind => service,
-                                     restarts => 0, restart_period_s => 60, boot_timeout_s => 60} end,
+                                     restarts => 0, restart_period_s => 60} end,
     persistent_term:put({erx_domain_fake_lib, boot},
                         #{domains => [Row(0, 1, <<"b">>), Row(1, 0, <<"a">>)], services => [],
                           grants => [{0, log, system, #{max_request => 64, in_flight => 2, queue => 4096}},
@@ -444,7 +444,7 @@ system_packages_mount_test_() ->
 %% no call to the service first, as the release's later applications read /data.
 system_mounts(Grants) ->
     Row = fun(Row, Place, Name) -> #{row => Row, place => Place, name => Name, principal => 1, kind => service,
-                                     restarts => 0, restart_period_s => 60, boot_timeout_s => 60} end,
+                                     restarts => 0, restart_period_s => 60} end,
     persistent_term:put({erx_domain_fake_lib, boot},
                         #{domains => [Row(0, 1, <<"b">>), Row(1, 0, <<"a">>)],
                           services => [{1, data, 5}, {1, packages, 5}], grants => Grants}),
@@ -742,7 +742,7 @@ system_namespace() ->
 %% service no row is granted.
 display_setup() ->
     Row = fun(Row, Place, Name) -> #{row => Row, place => Place, name => Name, principal => 1, kind => service,
-                                     restarts => 3, restart_period_s => 60, boot_timeout_s => 60} end,
+                                     restarts => 3, restart_period_s => 60} end,
     persistent_term:put({erx_domain_fake_lib, boot},
                         #{domains => [Row(0, 1, <<"b">>), Row(1, 0, <<"late">>)],
                           services => [{1, screen, ?ERX_SERVICE_WINDOWS}], grants => []}),
@@ -806,7 +806,7 @@ app_session_test_() ->
 app_setup() ->
     persistent_term:put({erx_domain_fake_lib, apps}, #{template => 2, first => 6, max => 4, memory => 4 * ?APP_MEMORY}),
     Row = fun(Row, Place, Name) -> #{row => Row, place => Place, name => Name, principal => 1, kind => service,
-                                     restarts => 3, restart_period_s => 60, boot_timeout_s => 60} end,
+                                     restarts => 3, restart_period_s => 60} end,
     persistent_term:put({erx_domain_fake_lib, boot},
                         #{domains => [Row(0, 1, <<"b">>), Row(1, 0, <<"a">>)],
                           services => [{1, screen, ?ERX_SERVICE_WINDOWS}, {1, clip, ?ERX_SERVICE_FILES}],

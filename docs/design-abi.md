@@ -1885,13 +1885,13 @@ image's format.
 
 | Source form | Accepted properties and value forms |
 | --- | --- |
-| `machine` | `flags` flag list; `host`, `console`, `hostlink`, `platform` strings; `root_memory`, `system_baseline`, `max_domains`, `max_connections`, `system_lane`, `system_queue`, `peer_held`, `system_reserve` integers; `system_share`, `users_share` share references; `system_principal` principal reference; `system_runtime_limits` runtime-limits reference; `native_limits` limits reference; `sealing none\|device\|tpm` |
+| `machine` | `flags` flag list; `host`, `console`, `hostlink`, `platform` strings; `root_memory`, `system_baseline`, `max_domains`, `max_connections`, `system_lane`, `system_queue`, `peer_held`, `system_reserve` integers; `system_share`, `users_share` share references; `system_principal` principal reference; `system_runtime_limits` runtime-limits reference; `native_limits` limits reference; `sealing none\|device\|tpm`; `boot_timeout_s` integer, 1 to `boot_timeout_max_s` (3,600), `boot_timeout_default_s` (60) when absent; `system_args` vector |
 | `share NAME` | exactly `quota_ns`, `period_ns`, `cpuset`, `capacity_mcpu`, `capacity_first`, `slice_us`, `grace_us`, `base`, `ceiling`, `flags`; integers except quota's optional `uncapped` literal and the flag list |
 | `principal NAME` | `memory`, `domains`, `names` integers; `grant` share reference; `default_limits`, `ceiling_limits` limits references |
 | `runtime_limits NAME` | exactly the nine non-name, non-reserved fields of the packed runtime-limits record, each an integer |
 | `limits NAME` | its packed scalar fields except name, reserved and runtime index; `grant` share reference; `spaces` share reference or `none`; `runtime_limits` runtime-limits reference; `flags` flag list |
 | `lane_class NAME` | `lane` integer |
-| `domain NAME` | `principal`, `limits` references; `kind service\|secret`; `flags` flag list; `runtime`, `release` artifact references; `restarts`, `restart_period_s` integers; `boot_timeout_s` integer, 1 to `boot_timeout_max_s` (3,600), `boot_timeout_default_s` (60) when absent; `args`, `env` vectors |
+| `domain NAME` | `principal`, `limits` references; `kind service\|secret`; `flags` flag list; `runtime`, `release` artifact references; `restarts`, `restart_period_s` integers; `args`, `env` vectors |
 | `session PRINCIPAL` | the session template of the principal its name names, so a principal has one; `limits` reference; `runtime`, `release` artifact references; `args`, `env` vectors |
 | `unit NAME` | `placement` string naming a complete checked platform unit; `holder` domain reference or `system` |
 | `window NAME` | `holder` domain reference; `device` checked platform-device string; `role` declared role name; `partition` integer; `rights` flag list |

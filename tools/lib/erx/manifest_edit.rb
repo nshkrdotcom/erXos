@@ -18,16 +18,24 @@ module Erx
     # named by its first line, "machine", "principal system" or "limits display"; one
     # that is not there, a field it does not have, or a value of another form than the
     # edit's is refused, and so is a removal that leaves a record naming one it took, so
-    # an edit is never silently lost.
+    # an edit is never silently lost. The one exception: set states a field the record
+    # leaves out where its kind may leave it out.
     module Edit
       module_function
 
       # text with each [record, field] of growth grown by its number; a negative number
       # shrinks it.
-      def grow(text, growth) = Frontend.render(changed(Frontend.read(text), growth) { |value, added| value + added })
+      def grow(text, growth) = Frontend.render(grown(Frontend.read(text), growth))
 
-      # text with each [record, field] of values set to its number.
-      def set(text, values) = Frontend.render(changed(Frontend.read(text), values) { |_value, given| given })
+      # text with each [record, field] of values set to its number. A field the record
+      # leaves out is stated only where its kind may leave it out (Frontend::OPTIONAL), as
+      # the website's machine states its boot timeout (InteractiveBoot).
+      def set(text, values)
+        Frontend.render(changed(Frontend.read(text), values) do |record, field, given|
+          settable!(record, field)
+          given
+        end)
+      end
 
       # The number of field in the record named record.
       def value(text, record:, field:) = named(Frontend.read(text), record).decimal(field)
@@ -121,7 +129,7 @@ module Erx
         changes = { [principal.header, 'memory'] => -budget, [principal.header, 'domains'] => -1,
                     %w[machine root_memory] => -(budget + dma), %w[machine max_domains] => -1,
                     %w[machine max_connections] => -1 - (2 * root) }
-        Frontend.render(changed(remaining, changes) { |value, added| value + added })
+        Frontend.render(grown(remaining, changes))
       end
 
       # text without its apps row, as if it had never been written in, or text itself when
@@ -142,20 +150,32 @@ module Erx
         services = apps.properties.fetch('services', []).size
         changes = { %w[machine root_memory] => -apps.decimal('memory'), %w[machine max_domains] => -max,
                     %w[machine max_connections] => -max * (2 + services) }
-        Frontend.render(changed(removed(source, [apps]), changes) { |value, added| value + added })
+        Frontend.render(grown(removed(source, [apps]), changes))
       end
 
+      # source with each [record, field] of growth grown by its number.
+      def grown(source, growth) = changed(source, growth) { |record, field, added| record.decimal(field) + added }
+
       # source with each [record, field] of changes replaced by what the block returns for
-      # the field's value and the change's number, changed in order.
+      # the record, the field and the change's number, changed in order.
       def changed(source, changes)
         changes.reduce(source) do |current, ((name, field), change)|
           record = named(current, name)
-          result = yield record.decimal(field), change
+          result = yield record, field, change
           raise Error, "the manifest's #{name} #{field} would be #{result}" unless result.is_a?(Integer) && !result.negative?
 
           token = ABI::Token.new(value: result.to_s.freeze, quoted: false).freeze
           replaced(current, record, with_field(record, field, token))
         end
+      end
+
+      # Refuses to set field of record unless the record holds a number there or leaves it
+      # out where its kind may (Frontend::OPTIONAL). A stated field's form is the manifest
+      # check's to judge, as every other field's is.
+      def settable!(record, field)
+        return if !record.properties.key?(field) && Frontend::OPTIONAL.fetch(record.kind, []).include?(field)
+
+        record.decimal(field) # raises unless the record holds one decimal number there
       end
 
       # record with field holding token alone.

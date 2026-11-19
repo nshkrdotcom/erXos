@@ -2875,7 +2875,8 @@ from a control slot, and the agent acts only on the system domain's.
                                                % arguments, at most 2,048 bytes
                   limits => #{atom() => non_neg_integer()},
                                                % within the principal's ceilings
-                  boot_timeout => timeout()}.  % default 60,000 ms
+                  boot_timeout => timeout()}.  % default the machine's boot timeout
+                                               % (design-system.md, "The manifest")
 
 -spec erx_domain:create(spec()) -> {ok, domain()} | {error, term()}.
 -spec erx_domain:stop(domain(), Reason :: term()) -> ok.

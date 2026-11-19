@@ -194,8 +194,9 @@
 # (ReleaseMedium.image), and the storage domain holds a read-only window on it.
 #
 # The storage, network, web and display domains restart at most 5 times in 600 s: a boot that
-# hangs is stopped after the default 60 s boot timeout, so a shorter period would never
-# see 5 of them and would restart a hung domain without end.
+# hangs is stopped after the machine's 60 s boot timeout, the default, so a shorter period would
+# never see 5 of them and would restart a hung domain without end. The website's image, whose
+# machine waits 600 s, is such a case (TODO.md).
 share web
   quota_ns 1500000
   period_ns 10000000

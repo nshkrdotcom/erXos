@@ -4592,11 +4592,13 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   runs with none.
 * [Medium] domain service and manifest check, `erx_domain_core:restart/5` and `tools/lib/erx/manifest.rb`
   (`normalize_domains`): a configured row may restart `restarts` times within `restart_period_s`, and
-  a boot that hangs is stopped only after its `boot_timeout_s`, so a row with `restarts` above 0 and
-  `restart_period_s` at most `restarts` times `boot_timeout_s` never reaches its limit and restarts a
-  hung boot without end. Refuse such a row in the manifest check; the test rows derived from
-  MediumBoot's with `restarts 1` and `restart_period_s 5` (`system_domain_regrant.rb`,
-  `device_give.rb`) then need a longer period.
+  a boot that hangs is stopped only after the machine's `boot_timeout_s`, so a row with `restarts`
+  above 0 and `restart_period_s` at most `restarts` times `boot_timeout_s` never reaches its limit and
+  restarts a hung boot without end, each start still stopped at the deadline. The website's image
+  is such a machine: its 600 s boot timeout against the rows' 5 restarts in 600 s. Refuse such a row
+  in the manifest check, or size the period from the boot timeout; the test rows derived from MediumBoot's with
+  `restarts 1` and `restart_period_s 5` (`system_domain_regrant.rb`, `device_give.rb`) then need a
+  longer period.
 * [Medium] domains, `liberx/system/dom_life.c` (`life_connections`) and design-domains'
   limits table: the table says a domain's `connections` counts the system connection,
   and `life_connections` leaves it out of the quota, which the development manifest's
@@ -9333,7 +9335,7 @@ document's "residual risks accepted" paragraph.
   [design-system.md](docs/design-system.md#boot)): the domain service starts every configured domain at once
   in the manifest's boot order, so on one CPU the runtimes slow each other and the login waits for the slowest.
   Two rules of the boot-order proposal are deferred: (A) a start waits for the
-  configured domains serving its `files` grants to settle, each bounded by its row's boot timeout, and (B)
+  configured domains serving its `files` grants to settle, each bounded by the machine's boot timeout, and (B)
   configured domains that no start needs are held until the boot is quiet. Measured under TCG on 1 CPU, once
   storage and network run on the interpreter, ordering gives 0.5 s to the prompt and 1.3 s to `/data`; on JIT
   images it gives 2.9 s (raw data: ~/erxos-history commit 34d0390, `boot-slow-2026-11-11`). Rule C, a session

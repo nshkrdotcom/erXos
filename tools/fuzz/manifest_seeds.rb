@@ -14,7 +14,7 @@ module Erx
   # QEMU virt's development manifest, as the manifest check accepts it for a production image,
   # the same with configured domains (ManifestContextFixture.domain_source), the empty
   # native manifest of the structural test images, with prefixes of the first, the
-  # configured domains' with its first row's boot_timeout_s 0, which the reader refuses,
+  # configured domains' with the machine's boot_timeout_s 0, which the reader refuses,
   # the configured domains' with alpha's probe granted to the system principal's
   # session template, so the facet table holds a session grantee, and the same with a
   # start row for that template, left off and with its own restart intensity, and the
@@ -152,12 +152,11 @@ module Erx
       JsonInput.parse(File.binread(File.join(repository, path)), max_bytes: 65_536, label: path)
     end
 
-    # The manifest bytes with their first configured domain's boot_timeout_s set to seconds.
+    # The manifest bytes with the machine's boot_timeout_s, in their header, set to seconds.
     def boot_timeout(codec, bytes, seconds)
-      offset = codec.open('manifest', bytes).header.fetch('domains').fetch('offset')
-      row = codec.decode_layout('erx_mf_domain', bytes, offset: offset, prefix: true)
-      encoded = codec.encode_layout('erx_mf_domain', row.merge('boot_timeout_s' => seconds))
-      bytes.b.tap { |copy| copy[offset, encoded.bytesize] = encoded }
+      header = codec.decode_layout('erx_manifest', bytes, offset: 0, prefix: true)
+      encoded = codec.encode_layout('erx_manifest', header.merge('boot_timeout_s' => seconds))
+      bytes.b.tap { |copy| copy[0, encoded.bytesize] = encoded }
     end
   end
 end
