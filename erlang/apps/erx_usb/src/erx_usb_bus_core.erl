@@ -151,12 +151,15 @@ port's failure is logged once per connection.
 Every status word comes from a device and is decoded by erx_usb_hub_core,
 which refuses a malformed one; a malformed status or answer, like a failed
 port operation, detaches an external hub. The root hub's operations are the
-controller process's register accesses and do not fail.
+controller process's register accesses and do not fail. An external hub's
+go out as control requests on its EP0, spelled by hub_request/2, the hub
+class's GET_STATUS, SET_FEATURE and CLEAR_FEATURE (usb.h:229-264), and the
+request's answer comes back as the operation's by hub_answer/2.
 """.
 
--export([new/1, step/3, ports/1, histories/1, devices/1]).
+-export([new/1, step/3, ports/1, histories/1, devices/1, hub_request/2, hub_answer/2]).
 
--export_type([state/0, event/0, action/0, hub_id/0, ref/0, port_state/0, port_history/0, step/0, run/0,
+-export_type([state/0, event/0, action/0, hub_id/0, ref/0, target/0, op/0, port_state/0, port_history/0, step/0, run/0,
               run_no/0]).
 
 -include("generated/erx_abi.hrl").
@@ -309,6 +312,53 @@ ports(#{hubs := Hubs}) ->
 -spec histories(state()) -> #{{hub_id(), port_no()} => port_history()}.
 histories(#{hubs := Hubs}) ->
     maps:from_list([{{Id, N}, History} || Id := #{histories := Histories} <- Hubs, N := History <- Histories]).
+
+-doc "An external hub's port operation on Target as the control request on its EP0: the setup packet and its data stage.".
+-spec hub_request(target(), op()) -> {<<_:64>>, none | {in, pos_integer()}}.
+hub_request(hub, get_status) ->
+    get_status(?ERX_USB_RECIPIENT_DEVICE, 0);
+hub_request(hub, {clear, Change}) ->
+    hub_feature(?ERX_USB_REQUEST_CLEAR_FEATURE, ?ERX_USB_RECIPIENT_DEVICE, hub_change_feature(Change), 0);
+hub_request(N, get_status) ->
+    get_status(?ERX_USB_RECIPIENT_OTHER, N);
+hub_request(N, power_on) ->
+    hub_feature(?ERX_USB_REQUEST_SET_FEATURE, ?ERX_USB_RECIPIENT_OTHER, ?ERX_USB_PORT_FEATURE_POWER, N);
+hub_request(N, reset) ->
+    hub_feature(?ERX_USB_REQUEST_SET_FEATURE, ?ERX_USB_RECIPIENT_OTHER, ?ERX_USB_PORT_FEATURE_RESET, N);
+hub_request(N, disable) ->
+    hub_feature(?ERX_USB_REQUEST_CLEAR_FEATURE, ?ERX_USB_RECIPIENT_OTHER, ?ERX_USB_PORT_FEATURE_ENABLE, N);
+hub_request(N, {clear, Change}) ->
+    hub_feature(?ERX_USB_REQUEST_CLEAR_FEATURE, ?ERX_USB_RECIPIENT_OTHER, port_change_feature(Change), N).
+
+-doc """
+The answer to an external hub's port operation Op, from its control
+request's: GET_STATUS answers its bytes, which the status decoders check;
+any other operation answers `ok` once its request completes.
+""".
+-spec hub_answer(op(), {ok, binary()} | {error, term()}) -> ok | {ok, binary()} | {error, term()}.
+hub_answer(get_status, Result) -> Result;
+hub_answer(_Op, {ok, _Bytes}) -> ok;
+hub_answer(_Op, {error, Reason}) -> {error, Reason}.
+
+%% GET_STATUS answers a status word and a change word, 16 bits each.
+get_status(Recipient, Index) ->
+    {setup(?ERX_USB_REQUEST_DIR_IN bor ?ERX_USB_REQUEST_TYPE_CLASS bor Recipient, ?ERX_USB_REQUEST_GET_STATUS,
+           0, Index, 4),
+     {in, 4}}.
+
+hub_feature(Request, Recipient, Feature, Index) ->
+    {control, Setup, none} = control(?ERX_USB_REQUEST_TYPE_CLASS, Recipient, Request, Feature, Index),
+    {Setup, none}.
+
+%% The feature that clears each change erx_usb_hub_core names.
+hub_change_feature(local_power) -> ?ERX_USB_HUB_FEATURE_C_LOCAL_POWER;
+hub_change_feature(over_current) -> ?ERX_USB_HUB_FEATURE_C_OVER_CURRENT.
+
+port_change_feature(connection) -> ?ERX_USB_PORT_FEATURE_C_CONNECTION;
+port_change_feature(enabled) -> ?ERX_USB_PORT_FEATURE_C_ENABLE;
+port_change_feature(suspend) -> ?ERX_USB_PORT_FEATURE_C_SUSPEND;
+port_change_feature(over_current) -> ?ERX_USB_PORT_FEATURE_C_OVER_CURRENT;
+port_change_feature(reset) -> ?ERX_USB_PORT_FEATURE_C_RESET.
 
 -doc "Every device the bus holds, by its reference, for inspection.".
 -spec devices(state()) -> #{ref() => device()}.
