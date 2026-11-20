@@ -7,13 +7,11 @@ capabilities; [chapter 3](03-erlang.md) for Erlang processes, links,
 supervisors and ERTS. A reader who knows all three starts here.
 
 > **Status.** The history, goals and principles carry no mark. erXos
-> runs on Fiasco, an existing L4 microkernel, behind a kernel interface
-> of its own; that first phase of the roadmap is **Built**. 0.1, the first public
-> preview, is **Built** and published from the commit tagged `v0.1`. 0.2,
-> the first release, is next, also on Fiasco; budgets that act as walls
-> between domains come with it. erXos's own kernel is Phase 2: some of
-> its parts are **Built (host)**, built and tested as programs on the
-> development machine, and none of it boots.
+> running on Fiasco behind its own kernel interface, domains with a
+> runtime each, the park protocol between executors and Fiasco, and
+> budgets as records that end everything charged to them are
+> **Built**. Priority bands, per-domain CPU sets and thread limits,
+> and budgets that refuse a charge past their limit are **Designed**.
 
 An Erlang program on FreeBSD can run hundreds of thousands of
 processes, and `ps` lists one of them. That one line is `beam.smp`,
@@ -32,28 +30,19 @@ native code linked into the runtime can end every process in it, and
 the file system beneath is kernel code that no supervisor can restart.
 
 erXos turns this around: the Erlang process becomes the operating
-system's process. A small capability microkernel sits underneath and
-knows nothing of Erlang. Above it, the machine is divided into
-domains, each an address space with its own Erlang runtime
+system's process. A small microkernel sits underneath and knows
+nothing of Erlang. That kernel is Fiasco, a microkernel of the L4
+family, changed by a few patches. Above it, the machine is divided
+into domains, each an address space with its own Erlang runtime
 ([chapter 10](README.md#chapter-10-domains-a-wall-around-some-processes)).
 The machine stays one Erlang system, whose processes link and message
 one another across domains, and drivers and file systems are Erlang
 processes under supervisors.
 
-erXos has two kernels, one at a time. It runs on Fiasco, a microkernel
-of the L4 family that others built, changed by a few patches.
-Meanwhile it builds a kernel of its own on Fiasco's design, which
-replaces Fiasco in Phase 2 of the roadmap. Programs reach either kernel
-through one interface that erXos defines, so the switch moves nothing
-above it
-([chapter 2](02-microkernels.md#254-why-erxos-starts-on-fiasco-and-later-replaces-it)).
-For each claim about erXos, this chapter says whether it is built,
-only designed, or holds only partly on Fiasco.
-
 Sections 4.1 and 4.2 state the problem and the history of its hardest
 part, two-level scheduling; 4.3 traces what erXos borrows; 4.4 and 4.5
-give its goals and principles; 4.6 to 4.8 say how it reaches a working
-machine, where it stands and what the approach costs.
+give its goals and principles; 4.6 says what runs today and 4.7 what
+the approach costs.
 
 ## 4.1 Erlang systems as operating systems
 
@@ -133,10 +122,10 @@ keeping the machine one Erlang system. That gap is where erXos starts.
 
 If each domain's runtime schedules its own Erlang processes, something
 must still schedule the runtimes. In erXos the kernel shares the CPUs
-among domains and among the native threads of C programs, and each
-runtime switches between its own processes without asking the kernel.
-This is **two-level scheduling**: the kernel at one level, a user-mode
-scheduler at the other. Its history is mostly failure.
+among the threads of every domain, and each runtime switches between
+its own processes without asking the kernel. This is **two-level
+scheduling**: the kernel at one level, a user-mode scheduler at the
+other. Its history is mostly failure.
 
 ### 4.2.1 Two answers, both tried
 
@@ -190,29 +179,48 @@ a few threads, which erXos calls **executors**. Work that must block
 goes to separate helper threads, as ERTS's dirty schedulers do
 ([chapter 3](03-erlang.md#352-schedulers-and-reductions)).
 
-So erXos keeps both levels, under six rules its design sets for the
-contract between kernel and runtime. Each removes a failure that ended
-an earlier system ([design.md, Decisions](../design.md#decisions)):
+So erXos keeps both levels, and splits the work between Fiasco and the
+runtime along rules that each remove a failure of an earlier system
+([design.md, Decisions](../design.md#decisions),
+[design-fiasco.md, The scheduler on Fiasco](../design-fiasco.md#the-scheduler-on-fiasco)):
 
-1. Executors are ordinary preemptible threads.
-2. No upcall ever reaches an executor, so the runtime is never entered
-   at an unsafe point.
-3. Wakeups and changes in CPU capacity are queued events, taken at the
-   runtime's own safe points, so none is lost.
-4. Executors never block except to park, so none is lost inside a
-   system call.
-5. The kernel enforces CPU limits whatever the runtime reports
-   (in full only with the grants below).
-6. No thread donates its CPU time to another, so no domain's
-   scheduling depends on another's.
+1. **Executors are ordinary threads.** Fiasco preempts and schedules
+   them like any other thread.
+2. **No upcall reaches an executor.** Fiasco has one upcall, its vCPU
+   interface, and erXos uses it only to deliver POSIX signals to a
+   native program's worker threads. Arming it refuses an executor, so
+   the runtime is never entered at an unsafe point
+   ([design.md, Invariants](../design.md#invariants)).
+3. **No wakeup is lost.** A wakeup is a queued event: it advances a
+   counter that an executor about to park compares under the same
+   lock, so a park that would miss it returns at once, and a running
+   executor finds the work at its next safe point
+   ([design-fiasco.md, The park protocol](../design-fiasco.md#the-park-protocol)).
+4. **Executors never block except to park.** `liberx`, the library
+   under every runtime, refuses an executor every other kind of wait.
+5. **The kernel decides who runs.** Fiasco's fixed-priority scheduler
+   picks the thread; what the runtime says about its own load is
+   advice that nothing in the kernel acts on.
+6. **No thread lends its CPU time to another.** A service runs a
+   client's request on its own threads, so no domain's scheduling
+   depends on another's
+   ([design.md, Alternatives considered](../design.md#alternatives-considered)).
 
-The kernel allocates CPU time to **groups** of threads. Each group has
-a **grant**, a share of CPU time per period on a set of CPUs, which
-its runtime divides among its processes
-([chapter 9](README.md#chapter-9-processes-runtimes-and-two-level-scheduling)).
-Grants come with erXos's own kernel, or with a later stage of the
-scheduler on Fiasco. On Fiasco as 0.2 runs it, a domain gets a
-priority band, a set of CPUs and a thread limit instead.
+Fiasco's scheduler has priorities 1 to 255 and runs threads of one
+priority round robin, each for a time slice. Every thread runs at
+priority 1, except the watchdog at 255
+([design-fiasco.md, Scheduling](../design-fiasco.md#scheduling)).
+Within its threads, each runtime schedules its own processes with its
+own run queues, priorities and reductions.
+
+The design divides the CPUs among domains with three limits, set in
+each domain's row of the system configuration: a **band**, the
+priority all its threads run at; a set of CPUs its threads may run
+on; and a limit on how many threads it may have. There are six bands,
+from the watchdog at the top down to apps and programs, so a domain
+that spins delays only its own band and those below
+([design-fiasco.md, Bands](../design-fiasco.md#bands)). These limits
+are designed and not built.
 
 Akaros, a research system, shows what rule 2 avoids. It could take a
 core away at any line of code, even under a lock, and then asked the
@@ -277,19 +285,28 @@ works.
 Jochen Liedtke's L4, from 1993, showed that a microkernel can be fast
 by keeping only address spaces, threads and fast message passing
 ([chapter 2](02-microkernels.md#251-from-l3-to-sel4)). Fiasco, a C++
-implementation of L4 begun at TU Dresden in 1998, is the kernel erXos
-runs on (Elphinstone and Heiser 2013).
+implementation of L4 begun at TU Dresden in 1998, is erXos's kernel
+(Elphinstone and Heiser 2013). erXos patches it only where it needs a
+property Fiasco lacks and the patch is small
+([design-fiasco.md](../design-fiasco.md)).
 
-erXos's own kernel, being written for Phase 2, rewrites Fiasco's design in
-C17, the 2017 edition of C, and keeps Fiasco's model wherever erXos
-needs nothing else. Its design document records each departure with
-its reason ([design-kernel.md, L4 lineage](../design-kernel.md#l4-lineage)).
-The main ones are CPU grants to groups (section 4.2) and budgets
-(section 4.3.4). Another is that an address space stops when its
-creator stops, so no program outlives its domain. seL4, the L4 kernel with a formal proof
-of correctness, was the other candidate, but a fork changed for erXos
-would lose the proof
-([design.md, Alternatives considered](../design.md#alternatives-considered)).
+erXos also takes the shape of L4Re, the user-mode system that usually
+runs on Fiasco. In L4Re a root task, the first program the kernel
+starts, creates the other programs and hands each its capabilities
+([chapter 2](02-microkernels.md#253-the-root-task)). In erXos the root
+service of the system domain plays that part: it alone creates kernel
+objects and writes any address space's capabilities or page tables.
+Even the domain limits of section 4.2.3 follow L4Re: its loader gives
+each program a CPU set and a range of priorities
+([design-fiasco.md, Threads, bands and stops](../design-fiasco.md#threads-bands-and-stops)).
+
+erXos's own code never calls Fiasco directly. It reaches the kernel
+through the **kernel interface**: the calls, rights, status codes and
+binary layouts defined in `abi/erx_abi.txt`, which `liberx` offers to
+every runtime and service. A call Fiasco cannot carry out fails with
+erXos's own status, `ERX_ENOTSUP`, never with a Fiasco error, so no
+Fiasco type or number reaches Erlang code or users
+([design-fiasco.md, Contract](../design-fiasco.md#contract)).
 
 ### 4.3.3 Plan 9: names and files
 
@@ -333,13 +350,23 @@ Payment comes from EROS
 EROS allocated every object from a **space bank**. Banks formed a
 hierarchy, and destroying one destroyed, or handed to its parent,
 everything allocated from it and the banks below it (Shapiro, Smith
-and Farber 1999). erXos's **budgets** follow that model. On erXos's
-own kernel (Phase 2), every kernel object and page is charged to a
-budget carved from its parent's. Deleting a budget deletes everything
-charged to it at once, so ending a domain leaves nothing to chase. On Fiasco the design is cut down: in the preview a budget
-records its limit but refuses nothing, and 0.2 makes each domain's
-budget a hard wall at its guarantee
-([chapter 12](README.md#chapter-12-memory-and-budgets)).
+and Farber 1999). erXos's **budgets** follow that model. The root
+service keeps a record of each budget, carved from its parent's, and
+charges each object it creates to one. Ending a budget ends everything
+charged to it and every budget carved below it, so ending a domain
+leaves nothing to chase (`liberx/backend/fiasco/budget.c`).
+
+In the design, each domain's budget is also a wall at its guarantee,
+in three parts. Its kernel memory is a Fiasco factory, a kernel object
+that creates others, with a fixed limit carved from its parent's;
+its user pages are charged to the budget's record, which refuses a
+charge past its limit; and what the root service holds on the domain's
+behalf is bounded by limits on the domain's threads, objects and
+mappings ([design-fiasco.md, Memory and budgets](../design-fiasco.md#memory-and-budgets),
+[chapter 12](README.md#chapter-12-memory-and-budgets)). That wall is
+designed and not built: a budget records its limit but refuses no
+charge, and the inspector reports a domain's budget as unsupported
+([README.md, Current status](../../README.md#current-status)).
 
 ## 4.4 Goals and non-goals
 
@@ -380,7 +407,7 @@ Four more requirements say how well.
 * **Reproducibility.** The same inputs give byte-identical boot images.
 * **Portability.** QEMU's `virt` machine first, then the Raspberry Pi 4
   and 5. AArch64 is the first architecture, and others are ports, not
-  redesigns ([design-kernel.md](../design-kernel.md)).
+  redesigns ([design.md, Portability](../design.md#portability)).
 
 ### 4.4.2 What erXos refuses
 
@@ -425,9 +452,8 @@ in C ([chapter 15](README.md#chapter-15-devices-and-drivers)).
 OTP 29.1.2's source lives in erXos's tree and changes by ordinary
 edits; erXos does not track upstream. ERTS is a parts bin, taken apart
 and recombined wherever that makes the system simpler or faster, and
-so is musl. In erXos, ERTS runs in user mode over `liberx`, erXos's
-library under every runtime, and its pids name the domain that owns
-them.
+so is musl. In erXos, ERTS runs in user mode over `liberx`, and its
+pids name the domain that owns them.
 
 Owning OTP does not mean drifting from it. OTP's own test suites run
 on erXos and on stock OTP, and the results are compared case by case.
@@ -457,10 +483,8 @@ derives the C headers and the matching Erlang, Ruby and TypeScript, so
 no constant is copied by hand. The system's configuration is one
 **system manifest**, a file that names every domain the machine runs,
 with its budget, its devices and the services it may reach; the build
-checks it before making the image. On Fiasco that check is reduced,
-and later milestones complete it
-([plan.md, Stopgaps and Fiasco](../plan.md#stopgaps-and-fiasco),
-[chapter 7](README.md#chapter-7-one-source-for-every-fact)).
+checks it before making the image
+([chapter 7](README.md#chapter-7-one-source-for-every-fact)).
 
 ### 4.5.5 UNIX look and feel, honestly
 
@@ -482,173 +506,22 @@ manifest ([design.md, Decisions](../design.md#decisions)). A
 `sysctl` command that refused every write would promise what it does
 not do.
 
-## 4.6 A working system first: phases and seams
+## 4.6 What runs today
 
-A capability microkernel with every guarantee erXos asks for is the
-slowest part to build and the hardest to check. Rather than wait for
-it, erXos builds the system first, on components that already work,
-and replaces them one at a time behind interfaces it owns.
-
-### 4.6.1 Seams
-
-A **seam** is one of erXos's own interfaces with a borrowed component
-behind it, placed so that replacing the component changes nothing above
-it. The most important is the **kernel interface**: the calls, rights,
-status codes and binary layouts of `abi/erx_abi.txt`, which `liberx`
-offers to every runtime and service. `liberx/backend/fiasco`
-implements it over Fiasco, `liberx/backend/hosted` inside a macOS
-process for fast testing, and erXos's own kernel gets a backend in
-Phase 2.
-
-A seam works only if nothing leaks through it: a call the Fiasco
-backend cannot implement fails with erXos's own status, `ERX_ENOTSUP`,
-not a Fiasco error
-([design-fiasco.md, Contract](../design-fiasco.md#contract)). Without
-the seam, the later port would touch every service that ever made a
-kernel call; with it, the switch is one change behind `liberx`.
-
-### 4.6.2 What a stopgap promises
-
-A **stopgap** is a component the roadmap replaces. Hardening it is
-wasted work, and hiding its gaps would make every claim above it
-unreliable. littlefs, the small file system that serves `/data`, and
-LVGL, the widget library that draws on panels, are stopgaps
-([plan.md, Stopgaps and Fiasco](../plan.md#stopgaps-and-fiasco)).
-
-For trusted workloads a stopgap promises only three things: no memory
-errors, no deadlock, and the right results for the calls it offers. A
-call it does not offer fails with `ERX_ENOTSUP`, and a value it cannot
-measure reads as unsupported or partial, with the reporter named.
-Fairness, latency bounds and exact accounting belong to the
-replacement; on the stopgap they are recorded gaps.
-
-### 4.6.3 Release contracts and the downsides table
-
-A stopgap that a release ships needs more, because a release runs code
-nobody trusts. It has a **release contract**, a short list of what the
-release commits to for untrusted workloads, each with its test.
-littlefs's contract
-([design-stopgap.md, Release contract](../design-stopgap.md#release-contract))
-says, among other things:
-
-* littlefs runs only inside the storage domain;
-* partition bytes and client requests reach it only through decoding
-  that checks every bound;
-* a crash ends only the storage domain, which restarts;
-* a file synced before a power cut survives it.
-
-Fiasco, the kernel 0.2 ships on, is not a stopgap: every domain's
-isolation rests on it. For 0.2 its contract promises that Fiasco's
-address spaces isolate each domain's memory and capabilities, and that rights
-only shrink: a copy of a capability never has more rights than the
-original. A deleted object is gone for every holder at once, and each
-domain's memory budget is a hard wall. Isolation also rests on the
-system domain's code that checks requests and places kernel objects,
-and on the domain that drives a device no hardware confines. Unless a
-patch closes the gap, it rests too on the CPU's branch predictors,
-which guess where code goes next
-([design-fiasco.md, Contract](../design-fiasco.md#contract)).
-
-What Fiasco lacks against erXos's own kernel is one list, the
-**downsides table**
-([design-fiasco.md, Downsides](../design-fiasco.md#downsides-against-erxoss-kernel)).
-Each row names the property lost, what a user sees and what closes it,
-and a release publishes the rows it accepts. The backend rebuilds none
-of these properties in user mode, because they belong to a kernel.
-
-### 4.6.4 The phases
-
-The roadmap has two phases, with releases between them, as figure 4.1
-shows ([plan.md, Overview](../plan.md#overview)).
-
-```mermaid
-flowchart TB
-    subgraph above["runtimes and services, unchanged throughout"]
-        direction LR
-        p1["Phase 1"] --> p1b["Phase 1b"] --> r01["0.1: published"] --> r02["0.2: next"] --> p2["Phase 2"]
-    end
-    above --> seam["the kernel interface: abi/erx_abi.txt and liberx"]
-    seam --> fiasco["Fiasco backend: Phase 1 to 0.2"]
-    seam --> erx["erx backend on erXos's kernel: from M7"]
-```
-
-*Figure 4.1. The phases above the seam and the two kernels below it.
-The kernel interface stays put: at milestone M7 erXos's own kernel
-replaces the Fiasco backend, and nothing above the line moves.*
-
-* **Phase 1** brings the system up on a near-stock Fiasco: the boot
-  image, the live machine, basic file systems and the command shell.
-  ERTS runs in user mode in the system domain
-  ([chapter 2](02-microkernels.md#253-the-root-task)), the Erlang
-  domain that decides policy and builds every other domain. Phase 1
-  asks for no security or robustness, and plugs no gap of Fiasco's.
-* **Phase 1b**, the second half of Phase 1, adds the user-facing
-  system on the same backend: domains and their connections, native
-  programs and pipes, the display, drivers in their own domains,
-  storage, networking and the Raspberry Pi 4.
-* **0.1, the preview**, publishes part of that system (section 4.7).
-* **0.2, the first release**, ships the system on Fiasco with logins
-  and untrusted apps. It reaches the security closure, the point after
-  which the system may run code nobody trusts, in its Fiasco form
-  ([plan.md, 0.2](../plan.md#02-the-first-release-on-fiasco)).
-* **Phase 2** builds erXos's own kernel, boots the same boot image,
-  and replaces Fiasco at milestone M7
-  ([plan.md, M7](../plan.md#m7-fiasco-leaves)). Most rows of the
-  downsides table close only there; a few close earlier, on Fiasco or
-  at other milestones.
-
-The switch is gated on **parity**: the new kernel runs the same system
-and tests as Fiasco, and every difference is explained and pinned by a
-test, as with OTP's suites. The same rule governs every stopgap's
-replacement. Every build until the security closure, 0.1 included, is
-a **development build**: it runs only trusted code and prints
-`development build: trusted code only` on boot.
-
-### 4.6.5 Why not another order
-
-Building erXos's kernel first would delay every user-facing feature
-and test the kernel against no real workload; erXos's order gives the
-new kernel a working system as its test corpus. Keeping Fiasco, or
-seL4, for good would leave a kernel that does not follow the
-construction rules of
-[chapter 6](README.md#chapter-6-correct-by-construction), with
-budgets and groups grafted on
-([design.md, Alternatives considered](../design.md#alternatives-considered)).
-The afterword,
-[The Road to erXos's Own Kernel](README.md#afterword-the-road-to-erxoss-own-kernel),
-follows Phase 2.
-
-## 4.7 Where erXos stands
-
-0.1, erXos's first public preview, is published, and it runs on
-Fiasco: most of erXos's own kernel exists only as C17 parts tested on
-the host. The website offers a browser demo, a Raspberry Pi 4 card and
-a QEMU image, built from the commit tagged `v0.1`
-([plan.md, 0.1](../plan.md#01-the-preview)). The browser demo runs
-erXos on an emulator compiled to WebAssembly, with a menu of hardware
-faults to inject (`site/README.md`).
-
-The preview is a development build. On a Raspberry Pi 4 it:
-
-* boots from the SD card to the command shell on the serial console;
-* shows the kiosk, a dashboard with a clock and live quotes fetched
-  over HTTPS, on its HDMI screen;
-* lets another machine reach its `rc` shell with `ssh -p 2222`, using
-  the key its user put on the card;
-* keeps closed files under `/data` through a power cut.
-
-Doom, an example game that is not part of the system, runs on both
-images. Underneath run the system domain, domains with a runtime each,
-the inspector, live code loading, a storage domain over littlefs that
-restarts after a failure, and `erx_net`
+erXos boots on QEMU's `virt` machine with 1 to 8 CPUs and on a
+Raspberry Pi 4, from an SD card. On the Pi 4 the serial console
+reaches the command shell, files under `/data` survive a power cycle,
+and Ethernet works. A kiosk app shows a clock and live quotes fetched
+over HTTPS on the board's screen, and root can log in over SSH with a
+key put on the card. Underneath run the system domain, domains with a
+runtime each, the inspector and `/proc`, live code loading from the
+host, a storage domain over littlefs that restarts after a failure,
+and `erx_net`. The POSIX-lite layer, USB, Bluetooth and WiFi drivers
+beyond their host-tested parts, and most of the browser client are
+designed and not built
 ([README.md, Current status](../../README.md#current-status)).
 
-The rest is designed and not built: the POSIX-lite layer, drivers for
-USB, Bluetooth and WiFi beyond their host-tested cores, and most of the
-browser client. 0.2 comes next, with logins, untrusted apps and the
-security closure on Fiasco; Phase 2 follows it.
-
-## 4.8 What the approach costs, and how it fails
+## 4.7 What the approach costs, and how it fails
 
 Every choice in this chapter has a price
 ([overview.md](../overview.md)).
@@ -664,61 +537,62 @@ other domain, so a fault in it resets the machine
 service can also become a bottleneck, so each service limits how much
 work any one client can make it do.
 
+**Isolation rests on Fiasco and on the root service.** Fiasco's address
+spaces and capability tables keep domains apart, and only the root
+service writes them, so a bug in Fiasco or in the root service's
+checks of requests could break isolation. That nothing a domain does
+can panic the kernel rests on Fiasco's own code and on erXos's fuzzing
+of the system calls. That nothing a device does can panic it, and that
+a fault ends only the faulting domain, hold as far as Fiasco's code
+gives them. Isolation rests too on the CPU's branch predictors, which
+guess where code goes next
+([design-fiasco.md, Contract](../design-fiasco.md#contract)).
+
 **Device isolation needs hardware.** A device that writes memory
 directly can write anywhere, unless an IOMMU, a unit that checks each
-device access against a table, confines it. No device on 0.2's
-platforms is behind one, so a bad driver domain can make its device
-write anywhere in memory.
+device access against a table, confines it. No device on QEMU `virt`
+or the Raspberry Pi 4 is behind one, so a bad driver domain can make
+its device write anywhere in memory
+([design-fiasco.md, Devices](../design-fiasco.md#devices)).
 
-**Fiasco is not erXos's kernel.** Until Phase 2, what only erXos's
-kernel enforces is absent, and the downsides table says so: there are
-no CPU grants, for example, and a page can be writable through one
-mapping while executable through another. That nothing a domain does
-can panic the kernel rests on Fiasco's own code, on erXos's fuzzing of
-the system calls and on a monthly review of Fiasco's security fixes; a
-reachable Fiasco bug could break isolation. That nothing a device does
-can panic it, and that a fault ends only the faulting domain, hold only
-as far as Fiasco's code gives them, and whether 0.2 accepts that is an
-open decision.
+**CPU time is not a share.** Fiasco charges each thread on its own,
+with no quota for a domain. Every domain's threads run at one
+priority, so a busy domain takes turns on a CPU with every other
+thread there. In the design, a domain is held to its
+band, its CPU set and its thread limit, so a domain that spins delays
+its own band and those below, and gets no fixed fraction of a CPU
+([design-fiasco.md, The scheduler on Fiasco](../design-fiasco.md#the-scheduler-on-fiasco)).
 
-**A stopgap fails safely or not at all.** The plan defers only gaps
-that fail with an error, a stop or a restart, never one that would
-lose data, widen authority or return a wrong answer as a right one. A
-crash of littlefs ends the storage domain, which the domain service
-restarts, and until then every request answers `{error, eio}`.
+**A page can have two faces.** No one mapping is writable and
+executable at once, but one page can be writable through one mapping
+and executable through another
+([design-fiasco.md, Contract](../design-fiasco.md#contract)).
 
-**The plan can fail at the seam.** If Fiasco's model leaked above
-`liberx`, Phase 2 would become a rewrite. The generated interface
-guards against that, and so does the rule that both backends pass one
-test set, refusals included ([plan.md, Overview](../plan.md#overview)).
-
-## 4.9 Summary
+## 4.8 Summary
 
 erXos makes the Erlang process the system's process, draws domains
 around groups of processes where trust requires them, and keeps the
 machine one Erlang system. Two-level scheduling failed in every
 general thread library; it works for erXos because its runtimes are
 its own and an Erlang process never blocks its thread. erXos's surface
-comes from UNIX and FreeBSD, its kernel design from L4 and Fiasco, its
-namespaces from Plan 9, and its authority and payment from EROS, Safe
-Erlang and Zircon. It refuses POSIX as a base, Linux binaries and
-secrecy inside a domain. The system runs first on Fiasco behind erXos's
-own kernel interface, with every gap published, and erXos's kernel
-replaces Fiasco at parity in Phase 2.
+comes from UNIX and FreeBSD, its kernel and root task from L4, Fiasco
+and L4Re, its namespaces from Plan 9, and its authority and payment
+from EROS, Safe Erlang and Zircon. It refuses POSIX as a base, Linux
+binaries and secrecy inside a domain. It runs on Fiasco, and its own
+code reaches the kernel only through its kernel interface, `liberx`.
 
 The next chapter assembles these pieces into one picture: the kernel,
 the domains, the system domain and the services, and how a request
 travels between them.
 
-## 4.10 Where to read next
+## 4.9 Where to read next
 
 * [design.md, Context](../design.md#context),
   [Requirements](../design.md#requirements) and
   [Decisions](../design.md#decisions): the problem, the goals and the
   decisions that span subsystems.
-* [plan.md, Overview](../plan.md#overview) and
-  [design-fiasco.md, Contract](../design-fiasco.md#contract): the
-  phases, and what the first release promises on Fiasco.
+* [design-fiasco.md](../design-fiasco.md): how the system uses Fiasco,
+  its scheduler and its budgets.
 * [research-hierarchical-scheduling.md](../research-hierarchical-scheduling.md)
   and [research-prior-art.md](../research-prior-art.md): the evidence
   behind sections 4.2 and 4.3.
