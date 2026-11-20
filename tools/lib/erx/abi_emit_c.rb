@@ -3,6 +3,7 @@
 # frozen_string_literal: true
 
 require_relative 'abi_model'
+require_relative 'abi_emit_marks'
 
 module Erx
   module ABI
@@ -76,6 +77,7 @@ module Erx
           type = schema.types.fetch(type_name)
           out.concat(layout_operations(type, schema)) if type.is_a?(Layout) && !type.private?
         end
+        out.concat(MarksEmitter.encoders(schema))
         out.concat(status_table(schema))
         out.concat(enum_name_tables(schema))
         out.concat(signal_tables(schema))

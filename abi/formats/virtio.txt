@@ -55,12 +55,26 @@ limit virtio_net_hdr_size u32 12
 limit virtio_net_queue_rx u32 0
 limit virtio_net_queue_tx u32 1
 
-# One entry of a queue's descriptor table.
+# The structure a queue's region holds that a report releases (docs/design-device-dma.md,
+# "What the formats say"): the descriptor table, which the CPU writes.
+target virtq_desc cpu
+
+# One entry of a queue's descriptor table (2.7.5). A description states its length and
+# whether the device writes the buffer; the sequencer supplies the buffer's address, and
+# the NEXT flag and next index from where it places the chain; this driver negotiates no
+# VIRTIO_F_INDIRECT_DESC, so INDIRECT is clear.
 layout erx_virtq_desc wire_le 8 16
   field addr u64 0
   field len u32 8
   field flags u16 12
+    bits next 0 0
+    bits write 1 1
+    bits indirect 2 2
   field next u16 14
+  refers addr data length len
+  derived flags.next
+  derived next
+  fixed flags.indirect 0
 
 # The head of the available ring (the driver's) and of the used ring (the
 # device's); the ring's entries follow, then a trailing event word this
@@ -69,10 +83,12 @@ layout erx_virtq_ring_head wire_le 2 4
   field flags u16 0
   field idx u16 2
 
-# One entry of the used ring, written by the device.
+# One entry of the used ring, written by the device (2.7.8): id is the head of the chain
+# it ends.
 layout erx_virtq_used_elem wire_le 4 8
   field id u32 0
   field len u32 4
+  releases id virtq_desc
 
 # The header a block request starts with, read by the device.
 layout erx_virtio_blk_req_header wire_le 8 16

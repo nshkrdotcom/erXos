@@ -202,6 +202,12 @@ The exact layout metadata forms, at two-space indentation, are:
 | `private` | the layout's record, offsets and operations go only to its private header, described above |
 | `sequence FIELD terminal VALUE exhaustion STATUS recovery RECOVERY` | FIELD is an atomic unsigned sequence counter; VALUE fits it; STATUS names a declared failure result; RECOVERY is `none`, `new_object` or `new_incarnation` |
 
+A layout that a device reads or writes as a record may also carry the
+DMA marks, `selects`, `fixed`, `refers`, `activates`, `derived` and
+`releases`, and its format file `target` lines; their forms, checks and
+the encoders generated from them are in
+[design-device-dma.md](design-device-dma.md#what-the-formats-say).
+
 `ROLE` is an identifier local to the layout, not a received name or an
 authenticated identity. Owner masks and reserved masks cover a field
 without gaps or overlaps when ownership is declared. An input mask is

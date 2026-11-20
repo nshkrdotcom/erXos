@@ -8008,7 +8008,13 @@ to the corpus and follow rc
   by meaning, fields and names, and the sequencer write them, make each run live, and end what the device holds only
   by its reports, which it acquires itself (the validity, then the records it covers), against one ledger. The TRB form's tables, bindings and releases are in
   [design-usb.md](docs/design-usb.md#what-the-dma-check-judges). Until then the TRB form's plans cannot run through
-  `run_call`. Packages, in order: the formats' marks and generated encoders; the ledger, the layout, descriptions,
+  `run_call`. The formats' marks and their generated encoders are in `abi/formats` (virtio and xHCI);
+  GENET's transmit status word and ADMA2's entry have no marked layout yet, nor do the command TRBs (one layout per
+  command, Set TR Dequeue Pointer's among them) or the input context's composed encoder, and the packages that move
+  those forms add them. That no address place is free rests on a list in `test/host/abi_marks_test.rb`; marking a
+  place as a device address in the format, so the generator refuses a free one, needs a design decision. The
+  encoders are public in `include/erx/abi.h` and exist for report layouts too; the sequencer's package confines them
+  to the sequencer (a private header or a chokepoint check). Packages, in order: the ledger, the layout, descriptions,
   the check's rules, the sequencer's publication and its acquisition, with the split ring moved onto them; GENET,
   and ADMA2 with its transfer split into entries by the sequencer, moved onto them; the TRB form's publication and
   bindings; the TRB form's releases from acquired events, each command's reach and the endpoints' states; the

@@ -4,6 +4,7 @@
 
 require_relative 'abi_source'
 require_relative 'abi_names'
+require_relative 'abi_marks'
 
 module Erx
   module ABI
@@ -147,7 +148,7 @@ module Erx
                         :constants, :rights, :objects, :kinds, :caps, :calls,
                         :readers, :translations, :services, :projections,
                         :protocols, :inspection, :ui, :draw, :input_records, :web, :theme, :inputs, :statuses, :signals, :faults,
-                        :errnos, :elements, :termios,
+                        :errnos, :elements, :termios, :marks,
                         keyword_init: true) do
       # The enums with args lines, in type order: the ones the generator
       # emits event tables for.
@@ -162,7 +163,7 @@ module Erx
       TOP_LEVEL = %w[abi arch trap reg limit scalar enum flags bytes layout
                      status right type kind cap call reader translation service
                      projection protocol inspection ui draw input web theme signal reserved_signal realtime
-                     signal_set fault errno elements termios].freeze
+                     signal_set fault errno elements termios target].freeze
       TYPE_KINDS = %w[scalar enum flags bytes layout].freeze
       BASE_TYPES = [1, 2, 4, 8].flat_map do |size|
         [false, true].map do |signed|
@@ -250,6 +251,7 @@ module Erx
         web = validate_web(by_kind, inspection)
         theme = validate_theme(by_kind, types)
         validate_event_bindings(types, definitions)
+        marks = Marks.validate(by_kind.fetch('target', []), by_kind.fetch('layout', []), types, constants)
         all_constants = constants.dup
         [type_constants(types), right_constants(rights)].each do |addition|
           addition.each do |name, value|
@@ -259,6 +261,7 @@ module Erx
         end
         objects.each { |name, value| add_constant(all_constants, "k_#{name}", value.fetch(:number), BASE_TYPES.fetch('u32'), abi.line) }
         kinds.each { |name, value| add_constant(all_constants, "kind_#{name}", value.fetch(:number), BASE_TYPES.fetch('u32'), abi.line) }
+        marks.meanings.each { |meaning| add_constant(all_constants, meaning.constant, meaning.number, BASE_TYPES.fetch('u32'), meaning.layout.line) }
         caps.each { |name, value| add_constant(all_constants, "root_slot_#{name}", value.fetch(:slot), BASE_TYPES.fetch('u32'), abi.line) }
         calls.each { |name, value| add_constant(all_constants, "call_#{name}", value.fetch(:number), BASE_TYPES.fetch('u32'), abi.line) }
         # Each abi/services interface's number, as a manifest's service row names it.
@@ -278,7 +281,7 @@ module Erx
                    inspection: inspection, ui: ui, draw: draw, input_records: input_records, web: web, theme: theme, inputs: source.inputs,
                    statuses: status_values(by_kind), signals: signals, faults: faults,
                    errnos: errnos, elements: elements.sort_by(&:name).freeze,
-                   termios: validate_termios(by_kind)).freeze
+                   termios: validate_termios(by_kind), marks: marks).freeze
         freeze_value(result)
       end
 
@@ -722,6 +725,9 @@ module Erx
             current_field = nil
           when 'atomic', 'writer', 'owner', 'zero', 'input_mask', 'visibility'
             metadata << line
+            current_field = nil
+          when *Marks::KEYWORDS
+            # Marks::validate reads these once every type is resolved.
             current_field = nil
           when 'names'
             line.fail!('names requires FIELD TYPE [args ARRAY]') unless words.size == 2 || (words.size == 4 && words[2] == 'args')

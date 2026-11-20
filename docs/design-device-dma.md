@@ -668,39 +668,68 @@ at a ring points it at the ring bound to it: a queue's own buffers.
 ### What the formats say
 
 The marks are members of a `layout` in `abi/formats`, read by
-`tools/lib/erx/abi_model.rb`, and each format file declares its
-structures:
+`tools/lib/erx/abi_marks.rb` once `tools/lib/erx/abi_model.rb` has
+resolved every type, and each format file declares its structures:
 
 ```
 target NAME cpu|device        a structure a region may hold, and its writer
 layout ...
-  selects FIELD.BITS VALUE    this layout is the meaning when the bits hold VALUE
-  fixed FIELD.BITS VALUE      the meaning's one value there, which the sequencer writes
-  refers FIELD.BITS TARGET [length FIELD.BITS [unit N]]
-                              a reference, given as a name; its length, if any, in the target
-  activates FIELD.BITS        the one bit whose value makes the record live
-  derived FIELD.BITS          a field the sequencer computes from where it places the record
-  releases FIELD TARGET [when FIELD.BITS VALUE...]
-                              on a report: the field names the holding it ends, under those codes
+  selects PLACE ENUM.MEMBER   this layout is the meaning when the bits hold MEMBER
+  fixed PLACE VALUE           the meaning's one value there, which the sequencer writes
+  refers PLACE TARGET [length PLACE [unit N]]
+                              a reference, given as a name; its length, if any, in units of N bytes
+  activates PLACE             the one bit whose value makes the record live
+  derived PLACE               a field the sequencer computes from where it places the record
+  releases PLACE TARGET [when PLACE ENUM.MEMBER...]
+                              on a report: the place names the holding it ends, under those codes
 ```
 
-`TARGET` is a structure of the file or `data`. The generator refuses an
-unknown target, a `selects` value outside its bits' enum, a `fixed`
-value wider than its bits, a length naming a field the layout does not
-have, an `activates` mark of more than one bit and a field marked twice,
-and emits beside each marked layout's accessors one constant meaning and
-one encoder, which writes a description's free fields, the fixed and
-derived fields, and zero in every bit the layout does not name. A form
+A `PLACE` is `FIELD`, a field with no `bits` lines, or `FIELD.BITS`, one
+bits range of a field; a field with bits is never named whole. A value
+of an enum is spelled `ENUM.MEMBER`, and a `fixed` value is a number or
+an `@` limit. A place no mark claims, or one claimed only as a length
+or as a release's place, is **free**: a description states it. A
+reference's place, the activation and each derived place are
+**placed**: the sequencer supplies them. `TARGET` is a structure of the
+mark's own file or `data`. The generator refuses a mark outside a
+`wire_le` layout, a marked layout with a field that is not one unsigned
+integer, an unknown target or one of another file, a `selects` or `when`
+member outside its enum or wider than its bits, a `fixed` value wider
+than its bits or with bits below the place's shift, a place the layout
+does not have, an `activates` mark of more than one bit, a place
+marked twice and a second `selects`, `activates` or `releases` mark,
+each with the line of the mark. It numbers the meanings from 1 in the
+order of their layouts' names, `ERX_MEANING_<LAYOUT>`, so 0 is no
+meaning, and emits beside each marked layout's accessors in
+`include/erx/abi.h`:
+
+```
+erx_L_free_t      the free places, which a description states
+erx_L_placed_t    the placed places: each reference's address, the activation, each derived place
+bool erx_L_encode(erx_L_t *record, const erx_L_free_t *described,
+    const erx_L_placed_t *placed)
+```
+
+Each input struct has one member per place, `FIELD` or `FIELD_BITS`, of
+the field's type, and is left out with its parameter when it would be
+empty. The encoder writes every byte of the record: the free and placed
+values, the selector's member and each fixed value, and zero in every
+bit the layout does not name; it returns false, leaving the record
+untouched, when a value does not fit its bits. A form
 offers a table's meanings by naming layouts, and a static assertion
 holds that the layouts one table offers share their size and their
-selector's bits. Where a record is composed of several layouts at a size
+selector's bits. Since a layout has one selector, each command the
+command ring offers is a layout of its own. Where a record is composed of several layouts at a size
 the controller reports, as the input context is of contexts of 32 or 64
 bytes (xHCI 6.2.5), the encoder places each at its offset. The xHCI
-file gains the DCBAA's and the scratchpad array's entry layouts, the
-endpoint context's `MaxPStreams` and `LSA` bits, the normal and data
-stage TRBs' immediate-data bit and the event TRBs' release marks; the
-virtio file, the descriptor's flag bits and the used element's release
-mark.
+file holds the DCBAA's and the scratchpad array's entry layouts, the
+endpoint context's `Mult`, `MaxPStreams`, `LSA` and `HID` bits, the
+normal and data stage TRBs' immediate-data bit and the event TRBs'
+release marks; the virtio file, the descriptor's flag bits and the used
+element's release mark. A record the sequencer writes from the layout
+alone has no free place: the DCBAA's, the scratchpad array's and the
+segment table's entries and each link's segment pointer are derived,
+and the link's other fields fixed.
 
 ### What each form's tables say
 
