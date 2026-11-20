@@ -276,7 +276,7 @@ Raspberry Pi's card; packages a user installs lie in `/data` (section
 16.3.3). A **package** is an app's
 one `.app` file: a signed header, an EROFS image of the app's files and
 that image's own hash tree (chapter
-[23](README.md#chapter-23-apps-and-packages)). A domain that runs an app
+[23](23-apps.md#2322-three-parts-in-one-file)). A domain that runs an app
 reads the package through the tree and checks every block against the
 package's own tree, a second time, in its own memory. So a storage
 domain can refuse to hand over a file, but it cannot change what a
@@ -368,7 +368,7 @@ placement is designed and not built.
 
 The volume is the files service `data`, and its `packages/` directory is
 a second service, `packages`, where installed apps lie (chapter
-[23](README.md#chapter-23-apps-and-packages)). For each grantee the
+[23](23-apps.md#2351-a-package-is-a-file)). For each grantee the
 storage domain starts a file grant of the tree, which admits only that
 domain's requests, through the facet the manifest declares (chapter 11,
 section [11.6](11-security.md#116-facets-authority-over-services)). A

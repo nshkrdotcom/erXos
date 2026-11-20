@@ -391,6 +391,8 @@ grantee is introduced to the facet and never to the service behind
 it. The facet admits only the operations and arguments the grant
 allows, within its limits, and forwards them to the service. Most
 facets are processes of the system domain.
+A domain that holds no facet for a service has no way to reach it: a
+call that needs one fails with `no_facet` before it reaches anything.
 
 A grant is a row of the system manifest. Here is one from
 `config/manifest/development.txt`, abridged (the full row also sets

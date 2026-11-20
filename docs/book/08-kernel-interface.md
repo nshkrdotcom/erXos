@@ -227,7 +227,7 @@ asks for all three. The backend has two rules for such cases
   never filled with a guess.
 
 The inspector, erXos's tool for reading the live system as files
-under `/proc` ([chapter 21](README.md#chapter-21-the-live-machine)),
+under `/proc` ([chapter 21](21-live-machine.md#2123-proc)),
 shows the second rule. Each CPU's idle time reads unsupported, and so
 does another domain's budget, because the Fiasco backend reports only
 the system domain's own. It does not print zero: a zero would look

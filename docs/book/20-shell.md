@@ -228,7 +228,7 @@ The escape hatch is Erlang itself. `erl` runs the Erlang shell above
 the command shell until it ends, and `erl EXPR` prints one
 expression's value. Records with structure belong there, in
 `erx:ps()` and the inspector of
-[chapter 21](README.md#chapter-21-the-live-machine).
+[chapter 21](21-live-machine.md#211-the-machine-is-an-object).
 
 ### 20.2.5 Pipelines of text
 
@@ -352,7 +352,7 @@ Invariants](../design-shell.md#invariants)). Values read from the
 inspector also say why they are missing: `top` prints `-` and the
 reason, such as `- [unknown]`, and `/proc`, `ntpctl` and the Erlang
 shell print the status itself, such as `[unknown]` or `[timeout 500]`
-([chapter 21](README.md#chapter-21-the-live-machine)).
+([chapter 21](21-live-machine.md#2121-six-statuses)).
 
 `/proc` gives the same live state as files
 ([chapter 14](14-files.md#1451-proc-the-inspector-as-files)). The QEMU

@@ -311,7 +311,7 @@ X server and the master side of a pseudo-terminal. erXos keeps that
 shape. `erx_term` is a supervised Erlang process of the person's
 session that makes a window through the session's grant, like any
 client. It asks the session for a tty of its own
-([chapter 21](README.md#chapter-21-the-live-machine)) and starts the
+([chapter 20](20-shell.md#2042-the-terminal-relay)) and starts the
 command shell on it with `TERM=xterm`. The display sees the terminal as
 pixels and routes it keys, nothing more.
 
@@ -529,9 +529,9 @@ A kiosk, a dashboard on a wall or a thermostat's panel, is often a
 separate system: a special shell that starts one program full-screen.
 In erXos a kiosk is an ordinary app on a display whose manifest entry
 sets the single policy. An app is a principal with a session template
-([chapter 23](README.md#chapter-23-apps-and-packages)). A **start
+([chapter 23](23-apps.md#231-an-app-is-a-principal)). A **start
 row** names an app and a display
-([chapter 24](README.md#chapter-24-startup-configuration-and-shutdown)).
+([chapter 23](23-apps.md#2312-what-starts-without-a-person)).
 The row's keeper starts the app's session at boot with no login, and
 starts a new one if it ends. That session is the **display's
 session**, whose oldest window the single policy shows. The widget
@@ -624,7 +624,7 @@ command. erXos's design has one. Its one construction: **an act is a
 line of rc that the session's own shell runs**, as if the person had
 typed it at a new shell. The palette finds any command of the
 session's command namespace
-([chapter 20](README.md#chapter-20-the-command-shell-and-the-unix-surface))
+([chapter 20](20-shell.md#2024-one-command-namespace))
 by part of its name. A typed value on the screen, such as a process in
 stats or a file in files, offers the commands that take its type, the
 usual one first. A **route** is a rule that turns a value into such a

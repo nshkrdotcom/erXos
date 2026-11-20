@@ -18,8 +18,7 @@
 kernel interface), [chapter 11](11-security.md) (facets, file grants,
 principals), [chapter 14](14-files.md) (namespaces and mounts),
 [chapter 16](16-storage.md) (EROFS images and their hash trees), and
-the outline of
-[chapter 22](README.md#chapter-22-displays-windows-and-the-web)
+[chapter 22](22-display.md)
 (windows and the widget toolkit).
 
 A shop wants a screen by its door that shows the time and a few
@@ -159,7 +158,7 @@ that asks the domain service for a session and links to it
 keeper; it is unrelated to chapter 14's keepers of stream files). When the session ends, the supervisor starts the
 session keeper again, and one row's failure touches no other row. The
 table and `service` are built; chapter
-[20](README.md#chapter-20-the-command-shell-and-the-unix-surface)
+[20](20-shell.md#205-services-as-freebsd-starts-them)
 covers `service` as a command. The built `enable` also starts the row,
 where the design, as FreeBSD's, has it start nothing until the next
 boot or the row's own `start`. <!-- check: FreeBSD's `service NAME
@@ -704,7 +703,7 @@ program that renders it, ships in every image whose release holds
 the toolkit. An app that wants another renderer ships its own program
 and draws pixels itself; nothing of the display domain's own drawing
 is offered to apps (chapter
-[22](README.md#chapter-22-displays-windows-and-the-web)).
+[22](22-display.md#224-lvgl-inside-apps)).
 
 The header's ABI version covers the native side (the kernel
 interface, the C library seam, the draw protocol and the package

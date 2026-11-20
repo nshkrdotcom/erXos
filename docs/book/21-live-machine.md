@@ -611,7 +611,7 @@ Mac at `/host`, through QEMU's virtio-9p device and a domain of its
 own, is designed and not built.
 
 `tools/erx web`, the browser view over the web facet, is the subject
-of [chapter 22](README.md#chapter-22-displays-windows-and-the-web).
+of [chapter 22](22-display.md#2272-the-web-client).
 
 ## 21.5 Logs and crash reports
 

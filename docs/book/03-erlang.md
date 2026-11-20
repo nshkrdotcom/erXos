@@ -944,7 +944,7 @@ with no recompilation and no restart.
 
 These tools see one node, and nothing beneath it: threads, memory,
 devices, other programs. [Chapter
-21](README.md#chapter-21-the-live-machine) shows how erXos extends this
+21](21-live-machine.md) shows how erXos extends this
 view to the whole machine.
 
 ## 3.8 Where the model stops
@@ -1189,7 +1189,7 @@ from installed storage, never a binary a service merely received
 domain](../design-runtime.md#code-in-the-system-domain)). This is
 **Designed** and not built: the boot information carries the flag that
 asks for it, and ERTS ignores it. [Chapter
-21](README.md#chapter-21-the-live-machine) covers code from the host,
+21](21-live-machine.md#214-code-from-the-host-named-by-its-hash) covers code from the host,
 and the tools of section 3.7 extended to the machine.
 
 ### 3.9.7 The chapter's ideas at a glance
