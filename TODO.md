@@ -8821,6 +8821,8 @@ document's "residual risks accepted" paragraph.
   design documents and the tree; built and unbuilt parts marked. Each chapter is written for a reader
   without Erlang, operating-system or microkernel background: Part I teaches the three subjects, and
   each chapter states the background it needs and explains in a Background box what only it uses.
+  design documents and the tree; built and unbuilt parts marked. Chapters follow the prose guide,
+  [docs/book/style.md](docs/book/style.md).
 * [Low] display, `erx_ui:open/1` falls back to the session's only display
   ([design-display.md](docs/design-display.md#choosing-a-display)): when `Options` and the
   `display` variable name none, open on the one display the session holds where it holds exactly
