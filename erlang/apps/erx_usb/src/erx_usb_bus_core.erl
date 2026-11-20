@@ -14,17 +14,22 @@ any deadline is pending, is `{deadline, At}`, the earliest of them, and the
 process answers it with the event `expired` at or after that time.
 
 **Hubs.** The root hub and every external hub are kept alike: a map of
-ports, the set of ports (and `hub`, the hub itself) whose status is still
-to be read, the one port operation in flight, the change bits still to be
-cleared after a read, and the pid of the hub function whose report is
-being handled, to which `{handled, Hub, From}` goes once the set is empty, so a
-restarted hub function never takes its predecessor's answer. A hub's port
-operations run one at a time, chosen afresh whenever none is in flight:
-first the clears of the last read, then powering an `off` port, then
-disabling a port given up, then the reset of the port holding the
-address-zero turn, then the next status read, which waits until the hub's power-good time has passed. So a hub
-has at most one operation and one report in flight however fast it
-reports, and nothing is queued but a set of its own ports.
+ports, the queue of ports (and `hub`, the hub itself) whose status is still
+to be read, each at most once and in the order they were named, the one port
+operation in flight, the change bits still to be cleared after a read, and
+the pid of the hub function whose report is being handled, to which
+`{handled, Hub, From}` goes once the queue is empty, so a restarted hub
+function never takes its predecessor's answer. A hub's port operations run
+one at a time, chosen afresh whenever none is in flight: first the clears of
+the last read, then powering an `off` port, then disabling a port given up,
+then the reset of the port holding the address-zero turn, then the next
+status read, which waits until the hub's power-good time has passed. So a
+hub has at most one operation and one report in flight however fast it
+reports, and nothing is queued but its own ports, each at most once. A read
+that saw changes queues its target again, so the target is read again after
+their clears, behind the reads already queued, and leaves the queue only on
+a read that sees none: a change that latched between a read and its clear,
+which the clear takes away unseen, is in the next read's status.
 
 **Ports** are in the states of the design's port table; a state carries
 its deadline and, from `enumerating` on, its occupant's reference, so a
@@ -242,7 +247,7 @@ hub's.
 -type hub() :: #{parent := root | {hub, full | high}, power_good := ms(),
                  power := powering | {good_at, ms()} | good | unpowered, multi_tt := boolean(),
                  ports := #{port_no() => port_state()}, histories := #{port_no() => port_history()},
-                 pending := ordsets:ordset(target()),
+                 pending := [target()],
                  op := none | {target(), op()}, clears := [{target(), atom()}], reporter := none | term()}.
 
 -doc """
@@ -300,14 +305,14 @@ devices(#{devices := Devices}) -> Devices.
 
 event({port_event, N}, _Now, State) ->
     {[], with_hub(root, fun(Hub = #{ports := Ports, pending := P}) when is_map_key(N, Ports) ->
-                                Hub#{pending := ordsets:add_element(N, P)};
+                                Hub#{pending := queued([N], P)};
                            (Hub) ->
                                 Hub
                         end, State)};
 event({changed, Id, Set, From}, _Now, State) ->
     {[], with_hub(Id, fun(Hub = #{pending := P, ports := Ports}) ->
                               Named = [T || T <- Set, T =:= hub orelse is_map_key(T, Ports)],
-                              Hub#{pending := ordsets:union(P, ordsets:from_list(Named)), reporter := From}
+                              Hub#{pending := queued(Named, P), reporter := From}
                       end, State)};
 event({port_done, Id, Target, Result}, Now, State = #{hubs := Hubs}) ->
     case Hubs of
@@ -638,11 +643,21 @@ answered(Id, Target, {clear, Change}, ok, _Now, State) ->
     {[], with_hub(Id, fun(Hub = #{clears := [{T, C} | Rest]}) when T =:= Target, C =:= Change ->
                               Hub#{clears := Rest}
                       end, State)};
+%% A read that saw changes queues its target again, behind the targets already
+%% queued, and the clears go first (next_op/3), so the target is read again after
+%% its last clear: a change that latched between this read and its clear, which the
+%% clear takes away unseen, is in that next read's status, as FreeBSD's
+%% uhub_reattach_port reads the port after it clears the connection change
+%% (usb_hub.c:620-637). Only a read with no changes takes the target off; a port
+%% whose changes keep coming back is read in turn with the targets queued, and
+%% holds back its hub's `handled` while they do.
 answered(Id, Target, get_status, Result, Now, State) ->
     case decode(Id, Target, Result, State) of
         {ok, Status = #{changes := Changes}} ->
-            Read = with_hub(Id, fun(Hub = #{pending := P}) ->
-                                        Hub#{pending := ordsets:del_element(Target, P),
+            Read = with_hub(Id, fun(Hub = #{pending := P}) when Changes =:= [] ->
+                                        Hub#{pending := P -- [Target]};
+                                   (Hub = #{pending := P}) ->
+                                        Hub#{pending := queued([Target], P -- [Target]),
                                              clears := [{Target, C} || C <- Changes]}
                                 end, State),
             read(Id, Target, Status, Now, Read);
@@ -755,7 +770,7 @@ expire_port(Id, N, {settling, At}, Now, State = #{waiting := Waiting}) when At =
 expire_port(Id, N, {resetting, At, _Phase}, Now, State) when At =< Now ->
     give_up(Id, N, reset_timeout, State);
 expire_port(Id, N, {resetting, At, {poll, Poll}}, Now, State) when Poll =< Now ->
-    Polled = with_hub(Id, fun(Hub = #{pending := P}) -> Hub#{pending := ordsets:add_element(N, P)} end, State),
+    Polled = with_hub(Id, fun(Hub = #{pending := P}) -> Hub#{pending := queued([N], P)} end, State),
     set_port(Id, N, {resetting, At, read_queued}, Polled);
 expire_port(Id, N, {recovering, At, Speed}, Now, State) when At =< Now ->
     enumerate(Id, N, Speed, State);
@@ -956,6 +971,10 @@ next_read(Id, Hub = #{pending := [Target | _], power := good}) ->
     issue(Id, Target, get_status, Hub);
 next_read(_Id, Hub) ->
     {[], Hub}.
+
+%% The targets of a hub's queue of reads with Targets added at its end, each once.
+queued(Targets, Pending) ->
+    Pending ++ [T || T <- lists:usort(Targets), not lists:member(T, Pending)].
 
 issue(Id, Target, Op, Hub) ->
     {[{port, Id, Target, Op}], Hub#{op := {Target, Op}}}.

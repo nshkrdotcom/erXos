@@ -7,9 +7,10 @@
 %% two ports, one external hub of two ports and devices of one and two functions, whose
 %% functions may end; then traces of 1,000 attach and detach cycles on one port, a
 %% connection storm, a hub detached during its child's enumeration, a chain of six hubs,
-%% four connects on one port within a minute, a function's restarts within a minute and
-%% a hub function's restart; over-current changes read on a root port; and a port's
-%% failure logged. World places are routes from the root.
+%% four connects on one port within a minute, a function's restarts within a minute,
+%% a hub function's restart and a device replugged between a read and its clear;
+%% over-current changes read on a root port; and a port's failure logged.
+%% World places are routes from the root.
 %%
 %% The simulation is the test's own model of the hardware and the processes around the
 %% core: every port's connection, enable, power and latched change bits; the port
@@ -36,7 +37,10 @@
 %% * a function ended is started again only once every one of its pipes has answered
 %%   `ok` to a reset since its end, its pipes reset one at a time; a failed reset
 %%   detaches its device, and an end, a reset's answer or a detached device's
-%%   function's end delivered again changes nothing.
+%%   function's end delivered again changes nothing;
+%% * a quiet bus, nothing in flight and no deadline pending, keeps every port empty
+%%   exactly where nothing is connected, so no change, one latched between a status
+%%   read and its clear included, is lost.
 %% Times start at 2^40, so every integer at or above it in a state is a time; states are
 %% compared with times taken relative to the clock and device references renumbered in
 %% order, so equal situations at different times are one state. Every number is
@@ -183,6 +187,7 @@ port0() -> #{thing => none, chg => [], enabled => false, addressed => false, pow
 %% a device's steps with it is explored.
 choices(Node = {M, _Core}) ->
     {Ready, Failed} = environment(Node),
+    [check_quiet_agreement(Node) || Ready =:= [], expiry(M) =:= []],
     {Answers, Reports} = lists:partition(fun({Kind, _}) -> Kind =:= core end, Ready),
     First = lists:sublist(Answers, 1),
     case lists:any(fun(A) -> taken_alone(A, Node) end, First) of
@@ -567,6 +572,16 @@ check_default_state(#{world := World}, Event) ->
         _ -> ok
     end.
 
+%% A quiet bus, nothing in flight and no deadline pending, waits for the world to
+%% change, so every port it keeps must agree with the world: empty exactly where
+%% nothing is connected. A change latched between a status read and its clear, which
+%% the clear takes away unseen, leaves such a node disagreeing.
+check_quiet_agreement({M = #{world := World}, Core}) ->
+    [error({quiet_port_disagrees_with_the_world, {H, N}, State, Thing})
+     || {H, N} := State <- erx_usb_bus_core:ports(Core),
+        #{thing := Thing} <- [maps:get(where(H, N, M), World, absent)],
+        (Thing =:= none) =/= (State =:= empty)].
+
 check_turn(Core, Event) ->
     case [P || P := S <- erx_usb_bus_core:ports(Core), in_window(S)] of
         [_, _ | _] = Two -> error({two_ports_at_address_zero, Two, Event});
@@ -870,21 +885,42 @@ over_current_changes_are_logged_once_per_attempt_test() ->
     ?assertMatch(#{{root, 1} := #{over_current_changes := 5}}, erx_usb_bus_core:histories(Core7)).
 
 %% Root port 1 of an idle bus signals, its status read answers Status and Change, and
-%% each change bit is cleared in turn; the read's over-current log actions and the state after.
+%% each change bit is cleared in turn, after which the port is read again and shows Status
+%% with no change; the over-current log actions of all of it and the state after.
 root_read(Status, Change, Now, Core0) ->
     {Core1, [{port, root, 1, get_status} | _]} = erx_usb_bus_core:step({port_event, 1}, Now, Core0),
     {Core2, Actions} = erx_usb_bus_core:step({port_done, root, 1, {ok, <<Status:16/little, Change:16/little>>, 3}},
                                              Now, Core1),
-    {[A || A = {log, _, _, over_current} <- Actions], cleared(Actions, Now, Core2)}.
+    cleared(Status, Actions, Now, Core2, [A || A = {log, _, _, over_current} <- Actions]).
 
-cleared(Actions, Now, Core) ->
-    case [Op || {port, root, 1, Op = {clear, _}} <- Actions] of
-        [] ->
-            Core;
-        [_] ->
-            {Next, More} = erx_usb_bus_core:step({port_done, root, 1, ok}, Now, Core),
-            cleared(More, Now, Next)
+cleared(Status, Actions, Now, Core, Logged) ->
+    Answer = case [Op || {port, root, 1, Op} <- Actions] of
+                 [] -> none;
+                 [{clear, _}] -> ok;
+                 [get_status] -> {ok, <<Status:16/little, 0:16>>, 3}
+             end,
+    case Answer of
+        none ->
+            {Logged, Core};
+        _ ->
+            {Next, More} = erx_usb_bus_core:step({port_done, root, 1, Answer}, Now, Core),
+            cleared(Status, More, Now, Next, Logged ++ [A || A = {log, _, _, over_current} <- More])
     end.
+
+%% A running device on root port 1 is unplugged and plugged in again after the status
+%% read that saw it gone and before that connection change is cleared: the clear takes
+%% the second change too, and the controller signals nothing more, so only a read
+%% after the clear can see the new device (FreeBSD's uhub_reattach_port reads the
+%% port after its clear, usb_hub.c:620-637).
+a_change_between_a_read_and_its_clear_is_not_lost_test() ->
+    Running = settle(follow({stimulus, [1], dev2}, trace_start())),
+    ?assertMatch({running, _}, port_of(Running, {root, 1})),
+    Clearing = drive(follow({stimulus, [1], none}, Running),
+                     fun({#{ops := Ops}, _Core}) -> maps:get(root, Ops, none) =:= {1, {clear, connection}} end,
+                     fun(_) -> true end),
+    ?assertEqual(empty, port_of(Clearing, {root, 1})),
+    Again = settle(follow({stimulus, [1], dev2}, Clearing)),
+    ?assertMatch({running, _}, port_of(Again, {root, 1})).
 
 a_connection_storm_stays_bounded_test() ->
     Toggle = fun(I, Node) ->

@@ -7848,6 +7848,14 @@ to the corpus and follow rc
   the design detaches the translator's hub, whether or not the addressed device is still
   attached ([The controller process](docs/design-usb.md#the-controller-process), "A failed address"). Bring both
   to the design, with the seeded faults its Verification table names.
+* [Medium] USB, the bus core's re-read after clears (`erx_usb_bus_core`, [design-usb.md](docs/design-usb.md#hubs)):
+  a read that saw changes queues its port again until a read sees none, and `handled` waits for an empty queue, so
+  on an external hub a port whose change bits set again faster than one clear and read (a device toggling its
+  pull-up) holds back the hub's next report while it lasts: a sibling port's unplug or plug goes unseen until it
+  stops, and the hub's EP0 carries reads and clears back to back. The root hub is not affected. Two ways out:
+  answer `handled` once every target the report named has been read once since it, re-reads going on in the queue;
+  or, as FreeBSD bounds it (`usb_hub.c:616-637`, one clear and one fresh read), leave the changes a re-read sees
+  latched at an external hub for its next report.
 * [Low] USB, the bus core's enumeration (`erx_usb_bus_core`, [design-usb.md](docs/design-usb.md#ports-hubs-and-devices-the-bus-core)):
   step 3, the language table and the manufacturer, product and serial strings, is not run, so a device's
   inspection record has no strings; a failure there fails nothing, so adding it is a step between `device` and

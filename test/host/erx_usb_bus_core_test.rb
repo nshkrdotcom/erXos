@@ -47,8 +47,8 @@ class ErxUsbBusCoreTest < Minitest::Test
              replacement: '{[{detach, Ref} | Actions],',
              catching: 'a_hub_detached_during_its_childs_enumeration_test'),
     Seed.new(fault: "`handled` sent to the first reporter, not a restarted hub function's",
-             anchor: 'Hub#{pending := ordsets:union(P, ordsets:from_list(Named)), reporter := From}',
-             replacement: 'Hub#{pending := ordsets:union(P, ordsets:from_list(Named)), reporter := case Hub of #{reporter := none} -> From; #{reporter := R} -> R end}',
+             anchor: 'Hub#{pending := queued(Named, P), reporter := From}',
+             replacement: 'Hub#{pending := queued(Named, P), reporter := case Hub of #{reporter := none} -> From; #{reporter := R} -> R end}',
              catching: 'handled_goes_to_the_reporter_test'),
     Seed.new(fault: 'a port given up with its device still enabled, the turn handed on',
              anchor: '{disabling, Reason, holds_turn_below(Old, State)}',
@@ -118,7 +118,12 @@ class ErxUsbBusCoreTest < Minitest::Test
     Seed.new(fault: "a port's failure logged at every move into a failure state, not once per connection",
              anchor: '{none, {failed, Reason}} -> [{log, Id, N, {failed, Reason}}];',
              replacement: '{_, {failed, Reason}} -> [{log, Id, N, {failed, Reason}}];',
-             catching: 'a_function_restarts_at_most_three_times_a_minute_test')
+             catching: 'a_function_restarts_at_most_three_times_a_minute_test'),
+    Seed.new(fault: 'a read that saw changes taking its port off the queue, so a change latched before ' \
+                    'their clear is lost',
+             anchor: 'Hub#{pending := queued([Target], P -- [Target]),',
+             replacement: 'Hub#{pending := P -- [Target],',
+             catching: [2, 0, 0])
   ].freeze
 
   def test_bus_core_cases_pass_under_eunit
