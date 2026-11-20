@@ -1160,8 +1160,9 @@ above as well: a `pci_bus` or `pci` service is the system domain's and a
 would direct which functions the enumerator raises. The system domain
 picks a facet's callback and the process behind it by the service's
 name, so each of the three services is named by its interface, and a
-service of one of those names is of that interface. The facet rows
-below leave out their limits, which no section states yet. The PCIe domain is
+service of one of those names is of that interface. The facet rows'
+limits, and the PCIe domain's own rows, are [The rows and the facets'
+limits](#the-rows-and-the-facets-limits). The PCIe domain is
 the configured row named `pcie`; the only rows that may name it are its
 bridges' units, its place in the boot order, its `pcie` service and its
 `pci_bus` facet. The shared part of the development manifest declares
@@ -1177,8 +1178,10 @@ service pci
   interface pci
 ```
 
-A board whose part places a bridge adds the domain's row, its unit, its
-`pcie` service and the three grants:
+A board whose part places a bridge adds the domain's rows ([The rows
+and the facets' limits](#the-rows-and-the-facets-limits)), its unit, its
+`pcie` service and the three grants, each facet row stating its limits
+as every source row states them:
 
 ```
 unit pcie
@@ -1190,15 +1193,222 @@ service pcie
 facet pci_bus
   grantee @domain.pcie
   service @service.pci_bus
+  operations none
+  max_request 65536
+  in_flight 1
+  reductions 5000000
+  period_ns 10000000000
+  max_heap_size 65536
 facet pcie
   grantee system
   service @service.pcie
+  operations none
+  max_request 1024
+  in_flight 1
+  reductions 100000
+  period_ns 1000000000
+  max_heap_size 8192
 facet pci
   grantee @domain.HOLDER
   service @service.pci
+  operations none
+  max_request 1024
+  in_flight DEVICES
+  reductions 100000
+  period_ns 1000000000
+  max_heap_size 8192
 ```
 
-with one `pci` facet for each configured domain holding a `pci` device.
+with one `pci` facet for each configured domain holding a `pci` device,
+`DEVICES` the number of `pci` devices that domain holds.
+
+### The rows and the facets' limits
+
+The facets' figures rest on the encoded and decoded sizes of their
+requests and answers at their widest, measured with
+`erlang:external_size/1` and `erts_debug:flat_size/1` on the
+development host's stock OTP 28 (Homebrew's `erl`, an Apple Silicon
+Mac): each record field at the largest value its type allows, each
+enum at its longest name, each flag set full, and a call in its
+envelope, `{'$gen_call', {Pid, [alias | Alias]}, Request}`, whose pid
+and alias each carry a node name of 255 bytes, the envelope
+`code_objects_max_request` holds
+([design-system.md](design-system.md#creating-a-domain), "The
+`code_objects` facet"). The host test below checks the one figure that
+is a floor on the tree's own OTP.
+
+| Term | Encoded bytes | Decoded words |
+| --- | --- | --- |
+| one reported function, `#{record => Record, kept => false}` | 1,000 | |
+| the envelope of an empty request | 585 | |
+| `report` of 64 functions, in its envelope | 64,526 | 12,821 |
+| `pci`'s `open` or `reset`, in its envelope | 598 | |
+| `pcie`'s `set`, in its envelope | 678 | |
+| `targets`' answer: 2 bridges, 64 layouts, 64 settings | 69,957 | 14,580 |
+
+A report carries every function of every bridge the domain holds, so
+its widest is `pcie_bridges_max` times `pcie_functions_max`, 64
+records, not one bridge's 32.
+
+**`pci_bus`.** `max_request` is 65,536: the widest report, 64,526 bytes,
+rounded up to a power of two. A row naming less drops the report
+unanswered (`erx_facet` drops a call past `max_request` and counts it),
+the enumerator never reports ready, and every holder of a `pci` device
+waits out the hold's 30 s and starts without it. So the figure is a
+floor, not a choice: `abi/services/pci_bus.txt` declares it as the limit
+`pci_bus_max_request_min`, and the manifest check refuses a `pci_bus`
+facet whose `max_request` is below it, naming the facet and the floor,
+as it refuses a tree facet below `files_max_frame_min`. The constant is
+written by hand, not generated: the size of an `erx_abi_layout` map in
+the external term format is OTP's to compute, and a Ruby model of it
+would be a second encoder. A host test in `erx_pci_bus_facet`'s suite
+proves it instead: it builds the widest report, passes each record
+through `erx_abi_layout:encode(erx_pcie_function, Record)`, whose clause
+takes a map with every field, so a field added to the layout fails the
+test until the test's record gains it, and checks that the report's
+`external_size` in the envelope above is at most
+`?ERX_PCI_BUS_MAX_REQUEST_MIN`. Its seeded failure is
+`pcie_functions_max` raised to 33, which takes the report past the
+floor. `in_flight` is 1, the enumerator's one process. `reductions`
+5,000,000 per `period_ns` 10,000,000,000 is the share
+[design-board-sensors.md](design-board-sensors.md#concurrency-and-failure)
+derives: one `firmware` request at its 1 s deadline, 4,000,000
+reductions, with the start's `targets` and `report` in the same period.
+`max_heap_size` is 65,536 words (512 KiB): the facet's process holds one
+request, its frame of at most 64 KiB (8,192 words, an off-heap binary
+that counts) and the decoded report of 12,821 words, about 21,000 words
+live, which a copying collection doubles.
+
+**`pcie` and `pci`.** Each request is one operation, a place of four
+integers below 2^32 and, for `set`, an `erx_pcie_setting` of two atoms
+and two integers below 2^64, so `max_request` is 1,024, the widest
+request (678 bytes) rounded up to a power of two, the figure
+`code_objects_max_request` gives the same envelope. A row naming less
+than the widest request drops it unanswered, as for `pci_bus`, but no
+floor is declared for these: the requests are the envelope and a few
+words, and the `pcie` QEMU suite's cases send every operation.
+`max_heap_size` is 8,192 words (64 KiB), a process holding one small
+request, as `root_clock`'s does. The `pcie` grant's `in_flight` is 1:
+the device service's PCIe process is its one caller and makes one call
+at a time ([Concurrency](#concurrency)). A `pci` grant's is the number
+of `pci` devices its holder holds, so each function's driver may have
+its one call in flight; a smaller figure answers a second driver's call
+`{error, busy}`, which it may retry. Both take the 100,000 reductions
+per 1 s that every message facet of the development manifest takes: a
+driver makes three calls at its start and the device service one per
+holder's change, each a few thousand reductions, and a function-level
+reset's waits, up to about 1.1 s in the enumerator, are timers, not
+reductions.
+
+**The domain's rows.** The PCIe domain is an interpreter service domain
+of the system principal, as the web and display domains are:
+
+```
+runtime_limits pcie
+  max_frame 131072
+  max_message_heap 131072
+  funnel_depth 64
+  exports 256
+  tmp 0
+  overlay 0
+  atoms 16384
+  foreign_atoms 1024
+  processes 1024
+share pcie
+  quota_ns 500000
+  period_ns 10000000
+  cpuset 1
+  capacity_mcpu 50
+  capacity_first 0
+  slice_us 1000
+  grace_us 5
+  base 16
+  ceiling 31
+  flags none
+limits pcie
+  memory 25165824
+  outer 1048576
+  grant @share.pcie
+  spaces none
+  lane 4096
+  connections 1
+  crash 0
+  flags none
+  runtime_limits @runtime_limits.pcie
+  peer_held 4096
+  peer_held_total 4096
+domain pcie
+  principal @principal.system
+  limits @limits.pcie
+  kind service
+  flags none
+  runtime @artifact.emu
+  release @artifact.pcie
+  restarts 5
+  restart_period_s 600
+  args "-- -root / -bindir /bin -progname erl -home / -nouser -nocookie -no_epmd -proto_dist erx"
+```
+
+* **`max_frame`** 131,072 holds the widest answer the domain takes,
+  `targets`' 69,957 bytes; a smaller one drops that answer, the
+  enumerator waits, and the boot timeout stops and restarts the domain,
+  a stop rather than a wrong answer. **`max_message_heap`** 131,072
+  words holds its 14,580 decoded words several times over. The rest
+  are the storage, network, web and display rows' figures: one process
+  and its application come nowhere near their process count, atom
+  table or export table, and the domain has no RAM file system and no
+  overlay.
+* **`memory`** 24 MiB is not measured. The bare release, loaded, on the
+  interpreter, takes 18.3 MiB (the web row's figure, in
+  `config/manifest/qemu-virt-development.txt`); `erx_pcie`'s modules
+  and one walk's state, 64 records and their plans, are well under
+  1 MiB; mapping a 256 MiB configuration window, QEMU `virt`'s, with
+  4 KiB pages takes at most 512 KiB of page tables. That leaves about
+  4 MiB of headroom. The measurement that settles it is the domain's
+  pool pages at rest after its report, measured as the storage row's
+  figure is (the root's pool pages in use with the domain up minus
+  those once it has ended), on the `pcie` suite's walk-and-report cell;
+  the figure is then that use rounded up to a whole MiB with 2 MiB of
+  headroom, as the network row's is. **`outer`** 1 MiB and the
+  **`peer_held`** figures are every configured domain's.
+* **`connections`** 1: its system connection carries its `pci_bus`
+  calls and the system domain's `pcie` calls, and it reaches no other
+  domain. **`lane`** 4 KiB: what it reads is the system domain's
+  answers, a few each boot, which reassemble across the lane.
+* **The grant**, 50 mcpu on CPU 0, is a share of its own, since no
+  existing share is this small: the domain spends CPU on its start's
+  walk, some hundreds of configuration accesses, and then on one `set`
+  or `reset` per holder's change. Its time is not measured; the walk's
+  time on the Pi 4, the slowest bridge, is the number to read from the
+  board probe.
+* **`restarts`** 5 in 600 s, every configured domain's: a domain that
+  crashes before reporting releases the hold at its end ([The catalogue
+  and gives](#the-catalogue-and-gives), "The hold at boot"), so its
+  restarts hold no other row.
+* **The release** `pcie` is a bare release with `erx_pcie`
+  ([Processes](#processes)), built as the web row's release is.
+
+**Where the rows live.** `config/manifest/qemu-virt-pcie.txt` holds the
+rows above, the unit, the `pcie` service and the `pci_bus` and `pcie`
+facets, spelled as above. It is not a board part: the `pcie` QEMU
+suite's manifest is the development manifest without the web domain
+(`Manifest::Edit.without_domain`), with this file appended and the test
+holder's rows, its unit and its `pci` facet added by the suite, as the
+display suite adds its client's (`tools/lib/erx/display_domain.rb`).
+The PCIe rows take exactly the web domain's memory, outer budget,
+connection and place in the system principal's domains quota, and less
+of `system` than the web share's 150 mcpu, so leaving out the web
+domain keeps every machine-wide figure (the system principal's memory
+and domains, `max_domains`, `max_connections`, `root_memory`, and
+property 13 of [design-system.md](design-system.md#the-manifest)) as
+the development manifest has it, and the suite tests nothing of the
+web domain. Should the PCIe rows outgrow the web domain's, the manifest
+check refuses the suite's manifest at build time. When USB input lands,
+the file's rows move into `config/manifest/qemu-virt-development.txt`,
+the board part, which then grows the system principal's memory by the
+domain's 25 MiB, its domains quota, `max_domains` and `max_connections`
+by one and `root_memory` by 25 MiB, and gives the grant its room in
+`system` ([Open decisions](#open-decisions)); the file is then deleted.
 
 ## The catalogue and gives
 
@@ -1485,7 +1695,7 @@ been made, which the readback catches. That is a residual of Fiasco
 | the give | refused, the creation with it | a doorbell the function's DMA range does not map one to one |
 | | nothing given, as a device the machine lacks | a function with no layout, unconfirmed or not `ready`; at a closed bridge's place, a reported pin that is not the place's |
 | the boot view | the bridge's unit and the place's refused | a closed bridge's `interrupt-map` routing a listed place's pin to a line other than its row's, or to one of the bridge's own lines |
-| the manifest check | the build fails, naming the property | a second holder of a bridge's unit; a `pcie` domain holding another unit; a `pci` row with a line at a place no closed bridge lists; a closed bus's line given apart from its row; more line-less `pci` rows than the frame's lines; a `pci_bus`, `pcie` or `pci` facet granted against the rule above |
+| the manifest check | the build fails, naming the property | a second holder of a bridge's unit; a `pcie` domain holding another unit; a `pci` row with a line at a place no closed bridge lists; a closed bus's line given apart from its row; more line-less `pci` rows than the frame's lines; a `pci_bus`, `pcie` or `pci` facet granted against the rule above; a `pci_bus` facet whose `max_request` is below `pci_bus_max_request_min` |
 
 ## On Fiasco
 
@@ -1537,6 +1747,7 @@ that touches it.
 | `erx_devices_pci_core` | exhaustive over its states and events: requests in `between` are answered only after a report's answer, or at `down`; a holder's end in `between` lowers the setting and sends nothing; a lowering is written before it is sent and a raise after its `ok`; the report's answer is withheld until `await_grant` answers the incarnation's facet, and `answered` is written before the answer is sent; a restarted process begins in `synced` only when `answered` names the incarnation holding its bridges, and in `between` when it names an ended one or none; the sequence `targets` with a mastering setting, the holder's end, `report` leaves the model's function off | the answer's settings dropped: that sequence leaves the function mastering after its holder's end; a raise written before its `ok`: after a failed `set` the library says `mastering`; the restart's state taken from the facet's presence: a restart after the grant was installed and before the report was answered begins in `synced` |
 | `erx_dom_pci_report` (C, host) | a valid placing report is taken whole; a BAR outside the window, unaligned, overlapping another entry, an MSI-X table past its BAR's size, each refuses the placing report whole with `ERX_EINVAL`; at a later report, a changed record, a missing one and a `not_ready` one each leave the function ungiven although an earlier report confirmed it; on a bridge marked `firmware_lost`, a report listing the VL805 `ready` leaves it ungiven; `erx_dom_pci_firmware` over a backend whose call answers `ERX_ETIMEDOUT` marks the entry before it returns, and over one answering `ERX_OK` or `ERX_ENOTSUP` does not | the overlap check removed: the overlapping fixture is admitted; the earlier confirmation kept when a record is missing: the missing function stays given; the mark not read at intake: the VL805 reported ready after the timeout is given |
 | `erx_domain:await_grant/2`, the domain service over its mint core | a wait for incarnation `D` is answered `{ok, Facet}` with `D`'s facet once installed, `{error, failed}` when its grant fails, `{error, ended}` when `D` ends or the grant moves to another server, and `{error, unprovided}` when `D` is ready without `pcie`; the service answers other calls while it waits; `system_namespace/0` still waits for every `files` grant | the wait matched by service alone: a wait for `D` is answered with its predecessor's installed facet; the idle case dropped: the wait for an incarnation that provides no `pcie` is never answered within the test's deadline |
+| `erx_pci_bus_facet`, the report's floor | the widest report, `pcie_bridges_max` times `pcie_functions_max` records each passed through `erx_abi_layout:encode(erx_pcie_function, Record)` at every field's widest value, in a call envelope whose pid and alias carry 255-byte node names, has an `external_size` at most `?ERX_PCI_BUS_MAX_REQUEST_MIN` ([The rows and the facets' limits](#the-rows-and-the-facets-limits)) | `pcie_functions_max` raised to 33: the report passes the floor and the case fails |
 | Fiasco's MSI line allocator (C, host) | lines from the range's first to its last, then `ERX_ELIMIT`; a freed line is taken again | the range's end off by one: the test's last allocation lies outside the range |
 
 ### Fuzz targets
@@ -1659,6 +1870,25 @@ the line, the DMA limit and the abort's kind.
   describes an identity range from 0, and loses a translating bridge's
   offset and lower bound; the cut range as the function's DMA facts
   goes through the create every device's give already uses.
+
+## Open decisions
+
+* **Where the PCIe domain's grant finds room in `system`.** Property 13
+  of [design-system.md](design-system.md#the-manifest) holds the
+  configured service domains' grants to `system`'s rate less
+  `system_reserve` of it. QEMU `virt`'s development manifest has no room
+  left: `system` is 30 ms per 10 ms, 3.0 CPUs, less the reserve's 250
+  thousandths, 2.25; the storage and network domains take 1.0 each, the
+  web share 0.15 and the display share 0.1, 2.25 in all. The `pcie` suite
+  needs no answer, since it leaves out the web domain ([The rows and the
+  facets' limits](#the-rows-and-the-facets-limits)), but the PCIe rows'
+  move into the board part does. The choices: grow `system` to 31 ms per
+  10 ms (3.1 CPUs, 2.325 after the reserve) in the development
+  manifest's shared part, which every board's four-CPU cpuset holds;
+  take the 50 mcpu from the web or display share, both still to be sized
+  from measurement; or lower `system_reserve`. Recommendation: grow
+  `system`, which keeps the reserve's headroom and takes from no domain
+  whose share is not yet measured; on the Pi 4 it only adds headroom.
 
 ## References
 
