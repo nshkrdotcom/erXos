@@ -171,11 +171,14 @@ pixels. The [overview](docs/overview.md) tells the longer story.
 
 erXos is in Phase 1 of the [roadmap](docs/plan.md): the system is up on the
 Fiasco kernel, and Phase 1b moves the user-facing parts into
-domains of their own. The next milestone is
-[0.1, the preview](docs/plan.md#01-the-preview),
-erXos's first public preview: a development build for the Raspberry
-Pi 4 and QEMU `virt` with the kiosk and its live quotes on the screen, SSH to `rc`, and Doom
-in both images. Every build is a development build and prints
+domains of their own.
+[0.1, the preview](docs/plan.md#01-the-preview), erXos's first public
+preview, is published: the [website](https://stass.github.io/erXos/)
+offers its browser demo and its Raspberry Pi 4 card, a development
+build with the kiosk and its live quotes on the screen, SSH to `rc`, and
+Doom. The next milestone is
+[0.2, the first release](docs/plan.md#02-the-first-release-on-fiasco),
+on Fiasco. Every build is a development build and prints
 `development build: trusted code only`. `tools/erx boot` builds an image
 and boots it in QEMU to the command shell:
 
@@ -440,7 +443,8 @@ Eshell V17.1.1 (type help(). for help)
 
 ## Getting started
 
-0.1 is a development preview ([plan](docs/plan.md#01-the-preview),
+0.1, published on the [website](https://stass.github.io/erXos/), is a
+development preview ([plan](docs/plan.md#01-the-preview),
 [release notes](site/release-notes.html)): it prints `development build:
 trusted code only` at boot and must run trusted code only. It runs on
 QEMU `virt` and on a Raspberry Pi 4. Read the release notes' known

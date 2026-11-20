@@ -644,16 +644,19 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   Raspberry Pi 4 with and without it ([todo-performance.md](docs/todo-performance.md)), and carry it only if the
   patched median lies within the unpatched runs' spread; otherwise drop it and publish FD32
   ([design-fiasco.md](docs/design-fiasco.md#the-releases-fiasco-build)).
-* [High] 0.1 on Fiasco, the Raspberry Pi 4's hardware watchdog (`liberx/backend/fiasco/watchdog_thread.c`,
-  `config/platforms/raspi4b.json`): on every boot the root's watchdog thread arms the BCM2711's
-  power-management watchdog with a 4 s timeout and reloads it at every step, through a window of a platform
-  unit only the root maps, so a hang of Fiasco or of the root resets the board, into the committed slot after a
-  trial boot; no end stops it, so a requested off on the Pi reboots the
-  board about 4 s later. Needs the clean-room facts record of the watchdog,
-  as the RNG200's; its cases are on the board's manual checklist: a development image whose root stops its
-  watchdog thread once it armed the watchdog resets within the timeout and boots again; seeded: the arming
-  skipped, so the board stays hung; and after a requested off the board restarts within about 5 s
-  ([design-fiasco.md](docs/design-fiasco.md#the-watchdog)).
+* [High] 0.2 on Fiasco, the Raspberry Pi 4's hardware watchdog (`liberx/backend/fiasco/watchdog_thread.c`,
+  `liberx/backend/fiasco/pm_wdt.c`, `config/platforms/raspi4b.json`): on every boot the root's watchdog thread
+  arms the BCM2711's power-management watchdog with a 4 s timeout and reloads it at every step, through a window
+  of a platform unit only the root maps, so a hang of Fiasco or of the root resets the board, into the committed
+  slot after a trial boot ([design-fiasco.md](docs/design-fiasco.md#the-watchdog)); its registers come from the
+  clean-room facts record in `hw/svd/pm_wdt/pm_wdt.svd`. Open, for 0.2:
+  (1) the cases on the board's manual checklist, not run on 0.1's published card: a development image whose
+  root stops its watchdog thread once it armed the watchdog resets within the timeout and boots again; seeded:
+  the arming skipped, so the board stays hung;
+  (2) a requested off: the design has no end stop the watchdog, so a requested off on the Pi reboots the board
+  about 4 s later, but on 0.1's card `halt` leaves the board halted until its power is cycled. Find what stops
+  the watchdog or keeps its reset from taking effect, and make the board and the design agree, with the
+  checklist's case that after a requested off the board restarts within about 5 s, or its replacement.
 * [High] apps, an app principal's wall on both kernels (`liberx/system/dom_boot.c`, `erx_domain_core.erl`):
   the domain library carves each app principal's budget at boot as an elastic budget with no guarantee, which
   Fiasco makes a wall of nothing. Carve none at boot; the domain service carves the principal's wall from
@@ -2366,7 +2369,13 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
 * [Low] platforms, the soak (`docs/design-platforms.md`, "The soak"): nothing tests repeated boots of the
   board: the soak boots it once and the power-cut checklist covers power cuts, so no test
   boots the machine many times in a row. Add a repeated-boot check to the soak's rounds, judged by
-  the same pure judge, or decide that the preview needs none.
+  the same pure judge, or decide that 0.2 needs none.
+* [Medium] platforms, building the soak (`docs/design-platforms.md`, "The soak"; one of 0.2's exit criteria in
+  [plan.md](docs/plan.md#02-the-first-release-on-fiasco)): 0.1 is published without it. Four packages of about
+  50 to 100 calls each (unverified until they run): the judge and the round's readers (`tools/lib/erx/soak.rb`,
+  a pure core, with `test/host/soak_test.rb`), the board's driver (`tools/erx soak board` and `soak judge`,
+  extending `DevKey.ssh_argv` to take a destination and an identity path), the QEMU run, and the runs
+  themselves, whose records go to the history repository.
 * [Low] liberx, `liberx/backend/fiasco/vm.h`, `vm.c`, `thread.c`: the backend's fixed addresses
   (`ERX_FIASCO_KIP_WINDOW`, the device window, the UTCB area, the VM window, the area start) are spread over
   three files, and only the KIP window's place below the device window is asserted. Gather them in one layout
@@ -7778,6 +7787,10 @@ to the corpus and follow rc
   (`ProductionImage::Machine.board`, 640 MiB for QEMU) but without Doom, so no gate proves that the media as published
   still pack, fit their machine and build reproducibly. Give one gate cell a
   fetched Doom fork and have it pack both published media with Doom.
+* [Low] examples, Doom on QEMU by hand (`/bin/doom`, `examples/doom/doom`; [design-packaging.md](docs/design-packaging.md#examples)):
+  no gate builds Doom, and 0.1 is published without its by-hand check: on QEMU `virt`, with a medium packed by
+  `tools/erx pack --published`, `doom` typed in `rc` shows Doom's title, and a key from the virtio keyboard
+  moves its menu. Run it on the next published build.
 * [Low] examples, `tools/lib/erx/doom_program.rb` (`DOOM_SOURCES`): the
   Doom build lists the fork's files to compile as a copy of the fork
   `Makefile`'s `SRC_DOOM` less the X11 platform part, and its platform layer
@@ -8799,8 +8812,8 @@ document's "residual risks accepted" paragraph.
   `display` variable name none, open on the one display the session holds where it holds exactly
   one, as a program's handler does at its first open of `/dev/draw`, instead of answering
   `{error, no_display}`. A separate change with its own design edit and tests.
-* [Medium] Fiasco, one-shot timer and tickless idle, after 0.1 (`config/fiasco/kernel.defconfig`, [design-fiasco.md](docs/design-fiasco.md)): the kernel is built `CONFIG_PERIODIC` with a 1 ms tick (`SCHED_GRANULARITY` 1000) and no tickless idle, so every CPU takes 1000 timer interrupts a second even when idle, and CPU time is charged by whole ticks (the backend reports no idle time for that reason). Fiasco offers one-shot mode on ARM when `SYNC_CLOCK` is on (`kern/arm/Kconfig:14-15`), which selects fine-grained CPU time, and tickless idle. Build with `CONFIG_ONE_SHOT_PARAM` so `-oneshot-timer` picks the mode at boot; measure idle host CPU of a QEMU guest and the QEMU suites in both modes, run it on the Pi 4, then make one-shot with tickless idle the default and report idle time from the fine-grained counts.
-* [Medium] storage, a card image that holds only what is written, after 0.1
+* [Medium] Fiasco, one-shot timer and tickless idle (`config/fiasco/kernel.defconfig`, [design-fiasco.md](docs/design-fiasco.md)): the kernel is built `CONFIG_PERIODIC` with a 1 ms tick (`SCHED_GRANULARITY` 1000) and no tickless idle, so every CPU takes 1000 timer interrupts a second even when idle, and CPU time is charged by whole ticks (the backend reports no idle time for that reason). Fiasco offers one-shot mode on ARM when `SYNC_CLOCK` is on (`kern/arm/Kconfig:14-15`), which selects fine-grained CPU time, and tickless idle. Build with `CONFIG_ONE_SHOT_PARAM` so `-oneshot-timer` picks the mode at boot; measure idle host CPU of a QEMU guest and the QEMU suites in both modes, run it on the Pi 4, then make one-shot with tickless idle the default and report idle time from the fine-grained counts.
+* [Medium] storage, a card image that holds only what is written
   ([design-storage.md](docs/design-storage.md), `abi/medium.txt`, the image packer): order the
   partitions with the populated ones first (record, system A, boot A), end the image after boot
   A's last used cluster, and let the partition table describe boot B, system B, the vault and

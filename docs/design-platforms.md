@@ -1773,12 +1773,12 @@ lets the block counter roll over for large files.
 #### The soak
 
 The passes above check that each part works once. The soak checks that the
-preview's whole workload keeps working on one machine for a day: the kiosk
+board's whole workload keeps working on one machine for a day: the kiosk
 with its live quotes, root's SSH sessions with `ps` and `top`, files
 written under `/data`, and the watchdogs that stand behind a hang. It runs
 by hand on the 4 GB Raspberry Pi 4 from the published card, and under the
-QEMU harness on QEMU `virt` under HVF. It is release evidence for the
-preview ([plan.md](plan.md)), run before the release on the release's
+QEMU harness on QEMU `virt` under HVF. It is release evidence for
+0.2 ([plan.md](plan.md#02-the-first-release-on-fiasco)), run before the release on the release's
 commit, and a developer's tool, run on demand after a change suspected of a
 leak. It is in no gate.
 
