@@ -40,9 +40,109 @@ module Erx
       def encoders(schema)
         marks = schema.marks
         written = marks.layouts.reject(&:report?)
+        targets = marks.targets.values.sort_by(&:name)
+        described = marks.meanings.reject(&:report?)
         [*(written.empty? ? [] : little_endian),
          *written.flat_map { |marked| encoder(marked) },
-         *marks.targets.values.sort_by(&:name).flat_map { |target| meaning_list(target, marks.offered(target)) }]
+         *targets.flat_map { |target| meaning_list(target, marks.offered(target)) },
+         *structures(targets, marks.meanings), *descriptions(described)]
+      end
+
+      # The structures, numbered in name order from 1, so 0 is free to name a
+      # buffer's data; which of them the device writes; and the structure each
+      # meaning belongs to. The check reads these, never a copy of the formats.
+      def structures(targets, meanings)
+        return [] if targets.empty?
+
+        numbers = targets.each_with_index.map do |target, index|
+          "#define #{structure_constant(target.name)} UINT32_C(#{index + 1})"
+        end
+        ['/* The structures the formats declare; 0 names a buffer\'s data, which no structure is. */',
+         '#define ERX_REFERS_DATA UINT32_C(0)', *numbers, '',
+         *switch_function('Whether the device writes structure, as its format declares; false for one the CPU writes or none.',
+                          'bool', 'erx_structure_device_writes(uint32_t structure)', 'structure',
+                          targets.select(&:device?).map { |target| [structure_constant(target.name), 'true'] }, 'false'),
+         *switch_function('The structure whose tables offer meaning, or 0 for a number that is no meaning.',
+                          'uint32_t', 'erx_meaning_structure(uint32_t meaning)', 'meaning',
+                          meanings.map { |meaning| [CEmitter.constant(meaning.constant), structure_constant(meaning.structure.name)] },
+                          '0')]
+      end
+
+      def structure_constant(name) = CEmitter.constant("structure_#{name}")
+
+      # One switch from value to result, the cases with one result sharing it.
+      def switch_function(summary, type, signature, value, cases, otherwise)
+        arms = cases.group_by(&:last).flat_map do |result, group|
+          [*group.map { |label, _| "\tcase #{label}:" }, "\t\treturn (#{result});"]
+        end
+        ["/* #{summary} */", "static inline #{type}", signature, '{',
+         "\tswitch (#{value}) {", *arms, "\tdefault:", "\t\treturn (#{otherwise});", "\t}", '}', '']
+      end
+
+      # What the check judges of a description (docs/design-device-dma.md,
+      # "The rules", meanings and lengths): the union of every described
+      # meaning's free places, and one function that refuses a value its
+      # encoder would refuse and gives each reference's target and its length
+      # in bytes, its length place's value times its unit.
+      def descriptions(described)
+        stated = described.reject { |marked| marked.free.empty? }
+        return [] if stated.empty?
+
+        most = [described.map { |marked| marked.references.size }.max, 1].max
+        cases = described.flat_map { |marked| description_case(marked) }
+        ['/* The free places of a description, by its meaning: one member per meaning that has any. */',
+         'typedef union erx_meaning_free {',
+         *stated.map { |marked| "\t#{CEmitter.name(marked.layout.name)}_free_t\t#{Names.stem(marked.layout.name)};" },
+         '} erx_meaning_free_t;', '',
+         '/*',
+         ' * One reference of a description: the structure its record is of, or',
+         ' * ERX_REFERS_DATA for a buffer, and the bytes it reaches from its name, or',
+         ' * 0 where the format gives it no length place (a record of the target).',
+         ' */',
+         'typedef struct erx_meaning_reference {',
+         "\tuint32_t\ttarget;",
+         "\tuint64_t\tlength;",
+         '} erx_meaning_reference_t;', '',
+         '/* The most references one description names. */',
+         "#define ERX_MEANING_REFERENCES_MAX #{most}u", '',
+         '/*',
+         ' * Judges a description of meaning as its encoder would: false when meaning',
+         ' * is no meaning a description states, or a free value is wider than its',
+         ' * place or has bits set below its shift. Otherwise *count references, in',
+         ' * the order of their address places, are written into references.',
+         ' */',
+         'static inline bool',
+         'erx_meaning_describes(uint32_t meaning, const erx_meaning_free_t *described,',
+         '    erx_meaning_reference_t references[ERX_MEANING_REFERENCES_MAX], size_t *count)',
+         '{',
+         "\tswitch (meaning) {", *cases, "\tdefault:", "\t\treturn (false);", "\t}", '}', '']
+      end
+
+      def description_case(marked)
+        member = "described->#{Names.stem(marked.layout.name)}"
+        checks = refusals(marked.free.map { |place| Assignment.new(place: place, expression: "#{member}.#{place.name}") })
+        references = marked.references.each_with_index.map do |reference, index|
+          "\t\treferences[#{index}] = (erx_meaning_reference_t){ #{reference_target(reference)}, #{reference_length(reference, member)} };"
+        end
+        ["\tcase #{CEmitter.constant(marked.constant)}:",
+         *checks.map { |line| "\t#{line.gsub("\n\t", "\n\t\t")}" },
+         *references,
+         "\t\t*count = #{marked.references.size};",
+         "\t\treturn (true);"]
+      end
+
+      def reference_target(reference)
+        reference.target == Marks::DATA ? 'ERX_REFERS_DATA' : structure_constant(reference.target)
+      end
+
+      # The length in bytes, which a uint64_t holds for every value the
+      # place's width check lets through: the model refuses a unit that
+      # could make the product wrap.
+      def reference_length(reference, member)
+        return '0' unless reference.length
+
+        length = "#{member}.#{reference.length.name}"
+        reference.unit == 1 ? length : "#{length} * #{reference.unit}u"
       end
 
       def little_endian

@@ -329,8 +329,12 @@ module Erx
         line.fail!('a length unit is a positive byte count') unless unit.positive?
         place = fetch_place(places, words[0], line)
         line.fail!("refers names a device address, and #{place.spelling} is not one") unless place.device_address
-        Reference.new(place: place, target: target_name(target, targets, line),
-                      length: length && fetch_place(places, length, line), unit: unit).freeze
+        length &&= fetch_place(places, length, line)
+        # The check reads a reference's bytes as one uint64_t, the length's value times its unit.
+        if length && length.maximum * unit > (1 << 64) - 1
+          line.fail!("#{length.spelling} times #{unit} can exceed 64 bits")
+        end
+        Reference.new(place: place, target: target_name(target, targets, line), length: length, unit: unit).freeze
       end
 
       # releases FIELD.BITS TARGET [when FIELD.BITS ENUM.MEMBER...]

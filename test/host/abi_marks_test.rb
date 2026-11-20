@@ -105,6 +105,8 @@ class AbiMarksTest < Minitest::Test
     'a fixed value below its shift' => ['fixed control.toggle 0', "fixed control.toggle 0\n  fixed status.aligned 8",
                                         'fixed value 8 does not fit status.aligned'],
     'a length unit of zero' => ['length status.length', 'length status.length unit 0', 'a length unit is a positive byte count'],
+    'a length whose bytes exceed 64 bits' => ['length status.length', 'length status.length unit 281474976710656',
+                                              'status.length times 281474976710656 can exceed 64 bits'],
     'a signed field' => ['field buffer u64 0 device_address', 'field buffer i64 0', 'a marked layout holds unsigned integer fields only'],
     'a place claimed by no mark' => ["\n  states control.spare", '', 'control.spare is claimed by no mark'],
     'a reference to a place that is no device address' => ['field buffer u64 0 device_address', 'field buffer u64 0',
@@ -290,6 +292,31 @@ class AbiMarksTest < Minitest::Test
 
   # A call of an encoder of the port status change event, a report, with the input
   # structs an encoder of its places would take; it must not build.
+  DESCRIBES = <<~C
+    #include <stdio.h>
+    #include "erx/abi.h"
+
+    int
+    main(void)
+    {
+    	erx_meaning_free_t described = { .virtq_desc = { .len = 300, .flags_write = 1 } };
+    	erx_meaning_reference_t references[ERX_MEANING_REFERENCES_MAX];
+    	size_t count = 9;
+    	int right = erx_meaning_describes(ERX_MEANING_VIRTQ_DESC, &described, references, &count) &&
+    	    count == 1 && references[0].target == ERX_REFERS_DATA && references[0].length == 300;
+
+    	described.virtq_desc.len = UINT64_C(1) << 32;
+    	right = right && !erx_meaning_describes(ERX_MEANING_VIRTQ_DESC, &described, references, &count);
+    	right = right && !erx_meaning_describes(ERX_MEANING_VIRTQ_USED_ELEM, &described, references, &count);
+    	right = right && erx_meaning_structure(ERX_MEANING_XHCI_TRB_NORMAL) == ERX_STRUCTURE_XHCI_TRANSFER_RING &&
+    	    erx_meaning_structure(0) == 0;
+    	right = right && erx_structure_device_writes(ERX_STRUCTURE_VIRTQ_USED) &&
+    	    !erx_structure_device_writes(ERX_STRUCTURE_VIRTQ_AVAIL);
+    	printf("%s\\n", right ? "described" : "wrong");
+    	return (right ? 0 : 1);
+    }
+  C
+
   ENCODE_A_REPORT = <<~C
     #include "erx/abi.h"
 
@@ -435,6 +462,26 @@ class AbiMarksTest < Minitest::Test
     output, status = run_encoders(seeded)
     refute status.success?
     assert_equal "trb_normal wide: encoded 1, bytes differ 1\n", output
+  end
+
+  # What the check reads of a description, generated from the marks: the meaning's
+  # structure, which structures the device writes, and each reference's length from the
+  # free places, refused where a free value is wider than its place.
+  def test_descriptions_give_their_structure_and_reference_lengths
+    header = Erx::ABI::CEmitter.header(tree_schema(Dir.mktmpdir('erx-abi-marks-')))
+    output, status = compile(header, DESCRIBES) { |program| Open3.capture2e(program, stdin_data: '') }
+    assert status.success?, output
+    assert_equal "described\n", output
+  end
+
+  # A seeded fault in the generated code: the descriptor's length without its width
+  # check in erx_meaning_describes, so a length wider than 32 bits is judged whole.
+  def test_a_dropped_description_width_check_is_caught
+    header = Erx::ABI::CEmitter.header(tree_schema(Dir.mktmpdir('erx-abi-marks-')))
+    seeded = edit(header, "\t\tif (described->virtq_desc.len > UINT64_C(0xffffffff) ||\n\t\t    ", "\t\tif (")
+    output, status = compile(seeded, DESCRIBES) { |program| Open3.capture2e(program, stdin_data: '') }
+    refute status.success?
+    assert_equal "wrong\n", output
   end
 
   private

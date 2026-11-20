@@ -56,8 +56,10 @@ limit virtio_net_queue_rx u32 0
 limit virtio_net_queue_tx u32 1
 
 # The structures a queue's regions hold (docs/design-device-dma.md, "What the formats
-# say"): the descriptor table, which the CPU writes, and the used ring, which the device
-# writes. The available ring is the sequencer's own and offers no meaning.
+# say"): the descriptor table and the available ring, which the CPU writes, and the used
+# ring, which the device writes. The available ring is the sequencer's own and offers no
+# meaning.
+target virtq_avail cpu
 target virtq_desc cpu
 target virtq_used device
 

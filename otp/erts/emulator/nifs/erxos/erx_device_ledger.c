@@ -1,0 +1,330 @@
+/*
+ * Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * The ledger of a queue's DMA memory: see erx_device_ledger.h.
+ *
+ * The ERX_DMA_SEED_* macros plant the faults test/host/erx_device_ledger_test.rb shows its
+ * harness catches (docs/design-device-dma.md, Verification, The check).
+ */
+
+#include <strings.h>
+
+#include "erx/abi.h"
+#include "erx_device_ledger.h"
+
+#ifdef ERX_DMA_SEED_NO_GRANULE_TEST
+#define SEED_NO_GRANULE_TEST	true
+#else
+#define SEED_NO_GRANULE_TEST	false
+#endif
+#ifdef ERX_DMA_SEED_HOLD_WHILE_HELD
+#define SEED_HOLD_WHILE_HELD	true
+#else
+#define SEED_HOLD_WHILE_HELD	false
+#endif
+#ifdef ERX_DMA_SEED_RELEASE_TWICE
+#define SEED_RELEASE_TWICE	true
+#else
+#define SEED_RELEASE_TWICE	false
+#endif
+
+static bool
+power_of_two(uint64_t value)
+{
+	return (value != 0 && (value & (value - 1)) == 0);
+}
+
+static uint64_t
+round_up(uint64_t value, uint64_t granule)
+{
+	return ((value + granule - 1) & ~(granule - 1));
+}
+
+static bool
+same_place(erx_dma_place_t a, erx_dma_place_t b)
+{
+	return (a.table == b.table && a.index == b.index);
+}
+
+bool
+erx_dma_layout_split_ring(uint32_t size, uint32_t buffer_size, uint32_t granule, uint64_t memory_size,
+    uint64_t device_base, uint32_t address_bits, erx_dma_layout_t *layout)
+{
+	/* Each ring is its head, `size` entries and a trailing event word this driver leaves unused. */
+	const uint64_t avail_bytes = ERX_VIRTQ_RING_HEAD_SIZE + (uint64_t)size * sizeof(uint16_t) + sizeof(uint16_t);
+	const uint64_t used_bytes = ERX_VIRTQ_RING_HEAD_SIZE + (uint64_t)size * ERX_VIRTQ_USED_ELEM_SIZE +
+	    sizeof(uint16_t);
+	uint64_t avail, used, pool;
+
+	if (!power_of_two(size) || size > ERX_DEVICE_QUEUE_SIZE_MAX || !power_of_two(granule) ||
+	    granule > ERX_DEVICE_GRANULE_MAX || buffer_size == 0 || buffer_size > ERX_DEVICE_BUFFER_MAX)
+		return (false);
+	avail = round_up((uint64_t)size * ERX_VIRTQ_DESC_SIZE, granule);
+	used = avail + round_up(avail_bytes, granule);
+	pool = used + round_up(used_bytes, granule);
+	*layout = (erx_dma_layout_t){
+		.memory_size = memory_size,
+		.device_base = device_base,
+		.address_bits = address_bits,
+		.granule = granule,
+		.table_count = 3,
+		.tables = {
+			{ ERX_STRUCTURE_VIRTQ_DESC, ERX_DMA_PLACED_FREE, 0, avail, 0, size, ERX_VIRTQ_DESC_SIZE },
+			{ ERX_STRUCTURE_VIRTQ_AVAIL, ERX_DMA_PLACED_IN_ORDER, avail, used - avail,
+			  avail + ERX_VIRTQ_RING_HEAD_SIZE, size, sizeof(uint16_t) },
+			{ ERX_STRUCTURE_VIRTQ_USED, ERX_DMA_PLACED_BY_DEVICE, used, pool - used,
+			  used + ERX_VIRTQ_RING_HEAD_SIZE, size, ERX_VIRTQ_USED_ELEM_SIZE },
+		},
+		.pool = { pool, size, buffer_size, (uint32_t)round_up(buffer_size, granule) },
+	};
+	return (true);
+}
+
+/*
+ * One region of the install's check: `length` bytes from `offset`, whole granules, not before
+ * `*end`, the end of the region before it, and inside the memory. Moves `*end` past it.
+ */
+static bool
+region_valid(const erx_dma_layout_t *layout, uint64_t offset, uint64_t length, uint64_t *end)
+{
+	const uint64_t granule_mask = (uint64_t)layout->granule - 1;
+	uint64_t region_end;
+
+	if (length == 0 || offset < *end || __builtin_add_overflow(offset, length, &region_end) ||
+	    region_end > layout->memory_size)
+		return (false);
+	if (!SEED_NO_GRANULE_TEST && ((offset | length) & granule_mask) != 0)
+		return (false);
+	*end = region_end;
+	return (true);
+}
+
+static bool
+table_valid(const erx_dma_layout_t *layout, uint32_t index, uint64_t *end)
+{
+	const erx_dma_table_t *table = &layout->tables[index];
+	uint64_t records;
+
+	if (!region_valid(layout, table->region, table->region_length, end) || table->structure == ERX_REFERS_DATA ||
+	    table->count == 0 || table->stride == 0 || table->first < table->region ||
+	    (table->placing == ERX_DMA_PLACED_BY_DEVICE) != erx_structure_device_writes(table->structure))
+		return (false);
+	records = (uint64_t)table->count * table->stride;
+	if (table->first - table->region > table->region_length ||
+	    records > table->region_length - (table->first - table->region))
+		return (false);
+	for (uint32_t other = 0; other < index; other++) {
+		if (layout->tables[other].structure == table->structure ||
+		    (table->placing != ERX_DMA_PLACED_FREE && layout->tables[other].placing == table->placing))
+			return (false);
+	}
+	return (true);
+}
+
+static bool
+layout_valid(const erx_dma_layout_t *layout)
+{
+	const erx_dma_pool_t *pool = &layout->pool;
+	const uint64_t widest = layout->address_bits == 64 ? UINT64_MAX : (UINT64_C(1) << layout->address_bits) - 1;
+	uint64_t end = 0, last;
+
+	if (!power_of_two(layout->granule) || layout->address_bits == 0 || layout->address_bits > 64 ||
+	    layout->table_count > ERX_DMA_TABLES_MAX)
+		return (false);
+	for (uint32_t index = 0; index < layout->table_count; index++) {
+		if (!table_valid(layout, index, &end))
+			return (false);
+	}
+	/* Each buffer is a region of its own, one stride long, so whole granules make them disjoint. */
+	if (pool->count == 0 || pool->size == 0 || pool->size > pool->stride ||
+	    (!SEED_NO_GRANULE_TEST && (pool->stride & (layout->granule - 1)) != 0) ||
+	    !region_valid(layout, pool->first, (uint64_t)pool->count * pool->stride, &end))
+		return (false);
+	return (!__builtin_add_overflow(layout->device_base, end - 1, &last) && last <= widest);
+}
+
+bool
+erx_dma_ledger_make(erx_dma_ledger_t *ledger, const erx_dma_layout_t *layout)
+{
+	if (!layout_valid(layout))
+		return (false);
+	bzero(ledger, sizeof(*ledger));
+	ledger->layout = *layout;
+	return (true);
+}
+
+void
+erx_dma_ledger_reset(erx_dma_ledger_t *ledger)
+{
+	ledger->live = 0;
+	bzero(ledger->positions, sizeof(ledger->positions));
+}
+
+const erx_dma_layout_t *
+erx_dma_ledger_layout(const erx_dma_ledger_t *ledger)
+{
+	return (&ledger->layout);
+}
+
+int
+erx_dma_ledger_table(const erx_dma_ledger_t *ledger, uint32_t structure)
+{
+	for (uint32_t index = 0; index < ledger->layout.table_count; index++) {
+		if (ledger->layout.tables[index].structure == structure)
+			return ((int)index);
+	}
+	return (-1);
+}
+
+erx_dma_position_t
+erx_dma_ledger_position(const erx_dma_ledger_t *ledger, uint32_t table)
+{
+	return (table < ledger->layout.table_count ? ledger->positions[table] : (erx_dma_position_t){ 0, 0 });
+}
+
+bool
+erx_dma_ledger_record_held(const erx_dma_ledger_t *ledger, erx_dma_place_t place)
+{
+	for (uint32_t live = 0; live < ledger->live; live++) {
+		const erx_dma_holding_t *holding = &ledger->holdings[live];
+
+		for (uint32_t record = 0; record < holding->record_count; record++) {
+			if (same_place(holding->records[record], place))
+				return (true);
+		}
+	}
+	return (false);
+}
+
+bool
+erx_dma_ledger_buffer_held(const erx_dma_ledger_t *ledger, uint32_t buffer)
+{
+	for (uint32_t live = 0; live < ledger->live; live++) {
+		const erx_dma_holding_t *holding = &ledger->holdings[live];
+
+		for (uint32_t index = 0; index < holding->buffer_count; index++) {
+			if (holding->buffers[index] == buffer)
+				return (true);
+		}
+	}
+	return (false);
+}
+
+erx_dma_writer_t
+erx_dma_ledger_buffer_writer(const erx_dma_ledger_t *ledger, uint32_t buffer)
+{
+	return (erx_dma_ledger_buffer_held(ledger, buffer) ? ERX_DMA_DEVICE : ERX_DMA_CPU);
+}
+
+uint32_t
+erx_dma_ledger_free_records(const erx_dma_ledger_t *ledger, uint32_t table)
+{
+	uint32_t held = 0;
+
+	if (table >= ledger->layout.table_count)
+		return (0);
+	for (uint32_t live = 0; live < ledger->live; live++) {
+		const erx_dma_holding_t *holding = &ledger->holdings[live];
+
+		for (uint32_t record = 0; record < holding->record_count; record++)
+			held += holding->records[record].table == table;
+	}
+	return (ledger->layout.tables[table].count - held);
+}
+
+uint32_t
+erx_dma_ledger_live(const erx_dma_ledger_t *ledger)
+{
+	return (ledger->live);
+}
+
+static void
+advance(erx_dma_ledger_t *ledger, uint32_t table, uint32_t records)
+{
+	erx_dma_position_t *position = &ledger->positions[table];
+
+	position->index += records;
+	if (position->index >= ledger->layout.tables[table].count) {
+		position->index -= ledger->layout.tables[table].count;
+		position->lap++;
+	}
+}
+
+/*
+ * Whether `holding` may begin, and how many records it takes of each table placed in order:
+ * every record a table's that no holding holds, named once, not the device's, and, in a table
+ * placed in order, the next one from its position; every buffer the pool's, unheld, named once.
+ */
+static bool
+holding_valid(const erx_dma_ledger_t *ledger, const erx_dma_holding_t *holding, uint32_t taken[ERX_DMA_TABLES_MAX])
+{
+	if (ledger->live == ERX_DMA_HOLDINGS_MAX || holding->record_count == 0 ||
+	    holding->record_count > ERX_DMA_HELD_RECORDS_MAX || holding->buffer_count > ERX_DMA_HELD_BUFFERS_MAX)
+		return (false);
+	for (uint32_t record = 0; record < holding->record_count; record++) {
+		const erx_dma_place_t place = holding->records[record];
+		const erx_dma_table_t *table;
+
+		if (place.table >= ledger->layout.table_count)
+			return (false);
+		table = &ledger->layout.tables[place.table];
+		if (place.index >= table->count || table->placing == ERX_DMA_PLACED_BY_DEVICE ||
+		    (!SEED_HOLD_WHILE_HELD && erx_dma_ledger_record_held(ledger, place)))
+			return (false);
+		for (uint32_t earlier = 0; earlier < record; earlier++) {
+			if (same_place(holding->records[earlier], place))
+				return (false);
+		}
+		if (table->placing == ERX_DMA_PLACED_IN_ORDER) {
+			/* Records named once and at most count of them, so the sum stays below 2 * count. */
+			if (place.index != (ledger->positions[place.table].index + taken[place.table]) % table->count)
+				return (false);
+			taken[place.table]++;
+		}
+	}
+	for (uint32_t index = 0; index < holding->buffer_count; index++) {
+		const uint32_t buffer = holding->buffers[index];
+
+		if (buffer >= ledger->layout.pool.count ||
+		    (!SEED_HOLD_WHILE_HELD && erx_dma_ledger_buffer_held(ledger, buffer)))
+			return (false);
+		for (uint32_t earlier = 0; earlier < index; earlier++) {
+			if (holding->buffers[earlier] == buffer)
+				return (false);
+		}
+	}
+	return (true);
+}
+
+bool
+erx_dma_ledger_hold(erx_dma_ledger_t *ledger, const erx_dma_holding_t *holding)
+{
+	uint32_t taken[ERX_DMA_TABLES_MAX] = { 0 };
+
+	if (!holding_valid(ledger, holding, taken))
+		return (false);
+	ledger->holdings[ledger->live++] = *holding;
+	for (uint32_t table = 0; table < ledger->layout.table_count; table++)
+		advance(ledger, table, taken[table]);
+	return (true);
+}
+
+bool
+erx_dma_ledger_release(erx_dma_ledger_t *ledger, uint32_t reports, erx_dma_place_t head)
+{
+	if (reports >= ledger->layout.table_count || ledger->layout.tables[reports].placing != ERX_DMA_PLACED_BY_DEVICE)
+		return (false);
+	for (uint32_t live = 0; live < ledger->live; live++) {
+		if (same_place(ledger->holdings[live].records[0], head)) {
+			ledger->holdings[live] = ledger->holdings[--ledger->live];
+			advance(ledger, reports, 1);
+			return (true);
+		}
+	}
+	if (SEED_RELEASE_TWICE) {
+		advance(ledger, reports, 1);
+		return (true);
+	}
+	return (false);
+}

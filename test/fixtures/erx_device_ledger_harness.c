@@ -1,0 +1,337 @@
+/*
+ * Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Host tests of the ledger and the check's rules (docs/design-device-dma.md, Verification, The
+ * check), run by test/host/erx_device_ledger_test.rb: the install's check of a layout; each rule
+ * refusing the publication it exists for, by name; and the ledger's state machine, hold and
+ * release over a queue of two entries, against a reference model on every sequence of events up
+ * to a fixed depth. The first failed expectation prints a FAILED line and exits non-zero.
+ */
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include "erx/abi.h"
+#include "erx_device_ledger.h"
+#include "erx_device_rules.h"
+
+#define EXPECT(condition, what)							\
+	do {									\
+		if (!(condition)) {						\
+			printf("FAILED %s:%d: %s\n", __FILE__, __LINE__, (what));	\
+			exit(1);						\
+		}								\
+	} while (0)
+
+/* Four entries, buffers of 100 bytes, a granule of 64: rings at 0, 64 and 128, the pool at 192. */
+enum { SIZE = 4, BUFFER = 100, GRANULE = 64, MEMORY = 192 + SIZE * 128 };
+enum { DESC = 0, AVAIL = 1, USED = 2 };
+
+static erx_dma_layout_t
+split_ring(uint64_t memory, uint64_t base, uint32_t bits)
+{
+	erx_dma_layout_t layout;
+
+	EXPECT(erx_dma_layout_split_ring(SIZE, BUFFER, GRANULE, memory, base, bits, &layout), "a split ring's layout");
+	return (layout);
+}
+
+static void
+test_layout(void)
+{
+	erx_dma_ledger_t ledger;
+	erx_dma_layout_t layout = split_ring(MEMORY, 0x40000000, 32), planted;
+
+	EXPECT(erx_dma_ledger_make(&ledger, &layout), "the split ring's layout passes the install's check");
+	EXPECT(layout.tables[AVAIL].region == 64 && layout.tables[USED].region == 128 && layout.pool.first == 192 &&
+	    layout.pool.stride == 128, "each ring a region of its own from a granule, buffers at a granule stride");
+	EXPECT(erx_dma_ledger_table(&ledger, ERX_STRUCTURE_VIRTQ_USED) == USED, "the used ring's table");
+	EXPECT(!erx_dma_layout_split_ring(3, BUFFER, GRANULE, MEMORY, 0, 32, &planted), "a size not a power of two");
+
+	planted = split_ring(MEMORY - 1, 0, 32);
+	EXPECT(!erx_dma_ledger_make(&ledger, &planted), "a pool past the memory is refused");
+	planted = split_ring(MEMORY, 512, 10);
+	EXPECT(!erx_dma_ledger_make(&ledger, &planted), "a region past the address width is refused");
+	planted = split_ring(MEMORY, UINT64_MAX - 100, 64);
+	EXPECT(!erx_dma_ledger_make(&ledger, &planted), "a device base whose regions wrap is refused");
+	planted = layout;
+	planted.tables[AVAIL].region = 32;
+	planted.tables[AVAIL].first = 36;
+	EXPECT(!erx_dma_ledger_make(&ledger, &planted), "overlapping regions are refused");
+	planted = layout;
+	planted.tables[USED].placing = ERX_DMA_PLACED_FREE;
+	EXPECT(!erx_dma_ledger_make(&ledger, &planted), "a device structure described by cores is refused");
+	planted = layout;
+	planted.tables[AVAIL].count = SIZE * 32;
+	EXPECT(!erx_dma_ledger_make(&ledger, &planted), "records past their region are refused");
+
+	/* The seed's case: a form planted to lay out an unaligned region, then an unrounded stride. */
+	planted = layout;
+	planted.tables[AVAIL].region = 72;
+	planted.tables[AVAIL].region_length = 56;
+	planted.tables[AVAIL].first = 76;
+	EXPECT(!erx_dma_ledger_make(&ledger, &planted), "a region off a granule is refused");
+	planted = layout;
+	planted.pool.stride = BUFFER;
+	EXPECT(!erx_dma_ledger_make(&ledger, &planted), "buffers sharing a granule are refused");
+}
+
+static erx_dma_description_t
+descriptor(uint32_t buffer, uint64_t offset, uint64_t length, bool device_writes)
+{
+	return ((erx_dma_description_t){
+		.structure = ERX_STRUCTURE_VIRTQ_DESC,
+		.meaning = ERX_MEANING_VIRTQ_DESC,
+		.described = { .virtq_desc = { .len = length, .flags_write = device_writes } },
+		.name_count = 1,
+		.names = { { buffer, offset } },
+	});
+}
+
+static erx_dma_verdict_t
+check(const erx_dma_ledger_t *ledger, const erx_dma_description_t *records, uint32_t record_count,
+    const erx_dma_fill_t *fills, uint32_t fill_count)
+{
+	const erx_dma_publication_t publication = { record_count, records, fill_count, fills };
+
+	return (erx_dma_publication_check(ledger, &publication));
+}
+
+static void
+hold(erx_dma_ledger_t *ledger, const erx_dma_holding_t *holding)
+{
+	EXPECT(erx_dma_ledger_hold(ledger, holding), "a holding begins");
+}
+
+static void
+test_rules(void)
+{
+	const erx_dma_layout_t layout = split_ring(MEMORY, 0, 32);
+	const erx_dma_description_t chain[2] = { descriptor(0, 0, 16, false), descriptor(0, 16, 84, true) };
+	const erx_dma_fill_t header = { 0, 0, 16 };
+	erx_dma_description_t bad[ERX_DMA_HELD_RECORDS_MAX + 1];
+	erx_dma_fill_t fill;
+	erx_dma_ledger_t ledger;
+
+	EXPECT(erx_dma_ledger_make(&ledger, &layout), "a ledger");
+	EXPECT(check(&ledger, chain, 2, &header, 1) == ERX_DMA_PASSES, "a request's chain with its header filled");
+
+	/* meanings: a transfer TRB described on the descriptor table; a ring the sequencer or the device owns. */
+	bad[0] = descriptor(1, 0, 8, false);
+	bad[0].meaning = ERX_MEANING_XHCI_TRB_NORMAL;
+	bad[0].described = (erx_meaning_free_t){ .xhci_trb_normal = { .status_length = 8 } };
+	EXPECT(check(&ledger, bad, 1, NULL, 0) == ERX_DMA_BREAKS_MEANINGS, "another structure's meaning");
+	bad[0] = descriptor(1, 0, 8, false);
+	bad[0].structure = ERX_STRUCTURE_VIRTQ_AVAIL;
+	EXPECT(check(&ledger, bad, 1, NULL, 0) == ERX_DMA_BREAKS_MEANINGS, "a record of the available ring");
+	bad[0].structure = ERX_STRUCTURE_VIRTQ_USED;
+	bad[0].meaning = ERX_MEANING_VIRTQ_USED_ELEM;
+	EXPECT(check(&ledger, bad, 1, NULL, 0) == ERX_DMA_BREAKS_MEANINGS, "a used element described");
+
+	/* widths: a length one bit wider than its field; WRITE given two bits. */
+	bad[0] = descriptor(1, 0, UINT64_C(1) << 32, false);
+	EXPECT(check(&ledger, bad, 1, NULL, 0) == ERX_DMA_BREAKS_WIDTHS, "a length wider than its field");
+	bad[0] = descriptor(1, 0, 8, false);
+	bad[0].described.virtq_desc.flags_write = 2;
+	EXPECT(check(&ledger, bad, 1, NULL, 0) == ERX_DMA_BREAKS_WIDTHS, "a flag wider than its bit");
+
+	/* names: a buffer past the pool; a record with no name. */
+	bad[0] = descriptor(SIZE, 0, 8, false);
+	EXPECT(check(&ledger, bad, 1, NULL, 0) == ERX_DMA_BREAKS_NAMES, "a buffer index past the pool");
+	bad[0] = descriptor(1, 0, 8, false);
+	bad[0].name_count = 0;
+	EXPECT(check(&ledger, bad, 1, NULL, 0) == ERX_DMA_BREAKS_NAMES, "a reference with no name");
+
+	/* lengths: past the buffer, and an offset whose sum with the length wraps. */
+	bad[0] = descriptor(1, 90, 20, true);
+	EXPECT(check(&ledger, bad, 1, NULL, 0) == ERX_DMA_BREAKS_LENGTHS, "a transfer past its buffer");
+	bad[0] = descriptor(1, UINT64_MAX, 2, true);
+	EXPECT(check(&ledger, bad, 1, NULL, 0) == ERX_DMA_BREAKS_LENGTHS, "an offset and length that wrap");
+	bad[0] = descriptor(1, 0, BUFFER, true);
+	EXPECT(check(&ledger, bad, 1, NULL, 0) == ERX_DMA_PASSES, "a whole buffer");
+
+	/* fills: a buffer no record names; bytes straddling two names; inside one name. */
+	fill = (erx_dma_fill_t){ 1, 0, 4 };
+	EXPECT(check(&ledger, chain, 2, &fill, 1) == ERX_DMA_BREAKS_FILLS, "out bytes into a buffer no record names");
+	fill = (erx_dma_fill_t){ 0, 10, 7 };
+	EXPECT(check(&ledger, chain, 2, &fill, 1) == ERX_DMA_BREAKS_FILLS, "out bytes past their name");
+	fill = (erx_dma_fill_t){ 0, UINT64_MAX, 2 };
+	EXPECT(check(&ledger, chain, 2, &fill, 1) == ERX_DMA_BREAKS_FILLS, "a fill whose sum wraps");
+	fill = (erx_dma_fill_t){ 0, 20, 80 };
+	EXPECT(check(&ledger, chain, 2, &fill, 1) == ERX_DMA_PASSES, "out bytes inside a name");
+
+	/* room: nothing; more records than a holding holds. */
+	EXPECT(check(&ledger, chain, 0, NULL, 0) == ERX_DMA_BREAKS_ROOM, "an empty publication");
+	for (uint32_t index = 0; index < ERX_DMA_HELD_RECORDS_MAX + 1; index++)
+		bad[index] = descriptor(index % SIZE, 0, 8, false);
+	EXPECT(check(&ledger, bad, ERX_DMA_HELD_RECORDS_MAX + 1, NULL, 0) == ERX_DMA_BREAKS_ROOM, "a run past a holding");
+
+	/* held: buffer 0 handed to the device by a live holding, then named again. */
+	hold(&ledger, &(erx_dma_holding_t){ 4, { { DESC, 0 }, { DESC, 1 }, { DESC, 2 }, { AVAIL, 0 } }, 1, { 0 } });
+	EXPECT(check(&ledger, chain, 2, &header, 1) == ERX_DMA_BREAKS_HELD, "a buffer the device holds, posted again");
+	EXPECT(erx_dma_ledger_buffer_writer(&ledger, 0) == ERX_DMA_DEVICE &&
+	    erx_dma_ledger_buffer_writer(&ledger, 1) == ERX_DMA_CPU, "a buffer's writer follows its holding");
+
+	/* room: one free descriptor left for a run of two. */
+	bad[0] = descriptor(1, 0, 8, false);
+	bad[1] = descriptor(1, 8, 8, true);
+	EXPECT(check(&ledger, bad, 2, NULL, 0) == ERX_DMA_BREAKS_ROOM, "a run longer than the free descriptors");
+	EXPECT(check(&ledger, bad, 1, NULL, 0) == ERX_DMA_PASSES, "a run of the one free descriptor");
+
+	/* room: every available entry held, with descriptors free. */
+	EXPECT(erx_dma_ledger_make(&ledger, &layout), "a ledger");
+	for (uint32_t index = 0; index < SIZE; index++)
+		hold(&ledger, &(erx_dma_holding_t){ 1, { { AVAIL, index } }, 0, { 0 } });
+	EXPECT(check(&ledger, bad, 1, NULL, 0) == ERX_DMA_BREAKS_ROOM, "a chain while its available entry is held");
+}
+
+static void
+test_transitions(void)
+{
+	const erx_dma_layout_t layout = split_ring(MEMORY, 0, 32);
+	const erx_dma_place_t head = { DESC, 0 };
+	erx_dma_ledger_t ledger;
+
+	EXPECT(erx_dma_ledger_make(&ledger, &layout), "a ledger");
+	EXPECT(!erx_dma_ledger_hold(&ledger, &(erx_dma_holding_t){ 2, { { DESC, 0 }, { USED, 0 } }, 0, { 0 } }),
+	    "a holding of a record the device writes");
+	EXPECT(!erx_dma_ledger_hold(&ledger, &(erx_dma_holding_t){ 2, { { DESC, 0 }, { AVAIL, 1 } }, 0, { 0 } }),
+	    "an available entry out of order");
+	EXPECT(!erx_dma_ledger_hold(&ledger, &(erx_dma_holding_t){ 2, { { DESC, 0 }, { DESC, 0 } }, 0, { 0 } }),
+	    "a record named twice");
+	EXPECT(!erx_dma_ledger_hold(&ledger, &(erx_dma_holding_t){ 1, { { DESC, 0 } }, 2, { 1, 1 } }),
+	    "a buffer named twice");
+	EXPECT(!erx_dma_ledger_hold(&ledger, &(erx_dma_holding_t){ 1, { { DESC, SIZE } }, 0, { 0 } }),
+	    "a record past its table");
+	EXPECT(erx_dma_ledger_live(&ledger) == 0, "nothing began");
+	hold(&ledger, &(erx_dma_holding_t){ 2, { { DESC, 0 }, { AVAIL, 0 } }, 1, { 0 } });
+	EXPECT(!erx_dma_ledger_release(&ledger, DESC, head), "a release on a table the CPU writes");
+	EXPECT(erx_dma_ledger_free_records(&ledger, DESC) == SIZE - 1, "three free descriptors");
+	erx_dma_ledger_reset(&ledger);
+	EXPECT(erx_dma_ledger_live(&ledger) == 0 && !erx_dma_ledger_buffer_held(&ledger, 0) &&
+	    erx_dma_ledger_position(&ledger, AVAIL).index == 0, "the idle report ends every holding");
+}
+
+/*
+ * The state machine, exhaustively: on a queue of two entries, every sequence of up to DEPTH
+ * events, each a chain of one or two descriptors from head h with its buffer h and the next
+ * available entry, or a used element naming head h. The reference model says which events the
+ * design's order allows and what each leaves held; after every event the ledger agrees.
+ */
+enum { QUEUE = 2, DEPTH = 6, EVENTS = 3 * QUEUE };
+
+typedef struct model {
+	unsigned	descs, avails, buffers;	/* bit i: record or buffer i held */
+	unsigned	heads;			/* bit h: a live holding's head is descriptor h */
+	unsigned	chain[QUEUE];		/* the descriptors of the holding headed by h */
+	unsigned	avail_of[QUEUE];	/* its available entry */
+	unsigned	avail, avail_lap, used, used_lap;
+} model_t;
+
+static unsigned
+chain_of(unsigned head, unsigned length)
+{
+	return (length == 1 ? 1u << head : 3u);
+}
+
+static void
+agree(const erx_dma_ledger_t *ledger, const model_t *model)
+{
+	for (uint32_t index = 0; index < QUEUE; index++) {
+		EXPECT(erx_dma_ledger_record_held(ledger, (erx_dma_place_t){ DESC, index }) ==
+		    ((model->descs >> index) & 1), "a descriptor held as the model holds it");
+		EXPECT(erx_dma_ledger_record_held(ledger, (erx_dma_place_t){ AVAIL, index }) ==
+		    ((model->avails >> index) & 1), "an available entry held as the model holds it");
+		EXPECT(erx_dma_ledger_buffer_held(ledger, index) == ((model->buffers >> index) & 1),
+		    "a buffer held as the model holds it");
+	}
+	EXPECT(erx_dma_ledger_live(ledger) == (unsigned)__builtin_popcount(model->heads), "the live holdings");
+	EXPECT(erx_dma_ledger_position(ledger, AVAIL).index == model->avail &&
+	    erx_dma_ledger_position(ledger, AVAIL).lap == model->avail_lap, "the available ring's position");
+	EXPECT(erx_dma_ledger_position(ledger, USED).index == model->used &&
+	    erx_dma_ledger_position(ledger, USED).lap == model->used_lap, "the used ring's position");
+}
+
+static void
+step(const erx_dma_ledger_t *before, const model_t *was, unsigned event, unsigned depth, unsigned long *runs)
+{
+	erx_dma_ledger_t *ledger = malloc(sizeof(*ledger));
+	model_t model = *was;
+	const unsigned head = event % QUEUE, kind = event / QUEUE;
+	bool allowed, done;
+
+	EXPECT(ledger != NULL, "memory for a ledger");
+	memcpy(ledger, before, sizeof(*ledger));
+	if (kind < 2) {
+		const unsigned chain = chain_of(head, kind + 1);
+		erx_dma_holding_t holding = { 0, { { DESC, head } }, 1, { head } };
+
+		if (kind == 1)
+			holding.records[1] = (erx_dma_place_t){ DESC, 1 - head };
+		holding.record_count = kind + 1;
+		holding.records[holding.record_count++] = (erx_dma_place_t){ AVAIL, model.avail };
+		allowed = (model.descs & chain) == 0 && (model.buffers & (1u << head)) == 0 &&
+		    (model.avails & (1u << model.avail)) == 0;
+		done = erx_dma_ledger_hold(ledger, &holding);
+		if (allowed) {
+			model.descs |= chain;
+			model.buffers |= 1u << head;
+			model.avails |= 1u << model.avail;
+			model.heads |= 1u << head;
+			model.chain[head] = chain;
+			model.avail_of[head] = model.avail;
+			model.avail_lap += (model.avail + 1) / QUEUE;
+			model.avail = (model.avail + 1) % QUEUE;
+		}
+	} else {
+		allowed = (model.heads >> head) & 1;
+		done = erx_dma_ledger_release(ledger, USED, (erx_dma_place_t){ DESC, head });
+		if (allowed) {
+			model.descs &= ~model.chain[head];
+			model.buffers &= ~(1u << head);
+			model.avails &= ~(1u << model.avail_of[head]);
+			model.heads &= ~(1u << head);
+			model.used_lap += (model.used + 1) / QUEUE;
+			model.used = (model.used + 1) % QUEUE;
+		}
+	}
+	EXPECT(done == allowed, kind < 2 ? "a holding begins exactly when nothing it names is held" :
+	    "a release ends exactly a live holding");
+	agree(ledger, &model);
+	(*runs)++;
+	if (depth + 1 < DEPTH) {
+		for (unsigned next = 0; next < EVENTS; next++)
+			step(ledger, &model, next, depth + 1, runs);
+	}
+	free(ledger);
+}
+
+static void
+test_state_machine(void)
+{
+	erx_dma_layout_t queue;
+	erx_dma_ledger_t *ledger = malloc(sizeof(*ledger));
+	const model_t empty = { 0 };
+	unsigned long runs = 0;
+
+	EXPECT(ledger != NULL, "memory for a ledger");
+	EXPECT(erx_dma_layout_split_ring(QUEUE, BUFFER, GRANULE, 192 + QUEUE * 128, 0, 32, &queue), "a queue of two");
+	EXPECT(erx_dma_ledger_make(ledger, &queue), "its ledger");
+	for (unsigned event = 0; event < EVENTS; event++)
+		step(ledger, &empty, event, 0, &runs);
+	printf("state machine: %lu events checked\n", runs);
+	free(ledger);
+}
+
+int
+main(void)
+{
+	test_layout();
+	test_rules();
+	test_transitions();
+	test_state_machine();
+	printf("erx_device_ledger done\n");
+	return (0);
+}
