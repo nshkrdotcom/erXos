@@ -98,8 +98,8 @@ multi-TT setting when the claim selected it, and the hub descriptor's
 head; and one `{configure_endpoints, Ref, Step, ...}` adding every claimed
 pipe, with the hub fields for a hub. Control transfers go out as
 `{control, Ref, Step, Setup, Data}`. On the last answer the port is
-`running`, `{start, Ref, Functions}` starts the device's functions, and a
-hub enters with its ports `off`.
+`running`, `{start, Ref, Functions}` starts the device's functions, each
+paired with its run number, 1, and a hub enters with its ports `off`.
 
 Every request names its device's reference and the step it was sent at,
 and its answer echoes both: `{Kind, Ref, Step, Result}`. request/4 is the
@@ -113,27 +113,35 @@ answer, or descriptor erx_usb_desc or the claim refuses, gives the port up
 with the step and the reason, through one throw caught in
 device_answered/6.
 
-**A function's end.** `{function_ended, Ref, Interface}`, which the bus
-process sends when a running function's process ends while its device
-stays, resets the function's pipes other than EP0 one at a time,
+**A function's end.** `{function_ended, Ref, Interface, Run}`, which the
+bus process sends when instance Run of a running function ends while its
+device stays, resets the function's pipes other than EP0 one at a time,
 `{reset_pipe, Ref, Interface, Address}` each, the next sent only on the
-last one's `ok`, and `{start, Ref, [Function]}` starts the function again
-once every one has answered, so its new instance never meets a transfer, a
-halt or a toggle of the old one. A function starts again at most
-`usb_function_restarts_max` times in any `usb_function_restart_window_ms`,
-counted as a port's attempts are, by admit/4; an end past them, or a reset
-that fails, gives its device's port up.
+last one's `ok`, and `{start, Ref, [{Function, Run + 1}]}` starts the
+function again once every one has answered, so its new instance never
+meets a transfer, a halt or a toggle of the old one. A function starts
+again at most `usb_function_restarts_max` times in any
+`usb_function_restart_window_ms`, counted as a port's attempts are, by
+admit/4; an end past them, or a reset that fails, gives its device's port
+up.
 
 A function's run is `running` or the pipes it has still to reset, the first
-of them in flight. An end named for a function not running, or a reset's
-answer for a pipe not in flight, is ignored. A reset's answer is stale by
-construction, since the controller answers every reset once and a pipe's
-next reset is sent only after its last answer was taken. An end is not:
-the bus process sends exactly one end for each instance it started, after
-every message that instance sent, which a monitor of the instance's own
-process gives, and reports a start that fails as that instance's end. A hub function's end leaves the report it was handling answered to
-no one, and its next instance's first report reads every port again, leaving
-each whose status agrees with its state as it is.
+of them in flight, with the number of the instance last started. Every
+start carries its instance's number and the bus process echoes it in that
+instance's end and, for a hub function, in its reports, `{changed, Ref,
+Set, Run, From}`. An end or a report is taken only while its function is
+running with the number it names, so one from an instance that ended,
+repeated or late, is stale by construction and ignored, however the bus
+process orders them. What the numbers cannot give is an end that never
+comes: the bus process sends an instance's end at least once, when its
+process ends and when its start fails, so no function is left running
+with nothing behind it. A reset's answer for a pipe not in flight is ignored,
+and a reset's answer is stale by construction too, since the controller
+answers every reset once and a pipe's next reset is sent only after its
+last answer was taken. A hub function's end leaves the report it was
+handling answered to no one, and its next instance's first report reads
+every port again, leaving each whose status agrees with its state as it
+is.
 
 **Diagnostics.** A port is logged as given up, `{log, Hub, Port, {failed,
 Reason}}`, when update_port/4 moves it into `disabling` or `disabled` from
@@ -148,7 +156,8 @@ controller process's register accesses and do not fail.
 
 -export([new/1, step/3, ports/1, histories/1, devices/1]).
 
--export_type([state/0, event/0, action/0, hub_id/0, ref/0, port_state/0, port_history/0, step/0, run/0]).
+-export_type([state/0, event/0, action/0, hub_id/0, ref/0, port_state/0, port_history/0, step/0, run/0,
+              run_no/0]).
 
 -include("generated/erx_abi.hrl").
 
@@ -205,13 +214,13 @@ hub's.
 -type answer_kind() :: slot | addressed | control_done | evaluated | endpoints_configured.
 
 -type event() :: {port_event, port_no()}
-               | {changed, hub_id(), erx_usb_hub_core:change_set(), From :: term()}
+               | {changed, ref(), erx_usb_hub_core:change_set(), run_no(), From :: term()}
                | {port_done, hub_id(), target(), ok | {ok, binary()} | {ok, binary(), byte()} | {error, term()}}
                | {slot, ref(), step(), {ok, pos_integer()} | {error, term()}}
                | {addressed, ref(), step(), {ok, pos_integer()} | {error, term()}}
                | {control_done, ref(), step(), {ok, binary()} | {error, term()}}
                | {evaluated | endpoints_configured, ref(), step(), ok | {error, term()}}
-               | {function_ended, ref(), Interface :: byte()}
+               | {function_ended, ref(), Interface :: byte(), run_no()}
                | {pipe_reset, ref(), Interface :: byte(), Address :: byte(), ok | {error, term()}}
                | expired.
 
@@ -236,7 +245,7 @@ hub's.
                 | {control, ref(), step(), Setup :: <<_:64>>, none | {in, pos_integer()}}
                 | {evaluate_context, ref(), step(), #{ep0_packet := pos_integer()}}
                 | {configure_endpoints, ref(), step(), endpoints()}
-                | {start, ref(), [erx_usb_claim:function_()]}
+                | {start, ref(), [{erx_usb_claim:function_(), run_no()}]}
                 | {reset_pipe, ref(), Interface :: byte(), Address :: byte()}
                 | {detach, ref()}
                 | {log, hub_id(), port_no(), over_current | {failed, term()}}
@@ -266,11 +275,15 @@ interface.
 
 -doc """
 A claimed function's run: `running`, or ended and with the addresses of its
-pipes still to reset, in order, the first of them in flight; and the times of
-its ends within the last `usb_function_restart_window_ms`, oldest first, at
-most `usb_function_restarts_max` of them.
+pipes still to reset, in order, the first of them in flight; the number of the
+instance last started; and the times of its ends within the last
+`usb_function_restart_window_ms`, oldest first, at most
+`usb_function_restarts_max` of them.
 """.
--type run() :: #{state := running | {resetting, [byte(), ...]}, ends := [ms()]}.
+-type run() :: #{state := running | {resetting, [byte(), ...]}, number := run_no(), ends := [ms()]}.
+
+-doc "A function instance's number: 1 for the function's first start, one more for each start again.".
+-type run_no() :: pos_integer().
 
 -opaque state() :: #{hubs := #{hub_id() => hub()}, devices := #{ref() => device()},
                      waiting := [{hub_id(), port_no()}], next := ref()}.
@@ -309,11 +322,16 @@ event({port_event, N}, _Now, State) ->
                            (Hub) ->
                                 Hub
                         end, State)};
-event({changed, Id, Set, From}, _Now, State) ->
-    {[], with_hub(Id, fun(Hub = #{pending := P, ports := Ports}) ->
-                              Named = [T || T <- Set, T =:= hub orelse is_map_key(T, Ports)],
-                              Hub#{pending := queued(Named, P), reporter := From}
-                      end, State)};
+event({changed, Ref, Set, Run, From}, _Now, State) ->
+    case hub_run(Ref, State) of
+        #{state := running, number := Run} ->
+            {[], with_hub(Ref, fun(Hub = #{pending := P, ports := Ports}) ->
+                                       Named = [T || T <- Set, T =:= hub orelse is_map_key(T, Ports)],
+                                       Hub#{pending := queued(Named, P), reporter := From}
+                               end, State)};
+        _Stale ->
+            {[], State}
+    end;
 event({port_done, Id, Target, Result}, Now, State = #{hubs := Hubs}) ->
     case Hubs of
         #{Id := Hub = #{op := {Target, Op}}} ->
@@ -325,8 +343,8 @@ event({Kind, Ref, Step, Result}, Now, State)
   when Kind =:= slot; Kind =:= addressed; Kind =:= control_done; Kind =:= evaluated;
        Kind =:= endpoints_configured ->
     device_answered(Ref, Step, Kind, Result, Now, State);
-event({function_ended, Ref, Interface}, Now, State) ->
-    function_ended(Ref, Interface, Now, State);
+event({function_ended, Ref, Interface, Run}, Now, State) ->
+    function_ended(Ref, Interface, Run, Now, State);
 event({pipe_reset, Ref, Interface, Address, Result}, _Now, State) ->
     pipe_reset(Ref, Interface, Address, Result, State);
 event(expired, Now, State = #{hubs := Hubs}) ->
@@ -500,7 +518,8 @@ multi_tt(Functions) ->
 %% and a hub's ports added `off`.
 configured(Ref, Device = #{port := {Id, N}, speed := Speed, route := Route, functions := Functions, hub := Hub},
            State0 = #{hubs := Hubs}) ->
-    Runs = maps:from_list([{Interface, #{state => running, ends => []}} || #{interface := Interface} <- Functions]),
+    Runs = maps:from_list([{Interface, #{state => running, number => 1, ends => []}}
+                           || #{interface := Interface} <- Functions]),
     State1 = put_device(Ref, Device#{runs := Runs}, State0),
     State = case Hub of
                 none ->
@@ -509,27 +528,29 @@ configured(Ref, Device = #{port := {Id, N}, speed := Speed, route := Route, func
                     Added = hub({hub, hub_speed(Speed)}, Ports, Units, multi_tt(Functions), hub_power(Route)),
                     State1#{hubs := Hubs#{Ref => Added}}
             end,
-    then([{start, Ref, Functions}], set_port(Id, N, {running, Ref}, State)).
+    Started = [{Function, Number} || Function = #{interface := Interface} <- Functions,
+                                     #{number := Number} <- [maps:get(Interface, Runs)]],
+    then([{start, Ref, Started}], set_port(Id, N, {running, Ref}, State)).
 
 %% A function's end (docs/design-usb.md, "A function's end" and "Failure handling").
 
 %% Function Interface of device Ref ended while the device stays: its pipes are
 %% reset, then it starts again, when fewer than usb_function_restarts_max of its
 %% ends fell in the last usb_function_restart_window_ms; past them its device's
-%% port is given up. An end named for a device gone or a function not running is
-%% stale.
-function_ended(Ref, Interface, Now, State) ->
+%% port is given up. An end named for a device gone, for a function not running or
+%% for an instance other than the one running is stale.
+function_ended(Ref, Interface, Run, Now, State) ->
     case find_run(Ref, Interface, State) of
-        #{state := running, ends := Ends} ->
+        Current = #{state := running, number := Run, ends := Ends} ->
             case admit(Ends, Now, ?ERX_USB_FUNCTION_RESTARTS_MAX, ?ERX_USB_FUNCTION_RESTART_WINDOW_MS) of
                 {admitted, Admitted} ->
                     #{pipes := Pipes} = claimed(Ref, Interface, State),
-                    reset_next_or_start(Ref, Interface, [Address || #{address := Address} <- Pipes], Admitted,
-                                        drop_reporter(Ref, Interface, State));
+                    reset_next_or_start(Ref, Interface, [Address || #{address := Address} <- Pipes],
+                                        Current#{ends := Admitted}, drop_reporter(Ref, Interface, State));
                 {refused, _Until} ->
                     fail_device(Ref, {function, Interface, restarts}, State)
             end;
-        _NotRunning ->
+        _Stale ->
             {[], State}
     end.
 
@@ -538,22 +559,22 @@ function_ended(Ref, Interface, Now, State) ->
 %% start; otherwise its device's port is given up.
 pipe_reset(Ref, Interface, Address, Result, State) ->
     case find_run(Ref, Interface, State) of
-        #{state := {resetting, [Address | Left]}, ends := Ends} ->
+        Current = #{state := {resetting, [Address | Left]}} ->
             case Result of
-                ok -> reset_next_or_start(Ref, Interface, Left, Ends, State);
+                ok -> reset_next_or_start(Ref, Interface, Left, Current, State);
                 {error, Reason} -> fail_device(Ref, {function, Interface, {reset_pipe, Reason}}, State)
             end;
         _NotInFlight ->
             {[], State}
     end.
 
-%% An ended function's next pipe reset, or, with none left, its start again.
-reset_next_or_start(Ref, Interface, [], Ends, State) ->
-    {[{start, Ref, [claimed(Ref, Interface, State)]}],
-     put_run(Ref, Interface, #{state => running, ends => Ends}, State)};
-reset_next_or_start(Ref, Interface, Left = [Address | _], Ends, State) ->
-    {[{reset_pipe, Ref, Interface, Address}],
-     put_run(Ref, Interface, #{state => {resetting, Left}, ends => Ends}, State)}.
+%% An ended function's next pipe reset, or, with none left, its start again as
+%% the next instance.
+reset_next_or_start(Ref, Interface, [], Current = #{number := Number}, State) ->
+    {[{start, Ref, [{claimed(Ref, Interface, State), Number + 1}]}],
+     put_run(Ref, Interface, Current#{state := running, number := Number + 1}, State)};
+reset_next_or_start(Ref, Interface, Left = [Address | _], Current, State) ->
+    {[{reset_pipe, Ref, Interface, Address}], put_run(Ref, Interface, Current#{state := {resetting, Left}}, State)}.
 
 %% A hub function's end: the report its hub was handling is the ended instance's,
 %% so it is answered to no one; the next instance's first report names every port.
@@ -567,6 +588,18 @@ find_run(Ref, Interface, #{devices := Devices}) ->
     case Devices of
         #{Ref := #{runs := #{Interface := Run}}} -> Run;
         #{} -> none
+    end.
+
+%% The run of hub Ref's hub function, or `none` for a device the bus does not
+%% hold or holds but not as a configured hub.
+hub_run(Ref, State = #{devices := Devices}) ->
+    Functions = case Devices of
+                    #{Ref := #{functions := Claimed}} -> Claimed;
+                    #{} -> []
+                end,
+    case hub_function(Functions) of
+        #{interface := Interface} -> find_run(Ref, Interface, State);
+        none -> none
     end.
 
 put_run(Ref, Interface, Run, State = #{devices := Devices}) ->

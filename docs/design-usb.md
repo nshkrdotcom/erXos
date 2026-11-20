@@ -1406,6 +1406,22 @@ device keeps the command its predecessor started, and every BOT
 instance starts with its class's reset recovery for that reason
 ([The BOT engine](#the-bot-engine)).
 
+Each instance of a function has a run number, which the bus core keeps
+per function: 1 at the device's configuration, one more at each start
+again. The core's start, `{start, Ref, Functions}`, pairs each function
+with its number, and the bus process keeps the number with the instance
+it starts and passes it back in that instance's end, `{function_ended,
+Ref, Interface, Run}`, and, for a hub function, in each of its reports,
+`{changed, Hub, Set, Run, Pid}`. The core takes an end or a report only
+while the function runs as the instance it names, so one from an
+earlier instance, repeated or late, is stale by construction and
+changes nothing: it cannot reset a running instance's pipes and start a
+second one, nor take `handled` from a hub function's successor, however
+the bus process orders its messages. The numbers cannot stand in for an
+end that never comes, so the bus process sends an instance's end at
+least once: when its process ends, which its monitor gives, and when
+its start fails.
+
 A STALL, a timeout or a malformed answer ends the enumeration as
 FreeBSD's error path does: the device is detached, the port is disabled
 at its hub, by ClearPortFeature(PORT_ENABLE) or a root port's enable bit
@@ -1441,9 +1457,12 @@ the report and explores every port on any (`uhub_intr_callback`,
 sends `{changed, Hub, Bitmap, Pid}`, `Pid` its own, to the bus process
 and posts its next transfer only when the bus process answers
 `{handled, Hub}`; a report that names nothing posts the next transfer at
-once. The bus core keeps the pid of the report it is handling and
-answers that pid alone, and a restarted function's report replaces its
-predecessor's, so no instance ever takes another's answer. Its first report, at
+once. The bus process gives the bus core the report with the run number
+of the instance that sent it ([A function's
+end](#ports-hubs-and-devices-the-bus-core)), and the core takes only the
+running instance's. It keeps the pid of the report it is handling and
+answers that pid alone, and drops it when the instance ends, so no
+instance ever takes another's answer. Its first report, at
 start, names the hub and every port, so each instance, a restarted one
 included, has the bus core read every port's status once. The bus core
 queues the ports of the bitmap the hub's queue does not hold yet, and
@@ -2836,7 +2855,7 @@ targeted traces carry the longer sequences.
 
 | Test | Seeded fault that must fail it |
 | --- | --- |
-| `erx_usb_bus_core`, explored to a fixed point over a root hub of two ports, one external hub of two ports and devices of one and two functions, with references and slots drawn from small sets; then traces of 1,000 attach and detach cycles on one port, a connection storm, a hub detached during its child's enumeration, a chain of six hubs, four connects on one port within a minute, four ends of one function within a minute and a hub function's restart with a device behind it, a device unplugged and plugged in again between the read of its connection change and that change's clear; over-current changes read on a root port; and, at every quiet node of the exploration, every port agreeing with the world on whether something is connected | a connection change with the port still connected not detaching the occupant; the address-zero turn released at the reset's end instead of the address; a port's new state dropping its occupant without detaching it; a port given up after its address keeping the turn; the turn released at a detach before the address answer, so a second device is reset while the first's Address Device is outstanding; an Address Device answer for a detached device dropped as stale, so the turn is never given back; a hub given up handing on the turn a port below it held; a hub six tiers below the root powering its ports; a full-speed device's EP0 left at 8 bytes when its descriptor says otherwise; a hub configured without its hub descriptor; a device's first request sent at its address answer, without the 10 ms settle; the step an answer echoes ignored, so a stale answer is taken at the step awaiting its kind; a function restarted before its pipes' resets answer, so the new instance meets a transfer its predecessor posted; a pipe's failed reset keeping the device; the restart bound removed; a port's failure logged at every move into a failure state; the attempt throttle removed; a port's attempts never leaving the window; an over-current change logged on every change; the over-current log not rearmed by an attempt; a read that saw changes taking its port off the queue, so a change latched before their clear is lost |
+| `erx_usb_bus_core`, explored to a fixed point over a root hub of two ports, one external hub of two ports and devices of one and two functions, with references and slots drawn from small sets; then traces of 1,000 attach and detach cycles on one port, a connection storm, a hub detached during its child's enumeration, a chain of six hubs, four connects on one port within a minute, four ends of one function within a minute and a hub function's restart with a device behind it, a device unplugged and plugged in again between the read of its connection change and that change's clear; over-current changes read on a root port; and, at every quiet node of the exploration, every port agreeing with the world on whether something is connected; at every node, the end and the hub reports of every instance not running, the earlier ones and an ended one whose pipes are still being reset, changing nothing, and a restart starting the claimed function unchanged under a run number no earlier instance had | a connection change with the port still connected not detaching the occupant; the address-zero turn released at the reset's end instead of the address; a port's new state dropping its occupant without detaching it; a port given up after its address keeping the turn; the turn released at a detach before the address answer, so a second device is reset while the first's Address Device is outstanding; an Address Device answer for a detached device dropped as stale, so the turn is never given back; a hub given up handing on the turn a port below it held; a hub six tiers below the root powering its ports; a full-speed device's EP0 left at 8 bytes when its descriptor says otherwise; a hub configured without its hub descriptor; a device's first request sent at its address answer, without the 10 ms settle; the step an answer echoes ignored, so a stale answer is taken at the step awaiting its kind; a function restarted before its pipes' resets answer, so the new instance meets a transfer its predecessor posted; an end from a function's earlier instance taken, so a late end resets the running instance's pipes; a report from a hub function's ended instance taken, after its restart or while its pipe is still being reset; the report an ended hub instance was handling kept, so `handled` goes to it; a pipe's failed reset keeping the device; the restart bound removed; a port's failure logged at every move into a failure state; the attempt throttle removed; a port's attempts never leaving the window; an over-current change logged on every change; the over-current log not rearmed by an attempt; a read that saw changes taking its port off the queue, so a change latched before their clear is lost |
 | `erx_usb_hub_core`, its machine explored to a fixed point for hubs of 1, 2, 7, 8 and 15 ports over every report of the port count's length with each port bit and the bits around it, a short report and a failed transfer; its decoders on written cases | a change report sent with the next transfer already posted; `handled` taken without posting the next transfer; the bits above the port count kept; a report shorter than the port count taken as naming nothing |
 | `erx_xhci_core`'s pipe machine, teardown, control abort and failed address, explored to a fixed point over every queue state the NIF reports and every answer of each step, EP0 and other endpoints, behind a translator and not | `reset_pipe` issuing Reset Endpoint on a stopped queue; a stopped EP0 dropped and added; the abort answered after Stop Endpoint alone, so the next request finds EP0 stopped; the translator's clear skipped; Disable Slot issued before the stops answer; an Address Device whose device detached while it was posted left unanswered |
 | `erx_xhci_core`'s start, explored to a fixed point with and without a legacy support capability over every answer of the BIOS's semaphore and of the install and an interrupt at any time, the clock moving to each deadline; a run that has not ended always has a next step | the install called while the BIOS still owns the controller; the BIOS's semaphore never polled again; an interrupt before the controller runs acknowledged at once, or with a failure |

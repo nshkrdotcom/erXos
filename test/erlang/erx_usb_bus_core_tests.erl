@@ -38,6 +38,9 @@
 %%   `ok` to a reset since its end, its pipes reset one at a time; a failed reset
 %%   detaches its device, and an end, a reset's answer or a detached device's
 %%   function's end delivered again changes nothing;
+%% * a function starts again as it was claimed, under a run number no earlier instance
+%%   had, and every earlier instance's end, and a hub function's earlier instances'
+%%   reports, delivered at any node, change nothing;
 %% * a quiet bus, nothing in flight and no deadline pending, keeps every port empty
 %%   exactly where nothing is connected, so no change, one latched between a status
 %%   read and its clear included, is lost.
@@ -319,7 +322,7 @@ expected_hub_fields(_Device) -> none.
 %% Each hub function with no report outstanding: its first report names every port and
 %% the hub, a later one the ports whose change bits are set.
 reports(M = #{hubs := Hubs, world := World}) ->
-    [{report, {changed, Ref, Named, {fn, Ref, Instance}}}
+    [{report, {changed, Ref, Named, Instance, {fn, Ref, Instance}}}
      || Ref := #{route := Route, first := First, outstanding := false, running := true, instance := Instance} <- Hubs,
         Named <- [named(First, [N || N <- [1, 2], maps:get(chg, maps:get(Route ++ [N], World, port0())) =/= []])],
         Named =/= []]
@@ -405,20 +408,20 @@ follow({expire, At}, {M = #{now := Now}, Core}) ->
     deliver(expired, M#{now := At}, Core);
 follow({signal, Event = {port_event, N}}, {M = #{world := World}, Core}) ->
     deliver(Event, M#{world := World#{[N] := (maps:get([N], World))#{signaled := true}}}, Core);
-follow({report, Event = {changed, Ref, _, _}}, {M = #{hubs := Hubs}, Core}) ->
+follow({report, Event = {changed, Ref, _, _, _}}, {M = #{hubs := Hubs}, Core}) ->
     Fn = maps:get(Ref, Hubs),
     deliver(Event, M#{hubs := Hubs#{Ref := Fn#{first := false, outstanding := true}}}, Core);
 %% A function's end: its pipes' resets follow, or its device's detach past its restarts.
 %% A hub function stops reporting until its next instance starts.
 follow({finish, Ref, I}, {M = #{ends := E, fns := Fns, hubs := Hubs, now := Now}, Core}) ->
-    Fn = #{pipes := Pipes, ended := Ended, driver := Driver} = maps:get({Ref, I}, Fns),
+    Fn = #{pipes := Pipes, ended := Ended, driver := Driver, run := Run} = maps:get({Ref, I}, Fns),
     Recent = [T || T <- Ended, Now - T < ?RESTART_WINDOW] ++ [Now],
     Stopped = case Driver of
                   erx_usb_hub -> Hubs#{Ref := (maps:get(Ref, Hubs))#{running := false, outstanding := false}};
                   _ -> Hubs
               end,
     Ending = M#{ends := E - 1, hubs := Stopped, fns := Fns#{{Ref, I} := Fn#{state := {ended, Pipes}, ended := Recent}}},
-    Node = {#{last := Last}, _} = deliver({function_ended, Ref, I}, Ending, Core),
+    Node = {#{last := Last}, _} = deliver({function_ended, Ref, I, Run}, Ending, Core),
     Answered = case length(Recent) > ?RESTARTS_MAX of
                    true -> lists:member({detach, Ref}, Last);
                    false -> [A || {reset_pipe, R, J, A} <- Last, {R, J} =:= {Ref, I}] =/= []
@@ -508,13 +511,14 @@ observe(Event, Actions, M0, Before, After) ->
     check_turn(After, Event),
     check_connection_detach(Event, Actions, Before),
     check_failure_logs(Event, Actions, Before, After),
-    [stale({function_ended, Ref, I}, maps:get(now, M0), After)
-     || {detach, Ref} <- Actions, {R, I} := _ <- maps:get(fns, M0), R =:= Ref],
+    [stale({function_ended, Ref, I, Run}, maps:get(now, M0), After)
+     || {detach, Ref} <- Actions, {R, I} := #{run := Run} <- maps:get(fns, M0), R =:= Ref],
     M1 = close_window(Event, M0, Before, After),
     M2 = lists:foldl(fun(Action, M) -> action(Action, M, Before, After) end,
                      M1#{deadline := none, last => Actions}, Actions),
     [is_map_key(Ref, erx_usb_bus_core:devices(After)) orelse error({slot_of_gone_device, Ref, Event})
      || Ref := _ <- maps:get(slots, M2)],
+    earlier_runs_stale(M2, After),
     {check_stale(Event, M2, After), After}.
 
 %% A device's successful answer is kept while the device lasts, and every answer the
@@ -534,9 +538,27 @@ check_stale(Event, M = #{answered := Answered, now := Now}, Core) ->
 
 %% A function's end or a pipe reset's answer delivered again: the function is no
 %% longer running, or the reset no longer in flight, so it changes nothing.
-repeated(Event = {function_ended, _Ref, _I}, Now, Core) -> stale(Event, Now, Core);
+repeated(Event = {function_ended, _Ref, _I, _Run}, Now, Core) -> stale(Event, Now, Core);
 repeated(Event = {pipe_reset, _Ref, _I, _A, _Result}, Now, Core) -> stale(Event, Now, Core);
 repeated(_Event, _Now, _Core) -> ok.
+
+%% The end of every instance not running, and a hub function's reports from each, naming
+%% every port and the hub, delivered at any node: the earlier instances', and an ended
+%% instance's own while its pipes are still being reset. Each is stale, so it changes
+%% nothing, however late it comes.
+earlier_runs_stale(#{fns := Fns, now := Now}, Core) ->
+    lists:foreach(fun(Stale) -> stale(Stale, Now, Core) end,
+                  [Event || {Ref, I} := #{run := Run, state := State, driver := Driver} <- Fns,
+                            Old <- lists:seq(1, last_not_running(Run, State)),
+                            Event <- instance_events(Ref, I, Old, Driver)]).
+
+last_not_running(Run, running) -> Run - 1;
+last_not_running(Run, _Ended) -> Run.
+
+instance_events(Ref, I, Run, erx_usb_hub) ->
+    [{function_ended, Ref, I, Run}, {changed, Ref, [1, 2, hub], Run, {fn, Ref, Run}}];
+instance_events(Ref, I, Run, _Driver) ->
+    [{function_ended, Ref, I, Run}].
 
 stale(Stale, Now, Core) ->
     case erx_usb_bus_core:step(Stale, Now, Core) of
@@ -714,7 +736,7 @@ action({configure_endpoints, Ref, Step, #{add := Pipes, hub := HubFields}}, M = 
     saw(Ref, configure_endpoints, M#{cmds := Cmds ++ [{endpoints_configured, Ref, Step, none}]});
 action({start, Ref, Functions}, M = #{fns := Fns}, _Before, After) ->
     is_map_key(Ref, erx_usb_bus_core:devices(After)) orelse error({start_for_gone_device, Ref}),
-    case [I || #{interface := I} <- Functions, is_map_key({Ref, I}, Fns)] of
+    case [I || {#{interface := I}, _Run} <- Functions, is_map_key({Ref, I}, Fns)] of
         [] -> first_start(Ref, Functions, M, After);
         Restarted -> restart(Ref, Restarted, Functions, M)
     end;
@@ -750,28 +772,31 @@ first_start(Ref, Functions, M = #{hubs := Hubs, things := Things, seen := Seen, 
     lists:reverse(maps:get(Ref, Seen)) =:= expected_steps(Thing)
         orelse error({started_after_other_steps, Ref, Thing, maps:get(Ref, Seen)}),
     Runs = #{{Ref, I} => #{state => running, driver => Driver, pipes => [A || #{address := A} <- Pipes],
-                           ended => []}
-             || #{interface := I, driver := Driver, pipes := Pipes} <- Functions},
+                           ended => [], run => Run, function => Function}
+             || {Function = #{interface := I, driver := Driver, pipes := Pipes}, Run} <- Functions},
     Started = M#{fns := maps:merge(Fns, Runs)},
-    case [Driver || #{driver := Driver} <- Functions] of
-        [erx_usb_hub] ->
+    case [{Driver, Run} || {#{driver := Driver}, Run} <- Functions] of
+        [{erx_usb_hub, Run}] ->
             Started#{hubs := Hubs#{Ref => #{route => where(H, N, M), first => true, outstanding => false,
-                                            running => true, instance => 1}}};
+                                            running => true, instance => Run}}};
         _ ->
             Started
     end.
 
-%% A function started again: alone, and only once every one of its pipes has answered
-%% a reset since its end; a hub function's next instance reports every port first.
-restart(Ref, [I], [#{interface := I}], M = #{fns := Fns, hubs := Hubs}) ->
+%% A function started again: alone, as it was claimed, with a run number no earlier
+%% instance had, and only once every one of its pipes has answered a reset since its
+%% end; a hub function's next instance reports every port first.
+restart(Ref, [I], [{Function = #{interface := I}, Run}], M = #{fns := Fns, hubs := Hubs}) ->
     case maps:get({Ref, I}, Fns) of
+        #{state := {ended, []}, run := Before, function := Claimed} when Run =< Before; Function =/= Claimed ->
+            error({restart_not_a_new_instance_of_the_claim, Ref, I, Run, Before});
         Fn = #{state := {ended, []}, driver := Driver} ->
-            Running = M#{fns := Fns#{{Ref, I} := Fn#{state := running}}},
+            Running = M#{fns := Fns#{{Ref, I} := Fn#{state := running, run := Run}}},
             case Driver of
                 erx_usb_hub ->
-                    Hub = #{instance := Instance} = maps:get(Ref, Hubs),
+                    Hub = maps:get(Ref, Hubs),
                     Running#{hubs := Hubs#{Ref := Hub#{first := true, outstanding := false, running := true,
-                                                       instance := Instance + 1}}};
+                                                       instance := Run}}};
                 _ ->
                     Running
             end;
@@ -975,9 +1000,9 @@ out_of_shape_reports_and_answers_test() ->
     ?assertEqual([{detach, HubRef}], [A || A = {detach, _} <- Detached]),
     {_, Idle} = Hub = settle(Node),
     Later = maps:get(now, element(1, Hub)),
-    {S1, A1} = erx_usb_bus_core:step({changed, HubRef, [3], fn}, Later, Idle),
+    {S1, A1} = erx_usb_bus_core:step({changed, HubRef, [3], 1, fn}, Later, Idle),
     ?assertEqual([{handled, HubRef, fn}], [A || A <- A1, element(1, A) =/= deadline]),
-    ?assertMatch({_, [{port, HubRef, 1, get_status} | _]}, erx_usb_bus_core:step({changed, HubRef, [1, 3], fn}, Later, S1)).
+    ?assertMatch({_, [{port, HubRef, 1, get_status} | _]}, erx_usb_bus_core:step({changed, HubRef, [1, 3], 1, fn}, Later, S1)).
 
 %% A hub given up while a port below it holds the turn keeps the turn on its own port
 %% until its parent answers the disable, since the child stays reachable through the
@@ -1020,19 +1045,6 @@ a_hub_past_the_depth_limit_keeps_its_ports_off_test() ->
     #{port := DevicePort} = maps:get(Device, Devices),
     ?assertEqual({running, Device}, maps:get(DevicePort, Ports)).
 
-%% decision 3: `handled` goes to the instance that reported; a restarted hub
-%% function's report replaces its predecessor's, which is never answered.
-handled_goes_to_the_reporter_test() ->
-    {_, Node} = Hub = settle(follow({stimulus, [1], hub}, trace_start())),
-    {running, HubRef} = port_of(Hub, {root, 1}),
-    {S1, A1} = erx_usb_bus_core:step({changed, HubRef, [1], old}, maps:get(now, element(1, Hub)), Node),
-    ?assertMatch([{port, HubRef, 1, get_status} | _], A1),
-    {S2, A2} = erx_usb_bus_core:step({changed, HubRef, [2], new}, maps:get(now, element(1, Hub)), S1),
-    ?assertEqual([], [A || A = {handled, _, _} <- A2]),
-    {S3, A3} = erx_usb_bus_core:step({port_done, HubRef, 1, {ok, <<1:16/little, 0:16>>}}, maps:get(now, element(1, Hub)), S2),
-    ?assertMatch([{port, HubRef, 2, get_status} | _], A3),
-    {_, A4} = erx_usb_bus_core:step({port_done, HubRef, 2, {ok, <<0:16, 0:16>>}}, maps:get(now, element(1, Hub)), S3),
-    ?assertEqual([{handled, HubRef, new}], [A || A = {handled, _, _} <- A4]).
 
 %% A function's ends, each answered by its pipe's reset and then its start again: three
 %% within a minute restart it; a fourth within that minute detaches its device and gives
@@ -1042,7 +1054,7 @@ a_function_restarts_at_most_three_times_a_minute_test() ->
     {#{now := Now}, Core0} = Running = settle(follow({stimulus, [1], dev1}, trace_start())),
     {running, Ref} = port_of(Running, {root, 1}),
     Three = lists:foldl(fun(At, Core) -> restarted(Ref, At, Core) end, Core0, [Now, Now + 1, Now + 2]),
-    {Refused, Actions} = erx_usb_bus_core:step({function_ended, Ref, 0}, Now + 3, Three),
+    {Refused, Actions} = erx_usb_bus_core:step({function_ended, Ref, 0, 4}, Now + 3, Three),
     Failure = {function, 0, restarts},
     ?assertEqual([{detach, Ref}, {log, root, 1, {failed, Failure}}, {port, root, 1, disable}],
                  [A || A <- Actions, element(1, A) =/= deadline]),
@@ -1050,15 +1062,33 @@ a_function_restarts_at_most_three_times_a_minute_test() ->
     ?assertEqual([], [A || A = {log, _, _, _} <- More]),
     ?assertEqual({disabled, Failure}, maps:get({root, 1}, erx_usb_bus_core:ports(Disabled))),
     Later = restarted(Ref, Now + ?RESTART_WINDOW, Three),
-    ?assertMatch({_, [{detach, Ref} | _]}, erx_usb_bus_core:step({function_ended, Ref, 0}, Now + ?RESTART_WINDOW, Later)).
+    ?assertMatch({_, [{detach, Ref} | _]},
+                 erx_usb_bus_core:step({function_ended, Ref, 0, 5}, Now + ?RESTART_WINDOW, Later)).
 
-%% dev1's one function, interface 0, ends at Now and starts again once its one pipe,
-%% 81h, has answered its reset.
+%% A late end from the run before, delivered once the function has started again,
+%% changes nothing: the running instance's pipes are not reset under it.
+a_late_end_from_an_earlier_run_changes_nothing_test() ->
+    {#{now := Now}, Core0} = Running = settle(follow({stimulus, [1], dev1}, trace_start())),
+    {running, Ref} = port_of(Running, {root, 1}),
+    stale({function_ended, Ref, 0, 1}, Now + 1, restarted(Ref, Now, Core0)).
+
+%% A report from a hub function's ended instance, arriving once its next instance runs,
+%% changes nothing: it neither queues a read nor takes `handled` from its successor.
+a_report_from_an_ended_hub_instance_changes_nothing_test() ->
+    Hub = settle(follow({stimulus, [1], hub}, trace_start())),
+    {running, HubRef} = port_of(Hub, {root, 1}),
+    {#{now := Now}, Core} = settle(follow({finish, HubRef, 0}, Hub)),
+    stale({changed, HubRef, [1, 2, hub], 1, {fn, HubRef, 1}}, Now, Core).
+
+%% dev1's one function, interface 0, running as instance Run, ends at Now and starts
+%% again as instance Run + 1 once its one pipe, 81h, has answered its reset.
 restarted(Ref, Now, Core0) ->
-    {Core1, A1} = erx_usb_bus_core:step({function_ended, Ref, 0}, Now, Core0),
+    #{runs := #{0 := #{number := Run}}} = maps:get(Ref, erx_usb_bus_core:devices(Core0)),
+    {Core1, A1} = erx_usb_bus_core:step({function_ended, Ref, 0, Run}, Now, Core0),
     ?assertEqual([{reset_pipe, Ref, 0, 16#81}], [A || A <- A1, element(1, A) =/= deadline]),
     {Core2, A2} = erx_usb_bus_core:step({pipe_reset, Ref, 0, 16#81, ok}, Now, Core1),
-    ?assertMatch([{start, Ref, [#{interface := 0, pipes := [#{address := 16#81}]}]}],
+    Next = Run + 1,
+    ?assertMatch([{start, Ref, [{#{interface := 0, pipes := [#{address := 16#81}]}, Next}]}],
                  [A || A <- A2, element(1, A) =/= deadline]),
     Core2.
 
