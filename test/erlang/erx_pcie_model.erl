@@ -7,8 +7,9 @@
 %% BAR registers, the buses a root port's applied target has opened, and a log of
 %% every access that reached the hardware.
 %%
-%% It is reached two ways: as an ECAM configuration window (read/3 and write/4 at a
-%% window offset, the window() erx_pcie_ecam:open/2 takes), and as a closed bridge
+%% It is reached two ways: as an ECAM configuration window in the device NIF's shape
+%% (elements/2, config_read/4 and config_write/5 over pci_ecam's `function` space, the
+%% space() erx_pcie_ecam:open/2 takes), and as a closed bridge
 %% driver, the BCM2711's contract over the same model: an access at a place
 %% erx_pcie_bridge:reaches/2 refuses answers absent without touching the model, and a
 %% model whose link is down answers link_down.
@@ -17,7 +18,7 @@
 -behaviour(erx_pcie_bridge).
 
 -export([new/1, open_bus/2, set_link/2, hardware/1, register/3]).
--export([read/3, write/4]).
+-export([elements/2, config_read/4, config_write/5]).
 -export([start/2, access/2, ready/2, closed/2]).
 
 %% Functions: [{Place, Snapshot, #{BarOffset => WritableMask}}]. Bus 0 and the bus
@@ -42,14 +43,25 @@ register(Table, Place, {Offset, Width}) ->
     <<_:Offset/binary, Value:Width/little-unit:8, _/binary>> = Bytes,
     Value.
 
-%% The ECAM window: the handle is {Table, BusFirst}.
-read({Table, First}, At, Width) ->
-    model_read(Table, place(First, At), At band 16#fff, Width).
+%% The ECAM window: the handle is {Table, BusFirst}, or {Table, BusFirst, Buses} for a
+%% window that covers only Buses buses, as a tree's reg may; a block past it is badarg, as
+%% the device NIF's is.
+elements({Table, First}, function) -> elements({Table, First, 256}, function);
+elements({_Table, _First, Buses}, function) -> Buses * 256.
 
-write({Table, First}, At, Width, Value) ->
-    model_write(Table, place(First, At), At band 16#fff, Width, Value).
+config_read(Handle, {function, Routing}, Offset, Width) ->
+    {Table, First} = window(Handle, Routing),
+    model_read(Table, place(First, Routing), Offset, Width).
 
-place(First, At) -> {First + (At bsr 20), (At bsr 15) band 31, (At bsr 12) band 7}.
+config_write(Handle, {function, Routing}, Offset, Width, Value) ->
+    {Table, First} = window(Handle, Routing),
+    model_write(Table, place(First, Routing), Offset, Width, Value).
+
+window(Handle, Routing) ->
+    Routing < elements(Handle, function) orelse error(badarg),
+    {element(1, Handle), element(2, Handle)}.
+
+place(First, Routing) -> {First + (Routing bsr 8), (Routing bsr 3) band 31, Routing band 7}.
 
 %% The closed bridge driver.
 start(_Bridge, _Device) -> {error, unsupported}.

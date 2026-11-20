@@ -2289,7 +2289,8 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   `erx_domain:await_grant(pcie, D)`, which the domain service does not have), its `pci` facet, the hold at boot,
   a holder's end; a system manifest service row for each interface, with the manifest check's grantee rules; the
   `pcie` facet's mint in the PCIe domain over `erx_facet`; and the bridge's driver over its given record, which
-  needs the ECAM configuration-space view and a record that names its device row. Facet places are the bridge's
+  needs a given record that names its device row (`-erx_record given` carries no INDEX, so the PCIe domain cannot
+  match it to `erx_pcie_bridge.index`; `erx_boot_given_words`, its two writers and `erx_device_record` gain it). Facet places are the bridge's
   device row and the function's place, `{Bridge, Bus, Device, Function}`, where the design writes the bridge's path:
   the PCIe domain knows its bridges only by row (`erx_pcie_bridge.index`), so the design should say which.
 * [Medium] PCIe, `erx_pcie_apply`'s verification and the later record (`erlang/apps/erx_pcie/src/erx_pcie_apply.erl`,
@@ -9605,10 +9606,15 @@ document's "residual risks accepted" paragraph.
   the places start the tree's grants (`input_tree/1`), but nothing yet hands one to the display domain the
   manifest names, and no `erx_usb_sup` starts the places before the bus. Both come with the USB domain's start.
 * [Medium] USB and PCIe, `hw/svd/` ([design-usb.md](docs/design-usb.md#registers-at-offsets-the-controller-reports),
-  [design-generation.md](docs/design-generation.md#register-inputs)): no configuration-space view for ECAM or for the
-  BCM2711 bridge. Write both (8-, 16- and 32-bit accesses at a computed offset, bounded by the window: ECAM's window,
-  and the BCM2711's root port at 0 and endpoint data window at `0x8000`) with the generator's support for them;
+  [design-generation.md](docs/design-generation.md#register-inputs)): no configuration-space view for the BCM2711
+  bridge. Write its `<configurationSpace>` rows (the root port at 0 and the endpoint data window at `0x8000`, each one
+  block, as `pci_ecam.svd` does ECAM's) beside its registers;
   `erx_pcie_bcm2711_core`'s `cfg_read` and `cfg_write` operations reach configuration space through that view.
+  `check_spaces` (`tools/lib/erx/hardware.rb`) refuses a space over a register, and the root port's block at 0 holds
+  the SVD's `RC_CFG_*` registers, so the design must first say whether a space may cover named registers.
+* [Medium] device NIF, `erx_device.c` `erx_device_config_read`/`_write` and `erx_device_nif.c` `decode_config`: no test
+  reaches them (the harness checks the core only): open a `pci_ecam` stand-in and check a round trip at each width,
+  a value wider than its width refused, block 256 refused and `elements/2` 256, with a seed on the value bound.
 * [Medium] PCIe, `erlang/apps/erx_pcie/src/erx_pcie_bcm2711_core.erl` ([design-pcie.md](docs/design-pcie.md#the-bridge-seam)):
   the core runs an agenda of closures, so its state cannot be printed, compared or explored exhaustively, and its
   operation vocabulary (`{wait, Us}`, `{read, Register}`, `{write, Register, Word}`) is a second one beside
@@ -9617,12 +9623,6 @@ document's "residual risks accepted" paragraph.
 * [Low] docs, `docs/research-brcmstb-pcie.md` section 2: the worked `BASE_LIMIT` for the mainline tree's 64 MiB window
   reads `0x00300000`; FreeBSD's encoder (`bcm2838_pci.c:591-596`) gives `0x03f00000`, the limit being MiB `0x603f`.
   Re-check the section's worked values in a new dated record.
-* [Medium] PCIe, `erlang/apps/erx_pcie/src/erx_pcie_ecam.erl` ([design-pcie.md](docs/design-pcie.md#the-bridge-seam)):
-  `start/2` answers `{error, unsupported}`, since the device NIF has no access at a computed offset until the ECAM
-  configuration-space view above exists. The driver's accesses go through a `space()` (a module with `read/3` and
-  `write/4` at a window offset) that `open/2` takes and only the host tests supply. When the view lands, `start/2`
-  makes its state from the device record and the `space()` indirection is deleted; the view's bound by the window
-  then also covers a tree whose `bus-range` reaches past its ECAM `reg`.
 * [Medium] USB, `tools/lib/erx/chokepoint_rules/device.rb` ([design-usb.md](docs/design-usb.md#the-block-transport)):
   `device-posters` names neither `erx_xhci` as a poster of `erx_device:post/4` nor `erx_blk_write` as the one caller
   of `erx_usb_pipe:bulk_out/3`, and nothing holds `erx_device` to `erx_xhci` within `erlang/apps/erx_usb/`. Add the

@@ -122,6 +122,20 @@ bool	erx_device_write_field(const erx_device_t *device, const erx_device_registe
 	    const erx_device_field_t *field, uint64_t value);
 
 /*
+ * The configuration accesses (docs/design-generation.md, "Register inputs"): `width` bytes,
+ * 1, 2 or 4, at `offset` of one block of a configuration space of the device's peripheral, as
+ * erx_device_space_offset allows, so never past the block or the window. Each is false, having
+ * touched nothing, for anything else, and a write for a value wider than `width`. The space is
+ * the device's own, from erx_device_space_named over its peripheral.
+ */
+bool	erx_device_config_read(const erx_device_t *device, const erx_device_space_t *space, erx_device_element_t element,
+	    uint64_t offset, uint64_t width, uint64_t *value);
+bool	erx_device_config_write(const erx_device_t *device, const erx_device_space_t *space, erx_device_element_t element,
+	    uint64_t offset, uint64_t width, uint64_t value);
+/* How many blocks of the space lie wholly inside the device's window. */
+uint32_t	erx_device_space_elements(const erx_device_t *device, const erx_device_space_t *space);
+
+/*
  * How many elements of the register the device has, as its open resolved them: an array's
  * count, its live count where the device reports one, the instances of a capability's cluster
  * that its walk found, and for any other register 1, or 0 in a capability's cluster it did not find.

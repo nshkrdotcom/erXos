@@ -73,6 +73,24 @@ class ErxDeviceTest < Minitest::Test
     assert_match(/FAILED .*RESOLVE_REFUSED/, seeded_failure(NO_WINDOW_CHECK, file: 'erx_device_core.c', flags: ['-DERX_DEVICE_XHCI']))
   end
 
+def test_the_ecam_configuration_space_and_its_bounds
+  assert_match(/^erx_device ecam done$/, run_harness('-DERX_DEVICE_ECAM'))
+end
+
+# The seeded fault of the configuration view: the bound by a function's block removed, so an
+# access at offset 4096 of one function reaches the next function's space and is not refused.
+  NO_BLOCK_BOUND = ["offset >= space->size ||\n\t    width > space->size - offset)", "false)"].freeze
+# The window's bound removed: a block past the window, a bus the window does not cover, is reached.
+  NO_WINDOW_BOUND = ['index >= erx_device_space_blocks(space, size)', '((void)size, index >= space->count)'].freeze
+
+  def test_a_configuration_access_without_its_block_bound_fails_the_harness
+    assert_match(/FAILED .*0, 4096, 1, &at/, seeded_failure(NO_BLOCK_BOUND, file: 'erx_device_core.c', flags: ['-DERX_DEVICE_ECAM']))
+  end
+
+  def test_a_configuration_access_without_its_window_bound_fails_the_harness
+    assert_match(/FAILED .*16u << 8, 0, 4, &at/, seeded_failure(NO_WINDOW_BOUND, file: 'erx_device_core.c', flags: ['-DERX_DEVICE_ECAM']))
+  end
+
   def test_a_command_without_its_dma_check_fails_the_harness
     assert_match(/FAILED .*erx_device_command\(record, read_block \| dma\)/, seeded_failure(NO_DMA_CHECK))
   end

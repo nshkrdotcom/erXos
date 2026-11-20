@@ -43,11 +43,25 @@ module Erx
     # derived_from names the peripheral whose leading cluster this one's registers begin with;
     # leading is this one's own leading cluster, its name, offset and register count, or nil;
     # capabilities is the field that gives the head of its extended-capability list, or nil.
-    Device = Struct.new(:name, :size, :registers, :derived_from, :leading, :capabilities, keyword_init: true) do
+    # spaces are its configuration spaces (Space), empty for a peripheral of registers alone.
+    Device = Struct.new(:name, :size, :registers, :derived_from, :leading, :capabilities, :spaces, keyword_init: true) do
       # Each movable cluster of the device once, in the order its registers first appear.
       def bases = registers.filter_map(&:cluster).uniq
     end
     Leading = Data.define(:name, :offset, :count)
+    # A configuration space, the erXos extension for a PCIe bridge's configuration window
+    # (docs/design-generation.md, "Register inputs"): `count` blocks of `size` bytes, one
+    # function's configuration space each, one after another from `offset`. The device NIF
+    # reaches a block with 8-, 16- and 32-bit accesses at an offset inside it, and only a block
+    # that lies wholly inside the window it opened.
+    Space = Data.define(:name, :offset, :size, :count) do
+      def range = offset...(offset + size * count)
+    end
+    # The most bytes of one block: a PCIe function's configuration space, 4 KiB in ECAM.
+    SPACE_BYTES_MAX = 4096
+    # The most blocks of one space: every bus, device and function ECAM reaches (256 * 32 * 8).
+    SPACE_BLOCKS_MAX = 65_536
+    SPACES_MAX = 4
     IDENTIFIER = /\A[A-Za-z][A-Za-z0-9_]*\z/
     ARRAY_NAME = /\A(.*)\[%s\]\z/
     ELEMENTS_MAX = 256
@@ -73,7 +87,7 @@ module Erx
     # Every SVD file beneath hw/svd is an input; generation discovers them.
     SVD_GLOB = 'hw/svd/**/*.svd'
     MAX_SVD_BYTES = 4 * 1024 * 1024
-    CONTAINERS = %w[device peripherals peripheral addressBlock registers cluster register fields field
+    CONTAINERS = %w[device peripherals peripheral addressBlock registers cluster configurationSpace register fields field
                     enumeratedValues enumeratedValue].freeze
     module_function
 
@@ -214,14 +228,19 @@ module Erx
     end
 
     def parse_peripheral(peripheral, default_width:, earlier:)
-      known_elements(peripheral, allowed: %w[name description baseAddress addressBlock capabilitiesFrom registers])
+      known_elements(peripheral, allowed: %w[name description baseAddress addressBlock capabilitiesFrom registers
+                                             configurationSpace])
       raise Error, 'SVD peripheral base must be relative zero' unless number(text(peripheral, 'baseAddress')) == 0
       block = child(peripheral, 'addressBlock')
       known_elements(block, allowed: %w[offset size usage])
       raise Error, 'SVD address block must start at zero' unless number(text(block, 'offset')) == 0
       raise Error, 'SVD address block must hold registers' unless text(block, 'usage') == 'registers'
       size = number(text(block, 'size'), maximum: 1024 * 1024)
-      registers = child(peripheral, 'registers')
+      spaces = children(peripheral, 'configurationSpace').map { |node| parse_space(node) }.freeze
+      raise Error, "SVD peripheral takes at most #{SPACES_MAX} configuration spaces" if spaces.size > SPACES_MAX
+      registers = child(peripheral, 'registers', required: spaces.empty?)
+      return space_device(peripheral, size: size, spaces: spaces) if registers.nil?
+
       known_elements(registers, allowed: %w[register cluster])
       parsed = peripheral_registers(registers.children, default_width: default_width, block_size: size, earlier: earlier,
                                                         enumerations: peripheral_enumerations(registers))
@@ -248,6 +267,7 @@ module Erx
       end
       # Every fixed register, a copied one included, lies inside this peripheral's own block.
       raise Error, 'SVD register is outside its aligned block' if element_ranges(fixed).map(&:end).max > size
+      check_spaces(spaces, ranges: element_ranges(fixed), names: names)
       check_references(list, fixed, capabilities)
       # Field lists and shared enumerations multiply what the file spells out; this bounds
       # the names a peripheral's headers carry, one per field and one per field's value.
@@ -257,7 +277,51 @@ module Erx
 
       Device.new(name: identifier(text(peripheral, 'name')), size: size, registers: list.freeze,
                  derived_from: parsed.derived_from, leading: parsed.leading,
-                 capabilities: capabilities).freeze.then do |device|
+                 capabilities: capabilities, spaces: spaces).freeze.then do |device|
+        validate_symbols(device)
+        device
+      end
+    end
+
+    # A configuration space: NAME, or NAME[%s] with a dim of 2 or more for an array of blocks;
+    # its first block's addressOffset and one block's size, each a multiple of 4, so that every
+    # 32-bit access inside a block is aligned.
+    def parse_space(node)
+      known_elements(node, allowed: %w[name description addressOffset size dim])
+      name = text(node, 'name')
+      offset = number(text(node, 'addressOffset'), maximum: 1024 * 1024)
+      size = number(text(node, 'size'), maximum: SPACE_BYTES_MAX)
+      unless size >= 4 && (size % 4).zero? && (offset % 4).zero?
+        raise Error, "an SVD configuration space has blocks of 4 to #{SPACE_BYTES_MAX} bytes at an offset of 4"
+      end
+      return Space.new(name: identifier(name), offset: offset, size: size, count: 1) if child(node, 'dim', required: false).nil?
+
+      count = number(text(node, 'dim'), maximum: SPACE_BLOCKS_MAX)
+      base = name[ARRAY_NAME, 1]
+      raise Error, 'an SVD configuration space array is NAME[%s] of dim 2 or more' unless base && count >= 2
+
+      Space.new(name: identifier(base), offset: offset, size: size, count: count)
+    end
+
+    # Spaces meet neither each other nor a register at a fixed offset, and none shares a
+    # register's name, since a driver names both.
+    def check_spaces(spaces, ranges:, names:)
+      all = names + spaces.map { |space| space.name.downcase }
+      raise Error, 'SVD configuration space names collide' unless all.uniq == all
+
+      (ranges + spaces.map(&:range)).sort_by(&:begin).each_cons(2) do |left, right|
+        raise Error, 'SVD configuration spaces overlap' if left.end > right.begin
+      end
+    end
+
+    # A peripheral of configuration spaces alone, as an ECAM window is: no registers, so no
+    # clusters and no capability list.
+    def space_device(peripheral, size:, spaces:)
+      raise Error, 'an SVD peripheral without registers has no capabilitiesFrom' unless text(peripheral, 'capabilitiesFrom', default: '').empty?
+
+      check_spaces(spaces, ranges: [], names: [])
+      Device.new(name: identifier(text(peripheral, 'name')), size: size, registers: [].freeze, derived_from: nil,
+                 leading: nil, capabilities: nil, spaces: spaces).freeze.then do |device|
         validate_symbols(device)
         device
       end
@@ -964,6 +1028,19 @@ module Erx
         \tuint32_t\tfirst;
         } erx_device_base_t;
 
+        /*
+         * A configuration space (docs/design-generation.md, "Register inputs"): `count` blocks
+         * of `size` bytes, block i at `offset` + i * `size` of the window, each reached with 8-,
+         * 16- and 32-bit accesses at an offset inside it, and only while it lies wholly inside
+         * the window the device was opened with.
+         */
+        typedef struct erx_device_space {
+        \tconst char\t*name;
+        \tuint64_t\toffset;
+        \tuint32_t\tsize;
+        \tuint32_t\tcount;
+        } erx_device_space_t;
+
         typedef struct erx_device_peripheral {
         \tconst char\t\t\t*name;
         \tconst erx_device_register_t\t*registers;
@@ -977,6 +1054,8 @@ module Erx
         \tbool\t\t\t\tlisted;		/* it has an extended-capability list, whose head */
         \tuint32_t\t\t\tlist_reg;	/* field list_field (an index in its fields) of register */
         \tuint32_t\t\t\tlist_field;	/* list_reg gives in 32-bit words from the window's start */
+        \tconst erx_device_space_t\t*spaces;	/* its configuration spaces, or NULL */
+        \tuint32_t\t\t\tspace_count;
         } erx_device_peripheral_t;
       C
     end
@@ -1023,10 +1102,20 @@ module Erx
         "\t{ .name = \"#{movable.cluster.downcase}\", .reg = #{register}, .field = #{field}, " \
           ".capability = #{movable.capability || 0}, .instances = #{movable.instances}, .first = #{first} },"
       end
-      ["static const erx_device_field_t #{prefix}_fields[] = {", *fields, '};', '',
-       "static const erx_device_register_t #{prefix}_registers[] = {", *registers, '};', '',
-       *(bases.empty? ? [] : ["static const erx_device_base_t #{prefix}_bases[] = {", *bases, '};', ''])]
+      spaces = device.spaces.map do |space|
+        "\t{ .name = \"#{space.name.downcase}\", .offset = #{space.offset}, .size = #{space.size}, .count = #{space.count} },"
+      end
+      [*table_array("erx_device_field_t #{prefix}_fields", fields),
+       *table_array("erx_device_register_t #{prefix}_registers", registers),
+       *table_array("erx_device_base_t #{prefix}_bases", bases),
+       *table_array("erx_device_space_t #{prefix}_spaces", spaces)]
     end
+
+    # A static array of the rows, or nothing for none, which C17 has no empty initializer for;
+    # the peripheral's entry then names NULL (table_pointer).
+    def table_array(declaration, rows) = rows.empty? ? [] : ["static const #{declaration}[] = {", *rows, '};', '']
+
+    def table_pointer(name, rows) = rows.empty? ? 'NULL' : name
 
     def table_list(device)
       register, field = device.capabilities ? table_indexes(device, device.capabilities) : [0, 0]
@@ -1037,12 +1126,15 @@ module Erx
     def device_table_header(devices)
       entries = devices.map do |device|
         prefix = "erx_device_#{device.name.downcase}"
-        "\t{ .name = \"#{device.name.downcase}\", .registers = #{prefix}_registers, .fields = #{prefix}_fields, " \
+        fields = device.registers.sum { |register| register.fields.size }
+        "\t{ .name = \"#{device.name.downcase}\", .registers = #{table_pointer("#{prefix}_registers", device.registers)}, " \
+          ".fields = #{table_pointer("#{prefix}_fields", Array.new(fields))}, " \
           ".window_size = #{device.size}, .register_count = #{device.registers.size}, " \
-          ".field_count = #{device.registers.sum { |register| register.fields.size }}, " \
+          ".field_count = #{fields}, " \
           ".derived_from = #{device.derived_from ? %("#{device.derived_from.downcase}") : 'NULL'}, " \
-          ".bases = #{device.bases.empty? ? 'NULL' : "#{prefix}_bases"}, .base_count = #{device.bases.size}, " \
-          "#{table_list(device)} },"
+          ".bases = #{table_pointer("#{prefix}_bases", device.bases)}, .base_count = #{device.bases.size}, " \
+          "#{table_list(device)}, .spaces = #{table_pointer("#{prefix}_spaces", device.spaces)}, " \
+          ".space_count = #{device.spaces.size} },"
       end
       generated_header('ERX_HW_DEVICE_TABLE_H', [*devices.flat_map { |device| table_device(device) },
                                                  'static const erx_device_peripheral_t erx_device_peripherals[] = {',

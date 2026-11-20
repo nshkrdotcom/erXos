@@ -1031,9 +1031,73 @@ check_xhci(void)
 }
 #endif
 
+/*
+ * The ECAM window's configuration space (hw/svd/pci_ecam/pci_ecam.svd): one block of 4 KiB per
+ * routing ID, (bus - first) << 8 | device << 3 | function, so a function's byte at offset R is at
+ * (bus - first) << 20 | device << 15 | function << 12 | R; an offset past the block, a width or
+ * offset the access does not take, and a block past the window, a bus the window does not
+ * cover, are each refused.
+ */
+#ifdef ERX_DEVICE_ECAM
+#define ECAM_BUS_BYTES	0x100000u
+
+static uint64_t
+ecam_at(const erx_device_space_t *space, uint64_t size, uint64_t routing, uint64_t offset, uint64_t width)
+{
+	uint64_t at = UINT64_MAX;
+
+	CHECK(erx_device_space_offset(space, size, true, routing, offset, width, &at));
+	return (at);
+}
+
+static void
+check_ecam(void)
+{
+	const erx_device_peripheral_t *const ecam = erx_device_peripheral_find("pci_ecam", 8);
+	const uint64_t sixteen = 16u * ECAM_BUS_BYTES;
+	const erx_device_space_t *space;
+	uint64_t at;
+
+	CHECK(ecam != NULL && ecam->register_count == 0 && ecam->space_count == 1 && ecam->window_size == ECAM_BUS_BYTES);
+	space = erx_device_space_named(ecam, "function", 8);
+	CHECK(space != NULL && space->offset == 0 && space->size == 4096 && space->count == 65536);
+	CHECK(erx_device_space_named(ecam, "functio", 7) == NULL && erx_device_space_named(ecam, "functions", 9) == NULL);
+	CHECK(erx_device_space_blocks(space, ECAM_BUS_BYTES) == 256 && erx_device_space_blocks(space, sixteen) == 4096);
+	CHECK(erx_device_space_blocks(space, 256u * ECAM_BUS_BYTES) == 65536 && erx_device_space_blocks(space, 1u << 30) == 65536);
+	CHECK(erx_device_space_blocks(space, 4095) == 0 && erx_device_space_blocks(space, ECAM_BUS_BYTES - 1) == 255);
+	/* Bus 2, device 3, function 4 of a bridge whose first bus is 0. */
+	CHECK(ecam_at(space, sixteen, 2u << 8 | 3u << 3 | 4u, 0, 4) == (2u << 20 | 3u << 15 | 4u << 12));
+	CHECK(ecam_at(space, sixteen, 0x0108, 0x3c, 1) == 0x108000 + 0x3c);
+	CHECK(ecam_at(space, sixteen, 0x0108, 0x0e, 2) == 0x108000 + 0x0e);
+	CHECK(ecam_at(space, sixteen, 0, 4095, 1) == 4095 && ecam_at(space, sixteen, 0, 4092, 4) == 4092);
+	CHECK(ecam_at(space, sixteen, 4095, 4092, 4) == sixteen - 4);
+	/* An offset past the function's 4 KiB, or an access that reaches past it. */
+	CHECK(!erx_device_space_offset(space, sixteen, true, 0, 4096, 1, &at));
+	CHECK(!erx_device_space_offset(space, sixteen, true, 0, 4096, 4, &at));
+	CHECK(!erx_device_space_offset(space, sixteen, true, 0, UINT64_MAX, 1, &at));
+	CHECK(!erx_device_space_offset(space, sixteen, true, 0, UINT64_MAX - 3, 4, &at));
+	/* A bus past the window: the 16-bus window's bus 16, and the 1-bus window's bus 1. */
+	CHECK(!erx_device_space_offset(space, sixteen, true, 16u << 8, 0, 4, &at));
+	CHECK(!erx_device_space_offset(space, ECAM_BUS_BYTES, true, 1u << 8, 0, 4, &at));
+	CHECK(!erx_device_space_offset(space, 256u * ECAM_BUS_BYTES, true, 65536, 0, 4, &at));
+	CHECK(!erx_device_space_offset(space, 1u << 30, true, UINT64_MAX, 0, 4, &at));
+	/* Widths the access does not take, offsets not a multiple of the width, and the array unindexed. */
+	CHECK(!erx_device_space_offset(space, sixteen, true, 0, 0, 0, &at) && !erx_device_space_offset(space, sixteen, true, 0, 0, 3, &at));
+	CHECK(!erx_device_space_offset(space, sixteen, true, 0, 0, 8, &at) && !erx_device_space_offset(space, sixteen, true, 0, 2, 4, &at));
+	CHECK(!erx_device_space_offset(space, sixteen, true, 0, 1, 2, &at) && !erx_device_space_offset(space, sixteen, false, 0, 0, 4, &at));
+	/* A window that cannot be aligned for 32-bit accesses is refused at open. */
+	CHECK(erx_device_base_aligned(ecam, 0x3f000000) && !erx_device_base_aligned(ecam, 0x3f000002));
+}
+#endif
+
 int
 main(void)
 {
+#ifdef ERX_DEVICE_ECAM
+	check_ecam();
+	printf("erx_device ecam done\n");
+	return (0);
+#endif
 #ifdef ERX_DEVICE_XHCI
 	check_xhci();
 	printf("erx_device xhci done\n");
