@@ -458,9 +458,21 @@ reset, which the driver then resets by its registers. The longest
 ### Processes
 
 The PCIe domain, `pcie` (node `pcie@erxos`), runs one permanent
-application, `erx_pcie` in `erlang/apps/erx_pcie/`, whose one process,
-the **enumerator** (`erx_pcie_enumerator`), owns every bridge the domain holds and serves the
-`pcie` facet. Its decisions are pure modules:
+application, `erx_pcie` in `erlang/apps/erx_pcie/`, with two processes
+below one supervisor (`erx_pcie_sup`): the **enumerator**
+(`erx_pcie_enumerator`), which owns every bridge the domain holds and
+serves `pcie`, and the **mint** of the `pcie` facet
+(`erx_pcie_facet`), which grants it to the system domain alone and
+whose facets forward each well-formed request to the enumerator by its
+registered name. They are two because each must be up at a different
+moment of the boot. The mint must be named before init's ready report
+([Facets](#facets)), so the boot script starts it; the enumerator needs
+the `pci_bus` facet the ready answer brings, so the domain row's
+`-eval ok=erx_pcie_sup:start_enumerator()` starts it, after the answer.
+And the enumerator is blocked in its `report` call while the system
+domain mints its `pcie` grant, which the device service awaits before it
+answers, so a mint request the enumerator had to answer would never be
+answered. Its decisions are pure modules:
 
 | Module | Pure function |
 | --- | --- |
@@ -473,11 +485,17 @@ the **enumerator** (`erx_pcie_enumerator`), owns every bridge the domain holds a
 
 The effects, every configuration access and every bridge register, go
 through the bridge driver's `access` and the device NIF, and
-`erx_pcie_apply` is the one caller of `plan/2`. Any crash of the
-enumerator ends the application and so the domain, which the domain
-service restarts within the row's intensity; the restarted domain asks
-for the targets again. There is no supervisor below it: the domain's
-restart is the recovery.
+`erx_pcie_apply` is the one caller of `plan/2`. The supervisor is
+`one_for_all` with intensity 0, so the end of either process ends the
+other and the application, and so the domain, which the domain service
+restarts within the row's intensity; the restarted domain asks for the
+targets again. No process is restarted in place: the domain's restart
+is the recovery. So no mint outlives its enumerator, and a `pcie`
+facet, which ends with its mint, never stands in front of an
+enumerator of another incarnation. A request that reaches a facet
+before the `-eval` has started the enumerator is refused
+`{error, unavailable}`; the device service sends none then, since it
+calls `pcie` only after answering the enumerator's report.
 
 ### The bridge seam
 
@@ -1193,7 +1211,7 @@ service pcie
 facet pci_bus
   grantee @domain.pcie
   service @service.pci_bus
-  operations none
+  operations targets,report,firmware
   max_request 65536
   in_flight 1
   reductions 5000000
@@ -1211,7 +1229,7 @@ facet pcie
 facet pci
   grantee @domain.HOLDER
   service @service.pci
-  operations none
+  operations open,master,reset
   max_request 1024
   in_flight DEVICES
   reductions 100000
@@ -1220,7 +1238,13 @@ facet pci
 ```
 
 with one `pci` facet for each configured domain holding a `pci` device,
-`DEVICES` the number of `pci` devices that domain holds.
+`DEVICES` the number of `pci` devices that domain holds. The `pci_bus` and
+`pci` rows list every operation of their interface, since the system
+domain's facets (`erx_pci_bus_facet`, `erx_pci_facet`) check a grant's
+operations and admit none their row leaves out; the `pcie` row lists
+none, as every service a configured domain serves does on Fiasco
+([design-time.md](design-time.md#on-fiasco)), and `erx_pcie_facet`, which
+has no `operation/1`, admits by the request's shape alone.
 
 ### The rows and the facets' limits
 
@@ -1346,7 +1370,7 @@ domain pcie
   release @artifact.pcie
   restarts 5
   restart_period_s 600
-  args "-- -root / -bindir /bin -progname erl -home / -nouser -nocookie -no_epmd -proto_dist erx"
+  args "-- -root / -bindir /bin -progname erl -home / -nouser -nocookie -no_epmd -proto_dist erx -eval ok=erx_pcie_sup:start_enumerator()"
 ```
 
 * **`max_frame`** 131,072 holds the widest answer the domain takes,
@@ -1408,7 +1432,8 @@ the file's rows move into `config/manifest/qemu-virt-development.txt`,
 the board part, which then grows the system principal's memory by the
 domain's 25 MiB, its domains quota, `max_domains` and `max_connections`
 by one and `root_memory` by 25 MiB, and gives the grant its room in
-`system` ([Open decisions](#open-decisions)); the file is then deleted.
+`system`, which grows to 3.1 CPUs in QEMU `virt`'s development manifest
+([Open decisions](#open-decisions)); the file is then deleted.
 
 ## The catalogue and gives
 
@@ -1685,6 +1710,8 @@ been made, which the readback catches. That is a residual of Fiasco
 | | `{error, busy}` | a function-level reset with transactions still pending after 1000 ms |
 | | `{error, route}` | the route does not fit the function: no such capability, or a doorbell beyond its MSI address width |
 | | `{error, unknown}` | a place the enumerator has no layout for |
+| | `{error, badarg}` | the facet's refusal of a request out of the interface's shape, before the enumerator sees it |
+| | `{error, unavailable}` | the facet's refusal of a request that finds no enumerator registered ([Processes](#processes)) |
 | `pci_bus:report` | `{ok, Settings}` | after intake, once the system domain holds the incarnation's `pcie`; refusals are per function, in the log and in `/dev` |
 | | `{error, unavailable}` | `erx_domain:await_grant(pcie, D)` answered an error: the grant failed or missed the mint core's deadline, the incarnation ended, or it provides no `pcie` |
 | `pci_bus:firmware` | `{error, Status}` | the kernel call's status other than `ERX_OK`, such as `ERX_ENOTSUP`, `ERX_ETIMEDOUT` or `ERX_EBUSY` |

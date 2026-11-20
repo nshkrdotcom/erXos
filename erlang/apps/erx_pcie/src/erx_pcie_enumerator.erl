@@ -3,10 +3,10 @@
 
 -module(erx_pcie_enumerator).
 -moduledoc """
-The PCIe domain's one process, the enumerator (docs/design-pcie.md, "The
-PCIe domain", "Facets"), and the erx_pcie application that runs it, with
-no supervisor below it: any crash of the enumerator ends the application
-and so the domain, whose restart is the recovery.
+The PCIe domain's enumerator (docs/design-pcie.md, "The PCIe domain",
+"Processes", "Facets"), registered under its module's name below
+erx_pcie_sup, which ends the domain at any crash of it, so the domain's
+restart is the recovery.
 
 **The start.** The enumerator asks the device service for its targets
 over `pci_bus`, `{ok, Bridges, Layouts, Settings}`: each bridge's record,
@@ -27,7 +27,8 @@ found to the device service, `{report, Functions}`, each its record and
 whether the start kept it at its setting, and applies each setting the
 answer carries that differs from its target's. Only then does it serve.
 
-**Serving** (`pcie`): `{set, Key, Setting}` takes a function to its
+**Serving** (`pcie`, each request erx_pcie_facet admits forwarded here):
+`{set, Key, Setting}` takes a function to its
 layout and Setting, turning it off when the mastering rule refuses
 Setting, and `{reset, Key}` is the function-level reset of
 "The plan": `off`, then, where the function offers the reset, pending
@@ -43,11 +44,9 @@ bridge and a model device service: `bus`, one request to `pci_bus`;
 milliseconds. An access that answers `link_down` exits the process.
 """.
 
--behaviour(application).
 -behaviour(gen_server).
 
--export([start/2, stop/1]).
--export([start_link/1, set/3, reset/2]).
+-export([start_link/0, start_link/1, set/3, reset/2]).
 -export([init/1, handle_continue/2, handle_call/3, handle_cast/2]).
 -export_type([edge/0, key/0, reported/0]).
 
@@ -73,15 +72,20 @@ milliseconds. An access that answers `link_down` exits the process.
 -define(FLR_POLL_MS, 100).
 -define(FLR_POLLS, 10).
 -define(FLR_WAIT_MS, 100).
+%% The longest wait for a pci_bus answer: the answer to report waits for the
+%% system domain's pcie grant, whose operation the domain service's mint core
+%% abandons after 10 s (erx_domain_mints), and a firmware request has a 1 s
+%% deadline, so twice the mint core's deadline is never reached by a
+%% device service that answers.
+-define(BUS_TIMEOUT_MS, 20000).
 
--doc "The application's start: the enumerator over the domain's own edge.".
-start(_Type, _Args) ->
-    start_link(#{bus => fun bus/1, open => fun open/1, sleep => fun timer:sleep/1}).
+-doc "Starts the domain's enumerator over its own edge, registered under the module's name.".
+-spec start_link() -> {ok, pid()}.
+start_link() ->
+    Edge = #{bus => fun bus/1, open => fun open/1, sleep => fun timer:sleep/1},
+    gen_server:start_link({local, ?MODULE}, ?MODULE, Edge, []).
 
-stop(_State) ->
-    ok.
-
--doc "Starts the enumerator over Edge; it starts its bridges before it serves.".
+-doc "Starts an enumerator over Edge, unregistered, as the host tests run it; it starts its bridges before it serves.".
 -spec start_link(edge()) -> {ok, pid()}.
 start_link(Edge) ->
     gen_server:start_link(?MODULE, Edge, []).
@@ -363,11 +367,15 @@ keep_driver({Index, _, _, _}, Driver, #{drivers := Drivers} = State) ->
 
 %% --- The domain's edge -------------------------------------------------------
 
-%% The pci_bus facet on the target: no system manifest names a pci_bus
-%% service, so the domain has no facet to call and its start ends here
-%% (TODO.md, "the start's other side").
-bus(_Request) ->
-    {error, no_facet}.
+%% The pci_bus facet on the target: one call to the facet erx:cap/1 finds,
+%% answered when the device service answers, or {error, no_facet} when the
+%% domain holds none. A facet whose server has ended, or an answer later
+%% than ?BUS_TIMEOUT_MS, exits the call, and so ends the domain.
+bus(Request) ->
+    case erx:cap(pci_bus) of
+        Facet when is_pid(Facet) -> gen_server:call(Facet, Request, ?BUS_TIMEOUT_MS);
+        undefined -> {error, no_facet}
+    end.
 
 %% A bridge's driver on the target ("The bridge seam"): the device record of
 %% role `configuration` whose INDEX is the bridge's manifest device row,

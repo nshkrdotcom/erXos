@@ -11,11 +11,14 @@ require_relative '../fixtures/erlang_build'
 # driver over the configuration-space model test/erlang/erx_pcie_model.erl, and
 # test/erlang/erx_pcie_place_tests.erl, the cases of placement, and
 # test/erlang/erx_pcie_enumerator_tests.erl, the enumerator's start and its pcie
-# operations over the same model, and test/erlang/erx_pcie_apply_tests.erl, the planner's
-# effect layer over the model with writes that do not take, against the erx_pcie
+# operations over the same model, test/erlang/erx_pcie_apply_tests.erl, the planner's
+# effect layer over the model with writes that do not take, and
+# test/erlang/erx_pcie_facet_tests.erl, the pcie facet in front of a stand-in enumerator,
+# against the erx_pcie
 # application compiled from source on stock's emulator (ERX_ERL and ERX_ERLC, which make
 # check supplies). Then each seeded fault, applied to a copy of its module, must fail
-# the case named for it (docs/design-pcie.md, "Host tests of the pure cores"): the
+# the case named for it (docs/design-pcie.md, "Host tests of the pure cores"): the pcie
+# facet's setting check removed, so a setting of no mode reaches the enumerator; the
 # closed bridge's place check removed, so the walk reaches function 1 of the root
 # port's bus; ECAM's bus range ignored; the header type taken by parse/1 alone, so a
 # CardBus header reads as malformed; a sized BAR left at all ones; the alignment
@@ -34,8 +37,9 @@ class ErxPcieWalkTest < Minitest::Test
   TESTS = %w[test/erlang/erx_pcie_cfg_tests.erl test/erlang/erx_pcie_model.erl
              test/erlang/erx_pcie_walk_tests.erl test/erlang/erx_pcie_place_tests.erl
              test/erlang/erx_pcie_enumerator_tests.erl test/erlang/erx_pcie_plan_tests.erl
-             test/erlang/erx_pcie_apply_tests.erl].freeze
-  CASES = %w[erx_pcie_walk_tests erx_pcie_place_tests erx_pcie_enumerator_tests erx_pcie_apply_tests].freeze
+             test/erlang/erx_pcie_apply_tests.erl test/erlang/erx_pcie_facet_tests.erl].freeze
+  CASES = %w[erx_pcie_walk_tests erx_pcie_place_tests erx_pcie_enumerator_tests erx_pcie_apply_tests
+             erx_pcie_facet_tests].freeze
   DEADLINE_SECONDS = '120'
 
   # A seed may also name the property its catching case must report broken.
@@ -44,6 +48,11 @@ class ErxPcieWalkTest < Minitest::Test
   end
 
   SEEDS = [
+    Seed.new(fault: "the pcie facet's setting check removed",
+             module_path: 'erlang/apps/erx_pcie/src/erx_pcie_facet.erl',
+             anchor: 'well_formed({set, Key, Setting}) -> key(Key) andalso setting(Setting);',
+             replacement: 'well_formed({set, Key, Setting}) -> key(Key) andalso (setting(Setting) orelse true);',
+             catching_case: 'a_request_out_of_shape_reaches_no_enumerator_test'),
     Seed.new(fault: "the closed bridge's place check removed",
              module_path: 'erlang/apps/erx_pcie/src/erx_pcie_bridge.erl',
              anchor: '    Device =:= 0 andalso Function =:= 0;',

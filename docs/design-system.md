@@ -2394,8 +2394,14 @@ mint named after the report is refused. A mint lives as long as its domain's inc
 providers are the report's until the domain ends, so a mint's end ends its
 domain, as a permanent application's does, and the restarted domain's
 report provides again. A server reports ready
-only once it can serve: the storage domain's report follows its mount of
-`/data`. The ready-report gate authenticates the reporting domain and its
+once its mints are named, and each of its services serves from the
+moment its protocol says: a storage mint runs its mount after the
+report and holds a mint request that comes first in its queue until
+the mount is done (`erx_storage_mint`), and for the PCIe protocol
+serving starts at the answer to the PCIe domain's report: its mint
+grants `pcie` at once, and its enumerator takes a request only once the
+device service has answered that report
+([design-pcie.md](design-pcie.md#processes)). The ready-report gate authenticates the reporting domain and its
 connection agent ([Creating a domain](#creating-a-domain)), but the
 `provides` map is the server's own words and is untrusted. The domain
 service takes from it only what the manifest and the reporting

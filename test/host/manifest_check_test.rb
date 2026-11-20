@@ -6,6 +6,7 @@ require 'json'
 require 'minitest/autorun'
 require_relative '../../tools/lib/erx/manifest'
 require_relative '../../tools/lib/erx/platform'
+require_relative '../../tools/lib/erx/pcie_domain'
 require_relative '../fixtures/manifest_context'
 
 # Phase 1's manifest check (docs/design-fiasco.md): each kept property of
@@ -141,6 +142,18 @@ class ManifestCheckTest < Minitest::Test
     assert_equal 13, view.count('devices')
     assert_equal 10, view.count('windows')
     assert_equal 1, view.count('images')
+  end
+
+  # The PCIe domain's manifest, the development manifest without the web domain and with
+  # config/manifest/qemu-virt-pcie.txt (PcieDomain), passes the check: the PCIe domain
+  # stands in the web domain's place, holds the ECAM bridge's unit, and its grants keep
+  # the root's margin as the development manifest does.
+  def test_the_pcie_domain_s_manifest_is_accepted
+    platform = Erx::Platform.load(root: ROOT, name: 'qemu-virt')
+    result = admit(Erx::PcieDomain.manifest_source(ROOT, platform: platform))
+    view = @codec.open('manifest', result.bytes)
+    assert_equal 4, view.count('domains')
+    assert_equal 8 << 20, result.report.fetch('root_memory') - result.report.fetch('promised_memory')
   end
 
   # The website's manifest passes the same check: its storage and network domains, without

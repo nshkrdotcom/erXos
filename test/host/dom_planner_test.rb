@@ -579,6 +579,13 @@ class DomPlannerTest < Minitest::Test
   # The device of the platform record's unit key, the record's units having one each.
   def device_of(platform, key) = platform.fetch('units').find { |unit| unit.fetch('key') == key }.fetch('devices').first
 
+  # The system domain's pci service and its facet for alpha, the VL805's holder, since the
+  # domain tests' manifest has no system service: a configured domain holds one exactly when it
+  # holds a pci device (docs/design-pcie.md, "The manifest"), with the limits design-pcie.md's
+  # "The rows and the facets' limits" gives a holder of one pci device.
+  VL805_PCI_FACET = "service pci\n  server system\n  interface pci\nfacet alpha_pci\n  grantee @domain.alpha\n  service @service.pci\n  operations open,master,reset\n" \
+                    "  max_request 1024\n  in_flight 1\n  reductions 100000\n  period_ns 1000000000\n  max_heap_size 8192\n"
+
   # The packed manifest of the Pi 4's closed bridge and the VL805 at its one place, line 175,
   # held by alpha, on the qemu-virt platform record (docs/design-usb.md, "The Phase 1 part").
   def vl805_manifest
@@ -595,7 +602,7 @@ class DomPlannerTest < Minitest::Test
     platform.fetch('units').push({ 'key' => 'pcie', 'devices' => [bridge] }, { 'key' => 'vl805', 'devices' => [function] })
     @context = Erx::Manifest::Context.new(**ManifestContextFixture.arguments(@codec).merge(platform: platform))
     source = with_domains('alpha', 'pcie') + "unit pcie\n  placement \"pcie\"\n  holder @domain.pcie\n" \
-                                             "unit vl805\n  placement \"vl805\"\n  holder @domain.alpha\n"
+                                             "unit vl805\n  placement \"vl805\"\n  holder @domain.alpha\n" + VL805_PCI_FACET
     admit(source).bytes
   end
 
@@ -669,7 +676,7 @@ class DomPlannerTest < Minitest::Test
     platform.fetch('units').push({ 'key' => 'pcie', 'devices' => [bridge] }, { 'key' => 'vl805', 'devices' => [function] })
     @context = Erx::Manifest::Context.new(**ManifestContextFixture.arguments(@codec).merge(platform: platform))
     source = with_domains('alpha', 'pcie') + "unit pcie\n  placement \"pcie\"\n  holder @domain.pcie\n" \
-                                             "unit vl805\n  placement \"vl805\"\n  holder @domain.alpha\n"
+                                             "unit vl805\n  placement \"vl805\"\n  holder @domain.alpha\n" + VL805_PCI_FACET
     error = assert_raises(Erx::Manifest::Invalid) { admit(source) }
     assert_equal 'view', error.field, error.message
     assert_match(/share an interrupt line are in two units/, error.message)
@@ -901,7 +908,8 @@ class DomPlannerTest < Minitest::Test
                 %w[display 0 windows], %w[home 2 files], %w[inspect none inspect],
                 %w[log none log], %w[login_keys 2 files], %w[machine none files], %w[net 1 net],
                 %w[network_ctl 1 driver_control],
-                %w[packages 2 files], %w[start none files], %w[storage_ctl 2 driver_control],
+                %w[packages 2 files], %w[pci none pci], %w[pci_bus none pci_bus], %w[start none files],
+                %w[storage_ctl 2 driver_control],
                 %w[system 2 files], %w[web 3 web]]
     assert_equal services.each_with_index.map { |(name, server, kind), index|
                    "service #{index} name=#{name} server=#{server} interface=#{interface.call(kind)}"

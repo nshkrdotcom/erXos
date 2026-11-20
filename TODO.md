@@ -2293,8 +2293,8 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
 * [Medium] PCIe domain and device service, the start's other side (`erlang/apps/erx_pcie/src/erx_pcie_enumerator.erl`,
   `erlang/apps/erx_domain/src/erx_devices_pci.erl`, `abi/services/pci_bus.txt`, `pci.txt`, `pcie.txt`,
   [design-pcie.md](docs/design-pcie.md#facets)): the enumerator runs its start and serves `set` and `reset` over its
-  edge on the host, and on the target opens an ECAM bridge's driver over its given record, but its `bus` answers
-  `{error, no_facet}`, so the domain does not start. The device service's PCIe process (`erx_devices_pci`) applies
+  edge on the host, and on the target opens an ECAM bridge's driver over its given record and calls `pci_bus`
+  through the facet `erx:cap/1` finds; its mint (`erx_pcie_facet`) grants `pcie` to the system domain. The device service's PCIe process (`erx_devices_pci`) applies
   `erx_devices_pci_core` behind the `pci_bus` and `pci` facets (`erx_pci_bus_facet`, `erx_pci_facet`, minted in
   front of the domain service and forwarding to the registered process), takes every domain's end from the domain
   service's forward, answers `report` after `erx_domain:await_grant(pcie, D)` with the incarnation written to the
@@ -2303,13 +2303,15 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   interfaces' servers and grantees to design-pcie.md's "The manifest". Still to build: `firmware`, which answers
   `{error, enotsup}` until `erx_domain_lib:pci_firmware/1` exists, and
   that waits for `erx_firmware_request`, which no ABI file or backend declares yet; the identity check
-  of a reported function against its row's compatible string ("The catalogue and gives"); a board part that
-  places a bridge (QEMU virt's ECAM bridge has no platform row), with the domain `pcie`'s row and the three
-  facet rows, whose limits (the domain's memory, `pci_bus`'s `max_request`, which must hold a whole report) no
-  design states yet; the `pcie` facet's mint in the PCIe domain over `erx_facet`, and `bus/1` over the
-  `pci_bus` facet. The process and its facets have host tests only; the `pcie` QEMU suite covers the
-  target. The BCM2711's bridge has its core (`erx_pcie_bcm2711_core`) and no driver module with `start` over a
+  of a reported function against its row's compatible string ("The catalogue and gives"); the `pcie` QEMU suite
+  over `Erx::PcieDomain`'s manifest (`config/manifest/qemu-virt-pcie.txt`), with its test holder and its
+  walk-and-report and hold cases. Until then the process and its facets have host tests only. The BCM2711's bridge has its core (`erx_pcie_bcm2711_core`) and no driver module with `start` over a
   device, so the enumerator refuses its record (`no_driver_module`).
+* [Medium] PCIe and the drivers' control, one mint for system-domain-only grants (`erlang/apps/erx_pcie/src/erx_pcie_facet.erl`
+  `start_link/0`, `mint_init/1`, `mint/1`; `erlang/apps/erx/src/erx_driver_ctl.erl` `start_mint`, `mint_init`, `mint`): the pcie
+  mint repeats the driver-control mint line for line but for its callback module and the grant's extra keys, so a fix
+  to either (its system messages, the withdrawal of an abandoned grant) must be made twice, and the pcie mint's
+  grant path has no host test. Fold both into one mint that takes the callback and the extra grant keys.
 * [Medium] PCIe, the start's leftovers (`erlang/apps/erx_pcie/src/erx_pcie_enumerator.erl`, `abi/services/pci.txt`,
   [design-pcie.md](docs/design-pcie.md#facets)): the start holds a changed function off by its own copy of the
   intake's comparison (`changed` in `erx_pcie_enumerator`, `pci_same` in `dom_core.c`), which the answer to `report`
@@ -3265,6 +3267,11 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   ([todo-performance.md](docs/todo-performance.md), the `system` mount's boot cost).
   Give the domain service a withdrawal it sends the mint for every request it stops
   waiting on, or have each grant end unless the grantee claims it within the deadline.
+* [Low] storage, docs (`docs/design-stopgap.md`, the paragraph on a restart: "answers its start only once the volume
+  has mounted, so ... the domain reports ready, only over a mounted volume, and a mount that fails fails the domain's
+  boot"): `erx_storage_mint` runs its mount after the ready report, in its own process, and holds a mint request
+  until the mount is done, so the domain reports ready before the volume mounts and a failed mount ends the domain
+  after its boot; design-system.md's "Providers" says so. Restate the paragraph from the mint's order.
 * [Medium] storage, `erx_storage_mint` loop (`mint/3`): no host test drives the loop itself.
   `test/erlang/erx_storage_mint_tests.erl` covers `mint_request/3`, `erx_fs_grants:grant_options/1` and the
   answers `grant/5` gives, refusals included, but not that the loop (`mint/3`,
