@@ -741,7 +741,13 @@ answers the error `ERX_ESTALE` until its holder closes it, and never
 names whatever object comes next. The record's generation does not cover a
 holder's own close; the entry's own generation does, carried in the
 handle's value, so a closed handle answers `ERX_ESTALE` too, even once
-its entry, taken first in, first out, names another object. Each entry
+its entry, taken first in, first out, names another object. A doorbell
+or an interrupt line is the one exception: its holder rings and
+acknowledges it straight through Fiasco, on a capability the root
+places at the Fiasco slot the handle's index fixes, so those two uses
+make no request to the root and are checked by Fiasco at the slot
+alone, while every other use of its handle still goes through the
+root. Each entry
 records its rights, but no call except destroy checks them yet: any
 holder may use an object as its type allows, and only destroying it is
 kept to the object's creator. The design adds rights that start from

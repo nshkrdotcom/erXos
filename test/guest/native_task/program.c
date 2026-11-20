@@ -299,10 +299,11 @@ mode_race(void)
 
 /*
  * A task makes no line, which only the root makes, so a task asks the service directly
- * and that create answers ERX_ENOTSUP. A holder binds, unbinds, triggers and acks an object
- * it was given, but through a handle of its own table, which holds none here: ERX_CAP_NULL
- * names no entry (ERX_ESTALE), and none of the handles 1 to IRQ_SCAN of its own table
- * answers ERX_OK to any of the four, while the root holds an object of its own.
+ * and that create answers ERX_ENOTSUP. A holder binds and unbinds an object it was given
+ * through a handle of its own table, which holds none here, and triggers and acks it on
+ * the capability at that handle's IRQ slot, of which it has none: ERX_CAP_NULL names no
+ * entry (ERX_ESTALE), and none of the handles 1 to IRQ_SCAN of its own table answers ERX_OK
+ * to any of the four, while the root holds an object of its own in its own slots.
  * Last, the task makes a doorbell of its own, which its end takes with it.
  */
 static int64_t
@@ -324,16 +325,15 @@ mode_irq_refused(void)
 		return (82);
 	if (erx_fiasco_service_call(ERX_FIASCO_CALL_IRQ_UNBIND, &none, sizeof(none), &reply) != ERX_ESTALE)
 		return (83);
-	if (erx_fiasco_service_call(ERX_FIASCO_CALL_IRQ_ACK, &none, sizeof(none), &reply) != ERX_ESTALE)
+	if (erx_irq_ack(ERX_CAP_NULL) != ERX_ESTALE)
 		return (84);
-	if (erx_fiasco_service_call(ERX_FIASCO_CALL_IRQ_TRIGGER, &none, sizeof(none), &reply) != ERX_ESTALE)
+	if (erx_irq_trigger(ERX_CAP_NULL) != ERX_ESTALE)
 		return (85);
 	for (uint64_t handle = 1; handle <= IRQ_SCAN; handle++) {
 		const erx_fiasco_irq_request_t held = { .caller = caller, .irq = handle };
 		const erx_fiasco_irq_bind_request_t held_bind = { .caller = caller, .irq = handle, .group = ERX_CAP_SELF };
 
-		if (erx_fiasco_service_call(ERX_FIASCO_CALL_IRQ_ACK, &held, sizeof(held), &reply) == ERX_OK ||
-		    erx_fiasco_service_call(ERX_FIASCO_CALL_IRQ_TRIGGER, &held, sizeof(held), &reply) == ERX_OK ||
+		if (erx_irq_ack(handle) == ERX_OK || erx_irq_trigger(handle) == ERX_OK ||
 		    erx_fiasco_service_call(ERX_FIASCO_CALL_IRQ_BIND, &held_bind, sizeof(held_bind), &reply) == ERX_OK ||
 		    erx_fiasco_service_call(ERX_FIASCO_CALL_IRQ_UNBIND, &held, sizeof(held), &reply) == ERX_OK)
 			return (100 + (int64_t)handle);
