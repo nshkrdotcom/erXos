@@ -136,14 +136,13 @@ erx_split_ring_post(erx_split_ring_t *ring, const erx_dma_piece_t *pieces, uint3
 
 	/* The refusals in the order the header gives, which erx_device_post's callers see. */
 	if (count == 0 || count > ERX_DEVICE_CHAIN_MAX ||
-	    !pieces_fit(pieces, count, erx_dma_ledger_layout(&ring->ledger)->pool.size))
+	    !pieces_fit(pieces, count, erx_dma_ledger_layout(&ring->ledger)->pool.size) ||
+	    !pieces_virtio_valid(pieces, count))
 		return (ERX_EINVAL);
 	if (ring->broken)
 		return (ERX_ECORRUPT);
 	if (!free_buffer(ring, &buffer))
 		return (ERX_EWOULDBLOCK);
-	if (!pieces_virtio_valid(pieces, count))
-		return (ERX_EINVAL);
 	/* Field by field over zeroed records, so the check sees no stale free value. */
 	bzero(records, sizeof(records));
 	for (uint32_t index = 0; index < count; index++) {

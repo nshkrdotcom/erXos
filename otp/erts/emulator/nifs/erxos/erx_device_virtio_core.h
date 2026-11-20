@@ -79,12 +79,16 @@ const erx_dma_ledger_t	*erx_split_ring_ledger(const erx_split_ring_t *ring);
 /*
  * Posts `count` pieces as one chain tagged `tag` into `sequence`, which the effect layer
  * applies as erx_device_sequencer.h says; sequence->fills[i] is where pieces[i]'s bytes go.
- * ERX_EINVAL, in order, for a count outside 1..ERX_DEVICE_CHAIN_MAX or pieces longer together
- * than a buffer; ERX_ECORRUPT for a broken ring; ERX_EWOULDBLOCK for no free buffer; ERX_EINVAL
- * for an empty piece, one the device reads after one it writes, or a region it writes; then
- * ERX_EWOULDBLOCK for too few free descriptors or a held next available entry (the check's room
- * rule), and ERX_EINVAL for any other verdict: a region its device does not have (the fills rule)
- * or a bug of this core. Anything but ERX_OK changes nothing.
+ * The refusals, in order, so a malformed chain is ERX_EINVAL on every ring, full or broken:
+ *   ERX_EINVAL       a count outside 1..ERX_DEVICE_CHAIN_MAX, pieces longer together than a
+ *                    buffer, an empty piece, one the device reads after one it writes, or a
+ *                    region piece the device writes;
+ *   ERX_ECORRUPT     a broken ring;
+ *   ERX_EWOULDBLOCK  no free buffer, too few free descriptors or a held next available entry
+ *                    (the check's room rule);
+ *   ERX_EINVAL       any other verdict: a region its device does not have (the fills rule,
+ *                    which the check judges after the room rule) or a bug of this core.
+ * Anything but ERX_OK changes nothing.
  */
 int	erx_split_ring_post(erx_split_ring_t *ring, const erx_dma_piece_t *pieces, uint32_t count, uint64_t tag,
 	    erx_dma_sequence_t *sequence);

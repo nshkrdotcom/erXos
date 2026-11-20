@@ -256,15 +256,16 @@ expected_post(const world_t *w, const erx_dma_piece_t *pieces, uint32_t count)
 {
 	if (count == 0 || count > ERX_DEVICE_CHAIN_MAX || sum(pieces, count) > BUFFER)
 		return (ERX_EINVAL);
+	/* A malformed chain is EINVAL on every ring, full or broken. */
+	for (uint32_t index = 0; index < count; index++)
+		if (pieces[index].length == 0 || (index > 0 && pieces[index - 1].device_writes && !pieces[index].device_writes))
+			return (ERX_EINVAL);
 	if (w->broken)
 		return (ERX_ECORRUPT);
 	if (w->holdings == w->size) {
 		reached[REACH_FULL_BUFFERS]++;
 		return (ERX_EWOULDBLOCK);
 	}
-	for (uint32_t index = 0; index < count; index++)
-		if (pieces[index].length == 0 || (index > 0 && pieces[index - 1].device_writes && !pieces[index].device_writes))
-			return (ERX_EINVAL);
 	if (w->free_descs < count) {
 		reached[REACH_FULL_DESCS]++;
 		return (ERX_EWOULDBLOCK);
