@@ -220,9 +220,12 @@ an_io_bar_decoding_16_bits_is_sized_from_its_low_16_test() ->
     ?assertEqual({ok, 4}, erx_pcie_cfg:size(bar(1, io, false), 16#0000fff1)),
     ?assertEqual({ok, 8}, erx_pcie_cfg:size(bar(1, io, false), 16#0000ff01)).
 
-sizing_refuses_a_64_bit_bar_that_needs_the_high_word_test() ->
-    ?assertEqual({error, {bar_size, 2}}, erx_pcie_cfg:size(bar(2, memory, true), 16#ffffffff0000000c)),
-    ?assertEqual({error, {bar_size, 4}}, erx_pcie_cfg:size(bar(4, memory, true), 16#fffffffe00000004)).
+%% A 64-bit BAR whose size needs the high word is sized whole, so its report carries
+%% the true size; the walk reports it unplaced.
+sizing_gives_a_64_bit_bar_that_needs_the_high_word_its_true_size_test() ->
+    ?assertEqual({ok, 32}, erx_pcie_cfg:size(bar(2, memory, true), 16#ffffffff0000000c)),
+    ?assertEqual({ok, 33}, erx_pcie_cfg:size(bar(4, memory, true), 16#fffffffe00000004)),
+    ?assertEqual({ok, 63}, erx_pcie_cfg:size(bar(4, memory, true), 16#8000000000000004)).
 
 an_unimplemented_or_absent_bar_has_no_size_test() ->
     ?assertEqual(absent, erx_pcie_cfg:size(bar(4, memory, false), 16#00000000)),

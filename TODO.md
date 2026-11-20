@@ -2272,15 +2272,37 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   root joins the tree's windows and `erx_domain_lib:pci_report/2` takes a report into it, but no device service
   process calls it (package P12), the catalogue has no `answered`, `devices/0` does not show the layouts, the
   settings or `firmware lost`, and `erx_domain_lib:pci_firmware/1`, which would hand the notification's status to
-  `erx_dom_pci_firmware`, waits for `erx_firmware_request` (the ABI item below). The PCIe domain's record of an
-  unplaced function must carry its BAR's true `size_log2` (`abi/formats/pcie.txt`), where `erx_pcie_cfg:size/2`
-  answers only `{bar_size, Index}` past `pcie_bar_size_log2_max`. Also refuse in `erx_dt_bridge` a window whose
+  `erx_dom_pci_firmware`, waits for `erx_firmware_request` (the ABI item below). Also refuse in `erx_dt_bridge` a window whose
   PCI, CPU or size is not page-aligned, and check BAR spans across a machine's bridges, not only within one.
   `pci_report/2` answers any system-domain caller, since its caller is the device service and not the registered
   domain service; a process that reports before the PCIe domain lays the bridge's layouts for the boot. Hold it to
   the device service's process (a registration of its own, or the call routed through the domain service), and
   hold `erx_dom_lib_pci_report` to the NIF and `erx_dom_view_bridge` to the root with chokepoints. The root's join
   (`tree_facts`) and the NIF's term handling run only on the target; the `pcie` QEMU suite (P12) covers them.
+* [Medium] PCIe domain and device service, the start's other side (`erlang/apps/erx_pcie/src/erx_pcie_enumerator.erl`,
+  `abi/services/pci_bus.txt`, `pci.txt`, `pcie.txt`, [design-pcie.md](docs/design-pcie.md#facets)): the enumerator
+  runs its start and serves `set` and `reset` over its edge on the host, but on the target its `bus` answers
+  `{error, no_facet}` and its `open` `{error, unsupported}`, so the domain does not start. Still to build: the device
+  service's `pci_bus` process (`targets` from a library read of each bridge's catalogue, its layouts and every pci
+  row's setting, which `erx_domain_lib` does not offer; `report` matching each function to its row by place and
+  compatible string, which `devices/0` does not give a pci row, then `pci_report/2`, the lowering to `off` and
+  `erx_domain:await_grant(pcie, D)`, which the domain service does not have), its `pci` facet, the hold at boot,
+  a holder's end; a system manifest service row for each interface, with the manifest check's grantee rules; the
+  `pcie` facet's mint in the PCIe domain over `erx_facet`; and the bridge's driver over its given record, which
+  needs the ECAM configuration-space view and a record that names its device row. Facet places are the bridge's
+  device row and the function's place, `{Bridge, Bus, Device, Function}`, where the design writes the bridge's path:
+  the PCIe domain knows its bridges only by row (`erx_pcie_bridge.index`), so the design should say which.
+* [Medium] PCIe, `erx_pcie_apply`'s verification and the later record (`erlang/apps/erx_pcie/src/erx_pcie_apply.erl`,
+  `erx_pcie_enumerator.erl`, [design-pcie.md](docs/design-pcie.md#host-tests-of-the-pure-cores)): the host test the
+  design names for `erx_pcie_apply` (every plan run with each write ignored alone, and with a register ignoring writes
+  from one write on) and its two seeded faults are not written; the model has no write-ignoring registers. A later
+  start reports a drivable function as its stored layout rather than as it reads, so a change the planner's identity
+  does not cover (class, subsystem, pin, MSI-X table, Express offset or FLR flag) is confirmed; build the later record
+  from the read with the layout's BAR sizes and addresses. `targets` must carry each layout's latest state, which the
+  library's intake zeroes, since the enumerator drives only layouts found ready or not_ready. A `set` the planner
+  refuses for the mastering rule is answered `{error, reset}` without turning the function off, and a start whose route
+  does not fit leaves it as it reads, where Failure handling turns it off; a root port's reopening that fails and the
+  walk's `past_bound` are not logged. The `pci` interface's scope, its `device` parameters, is not declared.
 * [Low] image build, the Pi's single file against the loader's device tree (`ProductionImage::Machine#check_single_file`,
   `Fiasco#first_stage_address`): the bound starts at the entry of users-raspi4b's `bootstrap.elf`, not checked
   against the address QEMU's raspi4b model and the firmware load it at (`QemuPlan::MACHINES` loads, 0x200000). If

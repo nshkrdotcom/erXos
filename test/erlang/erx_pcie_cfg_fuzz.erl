@@ -105,14 +105,14 @@ size_round({Bar, Answer}) ->
             1;
         absent ->
             0;
-        {error, {Why, Index}} when Why =:= bar_mask; Why =:= bar_size ->
+        {error, {bar_mask, Index}} ->
             Index =:= maps:get(index, Bar) orelse fail(crash, {Bar, Answer}, Result),
             0;
         Other ->
             fail(crash, {Bar, Answer}, Other)
     end.
 
-%% A size answered is the answer's lowest base bit, and it fits the 32-bit windows; for
+%% A size answered is the answer's lowest base bit, within the register's width; for
 %% a memory BAR it is the whole base mask, every base bit from the size up set. An I/O
 %% BAR is spared that contiguity, as FreeBSD spares every BAR.
 size_sound(#{kind := Kind, addr64 := Wide}, Answer, Log2) ->
@@ -122,7 +122,7 @@ size_sound(#{kind := Kind, addr64 := Wide}, Answer, Log2) ->
                        {memory, true} -> {4, 64}
                    end,
     Base = Answer band ((1 bsl Width) - (1 bsl Low)),
-    Log2 >= Low andalso Log2 =< 31
+    Log2 >= Low andalso Log2 < Width
         andalso Base band -Base =:= 1 bsl Log2
         andalso (Kind =:= io orelse Base =:= (1 bsl Width) - (1 bsl Log2)).
 

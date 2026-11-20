@@ -1,0 +1,120 @@
+%% Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
+%% SPDX-License-Identifier: BSD-2-Clause
+
+%% The enumerator's start and its pcie operations (docs/design-pcie.md, "Facets",
+%% "The plan"), run as the process over an ECAM bridge on erx_pcie_model and a model
+%% device service: the bus edge answers targets as the case gives them, keeps the
+%% report, and answers it with the case's settings.
+-module(erx_pcie_enumerator_tests).
+
+-include_lib("eunit/include/eunit.hrl").
+-include("generated/erx_abi.hrl").
+
+-import(erx_pcie_cfg_tests, [put/4, endpoint/0]).
+
+-define(BRIDGE, 3).
+-define(PLACE, {0, 1, 0}).
+-define(KEY, {?BRIDGE, 0, 1, 0}).
+-define(WINDOW, 16#10000000).
+
+%% The endpoint fixture as a single-function device, with the walk tests' BAR masks.
+endpoint_at(Place, Snapshot) ->
+    {Place, put(Snapshot, 16#0e, 1, 16#00),
+     #{16#10 => 16#fffff000, 16#14 => 16#ffffffc0, 16#18 => 16#ffffc000, 16#1c => 16#ffffffff,
+       16#20 => 0, 16#24 => 0}}.
+
+%% An open bridge with one 256 MiB memory window at PCI address 0x10000000.
+bridge() ->
+    Window = #{pci => 0, cpu => 0, size => 0, flags => []},
+    Place = #{bus => 0, device => 0, function => 0, pin => 0},
+    Record = #{index => ?BRIDGE, bus_first => 0, bus_last => 255, flags => [],
+               windows => [#{pci => ?WINDOW, cpu => ?WINDOW, size => 16#10000000, flags => []}
+                           | lists:duplicate(?ERX_PCIE_WINDOWS_MAX - 1, Window)],
+               places => lists:duplicate(?ERX_PCIE_CLOSED_MAX, Place)},
+    {ok, Bridge} = erx_abi_layout:decode(erx_pcie_bridge, erx_abi_layout:encode(erx_pcie_bridge, Record)),
+    Bridge.
+
+setting(Mode) -> #{mode => Mode, route => none, message => #{address => 0, data => 0}}.
+
+%% The enumerator started over Table with the targets given, its report answered with
+%% Answer; returns the enumerator and what it reported once its start is done.
+started(Table, Layouts, Settings, Answer) ->
+    Reports = ets:new(reports, [public]),
+    Bus = fun(targets) -> {ok, [bridge()], Layouts, Settings};
+             ({report, Reported}) -> ets:insert(Reports, {report, Reported}), {ok, Answer}
+          end,
+    Open = fun(Bridge) ->
+                   {ok, State} = erx_pcie_ecam:open(Bridge, {erx_pcie_model, {Table, 0}}),
+                   {ok, {erx_pcie_ecam, State}}
+           end,
+    {ok, Pid} = erx_pcie_enumerator:start_link(#{bus => Bus, open => Open, sleep => fun(_) -> ok end}),
+    _ = sys:get_state(Pid),
+    [{report, Reported}] = ets:lookup(Reports, report),
+    {Pid, Reported}.
+
+stop(Pid) ->
+    unlink(Pid),
+    exit(Pid, kill).
+
+command(Table) -> erx_pcie_model:register(Table, ?PLACE, {16#04, 2}).
+
+%% The placing start's report, with the function's BARs written by it.
+placed() ->
+    Table = erx_pcie_model:new([endpoint_at(?PLACE, endpoint())]),
+    {Pid, [#{record := Record}] = Reported} = started(Table, [], #{}, #{}),
+    stop(Pid),
+    {Table, Record, Reported}.
+
+a_placing_start_reports_each_function_placed_in_the_window_and_writes_its_bars_test() ->
+    {Table, Record, [#{kept := Kept}]} = placed(),
+    #{state := ready, bridge := ?BRIDGE, vendor := 16#1af4, device_id := 16#1041,
+      bars := [Bar0, _, Bar2 | _], msix_offset := 16#40, msi_offset := 16#50} = Record,
+    ?assertMatch(#{kind := memory, size_log2 := 12, flags := [placed]}, Bar0),
+    ?assertMatch(#{kind := memory, size_log2 := 14, flags := [addr64, prefetchable, placed]}, Bar2),
+    #{address := Address0} = Bar0,
+    #{address := Address2} = Bar2,
+    ?assert(Address0 >= ?WINDOW andalso Address2 >= ?WINDOW),
+    ?assertEqual(Address0, erx_pcie_model:register(Table, ?PLACE, {16#10, 4}) band 16#fffff000),
+    ?assertEqual(Address2, erx_pcie_model:register(Table, ?PLACE, {16#18, 4}) band 16#ffffc000),
+    %% The start's target is the layout in mode off: every switch quiet, and kept.
+    ?assertEqual(0, command(Table) band 16#7),
+    ?assert(Kept).
+
+a_later_start_applies_an_answered_setting_and_serves_set_test() ->
+    {_, Layout, _} = placed(),
+    Table = erx_pcie_model:new([endpoint_at(?PLACE, endpoint())]),
+    {Pid, [#{record := Record, kept := true}]} = started(Table, [Layout], #{}, #{?KEY => setting(decoding)}),
+    ?assertEqual(Layout#{state := ready}, Record),
+    ?assertEqual(16#2, command(Table) band 16#7),
+    ?assertEqual(ok, erx_pcie_enumerator:set(Pid, ?KEY, setting(off))),
+    ?assertEqual(0, command(Table) band 16#7),
+    ?assertEqual({error, unknown}, erx_pcie_enumerator:set(Pid, {?BRIDGE, 0, 2, 0}, setting(off))),
+    stop(Pid).
+
+a_function_with_another_identity_is_reported_unplaced_and_lowered_test() ->
+    {_, Layout, _} = placed(),
+    Table = erx_pcie_model:new([endpoint_at(?PLACE, put(endpoint(), 16#02, 2, 16#1042))]),
+    {Pid, [#{record := Record, kept := false}]} = started(Table, [Layout], #{?KEY => setting(decoding)}, #{}),
+    stop(Pid),
+    ?assertMatch(#{state := unplaced, device_id := 16#1042}, Record),
+    ?assertEqual(0, command(Table) band 16#7).
+
+a_function_level_reset_initiates_the_reset_and_returns_to_decoding_test() ->
+    {_, Layout, _} = placed(),
+    Table = erx_pcie_model:new([endpoint_at(?PLACE, endpoint())]),
+    {Pid, _} = started(Table, [Layout], #{}, #{?KEY => setting(decoding)}),
+    ?assertEqual({ok, flr}, erx_pcie_enumerator:reset(Pid, ?KEY)),
+    ?assertEqual(16#2, command(Table) band 16#7),
+    ?assertNotEqual(0, erx_pcie_model:register(Table, ?PLACE, {16#78, 2}) band 16#8000),
+    stop(Pid).
+
+%% A layout the placing walk left unplaced keeps its state at a later start: it is
+%% lowered to quiet, never started, and set refuses it.
+a_layout_left_unplaced_stays_unplaced_and_is_never_driven_test() ->
+    {_, Layout, _} = placed(),
+    Table = erx_pcie_model:new([endpoint_at(?PLACE, endpoint())]),
+    {Pid, [#{record := Record, kept := false}]} = started(Table, [Layout#{state := unplaced}], #{}, #{}),
+    ?assertMatch(#{state := unplaced}, Record),
+    ?assertEqual(0, command(Table) band 16#7),
+    ?assertEqual({error, unknown}, erx_pcie_enumerator:set(Pid, ?KEY, setting(decoding))),
+    stop(Pid).

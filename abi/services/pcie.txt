@@ -1,0 +1,11 @@
+# Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
+# SPDX-License-Identifier: BSD-2-Clause
+# The pcie interface (docs/design-pcie.md, "Facets"): what the system domain's device
+# service asks of the PCIe domain's enumerator once it has answered that incarnation's
+# report. set takes a function to its layout and a new setting (erx_pcie_setting,
+# abi/formats/pcie.txt); reset is a function-level reset. Only the system domain holds
+# it.
+service pcie 18
+  served_as message
+  operation set 1
+  operation reset 2

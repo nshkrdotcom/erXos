@@ -1,0 +1,13 @@
+# Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
+# SPDX-License-Identifier: BSD-2-Clause
+# The pci interface (docs/design-pcie.md, "Facets", "Who programs what, and when"): what a
+# domain that drives a PCIe function asks of the system domain's device service, for a
+# function it holds, which the device service matches against the grantee's own rows.
+# open sets the function decoding, with bus mastering off; master sets it mastering, with
+# its interrupt route live; reset is a function-level reset where the function offers one,
+# leaving it decoding. A domain holds a facet of it exactly when it holds a pci device.
+service pci 17
+  served_as message
+  operation open 1
+  operation master 2
+  operation reset 3

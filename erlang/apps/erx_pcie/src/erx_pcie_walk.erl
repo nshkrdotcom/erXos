@@ -62,12 +62,13 @@ configuration read (erx_pcie_cfg:parse/1) and its planner's target
 -doc """
 What a reported function was found to be: a function with its read
 value and, at a placing walk, the hardware size of each memory BAR that
-sized, by BAR index; one with a BAR too large to place; one whose snapshot
+sized, by BAR index; one with a BAR too large to place, with every sized
+BAR's true size, so its report carries them; one whose snapshot
 or sizing answer was refused, with the field; or one the walk does not
 take, with the reason.
 """.
 -type outcome() :: {read, erx_pcie_cfg:read(), Sizes :: #{0..5 => byte()}}
-                 | {unplaced, erx_pcie_cfg:read(), {bar_size, 0..5}}
+                 | {unplaced, erx_pcie_cfg:read(), Sizes :: #{0..5 => byte()}}
                  | {malformed, erx_pcie_cfg:reason() | {bar_mask, 0..5}}
                  | {unsupported, header_type | below_root_port | root_port_bar | bus_range}.
 
@@ -289,15 +290,18 @@ parsed(Place, Parent, Identity, _Snapshot, none, {ok, #{header := bridge}}, Walk
     report(Place, Parent, Identity, {unsupported, below_root_port}, Walk).
 
 %% A function's outcome from the sizes of its memory BARs: the first
-%% refused answer, in BAR order, decides it.
+%% refused answer, in BAR order, makes it malformed; a size past what a
+%% window places, unplaced.
 endpoint_outcome(Read, Sizes) ->
-    case [Error || {_Bar, {error, _} = Error} <- Sizes] of
-        [] ->
-            {read, Read, maps:from_list([{Index, Log2} || {#{index := Index}, {ok, Log2}} <- Sizes])};
-        [{error, {bar_mask, _} = Field} | _] ->
+    Sized = maps:from_list([{Index, Log2} || {#{index := Index}, {ok, Log2}} <- Sizes]),
+    case [Field || {_Bar, {error, Field}} <- Sizes] of
+        [Field | _] ->
             {malformed, Field};
-        [{error, {bar_size, _} = Field} | _] ->
-            {unplaced, Read, Field}
+        [] ->
+            case lists:any(fun(Log2) -> Log2 > ?ERX_PCIE_BAR_SIZE_LOG2_MAX end, maps:values(Sized)) of
+                true -> {unplaced, Read, Sized};
+                false -> {read, Read, Sized}
+            end
     end.
 
 %% Each sized BAR with its decoded size, taking the read-back answers in

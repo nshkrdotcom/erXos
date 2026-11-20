@@ -448,14 +448,15 @@ reset, which the driver then resets by its registers. The longest
 
 The PCIe domain, `pcie` (node `pcie@erxos`), runs one permanent
 application, `erx_pcie` in `erlang/apps/erx_pcie/`, whose one process,
-the **enumerator**, owns every bridge the domain holds and serves the
+the **enumerator** (`erx_pcie_enumerator`), owns every bridge the domain holds and serves the
 `pcie` facet. Its decisions are pure modules:
 
 | Module | Pure function |
 | --- | --- |
 | `erx_pcie_cfg` | parses a configuration snapshot, 256 bytes, into the read value of a function or root port, or refuses it; decodes BAR sizing answers |
 | `erx_pcie_walk` | the walk as a state machine: each step takes the last access's answer and returns the next access or the walk's result |
-| `erx_pcie_place` | the layouts of a placing walk's functions, given the bridge's windows |
+| `erx_pcie_place` | the layouts of a placing walk's functions, given the bridge's windows; a root port's window over the layouts below it |
+| `erx_pcie_report` | the `erx_pcie_function` record of each function a walk found, from its read value, sizes and placement |
 | `erx_pcie_plan` | the plan's stages, each its writes and the state they lead to, from a read value and a target; the descent to quiet; whether a function reads as a state; the start's target |
 | `erx_pcie_bcm2711_core` | the BCM2711 bridge's bring-up and keep-or-reset decision as a state machine over register reads |
 
@@ -1339,7 +1340,7 @@ been made, which the readback catches. That is a residual of Fiasco
 | `pci_bus:report` | `{ok, Settings}` | after intake, once the system domain holds the incarnation's `pcie`; refusals are per function, in the log and in `/dev` |
 | | `{error, unavailable}` | `erx_domain:await_grant(pcie, D)` answered an error: the grant failed or missed the mint core's deadline, the incarnation ended, or it provides no `pcie` |
 | `pci_bus:firmware` | `{error, Status}` | the kernel call's status other than `ERX_OK`, such as `ERX_ENOTSUP`, `ERX_ETIMEDOUT` or `ERX_EBUSY` |
-| `erx_pcie_cfg:parse/1`, `size/2` | `{error, Field}` | the parser's refusals ([The walk](#the-walk), [Sizing](#sizing)); the function is reported `malformed` or `unplaced` |
+| `erx_pcie_cfg:parse/1`, `size/2` | `{error, Field}` | the parser's refusals ([The walk](#the-walk), [Sizing](#sizing)); the function is reported `malformed`; `size/2` answers a BAR's true size, and the walk reports a function whose size no window can place `unplaced` |
 | `erx_dom_pci_report` | `ERX_EINVAL`, the placing walk's layouts refused whole | a BAR outside its window, not aligned to its span, or overlapping another device; an MSI-X table past its BAR's hardware size |
 | `erx_irq_create` of `ERX_IRQ_MSI` | `ERX_ELIMIT` | no free line of the frame, or the function past `ERX_MSI_MAX` |
 | | `ERX_ENOMEM` | the Fiasco root's IRQ slots are full |

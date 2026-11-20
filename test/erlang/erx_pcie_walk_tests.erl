@@ -179,7 +179,7 @@ a_bar_of_4_gib_is_unplaced_test() ->
     Table = erx_pcie_model:new([{{0, 0, 0}, Snapshot,
                                  (endpoint_masks())#{16#18 => 0}}]),
     {{done, Result}, _} = ecam_walk(placing, open_bridge(255), Table),
-    ?assertMatch({unplaced, #{vendor := 16#1af4}, {bar_size, 2}}, outcome({0, 0, 0}, Result)).
+    ?assertMatch({unplaced, #{vendor := 16#1af4}, #{2 := 32}}, outcome({0, 0, 0}, Result)).
 
 a_root_port_past_the_bus_range_is_unsupported_test() ->
     Table = erx_pcie_model:new([root_port_at({0, 1, 0})]),
