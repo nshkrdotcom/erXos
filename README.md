@@ -159,8 +159,9 @@ than mirroring pixels. The [overview](docs/overview.md) tells the longer story.
   ([web](docs/design-web.md))
 * **UNIX on the surface.** As on *QNX* and *Plan 9*, UNIX is how the system
   looks wherever that is also how it works, not what it is built on. The command shell speaks rc's language
-  and pipes text between commands, as UNIX does. Toybox supplies the
-  familiar tools. Native programs run over musl, each holding only what
+  and pipes text between commands, as UNIX does. The file commands, `cat`, `ls`, `cp` and the
+  rest, are Erlang commands; toybox is to supply the other familiar
+  tools, and is designed and not built. Native programs run over musl, each holding only what
   its starter handed it; the POSIX-lite layer that completes them is
   designed and not built.
   ([shell](docs/design-shell.md), [programs](docs/design-programs.md),
