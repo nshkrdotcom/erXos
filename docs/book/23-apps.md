@@ -31,12 +31,13 @@ the author: the dashboard must not read the shop's files or take
 memory the system's own services were promised.
 
 FreeBSD answers the first half with `pkg`. A package is an archive of
-files with a manifest of metadata; `pkg add` unpacks it into
-`/usr/local`, records it in a database and checks its signature
-against keys the system trusts. A daemon in a package ships an `rc.d`
+files with a manifest of metadata; `pkg add` installs it, and the
+package is recorded in a database; a repository can be set to
+require a signature checked against a public key or fingerprints the
+system trusts (pkg-add(8), pkg(8), pkg.conf(5), pkg-repository(5)).
+A daemon in a package ships an `rc.d`
 script, and it starts at boot once `rc.conf` sets `NAME_enable="YES"`
 (the box before section 23.1.2 explains both).
-<!-- check: pkg(8) and pkg-add(8) as described; not read in this task -->
 The second half FreeBSD answers with UNIX users: the daemon runs as a
 user the package creates, and file permissions keep it out of other
 users' files. Nothing bounds what the package's install scripts do,
@@ -79,8 +80,8 @@ alternatives close the chapter.
 > between users become the walls between apps. An app lists the
 > permissions it wants in its manifest, such as the camera or the
 > network, and the system grants each one at install or asks the user
-> at run time. <!-- check: Android per-app UID and runtime permission
-> model; not read in this task --> Two lessons carry over to erXos:
+> at run time (Android Open Source Project, "Application Sandbox";
+> Android Developers, "Permissions on Android"). Two lessons carry over to erXos:
 > one identity per app, and authority named in advance, in a list the
 > system can check without running the app. erXos leaves out the
 > prompt: no person approves a grant one at a time. The machine's
@@ -122,9 +123,9 @@ the shop's dashboard.
 > if its variable says `YES`; `service ntpd onestart` starts it once
 > whatever the variable says; and `service ntpd enable` writes the
 > variable into `rc.conf` so that the next boot starts it.
-> <!-- check: FreeBSD rc.d, rc.conf and service(8) as described,
-> including that `service NAME enable` only sets the variable and
-> starts nothing; not read in this task -->
+> (rc(8), rc.conf(5) and service(8) describe each of these; `enable`
+> only writes `rc.conf`, and service(8)'s own example follows it with a
+> separate `service sshd start`.)
 
 ### 23.1.2 What starts without a person
 
@@ -161,8 +162,7 @@ table and `service` are built; chapter
 [20](20-shell.md#205-services-as-freebsd-starts-them)
 covers `service` as a command. The built `enable` also starts the row,
 where the design, as FreeBSD's, has it start nothing until the next
-boot or the row's own `start`. <!-- check: FreeBSD's `service NAME
-enable` sets the variable and starts nothing; not read in this task -->
+boot or the row's own `start`.
 
 ### 23.1.3 One row bounds every app
 
@@ -839,6 +839,6 @@ session running across it.
   the reader and the hash check every package mount goes through.
 * [examples/dashboard/README.md](../../examples/dashboard/README.md):
   the kiosk app, its host test and its QEMU cells.
-* FreeBSD Project, pkg(8) and rc.conf(5) manual pages: the package
+* FreeBSD Project, pkg(8), pkg-add(8), pkg.conf(5), rc(8), rc.conf(5)
+  and service(8) manual pages, FreeBSD 14.3 and pkg 1.21.3: the package
   manager and start settings erXos's surface is measured against.
-  <!-- check: citation -->

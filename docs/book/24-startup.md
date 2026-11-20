@@ -44,7 +44,6 @@ which runs `/etc/rc.shutdown` to stop the daemons, syncs the disks
 and resets. A hang is
 the business of `watchdogd(8)`, which pets the hardware watchdog
 while the system lives.
-<!-- check: loader(8), rc(8), rc.conf(5), shutdown(8), init(8) running /etc/rc.shutdown, watchdogd(8) as described; not read in this task -->
 Each program reads its own configuration at its own moment, so none
 can say before boot whether the whole is consistent.
 
@@ -390,7 +389,6 @@ FreeBSD's `rcorder(8)` does the same for rc scripts at every boot,
 from their `REQUIRE` and `PROVIDE` lines. erXos does it once, at
 build time, so a cycle is a build error and never a boot that stops
 half way.
-<!-- check: rcorder(8) as described; not read in this task -->
 
 Before a domain's first thread runs, the device service gives it the
 units the manifest names, so a driver never starts without its device
@@ -893,8 +891,9 @@ slots, which are designed.
   loader, console, firmware, watchdog, entropy and trust root.
 * [design-abi.md, Ordering and partial boots](../design-abi.md#ordering-and-partial-boots):
   how the boot order is derived.
-* FreeBSD Project, loader(8), rc(8), rcorder(8), reboot(8) and
-  watchdogd(8) manual pages: the familiar baseline this chapter
-  measures erXos against. <!-- check: citation -->
-* Arm, *Power State Coordination Interface* (DEN 0022): the firmware
-  calls behind every reset and power-off. <!-- check: citation -->
+* FreeBSD Project, loader(8), rc(8), rc.conf(5), rcorder(8), init(8),
+  shutdown(8), reboot(8) and watchdogd(8) manual pages, FreeBSD 14.3:
+  the familiar baseline this chapter measures erXos against.
+* Arm, *Power State Coordination Interface*, document DEN 0022,
+  <https://developer.arm.com/documentation/den0022>: the firmware
+  interface the PSCI box in section 24.1 describes.

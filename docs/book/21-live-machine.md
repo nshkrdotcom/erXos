@@ -786,8 +786,8 @@ system domain carry no term.
   root service reports on Fiasco, and why the rest is unsupported.
 * `abi/inspection.txt`: every path, kind, attribute and reporter.
 * David A. Moon, "Symbolics Architecture", *IEEE Computer* 20(1),
-  1987: the Lisp machine whose live, inspectable environment this
-  chapter follows. <!-- check: citation details. -->
+  January 1987, pp. 43-52: the Lisp machine whose live, inspectable
+  environment this chapter follows.
 * Stuart Cheshire and Mary Baker, "Consistent Overhead Byte Stuffing",
   *IEEE/ACM Transactions on Networking* 7(2):159-172, 1999: the framing of the
   host link.
