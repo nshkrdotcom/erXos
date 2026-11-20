@@ -211,7 +211,7 @@ its own side, which section 10.3 shows the reader surviving.
 
 In the system as built, each party's `liberx` asks the root to map its
 peer's side read-only, and that request is what keeps one writer per
-page. Handles carry no rights
+page. No call checks a handle's rights yet
 ([section 8.4.4](08-kernel-interface.md#844-rights)), so a domain that
 sent the root its own request could map its peer's side writable. This
 is one reason every build runs trusted code only. The design gives each

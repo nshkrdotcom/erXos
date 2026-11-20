@@ -84,7 +84,7 @@ function_api_case_stale_handle(void)
 	if (erx_mem_create(0, 2 * PAGE, 0, &successor) != ERX_OK)
 		return (false);
 	return (map_two_pages(gone) == ERX_ESTALE && erx_object_destroy(gone) == ERX_ESTALE &&
-	    handle_close(gone) == ERX_OK && handle_close(gone) == ERX_EINVAL && erx_object_destroy(gone) == ERX_EINVAL &&
+	    handle_close(gone) == ERX_OK && handle_close(gone) == ERX_ESTALE && erx_object_destroy(gone) == ERX_ESTALE &&
 	    erx_object_destroy(successor) == ERX_OK && handle_close(successor) == ERX_OK);
 }
 
@@ -104,8 +104,8 @@ function_api_case_dup_and_close(void)
 	    erx_vm_free_pages() >= before)
 		return (false);
 	if (handle_close(mem) != ERX_OK || erx_cap_dup(copy, &probe) != ERX_OK || handle_close(probe) != ERX_OK ||
-	    handle_close(mem) != ERX_EINVAL ||
-	    handle_close(0) != ERX_EINVAL || erx_cap_dup(0, &mem) != ERX_EINVAL)
+	    handle_close(mem) != ERX_ESTALE ||
+	    handle_close(0) != ERX_ESTALE || erx_cap_dup(0, &mem) != ERX_ESTALE)
 		return (false);
 	if (handle_close(copy) != ERX_OK || erx_vm_free_pages() != before)
 		return (false);

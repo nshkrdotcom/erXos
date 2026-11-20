@@ -64,8 +64,9 @@ uint64_t	erx_fiasco_service_thread(void);
 
 /*
  * Task calls of the call table. fault is ERX_CAP_NULL or a gate the caller holds,
- * else ERX_ETYPE, and the space's records go to it with label as their label;
- * parent is ERX_CAP_SELF or a space the caller created, else ERX_ETYPE, and one
+ * else the lookup's refusal (ERX_ESTALE for a value that names nothing, ERX_ETYPE for
+ * another kind), and the space's records go to it with label as their label; parent
+ * is ERX_CAP_SELF or a space the caller created, else the lookup's refusal, and one
  * that is stopping is ERX_EINVAL; the new space joins parent's tree and stops when
  * parent stops; budget charges the space as for every create
  * (erx_budget_create below); cap_limit bounds the task's handle table, counting ERX_CAP_NULL as erXos's
@@ -122,8 +123,8 @@ int	erx_mem_child(uint64_t parent, uint64_t budget, uint64_t offset, uint64_t si
 
 /*
  * Handle calls (docs/design-fiasco.md, "Capabilities in Fiasco's object space"): a
- * handle that is no entry in use is ERX_EINVAL, one whose object has gone ERX_ESTALE.
- * A dup into a full table is ERX_ELIMIT. A close frees the entry, a stale one too,
+ * handle that names no entry in use at its generation, or whose object has gone, is
+ * ERX_ESTALE. A dup into a full table is ERX_ELIMIT. A close frees the entry, a stale one too,
  * and the object goes with its last handle unless it is mapped. A destroy from a task
  * other than the object's creator's, or of an object the root keeps, is ERX_ERIGHTS,
  * and of a group that still has threads ERX_ENOTSUP; a destroy revokes every mapping

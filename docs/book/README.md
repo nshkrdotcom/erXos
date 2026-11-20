@@ -564,8 +564,7 @@ Erlang commands; the system's state under `/proc`; inspecting any
 process; creating a domain and seeing a link report its end; memory and
 threads held as records, and ending a domain ends everything charged to
 it. Designed: memory limits that refuse a domain more, CPU limits per
-domain, rights on handles and handles that stay stale after their own
-close, a login that gives each person a domain of their own, and
+domain, rights on handles checked on every use, a login that gives each person a domain of their own, and
 toybox's UNIX programs in the session's `/bin`.
 
 1. **Seven concepts, each with one owner.** Process, domain, runtime,
@@ -640,8 +639,8 @@ plan and the one effect loop; the funnel; the chokepoint build checks,
 each with a seeded violation; and the stack proof of the C17 code that
 Fiasco links. Of the properties in section 6.2, three are Designed: the
 memory wall of a domain's budget, Fiasco's refusal of a mapping that is
-writable and executable at once, and handles with rights and a
-generation in their value. The rest are Built, with the limits the
+writable and executable at once, and rights on handles checked on
+every use. The rest are Built, with the limits the
 chapter states.
 
 1. **Open-ended enumeration is the smell.** A correctness argument that
@@ -655,9 +654,8 @@ chapter states.
    [design.md, Correct by construction in code](../design.md#correct-by-construction-in-code).
 2. **The properties erXos holds by construction.** A tour of the list
    as it holds on Fiasco: only the root service creates kernel objects;
-   a destroyed object's handles answer `ERX_ESTALE` and never name a
-   successor, while a number used after its own close can reach another
-   object; a domain's memory is charged to its own budget, and the wall
+   a destroyed object's handles, and a handle used after its own
+   close, answer `ERX_ESTALE` and never name a successor; a domain's memory is charged to its own budget, and the wall
    that refuses a charge past it is Designed; a pid is a name, not an
    authority; no process acts on a message from another domain that its
    protocol's owner did not admit; every layer agrees on the ABI because
@@ -839,7 +837,7 @@ creation, umtx waits and parking; fault gates and exit records; the
 machine's end on a fault of the root task; budgets as records that end
 what is charged to them. Designed: priority bands and per-domain CPU
 sets; signals through vCPU upcalls; DMA spaces behind an IOMMU; rights
-on handles and the generation in a handle's value; and the system-call
+on handles checked on every use; and the system-call
 fuzz campaign.
 
 1. **What the kernel knows, and what it does not.** Spaces, threads,
@@ -865,13 +863,14 @@ fuzz campaign.
    [design-fiasco.md, Who holds what](../design-fiasco.md#who-holds-what),
    [design-fiasco.md, The call table](../design-fiasco.md#the-call-table).
 4. **Handles and destroying an object.** A handle is an entry in the
-   caller's table in the root service, one plus its index; the entry
-   records its object's generation, so a destroyed object's handles
-   answer `ERX_ESTALE` and never name a successor. A closed number is
-   reused lowest first, so a use after one's own close can reach another
-   object; the section says what that means for an app and for a
-   server. Handles carry no rights, and only the creator may destroy;
-   rights per handle and a generation in the value are Designed.
+   caller's table in the root service; the entry records its object's
+   generation, and the handle's value carries the entry's own, so a
+   destroyed object's handles and a handle used after its own close
+   both answer `ERX_ESTALE` and never name a successor. Free entries
+   are reused first in, first out. Entries record rights, and only the
+   creator may destroy; rights narrowed per creation kind and checked on
+   every use, and interrupt objects rung straight through Fiasco, are
+   Designed.
    Handles flow only down, from a space's creator into it.
    *Draws on:* [design-fiasco.md, Destroying an object](../design-fiasco.md#destroying-an-object),
    [design-fiasco.md, Passing a handle](../design-fiasco.md#passing-a-handle).
