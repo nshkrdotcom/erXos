@@ -39,6 +39,8 @@
 #include "liberx/backend/fiasco/thread.h"
 #include "liberx/backend/fiasco/vm.h"
 
+static int	object_entry_close(uint32_t, uint64_t, bool *, uint32_t *);
+static int	object_entry_place(uint32_t, uint32_t, uint64_t, uint32_t);
 static erx_backend_handles_t *object_handles_of(uint32_t);
 static int	object_pass_item(uint32_t, uint32_t, erx_msg_item_t *);
 static int	object_pass_type(uint32_t, erx_ktype_t *);
@@ -63,10 +65,11 @@ erx_fiasco_object_init(void)
 	if (erx_backend_grow_table_room(&object_records, 1) != ERX_OK)
 		return ("objects: the pool cannot hold the object records");
 	/*
-	 * The root's table is bounded by the pool alone, which its grow table's limit stands
-	 * for; its first page now too, for the same reason as the records'.
+	 * The root's table is bounded by what its layout leaves of the object space, so its
+	 * window of IRQ slots ends before its other slots; its first page now too, for the same
+	 * reason as the records'.
 	 */
-	if (erx_fiasco_object_task_open(ERX_FIASCO_TASK_ROOT, UINT32_MAX) != ERX_OK ||
+	if (erx_fiasco_object_task_open(ERX_FIASCO_TASK_ROOT, ERX_FIASCO_ROOT_HANDLES) != ERX_OK ||
 	    erx_backend_grow_table_room(&object_handles_of(ERX_FIASCO_TASK_ROOT)->entries, 1) != ERX_OK)
 		return ("objects: the pool cannot hold the root's handle table");
 	return (NULL);
@@ -124,6 +127,7 @@ int
 erx_fiasco_object_create(uint32_t task, uint32_t kind, uint64_t budget, erx_fiasco_object_fill_t fill, const void *request,
     uint64_t *handle)
 {
+	const uint32_t rights = erx_ktype_rights_mask(object_type(kind));
 	uint64_t charged;
 	uint32_t index;
 	int status = erx_fiasco_budget_named(task, budget, &charged);
@@ -135,12 +139,13 @@ erx_fiasco_object_create(uint32_t task, uint32_t kind, uint64_t budget, erx_fias
 		return (status);
 	status = fill(index, request);
 	if (status == ERX_OK) {
-		status = erx_backend_handle_add(&object_records, object_handles_of(task), index,
-		    erx_ktype_rights_mask(object_type(kind)), handle);
+		status = erx_backend_handle_add(&object_records, object_handles_of(task), index, rights, handle);
+		if (status == ERX_OK)
+			status = object_entry_place(task, index, *handle, rights);
 		if (status != ERX_OK)
 			object_release(index);
 	}
-	/* No entry ever named the record, so it goes back at the generation it had. */
+	/* No entry the caller saw ever named the record, so it goes back at the generation it had. */
 	if (status != ERX_OK)
 		erx_backend_object_unmake(&object_records, index);
 	return (status);
@@ -200,7 +205,10 @@ erx_fiasco_object_unmapped(uint32_t index)
 int
 erx_fiasco_cap_dup_body(uint32_t task, uint64_t handle, uint64_t *copy)
 {
-	return (erx_backend_handle_dup(&object_records, object_handles_of(task), handle, copy));
+	uint32_t index, rights;
+	const int status = erx_backend_handle_dup(&object_records, object_handles_of(task), handle, copy, &index, &rights);
+
+	return (status == ERX_OK ? object_entry_place(task, index, *copy, rights) : status);
 }
 
 int
@@ -208,7 +216,7 @@ erx_fiasco_cap_close_body(uint32_t task, uint64_t handle)
 {
 	uint32_t index;
 	bool freed;
-	const int status = erx_backend_handle_close(&object_records, object_handles_of(task), handle, &freed, &index);
+	const int status = object_entry_close(task, handle, &freed, &index);
 
 	if (status == ERX_OK && freed)
 		object_unheld(index);
@@ -323,6 +331,8 @@ object_pass_item(uint32_t from, uint32_t to, erx_msg_item_t *item)
 	if (status == ERX_OK) {
 		rights = mask & erx_ktype_rights_mask(type) & ~ERX_HR_DESTROY;
 		status = erx_backend_handle_add(&object_records, object_handles_of(to), index, rights, &value);
+		if (status == ERX_OK)
+			status = object_entry_place(to, index, value, rights);
 	}
 	if (status != ERX_OK)
 		return (status);
@@ -331,7 +341,7 @@ object_pass_item(uint32_t from, uint32_t to, erx_msg_item_t *item)
 	 * entry, one service thread runs every request, and to's new entry names the record.
 	 */
 	if (move != 0)
-		(void)erx_backend_handle_close(&object_records, object_handles_of(from), item->cap.raw, &freed, &closed);
+		(void)object_entry_close(from, item->cap.raw, &freed, &closed);
 	item->desc = 0;
 	(void)erx_msg_item_desc_type_set(&item->desc, type);
 	(void)erx_msg_item_desc_rights_set(&item->desc, rights);
@@ -381,6 +391,46 @@ object_type(uint32_t kind)
 		break;
 	}
 	return (0);
+}
+
+/*
+ * Every entry a call adds ends here: an IRQ entry in irq.c's one placement, and no other
+ * kind has a capability in its holder. A placement that fails takes the new entry back,
+ * which leaves its record's holders as they were.
+ */
+static int
+object_entry_place(uint32_t task, uint32_t index, uint64_t handle, uint32_t rights)
+{
+	uint32_t closed;
+	bool freed;
+	int status;
+
+	if (erx_backend_object_at(&object_records, index)->kind != ERX_BACKEND_OBJECT_IRQ)
+		return (ERX_OK);
+	status = erx_fiasco_irq_place(task, index, handle, rights);
+	if (status != ERX_OK)
+		(void)object_entry_close(task, handle, &freed, &closed);
+	return (status);
+}
+
+/*
+ * Every entry a call frees goes here, a close, a move's close and a failed placement's
+ * undo alike: the core's close, then, for an entry of a live IRQ record, the empty of its
+ * IRQ slot. The slot of an entry whose IRQ object went is empty already, since the destroy
+ * deleted the object. *freed and *index are the core's.
+ */
+static int
+object_entry_close(uint32_t task, uint64_t handle, bool *freed, uint32_t *index)
+{
+	uint32_t record = UINT32_MAX;
+	const int status = erx_backend_handle_close(&object_records, object_handles_of(task), handle, freed, &record);
+
+	if (status != ERX_OK)
+		return (status);
+	if (record != UINT32_MAX && erx_backend_object_at(&object_records, record)->kind == ERX_BACKEND_OBJECT_IRQ)
+		erx_fiasco_irq_unplace(task, handle);
+	*index = record;
+	return (ERX_OK);
 }
 
 static erx_backend_handles_t *

@@ -256,7 +256,7 @@ static void
 apply(erx_backend_grow_table_t *objects, erx_backend_handles_t *handles, model_t *model, const step_t *step)
 {
 	const uint64_t value = step->number == 0 ? 0 : model_value(model, step->number);
-	uint32_t index = UINT32_MAX, number, serial;
+	uint32_t index = UINT32_MAX, number, serial, dup_index, dup_rights;
 	uint64_t handle = 0;
 	bool freed = true, live;
 	int status;
@@ -280,7 +280,7 @@ apply(erx_backend_grow_table_t *objects, erx_backend_handles_t *handles, model_t
 		model_give(model, number, model->serials++, handle);
 		return;
 	case OP_DUP:
-		status = erx_backend_handle_dup(objects, handles, value, &handle);
+		status = erx_backend_handle_dup(objects, handles, value, &handle, &dup_index, &dup_rights);
 		if (model_find(model, value) != ERX_OK) {
 			check(status == model_find(model, value), "a dup of a bad handle answered otherwise", value);
 			return;
@@ -570,7 +570,7 @@ case_refusals(void)
 	static const uint64_t strays[] = { ERX_CAP_NULL, 2, ERX_CAP_SELF, ERX_CAP_SELF_THREAD, UINT64_MAX };
 	erx_backend_grow_table_t objects;
 	erx_backend_handles_t handles;
-	uint32_t index, found;
+	uint32_t index, found, copy_rights;
 	uint64_t handle, copy = 0;
 	bool freed;
 
@@ -594,11 +594,12 @@ case_refusals(void)
 	    &found) == ERX_ERIGHTS, "a right the entry lacks was granted", 0);
 	check(erx_backend_handle_find(&objects, &handles, handle, ERX_BACKEND_OBJECT_MEMORY, RIGHTS, &found) == ERX_OK &&
 	    found == index, "the rights the entry holds were refused", found);
-	check(erx_backend_handle_dup(&objects, &handles, handle, &copy) == ERX_OK &&
+	check(erx_backend_handle_dup(&objects, &handles, handle, &copy, &found, &copy_rights) == ERX_OK &&
+	    found == index && copy_rights == RIGHTS &&
 	    erx_backend_handle_find(&objects, &handles, copy, ERX_BACKEND_OBJECT_MEMORY, RIGHTS, &found) == ERX_OK &&
 	    erx_backend_handle_find(&objects, &handles, copy, ERX_BACKEND_OBJECT_MEMORY, ERX_HR_WRITE, &found) ==
 	    ERX_ERIGHTS, "a dup's rights are not its source's", copy);
-	check(erx_backend_handle_dup(&objects, &handles, ERX_CAP_NULL, &copy) == ERX_ESTALE &&
+	check(erx_backend_handle_dup(&objects, &handles, ERX_CAP_NULL, &copy, &found, &copy_rights) == ERX_ESTALE &&
 	    erx_backend_handle_close(&objects, &handles, ERX_CAP_NULL, &freed, &found) == ERX_ESTALE,
 	    "the null handle was dup'd or closed", 0);
 	check(erx_backend_object_at(&objects, index)->creator == 3 && erx_backend_object_at(&objects, index)->budget == 4,

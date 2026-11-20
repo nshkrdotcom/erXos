@@ -55,6 +55,10 @@ typedef enum erx_backend_object_kind {
 	ERX_BACKEND_OBJECT_IRQ
 } erx_backend_object_kind_t;
 
+/* The number of the entry a handle names: its index plus one, 0 for ERX_CAP_NULL's, which names none. */
+#define ERX_BACKEND_HANDLE_NUMBER_MASK	((UINT64_C(1) << ERX_CAP_SLOT_BITS) - 1)
+#define ERX_BACKEND_HANDLE_NUMBER(handle)	((uint32_t)((handle) & ERX_BACKEND_HANDLE_NUMBER_MASK))
+
 /* For erx_backend_handle_find: any live kind will do. */
 #define ERX_BACKEND_OBJECT_ANY	UINT32_MAX
 
@@ -149,11 +153,12 @@ int	erx_backend_handle_find(const erx_backend_grow_table_t *objects, const erx_b
 	    uint32_t kind, uint32_t needed, uint32_t *index) ERX_WARN_UNUSED_RESULT;
 
 /*
- * Adds a second entry naming what handle names, at handle's rights:
- * erx_backend_handle_find's refusals, then erx_backend_handle_add's.
+ * Adds a second entry naming what handle names, at handle's rights, and gives the record
+ * and the rights the copy names: erx_backend_handle_find's refusals, then
+ * erx_backend_handle_add's.
  */
 int	erx_backend_handle_dup(erx_backend_grow_table_t *objects, erx_backend_handles_t *, uint64_t handle,
-	    uint64_t *copy) ERX_WARN_UNUSED_RESULT;
+	    uint64_t *copy, uint32_t *index, uint32_t *rights) ERX_WARN_UNUSED_RESULT;
 
 /*
  * Frees handle's entry, whether or not its object still lives: the lookup's entry step

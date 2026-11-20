@@ -123,6 +123,28 @@ line_label(void)
 }
 
 /*
+ * IRQ placement (docs/design-fiasco.md, "Handles"): an entry whose rights hold neither
+ * ERX_HR_TRIGGER nor ERX_HR_ACK has no capability at its IRQ slot, whether a pass or a
+ * duplicate made it, so the holder's own ring and ack reach nothing; the root's software
+ * object, passed with ERX_HR_TRIGGER, rings directly.
+ */
+static int64_t
+inspect_only(void)
+{
+	uint64_t copy;
+
+	if (erx_irq_trigger(handles[HOLDER_INSPECT]) != ERX_ESTALE || erx_irq_ack(handles[HOLDER_INSPECT]) != ERX_ESTALE)
+		return (90);
+	if (erx_cap_dup(handles[HOLDER_INSPECT], &copy) != ERX_OK)
+		return (91);
+	if (erx_irq_trigger(copy) != ERX_ESTALE || erx_irq_ack(copy) != ERX_ESTALE)
+		return (92);
+	if (erx_irq_trigger(handles[HOLDER_ROOT_SOFT]) != ERX_OK)
+		return (93);
+	return (0);
+}
+
+/*
  * The bind and a second bind that moves the label, the first ack, which opens the line
  * (docs/design-kernel.md, "IRQ objects"), then the prompt for the harness's character,
  * its label and its ack. The line is level and its byte stays unread until the root
@@ -161,6 +183,8 @@ executor_main(uint64_t unused)
 		status = run_check();
 	if (status == 0)
 		status = foreign_groups_refused();
+	if (status == 0)
+		status = inspect_only();
 	if (status == 0)
 		status = line_take();
 	atomic_store_explicit(&executor_status, status, memory_order_release);
