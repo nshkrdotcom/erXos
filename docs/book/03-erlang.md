@@ -7,9 +7,9 @@
 > section 3.5) runs in every **domain**, erXos's protected group of
 > Erlang processes (section 3.9). Domains message each other as Erlang
 > nodes do (section 3.6). Device drivers are supervised Erlang
-> processes, and modules are reloaded from the development host. The
-> refusal, by erXos's most trusted domain, of code that is not installed
-> is **Designed**.
+> processes, and modules are reloaded from the development host.
+> **Designed**: each domain's priority band, and the refusal, by erXos's
+> most trusted domain, of code that is not installed.
 
 **Background needed.** [Chapter
 1](01-operating-systems.md) (processes,
@@ -988,13 +988,10 @@ found missing. Its architecture document, [design.md](../design.md),
 opens with the premise in one sentence: "In erXos, Erlang's process is
 the operating system's process ..."
 
-That something is a kernel, and erXos has two. Today erXos runs on
-**Fiasco**, an existing microkernel of the L4 family ([chapter
+That something is the kernel. erXos runs on **Fiasco**, a microkernel of
+the L4 family ([chapter
 2](02-microkernels.md#25-the-l4-family-and-fiasco)), behind a kernel
-interface of erXos's own. Its own kernel, written in C on Fiasco's
-design, is the second phase of the roadmap and does not yet boot. Each
-claim below says whether it is built, designed, or holds only partly on
-Fiasco.
+interface of erXos's own. Each claim below is marked built or designed.
 
 ### 3.9.1 Every Erlang process is an operating-system process
 
@@ -1026,13 +1023,19 @@ and `'DOWN'` messages Erlang already defines ([design-runtime.md, Crash
 handling](../design-runtime.md#crash-handling)). **Built**: ERTS runs in
 user mode as the system domain on Fiasco, and other domains each run
 their own ERTS in an address space of their own (README.md, "Current
-status"). Each domain also gets its own share of CPU time
-(**Designed**). On Fiasco a domain's CPU is only a priority band and a
-set of processors, not a measured allocation.
+status").
+
+No domain gets a measured share of CPU time; each has a
+**priority band**, the Fiasco priority its threads start at, and a set
+of processors, so a spinning domain delays only its band and those
+below ([design-fiasco.md,
+Bands](../design-fiasco.md#bands)). The bands are **Designed** and not
+built: today every thread but the watchdog's runs at one priority
+(`liberx/backend/fiasco/service.c`).
 
 Scheduling has two levels: ERTS switches between Erlang processes as
-section 3.5.2 describes, and the kernel schedules ERTS's threads and
-divides CPU time between domains. [Chapter
+section 3.5.2 describes, and the kernel schedules ERTS's threads by
+priority. [Chapter
 9](README.md#chapter-9-processes-runtimes-and-two-level-scheduling)
 treats both.
 
@@ -1151,19 +1154,23 @@ host ([design-runtime.md](../design-runtime.md)). It keeps the
 scheduler, the collector, the loader, the JIT and distribution, and
 removes the layers that only adapt it to running as a program on UNIX.
 
-The JIT shows the kind of change. erXos's design never lets one mapping
-of memory be writable and executable at once. BeamAsm's code memory is
-therefore mapped twice, once writable for the JIT and once executable
-for the processor. Only domains whose runtime image is marked for JIT
-get address spaces that allow this. The system domain, which holds the
-most authority, runs the interpreter and makes no machine code at all
+The JIT shows the kind of change. erXos's kernel interface has no
+mapping that is writable and executable at once, and its C library
+refuses to ask for one. BeamAsm's code memory is therefore mapped
+twice, once writable for the JIT and once executable for the processor.
+Only a domain whose runtime image is marked for JIT gets an address
+space that allows this. The system domain runs the interpreter and makes
+no machine code
 ([design-runtime.md, BeamAsm](../design-runtime.md#beamasm)). **Built**:
 domains run either the interpreter or BeamAsm (README.md, "Current
-status"). On Fiasco the rule holds only in part. A page can be writable
-through one mapping and executable through another. Any domain can run
-code it wrote into its own memory, and some of the system domain's own
-mappings are writable and executable
-([design-fiasco.md](../design-fiasco.md#downsides-against-erxoss-kernel)).
+status").
+
+The rule has limits. Any other memory object can be mapped writable in
+one place and executable in another, so any domain can run code it
+wrote into its own memory. Some of the system domain's own mappings,
+through which it reaches every page, are writable and executable
+([design-fiasco.md, Shared objects and the JIT
+alias](../design-fiasco.md#shared-objects-and-the-jit-alias)).
 
 ### 3.9.6 Hot code loading, with a hash
 
@@ -1175,9 +1182,9 @@ reads them, refusing a mismatch with `hash_mismatch`
 "Current status"). The system domain goes further and loads only code
 from installed storage, never a binary a service merely received
 ([design-runtime.md, Code in the system
-domain](../design-runtime.md#code-in-the-system-domain)). **Designed**:
-the boot information already carries the flag that asks for this, but
-ERTS does not yet act on it. [Chapter
+domain](../design-runtime.md#code-in-the-system-domain)). This is
+**Designed** and not built: the boot information carries the flag that
+asks for it, and ERTS ignores it. [Chapter
 21](README.md#chapter-21-the-live-machine) covers code from the host,
 and the tools of section 3.7 extended to the machine.
 
@@ -1186,7 +1193,7 @@ and the tools of section 3.7 extended to the machine.
 | Erlang idea | In erXos | Chapter |
 | --- | --- | --- |
 | lightweight process | the operating system's process | 9 |
-| node | a domain, with its own address space and budget (its own CPU allocation designed) | 10 |
+| node | a domain, with its own address space, budget and priority band (designed) | 10 |
 | distribution | connections between domains over shared memory, checked by the funnel | 10 |
 | links, monitors, supervisors | kept across domains; drivers and services restart under supervisors | 10, 15 |
 | `gen_server`, `gen_statem` | the edge that performs a pure core's actions | 6 |
