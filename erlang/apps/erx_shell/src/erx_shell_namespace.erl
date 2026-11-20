@@ -11,10 +11,11 @@ A name resolves, in order, to a builtin of the runner (`cd`, and the job
 builtins `jobs`, `fg`, `bg` and `kill`), then to an
 Erlang command, a module that implements erx_cmd and declares
 `-erx_command(Name)`. Two modules that declare one name leave it
-unresolved: it runs nothing, and whatis names both. A name that holds a
-`/` is a path, which names a program, and nothing else resolves to a
-program yet, so both give `not found` (the evaluator's functions and its
-own builtins come before all of these and never reach the namespace).
+unresolved: it runs nothing, and whatis names both. A name this table
+does not hold, and a path, which holds a `/`, are the runner's to try as
+a program command from `/bin` (erx_shell_program:find/1) (the
+evaluator's functions and its own builtins come before all of these and
+never reach the namespace).
 
 build/1 is the pure core: it takes each module's attributes and exports
 and checks them, so a module whose metadata is malformed or that does
