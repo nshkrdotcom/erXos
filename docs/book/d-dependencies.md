@@ -37,25 +37,11 @@ A component erXos takes from outside must pay for itself: it saves more
 work, or buys more correctness, than it costs in size, review and
 license obligations. The project prefers mature, maintained
 components with a C or Erlang interface under a permissive license:
-ISC, BSD, MIT or Apache-2.0. A permanent
-copyleft dependency needs explicit agreement. OFL-1.1 is allowed for
-font data only.
+ISC, BSD, MIT or Apache-2.0. A copyleft dependency needs explicit
+agreement; the Pi 4's device tree is the one accepted (D.3.2). OFL-1.1
+is allowed for font data only.
 
-The table gives each row one of four statuses:
-
-* **`permanent`**: kept for good. Most rows are this.
-* **`stopgap`**: a component used to have a working system rather than
-  one chosen to keep: littlefs and LVGL. Each runs confined, as its
-  design states, and is fuzzed at its input.
-* **`release`**: a part of the trusted base that every domain's
-  isolation rests on: Fiasco, its boot console driver and three GCC
-  headers its build includes. A build check proves that what its
-  release build links is under permissive licenses.
-* **`example`**: a demo that is never part of the system. Doom is the
-  one; the images the website offers carry it, with its source offered.
-
-Tools and test data have labels of their own and never enter an image
-the system ships.
+Tools and test data never enter an image the system ships.
 
 ## D.2 Two ways in
 
@@ -65,19 +51,20 @@ depends on whether erXos changes it.
 **Code erXos changes lives in the tree.** OTP 29.1.2's source in
 `otp/`, musl in `musl/`, the Fiasco parts in `fiasco/`, OpenSSL,
 littlefs, Monocypher, ctaes, the BLAKE3, ChaCha20 and SHA-256 cores and
-`libmemdraw` are ordinary directories of the repository, changed by
-ordinary commits. Upstream is not merged: erXos owns their fixes,
+`libmemdraw`, among others, are ordinary directories of the
+repository, changed by ordinary commits. Upstream is not merged: erXos owns their fixes,
 and Fiasco's upstream is reviewed each month for security fixes to
 backport. Beside each sits an `ORIGIN.md`, the import's
 **origin record**: the repository, the release or commit, the
 archive's SHA-256 and, for every file, its original hash and license ([design-build.md, Sources and imports](../design-build.md#sources-and-imports)).
-LVGL is the one variant: a git submodule of erXos's own fork, pinned by
+LVGL is the one part of the system that is a git submodule instead,
+of erXos's own fork, pinned by
 its gitlink, with its `ORIGIN.md` at `display/lvgl/ORIGIN.md`.
 
 **Code erXos uses unchanged is fetched.** Everything else (the test
 oracles, the firmware, the device trees, LLVM's runtime libraries) is
 pinned in `deps.lock` by URL, version and SHA-256, with its
-license and status, fetched by `make fetch` alone and built out of
+license, fetched by `make fetch` alone and built out of
 tree ([Appendix C](c-building.md#c2-fetching-pinned-sources)). The web
 client's npm packages are pinned the same way, by the integrity hashes
 of `web/pnpm-lock.yaml`, with install scripts off.
@@ -94,7 +81,7 @@ The table has about sixty rows, in a few groups.
 
 | Component | License | Why it pays |
 | --- | --- | --- |
-| Erlang/OTP 29.1.2: ERTS and the shipped applications, with asmjit, PCRE2, zlib, zstd and Ryu inside | Apache-2.0; the parts inside under Zlib, BSD-3-Clause and Apache-2.0 | The language, its runtime and decades of supervision, distribution and libraries; erXos is built around it ([chapter 3](03-erlang.md)). asmjit, the JIT's assembler, is never in the system domain's image. |
+| Erlang/OTP 29.1.2: ERTS and the shipped applications, with asmjit, PCRE2, zlib, zstd and Ryu inside | Apache-2.0; the parts inside under Zlib, BSD-3-Clause (PCRE2's with its exception) and Apache-2.0 | The language, its runtime and decades of supervision, distribution and libraries; erXos is built around it ([chapter 3](03-erlang.md)). asmjit, the JIT's assembler, is never in the system domain's image. |
 | musl | MIT | A small, readable C library for every runtime and native program, whose seam under ERTS erXos owns ([chapter 9](09-processes.md#96-the-c-library-seam-and-hosted-mode)). |
 | OpenSSL 3.5 | Apache-2.0 | OTP's `crypto`, `ssl` and `ssh`, and the vault's key derivation and encryption; a long-term-support series. It never enters the system domain's image. |
 | LLVM libc++, libc++abi and compiler-rt builtins | Apache-2.0 with the LLVM exception | BeamAsm's C++ runtime, and the compiler's helper routines. |
@@ -109,16 +96,24 @@ The table has about sixty rows, in a few groups.
 | libfdt | BSD-2-Clause (dual GPL-2.0-or-later) | Reading the device tree, the board's description. |
 | TF-A's BL31 for the Pi 4 | BSD-3-Clause | The firmware calls that start CPUs and end the machine. |
 | Raspberry Pi firmware | Broadcom's binary license | Starts the board and loads the kernel. |
-| The boards' device trees, from Linux | Pi 4 GPL-2.0; Pi 5 GPL-2.0 OR MIT | Describe each board. The Pi 4's is an accepted permanent copyleft dependency, shipped as a file of its own beside its edited source and Linux's GPL-2.0 text. |
+| The boards' device trees, from Linux | Pi 4 GPL-2.0; Pi 5 GPL-2.0 OR MIT | Describe each board. The Pi 4's is the one copyleft dependency the system accepts, shipped as a file of its own beside its edited source and Linux's GPL-2.0 text. |
 
-Fiasco is MIT almost throughout. Two files are not. Fiasco's own
-`kobject_rpc.h` is GPL-2.0, and the tree holds instead erXos's MIT
-replacement, written from a description by someone who never read the
-original. The kernel debugger's `jdb_object.cpp` is GPL-2.0 too. Only a
-kernel built with the debugger compiles it, and the license rule takes
-it only in development builds. The images the website offers carry it
-and go out with a link to their source. Fiasco's other GPL and
-LGPL parts were left out when it was imported.
+What the system builds from Fiasco is MIT, with two files to note.
+Fiasco's own `kobject_rpc.h` is GPL-2.0, and the tree holds instead
+erXos's MIT replacement, written from a description by someone who
+never read the original. The kernel debugger's `jdb_object.cpp` is
+GPL-2.0 too. Only a kernel built with the debugger compiles it, and
+the license rule takes it only in development builds. The images the
+website offers carry it and go out with a link to their source.
+
+Fiasco's imported tree does hold other GPL and LGPL files: about 150
+in its kernel, `bootstrap` and build-system directories, and, beside
+`sigma0` in `l4re-core`, one LGPL file and some 9,000 files of GCC's
+C++ library, libstdc++, under GPL-3.0 with the GCC exception. No
+build compiles them. A build check fails if any file compiled or
+linked into the kernel, `bootstrap` or `sigma0`, headers included,
+has a license that is not permissive, apart from the three GCC headers and, in a kernel with the debugger,
+`jdb_object.cpp`.
 
 ### D.3.3 Storage, cryptography and small cores
 
@@ -172,7 +167,7 @@ translated: `netinet/in_cksum.c`, whose four-clause license keeps the
 advertising clause, and `tcp_stacks/tailq_hash.c`, which carries no
 license at all.
 
-### D.3.7 Tools, oracles and examples
+### D.3.7 Tools, oracles and a demo
 
 Most rows never reach an image. They build the system or check it:
 
@@ -186,7 +181,7 @@ Most rows never reach an image. They build the system or check it:
   host for the network stack. Some are GPL, such as the Linux guests
   that test erXos's F2FS; they run only as black boxes in a guest and
   are never linked.
-* **The example**: doomgeneric under GPL-2.0-or-later with Freedoom's
+* **A demo program**, never part of the system: doomgeneric under GPL-2.0-or-later with Freedoom's
   data file under BSD-3-Clause, as `/bin/doom` on the images the
   website offers. Its source is erXos's fork, a submodule that no file
   of erXos's tree comes from.
@@ -245,13 +240,14 @@ not built.
 A permissive license enters every build. A license that is not
 permissive enters only through one closed table, `LicenseCheck::TABLE`
 in `tools/lib/erx/license_check.rb`, whose every row names one input:
-its status, its exact license, where the build reads it and which
+its exact license, where the build reads it and which
 kinds of build take it. The table has three rows:
 
 1. the three GCC headers Fiasco includes, in every build, since the
    GCC Runtime Library Exception lets code compiled with them go out
    under any terms;
-2. Doom's archive, the example, in development builds only;
+2. Doom's archive, a demo program that is never part of the system,
+   in development builds only;
 3. Fiasco's `jdb_object.cpp`, in development builds only.
 
 The design admits a few more files by name and place, outside every
@@ -268,8 +264,8 @@ with a link to the source they were built from.
 ## Summary
 
 erXos takes outside code when it pays for itself, prefers permissive
-licenses, and marks each component in one table as permanent,
-stopgap, release or example. Code it changes lives in the tree with an
+licenses, and records each component, with what it does and its
+license, in one table. Code it changes lives in the tree with an
 `ORIGIN.md` that records every file's hash and license; code it uses
 unchanged is pinned in `deps.lock`. Small libraries such as Monocypher
 and ctaes keep OpenSSL out of the trusted base. A changed import file

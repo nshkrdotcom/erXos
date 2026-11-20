@@ -5,13 +5,13 @@
 > `deps.lock`, `make setup` and the oracle bootstrap, `make check` and
 > the slower gates, `tools/erx boot` on QEMU, the QEMU medium and the
 > Raspberry Pi 4 card from `make pack`, netbooting a board from a Mac,
-> and hosted mode on macOS, which has no command of its own that
-> starts a shell (section C.7).
+> and hosted mode on macOS.
 
 A clean clone of erXos holds no compiler output, no generated header
 and no third-party archive. It refuses to build until it has fetched
-what `deps.lock` names and checked every byte against its hash. One command reaches the network; every other command runs offline, under a
-deadline, with its output in a log.
+what `deps.lock` names and checked every byte against its hash. Only
+the fetch step (section C.2) reaches the network; every other command
+runs offline, under a deadline, with its output in a log.
 
 On FreeBSD, building the system is `make buildworld` in a checkout of
 `/usr/src`, with tools from the base system and nothing fetched. erXos
@@ -84,8 +84,8 @@ unset. Hosted mode (section C.7) builds only on macOS, so on FreeBSD
 The file `deps.lock` at the root of the tree is the list of everything
 the build takes from outside. Each entry is a **pin**: a source's
 identifier, its exact URL, its version or full commit, the SHA-256 of
-its archive, the root directory the archive must unpack to, its
-license and its status. The first entry reads:
+its archive, the root directory the archive must unpack to and its
+license. The first entry reads, in part:
 
 ```json
 {
@@ -95,14 +95,14 @@ license and its status. The first entry reads:
   "url": "https://github.com/erlang/otp/releases/download/OTP-29.1.2/otp_src_29.1.2.tar.gz",
   "sha256": "c79966661e35fe4aff8ec003db63682e3b33b10b672220d51bf93c0a9244b049",
   "directory": "otp_src_29.1.2",
-  "license": "Apache-2.0",
-  "status": "permanent"
+  "license": "Apache-2.0"
 }
 ```
 
 Notice that nothing in the entry says where to unpack or what to run:
 the build decides that, and the entry only says what the bytes must
-be. `make fetch` is the only command that touches the network:
+be. All fetching goes through `tools/erx fetch`, and `make fetch`
+runs it for everything the build needs:
 
 ```sh
 make fetch DOCKER_CONTEXT=NAME
@@ -122,8 +122,9 @@ context also pulls the oracle's Linux image, by its manifest digest.
 Two kinds of source are not tarballs. LVGL, the widget renderer, is a
 git submodule, `display/lvgl/lvgl`, of erXos's own fork, pinned by the
 commit the tree's gitlink records; `make fetch` clones it when it is
-missing, as does `git clone --recurse-submodules`. Doom, the example
-game, is a submodule marked `update = none`, and only
+missing, as does `git clone --recurse-submodules`. Doom, a demo
+game that is never part of the system, is a submodule marked
+`update = none`, and only
 `tools/erx fetch --example doom` obtains it, with Freedoom's data file
 checked against its own hash.
 
@@ -139,7 +140,7 @@ The code erXos changes, OTP in `otp/`, musl in `musl/`, Fiasco in
 
 ## C.3 Setup and the oracle bootstrap
 
-An **oracle** is an independent program whose answers the system's
+An **oracle** is an independent program whose answers the system's own
 must match. Examples are stock OTP for erXos's Erlang, musl's own tests for its C
 library, plan9port's `rc` for the command shell
 ([chapter 6](06-construction.md) explains why the project trusts
@@ -193,8 +194,8 @@ it lands. In order, it:
    file under an import matches its `ORIGIN.md` or carries a change
    notice (Appendix D, section D.4);
 3. runs the build checks: architecture terms in the generic code and
-   documents, the chokepoint checks and the stack proof of the C17
-   cores ([chapter 6](06-construction.md));
+   documents, the chokepoint checks and the stack proof of the C code
+   erXos links into the kernel ([chapter 6](06-construction.md));
 4. builds the web client and makes sure the `rc` oracle is current;
 5. runs every host test in `test/host/` and the native integration
    tests in `test/integration/`, except the few that boot QEMU, need
@@ -208,11 +209,11 @@ The slower gates run separately, when a change wants them:
 | Command | What it checks |
 | --- | --- |
 | `make check-qemu` | every QEMU suite, each boot fresh: under HVF, and under TCG a deterministic transcript and a one-CPU boot |
-| `make check-reproducible` | two clean builds of the QEMU medium and of the Pi 4 card are byte-identical |
+| `make check-reproducible` | two clean builds of the QEMU medium, and of the Pi 4 card without its packages, are byte-identical |
 | `make check-sanitizers` | the host C code under AddressSanitizer and UndefinedBehaviorSanitizer, the concurrency tests under ThreadSanitizer |
 | `make check-fuzz` | the host fuzz targets, for their configured budgets |
 | `make check-tla` | the TLA+ protocol models under TLC, each with its seeded defects |
-| `make check-cbmc` | the bounded model checker over the C cores' harnesses in `test/cbmc/` |
+| `make check-cbmc` | the bounded model checker, through the harnesses in `test/cbmc/`, over the C code in `kernel/core/` that erXos links into Fiasco |
 | `make check-litmus` | the weak-memory litmus tests of `test/litmus/` under herd7 |
 | `make check-oracle` | OTP's suites on erXos under QEMU against stock OTP, case by case, then musl's `libc-test` |
 
@@ -422,7 +423,7 @@ on stock OTP, and compares them as `make check-oracle` does.
 ## Summary
 
 A build of erXos takes every outside source from `deps.lock`, where
-each is pinned by URL and SHA-256, and only `make fetch` reaches the
+each is pinned by URL and SHA-256, and only the fetch step reaches the
 network. `make setup` builds, once, the oracles the checks compare
 against: stock OTP twice, fsimg, plan9port's `rc` and the hosted
 runtime. `make check` is the everyday gate: source and provenance
