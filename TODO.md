@@ -8816,6 +8816,9 @@ document's "residual risks accepted" paragraph.
 
 ## Planned features
 
+* [Medium] docs, the book ([docs/book/](docs/book/README.md)): write The Design and Implementation
+  of erXos from docs/book/README.md's outline, one chapter per package, each checked against the
+  design documents and the tree; built and unbuilt parts marked.
 * [Low] display, `erx_ui:open/1` falls back to the session's only display
   ([design-display.md](docs/design-display.md#choosing-a-display)): when `Options` and the
   `display` variable name none, open on the one display the session holds where it holds exactly
