@@ -69,13 +69,15 @@ typedef struct erx_split_ring_answer {
 } erx_split_ring_answer_t;
 
 /*
- * An empty ring over `layout`, a split ring's as erx_dma_layout_split_ring makes it, whose region
- * entries name the regions of `regions`, its device's table (erx_dma_ledger_make). False, writing
- * nothing, for a layout erx_dma_ledger_make refuses, one lacking a descriptor table, an available
- * ring or a used ring, one whose three tables' counts differ (the queue's one size, which the
- * install writes), or one of more than ERX_DEVICE_QUEUE_SIZE_MAX buffers.
+ * An empty ring of `size` entries and buffers of `buffer_size` bytes in `memory_size` bytes of
+ * memory at device address `device_base`, laid out by erx_dma_layout_split_ring and no one else,
+ * so the install's registers name virtio's rings wherever a ring is made; its region entries
+ * name the regions of `regions`, its device's table (erx_dma_ledger_make). False, writing
+ * nothing, for arguments erx_dma_layout_split_ring refuses or a layout erx_dma_ledger_make
+ * refuses: one past the memory or its address width.
  */
-bool	erx_split_ring_make(erx_split_ring_t *ring, const erx_dma_layout_t *layout, const erx_dma_regions_t *regions);
+bool	erx_split_ring_make(erx_split_ring_t *ring, uint32_t size, uint32_t buffer_size, uint32_t granule,
+	    uint64_t memory_size, uint64_t device_base, uint32_t address_bits, const erx_dma_regions_t *regions);
 /* The device's idle report after a reset: every chain ends and the ring is whole again. */
 void	erx_split_ring_reset(erx_split_ring_t *ring);
 /*

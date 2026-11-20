@@ -33,7 +33,7 @@
 #define SEED_LEN_UNCHECKED	false
 #endif
 
-/* The layout's table of the used ring, which erx_split_ring_make found there. */
+/* The layout's table of the used ring, which erx_dma_layout_split_ring always lays out. */
 static uint32_t
 used_table(const erx_split_ring_t *ring)
 {
@@ -41,18 +41,15 @@ used_table(const erx_split_ring_t *ring)
 }
 
 bool
-erx_split_ring_make(erx_split_ring_t *ring, const erx_dma_layout_t *layout, const erx_dma_regions_t *regions)
+erx_split_ring_make(erx_split_ring_t *ring, uint32_t size, uint32_t buffer_size, uint32_t granule,
+    uint64_t memory_size, uint64_t device_base, uint32_t address_bits, const erx_dma_regions_t *regions)
 {
+	erx_dma_layout_t layout;
 	erx_dma_ledger_t ledger;
-	int desc, avail, used;
 
-	if (layout->pool.count > ERX_DEVICE_QUEUE_SIZE_MAX || !erx_dma_ledger_make(&ledger, layout, regions))
-		return (false);
-	desc = erx_dma_ledger_table(&ledger, ERX_STRUCTURE_VIRTQ_DESC);
-	avail = erx_dma_ledger_table(&ledger, ERX_STRUCTURE_VIRTQ_AVAIL);
-	used = erx_dma_ledger_table(&ledger, ERX_STRUCTURE_VIRTQ_USED);
-	if (desc < 0 || avail < 0 || used < 0 || layout->tables[avail].count != layout->tables[desc].count ||
-	    layout->tables[used].count != layout->tables[desc].count)
+	/* The layout's three tables and its pool all count `size`, up to ERX_DEVICE_QUEUE_SIZE_MAX. */
+	if (!erx_dma_layout_split_ring(size, buffer_size, granule, memory_size, device_base, address_bits, &layout) ||
+	    !erx_dma_ledger_make(&ledger, &layout, regions))
 		return (false);
 	bzero(ring, sizeof(*ring));
 	ring->ledger = ledger;
@@ -234,7 +231,7 @@ erx_split_ring_complete(erx_split_ring_t *ring, const erx_report_record_t *eleme
 		return (ERX_ECORRUPT);
 	while (*done < count && answered < bytes_max && erx_dma_ledger_acquired(&ring->ledger, used) > 0) {
 		const uint32_t len = elements[*done].virtq_used_elem.len;
-		const erx_dma_holding_t *const holding = erx_dma_report_holding(&ring->ledger, used, &elements[*done]);
+		const erx_dma_found_t found = erx_dma_report_holding(&ring->ledger, used, &elements[*done]);
 		erx_split_ring_chain_t chain;
 		uint32_t buffer;
 
@@ -243,13 +240,13 @@ erx_split_ring_complete(erx_split_ring_t *ring, const erx_report_record_t *eleme
 		 * chain held: the device may still write its buffer. The ring's every publication names
 		 * one buffer, which the ledger's names rule kept below the pool's count.
 		 */
-		if (holding == NULL) {
+		if (found.holding == NULL) {
 			ring->broken = true;
 			break;
 		}
-		buffer = holding->buffers[0];
+		buffer = found.holding->buffers[0];
 		chain = ring->chains[buffer];
-		if ((len > chain.writable && !SEED_LEN_UNCHECKED) || !erx_dma_consume(&ring->ledger, used, holding)) {
+		if ((len > chain.writable && !SEED_LEN_UNCHECKED) || !erx_dma_consume(&ring->ledger, used, found)) {
 			ring->broken = true;
 			break;
 		}

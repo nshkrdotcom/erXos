@@ -305,6 +305,7 @@ test_transitions(void)
 {
 	const erx_dma_layout_t layout = split_ring(MEMORY, 0, 32);
 	const erx_dma_place_t head = { DESC, 0 };
+	erx_dma_found_t stale;
 	erx_dma_holding_t copy;
 	erx_dma_ledger_t ledger;
 
@@ -325,9 +326,21 @@ test_transitions(void)
 	EXPECT(!erx_dma_ledger_release_holding(&ledger, USED, erx_dma_ledger_holding(&ledger, head)),
 	    "a release no acquisition covered");
 	EXPECT(erx_dma_ledger_acquire(&ledger, USED, 1), "the chain's report acquired");
-	copy = *erx_dma_ledger_holding(&ledger, head);
-	EXPECT(!erx_dma_ledger_release_holding(&ledger, USED, &copy) && !erx_dma_ledger_release_holding(&ledger, USED, NULL) &&
+	copy = *erx_dma_ledger_holding(&ledger, head).holding;
+	EXPECT(!erx_dma_ledger_release_holding(&ledger, USED, (erx_dma_found_t){ &copy, copy.serial }) &&
+	    !erx_dma_ledger_release_holding(&ledger, USED, (erx_dma_found_t){ NULL, 0 }) &&
 	    erx_dma_ledger_live(&ledger) == 1, "a holding the ledger did not give ends nothing");
+	EXPECT(hold_at(&ledger, 1, (erx_dma_place_t[]){ { DESC, 1 }, { AVAIL, 1 } }, 2) &&
+	    erx_dma_ledger_acquire(&ledger, USED, 2), "a second chain, both reports acquired");
+	stale = erx_dma_ledger_holding(&ledger, head);
+	EXPECT(erx_dma_ledger_release_holding(&ledger, USED, stale), "the first chain ends");
+	EXPECT(!erx_dma_ledger_release_holding(&ledger, USED, stale) && erx_dma_ledger_live(&ledger) == 1,
+	    "a holding kept past its release ends nothing, though another moved to its place");
+	EXPECT(erx_dma_ledger_release_holding(&ledger, USED, erx_dma_ledger_holding(&ledger, (erx_dma_place_t){ DESC, 1 })) &&
+	    hold_at(&ledger, 0, (erx_dma_place_t[]){ { DESC, 0 }, { AVAIL, 2 } }, 2) &&
+	    erx_dma_ledger_acquire(&ledger, USED, 1), "the second chain ends; the first chain's head held again");
+	EXPECT(!erx_dma_ledger_release_holding(&ledger, USED, stale) && erx_dma_ledger_live(&ledger) == 1,
+	    "a holding kept past its release ends nothing, though a new one has its place and its head");
 	EXPECT(erx_dma_ledger_acquire(&ledger, USED, 0), "the acquisition taken back");
 	EXPECT(!erx_dma_ledger_acquire(&ledger, USED, 2) && !erx_dma_ledger_acquire(&ledger, DESC, 1),
 	    "an acquisition past the live holdings, or of a table the CPU writes");

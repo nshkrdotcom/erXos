@@ -93,11 +93,11 @@ covers(const erx_dma_range_t *ranges, uint32_t count, uint64_t offset, uint64_t 
 static bool
 consume(erx_dma_ledger_t *ledger, const erx_report_record_t *record, erx_dma_holding_t *ended)
 {
-	const erx_dma_holding_t *const holding = erx_dma_report_holding(ledger, USED, record);
+	const erx_dma_found_t found = erx_dma_report_holding(ledger, USED, record);
 
-	if (holding != NULL)
-		*ended = *holding;
-	return (erx_dma_consume(ledger, USED, holding));
+	if (found.holding != NULL)
+		*ended = *found.holding;
+	return (erx_dma_consume(ledger, USED, found));
 }
 
 /* The install: the calls rule first, then every table zeroed and cleaned, the registers from the layout, the ready bit. */

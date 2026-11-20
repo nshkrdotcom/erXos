@@ -326,9 +326,9 @@ make(script_t *script)
 
 	check(erx_dma_layout_split_ring(size, buffer_size, granule, UINT64_MAX, 0, 64, &layout));
 	memory_size = layout.pool.first + (uint64_t)layout.pool.count * layout.pool.stride;
-	check(erx_dma_layout_split_ring(size, buffer_size, granule, memory_size,
-	    (bits & 2) != 0 ? UINT64_MAX - memory_size + 1 : FUZZ_BASE, 64, &layout));
-	check(erx_split_ring_make(&ring, &layout, &no_regions));
+	check(erx_split_ring_make(&ring, size, buffer_size, granule, memory_size,
+	    (bits & 2) != 0 ? UINT64_MAX - memory_size + 1 : FUZZ_BASE, 64, &no_regions));
+	layout = *erx_dma_ledger_layout(erx_split_ring_ledger(&ring));
 }
 
 int

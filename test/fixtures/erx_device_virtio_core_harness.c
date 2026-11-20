@@ -126,7 +126,7 @@ fresh(world_t *w, uint32_t size)
 	w->size = size;
 	w->free_descs = size;
 	EXPECT(erx_dma_layout_split_ring(size, BUFFER, GRANULE, MEMORY, BASE, 32, &w->layout) &&
-	    erx_split_ring_make(&w->ring, &w->layout, &no_regions), "the split ring is made");
+	    erx_split_ring_make(&w->ring, size, BUFFER, GRANULE, MEMORY, BASE, 32, &no_regions), "the split ring is made");
 	memset(w->memory, 0xa5, w->layout.pool.first);
 	install(w);
 }
@@ -676,7 +676,7 @@ test_region_piece(void)
 	bool entry_stored = false;
 
 	EXPECT(erx_dma_layout_split_ring(2, BUFFER, GRANULE, MEMORY, BASE, 32, &w.layout) &&
-	    erx_split_ring_make(&w.ring, &w.layout, &regions), "a ring of a device with regions");
+	    erx_split_ring_make(&w.ring, 2, BUFFER, GRANULE, MEMORY, BASE, 32, &regions), "a ring of a device with regions");
 	EXPECT(erx_dma_regions_add(&regions, region) &&
 	    erx_dma_regions_add(&regions, (erx_dma_persistent_region_t){ .name = 6, .address = BASE, .length = 0x1000 }),
 	    "the device's regions");
@@ -702,16 +702,26 @@ test_region_piece(void)
 	EXPECT(entry_stored, "the entry is stored at the piece's place from the region's record");
 }
 
-/* A layout without a used ring is not a split ring's. */
+/*
+ * The ring lays itself out: its layout is erx_dma_layout_split_ring's, and what that refuses, or
+ * a memory too small for it, makes no ring.
+ */
 static void
 test_layout(void)
 {
 	static world_t w;
 	erx_dma_layout_t layout;
 
-	EXPECT(erx_dma_layout_split_ring(2, BUFFER, GRANULE, MEMORY, BASE, 32, &layout), "the layout");
-	layout.table_count = 2;
-	EXPECT(!erx_split_ring_make(&w.ring, &layout, &no_regions), "a ring needs its used ring");
+	EXPECT(erx_dma_layout_split_ring(4, BUFFER, GRANULE, MEMORY, BASE, 32, &layout) &&
+	    erx_split_ring_make(&w.ring, 4, BUFFER, GRANULE, MEMORY, BASE, 32, &no_regions) &&
+	    erx_dma_ledger_layout(erx_split_ring_ledger(&w.ring))->tables[DESC].stride == layout.tables[DESC].stride &&
+	    erx_dma_ledger_layout(erx_split_ring_ledger(&w.ring))->tables[USED].first == layout.tables[USED].first &&
+	    erx_dma_ledger_layout(erx_split_ring_ledger(&w.ring))->pool.first == layout.pool.first,
+	    "the ring's layout is the split ring's");
+	EXPECT(!erx_split_ring_make(&w.ring, 3, BUFFER, GRANULE, MEMORY, BASE, 32, &no_regions),
+	    "a size not a power of two");
+	EXPECT(!erx_split_ring_make(&w.ring, 4, BUFFER, GRANULE, layout.pool.first, BASE, 32, &no_regions),
+	    "a memory without room for the pool");
 }
 
 int

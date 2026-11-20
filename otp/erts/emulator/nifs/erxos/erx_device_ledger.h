@@ -109,7 +109,19 @@ typedef struct erx_dma_holding {
 	erx_dma_place_t	records[ERX_DMA_HELD_RECORDS_MAX];	/* records[0] is the head */
 	uint32_t	buffer_count;
 	uint32_t	buffers[ERX_DMA_HELD_BUFFERS_MAX];
+	uint64_t	serial;		/* the ledger's count of holdings begun when it began, from 1 */
 } erx_dma_holding_t;
+
+/*
+ * A live holding as a query found it: the ledger's pointer, NULL for none, and the holding's
+ * serial. No two holdings of a ledger share a serial, resets included, so a release, which ends
+ * the holding only while that pointer still holds that serial, ends nothing for a value kept
+ * past the holding's end, whatever holding has its place or its head since.
+ */
+typedef struct erx_dma_found {
+	const erx_dma_holding_t	*holding;
+	uint64_t		serial;
+} erx_dma_found_t;
 
 /*
  * One of the device's persistent regions (docs/design-device-dma.md, "The ledger"), by the
@@ -158,6 +170,7 @@ typedef struct erx_dma_ledger {
 	uint32_t		live;
 	erx_dma_holding_t	holdings[ERX_DMA_HOLDINGS_MAX];
 	const erx_dma_regions_t	*regions;	/* the device record's, never NULL */
+	uint64_t		begun;		/* holdings begun, kept across resets: the last serial */
 } erx_dma_ledger_t;
 
 /*
@@ -194,13 +207,14 @@ bool	erx_dma_ledger_hold(erx_dma_ledger_t *ledger, const struct erx_dma_publicat
  */
 bool	erx_dma_ledger_acquire(erx_dma_ledger_t *ledger, uint32_t reports, uint32_t count);
 /*
- * Ends `holding`, a live holding of this ledger as erx_dma_ledger_holding gave it, on a report of
- * table `reports`, the table the device writes, at its consumer position. False, changing nothing,
- * for a table the device does not write, an acquisition with no report left, or a holding that is
- * not one of the ledger's live ones, NULL included. A caller reads what it needs of the holding
- * first: the pointer is the ledger's, and no longer names it after.
+ * Ends the holding `found` names, as erx_dma_ledger_holding found it, on a report of table
+ * `reports`, the table the device writes, at its consumer position. False, changing nothing, for
+ * a table the device does not write, an acquisition with no report left, or a found holding that
+ * is not one of the ledger's live ones (NULL, a copy) or has ended since it was found.
+ * A caller reads what it needs of the holding first: the pointer is the ledger's, and no longer
+ * names it after.
  */
-bool	erx_dma_ledger_release_holding(erx_dma_ledger_t *ledger, uint32_t reports, const erx_dma_holding_t *holding);
+bool	erx_dma_ledger_release_holding(erx_dma_ledger_t *ledger, uint32_t reports, erx_dma_found_t found);
 /*
  * The device's idle report after a reset: every holding and acquisition ends and every position
  * returns to 0. The persistent regions stay.
@@ -223,8 +237,8 @@ bool			 erx_dma_ledger_record_held(const erx_dma_ledger_t *ledger, erx_dma_place
 bool			 erx_dma_ledger_buffer_held(const erx_dma_ledger_t *ledger, uint32_t buffer);
 /* The derived writer of a buffer: the device's while a holding holds it. */
 erx_dma_writer_t	 erx_dma_ledger_buffer_writer(const erx_dma_ledger_t *ledger, uint32_t buffer);
-/* The live holding whose head is `head`, or NULL; valid until the ledger changes. */
-const erx_dma_holding_t	*erx_dma_ledger_holding(const erx_dma_ledger_t *ledger, erx_dma_place_t head);
+/* The live holding whose head is `head`, its pointer NULL for none, which the pointer names until the ledger changes. */
+erx_dma_found_t		 erx_dma_ledger_holding(const erx_dma_ledger_t *ledger, erx_dma_place_t head);
 /* The records of a table no holding holds. */
 uint32_t		 erx_dma_ledger_free_records(const erx_dma_ledger_t *ledger, uint32_t table);
 uint32_t		 erx_dma_ledger_live(const erx_dma_ledger_t *ledger);

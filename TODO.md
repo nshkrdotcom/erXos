@@ -8043,13 +8043,9 @@ to the corpus and follow rc
   live holding), and `erx_dma_ledger_acquire` takes a bare count, so no chokepoint yet keeps the ledger's
   transitions to the sequencer;
   `ERX_DMA_STORE_BYTES_MAX` is hand-kept, checked only by a static assertion against the two layouts the sequencer
-  encodes, and should be derived from the widest encoded layout; `erx_split_ring_make` checks a given layout's
-  shape only in part (equal counts), so a hand-built layout whose descriptor `first` is off its region, whose
-  strides are not virtio's or whose count is not a power of two passes while the install's registers name each
-  ring's region: make should derive the layout through `erx_dma_layout_split_ring` itself, which also keeps
-  `install()` from seeing a layout of unequal counts through `erx_dma_ledger_make`; `erx_dma_consume` ends the
-  holding at a slot, so a pointer kept past another release names whatever holding moved there (the ring is
-  its one caller and uses it at once), and should carry the head the query found; the install's sequence
+  encodes, and should be derived from the widest encoded layout; `erx_dma_ledger_make` takes any layout that passes the
+  install's check, so the sequencer's `install()` relies on its one caller, the split ring, deriving its layout
+  through `erx_dma_layout_split_ring` (three tables of one count); the install's sequence
   leaves `QueueSel` to the effect layer, which must write it from the record before the registers; the
   publication's `erx_dma_publication_call_t` and `erx_device_dma.h`'s `erx_dma_call_t` are two models of a
   call until the old check goes; `free_record`'s loop

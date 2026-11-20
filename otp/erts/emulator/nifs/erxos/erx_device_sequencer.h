@@ -139,19 +139,21 @@ erx_dma_range_t	erx_dma_acquire_record(const erx_dma_ledger_t *ledger, uint32_t 
 
 /*
  * The live holding the record at the consumer position of `reports`, as the acquisition read
- * it, would end, without ending it, so a form judges the rest of the record first; NULL where
- * erx_dma_consume would refuse it. The holding is the ledger's, valid until the ledger changes.
+ * it, would end, without ending it, so a form judges the rest of the record first; its pointer
+ * NULL where erx_dma_consume would refuse it. The pointer is the ledger's, valid until the
+ * ledger changes; erx_dma_consume ends the holding only while it is live (erx_dma_found_t).
  */
-const erx_dma_holding_t	*erx_dma_report_holding(const erx_dma_ledger_t *ledger, uint32_t reports,
+erx_dma_found_t		erx_dma_report_holding(const erx_dma_ledger_t *ledger, uint32_t reports,
 			    const erx_report_record_t *record);
 
 /*
- * Consumes the record at the consumer position of table `reports`, ending `holding`, the one
- * erx_dma_report_holding gave for that record, so the record is decoded once and judged whole
- * before anything ends. False, changing nothing, for NULL (a record past what the acquisition
- * covered, one whose selector names no meaning, one that releases nothing the split ring knows,
- * or one naming no live holding), which breaks the queue.
+ * Consumes the record at the consumer position of table `reports`, ending the holding `found`
+ * names, as erx_dma_report_holding gave it for that record, so the record is decoded once and
+ * judged whole before anything ends. False, changing nothing, which breaks the queue, for a
+ * NULL holding (a record past what the acquisition covered, one whose selector names no meaning,
+ * one that releases nothing the split ring knows, or one naming no live holding) or one that has
+ * ended since it was found (erx_dma_ledger_release_holding).
  */
-bool	erx_dma_consume(erx_dma_ledger_t *ledger, uint32_t reports, const erx_dma_holding_t *holding);
+bool	erx_dma_consume(erx_dma_ledger_t *ledger, uint32_t reports, erx_dma_found_t found);
 
 #endif /* ERX_DEVICE_SEQUENCER_H */
