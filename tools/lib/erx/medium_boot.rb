@@ -464,7 +464,11 @@ module Erx
     # against the layout of the node's system_image record (docs/design-fiasco.md, "The
     # booted slot"), mounts it with the EROFS reader itself, so nothing joins the
     # storage domain's namespace, and prints the MD5 of IMAGE_FILE as the reader reads it;
-    # it must be the MD5 of the file the packer put in the image. A call that raises answers {image_md5, {Class, Reason}}.
+    # it must be the MD5 of the file the packer put in the image. A read that fails answers
+    # its class and reason, printed as a binary at the storage domain's node, and a call
+    # that raises answers {image_md5, {Class, Reason}}. The storage domain answers only a
+    # boolean (the wait) and a binary (the read): the system domain decodes its answers in
+    # safe mode and drops one that names an atom it lacks (docs/design-runtime.md, edit 9).
     # The echo of the line does not start {image_md5, so only the answer matches.
     def image_checkpoints(shell, release)
       entry = release.find { |candidate| IMAGE_FILE.match?(candidate.fetch('path')) }
@@ -472,11 +476,12 @@ module Erx
 
       names = entry.fetch('path').split('/').map { |name| "<<\"#{name}\">>" }.join(',')
       digest = Digest::MD5.file(entry.fetch('artifact')).hexdigest.upcase
-      read = "fun()->{ok,ImLayout}=erx_device_record:system_image(),{ok,ImPid}=erx_blk_service:window(system)," \
+      read = "fun()->try {ok,ImLayout}=erx_device_record:system_image(),{ok,ImPid}=erx_blk_service:window(system)," \
              "{ok,ImImage}=erx_verity:open(ImPid,ImLayout),{ok,ImFs}=erx_erofs:mount(ImImage,fun(_)->ok end)," \
-             "case erx_erofs:read_file(ImFs,[#{names}]) of {ok,B}->binary:encode_hex(erlang:md5(B));E->E end end"
-      expression = "ImWait=fun ImW(0)->timeout;ImW(N)->case lists:keymember(erx_storage,1,try erpc:call('#{STORAGE_NODE}'," \
-                   "application,which_applications,[],1000) catch _:_->[] end) of true->ok;false->timer:sleep(500),ImW(N-1) end end," \
+             "{ok,B}=erx_erofs:read_file(ImFs,[#{names}]),binary:encode_hex(erlang:md5(B)) " \
+             "catch ImRc:ImRr->iolist_to_binary(io_lib:format(\"~0p\",[{ImRc,ImRr}])) end end"
+      expression = "ImWait=fun ImW(0)->timeout;ImW(N)->case try erpc:call('#{STORAGE_NODE}'," \
+                   "application_controller,is_running,[erx_storage],1000) catch _:_->false end of true->ok;false->timer:sleep(500),ImW(N-1) end end," \
                    "{image_md5,try ok=ImWait(240),erpc:call('#{STORAGE_NODE}',#{read},60000) catch ImC:ImR->{ImC,ImR} end}.\r"
       whole = /\A(?:(?:\([a-z0-9_]+@[a-z0-9_.-]+\))?[0-9]+> )?\{image_md5,<<"#{digest}">>\}\r*\n\z/n
       [shell.merge(type: expression).freeze,
@@ -677,6 +682,16 @@ module Erx
       # loads are loaded, PoolPagesUp being the pages in use then minus the pages once it has
       # stopped. Stop is down, or timeout when the domain did not end within 60 s, in which case
       # PoolPages is no figure. The system's own figures are {Memory, Carriers, Threads, Pool}.
+      # The system domain decodes a domain's answers in safe mode and drops one that names an
+      # atom it lacks, as a list of the domain's modules does (docs/design-runtime.md, edit 9),
+      # so Modules is counted from erlang:system_info(loaded), which is text, and LOADED's
+      # modules are found and loaded by a shell fun run at the domain's node. That fun runs in
+      # the domain's copy of the shell's evaluator (erl_eval, with shell and erl_internal),
+      # loading them if they are not loaded yet, so Loaded's Memory, Carriers and PoolPagesUp
+      # may include those modules, and Row's figures do not. The other figures name only
+      # ERTS's own atoms, which the system's figures, taken first, have created, since every
+      # runtime takes the same allocator flags. A figure whose call fails is its
+      # {Class, Reason}, except in Carriers, where a failed call leaves its allocator out.
       # runs: ReleaseFiles.domain_runs(paths).
       def expression(runs:, runtime:)
         spec = MediumBoot.erlang_map(runtime: runtime, memory: MEMORY, outer: DOMAIN_OUTER, lane: 4096,
@@ -697,15 +712,22 @@ module Erx
           'FpSz<-[lists:sum([lists:sum([FpCs||{FpK,FpL}<-FpIn,FpK=:=mbcs orelse FpK=:=sbcs,{carriers_size,FpCs,_,_}<-FpL])' \
           '||{instance,_,FpIn}<-FpList(FpAsk(FpN,erlang,system_info,[{allocator,FpA}]))])],FpSz>0])) end',
           'FpThreads=fun(FpN)->[FpAsk(FpN,erlang,system_info,[FpT])||FpT<-[schedulers,dirty_cpu_schedulers,dirty_io_schedulers,thread_pool_size]] end',
+          # A node's loaded modules: system_info(loaded) is two header lines, then one line per
+          # module (loaded/2 in otp/erts/emulator/beam/break.c).
+          'FpCount=fun(FpN)->case FpAsk(FpN,erlang,system_info,[loaded]) of FpB when is_binary(FpB)->' \
+          'length(binary:matches(FpB,<<"\n">>))-2;FpO->FpO end end',
+          # Run at a domain's node: the count of the modules of LOADED's applications and the
+          # result of loading them, a failure printed as a binary.
+          "FpLoaded=fun()->FpMs=lists:append([case application:get_key(FpAp,modules) of {ok,FpM}->FpM;_->[] end||FpAp<-[#{LOADED.join(',')}]])," \
+          '{length(FpMs),case code:ensure_modules_loaded(FpMs) of ok->ok;FpErr->iolist_to_binary(io_lib:format("~0p",[FpErr])) end} end',
           "FpSpec=#{spec}",
           "FpStep=fun(FpName,FpBoot,FpRel,FpNf,FpTmp)->FpU0=FpUsed(),FpLim=\#{processes=>#{PROCESSES},atoms=>#{ATOMS},tmp=>FpTmp}," \
           'case erx_domain:create(FpSpec#{name=>FpName,boot=>FpBoot,release=>FpRel,release_files=>FpNf,limits=>FpLim}) of ' \
           '{ok,FpD}->FpNode=erx_domain:node(FpD),timer:sleep(15000),FpU1=FpUsed(),' \
           'FpRow={FpAsk(FpNode,erlang,memory,[]),FpCarriers(FpNode),FpThreads(FpNode),FpAsk(FpNode,erlang,system_info,[process_count]),' \
-          'FpAsk(FpNode,erlang,system_info,[atom_count]),length(FpList(FpAsk(FpNode,code,all_loaded,[])))},' \
-          "FpMods=lists:append([case FpAsk(FpNode,application,get_key,[FpAp,modules]) of {ok,FpMs}->FpMs;_->[] end||FpAp<-[#{LOADED.join(',')}]])," \
-          'FpLoad=FpAsk(FpNode,code,ensure_modules_loaded,[FpMods]),' \
-          'FpRow2={length(FpMods),FpLoad,FpAsk(FpNode,erlang,memory,[]),FpCarriers(FpNode),FpUsed()},' \
+          'FpAsk(FpNode,erlang,system_info,[atom_count]),FpCount(FpNode)},' \
+          '{FpLc,FpLr}=FpAsk(FpNode,erlang,apply,[FpLoaded,[]]),' \
+          'FpRow2={FpLc,FpLr,FpAsk(FpNode,erlang,memory,[]),FpCarriers(FpNode),FpUsed()},' \
           "FpMon=monitor(process,erx_domain:pid(FpD)),erx_domain:stop(FpD,shutdown)," \
           "FpStop=receive {'DOWN',FpMon,process,_,_}->down after 60000->timeout end,timer:sleep(3000),FpU2=FpUsed()," \
           '{FpName,FpU0,case FpStop of down->FpU1-FpU2;_->no_figure end,FpRow,setelement(5,FpRow2,element(5,FpRow2)-FpU2),FpStop};FpBad->{FpName,FpBad} end end',

@@ -137,13 +137,16 @@ module Erx
     # network domain's rows in the domain service, and Link, vtnet0's link supervisor in
     # the network domain as a list; and the first incarnation's id I0 and node N0, root's
     # `net` R0, the system's `network_ctl` C0 and vtnet0's link supervisor L0. Every later
-    # system-shell line reads these bindings.
+    # system-shell line reads these bindings. Link picks the supervisor at the network
+    # domain's node, so the answer is pids alone: the system domain decodes the domain's
+    # answers in safe mode and drops one that names an atom it lacks, as which_children's
+    # module lists do (docs/design-runtime.md, edit 9).
     ROOT_NET = 'erpc:call(root_1@erxos, erx, cap, [net])'
     NETWORK_TEMPLATE = <<~'ERLANG'
       Net = fun() -> [D || #{name := {erx_ident, <<"network">>}} = D <-
                            erx_domain_core:domains(maps:get(core, sys:get_state(erx_domain_srv)))] end,
       [#{id := I0, node := N0}] = Net(),
-      Link = fun() -> [P || {vtnet0, P, _, _} <- erpc:call(N0, supervisor, which_children, [erx_net_interfaces])] end,
+      Link = fun() -> erpc:call(N0, fun() -> [P || {vtnet0, P, _, _} <- supervisor:which_children(erx_net_interfaces)] end) end,
       [L0] = Link(), R0 = %<root_net>s, C0 = erx:cap(network_ctl),
       {is_pid(L0), is_pid(R0), is_pid(C0)}.
     ERLANG
