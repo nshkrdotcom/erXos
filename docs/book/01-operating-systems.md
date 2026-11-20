@@ -164,7 +164,7 @@ network stack and the drivers run outside it, as programs, most of them
 written in Erlang ([design.md, Trust
 placement](../design.md#trust-placement)). A kernel built this way is a
 microkernel, the subject of [chapter
-2](README.md#chapter-2-microkernels-and-capabilities). [Chapter
+2](02-microkernels.md). [Chapter
 5](README.md#chapter-5-design-overview-of-erxos) shows erXos's version
 of figure 1.1 and names the seven concepts it is built from.
 
@@ -462,7 +462,7 @@ kernel threads; the program's own scheduler decides which task each
 kernel thread runs. Switching between such tasks costs a function call,
 not a kernel entry, and a task can need only a few KiB of memory, so a
 program can have hundreds of thousands of them. Erlang's processes are
-tasks of this kind, as [chapter 3](README.md#chapter-3-erlang-and-otp)
+tasks of this kind, as [chapter 3](03-erlang.md)
 explains; despite the shared word, they are not operating-system
 processes.
 
@@ -831,7 +831,7 @@ is fast, because a driver can touch registers and kernel data directly,
 but it puts every driver's bugs in kernel mode too. A driver that
 follows a bad pointer corrupts the kernel, and a driver that loops holds
 a core with interrupts off. That boundary is the one [chapter
-2](README.md#chapter-2-microkernels-and-capabilities) questions.
+2](02-microkernels.md) questions.
 
 ### 1.5.4 Direct memory access
 
@@ -1063,7 +1063,7 @@ user's power. A text editor that the user started can delete every file
 the user owns. This is called **ambient authority**: power that a
 process holds from its surroundings, not because it was handed the right
 to one particular thing. [Chapter
-2](README.md#chapter-2-microkernels-and-capabilities) describes the
+2](02-microkernels.md) describes the
 alternative, capabilities, where a program can use only what it was
 explicitly given.
 
@@ -1181,7 +1181,7 @@ signal to wake the other side when there is something to read.
 
 **Where erXos uses this.** Erlang processes share no memory and talk
 only by sending messages, which removes races on shared data from most
-of the system's code ([chapter 3](README.md#chapter-3-erlang-and-otp)).
+of the system's code ([chapter 3](03-erlang.md)).
 Between domains, messages travel over a **lane**, one direction of a
 connection between two domains ([chapter
 10](README.md#chapter-10-domains-a-wall-around-some-processes)). A lane
@@ -1242,7 +1242,7 @@ first program is the **system domain**, the domain that runs the trusted
 system services and creates every other domain ([chapter
 10](README.md#chapter-10-domains-a-wall-around-some-processes)). It
 plays the part that the root task plays in an L4 system ([chapter
-2](README.md#chapter-2-microkernels-and-capabilities); [design.md, Trust
+2](02-microkernels.md); [design.md, Trust
 placement](../design.md#trust-placement)). [Chapter
 24](README.md#chapter-24-startup-configuration-and-shutdown) follows the
 whole boot.

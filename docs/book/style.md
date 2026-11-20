@@ -406,9 +406,9 @@ costs.
 **Explain "by construction" with the list it replaces.** erXos's core
 claim is that properties hold because the wrong state cannot be
 written. Show the reader the list of cases a conventional design must
-remember, then the one mechanism that makes the list empty. Chapter 3
-introduces the idea; later chapters point back to it when they meet an
-instance.
+remember, then the one mechanism that makes the list empty. Chapter 6
+introduces the idea; chapter 2 prepares it, and later chapters point back to it
+when they meet an instance.
 
 ## Honesty: built and designed
 

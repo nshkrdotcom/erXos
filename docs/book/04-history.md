@@ -1,10 +1,10 @@
 # Chapter 4. History and Goals
 
 **Background needed.** Chapters 1 to 3, for the terms.
-[Chapter 1](01-operating-systems-from-the-ground-up.md) covers
+[Chapter 1](01-operating-systems.md) covers
 processes, threads, address spaces and system calls;
-[chapter 2](02-microkernels-and-capabilities.md) microkernels, L4 and
-capabilities; [chapter 3](03-erlang-and-otp.md) Erlang processes,
+[chapter 2](02-microkernels.md) microkernels, L4 and
+capabilities; [chapter 3](03-erlang.md) Erlang processes,
 links, supervisors and ERTS. A reader who knows operating systems,
 microkernels and Erlang starts here.
 
@@ -44,7 +44,7 @@ erXos turns this around: the Erlang process becomes the operating
 system's process. A small capability microkernel sits underneath and
 knows nothing of Erlang. Above it, the machine is divided into
 **domains**, each an address space with its own Erlang runtime
-([chapter 10](10-domains-a-wall-around-some-processes.md)). The whole
+([chapter 10](README.md#chapter-10-domains-a-wall-around-some-processes)). The whole
 machine stays one Erlang system, whose processes link, monitor and
 message one another across domains. Drivers, file systems and system
 services are Erlang processes under supervisors. Until its own kernel
@@ -78,7 +78,7 @@ switches to another, so a busy process cannot starve the rest. A
 process that crashes sends an exit signal along its links, and a
 **supervisor**, an OTP process whose job is to restart the processes
 below it, starts a fresh one. A new version of a module can be loaded
-while the old one runs. [Chapter 3](03-erlang-and-otp.md) explains
+while the old one runs. [Chapter 3](03-erlang.md) explains
 each of these.
 
 These are the services a UNIX kernel gives to UNIX processes:
@@ -233,7 +233,7 @@ remove a cause of failure named above:
 The kernel allocates time to **groups** of threads. Each group has a
 **grant**, a quota per period and a set of CPUs, and each runtime
 divides its group's grant among its own processes.
-[Chapter 9](09-processes-runtimes-and-two-level-scheduling.md)
+[Chapter 9](README.md#chapter-9-processes-runtimes-and-two-level-scheduling)
 explains the contract. Grants are a mechanism of erXos's own kernel
 (Phase 2). On Fiasco, which 0.2 runs on, a domain gets a priority
 band, a set of CPUs and a thread limit instead. The downsides table
@@ -244,7 +244,7 @@ Two lessons of the old systems still apply. A preempted executor may
 hold a lock another executor needs. And tools must see every
 lightweight process, as they see every 1:1 thread, so erXos's
 inspector shows Erlang processes as objects of the machine
-([chapter 21](21-the-live-machine.md)).
+([chapter 21](README.md#chapter-21-the-live-machine)).
 
 Three research systems, Psyche, Barrelfish and Akaros, explored how a
 kernel and a runtime share CPUs, and showed the way for the part that
@@ -298,14 +298,14 @@ stack, `erx_net`, is an Erlang redesign of FreeBSD's
 
 erXos leaves UNIX's inside. Its kernel is not monolithic, POSIX is not
 its base, and a user id grants nothing by itself
-([chapter 20](20-the-command-shell-and-the-unix-surface.md)).
+([chapter 20](README.md#chapter-20-the-command-shell-and-the-unix-surface)).
 
 ### 4.3.2 L4 and Fiasco: the kernel
 
 Jochen Liedtke's L4, from 1993, showed that a microkernel can be fast.
 It keeps only what cannot move out of the kernel: address spaces,
 threads and fast message passing between them
-([chapter 2](02-microkernels-and-capabilities.md)). Fiasco is a C++
+([chapter 2](02-microkernels.md)). Fiasco is a C++
 implementation of the L4 interface, begun at TU Dresden in 1998; its
 descendant, the L4Re microkernel, reaches every kernel object through
 capabilities.
@@ -344,7 +344,7 @@ without a container runtime.
 On Fiasco the design is cut down. 0.2 makes each domain's budget a
 hard wall, with no spending beyond its guarantee; the downsides table
 lists that as FD25. The preview's inspector reports another domain's
-budget as unsupported. [Chapter 12](12-memory-and-budgets.md) covers
+budget as unsupported. [Chapter 12](README.md#chapter-12-memory-and-budgets) covers
 budgets.
 
 ### 4.3.4 Plan 9 and Inferno: names and files
@@ -362,8 +362,8 @@ visible face of a capability: a domain cannot name a file server it
 was never handed. Every file server speaks 9P2000.L, a version of 9P.
 A display serves each window as a directory of files, and a program
 draws with Plan 9's draw protocol. The command shell speaks rc's
-language ([chapter 14](14-files-namespaces-and-service-trees.md),
-[chapter 22](22-displays-windows-and-the-web.md)).
+language ([chapter 14](README.md#chapter-14-files-namespaces-and-service-trees),
+[chapter 22](README.md#chapter-22-displays-windows-and-the-web)).
 
 Inferno, a later Bell Labs system, put a virtual machine, Dis, at the
 center, and ran programs safely without memory protection because the
@@ -388,7 +388,7 @@ Genera Programming Environment", 1987). erXos takes that live machine.
 One inspector shows CPUs, kernel objects, domains and processes as
 live records. `source(Pid)` opens the line a process is executing, and
 code loads into the running machine from a laptop
-([chapter 21](21-the-live-machine.md)). Genera had no protected core,
+([chapter 21](README.md#chapter-21-the-live-machine)). Genera had no protected core,
 and its authors called the missing "keep out" signs a hazard. erXos
 keeps its walls visible. Every value the inspector shows says who
 reported it, and what a process may change depends on what it holds.
@@ -437,7 +437,7 @@ erXos takes both. A pid is a name, not an authority. A domain reaches
 another domain's process only if that process's own runtime exported
 it, so a forged pid reaches nothing. Inside a domain, pids keep their
 stock meaning, because the domain is the unit of trust
-([chapter 11](11-authority-and-security.md)).
+([chapter 11](README.md#chapter-11-authority-and-security)).
 
 ### 4.3.8 Barrelfish and BOOM: the system described as data
 
@@ -451,7 +451,7 @@ system manifest says which domains the machine runs and which devices
 each holds, and the build checks it before making the image. One file
 defines the kernel's calls and binary layouts, and every C, Erlang and
 Ruby form of them is generated from it
-([chapter 7](07-one-source-for-every-fact.md)). BOOM-style services
+([chapter 7](README.md#chapter-7-one-source-for-every-fact)). BOOM-style services
 are a research direction for erXos, not part of its design
 ([research-os-ideas.md, Declarative OS services](../research-os-ideas.md#declarative-os-services-from-boom-and-dedalus)).
 
@@ -465,7 +465,7 @@ shorter list of what it refuses, both from
 
 One term first: a **principal** is a user in erXos's sense, an
 identity with its own budget, CPU share and quotas
-([chapter 11](11-authority-and-security.md)).
+([chapter 11](README.md#chapter-11-authority-and-security)).
 
 | Requirement | What it means | Why |
 | --- | --- | --- |
@@ -539,7 +539,7 @@ to its last sync ([README.md, Current status](../../README.md#current-status)).
 The kernel, the library under the runtimes, the device shims and
 per-byte work such as checksums and hashes stay in C, which does them
 better. A native driver exists only as a measured row of a table that
-justifies it ([chapter 15](15-devices-and-drivers.md)).
+justifies it ([chapter 15](README.md#chapter-15-devices-and-drivers)).
 
 ### 4.5.2 erXos owns OTP
 
@@ -555,7 +555,7 @@ domain that owns them. Owning OTP does not mean drifting from it.
 OTP's own test suites run on erXos and on stock OTP on the development
 host, and the results are compared case by case. Every difference is a
 bug in erXos, a documented difference with a test, or an upstream bug
-recorded as such ([chapter 25](25-checking-the-system.md)).
+recorded as such ([chapter 25](README.md#chapter-25-checking-the-system)).
 
 ### 4.5.3 Beauty and simplicity
 
@@ -589,7 +589,7 @@ it may reach. The build checks the manifest before it makes the image
 manifests are in `config/manifest/`. On Fiasco the build runs a
 reduced form of that check, which later milestones complete
 ([plan.md, Stopgaps and Fiasco](../plan.md#stopgaps-and-fiasco)).
-[Chapter 7](07-one-source-for-every-fact.md) tells the whole story.
+[Chapter 7](README.md#chapter-7-one-source-for-every-fact) tells the whole story.
 
 ### 4.5.5 UNIX look and feel, honestly
 
@@ -763,7 +763,7 @@ turns into jumps, and build checks on who may do what. erXos's budgets and group
 grafted onto it
 ([design.md, Alternatives considered](../design.md#alternatives-considered)).
 The afterword,
-[The Road to erXos's Own Kernel](afterword-the-road-to-erxoss-own-kernel.md),
+[The Road to erXos's Own Kernel](README.md#afterword-the-road-to-erxoss-own-kernel),
 follows Phase 2.
 
 ## 4.7 Where erXos stands

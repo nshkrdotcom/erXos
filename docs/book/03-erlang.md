@@ -9,7 +9,7 @@
 > refusal of code that is not installed is **Designed**.
 
 **Background needed.** [Chapter
-1](README.md#chapter-1-operating-systems-from-the-ground-up) (processes,
+1](01-operating-systems.md) (processes,
 threads, scheduling, address spaces). No Erlang. A reader fluent in
 Erlang and OTP can skip to [section 3.5](#35-the-beam-and-erts), the
 runtime system, which is the part erXos takes apart, and then read

@@ -7,9 +7,9 @@
 > Phase 2 of the [roadmap](../plan.md); only host-built cores of it
 > exist, and none of them boots (**Built (host)**). What erXos takes
 > from L4 and Fiasco is told in
-> [chapter 8](08-the-kernel-interface-and-its-two-kernels.md).
+> [chapter 8](README.md#chapter-8-the-kernel-interface-and-its-two-kernels).
 
-**Background needed.** [Chapter 1](01-operating-systems-from-the-ground-up.md):
+**Background needed.** [Chapter 1](01-operating-systems.md):
 kernel mode and user mode, address spaces, system calls.
 
 A network card driver in the FreeBSD kernel is a few thousand lines of
@@ -545,7 +545,7 @@ measured it. Its basic operations, IPC among them, cost about what
 similar operations cost on Linux (same paper, abstract), which
 answered the belief that capability systems must be slow. Its space
 banks, which pay for every object a program creates, are the model for
-erXos's budgets ([chapter 12](12-memory-and-budgets.md)).
+erXos's budgets ([chapter 12](README.md#chapter-12-memory-and-budgets)).
 
 **seL4** is the L4 kernel built for proof. Its developers wrote it
 from scratch with capability-based access control, and it was the
@@ -648,7 +648,7 @@ given" holds because no code can be written that breaks it.
 This is what the book means by **by construction**: a property holds
 because the wrong state cannot be expressed, not because every
 participant remembered a rule.
-[Chapter 6](06-correct-by-construction.md) makes it the method of the
+[Chapter 6](README.md#chapter-6-correct-by-construction) makes it the method of the
 whole design. erXos states several of its kernel's properties in this
 form. Among them: a stale capability never names a new object, rights
 only shrink, and no capability ever waits in a queue for a receiver
@@ -761,7 +761,7 @@ kernel objects and the only writer of any task's capability table and
 page tables. Every later use of an object is the holder's own Fiasco
 call, which Fiasco checks
 ([design-fiasco.md, The construction](../design-fiasco.md#the-construction)).
-[Chapter 10](10-domains-a-wall-around-some-processes.md) tells how the
+[Chapter 10](README.md#chapter-10-domains-a-wall-around-some-processes) tells how the
 system domain builds domains.
 
 ### 2.5.4 Why erXos starts on Fiasco and later replaces it
@@ -801,7 +801,7 @@ use; erXos's own kernel checks a generation. Each such difference is a
 row of the downsides table, this one row FD1
 ([design-fiasco.md, Downsides against erXos's kernel](../design-fiasco.md#downsides-against-erxoss-kernel)),
 and the first release publishes the table with it.
-[Chapter 8](08-the-kernel-interface-and-its-two-kernels.md) describes
+[Chapter 8](README.md#chapter-8-the-kernel-interface-and-its-two-kernels) describes
 the interface and both kernels behind it.
 
 ## 2.6 What fails, and what a failure reaches

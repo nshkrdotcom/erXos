@@ -151,9 +151,17 @@ services are exactly its interface: everything else runs in user mode.
 * Every chapter follows the prose guide, [style.md](style.md): its voice,
   the shape of a chapter, background for newcomers, honesty about what is
   built, and the checklist each writer runs before committing.
-* Each chapter is a file `NN-name.md` in this directory, in GitHub
-  Flavored Markdown, its figures Mermaid where GitHub renders it and
-  text diagrams otherwise, as [Decisions](#decisions) settles.
+* Each chapter is a file in this directory, in GitHub Flavored
+  Markdown, its figures Mermaid where GitHub renders it and text diagrams
+  otherwise, as [Decisions](#decisions) settles. The file name is the
+  two-digit chapter number and a short slug, `NN-slug.md`; the afterword
+  and the appendices are `afterword.md` and `a-slug.md` to `e-slug.md`.
+  The table below is the one list of names.
+* A link from one chapter to another is a relative link to the file, with
+  a section anchor where the chapter has one (`10-domains.md#103-...`). A
+  chapter that is not yet written is linked to its outline section in
+  this file (`README.md#chapter-10-domains-a-wall-around-some-processes`),
+  and the link changes to the file when the chapter lands.
 * Each chapter cites the design documents by relative link and section,
   and the tree by path. It explains; it decides nothing. When a chapter
   and a design document disagree, the design document is right and the
@@ -172,6 +180,40 @@ services are exactly its interface: everything else runs in user mode.
   a concept before the chapter first uses it; the outline lists them.
 * Present tense throughout. Whether a thing is built is said in the
   chapter's status box and in the sentence that describes it.
+
+| Chapter | Title | File |
+|---|---|---|
+| 1 | Operating Systems from the Ground Up | `01-operating-systems.md` |
+| 2 | Microkernels and Capabilities | `02-microkernels.md` |
+| 3 | Erlang and OTP | `03-erlang.md` |
+| 4 | History and Goals | `04-history.md` |
+| 5 | Design Overview of erXos | `05-overview.md` |
+| 6 | Correct by Construction | `06-construction.md` |
+| 7 | One Source for Every Fact | `07-one-source.md` |
+| 8 | The Kernel Interface and Its Two Kernels | `08-kernel-interface.md` |
+| 9 | Processes, Runtimes and Two-Level Scheduling | `09-processes.md` |
+| 10 | Domains: A Wall Around Some Processes | `10-domains.md` |
+| 11 | Authority and Security | `11-security.md` |
+| 12 | Memory and Budgets | `12-memory.md` |
+| 13 | Native Programs, Pipes and POSIX-lite | `13-native-programs.md` |
+| 14 | Files, Namespaces and Service Trees | `14-files.md` |
+| 15 | Devices and Drivers | `15-devices.md` |
+| 16 | Storage and Updates | `16-storage.md` |
+| 17 | The Network Stack | `17-network.md` |
+| 18 | WiFi | `18-wifi.md` |
+| 19 | Bluetooth | `19-bluetooth.md` |
+| 20 | The Command Shell and the UNIX Surface | `20-shell.md` |
+| 21 | The Live Machine | `21-live-machine.md` |
+| 22 | Displays, Windows and the Web | `22-display.md` |
+| 23 | Apps and Packages | `23-apps.md` |
+| 24 | Startup, Configuration and Shutdown | `24-startup.md` |
+| 25 | Checking the System | `25-checking.md` |
+| Afterword | The Road to erXos's Own Kernel | `afterword.md` |
+| Appendix A | Glossary | `a-glossary.md` |
+| Appendix B | Reading the Design Documents | `b-design-documents.md` |
+| Appendix C | Building and Booting erXos | `c-building.md` |
+| Appendix D | Dependencies and Licenses | `d-dependencies.md` |
+| Appendix E | Lineage | `e-lineage.md` |
 
 ## Contents
 
@@ -229,7 +271,7 @@ services are exactly its interface: everything else runs in user mode.
 [D. Dependencies and Licenses](#appendix-d-dependencies-and-licenses),
 [E. Lineage](#appendix-e-lineage)
 
-About 940 pages in all, at about 450 words a page.
+About 900 pages in all, at about 400 words a page.
 
 ---
 
@@ -244,7 +286,7 @@ paths in [Readers](#readers)).
 
 ### Chapter 1. Operating Systems from the Ground Up
 
-*About 40 pages.* What an operating system is for and how one works:
+*About 30 pages.* What an operating system is for and how one works:
 the kernel, the two modes of the processor, processes, virtual memory,
 files, devices and the boundary between a program and the machine.
 
@@ -266,25 +308,33 @@ microkernels and for Erlang; the chapters after them say what erXos does.
    three ways into the kernel: a system call, an exception such as a page
    fault, and an interrupt. The timer interrupt and preemption. The
    names an architecture gives its modes (AArch64's exception levels) in
-   one paragraph.
+   one paragraph. Subsections: 1.2.1 three ways into the kernel; 1.2.2 a
+   system call from start to finish; 1.2.3 the timer; 1.2.4 protection
+   without modes (language-based safety as the alternative); 1.2.5 the
+   modes on AArch64.
    *Draws on:* [design-arch-aarch64.md](../design-arch-aarch64.md).
 3. **Processes, threads and scheduling.** What a process and a thread
    are, the context switch, run queues, priorities and fairness, and
-   cooperative against preemptive scheduling.
+   cooperative against preemptive scheduling. Subsections 1.3.1 to 1.3.5
+   follow that order; 1.3.6 How a process ends covers exit, reaping and
+   what the kernel reclaims.
    *Draws on:* [design-scheduler.md](../design-scheduler.md).
 4. **Virtual memory.** Address spaces, pages, page tables and the TLB, a
    page fault walked step by step, demand paging, copy-on-write,
    memory-mapped files, and protection bits including
-   writable-or-executable.
+   writable-or-executable. Subsection 1.4.7 Who pays for memory:
+   overcommit, running out of memory, and charging every page to an account.
    *Draws on:* [design-kernel.md](../design-kernel.md).
 5. **Devices, interrupts, DMA and caches.** Memory-mapped registers,
    device interrupts and the interrupt controller, drivers, direct memory
    access, why a cache can hide a device's write from the processor and
    what an IOMMU does about a device that writes where it should not.
+   Subsection 1.5.6 Finding the devices: device trees and bus
+   enumeration.
    *Draws on:* [design-device-dma.md](../design-device-dma.md).
 6. **Files and block devices.** The file as the central abstraction, file
    systems on block devices, directories, mounting, and what a path
-   names.
+   names. Subsection 1.6.5 Permissions, and the power of a user.
    *Draws on:* [design-files.md](../design-files.md).
 7. **Talking and sharing.** Locks, atomic operations and memory ordering
    in one page; pipes, sockets and messages; shared memory.
@@ -292,6 +342,11 @@ microkernels and for Erlang; the chapters after them say what erXos does.
 8. **From power-on to the first program.** Firmware, a boot loader, the
    kernel and the first user program.
    *Draws on:* [design-platforms.md](../design-platforms.md).
+9. **When a part fails.** What a crashing program, a kernel panic and a
+   device that writes where it should not each cost in a conventional
+   system: where the line between kernel mode and user mode runs decides
+   how far a failure reaches, which the later chapters answer. A summary
+   (1.10) and where to read next (1.11) close the chapter.
 
 **Background boxes.** None: the chapter is the background.
 *Further reading* (the chapter's writer checks each citation): Ritchie and
@@ -306,7 +361,7 @@ write with and without a cache that is coherent with it.
 
 ### Chapter 2. Microkernels and Capabilities
 
-*About 28 pages.* The design family erXos belongs to: a kernel that does
+*About 19 pages.* The design family erXos belongs to: a kernel that does
 as little as it can, services in user mode, and authority held as
 unforgeable references.
 
@@ -343,12 +398,23 @@ from L4 and Fiasco are in chapter 8.
    on Fiasco and later replaces it with its own kernel.
    *Draws on:* [design-fiasco.md](../design-fiasco.md),
    [plan.md, Track K](../plan.md#track-k-erxoss-kernel).
+6. **What fails, and what a failure reaches.** A microkernel does not stop
+   servers from failing; it changes what a failure reaches, from the whole
+   machine to one address space, and what stays unprotected.
+7. **Design choices.** The alternatives to a microkernel with
+   capabilities (a hardened monolithic kernel, protection by language,
+   access lists) and why erXos does not take them. A summary and where
+   to read next close the chapter.
 
 **Background boxes.** None: the chapter is the background.
 *Further reading* (the chapter's writer checks each citation): Liedtke,
 "On micro-kernel construction" (1995); Dennis and Van Horn, "Programming
 Semantics for Multiprogrammed Computations" (1966); Saltzer and
-Schroeder, "The Protection of Information in Computer Systems" (1975).
+Schroeder, "The Protection of Information in Computer Systems" (1975);
+Elphinstone and Heiser, "From L3 to seL4: What Have We Learnt in 20
+Years of L4 Microkernels?" (2013); Hardy, "The Confused Deputy" (1988);
+Shapiro, Smith and Farber, "EROS: A Fast Capability System" (SOSP 1999);
+the FreeBSD manual page capsicum(4).
 
 **Figures.** 2.1: a monolithic kernel and a microkernel with servers,
 side by side. 2.2: a client calling a server by IPC. 2.3: a capability
@@ -357,7 +423,7 @@ access list and with capabilities.
 
 ### Chapter 3. Erlang and OTP
 
-*About 40 pages.* Enough Erlang to read the rest of the book: the
+*About 25 pages.* Enough Erlang to read the rest of the book: the
 language, processes and messages, failure handled by supervisors, OTP's
 behaviours, and the virtual machine that runs it.
 
@@ -395,6 +461,14 @@ to section 5, the BEAM and ERTS, which is what erXos takes apart.
    Erlang programmer uses, as the baseline that chapter 21 extends to
    the whole machine.
    *Draws on:* [design-live.md](../design-live.md).
+8. **Where the model stops.** What Erlang's isolation does not give on a
+   stock system: native code, one shared memory, the atom table, shared
+   stores, distribution with a cookie, and CPU time.
+9. **How erXos uses these ideas.** Every Erlang process an operating-system
+   process; distribution across a domain's wall; supervisors all the way
+   down; a functional core with a behaviour at the edge; ERTS as a parts
+   bin; hot code loading with a hash; and the chapter's ideas at a
+   glance. A summary and where to read next close the chapter.
 
 **Background boxes.** None: the chapter is the background.
 *Further reading* (the chapter's writer checks each citation): Armstrong,
@@ -412,7 +486,7 @@ on threads, processes on schedulers.
 
 ### Chapter 4. History and Goals
 
-*About 24 pages.* Why build an operating system around Erlang, what erXos
+*About 18 pages.* Why build an operating system around Erlang, what erXos
 takes from earlier systems, and how it gets from nothing to a working
 machine.
 
@@ -450,6 +524,8 @@ built and published; 0.2 next; Phase 2 after.
    organised around a language; Safe Erlang for pids as capabilities;
    Zircon for no ambient authority; Barrelfish and BOOM for declarative
    description. One paragraph each on what erXos took and what it left.
+   Section 4.1.4 adds the earlier attempts to run Erlang below the
+   application (Nerves, GRiSP, LING, HydrOS) and the gap they leave.
    *Draws on:* [research-prior-art.md](../research-prior-art.md),
    [README.md, Architecture](../../README.md#architecture).
 4. **Goals and non-goals.** The nine functional requirements (run OTP
@@ -474,13 +550,22 @@ built and published; 0.2 next; Phase 2 after.
    user feature and a published list of what Fiasco lacks; Phase 2
    replaces Fiasco with erXos's kernel at parity. The section explains
    why a stopgap is acceptable only behind an interface erXos owns, and
-   what a stopgap promises and does not.
+   what a stopgap promises and does not. Subsections: seams, what a
+   stopgap promises, release contracts and the downsides table, the
+   phases, and why not another order.
    *Draws on:* [plan.md, Overview](../plan.md#overview),
    [design-fiasco.md, Contract](../design-fiasco.md#contract),
    [design-stopgap.md, Release contract](../design-stopgap.md#release-contract).
+7. **Where erXos stands.** What 0.1 publishes today, what runs under it,
+   and what is designed and not built.
+8. **What the approach costs, and how it fails.** A runtime per domain
+   costs memory, the system domain is critical, device isolation needs
+   hardware, Fiasco is not erXos's kernel, a stopgap fails safely or not
+   at all, and the plan can fail at the seam. A summary and where to read
+   next close the chapter.
 
 **Figures.** 4.1: a timeline of the systems erXos draws on, with the idea
-taken from each. 4.2: the phases and milestones as a strip, 0.1 marked
+taken from each, as a text diagram. 4.2: the phases and milestones as a strip, 0.1 marked
 published, 0.2 next, Phase 2 after, the seam (the kernel interface)
 drawn as a line that stays put while the kernel below it changes.
 
@@ -1920,7 +2005,9 @@ chapter's Background box (TCP window, GATT, ELF, 9P), and erXos's own
 (domain, facet, lane, budget, funnel), from
 [design.md, The model](../design.md#the-model) and the terms each chapter
 introduces. A reader who meets a term before its chapter finds it here,
-in alphabetical order, with the chapter to turn to.
+in alphabetical order, with the chapter to turn to. The first version,
+[a-glossary.md](a-glossary.md), lists the terms of chapters 1 to 4; each
+later chapter adds its own.
 
 ## Appendix B. Reading the Design Documents
 
