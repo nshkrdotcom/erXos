@@ -10,7 +10,8 @@ actions it answers, in order; it decides nothing the core can.
 
 **Its siblings.** It runs under erx_usb_bus_sup beside the controller
 process and the function supervisor, and finds both among its
-supervisor's children once it has started. It attaches to the controller
+supervisor's children once it has started, and the places among those
+of the controller's erx_usb_sup. It attaches to the controller
 (erx_usb_bus_link) and holds no core until the controller answers its
 root hub's port count; then the core's first step powers the root ports.
 
@@ -24,10 +25,11 @@ timer, replaced at every step, and its expiry is taken only from the
 timer last set. A port given up, or an over-current change, is logged.
 
 **Function instances.** `{start, Ref, Functions}` starts each function
-under the function supervisor, its driver's start_link/1 given the bus,
-the device's reference, its claimed function, its run number and a pipe
-for each of its claimed pipes alone (erx_usb_pipe), and for a hub its
-port count. Each instance is monitored and kept by its pid with its
+under the function supervisor, its driver's start_link/1 given one map:
+its claimed function, its device's EP0 as `control`, a pipe for each of
+its claimed pipes alone as `pipes` (erx_usb_pipe), the places, and the
+bus, the device's reference and its run number; for a hub also its port
+count. Each instance is monitored and kept by its pid with its
 device, interface and run number, so the run number goes back to the core
 with the instance that has it, never with whatever instance runs when the
 message is read: a hub function's report, `{changed, Hub, Set, Pid}`, is
@@ -35,6 +37,11 @@ taken only from a live instance of hub Hub, and passed on with that
 instance's run number, and the core takes every other as stale.
 An instance's end reaches the core at least once: from its monitor when
 its process ends, however it ends, and at once when its start fails.
+The one exception is a function that found its interface unusable and
+ended, or failed to start, with `{shutdown, {unusable, Reason}}`: that
+end is final, as a FreeBSD probe's ENXIO is, so it is logged and starts
+nothing again, counts toward no restart bound and leaves the device's
+other functions running.
 
 **Detach.** `{detach, Ref}` stops every instance of device Ref, dropping
 its monitor first, so a detached device's functions send no end, and then
@@ -44,36 +51,39 @@ lose their functions before it does.
 """.
 -behaviour(gen_server).
 
--export([start_link/1]).
+-export([start_link/2]).
 -export([init/1, handle_continue/2, handle_call/3, handle_cast/2, handle_info/2]).
 
 -type instance() :: {erx_usb_bus_core:ref(), Interface :: byte(), erx_usb_bus_core:run_no(), reference()}.
 
 -record(bus, {sup :: pid(),
+              usb :: pid(),
+              places = none :: none | pid(),
               controller = none :: none | pid(),
               functions = none :: none | pid(),
               core = none :: none | erx_usb_bus_core:state(),
               timer = none :: none | reference(),
               instances = #{} :: #{pid() => instance()}}).
 
--doc "Starts the bus process of the bus group Sup, linked to the caller.".
--spec start_link(pid()) -> {ok, pid()}.
-start_link(Sup) ->
-    gen_server:start_link(?MODULE, Sup, []).
+-doc "Starts the bus process of the bus group Sup under the controller's supervisor Usb, linked to the caller.".
+-spec start_link(pid(), pid()) -> {ok, pid()}.
+start_link(Sup, Usb) ->
+    gen_server:start_link(?MODULE, {Sup, Usb}, []).
 
 -doc false.
-init(Sup) ->
-    {ok, #bus{sup = Sup}, {continue, siblings}}.
+init({Sup, Usb}) ->
+    {ok, #bus{sup = Sup, usb = Usb}, {continue, siblings}}.
 
-%% The supervisor answers only once it has started every child, so its children
-%% are read after init/1 has returned, never from inside it.
+%% A supervisor answers only once it has started every child, so the children are
+%% read after init/1 has returned, never from inside it.
 -doc false.
-handle_continue(siblings, Bus = #bus{sup = Sup}) ->
+handle_continue(siblings, Bus = #bus{sup = Sup, usb = Usb}) ->
     Children = supervisor:which_children(Sup),
+    {places, Places, _, _} = lists:keyfind(places, 1, supervisor:which_children(Usb)),
     {controller, Controller, _, _} = lists:keyfind(controller, 1, Children),
     {functions, Functions, _, _} = lists:keyfind(functions, 1, Children),
     ok = erx_usb_bus_link:attach(Controller),
-    {noreply, Bus#bus{controller = Controller, functions = Functions}}.
+    {noreply, Bus#bus{controller = Controller, functions = Functions, places = Places}}.
 
 -doc false.
 handle_call(_Request, _From, Bus) ->
@@ -89,10 +99,10 @@ handle_info({changed, Hub, Set, Pid}, Bus = #bus{instances = Instances}) when is
         #{Pid := {Hub, _Interface, Run, _Monitor}} -> {noreply, handle({changed, Hub, Set, Run, Pid}, Bus)};
         #{} -> {noreply, Bus}
     end;
-handle_info({'DOWN', Monitor, process, Pid, _Reason}, Bus = #bus{instances = Instances}) ->
+handle_info({'DOWN', Monitor, process, Pid, Reason}, Bus = #bus{instances = Instances}) ->
     case Instances of
         #{Pid := {Ref, Interface, Run, Monitor}} ->
-            {noreply, handle({function_ended, Ref, Interface, Run}, Bus#bus{instances = maps:remove(Pid, Instances)})};
+            {noreply, ended(Ref, Interface, Run, Reason, Bus#bus{instances = maps:remove(Pid, Instances)})};
         #{} ->
             {noreply, Bus}
     end;
@@ -169,14 +179,27 @@ start(Ref, Function = #{driver := Driver, interface := Interface}, Run, {Bus, En
         {ok, Pid} when is_pid(Pid) ->
             Instance = {Ref, Interface, Run, monitor(process, Pid)},
             {Bus#bus{instances = Instances#{Pid => Instance}}, Ended};
+        {error, Unusable = {shutdown, {unusable, _Reason}}} ->
+            {ended(Ref, Interface, Run, Unusable, Bus), Ended};
         _Failed ->
             {Bus, [{function_ended, Ref, Interface, Run} | Ended]}
     end.
 
-%% A function's start arguments: its own pipes alone, and for a hub its port count.
-args(Ref, Function = #{pipes := Pipes}, Run, #bus{controller = Controller, core = Core}) ->
-    Args = #{bus => self(), device => Ref, function => Function, run => Run,
-             pipes => [erx_usb_pipe:new(Controller, Ref, Address) || #{address := Address} <- Pipes]},
+%% An instance's end through the core, which resets its pipes and starts it again
+%% within its bound, unless the function found its interface unusable: that end is
+%% final, and the core keeps the function's run as it was until its device leaves.
+ended(Ref, Interface, _Run, {shutdown, {unusable, Reason}}, Bus) ->
+    logger:notice(#{usb => function, device => Ref, interface => Interface, what => {unusable, Reason}}),
+    Bus;
+ended(Ref, Interface, Run, _Reason, Bus) ->
+    handle({function_ended, Ref, Interface, Run}, Bus).
+
+%% A function's start map: its device's EP0 and its own pipes alone, the places, and
+%% for a hub its port count.
+args(Ref, Function = #{pipes := Pipes}, Run, #bus{controller = Controller, places = Places, core = Core}) ->
+    Args = #{function => Function, control => erx_usb_pipe:new(Controller, Ref, 0),
+             pipes => [erx_usb_pipe:new(Controller, Ref, Address) || #{address := Address} <- Pipes],
+             places => Places, bus => self(), device => Ref, run => Run},
     case erx_usb_bus_core:devices(Core) of
         #{Ref := #{hub := #{ports := Ports}}} -> Args#{ports => Ports};
         #{Ref := #{hub := none}} -> Args

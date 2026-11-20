@@ -29,8 +29,36 @@ a_keyboard_on_a_root_port_runs_its_function_test() ->
         Ref = configured([1]),
         {hid_started, _Pid, Args} = next_hid(),
         ?assertMatch(#{device := Ref, run := 1, function := #{interface := 0}}, Args),
-        ?assertEqual([{Ref, 16#81}], [erx_usb_pipe:endpoint(P) || P <- maps:get(pipes, Args)])
+        ?assertEqual([{Ref, 16#81}], [erx_usb_pipe:endpoint(P) || P <- maps:get(pipes, Args)]),
+        ?assertEqual({Ref, 0}, erx_usb_pipe:endpoint(maps:get(control, Args))),
+        ?assert(is_pid(maps:get(places, Args)))
     end).
+
+%% A function that finds its interface unusable ends for good, as a FreeBSD probe's
+%% ENXIO does: it is not started again, its pipes are not reset, and the device's
+%% other function keeps running.
+an_unusable_interface_leaves_the_others_running_test() ->
+    persistent_term:put(erx_usb_hid_stand_in, {unusable, 1}),
+    try
+        with_bus(#{[1] => composite}, fun() ->
+            Ref = configured([1]),
+            {hid_started, Running, #{function := #{interface := 0}}} = next_hid(),
+            Gone = receive {hid_unusable, Pid, #{function := #{interface := 1}}} -> Pid
+                   after ?WAIT_MS -> error(no_unusable_start)
+                   end,
+            settled(),
+            Gone ! unusable,
+            settled(),
+            ?assertNot(is_process_alive(Gone)),
+            ?assert(is_process_alive(Running)),
+            ?assertEqual(0, count({reset_pipe, Ref, 1, 16#82})),
+            ?assertEqual([], [D || D = {detach, _} <- log()]),
+            ?assertEqual(none, next_hid(200)),
+            ?assertEqual(none, receive Again = {hid_unusable, _, _} -> Again after 0 -> none end)
+        end)
+    after
+        persistent_term:erase(erx_usb_hid_stand_in)
+    end.
 
 %% A function's end while its device stays resets its pipes and starts it again with
 %% the next run number, at most usb_function_restarts_max times in the window; the end

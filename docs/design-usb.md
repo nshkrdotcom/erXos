@@ -1239,9 +1239,12 @@ group is `transient` under `erx_usb_sup`: past its bound it ends with
 after every reset, a host controller error that returns, is given up
 while its places stay; a later failure of the places restarts the
 bus group with them, a fresh try within `erx_usb_sup`'s own bound. A
-function instance is killed when it is stopped, and a driver's
-`start_link/1` returns before any transfer and never calls the bus
-process, which starts it in its own loop. A device's reference names it within one bus
+function instance is killed when it is stopped. Every driver starts
+with `start_link/1` on one map: its claimed `function`, its device's EP0
+as `control`, its own claimed `pipes` and the `places`, with the bus
+process, the device's reference and the run number beside them and, for
+a hub, its port count; it returns before any transfer and never calls
+the bus process, which starts it in its own loop. A device's reference names it within one bus
 process's life; a restarted bus starts its references afresh, since
 everything that held the old ones ended with it.
 

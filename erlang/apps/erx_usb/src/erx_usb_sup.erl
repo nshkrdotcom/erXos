@@ -33,5 +33,5 @@ init(Controller) ->
     Flags = #{strategy => rest_for_one, intensity => ?ERX_USB_BUS_RESTARTS_MAX,
               period => ?ERX_USB_BUS_RESTART_WINDOW_MS div 1000},
     {ok, {Flags, [#{id => places, start => {erx_usb_places_sup, start_link, []}, type => supervisor},
-                  #{id => bus, start => {erx_usb_bus_sup, start_link, [Controller]}, type => supervisor,
+                  #{id => bus, start => {erx_usb_bus_sup, start_link, [self(), Controller]}, type => supervisor,
                     restart => transient}]}}.

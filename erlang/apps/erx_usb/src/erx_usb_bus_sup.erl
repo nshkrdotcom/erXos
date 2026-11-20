@@ -26,17 +26,18 @@ than reset forever.
 
 -include("generated/erx_abi.hrl").
 
--export([start_link/1, start_function/2]).
+-export([start_link/2, start_function/2]).
 -export([init/1]).
 
 -doc """
-Starts the bus group of the controller process that Controller, a
-`{Module, Function, Args}` start, starts linked; the bus process attaches
+Starts the bus group, under the controller's erx_usb_sup Usb, of the
+controller process that Controller, a `{Module, Function, Args}` start,
+starts linked; the bus process attaches
 to it (erx_usb_bus_link).
 """.
--spec start_link({module(), atom(), [term()]}) -> {ok, pid()}.
-start_link(Controller) ->
-    supervisor:start_link(?MODULE, {group, Controller}).
+-spec start_link(pid(), {module(), atom(), [term()]}) -> {ok, pid()}.
+start_link(Usb, Controller) ->
+    supervisor:start_link(?MODULE, {group, Usb, Controller}).
 
 -doc "Starts one function instance: its driver's start_link/1 with Args.".
 -spec start_function(erx_usb_claim:driver(), map()) -> {ok, pid()} | {error, term()}.
@@ -44,11 +45,11 @@ start_function(Driver, Args) ->
     Driver:start_link(Args).
 
 -doc false.
-init({group, Controller}) ->
+init({group, Usb, Controller}) ->
     Flags = #{strategy => one_for_all, intensity => ?ERX_USB_BUS_RESTARTS_MAX,
               period => ?ERX_USB_BUS_RESTART_WINDOW_MS div 1000},
     {ok, {Flags, [#{id => controller, start => Controller},
-                  #{id => bus, start => {erx_usb_bus, start_link, [self()]}},
+                  #{id => bus, start => {erx_usb_bus, start_link, [self(), Usb]}},
                   #{id => functions, start => {supervisor, start_link, [?MODULE, functions]},
                     type => supervisor}]}};
 init(functions) ->

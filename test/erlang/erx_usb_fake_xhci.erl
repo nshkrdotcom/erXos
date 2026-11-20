@@ -8,7 +8,8 @@ erx_usb_bus_link and erx_usb_pipe as docs/design-usb.md states the
 controller does, over a world the test changes.
 
 The world maps places to things: a place is a route from the root, the
-root port first, and a thing a `keyboard` or `{hub, Ports}`, each
+root port first, and a thing a `keyboard`, a `composite` of two HID
+interfaces or `{hub, Ports}`, each
 high-speed, with the descriptors erx_usb_desc_tests builds. A root port's
 reset ends with a port event showing its reset change; a hub port's when
 its next GET_STATUS shows the change, as the design says of each. A hub
@@ -219,11 +220,17 @@ cleared(?ERX_USB_PORT_FEATURE_C_SUSPEND) -> suspend;
 cleared(?ERX_USB_PORT_FEATURE_C_OVER_CURRENT) -> over_current;
 cleared(?ERX_USB_PORT_FEATURE_C_RESET) -> reset.
 
-descriptor(device, keyboard) -> erx_usb_desc_tests:device(0, 0, 0);
+descriptor(device, Keyboard) when Keyboard =:= keyboard; Keyboard =:= composite ->
+    erx_usb_desc_tests:device(0, 0, 0);
 descriptor(device, {hub, _Ports}) -> erx_usb_desc_tests:device(9, 0, 1);
 descriptor(configuration, keyboard) ->
     erx_usb_desc_tests:configuration([erx_usb_desc_tests:interface(0, 0, 3, 1, 1),
                                       erx_usb_desc_tests:endpoint(16#81, 3, 8, 10)]);
+descriptor(configuration, composite) ->
+    erx_usb_desc_tests:configuration([erx_usb_desc_tests:interface(0, 0, 3, 1, 1),
+                                      erx_usb_desc_tests:endpoint(16#81, 3, 8, 10),
+                                      erx_usb_desc_tests:interface(1, 0, 3, 0, 0),
+                                      erx_usb_desc_tests:endpoint(16#82, 3, 8, 10)]);
 descriptor(configuration, {hub, _Ports}) ->
     erx_usb_desc_tests:configuration([erx_usb_desc_tests:interface(0, 0, 9, 0, 0),
                                       erx_usb_desc_tests:endpoint(16#81, 3, 1, 12)]);
@@ -232,6 +239,11 @@ descriptor(hub_descriptor, {hub, Ports}) ->
 
 %% A function's transfers: a hub's status transfer is held until one of its ports
 %% has a change pending, or fails when the test asked.
+transfer(From, {control, Pipe, Setup, _Data, Tag}, S) ->
+    {Ref, _Address} = erx_usb_pipe:endpoint(Pipe),
+    {Result, S1} = control(Ref, Setup, S),
+    From ! {Tag, Result},
+    S1;
 transfer(From, {interrupt_in, Pipe, Tag, _Length}, S = #{posted := Posted}) ->
     {Ref, _Address} = erx_usb_pipe:endpoint(Pipe),
     deliver(Ref, S#{posted := Posted#{Ref => {From, Pipe, Tag}}}).
