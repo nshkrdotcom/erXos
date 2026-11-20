@@ -3,7 +3,7 @@
 > **Status.** Background: the chapter describes operating systems in
 > general and carries no mark. Each sentence about erXos in its
 > "Where erXos uses this" paragraphs says in words which mark of the
-> [key](README.md#built-and-target) applies: **Built**, working in the
+> [key](README.md#built-and-designed) applies: **Built**, working in the
 > tree today, or **Designed**, specified but not yet built.
 
 **Background needed.** None. The chapter assumes only that the reader
@@ -143,7 +143,7 @@ the L4 family ([chapter
 call Fiasco directly. They call erXos's own **kernel interface**, the
 set of requests programs may make of the kernel, which a small library
 called `liberx` carries out over Fiasco ([chapter
-8](README.md#chapter-8-the-kernel-interface-and-its-two-kernels)).
+8](README.md#chapter-8-the-kernel-interface-and-fiasco)).
 
 **Where erXos uses this.** erXos draws the line of figure 1.1 in a
 different place. Only the kernel runs with the processor's full power,

@@ -6,7 +6,7 @@
 > its own kernel interface, `liberx`, and its system domain, the root
 > task, starts and ends the other domains. How erXos uses Fiasco is
 > told in
-> [chapter 8](README.md#chapter-8-the-kernel-interface-and-its-two-kernels).
+> [chapter 8](README.md#chapter-8-the-kernel-interface-and-fiasco).
 
 **Background needed.** [Chapter 1](01-operating-systems.md):
 kernel mode and user mode, address spaces, system calls.
@@ -742,7 +742,7 @@ if it does meet one, it reaches that object
 ([design-fiasco.md, Handles are slots](../design-fiasco.md#handles-are-slots)).
 A slot whose object was deleted is a different case, and is safe: it
 stays reserved, and every later use fails with an error.
-[Chapter 8](README.md#chapter-8-the-kernel-interface-and-its-two-kernels)
+[Chapter 8](README.md#chapter-8-the-kernel-interface-and-fiasco)
 describes the interface and how it sits on Fiasco.
 
 ## 2.6 What fails, and what a failure reaches

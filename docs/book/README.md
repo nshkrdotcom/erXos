@@ -262,7 +262,7 @@ services are exactly its interface: everything else runs in user mode.
 [D. Dependencies and Licenses](#appendix-d-dependencies-and-licenses),
 [E. Lineage](#appendix-e-lineage)
 
-About 880 pages in all, at about 400 words a page.
+About 870 pages in all, at about 400 words a page.
 
 ---
 
@@ -277,7 +277,7 @@ paths in [Readers](#readers)).
 
 ### Chapter 1. Operating Systems from the Ground Up
 
-*About 26 pages.* What an operating system is for and how one works:
+*About 27 pages.* What an operating system is for and how one works:
 the kernel, the two modes of the processor, processes, virtual memory,
 files, devices and the boundary between a program and the machine.
 
@@ -476,7 +476,7 @@ domains.
 
 ### Chapter 4. History and Goals
 
-*About 15 pages.* Why build an operating system around Erlang, what erXos
+*About 13 pages.* Why build an operating system around Erlang, what erXos
 takes from earlier systems, and the goals and principles that shape it.
 
 **Background needed.** Chapters 1 to 3, for the terms; a reader who
