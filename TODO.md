@@ -8043,7 +8043,16 @@ to the corpus and follow rc
   live holding), and `erx_dma_ledger_acquire` takes a bare count, so no chokepoint yet keeps the ledger's
   transitions to the sequencer;
   `ERX_DMA_STORE_BYTES_MAX` is hand-kept, checked only by a static assertion against the two layouts the sequencer
-  encodes, and should be derived from the widest encoded layout; `free_record`'s loop
+  encodes, and should be derived from the widest encoded layout; `erx_split_ring_make` checks a given layout's
+  shape only in part (equal counts), so a hand-built layout whose descriptor `first` is off its region, whose
+  strides are not virtio's or whose count is not a power of two passes while the install's registers name each
+  ring's region: make should derive the layout through `erx_dma_layout_split_ring` itself, which also keeps
+  `install()` from seeing a layout of unequal counts through `erx_dma_ledger_make`; `erx_dma_consume` ends the
+  holding at a slot, so a pointer kept past another release names whatever holding moved there (the ring is
+  its one caller and uses it at once), and should carry the head the query found; the install's sequence
+  leaves `QueueSel` to the effect layer, which must write it from the record before the registers; the
+  publication's `erx_dma_publication_call_t` and `erx_device_dma.h`'s `erx_dma_call_t` are two models of a
+  call until the old check goes; `free_record`'s loop
   is bounded only by the room rule; `erx_dma_publish` returns check verdicts for refusals that mean the check and the
   sequencer disagree; rule 1 zeroes a buffer's named size while the handover cleans its stride; and the generated
   `erx_report_meaning` carries an unreachable return and casts for a structure with one meaning. A layout holds one table of each structure, and a table cores describe is placed at any free record, which the

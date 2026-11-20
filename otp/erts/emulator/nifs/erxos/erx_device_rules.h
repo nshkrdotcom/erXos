@@ -14,6 +14,11 @@
  *
  * erx_dma_publication_check judges a publication against the ledger, before anything is placed
  * or written, and names the first rule it breaks:
+ *   calls     its call is one the type offers: a run describes at least one record; an
+ *             install describes no record and no fill and finds the ledger idle, nothing held,
+ *             acquired or moved, so no ring it zeroes is one a live chain is on (that the queue
+ *             is not ready already is the form core's, as erx_split_ring_install refuses it); an
+ *             install passes on this rule alone, its every step derived from the layout;
  *   meanings  each record's structure is a table of the layout that descriptions fill, and its
  *             meaning is one that structure's tables offer;
  *   widths    each free value fits its place, as the meaning's encoder takes it;
@@ -28,7 +33,6 @@
  *             record of the publication names, and no two fills share a byte; a region entry's
  *             fill is one entry long and names a persistent region the ledger holds, so a
  *             region of another device, or none, fails.
- * The calls rule holds by the type: a publication carries records and fills and no other step.
  * The bindings, reach and controls rules, and the releases rule over acquired reports, belong
  * to the forms and the sequencer that move onto this check after the split ring.
  */
@@ -78,17 +82,31 @@ typedef struct erx_dma_fill {
 	uint32_t		region;		/* a region entry's: the persistent region's name */
 } erx_dma_fill_t;
 
-/* What a decision that hands over describes: its records, in the order of the run, and its fills. */
+/*
+ * A publication's call, which says what the sequencer makes live (docs/design-device-dma.md,
+ * "Publication"), from this closed set and no other:
+ *   RUN      the records it describes, made live by the next entry of the table placed in order;
+ *   INSTALL  the queue: every table zeroed and cleaned, the queue's registers from the layout,
+ *            made live by the ready bit (erx_device_sequencer.h).
+ */
+typedef enum erx_dma_publication_call {
+	ERX_DMA_PUBLISH_RUN,
+	ERX_DMA_PUBLISH_INSTALL,
+} erx_dma_publication_call_t;
+
+/* What a decision that hands over describes: its records, in the order of the run, its fills and its call. */
 typedef struct erx_dma_publication {
 	uint32_t			record_count;
 	const erx_dma_description_t	*records;
 	uint32_t			fill_count;
 	const erx_dma_fill_t		*fills;
+	erx_dma_publication_call_t	call;
 } erx_dma_publication_t;
 
 /* The rule a publication breaks first, or ERX_DMA_PASSES. */
 typedef enum erx_dma_verdict {
 	ERX_DMA_PASSES,
+	ERX_DMA_BREAKS_CALLS,
 	ERX_DMA_BREAKS_MEANINGS,
 	ERX_DMA_BREAKS_WIDTHS,
 	ERX_DMA_BREAKS_NAMES,

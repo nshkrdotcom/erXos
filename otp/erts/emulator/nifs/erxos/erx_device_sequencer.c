@@ -6,7 +6,11 @@
  *
  * The ERX_DMA_SEED_* macros below plant the faults test/host/erx_device_sequencer_test.rb shows
  * its harness catches (docs/design-device-dma.md, Verification): rule 1's zeros left out, so a
- * stale byte reaches a buffer the device holds.
+ * stale byte reaches a buffer the device holds. The INSTALL_* seeds, which
+ * test/host/erx_device_virtio_core_test.rb shows its harness catches, plant faults in the install:
+ * the used ring left unzeroed; the used ring's register given the available ring's address, a
+ * value not from the layout's used table; the rings' cleans left out, so the ready bit comes
+ * before the zeroing reaches memory.
  */
 
 #include <string.h>
@@ -15,7 +19,24 @@
 
 _Static_assert(sizeof(erx_virtq_desc_t) <= ERX_DMA_STORE_BYTES_MAX &&
     sizeof(erx_virtio_gpu_mem_entry_t) <= ERX_DMA_STORE_BYTES_MAX, "every record the sequencer encodes fits a store");
+_Static_assert(ERX_DMA_TABLES_MAX <= ERX_DMA_ZEROS_MAX && ERX_DMA_TABLES_MAX <= ERX_DMA_CLEANS_MAX,
+    "an install zeroes and cleans every table");
 
+#ifdef ERX_DMA_SEED_INSTALL_NOT_ZEROED
+#define SEED_INSTALL_NOT_ZEROED	true
+#else
+#define SEED_INSTALL_NOT_ZEROED	false
+#endif
+#ifdef ERX_DMA_SEED_INSTALL_REGISTER
+#define SEED_INSTALL_REGISTER	true
+#else
+#define SEED_INSTALL_REGISTER	false
+#endif
+#ifdef ERX_DMA_SEED_INSTALL_UNCLEANED
+#define SEED_INSTALL_UNCLEANED	true
+#else
+#define SEED_INSTALL_UNCLEANED	false
+#endif
 #ifdef ERX_DMA_SEED_NO_ZEROS
 #define SEED_NO_ZEROS		true
 #else
@@ -179,6 +200,50 @@ place_in_order(const erx_dma_ledger_t *ledger, uint32_t table, erx_dma_place_t h
 	return (true);
 }
 
+/* The device address of a table's region, where a ring's head is: what a queue register names. */
+static uint64_t
+table_address(const erx_dma_layout_t *layout, int table)
+{
+	return (layout->device_base + layout->tables[table].region);
+}
+
+/*
+ * The install of virtio's split ring, which the check found idle: every table's region zeroed and
+ * cleaned, then the queue's size and its three rings' addresses from the layout, and the ready bit
+ * as the activation. The idle report left every position at 0, where the device starts, so the
+ * ledger does not change. BREAKS_CALLS for a layout of a form whose install the sequencer does not
+ * write.
+ */
+static erx_dma_verdict_t
+install(const erx_dma_ledger_t *ledger, erx_dma_sequence_t *sequence)
+{
+	const erx_dma_layout_t *layout = erx_dma_ledger_layout(ledger);
+	const int desc = erx_dma_ledger_table(ledger, ERX_STRUCTURE_VIRTQ_DESC);
+	const int avail = erx_dma_ledger_table(ledger, ERX_STRUCTURE_VIRTQ_AVAIL);
+	const int used = erx_dma_ledger_table(ledger, ERX_STRUCTURE_VIRTQ_USED);
+	erx_dma_sequence_t out = { 0 };
+
+	if (desc < 0 || avail < 0 || used < 0)
+		return (ERX_DMA_BREAKS_CALLS);
+	for (uint32_t table = 0; table < layout->table_count; table++) {
+		const erx_dma_table_t *const at = &layout->tables[table];
+
+		if (!(SEED_INSTALL_NOT_ZEROED && (int)table == used))
+			add_range(out.zeros, &out.zero_count, at->region, at->region_length);
+		if (!SEED_INSTALL_UNCLEANED)
+			add_range(out.cleans, &out.clean_count, at->region, at->region_length);
+	}
+	out.registers[0] = (erx_dma_register_write_t){ ERX_DMA_VIRTQ_NUM, layout->tables[desc].count };
+	out.registers[1] = (erx_dma_register_write_t){ ERX_DMA_VIRTQ_DESC, table_address(layout, desc) };
+	out.registers[2] = (erx_dma_register_write_t){ ERX_DMA_VIRTQ_DRIVER, table_address(layout, avail) };
+	out.registers[3] = (erx_dma_register_write_t){ ERX_DMA_VIRTQ_DEVICE,
+	    table_address(layout, SEED_INSTALL_REGISTER ? avail : used) };
+	out.register_count = 4;
+	out.activation = (erx_dma_activation_t){ .kind = ERX_DMA_ACTIVATE_REGISTER, .reg = { ERX_DMA_VIRTQ_READY, 1 } };
+	*sequence = out;
+	return (ERX_DMA_PASSES);
+}
+
 erx_dma_verdict_t
 erx_dma_publish(erx_dma_ledger_t *ledger, const erx_dma_publication_t *publication, erx_dma_sequence_t *sequence)
 {
@@ -191,6 +256,8 @@ erx_dma_publish(erx_dma_ledger_t *ledger, const erx_dma_publication_t *publicati
 
 	if (verdict != ERX_DMA_PASSES)
 		return (verdict);
+	if (publication->call == ERX_DMA_PUBLISH_INSTALL)
+		return (install(ledger, sequence));
 	/* The check passed: every record is in a table placed free, with room for the run. */
 	for (uint32_t record = 0; record < publication->record_count; record++) {
 		const uint32_t table = (uint32_t)erx_dma_ledger_table(ledger, publication->records[record].structure);
@@ -212,8 +279,10 @@ erx_dma_publish(erx_dma_ledger_t *ledger, const erx_dma_publication_t *publicati
 		if (erx_structure_device_writes(layout->tables[table].structure) ||
 		    layout->tables[table].placing != ERX_DMA_PLACED_IN_ORDER)
 			continue;
-		if (activated || !place_in_order(ledger, table, places[0], &out.stores[out.store_count], &out.activation))
+		if (activated ||
+		    !place_in_order(ledger, table, places[0], &out.stores[out.store_count], &out.activation.store))
 			return (ERX_DMA_BREAKS_ROOM);
+		out.activation.kind = ERX_DMA_ACTIVATE_STORE;
 		activated = true;
 		places[count++] = (erx_dma_place_t){ table, erx_dma_ledger_position(ledger, table).index };
 		add_range(out.cleans, &out.clean_count, out.stores[out.store_count].offset,

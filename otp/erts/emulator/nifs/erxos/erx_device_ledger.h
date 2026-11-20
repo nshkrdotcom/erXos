@@ -228,6 +228,8 @@ const erx_dma_holding_t	*erx_dma_ledger_holding(const erx_dma_ledger_t *ledger, 
 /* The records of a table no holding holds. */
 uint32_t		 erx_dma_ledger_free_records(const erx_dma_ledger_t *ledger, uint32_t table);
 uint32_t		 erx_dma_ledger_live(const erx_dma_ledger_t *ledger);
+/* Whether the ledger is as the idle report left it: no holding, no acquisition, every position at 0. */
+bool			 erx_dma_ledger_idle(const erx_dma_ledger_t *ledger);
 /* The reports of table `table` the last acquisition covered that are not consumed yet. */
 uint32_t		 erx_dma_ledger_acquired(const erx_dma_ledger_t *ledger, uint32_t table);
 /*

@@ -122,7 +122,7 @@ static erx_dma_verdict_t
 check(const erx_dma_ledger_t *ledger, const erx_dma_description_t *records, uint32_t record_count,
     const erx_dma_fill_t *fills, uint32_t fill_count)
 {
-	const erx_dma_publication_t publication = { record_count, records, fill_count, fills };
+	const erx_dma_publication_t publication = { record_count, records, fill_count, fills, ERX_DMA_PUBLISH_RUN };
 
 	return (erx_dma_publication_check(ledger, &publication));
 }
@@ -132,7 +132,7 @@ static bool
 hold_at(erx_dma_ledger_t *ledger, int buffer, const erx_dma_place_t *places, uint32_t count)
 {
 	const erx_dma_description_t record = descriptor(buffer < 0 ? 0 : (uint32_t)buffer, 0, 8, false);
-	const erx_dma_publication_t publication = { buffer < 0 ? 0 : 1, &record, 0, NULL };
+	const erx_dma_publication_t publication = { buffer < 0 ? 0 : 1, &record, 0, NULL, ERX_DMA_PUBLISH_RUN };
 
 	return (erx_dma_ledger_hold(ledger, &publication, places, count));
 }
@@ -201,7 +201,7 @@ test_rules(void)
 	EXPECT(check(&ledger, chain, 2, pair, 2) == ERX_DMA_PASSES, "two fills end to end");
 
 	/* room: nothing; more records than a holding holds. */
-	EXPECT(check(&ledger, chain, 0, NULL, 0) == ERX_DMA_BREAKS_ROOM, "an empty publication");
+	EXPECT(check(&ledger, chain, 0, NULL, 0) == ERX_DMA_BREAKS_CALLS, "a run of no record");
 	for (uint32_t index = 0; index < ERX_DMA_HELD_RECORDS_MAX + 1; index++)
 		bad[index] = descriptor(index % SIZE, 0, 8, false);
 	EXPECT(check(&ledger, bad, ERX_DMA_HELD_RECORDS_MAX + 1, NULL, 0) == ERX_DMA_BREAKS_ROOM, "a run past a holding");
