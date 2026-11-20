@@ -559,8 +559,10 @@ and the `release` an end writes is never dropped, so a number is free only
 when it has no occupant and less than one read's worth unread: a display
 that has stopped reading a number keeps it taken, and each number's
 unread bytes pass that bound by at most one `release`. A function that
-finds every number taken is not started, and the bus process shows it in
-the device's inspection record as `no input number`.
+finds every number taken is not started: its start fails as unusable,
+with `no_input_number`, which the device's inspection record shows as
+`no input number`
+([the bus core](#ports-hubs-and-devices-the-bus-core)).
 
 A read of a number's file takes whole records only, as many as its count
 holds and the stream has, and a read of at least one byte whose count
@@ -675,7 +677,7 @@ fixed before any device arrives:
 | commands | one in flight per controller; a device's teardown at most one Stop Endpoint per endpoint and one Disable Slot | the controller process |
 | hub notifications | one status transfer posted per hub, and the next posted only when the bus core has handled every port the last one named; per port at most one operation in flight | [Hubs](#hubs) |
 | enumeration | one port at a time between its reset and its device's address; one attempt per connection; an attempt starts when the port has settled, at most `usb_port_attempts_max` on a port in any `usb_port_attempt_window_ms`; past them a settled port is held in `settling` until its oldest attempt leaves that window; a hub attached again starts its ports' attempts afresh, which its own port's attempts bound | `usb_port_attempts_max`, `usb_port_attempt_window_ms` |
-| function restarts | a function's pipes are reset before each restart, and a function is restarted at most 3 times in any 60 s; an end past them detaches its device and disables its port until its connection changes ([Failure handling](#failure-handling)) | `usb_function_restarts_max`, `usb_function_restart_window_ms` |
+| function restarts | a function's pipes are reset before each restart, and a function is restarted at most 3 times in any 60 s; an end past them detaches its device and disables its port until its connection changes; an end as unusable is neither restarted nor counted ([Failure handling](#failure-handling)) | `usb_function_restarts_max`, `usb_function_restart_window_ms` |
 | diagnostics | a port's failure is logged once per connection and an over-current change once per enumeration attempt, so at most one line more than the port's attempts; repeats count in the inspection record | the bus core |
 | processes | one per claimed function, one per ready medium's transport, partition and windows | the claim table and the places |
 | input numbers, drives | 8 input numbers; the drives the manifest names, at most 4 | `usb_input_max`, `usb_drives_max` |
@@ -1411,7 +1413,7 @@ per function: 1 at the device's configuration, one more at each start
 again. The core's start, `{start, Ref, Functions}`, pairs each function
 with its number, and the bus process keeps the number with the instance
 it starts and passes it back in that instance's end, `{function_ended,
-Ref, Interface, Run}`, and, for a hub function, in each of its reports,
+Ref, Interface, Run, Reason}`, and, for a hub function, in each of its reports,
 `{changed, Hub, Set, Run, Pid}`. The core takes an end or a report only
 while the function runs as the instance it names, so one from an
 earlier instance, repeated or late, is stale by construction and
@@ -1421,6 +1423,22 @@ the bus process orders its messages. The numbers cannot stand in for an
 end that never comes, so the bus process sends an instance's end at
 least once: when its process ends, which its monitor gives, and when
 its start fails.
+
+An end carries its reason as it came, the reason the instance's process
+ended or the Reason of the `{error, Reason}` its start answered, and the bus core alone reads
+it. A function that cannot drive its interface, such as a HID
+interface with no usable report, ends with `{shutdown, {unusable,
+Reason}}`, or its start fails with that error, and the core takes that
+end as final, as a FreeBSD driver whose probe answers ENXIO leaves the
+interface unattached: it resets no pipe, starts no instance, counts the
+end toward no bound and keeps the reason in the function's run, which
+the device's inspection record shows. The function stays unused until
+its device is enumerated again, and the device's other functions run
+on, so a composite keyboard whose second interface carries only usages
+no role takes keeps its keyboard. Every other end, a crash or a failed
+transfer, is a failure, which the restarts bound ([Failure
+handling](#failure-handling)). Every end of the hub function is a
+failure: it ends only on a failed transfer of its pipe or a crash.
 
 A STALL, a timeout or a malformed answer ends the enumeration as
 FreeBSD's error path does: the device is detached, the port is disabled
@@ -2399,9 +2417,12 @@ descriptor's parser, and `erx_hid_core`, the protocol's plan and the fold.
 The bus process starts it with the claimed function, the device's
 control pipe, the function's interrupt-IN pipe and the controller's
 places; it takes its input number first, so a start that finds none
-fails, and does the rest after its start has answered. It ends by its
-own decision with `{shutdown, Reason}`, a failed transfer's or the
-plan's, so an expected end such as a detach is not logged as a crash.
+fails, as unusable, and does the rest after its start has answered. It
+ends by its own decision with `{shutdown, {transfer, Reason}}` on a
+failed transfer, which the bus restarts, or `{shutdown, {unusable,
+Reason}}` on a plan that cannot drive the interface, which the bus
+takes as final, so an expected end such as a detach is not logged as a
+crash.
 
 ### The report descriptor
 
@@ -2463,8 +2484,8 @@ reads the report descriptor and parses it, then:
   no report ids: the layout the parser makes of FreeBSD's boot
   descriptors (`hidrdesc.h:307-368`), so every layout comes from the one
   parser;
-* on any other interface, uses the parsed layout or ends with the
-  parser's reason, `no_usable_report`, or the failed read's;
+* on any other interface, uses the parsed layout or ends unusable with
+  the parser's reason, `no_usable_report`, or the failed read's;
 * on a keyboard, a layout with the keys role, sends SET_IDLE(0), so it
   reports only on change.
 
@@ -2953,6 +2974,7 @@ medium had gone after the request.
 | a device of no claimed class, or past a bound | the claim table, the bounds | nothing: configured with no function, or refused | the inspection record names the reason |
 | a malformed HID report | the fold | nothing: the report is dropped and counted | none needed |
 | a function process crashes, or ends on a failed transfer of its HID or hub pipes | its supervisor link, seen by the bus | the function; its place is freed, an input number with `release` | the bus resets the function's pipes, which answers what its predecessor left posted `stopped`, then restarts it, at most 3 times in 60 s; past that, or when a pipe's reset fails, the device is detached and its port disabled until its connection changes |
+| an interface its function cannot drive; for HID, no usable report, a failed descriptor read with no boot fallback, or no free input number | the function, which ends or fails its start with `{shutdown, {unusable, Reason}}` | that function, for good while its device stays; nothing else | none: it is not restarted and counts toward no restart bound, the device's other functions run on, and the reason is in the device's inspection record |
 | a halted endpoint | the completion's code | the transfer; EP0 is reset by the controller, any other pipe stays halted | HID and hubs end the function, as above; BOT's own recovery through `reset_pipe` (its status flow or reset recovery) |
 | a step of `reset_pipe` fails | the command's or request's answer | the reset; the pipe is `halted` | the class's recovery; for BOT a failed reset recovery ends the function, which the bus restarts as above |
 | an Address Device that fails | the command's completion | the enumeration; the slot is disabled, and behind a transaction translator after a USB Transaction Error, the translator's buffer cleared before the answer | the port is disabled as for any failed enumeration; a CLEAR_TT_BUFFER that fails detaches the translator's hub and every device behind it |
@@ -2979,7 +3001,7 @@ reported by the USB domain and shown under `/proc/usb`
   with its step and reason;
 * `[usb, Controller, devices, Route]`: the vendor and product ids, class,
   speed, the three strings, state, its functions each with its kind and
-  its input number or drive, each pipe's state, a refusal's reason, and
+  its input number or drive, or the reason it ended unusable, each pipe's state, a refusal's reason, and
   counters of reports dropped, keys unmapped and resets; for a medium,
   whether it flushes.
 
@@ -3012,7 +3034,7 @@ sink shows it.
 | a walk of a drive's tree whose mount the server refused | `eio`, the mount's inspection record naming the failure | the mount's flush answered other than `ok` or `enotsup`, or the window ended before it answered; the next walk mounts again |
 | `erx_firmware_request` | `ERX_ENOTSUP`; `ERX_EPROTO`; `ERX_ERIGHTS`; `ERX_ETIMEDOUT`; `ERX_EBUSY`; `ERX_EWOULDBLOCK` | a resource of a device without notifications or a platform without one, an index past the device's list, or a tag the firmware ignored; an answer outside the interface; a resource without `CARVE`; no answer within 1 s, and every call after one in the boot; another mailbox request in flight; a call from an executor |
 | the Pi 4's PCIe unit at boot | given to no domain, with the device service's diagnostic | the tree the firmware hands over routes the VL805's position to one of the bridge's lines, so one unit spans the PCIe domain and the USB domain |
-| a function | not started, with `no input number`, `no drive`, `no usable report`, `not direct access`, `block length`, `max lun` | its place, its layout, its unit |
+| a function | not started, with `no input number`, `no drive`, `not direct access`, `block length`, `max lun`; or ended unusable, with `no usable report` | its place, its layout, its unit |
 | the manifest check | the build fails | a window on a `usb` device with no drive, or a drive on another device; a drive named twice for one partition; more drives than `usb_drives_max`; a release manifest whose USB domain holds another unit or a file server; a second holder of a bridge's unit, or a `pcie` domain holding another unit; the Pi 4's INTx line given apart from its function |
 
 ## Verification
@@ -3028,7 +3050,7 @@ targeted traces carry the longer sequences.
 
 | Test | Seeded fault that must fail it |
 | --- | --- |
-| `erx_usb_bus_core`, explored to a fixed point over a root hub of two ports, one external hub of two ports and devices of one and two functions, with references and slots drawn from small sets; then traces of 1,000 attach and detach cycles on one port, a connection storm, a hub detached during its child's enumeration, a chain of six hubs, four connects on one port within a minute, four ends of one function within a minute and a hub function's restart with a device behind it, a device unplugged and plugged in again between the read of its connection change and that change's clear; over-current changes read on a root port; and, at every quiet node of the exploration, every port agreeing with the world on whether something is connected; at every node, the end and the hub reports of every instance not running, the earlier ones and an ended one whose pipes are still being reset, changing nothing, and a restart starting the claimed function unchanged under a run number no earlier instance had | a connection change with the port still connected not detaching the occupant; the address-zero turn released at the reset's end instead of the address; a port's new state dropping its occupant without detaching it; a port given up after its address keeping the turn; the turn released at a detach before the address answer, so a second device is reset while the first's Address Device is outstanding; an Address Device answer for a detached device dropped as stale, so the turn is never given back; a hub given up handing on the turn a port below it held; a hub six tiers below the root powering its ports; a full-speed device's EP0 left at 8 bytes when its descriptor says otherwise; a hub configured without its hub descriptor; a device's first request sent at its address answer, without the 10 ms settle; the step an answer echoes ignored, so a stale answer is taken at the step awaiting its kind; a function restarted before its pipes' resets answer, so the new instance meets a transfer its predecessor posted; an end from a function's earlier instance taken, so a late end resets the running instance's pipes; a report from a hub function's ended instance taken, after its restart or while its pipe is still being reset; the report an ended hub instance was handling kept, so `handled` goes to it; a pipe's failed reset keeping the device; the restart bound removed; a port's failure logged at every move into a failure state; the attempt throttle removed; a port's attempts never leaving the window; an over-current change logged on every change; the over-current log not rearmed by an attempt; a read that saw changes taking its port off the queue, so a change latched before their clear is lost |
+| `erx_usb_bus_core`, explored to a fixed point over a root hub of two ports, one external hub of two ports and devices of one and two functions, with references and slots drawn from small sets; then traces of 1,000 attach and detach cycles on one port, a connection storm, a hub detached during its child's enumeration, a chain of six hubs, four connects on one port within a minute, four ends of one function within a minute and a hub function's restart with a device behind it, a device unplugged and plugged in again between the read of its connection change and that change's clear; over-current changes read on a root port; and, at every quiet node of the exploration, every port agreeing with the world on whether something is connected; at every node, the end and the hub reports of every instance not running, the earlier ones and an ended one whose pipes are still being reset, changing nothing, and a restart starting the claimed function unchanged under a run number no earlier instance had; and every end as unusable, of either function of a two-function device, resetting, starting and detaching nothing, keeping its reason and leaving the device's other function as it was | a connection change with the port still connected not detaching the occupant; the address-zero turn released at the reset's end instead of the address; a port's new state dropping its occupant without detaching it; a port given up after its address keeping the turn; the turn released at a detach before the address answer, so a second device is reset while the first's Address Device is outstanding; an Address Device answer for a detached device dropped as stale, so the turn is never given back; a hub given up handing on the turn a port below it held; a hub six tiers below the root powering its ports; a full-speed device's EP0 left at 8 bytes when its descriptor says otherwise; a hub configured without its hub descriptor; a device's first request sent at its address answer, without the 10 ms settle; the step an answer echoes ignored, so a stale answer is taken at the step awaiting its kind; an unusable end taken as a failure, so the function is restarted and its device given up past the bound; a function restarted before its pipes' resets answer, so the new instance meets a transfer its predecessor posted; an end from a function's earlier instance taken, so a late end resets the running instance's pipes; a report from a hub function's ended instance taken, after its restart or while its pipe is still being reset; the report an ended hub instance was handling kept, so `handled` goes to it; a pipe's failed reset keeping the device; the restart bound removed; a port's failure logged at every move into a failure state; the attempt throttle removed; a port's attempts never leaving the window; an over-current change logged on every change; the over-current log not rearmed by an attempt; a read that saw changes taking its port off the queue, so a change latched before their clear is lost |
 | `erx_usb_hub_core`, its machine explored to a fixed point for hubs of 1, 2, 7, 8 and 15 ports over every report of the port count's length with each port bit and the bits around it, a short report and a failed transfer; its decoders on written cases | a change report sent with the next transfer already posted; `handled` taken without posting the next transfer; the bits above the port count kept; a report shorter than the port count taken as naming nothing |
 | `erx_xhci_core`'s pipe machine, teardown, control abort and failed address, explored to a fixed point over every queue state the NIF reports and every answer of each step, EP0 and other endpoints, behind a translator and not | `reset_pipe` issuing Reset Endpoint on a stopped queue; a stopped EP0 dropped and added; the abort answered after Stop Endpoint alone, so the next request finds EP0 stopped; the translator's clear skipped; Disable Slot issued before the stops answer; an Address Device whose device detached while it was posted left unanswered |
 | `erx_xhci_core`'s start, explored to a fixed point with and without a legacy support capability over every answer of the BIOS's semaphore and of the install and an interrupt at any time, the clock moving to each deadline; a run that has not ended always has a next step | the install called while the BIOS still owns the controller; the BIOS's semaphore never polled again; an interrupt before the controller runs acknowledged at once, or with a failure |

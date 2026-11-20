@@ -7948,20 +7948,19 @@ to the corpus and follow rc
 * [Medium] SSH stage 2, the login facet ([design-ssh.md](docs/design-ssh.md)): the cookie table is keyed by the connection process, but a service behind `erx_facet` sees the facet's forward (a fresh alias, `erx_facet.erl`'s request handling), not the grantee's pid. The stage-2 design must say how the facet learns the connection: carried in the request, or keyed by the facet's forward and its `'DOWN'`.
 * [Medium] SSH, a job's messages through the session's line (`erlang/apps/erx/src/erx_session_line.erl`, `line/4`; [design-ssh.md](docs/design-ssh.md#sessions-ttys-and-shells)): `open_job`'s channel sends the line `{job_input, Bytes}`, `job_eof`, `job_sent` and `job_hangup` in the SSH domain's envelope, none a call, but the line hands its callback only the peer's admitted calls and drops every other message in an envelope, so a job would wait for a `job_written` that never comes. Building `open_job` needs a callback beside `request/4` that gets the peer's other messages, and never a third domain's.
 * [Low] cross-domain call admission, written twice (`erx:call_from/3` in `erlang/apps/erx/src/erx.erl`, which erx_facet and erx_session_line ask; `erx_net_admit:request/2` in `erlang/apps/erx_net/src/erx_net_admit.erl`, over its own `domain/1`): N12 of [design-network-stack.md](docs/design-network-stack.md#requirements) keeps `erx_net/src` from naming erx, so the network grant cannot ask `erx:call_from/3`, and a change to the rule is two edits. One source needs a choice: the runtime seam (`erx_net_runtime`) answering the check, the operation schema's generator emitting both, or N12 relaxed for this one function.
-* [High] USB, a HID interface no function can drive (`erx_usb_hid`, `erx_usb_bus_core`;
-  [design-usb.md](docs/design-usb.md#the-protocol), [Failure handling](docs/design-usb.md#failure-handling)):
-  the design ends such a function (`no_usable_report`, a non-boot interface whose descriptor read fails, and a
-  start that finds no input number), and the bus core counts every end against `usb_function_restarts_max`, so a
-  composite keyboard whose second interface carries only Consumer page keys is restarted three times and then
-  its device is given up, its working keyboard interface with it. Decide in the design how a function that is
-  not driven differs from one that failed: a function that stays parked holding nothing until the bus stops it,
-  with its reason in the device's inspection record, or an end the bus core takes as final and does not restart.
 * [Medium] USB, the boot mouse's transfer length (`erx_hid_core:plan/2`, `erx_usb_hid`;
   [design-usb.md](docs/design-usb.md#from-reports-to-records)): in the boot protocol the transfer is the boot
   layout's 3 bytes; a boot mouse that sends longer boot reports (unverified: whether HID 1.11, Appendix B.2,
   lets bytes from 3 on be device-specific) babbles on the shorter transfer, halts its pipe and ends the
   function. Check B.2 and, if so, size boot transfers to the endpoint's packet size, at most
   `hid_input_report_max`.
+* [Medium] USB, a BOT function that cannot drive its interface (`erx_usb_bot_core`, the BOT function;
+  [design-usb.md](docs/design-usb.md#ports-hubs-and-devices-the-bus-core)): the bus core takes
+  `{shutdown, {unusable, Reason}}` as a final end, but the BOT engine stops on a Get Max LUN answer above 15
+  (`{error, {max_lun, Max}}`), which the design lists as a refusal like `no usable report`; unless the BOT
+  function ends with the unusable shape, the core counts it, restarts it three times and gives up the
+  whole device, a composite device's other functions with it. Say in the BOT section which of its stops end
+  unusable (`max_lun`, `not direct access`, `block length`) and end the function so when it is built.
 * [Medium] USB, the controller core's EP0 rules (`erx_xhci_core`, [design-usb.md](docs/design-usb.md#the-controller-process)):
   three choices the design does not name. EP0's control requests wait in order in the core, one posted at a time, and
   a pipe that leaves `open` answers what waits on it as a post (`set_pipe/3`), so one function's STALL on a composite

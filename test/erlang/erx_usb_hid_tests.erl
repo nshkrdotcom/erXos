@@ -266,12 +266,12 @@ a_refused_descriptor_types_in_the_boot_protocol_test() ->
     ?assertEqual([{key, down, ?KEY_A}], records(P, 0, 1)),
     stop(P).
 
-%% An interface it cannot drive ends the function with the reason, and its number is
+%% An interface it cannot drive ends the function unusable, with the reason, and its number is
 %% released and free again.
 an_interface_with_no_usable_report_ends_test() ->
     P = places(),
     F = function(P, 0, 0, ?NO_ROLE),
-    ?assertEqual({shutdown, no_usable_report}, ended(F)),
+    ?assertEqual({shutdown, {unusable, no_usable_report}}, ended(F)),
     ?assertEqual([release], records(P, 0, 1)),
     _ = keyboard(P),
     stop(P).
@@ -312,7 +312,7 @@ a_report_storm_waits_for_the_reader() ->
     wait_posted(F, 4),
     stop(P).
 
-%% With every number taken, the function is not started, and its start fails without
+%% With every number taken, the function is not started, and its start fails as unusable without
 %% ending the caller.
 a_function_finds_no_input_number_test() ->
     #{places := Places} = P = places(),
@@ -321,7 +321,7 @@ a_function_finds_no_input_number_test() ->
     Device = spawn(fun() -> device(?KEYBOARD) end),
     Function = #{driver => erx_usb_hid, interface => 0, alternate => 0,
                  setting => setting(1, 1, ?KEYBOARD), pipes => []},
-    ?assertEqual({error, no_input_number},
+    ?assertEqual({error, {shutdown, {unusable, no_input_number}}},
                  erx_usb_hid:start_link(#{function => Function, control => {stand_in_pipe, Device, 0},
                                           pipes => [{stand_in_pipe, Device, 16#81}], places => Places})),
     [H ! stop || H <- Holders],

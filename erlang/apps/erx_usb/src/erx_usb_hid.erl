@@ -16,7 +16,8 @@ claim's function, the device's control pipe, the function's pipes in the
 claim's order (the interrupt-IN pipe alone) and the controller's places.
 The function first takes the lowest free input number
 (`erx_usb_places_sup:occupy_input/2`); when every number is taken it is not
-started, and its start answers `{error, no_input_number}`. Then, after the
+started, and its start answers `{error, {shutdown, {unusable, no_input_number}}}`,
+the reason of an unusable end. Then, after the
 start has answered, it reads the report descriptor with
 GET_DESCRIPTOR(report), asks `erx_hid_core:plan/2` how to drive the
 interface, sends SET_PROTOCOL and SET_IDLE(0) as the plan says, ignoring
@@ -35,10 +36,17 @@ folded, in the order the controller sends their completions.
 
 **End.** A transfer that fails, answering `{error, Reason}`, ends the
 function with `{shutdown, {transfer, Reason}}`, as the class's disposition
-says (docs/design-usb.md, "Transfers and pipes"); a plan that cannot drive
-the interface ends it with `{shutdown, Reason}`, and the end of its
-number's stream, by a restart of the places, with `{shutdown, stream}`. The function never resets
-its pipes: the bus resets them before it starts the function again. Its
+says (docs/design-usb.md, "Transfers and pipes"), and the end of its
+number's stream, by a restart of the places, with `{shutdown, stream}`;
+the bus restarts it after either, within its bound. It ends with
+`{shutdown, {unusable, Reason}}` when its plan cannot drive the
+interface: the descriptor is refused or has no usable report, or it
+could not be read and the interface has no boot fallback. The bus
+takes that end as final, as a
+FreeBSD probe that answers ENXIO: the function is not started again
+while its device stays, and the device's other functions run on. The
+function never resets its pipes: the bus resets them before it starts
+the function again. Its
 number's stream monitors it and writes `release` when it ends, by any of
 those, by a crash or by the bus stopping it, so a reader never keeps a key
 held by a function that is gone.
@@ -91,10 +99,10 @@ device's control pipe, the function's pipes in the order of the function's
 
 -doc """
 Starts a function on Start, linked to the caller: `{ok, Pid}` once it has
-taken an input number, `{error, no_input_number}` when every number is
-taken.
+taken an input number, `{error, {shutdown, {unusable, no_input_number}}}`
+when every number is taken.
 """.
--spec start_link(start()) -> {ok, pid()} | {error, no_input_number | term()}.
+-spec start_link(start()) -> {ok, pid()} | {error, {shutdown, {unusable, no_input_number}} | term()}.
 start_link(Start) ->
     gen_server:start_link(?MODULE, Start, []).
 
@@ -112,7 +120,7 @@ init(#{function := #{interface := Interface, setting := Setting}, control := Con
                       stream_monitor = erlang:monitor(process, Stream)},
              {continue, setup}};
         {error, no_input_number} ->
-            {error, no_input_number}
+            {error, unusable(no_input_number)}
     end.
 
 -doc false.
@@ -126,7 +134,7 @@ handle_continue(setup, H = #hid{setting = Setting}) ->
             lists:foreach(fun(Tag) -> post(Tag, Running) end, lists:seq(1, ?POSTED)),
             {noreply, Running};
         {error, Reason} ->
-            {stop, {shutdown, Reason}, H}
+            {stop, unusable(Reason), H}
     end.
 
 -doc false.
@@ -149,6 +157,11 @@ handle_info({'DOWN', Monitor, process, _, _}, H = #hid{stream_monitor = Monitor}
     {stop, {shutdown, stream}, H};
 handle_info(_Message, H) ->
     {noreply, H}.
+
+%% The end, or the failed start, of a function that cannot drive its interface,
+%% which the bus takes as final (docs/design-usb.md, "A function's end").
+unusable(Reason) ->
+    {shutdown, {unusable, Reason}}.
 
 %% ---------------------------------------------------------------------------
 %% Requests
