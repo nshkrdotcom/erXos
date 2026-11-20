@@ -1272,15 +1272,16 @@ boot's first report, holding its start as it holds a start for a
 principal's ending domain; rows without one start in boot order
 meanwhile. The PCIe row is the row holding a host bridge some `pci`
 device's place names; it is never held, and a machine with no PCIe row
-holds nothing. The hold is released at the first of four events, or
-sooner when no PCIe row is booting. The device service tells the domain
-service, once it has answered a report, with
-`erx_domain:pci_report_answered/0`; the domain service sees the other
-three itself: the PCIe row's end, its stop for not reporting ready
-within its boot timeout, and 30 s after its ready answer. A PCIe row
-that is not booting once the boot's other rows have started, its start
-refused or its domain ready at its start, will never report, so the hold
-is released then. A held row counts as starting while it waits, so a
+holds nothing. The hold is released at the first of three: the device
+service's answer to a report, which it tells the domain service with
+`erx_domain:pci_report_answered/0`; 30 s after a PCIe row's ready
+answer; and no PCIe row booting, which the domain service derives from
+its domains' states once the boot's other rows have started and again at
+each PCIe row's end or stop for not reporting ready within its boot
+timeout. A PCIe row whose start was refused, whose domain was ready at
+its start, which ended without a restart or which was stopped will never
+report, so the hold is released then; a PCIe row restarted at its end is
+booting again and keeps the hold. A held row counts as starting while it waits, so a
 grant it serves is waited for, not settled as failed. A row started
 after a failed hold gets nothing of its `pci` devices. The check's boot
 order puts the PCIe domain before every row holding a `pci` device.

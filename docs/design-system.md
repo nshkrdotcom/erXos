@@ -3502,9 +3502,10 @@ units hold a `pci` device only once the device service has answered the
 boot's first report, holding its start as it holds a start for a
 principal's ending domain, and starts the rows without one in boot order
 meanwhile. The hold is released at the first of: the device service's
-word that it has answered a report, the PCIe row's end, its stop for its
-boot timeout, 30 s after its ready answer, or, once the boot's other
-rows have started, a PCIe row that is not booting; the domain service sees all but the first itself. A held row
+word that it has answered a report, 30 s after a PCIe row's ready
+answer, or no PCIe row booting, which the domain service checks once the
+boot's other rows have started and at each PCIe row's end or stop for
+its boot timeout; the domain service sees all but the first itself. A held row
 counts as starting, and a row started after a failed hold gets nothing
 of its `pci` devices
 ([design-pcie.md](design-pcie.md#the-catalogue-and-gives)).

@@ -24,10 +24,11 @@ start names. A template is no configured
 domain, so the boot never starts one, and nothing restarts one or a session.
 
 The boot holds a configured row holding a `pci` device until the device
-service has answered a PCIe report, or the PCIe row has ended, been stopped
-for its boot timeout or reported ready 30 s ago, or, once the boot's other
-rows have started, when no PCIe row is booting (pci_hold/2;
-docs/design-pcie.md, "The hold at boot"); a held row counts as starting.
+service has answered a PCIe report, a PCIe row reported ready 30 s ago, or
+no PCIe row is booting, which is checked once the boot's other rows have
+started and at each PCIe row's end or stop for its boot timeout
+(pci_hold/2; docs/design-pcie.md, "The hold at boot"); a held row counts as
+starting.
 
 A create or a session's start for a principal one of whose domains is
 ending, its domain pid gone but its end not yet arrived, is held until that
@@ -297,13 +298,13 @@ handle_continue(boot, #{lib := Lib, configured := Configured} = State) ->
                none -> Ordered;
                #{rows := Held} -> Ordered -- Held
            end,
-    {noreply, pci_hold_started(lists:foldl(fun start_configured/2, State#{pci_hold := Hold}, Free))}.
+    {noreply, pci_unless_booting(lists:foldl(fun start_configured/2, State#{pci_hold := Hold}, Free))}.
 
 %% The hold at boot (docs/design-pcie.md, "The hold at boot"): a configured row holding a
 %% pci device starts only once the device service has answered a PCIe report
-%% (erx_domain:pci_report_answered/0), or the PCIe row, the row holding a host bridge a
-%% pci device's place names, ends, is stopped for its boot timeout, or reported ready
-%% pci_hold_after_ready ago, whichever is first; the PCIe row itself is never held.
+%% (erx_domain:pci_report_answered/0), a PCIe row, the row holding a host bridge a pci
+%% device's place names, reported ready pci_hold_after_ready ago, or no PCIe row is
+%% booting (pci_unless_booting/1), whichever is first; the PCIe row itself is never held.
 %% The hold is none on a machine with no PCIe row or no row to hold, and otherwise the
 %% PCIe rows and the rows held, in Ordered's boot order. The decision reads only the
 %% device catalogue, as the library placed it at boot.
@@ -330,12 +331,16 @@ devices(Lib) ->
             []
     end.
 
-%% After the boot's starts, a hold no PCIe row is booting to release, its start refused
-%% or its domain ready at its start with no report to make, is released at once, so
-%% nothing waits on a row that will never report.
-pci_hold_started(#{pci_hold := none} = State) ->
+%% The hold's one derived release: a hold no PCIe row is booting to release is released
+%% at once, so nothing waits on a row that will never report. It is checked when that
+%% can have become true: once the boot's other rows have started (a PCIe row whose start
+%% was refused, or whose domain was ready at its start with no report to make), and at a
+%% PCIe row's end or stop for its boot timeout (pci_row_gone/2). A PCIe row ready after
+%% its start is no longer booting but is not checked: its report is still to come, and
+%% its ready report's timer bounds the wait (arm_pci_hold_timer/2).
+pci_unless_booting(#{pci_hold := none} = State) ->
     State;
-pci_hold_started(#{pci_hold := #{pcie := Pcie}, core := Core} = State) ->
+pci_unless_booting(#{pci_hold := #{pcie := Pcie}, core := Core} = State) ->
     case [Row || #{origin := {configured, Row}, state := running} <- erx_domain_core:domains(Core),
                  lists:member(Row, Pcie)] of
         [] -> pci_release(State);
@@ -343,10 +348,10 @@ pci_hold_started(#{pci_hold := #{pcie := Pcie}, core := Core} = State) ->
     end.
 
 %% The domain whose origin is Origin has stopped booting, by its end or its boot timeout:
-%% when it is a PCIe row's, the hold is released.
+%% when it is a PCIe row's, the hold is released unless a PCIe row is still booting.
 pci_row_gone({configured, Row}, #{pci_hold := #{pcie := Pcie}} = State) ->
     case lists:member(Row, Pcie) of
-        true -> pci_release(State);
+        true -> pci_unless_booting(State);
         false -> State
     end;
 pci_row_gone(_Origin, State) ->
@@ -628,7 +633,7 @@ handle_info({timeout, _Timer, {boot_timeout, Id}}, #{core := Core} = State) ->
             stop(Id, State),
             %% A configured row stopping is no longer starting, so a session waiting for
             %% its grant is answered now, even if the library refused the stop and no
-            %% end will come. A PCIe row's timeout releases the hold at boot.
+            %% end will come. A PCIe row's timeout releases the hold unless one boots.
             Stopping = answer_in_place(State#{core := erx_domain_core:stopping(Id, Core)}),
             {noreply, pci_row_gone(Origin, Stopping)};
         _ ->
@@ -1598,7 +1603,7 @@ ended(Id, End, Where, #{lib := Lib, core := Core, links := Links} = State) ->
             {Unlinked, Actions} = erx_domain_links:ended(Id, Info, Links),
             Told = unprovide(Origin, Id, perform(Actions, State#{core := Ended, links := Unlinked})),
             _ = retire(Lib, Id),
-            %% A PCIe row's end releases the hold at boot, after its own restart.
+            %% A PCIe row's end releases the hold at boot unless one still boots.
             Restarted = restart(Origin, Id, Life, Info, Where, waiter_ended(Id, Life, Info, Told)),
             pci_row_gone(Origin, release(Restarted))
     end.
