@@ -110,9 +110,24 @@ state of its own, and a grant with an operation is bounded by its
 deadline, a starting server by its boot timeout. A display's row waits
 for its server by the same rule (server_settled/3): no starting row
 serves the display's service.
+
+One incarnation's grant (docs/design-system.md, "A session takes the
+console"). system_grant/3 answers a wait for the system domain's grant of a
+service from one incarnation of its server row, from the grant's state and
+that row's newest incarnation alone: the facet once the grant is installed
+with that incarnation as its server, failed once it failed so, ended once the
+incarnation has ended or the grant carries another server, and unprovided
+once the incarnation is ready and the grant idle, since it provides no such
+name and the core starts no operation for it. It answers wait otherwise:
+while the grant's operation for the incarnation is pending, which its deadline
+bounds, or while the core has not yet heard of the incarnation, which its
+row's boot timeout bounds for an incarnation of the server row, since its
+ready report or its end follows. The grant is matched by the incarnation,
+never by the service alone, so no wait is answered with a predecessor's facet.
 """.
 
--export([new/1, step/2, grants/1, granted/3, granted_names/2, in_place/3, server_settled/3, pair_area/3]).
+-export([new/1, step/2, grants/1, granted/3, granted_names/2, in_place/3, server_settled/3, system_grant/3,
+         pair_area/3]).
 -export_type([state/0, config/0, event/0, action/0, grant/0, key/0, pair/0]).
 
 -define(SYSTEM_ID, 4).
@@ -273,6 +288,47 @@ system domain serves, has no start to wait for and has settled.
 -spec server_settled(name(), Starting :: [row()], state()) -> boolean().
 server_settled(Name, Starting, #{declared := Declared}) ->
     not lists:any(fun(Row) -> lists:member(Name, maps:get(Row, Declared, [])) end, Starting).
+
+-doc """
+The answer to a wait for the system domain's grant of service Name from Id,
+an incarnation of the grant's server row: {ok, Facet} once the grant is
+installed with Id as its server, Facet as the installation in the system
+domain's registry carries it (installed_facet/3), {error, failed} once it failed with Id as
+its server, {error, ended} once Id has ended or the grant carries another
+server, {error, unprovided} once Id is ready and the grant is idle, and wait
+while none of these holds. A name the system domain is granted by no row is
+{error, unprovided}: nothing will ever be installed for it.
+""".
+-spec system_grant(name(), id(), state()) ->
+          wait | {ok, erx_facets:facet()} | {error, failed | ended | unprovided}.
+system_grant(Name, Id, #{grants := Grants, rows := Rows} = State) ->
+    Key = {system, Name},
+    case Grants of
+        #{Key := #{state := {installed, {Id, _}, Pid}}} -> {ok, installed_facet(Pid, Key, State)};
+        #{Key := #{state := {failed, {Id, _}, _Reason}}} -> {error, failed};
+        #{Key := #{state := idle, server := Server}} -> idle_grant(heard(Id, maps:get(Server, Rows, none)));
+        #{Key := #{state := Grant}} -> other_grant(Id, carried_pair(Grant));
+        #{} -> {error, unprovided}
+    end.
+
+%% An idle grant: Id provides no such name once it is ready, nothing comes for it once
+%% it has ended, and until the core hears of it there is nothing to decide.
+idle_grant(ready) -> {error, unprovided};
+idle_grant(ended) -> {error, ended};
+idle_grant(unheard) -> wait.
+
+%% A grant with an operation pending, or settled with another server than Id: a wait
+%% for the operation's own server waits for it, and any other is another server's.
+other_grant(Id, {Id, _GranteeId}) -> wait;
+other_grant(_Id, _AnotherPair) -> {error, ended}.
+
+%% Whether the core has heard incarnation Id of a row whose newest incarnation is
+%% Newest ready, ended, or not at all: a row's incarnations follow one another, so one
+%% older than the newest has ended.
+heard(Id, {Id, ready, _Node, _Providers}) -> ready;
+heard(Id, {Id, ended}) -> ended;
+heard(Id, Newest) when is_tuple(Newest), element(1, Newest) > Id -> ended;
+heard(_Id, _NewestOrNone) -> unheard.
 
 settled({installed, _Pair, _Facet}, _Server, _Starting) -> true;
 settled({failed, _Pair, _Reason}, _Server, _Starting) -> true;

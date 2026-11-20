@@ -45,7 +45,8 @@ or stopped.
 """.
 
 -export([create/1, start_session/2, start_app/2, info/1, introduce/2, line/3, stop/2, id/1, node/1, pid/1]).
--export([system_principal/0, system_principal_request/0, system_namespace/0, display_settled/1]).
+-export([system_principal/0, system_principal_request/0, system_namespace/0, display_settled/1,
+         await_grant/2]).
 -export([inspect_view/1]).
 -export_type([domain/0, spec/0]).
 
@@ -211,6 +212,26 @@ that names the display then, whether its display came up or not
 -spec display_settled(binary()) -> gen_server:request_id().
 display_settled(Name) when is_binary(Name) ->
     gen_server:send_request(erx_domain_srv, {display_settled, Name}).
+
+-doc """
+Asks the domain service to answer once the system domain's grant of service
+Name has settled for incarnation Id of its server (docs/design-system.md, "A
+session takes the console", one incarnation's grant): {ok, Facet} once the
+grant is installed with Id as its server, Facet the system domain's facet of
+that incarnation; {error, failed} once it failed with Id as its server;
+{error, ended} once Id has ended or the grant carries another server; and
+{error, unprovided} once Id is ready and provides no Name, or the system
+domain is granted no Name. The mint core's deadline bounds a wait for an
+operation in progress, and the server row's boot timeout one before Id's
+ready report, for an Id that is an incarnation of the grant's server row,
+as the domain a PCIe domain's envelope names is. The request is sent, not waited on, as system_namespace/0's
+is: the device service takes the answer with gen_server:check_response/2 and
+answers a PCIe domain's report, Id the domain its envelope names, only on it
+(docs/design-pcie.md, "Facets").
+""".
+-spec await_grant(atom(), pos_integer()) -> gen_server:request_id().
+await_grant(Name, Id) when is_atom(Name), is_integer(Id), Id > 0 ->
+    gen_server:send_request(erx_domain_srv, {await_grant, Name, Id}).
 
 -doc "Introduces domains A and B: ok once their connection is up at both ends.".
 -spec introduce(domain(), domain()) -> ok | {error, term()}.

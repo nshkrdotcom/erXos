@@ -1060,21 +1060,21 @@ grant of `pcie` has settled for that incarnation:
   server;
 * `{error, unprovided}` when `D` is ready and the grant is idle, since
   `D` provides no `pcie` and the mint core arms no deadline for it
-  (`erx_domain_mints.erl:412-413`).
+  (`erx_domain_mints:current_pair/2`).
 
 The request is sent, not waited on, as `erx_domain:system_namespace/0`'s
 is, so the device service's PCIe process goes on taking holders' ends
 and requests while it waits; the domain service keeps the waiting
 callers beside those of `system_namespace/0`, which keeps its own rule
 over every `files` grant, and answers both after every step
-(`erx_domain_srv.erl:1372`). An operation in progress is bounded by the
-mint core's 10 s deadline (`erx_domain_mints.erl:113`), and `D` before
+(`erx_domain_srv:answer_in_place/1`). An operation in progress is bounded by the
+mint core's 10 s deadline (`erx_domain_mints`'s `DEADLINE`), and `D` before
 its ready report by the machine's boot timeout. On `{ok, Facet}` the device
 service records `D` as `answered` in each of the incarnation's bridges'
 catalogue entries ([Records](#records)), then answers, and calls
 `pcie` on `Facet` from then on, never on what `erx:cap/1` finds, which
 can still be a dead incarnation's pid until its successor's is
-installed (`erx.erl:143-148`). On any error it answers `{error,
+installed (`erx:cap/1`). On any error it answers `{error,
 unavailable}` and the enumerator exits, so the domain restarts. So every
 change of a setting after the answer reaches that incarnation by
 `pcie`, and every change before it is in the answer: no incarnation

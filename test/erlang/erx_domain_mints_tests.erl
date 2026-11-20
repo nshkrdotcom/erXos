@@ -23,9 +23,10 @@
 %% of them twice; and one hostile act: S naming domain 99's mint or a forged
 %% one, S answering with a facet of 99 or a forged one, a refused mint or
 %% introduction, or any domain the model started, or 99, answering any tag
-%% as a mint or as a grantee. It runs with the grant to G alone, and with
-%% grants to G and to the system domain side by side, over fewer
-%% incarnations, and with the grant to template 0's sessions: one session
+%% as a mint or as a grantee. It runs with the grant to G alone, with the
+%% grant to the system domain alone, with grants to G and to the system
+%% domain side by side, over fewer incarnations, and with the grant to
+%% template 0's sessions: one session
 %% beside two incarnations of S, and two sessions beside one, each started, reporting ready and ending in any order beside
 %% S's incarnations. A session's report reaches the core when it is made,
 %% before its end, as erx_domain_srv passes it on; a session answers
@@ -52,7 +53,15 @@
 %%   whose report marked the grant, and its row's limits else;
 %% * honest_progress: once nothing is in flight in a run with no hostile act,
 %%   no refused step and no fired deadline, every grant that has a pair is
-%%   installed.
+%%   installed;
+%% * grant_answer: where the system domain is a grantee, a wait for its grant
+%%   (system_grant/3) for any domain id the model has issued, and the next, is
+%%   answered with a facet only for S's ready incarnation and with that
+%%   incarnation's own facet, failed or unprovided only for S's ready
+%%   incarnation, and ended for any other; one for an id older than S's ready
+%%   incarnation is answered ended; and with no deadline armed, one for S's
+%%   ready incarnation is answered, so no wait for an incarnation the core has
+%%   heard ready outlasts its operation.
 
 -module(erx_domain_mints_tests).
 -include_lib("eunit/include/eunit.hrl").
@@ -526,6 +535,9 @@ invalid_template_grants_are_refused_test() ->
 explore_row_grantee_test_() ->
     {timeout, 300, fun() -> explore_and_report([?G], 2, 0) end}.
 
+explore_system_grantee_test_() ->
+    {timeout, 300, fun() -> explore_and_report([system], 2, 0) end}.
+
 explore_two_grants_test_() ->
     {timeout, 300, fun() -> explore_and_report([?G, system], 1, 0) end}.
 
@@ -633,7 +645,23 @@ check_state(Core, Env, Node, Seen) ->
     check_one_timer(Grants, Env, Node, Seen),
     check_current_pair(Grants, Env, Node, Seen),
     check_session_entries(Grants, Env, Node, Seen),
-    check_honest_progress(Grants, Env, Node, Seen).
+    check_honest_progress(Grants, Env, Node, Seen),
+    is_map_key({system, data}, Grants) andalso check_grant_answer(Core, Env, Node, Seen).
+
+%% Every domain id the model has issued, and the next, asked for the system domain's grant.
+check_grant_answer(Core, #{next_id := NextId, armed := Armed} = Env, Node, Seen) ->
+    Ready = ready_id(?S, Env),
+    lists:foreach(fun(Id) ->
+                          Answer = erx_domain_mints:system_grant(data, Id, Core),
+                          Expected = case Answer of
+                                         {ok, Facet} -> Id =:= Ready andalso Facet =:= facet(Id);
+                                         _ when is_integer(Ready), Id < Ready -> Answer =:= {error, ended};
+                                         wait -> not (Id =:= Ready andalso Armed =:= []);
+                                         {error, ended} -> Id =/= Ready;
+                                         {error, _FailedOrUnprovided} -> Id =:= Ready
+                                     end,
+                          Expected orelse violation(grant_answer, Node, state, Seen)
+                  end, lists:seq(5, NextId)).
 
 check_one_timer(Grants, #{armed := Armed}, Node, Seen) ->
     Pending = lists:sort([Tag || {Step, _, Tag} <- maps:values(Grants), Step =/= installed, Step =/= failed] ++

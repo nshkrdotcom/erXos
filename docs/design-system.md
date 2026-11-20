@@ -1218,9 +1218,11 @@ in place before anyone can connect to it.
   with `D` as its server, `{error, failed}` when it failed with `D` as
   its server, `{error, ended}` when `D` has ended or the grant carries
   another server, and `{error, unprovided}` when `D` is ready and the
-  grant is idle, since `D` provides no `pcie`. The wait is bounded by
+  grant is idle, since `D` provides no `pcie`, or the system domain is
+  granted no `pcie` at all. The wait is bounded by
   the mint core's deadline for an operation in progress and by the
-  machine's boot timeout before `D`'s ready report.
+  machine's boot timeout before the ready report of `D`, an incarnation
+  of the grant's server row.
 * **Why it holds by construction.** The wait reads only state the mint
   core already keeps, the grant of each `files` service to the session,
   and the domain service's own record of which configured domains are

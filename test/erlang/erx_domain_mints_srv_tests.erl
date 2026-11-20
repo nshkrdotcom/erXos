@@ -58,6 +58,19 @@ display_settled_test_() ->
      || {Name, Case} <- [{"ready", fun display_ready/0}, {"ended", fun display_ended/0},
                          {"boot timeout", fun display_timed_out/0}]].
 
+%% One incarnation's grant (docs/design-system.md, "A session takes the console"):
+%% erx_domain:await_grant/2 is answered once the system domain's grant of echo has
+%% settled for the incarnation it names, with the facet, failed, ended or unprovided,
+%% while the service goes on answering other calls; in the last case a's reports
+%% provide nothing.
+await_grant_test_() ->
+    [{setup, fun() -> setup(1, #{}, Provides) end, fun cleanup/1,
+      fun(_) -> {timeout, 20, {Name, Case}} end}
+     || {Name, Case, Provides} <- [{"installed", fun await_installed/0, fun(Id) -> #{echo => pid('a@erxos', Id, 1)} end},
+                                   {"failed", fun await_failed/0, fun(Id) -> #{echo => pid('a@erxos', Id, 1)} end},
+                                   {"ended", fun await_ended/0, fun(Id) -> #{echo => pid('a@erxos', Id, 1)} end},
+                                   {"unprovided", fun await_unprovided/0, fun(_Id) -> #{} end}]].
+
 %% The domain service's funnel for a domain's facets (docs/design-domains.md, "Facets"),
 %% with a table of facet names that holds echo and other, and with the table the
 %% build generates.
@@ -737,6 +750,54 @@ system_namespace() ->
     domain_pid(5) ! {erx_origin, 5, {erx_facet_minted, Tag, {ok, pid('a@erxos', 5, 3)}}},
     ?assertEqual({reply, ok}, gen_server:receive_response(First, 2000)),
     ?assertEqual({reply, ok}, gen_server:receive_response(erx_domain:system_namespace(), 2000)).
+
+%% A wait for a (5) while its grant is minting, unanswered after the service has
+%% answered system_namespace/0, which with echo of no files interface waits for
+%% nothing; and the grant's tag.
+await_minting() ->
+    Wait = erx_domain:await_grant(echo, 5),
+    #{{system, echo} := {minting, {5, 4}, Tag}} = wait(fun(#{{system, echo} := {minting, _, _}}) -> true end),
+    ?assertEqual({reply, ok}, gen_server:receive_response(erx_domain:system_namespace(), 2000)),
+    %% wait_response/2 keeps the request on its timeout, where receive_response/2 abandons it.
+    ?assertEqual(timeout, gen_server:wait_response(Wait, 200)),
+    {Wait, Tag}.
+
+%% The grant installed answers the wait with a's facet, and a later wait at once. A wait
+%% for another incarnation, 7, is never answered with a's facet, since the grant carries
+%% another server, and a name the system domain is not granted has nothing to wait for.
+await_installed() ->
+    {Wait, Tag} = await_minting(),
+    Facet = pid('a@erxos', 5, 3),
+    domain_pid(5) ! {erx_origin, 5, {erx_facet_minted, Tag, {ok, Facet}}},
+    ?assertEqual({reply, {ok, Facet}}, gen_server:receive_response(Wait, 2000)),
+    ?assertEqual({reply, {ok, Facet}}, gen_server:receive_response(erx_domain:await_grant(echo, 5), 2000)),
+    ?assertEqual({reply, {error, ended}}, gen_server:receive_response(erx_domain:await_grant(echo, 7), 2000)),
+    ?assertEqual({reply, {error, unprovided}}, gen_server:receive_response(erx_domain:await_grant(other, 5), 2000)).
+
+%% A facet of another node fails the grant, which answers the wait failed.
+await_failed() ->
+    {Wait, Tag} = await_minting(),
+    domain_pid(5) ! {erx_origin, 5, {erx_facet_minted, Tag, {ok, pid('x@erxos', 5, 3)}}},
+    ?assertEqual({reply, {error, failed}}, gen_server:receive_response(Wait, 2000)).
+
+%% a's end answers the wait ended, and a wait for it after its restart, 7, at once; a
+%% wait for 7 waits for 7's own grant.
+await_ended() ->
+    {Wait, _Tag} = await_minting(),
+    erx_domain_srv ! {domain_ended, 5, {stopped, 0}, #{}},
+    ?assertEqual({reply, {error, ended}}, gen_server:receive_response(Wait, 2000)),
+    wait(fun(#{{system, echo} := {minting, {7, 4}, _}}) -> true end),
+    ?assertEqual({reply, {error, ended}}, gen_server:receive_response(erx_domain:await_grant(echo, 5), 2000)),
+    ?assertEqual(timeout, gen_server:wait_response(erx_domain:await_grant(echo, 7), 200)).
+
+%% a ready without echo answers the wait unprovided: its grant is idle and no operation
+%% will start for it. A wait for a's next incarnation, 7, which the core has not heard
+%% of, waits for it.
+await_unprovided() ->
+    Wait = erx_domain:await_grant(echo, 5),
+    ?assertEqual({reply, {error, unprovided}}, gen_server:receive_response(Wait, 2000)),
+    ?assertMatch(#{{system, echo} := idle}, grants()),
+    ?assertEqual(timeout, gen_server:wait_response(erx_domain:await_grant(echo, 7), 200)).
 
 %% The service over b (row 0) and late (row 1, id 5), which serves screen, a windows
 %% service no row is granted.
