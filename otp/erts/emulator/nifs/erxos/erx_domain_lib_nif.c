@@ -1276,49 +1276,37 @@ fault_thread_start(void)
  * of an erx_pcie_function (erx_abi_layout:encode/2). The device service,
  * the design's caller, is not the registered process, so any caller is
  * answered: the system domain runs only trusted code, and the intake judges
- * a report against the catalogue but not who sent it. A list longer
- * than a bridge's functions, or with a record that is not a binary of the
- * layout's size, is a report the NIF cannot read: it is refused whole
- * (erx_dom_lib_pci_refuse), field functions or record, so no earlier
- * report's confirmation survives it. A bridge that is not an integer or
- * records that are not a list are badarg. ok, {error, {einval, Record,
- * Field}} naming the refused record by its place in the list and the field
- * the intake names, or {error, Name}.
+ * a report against the catalogue but not who sent it. The records go to the
+ * intake as they are, an element that is not a binary as no bytes, so the
+ * intake alone refuses a report too long or with a record that is not one
+ * record's bytes, whole, as it refuses any other. A bridge that is not an
+ * integer or records that are not a list are badarg. ok, {error, {einval,
+ * Record, Field}} naming the refused record by its place in the list and
+ * the field the intake names, or {error, Name}.
  */
 static ERL_NIF_TERM
 pci_report_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
 {
-	erx_pcie_function_t report[ERX_PCIE_FUNCTIONS_MAX];
+	erx_dom_pci_record_t records[ERX_PCIE_FUNCTIONS_MAX];
 	erx_dom_pci_refusal_t refusal = { 0, NULL };
 	ERL_NIF_TERM list, head;
 	ErlNifBinary record;
-	unsigned int bridge, count, at;
-	const char *unread;
+	unsigned int bridge, count;
 	erx_status_t status;
 
 	if (argc != 2 || !enif_get_uint(env, argv[0], &bridge) || !enif_get_list_length(env, argv[1], &count))
 		return (enif_make_badarg(env));
-	/* unread names what could not be read, and at the record it refuses. */
-	unread = NULL;
-	if (count > ERX_PCIE_FUNCTIONS_MAX) {
-		unread = "functions";
-		at = count;
-	} else {
-		for (at = 0, list = argv[1]; at < count; at++) {
-			/* The decoder reads a prefix of a longer binary, so the size is checked here. */
-			if (!enif_get_list_cell(env, list, &head, &list) || !enif_inspect_binary(env, head, &record) ||
-			    record.size != ERX_PCIE_FUNCTION_SIZE ||
-			    !erx_pcie_function_decode(record.data, record.size, &report[at])) {
-				unread = "record";
-				break;
-			}
-		}
+	/* The intake reads no record of a report past its bound. */
+	list = argv[1];
+	for (unsigned int at = 0; at < count && at < ERX_PCIE_FUNCTIONS_MAX; at++) {
+		(void)enif_get_list_cell(env, list, &head, &list);
+		records[at] = enif_inspect_binary(env, head, &record) ?
+		    (erx_dom_pci_record_t){ record.data, record.size } : (erx_dom_pci_record_t){ NULL, 0 };
 	}
 	if (lib == NULL)
 		return (status_error(env, ERX_ENOTSUP));
 	enif_mutex_lock(lib_lock);
-	status = unread != NULL ? erx_dom_lib_pci_refuse(lib, bridge, at, unread, &refusal) :
-	    erx_dom_lib_pci_report(lib, bridge, report, count, &refusal);
+	status = erx_dom_lib_pci_report(lib, bridge, records, count, &refusal);
 	enif_mutex_unlock(lib_lock);
 	/* The field is one of the intake's own names, never the caller's bytes. */
 	if (status == ERX_EINVAL && refusal.field != NULL)

@@ -378,9 +378,19 @@ typedef struct erx_dom_pci_refusal {
 } erx_dom_pci_refusal_t;
 
 /*
+ * One record of a report as its sender handed it: the bytes of an
+ * erx_pcie_function (erx_pcie_function_encode), not yet read. A sender's
+ * value that is no byte string at all is handed as no bytes.
+ */
+typedef struct erx_dom_pci_record {
+	const uint8_t	*bytes;
+	size_t		size;
+} erx_dom_pci_record_t;
+
+/*
  * The library's intake of a report on bridge's functions, count records as
- * erx_pcie_function_decode gave them (docs/design-pcie.md, "The catalogue
- * and gives"), against the catalogue's nentries entries, whose register
+ * their sender handed them (docs/design-pcie.md, "The catalogue and
+ * gives"), against the catalogue's nentries entries, whose register
  * ranges no BAR may meet. It decides every layout from the whole report and
  * only then writes them all. A bridge with no layouts takes the report's records
  * as its layouts, each with its state, only if every placed memory BAR is aligned to its span,
@@ -394,22 +404,13 @@ typedef struct erx_dom_pci_refusal {
  * a device or function past its bound or at a place another record holds, of a state or BAR outside its
  * sets (a size past ERX_PCIE_BAR_SIZE_LOG2_WIDE, or past ERX_PCIE_BAR_SIZE_LOG2_MAX on a placed BAR; a
  * placed BAR not memory; a placed 32-bit BAR past 4 GiB; a ready function's memory BAR not placed), a 64-bit BAR whose upper half is not absent, more than
- * ERX_PCIE_FUNCTIONS_MAX records, or, to a bridge with no layouts, any placement
- * check above.
+ * ERX_PCIE_FUNCTIONS_MAX records (field functions, record count), a record
+ * not ERX_PCIE_FUNCTION_SIZE bytes (field record), or, to a bridge with no
+ * layouts, any placement check above. records is read only when count is
+ * within ERX_PCIE_FUNCTIONS_MAX, so a caller may hand none past it.
  */
 erx_status_t	erx_dom_pci_report(erx_dom_pci_bridge_t *bridge, const erx_dom_device_entry_t *entries,
-		    uint32_t nentries, const erx_pcie_function_t *report, uint32_t count,
-		    erx_dom_pci_refusal_t *refusal) ERX_WARN_UNUSED_RESULT;
-
-/*
- * A report on bridge's functions refused whole, its record refused at field,
- * a static name: every layout unconfirmed and nothing else written, as
- * erx_dom_pci_report refuses one, so no earlier report gives a function:
- * for a report its caller could not read, such as one with a record of the
- * wrong size, and for one past ERX_PCIE_FUNCTIONS_MAX records. ERX_EINVAL,
- * *refusal set.
- */
-erx_status_t	erx_dom_pci_refuse(erx_dom_pci_bridge_t *bridge, uint32_t record, const char *field,
+		    uint32_t nentries, const erx_dom_pci_record_t *records, uint32_t count,
 		    erx_dom_pci_refusal_t *refusal) ERX_WARN_UNUSED_RESULT;
 
 /*

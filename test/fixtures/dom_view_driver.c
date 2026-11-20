@@ -184,23 +184,42 @@ pci_pin(const erx_dom_pci_bridge_t *bridge, const erx_dom_device_entry_t *entry)
 	return (1);
 }
 
+/* Each of count functions as the device service hands it, its bytes in bytes. */
+static void
+pci_records(const erx_pcie_function_t *report, uint32_t count, uint8_t (*bytes)[ERX_PCIE_FUNCTION_SIZE],
+    erx_dom_pci_record_t *records)
+{
+	for (uint32_t at = 0; at < count; at++) {
+		(void)erx_pcie_function_encode(&report[at], bytes[at], ERX_PCIE_FUNCTION_SIZE);
+		records[at] = (erx_dom_pci_record_t){ bytes[at], ERX_PCIE_FUNCTION_SIZE };
+	}
+}
+
 /*
- * A report the caller could not read, on a copy of the laid catalogue
- * (erx_dom_lib_pci_refuse): refused whole, its first layout left
- * unconfirmed; and on a row with no catalogue, refused at field bridge.
+ * A report whose third record is not one record's bytes, on a copy of the
+ * laid catalogue (erx_dom_lib_pci_report): refused whole, its first layout
+ * left unconfirmed; and on a row with no catalogue, refused at field bridge.
  */
 static void
-pci_unread(erx_dom_lib_t *lib, uint32_t at)
+pci_unread(erx_dom_lib_t *lib, uint32_t at, const erx_pcie_function_t *report, uint32_t count)
 {
 	const erx_dom_pci_bridge_t kept = lib->pci_bridges[at];
+	const erx_pcie_function_t repeated[3] = { report[0], report[0], report[0] };
 	erx_dom_pci_refusal_t refusal = { .field = "none" };
-	const int status = (int)erx_dom_lib_pci_refuse(lib, kept.facts.index, 2, "record", &refusal);
+	uint8_t bytes[3][ERX_PCIE_FUNCTION_SIZE];
+	erx_dom_pci_record_t records[3];
+	int status;
 
+	if (count == 0)
+		return;
+	pci_records(repeated, 3, bytes, records);
+	records[2].size--;
+	status = (int)erx_dom_lib_pci_report(lib, kept.facts.index, records, 3, &refusal);
 	printf("unread %" PRIu32 " status=%d record=%" PRIu32 " field=%s confirmed=%d\n", kept.facts.index, status,
 	    refusal.record, refusal.field, lib->pci_bridges[at].nlayouts != 0 && lib->pci_bridges[at].layouts[0].confirmed);
 	lib->pci_bridges[at] = kept;
 	refusal = (erx_dom_pci_refusal_t){ .field = "none" };
-	printf("unread none status=%d field=%s\n", (int)erx_dom_lib_pci_refuse(lib, UINT32_MAX, 2, "record", &refusal),
+	printf("unread none status=%d field=%s\n", (int)erx_dom_lib_pci_report(lib, UINT32_MAX, records, 3, &refusal),
 	    refusal.field);
 }
 
@@ -214,11 +233,14 @@ pci_refused(erx_dom_lib_t *lib, uint32_t at, const erx_pcie_function_t *report, 
 	const erx_dom_pci_bridge_t kept = lib->pci_bridges[at];
 	const erx_pcie_bridge_t none = { 0 };
 	erx_dom_pci_refusal_t refusal = { .field = "none" };
+	uint8_t bytes[ERX_PCIE_FUNCTIONS_MAX][ERX_PCIE_FUNCTION_SIZE];
+	erx_dom_pci_record_t records[ERX_PCIE_FUNCTIONS_MAX];
 
+	pci_records(report, count, bytes, records);
 	lib->pci_bridges[at] = (erx_dom_pci_bridge_t){ .facts = kept.facts };
 	erx_dom_view_bridge(&lib->pci_bridges[at], &none, ERX_DT_BRIDGE_MALFORMED);
 	printf("refused %" PRIu32 " status=%d field=%s\n", kept.facts.index,
-	    (int)erx_dom_lib_pci_report(lib, kept.facts.index, report, count, &refusal), refusal.field);
+	    (int)erx_dom_lib_pci_report(lib, kept.facts.index, records, count, &refusal), refusal.field);
 	lib->pci_bridges[at] = kept;
 }
 
@@ -268,6 +290,8 @@ print_bridges(erx_dom_lib_t *lib)
 	const erx_pcie_bridge_t tree = { .bus_first = 0, .bus_last = 1,
 	    .windows = { { .pci = PCI_WINDOW_PCI, .cpu = PCI_WINDOW_CPU, .size = 0x40000000 } } };
 	erx_pcie_function_t report[ERX_PCIE_FUNCTIONS_MAX];
+	uint8_t bytes[ERX_PCIE_FUNCTIONS_MAX][ERX_PCIE_FUNCTION_SIZE];
+	erx_dom_pci_record_t records[ERX_PCIE_FUNCTIONS_MAX];
 	const erx_pcie_bridge_t *facts;
 	erx_dom_pci_refusal_t refusal;
 	erx_dom_range_t cpu;
@@ -300,14 +324,15 @@ print_bridges(erx_dom_lib_t *lib)
 			count++;
 		}
 		refusal = (erx_dom_pci_refusal_t){ .field = "none" };
+		pci_records(report, count, bytes, records);
 		printf("report %" PRIu32 " status=%d field=%s\n", bridge->facts.index,
-		    (int)erx_dom_lib_pci_report(lib, bridge->facts.index, report, count, &refusal), refusal.field);
+		    (int)erx_dom_lib_pci_report(lib, bridge->facts.index, records, count, &refusal), refusal.field);
 		for (uint32_t layout = 0; layout < bridge->nlayouts; layout++)
 			printf("layout %" PRIu32 " %u.%u.%u placed=%u state=%u confirmed=%d\n", bridge->facts.index,
 			    bridge->layouts[layout].record.bus, bridge->layouts[layout].record.device,
 			    bridge->layouts[layout].record.function, bridge->layouts[layout].record.state,
 			    bridge->layouts[layout].state, bridge->layouts[layout].confirmed ? 1 : 0);
-		pci_unread(lib, at);
+		pci_unread(lib, at, report, count);
 		pci_refused(lib, at, report, count);
 	}
 	for (uint32_t index = 0; index < lib->view.ndevices; index++) {

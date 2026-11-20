@@ -422,27 +422,15 @@ void		erx_dom_view_bridge(erx_dom_pci_bridge_t *bridge, const erx_pcie_bridge_t 
 
 /*
  * The PCIe domain's report on the bridge of device row index bridge, count
- * records as erx_pcie_function_decode gave them, into that bridge's
+ * records as the device service handed them, into that bridge's
  * catalogue through erx_dom_pci_report (erx/dom.h), against every entry of
  * the view's catalogue (docs/design-pcie.md, "The catalogue and gives").
  * The caller holds the library's lock. ERX_EINVAL with *refusal naming
  * field bridge and record count for a row with no catalogue; otherwise
  * erx_dom_pci_report's status and refusal.
  */
-erx_status_t	erx_dom_lib_pci_report(erx_dom_lib_t *, uint32_t bridge, const erx_pcie_function_t *report,
+erx_status_t	erx_dom_lib_pci_report(erx_dom_lib_t *, uint32_t bridge, const erx_dom_pci_record_t *records,
 		    uint32_t count, erx_dom_pci_refusal_t *refusal) ERX_WARN_UNUSED_RESULT;
-
-/*
- * A report on the bridge of device row index bridge that the caller could
- * not read, its record refused at field, a static name: refused whole
- * through erx_dom_pci_refuse (erx/dom.h), so a report too long or with a
- * record that does not decode leaves no earlier confirmation, as one the
- * intake refuses does. The caller holds the library's lock. ERX_EINVAL
- * always, *refusal naming the record and field, or field bridge, as
- * erx_dom_lib_pci_report does for a row with no catalogue.
- */
-erx_status_t	erx_dom_lib_pci_refuse(erx_dom_lib_t *, uint32_t bridge, uint32_t record, const char *field,
-		    erx_dom_pci_refusal_t *refusal) ERX_WARN_UNUSED_RESULT;
 
 /*
  * Writes mode, an ERX_PCIE_MODE_*, into the setting of device row index, a

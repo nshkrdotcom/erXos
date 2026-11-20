@@ -634,7 +634,7 @@ lib_pci_bridge(erx_dom_lib_t *lib, uint32_t bridge)
 }
 
 erx_status_t
-erx_dom_lib_pci_report(erx_dom_lib_t *lib, uint32_t bridge, const erx_pcie_function_t *report, uint32_t count,
+erx_dom_lib_pci_report(erx_dom_lib_t *lib, uint32_t bridge, const erx_dom_pci_record_t *records, uint32_t count,
     erx_dom_pci_refusal_t *refusal)
 {
 	erx_dom_pci_bridge_t *const held = lib_pci_bridge(lib, bridge);
@@ -643,20 +643,7 @@ erx_dom_lib_pci_report(erx_dom_lib_t *lib, uint32_t bridge, const erx_pcie_funct
 		*refusal = (erx_dom_pci_refusal_t){ .record = count, .field = "bridge" };
 		return (ERX_EINVAL);
 	}
-	return (erx_dom_pci_report(held, lib->view.devices, lib->view.ndevices, report, count, refusal));
-}
-
-erx_status_t
-erx_dom_lib_pci_refuse(erx_dom_lib_t *lib, uint32_t bridge, uint32_t record, const char *field,
-    erx_dom_pci_refusal_t *refusal)
-{
-	erx_dom_pci_bridge_t *const held = lib_pci_bridge(lib, bridge);
-
-	if (held == NULL) {
-		*refusal = (erx_dom_pci_refusal_t){ .record = record, .field = "bridge" };
-		return (ERX_EINVAL);
-	}
-	return (erx_dom_pci_refuse(held, record, field, refusal));
+	return (erx_dom_pci_report(held, lib->view.devices, lib->view.ndevices, records, count, refusal));
 }
 
 erx_status_t

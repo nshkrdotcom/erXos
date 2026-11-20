@@ -294,14 +294,16 @@ class DomCoreTest < Minitest::Test
   # translated by the window from PCI 0xc0000000 to CPU 0x600000000; a later report
   # gives only what it repeats ready; a BAR outside the window, unaligned, over an
   # entry's registers or another BAR, or an MSI-X table past its BAR, refuses the report
-  # whole, so the next places again; a report its caller could not read is refused whole
-  # too, leaving no earlier confirmation.
+  # whole, so the next places again; a report with a record that is not one record's bytes
+  # or past the bound is refused whole too, leaving no earlier confirmation.
   PCI = [
     'pci placed 0 none givable=1', 'pci cpu 1 0x600000000+0x1000', 'pci same 0 none givable=1',
     *%w[changed missing not_ready firmware_lost].map { |name| "pci #{name} 0 none givable=0" },
     'pci before_mark 0 none givable=1', 'pci marked givable=0', 'pci laid 0 none givable=1',
     "pci refused_later #{EINVAL} function givable=0", 'pci read 0 none givable=1',
-    "pci unread #{EINVAL} 1 record givable=0", 'pci empty 0 none givable=0', 'pci after_empty 0 none givable=1',
+    "pci unread #{EINVAL} 1 record givable=0", "pci reread 0 none givable=1",
+    "pci no_bytes #{EINVAL} 1 record givable=0", "pci reread 0 none givable=1",
+    "pci too_many #{EINVAL} 33 functions givable=0", 'pci empty 0 none givable=0', 'pci after_empty 0 none givable=1',
     *%w[below past_end unaligned entry overlap].map { |name| "pci #{name} #{EINVAL} bars givable=0" },
     "pci msix_past #{EINVAL} msix_table_offset givable=0", 'pci msix_inside 0 none givable=1',
     "pci upper_half #{EINVAL} bars givable=0", "pci other_bridge #{EINVAL} bridge givable=0",

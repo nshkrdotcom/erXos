@@ -345,7 +345,7 @@ that does not encode, with Field record.
 pci_report(Bridge, Functions) ->
     pci_report_nif(Bridge, [function_bytes(Function) || Function <- Functions]).
 
-%% A function's bytes, or none for one that does not encode, which the NIF
+%% A function's bytes, or none for one that does not encode, which the intake
 %% refuses as a record it cannot read. Every exception of the encoder means a
 %% map it does not take, so a defect of the encoder itself would show as that
 %% refusal, which fails safe: it unconfirms the bridge's every layout.
