@@ -1,0 +1,239 @@
+%% Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
+%% SPDX-License-Identifier: BSD-2-Clause
+
+-module(erx_devices_pci).
+-moduledoc """
+The device service's PCIe process (docs/design-pcie.md, "Facets",
+"Concurrency"): the one process that writes the library's PCIe settings and
+calls the PCIe domain's `pcie`, so the settings the library holds and those
+sent are written in one order. Every decision is erx_devices_pci_core's;
+this module performs the actions it returns, in order, and keeps the state
+the core is handed.
+
+**What arrives.** The PCIe domain's `pci_bus` requests and every holder's
+`pci` requests, each forwarded by its facet (erx_pci_bus_facet,
+erx_pci_facet) with the grantee it was minted for, as `{pci_bus, D,
+Operation}` and `{pci, Grantee, Operation}`; and the end of every domain,
+which erx_domain_srv forwards as it takes the library's `domain_ended`
+(domain_ended/2). A holder's end lowers the rows it held; the end of the
+answered PCIe incarnation moves the core to `between`.
+
+**`report`** goes through the library's intake per bridge the library
+holds (erx_devices_pci_core:reports/2), every row lowered/3 names is
+lowered to `off`, and only then is erx_domain:await_grant(pcie, D) sent,
+not waited on; its answer, `{ok, Facet}`, answers the report with every
+setting and moves the core to `synced`, and any other answers
+`{error, unavailable}`.
+
+**The rows a holder held** are those the process last read from the
+library with that holder (`held`), read again at every request and
+report. An entry stays until its holder's end arrives, even when a later
+read no longer shows the holder, since the library clears a row's holder
+at the end before it reports it; so the lowering is sent for every row a
+living holder could have raised, and the forward of the end, which
+erx_domain_srv sends before it starts the holder's next incarnation,
+reaches the process before any request of that incarnation.
+
+**A `pcie` call** is sent with gen_server:send_request/2 and a 2 s
+deadline. The end of the facet before it answered is the end of the
+incarnation it was made on; past the deadline the call is abandoned, its
+late answer dropped. An answer outside the interface (`ok`, `{ok, flr |
+none}`, `{error, Atom}`) is taken as `{error, failed}`, so no term of the
+PCIe domain's reaches a holder.
+""".
+-behaviour(gen_server).
+
+-export([start_link/0, start_link/1, domain_ended/2]).
+-export([init/1, handle_call/3, handle_cast/2, handle_info/2]).
+
+%% The deadline of a pcie call, past the longest reset (docs/design-pcie.md, "Concurrency").
+-define(PCIE_DEADLINE, 2000).
+%% How long the core stays between before it goes down.
+-define(DOWN_AFTER, 5000).
+
+-spec start_link() -> gen_server:start_ret().
+start_link() ->
+    start_link(#{}).
+
+-doc """
+Opts names a host test's stand-ins: lib, the domain library's module
+(erx_domain_lib by default); await, the function of erx_domain:await_grant/2
+(the default); and register, false to start the process unregistered.
+""".
+-spec start_link(map()) -> gen_server:start_ret().
+start_link(Opts) ->
+    case maps:get(register, Opts, true) of
+        true -> gen_server:start_link({local, ?MODULE}, ?MODULE, Opts, []);
+        false -> gen_server:start_link(?MODULE, Opts, [])
+    end.
+
+-doc "Domain Id's end, as erx_domain_srv forwards it to Server, the process's name or pid.".
+-spec domain_ended(gen_server:server_ref(), pos_integer()) -> ok.
+domain_ended(Server, Id) ->
+    gen_server:cast(Server, {domain_ended, Id}).
+
+init(Opts) ->
+    State = #{lib => maps:get(lib, Opts, erx_domain_lib),
+              await => maps:get(await, Opts, fun erx_domain:await_grant/2),
+              phase => {between, start}, waiting => [], held => #{},
+              %% Outstanding pcie calls and report answers, by request id.
+              calls => #{}, reports => #{}},
+    {_Devices, Read} = devices(State),
+    {ok, act({arm_down, start}, Read)}.
+
+handle_call({pci, Grantee, Operation}, From, #{phase := Phase, waiting := Waiting} = State) ->
+    {Devices, Read} = devices(State),
+    Request = #{from => From, grantee => Grantee, operation => Operation},
+    case erx_devices_pci_core:request(Request, Phase, Devices) of
+        wait -> {noreply, Read#{waiting := Waiting ++ [Request]}};
+        Actions -> {noreply, perform(Actions, Read)}
+    end;
+handle_call({pci_bus, _D, targets}, _From, #{lib := Lib} = State) ->
+    {Devices, Read} = devices(State),
+    {reply, erx_devices_pci_core:targets(catalogues(Lib), Devices), Read};
+handle_call({pci_bus, D, {report, Reported}}, From, State) ->
+    {noreply, report(D, Reported, From, State)};
+handle_call({pci_bus, _D, {firmware, _Bridge}}, _From, State) ->
+    %% erx_domain_lib:pci_firmware/1 is not built (TODO.md).
+    {reply, {error, enotsup}, State}.
+
+handle_cast({domain_ended, Id}, #{phase := Phase, held := Held} = State) ->
+    Rows = [Row || _Index := #{holder := Holder} = Row <- Held, Holder =:= Id],
+    {Next, Ended} = erx_devices_pci_core:incarnation_ended(Id, Phase),
+    Kept = maps:filter(fun(_Index, #{holder := Holder}) -> Holder =/= Id end, Held),
+    {noreply, perform(erx_devices_pci_core:holder_ended(Rows, Phase) ++ Ended,
+                      State#{phase := Next, held := Kept})}.
+
+handle_info({timeout, _Timer, {down, Since}}, #{phase := Phase, waiting := Waiting} = State) ->
+    {Next, Actions} = erx_devices_pci_core:down_timer(Since, Phase, Waiting),
+    Left = case Next of
+               down -> [];
+               _ -> Waiting
+           end,
+    {noreply, perform(Actions, State#{phase := Next, waiting := Left})};
+handle_info({timeout, _Timer, {pcie_deadline, ReqId}}, #{calls := Calls} = State) ->
+    case Calls of
+        #{ReqId := {Then, _Timer2, _Id}} ->
+            %% Abandoned: the monitor and the alias go, so a late answer never arrives.
+            erlang:demonitor(ReqId, [flush]),
+            {noreply, pcie_answered(Then, timeout, State#{calls := maps:remove(ReqId, Calls)})};
+        #{} ->
+            {noreply, State}
+    end;
+handle_info(Message, State) ->
+    {noreply, response(Message, State)}.
+
+%% The answer to a report: the intake per held bridge, the rows lowered, then the
+%% wait for the incarnation's pcie facet.
+report(D, Reported, From, #{lib := Lib, await := Await, reports := Reports} = State) ->
+    {Devices, Read} = devices(State),
+    {PerBridge, Unheld} = erx_devices_pci_core:reports(Reported, catalogues(Lib)),
+    [intake(Lib, Bridge, Records) || {Bridge, Records} <- PerBridge],
+    [logger:notice("erx_devices_pci: a PCIe report names bridge ~b, which the library does not hold",
+                   [Bridge]) || #{bridge := Bridge} <- Unheld],
+    [logger:notice("erx_devices_pci: no pci row names the function at ~0p; it stays off",
+                   [{B, Bus, Dev, Fn}])
+     || #{bridge := B, bus := Bus, device := Dev, function := Fn} <- erx_devices_pci_core:unlisted(Reported, Devices)],
+    Lowered = erx_devices_pci_core:lowered(catalogues(Lib), Devices, Reported),
+    Done = perform([{mode, Index, off} || Index <- Lowered], Read),
+    Done#{reports := Reports#{Await(pcie, D) => {From, D}}}.
+
+intake(Lib, Bridge, Records) ->
+    case Lib:pci_report(Bridge, Records) of
+        ok -> ok;
+        {error, Refusal} ->
+            logger:error("erx_devices_pci: the library refused bridge ~b's report whole: ~0p", [Bridge, Refusal])
+    end.
+
+%% The answer a message completes: a report's wait for its facet, or a pcie call.
+response(Message, #{reports := Reports, calls := Calls} = State) ->
+    case {answer(Message, Reports), answer(Message, Calls)} of
+        {{ReqId, Answer}, none} -> grant_answered(maps:get(ReqId, Reports), Answer,
+                                                  State#{reports := maps:remove(ReqId, Reports)});
+        {none, {ReqId, Answer}} ->
+            {Then, Timer, Id} = maps:get(ReqId, Calls),
+            _ = erlang:cancel_timer(Timer),
+            pcie_ended_or_answered(Then, Id, Answer, State#{calls := maps:remove(ReqId, Calls)});
+        {none, none} -> State
+    end.
+
+%% The request id Message answers among Pending's, and its answer, or none.
+answer(Message, Pending) ->
+    Answers = [{ReqId, gen_server:check_response(Message, ReqId)} || ReqId := _ <- Pending],
+    case [Answered || {_ReqId, Answer} = Answered <- Answers, Answer =/= no_reply] of
+        [Answered] -> Answered;
+        [] -> none
+    end.
+
+grant_answered({From, D}, {reply, {ok, Facet}}, #{waiting := Waiting} = State) ->
+    {Devices, Read} = devices(State),
+    gen_server:reply(From, {ok, erx_devices_pci_core:settings(Devices)}),
+    {Phase, Actions} = erx_devices_pci_core:answered(D, Facet, Waiting, Devices),
+    perform(Actions, Read#{phase := Phase, waiting := []});
+grant_answered({From, D}, Answer, State) ->
+    logger:error("erx_devices_pci: PCIe domain ~b's report is not answered, its pcie facet: ~0p", [D, Answer]),
+    gen_server:reply(From, {error, unavailable}),
+    State.
+
+%% A pcie call's end: the facet's end before it answered is the end of incarnation Id.
+pcie_ended_or_answered(Then, Id, {error, _Down}, #{phase := Phase} = State) ->
+    {Next, Ended} = erx_devices_pci_core:incarnation_ended(Id, Phase),
+    pcie_answered(Then, ended, perform(Ended, State#{phase := Next}));
+pcie_ended_or_answered(Then, _Id, {reply, Answer}, State) ->
+    pcie_answered(Then, interface(Answer), State).
+
+pcie_answered(Then, Answer, #{phase := Phase, waiting := Waiting} = State) ->
+    {Devices, Read} = devices(State),
+    {Actions, Again} = erx_devices_pci_core:pcie_answer(Then, Answer, Phase, Devices),
+    perform(Actions, Read#{waiting := Waiting ++ [Request || Request <- [Again], Request =/= none]}).
+
+%% The enumerator's answer as the interface spells it; anything else is a failure.
+interface(ok) -> ok;
+interface({ok, Kind}) when Kind =:= flr; Kind =:= none -> {ok, Kind};
+interface({error, Reason}) when is_atom(Reason) -> {error, Reason};
+interface(_Answer) -> {error, failed}.
+
+perform(Actions, State) ->
+    lists:foldl(fun act/2, State, Actions).
+
+act({mode, Index, Mode}, #{lib := Lib} = State) ->
+    case Lib:pci_mode(Index, Mode) of
+        ok -> ok;
+        {error, Reason} ->
+            logger:error("erx_devices_pci: the library refused mode ~ts for row ~b: ~0p", [Mode, Index, Reason])
+    end,
+    State;
+act({pcie, Facet, Call, Then}, #{phase := Phase, calls := Calls} = State) ->
+    ReqId = gen_server:send_request(Facet, Call),
+    Timer = erlang:start_timer(?PCIE_DEADLINE, self(), {pcie_deadline, ReqId}),
+    State#{calls := Calls#{ReqId => {Then, Timer, incarnation(Phase)}}};
+act({reply, From, Answer}, State) ->
+    gen_server:reply(From, Answer),
+    State;
+act({arm_down, Since}, State) ->
+    _ = erlang:start_timer(?DOWN_AFTER, self(), {down, Since}),
+    State.
+
+%% The core sends pcie calls only synced, on the answered incarnation's facet.
+incarnation({synced, Id, _Facet}) -> Id.
+
+%% The library's device catalogue, and the state with every row a living holder
+%% holds recorded in held, the earlier entries kept until their holder's end.
+devices(#{lib := Lib, held := Held} = State) ->
+    Devices = case Lib:devices() of
+                  {ok, Read} -> Read;
+                  {error, Reason} ->
+                      logger:error("erx_devices_pci: the library's device catalogue is unreadable: ~0p", [Reason]),
+                      []
+              end,
+    Holding = #{Index => Row || #{index := Index, holder := Holder, place := Place} = Row <- Devices,
+                                is_integer(Holder), Place =/= none},
+    {Devices, State#{held := maps:merge(Held, Holding)}}.
+
+catalogues(Lib) ->
+    case Lib:pci_bridges() of
+        {ok, Catalogues} -> Catalogues;
+        {error, Reason} ->
+            logger:error("erx_devices_pci: the library's PCIe catalogue is unreadable: ~0p", [Reason]),
+            []
+    end.

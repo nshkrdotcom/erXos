@@ -1276,12 +1276,17 @@ the PCIe row ends or fails to report ready within its boot timeout, or
 failed hold gets nothing of its `pci` devices. The check's boot order
 puts the PCIe domain before every row holding a `pci` device.
 
-**A holder's end.** The device service monitors the holder's domain pid
-from its give; at its end it sets the setting's mode `off` in the
-library with `pci_mode/2`, as the library's own end of the holder's
-device records also does, whichever comes first, and then calls
-`pcie:set`, or, with no PCIe incarnation
-answered, leaves it to the next start's `targets` or `report`.
+**A holder's end.** The device service learns of every domain's end
+from the domain library, whose `{domain_ended, Id, End, Record}` the
+domain service takes and forwards to the PCIe process before it acts on
+the end, so before it starts the holder's next incarnation; the process
+keeps no monitor. The process keeps each `pci` row it last read with a
+living holder until that holder's end arrives, since the library's own
+end of the holder's device records clears the row's holder and sets its
+mode `off` before the end is reported. At the end it sets the setting's
+mode `off` in the library with `pci_mode/2` and then calls `pcie:set`,
+or, with no PCIe incarnation answered, leaves it to the next start's
+`targets` or `report`.
 
 ## Concurrency
 
@@ -1303,7 +1308,8 @@ and those sent are written in one order. Its decisions are a pure core,
 | `down` | 5 s in `between` | `{error, unavailable}` at once | as in `between` |
 
 The answer to a report moves it to `synced`; the end of the answered
-incarnation, which it monitors, to `between`, and a request whose `pcie`
+incarnation, whose end the domain service forwards as a holder's is, to
+`between`, and a request whose `pcie`
 call failed because that incarnation ended waits again; 5 s in
 `between`, past one restart's bring-up and walk, to `down`. A process
 its supervisor restarts cannot learn from a facet's presence whether a
@@ -1311,7 +1317,7 @@ report was answered, since the grant is installed whether or not it
 was, so it reads the bridges' `answered` from the library: when an
 entry names the incarnation that the bridge's device record names as
 its holder, it asks `erx_domain:await_grant(pcie, D)` for that
-incarnation's facet and begins in `synced` with it, monitoring it, and
+incarnation's facet and begins in `synced` with it, and
 otherwise begins in `between`. The answer is written to the library
 before it is sent, so a crash between the two leaves a report that the
 library calls answered and the enumerator never received; the
@@ -1367,8 +1373,8 @@ waits for.
 | transactions still pending at a function-level reset | the enumerator's 1000 ms wait | no reset; the function stays off; `{error, busy}` |
 | the VL805's firmware stays absent after the notification | `ready` | it is reported `not_ready`; a later start resets the bridge and asks again |
 | the notification times out | `erx_domain_lib:pci_firmware/1` | the bridge's entry is marked `firmware_lost` in the same call; every later report of the bridge is taken as `not_ready`, so the VL805 is not given until the next boot, even when a late answer loads its firmware and a later start keeps the bridge; a later bring-up's notification answers `ERX_ETIMEDOUT` at once ([design-usb.md](design-usb.md#the-vl805s-firmware)) |
-| a holder ends while the PCIe domain is down | the device service's monitor | the library's setting says `off`; the next start applies it |
-| the device service's PCIe process crashes | its supervisor | it restarts, reads every setting, holder and `answered` from the library and monitors the holders again; it begins in `synced` only with an answered incarnation that still holds its bridges ([Concurrency](#concurrency)); a function whose holder has ended is set `off` |
+| a holder ends while the PCIe domain is down | the domain library's `domain_ended`, which the domain service forwards | the library's setting says `off`; the next start applies it |
+| the device service's PCIe process crashes | its supervisor | it restarts, reads every setting, holder and `answered` from the library; it begins in `synced` only with an answered incarnation that still holds its bridges ([Concurrency](#concurrency)); a function whose holder has ended is set `off` |
 | a placing walk's record fails intake | the library | the bridge takes no layouts and places again at its next walk; nothing on it is given; a log line names the record and the field |
 | a later report's record differs from its layout | the enumerator's start and the library | the start takes the function to its layout and the setting `off` with route `none`, whatever its setting, and reports it not kept; the intake leaves it unconfirmed and not given, so the device service lowers its setting; its holder's requests answer `{error, gone}` |
 
@@ -1511,7 +1517,7 @@ confirmed against the pinned QEMU's documentation.
 | a device-generated MSI | the test holder has the function raise its interrupt, by a command whose completion posts an event, and its IRQ object is delivered within the deadline | the MSI enable left out of the ascent: no delivery |
 | restart | the PCIe domain killed while the test holder masters: after its restart the enumerator's count of writes to that function is zero and the holder's next register read succeeds | the planner taking every field as differing: the count is nonzero |
 | restart behind a root port | the same with `qemu-xhci` behind a root port the harness attaches: the root port's write count is zero too | the root port sized at every walk: its count is nonzero and the holder's read fails |
-| holder end | the test holder halts: the function's command register reads memory space and bus master clear | the device service's monitor dropped: the command still reads set |
+| holder end | the test holder halts: the function's command register reads memory space and bus master clear | the domain service's forward of the end dropped: the command still reads set |
 | holder end during a PCIe start | the PCIe domain killed, then the test holder halted before the new report: after the start the function reads off | the report's answer carrying no settings: the function still masters |
 | interrupted transitions | the PCIe domain killed repeatedly while the test holder loops `open` and `master`: after each restart the function reads either as the library's setting or off, never mastering with another route | the start's rule replaced by the plan to the setting: a restart raises a function |
 | function-level reset | where `qemu-xhci` offers one, `reset` answers `{ok, flr}` and the function reads `decoding` with its layout; where it does not, `{ok, none}` | the plan to `decoding` after the reset left out: the function reads without its layout |

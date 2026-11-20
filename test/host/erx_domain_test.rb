@@ -49,6 +49,7 @@ class ErxDomainTest < Minitest::Test
     test/erlang/erx_domain_mints_srv_tests.erl
     test/erlang/erx_devices_tests.erl
     test/erlang/erx_devices_pci_core_tests.erl
+    test/erlang/erx_devices_pci_tests.erl
   ].freeze
 
   def test_domain_service_cases_pass_under_eunit
@@ -81,6 +82,10 @@ class ErxDomainTest < Minitest::Test
 
   def test_device_service_pci_decisions_pass_under_eunit
     assert_eunit_passes('erx_devices_pci_core_tests', deadline: 60)
+  end
+
+  def test_device_service_pci_process_passes_under_eunit
+    assert_eunit_passes('erx_devices_pci_tests', deadline: 60)
   end
 
   def test_dev_tree_passes_under_eunit
@@ -227,9 +232,22 @@ class ErxDomainTest < Minitest::Test
     Fault.new(name: "a holder's end blind to the library", file: File.join(APPLICATION, 'erx_devices_pci_core.erl'),
               from: '[{mode, Index, off} || {Index, _, _} <- Lowered] ++', to: '[] ++',
               tests: 'erx_devices_pci_core_tests',
-              caught_by: 'a_holders_end_lowers_its_rows_in_the_library_then_sends_test')
+              caught_by: 'a_holders_end_lowers_its_rows_in_the_library_then_sends_test'),
+    # The PCIe process (docs/design-pcie.md, "Concurrency"): one that forgets a row once a
+    # read no longer shows its holder, which the library clears at the end before it
+    # reports it, sends no lowering, so the function goes on mastering for no holder.
+    Fault.new(name: "a holder's rows forgotten before its end", file: File.join(APPLICATION, 'erx_devices_pci.erl'),
+              from: 'held := maps:merge(Held, Holding)', to: 'held := maps:merge(maps:with([], Held), Holding)',
+              tests: 'erx_devices_pci_tests',
+              caught_by: 'a_holders_end_after_the_library_cleared_its_row_is_still_sent_test'),
+    # One that passes the enumerator's answer on unread hands a term of the PCIe domain's
+    # to a holder.
+    Fault.new(name: "an enumerator's answer passed on", file: File.join(APPLICATION, 'erx_devices_pci.erl'),
+              from: 'pcie_answered(Then, interface(Answer), State)', to: 'pcie_answered(Then, Answer, State)',
+              tests: 'erx_devices_pci_tests',
+              caught_by: 'an_enumerator_answer_outside_the_interface_is_not_passed_on_test')
   ].freeze
-
+  
   def test_the_cases_catch_each_seeded_fault
     FAULTS.each do |fault|
       source = File.read(File.join(ROOT, fault.file))

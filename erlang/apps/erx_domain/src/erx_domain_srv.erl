@@ -165,8 +165,12 @@ start_link(Opts) ->
 init(Opts) ->
     process_flag(trap_exit, true),
     Lib = library(maps:get(lib, Opts, erx_domain_lib)),
-    %% The code_objects service is the domain service's own (code_objects_row/0).
+    %% The code_objects service is the domain service's own (code_objects_row/0). The
+    %% PCIe services' facets stand in front of the service too, which outlives the device
+    %% service's PCIe process their callbacks find at each request (erx_pci_facet).
     ok = erx_facet:serve(code_objects, self()),
+    ok = erx_facet:serve(pci_bus, self()),
+    ok = erx_facet:serve(pci, self()),
     case principals(Lib, Opts) of
         {ok, Principals} ->
             {ok, booted(state(Lib, Principals, Opts)), {continue, boot}};
@@ -497,6 +501,10 @@ handle_cast(_Request, State) ->
     {noreply, State}.
 
 handle_info({domain_ended, Id, End, Record}, State) ->
+    %% The device service's PCIe process lowers the PCIe functions the domain held
+    %% (docs/design-pcie.md, "A holder's end"); it learns of the end before the service
+    %% starts the domain's next incarnation below, which may hold them again.
+    ok = erx_devices_pci:domain_ended(erx_devices_pci, Id),
     {noreply, ended(Id, End, erx_domain_core:fault_where(End, Record), State)};
 handle_info({domain_ready, Ref, Id, Provides, Inspect}, State) ->
     {noreply, ready(Id, Ref, provided_atoms(Provides), Inspect, State)};
@@ -1007,6 +1015,12 @@ system_facet(clock, {message, Behind, Limits}, _Principal, _State) ->
     {facet, erx_clock_facet, Behind, Limits};
 system_facet(code_objects, {message, Behind, Limits}, _Principal, _State) ->
     {facet, erx_code_objects_facet, Behind, Limits#{behind => Behind}};
+system_facet(pci_bus, {message, Behind, Limits}, _Principal, _State) ->
+    %% docs/design-pcie.md, "Facets": the callback forwards each request, with its
+    %% grantee, to the device service's PCIe process registered at that moment.
+    {facet, erx_pci_bus_facet, Behind, Limits};
+system_facet(pci, {message, Behind, Limits}, _Principal, _State) ->
+    {facet, erx_pci_facet, Behind, Limits};
 system_facet(_Name, {message, Behind, Limits}, _Principal, _State) ->
     {facet, erx_domain_facet, Behind, Limits#{behind => Behind}};
 system_facet(machine, {tree, Grants, Limits}, Principal, State) ->
