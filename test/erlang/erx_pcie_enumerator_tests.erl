@@ -99,6 +99,30 @@ a_function_with_another_identity_is_reported_unplaced_and_lowered_test() ->
     ?assertMatch(#{state := unplaced, device_id := 16#1042}, Record),
     ?assertEqual(0, command(Table) band 16#7).
 
+%% A function changed where the planner's identity does not look, here its subsystem,
+%% is reported as the walk read it, with its layout's BAR sizes and addresses, so the
+%% library's intake sees the change.
+a_later_record_is_what_the_walk_read_test() ->
+    {_, Layout, _} = placed(),
+    Table = erx_pcie_model:new([endpoint_at(?PLACE, put(endpoint(), 16#2e, 2, 16#1101))]),
+    {Pid, [#{record := Record}]} = started(Table, [Layout], #{}, #{}),
+    stop(Pid),
+    ?assertEqual(Layout#{state := ready, subsystem := 16#1101}, Record).
+
+%% A master request refused by the mastering rule turns the function off: here its BAR
+%% was rewritten behind the enumerator's back while it decoded.
+a_set_refused_by_the_mastering_rule_turns_the_function_off_test() ->
+    {_, Layout, _} = placed(),
+    Table = erx_pcie_model:new([endpoint_at(?PLACE, endpoint())]),
+    {Pid, _} = started(Table, [Layout], #{}, #{?KEY => setting(decoding)}),
+    ?assertEqual(16#2, command(Table) band 16#7),
+    erx_pcie_model:write({Table, 0}, 16#8000 + 16#10, 4, 16#0fff0000),
+    ?assertEqual({error, reset}, erx_pcie_enumerator:set(Pid, ?KEY, setting(mastering))),
+    ?assertEqual(0, command(Table) band 16#7),
+    #{bars := [#{address := Address0} | _]} = Layout,
+    ?assertEqual(Address0, erx_pcie_model:register(Table, ?PLACE, {16#10, 4}) band 16#fffff000),
+    stop(Pid).
+
 a_function_level_reset_initiates_the_reset_and_returns_to_decoding_test() ->
     {_, Layout, _} = placed(),
     Table = erx_pcie_model:new([endpoint_at(?PLACE, endpoint())]),

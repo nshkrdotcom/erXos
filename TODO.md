@@ -2289,20 +2289,23 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   `erx_domain:await_grant(pcie, D)`, which the domain service does not have), its `pci` facet, the hold at boot,
   a holder's end; a system manifest service row for each interface, with the manifest check's grantee rules; the
   `pcie` facet's mint in the PCIe domain over `erx_facet`; and the bridge's driver over its given record, which
-  needs the ECAM configuration-space view and a record that names its device row. Facet places are the bridge's
-  device row and the function's place, `{Bridge, Bus, Device, Function}`, where the design writes the bridge's path:
-  the PCIe domain knows its bridges only by row (`erx_pcie_bridge.index`), so the design should say which.
-* [Medium] PCIe, `erx_pcie_apply`'s verification and the later record (`erlang/apps/erx_pcie/src/erx_pcie_apply.erl`,
-  `erx_pcie_enumerator.erl`, [design-pcie.md](docs/design-pcie.md#host-tests-of-the-pure-cores)): the host test the
-  design names for `erx_pcie_apply` (every plan run with each write ignored alone, and with a register ignoring writes
-  from one write on) and its two seeded faults are not written; the model has no write-ignoring registers. A later
-  start reports a drivable function as its stored layout rather than as it reads, so a change the planner's identity
-  does not cover (class, subsystem, pin, MSI-X table, Express offset or FLR flag) is confirmed; build the later record
-  from the read with the layout's BAR sizes and addresses. `targets` must carry each layout's latest state, which the
-  library's intake zeroes, since the enumerator drives only layouts found ready or not_ready. A `set` the planner
-  refuses for the mastering rule is answered `{error, reset}` without turning the function off, and a start whose route
-  does not fit leaves it as it reads, where Failure handling turns it off; a root port's reopening that fails and the
-  walk's `past_bound` are not logged. The `pci` interface's scope, its `device` parameters, is not declared.
+  needs the ECAM configuration-space view and a record that names its device row.
+* [Medium] PCIe, the start's leftovers (`erlang/apps/erx_pcie/src/erx_pcie_enumerator.erl`, `abi/services/pci.txt`,
+  [design-pcie.md](docs/design-pcie.md#facets)): `targets` must carry each layout's latest state, which the library's
+  intake zeroes, since the enumerator drives only layouts found ready or not_ready. A start whose route does not fit
+  leaves the function as it reads, where Failure handling turns it off; a root port's reopening that fails and the
+  walk's `past_bound` are not logged. The `pci` interface's scope, a `device` parameter for each device its grantee
+  holds, is not declared: the service grammar takes a parameter set of `u64` alone (`tools/lib/erx/abi_contracts.rb`),
+  and the manifest check has no checker to hold the scope to the grantee's `pci` rows, so both wait for the device
+  service's `pci` facet. A later start keeps a function at its setting, `mastering` included, when it changed only
+  where the planner's identity does not look (subsystem, class, revision, pin, FLR flag, MSI-X table): its record
+  shows the change and the intake leaves it unconfirmed, but nothing in the design says the answer then lowers it, so
+  either the enumerator starts a function whose record differs from its layout at `off`, or "The answer to
+  `report`" lowers every function the intake leaves unconfirmed. `erx_pcie_report:later/3` reports a BAR its layout
+  calls absent as absent even when it reads nonzero, which hides an implemented BAR from the intake; report such a BAR
+  as unsized memory. The planner checks the route in mode `off` too, so an `off` setting cannot lower a function
+  whose route no longer fits. `erx_pcie_apply_tests` keeps a broken property's rule and target but not the input's
+  switch levels and differing fields, and every walk seed reruns it (about 10 s each).
 * [Low] image build, the Pi's single file against the loader's device tree (`ProductionImage::Machine#check_single_file`,
   `Fiasco#first_stage_address`): the bound starts at the entry of users-raspi4b's `bootstrap.elf`, not checked
   against the address QEMU's raspi4b model and the firmware load it at (`QemuPlan::MACHINES` loads, 0x200000). If

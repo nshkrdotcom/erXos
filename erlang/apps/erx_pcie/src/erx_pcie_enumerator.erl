@@ -18,14 +18,17 @@ root port it numbered gets its window opened over them. Then each
 function with a layout gets the start's target of its layout and setting
 (erx_pcie_apply:start/3); one that no longer reads with its layout's
 identity, and one at a place with no layout, is lowered to quiet and
-reported `unplaced` from what it reads. A function the bridge driver
-holds back is reported `not_ready`. It then reports every function it
+reported `unplaced` from what it reads; a later walk's function is
+reported as it reads, with its layout's BAR sizes and addresses, so the
+library's intake sees any change. A function the bridge driver holds
+back is reported `not_ready`. It then reports every function it
 found to the device service, `{report, Functions}`, each its record and
 whether the start kept it at its setting, and applies each setting the
 answer carries that differs from its target's. Only then does it serve.
 
 **Serving** (`pcie`): `{set, Key, Setting}` takes a function to its
-layout and Setting, and `{reset, Key}` is the function-level reset of
+layout and Setting, turning it off when the mastering rule refuses
+Setting, and `{reset, Key}` is the function-level reset of
 "The plan": `off`, then, where the function offers the reset, pending
 transactions polled every 100 ms for at most 1000 ms, the reset
 initiated, 100 ms and a read that must find the function with its
@@ -92,19 +95,18 @@ init(Edge) ->
 handle_continue(start, #{edge := #{bus := Bus} = Edge}) ->
     {ok, Bridges, Layouts, Settings} = Bus(targets),
     Started = [start_bridge(Bridge, Layouts, Settings, Edge) || Bridge <- Bridges],
-    Reported = lists:append([Reports || {_Index, _Driver, _Layouts, Reports} <- Started]),
-    {ok, Answered} = Bus({report, Reported}),
+    {ok, Answered} = Bus({report, lists:append([Reports || #{reports := Reports} <- Started])}),
     State = #{edge => Edge,
-              drivers => maps:from_list([{Index, Driver} || {Index, Driver, _, _} <- Started, Driver =/= none]),
-              layouts => maps:from_list([{key(L), L} || {_, _, Own, _} <- Started, L <- Own]),
+              drivers => maps:from_list([{Index, Driver} || #{index := Index, driver := Driver} <- Started]),
+              layouts => maps:from_list([{key(L), L} || #{held := Held} <- Started, L <- Held]),
               settings => Settings},
     {noreply, maps:fold(fun answered/3, State, Answered)}.
 
 handle_call({set, Key, Setting}, _From, State) ->
-    {Result, Next} = target(Key, Setting, State),
+    {Result, Next} = served(fun() -> {ok, take(Key, Setting, State)} end),
     {reply, Result, Next};
 handle_call({reset, Key}, _From, State) ->
-    {Result, Next} = function_reset(Key, State),
+    {Result, Next} = served(fun() -> function_reset(Key, State) end),
     {reply, Result, Next};
 handle_call(_Request, _From, State) ->
     {reply, {error, badarg}, State}.
@@ -114,28 +116,41 @@ handle_cast(_Request, State) ->
 
 %% --- The start ---------------------------------------------------------------
 
-%% One bridge's start: its driver, and the record of every function it found.
+%% One bridge's start: its driver, the layouts it holds for serving, and
+%% the report of every function it found. A bridge whose driver does not
+%% open has none of them.
 start_bridge(#{index := Index} = Bridge, Layouts, Settings, #{open := Open}) ->
     case Open(Bridge) of
         {ok, Driver} ->
-            Own = [L || #{bridge := B} = L <- Layouts, B =:= Index],
-            Kind = case Own of
-                       [] -> placing;
-                       _ -> later
-                   end,
-            {#{found := Found, root_ports := RootPorts}, Walked} = walk(Bridge, Kind, Own, Driver),
-            {Records, Placed} = records(Kind, Index, Bridge, Found, Own, RootPorts, Walked),
-            {Reports, Started} = lists:mapfoldl(fun(R, D) -> start_function(R, Settings, D) end,
-                                                Placed, Records),
-            Held = case Kind of
-                       placing -> [R || {R, _} <- Records, drivable(R)];
-                       later -> [L || L <- Own, drivable(L)]
-                   end,
-            {Index, Started, Held, Reports};
+            {Starts, Held, Walked} = starts(Bridge, [L || #{bridge := B} = L <- Layouts, B =:= Index], Driver),
+            {Reports, Started} = lists:mapfoldl(fun(S, D) -> start_function(S, Settings, D) end, Walked, Starts),
+            #{index => Index, driver => Started, held => Held, reports => Reports};
         {error, Reason} ->
             logger:error("pcie: bridge ~b not started: ~p", [Index, Reason]),
-            {Index, none, [], []}
+            #{index => Index, held => [], reports => []}
     end.
+
+%% The walk of a bridge and what each function it found starts from, a
+%% start(): the record to report, the target layout and what the walk
+%% read. A bridge with no layouts gets a placing walk, after which its
+%% functions' records are placed, each its own target, and its root
+%% ports' windows opened over them; a later walk's function is started
+%% against its stored layout and reported as it reads. Answers the starts,
+%% the layouts held for serving, and the driver.
+starts(#{index := Index} = Bridge, [], Driver) ->
+    {#{found := Found, root_ports := RootPorts}, Walked} = walk(Bridge, placing, [], Driver),
+    Addresses = erx_pcie_place:layout(Bridge, Found),
+    Starts = [placing_start(Index, F, Addresses) || F <- Found],
+    Records = [R || #{record := R} <- Starts],
+    Opened = lists:foldl(fun(#{place := Place, buses := Buses}, D) ->
+                                 {_, Next} = root_port(Place, Buses, Records, D),
+                                 Next
+                         end, Walked, [R || #{applied := ok} = R <- RootPorts]),
+    {Starts, [R || R <- Records, drivable(R)], Opened};
+starts(#{index := Index} = Bridge, Own, Driver) ->
+    {#{found := Found}, Walked} = walk(Bridge, later, Own, Driver),
+    ByPlace = maps:from_list([{place(L), L} || L <- Own]),
+    {[later_start(Index, F, ByPlace) || F <- Found], [L || L <- Own, drivable(L)], Walked}.
 
 %% The walk run to its end; each root port it numbers gets its target from
 %% the layouts the walk starts with, closed at a placing walk.
@@ -157,44 +172,31 @@ root_port(Place, #{secondary_bus := Secondary} = Buses, Layouts, Driver) ->
     Window = erx_pcie_place:root_port_window(Secondary, Layouts),
     erx_pcie_apply:apply(Place, {root_port, #{buses => Buses, window => Window}}, Driver).
 
-%% The records of what a walk found. A placing walk's are placed, and its
-%% root ports' windows opened over them; a later walk's function keeps its
-%% layout, decided at its start.
-records(placing, Index, Bridge, Found, _Own, RootPorts, Driver) ->
-    Addresses = erx_pcie_place:layout(Bridge, Found),
-    Records = [{placing_record(Index, F, Addresses), F} || F <- Found],
-    Opened = lists:foldl(fun(#{place := Place, buses := Buses}, D) ->
-                                 {_, Next} = root_port(Place, Buses, [R || {R, _} <- Records], D),
-                                 Next
-                         end, Driver, [R || #{applied := ok} = R <- RootPorts]),
-    {Records, Opened};
-records(later, Index, _Bridge, Found, Own, _RootPorts, Driver) ->
-    ByPlace = maps:from_list([{place(L), L} || L <- Own]),
-    {[{later_record(Index, F, ByPlace), F} || F <- Found], Driver}.
+placing_start(Index, #{outcome := Outcome} = Found, Addresses) ->
+    Record = case Outcome of
+                 {read, _, _} -> erx_pcie_report:placed(Index, Found, Addresses);
+                 {unplaced, _, _} -> erx_pcie_report:read(Index, Found, unplaced);
+                 {State, _} -> erx_pcie_report:identity(Index, Found, State)
+             end,
+    #{record => Record, target => Record, found => Found}.
 
-placing_record(Index, #{outcome := Outcome} = Found, Addresses) ->
-    case Outcome of
-        {read, _, _} -> erx_pcie_report:placed(Index, Found, Addresses);
-        {unplaced, _, _} -> erx_pcie_report:read(Index, Found, unplaced);
-        {State, _} -> erx_pcie_report:identity(Index, Found, State)
-    end.
-
-%% A function a later walk read whole is its layout, to be confirmed at its
-%% start, when the placing walk could drive it; a layout the placing walk
-%% left unplaced, malformed or unsupported keeps that state, and an
-%% unplaced one is lowered to quiet. One at a place with no layout is
-%% unplaced.
-later_record(Index, #{place := Place, outcome := Outcome} = Found, ByPlace) ->
-    case {Outcome, maps:find(Place, ByPlace)} of
-        {{read, _, _}, {ok, Layout}} ->
-            case drivable(Layout) of
-                true -> Layout#{state := ready};
-                false -> Layout
-            end;
-        {{read, _, _}, error} -> erx_pcie_report:read(Index, Found, unplaced);
-        {{unplaced, _, _}, _} -> erx_pcie_report:read(Index, Found, unplaced);
-        {{State, _}, _} -> erx_pcie_report:identity(Index, Found, State)
-    end.
+%% A function a later walk read whole at a drivable layout's place is
+%% started against that layout and reported as it reads; a layout the
+%% placing walk left unplaced, malformed or unsupported keeps that state,
+%% and an unplaced one is lowered to quiet. One at a place with no layout
+%% is unplaced.
+later_start(Index, #{place := Place, outcome := Outcome} = Found, ByPlace) ->
+    Record = case {Outcome, maps:find(Place, ByPlace)} of
+                 {{read, _, _}, {ok, Layout}} ->
+                     case drivable(Layout) of
+                         true -> erx_pcie_report:later(Index, Found, Layout);
+                         false -> Layout
+                     end;
+                 {{read, _, _}, error} -> erx_pcie_report:read(Index, Found, unplaced);
+                 {{unplaced, _, _}, _} -> erx_pcie_report:read(Index, Found, unplaced);
+                 {{State, _}, _} -> erx_pcie_report:identity(Index, Found, State)
+             end,
+    #{record => Record, target => maps:get(Place, ByPlace, Record), found => Found}.
 
 %% A function's start: a ready one to the start's target of its layout and
 %% setting, which its bridge may then hold back; an unplaced one quiet; a
@@ -202,25 +204,26 @@ later_record(Index, #{place := Place, outcome := Outcome} = Found, ByPlace) ->
 %% longer reads with its layout's identity is lowered to quiet and
 %% reported unplaced from what the walk read, so the intake does not
 %% confirm its layout.
-start_function({#{state := ready} = Record, Found}, Settings, {Module, _} = Driver) ->
+start_function(#{record := #{state := ready} = Record, target := Layout, found := Found}, Settings,
+               {Module, _} = Driver) ->
     Setting = maps:get(key(Record), Settings, off()),
-    case erx_pcie_apply:start(place(Record), {function, Record, Setting}, Driver) of
+    case erx_pcie_apply:start(place(Record), {function, Layout, Setting}, Driver) of
         {{ok, Kept}, {_, Started}} ->
             case Module:ready(Record, Started) of
                 {ok, Ready} -> {#{record => Record, kept => Kept}, {Module, Ready}};
                 {not_ready, Held} -> {#{record => Record#{state := not_ready}, kept => false}, {Module, Held}}
             end;
-        {{{error, gone}, _}, Next} ->
+        {{error, gone}, Next} ->
             {_, Quiet} = erx_pcie_apply:quiet(place(Record), Next),
             {#{record => erx_pcie_report:read(maps:get(bridge, Record), Found, unplaced), kept => false}, Quiet};
-        {{{error, Reason}, _}, Next} ->
+        {{error, Reason}, Next} ->
             logger:warning("pcie: ~p: start: ~p", [key(Record), Reason]),
             {#{record => Record, kept => false}, Next}
     end;
-start_function({#{state := unplaced} = Record, _Found}, _Settings, Driver) ->
+start_function(#{record := #{state := unplaced} = Record}, _Settings, Driver) ->
     {_, Next} = erx_pcie_apply:quiet(place(Record), Driver),
     {#{record => Record, kept => false}, Next};
-start_function({Record, _Found}, _Settings, Driver) ->
+start_function(#{record := Record}, _Settings, Driver) ->
     {#{record => Record, kept => false}, Driver}.
 
 %% An answered setting that differs from the target the start applied.
@@ -229,102 +232,109 @@ answered(Key, Setting, #{settings := Settings} = State) ->
         Setting ->
             State#{settings := Settings#{Key => Setting}};
         _ ->
-            {Result, Next} = target(Key, Setting, State),
+            {Result, Next} = served(fun() -> {ok, take(Key, Setting, State)} end),
             Result =:= ok orelse logger:warning("pcie: ~p: setting: ~p", [Key, Result]),
             Next
     end.
 
 %% --- Serving -----------------------------------------------------------------
 
-target(Key, Setting, #{layouts := Layouts} = State) ->
-    case maps:find(Key, Layouts) of
-        {ok, Layout} ->
-            with_driver(Key, State, fun(Driver) ->
-                                            erx_pcie_apply:apply(place(Layout), {function, Layout, Setting}, Driver)
-                                    end,
-                        fun(ok, S) -> S#{settings := maps:put(Key, Setting, maps:get(settings, S))};
-                           (_, S) -> S
-                        end);
-        error ->
-            {{error, unknown}, State}
+%% The one route of a refusal: each step that ends an operation early
+%% throws {erx_pcie_enumerator, Reason, State}, with the state its accesses left, and
+%% each operation's entry catches it here.
+served(Operation) ->
+    try
+        Operation()
+    catch
+        throw:{?MODULE, Reason, State} -> {{error, Reason}, State}
     end.
 
-function_reset(Key, #{layouts := Layouts, settings := Settings} = State) ->
-    case maps:find(Key, Layouts) of
-        error ->
-            {{error, unknown}, State};
-        {ok, Layout} ->
-            Setting = maps:get(Key, Settings, off()),
-            case target(Key, Setting#{mode := off}, State) of
-                {ok, Off} ->
-                    {Reset, Flr} = flr(Layout, Off),
-                    case Reset of
-                        {ok, _} ->
-                            case target(Key, Setting#{mode := decoding}, Flr) of
-                                {ok, Decoding} -> {Reset, Decoding};
-                                Failed -> Failed
-                            end;
-                        _ ->
-                            {Reset, Flr}
-                    end;
-                Failed ->
-                    Failed
+%% Takes the function Key names to its layout and Setting, and records the
+%% setting. A target the mastering rule refuses turns the function off
+%% ("Failure handling and restart"), and a failure of that is the answer.
+take(Key, Setting, State) ->
+    Layout = layout(Key, State),
+    {Result, Driver} = erx_pcie_apply:apply(place(Layout), {function, Layout, Setting}, driver(Key, State)),
+    Next = keep_driver(Key, Driver, State),
+    case Result of
+        ok -> Next#{settings := (maps:get(settings, Next))#{Key => Setting}};
+        {error, reset} -> throw({?MODULE, reset, take(Key, Setting#{mode := off}, Next)});
+        {error, Reason} -> throw({?MODULE, Reason, Next})
+    end.
+
+%% The function-level reset of "The plan": off, the reset where the
+%% layout offers it, then decoding.
+function_reset(Key, State) ->
+    Setting = maps:get(Key, maps:get(settings, State), off()),
+    Off = take(Key, Setting#{mode := off}, State),
+    {How, Reset} = flr(layout(Key, Off), Off),
+    {{ok, How}, take(Key, Setting#{mode := decoding}, Reset)}.
+
+%% The reset itself, where the layout's Express flags offer it.
+flr(#{express_offset := At, express_flags := Flags} = Layout, #{edge := #{sleep := Sleep}} = State) ->
+    case At =/= 0 andalso lists:member(flr, Flags) of
+        false ->
+            {none, State};
+        true ->
+            Key = key(Layout),
+            {Module, Driver} = driver(Key, State),
+            {Answer, Next} = initiate(place(Layout), At, ?FLR_POLLS, Module, Driver, Sleep),
+            Kept = keep_driver(Key, {Module, Next}, State),
+            case Answer of
+                ok -> {flr, Kept};
+                {error, Reason} -> throw({?MODULE, Reason, Kept})
             end
     end.
 
-%% The reset itself, where the layout's Express flags offer it.
-flr(#{express_offset := At, express_flags := Flags} = Layout, State) ->
-    case At =/= 0 andalso lists:member(flr, Flags) of
-        false ->
-            {{ok, none}, State};
-        true ->
-            Key = key(Layout),
-            Place = place(Layout),
-            with_driver(Key, State,
-                        fun(Driver) -> initiate(Place, At, ?FLR_POLLS, Driver, maps:get(edge, State)) end,
-                        fun(_, S) -> S end)
-    end.
-
-initiate(Place, At, Polls, {Module, S0}, #{sleep := Sleep} = Edge) ->
-    {Status, S1} = Module:access({read, Place, At + ?ERX_PCIE_EXPRESS_DEVICE_STATUS, 2}, S0),
-    case Status of
-        {ok, 16#ffff} ->
-            {{error, gone}, {Module, S1}};
-        {ok, Word} when Word band ?ERX_PCIE_EXPRESS_DEVICE_STATUS_PENDING =:= 0 ->
+%% Pending transactions polled until clear, then the reset initiated and
+%% its wait. The plan to decoding that follows reads the function again
+%% and answers gone for one without its identity.
+initiate(Place, At, Polls, Module, S0, Sleep) ->
+    case Module:access({read, Place, At + ?ERX_PCIE_EXPRESS_DEVICE_STATUS, 2}, S0) of
+        {{ok, 16#ffff}, S1} ->
+            {{error, gone}, S1};
+        {{ok, Word}, S1} when Word band ?ERX_PCIE_EXPRESS_DEVICE_STATUS_PENDING =:= 0 ->
             case Module:access({read, Place, At + ?ERX_PCIE_EXPRESS_DEVICE_CONTROL, 2}, S1) of
                 {{ok, Control}, S2} ->
-                    {_, S3} = Module:access({write, Place, At + ?ERX_PCIE_EXPRESS_DEVICE_CONTROL, 2,
-                                             Control bor ?ERX_PCIE_EXPRESS_DEVICE_CONTROL_FLR}, S2),
+                    S3 = case Module:access({write, Place, At + ?ERX_PCIE_EXPRESS_DEVICE_CONTROL, 2,
+                                             Control bor ?ERX_PCIE_EXPRESS_DEVICE_CONTROL_FLR}, S2) of
+                             {{error, link_down}, _} -> exit(link_down);
+                             {_, Written} -> Written
+                         end,
                     Sleep(?FLR_WAIT_MS),
-                    %% The plan to decoding that follows reads the function
-                    %% again and answers gone for one without its identity.
-                    {{ok, flr}, {Module, S3}};
+                    {ok, S3};
                 {{error, absent}, S2} ->
-                    {{error, gone}, {Module, S2}};
+                    {{error, gone}, S2};
                 {{error, link_down}, _} ->
                     exit(link_down)
             end;
-        {ok, _Pending} when Polls > 0 ->
+        {{ok, _Pending}, S1} when Polls > 0 ->
             Sleep(?FLR_POLL_MS),
-            initiate(Place, At, Polls - 1, {Module, S1}, Edge);
-        {ok, _Pending} ->
-            {{error, busy}, {Module, S1}};
-        {error, absent} ->
-            {{error, gone}, {Module, S1}};
-        {error, link_down} ->
+            initiate(Place, At, Polls - 1, Module, S1, Sleep);
+        {{ok, _Pending}, S1} ->
+            {{error, busy}, S1};
+        {{error, absent}, S1} ->
+            {{error, gone}, S1};
+        {{error, link_down}, _} ->
             exit(link_down)
     end.
 
-%% Runs Act over the driver of Key's bridge, keeping the driver's new
-%% state, and Then over the state with Act's result.
-with_driver({Index, _, _, _}, #{drivers := Drivers} = State, Act, Then) ->
-    case maps:find(Index, Drivers) of
-        {ok, Driver} ->
-            {Result, Next} = Act(Driver),
-            {Result, Then(Result, State#{drivers := Drivers#{Index := Next}})};
-        error ->
-            {{error, unknown}, State}
+%% The layout Key names, and the driver of its bridge; unknown for a key
+%% the enumerator holds no layout or driver for.
+layout(Key, #{layouts := Layouts} = State) ->
+    case maps:find(Key, Layouts) of
+        {ok, Layout} -> Layout;
+        error -> throw({?MODULE, unknown, State})
     end.
+
+driver({Index, _, _, _}, #{drivers := Drivers} = State) ->
+    case maps:find(Index, Drivers) of
+        {ok, Driver} -> Driver;
+        error -> throw({?MODULE, unknown, State})
+    end.
+
+keep_driver({Index, _, _, _}, Driver, #{drivers := Drivers} = State) ->
+    State#{drivers := Drivers#{Index := Driver}}.
 
 %% --- The domain's edge -------------------------------------------------------
 

@@ -10,7 +10,8 @@ erx_abi_layout, built from what the walk read. Pure.
 A function the walk read whole gets its identity, class, subsystem, pin,
 BARs and capabilities from its read value. Each memory BAR that sized
 carries its true size, and at a placing walk its address and the
-`placed` flag where placement gave it one; a memory BAR that did not size
+`placed` flag where placement gave it one, and at a later walk, which
+sizes nothing, its layout's size and placement; a memory BAR that did not size
 is one the function does not implement, absent in the record, as an
 unimplemented BAR register reads; an I/O BAR is never placed. A function
 whose snapshot was refused, or that the walk does not take, carries its
@@ -23,7 +24,7 @@ enumerator lowers `ready` to `not_ready` where its bridge holds the
 function back.
 """.
 
--export([placed/3, read/3, identity/3]).
+-export([placed/3, later/3, read/3, identity/3]).
 
 -include("generated/erx_abi.hrl").
 
@@ -41,6 +42,30 @@ placed(Bridge, #{place := Place, outcome := {read, Read, Sizes}}, Addresses) ->
                 false -> unplaced
             end,
     record(Bridge, Place, State, Read, Bars).
+
+-doc """
+The record of a function a later walk read whole at a drivable layout's
+place, in state `ready`: as it reads, each memory BAR with the size and
+placement the layout gives the BAR of its index, since a later walk
+sizes nothing. A memory BAR whose layout is absent, one that did not
+size, is absent, as at the placing walk; one whose layout is I/O
+carries no size, and the planner finds such a function gone.
+""".
+-spec later(non_neg_integer(), erx_pcie_walk:found(), erx_abi_layout:erx_pcie_function()) ->
+          erx_abi_layout:erx_pcie_function().
+later(Bridge, #{place := Place, outcome := {read, Read, _Sizes}}, #{bars := Laid}) ->
+    Bars = [laid_bar(B, lists:nth(I + 1, Laid)) || #{index := I} = B <- bars(Read)],
+    record(Bridge, Place, ready, Read, Bars).
+
+laid_bar(Bar, #{kind := memory, size_log2 := Size, flags := Flags, address := At}) ->
+    bar(Bar, Size, case lists:member(placed, Flags) of
+                       true -> {placed, At};
+                       false -> unplaced
+                   end);
+laid_bar(Bar, #{kind := absent}) ->
+    bar(Bar, none, unplaced);
+laid_bar(Bar, #{kind := io}) ->
+    bar(Bar, unsized, unplaced).
 
 -doc """
 The record of a function read whole but not placed by this walk, in
