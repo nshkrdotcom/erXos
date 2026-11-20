@@ -9399,7 +9399,14 @@ document's "residual risks accepted" paragraph.
   ([design-usb.md](docs/design-usb.md#the-phase-1-part)).
 * [Medium] USB, `abi/inspection.txt` ([design-usb.md](docs/design-usb.md#failure-handling)): no `usb` kind. Declare
   `[usb, Controller]`, `[usb, Controller, ports, Route]`, `[usb, Controller, devices, Route]` and the other paths
-  Failure handling lists, shown under `/proc/usb`.
+  Failure handling lists, shown under `/proc/usb`, with the controller and bus processes that report them. The
+  design leaves open the reporter category of a top-level path a configured domain other than the system domain
+  reports (the schema's `service` and `runtime` do not fit as declared), the key types of `Controller` and
+  `Route`, and the shape of a device's functions, each a kind with an input number or a drive, which the schema's
+  types have no alternative for.
+* [Medium] USB, the input tree's service side (`erx_usb_places_sup`, [design-usb.md](docs/design-usb.md#hid-reaches-the-display)):
+  the places start the tree's grants (`input_tree/1`), but nothing yet hands one to the display domain the
+  manifest names, and no `erx_usb_sup` starts the places before the bus. Both come with the USB domain's start.
 * [Medium] USB and PCIe, `hw/svd/` ([design-usb.md](docs/design-usb.md#registers-at-offsets-the-controller-reports),
   [design-generation.md](docs/design-generation.md#register-inputs)): no `xhci/xhci.svd`, no ECAM file and no BCM2711
   bridge file. Write `xhci.svd` from FreeBSD's `xhcireg.h` and the xHCI specification's register chapters, its three

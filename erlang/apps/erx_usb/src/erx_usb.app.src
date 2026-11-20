@@ -7,12 +7,13 @@
 %% a hub function's status pipe and the hub status decoders; erx_usb_bot_core, the Bulk-Only
 %% transport engine of a mass-storage function; erx_usb_bus_core, the bus process's topology of
 %% hubs, ports and devices; and erx_xhci_core, the controller process's commands, pipes and
-%% transfers.
+%% transfers. Beside them run the places, erx_usb_places_sup: each input number's stream,
+%% erx_usb_input_stream, and the input tree, erx_usb_input_tree, that serves them.
 {application, erx_usb,
  [{description, "erXos USB stack"},
   {vsn, "1"},
   {modules, [erx_hid_core, erx_hid_desc, erx_usb_bot_core, erx_usb_bus_core, erx_usb_claim, erx_usb_desc,
-             erx_usb_hub_core, erx_xhci_core]},
+             erx_usb_hub_core, erx_usb_input_stream, erx_usb_input_tree, erx_usb_places_sup, erx_xhci_core]},
   {registered, []},
-  {applications, [kernel, stdlib, erx]},
+  {applications, [kernel, stdlib, erx, erx_files]},
   {env, []}]}.

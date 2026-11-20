@@ -549,9 +549,20 @@ function ends, by detach, by crash or by its controller's reset, the
 file carries `release`, then nothing until the number's next occupant.
 The number's stream process monitors its occupant and writes the
 `release` itself when the occupant's process ends, so no path by which a
-function can end has to remember it. A function that finds every number
-taken is not started, and the bus process shows it in the device's
-inspection record as `no input number`.
+function can end has to remember it. A stream holds at most one read's
+worth of unread records ([From reports to records](#from-reports-to-records)),
+and the `release` an end writes is never dropped, so a number is free only
+when it has no occupant and less than one read's worth unread: a display
+that has stopped reading a number keeps it taken, and each number's
+unread bytes pass that bound by at most one `release`. A function that
+finds every number taken is not started, and the bus process shows it in
+the device's inspection record as `no input number`.
+
+A read of a number's file takes whole records only, as many as its count
+holds and the stream has, and a read of at least one byte whose count
+holds no record is refused with `EINVAL`. So no read ends inside a record, and a reader that
+ends, with the display's restart or a flush, never leaves the next one
+reading from the middle of a record.
 
 The input tree is the USB domain's only grant to the display, and it has
 the reach the display design gives any input source: that of a person at
