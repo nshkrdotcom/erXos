@@ -58,7 +58,7 @@ static void	link_record_cases(void);
 static const char *const step_names[] = {
 	"CARVE", "SPACE", "GROUP", "MEM", "BELL", "SLICE", "IMAGE_MAP", "MAP",
 	"INSTALL", "BOOTINFO", "THREAD", "RESOURCE", "WINDOW", "IRQ", "DMA",
-	"CONTIGUOUS", "GIVE"
+	"CONTIGUOUS", "MSI", "GIVE"
 };
 
 /*
@@ -1101,6 +1101,164 @@ device_seeded(void)
 #undef SEED
 }
 
+/*
+ * PCIe functions' gives (docs/design-pcie.md, "The catalogue and gives"):
+ * entry 0 an open host bridge on configured row 1, with qemu-xhci, entry 1,
+ * at 0:2.0 behind it, and entry 3 a closed one, with the VL805, entry 2, at
+ * its listed place 1:0.0 on pin INTA and the row's line 175; both
+ * functions are on row 0, domain 5's, each its own unit.
+ */
+#define PCI_OPEN_CPU	UINT64_C(0x10000000)
+#define PCI_CLOSED_PCI	UINT64_C(0xc0000000)
+#define PCI_CLOSED_CPU	UINT64_C(0x600000000)
+static erx_dom_device_entry_t pci_devices[4];
+static erx_dom_device_t pci_records[4];
+static erx_dom_pci_bridge_t pci_bridges[2];
+
+static erx_pcie_function_t
+pci_layout(uint32_t bridge, uint8_t bus, uint8_t device, uint16_t vendor, uint16_t id, uint64_t at,
+    uint8_t size_log2)
+{
+	return ((erx_pcie_function_t){ .bridge = bridge, .bus = bus, .device = device,
+	    .vendor = vendor, .device_id = id,
+	    .bars = { { .kind = ERX_PCIE_BAR_MEMORY, .flags = ERX_PCIE_BAR_ADDR64 | ERX_PCIE_BAR_PLACED,
+	    .size_log2 = size_log2, .address = at } } });
+}
+
+static void
+pci_view(void)
+{
+	reset_view();
+	for (uint32_t index = 0; index < 4; index++) {
+		pci_devices[index] = (erx_dom_device_entry_t){ .unit = index, .row = index % 3 == 0 ? 1 : 0,
+		    .selector = ERX_MF_SELECTOR_PCI, .role_word = "usb", .peripheral = "xhci",
+		    .memory = 0x10000 };
+		pci_records[index] = (erx_dom_device_t){ .index = index };
+	}
+	pci_devices[0] = (erx_dom_device_entry_t){ .unit = 0, .row = 1, .nranges = 1,
+	    .ranges = { { .base = 0x4010000000, .size = 0x1000 } } };
+	pci_devices[3] = pci_devices[0];
+	pci_devices[3].unit = 3;
+	pci_devices[3].ranges[0].base = 0xfd500000;
+	pci_devices[1].compatible = "pci1b36,000d";
+	pci_devices[1].bridge = 0;
+	pci_devices[1].device = 2;
+	pci_devices[2].compatible = "pci1106,3483";
+	pci_devices[2].bridge = 3;
+	pci_devices[2].bus = 1;
+	pci_devices[2].nlines = 1;
+	pci_devices[2].lines[0] = 175;
+	pci_bridges[0] = (erx_dom_pci_bridge_t){ .facts = { .index = 0, .bus_last = 255,
+	    .windows = { { .pci = PCI_OPEN_CPU, .cpu = PCI_OPEN_CPU, .size = 0x2eff0000 } } }, .nlayouts = 1 };
+	pci_bridges[0].layouts[0] = (erx_dom_pci_layout_t){ .state = ERX_PCIE_STATE_READY, .confirmed = true,
+	    .record = pci_layout(0, 0, 2, 0x1b36, 0x000d, PCI_OPEN_CPU, 14) };
+	pci_bridges[0].layouts[0].record.msi_offset = 0x80;
+	pci_bridges[0].layouts[0].record.msi_flags = ERX_PCIE_MSI_ADDR64;
+	pci_bridges[0].layouts[0].record.msix_offset = 0x90;
+	pci_bridges[0].layouts[0].record.msix_table_size = 16;
+	pci_bridges[0].layouts[0].record.msix_table_offset = 0x3000;
+	pci_bridges[1] = (erx_dom_pci_bridge_t){ .facts = { .index = 3, .bus_last = 1, .flags = ERX_PCIE_BRIDGE_CLOSED,
+	    .windows = { { .pci = PCI_CLOSED_PCI, .cpu = PCI_CLOSED_CPU, .size = 0x40000000 } },
+	    .places = { { .bus = 1, .pin = 1 } } }, .nlayouts = 1 };
+	pci_bridges[1].layouts[0] = (erx_dom_pci_layout_t){ .state = ERX_PCIE_STATE_READY, .confirmed = true,
+	    .record = pci_layout(3, 1, 0, 0x1106, 0x3483, PCI_CLOSED_PCI, 12) };
+	pci_bridges[1].layouts[0].record.pin = 1;
+	view.devices = pci_devices;
+	view.device_records = pci_records;
+	view.ndevices = 4;
+	view.pci_bridges = pci_bridges;
+	view.npci_bridges = 2;
+}
+
+/* A function's give: its status, steps, its route and its first window. */
+static void
+pci_case(const char *name, uint32_t unit)
+{
+	erx_dom_unit_plan_t plan;
+	const erx_status_t status = give(5, unit, &plan);
+
+	if (status != ERX_OK) {
+		printf("pci %s %d\n", name, status);
+		return;
+	}
+	printf("pci %s 0 route=%u steps=", name, plan.devices[0].route);
+	for (uint32_t step = 0; step < plan.nsteps; step++)
+		printf("%s%s", step == 0 ? "" : ",", step_names[plan.steps[step].kind]);
+	for (uint32_t step = 0; step < plan.nsteps; step++)
+		if (plan.steps[step].kind == ERX_DOM_STEP_WINDOW) {
+			printf(" window=0x%llx+0x%llx", (unsigned long long)plan.steps[step].base,
+			    (unsigned long long)plan.steps[step].size);
+			break;
+		}
+	printf("\n");
+}
+
+static void
+pci_cases(void)
+{
+	pci_view();
+	pci_case("xhci", 1);
+	pci_case("vl805", 2);
+	pci_bridges[0].layouts[0].record.msi_offset = 0;
+	pci_case("xhci_msix", 1);
+	pci_bridges[0].layouts[0].record.msix_offset = 0;
+	pci_case("xhci_polled", 1);
+	pci_view();
+	pci_bridges[0].layouts[0].record.msi_flags = ERX_PCIE_MSI_VECTOR_MASK;
+	pci_case("xhci_mask_unplaced", 1);
+	pci_view();
+	pci_bridges[0].layouts[0].record.bars[0].address = PCI_OPEN_CPU + 0x2eff0000;
+	pci_case("bar_outside", 1);
+	pci_view();
+	pci_bridges[0].layouts[0].record.bars[0].address = PCI_OPEN_CPU - 0x4000;
+	pci_case("bar_below", 1);
+	pci_view();
+	pci_bridges[0].layouts[0].confirmed = false;
+	pci_case("unconfirmed", 1);
+	pci_view();
+	pci_bridges[0].layouts[0].record.device_id = 0x000e;
+	pci_case("identity", 1);
+	pci_view();
+	pci_bridges[1].layouts[0].record.pin = 2;
+	pci_case("wrong_pin", 2);
+	pci_view();
+	pci_bridges[1].facts.places[0].device = 1;
+	pci_case("place_unlisted", 2);
+	pci_view();
+	pci_bridges[1].firmware_lost = true;
+	pci_case("firmware_lost", 2);
+	pci_view();
+	view.npci_bridges = 0;
+	pci_case("no_catalogue", 1);
+	reset_view();
+}
+
+/* Seeded PCIe gives: each breaks one rule erx_dom_unit_check enforces. */
+static void
+pci_seeded(void)
+{
+	erx_dom_unit_plan_t intx, msi, plan;
+
+	pci_view();
+	if (give(5, 2, &intx) != ERX_OK)
+		failures++;
+	if (give(5, 1, &msi) != ERX_OK)
+		failures++;
+	/* The VL805's line made while the function is not given. */
+	plan = intx;
+	plan.devices[0].driven = false;
+	plan.devices[0].line = ERX_DOM_UNIT_NONE;
+	printf("seeded pci_line_apart %d\n", erx_dom_unit_check(&plan));
+	/* A wired line for a function routed by MSI, and an MSI for one routed by its line. */
+	plan = msi;
+	plan.devices[0].route = ERX_PCIE_ROUTE_INTX;
+	printf("seeded pci_msi_for_intx %d\n", erx_dom_unit_check(&plan));
+	plan = intx;
+	plan.devices[0].route = ERX_PCIE_ROUTE_MSI;
+	printf("seeded pci_line_for_msi %d\n", erx_dom_unit_check(&plan));
+	reset_view();
+}
+
 int
 main(int argc, char **argv)
 {
@@ -1112,11 +1270,13 @@ main(int argc, char **argv)
 		teardown_cases();
 		end_cases();
 		device_cases();
+		pci_cases();
 		return (failures == 0 ? 0 : 1);
 	}
 	if (argc == 2 && strcmp(argv[1], "seeded") == 0) {
 		seeded();
 		device_seeded();
+		pci_seeded();
 		return (failures == 0 ? 0 : 1);
 	}
 	fprintf(stderr, "usage: dom_life_driver explore|cases|seeded\n");

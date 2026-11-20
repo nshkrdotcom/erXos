@@ -51,6 +51,17 @@
 	2u * ERX_BOOT_NAME_WORD_MAX + ERX_BOOT_PATH_WORD_MAX + 8u * ERX_BOOT_NUMBER_WORD_MAX + sizeof("1") + ERX_BOOT_MARK_WORD_MAX)
 
 /*
+ * -erx_record function ROLE PERIPHERAL BRIDGE BUS DEVICE FUNCTION LINE_H MARK MEM_H MEM_SIZE COHERENT ROUTE
+ * ADDRESS DATA TABLE_BAR TABLE_OFFSET TABLE_SIZE then WINDOW_H OFFSET SIZE_LOG2 for each of the six BARs, per
+ * PCIe function given to a holder (docs/design-pcie.md, "The catalogue and gives"): ROUTE is a name of
+ * ERX_BOOT_ROUTE_WORD_MAX bytes, COHERENT one digit, every other number a u64.
+ */
+#define ERX_BOOT_ROUTE_WORD_MAX		5u
+#define ERX_BOOT_FUNCTION_WORDS_MAX	(sizeof(ERX_BOOT_RECORD_FLAG) + sizeof("function") + \
+	2u * ERX_BOOT_NAME_WORD_MAX + 30u * ERX_BOOT_NUMBER_WORD_MAX + sizeof("1") + ERX_BOOT_MARK_WORD_MAX + \
+	ERX_BOOT_ROUTE_WORD_MAX)
+
+/*
  * -erx_record framebuffer WINDOW_H OFFSET SIZE WIDTH HEIGHT STRIDE FORMAT, per framebuffer a domain
  * holds (docs/design-device-tree.md, "Facts into records"): FORMAT is a name of the device-tree
  * reader's table (erx_dt_fb_format_name), the longest "a2r10g10b10" and "x2r10g10b10".

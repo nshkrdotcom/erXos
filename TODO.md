@@ -2272,10 +2272,8 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   nothing yet holds one per bridge entry, fills its facts from the tree (`erx_dt_bridge`) and the manifest row's
   index, flags and places, or calls the intake from `erx_domain_lib:pci_report`, and `erx_dom_pci_firmware` does
 not set `firmware_lost`. Land them with the give of a function and the PCIe domain's first report.
-  Until the give of a function lands, a `pci` row of a kind is driven but its give has no record path for it
-  (`dom_apply.c`, `apply_given_words` refuses its empty PATH), so a configured row holding one fails its creation
-  safely; no shipped manifest places one. With the give: compare the layout's vendor and device id with the
-  entry's compatible string in `erx_dom_pci_givable` rather than only in the device service; state in
+  Until the catalogue is held, the give of a `pci` row gives it nothing (`erx_dom_pci_given` finds no
+  catalogue), as a function the machine lacks. With it: state in
   `abi/formats/pcie.txt` how a BAR too large to place is encoded, since the intake refuses a report with any BAR
   past `pcie_bar_size_log2_max`; refuse in `erx_dt_bridge` a window whose PCI, CPU or size is not page-aligned;
   check spans across a machine's bridges; and refuse an I/O BAR marked placed, a 32-bit BAR above 4 GiB and a
@@ -5024,13 +5022,23 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   flagged `ERX_ENTRY_SYSTEM` is refused; confirm against the boot image's
   layout for domain releases (IM1) that service domains never run the
   system release's ERTS entry.
-* [Low] domain library, `liberx/system/dom_life.c`
-  `erx_dom_plan_unit_give`: it plans the device-tree entries of a unit (their resources,
-  a window per page run, an IRQ object per line, a DMA window or contiguous
-  memory); a PCIe function's give, with its BARs carved inside the
-  bridge's windows, its MSIs and its requester id's stream
-  ([design-system.md](docs/design-system.md#devices)), lands with the PCIe
-  enumerator.
+* [Medium] domain library, the give of a PCIe function (`liberx/system/dom_life.c` `life_unit_function`,
+  `liberx/system/dom_apply.c` `apply_function_words`, [design-pcie.md](docs/design-pcie.md#the-catalogue-and-gives)):
+  the BAR each range came from is found again in the apply by repeating the planner's "memory and placed" test, so
+  a change to one copy pairs a BAR with another's window; store each range's BAR index in `erx_dom_unit_device_t`
+  and read each BAR's window from the planner's layout rather than scanning the WINDOW steps. `erx_dom_unit_check`
+  does not tie an msi or msix device's line to an MSI step from its own resource, nor an intx device's to an IRQ
+  step, so a plan built otherwise could pass with a zero message. A function whose reported pin is not its
+  place's is held silently, where the design wants a log line naming both pins; have `erx_dom_pci_given` return
+  the reason. `erx_dom_pci_route` picks msix without checking that the table's BAR is placed (it fails safe, with
+  no interrupt). `route_word` and `ERX_BOOT_ROUTE_WORD_MAX` copy the generated route names by hand. No host test
+  reads the `-erx_record function` words, the setting or the message, and `tools/fuzz/dom_core_fuzz.c` holds no
+  catalogue, so the PCIe path of the give is not fuzzed.
+* [Medium] runtime, `erlang/apps/erx/src/erx_device_record.erl` and the device NIF: the domain library writes a
+  given PCIe function's `-erx_record function` record ([design-pcie.md](docs/design-pcie.md#the-catalogue-and-gives)),
+  but no reader takes it, so a holder finds no record of its function; read it with a window per placed BAR,
+  and have the NIF write an MSI-X route's table from it. A confined function's DMA window by its requester id
+  waits for erXos's kernel, as every DMA window does.
 * [Medium] drivers, `erlang/apps/erx_blk` (and `erx_net`, `erx_fb`): no
   configured domain's driver starter calls `erx_irq_line:start_owners/1`, so a
   driver on a line its unit shares, which the domain library now marks

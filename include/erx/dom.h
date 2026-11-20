@@ -243,6 +243,10 @@ typedef struct erx_dom_device {
 					 * its first give, charged to the system
 					 * domain and kept for the boot; else
 					 * ERX_CAP_NULL */
+	/* A PCIe function's setting (docs/design-pcie.md, "Records"): its
+	 * give writes the route and the message its MSI object's creation
+	 * returned, and the mode stays off; all zero for every other device. */
+	erx_pcie_setting_t setting;
 } erx_dom_device_t;
 
 /* A page-aligned range of device addresses. */
@@ -413,6 +417,28 @@ bool		erx_dom_pci_bar_cpu(const erx_pcie_bridge_t *facts, const erx_pcie_bar_t *
  */
 const erx_dom_pci_layout_t *erx_dom_pci_givable(const erx_dom_pci_bridge_t *bridge, uint8_t bus,
 		    uint8_t device, uint8_t function);
+
+/*
+ * The route a give of function, the layout of entry's place, chooses
+ * (docs/design-pcie.md, "The choice"): intx when the row names a line, a
+ * closed bus's; else msi when the function has MSI whose per-vector mask,
+ * if any, is at the offset a 64-bit capability gives; else msix when it has
+ * MSI-X; else none, and its driver polls. ERX_PCIE_ROUTE_*.
+ */
+uint8_t		erx_dom_pci_route(const erx_dom_device_entry_t *entry, const erx_pcie_function_t *function);
+
+/*
+ * The layout a give of PCIe function entry gives, from the nbridges
+ * catalogues of bridges (docs/design-pcie.md, "The catalogue and gives"),
+ * with its bridge's record in *facts: the catalogue naming entry's bridge
+ * gives it (erx_dom_pci_givable), its identity is entry's compatible
+ * string, pci and the vendor and device id in four lowercase hexadecimal
+ * digits each, and on a closed bridge its place is listed and its reported
+ * pin is the place's (docs/design-pcie.md, "The closed bus"). NULL for any
+ * other, which its give gives nothing for, as a device the machine lacks.
+ */
+const erx_dom_pci_layout_t *erx_dom_pci_given(const erx_dom_pci_bridge_t *bridges, uint32_t nbridges,
+		    const erx_dom_device_entry_t *entry, const erx_pcie_bridge_t **facts);
 
 /*
  * Whether a runtime drives entry: a device of a kind (erx/device_kinds.h,
@@ -667,6 +693,11 @@ typedef struct erx_dom_view {
 	const erx_dom_device_entry_t *devices;	/* the catalogue: ndevices entries */
 	const erx_dom_device_t	*device_records; /* ndevices records, entry for entry */
 	uint32_t		 ndevices;
+	/* The host bridges' catalogues (docs/design-pcie.md, "The catalogue
+	 * and gives"), each naming its bridge's entry in facts.index; a PCIe
+	 * function whose bridge has none here is given nothing. */
+	const erx_dom_pci_bridge_t *pci_bridges;
+	uint32_t		 npci_bridges;
 	const erx_dom_file_t	*files;		/* the boot image's files */
 	uint32_t		 nfiles;
 	const erx_dom_configured_t *configured;
@@ -788,6 +819,9 @@ typedef enum erx_dom_step_kind {
 	ERX_DOM_STEP_CONTIGUOUS,	/* obj: contiguous memory of size for the
 					 * device of resource target, charged to
 					 * budget */
+	ERX_DOM_STEP_MSI,		/* obj: an MSI IRQ object for the PCIe
+					 * function of resource target, charged
+					 * to budget */
 	ERX_DOM_STEP_GIVE		/* a creation's: gives[index], applied whole */
 } erx_dom_step_kind_t;
 
@@ -884,10 +918,24 @@ typedef enum erx_dom_parent {
  * has neither, and an unplaced framebuffer no window. shared says another
  * device of the unit, of a kind or not, names that line, which the
  * holder's record marks.
+ *
+ * A PCIe function (pci) is driven only when its bridge's catalogue gives
+ * it (erx_dom_pci_givable): its ranges are then its placed memory BARs'
+ * CPU spans in BAR order, its registers the first placed BAR's
+ * hardware size at offset 0, function its layout's record and route the
+ * one erx_dom_pci_route chooses; its line is its row's for intx, an MSI
+ * object for msi and msix, none for none. One its catalogue does not give
+ * is held as a device of no kind, so its give makes nothing but its
+ * resource and its holder finds no record (docs/design-pcie.md, "The
+ * catalogue and gives").
  */
 typedef struct erx_dom_unit_device {
 	uint32_t	index;		/* its entry and record */
-	bool		driven;		/* erx_dom_entry_driven of its entry */
+	bool		driven;		/* erx_dom_entry_driven of its entry, and
+					 * for a PCIe function given by its catalogue */
+	bool		pci;		/* its entry is a PCIe function's */
+	uint8_t		route;		/* a driven PCIe function's ERX_PCIE_ROUTE_* */
+	erx_pcie_function_t function;	/* and its layout's record */
 	uint32_t	nranges;	/* its entry's register ranges */
 	erx_dom_range_t	ranges[ERX_DEVICE_RANGES_MAX];
 	uint64_t	reg_offset;	/* its registers' offset into ranges[0] */

@@ -403,6 +403,7 @@ life_step_ok(const erx_dom_step_t *step, const bool *made)
 	case ERX_DOM_STEP_RESOURCE:
 	case ERX_DOM_STEP_WINDOW:
 	case ERX_DOM_STEP_IRQ:
+	case ERX_DOM_STEP_MSI:
 	case ERX_DOM_STEP_DMA:
 	case ERX_DOM_STEP_CONTIGUOUS:
 	case ERX_DOM_STEP_GIVE:
@@ -743,6 +744,45 @@ life_names_line(const erx_dom_device_entry_t *entry, uint32_t number)
 }
 
 /*
+ * A PCIe function of the give, its entry's facts copied (driven, the
+ * rest zero): the function its bridge's catalogue gives, with its ranges
+ * its placed memory BARs' CPU spans, in BAR order, its registers the
+ * first one's hardware size at its start, and its route; one the
+ * catalogue does not give is held, not driven (erx/dom.h). ERX_EINVAL for
+ * a placed BAR no memory window of its bridge holds whole, which the
+ * intake refuses, so only a catalogue built otherwise has one.
+ */
+static erx_status_t
+life_unit_function(const erx_dom_view_t *view, const erx_dom_device_entry_t *entry,
+    erx_dom_unit_device_t *device)
+{
+	const erx_pcie_bridge_t *facts;
+	const erx_dom_pci_layout_t *layout;
+	const erx_pcie_bar_t *bar;
+
+	device->pci = true;
+	if (!device->driven)
+		return (ERX_OK);
+	layout = erx_dom_pci_given(view->pci_bridges, view->npci_bridges, entry, &facts);
+	if (layout == NULL) {
+		device->driven = false;
+		return (ERX_OK);
+	}
+	device->function = layout->record;
+	device->route = erx_dom_pci_route(entry, &layout->record);
+	for (uint32_t at = 0; at < sizeof(layout->record.bars) / sizeof(layout->record.bars[0]); at++) {
+		bar = &layout->record.bars[at];
+		if (bar->kind != ERX_PCIE_BAR_MEMORY || (bar->flags & ERX_PCIE_BAR_PLACED) == 0)
+			continue;
+		if (!erx_dom_pci_bar_cpu(facts, bar, &device->ranges[device->nranges]))
+			return (ERX_EINVAL);
+		if (device->nranges++ == 0)
+			device->reg_size = device->ranges[0].size;
+	}
+	return (ERX_OK);
+}
+
+/*
  * The give's devices: every entry of the unit, in catalogue order, each
  * placed on holder's row, well formed, meeting no entry of another unit,
  * and held by no living domain, with the facts its windows come from.
@@ -783,6 +823,12 @@ life_unit_devices(const erx_dom_view_t *view, const erx_dom_plan_t *holder,
 		    .nranges = entry->nranges, .reg_offset = entry->offset,
 		    .reg_size = entry->size, .window = ERX_DOM_UNIT_NONE,
 		    .line = ERX_DOM_UNIT_NONE };
+		if (entry->selector == ERX_MF_SELECTOR_PCI) {
+			device->nranges = 0;
+			if (life_unit_function(view, entry, device) != ERX_OK)
+				return (ERX_EINVAL);
+			continue;
+		}
 		for (uint32_t range = 0; range < entry->nranges; range++)
 			device->ranges[range] = entry->ranges[range];
 	}
@@ -941,7 +987,7 @@ life_unit_lines(const erx_dom_view_t *view, erx_dom_unit_plan_t *draft,
 	for (uint32_t d = 0; d < draft->ndevices; d++) {
 		device = &draft->devices[d];
 		entry = &view->devices[device->index];
-		if (!device->driven)
+		if (!device->driven || (device->pci && device->route != ERX_PCIE_ROUTE_INTX))
 			continue;
 		for (uint32_t line = 0; line < entry->nlines; line++) {
 			found = life_line_find(view, draft, sources, at, *nlines,
@@ -1050,6 +1096,17 @@ erx_dom_plan_unit_give(const erx_dom_view_t *view,
 	for (uint32_t l = 0; l < nlines; l++)
 		life_unit_make(&draft, ERX_DOM_STEP_IRQ, ERX_DOM_OBJ_DEV_IRQ + l,
 		    sources[l], at[l]);
+	/* A PCIe function's one message, an object of the give's lines after
+	 * the wired ones (docs/design-pcie.md, "One message per function"). */
+	for (uint32_t d = 0; d < draft.ndevices; d++) {
+		if (!draft.devices[d].driven || (draft.devices[d].route != ERX_PCIE_ROUTE_MSI &&
+		    draft.devices[d].route != ERX_PCIE_ROUTE_MSIX))
+			continue;
+		if (nlines == ERX_DOM_UNIT_LINES_MAX)
+			return (ERX_ELIMIT);
+		draft.devices[d].line = nlines;
+		life_unit_make(&draft, ERX_DOM_STEP_MSI, ERX_DOM_OBJ_DEV_IRQ + nlines++, d, 0);
+	}
 	/*
 	 * A device of no kind is held, not driven (docs/design-shared-devices.md,
 	 * "The unit rule"): no DMA window or memory, as no window or line.
@@ -1135,7 +1192,13 @@ life_unit_step_ok(const erx_dom_unit_plan_t *plan, uint32_t at,
 	case ERX_DOM_STEP_IRQ:
 		return (fresh && from_device && holder_pays &&
 		    life_grant_key(obj) == ERX_DOM_OBJ_DEV_IRQ &&
-		    step->index < ERX_DEVICE_IRQS_MAX);
+		    step->index < ERX_DEVICE_IRQS_MAX &&
+		    (!plan->devices[d].pci || plan->devices[d].route == ERX_PCIE_ROUTE_INTX));
+	case ERX_DOM_STEP_MSI:
+		return (fresh && from_device && holder_pays &&
+		    life_grant_key(obj) == ERX_DOM_OBJ_DEV_IRQ && step->index == 0 &&
+		    plan->devices[d].pci && (plan->devices[d].route == ERX_PCIE_ROUTE_MSI ||
+		    plan->devices[d].route == ERX_PCIE_ROUTE_MSIX));
 	case ERX_DOM_STEP_DMA:
 		return (fresh && from_device && holder_pays &&
 		    obj == ERX_DOM_OBJ_DEV_DMA + d &&

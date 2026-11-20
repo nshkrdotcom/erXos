@@ -75,7 +75,7 @@ _Static_assert(sizeof(obj_names) / sizeof(obj_names[0]) == ERX_DOM_OBJ_COUNT,
 static const char *const step_names[] = {
 	"CARVE", "SPACE", "GROUP", "MEM", "BELL", "SLICE", "IMAGE_MAP", "MAP",
 	"INSTALL", "BOOTINFO", "THREAD", "RESOURCE", "WINDOW", "IRQ", "DMA",
-	"CONTIGUOUS", "GIVE"
+	"CONTIGUOUS", "MSI", "GIVE"
 };
 
 static erx_grant_t
@@ -225,6 +225,7 @@ model_apply(model_t *m, const erx_dom_step_t *step)
 	case ERX_DOM_STEP_RESOURCE:
 	case ERX_DOM_STEP_WINDOW:
 	case ERX_DOM_STEP_IRQ:
+	case ERX_DOM_STEP_MSI:
 	case ERX_DOM_STEP_DMA:
 	case ERX_DOM_STEP_CONTIGUOUS:
 		return (false);

@@ -800,8 +800,8 @@ same way without making it
 **`answered`**, the domain id of the PCIe incarnation whose report the
 device service last answered, 0 for none, which domain ids, never reused
 in a boot, keep from naming a later incarnation
-([Concurrency](#concurrency)). A `pci` row's entry gains its
-**setting**. The row finds its function's layout by place in its
+([Concurrency](#concurrency)). A `pci` row's device record gains its
+**setting**, which its give writes. The row finds its function's layout by place in its
 bridge's entry, so no layout is stored twice.
 `erx_domain_lib:devices/0` shows them, with `/dev`'s `status` naming
 the place, the identity, the BARs, the state, the mode and the route,
@@ -1164,7 +1164,14 @@ inside the DMA range; and the given record, which names the function's
 place, each BAR's window and hardware size, and for an MSI-X route the
 `erx_msi_message` the IRQ object's creation returned, the table BAR,
 offset and size. The setting's route is
-written; the mode stays `off`.
+written; the mode stays `off`. The record is
+`-erx_record function ROLE PERIPHERAL BRIDGE BUS DEVICE FUNCTION LINE_H
+MARK MEM_H MEM_SIZE COHERENT ROUTE ADDRESS DATA TABLE_BAR TABLE_OFFSET
+TABLE_SIZE`, then `WINDOW_H OFFSET SIZE_LOG2` for each of the six BARs in
+register order, a BAR not placed with no window, written by
+`erx_boot_function_words`. A function the give gives nothing for is held
+as a device of no kind: its unit's give makes its resource alone, so a
+line only its row names has no object and no holder reads it.
 
 **The hold at boot.** The domain service starts a configured row whose
 units hold a `pci` device only once the device service has answered the

@@ -196,6 +196,37 @@ typedef struct erx_boot_given {
 } erx_boot_given_t;
 
 /*
+ * A PCIe function given to a holder domain (docs/design-pcie.md, "The catalogue and
+ * gives"): its kind's names, its bridge's manifest device row and its place, its line's
+ * IRQ object, wired or an MSI's, its memory as erx_boot_given_t's, its interrupt route
+ * (ERX_PCIE_ROUTE_*), and for an MSI-X route the message its object's creation returned
+ * and its table's BAR, offset and entries, zero for every other route; and each BAR, in
+ * register order, by the window over its span and its offset there, ERX_CAP_NULL and 0
+ * for a BAR not placed, and its hardware size as a power of two.
+ */
+typedef struct erx_boot_function {
+	const char	*role;
+	const char	*peripheral;
+	uint64_t	bridge;
+	uint8_t		bus, device, function;
+	uint64_t	line;
+	bool		line_shared;
+	uint64_t	memory;
+	uint64_t	memory_size;
+	bool		coherent;
+	uint8_t		route;
+	erx_msi_message_t message;
+	uint8_t		table_bar;
+	uint32_t	table_offset;
+	uint16_t	table_size;
+	struct {
+		uint64_t	window;
+		uint64_t	offset;
+		uint8_t		size_log2;
+	} bars[sizeof(((erx_pcie_function_t *)NULL)->bars) / sizeof(erx_pcie_bar_t)];
+} erx_boot_function_t;
+
+/*
  * The given record of a device the root gives itself (docs/design-fiasco.md, "Device
  * records"): the device's names and register size, the offset of its window (from
  * erx_boot_device_window), and the handles of the objects the root made for it, its
@@ -218,6 +249,9 @@ erx_boot_given_t	erx_boot_device_given(const erx_boot_device_t *device, const er
  * ERX_BOOT_NAME_WORD_MAX.
  */
 size_t	erx_boot_given_words(const erx_boot_given_t *given, char *words, size_t capacity);
+
+/* The -erx_record function words of a given PCIe function, as erx_boot_given_words writes a given device's. */
+size_t	erx_boot_function_words(const erx_boot_function_t *function, char *words, size_t capacity);
 
 /*
  * Whether path may be the PATH word of a device record: a device-tree node path

@@ -641,6 +641,49 @@ erx_boot_given_words(const erx_boot_given_t *given, char *words, size_t capacity
 	return (0);
 }
 
+/* A PCIe function's route as the function record names it: none, msi, msix or intx. */
+static const char *
+route_word(uint8_t route)
+{
+	switch (route) {
+	case ERX_PCIE_ROUTE_MSI:
+		return ("msi");
+	case ERX_PCIE_ROUTE_MSIX:
+		return ("msix");
+	case ERX_PCIE_ROUTE_INTX:
+		return ("intx");
+	default:
+		return ("none");
+	}
+}
+
+size_t
+erx_boot_function_words(const erx_boot_function_t *function, char *words, size_t capacity)
+{
+	size_t used = 0;
+	bool fits = word_put(words, capacity, &used, ERX_BOOT_RECORD_FLAG) && word_put(words, capacity, &used, "function") &&
+	    word_put(words, capacity, &used, function->role) && word_put(words, capacity, &used, function->peripheral) &&
+	    number_put(words, capacity, &used, function->bridge) && number_put(words, capacity, &used, function->bus) &&
+	    number_put(words, capacity, &used, function->device) && number_put(words, capacity, &used, function->function) &&
+	    number_put(words, capacity, &used, function->line) &&
+	    word_put(words, capacity, &used, line_mark(function->line_shared)) &&
+	    number_put(words, capacity, &used, function->memory) &&
+	    number_put(words, capacity, &used, function->memory_size) &&
+	    number_put(words, capacity, &used, function->coherent ? 1 : 0) &&
+	    word_put(words, capacity, &used, route_word(function->route)) &&
+	    number_put(words, capacity, &used, function->message.address) &&
+	    number_put(words, capacity, &used, function->message.data) &&
+	    number_put(words, capacity, &used, function->table_bar) &&
+	    number_put(words, capacity, &used, function->table_offset) &&
+	    number_put(words, capacity, &used, function->table_size);
+
+	for (size_t at = 0; fits && at < sizeof(function->bars) / sizeof(function->bars[0]); at++)
+		fits = number_put(words, capacity, &used, function->bars[at].window) &&
+		    number_put(words, capacity, &used, function->bars[at].offset) &&
+		    number_put(words, capacity, &used, function->bars[at].size_log2);
+	return (fits ? used : 0);
+}
+
 /*
  * Whether format is a name the record's room holds: not NULL and not empty, and at most
  * ERX_BOOT_FORMAT_WORD_MAX bytes with its NUL.

@@ -856,6 +856,7 @@ dom_step_makes(erx_dom_step_kind_t kind)
 	case ERX_DOM_STEP_RESOURCE:
 	case ERX_DOM_STEP_WINDOW:
 	case ERX_DOM_STEP_IRQ:
+	case ERX_DOM_STEP_MSI:
 	case ERX_DOM_STEP_DMA:
 	case ERX_DOM_STEP_CONTIGUOUS:
 		return (true);
@@ -1417,6 +1418,7 @@ dom_step_ok(const erx_dom_plan_t *plan, const erx_dom_step_t *step,
 	case ERX_DOM_STEP_RESOURCE:
 	case ERX_DOM_STEP_WINDOW:
 	case ERX_DOM_STEP_IRQ:
+	case ERX_DOM_STEP_MSI:
 	case ERX_DOM_STEP_DMA:
 	case ERX_DOM_STEP_CONTIGUOUS:
 		return (false);
@@ -1520,6 +1522,7 @@ erx_dom_step_undo(erx_dom_step_kind_t kind)
 	case ERX_DOM_STEP_RESOURCE:
 	case ERX_DOM_STEP_WINDOW:
 	case ERX_DOM_STEP_IRQ:
+	case ERX_DOM_STEP_MSI:
 	case ERX_DOM_STEP_DMA:
 		return (ERX_DOM_UNDO_DESTROY);
 	case ERX_DOM_STEP_CONTIGUOUS:
@@ -1780,6 +1783,80 @@ erx_dom_pci_givable(const erx_dom_pci_bridge_t *bridge, uint8_t bus, uint8_t dev
 
 		if (layout->record.bus == bus && layout->record.device == device && layout->record.function == function)
 			return (layout->confirmed && layout->state == ERX_PCIE_STATE_READY ? layout : NULL);
+	}
+	return (NULL);
+}
+
+uint8_t
+erx_dom_pci_route(const erx_dom_device_entry_t *entry, const erx_pcie_function_t *function)
+{
+	const bool masked = (function->msi_flags & ERX_PCIE_MSI_VECTOR_MASK) != 0;
+	const bool wide = (function->msi_flags & ERX_PCIE_MSI_ADDR64) != 0;
+
+	if (entry->nlines != 0)
+		return (ERX_PCIE_ROUTE_INTX);
+	/* pcireg.h gives the per-vector mask's offset only for a 64-bit capability. */
+	if (function->msi_offset != 0 && (!masked || wide))
+		return (ERX_PCIE_ROUTE_MSI);
+	if (function->msix_offset != 0)
+		return (ERX_PCIE_ROUTE_MSIX);
+	return (ERX_PCIE_ROUTE_NONE);
+}
+
+/*
+ * Whether compatible, a NUL-terminated string, is the function's identity:
+ * pci, its vendor and device id in four lowercase hexadecimal digits each,
+ * apart by a comma (docs/design-pcie.md, "The catalogue and gives").
+ */
+static bool
+pci_identity(const char *compatible, const erx_pcie_function_t *function)
+{
+	static const char digits[] = "0123456789abcdef";
+	char identity[sizeof("pci0000,0000")] = "pci0000,0000";
+
+	for (uint32_t at = 0; at < 4; at++) {
+		identity[3 + at] = digits[(function->vendor >> (12 - 4 * at)) & 0xf];
+		identity[8 + at] = digits[(function->device_id >> (12 - 4 * at)) & 0xf];
+	}
+	return (compatible != NULL && strcmp(compatible, identity) == 0);
+}
+
+/*
+ * Whether a function of a bridge raises only the line its place's row
+ * names: on an open bridge no row names one, and on a closed one its place
+ * is listed and its reported pin is the place's (docs/design-pcie.md, "The
+ * closed bus").
+ */
+static bool
+pci_pin_listed(const erx_pcie_bridge_t *facts, const erx_pcie_function_t *function)
+{
+	if ((facts->flags & ERX_PCIE_BRIDGE_CLOSED) == 0)
+		return (true);
+	for (uint32_t at = 0; at < ERX_PCIE_CLOSED_MAX; at++) {
+		const erx_pcie_place_t *const place = &facts->places[at];
+
+		if (place->bus != 0 && place->bus == function->bus && place->device == function->device &&
+		    place->function == function->function)
+			return (place->pin == function->pin);
+	}
+	return (false);
+}
+
+const erx_dom_pci_layout_t *
+erx_dom_pci_given(const erx_dom_pci_bridge_t *bridges, uint32_t nbridges, const erx_dom_device_entry_t *entry,
+    const erx_pcie_bridge_t **facts)
+{
+	const erx_dom_pci_layout_t *layout;
+
+	for (uint32_t at = 0; at < nbridges; at++) {
+		if (bridges[at].facts.index != entry->bridge)
+			continue;
+		layout = erx_dom_pci_givable(&bridges[at], entry->bus, entry->device, entry->function);
+		if (layout == NULL || !pci_identity(entry->compatible, &layout->record) ||
+		    !pci_pin_listed(&bridges[at].facts, &layout->record))
+			return (NULL);
+		*facts = &bridges[at].facts;
+		return (layout);
 	}
 	return (NULL);
 }
