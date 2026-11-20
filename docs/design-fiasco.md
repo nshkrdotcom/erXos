@@ -2571,7 +2571,7 @@ a clean-room facts record of the power-management watchdog, as the RNG200's do.
 
 Its numbers and mode come from [the command line](#the-command-line), with the design's defaults of 1, 5 and 60 seconds. **The pet is the design's
 own**: `erx_watchdog`, a process at priority `max` of the release's `kernel`, started among `kernel`'s first children, right after `on_load` lets a module with a NIF load, calling the watchdog NIF from a
-normal scheduler every half second, shorter than any `P` or `D` the command line can set, since those count in seconds. It pets unconditionally and reads no `liveness` record, which `Manifest::Check` refuses until it does, so a pet says only
+normal scheduler every half second, shorter than any `P` or `D` the command line can set, since those count in seconds. It pets unconditionally and reads no `liveness` record, so a pet says only
 that schedulers run and timers fire, and a release with no services is no special case: the first pet follows the first period. A call that
 never yields holds the pet for as long as it holds its normal scheduler, so ERTS prepares a module for loading, the longest such call seen at
 boot, on a dirty CPU scheduler (edit 76 of [design-runtime.md](design-runtime.md#the-edits-outside-syserxos)). Until the first pet the boot races `B` alone, from the watchdog thread's start, which covers ERTS's start,

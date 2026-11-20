@@ -24,8 +24,8 @@
 devices, file systems, journals), [chapter 10](10-domains.md)
 (domains and how one ends), [chapter 11](11-security.md) (facets and
 file grants), and the outlines of chapters
-[14](README.md#chapter-14-files-namespaces-and-service-trees) and
-[15](README.md#chapter-15-devices-and-drivers) (file servers and
+[14](14-files.md) and
+[15](15-devices.md) (file servers and
 drivers).
 
 A Raspberry Pi in a kiosk loses power whenever someone trips over the

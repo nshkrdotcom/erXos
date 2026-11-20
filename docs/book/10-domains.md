@@ -971,8 +971,8 @@ subject of [chapter 11](11-security.md).
   the plans the library computes and applies.
 * [design-fiasco.md](../design-fiasco.md): what the root service does
   for connections, doorbells and stops.
-* Lawrie Brown and Dan Sahlin, "Extending Erlang for Safety and
-  Reliability", ICICS 1999: Safe Erlang, section 2 for the problem
+* Lawrie Brown and Dan Sahlin, "Extending Erlang for Safe Mobile
+  Code Execution", ICICS 1999, LNCS 1726: Safe Erlang, section 2 for the problem
   with pids and section 3.1 for its capabilities.
 * The Erlang distribution protocol, `erts/doc/guides/erl_dist_protocol.md`
   in OTP's source: the control tuples a frame carries.

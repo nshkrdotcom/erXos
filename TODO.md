@@ -2566,6 +2566,12 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
 
 ## Bugs by subsystem
 
+* [Medium] tests, `test/host/erx_net_effect_test.rb:250` (`test_seeded_fault_fails_credit_counts_segments`)
+  is timing-dependent: on a loaded host (a 610 s run) `erx_net_driver_tests` failed
+  `dhcp_starts_when_the_link_comes_up_test` (line 383, `dhcp_sent(300)` saw `discover`) and timed out in
+  `far_end_end_restarts_the_link` (`wait_gone/1`, line 427) before the seed's own failure, so the seed's
+  expected name never appeared. The same tree passed in 456 s. The driver tests' fixed waits want to wait
+  on the event, not a time.
 * [Medium] docs, `docs/design-shared-devices.md` (lines ~102 and ~456, invariant SD1): the design says a
   give makes a unit's objects in the holder's budget; the code charges a device's DMA memory to the
   system domain's budget and keeps it across the holder's restarts (`liberx/system/dom_life.c`
@@ -4813,6 +4819,7 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   domain service that stops answering) has it pet only after every listed service answers
   within the period, and kill a domain service that does not, whose end then ends the
   machine. A deadlocked domain service therefore leaves the machine up. Make the calls.
+  Until then `Manifest::Check` refuses a manifest's `liveness` row (`tools/lib/erx/manifest.rb`).
 * [Medium] domain service, `test/erlang/erx_domain_tests.erl`: nothing tests the `ebusy`
   and `erights` answers, which the stand-in library never gives. Add a stand-in that
   refuses.
@@ -8764,9 +8771,10 @@ to the corpus and follow rc
   from the wire can take CPU from other domains (M5's kernel part, M8); no wall around any domain, the browser-facing
   web domain included (M5's kernel part); and nothing stopping a domain or
   program that bypasses `liberx` (M5's kernel part, M7); and, on the
-  Raspberry Pi 4 (1b-I), the boards' platform items: no hardware watchdog
-  backs a hang of Fiasco, even on a board that runs unattended (its `config.txt` leaves
-  `kernel_watchdog_timeout` unset, since nothing under Fiasco reloads the watchdog), no crash region, no trial request and no device
+  Raspberry Pi 4 (1b-I), the boards' platform items: the hardware watchdog is
+  armed and reloaded by the root's watchdog thread on every boot, so only a hang
+  before that thread starts (in the firmware or in Fiasco's boot) stays hung until
+  the power is cycled; no crash region, no trial request and no device
   secret (M12). Development
   builds run trusted code only until M11.
 * [Medium] Fiasco backend, a device's input and a fault's reach on Fiasco (R1's published downsides; erXos's
@@ -8796,8 +8804,9 @@ to the corpus and follow rc
     `Irq_chip::detach` requires;
   * a wedged bus, which stalls the CPU that touches it with no fault to end anything;
   * DMA of unconfined devices (the item above, FD12);
-  * on the Raspberry Pi 4, no hardware watchdog behind a hang of Fiasco (the item above, FD29); Q15
-    accepts the root reloading the PM watchdog during a trial.
+  * on the Raspberry Pi 4, a hang before the root's watchdog thread starts (in the firmware or in
+    Fiasco's boot) stays hung until the power is cycled, since the PM watchdog is armed only by that
+    thread (the item above, FD29).
 * [Low] liberx Fiasco backend, `erx_fiasco_exception_kind`
   (`liberx/backend/fiasco/arch/aarch64/exception.c`): the exception class's position and the SError
   class are written by hand, since `tools/erx sysreg refresh` refuses ESR_EL1, whose ISS layout

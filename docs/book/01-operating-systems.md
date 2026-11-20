@@ -884,7 +884,7 @@ the kernel takes the board's word for it.
 driver is an Erlang process. It reaches its device through a small C
 part of the runtime, the only code that touches the device's
 registers, and another Erlang process restarts it when it crashes; that
-is built ([chapter 15](README.md#chapter-15-devices-and-drivers)). The
+is built ([chapter 15](15-devices.md)). The
 Raspberry Pi 4's Ethernet and SD controllers are not cache-coherent.
 erXos derives every clean, invalidate and barrier from one event, a
 buffer passing between processor and device, so no driver can forget
@@ -962,7 +962,7 @@ system replays the notes. A copy-on-write file system never overwrites
 live data:
 it writes the new blocks elsewhere, then switches to them with one final
 write, so a crash leaves either the old version or the new one. [Chapter
-16](README.md#chapter-16-storage-and-updates) returns to both.
+16](16-storage.md) returns to both.
 
 The kernel keeps recently used blocks in a cache in memory, so reading
 a file twice reads the disk once, and writes reach the disk later. A
@@ -1006,7 +1006,7 @@ Each domain has its own **namespace**, a private table from paths to the
 file servers, programs that serve files, it was given. A path can
 therefore never reach a server the domain was not given. Domains reach
 file servers through one file protocol, taken from Plan 9 ([chapter
-14](README.md#chapter-14-files-namespaces-and-service-trees)). The
+14](14-files.md)). The
 service that keeps files on the SD card or disk runs in a domain of its
 own. All of this is built ([design-files.md](../design-files.md#overview)).
 
@@ -1165,7 +1165,7 @@ creates every other domain ([chapter
 plays the part of `init` and more: like the root task of an L4 system
 ([chapter 2](02-microkernels.md#253-the-root-task)), it creates every
 kernel object the others use. [Chapter
-24](README.md#chapter-24-startup-configuration-and-shutdown) follows the
+24](24-startup.md) follows the
 whole boot.
 
 ## 1.9 When a part fails
