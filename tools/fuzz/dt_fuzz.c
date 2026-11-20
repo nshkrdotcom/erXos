@@ -7,13 +7,17 @@
  * The device-tree reader, kernel/core/dt.c, over arbitrary bytes, handed
  * over in a buffer of exactly their length so that a read past them is an
  * AddressSanitizer report. An accepted view goes to erx_dt_device for
- * fixed paths, to erx_dt_framebuffer, to erx_dt_registers and to
- * erx_dt_intx for every pin of two places, and every
+ * fixed paths, with and without a DMA limit, to erx_dt_framebuffer, to
+ * erx_dt_registers, to erx_dt_intx for every pin of two places and to
+ * erx_dt_bridge, and every
  * answer must keep the reader's promises: memory ranges within the bound and
  * ordered, no DMA facts beside a status other than ok, a framebuffer whose
  * pages lie in its window and whose rows fit its length, and no register
- * window confirmed for an empty row, and no line beside a status other than
- * ok, nor one outside the GIC's SPIs.
+ * window confirmed for an empty row, no line beside a status other than
+ * ok, nor one outside the GIC's SPIs, no DMA range reaching the limit, and
+ * no bridge facts beside a status other than ok, nor a bus span reversed, a
+ * record field the reader does not own changed, or a window that wraps,
+ * follows an unused one, has a flag not of the ABI or meets the tree's RAM.
  */
 
 #include <stddef.h>
@@ -32,16 +36,19 @@ static const char *const paths[] = {
 };
 
 static void
-device_check(const erx_dt_t *tree, const char *path, erx_dt_row_t row)
+device_check(const erx_dt_t *tree, const char *path, erx_dt_row_t row, uint64_t dma_limit)
 {
 	erx_dt_device_t facts;
 
-	erx_dt_device(tree, path, row, &facts);
+	erx_dt_device(tree, path, row, dma_limit, &facts);
 	if (facts.dma > ERX_DT_DMA_RANGES || facts.mac_status > ERX_DT_MAC_NONE)
 		abort();
 	if (facts.dma != ERX_DT_DMA_OK && (facts.coherent || facts.cpu != 0 || facts.bus != 0 || facts.last != 0))
 		abort();
 	if (facts.dma == ERX_DT_DMA_OK && facts.last < facts.cpu)
+		abort();
+	if (facts.dma == ERX_DT_DMA_OK && dma_limit != 0 &&
+	    (facts.bus >= dma_limit || facts.last - facts.cpu >= dma_limit - facts.bus))
 		abort();
 	if (facts.mac_status == ERX_DT_MAC_OK && (facts.mac[0] & 1) != 0)
 		abort();
@@ -122,6 +129,50 @@ intx_check(const erx_dt_t *tree, const char *path)
 	}
 }
 
+/*
+ * A bridge's facts are zero beside a status other than ok, and the fields the
+ * manifest gives are untouched; on ok its buses are in order and its windows
+ * lead, each with a range that does not wrap, over no RAM, and only the ABI's
+ * flags.
+ */
+static void
+bridge_check(const erx_dt_t *tree, const char *path)
+{
+	erx_pcie_bridge_t bridge;
+	erx_dt_bridge_status_t status;
+	uint64_t last;
+	bool unused;
+	uint32_t m;
+	size_t i;
+
+	memset(&bridge, 0xa5, sizeof(bridge));
+	status = erx_dt_bridge(tree, path, &bridge);
+	if (status > ERX_DT_BRIDGE_RANGES || bridge.index != 0xa5a5a5a5 || bridge.flags != 0xa5 ||
+	    bridge.places[0].bus != 0xa5 || bridge.places[ERX_PCIE_CLOSED_MAX - 1].pin != 0xa5)
+		abort();
+	if (status != ERX_DT_BRIDGE_OK && (bridge.bus_first != 0 || bridge.bus_last != 0))
+		abort();
+	if (bridge.bus_first > bridge.bus_last)
+		abort();
+	unused = false;
+	for (i = 0; i < ERX_PCIE_WINDOWS_MAX; i++) {
+		if (bridge.windows[i].size == 0) {
+			if (bridge.windows[i].pci != 0 || bridge.windows[i].cpu != 0 || bridge.windows[i].flags != 0)
+				abort();
+			unused = true;
+			continue;
+		}
+		if (status != ERX_DT_BRIDGE_OK || unused || (bridge.windows[i].flags & ~ERX_PCIE_WINDOW_FLAGS_KNOWN) != 0 ||
+		    (bridge.windows[i].flags & ERX_PCIE_WINDOW_IO) != 0 ||
+		    __builtin_add_overflow(bridge.windows[i].pci, bridge.windows[i].size - 1, &last) ||
+		    __builtin_add_overflow(bridge.windows[i].cpu, bridge.windows[i].size - 1, &last))
+			abort();
+		for (m = 0; m < tree->memory_count; m++)
+			if (tree->memory[m].first <= last && bridge.windows[i].cpu <= tree->memory[m].last)
+				abort();
+	}
+}
+
 int
 LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
 {
@@ -141,8 +192,10 @@ LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
 			if (tree.memory[i].last < tree.memory[i].first)
 				abort();
 		for (p = 0; p < sizeof(paths) / sizeof(paths[0]); p++) {
-			device_check(&tree, paths[p], ERX_DT_ROW_NODE);
-			device_check(&tree, paths[p], ERX_DT_ROW_PCIE);
+			device_check(&tree, paths[p], ERX_DT_ROW_NODE, 0);
+			device_check(&tree, paths[p], ERX_DT_ROW_PCIE, 0);
+			device_check(&tree, paths[p], ERX_DT_ROW_PCIE, 0x3c000000);
+			bridge_check(&tree, paths[p]);
 		}
 		framebuffer_check(&tree, 0x7e000000, 0x400000);
 		framebuffer_check(&tree, 0, UINT64_MAX);

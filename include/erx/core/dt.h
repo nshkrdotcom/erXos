@@ -94,8 +94,17 @@ struct erx_dt_device {
 	uint8_t			 mac[ERX_DT_MAC_BYTES];
 };
 
-/* A place below a closed bridge's root port (abi/formats/pcie.txt). */
+/* A place below a closed bridge's root port, and a host bridge's record (abi/formats/pcie.txt). */
 struct erx_pcie_place;
+struct erx_pcie_bridge;
+
+typedef enum erx_dt_bridge_status {
+	ERX_DT_BRIDGE_OK,
+	ERX_DT_BRIDGE_NO_NODE,
+	ERX_DT_BRIDGE_CELLS,
+	ERX_DT_BRIDGE_MALFORMED,
+	ERX_DT_BRIDGE_RANGES
+} erx_dt_bridge_status_t;
 
 typedef enum erx_dt_intx_status {
 	ERX_DT_INTX_OK,
@@ -176,9 +185,33 @@ struct erx_dt_seeds {
  */
 const char	*erx_dt_accept(const void *bytes, size_t size, erx_dt_t *tree);
 
-/* Fills *facts with the coherence, DMA range and hardware address of the
- * device at path, an absolute node path. */
-void		 erx_dt_device(const erx_dt_t *tree, const char *path, erx_dt_row_t row, erx_dt_device_t *facts);
+/*
+ * Fills *facts with the coherence, DMA range and hardware address of the
+ * device at path, an absolute node path. dma_limit is a PCIe function's
+ * row's DMA limit (docs/design-pcie.md, "DMA"), a device address,
+ * exclusive, that cuts the range; 0 for none and for a device-tree row.
+ */
+void		 erx_dt_device(const erx_dt_t *tree, const char *path, erx_dt_row_t row, uint64_t dma_limit,
+		    erx_dt_device_t *facts);
+
+/*
+ * The facts the tree holds of the PCI host bridge at path
+ * (docs/design-device-tree.md, "A PCI host bridge"): fills bridge's
+ * bus_first, bus_last and windows from its bus-range and ranges, the
+ * windows in the order of their entries, the unused ones zero, and leaves
+ * the rest of the record, which the manifest and the platform record give.
+ * On any status but ERX_DT_BRIDGE_OK the buses and windows are zero.
+ * ERX_DT_BRIDGE_NO_NODE: no node at path.
+ * ERX_DT_BRIDGE_CELLS: a bridge with ranges whose #address-cells is not 3,
+ * or whose #size-cells or parent's #address-cells is not 1 or 2.
+ * ERX_DT_BRIDGE_MALFORMED: the root; an empty ranges or one not a whole
+ * number of entries; an entry of configuration space, or whose PCI or
+ * parent range wraps, is not translated to the CPU's whole and in one
+ * piece, or meets the tree's RAM or an earlier window; a bus-range not two cells of at most
+ * 255, the first not above the last.
+ * ERX_DT_BRIDGE_RANGES: more than ERX_PCIE_WINDOWS_MAX memory windows.
+ */
+erx_dt_bridge_status_t erx_dt_bridge(const erx_dt_t *tree, const char *path, struct erx_pcie_bridge *bridge);
 
 /*
  * The interrupt line the PCI host bridge at path routes for a closed bus's

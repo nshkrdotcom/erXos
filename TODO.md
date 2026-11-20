@@ -3039,6 +3039,15 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   bridge's `ranges`. The
   reader takes a closed place (`erx_dt_intx`) as valid, device below 32, function below 8 and pin 1 to 4; the
   platform record's reader of a bridge's places (`Manifest#bridge_places`) refuses any other.
+* [Low] device-tree reader, a closed place's bounds (`kernel/core/dt.c`, `erx_dt_intx`, `intx_key`): the reader
+  takes the place it is handed as valid, device below 32, function below 8 and pin 1 to 4, and shifts the fields
+  into the unit address unmasked, so a place with device 32 matches another place's entry. The platform record's
+  reader of a bridge's places must refuse any other place when the places land.
+* [Medium] device-tree reader, the PCI ranges entry read twice (`kernel/core/dt.c`, `windows_translate` and
+  `windows_read`): both decode the bus binding's three-cell entry (phys.hi's space code, the PCI address, the
+  parent's address, the size) and skip I/O space, and they already differ: `windows_read` refuses configuration
+  space, `windows_translate` takes a configuration-space entry of a bridge's `dma-ranges` as memory. Give both one
+  entry decoder and refuse configuration space in `dma-ranges` too.
 * [Low] device-tree reader, its sources listed twice (`tools/fuzz/dt_target.rb`, `tools/lib/erx/native_root.rb`,
   `DEVICE_TREE`): the reader, its architecture's interrupt binding and libfdt's files are named in both, so a new
   source is added in two places. Derive one list from the other.

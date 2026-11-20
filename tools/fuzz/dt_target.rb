@@ -7,7 +7,9 @@
 # seeds are small trees in the shapes test/host/dt_test.rb covers, written here
 # by FdtSeed: a device under a bus with one-cell dma-ranges over the two-cell
 # root, the same under a gap without dma-ranges, a PCIe bridge's three-cell
-# dma-ranges with a memory and an I/O entry, a bridge's interrupt-map onto an
+# dma-ranges with a memory and an I/O entry, a bridge's ranges with an I/O, a
+# 32-bit and a 64-bit prefetchable window and its bus-range, the same below a
+# bus that translates it, a bridge's interrupt-map onto an
 # interrupt controller, coherence marks, hardware addresses, a framebuffer, a
 # nested chain, and a truncated tree.
 # The reader links its architecture's interrupt controller binding, the GIC's.
@@ -52,6 +54,10 @@ module FdtSeed
          [node('memory@0', { 'device_type' => string('memory'), 'reg' => cells(0, 0, 0x4000_0000) }), *children])
   end
 
+  # A PCI host bridge with ranges and buses 0 to 31.
+  def bridge(name, ranges) = node(name, { 'device_type' => string('pci'), '#address-cells' => cells(3), '#size-cells' => cells(2),
+                                          'bus-range' => cells(0, 0x1f), 'ranges' => ranges })
+
   def bus(name, ranges, children) = node(name, { '#address-cells' => cells(1), '#size-cells' => cells(1), 'dma-ranges' => ranges }, children)
 end
 
@@ -63,6 +69,15 @@ seeds = {
   'pcie' => FdtSeed.root(FdtSeed.node('pcie', { '#address-cells' => FdtSeed.cells(3), '#size-cells' => FdtSeed.cells(2),
                                                 'dma-ranges' => FdtSeed.cells(0x8100_0000, 0, 0, 0, 0, 0, 0x1_0000,
                                                                               0x200_0000, 0, 0, 0, 0, 0, 0x4000_0000) })),
+  # QEMU virt's windows above the RAM, and its buses 0 to 31.
+  'bridge' => FdtSeed.root(FdtSeed.bridge('pcie', FdtSeed.cells(0x100_0000, 0, 0, 0, 0x3eff_0000, 0, 0x1_0000,
+                                                               0x200_0000, 0, 0x4000_0000, 0, 0x4000_0000, 0, 0x2eff_0000,
+                                                               0x4300_0000, 0x80, 0, 0x80, 0, 0x80, 0))),
+  # The Pi 4's bridge on a bus that moves its 64 MiB window to CPU address 0x80000000.
+  'bridge-translated' => FdtSeed.root(FdtSeed.node('scb', { '#address-cells' => FdtSeed.cells(2), '#size-cells' => FdtSeed.cells(1),
+                                                           'ranges' => FdtSeed.cells(6, 0, 0, 0x8000_0000, 0x1000_0000) },
+                                                    [FdtSeed.bridge('pcie@7d500000', FdtSeed.cells(0x200_0000, 0, 0xf800_0000, 6, 0, 0,
+                                                                                                  0x400_0000))])),
   # INTA to INTD of every device onto SPIs 143 to 146 of the controller of phandle 1.
   'intx' => FdtSeed.root(FdtSeed.node('intc', { 'phandle' => FdtSeed.cells(1), '#address-cells' => FdtSeed.cells(0),
                                                 '#interrupt-cells' => FdtSeed.cells(3), 'interrupt-controller' => '' }),

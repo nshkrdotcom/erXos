@@ -451,7 +451,7 @@ tree_facts(const erx_dt_t *tree)
 		if (entry->asked) {
 			if (!tree_path_set(path))
 				return ("a device record: its device-tree path is not a node path");
-			erx_dt_device(tree, tree_path, ERX_DT_ROW_NODE, &entry->facts);
+			erx_dt_device(tree, tree_path, ERX_DT_ROW_NODE, 0, &entry->facts);
 		}
 		entry->memory = erx_boot_dma_memory(entry->asked ? &entry->facts : NULL, row_memory);
 		if (entry->asked && entry->row != ERX_MF_NONE && (length = erx_boot_tree_line(path, row_memory, network,
