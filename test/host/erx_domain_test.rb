@@ -259,7 +259,27 @@ class ErxDomainTest < Minitest::Test
     Fault.new(name: "an enumerator's answer passed on", file: File.join(APPLICATION, 'erx_devices_pci.erl'),
               from: 'pcie_answered(Then, interface(Answer), State)', to: 'pcie_answered(Then, Answer, State)',
               tests: 'erx_devices_pci_tests',
-              caught_by: 'an_enumerator_answer_outside_the_interface_is_not_passed_on_test')
+              caught_by: 'an_enumerator_answer_outside_the_interface_is_not_passed_on_test'),
+    # The hold at boot (docs/design-pcie.md, "The hold at boot"): a held row started with
+    # the boot's free rows starts its pci holder before its function's state is settled;
+    # a report's answer that releases nothing, and a hold kept when the PCIe row did not
+    # start, each leave the held row waiting on a release that never comes.
+    Fault.new(name: 'a held row started at boot', file: SERVICE,
+              from: '#{rows := Held} -> Ordered -- Held', to: '#{rows := _Held} -> Ordered',
+              tests: 'erx_domain_tests', caught_by: 'hold_released_by_the_report_answer_test_'),
+    Fault.new(name: "a report's answer that releases nothing", file: SERVICE,
+              from: "handle_cast(pci_report_answered, State) ->\n    {noreply, pci_release(State)};",
+              to: "handle_cast(pci_report_answered, State) ->\n    {noreply, State};",
+              tests: 'erx_domain_tests', caught_by: 'hold_released_by_the_report_answer_test_'),
+    Fault.new(name: 'a hold kept when the PCIe row did not start', file: SERVICE,
+              from: '        [] -> pci_release(State);', to: '        [] -> State;',
+              tests: 'erx_domain_tests', caught_by: 'hold_released_when_the_pcie_row_does_not_start_test_'),
+    # A held row that does not count as starting settles the display it serves as if
+    # nothing would ever serve it, so the start table starts a row naming it at once.
+    Fault.new(name: 'a held row that is not starting', file: SERVICE,
+              from: "<- erx_domain_core:domains(Core)]\n        ++ pci_held(State),",
+              to: "<- erx_domain_core:domains(Core)],",
+              tests: 'erx_domain_tests', caught_by: 'hold_released_by_the_report_answer_test_')
   ].freeze
   
   def test_the_cases_catch_each_seeded_fault

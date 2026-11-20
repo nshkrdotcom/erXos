@@ -22,8 +22,9 @@ answered PCIe incarnation moves the core to `between`.
 holds (erx_devices_pci_core:reports/2), every row lowered/3 names is
 lowered to `off`, and only then is erx_domain:await_grant(pcie, D) sent,
 not waited on; its answer, `{ok, Facet}`, answers the report with every
-setting and moves the core to `synced`, and any other answers
-`{error, unavailable}`.
+setting, tells the domain service it has answered
+(erx_domain:pci_report_answered/0), which releases its hold at boot, and moves
+the core to `synced`; any other answers `{error, unavailable}`.
 
 **The rows a holder held** are those the process read from the library
 with that holder (`held`, by holder and then row), recorded at every read
@@ -202,6 +203,8 @@ grant_answered({report, From, D}, {reply, {ok, Facet}}, #{lib := Lib, waiting :=
         {error, Reason} -> logger:error("erx_devices_pci: the library refused answered ~b: ~0p", [D, Reason])
     end,
     gen_server:reply(From, {ok, erx_devices_pci_core:settings(Devices)}),
+    %% The answer releases the domain service's hold at boot (docs/design-pcie.md, "The hold at boot").
+    ok = erx_domain:pci_report_answered(),
     {Phase, Actions} = erx_devices_pci_core:answered(D, Facet, Waiting, Devices),
     %% A restart's wait for an earlier incarnation no longer decides the phase.
     Left = maps:filter(fun(_ReqId, Wait) -> element(1, Wait) =/= resume end, Reports),

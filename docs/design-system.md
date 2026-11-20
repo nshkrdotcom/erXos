@@ -1149,10 +1149,12 @@ in place before anyone can connect to it.
   `files` service to it has settled: the mint core has installed it
   ([Facets a configured domain serves](#facets-a-configured-domain-serves)),
   its operation has failed, or it has no operation while its server is
-  not starting. A server is starting from its start until it reports
-  ready, is stopped for its boot timeout, or ends. A server that is ready
-  but does not provide the grant's name, one that has ended, and one whose
-  start was refused are not starting, so their grants have no operation
+  not starting. A server is starting from its start, or from the boot
+  while the hold at boot holds its row ([Devices](#devices)), until it
+  reports ready, is stopped for its boot timeout, or ends. A server that
+  is ready but does not provide the grant's name, one that has ended,
+  and one whose start was refused are not starting, so their grants have
+  no operation
   to wait for and count as settled. Grants of every other
   interface (`net`, `driver_control`, `web`) are not waited for: the mint
   core installs them when their server reports, as it does after a
@@ -3499,10 +3501,12 @@ its bridges ([design-pcie.md](design-pcie.md#concurrency)).
 units hold a `pci` device only once the device service has answered the
 boot's first report, holding its start as it holds a start for a
 principal's ending domain, and starts the rows without one in boot order
-meanwhile. The device service releases the hold at that answer, when the
-PCIe row ends or fails to report ready within its boot timeout, or 30 s
-after its ready answer, whichever is first; a row started after a failed
-hold gets nothing of its `pci` devices
+meanwhile. The hold is released at the first of: the device service's
+word that it has answered a report, the PCIe row's end, its stop for its
+boot timeout, 30 s after its ready answer, or, once the boot's other
+rows have started, a PCIe row that is not booting; the domain service sees all but the first itself. A held row
+counts as starting, and a row started after a failed hold gets nothing
+of its `pci` devices
 ([design-pcie.md](design-pcie.md#the-catalogue-and-gives)).
 
 **Units.** Devices that cannot be given apart, because they share a

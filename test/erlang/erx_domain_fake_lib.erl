@@ -34,7 +34,7 @@
 %% so the process dictionary keeps each domain's pid and node and each connection.
 -module(erx_domain_fake_lib).
 -export([start_log/0, next_call/0, kill_and_await/1]).
--export([register/0, configured/0, configured/3, templates/0, apps/0, session/5, app_session/6, create/1, start/1, stop/2, retire/1, crash/1,
+-export([register/0, configured/0, configured/3, templates/0, apps/0, devices/0, session/5, app_session/6, create/1, start/1, stop/2, retire/1, crash/1,
          connect/6, disconnect/1]).
 -export([open_side/2, close_side/2, export/3]).
 -export([agent/2, reader/1]).
@@ -85,6 +85,9 @@ templates() -> {ok, persistent_term:get({?MODULE, templates}, [#{template => 0, 
 
 %% No apps row, or the app entries the persistent term {?MODULE, apps} sets.
 apps() -> {ok, persistent_term:get({?MODULE, apps}, none)}.
+%% No device, or the device rows the persistent term {?MODULE, devices} sets, each with
+%% its index, its configured row and its place, as erx_domain_lib:devices/0 answers them.
+devices() -> {ok, persistent_term:get({?MODULE, devices}, [])}.
 session(Id, Template, Name, Display, DomainPid) when is_pid(DomainPid), is_atom(Display) ->
     session_made(get(session), Id, Template, Name, Display, DomainPid).
 
