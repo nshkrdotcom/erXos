@@ -205,9 +205,9 @@ class ManifestCheckTest < Minitest::Test
   def test_accepted_services_reach_the_encoded_manifest
     view = @codec.open('manifest', admit(@source + SERVICE).bytes)
     # The development manifest's own, clock, code_objects, data, display, home, inspect, log,
-    # login_keys, machine, net, network_ctl, packages, start, storage_ctl, system and web,
-    # and this one.
-    assert_equal %w[clock code_objects data display home inspect log login_keys machine net network_ctl packages probe start storage_ctl system web], view.count('services').times.map { |index| view.string(view.fetch('services', index).fetch('name')) }
+    # login_keys, machine, net, network_ctl, packages, pci, pci_bus, start, storage_ctl, system
+    # and web, and this one.
+    assert_equal %w[clock code_objects data display home inspect log login_keys machine net network_ctl packages pci pci_bus probe start storage_ctl system web], view.count('services').times.map { |index| view.string(view.fetch('services', index).fetch('name')) }
     assert_equal 0, view.count('liveness')
   end
 
@@ -276,12 +276,23 @@ class ManifestCheckTest < Minitest::Test
   end
 
   # The development manifest with a domain pcie in place of the web domain, serving web
-  # only when serving, and the units of holders.
+  # only when serving, the units of holders, and the pci facet of the function's holder
+  # when a configured domain holds it.
   def usb_source(holders = USB_HOLDERS, serving: false)
     renamed = changed(@source.sub("domain web\n", "domain pcie\n").gsub('@domain.web', '@domain.pcie'))
     renamed = renamed.sub(/^service web\n(?:  .*\n)*/, '').sub(/^facet web\n(?:  .*\n)*/, '') unless serving
-    renamed + units_of(holders)
+    holder = holders['xhci']
+    renamed + units_of(holders) + (holder&.start_with?('@domain.') ? pcie_facet('pci', holder) : '')
   end
+
+  # A facet row of the PCIe interface service, granted to grantee.
+  def pcie_facet(service, grantee, name: service)
+    "facet #{name}\n  name \"#{service}\"\n  grantee #{grantee}\n  service @service.#{service}\n  operations none\n  max_request 4096\n" \
+      "  in_flight 1\n  reductions 100000\n  period_ns 1000000000\n  max_heap_size 65536\n"
+  end
+
+  # The domain pcie's pcie service, which only the system domain holds.
+  PCIE_SERVICE = "service pcie\n  server @domain.pcie\n  interface pcie\n"
 
   def units_of(holders) = holders.map { |key, holder| "unit #{key}\n  placement \"#{key}\"\n  holder #{holder}\n" }.join
 
@@ -319,6 +330,49 @@ class ManifestCheckTest < Minitest::Test
     usb_refused('windows', /pcie holds nothing but PCIe bridges' units, and its windows row/,
                 usb_source + window(role: 'fat', holder: '@domain.pcie'))
     usb_refused('services', /pcie holds nothing but PCIe bridges' units, and its services row/, usb_source(serving: true))
+  end
+
+  # The PCIe interfaces' parties (docs/design-pcie.md, "Facets" and "The manifest"): the
+  # domain pcie serves pcie to the system domain and holds pci_bus, the system domain's.
+  def test_the_pcie_domain_serves_pcie_and_holds_pci_bus
+    usb_admit(usb_source + PCIE_SERVICE + pcie_facet('pcie', 'system') + pcie_facet('pci_bus', '@domain.pcie'))
+  end
+
+  def test_a_pcie_interface_of_another_server_is_refused
+    usb_refused('service.server', /a pci service is named pci, is of interface pci and is served by the system domain alone/,
+                usb_source.sub("service pci\n  server system\n", "service pci\n  server @domain.storage\n"))
+    usb_refused('service.server', /a pci_bus service .* served by the system domain alone/,
+                usb_source.sub("service pci_bus\n  server system\n", "service pci_bus\n  server @domain.network\n"))
+    usb_refused('service.server', /a pcie service .* served by the domain pcie alone/,
+                usb_source + "service pcie\n  server system\n  interface pcie\n")
+  end
+
+  # The system domain finds a facet's callback by its service's name, so the name and the
+  # interface go together both ways.
+  def test_a_pcie_service_name_apart_from_its_interface_is_refused
+    message = /a pci_bus service is named pci_bus, is of interface pci_bus/
+    usb_refused('service.server', message, usb_source.sub("  interface pci_bus\n", "  interface log\n"))
+    usb_refused('service.server', message, usb_source + "service pci_bus_too\n  server system\n  interface pci_bus\n")
+  end
+
+  def test_the_pcie_domain_holding_a_facet_of_another_interface_is_refused
+    usb_refused('facets', /pcie holds nothing but PCIe bridges' units, and its facets row/,
+                usb_source + pcie_facet('pci', '@domain.pcie', name: 'pci_pcie').sub('@service.pci', '@service.log'))
+  end
+
+  def test_a_pci_bus_facet_of_another_grantee_is_refused
+    usb_refused('facet.grantee', /only the domain pcie holds a pci_bus facet/, usb_source + pcie_facet('pci_bus', '@domain.network'))
+  end
+
+  def test_a_pcie_facet_of_another_grantee_is_refused
+    usb_refused('facet.grantee', /only the system domain holds a pcie facet/,
+                usb_source + PCIE_SERVICE + pcie_facet('pcie', '@domain.network'))
+  end
+
+  def test_a_pci_facet_is_held_exactly_by_the_holders_of_pci_devices
+    message = /a configured domain holds a pci facet exactly when it holds a pci device/
+    usb_refused('facet.grantee', message, usb_source.sub(/^facet pci\n(?:  .*\n)*/, ''))
+    usb_refused('facet.grantee', message, usb_source + pcie_facet('pci', '@domain.storage', name: 'pci_storage'))
   end
 
   def test_a_function_held_by_the_system_domain_is_refused

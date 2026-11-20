@@ -2282,6 +2282,14 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   hold `erx_dom_lib_pci_report` and `erx_dom_lib_pci_mode` to the NIF and `erx_dom_view_bridge` to the root with
   chokepoints. The root's join
   (`tree_facts`) and the NIF's term handling run only on the target; the `pcie` QEMU suite (P12) covers them.
+* [Medium] Services dispatched by name, checked by interface (`erlang/apps/erx_domain/src/erx_domain_srv.erl`,
+  `tools/lib/erx/manifest.rb`, [design-abi.md](docs/design-abi.md#services-facets-and-their-parameter-schemas)): the
+  domain service picks a system-domain facet's callback and the process behind it by the service's name
+  (`system_facet/4`, `served/2`), while the manifest check matches the `log`, `clock` and `inspect` services by
+  interface, so a service named `log` of another interface, or a service of interface `log` under another name, is
+  admitted and its grantees get a surface the check never judged. `check_pcie_parties` closes this for `pci_bus`,
+  `pci` and `pcie` alone, as `check_code_objects_service` does for `code_objects`; bind every system-domain service's
+  name to its interface in one rule and delete the per-interface copies.
 * [Medium] PCIe domain and device service, the start's other side (`erlang/apps/erx_pcie/src/erx_pcie_enumerator.erl`,
   `erlang/apps/erx_domain/src/erx_devices_pci.erl`, `abi/services/pci_bus.txt`, `pci.txt`, `pcie.txt`,
   [design-pcie.md](docs/design-pcie.md#facets)): the enumerator runs its start and serves `set` and `reset` over its
@@ -2290,14 +2298,16 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   `erx_devices_pci_core` behind the `pci_bus` and `pci` facets (`erx_pci_bus_facet`, `erx_pci_facet`, minted in
   front of the domain service and forwarding to the registered process), takes every domain's end from the domain
   service's forward, answers `report` after `erx_domain:await_grant(pcie, D)` with the incarnation written to the
-  catalogue's `answered` first, and after a restart begins `synced` from it. Still to build: the hold at boot in
-  `erx_domain_srv`; `firmware`, which answers `{error, enotsup}` until `erx_domain_lib:pci_firmware/1` exists, and
+  catalogue's `answered` first, and after a restart begins `synced` from it. The domain service serves `pci_bus`
+  and `pci`, whose service rows the shared development manifest declares, and the manifest check holds the three
+  interfaces' servers and grantees to design-pcie.md's "The manifest". Still to build: `firmware`, which answers
+  `{error, enotsup}` until `erx_domain_lib:pci_firmware/1` exists, and
   that waits for `erx_firmware_request`, which no ABI file or backend declares yet; the identity check
-  of a reported function against its row's compatible string ("The catalogue and gives"); a system manifest
-  service row for each interface, with the manifest check's grantee rules, and with them the domain service's
-  `erx_facet:serve/2` of `pci_bus` and `pci` (the facet-names chokepoint refuses a service no manifest row declares;
-  `system_facet/4` already picks the two callbacks); the `pcie` facet's mint in the PCIe
-  domain over `erx_facet`. The process and its facets have host tests only; the `pcie` QEMU suite covers the
+  of a reported function against its row's compatible string ("The catalogue and gives"); a board part that
+  places a bridge (QEMU virt's ECAM bridge has no platform row), with the domain `pcie`'s row and the three
+  facet rows, whose limits (the domain's memory, `pci_bus`'s `max_request`, which must hold a whole report) no
+  design states yet; the `pcie` facet's mint in the PCIe domain over `erx_facet`, and `bus/1` over the
+  `pci_bus` facet. The process and its facets have host tests only; the `pcie` QEMU suite covers the
   target. The BCM2711's bridge has its core (`erx_pcie_bcm2711_core`) and no driver module with `start` over a
   device, so the enumerator refuses its record (`no_driver_module`).
 * [Medium] PCIe, the start's leftovers (`erlang/apps/erx_pcie/src/erx_pcie_enumerator.erl`, `abi/services/pci.txt`,

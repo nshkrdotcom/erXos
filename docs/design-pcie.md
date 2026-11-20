@@ -1154,7 +1154,51 @@ serves from a stale view, and none misses a holder's end.
 that only the PCIe domain holds `pci_bus`, only the system domain holds
 `pcie`, and a domain holds a `pci` facet exactly when it holds a `pci`
 device, its scope those devices, as property 8 proves the driver-control
-facet's grantee from the interface.
+facet's grantee from the interface. It holds the servers to the table
+above as well: a `pci_bus` or `pci` service is the system domain's and a
+`pcie` service the PCIe domain's, since a `pci_bus` of another server
+would direct which functions the enumerator raises. The system domain
+picks a facet's callback and the process behind it by the service's
+name, so each of the three services is named by its interface, and a
+service of one of those names is of that interface. The facet rows
+below leave out their limits, which no section states yet. The PCIe domain is
+the configured row named `pcie`; the only rows that may name it are its
+bridges' units, its place in the boot order, its `pcie` service and its
+`pci_bus` facet. The shared part of the development manifest declares
+the system domain's two services, so a board whose part places no
+bridge declares them and grants neither:
+
+```
+service pci_bus
+  server system
+  interface pci_bus
+service pci
+  server system
+  interface pci
+```
+
+A board whose part places a bridge adds the domain's row, its unit, its
+`pcie` service and the three grants:
+
+```
+unit pcie
+  placement "pcie"
+  holder @domain.pcie
+service pcie
+  server @domain.pcie
+  interface pcie
+facet pci_bus
+  grantee @domain.pcie
+  service @service.pci_bus
+facet pcie
+  grantee system
+  service @service.pcie
+facet pci
+  grantee @domain.HOLDER
+  service @service.pci
+```
+
+with one `pci` facet for each configured domain holding a `pci` device.
 
 ## The catalogue and gives
 
@@ -1272,19 +1316,18 @@ boot's first report, holding its start as it holds a start for a
 principal's ending domain; rows without one start in boot order
 meanwhile. The PCIe row is the row holding a host bridge some `pci`
 device's place names; it is never held, and a machine with no PCIe row
-holds nothing. The hold is released at the first of three: the device
+holds nothing. The hold is released at the first of four: the device
 service's answer to a report, which it tells the domain service with
 `erx_domain:pci_report_answered/0`; 30 s after a PCIe row's ready
-answer; and no PCIe row booting, which the domain service derives from
-its domains' states once the boot's other rows have started and again at
-each PCIe row's end or stop for not reporting ready within its boot
-timeout. A PCIe row whose start was refused, whose domain was ready at
-its start, which ended without a restart or which was stopped will never
-report, so the hold is released then; a PCIe row restarted at its end is
-booting again and keeps the hold. A held row counts as starting while it waits, so a
+answer; a PCIe row's end, whatever its restart, so a row that crashes
+before reporting cannot hold the rows for as long as its restarts last;
+and no PCIe row booting, which the domain service derives from its
+domains' states once the boot's other rows have started and again at
+each PCIe row's stop for not reporting ready within its boot timeout. A
+PCIe row whose start was refused, whose domain was ready at its start,
+or which was stopped will never report, so the hold is released then. A held row counts as starting while it waits, so a
 grant it serves is waited for, not settled as failed. A row started
-after a failed hold gets nothing of its `pci` devices. The check's boot
-order puts the PCIe domain before every row holding a `pci` device.
+after a failed hold gets nothing of its `pci` devices.
 
 **A holder's end.** The device service learns of every domain's end
 from the domain library, whose `{domain_ended, Id, End, Record}` the

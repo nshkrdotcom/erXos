@@ -2810,8 +2810,8 @@ module Erx
       # docs/design-usb.md, "The Phase 1 part"). A PCIe bridge is a device-tree row of the
       # configuration role. Its unit is held by the configured domain pcie, which can turn on
       # any function's bus mastering and so holds nothing else: every record that names pcie
-      # is one of an allow-list, a bridge's unit or its place in the boot order, so a table
-      # the ABI adds later is refused until it is allowed. A placed PCIe function is
+      # is one of an allow-list (pcie_reference?), so a table the ABI adds later is refused
+      # until it is allowed. A placed PCIe function is
       # unconfined, held by a configured domain and behind a bridge the manifest places,
       # which pcie then drives. A function names a line only at a closed bridge's place
       # (behind_bridge), and the boot view keeps that line in its unit.
@@ -2826,14 +2826,57 @@ module Erx
           invalid("the domain pcie holds only PCIe bridges' units", 'unit.holder') if held && !rows.all? { |device| pcie_bridge?(device) }
           rows.select { |device| device.fetch('selector') == @codec.member('mf_selector', 'pci') }.each { |function| check_function(function, holder, bridges) }
         end
+        check_pcie_parties(tables, pcie, units)
         return if pcie.nil?
 
-        named = domain_references(tables, pcie).map(&:first).uniq - PCIE_DOMAIN_REFERENCES
+        named = domain_references(tables, pcie).reject { |scope, row| pcie_reference?(scope, row, tables) }.map(&:first).uniq
         invalid("the domain pcie holds nothing but PCIe bridges' units, and its #{named.first} row names it", named.first) unless named.empty?
       end
 
-      # The tables a row of which may name the domain pcie (check_pcie).
-      PCIE_DOMAIN_REFERENCES = %w[units boot_order].freeze
+      # Whether a row naming the domain pcie is one of the allow-list's (check_pcie): its
+      # bridges' units, its place in the boot order, its service of pcie and its pci_bus
+      # facet. Every other table is refused until allowed.
+      def pcie_reference?(scope, row, tables)
+        case scope
+        when 'units', 'boot_order' then true
+        when 'services' then row.fetch('interface') == fetch_interface('pcie')
+        when 'facets' then facets_of([row], 'pci_bus', tables).any?
+        else false
+        end
+      end
+
+      # The parties of the three PCIe interfaces (docs/design-pcie.md, "Facets" and "The
+      # manifest"). The system domain's device service serves pci_bus and pci and the domain
+      # pcie serves pcie. Only pcie holds pci_bus: another holder could report functions and
+      # take settings, and a pci_bus of another server would direct which functions the
+      # enumerator raises. Only the system domain holds pcie, whose set raises any function
+      # without a holder's request. A configured domain holds a pci facet exactly when its
+      # units hold a pci device: the device service matches a request's place against the
+      # grantee's own rows, so a facet without one opens nothing, and a holder without one
+      # cannot open its function. The system domain picks a facet's callback and the process
+      # behind it by the service's name (erx_domain_srv:system_facet/4, served/2), so each
+      # service of the three is named by its interface and a service of one of those names
+      # is of that interface: a service named pci_bus of another interface would otherwise
+      # hand its grantees the device service's pci_bus surface.
+      def check_pcie_parties(tables, pcie, units)
+        system = @codec.constant('mf_none')
+        { 'pci_bus' => [system, 'the system domain'], 'pci' => [system, 'the system domain'],
+          'pcie' => [pcie, 'the domain pcie'] }.each do |name, (server, label)|
+          interface = fetch_interface(name)
+          named = tables.fetch('services').select { |service| service.fetch('interface') == interface || service.fetch('name') == name.b }
+          invalid("a #{name} service is named #{name}, is of interface #{name} and is served by #{label} alone", 'service.server') unless
+            named.all? { |service| service.fetch('interface') == interface && service.fetch('name') == name.b && service.fetch('server') == server }
+        end
+        grantees = ->(name) { facets_of(tables.fetch('facets'), name, tables).map { |row| row.values_at('grantee_kind', 'grantee') } }
+        invalid('only the domain pcie holds a pci_bus facet', 'facet.grantee') unless
+          grantees.call('pci_bus').all? { |grantee| grantee == [grantee_kind('domain'), pcie] }
+        invalid('only the system domain holds a pcie facet', 'facet.grantee') unless
+          grantees.call('pcie').all? { |kind, _| kind == grantee_kind('system') }
+        holders = units.select { |_holder, rows| rows.any? { |device| device.fetch('selector') == @codec.member('mf_selector', 'pci') } }
+                       .map { |holder, _rows| [grantee_kind('domain'), holder] }
+        invalid('a configured domain holds a pci facet exactly when it holds a pci device', 'facet.grantee') unless
+          grantees.call('pci').sort == holders.uniq.sort
+      end
 
       def pcie_bridge?(device)
         device.fetch('selector') == @codec.member('mf_selector', 'dt') && device.fetch('role') == device_role('configuration')

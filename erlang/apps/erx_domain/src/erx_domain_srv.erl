@@ -177,8 +177,12 @@ start_link(Opts) ->
 init(Opts) ->
     process_flag(trap_exit, true),
     Lib = library(maps:get(lib, Opts, erx_domain_lib)),
-    %% The code_objects service is the domain service's own (code_objects_row/0).
+    %% The code_objects service is the domain service's own (code_objects_row/0). The
+    %% PCIe services' facets stand in front of the service too, which outlives the device
+    %% service's PCIe process their callbacks find at each request (erx_pci_facet).
     ok = erx_facet:serve(code_objects, self()),
+    ok = erx_facet:serve(pci_bus, self()),
+    ok = erx_facet:serve(pci, self()),
     case principals(Lib, Opts) of
         {ok, Principals} ->
             {ok, booted(state(Lib, Principals, Opts)), {continue, boot}};
@@ -335,9 +339,11 @@ devices(Lib) ->
 %% at once, so nothing waits on a row that will never report. It is checked when that
 %% can have become true: once the boot's other rows have started (a PCIe row whose start
 %% was refused, or whose domain was ready at its start with no report to make), and at a
-%% PCIe row's end or stop for its boot timeout (pci_row_gone/2). A PCIe row ready after
-%% its start is no longer booting but is not checked: its report is still to come, and
-%% its ready report's timer bounds the wait (arm_pci_hold_timer/2).
+%% PCIe row's stop for its boot timeout (pci_row_gone/3). A PCIe row ready after its
+%% start is no longer booting but is not checked: its report is still to come, and its
+%% ready report's timer bounds the wait (arm_pci_hold_timer/2). A PCIe row's end
+%% releases the hold whatever its restart, so a row ending before every ready report
+%% cannot hold the rows for as long as its restarts last.
 pci_unless_booting(#{pci_hold := none} = State) ->
     State;
 pci_unless_booting(#{pci_hold := #{pcie := Pcie}, core := Core} = State) ->
@@ -348,13 +354,14 @@ pci_unless_booting(#{pci_hold := #{pcie := Pcie}, core := Core} = State) ->
     end.
 
 %% The domain whose origin is Origin has stopped booting, by its end or its boot timeout:
-%% when it is a PCIe row's, the hold is released unless a PCIe row is still booting.
-pci_row_gone({configured, Row}, #{pci_hold := #{pcie := Pcie}} = State) ->
+%% when it is a PCIe row's, Release takes the hold (pci_release/1 at its end,
+%% pci_unless_booting/1 at its boot timeout).
+pci_row_gone({configured, Row}, Release, #{pci_hold := #{pcie := Pcie}} = State) ->
     case lists:member(Row, Pcie) of
-        true -> pci_unless_booting(State);
+        true -> Release(State);
         false -> State
     end;
-pci_row_gone(_Origin, State) ->
+pci_row_gone(_Origin, _Release, State) ->
     State.
 
 %% The hold's release: each held row starts, in boot order; once released, there is
@@ -635,7 +642,7 @@ handle_info({timeout, _Timer, {boot_timeout, Id}}, #{core := Core} = State) ->
             %% its grant is answered now, even if the library refused the stop and no
             %% end will come. A PCIe row's timeout releases the hold unless one boots.
             Stopping = answer_in_place(State#{core := erx_domain_core:stopping(Id, Core)}),
-            {noreply, pci_row_gone(Origin, Stopping)};
+            {noreply, pci_row_gone(Origin, fun pci_unless_booting/1, Stopping)};
         _ ->
             {noreply, State}
     end;
@@ -1603,9 +1610,9 @@ ended(Id, End, Where, #{lib := Lib, core := Core, links := Links} = State) ->
             {Unlinked, Actions} = erx_domain_links:ended(Id, Info, Links),
             Told = unprovide(Origin, Id, perform(Actions, State#{core := Ended, links := Unlinked})),
             _ = retire(Lib, Id),
-            %% A PCIe row's end releases the hold at boot unless one still boots.
+            %% A PCIe row's end releases the hold at boot, after its own restart.
             Restarted = restart(Origin, Id, Life, Info, Where, waiter_ended(Id, Life, Info, Told)),
-            pci_row_gone(Origin, release(Restarted))
+            pci_row_gone(Origin, fun pci_release/1, release(Restarted))
     end.
 
 %% A crash's slogan, from its crash area, which goes at the retire after it.
