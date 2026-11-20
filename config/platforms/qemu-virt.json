@@ -100,6 +100,23 @@
           "compatible": "virtio,mmio", "bus": 0, "device": 0, "function": 0,
           "dma": "none", "flags": 0, "dma_memory": 0, "placement_key": "spare" }
       ]
+    },
+    {
+      "key": "pcie",
+      "devices": [
+        { "selector": "dt", "role": "configuration", "path": "/pcie@10000000", "bridge": "",
+          "base": 275146342400, "size": 268435456, "line": 0,
+          "compatible": "pci-host-ecam-generic", "bus": 0, "device": 0, "function": 0,
+          "dma": "none", "flags": 0, "dma_memory": 0, "placement_key": "pcie" }
+      ]
+    },
+    {
+      "key": "xhci",
+      "devices": [
+        { "selector": "pci", "role": "usb", "path": "", "bridge": "/pcie@10000000",
+          "line": 0, "compatible": "pci1b36,000d", "bus": 0, "device": 2, "function": 0,
+          "dma": "unconfined", "flags": 1, "dma_memory": 1048576, "placement_key": "xhci" }
+      ]
     }
   ]
 }

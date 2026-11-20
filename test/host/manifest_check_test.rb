@@ -59,9 +59,10 @@ class ManifestCheckTest < Minitest::Test
     [@source + "unit extra\n  placement \"extra\"\n  holder system\n", context(platform: with_extra_device_platform(**fields))]
   end
 
-  # The real platform with the unit with_extra_device places.
+  # The real platform with the unit with_extra_device places, its device a copy of the
+  # spare unit's with fields changed.
   def with_extra_device_platform(**fields)
-    device = @platform.fetch('units').last.fetch('devices').first
+    device = @platform.fetch('units').find { |unit| unit.fetch('key') == 'spare' }.fetch('devices').first
                       .merge('path' => '/extra@0', 'placement_key' => 'extra', 'dma' => 'none', 'dma_memory' => 0)
                       .merge(fields.transform_keys(&:to_s))
     platform_with { |value| value.fetch('units') << { 'key' => 'extra', 'devices' => [device] } }
@@ -269,10 +270,14 @@ class ManifestCheckTest < Minitest::Test
   def stick_row = usb_row('stick', role: 'usb', path: STICK, compatible: 'generic-xhci', base: 0xa004000, size: 0x1000,
                                    line: 60, flags: hostile)
 
-  # The real platform with the units of units, each key's list of devices.
+  # The real platform with the units of units, each key's list of devices, in place of the
+  # platform's own unit of that key (QEMU virt's ECAM bridge and qemu-xhci).
   def usb_platform(**units)
     rows = { pcie: [bridge_row], xhci: [xhci_row], stick: [stick_row] }.merge(units)
-    platform_with { |value| rows.each { |key, devices| value.fetch('units') << { 'key' => key.to_s, 'devices' => devices } } }
+    platform_with do |value|
+      value.fetch('units').reject! { |unit| rows.key?(unit.fetch('key').to_sym) }
+      rows.each { |key, devices| value.fetch('units') << { 'key' => key.to_s, 'devices' => devices } }
+    end
   end
 
   # The development manifest with a domain pcie in place of the web domain, serving web

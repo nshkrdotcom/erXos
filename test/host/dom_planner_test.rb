@@ -591,6 +591,7 @@ class DomPlannerTest < Minitest::Test
     function = row.merge('placement_key' => 'vl805', 'selector' => 'pci', 'role' => 'usb', 'bridge' => bridge.fetch('path'),
                          'bus' => 1, 'compatible' => 'pci1106,3483', 'line' => 175, 'dma' => 'unconfined',
                          'dma_memory' => 1 << 20, 'flags' => ['hostile'])
+    platform.fetch('units').reject! { |unit| unit.fetch('key') == 'pcie' }
     platform.fetch('units').push({ 'key' => 'pcie', 'devices' => [bridge] }, { 'key' => 'vl805', 'devices' => [function] })
     @context = Erx::Manifest::Context.new(**ManifestContextFixture.arguments(@codec).merge(platform: platform))
     source = with_domains('alpha', 'pcie') + "unit pcie\n  placement \"pcie\"\n  holder @domain.pcie\n" \
@@ -664,6 +665,7 @@ class DomPlannerTest < Minitest::Test
     function = row.merge('placement_key' => 'vl805', 'selector' => 'pci', 'role' => 'usb', 'bridge' => bridge.fetch('path'),
                          'bus' => 1, 'compatible' => 'pci1106,3483', 'line' => device_of(platform, 'block').fetch('line'),
                          'dma' => 'unconfined', 'dma_memory' => 1 << 20, 'flags' => ['hostile'])
+    platform.fetch('units').reject! { |unit| unit.fetch('key') == 'pcie' }
     platform.fetch('units').push({ 'key' => 'pcie', 'devices' => [bridge] }, { 'key' => 'vl805', 'devices' => [function] })
     @context = Erx::Manifest::Context.new(**ManifestContextFixture.arguments(@codec).merge(platform: platform))
     source = with_domains('alpha', 'pcie') + "unit pcie\n  placement \"pcie\"\n  holder @domain.pcie\n" \
