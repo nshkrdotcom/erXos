@@ -10,9 +10,9 @@ require_relative '../../tools/lib/erx/host_os'
 require_relative '../../tools/lib/erx/memdraw_build'
 
 # Runs test/erlang/erx_winfs_tests.erl: erx_winfs, erx_window, erx_screen and erx_fb_sup's
-# start of erx_winfs, with the erx_fs grants of erx_files, on stock's emulator with
-# erx_memdraw's NIF built for the host (Erx::MemdrawBuild.nif), whose stand-in pixel
-# area the windows present from.
+# start of erx_winfs, with the erx_fs grants of erx_files, and erx_input_reader over a file
+# model, on stock's emulator with erx_memdraw's NIF built for the host
+# (Erx::MemdrawBuild.nif), whose stand-in pixel area the windows present from.
 class ErxWinfsTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
   OTP = File.join(ROOT, 'build/oracle/jit/install/lib/erlang')
@@ -20,7 +20,7 @@ class ErxWinfsTest < Minitest::Test
   INCLUDE = File.join(ROOT, 'build/gen/erlang/apps/erx/include')
   GRAMMAR = 'build/gen/otp/erts/preloaded/src/erx_9p_grammar.erl'
   DISPLAY = %w[erx_display erx_screen erx_screen_core erx_wctl erx_window erx_winctl erx_winfs erx_wm
-               erx_wm_single erx_wm_rio erx_input].map { |name| "erlang/apps/erx_display/src/#{name}.erl" } +
+               erx_wm_single erx_wm_rio erx_input erx_input_reader].map { |name| "erlang/apps/erx_display/src/#{name}.erl" } +
             %w[build/gen/erlang/apps/erx_display/src/erx_keymap.erl build/gen/erlang/apps/erx/src/generated/erx_input_codec.erl
                build/gen/erlang/apps/erx_memdraw/src/erx_theme.erl
                erlang/apps/erx_display/src/erx_splash.erl erlang/apps/erx_memdraw/src/erx_mask.erl
@@ -32,8 +32,9 @@ class ErxWinfsTest < Minitest::Test
   # The display's log is the debug log of erx_log's NIF, which stock's emulator has not.
   LOG_STUB = <<~ERLANG
     -module(erx_log).
-    -export([debug/1]).
+    -export([debug/1, debug_text/1]).
     debug(_Message) -> ok.
+    debug_text(_Message) -> ok.
   ERLANG
   DEADLINE_SECONDS = '300'
   WINFS = 'erlang/apps/erx_display/src/erx_winfs.erl'
@@ -52,6 +53,13 @@ class ErxWinfsTest < Minitest::Test
   FRONT_ALWAYS = 'front => true, holder => Owner'
   FRONT_CASE = '{generator, erx_winfs_tests, a_window_takes_its_front_mark_from_its_grant_test_}'
   WAITING_CASE = '{generator, erx_winfs_tests, a_waiting_kbd_read_holds_up_nothing_of_its_grant_test_}'
+  # The seeded fault: a reader that stops after its first read instead of reading again.
+  READER = 'erlang/apps/erx_display/src/erx_input_reader.erl'
+  READ_AGAIN = '            read(Device, Read, Rest, Dropped + NewlyDropped);'
+  ONE_READ = '            _ = {Rest, NewlyDropped}, ok;'
+  # The seeded fault: a reader that drops the bytes of a record its read ended inside.
+  NO_CARRY = '            _ = Rest, read(Device, Read, <<>>, Dropped + NewlyDropped);'
+  READER_CASE = '{generator, erx_winfs_tests, a_reader_routes_its_file_s_records_and_its_end_takes_its_keys_up_test_}'
 
   def setup
     skip 'stock OTP not built: make oracle-bootstrap' unless File.directory?(OTP)
@@ -100,6 +108,28 @@ class ErxWinfsTest < Minitest::Test
     text, status = eunit(FRONT_CASE, replaced: { WINFS => source.sub(FRONT_FROM_GRANT, FRONT_ALWAYS) })
     refute status.success?, text
     assert_match(/expected,<<"hidden">>/, text)
+  end
+
+  # docs/design-display.md, "The display device": a reader that stops after its first read
+  # never reads the bytes that complete a split record, so the window's key never arrives.
+  def test_a_reader_that_reads_once_fails_the_reader_case
+    source = File.read(File.join(ROOT, READER))
+    raise "#{READER} no longer holds #{READ_AGAIN.inspect}" unless source.include?(READ_AGAIN)
+
+    text, status = eunit(READER_CASE, replaced: { READER => source.sub(READ_AGAIN, ONE_READ) })
+    refute status.success?, text
+    assert_match(/no_read/, text)
+  end
+
+  # docs/design-display.md, "The display device": a reader that drops the bytes of a record
+  # its read ended inside never routes that record, so the window's key never arrives.
+  def test_a_reader_that_drops_a_split_record_fails_the_reader_case
+    source = File.read(File.join(ROOT, READER))
+    raise "#{READER} no longer holds #{READ_AGAIN.inspect}" unless source.include?(READ_AGAIN)
+
+    text, status = eunit(READER_CASE, replaced: { READER => source.sub(READ_AGAIN, NO_CARRY) })
+    refute status.success?, text
+    assert_match(/no_answer/, text)
   end
 
   private
