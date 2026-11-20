@@ -13,6 +13,9 @@
 
 #include "erx_device_sequencer.h"
 
+_Static_assert(sizeof(erx_virtq_desc_t) <= ERX_DMA_STORE_BYTES_MAX &&
+    sizeof(erx_virtio_gpu_mem_entry_t) <= ERX_DMA_STORE_BYTES_MAX, "every record the sequencer encodes fits a store");
+
 #ifdef ERX_DMA_SEED_NO_ZEROS
 #define SEED_NO_ZEROS		true
 #else
@@ -133,6 +136,24 @@ encode(const erx_dma_layout_t *layout, const erx_dma_description_t *description,
 }
 
 /*
+ * A region entry, whole, through its layout's encoder, at `at` of the record's memory: the
+ * persistent region's device address and whole length. False where the encoder refuses them,
+ * which cannot happen: erx_dma_ledger_add_region refuses a length the entry cannot state.
+ */
+static bool
+encode_region_entry(const erx_dma_persistent_region_t *region, uint64_t at, erx_dma_store_t *store)
+{
+	const erx_virtio_gpu_mem_entry_placed_t placed = { .addr = region->address, .length = region->length };
+	erx_virtio_gpu_mem_entry_t record;
+
+	if (!erx_virtio_gpu_mem_entry_encode(&record, &placed))
+		return (false);
+	*store = (erx_dma_store_t){ .offset = at, .length = sizeof(record) };
+	memcpy(store->bytes, &record, sizeof(record));
+	return (true);
+}
+
+/*
  * The record of the sequencer's own at a table placed in order, and the activation that makes
  * the run live. Only virtio's available ring is such a table: its entry names the chain's head,
  * and the available index, one past the entry's running index, is the activation.
@@ -206,10 +227,19 @@ erx_dma_publish(erx_dma_ledger_t *ledger, const erx_dma_publication_t *publicati
 			zero_gaps(layout, publication, buffers[index], &out);
 		add_range(out.cleans, &out.clean_count, buffer_offset(layout, buffers[index], 0), layout->pool.stride);
 	}
-	for (uint32_t index = 0; index < publication->fill_count; index++)
-		out.fills[out.fill_count++] = (erx_dma_range_t){
-		    buffer_offset(layout, publication->fills[index].buffer, publication->fills[index].offset),
-		    publication->fills[index].length };
+	for (uint32_t index = 0; index < publication->fill_count; index++) {
+		const erx_dma_fill_t *const fill = &publication->fills[index];
+		const uint64_t at = buffer_offset(layout, fill->buffer, fill->offset);
+
+		if (fill->kind != ERX_DMA_FILL_REGION_ENTRY) {
+			out.fills[out.fill_count++] = (erx_dma_range_t){ at, fill->length };
+			continue;
+		}
+		/* The check found the region in the ledger. */
+		if (!encode_region_entry(erx_dma_ledger_region(ledger, fill->region), at, &out.stores[out.store_count++]))
+			return (ERX_DMA_BREAKS_FILLS);
+		out.fills[out.fill_count++] = (erx_dma_range_t){ at, 0 };
+	}
 	if (!erx_dma_ledger_hold(ledger, publication, places, count))
 		return (ERX_DMA_BREAKS_ROOM);
 	*sequence = out;

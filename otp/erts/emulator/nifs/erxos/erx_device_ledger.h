@@ -34,6 +34,12 @@
  * is derived from the holdings, never stated: a buffer is the device's while a holding holds
  * it, and a table is its structure's writer, as abi/formats declares it.
  *
+ * The ledger also keeps the persistent regions of its queue's device that a region entry may
+ * name, each added once by erx_dma_ledger_add_region and kept until the ledger is made again.
+ * A queue's ledger is its device's alone and only that device's regions are added to it, so a
+ * region of another device is a name it does not hold. No holding holds a persistent region:
+ * its writer is always the CPU.
+ *
  * Offsets are bytes from the start of the record's memory; a device address is the record's
  * device base plus an offset.
  */
@@ -44,6 +50,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "erx_device.h"
 #include "erx_device_dma.h"
 
 /* Bounds of this record's queues: three tables (virtio's split ring), and one chain's records and buffers. */
@@ -103,6 +110,17 @@ typedef struct erx_dma_holding {
 	uint32_t	buffers[ERX_DMA_HELD_BUFFERS_MAX];
 } erx_dma_holding_t;
 
+/*
+ * One of the device's persistent regions (docs/design-device-dma.md, "The ledger"), by the
+ * name erx_device_region gave it: kept for the boot, written by the CPU alone and read by the
+ * device whenever a region entry names it.
+ */
+typedef struct erx_dma_persistent {
+	uint32_t	name;
+	uint64_t	address;	/* its device address */
+	uint64_t	length;		/* its whole length */
+} erx_dma_persistent_region_t;
+
 /* What a decision that hands over describes (erx_device_rules.h). */
 struct erx_dma_publication;
 
@@ -118,9 +136,10 @@ typedef struct erx_dma_position {
 
 /*
  * The ledger. Its fields are the module's: callers read it through the accessors below and
- * change it only through hold, release and reset, so its invariants hold by construction: the
- * layout was checked when the ledger was made, the first `live` holdings are the live ones, and
- * no record or buffer is held twice.
+ * change it only through hold, release, reset and add_region, so its invariants hold by
+ * construction: the layout was checked when the ledger was made, the first `live` holdings are
+ * the live ones, no record or buffer is held twice, and the first `persistent_count` regions are
+ * the device's, each named once.
  */
 typedef struct erx_dma_ledger {
 	erx_dma_layout_t	layout;
@@ -128,6 +147,8 @@ typedef struct erx_dma_ledger {
 	uint32_t		acquired[ERX_DMA_TABLES_MAX];	/* reports covered, not consumed */
 	uint32_t		live;
 	erx_dma_holding_t	holdings[ERX_DMA_HOLDINGS_MAX];
+	uint32_t		persistent_count;
+	erx_dma_persistent_region_t	persistent[ERX_DEVICE_REGIONS_MAX];
 } erx_dma_ledger_t;
 
 /*
@@ -169,8 +190,19 @@ bool	erx_dma_ledger_acquire(erx_dma_ledger_t *ledger, uint32_t reports, uint32_t
  */
 bool	erx_dma_ledger_release(erx_dma_ledger_t *ledger, uint32_t reports, erx_dma_place_t head,
 	    erx_dma_holding_t *ended);
-/* The device's idle report after a reset: every holding and acquisition ends and every position returns to 0. */
+/*
+ * The device's idle report after a reset: every holding and acquisition ends and every position
+ * returns to 0. The persistent regions stay.
+ */
 void	erx_dma_ledger_reset(erx_dma_ledger_t *ledger);
+/*
+ * Adds `region`, one of the device's persistent regions, which a region entry may then name;
+ * the same region again adds nothing. False, changing nothing, for a name already added with
+ * another address or length, more regions than a device has
+ * (ERX_DEVICE_REGIONS_MAX), a length of 0 or past what a region entry states, a range
+ * past the address width, or one sharing a byte with the queue's memory.
+ */
+bool	erx_dma_ledger_add_region(erx_dma_ledger_t *ledger, erx_dma_persistent_region_t region);
 
 /* The accessors. A table or buffer number outside the layout is held by nothing. */
 const erx_dma_layout_t	*erx_dma_ledger_layout(const erx_dma_ledger_t *ledger);
@@ -186,6 +218,8 @@ uint32_t		 erx_dma_ledger_free_records(const erx_dma_ledger_t *ledger, uint32_t 
 uint32_t		 erx_dma_ledger_live(const erx_dma_ledger_t *ledger);
 /* The reports of table `table` the last acquisition covered that are not consumed yet. */
 uint32_t		 erx_dma_ledger_acquired(const erx_dma_ledger_t *ledger, uint32_t table);
+/* The persistent region named `name`, or NULL for a name the ledger does not hold. */
+const erx_dma_persistent_region_t	*erx_dma_ledger_region(const erx_dma_ledger_t *ledger, uint32_t name);
 
 /* Whether `length` bytes from `offset` lie inside `size` bytes, with no sum that can wrap. */
 static inline bool

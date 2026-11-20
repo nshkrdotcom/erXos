@@ -8021,9 +8021,9 @@ to the corpus and follow rc
   command, Set TR Dequeue Pointer's among them) and the input context's composed encoder have no marks yet, and the packages that move those forms add them. Every
   device address in `abi/formats` carries `device_address`, and a marked layout refuses one a description would
   state or the format fix; a device address in an unmarked layout is not refused yet: that rule turns on when the
-  last form moves onto the encoders. virtio-gpu's `erx_virtio_gpu_mem_entry` has its region entry's marks and encoder,
-  and moves onto them with the split ring; until then `resolve_regions` in `erx_device.c` writes it by hand, its
-  length bounded where the region is carved, not at the write. The ADMA2 entry's encoder accepts a length of 0, which moves 65,536 bytes; the
+  last form moves onto the encoders. The sequencer encodes virtio-gpu's region entry, `erx_virtio_gpu_mem_entry`, from a fill that
+  names a persistent region its ledger holds; until `erx_device.c` moves onto it and adds each region to its device's
+  queue ledgers, `resolve_regions` there writes the entry by hand, its length bounded where the region is carved. The ADMA2 entry's encoder accepts a length of 0, which moves 65,536 bytes; the
   sequencer's split never derives one, and the package that writes the split tests it. The encoders are public in
   `include/erx/abi.h`, beside every layout's generic setters; they end up confined to the sequencer (a private header), and the chokepoint of
   [Descriptions](docs/design-device-dma.md#descriptions), that only the sequencer stores into a region holding a
@@ -8042,7 +8042,8 @@ to the corpus and follow rc
   exhaustive harness does not explore its acquire transition (each release there follows an acquisition of every
   live holding), and `erx_dma_ledger_acquire` takes a bare count, so no chokepoint yet keeps the ledger's
   transitions to the sequencer;
-  `ERX_DMA_STORE_BYTES_MAX` is hand-kept and should be derived from the widest encoded layout; `free_record`'s loop
+  `ERX_DMA_STORE_BYTES_MAX` is hand-kept, checked only by a static assertion against the two layouts the sequencer
+  encodes, and should be derived from the widest encoded layout; `free_record`'s loop
   is bounded only by the room rule; `erx_dma_publish` returns check verdicts for refusals that mean the check and the
   sequencer disagree; rule 1 zeroes a buffer's named size while the handover cleans its stride; and the generated
   `erx_report_meaning` carries an unreachable return and casts for a structure with one meaning. A layout holds one table of each structure, and a table cores describe is placed at any free record, which the

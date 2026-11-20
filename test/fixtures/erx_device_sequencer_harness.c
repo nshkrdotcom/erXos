@@ -6,7 +6,8 @@
  * The check), run by test/host/erx_device_sequencer_test.rb: a publication's records written
  * whole through the encoder, its chain in free descriptors, its available entry and activation,
  * rule 1's zeros around its fills and the cleans of everything passing to the device; a refused
- * publication changing nothing; the acquisition's count and the consumption of used elements,
+ * publication changing nothing; a region entry encoded from its region's name in place of a
+ * fill's bytes; the acquisition's count and the consumption of used elements,
  * each releasing its chain, and refusing a used index past what is live or an id naming no live
  * chain. The first failed expectation prints a FAILED line and exits non-zero.
  */
@@ -164,6 +165,48 @@ test_acquisition(void)
 }
 
 /*
+ * A region entry in place of a header's bytes, by its region's name: one store from its encoder
+ * at the fill's offset, nothing for the effect layer to fill there, no zero over it, cleaned with
+ * its buffer; two entries 8 bytes apart, the second's address over the first's length, refused
+ * with nothing held.
+ */
+static void
+test_region_entry(void)
+{
+	erx_dma_ledger_t ledger = fresh();
+	const erx_dma_persistent_region_t region = { .name = 2, .address = 0x80042000, .length = 0x3000 };
+	erx_dma_description_t request[2] = { chain[0], chain[1] };
+	erx_dma_fill_t entries[2] = {
+		{ .kind = ERX_DMA_FILL_REGION_ENTRY, .buffer = 0, .offset = 0, .length = ERX_VIRTIO_GPU_MEM_ENTRY_SIZE,
+		  .region = 2 },
+		{ .kind = ERX_DMA_FILL_REGION_ENTRY, .buffer = 0, .offset = 8, .length = ERX_VIRTIO_GPU_MEM_ENTRY_SIZE,
+		  .region = 2 },
+	};
+	const uint64_t pool = 192;
+	erx_dma_sequence_t sequence;
+	erx_virtio_gpu_mem_entry_t written;
+	const erx_dma_store_t *store;
+
+	EXPECT(erx_dma_ledger_add_region(&ledger, region), "the device's region");
+	request[0].described.virtq_desc.len = 32;
+	EXPECT(erx_dma_publish(&ledger, &(erx_dma_publication_t){ 2, request, 2, entries }, &sequence) ==
+	    ERX_DMA_BREAKS_FILLS && erx_dma_ledger_live(&ledger) == 0, "two region entries 8 bytes apart, refused");
+	EXPECT(erx_dma_publish(&ledger, &(erx_dma_publication_t){ 2, chain, 1, entries }, &sequence) == ERX_DMA_PASSES &&
+	    sequence.store_count == 4 && sequence.fill_count == 1 && sequence.fills[0].offset == pool &&
+	    sequence.fills[0].length == 0, "the chain, its available entry and the region entry stored; no bytes to fill");
+	store = &sequence.stores[3];
+	EXPECT(store->offset == pool && store->length == sizeof(written), "the region entry whole, at the fill's offset");
+	memcpy(&written, store->bytes, sizeof(written));
+	EXPECT(written.addr == region.address && written.length == region.length && written.padding == 0,
+	    "the entry's address and length are the region's, its padding 0");
+	for (uint32_t index = 0; index < sequence.zero_count; index++)
+		EXPECT(sequence.zeros[index].offset >= pool + ERX_VIRTIO_GPU_MEM_ENTRY_SIZE ||
+		    sequence.zeros[index].offset + sequence.zeros[index].length <= pool, "no zero over the region entry");
+	EXPECT(covers(sequence.cleans, sequence.clean_count, pool, ERX_VIRTIO_GPU_MEM_ENTRY_SIZE),
+	    "the region entry cleaned with its buffer");
+}
+
+/*
  * Ten rounds over a queue of four, past two laps: each publication's activation and each
  * acquisition's count follow the running index; and a chain placed around a held descriptor
  * links to the descriptor it took, not to the next number.
@@ -199,6 +242,7 @@ main(void)
 {
 	test_publication();
 	test_acquisition();
+	test_region_entry();
 	test_laps();
 	printf("erx_device_sequencer done\n");
 	return (0);

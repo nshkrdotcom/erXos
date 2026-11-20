@@ -454,6 +454,7 @@ whole controller.
 | the layout | the record's regions, each holding one structure, with that structure's writer, or a buffer; each table's region, record count and stride | made once at install from the form's layout and the counts read from the device, and checked then: every region whole granules, ascending, disjoint, inside the memory and below the form's address width |
 | the positions | for each ring the CPU writes, the next position the sequencer publishes at, with a TRB ring's cycle state there; for each structure the device writes in order, the next position the CPU consumes, with the event ring's cycle state there | publications and releases |
 | the holdings | one for each publication the device may still act on: the records it made live, the regions it handed to the device, and the report that ends it | publications begin them, releases end them |
+| the persistent regions | the device's regions a region entry may name, each by its name, with its device address and whole length | added one at a time, each once, after the ledger is made, the same region again adding nothing; kept until it is made again, a reset included |
 | the bindings | the TRB form's: the endpoint each transfer ring is bound to | the commands that bind, and releases |
 | the command's reach | the TRB form's: the endpoints the command in flight closes to new transfers, and the transfer holdings its success retires, fixed at its publication; each endpoint's **state**, `running`, `stopped` or `halted` | a command's publication fixes its reach and its completion ends it; an endpoint's state changes only on what the trusted side did or consumed: the consumed success of the command that binds it, or the publication of a transfer on it, sets `running`; a consumed Stop Endpoint or Reset Endpoint success sets `stopped`; a consumed error event that halts it sets `halted` |
 
@@ -462,6 +463,17 @@ CPU's otherwise. A record is live while a holding holds it. A core reads
 the ledger through accessors (which buffers are free, a ring's
 positions, a queue's live transfers, whether an endpoint is closed and
 its state) and states no writer itself.
+
+A region reaches the ledger by the one transition that adds a
+persistent region: for each queue of the device, at the region's making
+or the queue's install, whichever is later. It refuses, changing
+nothing, a name the ledger already holds, more regions than a record
+has, a length of 0 or one the region entry's length field cannot hold, a range
+past the form's address width, and a range sharing an address with the
+queue's memory, which no region entry may point the device into. A
+queue's ledger is its device's alone and only that device's regions are
+added to it, so a region of another device is a name the ledger does not
+hold.
 
 ### Descriptions
 
@@ -531,8 +543,9 @@ Posting), as virtio-gpu's resource backing holds
   description reaches it as one length of that buffer. It is a record
   of the buffer, in no table, and no core describes it: the name is the
   whole of its input.
-* **What it says.** `R` must be a region of the post's own device; one
-  of another device, or none, fails the post. The entry's address is that region's device address and its
+* **What it says.** `R` must be a persistent region the queue's ledger
+  holds ([The ledger](#the-ledger)); one of another device, or none, is
+  not, and fails the post. The entry's address is that region's device address and its
   length the region's whole length, both derived, its padding fixed at
   0, so the layout has no free place; its encoder refuses a length its
   field cannot hold.
@@ -706,7 +719,7 @@ one pass. A plan passes when every rule holds:
 | lengths | each length lies inside its named buffer from the named offset; an ADMA2 extent is at least one block | a transfer past its buffer; an ADMA2 entry of length 0, which moves 65,536 bytes |
 | reach | the TRB form's: no transfer is published on an endpoint the command in flight closes, or on a `halted` one; a Configure Endpoint that drops an endpoint, alone or with an add, is published only when that endpoint is `stopped`, or `running` with no live transfer; a Disable Slot only when no endpoint of its slot is `running` with a live transfer | a Set TR Dequeue Pointer whose success retires a transfer published after its pointer was fixed, which the controller then runs; a command the specification leaves undefined in the endpoint's state, a drop on a halted endpoint or on a running one that is not idle (xHCI 4.6.6, p. 117; 4.6.8, p. 132), a Disable Slot with a transfer in progress (4.6.4, p. 109); a transfer on a halted endpoint, whose doorbell the controller disables (4.6.8, p. 128), leaving the ledger's state wrong |
 | room | the run fits: as many free positions as it takes, a link it reaches among them; free descriptors and a free available entry; a carried record no holding holds | a live record overwritten, such as a TRB the controller has not fetched or the input context of a command in flight |
-| fills | an `out` segment's bytes go only inside a range a record of the plan names, and no two fills share a byte | the CPU storing into a buffer the device holds; a later fill overwriting part of an earlier, as one region entry's length written over another's address |
+| fills | an `out` segment's bytes go only inside a range a record of the plan names, and no two fills share a byte; a region entry's fill is one entry long and names a persistent region the ledger holds | the CPU storing into a buffer the device holds; a later fill overwriting part of an earlier, as one region entry's length written over another's address; the device sent through a region entry to an address outside the device's regions, another device's region among them |
 | controls | a control step writes an owned register inside the window, with every field its table fixes for a stop or a reset | a core aiming the device through a register |
 | releases | a report is a register its table names, or a snapshot an `acquire` step took of a record its validity covered; a take-back consumes reports from the consumer positions, each releasing what its meaning says, or nothing; every copy reads a buffer released in the same decision, inside it | a buffer reused while the device holds it; a report read twice to release a later holding; a torn record releasing another transfer's holding; a copy of bytes the device still holds |
 
@@ -1542,6 +1555,7 @@ ran.
   | a run longer than the ring's free positions; a command while the input context is held; a chain while its available entry is held | the room test removed |
   | `out` bytes into a buffer no record names, or past the range it names | the fills test removed |
   | two fills sharing a byte of one buffer | the overlap test removed |
+  | a region entry's fill shorter than an entry; a region entry naming a region the ledger does not hold | the entry's length test removed; the region lookup taking any region |
   | a control step setting `USBCMD`'s run bit or `QueueReady` | the controls test removed |
   | a completion for transfer A whose copies read B's buffer; a used element consumed a second time; an event consumed past the consumer cycle state | the releases taken from the core's copies; the consumer position test removed |
   | a copy in a publication; a report of a region the CPU writes; a `report` step reading a used or event ring record in place of an acquisition | the calls test removed; the report target test removed; ring memory allowed as a report target |

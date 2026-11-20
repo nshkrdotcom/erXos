@@ -29,6 +29,11 @@
 #else
 #define SEED_RELEASE_TWICE	false
 #endif
+#ifdef ERX_DMA_SEED_ANY_REGION
+#define SEED_ANY_REGION		true
+#else
+#define SEED_ANY_REGION		false
+#endif
 
 static bool
 power_of_two(uint64_t value)
@@ -138,11 +143,18 @@ table_valid(const erx_dma_layout_t *layout, uint32_t index, uint64_t *end)
 	return (true);
 }
 
+/* The widest device address the form can hold. */
+static uint64_t
+widest_address(const erx_dma_layout_t *layout)
+{
+	return (layout->address_bits == 64 ? UINT64_MAX : (UINT64_C(1) << layout->address_bits) - 1);
+}
+
 static bool
 layout_valid(const erx_dma_layout_t *layout)
 {
 	const erx_dma_pool_t *pool = &layout->pool;
-	const uint64_t widest = layout->address_bits == 64 ? UINT64_MAX : (UINT64_C(1) << layout->address_bits) - 1;
+	const uint64_t widest = widest_address(layout);
 	uint64_t end = 0, last;
 
 	if (!power_of_two(layout->granule) || layout->address_bits == 0 || layout->address_bits > 64 ||
@@ -176,6 +188,51 @@ erx_dma_ledger_reset(erx_dma_ledger_t *ledger)
 	ledger->live = 0;
 	bzero(ledger->positions, sizeof(ledger->positions));
 	bzero(ledger->acquired, sizeof(ledger->acquired));
+}
+
+/*
+ * Whether `region`'s device addresses and the queue's memory share one, from whichever starts
+ * first, so no end is summed.
+ */
+static bool
+meets_the_queue(const erx_dma_layout_t *layout, erx_dma_persistent_region_t region)
+{
+	if (region.address >= layout->device_base)
+		return (region.address - layout->device_base < layout->memory_size);
+	return (layout->device_base - region.address < region.length);
+}
+
+bool
+erx_dma_ledger_add_region(erx_dma_ledger_t *ledger, erx_dma_persistent_region_t region)
+{
+	/* The longest region an entry states: its length field's width, as the generated layout gives it. */
+	const uint64_t longest = UINT64_MAX >> (64 - 8 * sizeof(((erx_virtio_gpu_mem_entry_t *)NULL)->length));
+	const erx_dma_persistent_region_t *const held = erx_dma_ledger_region(ledger, region.name);
+	uint64_t last;
+
+	/* erx_device_region gives the same region again for the same request, so a repeat adds nothing. */
+	if (held != NULL)
+		return (held->address == region.address && held->length == region.length);
+	if (ledger->persistent_count == ERX_DEVICE_REGIONS_MAX)
+		return (false);
+	if (region.length == 0 || region.length > longest)
+		return (false);
+	if (__builtin_add_overflow(region.address, region.length - 1, &last) || last > widest_address(&ledger->layout))
+		return (false);
+	if (meets_the_queue(&ledger->layout, region))
+		return (false);
+	ledger->persistent[ledger->persistent_count++] = region;
+	return (true);
+}
+
+const erx_dma_persistent_region_t *
+erx_dma_ledger_region(const erx_dma_ledger_t *ledger, uint32_t name)
+{
+	for (uint32_t index = 0; index < ledger->persistent_count; index++) {
+		if (SEED_ANY_REGION || ledger->persistent[index].name == name)
+			return (&ledger->persistent[index]);
+	}
+	return (NULL);
 }
 
 const erx_dma_layout_t *

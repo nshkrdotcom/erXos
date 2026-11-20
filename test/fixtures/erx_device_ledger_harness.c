@@ -213,6 +213,78 @@ test_rules(void)
 	EXPECT(check(&ledger, bad, 1, NULL, 0) == ERX_DMA_BREAKS_ROOM, "a chain while its available entry is held");
 }
 
+/*
+ * The persistent regions: added once each, kept over a reset, refused when they repeat a name,
+ * outrun a device's regions, are empty, longer than an entry states, past the address width or
+ * over the queue's memory; and the fills rule over a region entry: one entry long, naming a
+ * region the ledger holds, never two over the same bytes.
+ */
+static void
+test_regions(void)
+{
+	const erx_dma_layout_t layout = split_ring(MEMORY, 0, 32);
+	const erx_dma_description_t whole = descriptor(0, 0, BUFFER, false);
+	const erx_dma_persistent_region_t region = { .name = 7, .address = 0x80000000, .length = 0x3000 };
+	erx_dma_fill_t entries[2] = {
+		{ .kind = ERX_DMA_FILL_REGION_ENTRY, .buffer = 0, .offset = 0, .length = ERX_VIRTIO_GPU_MEM_ENTRY_SIZE,
+		  .region = 7 },
+		{ .kind = ERX_DMA_FILL_REGION_ENTRY, .buffer = 0, .offset = 8, .length = ERX_VIRTIO_GPU_MEM_ENTRY_SIZE,
+		  .region = 7 },
+	};
+	erx_dma_layout_t wide;
+	erx_dma_ledger_t ledger;
+
+	EXPECT(erx_dma_ledger_make(&ledger, &layout), "a ledger");
+	EXPECT(erx_dma_ledger_region(&ledger, 7) == NULL, "no region before one is added");
+	EXPECT(check(&ledger, &whole, 1, entries, 1) == ERX_DMA_BREAKS_FILLS, "a region entry before its region is added");
+	EXPECT(erx_dma_ledger_add_region(&ledger, region), "a region of the device");
+	entries[0].region = 3;
+	EXPECT(check(&ledger, &whole, 1, entries, 1) == ERX_DMA_BREAKS_FILLS,
+	    "a region entry naming a region the ledger does not hold, as another device's");
+	entries[0].region = 7;
+	EXPECT(erx_dma_ledger_add_region(&ledger, region), "the same region again adds nothing");
+	EXPECT(!erx_dma_ledger_add_region(&ledger, (erx_dma_persistent_region_t){ 7, 0x90000000, 0x1000 }),
+	    "a name added again with another address");
+	EXPECT(!erx_dma_ledger_add_region(&ledger, (erx_dma_persistent_region_t){ 8, 0x90000000, 0 }), "an empty region");
+	EXPECT(!erx_dma_ledger_add_region(&ledger, (erx_dma_persistent_region_t){ 8, 0x90000000, UINT64_C(1) << 32 }),
+	    "a region longer than an entry's length states");
+	EXPECT(!erx_dma_ledger_add_region(&ledger, (erx_dma_persistent_region_t){ 8, 0xfffff000, 0x2000 }),
+	    "a region past the address width");
+	EXPECT(!erx_dma_ledger_add_region(&ledger, (erx_dma_persistent_region_t){ 8, MEMORY - 8, 0x1000 }) &&
+	    !erx_dma_ledger_add_region(&ledger, (erx_dma_persistent_region_t){ 8, 0, 0x1000 }) &&
+	    !erx_dma_ledger_add_region(&ledger, (erx_dma_persistent_region_t){ 8, UINT64_MAX - 8, 4 }),
+	    "a region over the queue's memory, or past the address width");
+	for (uint32_t name = 8; name < 8 + ERX_DEVICE_REGIONS_MAX - 1; name++)
+		EXPECT(erx_dma_ledger_add_region(&ledger, (erx_dma_persistent_region_t){ name, 0x90000000 + name * 0x1000, 0x1000 }),
+		    "the device's other regions");
+	EXPECT(!erx_dma_ledger_add_region(&ledger, (erx_dma_persistent_region_t){ 99, 0xa0000000, 0x1000 }),
+	    "more regions than a device has");
+	erx_dma_ledger_reset(&ledger);
+	EXPECT(erx_dma_ledger_region(&ledger, 7) != NULL && erx_dma_ledger_region(&ledger, 7)->address == region.address,
+	    "a reset keeps the persistent regions");
+
+	EXPECT(check(&ledger, &whole, 1, entries, 1) == ERX_DMA_PASSES, "a region entry naming the device's region");
+	entries[0].length = 8;
+	EXPECT(check(&ledger, &whole, 1, entries, 1) == ERX_DMA_BREAKS_FILLS, "a region entry's fill shorter than an entry");
+	entries[0].length = ERX_VIRTIO_GPU_MEM_ENTRY_SIZE;
+	EXPECT(check(&ledger, &whole, 1, entries, 2) == ERX_DMA_BREAKS_FILLS, "two region entries 8 bytes apart");
+	entries[1].offset = ERX_VIRTIO_GPU_MEM_ENTRY_SIZE;
+	EXPECT(check(&ledger, &whole, 1, entries, 2) == ERX_DMA_PASSES, "two region entries end to end");
+
+	/* The queue's memory from a base above 0, at a 64-bit width: each edge, from either side, and a wrap. */
+	wide = split_ring(MEMORY, 0x40000000, 64);
+	EXPECT(erx_dma_ledger_make(&ledger, &wide), "a 64-bit ledger");
+	EXPECT(!erx_dma_ledger_add_region(&ledger, (erx_dma_persistent_region_t){ 1, 0x40000000 - 0x1000, 0x1001 }),
+	    "a region from below the queue into its first byte");
+	EXPECT(!erx_dma_ledger_add_region(&ledger, (erx_dma_persistent_region_t){ 1, 0x40000000 + MEMORY - 1, 0x1000 }),
+	    "a region from the queue's last byte");
+	EXPECT(!erx_dma_ledger_add_region(&ledger, (erx_dma_persistent_region_t){ 1, UINT64_MAX - 8, 0x1000 }),
+	    "a region whose end wraps");
+	EXPECT(erx_dma_ledger_add_region(&ledger, (erx_dma_persistent_region_t){ 1, 0x40000000 - 0x1000, 0x1000 }) &&
+	    erx_dma_ledger_add_region(&ledger, (erx_dma_persistent_region_t){ 2, 0x40000000 + MEMORY, 0x1000 }),
+	    "regions ending at the queue's first byte and starting past its last");
+}
+
 static void
 test_transitions(void)
 {
@@ -360,6 +432,7 @@ main(void)
 {
 	test_layout();
 	test_rules();
+	test_regions();
 	test_transitions();
 	test_state_machine();
 	printf("erx_device_ledger done\n");

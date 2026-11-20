@@ -11,10 +11,12 @@
  * A publication is judged by erx_dma_publication_check, then the sequencer places its run (each
  * description at a free record of its table, chained in the plan's order; each table placed in
  * order at its position), encodes every record whole through its meaning's generated encoder,
+ * and each region entry through its layout's from the ledger's record of the region it names,
  * derives the activation and begins the publication's holding. What it returns is applied as:
  *   1. the zeros, rule 1: every byte of a buffer passing to the device that no fill covers;
- *   2. the fills, the publication's `out` bytes, at the offsets given here;
- *   3. the stores, each record whole;
+ *   2. the fills, the publication's `out` bytes, at the offsets given here; a region entry's
+ *      fill is empty here, since its entry is a store;
+ *   3. the stores, each record whole, region entries included;
  *   4. the cleans, every range passing to the device, then the publish barrier;
  *   5. the activation, one store, and the clean of its line; then the doorbell.
  *
@@ -37,8 +39,10 @@
 #include "erx_device_ledger.h"
 #include "erx_device_rules.h"
 
-/* The widest record the sequencer writes: a descriptor. */
+/* The widest record the sequencer writes: a descriptor or a region entry. */
 #define ERX_DMA_STORE_BYTES_MAX		16u
+/* Each record of a run, its available entry, and a region entry for each fill. */
+#define ERX_DMA_STORES_MAX		(ERX_DMA_HELD_RECORDS_MAX + ERX_DMA_FILLS_MAX)
 /* Rule 1 leaves at most one gap before each fill of a buffer and one after the last. */
 #define ERX_DMA_ZEROS_MAX		(ERX_DMA_HELD_BUFFERS_MAX + ERX_DMA_FILLS_MAX)
 /* Each buffer passing to the device, each record and the available entry. */
@@ -64,7 +68,7 @@ typedef struct erx_dma_sequence {
 	uint32_t		fill_count;
 	erx_dma_range_t		fills[ERX_DMA_FILLS_MAX];
 	uint32_t		store_count;
-	erx_dma_store_t		stores[ERX_DMA_HELD_RECORDS_MAX];
+	erx_dma_store_t		stores[ERX_DMA_STORES_MAX];
 	uint32_t		clean_count;
 	erx_dma_range_t		cleans[ERX_DMA_CLEANS_MAX];
 	erx_dma_store_t		activation;

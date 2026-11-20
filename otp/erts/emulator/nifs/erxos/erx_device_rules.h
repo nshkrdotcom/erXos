@@ -25,7 +25,9 @@
  *             record of each table placed in order unheld, and the holding it makes no larger
  *             than a holding holds;
  *   fills     at most ERX_DMA_FILLS_MAX fills, an out segment's bytes go only inside a range a
- *             record of the publication names, and no two fills share a byte.
+ *             record of the publication names, and no two fills share a byte; a region entry's
+ *             fill is one entry long and names a persistent region the ledger holds, so a
+ *             region of another device, or none, fails.
  * The calls rule holds by the type: a publication carries records and fills and no other step.
  * The bindings, reach and controls rules, and the releases rule over acquired reports, belong
  * to the forms and the sequencer that move onto this check after the split ring.
@@ -57,11 +59,23 @@ typedef struct erx_dma_description {
 	erx_dma_name_t		names[ERX_MEANING_REFERENCES_MAX];
 } erx_dma_description_t;
 
-/* An out segment's `length` bytes, stored into `buffer` from `offset`. */
+/* What a fill stores. */
+typedef enum erx_dma_fill_kind {
+	ERX_DMA_FILL_BYTES,		/* an out segment's bytes, which the effect layer stores */
+	ERX_DMA_FILL_REGION_ENTRY,	/* a region entry, which the sequencer encodes */
+} erx_dma_fill_kind_t;
+
+/*
+ * An out segment's `length` bytes, stored into `buffer` from `offset`. A region entry's fill
+ * names its persistent region and no more (docs/design-device-dma.md, "Descriptions"): the
+ * sequencer encodes the entry from the ledger's record of that region, never a core's values.
+ */
 typedef struct erx_dma_fill {
-	uint32_t	buffer;
-	uint64_t	offset;
-	uint64_t	length;
+	erx_dma_fill_kind_t	kind;
+	uint32_t		buffer;
+	uint64_t		offset;
+	uint64_t		length;
+	uint32_t		region;		/* a region entry's: the persistent region's name */
 } erx_dma_fill_t;
 
 /* What a decision that hands over describes: its records, in the order of the run, and its fills. */

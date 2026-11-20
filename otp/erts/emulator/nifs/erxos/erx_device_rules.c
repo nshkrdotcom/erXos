@@ -46,6 +46,11 @@
 #else
 #define SEED_NO_FILLS_TEST	false
 #endif
+#ifdef ERX_DMA_SEED_NO_ENTRY_LENGTH_TEST
+#define SEED_NO_ENTRY_LENGTH_TEST	true
+#else
+#define SEED_NO_ENTRY_LENGTH_TEST	false
+#endif
 #ifdef ERX_DMA_SEED_NO_OVERLAP_TEST
 #define SEED_NO_OVERLAP_TEST	true
 #else
@@ -148,6 +153,19 @@ room(const erx_dma_ledger_t *ledger, const erx_dma_publication_t *publication, c
 	    erx_dma_publication_buffers(publication, buffers, &count));
 }
 
+/*
+ * The fills rule over a region entry's fill: one entry long, naming a persistent region the
+ * ledger holds. A fill of bytes has no region.
+ */
+static bool
+region_entry_valid(const erx_dma_ledger_t *ledger, const erx_dma_fill_t *fill)
+{
+	if (fill->kind != ERX_DMA_FILL_REGION_ENTRY)
+		return (true);
+	return ((SEED_NO_ENTRY_LENGTH_TEST || fill->length == ERX_VIRTIO_GPU_MEM_ENTRY_SIZE) &&
+	    erx_dma_ledger_region(ledger, fill->region) != NULL);
+}
+
 /* The fills rule over one fill: inside a range a record of the publication names. */
 static bool
 filled_inside_a_name(const erx_dma_publication_t *publication, const judged_t *judged, const erx_dma_fill_t *fill)
@@ -194,7 +212,8 @@ erx_dma_publication_check(const erx_dma_ledger_t *ledger, const erx_dma_publicat
 	if (publication->fill_count > ERX_DMA_FILLS_MAX)
 		return (ERX_DMA_BREAKS_FILLS);
 	for (uint32_t fill = 0; fill < publication->fill_count; fill++) {
-		if (!SEED_NO_FILLS_TEST && !filled_inside_a_name(publication, judged, &publication->fills[fill]))
+		if ((!SEED_NO_FILLS_TEST && !filled_inside_a_name(publication, judged, &publication->fills[fill])) ||
+		    !region_entry_valid(ledger, &publication->fills[fill]))
 			return (ERX_DMA_BREAKS_FILLS);
 		for (uint32_t earlier = 0; earlier < fill && !SEED_NO_OVERLAP_TEST; earlier++) {
 			if (fills_overlap(&publication->fills[earlier], &publication->fills[fill]))
