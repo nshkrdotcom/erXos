@@ -40,6 +40,11 @@ limit xhci_scratchpad_array_align u32 64
 # The error count every endpoint context the NIF builds takes (xhci.c:2495-2501).
 limit xhci_endpoint_error_count u32 3
 
+# A command the controller has not answered within this many milliseconds fails the
+# controller, whose restart resets it (design-usb.md, "The controller process"), an erXos
+# choice.
+limit xhci_command_deadline_ms u32 5000
+
 # The buffer of an interrupt and of a bulk queue block: an interrupt block's four of
 # 1 KiB and a bulk block's two of 32 KiB (design-usb.md, "The TRB ring form"), each an
 # erXos choice.

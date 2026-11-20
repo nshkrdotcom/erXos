@@ -189,6 +189,19 @@ limit usb_hub_multi_tt_alternate u8 1
 enum usb_feature u16
   value endpoint_halt 0
 
+# CLEAR_TT_BUFFER's wValue names the endpoint whose buffered split transaction a
+# translator drops: its number in bits 3:0, the device's address from bit 4, its transfer
+# type from bit 12 and its direction, the endpoint address's IN bit moved up 8 to bit 15
+# (usb_request.c:2259-2260). The type's place is FreeBSD's and is not checked here against
+# USB 2.0, 11.24.2.3.
+limit usb_tt_clear_address_shift u32 4
+limit usb_tt_clear_type_shift u32 12
+limit usb_tt_clear_dir_shift u32 8
+
+# A device's bus address is 7 bits, as that wValue holds it (usb_request.c:2259); 0 is the
+# default address a device answers before Address Device gives it its own (usb.h:76).
+limit usb_address_max u8 0x7f
+
 # A hub's features, its own and its ports' (usb.h:247-264), USB 2.0's set: the link
 # state, L1 and the SuperSpeed port features are not used, since no SuperSpeed hub is
 # driven.

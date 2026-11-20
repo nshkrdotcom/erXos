@@ -7806,6 +7806,26 @@ to the corpus and follow rc
 * [Medium] SSH stage 2, the login facet ([design-ssh.md](docs/design-ssh.md)): the cookie table is keyed by the connection process, but a service behind `erx_facet` sees the facet's forward (a fresh alias, `erx_facet.erl`'s request handling), not the grantee's pid. The stage-2 design must say how the facet learns the connection: carried in the request, or keyed by the facet's forward and its `'DOWN'`.
 * [Medium] SSH, a job's messages through the session's line (`erlang/apps/erx/src/erx_session_line.erl`, `line/4`; [design-ssh.md](docs/design-ssh.md#sessions-ttys-and-shells)): `open_job`'s channel sends the line `{job_input, Bytes}`, `job_eof`, `job_sent` and `job_hangup` in the SSH domain's envelope, none a call, but the line hands its callback only the peer's admitted calls and drops every other message in an envelope, so a job would wait for a `job_written` that never comes. Building `open_job` needs a callback beside `request/4` that gets the peer's other messages, and never a third domain's.
 * [Low] cross-domain call admission, written twice (`erx:call_from/3` in `erlang/apps/erx/src/erx.erl`, which erx_facet and erx_session_line ask; `erx_net_admit:request/2` in `erlang/apps/erx_net/src/erx_net_admit.erl`, over its own `domain/1`): N12 of [design-network-stack.md](docs/design-network-stack.md#requirements) keeps `erx_net/src` from naming erx, so the network grant cannot ask `erx:call_from/3`, and a change to the rule is two edits. One source needs a choice: the runtime seam (`erx_net_runtime`) answering the check, the operation schema's generator emitting both, or N12 relaxed for this one function.
+* [High] USB, CLEAR_TT_BUFFER's wValue (`abi/formats/usb.txt`, `usb_tt_clear_type_shift`; `erx_xhci_core`'s
+  `tt_clear/2`): the endpoint type sits at bit 12 as FreeBSD's `usbd_req_clear_tt_buffer` puts it
+  (`usb_request.c:2259-2260`), which is unchecked against USB 2.0, 11.24.2.3, a document not yet obtained; if USB 2.0
+  puts it at bits 12..11, a bulk endpoint's clear names the wrong buffer or stalls and the bulk reset fails. Read the
+  wValue table, fix the shift if needed, and consider stating wValue as a layout with bits rows. The same text settles
+  whether wIndex is the port when a multi-TT-capable hub runs in single-TT mode (the core sends 1; FreeBSD sends 1 only
+  for a single-TT hub, `usb_request.c:2254-2256`).
+* [Medium] USB, the controller core's EP0 rules (`erx_xhci_core`, [design-usb.md](docs/design-usb.md#the-controller-process)):
+  three choices the design does not name. EP0's control requests wait in order in the core, one posted at a time, and
+  a pipe that leaves `open` answers what waits on it as a post (`set_pipe/3`), so one function's STALL on a composite
+  device answers another's queued request, a pipe reset's CLEAR_FEATURE included, `{error, resetting}`, and that
+  reset fails; keeping the queue across EP0's own reset would avoid it. When EP0's reset after a halt fails, the halted
+  request is answered with its own result and EP0 stays `halted`, against "never a reason the pipe stays unusable"; the
+  abort's rule (fail the controller) may fit better. A NIF refusal of a transfer reaches the caller raw as
+  `{error, full}`, an answer `erx_usb_pipe` does not list. Decide each in the design and pin it in the cases.
+* [Medium] USB, the controller core's exploration (`test/erlang/erx_xhci_core_tests.erl`): at most one caller's post
+  per pipe, so a second bulk transfer left on a halted ring is never explored; the `stopped` answers of a restarted
+  ring always precede the command's completion, an order the design does not fix; answer contents are not checked
+  against what the model delivered; no invariant catches EP0 left halted after a stall (only the trace case does);
+  and bus commands never share the command queue with resets.
 * [Medium] USB, the bus core and the controller core (`erx_usb_bus_core`, [design-usb.md](docs/design-usb.md#ports-hubs-and-devices-the-bus-core)):
   the code differs from the design in two places. A detach while Address Device is in flight releases the
   address-zero turn, which the code derives from the port's state alone, before the controller answers the command,
