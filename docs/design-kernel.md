@@ -4955,7 +4955,11 @@ executors never wait in IPC: they park on their group
 
 **Creating.** `erx_irq_create(budget, resource, kind, selector)`, with
 `ALLOC` on the budget, makes an IRQ object with every right its kind
-allows:
+allows, and returns it with one `erx_msi_message` (`abi/kernel.txt`),
+the doorbell's 64-bit address and 32-bit data, which is zero for
+`ERX_IRQ_SOFT` and `ERX_IRQ_LINE`. The backend builds the message from
+the same allocation that creates the object; no caller derives it from
+the object or from a line number:
 
 * `ERX_IRQ_SOFT` needs no resource; software triggers it alone. It is
   the doorbell of a lane, of a program's channel and of a pipe, and a
@@ -4968,12 +4972,13 @@ allows:
 * `ERX_IRQ_MSI` takes the resource of a PCIe function, carved by its
   requester id ([Resources, DMA windows and
   consoles](#resources-dma-windows-and-consoles)), allocates a free line
-  of the platform's **MSI frame**, and returns, with the object, the
-  doorbell address and the value the function must write: for a confined
-  function, at the I/O address at which every DMA window maps the frame
-  ([DMA and the IOMMU](#dma-and-the-iommu)); for an unconfined one, at the
+  of the platform's **MSI frame**, and returns, with the object, its
+  `erx_msi_message`: the value the function must write, the line's
+  interrupt id in the frame, and the doorbell address: for a confined
+  function, the I/O address at which every DMA window maps the frame
+  ([DMA and the IOMMU](#dma-and-the-iommu)); for an unconfined one, the
   device address the bridge's `dma-ranges` give the frame. The PCIe
-  enumerator writes them into the function's MSI capability, or, for a
+  enumerator writes the message into the function's MSI capability, or, for a
   function routed by MSI-X, the holder's device NIF into the table its
   register window maps
   ([design-pcie.md](design-pcie.md#who-programs-what-and-when)). A function has at most
@@ -7753,7 +7758,7 @@ errors). Calls that may wait are marked with the executor rule.
 | groups | `erx_group_create(budget (ALLOC), parent (CONFIGURE))` returning group, control and status capabilities, with the grant read from the caller's UTCB, `erx_group_configure(group (CONFIGURE))`, `erx_group_info(group (INSPECT))`, `erx_group_take_ready(max)` taking at most `ERX_MSG_WORDS` (63) labels into the caller's UTCB, `erx_park(group_epoch, slot_epoch, deadline)` (executor: allow), `erx_executor_wake(slot)`, `erx_yield` | [design-scheduler.md](design-scheduler.md#kernel-calls) |
 | memory | `erx_mem_create(budget (ALLOC), size, flags)`, `erx_mem_create_contiguous(budget (ALLOC), resource (CARVE), size, limit)`, `erx_mem_create_physical(budget (ALLOC), resource (CARVE), range, attr)`, `erx_mem_dma_addr(mem (PHYS), offset)`, `erx_vm_reserve`, `erx_vm_commit`, `erx_vm_decommit`, `erx_vm_release` (space (MAP)), `erx_space_protect(space (MAP), addr, size, prot)`, `erx_vm_map(space (MAP), addr, size, mem (MAP), offset, prot)`, `erx_image_slice(budget (ALLOC), image (CARVE), first, count)`, `erx_image_map(space (MAP), slice (MAP), entry)`, `erx_mem_create_paged(budget (ALLOC, and CODE with ERX_MEM_CODE), size, flags)`, `erx_mem_supply(mem (SUPPLY), offset, src (READ), src_offset, len)`, `erx_mem_seal(mem (SUPPLY))`, `erx_mem_grow(mem (SUPPLY), size)`, `erx_mem_dirty(mem (SUPPLY), offset, npages)`, `erx_mem_child(parent (READ, CHILD), budget (ALLOC), offset, size)`, `erx_mem_own(child (WRITE), offset, size)`, `erx_mem_copy(dst (WRITE), dst_offset, src (READ), src_offset, len)` | none waits; range calls, supplying, taking ownership and copying proceed in parts; `ERX_MEM_JIT`; `ERX_MEM_INHERIT` lets a fork's copy share a shared object ([Copy-on-write children and copies of spaces](#copy-on-write-children-and-copies-of-spaces)); contiguous memory needs the resource entry of the unconfined device it is for; a paged object maps only once sealed; a sealed object takes no write; growth and store reports are a shared object's, and `SUPPLY`, which no pass between peers carries, is its manager's ([Memory](#memory), [Virtual memory](#virtual-memory)); a mapping keeps its object until it is unmapped or the object is deleted, and `erx_space_protect` moves its protection only beneath its ceiling (K4); a supply or a copy fails with `ERX_ESTALE` once an object it reads or writes is deleted, never with a fault ([Arguments and results](#arguments-and-results)) |
 | IPC | `erx_gate_create(budget (ALLOC))`, `erx_gate_bind(gate (SERVE), thread (CONFIGURE), label)`, `erx_ipc_call(gate (CALL), tag, send_by, reply_by)`, `erx_ipc_send(gate (CALL), tag, send_by)`, `erx_ipc_wait(wait_by)`, `erx_ipc_reply_wait(tag, wait_by)`, `erx_ipc_reply(tag)` | every call but the first two and `erx_ipc_reply` may wait (executor: refuse); messages of up to 63 words and four items in the UTCB; a receive returns the tag and the label ([IPC gates](#ipc-gates)) |
-| IRQ objects | `erx_irq_create(budget (ALLOC), resource (CARVE) or ERX_CAP_NULL, kind, selector)`, `erx_irq_bind(irq (BIND), thread (CONFIGURE) or group (SIGNAL), label)`, `erx_irq_trigger(irq (TRIGGER))`, `erx_irq_ack(irq (ACK))`, `erx_irq_route(irq (CONFIGURE), cpu)` | none waits; an MSI's creation returns its doorbell address and data ([IRQ objects](#irq-objects)) |
+| IRQ objects | `erx_irq_create(budget (ALLOC), resource (CARVE) or ERX_CAP_NULL, kind, selector)`, `erx_irq_bind(irq (BIND), thread (CONFIGURE) or group (SIGNAL), label)`, `erx_irq_trigger(irq (TRIGGER))`, `erx_irq_ack(irq (ACK))`, `erx_irq_route(irq (CONFIGURE), cpu)` | none waits; creation returns the object and an `erx_msi_message`, an MSI's doorbell address and data, zero for the other kinds ([IRQ objects](#irq-objects)) |
 | umtx | `erx_umtx_wait(addr, expected, deadline)` (executor: allow on private memory), `erx_umtx_wake(addr, count)` | [Umtx](#umtx) |
 | resources and DMA | `erx_resource_carve(budget (ALLOC), resource (CARVE), kind, selector)`, `erx_dma_create(resource (CARVE), budget (ALLOC))`, `erx_dma_map(window (MAP), iova, size, mem (MAP), offset, prot)`, `erx_dma_unmap(window (MAP), iova, size)`, `erx_dma_bind(window (BIND), irq (TRIGGER))` | none waits |
 | log and trace | `erx_debug_log(len)`, its text in the caller's UTCB, `erx_log_read(res (TRACE), cursor, window)`, `erx_log_take(res (TRACE), window)`, `erx_trace_read(res (TRACE), cpu, cursor, window)` | none waits; each reader writes whole records into its window and returns the next cursor and the count of records lost ([Console, log and panic](#console-log-and-panic), [Trace ring](#trace-ring)) |

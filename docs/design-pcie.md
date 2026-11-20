@@ -140,7 +140,7 @@ Each property below is built because a named consumer needs it.
 
 | Consumer | Where | What it needs |
 | --- | --- | --- |
-| `qemu-xhci`, PCI `1b36:000d` | QEMU `virt`, on the root bus; the first USB ([design-usb.md](design-usb.md)) | one 64-bit memory BAR placed, one message; it offers MSI and MSI-X |
+| `qemu-xhci`, PCI `1b36:000d` | QEMU `virt`, on the root bus; the first USB ([design-usb.md](design-usb.md)) | one 64-bit memory BAR placed, one message; with its default properties it offers MSI-X alone, 16 vectors in BAR 0, and no MSI capability ([the QEMU facts record](research-qemu-pcie-usb.md#qemu-xhci)), so it takes the MSI-X route |
 | the VL805, PCI `1106:3483` | the Pi 4, bus 1, device 0, behind the BCM2711's root port | bring-up of the bridge, a placed BAR in the 32-bit outbound window, its INTx line, DMA below the bridge's limit, its firmware notification |
 
 Two further consumers shape what is left open, and are served by the
@@ -736,8 +736,10 @@ address, 0 when not placed. Its span, the size rounded up to the page
 size, is derived.
 
 **`erx_pcie_setting`**: `mode` u8 (`off`, `decoding`, `mastering`),
-`route` u8 (`none`, `msi`, `msix`, `intx`), `address` u64 and `data` u32,
-the doorbell and value of the function's one message, zero for the other
+`route` u8 (`none`, `msi`, `msix`, `intx`), and `message`, an
+`erx_msi_message` as `erx_irq_create` returned it
+([design-kernel.md](design-kernel.md#irq-objects)), its address and
+data the doorbell and value of the function's one message, zero for the other
 routes.
 
 **`erx_pcie_bridge`**, what the device service hands the PCIe domain of
@@ -826,7 +828,7 @@ whose MSI capability takes only 32-bit addresses needs a doorbell below
 
 | Step | Who | What |
 | --- | --- | --- |
-| the give, in the holder's creation | the domain library | the function's register windows over its placed BARs' spans, its IRQ object (`ERX_IRQ_MSI`, or `ERX_IRQ_LINE` for the closed bus's line), its DMA window or contiguous memory, its given record; it writes the setting's route from the IRQ object's doorbell and data; the mode stays `off`, and nothing is sent to the PCIe domain |
+| the give, in the holder's creation | the domain library | the function's register windows over its placed BARs' spans, its IRQ object (`ERX_IRQ_MSI`, or `ERX_IRQ_LINE` for the closed bus's line), its DMA window or contiguous memory, its given record; it writes the setting's route and the `erx_msi_message` the IRQ object's creation returned; the mode stays `off`, and nothing is sent to the PCIe domain |
 | the driver's start | the driver, by `pci:open` | the device service sets `decoding`; the enumerator's plan writes the BARs and the MSI address, data and mask if they differ, with the function quiet, then memory space and MSI-X masked |
 | the driver's reset of its device | the driver, by its registers | xHCI's `HCRST`, virtio's status 0; nothing of PCIe; for an MSI-X route the NIF writes the whole table now and reads entry 0's data back, so the table's writes are made before the driver goes on |
 | the driver ready | the driver, by `pci:master` | `mastering`, planned only from `decoding`: MSI live, or MSI-X live, or INTx live; then bus master |
@@ -851,8 +853,15 @@ base already ([DMA](#dma)).
 ### The MSI frame on Fiasco
 
 On erXos's kernel the kernel drives the frame and `ERX_IRQ_MSI` returns
-the doorbell and value ([design-kernel.md](design-kernel.md#irq-objects)).
-On Fiasco the backend implements the same call in the root, over
+the doorbell and value as one `erx_msi_message`
+([design-kernel.md](design-kernel.md#irq-objects)). The domain library
+copies that message into the function's setting and, for an MSI-X
+route, its given record, as the call returned it: the enumerator
+programs MSI from the setting, the holder's NIF programs MSI-X from the
+given record, and nothing derives the message from the object or the
+line. A message's data is the frame's **interrupt id** of the line it
+raises, the number the function writes to the doorbell; the other
+documents cite this section for it. On Fiasco the backend implements the same call in the root, over
 the frame's lines, which Fiasco binds as wired lines:
 
 * **The range.** QEMU `virt`'s platform record names the frame,
@@ -869,8 +878,11 @@ the frame's lines, which Fiasco binds as wired lines:
   `l4_icu_set_mode` with `L4_IRQ_F_POS_EDGE`
   (`fiasco/l4re-core/l4sys/include/icu.h:82`, `:266`), as FreeBSD sets
   every frame line ([design-platforms.md](design-platforms.md#msi-frames)), binds it as `ERX_IRQ_LINE` binds a
-  line, and answers the doorbell, the frame's base plus `0x40`, and the
-  data, the line's interrupt id. Whether the fork's
+  line, and answers the message, the doorbell, the frame's base plus
+  `0x40`, and the data, the line's interrupt id, in the reply's second
+  and third words beside the object in its first (`abi/erx_abi.txt`,
+  `erx_fiasco_irq_create_request`), so the request does not grow.
+  Whether the fork's
   interrupt controller honours the mode for these lines is probe 4's second half
   ([the record's open items](research-qemu-pcie-usb.md#not-settled)).
 * **The address the function writes.** The doorbell answered is the
@@ -1121,7 +1133,8 @@ BAR's PCI range translated by the bridge's window; the IRQ object of
 [The choice](#the-choice); the DMA window, or the contiguous memory
 inside the DMA range; and the given record, which names the function's
 place, each BAR's window and hardware size, and for an MSI-X route the
-doorbell, data, table BAR, offset and size. The setting's route is
+`erx_msi_message` the IRQ object's creation returned, the table BAR,
+offset and size. The setting's route is
 written; the mode stays `off`.
 
 **The hold at boot.** The domain service starts a configured row whose

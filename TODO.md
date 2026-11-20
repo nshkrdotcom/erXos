@@ -909,8 +909,6 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   16 MiB in one kernel call, and the design leaves how that meets the bounded-path rule to the performance watch list.
   Decide it in the design: zero the `erx.dma_pool` once at boot and each range as it returns to the pool, or zero in
   preemptible steps, and keep only the measurement in `docs/todo-performance.md`.
-* [Low] Fiasco backend, `liberx/backend/fiasco/irq.c`: an IRQ object is unbound by a holder allowed in its group (the group's home, its creator or the root: `irq_group_allowed`) and freed with its last handle. Whether a restarted block driver can rebind its line through that is untested.
-* [Medium] Fiasco backend, `liberx/backend/fiasco/vm.c`, `liberx/backend/core/vm_table.c`: the range table sees an object's mapping as uncommitted, so
 * [Medium] erXos's kernel, [design-kernel.md](docs/design-kernel.md#threads) ("The kernel-user page"): the kernel maps
   each thread's kernel-user page "at an address it picks", and nothing keeps that address out of the places the ABI
   fixes in every program's space: the loader's window (`exec_window_base`, `exec_window_bytes`) and the program
@@ -2593,6 +2591,11 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   only in the test that feeds it the other kind of source. Derive the removals from the manifest's
   structure instead, as `Manifest::Edit.without_sessions` already does for session grants: drop a
   configured domain with the services it serves and every facet granting them.
+* [Medium] Fiasco backend, `liberx/backend/fiasco/irq.c:141` (the bind): every bind ends in `l4_irq_unmask`, so a
+  line is unmasked at its first bind, where [design-kernel.md](docs/design-kernel.md#irq-objects) ("Creating") keeps
+  an `ERX_IRQ_LINE` object masked until its driver first acknowledges it. A device that raises its line before its
+  driver is ready then delivers to a sink that has not set up. Unmask a line only at `erx_irq_ack`, with a
+  regression test that binds a pending line and sees no delivery before the first acknowledgement.
 * [Low] Fiasco backend, fault records (`liberx/backend/fiasco/service.c` `service_page_fault`): a
   memory fault's `cause` is Fiasco's access bits (`mr[0] & SERVICE_FAULT_ACCESS`), not the cause
   as the CPU reported it, which [design-kernel.md](docs/design-kernel.md) gives for every fault
@@ -7804,11 +7807,17 @@ to the corpus and follow rc
 * [Medium] SSH, a job's messages through the session's line (`erlang/apps/erx/src/erx_session_line.erl`, `line/4`; [design-ssh.md](docs/design-ssh.md#sessions-ttys-and-shells)): `open_job`'s channel sends the line `{job_input, Bytes}`, `job_eof`, `job_sent` and `job_hangup` in the SSH domain's envelope, none a call, but the line hands its callback only the peer's admitted calls and drops every other message in an envelope, so a job would wait for a `job_written` that never comes. Building `open_job` needs a callback beside `request/4` that gets the peer's other messages, and never a third domain's.
 * [Low] cross-domain call admission, written twice (`erx:call_from/3` in `erlang/apps/erx/src/erx.erl`, which erx_facet and erx_session_line ask; `erx_net_admit:request/2` in `erlang/apps/erx_net/src/erx_net_admit.erl`, over its own `domain/1`): N12 of [design-network-stack.md](docs/design-network-stack.md#requirements) keeps `erx_net/src` from naming erx, so the network grant cannot ask `erx:call_from/3`, and a change to the rule is two edits. One source needs a choice: the runtime seam (`erx_net_runtime`) answering the check, the operation schema's generator emitting both, or N12 relaxed for this one function.
 * [Medium] USB, the bus core and the controller core (`erx_usb_bus_core`, [design-usb.md](docs/design-usb.md#ports-hubs-and-devices-the-bus-core)):
-  a detach while Address Device is in flight releases the address-zero turn, which follows from the port's state,
-  before the controller answers the command, so the next port's reset can start while the detached device's
-  address is still being set. The design's transaction-translator argument wants the turn held until that answer,
-  or the controller to order the next Enable Slot after the failed address's cleanup; the controller core's design
-  decides which.
+  the code differs from the design in two places. A detach while Address Device is in flight releases the
+  address-zero turn, which the code derives from the port's state alone, before the controller answers the command,
+  so the next port's reset can start while the detached device's address is still being set; the design holds the
+  turn with the one Address Device sent and not yet answered, set only by the bus core's request-making function
+  and cleared only by its answer, which is never dropped as stale, and has the controller answer every Address
+  Device (`{error, gone}` when still unposted at the detach) with the failed address's Disable Slot being the
+  teardown's. And the code has no case for `{error, {tt_clear, R}}`: `value/1` throws it as any refusal of the
+  `addressing` step (`erx_usb_bus_core.erl:337-339`, `:386-388`), giving up the addressed device's own port, where
+  the design detaches the translator's hub, whether or not the addressed device is still
+  attached ([The controller process](docs/design-usb.md#the-controller-process), "A failed address"). Bring both
+  to the design, with the seeded faults its Verification table names.
 * [Low] USB, the bus core's enumeration (`erx_usb_bus_core`, [design-usb.md](docs/design-usb.md#ports-hubs-and-devices-the-bus-core)):
   step 3, the language table and the manufacturer, product and serial strings, is not run, so a device's
   inspection record has no strings; a failure there fails nothing, so adding it is a step between `device` and
@@ -9282,7 +9291,16 @@ document's "residual risks accepted" paragraph.
 * [Medium] system manifest, `abi/manifest.txt` ([design-abi.md](docs/design-abi.md#devices-and-partition-windows),
   [design-pcie.md](docs/design-pcie.md#dma)): no `dma_limit` in `erx_mf_device`, no closed flag with its listed places
   and pins on a bridge's row, and no `msi_frame` platform part on QEMU `virt`. Add them, with the packer's copies from
-  the platform record; the `dt`-case item under Bugs covers `base`, `size` and `line`.
+  the platform record; the `dt`-case item under Bugs covers `base`, `size` and `line`. `config/platforms/qemu-virt.json`
+  has no `msi_frame` record either, which [The MSI frame on Fiasco](docs/design-pcie.md#the-msi-frame-on-fiasco)
+  relies on: add it with the measured frame, base `0x08020000`, interrupt ids 80 to 143
+  ([the QEMU facts record](docs/research-qemu-pcie-usb.md#the-msi-frame)).
+* [Medium] liberx, `liberx/backend/api.h` (`erx_irq_create`) and `liberx/backend/fiasco/irq.c`: the call returns only
+  the object and the Fiasco backend refuses `ERX_IRQ_MSI` (`irq.c:189`). Return the `erx_msi_message` of
+  `abi/kernel.txt` beside the object, zero for soft and line, in the reply's second and third words on Fiasco
+  (`abi/erx_abi.txt`, `erx_fiasco_irq_create_request`), and build `ERX_IRQ_MSI` over the frame's lines as
+  [The MSI frame on Fiasco](docs/design-pcie.md#the-msi-frame-on-fiasco) says, keeping its refusal of a doorbell
+  outside the function's DMA range.
 * [Medium] USB, `abi/inspection.txt` ([design-usb.md](docs/design-usb.md#failure-handling)): no `usb` kind. Declare
   `[usb, Controller]`, `[usb, Controller, ports, Route]`, `[usb, Controller, devices, Route]` and the other paths
   Failure handling lists, shown under `/proc/usb`.

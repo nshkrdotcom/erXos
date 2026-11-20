@@ -935,7 +935,9 @@ layout erx_fiasco_machine_end_request wire_le 8 24
   field res u64 8
   field how u64 16
 
-# erx_irq_create: the record is charged to budget, as every create's.
+# erx_irq_create: the record is charged to budget, as every create's. The
+# reply's first word is the IRQ object, its second and third the
+# erx_msi_message's address and data, zero for every kind but msi.
 layout erx_fiasco_irq_create_request wire_le 8 32
   field caller u64 0
   field kind u64 8

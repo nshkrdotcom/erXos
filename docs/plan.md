@@ -2075,8 +2075,10 @@ NIF glue, about 3,000 lines of C17 beside the generated accessors; and
 about 5,000 lines of Erlang for the virtio drivers at a few hundred lines
 each (sDDF's C drivers run 400 to 700 lines, and binary matching is no
 longer), the PCIe enumerator with its fuzz target, the device service's
-placement and `/dev`, the supervisors and the tests. The PCIe enumerator
-and the MSI frame's driver are the kernel part's.
+placement and `/dev`, the supervisors and the tests. [Track
+U](#track-u-usb)'s part (b) builds the PCIe enumerator and the MSI
+frame's use on Fiasco first; M9's kernel part moves them onto erXos's
+kernel, whose kernel drives the frame.
 
 **Exit criteria, on Fiasco (1b-E).** A storage domain killed under
 load restarts with no acknowledged write lost; a littlefs failure ends the
@@ -2539,14 +2541,22 @@ the VL805's internal hub types into the kiosk.
   ([design-usb.md](design-usb.md#verification)).
 * **(b) The PCIe domain and `qemu-xhci` on QEMU `virt`, on
   Fiasco.** The PCIe enumerator with BAR assignment in a `pcie` domain;
-  in the backend, `ERX_IRQ_MSI` over the lines of QEMU `virt`'s MSI
-  frame and the give of a PCIe function on a configured row; the Phase 1
-  manifest check accepting one `pcie` domain
+  the three PCIe facets, `pci_bus`, `pci` and `pcie`, and the device
+  service's PCIe process ([design-pcie.md](design-pcie.md#facets));
+  `erx_domain:await_grant/2`; the domain library's intake of the
+  placing report, `erx_dom_pci_report`, with the catalogue's
+  `firmware_lost`; the hold of `pci` rows at boot;
+  the SVD files and the generator's extensions for xHCI, ECAM and the
+  bridge's configuration-space views; the edits these require of
+  [design-system.md](design-system.md); in the backend, `ERX_IRQ_MSI`
+  over the lines of QEMU `virt`'s MSI frame, returning its
+  `erx_msi_message`, and the give of a PCIe function on a configured
+  row; the Phase 1 manifest check accepting one `pcie` domain
   ([design-usb.md](design-usb.md#the-phase-1-part)); then the TRB ring
   form, the controller, the bus, hubs, HID into a display domain and
   mass storage into drives. It needs [1b-E](#m9-a-driver-is-an-erlang-process)
   and a display domain that reads input files; `qemu-xhci` interrupts
-  by MSI on Fiasco as on erXos's kernel
+  by MSI-X on the frame on Fiasco as on erXos's kernel
   ([design-usb.md](design-usb.md#interrupts)).
 * **(c) The BCM2711 bridge and the VL805 on the Pi 4, on Fiasco.**
   The bridge driver with the vendor's bring-up from the clean-room facts

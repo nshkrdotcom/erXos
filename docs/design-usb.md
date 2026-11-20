@@ -221,13 +221,16 @@ evidence each part rests on:
 help` lists `qemu-xhci`, `nec-usb-xhci`, `usb-ehci`, the ICH9 and PIIX
 UHCIs and `pci-ohci`, and no memory-mapped one (probe of the facts
 record, QEMU 11.1.3). `qemu-xhci` is PCI `1b36:000d` with one 64-bit
-memory BAR, MSI and MSI-X, four USB 2 and four USB 3 ports; QEMU's
+memory BAR, MSI-X alone with its default properties (16 vectors in BAR
+0, no MSI capability; [the QEMU facts
+record](research-qemu-pcie-usb.md#qemu-xhci)), four USB 2 and four USB
+3 ports; QEMU's
 documentation calls xHCI "the only controller you need"
 (`docs/system/devices/usb.rst:12-26`). With `usb-kbd`, `usb-tablet` and
 `usb-storage` attached, the keyboard and the tablet enumerate at 480 Mb/s
 and the stick at 5000 Mb/s. Its capability registers are read at run
-time. The machine has an ECAM PCIe bridge and an MSI frame, written
-with the number of the line to raise at offset `0x40`, which the harness
+time. The machine has an ECAM PCIe bridge and an MSI frame
+([design-pcie.md](design-pcie.md#the-msi-frame-on-fiasco)), which the harness
 gives TCG and HVF alike
 ([design-platforms.md](design-platforms.md#msi-frames)).
 
@@ -516,7 +519,7 @@ file system. Its release script, `usb`, holds the base every domain boots and
 
 | Platform | Controller | Given as | Interrupt | DMA | The USB domain is |
 | --- | --- | --- | --- | --- | --- |
-| QEMU `virt` | `qemu-xhci`, PCI `1b36:000d` on the root bus | a PCIe function by place, through the PCIe domain | one MSI on the MSI frame | confined by the IOMMU on erXos's kernel, which covers the root bus; unconfined on Fiasco, whose harness starts no IOMMU | outside the trusted base on erXos's kernel; in it on Fiasco |
+| QEMU `virt` | `qemu-xhci`, PCI `1b36:000d` on the root bus | a PCIe function by place, through the PCIe domain | one message on the MSI frame, by MSI-X | confined by the IOMMU on erXos's kernel, which covers the root bus; unconfined on Fiasco, whose harness starts no IOMMU | outside the trusted base on erXos's kernel; in it on Fiasco |
 | Raspberry Pi 4 | the VL805, PCI `1106:3483` at bus 1, device 0, function 0 behind the `brcm,bcm2711-pcie` bridge | a PCIe function by place, with its INTx line as one unit | the bridge's INTx line for that position | unconfined; the board has no IOMMU | in the trusted base, as every Pi 4 DMA device's domain is ([design.md](design.md#trust-placement)) |
 
 A development build's manifest may put the controller in another domain,
@@ -692,12 +695,12 @@ The bridge is ECAM (`pci-host-ecam-generic`), as
 assigns BARs before erXos on QEMU `virt`, since no firmware runs, so the
 enumerator assigns `qemu-xhci`'s BAR 0 from the bridge's 32-bit memory
 window in the tree's `ranges`, aligned to its size. The give carves it as
-the register window, creates one MSI on the MSI frame, whose address
-and data the enumerator programs into the function's MSI capability at
-the holder's `open`, and,
-on erXos's kernel, the DMA window on the function's IOMMU stream. Which
-of MSI and MSI-X the enumerator programs is the PCIe design's; the
-driver needs one vector, since it uses one interrupter.
+the register window, creates one message on the MSI frame, which the
+given record carries since the function offers MSI-X alone, and,
+on erXos's kernel, the DMA window on the function's IOMMU stream; the
+holder's NIF writes the message into table entry 0 after the driver's
+reset, as [design-pcie.md](design-pcie.md#who-programs-what-and-when)
+says. The driver needs one vector, since it uses one interrupter.
 
 ### The BCM2711 bridge
 
@@ -954,20 +957,19 @@ with this design's probes, each with what settles it:
 
 ### Interrupts
 
-**QEMU `virt`: MSI.** On erXos's kernel the kernel drives the MSI
-frame and the give creates the MSI as an IRQ object on it
-([design-platforms.md](design-platforms.md#msi-frames)). Fiasco
-uses MSI too, and not the function's INTx line: QEMU's bus is not
-closed, since the harness can put any function at any position, and an
-MSI over the frame is the same call above `liberx` in both phases. On
-Fiasco the backend implements that call: `erx_irq_create` of
-`ERX_IRQ_MSI`, in the root, takes a free line of the range the frame
-serves, as the platform record names it, makes a Fiasco IRQ object
-bound to that line through Fiasco's interrupt controller, and answers
-the doorbell address, the frame's base plus `0x40`, and the data, the
-line's number. The enumerator and the device service see exactly the
-MSI they see on erXos's kernel, so nothing above `liberx` changes
-between the phases. The frame's range on QEMU `virt`, and whether
+**QEMU `virt`: a message on the MSI frame.** The give creates the
+controller's one message as an `ERX_IRQ_MSI` IRQ object on the
+platform's MSI frame, on erXos's kernel and on Fiasco alike.
+`qemu-xhci` offers MSI-X alone, with no MSI capability ([the QEMU facts
+record](research-qemu-pcie-usb.md#qemu-xhci)), so it takes the MSI-X
+route and the holder's NIF writes that message into its table
+([design-pcie.md](design-pcie.md#the-choice)). Fiasco uses the frame
+too, and not the function's INTx line: QEMU's bus is not closed, since
+the harness can put any function at any position, and a message over
+the frame is the same call above `liberx` in both phases. How each
+kernel makes the call and its message is design-pcie.md's
+([The MSI frame on Fiasco](design-pcie.md#the-msi-frame-on-fiasco)),
+so nothing above `liberx` changes between the phases. The frame's range on QEMU `virt`, and whether
 Fiasco binds its lines with the edge trigger an MSI needs, are probe 4 ([the QEMU facts record](research-qemu-pcie-usb.md#probe-numbering)).
 
 **Raspberry Pi 4: the INTx line of a closed bus.** The Pi 4 has no MSI
@@ -1217,9 +1219,10 @@ the step sets its deadlines. Its state is a map of hubs, the root hub among them
 with its ports and its pending change set, and of devices, each with its
 place in the tree (the route of port numbers from the root), its speed,
 its reference, its enumeration state, its configuration and its
-functions; the **address-zero turn**, the one port, or none, between the
-start of its reset and its device's address, follows from the ports'
-states.
+functions; the **address-zero turn**, held from the start of one port's
+reset until the controller answers its device's Address Device, follows
+from the ports' states and from the one Address Device sent and not yet
+answered, if any.
 
 Each port is in one of these states. A **connection change** reported
 for a port in any state first detaches the port's occupant, if it has
@@ -1239,7 +1242,7 @@ only the other ways out, and its times and counts are limits of
 | `waiting` | settled; waiting for the address-zero turn, in arrival order | the turn: `resetting` |
 | `resetting` | port reset issued, holding the turn; deadline `usb_reset_deadline_ms` | reset done with the port enabled: `recovering`; reset done with the port disabled: `disabled`; the deadline or a speed the controller cannot run: `disabling` |
 | `recovering` | FreeBSD's reset recovery, `usb_reset_recovery_ms`, holding the turn | the deadline: `enumerating` |
-| `enumerating` | the device is addressed, read and configured; the turn is released when the address is assigned or the attempt fails | configured: `running`; any failure: `disabling` |
+| `enumerating` | the device is addressed, read and configured; the turn passes to its Address Device when that is sent, and is released at that command's answer | configured: `running`; any failure: `disabling` |
 | `disabling` | given up while its device may still be enabled: the occupant detached, the port being disabled at its hub; holding the turn if it, or a port below the hub on it, held it when given up | the hub's answer: `disabled` |
 | `running` | the device's functions run | the port reported disabled by its hub: detach, `disabled`; a hub whose control pipe fails: `disabling` |
 | `disabled` | given up; the port's last failure and its step are kept | none: only a connection change, whose settled port then waits for its attempts to allow another ([What a device can make the domain spend](#what-a-device-can-make-the-domain-spend)) |
@@ -1256,13 +1259,30 @@ cleared, as `usbd_req_reset_port` does (`usb_request.c:805-863`).
 
 The **address-zero turn** keeps one device at a time in the default
 state, where every device answers address zero: a port takes the turn
-when it starts its reset and gives it back when the controller has
-assigned its device's address or the attempt has failed, and the next
-`waiting` port takes it. The turn is no field of its own: the port that
-holds it is the one in `resetting`, `recovering`, `enumerating` before
-its Address Device is answered, or `disabling` after holding it, and a `waiting` port is granted it only
-when no port is in those states, so a port that leaves them by any path,
-its hub's detach included, has given the turn back. On xHCI the controller sends SET_ADDRESS itself
+when it starts its reset, the turn passes to its device's Address
+Device when that command is sent, and it is given back when the
+controller answers that Address Device, whatever the answer and whether
+or not its device is still attached; the next `waiting` port takes it.
+Until the command is sent a port holds the turn: the one in
+`resetting`, `recovering`, `enumerating` before its Address Device, or
+`disabling` after holding it. From then on the command holds it: the
+state records the one Address Device sent and not yet answered, a fact
+set only by the bus core's one function that makes requests, as it
+makes that command, and cleared only by that command's answer. A
+`waiting` port is granted the turn only when no port is in those states
+and no Address Device is recorded. So a port that leaves those states by
+any path, its hub's detach included, has given the turn back, and no
+port path takes part in giving back the command's: a detach after the
+command is sent applies at once, invalidating the device's reference,
+functions and places, and leaves the turn with the command. The
+controller answers every Address Device ([The controller
+process](#the-controller-process), "A failed address"), and a command
+past its 5 s deadline fails the controller, whose restart restarts the
+bus, so the turn cannot hang. The answer is matched against the record
+before the device's reference is looked up, so it is never dropped as
+stale: for a detached device it gives back the turn and does nothing
+more, except that `{error, {tt_clear, _}}` still detaches the
+translator's hub. On xHCI the controller sends SET_ADDRESS itself
 during Address Device (xHCI 4.3.4, p. 89); the turn still serializes
 the resets, since two devices reset behind one hub would both answer
 address zero.
@@ -1277,8 +1297,9 @@ data; a device passes each step once, so
 the two name one request, and an answer is taken only while the device
 is at the step it names. An answer repeated, or arriving after its step
 was left, is stale by construction and dropped, as a late answer for a
-detached device is ([Concurrency](#concurrency)), and the bus core keeps
-no count of what is in flight. The steps:
+detached device is ([Concurrency](#concurrency)), except the Address
+Device's answer, which gives back the turn; the bus core keeps no count
+of what is in flight but that one Address Device. The steps:
 
 1. **Address.** Enable a slot, then address it (Address Device with the
    block-set-address flag clear) from the parameters the bus core names:
@@ -1702,8 +1723,10 @@ its own 5 s fails the controller, as a command does.
 
 **A failed address.** An Address Device that fails is cleaned up by the
 controller core before the bus core hears of it. The core first
-disables the slot, the recovery xHCI gives for a USB Transaction Error
-there (4.6.5, p. 114). When the device sits behind a transaction
+tears the slot down, the teardown below, whose Disable Slot is the
+recovery xHCI gives for a USB Transaction Error there (4.6.5, p. 114);
+there is one path to a disabled slot, not one for a failed address and
+another for a detach. When the device sits behind a transaction
 translator, the `tt` parameter of its Address Device, and the code is a
 USB Transaction Error, the core then sends CLEAR_TT_BUFFER to the
 translator's hub on that hub's EP0 for the default control endpoint at
@@ -1718,10 +1741,21 @@ enumeration reaches the translator before its buffer is clear. A
 CLEAR_TT_BUFFER that fails or passes its deadline answers `{error,
 {tt_clear, Reason}}` instead, and the bus core detaches the hub whose
 translator it is, as it detaches any device whose control pipe fails,
-with every device behind it; its port waits for a connection change or
+with every device behind it, whether or not the addressed device is
+still attached; its port waits for a connection change or
 a controller restart. On the Pi 4 that hub is the VL805's internal one,
 so its USB 2 devices stay away until the controller's `restart`, which
 the port's inspection record shows with the reason.
+
+The controller answers every Address Device, since its answer is what
+gives back the address-zero turn ([Ports, hubs and devices: the bus
+core](#ports-hubs-and-devices-the-bus-core)). One still unposted when
+the bus core detaches its device is answered `{error, gone}` and never
+posted. One already posted is answered once it completes: with the
+address on success, the teardown of the detached device's slot
+following; after the cleanup above on failure. Its 5 s deadline holds
+either way, so a command the controller never completes fails the
+controller as any command does.
 
 **Teardown** of a detached device's slot is the core's alone, as is the
 reset of a pipe whose function ended: for each
@@ -2360,8 +2394,14 @@ allows, and a value above 15 refuses the interface.
 
 ### The SCSI subset
 
-The transport sends these commands and no others, each built in
-`erx_blk_write` from the table of `abi/formats/usb.txt`:
+A BOT function sends these commands and no others, the first of them at
+its unit's start, before any medium or block transport exists. `erx_blk_write`
+builds each one's CBW from the table of `abi/formats/usb.txt`, and
+`erx_usb_bot_core` decodes every answer it decides on: the CSW, Get Max
+LUN's byte, and the data of INQUIRY, REQUEST SENSE and READ
+CAPACITY(10) and (16). The split is SD's: `erx_blk_write` builds every
+command word the card receives and `erx_blk_sd_card` parses every
+response ([design-storage.md](design-storage.md#the-sd-host-controller)).
 
 | Command | When | What it decides |
 | --- | --- | --- |
@@ -2610,8 +2650,14 @@ a control transfer's answer, a command's completion, a deadline, a hub's
 bitmap or a function's end. A detach that arrives while an enumeration
 step's transfer is in flight is applied at once; the transfer's late
 answer names a device reference the state no longer holds and is
-dropped, and the controller answers it `gone` anyway, since the
-reference left its map in the same detach.
+dropped. The controller answers `gone` what it has not yet posted,
+since the reference left its map in the same detach; an Address Device
+it has already posted it answers when that command completes
+([The controller process](#the-controller-process), "A failed
+address"). That answer is the one never dropped: it gives back the
+address-zero turn whether or not its device is still attached
+([Ports, hubs and devices: the bus
+core](#ports-hubs-and-devices-the-bus-core)).
 
 Function processes run concurrently and share nothing; they meet only
 in the controller's mailbox and, for input, in their own number's stream,
@@ -2705,9 +2751,9 @@ targeted traces carry the longer sequences.
 
 | Test | Seeded fault that must fail it |
 | --- | --- |
-| `erx_usb_bus_core`, explored to a fixed point over a root hub of two ports, one external hub of two ports and devices of one and two functions, with references and slots drawn from small sets; then traces of 1,000 attach and detach cycles on one port, a connection storm, a hub detached during its child's enumeration, a chain of six hubs and four connects on one port within a minute; over-current changes read on a root port | a connection change with the port still connected not detaching the occupant; the address-zero turn released at the reset's end instead of the address; a port's new state dropping its occupant without detaching it; a port given up after its address keeping the turn; a hub given up handing on the turn a port below it held; a hub six tiers below the root powering its ports; a full-speed device's EP0 left at 8 bytes when its descriptor says otherwise; a hub configured without its hub descriptor; a device's first request sent at its address answer, without the 10 ms settle; the step an answer echoes ignored, so a stale answer is taken at the step awaiting its kind; a function restarted before its pipes' resets answer, so the new instance meets a transfer its predecessor posted; the attempt throttle removed; a port's attempts never leaving the window; an over-current change logged on every change; the over-current log not rearmed by an attempt |
+| `erx_usb_bus_core`, explored to a fixed point over a root hub of two ports, one external hub of two ports and devices of one and two functions, with references and slots drawn from small sets; then traces of 1,000 attach and detach cycles on one port, a connection storm, a hub detached during its child's enumeration, a chain of six hubs and four connects on one port within a minute; over-current changes read on a root port | a connection change with the port still connected not detaching the occupant; the address-zero turn released at the reset's end instead of the address; a port's new state dropping its occupant without detaching it; a port given up after its address keeping the turn; the turn released at a detach before the address answer, so a second device is reset while the first's Address Device is outstanding; an Address Device answer for a detached device dropped as stale, so the turn is never given back; a hub given up handing on the turn a port below it held; a hub six tiers below the root powering its ports; a full-speed device's EP0 left at 8 bytes when its descriptor says otherwise; a hub configured without its hub descriptor; a device's first request sent at its address answer, without the 10 ms settle; the step an answer echoes ignored, so a stale answer is taken at the step awaiting its kind; a function restarted before its pipes' resets answer, so the new instance meets a transfer its predecessor posted; the attempt throttle removed; a port's attempts never leaving the window; an over-current change logged on every change; the over-current log not rearmed by an attempt |
 | `erx_usb_hub_core`, its machine explored to a fixed point for hubs of 1, 2, 7, 8 and 15 ports over every report of the port count's length with each port bit and the bits around it, a short report and a failed transfer; its decoders on written cases | a change report sent with the next transfer already posted; `handled` taken without posting the next transfer; the bits above the port count kept; a report shorter than the port count taken as naming nothing |
-| `erx_xhci_core`'s pipe machine, teardown, control abort and failed address, explored to a fixed point over every queue state the NIF reports and every answer of each step, EP0 and other endpoints, behind a translator and not | `reset_pipe` issuing Reset Endpoint on a stopped queue; a stopped EP0 dropped and added; the abort answered after Stop Endpoint alone, so the next request finds EP0 stopped; the translator's clear skipped; Disable Slot issued before the stops answer |
+| `erx_xhci_core`'s pipe machine, teardown, control abort and failed address, explored to a fixed point over every queue state the NIF reports and every answer of each step, EP0 and other endpoints, behind a translator and not | `reset_pipe` issuing Reset Endpoint on a stopped queue; a stopped EP0 dropped and added; the abort answered after Stop Endpoint alone, so the next request finds EP0 stopped; the translator's clear skipped; Disable Slot issued before the stops answer; an Address Device whose device detached while it was posted left unanswered |
 | `erx_device_trb`, in C on the host, explored to a fixed point over rings of six TRBs and a link, two slots, two queues each, one buffer a queue, events of every code and kind, stops, resets, dequeue moves, drops and disables, so ring wrap and slot reuse are reachable; then traces of 100,000 transfers with random completions and 1,000 slot reuses; then under AddressSanitizer | a short data-stage event treated as completing, so the status event names no transfer and breaks the form; the stop span narrowed to the oldest transfer's first TRB and the enqueue position, so a completion followed by its forced event breaks the form; the enqueue position left on the link after a post that ends before it; Disable Slot accepted with a queue running; the TRB pointer's range check removed |
 | the publication, in C on the host, against a model controller that takes a TRB the moment its cycle bit matches | the first TRB's cycle word written with the other TRBs |
 | the event ring's bound | the forced stop event left out of the model's sources |
@@ -2744,8 +2790,8 @@ Erlang ones run on the host's stock OTP, as the FAT decoders do:
   the root hub's port status and change words;
 * `erx_hid_desc`, the report descriptor;
 * `erx_hid_core`, a report against a layout taken from the corpus;
-* the BOT core's CSW and Get Max LUN answer, and the INQUIRY, READ
-  CAPACITY(10) and (16) and REQUEST SENSE decoders;
+* `erx_usb_bot_core`'s decoders, all of them: the CSW, Get Max LUN's
+  answer, INQUIRY, READ CAPACITY(10) and (16) and REQUEST SENSE;
 * `erx_xhci_core`'s decoders of completion codes and command answers;
 * `erx_device_trb`'s completion, in C, over a fuzzed event ring and
   fuzzed output-context address byte: the one C reader of memory a USB

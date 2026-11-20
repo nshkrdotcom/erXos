@@ -129,6 +129,14 @@ enum irq_kind u32
   value line 1
   value msi 2
 
+# What erx_irq_create returns beside an msi object, built from the same
+# allocation: the doorbell address the function writes and the value it
+# writes there, the frame's interrupt id; zero for soft and line.
+layout erx_msi_message wire_le 8 16
+  field address u64 0
+  field data u32 8
+  padding 12 4
+
 # An executor's class and state, and what a group's status page mirrors for its
 # runtime (docs/design-scheduler.md, "The shared areas").
 
