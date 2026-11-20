@@ -9285,9 +9285,10 @@ document's "residual risks accepted" paragraph.
   domain library (`dom_boot_view.c`, `boot_devices`) lands with it.
 * [Medium] system manifest, `abi/manifest.txt` ([design-usb.md](docs/design-usb.md#what-the-usb-domain-claims)): no
   `usb` device role and no `drive` field in `erx_mf_window`. Add both, the field set exactly when the window's device
-  has the `usb` role, and property 9 of the manifest check: at most `usb_drives_max` drives per controller, each
-  (device, drive, partition) once, and a release build's USB domain holding its controller's unit alone and serving
-  no file system.
+  has the `usb` role, and the manifest check's properties 8 and 9 as
+  [design-system.md](docs/design-system.md#the-manifest) states them: at most `usb_drives_max` drives per controller,
+  each (device, drive, partition) once, and a release build's USB domain holding its controller's unit alone and
+  running no file system.
 * [Medium] system manifest, `abi/manifest.txt` ([design-abi.md](docs/design-abi.md#devices-and-partition-windows),
   [design-pcie.md](docs/design-pcie.md#dma)): no `dma_limit` in `erx_mf_device`, no closed flag with its listed places
   and pins on a bridge's row, and no `msi_frame` platform part on QEMU `virt`. Add them, with the packer's copies from
@@ -9318,16 +9319,13 @@ document's "residual risks accepted" paragraph.
 * [Low] USB, `abi/formats/evdev.txt` ([design-usb.md](docs/design-usb.md#the-usage-table)): the key codes FreeBSD's
   `evdev_usb_scancodes` maps that the file lacks (keypad keys, F13 to F24, `KEY_102ND`, `KEY_COMPOSE` and the others).
   Add them, since the file holds every code erXos reads.
-* [Medium] docs, design-system.md: the edits design-usb, design-pcie and design-board-sensors require of it are not
-  made. A `usb` device role and a `drive` field in `erx_mf_window` with manifest property 9
-  ([design-usb.md](docs/design-usb.md#what-the-usb-domain-claims)); a USB device as a sub-device of its controller's
-  unit that enters no catalogue; the bridge's `pci_bus:firmware/1` request made through
-  `erx_domain_lib:pci_firmware/1`, marking `firmware_lost` at a timeout
-  ([design-usb.md](docs/design-usb.md#the-vl805s-firmware)); the device service's PCIe process, its core and
-  monitors, the hold of `pci` rows at boot, `/dev`'s PCIe fields and `erx_domain:await_grant/2`
-  ([design-pcie.md](docs/design-pcie.md#facets)); and the device service's `firmware_rows/1` and `firmware_read/1`
-  through its firmware worker, the sensor driver among its callers
-  ([design-board-sensors.md](docs/design-board-sensors.md#concurrency-and-failure)).
+* [Low] docs, design-system.md "The manifest", property 8: the facet grantee rules of
+  [design-pcie.md](docs/design-pcie.md#facets) ("The manifest") are not among the check's properties: only the PCIe
+  domain holds `pci_bus`, only the system domain holds `pcie`, and a domain holds a `pci` facet exactly when it holds a
+  `pci` device, its scope those devices. State them beside the driver-control facet's rule.
+* [Low] docs, design-system.md "Devices": `erx_domain_lib:devices/0` gives each entry's `role` as `block`, `net` or
+  `none`, while the manifest's `mf_device_role` (`abi/manifest.txt`) has twelve values, `network` rather than `net`,
+  and gains `usb` with the manifest item above. Say which roles `devices/0` reports, from the one table.
 * [Medium] docs, design-live.md "Overlays": two loads into one domain other than the system domain at once
   have no stated outcome: whether the code service holds a second candidate overlay until the first is
   published or discarded, or refuses it, so that no published overlay is written from a stale base. State it

@@ -262,10 +262,16 @@ manifest holds:
   given by unit ([Devices](#devices)), each by device-tree path or, for a
   PCIe function, by its place on a bus, with its compatible string, its
   mark as confined or unconfined if it masters DMA, the size of its memory
-  if it is unconfined, and its `hostile` mark, which the platform's
-  placement table sets
-  ([design-platforms.md](design-platforms.md#what-the-manifest-says)); its
-  partition windows, by role in the medium layout; its **facets**, each
+  if it is unconfined, and its `hostile` mark and its role, which the
+  platform's placement table sets
+  ([design-platforms.md](design-platforms.md#what-the-manifest-says)), a
+  USB host controller's role being `usb`; its
+  partition windows, by role in the medium layout, and on a `usb`
+  device's row a `fat` window whose `drive` field names one of that
+  controller's drives, `da0` to `da3`, and whose partition is the
+  primary entry to serve on whatever medium the drive holds
+  ([design-usb.md](design-usb.md#mass-storage-reaches-the-file-servers));
+  its **facets**, each
   naming a service that the system release or another configured domain
   serves, with the grant's limits; and its **introductions**, each naming
   another configured domain.
@@ -288,7 +294,9 @@ manifest holds:
   packaging design's ([design-apps.md](design-apps.md#packaging)).
 * **The boot order**, the configured domains in an order in which every
   domain follows every configured domain whose service its facets name,
-  which the check computes, breaking ties by stable name order.
+  and every row holding a `pci` device follows the PCIe domain
+  ([design-pcie.md](design-pcie.md#the-catalogue-and-gives)), which the
+  check computes, breaking ties by stable name order.
 * **In a development build only**, the native programs of a partial boot
   ([Boot](#boot)).
 
@@ -323,7 +331,7 @@ content, so both readers have a fuzz target
 | --- | --- |
 | the root-task entry, in C | `root_memory`, which it compares with the root budget before anything else; the shares of `system` and `users`; the system principal's budget; the sizes of the domain library's tables; a development build's partial boot |
 | the domain service | the configured domains in the boot order, their restart intensities, `required` and rescue marks, facets and introductions; `system_lane`, `system_queue`, `peer_held` and `system_reserve`; the host name; the vault's sealing backend, which it passes to the vault at its creation |
-| the device service | each device's holder, unit and confinement mark, each domain's windows by role, an unconfined device's memory size, and the console's and the host link's paths |
+| the device service | each device's holder, unit and confinement mark, each domain's windows by role and drive, an unconfined device's memory size, and the console's and the host link's paths |
 | the resource policy | the principals' budgets, shares and quotas; the lane size per class; `system_reserve`, which bounds the service grants it sets |
 | the principal service | the principals, and which of them are system-shell principals, which it tells the console with each login it confirms |
 | the start service | the `start` rows, the principals with a session template, and the `windows` services each template is granted, by which it checks a row's display ([design-apps.md](design-apps.md#the-start-table)) |
@@ -391,7 +399,11 @@ violation fails the build with the property, the record and the field:
 8. **Partitions, devices and the console reach only their holders:** only
    the slot writer holds the windows on the slots, the boot-selection
    record and the reset count; only storage domains hold windows on data,
-   FAT and vault's partitions; the units of the UARTs that `console`,
+   FAT and vault's partitions; a window names a drive exactly when it
+   lies on a `usb` device's row, no two windows name one partition of
+   one drive, and no controller's rows name more than `usb_drives_max`
+   drives ([design-usb.md](design-usb.md#refusals-and-error-results));
+   the units of the UARTs that `console`,
    `hostlink` and each grant of the `line` interface, by its `uart`
    parameter, name are the system domain's and their paths all differ,
    so no two `line` grants name one UART and none names the console's or
@@ -426,7 +438,11 @@ violation fails the build with the property, the record and the field:
    device together with a window on a partition that no hash tree checks
    (a data, FAT or vault's partition) or a `hostile` device of another
    unit; the diagnostic names that hostile input when the violating holder
-   has one. The web domain, the configured domain that holds the
+   has one. A USB domain, the configured domain that holds a `usb`
+   device, holds that controller's unit and nothing else and runs no
+   file system, whether or not its controller is confined: a FAT server
+   in another domain reaches a drive's medium through its drive grant
+   ([design-usb.md](design-usb.md#who-holds-a-controller)). The web domain, the configured domain that holds the
    `erx_web_login` facet and parses browsers' bytes, holds no unconfined
    device, its network listener is TLS, and the host link's facets do not
    list `web`, so the web's development paths stay out of a release
@@ -1190,6 +1206,21 @@ in place before anyone can connect to it.
   server reports after a restart, as any grant is, and the row's keeper
   asks again before each start of its session
   ([design-apps.md](design-apps.md#keeping-a-session)).
+* **One incarnation's grant.** The device service answers a PCIe
+  domain's report only once the system domain holds that incarnation's
+  `pcie` facet ([design-pcie.md](design-pcie.md#facets)). It asks with
+  `erx_domain:await_grant(pcie, D)`, a request of the system domain's
+  own like `system_namespace/0`, sent and not waited on, for the
+  incarnation `D` that the report's envelope names. The domain service
+  keeps the caller beside those of `system_namespace/0` and answers at
+  the first step of the mint core at which the system domain's grant of
+  `pcie` has settled for `D`: `{ok, Facet}` when the grant is installed
+  with `D` as its server, `{error, failed}` when it failed with `D` as
+  its server, `{error, ended}` when `D` has ended or the grant carries
+  another server, and `{error, unprovided}` when `D` is ready and the
+  grant is idle, since `D` provides no `pcie`. The wait is bounded by
+  the mint core's deadline for an operation in progress and by the
+  machine's boot timeout before `D`'s ready report.
 * **Why it holds by construction.** The wait reads only state the mint
   core already keeps, the grant of each `files` service to the session,
   and the domain service's own record of which configured domains are
@@ -3115,20 +3146,36 @@ the device tree's `serialN` aliases say.
 **Firmware requests.** The device service is the one sender of the
 firmware's mailbox requests after boot, `erx_firmware_request`
 ([design-usb.md](design-usb.md#the-vl805s-firmware)): the VL805's
-notification for the PCIe domain's bridge
-([design-pcie.md](design-pcie.md#facets)) and the Bluetooth line's
-power for the line service
-([design-bluetooth.md](design-bluetooth.md#the-power-line)). A request
-may wait in the kernel up to its 1 s deadline, and a process running a
+notification, which the PCIe domain's bridge driver asks for with
+`pci_bus:firmware/1`, answered `ok` for `ERX_OK` and `{error, Status}`
+naming any other status ([design-pcie.md](design-pcie.md#facets));
+the Bluetooth line's power for the line service
+([design-bluetooth.md](design-bluetooth.md#the-power-line)); and the
+board sensors' readings for the sensor driver, which asks for the
+machine's rows with `erx_devices:firmware_rows(machine)`, their
+readings' names in row order as the domain library's boot view reads
+them from the manifest, empty on a platform with none, and then for one
+reading at a time with `erx_devices:firmware_read(Reading)`, answered
+`{ok, Answer}` with the answer's bytes, `{error, Status}` with the
+kernel call's status, or `{error, enotsup}` for a `Reading` that is
+not a machine row of the platform
+([design-board-sensors.md](design-board-sensors.md#the-sensor-driver)).
+A request may wait in the kernel up to its 1 s deadline, and a process
+running a
 dirty NIF cannot run its receive loop, so the work is split as the
 stopgap's littlefs glue splits it
 ([design-stopgap.md](design-stopgap.md#littlefs-in-the-storage-domain)).
 The device service's process takes every request into a queue and
 never waits on the kernel. Its **firmware worker**, a process linked to
-it, alone calls the domain library's firmware entries,
-`erx_domain_lib:pci_firmware/1` and `device_notify/2`, and is handed
-the next request only after the last one's answer. Those entries are
-dirty I/O NIFs, since the kernel call waits and an executor's would
+it, alone calls the domain library's firmware entries, and is handed
+the next request only after the last one's answer. They are
+`erx_domain_lib:firmware/2`, the one library call over the firmware's
+requests, which sends row `Index` of a device or of the machine and
+serves a reading as `firmware(machine, Index)`, and its two uses for
+notifications: `pci_firmware/1`, a bridge's notification at index 0
+with the resource the bridge's device record holds for its give, and
+`device_notify/2`, for a device record the system domain holds itself.
+Those entries are dirty I/O NIFs, since the kernel call waits and an executor's would
 answer `ERX_EWOULDBLOCK`. So two requests never meet in the kernel,
 and the device service answers the watchdog's liveness call ([Boot](#boot)) and every
 other call while a request waits. Each entry takes the
@@ -3136,8 +3183,11 @@ library's lock to read the device's resource before the kernel call and
 to mark a bridge `firmware_lost` after an `ERX_ETIMEDOUT`
 ([design-pcie.md](design-pcie.md#the-catalogue-and-gives)), never
 across the wait, so no other entry, and no other service, waits on the
-mailbox. The queue holds at most one request per caller: the PCIe
-domain asks through its `pci_bus` facet, whose grant takes one request
+mailbox. The library's intake takes every function of a marked bridge
+as `not_ready`, so a bridge whose notification timed out gives none of
+its functions for the rest of the boot, whatever a late answer or a
+later start of the PCIe domain finds. The queue holds at most one
+request per caller: the PCIe domain asks through its `pci_bus` facet, whose grant takes one request
 in flight and refuses another with `{error, busy}`, and the system
 domain's own callers, the sensor driver and the line service, each ask
 the next only after the last one's answer. The worker reads its
@@ -3403,6 +3453,40 @@ none ([design-pcie.md](design-pcie.md#the-plan)). The kernel keeps the
 register pages of the devices of `hw/kernel_devices.txt`; the console's
 UART it only writes by polling (The console, above).
 
+**The device service's PCIe process.** One process of the device
+service writes the library's settings and calls the PCIe domain's
+`pcie` facet, so the settings the library holds and those sent are
+written in one order. Its decisions are a pure core,
+`erx_devices_pci_core`, a state machine over three states: `between`,
+no PCIe incarnation's report answered since the last one ended, in
+which a holder's request waits and a holder's end lowers the setting in
+the library and sends nothing; `synced`, the current incarnation's
+report answered, in which requests are handled and a holder's end
+lowers the setting and then sends it; and `down`, 5 s in `between`, in
+which a request is answered `{error, unavailable}` at once. It monitors
+the answered incarnation, whose end moves it to `between`, and each
+holder's domain pid from its give, whose end turns that function's
+setting `off`. It answers a report only once the system domain holds
+the reporting incarnation's `pcie` facet, which it asks for with
+`erx_domain:await_grant/2`
+([A session takes the console](#a-session-takes-the-console)), writes
+that incarnation into the bridges' `answered` before it sends the
+answer, and from then on calls `pcie` on the facet that request
+returned. A restarted process reads every setting, holder and
+`answered` from the library, monitors the holders again, and begins in
+`synced` only when `answered` names the incarnation that still holds
+its bridges ([design-pcie.md](design-pcie.md#concurrency)).
+
+**The hold at boot.** The domain service starts a configured row whose
+units hold a `pci` device only once the device service has answered the
+boot's first report, holding its start as it holds a start for a
+principal's ending domain, and starts the rows without one in boot order
+meanwhile. The device service releases the hold at that answer, when the
+PCIe row ends or fails to report ready within its boot timeout, or 30 s
+after its ready answer, whichever is first; a row started after a failed
+hold gets nothing of its `pci` devices
+([design-pcie.md](design-pcie.md#the-catalogue-and-gives)).
+
 **Units.** Devices that cannot be given apart, because they share a
 register page or an interrupt line or sit behind one PCIe function, form
 one **unit**, given whole to one domain, so no page and no line is ever
@@ -3418,7 +3502,14 @@ a unit that the machine splits across the manifest's domains to no
 domain, with a diagnostic. A unit's holder's drivers reset its devices
 together, and a give places a device only on a domain of the configured
 row the manifest places its unit on, never on a requested or session
-domain or another row's.
+domain or another row's. A USB device is a sub-device of its host
+controller's unit: its registers are the controller's, its interrupts
+arrive on the controller's, and it is reached only through transfers the
+controller runs. It enters no catalogue, is named in no manifest row and
+is given to no domain; other domains see only the places its
+controller's domain serves, fixed when they are configured, an input
+number's file in its input tree and a drive's grant
+([design-usb.md](design-usb.md#hotplug-ends-at-the-controllers-domain)).
 
 **Partition windows.** The block driver serves each partition of its
 medium as a window ([design-storage.md](design-storage.md#data-model)).
@@ -3475,7 +3566,10 @@ encoded as `/proc` encodes the names it shows
 ([design-live.md](design-live.md#the-proc-tree)), such as
 `/dev/12-virtio,mmio`, holding `status`, read only: its path, registers,
 interrupt lines, unit, confinement, holder domain and driver process, one
-`name TAB value` line each in the `/proc` format. The tree is read-only.
+`name TAB value` line each in the `/proc` format, and for a PCIe
+function also its place, identity, BARs, state, mode and route, and
+for a bridge `firmware lost` when that mark is set
+([design-pcie.md](design-pcie.md#records)). The tree is read-only.
 The device service's control facet serves a second tree of the same
 shape, mounted at `/dev` instead for the sessions that hold that facet,
 whose device directories also hold `ctl`: a write of one word, `stop`,
