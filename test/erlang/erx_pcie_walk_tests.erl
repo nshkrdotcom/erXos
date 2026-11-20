@@ -9,6 +9,7 @@
 -module(erx_pcie_walk_tests).
 
 -include_lib("eunit/include/eunit.hrl").
+-include("generated/erx_abi.hrl").
 
 -import(erx_pcie_cfg_tests, [blank/0, put/4, endpoint/0, root_port/0]).
 
@@ -30,11 +31,22 @@ single_at(Place) -> {Place, put(endpoint(), 16#0e, 1, 16#00), endpoint_masks()}.
 root_port_at(Place) -> {Place, root_port(), root_port_masks()}.
 
 open_bridge(Last) ->
-    #{index => 7, bus_first => 0, bus_last => Last, closed => false, windows => [], places => []}.
+    bridge(#{index => 7, bus_first => 0, bus_last => Last, flags => []}, []).
 
 closed_bridge(Listed) ->
-    #{index => 8, bus_first => 0, bus_last => 1, closed => true, windows => [],
-      places => [#{place => Place, pin => 1} || Place <- Listed]}.
+    bridge(#{index => 8, bus_first => 0, bus_last => 1, flags => [closed]}, Listed).
+
+%% A host bridge record as the device service hands it: its bytes decoded, so its
+%% windows and places are the record's slots, the unused ones zero.
+bridge(Fields, Listed) ->
+    Places = [#{bus => Bus, device => Device, function => Function, pin => 1}
+              || {Bus, Device, Function} <- Listed],
+    Unused = #{bus => 0, device => 0, function => 0, pin => 0},
+    Window = #{pci => 0, cpu => 0, size => 0, flags => []},
+    Record = Fields#{windows => lists:duplicate(?ERX_PCIE_WINDOWS_MAX, Window),
+                     places => Places ++ lists:duplicate(?ERX_PCIE_CLOSED_MAX - length(Places), Unused)},
+    {ok, Bridge} = erx_abi_layout:decode(erx_pcie_bridge, erx_abi_layout:encode(erx_pcie_bridge, Record)),
+    Bridge.
 
 %% The walk run to its end over the ECAM driver on the model, each root port's
 %% target applied with the answer ApplyAnswer.
@@ -57,7 +69,7 @@ drive({_Walk, [{stop, Stop}]}, _Edge, _Table, Applied) ->
 drive({Walk, [{access, Access}]}, {Driver, State, ApplyAnswer}, Table, Applied) ->
     {Answer, Next} = Driver:access(Access, State),
     drive(erx_pcie_walk:step(Answer, Walk), {Driver, Next, ApplyAnswer}, Table, Applied);
-drive({Walk, [{root_port, Place, _Read, #{secondary := Bus} = Buses}]}, {_, _, ApplyAnswer} = Edge,
+drive({Walk, [{root_port, Place, _Read, #{secondary_bus := Bus} = Buses}]}, {_, _, ApplyAnswer} = Edge,
       Table, Applied) ->
     ApplyAnswer =:= ok andalso erx_pcie_model:open_bus(Table, Bus),
     drive(erx_pcie_walk:step(ApplyAnswer, Walk), Edge, Table, [{Place, Buses} | Applied]).
@@ -75,8 +87,8 @@ an_open_root_bus_finds_every_function_and_numbers_root_ports_in_place_order_test
                                 single_at({2, 5, 6})]),
     {{done, Result}, Applied} = ecam_walk(later, open_bridge(255), Table),
     ?assertEqual([{0, 0, 0}, {0, 0, 3}, {1, 0, 0}, {2, 5, 0}, {2, 5, 6}], places(Result)),
-    ?assertEqual([{{0, 2, 0}, #{primary => 0, secondary => 1, subordinate => 1}},
-                  {{0, 4, 0}, #{primary => 0, secondary => 2, subordinate => 2}}], Applied),
+    ?assertEqual([{{0, 2, 0}, #{primary_bus => 0, secondary_bus => 1, subordinate_bus => 1}},
+                  {{0, 4, 0}, #{primary_bus => 0, secondary_bus => 2, subordinate_bus => 2}}], Applied),
     ?assertEqual([{{0, 2, 0}, ok}, {{0, 4, 0}, ok}],
                  [{P, A} || #{place := P, applied := A} <- maps:get(root_ports, Result)]),
     ?assertMatch(#{parent := {0, 2, 0}}, lists:nth(3, maps:get(found, Result))),
@@ -88,7 +100,7 @@ a_closed_bridge_reaches_only_its_root_port_and_listed_places_test() ->
                                 single_at({1, 1, 0}), single_at({0, 0, 1})]),
     {{done, Result}, Applied} = closed_walk(placing, closed_bridge([{1, 0, 0}]), Table),
     ?assertEqual([{1, 0, 0}], places(Result)),
-    ?assertMatch([{{0, 0, 0}, #{secondary := 1}}], Applied),
+    ?assertMatch([{{0, 0, 0}, #{secondary_bus := 1}}], Applied),
     Touched = lists:usort([Place || {_Kind, Place, _Offset} <- erx_pcie_model:hardware(Table)]),
     ?assertEqual([{0, 0, 0}, {1, 0, 0}], Touched).
 
@@ -152,9 +164,9 @@ bus_numbers_follow_the_root_ports_places_alone_test() ->
     Functions = [{{0, 1, 0}, root_port(), #{16#10 => 16#fffff000}}, root_port_at({0, 2, 0})],
     {{done, Placing}, PlacingApplied} = ecam_walk(placing, open_bridge(255), erx_pcie_model:new(Functions)),
     ?assertEqual({unsupported, root_port_bar}, outcome({0, 1, 0}, Placing)),
-    ?assertMatch([{{0, 2, 0}, #{secondary := 2}}], PlacingApplied),
+    ?assertMatch([{{0, 2, 0}, #{secondary_bus := 2}}], PlacingApplied),
     {{done, _}, LaterApplied} = ecam_walk(later, open_bridge(255), erx_pcie_model:new(Functions)),
-    ?assertMatch([{{0, 1, 0}, #{secondary := 1}}, {{0, 2, 0}, #{secondary := 2}}], LaterApplied).
+    ?assertMatch([{{0, 1, 0}, #{secondary_bus := 1}}, {{0, 2, 0}, #{secondary_bus := 2}}], LaterApplied).
 
 a_sizing_mask_with_holes_is_malformed_test() ->
     Table = erx_pcie_model:new([{{0, 0, 0}, put(endpoint(), 16#0e, 1, 0),

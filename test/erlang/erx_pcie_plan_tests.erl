@@ -82,13 +82,18 @@ pick(false, _Differing, Equal) -> Equal.
 
 layout(Msi, Msix) ->
     Bar = fun(Kind, Flags, Address) -> #{kind => Kind, flags => Flags, size_log2 => 12, address => Address} end,
-    #{vendor => 16#1b36, device_id => 16#000d, header => 0, pin => 1,
+    #{bridge => 0, bus => 0, device => 1, function => 0, state => ready,
+      vendor => 16#1b36, device_id => 16#000d, class_code => 16#010802, revision => 2, header => 0,
+      subsystem_vendor => 16#1af4, subsystem => 16#1100, pin => 1,
       bars => [Bar(memory, [addr64, placed], ?BAR0), Bar(absent, [], 0), Bar(memory, [placed], ?BAR2),
                Bar(io, [], 0), Bar(absent, [], 0), Bar(absent, [], 0)],
       msi_offset => case Msi of none -> 0; _ -> 16#50 end,
       msi_flags => [addr64 || Msi =:= msi64 orelse Msi =:= msi64_mask]
           ++ [vector_mask || Msi =:= msi32_mask orelse Msi =:= msi64_mask],
-      msix_offset => case Msix of true -> 16#40; false -> 0 end}.
+      msi_vectors => 0,
+      msix_offset => case Msix of true -> 16#40; false -> 0 end,
+      msix_table_size => 0, msix_table_bar => 0, msix_table_offset => 0,
+      express_offset => 0, express_type => 0, express_flags => []}.
 
 %% --- The oracle ------------------------------------------------------------------
 
@@ -132,14 +137,14 @@ data_ok(#{bars := Bars} = Read, {function, _Layout, #{route := Route}}) ->
     [B0, _, B2, B3 | _] = [Address || #{address := Address} <- Bars],
     {B0, B2, B3} =:= {?BAR0, ?BAR2, 0}
         andalso (Route =/= msi orelse msi_ok(maps:get(msi, Read)));
-data_ok(#{bridge := Bridge}, {root_port, #{window := Window} = Port}) ->
+data_ok(#{bridge := Bridge}, {root_port, #{buses := Buses, window := Window}}) ->
     {Base, Limit} = case Window of
                         closed -> {16#fff0, 0};
                         {First, Last} -> {(First bsr 16) band 16#fff0, (Last bsr 16) band 16#fff0}
                     end,
     Masked = fun(Name, Mask) -> maps:get(Name, Bridge) band Mask end,
     [Masked(primary_bus, 16#ff), Masked(secondary_bus, 16#ff), Masked(subordinate_bus, 16#ff)]
-        =:= [maps:get(Name, Port) || Name <- [primary_bus, secondary_bus, subordinate_bus]]
+        =:= [maps:get(Name, Buses) || Name <- [primary_bus, secondary_bus, subordinate_bus]]
         andalso {Masked(memory_base, 16#fff0), Masked(memory_limit, 16#fff0)} =:= {Base, Limit}
         andalso {Masked(prefetch_base, 16#fff0), Masked(prefetch_limit, 16#fff0)} =:= {16#fff0, 0}
         andalso {Masked(io_base, 16#f0), Masked(io_limit, 16#f0)} =:= {16#f0, 0}
@@ -379,7 +384,7 @@ root_port(Levels, Differing) ->
           {16#50, 1, 16#05}, {16#51, 1, 0}, {16#52, 2, flag(maps:get(msi, Levels), 16#1)}]).
 
 root_target(Window) ->
-    #{primary_bus => 0, secondary_bus => 1, subordinate_bus => 1, window => Window}.
+    #{buses => #{primary_bus => 0, secondary_bus => 1, subordinate_bus => 1}, window => Window}.
 
 root_port_test_() ->
     {timeout, ?DEADLINE,

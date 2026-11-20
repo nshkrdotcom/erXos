@@ -41,14 +41,14 @@ that does not fit.
 
 -doc """
 The addresses of the memory BARs of a placing walk's functions, the
-`read` outcomes of what it found, in the bridge's windows.
+`read` outcomes of what it found, in the bridge's windows in use.
 """.
--spec layout([erx_pcie:window()], [erx_pcie_walk:found()]) -> addresses().
-layout(Windows, Found) ->
+-spec layout(erx_abi_layout:erx_pcie_bridge(), [erx_pcie_walk:found()]) -> addresses().
+layout(Bridge, Found) ->
     Bars = [{Place, Parent, Index, Log2}
             || #{place := Place, parent := Parent, outcome := {read, _Read, Sizes}} <- Found,
                {Index, Log2} <- lists:sort(maps:to_list(Sizes))],
-    Addresses = case window(Windows) of
+    Addresses = case window(erx_pcie:windows(Bridge)) of
                     none -> [{{Place, Index}, unplaced} || {Place, _, Index, _} <- Bars];
                     {Base, Size} -> addresses(Bars, Base, Size)
                 end,
@@ -66,7 +66,8 @@ layout(Windows, Found) ->
 %% The first memory window that is not prefetchable and lies below 4 GiB,
 %% as its PCI base and size, or none.
 window(Windows) ->
-    case [{Pci, Size} || #{pci := Pci, size := Size, io := false, prefetchable := false} <- Windows,
+    case [{Pci, Size} || #{pci := Pci, size := Size, flags := Flags} <- Windows,
+                         not lists:member(io, Flags), not lists:member(prefetchable, Flags),
                          Pci + Size =< 1 bsl 32] of
         [] -> none;
         [First | _] -> First

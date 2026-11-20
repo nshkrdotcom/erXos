@@ -38,18 +38,18 @@ volatile access of that width.
 """.
 -type space() :: {Module :: module(), Handle :: term()}.
 
--opaque state() :: {ecam, erx_pcie:bridge(), space()}.
+-opaque state() :: {ecam, erx_abi_layout:erx_pcie_bridge(), space()}.
 
 -doc """
 The bridge's state over its device's configuration window: unsupported,
 since the device NIF has no access at a computed offset.
 """.
--spec start(erx_pcie:bridge(), erx_device:device()) -> {error, unsupported}.
+-spec start(erx_abi_layout:erx_pcie_bridge(), erx_device:device()) -> {error, unsupported}.
 start(_Bridge, _Device) ->
     {error, unsupported}.
 
 -doc "The bridge's state over a configuration window reached as a `space()`.".
--spec open(erx_pcie:bridge(), space()) -> {ok, state()}.
+-spec open(erx_abi_layout:erx_pcie_bridge(), space()) -> {ok, state()}.
 open(Bridge, {Module, _Handle} = Space) when is_atom(Module) ->
     {ok, {ecam, Bridge, Space}}.
 
@@ -62,7 +62,7 @@ access(Access, {ecam, Bridge, Space} = State) ->
     {make(Access, Bridge, Space), State}.
 
 -doc "Always `ok`: an ECAM bridge holds no function back.".
--spec ready(erx_pcie:layout(), state()) -> {ok, state()}.
+-spec ready(erx_abi_layout:erx_pcie_function(), state()) -> {ok, state()}.
 ready(_Function, State) ->
     {ok, State}.
 

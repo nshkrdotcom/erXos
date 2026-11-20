@@ -38,46 +38,27 @@ BAR's read-only type bits as the read value gives them.
 """.
 
 -export([plan/2, quiet/1, start_target/2, differs/2]).
--export_type([target/0, layout/0, setting/0, root_port/0, stage/0, state/0, write/0,
-              field/0, reason/0]).
+-export_type([target/0, root_port/0, stage/0, state/0, write/0, field/0, reason/0]).
 
 -include("generated/erx_abi.hrl").
-
--doc """
-The fields of `erx_pcie_function` the planner reads, by the record's
-names: its identity, header type, pin, six BARs (each with its kind, its
-flags and its PCI address, 0 when not placed) and its MSI and MSI-X
-offsets (0 for none) with MSI's flags.
-""".
--type layout() :: #{vendor := 0..16#ffff,
-                    device_id := 0..16#ffff,
-                    header := byte(),
-                    pin := 0..4,
-                    bars := [#{kind := erx_abi_enums:pcie_bar_kind(),
-                               flags := [addr64 | prefetchable | placed],
-                               address := 0..16#ffffffffffffffff,
-                               _ => _}],
-                    msi_offset := byte(),
-                    msi_flags := [addr64 | vector_mask],
-                    msix_offset := byte(),
-                    _ => _}.
-
--doc "`erx_pcie_setting`: a mode, a route and the route's one message.".
--type setting() :: #{mode := erx_abi_enums:pcie_mode(),
-                     route := erx_abi_enums:pcie_route(),
-                     message := #{address := 0..16#ffffffffffffffff, data := 0..16#ffffffff}}.
 
 -doc """
 A root port's target (docs/design-pcie.md, "Root ports"): the bus numbers
 the walk gave it and its memory window, closed or the PCI addresses of its
 first and last byte, 1 MiB granular.
 """.
--type root_port() :: #{primary_bus := byte(),
-                       secondary_bus := byte(),
-                       subordinate_bus := byte(),
+-type root_port() :: #{buses := erx_pcie_walk:buses(),
                        window := closed | {0..16#ffffffff, 0..16#ffffffff}}.
 
--type target() :: {function, layout(), setting()} | {root_port, root_port()}.
+-doc """
+A function's target, its layout and its setting, records of
+`abi/formats/pcie.txt` whose identity, header type, pin, BARs (each with
+its kind, its flags and its PCI address, 0 when not placed) and MSI and
+MSI-X offsets (0 for none) with MSI's flags the planner reads; or a root
+port's.
+""".
+-type target() :: function_target() | {root_port, root_port()}.
+-type function_target() :: {function, erx_abi_layout:erx_pcie_function(), erx_abi_layout:erx_pcie_setting()}.
 
 -type switch() :: io | memory | master | intx | msi | msix.
 -type data() :: {bar, 0..5} | {bar_high, 0..4} | msi_mme | msi_address | msi_address_high
@@ -131,8 +112,7 @@ quiet(Read) ->
 The start's rule: Target when the function reads as it, else the same
 target in mode `off`.
 """.
--spec start_target(erx_pcie_cfg:read(), {function, layout(), setting()}) ->
-          {function, layout(), setting()}.
+-spec start_target(erx_pcie_cfg:read(), function_target()) -> function_target().
 start_target(Read, {function, Layout, Setting} = Target) ->
     case plan(Read, Target) of
         {ok, []} -> Target;
@@ -280,8 +260,9 @@ root_port_switches(Identity, #{window := Window}) ->
 
 %% Its bus numbers and memory window, its prefetchable and I/O windows
 %% closed: a closed window's base holds every address bit and its limit none.
-root_port_data(#{primary_bus := Primary, secondary_bus := Secondary,
-                 subordinate_bus := Subordinate, window := Window}) ->
+root_port_data(#{buses := #{primary_bus := Primary, secondary_bus := Secondary,
+                            subordinate_bus := Subordinate},
+                 window := Window}) ->
     {MemoryBase, MemoryLimit} = memory_window(Window),
     [{primary_bus, Primary}, {secondary_bus, Secondary}, {subordinate_bus, Subordinate},
      {memory_base, MemoryBase}, {memory_limit, MemoryLimit},

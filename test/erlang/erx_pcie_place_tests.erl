@@ -15,8 +15,12 @@
 
 %% QEMU virt's 32-bit memory window, from its tree's ranges.
 window() ->
-    #{pci => 16#10000000, cpu => 16#10000000, size => 16#2eff0000,
-      addr64 => false, prefetchable => false, io => false}.
+    #{pci => 16#10000000, cpu => 16#10000000, size => 16#2eff0000, flags => []}.
+
+%% Placement in a host bridge whose windows are Windows.
+placed(Windows, Found) ->
+    Bridge = #{index => 0, bus_first => 0, bus_last => 255, flags => [], windows => Windows, places => []},
+    erx_pcie_place:layout(Bridge, Found).
 
 %% A function the walk read, with the hardware size of each memory BAR by index.
 found(Place, Parent, Sizes) ->
@@ -28,29 +32,30 @@ a_fixed_set_gets_the_addresses_written_here_test() ->
     ?assertEqual(#{{0, 1, 0} => #{0 => {placed, 16#10110000}},
                    {0, 2, 0} => #{0 => {placed, 16#10100000}},
                    {0, 3, 0} => #{0 => {placed, 16#10000000}}},
-                 erx_pcie_place:layout([window()], Found)).
+                 placed([window()], Found)).
 
 a_small_bar_takes_a_whole_page_test() ->
     Found = [found({0, 1, 0}, root, #{0 => 4, 1 => 8})],
     ?assertEqual(#{{0, 1, 0} => #{0 => {placed, 16#10000000}, 1 => {placed, 16#10001000}}},
-                 erx_pcie_place:layout([window()], Found)).
+                 placed([window()], Found)).
 
 the_window_is_the_first_low_memory_window_that_is_not_prefetchable_test() ->
-    Prefetchable = (window())#{prefetchable => true},
-    High = (window())#{pci => 16#8000000000, size => 16#8000000000, addr64 => true},
-    Io = (window())#{pci => 0, size => 16#10000, io => true},
+    Prefetchable = (window())#{flags => [prefetchable]},
+    High = (window())#{pci => 16#8000000000, size => 16#8000000000, flags => [addr64]},
+    Io = (window())#{pci => 0, size => 16#10000, flags => [io]},
+    Unused = (window())#{pci => 0, cpu => 0, size => 0},
     Low = (window())#{pci => 16#40000000, size => 16#100000},
     Found = [found({0, 1, 0}, root, #{0 => 12})],
     ?assertEqual(#{{0, 1, 0} => #{0 => {placed, 16#40000000}}},
-                 erx_pcie_place:layout([Prefetchable, High, Io, Low], Found)),
+                 placed([Prefetchable, High, Io, Unused, Low], Found)),
     ?assertEqual(#{{0, 1, 0} => #{0 => unplaced}},
-                 erx_pcie_place:layout([Prefetchable, High, Io], Found)).
+                 placed([Prefetchable, High, Io, Unused], Found)).
 
 alignment_is_absolute_not_from_the_windows_base_test() ->
     Unaligned = (window())#{pci => 16#10001000, cpu => 16#10001000},
     Found = [found({0, 1, 0}, root, #{0 => 16})],
     ?assertEqual(#{{0, 1, 0} => #{0 => {placed, 16#10010000}}},
-                 erx_pcie_place:layout([Unaligned], Found)).
+                 placed([Unaligned], Found)).
 
 what_does_not_fit_is_unplaced_test() ->
     Small = (window())#{size => ?MIB},
@@ -60,14 +65,14 @@ what_does_not_fit_is_unplaced_test() ->
                    {0, 2, 0} => #{0 => unplaced},
                    {0, 3, 0} => #{},
                    {1, 0, 0} => #{0 => unplaced}},
-                 erx_pcie_place:layout([Small], Found)).
+                 placed([Small], Found)).
 
 a_root_ports_functions_lie_inside_its_granule_aligned_window_test() ->
     Found = [found({0, 1, 0}, root, #{0 => 12}),
              found({1, 0, 0}, {0, 2, 0}, #{0 => 14, 2 => 12})],
     ?assertEqual(#{{0, 1, 0} => #{0 => {placed, 16#10100000}},
                    {1, 0, 0} => #{0 => {placed, 16#10000000}, 2 => {placed, 16#10004000}}},
-                 erx_pcie_place:layout([window()], Found)).
+                 placed([window()], Found)).
 
 generated_sets_satisfy_every_placement_property_test_() ->
     {timeout, 60, fun() -> lists:foreach(fun check_generated/1, lists:seq(1, 300)) end}.
@@ -75,7 +80,7 @@ generated_sets_satisfy_every_placement_property_test_() ->
 check_generated(Seed) ->
     rand:seed(exsss, {Seed, Seed * 7, Seed * 13}),
     Found = generated(),
-    Layout = erx_pcie_place:layout([window()], Found),
+    Layout = placed([window()], Found),
     #{pci := Base, size := Size} = window(),
     Spans = [{Place, Parent, Address, max(1 bsl Log2, ?PAGE)}
              || #{place := Place, parent := Parent, outcome := {read, _, Sizes}} <- Found,
@@ -91,7 +96,7 @@ check_generated(Seed) ->
         ++ [{A, A + S} || {_, root, A, S} <- Spans],
     ?assertEqual([], overlaps(Windows)),
     Shuffled = [F || {_, F} <- lists:sort([{rand:uniform(), F} || F <- Found])],
-    ?assertEqual(Layout, erx_pcie_place:layout([window()], Shuffled)).
+    ?assertEqual(Layout, placed([window()], Shuffled)).
 
 %% A root port's forwarding window: from its lowest BAR to its highest BAR's
 %% end, each rounded out to 1 MiB, as its target derives it from the layouts.

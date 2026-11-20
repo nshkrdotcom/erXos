@@ -52,8 +52,12 @@ the walk at once, since its domain's restart is the bridge's recovery.
 -doc "Where a function was found: on the root bus, or below the root port at a place.".
 -type parent() :: root | erx_pcie:place().
 
--doc "A root port's bus numbers as the walk numbers them.".
--type buses() :: #{primary := 0..255, secondary := 0..255, subordinate := 0..255}.
+-doc """
+A root port's bus numbers as the walk numbers them, under the names its
+configuration read (erx_pcie_cfg:parse/1) and its planner's target
+(erx_pcie_plan:root_port()) give them.
+""".
+-type buses() :: #{primary_bus := 0..255, secondary_bus := 0..255, subordinate_bus := 0..255}.
 
 -doc """
 What a reported function was found to be: a function with its read
@@ -121,7 +125,7 @@ the walk's result or because the link went down.
                  erx_pcie_cfg:read(), buses(), [sized_bar()]}
               | {number, erx_pcie:place(), erx_pcie_cfg:read(), buses()}.
 
--record(walk, {bridge :: erx_pcie:bridge(),
+-record(walk, {bridge :: erx_abi_layout:erx_pcie_bridge(),
                kind :: kind(),
                %% The tasks still to begin, the next first.
                agenda = [] :: [task()],
@@ -140,7 +144,7 @@ the walk's result or because the link went down.
 -opaque walk() :: #walk{}.
 
 -doc "The walk of a bridge and its first action.".
--spec start(erx_pcie:bridge(), kind()) -> {walk(), [action()]}.
+-spec start(erx_abi_layout:erx_pcie_bridge(), kind()) -> {walk(), [action()]}.
 start(#{bus_first := First} = Bridge, Kind) when Kind =:= placing; Kind =:= later ->
     advance(#walk{bridge = Bridge, kind = Kind, task = none, next_bus = First + 1,
                   agenda = probes(First, root)}).
@@ -216,7 +220,7 @@ finished({size_root_port, Place, Identity, Read, Buses, Bars}, {ok, Answers}, Wa
         [] -> push([{number, Place, Read, Buses}], Walk);
         _Implemented -> report(Place, root, Identity, {unsupported, root_port_bar}, Walk)
     end;
-finished({number, Place, Read, #{secondary := Bus} = Buses}, Answer, Walk) ->
+finished({number, Place, Read, #{secondary_bus := Bus} = Buses}, Answer, Walk) ->
     Applied = case Answer of
                   {ok, []} -> ok;
                   {error, _Reason} = Error -> Error
@@ -253,7 +257,7 @@ classify(Place, Parent, Snapshot, Walk) ->
 take_buses({Primary, _, _}, root, ?ERX_PCIE_HEADER_BRIDGE,
            #walk{next_bus = Bus, bridge = #{bus_last := Last}} = Walk) ->
     Buses = case Bus =< Last of
-                true -> #{primary => Primary, secondary => Bus, subordinate => Bus};
+                true -> #{primary_bus => Primary, secondary_bus => Bus, subordinate_bus => Bus};
                 false -> bus_range
             end,
     {Buses, Walk#walk{next_bus = Bus + 1}};

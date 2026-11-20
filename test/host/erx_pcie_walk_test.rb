@@ -15,8 +15,9 @@ require_relative '../fixtures/erlang_build'
 # the case named for it (docs/design-pcie.md, "Host tests of the pure cores"): the
 # closed bridge's place check removed, so the walk reaches function 1 of the root
 # port's bus; ECAM's bus range ignored; the header type taken by parse/1 alone, so a
-# CardBus header reads as malformed; a sized BAR left at all ones; and the alignment
-# rounding dropped, so the 64 KiB BAR lands at 4 KiB.
+# CardBus header reads as malformed; a sized BAR left at all ones; the alignment
+# rounding dropped, so the 64 KiB BAR lands at 4 KiB; and an unused window slot, of size
+# 0, taken as placement's window, so a BAR that fits the real one is unplaced.
 class ErxPcieWalkTest < Minitest::Test
   APPLICATIONS = %w[erx_pcie].freeze
   TESTS = %w[test/erlang/erx_pcie_cfg_tests.erl test/erlang/erx_pcie_model.erl
@@ -51,7 +52,12 @@ class ErxPcieWalkTest < Minitest::Test
              module_path: 'erlang/apps/erx_pcie/src/erx_pcie_place.erl',
              anchor: '    #{order => {Place, Index}, span => Span, alignment => Span,',
              replacement: '    #{order => {Place, Index}, span => Span, alignment => ?ERX_PAGE_SIZE,',
-             catching_case: 'a_fixed_set_gets_the_addresses_written_here_test')
+             catching_case: 'a_fixed_set_gets_the_addresses_written_here_test'),
+    Seed.new(fault: 'an unused window of size 0 taken as the window',
+             module_path: 'erlang/apps/erx_pcie/src/erx_pcie.erl',
+             anchor: '    [Window || #{size := Size} = Window <- Windows, Size > 0].',
+             replacement: '    [Window || #{size := Size} = Window <- Windows, is_integer(Size)].',
+             catching_case: 'the_window_is_the_first_low_memory_window_that_is_not_prefetchable_test')
   ].freeze
 
   def test_walk_place_and_ecam_cases_pass_under_eunit

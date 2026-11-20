@@ -731,9 +731,13 @@ The records are layouts in a new ABI file, `abi/formats/pcie.txt`, as
 `wire_le` layouts with the configuration-space constants the parser and
 the planner use (offsets and bits from FreeBSD's `pcireg.h`) and the
 limits below. The generator emits their C reader and struct and their
-Erlang codec, as it does for the manifest's records
-([design-abi.md](design-abi.md)), so the PCIe domain, the device service
-and the domain library share one definition.
+Erlang codec, `erx_abi_layout`, whose maps are the records' one Erlang
+form ([design-abi.md](design-abi.md#layouts-in-erlang)), so the PCIe
+domain, the device service and the domain library share one definition.
+The PCIe modules hold the records as those maps and read their flags and
+unused slots through `erx_pcie`'s accessors; a function's configuration
+as read (`erx_pcie_cfg`'s parse) is a different thing, the registers the
+planner writes against, and keeps its own form.
 
 **`erx_pcie_function`**, the layout, which the PCIe domain reports:
 

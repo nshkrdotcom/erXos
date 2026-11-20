@@ -38,10 +38,10 @@ bridge's link was down around the access, whose answer is then not taken.
 """.
 -type result() :: {ok, 0..16#ffffffff} | ok | {error, absent | link_down}.
 
--callback start(Facts :: erx_pcie:bridge(), Device :: erx_device:device()) ->
+-callback start(Facts :: erx_abi_layout:erx_pcie_bridge(), Device :: erx_device:device()) ->
     {ok, State :: term()} | {error, Reason :: atom()}.
 -callback access(Access :: access(), State :: term()) -> {result(), State :: term()}.
--callback ready(Function :: erx_pcie:layout(), State :: term()) ->
+-callback ready(Function :: erx_abi_layout:erx_pcie_function(), State :: term()) ->
     {ok | not_ready, State :: term()}.
 
 -doc """
@@ -49,10 +49,13 @@ Whether a driver of the bridge may make an access at the place: for an
 open bridge, any place whose bus lies in its range; for a closed one,
 only its root port and the places its record lists.
 """.
--spec reaches(erx_pcie:bridge(), erx_pcie:place()) -> boolean().
-reaches(#{closed := false, bus_first := First, bus_last := Last}, {Bus, _Device, _Function}) ->
+-spec reaches(erx_abi_layout:erx_pcie_bridge(), erx_pcie:place()) -> boolean().
+reaches(Bridge, Place) ->
+    reaches(erx_pcie:closed(Bridge), Bridge, Place).
+
+reaches(false, #{bus_first := First, bus_last := Last}, {Bus, _Device, _Function}) ->
     First =< Bus andalso Bus =< Last;
-reaches(#{closed := true, bus_first := First}, {First, Device, Function}) ->
+reaches(true, #{bus_first := First}, {First, Device, Function}) ->
     Device =:= 0 andalso Function =:= 0;
-reaches(#{closed := true, places := Places}, Place) ->
-    lists:any(fun(#{place := Listed}) -> Listed =:= Place end, Places).
+reaches(true, Bridge, Place) ->
+    lists:member(Place, erx_pcie:places(Bridge)).

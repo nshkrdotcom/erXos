@@ -3443,6 +3443,12 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   ([design-packaging.md](docs/design-packaging.md#other-subsystems)). Fix: `cp` opens the target itself and
   copies in the 64 KiB pieces design-shell.md's info report describes, checking `file:close/1`'s answer; a
   test with a tree whose close answers `eio`.
+* [Medium] apps, the manifest and package readers ([design-abi.md](docs/design-abi.md#layouts-in-erlang)):
+  the generated structural readers decode an enum or flags field to its integer, so their callers compare
+  against `erx_abi.hrl` macros (`erlang/apps/erx/src/erx_pkg_header.erl:237`, `start/2` on
+  `?ERX_PKG_ERLANG`) while `erx_abi_layout` gives the same fields as atoms and ordsets: two forms of one
+  record. Fix: the structural readers decode a fixed record through `erx_abi_layout` and their callers
+  match names.
 * [Low] apps, `erx_pkg_header` ([design-packaging.md](docs/design-packaging.md#the-declaration)): the
   generated reader checks the declaration's strings by the ABI's string classes, which are wider than the
   declaration's grammar: a need named twice, more than `pkg_args_max` arguments, an application name with
