@@ -7,13 +7,12 @@ capabilities; [chapter 3](03-erlang.md) for Erlang processes, links,
 supervisors and ERTS. A reader who knows all three starts here.
 
 > **Status.** The history, goals and principles carry no mark. erXos
-> runs on
-> Fiasco, an existing L4 microkernel, behind a kernel interface of its
-> own; that first phase of the roadmap is Built. 0.1, the first public
-> preview, is Built and published from the commit tagged `v0.1`. 0.2,
+> runs on Fiasco, an existing L4 microkernel, behind a kernel interface
+> of its own; that first phase of the roadmap is **Built**. 0.1, the first public
+> preview, is **Built** and published from the commit tagged `v0.1`. 0.2,
 > the first release, is next, also on Fiasco; budgets that act as walls
 > between domains come with it. erXos's own kernel is Phase 2: some of
-> its parts are Built (host), built and tested as programs on the
+> its parts are **Built (host)**, built and tested as programs on the
 > development machine, and none of it boots.
 
 An Erlang program on FreeBSD can run hundreds of thousands of
@@ -416,8 +415,8 @@ and does not interpret the data the device sends. The drivers for
 QEMU's virtual display and input devices are Erlang, and so is the
 Raspberry Pi's framebuffer driver. One QEMU test kills the virtual
 disk's driver in the middle of a transfer, then finds each kept file
-intact up to its last sync, the last moment its data was forced to
-disk ([README.md, Current status](../../README.md#current-status)).
+cut at a sync, the last moment its data was forced to disk
+([README.md, Current status](../../README.md#current-status)).
 The kernel, the device shims and per-byte work such as checksums stay
 in C ([chapter 15](README.md#chapter-15-devices-and-drivers)).
 

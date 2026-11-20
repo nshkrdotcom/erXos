@@ -271,7 +271,7 @@ services are exactly its interface: everything else runs in user mode.
 [D. Dependencies and Licenses](#appendix-d-dependencies-and-licenses),
 [E. Lineage](#appendix-e-lineage)
 
-About 900 pages in all, at about 400 words a page.
+About 890 pages in all, at about 400 words a page.
 
 ---
 
@@ -286,7 +286,7 @@ paths in [Readers](#readers)).
 
 ### Chapter 1. Operating Systems from the Ground Up
 
-*About 30 pages.* What an operating system is for and how one works:
+*About 26 pages.* What an operating system is for and how one works:
 the kernel, the two modes of the processor, processes, virtual memory,
 files, devices and the boundary between a program and the machine.
 
@@ -361,7 +361,7 @@ write with and without a cache that is coherent with it.
 
 ### Chapter 2. Microkernels and Capabilities
 
-*About 19 pages.* The design family erXos belongs to: a kernel that does
+*About 17 pages.* The design family erXos belongs to: a kernel that does
 as little as it can, services in user mode, and authority held as
 unforgeable references.
 
@@ -417,13 +417,13 @@ Shapiro, Smith and Farber, "EROS: A Fast Capability System" (SOSP 1999);
 the FreeBSD manual page capsicum(4).
 
 **Figures.** 2.1: a monolithic kernel and a microkernel with servers,
-side by side. 2.2: a client calling a server by IPC. 2.3: a capability
+side by side, showing what a driver's bug reaches in each. 2.2: a client calling a server by IPC. 2.3: a capability
 as a slot in a table, with its rights. 2.4: the confused deputy with an
 access list and with capabilities.
 
 ### Chapter 3. Erlang and OTP
 
-*About 25 pages.* Enough Erlang to read the rest of the book: the
+*About 22 pages.* Enough Erlang to read the rest of the book: the
 language, processes and messages, failure handled by supervisors, OTP's
 behaviours, and the virtual machine that runs it.
 
@@ -475,10 +475,10 @@ to section 5, the BEAM and ERTS, which is what erXos takes apart.
 "Making Reliable Distributed Systems in the Presence of Software Errors"
 (2003); the OTP documentation shipped with the tree.
 
-**Figures.** 3.1: a process, its mailbox, links and monitors. 3.2: a
-supervision tree and one restart. 3.3: a `gen_statem` as a state
-diagram. 3.4: the BEAM inside one operating-system process: schedulers
-on threads, processes on schedulers.
+**Figures.** 3.1: a process and its mailbox. 3.2: a supervision tree and
+one restart. 3.3: the BEAM inside one operating-system process:
+schedulers on threads, processes on schedulers. 3.4: one message between
+domains.
 
 ---
 
@@ -486,7 +486,7 @@ on threads, processes on schedulers.
 
 ### Chapter 4. History and Goals
 
-*About 18 pages.* Why build an operating system around Erlang, what erXos
+*About 15 pages.* Why build an operating system around Erlang, what erXos
 takes from earlier systems, and how it gets from nothing to a working
 machine.
 
@@ -517,14 +517,13 @@ built and published; 0.2 next; Phase 2 after.
    own, and Erlang processes never block a thread.
    *Draws on:* [research-hierarchical-scheduling.md](../research-hierarchical-scheduling.md),
    [design.md, Context](../design.md#context).
-3. **The lineage.** L4 and Fiasco for the kernel; EROS's space banks and
-   Genode's quotas for resources; Plan 9 and Inferno for namespaces,
-   files, the shell and graphics; QNX for UNIX on a microkernel; Genera
-   for a machine open to inspection; Singularity, SPIN and JX for systems
-   organised around a language; Safe Erlang for pids as capabilities;
-   Zircon for no ambient authority; Barrelfish and BOOM for declarative
-   description. One paragraph each on what erXos took and what it left.
-   Section 4.1.4 adds the earlier attempts to run Erlang below the
+3. **The lineage.** Four subsections give the sources that shaped erXos
+   most: UNIX and FreeBSD for the surface; L4 and Fiasco for the kernel;
+   Plan 9 for names and files; EROS, Safe Erlang and Zircon for authority
+   and payment (EROS's space banks, pids as capabilities, no ambient
+   authority). A table (4.1) lists the rest with the idea each gave:
+   QNX, Genera, Inferno, Singularity, SPIN, Midori, Genode and Barrelfish. Section 4.1.4 adds the earlier
+   attempts to run Erlang below the
    application (Nerves, GRiSP, LING, HydrOS) and the gap they leave.
    *Draws on:* [research-prior-art.md](../research-prior-art.md),
    [README.md, Architecture](../../README.md#architecture).
@@ -564,8 +563,7 @@ built and published; 0.2 next; Phase 2 after.
    at all, and the plan can fail at the seam. A summary and where to read
    next close the chapter.
 
-**Figures.** 4.1: a timeline of the systems erXos draws on, with the idea
-taken from each, as a text diagram. 4.2: the phases and milestones as a strip, 0.1 marked
+**Figures.** 4.1: the phases and milestones as a strip, 0.1 marked
 published, 0.2 next, Phase 2 after, the seam (the kernel interface)
 drawn as a line that stays put while the kernel below it changes.
 

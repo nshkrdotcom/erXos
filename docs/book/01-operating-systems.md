@@ -1,9 +1,11 @@
 # Chapter 1. Operating Systems from the Ground Up
 
 > **Status.** Background: the chapter describes operating systems in
-> general and carries no marker. Each sentence about erXos in its
-> "Where erXos uses this" paragraphs says whether what it describes is
-> built, designed, or holds only partly on Fiasco.
+> general and carries no mark. Each sentence about erXos in its
+> "Where erXos uses this" paragraphs says in words which mark of the
+> [key](README.md#built-and-target) applies: built (**Built**), designed
+> (**Designed**, **0.2** or **Phase 2**), or holding only partly on
+> Fiasco.
 
 **Background needed.** None. The chapter assumes only that the reader
 can program, in any language.
@@ -1110,9 +1112,13 @@ in shared memory that only the sender writes, plus a small signal that
 wakes the receiver ([chapter
 10](README.md#chapter-10-domains-a-wall-around-some-processes)). The
 receiver checks every message through one function that refuses
-malformed ones. The lane's code is built, in `liberx`, erXos's C
-library for kernel calls. Pipes between C programs are rings in shared
-memory too, and are built ([design-pipes.md](../design-pipes.md#overview)).
+malformed ones. The lane's code is built and tested on a development
+host, but on Fiasco domains do not yet carry their messages over lanes:
+lanes are the transport of Phase 2
+([design-fiasco.md](../design-fiasco.md#what-phase-1-code-must-not-assume)).
+Pipes between programs are designed as rings of the same layout in shared
+memory ([design-pipes.md](../design-pipes.md#overview)), and programs have
+pipes today ([README.md, Current status](../../README.md#current-status)).
 
 ## 1.8 From power-on to the first program
 

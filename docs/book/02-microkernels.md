@@ -717,7 +717,7 @@ tells how the root task works on Fiasco.
 
 ### 2.5.4 Why erXos starts on Fiasco and later replaces it
 
-[Chapter 1](01-operating-systems.md) introduced erXos's two kernels:
+[Chapter 1](01-operating-systems.md#114-the-parts-of-an-operating-system) introduced erXos's two kernels:
 erXos runs on Fiasco behind an interface of its own, while it builds a
 kernel of its own for Phase 2, a capability microkernel in C on
 Fiasco's design ([design-kernel.md](../design-kernel.md)).

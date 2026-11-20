@@ -104,8 +104,10 @@ than mirroring pixels. The [overview](docs/overview.md) tells the longer story.
   charged to a budget carved from its parent's. Delete the budget, and
   everything charged to it goes too, so ending a domain is one operation,
   and users get memory quotas and a CPU share without a container
-  runtime. On Fiasco budgets are not walls, and the inspector reports a
-  domain's budget as unsupported. *EROS*'s space banks are the model,
+  runtime. On Fiasco budgets are not walls yet: 0.2 makes each domain's budget
+  a wall ([design-fiasco.md](docs/design-fiasco.md#memory-and-budgets),
+  [plan.md](docs/plan.md#02-the-first-release-on-fiasco)). Until then
+  the inspector reports a domain's budget as unsupported. *EROS*'s space banks are the model,
   with *Genode*'s quotas.
   ([budgets](docs/design-kernel.md#budgets),
   [resource policy](docs/design-system.md#resource-policy))
