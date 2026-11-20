@@ -611,14 +611,24 @@ layer read in an observation of the same call and keeps unchanged. A
 decision that takes back says how many of the call's reports it
 consumes, in order from the ledger's consumer position of each structure
 the device writes; the sequencer derives the releases from those reports
-alone, by the release each report's meaning carries in its form's table,
-and advances the consumer position. Nothing a core says chooses what
+alone, by the `releases` mark of each report's meaning
+([What the formats say](#what-the-formats-say)), and advances the
+consumer position. Nothing a core says chooses what
 comes back. Its own reading of the same reports decides only its answers
 and its states, and a copy reads only a buffer a release of the same
 decision returns. A report whose meaning releases a holding but which
 names none that is live (a used element naming no live chain's head, an
 index past what is live) is refused, and the queue breaks, as a
-malformed used entry breaks it.
+malformed used entry breaks it. So is a record whose selector names no
+meaning of its structure, such as an xHCI Host Controller Event (TRB
+type 37), which no meaning of the event ring selects: the sequencer
+cannot tell what such a record releases, so it releases nothing and
+every holding stays held until the reset's idle report returns it. The
+queue breaks rather than skipping the record, because a skip would
+consume a report the design gives no meaning, here the controller's own
+error report, an event ring full among them, which
+[design-usb.md](design-usb.md#the-trb-ring-form) already treats as
+breaking the form.
 
 **A report is a snapshot the trusted side acquired.** A device writes a
 record of a ring it fills in more than one store and says only which
@@ -728,9 +738,10 @@ can put any 64-bit value in an `{out, Binary}` segment shaped as a
 more entries. On a device whose window confines it, what such an address
 reaches is bounded by the window; on an unconfined device it reaches any
 memory, and for virtio-gpu "every address the device follows came from
-a checked name" does not hold. That gap is the security residual
-"device NIF, virtio-gpu requests on an unconfined device" in
-[TODO.md](../TODO.md), and the argument claims nothing for it.
+a checked name" does not hold. The design makes no guarantee there: on
+an unconfined device a payload format of which carries device
+addresses, the argument claims nothing for the addresses in its
+payloads.
 
 ### What the formats say
 
@@ -741,7 +752,7 @@ resolved every type, and each format file declares its structures:
 ```
 target NAME cpu|device        a structure a region may hold, and its writer
 layout ...
-  meaning TARGET...           this layout is a meaning of each TARGET's records: a table
+  meaning TARGET              this layout is a meaning of TARGET's records: every table
                               of that structure offers it
   field NAME TYPE OFFSET device_address
     bits NAME LOW HIGH [shift N] device_address
@@ -767,27 +778,42 @@ layout, marked or not; it never names an address the CPU uses, such as
 an ELF segment's or a PCIe BAR's. In a marked layout every place is
 claimed by exactly one mark, so a place is free only by a mark: a place
 a `states` mark claims, a reference's length, and a release's place and
-its `when` place are **free**, and a description states them. A
+its `when` place are **free**. Who gives a free place its value follows
+from the layout's writer: the free places of a layout a description
+states, its `states` places and each reference's length, are the
+description's inputs; those of a report, its `states` places and its
+release's place and `when` place, are the values the device states,
+which the trusted side only reads. A
 reference's place, the activation and each derived place are
 **placed**: the sequencer supplies them. A device address is placed,
 or is a release's place, never free or fixed, and a reference's place
 is a device address. `TARGET` is a structure of the mark's own file or,
 for a reference, `data`.
 
-**A meaning's writer is its table's.** The structures a layout's
-`meaning` line names share one writer, and that writer is the layout's.
-A layout that is a meaning of `device` structures is a **report**: the
+**A meaning's writer is its table's.** A layout's `meaning` line names
+exactly one structure, and that structure's writer is the layout's. A
+layout that is a meaning of a `device` structure is a **report**: the
 device writes it, so it has no `refers` or `derived` mark, its free
 places are what the device states, and only a report has a `releases`
-mark. The port status change event is a report though it releases
-nothing, because the event ring is a `device` structure; no mark of its
-own decides that. A layout that is a meaning of `cpu` structures is one
-a description states. A layout with no `meaning` line is offered by no
+mark. A `releases` mark names a `cpu` structure, since a holding is
+always of records the CPU wrote: the used element releases descriptors
+of the descriptor table, an event TRBs of a transfer ring or the
+command ring. The port status change event is a report though it
+releases nothing, because the event ring is a `device` structure; no
+mark of its own decides that. A layout that is a meaning of a `cpu`
+structure is one a description states.
+
+**A layout with no `meaning` line is the CPU's.** It is offered by no
 table, so no description names it: it is the sequencer's own record (a
 link, the DCBAA's, the scratchpad array's and the segment table's
 entries, the ADMA2 entry, a region entry), which has no free place, or a
 part of a composed record (the input context's slot and endpoint
-contexts), described only as part of the record that composes it.
+contexts), described only as part of the record that composes it. It is
+never a report: a record the device writes reaches the trusted side only
+through the acquisition, which reads only the structures declared
+`device` and judges each record it takes by its structure's generated
+list of meanings, so no layout outside those lists is ever read as what
+the device states.
 
 **What a table offers.** The meanings a table offers are the layouts
 whose `meaning` line names its structure; no form lists them again, and
@@ -796,10 +822,10 @@ each structure's meanings to what placement and acquisition need:
 
 * they share one size, the table's stride;
 * a structure with more than one meaning has a `selects` mark in each,
-  on bits at the same offset and range, and no enum member is selected
-  by two layouts, so a selector value names at most one meaning in any
-  table and a report's release is read under the one meaning its
-  selector gives; a structure with one meaning may have no selector;
+  on bits at the same offset and range, so a selector value names at
+  most one meaning in any table and a report's release is read under
+  the one meaning its selector gives; a structure with one meaning may
+  have no selector;
 * every meaning of one structure has its `activates` mark on the same
   bit of a field at the same offset and width, or none has one. On a
   `device` structure that bit is the validity the acquisition reads
@@ -808,15 +834,22 @@ each structure's meanings to what placement and acquisition need:
   validity from outside the record, as virtio's used ring does from its
   used index, which its form's acquisition reads instead.
 
+**A selector value names one layout of its file.** Each enum member is
+selected by at most one layout of the whole format file, a meaning or
+not. So the xHCI link TRB, which has no `meaning` line and lies in
+every TRB ring, selects a type no meaning of any ring selects, and a
+record the device writes with that type names no meaning of the event
+ring ([Releases](#releases)).
+
 The generator refuses a mark outside a `wire_le` layout, a
 marked layout with a field that is not one unsigned integer or with a
 `tail`, whose part the encoder would not write, a report with a
 `refers` or `derived` mark, a `releases` mark on a layout that is no
-report, a `meaning` line naming structures of both writers or one of
-another file, a structure whose meanings differ in size, in where their
-selector lies or in where their activation lies, a structure of more
-than one meaning one of which has no selector, an enum member two
-layouts select, two places of one encoder member name
+report or naming a structure that is not `cpu`, a `meaning` line naming
+other than one structure or one of another file, a structure whose
+meanings differ in size, in where their selector lies or in where their
+activation lies, a structure of more than one meaning one of which has
+no selector, an enum member two layouts of the file select, two places of one encoder member name
 (`a_b` and `a.b`), a place no mark claims,
 a device address a description would state or the format fix, a
 reference to a place that is no device address, `device_address` on a
@@ -826,8 +859,10 @@ or wider than its bits, a `fixed` value wider than its bits or with bits
 below the place's shift, a place the layout does not have, an
 `activates` mark of more than one bit, a place marked twice and a
 second `selects`, `activates` or `releases` mark, each with the line of
-the mark or of the place. It numbers the meanings from 1 in the order
-of their layouts' names, `ERX_MEANING_<LAYOUT>`, so 0 is no meaning,
+the mark or of the place. It numbers the meanings, the layouts with a
+`meaning` line and no others, from 1 in the order of their layouts'
+names, `ERX_MEANING_<LAYOUT>`, so 0 is no meaning; the sequencer's own
+records and the parts of composed records get no number. It
 emits each structure's meanings as one list, and emits beside each
 marked layout's accessors in `include/erx/abi.h`, except a report's:
 
@@ -1561,11 +1596,18 @@ ran.
   field of another layout and an `activates` mark two bits wide are each
   refused with a line naming the mark. So are a table's writer and its
   offers broken one at a time: a `releases` mark on a meaning of a `cpu`
-  structure, a `refers` mark on a meaning of a `device` one, a `meaning`
-  line naming a `cpu` and a `device` structure, two meanings of one
-  structure of different sizes, two that select one member, two with
-  their activation at different offsets, and one of two meanings with no
-  selector. A generated header holds no encoder for a report. Seeds: the
+  structure, a `refers` mark on a meaning of a `device` one, a
+  `releases` mark naming a `device` structure, a `meaning` line naming
+  two structures, two meanings of one structure of different sizes, two
+  that select one member, two with their activation at different
+  offsets, one of two meanings with no selector, and a layout with no
+  `meaning` line selecting a member a meaning of the same file selects. A
+  generated header holds no encoder and no input struct for a report:
+  the regression case is the xHCI port status change event, which
+  carries no `releases` mark, and whose header has its accessors and no
+  `erx_xhci_trb_port_event_encode` or `erx_xhci_trb_port_event_free_t`;
+  a host source that calls `erx_xhci_trb_port_event_encode` is kept as a
+  test that expects the build to fail. Seeds: the
   target test removed, and the unknown target builds; the writer test
   removed, and the transfer ring's layout with a `releases` mark builds;
   the selector test removed, and two meanings selecting one member build.

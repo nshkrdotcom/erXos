@@ -8024,7 +8024,7 @@ to the corpus and follow rc
   last form moves onto the encoders. virtio-gpu's `erx_virtio_gpu_mem_entry` moves with the split ring, as a region
   entry; until then `resolve_regions` in `erx_device.c` writes it by hand, its length bounded where the region is
   carved, not at the write. The ADMA2 entry's encoder accepts a length of 0, which moves 65,536 bytes; the
-  sequencer's split never derives one, and the package that writes the split tests it. The encoders are public in `include/erx/abi.h` and exist for report layouts too; they end up confined
+  sequencer's split never derives one, and the package that writes the split tests it. The encoders are public in `include/erx/abi.h` and exist, with their `_free_t` input structs, for report layouts too, whose release places count as free (`tools/lib/erx/abi_marks.rb:40,130`, `tools/lib/erx/abi_emit_marks.rb:43`), against the design's reports with accessors only and the `meaning` line, which the formats do not carry yet; they end up confined
   to the sequencer (a private header), and the rule worth a build check is that only the sequencer stores into a
   region holding a structure. Packages, in order: the ledger, the layout, descriptions,
   the check's rules, the sequencer's publication and its acquisition, with the split ring moved onto them; GENET,
