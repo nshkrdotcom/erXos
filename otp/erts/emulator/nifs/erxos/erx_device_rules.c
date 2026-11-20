@@ -46,6 +46,11 @@
 #else
 #define SEED_NO_FILLS_TEST	false
 #endif
+#ifdef ERX_DMA_SEED_NO_OVERLAP_TEST
+#define SEED_NO_OVERLAP_TEST	true
+#else
+#define SEED_NO_OVERLAP_TEST	false
+#endif
 
 /* What the check derived of one record: its table and the references its meaning gives. */
 typedef struct judged {
@@ -159,6 +164,17 @@ filled_inside_a_name(const erx_dma_publication_t *publication, const judged_t *j
 	return (false);
 }
 
+/*
+ * The fills rule over two fills, each already inside a name, so no sum wraps: whether a byte of
+ * one buffer is in both, where the later store would overwrite part of the earlier.
+ */
+static bool
+fills_overlap(const erx_dma_fill_t *one, const erx_dma_fill_t *other)
+{
+	return (one->buffer == other->buffer && one->length != 0 && other->length != 0 &&
+	    one->offset < other->offset + other->length && other->offset < one->offset + one->length);
+}
+
 erx_dma_verdict_t
 erx_dma_publication_check(const erx_dma_ledger_t *ledger, const erx_dma_publication_t *publication)
 {
@@ -180,6 +196,10 @@ erx_dma_publication_check(const erx_dma_ledger_t *ledger, const erx_dma_publicat
 	for (uint32_t fill = 0; fill < publication->fill_count; fill++) {
 		if (!SEED_NO_FILLS_TEST && !filled_inside_a_name(publication, judged, &publication->fills[fill]))
 			return (ERX_DMA_BREAKS_FILLS);
+		for (uint32_t earlier = 0; earlier < fill && !SEED_NO_OVERLAP_TEST; earlier++) {
+			if (fills_overlap(&publication->fills[earlier], &publication->fills[fill]))
+				return (ERX_DMA_BREAKS_FILLS);
+		}
 	}
 	return (ERX_DMA_PASSES);
 }

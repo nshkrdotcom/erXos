@@ -129,9 +129,9 @@ test_rules(void)
 {
 	const erx_dma_layout_t layout = split_ring(MEMORY, 0, 32);
 	const erx_dma_description_t chain[2] = { descriptor(0, 0, 16, false), descriptor(0, 16, 84, true) };
-	const erx_dma_fill_t header = { 0, 0, 16 };
+	const erx_dma_fill_t header = { .buffer = 0, .offset = 0, .length = 16 };
 	erx_dma_description_t bad[ERX_DMA_HELD_RECORDS_MAX + 1];
-	erx_dma_fill_t fill;
+	erx_dma_fill_t fill, pair[2];
 	erx_dma_ledger_t ledger;
 
 	EXPECT(erx_dma_ledger_make(&ledger, &layout), "a ledger");
@@ -172,14 +172,20 @@ test_rules(void)
 	EXPECT(check(&ledger, bad, 1, NULL, 0) == ERX_DMA_PASSES, "a whole buffer");
 
 	/* fills: a buffer no record names; bytes straddling two names; inside one name. */
-	fill = (erx_dma_fill_t){ 1, 0, 4 };
+	fill = (erx_dma_fill_t){ .buffer = 1, .offset = 0, .length = 4 };
 	EXPECT(check(&ledger, chain, 2, &fill, 1) == ERX_DMA_BREAKS_FILLS, "out bytes into a buffer no record names");
-	fill = (erx_dma_fill_t){ 0, 10, 7 };
+	fill = (erx_dma_fill_t){ .buffer = 0, .offset = 10, .length = 7 };
 	EXPECT(check(&ledger, chain, 2, &fill, 1) == ERX_DMA_BREAKS_FILLS, "out bytes past their name");
-	fill = (erx_dma_fill_t){ 0, UINT64_MAX, 2 };
+	fill = (erx_dma_fill_t){ .buffer = 0, .offset = UINT64_MAX, .length = 2 };
 	EXPECT(check(&ledger, chain, 2, &fill, 1) == ERX_DMA_BREAKS_FILLS, "a fill whose sum wraps");
-	fill = (erx_dma_fill_t){ 0, 20, 80 };
+	fill = (erx_dma_fill_t){ .buffer = 0, .offset = 20, .length = 80 };
 	EXPECT(check(&ledger, chain, 2, &fill, 1) == ERX_DMA_PASSES, "out bytes inside a name");
+	/* fills: two over the same bytes, so a later store overwrites an earlier; end to end; in two buffers. */
+	pair[0] = (erx_dma_fill_t){ .buffer = 0, .offset = 0, .length = 16 };
+	pair[1] = (erx_dma_fill_t){ .buffer = 0, .offset = 8, .length = 8 };
+	EXPECT(check(&ledger, chain, 2, pair, 2) == ERX_DMA_BREAKS_FILLS, "two fills over the same bytes");
+	pair[1] = (erx_dma_fill_t){ .buffer = 0, .offset = 16, .length = 8 };
+	EXPECT(check(&ledger, chain, 2, pair, 2) == ERX_DMA_PASSES, "two fills end to end");
 
 	/* room: nothing; more records than a holding holds. */
 	EXPECT(check(&ledger, chain, 0, NULL, 0) == ERX_DMA_BREAKS_ROOM, "an empty publication");

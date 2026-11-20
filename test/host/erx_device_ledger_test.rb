@@ -28,7 +28,7 @@ class ErxDeviceLedgerTest < Minitest::Test
   # The seeds of the ledger (the layout's granule test, a holding begun over a held record or
   # buffer, a release of a holding not live) and of each rule of the check.
   SEEDS = %w[NO_GRANULE_TEST HOLD_WHILE_HELD RELEASE_TWICE NO_MEANING_TEST NO_WIDTH_TEST NO_RANGE_TEST
-             NO_HELD_TEST NO_LENGTH_TEST NO_ROOM_TEST NO_FILLS_TEST].freeze
+             NO_HELD_TEST NO_LENGTH_TEST NO_ROOM_TEST NO_FILLS_TEST NO_OVERLAP_TEST].freeze
 
   def test_ledger_and_rules
     output, status = run_harness
