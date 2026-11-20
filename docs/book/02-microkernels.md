@@ -501,7 +501,7 @@ Linux, which answered the belief that capability systems must be slow.
 EROS pays for every object a program creates from a **space bank**, an
 account of memory: deleting the bank frees every object paid from it.
 Space banks are the model for erXos's budgets
-([chapter 12](README.md#chapter-12-memory-and-budgets)).
+([chapter 12](12-memory.md#121-budgets-as-space-banks)).
 
 **seL4**, from NICTA and UNSW, is the L4 kernel built for proof. It was
 the first operating system kernel with a complete formal verification:
@@ -702,7 +702,7 @@ bug in it can give any program anything.
 
 In erXos the root task is the **system domain**. A domain is erXos's
 unit of isolation, a group of Erlang processes behind one wall
-([chapter 10](README.md#chapter-10-domains-a-wall-around-some-processes)).
+([chapter 10](10-domains.md#101-a-domain-is-a-node)).
 The system domain's Erlang services decide who gets what, and its C
 library builds and ends every other domain
 ([design.md, The model](../design.md#the-model)). It is the only

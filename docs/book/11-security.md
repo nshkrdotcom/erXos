@@ -56,7 +56,7 @@ built from someone else's source
 
 The unit of protection is the **domain**: an address space with its
 own Erlang runtime and its own processes, walled off from every other
-([chapter 10](10-domains.md)). Five adversaries matter.
+([chapter 10](10-domains.md#101-a-domain-is-a-node)). Five adversaries matter.
 
 * **Code in an Erlang domain.** It may do anything inside its own
   domain, including send messages to other domains through its
@@ -519,7 +519,7 @@ channel to its **handler**, the session's Erlang process that serves
 that program, a data area for its reads and writes, and the memory its
 session mapped for it. Every path it opens goes to the handler, which
 resolves it over the program's own table
-([chapter 13](13-native-programs.md)). That table is narrowed from its
+([chapter 13](13-native-programs.md#1322-the-handler)). That table is narrowed from its
 starter's: each entry on the same server, rooted at or below the
 starter's, with rights no wider
 ([design-files.md, Invariants](../design-files.md#invariants)). The
@@ -672,7 +672,7 @@ domain's connections holds too, since the domain service makes every
 connection.
 
 Memory and CPU are another matter. A **budget** is the record that
-pays for a domain's memory ([chapter 12](12-memory.md)). One shared
+pays for a domain's memory ([chapter 12](12-memory.md#121-budgets-as-space-banks)). One shared
 pool of memory serves every domain, and any domain can drain it: a
 budget record stores a guarantee and a cap and refuses nothing, and
 when the pool runs dry every domain's allocations fail with

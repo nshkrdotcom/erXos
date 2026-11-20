@@ -133,11 +133,11 @@ expect, this section says so.
 
 | Property | The one mechanism | Chapter |
 | --- | --- | --- |
-| Only the root service creates kernel objects | no domain holds Fiasco's factory; `liberx` sends every such request to the root service | [8](08-kernel-interface.md#83-the-root-service-who-holds-what), [10](README.md#chapter-10-domains-a-wall-around-some-processes) |
+| Only the root service creates kernel objects | no domain holds Fiasco's factory; `liberx` sends every such request to the root service | [8](08-kernel-interface.md#83-the-root-service-who-holds-what), [10](10-domains.md#108-the-system-domain-and-the-domain-library) |
 | A destroyed object is gone for every holder at once | every use of a handle passes one lookup that checks the object's generation | [8](08-kernel-interface.md#842-destroying-an-object) |
-| Ending a budget ends what was charged to it | one walk over the root service's records of that budget | [12](README.md#chapter-12-memory-and-budgets) |
-| A pid is a name, not an authority | the receiver's funnel admits an operation only on a process its own export table lists | [10](README.md#chapter-10-domains-a-wall-around-some-processes) |
-| No process acts on a message from another domain that its protocol's owner did not admit | every such message arrives wrapped as `{erx_origin, D, Msg}`; only the protocol's owner unwraps it | [10](README.md#chapter-10-domains-a-wall-around-some-processes) |
+| Ending a budget ends what was charged to it | one walk over the root service's records of that budget | [12](12-memory.md#1212-ending-a-budget) |
+| A pid is a name, not an authority | the receiver's funnel admits an operation only on a process its own export table lists | [10](10-domains.md#104-exports-a-pid-is-a-name-not-an-authority) |
+| No process acts on a message from another domain that its protocol's owner did not admit | every such message arrives wrapped as `{erx_origin, D, Msg}`; only the protocol's owner unwraps it | [10](10-domains.md#105-the-origin-envelope) |
 | Every layer agrees on the kernel interface | all are generated from the files under `abi/` | [7](07-one-source.md#72-the-abi-file) |
 
 *Table 6.1. The "by construction" properties on Fiasco. No row
@@ -208,7 +208,7 @@ bounded by its own budget, and a charge past the limit is refused, so
 no domain can take memory another was promised. The wall is designed
 and not built ([design-fiasco.md, Memory and
 budgets](../design-fiasco.md#memory-and-budgets)).
-[Chapter 12](README.md#chapter-12-memory-and-budgets) explains both.
+[Chapter 12](12-memory.md#124-walls-what-is-built-what-is-designed) explains both.
 
 ### 6.2.4 Pids, exports and the envelope
 
@@ -516,8 +516,8 @@ Here is a post of one outgoing packet.
 No line of the driver or the form places a clean or a barrier; they
 follow from the change of writer. The cores, the check and the
 effect loop are **Built**. The GENET driver on the Raspberry Pi 4
-and the virtio drivers on QEMU run through them (README.md, "Current
-status"; `otp/erts/emulator/nifs/erxos/erx_device_genet.c`).
+and the virtio drivers on QEMU run through them ([the top-level README, Current
+status](../../README.md#current-status); `otp/erts/emulator/nifs/erxos/erx_device_genet.c`).
 
 ### 6.4.4 The edge, held by a build check
 
@@ -563,8 +563,8 @@ checks the budget arithmetic and other C cores for every input within
 stated bounds. Every parser of untrusted input has a fuzz target, among
 them the funnel's term decoder, the boot image and executable headers.
 The static checks are the chokepoint rules and the stack proof of
-sections 6.6 and 6.7. All of these are **Built** (README.md, "Current
-status").
+sections 6.6 and 6.7. All of these are **Built** ([the top-level README, Current
+status](../../README.md#current-status)).
 
 ### 6.5.1 Seeded faults
 

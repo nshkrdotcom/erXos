@@ -93,7 +93,7 @@ describes. The kernel knows threads and address spaces and moves
 pages between them. It knows that an IRQ object fired. It does not
 know what a pid is, that a process has a mailbox, or which Erlang
 process a page holds. Those live in ERTS, one level up
-([chapter 9](README.md#chapter-9-processes-runtimes-and-two-level-scheduling)).
+([chapter 9](09-processes.md#912-two-levels-in-one-picture)).
 
 ### 8.1.2 Why the line falls there
 
@@ -624,7 +624,7 @@ at once without searching. Domains do not pass handles to each other:
 they share memory through connections that the domain library, which
 created both domains, sets up
 ([design-fiasco.md, Passing a handle](../design-fiasco.md#passing-a-handle);
-[chapter 10](README.md#chapter-10-domains-a-wall-around-some-processes)).
+[chapter 10](10-domains.md#1023-who-makes-a-connection)).
 
 ## 8.5 Threads, waits, gates and faults
 
@@ -846,7 +846,7 @@ page fault that the root must fill. A fault is always a bug, and is
 reported as one (section 8.5.4). The cost is that memory a program
 commits is taken whole, even the parts it never touches; only reserved
 addresses are free. Chapter 12 weighs that against FreeBSD's demand
-paging ([chapter 12](README.md#chapter-12-memory-and-budgets)).
+paging ([chapter 12](12-memory.md#1211-design-choices)).
 
 ### 8.6.3 Kinds of memory object
 
@@ -879,7 +879,7 @@ with the JIT flag can map one JIT object twice, once writable and once
 executable; BeamAsm, ERTS's just-in-time compiler, writes code through
 one address and runs it through the other. So a domain with that flag
 can run code it wrote, and that is a property of the system, not a gap
-in one call ([chapter 11](README.md#chapter-11-authority-and-security)).
+in one call ([chapter 11](11-security.md#11101-no-writable-and-executable-mapping)).
 
 ### 8.6.4 Who pays
 
@@ -889,7 +889,7 @@ record that groups objects so they end together, as section 8.4.2
 described. It records a limit, but it refuses no charge past it, so
 one domain can take pages from the pool that others need
 ([design-fiasco.md, Memory and budgets](../design-fiasco.md#memory-and-budgets);
-[chapter 12](README.md#chapter-12-memory-and-budgets)).
+[chapter 12](12-memory.md#123-the-pool)).
 
 ## 8.7 Interrupts, doorbells and devices
 
@@ -978,7 +978,7 @@ Where a device masters DMA without an IOMMU, isolation also rests on
 the domain that drives it (section 8.7.2). And on a processor open to
 branch-predictor attacks, in which one program trains the processor's
 guesses so that another leaks data through timing, a domain may read
-memory it cannot map ([chapter 11](README.md#chapter-11-authority-and-security)).
+memory it cannot map ([chapter 11](11-security.md#1113-what-the-threat-model-leaves-out)).
 
 That nothing a domain does can make the kernel panic rests on Fiasco's
 own code. Fiasco is the kernel its developers wrote, with a few small
@@ -1004,7 +1004,7 @@ A hostile domain could:
 * write anything into its own side of a ring it shares; the receiving
   domain's funnel, the one function that checks every frame arriving
   from another domain, checks it
-  ([chapter 10](README.md#chapter-10-domains-a-wall-around-some-processes));
+  ([chapter 10](10-domains.md#103-the-funnel));
 * ring a peer's doorbell as often as it likes; the peer's pending state
   stays one listed entry, but each ring costs the peer a dispatcher run
   and up to one wake, and nothing bounds the rate;

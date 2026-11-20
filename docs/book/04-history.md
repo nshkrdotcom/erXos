@@ -35,7 +35,7 @@ system's process. A small microkernel sits underneath and knows
 nothing of Erlang. That kernel is Fiasco, a microkernel of the L4
 family, changed by a few patches. Above it, the machine is divided
 into domains, each an address space with its own Erlang runtime
-([chapter 10](README.md#chapter-10-domains-a-wall-around-some-processes)).
+([chapter 10](10-domains.md#101-a-domain-is-a-node)).
 The machine stays one Erlang system, whose processes link and message
 one another across domains, and drivers and file systems are Erlang
 processes under supervisors.
@@ -349,7 +349,7 @@ erXos takes both ideas. In its design, a domain reaches another
 domain's process only if that process's own runtime exported it, so a
 forged pid reaches nothing. Inside a domain, pids keep their stock meaning, because the
 domain is the unit of trust
-([chapter 11](README.md#chapter-11-authority-and-security)).
+([chapter 11](11-security.md#115-exports-and-the-funnel-authority-over-processes)).
 
 Payment comes from EROS
 ([chapter 2](02-microkernels.md#236-capability-systems-in-practice)).
@@ -369,7 +369,7 @@ its user pages are charged to the budget's record, which refuses a
 charge past its limit; and what the root service holds on the domain's
 behalf is bounded by limits on the domain's threads, objects and
 mappings ([design-fiasco.md, Memory and budgets](../design-fiasco.md#memory-and-budgets),
-[chapter 12](README.md#chapter-12-memory-and-budgets)). That wall is
+[chapter 12](12-memory.md#124-walls-what-is-built-what-is-designed)). That wall is
 designed and not built: a budget records its limit but refuses no
 charge, and the inspector reports a domain's budget as unsupported
 ([README.md, Current status](../../README.md#current-status)).
@@ -385,7 +385,7 @@ those three, and the non-goals mark where erXos stops
 
 A **principal** is a user in erXos's sense, an identity with its own
 budget, CPU share and quotas
-([chapter 11](README.md#chapter-11-authority-and-security)).
+([chapter 11](11-security.md#119-principals-sessions-and-quotas)).
 
 | Requirement | What it means |
 | --- | --- |

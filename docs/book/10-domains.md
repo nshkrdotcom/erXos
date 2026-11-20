@@ -89,13 +89,13 @@ loaded code, ETS tables and registered names. A domain's
 from the domain's own release
 ([design-domains.md, Atoms, code, ETS and names](../design-domains.md#atoms-code-ets-and-names)).
 A domain also has a **budget**, a record of the memory set aside for it
-([chapter 12](12-memory.md)); a **group**, the threads its runtime runs
-on ([chapter 9](09-processes.md)); and a connection to the system
+([chapter 12](12-memory.md#121-budgets-as-space-banks)); a **group**, the threads its runtime runs
+on ([chapter 9](09-processes.md#933-park-and-wake-on-fiasco)); and a connection to the system
 domain, the one it boots with.
 
 So a NIF's stray pointer corrupts only its own domain's heap, and a
 domain that fills its atom table ends alone. Each domain running its own ERTS is
-Built (README.md, "Current status").
+Built ([the top-level README, Current status](../../README.md#current-status)).
 
 ### 10.1.2 Domain ids and pids
 
@@ -293,7 +293,7 @@ take over:
 
 Introductions are Built for callers in the system domain. Another
 domain asks for one through a **facet**, a process that stands for a
-right to use one service ([chapter 11](11-authority.md)).
+right to use one service ([chapter 11](11-security.md#116-facets-authority-over-services)).
 
 No kernel message or capability passes between two domains, and the
 system domain carries none of their frames.
@@ -302,7 +302,7 @@ Each page of a connection is charged to the domain that reads it,
 which sized the lane, through a budget record for that connection. In
 the system as built the record refuses nothing; a budget that refuses
 memory past its limit is designed and not built
-([chapter 12](12-memory.md)).
+([chapter 12](12-memory.md#124-walls-what-is-built-what-is-designed)).
 
 ### 10.2.4 When a lane is full
 
@@ -957,7 +957,7 @@ their meaning across the wall, and a domain's end reaches each peer
 after everything it sent.
 
 What a domain holds besides messages, and who may hand it out, is the
-subject of [chapter 11](11-authority.md).
+subject of [chapter 11](11-security.md).
 
 ## Where to read next
 

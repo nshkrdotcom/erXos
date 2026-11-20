@@ -599,7 +599,7 @@ not ported fails when the program is linked rather than when it runs
 that deletion is designed and not built. A runtime uses no file
 descriptor but standard output and error; native programs get files,
 pipes and signals from a POSIX layer over `liberx`
-([chapter 13](13-native-programs.md)).
+([chapter 13](13-native-programs.md#137-the-posix-lite-personality)).
 
 The errno and signal numbers musl returns are FreeBSD's, generated from
 one table in the ABI and checked against FreeBSD's own

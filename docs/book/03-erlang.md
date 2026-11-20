@@ -1004,13 +1004,13 @@ signals and supervises is an Erlang process: a pid, a mailbox, links and
 monitors ([design.md, The model](../design.md#the-model)). No second
 kind of process lies beneath it. Native programs written in C do run,
 each in an address space of its own, as [chapter
-13](README.md#chapter-13-native-programs-pipes-and-posix-lite) tells.
+13](13-native-programs.md#131-a-program-is-a-port) tells.
 
 Erlang processes are grouped into **domains**. A domain is a group of
 processes that share one address space, one ERTS and one memory budget.
 Each domain's ERTS runs in user mode, as an Erlang node with a name of
 its own ([chapter
-10](README.md#chapter-10-domains-a-wall-around-some-processes)). One
+10](10-domains.md#101-a-domain-is-a-node)). One
 domain is special: the **system domain**, erXos's root task in the sense
 of [section 2.5.3](02-microkernels.md#253-the-root-task). It holds the
 authority over all memory and devices, builds every other domain, and
@@ -1037,7 +1037,7 @@ built: today every thread but the watchdog's runs at one priority
 Scheduling has two levels: ERTS switches between Erlang processes as
 section 3.5.2 describes, and the kernel schedules ERTS's threads by
 priority. [Chapter
-9](README.md#chapter-9-processes-runtimes-and-two-level-scheduling)
+9](09-processes.md#912-two-levels-in-one-picture)
 treats both.
 
 ### 3.9.2 Distribution across a domain's wall

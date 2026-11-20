@@ -101,7 +101,7 @@ This is **Built**.
 
 A **domain** is erXos's unit of isolation, a group of Erlang processes
 behind one wall
-([chapter 10](README.md#chapter-10-domains-a-wall-around-some-processes)).
+([chapter 10](10-domains.md#101-a-domain-is-a-node)).
 The wall is an address space of its own. A stray pointer in a NIF,
 the C code a module can link into ERTS
 ([section 3.5.4](03-erlang.md#354-bifs-nifs-and-ports)), corrupts
@@ -167,7 +167,7 @@ below. A **CPU set** names the processors they may use, and a
 These limits are **Designed** and not built. Every thread but the root's
 watchdog thread runs at one priority, so a busy domain takes turns
 with every other thread on its CPU
-([chapter 9](README.md#chapter-9-processes-runtimes-and-two-level-scheduling)).
+([chapter 9](09-processes.md#921-one-priority-round-robin)).
 
 ### 5.1.5 Budget
 
@@ -197,7 +197,7 @@ Budgets as records, which end everything charged to them, are
 design, a domain's budget sets aside memory no other budget can take,
 and refuses the domain more once it is spent
 ([design-fiasco.md, Memory and budgets](../design-fiasco.md#memory-and-budgets);
-[chapter 12](README.md#chapter-12-memory-and-budgets)).
+[chapter 12](12-memory.md#124-walls-what-is-built-what-is-designed)).
 
 ### 5.1.6 Capability and export
 
@@ -526,7 +526,7 @@ budgets and leaves nothing behind
 The device service gives each device to the domain the manifest names,
 such as the SD card to the storage domain, and each domain's ERTS
 boots its own small release as a node. Domain creation from the manifest is **Built**
-([chapter 10](README.md#chapter-10-domains-a-wall-around-some-processes);
+([chapter 10](10-domains.md#1082-creating-a-domain);
 [chapter 15](README.md#chapter-15-devices-and-drivers)).
 
 ### 5.3.3 A session starts
@@ -588,8 +588,8 @@ Connections, the funnel, exports, facets and `/proc/time/status` are
 The funnel sits with the receiver, so the party that bears the cost
 of a bad frame checks it, on its own CPU time. No third party stands
 between two domains where its failure could reach either
-([chapter 10](README.md#chapter-10-domains-a-wall-around-some-processes);
-[chapter 11](README.md#chapter-11-authority-and-security)).
+([chapter 10](10-domains.md#103-the-funnel);
+[chapter 11](11-security.md#112-trust-placement)).
 
 ### 5.3.5 A domain crashes, and a link reports it
 
@@ -641,7 +641,7 @@ starts, so it knows who holds each, and the end of the stream follows
 ([design-pipes.md](../design-pipes.md)). Programs in pipelines with
 Erlang commands are **Built**
 ([README.md, Current status](../../README.md#current-status);
-[chapter 13](README.md#chapter-13-native-programs-pipes-and-posix-lite);
+[chapter 13](13-native-programs.md#135-a-pipeline-end-to-end);
 [chapter 20](README.md#chapter-20-the-command-shell-and-the-unix-surface)).
 
 ### 5.3.7 The day as one diagram

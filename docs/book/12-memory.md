@@ -484,7 +484,7 @@ copies are eager. `erx_mem_child`, which the program loader uses for
 an executable's writable segments, makes a new memory object and
 fills it with the parent's bytes. Each program pays for its writable
 segments in full when it starts. No call copies a whole space, so
-there is no copy-on-write `fork` ([chapter 13](13-native-programs.md)).
+there is no copy-on-write `fork` ([chapter 13](13-native-programs.md#1372-why-posix_spawn-not-fork)).
 
 ### 12.7.2 Shared objects
 
@@ -508,7 +508,7 @@ ERTS's just-in-time compiler, writes machine code and then runs it,
 and no mapping may be writable and executable at once. So a space made
 with the JIT flag maps one JIT object twice: read and write for the
 compiler, read and execute for the code. The domain can still run
-code it wrote ([chapter 11](11-authority.md)). Shared objects and the JIT alias are built.
+code it wrote ([chapter 11](11-security.md#11101-no-writable-and-executable-mapping)). Shared objects and the JIT alias are built.
 
 ## 12.8 Deleted memory
 

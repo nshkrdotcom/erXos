@@ -504,7 +504,7 @@ last line.
 Two limits show here. A program does not read the terminal: a standard
 input that is the terminal reaches it as a pipe already at its end.
 And a redirection reaches a program as a pipe that a pump feeds from
-the file, not as the file (README.md, "Current status").
+the file, not as the file ([the top-level README, Current status](../../README.md#current-status)).
 
 ## 13.6 Signals, job control and FreeBSD's numbers
 
@@ -577,7 +577,7 @@ job control interrupts the job's Erlang processes, the program's
 starter among them. When the starter ends, the handler kills the
 program's tree of spaces, reports it as killed by `SIGKILL`, and waits
 for the program's end as for any other. The line's `$status` is then
-`sigint` (README.md, "Current status"). The program sees no `SIGINT`
+`sigint` ([the top-level README, Current status](../../README.md#current-status)). The program sees no `SIGINT`
 and runs no cleanup.
 
 Stopping a program is designed and not built. In the design the
@@ -660,7 +660,7 @@ descriptors. Table 13.2 says which parts run.
 | terminal | none: standard input from the terminal is at its end | `/dev/tty` with `termios` |
 
 *Table 13.2. The POSIX-lite personality. The personality as a whole is
-designed and not built (README.md, "Current status").*
+designed and not built ([the top-level README, Current status](../../README.md#current-status)).*
 
 Some designed rows exist in part: `liberx` holds the spawn planner, a
 pure function from what `posix_spawn` was asked for to the request it

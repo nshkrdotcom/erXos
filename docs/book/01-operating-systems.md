@@ -476,7 +476,7 @@ job can keep running after its shell exits, unless the terminal's
 hangup signal ends it.
 
 **Where erXos uses this.** erXos schedules in two levels ([chapter
-9](README.md#chapter-9-processes-runtimes-and-two-level-scheduling)).
+9](09-processes.md#912-two-levels-in-one-picture)).
 Fiasco decides which kernel thread runs on each core, and inside each
 domain the Erlang runtime picks which Erlang process runs on its
 threads; that is built. Today every domain's threads run at one Fiasco
@@ -490,7 +490,7 @@ erXos also gives UNIX's process two
 parts. The Erlang process runs and fails. A **domain**, a set of Erlang
 processes sharing one address space, is what the hardware walls off;
 domains are built ([chapter
-10](README.md#chapter-10-domains-a-wall-around-some-processes)).
+10](10-domains.md#101-a-domain-is-a-node)).
 
 ## 1.4 Virtual memory
 
@@ -704,7 +704,7 @@ process can still crowd out the rest.
 
 **Where erXos uses this.** Each domain has a **budget**, an account for
 the memory it uses ([chapter
-12](README.md#chapter-12-memory-and-budgets)). Today a budget is only a
+12](12-memory.md#121-budgets-as-space-banks)). Today a budget is only a
 record: nothing is charged to it, so one domain can still crowd out the
 rest, and the inspector reports another domain's budget as unsupported;
 that is built. The design makes each budget a wall: a Fiasco
@@ -715,7 +715,7 @@ Erlang's just-in-time compiler keeps W^X by writing code through one
 mapping and running it through another; that is built. The system does
 not stop a page from being writable through one mapping and executable
 through another, so a domain can run code it wrote into its own memory
-([chapter 11](README.md#chapter-11-authority-and-security)).
+([chapter 11](11-security.md#11101-no-writable-and-executable-mapping)).
 
 ## 1.5 Devices, interrupts, DMA and caches
 
@@ -1113,7 +1113,7 @@ system's code; that is built ([chapter 3](03-erlang.md)). Between
 domains, erXos carries messages over a **lane**: a ring buffer in shared
 memory that only the sender writes, plus a small signal that wakes the
 receiver ([chapter
-10](README.md#chapter-10-domains-a-wall-around-some-processes)). The
+10](10-domains.md#1021-a-lane)). The
 receiver checks every message through one function that refuses
 malformed ones. Both are built
 ([design-domains.md](../design-domains.md#on-fiasco)).
@@ -1161,7 +1161,7 @@ first program; that is built
 ([design-platforms.md](../design-platforms.md#overview)). That program
 is the **system domain**, which runs the trusted system services and
 creates every other domain ([chapter
-10](README.md#chapter-10-domains-a-wall-around-some-processes)). It
+10](10-domains.md#108-the-system-domain-and-the-domain-library)). It
 plays the part of `init` and more: like the root task of an L4 system
 ([chapter 2](02-microkernels.md#253-the-root-task)), it creates every
 kernel object the others use. [Chapter

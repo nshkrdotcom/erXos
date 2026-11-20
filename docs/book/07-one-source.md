@@ -469,7 +469,7 @@ and each device's **holder**, the one domain the device belongs to
 and whose code drives it. It also names each service and each
 **facet**, the permission that lets one domain
 reach one service of another ([chapter
-11](README.md#chapter-11-authority-and-security) explains facets).
+11](11-security.md#116-facets-authority-over-services) explains facets).
 A domain, from the shared part, and a unit, from the board's part,
 look like this:
 
@@ -532,7 +532,7 @@ enforced: the design's priority band, CPU set and thread limit per
 domain are designed and not built, and every thread but the watchdog
 runs at one priority. A manifest that passes the check is one whose
 numbers add up, not one the system holds to them ([chapter
-12](README.md#chapter-12-memory-and-budgets)).
+12](12-memory.md#1241-accounts-without-walls)).
 
 ### 7.7.2 A seeded violation, traced
 
