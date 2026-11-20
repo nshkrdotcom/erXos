@@ -212,7 +212,6 @@ erx_split_ring_complete(erx_split_ring_t *ring, const erx_report_record_t *eleme
 		const erx_dma_holding_t *const holding = erx_dma_report_holding(&ring->ledger, used, &elements[*done]);
 		erx_split_ring_chain_t chain;
 		uint32_t buffer;
-		erx_dma_holding_t ended;
 
 		/*
 		 * The element is judged whole before its chain is released, so a bad one leaves the
@@ -225,12 +224,10 @@ erx_split_ring_complete(erx_split_ring_t *ring, const erx_report_record_t *eleme
 		}
 		buffer = holding->buffers[0];
 		chain = ring->chains[buffer];
-		if (len > chain.writable && !SEED_LEN_UNCHECKED) {
+		if ((len > chain.writable && !SEED_LEN_UNCHECKED) || !erx_dma_consume(&ring->ledger, used, holding)) {
 			ring->broken = true;
 			break;
 		}
-		/* Cannot refuse: erx_dma_report_holding found the holding it ends. */
-		(void)erx_dma_consume(&ring->ledger, used, &elements[*done], &ended);
 		answers[*done] = (erx_split_ring_answer_t){ .tag = chain.tag,
 		    .written = { .offset = pool->first + (uint64_t)buffer * pool->stride + chain.written_from,
 		    .length = len } };

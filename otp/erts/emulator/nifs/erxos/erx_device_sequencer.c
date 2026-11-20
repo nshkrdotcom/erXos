@@ -313,10 +313,7 @@ erx_dma_report_holding(const erx_dma_ledger_t *ledger, uint32_t reports, const e
 }
 
 bool
-erx_dma_consume(erx_dma_ledger_t *ledger, uint32_t reports, const erx_report_record_t *record,
-    erx_dma_holding_t *ended)
+erx_dma_consume(erx_dma_ledger_t *ledger, uint32_t reports, const erx_dma_holding_t *holding)
 {
-	erx_dma_place_t head;
-
-	return (report_head(ledger, reports, record, &head) && erx_dma_ledger_release(ledger, reports, head, ended));
+	return (erx_dma_ledger_release_holding(ledger, reports, holding));
 }

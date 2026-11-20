@@ -29,8 +29,6 @@
 enum { SIZE = 4, BUFFER = 100, GRANULE = 64, MEMORY = 192 + SIZE * 128 };
 enum { DESC = 0, AVAIL = 1, USED = 2 };
 
-/* The holding a release ended, which these tests do not read. */
-static erx_dma_holding_t ended;
 /* The device's region table, empty but for test_regions, which fills its own. */
 static const erx_dma_regions_t no_regions;
 static erx_dma_regions_t table;
@@ -307,6 +305,7 @@ test_transitions(void)
 {
 	const erx_dma_layout_t layout = split_ring(MEMORY, 0, 32);
 	const erx_dma_place_t head = { DESC, 0 };
+	erx_dma_holding_t copy;
 	erx_dma_ledger_t ledger;
 
 	EXPECT(erx_dma_ledger_make(&ledger, &layout, &no_regions), "a ledger");
@@ -321,8 +320,15 @@ test_transitions(void)
 	EXPECT(hold_at(&ledger, 0, (erx_dma_place_t[]){ { DESC, 0 }, { AVAIL, 0 } }, 2), "a chain of one descriptor");
 	EXPECT(!hold_at(&ledger, 0, (erx_dma_place_t[]){ { DESC, 1 }, { AVAIL, 1 } }, 2),
 	    "a buffer a live holding holds, with descriptors free");
-	EXPECT(!erx_dma_ledger_release(&ledger, DESC, head, &ended), "a release on a table the CPU writes");
-	EXPECT(!erx_dma_ledger_release(&ledger, USED, head, &ended), "a release no acquisition covered");
+	EXPECT(!erx_dma_ledger_release_holding(&ledger, DESC, erx_dma_ledger_holding(&ledger, head)),
+	    "a release on a table the CPU writes");
+	EXPECT(!erx_dma_ledger_release_holding(&ledger, USED, erx_dma_ledger_holding(&ledger, head)),
+	    "a release no acquisition covered");
+	EXPECT(erx_dma_ledger_acquire(&ledger, USED, 1), "the chain's report acquired");
+	copy = *erx_dma_ledger_holding(&ledger, head);
+	EXPECT(!erx_dma_ledger_release_holding(&ledger, USED, &copy) && !erx_dma_ledger_release_holding(&ledger, USED, NULL) &&
+	    erx_dma_ledger_live(&ledger) == 1, "a holding the ledger did not give ends nothing");
+	EXPECT(erx_dma_ledger_acquire(&ledger, USED, 0), "the acquisition taken back");
 	EXPECT(!erx_dma_ledger_acquire(&ledger, USED, 2) && !erx_dma_ledger_acquire(&ledger, DESC, 1),
 	    "an acquisition past the live holdings, or of a table the CPU writes");
 	EXPECT(erx_dma_ledger_free_records(&ledger, DESC) == SIZE - 1, "three free descriptors");
@@ -406,7 +412,8 @@ step(const erx_dma_ledger_t *before, const model_t *was, unsigned event, unsigne
 		allowed = (model.heads >> head) & 1;
 		/* The acquisition is not explored here: each release follows one covering every live holding. */
 		EXPECT(erx_dma_ledger_acquire(ledger, USED, erx_dma_ledger_live(ledger)), "an acquisition of what is live");
-		done = erx_dma_ledger_release(ledger, USED, (erx_dma_place_t){ DESC, head }, &ended);
+		done = erx_dma_ledger_release_holding(ledger, USED,
+		    erx_dma_ledger_holding(ledger, (erx_dma_place_t){ DESC, head }));
 		if (allowed) {
 			model.descs &= ~model.chain[head];
 			model.buffers &= ~(1u << head);

@@ -106,12 +106,12 @@ const erx_dma_holding_t	*erx_dma_report_holding(const erx_dma_ledger_t *ledger, 
 			    const erx_report_record_t *record);
 
 /*
- * Consumes the record at the consumer position of table `reports`, as the acquisition read it,
- * and ends the holding it releases into `*ended`. False, changing nothing, for a record past
- * what the acquisition covered, one whose selector names no meaning, one that releases nothing
- * the split ring knows, or one naming no live holding: the queue breaks.
+ * Consumes the record at the consumer position of table `reports`, ending `holding`, the one
+ * erx_dma_report_holding gave for that record, so the record is decoded once and judged whole
+ * before anything ends. False, changing nothing, for NULL (a record past what the acquisition
+ * covered, one whose selector names no meaning, one that releases nothing the split ring knows,
+ * or one naming no live holding), which breaks the queue.
  */
-bool	erx_dma_consume(erx_dma_ledger_t *ledger, uint32_t reports, const erx_report_record_t *record,
-	    erx_dma_holding_t *ended);
+bool	erx_dma_consume(erx_dma_ledger_t *ledger, uint32_t reports, const erx_dma_holding_t *holding);
 
 #endif /* ERX_DEVICE_SEQUENCER_H */

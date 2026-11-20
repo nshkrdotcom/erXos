@@ -448,25 +448,21 @@ erx_dma_ledger_holding(const erx_dma_ledger_t *ledger, erx_dma_place_t head)
 }
 
 bool
-erx_dma_ledger_release(erx_dma_ledger_t *ledger, uint32_t reports, erx_dma_place_t head, erx_dma_holding_t *ended)
+erx_dma_ledger_release_holding(erx_dma_ledger_t *ledger, uint32_t reports, const erx_dma_holding_t *holding)
 {
-	const erx_dma_holding_t *holding;
-
 	if (reports >= ledger->layout.table_count || !device_writes(&ledger->layout, reports) ||
 	    ledger->acquired[reports] == 0)
 		return (false);
-	holding = erx_dma_ledger_holding(ledger, head);
-	if (holding != NULL) {
-		const uint32_t live = (uint32_t)(holding - ledger->holdings);
-
-		*ended = *holding;
-		ledger->holdings[live] = ledger->holdings[--ledger->live];
-		ledger->acquired[reports]--;
-		advance(ledger, reports, 1);
-		return (true);
+	/* By equality alone: a pointer the ledger did not give compares equal to none of its holdings. */
+	for (uint32_t live = 0; live < ledger->live; live++) {
+		if (&ledger->holdings[live] == holding) {
+			ledger->holdings[live] = ledger->holdings[--ledger->live];
+			ledger->acquired[reports]--;
+			advance(ledger, reports, 1);
+			return (true);
+		}
 	}
 	if (SEED_RELEASE_TWICE) {
-		*ended = (erx_dma_holding_t){ 0 };
 		advance(ledger, reports, 1);
 		return (true);
 	}

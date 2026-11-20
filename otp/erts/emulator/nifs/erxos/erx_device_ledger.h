@@ -147,7 +147,7 @@ typedef struct erx_dma_position {
 
 /*
  * The ledger. Its fields are the module's: callers read it through the accessors below and
- * change it only through hold, acquire, release and reset, so its invariants hold by
+ * change it only through hold, acquire, release_holding and reset, so its invariants hold by
  * construction: the layout was checked when the ledger was made, the first `live` holdings are
  * the live ones, and no record or buffer is held twice. Its regions are its device's table.
  */
@@ -194,12 +194,13 @@ bool	erx_dma_ledger_hold(erx_dma_ledger_t *ledger, const struct erx_dma_publicat
  */
 bool	erx_dma_ledger_acquire(erx_dma_ledger_t *ledger, uint32_t reports, uint32_t count);
 /*
- * Ends the live holding whose head is `head`, on a report of table `reports`, the table the
- * device writes, at its consumer position, into `*ended`. False, changing nothing, when none is
- * live or the acquisition covered no report left.
+ * Ends `holding`, a live holding of this ledger as erx_dma_ledger_holding gave it, on a report of
+ * table `reports`, the table the device writes, at its consumer position. False, changing nothing,
+ * for a table the device does not write, an acquisition with no report left, or a holding that is
+ * not one of the ledger's live ones, NULL included. A caller reads what it needs of the holding
+ * first: the pointer is the ledger's, and no longer names it after.
  */
-bool	erx_dma_ledger_release(erx_dma_ledger_t *ledger, uint32_t reports, erx_dma_place_t head,
-	    erx_dma_holding_t *ended);
+bool	erx_dma_ledger_release_holding(erx_dma_ledger_t *ledger, uint32_t reports, const erx_dma_holding_t *holding);
 /*
  * The device's idle report after a reset: every holding and acquisition ends and every position
  * returns to 0. The persistent regions stay.
