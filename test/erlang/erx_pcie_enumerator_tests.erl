@@ -116,7 +116,7 @@ a_set_refused_by_the_mastering_rule_turns_the_function_off_test() ->
     Table = erx_pcie_model:new([endpoint_at(?PLACE, endpoint())]),
     {Pid, _} = started(Table, [Layout], #{}, #{?KEY => setting(decoding)}),
     ?assertEqual(16#2, command(Table) band 16#7),
-    erx_pcie_model:write({Table, 0}, 16#8000 + 16#10, 4, 16#0fff0000),
+    erx_pcie_model:config_write({Table, 0}, {function, 8}, 16#10, 4, 16#0fff0000),
     ?assertEqual({error, reset}, erx_pcie_enumerator:set(Pid, ?KEY, setting(mastering))),
     ?assertEqual(0, command(Table) band 16#7),
     #{bars := [#{address := Address0} | _]} = Layout,
@@ -155,7 +155,7 @@ a_changed_function_starts_off_whatever_its_setting_test() ->
     ok = erx_pcie_enumerator:set(First, ?KEY, setting(mastering)),
     stop(First),
     ?assertEqual(16#6, command(Table) band 16#7),
-    ok = erx_pcie_model:write({Table, 0}, 16#8000 + 16#2e, 2, 16#1101),
+    ok = erx_pcie_model:config_write({Table, 0}, {function, 8}, 16#2e, 2, 16#1101),
     {Pid, [#{record := Record, kept := Kept}]} =
         started(Table, [Layout], #{?KEY => setting(mastering)}, #{?KEY => setting(decoding)}),
     ?assertMatch(#{state := ready, subsystem := 16#1101}, Record),

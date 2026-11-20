@@ -48,13 +48,13 @@
 %% access/2 of erx_pcie_bridge is reached here.
 
 access({read, Place, Offset, Width}, {Table, _Issued} = State) ->
-    {{ok, erx_pcie_model:read({Table, 0}, ecam(Place) + Offset, Width)}, State};
+    {{ok, erx_pcie_model:config_read({Table, 0}, {function, routing(Place)}, Offset, Width)}, State};
 access({write, Place, Offset, Width, Value}, {Table, Issued}) ->
     Before = erx_pcie_model:snapshot(Table, Place),
-    ok = erx_pcie_model:write({Table, 0}, ecam(Place) + Offset, Width, Value),
+    ok = erx_pcie_model:config_write({Table, 0}, {function, routing(Place)}, Offset, Width, Value),
     {ok, {Table, [{Before, {Offset, Width, Value}} | Issued]}}.
 
-ecam({Bus, Device, Function}) -> (Bus bsl 20) bor (Device bsl 15) bor (Function bsl 12).
+routing({Bus, Device, Function}) -> (Bus bsl 8) bor (Device bsl 3) bor Function.
 
 %% One run of Target from Snapshot under the model's ignore rule: the answer, the
 %% writes issued oldest first, each with the model before it, and the model after.
