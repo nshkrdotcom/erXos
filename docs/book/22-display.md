@@ -10,7 +10,8 @@
 > QEMU and the Raspberry Pi 4; Doom as an example program; the
 > terminal emulator's pure core; the browser demo; and `tools/erx web`.
 > Built as pure cores with host tests, run by no guest: the
-> overlapping window policy and the desktop programs' cores. Designed:
+> overlapping window policy and the desktop programs' cores. Built and
+> run in a window: `erx_desk` with its `clock` command. Designed:
 > the terminal window and presentations in it, the Erlang and browser
 > renderers, the web's network front end, the desktop session, find and
 > act, the direct path to the device, and graphics hardware.
@@ -36,8 +37,6 @@ to it over a socket. The classic X protocol asks the server to draw
 lines, rectangles and text in its own fonts. Modern toolkits draw into
 images of their own and hand the server finished pixels. A compositor,
 another client, puts the windows together.
-<!-- check: FreeBSD's default graphical stack is Xorg, with Wayland
-compositors available from ports; no source read in this task. -->
 Either way the server is a large program with an authority model of
 its own, and it parses every client's requests.
 
@@ -90,9 +89,9 @@ from chapter 8's window in the root service's address space.
 
 `erx_winfs` serves one file tree per display, an `erx_fs` tree of the
 kind [chapter 14](14-files.md#1424-serving-the-erx_fs-behaviour)
-describes. A client reaches it through a file grant rooted at the
-client's own directory, and that grant is all the client holds of the
-display. `mkdir` of a name of the client's choosing makes a window.
+describes. The tree holds a directory for each client, and a client
+reaches the display through a file grant rooted at its own directory.
+That grant is all the client holds of the display. `mkdir` of a name of the client's choosing makes a window.
 The listing, from
 [design-display.md, The window tree](../design-display.md#the-window-tree):
 
@@ -149,8 +148,10 @@ domain maps it writable, the display maps it read-only, and no other
 domain maps it. Its size is the grant's `pixels` parameter, 8 MiB by
 default, room for one window of 1920 by 1080 pixels at 32 bits each.
 
-A **buffer** is a range of that area, laid out as Plan 9's pixel
-library, `libmemdraw`, lays out an image: rows from the top, each of
+In this chapter a **buffer** is a range of that area, not the DMA
+buffer a driver hands a device in chapter 15. It is laid out as Plan
+9's pixel library, `libmemdraw`, lays out an image: rows from the top,
+each of
 
 ```text
 stride(width, depth) = 4 * ((width * depth + 31) div 32)     bytes in a row
@@ -184,17 +185,21 @@ write is already a signal.
 ### 22.1.3 A present, end to end
 
 Follow a program that draws a red square into its window. Every step
-is built; QEMU's display suite checks the virtio-gpu path against a
-reference picture.
+is built. In QEMU, the kiosk suite runs a program that draws through
+`/dev/draw` this way and checks that its frames change the screen.
+The display suite's client draws into its buffer from Erlang instead,
+and the suite compares the screen with a reference picture.
 
-1. The program was started with a window, so its handler
-   ([chapter 13](13-native-programs.md#1322-the-handler)) gave it a
-   `/dev` of its own, with `draw`, `ctl`, `kbd`, `mouse`, `wctl` and
+1. The program's first open of `/dev/draw` made its handler
+   ([chapter 13](13-native-programs.md#1322-the-handler)) open it a
+   window; a program can also be started with one. The handler gave it
+   a `/dev` of its own, with `draw`, `ctl`, `kbd`, `mouse`, `wctl` and
    `label`. The session read `screen`, made the window, then allocated
    its buffer at the screen's size in the pixel area.
 2. The program writes Plan 9 draw messages to `/dev/draw`: allocate an
-   image of solid red, draw it into image 0 over a rectangle, and flush
-   with `v`. The write reaches the session's **draw connection**,
+   image of solid red, draw it over a rectangle of image 0, the
+   connection's name for the window itself, and send `v`, the message
+   that flushes. The write reaches the session's **draw connection**,
    `erx_draw_conn`, a process of the program's own session.
 3. The draw connection's pure core, `erx_draw_core:plan/2`, decodes and
    checks the whole write. Only when every message passes does the
@@ -219,9 +224,10 @@ reference picture.
 
 The display decoded no draw message, loaded no font and ran nothing on
 the program's behalf. Plan 9 executed draw messages in its kernel.
-erXos executes them in the client's session, as plan9port, Plan 9's
-port to other systems, does in a helper process beside each client. A Plan 9 draw client needs only its connection
-code changed.
+erXos executes them in the client's session, much as plan9port, Plan
+9's port to other systems, executes them in a separate program,
+devdraw, that its clients start. A Plan 9 draw client needs only its
+connection code changed.
 
 `erx_screen` never waits on the driver. A frame request returns at
 once and the answer arrives as a message, so the mailbox keeps
@@ -240,10 +246,11 @@ idle screen costs no CPU and a battery panel can sleep.
 The design has two composition paths. The **copy** path is the one
 above. The **direct** path skips the copy: when one window covers the
 screen and the device can read client memory, the driver pushes from
-the buffer itself. `erx_screen_core` already chooses between them, but
+the buffer itself. `erx_screen_core` can choose between them, but
 both built drivers report that their device cannot read client memory,
-so every frame takes the copy path. The direct path is designed and
-used by no built driver.
+and `erx_screen` builds its core with the direct path closed, since the
+core would choose that path without checking the buffer's size. So
+every frame takes the copy path. The direct path is designed and not built.
 
 ## 22.2 Input routing and the terminal
 
@@ -288,8 +295,9 @@ policy decides geometry and who takes each input, and nothing else.
 
 The **single** policy, `erx_wm_single`, shows one window over the
 whole screen with no decoration: the oldest window of the display's
-session (section 22.5.1). Every other window stays hidden and receives
-no new input. It is built and runs the kiosk.
+session (section 22.5.1), unless a front window lives, which shows
+over it (also section 22.5.1). Every other window stays hidden and
+receives no new input. It is built and runs the kiosk.
 
 The **overlapping** policy, `erx_wm_rio`, follows rio. Windows overlap
 with thin borders, a click makes a window current, and a menu moves,
@@ -313,8 +321,10 @@ list of effects. Each byte passes a UTF-8 decoder, then Paul Williams's
 parser for DEC's ANSI-compatible terminals, then acts on the grid of
 cells. Program output is untrusted, so every stage keeps bounded state:
 16 parameters, a 4 KiB OSC string, 131,072 cells of scrollback, 256
-links. Its only replies to a program are the fixed forms of two status
-queries. So nothing a program writes comes back as typed input. A
+links. Its only replies to a program are three status reports: what
+terminal it is, that it is working, and where the cursor is. Their
+only variable parts are numbers it computes, so nothing a program
+writes comes back as typed input. A
 title report, which in some terminals echoes attacker-chosen text to
 the shell, does not exist.
 
@@ -334,12 +344,14 @@ bound to the object it showed. A command that wanted a process could
 take any process on the screen with a click. erXos takes the idea in a
 form that grants nothing. When the shell or the inspector writes a
 typed value to a terminal that understands links, it wraps the text in
-an OSC 8 hyperlink whose target is `erx:TYPE/TEXT`. This is a
+an OSC 8 hyperlink, an escape sequence that marks text as a link,
+whose target is `erx:TYPE/TEXT`. This is a
 **presentation**: a type and a canonical text. A click inserts the text
 where the person is typing and calls no service. The command that then
 runs is checked by the shell like any typed command, so a session
 without the right to inspect processes clicks a pid and gets
-`no_facet`. On a plain terminal the same output is plain text that
+`no_facet`, the refusal of a call for which the session holds no
+[facet](11-security.md#116-facets-authority-over-services). On a plain terminal the same output is plain text that
 parses back. Presentations in a terminal window are designed and not
 built, since the terminal window is not built.
 
@@ -384,17 +396,18 @@ card(#{symbol := Symbol, name := Name, price := Price, change := Change,
 ```
 
 Notice two things. The card says what each text *is*, a `title`, a
-`caption`, a `figure`, and leaves size and colour to the theme
+`caption`, a `figure`, and leaves type size and colour to the theme
 (section 22.5.3). And `key => Symbol` names the card among its
 siblings, so when quotes are reordered the toolkit moves the card
 instead of rebuilding it.
 
-`abi/formats/ui.txt` declares the vocabulary in three closed tables:
-the properties, each with one name and one type; the kinds, each with
-the properties it takes; and the image types, of which there is one,
-PNG. The containers are `column`, `row`, `grid`, `scroll` and `stack`.
-The widgets are `label`, `button`, `checkbox`, `slider`, `input`,
-`list`, `image`, `spacer` and `graph`. From that file, the build
+`abi/formats/ui.txt` declares the vocabulary as closed tables. The
+chief three are the properties, each with one name and one type; the
+kinds, each with the properties it takes; and the image types, of
+which there is one, PNG. Beside them it declares limits, value types
+and the records of the binary form. A kind is a container, such as
+`column` or `scroll`, or a widget, such as `button` or `graph`; the
+file lists the rest. From that file, the build
 generates the validator `erx_ui_schema` and codecs for the binary form,
 in Erlang, C and TypeScript ([chapter 7](07-one-source.md)). Each has
 a fuzz target.
@@ -527,19 +540,21 @@ authority and on its budget.
 
 The dashboard in `examples/dashboard` is such an app: a clock, the date,
 and quotes of Bitcoin, Ether and Solana from Kraken. Figure 22.3 shows
-it on a Raspberry Pi 4.
+it on QEMU's `virt` machine at 1280 by 800 pixels.
 
-![The kiosk dashboard on a Raspberry Pi 4](../../site/kiosk.png)
+![The kiosk dashboard on QEMU's virt machine](../../site/kiosk.png)
 
-*Figure 22.3. The kiosk on the Raspberry Pi 4. `erx-lvgl` drew every
+*Figure 22.3. The kiosk on QEMU's `virt` machine, at 1280 by 800
+pixels. `erx-lvgl` drew every
 pixel in the app's own session; the display domain copied the
 rectangles that changed.*
 
 The dashboard is built and runs on QEMU and the Pi 4. On the Pi the
 quotes come live over the board's Ethernet. On QEMU it boots with no
 network, and one suite cell fetches quotes from an offline HTTPS
-fixture. The Pi's screen is checked by hand; QEMU's is compared with a
-reference picture.
+fixture. The Pi's screen is checked by hand. QEMU's is compared with
+the host's own drawing of the dashboard at the minute the guest
+logged.
 
 A window of any other domain stays hidden on a kiosk. The exception is
 a **front** grant, which only a development build gives, to the root
@@ -759,7 +774,7 @@ Each party loses at most what it owned, and the rest redraws.
   restarts it.
 * **A kiosk's app ends.** The start row's keeper starts a new session
   within the row's restart limit. Meanwhile the single policy shows no
-  other session's window.
+  other session's window, except a front window.
 * **A client lies.** A `present` outside its area fails with `EINVAL`.
   A draw message naming another connection's image fails with
   `ENOENT`, since no such id exists in its own connection. A program's
@@ -781,8 +796,11 @@ between other domains.
 
 **Rendering in the client.** Plan 9 executed every draw message in the
 display. That keeps the display parsing every client's bytes. A
-picture a client rendered itself, LVGL's or a GPU's, would take five
-copies to reach the screen, where a buffer takes one. Doing both would
+picture a client rendered itself, LVGL's or a GPU's, would have to be
+sent as draw messages that load an image. Its bytes would then be
+copied five times: into a lane, out of it, through the file server
+into the image, into the screen image, and to the device. A buffer is
+copied once. Doing both would
 give two kinds of window content, two quotas and two sets of failures.
 QNX Screen, Wayland and Fuchsia's Flatland all render in the client.
 erXos takes their rules and none of their protocols, because a `ctl`
@@ -846,9 +864,9 @@ and the web client makes a browser a display that receives only data.
   drivers and the Pi's V3D.
 * [site/README.md](../../site/README.md): how the browser demo is built,
   and its fault menu.
-* Rob Pike, "8½, the Plan 9 Window System" (1991): windows as files
-  served to each program, rio's ancestor.
-  <!-- check: title and year from memory; no source read in this task. -->
+* Rob Pike, "8½, the Plan 9 Window System", Proceedings of the Summer
+  1991 USENIX Conference, pp. 257-265: windows as files served to each
+  program, rio's ancestor.
 * draw(3) and rio(1), the Plan 9 manual: the protocol erXos's draw
   connection executes, and the window system the overlapping policy
   follows.
