@@ -83,13 +83,11 @@ int
 erx_dma_run_table(const erx_dma_ledger_t *ledger, const erx_dma_publication_t *publication, uint32_t structure)
 {
 	const erx_dma_layout_t *layout = erx_dma_ledger_layout(ledger);
-	const int first = erx_dma_ledger_table(ledger, structure), bound = erx_dma_ledger_bound_table(ledger, publication->endpoint);
-	uint32_t tables = 0;
+	const int one = erx_dma_ledger_table(ledger, structure);
+	const int bound = erx_dma_ledger_bound_table(ledger, publication->endpoint);
 
-	for (uint32_t table = 0; table < layout->table_count; table++)
-		tables += layout->tables[table].structure == structure;
-	if (tables == 1)
-		return (first);
+	if (one >= 0)
+		return (one);
 	return (bound >= 0 && layout->tables[bound].structure == structure ? bound : -1);
 }
 
@@ -103,7 +101,7 @@ judge_record(const erx_dma_ledger_t *ledger, const erx_dma_publication_t *public
 	const erx_dma_pool_t *pool;
 	uint32_t pool_index;
 
-	if (erx_dma_ledger_table(ledger, record->structure) >= 0 && table < 0)
+	if (table < 0 && erx_dma_ledger_tables(ledger, record->structure) > 1)
 		return (ERX_DMA_BREAKS_BINDINGS);
 	if (table < 0 || erx_structure_device_writes(record->structure) ||
 	    layout->tables[table].placing == ERX_DMA_PLACED_IN_ORDER ||
@@ -183,20 +181,22 @@ room(const erx_dma_ledger_t *ledger, const erx_dma_publication_t *publication, c
 				return (false);
 			in_order++;
 		}
-			if (layout->tables[table].placing == ERX_DMA_PLACED_RING && described[table] != 0) {
-				const uint32_t taken = erx_dma_ledger_ring_run(ledger, table, described[table], steps);
+		if (layout->tables[table].placing == ERX_DMA_PLACED_RING && described[table] != 0) {
+			const uint32_t taken = erx_dma_ledger_ring_run(ledger, table, described[table], steps);
 
-				/* The links it takes count with its records; a ring's run has no record placed in order. */
-				in_order += taken - described[table];
-				for (uint32_t step = 0; step < taken && !SEED_RING_REUSE_HELD; step++) {
-					if (erx_dma_ledger_record_held(ledger, steps[step].place))
-						return (false);
-				}
-				continue;
-			}
-			if (described[table] > erx_dma_ledger_free_records(ledger, table))
+			if (taken == 0)
 				return (false);
+			/* The links it takes count with its records; a ring's run has no record placed in order. */
+			in_order += taken - described[table];
+			for (uint32_t step = 0; step < taken && !SEED_RING_REUSE_HELD; step++) {
+				if (erx_dma_ledger_record_held(ledger, steps[step].place))
+					return (false);
+			}
+			continue;
 		}
+		if (described[table] > erx_dma_ledger_free_records(ledger, table))
+			return (false);
+	}
 	return (publication->record_count + in_order <= ERX_DMA_HELD_RECORDS_MAX &&
 	    erx_dma_publication_buffers(publication, buffers, &count));
 }
@@ -271,8 +271,8 @@ erx_dma_publication_check(const erx_dma_ledger_t *ledger, const erx_dma_publicat
 		const erx_dma_verdict_t verdict = judge_record(ledger, publication, &publication->records[record],
 		    &judged[record]);
 
-		if (verdict == ERX_DMA_PASSES && record > 0 && judged[record].table != judged[0].table &&
-		    erx_dma_ledger_layout(ledger)->tables[judged[record].table].placing == ERX_DMA_PLACED_RING)
+		/* A run's records lie in one table, so a ring's run is placed whole on its ring. */
+		if (verdict == ERX_DMA_PASSES && judged[record].table != judged[0].table)
 			return (ERX_DMA_BREAKS_BINDINGS);
 
 		if (verdict != ERX_DMA_PASSES)

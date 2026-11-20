@@ -29,6 +29,11 @@
 #else
 #define SEED_RELEASE_TWICE	false
 #endif
+#ifdef ERX_DMA_SEED_BIND_WHILE_HELD
+#define SEED_BIND_WHILE_HELD	true
+#else
+#define SEED_BIND_WHILE_HELD	false
+#endif
 #ifdef ERX_DMA_SEED_RING_NO_LINK
 #define SEED_RING_NO_LINK	true
 #else
@@ -121,7 +126,7 @@ device_writes(const erx_dma_layout_t *layout, uint32_t table)
 
 /*
  * One region of the install's check: `length` bytes from `offset`, whole granules, not before
- * `*end`, the end of the region before it, and inside the memory. Moves `*end` past it.
+ * `*end`, and inside the memory. Moves `*end` past it; disjoint() judges the regions together.
  */
 static bool
 region_valid(const erx_dma_layout_t *layout, uint64_t offset, uint64_t length, uint64_t *end)
@@ -305,9 +310,9 @@ bool
 erx_dma_ledger_bind(erx_dma_ledger_t *ledger, uint32_t table, uint32_t endpoint)
 {
 	if (endpoint == 0 || table >= ledger->layout.table_count ||
-	    ledger->layout.tables[table].placing != ERX_DMA_PLACED_RING || ledger->bound[table] != 0)
+	    ledger->layout.tables[table].placing != ERX_DMA_PLACED_RING || ledger->bound[table] != 0 ||
+	    (!SEED_BIND_WHILE_HELD && table_held(ledger, table)))
 		return (false);
-	/* An unbound ring holds no record: only a run on a bound ring holds one, and unbind waits for none. */
 	ledger->bound[table] = endpoint;
 	/* The first record, on lap 0, of cycle state 1; the sequencer zeroes the ring with it. */
 	ledger->positions[table] = (erx_dma_position_t){ 0, 0 };
@@ -358,7 +363,8 @@ erx_dma_ledger_ring_run(const erx_dma_ledger_t *ledger, uint32_t table, uint32_t
 	uint32_t index, lap, link, count = 0;
 
 	if (table >= ledger->layout.table_count || ledger->layout.tables[table].placing != ERX_DMA_PLACED_RING ||
-	    descriptions == 0 || descriptions > ERX_DMA_HELD_RECORDS_MAX)
+	    descriptions == 0 || descriptions > ERX_DMA_HELD_RECORDS_MAX ||
+	    descriptions >= ledger->layout.tables[table].count)
 		return (0);
 	index = ledger->positions[table].index;
 	lap = ledger->positions[table].lap;
@@ -419,11 +425,26 @@ erx_dma_ledger_layout(const erx_dma_ledger_t *ledger)
 int
 erx_dma_ledger_table(const erx_dma_ledger_t *ledger, uint32_t structure)
 {
+	int found = -1;
+
 	for (uint32_t index = 0; index < ledger->layout.table_count; index++) {
-		if (ledger->layout.tables[index].structure == structure)
-			return ((int)index);
+		if (ledger->layout.tables[index].structure != structure)
+			continue;
+		if (found >= 0)
+			return (-1);
+		found = (int)index;
 	}
-	return (-1);
+	return (found);
+}
+
+uint32_t
+erx_dma_ledger_tables(const erx_dma_ledger_t *ledger, uint32_t structure)
+{
+	uint32_t count = 0;
+
+	for (uint32_t index = 0; index < ledger->layout.table_count; index++)
+		count += ledger->layout.tables[index].structure == structure;
+	return (count);
 }
 
 erx_dma_position_t

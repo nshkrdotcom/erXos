@@ -25,8 +25,9 @@ class ErxDeviceTrbRingTest < Minitest::Test
 
   # A run ending just before the link leaves it untaken, so the position rests on it; a run's
   # first TRB written with its live cycle bit, so the device may take it before the rest; a name
-  # of another ring's pool let through; the room rule not asking a ring's positions to be free.
-  SEEDS = %w[RING_NO_LINK FIRST_CYCLE_LIVE NO_BINDING_TEST RING_REUSE_HELD].freeze
+  # of another ring's pool let through; the room rule not asking a ring's positions to be free; a
+  # binding of a ring a run holds, which would zero its TRBs under the device.
+  SEEDS = %w[RING_NO_LINK FIRST_CYCLE_LIVE NO_BINDING_TEST RING_REUSE_HELD BIND_WHILE_HELD].freeze
 
   def test_rings_and_bindings
     output, status = run_harness

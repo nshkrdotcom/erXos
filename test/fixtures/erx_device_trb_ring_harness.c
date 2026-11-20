@@ -350,6 +350,30 @@ test_bindings(void)
 	    "the reset's idle report ends every binding");
 }
 
+/* A ring that is its structure's one table, as the command ring is, takes runs unbound. */
+static void
+test_sole_ring(void)
+{
+	erx_dma_layout_t planned = layout();
+	erx_dma_ledger_t ledger;
+	erx_dma_sequence_t sequence;
+	erx_dma_description_t records[RING];
+	erx_dma_publication_t publication;
+
+	planned.tables[RING1].structure = ERX_STRUCTURE_XHCI_COMMAND_RING;
+	EXPECT(erx_dma_ledger_make(&ledger, &planned, &no_regions), "one transfer ring and a command ring");
+	for (uint32_t index = 0; index < RING; index++)
+		records[index] = status();
+	publication = on(0, records, RING);
+	EXPECT(erx_dma_publication_check(&ledger, &publication) == ERX_DMA_BREAKS_ROOM &&
+	    erx_dma_publish(&ledger, &publication, &sequence) == ERX_DMA_BREAKS_ROOM,
+	    "a run as long as its ring would name a position twice");
+	publication = on(0, records, run(1, 0, records));
+	EXPECT(erx_dma_publish(&ledger, &publication, &sequence) == ERX_DMA_PASSES, "a run on the sole ring");
+	EXPECT(!erx_dma_bind(&ledger, RING0, ENDPOINT0, &sequence),
+	    "a ring a run holds is not bound, which would zero the TRBs the device holds");
+}
+
 int
 main(void)
 {
@@ -359,6 +383,7 @@ main(void)
 	const model_t start = { 0 };
 
 	test_bindings();
+	test_sole_ring();
 	EXPECT(erx_dma_ledger_make(&ledger, &planned, &no_regions) && erx_dma_bind(&ledger, RING0, ENDPOINT0, &sequence),
 	    "ring 0 bound");
 	explore(&ledger, &start, DEPTH);

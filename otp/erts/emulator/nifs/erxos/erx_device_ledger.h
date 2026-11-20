@@ -196,8 +196,8 @@ bool	erx_dma_layout_split_ring(uint32_t size, uint32_t buffer_size, uint32_t gra
 
 /*
  * A ledger with no holding and every position at 0, from `layout` if it passes the install's
- * check: every region whole granules, ascending, disjoint, inside the memory and below the
- * address width, in any order; each table's records inside its region, a ring of at least two,
+ * check: every region whole granules, disjoint in whatever order it lies, inside the
+ * memory and below the address width; each table's records inside its region, a ring of at least two,
  * a table descriptions fill naming one of its pools; and one buffer's bytes no more than its stride. False, writing nothing, otherwise. `regions` is
  * its device's table, which the ledger reads and never changes.
  */
@@ -238,8 +238,12 @@ bool	erx_dma_regions_add(erx_dma_regions_t *regions, erx_dma_persistent_region_t
 
 /* The accessors. A table or buffer number outside the layout is held by nothing. */
 const erx_dma_layout_t	*erx_dma_ledger_layout(const erx_dma_ledger_t *ledger);
-/* The index of the layout's first table of `structure`, or -1. */
+/*
+ * The index of the layout's one table of `structure`, or -1 for none or several, where a binding
+ * names the table; and how many tables of `structure` the layout holds.
+ */
 int			 erx_dma_ledger_table(const erx_dma_ledger_t *ledger, uint32_t structure);
+uint32_t		 erx_dma_ledger_tables(const erx_dma_ledger_t *ledger, uint32_t structure);
 erx_dma_position_t	 erx_dma_ledger_position(const erx_dma_ledger_t *ledger, uint32_t table);
 bool			 erx_dma_ledger_record_held(const erx_dma_ledger_t *ledger, erx_dma_place_t place);
 bool			 erx_dma_ledger_buffer_held(const erx_dma_ledger_t *ledger, uint32_t buffer);
@@ -271,9 +275,9 @@ uint64_t		 erx_dma_layout_buffer_offset(const erx_dma_layout_t *layout, uint32_t
 /*
  * The bindings (docs/design-device-dma.md, "The ledger"). erx_dma_ledger_bind binds ring `table`
  * to `endpoint`, not 0, and returns its position to the first record on a new lap of cycle state
- * 1; false, changing nothing, for a table that is not a ring or one bound already. An unbound
- * ring holds no record, since only a run on a bound ring holds one and erx_dma_ledger_unbind,
- * which ends a binding, is refused while a holding holds a record of the ring. The sequencer calls both, with the effects of each (erx_dma_bind).
+ * 1; false, changing nothing, for a table that is not a ring, one bound already, or one a holding
+ * holds a record of. erx_dma_ledger_unbind ends a binding, refused while a holding holds a record
+ * of the ring. The sequencer calls both, with the effects of each (erx_dma_bind).
  */
 bool		erx_dma_ledger_bind(erx_dma_ledger_t *ledger, uint32_t table, uint32_t endpoint);
 bool		erx_dma_ledger_unbind(erx_dma_ledger_t *ledger, uint32_t table);
@@ -285,7 +289,8 @@ int		erx_dma_ledger_bound_table(const erx_dma_ledger_t *ledger, uint32_t endpoin
  * The positions a run of `descriptions` records takes on ring `table` from its position, in ring
  * order, into `steps`: a description's, and a link's where the run reaches it or ends just before
  * it, so the position never rests on the link. Their count, or 0 for a table that is not a ring,
- * no description or more than ERX_DMA_HELD_RECORDS_MAX. Whether they are free is the room rule's.
+ * no description, more than ERX_DMA_HELD_RECORDS_MAX, or as many as the ring's count or more, so
+ * no run names a position twice. Whether they are free is the room rule's.
  */
 uint32_t	erx_dma_ledger_ring_run(const erx_dma_ledger_t *ledger, uint32_t table, uint32_t descriptions,
 		    erx_dma_ring_step_t steps[ERX_DMA_RING_STEPS_MAX]);
