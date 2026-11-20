@@ -4,13 +4,14 @@
 %% The PCIe enumerator (docs/design-pcie.md). Its pure cores build and are tested on
 %% the host: erx_pcie_cfg, the configuration-space parser and BAR sizing; erx_pcie_plan,
 %% the planner of the writes that take a function to its target; erx_pcie_walk, the walk;
-%% erx_pcie_place, placement. erx_pcie_bridge is the bridge seam, erx_pcie_ecam its ECAM
-%% driver.
+%% erx_pcie_place, placement; erx_pcie_bcm2711_core, the BCM2711 bridge's keep-or-reset
+%% decision, bring-up and configuration access. erx_pcie_bridge is the bridge seam,
+%% erx_pcie_ecam its ECAM driver.
 {application, erx_pcie,
  [{description, "erXos PCIe enumerator"},
   {vsn, "1"},
-  {modules, [erx_pcie, erx_pcie_bridge, erx_pcie_cfg, erx_pcie_ecam, erx_pcie_place, erx_pcie_plan,
-             erx_pcie_walk]},
+  {modules, [erx_pcie, erx_pcie_bcm2711_core, erx_pcie_bridge, erx_pcie_cfg, erx_pcie_ecam,
+             erx_pcie_place, erx_pcie_plan, erx_pcie_walk]},
   {registered, []},
   {applications, [kernel, stdlib, erx]},
   {env, []}]}.

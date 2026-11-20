@@ -9433,12 +9433,18 @@ document's "residual risks accepted" paragraph.
   the places start the tree's grants (`input_tree/1`), but nothing yet hands one to the display domain the
   manifest names, and no `erx_usb_sup` starts the places before the bus. Both come with the USB domain's start.
 * [Medium] USB and PCIe, `hw/svd/` ([design-usb.md](docs/design-usb.md#registers-at-offsets-the-controller-reports),
-  [design-generation.md](docs/design-generation.md#register-inputs)): no `xhci/xhci.svd`, no ECAM file and no BCM2711
-  bridge file. Write `xhci.svd` from FreeBSD's `xhcireg.h` and the xHCI specification's register chapters, its three
-  movable clusters marked with the capability field their base comes from and its owned registers marked; the
-  BCM2711 bridge's registers from the facts record's register map and `bcm2838_pci.c`; and the ECAM and BCM2711
-  configuration-space views (8-, 16- and 32-bit accesses at a computed offset, bounded by the window), with the
-  generator's support for both extensions.
+  [design-generation.md](docs/design-generation.md#register-inputs)): no configuration-space view for ECAM or for the
+  BCM2711 bridge. Write both (8-, 16- and 32-bit accesses at a computed offset, bounded by the window: ECAM's window,
+  and the BCM2711's root port at 0 and endpoint data window at `0x8000`) with the generator's support for them;
+  `erx_pcie_bcm2711_core`'s `cfg_read` and `cfg_write` operations reach configuration space through that view.
+* [Medium] PCIe, `erlang/apps/erx_pcie/src/erx_pcie_bcm2711_core.erl` ([design-pcie.md](docs/design-pcie.md#the-bridge-seam)):
+  the core runs an agenda of closures, so its state cannot be printed, compared or explored exhaustively, and its
+  operation vocabulary (`{wait, Us}`, `{read, Register}`, `{write, Register, Word}`) is a second one beside
+  `erx_genet_core`'s. Recast it as straight-line write lists with its four decision points (the link, the firmware
+  register, the port bit, the link poll) as named states, sharing one effect type with the other register cores.
+* [Low] docs, `docs/research-brcmstb-pcie.md` section 2: the worked `BASE_LIMIT` for the mainline tree's 64 MiB window
+  reads `0x00300000`; FreeBSD's encoder (`bcm2838_pci.c:591-596`) gives `0x03f00000`, the limit being MiB `0x603f`.
+  Re-check the section's worked values in a new dated record.
 * [Medium] PCIe, `erlang/apps/erx_pcie/src/erx_pcie_ecam.erl` ([design-pcie.md](docs/design-pcie.md#the-bridge-seam)):
   `start/2` answers `{error, unsupported}`, since the device NIF has no access at a computed offset until the ECAM
   configuration-space view above exists. The driver's accesses go through a `space()` (a module with `read/3` and

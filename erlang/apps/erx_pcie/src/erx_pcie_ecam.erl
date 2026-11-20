@@ -69,18 +69,13 @@ ready(_Function, State) ->
 make({read, Place, Offset, Width}, Bridge, {Module, Handle}) when Offset rem Width =:= 0 ->
     case function_base(Bridge, Place) of
         unreached -> {error, absent};
-        Base -> read_answer(Offset, Width, Module:read(Handle, Base + Offset, Width))
+        Base -> erx_pcie_bridge:read_answer(Offset, Width, Module:read(Handle, Base + Offset, Width))
     end;
 make({write, Place, Offset, Width, Value}, Bridge, {Module, Handle}) when Offset rem Width =:= 0 ->
     case function_base(Bridge, Place) of
         unreached -> {error, absent};
         Base -> ok = Module:write(Handle, Base + Offset, Width, Value)
     end.
-
-%% A read of all ones at offset 0 is a vendor no function has: nothing is
-%% at the place.
-read_answer(0, Width, Value) when Value =:= 1 bsl (8 * Width) - 1 -> {error, absent};
-read_answer(_Offset, _Width, Value) -> {ok, Value}.
 
 %% Where the place's 4 KiB of configuration space starts in the window, or
 %% `unreached` for a place the bridge does not reach.

@@ -801,20 +801,28 @@ and 6), each wait a deadline of the core:
 3. Program the inbound window from the tree's `dma-ranges`: `BAR2` with
    its CPU side at physical 0 and its PCI side at the range's lowest
    address, its size the range's size rounded up to a power of two;
-   `SCB0_SIZE` to match; `BAR1` and `BAR3` disabled, `BAR1` because on
-   this family it would map the SoC's own registers to the bus
-   (section 2). A tree whose range breaks the window's rules (a power of
-   two, an offset that is a multiple of the size and not between 2 and
-   4 GiB) fails bring-up with `dma-ranges`. On the Pi 4's 3 GiB range
-   this is a 4 GiB window at PCI 0; FreeBSD's fixed 8 GiB window covers
-   the same memory (section 8, item 4).
+   `BAR1` and `BAR3` disabled, `BAR1` because on this family it would
+   map the SoC's own registers to the bus (section 2). On the Pi 4's
+   3 GiB range this is a 4 GiB window at PCI 0; FreeBSD's fixed 8 GiB
+   window covers the same memory (section 8, item 4).
 4. Read the root-complex bit, bit 7 of `MISC_PCIE_STATUS`; clear, the
    block is an endpoint and bring-up fails with `endpoint mode`.
-5. Set the root port's class code (bits 23:0 of `0x43c`) to `0x060400`,
-   a PCI-to-PCI bridge, since the block resets presenting an endpoint's;
-   set `ENDIAN_MODE_BAR2` (`0x188`) to little endian; program one
-   outbound window for each memory range of the tree's `ranges`, at most
-   four, each in MiB with an inclusive end (section 2).
+5. Set `SCB0_SIZE` in `MISC_CTRL` to match the inbound window; set the
+   root port's class code (bits 23:0 of `0x43c`) to `0x060400`, a
+   PCI-to-PCI bridge, since the block resets presenting an endpoint's;
+   program one outbound window for each memory range of the tree's
+   `ranges`, each in MiB with an inclusive end (section 2); set
+   `ENDIAN_MODE_BAR2` (`0x188`) to little endian.
+
+   Both windows are checked against the tree before any register is
+   touched, so a tree they cannot carry leaves the bridge as it was. A
+   `dma-ranges` range whose CPU side is not 0, which the window's fixed
+   CPU side cannot map as the tree says, or whose window breaks the
+   window's rules (64 KiB to 64 GiB, a PCI offset that is a multiple of
+   the size and not between 2 and 4 GiB) fails bring-up with
+   `dma-ranges`; `ranges` with no memory range, more than four, or one
+   whose CPU base or size is not whole MiB or whose end lies past the
+   40 bits the window registers hold, fails it with `ranges`.
 6. Clear `CLKREQ_DEBUG_ENABLE` and `L1SS_ENABLE` in `0x4204`, the mode
    Linux calls "safe": no clock power management, so no internal-bus
    timeout to lengthen and no L1 substates that could stop the link

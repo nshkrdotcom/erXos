@@ -1,0 +1,283 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
+     SPDX-License-Identifier: BSD-2-Clause
+
+     The BCM2711's PCIe bridge registers that its driver uses (docs/design-usb.md,
+     "The BCM2711 bridge"; docs/design-pcie.md, "The bridge seam"), written by erXos
+     from two sources, each read for this file:
+
+     * The clean-room facts record docs/research-brcmstb-pcie.md (SHA-256
+       c5fff7acdbbda13617aca477bd95dac0893681930ad054eaeda240c48208a672), its
+       register map and the sections cited beside each register. The record states
+       the register and field names of the vendor's Linux driver as hardware facts;
+       no GPL source was read for this file.
+     * FreeBSD's sys/arm/broadcom/bcm2835/bcm2838_pci.c at releng/15.1, commit
+       95719d8a895bf8170851e9844d9b4092b1d2b6fe (SHA-256
+       10a983496e957f3cf01039f5076e189a817bdfc5da53e582f42dad525d1ac6a9, ISC), at the
+       lines cited, the second witness; and sys/dev/pci/pcireg.h at the same commit
+       (SHA-256 e807eb05747d6c47a5722ff7b2be385d09053b1d2a3acfc16af4a5ab08bd6507,
+       BSD-2-Clause) for the link status bits, lines 847 and 861-863.
+
+     The window is the bridge's one register range, 0x9310 bytes (record, section 0).
+     The root port's own configuration space at 0x0000 and the endpoint's data window
+     at 0x8000 are reached at computed offsets, which are not registers of this
+     peripheral; the three registers of the root port's space the driver uses (two of
+     the vendor's and the link status) are. Every access is an aligned 32-bit word.
+
+     Where the vendor's driver changes some bits of a register by read-modify-write,
+     the bits no source names are fields kept as read (KEPT_*), so a write changes
+     only what it means to. Where both drivers write a whole register, bits no source
+     names are left undeclared and written as zero, as both do. Fields marked
+     "inference" rest on the record's reading of a name or on arithmetic it shows,
+     not on a statement of either source; a board probe settles them. -->
+<device schemaVersion="1.3">
+  <name>BCM2711_PCIE</name><version>1</version>
+  <description>BCM2711 PCIe bridge</description>
+  <addressUnitBits>8</addressUnitBits><width>32</width>
+  <peripherals>
+    <peripheral>
+      <name>BCM2711_PCIE</name><baseAddress>0</baseAddress>
+      <addressBlock><offset>0</offset><size>0x9310</size><usage>registers</usage></addressBlock>
+      <registers>
+        <!-- Record, register map and section 1, step 3n; section 8, item 13: FreeBSD
+             does not write it. -->
+        <register>
+          <name>RC_CFG_VENDOR_SPECIFIC_REG1</name><ownedByNif>false</ownedByNif>
+          <description>The root port's vendor register 1: the inbound window's byte order</description>
+          <addressOffset>0x188</addressOffset><access>read-write</access>
+          <fields>
+            <field><name>KEPT_LOW</name><description>Bits no source names, kept as read</description><bitOffset>0</bitOffset><bitWidth>2</bitWidth></field>
+            <field>
+              <name>ENDIAN_MODE_BAR2</name><description>Byte order of inbound window BAR2</description>
+              <bitOffset>2</bitOffset><bitWidth>2</bitWidth>
+              <enumeratedValues><enumeratedValue><name>LITTLE</name><value>0</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>KEPT_HIGH</name><description>Bits no source names, kept as read</description><bitOffset>4</bitOffset><bitWidth>28</bitWidth></field>
+          </fields>
+        </register>
+        <!-- Record, register map and section 1, step 3l; FreeBSD lines 55-57 and
+             722-723 (a whole-register write of the same class). -->
+        <register>
+          <name>RC_CFG_PRIV1_ID_VAL3</name><ownedByNif>false</ownedByNif>
+          <description>The root port's class code, which resets as an endpoint's</description>
+          <addressOffset>0x43c</addressOffset><access>read-write</access>
+          <fields>
+            <field>
+              <name>CLASS_CODE</name><description>Base class, subclass and programming interface</description>
+              <bitOffset>0</bitOffset><bitWidth>24</bitWidth>
+              <enumeratedValues><enumeratedValue><name>PCI_TO_PCI_BRIDGE</name><value>0x060400</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>KEPT</name><description>Bits no source names, kept as read</description><bitOffset>24</bitOffset><bitWidth>8</bitWidth></field>
+          </fields>
+        </register>
+        <!-- The root port's PCI Express capability sits at 0xac (record, register
+             map); its link control and status word is at 0xac + 0x10, its status the
+             upper half (pcireg.h:847, 861-863). FreeBSD reads it as this one word,
+             lines 70 and 689. Only the status is read; nothing writes the word. -->
+        <register>
+          <name>RC_CFG_LINK_CONTROL_STATUS</name><ownedByNif>false</ownedByNif>
+          <description>The root port's link control and status: the negotiated speed and width</description>
+          <addressOffset>0xbc</addressOffset><access>read-only</access>
+          <fields>
+            <field><name>SPEED</name><description>The link's current speed, as PCI Express numbers it; 0 with no link</description><bitOffset>16</bitOffset><bitWidth>4</bitWidth></field>
+            <field><name>WIDTH</name><description>The link's negotiated width in lanes</description><bitOffset>20</bitOffset><bitWidth>6</bitWidth></field>
+          </fields>
+        </register>
+        <!-- Record, register map, section 1, steps 3f and 3i, section 2 and section 8,
+             items 3 and 4; FreeBSD lines 64 and 107-112 write SCB_ACCESS_EN,
+             CFG_READ_UR_MODE and SCB0_SIZE as one word. -->
+        <register>
+          <name>MISC_CTRL</name><ownedByNif>false</ownedByNif>
+          <description>MISC_MISC_CTRL: bus access, burst and the memory controllers' sizes</description>
+          <addressOffset>0x4008</addressOffset><access>read-write</access>
+          <fields>
+            <field><name>SCB2_SIZE</name><description>Memory controller 2's size; unused on the BCM2711</description><bitOffset>0</bitOffset><bitWidth>5</bitWidth></field>
+            <field><name>KEPT_5</name><description>Bits no source names, kept as read</description><bitOffset>5</bitOffset><bitWidth>2</bitWidth></field>
+            <field><name>RCB_64B_MODE</name><description>Read completion boundary of 64 bytes; no source says what it changes</description><bitOffset>7</bitOffset><bitWidth>1</bitWidth></field>
+            <field><name>KEPT_8</name><description>Bits no source names, kept as read</description><bitOffset>8</bitOffset><bitWidth>2</bitWidth></field>
+            <field><name>RCB_MPS_MODE</name><description>Read completion boundary from the payload size; no source says what it changes</description><bitOffset>10</bitOffset><bitWidth>1</bitWidth></field>
+            <field><name>KEPT_11</name><description>A bit no source names, kept as read</description><bitOffset>11</bitOffset><bitWidth>1</bitWidth></field>
+            <field><name>SCB_ACCESS_EN</name><description>Lets the bridge reach the system bus</description><bitOffset>12</bitOffset><bitWidth>1</bitWidth></field>
+            <field><name>CFG_READ_UR_MODE</name><description>A configuration read completing with Unsupported Request returns data (inference)</description><bitOffset>13</bitOffset><bitWidth>1</bitWidth></field>
+            <field><name>KEPT_14</name><description>Bits no source names, kept as read</description><bitOffset>14</bitOffset><bitWidth>6</bitWidth></field>
+            <field>
+              <name>MAX_BURST_SIZE</name><description>The longest burst on the system bus</description>
+              <bitOffset>20</bitOffset><bitWidth>2</bitWidth>
+              <enumeratedValues>
+                <enumeratedValue><name>BYTES_128</name><value>0</value></enumeratedValue>
+                <enumeratedValue><name>BYTES_256</name><value>1</value></enumeratedValue>
+                <enumeratedValue><name>BYTES_512</name><value>2</value></enumeratedValue>
+              </enumeratedValues>
+            </field>
+            <field><name>SCB1_SIZE</name><description>Memory controller 1's size; unused on the BCM2711</description><bitOffset>22</bitOffset><bitWidth>5</bitWidth></field>
+            <field><name>SCB0_SIZE</name><description>Memory controller 0's size, as its base-2 logarithm less 15</description><bitOffset>27</bitOffset><bitWidth>5</bitWidth></field>
+          </fields>
+        </register>
+        <!-- Record, register map and section 2 (outbound); FreeBSD lines 71-72 and
+             708-716 write window 0 alone. -->
+        <register>
+          <name>WIN_LO[%s]</name><ownedByNif>false</ownedByNif>
+          <description>CPU_2_PCIE_MEM_WIN_LO: outbound window w's PCI address, low word</description>
+          <addressOffset>0x400c</addressOffset><access>read-write</access>
+          <dim>4</dim><dimIncrement>8</dimIncrement>
+          <fields><field><name>ADDRESS</name><description>The PCI address's bits 31:0</description><bitOffset>0</bitOffset><bitWidth>32</bitWidth></field></fields>
+        </register>
+        <register>
+          <name>WIN_HI[%s]</name><ownedByNif>false</ownedByNif>
+          <description>CPU_2_PCIE_MEM_WIN_HI: outbound window w's PCI address, high word</description>
+          <addressOffset>0x4010</addressOffset><access>read-write</access>
+          <dim>4</dim><dimIncrement>8</dimIncrement>
+          <fields><field><name>ADDRESS</name><description>The PCI address's bits 63:32</description><bitOffset>0</bitOffset><bitWidth>32</bitWidth></field></fields>
+        </register>
+        <!-- Record, register map and section 2 (inbound): BARn_CONFIG_LO's size in
+             bits 4:0 and the PCI address's low bits above it in the same register; the
+             address is at least 4 KiB aligned, so its bits sit in place in 31:12
+             (inference from the record's "share the register"), and bits 11:5 are
+             written as zero. FreeBSD lines 65-68 and 663-668 write BAR2 with its size
+             alone and BAR1 and BAR3 as zero. -->
+        <register>
+          <name>BAR1_CONFIG_LO</name><ownedByNif>false</ownedByNif>
+          <description>MISC_RC_BAR1_CONFIG_LO: inbound window 1, which on this family maps the SoC's registers; kept disabled</description>
+          <addressOffset>0x402c</addressOffset><access>read-write</access>
+          <fields>
+            <field>
+              <name>SIZE</name><description>The window's size code; 0 disables it</description>
+              <bitOffset>0</bitOffset><bitWidth>5</bitWidth>
+              <enumeratedValues><name>BAR_SIZE</name><enumeratedValue><name>DISABLED</name><value>0</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>ADDRESS</name><description>The PCI address's bits 31:12</description><bitOffset>12</bitOffset><bitWidth>20</bitWidth></field>
+          </fields>
+        </register>
+        <register>
+          <name>BAR2_CONFIG_LO</name><ownedByNif>false</ownedByNif>
+          <description>MISC_RC_BAR2_CONFIG_LO: inbound window 2, the one that maps memory from CPU address 0</description>
+          <addressOffset>0x4034</addressOffset><access>read-write</access>
+          <fields>
+            <field>
+              <name>SIZE</name><description>The window's size code: log2(size) - 15 from 64 KiB to 64 GiB, log2(size) - 12 + 0x1c from 4 KiB to 32 KiB; 0 disables it</description>
+              <bitOffset>0</bitOffset><bitWidth>5</bitWidth>
+              <enumeratedValues derivedFrom="BAR_SIZE"/>
+            </field>
+            <field><name>ADDRESS</name><description>The PCI address's bits 31:12</description><bitOffset>12</bitOffset><bitWidth>20</bitWidth></field>
+          </fields>
+        </register>
+        <register>
+          <name>BAR2_CONFIG_HI</name><ownedByNif>false</ownedByNif>
+          <description>MISC_RC_BAR2_CONFIG_HI: inbound window 2's PCI address, high word</description>
+          <addressOffset>0x4038</addressOffset><access>read-write</access>
+          <fields><field><name>ADDRESS</name><description>The PCI address's bits 63:32</description><bitOffset>0</bitOffset><bitWidth>32</bitWidth></field></fields>
+        </register>
+        <register>
+          <name>BAR3_CONFIG_LO</name><ownedByNif>false</ownedByNif>
+          <description>MISC_RC_BAR3_CONFIG_LO: inbound window 3; kept disabled</description>
+          <addressOffset>0x403c</addressOffset><access>read-write</access>
+          <fields>
+            <field>
+              <name>SIZE</name><description>The window's size code; 0 disables it</description>
+              <bitOffset>0</bitOffset><bitWidth>5</bitWidth>
+              <enumeratedValues derivedFrom="BAR_SIZE"/>
+            </field>
+            <field><name>ADDRESS</name><description>The PCI address's bits 31:12</description><bitOffset>12</bitOffset><bitWidth>20</bitWidth></field>
+          </fields>
+        </register>
+        <!-- Record, register map and section 6 (turn-off). -->
+        <register>
+          <name>MISC_PCIE_CTRL</name><ownedByNif>false</ownedByNif>
+          <description>MISC_PCIE_CTRL: the link's power-state request</description>
+          <addressOffset>0x4064</addressOffset><access>read-write</access>
+          <fields>
+            <field><name>L23_REQUEST</name><description>Asks the link to enter L2/L3 ready</description><bitOffset>0</bitOffset><bitWidth>1</bitWidth></field>
+            <field><name>KEPT</name><description>Bits that are not the BCM2711's or that no source names, kept as read</description><bitOffset>1</bitOffset><bitWidth>31</bitWidth></field>
+          </fields>
+        </register>
+        <!-- Record, register map, section 1 (link-up test) and section 6; FreeBSD
+             lines 69 and 676 test bits 4 and 5 together. -->
+        <register>
+          <name>MISC_PCIE_STATUS</name><ownedByNif>false</ownedByNif>
+          <description>MISC_PCIE_STATUS: the link's state and the block's mode</description>
+          <addressOffset>0x4068</addressOffset><access>read-only</access>
+          <fields>
+            <field><name>PHYLINKUP</name><description>The physical link is up</description><bitOffset>4</bitOffset><bitWidth>1</bitWidth></field>
+            <field><name>DL_ACTIVE</name><description>The data link layer is active</description><bitOffset>5</bitOffset><bitWidth>1</bitWidth></field>
+            <field><name>LINK_IN_L23</name><description>The link is in L2/L3 ready</description><bitOffset>6</bitOffset><bitWidth>1</bitWidth></field>
+            <field>
+              <name>PORT</name><description>Whether the block is a root complex or an endpoint</description>
+              <bitOffset>7</bitOffset><bitWidth>1</bitWidth>
+              <enumeratedValues>
+                <enumeratedValue><name>ENDPOINT</name><value>0</value></enumeratedValue>
+                <enumeratedValue><name>ROOT_COMPLEX</name><value>1</value></enumeratedValue>
+              </enumeratedValues>
+            </field>
+          </fields>
+        </register>
+        <!-- Record, register map and section 2 (outbound): BASE and LIMIT in MiB, the
+             limit inclusive; FreeBSD lines 73 and 591-596 give the same layout. -->
+        <register>
+          <name>WIN_BASE_LIMIT[%s]</name><ownedByNif>false</ownedByNif>
+          <description>CPU_2_PCIE_MEM_WIN_BASE_LIMIT: outbound window w's CPU base and limit, low bits</description>
+          <addressOffset>0x4070</addressOffset><access>read-write</access>
+          <dim>4</dim><dimIncrement>4</dimIncrement>
+          <fields>
+            <field><name>BASE</name><description>The CPU base in MiB, its low 12 bits</description><bitOffset>4</bitOffset><bitWidth>12</bitWidth></field>
+            <field><name>LIMIT</name><description>The CPU limit (the last byte) in MiB, its low 12 bits</description><bitOffset>20</bitOffset><bitWidth>12</bitWidth></field>
+          </fields>
+        </register>
+        <!-- Record, register map and section 2; FreeBSD lines 74-75 and 599-610. -->
+        <register>
+          <name>WIN_BASE_HI[%s]</name><ownedByNif>false</ownedByNif>
+          <description>CPU_2_PCIE_MEM_WIN_BASE_HI: outbound window w's CPU base, high bits</description>
+          <addressOffset>0x4080</addressOffset><access>read-write</access>
+          <dim>4</dim><dimIncrement>8</dimIncrement>
+          <fields><field><name>BASE</name><description>The CPU base in MiB, shifted right by 12</description><bitOffset>0</bitOffset><bitWidth>8</bitWidth></field></fields>
+        </register>
+        <register>
+          <name>WIN_LIMIT_HI[%s]</name><ownedByNif>false</ownedByNif>
+          <description>CPU_2_PCIE_MEM_WIN_LIMIT_HI: outbound window w's CPU limit, high bits</description>
+          <addressOffset>0x4084</addressOffset><access>read-write</access>
+          <dim>4</dim><dimIncrement>8</dimIncrement>
+          <fields><field><name>LIMIT</name><description>The CPU limit in MiB, shifted right by 12</description><bitOffset>0</bitOffset><bitWidth>8</bitWidth></field></fields>
+        </register>
+        <!-- Record, register map, section 1 (steps 3e and 6e) and section 6; FreeBSD
+             lines 63, 89-90 and 196 write the word whole. -->
+        <register>
+          <name>HARD_DEBUG</name><ownedByNif>false</ownedByNif>
+          <description>MISC_HARD_PCIE_HARD_DEBUG: the SerDes power and clock power management</description>
+          <addressOffset>0x4204</addressOffset><access>read-write</access>
+          <fields>
+            <field><name>KEPT_0</name><description>A bit no source names, kept as read</description><bitOffset>0</bitOffset><bitWidth>1</bitWidth></field>
+            <field><name>CLKREQ_DEBUG_ENABLE</name><description>CLKREQ# clock power management</description><bitOffset>1</bitOffset><bitWidth>1</bitWidth></field>
+            <field><name>KEPT_2</name><description>Bits the BCM2711 driver does not use or no source names, kept as read</description><bitOffset>2</bitOffset><bitWidth>19</bitWidth></field>
+            <field><name>L1SS_ENABLE</name><description>L1 substates</description><bitOffset>21</bitOffset><bitWidth>1</bitWidth></field>
+            <field><name>KEPT_22</name><description>Bits no source names, kept as read</description><bitOffset>22</bitOffset><bitWidth>5</bitWidth></field>
+            <field><name>SERDES_IDDQ</name><description>Powers the SerDes down</description><bitOffset>27</bitOffset><bitWidth>1</bitWidth></field>
+            <field><name>KEPT_28</name><description>Bits no source names, kept as read</description><bitOffset>28</bitOffset><bitWidth>4</bitWidth></field>
+          </fields>
+        </register>
+        <!-- Record, section 3; FreeBSD lines 86 and 266-289: an endpoint's place in
+             ECAM layout, its register bits zero. -->
+        <register>
+          <name>EXT_CFG_INDEX</name><ownedByNif>false</ownedByNif>
+          <description>EXT_CFG_INDEX: which function the data window at 0x8000 shows</description>
+          <addressOffset>0x9000</addressOffset><access>write-only</access>
+          <fields>
+            <field><name>FUNCTION</name><description>The function</description><bitOffset>12</bitOffset><bitWidth>3</bitWidth></field>
+            <field><name>DEVICE</name><description>The device</description><bitOffset>15</bitOffset><bitWidth>5</bitWidth></field>
+            <field><name>BUS</name><description>The bus</description><bitOffset>20</bitOffset><bitWidth>8</bitWidth></field>
+          </fields>
+        </register>
+        <!-- Record, register map and section 1, step 3; FreeBSD lines 60-62 and
+             178-194 change bits 0 and 1 by read-modify-write. -->
+        <register>
+          <name>RGR1_SW_INIT_1</name><ownedByNif>false</ownedByNif>
+          <description>RGR1_SW_INIT_1: PERST# and the bridge's reset</description>
+          <addressOffset>0x9210</addressOffset><access>read-write</access>
+          <fields>
+            <field><name>PERST</name><description>1 holds PERST# asserted</description><bitOffset>0</bitOffset><bitWidth>1</bitWidth></field>
+            <field><name>INIT</name><description>1 holds the bridge in reset</description><bitOffset>1</bitOffset><bitWidth>1</bitWidth></field>
+            <field><name>KEPT</name><description>Bits no source names, kept as read</description><bitOffset>2</bitOffset><bitWidth>30</bitWidth></field>
+          </fields>
+        </register>
+      </registers>
+    </peripheral>
+  </peripherals>
+</device>

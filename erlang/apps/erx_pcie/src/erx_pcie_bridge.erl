@@ -20,7 +20,7 @@ record lists, since any other access on the BCM2711's bus locks up the
 memory controller (docs/design-pcie.md, "The closed bus").
 """.
 
--export([reaches/2]).
+-export([reaches/2, read_answer/3]).
 -export_type([access/0, result/0]).
 
 -doc """
@@ -59,3 +59,12 @@ reaches(true, #{bus_first := First}, {First, Device, Function}) ->
     Device =:= 0 andalso Function =:= 0;
 reaches(true, Bridge, Place) ->
     lists:member(Place, erx_pcie:places(Bridge)).
+
+-doc """
+A configuration read's answer from the value read: all ones at offset 0,
+a vendor no function has, is `{error, absent}`, since nothing is at the
+place; any other value is the read's.
+""".
+-spec read_answer(0..255, 1 | 2 | 4, 0..16#ffffffff) -> {ok, 0..16#ffffffff} | {error, absent}.
+read_answer(0, Width, Value) when Value =:= 1 bsl (8 * Width) - 1 -> {error, absent};
+read_answer(_Offset, _Width, Value) -> {ok, Value}.
