@@ -5,8 +5,9 @@
 -moduledoc """
 The input tree (docs/design-usb.md, "HID reaches the display"): the
 `erx_fs` callback module of one controller's input numbers, whose grant's
-argument is the controller's places, erx_usb_places_sup. The tree is named
-`input` and holds the `usb_input_max` files `hid0` to `hid7` beside nothing
+argument is the controller's places, erx_usb_places_sup. The tree is an
+instance of the input interface (abi/services/input.txt), named by its
+`input_tree`, `input`, and holds the `usb_input_max` files `hid0` to `hid7` beside nothing
 else, the same set for as long as the places live, so a display that
 starts one reader for each file it lists has its sources fixed.
 
@@ -31,8 +32,6 @@ stream that has ended without ending itself.
 
 -export([init/1, root/1, walk/3, getattr/2, open/3, read/4, readdir/4, statfs/1, clunk/2]).
 
--define(TREE, <<"input">>).
-
 %% A node: the root, or the file of input number N.
 -type node_() :: root | {hid, non_neg_integer()}.
 
@@ -50,7 +49,7 @@ init(Streams) when tuple_size(Streams) =:= ?ERX_USB_INPUT_MAX ->
 
 -doc false.
 root(_Fs) ->
-    {ok, ?TREE, root, qid(root)}.
+    {ok, ?ERX_INPUT_TREE_BYTES, root, qid(root)}.
 
 -doc false.
 walk(root, Name, _Fs) ->

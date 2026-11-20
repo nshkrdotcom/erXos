@@ -15,6 +15,8 @@
 -include_lib("eunit/include/eunit.hrl").
 -include("generated/erx_abi.hrl").
 
+-export([export/3]).
+
 -define(NOFID, 16#ffffffff).
 -define(O_RDONLY, 0).
 -define(O_WRONLY, 1).
@@ -32,7 +34,7 @@ places() ->
     unlink(Places),
     {Grants, Streams} = erx_usb_places_sup:input_tree(Places),
     {ok, {Grant, _}} = erx_fs_grants:own(Grants, Streams),
-    {ok, _} = call(Grant, {attach, 1, ?NOFID, <<"user">>, <<"input">>, 0}),
+    {ok, _} = call(Grant, {attach, 1, ?NOFID, <<"user">>, ?ERX_INPUT_TREE_BYTES, 0}),
     {ok, _} = call(Grant, {walk, 1, 2, []}),
     {ok, _, _} = call(Grant, {lopen, 2, ?O_RDONLY}),
     [begin
@@ -99,6 +101,26 @@ the_tree_holds_the_eight_numbers_test() ->
     ?assertEqual({error, enoent}, call(Grant, {walk, 1, 4, [<<"hidx">>]})),
     ?assertEqual({error, erofs}, call(Grant, {lcreate, 1, <<"hid9">>, 0, 8#644, 0})),
     stop(P).
+
+%% A grant minted as the domain service mints an input service's (erx_domain_mints's
+%% grant_limits/2: its facet row's limits with rights ro, and session for the marked
+%% grant) starts, and serves the tree read-only. The grant is bound as the domain's
+%% own, so the test's bare requests reach it; the limits apply to every grant alike.
+a_grant_with_the_mint_limits_serves_the_tree_read_only_test() ->
+    {ok, Places} = erx_usb_places_sup:start_link(),
+    unlink(Places),
+    {Grants, Streams} = erx_usb_places_sup:input_tree(Places),
+    {ok, Grant} = erx_fs_grants:grant(Grants, Streams, #{rights => ro, session => true},
+                                      #{client => own, ends_with => none, exports => ?MODULE}),
+    {ok, _} = call(Grant, {attach, 1, ?NOFID, <<"user">>, ?ERX_INPUT_TREE_BYTES, 0}),
+    {ok, _} = call(Grant, {walk, 1, 3, [name(0)]}),
+    ?assertEqual({error, erofs}, call(Grant, {lopen, 3, ?O_WRONLY})),
+    {ok, _, _} = call(Grant, {lopen, 3, ?O_RDONLY}),
+    stop(#{places => Places}).
+
+%% The grant's exports module: every export is allowed.
+export(_Pid, _Rights, _Peer) ->
+    ok.
 
 %% A read takes whole records only: one too small for a record is refused at once, and
 %% one whose count ends inside a record takes the records before it.
