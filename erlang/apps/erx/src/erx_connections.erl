@@ -348,8 +348,8 @@ hand_over(Kernel, #{port := Port} = Connection) ->
 %%   {erx_origin, SystemId, Record}, so a peer handed the agent's pid can reach it but
 %%   not steer it;
 %% * in the same envelope, the domain service's answer to init's ready report, the
-%%   domain's facets by name, which the agent hands init (edit 65), with the names of
-%%   the facets of configured domains the manifest grants it, which the agent keeps for
+%%   domain's facets by name, which the agent hands init (edit 65), with the names and
+%%   interfaces of the facets of configured domains the manifest grants it, which the agent keeps for
 %%   erx:granted/0 (docs/design-system.md, "Facets a configured domain serves"), and each later
 %%   installation of a facet a configured domain minted for this one (install/4);
 %% * erx_dist's word that an introduced connection's entry is up;
@@ -384,8 +384,8 @@ records(#{kernel := Kernel, system := SystemId} = Env, Held, Dropped) ->
                                        is_atom(Name), erx_facets:is_facet(Facet)},
             ok = erx_facets:install(Valid),
             %% Kept before init hears of the facets, so the applications init then starts
-            %% find the names erx:granted/0 reads.
-            persistent_term:put({erx, granted}, lists:usort(names(Granted))),
+            %% find the grants erx:granted/0,1 read.
+            persistent_term:put({erx, granted}, lists:usort(grants(Granted))),
             init ! {erx_facets, Valid},
             records(Env, Held, Dropped);
         {erx_origin, SystemId, {erx_app, App}} when is_map(App), element(1, map_get(app, Env)) =:= waiting ->
@@ -452,11 +452,12 @@ install(#{domain_pid := DomainPid}, Tag, Name, Facet) ->
     DomainPid ! {erx_facets_installed, Tag},
     ok.
 
-%% The atoms of List, the ready answer's names of the facets the manifest grants the
-%% domain, ignoring any other element and an improper tail.
-names([Name | Rest]) when is_atom(Name) -> [Name | names(Rest)];
-names([_ | Rest]) -> names(Rest);
-names(_) -> [].
+%% The {Name, Interface} pairs of List, the ready answer's names and interface numbers of
+%% the facets the manifest grants the domain, ignoring any other element and an improper
+%% tail.
+grants([{Name, Interface} | Rest]) when is_atom(Name), is_integer(Interface) -> [{Name, Interface} | grants(Rest)];
+grants([_ | Rest]) -> grants(Rest);
+grants(_) -> [].
 
 %% The app's record has come: each asker waiting for it is answered, and it is kept for
 %% those who ask later (app/0).

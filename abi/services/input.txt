@@ -1,0 +1,21 @@
+# Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
+# SPDX-License-Identifier: BSD-2-Clause
+# The input interface (docs/design-display.md, "The display device"): an erx_fs grant of
+# one input tree, a read-only tree of input device files that a domain driving input
+# devices serves (docs/design-usb.md, "HID reaches the display"; docs/design-bluetooth.md)
+# and a display reads. Each file is a stream of the input records of
+# abi/formats/input.txt. Its operations are the file protocol's own, which no facet row
+# names, so it declares none. Every grant of the interface is read-only by construction:
+# the interface declares no rights, so no facet row can state any, and the domain service
+# asks the server to mint each grant read-only and holds the facet as one
+# (erx_domain_mints). The manifest check holds the interface to property 8's input clause
+# (docs/design-system.md, "The manifest"; check_input_grants): only a display domain, a
+# domain that serves a display, holds a facet of it, since its holder reads every key pressed on
+# the devices behind it, whatever window has the keyboard. A domain may serve several
+# trees, each a service of its own name, and a display may hold several, one per serving
+# domain, which it tells from its other grants by this interface (erx:granted/1).
+service input 15
+  served_as tree
+# The input tree's wire, which its server serves and the display's follower reads, so both
+# sides take it from here. input_tree is the tree's name in an attach.
+bytes input_tree 5 value 696e707574

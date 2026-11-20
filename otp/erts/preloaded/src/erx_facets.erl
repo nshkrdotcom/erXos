@@ -20,7 +20,7 @@ The readers read the registry at use:
 * find/1 and pids/0 answer `erx:cap/1` and `erx:caps/0`;
 * table/1 puts the grant beneath each facet's entry of a namespace table at
   each resolution, so a re-grant serves the next lookup;
-* file_grant/2 is the one maker of a file client's handle on a files facet's
+* file_grant/2,3 is the one maker of a file client's handle on a files facet's
   grant. A caller that keeps the handle, as an image mount keeps the grant
   it opened its file on, keeps that grant until it lets it go.
 
@@ -31,7 +31,7 @@ It is preloaded beside prim_file and erx_path, since every resolution of a
 path reads it, the code loader's included.
 """.
 
--export([find/1, pids/0, install/1, is_facet/1, files/2, table/1, file_grant/2]).
+-export([find/1, pids/0, install/1, is_facet/1, files/2, table/1, file_grant/2, file_grant/3]).
 -export_type([facet/0]).
 
 -include("generated/erx_abi.hrl").
@@ -136,10 +136,20 @@ facet of the name. So no handle carries more than its grant's rights.
 """.
 -spec file_grant(atom(), ro | rx) -> {ok, {pid(), binary(), ro}} | {error, eacces | enoent}.
 file_grant(Name, Rights) ->
+    file_grant(Name, Rights, atom_to_binary(Name)).
+
+-doc """
+The handle file_grant/2 makes, on the tree named `Tree` instead of the
+facet's name: for a facet of an interface whose tree has one name whatever
+the service is called, as an input tree's is `input_tree`
+(abi/services/input.txt).
+""".
+-spec file_grant(atom(), ro | rx, binary()) -> {ok, {pid(), binary(), ro}} | {error, eacces | enoent}.
+file_grant(Name, Rights, Tree) ->
     case registry() of
         #{Name := {Pid, Granted}}
           when is_pid(Pid), (Rights =:= ro orelse (Rights =:= rx andalso Granted =:= rx)) ->
-            {ok, {Pid, atom_to_binary(Name), ro}};
+            {ok, {Pid, Tree, ro}};
         #{Name := {Pid, _Granted}} when is_pid(Pid) ->
             {error, eacces};
         #{} ->

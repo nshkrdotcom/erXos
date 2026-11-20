@@ -920,6 +920,23 @@ class ManifestDomainsTest < Minitest::Test
             message: /a partial boot runs no services/)
   end
 
+  # Property 8's input clause (abi/services/input.txt): an input tree's facet goes only to
+  # a display domain, alpha, which serves the windows service b, and never to beta, a
+  # configured domain that serves no display, the system domain or a session template; and
+  # the interface declares no rights, so a row that states rw is refused.
+  def test_an_input_facet_goes_to_a_display_domain_alone_and_read_only
+    input = ->(server) { "service kbd\n  server #{server}\n  interface input\n" }
+    granted = ->(server, grantee) { with_windows(server: '@domain.alpha') + input.call(server) + window_facet('kbd', grantee, '@service.kbd') }
+    view = @codec.open('manifest', admit(granted.call('@domain.beta', '@domain.alpha')).bytes)
+    assert_includes rows(view, 'services').map { |row| row.fetch('interface') }, 15
+    [['@domain.alpha', '@domain.beta'], ['@domain.beta', 'system'], ['@domain.beta', '@session.system']].each do |server, grantee|
+      refused(Erx::Manifest::Invalid, 'facet.grantee', granted.call(server, grantee),
+              message: /input facet kbd is granted to no display domain/)
+    end
+    refused(Erx::Manifest::Invalid, 'facet.parameter', granted.call('@domain.beta', '@domain.alpha') + "  parameter rights rw\n",
+            message: /parameter rights is not declared by its service/)
+  end
+
   # Property 18: the display record is packed by its service's index, with its policy,
   # idle times and palette, light unless the record names one.
   def test_a_display_record_is_packed_by_its_service

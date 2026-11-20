@@ -217,7 +217,7 @@ state(Lib, Principals, Opts) ->
       served => #{}, lines => #{},
       facet_names => maps:get(facet_names, Opts, ?ERX_FACET_NAMES),
       inspect_policy => inspect_policy(Opts), principals => Principals,
-      facet_rows => [], trees => [], app_entries => AppEntries,
+      facet_rows => [], trees => [], interfaces => #{}, app_entries => AppEntries,
       apps => erx_principal:new(apps_max(AppEntries))}.
 
 %% The app entries the library placed at boot (erx_domain_lib:apps/0), none with no
@@ -305,10 +305,12 @@ booted(#{lib := Lib} = State) ->
             Services = [{Server, Name} || {Server, Name, _Interface} <- maps:get(services, Boot, []), Server =/= system],
             Files = [Name || {_Server, Name, ?ERX_SERVICE_FILES} <- maps:get(services, Boot, [])],
             Windows = [Name || {_Server, Name, ?ERX_SERVICE_WINDOWS} <- maps:get(services, Boot, [])],
+            Inputs = [Name || {_Server, Name, ?ERX_SERVICE_INPUT} <- maps:get(services, Boot, [])],
             Trees = [Name || {_Server, Name, Interface} <- maps:get(services, Boot, []),
                              lists:member(Interface, ?ERX_TREE_SERVICES)],
             Mints = erx_domain_mints:new((maps:get(mint_config, State))#{services => Services,
-                                           grants => Minted, files => Files, windows => Windows}),
+                                           grants => Minted, files => Files, windows => Windows,
+                                           inputs => Inputs}),
             %% Only configured rows, each its index, read Served: a {template, T}
             %% grant reaches each session through the session's own facet rows, and
             %% a grant to the system domain is planned by no ready answer.
@@ -324,6 +326,8 @@ booted(#{lib := Lib} = State) ->
             State#{core := erx_domain_core:new(Host), boot_timeout := Seconds * 1000, configured := Configured,
                    mints := Mints, served := Served,
                    facet_rows := lists:enumerate(0, maps:get(grants, Boot, [])), trees := Trees,
+                   interfaces := maps:from_list([{{Server, Name}, Interface}
+                                                 || {Server, Name, Interface} <- maps:get(services, Boot, [])]),
                    templates := maps:from_list([{P, T} || #{principal := P} = T <- Templates])};
         {{error, _}, _} ->
             State#{core := erx_domain_core:new(<<>>)};
@@ -968,8 +972,8 @@ marked(#{}) -> none.
 %% erx_fs grant its erx_fs_grants supervisor starts, and ends with that supervisor. The answer
 %% goes to the domain pid, which hands it to the domain's agent for init (edit 65). Init
 %% waits for it, so every domain that reported is answered, with no facets too. Granted,
-%% the names of the facets of configured domains the manifest grants the domain
-%% (granted/2), goes with it, so the domain mounts what it is granted before the grants
+%% the names and interfaces of the facets of configured domains the manifest grants the
+%% domain (granted/3), goes with it, so the domain mounts what it is granted before the grants
 %% are installed (docs/design-system.md, "Facets a configured domain serves").
 grant_facets(Id, Served, Granted, #{core := Core, exports := Exports} = State) ->
     {ok, #{pid := Pid, ref := Ref, facets := Facets, principal := Principal}} = erx_domain_core:fetch(Id, Core),
@@ -1098,15 +1102,21 @@ served(request, _Domain, _State) ->
 code_objects_row() ->
     {code_objects, message, #{max_request => ?ERX_CODE_OBJECTS_MAX_REQUEST, in_flight => 4}}.
 
-%% The names of the facets of configured domains the manifest grants a domain of
-%% Origin: its row's, or a session's own rows, and no other domain's; none for a domain
-%% created on request, which the manifest grants nothing.
-granted({configured, Row}, _Domain, #{mints := Mints}) ->
-    erx_domain_mints:granted_names(Row, Mints);
-granted({session, _Template}, Domain, _State) ->
-    lists:usort([Name || {Name, _Server, _Limits} <- minted_rows(Domain)]);
+%% The facets of configured domains the manifest grants a domain of Origin, sorted, each
+%% {Name, Interface}, its name and its service's interface number (abi/services), by which
+%% a domain tells, say, its input trees from its other grants (erx:granted/1): its row's,
+%% or a session's own rows, and no other domain's; none for a domain created on request,
+%% which the manifest grants nothing.
+granted({configured, Row}, _Domain, #{mints := Mints} = State) ->
+    with_interfaces(erx_domain_mints:granted_services(Row, Mints), State);
+granted({session, _Template}, Domain, State) ->
+    with_interfaces([{Name, Server} || {Name, Server, _Limits} <- minted_rows(Domain)], State);
 granted(request, _Domain, _State) ->
     [].
+
+%% Each service of Services, a name and its server row, as {Name, Interface}, sorted.
+with_interfaces(Services, #{interfaces := Interfaces}) ->
+    lists:usort([{Name, maps:get({Server, Name}, Interfaces)} || {Name, Server} <- Services]).
 
 %% A session's rows of configured domains' services, which the mint core grants it.
 minted_rows(#{rows := Rows}) ->

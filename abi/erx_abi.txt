@@ -15,6 +15,7 @@ include services/log.txt
 include services/ssh.txt
 include services/clock.txt
 include services/code_objects.txt
+include services/input.txt
 include manifest.txt
 include formats/elf64.txt
 include formats/virtio.txt

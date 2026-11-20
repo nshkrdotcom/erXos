@@ -430,7 +430,12 @@ violation fails the build with the property, the record and the field:
    network domain holds a network device; and only the system domain
    holds a facet of the driver-control interface, which stops and starts
    another domain's drivers ([The holder's driver-control
-   facet](#the-holders-driver-control-facet)).
+   facet](#the-holders-driver-control-facet)); and only a display
+   domain, one that serves a display's window service, holds a facet of
+   the `input` interface, whose holder reads every key pressed on the
+   devices behind it, whatever window has the keyboard
+   ([design-display.md](design-display.md#the-display-device)). The
+   interface declares no rights, so every such facet is read-only.
 9. **A release build's manifest confines what it can:** each unconfined
    device's holder holds that device's unit and nothing else, so the file
    system or network stack that parses what an unconfined `hostile` device
@@ -2539,11 +2544,15 @@ first, since the domain service sends it as it takes the grantee's ready
 report, which every operation for that grantee follows. The ready answer
 also names the facets of configured domains the manifest grants the
 grantee, its row's grants or its session template's, and no other
-domain's, so the grantee knows a name is coming before its grant is
-installed: a domain mounts a files facet only where the manifest grants
+domain's, each with its service's interface number (`abi/services`), so
+the grantee knows a name is coming before its grant is installed and what
+kind of grant it is, as a display tells its input trees from another
+display's window service ([design-display.md](design-display.md#the-display-device)):
+a domain mounts a files facet only where the manifest grants
 it one ([design-files.md](design-files.md#building-binding-and-mounting),
-"A facet's mount"), and the domain's agent keeps the names for
-`erx:granted/0`. The system domain, which holds the manifest, takes its
+"A facet's mount"), and the domain's agent keeps the names and their
+interfaces for `erx:granted/0`, which answers the names, and
+`erx:granted/1`, which answers those of one interface. The system domain, which holds the manifest, takes its
 own names from it. Until its grant is installed, and while its server
 restarts, the grantee finds the name absent or its facet dead, and
 treats both as the service being unavailable.

@@ -1470,11 +1470,22 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
     `shm_stat`, unverified, and a pipe end's size, 0 where FreeBSD reports the bytes readable.
   * **Input from another domain** ([The display device](docs/design-display.md#the-display-device)): the
     display's reader of each file of a granted input tree, a source of the router with one read outstanding, which
-    decodes each read with `erx_input_codec:decode/1` and puts the bytes of a split record before its next read.
+    decodes each read with `erx_input_codec:decode/1` and puts the bytes of a split record before its next read, and
+    `erx_input_follower`, which keeps one reader for each file of each grant of the `input` interface.
   * **The web** ([UIs: the browser renderer](docs/design-web.md#uis-the-browser-renderer)): `erx_ui_server` and
     `erx_ui_browser` start in the application's session; `erx_web_line` keeps the table of open UIs and serves the
     `ui` and `uis` targets as views; `erx_web_conn` decodes an event's record and sends every `open` to the line,
     where it answers `ui`, `uis` and `event` as unsupported today.
+* [Medium] domain service, `erlang/apps/erx_domain/src/erx_domain_mints.erl` (`grant_limits/2`, `installed_facet/3`):
+  a grant is told a files or an input grant by its service name alone (`files`, `inputs`), though names are
+  unique only per server, so a files grant of one server named like another server's input service is minted and
+  held read-only; the interface would better come from one `{Server, Name} => Interface` map, which
+  `erx_domain_srv` builds for the ready answer, and read-only from a declaration of `abi/services/input.txt`
+  rather than from the Erlang that names `?ERX_SERVICE_INPUT`.
+* [Low] display, `erx_input_follower` and `erx_input_reader:files/1`
+  ([The display device](docs/design-display.md#the-display-device)): a tree's listing is held whole, up to
+  `erx_file_remote`'s 1,048,576 entries, before `input_tree_files_max` refuses it, in a lister with no
+  `max_heap_size`, and a tree whose listing fails is listed again each second; a residual of trusted serving domains.
 * [Medium] `tools/lib/erx/abi_input.rb`, [Input records](docs/design-abi.md#input-records): the `input`
   declaration is a fourth reader of tagged records beside the draw messages and the program and web protocols'
   `union`s. Its term rule (`distinct!`) repeats the program grammar's case selection and its member grouping copies

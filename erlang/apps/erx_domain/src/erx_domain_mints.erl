@@ -126,7 +126,7 @@ ready report or its end follows. The grant is matched by the incarnation,
 never by the service alone, so no wait is answered with a predecessor's facet.
 """.
 
--export([new/1, step/2, grants/1, granted/3, granted_names/2, in_place/3, server_settled/3, system_grant/3,
+-export([new/1, step/2, grants/1, granted/3, granted_names/2, granted_services/2, in_place/3, server_settled/3, system_grant/3,
          pair_area/3]).
 -export_type([state/0, config/0, event/0, action/0, grant/0, key/0, pair/0]).
 
@@ -159,6 +159,7 @@ never by the service alone, so no wait is answered with a predecessor's facet.
                     owner := fun((pid()) -> non_neg_integer()),
                     files => [name()],
                     windows => [name()],
+                    inputs => [name()],
                     deadline => pos_integer()}.
 %% ready carries the incarnation's node, which the service knows; the rest of the
 %% untrusted events' fields are any term a domain sent.
@@ -188,6 +189,7 @@ never by the service alone, so no wait is answered with a predecessor's facet.
                      owner := fun((pid()) -> non_neg_integer()),
                      files := [name()],
                      windows := [name()],
+                     inputs := [name()],
                      areas := #{row() => [area()]},
                      deadline := pos_integer()}.
 %% A party of a pair as the domain service records it: its id and what it holds, a
@@ -206,7 +208,8 @@ service's name, its server row and the grant's limits. A grantee
 rows its plan gave it, in its ready report and as a party. Files names the
 services of the files interface, whose grants a namespace mounts, and
 Windows those of the windows interface, whose grants size their pairs'
-pixel areas (pair_area/3); none of either by default. A grant of a
+pixel areas (pair_area/3), and Inputs those of the input interface, whose
+grants are read-only (grant_limits/2); none of any by default. A grant of a
 service its server does not declare, a grant to its own server, two
 grants of one name to one grantee, or a service whose server is no row (the
 system domain's, which the ready answers serve) is a bug of the caller,
@@ -230,6 +233,7 @@ new(#{services := Services, grants := Grants, owner := Owner} = Config) when is_
     Windows = maps:get(windows, Config, []),
     #{declared => Declared, grants => Entries, rows => #{}, sessions => sets:new([{version, 2}]),
           next_tag => 1, owner => Owner, files => maps:get(files, Config, []), windows => Windows,
+          inputs => maps:get(inputs, Config, []),
           areas => areas(Windows, Grants), deadline => maps:get(deadline, Config, ?DEADLINE)}.
 
 entry(Server, Limits, Mark) -> #{server => Server, limits => Limits, mark => Mark, state => idle}.
@@ -260,8 +264,18 @@ Grantee's own grants, so a domain's ready answer, which names them, says
 nothing of another domain's (erx_domain_srv).
 """.
 -spec granted_names(row() | system, state()) -> [name()].
-granted_names(Grantee, #{grants := Grants}) ->
-    lists:usort([Name || {Holder, Name} <- maps:keys(Grants), Holder =:= Grantee]).
+granted_names(Grantee, State) ->
+    [Name || {Name, _Server} <- granted_services(Grantee, State)].
+
+-doc """
+The services of configured domains the manifest grants Grantee, as
+granted_names/2 finds them, each its name and its server row, sorted by name: the
+pair that names a service's interface, since two servers may each serve a service
+of one name.
+""".
+-spec granted_services(row() | system, state()) -> [{name(), row()}].
+granted_services(Grantee, #{grants := Grants}) ->
+    lists:usort([{Name, Server} || {Holder, Name} := #{server := Server} <- Grants, Holder =:= Grantee]).
 
 -doc """
 Whether Grantee's namespace is in place: each of its grants of a files
@@ -544,26 +558,34 @@ party_areas(request, _State) -> [].
 %% The request to the server's mint for the grant Key and its operation Tag, with the
 %% grant's limits as its mark has them (session_limits/2).
 mint_request({_, Name} = Key, {ServerId, GranteeId}, Tag, #{rows := Rows} = State) ->
-    #{limits := Limits, mark := Mark, server := Server} = grant_entry(Key, State),
+    #{mark := Mark, server := Server} = grant_entry(Key, State),
     #{Server := {ServerId, ready, _Node, #{Name := Mint}}} = Rows,
-    {mint, Tag, Mint, Name, GranteeId, session_limits(Limits, Mark)}.
+    {mint, Tag, Mint, Name, GranteeId, session_limits(grant_limits(Key, State), Mark)}.
+
+%% The limits of the grant Key as its server mints it and its grantee holds it: its facet
+%% row's, and for a grant of an input service, which states no rights
+%% (abi/services/input.txt), rights ro, so its server serves it read-only and its grantee
+%% holds it so (installed_facet/3).
+grant_limits({_, Name} = Key, #{inputs := Inputs} = State) ->
+    #{limits := Limits} = grant_entry(Key, State),
+    case lists:member(Name, Inputs) of
+        true -> Limits#{rights => ro};
+        false -> Limits
+    end.
 
 %% A grant's limits as its mint carries them: session => true for the marked grant, and
 %% no session for any other, whatever its facet row's limits hold.
 session_limits(Limits, true) -> Limits#{session => true};
 session_limits(Limits, false) -> maps:remove(session, Limits).
 
-%% The facet Pid of the grant Key as its installation carries it: for a files service,
-%% the pid with the rights of the grant's facet row, which the manifest states and no
-%% reply of the server's sets (docs/design-files.md, "Rights beneath an entry"); for any
-%% other service, the pid alone.
-installed_facet(Pid, {_, Name} = Key, #{files := Files} = State) ->
-    case lists:member(Name, Files) of
-        true ->
-            #{limits := Limits} = grant_entry(Key, State),
-            erx_fs_grants:facet(Pid, Limits);
-        false ->
-            Pid
+%% The facet Pid of the grant Key as its installation carries it: for a files or an input
+%% service, the pid with the rights of the grant's limits (grant_limits/2), which the
+%% manifest states and no reply of the server's sets (docs/design-files.md, "Rights
+%% beneath an entry"); for any other service, the pid alone.
+installed_facet(Pid, {_, Name} = Key, #{files := Files, inputs := Inputs} = State) ->
+    case lists:member(Name, Files ++ Inputs) of
+        true -> erx_fs_grants:facet(Pid, grant_limits(Key, State));
+        false -> Pid
     end.
 
 cancel(Grant) ->

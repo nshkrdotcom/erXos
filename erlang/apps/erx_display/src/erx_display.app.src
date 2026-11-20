@@ -18,7 +18,7 @@
 {application, erx_display,
  [{description, "erXos display services"},
   {vsn, "1"},
-  {modules, [erx_display, erx_input, erx_input_reader, erx_keymap, erx_screen, erx_screen_core, erx_splash, erx_splash_mark, erx_wctl, erx_window, erx_winctl,
+  {modules, [erx_display, erx_input, erx_input_follower, erx_input_reader, erx_keymap, erx_screen, erx_screen_core, erx_splash, erx_splash_mark, erx_wctl, erx_window, erx_winctl,
               erx_winfs, erx_wm, erx_wm_rio, erx_wm_single]},
   {registered, []},
   {applications, [kernel, stdlib, erx, erx_files, erx_memdraw]},

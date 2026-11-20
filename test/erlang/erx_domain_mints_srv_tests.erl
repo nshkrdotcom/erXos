@@ -389,15 +389,15 @@ served() ->
     ?assertEqual(#{}, grants()).
 
 %% The ready answer names the facets of configured domains the manifest grants the
-%% domain, which come later by installation, so the domain mounts each it is granted:
+%% domain, each with its interface, echo's 1, which come later by installation, so the domain mounts each it is granted:
 %% b (row 0) and a session of template 0 are granted echo and their answers name it;
 %% a, which serves echo and is granted nothing, finds none, and a session of template 1,
 %% which the manifest grants nothing, finds none, though template 0 holds a grant.
 granted_names_test_() ->
-    [{"template 0", fun() -> ?assertEqual({[], [echo], [echo]}, granted_names(0)) end},
-     {"template 1", fun() -> ?assertEqual({[], [echo], []}, granted_names(1)) end}].
+    [{"template 0", fun() -> ?assertEqual({[], [{echo, 1}], [{echo, 1}]}, granted_names(0)) end},
+     {"template 1", fun() -> ?assertEqual({[], [{echo, 1}], []}, granted_names(1)) end}].
 
-%% The names the ready answers of a, b and a session of principal 1 carried, with
+%% The grants the ready answers of a, b and a session of principal 1 carried, with
 %% principal 1's sessions made from template Template.
 granted_names(Template) ->
     Self = self(),
@@ -918,7 +918,7 @@ app_session() ->
                      after 2000 -> none end),
         PidA ! {erx_origin, 5, {erx_facet_minted, Tag, {ok, pid('a@erxos', 5, 7)}}},
         {Before, {_, install, Tag, clip, _}} = received(Pid7, fun({_, install, _, _, _}) -> true end, []),
-        ?assertEqual([[clip]], [Granted || {_, facets, _, Granted} <- Before]),
+        ?assertEqual([[{clip, ?ERX_SERVICE_FILES}]], [Granted || {_, facets, _, Granted} <- Before]),
         %% An app's session holds the code_objects facet too, bound to itself.
         [#{code_objects := CodeObjects}] = [Facets || {_, facets, Facets, _} <- Before],
         ?assertMatch(#{grantee := 7}, erx_facet:info(CodeObjects)),

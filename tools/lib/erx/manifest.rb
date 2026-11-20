@@ -1958,7 +1958,9 @@ module Erx
       # server grants each session made from it, or of a system-served one, which the
       # domain service starts for each such session (property 14). A facet of the
       # driver-control interface stops and starts another domain's drivers, so only the
-      # system domain holds one (property 8); the network's facets are property 15's
+      # system domain holds one (property 8), and a facet of the input interface reads every
+      # key pressed on its devices, so only a display domain holds one (check_input_grants);
+      # the network's facets are property 15's
       # (check_network_grants), and the files and inspect receivers' floors property 16's
       # (check_files_grants, check_inspect_grants). Each facet's parameters are resolved
       # against its service's declarations (facet_parameters), and its operations against
@@ -2007,6 +2009,7 @@ module Erx
         check_files_grants(rows, tables)
         check_inspect_grants(rows, tables)
         check_line_grants(rows, packed.map(&:first), tables)
+        check_input_grants(rows, tables)
         operations = records('facet').zip(sources).map { |record, row| facet_operations(record, row, service_rows) } +
                      derived.map { [] }
         order = rows.each_index.sort_by { |at| [rows.fetch(at).fetch('name'), *grantee.call(rows.fetch(at))] }
@@ -2222,6 +2225,26 @@ module Erx
         check_uart_lines(tables, console, uarts.to_h { |uart| [tables.fetch('devices').fetch(uart).fetch('path'), 'facet.parameter'] })
         invalid('two line grants name one UART', 'facet.parameter') unless uarts.uniq.size == uarts.size
         invalid('a manifest holds at most one line grant', 'facet.service') if grants.size > 1
+      end
+
+      # Property 8's clause for the input interface (docs/design-system.md, "The manifest";
+      # abi/services/input.txt). A facet of an input tree reads every key pressed on the
+      # devices behind it, whatever window has the keyboard, so only a display domain, a
+      # configured domain that serves a service checked by windows_grant, holds one: a
+      # session or another domain holding one would read the user's typing past the
+      # display's focus. Its grants are read-only by construction: the interface declares
+      # no rights parameter, so facet_parameters refuses a row that states one.
+      def check_input_grants(facets, tables)
+        services = tables.fetch('services')
+        input = fetch_interface('input')
+        displays = services.select { |service| grant_checker(service.fetch('interface')) == 'windows_grant' }
+                           .map { |service| service.fetch('server') }
+        facets.each do |row|
+          next unless services.fetch(row.fetch('service')).fetch('interface') == input
+          next if row.fetch('grantee_kind') == grantee_kind('domain') && displays.include?(row.fetch('grantee'))
+
+          invalid("input facet #{row.fetch('name')} is granted to no display domain", 'facet.grantee')
+        end
       end
 
       # The displays (docs/design-display.md, "A display's session"), sorted by their

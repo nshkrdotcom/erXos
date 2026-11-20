@@ -133,6 +133,19 @@ a_files_install_carries_its_rows_rights_test() ->
     ?assertEqual([{install, 1, 6, data, {facet(5), rw}}], Install([data], #{})),
     ?assertEqual([{install, 1, 6, data, facet(5)}], Install([], #{rights => ro})).
 
+%% A grant of an input service is read-only by construction (abi/services/input.txt): its
+%% server is asked to mint it with rights ro and its grantee holds it with ro, whatever its
+%% limits hold, a rights limit the manifest's parameter check would refuse among them.
+an_input_grant_is_minted_and_held_read_only_test() ->
+    Mint = fun(Limits) ->
+                   Config = (config([?G]))#{grants := [{?G, data, ?S, Limits}], inputs => [data]},
+                   {Actions, _} = run([ready(?S, 5, #{data => mint(5)}), ready(?G, 6, #{}), {introduced, 1, ok},
+                                       {minted, 5, 1, {ok, facet(5)}}], erx_domain_mints:new(Config)),
+                   lists:nthtail(2, Actions)
+           end,
+    [?assertEqual([[{mint, 1, mint(5), data, 6, maps:put(rights, ro, ?LIMITS)}], [{install, 1, 6, data, {facet(5), ro}}]],
+                  Mint(Limits)) || Limits <- [?LIMITS, maps:put(rights, rw, ?LIMITS)]].
+
 in_order_test() ->
     {Actions, State} = run([ready(?S, 5, #{data => mint(5)}), ready(?G, 6, #{}), {introduced, 1, ok},
                             {minted, 5, 1, {ok, facet(5)}}, {installed, 6, 1}], new()),

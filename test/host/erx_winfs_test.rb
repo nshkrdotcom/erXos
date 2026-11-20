@@ -10,8 +10,8 @@ require_relative '../../tools/lib/erx/host_os'
 require_relative '../../tools/lib/erx/memdraw_build'
 
 # Runs test/erlang/erx_winfs_tests.erl: erx_winfs, erx_window, erx_screen and erx_fb_sup's
-# start of erx_winfs, with the erx_fs grants of erx_files, and erx_input_reader over a file
-# model, on stock's emulator with erx_memdraw's NIF built for the host
+# start of erx_winfs, with the erx_fs grants of erx_files, erx_input_reader over a file
+# model and erx_input_follower over model grants and readers, on stock's emulator with erx_memdraw's NIF built for the host
 # (Erx::MemdrawBuild.nif), whose stand-in pixel area the windows present from.
 class ErxWinfsTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
@@ -20,7 +20,7 @@ class ErxWinfsTest < Minitest::Test
   INCLUDE = File.join(ROOT, 'build/gen/erlang/apps/erx/include')
   GRAMMAR = 'build/gen/otp/erts/preloaded/src/erx_9p_grammar.erl'
   DISPLAY = %w[erx_display erx_screen erx_screen_core erx_wctl erx_window erx_winctl erx_winfs erx_wm
-               erx_wm_single erx_wm_rio erx_input erx_input_reader].map { |name| "erlang/apps/erx_display/src/#{name}.erl" } +
+               erx_wm_single erx_wm_rio erx_input erx_input_reader erx_input_follower].map { |name| "erlang/apps/erx_display/src/#{name}.erl" } +
             %w[build/gen/erlang/apps/erx_display/src/erx_keymap.erl build/gen/erlang/apps/erx/src/generated/erx_input_codec.erl
                build/gen/erlang/apps/erx_memdraw/src/erx_theme.erl
                erlang/apps/erx_display/src/erx_splash.erl erlang/apps/erx_memdraw/src/erx_mask.erl
@@ -28,7 +28,8 @@ class ErxWinfsTest < Minitest::Test
   FILES = %w[erx_fs erx_fs_grant erx_fs_grants erx_fs_node erx_fs_version].map { |name| "erlang/apps/erx_files/src/#{name}.erl" } +
           ['erlang/apps/erx/src/erx_fs_waits.erl']
   MODULES = (['erlang/apps/erx_memdraw/src/erx_memdraw.erl', 'erlang/apps/erx_memdraw/src/erx_chan.erl', GRAMMAR] + DISPLAY + FILES +
-             ['erlang/apps/erx/src/erx_facet.erl', 'erlang/apps/erx_fb/src/erx_fb_sup.erl', 'test/erlang/erx_winfs_tests.erl']).freeze
+             ['erlang/apps/erx/src/erx_facet.erl', 'erlang/apps/erx_fb/src/erx_fb_sup.erl', 'test/erlang/erx_winfs_tests.erl',
+              'test/erlang/erx_input_follower_tests.erl']).freeze
   # The display's log is the debug log of erx_log's NIF, which stock's emulator has not.
   LOG_STUB = <<~ERLANG
     -module(erx_log).
@@ -60,6 +61,14 @@ class ErxWinfsTest < Minitest::Test
   # The seeded fault: a reader that drops the bytes of a record its read ended inside.
   NO_CARRY = '            _ = Rest, read(Device, Read, <<>>, Dropped + NewlyDropped);'
   READER_CASE = '{generator, erx_winfs_tests, a_reader_routes_its_file_s_records_and_its_end_takes_its_keys_up_test_}'
+  # The seeded faults of the input follower: one that leaves a tree's readers running when
+  # its grant ends, and one that lists a tree in its own process.
+  FOLLOWER = 'erlang/apps/erx_display/src/erx_input_follower.erl'
+  STOP_READERS = "    stop(Phase),\n    State\#{trees := maps:remove(Name, Trees)}."
+  KEEP_READERS = "    _ = Phase,\n    State\#{trees := maps:remove(Name, Trees)}."
+  LISTER = '            Lister = spawn_link(fun() -> Follower ! {listed, self(), List(Grant)} end),'
+  LIST_INLINE = '            Lister = self(), Follower ! {listed, Lister, List(Grant)},'
+  FOLLOWER_CASE = '{generator, erx_input_follower_tests, follower_test_}'
 
   def setup
     skip 'stock OTP not built: make oracle-bootstrap' unless File.directory?(OTP)
@@ -132,7 +141,38 @@ class ErxWinfsTest < Minitest::Test
     assert_match(/no_answer/, text)
   end
 
+  # docs/design-display.md, "The display device": the follower's cases over model grants.
+  def test_input_follower_cases
+    text, status = eunit('erx_input_follower_tests')
+    assert status.success?, text
+    assert_match(/All \d+ tests passed/, text)
+  end
+
+  # A follower that leaves a tree's readers running when its grant ends starts the
+  # replacements beside them.
+  def test_a_follower_that_keeps_an_ended_grant_s_readers_fails_the_follower_case
+    text, status = eunit(FOLLOWER_CASE, replaced: { FOLLOWER => seeded(FOLLOWER, STOP_READERS, KEEP_READERS) })
+    refute status.success?, text
+    assert_match(/a grant's return/, text)
+  end
+
+  # A follower that lists a tree in its own process waits on a server that never answers,
+  # so another tree's readers never start.
+  def test_a_follower_that_lists_in_its_own_process_fails_the_follower_case
+    text, status = eunit(FOLLOWER_CASE, replaced: { FOLLOWER => seeded(FOLLOWER, LISTER, LIST_INLINE) })
+    refute status.success?, text
+    assert_match(/two trees/, text)
+  end
+
   private
+
+  # The text of Path with Original, which it must hold, replaced by Fault.
+  def seeded(path, original, fault)
+    source = File.read(File.join(ROOT, path))
+    raise "#{path} no longer holds #{original.inspect}" unless source.include?(original)
+
+    source.sub(original, fault)
+  end
 
   # Compiles the modules, with each path of Replaced compiled from its text instead, and
   # runs the EUnit Tests.

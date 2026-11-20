@@ -35,6 +35,12 @@
 %% the supervisor's one restart intensity all the same (TODO.md). A malformed input record
 %% starts no input driver, with one line in the kernel log; no record starts none, silently.
 %%
+%% Last, the follower of the domain's input grants (erx_input_follower), which keeps one
+%% reader of each file of each input tree another domain grants the display, such as the
+%% USB domain's, feeding the window system as a virtio-input driver does. It comes after
+%% the drivers, so its end restarts nothing else, and it starts whether or not the domain
+%% holds an input grant, since grants arrive only after the domain's ready answer.
+%%
 %% erx_screen is a module of erx_display, a library application that starts no process,
 %% so the driver's supervisor starts it behind the driver, and no screen runs before a
 %% driver does.
@@ -66,7 +72,7 @@ init([]) ->
                   PaletteName),
     Inputs = inputs(erx_device_record:find(input, virtio_input)),
     {ok, {#{strategy => rest_for_one, intensity => ?INTENSITY, period => ?PERIOD_S,
-            auto_shutdown => any_significant}, Winfs ++ Display ++ Inputs}}.
+            auto_shutdown => any_significant}, Winfs ++ Display ++ Inputs ++ [follower()]}}.
 
 %% The window system's child for Display, Policy and Palette, the values of the domain's
 %% display, display_policy and display_palette variables: the mint of the service Display
@@ -118,6 +124,15 @@ display({ok, _Gpus}, {ok, _Framebuffers}, _Palette) ->
 display(_Gpus, _Framebuffers, _Palette) ->
     _ = erx_log:debug(["erx_fb: the display device record is malformed"]),
     [].
+
+%% The follower of the domain's input grants.
+follower() ->
+    #{id => erx_input_follower,
+      start => {erx_input_follower, start_link, []},
+      restart => permanent,
+      shutdown => 2000,
+      type => worker,
+      modules => [erx_input_follower, erx_input_reader]}.
 
 %% One input driver for each input record, each child named by its record's path.
 inputs({ok, Specs}) ->

@@ -525,16 +525,20 @@ file system. Its release script, `usb`, holds the base every domain boots and
 A development build's manifest may put the controller in another domain,
 the display domain for instance, as it may merge other driver domains
 ([design-system.md](design-system.md#devices)); nothing in the stack
-changes, since a place's reader then reads a local process.
+changes, since a place's reader then reads a local process. The display's
+own USB function then feeds `erx_winfs:input/2` directly, as a virtio-input
+driver does, and serves no input tree.
 
 ### HID reaches the display
 
 The USB domain serves an **input tree** through `erx_fs`
 ([design-files.md](design-files.md#serving-the-erx_fs-behaviour)) holding
 the eight files `hid0` to `hid7`, each a stream of records in the binary
-form of `abi/formats/input.txt`. The manifest grants the tree, an
-instance of `files`, read only to the display domain that should receive
-the controller's input, exactly as for any input device another domain
+form of `abi/formats/input.txt`, named by `input_tree` of
+`abi/services/input.txt`. The tree is a service of the `input`
+interface, whose grants are read-only by construction, and the manifest
+grants it only to the display domain that should receive the
+controller's input, exactly as for any input device another domain
 holds ([design-display.md](design-display.md#the-display-device)). The
 display starts one reader for each file of a granted input tree; each
 reader is a source of the router, with one read outstanding, and ends
