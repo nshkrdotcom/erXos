@@ -37,22 +37,24 @@ change the library: create/1, configured/3, session/5, app_session/6, start/1, s
 connect/6 and disconnect/1 answer {error, erights} to any other caller, and
 so does crash/1, which reads a domain's crash dump. info/2 answers any
 caller, since a group's or budget's report holds none of the domain's data,
-and so does pci_report/2, the PCIe catalogue's intake, whose caller is the
-device service.
+and so do pci_report/2, the PCIe catalogue's intake, pci_bridges/0, its
+read, and pci_mode/2, the write of a PCIe function's mode, whose caller is
+the device service.
 """.
 
 -export([register/0, create/1, start/1, stop/2, retire/1, crash/1, info/2, connect/6, disconnect/1,
          configured/0, configured/3, templates/0, apps/0, devices/0, session/5, app_session/6, code_object/2,
-         code_drop/2, end_commit/1, pci_report/2]).
+         code_drop/2, end_commit/1, pci_report/2, pci_bridges/0, pci_mode/2]).
 -nifs([register_nif/0, create_nif/1, start_nif/1, stop_nif/2, retire_nif/1, crash_nif/1, info_nif/3, connect_nif/6,
        disconnect_nif/1, configured_nif/0, configured_create_nif/3, templates_nif/0, apps_nif/0, devices_nif/0,
        session_create_nif/5, app_session_create_nif/6, code_object_nif/2, code_drop_nif/2,
-       end_commit_nif/1, pci_report_nif/2]).
+       end_commit_nif/1, pci_report_nif/2, pci_bridges_nif/0, pci_mode_nif/2]).
 -on_load(on_load/0).
 
 -include("generated/erx_abi.hrl").
 
--export_type([spec/0, created/0, error/0, configured/0, template/0, apps/0, device/0]).
+-export_type([spec/0, created/0, error/0, configured/0, template/0, apps/0, device/0, pci_place/0,
+              pci_catalogue/0, pci_layout/0]).
 
 -type error() :: {error, atom() | {status, integer()}}.
 -type grant() :: #{quota_ns := non_neg_integer(), cpuset := non_neg_integer(),
@@ -133,8 +135,10 @@ compatible string, none when its role is none; its registers, the
 whose configuration space gives them; its ranges, the {Base, Bytes} of
 each run of whole pages its registers touch, which a give maps; its
 interrupt lines, as the platform's interrupt controller numbers them,
-none listed for a PCIe function; and whether it is confined, that is,
-has an IOMMU stream.
+none listed for a PCIe function; whether it is confined, that is, has an
+IOMMU stream; and for a PCIe function its place, by which the device
+service matches a report to its row, and its setting, each none for every
+other device.
 """.
 -type device() :: #{index := non_neg_integer(), unit := non_neg_integer(),
                     unit_name := binary(),
@@ -143,7 +147,27 @@ has an IOMMU stream.
                     registers := {Address :: non_neg_integer(), Bytes :: pos_integer()} | unknown,
                     ranges := [{Base :: non_neg_integer(), Bytes :: pos_integer()}],
                     lines := [non_neg_integer()], confined := boolean(),
-                    holder := pos_integer() | system | none}.
+                    holder := pos_integer() | system | none,
+                    place := pci_place() | none, setting := erx_abi_layout:erx_pcie_setting() | none}.
+
+-doc "A PCIe function's place: its host bridge's device row, and its bus, device and function there.".
+-type pci_place() :: {Bridge :: non_neg_integer(), Bus :: 0..255, Device :: 0..31, Function :: 0..7}.
+
+-doc """
+A host bridge's catalogue (docs/design-pcie.md, "The catalogue and gives"):
+its record, whether its firmware notification timed out, and its layouts in
+its placing report's order.
+""".
+-type pci_catalogue() :: #{bridge := erx_abi_layout:erx_pcie_bridge(), firmware_lost := boolean(),
+                           layouts := [pci_layout()]}.
+
+-doc """
+A layout: the function as the placing report gave it, its state that
+report's; the latest report's state, none when that report did not list it;
+and whether the latest report listed it with its layout.
+""".
+-type pci_layout() :: #{record := erx_abi_layout:erx_pcie_function(),
+                        state := erx_abi_enums:pcie_state() | none, confirmed := boolean()}.
 
 on_load() ->
     erlang:load_nif(atom_to_list(?MODULE), #{}).
@@ -297,7 +321,10 @@ The device catalogue, in the manifest's device order, with each device's holder.
 """.
 -spec devices() -> {ok, [device()]} | error().
 devices() ->
-    devices_nif().
+    case devices_nif() of
+        {ok, Devices} -> {ok, [Device#{setting := setting(Setting)} || #{setting := Setting} = Device <- Devices]};
+        Error -> Error
+    end.
 
 -doc """
 The PCIe domain's report on the host bridge of device row Bridge, which the
@@ -313,6 +340,31 @@ names. More functions than a bridge holds is badarg.
           ok | {error, {einval, non_neg_integer(), atom()}} | error().
 pci_report(Bridge, Functions) ->
     pci_report_nif(Bridge, [erx_abi_layout:encode(erx_pcie_function, Function) || Function <- Functions]).
+
+-doc """
+Every host bridge's catalogue, in device row order (docs/design-pcie.md,
+"The catalogue and gives"), from which the device service answers the PCIe domain's
+targets, with devices/0 for every pci row's setting.
+""".
+-spec pci_bridges() -> {ok, [pci_catalogue()]} | error().
+pci_bridges() ->
+    case pci_bridges_nif() of
+        {ok, Bridges} -> {ok, [catalogue(Bridge) || Bridge <- Bridges]};
+        Error -> Error
+    end.
+
+-doc """
+Writes Mode into the setting of device row Index, a pci row
+(docs/design-pcie.md, "Concurrency"): off, a lowering, which the device
+service writes before it sends it, or decoding or mastering, a raise,
+written after the PCIe domain's ok. The route stays the give's. ok, or
+{error, einval} for a row that is not a pci row, or a raise of a function
+no living domain holds or its catalogue does not give; another Mode is a
+function_clause error.
+""".
+-spec pci_mode(non_neg_integer(), erx_abi_enums:pcie_mode()) -> ok | error().
+pci_mode(Index, Mode) ->
+    pci_mode_nif(Index, erx_abi_enums:value(pcie_mode, Mode)).
 
 -doc """
 Manifest startup and restart: builds configured row Row under id Id and
@@ -439,3 +491,26 @@ end_commit_nif(_How) ->
 
 pci_report_nif(_Bridge, _Records) ->
     erlang:nif_error(undef).
+
+pci_bridges_nif() ->
+    erlang:nif_error(undef).
+
+pci_mode_nif(_Index, _Mode) ->
+    erlang:nif_error(undef).
+
+%% The library hands records as the bytes its generated encoders write, which
+%% the generated codec reads: the records' one form in Erlang.
+catalogue({Bridge, FirmwareLost, Layouts}) ->
+    #{bridge => decoded(erx_pcie_bridge, Bridge), firmware_lost => FirmwareLost,
+      layouts => [#{record => decoded(erx_pcie_function, Record), state => state(State), confirmed => Confirmed}
+                  || {Record, State, Confirmed} <- Layouts]}.
+
+state(0) -> none;
+state(State) -> {ok, Name} = erx_abi_enums:name(pcie_state, State), Name.
+
+setting(none) -> none;
+setting(Setting) -> decoded(erx_pcie_setting, Setting).
+
+decoded(Layout, Bytes) ->
+    {ok, Record} = erx_abi_layout:decode(Layout, Bytes),
+    Record.

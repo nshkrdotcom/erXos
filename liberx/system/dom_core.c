@@ -1758,14 +1758,14 @@ pci_reported(const erx_pcie_function_t *layout, const erx_pcie_function_t *repor
 	return (NULL);
 }
 
-/* Whether record, without its state, is layout; the decoder zeroes every padding byte. */
+/* Whether record and layout are one function, without their states; the decoder zeroes every padding byte. */
 static bool
 pci_same(const erx_pcie_function_t *layout, const erx_pcie_function_t *record)
 {
-	erx_pcie_function_t stateless = *record;
+	erx_pcie_function_t as_layout = *record;
 
-	stateless.state = 0;
-	return (memcmp(layout, &stateless, sizeof(stateless)) == 0);
+	as_layout.state = layout->state;
+	return (memcmp(layout, &as_layout, sizeof(as_layout)) == 0);
 }
 
 erx_status_t
@@ -1785,10 +1785,8 @@ erx_dom_pci_report(erx_dom_pci_bridge_t *bridge, const erx_dom_device_entry_t *e
 	if (bridge->nlayouts == 0) {
 		if ((status = pci_report_placed(&bridge->facts, entries, nentries, report, count, refusal)) != ERX_OK)
 			return (status);
-		for (uint32_t at = 0; at < count; at++) {
+		for (uint32_t at = 0; at < count; at++)
 			bridge->layouts[at] = (erx_dom_pci_layout_t){ .record = report[at] };
-			bridge->layouts[at].record.state = 0;
-		}
 		bridge->nlayouts = count;
 	}
 	for (uint32_t at = 0; at < bridge->nlayouts; at++) {

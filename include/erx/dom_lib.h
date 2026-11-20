@@ -433,6 +433,21 @@ erx_status_t	erx_dom_lib_pci_report(erx_dom_lib_t *, uint32_t bridge, const erx_
 		    uint32_t count, erx_dom_pci_refusal_t *refusal) ERX_WARN_UNUSED_RESULT;
 
 /*
+ * Writes mode, an ERX_PCIE_MODE_*, into the setting of device row index, a
+ * pci row (docs/design-pcie.md, "The catalogue and gives", "Concurrency"): off,
+ * a lowering, which the device service writes before it sends it, or
+ * decoding or mastering, a raise, which it writes after the PCIe domain's
+ * ok. The route and message stay what the give wrote. The caller holds the
+ * library's lock. ERX_EINVAL, writing nothing, for a row that is not a pci
+ * row, a mode outside the set, or a raise of a function no living domain
+ * holds or its catalogue does not give (erx_dom_pci_given), so the library
+ * says a raise only of a function a holder holds and could be given now
+ * (TODO.md, the start's leftovers); a holder's end lowers its
+ * functions itself.
+ */
+erx_status_t	erx_dom_lib_pci_mode(erx_dom_lib_t *, uint32_t index, uint32_t mode) ERX_WARN_UNUSED_RESULT;
+
+/*
  * The root's view: erx_dom_view_build over every entry of the opened boot
  * image, each judged by erx_dom_boot_image from the bytes the archive holds
  * at its start (liberx/system/dom_boot.c).

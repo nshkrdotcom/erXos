@@ -635,6 +635,24 @@ erx_dom_lib_pci_report(erx_dom_lib_t *lib, uint32_t bridge, const erx_pcie_funct
 	return (ERX_EINVAL);
 }
 
+erx_status_t
+erx_dom_lib_pci_mode(erx_dom_lib_t *lib, uint32_t index, uint32_t mode)
+{
+	const erx_pcie_bridge_t *facts;
+	erx_dom_device_t *record;
+
+	if (index >= lib->view.ndevices || lib->view.devices[index].selector != ERX_MF_SELECTOR_PCI ||
+	    mode > ERX_PCIE_MODE_MASTERING)
+		return (ERX_EINVAL);
+	record = &lib->device_records[index];
+	/* A raise only for a function a living domain holds and its catalogue gives. */
+	if (mode != ERX_PCIE_MODE_OFF && (record->holder == 0 ||
+	    erx_dom_pci_given(lib->pci_bridges, lib->view.npci_bridges, &lib->view.devices[index], &facts) == NULL))
+		return (ERX_EINVAL);
+	record->setting.mode = (uint8_t)mode;
+	return (ERX_OK);
+}
+
 /* A framebuffer record takes no more room than the given record the reserve counts for it. */
 _Static_assert(ERX_BOOT_FRAMEBUFFER_WORDS_MAX <= ERX_BOOT_GIVEN_WORDS_MAX, "a framebuffer record fits a given record's room");
 

@@ -46,14 +46,17 @@
  * function at each pci row's place below the bridge, of the row's identity
  * and its place's pin, each with one 4 KiB 64-bit BAR placed in turn from
  * the window's start (erx_dom_lib_pci_report), and the same report on the
- * catalogue joined instead to a tree the reader refused; then whether a give finds
- * each pci row's function in the view's catalogues (erx_dom_pci_given),
- * with its first BAR's CPU range:
+ * catalogue joined instead to a tree the reader refused, with each layout the
+ * report left, its placing state, latest state and confirmation; then whether a
+ * give finds each pci row's function in the view's catalogues (erx_dom_pci_given),
+ * with its first BAR's CPU range; then each pci row's mode writes (print_modes):
  *
  *   bridge INDEX row=ROW closed=0|1 places=BUS.DEVICE.FUNCTION/PIN,...
  *   report ROW status=STATUS field=FIELD|none
+ *   layout ROW BUS.DEVICE.FUNCTION placed=STATE state=STATE confirmed=0|1
  *   refused ROW status=STATUS field=FIELD|none
  *   given INDEX cpu=BASE+SIZE|none
+ *   mode INDEX unheld=S held=S mode=MODE past=S unconfirmed=S off=S other=S
  *
  * numbers in hexadecimal for ranges and decimal elsewhere.
  */
@@ -199,6 +202,46 @@ pci_refused(erx_dom_lib_t *lib, uint32_t at, const erx_pcie_function_t *report, 
 	lib->pci_bridges[at] = kept;
 }
 
+/*
+ * The mode writes of pci row index (erx_dom_lib_pci_mode), the library left as
+ * it was: a raise with no holder; with a holder, a raise to mastering and the
+ * mode it leaves, a mode past the set, a raise with the function's layout
+ * unconfirmed, and the lowering; and a write to its bridge's row, no pci row.
+ */
+static void
+print_modes(erx_dom_lib_t *lib, uint32_t index)
+{
+	erx_dom_device_t *const record = &lib->device_records[index];
+	const erx_dom_device_t kept = *record;
+	erx_dom_pci_bridge_t *bridge = NULL;
+	int unheld, held, past, unconfirmed, off, other;
+	unsigned int mode;
+
+	for (uint32_t at = 0; at < lib->view.npci_bridges; at++) {
+		if (lib->pci_bridges[at].facts.index == lib->view.devices[index].bridge)
+			bridge = &lib->pci_bridges[at];
+	}
+	unheld = (int)erx_dom_lib_pci_mode(lib, index, ERX_PCIE_MODE_DECODING);
+	record->holder = 1;
+	held = (int)erx_dom_lib_pci_mode(lib, index, ERX_PCIE_MODE_MASTERING);
+	mode = record->setting.mode;
+	past = (int)erx_dom_lib_pci_mode(lib, index, ERX_PCIE_MODE_MASTERING + 1);
+	unconfirmed = -2;
+	if (bridge != NULL && bridge->nlayouts > 0) {
+		const erx_dom_pci_bridge_t confirmed = *bridge;
+
+		for (uint32_t at = 0; at < bridge->nlayouts; at++)
+			bridge->layouts[at].confirmed = false;
+		unconfirmed = (int)erx_dom_lib_pci_mode(lib, index, ERX_PCIE_MODE_DECODING);
+		*bridge = confirmed;
+	}
+	off = (int)erx_dom_lib_pci_mode(lib, index, ERX_PCIE_MODE_OFF);
+	other = (int)erx_dom_lib_pci_mode(lib, lib->view.devices[index].bridge, ERX_PCIE_MODE_OFF);
+	printf("mode %" PRIu32 " unheld=%d held=%d mode=%u past=%d unconfirmed=%d off=%d other=%d\n", index, unheld,
+	    held, mode, past, unconfirmed, off, other);
+	*record = kept;
+}
+
 static void
 print_bridges(erx_dom_lib_t *lib)
 {
@@ -239,6 +282,11 @@ print_bridges(erx_dom_lib_t *lib)
 		refusal = (erx_dom_pci_refusal_t){ .field = "none" };
 		printf("report %" PRIu32 " status=%d field=%s\n", bridge->facts.index,
 		    (int)erx_dom_lib_pci_report(lib, bridge->facts.index, report, count, &refusal), refusal.field);
+		for (uint32_t layout = 0; layout < bridge->nlayouts; layout++)
+			printf("layout %" PRIu32 " %u.%u.%u placed=%u state=%u confirmed=%d\n", bridge->facts.index,
+			    bridge->layouts[layout].record.bus, bridge->layouts[layout].record.device,
+			    bridge->layouts[layout].record.function, bridge->layouts[layout].record.state,
+			    bridge->layouts[layout].state, bridge->layouts[layout].confirmed ? 1 : 0);
 		pci_refused(lib, at, report, count);
 	}
 	for (uint32_t index = 0; index < lib->view.ndevices; index++) {
@@ -252,6 +300,10 @@ print_bridges(erx_dom_lib_t *lib)
 			printf("given %" PRIu32 " cpu=0x%" PRIx64 "+0x%" PRIx64 "\n", index, cpu.base, cpu.size);
 		else
 			printf("given %" PRIu32 " cpu=none\n", index);
+	}
+	for (uint32_t index = 0; index < lib->view.ndevices; index++) {
+		if (lib->view.devices[index].selector == ERX_MF_SELECTOR_PCI)
+			print_modes(lib, index);
 	}
 }
 

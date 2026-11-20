@@ -700,6 +700,26 @@ class DomPlannerTest < Minitest::Test
     assert_includes lines, "report #{row} status=0 field=none"
     assert_includes lines, "refused #{row} status=-1 field=bus"
     assert_equal ["cpu=0x600000000+0x1000"], lines.grep(/\Agiven /).map { |line| line.split.last }
+    # The layout keeps its placing report's state beside the latest one's.
+    assert_equal ["layout #{row} 1.0.0 placed=1 state=1 confirmed=1"], lines.grep(/\Alayout /)
+    # A pci row's mode: a raise only with a holder and a confirmed layout, a mode in the set,
+    # the lowering always, and no write to a row that is not a pci row.
+    assert_equal ['unheld=-1 held=0 mode=2 past=-1 unconfirmed=-1 off=0 other=-1'],
+                 lines.grep(/\Amode /).map { |line| line.split.drop(2).join(' ') }
+  end
+
+  # The seeded fault: a raise written without asking whether the catalogue gives the
+  # function, so the library says decoding for a function whose layout is unconfirmed.
+  def test_a_raise_of_a_function_its_catalogue_does_not_give_is_refused
+    source = File.read(File.join(ROOT, 'liberx/system/dom_boot_view.c'))
+    check = "\tif (mode != ERX_PCIE_MODE_OFF && (record->holder == 0 ||\n" \
+            "\t    erx_dom_pci_given(lib->pci_bridges, lib->view.npci_bridges, &lib->view.devices[index], &facts) == NULL))\n"
+    assert_equal 1, source.scan(check).size, 'the seed no longer applies'
+    seeded = File.join(@directory, 'dom_boot_view.c')
+    File.write(seeded, source.sub(check, "\t(void)facts;\n\tif (mode != ERX_PCIE_MODE_OFF && record->holder == 0)\n"))
+    driver = self.class.view_driver_from(seeded, name: 'dom-view-raise-ungiven')
+    lines = view_lines(vl805_manifest, 'pci-raise-ungiven', 'pci', driver: driver)
+    assert_equal ['unconfirmed=0'], lines.grep(/\Amode /).map { |line| line[/unconfirmed=-?\d+/] }
   end
 
   # The seeded fault: the catalogue built without the tree's windows, so the report's BAR

@@ -811,7 +811,8 @@ in a boot, keep from naming a later incarnation
 ([Concurrency](#concurrency)). A `pci` row's device record gains its
 **setting**, which its give writes. The row finds its function's layout by place in its
 bridge's entry, so no layout is stored twice.
-`erx_domain_lib:devices/0` shows them, with `/dev`'s `status` naming
+`erx_domain_lib:devices/0` and `pci_bridges/0` show them ([The
+catalogue and gives](#the-catalogue-and-gives)), with `/dev`'s `status` naming
 the place, the identity, the BARs, the state, the mode and the route,
 and the bridge's `firmware lost` when it is set.
 
@@ -1154,8 +1155,9 @@ report. It decides every entry of the bridge from the whole report and
 only then writes them all at once, so no order of processing can leave
 an earlier state in place:
 
-* **A bridge with no layouts** takes the report's layouts, a record
-  without its `state`, only if every record passes: each placed BAR is
+* **A bridge with no layouts** takes the report's records as its
+  layouts, each with its `state`, the placing walk's, only if every
+  record passes: each placed BAR is
   aligned to its span and lies inside its bridge's window; no two spans
   overlap each other or any other entry's register ranges; an MSI-X
   table lies inside its BAR's hardware size. One record that fails
@@ -1167,7 +1169,8 @@ an earlier state in place:
   does not hold.
 * **A bridge with layouts** checks each record against its layout
   alone, which passed those checks when it was taken: a function is
-  confirmed when its record, without its `state`, equals its layout; one
+  confirmed when its record equals its layout, both without their
+  `state`; one
   the report does not list, or lists with another record, is
   unconfirmed; a function at a place with no layout is `unplaced`.
 * **Every function's state** is the latest report's, so a function the
@@ -1177,6 +1180,41 @@ an earlier state in place:
   says, so the VL805 a late firmware answer brought up after its
   notification timed out is never given in that boot, however many
   starts of the PCIe domain keep the bridge and report it ready.
+
+**The device service's reads and writes** of the catalogue are three
+more calls of the library, each answering any caller in the system
+domain as `pci_report/2` does:
+
+* `erx_domain_lib:pci_bridges/0` answers every host bridge's catalogue
+  in device row order, each `#{bridge, firmware_lost, layouts}`: the
+  bridge's `erx_pcie_bridge` record, its mark, and its layouts in their
+  placing report's order, each `#{record, state, confirmed}`, the
+  `erx_pcie_function` with the placing walk's `state`, the latest
+  report's `state` (`none` when it did not list the function) and
+  whether it listed it with its layout. `targets` answers each bridge's
+  record and its layouts' records, so the enumerator drives a layout by
+  its placing walk's state, as the PCIe domain's start requires: a layout
+  the placing walk found `ready` or `not_ready` has its BARs placed and
+  is started again whatever a later start found, and one it found
+  `unplaced`, `unsupported` or `malformed` never is.
+* `erx_domain_lib:devices/0` gives a `pci` row its `place`, `{Bridge,
+  Bus, Device, Function}` as [Facets](#facets) spells it, by which the
+  device service matches a report's function to its row, and its
+  `setting`, the `erx_pcie_setting` its give wrote and the writes below
+  changed; `none` for both on every other row. `targets` answers each
+  row's setting by its place.
+* `erx_domain_lib:pci_mode(Index, Mode)` writes the mode of row
+  `Index`'s setting, its route staying the give's: `off`, a lowering
+  ([Concurrency](#concurrency)), always; `decoding` or `mastering`, a
+  raise, only for a function a living domain holds and its catalogue
+  gives, so the library says a raise only of a function a holder holds
+  and could be given now.
+  Any other row, or a raise refused, is `{error, einval}`. The library's own end of a
+  holder's device records lowers its functions too.
+
+The library hands every record to Erlang as the bytes the generated C
+encoder writes, which `erx_abi_layout` decodes, the records' one form in
+Erlang ([Records](#records)).
 
 **The give** of a `pci` device, `erx_dom_plan_unit_give`: a function
 with no layout, not confirmed, or not `ready` gives nothing, as a device
@@ -1211,7 +1249,9 @@ puts the PCIe domain before every row holding a `pci` device.
 
 **A holder's end.** The device service monitors the holder's domain pid
 from its give; at its end it sets the setting's mode `off` in the
-library and then calls `pcie:set`, or, with no PCIe incarnation
+library with `pci_mode/2`, as the library's own end of the holder's
+device records also does, whichever comes first, and then calls
+`pcie:set`, or, with no PCIe incarnation
 answered, leaves it to the next start's `targets` or `report`.
 
 ## Concurrency

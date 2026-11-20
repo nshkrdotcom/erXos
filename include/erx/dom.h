@@ -351,7 +351,7 @@ typedef struct erx_dom_device_entry {
  * "Records", "The catalogue and gives"). facts is the bridge's record: its
  * buses and windows the tree's (erx_dt_bridge), its index, flags and
  * places the manifest's. A layout is a function as the bridge's placing
- * report gave it, its record's state 0, with the latest report's state
+ * report gave it, its record's state that report's, with the latest report's state
  * (0 when the latest report did not list it) and whether that report
  * listed it with its layout. A bridge with no layouts takes the next
  * report's as its placing report. A bridge marked firmware_lost gives no
@@ -383,11 +383,11 @@ typedef struct erx_dom_pci_refusal {
  * and gives"), against the catalogue's nentries entries, whose register
  * ranges no BAR may meet. It decides every layout from the whole report and
  * only then writes them all. A bridge with no layouts takes the report's records
- * as its layouts only if every placed memory BAR is aligned to its span,
+ * as its layouts, each with its state, only if every placed memory BAR is aligned to its span,
  * lies whole inside one of the bridge's memory windows and meets no other
  * span and no entry's register range, and every MSI-X table lies inside
  * its BAR's hardware size. A bridge with layouts confirms a layout whose record,
- * without its state, the report repeats, and unconfirms every other. Every
+ * both without their states, the report repeats, and unconfirms every other. Every
  * layout takes the report's state, or none, and not_ready on a bridge marked
  * firmware_lost. ERX_EINVAL, with *refusal naming the record and field,
  * every layout unconfirmed and nothing else written: a record of another bridge, at a bus outside its range,

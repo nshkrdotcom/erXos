@@ -154,3 +154,10 @@ erx_dom_lib_pci_report(erx_dom_lib_t *lib, uint32_t bridge, const erx_pcie_funct
 	(void)lib, (void)bridge, (void)report, (void)count, (void)refusal;
 	return (ERX_ENOTSUP);
 }
+
+erx_status_t
+erx_dom_lib_pci_mode(erx_dom_lib_t *lib, uint32_t index, uint32_t mode)
+{
+	(void)lib, (void)index, (void)mode;
+	return (ERX_ENOTSUP);
+}
