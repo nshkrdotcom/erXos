@@ -8036,9 +8036,12 @@ to the corpus and follow rc
   ADMA2 and the TRB form through `accept_plan` until those move, so the old check goes with the last of them. The
   sequencer writes virtio's available entry, which no layout holds, without an encoder; it refuses a report that
   releases nothing (the ledger has no transition that only advances a consumer position) and a release by address,
-  as an event TRB's, both of which the TRB form needs. Before `erx_device.c` moves onto it: `erx_dma_consume` must be
-  tied by construction to the count `erx_dma_acquire_count` returned (an acquisition value consume refuses past), or
-  an effect layer consuming one record too many reads a stale used element whose old id can release a live chain;
+  as an event TRB's, both of which the TRB form needs. Before `erx_device.c` moves onto it:
+  `erx_dma_consume` takes the record the effect layer read, and nothing ties it to the record at the consumer
+  position (an acquisition that holds its second-phase snapshots and consumes them in order would); the ledger's
+  exhaustive harness does not explore its acquire transition (each release there follows an acquisition of every
+  live holding), and `erx_dma_ledger_acquire` takes a bare count, so no chokepoint yet keeps the ledger's
+  transitions to the sequencer;
   `ERX_DMA_STORE_BYTES_MAX` is hand-kept and should be derived from the widest encoded layout; `free_record`'s loop
   is bounded only by the room rule; `erx_dma_publish` returns check verdicts for refusals that mean the check and the
   sequencer disagree; rule 1 zeroes a buffer's named size while the handover cleans its stride; and the generated

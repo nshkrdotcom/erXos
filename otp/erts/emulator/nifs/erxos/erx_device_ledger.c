@@ -175,6 +175,7 @@ erx_dma_ledger_reset(erx_dma_ledger_t *ledger)
 {
 	ledger->live = 0;
 	bzero(ledger->positions, sizeof(ledger->positions));
+	bzero(ledger->acquired, sizeof(ledger->acquired));
 }
 
 const erx_dma_layout_t *
@@ -340,14 +341,30 @@ erx_dma_ledger_hold(erx_dma_ledger_t *ledger, const erx_dma_publication_t *publi
 }
 
 bool
+erx_dma_ledger_acquire(erx_dma_ledger_t *ledger, uint32_t reports, uint32_t count)
+{
+	if (reports >= ledger->layout.table_count || !device_writes(&ledger->layout, reports) || count > ledger->live)
+		return (false);
+	ledger->acquired[reports] = count;
+	return (true);
+}
+
+uint32_t
+erx_dma_ledger_acquired(const erx_dma_ledger_t *ledger, uint32_t table)
+{
+	return (table < ledger->layout.table_count ? ledger->acquired[table] : 0);
+}
+bool
 erx_dma_ledger_release(erx_dma_ledger_t *ledger, uint32_t reports, erx_dma_place_t head, erx_dma_holding_t *ended)
 {
-	if (reports >= ledger->layout.table_count || !device_writes(&ledger->layout, reports))
+	if (reports >= ledger->layout.table_count || !device_writes(&ledger->layout, reports) ||
+	    ledger->acquired[reports] == 0)
 		return (false);
 	for (uint32_t live = 0; live < ledger->live; live++) {
 		if (same_place(ledger->holdings[live].records[0], head)) {
 			*ended = ledger->holdings[live];
 			ledger->holdings[live] = ledger->holdings[--ledger->live];
+			ledger->acquired[reports]--;
 			advance(ledger, reports, 1);
 			return (true);
 		}

@@ -129,6 +129,7 @@ test_acquisition(void)
 	erx_dma_description_t other[1] = { chain[0] };
 	erx_dma_sequence_t sequence;
 	erx_report_record_t report = { .virtq_used_elem = { .id = 2, .len = 16 } };
+	const erx_report_record_t stale = { .virtq_used_elem = { .id = 0 } };
 	erx_dma_holding_t ended;
 	uint32_t count;
 
@@ -140,22 +141,26 @@ test_acquisition(void)
 	    "the second chain in the next free descriptor, the index past both entries");
 	EXPECT(sequence.zero_count == 1 && sequence.zeros[0].length == BUFFER, "an unfilled buffer zeroed whole");
 
-	EXPECT(!erx_dma_acquire_count(&ledger, USED, 3, SIZE, &count), "a used index past what is live breaks the queue");
-	EXPECT(erx_dma_acquire_count(&ledger, USED, 2, 1, &count) && count == 1, "the count bounded by the call's most");
-	EXPECT(erx_dma_acquire_record(&ledger, USED, 0).offset == 128 + ERX_VIRTQ_RING_HEAD_SIZE,
-	    "the first used element at the consumer position");
+	EXPECT(!erx_dma_acquire(&ledger, USED, 3, SIZE, &count), "a used index past what is live breaks the queue");
+	EXPECT(!erx_dma_acquire(&ledger, DESC, 1, SIZE, &count), "no acquisition of a table the CPU writes");
+	EXPECT(erx_dma_acquire(&ledger, USED, 2, 1, &count) && count == 1, "the count bounded by the call's most");
+	EXPECT(erx_dma_acquire_record(&ledger, USED, 0).offset == 128 + ERX_VIRTQ_RING_HEAD_SIZE &&
+	    erx_dma_acquire_record(&ledger, USED, 1).length == 0,
+	    "the first used element at the consumer position, and none past the count");
 
 	EXPECT(erx_dma_consume(&ledger, USED, &report, &ended), "the used element releases the second chain");
 	EXPECT(ended.records[0].index == 2 && ended.buffer_count == 1 && ended.buffers[0] == 1 &&
 	    !erx_dma_ledger_buffer_held(&ledger, 1), "its descriptor, its entry and its buffer come back");
+	EXPECT(!erx_dma_consume(&ledger, USED, &stale, &ended),
+	    "a stale element past the acquired count releases no live chain");
+
+	EXPECT(erx_dma_acquire(&ledger, USED, 2, SIZE, &count) && count == 1, "the second element acquired");
 	EXPECT(!erx_dma_consume(&ledger, USED, &report, &ended), "a chain released twice breaks the queue");
 	report.virtq_used_elem.id = SIZE;
 	EXPECT(!erx_dma_consume(&ledger, USED, &report, &ended), "an id past the table breaks the queue");
-	report.virtq_used_elem.id = 0;
-	EXPECT(erx_dma_consume(&ledger, USED, &report, &ended) && erx_dma_ledger_live(&ledger) == 0,
+	EXPECT(erx_dma_consume(&ledger, USED, &stale, &ended) && erx_dma_ledger_live(&ledger) == 0,
 	    "the first chain comes back");
-	EXPECT(erx_dma_acquire_record(&ledger, USED, 0).offset == 128 + ERX_VIRTQ_RING_HEAD_SIZE +
-	    2 * ERX_VIRTQ_USED_ELEM_SIZE, "the consumer position moved past both elements");
+	EXPECT(erx_dma_ledger_position(&ledger, USED).index == 2, "the consumer position moved past both elements");
 }
 
 /*
@@ -176,7 +181,8 @@ test_laps(void)
 	for (uint16_t round = 1; round <= 10; round++) {
 		EXPECT(erx_dma_publish(&ledger, &(erx_dma_publication_t){ 1, one, 0, NULL }, &sequence) == ERX_DMA_PASSES &&
 		    half(&sequence.activation) == round, "the activation is the running index past the entry");
-		EXPECT(erx_dma_acquire_count(&ledger, USED, round, SIZE, &count) && count == 1, "one element covered each round");
+		EXPECT(erx_dma_acquire(&ledger, USED, round, SIZE, &count) && count == 1,
+		    "one element covered each round");
 		report.virtq_used_elem.id = (uint32_t)(sequence.stores[0].offset / ERX_VIRTQ_DESC_SIZE);
 		EXPECT(erx_dma_consume(&ledger, USED, &report, &ended), "each round's chain comes back");
 	}

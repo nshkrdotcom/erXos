@@ -227,6 +227,9 @@ test_transitions(void)
 	EXPECT(!hold_at(&ledger, 0, (erx_dma_place_t[]){ { DESC, 1 }, { AVAIL, 1 } }, 2),
 	    "a buffer a live holding holds, with descriptors free");
 	EXPECT(!erx_dma_ledger_release(&ledger, DESC, head, &ended), "a release on a table the CPU writes");
+	EXPECT(!erx_dma_ledger_release(&ledger, USED, head, &ended), "a release no acquisition covered");
+	EXPECT(!erx_dma_ledger_acquire(&ledger, USED, 2) && !erx_dma_ledger_acquire(&ledger, DESC, 1),
+	    "an acquisition past the live holdings, or of a table the CPU writes");
 	EXPECT(erx_dma_ledger_free_records(&ledger, DESC) == SIZE - 1, "three free descriptors");
 	erx_dma_ledger_reset(&ledger);
 	EXPECT(erx_dma_ledger_live(&ledger) == 0 && !erx_dma_ledger_buffer_held(&ledger, 0) &&
@@ -306,6 +309,8 @@ step(const erx_dma_ledger_t *before, const model_t *was, unsigned event, unsigne
 		}
 	} else {
 		allowed = (model.heads >> head) & 1;
+		/* The acquisition is not explored here: each release follows one covering every live holding. */
+		EXPECT(erx_dma_ledger_acquire(ledger, USED, erx_dma_ledger_live(ledger)), "an acquisition of what is live");
 		done = erx_dma_ledger_release(ledger, USED, (erx_dma_place_t){ DESC, head }, &ended);
 		if (allowed) {
 			model.descs &= ~model.chain[head];

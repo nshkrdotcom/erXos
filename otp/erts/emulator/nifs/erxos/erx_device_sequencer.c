@@ -217,18 +217,18 @@ erx_dma_publish(erx_dma_ledger_t *ledger, const erx_dma_publication_t *publicati
 }
 
 bool
-erx_dma_acquire_count(const erx_dma_ledger_t *ledger, uint32_t reports, uint16_t index, uint32_t most,
-    uint32_t *count)
+erx_dma_acquire(erx_dma_ledger_t *ledger, uint32_t reports, uint16_t index, uint32_t most, uint32_t *count)
 {
 	const erx_dma_layout_t *layout = erx_dma_ledger_layout(ledger);
+	uint32_t covered;
+
 	if (reports >= layout->table_count || !erx_structure_device_writes(layout->tables[reports].structure))
 		return (false);
-	*count = (uint16_t)(index - running_index(ledger, reports));
-	if (*count > erx_dma_ledger_live(ledger))
+	covered = (uint16_t)(index - running_index(ledger, reports));
+	if (covered > erx_dma_ledger_live(ledger))
 		return (false);
-	if (*count > most)
-		*count = most;
-	return (true);
+	*count = covered < most ? covered : most;
+	return (erx_dma_ledger_acquire(ledger, reports, *count));
 }
 
 erx_dma_range_t
@@ -238,11 +238,11 @@ erx_dma_acquire_record(const erx_dma_ledger_t *ledger, uint32_t reports, uint32_
 	const erx_dma_table_t *table;
 	uint32_t index;
 
-	if (reports >= layout->table_count || !erx_structure_device_writes(layout->tables[reports].structure))
+	/* Only a table the device writes has an acquisition. */
+	if (k >= erx_dma_ledger_acquired(ledger, reports))
 		return ((erx_dma_range_t){ 0, 0 });
 	table = &layout->tables[reports];
 	index = (uint32_t)(((uint64_t)erx_dma_ledger_position(ledger, reports).index + k) % table->count);
-
 	return ((erx_dma_range_t){ record_offset(layout, (erx_dma_place_t){ reports, index }), table->stride });
 }
 
@@ -255,7 +255,7 @@ erx_dma_consume(erx_dma_ledger_t *ledger, uint32_t reports, const erx_report_rec
 	uint64_t value;
 	int target;
 
-	if (reports >= layout->table_count)
+	if (erx_dma_ledger_acquired(ledger, reports) == 0)
 		return (false);
 	if (!erx_report_meaning(layout->tables[reports].structure, record, &meaning))
 		return (false);

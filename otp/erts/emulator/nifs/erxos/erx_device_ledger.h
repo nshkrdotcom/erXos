@@ -16,15 +16,20 @@
  * A holding is one publication the device may still act on: the records it made live and the
  * buffers it handed to the device. Its first record, its head, is what the report that ends it
  * names. The ledger keeps the live holdings and, for each table placed in order and each the
- * device writes, its position. Its state machine has two transitions, and each refuses,
+ * device writes, its position and how many of its records the last acquisition covered that
+ * are not consumed yet. Its state machine has three transitions, and each refuses,
  * changing nothing, what the design's order forbids:
  *   hold     begins the holding of a publication from the records the sequencer placed it in
  *            and the buffers its names reach, each once, taken from the publication itself so
  *            no buffer it names goes to the device unheld: none of them is held already, its
  *            records of a table placed in order are the next ones from that table's position,
  *            which moves past them, and it holds no record of a table the device writes;
+ *   acquire  records how many reports of a table the device writes its validity covers from
+ *            the consumer position, at most the live holdings;
  *   release  ends the live holding a report names, from the report table's consumer position,
- *            which moves past it; a report naming no live holding's head ends nothing.
+ *            which moves past it, spending one report the acquisition covered; a report naming
+ *            no live holding's head, or past what the acquisition covered, ends nothing, so a
+ *            stale report past the validity never releases a live holding.
  * The idle report after a reset ends every holding (erx_dma_ledger_reset). A region's writer
  * is derived from the holdings, never stated: a buffer is the device's while a holding holds
  * it, and a table is its structure's writer, as abi/formats declares it.
@@ -120,6 +125,7 @@ typedef struct erx_dma_position {
 typedef struct erx_dma_ledger {
 	erx_dma_layout_t	layout;
 	erx_dma_position_t	positions[ERX_DMA_TABLES_MAX];
+	uint32_t		acquired[ERX_DMA_TABLES_MAX];	/* reports covered, not consumed */
 	uint32_t		live;
 	erx_dma_holding_t	holdings[ERX_DMA_HOLDINGS_MAX];
 } erx_dma_ledger_t;
@@ -151,12 +157,19 @@ bool	erx_dma_ledger_make(erx_dma_ledger_t *ledger, const erx_dma_layout_t *layou
 bool	erx_dma_ledger_hold(erx_dma_ledger_t *ledger, const struct erx_dma_publication *publication,
 	    const erx_dma_place_t *records, uint32_t record_count);
 /*
+ * Records that the validity of table `reports`, one the device writes, covers `count` reports
+ * from its consumer position, replacing what an earlier acquisition covered. False, changing
+ * nothing, for a table the device does not write or a count past the live holdings.
+ */
+bool	erx_dma_ledger_acquire(erx_dma_ledger_t *ledger, uint32_t reports, uint32_t count);
+/*
  * Ends the live holding whose head is `head`, on a report of table `reports`, the table the
- * device writes, at its consumer position, into `*ended`. False, changing nothing, when none is live.
+ * device writes, at its consumer position, into `*ended`. False, changing nothing, when none is
+ * live or the acquisition covered no report left.
  */
 bool	erx_dma_ledger_release(erx_dma_ledger_t *ledger, uint32_t reports, erx_dma_place_t head,
 	    erx_dma_holding_t *ended);
-/* The device's idle report after a reset: every holding ends and every position returns to 0. */
+/* The device's idle report after a reset: every holding and acquisition ends and every position returns to 0. */
 void	erx_dma_ledger_reset(erx_dma_ledger_t *ledger);
 
 /* The accessors. A table or buffer number outside the layout is held by nothing. */
@@ -171,6 +184,8 @@ erx_dma_writer_t	 erx_dma_ledger_buffer_writer(const erx_dma_ledger_t *ledger, u
 /* The records of a table no holding holds. */
 uint32_t		 erx_dma_ledger_free_records(const erx_dma_ledger_t *ledger, uint32_t table);
 uint32_t		 erx_dma_ledger_live(const erx_dma_ledger_t *ledger);
+/* The reports of table `table` the last acquisition covered that are not consumed yet. */
+uint32_t		 erx_dma_ledger_acquired(const erx_dma_ledger_t *ledger, uint32_t table);
 
 /* Whether `length` bytes from `offset` lie inside `size` bytes, with no sum that can wrap. */
 static inline bool

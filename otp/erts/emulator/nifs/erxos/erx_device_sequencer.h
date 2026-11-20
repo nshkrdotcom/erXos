@@ -79,21 +79,25 @@ erx_dma_verdict_t	erx_dma_publish(erx_dma_ledger_t *ledger, const erx_dma_public
 			    erx_dma_sequence_t *sequence);
 
 /*
- * The validity of table `reports`, a used ring: how many records its device-written index
- * `index` covers from the ledger's consumer position, at most `most`. False when it covers more
- * than the live holdings, a malformed index that breaks the queue.
+ * The validity of table `reports`, a used ring: the records its device-written index `index`
+ * covers from the ledger's consumer position, at most `most`, into `*count`, kept in the ledger
+ * as what erx_dma_consume may consume (erx_dma_ledger_acquire). False, changing nothing, when it
+ * covers more than the live holdings, a malformed index that breaks the queue, or for a table
+ * the device does not write.
  */
-bool	erx_dma_acquire_count(const erx_dma_ledger_t *ledger, uint32_t reports, uint16_t index, uint32_t most,
-	    uint32_t *count);
+bool	erx_dma_acquire(erx_dma_ledger_t *ledger, uint32_t reports, uint16_t index, uint32_t most, uint32_t *count);
 
-/* Where the record `k` places past the consumer position of table `reports` lies, to read whole; empty for a table the device does not write. */
+/*
+ * Where the record `k` places past the consumer position of `reports` lies, to read whole;
+ * empty past what the acquisition left.
+ */
 erx_dma_range_t	erx_dma_acquire_record(const erx_dma_ledger_t *ledger, uint32_t reports, uint32_t k);
 
 /*
  * Consumes the record at the consumer position of table `reports`, as the acquisition read it,
- * and ends the holding it releases into `*ended`. False, changing nothing, for a record whose
- * selector names no meaning, one that releases nothing the split ring knows, or one naming no
- * live holding: the queue breaks.
+ * and ends the holding it releases into `*ended`. False, changing nothing, for a record past
+ * what the acquisition covered, one whose selector names no meaning, one that releases nothing
+ * the split ring knows, or one naming no live holding: the queue breaks.
  */
 bool	erx_dma_consume(erx_dma_ledger_t *ledger, uint32_t reports, const erx_report_record_t *record,
 	    erx_dma_holding_t *ended);
