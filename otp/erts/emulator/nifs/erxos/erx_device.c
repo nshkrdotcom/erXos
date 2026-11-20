@@ -1955,7 +1955,7 @@ resolve_regions(const erx_device_t *device, const erx_device_piece_t *requested,
 			return (false);
 		entries[step] = (erx_virtio_gpu_mem_entry_t){ .addr = region->addr, .length = (uint32_t)region->length };
 		pieces[step] = (erx_dma_piece_t){ .bytes = (const uint8_t *)&entries[step], .length = sizeof(entries[step]),
-		    .names_region = true };
+		    .names_region = true, .region = requested[step].region };
 	}
 	return (true);
 }

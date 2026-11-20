@@ -164,14 +164,17 @@ typedef enum erx_dma_request_kind {
 
 /*
  * One piece of a post: `length` bytes the device reads from `bytes`, or `length` bytes it
- * writes. `names_region` says the piece is a region's entry the effect layer resolved, which a
- * form that takes no region refuses.
+ * writes. `names_region` says the piece is the entry of the region named `region`: the split ring's
+ * form core over the sequencer has the sequencer encode it, with `bytes` and `length` unused, and
+ * erx_device_queue's core copies the entry's bytes the effect layer resolved into `bytes`. A form
+ * that takes no region refuses it.
  */
 typedef struct erx_dma_piece {
 	const uint8_t	*bytes;
 	uint32_t	length;
 	bool		device_writes;
 	bool		names_region;
+	uint32_t	region;
 } erx_dma_piece_t;
 
 typedef struct erx_dma_request {

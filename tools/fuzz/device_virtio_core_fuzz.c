@@ -60,6 +60,8 @@ typedef struct script {
 } script_t;
 
 static erx_split_ring_t ring, before;
+/* The device's region table, empty: the fuzzer posts no region piece (test_region_piece covers them). */
+static const erx_dma_regions_t no_regions;
 static erx_dma_layout_t layout;
 static shadow_chain_t shadow[ERX_DEVICE_QUEUE_SIZE_MAX];
 static uint32_t posted_count, acquired, posts;
@@ -210,6 +212,7 @@ post(script_t *script)
 		pieces[index].device_writes = (take(script, 1) & 1) != 0;
 		pieces[index].bytes = pieces[index].device_writes ? NULL : out_bytes;
 		pieces[index].names_region = false;
+		pieces[index].region = 0;
 	}
 	before = ring;
 	status = erx_split_ring_post(&ring, pieces, count, tag, &sequence);
@@ -325,7 +328,7 @@ make(script_t *script)
 	memory_size = layout.pool.first + (uint64_t)layout.pool.count * layout.pool.stride;
 	check(erx_dma_layout_split_ring(size, buffer_size, granule, memory_size,
 	    (bits & 2) != 0 ? UINT64_MAX - memory_size + 1 : FUZZ_BASE, 64, &layout));
-	check(erx_split_ring_make(&ring, &layout));
+	check(erx_split_ring_make(&ring, &layout, &no_regions));
 }
 
 int

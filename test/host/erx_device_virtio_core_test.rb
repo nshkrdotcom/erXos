@@ -33,7 +33,7 @@ class ErxDeviceVirtioCoreTest < Minitest::Test
     'EMPTY_PIECE' => 'a post answers as the model says',
     'READ_AFTER_WRITE' => 'a post answers as the model says',
     'NOT_PACKED' => 'the pieces lie end to end',
-    'LEN_UNCHECKED' => 'the answers stop at the limits or at a malformed element'
+    'LEN_UNCHECKED' => "a len past the chain's writable bytes is ECORRUPT"
   }.freeze
 
   def test_state_machine

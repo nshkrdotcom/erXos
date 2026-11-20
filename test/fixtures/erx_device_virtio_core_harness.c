@@ -87,6 +87,8 @@ typedef struct world {
 } world_t;
 
 static uint8_t payload[BUFFER];
+/* The device's region table: the core's region entries are the ledger's and the sequencer's, tested there. */
+static const erx_dma_regions_t no_regions;
 
 /* The states the exhaustive search must reach, so a model that never gets there fails. */
 enum {
@@ -117,7 +119,7 @@ fresh(world_t *w, uint32_t size)
 	w->size = size;
 	w->free_descs = size;
 	EXPECT(erx_dma_layout_split_ring(size, BUFFER, GRANULE, MEMORY, BASE, 32, &w->layout) &&
-	    erx_split_ring_make(&w->ring, &w->layout), "the split ring is made");
+	    erx_split_ring_make(&w->ring, &w->layout, &no_regions), "the split ring is made");
 }
 
 static void
@@ -390,7 +392,7 @@ driver(world_t *w, uint32_t most, uint64_t bytes_max)
 	w->holdings -= done;
 	if (breaks) {
 		w->broken = true;
-		EXPECT(erx_split_ring_post(&w->ring, (erx_dma_piece_t[]){ { payload, 4, false, false } }, 1, 0,
+		EXPECT(erx_split_ring_post(&w->ring, (erx_dma_piece_t[]){ { payload, 4, false, false, 0 } }, 1, 0,
 		    &(erx_dma_sequence_t){ 0 }) == ERX_ECORRUPT, "a broken ring posts nothing");
 	}
 }
@@ -429,13 +431,13 @@ static void
 step(world_t *w, int op)
 {
 	/* A block request's shape: a header the device reads, then a status it writes. */
-	const erx_dma_piece_t header[2] = { { payload, 8, false, false }, { NULL, 4, true, false } };
-	const erx_dma_piece_t whole[1] = { { NULL, BUFFER, true, false } };
-	const erx_dma_piece_t four[4] = { { payload, 1, false, false }, { payload + 1, 1, false, false },
-	    { NULL, 1, true, false }, { NULL, 2, true, false } };
-	const erx_dma_piece_t empty[2] = { { payload, 8, false, false }, { NULL, 0, true, false } };
-	const erx_dma_piece_t reversed[2] = { { NULL, 4, true, false }, { payload, 4, false, false } };
-	const erx_dma_piece_t long_[2] = { { NULL, 40, true, false }, { NULL, 40, true, false } };
+	const erx_dma_piece_t header[2] = { { payload, 8, false, false, 0 }, { NULL, 4, true, false, 0 } };
+	const erx_dma_piece_t whole[1] = { { NULL, BUFFER, true, false, 0 } };
+	const erx_dma_piece_t four[4] = { { payload, 1, false, false, 0 }, { payload + 1, 1, false, false, 0 },
+	    { NULL, 1, true, false, 0 }, { NULL, 2, true, false, 0 } };
+	const erx_dma_piece_t empty[2] = { { payload, 8, false, false, 0 }, { NULL, 0, true, false, 0 } };
+	const erx_dma_piece_t reversed[2] = { { NULL, 4, true, false, 0 }, { payload, 4, false, false, 0 } };
+	const erx_dma_piece_t long_[2] = { { NULL, 40, true, false, 0 }, { NULL, 40, true, false, 0 } };
 
 	switch (op) {
 	case OP_POST_HEADER: post(w, header, 2); break;
@@ -553,6 +555,70 @@ test_beyond_acquisition(void)
 	    "the element past the acquisition is not consumed and breaks nothing");
 }
 
+/*
+ * A used len past what the chain let the device write is judged before the chain is released:
+ * the ring breaks and its ledger still holds the chain's buffer, which the device may still write.
+ */
+static void
+test_bad_len_keeps_chain(void)
+{
+	static world_t w;
+	erx_report_record_t element = { .virtq_used_elem = { .len = UINT32_MAX } };
+	erx_split_ring_answer_t answer;
+	uint32_t count, done;
+
+	fresh(&w, 2);
+	step(&w, OP_POST_WHOLE);
+	EXPECT(erx_split_ring_acquire(&w.ring, 1, 1, &count) == ERX_OK && count == 1, "one element new");
+	element.virtq_used_elem.id = w.fetched[0].head;
+	EXPECT(erx_split_ring_complete(&w.ring, &element, 1, UINT64_MAX, &answer, &done) == ERX_ECORRUPT && done == 0,
+	    "a len past the chain's writable bytes is ECORRUPT");
+	EXPECT(w.ring.broken && erx_dma_ledger_live(erx_split_ring_ledger(&w.ring)) == 1 &&
+	    erx_dma_ledger_buffer_held(erx_split_ring_ledger(&w.ring), 0),
+	    "a bad len releases nothing: the chain's buffer stays held");
+}
+
+/*
+ * A piece naming a region is the device's region entry, which the sequencer encodes from the
+ * ledger's record of the region by its name: a store, not a fill, and only of its device's table.
+ */
+static void
+test_region_piece(void)
+{
+	static world_t w;
+	static erx_dma_regions_t regions;
+	const erx_dma_persistent_region_t region = { .name = 5, .address = 0x90000000, .length = 0x2000 };
+	erx_dma_piece_t pieces[2] = { { NULL, 0, false, true, 6 }, { NULL, 8, true, false, 0 } };
+	erx_dma_sequence_t sequence;
+	bool entry_stored = false;
+
+	EXPECT(erx_dma_layout_split_ring(2, BUFFER, GRANULE, MEMORY, BASE, 32, &w.layout) &&
+	    erx_split_ring_make(&w.ring, &w.layout, &regions), "a ring of a device with regions");
+	EXPECT(erx_dma_regions_add(&regions, region) &&
+	    erx_dma_regions_add(&regions, (erx_dma_persistent_region_t){ .name = 6, .address = BASE, .length = 0x1000 }),
+	    "the device's regions");
+	EXPECT(erx_split_ring_post(&w.ring, pieces, 2, 1, &sequence) == ERX_EINVAL,
+	    "a region over the queue's own memory, which the queue does not hold");
+	pieces[0].region = 7;
+	EXPECT(erx_split_ring_post(&w.ring, pieces, 2, 1, &sequence) == ERX_EINVAL, "a region the device does not have");
+	pieces[0].region = 5;
+	pieces[0].device_writes = true;
+	EXPECT(erx_split_ring_post(&w.ring, pieces, 2, 1, &sequence) == ERX_EINVAL, "a region the device writes");
+	pieces[0].device_writes = false;
+	EXPECT(erx_split_ring_post(&w.ring, pieces, 2, 1, &sequence) == ERX_OK && sequence.fill_count == 1 &&
+	    sequence.fills[0].length == 0, "a region's entry is no fill");
+	for (uint32_t index = 0; index < sequence.store_count; index++) {
+		erx_virtio_gpu_mem_entry_t entry;
+
+		if (sequence.stores[index].length != sizeof(entry))
+			continue;
+		memcpy(&entry, sequence.stores[index].bytes, sizeof(entry));
+		entry_stored |= sequence.stores[index].offset == sequence.fills[0].offset &&
+		    entry.addr == region.address && entry.length == region.length;
+	}
+	EXPECT(entry_stored, "the entry is stored at the piece's place from the region's record");
+}
+
 /* A layout without a used ring is not a split ring's. */
 static void
 test_layout(void)
@@ -562,7 +628,7 @@ test_layout(void)
 
 	EXPECT(erx_dma_layout_split_ring(2, BUFFER, GRANULE, MEMORY, BASE, 32, &layout), "the layout");
 	layout.table_count = 2;
-	EXPECT(!erx_split_ring_make(&w.ring, &layout), "a ring needs its used ring");
+	EXPECT(!erx_split_ring_make(&w.ring, &layout, &no_regions), "a ring needs its used ring");
 }
 
 int
@@ -572,6 +638,8 @@ main(void)
 		payload[byte] = (uint8_t)(byte * 7 + 1);
 	test_layout();
 	test_beyond_acquisition();
+	test_bad_len_keeps_chain();
+	test_region_piece();
 	test_laps();
 	test_exhaustive(2);
 	test_exhaustive(4);

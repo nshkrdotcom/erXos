@@ -41,11 +41,11 @@ used_table(const erx_split_ring_t *ring)
 }
 
 bool
-erx_split_ring_make(erx_split_ring_t *ring, const erx_dma_layout_t *layout)
+erx_split_ring_make(erx_split_ring_t *ring, const erx_dma_layout_t *layout, const erx_dma_regions_t *regions)
 {
 	erx_dma_ledger_t ledger;
 
-	if (layout->pool.count > ERX_DEVICE_QUEUE_SIZE_MAX || !erx_dma_ledger_make(&ledger, layout) ||
+	if (layout->pool.count > ERX_DEVICE_QUEUE_SIZE_MAX || !erx_dma_ledger_make(&ledger, layout, regions) ||
 	    erx_dma_ledger_table(&ledger, ERX_STRUCTURE_VIRTQ_DESC) < 0 ||
 	    erx_dma_ledger_table(&ledger, ERX_STRUCTURE_VIRTQ_AVAIL) < 0 ||
 	    erx_dma_ledger_table(&ledger, ERX_STRUCTURE_VIRTQ_USED) < 0)
@@ -68,6 +68,13 @@ erx_split_ring_ledger(const erx_split_ring_t *ring)
 	return (&ring->ledger);
 }
 
+/* A piece's bytes in the buffer: a region's entry is one entry long, whatever the piece says. */
+static uint32_t
+piece_length(const erx_dma_piece_t *piece)
+{
+	return (piece->names_region ? ERX_VIRTIO_GPU_MEM_ENTRY_SIZE : piece->length);
+}
+
 /* Whether the pieces, end to end, fit in a buffer of `size` bytes, with no sum that can wrap. */
 static bool
 pieces_fit(const erx_dma_piece_t *pieces, uint32_t count, uint32_t size)
@@ -75,9 +82,9 @@ pieces_fit(const erx_dma_piece_t *pieces, uint32_t count, uint32_t size)
 	uint32_t offset = 0;
 
 	for (uint32_t index = 0; index < count; index++) {
-		if (pieces[index].length > size - offset)
+		if (piece_length(&pieces[index]) > size - offset)
 			return (false);
-		offset += pieces[index].length;
+		offset += piece_length(&pieces[index]);
 	}
 	return (true);
 }
@@ -85,13 +92,15 @@ pieces_fit(const erx_dma_piece_t *pieces, uint32_t count, uint32_t size)
 /*
  * Virtio's rules for a chain: no piece empty, and every piece the device writes after every
  * one it reads (Virtio 1.2, section 2.7.4.2); a device may answer any other order by asking
- * for a reset.
+ * for a reset. A region's entry is a piece the device reads.
  */
 static bool
 pieces_virtio_valid(const erx_dma_piece_t *pieces, uint32_t count)
 {
 	for (uint32_t index = 0; index < count; index++) {
-		if (pieces[index].length == 0 && !SEED_EMPTY_PIECE)
+		if (piece_length(&pieces[index]) == 0 && !SEED_EMPTY_PIECE)
+			return (false);
+		if (pieces[index].names_region && pieces[index].device_writes)
 			return (false);
 		if (index > 0 && pieces[index - 1].device_writes && !pieces[index].device_writes &&
 		    !SEED_READ_AFTER_WRITE)
@@ -139,23 +148,25 @@ erx_split_ring_post(erx_split_ring_t *ring, const erx_dma_piece_t *pieces, uint3
 	bzero(records, sizeof(records));
 	for (uint32_t index = 0; index < count; index++) {
 		const erx_dma_piece_t *const piece = &pieces[index];
+		const uint32_t length = piece_length(piece);
 
 		records[index].structure = ERX_STRUCTURE_VIRTQ_DESC;
 		records[index].meaning = ERX_MEANING_VIRTQ_DESC;
-		records[index].described.virtq_desc.len = piece->length;
+		records[index].described.virtq_desc.len = length;
 		records[index].described.virtq_desc.flags_write = piece->device_writes ? 1 : 0;
 		records[index].name_count = 1;
 		records[index].names[0] = (erx_dma_name_t){ .buffer = buffer, .offset = offset };
 		/* The readable pieces come first, so fills[i] is pieces[i]'s, as the header promises. */
 		if (piece->device_writes) {
-			chain.writable += piece->length;
+			chain.writable += length;
 		} else {
-			fills[publication.fill_count++] = (erx_dma_fill_t){ .buffer = buffer, .offset = offset,
-			    .length = piece->length };
-			chain.written_from += piece->length;
+			fills[publication.fill_count++] = (erx_dma_fill_t){
+				.kind = piece->names_region ? ERX_DMA_FILL_REGION_ENTRY : ERX_DMA_FILL_BYTES,
+				.buffer = buffer, .offset = offset, .length = length, .region = piece->region };
+			chain.written_from += length;
 		}
 		if (!SEED_NOT_PACKED)
-			offset += piece->length;
+			offset += length;
 	}
 	switch (erx_dma_publish(&ring->ledger, &publication, sequence)) {
 	case ERX_DMA_PASSES:
@@ -199,25 +210,30 @@ erx_split_ring_complete(erx_split_ring_t *ring, const erx_report_record_t *eleme
 		return (ERX_ECORRUPT);
 	while (*done < count && answered < bytes_max && erx_dma_ledger_acquired(&ring->ledger, used) > 0) {
 		const uint32_t len = elements[*done].virtq_used_elem.len;
-		const erx_split_ring_chain_t *chain;
+		const erx_dma_holding_t *const holding = erx_dma_report_holding(&ring->ledger, used, &elements[*done]);
+		erx_split_ring_chain_t chain;
+		uint32_t buffer;
 		erx_dma_holding_t ended;
 
 		/*
-		 * The ring's every publication names one buffer, so a holding it ends holds that one,
-		 * which the ledger's names rule kept below the pool's count.
+		 * The element is judged whole before its chain is released, so a bad one leaves the
+		 * chain held: the device may still write its buffer. The ring's every publication names
+		 * one buffer, which the ledger's names rule kept below the pool's count.
 		 */
-		if (!erx_dma_consume(&ring->ledger, used, &elements[*done], &ended)) {
+		if (holding == NULL) {
 			ring->broken = true;
 			break;
 		}
-		chain = &ring->chains[ended.buffers[0]];
-		/* The chain has ended: a broken ring posts nothing until the reset that follows. */
-		if (len > chain->writable && !SEED_LEN_UNCHECKED) {
+		buffer = holding->buffers[0];
+		chain = ring->chains[buffer];
+		if (len > chain.writable && !SEED_LEN_UNCHECKED) {
 			ring->broken = true;
 			break;
 		}
-		answers[*done] = (erx_split_ring_answer_t){ .tag = chain->tag,
-		    .written = { .offset = pool->first + (uint64_t)ended.buffers[0] * pool->stride + chain->written_from,
+		/* Cannot refuse: erx_dma_report_holding found the holding it ends. */
+		(void)erx_dma_consume(&ring->ledger, used, &elements[*done], &ended);
+		answers[*done] = (erx_split_ring_answer_t){ .tag = chain.tag,
+		    .written = { .offset = pool->first + (uint64_t)buffer * pool->stride + chain.written_from,
 		    .length = len } };
 		answered += len;
 		(*done)++;

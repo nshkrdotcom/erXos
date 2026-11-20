@@ -34,6 +34,11 @@
 #else
 #define SEED_ANY_REGION		false
 #endif
+#ifdef ERX_DMA_SEED_REGION_MEETS_QUEUE
+#define SEED_REGION_MEETS_QUEUE	true
+#else
+#define SEED_REGION_MEETS_QUEUE	false
+#endif
 
 static bool
 power_of_two(uint64_t value)
@@ -172,24 +177,6 @@ layout_valid(const erx_dma_layout_t *layout)
 	return (!__builtin_add_overflow(layout->device_base, end - 1, &last) && last <= widest);
 }
 
-bool
-erx_dma_ledger_make(erx_dma_ledger_t *ledger, const erx_dma_layout_t *layout)
-{
-	if (!layout_valid(layout))
-		return (false);
-	bzero(ledger, sizeof(*ledger));
-	ledger->layout = *layout;
-	return (true);
-}
-
-void
-erx_dma_ledger_reset(erx_dma_ledger_t *ledger)
-{
-	ledger->live = 0;
-	bzero(ledger->positions, sizeof(ledger->positions));
-	bzero(ledger->acquired, sizeof(ledger->acquired));
-}
-
 /*
  * Whether `region`'s device addresses and the queue's memory share one, from whichever starts
  * first, so no end is summed.
@@ -202,37 +189,75 @@ meets_the_queue(const erx_dma_layout_t *layout, erx_dma_persistent_region_t regi
 	return (layout->device_base - region.address < region.length);
 }
 
-bool
-erx_dma_ledger_add_region(erx_dma_ledger_t *ledger, erx_dma_persistent_region_t region)
+/* The longest region an entry states: its length field's width, as the generated layout gives it. */
+static const uint64_t longest_region = UINT64_MAX >> (64 - 8 * sizeof(((erx_virtio_gpu_mem_entry_t *)NULL)->length));
+
+/*
+ * Whether a region entry in a queue of `layout` may name `region`: a length an entry states, and
+ * its range below the form's address width and apart from the queue's memory, which no entry
+ * may point the device into.
+ */
+static bool
+region_fits_queue(const erx_dma_layout_t *layout, erx_dma_persistent_region_t region)
 {
-	/* The longest region an entry states: its length field's width, as the generated layout gives it. */
-	const uint64_t longest = UINT64_MAX >> (64 - 8 * sizeof(((erx_virtio_gpu_mem_entry_t *)NULL)->length));
-	const erx_dma_persistent_region_t *const held = erx_dma_ledger_region(ledger, region.name);
 	uint64_t last;
+
+	return (region.length != 0 && region.length <= longest_region &&
+	    !__builtin_add_overflow(region.address, region.length - 1, &last) && last <= widest_address(layout) &&
+	    (SEED_REGION_MEETS_QUEUE || !meets_the_queue(layout, region)));
+}
+
+bool
+erx_dma_ledger_make(erx_dma_ledger_t *ledger, const erx_dma_layout_t *layout, const erx_dma_regions_t *regions)
+{
+	if (!layout_valid(layout))
+		return (false);
+	bzero(ledger, sizeof(*ledger));
+	ledger->layout = *layout;
+	ledger->regions = regions;
+	return (true);
+}
+
+void
+erx_dma_ledger_reset(erx_dma_ledger_t *ledger)
+{
+	ledger->live = 0;
+	bzero(ledger->positions, sizeof(ledger->positions));
+	bzero(ledger->acquired, sizeof(ledger->acquired));
+}
+
+/* The region of `regions` named `name`, or NULL. */
+static const erx_dma_persistent_region_t *
+region_named(const erx_dma_regions_t *regions, uint32_t name)
+{
+	for (uint32_t index = 0; index < regions->count; index++) {
+		if (regions->regions[index].name == name)
+			return (&regions->regions[index]);
+	}
+	return (NULL);
+}
+
+bool
+erx_dma_regions_add(erx_dma_regions_t *regions, erx_dma_persistent_region_t region)
+{
+	const erx_dma_persistent_region_t *const held = region_named(regions, region.name);
 
 	/* erx_device_region gives the same region again for the same request, so a repeat adds nothing. */
 	if (held != NULL)
 		return (held->address == region.address && held->length == region.length);
-	if (ledger->persistent_count == ERX_DEVICE_REGIONS_MAX)
+	if (regions->count == ERX_DEVICE_REGIONS_MAX || region.length == 0 || region.length > longest_region)
 		return (false);
-	if (region.length == 0 || region.length > longest)
-		return (false);
-	if (__builtin_add_overflow(region.address, region.length - 1, &last) || last > widest_address(&ledger->layout))
-		return (false);
-	if (meets_the_queue(&ledger->layout, region))
-		return (false);
-	ledger->persistent[ledger->persistent_count++] = region;
+	regions->regions[regions->count++] = region;
 	return (true);
 }
 
 const erx_dma_persistent_region_t *
 erx_dma_ledger_region(const erx_dma_ledger_t *ledger, uint32_t name)
 {
-	for (uint32_t index = 0; index < ledger->persistent_count; index++) {
-		if (SEED_ANY_REGION || ledger->persistent[index].name == name)
-			return (&ledger->persistent[index]);
-	}
-	return (NULL);
+	const erx_dma_persistent_region_t *const region = SEED_ANY_REGION && ledger->regions->count > 0 ?
+	    &ledger->regions->regions[0] : region_named(ledger->regions, name);
+
+	return (region != NULL && region_fits_queue(&ledger->layout, *region) ? region : NULL);
 }
 
 const erx_dma_layout_t *
@@ -411,20 +436,34 @@ erx_dma_ledger_acquired(const erx_dma_ledger_t *ledger, uint32_t table)
 {
 	return (table < ledger->layout.table_count ? ledger->acquired[table] : 0);
 }
+
+const erx_dma_holding_t *
+erx_dma_ledger_holding(const erx_dma_ledger_t *ledger, erx_dma_place_t head)
+{
+	for (uint32_t live = 0; live < ledger->live; live++) {
+		if (same_place(ledger->holdings[live].records[0], head))
+			return (&ledger->holdings[live]);
+	}
+	return (NULL);
+}
+
 bool
 erx_dma_ledger_release(erx_dma_ledger_t *ledger, uint32_t reports, erx_dma_place_t head, erx_dma_holding_t *ended)
 {
+	const erx_dma_holding_t *holding;
+
 	if (reports >= ledger->layout.table_count || !device_writes(&ledger->layout, reports) ||
 	    ledger->acquired[reports] == 0)
 		return (false);
-	for (uint32_t live = 0; live < ledger->live; live++) {
-		if (same_place(ledger->holdings[live].records[0], head)) {
-			*ended = ledger->holdings[live];
-			ledger->holdings[live] = ledger->holdings[--ledger->live];
-			ledger->acquired[reports]--;
-			advance(ledger, reports, 1);
-			return (true);
-		}
+	holding = erx_dma_ledger_holding(ledger, head);
+	if (holding != NULL) {
+		const uint32_t live = (uint32_t)(holding - ledger->holdings);
+
+		*ended = *holding;
+		ledger->holdings[live] = ledger->holdings[--ledger->live];
+		ledger->acquired[reports]--;
+		advance(ledger, reports, 1);
+		return (true);
 	}
 	if (SEED_RELEASE_TWICE) {
 		*ended = (erx_dma_holding_t){ 0 };

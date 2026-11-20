@@ -40,6 +40,9 @@ static const erx_dma_description_t chain[2] = {
 };
 static const erx_dma_fill_t header = { .buffer = 0, .offset = 0, .length = 16 };
 
+/* The device's region table, which fresh empties. */
+static erx_dma_regions_t regions;
+
 static erx_dma_ledger_t
 fresh(void)
 {
@@ -47,7 +50,7 @@ fresh(void)
 	erx_dma_ledger_t ledger;
 
 	EXPECT(erx_dma_layout_split_ring(SIZE, BUFFER, GRANULE, MEMORY, BASE, 32, &layout) &&
-	    erx_dma_ledger_make(&ledger, &layout), "the split ring's ledger");
+	    erx_dma_ledger_make(&ledger, &layout, (bzero(&regions, sizeof(regions)), &regions)), "the split ring's ledger");
 	return (ledger);
 }
 
@@ -187,7 +190,7 @@ test_region_entry(void)
 	erx_virtio_gpu_mem_entry_t written;
 	const erx_dma_store_t *store;
 
-	EXPECT(erx_dma_ledger_add_region(&ledger, region), "the device's region");
+	EXPECT(erx_dma_regions_add(&regions, region), "the device's region");
 	request[0].described.virtq_desc.len = 32;
 	EXPECT(erx_dma_publish(&ledger, &(erx_dma_publication_t){ 2, request, 2, entries }, &sequence) ==
 	    ERX_DMA_BREAKS_FILLS && erx_dma_ledger_live(&ledger) == 0, "two region entries 8 bytes apart, refused");

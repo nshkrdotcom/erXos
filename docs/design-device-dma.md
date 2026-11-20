@@ -296,7 +296,10 @@ A descriptor form's core is a pure state machine over the queue's
 protocol state: its tags, for ADMA2 whether the queue is idle, armed or
 in flight, for the TRB form its slots, queues and command in flight.
 Which buffers are free and which records are live it reads from the
-ledger ([The ledger](#the-ledger)), which it never changes. A queue call
+ledger ([The ledger](#the-ledger)), which it changes only through the
+pure sequencer: the core owns the protocol over the sequencer, which
+judges each decision and returns its effects with the next ledger, and
+the effect layer applies that output. A queue call
 runs in rounds. Each form
 supplies one pure **round function** (`erx_device_queue_round` for the
 split ring, `erx_device_genet_round` for the register ring, and ADMA2's
@@ -305,7 +308,8 @@ beside them), the form's only entry from the effect layer. It takes a
 them the idle report and the engine's start) with the record's facts the
 form reads (the queue's number, its device base and pool offset, whether
 it is ready, a post's pieces, a completion's bounds), the round's number,
-the values the call's observations read, and the ledger, read-only. It
+the values the call's observations read, and the ledger, which only the
+sequencer it calls advances. It
 returns either an **observation**, a bounded list of reads it needs, or a
 **decision**, a plan and the core's next protocol state, or the call's
 end with its status. A
@@ -447,14 +451,16 @@ needs of the ledger's facts it reads from the ledger.
 ### The ledger
 
 The ledger is one value per queue record; the TRB form's record is the
-whole controller.
+whole controller. Its persistent regions are the one exception: the
+device record owns one region table, which every ledger of the device
+reads and none changes.
 
 | Part | What it says | Made or changed by |
 | --- | --- | --- |
 | the layout | the record's regions, each holding one structure, with that structure's writer, or a buffer; each table's region, record count and stride | made once at install from the form's layout and the counts read from the device, and checked then: every region whole granules, ascending, disjoint, inside the memory and below the form's address width |
 | the positions | for each ring the CPU writes, the next position the sequencer publishes at, with a TRB ring's cycle state there; for each structure the device writes in order, the next position the CPU consumes, with the event ring's cycle state there | publications and releases |
 | the holdings | one for each publication the device may still act on: the records it made live, the regions it handed to the device, and the report that ends it | publications begin them, releases end them |
-| the persistent regions | the device's regions a region entry may name, each by its name, with its device address and whole length | added one at a time, each once, after the ledger is made, the same region again adding nothing; kept until it is made again, a reset included |
+| the persistent regions | the device's regions a region entry may name, each by its name, with its device address and whole length: the device record's one region table, read through a pointer | added to the device's table one at a time, each once, under the device lock, the same region again adding nothing; kept for the boot, a reset included |
 | the bindings | the TRB form's: the endpoint each transfer ring is bound to | the commands that bind, and releases |
 | the command's reach | the TRB form's: the endpoints the command in flight closes to new transfers, and the transfer holdings its success retires, fixed at its publication; each endpoint's **state**, `running`, `stopped` or `halted` | a command's publication fixes its reach and its completion ends it; an endpoint's state changes only on what the trusted side did or consumed: the consumed success of the command that binds it, or the publication of a transfer on it, sets `running`; a consumed Stop Endpoint or Reset Endpoint success sets `stopped`; a consumed error event that halts it sets `halted` |
 
@@ -464,16 +470,17 @@ the ledger through accessors (which buffers are free, a ring's
 positions, a queue's live transfers, whether an endpoint is closed and
 its state) and states no writer itself.
 
-A region reaches the ledger by the one transition that adds a
-persistent region: for each queue of the device, at the region's making
-or the queue's install, whichever is later. It refuses, changing
-nothing, a name the ledger already holds, more regions than a record
-has, a length of 0 or one the region entry's length field cannot hold, a range
-past the form's address width, and a range sharing an address with the
-queue's memory, which no region entry may point the device into. A
-queue's ledger is its device's alone and only that device's regions are
-added to it, so a region of another device is a name the ledger does not
-hold.
+A region reaches its device's table by the one transition that adds a
+persistent region, at the region's making. It refuses, changing
+nothing, a name the table already holds with other values, more regions
+than a record has, and a length of 0 or one the region entry's length
+field cannot hold. A queue reaches a region only through the ledger's
+one lookup by name, which gives it only a region that fits it: below the
+form's address width and sharing no address with the queue's memory,
+which no region entry may point the device into, whichever of the two
+was made first. A queue's ledger reads its own device's table alone, so
+a region of another device is a name the ledger does not hold, by
+construction.
 
 ### Descriptions
 
@@ -1422,9 +1429,10 @@ The device lock serialises every queue call and every driver register
 write, so a decision's effects run whole, with no other decision's and
 no driver write between them, and every check a call makes under the
 lock still holds when the write it guards is made. The ledger is part of
-the queue record: the core, the check and the sequencer read it within
-one call under the lock, and the effect layer replaces it with the
-sequencer's next ledger only after the decision's effects have run; a
+the queue record: the core, the check and the sequencer read it, and
+the sequencer advances it, within one call under the lock, and the
+effect layer applies the sequencer's output before the lock is released,
+so no other call sees the next ledger before its effects have run; a
 refused decision leaves it as it was and breaks the queue. Maintenance by address
 reaches every cache of the CPUs that share the memory, so one CPU's
 maintenance suffices whichever CPUs fetched the lines.
@@ -1556,6 +1564,7 @@ ran.
   | `out` bytes into a buffer no record names, or past the range it names | the fills test removed |
   | two fills sharing a byte of one buffer | the overlap test removed |
   | a region entry's fill shorter than an entry; a region entry naming a region the ledger does not hold | the entry's length test removed; the region lookup taking any region |
+  | a region entry naming a region of the device over the queue's own memory | the lookup's test of the queue's memory removed |
   | a control step setting `USBCMD`'s run bit or `QueueReady` | the controls test removed |
   | a completion for transfer A whose copies read B's buffer; a used element consumed a second time; an event consumed past the consumer cycle state | the releases taken from the core's copies; the consumer position test removed |
   | a copy in a publication; a report of a region the CPU writes; a `report` step reading a used or event ring record in place of an acquisition | the calls test removed; the report target test removed; ring memory allowed as a report target |

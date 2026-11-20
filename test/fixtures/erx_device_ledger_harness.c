@@ -31,6 +31,21 @@ enum { DESC = 0, AVAIL = 1, USED = 2 };
 
 /* The holding a release ended, which these tests do not read. */
 static erx_dma_holding_t ended;
+/* The device's region table, empty but for test_regions, which fills its own. */
+static const erx_dma_regions_t no_regions;
+static erx_dma_regions_t table;
+
+/* Whether a queue of `layout` holds `region` once its device's table has it alone. */
+static bool
+queue_holds(const erx_dma_layout_t *layout, erx_dma_persistent_region_t region)
+{
+	static erx_dma_regions_t alone;
+	erx_dma_ledger_t ledger;
+
+	memset(&alone, 0, sizeof(alone));
+	return (erx_dma_ledger_make(&ledger, layout, &alone) && erx_dma_regions_add(&alone, region) &&
+	    erx_dma_ledger_region(&ledger, region.name) != NULL);
+}
 
 static erx_dma_layout_t
 split_ring(uint64_t memory, uint64_t base, uint32_t bits)
@@ -47,7 +62,7 @@ test_layout(void)
 	erx_dma_ledger_t ledger;
 	erx_dma_layout_t layout = split_ring(MEMORY, 0x40000000, 32), planted;
 
-	EXPECT(erx_dma_ledger_make(&ledger, &layout), "the split ring's layout passes the install's check");
+	EXPECT(erx_dma_ledger_make(&ledger, &layout, &no_regions), "the split ring's layout passes the install's check");
 	EXPECT(layout.tables[AVAIL].region == 64 && layout.tables[USED].region == 128 && layout.pool.first == 192 &&
 	    layout.pool.stride == 128, "each ring a region of its own from a granule, buffers at a granule stride");
 	EXPECT(erx_dma_ledger_table(&ledger, ERX_STRUCTURE_VIRTQ_USED) == USED, "the used ring's table");
@@ -61,36 +76,36 @@ test_layout(void)
 	    "below a granule of their alignment the rings keep virtio's alignments");
 
 	planted = split_ring(MEMORY - 1, 0, 32);
-	EXPECT(!erx_dma_ledger_make(&ledger, &planted), "a pool past the memory is refused");
+	EXPECT(!erx_dma_ledger_make(&ledger, &planted, &no_regions), "a pool past the memory is refused");
 	planted = split_ring(MEMORY, 512, 10);
-	EXPECT(!erx_dma_ledger_make(&ledger, &planted), "a region past the address width is refused");
+	EXPECT(!erx_dma_ledger_make(&ledger, &planted, &no_regions), "a region past the address width is refused");
 	planted = split_ring(MEMORY, UINT64_MAX - 111, 64);
-	EXPECT(!erx_dma_ledger_make(&ledger, &planted), "a device base whose regions wrap is refused");
+	EXPECT(!erx_dma_ledger_make(&ledger, &planted, &no_regions), "a device base whose regions wrap is refused");
 	planted = layout;
 	planted.tables[DESC].region_length = 128;
-	EXPECT(!erx_dma_ledger_make(&ledger, &planted), "overlapping regions are refused");
+	EXPECT(!erx_dma_ledger_make(&ledger, &planted, &no_regions), "overlapping regions are refused");
 	planted = layout;
 	planted.pool.size = planted.pool.stride + 1;
-	EXPECT(!erx_dma_ledger_make(&ledger, &planted), "a buffer longer than its stride is refused");
+	EXPECT(!erx_dma_ledger_make(&ledger, &planted, &no_regions), "a buffer longer than its stride is refused");
 	planted = layout;
 	planted.tables[AVAIL].structure = ERX_STRUCTURE_VIRTQ_DESC;
-	EXPECT(!erx_dma_ledger_make(&ledger, &planted), "two tables of one structure are refused");
+	EXPECT(!erx_dma_ledger_make(&ledger, &planted, &no_regions), "two tables of one structure are refused");
 	planted = layout;
 	planted.tables[AVAIL].count = SIZE * 32;
-	EXPECT(!erx_dma_ledger_make(&ledger, &planted), "records past their region are refused");
+	EXPECT(!erx_dma_ledger_make(&ledger, &planted, &no_regions), "records past their region are refused");
 
 	/* The seed's case: a form planted to lay out an unaligned region, then an unrounded stride. */
 	planted = layout;
 	planted.tables[AVAIL].region = 72;
 	planted.tables[AVAIL].region_length = 56;
 	planted.tables[AVAIL].first = 76;
-	EXPECT(!erx_dma_ledger_make(&ledger, &planted), "a region off a granule is refused");
+	EXPECT(!erx_dma_ledger_make(&ledger, &planted, &no_regions), "a region off a granule is refused");
 	planted = layout;
 	planted.pool.stride = BUFFER;
-	EXPECT(!erx_dma_ledger_make(&ledger, &planted), "buffers sharing a granule are refused");
+	EXPECT(!erx_dma_ledger_make(&ledger, &planted, &no_regions), "buffers sharing a granule are refused");
 	planted = layout;
 	planted.pool.stride = 96;
-	EXPECT(!erx_dma_ledger_make(&ledger, &planted), "a stride off a granule is refused, the pool's length on one");
+	EXPECT(!erx_dma_ledger_make(&ledger, &planted, &no_regions), "a stride off a granule is refused, the pool's length on one");
 }
 
 static erx_dma_description_t
@@ -134,7 +149,7 @@ test_rules(void)
 	erx_dma_fill_t fill, pair[2];
 	erx_dma_ledger_t ledger;
 
-	EXPECT(erx_dma_ledger_make(&ledger, &layout), "a ledger");
+	EXPECT(erx_dma_ledger_make(&ledger, &layout, &no_regions), "a ledger");
 	EXPECT(check(&ledger, chain, 2, &header, 1) == ERX_DMA_PASSES, "a request's chain with its header filled");
 
 	/* meanings: a transfer TRB described on the descriptor table; a ring the sequencer or the device owns. */
@@ -207,7 +222,7 @@ test_rules(void)
 	EXPECT(check(&ledger, bad, 1, NULL, 0) == ERX_DMA_PASSES, "a run of the one free descriptor");
 
 	/* room: every available entry held, with descriptors free. */
-	EXPECT(erx_dma_ledger_make(&ledger, &layout), "a ledger");
+	EXPECT(erx_dma_ledger_make(&ledger, &layout, &no_regions), "a ledger");
 	for (uint32_t index = 0; index < SIZE; index++)
 		EXPECT(hold_at(&ledger, -1, &(erx_dma_place_t){ AVAIL, index }, 1), "a holding of an available entry");
 	EXPECT(check(&ledger, bad, 1, NULL, 0) == ERX_DMA_BREAKS_ROOM, "a chain while its available entry is held");
@@ -234,30 +249,30 @@ test_regions(void)
 	erx_dma_layout_t wide;
 	erx_dma_ledger_t ledger;
 
-	EXPECT(erx_dma_ledger_make(&ledger, &layout), "a ledger");
+	EXPECT(erx_dma_ledger_make(&ledger, &layout, &table), "a ledger");
 	EXPECT(erx_dma_ledger_region(&ledger, 7) == NULL, "no region before one is added");
 	EXPECT(check(&ledger, &whole, 1, entries, 1) == ERX_DMA_BREAKS_FILLS, "a region entry before its region is added");
-	EXPECT(erx_dma_ledger_add_region(&ledger, region), "a region of the device");
+	EXPECT(erx_dma_regions_add(&table, region), "a region of the device");
 	entries[0].region = 3;
 	EXPECT(check(&ledger, &whole, 1, entries, 1) == ERX_DMA_BREAKS_FILLS,
 	    "a region entry naming a region the ledger does not hold, as another device's");
 	entries[0].region = 7;
-	EXPECT(erx_dma_ledger_add_region(&ledger, region), "the same region again adds nothing");
-	EXPECT(!erx_dma_ledger_add_region(&ledger, (erx_dma_persistent_region_t){ 7, 0x90000000, 0x1000 }),
+	EXPECT(erx_dma_regions_add(&table, region), "the same region again adds nothing");
+	EXPECT(!erx_dma_regions_add(&table, (erx_dma_persistent_region_t){ 7, 0x90000000, 0x1000 }),
 	    "a name added again with another address");
-	EXPECT(!erx_dma_ledger_add_region(&ledger, (erx_dma_persistent_region_t){ 8, 0x90000000, 0 }), "an empty region");
-	EXPECT(!erx_dma_ledger_add_region(&ledger, (erx_dma_persistent_region_t){ 8, 0x90000000, UINT64_C(1) << 32 }),
+	EXPECT(!erx_dma_regions_add(&table, (erx_dma_persistent_region_t){ 8, 0x90000000, 0 }), "an empty region");
+	EXPECT(!erx_dma_regions_add(&table, (erx_dma_persistent_region_t){ 8, 0x90000000, UINT64_C(1) << 32 }),
 	    "a region longer than an entry's length states");
-	EXPECT(!erx_dma_ledger_add_region(&ledger, (erx_dma_persistent_region_t){ 8, 0xfffff000, 0x2000 }),
+	EXPECT(!queue_holds(&layout, (erx_dma_persistent_region_t){ 8, 0xfffff000, 0x2000 }),
 	    "a region past the address width");
-	EXPECT(!erx_dma_ledger_add_region(&ledger, (erx_dma_persistent_region_t){ 8, MEMORY - 8, 0x1000 }) &&
-	    !erx_dma_ledger_add_region(&ledger, (erx_dma_persistent_region_t){ 8, 0, 0x1000 }) &&
-	    !erx_dma_ledger_add_region(&ledger, (erx_dma_persistent_region_t){ 8, UINT64_MAX - 8, 4 }),
+	EXPECT(!queue_holds(&layout, (erx_dma_persistent_region_t){ 8, MEMORY - 8, 0x1000 }) &&
+	    !queue_holds(&layout, (erx_dma_persistent_region_t){ 8, 0, 0x1000 }) &&
+	    !queue_holds(&layout, (erx_dma_persistent_region_t){ 8, UINT64_MAX - 8, 4 }),
 	    "a region over the queue's memory, or past the address width");
 	for (uint32_t name = 8; name < 8 + ERX_DEVICE_REGIONS_MAX - 1; name++)
-		EXPECT(erx_dma_ledger_add_region(&ledger, (erx_dma_persistent_region_t){ name, 0x90000000 + name * 0x1000, 0x1000 }),
+		EXPECT(erx_dma_regions_add(&table, (erx_dma_persistent_region_t){ name, 0x90000000 + name * 0x1000, 0x1000 }),
 		    "the device's other regions");
-	EXPECT(!erx_dma_ledger_add_region(&ledger, (erx_dma_persistent_region_t){ 99, 0xa0000000, 0x1000 }),
+	EXPECT(!erx_dma_regions_add(&table, (erx_dma_persistent_region_t){ 99, 0xa0000000, 0x1000 }),
 	    "more regions than a device has");
 	erx_dma_ledger_reset(&ledger);
 	EXPECT(erx_dma_ledger_region(&ledger, 7) != NULL && erx_dma_ledger_region(&ledger, 7)->address == region.address,
@@ -272,16 +287,18 @@ test_regions(void)
 	EXPECT(check(&ledger, &whole, 1, entries, 2) == ERX_DMA_PASSES, "two region entries end to end");
 
 	/* The queue's memory from a base above 0, at a 64-bit width: each edge, from either side, and a wrap. */
+	wide = split_ring(MEMORY, 0x90000000 + 8 * 0x1000, 32);
+	EXPECT(erx_dma_ledger_make(&ledger, &wide, &table) && erx_dma_ledger_region(&ledger, 8) == NULL &&
+	    erx_dma_ledger_region(&ledger, 7) != NULL, "a queue made over a region its device made before does not hold it");
 	wide = split_ring(MEMORY, 0x40000000, 64);
-	EXPECT(erx_dma_ledger_make(&ledger, &wide), "a 64-bit ledger");
-	EXPECT(!erx_dma_ledger_add_region(&ledger, (erx_dma_persistent_region_t){ 1, 0x40000000 - 0x1000, 0x1001 }),
+	EXPECT(!queue_holds(&wide, (erx_dma_persistent_region_t){ 1, 0x40000000 - 0x1000, 0x1001 }),
 	    "a region from below the queue into its first byte");
-	EXPECT(!erx_dma_ledger_add_region(&ledger, (erx_dma_persistent_region_t){ 1, 0x40000000 + MEMORY - 1, 0x1000 }),
+	EXPECT(!queue_holds(&wide, (erx_dma_persistent_region_t){ 1, 0x40000000 + MEMORY - 1, 0x1000 }),
 	    "a region from the queue's last byte");
-	EXPECT(!erx_dma_ledger_add_region(&ledger, (erx_dma_persistent_region_t){ 1, UINT64_MAX - 8, 0x1000 }),
+	EXPECT(!queue_holds(&wide, (erx_dma_persistent_region_t){ 1, UINT64_MAX - 8, 0x1000 }),
 	    "a region whose end wraps");
-	EXPECT(erx_dma_ledger_add_region(&ledger, (erx_dma_persistent_region_t){ 1, 0x40000000 - 0x1000, 0x1000 }) &&
-	    erx_dma_ledger_add_region(&ledger, (erx_dma_persistent_region_t){ 2, 0x40000000 + MEMORY, 0x1000 }),
+	EXPECT(queue_holds(&wide, (erx_dma_persistent_region_t){ 1, 0x40000000 - 0x1000, 0x1000 }) &&
+	    queue_holds(&wide, (erx_dma_persistent_region_t){ 2, 0x40000000 + MEMORY, 0x1000 }),
 	    "regions ending at the queue's first byte and starting past its last");
 }
 
@@ -292,7 +309,7 @@ test_transitions(void)
 	const erx_dma_place_t head = { DESC, 0 };
 	erx_dma_ledger_t ledger;
 
-	EXPECT(erx_dma_ledger_make(&ledger, &layout), "a ledger");
+	EXPECT(erx_dma_ledger_make(&ledger, &layout, &no_regions), "a ledger");
 	EXPECT(!hold_at(&ledger, 0, (erx_dma_place_t[]){ { DESC, 0 }, { USED, 0 } }, 2),
 	    "a holding of a record the device writes");
 	EXPECT(!hold_at(&ledger, 0, (erx_dma_place_t[]){ { DESC, 0 }, { AVAIL, 1 } }, 2), "an available entry out of order");
@@ -420,7 +437,7 @@ test_state_machine(void)
 
 	EXPECT(ledger != NULL, "memory for a ledger");
 	EXPECT(erx_dma_layout_split_ring(QUEUE, BUFFER, GRANULE, 192 + QUEUE * 128, 0, 32, &queue), "a queue of two");
-	EXPECT(erx_dma_ledger_make(ledger, &queue), "its ledger");
+	EXPECT(erx_dma_ledger_make(ledger, &queue, &no_regions), "its ledger");
 	for (unsigned event = 0; event < EVENTS; event++)
 		step(ledger, &empty, event, 0, &runs);
 	printf("state machine: %lu events checked\n", runs);

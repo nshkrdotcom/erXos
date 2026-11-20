@@ -98,6 +98,14 @@ bool	erx_dma_acquire(erx_dma_ledger_t *ledger, uint32_t reports, uint16_t index,
 erx_dma_range_t	erx_dma_acquire_record(const erx_dma_ledger_t *ledger, uint32_t reports, uint32_t k);
 
 /*
+ * The live holding the record at the consumer position of `reports`, as the acquisition read
+ * it, would end, without ending it, so a form judges the rest of the record first; NULL where
+ * erx_dma_consume would refuse it. The holding is the ledger's, valid until the ledger changes.
+ */
+const erx_dma_holding_t	*erx_dma_report_holding(const erx_dma_ledger_t *ledger, uint32_t reports,
+			    const erx_report_record_t *record);
+
+/*
  * Consumes the record at the consumer position of table `reports`, as the acquisition read it,
  * and ends the holding it releases into `*ended`. False, changing nothing, for a record past
  * what the acquisition covered, one whose selector names no meaning, one that releases nothing

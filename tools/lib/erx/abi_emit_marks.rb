@@ -65,8 +65,10 @@ module Erx
 
         arms = device.flat_map do |target|
           offered = meanings.select { |meaning| meaning.structure.name == target.name }
+          # A meaning with no selector is its structure's one meaning and always answers.
+          fallthrough = offered.all?(&:selector) ? ["\t\treturn (false);"] : []
           ["\tcase #{structure_constant(target.name)}:", *offered.flat_map { |meaning| select_arm(meaning) },
-           "\t\treturn (false);"]
+           *fallthrough]
         end
         reported = meanings.select(&:report?)
         releasing = reported.select(&:release)

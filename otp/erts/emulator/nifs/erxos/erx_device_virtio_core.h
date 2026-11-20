@@ -15,7 +15,10 @@
  *             per piece the device reads. No piece is empty, and none the device reads follows
  *             one it writes (Virtio 1.2, section 2.7.4.2), so the fills are the first pieces in
  *             order and the bytes the device writes are one range, from the readable pieces'
- *             end. The buffer is the lowest one no holding holds.
+ *             end. A piece naming a region is read by the device and is one region entry
+ *             long, which the sequencer encodes from the ledger's record of the region by its
+ *             name; a region its device's table lacks breaks the fills rule. The buffer is the
+ *             lowest one no holding holds.
  *   acquire   the used index, loaded once, says how many used elements are new: at most the
  *             live chains (erx_dma_acquire).
  *   complete  each used element, read whole, releases the chain whose head its id names
@@ -63,11 +66,12 @@ typedef struct erx_split_ring_answer {
 } erx_split_ring_answer_t;
 
 /*
- * An empty ring over `layout`, a split ring's as erx_dma_layout_split_ring makes it. False, writing
+ * An empty ring over `layout`, a split ring's as erx_dma_layout_split_ring makes it, whose region
+ * entries name the regions of `regions`, its device's table (erx_dma_ledger_make). False, writing
  * nothing, for a layout erx_dma_ledger_make refuses, one lacking a descriptor table, an available
  * ring or a used ring, or one of more than ERX_DEVICE_QUEUE_SIZE_MAX buffers.
  */
-bool	erx_split_ring_make(erx_split_ring_t *ring, const erx_dma_layout_t *layout);
+bool	erx_split_ring_make(erx_split_ring_t *ring, const erx_dma_layout_t *layout, const erx_dma_regions_t *regions);
 /* The device's idle report after a reset: every chain ends and the ring is whole again. */
 void	erx_split_ring_reset(erx_split_ring_t *ring);
 const erx_dma_ledger_t	*erx_split_ring_ledger(const erx_split_ring_t *ring);
@@ -77,9 +81,10 @@ const erx_dma_ledger_t	*erx_split_ring_ledger(const erx_split_ring_t *ring);
  * applies as erx_device_sequencer.h says; sequence->fills[i] is where pieces[i]'s bytes go.
  * ERX_EINVAL, in order, for a count outside 1..ERX_DEVICE_CHAIN_MAX or pieces longer together
  * than a buffer; ERX_ECORRUPT for a broken ring; ERX_EWOULDBLOCK for no free buffer; ERX_EINVAL
- * for an empty piece or one the device reads after one it writes; then ERX_EWOULDBLOCK for too
- * few free descriptors or a held next available entry (the check's room rule), and ERX_EINVAL
- * for any other verdict, a bug of this core. Anything but ERX_OK changes nothing.
+ * for an empty piece, one the device reads after one it writes, or a region it writes; then
+ * ERX_EWOULDBLOCK for too few free descriptors or a held next available entry (the check's room
+ * rule), and ERX_EINVAL for any other verdict: a region its device does not have (the fills rule)
+ * or a bug of this core. Anything but ERX_OK changes nothing.
  */
 int	erx_split_ring_post(erx_split_ring_t *ring, const erx_dma_piece_t *pieces, uint32_t count, uint64_t tag,
 	    erx_dma_sequence_t *sequence);

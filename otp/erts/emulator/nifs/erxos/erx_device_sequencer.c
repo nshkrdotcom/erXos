@@ -138,7 +138,7 @@ encode(const erx_dma_layout_t *layout, const erx_dma_description_t *description,
 /*
  * A region entry, whole, through its layout's encoder, at `at` of the record's memory: the
  * persistent region's device address and whole length. False where the encoder refuses them,
- * which cannot happen: erx_dma_ledger_add_region refuses a length the entry cannot state.
+ * which cannot happen: erx_dma_regions_add refuses a length the entry cannot state.
  */
 static bool
 encode_region_entry(const erx_dma_persistent_region_t *region, uint64_t at, erx_dma_store_t *store)
@@ -276,9 +276,14 @@ erx_dma_acquire_record(const erx_dma_ledger_t *ledger, uint32_t reports, uint32_
 	return ((erx_dma_range_t){ record_offset(layout, (erx_dma_place_t){ reports, index }), table->stride });
 }
 
-bool
-erx_dma_consume(erx_dma_ledger_t *ledger, uint32_t reports, const erx_report_record_t *record,
-    erx_dma_holding_t *ended)
+/*
+ * The head of the holding the record at the consumer position of `reports` names, through its
+ * meaning's `releases` mark. False for a record past what the acquisition covered, one whose
+ * selector names no meaning, or one naming no record of a table the ledger has.
+ */
+static bool
+report_head(const erx_dma_ledger_t *ledger, uint32_t reports, const erx_report_record_t *record,
+    erx_dma_place_t *head)
 {
 	const erx_dma_layout_t *layout = erx_dma_ledger_layout(ledger);
 	uint32_t meaning, structure;
@@ -295,5 +300,23 @@ erx_dma_consume(erx_dma_ledger_t *ledger, uint32_t reports, const erx_report_rec
 	target = erx_dma_ledger_table(ledger, structure);
 	if (target < 0 || value >= layout->tables[target].count)
 		return (false);
-	return (erx_dma_ledger_release(ledger, reports, (erx_dma_place_t){ (uint32_t)target, (uint32_t)value }, ended));
+	*head = (erx_dma_place_t){ (uint32_t)target, (uint32_t)value };
+	return (true);
+}
+
+const erx_dma_holding_t *
+erx_dma_report_holding(const erx_dma_ledger_t *ledger, uint32_t reports, const erx_report_record_t *record)
+{
+	erx_dma_place_t head;
+
+	return (report_head(ledger, reports, record, &head) ? erx_dma_ledger_holding(ledger, head) : NULL);
+}
+
+bool
+erx_dma_consume(erx_dma_ledger_t *ledger, uint32_t reports, const erx_report_record_t *record,
+    erx_dma_holding_t *ended)
+{
+	erx_dma_place_t head;
+
+	return (report_head(ledger, reports, record, &head) && erx_dma_ledger_release(ledger, reports, head, ended));
 }
