@@ -75,7 +75,7 @@ builds erXos's own kernel and replaces Fiasco.
 The design documents describe the target. The book describes both the
 target and what runs, and never presents the first as the second. Every
 chapter carries a status box, and every passage about something not yet
-running says so in its own sentence. The box uses three marks:
+running says so in its own sentence. The box uses these marks:
 
 | Mark | Meaning |
 | --- | --- |
@@ -148,6 +148,9 @@ services are exactly its interface: everything else runs in user mode.
 
 ## Conventions
 
+* Every chapter follows the prose guide, [style.md](style.md): its voice,
+  the shape of a chapter, background for newcomers, honesty about what is
+  built, and the checklist each writer runs before committing.
 * Each chapter is a file `NN-name.md` in this directory, in GitHub
   Flavored Markdown, its figures Mermaid where GitHub renders it and
   text diagrams otherwise, as [Decisions](#decisions) settles.
