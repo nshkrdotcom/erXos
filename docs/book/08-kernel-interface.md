@@ -605,7 +605,7 @@ ring and the ack (`erx_irq_trigger` and `erx_irq_ack` in
 invoke it, with no request to the root, and an empty slot answers
 `ERX_ESTALE`. In the root the same window of slots comes first, and
 its gate, its interrupt objects and each task's run lie past it, in
-one layout derived at build time (`thread.h`). Only a direct use after
+one layout derived at build time (`root_layout.h`). Only a direct use after
 a close is unchecked, because Fiasco checks the slot alone.
 
 ### 8.4.5 Why handles flow only down

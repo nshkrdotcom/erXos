@@ -17,6 +17,7 @@
 #include "liberx/backend/api.h"
 #include "liberx/backend/fiasco/log.h"
 #include "liberx/backend/fiasco/pm_wdt.h"
+#include "liberx/backend/fiasco/root_layout.h"
 #include "liberx/backend/fiasco/service.h"
 #include "liberx/backend/fiasco/thread.h"
 #include "liberx/backend/fiasco/watchdog_thread.h"

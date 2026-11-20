@@ -35,6 +35,7 @@
 #include "liberx/backend/fiasco/fault_gate.h"
 #include "liberx/backend/fiasco/group.h"
 #include "liberx/backend/fiasco/object.h"
+#include "liberx/backend/fiasco/root_layout.h"
 #include "liberx/backend/fiasco/service_task.h"
 #include "liberx/backend/fiasco/thread.h"
 #include "liberx/backend/fiasco/vm.h"

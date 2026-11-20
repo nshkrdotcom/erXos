@@ -503,7 +503,7 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   test in `test/host/handles_test.rb`, but the wrappers (`service_task.c`, `erx_fiasco_task_create_body`,
   `erx_fiasco_task_image_map_body`; `object.c`, `erx_fiasco_cap_pass_body`) include Fiasco's headers and build
   only for the target, so it belongs in a guest suite, or the design's note changes.
-* [Medium] 0.2 on Fiasco, `liberx/backend/fiasco/thread.h`: the root's layout plan lays out
+* [Medium] 0.2 on Fiasco, `liberx/backend/fiasco/root_layout.h`: the root's layout plan lays out
   `ERX_FIASCO_TASK_RUNS_MAX` (192) task runs, and `task_fill_space` refuses a task past them, where the design's
   [Handles](docs/design-fiasco.md#handles) section lays out the runs of the most tasks the task table admits
   (1,024, [Table sizes](docs/design-fiasco.md#table-sizes)). A run is 259 slots, so 1,024 runs take 265,216 slots
@@ -3995,10 +3995,14 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   every end a session process holds, so a session runs about 30 programs with writers; or a program holding
   64 or more pipe ends and its channel bell. The 65-writer case therefore waits for erXos's kernel. Not worked around
   on Fiasco.
-* [Low] Fiasco backend, `liberx/backend/fiasco/thread.h` (`ERX_FIASCO_IRQS_MAX`, 256): the machine holds at most
+* [Low] Fiasco backend, `liberx/backend/fiasco/root_layout.h` (`ERX_FIASCO_IRQS_MAX`, 256): the machine holds at most
   256 IRQ objects, one per program channel doorbell, one per pipe end and so on; an object past it fails
   with `ERX_ENOMEM`. Busy sessions with many programs and pipes can reach it. erXos's kernel has no such
   table.
+* [Low] Fiasco backend, musl's seam (`musl/src/internal/erxos/syscall.c`, `musl/src/thread/erxos/clone.c`): it
+  includes the backend's own headers (`thread.h`, `service.h`, `vm.h` and others), which
+  `fiasco-backend-headers-private` allows for it alone, so a backend header that grows an l4 include breaks
+  libc.a. A neutral liberx header carrying only what the seam calls would take musl off that allow-list.
 * [Low] hosted backend, `liberx/backend/hosted/group.c` (`irq_objects`): the hosted backend holds 64 IRQ
   objects in total (`ERX_BACKEND_PARK_OBJECTS_MAX`), so a hosted run with many programs and pipe ends
   fails earlier than the QEMU runs do.

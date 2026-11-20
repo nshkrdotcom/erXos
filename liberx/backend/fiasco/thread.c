@@ -27,6 +27,7 @@
 #include "liberx/backend/fiasco/lock.h"
 #include "liberx/backend/fiasco/log.h"
 #include "liberx/backend/fiasco/park.h"
+#include "liberx/backend/fiasco/root_layout.h"
 #include "liberx/backend/fiasco/service.h"
 #include "liberx/backend/fiasco/thread.h"
 #include "liberx/backend/fiasco/thread_claim.h"

@@ -49,6 +49,7 @@
 #include "liberx/backend/fiasco/group.h"
 #include "liberx/backend/fiasco/msi_lines.h"
 #include "liberx/backend/fiasco/object.h"
+#include "liberx/backend/fiasco/root_layout.h"
 #include "liberx/backend/fiasco/service.h"
 #include "liberx/backend/fiasco/service_task.h"
 #include "liberx/backend/fiasco/service_wire.h"

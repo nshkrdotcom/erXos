@@ -108,6 +108,7 @@ module Erx
         liberx/backend/fiasco/root_handoff.h
         liberx/backend/fiasco/root_mem.c
         liberx/backend/fiasco/root_mem.h
+        liberx/backend/fiasco/root_layout.h
         liberx/backend/fiasco/service.c
         liberx/backend/fiasco/service.h
         liberx/backend/fiasco/service_task.c

@@ -24,6 +24,7 @@
 #include "liberx/backend/core/entropy_read.h"
 #include "liberx/backend/core/gate.h"
 #include "liberx/backend/core/handles.h"
+#include "liberx/backend/fiasco/root_layout.h"
 #include "liberx/backend/fiasco/service.h"
 #include "liberx/backend/fiasco/thread.h"
 #include "liberx/backend/fiasco/vm.h"

@@ -26,6 +26,7 @@
 #include "liberx/backend/fiasco/launcher.h"
 #include "liberx/backend/fiasco/log.h"
 #include "liberx/backend/fiasco/park.h"
+#include "liberx/backend/fiasco/root_layout.h"
 #include "liberx/backend/fiasco/root_open.h"
 #include "liberx/backend/fiasco/service.h"
 #include "liberx/backend/fiasco/service_task.h"
