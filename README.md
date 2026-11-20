@@ -278,8 +278,9 @@ Eshell V17.1.1 (type help(). for help)
   commands (`ls`, `cat`, `grep`, `ps`, `top`, `mount`, `dmesg`, `uname`,
   `ping`, `host` and others) are Erlang commands that follow FreeBSD's
   output, and pipes carry text.
-* The start table runs services; `service` enables and stops them as
-  FreeBSD's does.
+* The start table runs services; `service` enables, starts and stops
+  them with FreeBSD's verbs and messages, and its `enable` also starts
+  the row, which FreeBSD's does not.
 * Root's session can end the machine: `reboot` resets it and `halt`
   powers it off, at root's console session and at the system domain's
   shell.
@@ -287,13 +288,11 @@ Eshell V17.1.1 (type help(). for help)
   passes a change of its line's size to the foreground jobs that asked
   for it.
 * Each terminal master in a session has a tty of its own, and its close
-  hangs up that tty's shells. The line discipline that will serve them,
-  `erx_tty` (cooked editing, signals for the foreground group, `termios`
-  modes and timers, after FreeBSD's), is a pure core with host tests, and
-  no tty runs it yet. The terminal relay (`erx_session_relay`, with its pure cores
-  `erx_session_relay_core` and `erx_tty_link`) is a server with host
-  tests, one relay per tty; `erx_output` and a tty that runs the line
-  discipline are not built.
+  hangs up that tty's shells. Each tty's terminal relay
+  (`erx_session_relay`, with its pure cores `erx_session_relay_core` and
+  `erx_tty_link`) runs the line discipline `erx_tty` (cooked editing,
+  signals for the foreground group, `termios` modes and timers, after
+  FreeBSD's), a pure core with host tests; `erx_output` is not built.
 * Programs have pipes and a session process can start one. A program's
   `kill` and `kill(pid, 0)` are answered by its handler, and a program
   reaches only itself. The command shell runs a program of the session's
@@ -361,7 +360,7 @@ Eshell V17.1.1 (type help(). for help)
   GENET driver on the Pi 4. `ifconfig`, `ping`, `host`, and `gen_tcp`
   connections out and in work in root's session.
 * In a development build, root logs in over SSH with the clone's
-  development key to an Erlang shell in root's session, served by OTP's
+  development key to `rc` in root's session, served by OTP's
   `ssh` daemon, whose version banner names erXos and the release. The
   first boot imports the `authorized_keys` of the card's FAT volume into
   root's home. The network suite logs in through a host port forward,
