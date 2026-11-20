@@ -41,7 +41,7 @@ Then `negotiate`, which the process answers with `{negotiated, Result}`;
 `{error, ebusy}` calls it again `xhci_poll_ms` later, and an install still
 busy `xhci_install_deadline_ms` after its first call fails the controller
 without being called again. Its `ok` starts the bus with the root hub's port count,
-`{start_bus, Ports}`, and the controller is `running`.
+`{start_bus, Ports}`, and the controller runs.
 
 **Root ports.** The bus process's root-hub operation `{port, From, Port,
 Op}` reads the port's PORTSC and answers from it: `get_status` with the
@@ -62,11 +62,18 @@ not yet opened its interrupt, is held unacknowledged: a line the firmware
 left asserted, as the VL805's INTx may be, stays masked until the
 install has reset the controller, and the one `ack` it is owed goes out
 with `{start_bus, Ports}`. A controller that fails first does not
-acknowledge it: the process's exit unbinds the line, which masks it. One of a
-running controller reads USBSTS and IMAN: a host system error
-fails the controller, which has halted (4.10.2.6, pp. 200-201);
-otherwise the core clears USBSTS's event interrupt and IMAN's interrupt
-pending, both write-one-to-clear (5.4.2, pp. 397-399; 5.5.2.1, pp.
+acknowledge it: the process's exit unbinds the line, which masks it. Events
+are never polled, but a running controller's status is: USBSTS is read on
+every interrupt and, at `expired`, every `xhci_status_interval_ms` whether
+interrupts come or not, and a host system error (4.10.2.6, pp. 200-201), a
+host controller error (4.24.1, p. 358) or a halt fails the controller
+(5.4.2, pp. 397-399); an all-ones read, from a function that left the bus,
+shows a host system error, and a word that is not an integer fails it as
+an unexpected read. USBCMD.HSEE stays clear, since it signals only on the
+bus, through SERR#, which the PCIe domain owns. An interrupt of a running
+controller reads USBSTS and IMAN, and when neither error nor halt shows,
+the core clears USBSTS's event interrupt and IMAN's interrupt pending,
+both write-one-to-clear (5.4.2, pp. 397-399; 5.5.2.1, pp.
 425-426), and asks to `complete`. The process answers each call of
 complete/2 with `{completed, Result}`: each transfer's or command's
 completion is handled as `{complete, Tag, Code, Extra}` and each port's
@@ -232,13 +239,13 @@ names.
 Where the start has got to: not started; the capability registers asked
 for; the BIOS's semaphore being read, or polled again at a time, until the
 handoff gives up; the install called, or called again at a time, until its
-deadline; running.
+deadline; running, with the time USBSTS is next read.
 """.
 -type phase() :: stopped
                | {capabilities, bound()}
                | {bios_handoff, GiveUp :: ms(), reading | {poll, ms()}}
                | {installing, Deadline :: ms(), calling | {retry, ms()}}
-               | running.
+               | {running, NextRead :: ms()}.
 
 -type result() :: {ok, binary()} | {error, term()}.
 -doc "Who a transfer's result goes to: a caller, or the reset of a pipe whose step it is.".
@@ -319,7 +326,7 @@ step(Event, Now, State) ->
 release_line({S = #{line := held}, A}) -> emit(ack, {S#{line := idle}, A});
 release_line(Acc) -> Acc.
 
--doc "The earliest of the command's deadline and the start's next poll, or `none`.".
+-doc "The earliest of the command's deadline and the phase's, the start's next poll or the next status read, or `none`.".
 -spec next_deadline(state()) -> ms() | none.
 next_deadline(#{command := Command, phase := Phase}) ->
     case [At || At <- [command_deadline(Command), phase_deadline(Phase)], At =/= none] of
@@ -332,6 +339,7 @@ command_deadline({_Tag, _Owner, _Command, At}) -> At.
 
 phase_deadline({bios_handoff, _GiveUp, {poll, At}}) -> At;
 phase_deadline({installing, _Deadline, {retry, At}}) -> At;
+phase_deadline({running, At}) -> At;
 phase_deadline(_Phase) -> none.
 
 %% Events
@@ -369,7 +377,7 @@ event({read, Words}, Now, Acc) ->
     read(lists:sort(maps:to_list(Words)), Now, Acc);
 event({negotiated, Result}, Now, Acc = {#{phase := {installing, _, calling}}, _}) ->
     negotiated(Result, Now, Acc);
-event(interrupt, _Now, Acc = {#{phase := running}, _}) ->
+event(interrupt, _Now, Acc = {#{phase := {running, _}}, _}) ->
     emit({read, [usbsts, iman]}, Acc);
 event(interrupt, _Now, {S, A}) ->
     {S#{line := held}, A};
@@ -379,7 +387,7 @@ event({completed, {error, Reason}}, _Now, Acc) ->
     emit({fail, {complete, Reason}}, Acc);
 event({completed, _Batch}, _Now, Acc) ->
     emit({fail, {unexpected, completed}}, Acc);
-event({port, From, Port, Op}, _Now, {S = #{phase := running, port_ops := Ops}, A}) ->
+event({port, From, Port, Op}, _Now, {S = #{phase := {running, _}, port_ops := Ops}, A}) ->
     emit({read, [{portsc, Port}]}, {S#{port_ops := Ops ++ [{Port, Op, From}]}, A});
 event({port, From, _Port, _Op}, _Now, Acc) ->
     answer({reply, From}, {error, halted}, Acc);
@@ -425,8 +433,8 @@ bios_owned(Byte, Now, Acc = {#{phase := {bios_handoff, GiveUp, reading}}, _}) ->
 install(Now, Acc) ->
     emit(negotiate, set_phase({installing, Now + ?ERX_XHCI_INSTALL_DEADLINE_MS, calling}, Acc)).
 
-negotiated(ok, _Now, Acc = {#{capabilities := #{ports := Ports}}, _}) ->
-    release_line(emit({start_bus, Ports}, set_phase(running, Acc)));
+negotiated(ok, Now, Acc = {#{capabilities := #{ports := Ports}}, _}) ->
+    release_line(emit({start_bus, Ports}, set_phase({running, Now + ?ERX_XHCI_STATUS_INTERVAL_MS}, Acc)));
 negotiated({error, ebusy}, Now, Acc = {#{phase := {installing, Deadline, calling}}, _}) when Now < Deadline ->
     set_phase({installing, Deadline, {retry, min(Now + ?ERX_XHCI_POLL_MS, Deadline)}}, Acc);
 negotiated({error, ebusy}, _Now, Acc) ->
@@ -440,6 +448,8 @@ phase_expired(Now, Acc = {#{phase := {installing, Deadline, {retry, _}}}, _}) wh
     emit({fail, install_timeout}, Acc);
 phase_expired(Now, Acc = {#{phase := {installing, Deadline, {retry, At}}}, _}) when At =< Now ->
     emit(negotiate, set_phase({installing, Deadline, calling}, Acc));
+phase_expired(Now, Acc = {#{phase := {running, At}}, _}) when At =< Now ->
+    emit({read, [usbsts]}, set_phase({running, Now + ?ERX_XHCI_STATUS_INTERVAL_MS}, Acc));
 phase_expired(_Now, Acc) ->
     Acc.
 
@@ -461,24 +471,45 @@ read([{{portsc, Port}, Word}], _Now, {S = #{port_ops := Ops}, A}) ->
         false ->
             emit({fail, {unexpected_read, {portsc, Port}}}, {S, A})
     end;
-read([{iman, Iman}, {usbsts, Status}], _Now, Acc) ->
+read([{iman, Iman}, {usbsts, Status}], _Now, Acc = {#{phase := {running, _}}, _})
+  when is_integer(Iman), is_integer(Status) ->
     serviced(Status, Iman, Acc);
+read([{usbsts, Status}], _Now, Acc = {#{phase := {running, _}}, _}) when is_integer(Status) ->
+    case status_fault(Status) of
+        none -> Acc;
+        Fault -> emit({fail, Fault}, Acc)
+    end;
 read(Words, _Now, Acc) ->
     emit({fail, {unexpected_read, [Register || {Register, _} <- Words]}}, Acc).
 
 %% Events
 
-%% An interrupt's status: a host system error fails the controller, which has
-%% halted; otherwise the event interrupt and the interrupter's pending bit are
-%% cleared before the event ring is read.
-serviced(Status, _Iman, Acc) when ?ERX_HW_XHCI_USBSTS_HSE_GET(Status) =/= 0 ->
-    emit({fail, host_system_error}, Acc);
+%% An interrupt's status: a controller that has stopped fails; otherwise the
+%% event interrupt and the interrupter's pending bit are cleared before the
+%% event ring is read.
 serviced(Status, Iman, Acc) ->
-    Eint = ?ERX_HW_XHCI_USBSTS_EINT_MASK,
-    Ip = ?ERX_HW_XHCI_IMAN_IP_MASK,
-    Cleared = emit({write, iman, modify(Iman, ?ERX_HW_XHCI_IMAN_PRESERVE, Ip, Ip)},
-                   emit({write, usbsts, modify(Status, ?ERX_HW_XHCI_USBSTS_PRESERVE, Eint, Eint)}, Acc)),
-    emit(complete, set_line({draining, 0}, Cleared)).
+    case status_fault(Status) of
+        none ->
+            Eint = ?ERX_HW_XHCI_USBSTS_EINT_MASK,
+            Ip = ?ERX_HW_XHCI_IMAN_IP_MASK,
+            Cleared = emit({write, iman, modify(Iman, ?ERX_HW_XHCI_IMAN_PRESERVE, Ip, Ip)},
+                           emit({write, usbsts, modify(Status, ?ERX_HW_XHCI_USBSTS_PRESERVE, Eint, Eint)}, Acc)),
+            emit(complete, set_line({draining, 0}, Cleared));
+        Fault ->
+            emit({fail, Fault}, Acc)
+    end.
+
+%% What stopped a controller that should be running, whose USBSTS reads Status,
+%% or `none`: a host system error, which an all-ones read from a function that
+%% left the bus shows too; a host controller error, which only a reset clears
+%% (4.24.1, p. 358); or halted with neither.
+status_fault(Status) ->
+    if
+        ?ERX_HW_XHCI_USBSTS_HSE_GET(Status) =/= 0 -> host_system_error;
+        ?ERX_HW_XHCI_USBSTS_HCE_GET(Status) =/= 0 -> host_controller_error;
+        ?ERX_HW_XHCI_USBSTS_HCH_GET(Status) =/= 0 -> host_controller_halted;
+        true -> none
+    end.
 
 %% A batch of Count events handled: the pass reads on while the batch was not
 %% empty and the pass has not reached its bound, and acknowledges the line

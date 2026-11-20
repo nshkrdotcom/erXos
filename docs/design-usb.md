@@ -1725,8 +1725,18 @@ may be, stays masked until the install has reset the controller, and
 its one acknowledgement goes out with the bus's start. A controller
 that fails first does not acknowledge it, since the process's exit
 unbinds the line, which masks it. Every controller of the kinds table is given with its
-interrupt, an MSI or the Pi 4's INTx line, so no controller is polled
-([A shared line is refused](#interrupts)). Each completion is a transfer's, with its tag, completion code
+interrupt, an MSI or the Pi 4's INTx line
+([A shared line is refused](#interrupts)), so events are never polled;
+status is read about once a second. The process reads `USBSTS` on
+every interrupt and, while the controller runs, every
+`xhci_status_interval_ms` (1 s) whether interrupts come or not, and
+fails the controller on a host system error (`HSE`), a host controller
+error (`HCE`), which only a reset clears, or `HCH` set while it should be
+running (xHCI 4.10.2.6, pp. 200-201; 4.24.1, p. 358; 5.4.2, pp.
+397-399). A function that left the bus reads all ones, which
+includes `HSE`, so a controller that stopped or vanished without an
+interrupt fails within about a second rather than leaving its callers
+waiting on completions that never come. Each completion is a transfer's, with its tag, completion code
 and bytes; a command's, with its tag, code and, for enable slot, the
 slot, for address device, the address; or a port's event, with the port.
 Erlang names the codes from `abi/formats/xhci.txt`.
@@ -2058,9 +2068,12 @@ and `USBCMD` with run and `INTE`, in FreeBSD's order
 controller interrupts only with both gates open (4.2, p. 82), and a
 reset closes `INTE` (5.4.1, p. 394), so both are written by this one
 decision, which runs after every reset and opens both, since every
-controller is given with its interrupt. `USBCMD.HSEE` stays clear: a
-host system error is read from `USBSTS` on every pass of the event loop
-rather than signalled on the bus. The segment table must be clean
+controller is given with its interrupt. `USBCMD.HSEE` stays clear: it
+only signals a host system error out of band, on the bus, gated by
+`SERR#` in the function's command register, which the PCIe domain
+owns; the controller process reads it from `USBSTS` instead, on every
+interrupt and about once a second ([The controller process](#the-controller-process)).
+The segment table must be clean
 before its base is written, since that write makes the controller read
 the table and enables the event ring (4.2, p. 82), which is why FreeBSD
 flushes first (`xhci.c:383-394`); the decision's handoffs clean every
@@ -2738,7 +2751,7 @@ medium had gone after the request.
 | a medium removed or changed | TEST UNIT READY, UNIT ATTENTION, the detach | the medium; its windows end | the FAT server unmounts and remounts on the next walk |
 | a medium that cannot flush | the readiness SYNCHRONIZE CACHE | nothing: its flushes answer `no_flush` | none; the FAT server mounts it read-only, with `no flush: read-only` in the mount's record |
 | a control transfer not answered in 5 s | the controller process's deadline | the transfer, answered `timeout` after Stop Endpoint and Set TR Dequeue Pointer past it | the caller's; EP0 is open again |
-| a command not answered in 5 s, an event that fails the form's checks, the controller's host system error, a wait of the install past its deadline | the controller process | the controller process | the bus group restarts; `negotiate/2` resets the controller and returns every buffer; every device is enumerated again; places survive, so each input number carries `release` and each medium's windows end |
+| a command not answered in 5 s, an event that fails the form's checks, the controller's host system error, host controller error or halt while it runs, read from `USBSTS` on an interrupt or once a second, an all-ones read from a function that left the bus among them, a wait of the install past its deadline | the controller process | the controller process | the bus group restarts; `negotiate/2` resets the controller and returns every buffer; every device is enumerated again; places survive, so each input number carries `release` and each medium's windows end |
 | a register access that aborts (the controller fell off its bus) | the kernel, on erXos's kernel; on Fiasco an SError ends the task of the next thread to enter user mode on its CPU, which need not be the USB domain's, and the controller's next deadline fails it | the USB domain, by the fault, on erXos's kernel; the controller process on Fiasco | the domain service restarts the domain, which gets its unit again; the display's readers see their files end and start again when the tree is granted again, and each drive's holder is introduced again, as for a block driver's domain |
 | a configuration access below the root port with the link down | the bridge driver's link reads, before and after | the access, answered `link_down`; the function's position is reported gone | none of its own; an abort that does arrive ends the PCIe domain on erXos's kernel, as the next row |
 | the PCIe domain ends | the domain service | the enumerator and the bridge driver | the domain restarts; with the link up and the VL805's firmware present the bridge driver resets nothing and running functions are unchanged; otherwise it turns the link off cleanly, brings the bridge up again and asks for the firmware |
@@ -2808,7 +2821,7 @@ targeted traces carry the longer sequences.
 | `erx_usb_hub_core`, its machine explored to a fixed point for hubs of 1, 2, 7, 8 and 15 ports over every report of the port count's length with each port bit and the bits around it, a short report and a failed transfer; its decoders on written cases | a change report sent with the next transfer already posted; `handled` taken without posting the next transfer; the bits above the port count kept; a report shorter than the port count taken as naming nothing |
 | `erx_xhci_core`'s pipe machine, teardown, control abort and failed address, explored to a fixed point over every queue state the NIF reports and every answer of each step, EP0 and other endpoints, behind a translator and not | `reset_pipe` issuing Reset Endpoint on a stopped queue; a stopped EP0 dropped and added; the abort answered after Stop Endpoint alone, so the next request finds EP0 stopped; the translator's clear skipped; Disable Slot issued before the stops answer; an Address Device whose device detached while it was posted left unanswered |
 | `erx_xhci_core`'s start, explored to a fixed point with and without a legacy support capability over every answer of the BIOS's semaphore and of the install and an interrupt at any time, the clock moving to each deadline; a run that has not ended always has a next step | the install called while the BIOS still owns the controller; the BIOS's semaphore never polled again; an interrupt before the controller runs acknowledged at once, or with a failure |
-| `erx_xhci_core`'s root ports and interrupt pass: every PORTSC write over many words, every change bit cleared by the name it shows as, a host system error, a pass bounded at two wraps of the event ring | a PORTSC write keeping the change and enable bits it read; the configuration error change behind no clear; a host system error ignored; an interrupt pass not bounded |
+| `erx_xhci_core`'s root ports and interrupt pass: every PORTSC write over many words, every change bit cleared by the name it shows as, a host system error, a pass bounded at two wraps of the event ring, `USBSTS` read once a second while running, each of those, a host controller error, a halt and an all-ones read failing the controller on an interrupt and on that read | a PORTSC write keeping the change and enable bits it read; the configuration error change behind no clear; a host system error ignored; a host controller error ignored; a halt ignored; a running controller's status never read between interrupts; an interrupt pass not bounded |
 | `erx_device_trb`, in C on the host, explored to a fixed point over rings of six TRBs and a link, two slots, two queues each, one buffer a queue, events of every code and kind, stops, resets, dequeue moves, drops and disables, so ring wrap and slot reuse are reachable; then traces of 100,000 transfers with random completions and 1,000 slot reuses; then under AddressSanitizer | a short data-stage event treated as completing, so the status event names no transfer and breaks the form; the stop span narrowed to the oldest transfer's first TRB and the enqueue position, so a completion followed by its forced event breaks the form; the enqueue position left on the link after a post that ends before it; Disable Slot accepted with a queue running; the TRB pointer's range check removed |
 | the publication, in C on the host, against a model controller that takes a TRB the moment its cycle bit matches | the first TRB's cycle word written with the other TRBs |
 | the event ring's bound | the forced stop event left out of the model's sources |

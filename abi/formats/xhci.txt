@@ -55,6 +55,13 @@ limit xhci_poll_ms u32 10
 limit xhci_bios_handoff_ms u32 5000
 limit xhci_install_deadline_ms u32 3000
 
+# A running controller's USBSTS is read on every interrupt and, whether interrupts come or
+# not, this often
+# (design-usb.md, "The controller process"), so a controller that stopped without an
+# interrupt, on a host controller error or a halt, or that left the bus, fails within
+# about a second; an erXos choice. Events are never polled.
+limit xhci_status_interval_ms u32 1000
+
 # An interrupt pass stops and acknowledges the line once it has read this many events: two
 # wraps of the event ring's 512 entries (design-usb.md, "The TRB ring form"), where
 # FreeBSD's xhci_interrupt_poll stops (xhci.c:1138, :1167-1176).

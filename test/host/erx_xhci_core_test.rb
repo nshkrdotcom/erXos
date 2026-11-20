@@ -19,7 +19,9 @@ require_relative '../fixtures/erlang_build'
 # keeping the change and enable bits it read; a change bit no clear reaches; the install
 # called while the BIOS still owns the controller; the BIOS's semaphore never polled
 # again, a start that stalls; an interrupt before the controller runs acknowledged at
-# once; a held interrupt acknowledged with a failure; a host system error ignored; an interrupt pass not bounded; and a lost command
+# once; a held interrupt acknowledged with a failure; a host system error ignored;
+# a host controller error ignored; a halt ignored; a running controller's status never read between
+# interrupts; an interrupt pass not bounded; and a lost command
 # never failing the controller.
 class ErxXhciCoreTest < Minitest::Test
   APPLICATIONS = %w[erx_usb].freeze
@@ -28,6 +30,7 @@ class ErxXhciCoreTest < Minitest::Test
   DEADLINE_SECONDS = '600'
   EXPLORED = 'the_pipe_machine_is_explored_to_a_fixed_point_test_'
   START_EXPLORED = 'the_start_is_explored_to_a_fixed_point_test_'
+  STATUS = 'the_status_of_a_running_controller_is_read_each_second_test'
 
   Seed = Data.define(:fault, :anchor, :replacement, :catching_case)
 
@@ -65,9 +68,21 @@ class ErxXhciCoreTest < Minitest::Test
              replacement: 'Byte band ?SEMAPHORE_OWNED >= 0 -> install(Now, Acc);',
              catching_case: START_EXPLORED),
     Seed.new(fault: 'a host system error ignored',
-             anchor: 'when ?ERX_HW_XHCI_USBSTS_HSE_GET(Status) =/= 0 ->',
-             replacement: 'when ?ERX_HW_XHCI_USBSTS_HSE_GET(Status) =:= 2 ->',
+             anchor: '?ERX_HW_XHCI_USBSTS_HSE_GET(Status) =/= 0 -> host_system_error;',
+             replacement: '?ERX_HW_XHCI_USBSTS_HSE_GET(Status) =:= 2 -> host_system_error;',
              catching_case: 'an_interrupt_pass_test'),
+    Seed.new(fault: 'a host controller error ignored',
+             anchor: '?ERX_HW_XHCI_USBSTS_HCE_GET(Status) =/= 0 -> host_controller_error;',
+             replacement: '?ERX_HW_XHCI_USBSTS_HCE_GET(Status) =:= 2 -> host_controller_error;',
+             catching_case: STATUS),
+    Seed.new(fault: 'a halt ignored',
+             anchor: '?ERX_HW_XHCI_USBSTS_HCH_GET(Status) =/= 0 -> host_controller_halted;',
+             replacement: '?ERX_HW_XHCI_USBSTS_HCH_GET(Status) =:= 2 -> host_controller_halted;',
+             catching_case: STATUS),
+    Seed.new(fault: "a running controller's status never read between interrupts",
+             anchor: 'phase_deadline({running, At}) -> At;',
+             replacement: 'phase_deadline({running, _At}) -> none;',
+             catching_case: STATUS),
     Seed.new(fault: 'the command deadline dropped',
              anchor: "when At =< Now ->\n    emit({fail, {command_timeout, Command}}, Acc);",
              replacement: "when At =< Now, false ->\n    emit({fail, {command_timeout, Command}}, Acc);",

@@ -633,6 +633,34 @@ an_interrupt_pass_test() ->
     ?assertMatch({_, [{fail, {unexpected, completed}}]},
                  erx_xhci_core:step({completed, {ok, [{port, 2}]}}, 0, S0)).
 
+%% A running controller's USBSTS is read on every interrupt and, with no interrupt, once
+%% a second: a host system error (bit 2), a host controller error (bit 12) or a halt
+%% (bit 0) fails it, and an all-ones read, a function that left the bus, shows the first.
+the_status_of_a_running_controller_is_read_each_second_test() ->
+    Stopped = [{16#4, host_system_error}, {16#1000, host_controller_error}, {16#1, host_controller_halted},
+               {16#ffffffff, host_system_error}],
+    S0 = running(),
+    ?assertEqual(1000, erx_xhci_core:next_deadline(S0)),
+    ?assertEqual({S0, []}, erx_xhci_core:step(expired, 999, S0)),
+    {S1, [{read, [usbsts]}]} = erx_xhci_core:step(expired, 1000, S0),
+    ?assertEqual(2000, erx_xhci_core:next_deadline(S1)),
+    %% Running, an event interrupt pending: nothing done, the next read a second on.
+    {S2, []} = erx_xhci_core:step({read, #{usbsts => 16#8}}, 1000, S1),
+    ?assertEqual(2000, erx_xhci_core:next_deadline(S2)),
+    [?assertMatch({_, [{fail, Reason}]}, erx_xhci_core:step({read, #{usbsts => Word}}, 1000, S1))
+     || {Word, Reason} <- Stopped],
+    %% A word that is not one fails the controller rather than reading as running.
+    ?assertMatch({_, [{fail, {unexpected_read, [usbsts]}}]}, erx_xhci_core:step({read, #{usbsts => bad}}, 1000, S1)),
+    %% A late deadline reads once and sets the next a second from when it came.
+    {S3, [{read, [usbsts]}]} = erx_xhci_core:step(expired, 3500, S2),
+    ?assertEqual(4500, erx_xhci_core:next_deadline(S3)),
+    %% An interrupt's read fails the controller on the same bits.
+    {S4, [{read, [usbsts, iman]}]} = erx_xhci_core:step(interrupt, 0, S0),
+    [?assertMatch({_, [{fail, Reason}]}, erx_xhci_core:step({read, #{usbsts => Word, iman => 3}}, 0, S4))
+     || {Word, Reason} <- Stopped],
+    %% Before the controller runs, USBSTS is not read on a deadline.
+    ?assertEqual(none, erx_xhci_core:next_deadline(handoff_started())).
+
 %% A pass reads at most 1024 events, two wraps of the 512-entry event ring: batches of
 %% 32 port events ask for more until the 32nd, which acknowledges the line.
 an_interrupt_pass_is_bounded_test() ->
