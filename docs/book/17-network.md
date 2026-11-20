@@ -688,7 +688,7 @@ and no client domain reaches a driver, an interface process or a
 shared table. In the
 design, a WiFi domain drives the Raspberry Pi 4's WiFi chip and lends
 that medium to the network domain as an interface; that is designed
-and not built ([chapter 18](18-wifi.md)).
+and not built ([chapter 18](18-wifi.md#1813-three-domains-one-medium)).
 
 The system domain, the trusted base, holds no `net` facet, so no
 socket's traffic ever enters it and the trusted base parses no packet

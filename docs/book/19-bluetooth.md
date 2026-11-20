@@ -374,7 +374,7 @@ process passes none, since no service is declared yet.
 
 The machine's address on the air is a **static random address**, made
 from the system's random generator, which the root service keeps.
-Like the IPv6 addresses of [chapter 17](17-network.md), it does not
+Like the IPv6 addresses of [chapter 17](17-network.md#1721-one-owner-one-step), it does not
 embed a hardware address, so it names neither the board nor its chip
 ([design-bluetooth.md, The identity address](../design-bluetooth.md#the-identity-address)).
 The store, `erx_bt_store`, makes the address at its start; the

@@ -1524,10 +1524,14 @@ and congestion control. DHCP and NTP.
 
 **Status.** Built: `erx_net` in a network domain (Ethernet, ARP, IPv4,
 IPv6 neighbour discovery, ICMP, UDP, TCP, DHCP) over virtio-net and the
-Pi 4's GENET, `ifconfig`, `ping`, `host`, `gen_tcp` in and out, NTP.
-Designed: sockets for native programs, the fast path, and the stack's
-full verification against FreeBSD (the chapter's writer checks which
-parts of each are built).
+Pi 4's GENET, `ifconfig`, `ping`, `host`, `gen_tcp` and `gen_udp` in any
+domain that holds the `net` facet, bounded queues and per-domain
+limits, merged receives, an exhaustive test of the TCP core, fuzz tests
+of the decoders, and NTP. Designed: two speed-ups that work only in host
+tests (checksums in the copy, many segments as one unit), a leaner
+per-segment step, sockets for native programs, FreeBSD's TCP test
+scripts run against the stack, generated admission code, `ntpd` enabled
+from `/etc/start.conf`, and WiFi as an interface.
 
 1. **Why FreeBSD's stack, and why not a translation.** What the stack
    matches, why FreeBSD's default stack and not another, and what a naive
@@ -1574,8 +1578,13 @@ a study in pure protocol cores.
 **Background needed.** Chapters 3 and 6 (state machines as pure cores),
 chapter 15 (drivers and devices), chapter 17 (the network stack).
 
-**Status.** Built as pure cores with host tests: WiFi's join machine, SAE exchange and
-EAPOL-Key codec. No radio driver runs on a board.
+**Status.** Built as pure Erlang cores with host tests, driving no
+radio: the station's choice of a network, the join machine, the failure
+memory, `erx_wifi_keys`, the public half of SAE, the EAPOL-Key codec
+and the WPA key arithmetic. Designed: the SDIO host, the chip process
+and its firmware, the station's process, the key holder, SAE's three
+functions in `crypto`, the Transition Disable report, the `wlan0`
+medium and its tools. No WiFi driver runs on a board.
 
 1. **WiFi on the CYW43455.** What the chip offers, where its firmware is
    trusted and where it is not, and the driver's place beside the network
@@ -1609,8 +1618,13 @@ Erlang, with Low Energy and the peripheral role first.
 **Background needed.** Chapters 3 and 6 (supervised processes, pure
 cores), chapter 15 (drivers and devices).
 
-**Status.** Built as pure cores with host tests: Bluetooth's HCI codec and controller process
-with its line, links and patch reader. No radio driver runs on a board.
+**Status.** Built, with host tests, but run on no board: the H4 framing
+and HCI codec, the controller process with its supervision, the patch
+reader, advertising data and the identity address, and the line tree
+with its keeper. Designed: running the domain on the Pi 4, the
+controller's power cycle, serving the line to a file grant, the GATT
+server and its gate, the `ble` facet, the serial service, pairing and
+bonding, and tests against a Bumble peer.
 
 1. **Bluetooth Low Energy, peripheral first.** What the role is, what
    erXos offers a phone that connects to it, and what it does not offer.

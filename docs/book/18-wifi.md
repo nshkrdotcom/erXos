@@ -15,7 +15,7 @@
 supervisors. [Chapter 6](06-construction.md), section 6.3: state
 machines as pure cores. [Chapter 11](11-security.md), sections 11.6
 and 11.11: facets and the vault. [Chapter 15](15-devices.md): drivers,
-units and line owners. [Chapter 17](17-network.md): the network stack
+units and line owners. [Chapter 17](17-network.md#1721-one-owner-one-step): the network stack
 and its interfaces.
 
 A WiFi station, the device that joins a wireless network, takes bytes
@@ -37,7 +37,7 @@ user types `ifconfig wlan0 scan`, lists networks in
 erXos keeps that surface and moves everything else into one domain of
 Erlang, the WiFi domain, which turns the Raspberry Pi 4's WiFi chip
 into an Ethernet **medium**, the network stack's word for a link it
-sends frames through ([chapter 17](17-network.md)). Its station is
+sends frames through ([chapter 17](17-network.md#1731-the-process-tree)). Its station is
 three pure functions, one of them a state machine whose every legal
 edge is one table, so the order of events it accepts is a value a
 test can enumerate. The network's password never enters the domain
@@ -133,12 +133,12 @@ card registers its own state depends on, such as the bus width.
 
 The network stack sees an ordinary medium: frames, a hardware address,
 an MTU, the largest frame the link carries
-([chapter 17](17-network.md)), and a link state. The link state is
+([chapter 17](17-network.md#1721-one-owner-one-step)), and a link state. The link state is
 the **port**, in the sense of IEEE 802.1X, the standard for access
 control on a network link, and not an Erlang port. It lets data frames through only once the keys are in, so the
 stack never carries traffic on an unauthenticated network. DHCP, the
 protocol that hands a machine its address
-([chapter 17](17-network.md)), starts when the link comes `up`. The
+([chapter 17](17-network.md#1731-the-process-tree)), starts when the link comes `up`. The
 network domain parses no firmware format, holds no key and never
 calls `crypto`.
 
