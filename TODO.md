@@ -8030,11 +8030,7 @@ to the corpus and follow rc
   structure, is a build check that lands with the sequencer. The ledger, the queue's layout, descriptions and the
   publication rules are in `erx_device_ledger.c` and `erx_device_rules.c`, host-tested and used by nothing yet; the
   package that moves the split ring onto them deletes the fold of `erx_device_dma_check` and `erx_device_queue_layout`,
-  so one check and one layout stay. Their fills rule keeps out bytes inside a range a record names, but not only one it
-  names for the device to read: no mark says which free place gives a reference's direction. One publication may name
-  one buffer at several ranges, as a chain names its head's buffer, while the names rule of
-  [The rules](docs/design-device-dma.md#the-rules) says no buffer is named twice in one plan; the design says which it
-  means. A layout holds one table of each structure, and a table cores describe is placed at any free record, which the
+  so one check and one layout stay. A layout holds one table of each structure, and a table cores describe is placed at any free record, which the
   TRB form's many transfer rings, each placed in order, change when it moves on. Packages, in order: the
   sequencer's publication and its acquisition, with the releases rule and the split ring moved onto them; GENET,
   and ADMA2 with its transfer split into entries by the sequencer, moved onto them; the TRB form's publication and
@@ -8049,7 +8045,7 @@ to the corpus and follow rc
   says only "derived from its packet size and burst"); Configure Endpoint's slot context carries only the context
   entries and hub fields, route, speed, root port and TT left 0, as the design's table says, though a controller that
   evaluates the whole slot context with its add flag would misread them; a non-EP0 control endpoint takes index
-  2n + 1 (xHCI 4.5.1); and whether a setup packet's direction bit must match the data stage's.
+  2n + 1 (xHCI 4.5.1).
 * [Low] USB, a USB 3 root port after a disable (`erx_xhci_core`, port_operation/2): writing PORTSC's PED to disable a
   USB 3 port leaves it in the Disabled link state, which leaves only through a PLS write of RxDetect with LWS set
   (xHCI 1.2, 5.4.8, p. 406); the core writes no PLS, so the port stays dead until the controller restarts. Nor does

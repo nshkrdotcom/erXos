@@ -48,6 +48,13 @@ same_place(erx_dma_place_t a, erx_dma_place_t b)
 	return (a.table == b.table && a.index == b.index);
 }
 
+/* Where a ring starts at or after `end`: on a granule, and on the ring's own alignment (Virtio 1.2, 2.7). */
+static uint64_t
+ring_start(uint64_t end, uint32_t granule, uint32_t align)
+{
+	return (round_up(end, granule > align ? granule : align));
+}
+
 bool
 erx_dma_layout_split_ring(uint32_t size, uint32_t buffer_size, uint32_t granule, uint64_t memory_size,
     uint64_t device_base, uint32_t address_bits, erx_dma_layout_t *layout)
@@ -59,11 +66,13 @@ erx_dma_layout_split_ring(uint32_t size, uint32_t buffer_size, uint32_t granule,
 	uint64_t avail_offset, used_offset, pool_offset;
 
 	if (!power_of_two(size) || size > ERX_DEVICE_QUEUE_SIZE_MAX || !power_of_two(granule) ||
-	    granule > ERX_DEVICE_GRANULE_MAX || buffer_size == 0 || buffer_size > ERX_DEVICE_BUFFER_MAX)
+	    granule > ERX_DEVICE_GRANULE_MAX || buffer_size == 0 || buffer_size > ERX_DEVICE_BUFFER_MAX ||
+	    device_base % ERX_VIRTQ_DESC_TABLE_ALIGN != 0 || device_base % ERX_VIRTQ_AVAIL_RING_ALIGN != 0 ||
+	    device_base % ERX_VIRTQ_USED_RING_ALIGN != 0)
 		return (false);
-	avail_offset = round_up((uint64_t)size * ERX_VIRTQ_DESC_SIZE, granule);
-	used_offset = avail_offset + round_up(avail_bytes, granule);
-	pool_offset = used_offset + round_up(used_bytes, granule);
+	avail_offset = ring_start((uint64_t)size * ERX_VIRTQ_DESC_SIZE, granule, ERX_VIRTQ_AVAIL_RING_ALIGN);
+	used_offset = ring_start(avail_offset + avail_bytes, granule, ERX_VIRTQ_USED_RING_ALIGN);
+	pool_offset = round_up(used_offset + used_bytes, granule);
 	*layout = (erx_dma_layout_t){
 		.memory_size = memory_size,
 		.device_base = device_base,

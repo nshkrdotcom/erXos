@@ -49,12 +49,19 @@ test_layout(void)
 	    layout.pool.stride == 128, "each ring a region of its own from a granule, buffers at a granule stride");
 	EXPECT(erx_dma_ledger_table(&ledger, ERX_STRUCTURE_VIRTQ_USED) == USED, "the used ring's table");
 	EXPECT(!erx_dma_layout_split_ring(3, BUFFER, GRANULE, MEMORY, 0, 32, &planted), "a size not a power of two");
+	EXPECT(!erx_dma_layout_split_ring(SIZE, BUFFER, GRANULE, MEMORY, 8, 32, &planted),
+	    "a device base off the descriptor table's alignment");
+	EXPECT(erx_dma_layout_split_ring(SIZE, BUFFER, 1, MEMORY, 0, 32, &planted) &&
+	    planted.tables[AVAIL].region % ERX_VIRTQ_AVAIL_RING_ALIGN == 0 &&
+	    planted.tables[USED].region % ERX_VIRTQ_USED_RING_ALIGN == 0 &&
+	    planted.tables[USED].region >= planted.tables[AVAIL].first + SIZE * sizeof(uint16_t) + sizeof(uint16_t),
+	    "below a granule of their alignment the rings keep virtio's alignments");
 
 	planted = split_ring(MEMORY - 1, 0, 32);
 	EXPECT(!erx_dma_ledger_make(&ledger, &planted), "a pool past the memory is refused");
 	planted = split_ring(MEMORY, 512, 10);
 	EXPECT(!erx_dma_ledger_make(&ledger, &planted), "a region past the address width is refused");
-	planted = split_ring(MEMORY, UINT64_MAX - 100, 64);
+	planted = split_ring(MEMORY, UINT64_MAX - 111, 64);
 	EXPECT(!erx_dma_ledger_make(&ledger, &planted), "a device base whose regions wrap is refused");
 	planted = layout;
 	planted.tables[DESC].region_length = 128;

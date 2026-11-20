@@ -532,8 +532,7 @@ Posting), as virtio-gpu's resource backing holds
   of the buffer, in no table, and no core describes it: the name is the
   whole of its input.
 * **What it says.** `R` must be a region of the post's own device; one
-  of another device, or none, or named for the device to write, fails
-  the post. The entry's address is that region's device address and its
+  of another device, or none, fails the post. The entry's address is that region's device address and its
   length the region's whole length, both derived, its padding fixed at
   0, so the layout has no free place; its encoder refuses a length its
   field cannot hold.
@@ -702,14 +701,23 @@ one pass. A plan passes when every rule holds:
 | --- | --- | --- |
 | calls | each step is one its call makes: records and fills in a publication, a control in a reset, copies in a take-back, reports in an observation | a store while the device may hold what it changes; a copy outside a take-back |
 | meanings | each record's meaning is one its table offers, and each free field's value fits its bits | a record the form never builds reaching the device (a link, an indirect table, streams, event data); a value spilling into a neighbouring field, such as a length into the interrupter target |
-| names | each name lies in its target: a buffer of the record's binding, the queue's input context, an endpoint with a ring bound to it; no buffer is named by a live holding or twice in one plan | an address outside the memory or between records; a buffer the device holds posted again |
+| names | each name lies in its target: a buffer of the record's binding, the queue's input context, an endpoint with a ring bound to it; no name names a buffer a live holding holds; one publication may name a buffer at several ranges, each inside it, and its holding holds that buffer once | an address outside the memory or between records; a buffer the device holds posted again |
 | bindings | a transfer record names only buffers of its own ring's block; a command that binds names a ring bound to no endpoint | one queue's transfer reaching another's buffer; device A's endpoint run on device B's ring |
 | lengths | each length lies inside its named buffer from the named offset; an ADMA2 extent is at least one block | a transfer past its buffer; an ADMA2 entry of length 0, which moves 65,536 bytes |
 | reach | the TRB form's: no transfer is published on an endpoint the command in flight closes, or on a `halted` one; a Configure Endpoint that drops an endpoint, alone or with an add, is published only when that endpoint is `stopped`, or `running` with no live transfer; a Disable Slot only when no endpoint of its slot is `running` with a live transfer | a Set TR Dequeue Pointer whose success retires a transfer published after its pointer was fixed, which the controller then runs; a command the specification leaves undefined in the endpoint's state, a drop on a halted endpoint or on a running one that is not idle (xHCI 4.6.6, p. 117; 4.6.8, p. 132), a Disable Slot with a transfer in progress (4.6.4, p. 109); a transfer on a halted endpoint, whose doorbell the controller disables (4.6.8, p. 128), leaving the ledger's state wrong |
 | room | the run fits: as many free positions as it takes, a link it reaches among them; free descriptors and a free available entry; a carried record no holding holds | a live record overwritten, such as a TRB the controller has not fetched or the input context of a command in flight |
-| fills | an `out` segment's bytes go only into a buffer a record of the plan names for the device to read, inside it | the CPU storing into a buffer the device holds or writes |
+| fills | an `out` segment's bytes go only inside a range a record of the plan names | the CPU storing into a buffer the device holds |
 | controls | a control step writes an owned register inside the window, with every field its table fixes for a stop or a reset | a core aiming the device through a register |
 | releases | a report is a register its table names, or a snapshot an `acquire` step took of a record its validity covered; a take-back consumes reports from the consumer positions, each releasing what its meaning says, or nothing; every copy reads a buffer released in the same decision, inside it | a buffer reused while the device holds it; a report read twice to release a later holding; a torn record releasing another transfer's holding; a copy of bytes the device still holds |
+
+The check carries no direction. Which ranges the device reads or writes
+is the request's meaning, owned by the form: virtio's by each segment's
+kind, GENET's by the ring, which the device reads to transmit and writes
+on receive, ADMA2's by its command's posted direction, the TRB form's by the
+endpoint's direction and a control transfer's setup
+([design-usb.md](design-usb.md#the-trb-ring-form)). A fill where the
+device writes replaces a store rule 1 would have made as zeros, so a short
+completion returns the device's bytes, the post's own fill or zeros.
 
 **How the properties follow.** The device follows only addresses the
 sequencer wrote: from the layout at install, or from a name the check
@@ -1189,7 +1197,12 @@ every form; the record names the form its peripheral uses.
 descriptor table and its available ring are two regions, both written by
 the CPU, and its used ring a third, written by the device, each starting
 on a granule, so that each ring address the install writes names one
-region holding one structure ([The check](#the-check)). A post fills the
+region holding one structure ([The check](#the-check)). Each ring's
+start also keeps virtio's own alignment for it (Virtio 1.2, section
+2.7), which the layout takes from the `virtq_desc_table_align`,
+`virtq_avail_ring_align` and `virtq_used_ring_align` limits of
+`abi/formats/virtio.txt`, and a queue memory whose device base is off
+any of those alignments is refused. A post fills the
 buffers' `out` bytes and describes its chain; the sequencer places the
 chain in free descriptors, writes the available entry, and makes the
 chain live with the available index, then the doorbell; the
@@ -1524,10 +1537,10 @@ ran.
   | a buffer index past the ring's block; the input context named by a transfer; an endpoint with no bound ring named by Set TR Dequeue | the range test removed |
   | a normal TRB naming another block's buffer; an endpoint context binding a ring bound to another endpoint | the binding test removed |
   | an offset and a length that pass the buffer's end; an ADMA2 extent of zero blocks | the length test removed; the extent's lower bound removed |
-  | a buffer a live holding holds; one buffer named twice in a plan | the holding test removed |
+  | a buffer a live holding holds | the holding test removed |
   | a transfer on an endpoint a Set TR Dequeue Pointer in flight closes; a Disable Slot while an endpoint of its slot runs a live transfer, one that took a transfer after its Stop Endpoint succeeded among them; a Configure Endpoint dropping such an endpoint; a drop-and-add of an endpoint whose halting error event was consumed, before any Reset Endpoint | the reach test removed; the state left `stopped` by a transfer's publication; the drop test accepting `halted` as Disable Slot's does |
   | a run longer than the ring's free positions; a command while the input context is held; a chain while its available entry is held | the room test removed |
-  | `out` bytes into a buffer no record names, or into one the device writes | the fills test removed |
+  | `out` bytes into a buffer no record names, or past the range it names | the fills test removed |
   | a control step setting `USBCMD`'s run bit or `QueueReady` | the controls test removed |
   | a completion for transfer A whose copies read B's buffer; a used element consumed a second time; an event consumed past the consumer cycle state | the releases taken from the core's copies; the consumer position test removed |
   | a copy in a publication; a report of a region the CPU writes; a `report` step reading a used or event ring record in place of an acquisition | the calls test removed; the report target test removed; ring memory allowed as a report target |
