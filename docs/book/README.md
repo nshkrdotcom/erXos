@@ -1523,10 +1523,14 @@ and congestion control. DHCP and NTP.
 
 **Status.** Built: `erx_net` in a network domain (Ethernet, ARP, IPv4,
 IPv6 neighbour discovery, ICMP, UDP, TCP, DHCP) over virtio-net and the
-Pi 4's GENET, `ifconfig`, `ping`, `host`, `gen_tcp` in and out, NTP.
-Designed: sockets for native programs, the fast path, and the stack's
-full verification against FreeBSD (the chapter's writer checks which
-parts of each are built).
+Pi 4's GENET, `ifconfig`, `ping`, `host`, `gen_tcp` and `gen_udp` in any
+domain that holds the `net` facet, bounded queues and per-domain
+limits, merged receives, an exhaustive test of the TCP core, fuzz tests
+of the decoders, and NTP. Designed: two speed-ups that work only in host
+tests (checksums in the copy, many segments as one unit), a leaner
+per-segment step, sockets for native programs, FreeBSD's TCP test
+scripts run against the stack, generated admission code, `ntpd` enabled
+from `/etc/start.conf`, and WiFi as an interface.
 
 1. **Why FreeBSD's stack, and why not a translation.** What the stack
    matches, why FreeBSD's default stack and not another, and what a naive
@@ -1573,8 +1577,13 @@ a study in pure protocol cores.
 **Background needed.** Chapters 3 and 6 (state machines as pure cores),
 chapter 15 (drivers and devices), chapter 17 (the network stack).
 
-**Status.** Built as pure cores with host tests: WiFi's join machine, SAE exchange and
-EAPOL-Key codec. No radio driver runs on a board.
+**Status.** Built as pure Erlang cores with host tests, driving no
+radio: the station's choice of a network, the join machine, the failure
+memory, `erx_wifi_keys`, the public half of SAE, the EAPOL-Key codec
+and the WPA key arithmetic. Designed: the SDIO host, the chip process
+and its firmware, the station's process, the key holder, SAE's three
+functions in `crypto`, the Transition Disable report, the `wlan0`
+medium and its tools. No WiFi driver runs on a board.
 
 1. **WiFi on the CYW43455.** What the chip offers, where its firmware is
    trusted and where it is not, and the driver's place beside the network
@@ -1608,8 +1617,13 @@ Erlang, with Low Energy and the peripheral role first.
 **Background needed.** Chapters 3 and 6 (supervised processes, pure
 cores), chapter 15 (drivers and devices).
 
-**Status.** Built as pure cores with host tests: Bluetooth's HCI codec and controller process
-with its line, links and patch reader. No radio driver runs on a board.
+**Status.** Built, with host tests, but run on no board: the H4 framing
+and HCI codec, the controller process with its supervision, the patch
+reader, advertising data and the identity address, and the line tree
+with its keeper. Designed: running the domain on the Pi 4, the
+controller's power cycle, serving the line to a file grant, the GATT
+server and its gate, the `ble` facet, the serial service, pairing and
+bonding, and tests against a Bumble peer.
 
 1. **Bluetooth Low Energy, peripheral first.** What the role is, what
    erXos offers a phone that connects to it, and what it does not offer.
@@ -1648,12 +1662,22 @@ wherever that is also how it works.
 with pipes. Terminals, ttys and the line discipline. SSH in a page: keys
 and channels. The rc shell of Plan 9.
 
-**Status.** Built: rc written in Erlang with job control, Erlang commands
-that follow FreeBSD's output, text pipes, the start table and `service`,
-SSH login for root in development builds, ttys per terminal master.
-Built as a pure core with host tests: the line discipline `erx_tty`.
-Designed: the SSH domain with logins and keys, consoles with a login,
-evi, the screen editor run as `vi`.
+**Status.** Built: the command shell, rc's language in Erlang with a
+bounded parser and job control of Erlang jobs; Erlang commands that
+follow FreeBSD's output (`ls`, `cat`, `grep`, `sort`, `ps`, `top` and
+others); text pipes between Erlang commands and native programs; the
+line discipline `erx_tty`, a pure core with host tests, run by each
+session tty's terminal relay; the console's lines and `Ctrl-G` menu,
+which connects to a session or starts one; the start table with its
+settings in `/data/etc/rc.conf`, and `service`; root's SSH login to `rc`
+in development builds; the session's side of the SSH domain's line and
+the login facet's decoder. Designed: `/etc/start.conf` and start flags;
+interrupting and killing a session from the menu; terminal input to
+native programs through `/dev/tty`; stopping a native program with
+`Ctrl-Z`, the `Ctrl-T` status line, `within`, `rc` as a program for
+`system` and `popen`, toybox, the `secure` attribute and password logins
+at the console, the SSH domain itself with its host key in the vault,
+and evi, the screen editor run as `vi`.
 
 1. **UNIX look and feel, honestly.** What a UNIX user already knows is
    kept wherever it fits; where UNIX systems differ, erXos follows
@@ -1708,12 +1732,19 @@ marked with who reported it, and code loads into the running machine.
 **Background boxes.** How the BEAM traces a process. Module identity and
 what a code hash names. Logging and crash dumps.
 
-**Status.** Built: `erx:i()`, `erx:source/1`, `erx:trace/1`,
-`erx:inspect/2`, `/proc`, the host link with `tools/erx load`, `watch`
-and `files`, `tools/erx web`, the system log, crash records, unsupported
-and partial values on Fiasco. Designed: one timeline of the kernel's and
-the runtimes' scheduling decisions (the chapter's writer checks what
-Fiasco reports of it).
+**Status.** Built: `erx:i/0,1` and `erx:inspect/2`, with a reporter and
+a status on every value, unsupported and partial ones on Fiasco
+included; inspection agents and inspect facets; `/proc`, `dmesg`, `ps`
+and `top`; `erx:source/1` within the caller's runtime; `erx:trace/1`
+over the system domain's processes and the root service's trace ring;
+the host link with `tools/erx load`, `watch`, `files` and `web`; the
+code store, loading into the system domain; the log service to the
+console; the report filter; the crash record on the console. Designed:
+tracing other domains and the frames between them; the host link's
+inspect, trace, source and console commands; loading code into other
+domains, with overlays; refusing code outside installed storage; log
+files under `/var/log`; a crash record that survives the reset; domain
+crash dumps under `/proc`; the host's tree mounted in the machine.
 
 1. **The machine is an object.** `erx:i()` shows CPUs, threads, groups,
    domains, budgets and processes; `erx:source(Pid)` opens the line a
@@ -1762,14 +1793,20 @@ or a browser, renders the same stream of changes in its own idiom.
 command streams, shaders and their page tables. Event-driven GUI
 toolkits and widget trees. A browser as a display: WebSocket and canvas.
 
-**Status.** Built: the window server serving windows as files, Plan 9's
-draw protocol, virtio-gpu, virtio-input and the Pi's framebuffer drivers
-in Erlang, the kiosk dashboard on QEMU and the Pi 4, `erx-lvgl`, the
-theme, Doom as an example program; the website's browser demo running
-erXos in an AArch64 emulator compiled to WebAssembly. Built as a pure
-core with host tests: the rio-style window manager. Designed: the rest
-of the browser client, the desktop session, find and act, graphics
-hardware.
+**Status.** Built: the display domain, whose window server serves each
+window as a directory of files; the pixel area and `present`, by the
+copy path; Plan 9's draw protocol, executed in the client's session, and
+`/dev/draw` for a program started with a window; the virtio-gpu,
+virtio-input and Raspberry Pi framebuffer drivers in Erlang; the input
+router; the single window policy; the widget server with its LVGL
+renderer; the theme; the kiosk dashboard on QEMU and the Raspberry Pi 4;
+Doom as an example program; the terminal emulator's pure core; the
+browser demo; and `tools/erx web`. Built as pure cores with host tests,
+run by no guest: the overlapping window policy and the desktop programs'
+cores. Built and run in a window: `erx_desk` with its `clock` command.
+Designed: the terminal window and presentations in it, the Erlang and
+browser renderers, the web's network front end, the desktop session,
+find and act, the direct path to the device, and graphics hardware.
 
 1. **Windows are files.** A display serves each window as a directory of
    files; a program finds its window at `/dev/draw` and draws with Plan
@@ -1828,10 +1865,18 @@ installed at run time as one file with its needs declared and checked.
 **Background boxes.** Package managers and manifests. Declared
 permissions in app systems, as on a phone.
 
-**Status.** Built: the start table, `erx-app pack` producing a signed
-`.app` file with an EROFS image and a dm-verity tree, packages added to
-an image (the kiosk and Doom). Designed: installing, updating and
-removing at run time, an app's own session and tree.
+**Status.** Built: the start table and `service`, with the settings in
+`/data/etc/rc.conf`. `erx-app pack`, which makes one signed `.app` file
+of a header, an EROFS image and its hash tree. The SDK and its
+public-function check. The image builder's packages: placed in the
+system partition, then checked, admitted and started at boot, as the
+kiosk QEMU suite shows. The decoder, file check, admission and recovery,
+with host tests. An app's session holding only the `packages` and
+`system` grants and the services its app names. `erx_ui_host`. Designed:
+installing, updating and removing through `/apps`, `mount` of a package,
+`service NAME purge`, `/proc/packages`, the app's budget as a wall
+carved at each session's start, the `flags` field, the SDK's host tools,
+`erx-app test`, and `/svc/NAME`.
 
 1. **An app is a principal.** It gets a session from a template, its
    own budget and its own grants; a user adds apps without editing the

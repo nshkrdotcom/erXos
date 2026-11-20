@@ -263,11 +263,12 @@ machine as a **package**, one `.app` file. The file holds an
 authenticated header, a read-only image of the app's files, and a hash
 tree over the image's blocks, so a changed byte fails the read
 ([design-packaging.md, Where a package lies](../design-packaging.md#where-a-package-lies);
-[chapter 23](README.md#chapter-23-apps-and-packages)). The packer is
-**Built**. In the design a package lies in the system partition the
-machine booted from, or, once a user installs it, in the data
-partition's `packages/` directory. That is **Designed** and not built:
-packages ride in the boot image.
+[chapter 23](23-apps.md#232-one-file-per-app)). A package lies in the
+`apps/` directory of the system partition the machine booted from, or,
+once a user installs it, in the data partition's `packages/` directory.
+The packer and packages on the system partition, checked, admitted and
+started at boot, are **Built**; installing a package at run time is
+**Designed**.
 
 ### 5.1.8 Why each concept has exactly one owner
 
@@ -643,7 +644,7 @@ starts, so it knows who holds each, and the end of the stream follows
 Erlang commands are **Built**
 ([README.md, Current status](../../README.md#current-status);
 [chapter 13](13-native-programs.md#135-a-pipeline-end-to-end);
-[chapter 20](README.md#chapter-20-the-command-shell-and-the-unix-surface)).
+[chapter 20](20-shell.md#2025-pipelines-of-text)).
 
 ### 5.3.7 The day as one diagram
 
