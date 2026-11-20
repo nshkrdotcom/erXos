@@ -53,7 +53,7 @@ class SystemDomainTest < Minitest::Test
     domain = Erx::MediumBoot::Domain.new(runtime: 11, jit: 12, release: 13, release_files: 14)
     points = Suite.service_kill_checkpoints([{ name: 'image-identity', pattern: /y/n, seconds: 30 }, shell], domain: domain)
     line = Suite.service_kill_line(domain)
-    assert_equal %w[image-identity release-shell erlang-shell echo-facet domain-running control-table introduced hostile connection-down
+    assert_equal %w[image-identity release-shell erlang-shell echo-facet foreign-atom domain-running control-table introduced hostile connection-down
                     ignored-down later-domain domain-ends system-domain-ended],
                  points.map { |point| point.fetch(:name) }
     assert_equal Erx::ProductionImage::Run::ERL_LINE, points[1].fetch(:type)
@@ -61,7 +61,7 @@ class SystemDomainTest < Minitest::Test
     # The later domain's request names the image's runtime and release, the rows' boot
     # script, and one connection.
     assert line.start_with?('SdSpec=#{name=><<"peer">>,runtime=>11,release=>13,release_files=>14,boot=><<"erts">>,')
-    assert_includes line, ",connections=>1},#{Suite::ECHO_EXPRESSION},SdLives="
+    assert_includes line, ",connections=>1},#{Suite::ECHO_EXPRESSION},#{Suite::FOREIGN_ATOM_EXPRESSION},SdLives="
     running, table, _introduced, _hostile, _down, ignored, later, ends, ended = points.last(9)
     # The echo checkpoint: the facet answered and both hostile provides refused, and
     # nothing else. A report whose foreign mint was taken (no owner check), a call the

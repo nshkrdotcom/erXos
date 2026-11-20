@@ -10,8 +10,15 @@ echo, Grantee, Principal, Limits}} (erx_facet:provide/2): it starts a facet boun
 Grantee within Limits, ending with the mint, and replies with it, or with the
 reason start/3 failed. Anything else it drops. A facet answers {echo, Term}
 with {echo, Term} and refuses every other request.
+
+foreign_atoms/1 is a frame from another domain naming atoms the system domain
+lacks, for the system domain suite: spawned there by the system domain, it
+sends To a message holding an atom made here, then `foreign_after`, and exits
+with a reason that is an atom made here. The system domain decodes each frame
+in safe mode (edit 9 of docs/design-runtime.md), so the message is dropped and
+the reason arrives as `{erx_foreign_reason, Bin}`.
 """.
--export([mint/0]).
+-export([mint/0, foreign_atoms/1]).
 %% erx_facet's callbacks; erx_facet is not on this application's compile path.
 -export([init/1, admit/3]).
 
@@ -29,6 +36,12 @@ mint() ->
         _Other ->
             mint()
     end.
+
+-spec foreign_atoms(pid()) -> no_return().
+foreign_atoms(To) ->
+    To ! {foreign, list_to_atom("erx_foreign_atom_message")},
+    To ! foreign_after,
+    exit(list_to_atom("erx_foreign_atom_reason")).
 
 init(_Grant) ->
     {ok, none}.

@@ -9,7 +9,9 @@ require_relative '../system_domain'
 # (tools/lib/erx/system_domain.rb), booted from a test image: first the system domain
 # calls the echo facet that one configured domain serves through the test-only
 # erx_echo_test, and reads the domain service's refusals of that domain's hostile
-# provides; then service_kill ends one configured domain's system side
+# provides; that domain then sends the system domain a message and an exit reason naming
+# atoms the system domain lacks, which it decodes in safe mode, its atom table unchanged;
+# then service_kill ends one configured domain's system side
 # with another domain's {domain_down, D2, x}, which its watcher sees as noconnection, and
 # the other by having it kill its agent behind a burst it published, which halts it with
 # status 69; the burst arrives whole, then the exit (the lane driver's finish), and the end fires
