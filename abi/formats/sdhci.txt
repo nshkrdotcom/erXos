@@ -1,0 +1,35 @@
+# Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
+# SPDX-License-Identifier: BSD-2-Clause
+# The SD host controller's ADMA2 descriptor, from the SD Host Controller Simplified
+# Specification, version 4.20, with 32-bit addressing and 16-bit length mode, as
+# docs/design-device-dma.md's ADMA2 section reads it. Every field is little-endian.
+
+# An entry's action, in its attribute bits 5:3 (Act2, Act1, Act0): a transfer is Act2 1
+# and Act1 0, and Act0 is 0 for every ADMA2 entry (section 1.13.3.1, p. 18).
+limit sdhci_adma2_action_transfer u8 4
+
+# One entry of an ADMA2 table with 32-bit addressing (section 1.13.2, figure 1-10, p. 17;
+# section 1.13.3.1, figure 1-11, p. 18): the attributes in bits 5:0, the length in bits
+# 31:16, and the data's address in bits 63:32, a multiple of 4 bytes (section 1.13.1.3,
+# p. 16). Bits 15:6 are named by no bits range, so the encoder writes them 0: they hold
+# the upper ten bits of a 26-bit length only in 26-bit length mode, which the NIF leaves
+# off (section 2.2.25, bit 10, p. 97). The table offers one meaning, a transfer, which
+# the sequencer splits into entries, so every place is fixed or derived: each entry valid,
+# its action a transfer, interrupt clear; the end attribute on the last, each length and
+# each address from where the sequencer splits the transfer. A length field of 0 moves
+# 65,536 bytes (table 1-12, p. 18), so the sequencer never derives one.
+layout erx_sdhci_adma2_entry wire_le 4 8
+  field attributes u16 0
+    bits valid 0 0
+    bits end 1 1
+    bits interrupt 2 2
+    bits action 3 5
+  field length u16 2
+  field address u32 4
+    bits data 2 31 shift 2 device_address
+  fixed attributes.valid 1
+  derived attributes.end
+  fixed attributes.interrupt 0
+  fixed attributes.action @sdhci_adma2_action_transfer
+  derived length
+  derived address.data

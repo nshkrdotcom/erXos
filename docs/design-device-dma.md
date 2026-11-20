@@ -468,9 +468,11 @@ its state) and states no writer itself.
 A `record` step describes one record of a table the CPU writes:
 
 * its **meaning**, one of the closed set its table offers, each a layout
-  of `abi/formats`;
-* the values of the meaning's **free** fields, those its layout names and
-  does not mark;
+  of `abi/formats`, except ADMA2's one meaning, the transfer, which no
+  layout holds and the sequencer splits into entries of
+  `erx_sdhci_adma2_entry`;
+* the values of the meaning's **free** fields, those its layout marks
+  `states`, and each reference's length;
 * each **reference** as a **name**: a buffer of the table's binding with
   an offset into it, the queue's input context, or an endpoint whose
   bound ring the record points at.
@@ -498,6 +500,23 @@ records that tie
 tables together (the DCBAA, the scratchpad array, the segment table,
 each TRB ring's link), and every activation and doorbell.
 
+A record in memory is written only by its meaning's generated encoder
+([What the formats say](#what-the-formats-say)). A record in registers,
+GENET's descriptor status words (`TX_DESC_STATUS` and `RX_DESC_STATUS`
+in `hw/svd/genet/genet.svd`), is written as one store of a value built
+from zero through the SVD's generated accessors, never read, modified
+and written back, so no field the core did not describe keeps a value
+from before; its fixed fields are the form's table's
+([What each form's tables say](#what-each-forms-tables-say)).
+
+A **region entry** is a record the sequencer writes from a region's
+name: a buffer a record posts holds, in place of the name, the region's
+device address and length in a layout of the form's, as virtio-gpu's
+resource backing holds `erx_virtio_gpu_mem_entry` entries (Virtio 1.2,
+section 5.7.6). It is a described record like any other: its address
+is placed, from the region the check found named by the post's own
+device, and its encoder refuses a length its field cannot hold.
+
 ### Publication
 
 A decision that hands over is one **publication**: the records it
@@ -509,8 +528,11 @@ live. The sequencer:
    link with it; virtio's descriptors take free descriptors of the
    table, chained in the plan's order, and its available entry the next
    position; a carried record takes its own table's record;
-2. **encodes** every record whole from its description, through the
-   layouts' generated accessors, the derived fields included;
+2. **encodes** every record whole from its description: a record in
+   memory, region entries included, through its meaning's generated
+   encoder, the derived fields included; a record in registers, GENET's
+   status word, as one store of a value built from zero through the
+   SVD's generated accessors;
 3. writes the fills, rule 1's zeros and the records, then cleans every
    region passing to the device, in the order
    [the sequencer](#calls-observations-and-plans) gives;
@@ -649,8 +671,9 @@ one pass. A plan passes when every rule holds:
 
 **How the properties follow.** The device follows only addresses the
 sequencer wrote: from the layout at install, or from a name the check
-found inside its target, as the start of a record of the target's table
-or a buffer and an offset with the length inside. A ring it walks ends
+found inside its target, as the start of a record of the target's table,
+a buffer and an offset with the length inside, or a region entry's
+region. A ring it walks ends
 in a link the sequencer wrote, virtio's `next` the sequencer derives
 from the chain it placed, and the device acts only on live records, each
 written whole from a description the check judged: inside the memory.
@@ -668,39 +691,97 @@ at a ring points it at the ring bound to it: a queue's own buffers.
 ### What the formats say
 
 The marks are members of a `layout` in `abi/formats`, read by
-`tools/lib/erx/abi_model.rb`, and each format file declares its
-structures:
+`tools/lib/erx/abi_marks.rb` once `tools/lib/erx/abi_model.rb` has
+resolved every type, and each format file declares its structures:
 
 ```
 target NAME cpu|device        a structure a region may hold, and its writer
 layout ...
-  selects FIELD.BITS VALUE    this layout is the meaning when the bits hold VALUE
-  fixed FIELD.BITS VALUE      the meaning's one value there, which the sequencer writes
-  refers FIELD.BITS TARGET [length FIELD.BITS [unit N]]
-                              a reference, given as a name; its length, if any, in the target
-  activates FIELD.BITS        the one bit whose value makes the record live
-  derived FIELD.BITS          a field the sequencer computes from where it places the record
-  releases FIELD TARGET [when FIELD.BITS VALUE...]
-                              on a report: the field names the holding it ends, under those codes
+  field NAME TYPE OFFSET device_address
+    bits NAME LOW HIGH [shift N] device_address
+                              the place holds an address the device follows into memory
+  selects PLACE ENUM.MEMBER   this layout is the meaning when the bits hold MEMBER
+  fixed PLACE VALUE           the meaning's one value there, which the sequencer writes
+  refers PLACE TARGET [length PLACE [unit N]]
+                              a reference, given as a name; its length, if any, in units of N bytes
+  activates PLACE             the one bit whose value makes the record live
+  derived PLACE               a field the sequencer computes from where it places the record
+  states PLACE                a value neither the format nor the sequencer gives: a
+                              description states it, or on a report the device
+  releases PLACE TARGET [when PLACE ENUM.MEMBER...]
+                              on a report: the place names the holding it ends, under those codes
 ```
 
-`TARGET` is a structure of the file or `data`. The generator refuses an
-unknown target, a `selects` value outside its bits' enum, a `fixed`
-value wider than its bits, a length naming a field the layout does not
-have, an `activates` mark of more than one bit and a field marked twice,
-and emits beside each marked layout's accessors one constant meaning and
-one encoder, which writes a description's free fields, the fixed and
-derived fields, and zero in every bit the layout does not name. A form
+A `PLACE` is `FIELD`, a field with no `bits` lines, or `FIELD.BITS`, one
+bits range of a field; a field with bits is never named whole. A value
+of an enum is spelled `ENUM.MEMBER`, and a `fixed` value is a number or
+an `@` limit. `device_address` is a word of the place's own `field` or
+`bits` line, not a mark, since it says what the place holds in every
+layout, marked or not; it never names an address the CPU uses, such as
+an ELF segment's or a PCIe BAR's. In a marked layout every place is
+claimed by exactly one mark, so a place is free only by a mark: a place
+a `states` mark claims, a reference's length, and a release's place and
+its `when` place are **free**, and a description states them. A
+reference's place, the activation and each derived place are
+**placed**: the sequencer supplies them. A device address is placed,
+or is a release's place, never free or fixed, and a reference's place
+is a device address. A layout with a `releases` mark is a report, which
+the device writes, so it has no `refers` or `derived` mark. `TARGET` is
+a structure of the mark's own file or `data`. The generator refuses a mark outside a `wire_le` layout, a
+marked layout with a field that is not one unsigned integer or with a
+`tail`, whose part the encoder would not write, a report with a
+`refers` or `derived` mark, two places of one encoder member name
+(`a_b` and `a.b`), a place no mark claims,
+a device address a description would state or the format fix, a
+reference to a place that is no device address, `device_address` on a
+field that has bits or is not one unsigned integer, an unknown target
+or one of another file, a `selects` or `when` member outside its enum
+or wider than its bits, a `fixed` value wider than its bits or with bits
+below the place's shift, a place the layout does not have, an
+`activates` mark of more than one bit, a place marked twice and a
+second `selects`, `activates` or `releases` mark, each with the line of
+the mark or of the place. It numbers the meanings from 1 in the order
+of their layouts' names, `ERX_MEANING_<LAYOUT>`, so 0 is no meaning, and
+emits beside each marked layout's accessors in `include/erx/abi.h`:
+
+```
+erx_L_free_t      the free places, which a description states
+erx_L_placed_t    the placed places: each reference's address, the activation, each derived place
+bool erx_L_encode(erx_L_t *record, const erx_L_free_t *described,
+    const erx_L_placed_t *placed)
+```
+
+Each input struct has one `uint64_t` member per place, `FIELD` or
+`FIELD_BITS`, so a value reaches the encoder whole, and is left out with
+its parameter when it would be empty. The encoder compares each input
+with its place's maximum and, for a place with a shift, its alignment,
+before it stores anything; it returns false, leaving the record
+untouched, when a value does not fit, so no value is cut to its low
+bits. It writes every byte of the record: the free and placed values,
+the selector's member and each fixed value, and zero in every bit the
+layout does not name. The encoders fill a host struct of a `wire_le`
+layout, so the header asserts that the host is little-endian. A form
 offers a table's meanings by naming layouts, and a static assertion
 holds that the layouts one table offers share their size and their
-selector's bits. Where a record is composed of several layouts at a size
+selector's bits. Since a layout has one selector, each command the
+command ring offers is a layout of its own. Where a record is composed of several layouts at a size
 the controller reports, as the input context is of contexts of 32 or 64
 bytes (xHCI 6.2.5), the encoder places each at its offset. The xHCI
-file gains the DCBAA's and the scratchpad array's entry layouts, the
-endpoint context's `MaxPStreams` and `LSA` bits, the normal and data
-stage TRBs' immediate-data bit and the event TRBs' release marks; the
-virtio file, the descriptor's flag bits and the used element's release
-mark.
+file holds the DCBAA's and the scratchpad array's entry layouts, the
+endpoint context's `Mult`, `MaxPStreams`, `LSA` and `HID` bits, the
+normal and data stage TRBs' immediate-data bit and the event TRBs'
+release marks; the slot context's address and slot state and the
+endpoint context's state are fixed at 0, the controller's to write,
+which software sets to 0 in an input context (xHCI 1.2, Table 6-7,
+p. 447; Table 6-8, p. 450). The virtio file holds the descriptor's flag
+bits and the used element's release mark. The SDHCI file holds the ADMA2
+entry, whose places are all fixed or derived, since the table's one
+meaning is the transfer; the bits 15:6 that only 26-bit length mode
+reads are named by no range, so the encoder writes them 0, and its
+32-bit address refuses a wider value. A record the sequencer writes
+from the layout alone has no free place: the DCBAA's, the scratchpad
+array's and the segment table's entries and each link's segment pointer
+are derived, and the link's other fields fixed.
 
 ### What each form's tables say
 

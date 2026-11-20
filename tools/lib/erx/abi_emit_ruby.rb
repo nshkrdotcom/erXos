@@ -45,8 +45,9 @@ module Erx
         # The inspection schema has its own table, tools/generated/abi_inspection.rb;
         # the web protocol is the web client's and erx_web_proto's, and element sequences
         # erx_abi_packed's; no host tool reads either. The theme is its own emitters'
-        # (Erx::ABI::ThemeEmitter), read from the model.
-        attributes = @schema.each_pair.to_h.reject { |name, _value| %i[types inputs inspection web elements theme].include?(name) }
+        # (Erx::ABI::ThemeEmitter), read from the model, and the DMA marks the C
+        # encoders' (Erx::ABI::MarksEmitter).
+        attributes = @schema.each_pair.to_h.reject { |name, _value| %i[types inputs inspection web elements theme marks].include?(name) }
         rendered = attributes.map { |key, item| "#{key}: #{value(item)}" }
         rendered << 'types: types.freeze'
         rendered << 'inputs: {}.freeze'

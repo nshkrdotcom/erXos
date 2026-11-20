@@ -142,7 +142,10 @@ tables, not nested flexible arrays.
 
 An integer field can have indented `bits NAME LOW HIGH` members, with an
 optional `shift COUNT` for an address stored without low zero bits. Both
-ends are inclusive. The generator rejects overlap, out-of-range shifts
+ends are inclusive. A `field` line of one unsigned integer with no bits,
+or a `bits` line, may end in `device_address`: the place holds an address
+a device follows into memory
+([design-device-dma.md](design-device-dma.md#what-the-formats-say)). The generator rejects overlap, out-of-range shifts
 and ranges outside the field. A setter accepts the unshifted semantic
 value, checks its alignment and range, and preserves unrelated bits.
 Field visibility, allowed-zero bits and caller/kernel ownership are
@@ -201,6 +204,12 @@ The exact layout metadata forms, at two-space indentation, are:
 | `visibility FIELD CLASS` | CLASS is `internal`, `release` or `development`; the declaration does not itself expose the field |
 | `private` | the layout's record, offsets and operations go only to its private header, described above |
 | `sequence FIELD terminal VALUE exhaustion STATUS recovery RECOVERY` | FIELD is an atomic unsigned sequence counter; VALUE fits it; STATUS names a declared failure result; RECOVERY is `none`, `new_object` or `new_incarnation` |
+
+A layout that a device reads or writes as a record may also carry the
+DMA marks, `selects`, `fixed`, `refers`, `activates`, `derived`, `states`
+and `releases`, and its format file `target` lines; their forms, checks and
+the encoders generated from them are in
+[design-device-dma.md](design-device-dma.md#what-the-formats-say).
 
 `ROLE` is an identifier local to the layout, not a received name or an
 authenticated identity. Owner masks and reserved masks cover a field
