@@ -4,19 +4,21 @@
 > over the virtio block driver on QEMU and the SD card driver on the
 > Raspberry Pi 4; killing the block driver in the middle of a transfer
 > ends the domain, its restart mounts `/data` again, and every file
-> synced before the kill is there. The medium's layout of two slots,
-> the vault's partition and the data partition, the boot-selection
-> record the packer writes, and the QEMU harness that reads it and boots
-> the slot it names are built. The build writes each slot's system
-> partition as an EROFS image with a dm-verity hash tree, and the EROFS
-> reader in every runtime reads only blocks that pass the tree. The
-> pure FAT reader that finds root's login keys on the card is built.
-> The F2FS codec and mount core are built and tested on the host.
-> **Designed:** the `system` tree serving packages from the system
-> partition, the slot writer, updates with a trial boot and a commit,
-> the reset count, per-user trees of `/data`, the vault's storage
-> domain, the FAT server for removable media, and erXos's F2FS as a
-> mounted file system with its power-cut harness.
+> synced before the kill is there. Each user's home, `/root` or
+> `/home/NAME`, is served from `/data`. The medium's layout of two
+> slots, the vault's partition and the data partition, the
+> boot-selection record the packer writes, and the QEMU harness that
+> reads it and boots the slot it names are built. The build writes slot
+> A's system partition as an EROFS image with a dm-verity hash tree,
+> the EROFS reader in every runtime reads only blocks that pass the
+> tree, and the storage domain serves the partition's packages as the
+> `system` tree. The pure FAT reader that finds root's login keys on
+> the card is built. The F2FS codec and mount core are built and tested
+> on the host.
+> **Designed:** the slot writer, updates with a trial boot and a
+> commit, the reset count, the vault's storage domain, the FAT server
+> for removable media and USB drives, and erXos's F2FS as a mounted
+> file system with its power-cut harness.
 
 **Background needed.** [Chapter 1](01-operating-systems.md) (block
 devices, file systems, journals), [chapter 10](10-domains.md)
@@ -38,10 +40,10 @@ ZFS, keeps a file system consistent across a crash. `freebsd-update`
 replaces system files in place, and ZFS boot environments let an
 administrator keep the old system as a snapshot to boot if the new one
 fails. `nextboot` boots a different kernel once and falls back on the
-next reboot. <!-- check: FreeBSD nextboot(8) one-shot semantics; boot
-environments via bectl(8) --> All of this runs in the kernel, so a bug
-in a file system's parser is a kernel bug, and a crafted disk image is
-an attack on the kernel.
+next reboot. <!-- check: ZFS boot environments as described (bectl(8)
+not read) --> These file systems run in the kernel, so a bug in a file
+system's parser is a kernel bug, and a crafted disk image is an attack
+on the kernel.
 
 erXos runs storage as services in Erlang domains of their own. The
 system itself is a read-only image whose every block is checked
@@ -51,11 +53,6 @@ and an update writes a complete second copy of the system and boots
 it once on trial, so the copy that runs is never written. A bug in a
 file system ends a domain, never the machine.
 
-Sections 16.1 to 16.6 cover storage as a service, the read-only
-system, littlefs under `/data`, the F2FS design, removable media and
-the SD controller, and updates through two slots; failures and design
-choices follow.
-
 > **Background: partitions and the SD card.** A disk is one long row
 > of numbered blocks (chapter 1, section 1.6.1). A **partition** is a
 > range of those blocks set aside for one use, listed in a partition
@@ -63,14 +60,12 @@ choices follow.
 > record, has four entries; one of them may point to an extended
 > partition holding more. An SD card is flash memory behind a small
 > controller. Flash cannot overwrite a page in place: it erases a
-> large region, the **erase unit** (often 1 MiB or more on a card),
-> and then writes pages into it. Each region survives a limited number
-> of erases. The card's controller hides this by keeping a table from
-> the block numbers the computer uses to the pages that hold them, its
-> flash translation layer. That table is the card's secret, and a
-> power cut while the controller updates it can damage blocks the
-> computer never wrote.
-> <!-- check: typical SD erase unit sizes; FTL corruption on power loss is a known risk, not a guarantee -->
+> large region, the **erase unit**, and then writes pages into it.
+> Each region survives a limited number of erases. The card's
+> controller hides this by keeping a table from the block numbers the
+> computer uses to the pages that hold them, its flash translation
+> layer. That table is the card's secret, and a power cut while the
+> controller updates it can damage blocks the computer never wrote.
 
 ## 16.1 Storage as a service
 
@@ -125,9 +120,11 @@ thing.) The window checks every request against its range, refuses a
 write if it is read-only, and passes what is left to the driver. A file
 system that asks for a sector past its partition's end gets `erange`.
 
-Who holds which window is a fact of the system manifest, not of code.
-The development manifest, `config/manifest/qemu-virt-development.txt`,
-declares each one:
+The system manifest declares which domain may hold each window, and a
+build check proves the declaration safe: it refuses, for example, a
+window on a slot held by anyone but the system domain. The development
+manifest, `config/manifest/qemu-virt-development.txt`, declares the
+data partition's:
 
 ```text
 window data
@@ -139,18 +136,16 @@ window data
   image none
 ```
 
-The storage domain also holds the record partition read-only, for
-root's login keys. The block driver starts the windows from these
-rows at boot; they are built.
-
-The block driver, `erlang/apps/erx_blk`, is a few processes in the
-storage domain: a device process that talks to the
-controller through the device NIF (chapter 15), a partition process
-that reads the partition table, and the windows it starts. One module,
-`erx_blk_write`, is the only one that builds a write request for the
-device; a build check refuses any other module that posts one to the
-device (`tools/lib/erx/chokepoint_rules/device.rb`). Section 16.6
-explains why that one path matters.
+The block driver, `erlang/apps/erx_blk`, does not read these rows. It
+is a few processes in the storage domain: a device process that talks
+to the controller through the device NIF (chapter 15), a partition
+process, and the windows. The partition process reads the partition
+table, admits it only if it matches `abi/medium.txt`, and starts a
+window for the record partition, each boot partition, the vault's
+partition and the data partition. From the boot value (section
+16.6.2) it adds read-only windows on the booted slot's system
+partition and on the whole record partition, for root's login keys.
+It hands windows only to processes of its own domain. This is built.
 
 ### 16.1.3 What a failure ends
 
@@ -162,8 +157,9 @@ the supervisor, the application, and with it the whole storage domain.
 The domain service then restarts the domain, at most five times in
 600 seconds, as the manifest's row for it says.
 
-Erlang's habit is to restart only the process that failed. The reason
-for ending more is the disk's write cache. A restarted
+Erlang's habit, the one chapter 3's supervisors teach, is to restart
+only the process that failed. Here that habit would be wrong, because
+of the disk's write cache. A restarted
 driver resets the controller, and nothing promises that a reset keeps
 what the device's cache held. A file system that carried on over the
 new driver could believe a write was safe that the reset threw away.
@@ -191,8 +187,7 @@ The `driver_domains` QEMU suite runs that event
 6. The suite reads `/data` again: every synced file is present, each
    kept file cut at a sync.
 
-This is built. Root's session does not fail; it sees a pause in
-`/data`.
+Root's session does not fail; it sees a pause in `/data`.
 
 ## 16.2 Read-only system images
 
@@ -209,25 +204,23 @@ that lets any reader prove each block is the one the build wrote.
 > Merkle tree. To check one block, a reader needs the block, the tree
 > blocks on its path up, and the root hash; if the root hash is
 > trusted, so is the block. Linux's dm-verity uses such a tree to
-> check a read-only partition as it is read, and Android uses it for
-> its system partition.
-> <!-- check: dm-verity origin in Linux and use on Android -->
+> check a read-only partition as it is read.
 
 ### 16.2.1 EROFS and its tree
 
 The system partition holds an EROFS image. EROFS, the Enhanced Read-Only
-File System, was written for Linux to hold phone system images: it has
-no free-space map, no journal and nothing that changes, so a reader has
-little to get wrong. <!-- check: EROFS origin (Huawei, Linux 4.19
-staging, 2018) --> The tree after it is dm-verity's format, version 1,
+File System, is a Linux file system for read-only images: nothing on it
+changes, so it needs no free-space map and no journal, and a reader has
+little to get wrong. The tree after it is dm-verity's format, version 1,
 with SHA-256 and 4 KiB blocks, so each tree block holds 128 hashes
 (`otp/erts/preloaded/src/erx_verity_tree.erl`). The image's manifest,
 inside the slot's boot image, records the root hash, the tree's offset
 and its salt. The firmware loads the boot image from the boot partition,
 so the root hash does not pass through the partition it checks.
 
-The packer builds both, with fsimg, a tool outside the tree, and
-records the tree in the manifest's `system_image` row. This is built.
+The packer has fsimg, a tool outside the tree, write the EROFS image,
+computes the tree itself, and records the tree in the manifest's
+`system_image` row.
 
 ### 16.2.2 Every block checked before it is parsed
 
@@ -237,7 +230,7 @@ loading anything first. It never reads the medium itself. Every block
 comes through `erx_verity`, the hash-checking reader, and `erx_verity`
 hands back a block only once it matches the tree ([design-storage.md,
 Reading EROFS images](../design-storage.md#reading-erofs-images)).
-Figure 16.3 traces one read.
+Figure 16.2 traces one read.
 
 ```mermaid
 sequenceDiagram
@@ -255,15 +248,14 @@ sequenceDiagram
     end
 ```
 
-*Figure 16.3. An EROFS read checked against the hash tree. The reader
+*Figure 16.2. An EROFS read checked against the hash tree. The reader
 sees bytes only after they have matched; a changed block never reaches
 its parser.*
 
 The check runs in the calling process, in Erlang, with the runtime's
-SHA-256 built-in, and caches verified tree blocks. The reader decodes
-every structure by binary matching with checked bounds, for the images
-that did not pass a tree: those its fuzz target,
-`test/erlang/erx_erofs_fuzz.erl`, feeds it.
+SHA-256 built-in, and asks for the tree blocks it needs on every read.
+The parser also checks every bound, because its fuzz target,
+`test/erlang/erx_erofs_fuzz.erl`, feeds it images no tree vouches for.
 
 Flip one byte of a directory block in the system partition. Its hash
 no longer matches the tree, so the read answers `eio`; the reader
@@ -275,25 +267,27 @@ changes files and rebuilds the tree to match: every read still answers
 
 ### 16.2.3 The `system` tree, and every reader checks for itself
 
-In the design, the storage domain serves the booted slot's system
-partition as the **`system` tree**, read-only, through
-`erx_storage_system`, and its `apps/` directory holds the packages that
-come with the system image ([design-storage.md, The `system`
-tree](../design-storage.md#the-system-tree)). A **package** is an app's
+The storage domain serves the `apps/` directory of the booted slot's
+system partition as the **`system` tree**, read-only, through
+`erx_storage_system` ([design-storage.md, The `system`
+tree](../design-storage.md#the-system-tree)). The build places there
+the packages that come with the system, such as the kiosk app on the
+Raspberry Pi's card; packages a user installs lie in `/data` (section
+16.3.3). A **package** is an app's
 one `.app` file: a signed header, an EROFS image of the app's files and
 that image's own hash tree (chapter
 [23](README.md#chapter-23-apps-and-packages)). A domain that runs an app
 reads the package through the tree and checks every block against the
 package's own tree, a second time, in its own memory. So a storage
 domain can refuse to hand over a file, but it cannot change what a
-reader accepts.
-
-`erx_storage_system` is built and tested on the host, and the
-`medium_boot` QEMU suite reads a system release file from the partition
-through the hash-checking reader on a guest. The `system` tree as a
-service is designed and not built: the partition holds no `apps/`,
-so a booted system serves an empty tree to no one, and packages
-travel in the boot image.
+reader accepts. The system domain and the app template each hold a
+read-only **file grant** of the tree, a process of the storage domain
+that serves the tree to that one holder (chapter 11, section
+[11.7.1](11-security.md#1171-a-namespace-of-grants)); the build
+derives both from the manifest. This is
+built; `erx_storage_system` is tested on the host, and the
+`medium_boot` QEMU suite reads a system release file from the
+partition through the hash-checking reader on a guest.
 
 Nothing at boot needs the tree: every domain's code lies in the boot
 image (chapter 10, section
@@ -303,13 +297,14 @@ partition costs packages, never the boot.
 ## 16.3 littlefs in the storage domain
 
 `/data` is served by littlefs, a small file system from the embedded
-world. Its README states its goals: it "is designed to handle random
-power failures", gives "strong copy-on-write guarantees", and keeps RAM
-use "strictly bounded" as the file system grows (littlefs README,
-v2.11.3). It also spreads writes so no region wears out first. erXos
+world. Its README says it "is designed to handle random power
+failures" (littlefs README, v2.11.3); it also promises copy-on-write
+guarantees and RAM use that stays bounded as the file system grows,
+and it spreads writes over the blocks it rewrites (dynamic wear
+levelling). erXos
 imports littlefs v2.11.3 into `littlefs/`, and the storage domain runs
 it as a NIF (chapter 3), C code inside the domain's runtime
-([design-stopgap.md, littlefs in the storage
+([littlefs in the storage
 domain](../design-stopgap.md#littlefs-in-the-storage-domain)).
 
 > **Background: how a file system survives a cut.** A file system
@@ -374,20 +369,42 @@ placement is designed and not built.
 The volume is the files service `data`, and its `packages/` directory is
 a second service, `packages`, where installed apps lie (chapter
 [23](README.md#chapter-23-apps-and-packages)). For each grantee the
-storage domain starts a grant of the tree, a process that admits only
-that domain's requests (chapter 11, section
-[11.6](11-security.md#116-facets-authority-over-services)). A `packages`
-grant reaches nothing outside `packages/`. The system domain and root's
-session each hold a `data` grant over all of `/data`, read and write.
-Both services are built. Per-user trees, `/root` for root and
-`/home/NAME` for every other user through a `home` service, are designed
-and not built.
+storage domain starts a file grant of the tree, which admits only that
+domain's requests, through the facet the manifest declares (chapter 11,
+section [11.6](11-security.md#116-facets-authority-over-services)). A
+`packages` file grant reaches nothing outside `packages/`. The system
+domain and root's session each hold a `data` file grant over all of
+`/data`, read and write.
+
+Each user's home is a third service, `home`, over the volume's `root/`
+and `home/` directories ([design-files.md, Building, binding and
+mounting](../design-files.md#building-binding-and-mounting)). Its file grant is rooted at
+the grantee's own home, `/root` for root and `/home/NAME` for anyone
+else, and the grant makes the directory when the volume lacks it. The
+build gives every user's session template a `home` facet, so a user
+reaches their own home and nothing else of `/data`. All three services
+are built.
+
+The storage domain also serves `login_keys`, a read-only tree of one
+file, `root`, holding the keys of the `authorized_keys` file a user
+put on the record partition. It reads the card only when the file is
+first asked for, with the FAT reader of section 16.5.1. At boot, while
+`/root/.ssh/authorized_keys` does not exist, root's session reads
+`login_keys` and writes the keys there; from then on SSH reads only
+that copy, which root edits like any file ([design-ssh.md, Root's
+login keys on the medium](../design-ssh.md#roots-login-keys-on-the-medium)).
+This is built.
 
 ## 16.4 erXos's F2FS
 
 The design gives the data and vault partitions F2FS, the Flash-Friendly
 File System Samsung wrote for Linux (Lee and others, 2015), implemented
-afresh in Erlang ([design-f2fs.md](../design-f2fs.md)). It writes
+afresh in Erlang ([design-f2fs.md](../design-f2fs.md)). The vault's
+partition is a second volume because the vault's sealed keys are kept
+apart from everyone's files: in the design a storage domain of its own
+serves it, the vault is its only client, and so no user's request
+reaches it ([design-storage.md, Data
+model](../design-storage.md#data-model)). It writes
 Linux's on-disk format, so Linux can mount and check what erXos writes,
 and erXos can mount what Linux writes. No Linux code enters the tree:
 the implementation works from a record of the format written in other
@@ -411,10 +428,9 @@ references
 
 The allocator holds this rule by itself. A block that stops being used
 stays "touched" until the next checkpoint commits, and the allocator
-hands out only blocks that are neither in use nor touched. Four
-orderings complete it, among them that an address enters the state only
-after its block's write is answered, and that a commit block follows a
-flush covering every write before it. With these, stale chains, torn
+hands out only blocks that are neither in use nor touched. Four rules
+about the order of writes and flushes complete it. With these, stale
+chains, torn
 records and blocks freed too early cannot arise from erXos's writes, and
 need no code of their own.
 
@@ -477,9 +493,18 @@ The design adds the **FAT server**, `erx_fat`, which serves a whole FAT
 partition as files, in a storage domain of its own that holds only that
 partition's window ([design-storage.md, Removable media:
 FAT](../design-storage.md#removable-media-fat)). It reads FAT12, FAT16
-and FAT32 with long names, matches names without regard to case as
-Windows does, and reports files as mode `0644`, since FAT has no owners.
-The FAT server is designed and not built.
+and FAT32 with long names, writes FAT16 and FAT32 and mounts FAT12
+read-only, matches names without regard to case as Windows does, and
+reports files as mode `0644`, since FAT has no owners. A USB stick
+reaches it the same way: the USB domain runs a block service for each
+medium it finds, and the FAT server holds a **drive grant**, a right to one partition of
+one drive instead of a window. It mounts on access: the first time a
+client walks its tree it asks for the window and mounts what it finds;
+while the drive is empty its root is an empty read-only directory, and
+when the stick is pulled the window ends and the server unmounts
+([design-usb.md, Mass storage reaches the file
+servers](../design-usb.md#mass-storage-reaches-the-file-servers)). The
+FAT server and USB mass storage are designed and not built.
 
 ### 16.5.2 The SD host controller
 
@@ -537,7 +562,10 @@ harness plays the firmware: it reads the record, parses the slot it
 names, and boots it (`tools/lib/erx/boot_record.rb`, with a fuzz
 target). These are built.
 
-Figure 16.2 shows the states the record and the boot together allow.
+Write C for the committed slot, the one the record names, and S for
+the spare. The boot value, introduced in section 16.6.2, is
+`normal(X)` or `trial(X)` for the slot X the firmware booted. Figure
+16.3 shows the states the record and the boot together allow.
 
 ```mermaid
 stateDiagram-v2
@@ -551,7 +579,7 @@ stateDiagram-v2
     committed --> [*]
 ```
 
-*Figure 16.2. The boot-selection record as a state machine. Every
+*Figure 16.3. The boot-selection record as a state machine. Every
 failure from the trial state leads back to the committed slot, because
 only a healthy trial rewrites the record.*
 
@@ -582,19 +610,30 @@ manifest the update writes last. A spare cut short in either partition
 has no manifest that matches it, so it is never tried, and the next
 install writes it again. The facts on the medium are the only state.
 
+An update reaches the update service, in the system domain, from the
+developer's host over the host link or from the network, through the
+service's install facet; the service reports what it is doing and
+whether the spare passes its check ([design-storage.md, System
+updates](../design-storage.md#system-updates)). The design does not
+say more about where an update is published or what command a user
+types to start one.
+
 The slot writer, the update service and the commit are designed and not
-built. The boot value is built: it reaches the storage domain's runtime
-as the boot record `-erx_record boot VALUE SLOT`, and the block driver
-uses it to start a window on the booted slot's system partition alone.
+built. The boot value is built: the domain library passes it to the
+storage domain when it starts the domain, and the block driver uses it
+to start a window on the booted slot's system partition alone.
 
 ### 16.6.3 A trial writes nothing but the record
 
 A failed trial must leave nothing to undo. So, in the design, on a trial
 boot the block driver's one write path, `erx_blk_write`, refuses every
 write except to the record and the reset count, and every file system
-mounts read-only. With one write path, kept by a build check, the rule
-holds whatever the storage services and the system domain do. The trial
-rule is designed and not built: `erx_blk_write` does not apply it.
+mounts read-only. `erx_blk_write` is the only module that builds a
+write request for the device: a build check refuses any other module
+that posts one (`tools/lib/erx/chokepoint_rules/device.rb`), and this
+is built. With one write path, the rule holds whatever the storage
+services and the system domain do. The trial rule itself is designed
+and not built: `erx_blk_write` does not apply it.
 
 ### 16.6.4 Hangs, faults and the reset count
 
@@ -608,10 +647,11 @@ when the system domain's runtime stops petting it, and on the
 Raspberry Pi 4 it also arms the hardware watchdog with a 4 s timeout,
 so a hang of Fiasco or of the root service resets the board
 ([design-fiasco.md, The watchdog](../design-fiasco.md#the-watchdog)).
-Both watchdogs are built. A hang in the firmware's own stage, before
-that thread starts, is not covered and needs a power cycle. Making the
-trial request itself is designed and not built: `erx_machine_end`
-refuses `ERX_END_TRIAL`, so no trial is ever asked for.
+Both watchdogs are built. A hang before that thread starts, in the
+firmware's own stage or in Fiasco's boot, is not covered and needs a
+power cycle. The call that asks the firmware for a trial boot is
+designed and not built: the kernel interface refuses it, so no trial
+is ever asked for.
 
 The design adds a **reset count** in a sector of its own beside the
 record: the number of boots in a row that ended unordered. It rises
@@ -628,7 +668,9 @@ domain. The reset count is designed and not built.
 | A block driver crash | the storage domain, then restarted | the same; files synced before it are kept |
 | A crafted data partition | the storage domain, at every restart | `/data` stays unavailable; the partition is never formatted |
 | A changed block of a system partition | the one read | `eio` on that file; the machine boots, since nothing at boot reads the partition |
-| A trial that faults or hangs (designed) | the trial boot | the committed system boots again |
+
+In the design, a trial that faults or hangs ends only the trial boot,
+and the committed system boots again.
 
 None of this covers the card itself. Every rule here assumes a medium
 that writes a sector whole and honours a flush, and an SD card
@@ -664,8 +706,8 @@ manifest written last makes the note unnecessary.
 ## Summary
 
 Storage in erXos is Erlang services in their own domains. A file
-system reaches the medium only through partition windows the system
-manifest assigns. When the driver or littlefs fails, the storage domain
+system reaches the medium only through partition windows, each
+serving one partition. When the driver or littlefs fails, the storage domain
 ends and restarts, and every file synced before the failure is kept. The
 system's files sit on a read-only EROFS image whose every block is
 checked against a hash tree before it is parsed, with the root hash
@@ -682,7 +724,7 @@ record's layout is built, and the trial and commit are designed.
 * [design-storage.md](../design-storage.md): the medium, the block
   driver, the EROFS reader, the `system` tree, FAT, the SD controller
   and updates, with every invariant and its test.
-* [design-stopgap.md, littlefs in the storage domain](../design-stopgap.md#littlefs-in-the-storage-domain):
+* [littlefs in the storage domain](../design-stopgap.md#littlefs-in-the-storage-domain):
   the owner and worker, the failure path and the tests.
 * [design-f2fs.md](../design-f2fs.md): erXos's F2FS, its construction,
   crash states and power-cut harness.
@@ -692,7 +734,7 @@ record's layout is built, and the trial and commit are designed.
   how every end of the machine becomes a reset.
 * Changman Lee, Dongho Sim, Joo-Young Hwang and Sangyeun Cho, "F2FS: A
   New File System for Flash Storage", USENIX FAST, 2015: the design of
-  F2FS. <!-- check: authors and venue -->
+  F2FS.
 * littlefs project, README of littlefs v2.11.3,
   <https://github.com/littlefs-project/littlefs>: littlefs's goals.
 * Raspberry Pi Ltd, "config.txt" documentation, sections on
