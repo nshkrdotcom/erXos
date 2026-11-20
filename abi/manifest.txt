@@ -98,6 +98,7 @@ enum mf_device_role u32
   value i2c 10
   value spi 11
   value rtc 12
+  value usb 13
 enum mf_grantee u32
   value system 0
   value domain 1
@@ -461,6 +462,9 @@ layout erx_mf_device wire_le 8 88
   field clock u32 80
   field reserved u32 84
   zero reserved all
+# A window on a USB controller's row names in drive the controller's drive whose medium
+# it serves, da0 to da(usb_drives_max - 1) as 0 up, and every other window mf_none
+# (docs/design-usb.md, "Mass storage reaches the file servers").
 layout erx_mf_window wire_le 8 32
   field holder u32 0
   field device u32 4
@@ -468,7 +472,8 @@ layout erx_mf_window wire_le 8 32
   field partition u32 12
   field rights mf_window_rights 16
   field image u32 20
-  field reserved u64 24
+  field drive u32 24
+  field reserved u32 28
   zero reserved all
 layout erx_mf_service wire_le 8 24
   field name erx_mf_str 0

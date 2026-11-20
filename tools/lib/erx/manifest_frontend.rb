@@ -67,7 +67,7 @@ module Erx
         'domain' => %w[principal limits kind flags runtime release restarts restart_period_s args env],
         'session' => %w[limits runtime release args env],
         'unit' => %w[placement holder],
-        'window' => %w[holder device role partition rights image],
+        'window' => %w[holder device role partition rights image drive],
         'service' => %w[name server interface],
         'facet' => %w[name grantee service operations max_request in_flight reductions period_ns max_heap_size queue],
         'image' => %w[device input salt],
@@ -80,7 +80,7 @@ module Erx
         'system_image' => %w[input]
       }.freeze
       OPTIONAL = { 'machine' => %w[system_args boot_timeout_s], 'domain' => %w[args env], 'session' => %w[args env], 'service' => %w[name],
-                   'facet' => %w[name queue], 'image' => %w[salt],
+                   'facet' => %w[name queue], 'image' => %w[salt], 'window' => %w[drive],
                    'start' => %w[enable display restarts restart_period_s],
                    'apps' => %w[services max], 'package' => %w[enable], 'display' => %w[palette] }.freeze
       # The declarations that carry no source alias: the one machine, the one apps row

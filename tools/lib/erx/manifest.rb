@@ -674,10 +674,7 @@ module Erx
       end
 
       def check_device(device)
-        invalid('no domain holds a PCIe function until Track U (b) builds the enumerator', 'devices.selector') if device.fetch('selector') == @codec.member('mf_selector', 'pci')
-        role = device.fetch('role')
-        invalid('no domain holds PCIe configuration space until M9', 'devices.role') if role == device_role('configuration')
-        invalid('no domain holds a TPM until M11', 'devices.role') if role == device_role('tpm')
+        invalid('no domain holds a TPM until M11', 'devices.role') if device.fetch('role') == device_role('tpm')
         case device.fetch('dma')
         when @codec.member('mf_dma', 'confined')
           unsupported('a confined device needs a DMA window, which M9 brings', 'devices.dma')
@@ -720,6 +717,7 @@ module Erx
         rows['images'], rows['extents'] = normalize_images(rows.fetch('devices'))
         rows['system_image'] = system_image_rows
         rows['windows'] = normalize_windows(rows)
+        check_pcie(rows)
         check_window_services(rows)
         RootStartup.check(loadable: root_loadable_bytes, baseline: baseline,
                           root_memory: root_memory, platform: @context.platform)
@@ -1081,9 +1079,12 @@ module Erx
         invalid("device-tree device lacks #{missing.join(', ')}", 'context.platform.devices') unless missing.empty?
         invalid('device-tree device has an empty window', 'context.platform.devices') if device.fetch('size').zero?
         # Line 0 is no line (docs/design-abi.md, "Devices and partition windows"), so only a
-        # row no driver binds a line for, of the ordinary role, which no device kind has, or a
-        # framebuffer's, carries it.
-        if device.fetch('line').zero? && ![device_role('ordinary'), device_role('framebuffer')].include?(device.fetch('role'))
+        # row no driver binds a line for carries it: of the ordinary role, which no device
+        # kind has, a framebuffer's, or a PCIe bridge's whose node raises none of its own, as
+        # QEMU virt's ECAM node does not; a bridge that raises lines, as the BCM2711's, carries
+        # its first, which joins its unit (docs/design-platforms.md, "PCIe bridges").
+        no_line = %w[ordinary framebuffer configuration].map { |role| device_role(role) }
+        if device.fetch('line').zero? && !no_line.include?(device.fetch('role'))
           invalid('a driven device-tree device names no interrupt line', 'context.platform.devices')
         end
         unless device_path?(device['path'])
@@ -1335,9 +1336,14 @@ module Erx
 
       def device_role(name) = @codec.member('mf_device_role', name)
 
+      # Property 1: a device is one unit's, a device-tree device named by its path and a
+      # PCIe function by its place, its bridge, bus, device and function.
       def check_one_holder(devices)
-        paths = devices.filter_map { |device| device['path'] }
-        invalid('a device appears in more than one unit', 'devices.path') unless paths.uniq.size == paths.size
+        tree, functions = devices.partition { |device| device.fetch('selector') == @codec.member('mf_selector', 'dt') }
+        { 'devices.path' => tree.map { |device| device.fetch('path') },
+          'devices.place' => functions.map { |device| device.values_at('bridge', 'bus', 'device', 'function') } }.each do |field, names|
+          invalid('a device appears in more than one unit', field) unless names.uniq.size == names.size
+        end
       end
 
       def check_no_sealed_entry
@@ -2703,6 +2709,47 @@ module Erx
         { 'kind' => row.fetch('kind'), 'flags' => row.fetch('flags'), 'head' => head }
       end
 
+      # Property 3 as Phase 1 keeps it (docs/design-fiasco.md, "The Phase 1 manifest check";
+      # docs/design-usb.md, "The Phase 1 part"). A PCIe bridge is a device-tree row of the
+      # configuration role. Its unit is held by the configured domain pcie, which can turn on
+      # any function's bus mastering and so holds nothing else: every record that names pcie
+      # is one of an allow-list, a bridge's unit or its place in the boot order, so a table
+      # the ABI adds later is refused until it is allowed. A placed PCIe function is
+      # unconfined, held by a configured domain and behind a bridge the manifest places,
+      # which pcie then drives. No function names a line (device_window), since no platform
+      # record closes a bridge yet.
+      def check_pcie(tables)
+        devices = tables.fetch('devices')
+        pcie = @indices.fetch('domain')['pcie']
+        units = tables.fetch('units').map { |unit| [unit.fetch('holder'), unit_devices(devices, unit)] }
+        bridges = units.flat_map { |_holder, rows| rows.select { |device| pcie_bridge?(device) } }.map { |device| device.fetch('path') }
+        units.each do |holder, rows|
+          held = !pcie.nil? && holder == pcie
+          invalid("only the domain pcie holds a PCIe bridge's unit", 'unit.holder') if rows.any? { |device| pcie_bridge?(device) } && !held
+          invalid("the domain pcie holds only PCIe bridges' units", 'unit.holder') if held && !rows.all? { |device| pcie_bridge?(device) }
+          rows.select { |device| device.fetch('selector') == @codec.member('mf_selector', 'pci') }.each { |function| check_function(function, holder, bridges) }
+        end
+        return if pcie.nil?
+
+        named = domain_references(tables, pcie).map(&:first).uniq - PCIE_DOMAIN_REFERENCES
+        invalid("the domain pcie holds nothing but PCIe bridges' units, and its #{named.first} row names it", named.first) unless named.empty?
+      end
+
+      # The tables a row of which may name the domain pcie (check_pcie).
+      PCIE_DOMAIN_REFERENCES = %w[units boot_order].freeze
+
+      def pcie_bridge?(device)
+        device.fetch('selector') == @codec.member('mf_selector', 'dt') && device.fetch('role') == device_role('configuration')
+      end
+
+      def check_function(function, holder, bridges)
+        invalid('a PCIe function is held by a configured domain', 'unit.holder') if holder == @codec.constant('mf_none')
+        invalid('a PCIe function is unconfined in Phase 1', 'devices.dma') unless function.fetch('dma') == @codec.member('mf_dma', 'unconfined')
+        return if bridges.include?(function['bridge'])
+
+        invalid("a PCIe function's bridge #{function['bridge'].inspect} names no PCIe bridge the manifest places", 'devices.bridge')
+      end
+
       # Property 8's windows (docs/design-abi.md, "Devices and partition windows"; PW1 of
       # docs/design-storage.md): a role abi/manifest.txt does not mark configured is the
       # slot writer's, the system domain's alone in Phase 1, and the one system window is
@@ -2716,16 +2763,39 @@ module Erx
           slot_writer = !@codec.attribute?('mf_window_role', role, 'configured')
           invalid('only the system domain, the slot writer, holds the slot windows', 'window.holder') if
             slot_writer && !(one(record, 'holder').value == 'system' && !one(record, 'holder').quoted)
+          device = window_device(record, devices)
           { 'holder' => holder_index(one(record, 'holder'), field: 'window.holder'),
-            'device' => window_device(record, devices), 'role' => role, 'partition' => window_partition(record, role),
-            'rights' => window_rights(record, role), 'image' => window_image(record, role) }
+            'device' => device, 'role' => role, 'partition' => window_partition(record, role),
+            'rights' => window_rights(record, role), 'image' => window_image(record, role),
+            'drive' => window_drive(record, role, devices.fetch(device)) }
             .tap { |row| check_image_device(row, tables.fetch('images')) }
         end
         check_system_window(rows, tables)
         check_record_volume_window(rows)
-        placed = rows.map { |row| row.values_at('device', 'role', 'partition', 'image') }
-        invalid('two windows name one role and partition', 'window.partition') unless placed.uniq.size == placed.size
-        rows.sort_by { |row| row.values_at('holder', 'device', 'role', 'partition', 'image') }
+        placed = rows.map { |row| row.values_at('device', 'role', 'partition', 'image', 'drive') }
+        invalid('two windows name one role, partition and drive of a device', 'window.partition') unless placed.uniq.size == placed.size
+        rows.sort_by { |row| row.values_at('holder', 'device', 'role', 'partition', 'image', 'drive') }
+      end
+
+      # Property 8's drive clause (docs/design-usb.md, "Mass storage reaches the file
+      # servers"): a window on a USB controller is a fat window naming one of the
+      # controller's drives, da0 to da(usb_drives_max - 1), packed as its number, so no
+      # controller's rows can name more than usb_drives_max drives; every other window
+      # names none, packed as mf_none.
+      def window_drive(record, role, device)
+        controller = device.fetch('role') == device_role('usb')
+        unless record.properties.key?('drive') == controller
+          invalid('a window names a drive exactly when it lies on a USB controller', 'window.drive')
+        end
+        return @codec.constant('mf_none') unless controller
+
+        invalid('a window on a USB controller is a fat window', 'window.role') unless role == @codec.member('mf_window_role', 'fat')
+        token = one(record, 'drive')
+        drives = @codec.constant('usb_drives_max')
+        number = token.value[/\Ada(0|[1-9][0-9]*)\z/, 1]&.to_i unless token.quoted
+        return number if number && number < drives
+
+        invalid("a drive is da0 to da#{drives - 1}", 'window.drive')
       end
 
       # design-abi.md: fixed-medium roles have partition 0, because the medium
@@ -2775,11 +2845,20 @@ module Erx
           volumes.any? { |volume| system.nil? || volume.values_at('holder', 'device') != system.values_at('holder', 'device') }
       end
 
+      # A window lies on a block device, or on a USB controller, whose drives it names.
       def window_device(record, devices)
-        block_device(text(record, 'device'), devices) || invalid('window names no block device the manifest places', 'window.device')
+        path = text(record, 'device')
+        tree_device(path, devices, 'block') || tree_device(path, devices, 'usb') ||
+          invalid('window names no block or USB device the manifest places', 'window.device')
       end
 
-      def block_device(path, devices) = devices.index { |device| device['path'] == path && device.fetch('role') == device_role('block') }
+      # The index of the placed device-tree device at path of role, or nil. A PCIe function
+      # has no path, so nothing names it here.
+      def tree_device(path, devices, role)
+        devices.index do |device|
+          device.fetch('selector') == @codec.member('mf_selector', 'dt') && device['path'] == path && device.fetch('role') == device_role(role)
+        end
+      end
 
       def window_role(record)
         role = enum(record, 'role', 'mf_window_role')
@@ -2830,7 +2909,7 @@ module Erx
           placed = checked_extents(artifact(record, 'input', 'erofs_image', field: 'image.input'), field: 'image.input')
           bytes = placed.sum { |extent| extent.fetch('length') }
           invalid('an image is whole blocks', 'image.input') unless (bytes % block_size).zero?
-          device = block_device(text(record, 'device'), devices) || invalid('image names no block device the manifest places', 'image.device')
+          device = tree_device(text(record, 'device'), devices, 'block') || invalid('image names no block device the manifest places', 'image.device')
           images << { 'name' => record.name.b, 'device' => device,
                       'format' => @codec.member('mf_image_format', 'erofs_unchecked'),
                       'extents' => { 'table' => 'extents', 'first' => extents.size, 'count' => placed.size },

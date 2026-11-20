@@ -9354,16 +9354,22 @@ document's "residual risks accepted" paragraph.
   (`pci-host-ecam-generic`) and `bcm2711_pcie` (`brcm,bcm2711-pcie`) with role `configuration`, and `qemu-xhci` and
   the VL805 by PCI identity and position with role `usb`, each with its SVD peripheral; the PCIe-arm item under the
   domain library (`dom_boot_view.c`, `boot_devices`) lands with it.
-* [Medium] system manifest, `abi/manifest.txt` ([design-usb.md](docs/design-usb.md#what-the-usb-domain-claims)): no
-  `usb` device role and no `drive` field in `erx_mf_window`. Add both, the field set exactly when the window's device
-  has the `usb` role, and the manifest check's properties 8 and 9 as
-  [design-system.md](docs/design-system.md#the-manifest) states them: at most `usb_drives_max` drives per controller,
-  each (device, drive, partition) once, and a release build's USB domain holding its controller's unit alone and
-  running no file system.
+* [Medium] system manifest, `tools/lib/erx/manifest.rb` ([design-usb.md](docs/design-usb.md#mass-storage-reaches-the-file-servers)):
+  a window names its device by device-tree path alone, so no window can lie on a PCIe function, and `qemu-xhci` and
+  the VL805, both functions, can have no drive. Choose how a window (and a `device` facet parameter) names a
+  function by its place, before the drive grants need one. The boot-time reader bounds no `windows[].drive` (it has
+  no rule for "`mf_none` or below `usb_drives_max`"); add one before `erx_blk_drive` reads the field.
+* [Low] system manifest, `tools/lib/erx/manifest.rb` ([design-system.md](docs/design-system.md#the-manifest)):
+  property 9's USB-domain clause, a release build's USB domain holding its controller's unit alone and running no
+  file system, is not checked, since the check refuses every release build; it lands with the release build's
+  confinement check, with its seed.
 * [Medium] system manifest, `abi/manifest.txt` ([design-abi.md](docs/design-abi.md#devices-and-partition-windows),
   [design-pcie.md](docs/design-pcie.md#dma)): no `dma_limit` in `erx_mf_device`, and no closed flag with its listed
   places and pins on a bridge's row. Add them, with the packer's copies from the platform record; the `dt`-case item
-  under Bugs covers `base`, `size` and `line`.
+  under Bugs covers `base`, `size` and `line`. With them the manifest check takes a `pci` row's line at a listed
+  place of a closed bridge, which it refuses everywhere today (`device_window`), and proves that no other unit holds
+  that line, with the seed of the VL805's line given apart from its function
+  ([design-usb.md](docs/design-usb.md#the-phase-1-part)).
 * [Medium] USB, `abi/inspection.txt` ([design-usb.md](docs/design-usb.md#failure-handling)): no `usb` kind. Declare
   `[usb, Controller]`, `[usb, Controller, ports, Route]`, `[usb, Controller, devices, Route]` and the other paths
   Failure handling lists, shown under `/proc/usb`.
@@ -9390,10 +9396,12 @@ document's "residual risks accepted" paragraph.
 * [Low] docs, design-system.md "The manifest", property 8: the facet grantee rules of
   [design-pcie.md](docs/design-pcie.md#facets) ("The manifest") are not among the check's properties: only the PCIe
   domain holds `pci_bus`, only the system domain holds `pcie`, and a domain holds a `pci` facet exactly when it holds a
-  `pci` device, its scope those devices. State them beside the driver-control facet's rule.
+  `pci` device, its scope those devices. State them beside the driver-control facet's rule; the check's `pci_bus`
+  half is an entry of `PCIE_DOMAIN_REFERENCES` (`tools/lib/erx/manifest.rb`), which refuses every other record that
+  names the domain `pcie`.
 * [Low] docs, design-system.md "Devices": `erx_domain_lib:devices/0` gives each entry's `role` as `block`, `net` or
-  `none`, while the manifest's `mf_device_role` (`abi/manifest.txt`) has twelve values, `network` rather than `net`,
-  and gains `usb` with the manifest item above. Say which roles `devices/0` reports, from the one table.
+  `none`, while the manifest's `mf_device_role` (`abi/manifest.txt`) has thirteen values, `network` rather than `net`,
+  and `usb` among them. Say which roles `devices/0` reports, from the one table.
 * [Medium] docs, design-live.md "Overlays": two loads into one domain other than the system domain at once
   have no stated outcome: whether the code service holds a second candidate overlay until the first is
   published or discarded, or refuses it, so that no published overlay is written from a stale base. State it
