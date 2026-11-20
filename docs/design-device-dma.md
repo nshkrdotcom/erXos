@@ -468,7 +468,7 @@ its state) and states no writer itself.
 A `record` step describes one record of a table the CPU writes:
 
 * its **meaning**, one of the closed set its table offers, each a layout
-  of `abi/formats`, except ADMA2's one meaning, the transfer, which no
+  of `abi/formats` whose `meaning` line names the table's structure, except ADMA2's one meaning, the transfer, which no
   layout holds and the sequencer splits into entries of
   `erx_sdhci_adma2_entry`;
 * the values of the meaning's **free** fields, those its layout marks
@@ -502,20 +502,46 @@ each TRB ring's link), and every activation and doorbell.
 
 A record in memory is written only by its meaning's generated encoder
 ([What the formats say](#what-the-formats-say)). A record in registers,
-GENET's descriptor status words (`TX_DESC_STATUS` and `RX_DESC_STATUS`
-in `hw/svd/genet/genet.svd`), is written as one store of a value built
+GENET's transmit descriptor status word (`TX_DESC_STATUS` in
+`hw/svd/genet/genet.svd`), is written as one store of a value built
 from zero through the SVD's generated accessors, never read, modified
 and written back, so no field the core did not describe keeps a value
 from before; its fixed fields are the form's table's
-([What each form's tables say](#what-each-forms-tables-say)).
+([What each form's tables say](#what-each-forms-tables-say)). The
+receive status word, `RX_DESC_STATUS`, is the controller's report of a
+received frame: it is read, one load each, for the positions the
+receive producer index covers, and never written. A receive hand-back
+writes only the receive consumer index, and every descriptor's address
+is written once, at install.
 
 A **region entry** is a record the sequencer writes from a region's
-name: a buffer a record posts holds, in place of the name, the region's
-device address and length in a layout of the form's, as virtio-gpu's
-resource backing holds `erx_virtio_gpu_mem_entry` entries (Virtio 1.2,
-section 5.7.6). It is a described record like any other: its address
-is placed, from the region the check found named by the post's own
-device, and its encoder refuses a length its field cannot hold.
+name, the `out` segment `{region, R}` of a post
+([design-runtime.md](design-runtime.md#the-device-nif), Regions and
+Posting), as virtio-gpu's resource backing holds
+`erx_virtio_gpu_mem_entry` entries (Virtio 1.2, section 5.7.6):
+
+* **Where it lies.** The entry takes the segment's place among the
+  post's `out` segments, inside the buffer the post fills for the device
+  to read, at the offset the segments before it end at; the post's
+  description reaches it as one length of that buffer. It is a record
+  of the buffer, in no table, and no core describes it: the name is the
+  whole of its input.
+* **What it says.** `R` must be a region of the post's own device; one
+  of another device, or none, or named for the device to write, fails
+  the post. The entry's address is that region's device address and its
+  length the region's whole length, both derived, its padding fixed at
+  0, so the layout has no free place; its encoder refuses a length its
+  field cannot hold.
+* **Who holds what.** The posted buffer that holds the entry is
+  published and released as any buffer is: the publication's holding
+  holds it, and its release returns it. The region the entry names is
+  no holding's. It is not a region of the queue's layout but one of the
+  record's persistent regions ([Regions and
+  writers](#the-construction-handoffs-of-granules)), made only on a
+  coherent device, kept for the boot and written by the CPU alone; a
+  publication neither hands it over nor cleans it, and a release never
+  returns it. The ledger's derived writer covers the queue's regions,
+  and a persistent region stays the CPU's whatever posts name it.
 
 ### Publication
 
@@ -529,10 +555,10 @@ live. The sequencer:
    table, chained in the plan's order, and its available entry the next
    position; a carried record takes its own table's record;
 2. **encodes** every record whole from its description: a record in
-   memory, region entries included, through its meaning's generated
-   encoder, the derived fields included; a record in registers, GENET's
-   status word, as one store of a value built from zero through the
-   SVD's generated accessors;
+   memory through its meaning's generated encoder, the derived fields
+   included, and a region entry through its layout's; a record in
+   registers, GENET's transmit status word, as one store of a value
+   built from zero through the SVD's generated accessors;
 3. writes the fills, rule 1's zeros and the records, then cleans every
    region passing to the device, in the order
    [the sequencer](#calls-observations-and-plans) gives;
@@ -543,7 +569,8 @@ live. The sequencer:
    the command `command/2` writes; an install's ready bit, run bit or
    engine enable; then the doorbell, where the form has one;
 5. records the holding: the positions and records the run made live,
-   every region its names reach, and the report that ends it; for a TRB
+   every region of the queue's layout its names reach (a region entry's
+   persistent region is none of them), and the report that ends it; for a TRB
    command, also its reach, the endpoints it closes and the holdings its
    success retires, as they stand at this publication
    ([design-usb.md](design-usb.md#what-the-dma-check-judges)).
@@ -688,6 +715,23 @@ no new transfer meanwhile: one writer. A transfer record names only buffers of i
 ring is bound to one endpoint, and every record that points an endpoint
 at a ring points it at the ring bound to it: a queue's own buffers.
 
+**What the argument assumes.** The argument covers every address in a
+record: the check never parses the bytes of an `out` segment, which a
+core gives as payload. It therefore holds for a device only while no
+payload format of that device carries an address the device follows,
+or a count that makes the device read further payload bytes as such
+addresses. Block, network and input requests, xHCI's data stages and
+ADMA2's buffers carry none. virtio-gpu's control requests do: a core
+can put any 64-bit value in an `{out, Binary}` segment shaped as a
+`erx_virtio_gpu_mem_entry`, or overstate a resource backing's
+`nr_entries` so the device reads the bytes after the region entries as
+more entries. On a device whose window confines it, what such an address
+reaches is bounded by the window; on an unconfined device it reaches any
+memory, and for virtio-gpu "every address the device follows came from
+a checked name" does not hold. That gap is the security residual
+"device NIF, virtio-gpu requests on an unconfined device" in
+[TODO.md](../TODO.md), and the argument claims nothing for it.
+
 ### What the formats say
 
 The marks are members of a `layout` in `abi/formats`, read by
@@ -697,6 +741,8 @@ resolved every type, and each format file declares its structures:
 ```
 target NAME cpu|device        a structure a region may hold, and its writer
 layout ...
+  meaning TARGET...           this layout is a meaning of each TARGET's records: a table
+                              of that structure offers it
   field NAME TYPE OFFSET device_address
     bits NAME LOW HIGH [shift N] device_address
                               the place holds an address the device follows into memory
@@ -725,12 +771,52 @@ its `when` place are **free**, and a description states them. A
 reference's place, the activation and each derived place are
 **placed**: the sequencer supplies them. A device address is placed,
 or is a release's place, never free or fixed, and a reference's place
-is a device address. A layout with a `releases` mark is a report, which
-the device writes, so it has no `refers` or `derived` mark. `TARGET` is
-a structure of the mark's own file or `data`. The generator refuses a mark outside a `wire_le` layout, a
+is a device address. `TARGET` is a structure of the mark's own file or,
+for a reference, `data`.
+
+**A meaning's writer is its table's.** The structures a layout's
+`meaning` line names share one writer, and that writer is the layout's.
+A layout that is a meaning of `device` structures is a **report**: the
+device writes it, so it has no `refers` or `derived` mark, its free
+places are what the device states, and only a report has a `releases`
+mark. The port status change event is a report though it releases
+nothing, because the event ring is a `device` structure; no mark of its
+own decides that. A layout that is a meaning of `cpu` structures is one
+a description states. A layout with no `meaning` line is offered by no
+table, so no description names it: it is the sequencer's own record (a
+link, the DCBAA's, the scratchpad array's and the segment table's
+entries, the ADMA2 entry, a region entry), which has no free place, or a
+part of a composed record (the input context's slot and endpoint
+contexts), described only as part of the record that composes it.
+
+**What a table offers.** The meanings a table offers are the layouts
+whose `meaning` line names its structure; no form lists them again, and
+the check's meanings rule reads the generated list. The generator holds
+each structure's meanings to what placement and acquisition need:
+
+* they share one size, the table's stride;
+* a structure with more than one meaning has a `selects` mark in each,
+  on bits at the same offset and range, and no enum member is selected
+  by two layouts, so a selector value names at most one meaning in any
+  table and a report's release is read under the one meaning its
+  selector gives; a structure with one meaning may have no selector;
+* every meaning of one structure has its `activates` mark on the same
+  bit of a field at the same offset and width, or none has one. On a
+  `device` structure that bit is the validity the acquisition reads
+  first, in that field's one load, before it knows the record's meaning.
+  A `device` structure whose meanings have no `activates` mark takes its
+  validity from outside the record, as virtio's used ring does from its
+  used index, which its form's acquisition reads instead.
+
+The generator refuses a mark outside a `wire_le` layout, a
 marked layout with a field that is not one unsigned integer or with a
 `tail`, whose part the encoder would not write, a report with a
-`refers` or `derived` mark, two places of one encoder member name
+`refers` or `derived` mark, a `releases` mark on a layout that is no
+report, a `meaning` line naming structures of both writers or one of
+another file, a structure whose meanings differ in size, in where their
+selector lies or in where their activation lies, a structure of more
+than one meaning one of which has no selector, an enum member two
+layouts select, two places of one encoder member name
 (`a_b` and `a.b`), a place no mark claims,
 a device address a description would state or the format fix, a
 reference to a place that is no device address, `device_address` on a
@@ -741,8 +827,9 @@ below the place's shift, a place the layout does not have, an
 `activates` mark of more than one bit, a place marked twice and a
 second `selects`, `activates` or `releases` mark, each with the line of
 the mark or of the place. It numbers the meanings from 1 in the order
-of their layouts' names, `ERX_MEANING_<LAYOUT>`, so 0 is no meaning, and
-emits beside each marked layout's accessors in `include/erx/abi.h`:
+of their layouts' names, `ERX_MEANING_<LAYOUT>`, so 0 is no meaning,
+emits each structure's meanings as one list, and emits beside each
+marked layout's accessors in `include/erx/abi.h`, except a report's:
 
 ```
 erx_L_free_t      the free places, which a description states
@@ -760,10 +847,10 @@ untouched, when a value does not fit, so no value is cut to its low
 bits. It writes every byte of the record: the free and placed values,
 the selector's member and each fixed value, and zero in every bit the
 layout does not name. The encoders fill a host struct of a `wire_le`
-layout, so the header asserts that the host is little-endian. A form
-offers a table's meanings by naming layouts, and a static assertion
-holds that the layouts one table offers share their size and their
-selector's bits. Since a layout has one selector, each command the
+layout, so the header asserts that the host is little-endian. A report
+has its accessors and no encoder or input structs: nothing the device
+states is ever an encoder input, and no description can state it. Since
+a layout has one selector, each command the
 command ring offers is a layout of its own. Where a record is composed of several layouts at a size
 the controller reports, as the input context is of contexts of 32 or 64
 bytes (xHCI 6.2.5), the encoder places each at its offset. The xHCI
@@ -773,8 +860,13 @@ normal and data stage TRBs' immediate-data bit and the event TRBs'
 release marks; the slot context's address and slot state and the
 endpoint context's state are fixed at 0, the controller's to write,
 which software sets to 0 in an input context (xHCI 1.2, Table 6-7,
-p. 447; Table 6-8, p. 450). The virtio file holds the descriptor's flag
-bits and the used element's release mark. The SDHCI file holds the ADMA2
+p. 447; Table 6-8, p. 450); it declares the transfer rings and the
+command ring as `cpu` structures and the event ring as a `device` one,
+and the event TRBs as its meanings. The virtio file holds the
+descriptor's flag bits, the used element's release mark, the
+descriptor table as a `cpu` structure and the used ring as a `device`
+one, and the region entry `erx_virtio_gpu_mem_entry`, its address and
+length derived and its padding fixed. The SDHCI file holds the ADMA2
 entry, whose places are all fixed or derived, since the table's one
 meaning is the transfer; the bits 15:6 that only 26-bit length mode
 reads are named by no range, so the encoder writes them 0, and its
@@ -1378,9 +1470,9 @@ ran.
   the zeroing removed, and the earlier request's bytes appear.
 * **The check.** Host tests of `erx_device_dma_check` over each form's
   descriptions, ledgers and reports. Every plan each form's core makes in
-  its own harness passes the check; seed: a form's table offers one
-  meaning fewer (the setup stage), and that form's control transfers are
-  refused. Each rule refuses the failure it exists for, and a seed
+  its own harness passes the check; seed: the transfer ring's generated
+  list of meanings planted without the setup stage, and that form's
+  control transfers are refused. Each rule refuses the failure it exists for, and a seed
   planted in the check, as its `SEEDED` faults are, makes it pass:
 
   | Plan the check refuses | Seed under which it passes |
@@ -1467,8 +1559,16 @@ ran.
 * **The formats' marks.** The generator's tests: a format naming an
   unknown target, a `selects` value outside its enum, a length naming a
   field of another layout and an `activates` mark two bits wide are each
-  refused with a line naming the mark. Seed: the target test removed,
-  and the unknown target builds.
+  refused with a line naming the mark. So are a table's writer and its
+  offers broken one at a time: a `releases` mark on a meaning of a `cpu`
+  structure, a `refers` mark on a meaning of a `device` one, a `meaning`
+  line naming a `cpu` and a `device` structure, two meanings of one
+  structure of different sizes, two that select one member, two with
+  their activation at different offsets, and one of two meanings with no
+  selector. A generated header holds no encoder for a report. Seeds: the
+  target test removed, and the unknown target builds; the writer test
+  removed, and the transfer ring's layout with a `releases` mark builds;
+  the selector test removed, and two meanings selecting one member build.
 * **Ownership and the lock.** Over the stand-in, `write/3` of a GENET
   descriptor address, of `control0` with another DMA select, of `control0`
   setting the stop at block gap request or the continue request, and, while
