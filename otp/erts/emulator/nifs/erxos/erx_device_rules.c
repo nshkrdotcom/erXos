@@ -31,6 +31,11 @@
 #else
 #define SEED_NO_HELD_TEST	false
 #endif
+#ifdef ERX_DMA_SEED_NO_IDLE_TEST
+#define SEED_NO_IDLE_TEST	true
+#else
+#define SEED_NO_IDLE_TEST	false
+#endif
 #ifdef ERX_DMA_SEED_NO_LENGTH_TEST
 #define SEED_NO_LENGTH_TEST	true
 #else
@@ -193,13 +198,31 @@ fills_overlap(const erx_dma_fill_t *one, const erx_dma_fill_t *other)
 	    one->offset < other->offset + other->length && other->offset < one->offset + one->length);
 }
 
+/* The calls rule, as the header gives it. */
+static bool
+call_valid(const erx_dma_ledger_t *ledger, const erx_dma_publication_t *publication)
+{
+	switch (publication->call) {
+	case ERX_DMA_PUBLISH_RUN:
+		return (publication->record_count > 0);
+	case ERX_DMA_PUBLISH_INSTALL:
+		return (publication->record_count == 0 && publication->fill_count == 0 &&
+		    (SEED_NO_IDLE_TEST || erx_dma_ledger_idle(ledger)));
+	}
+	return (false);
+}
+
 erx_dma_verdict_t
 erx_dma_publication_check(const erx_dma_ledger_t *ledger, const erx_dma_publication_t *publication)
 {
 	judged_t judged[ERX_DMA_HELD_RECORDS_MAX];
 
+	if (!call_valid(ledger, publication))
+		return (ERX_DMA_BREAKS_CALLS);
+	if (publication->call == ERX_DMA_PUBLISH_INSTALL)
+		return (ERX_DMA_PASSES);
 	/* A run of more records than a holding holds cannot fit, and none is judged past the bound. */
-	if (publication->record_count == 0 || publication->record_count > ERX_DMA_HELD_RECORDS_MAX)
+	if (publication->record_count > ERX_DMA_HELD_RECORDS_MAX)
 		return (ERX_DMA_BREAKS_ROOM);
 	for (uint32_t record = 0; record < publication->record_count; record++) {
 		const erx_dma_verdict_t verdict = judge_record(ledger, &publication->records[record], &judged[record]);

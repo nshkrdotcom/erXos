@@ -338,6 +338,17 @@ erx_dma_ledger_live(const erx_dma_ledger_t *ledger)
 	return (ledger->live);
 }
 
+bool
+erx_dma_ledger_idle(const erx_dma_ledger_t *ledger)
+{
+	for (uint32_t table = 0; table < ERX_DMA_TABLES_MAX; table++) {
+		if (ledger->positions[table].index != 0 || ledger->positions[table].lap != 0 ||
+		    ledger->acquired[table] != 0)
+			return (false);
+	}
+	return (ledger->live == 0);
+}
+
 static void
 advance(erx_dma_ledger_t *ledger, uint32_t table, uint32_t records)
 {

@@ -70,6 +70,11 @@ typedef struct world {
 	erx_dma_layout_t	layout;
 	uint32_t		size;
 	uint8_t			memory[MEMORY];
+	/* Bytes the CPU stored that no clean has written to memory yet. */
+	bool			dirty[MEMORY];
+	/* The device's queue registers, as the install wrote them. */
+	uint64_t		queue_num, queue_desc, queue_driver, queue_device;
+	bool			ready;
 	/* The model and the device. */
 	bool			broken;
 	uint16_t		posts;		/* available entries since the reset */
@@ -93,7 +98,7 @@ static const erx_dma_regions_t no_regions;
 /* The states the exhaustive search must reach, so a model that never gets there fails. */
 enum {
 	REACH_FULL_BUFFERS, REACH_FULL_DESCS, REACH_FULL_AVAIL, REACH_MOST, REACH_BYTES, REACH_PARTIAL,
-	REACH_BAD_LATER_DESC, REACH_BAD_STALE, REACH_BAD_OUTSIDE, REACH_FOUR, REACH_COUNT
+	REACH_BAD_LATER_DESC, REACH_BAD_STALE, REACH_BAD_OUTSIDE, REACH_FOUR, REACH_INSTALL_BUSY, REACH_COUNT
 };
 static uint64_t reached[REACH_COUNT];
 
@@ -112,6 +117,8 @@ store16(world_t *w, uint64_t offset, uint16_t value)
 	memcpy(&w->memory[offset], &value, sizeof(value));
 }
 
+static void install(world_t *w);
+
 static void
 fresh(world_t *w, uint32_t size)
 {
@@ -120,6 +127,8 @@ fresh(world_t *w, uint32_t size)
 	w->free_descs = size;
 	EXPECT(erx_dma_layout_split_ring(size, BUFFER, GRANULE, MEMORY, BASE, 32, &w->layout) &&
 	    erx_split_ring_make(&w->ring, &w->layout, &no_regions), "the split ring is made");
+	memset(w->memory, 0xa5, w->layout.pool.first);
+	install(w);
 }
 
 static void
@@ -136,6 +145,8 @@ reset(world_t *w)
 	w->size = size;
 	w->free_descs = size;
 	EXPECT(erx_dma_ledger_live(erx_split_ring_ledger(&w->ring)) == 0, "the reset ends every chain");
+	memset(w->memory, 0xa5, w->layout.pool.first);
+	install(w);
 }
 
 static bool
@@ -144,27 +155,95 @@ inside(uint64_t offset, uint64_t length)
 	return (offset <= MEMORY && length <= MEMORY - offset);
 }
 
-/* The sequence applied as the effect layer applies it: zeros, fills, stores, the activation. */
+/* Where the device finds a ring: the address its register holds, as an offset of the memory. */
+static uint64_t
+ring_at(uint64_t address)
+{
+	return (address - BASE);
+}
+
+static void
+stored(world_t *w, uint64_t offset, uint64_t length)
+{
+	memset(&w->dirty[offset], true, length);
+}
+
+/*
+ * The sequence applied as the effect layer applies it: zeros, fills, stores, cleans, registers, the
+ * activation. A byte stored and not cleaned before the activation is one the device may not see.
+ */
 static void
 apply(world_t *w, const erx_dma_sequence_t *sequence, const erx_dma_piece_t *pieces)
 {
 	for (uint32_t index = 0; index < sequence->zero_count; index++) {
 		EXPECT(inside(sequence->zeros[index].offset, sequence->zeros[index].length), "a zero inside the memory");
 		memset(&w->memory[sequence->zeros[index].offset], 0, sequence->zeros[index].length);
+		stored(w, sequence->zeros[index].offset, sequence->zeros[index].length);
 	}
 	for (uint32_t index = 0; index < sequence->fill_count; index++) {
 		EXPECT(inside(sequence->fills[index].offset, sequence->fills[index].length) &&
 		    sequence->fills[index].length == pieces[index].length && !pieces[index].device_writes,
 		    "fill i is piece i's, a piece the device reads");
 		memcpy(&w->memory[sequence->fills[index].offset], pieces[index].bytes, pieces[index].length);
+		stored(w, sequence->fills[index].offset, sequence->fills[index].length);
 	}
 	for (uint32_t index = 0; index < sequence->store_count; index++) {
 		EXPECT(inside(sequence->stores[index].offset, sequence->stores[index].length), "a store inside the memory");
 		memcpy(&w->memory[sequence->stores[index].offset], sequence->stores[index].bytes,
 		    sequence->stores[index].length);
+		stored(w, sequence->stores[index].offset, sequence->stores[index].length);
 	}
-	EXPECT(inside(sequence->activation.offset, sequence->activation.length), "the activation inside the memory");
-	memcpy(&w->memory[sequence->activation.offset], sequence->activation.bytes, sequence->activation.length);
+	for (uint32_t index = 0; index < sequence->clean_count; index++) {
+		EXPECT(inside(sequence->cleans[index].offset, sequence->cleans[index].length), "a clean inside the memory");
+		memset(&w->dirty[sequence->cleans[index].offset], false, sequence->cleans[index].length);
+	}
+	for (uint32_t offset = 0; offset < MEMORY; offset++)
+		EXPECT(!w->dirty[offset], "every byte stored is clean before the activation");
+	for (uint32_t index = 0; index < sequence->register_count; index++) {
+		const erx_dma_register_write_t write = sequence->registers[index];
+
+		EXPECT(!w->ready, "no queue register written while the queue is ready");
+		w->queue_num = write.reg == ERX_DMA_VIRTQ_NUM ? write.value : w->queue_num;
+		w->queue_desc = write.reg == ERX_DMA_VIRTQ_DESC ? write.value : w->queue_desc;
+		w->queue_driver = write.reg == ERX_DMA_VIRTQ_DRIVER ? write.value : w->queue_driver;
+		w->queue_device = write.reg == ERX_DMA_VIRTQ_DEVICE ? write.value : w->queue_device;
+	}
+	if (sequence->activation.kind == ERX_DMA_ACTIVATE_REGISTER) {
+		EXPECT(sequence->activation.reg.reg == ERX_DMA_VIRTQ_READY && sequence->activation.reg.value == 1,
+		    "an install's activation is the ready bit");
+		w->ready = true;
+		return;
+	}
+	EXPECT(w->ready, "nothing is made live before the install");
+	EXPECT(inside(sequence->activation.store.offset, sequence->activation.store.length), "the activation inside the memory");
+	memcpy(&w->memory[sequence->activation.store.offset], sequence->activation.store.bytes, sequence->activation.store.length);
+}
+
+/*
+ * The install, as negotiate/2 runs it: refused while the ring is not as the reset left it;
+ * otherwise the rings, which may hold a former queue's bytes, zeroed and handed to the device.
+ */
+static void
+install(world_t *w)
+{
+	const int expected = w->broken ? ERX_ECORRUPT : w->posts != 0 ? ERX_EBUSY : ERX_OK;
+	const erx_split_ring_t before = w->ring;
+	erx_dma_sequence_t sequence;
+	const int status = erx_split_ring_install(&w->ring, &sequence);
+
+	EXPECT(status == expected, "an install answers as the model says");
+	if (status != ERX_OK) {
+		EXPECT(memcmp(&before, &w->ring, sizeof(before)) == 0, "a refused install changes nothing");
+		reached[REACH_INSTALL_BUSY] += status == ERX_EBUSY;
+		return;
+	}
+	w->ready = false;
+	apply(w, &sequence, NULL);
+	for (uint64_t offset = 0; offset < w->layout.pool.first; offset++)
+		EXPECT(w->memory[offset] == 0, "the install zeroes every ring");
+	EXPECT(w->queue_num == w->size && w->queue_desc == BASE + w->layout.tables[DESC].region &&
+	    w->queue_driver == BASE + w->layout.tables[AVAIL].region && w->queue_device == BASE + w->layout.tables[USED].region,
+	    "the queue registers name the layout's rings");
 }
 
 /*
@@ -175,7 +254,7 @@ apply(world_t *w, const erx_dma_sequence_t *sequence, const erx_dma_piece_t *pie
 static void
 fetch(world_t *w, const erx_dma_piece_t *pieces, uint32_t count, uint64_t tag)
 {
-	const erx_dma_table_t *const desc = &w->layout.tables[DESC], *const avail = &w->layout.tables[AVAIL];
+	const uint64_t descs = ring_at(w->queue_desc), avail = ring_at(w->queue_driver);
 	const uint64_t pool = w->layout.pool.first, stride = w->layout.pool.stride;
 	const uint32_t slot = (uint32_t)(w->posts % w->size);
 	fetched_t chain = { .avail_slot = slot, .tag = tag };
@@ -183,15 +262,15 @@ fetch(world_t *w, const erx_dma_piece_t *pieces, uint32_t count, uint64_t tag)
 	bool writing = false;
 	uint32_t index;
 
-	EXPECT(load16(w, avail->region + ERX_VIRTQ_RING_HEAD_OFF_IDX) == (uint16_t)(w->posts + 1),
+	EXPECT(load16(w, avail + ERX_VIRTQ_RING_HEAD_OFF_IDX) == (uint16_t)(w->posts + 1),
 	    "the available index moves past the one entry");
-	chain.head = index = load16(w, avail->first + 2u * slot);
+	chain.head = index = load16(w, avail + ERX_VIRTQ_RING_HEAD_SIZE + 2u * slot);
 	for (;;) {
 		erx_virtq_desc_t record;
 		uint64_t offset;
 
 		EXPECT(index < w->size && chain.desc_count < count, "the chain is as long as its pieces");
-		memcpy(&record, &w->memory[desc->first + (uint64_t)index * desc->stride], sizeof(record));
+		memcpy(&record, &w->memory[descs + (uint64_t)index * ERX_VIRTQ_DESC_SIZE], sizeof(record));
 		EXPECT(record.addr >= BASE + pool, "a descriptor names the pool");
 		offset = record.addr - BASE;
 		if (chain.desc_count == 0) {
@@ -303,12 +382,13 @@ post(world_t *w, const erx_dma_piece_t *pieces, uint32_t count)
 static void
 device_used(world_t *w, uint32_t id, uint32_t len, element_t expected)
 {
-	const erx_dma_table_t *const used = &w->layout.tables[USED];
+	const uint64_t used = ring_at(w->queue_device);
 	const erx_virtq_used_elem_t record = { .id = id, .len = len };
 
-	memcpy(&w->memory[used->first + (uint64_t)(w->used_idx % w->size) * used->stride], &record, sizeof(record));
+	memcpy(&w->memory[used + ERX_VIRTQ_RING_HEAD_SIZE + (uint64_t)(w->used_idx % w->size) * ERX_VIRTQ_USED_ELEM_SIZE], &record,
+	    sizeof(record));
 	w->used_idx++;
-	store16(w, used->region + ERX_VIRTQ_RING_HEAD_OFF_IDX, w->used_idx);
+	store16(w, used + ERX_VIRTQ_RING_HEAD_OFF_IDX, w->used_idx);
 	w->pending[w->pending_count++] = expected;
 }
 
@@ -425,7 +505,7 @@ bad_id(const world_t *w)
 
 enum {
 	OP_POST_HEADER, OP_POST_WHOLE, OP_POST_FOUR, OP_POST_BAD, OP_DONE_OLDEST, OP_DONE_NEWEST_SHORT, OP_DONE_ALL,
-	OP_BAD_LEN, OP_BAD_ID, OP_BAD_INDEX, OP_RESET, OPS
+	OP_BAD_LEN, OP_BAD_ID, OP_BAD_INDEX, OP_RESET, OP_INSTALL, OPS
 };
 
 static void
@@ -482,12 +562,15 @@ step(world_t *w, int op)
 		driver(w, w->size, UINT64_MAX);
 		break;
 	case OP_BAD_INDEX:
-		store16(w, w->layout.tables[USED].region + ERX_VIRTQ_RING_HEAD_OFF_IDX,
+		store16(w, ring_at(w->queue_device) + ERX_VIRTQ_RING_HEAD_OFF_IDX,
 		    (uint16_t)(w->consumed + w->holdings + 1));
 		driver(w, w->size, UINT64_MAX);
 		break;
 	case OP_RESET:
 		reset(w);
+		break;
+	case OP_INSTALL:
+		install(w);
 		break;
 	}
 }

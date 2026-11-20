@@ -156,7 +156,7 @@ check_posted(const erx_dma_sequence_t *sequence, const erx_dma_piece_t *pieces, 
 		    !pieces[index].device_writes);
 	for (uint32_t index = 0; index < sequence->clean_count; index++)
 		check(inside(sequence->cleans[index]));
-	check(erx_dma_inside(sequence->activation.offset, sequence->activation.length, layout.memory_size));
+	check(erx_dma_inside(sequence->activation.store.offset, sequence->activation.store.length, layout.memory_size));
 	for (uint32_t index = 0; index < count; index++) {
 		const erx_dma_store_t *const store = &sequence->stores[index];
 		erx_virtq_desc_t record;

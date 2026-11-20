@@ -12,13 +12,19 @@
  * description at a free record of its table, chained in the plan's order; each table placed in
  * order at its position), encodes every record whole through its meaning's generated encoder,
  * and each region entry through its layout's from the ledger's record of the region it names,
- * derives the activation and begins the publication's holding. What it returns is applied as:
+ * derives the activation and begins the publication's holding. An install places nothing and
+ * begins no holding: it zeroes and cleans every table, derives the queue's size and its rings'
+ * device addresses from the layout, and activates with the ready bit, so no ring is live before
+ * it is zero in memory. What it returns is applied as:
  *   1. the zeros, rule 1: every byte of a buffer passing to the device that no fill covers;
  *   2. the fills, the publication's `out` bytes, at the offsets given here; a region entry's
  *      fill is empty here, since its entry is a store;
  *   3. the stores, each record whole, region entries included;
  *   4. the cleans, every range passing to the device, then the publish barrier;
- *   5. the activation, one store, and the clean of its line; then the doorbell.
+ *   5. an install's registers, in order, after the queue's select, which the effect layer writes
+ *      first from the record, since it banks them (Virtio 1.2, section 4.2.2);
+ *   6. the activation: a run's one store, the clean of its line, then the doorbell; an install's
+ *      ready bit.
  *
  * An acquisition reads a structure the device writes in two phases: the validity (a used ring's
  * index) gives how many records it covers, then each record is read whole and consumed in order.
@@ -47,6 +53,8 @@
 #define ERX_DMA_ZEROS_MAX		(ERX_DMA_HELD_BUFFERS_MAX + ERX_DMA_FILLS_MAX)
 /* Each buffer passing to the device, each record and the available entry. */
 #define ERX_DMA_CLEANS_MAX		(ERX_DMA_HELD_BUFFERS_MAX + ERX_DMA_HELD_RECORDS_MAX)
+/* An install's queue size and three ring addresses. */
+#define ERX_DMA_REGISTERS_MAX		4u
 
 /* `length` bytes from `offset` of the record's memory. */
 typedef struct erx_dma_range {
@@ -61,6 +69,36 @@ typedef struct erx_dma_store {
 	uint8_t		bytes[ERX_DMA_STORE_BYTES_MAX];
 } erx_dma_store_t;
 
+/*
+ * A register an install writes, by what it says, virtio-mmio's (Virtio 1.2, section 4.2.2). The
+ * effect layer maps each to the register of its device it owns (erx_device.c), and writes an
+ * address as its low word's register, then its high word's.
+ */
+typedef enum erx_dma_register {
+	ERX_DMA_VIRTQ_NUM,	/* the queue's size, its tables' count */
+	ERX_DMA_VIRTQ_DESC,	/* the descriptor table's device address */
+	ERX_DMA_VIRTQ_DRIVER,	/* the available ring's */
+	ERX_DMA_VIRTQ_DEVICE,	/* the used ring's */
+	ERX_DMA_VIRTQ_READY,	/* 1: an install's activation */
+} erx_dma_register_t;
+
+typedef struct erx_dma_register_write {
+	erx_dma_register_t	reg;
+	uint64_t		value;
+} erx_dma_register_write_t;
+
+/* The one write that makes a publication live: a run's store into memory, or an install's register. */
+typedef enum erx_dma_activation_kind {
+	ERX_DMA_ACTIVATE_STORE,
+	ERX_DMA_ACTIVATE_REGISTER,
+} erx_dma_activation_kind_t;
+
+typedef struct erx_dma_activation {
+	erx_dma_activation_kind_t	kind;
+	erx_dma_store_t			store;	/* ERX_DMA_ACTIVATE_STORE's */
+	erx_dma_register_write_t	reg;	/* ERX_DMA_ACTIVATE_REGISTER's */
+} erx_dma_activation_t;
+
 /* What a publication applies, in the header's order; fills[i] is publication->fills[i]'s place. */
 typedef struct erx_dma_sequence {
 	uint32_t		zero_count;
@@ -71,12 +109,14 @@ typedef struct erx_dma_sequence {
 	erx_dma_store_t		stores[ERX_DMA_STORES_MAX];
 	uint32_t		clean_count;
 	erx_dma_range_t		cleans[ERX_DMA_CLEANS_MAX];
-	erx_dma_store_t		activation;
+	uint32_t		register_count;
+	erx_dma_register_write_t	registers[ERX_DMA_REGISTERS_MAX];
+	erx_dma_activation_t	activation;
 } erx_dma_sequence_t;
 
 /*
  * Judges `publication` and, when it passes, sequences it into `sequence` and begins its holding
- * in `ledger`. Any other verdict changes neither: it is a bug in the form's core, and the call
+ * in `ledger`; an install begins none. Any other verdict changes neither: it is a bug in the form's core, and the call
  * is badarg with nothing applied.
  */
 erx_dma_verdict_t	erx_dma_publish(erx_dma_ledger_t *ledger, const erx_dma_publication_t *publication,

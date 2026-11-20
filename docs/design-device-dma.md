@@ -719,7 +719,7 @@ one pass. A plan passes when every rule holds:
 
 | Rule | What it says | The failure it prevents |
 | --- | --- | --- |
-| calls | each step is one its call makes: records and fills in a publication, a control in a reset, copies in a take-back, reports in an observation | a store while the device may hold what it changes; a copy outside a take-back |
+| calls | each step is one its call makes, from a closed set of calls: records and fills in a run's publication; in an install's, no record and no fill, only the zeroed rings, the queue registers the layout gives and the ready bit, on a ledger as the idle report left it; a control in a reset, copies in a take-back, reports in an observation | a store while the device may hold what it changes, such as an install zeroing a ring a live chain is on; a copy outside a take-back |
 | meanings | each record's meaning is one its table offers, and each free field's value fits its bits | a record the form never builds reaching the device (a link, an indirect table, streams, event data); a value spilling into a neighbouring field, such as a length into the interrupter target |
 | names | each name lies in its target: a buffer of the record's binding, the queue's input context, an endpoint with a ring bound to it; no name names a buffer a live holding holds; one publication may name a buffer at several ranges, each inside it, and its holding holds that buffer once | an address outside the memory or between records; a buffer the device holds posted again |
 | bindings | a transfer record names only buffers of its own ring's block; a command that binds names a ring bound to no endpoint | one queue's transfer reaching another's buffer; device A's endpoint run on device B's ring |

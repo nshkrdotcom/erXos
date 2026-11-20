@@ -44,11 +44,15 @@ bool
 erx_split_ring_make(erx_split_ring_t *ring, const erx_dma_layout_t *layout, const erx_dma_regions_t *regions)
 {
 	erx_dma_ledger_t ledger;
+	int desc, avail, used;
 
-	if (layout->pool.count > ERX_DEVICE_QUEUE_SIZE_MAX || !erx_dma_ledger_make(&ledger, layout, regions) ||
-	    erx_dma_ledger_table(&ledger, ERX_STRUCTURE_VIRTQ_DESC) < 0 ||
-	    erx_dma_ledger_table(&ledger, ERX_STRUCTURE_VIRTQ_AVAIL) < 0 ||
-	    erx_dma_ledger_table(&ledger, ERX_STRUCTURE_VIRTQ_USED) < 0)
+	if (layout->pool.count > ERX_DEVICE_QUEUE_SIZE_MAX || !erx_dma_ledger_make(&ledger, layout, regions))
+		return (false);
+	desc = erx_dma_ledger_table(&ledger, ERX_STRUCTURE_VIRTQ_DESC);
+	avail = erx_dma_ledger_table(&ledger, ERX_STRUCTURE_VIRTQ_AVAIL);
+	used = erx_dma_ledger_table(&ledger, ERX_STRUCTURE_VIRTQ_USED);
+	if (desc < 0 || avail < 0 || used < 0 || layout->tables[avail].count != layout->tables[desc].count ||
+	    layout->tables[used].count != layout->tables[desc].count)
 		return (false);
 	bzero(ring, sizeof(*ring));
 	ring->ledger = ledger;
@@ -60,6 +64,23 @@ erx_split_ring_reset(erx_split_ring_t *ring)
 {
 	erx_dma_ledger_reset(&ring->ledger);
 	ring->broken = false;
+}
+
+int
+erx_split_ring_install(erx_split_ring_t *ring, erx_dma_sequence_t *sequence)
+{
+	const erx_dma_publication_t install = { .call = ERX_DMA_PUBLISH_INSTALL };
+
+	if (ring->broken)
+		return (ERX_ECORRUPT);
+	switch (erx_dma_publish(&ring->ledger, &install, sequence)) {
+	case ERX_DMA_PASSES:
+		return (ERX_OK);
+	case ERX_DMA_BREAKS_CALLS:
+		return (ERX_EBUSY);
+	default:
+		return (ERX_EINVAL);
+	}
 }
 
 const erx_dma_ledger_t *

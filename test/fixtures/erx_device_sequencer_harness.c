@@ -100,11 +100,42 @@ consume(erx_dma_ledger_t *ledger, const erx_report_record_t *record, erx_dma_hol
 	return (erx_dma_consume(ledger, USED, holding));
 }
 
+/* The install: the calls rule first, then every table zeroed and cleaned, the registers from the layout, the ready bit. */
+static void
+test_install(void)
+{
+	erx_dma_ledger_t ledger = fresh();
+	erx_dma_sequence_t sequence;
+	const erx_dma_publication_t install = { .call = ERX_DMA_PUBLISH_INSTALL };
+
+	EXPECT(erx_dma_publish(&ledger, &install, &sequence) == ERX_DMA_PASSES && erx_dma_ledger_idle(&ledger),
+		"an install of an idle ledger, which begins no holding");
+	EXPECT(sequence.zero_count == 3 && sequence.clean_count == 3 && sequence.zeros[2].offset == 128 &&
+		sequence.cleans[2].length == sequence.zeros[2].length && sequence.store_count == 0 && sequence.fill_count == 0,
+		"every table zeroed and cleaned, nothing else stored");
+	EXPECT(sequence.register_count == 4 && sequence.registers[0].reg == ERX_DMA_VIRTQ_NUM &&
+		sequence.registers[0].value == SIZE && sequence.registers[1].value == BASE &&
+		sequence.registers[2].value == BASE + 64 && sequence.registers[3].reg == ERX_DMA_VIRTQ_DEVICE &&
+		sequence.registers[3].value == BASE + 128, "the queue's size and its rings' addresses from the layout");
+	EXPECT(sequence.activation.kind == ERX_DMA_ACTIVATE_REGISTER && sequence.activation.reg.reg == ERX_DMA_VIRTQ_READY &&
+		sequence.activation.reg.value == 1, "the ready bit is the install's activation");
+	EXPECT(erx_dma_publish(&ledger, &(erx_dma_publication_t){ 1, chain, 0, NULL, ERX_DMA_PUBLISH_INSTALL }, &sequence) ==
+		ERX_DMA_BREAKS_CALLS, "an install that describes a record");
+	EXPECT(erx_dma_publish(&ledger, &(erx_dma_publication_t){ 0, NULL, 0, NULL, ERX_DMA_PUBLISH_RUN }, &sequence) ==
+		ERX_DMA_BREAKS_CALLS, "a run of no record");
+	EXPECT(erx_dma_publish(&ledger, &(erx_dma_publication_t){ 2, chain, 1, &header, ERX_DMA_PUBLISH_RUN }, &sequence) == ERX_DMA_PASSES,
+		"a chain published");
+	EXPECT(erx_dma_publish(&ledger, &install, &sequence) == ERX_DMA_BREAKS_CALLS && erx_dma_ledger_live(&ledger) == 1,
+		"an install while a chain is live zeroes nothing");
+	erx_dma_ledger_reset(&ledger);
+	EXPECT(erx_dma_publish(&ledger, &install, &sequence) == ERX_DMA_PASSES, "the install after the idle report");
+}
+
 static void
 test_publication(void)
 {
 	erx_dma_ledger_t ledger = fresh();
-	const erx_dma_publication_t publication = { 2, chain, 1, &header };
+	const erx_dma_publication_t publication = { 2, chain, 1, &header, ERX_DMA_PUBLISH_RUN };
 	erx_dma_sequence_t sequence;
 	erx_virtq_desc_t first, second;
 	const uint64_t pool = erx_dma_ledger_layout(&ledger)->pool.first;
@@ -120,7 +151,7 @@ test_publication(void)
 	    second.next == 0, "the tail is written by the device and ends the chain");
 	EXPECT(sequence.stores[2].offset == 64 + ERX_VIRTQ_RING_HEAD_SIZE && half(&sequence.stores[2]) == 0,
 	    "the available entry names the head");
-	EXPECT(sequence.activation.offset == 64 + ERX_VIRTQ_RING_HEAD_OFF_IDX && half(&sequence.activation) == 1,
+	EXPECT(sequence.activation.store.offset == 64 + ERX_VIRTQ_RING_HEAD_OFF_IDX && half(&sequence.activation.store) == 1,
 	    "the available index is the activation");
 	EXPECT(sequence.fill_count == 1 && sequence.fills[0].offset == pool && sequence.fills[0].length == 16,
 	    "the fill at its buffer");
@@ -149,10 +180,10 @@ test_acquisition(void)
 	uint32_t count;
 
 	other[0].names[0].buffer = 1;
-	EXPECT(erx_dma_publish(&ledger, &(erx_dma_publication_t){ 2, chain, 1, &header }, &sequence) == ERX_DMA_PASSES &&
-	    erx_dma_publish(&ledger, &(erx_dma_publication_t){ 1, other, 0, NULL }, &sequence) == ERX_DMA_PASSES,
+	EXPECT(erx_dma_publish(&ledger, &(erx_dma_publication_t){ 2, chain, 1, &header, ERX_DMA_PUBLISH_RUN }, &sequence) == ERX_DMA_PASSES &&
+	    erx_dma_publish(&ledger, &(erx_dma_publication_t){ 1, other, 0, NULL, ERX_DMA_PUBLISH_RUN }, &sequence) == ERX_DMA_PASSES,
 	    "two chains published");
-	EXPECT(sequence.stores[0].offset == 2 * ERX_VIRTQ_DESC_SIZE && half(&sequence.activation) == 2,
+	EXPECT(sequence.stores[0].offset == 2 * ERX_VIRTQ_DESC_SIZE && half(&sequence.activation.store) == 2,
 	    "the second chain in the next free descriptor, the index past both entries");
 	EXPECT(sequence.zero_count == 1 && sequence.zeros[0].length == BUFFER, "an unfilled buffer zeroed whole");
 
@@ -203,9 +234,9 @@ test_region_entry(void)
 
 	EXPECT(erx_dma_regions_add(&regions, region), "the device's region");
 	request[0].described.virtq_desc.len = 32;
-	EXPECT(erx_dma_publish(&ledger, &(erx_dma_publication_t){ 2, request, 2, entries }, &sequence) ==
+	EXPECT(erx_dma_publish(&ledger, &(erx_dma_publication_t){ 2, request, 2, entries, ERX_DMA_PUBLISH_RUN }, &sequence) ==
 	    ERX_DMA_BREAKS_FILLS && erx_dma_ledger_live(&ledger) == 0, "two region entries 8 bytes apart, refused");
-	EXPECT(erx_dma_publish(&ledger, &(erx_dma_publication_t){ 2, chain, 1, entries }, &sequence) == ERX_DMA_PASSES &&
+	EXPECT(erx_dma_publish(&ledger, &(erx_dma_publication_t){ 2, chain, 1, entries, ERX_DMA_PUBLISH_RUN }, &sequence) == ERX_DMA_PASSES &&
 	    sequence.store_count == 4 && sequence.fill_count == 1 && sequence.fills[0].offset == pool &&
 	    sequence.fills[0].length == 0, "the chain, its available entry and the region entry stored; no bytes to fill");
 	store = &sequence.stores[3];
@@ -236,17 +267,17 @@ test_laps(void)
 	uint32_t count;
 
 	for (uint16_t round = 1; round <= 10; round++) {
-		EXPECT(erx_dma_publish(&ledger, &(erx_dma_publication_t){ 1, one, 0, NULL }, &sequence) == ERX_DMA_PASSES &&
-		    half(&sequence.activation) == round, "the activation is the running index past the entry");
+		EXPECT(erx_dma_publish(&ledger, &(erx_dma_publication_t){ 1, one, 0, NULL, ERX_DMA_PUBLISH_RUN }, &sequence) == ERX_DMA_PASSES &&
+		    half(&sequence.activation.store) == round, "the activation is the running index past the entry");
 		EXPECT(erx_dma_acquire(&ledger, USED, round, SIZE, &count) && count == 1,
 		    "one element covered each round");
 		report.virtq_used_elem.id = (uint32_t)(sequence.stores[0].offset / ERX_VIRTQ_DESC_SIZE);
 		EXPECT(consume(&ledger, &report, &ended), "each round's chain comes back");
 	}
 	one[0].names[0].buffer = 1;
-	EXPECT(erx_dma_publish(&ledger, &(erx_dma_publication_t){ 1, one, 0, NULL }, &sequence) == ERX_DMA_PASSES &&
+	EXPECT(erx_dma_publish(&ledger, &(erx_dma_publication_t){ 1, one, 0, NULL, ERX_DMA_PUBLISH_RUN }, &sequence) == ERX_DMA_PASSES &&
 	    sequence.stores[0].offset == 0, "a chain of one holds descriptor 0");
-	EXPECT(erx_dma_publish(&ledger, &(erx_dma_publication_t){ 2, chain, 0, NULL }, &sequence) == ERX_DMA_PASSES &&
+	EXPECT(erx_dma_publish(&ledger, &(erx_dma_publication_t){ 2, chain, 0, NULL, ERX_DMA_PUBLISH_RUN }, &sequence) == ERX_DMA_PASSES &&
 	    descriptor(&sequence.stores[0]).next == 2 && sequence.stores[1].offset == 2 * ERX_VIRTQ_DESC_SIZE,
 	    "a chain placed around a held descriptor links past it");
 }
@@ -254,6 +285,7 @@ test_laps(void)
 int
 main(void)
 {
+	test_install();
 	test_publication();
 	test_acquisition();
 	test_region_entry();
