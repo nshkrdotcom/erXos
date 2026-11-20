@@ -517,15 +517,25 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
 * [High] 0.2 on Fiasco, `liberx/backend/fiasco`: budgets are not walls over user pages. `budget.c` records a
   budget's guarantee and cap (`budget.c:37-38`, `:116-117`) but refuses no charge, and the pool takes pages for
   no budget (`vm.c:161-165`'s `vm_take`), so one domain's commits can drain the pool that every domain and the
-  root's own tables use. The fix is the design's per-budget page count and refusal: each record counts the pool
-  pages charged to it, a page taken is charged to the owning object's budget inside the call's whole-plan check
-  and refused past the wall, a carve reserves its guarantee from its parent, and the budget topic reports `used`
-  partial with `guarantee`, `cap` and `carved` exact ([design-fiasco.md](docs/design-fiasco.md), "Memory and
+  root's own tables use. The fix is the design's one invariant per wall, `used + carved <= wall`: each record holds one wall
+  for guarantee and cap (an elastic kind `ERX_ENOTSUP`, unequal values `ERX_EINVAL`), counts the pool pages charged
+  to it and the walls carved from it, a page taken is charged to the owning object's budget inside the call's
+  whole-plan check, and a carve, a resize and a destroy adjust the parent's `carved` in the same request, each
+  refused where an invariant would break; the root's budget, which has no record, keeps its own pages and the
+  walls carved from it in two counters beside the pool's, under the pool's total; the budget topic reports
+  `used` partial with `guarantee`, `cap` and `carved` exact; and the tests and seeded fault the design lists ([design-fiasco.md](docs/design-fiasco.md), "Memory and
   budgets" and "Reporting a budget"). It blocks the release.
 * [High] 0.2 on Fiasco, `liberx/backend/fiasco`: doorbells and device lines placed directly in their holders
   without Fiasco's special right, so a trigger and an acknowledgement are the holder's own `l4_irq_trigger`
   and `l4_irq_unmask` and only the root binds or detaches
-  ([design-fiasco.md](docs/design-fiasco.md#who-holds-what)).
+  ([design-fiasco.md](docs/design-fiasco.md#who-holds-what)). Create, duplicate and pass place through one
+  placement function that places nothing unless the new entry's rights hold `TRIGGER` or `ACK`, tested with an
+  inspection-only entry from each call and seeded with unconditional placement; and the root's slot layout is
+  the design's derived plan, the root's handle limit what the object space leaves after it, checked by a static
+  assertion, in place of the unbounded root table `object.c:68` opens with `UINT32_MAX`
+  ([design-fiasco.md](docs/design-fiasco.md#handles)). The 65,536-slot figure is read from the source; the
+  boot probe of the last valid and first refused selector, with the alias check the design names, settles it on
+  a running kernel.
 * [High] 0.2 on Fiasco, `liberx/backend/fiasco` and the manifest: priority bands, CPU sets and per-domain
   thread limits from each domain's manifest row, applied at every thread's start, a create past the limit
   `ERX_ELIMIT` ([design-fiasco.md](docs/design-fiasco.md#bands)).
@@ -579,7 +589,8 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   from the app template's `limits session` record as every other limit
   ([design-packaging.md](docs/design-packaging.md)), with no
   table of the root's shared between domains; the machine-wide tables (`irq.c:60`'s `irq_objects`, the page
-  index's labels) become shares of each domain's limits, a create or map past a limit `ERX_ELIMIT`, and the
+  index's labels and its slice entries) become shares of each domain's limits, a create or map past a limit
+  `ERX_ELIMIT`, so no task can fill the 256 IRQ objects (`irq.c:60,171`) and starve every other domain's doorbells, and the
   domain service admits a domain only when the root's kernel memory and tables have its cost left, a session
   only from what lies outside the configured domains' shares
   ([design-fiasco.md](docs/design-fiasco.md#memory-and-budgets), FD14;
@@ -797,8 +808,8 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   the console path, the clock and the cross-compiled core, not a kernel entry.
   The test that a call keeps the caller's registers left with the trap route
   and returns with the `erx` backend's kernel.
-* [Low] Fiasco backend, `liberx/backend/fiasco`: own-task thread handles are still the bare index, not `ERX_FIASCO_THREAD_HANDLE_BASE` plus the index that design-fiasco.md's "Thread handles" names, so thread 0's handle equals `ERX_CAP_NULL` and `erx_gate_bind` reaches thread 0 only through `ERX_CAP_SELF_THREAD`, and an `erx_cap_pass` item holding an own thread's handle is read as the handle table's entry of that number, so it may pass a memory object instead of being refused. Move handles onto the base. Likewise the handle the root or a creator holds to a created space's first thread is the task above the index (`service_thread_handle` in `service.c`), not the handle-table entry "Thread creation" names, so it can equal one of the root's entries once the root holds 256 of them, and `erx_cap_close` or `erx_cap_dup` of it reaches that entry; give it a value no entry can bear, as the base does.
-* [Medium] Fiasco backend, `liberx/backend/fiasco/vm.c`: the page index's size counts the window, contiguous and device pages but not the archive pages a slice adds, one index entry each per live slice, so enough live slices fill the index and `page_find` spins on the service thread. One slice per domain cannot reach it; before a session slices per command, count live slice pages against a cap and refuse past it with `ERX_ENOMEM`, as `vm_device_pages_used` does, and correct `vm_table.h`'s "committing never finds it full".
+* [High] Fiasco backend, `liberx/backend/fiasco`, thread handles, blocks 0.2: the handle the root or a creator holds to a created space's first thread is the task above the index (`service_thread_handle` in `service.c:658`), not the entry of the creator's handle table that design-fiasco.md's "Thread creation" names, so it can equal one of the root's entries once the root holds 256 of them, and `erx_cap_close` or `erx_cap_dup` of it duplicates or closes an unrelated object. Make it the design's ordinary entry, made by the one create path and checked by the one lookup, so no other value can collide with an entry. Own-task thread handles are still the bare index, not `ERX_FIASCO_THREAD_HANDLE_BASE` plus the index that "Thread handles" names, so thread 0's handle equals `ERX_CAP_NULL` and `erx_gate_bind` reaches thread 0 only through `ERX_CAP_SELF_THREAD`, and an `erx_cap_pass` item holding an own thread's handle is read as the handle table's entry of that number, so it may pass a memory object instead of being refused; move them onto the base, above `caps_max`, as the design's reserved values. Tests: a creator's close and duplicate of its first-thread handle with the root holding more than 256 entries, and a pass of an own-thread handle refused; seeded fault: the first-thread handle built as the task above the index.
+* [High] Fiasco backend, `liberx/backend/fiasco/vm.c`, blocks exposing the call table's per-command and per-task slicing: the page index's size counts the window, contiguous and device pages but not the archive pages a slice adds, one index entry each per live slice, overlapping slices adding theirs independently, so enough live slices fill the index and `page_find` spins on the service thread. Build the design's admission ([design-fiasco.md](docs/design-fiasco.md#the-range-table)): the index sized at two slots for each window page and each of `ERX_FIASCO_SLICE_ENTRIES_MAX` slice entries, a slice's entries admitted against the live count before any is added and refused past it with `ERX_ENOMEM`, given back at the slice's end, and a probe bounded by the slot count; correct `vm_table.h`'s "committing never finds it full". Test: slices made until the refusal, then a commit and a lookup that both end; seeded fault: a slice admitted without counting its entries.
 * [Low] Fiasco backend, `erx_mem_child`: the child's handle is in its caller's table before the eager copy fills it, so a thread of the same task that closes the parent's handle and makes another object under the same number between the two calls has the child filled from that object. Make the creation and the copy one service request.
 * [Low] Fiasco backend, `liberx/backend/fiasco/service_wire.c`: the decoder copies a call's words into `decoded.request` without checking them against `ERX_FIASCO_WIRE_WORDS_MAX`; `erx_fiasco_mem_copy_request` fills all seven, so a longer layout would overflow it. Refuse past the maximum in the decoder, or assert every layout's size.
 * [Medium] Fiasco backend, native boot's seeded failures: `user_ptr` left 0, the
@@ -849,11 +860,9 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
 * [Low] BeamAsm, `sys/erxos/erx_jit_memory.c` (`erx_jit_memory_unmap`, `erx_jit_memory_map`): an unmap whose second
   release fails has already removed the first alias, against its header's "a refused call changes nothing", and a
   failed handle close after both maps loses the handle; the alias probe hand-encodes its return instruction.
-* [Medium] Fiasco backend, `liberx/backend/fiasco`, call table of `docs/design-fiasco.md`: `erx_cap_dup`, `erx_cap_close`,
-  `erx_object_destroy`, `erx_budget_create` and `erx_log_read` have no body. Their consumers are the Erlang NIF handles, the launcher, the domain library's root
-  entry and the Erlang log reader, which arrive with M3; each gets its body and a `test/guest/function_api` row then.
-  The pool counts pages for the root's one budget only, which the budget topic names `ERX_CAP_SELF`; a count for
-  each budget follows `erx_budget_create`'s body.
+* [Medium] Fiasco backend, `test/guest/function_api`: `erx_budget_create` and `erx_log_read` have bodies but no
+  case. Their consumers, the domain library's root entry and the Erlang log reader, arrive with M3; each gets its
+  case then.
 * [Low] Fiasco backend, `test/guest/native_task/guest.c`, `request_against_exit`: no seed shows the dropped-request
   count can move, as the thread deletion seed stops the suite at its earlier `service` case.
 * [Low] Fiasco backend, `liberx/backend/fiasco`, fault gates: each space's `dropped` counter of records lost after its gate was
@@ -880,10 +889,12 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   a umtx wait on the semaphore the park shares, so an up the race left over returns that wait early and is
   gone before the quiet park looks. The quiet park catches only an up arriving after `settle`; a wait that
   does not block on the semaphore, or a zero-deadline down right after the race, would catch both.
-* [Medium] Fiasco backend, `liberx/backend/fiasco/object.c`: a space handle is still the task's index, which the
-  launcher turns into the ended semaphore's slot without the service (`launcher.c`). It moves onto records with
-  BK5's space tree (the 1b-A package plan). Until then its value overlaps object handles, so `erx_cap_close` or
-  `erx_object_destroy` given a space handle acts on whatever entry has that number.
+* [Medium] Fiasco backend, lookup error precedence (`liberx/backend/fiasco/service_task.c:330`): the space-create
+  wrapper turns every failure of its `parent` and `fault` lookups into `ERX_ETYPE`, so a stale handle answers
+  `ERX_ETYPE` where design-fiasco.md's "Reserved values and error precedence" passes the lookup's `ERX_ESTALE`
+  through unchanged and keeps `ERX_ETYPE` for a live object of another kind. Return the lookup's status, check the
+  other wrappers that take a handle for the same collapse, and test the wrappers with a stale handle, not only
+  `handle_find`, with the seeded fault the design names.
 * [Medium] security residual, `liberx/backend/fiasco/vm_rules.c`: `erx_vm_map` lets every `erx_mem_create`
   object run, not only a JIT one, so any such object maps read-write at one address and read-execute at another, a protect moves RW to RX freely, and the
   root maps RX into a child made without `ERX_SPACE_JIT`. No single mapping is ever writable and executable,
@@ -8032,9 +8043,15 @@ to the corpus and follow rc
   ~ERX_HR_DESTROY`), a reported value that is not true. Read-only sharing does not exist on this backend.
   Development builds run trusted code only; the gap blocks release. The work is the third part of the
   design's [Implementation](docs/design-fiasco.md#handles) note: a rights field in `erx_backend_handle_entry_t`,
-  set at create, intersected in `erx_backend_handle_dup` and `object_pass_item`, and a needed-right argument to
-  `erx_backend_handle_find`, so every call gets the check by construction; the *rights shrink*, *a creator's
-  pass* and *writable peer side* cases, with their seeded faults.
+  set at create from the creation kind's default set in `abi/kernel.txt`, at a carve intersected with the parent
+  entry's rights and `DESTROY`, intersected in `erx_backend_handle_dup` and `object_pass_item`, and a needed-right
+  argument to `erx_backend_handle_find`, so every call gets the check by construction; the *rights shrink*, *a
+  creator's pass* and *writable peer side* cases, and a budget carved through an entry without `SPACES`, with their
+  seeded faults. A duplicate's mask needs a path end to end, since `erx_cap_dup` takes none (`service.h:132`) and
+  its request carries only the caller and the handle (`abi/erx_abi.txt`, `erx_fiasco_cap_request`): give
+  `erx_cap_dup` the mask erXos's kernel's call takes (`include/erx/cap.h`), a generated request with a mask field,
+  the decoder and the dispatch (`service.c`, `ERX_FIASCO_CALL_CAP_DUP`) passing it to the body, and its callers
+  passing their masks.
 * [Medium] Fiasco backend, placement rights of the request gate and the thread semaphores
   (`liberx/backend/fiasco/service_task.c:306-308`, `service.c:732-734`): both are mapped into the task with
   `L4_CAP_FPAGE_RWS`, where the design places the gate with the send right alone and a semaphore with only the
@@ -8392,7 +8409,7 @@ to the corpus and follow rc
   a principal that a start row names, an app's or a person's, and that never enrolled can be enrolled by whoever
   first reaches a secure console line, as any principal can, and then logged in to with its authority. Settle it in
   the login design, which covers every place a person meets the system.
-- [Low] program channel on Fiasco (`liberx/backend/fiasco/object.c`): a program can map the session's lane side read-write, the High item on rights per handle above. It can bind or unbind only IRQ objects it holds in its own group: it holds no handle to its channel doorbell, and `irq_group_allowed` refuses the session's doorbell, which is also the gate worker's IRQ for the program's port. A program also holds `TRIGGER` copies of its own pipe ends' doorbells, bound in its own group, and can rebind them to any label, label 1 included; that costs it only its own wakes. Any task can create IRQ objects up to the machine-wide 256 (`ERX_FIASCO_IRQS_MAX`) and starve every other domain's doorbells. erXos's kernel enforces the rights the install grants (`erx_program_core.c` `install_rights`).
+- [Low] program channel on Fiasco (`liberx/backend/fiasco/object.c`): a program can map the session's lane side read-write, the High item on rights per handle above. It can bind or unbind only IRQ objects it holds in its own group: it holds no handle to its channel doorbell, and `irq_group_allowed` refuses the session's doorbell, which is also the gate worker's IRQ for the program's port. A program also holds `TRIGGER` copies of its own pipe ends' doorbells, bound in its own group, and can rebind them to any label, label 1 included; that costs it only its own wakes. That any task can fill the machine-wide 256 IRQ objects is the High per-domain limits item of "0.2 on Fiasco". erXos's kernel enforces the rights the install grants (`erx_program_core.c` `install_rights`).
 
 * [Low] inspect service, the runtime agent leg ([design-live.md](docs/design-live.md#the-runtime-agent)): a
   domain's inspection agent takes questions one at a time, so a holder of scope `all` that asks without pause
