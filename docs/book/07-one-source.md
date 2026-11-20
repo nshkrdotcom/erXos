@@ -1,24 +1,18 @@
 # Chapter 7. One Source for Every Fact
 
-> **Status.** **Built**: the ABI file, `abi/erx_abi.txt`, with the
-> files it includes, and the Ruby generators that turn it into C,
-> Erlang, Ruby and TypeScript; the hardware sources (CMSIS-SVD files
-> for device registers and Arm's machine-readable data for system
-> registers) and the accessors generated from them; the theme file and
-> its contrast rules; the errno and signal tables with FreeBSD's
-> numbers; the descriptor layouts the DMA check reads, for virtio's
-> split ring and GENET's register ring; the system manifest and its
-> build check, with a seeded test per property; the table of declared
-> services and the check that holds code to it; the inspection schema.
-> **Designed**: the ADMA2 descriptor form for the SD controller, and
-> an evaluation of the manifest's relational rules in awklog, a
-> Datalog engine. The build uses no Datalog.
+> **Status.** **Built**: the ABI file and its generators; register
+> accessors generated from the hardware sources; the theme and its
+> contrast rules; the errno and signal tables; the system manifest and
+> its build-time check; the declared services and inspection schema.
+> **Designed**: the ABI file declaring every kernel call (it declares
+> one); budgets that refuse a charge at run time; per-domain CPU
+> limits; the ADMA2 descriptor form for the SD controller.
 
-**Background needed.** [Chapter 6](README.md#chapter-6-correct-by-construction)
-for "by construction" and chokepoint checks;
-[chapter 3](03-erlang.md) for Erlang modules, atoms, macros and
-guards; [chapter 1, section 1.5](01-operating-systems.md#15-devices-interrupts-dma-and-caches)
-for device registers, DMA and descriptor rings.
+**Background needed.** [Chapter 6](06-construction.md) for "by
+construction" and chokepoint checks; [chapter 3](03-erlang.md) for
+Erlang modules, atoms, macros and guards; [chapter 1, section
+1.5](01-operating-systems.md#15-devices-interrupts-dma-and-caches) for
+device registers, DMA and descriptor rings.
 
 The number -6 means "memory budget exhausted" in erXos. The C code in
 `liberx` returns it, the Erlang runtime turns it into the atom
@@ -34,105 +28,87 @@ let the build write every copy and check every rule that follows.
 UNIX systems know the idea in a few places. FreeBSD keeps its system
 calls in one file, `sys/kern/syscalls.master`, whose header says it is
 "Processed to created init_sysent.c, syscalls.c and syscall.h". The
-entry for `read` gives its number, 3, and its C prototype; the
-kernel's dispatch table and its table of call names follow from it.
-Much else is still written twice by hand. The errno numbers sit in a
-header and again in the messages `strerror` reads; a device's register
-offsets sit in a driver and again in a debugger.
+entry for `read` gives its number, 3, and its C prototype, and the
+kernel's dispatch table follows from it. Much else is still written
+twice by hand, such as a device's register offsets, in a driver and
+again in a debugger.
 
-erXos makes the FreeBSD habit the rule. Every table, format and
-decision has one source. Where C, Erlang, Ruby and TypeScript need the
-same fact, a Ruby generator writes all four from it during the build.
-Where a fact can be checked, such as a color's contrast or a
-configuration's sums, the build checks it.
-
-Section 7.1 states the problem and the rule. Sections 7.2 and 7.3 walk
-the ABI file and the rules its specs follow. Sections 7.4 to 7.8 apply
-the idea to hardware registers, the desktop's theme, the DMA check,
-the machine's configuration and its services. Section 7.9 says what
-happens when a source is wrong, and section 7.10 where Datalog fits.
+erXos makes the FreeBSD habit the rule. Where C, Erlang, Ruby and
+TypeScript need the same fact, a Ruby generator writes all four from
+one source during the build. Where a fact can be checked, such as a
+color's contrast or a configuration's sums, the build checks it.
 
 ## 7.1 Parallel copies, and the rule that replaces them
 
 Two copies of one fact stay equal only while everyone who changes one
 remembers the other. A C header defines a structure; an Erlang module
-decodes the same bytes with its own offsets; a Ruby tool packs them
-for the boot image. Change a field's width in the header and the
-system still builds, but the Erlang decoder reads the wrong bytes
-until someone notices a wrong value.
+decodes the same bytes with its own offsets. Change a field's width in
+the header and the system still builds, but the Erlang decoder reads
+the wrong bytes until someone notices a wrong value.
 
 > **Background: application binary interface.** An ABI says what two
-> pieces of compiled code must agree on to work together at the level of
-> bits: which number names each call, which register holds each
-> argument, how many bytes a structure has and where each field sits,
-> which integer means which error. An API is a promise in source code:
-> "call `read` with a descriptor, a buffer and a length". An ABI is the
-> same promise after compilation: "put 3 in this register, the
-> descriptor in that one". Programs compiled from different languages
-> share no source, so the ABI is all they share. If they disagree,
-> nothing fails at build time.
+> pieces of compiled code must agree on at the level of bits: which
+> number names each call, which register holds each argument, where
+> each field of a structure sits, which integer means which error. An
+> API is a promise in source code: "call `read` with a descriptor, a
+> buffer and a length". An ABI is the same promise after compilation:
+> "put 3 in this register, the descriptor in that one". Programs
+> compiled from different languages share no source, so the ABI is all
+> they share. If they disagree, nothing fails at build time.
 
 erXos's kernel interface is such an ABI, and so is each format that
 crosses a boundary: a message between domains, a boot image, a ring a
-device reads. Each is read and written in several languages: C in
-`liberx`, C and Erlang in the runtime, Ruby in the tools that pack
-images and talk to a booted machine, TypeScript in the web client.
+device reads. C, Erlang, Ruby and TypeScript code all read and write
+them.
 
-The usual defense is a test that compares the copies. It covers the
-copies someone thought to compare. [Chapter
-6](README.md#chapter-6-correct-by-construction) calls this open-ended
-enumeration: the claim "every copy agrees" rests on a list, and the
-next person to add a consumer does not know the list exists. erXos
-removes the list. Its rule, from [design.md, One source for the ABI
-and the
-hardware](../design.md#one-source-for-the-abi-and-the-hardware), has
-two parts:
+The usual defense is a test that compares the copies someone thought
+to compare. [Chapter 6](06-construction.md)
+calls this open-ended enumeration: the claim "every copy agrees" rests
+on a list, and the next person to add a consumer does not know the
+list exists.
 
-* every decision, table and format has exactly one implementation, and
-  C, Erlang, Ruby and TypeScript share a table only by generation from
-  one source;
+erXos removes the list. The project's rules for its code state the
+rule in two parts, and [design-generation.md](../design-generation.md)
+applies it to every interface:
+
+* every table and format has exactly one source, and C, Erlang, Ruby
+  and TypeScript share it only through files generated from that
+  source;
 * a fact the build can compute is never written by hand and then
   checked for agreement; the build computes it.
 
 > **Background: code generation.** A generator is a program that writes
 > another program's source. It reads a specification, a file that states
 > facts in a fixed, simple grammar, and prints C, Erlang or any other
-> language from it. `yacc` is a familiar one: it reads a
-> grammar and prints a C parser. A generator turns "remember to update
-> the other file" into "run the build". Its outputs cannot disagree,
-> since they all come from one reading of one file.
+> language from it. `yacc` is a familiar one: it reads a grammar and
+> prints a C parser. Its outputs cannot disagree, since they all come
+> from one reading of one file.
 
 The second part matters as much. A structure's size follows from its
-fields, and a count from a list. Written by hand, such a value is one
-more copy, and the check that compares it with the real value is one
-more test to keep.
+fields; written by hand, it is one more copy, with one more test to
+keep it right.
 
 ## 7.2 The ABI file
 
-The kernel interface and every fixed binary layout erXos defines live
-in `abi/erx_abi.txt` and its includes. The root file, about 1,160
-lines, includes about forty fragments under `abi/`: `kernel.txt` for
-rights and kernel-visible layouts, `services/*.txt` for interfaces
-between domains, `formats/*.txt` for on-disk and on-wire records, and
-others. [design-generation.md, Sources and
-outputs](../design-generation.md#sources-and-outputs) lists what each
-holds. The generator, `tools/gen_abi.rb` with its library under
-`tools/lib/erx/abi_*.rb`, reads all of them as one declaration set.
+Every status code, right, limit and fixed binary layout erXos defines
+is a line in `abi/erx_abi.txt` or one of the fragments it includes
+under `abi/`: kernel layouts, interfaces between domains, on-disk and
+on-wire records ([design-generation.md, Sources and
+outputs](../design-generation.md#sources-and-outputs)). The
+generator, `tools/gen_abi.rb`, reads all of them as one declaration
+set.
 
 ### 7.2.1 One line, three outputs
 
-Status codes are the simplest declarations. Here are four of the
-eighteen, from `abi/erx_abi.txt`:
+A status code is one line. Here are two of the eighteen, from
+`abi/erx_abi.txt`:
 
 ```text
 status ok 0 "success"
-status inval -1 "invalid argument"
-status stale -2 "stale capability or object"
 status nomem -6 "memory budget exhausted"
 ```
 
-Each line is a keyword, a name, a value and a description, and nothing
-else. Figure 7.1 shows where the `nomem` line goes.
+Each line is a keyword, a name, a value and a description. Figure 7.1 shows where the `nomem` line goes.
 
 ```mermaid
 flowchart LR
@@ -148,9 +124,9 @@ flowchart LR
 *Figure 7.1. One declaration and its outputs. Every consumer reads a
 generated file; none reads another consumer's copy.*
 
-Figure 7.2 shows the three outputs, which the build writes under
-`build/gen/`. In C, `build/gen/include/erx/abi.h` has a constant and a
-lookup table:
+The next three blocks, together Figure 7.2, are what the build writes
+under `build/gen/`. In C, `build/gen/include/erx/abi.h` has a constant
+and a lookup table:
 
 ```c
 #define ERX_ENOMEM (-INT32_C(6))
@@ -169,9 +145,6 @@ In Erlang, `build/gen/erlang/apps/erx/src/generated/erx_abi_events.erl`
 has a function with one clause per status:
 
 ```erlang
-%% Generated by tools/gen_abi.rb from abi/erx_abi.txt and its inputs.
-%% Do not edit this file.
-%% ...
 -spec status(integer()) -> atom() | unknown.
 status(0) -> 'ok';
 %% ...
@@ -185,27 +158,24 @@ host tools look up by name:
 "enomem" => Constant.new(
   name: "enomem",
   value: -6,
-  type: types.fetch("i32"),
+  # ...
   description: "memory budget exhausted".b
 ).freeze,
 ```
 
-*Figure 7.2. The `nomem` declaration in C, Erlang and Ruby. The
-name, value and description agree because one program wrote all
-three from one line.*
+*Figure 7.2. The `nomem` declaration in C, Erlang and Ruby, written by
+one program from one line.*
 
-Notice what each language gets: a shape that suits it. C gets a macro
+Notice that each language gets a shape that suits it. C gets a macro
 and an array indexed by the negated value. Erlang gets a function that
 answers `unknown` for a value no status holds, so an untrusted number
-never becomes an atom it did not already know. Ruby gets an immutable
-object. The generator does not translate a C header; it derives each
-language's form from the declaration.
+never becomes a new atom. Ruby gets an immutable object.
 
 ### 7.2.2 A layout, its offsets and the compiler's word on them
 
-Binary layouts carry many numbers each, and that is where hand-written
-copies fail most often. Here is the entry of a virtio descriptor
-table, from `abi/formats/virtio.txt`:
+A binary layout carries many numbers, and each is a chance for a
+hand-written copy to go wrong. Here is the entry of a virtio
+descriptor table, from `abi/formats/virtio.txt`:
 
 ```text
 # One entry of a queue's descriptor table.
@@ -216,12 +186,11 @@ layout erx_virtq_desc wire_le 8 16
   field next u16 14
 ```
 
-The first line says the layout is little-endian on the wire
-(`wire_le`), aligned to 8 bytes and 16 bytes long. Each field gives its
-type and its offset. The generator checks that the fields do not
-overlap, that each is aligned to its own width, and that they fit the
-16 bytes. Then it writes a C structure and asks the compiler to
-confirm it:
+The layout is little-endian on the wire (`wire_le`), aligned to 8
+bytes and 16 bytes long. The generator checks that the fields neither
+overlap nor leave a gap, that each is aligned to its own width, and
+that they fill the 16 bytes. Then it writes a C structure and asks the
+compiler to confirm it:
 
 ```c
 struct erx_virtq_desc {
@@ -237,19 +206,16 @@ _Static_assert(offsetof(erx_virtq_desc_t, len) ==
 ```
 
 The offsets are written in the spec because the virtio specification
-fixes them, and the spec should read like that document. Where a spec
-writes a value the generator could compute, the generator checks it.
-The `_Static_assert` lines add a second witness, the C compiler, a
-tool erXos does not control: if it laid the structure out differently,
-the build would stop.
-
-The same declaration yields a Ruby description of the layout for the
-host tools, so they agree with the C. Section 7.6 shows one more
-consumer: the check that every DMA plan passes.
+fixes them; section 7.3 names this exception to "derive the rest".
+The `_Static_assert` lines add a second check by a tool erXos does not
+control, the C compiler: if it laid the structure out differently, the
+build would stop. The same declaration yields a Ruby description for
+the host tools, and section 7.6 shows one more consumer, the check
+that decides whether a device may be handed an address.
 
 ### 7.2.3 What else the file declares
 
-The grammar ([design-abi.md, Source
+Besides `status` and `layout`, the grammar ([design-abi.md, Source
 grammar](../design-abi.md#source-grammar)) has a fixed set of forms,
 among them:
 
@@ -257,66 +223,56 @@ among them:
 | --- | --- |
 | `limit` | a named constant of a given type, such as `page_size` |
 | `enum`, `flags` | a closed set of names with explicit values or bit positions |
-| `layout` | a fixed binary record, as above |
-| `status`, `errno`, `signal` | result codes and the POSIX tables |
-| `reader` | a bounded table-and-string structure, with a generated reader that checks every reference |
+| `errno`, `signal` | the POSIX tables |
+| `reader` | a packed table, such as the system manifest of section 7.7, with a generated C reader that returns a checked view or a diagnostic |
 | `call` | a kernel call: its arguments, where each travels, what it may wait for and what it charges |
 | `service` | an interface between domains and its operations |
 
-The `reader` form describes packed tables such as the system manifest
-(section 7.7). From it the generator writes a C reader that takes a
-byte span and returns either a checked view or a typed diagnostic,
-never a half-checked view. The `call` form is built; the file declares
-one call with it, `debug_log`, and the generator writes its stubs for
-each backend of `liberx`. `liberx`'s other kernel calls are declared
-by hand in `liberx/backend/api.h`, using the generated types and
-status codes. [Chapter
-8](README.md#chapter-8-the-kernel-interface-and-fiasco) describes
-them.
+Kernel calls are the one large exception to this chapter's rule. In
+the design, the ABI file declares every kernel call, and `liberx`'s
+code for each backend (one per kernel the interface can sit over) is
+generated from it. That is designed and not built. Today the file
+declares one call with the `call` form, `debug_log`, and the generator
+writes its stubs. `liberx`'s other kernel calls are written by hand in
+`liberx/backend/api.h`, using the generated types and status codes.
+[Chapter 8](08-kernel-interface.md) describes them.
 
 ## 7.3 The rules every spec follows
 
 A spec helps only if it is easier to trust than the code it replaces.
-Seven rules, from erXos's working agreement and [design-abi.md, Source
+Six rules, from the project's rules and [design-abi.md, Source
 grammar](../design-abi.md#source-grammar), keep its specs so.
 
 **State facts; derive the rest.** A spec says what is true. The
 generator computes every value that follows: a C name from a spec
-name, a table's size, a hash, a lookup in the other direction. Section
-7.2.2 showed the one exception, values a source document fixes, and
-those the generator checks.
+name, a table's size, a hash, a lookup in the other direction. The one
+exception is a value a source document fixes, such as section 7.2.2's
+offsets, and the generator checks those.
 
-**Close every set.** Every column that names something has a fixed
-list of allowed values. A layout's storage is one of `wire_le`,
-`shared`, `native`, `packed_le` or `packed_be`; a signal's default
-action is one of `terminate`, `ignore`, `stop`, `continue` or
-`reserved`. An `enum` lists every member with an explicit value. A
-value outside the list is an error at generation, not a new case
-that some consumer forgets.
+**Close every set, strictly.** Every column that names something has a
+fixed list of allowed values: a signal's default action is one of
+`terminate`, `ignore`, `stop`, `continue` or `reserved`. A value
+outside the list is an error at generation, not a new case some
+consumer forgets. So are unknown keywords, surplus tokens and two
+names that would yield the same C, Erlang or Ruby name.
 
-**No expressions.** The grammar has no arithmetic, no interpolation,
-no conditionals and no includes searched for by name. A reader of the
-spec sees each value written out, and the generator has nothing to
-evaluate. A spec that grows a language of its own becomes a second
-program to debug.
+**No expressions.** The grammar has no arithmetic, no interpolation
+and no conditionals. A reader of the spec sees each value written out.
+A spec that grows a language of its own becomes a second program to
+debug.
 
-**Strict.** Unknown keywords, surplus tokens, a repeated property and
-a tab in the indentation all fail the run. So do two names that differ
-in the spec but would yield the same C, Erlang or Ruby name.
-
-**Fail whole.** The generator runs three pure stages. It parses the
-bytes into declarations with their file and line, checks the whole
-set, and builds an immutable plan of every output path and its bytes.
-Only then does it write; an invalid declaration produces a diagnostic
-and no output ([design-abi.md, Contract and
+**Fail whole.** The generator parses the bytes into declarations with
+their file and line, checks the whole set, and builds an immutable
+plan of every output path and its bytes. Only then does it write. An
+invalid declaration produces a diagnostic and no output
+([design-abi.md, Contract and
 ownership](../design-abi.md#contract-and-ownership)). This is chapter
-6's functional core again: the decisions are pure, and the one effect,
-writing files, comes last.
+6's functional core: the decisions are pure, and the one effect comes
+last.
 
-**Sorted and deterministic.** The constants in `erx/abi.h` appear
-sorted by name (`ERX_ELIMIT`, `ERX_END_OFF`, ..., `ERX_ENOMEM`),
-whatever order the spec lists them in. The same inputs give the same
-bytes, one reason erXos's boot images are reproducible.
+**Sorted and deterministic.** Outputs are sorted by name, whatever
+order the spec lists them in, so the same inputs give the same bytes,
+one reason erXos's boot images are reproducible.
 
 **Generated files are not checked in.** A generated file in the tree
 would be a second copy, and someone would edit it.
@@ -325,17 +281,12 @@ would be a second copy, and someone would edit it.
 
 Some facts belong to another system. A program ported from FreeBSD
 expects `ENOENT` to be 2 and `strerror` to say "No such file or
-directory". erXos's errno table, `abi/errno.txt`, holds every name its
-C library defines with FreeBSD 15.1's number. The generator writes
-musl's `bits/errno.h` from it, so musl's errno values, and the
-`strerror` table indexed by them, are FreeBSD's.
-
-The real source here is outside the tree, so erXos adds one test,
-`test/host/abi_errno_test.rb`, that compares its table with FreeBSD's
-`sys/sys/errno.h` at a pinned version. The test compares erXos's one
-copy with FreeBSD's; erXos has no copies of its own to compare. The
-signal table, `abi/signals.txt`, takes FreeBSD's numbers and its
-`sys_siglist` texts the same way.
+directory". erXos's errno table, `abi/errno.txt`, gives every name
+FreeBSD 15.1's number, and the generator writes musl's `bits/errno.h`
+from it. Here the real source is outside the tree, so a test,
+`test/host/abi_errno_test.rb`, holds erXos's one table to FreeBSD's
+`sys/sys/errno.h` at a pinned version. The signal table,
+`abi/signals.txt`, takes FreeBSD's numbers and texts the same way.
 
 ## 7.4 The hardware has one source too
 
@@ -345,40 +296,32 @@ chip's manual into `#define` lines: this field starts at bit 21 and is
 something other than asked. erXos takes register meanings from
 machine-readable sources instead.
 
-> **Background: CMSIS-SVD.** Chip vendors describe their devices'
-> registers in machine-readable files so that debuggers and code
-> generators need not copy manuals by hand. CMSIS-SVD, the System View
-> Description format, is Arm's XML format for such files. An SVD file
-> describes memory-mapped registers "from high-level peripheral
-> functions down to individual register bit fields" (Arm, CMSIS-SVD
-> documentation). It gives each register's offset, width and access,
-> and each field's bit position, width and named values.
-> Vendors ship these files with their device support packs.
+> **Background: CMSIS-SVD.** CMSIS-SVD, the System View Description
+> format, is Arm's XML format in which chip vendors describe their
+> devices' registers for debuggers and code generators. In the format's
+> documentation, the information "ranges from high level functional
+> descriptions of a peripheral all the way down to the definition and
+> purpose of an individual bit field in a memory mapped register". A
+> file gives each register's offset, width and access, and each
+> field's bit position, width and named values.
 
-Every peripheral erXos drives has an SVD file under `hw/svd/`, from
-the PL011 UART and the PL031 real-time clock to the Raspberry Pi 4's
-GENET Ethernet controller, SD controller and watchdog, and the
-virtio-mmio transport. A vendor's file enters the tree as an import
-with its origin recorded. The PL011's is UART0 from the Raspberry Pi
-Pico SDK's `rp2040.svd`, carved out by `tools/carve_pl011_svd.rb`,
-which refuses an upstream file whose SHA-256 differs from the pinned
-one (`hw/svd/pl011/ORIGIN.md`). Where no vendor file exists, erXos
-writes one from the device's documentation and cites it in the file's
-head comment.
+Every peripheral erXos drives has an SVD file under `hw/svd/`. A
+vendor's file enters the tree as an import with its origin and
+checksum recorded. Where no vendor file exists, erXos writes one from
+the device's documentation and cites it in the file.
 
 ### 7.4.1 One register, from XML to a driver
 
-The GENET controller talks to the Ethernet PHY, the chip that drives
-the cable, through one command register. Its declaration in
-`hw/svd/genet/genet.svd` reads, shortened:
+The Raspberry Pi 4's GENET Ethernet controller talks to the PHY, the
+chip that drives the cable, through one command register. Its
+declaration in `hw/svd/genet/genet.svd` reads, shortened:
 
 ```text
 <register>
   <name>MDIO_CMD</name><ownedByNif>false</ownedByNif>
   <addressOffset>0xe14</addressOffset><access>read-write</access>
   <fields>
-    <field><name>VALUE</name>  ...<bitOffset>0</bitOffset><bitWidth>16</bitWidth></field>
-    <field><name>REG</name>    ...<bitOffset>16</bitOffset><bitWidth>5</bitWidth></field>
+    <!-- VALUE at bit 0, REG at bit 16 ... -->
     <field><name>PMD</name>    ...<bitOffset>21</bitOffset><bitWidth>5</bitWidth></field>
     <field><name>WRITE</name>  ...<bitOffset>26</bitOffset><bitWidth>1</bitWidth></field>
     <field><name>READ</name>   ...<bitOffset>27</bitOffset><bitWidth>1</bitWidth></field>
@@ -387,229 +330,218 @@ the cable, through one command register. Its declaration in
 </register>
 ```
 
-Each field's description in the file cites the FreeBSD header the
-meaning was taken from (`if_genetreg.h`). `tools/gen_hw.rb` reads the
-file, checks it, and writes a C header and an Erlang include file. For
-the `PMD` field, the PHY's address, the Erlang file
-`erx_hw_genet.hrl` defines its shift, width and mask, and three macros:
+Each field cites the FreeBSD header its meaning came from.
+`tools/gen_hw.rb` checks the file and writes a C header and an Erlang
+include file. For the `PMD` field, the PHY's
+address, `erx_hw_genet.hrl` defines its shift, width and mask, and
+macros to get, check and put it (shortened):
 
 ```erlang
 -define(ERX_HW_GENET_MDIO_CMD_PMD_SHIFT, 21).
--define(ERX_HW_GENET_MDIO_CMD_PMD_WIDTH, 5).
 -define(ERX_HW_GENET_MDIO_CMD_PMD_MASK, 16#3e00000).
 -define(ERX_HW_GENET_MDIO_CMD_PMD_GET(Word), (((Word) bsr 21) band 16#1f)).
 -define(ERX_HW_GENET_MDIO_CMD_PMD_FITS(Value), (is_integer(Value) andalso (Value) >= 0 andalso (Value) =< 16#1f)).
-%% ERX_HW_GENET_MDIO_CMD_PMD_PUT(Value) places Value at bit 21, or fails
-%% with badfield when it does not fit.
+%% In summary (not the file's text): ERX_HW_GENET_MDIO_CMD_PMD_PUT(Value)
+%% places Value at bit 21, or fails with badfield when it does not fit.
 ```
 
-The Erlang driver that sends PHY commands,
-`erlang/apps/erx_net/erxos/erx_mdio.erl`, builds its command word from
-those macros alone:
+The Erlang module that builds PHY commands,
+`erlang/apps/erx_net/erxos/erx_mdio.erl`, makes its command word from
+those macros alone. Its `?READ` is its own short name for the
+generated mask of the `READ` bit:
 
 ```erlang
 command({read, Phy, Reg}) when ?ERX_HW_GENET_MDIO_CMD_PMD_FITS(Phy), ?ERX_HW_GENET_MDIO_CMD_REG_FITS(Reg) ->
     ?READ bor ?ERX_HW_GENET_MDIO_CMD_PMD_PUT(Phy) bor ?ERX_HW_GENET_MDIO_CMD_REG_PUT(Reg);
 ```
 
-Notice two things. The driver has no shift and no mask; 21 and `16#1f`
-appear only in the generated file. And the `FITS` macro is an Erlang
-guard, so a PHY address of 32 matches no clause. A hand-written `(Phy
-bsl 21)` would let it spill into the neighboring `WRITE` bit.
+Notice two things. The module has no shift and no mask; 21 and
+`16#1f` appear only in the generated file. And the `FITS` macro is an
+Erlang guard, so a PHY address of 32 matches no clause. A hand-written
+`(Phy bsl 21)` would put 32's one set bit at bit 26, the `WRITE` bit.
 
-The generator refuses an SVD file it does not wholly understand.
-Fields must fit their register without overlapping, and registers must
-fit their peripheral's address block. Every register must say whether
-the device NIF, the C part of ERTS that touches devices for Erlang
-drivers, owns it (`ownedByNif`, erXos's one extension, used in section
-7.6). An unknown extension element is an error, so no file is ever
-half read ([design-generation.md, Register
-inputs](../design-generation.md#register-inputs)).
+The generator refuses an SVD file it does not wholly understand:
+overlapping fields, a register outside its peripheral's address block,
+an unknown element ([design-generation.md, Register
+inputs](../design-generation.md#register-inputs)). erXos adds one
+element of its own, `ownedByNif`, which section 7.6 explains.
 
-The C side gets accessors that perform one volatile access of the
-declared width. It also gets the table through which the device NIF,
-`erx_device`, resolves the register names an Erlang driver uses. A
-driver reads and writes registers by name, such as `mdio_cmd`, and the
-NIF refuses an access the register's declaration does not allow.
+The C side gets accessors of the declared width. It also gets the
+table through which the device NIF, `erx_device`, resolves register
+names such as `mdio_cmd`; the device NIF is the C part of ERTS that
+touches devices for Erlang drivers. The NIF refuses an access the declaration does not allow.
 
 ### 7.4.2 The processor's own registers
 
 A processor also has system registers, read with special instructions
-rather than at memory addresses, such as the counter's frequency or
-the registers that say which instructions the CPU supports. Arm
-publishes their encodings and fields as machine-readable data under a
-BSD license. erXos pins one release (its SHA-256 is in `deps.lock`)
-and extracts the eight registers it uses into
-`hw/sysreg/aarch64.json`, keeping Arm's notice and the exact source
-identity (`hw/sysreg/ORIGIN.md`). The generator writes
-`erx/arch/aarch64/sysreg.h` from it, and `liberx`'s CPU-feature code
-reads the registers through it. A check recreates the JSON from the
-pinned archive, so it cannot drift from Arm's.
-
-Terminal escape rules (`abi/terminal.txt`) and keyboard layouts
-(`abi/keymaps/us.txt`) have generators of their own in the same way.
+rather than at memory addresses, such as those that say which
+instructions the CPU supports. Arm publishes their encodings and
+fields as machine-readable data under a BSD license. erXos extracts
+the registers it uses from one pinned release into
+`hw/sysreg/aarch64.json`, and the generator writes
+`erx/arch/aarch64/sysreg.h` from it. erXos's boot code reads the
+registers through it, in kernel mode, and `liberx` decodes their
+fields with it. A command recreates the JSON from the pinned archive
+and reports any difference. Terminal escape rules and keyboard layouts
+have generators of their own in the same way.
 
 ## 7.5 One theme, three languages
 
-erXos's desktop draws the same look in three places: Erlang widgets, C
-drawing code, and the web client in a browser. Each needs the same
-font sizes, spacing, corner radii and colors. `abi/theme.txt` declares
-them once:
+erXos's desktop draws the same look in Erlang widgets, C drawing code
+and the web client. Each needs the same font sizes, spacing and
+colors, and `abi/theme.txt` declares them once:
 
 ```text
   role body     font ui size 13 line 20 weight regular
   color text       1B1C1E FFFFFF
   color accent     0E7A6B 7FE7F2
   color on_accent  FFFFFF 0D0F2A
-  # The WCAG 2 contrast ratio each foreground meets on each background
-  # named, in each palette.
   contrast on_accent on accent 4.5
 ```
 
 Each `color` row gives a light-palette value and a dark one. The
 `contrast` row is a rule: text drawn in `on_accent` over `accent` must
-reach a contrast ratio of 4.5 in both palettes, as the WCAG 2
-accessibility guidelines define it. The generator computes the ratio
-for every pair a rule names (`contrast_ratio` in
-`tools/lib/erx/abi_theme.rb`) and fails the build if one falls short.
-A designer who darkens `accent` and forgets the text on it gets a
-build error, not a button no one can read.
+reach a contrast ratio of 4.5 in both palettes. The WCAG 2
+accessibility guidelines define the ratio: 1 is no contrast, 21 is
+black on white, and 4.5 is their minimum for body text. The generator
+computes the ratio for every pair a rule names and fails the build if
+one falls short. A designer who darkens `accent` gets a build error,
+not a button no one can read.
 
-From the one file the generator writes `erx_theme.erl` for the Erlang
-renderer (`color(light, accent) -> 16#0e7a6bff;`), `erx/theme.h` for C
-(`.accent = 0x0e7a6bu`), and `theme.ts` for the browser
-(`["--erx-color-accent", "#0e7a6b"]`, a CSS custom property).
-[design-desktop-programs.md, The theme: one
-declaration](../design-desktop-programs.md#the-theme-one-declaration)
-describes the theme's roles.
+From the one file the generator writes `erx_theme.erl` for Erlang,
+`erx/theme.h` for C, and `theme.ts` for the browser
+([design-desktop-programs.md, The theme: one
+declaration](../design-desktop-programs.md#the-theme-one-declaration)).
 
 ## 7.6 The descriptor formats behind the DMA check
 
-[Chapter 6](README.md#chapter-6-correct-by-construction) introduced
-`erx_device_dma_check`, in
-`otp/erts/emulator/nifs/erxos/erx_device_dma.h`, which refuses a DMA
-plan that would give a device an address outside the domain's DMA
-memory. To do that it must know where a device finds addresses. A
-descriptor (chapter 1's [descriptor
-ring](01-operating-systems.md#154-direct-memory-access)) holds an
-address field and a length field, and the check must find every store
-to either.
+Suppose the block driver wants the virtio disk to read one 4,096-byte
+sector into a buffer. A descriptor (chapter 1's [descriptor
+ring](01-operating-systems.md#154-direct-memory-access)) carries the
+buffer's device address in its `addr` field and 4,096 in its `len`
+field, and the device then writes 4,096 bytes there on its own. If
+either were wrong, the device would write over memory the domain does
+not own, and nothing in the processor would stop it.
 
-That knowledge comes from the declarations of this chapter, not from
-numbers in the check. For virtio's split ring, the queue's code fills
-the check's description of the form from the generated layout of
-section 7.2.2, in `erx_device_queue.c`:
+So no driver writes a descriptor directly. The device NIF's code for
+each **descriptor form**, the description of one kind of device's
+descriptors (virtio's split ring, GENET's register ring), is pure. It
+returns a plan of what to place in the descriptors. One independent
+check reads the whole plan before anything reaches the hardware. It
+verifies that every device address, with its length, stays inside the
+queue's DMA memory, and that no region of that memory has two writers.
+Only a checked plan reaches the effect layer, which writes it
+([design-device-dma.md](../design-device-dma.md)).
 
-```c
-	context->descriptor_size = ERX_VIRTQ_DESC_SIZE;
-	context->address_field = offsetof(erx_virtq_desc_t, addr);
-	context->address_width = sizeof(((erx_virtq_desc_t *)0)->addr);
-	context->length_field = offsetof(erx_virtq_desc_t, len);
-	context->length_width = sizeof(((erx_virtq_desc_t *)0)->len);
-```
+The check must know where a descriptor keeps its address and its
+length, and how wide each is. It takes those numbers from the
+declarations of this chapter and holds none of its own. For virtio,
+the queue code and the check read the offsets and widths of `addr` and
+`len` from the generated layout of section 7.2.2. If the spec changed,
+both would follow it in the next build.
 
-With these the check holds every plan to two rules
-([design-device-dma.md, Calls, observations and plans](../design-device-dma.md#calls-observations-and-plans)):
-an address reaches a descriptor only as an address step, which was
-checked against the domain's memory, and the same plan stores that
-descriptor's length equal to the reach that was checked. A plain number
-cannot land in an address field, and a length cannot pass what its
-address was checked for.
-
-GENET's descriptors are registers, not memory. For it the form names
-the descriptor registers (`rx_desc_status`, `rx_desc_addr_lo`,
-`rx_desc_addr_hi` and their transmit twins, in `erx_device_genet.c`).
-The NIF resolves them through the register table generated from
-`genet.svd`, so their offsets and stride come from section 7.4's
-source. The `ownedByNif` mark on each register says which registers
-only the NIF may write: those through which a write could aim the
-device at memory. A driver's write to an owned field fails with
+GENET's descriptors are registers, not memory, and the NIF finds them
+through the register table generated from `genet.svd`. Here
+`ownedByNif` does its job. It marks the registers, or single
+fields, that only the NIF may write, those through which a write could
+change where or how much the device moves, or which descriptors it
+takes as valid. A driver's write to an owned field fails with
 `badarg`.
 
-The result is a check with no layout knowledge of its own. If the
-virtio layout in the spec changed, the queue code and the check would
-follow it in the next build. The ADMA2 form, which would let the
-Raspberry Pi 4's SD controller move blocks by DMA through descriptor
-tables, follows the same pattern in [design-device-dma.md, The
-descriptor forms](../design-device-dma.md#the-descriptor-forms). The
-ADMA2 form is designed and not built.
+The Raspberry Pi 4's SD controller has a DMA descriptor format of its
+own, ADMA2, whose form follows the same pattern
+([design-device-dma.md, The descriptor
+forms](../design-device-dma.md#the-descriptor-forms)). The ADMA2 form
+is designed and not built.
 
 ## 7.7 The system manifest: the machine's configuration, checked
 
 A FreeBSD machine's configuration is spread across `/boot/loader.conf`,
-`/etc/rc.conf`, `/etc/devfs.rules`, jail configurations and more, each
-read by a different program at a different moment. No program sees all
-of it, so no program can say whether the whole is safe.
+`/etc/rc.conf`, `/etc/devfs.rules` and more, each read by a different
+program at a different moment, so no program can say whether the
+whole is safe.
 
-erXos has one file, the **system manifest** ([chapter 4, section
-4.5.4](04-history.md#454-declarative-where-it-simplifies)). For QEMU's
-`virt` machine it is the records every board takes,
-`config/manifest/development.txt`, followed by the board's own part,
-`config/manifest/qemu-virt-development.txt`. It names the machine's
-memory, each domain with its principal, limits and release, and each
-device with its holder. It also names each service and each **facet**,
-a grant that lets one domain reach one service of another ([chapter
-11](README.md#chapter-11-authority-and-security) explains facets). A
-domain and a device look like this:
+erXos has one, the **system manifest** ([chapter 4, section
+4.5.4](04-history.md#454-declarative-where-it-simplifies)), assembled
+from a part every board shares (`config/manifest/development.txt`)
+and the board's own part. It names the machine's memory, each domain,
+and each device's **holder**, the one domain the device belongs to
+and whose code drives it. It also names each service and each
+**facet**, the permission that lets one domain
+reach one service of another ([chapter
+11](README.md#chapter-11-authority-and-security) explains facets).
+A domain, from the shared part, and a unit, from the board's part,
+look like this:
 
 ```text
 domain storage
   principal @principal.system
   limits @limits.storage
   kind service
+  # ...
   runtime @artifact.emu
   release @artifact.storage
-  restarts 5
-  restart_period_s 600
   # ...
 unit block
   placement "block"
   holder @domain.storage
 ```
 
-The `unit` record gives the block device to the storage domain. An `@`
-name refers to another record.
+An `@` name refers to another record. The domain record names the
+user it runs for (its principal), its memory and CPU limits, the
+runtime it boots (`emu`, the ERTS emulator) and the OTP release with
+its Erlang code. Devices are given out by **unit**. Devices that share
+a register page or an interrupt line form one unit, given whole to one
+domain, so no page or line is ever held by two. The `unit` record
+gives the board's block device to the storage domain.
 
 ### 7.7.1 The check
 
-The packer, `tools/erx pack`, reads the manifest with the Ruby reader
-in `tools/lib/erx/manifest.rb`, runs the manifest check over it, and
-packs only the bytes the check returns. No other path leads from the
-text to the boot image. The packer's one way to get the manifest's
-bytes is `Manifest.admit`, which returns them only when every property
+The packer, `tools/erx pack`, gets the manifest's bytes only from
+`Manifest.admit` in `tools/lib/erx/manifest.rb`, which returns them only when every property
 holds ([design-fiasco.md, The manifest
 check](../design-fiasco.md#the-phase-1-manifest-check)). At boot, the
-system domain reads those bytes through readers generated from the
-manifest's layout in `abi/manifest.txt`, and nothing else configures a
-domain, a device's holder or a budget.
+system domain reads those bytes through readers generated from
+`abi/manifest.txt`, and nothing else configures a domain, a device's
+holder or a budget.
 
-The properties come from
-[design-system.md, The manifest](../design-system.md#the-manifest).
-On Fiasco the check keeps most of them, among them:
+The properties come from [design-system.md, The
+manifest](../design-system.md#the-manifest). Among them:
 
 * each device and unit has one holder;
 * every facet names a service the manifest declares, served by a
   domain the manifest configures;
-* exactly one domain, `pcie`, holds a PCIe bridge's configuration
-  space, and nothing else;
-* budgets and CPU shares sum within the machine's memory and the
-  parent's share;
-* the system domain, which every other domain depends on, is not given
-  a runtime that compiles code at run time;
+* exactly one domain, `pcie`, holds the configuration space of a PCIe
+  bridge (the controller through which the processor finds and sets
+  up PCIe devices), and nothing else;
+* the domains' memory budgets, and their CPU shares, sum within what
+  the machine has;
+* the system domain, which every other domain depends on, gets no
+  runtime with a just-in-time compiler, so it never makes code at run
+  time;
 * the domains' boot order has no cycle.
 
-The sums are checked when the image is built. Fiasco does not enforce
-a budget's limit at run time. A configuration that passes the check is
-one whose numbers add up, not one the kernel holds to them ([chapter
-12](README.md#chapter-12-memory-and-budgets) says what the system does
-enforce).
+These are build-time checks. At run time no budget refuses a charge.
+The root service records each budget's guarantee and cap but turns no
+request away for them, and every kernel object comes from the root's
+one Fiasco factory, the kernel object that creates others. In the
+design, each domain's budget is a wall: a factory of its own with a
+quota for its kernel memory, and a page count in the root service for
+its user pages. That is designed and not built. Nor are CPU limits
+enforced: the design's priority band, CPU set and thread limit per
+domain are designed and not built, and every thread but the watchdog
+runs at one priority. A manifest that passes the check is one whose
+numbers add up, not one the system holds to them ([chapter
+12](README.md#chapter-12-memory-and-budgets)).
 
 ### 7.7.2 A seeded violation, traced
 
-Each property has a test in `test/host/manifest_check_test.rb` that
-plants one violation and expects one diagnostic. The test for "each
+How do we know the check catches what it claims? Each property has a
+**seeded test** in `test/host/manifest_check_test.rb`: a test that
+plants one deliberate violation in a good manifest and passes only if
+the check refuses it with the expected diagnostic. The test for "each
 unit has one holder" appends a second record for the block device to
-the development manifest:
+the `virt` manifest:
 
 ```text
 unit again
@@ -617,27 +549,25 @@ unit again
   holder system
 ```
 
-Figure 7.3 follows the record through the check.
+(`system` is the manifest's bare name for the system domain.) Figure
+7.3 follows the record through the check.
 
 ```mermaid
 flowchart LR
-  text["manifest text + unit again"] --> reader["Ruby reader"]
-  reader --> facts["records with resolved references"]
-  facts --> props["properties"]
-  props --> diag["refused: unit.placement, unit is assigned more than once"]
-  props --> pack["packer: bytes for the boot image"]
+  text["manifest text + unit again"] --> reader["Ruby reader: parse"]
+  reader --> resolve["resolve units and holders, check"]
+  resolve --> diag["refused: unit.placement, unit is assigned more than once"]
+  resolve --> pack["packer: bytes for the boot image"]
 ```
 
-*Figure 7.3. The manifest check as a pipeline. The seeded record is
-read and resolved like any other; the one-holder property refuses
-it, and the packer receives nothing.*
+*Figure 7.3. The manifest check as a pipeline. The seeded record
+parses like any other; resolving units against the board's placements
+refuses it, and the packer receives nothing.*
 
-The reader accepts the record, which is well formed. The property then
-finds two units placed at `"block"` and refuses the manifest, naming
-the field, `unit.placement`, and the reason, "unit is assigned more
-than once". No image is built. The test passes only on that
-diagnostic, so a change that broke the property, or reported it under
-another rule, would fail it.
+The check finds `"block"` placed twice and refuses the manifest,
+naming the field and the reason. No image is built. The test passes
+only on that diagnostic, so a change that broke the property, or
+reported it under another rule, would fail it.
 
 ## 7.8 Declared services and inspection paths
 
@@ -657,34 +587,23 @@ service clock 13
   operation set 2
 ```
 
-The citation in the head comment is not decoration. The facet check,
-in `tools/lib/erx/facet_names.rb`, reads the first design citation in
-each file as the section that justifies the interface. It refuses a
-file that cites none, or cites a section the document does not have.
-It also refuses a manifest service whose interface no file declares,
-and a facet name used in Erlang code that no manifest service
-publishes. A programmer who adds a way for one domain to reach another
-must add a declaration, and the declaration must point at a design.
-[Chapter 11](README.md#chapter-11-authority-and-security) shows how a
-facet admits each request.
+The service has a number, 13, is reached by messages, and offers two
+operations, read the clock and set it. The citation in the head
+comment is not decoration. The facet check,
+`tools/lib/erx/facet_names.rb`, takes it as the section that justifies
+the interface, and refuses a file that cites no section or one the
+document does not have. It also refuses a manifest service whose
+interface no file declares, and a facet name in Erlang code that no
+manifest service publishes. A new way for one domain to reach another
+needs a declaration, and the declaration must point at a design.
 
 What the system observes about itself goes the same way.
 `abi/inspection.txt` declares each value `/proc` and the inspector can
-show, with its type, its unit, who may report it, who may see it and
-where it is projected:
-
-```text
-    attr processes count reporters runtime visible owner build all projections shell,host,proc,web
-```
-
-From the schema the generator writes the Erlang module `erx_schema`
-and the TypeScript the web client reads. The shell, `/proc` and the
-browser therefore name each field and its unit alike
-([design-generation.md, Inspection and
-diagnostics](../design-generation.md#inspection-and-diagnostics)). A
-field that is not declared cannot be shown, and a value that was not
-measured is shown as unknown, unsupported or partial, never as a
-made-up number.
+show: its type and unit, who may report it, who may see it, and where
+it is shown. The shell, the host tool and `/proc` therefore give each
+field the same name, order and unit label. A field that is not
+declared cannot be shown ([design-generation.md, Inspection and
+diagnostics](../design-generation.md#inspection-and-diagnostics)).
 
 ## 7.9 When a source is wrong
 
@@ -692,47 +611,21 @@ One wrong source makes every copy wrong together. erXos accepts that
 trade and makes a wrong source fail early.
 
 **A malformed spec** fails generation with a diagnostic naming the
-file, line, declaration and rule, before any compiler runs. A
-publication cut short, by a full disk say, leaves a tree that fails
-its stamp, and the next build regenerates it.
+file, line, declaration and rule, before any compiler runs.
 
 **A well-formed but wrong value**, such as a field offset that
-disagrees with the virtio specification, passes generation. Tests that
-check the format against an independent description catch it: the
-Erlang reader's hostile corpus, the fuzz targets built from the
-generated C readers, the boots that drive QEMU's virtio devices. The
-fix goes in the spec, and every consumer moves with it.
-
-**A wrong hardware description** shows up as a device misbehaving.
-Each SVD field cites its source, so "where did bit 21 come from?" has
-an answer in the file.
+disagrees with the virtio specification, passes generation. A test
+against something independent catches it: the boots that run erXos's
+virtio drivers against QEMU's devices. The fix goes in the spec, and
+every consumer moves with it.
 
 **A wrong configuration** fails the manifest check before an image
-exists. One that passes the check but leaves the machine too little
-memory fails at boot with a diagnostic, as
-[design-fiasco.md, The manifest check](../design-fiasco.md#the-phase-1-manifest-check)
-describes for `root_memory`.
+exists.
 
-What cannot happen is the failure this chapter began with: two copies
-that disagree.
+For every fact the generators cover, the failure this chapter began
+with cannot happen: two copies that disagree.
 
-## 7.10 Where Datalog fits, and where it does not
-
-erXos's principles name Datalog as one of the declarative forms it may
-use, after Barrelfish and the BOOM project
-([chapter 4, section 4.5.4](04-history.md#454-declarative-where-it-simplifies)).
-The build uses none. This section says why.
-
-> **Background: Datalog.** Datalog is a logic language for asking
-> questions of a set of facts. A **fact** states that something holds:
-> `parent(xerces, brooke).` A **rule** derives facts from facts:
-> `ancestor(X, Y) :- parent(X, Y).` and
-> `ancestor(X, Y) :- parent(X, Z), ancestor(Z, Y).`, read "X is an
-> ancestor of Y if X is a parent of Y, or a parent of some Z who is an
-> ancestor of Y". A **query** asks which values fit a pattern:
-> `?- ancestor(xerces, X).` Datalog borrows Prolog's syntax but works
-> from facts to conclusions, and every program terminates. It suits
-> questions about relations: who reaches whom, what depends on what.
+## 7.10 Where logic languages fit, and where they do not
 
 Barrelfish, an operating system from ETH Zurich and Microsoft
 Research, kept a **system knowledge base**. In its authors' words, it
@@ -740,83 +633,74 @@ Research, kept a **system knowledge base**. In its authors' words, it
 first-order logic" (Baumann and others, 2009), and it answered queries
 such as which core should run a device's driver. The BOOM project at
 Berkeley wrote distributed systems as rules over state and events.
-[research-os-ideas.md](../research-os-ideas.md#declarative-os-services-from-boom-and-dedalus)
-records both as research ideas, not as erXos's design.
+Both described a system in a logic language, and erXos's principles
+name one such language, Datalog, as a form it may use ([chapter 4,
+section 4.5.4](04-history.md#454-declarative-where-it-simplifies)).
 
-One rule decides each case: a declarative form is chosen when it turns
-a property into a checked constraint and is simpler than code. The
-specs of this chapter need no rules engine, because each fact follows
-from one line.
+> **Background: Datalog.** Datalog is a logic language for asking
+> questions of a set of facts. A **fact** states that something holds:
+> `parent(xerces, brooke).` A **rule** derives facts from facts:
+> `ancestor(X, Y) :- parent(X, Y).` and
+> `ancestor(X, Y) :- parent(X, Z), ancestor(Z, Y).`, read "X is an
+> ancestor of Y if X is a parent of Y, or a parent of some Z who is an
+> ancestor of Y". Datalog works from facts to conclusions, and every
+> program terminates. It suits questions about relations: who reaches
+> whom, what depends on what.
+
+erXos uses no Datalog. One rule decides each case: a declarative form
+is chosen when it turns a property into a checked constraint and is
+simpler than code. The specs of this chapter need no rules engine,
+because each fact follows from one line.
 
 The manifest is the one place where relations matter: who holds which
 device, which facet points at which server, whether boot order has a
-cycle.
-[design-verification.md, Focused tool evaluations](../design-verification.md#focused-tool-evaluations)
-describes an evaluation of those rules in awklog, a Datalog engine
-written in AWK. Ruby would read and check the manifest as it does and
-emit typed facts. awklog would then check ownership, facet targets,
-boot-order cycles and rescue closure, with the Ruby check as an
-independent oracle. The budget sums would stay in Ruby, because awklog
-has no arithmetic. awklog would be adopted only if the rules came out
-clearer without becoming a second source of policy. The evaluation is
-designed and not built.
-
-The desktop's find-and-act rules show the other outcome.
-[design-find-act.md, Alternatives considered](../design-find-act.md#alternatives-considered)
-weighed awklog, Soufflé (a Datalog engine built for program analysis)
-and a Datalog engine in Erlang for them, and chose none: those rules
-use no joins, so each engine would add a tool for nothing.
+cycle. The Ruby check of section 7.7 decides them all.
+[design-verification.md, Focused tool
+evaluations](../design-verification.md#focused-tool-evaluations)
+records an evaluation of those relations in awklog, a Datalog engine
+written in AWK, with the Ruby check as the answer to compare against.
+It is an evaluation, not part of the system's design.
 
 ## 7.11 Design choices
 
 **Write the headers by hand and test them.** This works when one
 language consumes the ABI. erXos has four, and each test that compares
 two of them is one more entry in a list someone forgets to extend.
-Generation costs about forty Ruby files under
-`tools/lib/erx/abi_*.rb` and a grammar to learn. That cost is paid
-once; the cost of copies grows with every consumer.
+Generation costs a library of Ruby files and a grammar to learn. That
+cost is paid once; the cost of copies grows with every consumer.
 
 **Make the C header the source, and parse it for the others.** C has
-no way to state a closed set of values or who owns each field of
-shared memory. Nor can it say which fields a release build may show,
-or which design section justifies an interface. A C parser would also
-be a large tool to trust. A small grammar made for the purpose says
-more and is easier to check.
+no way to state a closed set of values, who owns each field of shared
+memory, or which design section justifies an interface. A C parser
+would also be a large tool to trust. A small grammar made for the
+purpose says more and is easier to check.
 
 **Use a general interface language**, such as Protocol Buffers or
-ASN.1. These describe messages well, but bring wire formats, runtimes
-and generators of their own, and they do not describe kernel calls,
-register fields or contrast rules. erXos's grammar shares one model
-across all of these, so `u32` or `page_size` is declared once for
-every form.
+ASN.1. These describe messages well, but bring runtimes of their own
+and do not describe kernel calls, register fields or contrast rules,
+which erXos's one grammar covers.
 
 **Check the configuration at boot.** The manifest check could run in
 the system domain as it starts. It runs in the build instead, so a bad
 configuration never becomes an image, and each property is tested on
 the host, where a failure costs seconds.
 
-The ABI file describes the kernel interface; behind that interface sit
-`liberx` and Fiasco, and
-[chapter 8](README.md#chapter-8-the-kernel-interface-and-fiasco)
-follows a call through both.
+Behind the kernel interface sit `liberx` and Fiasco, and [chapter
+8](08-kernel-interface.md) follows a call through both.
 
 ## Summary
 
 erXos states each fact once, in a text file a program reads, and the
-build writes every copy. `abi/erx_abi.txt` and its fragments hold the
-kernel interface's status codes, rights, limits and layouts, from
-which Ruby generators write C, Erlang, Ruby and TypeScript that is
-never checked in. The specs state facts only, close every set of
-values, allow no expressions, parse strictly, fail whole and print
-sorted output. Device registers come from CMSIS-SVD files and system
-registers from Arm's data, so no driver packs a bit by hand, and the
-DMA check reads its descriptor layouts from the same declarations. One
-theme file gives three languages the desktop's look and holds its
-colors to contrast rules. The build packs only a system manifest that
-passes every property, each with a seeded test. Services and
-inspection paths are declared in tables the build holds code to.
-Datalog is not used; an awklog form of the manifest's relational rules
-is designed and not built.
+build writes every copy in C, Erlang, Ruby and TypeScript; kernel
+calls other than `debug_log` are still written by hand. The specs
+state facts only, close every set, allow no expressions and fail
+whole. Registers come from vendor data, so no driver packs a bit by
+hand, and the DMA check takes its descriptor layouts from the same
+declarations. The theme holds its colors to contrast rules. The build
+packs only a system manifest that passes every property, each with a
+seeded test; at run time no budget or CPU limit is enforced. Services
+and inspection paths are declared in tables the build holds code to.
+erXos uses no Datalog.
 
 ## Where to read next
 
@@ -829,8 +713,8 @@ is designed and not built.
   [System-manifest representation](../design-abi.md#system-manifest-representation).
 * [design-system.md, The manifest](../design-system.md#the-manifest):
   the manifest's records and the properties the check holds it to.
-* [design-device-dma.md](../design-device-dma.md): the DMA check, the
-  sequencer and the descriptor forms.
+* [design-device-dma.md](../design-device-dma.md): the DMA check and
+  the descriptor forms.
 * [design-verification.md, Focused tool evaluations](../design-verification.md#focused-tool-evaluations):
   the awklog evaluation.
 * FreeBSD, `sys/kern/syscalls.master`
@@ -843,5 +727,4 @@ is designed and not built.
   for scalable multicore systems", SOSP 2009, section 4.9: Barrelfish's
   system knowledge base.
 * [research-os-ideas.md](../research-os-ideas.md#declarative-os-services-from-boom-and-dedalus):
-  BOOM, Dedalus and Barrelfish's declarative hardware management, with
-  links to the papers.
+  BOOM and Barrelfish as research ideas, with links to the papers.
