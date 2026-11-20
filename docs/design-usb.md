@@ -1237,7 +1237,11 @@ times in any `usb_bus_restart_window_ms` (`abi/formats/usb.txt`). The bus
 group is `transient` under `erx_usb_sup`: past its bound it ends with
 `shutdown`, which is not restarted, so a controller that fails again
 after every reset, a host controller error that returns, is given up
-while its places stay. A device's reference names it within one bus
+while its places stay; a later failure of the places restarts the
+bus group with them, a fresh try within `erx_usb_sup`'s own bound. A
+function instance is killed when it is stopped, and a driver's
+`start_link/1` returns before any transfer and never calls the bus
+process, which starts it in its own loop. A device's reference names it within one bus
 process's life; a restarted bus starts its references afresh, since
 everything that held the old ones ended with it.
 
@@ -1473,7 +1477,8 @@ endpoint. Its report is a bitmap, bit 0 the hub itself and bit *n* port
 shorter report names every port and the hub, as FreeBSD reads none of
 the report and explores every port on any (`uhub_intr_callback`,
 `usb_hub.c:185-218`, and `uhub_explore`, `usb_hub.c:993-1090`). The function
-sends `{changed, Hub, Bitmap, Pid}`, `Pid` its own, to the bus process
+sends `{changed, Hub, Set, Pid}`, `Set` the ports and the hub the
+bitmap names and `Pid` its own, to the bus process
 and posts its next transfer only when the bus process answers
 `{handled, Hub}`; a report that names nothing posts the next transfer at
 once. The bus process gives the bus core the report with the run number
@@ -1726,7 +1731,10 @@ nonblocking:
 3. `erx_device:negotiate/2`, the form's reset and install, called again
    on a timer while it answers `{error, ebusy}`
    ([Install](#install));
-4. start the bus process with the root hub's port count; the bus core
+4. answer its bus process, which attaches once its supervisor has
+   started it ([The process tree](#the-process-tree)), with the root
+   hub's port count, as soon as both the attach and this step have
+   come, whichever comes last; the bus core
    powers and reads the root ports as it does any hub's, the controller
    turning the hub's port-power request into `PORTSC`'s port power bit,
    as FreeBSD's root hub does (`xhci_roothub_exec`, `xhci.c:3685-3687`),
@@ -2971,7 +2979,7 @@ medium had gone after the request.
 | a medium removed or changed | TEST UNIT READY, UNIT ATTENTION, the detach | the medium; its windows end | the FAT server unmounts and remounts on the next walk |
 | a medium that cannot flush | the readiness SYNCHRONIZE CACHE | nothing: its flushes answer `no_flush` | none; the FAT server mounts it read-only, with `no flush: read-only` in the mount's record |
 | a control transfer not answered in 5 s | the controller process's deadline | the transfer, answered `timeout` after Stop Endpoint and Set TR Dequeue Pointer past it | the caller's; EP0 is open again |
-| a command not answered in 5 s, an event that fails the form's checks, the controller's host system error, host controller error or halt while it runs, read from `USBSTS` on an interrupt or once a second, an all-ones read from a function that left the bus among them, a wait of the install past its deadline | the controller process | the controller process | the bus group restarts; `negotiate/2` resets the controller and returns every buffer; every device is enumerated again; places survive, so each input number carries `release` and each medium's windows end |
+| a command not answered in 5 s, an event that fails the form's checks, the controller's host system error, host controller error or halt while it runs, read from `USBSTS` on an interrupt or once a second, an all-ones read from a function that left the bus among them, a wait of the install past its deadline | the controller process | the controller process | the bus group restarts; `negotiate/2` resets the controller and returns every buffer; every device is enumerated again; places survive, so each input number carries `release` and each medium's windows end; past `usb_bus_restarts_max` restarts in `usb_bus_restart_window_ms` the controller is given up, its places still served ([The process tree](#the-process-tree)) |
 | a register access that aborts (the controller fell off its bus) | the kernel, on erXos's kernel; on Fiasco an SError ends the task of the next thread to enter user mode on its CPU, which need not be the USB domain's, and the controller's next deadline fails it | the USB domain, by the fault, on erXos's kernel; the controller process on Fiasco | the domain service restarts the domain, which gets its unit again; the display's readers see their files end and start again when the tree is granted again, and each drive's holder is introduced again, as for a block driver's domain |
 | a configuration access below the root port with the link down | the bridge driver's link reads, before and after | the access, answered `link_down`; the function's position is reported gone | none of its own; an abort that does arrive ends the PCIe domain on erXos's kernel, as the next row |
 | the PCIe domain ends | the domain service | the enumerator and the bridge driver | the domain restarts; with the link up and the VL805's firmware present the bridge driver resets nothing and running functions are unchanged; otherwise it turns the link off cleanly, brings the bridge up again and asks for the firmware |

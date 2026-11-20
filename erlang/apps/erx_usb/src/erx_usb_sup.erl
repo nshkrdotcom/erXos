@@ -12,7 +12,8 @@ group after them, since its functions occupy places that are gone.
 
 The bus group is `transient`: one that ends past its own restarts ends
 with `shutdown`, which is not restarted here, so the controller is given
-up while the places stay. Both supervisors restart at most
+up while the places stay; a later failure of the places starts it again
+with them, a fresh try within this supervisor's bound. Both supervisors restart at most
 `usb_bus_restarts_max` times in any `usb_bus_restart_window_ms`.
 """.
 -behaviour(supervisor).

@@ -13,7 +13,8 @@ and every function.
 The function supervisor starts one child per function instance the bus
 process asks for, each `temporary`: the bus process alone decides whether
 an ended function starts again, after resetting its pipes, within its
-restarts (erx_usb_bus_core).
+restarts (erx_usb_bus_core). An instance is killed when stopped: what it
+held lives in the controller and the places, which see it end.
 
 The group restarts at most `usb_bus_restarts_max` times in any
 `usb_bus_restart_window_ms`; past that it ends with `shutdown`, which
@@ -52,4 +53,5 @@ init({group, Controller}) ->
                     type => supervisor}]}};
 init(functions) ->
     {ok, {#{strategy => simple_one_for_one},
-          [#{id => function, start => {?MODULE, start_function, []}, restart => temporary}]}}.
+          [#{id => function, start => {?MODULE, start_function, []}, restart => temporary,
+            shutdown => brutal_kill}]}}.

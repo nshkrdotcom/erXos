@@ -83,7 +83,7 @@ class ErxUsbBusTest < Minitest::Test
       assert_equal 1, source.scan(seed.anchor).size, "seed anchor for #{seed.fault} is not unique"
       output, status = run_cases({ seed.module_path => source.sub(seed.anchor) { seed.replacement } })
       refute status.success?, "#{seed.fault}: the cases passed"
-      assert_match(/#{Regexp.escape(seed.catching_case)}[^\n]*\*failed\*/, output, seed.fault)
+      assert_match(/#{Regexp.escape(seed.catching_case)}[^\n]*\*(failed|timed out)\*/, output, seed.fault)
     end
   end
 

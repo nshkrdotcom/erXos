@@ -15,8 +15,9 @@
 -include("generated/erx_abi.hrl").
 
 -define(FAKE, erx_usb_fake_xhci_under_test).
-%% How long a case waits for what it expects: within EUnit's 5 s a case, so a case
-%% whose expectation never comes fails on its own assertion.
+%% How long a case waits for each thing it expects. A case whose expectation never
+%% comes usually fails on its own assertion, within EUnit's 5 s; one that chains
+%% waits may time out instead, which the runner counts as a failure too.
 -define(WAIT_MS, 2500).
 
 %% ---------------------------------------------------------------------------
@@ -218,12 +219,16 @@ next_hid(Timeout) ->
 
 %% The fake's log once it has stood still for a moment, so every answer in flight
 %% has been taken.
-settled() ->
+settled() -> settled(?WAIT_MS div 100).
+
+settled(0) ->
+    error({unsettled, log()});
+settled(Tries) ->
     Before = log(),
     timer:sleep(100),
     case log() of
         Before -> ok;
-        _Moved -> settled()
+        _Moved -> settled(Tries - 1)
     end.
 
 log() -> erx_usb_fake_xhci:log(?FAKE).
