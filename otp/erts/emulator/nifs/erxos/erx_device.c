@@ -301,13 +301,14 @@ lines_distinct(const erx_device_spec_t *spec)
 /*
  * Every part of the spec the table or the record bounds, checked before anything is made,
  * and the pages a window's mapping covers. A stand-in has none. Memory is a given device's
- * alone, and whole pages.
+ * alone, and whole pages. A peripheral with a cluster at an offset its device reports, as
+ * xHCI's, opens nowhere: this NIF resolves no such base and enforces no owned field.
  */
 static bool
 spec_fits(const erx_device_spec_t *spec, const erx_device_peripheral_t *peripheral, erx_device_pages_t *pages)
 {
 	*pages = (erx_device_pages_t){ 0 };
-	if (peripheral == NULL || spec->line_count > ERX_DEVICE_LINES_MAX || !lines_distinct(spec) ||
+	if (peripheral == NULL || peripheral->base_count != 0 || spec->line_count > ERX_DEVICE_LINES_MAX || !lines_distinct(spec) ||
 	    (spec->form != ERX_DEVICE_FORM_GIVEN && spec->memory_size != 0) || (spec->memory_size & (ERX_PAGE_SIZE - 1)) != 0)
 		return (false);
 	return (spec->form == ERX_DEVICE_FORM_STAND_IN ||

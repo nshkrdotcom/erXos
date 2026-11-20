@@ -492,6 +492,18 @@ check_open(const char *name, uint64_t block_bytes)
 	for (uint32_t index = 0; index < ERX_DEVICE_FIELDS_MAX; index++)
 		field_keys[index] = KEY_BASE + index;
 	CHECK(erx_device_get(0) == NULL);
+#ifndef ERX_DEVICE_FIXTURE
+	/*
+	 * xHCI has clusters at offsets the controller reports and fields the NIF owns in
+	 * registers it does not own whole, which this NIF does not resolve or enforce: it
+	 * opens no peripheral with a movable cluster, a stand-in neither.
+	 */
+	spec = spec_of("xhci", 0x9000000);
+	CHECK(erx_device_open(&spec, NULL, NULL, &device) == ERX_EINVAL);
+	spec.form = ERX_DEVICE_FORM_STAND_IN;
+	CHECK(erx_device_open(&spec, NULL, NULL, &device) == ERX_EINVAL);
+	spec = spec_of(name, 0x9000000);
+#endif
 	spec.peripheral_length = strlen(name) - 1;
 	CHECK(erx_device_open(&spec, NULL, NULL, &device) == ERX_EINVAL);
 	spec = spec_of(name, 0x9000000);
