@@ -244,7 +244,12 @@
               <field><name>PED</name><bitOffset>1</bitOffset><bitWidth>1</bitWidth><modifiedWriteValues>oneToClear</modifiedWriteValues></field>
               <field><name>OCA</name><bitOffset>3</bitOffset><bitWidth>1</bitWidth><access>read-only</access></field>
               <field><name>PR</name><bitOffset>4</bitOffset><bitWidth>1</bitWidth><modifiedWriteValues>oneToSet</modifiedWriteValues></field>
-              <field><name>PLS</name><bitOffset>5</bitOffset><bitWidth>4</bitWidth><modifiedWriteValues>modify</modifiedWriteValues></field>
+              <field><name>PLS</name><bitOffset>5</bitOffset><bitWidth>4</bitWidth><modifiedWriteValues>modify</modifiedWriteValues>
+                <!-- Table 5-27, p. 408: 3 is the U3 state, a suspended device. -->
+                <enumeratedValues>
+                  <enumeratedValue><name>U3</name><value>3</value></enumeratedValue>
+                </enumeratedValues>
+              </field>
               <field><name>PP</name><bitOffset>9</bitOffset><bitWidth>1</bitWidth></field>
               <field><name>SPEED</name><bitOffset>10</bitOffset><bitWidth>4</bitWidth><access>read-only</access></field>
               <field><name>PIC</name><bitOffset>14</bitOffset><bitWidth>2</bitWidth></field>

@@ -1690,7 +1690,15 @@ except to disable; FreeBSD writes back the value it read with the bits
 of `XHCI_PS_CLEAR` removed (`xhcireg.h:146`; `xhci.c:3633`), and erXos
 derives the same mask from the access type of each field of the SVD
 source, so no constant is copied by hand. The controller writes no `PORTSC` while it
-is halted (xHCI 5.4.8, p. 405).
+is halted (xHCI 5.4.8, p. 405). The bus core reads a root port's changes
+in the USB 2 hub words and clears each one it reads, and a root port
+raises no further event until all of its change bits are clear (4.19.2,
+p. 322), so every `PORTSC` change bit stands behind one USB 2 change: the
+link state change behind the suspend change, which is how FreeBSD's
+`C_PORT_SUSPEND` clears it (`xhci.c:3461-3463`); the warm reset change
+behind the reset change, both the end of a reset
+(`usb_hub.c:1091-1103`); and the configuration error change, a
+SuperSpeed link that failed to come up, behind the enable change.
 
 **Commands** run one at a time, each a post on the command queue whose
 completion is the next command's start. A command not answered in 5 s
@@ -2041,9 +2049,11 @@ before its base is written, since that write makes the controller read
 the table and enables the event ring (4.2, p. 82), which is why FreeBSD
 flushes first (`xhci.c:383-394`); the decision's handoffs clean every
 region before the register that names it. The last step waits for the
-controller to leave halted. The controller core holds each wait's deadline, 1 s as
-FreeBSD's loops (`xhci.c:430-436`, `:469-477`, `:494-499`), and fails
-the controller past it. The scratchpad passes to the device for good.
+controller to leave halted. Each wait is 1 s, as FreeBSD's loops
+(`xhci.c:430-436`, `:469-477`, `:494-499`); since `{error, ebusy}` does
+not say which wait it is in, the controller core holds one deadline for
+the install, the three waits' sum from its first call, and fails the
+controller past it. The scratchpad passes to the device for good.
 
 **Registers it owns.** `DCBAAP`, `CRCR`, `CONFIG`, `ERSTSZ`, `ERSTBA`,
 `ERDP`, every doorbell, `USBCMD`'s run and reset bits, `USBCMD.INTE`,

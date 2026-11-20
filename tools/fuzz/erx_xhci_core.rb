@@ -29,6 +29,14 @@ module ErxXhciCoreFuzz
     Seed.new(fault: 'slot 0 accepted',
              anchor: 'Value >= 1, Value =< Max',
              replacement: 'Value >= 0, Value =< Max',
+             marker: 'out_of_bounds'),
+    Seed.new(fault: 'a supported-protocol capability naming port 0 accepted',
+             anchor: 'First >= 1 andalso Count >= 1',
+             replacement: 'First >= 0 andalso Count >= 1',
+             marker: 'out_of_bounds'),
+    Seed.new(fault: 'a register write keeping the bits it must clear',
+             anchor: '(Read band Preserve band bnot Mask) bor Bits',
+             replacement: '(Read band bnot Preserve band bnot Mask) bor Bits',
              marker: 'out_of_bounds')
   ].freeze
   DEADLINE_SECONDS = '300'

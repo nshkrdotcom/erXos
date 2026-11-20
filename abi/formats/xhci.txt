@@ -45,6 +45,16 @@ limit xhci_endpoint_error_count u32 3
 # choice.
 limit xhci_command_deadline_ms u32 5000
 
+# The controller's start (design-usb.md, "The controller process"): it polls the BIOS's
+# semaphore and calls the install again every 10 ms, FreeBSD's pause in both loops
+# (xhci_pci.c:529-557, xhci.c:430-431); it goes on without the BIOS's release after 5 s,
+# FreeBSD's 500 polls; and the install, three waits of FreeBSD's 1 s each (xhci.c:430-436,
+# :469-477, :494-499) that one {error, ebusy} does not tell apart, fails the controller
+# when it has not answered ok within their sum.
+limit xhci_poll_ms u32 10
+limit xhci_bios_handoff_ms u32 5000
+limit xhci_install_deadline_ms u32 3000
+
 # The buffer of an interrupt and of a bulk queue block: an interrupt block's four of
 # 1 KiB and a bulk block's two of 32 KiB (design-usb.md, "The TRB ring form"), each an
 # erXos choice.

@@ -7924,6 +7924,11 @@ to the corpus and follow rc
   entries and hub fields, route, speed, root port and TT left 0, as the design's table says, though a controller that
   evaluates the whole slot context with its add flag would misread them; a non-EP0 control endpoint takes index
   2n + 1 (xHCI 4.5.1); and whether a setup packet's direction bit must match the data stage's.
+* [Low] USB, `erx_xhci_core`'s extended-capability registers (erlang/apps/erx_usb/src/erx_xhci_core.erl, register/0):
+  the legacy support semaphore bytes and the supported-protocol words are abstract names, and their fields
+  (`SEMAPHORE_OWNED`, `PROTOCOL_*`) and PAGESIZE's 4 KiB bit hand constants, until the device NIF's binding of the
+  extended capabilities (design-usb.md, "Registers at offsets the controller reports") gives them SVD clusters; then the names map to the SVD's registers,
+  the fields come from the generated macros, and `{start, Bound}`'s shape follows what the NIF reports it bound.
 * [Low] USB, the TRB ring form's design text (design-usb.md, "Two rules every ring keeps, on every controller"): it says a transfer that
   continues past the link sets the link's chain bit, but each control stage is a TD of one TRB (xHCI 4.11.2.2), so no
   TD of the form spans the link and `erx_device_trb.c` never sets it; and a ring's queue starts at the block's enqueue

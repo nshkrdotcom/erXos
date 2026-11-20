@@ -15,13 +15,17 @@ require_relative '../fixtures/erlang_build'
 # Reset Endpoint issued on a stopped queue; a stopped EP0 dropped and added; the
 # translator's buffer left uncleared after a halt; a reset whose Stop Endpoint still
 # waits keeping it when the endpoint halts, so the stop goes to a halted queue; and a
-# pipe that leaves open dropping the requests waiting on it unanswered.
+# pipe that leaves open dropping the requests waiting on it unanswered; a PORTSC write
+# keeping the change and enable bits it read; a change bit no clear reaches; the install
+# called while the BIOS still owns the controller; a host system error ignored; and a
+# lost command never failing the controller.
 class ErxXhciCoreTest < Minitest::Test
   APPLICATIONS = %w[erx_usb].freeze
   CORE = 'erlang/apps/erx_usb/src/erx_xhci_core.erl'
   TESTS = %w[test/erlang/erx_xhci_core_tests.erl].freeze
   DEADLINE_SECONDS = '600'
   EXPLORED = 'the_pipe_machine_is_explored_to_a_fixed_point_test_'
+  START_EXPLORED = 'the_start_is_explored_to_a_fixed_point_test_'
 
   Seed = Data.define(:fault, :anchor, :replacement, :catching_case)
 
@@ -45,7 +49,27 @@ class ErxXhciCoreTest < Minitest::Test
     Seed.new(fault: 'the requests waiting on a pipe that leaves open dropped',
              anchor: 'Left, Waiting).',
              replacement: 'Left, []).',
-             catching_case: 'ep0_is_reset_before_its_halted_request_is_answered_test')
+             catching_case: 'ep0_is_reset_before_its_halted_request_is_answered_test'),
+    Seed.new(fault: 'a PORTSC write keeping the change and enable bits it read',
+             anchor: '(Read band Preserve band bnot Mask) bor Bits',
+             replacement: '(Read band bnot Preserve band bnot Mask) bor Bits',
+             catching_case: 'portsc_writes_set_only_what_they_mean_test'),
+    Seed.new(fault: 'the configuration error change behind no clear',
+             anchor: '?ERX_HW_XHCI_PORTSC_PEC_MASK bor ?ERX_HW_XHCI_PORTSC_CEC_MASK',
+             replacement: '?ERX_HW_XHCI_PORTSC_PEC_MASK',
+             catching_case: 'every_change_bit_can_be_cleared_test'),
+    Seed.new(fault: 'the install called while the BIOS still owns the controller',
+             anchor: 'Byte band ?SEMAPHORE_OWNED =:= 0 -> install(Now, Acc);',
+             replacement: 'Byte band ?SEMAPHORE_OWNED >= 0 -> install(Now, Acc);',
+             catching_case: START_EXPLORED),
+    Seed.new(fault: 'a host system error ignored',
+             anchor: 'when ?ERX_HW_XHCI_USBSTS_HSE_GET(Status) =/= 0 ->',
+             replacement: 'when ?ERX_HW_XHCI_USBSTS_HSE_GET(Status) =:= 2 ->',
+             catching_case: 'an_interrupt_pass_test'),
+    Seed.new(fault: 'the command deadline dropped',
+             anchor: "when At =< Now ->\n    emit({fail, {command_timeout, Command}}, Acc);",
+             replacement: "when At =< Now, false ->\n    emit({fail, {command_timeout, Command}}, Acc);",
+             catching_case: 'the_controller_fails_on_a_malformed_answer_or_a_lost_command_test'),
   ].freeze
 
   def test_xhci_core_cases_pass_under_eunit

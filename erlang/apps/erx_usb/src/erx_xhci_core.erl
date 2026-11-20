@@ -17,6 +17,58 @@ The process feeds back every completion the NIF returns, `{complete, Tag,
 Code, Extra}`, and every post the NIF refuses, `{refused, Tag, Reason}`.
 Tags are the core's: the lowest number no post in flight holds.
 
+**Registers.** The core reads and writes the controller's registers only
+through actions: `{read, Registers}`, which the process answers with the
+event `{read, Words}`, a map of each register named to the word it read,
+and `{write, Register, Word}`. A register is named abstractly, register/0,
+and the process maps each name to the device NIF's. A write that sets a
+write-one-to-clear or write-one-to-act bit beside bits the write must keep
+is always modify/4 of the word just read, the read's preserved bits kept,
+the field written cleared and the bits meant set, with the preserve mask
+generated from hw/svd/xhci/xhci.svd, so no change bit is cleared and no
+port disabled by writing back what was read.
+
+**Start**, in the design's order, one phase at a time: `{start, Bound}`,
+Bound saying which extended capabilities the NIF bound at open, reads the
+capability registers and the supported-protocol capabilities, and
+capabilities/2 decodes them; a controller without 4 KiB pages fails, as
+FreeBSD refuses it (xhci.c:546-549). With a legacy support capability the
+core then writes its OS-owned semaphore and polls the BIOS-owned one every
+`xhci_poll_ms` until it reads clear, going on after `xhci_bios_handoff_ms`
+as FreeBSD does (xhci_pci.c:529-557), with `{log, bios_handoff_timeout}`.
+Then `negotiate`, which the process answers with `{negotiated, Result}`;
+`{error, ebusy}` calls it again `xhci_poll_ms` later, and an install still
+busy `xhci_install_deadline_ms` after its first call fails the controller
+without being called again. Its `ok` starts the bus with the root hub's port count,
+`{start_bus, Ports}`, and the controller is `running`.
+
+**Root ports.** The bus process's root-hub operation `{port, From, Port,
+Op}` reads the port's PORTSC and answers from it: `get_status` with the
+USB 2 status and change words and the PORTSC speed ID; `power_on`, `reset`,
+`disable` and `{clear, Change}` by writing PORTSC's port power, port reset,
+port enable (whose 1 disables) or the change bits behind Change, each with
+modify/4. Every PORTSC change bit stands behind one USB 2 change name, so a
+port's changes can all be cleared and it raises its next event (xHCI
+4.19.2, p. 322): the link state change behind `suspend`, as FreeBSD's
+C_PORT_SUSPEND clears it (xhci.c:3461-3463); the warm reset change behind
+`reset`, both a reset's end (FreeBSD's usb_hub.c:1091-1103); and the
+configuration error change behind `enabled`, a link that failed to come
+up. No PORTSC is written before the controller runs (5.4.8, p. 405): an
+operation before then is answered `{error, halted}`.
+
+**Events.** An `interrupt` before the controller runs, whose install has
+not yet opened its interrupt, is only acknowledged; one of a running
+controller reads USBSTS and IMAN: a host system error
+fails the controller, which has halted (4.10.2.6, pp. 200-201);
+otherwise the core clears USBSTS's event interrupt and IMAN's interrupt
+pending, both write-one-to-clear (5.4.2, pp. 397-399; 5.5.2.1, pp.
+425-426), and asks to `complete`. The process answers each call of
+complete/2 with `{completed, Result}`: each transfer's or command's
+completion is handled as `{complete, Tag, Code, Extra}` and each port's
+event goes to the bus process as `{port_event, Port}`; a non-empty batch
+asks to `complete` again, and an empty one to `ack` the line, so a
+level-triggered line is left deasserted (4.17.2, p. 296).
+
 **Decoders.** completion/1 names a completion code from
 abi/formats/xhci.txt; command_answer/3 and transfer_result/2 turn a
 completion into the answer its caller is given. The code and the slot or
@@ -64,12 +116,13 @@ success opens the pipe and answers `ok`; a failed step halts it and
 answers the step's error.
 """.
 
--export([new/0, step/3, next_deadline/1]).
--export([completion/1, command_answer/3, transfer_result/2]).
+-export([new/0, step/3, next_deadline/1, capabilities/1]).
+-export([completion/1, command_answer/3, transfer_result/2, decode_capabilities/2, port_operation/2, modify/4]).
 
--export_type([state/0, event/0, action/0, pipe/0, command/0, completion/0]).
+-export_type([state/0, event/0, action/0, pipe/0, command/0, completion/0, register/0, capabilities/0]).
 
 -include("generated/erx_abi.hrl").
+-include("generated/erx_hw_xhci.hrl").
 
 -type ms() :: integer().
 -type slot() :: 1..?ERX_USB_DEVICES_MAX.
@@ -103,17 +156,79 @@ answers the step's error.
 -type transfer() :: {control, Setup :: <<_:64>>, none | {in, pos_integer()} | {out, binary()}}
                   | {normal, {in, pos_integer()} | {out, binary()}}.
 
+-type port_no() :: 1..255.
+
+-doc """
+A register by the name the core gives it, which the controller process maps
+to the device NIF's: a capability or operational register by its name in
+hw/svd/xhci/xhci.svd; port n's PORTSC; the legacy support capability's
+semaphore bytes, xECP + 2, whose bit 0 is USBLEGSUP's BIOS-owned bit 16, and
+xECP + 3, whose bit 0 is its OS-owned bit 24, each written alone as the
+capability allows and FreeBSD does (xHCI 7.1.1, Table 7-4, pp. 519-520;
+xhcireg.h:198-199); and the I-th supported-protocol capability's words at
+offsets 0, with its major revision, and 8, with its ports (7.2, Tables 7-6
+and 7-8, pp. 522-523).
+""".
+-type register() :: hcsparams1 | hcsparams2 | hccparams1 | pagesize | usbsts | iman
+                  | {portsc, port_no()}
+                  | {legacy, bios_owned | os_owned}
+                  | {protocol, pos_integer(), revision | ports}.
+
+-doc "The extended capabilities the device NIF bound at open: whether a legacy support one, and how many supported-protocol ones.".
+-type bound() :: #{legacy := boolean(), protocols := non_neg_integer()}.
+
+-doc """
+What the capability registers say (5.3.3, 5.3.4 and 5.3.6, pp. 382-387): the
+slot, interrupter and port counts, the scratchpad buffers the controller
+asks for, whether it reaches 64-bit addresses, its context size in bytes,
+and the USB major revision of each port a supported-protocol capability
+names.
+""".
+-type capabilities() :: #{slots := byte(), interrupters := 0..2047, ports := byte(), scratchpads := 0..1023,
+                          ac64 := boolean(), context_bytes := 32 | 64, protocols := #{port_no() => byte()}}.
+
+-type port_op() :: get_status | power_on | reset | disable | {clear, atom()}.
+
+-doc "An entry complete/2 returns: a transfer's or a command's completion, or a port's event.".
+-type nif_event() :: {tag(), Code :: integer(), Extra :: term()} | {port, port_no()}.
+
 -type event() :: {command, From :: term(), bus_command()}
                | {post, From :: term(), pipe(), transfer()}
                | {reset_pipe, From :: term(), pipe(), queue_report()}
                | {complete, tag(), Code :: integer(), Extra :: term()}
                | {refused, tag(), Reason :: term()}
+               | {start, bound()}
+               | {read, #{register() => non_neg_integer()}}
+               | {negotiated, ok | {error, term()}}
+               | interrupt
+               | {completed, {ok, [nif_event()]} | {error, term()}}
+               | {port, From :: term(), port_no(), port_op()}
                | expired.
 
 -type action() :: {command, tag(), command()}
                | {transfer, pipe(), tag(), transfer()}
                | {reply, From :: term(), Answer :: term()}
+               | {read, [register()]}
+               | {write, register(), non_neg_integer()}
+               | negotiate
+               | {start_bus, Ports :: byte()}
+               | complete
+               | ack
+               | {port_event, port_no()}
+               | {log, bios_handoff_timeout}
                | {fail, Reason :: term()}.
+
+-doc """
+Where the start has got to: not started; the capability registers asked
+for; the BIOS's semaphore being read, or polled again at a time, until the
+handoff gives up; the install called, or called again at a time, until its
+deadline; running.
+""".
+-type phase() :: stopped
+               | {capabilities, bound()}
+               | {bios_handoff, GiveUp :: ms(), reading | {poll, ms()}}
+               | {installing, Deadline :: ms(), calling | {retry, ms()}}
+               | running.
 
 -type result() :: {ok, binary()} | {error, term()}.
 -doc "Who a transfer's result goes to: a caller, or the reset of a pipe whose step it is.".
@@ -140,22 +255,43 @@ waiting its turn.
 -doc """
 `inflight` holds every transfer posted and not yet completed, by tag;
 `command` the one command in flight, with its deadline; `commands` the
-commands waiting, oldest first.
+commands waiting, oldest first; `port_ops` the root-port operations whose
+PORTSC read is awaited, oldest first.
 """.
--opaque state() :: #{slots := #{slot() => slot_record()},
+-opaque state() :: #{phase := phase(),
+                     capabilities := none | capabilities(),
+                     port_ops := [{port_no(), port_op(), From :: term()}],
+                     slots := #{slot() => slot_record()},
                      pipes := #{pipe() => pipe_record()},
                      inflight := #{tag() => {pipe(), requester()}},
                      command := none | {tag(), owner(), command(), Deadline :: ms()},
                      commands := [owner()]}.
 
 -define(EP0, 1).
+
+%% The fields of the registers hw/svd/xhci/xhci.svd does not describe yet, whose
+%% spelling waits on the device NIF's binding of the extended capabilities: bit 0 of
+%% each legacy support semaphore byte (7.1.1, Table 7-4, pp. 519-520); a supported-
+%% protocol capability's major revision, bits 31:24 of its word 0, and its compatible
+%% port offset and count, bits 7:0 and 15:8 of its word 8 (7.2, Tables 7-6 and 7-8,
+%% pp. 522-523); and PAGESIZE's bit 0, pages of 4 KiB (5.4.3, Table 5-22, p. 400).
+-define(SEMAPHORE_OWNED, 1).
+-define(PROTOCOL_MAJOR_SHIFT, 24).
+-define(PROTOCOL_COUNT_SHIFT, 8).
+-define(PROTOCOL_FIELD, 16#ff).
+-define(FOUR_KIB_PAGES, 1).
 -define(IS_BUS_COMMAND(C), (C =:= enable_slot orelse element(1, C) =:= address_device
                             orelse element(1, C) =:= evaluate_context orelse element(1, C) =:= configure_endpoints)).
 
--doc "A controller with no slots and nothing in flight.".
+-doc "A controller not yet started, with no slots and nothing in flight.".
 -spec new() -> state().
 new() ->
-    #{slots => #{}, pipes => #{}, inflight => #{}, command => none, commands => []}.
+    #{phase => stopped, capabilities => none, port_ops => [],
+      slots => #{}, pipes => #{}, inflight => #{}, command => none, commands => []}.
+
+-doc "What the controller's capability registers said, for its inspection record, or `none` before they are read.".
+-spec capabilities(state()) -> capabilities() | none.
+capabilities(#{capabilities := Capabilities}) -> Capabilities.
 
 -doc "The next state on Event, handled at Now, and the actions the controller process performs.".
 -spec step(event(), ms(), state()) -> {state(), [action()]}.
@@ -166,10 +302,20 @@ step(Event, Now, State) ->
         Fails -> {Next, [lists:last(Fails)]}
     end.
 
--doc "The deadline of the command in flight, or `none`.".
+-doc "The earliest of the command's deadline and the start's next poll, or `none`.".
 -spec next_deadline(state()) -> ms() | none.
-next_deadline(#{command := none}) -> none;
-next_deadline(#{command := {_Tag, _Owner, _Command, At}}) -> At.
+next_deadline(#{command := Command, phase := Phase}) ->
+    case [At || At <- [command_deadline(Command), phase_deadline(Phase)], At =/= none] of
+        [] -> none;
+        Ats -> lists:min(Ats)
+    end.
+
+command_deadline(none) -> none;
+command_deadline({_Tag, _Owner, _Command, At}) -> At.
+
+phase_deadline({bios_handoff, _GiveUp, {poll, At}}) -> At;
+phase_deadline({installing, _Deadline, {retry, At}}) -> At;
+phase_deadline(_Phase) -> none.
 
 %% Events
 
@@ -197,10 +343,235 @@ event({refused, Tag, Reason}, _Now, {S = #{inflight := Inflight}, A}) ->
         {{Pipe, Requester}, Rest} -> answer(Requester, {error, Reason}, post_waiting(Pipe, {S#{inflight := Rest}, A}));
         error -> emit({fail, {unknown_tag, Tag}}, {S, A})
     end;
-event(expired, Now, Acc = {#{command := {_Tag, _Owner, Command, At}}, _}) when At =< Now ->
+event({start, Bound}, _Now, {S = #{phase := stopped}, A}) ->
+    emit({read, [hcsparams1, hcsparams2, hccparams1, pagesize | protocol_registers(Bound)]},
+         {S#{phase := {capabilities, Bound}}, A});
+event({read, Words}, Now, Acc = {#{phase := {capabilities, Bound}}, _}) when is_map_key(hcsparams1, Words) ->
+    capabilities_read(decode_capabilities(Words, Bound), Bound, Now, Acc);
+event({read, Words}, Now, Acc) ->
+    read(lists:sort(maps:to_list(Words)), Now, Acc);
+event({negotiated, Result}, Now, Acc = {#{phase := {installing, _, calling}}, _}) ->
+    negotiated(Result, Now, Acc);
+event(interrupt, _Now, Acc = {#{phase := running}, _}) ->
+    emit({read, [usbsts, iman]}, Acc);
+event(interrupt, _Now, Acc) ->
+    emit(ack, Acc);
+event({completed, {ok, []}}, _Now, Acc) ->
+    emit(ack, Acc);
+event({completed, {ok, Events}}, Now, Acc) ->
+    emit(complete, lists:foldl(fun(Event, In) -> nif_event(Event, Now, In) end, Acc, Events));
+event({completed, {error, Reason}}, _Now, Acc) ->
+    emit({fail, {complete, Reason}}, Acc);
+event({port, From, Port, Op}, _Now, {S = #{phase := running, port_ops := Ops}, A}) ->
+    emit({read, [{portsc, Port}]}, {S#{port_ops := Ops ++ [{Port, Op, From}]}, A});
+event({port, From, _Port, _Op}, _Now, Acc) ->
+    answer({reply, From}, {error, halted}, Acc);
+event(expired, Now, Acc) ->
+    command_expired(Now, phase_expired(Now, Acc));
+event(Event, _Now, Acc) ->
+    emit({fail, {unexpected, Event}}, Acc).
+
+command_expired(Now, Acc = {#{command := {_Tag, _Owner, Command, At}}, _}) when At =< Now ->
     emit({fail, {command_timeout, Command}}, Acc);
-event(expired, _Now, Acc) ->
+command_expired(_Now, Acc) ->
     Acc.
+
+%% Start
+
+protocol_registers(#{protocols := Count}) ->
+    [{protocol, I, Word} || I <- lists:seq(1, Count), Word <- [revision, ports]].
+
+%% The capability registers decoded: a legacy support capability begins the
+%% BIOS's handoff, and without one the install follows at once.
+capabilities_read({ok, Capabilities}, Bound, Now, {S, A}) ->
+    Read = {S#{capabilities := Capabilities}, A},
+    case Bound of
+        #{legacy := true} ->
+            emit({read, [{legacy, bios_owned}]},
+                 emit({write, {legacy, os_owned}, ?SEMAPHORE_OWNED},
+                      set_phase({bios_handoff, Now + ?ERX_XHCI_BIOS_HANDOFF_MS, reading}, Read)));
+        #{legacy := false} ->
+            install(Now, Read)
+    end;
+capabilities_read({error, Reason}, _Bound, _Now, Acc) ->
+    emit({fail, {capabilities, Reason}}, Acc).
+
+%% The BIOS's semaphore read: clear ends the handoff, and so does the time
+%% FreeBSD gives the BIOS (xhci_pci.c:546-555); otherwise it is read again.
+bios_owned(Byte, Now, Acc = {#{phase := {bios_handoff, GiveUp, reading}}, _}) ->
+    if
+        Byte band ?SEMAPHORE_OWNED =:= 0 -> install(Now, Acc);
+        Now >= GiveUp -> install(Now, emit({log, bios_handoff_timeout}, Acc));
+        true -> set_phase({bios_handoff, GiveUp, {poll, Now + ?ERX_XHCI_POLL_MS}}, Acc)
+    end.
+
+install(Now, Acc) ->
+    emit(negotiate, set_phase({installing, Now + ?ERX_XHCI_INSTALL_DEADLINE_MS, calling}, Acc)).
+
+negotiated(ok, _Now, Acc = {#{capabilities := #{ports := Ports}}, _}) ->
+    emit({start_bus, Ports}, set_phase(running, Acc));
+negotiated({error, ebusy}, Now, Acc = {#{phase := {installing, Deadline, calling}}, _}) when Now < Deadline ->
+    set_phase({installing, Deadline, {retry, min(Now + ?ERX_XHCI_POLL_MS, Deadline)}}, Acc);
+negotiated({error, ebusy}, _Now, Acc) ->
+    emit({fail, install_timeout}, Acc);
+negotiated({error, Reason}, _Now, Acc) ->
+    emit({fail, {install, Reason}}, Acc).
+
+phase_expired(Now, Acc = {#{phase := {bios_handoff, GiveUp, {poll, At}}}, _}) when At =< Now ->
+    emit({read, [{legacy, bios_owned}]}, set_phase({bios_handoff, GiveUp, reading}, Acc));
+phase_expired(Now, Acc = {#{phase := {installing, Deadline, {retry, _}}}, _}) when Deadline =< Now ->
+    emit({fail, install_timeout}, Acc);
+phase_expired(Now, Acc = {#{phase := {installing, Deadline, {retry, At}}}, _}) when At =< Now ->
+    emit(negotiate, set_phase({installing, Deadline, calling}, Acc));
+phase_expired(_Now, Acc) ->
+    Acc.
+
+set_phase(Phase, {S, A}) -> {S#{phase := Phase}, A}.
+
+%% Reads, by the registers answered
+
+read([{{legacy, bios_owned}, Byte}], Now, Acc = {#{phase := {bios_handoff, _, reading}}, _}) ->
+    bios_owned(Byte, Now, Acc);
+read([{{portsc, Port}, Word}], _Now, {S = #{port_ops := Ops}, A}) ->
+    case lists:keytake(Port, 1, Ops) of
+        {value, {Port, Op, From}, Rest} ->
+            {Writes, Answer} = port_operation(Op, Word),
+            Written = lists:foldl(fun(Write, In) -> emit({write, {portsc, Port}, Write}, In) end,
+                                  {S#{port_ops := Rest}, A}, Writes),
+            answer({reply, From}, Answer, Written);
+        false ->
+            emit({fail, {unexpected_read, {portsc, Port}}}, {S, A})
+    end;
+read([{iman, Iman}, {usbsts, Status}], _Now, Acc) ->
+    serviced(Status, Iman, Acc);
+read(Words, _Now, Acc) ->
+    emit({fail, {unexpected_read, [Register || {Register, _} <- Words]}}, Acc).
+
+%% Events
+
+%% An interrupt's status: a host system error fails the controller, which has
+%% halted; otherwise the event interrupt and the interrupter's pending bit are
+%% cleared before the event ring is read.
+serviced(Status, _Iman, Acc) when ?ERX_HW_XHCI_USBSTS_HSE_GET(Status) =/= 0 ->
+    emit({fail, host_system_error}, Acc);
+serviced(Status, Iman, Acc) ->
+    Eint = ?ERX_HW_XHCI_USBSTS_EINT_MASK,
+    Ip = ?ERX_HW_XHCI_IMAN_IP_MASK,
+    emit(complete, emit({write, iman, modify(Iman, ?ERX_HW_XHCI_IMAN_PRESERVE, Ip, Ip)},
+                        emit({write, usbsts, modify(Status, ?ERX_HW_XHCI_USBSTS_PRESERVE, Eint, Eint)}, Acc))).
+
+nif_event({port, Port}, _Now, Acc) ->
+    emit({port_event, Port}, Acc);
+nif_event({Tag, Code, Extra}, Now, Acc) ->
+    event({complete, Tag, Code, Extra}, Now, Acc).
+
+%% Root ports
+
+-doc """
+A root-port operation on the port whose PORTSC reads Word: the PORTSC words to
+write, each modify/4 of Word, and the answer to the bus process. get_status
+writes nothing and answers the USB 2 hub words, wPortStatus and wPortChange,
+with the PORTSC speed ID; a `{clear, Change}` for a name no change bit stands
+behind answers `{error, badarg}`.
+""".
+-spec port_operation(port_op(), non_neg_integer()) ->
+          {[non_neg_integer()], ok | {ok, <<_:32>>, byte()} | {error, badarg}}.
+port_operation(get_status, Word) ->
+    {[], {ok, <<(port_status(Word)):16/little, (port_changes(Word)):16/little>>,
+          ?ERX_HW_XHCI_PORTSC_SPEED_GET(Word)}};
+port_operation(power_on, Word) ->
+    {[set_portsc(Word, ?ERX_HW_XHCI_PORTSC_PP_MASK)], ok};
+port_operation(reset, Word) ->
+    {[set_portsc(Word, ?ERX_HW_XHCI_PORTSC_PR_MASK)], ok};
+port_operation(disable, Word) ->
+    {[set_portsc(Word, ?ERX_HW_XHCI_PORTSC_PED_MASK)], ok};
+port_operation({clear, Change}, Word) ->
+    case lists:keyfind(Change, 1, port_changes()) of
+        {Change, Bits, _UsbBit} -> {[set_portsc(Word, Bits)], ok};
+        false -> {[], {error, badarg}}
+    end.
+
+set_portsc(Word, Bits) -> modify(Word, ?ERX_HW_XHCI_PORTSC_PRESERVE, Bits, Bits).
+
+%% wPortStatus from PORTSC. The port is suspended in the U3 link state; the
+%% speed bits stay clear, since a root port's speed is its speed ID.
+port_status(Word) ->
+    lists:foldl(fun(Bit, Status) -> Status bor Bit end, 0,
+                [Bit || {true, Bit} <- [{Word band ?ERX_HW_XHCI_PORTSC_CCS_MASK =/= 0, ?ERX_USB_PORT_STATUS_CONNECTION},
+                 {Word band ?ERX_HW_XHCI_PORTSC_PED_MASK =/= 0, ?ERX_USB_PORT_STATUS_ENABLED},
+                 {?ERX_HW_XHCI_PORTSC_PLS_GET(Word) =:= ?ERX_HW_XHCI_PORTSC_PLS_U3, ?ERX_USB_PORT_STATUS_SUSPEND},
+                 {Word band ?ERX_HW_XHCI_PORTSC_OCA_MASK =/= 0, ?ERX_USB_PORT_STATUS_OVER_CURRENT},
+                 {Word band ?ERX_HW_XHCI_PORTSC_PR_MASK =/= 0, ?ERX_USB_PORT_STATUS_RESET},
+                 {Word band ?ERX_HW_XHCI_PORTSC_PP_MASK =/= 0, ?ERX_USB_PORT_STATUS_POWER}]]).
+
+%% wPortChange from PORTSC: a name's bit when any change bit behind it is set.
+port_changes(Word) ->
+    lists:foldl(fun({_Name, Bits, UsbBit}, Changes) when Word band Bits =/= 0 -> Changes bor UsbBit;
+                   (_Change, Changes) -> Changes
+                end, 0, port_changes()).
+
+%% Every PORTSC change bit behind the USB 2 change name the bus core reads and
+%% clears, with that name's bit in wPortChange: the one table both directions use.
+port_changes() ->
+    [{connection, ?ERX_HW_XHCI_PORTSC_CSC_MASK, ?ERX_USB_PORT_CHANGE_CONNECTION},
+     {enabled, ?ERX_HW_XHCI_PORTSC_PEC_MASK bor ?ERX_HW_XHCI_PORTSC_CEC_MASK, ?ERX_USB_PORT_CHANGE_ENABLED},
+     {suspend, ?ERX_HW_XHCI_PORTSC_PLC_MASK, ?ERX_USB_PORT_CHANGE_SUSPEND},
+     {over_current, ?ERX_HW_XHCI_PORTSC_OCC_MASK, ?ERX_USB_PORT_CHANGE_OVER_CURRENT},
+     {reset, ?ERX_HW_XHCI_PORTSC_PRC_MASK bor ?ERX_HW_XHCI_PORTSC_WRC_MASK, ?ERX_USB_PORT_CHANGE_RESET}].
+
+-doc """
+The word to write to a register read as Read, to set Bits within the field
+Mask: the read's bits the register's Preserve mask keeps, but those of the
+field, and Bits. Every write-one-to-clear or write-one-to-act bit is outside
+Preserve, so the write sets only the ones in Bits (hw/svd/xhci/xhci.svd's
+derived preserve masks; FreeBSD's XHCI_PS_CLEAR, xhcireg.h:146, for PORTSC).
+""".
+-spec modify(non_neg_integer(), non_neg_integer(), non_neg_integer(), non_neg_integer()) -> non_neg_integer().
+modify(Read, Preserve, Mask, Bits) ->
+    (Read band Preserve band bnot Mask) bor Bits.
+
+%% Capabilities
+
+-doc """
+The capability registers' words decoded, or why the controller cannot be
+driven: `{unsupported, page_size}` when PAGESIZE does not offer the 4 KiB
+pages the device NIF lays out (5.4.3, pp. 399-400; xhci.c:546-549), and
+`{malformed, {protocol, I}}` when the I-th supported-protocol capability names
+no port or a port past the port count (Table 7-8, p. 523). The scratchpad
+count is HCSPARAMS2's high five bits above its low five (5.3.4, pp. 383-384).
+""".
+-spec decode_capabilities(#{register() => non_neg_integer()}, bound()) ->
+          {ok, capabilities()} | {error, {unsupported, page_size} | {malformed, {protocol, pos_integer()}}}.
+decode_capabilities(Words = #{hcsparams1 := Params1, hcsparams2 := Params2, hccparams1 := CParams1,
+                              pagesize := PageSize}, #{protocols := Count}) ->
+    Ports = ?ERX_HW_XHCI_HCSPARAMS1_MAXPORTS_GET(Params1),
+    try
+        PageSize band ?FOUR_KIB_PAGES =/= 0 orelse throw({unsupported, page_size}),
+        Protocols = lists:foldl(fun(I, Acc) -> maps:merge(Acc, protocol_ports(I, Words, Ports)) end,
+                                #{}, lists:seq(1, Count)),
+        {ok, #{slots => ?ERX_HW_XHCI_HCSPARAMS1_MAXSLOTS_GET(Params1),
+               interrupters => ?ERX_HW_XHCI_HCSPARAMS1_MAXINTRS_GET(Params1),
+               ports => Ports,
+               scratchpads => (?ERX_HW_XHCI_HCSPARAMS2_SPB_MAX_HI_GET(Params2)
+                                   bsl ?ERX_HW_XHCI_HCSPARAMS2_SPB_MAX_LO_WIDTH)
+                   bor ?ERX_HW_XHCI_HCSPARAMS2_SPB_MAX_LO_GET(Params2),
+               ac64 => ?ERX_HW_XHCI_HCCPARAMS1_AC64_GET(CParams1) =:= 1,
+               context_bytes => case ?ERX_HW_XHCI_HCCPARAMS1_CSZ_GET(CParams1) of 1 -> 64; 0 -> 32 end,
+               protocols => Protocols}}
+    catch
+        throw:Reason -> {error, Reason}
+    end.
+
+%% The ports of the I-th supported-protocol capability, each with its major
+%% revision: Compatible Port Count ports from Compatible Port Offset, all
+%% within 1..Ports.
+protocol_ports(I, Words, Ports) ->
+    #{{protocol, I, revision} := Revision, {protocol, I, ports} := PortWord} = Words,
+    First = PortWord band ?PROTOCOL_FIELD,
+    Count = (PortWord bsr ?PROTOCOL_COUNT_SHIFT) band ?PROTOCOL_FIELD,
+    First >= 1 andalso Count >= 1 andalso First + Count - 1 =< Ports orelse throw({malformed, {protocol, I}}),
+    Major = (Revision bsr ?PROTOCOL_MAJOR_SHIFT) band ?PROTOCOL_FIELD,
+    maps:from_list([{Port, Major} || Port <- lists:seq(First, First + Count - 1)]).
 
 %% Commands, one at a time
 

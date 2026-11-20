@@ -457,3 +457,234 @@ drained(M = #{callers := Callers, posted := Posted, queues := Queues}, Budget) -
                 {error, Why} -> [Why]
             end
     end.
+
+%% The start, the root ports and the interrupt pass (docs/design-usb.md, "The controller
+%% process"). Register words are written out: PORTSC's bits (xHCI 5.4.8, Table 5-27, pp.
+%% 405-413) are PED 16#2, PR 16#10, PLS 16#1e0, PP 16#200, speed 16#3c00, LWS 16#10000,
+%% the change bits CSC 16#20000 to CEC 16#800000 and WPR 16#80000000; the bits a write
+%% keeps are PP, PIC and the wake enables, 16#e00c200.
+
+-define(PS_PED, 16#2).
+-define(PS_PR, 16#10).
+-define(PS_PP, 16#200).
+-define(PS_LWS, 16#10000).
+-define(PS_CSC, 16#20000).
+-define(PS_PEC, 16#40000).
+-define(PS_WRC, 16#80000).
+-define(PS_OCC, 16#100000).
+-define(PS_PRC, 16#200000).
+-define(PS_PLC, 16#400000).
+-define(PS_CEC, 16#800000).
+-define(PS_WPR, 16#80000000).
+-define(PS_CHANGES, 16#fe0000).
+-define(PS_KEPT, 16#e00c200).
+
+%% HCSPARAMS1: 32 slots, 1 interrupter, 4 ports; HCSPARAMS2: 0 scratchpads; HCCPARAMS1:
+%% AC64; PAGESIZE: 4 KiB. Protocol 1: USB 2 on ports 1-2; protocol 2: USB 3 on 3-4.
+capability_words() ->
+    #{hcsparams1 => 16#04000120, hcsparams2 => 0, hccparams1 => 1, pagesize => 1,
+      {protocol, 1, revision} => 16#02000802, {protocol, 1, ports} => 16#0201,
+      {protocol, 2, revision} => 16#03000002, {protocol, 2, ports} => 16#0203}.
+
+-define(BOUND, #{legacy => true, protocols => 2}).
+
+%% A controller started to its BIOS handoff at time 0, the core's first actions checked.
+handoff_started() ->
+    Regs = [hcsparams1, hcsparams2, hccparams1, pagesize,
+            {protocol, 1, revision}, {protocol, 1, ports}, {protocol, 2, revision}, {protocol, 2, ports}],
+    {S1, [{read, Regs}]} = erx_xhci_core:step({start, ?BOUND}, 0, erx_xhci_core:new()),
+    {S2, [{write, {legacy, os_owned}, 1}, {read, [{legacy, bios_owned}]}]} =
+        erx_xhci_core:step({read, capability_words()}, 0, S1),
+    S2.
+
+%% A running controller of capability_words(), its bus started.
+running() ->
+    {S1, [negotiate]} = erx_xhci_core:step({read, #{{legacy, bios_owned} => 0}}, 0, handoff_started()),
+    {S2, [{start_bus, 4}]} = erx_xhci_core:step({negotiated, ok}, 0, S1),
+    S2.
+
+the_start_reads_hands_off_and_installs_test() ->
+    S0 = handoff_started(),
+    ?assertMatch(#{ports := 4, slots := 32, interrupters := 1, scratchpads := 0, ac64 := true,
+                   context_bytes := 32, protocols := #{1 := 2, 2 := 2, 3 := 3, 4 := 3}},
+                 erx_xhci_core:capabilities(S0)),
+    %% The BIOS still owns it: read again 10 ms later, then released.
+    {S1, []} = erx_xhci_core:step({read, #{{legacy, bios_owned} => 1}}, 0, S0),
+    ?assertEqual(10, erx_xhci_core:next_deadline(S1)),
+    ?assertEqual({S1, []}, erx_xhci_core:step(expired, 9, S1)),
+    {S2, [{read, [{legacy, bios_owned}]}]} = erx_xhci_core:step(expired, 10, S1),
+    {S3, [negotiate]} = erx_xhci_core:step({read, #{{legacy, bios_owned} => 0}}, 10, S2),
+    %% The install answers ebusy: called again 10 ms later, then ok starts the bus.
+    {S4, []} = erx_xhci_core:step({negotiated, {error, ebusy}}, 12, S3),
+    ?assertEqual(22, erx_xhci_core:next_deadline(S4)),
+    {S5, [negotiate]} = erx_xhci_core:step(expired, 22, S4),
+    ?assertMatch({_, [{start_bus, 4}]}, erx_xhci_core:step({negotiated, ok}, 23, S5)),
+    ?assertMatch({_, [{fail, {install, eio}}]}, erx_xhci_core:step({negotiated, {error, eio}}, 23, S5)),
+    %% Without a legacy support capability the install follows the capabilities.
+    {N1, _} = erx_xhci_core:step({start, #{legacy => false, protocols => 0}}, 0, erx_xhci_core:new()),
+    ?assertMatch({_, [negotiate]},
+                 erx_xhci_core:step({read, maps:with([hcsparams1, hcsparams2, hccparams1, pagesize],
+                                                     capability_words())}, 0, N1)).
+
+the_start_gives_up_on_the_bios_and_on_the_install_test() ->
+    Polled = lists:foldl(fun(At, S) ->
+                                 {S1, [{read, _}]} = erx_xhci_core:step(expired, At, S),
+                                 {S2, []} = erx_xhci_core:step({read, #{{legacy, bios_owned} => 1}}, At, S1),
+                                 S2
+                         end, element(1, erx_xhci_core:step({read, #{{legacy, bios_owned} => 1}}, 0,
+                                                            handoff_started())),
+                         lists:seq(10, 4990, 10)),
+    {S1, [{read, _}]} = erx_xhci_core:step(expired, 5000, Polled),
+    {S2, [{log, bios_handoff_timeout}, negotiate]} =
+        erx_xhci_core:step({read, #{{legacy, bios_owned} => 1}}, 5000, S1),
+    Busy = lists:foldl(fun(At, S) ->
+                               {Sb, []} = erx_xhci_core:step({negotiated, {error, ebusy}}, At, S),
+                               {Sc, [negotiate]} = erx_xhci_core:step(expired, At + 10, Sb),
+                               Sc
+                       end, S2, lists:seq(5000, 7980, 10)),
+    ?assertMatch({_, [{fail, install_timeout}]}, erx_xhci_core:step({negotiated, {error, ebusy}}, 8000, Busy)),
+    %% Busy at 7999: called again at the deadline, 8000, no later; reached, it fails uncalled.
+    {Late, []} = erx_xhci_core:step({negotiated, {error, ebusy}}, 7999, Busy),
+    ?assertEqual(8000, erx_xhci_core:next_deadline(Late)),
+    ?assertMatch({_, [{fail, install_timeout}]}, erx_xhci_core:step(expired, 8000, Late)).
+
+the_start_refuses_capabilities_it_cannot_drive_test() ->
+    Words = capability_words(),
+    ?assertEqual({error, {unsupported, page_size}},
+                 erx_xhci_core:decode_capabilities(Words#{pagesize => 2}, ?BOUND)),
+    ?assertEqual({error, {malformed, {protocol, 2}}},
+                 erx_xhci_core:decode_capabilities(Words#{{protocol, 2, ports} => 16#0204}, ?BOUND)),
+    ?assertEqual({error, {malformed, {protocol, 1}}},
+                 erx_xhci_core:decode_capabilities(Words#{{protocol, 1, ports} => 16#0200}, ?BOUND)),
+    {S1, _} = erx_xhci_core:step({start, ?BOUND}, 0, erx_xhci_core:new()),
+    ?assertMatch({_, [{fail, {capabilities, {unsupported, page_size}}}]},
+                 erx_xhci_core:step({read, Words#{pagesize => 2}}, 0, S1)),
+    ?assertMatch({_, [{reply, bus, {error, halted}}]}, erx_xhci_core:step({port, bus, 1, get_status}, 0, S1)).
+
+%% Every root-port write over many PORTSC words: the enable bit only to disable, the
+%% change bits only the ones its clear names, the reset only to reset, the kept bits as
+%% read but port power when powering, and never the link state strobe or a warm reset.
+portsc_writes_set_only_what_they_mean_test() ->
+    rand:seed(exsss, {18, 18, 18}),
+    Words = [0, 16#ffffffff | [1 bsl Bit || Bit <- lists:seq(0, 31)]]
+        ++ [rand:uniform(1 bsl 32) - 1 || _ <- lists:seq(1, 2000)],
+    Ops = [{power_on, ?PS_PP}, {reset, ?PS_PR}, {disable, ?PS_PED},
+           {{clear, connection}, ?PS_CSC}, {{clear, enabled}, ?PS_PEC bor ?PS_CEC},
+           {{clear, suspend}, ?PS_PLC}, {{clear, over_current}, ?PS_OCC},
+           {{clear, reset}, ?PS_PRC bor ?PS_WRC}],
+    [begin
+         {[Written], ok} = erx_xhci_core:port_operation(Op, Word),
+         ?assertEqual({Op, Word, Set band ?PS_CHANGES}, {Op, Word, Written band ?PS_CHANGES}),
+         ?assertEqual({Op, Word, Set band ?PS_PED}, {Op, Word, Written band ?PS_PED}),
+         ?assertEqual({Op, Word, Set band ?PS_PR}, {Op, Word, Written band ?PS_PR}),
+         ?assertEqual({Op, Word, (Word band ?PS_KEPT) bor (Set band ?PS_PP)}, {Op, Word, Written band ?PS_KEPT}),
+         ?assertEqual({Op, Word, 0}, {Op, Word, Written band (?PS_LWS bor ?PS_WPR)})
+     end || Word <- Words, {Op, Set} <- Ops],
+    ?assertEqual({[], {error, badarg}}, erx_xhci_core:port_operation({clear, test}, 0)).
+
+%% xHCI 4.19.2 (p. 322): a root port raises no further event until every change bit is
+%% clear, so each one shows in wPortChange and the clear of the name it shows as clears it.
+every_change_bit_can_be_cleared_test() ->
+    Names = [{1, connection}, {2, enabled}, {4, suspend}, {8, over_current}, {16, reset}],
+    [begin
+         {[], {ok, <<0:16, Change:16/little>>, 0}} = erx_xhci_core:port_operation(get_status, Bit),
+         {Change, Name} = lists:keyfind(Change, 1, Names),
+         {[Written], ok} = erx_xhci_core:port_operation({clear, Name}, Bit),
+         ?assertEqual({Bit, Bit}, {Bit, Written band Bit})
+     end || Bit <- [?PS_CSC, ?PS_PEC, ?PS_WRC, ?PS_OCC, ?PS_PRC, ?PS_PLC, ?PS_CEC]].
+
+root_ports_answer_from_portsc_test() ->
+    S0 = running(),
+    %% Connected, enabled, powered, high speed (3), with a connection and a link state change.
+    Word = 16#1 bor ?PS_PED bor ?PS_PP bor (3 bsl 10) bor ?PS_CSC bor ?PS_PLC,
+    {S1, [{read, [{portsc, 2}]}]} = erx_xhci_core:step({port, bus, 2, get_status}, 0, S0),
+    ?assertMatch({_, [{reply, bus, {ok, <<16#103:16/little, 16#5:16/little>>, 3}}]},
+                 erx_xhci_core:step({read, #{{portsc, 2} => Word}}, 0, S1)),
+    %% Suspended: the U3 link state, 3 in PLS.
+    ?assertMatch({_, [{reply, bus, {ok, <<16#5:16/little, 0:16>>, 0}}]},
+                 erx_xhci_core:step({read, #{{portsc, 2} => 16#1 bor (3 bsl 5)}}, 0, S1)),
+    {S2, [{read, [{portsc, 3}]}]} = erx_xhci_core:step({port, bus, 3, power_on}, 0, S0),
+    ?assertMatch({_, [{write, {portsc, 3}, ?PS_PP}, {reply, bus, ok}]},
+                 erx_xhci_core:step({read, #{{portsc, 3} => ?PS_PED bor ?PS_CSC}}, 0, S2)),
+    ?assertMatch({_, [{fail, {unexpected_read, {portsc, 1}}}]},
+                 erx_xhci_core:step({read, #{{portsc, 1} => 0}}, 0, S2)).
+
+%% An interrupt: USBSTS and IMAN read; a host system error fails the controller; otherwise
+%% the event interrupt (USBSTS bit 3) and the pending bit (IMAN bit 0) are cleared, IMAN's
+%% enable (bit 1) kept, and the ring is drained before the line is acknowledged.
+an_interrupt_pass_test() ->
+    S0 = running(),
+    {S1, [{read, [usbsts, iman]}]} = erx_xhci_core:step(interrupt, 0, S0),
+    ?assertMatch({_, [{fail, host_system_error}]}, erx_xhci_core:step({read, #{usbsts => 16#5, iman => 3}}, 0, S1)),
+    {S2, [{write, usbsts, 16#8}, {write, iman, 16#3}, complete]} =
+        erx_xhci_core:step({read, #{usbsts => 16#18, iman => 3}}, 0, S1),
+    {S3, [{port_event, 2}, complete]} = erx_xhci_core:step({completed, {ok, [{port, 2}]}}, 0, S2),
+    ?assertMatch({_, [ack]}, erx_xhci_core:step({completed, {ok, []}}, 0, S3)),
+    ?assertMatch({_, [{fail, {unknown_tag, 7}}]}, erx_xhci_core:step({completed, {ok, [{7, ?SUCCESS, <<>>}]}}, 0, S3)),
+    ?assertMatch({_, [{fail, {complete, broken}}]}, erx_xhci_core:step({completed, {error, broken}}, 0, S3)).
+
+%% The start explored: from {start, Bound} with and without a legacy capability, every
+%% answer the environment may give in every reachable state (the BIOS's byte owned or
+%% released at each read; the install ok, ebusy or failed at each call), the clock moving
+%% only to next_deadline/1. Checked at each step: the install is called only once the BIOS
+%% released the controller or 5 s passed; the bus starts only on the install's ok; an
+%% install still busy 3 s after its first call fails; expired a millisecond before the
+%% deadline changes nothing; an interrupt before the controller runs is only
+%% acknowledged. Each world ends running or failed.
+the_start_is_explored_to_a_fixed_point_test_() ->
+    {timeout, 300, fun() ->
+        [begin
+             {S1, _} = erx_xhci_core:step({start, Bound}, 0, erx_xhci_core:new()),
+             {S2, Actions} = erx_xhci_core:step({read, capability_words()}, 0, S1),
+             W = #{legacy => maps:get(legacy, Bound), released => false, installing => none, awaits => none, last => none},
+             {Ends, _} = explore_start([{S2, Actions, 0, W}], #{}, #{}),
+             ?assertEqual(lists:sort(maps:keys(Ends)), [failed, running])
+         end || Bound <- [?BOUND, #{legacy => false, protocols => 2}]]
+    end}.
+
+explore_start([], Seen, Ends) -> {Ends, Seen};
+explore_start([{S, Actions, Now, W} | Rest], Seen, Ends) ->
+    case check_start(Actions, Now, W#{awaits := none}) of
+        {ended, How} ->
+            explore_start(Rest, Seen, Ends#{How => true});
+        W1 when is_map_key({S, Now, W1}, Seen) ->
+            explore_start(Rest, Seen, Ends);
+        W1 ->
+            Next = [{S2, A2, At, answered(Event, W1)}
+                    || {Event, At} <- start_events(S, Now, W1), {S2, A2} <- [erx_xhci_core:step(Event, At, S)]],
+            explore_start(Next ++ Rest, Seen#{{S, Now, W1} => true}, Ends)
+    end.
+
+%% The answers the environment may give to what the core last asked, and the clock
+%% moved to the next deadline, where expired a millisecond earlier must change nothing;
+%% an interrupt before the controller runs is only acknowledged.
+start_events(S, Now, #{awaits := Awaits}) ->
+    ?assertEqual({S, [ack]}, erx_xhci_core:step(interrupt, Now, S)),
+    Expired = case erx_xhci_core:next_deadline(S) of
+                  none -> [];
+                  At -> ?assertEqual({S, []}, erx_xhci_core:step(expired, At - 1, S)), [{expired, At}]
+              end,
+    Answers = case Awaits of
+                  bios -> [{read, #{{legacy, bios_owned} => B}} || B <- [0, 1]];
+                  install -> [{negotiated, R} || R <- [ok, {error, ebusy}, {error, eio}]];
+                  none -> []
+              end,
+    Expired ++ [{Answer, Now} || Answer <- Answers].
+
+answered(Event = {read, #{{legacy, bios_owned} := 0}}, W) -> W#{released := true, last := Event};
+answered(Event, W) -> W#{last := Event}.
+
+check_start([], _Now, W) -> W;
+check_start([{write, {legacy, os_owned}, 1} | Rest], Now, W) -> check_start(Rest, Now, W);
+check_start([{read, [{legacy, bios_owned}]} | Rest], Now, W) -> check_start(Rest, Now, W#{awaits := bios});
+check_start([{log, bios_handoff_timeout} | Rest], Now, W) ->
+    ?assert(Now >= 5000),
+    check_start(Rest, Now, W#{released := true});
+check_start([negotiate | Rest], Now, W = #{legacy := Legacy, released := Released, installing := Since}) ->
+    ?assert(Released orelse not Legacy),
+    check_start(Rest, Now, W#{awaits := install, installing := case Since of none -> Now; _ -> Since end});
+check_start([{start_bus, 4}], _Now, #{last := {negotiated, ok}}) -> {ended, running};
+check_start([{fail, install_timeout}], Now, #{installing := Since}) ->
+    ?assert(Now >= Since + 3000),
+    {ended, failed};
+check_start([{fail, {install, eio}}], _Now, _W) -> {ended, failed}.
