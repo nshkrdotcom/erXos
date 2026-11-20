@@ -1,4 +1,4 @@
-# The Design and Implementation of the erXos Operating System
+# erXos: An Operating System in Erlang
 
 This file is the plan of a book: its title, its readers, the order of
 its chapters and, for each chapter, what its sections explain, the

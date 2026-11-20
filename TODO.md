@@ -9091,8 +9091,8 @@ document's "residual risks accepted" paragraph.
 
 ## Planned features
 
-* [Medium] docs, the book ([docs/book/](docs/book/README.md)): write The Design and Implementation
-  of erXos from docs/book/README.md's outline, one chapter per package, each checked against the
+* [Medium] docs, the book ([docs/book/](docs/book/README.md)): write erXos: An Operating System in Erlang
+  from docs/book/README.md's outline, one chapter per package, each checked against the
   design documents and the tree; built and unbuilt parts marked. Each chapter is written for a reader
   without Erlang, operating-system or microkernel background: Part I teaches the three subjects, and
   each chapter states the background it needs and explains in a Background box what only it uses.
