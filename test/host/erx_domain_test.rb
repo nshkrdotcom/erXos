@@ -220,7 +220,14 @@ class ErxDomainTest < Minitest::Test
               from: '#{record := Record, confirmed := true, state := ready} <- Layouts},',
               to: '#{record := Record} <- Layouts},',
               tests: 'erx_devices_pci_core_tests',
-              caught_by: 'a_report_refused_whole_lowers_every_function_of_its_bridge_test')
+              caught_by: 'a_report_refused_whole_lowers_every_function_of_its_bridge_test'),
+    # A holder's end (docs/design-pcie.md, "The catalogue and gives"): one that sends its
+    # lowering without writing it to the library leaves the library saying the function
+    # still decodes or masters for a holder that is gone.
+    Fault.new(name: "a holder's end blind to the library", file: File.join(APPLICATION, 'erx_devices_pci_core.erl'),
+              from: '[{mode, Index, off} || {Index, _, _} <- Lowered] ++', to: '[] ++',
+              tests: 'erx_devices_pci_core_tests',
+              caught_by: 'a_holders_end_lowers_its_rows_in_the_library_then_sends_test')
   ].freeze
 
   def test_the_cases_catch_each_seeded_fault

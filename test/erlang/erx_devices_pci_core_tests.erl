@@ -84,3 +84,126 @@ targets_answer_the_librarys_bridges_layouts_and_settings_test() ->
     Catalogues = [catalogue([layout(1, ready, true), layout(2, none, false)])],
     ?assertEqual({ok, [bridge(?BRIDGE)], [record(?BRIDGE, 1), record(?BRIDGE, 2)], #{{?BRIDGE, 0, 1, 0} => mastering()}},
                  erx_devices_pci_core:targets(Catalogues, [row(10, 1), other_row(11)])).
+
+%% The state machine of "Concurrency": a holder's requests and ends in each phase.
+
+-define(FACET, pcie_facet).
+-define(HOLDER, 21).
+
+synced() -> {synced, 9, ?FACET}.
+
+%% A pci row at Device, held by ?HOLDER, its setting of Mode.
+held(Index, Device, Mode) ->
+    (row(Index, Device))#{holder => ?HOLDER, setting => (mastering())#{mode := Mode}}.
+
+request(Operation) -> #{from => from, grantee => ?HOLDER, operation => Operation}.
+
+place(Device) -> {?BRIDGE, 0, Device, 0}.
+
+%% A holder's end lowers each of its rows in the library first and, only with an
+%% answered incarnation, sends the lowering after it; with none, the next start's
+%% targets carry it.
+a_holders_end_lowers_its_rows_in_the_library_then_sends_test() ->
+    Rows = [held(10, 1, mastering), held(11, 2, decoding)],
+    Off = fun(Device) -> {set, place(Device), (mastering())#{mode := off}} end,
+    ?assertEqual([{mode, 10, off}, {mode, 11, off}, {pcie, ?FACET, Off(1), lowering}, {pcie, ?FACET, Off(2), lowering}],
+                 erx_devices_pci_core:holder_ended(Rows, synced())),
+    ?assertEqual([{mode, 10, off}, {mode, 11, off}], erx_devices_pci_core:holder_ended(Rows, {between, 9})),
+    ?assertEqual([{mode, 10, off}, {mode, 11, off}], erx_devices_pci_core:holder_ended(Rows, down)).
+
+a_request_waits_between_and_is_unavailable_when_down_test() ->
+    Devices = [held(10, 1, off)],
+    ?assertEqual(wait, erx_devices_pci_core:request(request({open, place(1)}), {between, start}, Devices)),
+    ?assertEqual([{reply, from, {error, unavailable}}],
+                 erx_devices_pci_core:request(request({open, place(1)}), down, Devices)).
+
+%% The device service matches a place against the grantee's own rows alone: another
+%% holder's function, the grantee's row with no place and a place no row names are
+%% not held.
+a_place_the_grantee_does_not_hold_is_refused_test() ->
+    Devices = [held(10, 1, off), (held(11, 2, off))#{holder => ?HOLDER + 1},
+               (other_row(12))#{holder => ?HOLDER}],
+    [?assertEqual([{reply, from, {error, not_held}}],
+                  erx_devices_pci_core:request(request({Operation, Place}), synced(), Devices))
+     || Operation <- [open, master, reset], Place <- [place(2), place(3), none]].
+
+%% A raise is sent first and written to the library only on the enumerator's ok;
+%% master from mastering is sent again.
+open_and_master_raise_after_the_enumerators_ok_test() ->
+    Devices = [held(10, 1, off)],
+    Open = request({open, place(1)}),
+    Decoding = (mastering())#{mode := decoding},
+    ?assertEqual([{pcie, ?FACET, {set, place(1), Decoding}, {raise, Open, 10, decoding}}],
+                 erx_devices_pci_core:request(Open, synced(), Devices)),
+    ?assertEqual({[{mode, 10, decoding}, {reply, from, ok}], none},
+                 erx_devices_pci_core:pcie_answer({raise, Open, 10, decoding}, ok, synced(), Devices)),
+    Master = request({master, place(1)}),
+    [?assertEqual([{pcie, ?FACET, {set, place(1), mastering()}, {raise, Master, 10, mastering}}],
+                  erx_devices_pci_core:request(Master, synced(), [held(10, 1, Mode)])) || Mode <- [decoding, mastering]],
+    ?assertEqual([{reply, from, {error, order}}], erx_devices_pci_core:request(Master, synced(), Devices)).
+
+%% A raise answered after its holder ended, or after the row passed to another
+%% holder, writes nothing: the library never says more than a living holder asked.
+a_raise_answered_after_its_holders_end_is_not_written_test() ->
+    Open = request({open, place(1)}),
+    [?assertEqual({[{reply, from, ok}], none},
+                  erx_devices_pci_core:pcie_answer({raise, Open, 10, decoding}, ok, synced(), [Row]))
+     || Row <- [(held(10, 1, off))#{holder => none}, (held(10, 1, off))#{holder => ?HOLDER + 1}]],
+    Reset = request({reset, place(1)}),
+    ?assertEqual({[{reply, from, {ok, none}}], none},
+                 erx_devices_pci_core:pcie_answer({reset, Reset, 10}, {ok, none}, synced(),
+                                                  [(held(10, 1, off))#{holder => none}])).
+
+%% A reset lowers the library's setting before it is sent, and its ok, which leaves
+%% the function decoding, raises the library to decoding, so the driver's master
+%% after it is not refused as out of order; a refused or timed-out reset writes
+%% nothing more.
+a_reset_lowers_before_it_is_sent_test() ->
+    Reset = request({reset, place(1)}),
+    Devices = [held(10, 1, off)],
+    ?assertEqual([{mode, 10, off}, {pcie, ?FACET, {reset, place(1)}, {reset, Reset, 10}}],
+                 erx_devices_pci_core:request(Reset, synced(), [held(10, 1, mastering)])),
+    ?assertEqual({[{mode, 10, decoding}, {reply, from, {ok, flr}}], none},
+                 erx_devices_pci_core:pcie_answer({reset, Reset, 10}, {ok, flr}, synced(), Devices)),
+    ?assertEqual({[{reply, from, {error, busy}}], none},
+                 erx_devices_pci_core:pcie_answer({reset, Reset, 10}, {error, busy}, synced(), Devices)),
+    ?assertEqual({[{reply, from, {error, unavailable}}], none},
+                 erx_devices_pci_core:pcie_answer({reset, Reset, 10}, timeout, synced(), Devices)).
+
+%% A call the incarnation's end failed waits again, or is handled at once when a later
+%% incarnation is already answered; a timeout answers unavailable and writes nothing; a
+%% refusal is the holder's answer; a lowering's answer is nobody's.
+the_enumerators_answers_test() ->
+    Open = request({open, place(1)}),
+    Reset = request({reset, place(1)}),
+    Raise = {raise, Open, 10, decoding},
+    Devices = [held(10, 1, off)],
+    ?assertEqual({[], Open}, erx_devices_pci_core:pcie_answer(Raise, ended, {between, 9}, Devices)),
+    ?assertEqual({[], Reset}, erx_devices_pci_core:pcie_answer({reset, Reset, 10}, ended, {between, 9}, Devices)),
+    Later = {synced, 10, later_facet},
+    ?assertEqual({[{pcie, later_facet, {set, place(1), (mastering())#{mode := decoding}}, Raise}], none},
+                 erx_devices_pci_core:pcie_answer(Raise, ended, Later, Devices)),
+    ?assertEqual({[{reply, from, {error, unavailable}}], none},
+                 erx_devices_pci_core:pcie_answer(Raise, timeout, synced(), Devices)),
+    ?assertEqual({[{reply, from, {error, gone}}], none},
+                 erx_devices_pci_core:pcie_answer(Raise, {error, gone}, synced(), Devices)),
+    ?assertEqual({[], none}, erx_devices_pci_core:pcie_answer(lowering, ended, {between, 9}, Devices)),
+    ?assertEqual({[], none}, erx_devices_pci_core:pcie_answer(lowering, ok, synced(), Devices)).
+
+%% The answered incarnation's end moves synced to between and arms its 5 s timer;
+%% another incarnation's end changes nothing; the timer moves its own between to down
+%% and answers every waiting request unavailable, and a timer of an earlier between is
+%% ignored; an answer replays the waiting requests in order.
+the_phases_test() ->
+    ?assertEqual({{between, 9}, [{arm_down, 9}]}, erx_devices_pci_core:incarnation_ended(9, synced())),
+    ?assertEqual({synced(), []}, erx_devices_pci_core:incarnation_ended(8, synced())),
+    ?assertEqual({{between, 9}, []}, erx_devices_pci_core:incarnation_ended(9, {between, 9})),
+    Waiting = [request({open, place(1)}), (request({reset, place(1)}))#{from := later}],
+    ?assertEqual({down, [{reply, from, {error, unavailable}}, {reply, later, {error, unavailable}}]},
+                 erx_devices_pci_core:down_timer(9, {between, 9}, Waiting)),
+    ?assertEqual({{between, 10}, []}, erx_devices_pci_core:down_timer(9, {between, 10}, Waiting)),
+    ?assertEqual({synced(), []}, erx_devices_pci_core:down_timer(9, synced(), [])),
+    {Phase, Actions} = erx_devices_pci_core:answered(9, ?FACET, Waiting, [held(10, 1, off)]),
+    ?assertEqual(synced(), Phase),
+    ?assertMatch([{pcie, ?FACET, {set, _, _}, {raise, _, 10, decoding}}, {mode, 10, off},
+                  {pcie, ?FACET, {reset, _}, {reset, _, 10}}], Actions).

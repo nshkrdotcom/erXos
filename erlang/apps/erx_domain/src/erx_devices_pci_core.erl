@@ -27,13 +27,60 @@ second keeps the library's setting the function's own when the start
 found it disturbed and turned it off with its record unchanged. A
 setting above `off` stays only on a function the library could give now
 and the start left at it.
+
+**The phases** ("Concurrency"): `between`, when no incarnation's report has
+been answered since the last answered one ended; `{synced, Id, Facet}`, once
+incarnation Id's report was answered and Facet is its `pcie`; and `down`,
+5 s in `between`. A holder's request waits `between`, is handled `synced`
+and is answered `{error, unavailable}` `down` (request/3). Its place is
+matched against the grantee's own rows alone. Two orders keep the library
+from saying more than a function was asked for: a lowering (a holder's end,
+holder_ended/2, and the first step of a `reset`) is written to the library
+before it is sent, and a raise (`open`, `master`) only on the enumerator's
+`ok` (pcie_answer/4), so a timed-out raise is never written. A call the
+incarnation's end failed waits again, for the next answered incarnation.
+
+The functions return actions for the process to perform in order:
+`{mode, Index, Mode}`, erx_domain_lib:pci_mode/2; `{pcie, Facet, Call,
+Then}`, a `pcie` call whose answer goes to pcie_answer(Then, Answer);
+`{reply, From, Answer}`; and `{arm_down, Since}`, the 5 s timer of the
+`between` that Since's end began, which a later `between` does not take.
 """.
 
 -export([targets/2, reports/2, unlisted/2, lowered/3, settings/1]).
--export_type([place/0]).
+-export([request/3, pcie_answer/4, holder_ended/2, answered/4, incarnation_ended/2, down_timer/3]).
+-export_type([place/0, phase/0, request/0, action/0, then/0]).
 
 -doc "A function by its host bridge's device row and its place, as erx_domain_lib:pci_place() spells it.".
 -type place() :: erx_domain_lib:pci_place().
+
+-doc """
+Whether a PCIe incarnation's report was answered, and its `pcie` facet if
+so; `between` names the incarnation whose end began it, or `start` for the
+process's own start.
+""".
+-type phase() :: {between, Since :: pos_integer() | start} | down | {synced, Id :: pos_integer(), Facet :: term()}.
+
+-doc "A holder's `pci` request, as its facet forwarded it with the grantee it was minted for.".
+-type request() :: #{from := term(), grantee := pos_integer(),
+                     operation := {open | master | reset, place()}}.
+
+-doc """
+What a `pcie` call's answer completes: a raise to write and answer; a reset,
+which leaves the function `decoding` (docs/design-pcie.md, "Who programs
+what, and when"), so its ok raises the library to `decoding` for the
+driver's `master` after it; or a lowering.
+""".
+-type then() :: {raise, request(), Index :: non_neg_integer(), decoding | mastering}
+              | {reset, request(), Index :: non_neg_integer()} | lowering.
+
+-type pcie_call() :: {set, place(), erx_abi_layout:erx_pcie_setting()} | {reset, place()}.
+
+-doc "An effect for the device service's PCIe process to perform, in order.".
+-type action() :: {mode, Index :: non_neg_integer(), erx_abi_enums:pcie_mode()}
+                | {pcie, Facet :: term(), pcie_call(), then()}
+                | {reply, From :: term(), term()}
+                | {arm_down, pos_integer() | start}.
 
 %% A function as the PCIe domain's start reports it, its record and whether
 %% the start kept it at its setting; the enumerator owns the type.
@@ -92,6 +139,115 @@ lowered(Catalogues, Devices, Reported) ->
 -spec settings([erx_domain_lib:device()]) -> #{place() => erx_abi_layout:erx_pcie_setting()}.
 settings(Devices) ->
     #{Place => Setting || #{place := Place, setting := Setting} <- Devices, Place =/= none}.
+
+-doc """
+A holder's request in Phase over the device catalogue: wait `between`,
+`{error, unavailable}` `down`, and `synced` its actions. A place no row of
+the grantee names is `{error, not_held}`; `master` while the library's
+mode is `off` is `{error, order}`. The facet's decoder has held the
+request to request()'s shape.
+""".
+-spec request(request(), phase(), [erx_domain_lib:device()]) -> wait | [action()].
+request(_Request, {between, _}, _Devices) ->
+    wait;
+request(#{from := From}, down, _Devices) ->
+    [{reply, From, {error, unavailable}}];
+request(#{from := From, operation := {Operation, Place}} = Request, {synced, _, Facet}, Devices) ->
+    case held_row(Request, Devices) of
+        #{index := Index, setting := Setting} -> handled(Operation, Request, {Index, Place, Setting}, Facet);
+        none -> [{reply, From, {error, not_held}}]
+    end.
+
+%% The grantee's own row at the request's place, or none.
+held_row(#{grantee := Grantee, operation := {_, Place}}, Devices) ->
+    case [Row || #{holder := Holder, place := At} = Row <- Devices,
+                 Holder =:= Grantee, At =:= Place, At =/= none] of
+        [Row] -> Row;
+        [] -> none
+    end.
+
+handled(open, Request, {Index, Place, Setting}, Facet) ->
+    [{pcie, Facet, {set, Place, Setting#{mode := decoding}}, {raise, Request, Index, decoding}}];
+handled(master, #{from := From}, {_, _, #{mode := off}}, _Facet) ->
+    [{reply, From, {error, order}}];
+handled(master, Request, {Index, Place, Setting}, Facet) ->
+    [{pcie, Facet, {set, Place, Setting#{mode := mastering}}, {raise, Request, Index, mastering}}];
+handled(reset, Request, {Index, Place, _Setting}, Facet) ->
+    [{mode, Index, off}, {pcie, Facet, {reset, Place}, {reset, Request, Index}}].
+
+-doc """
+The actions a `pcie` answer completes in Phase over the device catalogue,
+and the request to wait again, or none. Answer is `ended` when the call
+failed because the incarnation ended, `timeout` past its 2 s deadline, or
+the enumerator's. A call `ended` failed is handled again at once in a
+later `synced`, and waits otherwise. A raise, and a reset's `decoding`, is
+written only on `ok` and only while the requester still holds the row, so
+the library never says more than a living holder was answered.
+""".
+-spec pcie_answer(then(), ok | {ok, flr | none} | {error, term()} | ended | timeout, phase(),
+                  [erx_domain_lib:device()]) -> {[action()], request() | none}.
+pcie_answer(lowering, _Answer, _Phase, _Devices) ->
+    {[], none};
+pcie_answer(Then, ended, {synced, _, _} = Phase, Devices) ->
+    {request(request_of(Then), Phase, Devices), none};
+pcie_answer(Then, ended, _Phase, _Devices) ->
+    {[], request_of(Then)};
+pcie_answer(Then, timeout, _Phase, _Devices) ->
+    {[{reply, from(Then), {error, unavailable}}], none};
+pcie_answer({raise, #{from := From} = Request, Index, Mode}, ok, _Phase, Devices) ->
+    {raised(Request, Index, Mode, Devices) ++ [{reply, From, ok}], none};
+pcie_answer({reset, #{from := From} = Request, Index}, {ok, Kind}, _Phase, Devices) ->
+    {raised(Request, Index, decoding, Devices) ++ [{reply, From, {ok, Kind}}], none};
+pcie_answer(Then, Answer, _Phase, _Devices) ->
+    {[{reply, from(Then), Answer}], none}.
+
+raised(Request, Index, Mode, Devices) ->
+    case held_row(Request, Devices) of
+        #{index := Index} -> [{mode, Index, Mode}];
+        _ -> []
+    end.
+
+request_of({raise, Request, _, _}) -> Request;
+request_of({reset, Request, _}) -> Request.
+
+from(Then) -> maps:get(from, request_of(Then)).
+
+-doc """
+A holder's end: each `pci` row it held, as the process recorded it at the
+give, lowered to `off` in the library, its route staying the give's, and
+sent after only with an answered incarnation; otherwise the next start's
+`targets` or `report` carries it.
+""".
+-spec holder_ended([erx_domain_lib:device()], phase()) -> [action()].
+holder_ended(Rows, Phase) ->
+    Lowered = [{Index, Place, Setting#{mode := off}}
+               || #{index := Index, place := Place, setting := Setting} <- Rows],
+    [{mode, Index, off} || {Index, _, _} <- Lowered] ++
+        case Phase of
+            {synced, _, Facet} -> [{pcie, Facet, {set, Place, Off}, lowering} || {_, Place, Off} <- Lowered];
+            _ -> []
+        end.
+
+-doc "Incarnation Id's report answered with Facet: synced, and every waiting request handled in order.".
+-spec answered(pos_integer(), term(), [request()], [erx_domain_lib:device()]) -> {phase(), [action()]}.
+answered(Id, Facet, Waiting, Devices) ->
+    Phase = {synced, Id, Facet},
+    {Phase, lists:append([request(Request, Phase, Devices) || Request <- Waiting])}.
+
+-doc "Incarnation Id's end: `between`, with its 5 s timer armed, if Id is the answered one.".
+-spec incarnation_ended(pos_integer(), phase()) -> {phase(), [action()]}.
+incarnation_ended(Id, {synced, Id, _}) -> {{between, Id}, [{arm_down, Id}]};
+incarnation_ended(_Id, Phase) -> {Phase, []}.
+
+-doc """
+The 5 s timer Since's `between` armed: `down` if that `between` still
+holds, every waiting request answered `{error, unavailable}`.
+""".
+-spec down_timer(pos_integer() | start, phase(), [request()]) -> {phase(), [action()]}.
+down_timer(Since, {between, Since}, Waiting) ->
+    {down, [{reply, From, {error, unavailable}} || #{from := From} <- Waiting]};
+down_timer(_Since, Phase, _Waiting) ->
+    {Phase, []}.
 
 place(#{bridge := Bridge, bus := Bus, device := Device, function := Function}) ->
     {Bridge, Bus, Device, Function}.

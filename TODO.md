@@ -2288,11 +2288,14 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   [design-pcie.md](docs/design-pcie.md#facets)): the enumerator runs its start and serves `set` and `reset` over its
   edge on the host, and on the target opens an ECAM bridge's driver over its given record, but its `bus` answers
   `{error, no_facet}`, so the domain does not start. `erx_devices_pci_core` decides `targets` and the answer to
-  `report` (each held bridge's records, and the rows to lower from the library's catalogue), but no process applies
-  it. Still to build: the device service's PCIe process over that core (`pci_bridges/0`, `devices/0`,
+  `report` (each held bridge's records, and the rows to lower from the library's catalogue) and the phases of
+  "Concurrency" (a holder's request, its end, the enumerator's answers, `between`, `synced` and `down`), but no
+  process applies it. Still to build: the device service's PCIe process over that core (`pci_bridges/0`, `devices/0`,
   `pci_report/2` for each held bridge, `pci_mode(Index, off)` for every row `lowered/3` names, then
-  `erx_domain:await_grant(pcie, D)`, `answered` in the catalogue, and the `between`, `synced` and `down` state machine
-  "Concurrency" gives the core), its `pci` facet, the hold at boot, a holder's end; a system manifest service row for
+  `erx_domain:await_grant(pcie, D)`, `answered` in the catalogue, the core's actions and its 5 s and 2 s timers), the
+  holder monitors from each give, the `pci_bus` and `pci` facet callbacks that forward each request with its
+  grantee (`system_facet/4` in `erx_domain_srv`), the `pci` decoder refusing an operation or place outside
+  `erx_devices_pci_core:request()` with `{error, badarg}` before the core sees it, its `pci` facet, the hold at boot, a holder's end; a system manifest service row for
   each interface, with the manifest check's grantee rules; the `pcie` facet's mint in the PCIe domain over
   `erx_facet`. The BCM2711's bridge has its core (`erx_pcie_bcm2711_core`) and no driver module with `start` over a
   device, so the enumerator refuses its record (`no_driver_module`).
