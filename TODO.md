@@ -8016,17 +8016,18 @@ to the corpus and follow rc
   by meaning, fields and names, and the sequencer write them, make each run live, and end what the device holds only
   by its reports, which it acquires itself (the validity, then the records it covers), against one ledger. The TRB form's tables, bindings and releases are in
   [design-usb.md](docs/design-usb.md#what-the-dma-check-judges). Until then the TRB form's plans cannot run through
-  `run_call`. The formats' marks and their generated encoders are in `abi/formats` (virtio, xHCI, and SDHCI's ADMA2
-  entry, which nothing uses yet); the command TRBs (one layout per command, Set TR Dequeue Pointer's among them) and
-  the input context's composed encoder have no marks yet, and the packages that move those forms add them. Every
+  `run_call`. The formats' marks are in `abi/formats` (virtio, xHCI, and SDHCI's ADMA2 entry), and the encoders and
+  each structure's meaning list generated from them in `include/erx/abi.h`, which nothing uses yet; the command TRBs (one layout per
+  command, Set TR Dequeue Pointer's among them) and the input context's composed encoder have no marks yet, and the packages that move those forms add them. Every
   device address in `abi/formats` carries `device_address`, and a marked layout refuses one a description would
   state or the format fix; a device address in an unmarked layout is not refused yet: that rule turns on when the
-  last form moves onto the encoders. virtio-gpu's `erx_virtio_gpu_mem_entry` moves with the split ring, as a region
-  entry; until then `resolve_regions` in `erx_device.c` writes it by hand, its length bounded where the region is
-  carved, not at the write. The ADMA2 entry's encoder accepts a length of 0, which moves 65,536 bytes; the
-  sequencer's split never derives one, and the package that writes the split tests it. The encoders are public in `include/erx/abi.h` and exist, with their `_free_t` input structs, for report layouts too, whose release places count as free (`tools/lib/erx/abi_marks.rb:40,130`, `tools/lib/erx/abi_emit_marks.rb:43`), against the design's reports with accessors only and the `meaning` line, which the formats do not carry yet; they end up confined
-  to the sequencer (a private header), and the rule worth a build check is that only the sequencer stores into a
-  region holding a structure. Packages, in order: the ledger, the layout, descriptions,
+  last form moves onto the encoders. virtio-gpu's `erx_virtio_gpu_mem_entry` has its region entry's marks and encoder,
+  and moves onto them with the split ring; until then `resolve_regions` in `erx_device.c` writes it by hand, its
+  length bounded where the region is carved, not at the write. The ADMA2 entry's encoder accepts a length of 0, which moves 65,536 bytes; the
+  sequencer's split never derives one, and the package that writes the split tests it. The encoders are public in
+  `include/erx/abi.h`, beside every layout's generic setters; they end up confined to the sequencer (a private header), and the chokepoint of
+  [Descriptions](docs/design-device-dma.md#descriptions), that only the sequencer stores into a region holding a
+  structure, is a build check that lands with the sequencer. Packages, in order: the ledger, the layout, descriptions,
   the check's rules, the sequencer's publication and its acquisition, with the split ring moved onto them; GENET,
   and ADMA2 with its transfer split into entries by the sequencer, moved onto them; the TRB form's publication and
   bindings; the TRB form's releases from acquired events, each command's reach and the endpoints' states; the

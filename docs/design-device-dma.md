@@ -500,8 +500,13 @@ records that tie
 tables together (the DCBAA, the scratchpad array, the segment table,
 each TRB ring's link), and every activation and doorbell.
 
-A record in memory is written only by its meaning's generated encoder
-([What the formats say](#what-the-formats-say)). A record in registers,
+A record in memory is written only by its layout's generated encoder, a
+meaning's or one of the sequencer's own records'
+([What the formats say](#what-the-formats-say)). The header also gives
+every layout's fields setters, and none of them writes such a record:
+only the sequencer stores into a region that holds a structure, a
+chokepoint checked at build, and it stores only records an encoder
+built. A record in registers,
 GENET's transmit descriptor status word (`TX_DESC_STATUS` in
 `hw/svd/genet/genet.svd`), is written as one store of a value built
 from zero through the SVD's generated accessors, never read, modified
@@ -822,8 +827,8 @@ each structure's meanings to what placement and acquisition need:
 
 * they share one size, the table's stride;
 * a structure with more than one meaning has a `selects` mark in each,
-  on bits at the same offset and range, so a selector value names at
-  most one meaning in any table and a report's release is read under
+  on bits at the same offset and range, so, with the rule below, a
+  selector value names at most one meaning in any table and a report's release is read under
   the one meaning its selector gives; a structure with one meaning may
   have no selector;
 * every meaning of one structure has its `activates` mark on the same
@@ -836,7 +841,10 @@ each structure's meanings to what placement and acquisition need:
 
 **A selector value names one layout of its file.** Each enum member is
 selected by at most one layout of the whole format file, a meaning or
-not. So the xHCI link TRB, which has no `meaning` line and lies in
+not, and so is each value of a place's bits: two layouts that select
+on bits at the same offset and range select different values there,
+whatever enum or shift spells them, since the record holds the bits
+and not the spelling. So the xHCI link TRB, which has no `meaning` line and lies in
 every TRB ring, selects a type no meaning of any ring selects, and a
 record the device writes with that type names no meaning of the event
 ring ([Releases](#releases)).
@@ -849,7 +857,7 @@ report or naming a structure that is not `cpu`, a `meaning` line naming
 other than one structure or one of another file, a structure whose
 meanings differ in size, in where their selector lies or in where their
 activation lies, a structure of more than one meaning one of which has
-no selector, an enum member two layouts of the file select, two places of one encoder member name
+no selector, an enum member or a value of the same bits two layouts of the file select, two places of one encoder member name
 (`a_b` and `a.b`), a place no mark claims,
 a device address a description would state or the format fix, a
 reference to a place that is no device address, `device_address` on a

@@ -55,9 +55,11 @@ limit virtio_net_hdr_size u32 12
 limit virtio_net_queue_rx u32 0
 limit virtio_net_queue_tx u32 1
 
-# The structure a queue's region holds that a report releases (docs/design-device-dma.md,
-# "What the formats say"): the descriptor table, which the CPU writes.
+# The structures a queue's regions hold (docs/design-device-dma.md, "What the formats
+# say"): the descriptor table, which the CPU writes, and the used ring, which the device
+# writes. The available ring is the sequencer's own and offers no meaning.
 target virtq_desc cpu
+target virtq_used device
 
 # One entry of a queue's descriptor table (2.7.5). A description states its length and
 # whether the device writes the buffer; the sequencer supplies the buffer's address, and
@@ -71,6 +73,7 @@ layout erx_virtq_desc wire_le 8 16
     bits write 1 1
     bits indirect 2 2
   field next u16 14
+  meaning virtq_desc
   refers addr data length len
   states flags.write
   derived flags.next
@@ -89,6 +92,7 @@ layout erx_virtq_ring_head wire_le 2 4
 layout erx_virtq_used_elem wire_le 4 8
   field id u32 0
   field len u32 4
+  meaning virtq_used
   releases id virtq_desc
   states len
 
@@ -185,10 +189,15 @@ layout erx_virtio_gpu_resource_attach_backing wire_le 8 32
   field resource_id u32 24
   field nr_entries u32 28
 
+# A region entry (5.7.6), written by the sequencer from a region's name alone: the
+# region's device address and its whole length, derived, and the padding.
 layout erx_virtio_gpu_mem_entry wire_le 8 16
   field addr u64 0 device_address
   field length u32 8
   field padding u32 12
+  derived addr
+  derived length
+  fixed padding 0
 
 # The input device (section 5.8), device ID 18 as FreeBSD's sys/dev/virtio/virtio_ids.h
 # at release/15.1.0 gives it. The driver posts each buffer of its event queue, queue 0, at

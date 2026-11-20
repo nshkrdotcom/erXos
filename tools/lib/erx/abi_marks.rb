@@ -7,22 +7,31 @@ module Erx
     # The DMA marks of a descriptor format (docs/design-device-dma.md, "What
     # the formats say"): each format file declares the structures its regions
     # hold (`target NAME cpu|device`), and each layout a device reads or
-    # writes as a record marks what its fields mean to the DMA check, so that
-    # a record is written only by the encoder generated from those marks.
+    # writes as a record marks what its fields mean to the DMA check.
+    #
+    # A layout's meaning line names the one structure whose tables offer it,
+    # and that structure's writer is the layout's: a meaning of a `device`
+    # structure is a report, which the device writes and the trusted side only
+    # reads, so it gets accessors and no encoder; every other marked layout,
+    # a meaning a description states or a record of the sequencer's own, is
+    # written only by the encoder generated from its marks. A marked layout
+    # with no meaning line is the CPU's and has no meaning number.
     #
     # A mark names a place: a field that has no bits lines, written FIELD, or
     # one bits range of a field, written FIELD.BITS. Every place of a marked
-    # layout is claimed by exactly one mark, so a place is free, stated by a
-    # description, only where a states mark, a reference's length or a
-    # release says so. A place whose field or bits line ends in
-    # device_address holds an address the device follows; in a marked layout
-    # the sequencer writes it (a reference or a derived place), or the device
-    # reports it (a release's place). Build_layout leaves the mark lines to
-    # this module, which reads them from the layout declarations once every
-    # type is resolved, since a mark may name an enum declared after its layout.
+    # layout is claimed by exactly one mark, so a place is free only where a
+    # states mark, a reference's length or a release says so: a description
+    # states it, or, on a report, the device. A place whose field or bits line
+    # ends in device_address holds an address the device follows; in a marked
+    # layout the sequencer writes it (a reference or a derived place), or the
+    # device reports it (a release's place). Build_layout leaves the mark
+    # lines to this module, which reads them from the layout declarations
+    # once every type is resolved, since a mark may name an enum declared
+    # after its layout.
     module Marks
       # Each mark's spelling, as a refusal states it.
       SYNTAX = {
+        'meaning' => 'TARGET',
         'selects' => 'FIELD.BITS ENUM.MEMBER',
         'fixed' => 'FIELD.BITS VALUE',
         'refers' => 'FIELD.BITS TARGET [length FIELD.BITS [unit N]]',
@@ -34,63 +43,91 @@ module Erx
       KEYWORDS = SYNTAX.keys.freeze
       WRITERS = %w[cpu device].freeze
       DATA = 'data'
-      # The roles a mark gives a place. A free place is an encoder input a
-      # description states (or, on a report, the device); a placed one the
-      # sequencer supplies; a written one the encoder takes from the mark.
+      # The roles a mark gives a place. A free place is one a description
+      # states, or, on a report, the device; a placed one the sequencer
+      # supplies; a written one the encoder takes from the mark.
       FREE = %i[stated reported code].freeze
       # The roles a device address may take: the sequencer writes it, or the
       # device reports it.
       ADDRESS_ROLES = %i[placed reported].freeze
 
-      Target = Struct.new(:name, :writer, :line, keyword_init: true)
+      # A structure a region may hold, and its writer.
+      Target = Struct.new(:name, :writer, :line, keyword_init: true) do
+        def device? = writer == 'device'
+      end
 
       # One place of a marked layout, with the field or bits line that declares
-      # it. A bits range keeps the accessor's view: the value it takes is
-      # shifted left by shift, so its low shift bits are zero.
-      Place = Struct.new(:field, :bits, :type, :low, :high, :shift, :device_address, :line,
+      # it and its field's byte offset. A bits range keeps the accessor's view:
+      # the value it takes is shifted left by shift, so its low shift bits are
+      # zero.
+      Place = Struct.new(:field, :bits, :type, :offset, :low, :high, :shift, :device_address, :line,
                          keyword_init: true) do
         def name = bits ? "#{field}_#{bits}" : field
         def spelling = bits ? "#{field}.#{bits}" : field
         def maximum = ((1 << (high - low + 1)) - 1) << shift
         def holds?(value) = value.between?(0, maximum) && (value & ((1 << shift) - 1)).zero?
+        # Where the place lies in its record: the field's offset and width and
+        # the bits it covers, the same for two places only if they read the
+        # same bits of a record.
+        def position = [offset, type.bits, low, high]
       end
 
-      # A value the encoder writes itself: the selector's member or a fixed value.
-      Value = Struct.new(:place, :value, keyword_init: true)
+      # A value the encoder writes itself, from its mark's line: the
+      # selector's member, with the enum it is of, or a fixed value, whose
+      # enum is nil. raw is what the place's bits hold, the value without
+      # its shift.
+      Value = Struct.new(:place, :value, :enum, :line, keyword_init: true) do
+        def raw = value >> place.shift
+      end
       # A reference given as a name: the place that holds its address, the
       # structure it names (a target or data), and the place that holds its
       # length, counted in units of unit bytes, or nil.
       Reference = Struct.new(:place, :target, :length, :unit, keyword_init: true)
       # On a report: the place that names the holding the report ends, the
-      # structure that holding is of, and the codes it ends it under, nil for
-      # every code.
+      # cpu structure that holding is of, and the codes it ends it under, nil
+      # for every code.
       Release = Struct.new(:place, :target, :condition, :codes, keyword_init: true)
 
-      # One marked layout as a meaning. free and placed are the encoder's two
+      # One marked layout. structure is the target its meaning line names and
+      # meaning_line that line, both nil for a layout that is no meaning (the
+      # sequencer's own record, or a part of a composed one); number is its
+      # meaning's, nil when it is none. free and placed are the encoder's two
       # inputs, in the layout's field order: what a description states, and
       # what the sequencer supplies where it places the record (each
-      # reference's address, the activation and each derived field).
-      Meaning = Struct.new(:layout, :number, :selector, :fixed, :references, :activation,
-                           :derived, :release, :free, :placed, keyword_init: true) do
+      # reference's address, the activation and each derived field). A report
+      # has no encoder, and its free places are what the device states.
+      MarkedLayout = Data.define(:layout, :structure, :meaning_line, :number, :selector, :fixed,
+                                 :references, :activation, :derived, :release, :free, :placed) do
+        def meaning? = !structure.nil?
+        def report? = meaning? && structure.device?
         def constant = "meaning_#{Names.stem(layout.name)}"
       end
 
       # One mark line of a layout and its parsed value.
       Mark = Struct.new(:keyword, :line, :value, keyword_init: true)
-      Schema = Struct.new(:targets, :meanings, keyword_init: true)
+
+      # The structures, by name, and the marked layouts, in the order of their
+      # layouts' names.
+      Schema = Struct.new(:targets, :layouts, keyword_init: true) do
+        # The layouts with a meaning line, each with its number.
+        def meanings = layouts.select(&:meaning?)
+        # What every table of target offers: the meanings whose line names it.
+        def offered(target) = meanings.select { |meaning| meaning.structure.name == target.name }
+      end
 
       module_function
 
-      # The targets and the meanings, each meaning numbered from 1 in the
-      # order of its layout's name, so 0 is no meaning.
       def validate(target_declarations, layout_declarations, types, constants)
-        targets = validate_targets(target_declarations)
-        marked = layout_declarations.select { |declaration| declaration.members.any? { |line| mark?(line) } }
-        meanings = marked.sort_by { |declaration| declaration.args.first }.each_with_index.map do |declaration, index|
-          meaning(declaration, types.fetch(declaration.args.first), index + 1,
-                  targets: targets, types: types, constants: constants)
+        targets = validate_targets(target_declarations).freeze
+        layouts = layout_declarations.select { |declaration| declaration.members.any? { |line| mark?(line) } }
+                                     .sort_by { |declaration| declaration.args.first }.map do |declaration|
+          marked_layout(declaration, types.fetch(declaration.args.first),
+                        targets: targets, types: types, constants: constants)
         end
-        Schema.new(targets: targets.freeze, meanings: meanings.freeze).freeze
+        refuse_reused_selectors(layouts)
+        schema = Schema.new(targets: targets, layouts: number(layouts).freeze).freeze
+        targets.each_value { |target| check_meanings(target, schema.offered(target)) }
+        schema
       end
 
       def mark?(line) = line.indent == 2 && KEYWORDS.include?(line.words.first)
@@ -107,7 +144,7 @@ module Erx
         end
       end
 
-      def meaning(declaration, layout, number, targets:, types:, constants:)
+      def marked_layout(declaration, layout, targets:, types:, constants:)
         declaration.fail!('marks belong to a wire_le layout') unless layout.storage == 'wire_le'
         layout.tail&.line&.fail!('a marked layout has no tail: its encoder writes the fixed part only')
         layout.fields.reject { |field| field.type.is_a?(IntegerType) && !field.type.signed && !field.array? }
@@ -117,33 +154,108 @@ module Erx
           Mark.new(keyword: line.words.first, line: line,
                    value: parse_mark(line, places, targets: targets, types: types, constants: constants)).freeze
         end
-        selector, activation, release = %w[selects activates releases].map { |keyword| one(marks, keyword) }
+        structure, selector, activation, release = %w[meaning selects activates releases].map { |keyword| one(marks, keyword) }
         fixed, references, derived = %w[fixed refers derived].map do |keyword|
           marks.select { |mark| mark.keyword == keyword }.map(&:value).freeze
         end
-        if release && (references.any? || derived.any?)
-          declaration.fail!('a report, a layout with releases, has no refers or derived mark: the device writes it')
-        end
+        refuse_writer_marks(declaration, marks, report: structure&.device?)
         roles = claim_once(marks, places)
-        Meaning.new(layout: layout, number: number, selector: selector, fixed: fixed,
-                    references: references, activation: activation, derived: derived, release: release,
-                    free: places.values.select { |place| FREE.include?(roles[place.spelling]) }.freeze,
-                    placed: places.values.select { |place| roles[place.spelling] == :placed }.freeze).freeze
+        MarkedLayout.new(layout: layout, structure: structure, number: nil,
+                         meaning_line: marks.find { |mark| mark.keyword == 'meaning' }&.line,
+                         selector: selector, fixed: fixed, references: references, activation: activation,
+                         derived: derived, release: release,
+                         free: places.values.select { |place| FREE.include?(roles[place.spelling]) }.freeze,
+                         placed: places.values.select { |place| roles[place.spelling] == :placed }.freeze)
       end
 
-      # One mark line's value: a Value for selects and fixed, a Reference, a
-      # Place for activates, derived and states, or a Release.
+      # The layouts with each meaning numbered, from 1 in the layouts' order.
+      def number(layouts)
+        numbers = layouts.select(&:meaning?).each.with_index(1).to_h { |marked, number| [marked.layout.name, number] }
+        layouts.map { |marked| marked.with(number: numbers[marked.layout.name]) }
+      end
+
+      # A report is written by the device, so it has no reference or derived
+      # place for the sequencer to supply; and only a report ends a holding.
+      def refuse_writer_marks(declaration, marks, report:)
+        keywords = marks.map(&:keyword)
+        if report && (keywords & %w[refers derived]).any?
+          declaration.fail!('a report, a meaning of a device structure, has no refers or derived mark: the device writes it')
+        end
+        return if report
+
+        marks.find { |mark| mark.keyword == 'releases' }&.line
+             &.fail!('releases belongs to a report, a meaning of a device structure')
+      end
+
+      # A selector value names one layout of its file, a meaning or not: no
+      # two layouts of a file select one enum member, nor the same bits on the
+      # same place of a record, whatever enum or shift spells them. Each
+      # refusal names the second layout's selects line.
+      SELECTOR_KEYS = {
+        'the enum member' => ->(selector) { [selector.enum, selector.value] },
+        'the bits' => ->(selector) { [selector.place.position, selector.raw] }
+      }.freeze
+
+      def refuse_reused_selectors(layouts)
+        selected = layouts.select(&:selector)
+        SELECTOR_KEYS.each do |what, key|
+          selected.group_by { |marked| [marked.layout.line.path, key.call(marked.selector)] }.each_value do |first, second, *|
+            next unless second
+
+            second.selector.line.fail!("#{second.layout.name} selects #{what} #{first.layout.name} selects: " \
+                                       'a selector value names one layout of its file')
+          end
+        end
+      end
+
+      # What placement and acquisition need of one structure's meanings, each
+      # the same in all of them: the size, the table's stride; where the
+      # selector lies; and where the activation lies, or that none has one.
+      MEANINGS_ALIKE = {
+        'size' => ->(meaning) { meaning.layout.size },
+        'where their selector lies' => ->(meaning) { meaning.selector.place.position },
+        'their activation: every meaning of a structure has it on the same bit, or none has one' =>
+          ->(meaning) { meaning.activation&.position }
+      }.freeze
+
+      # A structure with more than one meaning has a selector in each, and its
+      # meanings are alike in MEANINGS_ALIKE. Each refusal names the meaning
+      # line of a meaning that departs from the first.
+      def check_meanings(target, meanings)
+        return if meanings.size < 2
+
+        meanings.reject(&:selector).each do |unselected|
+          unselected.meaning_line.fail!("#{unselected.layout.name} has no selects mark, and " \
+                                        "#{target.name} has more than one meaning")
+        end
+        first, *others = meanings
+        others.each do |meaning|
+          what, = MEANINGS_ALIKE.find { |_what, of| of.call(meaning) != of.call(first) }
+          next unless what
+
+          meaning.meaning_line.fail!("#{meaning.layout.name} and #{first.layout.name}, meanings of " \
+                                     "#{target.name}, differ in #{what}")
+        end
+      end
+
+      # One mark line's value: the Target for meaning, a Value for selects and
+      # fixed, a Reference, a Place for activates, derived and states, or a
+      # Release.
       def parse_mark(line, places, targets:, types:, constants:)
         keyword, *words = line.words
         case [keyword, words.size]
+        in ['meaning', 1]
+          line.fail!("a meaning names a structure, not #{DATA}") if words[0] == DATA
+          targets.fetch(target_name(words[0], targets, line))
         in ['selects', 2]
           place = fetch_place(places, words[0], line)
-          Value.new(place: place, value: member(words[1], place, types, line)).freeze
+          enum, value = member(words[1], place, types, line)
+          Value.new(place: place, value: value, enum: enum, line: line).freeze
         in ['fixed', 2]
           place = fetch_place(places, words[0], line)
           value = Model.numeric(words[1], constants, line)
           line.fail!("fixed value #{words[1]} does not fit #{place.spelling}") unless place.holds?(value)
-          Value.new(place: place, value: value).freeze
+          Value.new(place: place, value: value, enum: nil, line: line).freeze
         in ['refers', _] then parse_reference(words, places, targets, line)
         in ['activates', 1]
           place = fetch_place(places, words[0], line)
@@ -158,9 +270,11 @@ module Erx
       # Each place a mark claims, with its role: a reference claims its address,
       # placed, and its length, stated; a release the place it names and the
       # code it is read under, reported and a code; activates and derived a placed
-      # place; selects and fixed a written one; states a stated one.
+      # place; selects and fixed a written one; states a stated one. A meaning
+      # line claims none.
       def claims(mark)
         case mark.value
+        in Target then []
         in Reference => reference then [[reference.place, :placed], [reference.length, :stated]].select(&:first)
         in Release => release then [[release.place, :reported], [release.condition, :code]].select(&:first)
         in Value => value then [[value.place, :written]]
@@ -223,9 +337,13 @@ module Erx
       def parse_release(words, places, targets, types, line)
         line.fail!("releases requires #{SYNTAX.fetch('releases')}") unless words.size == 2 || (words.size >= 5 && words[2] == 'when')
         condition = words.size > 2 ? fetch_place(places, words[3], line) : nil
-        codes = condition && words.drop(4).map { |code| member(code, condition, types, line) }
+        codes = condition && words.drop(4).map { |code| member(code, condition, types, line).last }
         line.fail!('releases when lists each code once') if codes && codes.uniq.size != codes.size
-        Release.new(place: fetch_place(places, words[0], line), target: target_name(words[1], targets, line),
+        target = target_name(words[1], targets, line)
+        unless targets[target] && !targets[target].device?
+          line.fail!("releases names #{target}, which is no cpu structure: a holding is of records the CPU wrote")
+        end
+        Release.new(place: fetch_place(places, words[0], line), target: target,
                     condition: condition, codes: codes&.freeze).freeze
       end
 
@@ -239,7 +357,8 @@ module Erx
         name
       end
 
-      # ENUM.MEMBER, a member of an enum (not flags) whose value fits the place.
+      # ENUM.MEMBER, a member of an enum (not flags) whose value fits the
+      # place: the enum's name and the member's value.
       def member(spelling, place, types, line)
         enum_name, _, member_name = spelling.rpartition('.')
         enum = types[enum_name]
@@ -247,7 +366,7 @@ module Erx
         line.fail!("#{member_name} is not a member of #{enum_name}") unless enum.members.key?(member_name)
         value = enum.members.fetch(member_name)
         line.fail!("#{spelling} does not fit #{place.spelling}") unless place.holds?(value)
-        value
+        [enum_name, value]
       end
 
       def fetch_place(places, spelling, line)
@@ -259,12 +378,13 @@ module Erx
       def layout_places(layout)
         layout.fields.flat_map do |field|
           if field.bits.empty?
-            [Place.new(field: field.name, bits: nil, type: field.type, low: 0, high: field.type.bits - 1,
-                       shift: 0, device_address: field.device_address, line: field.line).freeze]
+            [Place.new(field: field.name, bits: nil, type: field.type, offset: field.offset, low: 0,
+                       high: field.type.bits - 1, shift: 0, device_address: field.device_address,
+                       line: field.line).freeze]
           else
             field.bits.map do |bits|
-              Place.new(field: field.name, bits: bits.fetch(:name), type: field.type, low: bits.fetch(:low),
-                        high: bits.fetch(:high), shift: bits.fetch(:shift),
+              Place.new(field: field.name, bits: bits.fetch(:name), type: field.type, offset: field.offset,
+                        low: bits.fetch(:low), high: bits.fetch(:high), shift: bits.fetch(:shift),
                         device_address: bits.fetch(:device_address), line: bits.fetch(:line)).freeze
             end
           end
