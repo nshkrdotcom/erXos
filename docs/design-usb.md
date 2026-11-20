@@ -968,7 +968,7 @@ the doorbell address, the frame's base plus `0x40`, and the data, the
 line's number. The enumerator and the device service see exactly the
 MSI they see on erXos's kernel, so nothing above `liberx` changes
 between the phases. The frame's range on QEMU `virt`, and whether
-Fiasco binds its lines with the edge trigger an MSI needs, are probe 4.
+Fiasco binds its lines with the edge trigger an MSI needs, are probe 4 ([the QEMU facts record](research-qemu-pcie-usb.md#probe-numbering)).
 
 **Raspberry Pi 4: the INTx line of a closed bus.** The Pi 4 has no MSI
 frame erXos drives: the bridge's MSI registers share their page with the
@@ -2034,7 +2034,8 @@ function reset is read from its capabilities; the driver's own reset is
 `HCRST`, inside `negotiate/2`. The facts the documentation does not
 give, the capability registers and the port layout, are read at start
 and shown in the controller's inspection record; the first QEMU run
-records them in the facts record (probe 3).
+records them in the facts record (probe 3,
+[research-qemu-pcie-usb.md](research-qemu-pcie-usb.md#not-settled)).
 
 ### The VL805 on the Raspberry Pi 4
 
@@ -2807,7 +2808,8 @@ notification, must leave the VL805 out of the catalogue with
 `vl805 firmware not loaded`, on a board without the VL805's EEPROM.
 
 Probes, each recorded in the facts record of this design's QEMU and
-board findings. Under QEMU: `qemu-xhci`'s capability registers and port
+board findings (the QEMU ones so far in
+[research-qemu-pcie-usb.md](research-qemu-pcie-usb.md)). Under QEMU: `qemu-xhci`'s capability registers and port
 layout; the MSI frame's range of lines, Fiasco binding one of them with
 the edge trigger, and an MSI from `qemu-xhci` arriving on it; hotplug
 and its port events; the IOMMU stream, at M9's kernel part; a `pcap`

@@ -861,7 +861,8 @@ the frame's lines, which Fiasco binds as wired lines:
   root may not read the frame's `MSI_TYPER`, since only `erx_device`
   reads device registers, so the record stands in for it; the QEMU suite
   checks the record by raising the first and the last line. Which range
-  QEMU's frame serves is unverified (probe 4 of the USB design).
+  QEMU's frame serves is in [the QEMU facts record](research-qemu-pcie-usb.md#the-msi-frame)
+  (probe 4 of the USB design).
 * **The call.** `erx_irq_create(budget, resource, ERX_IRQ_MSI, 0)`
   ignores the resource, as every device call of the Fiasco backend does, takes the
   lowest free line of the range, sets it edge-triggered through Fiasco's
@@ -870,7 +871,8 @@ the frame's lines, which Fiasco binds as wired lines:
   every frame line ([design-platforms.md](design-platforms.md#msi-frames)), binds it as `ERX_IRQ_LINE` binds a
   line, and answers the doorbell, the frame's base plus `0x40`, and the
   data, the line's interrupt id. Whether the fork's
-  interrupt controller honours the mode for these lines is probe 4's second half.
+  interrupt controller honours the mode for these lines is probe 4's second half
+  ([the record's open items](research-qemu-pcie-usb.md#not-settled)).
 * **The address the function writes.** The doorbell answered is the
   frame's CPU address, which is the address the function writes only
   where its host bridge maps the frame one to one. The give checks the
