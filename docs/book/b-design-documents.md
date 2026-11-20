@@ -28,20 +28,23 @@ Three properties of the documents surprise a newcomer.
   tree and its tests, and [TODO.md](../../TODO.md), which lists open
   defects and known gaps. The book's Built and Designed marks come from
   those, not from the design documents' tense.
-* **Some describe a kernel that enforces more than Fiasco does.**
-  [design-kernel.md](../design-kernel.md),
-  [design-scheduler.md](../design-scheduler.md) and
-  [design-arch-aarch64.md](../design-arch-aarch64.md) describe a kernel
-  that holds every isolation property itself.
-  The system's kernel is Fiasco, and
-  [design-fiasco.md](../design-fiasco.md) says what Fiasco gives of
-  that model and what it does not. Where the two differ,
+* **Three describe the kernel interface in a stronger form than the
+  system's kernel gives it.** [design-kernel.md](../design-kernel.md)
+  defines the objects, capabilities and calls of the kernel interface
+  of [chapter 8](08-kernel-interface.md) as a kernel that would hold
+  every isolation property itself;
+  [design-scheduler.md](../design-scheduler.md) describes CPU time in
+  the same form, and
+  [design-arch-aarch64.md](../design-arch-aarch64.md) binds that form
+  to the processor. The system's kernel is Fiasco.
+  [design-fiasco.md](../design-fiasco.md) says which of those
+  properties Fiasco gives, how `liberx` carries the interface over it,
+  and what the system does without the rest. Where they differ,
   design-fiasco.md describes the running system, and the book follows
   it.
 * **They carry the project's planning notes.** The documents say in
-  places how the work is staged and which component a later one takes
-  over from. The book describes the system as it runs and leaves those
-  notes out; [plan.md](../plan.md), the roadmap, holds them.
+  places how the work is staged; the book leaves those notes out, and
+  [plan.md](../plan.md), the roadmap, holds them.
 
 Around the design documents sit others with different jobs.
 [overview.md](../overview.md) is a short introduction for a reader new
@@ -152,8 +155,8 @@ gives the question the document settles.
 | [design-host-oracle.md](../design-host-oracle.md) | Stock OTP as the test oracle, in an isolated Linux container |
 | [design-verification.md](../design-verification.md) | Pure protocol cores, TLA+ models and the evidence that ties a model to its code |
 
-*Table B.1. The design documents, in the order of the book's parts,
-from [design.md, Document map](../design.md#document-map).*
+*Table B.1. The design documents, grouped by subject, drawn from
+[design.md, Document map](../design.md#document-map).*
 
 Sizes vary by a factor of sixty, from under 150 lines for littlefs to
 over nine thousand for design-kernel.md; in a long one, read the table
@@ -182,7 +185,8 @@ forty-five carry each one under that name.
 * **Invariants** (27). The properties that always hold, each stated
   so that a test or a build check can fail on it.
 * **Concurrency** and **Failure handling, diagnostics and
-  debuggability**, under these or shorter names in most documents.
+  debuggability**, under these or shorter names: a Concurrency section in 17
+  documents, a Failure section in 30.
   What runs at once, what each failure reaches, which supervisor restarts what, and what
   an operator sees.
 * **Refusals and error results** (9) and **Untrusted input** (2). What
@@ -265,21 +269,21 @@ read next" names.
 | [3](03-erlang.md) | design-runtime.md; research-erts-internals.md |
 | [4](04-history.md) | design.md (Context, Requirements, Decisions); design-fiasco.md; research-hierarchical-scheduling.md; research-prior-art.md |
 | [5](05-overview.md) | overview.md; design.md; design-fiasco.md; design-domains.md; design-system.md |
-| [6](06-construction.md) | design.md (Invariants, Correct by construction in code); design-fiasco.md; design-device-dma.md; style.md |
+| [6](06-construction.md) | design.md (Correct by construction in code); design-fiasco.md (Contract); design-device-dma.md; style.md |
 | [7](07-one-source.md) | design-generation.md; design-abi.md; design-system.md (the manifest); design-device-dma.md; design-verification.md |
 | [8](08-kernel-interface.md) | design-fiasco.md; design-runtime.md |
-| [9](09-processes.md) | design-scheduler.md; design-fiasco.md; design-runtime.md; design-shared-code.md |
+| [9](09-processes.md) | design-scheduler.md; design-fiasco.md (the scheduler on Fiasco); design-runtime.md; research-hierarchical-scheduling.md |
 | [10](10-domains.md) | design-domains.md; design-runtime.md; design-system.md |
-| [11](11-security.md) | design.md (Security); design-domains.md; design-files.md; design-system.md (the vault); design-crypto.md; design-live.md |
+| [11](11-security.md) | design.md (Security); design-fiasco.md (security on Fiasco, rights); design-domains.md; design-files.md; design-time.md (who may set it); design-system.md (the vault); design-live.md (escape rules) |
 | [12](12-memory.md) | design-fiasco.md (memory and budgets); design-system.md |
-| [13](13-native-programs.md) | design-programs.md; design-pipes.md; design-shell.md |
+| [13](13-native-programs.md) | design-programs.md; design-pipes.md; design-shell.md; design-fiasco.md (vCPU upcalls on Fiasco) |
 | [14](14-files.md) | design-files.md; design-tmp.md; design-app-trees.md; design-live.md (`/proc`) |
 | [15](15-devices.md) | design-system.md (devices and drivers); design-runtime.md (the device NIF); design-device-dma.md; design-device-tree.md; design-shared-devices.md; design-pcie.md; design-usb.md; design-header-io.md; design-board-sensors.md |
-| [16](16-storage.md) | design-storage.md; design-stopgap.md; design-f2fs.md; design-platforms.md |
+| [16](16-storage.md) | design-storage.md; design-stopgap.md; design-f2fs.md; design-platforms.md; design-fiasco.md (the end path) |
 | [17](17-network.md) | design-network-stack.md; design-time.md |
 | [18](18-wifi.md), [19](19-bluetooth.md) | design-wifi.md; design-bluetooth.md; design-shared-devices.md |
 | [20](20-shell.md) | design-shell.md; design-vi.md; design-ssh.md; design-live.md (ttys); design-apps.md |
-| [21](21-live-machine.md) | design-live.md; design-log.md |
+| [21](21-live-machine.md) | design-live.md; design-log.md; design-system.md (the crash record); design-fiasco.md (reporting kernel objects, the trace ring) |
 | [22](22-display.md) | design-display.md; design-desktop-programs.md; design-find-act.md; design-web.md |
 | [23](23-apps.md) | design-apps.md; design-packaging.md; design-app-trees.md; design-storage.md |
 | [24](README.md#chapter-24-startup-configuration-and-shutdown) | design-system.md; design-fiasco.md; design-kernel.md (boot); design-abi.md; design-platforms.md |
@@ -289,8 +293,9 @@ read next" names.
 each chapter's "Where to read next" and the outline of chapters 24
 and 25.*
 
-design-arch-aarch64.md has no chapter; it is for someone porting or
-debugging the kernel's use of the processor. Building and booting the
+design-arch-aarch64.md has no chapter: it binds design-kernel.md's
+form of the interface to AArch64's registers and instructions, and is
+for a reader of that document. Building and booting the
 system is the subject of
 [Appendix C](README.md#appendix-c-building-and-booting-erxos), and
 design.md's dependency table, with every component's license, of

@@ -790,4 +790,4 @@ system domain carry no term.
   chapter follows. <!-- check: citation details. -->
 * Stuart Cheshire and Mary Baker, "Consistent Overhead Byte Stuffing",
   *IEEE/ACM Transactions on Networking* 7(2), 1999: the framing of the
-  host link. <!-- check: citation details. -->
+  host link.

@@ -16,7 +16,7 @@ The evidence is the project's survey of earlier systems,
 
 ## E.1 Erlang and its runtimes
 
-| Source | What erXos took | Where |
+| Source | What erXos took, or the contrast it draws | Where |
 | --- | --- | --- |
 | Erlang/OTP and Armstrong's thesis (2003) | Isolated processes that share nothing, "let it crash" and supervisors as the whole system's failure model, and restarting, after Gray's study of transient faults (1985) | [Chapter 3](03-erlang.md#33-let-it-crash), [chapter 4](04-history.md#41-erlang-systems-as-operating-systems) |
 | ERTS, read as described in The BEAM Book (Stenman and others) | Preemption only at function calls and receives, per-process heaps; the runtime as a parts bin taken apart and recombined | [Chapter 3](03-erlang.md#35-the-beam-and-erts), [chapter 9](09-processes.md#94-erts-as-a-parts-bin) |
@@ -35,7 +35,7 @@ Where UNIX systems differ, erXos follows FreeBSD. It keeps FreeBSD's
 behavior and redesigns the structure, so most entries here are a
 behavior kept and an inside replaced.
 
-| Source | What erXos took | Where |
+| Source | What erXos took, or the contrast it draws | Where |
 | --- | --- | --- |
 | UNIX | Files, processes, text pipes, a shell and small tools as the surface | [Chapter 4](04-history.md#431-unix-and-freebsd-the-surface), [chapter 20](20-shell.md#201-unix-look-and-feel-honestly) |
 | McKusick, Neville-Neil and Watson, *The Design and Implementation of the FreeBSD Operating System* (2014) | The arc and manner of this book; the tty layer that `erx_tty` follows | [README.md](README.md#what-the-book-is), [chapter 20](20-shell.md#204-ttys-and-the-console) |
@@ -52,11 +52,11 @@ behavior kept and an inside replaced.
 
 ## E.3 Microkernels and capabilities
 
-| Source | What erXos took | Where |
+| Source | What erXos took, or the contrast it draws | Where |
 | --- | --- | --- |
 | L4 (Liedtke 1993, 1995) | A kernel of address spaces, threads and fast IPC, with everything else in user mode | [Chapter 2](02-microkernels.md#251-from-l3-to-sel4) |
 | Fiasco (TU Dresden, from 1998) | The kernel itself, behind erXos's kernel interface, with a few small patches | [Chapter 4](04-history.md#432-l4-and-fiasco-the-kernel), [chapter 8](08-kernel-interface.md) |
-| L4Re | A root task that creates every program and hands it its capabilities; per-program CPU sets and priorities, the model for the designed bands | [Chapter 2](02-microkernels.md#253-the-root-task), [chapter 8](08-kernel-interface.md#83-the-root-service-who-holds-what) |
+| L4Re | A root task that creates every program and hands it its capabilities; its loader ned's CPU sets, the model for each domain's designed CPU set | [Chapter 2](02-microkernels.md#253-the-root-task), [chapter 8](08-kernel-interface.md#83-the-root-service-who-holds-what), [chapter 9](09-processes.md#923-cpu-sets-and-thread-limits) |
 | Dennis and Van Horn (1966) | The capability: a reference that carries rights | [Chapter 2](02-microkernels.md#232-a-capability-is-a-reference-with-rights) |
 | Saltzer and Schroeder (1975) | Least privilege, economy of mechanism and complete mediation | [Chapter 6](06-construction.md), [chapter 11](11-security.md) |
 | Hardy, "The Confused Deputy" (1988) | The problem that facets and minted handles answer | [Chapter 2](02-microkernels.md#234-the-confused-deputy), [chapter 11](11-security.md#116-facets-authority-over-services) |
@@ -76,7 +76,7 @@ behavior kept and an inside replaced.
 Plan 9 shaped how erXos's names, files and windows work; how they
 look is erXos's own.
 
-| Source | What erXos took | Where |
+| Source | What erXos took, or the contrast it draws | Where |
 | --- | --- | --- |
 | Plan 9's namespaces and 9P (Pike and others 1993, 1995) | A private table from paths to file servers per domain, and one file protocol, 9P2000.L | [Chapter 14](14-files.md#141-a-path-is-the-face-of-a-capability) |
 | Plan 9's file conventions | State is a file to read, control a file to write | [Chapter 14](14-files.md#145-state-is-a-file-to-read-control-is-a-file-to-write) |
@@ -90,7 +90,7 @@ look is erXos's own.
 
 ## E.5 Live and language-based systems
 
-| Source | What erXos took | Where |
+| Source | What erXos took, or the contrast it draws | Where |
 | --- | --- | --- |
 | Genera, the Symbolics Lisp machine environment (Walker and others 1987) | A live machine, every object examinable and code patched as it runs; output bound to its value | [Chapter 21](21-live-machine.md#211-the-machine-is-an-object), [chapter 22](22-display.md#2224-output-that-remembers-its-value) |
 | Singularity (Hunt and Larus 2007; Aiken and others 2006) | Evidence that protection crossings, not safety checks, dominate the cost of isolation; hence many processes per address space | [Chapter 4](04-history.md#43-the-lineage), [chapter 8](08-kernel-interface.md#81-what-the-kernel-knows-and-what-it-does-not) |
@@ -106,17 +106,17 @@ look is erXos's own.
 
 ## E.6 Devices, storage, networks and radios
 
-| Source | What erXos took | Where |
+| Source | What erXos took, or the contrast it draws | Where |
 | --- | --- | --- |
 | OASIS, VIRTIO 1.2 (2022) | The device rings of QEMU's devices | [Chapter 15](15-devices.md) |
 | F2FS (Lee and others 2015) | The read-write file system's design, implemented in Erlang | [Chapter 16](16-storage.md#164-erxoss-f2fs) |
 | littlefs | The small file system that the storage domain runs as a NIF | [Chapter 16](16-storage.md#163-littlefs-in-the-storage-domain) |
-| Merkle's hash tree (1987) <!-- check: citation details --> | Each block of a read-only system image checked against one root hash | [Chapter 16](16-storage.md#162-read-only-system-images) |
+| Merkle's hash tree (1987) | Each block of a read-only system image checked against one root hash | [Chapter 16](16-storage.md#162-read-only-system-images) |
 | The Raspberry Pi firmware's `tryboot` | Updates through two slots and a trial boot | [Chapter 16](16-storage.md#166-updates-through-two-slots) |
 | OpenBSD's `bwfm(4)` | The WiFi driver's model, the chip's supplicant off | [Chapter 18](18-wifi.md#181-wifi-on-the-cyw43455) |
 | Fuchsia's WLAN stack | Policy apart from the state machine, its transitions written once | [Chapter 18](18-wifi.md#182-the-station-three-pure-parts) |
 | wpa_supplicant | The states of SAE's public half | [Chapter 18](18-wifi.md#183-keys) |
-| Cheshire and Baker, COBS (1999) <!-- check: citation details --> | The framing of the host link over a serial line | [Chapter 21](21-live-machine.md#214-code-from-the-host-named-by-its-hash) |
+| Cheshire and Baker, COBS (1999) | The framing of the host link over a serial line | [Chapter 21](21-live-machine.md#214-code-from-the-host-named-by-its-hash) |
 
 *Table E.6. Sources for devices and I/O
 ([design-wifi.md, Lineage](../design-wifi.md#lineage) holds the full
@@ -127,10 +127,11 @@ WiFi table).*
 Each failure or refused mechanism below shaped a rule of erXos.
 
 * **Scheduler activations and M:N threading** (Anderson and others
-  1991). Upcalls arrived at any point, and a preempted lock holder
-  could stall the scheduler; NetBSD 5.0 and FreeBSD 7.0 moved to one
-  kernel thread per user thread. erXos keeps two levels of scheduling but sends no upcall to a
-  thread that runs Erlang processes
+  1991). Upcalls arrived at any point, and a lock holder preempted by
+  an upcall had to be resumed specially before anything else could
+  run; NetBSD 5.0 and FreeBSD 7.0 moved to one kernel thread per user
+  thread. erXos keeps two levels of scheduling but sends no upcall to
+  a thread that runs Erlang processes
   ([chapter 4, section 4.2](04-history.md#42-thirty-years-of-two-level-scheduling),
   [chapter 9](09-processes.md)).
 * **Akaros** took a core away at any line, even under a lock. The
@@ -177,8 +178,7 @@ confirms carries a note for the book's checker.
 * Lawrie Brown and Dan Sahlin, "Extending Erlang for Safe Mobile Code
   Execution", ICICS 1999, LNCS 1726.
 * Stuart Cheshire and Mary Baker, "Consistent Overhead Byte Stuffing",
-  *IEEE/ACM Transactions on Networking* 7(2), 1999.
-  <!-- check: citation details -->
+  *IEEE/ACM Transactions on Networking* 7(2):159-172, 1999.
 * Russ Cox, Eric Grosse, Rob Pike, Dave Presotto and Sean Quinlan,
   "Security in Plan 9", USENIX Security 2002.
 * Jack Dennis and Earl Van Horn, "Programming Semantics for
@@ -208,7 +208,7 @@ confirms carries a note for the book's checker.
   Design and Implementation of the FreeBSD Operating System*, 2nd
   edition, Addison-Wesley, 2014.
 * Ralph Merkle, "A Digital Signature Based on a Conventional
-  Encryption Function", CRYPTO 1987. <!-- check: citation details -->
+  Encryption Function", CRYPTO '87, pp. 369-378.
 * OASIS, *Virtual I/O Device (VIRTIO) Version 1.2*, 2022.
 * Rob Pike, "8½, the Plan 9 Window System", Proceedings of the Summer
   1991 USENIX Conference.
