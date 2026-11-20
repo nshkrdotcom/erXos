@@ -1115,8 +1115,8 @@ static void
 pci_case(const char *name, const erx_pcie_function_t *report, uint32_t count)
 {
 	erx_dom_pci_refusal_t refusal = { .field = "none" };
-	uint8_t bytes[2][ERX_PCIE_FUNCTION_SIZE];
-	erx_dom_pci_record_t records[2];
+	uint8_t bytes[ERX_PCIE_FUNCTIONS_MAX][ERX_PCIE_FUNCTION_SIZE];
+	erx_dom_pci_record_t records[ERX_PCIE_FUNCTIONS_MAX];
 	erx_status_t status;
 
 	for (uint32_t at = 0; at < count; at++) {

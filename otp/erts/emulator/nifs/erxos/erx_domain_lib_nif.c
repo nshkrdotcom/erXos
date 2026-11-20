@@ -1299,6 +1299,7 @@ pci_report_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
 	/* The intake reads no record of a report past its bound. */
 	list = argv[1];
 	for (unsigned int at = 0; at < count && at < ERX_PCIE_FUNCTIONS_MAX; at++) {
+		/* A list of count cells, as enif_get_list_length found, has this one. */
 		(void)enif_get_list_cell(env, list, &head, &list);
 		records[at] = enif_inspect_binary(env, head, &record) ?
 		    (erx_dom_pci_record_t){ record.data, record.size } : (erx_dom_pci_record_t){ NULL, 0 };

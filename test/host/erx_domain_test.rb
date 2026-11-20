@@ -237,7 +237,7 @@ class ErxDomainTest < Minitest::Test
     # read no longer shows its holder, which the library clears at the end before it
     # reports it, sends no lowering, so the function goes on mastering for no holder.
     Fault.new(name: "a holder's rows forgotten before its end", file: File.join(APPLICATION, 'erx_devices_pci.erl'),
-              from: 'held := maps:merge(Held, Holding)', to: 'held := maps:merge(maps:with([], Held), Holding)',
+              from: 'end, Held,', to: 'end, maps:with([], Held),',
               tests: 'erx_devices_pci_tests',
               caught_by: 'a_holders_end_after_the_library_cleared_its_row_is_still_sent_test'),
     # One that passes the enumerator's answer on unread hands a term of the PCIe domain's

@@ -165,12 +165,8 @@ start_link(Opts) ->
 init(Opts) ->
     process_flag(trap_exit, true),
     Lib = library(maps:get(lib, Opts, erx_domain_lib)),
-    %% The code_objects service is the domain service's own (code_objects_row/0). The
-    %% PCIe services' facets stand in front of the service too, which outlives the device
-    %% service's PCIe process their callbacks find at each request (erx_pci_facet).
+    %% The code_objects service is the domain service's own (code_objects_row/0).
     ok = erx_facet:serve(code_objects, self()),
-    ok = erx_facet:serve(pci_bus, self()),
-    ok = erx_facet:serve(pci, self()),
     case principals(Lib, Opts) of
         {ok, Principals} ->
             {ok, booted(state(Lib, Principals, Opts)), {continue, boot}};

@@ -2292,10 +2292,14 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   front of the domain service and forwarding to the registered process), takes every domain's end from the domain
   service's forward, and answers `report` after `erx_domain:await_grant(pcie, D)`. Still to build: `answered` in the
   catalogue, written before the report's answer, and the restarted process beginning `synced` from it (it begins
-  `between` and goes `down` 5 s later while an answered incarnation lives); the hold at boot in `erx_domain_srv`;
+  `between` and goes `down` 5 s later while an answered incarnation lives, so a holder's end in that time lowers
+  only the library's setting and the function stays raised until the next PCIe start, and an end forwarded while the
+  process is restarting is dropped); the hold at boot in `erx_domain_srv`;
   `firmware`, which answers `{error, enotsup}` until `erx_domain_lib:pci_firmware/1` exists; the identity check
   of a reported function against its row's compatible string ("The catalogue and gives"); a system manifest
-  service row for each interface, with the manifest check's grantee rules; the `pcie` facet's mint in the PCIe
+  service row for each interface, with the manifest check's grantee rules, and with them the domain service's
+  `erx_facet:serve/2` of `pci_bus` and `pci` (the facet-names chokepoint refuses a service no manifest row declares;
+  `system_facet/4` already picks the two callbacks); the `pcie` facet's mint in the PCIe
   domain over `erx_facet`. The process and its facets have host tests only; the `pcie` QEMU suite covers the
   target. The BCM2711's bridge has its core (`erx_pcie_bcm2711_core`) and no driver module with `start` over a
   device, so the enumerator refuses its record (`no_driver_module`).

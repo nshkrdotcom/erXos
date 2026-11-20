@@ -25,21 +25,28 @@ not waited on; its answer, `{ok, Facet}`, answers the report with every
 setting and moves the core to `synced`, and any other answers
 `{error, unavailable}`.
 
-**The rows a holder held** are those the process last read from the
-library with that holder (`held`), read again at every request and
-report. An entry stays until its holder's end arrives, even when a later
-read no longer shows the holder, since the library clears a row's holder
-at the end before it reports it; so the lowering is sent for every row a
-living holder could have raised, and the forward of the end, which
-erx_domain_srv sends before it starts the holder's next incarnation,
-reaches the process before any request of that incarnation.
+**The rows a holder held** are those the process read from the library
+with that holder (`held`, by holder and then row), recorded at every read
+of the catalogue (read/1). A holder's entry goes only when its end
+arrives, whatever later reads show, since the library clears a row's
+holder at the end before it reports it, and the domain service may start
+the holder's next incarnation, which holds the row again, before the
+process takes the forwarded end; so the lowering is sent for every row a
+living holder could have raised.
+
+**After a restart** the process begins `between`, since the library keeps
+no `answered` yet (TODO.md), and goes `down` 5 s later; while the answered
+PCIe incarnation lives, a holder's end then lowers only the library's
+setting, and the function stays as it was until the next PCIe start.
 
 **A `pcie` call** is sent with gen_server:send_request/2 and a 2 s
 deadline. The end of the facet before it answered is the end of the
 incarnation it was made on; past the deadline the call is abandoned, its
 late answer dropped. An answer outside the interface (`ok`, `{ok, flr |
-none}`, `{error, Atom}`) is taken as `{error, failed}`, so no term of the
-PCIe domain's reaches a holder.
+none}`, or `{error, Reason}` with Reason one of the results "Refusals and
+error results" names for `pcie`) is taken as `{error, failed}`, the
+facet's own answer for a service that failed a request (erx_facet), so no
+term of the PCIe domain's reaches a holder.
 """.
 -behaviour(gen_server).
 
@@ -78,18 +85,18 @@ init(Opts) ->
               phase => {between, start}, waiting => [], held => #{},
               %% Outstanding pcie calls and report answers, by request id.
               calls => #{}, reports => #{}},
-    {_Devices, Read} = devices(State),
+    {_Devices, Read} = read(State),
     {ok, act({arm_down, start}, Read)}.
 
 handle_call({pci, Grantee, Operation}, From, #{phase := Phase, waiting := Waiting} = State) ->
-    {Devices, Read} = devices(State),
+    {Devices, Read} = read(State),
     Request = #{from => From, grantee => Grantee, operation => Operation},
     case erx_devices_pci_core:request(Request, Phase, Devices) of
         wait -> {noreply, Read#{waiting := Waiting ++ [Request]}};
         Actions -> {noreply, perform(Actions, Read)}
     end;
 handle_call({pci_bus, _D, targets}, _From, #{lib := Lib} = State) ->
-    {Devices, Read} = devices(State),
+    {Devices, Read} = read(State),
     {reply, erx_devices_pci_core:targets(catalogues(Lib), Devices), Read};
 handle_call({pci_bus, D, {report, Reported}}, From, State) ->
     {noreply, report(D, Reported, From, State)};
@@ -98,11 +105,14 @@ handle_call({pci_bus, _D, {firmware, _Bridge}}, _From, State) ->
     {reply, {error, enotsup}, State}.
 
 handle_cast({domain_ended, Id}, #{phase := Phase, held := Held} = State) ->
-    Rows = [Row || _Index := #{holder := Holder} = Row <- Held, Holder =:= Id],
+    {Rows, Kept} = case maps:take(Id, Held) of
+                       {ByIndex, Others} -> {maps:values(ByIndex), Others};
+                       error -> {[], Held}
+                   end,
+    %% The holder's lowerings go on the phase they were decided in, then the phase moves.
+    Lowered = perform(erx_devices_pci_core:holder_ended(Rows, Phase), State#{held := Kept}),
     {Next, Ended} = erx_devices_pci_core:incarnation_ended(Id, Phase),
-    Kept = maps:filter(fun(_Index, #{holder := Holder}) -> Holder =/= Id end, Held),
-    {noreply, perform(erx_devices_pci_core:holder_ended(Rows, Phase) ++ Ended,
-                      State#{phase := Next, held := Kept})}.
+    {noreply, perform(Ended, Lowered#{phase := Next})}.
 
 handle_info({timeout, _Timer, {down, Since}}, #{phase := Phase, waiting := Waiting} = State) ->
     {Next, Actions} = erx_devices_pci_core:down_timer(Since, Phase, Waiting),
@@ -126,7 +136,7 @@ handle_info(Message, State) ->
 %% The answer to a report: the intake per held bridge, the rows lowered, then the
 %% wait for the incarnation's pcie facet.
 report(D, Reported, From, #{lib := Lib, await := Await, reports := Reports} = State) ->
-    {Devices, Read} = devices(State),
+    {Devices, Read} = read(State),
     {PerBridge, Unheld} = erx_devices_pci_core:reports(Reported, catalogues(Lib)),
     [intake(Lib, Bridge, Records) || {Bridge, Records} <- PerBridge],
     [logger:notice("erx_devices_pci: a PCIe report names bridge ~b, which the library does not hold",
@@ -166,7 +176,7 @@ answer(Message, Pending) ->
     end.
 
 grant_answered({From, D}, {reply, {ok, Facet}}, #{waiting := Waiting} = State) ->
-    {Devices, Read} = devices(State),
+    {Devices, Read} = read(State),
     gen_server:reply(From, {ok, erx_devices_pci_core:settings(Devices)}),
     {Phase, Actions} = erx_devices_pci_core:answered(D, Facet, Waiting, Devices),
     perform(Actions, Read#{phase := Phase, waiting := []});
@@ -183,14 +193,15 @@ pcie_ended_or_answered(Then, _Id, {reply, Answer}, State) ->
     pcie_answered(Then, interface(Answer), State).
 
 pcie_answered(Then, Answer, #{phase := Phase, waiting := Waiting} = State) ->
-    {Devices, Read} = devices(State),
+    {Devices, Read} = read(State),
     {Actions, Again} = erx_devices_pci_core:pcie_answer(Then, Answer, Phase, Devices),
     perform(Actions, Read#{waiting := Waiting ++ [Request || Request <- [Again], Request =/= none]}).
 
 %% The enumerator's answer as the interface spells it; anything else is a failure.
 interface(ok) -> ok;
 interface({ok, Kind}) when Kind =:= flr; Kind =:= none -> {ok, Kind};
-interface({error, Reason}) when is_atom(Reason) -> {error, Reason};
+interface({error, Reason}) when Reason =:= gone; Reason =:= stuck; Reason =:= reset; Reason =:= busy;
+                                Reason =:= route; Reason =:= unknown -> {error, Reason};
 interface(_Answer) -> {error, failed}.
 
 perform(Actions, State) ->
@@ -218,17 +229,22 @@ act({arm_down, Since}, State) ->
 incarnation({synced, Id, _Facet}) -> Id.
 
 %% The library's device catalogue, and the state with every row a living holder
-%% holds recorded in held, the earlier entries kept until their holder's end.
-devices(#{lib := Lib, held := Held} = State) ->
+%% holds recorded in held under that holder, the earlier entries kept until
+%% their holder's end.
+read(#{lib := Lib, held := Held} = State) ->
     Devices = case Lib:devices() of
                   {ok, Read} -> Read;
                   {error, Reason} ->
                       logger:error("erx_devices_pci: the library's device catalogue is unreadable: ~0p", [Reason]),
                       []
               end,
-    Holding = #{Index => Row || #{index := Index, holder := Holder, place := Place} = Row <- Devices,
-                                is_integer(Holder), Place =/= none},
-    {Devices, State#{held := maps:merge(Held, Holding)}}.
+    Recorded = lists:foldl(fun(#{index := Index, holder := Holder} = Row, ByHolder) ->
+                                   maps:update_with(Holder, fun(Rows) -> Rows#{Index => Row} end,
+                                                    #{Index => Row}, ByHolder)
+                           end, Held,
+                           [Row || #{holder := Holder, place := Place} = Row <- Devices,
+                                   is_integer(Holder), Place =/= none]),
+    {Devices, State#{held := Recorded}}.
 
 catalogues(Lib) ->
     case Lib:pci_bridges() of

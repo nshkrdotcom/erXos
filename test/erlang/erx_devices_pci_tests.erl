@@ -52,6 +52,7 @@ serve(Test, Answer) ->
 
 %% The process over the stand-ins, its pcie facet answering Pcie(Call).
 started(Mode, Pcie) ->
+    flushed(),
     persistent_term:put({?MODULE, test}, self()),
     persistent_term:put({?MODULE, devices}, [row(Mode)]),
     Facet = server(Pcie),
@@ -62,6 +63,10 @@ started(Mode, Pcie) ->
                                                       end}),
     unlink(Pid),
     {Pid, Facet}.
+
+%% An earlier case's writes and calls, which may still be in the mailbox.
+flushed() ->
+    receive {library, _} -> flushed(); {called, _, _} -> flushed() after 0 -> ok end.
 
 stopped(Pid) ->
     exit(Pid, kill),
@@ -153,6 +158,21 @@ a_holders_end_after_the_library_cleared_its_row_is_still_sent_test() ->
     synced(Pid),
     ?assertEqual({mode, ?ROW, off}, library()),
     persistent_term:put({?MODULE, devices}, [(row(off))#{holder => none}]),
+    ?assertEqual({error, not_held}, gen_server:call(Pid, {pci, ?HOLDER, {open, ?PLACE}})),
+    erx_devices_pci:domain_ended(Pid, ?HOLDER),
+    receive {called, Facet, Call} -> ?assertEqual({set, ?PLACE, #{mode => off, route => none}}, Call)
+    after 1000 -> ?assert(false)
+    end,
+    stopped(Pid).
+
+%% The domain service may give the row to the holder's next incarnation before
+%% the process takes the end; a read showing the new holder must not lose the
+%% ended one's row.
+a_holders_end_after_its_next_incarnation_was_read_is_still_sent_test() ->
+    {Pid, Facet} = started(mastering, fun(_) -> ok end),
+    synced(Pid),
+    ?assertEqual({mode, ?ROW, off}, library()),
+    persistent_term:put({?MODULE, devices}, [(row(off))#{holder => ?HOLDER + 1}]),
     ?assertEqual({error, not_held}, gen_server:call(Pid, {pci, ?HOLDER, {open, ?PLACE}})),
     erx_devices_pci:domain_ended(Pid, ?HOLDER),
     receive {called, Facet, Call} -> ?assertEqual({set, ?PLACE, #{mode => off, route => none}}, Call)
