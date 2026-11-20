@@ -88,7 +88,7 @@ pieces_fit(const erx_dma_piece_t *pieces, uint32_t count, uint32_t size)
  * for a reset.
  */
 static bool
-pieces_ordered(const erx_dma_piece_t *pieces, uint32_t count)
+pieces_virtio_valid(const erx_dma_piece_t *pieces, uint32_t count)
 {
 	for (uint32_t index = 0; index < count; index++) {
 		if (pieces[index].length == 0 && !SEED_EMPTY_PIECE)
@@ -125,6 +125,7 @@ erx_split_ring_post(erx_split_ring_t *ring, const erx_dma_piece_t *pieces, uint3
 	erx_dma_publication_t publication = { .record_count = count, .records = records, .fills = fills };
 	uint32_t buffer, offset = 0;
 
+	/* The refusals in the order the header gives, which erx_device_post's callers see. */
 	if (count == 0 || count > ERX_DEVICE_CHAIN_MAX ||
 	    !pieces_fit(pieces, count, erx_dma_ledger_layout(&ring->ledger)->pool.size))
 		return (ERX_EINVAL);
@@ -132,7 +133,7 @@ erx_split_ring_post(erx_split_ring_t *ring, const erx_dma_piece_t *pieces, uint3
 		return (ERX_ECORRUPT);
 	if (!free_buffer(ring, &buffer))
 		return (ERX_EWOULDBLOCK);
-	if (!pieces_ordered(pieces, count))
+	if (!pieces_virtio_valid(pieces, count))
 		return (ERX_EINVAL);
 	/* Field by field over zeroed records, so the check sees no stale free value. */
 	bzero(records, sizeof(records));

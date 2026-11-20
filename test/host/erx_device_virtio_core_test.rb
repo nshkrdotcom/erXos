@@ -27,8 +27,14 @@ class ErxDeviceVirtioCoreTest < Minitest::Test
 
   # The seeds of the core, each a rule of virtio's left out: an empty piece posted; a piece the
   # device reads after one it writes; pieces laid over each other instead of end to end; a used
-  # len past what the chain let the device write answered.
-  SEEDS = %w[EMPTY_PIECE READ_AFTER_WRITE NOT_PACKED LEN_UNCHECKED].freeze
+  # len past what the chain let the device write answered. Each with the expectation of the
+  # harness that catches it.
+  SEEDS = {
+    'EMPTY_PIECE' => 'a post answers as the model says',
+    'READ_AFTER_WRITE' => 'a post answers as the model says',
+    'NOT_PACKED' => 'the pieces lie end to end',
+    'LEN_UNCHECKED' => 'the answers stop at the limits or at a malformed element'
+  }.freeze
 
   def test_state_machine
     output, status = run_harness
@@ -36,11 +42,11 @@ class ErxDeviceVirtioCoreTest < Minitest::Test
     assert_match(/^#{DONE}$/, output)
   end
 
-  SEEDS.each do |seed|
+  SEEDS.each do |seed, caught_by|
     define_method("test_seed_#{seed.downcase}") do
       output, status = run_harness("-DERX_DMA_SEED_#{seed}")
       refute status.success?, "#{seed} went unnoticed:\n#{output}"
-      assert_match(/^FAILED /, output)
+      assert_match(/^FAILED .*: #{Regexp.escape(caught_by)}$/, output)
     end
   end
 

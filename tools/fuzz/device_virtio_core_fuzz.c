@@ -21,13 +21,13 @@
  *
  * The harness keeps its own record of every chain posted, by its buffer, and checks after each
  * step: a post passes only with 1..ERX_DEVICE_CHAIN_MAX pieces, none empty, none read after one
- * written, fitting a buffer together; its descriptors, decoded from the sequence's stores, name
- * a buffer no posted chain holds, from its first byte, end to end, each piece's length and
- * direction; every range the sequence writes or cleans lies inside the memory; a refused post
- * changes nothing. A completion answers only chains posted and not answered, with their tags,
- * from the first byte the device may write and no further than the chain let it, in no more
- * answers than the elements given or acquired, stopping once bytes_max are answered; a broken
- * ring refuses everything until its reset.
+ * written, fitting a buffer together, and always when it is valid and the ring has room; its
+ * descriptors, decoded from the sequence's stores, name a buffer no posted chain holds, from its
+ * first byte, end to end, each piece's length and direction; every range the sequence writes or
+ * cleans lies inside the memory; a refused post changes nothing. A completion answers only chains
+ * posted and not answered, with their tags, from the first byte the device may write and no
+ * further than the chain let it, in no more answers than the elements given or acquired, stopping
+ * once bytes_max are answered; a broken ring refuses everything until its reset.
  */
 
 #include <stdbool.h>
@@ -48,6 +48,8 @@ typedef struct shadow_chain {
 	bool		posted;
 	uint64_t	tag;
 	uint32_t	head;
+	uint32_t	desc_count;
+	uint32_t	avail_slot;
 	uint64_t	written;	/* the memory offset of the first byte the device may write */
 	uint32_t	writable;
 } shadow_chain_t;
@@ -60,7 +62,7 @@ typedef struct script {
 static erx_split_ring_t ring, before;
 static erx_dma_layout_t layout;
 static shadow_chain_t shadow[ERX_DEVICE_QUEUE_SIZE_MAX];
-static uint32_t posted_count, acquired;
+static uint32_t posted_count, acquired, posts;
 static uint16_t consumed;
 static uint64_t next_tag;
 static const uint8_t out_bytes[ERX_DEVICE_BUFFER_MAX];
@@ -92,7 +94,7 @@ static void
 forget_all(void)
 {
 	memset(shadow, 0, sizeof(shadow));
-	posted_count = acquired = 0;
+	posted_count = acquired = posts = 0;
 	consumed = 0;
 }
 
@@ -112,13 +114,34 @@ pieces_valid(const erx_dma_piece_t *pieces, uint32_t count)
 	return (total <= layout.pool.size);
 }
 
+/*
+ * Whether the ring has room for a chain of `count`: a free buffer, as many free descriptors and
+ * the next available entry no posted chain holds.
+ */
+static bool
+room(uint32_t count)
+{
+	const erx_dma_ledger_t *const ledger = erx_split_ring_ledger(&ring);
+	const uint32_t size = layout.tables[erx_dma_ledger_table(ledger, ERX_STRUCTURE_VIRTQ_DESC)].count;
+	uint32_t held = 0;
+
+	for (uint32_t buffer = 0; buffer < layout.pool.count; buffer++) {
+		if (!shadow[buffer].posted)
+			continue;
+		held += shadow[buffer].desc_count;
+		if (shadow[buffer].avail_slot == posts % size)
+			return (false);
+	}
+	return (posted_count < layout.pool.count && size - held >= count);
+}
+
 /* The posted chain's descriptors, as the sequence stores them, against its pieces. */
 static void
 check_posted(const erx_dma_sequence_t *sequence, const erx_dma_piece_t *pieces, uint32_t count, uint64_t tag)
 {
 	const erx_dma_table_t *const desc = &layout.tables[erx_dma_ledger_table(erx_split_ring_ledger(&ring),
 	    ERX_STRUCTURE_VIRTQ_DESC)];
-	shadow_chain_t chain = { .posted = true, .tag = tag };
+	shadow_chain_t chain = { .posted = true, .tag = tag, .desc_count = count, .avail_slot = posts % desc->count };
 	uint64_t buffer_start = 0, at = 0;
 	uint32_t buffer = 0, fills = 0;
 	bool writing = false;
@@ -169,6 +192,7 @@ check_posted(const erx_dma_sequence_t *sequence, const erx_dma_piece_t *pieces, 
 		chain.written = at;
 	shadow[buffer] = chain;
 	posted_count++;
+	posts++;
 }
 
 static void
@@ -193,6 +217,7 @@ post(script_t *script)
 		check(memcmp(&before, &ring, sizeof(ring)) == 0);
 		check(status == ERX_EINVAL || status == ERX_EWOULDBLOCK || status == ERX_ECORRUPT);
 		check(status != ERX_ECORRUPT || broken);
+		check(broken || !pieces_valid(pieces, count) || !room(count));
 		return;
 	}
 	check(!broken && pieces_valid(pieces, count));

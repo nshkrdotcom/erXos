@@ -63,9 +63,9 @@ typedef struct erx_split_ring_answer {
 } erx_split_ring_answer_t;
 
 /*
- * An empty ring over `layout`, a split ring's (erx_dma_layout_split_ring): its descriptor table,
- * available ring, used ring and at most ERX_DEVICE_QUEUE_SIZE_MAX buffers. False, writing
- * nothing, for another layout or one erx_dma_ledger_make refuses.
+ * An empty ring over `layout`, a split ring's as erx_dma_layout_split_ring makes it. False, writing
+ * nothing, for a layout erx_dma_ledger_make refuses, one lacking a descriptor table, an available
+ * ring or a used ring, or one of more than ERX_DEVICE_QUEUE_SIZE_MAX buffers.
  */
 bool	erx_split_ring_make(erx_split_ring_t *ring, const erx_dma_layout_t *layout);
 /* The device's idle report after a reset: every chain ends and the ring is whole again. */
@@ -90,7 +90,11 @@ int	erx_split_ring_post(erx_split_ring_t *ring, const erx_dma_piece_t *pieces, u
  * breaks it.
  */
 int	erx_split_ring_acquire(erx_split_ring_t *ring, uint16_t index, uint32_t most, uint32_t *count);
-/* Where the `k`th element the acquisition covered lies, to read whole; empty past them. */
+/*
+ * Where the `k`th element not yet consumed of those the acquisition covered lies, to read whole;
+ * empty past them. erx_split_ring_complete's elements[k] is what this gave for k when that call
+ * began.
+ */
 erx_dma_range_t	erx_split_ring_element(const erx_split_ring_t *ring, uint32_t k);
 
 /*
