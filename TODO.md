@@ -9003,6 +9003,11 @@ document's "residual risks accepted" paragraph.
   any compatible but the PL011's row of `erx_uart_kinds`.
 * [Low] docs/design-fiasco.md, "Device records": the physical record is said to name the page run around its
   registers after CLOCK; the root writes no such words.
+* [Low] Fiasco backend, `erx_info` of `ERX_INFO_BUDGET` (`liberx/backend/fiasco/service.c`, `service_info`):
+  any task asking about its own budget is answered with the page pool's machine-wide used count
+  (`erx_fiasco_vm_used_pages`), so every domain learns how much memory all the others hold. The design reports a
+  budget's own `used` from its record ([design-fiasco.md](docs/design-fiasco.md#reporting-a-budget)); until
+  records count pages, the field is reported unsupported rather than as the pool's count.
 
 ## Planned features
 
