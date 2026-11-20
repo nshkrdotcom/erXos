@@ -720,7 +720,7 @@ and the domain library share one definition.
 | `bus`, `device`, `function` | u8 each | its place; the requester id follows |
 | `state` | u8 | `ready`; `not_ready` (its bridge's `ready` held it back); `unplaced` (a memory BAR did not fit or did not size, or it appeared beside the bridge's layouts); `unsupported` (a header type, level or root-port BAR the walk does not take); `malformed` (its snapshot did not parse) |
 | `vendor`, `device_id` | u16 each | its identity |
-| `class` | u32 | base class, subclass and programming interface, bits 23 to 0 |
+| `class_code` | u32 | base class, subclass and programming interface, bits 23 to 0 |
 | `revision`, `header` | u8 each | revision; header type without the multifunction bit |
 | `subsystem_vendor`, `subsystem` | u16 each | |
 | `pin` | u8 | 0 for none, 1 to 4 for INTA to INTD |
@@ -749,7 +749,8 @@ and `bus_last` u8; `flags` u8 (closed); `windows`, at most
 (64-bit, prefetchable, I/O), from the tree's `ranges`; and, for a closed
 bridge, `places`, every place below its root port that its platform
 record lists, each a bus, device, function and pin, at most
-`pcie_closed_max` (4).
+`pcie_closed_max` (4). A window of size 0 is unused, and so is a place
+on bus 0, which lies above every root port.
 
 Limits: `pcie_bridges_max` 2 per domain, `pcie_functions_max` 32 per
 bridge. The generator checks each layout's offsets and size; the C reader

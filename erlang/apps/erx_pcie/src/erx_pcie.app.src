@@ -1,0 +1,12 @@
+%% Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
+%% SPDX-License-Identifier: BSD-2-Clause
+
+%% The PCIe enumerator (docs/design-pcie.md). Its pure cores build and are tested on
+%% the host: erx_pcie_cfg, the configuration-space parser and BAR sizing.
+{application, erx_pcie,
+ [{description, "erXos PCIe enumerator"},
+  {vsn, "1"},
+  {modules, [erx_pcie_cfg]},
+  {registered, []},
+  {applications, [kernel, stdlib, erx]},
+  {env, []}]}.

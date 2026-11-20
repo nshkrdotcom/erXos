@@ -25,6 +25,7 @@ include formats/input.txt
 include formats/mbr.txt
 include formats/usb.txt
 include formats/xhci.txt
+include formats/pcie.txt
 include medium.txt
 include formats/erofs.txt
 include formats/f2fs.txt
