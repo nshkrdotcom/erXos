@@ -107,9 +107,11 @@ jobs:
         with:
           ruby-version: '4.0'
       - name: Install build tools
+        # A stalled package mirror fails the request and retries, not the run.
+        timeout-minutes: 10
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends clang lld default-jre-headless make xz-utils
+          sudo apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
+          sudo apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends clang lld default-jre-headless make xz-utils
           rustup target add wasm32-unknown-unknown
           # erXos's tools run each subprocess under GNU timeout by its Homebrew name.
           sudo ln -sf /usr/bin/timeout /usr/local/bin/gtimeout
