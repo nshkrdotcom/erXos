@@ -324,12 +324,15 @@ erx_fiasco_task_create_body(uint32_t caller, const erx_fiasco_space_create_reque
 {
 	const uint64_t flags = request->flags, cap_limit = request->cap_limit;
 	task_create_t create = { .request = request };
+	int status;
 
 	if ((flags & ~(uint64_t)ERX_SPACE_JIT) != 0 || cap_limit < 2 || cap_limit > ERX_CAPS_MAX)
 		return (ERX_EINVAL);
-	if (task_space_named(caller, request->parent, &create.parent) != ERX_OK ||
-	    erx_fiasco_gate_named(caller, request->fault, &create.gate) != ERX_OK)
-		return (ERX_ETYPE);
+	status = task_space_named(caller, request->parent, &create.parent);
+	if (status == ERX_OK)
+		status = erx_fiasco_gate_named(caller, request->fault, &create.gate);
+	if (status != ERX_OK)
+		return (status);
 	/* A stopped space takes no child, so a stop's walk of the tree below it is final. */
 	if (erx_fiasco_task(create.parent)->state != ERX_FIASCO_TASK_LIVE)
 		return (ERX_EINVAL);
@@ -463,7 +466,8 @@ task_image_slice(uint32_t entry, uint32_t *slice)
  * and entry counts from the run's first, ERX_ERANGE past its last; a handle that names
  * no slice is the lookup's refusal, ERX_ETYPE for another kind. The root alone may name
  * ERX_CAP_NULL, the whole archive, and then entry is the archive's own index: how the
- * domain library maps a runtime's image entry, which no slice may hold.
+ * domain library maps a runtime's image entry, which no slice may hold. ERX_CAP_NULL
+ * from any other task is ERX_EINVAL, before the lookup.
  */
 static int
 task_image_entry(uint32_t caller, uint64_t image, uint64_t entry, uint32_t *index)
@@ -471,8 +475,8 @@ task_image_entry(uint32_t caller, uint64_t image, uint64_t entry, uint32_t *inde
 	uint32_t object, first, count;
 	int status;
 
-	if (caller == ERX_FIASCO_TASK_ROOT && image == ERX_CAP_NULL) {
-		if (entry > UINT32_MAX)
+	if (image == ERX_CAP_NULL) {
+		if (caller != ERX_FIASCO_TASK_ROOT || entry > UINT32_MAX)
 			return (ERX_EINVAL);
 		*index = (uint32_t)entry;
 		return (ERX_OK);

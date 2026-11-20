@@ -15,13 +15,26 @@
 
 /*
  * Object records and handle tables (docs/design-fiasco.md, "Handles"). The service
- * keeps one table of object records and one handle table per task. A handle is an
- * entry's index plus one, so 0 stays ERX_CAP_NULL. An entry
- * names a record and the generation the record had when the entry was made. A record's
- * generation grows each time the record is freed, and a record whose generation is at
- * its last value is retired instead, never to be taken again, so an entry whose object
- * has gone never names a successor: it answers ERX_ESTALE until it is closed. A handle
- * carries no rights.
+ * keeps one table of object records and one handle table per task. A handle's value is
+ * laid out as every capability value is (abi/kernel.txt, "Capability values and
+ * tables"): bits 0-23 hold the entry's number, its index plus one, so 0 stays
+ * ERX_CAP_NULL, and bits 24-63 the entry's generation. An entry names a record and the
+ * generation the record had when the entry was made, and holds the rights its holder
+ * has to the object.
+ *
+ * Two generations, each advanced by the one free that changes it. A close advances the
+ * entry's, so the value its holder had names nothing from then on; a record's free
+ * advances the record's, so an entry made for the object that went names nothing
+ * either, until its holder closes it. An entry or a record that reaches the last value
+ * of its generation retires at its free and is never taken again, so no generation
+ * wraps back to a value a holder may still keep. Free entries are taken first in,
+ * first out, and a table grows by a page only when none is free.
+ *
+ * Every use of a handle goes through erx_backend_handle_find, or erx_backend_handle_close
+ * for the holder's own entry, and so through the one lookup: the entry's number within
+ * the table, the entry in use and the value's generation equal to the entry's, then
+ * the record live at the entry's record generation, each failing ERX_ESTALE; then the
+ * kind, ERX_ETYPE; then the rights, ERX_ERIGHTS.
  *
  * Every decision is here and every effect is the caller's: the core says which record
  * a create took, or that a close left a record with no handle and no mapping, and the
@@ -45,6 +58,9 @@ typedef enum erx_backend_object_kind {
 /* For erx_backend_handle_find: any live kind will do. */
 #define ERX_BACKEND_OBJECT_ANY	UINT32_MAX
 
+/* The last value of an entry's generation, the most a handle's generation bits hold. */
+#define ERX_BACKEND_HANDLE_GENERATION_LAST	((UINT64_C(1) << ERX_CAP_GENERATION_BITS) - 1)
+
 /* A record's budget when it is charged to the root's own budget, which has no record. */
 #define ERX_BACKEND_BUDGET_ROOT	UINT64_MAX
 
@@ -60,13 +76,18 @@ typedef struct erx_backend_object {
 } erx_backend_object_t;
 
 typedef struct erx_backend_handle_entry {
-	uint32_t	object;		/* the record's index plus one, or 0 for a free entry */
-	uint32_t	generation;	/* the record's generation when the entry was made */
+	uint64_t	generation;		/* the entry's own: a handle's bits 24-63 while in use, the next one's while free */
+	uint32_t	object;			/* the record's index plus one, or 0 for an entry not in use */
+	uint32_t	object_generation;	/* the record's generation when the entry was made */
+	uint32_t	rights;			/* the holder's erXos rights to the object (ERX_HR_*) */
+	uint32_t	next_free;		/* on the free list: the next free entry's number, or 0 at its tail */
 } erx_backend_handle_entry_t;
 
 typedef struct erx_backend_handles {
 	erx_backend_grow_table_t entries;	/* erx_backend_handle_entry_t */
 	uint32_t	limit;			/* the most entries, the cap_limit its space was made with */
+	uint32_t	free_first;		/* the free list's head and tail, as entry numbers, or 0 when empty */
+	uint32_t	free_last;
 } erx_backend_handles_t;
 
 /* The object records, empty, whose pages come from source. */
@@ -106,37 +127,51 @@ bool	erx_backend_object_unreferenced(const erx_backend_object_t *);
  */
 void	erx_backend_handles_init(erx_backend_handles_t *, uint32_t limit, const erx_backend_grow_pages_t *source);
 
-/* One past the largest handle the table has room for: handles 1 to this, exclusive, may name entries. */
-uint64_t	erx_backend_handles_end(const erx_backend_handles_t *);
+/* How many of the table's entries are in use. */
+uint32_t	erx_backend_handles_used(const erx_backend_handles_t *);
 
 /*
- * Adds an entry naming the live record at index, in the lowest free entry, and counts
- * it in the record. ERX_ELIMIT when every entry up to the limit is in use; ERX_ENOMEM
- * when the table cannot grow to the next one.
+ * Adds an entry naming the live record at index with these rights, in the free list's
+ * first entry, and counts it in the record. ERX_ELIMIT when every entry up to the
+ * limit is in use; ERX_ENOMEM when the list is empty and the table cannot grow.
  */
 int	erx_backend_handle_add(erx_backend_grow_table_t *objects, erx_backend_handles_t *, uint32_t index,
-	    uint64_t *handle) ERX_WARN_UNUSED_RESULT;
+	    uint32_t rights, uint64_t *handle) ERX_WARN_UNUSED_RESULT;
 
 /*
  * The record a handle names, which must be of kind, or of any live kind for
- * ERX_BACKEND_OBJECT_ANY. ERX_EINVAL for a value that is no entry in use; ERX_ESTALE
- * when the object it named has gone; ERX_ETYPE for a live object of another kind.
+ * ERX_BACKEND_OBJECT_ANY, through an entry holding every right of needed. ERX_ESTALE
+ * for a value that names no entry in use at its generation, or whose object has gone;
+ * ERX_ETYPE for a live object of another kind; ERX_ERIGHTS for an entry that lacks a
+ * right of needed.
  */
 int	erx_backend_handle_find(const erx_backend_grow_table_t *objects, const erx_backend_handles_t *, uint64_t handle,
-	    uint32_t kind, uint32_t *index) ERX_WARN_UNUSED_RESULT;
+	    uint32_t kind, uint32_t needed, uint32_t *index) ERX_WARN_UNUSED_RESULT;
 
-/* Adds a second entry naming what handle names: erx_backend_handle_find's refusals, then erx_backend_handle_add's. */
+/*
+ * Adds a second entry naming what handle names, at handle's rights:
+ * erx_backend_handle_find's refusals, then erx_backend_handle_add's.
+ */
 int	erx_backend_handle_dup(erx_backend_grow_table_t *objects, erx_backend_handles_t *, uint64_t handle,
 	    uint64_t *copy) ERX_WARN_UNUSED_RESULT;
 
 /*
- * Frees handle's entry. ERX_EINVAL for a value that is no entry in use. A stale entry
- * is freed too, since nothing else ever would. *freed is set to whether the entry was
- * the last reference to a live record, which the caller then frees. *index is set to
- * the record whenever the entry named a live one, and left alone for a stale entry.
+ * Frees handle's entry, whether or not its object still lives: the lookup's entry step
+ * alone, so ERX_ESTALE for a value that names no entry in use at its generation. The
+ * entry takes a holder off its record only while the record is the object the entry
+ * was made for. *freed is set to whether the entry was the last reference to a live
+ * record, which the caller then frees. *index is set to the record whenever the entry
+ * named a live one, and left alone for a stale entry.
  */
 int	erx_backend_handle_close(erx_backend_grow_table_t *objects, erx_backend_handles_t *, uint64_t handle,
 	    bool *freed, uint32_t *index) ERX_WARN_UNUSED_RESULT;
+
+/*
+ * Closes every entry in use, as erx_backend_handle_close does, and calls unheld with
+ * each live record whose last reference that was, which the caller then frees.
+ */
+void	erx_backend_handles_close_all(erx_backend_grow_table_t *objects, erx_backend_handles_t *,
+	    void (*unheld)(uint32_t index));
 
 /* Gives the table's pages back; its entries must all have been closed. */
 void	erx_backend_handles_clear(erx_backend_handles_t *);

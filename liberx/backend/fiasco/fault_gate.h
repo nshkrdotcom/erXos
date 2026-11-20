@@ -33,8 +33,9 @@ const char	*erx_fiasco_gate_init(void);
 
 /*
  * What erx_space_create's fault names, for the caller: ERX_CAP_NULL is no gate, 0 in
- * *gate; a gate the caller holds is its record's index plus one; anything else is
- * ERX_ETYPE.
+ * *gate; a gate the caller holds is its record's index plus one, but ERX_ETYPE for one
+ * whose index the gate table cannot name; any other value is erx_fiasco_object_find's
+ * refusal, ERX_ETYPE for another kind.
  */
 int	erx_fiasco_gate_named(uint32_t caller, uint64_t fault, uint32_t *gate) ERX_WARN_UNUSED_RESULT;
 

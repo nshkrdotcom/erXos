@@ -286,7 +286,7 @@ vm_call(uint64_t space, erx_backend_vm_op_t op, uint64_t addr, uint64_t size, ui
 	int status;
 
 	if (space != ERX_CAP_SELF)
-		return (ERX_EINVAL);
+		return (ERX_ESTALE);
 	(void)pthread_once(&vm_once, vm_init);
 	(void)pthread_mutex_lock(&vm_lock);
 	status = erx_backend_vm_call(&vm_table, &vm_effects, &request, reserved);
@@ -372,7 +372,7 @@ erx_vm_map(uint64_t space, uint64_t addr, uint64_t size, uint64_t mem, uint64_t 
 	(void)mem;
 	(void)offset;
 	(void)prot;
-	return (ERX_EINVAL);
+	return (ERX_ESTALE);
 }
 
 /* No device exists here, so a device's address would be made up: docs/design-fiasco.md, "The hosted backend". */
@@ -418,7 +418,7 @@ erx_mem_dma_addr(uint64_t mem, uint64_t offset, uint64_t *addr)
 	(void)mem;
 	(void)offset;
 	(void)addr;
-	return (ERX_EINVAL);
+	return (ERX_ESTALE);
 }
 
 /*

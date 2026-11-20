@@ -636,7 +636,7 @@ bind_objects(void)
 		fail("erx: irq: no group FAILED\n");
 	root_group = group;
 	/* A second group has no home, so nothing holds it but its handle, which its destroy leaves stale. */
-	if (erx_group_create(0, 0, &gone) != ERX_OK || erx_irq_bind(0, gone, 1) != ERX_EINVAL ||
+	if (erx_group_create(0, 0, &gone) != ERX_OK || erx_irq_bind(0, gone, 1) != ERX_ESTALE ||
 	    erx_object_destroy(gone) != ERX_OK)
 		fail("erx: irq: a second group was not a homeless record FAILED\n");
 	if (pl011 == NULL)
@@ -662,9 +662,9 @@ bind_objects(void)
 	if (erx_irq_bind(irq_uart, group, LABEL_UART) != ERX_OK || erx_irq_bind(irq_soft, group, LABEL_SOFT) != ERX_OK ||
 	    erx_irq_bind(irq_other, group, LABEL_OTHER) != ERX_OK)
 		fail("erx: irq: the service refused a bind FAILED\n");
-	if (erx_irq_bind(77, group, 0) != ERX_EINVAL ||
-	    erx_irq_bind(irq_soft, gone, 0) != ERX_ESTALE || erx_irq_ack(77) != ERX_EINVAL ||
-	    erx_irq_trigger(77) != ERX_EINVAL)
+	if (erx_irq_bind(UINT64_C(1) << 40, group, 0) != ERX_ESTALE ||
+	    erx_irq_bind(irq_soft, gone, 0) != ERX_ESTALE || erx_irq_ack(UINT64_C(1) << 40) != ERX_ESTALE ||
+	    erx_irq_trigger(UINT64_C(1) << 40) != ERX_ESTALE)
 		fail("erx: irq: a malformed call was not refused FAILED\n");
 	if (erx_group_take_ready(1) != ERX_ETYPE)
 		fail("erx: irq: a worker's take_ready was not refused FAILED\n");

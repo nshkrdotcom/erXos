@@ -225,7 +225,7 @@ int
 erx_irq_bind(uint64_t irq, uint64_t group_handle, uint64_t label)
 {
 	irq_object_t *object;
-	int status = ERX_EINVAL;
+	int status = ERX_ESTALE;
 
 	(void)pthread_mutex_lock(&irq_mutex);
 	object = irq_find(irq);
@@ -251,7 +251,7 @@ erx_irq_trigger(uint64_t irq)
 	label = bound ? object->label : 0;
 	(void)pthread_mutex_unlock(&irq_mutex);
 	if (object == NULL)
-		return (ERX_EINVAL);
+		return (ERX_ESTALE);
 	if (!bound)
 		return (ERX_OK);
 	erx_backend_trace_write(ERX_TRACE_EVENT_IRQ_DELIVER, label, 0, 0);
@@ -267,17 +267,20 @@ erx_irq_ack(uint64_t irq)
 	(void)pthread_mutex_lock(&irq_mutex);
 	object = irq_find(irq);
 	(void)pthread_mutex_unlock(&irq_mutex);
-	return (object != NULL ? ERX_OK : ERX_EINVAL);
+	return (object != NULL ? ERX_OK : ERX_ESTALE);
 }
 
 int
 erx_group_configure(uint64_t group_handle)
 {
-	if (group_handle != ERX_CAP_SELF)
+	if (group_handle == ERX_CAP_NULL)
 		return (ERX_EINVAL);
+	if (group_handle != ERX_CAP_SELF)
+		return (ERX_ESTALE);
 	return (erx_backend_group_configure(erx_utcb_self(), &group_cpuset));
 }
 
+/* A local body with no lookup, as natively: another group is ERX_EINVAL (the call table). */
 int
 erx_group_info(uint64_t group_handle)
 {

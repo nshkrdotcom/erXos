@@ -42,6 +42,7 @@
 static erx_backend_handles_t *object_handles_of(uint32_t);
 static int	object_pass_item(uint32_t, uint32_t, erx_msg_item_t *);
 static int	object_pass_type(uint32_t, erx_ktype_t *);
+static erx_ktype_t object_type(uint32_t);
 static void	object_later(uint32_t);
 static void	object_release(uint32_t);
 static void	object_unheld(uint32_t);
@@ -84,13 +85,9 @@ void
 erx_fiasco_object_task_close(uint32_t task)
 {
 	erx_backend_handles_t *const handles = object_handles_of(task);
-	const uint64_t end = erx_backend_handles_end(handles);
 	uint32_t index;
-	bool freed;
 
-	for (uint64_t handle = 1; handle < end; handle++)
-		if (erx_backend_handle_close(&object_records, handles, handle, &freed, &index) == ERX_OK && freed)
-			object_later(index);
+	erx_backend_handles_close_all(&object_records, handles, object_later);
 	erx_backend_handles_clear(handles);
 	for (index = 0; index < erx_backend_grow_table_capacity(&object_records); index++) {
 		const erx_backend_object_t *const record = erx_backend_object_at(&object_records, index);
@@ -138,7 +135,8 @@ erx_fiasco_object_create(uint32_t task, uint32_t kind, uint64_t budget, erx_fias
 		return (status);
 	status = fill(index, request);
 	if (status == ERX_OK) {
-		status = erx_backend_handle_add(&object_records, object_handles_of(task), index, handle);
+		status = erx_backend_handle_add(&object_records, object_handles_of(task), index,
+		    erx_ktype_rights_mask(object_type(kind)), handle);
 		if (status != ERX_OK)
 			object_release(index);
 	}
@@ -164,20 +162,15 @@ uint32_t
 erx_fiasco_object_handles_used(uint32_t task)
 {
 	const erx_backend_handles_t *const handles = object_handles_of(task);
-	const erx_backend_handle_entry_t *entry;
-	uint32_t used = 0;
 
-	for (uint32_t index = 0; handles != NULL && index < erx_backend_grow_table_capacity(&handles->entries); index++) {
-		entry = erx_backend_grow_table_at(&handles->entries, index);
-		used += entry != NULL && entry->object != 0;
-	}
-	return (used);
+	return (handles != NULL ? erx_backend_handles_used(handles) : 0);
 }
 
+/* The lookup with no right needed: no call names the right it needs. */
 int
 erx_fiasco_object_find(uint32_t task, uint64_t handle, uint32_t kind, uint32_t *index)
 {
-	return (erx_backend_handle_find(&object_records, object_handles_of(task), handle, kind, index));
+	return (erx_backend_handle_find(&object_records, object_handles_of(task), handle, kind, 0, index));
 }
 
 void
@@ -301,8 +294,8 @@ erx_fiasco_cap_pass_body(uint32_t task, uint32_t caller, const erx_fiasco_cap_pa
 /*
  * One item, one of from's handles with its descriptor, passed into to's table and
  * rewritten as its result: a copy adds an entry naming the same record, and a move
- * then closes from's entry. The rights reported are the mask's within the type's, less
- * DESTROY, since only an object's creator destroys it; no entry records them. A sent
+ * then closes from's entry. The new entry records the rights the item reports, the
+ * mask's within the type's, less DESTROY, since only an object's creator destroys it. A sent
  * item that names the type its handle must have is a checked pass, which nothing here
  * offers.
  */
@@ -312,7 +305,7 @@ object_pass_item(uint32_t from, uint32_t to, erx_msg_item_t *item)
 	const uint32_t mask = (uint32_t)erx_msg_item_desc_rights_get(item->desc);
 	const uint64_t move = erx_msg_item_desc_move_get(item->desc);
 	uint64_t sent = 0, value = ERX_CAP_NULL;
-	uint32_t index, closed;
+	uint32_t index, closed, rights;
 	erx_ktype_t type = 0;
 	bool freed;
 	int status;
@@ -327,8 +320,10 @@ object_pass_item(uint32_t from, uint32_t to, erx_msg_item_t *item)
 	status = erx_fiasco_object_find(from, item->cap.raw, ERX_BACKEND_OBJECT_ANY, &index);
 	if (status == ERX_OK)
 		status = object_pass_type(erx_backend_object_at(&object_records, index)->kind, &type);
-	if (status == ERX_OK)
-		status = erx_backend_handle_add(&object_records, object_handles_of(to), index, &value);
+	if (status == ERX_OK) {
+		rights = mask & erx_ktype_rights_mask(type) & ~ERX_HR_DESTROY;
+		status = erx_backend_handle_add(&object_records, object_handles_of(to), index, rights, &value);
+	}
 	if (status != ERX_OK)
 		return (status);
 	/*
@@ -339,7 +334,7 @@ object_pass_item(uint32_t from, uint32_t to, erx_msg_item_t *item)
 		(void)erx_backend_handle_close(&object_records, object_handles_of(from), item->cap.raw, &freed, &closed);
 	item->desc = 0;
 	(void)erx_msg_item_desc_type_set(&item->desc, type);
-	(void)erx_msg_item_desc_rights_set(&item->desc, mask & erx_ktype_rights_mask(type) & ~ERX_HR_DESTROY);
+	(void)erx_msg_item_desc_rights_set(&item->desc, rights);
 	item->cap.raw = value;
 	return (ERX_OK);
 }
@@ -355,26 +350,37 @@ object_pass_item(uint32_t from, uint32_t to, erx_msg_item_t *item)
 static int
 object_pass_type(uint32_t kind, erx_ktype_t *type)
 {
+	if (kind == ERX_BACKEND_OBJECT_GATE || kind == ERX_BACKEND_OBJECT_SPACE)
+		return (ERX_ENOTSUP);
+	*type = object_type(kind);
+	return (ERX_OK);
+}
+
+/*
+ * The ABI type of a live record's kind, whose whole rights mask a create records in
+ * its entry. Every kind has its case, so a new one is a build warning here.
+ */
+static erx_ktype_t
+object_type(uint32_t kind)
+{
 	switch ((erx_backend_object_kind_t)kind) {
 	case ERX_BACKEND_OBJECT_MEMORY:
-		*type = ERX_K_MEMORY;
-		return (ERX_OK);
-	case ERX_BACKEND_OBJECT_IRQ:
-		*type = ERX_K_IRQ;
-		return (ERX_OK);
-	case ERX_BACKEND_OBJECT_BUDGET:
-		*type = ERX_K_BUDGET;
-		return (ERX_OK);
-	case ERX_BACKEND_OBJECT_GROUP:
-		*type = ERX_K_GROUP;
-		return (ERX_OK);
+		return (ERX_K_MEMORY);
 	case ERX_BACKEND_OBJECT_GATE:
+		return (ERX_K_GATE);
 	case ERX_BACKEND_OBJECT_SPACE:
+		return (ERX_K_SPACE);
+	case ERX_BACKEND_OBJECT_BUDGET:
+		return (ERX_K_BUDGET);
+	case ERX_BACKEND_OBJECT_GROUP:
+		return (ERX_K_GROUP);
+	case ERX_BACKEND_OBJECT_IRQ:
+		return (ERX_K_IRQ);
 	case ERX_BACKEND_OBJECT_FREE:
 	case ERX_BACKEND_OBJECT_RETIRED:
 		break;
 	}
-	return (ERX_ENOTSUP);
+	return (0);
 }
 
 static erx_backend_handles_t *
