@@ -46,7 +46,7 @@ erx_split_ring_make(erx_split_ring_t *ring, const erx_dma_layout_t *layout, cons
 	erx_dma_ledger_t ledger;
 	int desc, avail, used;
 
-	if (layout->pool.count > ERX_DEVICE_QUEUE_SIZE_MAX || !erx_dma_ledger_make(&ledger, layout, regions))
+	if (layout->pools[0].count > ERX_DEVICE_QUEUE_SIZE_MAX || !erx_dma_ledger_make(&ledger, layout, regions))
 		return (false);
 	desc = erx_dma_ledger_table(&ledger, ERX_STRUCTURE_VIRTQ_DESC);
 	avail = erx_dma_ledger_table(&ledger, ERX_STRUCTURE_VIRTQ_AVAIL);
@@ -134,7 +134,7 @@ pieces_virtio_valid(const erx_dma_piece_t *pieces, uint32_t count)
 static bool
 free_buffer(const erx_split_ring_t *ring, uint32_t *buffer)
 {
-	const uint32_t count = erx_dma_ledger_layout(&ring->ledger)->pool.count;
+	const uint32_t count = erx_dma_ledger_layout(&ring->ledger)->pools[0].count;
 
 	for (uint32_t candidate = 0; candidate < count; candidate++) {
 		if (!erx_dma_ledger_buffer_held(&ring->ledger, candidate)) {
@@ -157,7 +157,7 @@ erx_split_ring_post(erx_split_ring_t *ring, const erx_dma_piece_t *pieces, uint3
 
 	/* The refusals in the order the header gives, which erx_device_post's callers see. */
 	if (count == 0 || count > ERX_DEVICE_CHAIN_MAX ||
-	    !pieces_fit(pieces, count, erx_dma_ledger_layout(&ring->ledger)->pool.size) ||
+	    !pieces_fit(pieces, count, erx_dma_ledger_layout(&ring->ledger)->pools[0].size) ||
 	    !pieces_virtio_valid(pieces, count))
 		return (ERX_EINVAL);
 	if (ring->broken)
@@ -221,7 +221,7 @@ int
 erx_split_ring_complete(erx_split_ring_t *ring, const erx_report_record_t *elements, uint32_t count,
     uint64_t bytes_max, erx_split_ring_answer_t *answers, uint32_t *done)
 {
-	const erx_dma_pool_t *const pool = &erx_dma_ledger_layout(&ring->ledger)->pool;
+	const erx_dma_pool_t *const pool = &erx_dma_ledger_layout(&ring->ledger)->pools[0];
 	const uint32_t used = used_table(ring);
 	uint64_t answered = 0;
 

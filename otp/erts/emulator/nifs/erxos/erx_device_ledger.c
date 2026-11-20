@@ -29,6 +29,16 @@
 #else
 #define SEED_RELEASE_TWICE	false
 #endif
+#ifdef ERX_DMA_SEED_BIND_WHILE_HELD
+#define SEED_BIND_WHILE_HELD	true
+#else
+#define SEED_BIND_WHILE_HELD	false
+#endif
+#ifdef ERX_DMA_SEED_RING_NO_LINK
+#define SEED_RING_NO_LINK	true
+#else
+#define SEED_RING_NO_LINK	false
+#endif
 #ifdef ERX_DMA_SEED_ANY_REGION
 #define SEED_ANY_REGION		true
 #else
@@ -100,8 +110,9 @@ erx_dma_layout_split_ring(uint32_t size, uint32_t buffer_size, uint32_t granule,
 			  .region = used_offset, .region_length = pool_offset - used_offset,
 			  .first = used_offset + ERX_VIRTQ_RING_HEAD_SIZE, .count = size, .stride = ERX_VIRTQ_USED_ELEM_SIZE },
 		},
-		.pool = { .first = pool_offset, .count = size, .size = buffer_size,
-			  .stride = (uint32_t)round_up(buffer_size, granule) },
+		.pool_count = 1,
+		.pools = { { .first = pool_offset, .count = size, .size = buffer_size,
+			  .stride = (uint32_t)round_up(buffer_size, granule) } },
 	};
 	return (true);
 }
@@ -137,13 +148,28 @@ table_valid(const erx_dma_layout_t *layout, uint32_t index, uint64_t *end)
 {
 	const erx_dma_table_t *table = &layout->tables[index];
 
-	if (!region_valid(layout, table->region, table->region_length, end) || table->structure == ERX_REFERS_DATA ||
-	    table->count == 0 || table->stride == 0 || table->first < table->region ||
-	    !erx_dma_inside(table->first - table->region, (uint64_t)table->count * table->stride, table->region_length))
+	const bool described = table->placing != ERX_DMA_PLACED_IN_ORDER && !device_writes(layout, index);
+
+	*end = 0;
+	if (!region_valid(layout, table->region, table->region_length, end))
 		return (false);
-	for (uint32_t other = 0; other < index; other++) {
-		if (layout->tables[other].structure == table->structure)
-			return (false);
+	/* A ring holds its link and at least one description. */
+	return (table->structure != ERX_REFERS_DATA && table->count != 0 && table->stride != 0 &&
+	    table->first >= table->region &&
+	    erx_dma_inside(table->first - table->region, (uint64_t)table->count * table->stride, table->region_length) &&
+	    (table->placing != ERX_DMA_PLACED_RING || table->count >= 2) &&
+	    (!described || table->pool < layout->pool_count));
+}
+
+/* Whether the `count` regions of `starts` and `ends` share no byte, in whatever order they lie. */
+static bool
+disjoint(const uint64_t *starts, const uint64_t *ends, uint32_t count)
+{
+	for (uint32_t one = 0; one < count; one++) {
+		for (uint32_t other = 0; other < one; other++) {
+			if (starts[one] < ends[other] && starts[other] < ends[one])
+				return (false);
+		}
 	}
 	return (true);
 }
@@ -158,22 +184,34 @@ widest_address(const erx_dma_layout_t *layout)
 static bool
 layout_valid(const erx_dma_layout_t *layout)
 {
-	const erx_dma_pool_t *pool = &layout->pool;
 	const uint64_t widest = widest_address(layout);
+	uint64_t starts[ERX_DMA_TABLES_MAX + ERX_DMA_POOLS_MAX], ends[ERX_DMA_TABLES_MAX + ERX_DMA_POOLS_MAX];
 	uint64_t end = 0, last;
+	uint32_t regions = 0;
 
 	if (!power_of_two(layout->granule) || layout->address_bits == 0 || layout->address_bits > 64 ||
-	    layout->table_count > ERX_DMA_TABLES_MAX)
+	    layout->table_count > ERX_DMA_TABLES_MAX || layout->pool_count == 0 || layout->pool_count > ERX_DMA_POOLS_MAX)
 		return (false);
-	for (uint32_t index = 0; index < layout->table_count; index++) {
-		if (!table_valid(layout, index, &end))
+	for (uint32_t index = 0; index < layout->table_count; index++, regions++) {
+		if (!table_valid(layout, index, &ends[regions]))
 			return (false);
+		starts[regions] = layout->tables[index].region;
 	}
 	/* Each buffer is a region of its own, one stride long, so whole granules make them disjoint. */
-	if (pool->count == 0 || pool->size == 0 || pool->size > pool->stride ||
-	    (!SEED_NO_GRANULE_TEST && (pool->stride & (layout->granule - 1)) != 0) ||
-	    !region_valid(layout, pool->first, (uint64_t)pool->count * pool->stride, &end))
+	for (uint32_t index = 0; index < layout->pool_count; index++, regions++) {
+		const erx_dma_pool_t *pool = &layout->pools[index];
+
+		ends[regions] = 0;
+		if (pool->count == 0 || pool->size == 0 || pool->size > pool->stride ||
+		    (!SEED_NO_GRANULE_TEST && (pool->stride & (layout->granule - 1)) != 0) ||
+		    !region_valid(layout, pool->first, (uint64_t)pool->count * pool->stride, &ends[regions]))
+			return (false);
+		starts[regions] = pool->first;
+	}
+	if (!disjoint(starts, ends, regions))
 		return (false);
+	for (uint32_t index = 0; index < regions; index++)
+		end = ends[index] > end ? ends[index] : end;
 	return (!__builtin_add_overflow(layout->device_base, end - 1, &last) && last <= widest);
 }
 
@@ -224,6 +262,123 @@ erx_dma_ledger_reset(erx_dma_ledger_t *ledger)
 	ledger->live = 0;
 	bzero(ledger->positions, sizeof(ledger->positions));
 	bzero(ledger->acquired, sizeof(ledger->acquired));
+	bzero(ledger->bound, sizeof(ledger->bound));
+}
+
+uint32_t
+erx_dma_layout_buffers(const erx_dma_layout_t *layout)
+{
+	uint32_t count = 0;
+
+	for (uint32_t pool = 0; pool < layout->pool_count; pool++)
+		count += layout->pools[pool].count;
+	return (count);
+}
+
+const erx_dma_pool_t *
+erx_dma_layout_buffer_pool(const erx_dma_layout_t *layout, uint32_t buffer, uint32_t *pool)
+{
+	for (uint32_t index = 0; index < layout->pool_count; index++) {
+		if (buffer < layout->pools[index].count) {
+			*pool = index;
+			return (&layout->pools[index]);
+		}
+		buffer -= layout->pools[index].count;
+	}
+	return (NULL);
+}
+
+/* A buffer of the layout's: its pool and its place there exist. */
+uint64_t
+erx_dma_layout_buffer_offset(const erx_dma_layout_t *layout, uint32_t buffer, uint64_t offset)
+{
+	uint32_t index = 0;
+
+	for (; index + 1 < layout->pool_count && buffer >= layout->pools[index].count; index++)
+		buffer -= layout->pools[index].count;
+	return (layout->pools[index].first + (uint64_t)buffer * layout->pools[index].stride + offset);
+}
+
+/* Whether a holding holds a record of `table`. */
+static bool
+table_held(const erx_dma_ledger_t *ledger, uint32_t table)
+{
+	return (erx_dma_ledger_free_records(ledger, table) != ledger->layout.tables[table].count);
+}
+
+bool
+erx_dma_ledger_bind(erx_dma_ledger_t *ledger, uint32_t table, uint32_t endpoint)
+{
+	if (endpoint == 0 || table >= ledger->layout.table_count ||
+	    ledger->layout.tables[table].placing != ERX_DMA_PLACED_RING || ledger->bound[table] != 0 ||
+	    (!SEED_BIND_WHILE_HELD && table_held(ledger, table)))
+		return (false);
+	ledger->bound[table] = endpoint;
+	/* The first record, on lap 0, of cycle state 1; the sequencer zeroes the ring with it. */
+	ledger->positions[table] = (erx_dma_position_t){ 0, 0 };
+	return (true);
+}
+
+bool
+erx_dma_ledger_unbind(erx_dma_ledger_t *ledger, uint32_t table)
+{
+	if (table >= ledger->layout.table_count || ledger->bound[table] == 0 || table_held(ledger, table))
+		return (false);
+	ledger->bound[table] = 0;
+	return (true);
+}
+
+uint32_t
+erx_dma_ledger_binding(const erx_dma_ledger_t *ledger, uint32_t table)
+{
+	return (table < ledger->layout.table_count ? ledger->bound[table] : 0);
+}
+
+int
+erx_dma_ledger_bound_table(const erx_dma_ledger_t *ledger, uint32_t endpoint)
+{
+	int found = -1;
+
+	for (uint32_t table = 0; table < ledger->layout.table_count && endpoint != 0; table++) {
+		if (ledger->bound[table] != endpoint)
+			continue;
+		if (found >= 0)
+			return (-1);
+		found = (int)table;
+	}
+	return (found);
+}
+
+/* The cycle state on lap `lap` of a ring: 1 on lap 0, where a binding starts it, toggled by each link. */
+static uint32_t
+ring_cycle(uint32_t lap)
+{
+	return (~lap & 1u);
+}
+
+uint32_t
+erx_dma_ledger_ring_run(const erx_dma_ledger_t *ledger, uint32_t table, uint32_t descriptions,
+    erx_dma_ring_step_t steps[ERX_DMA_RING_STEPS_MAX])
+{
+	uint32_t index, lap, link, count = 0;
+
+	if (table >= ledger->layout.table_count || ledger->layout.tables[table].placing != ERX_DMA_PLACED_RING ||
+	    descriptions == 0 || descriptions > ERX_DMA_HELD_RECORDS_MAX)
+		return (0);
+	index = ledger->positions[table].index;
+	lap = ledger->positions[table].lap;
+	link = ledger->layout.tables[table].count - 1;
+	for (uint32_t description = 0; description <= descriptions; description++) {
+		/* The link where a description would land on it, and where the run ends just before it. */
+		if (index == link && !(SEED_RING_NO_LINK && description == descriptions)) {
+			steps[count++] = (erx_dma_ring_step_t){ { table, index }, ring_cycle(lap), true };
+			index = 0;
+			lap++;
+		}
+		if (description < descriptions)
+			steps[count++] = (erx_dma_ring_step_t){ { table, index++ }, ring_cycle(lap), false };
+	}
+	return (count);
 }
 
 /* The region of `regions` named `name`, or NULL. */
@@ -362,9 +517,11 @@ advance(erx_dma_ledger_t *ledger, uint32_t table, uint32_t records)
 }
 
 /*
- * Whether `holding` may begin, and how many records it takes of each table placed in order:
- * every record a table's that no holding holds, named once, not the device's, and, in a table
- * placed in order, the next one from its position; every buffer the pool's and unheld.
+ * Whether `holding` may begin, and how many records it takes of each table placed in order or as
+ * a ring: every record a table's that no holding holds, named once, not the device's, and, in a
+ * table placed in order or as a ring, one of the next `taken` from its position, so, named once,
+ * they are those next ones in whatever order the holding lists them (its head first); every
+ * buffer one of the layout's and unheld.
  */
 static bool
 holding_valid(const erx_dma_ledger_t *ledger, const erx_dma_holding_t *holding, uint32_t taken[ERX_DMA_TABLES_MAX])
@@ -373,10 +530,15 @@ holding_valid(const erx_dma_ledger_t *ledger, const erx_dma_holding_t *holding, 
 		return (false);
 	for (uint32_t record = 0; record < holding->record_count; record++) {
 		const erx_dma_place_t place = holding->records[record];
-		const erx_dma_table_t *table;
 
 		if (place.table >= ledger->layout.table_count)
 			return (false);
+		taken[place.table] += ledger->layout.tables[place.table].placing != ERX_DMA_PLACED_FREE;
+	}
+	for (uint32_t record = 0; record < holding->record_count; record++) {
+		const erx_dma_place_t place = holding->records[record];
+		const erx_dma_table_t *table;
+
 		table = &ledger->layout.tables[place.table];
 		if (place.index >= table->count || device_writes(&ledger->layout, place.table) ||
 		    (!SEED_HOLD_WHILE_HELD && erx_dma_ledger_record_held(ledger, place)))
@@ -385,17 +547,15 @@ holding_valid(const erx_dma_ledger_t *ledger, const erx_dma_holding_t *holding, 
 			if (same_place(holding->records[earlier], place))
 				return (false);
 		}
-		if (table->placing == ERX_DMA_PLACED_IN_ORDER) {
-			/* Records named once and at most count of them, so the sum stays below 2 * count. */
-			if (place.index != (ledger->positions[place.table].index + taken[place.table]) % table->count)
-				return (false);
-			taken[place.table]++;
-		}
+		/* Named once, so at most count of a table: its distance from the position is below count. */
+		if (table->placing != ERX_DMA_PLACED_FREE &&
+		    (place.index + table->count - ledger->positions[place.table].index) % table->count >= taken[place.table])
+			return (false);
 	}
 	for (uint32_t index = 0; index < holding->buffer_count; index++) {
 		const uint32_t buffer = holding->buffers[index];
 
-		if (buffer >= ledger->layout.pool.count ||
+		if (buffer >= erx_dma_layout_buffers(&ledger->layout) ||
 		    (!SEED_HOLD_WHILE_HELD && erx_dma_ledger_buffer_held(ledger, buffer)))
 			return (false);
 	}

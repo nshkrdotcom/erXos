@@ -19,7 +19,10 @@
 
 _Static_assert(sizeof(erx_virtq_desc_t) <= ERX_DMA_STORE_BYTES_MAX &&
     sizeof(erx_virtio_gpu_mem_entry_t) <= ERX_DMA_STORE_BYTES_MAX, "every record the sequencer encodes fits a store");
-_Static_assert(ERX_DMA_TABLES_MAX <= ERX_DMA_ZEROS_MAX && ERX_DMA_TABLES_MAX <= ERX_DMA_CLEANS_MAX,
+_Static_assert(sizeof(erx_xhci_trb_normal_t) <= ERX_DMA_STORE_BYTES_MAX, "a TRB fits a store");
+/* The split ring's three tables, the only layout an install takes. */
+#define SPLIT_RING_TABLES	3u
+_Static_assert(SPLIT_RING_TABLES <= ERX_DMA_ZEROS_MAX && SPLIT_RING_TABLES <= ERX_DMA_CLEANS_MAX,
     "an install zeroes and cleans every table");
 
 #ifdef ERX_DMA_SEED_INSTALL_NOT_ZEROED
@@ -37,6 +40,12 @@ _Static_assert(ERX_DMA_TABLES_MAX <= ERX_DMA_ZEROS_MAX && ERX_DMA_TABLES_MAX <= 
 #else
 #define SEED_INSTALL_UNCLEANED	false
 #endif
+#ifdef ERX_DMA_SEED_FIRST_CYCLE_LIVE
+#define SEED_FIRST_CYCLE_LIVE	true
+#else
+#define SEED_FIRST_CYCLE_LIVE	false
+#endif
+
 #ifdef ERX_DMA_SEED_NO_ZEROS
 #define SEED_NO_ZEROS		true
 #else
@@ -47,7 +56,7 @@ _Static_assert(ERX_DMA_TABLES_MAX <= ERX_DMA_ZEROS_MAX && ERX_DMA_TABLES_MAX <= 
 static uint64_t
 buffer_offset(const erx_dma_layout_t *layout, uint32_t buffer, uint64_t offset)
 {
-	return (layout->pool.first + (uint64_t)buffer * layout->pool.stride + offset);
+	return (erx_dma_layout_buffer_offset(layout, buffer, offset));
 }
 
 static uint64_t
@@ -75,8 +84,11 @@ zero_gaps(const erx_dma_layout_t *layout, const erx_dma_publication_t *publicati
 {
 	uint64_t cursor = 0;
 
-	while (cursor < layout->pool.size) {
-		uint64_t covered = cursor, next = layout->pool.size;
+	uint32_t pool;
+	const uint64_t size = erx_dma_layout_buffer_pool(layout, buffer, &pool)->size;
+
+	while (cursor < size) {
+		uint64_t covered = cursor, next = size;
 
 		for (uint32_t index = 0; index < publication->fill_count; index++) {
 			const erx_dma_fill_t *fill = &publication->fills[index];
@@ -127,13 +139,18 @@ free_record(const erx_dma_ledger_t *ledger, uint32_t table, const erx_dma_place_
 
 /*
  * One description's record, whole, through its meaning's encoder: its references' addresses
- * from its names and the layout, and the chain's link to `next` when the run goes on. False for
- * a meaning the sequencer has no encoder for yet, or a value its encoder refuses.
+ * from its names and the layout, the chain's link to `next` when the run goes on, and a TRB's
+ * cycle bit `cycle`. False for a meaning the sequencer has no encoder for yet, or a value its
+ * encoder refuses.
  */
 static bool
 encode(const erx_dma_layout_t *layout, const erx_dma_description_t *description, erx_dma_place_t place,
-    const erx_dma_place_t *next, erx_dma_store_t *store)
+    const erx_dma_place_t *next, uint32_t cycle, erx_dma_store_t *store)
 {
+	/* A TRB names at most one buffer, its data; one that names none has no address place. */
+	const uint64_t data = description->name_count == 0 ? 0 : layout->device_base +
+	    buffer_offset(layout, description->names[0].buffer, description->names[0].offset);
+
 	*store = (erx_dma_store_t){ .offset = record_offset(layout, place) };
 	switch (description->meaning) {
 	case ERX_MEANING_VIRTQ_DESC: {
@@ -151,9 +168,117 @@ encode(const erx_dma_layout_t *layout, const erx_dma_description_t *description,
 		memcpy(store->bytes, &record, sizeof(record));
 		return (true);
 	}
+	case ERX_MEANING_XHCI_TRB_NORMAL: {
+		const erx_xhci_trb_normal_placed_t placed = { .buffer = data, .control_cycle = cycle };
+		erx_xhci_trb_normal_t record;
+
+		if (!erx_xhci_trb_normal_encode(&record, &description->described.xhci_trb_normal, &placed))
+			return (false);
+		store->length = sizeof(record);
+		memcpy(store->bytes, &record, sizeof(record));
+		return (true);
+	}
+	case ERX_MEANING_XHCI_TRB_DATA: {
+		const erx_xhci_trb_data_placed_t placed = { .buffer = data, .control_cycle = cycle };
+		erx_xhci_trb_data_t record;
+
+		if (!erx_xhci_trb_data_encode(&record, &description->described.xhci_trb_data, &placed))
+			return (false);
+		store->length = sizeof(record);
+		memcpy(store->bytes, &record, sizeof(record));
+		return (true);
+	}
+	case ERX_MEANING_XHCI_TRB_SETUP: {
+		const erx_xhci_trb_setup_placed_t placed = { .control_cycle = cycle };
+		erx_xhci_trb_setup_t record;
+
+		if (!erx_xhci_trb_setup_encode(&record, &description->described.xhci_trb_setup, &placed))
+			return (false);
+		store->length = sizeof(record);
+		memcpy(store->bytes, &record, sizeof(record));
+		return (true);
+	}
+	case ERX_MEANING_XHCI_TRB_STATUS: {
+		const erx_xhci_trb_status_placed_t placed = { .control_cycle = cycle };
+		erx_xhci_trb_status_t record;
+
+		if (!erx_xhci_trb_status_encode(&record, &description->described.xhci_trb_status, &placed))
+			return (false);
+		store->length = sizeof(record);
+		memcpy(store->bytes, &record, sizeof(record));
+		return (true);
+	}
 	default:
 		return (false);
 	}
+}
+
+/* A ring's link at `step`, back to the ring's first record, with the cycle state of its lap. */
+static bool
+encode_link(const erx_dma_layout_t *layout, erx_dma_ring_step_t step, erx_dma_store_t *store)
+{
+	const erx_xhci_trb_link_placed_t placed = {
+		.segment_segment_pointer = layout->device_base + layout->tables[step.place.table].first,
+		.control_cycle = step.cycle,
+	};
+	erx_xhci_trb_link_t record;
+
+	if (!erx_xhci_trb_link_encode(&record, &placed))
+		return (false);
+	*store = (erx_dma_store_t){ .offset = record_offset(layout, step.place), .length = sizeof(record) };
+	memcpy(store->bytes, &record, sizeof(record));
+	return (true);
+}
+
+/*
+ * A ring's run (docs/design-device-dma.md, "Publication"): each description at the next position
+ * the ledger gives, with the cycle state there, a link it reaches among them; the first written
+ * with the other cycle bit, so the device takes none of the run before the activation, the store
+ * of the first's control word with its own. Every meaning of a ring activates on the one bit of
+ * that word, which the generator holds for a structure's meanings. Its places begin with the
+ * head, the last description, which the report of the TD's end names.
+ */
+static erx_dma_verdict_t
+place_ring(const erx_dma_ledger_t *ledger, const erx_dma_publication_t *publication, uint32_t table,
+    erx_dma_place_t *places, uint32_t *count, erx_dma_sequence_t *out)
+{
+	const erx_dma_layout_t *layout = erx_dma_ledger_layout(ledger);
+	erx_dma_ring_step_t steps[ERX_DMA_RING_STEPS_MAX];
+	const uint32_t taken = erx_dma_ledger_ring_run(ledger, table, publication->record_count, steps);
+	uint32_t description = 0;
+	erx_dma_store_t live;
+
+	*count = 1;
+	for (uint32_t step = 0; step < taken; step++) {
+		erx_dma_store_t *const store = &out->stores[out->store_count];
+		const bool first = description == 0 && !steps[step].link;
+
+		if (steps[step].link) {
+			if (!encode_link(layout, steps[step], store))
+				return (ERX_DMA_BREAKS_MEANINGS);
+			places[(*count)++] = steps[step].place;
+		} else {
+			const erx_dma_description_t *const record = &publication->records[description];
+
+			if (!encode(layout, record, steps[step].place, NULL,
+			    first && !SEED_FIRST_CYCLE_LIVE ? !steps[step].cycle : steps[step].cycle, store) ||
+			    (first && !encode(layout, record, steps[step].place, NULL, steps[step].cycle, &live)))
+				return (ERX_DMA_BREAKS_MEANINGS);
+			if (++description == publication->record_count)
+				places[0] = steps[step].place;
+			else
+				places[(*count)++] = steps[step].place;
+		}
+		if (first) {
+			out->activation.kind = ERX_DMA_ACTIVATE_STORE;
+			out->activation.store = (erx_dma_store_t){ .offset = live.offset + ERX_XHCI_TRB_NORMAL_OFF_CONTROL,
+			    .length = sizeof(uint32_t) };
+			memcpy(out->activation.store.bytes, live.bytes + ERX_XHCI_TRB_NORMAL_OFF_CONTROL, sizeof(uint32_t));
+		}
+		add_range(out->cleans, &out->clean_count, store->offset, store->length);
+		out->store_count++;
+	}
+	return (ERX_DMA_PASSES);
 }
 
 /*
@@ -223,7 +348,7 @@ install(const erx_dma_ledger_t *ledger, erx_dma_sequence_t *sequence)
 	const int used = erx_dma_ledger_table(ledger, ERX_STRUCTURE_VIRTQ_USED);
 	erx_dma_sequence_t out = { 0 };
 
-	if (desc < 0 || avail < 0 || used < 0)
+	if (desc < 0 || avail < 0 || used < 0 || layout->table_count != SPLIT_RING_TABLES)
 		return (ERX_DMA_BREAKS_CALLS);
 	for (uint32_t table = 0; table < layout->table_count; table++) {
 		const erx_dma_table_t *const at = &layout->tables[table];
@@ -252,24 +377,33 @@ erx_dma_publish(erx_dma_ledger_t *ledger, const erx_dma_publication_t *publicati
 	erx_dma_place_t places[ERX_DMA_HELD_RECORDS_MAX];
 	uint32_t buffers[ERX_DMA_HELD_BUFFERS_MAX], buffer_count, count = 0;
 	erx_dma_sequence_t out = { 0 };
-	bool activated = false;
+	bool activated = false, on_ring = false;
+	uint32_t ring, pool;
 
 	if (verdict != ERX_DMA_PASSES)
 		return (verdict);
 	if (publication->call == ERX_DMA_PUBLISH_INSTALL)
 		return (install(ledger, sequence));
-	/* The check passed: every record is in a table placed free, with room for the run. */
-	for (uint32_t record = 0; record < publication->record_count; record++) {
-		const uint32_t table = (uint32_t)erx_dma_ledger_table(ledger, publication->records[record].structure);
+	/* The check passed: every record is in one ring, or in tables placed free, with room for the run. */
+	ring = (uint32_t)erx_dma_run_table(ledger, publication, publication->records[0].structure);
+	if (layout->tables[ring].placing == ERX_DMA_PLACED_RING) {
+		const erx_dma_verdict_t placed = place_ring(ledger, publication, ring, places, &count, &out);
+
+		if (placed != ERX_DMA_PASSES)
+			return (placed);
+		activated = on_ring = true;
+	}
+	for (uint32_t record = 0; !on_ring && record < publication->record_count; record++) {
+		const uint32_t table = (uint32_t)erx_dma_run_table(ledger, publication, publication->records[record].structure);
 
 		places[count] = (erx_dma_place_t){ table, free_record(ledger, table, places, count) };
 		count++;
 	}
-	for (uint32_t record = 0; record < publication->record_count; record++) {
+	for (uint32_t record = 0; !on_ring && record < publication->record_count; record++) {
 		const bool chained = record + 1 < publication->record_count && places[record + 1].table == places[record].table;
 
 		if (!encode(layout, &publication->records[record], places[record], chained ? &places[record + 1] : NULL,
-		    &out.stores[out.store_count]))
+		    0, &out.stores[out.store_count]))
 			return (ERX_DMA_BREAKS_MEANINGS);
 		add_range(out.cleans, &out.clean_count, out.stores[out.store_count].offset,
 		    out.stores[out.store_count].length);
@@ -294,7 +428,8 @@ erx_dma_publish(erx_dma_ledger_t *ledger, const erx_dma_publication_t *publicati
 	for (uint32_t index = 0; index < buffer_count; index++) {
 		if (!SEED_NO_ZEROS)
 			zero_gaps(layout, publication, buffers[index], &out);
-		add_range(out.cleans, &out.clean_count, buffer_offset(layout, buffers[index], 0), layout->pool.stride);
+		add_range(out.cleans, &out.clean_count, buffer_offset(layout, buffers[index], 0),
+		    erx_dma_layout_buffer_pool(layout, buffers[index], &pool)->stride);
 	}
 	for (uint32_t index = 0; index < publication->fill_count; index++) {
 		const erx_dma_fill_t *const fill = &publication->fills[index];
@@ -385,4 +520,24 @@ bool
 erx_dma_consume(erx_dma_ledger_t *ledger, uint32_t reports, const erx_dma_holding_t *holding)
 {
 	return (erx_dma_ledger_release_holding(ledger, reports, holding));
+}
+
+bool
+erx_dma_bind(erx_dma_ledger_t *ledger, uint32_t table, uint32_t endpoint, erx_dma_sequence_t *sequence)
+{
+	const erx_dma_layout_t *layout = erx_dma_ledger_layout(ledger);
+	erx_dma_sequence_t out = { 0 };
+	erx_dma_ring_step_t link;
+
+	if (table >= layout->table_count || layout->tables[table].placing != ERX_DMA_PLACED_RING)
+		return (false);
+	/* The link on lap 0, where the binding starts the ring, so its cycle bit is that lap's state. */
+	link = (erx_dma_ring_step_t){ { table, layout->tables[table].count - 1 }, 1, true };
+	if (!encode_link(layout, link, &out.stores[0]) || !erx_dma_ledger_bind(ledger, table, endpoint))
+		return (false);
+	out.store_count = 1;
+	add_range(out.zeros, &out.zero_count, layout->tables[table].region, layout->tables[table].region_length);
+	add_range(out.cleans, &out.clean_count, layout->tables[table].region, layout->tables[table].region_length);
+	*sequence = out;
+	return (true);
 }

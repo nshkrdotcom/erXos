@@ -470,6 +470,34 @@ the ledger through accessors (which buffers are free, a ring's
 positions, a queue's live transfers, whether an endpoint is closed and
 its state) and states no writer itself.
 
+**Many tables of one structure, and rings placed in order.** A layout
+may hold several tables of one structure, as the TRB form holds one
+transfer ring per queue block, and the regions of its tables and pools
+may lie in any order, disjoint. Its buffers lie in **pools**, each of
+one size and stride, numbered across the layout; a table that
+descriptions fill names its pool, the buffers of its binding: virtio's
+descriptor table the one pool, a transfer ring its block's. A name of a
+buffer outside its record's table's pool breaks the bindings rule. A run
+describes records of one table: of the one table of its structure, or,
+where the layout holds several, of the table the ledger binds to the
+endpoint the publication names, which must be bound to it alone. A table
+is placed free (virtio's descriptors), in order by the sequencer alone
+(virtio's available ring), or as a **ring**, whose descriptions take its
+next positions: its last record is the sequencer's link, which a run
+takes where it reaches it, and where it ends just before it, so the
+position never rests there; the cycle state at a position is 1 on the
+lap a binding started and toggles with each lap. The room rule asks
+every position a run takes, its links included, to be unheld, so a wrap
+never reuses a held TRB. A binding is one transition of the ledger,
+refused unless the ring is bound to no endpoint and holds no record; it
+returns the position to the first record on a new lap of cycle state 1,
+and the sequencer zeroes the ring and writes its link with it. A
+holding's head, the record its ending report names, is a chain's first
+descriptor and a TRB run's last description, the TD's last TRB, which
+its success or short packet names; the report's device address names a
+record only at the start of one, by the layout's one map from address
+to record ([Releases](#releases)).
+
 A region reaches its device's table by the one transition that adds a
 persistent region, at the region's making. It refuses, changing
 nothing, a name the table already holds with other values, more regions

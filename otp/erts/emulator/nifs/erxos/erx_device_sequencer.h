@@ -154,4 +154,13 @@ const erx_dma_holding_t	*erx_dma_report_holding(const erx_dma_ledger_t *ledger, 
  */
 bool	erx_dma_consume(erx_dma_ledger_t *ledger, uint32_t reports, const erx_dma_holding_t *holding);
 
+/*
+ * The binding of ring `table` to `endpoint` (docs/design-device-dma.md, "The ledger"), the part of
+ * a binding command's publication that initialises the ring: the ledger binds it
+ * (erx_dma_ledger_bind), and `sequence` zeroes its region, writes its link on lap 0 and cleans the
+ * region, with no activation of its own; the command's publication activates after it. False,
+ * changing nothing, for a table that is not a ring or a binding the ledger refuses.
+ */
+bool	erx_dma_bind(erx_dma_ledger_t *ledger, uint32_t table, uint32_t endpoint, erx_dma_sequence_t *sequence);
+
 #endif /* ERX_DEVICE_SEQUENCER_H */

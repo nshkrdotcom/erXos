@@ -54,8 +54,13 @@
 #include "erx_device.h"
 #include "erx_device_dma.h"
 
-/* Bounds of this record's queues: three tables (virtio's split ring), and one chain's records and buffers. */
-#define ERX_DMA_TABLES_MAX		3u
+/*
+ * Bounds of a record's ledger: its tables, virtio's three or the TRB form's 36 transfer rings,
+ * command ring and event ring; its pools, virtio's one or a pool per queue block; and one chain's
+ * records and buffers.
+ */
+#define ERX_DMA_TABLES_MAX		40u
+#define ERX_DMA_POOLS_MAX		36u
 #define ERX_DMA_HELD_RECORDS_MAX	(ERX_DEVICE_CHAIN_MAX + 1u)
 #define ERX_DMA_HELD_BUFFERS_MAX	ERX_DEVICE_CHAIN_MAX
 #define ERX_DMA_HOLDINGS_MAX		ERX_DEVICE_QUEUE_SIZE_MAX
@@ -68,11 +73,13 @@
 typedef enum erx_dma_placing {
 	ERX_DMA_PLACED_FREE,	/* a description's record, at any record no holding holds (virtio's descriptors) */
 	ERX_DMA_PLACED_IN_ORDER,	/* the sequencer's own, at its position (virtio's available ring) */
+	ERX_DMA_PLACED_RING,	/* descriptions at its next positions, its last record the sequencer's link (a TRB ring) */
 } erx_dma_placing_t;
 
 typedef struct erx_dma_table {
 	uint32_t		structure;	/* ERX_STRUCTURE_* of erx/abi.h */
 	erx_dma_placing_t	placing;
+	uint32_t		pool;		/* a table descriptions fill: the pool its names reach */
 	uint64_t		region;		/* the offset of the table's region */
 	uint64_t		region_length;	/* whole granules */
 	uint64_t		first;		/* the offset of record 0, past a ring's head */
@@ -95,7 +102,8 @@ typedef struct erx_dma_layout {
 	uint32_t		granule;	/* G: a power of two */
 	uint32_t		table_count;
 	erx_dma_table_t		tables[ERX_DMA_TABLES_MAX];
-	erx_dma_pool_t		pool;
+	uint32_t		pool_count;
+	erx_dma_pool_t		pools[ERX_DMA_POOLS_MAX];	/* buffers numbered across them, in order */
 } erx_dma_layout_t;
 
 /* A record of a table: the table's index in the layout, and the record's in the table. */
@@ -157,8 +165,22 @@ typedef struct erx_dma_ledger {
 	uint32_t		acquired[ERX_DMA_TABLES_MAX];	/* reports covered, not consumed */
 	uint32_t		live;
 	erx_dma_holding_t	holdings[ERX_DMA_HOLDINGS_MAX];
+	uint32_t		bound[ERX_DMA_TABLES_MAX];	/* a ring's endpoint, 0 when unbound */
 	const erx_dma_regions_t	*regions;	/* the device record's, never NULL */
 } erx_dma_ledger_t;
+
+/*
+ * One position a ring's run takes (docs/design-device-dma.md, "The ledger"): the record, the
+ * cycle state there, and whether it is the ring's link, which the sequencer writes.
+ */
+typedef struct erx_dma_ring_step {
+	erx_dma_place_t	place;
+	uint32_t	cycle;
+	bool		link;
+} erx_dma_ring_step_t;
+
+/* A run of descriptions and the links it takes. */
+#define ERX_DMA_RING_STEPS_MAX	(2u * ERX_DMA_HELD_RECORDS_MAX + 1u)
 
 /*
  * The layout of virtio's split ring of `size` entries and its `size` buffers of `buffer_size`
@@ -175,8 +197,8 @@ bool	erx_dma_layout_split_ring(uint32_t size, uint32_t buffer_size, uint32_t gra
 /*
  * A ledger with no holding and every position at 0, from `layout` if it passes the install's
  * check: every region whole granules, ascending, disjoint, inside the memory and below the
- * address width; each table's records inside its region; at most one table of each structure,
- * and one buffer's bytes no more than its stride. False, writing nothing, otherwise. `regions` is
+ * address width, in any order; each table's records inside its region, a ring of at least two,
+ * a table descriptions fill naming one of its pools; and one buffer's bytes no more than its stride. False, writing nothing, otherwise. `regions` is
  * its device's table, which the ledger reads and never changes.
  */
 bool	erx_dma_ledger_make(erx_dma_ledger_t *ledger, const erx_dma_layout_t *layout, const erx_dma_regions_t *regions);
@@ -216,7 +238,7 @@ bool	erx_dma_regions_add(erx_dma_regions_t *regions, erx_dma_persistent_region_t
 
 /* The accessors. A table or buffer number outside the layout is held by nothing. */
 const erx_dma_layout_t	*erx_dma_ledger_layout(const erx_dma_ledger_t *ledger);
-/* The index of the layout's table of `structure`, or -1. */
+/* The index of the layout's first table of `structure`, or -1. */
 int			 erx_dma_ledger_table(const erx_dma_ledger_t *ledger, uint32_t structure);
 erx_dma_position_t	 erx_dma_ledger_position(const erx_dma_ledger_t *ledger, uint32_t table);
 bool			 erx_dma_ledger_record_held(const erx_dma_ledger_t *ledger, erx_dma_place_t place);
@@ -237,6 +259,36 @@ uint32_t		 erx_dma_ledger_acquired(const erx_dma_ledger_t *ledger, uint32_t tabl
  * does not fit the queue: past its address width or sharing a byte with its memory.
  */
 const erx_dma_persistent_region_t	*erx_dma_ledger_region(const erx_dma_ledger_t *ledger, uint32_t name);
+
+/*
+ * The buffers, numbered across the layout's pools in order: how many there are, the pool buffer
+ * `buffer` lies in (NULL past the last), and the offset of its byte `offset` in the record's memory.
+ */
+uint32_t		 erx_dma_layout_buffers(const erx_dma_layout_t *layout);
+const erx_dma_pool_t	*erx_dma_layout_buffer_pool(const erx_dma_layout_t *layout, uint32_t buffer, uint32_t *pool);
+uint64_t		 erx_dma_layout_buffer_offset(const erx_dma_layout_t *layout, uint32_t buffer, uint64_t offset);
+
+/*
+ * The bindings (docs/design-device-dma.md, "The ledger"). erx_dma_ledger_bind binds ring `table`
+ * to `endpoint`, not 0, and returns its position to the first record on a new lap of cycle state
+ * 1; false, changing nothing, for a table that is not a ring, one bound already, or one a holding
+ * holds a record of. erx_dma_ledger_unbind ends a binding, refused while a holding holds a record
+ * of the ring. The sequencer calls both, with the effects of each (erx_dma_bind).
+ */
+bool		erx_dma_ledger_bind(erx_dma_ledger_t *ledger, uint32_t table, uint32_t endpoint);
+bool		erx_dma_ledger_unbind(erx_dma_ledger_t *ledger, uint32_t table);
+/* The endpoint ring `table` is bound to, or 0. */
+uint32_t	erx_dma_ledger_binding(const erx_dma_ledger_t *ledger, uint32_t table);
+/* The one ring bound to `endpoint`, or -1 for none or more than one. */
+int		erx_dma_ledger_bound_table(const erx_dma_ledger_t *ledger, uint32_t endpoint);
+/*
+ * The positions a run of `descriptions` records takes on ring `table` from its position, in ring
+ * order, into `steps`: a description's, and a link's where the run reaches it or ends just before
+ * it, so the position never rests on the link. Their count, or 0 for a table that is not a ring,
+ * no description or more than ERX_DMA_HELD_RECORDS_MAX. Whether they are free is the room rule's.
+ */
+uint32_t	erx_dma_ledger_ring_run(const erx_dma_ledger_t *ledger, uint32_t table, uint32_t descriptions,
+		    erx_dma_ring_step_t steps[ERX_DMA_RING_STEPS_MAX]);
 
 /* Whether `length` bytes from `offset` lie inside `size` bytes, with no sum that can wrap. */
 static inline bool

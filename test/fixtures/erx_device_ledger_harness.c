@@ -61,8 +61,8 @@ test_layout(void)
 	erx_dma_layout_t layout = split_ring(MEMORY, 0x40000000, 32), planted;
 
 	EXPECT(erx_dma_ledger_make(&ledger, &layout, &no_regions), "the split ring's layout passes the install's check");
-	EXPECT(layout.tables[AVAIL].region == 64 && layout.tables[USED].region == 128 && layout.pool.first == 192 &&
-	    layout.pool.stride == 128, "each ring a region of its own from a granule, buffers at a granule stride");
+	EXPECT(layout.tables[AVAIL].region == 64 && layout.tables[USED].region == 128 && layout.pools[0].first == 192 &&
+	    layout.pools[0].stride == 128, "each ring a region of its own from a granule, buffers at a granule stride");
 	EXPECT(erx_dma_ledger_table(&ledger, ERX_STRUCTURE_VIRTQ_USED) == USED, "the used ring's table");
 	EXPECT(!erx_dma_layout_split_ring(3, BUFFER, GRANULE, MEMORY, 0, 32, &planted), "a size not a power of two");
 	EXPECT(!erx_dma_layout_split_ring(SIZE, BUFFER, GRANULE, MEMORY, 8, 32, &planted),
@@ -83,11 +83,15 @@ test_layout(void)
 	planted.tables[DESC].region_length = 128;
 	EXPECT(!erx_dma_ledger_make(&ledger, &planted, &no_regions), "overlapping regions are refused");
 	planted = layout;
-	planted.pool.size = planted.pool.stride + 1;
+	planted.pools[0].size = planted.pools[0].stride + 1;
 	EXPECT(!erx_dma_ledger_make(&ledger, &planted, &no_regions), "a buffer longer than its stride is refused");
 	planted = layout;
-	planted.tables[AVAIL].structure = ERX_STRUCTURE_VIRTQ_DESC;
-	EXPECT(!erx_dma_ledger_make(&ledger, &planted, &no_regions), "two tables of one structure are refused");
+	planted.tables[DESC].pool = 1;
+	EXPECT(!erx_dma_ledger_make(&ledger, &planted, &no_regions), "a table naming a pool the layout lacks is refused");
+	planted = layout;
+	planted.tables[DESC].placing = ERX_DMA_PLACED_RING;
+	planted.tables[DESC].count = 1;
+	EXPECT(!erx_dma_ledger_make(&ledger, &planted, &no_regions), "a ring of its link alone is refused");
 	planted = layout;
 	planted.tables[AVAIL].count = SIZE * 32;
 	EXPECT(!erx_dma_ledger_make(&ledger, &planted, &no_regions), "records past their region are refused");
@@ -99,10 +103,10 @@ test_layout(void)
 	planted.tables[AVAIL].first = 76;
 	EXPECT(!erx_dma_ledger_make(&ledger, &planted, &no_regions), "a region off a granule is refused");
 	planted = layout;
-	planted.pool.stride = BUFFER;
+	planted.pools[0].stride = BUFFER;
 	EXPECT(!erx_dma_ledger_make(&ledger, &planted, &no_regions), "buffers sharing a granule are refused");
 	planted = layout;
-	planted.pool.stride = 96;
+	planted.pools[0].stride = 96;
 	EXPECT(!erx_dma_ledger_make(&ledger, &planted, &no_regions), "a stride off a granule is refused, the pool's length on one");
 }
 
@@ -122,7 +126,7 @@ static erx_dma_verdict_t
 check(const erx_dma_ledger_t *ledger, const erx_dma_description_t *records, uint32_t record_count,
     const erx_dma_fill_t *fills, uint32_t fill_count)
 {
-	const erx_dma_publication_t publication = { record_count, records, fill_count, fills, ERX_DMA_PUBLISH_RUN };
+	const erx_dma_publication_t publication = { record_count, records, fill_count, fills, ERX_DMA_PUBLISH_RUN, 0 };
 
 	return (erx_dma_publication_check(ledger, &publication));
 }
@@ -132,7 +136,7 @@ static bool
 hold_at(erx_dma_ledger_t *ledger, int buffer, const erx_dma_place_t *places, uint32_t count)
 {
 	const erx_dma_description_t record = descriptor(buffer < 0 ? 0 : (uint32_t)buffer, 0, 8, false);
-	const erx_dma_publication_t publication = { buffer < 0 ? 0 : 1, &record, 0, NULL, ERX_DMA_PUBLISH_RUN };
+	const erx_dma_publication_t publication = { buffer < 0 ? 0 : 1, &record, 0, NULL, ERX_DMA_PUBLISH_RUN, 0 };
 
 	return (erx_dma_ledger_hold(ledger, &publication, places, count));
 }

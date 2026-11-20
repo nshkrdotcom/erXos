@@ -127,7 +127,7 @@ fresh(world_t *w, uint32_t size)
 	w->free_descs = size;
 	EXPECT(erx_dma_layout_split_ring(size, BUFFER, GRANULE, MEMORY, BASE, 32, &w->layout) &&
 	    erx_split_ring_make(&w->ring, &w->layout, &no_regions), "the split ring is made");
-	memset(w->memory, 0xa5, w->layout.pool.first);
+	memset(w->memory, 0xa5, w->layout.pools[0].first);
 	install(w);
 }
 
@@ -145,7 +145,7 @@ reset(world_t *w)
 	w->size = size;
 	w->free_descs = size;
 	EXPECT(erx_dma_ledger_live(erx_split_ring_ledger(&w->ring)) == 0, "the reset ends every chain");
-	memset(w->memory, 0xa5, w->layout.pool.first);
+	memset(w->memory, 0xa5, w->layout.pools[0].first);
 	install(w);
 }
 
@@ -239,7 +239,7 @@ install(world_t *w)
 	}
 	w->ready = false;
 	apply(w, &sequence, NULL);
-	for (uint64_t offset = 0; offset < w->layout.pool.first; offset++)
+	for (uint64_t offset = 0; offset < w->layout.pools[0].first; offset++)
 		EXPECT(w->memory[offset] == 0, "the install zeroes every ring");
 	EXPECT(w->queue_num == w->size && w->queue_desc == BASE + w->layout.tables[DESC].region &&
 	    w->queue_driver == BASE + w->layout.tables[AVAIL].region && w->queue_device == BASE + w->layout.tables[USED].region,
@@ -255,7 +255,7 @@ static void
 fetch(world_t *w, const erx_dma_piece_t *pieces, uint32_t count, uint64_t tag)
 {
 	const uint64_t descs = ring_at(w->queue_desc), avail = ring_at(w->queue_driver);
-	const uint64_t pool = w->layout.pool.first, stride = w->layout.pool.stride;
+	const uint64_t pool = w->layout.pools[0].first, stride = w->layout.pools[0].stride;
 	const uint32_t slot = (uint32_t)(w->posts % w->size);
 	fetched_t chain = { .avail_slot = slot, .tag = tag };
 	uint64_t buffer = 0, at = 0;

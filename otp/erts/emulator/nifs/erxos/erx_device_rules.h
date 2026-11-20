@@ -21,18 +21,22 @@
  *   meanings  each record's structure is a table of the layout that descriptions fill, and its
  *             meaning is one that structure's tables offer;
  *   widths    each free value fits its place, as the meaning's encoder takes it;
- *   names     each reference names a buffer of the pool, as many names as the meaning has
+ *   names     each reference names a buffer of the layout, as many names as the meaning has
  *             references, each of a buffer's data;
+ *   bindings  a run's records are of one table: its structure's one table, or the ring the
+ *             ledger binds to the publication's endpoint alone; each name is of a buffer of that
+ *             table's pool, so a transfer reaches only its own queue's buffers;
  *   held      no name is of a buffer a live holding holds;
  *   lengths   each reference's length lies inside its buffer from its offset;
- *   room      the run fits: as many unheld records of each table as it describes, the next
- *             record of each table placed in order unheld, and the holding it makes no larger
- *             than a holding holds;
+ *   room      the run fits: as many unheld records of each table placed free as it describes,
+ *             the next record of each table placed in order unheld, every position a ring's run
+ *             takes, its links included, unheld, and the holding it makes no larger than a
+ *             holding holds;
  *   fills     at most ERX_DMA_FILLS_MAX fills, an out segment's bytes go only inside a range a
  *             record of the publication names, and no two fills share a byte; a region entry's
  *             fill is one entry long and names a persistent region the ledger holds, so a
  *             region of another device, or none, fails.
- * The bindings, reach and controls rules, and the releases rule over acquired reports, belong
+ * The bindings commands make, the reach and controls rules, and the releases rule over acquired reports, belong
  * to the forms and the sequencer that move onto this check after the split ring.
  */
 
@@ -100,6 +104,7 @@ typedef struct erx_dma_publication {
 	uint32_t			fill_count;
 	const erx_dma_fill_t		*fills;
 	erx_dma_publication_call_t	call;
+	uint32_t			endpoint;	/* a run on a ring: the endpoint it is bound to */
 } erx_dma_publication_t;
 
 /* The rule a publication breaks first, or ERX_DMA_PASSES. */
@@ -113,10 +118,17 @@ typedef enum erx_dma_verdict {
 	ERX_DMA_BREAKS_LENGTHS,
 	ERX_DMA_BREAKS_ROOM,
 	ERX_DMA_BREAKS_FILLS,
+	ERX_DMA_BREAKS_BINDINGS,
 } erx_dma_verdict_t;
 
 erx_dma_verdict_t	erx_dma_publication_check(const erx_dma_ledger_t *ledger,
 			    const erx_dma_publication_t *publication);
+
+/*
+ * The table a run's record of `structure` is placed in: the layout's one table of it, or, where it
+ * holds several, the ring the ledger binds to the publication's endpoint alone; -1 for neither.
+ */
+int	erx_dma_run_table(const erx_dma_ledger_t *ledger, const erx_dma_publication_t *publication, uint32_t structure);
 
 /*
  * The buffers a publication's names reach, each once, in the order first named: what its holding
