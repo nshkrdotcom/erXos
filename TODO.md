@@ -7926,9 +7926,18 @@ to the corpus and follow rc
   2n + 1 (xHCI 4.5.1); and whether a setup packet's direction bit must match the data stage's.
 * [Low] USB, `erx_xhci_core`'s extended-capability registers (erlang/apps/erx_usb/src/erx_xhci_core.erl, register/0):
   the legacy support semaphore bytes and the supported-protocol words are abstract names, and their fields
-  (`SEMAPHORE_OWNED`, `PROTOCOL_*`) and PAGESIZE's 4 KiB bit hand constants, until the device NIF's binding of the
+  (`SEMAPHORE_OWNED`, `PROTOCOL_*`) hand constants, until the device NIF's binding of the
   extended capabilities (design-usb.md, "Registers at offsets the controller reports") gives them SVD clusters; then the names map to the SVD's registers,
   the fields come from the generated macros, and `{start, Bound}`'s shape follows what the NIF reports it bound.
+* [Low] USB, a USB 3 root port after a disable (`erx_xhci_core`, port_operation/2): writing PORTSC's PED to disable a
+  USB 3 port leaves it in the Disabled link state, which leaves only through a PLS write of RxDetect with LWS set
+  (xHCI 1.2, 5.4.8, p. 406); the core writes no PLS, so the port stays dead until the controller restarts. Nor does
+  the core issue a warm reset (WPR) for a port in SS.Inactive, so such a port also waits for a restart.
+* [Medium] USB, events left after a bounded interrupt pass (`erx_xhci_core`, drained/2; design-usb.md, "Completing"):
+  a pass that stops at `xhci_events_per_interrupt` acknowledges the line with events still on the ring, which a next
+  pass reads only if the controller raises the interrupt again. FreeBSD gets that by writing ERDP with its busy bit
+  (EHB) set (xhci.c:1191-1195); the TRB ring form's `complete/2` must publish ERDP the same way, stated in its design
+  with the xHCI section that requires it (not yet read) and covered by the model controller's test.
 * [Low] USB, the TRB ring form's design text (design-usb.md, "Two rules every ring keeps, on every controller"): it says a transfer that
   continues past the link sets the link's chain bit, but each control stage is a TD of one TRB (xHCI 4.11.2.2), so no
   TD of the form spans the link and `erx_device_trb.c` never sets it; and a ring's queue starts at the block's enqueue

@@ -8,11 +8,13 @@ require 'tmpdir'
 require_relative '../lib/erx/generated'
 
 # The fuzz target of erx_xhci_core's decoders, the completion code, a command
-# completion's answer and a transfer completion's result
-# (test/erlang/erx_xhci_core_fuzz.erl), compiled from source and run alone on stock's
-# emulator (ERX_ERL and ERX_ERLC, the oracle's). It runs the module as it is, then each
-# seeded copy, which must fail with its marker: one that accepts any address an 8-bit
-# field holds, and one that accepts slot 0.
+# completion's answer, a transfer completion's result, the capability registers and the
+# root-port writes (test/erlang/erx_xhci_core_fuzz.erl), compiled from source and run
+# alone on stock's emulator (ERX_ERL and ERX_ERLC, the oracle's). It runs the module as
+# it is, then each seeded copy, which must fail with its marker: one that accepts any
+# address an 8-bit field holds, one that accepts slot 0, one that accepts a protocol on
+# port 0, one that accepts protocols sharing a port, one that refuses every controller,
+# and one whose register writes keep the bits they must clear.
 module ErxXhciCoreFuzz
   ROOT = File.expand_path('../..', __dir__)
   # The generated header named here is in build/gen.
@@ -33,6 +35,14 @@ module ErxXhciCoreFuzz
     Seed.new(fault: 'a supported-protocol capability naming port 0 accepted',
              anchor: 'First >= 1 andalso Count >= 1',
              replacement: 'First >= 0 andalso Count >= 1',
+             marker: 'out_of_bounds'),
+    Seed.new(fault: 'supported-protocol capabilities sharing a port accepted',
+             anchor: 'lists:any(fun(Port) -> is_map_key(Port, Named) end, Range) andalso',
+             replacement: 'false andalso',
+             marker: 'out_of_bounds'),
+    Seed.new(fault: 'every controller refused',
+             anchor: 'orelse throw({unsupported, page_size}),',
+             replacement: 'orelse throw({unsupported, page_size}), throw({unsupported, page_size}),',
              marker: 'out_of_bounds'),
     Seed.new(fault: 'a register write keeping the bits it must clear',
              anchor: '(Read band Preserve band bnot Mask) bor Bits',

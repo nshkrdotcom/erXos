@@ -12,7 +12,8 @@ state, and answers the next state and the actions the controller process
 performs, in order: `{command, Tag, Command}` and `{transfer, Pipe, Tag,
 Transfer}` post to the device NIF, `{reply, From, Answer}` answers a caller,
 and `{fail, Reason}` ends the process, whose restart resets the controller;
-a step that fails answers that action alone, so nothing after it is posted.
+a step that fails answers that action alone, so nothing after it is posted
+and a held interrupt is not acknowledged.
 The process feeds back every completion the NIF returns, `{complete, Tag,
 Code, Extra}`, and every post the NIF refuses, `{refused, Tag, Reason}`.
 Tags are the core's: the lowest number no post in flight holds.
@@ -57,8 +58,12 @@ up. No PORTSC is written before the controller runs (5.4.8, p. 405): an
 operation before then is answered `{error, halted}`.
 
 **Events.** An `interrupt` before the controller runs, whose install has
-not yet opened its interrupt, is only acknowledged; one of a running
-controller reads USBSTS and IMAN: a host system error
+not yet opened its interrupt, is held unacknowledged: a line the firmware
+left asserted, as the VL805's INTx may be, stays masked until the
+install has reset the controller, and the one `ack` it is owed goes out
+with `{start_bus, Ports}`. A controller that fails first does not
+acknowledge it: the process's exit unbinds the line, which masks it. One of a
+running controller reads USBSTS and IMAN: a host system error
 fails the controller, which has halted (4.10.2.6, pp. 200-201);
 otherwise the core clears USBSTS's event interrupt and IMAN's interrupt
 pending, both write-one-to-clear (5.4.2, pp. 397-399; 5.5.2.1, pp.
@@ -67,7 +72,12 @@ complete/2 with `{completed, Result}`: each transfer's or command's
 completion is handled as `{complete, Tag, Code, Extra}` and each port's
 event goes to the bus process as `{port_event, Port}`; a non-empty batch
 asks to `complete` again, and an empty one to `ack` the line, so a
-level-triggered line is left deasserted (4.17.2, p. 296).
+level-triggered line is left deasserted (4.17.2, p. 296). A pass stops
+once it has read `xhci_events_per_interrupt` events, two wraps of the
+event ring, where FreeBSD's poll stops too (xhci.c:1138, :1167-1176), and
+acknowledges the line; what is left waits for the next pass. The process
+feeds the core no `interrupt` between a `complete` and its `{completed,
+Result}`, so passes never overlap.
 
 **Decoders.** completion/1 names a completion code from
 abi/formats/xhci.txt; command_answer/3 and transfer_result/2 turn a
@@ -256,9 +266,12 @@ waiting its turn.
 `inflight` holds every transfer posted and not yet completed, by tag;
 `command` the one command in flight, with its deadline; `commands` the
 commands waiting, oldest first; `port_ops` the root-port operations whose
-PORTSC read is awaited, oldest first.
+PORTSC read is awaited, oldest first; `line` the interrupt line: `idle`,
+`held` by an interrupt before the controller runs and owed its `ack`, or
+`{draining, Events}` while a pass reads the event ring.
 """.
 -opaque state() :: #{phase := phase(),
+                     line := idle | held | {draining, Events :: non_neg_integer()},
                      capabilities := none | capabilities(),
                      port_ops := [{port_no(), port_op(), From :: term()}],
                      slots := #{slot() => slot_record()},
@@ -274,19 +287,18 @@ PORTSC read is awaited, oldest first.
 %% each legacy support semaphore byte (7.1.1, Table 7-4, pp. 519-520); a supported-
 %% protocol capability's major revision, bits 31:24 of its word 0, and its compatible
 %% port offset and count, bits 7:0 and 15:8 of its word 8 (7.2, Tables 7-6 and 7-8,
-%% pp. 522-523); and PAGESIZE's bit 0, pages of 4 KiB (5.4.3, Table 5-22, p. 400).
+%% pp. 522-523).
 -define(SEMAPHORE_OWNED, 1).
 -define(PROTOCOL_MAJOR_SHIFT, 24).
 -define(PROTOCOL_COUNT_SHIFT, 8).
 -define(PROTOCOL_FIELD, 16#ff).
--define(FOUR_KIB_PAGES, 1).
 -define(IS_BUS_COMMAND(C), (C =:= enable_slot orelse element(1, C) =:= address_device
                             orelse element(1, C) =:= evaluate_context orelse element(1, C) =:= configure_endpoints)).
 
 -doc "A controller not yet started, with no slots and nothing in flight.".
 -spec new() -> state().
 new() ->
-    #{phase => stopped, capabilities => none, port_ops => [],
+    #{phase => stopped, line => idle, capabilities => none, port_ops => [],
       slots => #{}, pipes => #{}, inflight => #{}, command => none, commands => []}.
 
 -doc "What the controller's capability registers said, for its inspection record, or `none` before they are read.".
@@ -301,6 +313,11 @@ step(Event, Now, State) ->
         [] -> {Next, lists:reverse(Reversed)};
         Fails -> {Next, [lists:last(Fails)]}
     end.
+
+%% An interrupt held before the controller ran is owed one ack once the bus starts:
+%% given here, and the line left idle; a line not held is left as it is.
+release_line({S = #{line := held}, A}) -> emit(ack, {S#{line := idle}, A});
+release_line(Acc) -> Acc.
 
 -doc "The earliest of the command's deadline and the start's next poll, or `none`.".
 -spec next_deadline(state()) -> ms() | none.
@@ -354,14 +371,14 @@ event({negotiated, Result}, Now, Acc = {#{phase := {installing, _, calling}}, _}
     negotiated(Result, Now, Acc);
 event(interrupt, _Now, Acc = {#{phase := running}, _}) ->
     emit({read, [usbsts, iman]}, Acc);
-event(interrupt, _Now, Acc) ->
-    emit(ack, Acc);
-event({completed, {ok, []}}, _Now, Acc) ->
-    emit(ack, Acc);
-event({completed, {ok, Events}}, Now, Acc) ->
-    emit(complete, lists:foldl(fun(Event, In) -> nif_event(Event, Now, In) end, Acc, Events));
+event(interrupt, _Now, {S, A}) ->
+    {S#{line := held}, A};
+event({completed, {ok, Events}}, Now, Acc = {#{line := {draining, _}}, _}) ->
+    drained(length(Events), lists:foldl(fun(Event, In) -> nif_event(Event, Now, In) end, Acc, Events));
 event({completed, {error, Reason}}, _Now, Acc) ->
     emit({fail, {complete, Reason}}, Acc);
+event({completed, _Batch}, _Now, Acc) ->
+    emit({fail, {unexpected, completed}}, Acc);
 event({port, From, Port, Op}, _Now, {S = #{phase := running, port_ops := Ops}, A}) ->
     emit({read, [{portsc, Port}]}, {S#{port_ops := Ops ++ [{Port, Op, From}]}, A});
 event({port, From, _Port, _Op}, _Now, Acc) ->
@@ -409,7 +426,7 @@ install(Now, Acc) ->
     emit(negotiate, set_phase({installing, Now + ?ERX_XHCI_INSTALL_DEADLINE_MS, calling}, Acc)).
 
 negotiated(ok, _Now, Acc = {#{capabilities := #{ports := Ports}}, _}) ->
-    emit({start_bus, Ports}, set_phase(running, Acc));
+    release_line(emit({start_bus, Ports}, set_phase(running, Acc)));
 negotiated({error, ebusy}, Now, Acc = {#{phase := {installing, Deadline, calling}}, _}) when Now < Deadline ->
     set_phase({installing, Deadline, {retry, min(Now + ?ERX_XHCI_POLL_MS, Deadline)}}, Acc);
 negotiated({error, ebusy}, _Now, Acc) ->
@@ -427,6 +444,8 @@ phase_expired(_Now, Acc) ->
     Acc.
 
 set_phase(Phase, {S, A}) -> {S#{phase := Phase}, A}.
+
+set_line(Line, {S, A}) -> {S#{line := Line}, A}.
 
 %% Reads, by the registers answered
 
@@ -457,8 +476,19 @@ serviced(Status, _Iman, Acc) when ?ERX_HW_XHCI_USBSTS_HSE_GET(Status) =/= 0 ->
 serviced(Status, Iman, Acc) ->
     Eint = ?ERX_HW_XHCI_USBSTS_EINT_MASK,
     Ip = ?ERX_HW_XHCI_IMAN_IP_MASK,
-    emit(complete, emit({write, iman, modify(Iman, ?ERX_HW_XHCI_IMAN_PRESERVE, Ip, Ip)},
-                        emit({write, usbsts, modify(Status, ?ERX_HW_XHCI_USBSTS_PRESERVE, Eint, Eint)}, Acc))).
+    Cleared = emit({write, iman, modify(Iman, ?ERX_HW_XHCI_IMAN_PRESERVE, Ip, Ip)},
+                   emit({write, usbsts, modify(Status, ?ERX_HW_XHCI_USBSTS_PRESERVE, Eint, Eint)}, Acc)),
+    emit(complete, set_line({draining, 0}, Cleared)).
+
+%% A batch of Count events handled: the pass reads on while the batch was not
+%% empty and the pass has not reached its bound, and acknowledges the line
+%% otherwise.
+drained(Count, Acc = {#{line := {draining, Before}}, _}) ->
+    Events = Before + Count,
+    if
+        Count =:= 0; Events >= ?ERX_XHCI_EVENTS_PER_INTERRUPT -> emit(ack, set_line(idle, Acc));
+        true -> emit(complete, set_line({draining, Events}, Acc))
+    end.
 
 nif_event({port, Port}, _Now, Acc) ->
     emit({port_event, Port}, Acc);
@@ -537,7 +567,8 @@ The capability registers' words decoded, or why the controller cannot be
 driven: `{unsupported, page_size}` when PAGESIZE does not offer the 4 KiB
 pages the device NIF lays out (5.4.3, pp. 399-400; xhci.c:546-549), and
 `{malformed, {protocol, I}}` when the I-th supported-protocol capability names
-no port or a port past the port count (Table 7-8, p. 523). The scratchpad
+no port, a port past the port count, or a port an earlier capability
+already named (Table 7-8, p. 523). The scratchpad
 count is HCSPARAMS2's high five bits above its low five (5.3.4, pp. 383-384).
 """.
 -spec decode_capabilities(#{register() => non_neg_integer()}, bound()) ->
@@ -546,8 +577,8 @@ decode_capabilities(Words = #{hcsparams1 := Params1, hcsparams2 := Params2, hccp
                               pagesize := PageSize}, #{protocols := Count}) ->
     Ports = ?ERX_HW_XHCI_HCSPARAMS1_MAXPORTS_GET(Params1),
     try
-        PageSize band ?FOUR_KIB_PAGES =/= 0 orelse throw({unsupported, page_size}),
-        Protocols = lists:foldl(fun(I, Acc) -> maps:merge(Acc, protocol_ports(I, Words, Ports)) end,
+        ?ERX_HW_XHCI_PAGESIZE_FOUR_KIB_GET(PageSize) =:= 1 orelse throw({unsupported, page_size}),
+        Protocols = lists:foldl(fun(I, Acc) -> protocol_ports(I, Words, Ports, Acc) end,
                                 #{}, lists:seq(1, Count)),
         {ok, #{slots => ?ERX_HW_XHCI_HCSPARAMS1_MAXSLOTS_GET(Params1),
                interrupters => ?ERX_HW_XHCI_HCSPARAMS1_MAXINTRS_GET(Params1),
@@ -563,15 +594,18 @@ decode_capabilities(Words = #{hcsparams1 := Params1, hcsparams2 := Params2, hccp
     end.
 
 %% The ports of the I-th supported-protocol capability, each with its major
-%% revision: Compatible Port Count ports from Compatible Port Offset, all
-%% within 1..Ports.
-protocol_ports(I, Words, Ports) ->
+%% revision, added to those of the capabilities before it: Compatible Port
+%% Count ports from Compatible Port Offset, all within 1..Ports and none
+%% named before, since a port speaks one protocol.
+protocol_ports(I, Words, Ports, Named) ->
     #{{protocol, I, revision} := Revision, {protocol, I, ports} := PortWord} = Words,
     First = PortWord band ?PROTOCOL_FIELD,
     Count = (PortWord bsr ?PROTOCOL_COUNT_SHIFT) band ?PROTOCOL_FIELD,
     First >= 1 andalso Count >= 1 andalso First + Count - 1 =< Ports orelse throw({malformed, {protocol, I}}),
+    Range = lists:seq(First, First + Count - 1),
+    lists:any(fun(Port) -> is_map_key(Port, Named) end, Range) andalso throw({malformed, {protocol, I}}),
     Major = (Revision bsr ?PROTOCOL_MAJOR_SHIFT) band ?PROTOCOL_FIELD,
-    maps:from_list([{Port, Major} || Port <- lists:seq(First, First + Count - 1)]).
+    maps:merge(Named, maps:from_list([{Port, Major} || Port <- Range])).
 
 %% Commands, one at a time
 

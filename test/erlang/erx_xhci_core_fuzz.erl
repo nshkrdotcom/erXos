@@ -4,12 +4,14 @@
 %% The fuzz target of erx_xhci_core's decoders (docs/design-usb.md, "Fuzz targets"): the
 %% completion code, a command completion's answer and a transfer completion's result,
 %% over codes and values around and past each field's range, values of other types
-%% included, as a controller or a fault in the NIF's reading could hand them over. A
-%% round fails with a marker the runner looks for: `crash` when a decoder raises or
-%% answers outside its spec; `out_of_bounds` when an answer differs from the reference
-%% written here from the design: a slot outside 1 to usb_devices_max (16) or an address
-%% outside 1 to 127 accepted, a code named other than its ABI name, or a result other than
-%% the one its code gives.
+%% included, as a controller or a fault in the NIF's reading could hand them over; the
+%% capability registers, as any words or a well-formed set; and a root-port operation on
+%% any PORTSC word. A round fails with a marker the runner looks for: `crash` when a
+%% decoder raises or answers outside its spec; `out_of_bounds` when an answer differs
+%% from the reference written here from the design: a slot outside 1 to usb_devices_max
+%% (16) or an address outside 1 to 127 accepted, a code named other than its ABI name, a
+%% result other than the one its code gives, capabilities accepted or refused other than
+%% as the reference decides, or a PORTSC write setting a bit its operation does not mean.
 -module(erx_xhci_core_fuzz).
 
 -export([run/1]).
@@ -77,26 +79,68 @@ reference_result(6, _Bytes) -> {error, stall};
 reference_result(Code, _Bytes) when Code >= 26, Code =< 28 -> {error, stopped};
 reference_result(Code, _Bytes) -> {error, {controller, reference_completion(Code)}}.
 
-%% A value around the fields' ranges: an 8-bit code or slot, a 7-bit address, the
-%% 24-bit parameter, negative and huge integers, and values of other types.
-%% The capability registers as a controller may fill them: any 32-bit words, and up to
-%% eight supported-protocol capabilities. A decoded controller's ports are its MaxPorts,
-%% every protocol port lies in 1..MaxPorts, and only 4 KiB pages are accepted.
+%% The capability registers as a controller may fill them: any 32-bit words with up to
+%% eight supported-protocol capabilities, or a well-formed set. The decoder accepts
+%% exactly what the reference accepts, 4 KiB pages and protocols naming non-empty,
+%% disjoint port ranges within 1..MaxPorts, and gives each such port its protocol's major
+%% revision, its controller MaxPorts ports and at most 1023 scratchpads.
 capabilities() ->
-    Count = rand:uniform(9) - 1,
-    Words = maps:from_list([{Register, word()} || Register <- [hcsparams1, hcsparams2, hccparams1, pagesize]]
-                           ++ [{{protocol, I, Word}, protocol_word(Word)} || I <- lists:seq(1, Count),
-                                                                             Word <- [revision, ports]]),
-    Bound = #{legacy => false, protocols => Count},
-    case call(fun() -> erx_xhci_core:decode_capabilities(Words, Bound) end, Words) of
-        {ok, #{ports := Ports, protocols := Protocols, scratchpads := Scratchpads}} ->
-            #{hcsparams1 := Params1, pagesize := PageSize} = Words,
-            sound(Ports =:= Params1 bsr 24 andalso PageSize band 1 =:= 1 andalso Scratchpads =< 1023
-                  andalso lists:all(fun(Port) -> Port >= 1 andalso Port =< Ports end, maps:keys(Protocols)),
-                  {Words, Ports, Protocols}),
+    {Words, Count} = (pick([fun any_capabilities/0, fun well_formed_capabilities/0]))(),
+    Decoded = call(fun() -> erx_xhci_core:decode_capabilities(Words, #{legacy => false, protocols => Count}) end,
+                   Words),
+    case {Decoded, reference_protocols(Words, Count)} of
+        {{ok, #{ports := Ports, protocols := Protocols, scratchpads := Scratchpads}}, {ok, Protocols}} ->
+            sound(Ports =:= maps:get(hcsparams1, Words) bsr 24 andalso Scratchpads =< 1023, {Words, Ports}),
             1;
-        {error, _Refused} ->
-            0
+        {{error, _Refused}, refused} ->
+            0;
+        Mismatch ->
+            fail(out_of_bounds, {Words, Mismatch})
+    end.
+
+any_capabilities() ->
+    Count = rand:uniform(9) - 1,
+    {maps:from_list([{Register, word()} || Register <- [hcsparams1, hcsparams2, hccparams1, pagesize]]
+                    ++ [{{protocol, I, Word}, protocol_word(Word)} || I <- lists:seq(1, Count),
+                                                                      Word <- [revision, ports]]),
+     Count}.
+
+%% 4 KiB pages among others, and protocols on runs of ports from port 1 up, a gap of up
+%% to two ports before each, while they fit in MaxPorts.
+well_formed_capabilities() ->
+    Ports = rand:uniform(255),
+    Ranges = ranges(1, Ports, 8),
+    {maps:from_list([{hcsparams1, Ports bsl 24 bor (word() band 16#ffffff)}, {hcsparams2, word()},
+                     {hccparams1, word()}, {pagesize, word() band 16#ffff bor 1}]
+                    ++ lists:append([[{{protocol, I, revision}, word()},
+                                      {{protocol, I, ports}, Count bsl 8 bor First}]
+                                     || {I, {First, Count}} <- lists:enumerate(Ranges)])),
+     length(Ranges)}.
+
+ranges(_From, _Ports, 0) -> [];
+ranges(From, Ports, Left) ->
+    First = From + rand:uniform(3) - 1,
+    Count = rand:uniform(4),
+    case First + Count - 1 =< Ports of
+        true -> [{First, Count} | ranges(First + Count, Ports, Left - 1)];
+        false -> []
+    end.
+
+%% Each port's major revision, or refused: pages other than 4 KiB, or a protocol naming
+%% no port, a port past MaxPorts or a port an earlier protocol named.
+reference_protocols(#{pagesize := PageSize}, _Count) when PageSize band 1 =:= 0 -> refused;
+reference_protocols(Words = #{hcsparams1 := Params1}, Count) ->
+    reference_protocols(Words, Params1 bsr 24, lists:seq(1, Count), #{}).
+
+reference_protocols(_Words, _Ports, [], Named) -> {ok, Named};
+reference_protocols(Words, Ports, [I | Rest], Named) ->
+    #{{protocol, I, revision} := Revision, {protocol, I, ports} := PortWord} = Words,
+    {First, Count} = {PortWord band 255, (PortWord bsr 8) band 255},
+    Range = lists:seq(First, First + Count - 1),
+    case First >= 1 andalso Count >= 1 andalso First + Count - 1 =< Ports
+         andalso not lists:any(fun(Port) -> is_map_key(Port, Named) end, Range) of
+        true -> reference_protocols(Words, Ports, Rest, maps:merge(Named, maps:from_keys(Range, Revision bsr 24)));
+        false -> refused
     end.
 
 %% A supported-protocol word whose ports are often near the edges of the port count.
@@ -125,6 +169,8 @@ port_operation() ->
 
 word() -> rand:uniform(1 bsl 32) - 1.
 
+%% A value around the fields' ranges: an 8-bit code or slot, a 7-bit address, the
+%% 24-bit parameter, negative and huge integers, and values of other types.
 value() ->
     case rand:uniform(6) of
         1 -> rand:uniform(40) - 1;

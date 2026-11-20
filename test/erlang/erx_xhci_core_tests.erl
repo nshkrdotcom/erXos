@@ -554,11 +554,18 @@ the_start_refuses_capabilities_it_cannot_drive_test() ->
                  erx_xhci_core:decode_capabilities(Words#{pagesize => 2}, ?BOUND)),
     ?assertEqual({error, {malformed, {protocol, 2}}},
                  erx_xhci_core:decode_capabilities(Words#{{protocol, 2, ports} => 16#0204}, ?BOUND)),
+    %% Protocol 2 on ports 2-3 overlaps protocol 1's 1-2: a port speaks one protocol.
+    ?assertEqual({error, {malformed, {protocol, 2}}},
+                 erx_xhci_core:decode_capabilities(Words#{{protocol, 2, ports} => 16#0202}, ?BOUND)),
     ?assertEqual({error, {malformed, {protocol, 1}}},
                  erx_xhci_core:decode_capabilities(Words#{{protocol, 1, ports} => 16#0200}, ?BOUND)),
     {S1, _} = erx_xhci_core:step({start, ?BOUND}, 0, erx_xhci_core:new()),
     ?assertMatch({_, [{fail, {capabilities, {unsupported, page_size}}}]},
                  erx_xhci_core:step({read, Words#{pagesize => 2}}, 0, S1)),
+    %% An interrupt held while the capabilities are read is not acknowledged by the failure.
+    {Held, []} = erx_xhci_core:step(interrupt, 0, S1),
+    ?assertMatch({_, [{fail, {capabilities, {unsupported, page_size}}}]},
+                 erx_xhci_core:step({read, Words#{pagesize => 2}}, 0, Held)),
     ?assertMatch({_, [{reply, bus, {error, halted}}]}, erx_xhci_core:step({port, bus, 1, get_status}, 0, S1)).
 
 %% Every root-port write over many PORTSC words: the enable bit only to disable, the
@@ -621,22 +628,55 @@ an_interrupt_pass_test() ->
     {S3, [{port_event, 2}, complete]} = erx_xhci_core:step({completed, {ok, [{port, 2}]}}, 0, S2),
     ?assertMatch({_, [ack]}, erx_xhci_core:step({completed, {ok, []}}, 0, S3)),
     ?assertMatch({_, [{fail, {unknown_tag, 7}}]}, erx_xhci_core:step({completed, {ok, [{7, ?SUCCESS, <<>>}]}}, 0, S3)),
-    ?assertMatch({_, [{fail, {complete, broken}}]}, erx_xhci_core:step({completed, {error, broken}}, 0, S3)).
+    ?assertMatch({_, [{fail, {complete, broken}}]}, erx_xhci_core:step({completed, {error, broken}}, 0, S3)),
+    %% Outside a pass nothing asked to complete.
+    ?assertMatch({_, [{fail, {unexpected, completed}}]},
+                 erx_xhci_core:step({completed, {ok, [{port, 2}]}}, 0, S0)).
+
+%% A pass reads at most 1024 events, two wraps of the 512-entry event ring: batches of
+%% 32 port events ask for more until the 32nd, which acknowledges the line.
+an_interrupt_pass_is_bounded_test() ->
+    {S1, _} = erx_xhci_core:step(interrupt, 0, running()),
+    {S2, _} = erx_xhci_core:step({read, #{usbsts => 16#8, iman => 3}}, 0, S1),
+    Batch = {completed, {ok, lists:duplicate(32, {port, 1})}},
+    S33 = lists:foldl(fun(_, S) ->
+                              {Sn, Actions} = erx_xhci_core:step(Batch, 0, S),
+                              ?assertEqual(complete, lists:last(Actions)),
+                              Sn
+                      end, S2, lists:seq(1, 31)),
+    {S34, Last} = erx_xhci_core:step(Batch, 0, S33),
+    ?assertEqual(ack, lists:last(Last)),
+    %% The next interrupt begins a new pass.
+    ?assertMatch({_, [{read, [usbsts, iman]}]}, erx_xhci_core:step(interrupt, 0, S34)).
+
+%% An interrupt before the controller runs is held: no ack until the bus starts, or the
+%% controller fails, and then exactly one.
+an_interrupt_before_running_is_held_test() ->
+    {S1, []} = erx_xhci_core:step(interrupt, 0, handoff_started()),
+    ?assertEqual({S1, []}, erx_xhci_core:step(interrupt, 0, S1)),
+    {S2, [negotiate]} = erx_xhci_core:step({read, #{{legacy, bios_owned} => 0}}, 0, S1),
+    {S3, [{start_bus, 4}, ack]} = erx_xhci_core:step({negotiated, ok}, 0, S2),
+    ?assertMatch({_, [{read, [usbsts, iman]}]}, erx_xhci_core:step(interrupt, 0, S3)),
+    ?assertMatch({_, [{fail, {install, eio}}]}, erx_xhci_core:step({negotiated, {error, eio}}, 0, S2)).
 
 %% The start explored: from {start, Bound} with and without a legacy capability, every
 %% answer the environment may give in every reachable state (the BIOS's byte owned or
-%% released at each read; the install ok, ebusy or failed at each call), the clock moving
-%% only to next_deadline/1. Checked at each step: the install is called only once the BIOS
-%% released the controller or 5 s passed; the bus starts only on the install's ok; an
-%% install still busy 3 s after its first call fails; expired a millisecond before the
-%% deadline changes nothing; an interrupt before the controller runs is only
-%% acknowledged. Each world ends running or failed.
+%% released at each read; the install ok, ebusy or failed at each call; an interrupt at
+%% any time from the capabilities read on), the clock moving only to next_deadline/1.
+%% Checked at each step: the install
+%% is called only once the BIOS released the controller or 5 s passed; the bus starts
+%% only on the install's ok; an install still busy 3 s after its first call fails;
+%% expired a millisecond before the deadline changes nothing; an interrupt before the
+%% controller runs is held, not acknowledged, and its one ack goes out with the bus's
+%% start, never with a failure; a run that has not ended always has a next step,
+%% an answer it awaits or a deadline. Each world ends running or failed.
 the_start_is_explored_to_a_fixed_point_test_() ->
     {timeout, 300, fun() ->
         [begin
              {S1, _} = erx_xhci_core:step({start, Bound}, 0, erx_xhci_core:new()),
              {S2, Actions} = erx_xhci_core:step({read, capability_words()}, 0, S1),
-             W = #{legacy => maps:get(legacy, Bound), released => false, installing => none, awaits => none, last => none},
+             W = #{legacy => maps:get(legacy, Bound), released => false, installing => none, awaits => none,
+                   last => none, held => false},
              {Ends, _} = explore_start([{S2, Actions, 0, W}], #{}, #{}),
              ?assertEqual(lists:sort(maps:keys(Ends)), [failed, running])
          end || Bound <- [?BOUND, #{legacy => false, protocols => 2}]]
@@ -644,7 +684,7 @@ the_start_is_explored_to_a_fixed_point_test_() ->
 
 explore_start([], Seen, Ends) -> {Ends, Seen};
 explore_start([{S, Actions, Now, W} | Rest], Seen, Ends) ->
-    case check_start(Actions, Now, W#{awaits := none}) of
+    case check_start(Actions, Now, W) of
         {ended, How} ->
             explore_start(Rest, Seen, Ends#{How => true});
         W1 when is_map_key({S, Now, W1}, Seen) ->
@@ -655,24 +695,30 @@ explore_start([{S, Actions, Now, W} | Rest], Seen, Ends) ->
             explore_start(Next ++ Rest, Seen#{{S, Now, W1} => true}, Ends)
     end.
 
-%% The answers the environment may give to what the core last asked, and the clock
-%% moved to the next deadline, where expired a millisecond earlier must change nothing;
-%% an interrupt before the controller runs is only acknowledged.
-start_events(S, Now, #{awaits := Awaits}) ->
-    ?assertEqual({S, [ack]}, erx_xhci_core:step(interrupt, Now, S)),
+%% The answers the environment may give to what the core last asked, the clock moved to
+%% the next deadline, where expired a millisecond earlier must change nothing, and an
+%% interrupt. A run with neither an answer awaited nor a deadline, or with a deadline
+%% that does nothing when it comes, has stalled.
+start_events(S, Now, W = #{awaits := Awaits}) ->
     Expired = case erx_xhci_core:next_deadline(S) of
                   none -> [];
-                  At -> ?assertEqual({S, []}, erx_xhci_core:step(expired, At - 1, S)), [{expired, At}]
+                  At ->
+                      ?assertEqual({S, []}, erx_xhci_core:step(expired, At - 1, S)),
+                      ?assertNotEqual({S, []}, erx_xhci_core:step(expired, At, S)),
+                      [{expired, At}]
               end,
     Answers = case Awaits of
                   bios -> [{read, #{{legacy, bios_owned} => B}} || B <- [0, 1]];
                   install -> [{negotiated, R} || R <- [ok, {error, ebusy}, {error, eio}]];
                   none -> []
               end,
-    Expired ++ [{Answer, Now} || Answer <- Answers].
+    Expired =/= [] orelse Answers =/= [] orelse error({stalled, Now, W}),
+    [{interrupt, Now} | Expired ++ [{Answer, Now} || Answer <- Answers]].
 
-answered(Event = {read, #{{legacy, bios_owned} := 0}}, W) -> W#{released := true, last := Event};
-answered(Event, W) -> W#{last := Event}.
+%% An interrupt leaves what the core awaits; an answer or a deadline ends the wait.
+answered(interrupt, W) -> W#{held := true};
+answered(Event = {read, #{{legacy, bios_owned} := 0}}, W) -> W#{released := true, last := Event, awaits := none};
+answered(Event, W) -> W#{last := Event, awaits := none}.
 
 check_start([], _Now, W) -> W;
 check_start([{write, {legacy, os_owned}, 1} | Rest], Now, W) -> check_start(Rest, Now, W);
@@ -683,7 +729,9 @@ check_start([{log, bios_handoff_timeout} | Rest], Now, W) ->
 check_start([negotiate | Rest], Now, W = #{legacy := Legacy, released := Released, installing := Since}) ->
     ?assert(Released orelse not Legacy),
     check_start(Rest, Now, W#{awaits := install, installing := case Since of none -> Now; _ -> Since end});
-check_start([{start_bus, 4}], _Now, #{last := {negotiated, ok}}) -> {ended, running};
+check_start(Actions = [{start_bus, 4} | _], _Now, #{last := {negotiated, ok}, held := Held}) ->
+    ?assertEqual([{start_bus, 4} | [ack || Held]], Actions),
+    {ended, running};
 check_start([{fail, install_timeout}], Now, #{installing := Since}) ->
     ?assert(Now >= Since + 3000),
     {ended, failed};

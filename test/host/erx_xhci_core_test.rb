@@ -17,8 +17,10 @@ require_relative '../fixtures/erlang_build'
 # waits keeping it when the endpoint halts, so the stop goes to a halted queue; and a
 # pipe that leaves open dropping the requests waiting on it unanswered; a PORTSC write
 # keeping the change and enable bits it read; a change bit no clear reaches; the install
-# called while the BIOS still owns the controller; a host system error ignored; and a
-# lost command never failing the controller.
+# called while the BIOS still owns the controller; the BIOS's semaphore never polled
+# again, a start that stalls; an interrupt before the controller runs acknowledged at
+# once; a held interrupt acknowledged with a failure; a host system error ignored; an interrupt pass not bounded; and a lost command
+# never failing the controller.
 class ErxXhciCoreTest < Minitest::Test
   APPLICATIONS = %w[erx_usb].freeze
   CORE = 'erlang/apps/erx_usb/src/erx_xhci_core.erl'
@@ -70,6 +72,22 @@ class ErxXhciCoreTest < Minitest::Test
              anchor: "when At =< Now ->\n    emit({fail, {command_timeout, Command}}, Acc);",
              replacement: "when At =< Now, false ->\n    emit({fail, {command_timeout, Command}}, Acc);",
              catching_case: 'the_controller_fails_on_a_malformed_answer_or_a_lost_command_test'),
+    Seed.new(fault: "the BIOS's semaphore never polled again",
+             anchor: 'true -> set_phase({bios_handoff, GiveUp, {poll, Now + ?ERX_XHCI_POLL_MS}}, Acc)',
+             replacement: 'true -> set_phase({bios_handoff, GiveUp, reading}, Acc)',
+             catching_case: START_EXPLORED),
+    Seed.new(fault: 'an interrupt before the controller runs acknowledged at once',
+             anchor: "event(interrupt, _Now, {S, A}) ->\n    {S\#{line := held}, A};",
+             replacement: "event(interrupt, _Now, Acc) ->\n    emit(ack, Acc);",
+             catching_case: START_EXPLORED),
+    Seed.new(fault: 'an interrupt pass not bounded',
+             anchor: 'Count =:= 0; Events >= ?ERX_XHCI_EVENTS_PER_INTERRUPT ->',
+             replacement: 'Count =:= 0 ->',
+             catching_case: 'an_interrupt_pass_is_bounded_test'),
+    Seed.new(fault: 'a held interrupt acknowledged with a failure',
+             anchor: 'Fails -> {Next, [lists:last(Fails)]}',
+             replacement: "Fails -> {_, Owed} = release_line({Next, []}), {Next, Owed ++ [lists:last(Fails)]}",
+             catching_case: START_EXPLORED),
   ].freeze
 
   def test_xhci_core_cases_pass_under_eunit
