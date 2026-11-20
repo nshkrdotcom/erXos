@@ -3,9 +3,8 @@
 > **Status.** Background: the chapter describes operating systems in
 > general and carries no mark. Each sentence about erXos in its
 > "Where erXos uses this" paragraphs says in words which mark of the
-> [key](README.md#built-and-target) applies: built (**Built**), designed
-> (**Designed**, **0.2** or **Phase 2**), or holding only partly on
-> Fiasco.
+> [key](README.md#built-and-target) applies: **Built**, working in the
+> tree today, or **Designed**, specified but not yet built.
 
 **Background needed.** None. The chapter assumes only that the reader
 can program, in any language.
@@ -138,24 +137,19 @@ the keyboard; UNIX calls them daemons. `sshd` accepts remote logins and
 programs; they belong to the operating system because the rest of the
 system relies on them.
 
-**erXos's two kernels.** One fact about erXos underlies every erXos
-paragraph in this book. erXos runs today on **Fiasco**, an existing
-kernel of the L4 family ([chapter
-2](02-microkernels.md#25-the-l4-family-and-fiasco)), behind a kernel
-interface that erXos defines: the set of requests programs may make of
-the kernel. The code above that interface does not depend on which
-kernel answers. Meanwhile erXos is building its own kernel, which
-replaces Fiasco in the second phase of its roadmap ([chapter
-8](README.md#chapter-8-the-kernel-interface-and-its-two-kernels)). Some
-properties hold in full only on erXos's own kernel, so each claim about
-erXos says whether it is built, only designed, or holds only partly on
-Fiasco.
+**erXos's kernel.** erXos runs on **Fiasco**, an existing microkernel of
+the L4 family ([chapter
+2](02-microkernels.md#25-the-l4-family-and-fiasco)). Programs do not
+call Fiasco directly. They call erXos's own **kernel interface**, the
+set of requests programs may make of the kernel, which a small library
+called `liberx` carries out over Fiasco ([chapter
+8](README.md#chapter-8-the-kernel-interface-and-its-two-kernels)).
 
 **Where erXos uses this.** erXos draws the line of figure 1.1 in a
 different place. Only the kernel runs with the processor's full power,
 as in UNIX, but it holds far less. The file systems, the network stack
 and the drivers run outside it, as ordinary programs, most of them
-written in Erlang. That is built, on Fiasco
+written in Erlang. That is built
 ([design.md, Trust placement](../design.md#trust-placement)). A kernel
 that keeps this little is a **microkernel**, the subject of [chapter
 2](02-microkernels.md).
@@ -325,16 +319,18 @@ firmware that starts the board. The system-call trap is the instruction
 `svc`, the vector table's address goes in the register `VBAR_EL1`, and
 the return-from-trap is `eret`.
 
-**Where erXos uses this.** On Fiasco, which runs erXos today, the
-kernel runs at EL1 and every program at EL0; that is built. Every
+**Where erXos uses this.** Fiasco, erXos's kernel, runs at EL1 and
+every program at EL0; that is built. Every
 language runtime, the program that runs another language's code, runs
 at EL0, including the Erlang runtime that runs erXos's own system
 services. erXos uses Erlang, a safe language, but still walls programs
 apart with the hardware: the Erlang runtime does not check the code it
 loads, and a checker would be one more large program to trust (section
-1.2.4). erXos's own kernel is designed so that no kernel call takes a
-pointer, which removes the time-of-check-to-time-of-use bug; it does
-not boot yet ([design-arch-aarch64.md](../design-arch-aarch64.md#overview)).
+1.2.4). A program calls the kernel through `liberx`. Each call
+either runs as one of Fiasco's own system calls or becomes a request to
+the **root service**, a thread of the first program, the system domain
+(section 1.8), which alone creates kernel objects and maps memory; that
+is built ([design-fiasco.md](../design-fiasco.md#transport)).
 
 ## 1.3 Processes, threads and scheduling
 
@@ -479,17 +475,21 @@ process can therefore outlive the process that started it: a background
 job can keep running after its shell exits, unless the terminal's
 hangup signal ends it.
 
-**Where erXos uses this.** erXos is designed to schedule in two levels
-([design-scheduler.md](../design-scheduler.md)). The kernel decides
-which kernel thread runs on each core and charges the time to a
-**group**, an account that holds a share of processor time ([chapter
+**Where erXos uses this.** erXos schedules in two levels ([chapter
 9](README.md#chapter-9-processes-runtimes-and-two-level-scheduling)).
-Inside each group, a language runtime, Erlang's first, picks which
-user-level thread runs. The Erlang level is built; on Fiasco a group's
-share is recorded but not enforced. erXos also gives UNIX's process two
+Fiasco decides which kernel thread runs on each core, and inside each
+domain the Erlang runtime picks which Erlang process runs on its
+threads; that is built. Today every domain's threads run at one Fiasco
+priority, and the system does not measure how much processor time each
+domain uses. The design gives each domain a **priority band**, a range
+of priorities its threads start in, and a set of cores they may run on,
+so a spinning domain delays only domains in its band and below; that is
+designed, not built
+([design-fiasco.md](../design-fiasco.md#threads-bands-and-stops)).
+erXos also gives UNIX's process two
 parts. The Erlang process runs and fails. A **domain**, a set of Erlang
 processes sharing one address space, is what the hardware walls off;
-domains are built, on Fiasco ([chapter
+domains are built ([chapter
 10](README.md#chapter-10-domains-a-wall-around-some-processes)).
 
 ## 1.4 Virtual memory
@@ -702,17 +702,20 @@ limits exist, but they cover only part of what a process can make the
 kernel spend; FreeBSD has none for page tables or kernel stacks. So one
 process can still crowd out the rest.
 
-**Where erXos uses this.** erXos's own kernel is designed to charge
-every page it hands out, its own data included, to a **budget**, an
-account that cannot overdraw ([chapter
-12](README.md#chapter-12-memory-and-budgets)). The price is that every
-request names who pays. That kernel does not boot yet, and on Fiasco
-budgets do not yet act as walls between domains. Erlang's just-in-time
-compiler keeps W^X by writing code through one mapping and running it
-through another; that is built. Only erXos's own kernel is designed to
-stop a page from being writable through one mapping and executable
-through another; on Fiasco it can happen ([chapter
-11](README.md#chapter-11-authority-and-security)).
+**Where erXos uses this.** Each domain has a **budget**, an account for
+the memory it uses ([chapter
+12](README.md#chapter-12-memory-and-budgets)). Today a budget is only a
+record: nothing is charged to it, so one domain can still crowd out the
+rest, and the inspector reports another domain's budget as unsupported;
+that is built. The design makes each budget a wall: a Fiasco
+kernel-memory quota fixed when the domain is made, and a cap on its pages that the root
+service checks, so a domain that runs out fails alone; that is designed,
+not built ([design-fiasco.md](../design-fiasco.md#memory-and-budgets)).
+Erlang's just-in-time compiler keeps W^X by writing code through one
+mapping and running it through another; that is built. The system does
+not stop a page from being writable through one mapping and executable
+through another, so a domain can run code it wrote into its own memory
+([chapter 11](README.md#chapter-11-authority-and-security)).
 
 ## 1.5 Devices, interrupts, DMA and caches
 
@@ -1005,7 +1008,7 @@ therefore never reach a server the domain was not given. Domains reach
 file servers through one file protocol, taken from Plan 9 ([chapter
 14](README.md#chapter-14-files-namespaces-and-service-trees)). The
 service that keeps files on the SD card or disk runs in a domain of its
-own. All of this is built, on Fiasco ([design-files.md](../design-files.md#overview)).
+own. All of this is built ([design-files.md](../design-files.md#overview)).
 
 ## 1.7 Talking and sharing
 
@@ -1107,15 +1110,13 @@ other side when there is something to read.
 **Where erXos uses this.** Erlang processes share no memory and talk
 only by messages, which removes races on shared data from most of the
 system's code; that is built ([chapter 3](03-erlang.md)). Between
-domains, erXos's design carries messages over a **lane**: a ring buffer
-in shared memory that only the sender writes, plus a small signal that
-wakes the receiver ([chapter
+domains, erXos carries messages over a **lane**: a ring buffer in shared
+memory that only the sender writes, plus a small signal that wakes the
+receiver ([chapter
 10](README.md#chapter-10-domains-a-wall-around-some-processes)). The
 receiver checks every message through one function that refuses
-malformed ones. The lane's code is built and tested on a development
-host, but on Fiasco domains do not yet carry their messages over lanes:
-lanes are the transport of Phase 2
-([design-fiasco.md](../design-fiasco.md#what-phase-1-code-must-not-assume)).
+malformed ones. Both are built
+([design-domains.md](../design-domains.md#on-fiasco)).
 Pipes between programs use the same idea, a ring in shared memory that
 only the writer writes ([design-pipes.md](../design-pipes.md#overview)),
 and they are **Built**: programs have pipes today ([README.md, Current
@@ -1204,13 +1205,11 @@ others restart them.
 **Where erXos uses this.** A crashed Erlang process, a driver among
 them, is restarted by the process that supervises it ([chapter
 3](03-erlang.md#334-supervisors)). A domain that faults ends alone
-while the others run on. Both are built, on Fiasco. erXos's own kernel
-is designed so that nothing a domain or a device does can crash it. On
-Fiasco that rests on Fiasco's own code. For domains, a campaign of
-random system calls, planned for erXos's first release, is to test it;
-for devices, whether that release accepts the weaker guarantee is still
-open ([the downsides
-table](../design-fiasco.md#downsides-against-erxoss-kernel)). The
+while the others run on. Both are built. That nothing a domain or a
+device does can crash the kernel rests on Fiasco's own code. A campaign
+of random kernel calls from a test domain checks it for domains; that
+is designed, not built
+([design-fiasco.md](../design-fiasco.md#verification)). The
 system domain is the exception: its failure resets the whole machine
 ([design.md, Trust placement](../design.md#trust-placement)).
 
@@ -1260,6 +1259,6 @@ that line is the next chapter's question.
   (a process that receives its orphaned descendants), \_umtx\_op(2) (the
   sleep that checks the lock word) and tuning(7) (overcommit).
 * [overview.md](../overview.md). erXos in a few pages.
-* [design-arch-aarch64.md](../design-arch-aarch64.md). How erXos's
-  kernel uses AArch64's exception levels, page tables, timer and
-  interrupt controller.
+* [design-fiasco.md](../design-fiasco.md). How erXos runs on Fiasco:
+  who creates kernel objects, and how memory, threads and devices are
+  handed to each domain.
