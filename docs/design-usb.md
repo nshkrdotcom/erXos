@@ -1232,6 +1232,25 @@ order:
    restart restarts the bus, which enumerates every port again, and every
    function, whose places it frees first.
 
+Each of the two supervisors restarts at most `usb_bus_restarts_max`
+times in any `usb_bus_restart_window_ms` (`abi/formats/usb.txt`). The bus
+group is `transient` under `erx_usb_sup`: past its bound it ends with
+`shutdown`, which is not restarted, so a controller that fails again
+after every reset, a host controller error that returns, is given up
+while its places stay. A device's reference names it within one bus
+process's life; a restarted bus starts its references afresh, since
+everything that held the old ones ended with it.
+
+The bus process meets its controller through one module,
+`erx_usb_bus_link`, which spells every message between the two. Once
+started it finds the controller among its supervisor's children and
+attaches to it; the controller answers with its root hub's port count
+when its start reaches the bus (step 4 of [The controller
+process](#the-controller-process)), and the bus core's first step powers
+the root ports. From then on the bus process sends the core's requests as
+the core makes them, and the controller sends root-port events and the
+answers, each an event of the core.
+
 A medium's block service runs under its BOT function, so it ends with
 the function, and a medium's windows end with its block service.
 
@@ -1486,7 +1505,12 @@ disconnect is seen. The root hub
 works the same way: the controller process turns a port event into
 `{port_event, Port}`, and its port operations, register accesses of its
 own, do not fail, so one that does ends the bus with its controller; and a root port raises no further event until
-every one of its change bits is cleared (xHCI 4.19.2, p. 322).
+every one of its change bits is cleared (xHCI 4.19.2, p. 322). An
+external hub's port operations are the hub class's GET_STATUS,
+SET_FEATURE and CLEAR_FEATURE on the hub's EP0, which the bus process
+sends to the controller as control requests tagged with the operation in
+place of an enumeration step; the controller echoes the tag, and the
+request's answer is the operation's.
 
 So the work a hub can create is bounded by construction: one bitmap in
 flight per hub, one queue per hub that holds each port at most
@@ -3015,6 +3039,7 @@ targeted traces carry the longer sequences.
 | --- | --- |
 | `erx_usb_bus_core`, explored to a fixed point over a root hub of two ports, one external hub of two ports and devices of one and two functions, with references and slots drawn from small sets; then traces of 1,000 attach and detach cycles on one port, a connection storm, a hub detached during its child's enumeration, a chain of six hubs, four connects on one port within a minute, four ends of one function within a minute and a hub function's restart with a device behind it, a device unplugged and plugged in again between the read of its connection change and that change's clear; over-current changes read on a root port; and, at every quiet node of the exploration, every port agreeing with the world on whether something is connected; at every node, the end and the hub reports of every instance not running, the earlier ones and an ended one whose pipes are still being reset, changing nothing, and a restart starting the claimed function unchanged under a run number no earlier instance had | a connection change with the port still connected not detaching the occupant; the address-zero turn released at the reset's end instead of the address; a port's new state dropping its occupant without detaching it; a port given up after its address keeping the turn; the turn released at a detach before the address answer, so a second device is reset while the first's Address Device is outstanding; an Address Device answer for a detached device dropped as stale, so the turn is never given back; a hub given up handing on the turn a port below it held; a hub six tiers below the root powering its ports; a full-speed device's EP0 left at 8 bytes when its descriptor says otherwise; a hub configured without its hub descriptor; a device's first request sent at its address answer, without the 10 ms settle; the step an answer echoes ignored, so a stale answer is taken at the step awaiting its kind; a function restarted before its pipes' resets answer, so the new instance meets a transfer its predecessor posted; an end from a function's earlier instance taken, so a late end resets the running instance's pipes; a report from a hub function's ended instance taken, after its restart or while its pipe is still being reset; the report an ended hub instance was handling kept, so `handled` goes to it; a pipe's failed reset keeping the device; the restart bound removed; a port's failure logged at every move into a failure state; the attempt throttle removed; a port's attempts never leaving the window; an over-current change logged on every change; the over-current log not rearmed by an attempt; a read that saw changes taking its port off the queue, so a change latched before their clear is lost |
 | `erx_usb_hub_core`, its machine explored to a fixed point for hubs of 1, 2, 7, 8 and 15 ports over every report of the port count's length with each port bit and the bits around it, a short report and a failed transfer; its decoders on written cases | a change report sent with the next transfer already posted; `handled` taken without posting the next transfer; the bits above the port count kept; a report shorter than the port count taken as naming nothing |
+| the bus process, its supervision tree and the hub function, run whole under `erx_usb_sup` on the host against a fake controller speaking `erx_usb_bus_link` and `erx_usb_pipe`: a root port's device, a hub with a device plugged in behind it, a hub's removal, a device replaced before its port is read, a function's end and restart within its bounds, a start that fails, a hub function's restart, a report from an ended instance, a controller's failure, and a controller that fails at every reset | a start that fails sending no end; a detach leaving its device's functions running; a report passed on with the running instance's number whoever sent it; a hub port's connection change cleared by the wrong feature; a connection change on a port still connected not detaching its occupant; a bus group that gave up started again |
 | `erx_xhci_core`'s pipe machine, teardown, control abort and failed address, explored to a fixed point over every queue state the NIF reports and every answer of each step, EP0 and other endpoints, behind a translator and not | `reset_pipe` issuing Reset Endpoint on a stopped queue; a stopped EP0 dropped and added; the abort answered after Stop Endpoint alone, so the next request finds EP0 stopped; the translator's clear skipped; Disable Slot issued before the stops answer; an Address Device whose device detached while it was posted left unanswered |
 | `erx_xhci_core`'s start, explored to a fixed point with and without a legacy support capability over every answer of the BIOS's semaphore and of the install and an interrupt at any time, the clock moving to each deadline; a run that has not ended always has a next step | the install called while the BIOS still owns the controller; the BIOS's semaphore never polled again; an interrupt before the controller runs acknowledged at once, or with a failure |
 | `erx_xhci_core`'s root ports and interrupt pass: every PORTSC write over many words, every change bit cleared by the name it shows as, a host system error, a pass bounded at two wraps of the event ring, `USBSTS` read once a second while running, each of those, a host controller error, a halt and an all-ones read failing the controller on an interrupt and on that read | a PORTSC write keeping the change and enable bits it read; the configuration error change behind no clear; a host system error ignored; a host controller error ignored; a halt ignored; a running controller's status never read between interrupts; an interrupt pass not bounded |
