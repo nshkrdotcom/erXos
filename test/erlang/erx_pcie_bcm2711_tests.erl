@@ -58,7 +58,8 @@ notified(Model) -> lists:member(notify_firmware, ops(Model)).
 last_write(Model, Register) ->
     lists:last([Word || {Written, Word} <- writes(Model), Written =:= Register]).
 
-%% The keep-or-reset table (docs/design-usb.md, "Keep or reset"), every row.
+%% The keep-or-reset table (docs/design-usb.md,
+%% "Keep or reset, decided from what the bridge reads"), every row.
 the_keep_or_reset_table_test_() ->
     Rows = [{up, 16#000138c1, kept, not_run, present, false},
             {up, 0, reset, l23, present, true},
