@@ -20,7 +20,10 @@ module Erx
     # The applications whose modules drive a device class, and the UART drivers, the
     # device shims of erx_uart: its other modules, the host link and the line trees,
     # parse the bytes the drivers carry and touch no UART's registers themselves.
-    DRIVER_APPLICATIONS = %w[erx_blk erx_fb erx_rtc].freeze
+    # erx_pcie drives the host bridges: its enumerator hands each bridge driver its
+    # device, whose registers it reaches through the device NIF (docs/design-pcie.md,
+    # "Processes" and "The bridge seam").
+    DRIVER_APPLICATIONS = %w[erx_blk erx_fb erx_pcie erx_rtc].freeze
     UART_DRIVERS = %w[erx_pl011 erx_mini_uart].freeze
 
     # A call of erx_device's issuing function name: erx_device followed by

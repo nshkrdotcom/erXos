@@ -1104,7 +1104,7 @@ class ManifestCheckTest < Minitest::Test
 
   def test_a_pci_function_is_refused
     source, against = with_extra_device(selector: 'pci', role: 'ordinary', bridge: '/pcie@0', path: '', base: 0, size: 0, line: 0)
-    refused(Erx::Manifest::Invalid, 'devices.selector', source, against, message: /M9/)
+    refused(Erx::Manifest::Invalid, 'devices.selector', source, against, message: /Track U \(b\)/)
   end
 
   def test_an_unassigned_host_link_is_refused
