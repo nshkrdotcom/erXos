@@ -1068,8 +1068,8 @@ unknown tag, a sending pid of another domain. It ends the connection
 **Over a limit** is what the receiver's own policy declines, which a correct
 sender cannot know in advance: a frame past `max_frame`, a term past
 `max_message_heap` or a facet's request limit, nesting past `funnel_depth`,
-an atom past `foreign_atoms`. It is dropped and counted, as ERTS drops an
-undecodable distribution message, with the substitutions below for signals
+an atom past `foreign_atoms`. It is dropped and counted; ERTS likewise drops a message whose term does not
+decode (`beam/erl_proc_sig_queue.c:5524-5580`), though it does not count it, with the substitutions below for signals
 that must not vanish.
 
 For each record between the lane's `rpos` and the `wpos` it read once:
@@ -1685,8 +1685,8 @@ but in its sender or its lane:
   no sender's queue and no lane, and waits in its control slot only while
   the connection agent is at its queue quota
   ([Connections](#connections));
-* **dropped and counted**, as ERTS drops an undecodable distribution
-  message: at the receiver, a frame over its `max_frame`, a message past
+* **dropped and counted**, as ERTS drops a distribution message whose term
+  does not decode: at the receiver, a frame over its `max_frame`, a message past
   its `max_message_heap` or the target's request limit, a message to the
   system domain with an atom it lacks, a spawn reply that matches no
   pending spawn, and a message, a link exit, an `exit/2` or a
@@ -1916,9 +1916,9 @@ process that must act on what a domain sent last, the console facet with
 the domain's last log records and console output among them, traps exits
 or monitors the domain's processes instead of linking without trapping;
 then the exit or `DOWN` arrives as a message behind the tail and is taken
-after it. Every facet traps exits, since the `erx_facet` behaviour does
-([Facets](#facets)), so a facet that links its grantee's processes gets
-the domain's tail whole.
+after it. Every facet monitors the processes its grant ends with, as the
+`erx_facet` behaviour does ([Facets](#facets)), so a facet gets the
+domain's tail whole before its `DOWN`.
 
 ### Killing a process
 
@@ -2394,11 +2394,11 @@ limits, and whether it is live.
 
 **Composition.** The domain service mints an attenuating facet only within
 the record of the facet behind it, so an attenuated grant is checked once
-against its ancestry. Each attenuating facet is linked to the facet behind
-it, and the behaviour, which traps exits, turns the link into revocation in
-one direction alone: a facet whose facet behind exits exits with the same
+against its ancestry. Each attenuating facet names the facet behind
+it in its `ends_with`, and the behaviour, which monitors it and traps no exits, turns its end into revocation in
+one direction alone: a facet whose facet behind ends ends with the same
 reason, so revoking a grant revokes every grant attenuated from it, and a
-facet behind lets the exit of an attenuating facet pass, so a command
+facet behind does not monitor an attenuating facet, so a command
 domain's end, which ends its facets, leaves its starter's facet running.
 
 **Revocation.** Revoking a grant is its facet's exit. The promise is that no
@@ -2502,7 +2502,7 @@ Each runtime has its own atom table, sized by the domain's `atoms` limit
   atoms over the domain's life (16,384 by default), and frames from any one
   peer at most a sixteenth of that, counted by the lane. Beyond either
   count, a message with an unknown atom is undecodable: the runtime drops it
-  at `receive`, as ERTS drops an undecodable distribution message, and
+  at `receive`, as ERTS drops a distribution message whose term does not decode, and
   counts it. The fun and export tables have the same lifetime counts. Atoms
   are never freed, so lifetime counts are what bound what others can make a
   domain hold, and the share per peer keeps one peer from spending what the
@@ -3076,7 +3076,7 @@ domain](#domain-ids-pids-and-references)):
 | `exit/2` or `group_leader/2` on a process of another domain exported to the caller without `exit` | no effect, as on a process that does not exist |
 | An exit reason longer than the receiver's `max_frame` or past its `max_message_heap` | `{erx_reason_too_large, Bytes}` |
 | An exit reason the system domain cannot decode without creating an atom | system-domain processes see `{erx_foreign_reason, Bin}` |
-| A message to a system-domain process carrying an atom it lacks, a fun or an export | dropped and counted, as ERTS drops an undecodable distribution message |
+| A message to a system-domain process carrying an atom it lacks, a fun or an export | dropped and counted, as ERTS drops a distribution message whose term does not decode |
 | A message whose decoding would create atoms, funs or exports beyond the receiving domain's `foreign_atoms` count, in all or for the sender's lane | dropped at `receive` and counted |
 | A message carrying pids of the sender's domain | each the receiver does not yet hold is exported toward it with `send`, which covers messages and monitors; `link`, `exit` and `group_leader/2` on it need an explicit export by its owner, where stock Erlang lets a process link to and exit any pid it knows; pids of other domains in it stay data |
 | A pid or alias of the sender's domain beyond the sender's `exports` | travels, and behaves at the receiver as a dead process; `erx:export/3` returns `{error, system_limit}` |

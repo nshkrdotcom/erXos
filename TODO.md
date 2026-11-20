@@ -2534,6 +2534,15 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
 
 ## Bugs by subsystem
 
+* [Low] domain library, `liberx/system/dom_boot.c` (the apps budget and each principal's budget): both are
+  created with `ERX_BUDGET_ELASTIC`, while the comments beside them and
+  [design-fiasco.md](docs/design-fiasco.md) make a domain's budgets walls (cap equal to guarantee). Change
+  the kind with the budget-wall implementation package.
+* [Medium] Fiasco backend, `liberx/backend/fiasco/park.c`: `erx_park` and `erx_group_take_ready` refuse a thread
+  that is not an executor (`ERX_ETYPE`), and that is all of the executor rule. Refusing to arm a vCPU
+  upcall on an executor, and refusing an executor every other blocking wait with `ERX_EWOULDBLOCK`
+  ([design-fiasco.md](docs/design-fiasco.md), the blocking-call row, FD18), are not built, and
+  `ERX_EWOULDBLOCK` is not defined in `abi/erx_abi.txt`.
 * [Low] Fiasco backend, a task's first check of a release file still hashes on the service
   thread (`liberx/backend/fiasco/slice.c` `erx_fiasco_release_entry_body`, `check == 1`), so
   every other call of every task and of the root waits for that file's hash. The website's
