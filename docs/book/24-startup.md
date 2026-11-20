@@ -39,11 +39,12 @@ FreeBSD spreads this over many programs. The firmware loads `loader`,
 which reads `/boot/loader.conf` and loads the kernel and its modules
 from the root file system. The kernel starts `init`, which runs
 `/etc/rc`; the rc scripts read `/etc/rc.conf` and start each daemon in
-the order their `REQUIRE` lines give. `shutdown -r now` asks `init` to
-run the scripts' stop methods, sync the disks and reset. A hang is
+the order their `REQUIRE` lines give. `shutdown -r now` signals `init`,
+which runs `/etc/rc.shutdown` to stop the daemons, syncs the disks
+and resets. A hang is
 the business of `watchdogd(8)`, which pets the hardware watchdog
 while the system lives.
-<!-- check: loader(8), rc(8), rc.conf(5), shutdown(8), watchdogd(8) as described; not read in this task -->
+<!-- check: loader(8), rc(8), rc.conf(5), shutdown(8), init(8) running /etc/rc.shutdown, watchdogd(8) as described; not read in this task -->
 Each program reads its own configuration at its own moment, so none
 can say before boot whether the whole is consistent.
 
@@ -53,7 +54,7 @@ proved at build time, says which domains start, in which order, with
 which devices, and the system domain reads nothing else. A watchdog
 in the root service resets the machine when the system domain's
 runtime stops answering. Every end of the machine, asked for or not,
-goes through one function that says why.
+goes through one end path that says why.
 
 Sections 24.1 to 24.3 follow a boot from the file the loader reads to
 the console's prompt. Section 24.4 compares the two platforms. The
@@ -116,19 +117,20 @@ archive other than the one it was packed with.
 
 For debugging under QEMU there is also a **two-file form**: the first
 stage as built, given to `-kernel`, and the same archive as `-initrd`.
-Both forms are built; the `boot_image` QEMU suite boots each at every
-CPU count (`tools/lib/erx/qemu_suites/boot_image.rb`).
+Both forms are built; the `boot_image` QEMU suite boots the one-file
+form at 1 and 4 CPUs and the two-file form at 1
+(`tools/lib/erx/qemu_suites/boot_image.rb`).
 
 ### 24.1.2 The archive's layout
 
 The archive is erXos's own format, `ERXPACK` version 2, laid out as in
-Figure 24.2 ([design-kernel.md, The boot image](../design-kernel.md#the-boot-image)).
+Figure 24.1 ([design-kernel.md, The boot image](../design-kernel.md#the-boot-image)).
 
 ```text
 offset 0      +----------------------------+  -.
               | header, 96 bytes           |   |
               |  magic, version, flags     |   |
-              |  size in pages             |   |  index run:
+              |  total size (whole pages)  |   |  index run:
               |  root_entry, build id      |   |  hashed into
               |  index_hash                |   |  index_hash
               +----------------------------+   |
@@ -150,7 +152,7 @@ page boundary +----------------------------+  -'
               +----------------------------+
 ```
 
-*Figure 24.2. The boot image's layout. Every byte belongs to exactly
+*Figure 24.1. The boot image's layout. Every byte belongs to exactly
 one run, so the header's one hash commits to the whole archive: to
 the index run directly, and to each file run through the hash its
 entry records.*
@@ -195,11 +197,12 @@ Here is one, traced. The `boot_image` suite flips one byte inside the
 kernel's file in a copy of the bootable file, and boots the copy:
 
 1. QEMU loads the file and enters `bootstrap`.
-2. The locator is good, so the archive is where it says.
-3. The index hash matches, since the flipped byte lies in a file run.
-4. The kernel's entry is found. The hash of its file run differs from
+2. The locator is untouched, so the archive is where it says. The
+   index hash matches too, since the flipped byte lies in a file run,
+   which the index run covers only through the hash its entry records.
+3. The kernel's entry is found. The hash of its file run differs from
    the hash the entry records.
-5. `bootstrap` prints `erXos image: boot/kernel: file_hash` and stops.
+4. `bootstrap` prints `erXos image: boot/kernel: file_hash` and stops.
    Fiasco never runs.
 
 The suite's other damages, from a bad locator to a version 3 header
@@ -226,7 +229,8 @@ into a page reserved read-only for the root task. It holds the
 archive's address and size, the index hash, and the kernel command
 line from the device tree's `/chosen/bootargs`. It also holds the
 console's device-tree path from `/chosen/stdout-path`, the boot
-value with its slot
+value with its slot, which say what the firmware booted and from
+which slot
 ([chapter 16](16-storage.md#1662-the-slot-writer-decides-from-facts-it-reads)),
 and the boot CPU's identification registers, which user mode cannot
 read. Its layout comes from the ABI file
@@ -311,12 +315,14 @@ A crashed service restarts alone, with one exception. The domain
 service is a `temporary`, `significant` child of a `one_for_one`
 supervisor with
 `auto_shutdown => any_significant`
-(`erlang/apps/erx_domain/src/erx_domain_sup.erl`). Its end, however it
-comes, shuts down the application, the runtime and the machine. It
-keeps the record of every domain and connection in its own heap, and
-a clean reset is safer than a successor guessing at them.
+(`erlang/apps/erx_domain/src/erx_domain_sup.erl`), and so is
+`erx_machine`, the process that coordinates the machine's end
+(section 24.6.2). The end of either, however it comes, shuts down the
+application, the runtime and the machine. The domain service keeps
+the record of every domain and connection in its own heap, and a
+clean reset is safer than a successor guessing at them.
 
-Figure 24.1 puts the whole sequence in one picture, with the build's
+Figure 24.2 puts the whole sequence in one picture, with the build's
 manifest check beside it.
 
 ```mermaid
@@ -333,7 +339,7 @@ flowchart TB
   D --> S[start table: services]
 ```
 
-*Figure 24.1. The boot sequence. The manifest is checked once, on the
+*Figure 24.2. The boot sequence. The manifest is checked once, on the
 build host, before the packer writes it into an image. At boot nothing
 checks its properties again: every step reads the bytes that passed.*
 
@@ -368,7 +374,9 @@ The console is named by device-tree path, which is what the root task
 compares with the firmware's `stdout-path`. Step 4 of section 24.2.2
 refuses a machine with less than `root_memory`, and `max_domains`
 sizes the domain library's tables. Beside the system domain, this
-manifest configures four domains: storage, network, web and display.
+manifest and the part it shares with the other development manifests,
+`config/manifest/development.txt`, configure four domains: storage,
+network, web and display.
 
 ### 24.3.2 Boot order and the boot timeout
 
@@ -399,18 +407,22 @@ manifest sets another, is stopped. All of this is built
 
 What happens to the machine whose storage domain hangs at every boot?
 A domain that fails to start, or ends later, is restarted by the
-domain service within the restart intensity of its manifest row.
+domain service within the restart intensity of its manifest row,
+the domain's record in the manifest.
 That is at most `restarts` restarts in `restart_period_s` seconds, as an OTP
 supervisor counts ([chapter 3](03-erlang.md#334-supervisors)). The
 development manifests give their domains 5 restarts in 600 seconds.
 
 A boot that hangs needs a different count. It is stopped only at each
-timeout, so its restarts come 60 seconds apart, and five of them
-never fit in one 600-second period. Counted by time, a hang would
-restart for ever. So a restart after a boot timeout counts until some
-boot of that row reaches ready, however long that takes
-(`erx_domain_core:intensity/4`). A domain that hangs at every boot is
-left down after five tries, and the machine runs on without it. This
+boot timeout, so its restarts come a boot timeout apart. At the
+default 60 seconds five of them fit in 600 seconds, but a manifest may
+set the timeout as high as an hour, and past 120 seconds (600 divided
+by 5) no five restarts share one period. Counted by time, such a hang
+would restart for ever. So a restart after a boot timeout keeps
+counting until a boot of that row that reached ready ends, however
+long that takes (`erx_domain_core:intensity/4`). A domain that hangs
+at every boot is left down after five restarts, whatever its boot
+timeout, and the machine runs on without it. This
 is built, with host tests of the pure decision.
 
 The machine does not reset for it: a configured domain is one node
@@ -466,7 +478,7 @@ table, not a fork of the code.
 | Boot entropy | 32 bytes in `/chosen/rng-seed` | the firmware's seeds, or the RNG200 |
 | Hardware watchdog | none | the power-management watchdog |
 | Crash record | the console, which the harness logs | the console |
-| Trial request | the harness (designed) | the firmware's mailbox (designed) |
+| Trial request (section 24.7.3) | the harness (designed) | the firmware's mailbox (designed) |
 
 *Table 24.1. The two built platforms, from
 [design-platforms.md, Overview](../design-platforms.md#overview) and
@@ -562,8 +574,9 @@ stores the current time in one word of the root task, through
 `erx_watchdog_pet`. Only the root task links that function, so no
 other domain can call it.
 
-**The root's thread.** A thread of the root task at priority 255, the
-only thread above the common priority, wakes once a second and feeds
+**The root's thread.** A thread of the root task at priority 255 (in
+Fiasco a higher number is more urgent), the only thread above the
+common priority, wakes once a second and feeds
 a pure state machine, `erx_watchdog_step` in `kernel/core/watchdog.c`.
 The machine has three events. `START` arms the deadline `B` seconds
 ahead. Each `PET` moves it `D` seconds past the pet. Each `TICK`
@@ -572,18 +585,19 @@ either finds the deadline passed and returns the end, with the cause
 thread performs what the step returns
 (`liberx/backend/fiasco/watchdog_thread.c`). The numbers come from the
 kernel command line, `erx.watchdog=P,D,B`, with defaults of 1, 5 and
-60 seconds; the QEMU harness gives the slower TCG `1,30,600`. In
+60 seconds; the QEMU suites' boots under the slower TCG use
+`1,30,600` (`tools/lib/erx/production_image.rb`). In
 deterministic mode (`erx.det=1`) the watchdog is off.
 
 **The board's watchdog.** On the Raspberry Pi 4 the same thread arms
 the BCM2711's power-management watchdog with a 4 s timeout before its
 first tick. It reloads the watchdog at every tick, through a register
-window only the root task maps. If Fiasco or the root task hangs, the ticks
-stop and the board resets within 4 s. Nothing stops the hardware
-watchdog once it is armed, so a board halted on request also resets
-when it fires. The code is built. The board's manual checklist cases
-for it have not been run, so whether it resets a hung real board is
-not recorded.
+window only the root task maps. If Fiasco, or the watchdog thread
+itself, stops, the ticks stop and the board resets within 4 s. A hang
+of ERTS, which stops the pets, is the software deadline's to catch.
+Nothing stops the hardware watchdog once it is armed, so a board halted on request also resets
+when it fires. The code is built; no recorded run shows it resetting
+a hung real board.
 
 The chain has a hole at its start. A hang before the root's thread
 starts, in the firmware or in Fiasco's own boot, is watched by
@@ -608,43 +622,57 @@ built.
 
 ### 24.5.3 A missed pet, traced
 
-The `native_watchdog` QEMU suite withholds the first pet, at each CPU
-count (`tools/lib/erx/qemu_suites/native_watchdog.rb`):
+The `production_image` QEMU suite stops the pets of a real boot under
+HVF, with `erx.watchdog=1,5,60`
+(`tools/lib/erx/production_image.rb`, `prove_pet`):
 
-1. The root's thread starts and steps `START`: the deadline is `B`
-   seconds ahead.
-2. No pet comes. Each tick steps `TICK` and finds the deadline still
-   ahead.
-3. The first tick past `B` returns the end with
-   `ERX_CRASH_CAUSE_WATCHDOG`.
-4. The thread calls `erx_fiasco_end` (section 24.6.1). It does not own
-   the log ring, so it skips the ring, writes the crash record to the
-   console, then `erx: end reset`.
-5. The reset exits QEMU under `-no-reboot`, and the suite reads the
-   record's cause from the serial log.
+1. The machine boots as usual. `erx_watchdog` pets every half second,
+   and each tick of the root's thread steps `PET` and then `TICK`,
+   which reloads.
+2. An expression passed to `init`'s `-eval` calls
+   `erlang:suspend_process(whereis(erx_watchdog))` and prints
+   `pet_stopped`. ERTS runs on, but the watchdog process is never
+   scheduled again.
+3. The pets stop. Each tick finds the stored time unchanged and steps
+   only `TICK`, until the first tick more than `D`, 5 seconds, past
+   the last pet returns the end with `ERX_CRASH_CAUSE_WATCHDOG`.
+4. The thread calls the watchdog's entry to the end path (section
+   24.6.1). It writes the crash record, with the time since the last
+   pet, to the console, then `erx: end reset`.
+5. The reset exits QEMU under `-no-reboot`. The suite reads the
+   record's cause from the serial log, and checks that the end came
+   within `D` plus one period, with a margin, of `pet_stopped`.
 
-The watchdog is built, and the suite passes under HVF.
+An earlier boot of the same suite lets the machine run well past `B`
+and `D` with its pets going, so a watchdog that fires early fails one
+boot and a watchdog that never fires fails the other. A second suite,
+`native_watchdog`, boots a native test root task in place of the
+system domain, which pets for a while and then stops. The watchdog
+is built.
 
 ## 24.6 Ending the machine
 
 Every way the machine can end, from a typed `reboot` to a missed pet,
-reaches the same function, and that function always says which end it
+reaches the same end path, and that path always says which end it
 took.
 
 ### 24.6.1 One end path
 
-`erx_fiasco_end` in `liberx/backend/fiasco/end.c` takes a named cause.
-Fiasco's call that shuts the machine down is private to that file, and
-a build check, `fiasco-machine-end`, refuses it anywhere else, so
-nothing ends the machine without a cause
+The end path lives in `liberx/backend/fiasco/end.c`. Fiasco's call
+that shuts the machine down is private to that file, and a build
+check, `fiasco-machine-end`, refuses it anywhere else, so nothing ends
+the machine without a cause
 ([design-fiasco.md, The end path](../design-fiasco.md#the-end-path)).
-It runs four steps:
+The path has two entries. `erx_fiasco_end` takes a named cause, and
+a fault's details when there was one; `erx_fiasco_end_watchdog` is the
+watchdog thread's. Both share their first and last steps:
 
-1. **One caller.** An atomic exchange of an `ending` word picks one
-   caller; any other sleeps for ever.
-2. **The log.** On the thread that owns the log ring, it writes the
-   lines no reader has taken yet. Any other thread skips the ring,
-   since its owner may be mid-write.
+1. **One caller.** An atomic exchange of one word picks one caller;
+   any other sleeps for ever.
+2. **The log.** In `erx_fiasco_end`, on the thread that owns the log
+   ring, it writes the lines no reader has taken yet. Any other thread
+   skips the ring, since its owner may be mid-write, and the
+   watchdog's entry always skips it.
 3. **The record.** After a fault or a missed pet, it writes the crash
    record to the console
    ([chapter 21](21-live-machine.md#2153-the-crash-record)).
@@ -663,7 +691,7 @@ update's trial, which must fall back to the other slot
 ([chapter 16](16-storage.md#1664-hangs-faults-and-the-reset-count)).
 It also means a fault that repeats on every boot repeats the reset.
 
-On Fiasco no memory region survives the reset, so the crash record
+No memory region survives the reset, so the crash record
 lives only in the console's output: the harness's log on QEMU, and
 whatever is wired to the Pi's UART. A board with nothing on its serial
 pins keeps no record of why it reset.
@@ -714,21 +742,20 @@ Step 6 above is stock OTP's shutdown, which waits on each application
 as long as it takes. The design's **ordered end** is stricter
 ([design-system.md, Shutting down](../design-system.md#shutting-down)).
 The coordinator first has the domain library install an **ending
-record**: the requested end and an absolute deadline of 10 seconds.
-The domain library's fault thread, which runs no Erlang, resets the
-machine when the deadline passes, so no hung service holds the
-machine up. From then on no domain is created or restarted. Two steps
-follow, each with its own deadline. The vault stops its sealing
-backend, within 2 seconds. Every storage service freezes, writing a
-checkpoint that holds every write it acknowledged and refusing later
-writes, within 5 seconds. A requested trial goes ahead only when both
-succeed; otherwise it becomes a reset into the committed slot. `off`
-and `reset` go ahead regardless, with a log line saying durability is
+record**: the requested end and a deadline 10 seconds away, past
+which the library's fault thread, which runs no Erlang, resets the
+machine, so no hung service holds it up. No domain is created or
+restarted after that. Then the vault stops its sealing backend
+within 2 seconds, and every storage service freezes within 5,
+writing a checkpoint of every write it acknowledged and refusing
+later ones. A requested trial goes ahead only when both succeed,
+and otherwise resets into the committed slot; `off` and `reset` go
+ahead regardless, logging that durability is
 incomplete.
 
 The ending record, its deadline, the vault's quiesce and the storage
 freeze are designed and not built; the coordinator keeps the accepted
-request in its own state instead. The reset count, whose passing
+request in its own state. The reset count, whose passing
 three boots the rescue configuration, is designed and not built too
 ([chapter 16](16-storage.md#1664-hangs-faults-and-the-reset-count)).
 
@@ -778,10 +805,9 @@ not when it gives too few bytes.
 
 ### 24.7.3 What a board does not give
 
-The design gives each board a **device secret**, 32 bytes the board
-holds and its card does not, from which the vault derives the key
-that seals data to the board. On Fiasco no device secret is read, and
-the manifests say `sealing none`. The design also lets an update ask
+The system reads no secret held by the board apart from its card, so
+nothing is sealed to the board: whoever copies the card has all it
+holds, and the manifests say `sealing none`. The design lets an update ask
 the firmware for a one-shot trial boot of the spare slot. It asks
 through the Pi's mailbox, or on QEMU through a last line, `erx: end trial`,
 that the harness reads. Fiasco's backend refuses that end, so no trial
@@ -798,7 +824,7 @@ is ever asked for. The trial request is designed and not built.
 | A system service other than the domain service | restarted alone by its supervisor | a crash report |
 | The domain service, or the system runtime | the machine resets | crash record, `erx: end reset` |
 | ERTS stops petting | the root's thread resets the machine | crash record with the watchdog cause |
-| Fiasco or the root task hangs (Pi 4) | the hardware watchdog resets the board | nothing; the board reboots |
+| Fiasco or the watchdog thread stops (Pi 4) | the hardware watchdog resets the board | nothing; the board reboots |
 | A hang before the root's watchdog thread | nothing | a hung machine; power cycle |
 
 ## 24.9 Design choices
@@ -825,11 +851,12 @@ watchdog watches only the runtime that runs the domain service. The
 designed liveness list adds a few system services, so a deadlock
 inside the system domain is caught too.
 
-**The root arms the board's watchdog on every boot.** The design for
-the board leaves the hardware watchdog off on an attended development
-board. On Fiasco the root task arms it on every boot, since nothing
-else would reload it, so a board stopped in Fiasco's debugger resets
-within 4 seconds.
+**A hardware watchdog on every boot.** The firmware does not start the
+board's watchdog, and nothing before the root's watchdog thread would
+reload it, so the root task arms it on every boot, from that thread,
+attended board or not. A hung board comes back by itself. The cost is
+that an attended board stopped in Fiasco's debugger resets within
+4 seconds.
 
 ## Summary
 
@@ -844,7 +871,7 @@ build derived and gives each its units first. It stops a boot that
 misses its timeout, and leaves a row down when its restarts run out. The
 watchdog is a chain: an Erlang process pets the root's thread, which
 on the Pi 4 reloads the board's watchdog. Every end of the machine
-goes through one function that names the end, and every unordered end
+goes through one end path that names the end, and every unordered end
 resets. The image's hashes give integrity; authenticity needs signed
 slots, which are designed.
 

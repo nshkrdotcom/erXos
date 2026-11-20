@@ -694,13 +694,13 @@ The record is **Built**; the system-domain QEMU suite crashes the
 system domain's runtime and reads the record from the serial log
 (`tools/lib/erx/qemu_suites/system_domain.rb`).
 
-On Fiasco no memory region survives the reset. The design keeps the
-record in such a region where the platform has one, for the system
-shell to read at `[kernel, crash]`, and gives release builds a **brief
-form** with no registers, stack or log
+No memory region survives the reset, so the record lives only in the
+console's output: the harness's log on QEMU, and whatever is wired to
+the Pi's UART. The record's layout also has a **brief form**, with no
+registers, stack or log, for release builds
 ([design-system.md, The crash record](../design-system.md#the-crash-record)).
-Both are designed and not built; the root always writes the full
-form.
+The brief form is designed and not built; the root always writes the
+full form.
 
 A crash of any other domain ends only that domain, whose runtime
 writes its dump into the domain's crash area
