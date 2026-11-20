@@ -101,8 +101,12 @@ limit pcie_bar_mem_base u64 0xfffffffffffffff0
 limit pcie_bar_io_base u32 0xfffffffc
 # The largest BAR the 32-bit windows place, as a power of two; a 64-bit BAR whose size
 # needs the high word is reported unplaced (docs/design-pcie.md, "Sizing"). erXos's
-# choice.
+# choice. A report's BAR carries its true size_log2, at most pcie_bar_size_log2_wide, the
+# largest a 64-bit BAR's mask can give: the intake refuses a size_log2 above
+# pcie_bar_size_log2_max only on a placed BAR, and one above pcie_bar_size_log2_wide on
+# any BAR, so a function holding a BAR too large to place is reported unplaced with it.
 limit pcie_bar_size_log2_max u8 31
+limit pcie_bar_size_log2_wide u8 63
 
 # The capability list: the least offset a pointer may hold, the bits of a pointer read
 # (its low two cleared) and the most capabilities 192 bytes from 0x40 hold, past which

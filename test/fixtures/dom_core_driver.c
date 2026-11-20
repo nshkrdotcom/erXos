@@ -1188,6 +1188,55 @@ pcis(void)
 	/* A placing report refused whole leaves the next to place. */
 	report[0] = pci_function(0, PCI_WINDOW_PCI);
 	pci_case("after_refusals", report, 1);
+
+	/* A BAR too large to place is reported at its true size on an unplaced function (abi/formats/pcie.txt). */
+	const erx_pcie_bar_t huge = { .kind = ERX_PCIE_BAR_MEMORY, .flags = ERX_PCIE_BAR_ADDR64, .size_log2 = 40 };
+	pci_fresh();
+	report[0] = pci_function(0, PCI_WINDOW_PCI);
+	report[0].state = ERX_PCIE_STATE_UNPLACED;
+	report[0].bars[2] = huge;
+	pci_case("unplaced_huge", report, 1);
+	report[0].bars[2] = huge;
+	report[0].bars[2].size_log2 = 64;
+	pci_case("size_64", report, 1);
+	report[0] = pci_function(0, PCI_WINDOW_PCI);
+	report[0].bars[0].kind = ERX_PCIE_BAR_IO;
+	report[0].bars[0].flags = ERX_PCIE_BAR_PLACED;
+	pci_case("io_placed", report, 1);
+	/* A ready function has every memory BAR placed. */
+	report[0] = pci_function(0, PCI_WINDOW_PCI);
+	report[0].bars[0].flags = ERX_PCIE_BAR_ADDR64;
+	report[0].bars[0].address = 0;
+	pci_case("ready_unplaced", report, 1);
+	/* A window of 4 GiB holds a placed BAR's span clamped to the placing bound, so only the bound refuses one of 8 GiB. */
+	pci_fresh();
+	pci_bridge.facts.windows[0].size = UINT64_C(0x100000000);
+	report[0] = pci_function(0, UINT64_C(0x100000000));
+	report[0].bars[0].size_log2 = 33;
+	pci_case("placed_huge", report, 1);
+	/* A window reaching past 4 GiB holds a 64-bit BAR there and no 32-bit one. */
+	pci_fresh();
+	pci_bridge.facts.windows[0].size = 0x80000000;
+	report[0] = pci_function(0, UINT64_C(0x100000000));
+	report[0].bars[0].flags = ERX_PCIE_BAR_PLACED;
+	pci_case("narrow_above_4g", report, 1);
+	report[0] = pci_function(0, UINT64_C(0x100000000));
+	pci_case("wide_above_4g", report, 1);
+	pci_fresh();
+	report[0] = pci_function(ERX_PCIE_DEVICE_MAX + 1, PCI_WINDOW_PCI);
+	pci_case("device_bound", report, 1);
+	report[0] = pci_function(0, PCI_WINDOW_PCI);
+	report[0].function = ERX_PCIE_FUNCTION_MAX + 1;
+	pci_case("function_bound", report, 1);
+
+	/* Only a timed-out notification loses the bridge's firmware, and nothing finds it again. */
+	pci_fresh();
+	erx_dom_pci_firmware(&pci_bridge, ERX_EBUSY);
+	printf("pci firmware busy lost=%d\n", pci_bridge.firmware_lost ? 1 : 0);
+	erx_dom_pci_firmware(&pci_bridge, ERX_ETIMEDOUT);
+	printf("pci firmware timedout lost=%d\n", pci_bridge.firmware_lost ? 1 : 0);
+	erx_dom_pci_firmware(&pci_bridge, ERX_OK);
+	printf("pci firmware ok lost=%d\n", pci_bridge.firmware_lost ? 1 : 0);
 	return (0);
 }
 

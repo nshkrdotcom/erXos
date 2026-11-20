@@ -390,9 +390,10 @@ typedef struct erx_dom_pci_refusal {
  * without its state, the report repeats, and unconfirms every other. Every
  * layout takes the report's state, or none, and not_ready on a bridge marked
  * firmware_lost. ERX_EINVAL, with *refusal naming the record and field,
- * every layout unconfirmed and nothing else written: a record of another bridge, at a bus outside its range
- * or at a place another record holds, of a state or BAR outside its sets, a
- * 64-bit BAR whose upper half is not absent, more than
+ * every layout unconfirmed and nothing else written: a record of another bridge, at a bus outside its range,
+ * a device or function past its bound or at a place another record holds, of a state or BAR outside its
+ * sets (a size past ERX_PCIE_BAR_SIZE_LOG2_WIDE, or past ERX_PCIE_BAR_SIZE_LOG2_MAX on a placed BAR; a
+ * placed BAR not memory; a placed 32-bit BAR past 4 GiB; a ready function's memory BAR not placed), a 64-bit BAR whose upper half is not absent, more than
  * ERX_PCIE_FUNCTIONS_MAX records, or, to a bridge with no layouts, any placement
  * check above.
  */
@@ -417,6 +418,14 @@ bool		erx_dom_pci_bar_cpu(const erx_pcie_bridge_t *facts, const erx_pcie_bar_t *
  */
 const erx_dom_pci_layout_t *erx_dom_pci_givable(const erx_dom_pci_bridge_t *bridge, uint8_t bus,
 		    uint8_t device, uint8_t function);
+
+/*
+ * The bridge's firmware notification answered status (docs/design-usb.md,
+ * "The VL805's firmware"): ERX_ETIMEDOUT marks it firmware_lost, which
+ * nothing clears in the boot, since the kernel answers every later
+ * notification of the boot the same way; any other status leaves it.
+ */
+void		erx_dom_pci_firmware(erx_dom_pci_bridge_t *bridge, erx_status_t status);
 
 /*
  * The route a give of function, the layout of entry's place, chooses

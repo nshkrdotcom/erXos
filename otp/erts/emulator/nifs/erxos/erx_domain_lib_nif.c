@@ -33,7 +33,9 @@
  * it. crash, which reads an ended domain's crash area, asks the same, since
  * the dump holds that domain's data. info reads a living domain's group
  * or budget report for any caller, since a report holds none of the
- * domain's data. Which process registers is the domain service's to win:
+ * domain's data. pci_report, the PCIe catalogue's intake, answers any
+ * caller, since its caller is the device service (pci_report_nif). Which
+ * process registers is the domain service's to win:
  * it registers
  * at its start, and a registration while it lives is refused (TODO.md, the
  * domain service's trust in system-domain processes).
@@ -1224,6 +1226,50 @@ fault_thread_start(void)
 }
 
 /*
+ * pci_report(Bridge, Records): the PCIe domain's report on the host bridge
+ * of device row Bridge, which the device service hands on
+ * (docs/design-pcie.md, "The catalogue and gives"), each record the bytes
+ * of an erx_pcie_function (erx_abi_layout:encode/2). The device service,
+ * the design's caller, is not the registered process, so any caller is
+ * answered: the system domain runs only trusted code, and the intake judges
+ * a report against the catalogue but not who sent it. A list longer
+ * than a bridge's functions or a record not of the layout's size is
+ * badarg. ok, {error, {einval, Record, Field}} naming the refused record by
+ * its place in the list and the field the intake names, or {error, Name}.
+ */
+static ERL_NIF_TERM
+pci_report_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
+{
+	erx_pcie_function_t report[ERX_PCIE_FUNCTIONS_MAX];
+	erx_dom_pci_refusal_t refusal = { 0, NULL };
+	ERL_NIF_TERM list, head;
+	ErlNifBinary record;
+	unsigned int bridge, count;
+	erx_status_t status;
+
+	if (argc != 2 || !enif_get_uint(env, argv[0], &bridge) || !enif_get_list_length(env, argv[1], &count) ||
+	    count > ERX_PCIE_FUNCTIONS_MAX)
+		return (enif_make_badarg(env));
+	list = argv[1];
+	for (unsigned int at = 0; at < count; at++) {
+		/* The decoder reads a prefix of a longer binary, so the size is checked here. */
+		if (!enif_get_list_cell(env, list, &head, &list) || !enif_inspect_binary(env, head, &record) ||
+		    record.size != ERX_PCIE_FUNCTION_SIZE || !erx_pcie_function_decode(record.data, record.size, &report[at]))
+			return (enif_make_badarg(env));
+	}
+	if (lib == NULL)
+		return (status_error(env, ERX_ENOTSUP));
+	enif_mutex_lock(lib_lock);
+	status = erx_dom_lib_pci_report(lib, bridge, report, count, &refusal);
+	enif_mutex_unlock(lib_lock);
+	/* The field is one of the intake's own names, never the caller's bytes. */
+	if (status == ERX_EINVAL && refusal.field != NULL)
+		return (enif_make_tuple2(env, atom(env, "error"), enif_make_tuple3(env, atom(env, "einval"),
+		    enif_make_uint(env, refusal.record), atom(env, refusal.field))));
+	return (status_term(env, status));
+}
+
+/*
  * The library, its lock and its fault thread live as long as the system
  * domain, so only the first load sets them up and a later one (after a
  * purge) is refused. A library with no fault thread would never end a
@@ -1270,6 +1316,7 @@ static ErlNifFunc nif_funcs[] = {
 	{ "configured_create_nif", 3, configured_create_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND },
 	{ "session_create_nif", 5, session_create_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND },
 	{ "app_session_create_nif", 6, app_session_create_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND },
+	{ "pci_report_nif", 2, pci_report_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND },
 };
 
 ERL_NIF_INIT(erx_domain_lib, nif_funcs, load, NULL, NULL, NULL)

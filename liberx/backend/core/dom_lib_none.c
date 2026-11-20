@@ -146,3 +146,11 @@ erx_dom_lib_record(erx_dom_lib_t *lib, uint64_t label, const erx_fault_t *record
 	(void)lib, (void)label, (void)record, (void)report;
 	return (false);
 }
+
+erx_status_t
+erx_dom_lib_pci_report(erx_dom_lib_t *lib, uint32_t bridge, const erx_pcie_function_t *report, uint32_t count,
+    erx_dom_pci_refusal_t *refusal)
+{
+	(void)lib, (void)bridge, (void)report, (void)count, (void)refusal;
+	return (ERX_ENOTSUP);
+}

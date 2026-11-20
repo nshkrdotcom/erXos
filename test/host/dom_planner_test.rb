@@ -48,16 +48,19 @@ class DomPlannerTest < Minitest::Test
     end
 
     # test/fixtures/dom_view_driver.c over the library, printing the view's catalogue and services.
-    def view_driver
-      @view_driver_path ||= File.join(build_directory, 'dom-view').tap do |output|
-        sources = %w[liberx/system/dom_core.c liberx/system/dom_life.c liberx/system/dom_boot_view.c liberx/erx_lane.c
-                     liberx/backend/core/boot_manifest.c
-                     tools/host/input.c test/fixtures/dom_view_driver.c].map { |path| File.join(ROOT, path) }
+    def view_driver = @view_driver_path ||= view_driver_from(File.join(ROOT, 'liberx/system/dom_boot_view.c'), name: 'dom-view')
+
+    # The view driver with boot_view in dom_boot_view.c's place, for a seeded fault.
+    def view_driver_from(boot_view, name:)
+      File.join(build_directory, name).tap do |output|
+        sources = [*%w[liberx/system/dom_core.c liberx/system/dom_life.c].map { |path| File.join(ROOT, path) }, boot_view,
+                   *%w[liberx/erx_lane.c liberx/backend/core/boot_manifest.c tools/host/input.c
+                       test/fixtures/dom_view_driver.c].map { |path| File.join(ROOT, path) }]
         build_runner.run([ENV.fetch('ERX_CLANG', 'clang'), '-std=c17', '-D_DARWIN_C_SOURCE', '-Wall', '-Wextra', '-Werror',
                           '-O1', *Erx::Generated.include_flags(root: ROOT), '-I', File.join(ROOT, 'include'),
                           '-I', ROOT, '-I', File.join(ROOT, 'tools/host'), *sources,
                           Erx::Generated.path('liberx/generated/abi_reader.c', root: ROOT), '-o', output],
-                         name: 'dom-view-build', deadline: 120)
+                         name: "#{name}-build", deadline: 120)
       end
     end
 
@@ -102,11 +105,12 @@ class DomPlannerTest < Minitest::Test
   def development_manifest = admit_development(development_source)
 
   # The view's catalogue and services, or its refusal, as test/fixtures/dom_view_driver.c prints them,
-  # or with mode framebuffer its framebuffer rows' ranges before and after placement.
-  def view_lines(manifest, name, *mode)
+  # or with mode framebuffer its framebuffer rows' ranges before and after placement, or with
+  # mode pci its bridges' catalogues, a report on each and the gives it allows.
+  def view_lines(manifest, name, *mode, driver: self.class.view_driver)
     path = File.join(@directory, "view-#{name}.bin")
     File.binwrite(path, manifest)
-    File.readlines(@runner.run([self.class.view_driver, path, *mode], name: "dom-view-#{name}", deadline: 30).fetch('log'), chomp: true)
+    File.readlines(@runner.run([driver, path, *mode], name: "dom-view-#{name}", deadline: 30).fetch('log'), chomp: true)
   end
 
   # source with the machine's max_connections set to count; raises when the manifest
@@ -575,6 +579,25 @@ class DomPlannerTest < Minitest::Test
   # The device of the platform record's unit key, the record's units having one each.
   def device_of(platform, key) = platform.fetch('units').find { |unit| unit.fetch('key') == key }.fetch('devices').first
 
+  # The packed manifest of the Pi 4's closed bridge and the VL805 at its one place, line 175,
+  # held by alpha, on the qemu-virt platform record (docs/design-usb.md, "The Phase 1 part").
+  def vl805_manifest
+    platform = JSON.parse(JSON.generate(@context.platform))
+    row = { 'path' => '', 'bridge' => '', 'bus' => 0, 'device' => 0, 'function' => 0, 'clock' => 0, 'base' => 0, 'size' => 0,
+            'line' => 0, 'dma' => 'none', 'dma_memory' => 0, 'flags' => 0 }
+    bridge = row.merge('placement_key' => 'pcie', 'selector' => 'dt', 'role' => 'configuration', 'path' => '/scb/pcie@7d500000',
+                       'compatible' => 'brcm,bcm2711-pcie', 'base' => 0x40_1000_0000, 'size' => 0x1000_0000, 'flags' => ['closed'],
+                       'places' => [{ 'bus' => 1, 'device' => 0, 'function' => 0, 'pin' => 1 }], 'dma_limit' => 0x3c00_0000)
+    function = row.merge('placement_key' => 'vl805', 'selector' => 'pci', 'role' => 'usb', 'bridge' => bridge.fetch('path'),
+                         'bus' => 1, 'compatible' => 'pci1106,3483', 'line' => 175, 'dma' => 'unconfined',
+                         'dma_memory' => 1 << 20, 'flags' => ['hostile'])
+    platform.fetch('units').push({ 'key' => 'pcie', 'devices' => [bridge] }, { 'key' => 'vl805', 'devices' => [function] })
+    @context = Erx::Manifest::Context.new(**ManifestContextFixture.arguments(@codec).merge(platform: platform))
+    source = with_domains('alpha', 'pcie') + "unit pcie\n  placement \"pcie\"\n  holder @domain.pcie\n" \
+                                             "unit vl805\n  placement \"vl805\"\n  holder @domain.alpha\n"
+    admit(source).bytes
+  end
+
   # Every checked-in manifest over its own board's platform record: the view relates the
   # board's devices by page and by line (docs/design-shared-devices.md, "The unit rule"),
   # and every unit the records list is closed under both, the Raspberry Pi 4's five
@@ -655,25 +678,42 @@ class DomPlannerTest < Minitest::Test
   # drives it as usb over the xhci peripheral, and its position names its bridge's entry and
   # its place there; it has no register range until its report, and its line is its place's.
   def test_a_pci_function_takes_its_kind_and_position
-    platform = JSON.parse(JSON.generate(@context.platform))
-    row = { 'path' => '', 'bridge' => '', 'bus' => 0, 'device' => 0, 'function' => 0, 'clock' => 0, 'base' => 0, 'size' => 0,
-            'line' => 0, 'dma' => 'none', 'dma_memory' => 0, 'flags' => 0 }
-    bridge = row.merge('placement_key' => 'pcie', 'selector' => 'dt', 'role' => 'configuration', 'path' => '/scb/pcie@7d500000',
-                       'compatible' => 'brcm,bcm2711-pcie', 'base' => 0x40_1000_0000, 'size' => 0x1000_0000, 'flags' => ['closed'],
-                       'places' => [{ 'bus' => 1, 'device' => 0, 'function' => 0, 'pin' => 1 }], 'dma_limit' => 0x3c00_0000)
-    function = row.merge('placement_key' => 'vl805', 'selector' => 'pci', 'role' => 'usb', 'bridge' => bridge.fetch('path'),
-                         'bus' => 1, 'compatible' => 'pci1106,3483', 'line' => 175, 'dma' => 'unconfined',
-                         'dma_memory' => 1 << 20, 'flags' => ['hostile'])
-    platform.fetch('units').push({ 'key' => 'pcie', 'devices' => [bridge] }, { 'key' => 'vl805', 'devices' => [function] })
-    @context = Erx::Manifest::Context.new(**ManifestContextFixture.arguments(@codec).merge(platform: platform))
-    source = with_domains('alpha', 'pcie') + "unit pcie\n  placement \"pcie\"\n  holder @domain.pcie\n" \
-                                             "unit vl805\n  placement \"vl805\"\n  holder @domain.alpha\n"
-    lines = view_lines(admit(source).bytes, 'pci')
+    lines = view_lines(vl805_manifest, 'pci')
     bridge_line = lines.find { |line| line.start_with?('device ') && line.include?('unit=pcie ') }
     refute_nil bridge_line, lines.inspect
     index = bridge_line[/\Adevice (\d+) /, 1]
     entry = /\Adevice \d+ unit=vl805 compatible=pci1106,3483 ranges= bridge=#{index} place=1\.0\.0 role=usb peripheral=xhci lines=175 confined=0\z/
     assert(lines.any? { |line| line.match?(entry) }, lines.inspect)
+  end
+
+  # A host bridge's catalogue at boot (docs/design-pcie.md, "Records", "The catalogue and
+  # gives"): the view holds one per bridge row, its record's row, closed mark and places the
+  # manifest's; once the root joins the tree's windows, the library takes the PCIe domain's
+  # report on the VL805 and a give finds it, its BAR's CPU range the window's. Joined to a
+  # tree the reader refused, the catalogue takes no report.
+  def test_a_bridge_s_catalogue_takes_a_report_and_gives_its_function
+    lines = view_lines(vl805_manifest, 'pci-report', 'pci')
+    bridge = lines.grep(/\Abridge /)
+    assert_equal 1, bridge.size, lines.inspect
+    row = bridge.first[/\Abridge 0 row=(\d+) closed=1 places=1\.0\.0\/1\z/, 1]
+    refute_nil row, lines.inspect
+    assert_includes lines, "report #{row} status=0 field=none"
+    assert_includes lines, "refused #{row} status=-1 field=bus"
+    assert_equal ["cpu=0x600000000+0x1000"], lines.grep(/\Agiven /).map { |line| line.split.last }
+  end
+
+  # The seeded fault: the catalogue built without the tree's windows, so the report's BAR
+  # lies outside every window, the intake refuses it and no give finds the function.
+  def test_a_catalogue_without_the_tree_s_windows_gives_nothing
+    source = File.read(File.join(ROOT, 'liberx/system/dom_boot_view.c'))
+    copy = "\tmemcpy(bridge->facts.windows, tree->windows, sizeof(bridge->facts.windows));\n"
+    assert_equal 1, source.scan(copy).size, 'the seed no longer applies'
+    seeded = File.join(@directory, 'dom_boot_view.c')
+    File.write(seeded, source.sub(copy, ''))
+    driver = self.class.view_driver_from(seeded, name: 'dom-view-no-windows')
+    lines = view_lines(vl805_manifest, 'pci-no-windows', 'pci', driver: driver)
+    assert(lines.any? { |line| line.match?(/\Areport \d+ status=-1 field=bars\z/) }, lines.inspect)
+    assert_equal ['cpu=none'], lines.grep(/\Agiven /).map { |line| line.split.last }
   end
 
   # Line 0 is no line (docs/design-abi.md, "Devices and partition windows"): two rows of no

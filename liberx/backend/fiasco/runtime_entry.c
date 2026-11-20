@@ -427,8 +427,11 @@ erx_fiasco_program_tree(erx_dt_t *tree, const erx_manifest_view_t *manifest, erx
  * (erx_boot_dma_memory), so a row that asked nothing gets none. The root prints the line of each asking row a holder holds; the line of a row
  * the system domain holds waits for the root's own give, which makes its memory first
  * (device_give). A framebuffer row always asks, and its facts and line are
- * framebuffer_facts'. Returns NULL, or why the root cannot boot: a row that asks names a
- * path that is not a node path.
+ * framebuffer_facts'. Each PCIe host bridge's catalogue takes its buses and windows from
+ * the tree at its row's path (erx_dt_bridge, erx_dom_view_bridge), so a report places
+ * BARs only inside them; a bridge the reader refuses keeps none, its functions are given
+ * nothing, and the root prints a line naming it. Returns NULL, or why the root cannot boot: a row that asks, or a bridge
+ * row, names a path that is not a node path.
  */
 static const char *
 tree_facts(const erx_dt_t *tree)
@@ -462,6 +465,25 @@ tree_facts(const erx_dt_t *tree)
 		if (entry->asked && entry->row != ERX_MF_NONE && (length = erx_boot_tree_line(path, row_memory, network,
 		    &entry->facts, NULL, tree_line, sizeof(tree_line))) != 0)
 			erx_fiasco_console_write(tree_line, length);
+	}
+	for (uint32_t at = 0; at < library.view.npci_bridges; at++) {
+		erx_dom_pci_bridge_t *const bridge = &library_tables.pci_bridges[at];
+		const erx_dom_device_entry_t *const node = &library_tables.devices[bridge->facts.index];
+		erx_pcie_bridge_t facts = { 0 };
+		erx_dt_bridge_status_t status;
+
+		if (!tree_path_set((erx_boot_words_t){ node->path, node->path_len }))
+			return ("a PCIe bridge: its device-tree path is not a node path");
+		status = erx_dt_bridge(tree, tree_path, &facts);
+		erx_dom_view_bridge(bridge, &facts, status);
+		if (status != ERX_DT_BRIDGE_OK) {
+			static const char before[] = "erx: PCIe bridge ";
+			static const char after[] = ": the device tree's bus-range or ranges are refused; it gives no function\n";
+
+			erx_fiasco_console_write(before, sizeof(before) - 1);
+			erx_fiasco_console_write(node->path, node->path_len);
+			erx_fiasco_console_write(after, sizeof(after) - 1);
+		}
 	}
 	return (NULL);
 }

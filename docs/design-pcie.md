@@ -760,7 +760,10 @@ planner writes against, and keeps its own form.
 64-bit BAR is absent), `flags` u8 (64-bit, prefetchable, placed),
 `size_log2` u8, the BAR's hardware size, and `address` u64, the PCI
 address, 0 when not placed. Its span, the size rounded up to the page
-size, is derived.
+size, is derived. `size_log2` is the BAR's true size, up to 63
+(`pcie_bar_size_log2_wide`), so a function whose 64-bit BAR is too
+large to place is reported `unplaced` with that BAR's size; only a
+placed BAR is held to `pcie_bar_size_log2_max`.
 
 **`erx_pcie_setting`**: `mode` u8 (`off`, `decoding`, `mastering`),
 `route` u8 (`none`, `msi`, `msix`, `intx`), and `message`, an
@@ -784,9 +787,13 @@ bridge. The generator checks each layout's offsets and size, and its C
 reader, `erx_pcie_function_decode`, gives each field as the bytes hold
 it, its capability offsets within 256 bytes by their width. The library's
 intake ([The catalogue and gives](#the-catalogue-and-gives)) refuses a
-record whose state or BAR kind, flags or size lies outside its set, or
-whose 64-bit BAR is not followed by an absent upper half, before it
-checks what relates records to windows and to each other.
+record whose device, function, state or BAR kind or flags lies outside
+its set, whose BAR's size is past 63, or past
+`pcie_bar_size_log2_max` for a placed one, whose I/O BAR is marked
+placed, whose placed 32-bit BAR reaches past 4 GiB, which is `ready`
+with a memory BAR not placed, or whose 64-bit BAR
+is not followed by an absent upper half, before it checks what relates
+records to windows and to each other.
 
 **The catalogue.** A host bridge's catalogue, `erx_dom_pci_bridge_t`
 beside its entry, holds the bridge's record and its **layouts**: every function its
@@ -1122,7 +1129,21 @@ finding each function's manifest row, if any, by place and checking that
 its identity is the row's compatible string, spelled `pci` and the
 vendor and device id in four lowercase hexadecimal digits each,
 `pci1b36,000d`, erXos's own spelling since no tree carries it. A
-function no row names is logged as unlisted and stays off. The
+function no row names is logged as unlisted and stays off. `Functions`
+are `erx_abi_layout` maps, which the call hands the library as the
+layout's bytes, and the answer is `ok` or `{error, {einval, Record,
+Field}}` naming the refused record and field for the log line. The
+device service is not the domain service's registered process, and the
+call answers any caller in the system domain, which runs only trusted
+code: the intake judges a report against its bridge's windows and the
+catalogue, but not who sent it, so a process other than the device
+service could lay a bridge's layouts before the PCIe domain reports. The
+catalogues
+are the view's, one per host bridge row in row order, each record's row,
+flags and places the manifest's from the start and its buses and
+windows the tree's, which the root joins before any device is given
+(`erx_dt_bridge`, `erx_dom_view_bridge`); a bridge whose tree the reader
+refuses keeps none, so no BAR of a report lies inside them. The
 library's intake, `erx_dom_pci_report`, is the boundary check of a
 report. It decides every entry of the bridge from the whole report and
 only then writes them all at once, so no order of processing can leave

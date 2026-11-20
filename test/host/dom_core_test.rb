@@ -104,7 +104,10 @@ class DomCoreTest < Minitest::Test
     'an app session takes the template memory' => ["\tspec->memory = memory;\n", "\tspec->memory = memory > 0 ? source->memory : 0;\n"],
     'a bar is taken outside the bridge windows' =>
       ["bar->address < window->pci ||\n\t\t    bar->address - window->pci > window->size || " \
-       'span > window->size - (bar->address - window->pci))', 'false)']
+       'span > window->size - (bar->address - window->pci))', 'false)'],
+    'an unplaced bar is held to the placing bound' =>
+      ["\t\treturn (!ready || bar->kind != ERX_PCIE_BAR_MEMORY);\n",
+       "\t\treturn (bar->size_log2 <= ERX_PCIE_BAR_SIZE_LOG2_MAX && (!ready || bar->kind != ERX_PCIE_BAR_MEMORY));\n"]
   }.freeze
 
   def setup
@@ -301,7 +304,12 @@ class DomCoreTest < Minitest::Test
     "pci msix_past #{EINVAL} msix_table_offset givable=0", 'pci msix_inside 0 none givable=1',
     "pci upper_half #{EINVAL} bars givable=0", "pci other_bridge #{EINVAL} bridge givable=0",
     "pci bus #{EINVAL} bus givable=0", "pci twice #{EINVAL} function givable=0",
-    "pci state #{EINVAL} state givable=0", 'pci after_refusals 0 none givable=1'
+    "pci state #{EINVAL} state givable=0", 'pci after_refusals 0 none givable=1',
+    'pci unplaced_huge 0 none givable=0',
+    *%w[size_64 io_placed ready_unplaced placed_huge narrow_above_4g].map { |name| "pci #{name} #{EINVAL} bars givable=0" },
+    'pci wide_above_4g 0 none givable=1', "pci device_bound #{EINVAL} device givable=0",
+    "pci function_bound #{EINVAL} function givable=0",
+    'pci firmware busy lost=0', 'pci firmware timedout lost=1', 'pci firmware ok lost=1'
   ].freeze
 
   def test_a_pci_report_is_taken_whole_or_refused

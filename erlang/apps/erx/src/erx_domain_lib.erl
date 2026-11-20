@@ -36,16 +36,18 @@ The registered process, the domain service, is also the only one that may
 change the library: create/1, configured/3, session/5, app_session/6, start/1, stop/2, retire/1,
 connect/6 and disconnect/1 answer {error, erights} to any other caller, and
 so does crash/1, which reads a domain's crash dump. info/2 answers any
-caller, since a group's or budget's report holds none of the domain's data.
+caller, since a group's or budget's report holds none of the domain's data,
+and so does pci_report/2, the PCIe catalogue's intake, whose caller is the
+device service.
 """.
 
 -export([register/0, create/1, start/1, stop/2, retire/1, crash/1, info/2, connect/6, disconnect/1,
          configured/0, configured/3, templates/0, apps/0, devices/0, session/5, app_session/6, code_object/2,
-         code_drop/2, end_commit/1]).
+         code_drop/2, end_commit/1, pci_report/2]).
 -nifs([register_nif/0, create_nif/1, start_nif/1, stop_nif/2, retire_nif/1, crash_nif/1, info_nif/3, connect_nif/6,
        disconnect_nif/1, configured_nif/0, configured_create_nif/3, templates_nif/0, apps_nif/0, devices_nif/0,
        session_create_nif/5, app_session_create_nif/6, code_object_nif/2, code_drop_nif/2,
-       end_commit_nif/1]).
+       end_commit_nif/1, pci_report_nif/2]).
 -on_load(on_load/0).
 
 -include("generated/erx_abi.hrl").
@@ -298,6 +300,21 @@ devices() ->
     devices_nif().
 
 -doc """
+The PCIe domain's report on the host bridge of device row Bridge, which the
+device service hands on whole (docs/design-pcie.md, "The catalogue and
+gives"), into that bridge's catalogue: every function the walk found, as
+the erx_pcie_function maps of erx_abi_layout. ok when the intake took it;
+{error, {einval, Record, Field}} when it refused it whole, Record the
+refused function's index in Functions counted from 0 (or the list's length
+for a row with no catalogue, with Field bridge) and Field the field it
+names. More functions than a bridge holds is badarg.
+""".
+-spec pci_report(non_neg_integer(), [erx_abi_layout:erx_pcie_function()]) ->
+          ok | {error, {einval, non_neg_integer(), atom()}} | error().
+pci_report(Bridge, Functions) ->
+    pci_report_nif(Bridge, [erx_abi_layout:encode(erx_pcie_function, Function) || Function <- Functions]).
+
+-doc """
 Manifest startup and restart: builds configured row Row under id Id and
 domain pid DomainPid, as create/1 builds a request's domain. The domain service calls it from its
 manifest startup and restart with a row configured/0 gave, never a row a
@@ -418,4 +435,7 @@ app_session_create_nif(_Id, _Entry, _Memory, _Name, _Display, _DomainPid) ->
     erlang:nif_error(undef).
 
 end_commit_nif(_How) ->
+    erlang:nif_error(undef).
+
+pci_report_nif(_Bridge, _Records) ->
     erlang:nif_error(undef).

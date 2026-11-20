@@ -2266,18 +2266,21 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   window's device is found by the device's path, which a `pci` row does not have, so a system window on a
   block-role PCIe function would be checked against the wrong unit. No platform record has one; key the lookup by
   device index (a unit's span) when one appears.
-* [Medium] domain library and root, a host bridge's catalogue at boot (`liberx/system/dom_core.c`,
-  `erx_dom_pci_report`; `liberx/backend/fiasco/runtime_entry.c`, `tree_facts`;
-  [design-pcie.md](docs/design-pcie.md#records)): the intake takes a report into an `erx_dom_pci_bridge_t`, but
-  nothing yet holds one per bridge entry, fills its facts from the tree (`erx_dt_bridge`) and the manifest row's
-  index, flags and places, or calls the intake from `erx_domain_lib:pci_report`, and `erx_dom_pci_firmware` does
-not set `firmware_lost`. Land them with the give of a function and the PCIe domain's first report.
-  Until the catalogue is held, the give of a `pci` row gives it nothing (`erx_dom_pci_given` finds no
-  catalogue), as a function the machine lacks. With it: state in
-  `abi/formats/pcie.txt` how a BAR too large to place is encoded, since the intake refuses a report with any BAR
-  past `pcie_bar_size_log2_max`; refuse in `erx_dt_bridge` a window whose PCI, CPU or size is not page-aligned;
-  check spans across a machine's bridges; and refuse an I/O BAR marked placed, a 32-bit BAR above 4 GiB and a
-  device or function past its bound.
+* [Medium] domain library and device service, a host bridge's catalogue's callers (`erlang/apps/erx_domain`,
+  `erx_devices`; `otp/erts/emulator/nifs/erxos/erx_domain_lib_nif.c`;
+  [design-pcie.md](docs/design-pcie.md#the-catalogue-and-gives)): the view holds a catalogue per bridge row, the
+  root joins the tree's windows and `erx_domain_lib:pci_report/2` takes a report into it, but no device service
+  process calls it (package P12), the catalogue has no `answered`, `devices/0` does not show the layouts, the
+  settings or `firmware lost`, and `erx_domain_lib:pci_firmware/1`, which would hand the notification's status to
+  `erx_dom_pci_firmware`, waits for `erx_firmware_request` (the ABI item below). The PCIe domain's record of an
+  unplaced function must carry its BAR's true `size_log2` (`abi/formats/pcie.txt`), where `erx_pcie_cfg:size/2`
+  answers only `{bar_size, Index}` past `pcie_bar_size_log2_max`. Also refuse in `erx_dt_bridge` a window whose
+  PCI, CPU or size is not page-aligned, and check BAR spans across a machine's bridges, not only within one.
+  `pci_report/2` answers any system-domain caller, since its caller is the device service and not the registered
+  domain service; a process that reports before the PCIe domain lays the bridge's layouts for the boot. Hold it to
+  the device service's process (a registration of its own, or the call routed through the domain service), and
+  hold `erx_dom_lib_pci_report` to the NIF and `erx_dom_view_bridge` to the root with chokepoints. The root's join
+  (`tree_facts`) and the NIF's term handling run only on the target; the `pcie` QEMU suite (P12) covers them.
 * [Low] image build, the Pi's single file against the loader's device tree (`ProductionImage::Machine#check_single_file`,
   `Fiasco#first_stage_address`): the bound starts at the entry of users-raspi4b's `bootstrap.elf`, not checked
   against the address QEMU's raspi4b model and the firmware load it at (`QemuPlan::MACHINES` loads, 0x200000). If
@@ -9558,10 +9561,10 @@ document's "residual risks accepted" paragraph.
   `erx_firmware_request` in the machine family, and no firmware request record (name, belonging, tag, argument) in
   the system manifest from the platform record's `firmware_requests`. Add the three.
 * [Medium] domain library, `include/erx/device_kinds.h` ([design-usb.md](docs/design-usb.md#who-holds-a-controller),
-  [design-pcie.md](docs/design-pcie.md#the-bridge-seam)): no rows for the PCIe and USB kinds. Add `pci_ecam`
-  (`pci-host-ecam-generic`) and `bcm2711_pcie` (`brcm,bcm2711-pcie`) with role `configuration`, and `qemu-xhci` and
-  the VL805 by PCI identity and position with role `usb`, each with its SVD peripheral; the PCIe-arm item under the
-  domain library (`dom_boot_view.c`, `boot_devices`) lands with it.
+  [design-pcie.md](docs/design-pcie.md#the-bridge-seam)): no rows for the host bridges' kinds, so a bridge row
+  is held but not driven and the enumerator finds no given record to choose its module by. Add `pci_ecam`
+  (`pci-host-ecam-generic`) and `bcm2711_pcie` (`brcm,bcm2711-pcie`) with role `configuration` and their
+  peripherals, with the PCIe domain on QEMU `virt` (package P12).
 * [Medium] system manifest, `abi/manifest.txt` ([design-usb.md](docs/design-usb.md#mass-storage-reaches-the-file-servers)):
   the boot-time reader bounds no `windows[].drive` (it has no rule for "`mf_none` or below `usb_drives_max`"); add
   one before `erx_blk_drive` reads the field.
