@@ -57,12 +57,14 @@ test_layout(void)
 	planted = split_ring(MEMORY, UINT64_MAX - 100, 64);
 	EXPECT(!erx_dma_ledger_make(&ledger, &planted), "a device base whose regions wrap is refused");
 	planted = layout;
-	planted.tables[AVAIL].region = 32;
-	planted.tables[AVAIL].first = 36;
+	planted.tables[DESC].region_length = 128;
 	EXPECT(!erx_dma_ledger_make(&ledger, &planted), "overlapping regions are refused");
 	planted = layout;
-	planted.tables[USED].placing = ERX_DMA_PLACED_FREE;
-	EXPECT(!erx_dma_ledger_make(&ledger, &planted), "a device structure described by cores is refused");
+	planted.pool.size = planted.pool.stride + 1;
+	EXPECT(!erx_dma_ledger_make(&ledger, &planted), "a buffer longer than its stride is refused");
+	planted = layout;
+	planted.tables[AVAIL].structure = ERX_STRUCTURE_VIRTQ_DESC;
+	EXPECT(!erx_dma_ledger_make(&ledger, &planted), "two tables of one structure are refused");
 	planted = layout;
 	planted.tables[AVAIL].count = SIZE * 32;
 	EXPECT(!erx_dma_ledger_make(&ledger, &planted), "records past their region are refused");
@@ -76,6 +78,9 @@ test_layout(void)
 	planted = layout;
 	planted.pool.stride = BUFFER;
 	EXPECT(!erx_dma_ledger_make(&ledger, &planted), "buffers sharing a granule are refused");
+	planted = layout;
+	planted.pool.stride = 96;
+	EXPECT(!erx_dma_ledger_make(&ledger, &planted), "a stride off a granule is refused, the pool's length on one");
 }
 
 static erx_dma_description_t
@@ -99,10 +104,14 @@ check(const erx_dma_ledger_t *ledger, const erx_dma_description_t *records, uint
 	return (erx_dma_publication_check(ledger, &publication));
 }
 
-static void
-hold(erx_dma_ledger_t *ledger, const erx_dma_holding_t *holding)
+/* Begins, or tries to, the holding of one descriptor naming `buffer`, or of none for -1, at `places`. */
+static bool
+hold_at(erx_dma_ledger_t *ledger, int buffer, const erx_dma_place_t *places, uint32_t count)
 {
-	EXPECT(erx_dma_ledger_hold(ledger, holding), "a holding begins");
+	const erx_dma_description_t record = descriptor(buffer < 0 ? 0 : (uint32_t)buffer, 0, 8, false);
+	const erx_dma_publication_t publication = { buffer < 0 ? 0 : 1, &record, 0, NULL };
+
+	return (erx_dma_ledger_hold(ledger, &publication, places, count));
 }
 
 static void
@@ -168,9 +177,10 @@ test_rules(void)
 		bad[index] = descriptor(index % SIZE, 0, 8, false);
 	EXPECT(check(&ledger, bad, ERX_DMA_HELD_RECORDS_MAX + 1, NULL, 0) == ERX_DMA_BREAKS_ROOM, "a run past a holding");
 
-	/* held: buffer 0 handed to the device by a live holding, then named again. */
-	hold(&ledger, &(erx_dma_holding_t){ 4, { { DESC, 0 }, { DESC, 1 }, { DESC, 2 }, { AVAIL, 0 } }, 1, { 0 } });
-	EXPECT(check(&ledger, chain, 2, &header, 1) == ERX_DMA_BREAKS_HELD, "a buffer the device holds, posted again");
+	/* held: buffer 0 handed to the device by a live holding, then named again with a descriptor free. */
+	EXPECT(hold_at(&ledger, 0, (erx_dma_place_t[]){ { DESC, 0 }, { DESC, 1 }, { DESC, 2 }, { AVAIL, 0 } }, 4),
+	    "a holding of three descriptors and buffer 0");
+	EXPECT(check(&ledger, chain, 1, &header, 1) == ERX_DMA_BREAKS_HELD, "a buffer the device holds, posted again");
 	EXPECT(erx_dma_ledger_buffer_writer(&ledger, 0) == ERX_DMA_DEVICE &&
 	    erx_dma_ledger_buffer_writer(&ledger, 1) == ERX_DMA_CPU, "a buffer's writer follows its holding");
 
@@ -183,7 +193,7 @@ test_rules(void)
 	/* room: every available entry held, with descriptors free. */
 	EXPECT(erx_dma_ledger_make(&ledger, &layout), "a ledger");
 	for (uint32_t index = 0; index < SIZE; index++)
-		hold(&ledger, &(erx_dma_holding_t){ 1, { { AVAIL, index } }, 0, { 0 } });
+		EXPECT(hold_at(&ledger, -1, &(erx_dma_place_t){ AVAIL, index }, 1), "a holding of an available entry");
 	EXPECT(check(&ledger, bad, 1, NULL, 0) == ERX_DMA_BREAKS_ROOM, "a chain while its available entry is held");
 }
 
@@ -195,18 +205,17 @@ test_transitions(void)
 	erx_dma_ledger_t ledger;
 
 	EXPECT(erx_dma_ledger_make(&ledger, &layout), "a ledger");
-	EXPECT(!erx_dma_ledger_hold(&ledger, &(erx_dma_holding_t){ 2, { { DESC, 0 }, { USED, 0 } }, 0, { 0 } }),
+	EXPECT(!hold_at(&ledger, 0, (erx_dma_place_t[]){ { DESC, 0 }, { USED, 0 } }, 2),
 	    "a holding of a record the device writes");
-	EXPECT(!erx_dma_ledger_hold(&ledger, &(erx_dma_holding_t){ 2, { { DESC, 0 }, { AVAIL, 1 } }, 0, { 0 } }),
-	    "an available entry out of order");
-	EXPECT(!erx_dma_ledger_hold(&ledger, &(erx_dma_holding_t){ 2, { { DESC, 0 }, { DESC, 0 } }, 0, { 0 } }),
-	    "a record named twice");
-	EXPECT(!erx_dma_ledger_hold(&ledger, &(erx_dma_holding_t){ 1, { { DESC, 0 } }, 2, { 1, 1 } }),
-	    "a buffer named twice");
-	EXPECT(!erx_dma_ledger_hold(&ledger, &(erx_dma_holding_t){ 1, { { DESC, SIZE } }, 0, { 0 } }),
-	    "a record past its table");
+	EXPECT(!hold_at(&ledger, 0, (erx_dma_place_t[]){ { DESC, 0 }, { AVAIL, 1 } }, 2), "an available entry out of order");
+	EXPECT(!hold_at(&ledger, 0, (erx_dma_place_t[]){ { DESC, 0 }, { DESC, 0 } }, 2), "a record named twice");
+	EXPECT(!hold_at(&ledger, SIZE, &head, 1), "a buffer past the pool");
+	EXPECT(!hold_at(&ledger, 0, &(erx_dma_place_t){ DESC, SIZE }, 1), "a record past its table");
+	EXPECT(!hold_at(&ledger, 0, &head, 0), "a holding of no record");
 	EXPECT(erx_dma_ledger_live(&ledger) == 0, "nothing began");
-	hold(&ledger, &(erx_dma_holding_t){ 2, { { DESC, 0 }, { AVAIL, 0 } }, 1, { 0 } });
+	EXPECT(hold_at(&ledger, 0, (erx_dma_place_t[]){ { DESC, 0 }, { AVAIL, 0 } }, 2), "a chain of one descriptor");
+	EXPECT(!hold_at(&ledger, 0, (erx_dma_place_t[]){ { DESC, 1 }, { AVAIL, 1 } }, 2),
+	    "a buffer a live holding holds, with descriptors free");
 	EXPECT(!erx_dma_ledger_release(&ledger, DESC, head), "a release on a table the CPU writes");
 	EXPECT(erx_dma_ledger_free_records(&ledger, DESC) == SIZE - 1, "three free descriptors");
 	erx_dma_ledger_reset(&ledger);
@@ -266,15 +275,15 @@ step(const erx_dma_ledger_t *before, const model_t *was, unsigned event, unsigne
 	memcpy(ledger, before, sizeof(*ledger));
 	if (kind < 2) {
 		const unsigned chain = chain_of(head, kind + 1);
-		erx_dma_holding_t holding = { 0, { { DESC, head } }, 1, { head } };
+		erx_dma_place_t places[3] = { { DESC, head } };
+		uint32_t count = 1;
 
 		if (kind == 1)
-			holding.records[1] = (erx_dma_place_t){ DESC, 1 - head };
-		holding.record_count = kind + 1;
-		holding.records[holding.record_count++] = (erx_dma_place_t){ AVAIL, model.avail };
+			places[count++] = (erx_dma_place_t){ DESC, 1 - head };
+		places[count++] = (erx_dma_place_t){ AVAIL, model.avail };
 		allowed = (model.descs & chain) == 0 && (model.buffers & (1u << head)) == 0 &&
 		    (model.avails & (1u << model.avail)) == 0;
-		done = erx_dma_ledger_hold(ledger, &holding);
+		done = hold_at(ledger, (int)head, places, count);
 		if (allowed) {
 			model.descs |= chain;
 			model.buffers |= 1u << head;

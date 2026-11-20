@@ -15,12 +15,14 @@
  *
  * A holding is one publication the device may still act on: the records it made live and the
  * buffers it handed to the device. Its first record, its head, is what the report that ends it
- * names. The ledger keeps the live holdings and, for each table placed in order, its position.
- * Its state machine has two transitions, and each refuses, changing nothing, what the design's
- * order forbids:
- *   hold     begins a holding: none of its records or buffers is held already, its records of
- *            a table the sequencer places in order are the next ones from that table's position,
- *            which moves past them, and it names no record of a table the device writes;
+ * names. The ledger keeps the live holdings and, for each table placed in order and each the
+ * device writes, its position. Its state machine has two transitions, and each refuses,
+ * changing nothing, what the design's order forbids:
+ *   hold     begins the holding of a publication from the records the sequencer placed it in
+ *            and the buffers its names reach, each once, taken from the publication itself so
+ *            no buffer it names goes to the device unheld: none of them is held already, its
+ *            records of a table placed in order are the next ones from that table's position,
+ *            which moves past them, and it holds no record of a table the device writes;
  *   release  ends the live holding a report names, from the report table's consumer position,
  *            which moves past it; a report naming no live holding's head ends nothing.
  * The idle report after a reset ends every holding (erx_dma_ledger_reset). A region's writer
@@ -45,11 +47,14 @@
 #define ERX_DMA_HELD_BUFFERS_MAX	ERX_DEVICE_CHAIN_MAX
 #define ERX_DMA_HOLDINGS_MAX		ERX_DEVICE_QUEUE_SIZE_MAX
 
-/* How a table's records are placed, which its form says and abi/formats' writer must agree with. */
+/*
+ * How the sequencer places a table's records, as the form's table says (docs/design-device-dma.md,
+ * "What each form's tables say"). It applies to a structure the CPU writes; one the device writes,
+ * as abi/formats declares, is the device's reports, consumed in order from its position.
+ */
 typedef enum erx_dma_placing {
 	ERX_DMA_PLACED_FREE,	/* a description's record, at any record no holding holds (virtio's descriptors) */
 	ERX_DMA_PLACED_IN_ORDER,	/* the sequencer's own, at its position (virtio's available ring) */
-	ERX_DMA_PLACED_BY_DEVICE,	/* the device's reports, consumed in order (virtio's used ring) */
 } erx_dma_placing_t;
 
 typedef struct erx_dma_table {
@@ -93,6 +98,9 @@ typedef struct erx_dma_holding {
 	uint32_t	buffers[ERX_DMA_HELD_BUFFERS_MAX];
 } erx_dma_holding_t;
 
+/* What a decision that hands over describes (erx_device_rules.h). */
+struct erx_dma_publication;
+
 /*
  * A table's position: the next record to publish at, for one placed in order, or to consume,
  * for one the device writes, and how many times the position has wrapped, from which a form
@@ -131,14 +139,17 @@ bool	erx_dma_layout_split_ring(uint32_t size, uint32_t buffer_size, uint32_t gra
 /*
  * A ledger with no holding and every position at 0, from `layout` if it passes the install's
  * check: every region whole granules, ascending, disjoint, inside the memory and below the
- * address width; each table's records inside its region; each table's placing agreeing with
- * its structure's writer, at most one table of each structure, at most one table placed in
- * order and one the device writes. False, writing nothing, otherwise.
+ * address width; each table's records inside its region; at most one table of each structure,
+ * and one buffer's bytes no more than its stride. False, writing nothing, otherwise.
  */
 bool	erx_dma_ledger_make(erx_dma_ledger_t *ledger, const erx_dma_layout_t *layout);
 
-/* Begins `holding`, as the header comment says. False, changing nothing, when it may not begin. */
-bool	erx_dma_ledger_hold(erx_dma_ledger_t *ledger, const erx_dma_holding_t *holding);
+/*
+ * Begins the holding of `publication`, placed at the `record_count` records `records`, the
+ * first its head, as the header comment says. False, changing nothing, when it may not begin.
+ */
+bool	erx_dma_ledger_hold(erx_dma_ledger_t *ledger, const struct erx_dma_publication *publication,
+	    const erx_dma_place_t *records, uint32_t record_count);
 /*
  * Ends the live holding whose head is `head`, on a report of table `reports`, the table the
  * device writes, at its consumer position. False, changing nothing, when none is live.
@@ -159,5 +170,12 @@ erx_dma_writer_t	 erx_dma_ledger_buffer_writer(const erx_dma_ledger_t *ledger, u
 /* The records of a table no holding holds. */
 uint32_t		 erx_dma_ledger_free_records(const erx_dma_ledger_t *ledger, uint32_t table);
 uint32_t		 erx_dma_ledger_live(const erx_dma_ledger_t *ledger);
+
+/* Whether `length` bytes from `offset` lie inside `size` bytes, with no sum that can wrap. */
+static inline bool
+erx_dma_inside(uint64_t offset, uint64_t length, uint64_t size)
+{
+	return (offset <= size && length <= size - offset);
+}
 
 #endif /* ERX_DEVICE_LEDGER_H */

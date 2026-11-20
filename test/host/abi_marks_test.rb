@@ -290,8 +290,7 @@ class AbiMarksTest < Minitest::Test
     }
   C
 
-  # A call of an encoder of the port status change event, a report, with the input
-  # structs an encoder of its places would take; it must not build.
+  # A program over the description judge: right when every generated answer is.
   DESCRIBES = <<~C
     #include <stdio.h>
     #include "erx/abi.h"
@@ -317,6 +316,8 @@ class AbiMarksTest < Minitest::Test
     }
   C
 
+  # A call of an encoder of the port status change event, a report, with the input
+  # structs an encoder of its places would take; it must not build.
   ENCODE_A_REPORT = <<~C
     #include "erx/abi.h"
 

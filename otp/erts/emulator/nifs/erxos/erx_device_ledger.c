@@ -12,6 +12,7 @@
 
 #include "erx/abi.h"
 #include "erx_device_ledger.h"
+#include "erx_device_rules.h"
 
 #ifdef ERX_DMA_SEED_NO_GRANULE_TEST
 #define SEED_NO_GRANULE_TEST	true
@@ -55,14 +56,14 @@ erx_dma_layout_split_ring(uint32_t size, uint32_t buffer_size, uint32_t granule,
 	const uint64_t avail_bytes = ERX_VIRTQ_RING_HEAD_SIZE + (uint64_t)size * sizeof(uint16_t) + sizeof(uint16_t);
 	const uint64_t used_bytes = ERX_VIRTQ_RING_HEAD_SIZE + (uint64_t)size * ERX_VIRTQ_USED_ELEM_SIZE +
 	    sizeof(uint16_t);
-	uint64_t avail, used, pool;
+	uint64_t avail_offset, used_offset, pool_offset;
 
 	if (!power_of_two(size) || size > ERX_DEVICE_QUEUE_SIZE_MAX || !power_of_two(granule) ||
 	    granule > ERX_DEVICE_GRANULE_MAX || buffer_size == 0 || buffer_size > ERX_DEVICE_BUFFER_MAX)
 		return (false);
-	avail = round_up((uint64_t)size * ERX_VIRTQ_DESC_SIZE, granule);
-	used = avail + round_up(avail_bytes, granule);
-	pool = used + round_up(used_bytes, granule);
+	avail_offset = round_up((uint64_t)size * ERX_VIRTQ_DESC_SIZE, granule);
+	used_offset = avail_offset + round_up(avail_bytes, granule);
+	pool_offset = used_offset + round_up(used_bytes, granule);
 	*layout = (erx_dma_layout_t){
 		.memory_size = memory_size,
 		.device_base = device_base,
@@ -70,15 +71,27 @@ erx_dma_layout_split_ring(uint32_t size, uint32_t buffer_size, uint32_t granule,
 		.granule = granule,
 		.table_count = 3,
 		.tables = {
-			{ ERX_STRUCTURE_VIRTQ_DESC, ERX_DMA_PLACED_FREE, 0, avail, 0, size, ERX_VIRTQ_DESC_SIZE },
-			{ ERX_STRUCTURE_VIRTQ_AVAIL, ERX_DMA_PLACED_IN_ORDER, avail, used - avail,
-			  avail + ERX_VIRTQ_RING_HEAD_SIZE, size, sizeof(uint16_t) },
-			{ ERX_STRUCTURE_VIRTQ_USED, ERX_DMA_PLACED_BY_DEVICE, used, pool - used,
-			  used + ERX_VIRTQ_RING_HEAD_SIZE, size, ERX_VIRTQ_USED_ELEM_SIZE },
+			{ .structure = ERX_STRUCTURE_VIRTQ_DESC, .placing = ERX_DMA_PLACED_FREE,
+			  .region = 0, .region_length = avail_offset, .first = 0,
+			  .count = size, .stride = ERX_VIRTQ_DESC_SIZE },
+			{ .structure = ERX_STRUCTURE_VIRTQ_AVAIL, .placing = ERX_DMA_PLACED_IN_ORDER,
+			  .region = avail_offset, .region_length = used_offset - avail_offset,
+			  .first = avail_offset + ERX_VIRTQ_RING_HEAD_SIZE, .count = size, .stride = sizeof(uint16_t) },
+			{ .structure = ERX_STRUCTURE_VIRTQ_USED,
+			  .region = used_offset, .region_length = pool_offset - used_offset,
+			  .first = used_offset + ERX_VIRTQ_RING_HEAD_SIZE, .count = size, .stride = ERX_VIRTQ_USED_ELEM_SIZE },
 		},
-		.pool = { pool, size, buffer_size, (uint32_t)round_up(buffer_size, granule) },
+		.pool = { .first = pool_offset, .count = size, .size = buffer_size,
+			  .stride = (uint32_t)round_up(buffer_size, granule) },
 	};
 	return (true);
+}
+
+/* Whether the device writes the table's structure, as abi/formats declares: its reports. */
+static bool
+device_writes(const erx_dma_layout_t *layout, uint32_t table)
+{
+	return (erx_structure_device_writes(layout->tables[table].structure));
 }
 
 /*
@@ -104,19 +117,13 @@ static bool
 table_valid(const erx_dma_layout_t *layout, uint32_t index, uint64_t *end)
 {
 	const erx_dma_table_t *table = &layout->tables[index];
-	uint64_t records;
 
 	if (!region_valid(layout, table->region, table->region_length, end) || table->structure == ERX_REFERS_DATA ||
 	    table->count == 0 || table->stride == 0 || table->first < table->region ||
-	    (table->placing == ERX_DMA_PLACED_BY_DEVICE) != erx_structure_device_writes(table->structure))
-		return (false);
-	records = (uint64_t)table->count * table->stride;
-	if (table->first - table->region > table->region_length ||
-	    records > table->region_length - (table->first - table->region))
+	    !erx_dma_inside(table->first - table->region, (uint64_t)table->count * table->stride, table->region_length))
 		return (false);
 	for (uint32_t other = 0; other < index; other++) {
-		if (layout->tables[other].structure == table->structure ||
-		    (table->placing != ERX_DMA_PLACED_FREE && layout->tables[other].placing == table->placing))
+		if (layout->tables[other].structure == table->structure)
 			return (false);
 	}
 	return (true);
@@ -254,13 +261,12 @@ advance(erx_dma_ledger_t *ledger, uint32_t table, uint32_t records)
 /*
  * Whether `holding` may begin, and how many records it takes of each table placed in order:
  * every record a table's that no holding holds, named once, not the device's, and, in a table
- * placed in order, the next one from its position; every buffer the pool's, unheld, named once.
+ * placed in order, the next one from its position; every buffer the pool's and unheld.
  */
 static bool
 holding_valid(const erx_dma_ledger_t *ledger, const erx_dma_holding_t *holding, uint32_t taken[ERX_DMA_TABLES_MAX])
 {
-	if (ledger->live == ERX_DMA_HOLDINGS_MAX || holding->record_count == 0 ||
-	    holding->record_count > ERX_DMA_HELD_RECORDS_MAX || holding->buffer_count > ERX_DMA_HELD_BUFFERS_MAX)
+	if (ledger->live == ERX_DMA_HOLDINGS_MAX)
 		return (false);
 	for (uint32_t record = 0; record < holding->record_count; record++) {
 		const erx_dma_place_t place = holding->records[record];
@@ -269,7 +275,7 @@ holding_valid(const erx_dma_ledger_t *ledger, const erx_dma_holding_t *holding, 
 		if (place.table >= ledger->layout.table_count)
 			return (false);
 		table = &ledger->layout.tables[place.table];
-		if (place.index >= table->count || table->placing == ERX_DMA_PLACED_BY_DEVICE ||
+		if (place.index >= table->count || device_writes(&ledger->layout, place.table) ||
 		    (!SEED_HOLD_WHILE_HELD && erx_dma_ledger_record_held(ledger, place)))
 			return (false);
 		for (uint32_t earlier = 0; earlier < record; earlier++) {
@@ -289,22 +295,36 @@ holding_valid(const erx_dma_ledger_t *ledger, const erx_dma_holding_t *holding, 
 		if (buffer >= ledger->layout.pool.count ||
 		    (!SEED_HOLD_WHILE_HELD && erx_dma_ledger_buffer_held(ledger, buffer)))
 			return (false);
-		for (uint32_t earlier = 0; earlier < index; earlier++) {
-			if (holding->buffers[earlier] == buffer)
-				return (false);
-		}
 	}
 	return (true);
 }
 
+/*
+ * The holding of `publication` at `records`, with the buffers its names reach. False when there
+ * are more records or buffers than a holding holds.
+ */
+static bool
+holding_of(const erx_dma_publication_t *publication, const erx_dma_place_t *records, uint32_t record_count,
+    erx_dma_holding_t *holding)
+{
+	*holding = (erx_dma_holding_t){ .record_count = record_count };
+	if (record_count == 0 || record_count > ERX_DMA_HELD_RECORDS_MAX)
+		return (false);
+	for (uint32_t record = 0; record < record_count; record++)
+		holding->records[record] = records[record];
+	return (erx_dma_publication_buffers(publication, holding->buffers, &holding->buffer_count));
+}
+
 bool
-erx_dma_ledger_hold(erx_dma_ledger_t *ledger, const erx_dma_holding_t *holding)
+erx_dma_ledger_hold(erx_dma_ledger_t *ledger, const erx_dma_publication_t *publication,
+    const erx_dma_place_t *records, uint32_t record_count)
 {
 	uint32_t taken[ERX_DMA_TABLES_MAX] = { 0 };
+	erx_dma_holding_t holding;
 
-	if (!holding_valid(ledger, holding, taken))
+	if (!holding_of(publication, records, record_count, &holding) || !holding_valid(ledger, &holding, taken))
 		return (false);
-	ledger->holdings[ledger->live++] = *holding;
+	ledger->holdings[ledger->live++] = holding;
 	for (uint32_t table = 0; table < ledger->layout.table_count; table++)
 		advance(ledger, table, taken[table]);
 	return (true);
@@ -313,7 +333,7 @@ erx_dma_ledger_hold(erx_dma_ledger_t *ledger, const erx_dma_holding_t *holding)
 bool
 erx_dma_ledger_release(erx_dma_ledger_t *ledger, uint32_t reports, erx_dma_place_t head)
 {
-	if (reports >= ledger->layout.table_count || ledger->layout.tables[reports].placing != ERX_DMA_PLACED_BY_DEVICE)
+	if (reports >= ledger->layout.table_count || !device_writes(&ledger->layout, reports))
 		return (false);
 	for (uint32_t live = 0; live < ledger->live; live++) {
 		if (same_place(ledger->holdings[live].records[0], head)) {

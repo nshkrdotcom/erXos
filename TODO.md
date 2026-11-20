@@ -8027,8 +8027,16 @@ to the corpus and follow rc
   sequencer's split never derives one, and the package that writes the split tests it. The encoders are public in
   `include/erx/abi.h`, beside every layout's generic setters; they end up confined to the sequencer (a private header), and the chokepoint of
   [Descriptions](docs/design-device-dma.md#descriptions), that only the sequencer stores into a region holding a
-  structure, is a build check that lands with the sequencer. Packages, in order: the ledger, the layout, descriptions,
-  the check's rules, the sequencer's publication and its acquisition, with the split ring moved onto them; GENET,
+  structure, is a build check that lands with the sequencer. The ledger, the queue's layout, descriptions and the
+  publication rules are in `erx_device_ledger.c` and `erx_device_rules.c`, host-tested and used by nothing yet; the
+  package that moves the split ring onto them deletes the fold of `erx_device_dma_check` and `erx_device_queue_layout`,
+  so one check and one layout stay. Their fills rule keeps out bytes inside a range a record names, but not only one it
+  names for the device to read: no mark says which free place gives a reference's direction. One publication may name
+  one buffer at several ranges, as a chain names its head's buffer, while the names rule of
+  [The rules](docs/design-device-dma.md#the-rules) says no buffer is named twice in one plan; the design says which it
+  means. A layout holds one table of each structure, and a table cores describe is placed at any free record, which the
+  TRB form's many transfer rings, each placed in order, change when it moves on. Packages, in order: the
+  sequencer's publication and its acquisition, with the releases rule and the split ring moved onto them; GENET,
   and ADMA2 with its transfer split into entries by the sequencer, moved onto them; the TRB form's publication and
   bindings; the TRB form's releases from acquired events, each command's reach and the endpoints' states; the
   stand-ins' ledger check. Before a non-coherent device relies on the acquisition, its unverified AArch64 premise is settled by the Arm

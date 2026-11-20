@@ -54,13 +54,6 @@ typedef struct judged {
 	erx_meaning_reference_t	references[ERX_MEANING_REFERENCES_MAX];
 } judged_t;
 
-/* Whether `length` bytes from `offset` lie inside `size` bytes, with no sum that can wrap. */
-static bool
-inside(uint64_t offset, uint64_t length, uint64_t size)
-{
-	return (offset <= size && length <= size - offset);
-}
-
 /* The meanings, widths, names, held and lengths rules over one record. */
 static erx_dma_verdict_t
 judge_record(const erx_dma_ledger_t *ledger, const erx_dma_description_t *record, judged_t *judged)
@@ -68,7 +61,8 @@ judge_record(const erx_dma_ledger_t *ledger, const erx_dma_description_t *record
 	const erx_dma_layout_t *layout = erx_dma_ledger_layout(ledger);
 	const int table = erx_dma_ledger_table(ledger, record->structure);
 
-	if (table < 0 || layout->tables[table].placing != ERX_DMA_PLACED_FREE ||
+	if (table < 0 || erx_structure_device_writes(record->structure) ||
+	    layout->tables[table].placing != ERX_DMA_PLACED_FREE ||
 	    (!SEED_NO_MEANING_TEST && erx_meaning_structure(record->meaning) != record->structure))
 		return (ERX_DMA_BREAKS_MEANINGS);
 	judged->table = (uint32_t)table;
@@ -76,10 +70,9 @@ judge_record(const erx_dma_ledger_t *ledger, const erx_dma_description_t *record
 	    &judged->reference_count)) {
 		if (!SEED_NO_WIDTH_TEST)
 			return (ERX_DMA_BREAKS_WIDTHS);
-		judged->reference_count = record->name_count < ERX_MEANING_REFERENCES_MAX ? record->name_count :
-		    ERX_MEANING_REFERENCES_MAX;
-		for (size_t index = 0; index < judged->reference_count; index++)
-			judged->references[index] = (erx_meaning_reference_t){ ERX_REFERS_DATA, 0 };
+		/* The seed judges the record as one reference of no bytes, which every later rule passes. */
+		judged->reference_count = 1;
+		judged->references[0] = (erx_meaning_reference_t){ ERX_REFERS_DATA, 0 };
 	}
 	if (record->name_count != judged->reference_count)
 		return (ERX_DMA_BREAKS_NAMES);
@@ -92,30 +85,34 @@ judge_record(const erx_dma_ledger_t *ledger, const erx_dma_description_t *record
 			return (ERX_DMA_BREAKS_NAMES);
 		if (!SEED_NO_HELD_TEST && erx_dma_ledger_buffer_held(ledger, name.buffer))
 			return (ERX_DMA_BREAKS_HELD);
-		if (!SEED_NO_LENGTH_TEST && !inside(name.offset, judged->references[index].length, layout->pool.size))
+		if (!SEED_NO_LENGTH_TEST && !erx_dma_inside(name.offset, judged->references[index].length, layout->pool.size))
 			return (ERX_DMA_BREAKS_LENGTHS);
 	}
 	return (ERX_DMA_PASSES);
 }
 
-/* The buffers the publication names, each once, into `buffers`; their count, or more than the bound. */
-static uint32_t
-distinct_buffers(const erx_dma_publication_t *publication, uint32_t buffers[ERX_DMA_HELD_BUFFERS_MAX + 1])
+bool
+erx_dma_publication_buffers(const erx_dma_publication_t *publication, uint32_t buffers[ERX_DMA_HELD_BUFFERS_MAX],
+    uint32_t *count)
 {
-	uint32_t count = 0;
-
+	*count = 0;
 	for (uint32_t record = 0; record < publication->record_count; record++) {
-		for (uint32_t index = 0; index < publication->records[record].name_count; index++) {
-			const uint32_t buffer = publication->records[record].names[index].buffer;
+		const erx_dma_description_t *description = &publication->records[record];
+
+		for (uint32_t index = 0; index < description->name_count && index < ERX_MEANING_REFERENCES_MAX; index++) {
+			const uint32_t buffer = description->names[index].buffer;
 			bool seen = false;
 
-			for (uint32_t earlier = 0; earlier < count; earlier++)
+			for (uint32_t earlier = 0; earlier < *count; earlier++)
 				seen = seen || buffers[earlier] == buffer;
-			if (!seen && count <= ERX_DMA_HELD_BUFFERS_MAX)
-				buffers[count++] = buffer;
+			if (seen)
+				continue;
+			if (*count == ERX_DMA_HELD_BUFFERS_MAX)
+				return (false);
+			buffers[(*count)++] = buffer;
 		}
 	}
-	return (count);
+	return (true);
 }
 
 /*
@@ -127,7 +124,7 @@ static bool
 room(const erx_dma_ledger_t *ledger, const erx_dma_publication_t *publication, const judged_t *judged)
 {
 	const erx_dma_layout_t *layout = erx_dma_ledger_layout(ledger);
-	uint32_t described[ERX_DMA_TABLES_MAX] = { 0 }, in_order = 0, buffers[ERX_DMA_HELD_BUFFERS_MAX + 1];
+	uint32_t described[ERX_DMA_TABLES_MAX] = { 0 }, in_order = 0, buffers[ERX_DMA_HELD_BUFFERS_MAX], count;
 
 	for (uint32_t record = 0; record < publication->record_count; record++)
 		described[judged[record].table]++;
@@ -143,7 +140,7 @@ room(const erx_dma_ledger_t *ledger, const erx_dma_publication_t *publication, c
 			return (false);
 	}
 	return (publication->record_count + in_order <= ERX_DMA_HELD_RECORDS_MAX &&
-	    distinct_buffers(publication, buffers) <= ERX_DMA_HELD_BUFFERS_MAX);
+	    erx_dma_publication_buffers(publication, buffers, &count));
 }
 
 /* The fills rule over one fill: inside a range a record of the publication names. */
@@ -155,7 +152,7 @@ filled_inside_a_name(const erx_dma_publication_t *publication, const judged_t *j
 			const erx_dma_name_t name = publication->records[record].names[index];
 
 			if (name.buffer == fill->buffer && fill->offset >= name.offset &&
-			    inside(fill->offset - name.offset, fill->length, judged[record].references[index].length))
+			    erx_dma_inside(fill->offset - name.offset, fill->length, judged[record].references[index].length))
 				return (true);
 		}
 	}

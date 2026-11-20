@@ -83,4 +83,13 @@ typedef enum erx_dma_verdict {
 erx_dma_verdict_t	erx_dma_publication_check(const erx_dma_ledger_t *ledger,
 			    const erx_dma_publication_t *publication);
 
+/*
+ * The buffers a publication's names reach, each once, in the order first named: what its holding
+ * hands to the device, which erx_dma_ledger_hold takes from here and the room rule bounds, so the
+ * two never disagree. One publication may name one buffer at several ranges, as a split ring's
+ * chain names its head's buffer. False when there are more than a holding holds.
+ */
+bool	erx_dma_publication_buffers(const erx_dma_publication_t *publication,
+	    uint32_t buffers[ERX_DMA_HELD_BUFFERS_MAX], uint32_t *count);
+
 #endif /* ERX_DEVICE_RULES_H */
