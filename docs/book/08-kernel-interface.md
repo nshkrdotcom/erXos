@@ -3,14 +3,16 @@
 > **Status.** **Built:** `liberx` with its Fiasco backend and its
 > hosted backend, held to one test set; the root service, its request
 > decoder and its tables; handles as entries of the root's per-task
-> tables, each carrying its object's generation; memory objects of
+> tables, each carrying its object's generation and its own in the
+> handle's value, with the rights it holds; memory objects of
 > seven kinds, mappings and the root's page pool; doorbells and device
 > lines; thread creation, umtx waits and parking; fault gates and exit
 > records; the machine's end on a fault of the root task; budgets as
 > records that end what is charged to them. **Designed:** priority
 > bands and per-domain CPU sets; signals through vCPU upcalls; DMA
-> spaces behind an IOMMU; rights on handles and the generation in a
-> handle's value; and the system-call fuzz campaign.
+> spaces behind an IOMMU; rights narrowed per creation kind and checked
+> on every use; interrupt objects and doorbells rung straight through
+> Fiasco; and the system-call fuzz campaign.
 
 **Background needed.** [Chapter 1](01-operating-systems.md) for system
 calls, address spaces and page tables; [chapter 2](02-microkernels.md)
@@ -490,16 +492,20 @@ answer is what that number means after the object it named has gone.
 
 The root keeps one table of object records for the whole machine and
 one **handle table** per task (`liberx/backend/core/handles.h`). A
-handle is the index of an entry in the caller's own handle table, plus
-one, so that zero can mean "no handle". Each entry names an object
-record and the generation that record had when the entry was made.
+handle's low 24 bits are the number of an entry in the caller's own
+handle table, its index plus one, so that zero can mean "no handle";
+the 40 bits above them are the entry's own generation. Each entry names
+an object record and the generation that record had when the entry was
+made, and holds the rights its holder has to the object.
 
 Every service call that takes a handle looks it up with
-`erx_backend_handle_find`. A number that names no entry in use, past
-the table or free inside it, answers `ERX_EINVAL`. An entry whose
-record's generation has moved on answers `ERX_ESTALE`, and an object of
-the wrong kind for the call `ERX_ETYPE`. Otherwise the lookup returns
-the record.
+`erx_backend_handle_find`, which checks in order the number within
+the table, the entry in use, the value's generation against the
+entry's, and the record still at the entry's generation. A failure of
+any of these answers `ERX_ESTALE`, as erXos's kernel answers every value
+that names no live slot, so a forged, closed and stale handle look
+alike. Only then does an object of the wrong kind for the call answer
+`ERX_ETYPE`. Otherwise the lookup returns the record.
 
 So a handle is meaningless outside its table, as chapter 2's slot
 numbers are. Domain A's handle 7 and domain B's handle 7 are two
@@ -535,33 +541,34 @@ made is left to chase.
 
 ### 8.4.3 Using a handle after closing it
 
-The generation tells a holder that the object its entry named is gone.
-It does not protect a holder from its own close. When a task closes a
-handle, its entry is freed, and until it is reused the old number
-answers `ERX_EINVAL`. The next handle the task receives, from a create
-or a pass, takes the lowest free entry, as a UNIX file descriptor
-does. If the task's code kept the old number and uses it later, it
-reaches whatever the new entry names.
+The record's generation tells a holder that the object its entry named
+is gone; the entry's own generation protects a holder from its own
+close. A close advances the entry's generation and puts the entry at
+the end of the task's free list, so the old value answers `ERX_ESTALE`
+from then on, even after the entry is taken again for another object.
+Free entries are taken first in, first out, not lowest first as UNIX
+file descriptors are, and an entry whose generation reaches its last
+value, 2^40 - 1, retires and is never taken again, so no value comes
+back to name a new object. The close takes a holder off the record only
+when the record is still at the entry's generation, so closing a stale
+entry never costs the record's next object a holder.
 
-This is the use-after-close bug, and it is the holder's own: no other
-domain can cause it. In an app it acts on one of the app's own objects,
-with the app's own authority; it cannot reach anything the app was
-never given. The usual symptom is a write to the wrong shared buffer,
-or `ERX_ETYPE` when the reused entry names another kind of object. In a
-server that keeps handles for many clients, the bug crosses a trust
-line: one client's data could go to another. The defense is in the
-server's code, which keeps each handle in one place that owns its
-lifetime, as Erlang code does by holding the handle in one process's
-state.
+So the use-after-close bug, a program using a value after closing it,
+fails with `ERX_ESTALE` in every service call instead of reaching
+another object. One use stays unchecked by design: an interrupt object
+or a doorbell rung straight through Fiasco, once section 8.4.4's
+placement is built, is checked by Fiasco at its slot alone, and only
+the first-in-first-out reuse delays a closed slot from naming another
+object.
 
 ### 8.4.4 Rights
 
-A handle carries no rights. A pass takes a rights mask and reports
+Each entry stores its rights. A pass takes a rights mask and records
 the new handle's rights, the mask within what the object's type allows
-and without the right to destroy, but no entry stores them
-(`object_pass_item` in `object.c`). Two things limit a holder: the
-creator-only destroy, and the rules each kind of object carries
-(section 8.6.3):
+and without the right to destroy (`object_pass_item` in `object.c`),
+but a create records its type's whole mask and no call except destroy
+checks a right. Two things limit a holder: the creator-only destroy,
+and the rules each kind of object carries (section 8.6.3):
 
 * every mapping is read-only, readable and writable, or readable and
   executable, never writable and executable at once, because the range
@@ -579,15 +586,12 @@ and prints `development build: trusted code only` in its banner. In
 such a build, the masks the domain library passes are kept by the
 discipline of the code that receives them, not by the root.
 
-The design closes this gap and the one of section 8.4.3; it is
-designed and not built. Each entry of the per-task table records its
-object, its kind and its rights. Rights are intersected with the mask
-on every duplicate and pass and checked on every use. A handle's value
-carries its entry's generation, in bits the ABI file reserves, so a
-use after the holder's own close answers `ERX_ESTALE`, as a use after
-a destroy does, and never reaches another object. An interrupt object
-or a doorbell is also installed at the Fiasco slot that matches its
-handle, so ringing and acknowledging go straight to Fiasco without
+The design closes this gap; it is designed and not built. A create
+records its creation kind's default rights, rights are intersected
+with the mask on every duplicate and pass, and every call checks the
+right it needs, answering `ERX_ERIGHTS` without it. An interrupt
+object or a doorbell is also installed at the Fiasco slot that matches
+its handle, so ringing and acknowledging go straight to Fiasco without
 the root; only that direct use after a close is unchecked, because
 Fiasco checks the slot alone.
 
@@ -608,13 +612,13 @@ stateDiagram-v2
   Passed --> Stale: creator destroys the object
   Passed --> Free: holder closes its handle
   Stale --> Free: holder closes its handle
-  Free --> Held: the entry is reused for a new object
+  Free --> Held: the entry is reused, under a new generation
 ```
 
 *Figure 8.3. A handle's life in one holder's table. A destroy by the
 creator makes every holder's entry stale at once. A close frees the
-entry, and the next object the holder receives may take it: the
-use-after-close bug of section 8.4.3.*
+entry and advances its generation, so when a later object takes it,
+the old value still answers `ERX_ESTALE` (section 8.4.3).*
 
 Every holder of an object is the
 creator's task or a task below it in the tree of spaces, and a task's
@@ -1014,8 +1018,8 @@ A hostile domain could:
 * send requests and take faults as fast as its threads can, delaying
   every other domain's setup on the root service's one thread;
 * map writable a side of a connection it was passed to read, and
-  commit pages past its budget's limit, since handles carry no rights
-  and budgets refuse nothing (sections 8.4.4 and 8.6.4).
+  commit pages past its budget's limit, since no call checks a
+  handle's rights and budgets refuse nothing (sections 8.4.4 and 8.6.4).
 
 It could not reach another domain's memory or objects without a defect
 in Fiasco or in the root. It could not change any capability table or
@@ -1084,8 +1088,9 @@ tables need no lock. Its
 decoder names the caller from the gate's label and refuses any request
 whose shape the ABI file does not give. A handle is an entry in the
 caller's table in the root: a destroyed object's handles answer
-`ERX_ESTALE`, a closed handle's number is reused lowest-first, and
-handles carry no rights. Threads wait on one semaphore each, gates
+`ERX_ESTALE`, and so does a handle used after its own close, since
+its value carries the entry's generation; entries record rights, which
+no call but destroy checks yet. Threads wait on one semaphore each, gates
 carry fault and exit records to each space's creator, and a fault of
 the root task ends the machine. Isolation rests on Fiasco and on the
 root service, and, for a device that masters DMA without an IOMMU, on

@@ -596,8 +596,7 @@ properties in this form. A program names a kernel object only through
 a handle in a table kept for it, and every call that names a handle
 passes one lookup that checks the object's generation, so a destroyed
 object is gone for every holder at once. Section 2.5.4 says what the
-handles do not give: they carry no rights, and a number used after
-its own holder closed it can reach another object.
+handles do not give yet: no call but destroy checks their rights.
 
 ## 2.5 The L4 family and Fiasco
 
@@ -734,22 +733,20 @@ users, and a call Fiasco cannot carry out fails with a plain error,
 
 A program does not name its kernel objects by Fiasco's slots. It
 names them by **handles**, entries in a table the root task keeps for
-each program; a handle's value is the entry's index plus one. Each
-entry records the generation of the object it names, the counter of
-section 2.3.5, kept with the root task's record of the object rather
+each program; a handle's low 24 bits are the entry's index plus one.
+Each entry records the generation of the object it names, the counter
+of section 2.3.5, kept with the root task's record of the object rather
 than in the number. So when an object is destroyed, every handle to it
 answers the error `ERX_ESTALE` until its holder closes it, and never
-names whatever object comes next. The generation does not cover a
-holder's own close. A closed number answers `ERX_EINVAL` until it is
-reused, and numbers are reused lowest first, as UNIX reuses file
-descriptors, so a program that keeps using a number after closing it
-reaches whatever object took that number next. Handles carry no
-rights: any holder may use an object as its type allows, and only
-destroying it is kept to the object's creator. The design adds two
-things, designed and not built: rights recorded per handle, which only
-shrink as a handle is duplicated or passed, and a handle value that
-carries the generation, so a use after the holder's own close answers
-`ERX_ESTALE` too
+names whatever object comes next. The record's generation does not cover a
+holder's own close; the entry's own generation does, carried in the
+handle's value, so a closed handle answers `ERX_ESTALE` too, even once
+its entry, taken first in, first out, names another object. Each entry
+records its rights, but no call except destroy checks them yet: any
+holder may use an object as its type allows, and only destroying it is
+kept to the object's creator. The design adds rights that start from
+each creation kind's defaults, only shrink as a handle is duplicated or
+passed, and are checked on every use; that is designed and not built
 ([chapter 8, section 8.4](08-kernel-interface.md#84-handles-and-destroying-an-object)).
 [Chapter 8](08-kernel-interface.md) describes the interface and how it
 sits on Fiasco.

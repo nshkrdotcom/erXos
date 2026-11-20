@@ -383,8 +383,8 @@ no write over an object whose bytes are fixed (a sealed object, a
 code object or a slice of the boot image), and no execute over device
 memory. That is built. In the design a map is also held beneath the
 rights the caller's handle carries, which the root records per handle
-and narrows on every pass. Handles carry no rights as built, so that
-part is designed and not built.
+and narrows on every pass. As built the entries record rights but no
+map checks them, so that part is designed and not built.
 
 ### 12.5.5 Trimming never meets sharing
 

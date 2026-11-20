@@ -12,8 +12,8 @@ links back to it.
 > create a domain and see a link report its end. Memory and threads are
 > held as records, and ending a domain ends everything charged to it.
 > **Designed** and not built: memory limits that refuse a domain more,
-> CPU limits per domain, rights on handles and handles that stay stale
-> after their own close, a login that gives each person a domain of
+> CPU limits per domain, rights on handles narrowed per creation kind
+> and checked on every use, a login that gives each person a domain of
 > their own, and toybox's UNIX programs in the session's `/bin`.
 
 A FreeBSD machine that runs a web shop has two worlds in it. One is
@@ -213,15 +213,16 @@ address space, a thread or a device's interrupt, and records the
 object's **generation**, a count that grows each time the root
 service frees an object's record. So when an object is destroyed,
 every handle to it answers `ERX_ESTALE` until it is closed, and never
-names whatever object comes next. A closed number answers `ERX_EINVAL`
-until it is reused, lowest first, as UNIX reuses descriptors, so a
-program that uses a number after its own close reaches whatever object
-took it next. Unlike chapter 2's
-capabilities, handles carry no rights: whoever holds one may use its object, and only the object's creator
-may destroy it (`liberx/backend/core/handles.h`). The design gives
-handles rights that only shrink as a handle is passed, and a value
-that carries the generation, so a use after the holder's own close
-answers `ERX_ESTALE` too; that is designed and not built.
+names whatever object comes next. The handle's value also carries
+its entry's own generation, which a close advances, so a program that
+uses a number after its own close gets `ERX_ESTALE` too, even once the
+entry, reused first in, first out, names another object. Each entry
+records its rights, but unlike chapter 2's capabilities no call except
+destroy checks them yet: whoever holds a handle may use its object, and
+only the object's creator may destroy it
+(`liberx/backend/core/handles.h`). The design gives handles rights that
+start from each creation kind's defaults, only shrink as a handle is
+passed, and are checked on every use; that is designed and not built.
 
 The second is an **export**, which does the same job for Erlang
 processes. A domain reaches only the processes another domain exported
