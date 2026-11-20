@@ -18,8 +18,9 @@ require_relative '../fixtures/funnel_wire'
 # target rules, the latter bounding the receiver's own pids to ERTS's
 # internal range; the payload's version byte, discard mode and the
 # target's request limit; and the export table asked once, about the
-# operation's target, or not at all; and into the system domain, a spawn
-# request malformed whatever the rights, every other row as elsewhere.
+# operation's target, or not at all; into the system domain, a spawn
+# request malformed whatever the rights, every other row as elsewhere; and
+# on either lane, a spawn reply's error only one ERTS writes.
 class ErxFunnelCheckTest < Minitest::Test
   include FunnelWire
 
@@ -208,6 +209,24 @@ class ErxFunnelCheckTest < Minitest::Test
     others = TABLE.reject { |name, _| name == 'SPAWN_REQUEST' }
     rows = others.map { |name, row| [name, check(*frame_of(name), rights: row.right, system: 1).sub(/ \d+\z/, '')] }
     assert_equal(others.map { |name, row| [name, "deliver accepted ok #{row.asked}"] }, rows)
+  end
+
+  # A spawn reply's error is one of the atoms ERTS's spawn-serving code
+  # writes, on a lane into the system domain and into any other.
+  def test_a_spawn_reply_names_only_an_error_erts_writes_on_every_lane
+    reply = ->(result) { ctl(op(31), reference, to, EtfWire.small(0), result) }
+    [0, 1].each do |system|
+      ['zzz_unknown', '', 'bad', 'badopts'].product([0, ALL]).each do |error, rights|
+        assert_equal 'malformed malformed spawn_error - 0',
+                     check(reply.call(EtfWire.atom(error)), '', rights: rights, system: system),
+                     "#{error.inspect} rights #{rights} system #{system}"
+      end
+      %w[badopt noconnection system_limit].each do |error|
+        assert_equal 'deliver accepted ok - 0',
+                     check(reply.call(EtfWire.atom(error)), '', rights: 0, system: system), "#{error} system #{system}"
+      end
+      assert_equal 'deliver accepted ok - 0', check(reply.call(from), '', rights: 0, system: system), "pid system #{system}"
+    end
   end
 
   def test_refusals_of_the_grammar_stay_malformed

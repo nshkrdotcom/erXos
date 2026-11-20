@@ -432,7 +432,8 @@ table's bound it writes nothing and counts the failure for
 `erx_dist:exports_refused/0`. 9. The distribution decoder takes a safe mode,
 set in the system domain, which creates no atom and reports a refused atom
 apart from a malformed term; `erx_dist:atoms_refused/0` counts the payloads it
-refused for an atom. 10. In the system domain, a message to a peer
+refused for an atom. A control term refused for an atom ends the connection with
+a log line naming the peer; no frame the funnel accepts names such an atom. 10. In the system domain, a message to a peer
 whose entry's queue, the frames of `async_dist` senders included, is past the
 manifest's `system_queue` is dropped and counted on the receiver instead of
 suspending the sender, and any other signal that does not fit ends the

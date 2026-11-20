@@ -112,6 +112,8 @@ typedef enum erx_funnel_reason {
 				   reaches */
 	ERX_FUNNEL_ERR_SYSTEM_SPAWN, /* a SPAWN_REQUEST into the system
 				   domain, which serves no spawn */
+	ERX_FUNNEL_ERR_SPAWN_ERROR, /* a SPAWN_REPLY whose error is not one
+				   ERTS's spawn writes */
 } erx_funnel_reason_t;
 
 /* A frame's two terms: control first, then payload (absent when 0). */
@@ -162,9 +164,13 @@ struct erx_funnel_header {
  * options through; erXos's peer answers them locally with badopt, and a
  * control term past ERX_CTL_MAX with system_limit, so no correct runtime
  * writes them (design-domains.md, "The funnel", step 4).  Flags is an
- * integer below 2^27 and Result a pid (the child) or an atom (the error),
- * as ERTS reads them.  An operation carries a payload exactly when its
- * name says so (SEND_SENDER's message, ALIAS_SEND's message, the exits'
+ * integer below 2^27, as ERTS reads it, and Result a pid (the child) or
+ * one of the errors ERTS's spawn writes: badopt, noconnection or
+ * system_limit, refused otherwise with ERX_FUNNEL_ERR_SPAWN_ERROR.  So
+ * apart from a SPAWN_REQUEST's, which never reaches the system domain, a
+ * control term names no atom but its two ends' node names and these
+ * three.  An operation carries a payload exactly when its name
+ * says so (SEND_SENDER's message, ALIAS_SEND's message, the exits'
  * reasons, SPAWN_REQUEST's argument list).
  */
 #define ERX_FUNNEL_HAS_FROM		0x01u

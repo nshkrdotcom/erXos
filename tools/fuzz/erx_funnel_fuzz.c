@@ -15,8 +15,9 @@
  * only memory inside the input, sets the members its operation's row of
  * funnel.h lists and no others, and agrees with the payload length; a
  * refused one is all zero; every proper prefix of an accepted control
- * term is refused; and the payload's verdict and reason agree and an
- * accepted payload's words stay within the limit.  The harness also runs
+ * term is refused; an accepted spawn reply's error is one ERTS writes;
+ * and the payload's verdict and reason agree and an accepted payload's
+ * words stay within the limit.  The harness also runs
  * erx_funnel_check on the frame, whole and in discard mode, with the
  * export table's rights chosen by the cut byte, with the scratch
  * erx_funnel_check_scratch_bytes promises for the bytes held, which never
@@ -42,6 +43,21 @@ inside(const uint8_t *p, size_t n, const uint8_t *base, size_t len)
 {
 	return (p == NULL ? n == 0 :
 	    p >= base && n <= len && (size_t)(p - base) <= len - n);
+}
+
+/* Whether an atom is an error ERTS's spawn writes in a SPAWN_REPLY. */
+static bool
+spawn_error_known(const uint8_t *p, size_t n)
+{
+	static const char *const names[] = {
+		"badopt", "noconnection", "system_limit"
+	};
+	size_t i;
+
+	for (i = 0; i < sizeof(names) / sizeof(names[0]); i++)
+		if (n == strlen(names[i]) && memcmp(p, names[i], n) == 0)
+			return (true);
+	return (false);
 }
 
 /* The members each operation sets, from funnel.h's table. */
@@ -120,6 +136,10 @@ check_control(const erx_funnel_control_t *c, const uint8_t *term,
 	/* A spawn reply's Result is the child or the error, never both. */
 	if (c->op == ERX_FUNNEL_SPAWN_REPLY &&
 	    ((c->fields & ERX_FUNNEL_HAS_FROM) != 0) == (c->spawn.error != NULL))
+		abort();
+	/* An accepted spawn reply's error is one ERTS's spawn writes. */
+	if (c->spawn.error != NULL &&
+	    !spawn_error_known(c->spawn.error, c->spawn.error_len))
 		abort();
 	if ((c->fields & ERX_FUNNEL_HAS_ID) ? c->id == 0 : c->id != 0)
 		abort();

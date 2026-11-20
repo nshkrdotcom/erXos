@@ -69,6 +69,7 @@ static const char *const funnel_reasons[] = {
 	[ERX_FUNNEL_ERR_HELD] = "held",
 	[ERX_FUNNEL_ERR_VERDICT] = "verdict",
 	[ERX_FUNNEL_ERR_SYSTEM_SPAWN] = "system_spawn",
+	[ERX_FUNNEL_ERR_SPAWN_ERROR] = "spawn_error",
 };
 
 static const char *const etf_reasons[] = {

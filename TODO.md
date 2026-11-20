@@ -6354,6 +6354,11 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   shape with `badopt` and a term past `ERX_CTL_MAX` with `system_limit`; no such check
   exists, so such a spawn toward another domain is written, refused there as malformed,
   and ends the caller's own connection.
+* [Medium] Funnel control grammar, `liberx/erx_funnel.c` `spawn_errors`: the three
+  errors a SPAWN_REPLY may name (badopt, noconnection, system_limit) are kept by hand
+  in step with the writers in `otp/erts/emulator/beam/dist.c`, and the funnel tests and
+  fuzz target repeat the names. One source (an `abi/erx_abi.txt` row generating the
+  funnel table and the ERTS side) would make a new spawn error impossible to forget.
 * [Medium] Funnel authority, design-domains.md "The funnel" step 5: a
   `LINK` without `link` to a live process that holds no link with the
   sender is answered `noproc` by the target process when it handles the
@@ -8091,11 +8096,6 @@ to the corpus and follow rc
 * [Medium] runtime, the system domain's safe decode (edit 9 of
   [design-runtime.md](docs/design-runtime.md), `erts_proc_sig_decode_dist` in
   `otp/erts/emulator/beam/erl_proc_sig_queue.c`, `erts_net_message` in `dist.c`):
-  * A spawn reply whose error atom the system domain lacks, which only a sender
-    that is not ERTS writes, ends the connection through `erts_net_message`'s
-    decode error with no count: the lane driver counts only what the funnel
-    refuses. It is the one control term left that can name such an atom, since
-    a `SPAWN_REQUEST` into the system domain is malformed at the funnel.
   * Each message family a domain sends the system domain keeps its atoms within
     what the system domain holds by hand: the ready report's provides cross as
     binaries, a mint's refusal as `refused`, a lost connection's reason through

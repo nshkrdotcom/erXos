@@ -2333,6 +2333,19 @@ int erts_net_message(Port *prt,
 	bw(buf, orig_len);
 #endif
 	VALGRIND_MSG("data error");
+        /*
+         * erXos: edit 9. erts_decode_dist_ext has already logged a malformed term through
+         * bad_dist_ext, and leaves a refused atom to its caller. The funnel's control
+         * grammar names no atom the system domain lacks, so no frame it accepted reaches
+         * this; the log names the peer, never the term.
+         */
+        if (edep->flags & ERTS_DIST_EXT_ATOM_REFUSED) {
+            erts_dsprintf_buf_t *dsbufp = erts_create_logger_dsbuf();
+            erts_dsprintf(dsbufp, "%T refused an atom in a control term from %T "
+                          "on distribution channel %d\n", erts_this_node->sysname,
+                          dep->sysname, dist_entry_channel_no(dep));
+            erts_send_warning_to_logger_nogl(dsbufp);
+        }
 	goto decode_error;
     }
 
@@ -3086,6 +3099,7 @@ int erts_net_message(Port *prt,
         }
         if (answer != ERX_NET_DELIVER) {
             ErtsDSigSendContext ctx;
+            /* erXos: every error written here is in erx_funnel.c's spawn_errors. */
             error = answer == ERX_NET_SPAWN_LIMIT ? am_system_limit : am_noconnection;
         dist_spawn_error:
             if (ede_hfrag) {

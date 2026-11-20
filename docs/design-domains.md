@@ -849,6 +849,20 @@ nothing. A `SPAWN_REQUEST` on a lane into the system domain is malformed
 whatever the export table holds, so none reaches the system domain's
 decoder.
 
+**A control term names only atoms its receiver holds.** Besides a spawn
+request's module, function and options, the atoms a control term of the
+grammar names are the node names of its pids and references and a spawn
+reply's error. The error is one of the closed set ERTS's spawn-serving
+code writes (`beam/dist.c`, `erts_net_message`'s `DOP_SPAWN_REQUEST`):
+`badopt` for an option list it refuses, `noconnection` for a spawn
+answered as unauthorised or toward a dead target, and `system_limit`
+for one over a limit or a process it could not create. Every runtime
+holds these three, and a reply with any other error is malformed on
+every lane. So a control term into the system domain names no atom but
+its two ends' node names and these three, and its safe decode refuses
+none; were one refused, ERTS would log the refusal, naming the peer and
+not the term, and end the connection.
+
 **Signals that need no right.** An unlink, its acknowledgement, a demonitor,
 a link exit and a `DOWN` each change only a relation between their target
 and the sending process, which the sender rule makes the sender's own, and
@@ -1130,7 +1144,10 @@ For each record between the lane's `rpos` and the `wpos` it read once:
    with a node name at the machine's host; unlink identifiers are
    integers from 1 to 2^64 - 1; a spawn request's arity is an integer
    of ERTS's small range and a spawn reply's flags an integer below
-   2^27, as ERTS's distribution input reads them; spawn options are a
+   2^27, as ERTS's distribution input reads them; a spawn reply's error
+   is `badopt`, `noconnection` or `system_limit`, the closed set ERTS's
+   spawn writes ([Frames](#frames), A control term names only atoms its
+   receiver holds); spawn options are a
    proper list of options in the shape of every option ERTS's spawn
    takes, an atom or `{Atom, Value}` with `Value` an atom, an integer
    or a map from atoms to atoms and integers, so no option names a pid,
@@ -3771,6 +3788,19 @@ How a principal comes to hold a domain name, bound by first use within
 its `names` quota as this design does or assigned by the administrator
 in the configuration, is an open question of
 [design-system.md](design-system.md#risks-and-open-questions).
+
+How a spawn request whose module or function would be an atom past the
+receiver's `foreign_atoms` count
+([Atoms, code, ETS and names](#atoms-code-ets-and-names)) reaches its
+answer is open. Such a request is over a limit, which step 7 of
+[The funnel](#the-funnel) answers with `SPAWN_REPLY` of `system_limit`;
+but the funnel reads no atom table, so the atom is refused only when
+`erts_net_message` decodes the control term, and a refused atom in a
+control term ends the connection. No control grammar can close the
+case, since a module may be any atom. The path from that refusal to the
+over-limit reply is to be designed once for every domain; the system
+domain is the case of a `foreign_atoms` of 0, where the funnel already
+refuses every spawn request.
 
 ## References
 
