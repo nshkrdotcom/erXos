@@ -288,6 +288,38 @@ layout a map, and any other array a list. Neither function checks a value
 against more than its width: the bounds are its reader's, such as
 `erx_f2fs_codec`'s.
 
+### Layouts in Erlang
+
+Erlang reads and writes every fixed `wire_le` layout through one
+generated module, `erx_abi_layout`, in the shape of `erx_abi_packed`:
+one clause of a binary pattern of exactly the layout's size per layout,
+and one of the encoder. Each layout is also a `-type` of its map, field
+for field under its declared names, nothing renamed or dropped, so a
+module that holds a record names its type rather than declaring the
+fields again. An integer field is an integer, even one whose values have
+names elsewhere (a header type, a sentinel); an enum field is its
+member's atom; a flags field is the ordset of its bit names; a nested
+layout is a map and an array of layouts a list of maps; an unsigned byte
+array or a `bytes` field is a binary, and any other array a list.
+`erx_abi_enums` owns the translation between names and integers:
+`name/2` and `value/2` for every enum and flags type, and a type of the
+ordset for each flags type. Every atom comes from the ABI file, so no
+input creates one.
+
+`decode/2` returns `{ok, Map}` or `{error, Error}`: `{size, Layout}` for
+bytes of another size, `{padding, Layout}` for a padding byte that is not
+zero, and `{Type, Value}` for an enum value no member holds, a flags
+value with a bit its type does not declare, a combination its `allow`
+line does not list, a scalar outside its range, or bytes that differ from
+their type's fixed value. Each refusal is one throw out of the clause that
+finds it, caught once in `decode/2`. `encode/2` is its inverse, so
+`encode(decode(B))` is `B` for every `B` it accepts, and a value wider
+than its field, a value its type does not admit, or a name its type does
+not have, is an error. Neither
+interprets a sentinel, such as an unused slot of zeros: what it means is
+the reader's, which reads it in one module (`erx_pcie` for the PCIe
+records).
+
 ### Element sequences
 
 An element sequence is records of a tag, a length and a body of that
