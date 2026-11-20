@@ -310,10 +310,11 @@ Eshell V17.1.1 (type help(). for help)
   cover it over stand-ins of the window and draw connection (the window and
   the draw connection each have a keeper of their `kbd` and `mouse` reads),
   and the kiosk suite's front cell runs a program that draws, on root's
-  `front` display grant, over the dashboard. The file tree a program will see (`/bin`, `/dev`
-  with `null`, `zero`, `urandom` and `tty`, a name that answers `ENXIO` as
-  a file, and `/etc/passwd` and
-  `/etc/group`) is written as a file server that nothing starts yet.
+  `front` display grant, over the dashboard. Every session starts its export, a file server
+  of `/bin`, `/dev` (with `null`, `zero`, `urandom` and `tty`, a name that
+  answers `ENXIO` as a file) and `/etc` (`passwd` and `group`), as an `rx`
+  grant for `/bin` and an `rw` grant for `/dev` and `/etc`; a program's
+  handler does not join it into the program's table.
 * musl's errno and signal numbers are FreeBSD's, generated from the ABI's
   tables, and `strerror`'s texts are checked against FreeBSD's.
 
