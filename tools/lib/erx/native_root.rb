@@ -107,13 +107,13 @@ module Erx
     NO_PROGRAM = [*RUNTIME, *VM, *SERVICE, *LAUNCH, "#{BACKEND}/root.c", "#{BACKEND}/root_no_program.c",
                   'liberx/backend/core/boot_manifest.c'].freeze
     # The device-tree reader over libfdt with every check on (docs/design-device-tree.md, "The
-    # reader"), as tools/fuzz/dt_target.rb builds it: the root accepts the firmware's tree once
-    # and reads each given device's facts from it. libfdt includes musl's string.h and
-    # stdlib.h, so these read musl's headers too.
+    # reader"), with its architecture's interrupt controller binding, as tools/fuzz/dt_target.rb
+    # builds it: the root accepts the firmware's tree once and reads each given device's
+    # facts from it. libfdt includes musl's string.h and stdlib.h, so these read musl's
+    # headers too.
     LIBFDT = 'fiasco/libfdt/lib/contrib'
-    DEVICE_TREE = ['kernel/core/dt.c', *%w[fdt.c fdt_ro.c fdt_check.c fdt_addresses.c fdt_rw.c fdt_wip.c].map do |name|
-      "#{LIBFDT}/#{name}"
-    end].freeze
+    DEVICE_TREE = ['kernel/core/dt.c', 'kernel/arch/aarch64/dt_interrupt.c',
+                   *%w[fdt.c fdt_ro.c fdt_check.c fdt_addresses.c fdt_rw.c fdt_wip.c].map { |name| "#{LIBFDT}/#{name}" }].freeze
     DEVICE_TREE_FLAGS = ['-I', LIBFDT, '-DFDT_ASSUME_MASK=0'].freeze
     # The system's root task, less what its link takes from musl and ERTS: musl supplies
     # the memcpy and the rest of what root_mem.c gives a freestanding root.

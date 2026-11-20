@@ -7,11 +7,13 @@
  * The device-tree reader, kernel/core/dt.c, over arbitrary bytes, handed
  * over in a buffer of exactly their length so that a read past them is an
  * AddressSanitizer report. An accepted view goes to erx_dt_device for
- * fixed paths, to erx_dt_framebuffer and to erx_dt_registers, and every
+ * fixed paths, to erx_dt_framebuffer, to erx_dt_registers and to
+ * erx_dt_intx for every pin of two places, and every
  * answer must keep the reader's promises: memory ranges within the bound and
  * ordered, no DMA facts beside a status other than ok, a framebuffer whose
  * pages lie in its window and whose rows fit its length, and no register
- * window confirmed for an empty row.
+ * window confirmed for an empty row, and no line beside a status other than
+ * ok, nor one outside the GIC's SPIs.
  */
 
 #include <stddef.h>
@@ -96,6 +98,30 @@ registers_check(const erx_dt_t *tree)
 		abort();
 }
 
+/*
+ * Each pin of the Pi 4's closed place and of a place whose bits fill every field. A
+ * line is present only on ok, and is an SPI's interrupt id, 32 to 1019.
+ */
+static void
+intx_check(const erx_dt_t *tree, const char *path)
+{
+	static const erx_pcie_place_t places[] = { { 1, 0, 0, 0 }, { 0xff, 0x1f, 0x7, 0 } };
+	erx_dt_intx_status_t status;
+	erx_pcie_place_t place;
+	uint32_t line;
+	size_t p;
+
+	for (p = 0; p < sizeof(places) / sizeof(places[0]); p++) {
+		place = places[p];
+		for (place.pin = 1; place.pin <= ERX_PCIE_PIN_MAX; place.pin++) {
+			status = erx_dt_intx(tree, path, &place, &line);
+			if (status > ERX_DT_INTX_UNSUPPORTED || (status != ERX_DT_INTX_OK && line != 0) ||
+			    (status == ERX_DT_INTX_OK && (line < 32 || line > 1019)))
+				abort();
+		}
+	}
+}
+
 int
 LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
 {
@@ -122,6 +148,8 @@ LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
 		framebuffer_check(&tree, 0, UINT64_MAX);
 		seeds_check(&tree);
 		registers_check(&tree);
+		intx_check(&tree, "/pcie");
+		intx_check(&tree, "/scb/pcie@7d500000");
 	} else if (tree.bytes != NULL || tree.memory_count != 0) {
 		abort();
 	}

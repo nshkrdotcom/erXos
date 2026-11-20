@@ -22,6 +22,8 @@ require_relative '../../tools/fuzz/run_pack'
 class DtTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
   READER = 'kernel/core/dt.c'
+  # The reader's interrupt controller binding, the GIC's.
+  BINDING = 'kernel/arch/aarch64/dt_interrupt.c'
   DRIVER = 'test/fixtures/dt_driver.c'
   LIBFDT = 'fiasco/libfdt/lib/contrib'
   # The fuzz target's sources and macros, so this harness links what it links.
@@ -62,6 +64,20 @@ class DtTest < Minitest::Test
     "soc { #address-cells = <1>; #size-cells = <1>; #{property} #{body} };"
   end
 
+  # A PCI host bridge at /pcie whose interrupt-map, entries (nil for none), routes to the
+  # interrupt controller at the label gic, a GIC-400, under the mask (nil for none); bridge
+  # and gic are their cells.
+  INTX = lambda do |entries:, mask: '0x0 0x0 0x0 0x7', bridge: '#address-cells = <3>; #interrupt-cells = <1>;',
+                    gic: '#address-cells = <0>; #interrupt-cells = <3>; interrupt-controller;'|
+    map = entries && "#{mask && "interrupt-map-mask = <#{mask}>;"} interrupt-map = <#{entries}>;"
+    "gic: intc { compatible = \"arm,gic-400\"; #{gic} }; pcie { device_type = \"pci\"; #{bridge} #size-cells = <2>; #{map} };"
+  end
+  # Device 0's INTA to INTD on SPIs 143 to 146, level-triggered and active high.
+  PIN_ENTRIES = (1..4).map { |pin| format('0x0 0x0 0x0 0x%x &gic 0x0 0x%x 0x4', pin, 142 + pin) }.join(' ')
+  # The Pi 4's closed bus's one place, bus 1, device 0, function 0 (docs/design-usb.md,
+  # "Interrupts"), with a pin appended.
+  PI_PLACE = '1 0 0'
+
   FIXTURES = {
     'parent-coherent' => tree('bus { #address-cells = <2>; #size-cells = <1>; dma-coherent; dev { }; };'),
     'both-marks' => tree('dev { dma-coherent; dma-noncoherent; };'),
@@ -70,8 +86,16 @@ class DtTest < Minitest::Test
     'gap-below-ranges' => tree('outer { #address-cells = <2>; #size-cells = <1>; dma-ranges = <0x0 0x0 0x0 0x0 0x40000000>; ' \
                                'gap { #address-cells = <2>; #size-cells = <1>; dev { }; }; };'),
     'two-memories' => tree('dev { };', memory: 'memory@0 { device_type = "memory"; reg = <0x0 0x0 0x1000000 0x1 0x0 0x1000000>; };'),
+    # A host bridge's three-cell dma-ranges, with a device below it whose bus is the bridge.
     'pci-three-cells' => tree('pcie { device_type = "pci"; #address-cells = <3>; #size-cells = <2>; ' \
-                              'dma-ranges = <0x2000000 0x0 0x0 0x0 0x0 0x0 0x40000000>; };'),
+                              'dma-ranges = <0x2000000 0x0 0x0 0x0 0x0 0x0 0x40000000>; dev { }; };'),
+    # A memory entry and a non-relocatable I/O entry (space code 1 under the n bit), both over RAM.
+    'pci-memory-and-io' => tree('pcie { device_type = "pci"; #address-cells = <3>; #size-cells = <2>; ' \
+                                'dma-ranges = <0x81000000 0x0 0x0 0x0 0x0 0x0 0x10000 0x2000000 0x0 0x0 0x0 0x0 0x0 0x40000000>; };'),
+    # Three cells on a bus above a host bridge whose empty dma-ranges passes the windows up.
+    'pci-three-cells-above' => tree('outer { #address-cells = <3>; #size-cells = <2>; ' \
+                                    'dma-ranges = <0x2000000 0x0 0x0 0x0 0x0 0x0 0x40000000>; ' \
+                                    'pcie { #address-cells = <2>; #size-cells = <1>; dma-ranges; }; };'),
     'pcie-two-cells' => tree('pcie { #address-cells = <2>; #size-cells = <1>; dma-ranges = <0x0 0x80000000 0x0 0x0 0x40000000>; };'),
     # A one-cell bus over the two-cell root, under a one-cell bus that offsets it.
     'nested' => tree('outer { #address-cells = <1>; #size-cells = <1>; dma-ranges = <0x10000000 0x0 0x0 0x40000000>; ' \
@@ -132,7 +156,31 @@ class DtTest < Minitest::Test
     # compatible string: at the row's path, and at a path of its own.
     'regs-other-page' => tree(SOC.call(ranges: '0x7e000000 0x0 0xfe000000 0x1800000', body: RNG.call(reg: '0x7e200000 0x28'))),
     'regs-elsewhere' => tree(SOC.call(ranges: '0x7e000000 0x0 0xfe000000 0x1800000',
-                                      body: RNG.call(reg: '0x7e200000 0x28').sub('rng@7e104000', 'rng@7e200000')))
+                                      body: RNG.call(reg: '0x7e200000 0x28').sub('rng@7e104000', 'rng@7e200000'))),
+    # A map that keeps only the pin and routes INTA to INTD to SPIs 143 to 146, as the Pi 4's does.
+    'intx-pins' => tree(INTX.call(entries: PIN_ENTRIES)),
+    # A map that keeps the device and the pin, with entries for device 0 only.
+    'intx-by-device' => tree(INTX.call(mask: '0xf800 0x0 0x0 0x7', entries: PIN_ENTRIES)),
+    'intx-no-map' => tree(INTX.call(entries: nil)),
+    'intx-edge' => tree(INTX.call(entries: '0x0 0x0 0x0 0x1 &gic 0x0 0x8f 0x1')),
+    'intx-ppi' => tree(INTX.call(entries: '0x0 0x0 0x0 0x1 &gic 0x1 0x9 0x4')),
+    'intx-past-last-spi' => tree(INTX.call(entries: '0x0 0x0 0x0 0x1 &gic 0x0 0x3dc 0x4')),
+    'intx-short-entry' => tree(INTX.call(entries: '0x0 0x0 0x0 0x1 &gic 0x0 0x8f')),
+    'intx-short-mask' => tree(INTX.call(mask: '0x0 0x0 0x7', entries: PIN_ENTRIES)),
+    'intx-two-cell-bridge' => tree(INTX.call(bridge: '#address-cells = <2>; #interrupt-cells = <1>;', entries: PIN_ENTRIES)),
+    'intx-no-parent' => tree(INTX.call(entries: '0x0 0x0 0x0 0x1 0x99 0x0 0x8f 0x4')),
+    'intx-no-mask' => tree(INTX.call(mask: nil, entries: PIN_ENTRIES.gsub('0x0 0x0 0x0 0x', '0x10000 0x0 0x0 0x'))),
+    'intx-wide-parent-address' => tree(INTX.call(gic: '#address-cells = <3>; #interrupt-cells = <3>; interrupt-controller;',
+                                                 entries: '0x0 0x0 0x0 0x1 &gic 0x0 0x0 0x0 0x0 0x8f 0x4')),
+    'intx-other-controller' => tree(INTX.call(entries: PIN_ENTRIES).sub('arm,gic-400', 'brcm,bcm2836-l1-intc')),
+    'intx-nexus-parent' => tree(INTX.call(gic: '#address-cells = <0>; #interrupt-cells = <3>;', entries: PIN_ENTRIES)),
+    # The parent's unit address takes one cell in each entry.
+    'intx-parent-address' => tree(INTX.call(gic: '#address-cells = <1>; #interrupt-cells = <3>; interrupt-controller;',
+                                            entries: '0x0 0x0 0x0 0x1 &gic 0x0 0x0 0x8f 0x4 0x0 0x0 0x0 0x2 &gic 0x0 0x0 0x90 0x4')),
+    # The second entry names another controller.
+    'intx-two-parents' => tree(INTX.call(entries: '0x0 0x0 0x0 0x1 &gic 0x0 0x8f 0x4 0x0 0x0 0x0 0x2 &other 0x0 0x90 0x4') +
+                               'other: intc2 { compatible = "arm,gic-400"; #address-cells = <0>; #interrupt-cells = <3>; ' \
+                               'interrupt-controller; };')
   }.freeze
 
   # The RNG200's row in the Pi 4's platform record: its path, compatible string and window;
@@ -146,7 +194,8 @@ class DtTest < Minitest::Test
   CROSSING_WINDOW = '0x7e000000 0x3ff900'
   RAM_WINDOW = '0x3fe00000 0x800000'
 
-  # name => [original, replacement, fixture, query, the line the unseeded reader gives].
+  # name => [original, replacement, fixture, query, the line the unseeded reader gives, and
+  # the source seeded when it is not the reader].
   MUTANTS = {
     'the all-zero test turned round' =>
       ["\t\tif (bytes[at] != 0)\n", "\t\tif (bytes[at] == 0)\n", 'seed-zero', 'seeds',
@@ -176,6 +225,23 @@ class DtTest < Minitest::Test
     "the windows' bound removed" =>
       ["\t\t\tif (count == ERX_DT_WINDOWS_MAX)\n\t\t\t\treturn (ERX_DT_DMA_RANGES);\n", '', 'splitting',
        'device /outer/inner/dev node', 'device ranges coherent 0 range 0x0 0x0 0x0 mac none'],
+    'the space-code mask dropped' =>
+      ['>> PCI_SPACE_SHIFT & PCI_SPACE_MASK) == PCI_SPACE_IO)', '>> PCI_SPACE_SHIFT) == PCI_SPACE_IO)', 'pci-memory-and-io',
+       'device /pcie pcie', 'device ok coherent 0 range 0x0 0x0 0x3fffffff mac none'],
+    'an IO entry taken' =>
+      ["\t\t\tif ((cells_read(at, 1) >> PCI_SPACE_SHIFT & PCI_SPACE_MASK) == PCI_SPACE_IO)\n\t\t\t\tcontinue;\n", '',
+       'pci-memory-and-io', 'device /pcie pcie', 'device ok coherent 0 range 0x0 0x0 0x3fffffff mac none'],
+    'three cells taken above the host bridge' =>
+      ['pci = row == ERX_DT_ROW_PCIE && level == bus_level && ac == PCI_ADDRESS_CELLS;', 'pci = row == ERX_DT_ROW_PCIE && ac == PCI_ADDRESS_CELLS;',
+       'pci-three-cells-above', 'device /outer/pcie pcie', 'device cells coherent 0 range 0x0 0x0 0x0 mac none'],
+    "the map's pin match dropped" =>
+      ["for (i = 0; i < PCI_INTX_CELLS; i++)\n\t\tif (cells_read(entry", "for (i = 0; i < PCI_ADDRESS_CELLS; i++)\n\t\tif (cells_read(entry",
+       'intx-pins', "intx /pcie #{PI_PLACE} 2", 'intx ok 176'],
+    "the controller's compatible unchecked" =>
+      ['if (!known || ', 'if (', 'intx-other-controller', "intx /pcie #{PI_PLACE} 1", 'intx unsupported 0'],
+    'the level check removed' =>
+      ['(cells[2] & GIC_TRIGGER_MASK) != GIC_LEVEL_HIGH)', 'false)', 'intx-edge', "intx /pcie #{PI_PLACE} 1",
+       'intx unsupported 0', BINDING],
     'the RAM filter removed' =>
       ['if (memory_meets(tree, windows[side][i].at,', 'if (true || memory_meets(tree, windows[side][i].at,', 'over-no-ram',
        'device /bus/dev node', 'device ranges coherent 0 range 0x0 0x0 0x0 mac none'],
@@ -219,13 +285,15 @@ class DtTest < Minitest::Test
 
   def teardown = FileUtils.remove_entry(@directory)
 
-  def build(reader: File.join(ROOT, READER), name: 'driver', flags: @flags)
-    output = File.join(@directory, name.tr(" '", '--'))
+  # The driver over the target's sources, each source in seeded (a tree path) replaced by
+  # the file it maps to.
+  def build(seeded: {}, name: 'driver', flags: @flags)
+    output = File.join(@directory, name.tr(" '/", '---'))
+    sources = TARGET.sources.map { |source| seeded.fetch(source) { File.join(ROOT, source) } }
     log, status = Open3.capture2e(ENV.fetch('ERX_CLANG', 'clang'), '-std=c17', '-Wall', '-Wextra', '-Werror', '-pedantic', '-O1', '-g',
                                   *Erx::PackFuzz.define_flags(TARGET), *flags, *Erx::Generated.include_flags(root: ROOT),
-                                  '-I', File.join(ROOT, 'include'), '-I', File.join(ROOT, LIBFDT), reader,
-                                  *(TARGET.sources - [READER]).map { |source| File.join(ROOT, source) }, File.join(ROOT, DRIVER),
-                                  '-o', output, stdin_data: '')
+                                  '-I', File.join(ROOT, 'include'), '-I', File.join(ROOT, LIBFDT), *sources,
+                                  File.join(ROOT, DRIVER), '-o', output, stdin_data: '')
     assert status.success?, log
     output
   end
@@ -285,16 +353,17 @@ class DtTest < Minitest::Test
     built = Erx::BoardTree.build(root: ROOT, runner: runner, platform: platform,
                                  compiler: ENV.fetch('ERX_CLANG', 'clang'), revision: nil)
     queries = ['device /emmc2bus/mmc@7e340000 node', 'device /scb/ethernet@7d580000 node', 'device /scb/pcie@7d500000 pcie']
-    # The model's tree has the memory node the firmware fills.
+    # The model's tree has the memory node the firmware fills. The PCIe bridge's one dma-ranges
+    # entry maps PCI address 0 to physical 0 for 3 GiB (docs/design-device-tree.md, "The reader").
     assert_equal ['accept ok memory 1',
                   'device ok coherent 0 range 0x0 0xc0000000 0x3fffffff mac none',
                   "device ok coherent 0 #{IDENTITY} mac none",
-                  'device cells coherent 0 range 0x0 0x0 0x0 mac none'], answers(built.model, queries)
+                  'device ok coherent 0 range 0x0 0x0 0xbfffffff mac none'], answers(built.model, queries)
     # The card's tree leaves the memory node as zeros, so no window has RAM behind it.
     assert_equal ['accept ok memory 0',
                   'device ranges coherent 0 range 0x0 0x0 0x0 mac none',
                   'device ranges coherent 0 range 0x0 0x0 0x0 mac none',
-                  'device cells coherent 0 range 0x0 0x0 0x0 mac none'], answers(built.board, queries)
+                  'device ranges coherent 0 range 0x0 0x0 0x0 mac none'], answers(built.board, queries)
     # The card's tree places the RNG200 where its row in the platform record says, 0x7e104000
     # on the soc bus, CPU address 0xfe104000; the model's tree disables it, since QEMU's model
     # does not answer there (Erx::BoardTree).
@@ -303,6 +372,12 @@ class DtTest < Minitest::Test
     query = "regs #{row.values_at('path', 'compatible', 'base', 'size').join(' ')}"
     assert_equal 'regs ok', answers(built.board, [query])[1]
     assert_equal 'regs none', answers(built.model, [query])[1]
+    # Both trees route the closed bus's INTA to INTD to SPIs 143 to 146, interrupt ids 175
+    # to 178 (docs/design-pcie.md, "The closed bus").
+    intx = (1..4).map { |pin| "intx /scb/pcie@7d500000 #{PI_PLACE} #{pin}" }
+    expected = (175..178).map { |line| "intx ok #{line}" }
+    assert_equal expected, answers(built.board, intx)[1..]
+    assert_equal expected, answers(built.model, intx)[1..]
   end
 
   def test_coherence_marks
@@ -317,7 +392,10 @@ class DtTest < Minitest::Test
     {
       ['gap-below-ranges', 'device /outer/gap/dev node'] => 'device malformed coherent 0 range 0x0 0x0 0x0 mac none',
       ['two-memories', 'device /dev node'] => "device ok coherent 0 #{IDENTITY} mac none",
-      ['pci-three-cells', 'device /pcie pcie'] => 'device cells coherent 0 range 0x0 0x0 0x0 mac none',
+      ['pci-three-cells', 'device /pcie pcie'] => 'device ok coherent 0 range 0x0 0x0 0x3fffffff mac none',
+      ['pci-three-cells', 'device /pcie/dev node'] => 'device cells coherent 0 range 0x0 0x0 0x0 mac none',
+      ['pci-memory-and-io', 'device /pcie pcie'] => 'device ok coherent 0 range 0x0 0x0 0x3fffffff mac none',
+      ['pci-three-cells-above', 'device /outer/pcie pcie'] => 'device cells coherent 0 range 0x0 0x0 0x0 mac none',
       ['pcie-two-cells', 'device /pcie pcie'] => 'device ok coherent 0 range 0x0 0x80000000 0x3fffffff mac none',
       ['nested', 'device /outer/inner/dev node'] => 'device ok coherent 0 range 0x0 0x80000000 0xffffff mac none',
       ['over-no-ram', 'device /bus/dev node'] => 'device ranges coherent 0 range 0x0 0x0 0x0 mac none',
@@ -414,6 +492,35 @@ class DtTest < Minitest::Test
     assert_equal 'regs other', fixture_answers('regs-translated', ["regs /soc/rng@7e104000 #{RNG_COMPATIBLE} 0xfe104000 0x1000"])[1]
   end
 
+  # A closed bus's place takes the line its bridge's interrupt-map routes for its pin
+  # (docs/design-device-tree.md, "A PCI host bridge").
+  def test_intx_routes
+    {
+      ['intx-pins', "intx /pcie #{PI_PLACE} 1"] => 'intx ok 175',
+      ['intx-pins', "intx /pcie #{PI_PLACE} 2"] => 'intx ok 176',
+      ['intx-pins', "intx /pcie #{PI_PLACE} 4"] => 'intx ok 178',
+      ['intx-pins', 'intx /nowhere 1 0 0 1'] => 'intx no_node 0',
+      ['intx-by-device', 'intx /pcie 1 0 3 2'] => 'intx ok 176',
+      ['intx-by-device', 'intx /pcie 1 1 0 2'] => 'intx none 0',
+      ['intx-no-map', "intx /pcie #{PI_PLACE} 1"] => 'intx none 0',
+      ['intx-edge', "intx /pcie #{PI_PLACE} 1"] => 'intx unsupported 0',
+      ['intx-ppi', "intx /pcie #{PI_PLACE} 1"] => 'intx unsupported 0',
+      ['intx-past-last-spi', "intx /pcie #{PI_PLACE} 1"] => 'intx malformed 0',
+      ['intx-short-entry', "intx /pcie #{PI_PLACE} 1"] => 'intx malformed 0',
+      ['intx-short-mask', "intx /pcie #{PI_PLACE} 1"] => 'intx malformed 0',
+      ['intx-two-cell-bridge', "intx /pcie #{PI_PLACE} 1"] => 'intx malformed 0',
+      ['intx-no-parent', "intx /pcie #{PI_PLACE} 1"] => 'intx malformed 0',
+      ['intx-nexus-parent', "intx /pcie #{PI_PLACE} 1"] => 'intx unsupported 0',
+      ['intx-parent-address', "intx /pcie #{PI_PLACE} 2"] => 'intx ok 176',
+      ['intx-no-mask', "intx /pcie #{PI_PLACE} 2"] => 'intx ok 176',
+      ['intx-no-mask', 'intx /pcie 0 0 0 2'] => 'intx none 0',
+      ['intx-wide-parent-address', "intx /pcie #{PI_PLACE} 1"] => 'intx malformed 0',
+      ['intx-other-controller', "intx /pcie #{PI_PLACE} 1"] => 'intx unsupported 0',
+      ['intx-two-parents', "intx /pcie #{PI_PLACE} 1"] => 'intx unsupported 0',
+      ['intx-two-parents', "intx /pcie #{PI_PLACE} 2"] => 'intx unsupported 0'
+    }.each { |(name, query), expected| assert_equal expected, fixture_answers(name, [query])[1], "#{name}: #{query}" }
+  end
+
   # The root maps only the window its row names: a tree that names another device's page
   # under the RNG200's compatible string is refused, at the row's path or elsewhere.
   def test_register_window_is_the_rows
@@ -421,14 +528,15 @@ class DtTest < Minitest::Test
     assert_equal 'regs none', fixture_answers('regs-elsewhere', ["regs #{RNG_ROW}"])[1]
   end
 
-  MUTANTS.each do |name, (original, replacement, fixture_name, query, expected)|
+  MUTANTS.each do |name, (original, replacement, fixture_name, query, expected, source)|
     define_method("test_seeded_#{name.tr(" '", '__')}_is_caught") do
       assert_equal expected, fixture_answers(fixture_name, [query].compact).last, 'the unseeded reader'
-      text = File.read(File.join(ROOT, READER))
+      source ||= READER
+      text = File.read(File.join(ROOT, source))
       assert_includes text, original
-      seeded = File.join(@directory, 'seeded_dt.c')
+      seeded = File.join(@directory, "seeded_#{File.basename(source)}")
       File.write(seeded, text.sub(original) { replacement })
-      program = build(reader: seeded, name: name, flags: %w[-fsanitize=address,undefined -fno-sanitize-recover=all])
+      program = build(seeded: { source => seeded }, name: name, flags: %w[-fsanitize=address,undefined -fno-sanitize-recover=all])
       tree_name, prefix = fixture_name.split('@')
       lines, status = ask(fixture(tree_name), [query].compact, program: program, prefix: prefix&.to_i)
       refute status.success? && lines.last == expected, "#{name} went unnoticed"

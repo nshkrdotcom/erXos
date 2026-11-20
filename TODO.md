@@ -2958,6 +2958,17 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
 * [Low] device-tree reader, duplicate sibling names (`kernel/core/dt.c`, `node_find`): `fdt_check_full` does not
   refuse two siblings of one name, and `fdt_path_offset_namelen` takes the first, so a tree the reader could see
   is wrong gives the first node's facts. Refuse a path that matches two nodes. The firmware is trusted.
+* [Medium] device-tree reader, a PCI host bridge's other facts (`kernel/core/dt.c`;
+  [design-device-tree.md](docs/design-device-tree.md#the-reader), "A PCI host bridge";
+  [design-pcie.md](docs/design-pcie.md#dma)): the reader takes a host bridge's three-cell `dma-ranges` and the line
+  its `interrupt-map` routes for a closed place's pin, but not its `ranges` (three cells, an I/O entry skipped) or
+  its `bus-range`, and `erx_dt_device` does not cut a PCIe function's range at its row's `dma_limit`, which the
+  manifest does not carry yet. The bridge record the device service hands the PCIe domain needs all three. The
+  reader takes a closed place (`erx_dt_intx`) as valid, device below 32, function below 8 and pin 1 to 4; the
+  platform record's reader of a bridge's places refuses any other when the places land.
+* [Low] device-tree reader, its sources listed twice (`tools/fuzz/dt_target.rb`, `tools/lib/erx/native_root.rb`,
+  `DEVICE_TREE`): the reader, its architecture's interrupt binding and libfdt's files are named in both, so a new
+  source is added in two places. Derive one list from the other.
 * [Low] device-tree reader linked into no target (`tools/lib/erx/core_archive.rb`, `ROOT_TASK_SOURCES`): only the
   host tests and the fuzz target compile `kernel/core/dt.c`; the root task links it with the package that hands
   the tree over, and a target-only build break surfaces only then.
@@ -9439,12 +9450,6 @@ document's "residual risks accepted" paragraph.
   a hand-off stops the program. A reservation spanning a hand-off's batches would let a full table
   lose only its own end instead of stopping the program, and would close the window in which a
   program about to be stopped can write through a copy an earlier batch passed; needs a kernel design.
-* [Medium] `kernel/core/dt.c`, the DMA walk ([design-device-tree.md](docs/design-device-tree.md#the-reader),
-  [design-kernel.md](docs/design-kernel.md#dma-and-the-iommu)): a level whose addresses take three cells, a PCI
-  bus's, gives the device no DMA range, since the Devicetree Specification leaves those cells to the PCI bus
-  binding (v0.4, section 2.4.4, p. 22). An unconfined PCIe function that needs DMA, the Pi 5's RP1 devices
-  first, needs the binding read from its specification and the walk extended to its encoding, with a fixture of
-  the BCM2711's and the BCM2712's bridge `dma-ranges`.
 * [Medium] erx_domain boot order (`erlang/apps/erx_domain/src/erx_domain_srv.erl`, `handle_continue/2`;
   [design-system.md](docs/design-system.md#boot)): the domain service starts every configured domain at once
   in the manifest's boot order, so on one CPU the runtimes slow each other and the login waits for the slowest.

@@ -38,6 +38,32 @@
 #define DT_CELL		4
 
 /*
+ * The PCI bus binding's three address cells, phys.hi, phys.mid and phys.lo
+ * (PCI Bus Binding to IEEE Std 1275-1994, revision 2.1, section 2.2.1.1):
+ * phys.hi is npt000ss bbbbbbbb dddddfff rrrrrrrr, its space code ss 1 for
+ * I/O space, and phys.mid and phys.lo are the 64-bit PCI address. FreeBSD
+ * reads a host bridge's ranges the same way (pci_host_generic_fdt.c:66-68,
+ * :179-230).
+ */
+#define PCI_ADDRESS_CELLS	3
+#define PCI_SPACE_SHIFT		24
+#define PCI_SPACE_MASK		0x3
+#define PCI_SPACE_IO		0x1
+
+/*
+ * A function's unit interrupt specifier on a PCI bus: its unit address,
+ * phys.hi carrying its bus, device and function and the other two cells
+ * zero, then its pin, INTA 1 to INTD 4, in the one cell of the bridge's
+ * #interrupt-cells (PCI bus binding, sections 2.2.1.1 and 4.1.1,
+ * "interrupts"; Devicetree Specification v0.4, section 2.4.4).
+ */
+#define PCI_BUS_SHIFT		16
+#define PCI_DEVICE_SHIFT	11
+#define PCI_FUNCTION_SHIFT	8
+#define PCI_INTERRUPT_CELLS	1
+#define PCI_INTX_CELLS		(PCI_ADDRESS_CELLS + PCI_INTERRUPT_CELLS)
+
+/*
  * A walk over the nodes in document order. path[d] is the offset of the
  * node at depth d on the way from the root to the current node, so
  * path[depth - 1] is the current node's parent.
@@ -298,24 +324,34 @@ coherence_read(const void *fdt, const int path[ERX_DT_DEPTH_MAX + 1], int depth,
 /*
  * Translates the windows in through one non-empty dma-ranges, entries of
  * ac bus address cells, pac parent address cells and sc length cells, into
- * out. The parts of a window no entry covers drop out.
+ * out. The parts of a window no entry covers drop out. With pci, ac is the
+ * PCI bus binding's three cells: an entry of I/O space is skipped, and the
+ * bus address is the last two cells.
  */
 static erx_dt_dma_status_t
-windows_translate(const uint8_t *ranges, int len, int ac, int pac, int sc, const dt_window_t *in, uint32_t in_count,
-    dt_window_t out[ERX_DT_WINDOWS_MAX], uint32_t *out_count)
+windows_translate(const uint8_t *ranges, int len, int ac, int pac, int sc, bool pci, const dt_window_t *in,
+    uint32_t in_count, dt_window_t out[ERX_DT_WINDOWS_MAX], uint32_t *out_count)
 {
+	const uint8_t *at;
 	uint64_t child, parent, size, child_last, parent_last, window_last, low, high;
 	uint32_t count, i;
-	int entry, offset;
+	int entry, offset, child_cells;
 
 	entry = (ac + pac + sc) * DT_CELL;
 	if (len % entry != 0)
 		return (ERX_DT_DMA_MALFORMED);
+	child_cells = pci ? ac - 1 : ac;
 	count = 0;
 	for (offset = 0; offset < len; offset += entry) {
-		child = cells_read(ranges + offset, ac);
-		parent = cells_read(ranges + offset + ac * DT_CELL, pac);
-		size = cells_read(ranges + offset + (ac + pac) * DT_CELL, sc);
+		at = ranges + offset;
+		if (pci) {
+			if ((cells_read(at, 1) >> PCI_SPACE_SHIFT & PCI_SPACE_MASK) == PCI_SPACE_IO)
+				continue;
+			at += DT_CELL;
+		}
+		child = cells_read(at, child_cells);
+		parent = cells_read(at + child_cells * DT_CELL, pac);
+		size = cells_read(at + (child_cells + pac) * DT_CELL, sc);
 		if (size == 0)
 			continue;
 		if (__builtin_add_overflow(child, size - 1, &child_last) ||
@@ -347,17 +383,20 @@ windows_translate(const uint8_t *ranges, int len, int ac, int pac, int sc, const
  * without the property passes the windows only while no level above it
  * has a non-empty one; the root, which has no parent to map into, passes
  * them only through no dma-ranges or an empty one. Each level translates
- * one of the two window arrays into the other.
+ * one of the two window arrays into the other. When the bus is a PCIe
+ * function's host bridge, its own level, and no other, may take the PCI bus
+ * binding's three address cells.
  */
 static erx_dt_dma_status_t
-range_read(const erx_dt_t *tree, const int path[ERX_DT_DEPTH_MAX + 1], int bus_level, erx_dt_device_t *facts)
+range_read(const erx_dt_t *tree, const int path[ERX_DT_DEPTH_MAX + 1], int bus_level, erx_dt_row_t row,
+    erx_dt_device_t *facts)
 {
 	dt_window_t windows[2][ERX_DT_WINDOWS_MAX];
 	const dt_window_t *found;
 	const uint8_t *ranges;
 	erx_dt_dma_status_t status;
 	uint32_t count, translated, kept, i;
-	bool missing;
+	bool missing, pci;
 	int level, len, ac, sc, pac, side;
 
 	windows[0][0] = (dt_window_t){ .bus = 0, .last = UINT64_MAX, .at = 0 };
@@ -379,9 +418,11 @@ range_read(const erx_dt_t *tree, const int path[ERX_DT_DEPTH_MAX + 1], int bus_l
 		ac = fdt_address_cells(tree->bytes, path[level]);
 		sc = fdt_size_cells(tree->bytes, path[level]);
 		pac = fdt_address_cells(tree->bytes, path[level - 1]);
-		if (!cells_valid(ac) || !cells_valid(sc) || !cells_valid(pac))
+		pci = row == ERX_DT_ROW_PCIE && level == bus_level && ac == PCI_ADDRESS_CELLS;
+		if ((!pci && !cells_valid(ac)) || !cells_valid(sc) || !cells_valid(pac))
 			return (ERX_DT_DMA_CELLS);
-		status = windows_translate(ranges, len, ac, pac, sc, windows[side], count, windows[!side], &translated);
+		status = windows_translate(ranges, len, ac, pac, sc, pci, windows[side], count, windows[!side],
+		    &translated);
 		if (status != ERX_DT_DMA_OK)
 			return (status);
 		count = translated;
@@ -451,11 +492,166 @@ erx_dt_device(const erx_dt_t *tree, const char *path, erx_dt_row_t row, erx_dt_d
 	else
 		facts->dma = coherence_read(tree->bytes, nodes, depth, &facts->coherent);
 	if (facts->dma == ERX_DT_DMA_OK)
-		facts->dma = range_read(tree, nodes, bus_level, facts);
+		facts->dma = range_read(tree, nodes, bus_level, row, facts);
 	if (facts->dma != ERX_DT_DMA_OK) {
 		facts->coherent = false;
 		facts->cpu = facts->bus = facts->last = 0;
 	}
+}
+
+/* Whether a property is exactly one cell holding want. */
+static bool
+cell_is(const void *fdt, int node, const char *name, uint32_t want)
+{
+	const uint8_t *cell;
+	int len;
+
+	cell = fdt_getprop(fdt, node, name, &len);
+	return (cell != NULL && len == DT_CELL && cells_read(cell, 1) == want);
+}
+
+/*
+ * The cells of an interrupt-map entry's parent unit address: the interrupt
+ * parent's #address-cells, 0 when it has none, as FreeBSD reads it
+ * (ofw_bus_subr.c:428-430), or -1 for a value that is not one cell of at
+ * most 2.
+ */
+static int
+parent_unit_cells(const void *fdt, int parent)
+{
+	const uint8_t *cell;
+	uint64_t count;
+	int len;
+
+	cell = fdt_getprop(fdt, parent, "#address-cells", &len);
+	if (cell == NULL)
+		return (len == -FDT_ERR_NOTFOUND ? 0 : -1);
+	if (len != DT_CELL)
+		return (-1);
+	count = cells_read(cell, 1);
+	return (count <= 2 ? (int)count : -1);
+}
+
+/*
+ * The cells of the specifier of an interrupt controller whose binding the
+ * architecture layer reads: its #interrupt-cells, 1 to
+ * ERX_DT_INTERRUPT_CELLS_MAX, or 0 for a node that is no interrupt
+ * controller, none of erx_dt_interrupt_controllers, or of another count.
+ */
+static uint32_t
+controller_cells(const void *fdt, int parent)
+{
+	const char *const *compatible;
+	const uint8_t *cell;
+	uint64_t count;
+	bool known;
+	int len;
+
+	known = false;
+	for (compatible = erx_dt_interrupt_controllers; *compatible != NULL; compatible++)
+		known = known || fdt_node_check_compatible(fdt, parent, *compatible) == 0;
+	cell = fdt_getprop(fdt, parent, "#interrupt-cells", &len);
+	if (!known || !prop_present(fdt, parent, "interrupt-controller") || cell == NULL || len != DT_CELL)
+		return (0);
+	count = cells_read(cell, 1);
+	return (count <= ERX_DT_INTERRUPT_CELLS_MAX ? (uint32_t)count : 0);
+}
+
+/*
+ * A place's unit interrupt specifier, ANDed with the bridge's
+ * interrupt-map-mask, or false for a mask that is not one whole specifier.
+ * Without a mask every bit counts.
+ */
+static bool
+intx_key(const void *fdt, int node, const struct erx_pcie_place *place, uint32_t key[PCI_INTX_CELLS])
+{
+	const uint8_t *mask;
+	int len, i;
+
+	key[0] = (uint32_t)place->bus << PCI_BUS_SHIFT | (uint32_t)place->device << PCI_DEVICE_SHIFT |
+	    (uint32_t)place->function << PCI_FUNCTION_SHIFT;
+	key[1] = key[2] = 0;
+	key[3] = place->pin;
+	mask = fdt_getprop(fdt, node, "interrupt-map-mask", &len);
+	if (mask == NULL)
+		return (len == -FDT_ERR_NOTFOUND);
+	if (len != PCI_INTX_CELLS * DT_CELL)
+		return (false);
+	for (i = 0; i < PCI_INTX_CELLS; i++)
+		key[i] &= (uint32_t)cells_read(mask + i * DT_CELL, 1);
+	return (true);
+}
+
+/* Whether an interrupt-map entry's child unit interrupt specifier is key. */
+static bool
+intx_matches(const uint8_t *entry, const uint32_t key[PCI_INTX_CELLS])
+{
+	int i;
+
+	for (i = 0; i < PCI_INTX_CELLS; i++)
+		if (cells_read(entry + i * DT_CELL, 1) != key[i])
+			return (false);
+	return (true);
+}
+
+/*
+ * The walk over a host bridge's interrupt-map. An entry is its child unit
+ * interrupt specifier (PCI_INTX_CELLS), its parent's phandle (one cell),
+ * the parent's unit address and the parent's specifier. Every entry must
+ * name the first entry's parent, so every entry has the first's length,
+ * stride, and the walk is one pass; a map of at least one cell more than
+ * the child specifier and a whole number of strides holds only whole
+ * entries. The first matching entry decides; the controller's binding, in
+ * the architecture layer, turns its specifier into a line.
+ */
+erx_dt_intx_status_t
+erx_dt_intx(const erx_dt_t *tree, const char *path, const struct erx_pcie_place *place, uint32_t *line)
+{
+	const uint8_t *map, *entry, *found;
+	uint32_t key[PCI_INTX_CELLS], cells[ERX_DT_INTERRUPT_CELLS_MAX], phandle, specifier_cells, i;
+	int node, parent, len, unit_cells, stride, offset;
+
+	*line = 0;
+	node = node_find(tree, path);
+	if (node < 0)
+		return (ERX_DT_INTX_NO_NODE);
+	map = fdt_getprop(tree->bytes, node, "interrupt-map", &len);
+	if (map == NULL)
+		return (len == -FDT_ERR_NOTFOUND ? ERX_DT_INTX_NONE : ERX_DT_INTX_MALFORMED);
+	if (len == 0)
+		return (ERX_DT_INTX_NONE);
+	if (fdt_address_cells(tree->bytes, node) != PCI_ADDRESS_CELLS ||
+	    !cell_is(tree->bytes, node, "#interrupt-cells", PCI_INTERRUPT_CELLS) ||
+	    !intx_key(tree->bytes, node, place, key) || len < (PCI_INTX_CELLS + 1) * DT_CELL)
+		return (ERX_DT_INTX_MALFORMED);
+
+	phandle = (uint32_t)cells_read(map + PCI_INTX_CELLS * DT_CELL, 1);
+	parent = fdt_node_offset_by_phandle(tree->bytes, phandle);
+	if (parent < 0)
+		return (ERX_DT_INTX_MALFORMED);
+	specifier_cells = controller_cells(tree->bytes, parent);
+	if (specifier_cells == 0)
+		return (ERX_DT_INTX_UNSUPPORTED);
+	unit_cells = parent_unit_cells(tree->bytes, parent);
+	if (unit_cells < 0)
+		return (ERX_DT_INTX_MALFORMED);
+	stride = (PCI_INTX_CELLS + 1 + unit_cells + (int)specifier_cells) * DT_CELL;
+	if (len % stride != 0)
+		return (ERX_DT_INTX_MALFORMED);
+
+	found = NULL;
+	for (offset = 0; offset < len; offset += stride) {
+		entry = map + offset;
+		if (cells_read(entry + PCI_INTX_CELLS * DT_CELL, 1) != phandle)
+			return (ERX_DT_INTX_UNSUPPORTED);
+		if (found == NULL && intx_matches(entry, key))
+			found = entry + (PCI_INTX_CELLS + 1 + unit_cells) * DT_CELL;
+	}
+	if (found == NULL)
+		return (ERX_DT_INTX_NONE);
+	for (i = 0; i < specifier_cells; i++)
+		cells[i] = (uint32_t)cells_read(found + i * DT_CELL, 1);
+	return (erx_dt_interrupt_line(cells, specifier_cells, line));
 }
 
 /* A property of one cell, nonzero. */
@@ -591,7 +787,8 @@ regs_translate(const void *fdt, const int path[ERX_DT_DEPTH_MAX + 1], int depth,
 		sc = fdt_size_cells(fdt, path[level]);
 		pac = fdt_address_cells(fdt, path[level - 1]);
 		if (!cells_valid(ac) || !cells_valid(sc) || !cells_valid(pac) ||
-		    windows_translate(ranges, len, ac, pac, sc, windows[side], *count, windows[!side], count) != ERX_DT_DMA_OK)
+		    windows_translate(ranges, len, ac, pac, sc, false, windows[side], *count, windows[!side], count) !=
+		    ERX_DT_DMA_OK)
 			return (false);
 		side = !side;
 	}

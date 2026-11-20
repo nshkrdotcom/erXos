@@ -18,6 +18,8 @@
  *     -> seeds rng-seed LENGTH HEX kaslr-seed LENGTH HEX, HEX - for an absent seed
  *   regs PATH COMPATIBLE WINDOW_BASE WINDOW_SIZE
  *     -> regs STATUS
+ *   intx PATH BUS DEVICE FUNCTION PIN
+ *     -> intx STATUS LINE
  */
 
 #include <inttypes.h>
@@ -25,11 +27,13 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "erx/abi.h"
 #include "erx/core/dt.h"
 
 static const char *const dma_names[] = { "ok", "no_node", "coherence", "cells", "malformed", "ranges" };
 static const char *const fb_names[] = { "ok", "none", "ambiguous", "malformed", "unsupported", "outside" };
 static const char *const regs_names[] = { "ok", "none", "malformed", "other" };
+static const char *const intx_names[] = { "ok", "no_node", "none", "malformed", "unsupported" };
 
 static void
 device_print(const erx_dt_t *tree, const char *path, const char *row)
@@ -85,10 +89,22 @@ regs_print(const erx_dt_t *tree, const char *path, const char *compatible, const
 	printf("regs %s\n", regs_names[erx_dt_registers(tree, path, compatible, window)]);
 }
 
+static void
+intx_print(const erx_dt_t *tree, char *const words[5])
+{
+	const erx_pcie_place_t place = { (uint8_t)strtoul(words[1], NULL, 0), (uint8_t)strtoul(words[2], NULL, 0),
+		(uint8_t)strtoul(words[3], NULL, 0), (uint8_t)strtoul(words[4], NULL, 0) };
+	erx_dt_intx_status_t status;
+	uint32_t line;
+
+	status = erx_dt_intx(tree, words[0], &place, &line);
+	printf("intx %s %" PRIu32 "\n", intx_names[status], line);
+}
+
 int
 main(int argc, char **argv)
 {
-	char line[2048], *words[6], *save;
+	char line[2048], *words[7], *save;
 	unsigned char *bytes;
 	const char *reason;
 	erx_dt_t tree;
@@ -110,7 +126,7 @@ main(int argc, char **argv)
 	printf("accept %s memory %u\n", reason == NULL ? "ok" : reason, tree.memory_count);
 	while (fgets(line, sizeof(line), stdin) != NULL) {
 		count = 0;
-		for (words[0] = strtok_r(line, " \n", &save); words[count] != NULL && count < 5;)
+		for (words[0] = strtok_r(line, " \n", &save); words[count] != NULL && count < 6;)
 			words[++count] = strtok_r(NULL, " \n", &save);
 		if (count == 3 && strcmp(words[0], "device") == 0)
 			device_print(&tree, words[1], words[2]);
@@ -120,6 +136,8 @@ main(int argc, char **argv)
 			seeds_print(&tree);
 		else if (count == 5 && strcmp(words[0], "regs") == 0)
 			regs_print(&tree, words[1], words[2], words[3], words[4]);
+		else if (count == 6 && strcmp(words[0], "intx") == 0)
+			intx_print(&tree, &words[1]);
 		else
 			return (2);
 	}

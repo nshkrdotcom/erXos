@@ -397,7 +397,27 @@ bridge's `ranges`, whose child addresses take the same three cells as
 its `dma-ranges`, an entry of I/O space skipped; its `bus-range`; and its
 `interrupt-map`, each entry matched under its `interrupt-map-mask`, which
 for the BCM2711 keeps only the pin, so a closed bus's place
-takes the line the map routes for its position's pin. They are the
+takes the line the map routes for its position's pin. A place's unit
+interrupt specifier is the PCI bus binding's: its bus, device and
+function in the first address cell, the other two zero, and its pin,
+INTA 1 to INTD 4, in the bridge's one interrupt cell (PCI bus binding,
+sections 2.2.1.1 and 4.1.1; Devicetree Specification v0.4, section
+2.4.4, pp. 21-22); the first entry that matches decides. An entry's
+parent unit address takes its interrupt parent's `#address-cells`, 0
+when it has none, as FreeBSD reads it (`ofw_bus_subr.c:428-430`). The
+map's entries must all name one interrupt parent, so every entry has
+one length and the walk stays linear, and that parent must be an
+interrupt controller whose binding the architecture layer reads, named
+by its compatible string, so no other controller's specifier is read as
+a line of the machine's.
+The matched entry's specifier is read by the controller's binding, which
+the architecture layer holds (`kernel/arch/<arch>/dt_interrupt.c`, the
+one function `erx_dt_interrupt_line`): it gives the line, an interrupt
+id, only for a level-triggered line, since an INTx line is
+level-sensitive ([design-arch-aarch64.md](design-arch-aarch64.md#interrupt-controller)
+for AArch64's). A map with no entry for the place's pin gives no line,
+as does a bridge without a map, and an entry of any other parent or kind
+is refused, never read as a line. They are the
 windows, bus span and lines of the bridge's record that the device
 service hands the PCIe domain ([design-pcie.md](design-pcie.md#records),
 [design-pcie.md](design-pcie.md#the-closed-bus)), and the image suites
@@ -593,8 +613,11 @@ ran.
   translation through the level above the first non-empty one dropped;
   the windows cut to RAM; a PCIe function's walk started above its host
   bridge; the map's pin match dropped, so a closed place takes the first
-  entry's line; the windows' bound removed, which overruns the walk's array
-  under ASan.
+  entry's line; the level test of the controller's binding removed, so an
+  edge-triggered line is taken; the space code read without its mask, so
+  a non-relocatable I/O entry is taken; the I/O entry not skipped; three
+  cells taken above the host bridge; the windows' bound removed, which
+  overruns the walk's array under ASan.
 * **The firmware's edits**, over fixtures made from the card's tree (a
   different `emmc2bus` range, `local-mac-address`, a zero placeholder
   beside a valid `mac-address`, framebuffer nodes in each state). Seeds:
@@ -716,7 +739,16 @@ claimed for either.
 * Devicetree Specification, release v0.4
   (`https://github.com/devicetree-org/devicetree-specification/releases/download/v0.4/devicetree-specification-v0.4.pdf`,
   SHA-256 `c141dd78af0971fffed19433f84af5beab6aa058cfff2e33076805cef9f92e02`),
-  sections 2.3.5 and 2.3.8 to 2.3.11.
+  sections 2.3.5, 2.3.8 to 2.3.11 and 2.4.
+* PCI Bus Binding to IEEE Std 1275-1994, revision 2.1
+  (`https://www.devicetree.org/open-firmware/bindings/pci/pci2_1.pdf`,
+  SHA-256 `62b4dadfcc1d41f54a40ec3b56af0226c6c8fa928000873bb7e375f60a83f019`),
+  sections 2.2.1.1 and 4.1.1.
+* FreeBSD `releng/15.1` at `95719d8a895bf8170851e9844d9b4092b1d2b6fe`:
+  `sys/dev/pci/pci_host_generic_fdt.c`
+  (SHA-256 `054d4c979103b417cbe5d427aa45fb05ffd62757e2ca280fe18bc9fbe2333994`),
+  and `sys/dev/ofw/ofw_bus_subr.c`
+  (SHA-256 `093d74b60477e1ae638cff560e61144bb8976cb0e2671b308c9c29d10585f59f`).
 * Raspberry Pi documentation, commit `c6a64966af13`
   (`https://github.com/raspberrypi/documentation`), under
   `documentation/asciidoc/computers/`: `legacy_config_txt/video.adoc`

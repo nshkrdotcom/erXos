@@ -6,8 +6,11 @@
 # input is a tree's bytes, handed over in a buffer of exactly their length. The
 # seeds are small trees in the shapes test/host/dt_test.rb covers, written here
 # by FdtSeed: a device under a bus with one-cell dma-ranges over the two-cell
-# root, the same under a gap without dma-ranges, a PCIe bridge, coherence marks,
-# hardware addresses, a framebuffer, a nested chain, and a truncated tree.
+# root, the same under a gap without dma-ranges, a PCIe bridge's three-cell
+# dma-ranges with a memory and an I/O entry, a bridge's interrupt-map onto an
+# interrupt controller, coherence marks, hardware addresses, a framebuffer, a
+# nested chain, and a truncated tree.
+# The reader links its architecture's interrupt controller binding, the GIC's.
 # libfdt's writers (fdt_rw.c, fdt_wip.c) link only because fdt_addresses.c holds
 # one; the reader writes nothing.
 module FdtSeed
@@ -58,7 +61,15 @@ seeds = {
                                        [FdtSeed.bus('inner', FdtSeed.cells(0x8000_0000, 0x1000_0000, 0x100_0000), [FdtSeed.node('dev')])])),
   'gap' => FdtSeed.root(FdtSeed.bus('outer', FdtSeed.cells(0, 0, 0, 0x1000_0000), [FdtSeed.node('inner', {}, [FdtSeed.node('dev')])])),
   'pcie' => FdtSeed.root(FdtSeed.node('pcie', { '#address-cells' => FdtSeed.cells(3), '#size-cells' => FdtSeed.cells(2),
-                                                'dma-ranges' => FdtSeed.cells(0x200_0000, 0, 0, 0, 0, 0, 0x4000_0000) })),
+                                                'dma-ranges' => FdtSeed.cells(0x8100_0000, 0, 0, 0, 0, 0, 0x1_0000,
+                                                                              0x200_0000, 0, 0, 0, 0, 0, 0x4000_0000) })),
+  # INTA to INTD of every device onto SPIs 143 to 146 of the controller of phandle 1.
+  'intx' => FdtSeed.root(FdtSeed.node('intc', { 'phandle' => FdtSeed.cells(1), '#address-cells' => FdtSeed.cells(0),
+                                                '#interrupt-cells' => FdtSeed.cells(3), 'interrupt-controller' => '' }),
+                         FdtSeed.node('pcie', { '#address-cells' => FdtSeed.cells(3), '#size-cells' => FdtSeed.cells(2),
+                                                '#interrupt-cells' => FdtSeed.cells(1),
+                                                'interrupt-map-mask' => FdtSeed.cells(0, 0, 0, 7),
+                                                'interrupt-map' => FdtSeed.cells(*(1..4).flat_map { |pin| [0, 0, 0, pin, 1, 0, 142 + pin, 4] }) })),
   'marks' => FdtSeed.root(FdtSeed.node('dev', { 'dma-coherent' => FdtSeed.cells(0), 'dma-noncoherent' => '',
                                                 'local-mac-address' => [2, 0x11, 0x22, 0x33, 0x44, 0x55].pack('C*') })),
   'framebuffer' => FdtSeed.root(FdtSeed.node('chosen', {}, [FdtSeed.node('framebuffer@7e000000', {
@@ -72,7 +83,8 @@ seeds['truncated'] = seeds.fetch('translated').byteslice(0, 60)
 seeds['header-only'] = seeds.fetch('translated').byteslice(0, 8)
 
 Erx::PackFuzz.declare_target(
-  sources: ['kernel/core/dt.c', *%w[fdt.c fdt_ro.c fdt_check.c fdt_addresses.c fdt_rw.c fdt_wip.c].map { |name| "fiasco/libfdt/lib/contrib/#{name}" }],
+  sources: ['kernel/core/dt.c', 'kernel/arch/aarch64/dt_interrupt.c',
+            *%w[fdt.c fdt_ro.c fdt_check.c fdt_addresses.c fdt_rw.c fdt_wip.c].map { |name| "fiasco/libfdt/lib/contrib/#{name}" }],
   includes: [*Erx::PackFuzz::INCLUDES, 'fiasco/libfdt/lib/contrib'],
   defines: ['FDT_ASSUME_MASK=0'],
   seeds: seeds
