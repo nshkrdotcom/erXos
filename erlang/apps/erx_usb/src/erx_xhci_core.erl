@@ -859,8 +859,8 @@ tt_clear(Pipe = {Slot, _}, #{pipes := Pipes, slots := Slots}) ->
         bor (transfer_type(Type) bsl ?ERX_USB_TT_CLEAR_TYPE_SHIFT)
         bor ((EpAddress band ?ERX_USB_ENDPOINT_DIR_IN) bsl ?ERX_USB_TT_CLEAR_DIR_SHIFT),
     Index = case Multi of true -> Port; false -> 1 end,
-    {Hub, {control, setup(?ERX_USB_REQUEST_TYPE_CLASS bor ?ERX_USB_RECIPIENT_OTHER,
-                          ?ERX_USB_HUB_REQUEST_CLEAR_TT_BUFFER, Value, Index), none}}.
+    {Hub, {control, erx_usb_setup:packet(?ERX_USB_REQUEST_TYPE_CLASS bor ?ERX_USB_RECIPIENT_OTHER,
+                                         ?ERX_USB_HUB_REQUEST_CLEAR_TT_BUFFER, Value, Index, 0), none}}.
 
 transfer_type(control) -> ?ERX_USB_TRANSFER_TYPE_CONTROL;
 transfer_type(bulk) -> ?ERX_USB_TRANSFER_TYPE_BULK.
@@ -869,11 +869,8 @@ transfer_type(bulk) -> ?ERX_USB_TRANSFER_TYPE_BULK.
 %% side of its toggle.
 endpoint_clear(Pipe, #{pipes := Pipes}) ->
     #{Pipe := #{endpoint := #{address := EpAddress}}} = Pipes,
-    {control, setup(?ERX_USB_REQUEST_TYPE_STANDARD bor ?ERX_USB_RECIPIENT_ENDPOINT,
-                    ?ERX_USB_REQUEST_CLEAR_FEATURE, ?ERX_USB_FEATURE_ENDPOINT_HALT, EpAddress), none}.
-
-setup(RequestType, Request, Value, Index) ->
-    <<RequestType, Request, Value:16/little, Index:16/little, 0:16/little>>.
+    {control, erx_usb_setup:packet(?ERX_USB_REQUEST_TYPE_STANDARD bor ?ERX_USB_RECIPIENT_ENDPOINT,
+                                   ?ERX_USB_REQUEST_CLEAR_FEATURE, ?ERX_USB_FEATURE_ENDPOINT_HALT, EpAddress, 0), none}.
 
 %% Answers
 
