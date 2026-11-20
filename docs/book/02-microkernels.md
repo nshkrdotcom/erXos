@@ -1,14 +1,11 @@
 # Chapter 2. Microkernels and Capabilities
 
 > **Status.** Background: the chapter describes microkernels and
-> capabilities in general, so its sections carry no mark. The few
-> sentences about erXos carry their own marks. In the key of
-> [Built and target](README.md#built-and-target), **Built** runs,
-> **Built (host)** has only host tests, **0.2** is scheduled for the
-> first release, and **Phase 2** needs erXos's own kernel. erXos runs
-> on the Fiasco microkernel (**Built**). erXos's own kernel is designed
-> for Phase 2; only host-built cores of it exist, and none boots
-> (**Built (host)**). What erXos takes from L4 and Fiasco is told in
+> capabilities in general, so its sections carry no mark. What it says
+> about erXos is **Built**: erXos runs on the Fiasco microkernel behind
+> its own kernel interface, `liberx`, and its system domain, the root
+> task, starts and ends the other domains. How erXos uses Fiasco is
+> told in
 > [chapter 8](README.md#chapter-8-the-kernel-interface-and-its-two-kernels).
 
 **Background needed.** [Chapter 1](01-operating-systems.md):
@@ -594,19 +591,18 @@ This is what the book means by **by construction**: a property holds
 because the wrong state cannot be expressed, not because every
 participant remembered a rule.
 [Chapter 6](README.md#chapter-6-correct-by-construction) makes it the
-method of the whole design. erXos's design states several of its
-kernel's properties in this form
-([design.md, Invariants](../design.md#invariants)). Among them, a
-stale capability never names a new object, rights only shrink, and no
-capability ever waits in a queue for a receiver. They hold in full
-on erXos's own kernel (Phase 2); section 2.5.4 shows one that holds
-only partly on Fiasco.
+method of the whole design. erXos has some of its capability
+properties in this form. A program reaches an object only through a
+slot in its own table, which Fiasco looks up on every use. Rights only
+shrink: copying or passing a capability intersects its rights with a
+mask, and no call adds a right
+([design-fiasco.md, Rights](../design-fiasco.md#rights)). Section
+2.5.4 shows one property that holds only as a likelihood.
 
 ## 2.5 The L4 family and Fiasco
 
 A minimal kernel, fast synchronous IPC and capabilities came together
-in one family of kernels, L4. erXos runs on one member of it, Fiasco,
-and designs its own kernel on Fiasco's model.
+in one family of kernels, L4. erXos runs on one member of it, Fiasco.
 
 ### 2.5.1 From L3 to seL4
 
@@ -676,9 +672,9 @@ in figure 2.3.
    thread, and her call returns with the bytes, or with a note of where
    in a shared buffer they lie (section 2.2.3).
 
-A message holds at most 63 words, 8 bytes each on 64-bit Arm, a limit
-erXos's kernel keeps
-([design-kernel.md, Messages, gates and IRQ objects](../design-kernel.md#messages-gates-and-irq-objects)).
+A message holds at most 63 words, 8 bytes each on 64-bit Arm
+(`fiasco/l4re-core/l4sys/include/ARCH-arm64/arch/utcb.h:43`). Larger
+data travels through memory the two sides share.
 
 Ana could not have lied about who she was: the label came from the
 gate the server set up, which Ana reached only through her slot. If the server deletes Ana's gate, her slot 2
@@ -707,43 +703,47 @@ bug in it can give any program anything.
 In erXos the root task is the **system domain**. A domain is erXos's
 unit of isolation, a group of Erlang processes behind one wall
 ([chapter 10](README.md#chapter-10-domains-a-wall-around-some-processes)).
-In the design, the system domain's Erlang services decide who gets
-what, and its C library builds and ends every other domain
-([design.md, The model](../design.md#the-model)). The system domain's
-Erlang runtime runs on Fiasco (**Built**); the library that builds
-other domains is scheduled for 0.2.
+The system domain's Erlang services decide who gets what, and its C
+library builds and ends every other domain
+([design.md, The model](../design.md#the-model)). It is the only
+program that creates kernel objects: no other program holds a
+capability to a task, a thread or a factory, its own included, so no
+other program can change any address space's mappings
+([design-fiasco.md, Who holds what](../design-fiasco.md#who-holds-what)).
+This is **Built**: the system domain starts the domains its manifest
+names, and others on request.
+
+### 2.5.4 Why erXos uses Fiasco, and `liberx` above it
+
+erXos runs on Fiasco
+([chapter 1](01-operating-systems.md#114-the-parts-of-an-operating-system))
+because it is a proven L4 kernel with the capabilities of this
+chapter, quotas on kernel memory, and support for an IOMMU, the unit
+that limits which memory a device may reach
+([design.md, Decisions](../design.md#decisions)).
+
+Programs do not call Fiasco directly. Every program reaches the kernel
+through `liberx`, erXos's C library for kernel calls, the only code
+that issues them
+([design-runtime.md, liberx](../design-runtime.md#liberx)). Its calls,
+rights and status codes are erXos's own, defined in one file,
+`abi/erx_abi.txt`, and `liberx` implements them over Fiasco's calls.
+Fiasco's own names and data structures never reach Erlang code or
+users, and a call Fiasco cannot carry out fails with a plain error,
+`ERX_ENOTSUP`.
+
+Some properties of a capability kernel hold on erXos only as far as
+Fiasco gives them. One is the reused slot of section 2.3.5. A slot on
+Fiasco carries no generation. erXos reuses a freed slot as late as it
+can: the root task takes a program's never-used slots first, then its
+freed slots oldest first. So a program that keeps using a slot number
+after closing it rarely meets a new object. This is not a guarantee:
+if it does meet one, it reaches that object
+([design-fiasco.md, Handles are slots](../design-fiasco.md#handles-are-slots)).
+A slot whose object was deleted is a different case, and is safe: it
+stays reserved, and every later use fails with an error.
 [Chapter 8](README.md#chapter-8-the-kernel-interface-and-its-two-kernels)
-tells how the root task works on Fiasco.
-
-### 2.5.4 Why erXos starts on Fiasco and later replaces it
-
-[Chapter 1](01-operating-systems.md#114-the-parts-of-an-operating-system) introduced erXos's two kernels:
-erXos runs on Fiasco behind an interface of its own, while it builds a
-kernel of its own for Phase 2, a capability microkernel in C on
-Fiasco's design ([design-kernel.md](../design-kernel.md)).
-
-erXos starts on Fiasco for two reasons. It aims to reach a working
-system first, standing on proven components, and to replace them one
-at a time where that pays ([plan.md](../plan.md)). And Fiasco has
-decades of use behind it, which a new kernel must earn. So erXos's
-kernel replaces Fiasco only at parity: when it runs every test and
-benchmark the system ran on Fiasco
-([plan.md, M7](../plan.md#m7-fiasco-leaves)).
-
-A thin layer makes the switch possible. Every program reaches the
-kernel through `liberx`, erXos's C library for kernel calls, which
-hides which kernel runs underneath. One version of its insides turns
-erXos's kernel calls into Fiasco's; when erXos's kernel is ready,
-another replaces it, and nothing above `liberx` changes.
-
-The cost is that some properties erXos's kernel promises hold only
-partly on Fiasco. A capability slot on Fiasco carries no generation.
-erXos on Fiasco reuses a freed slot as late as it can, so a stale slot
-number rarely meets a new object. erXos's own kernel changes the
-number itself, and refuses the stale one. Each such gap is listed in
-[the downsides table](../design-fiasco.md#downsides-against-erxoss-kernel),
-and [chapter 8](README.md#chapter-8-the-kernel-interface-and-its-two-kernels)
-describes the interface and both kernels behind it.
+describes the interface and how it sits on Fiasco.
 
 ## 2.6 What fails, and what a failure reaches
 
@@ -767,11 +767,12 @@ What happens next depends on what failed.
   failure from spreading; it does not undo it.
 * **The root task.** Nothing with less authority can replace the
   program that holds every initial capability, so its failure ends the
-  system. erXos's design resets the machine after a fault of the
-  system domain, once it has written a crash record
-  ([design.md, The model](../design.md#the-model)). On Fiasco, a fault
-  of the root task's service thread instead leaves every program that
-  waits on it stuck until a watchdog or a test's deadline ends the run.
+  system. In erXos a fault of the system domain ends the machine
+  through one end path. The one exception is a fault of the thread
+  that answers other programs' kernel requests: nothing catches it, and
+  every program waiting on it stays stuck until a watchdog or a test's
+  deadline ends the run
+  ([design-fiasco.md, Faults, and the fault of the root task](../design-fiasco.md#faults-and-the-fault-of-the-root-task)).
 
 The kernel itself is the last case. Every program depends on it, so
 its bugs are not confined. That is why the kernel is kept small enough
@@ -823,8 +824,9 @@ family tried global ids first, and replaced them with capabilities
   only shrink as they are delegated.
 * A small kernel where every access goes through one lookup makes "a
   program reaches only what it was given" true by construction.
-* erXos runs on Fiasco, an L4 kernel, behind its own interface, until
-  its own kernel reaches parity.
+* erXos runs on Fiasco, a proven L4 kernel with capabilities, behind
+  its own kernel interface, `liberx`. Its system domain is the root
+  task.
 
 The next chapter turns from the kernel to the language erXos is built
 around: Erlang, whose processes share nothing and talk only by
@@ -867,7 +869,6 @@ message.
 * FreeBSD `capsicum(4)`: capabilities inside a UNIX.
   <https://man.freebsd.org/cgi/man.cgi?query=capsicum&sektion=4>
 * The L4Re servers pages, <https://l4re.org>: Sigma0, Moe and Ned.
-* For contributors: [design-kernel.md](../design-kernel.md) and its
-  [L4 lineage](../design-kernel.md#l4-lineage) ledger;
-  [design-fiasco.md](../design-fiasco.md), erXos on Fiasco;
+* For contributors: [design-fiasco.md](../design-fiasco.md), erXos on
+  Fiasco;
   [research-kernel-bases.md](../research-kernel-bases.md).
