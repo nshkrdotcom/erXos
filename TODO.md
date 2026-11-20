@@ -52,9 +52,9 @@ it; git history is the record of completed work.
   tree has a `ctl`, since ntpd's has none; the administrator's documentation says that `cat` of an app's file
   shows its bytes unescaped.
 * [Low] apps, `service` ([design-apps.md](docs/design-apps.md#interfaces)): rc.subr's `enabled`, `rcvar`, `describe`, `delete` and `poll`, and the `fast`, `force` and `quiet` forms of every verb, are refused with the usage line, so a script testing `service NAME enabled` reads every row as disabled; offer them from `/etc/start.conf` as FreeBSD does (`libexec/rc/rc.subr:1094-1126`, 1176, 1188-1191).
-* [High] apps, [design-packaging.md](docs/design-packaging.md): the packaging design awaits an outside
-  review of its update path, its `mount` and its `/etc/rc.conf`; then Track A's parts 2 and 3 build it
-  ([plan.md](docs/plan.md#track-a-apps)). An app names its needs, memory and code, and one `apps` row bounds
+* [High] apps, [design-packaging.md](docs/design-packaging.md): the design is reviewed and Track A's part 2,
+  packages added to an image, is built; part 3, installing at run time, is not
+  ([plan.md](docs/plan.md#track-a-apps)). In the design an app names its needs, memory and code, and one `apps` row bounds
   every app; each app is a plain file, `/apps/NAME.app`, the image's read-only; installing is `cp
   NAME.app /apps/`, whose close checks, admits and publishes the package by one rename, a copy over an
   installed app updates it the same way, the old one running until the new one passes and then stopped until
@@ -135,12 +135,9 @@ it; git history is the record of completed work.
   ([docs/todo-system-partition.md](docs/todo-system-partition.md)), and erx_pkg under erx_pkg_sup are built; the start service's supervisor starts
   erx_pkg_io (never restarted, its end resets the machine) and, given a config, erx_pkg_sup. `erx_pkg:system_config/0` builds
   the config from the manifest and the library's app entries. QEMU virt's development manifest has the
-  `apps` row and the check derives the app template, so every development boot runs the package process:
-  a boot of the apps suite's unlisted image (HVF, 1 CPU) showed `erx_domain_lib:apps/0`'s max 4, and
-  erx_pkg, 0.33 s into the system domain and before the storage domain had mounted its volume, ran its
-  recovery to the publication and crashed there on `erx_starter:packages/2`, which does not exist (`undef`),
-  four times, until erx_pkg_sup reached its intensity and stopped; the start service and the rest of the
-  boot carried on, and `erx_pkg:packages/0` answers `noproc`. The publication (`erx_starter:packages/2`: the set's rows after the manifest's, kept by keepers of
+  `apps` row and the check derives the app template, so every development boot runs the package process,
+  and the kiosk QEMU suite boots a production image whose system partition carries `apps/dashboard.app`,
+  which the process checks, admits and starts; its altered cell's package, root hash flipped, is refused at its mount. The publication (`erx_starter:packages/2`: the set's rows after the manifest's, kept by keepers of
   `{app, Name}`, a dropped app's keepers stopped before the answer, the set kept across a restart of the table) and the
   listing's wait for the system domain's namespace are built, and the apps suite's unlisted boot checks
   `{packages,4,#{packages => #{},scan => {ok,0}}}`. What remains: a listing that still fails after the wait
@@ -164,22 +161,6 @@ it; git history is the record of completed work.
   that `erx_pkg` and `erx_pkg_io` call no `erx_domain:stop/2`, and that only `erx_pkg` calls
   `erx_principal:register_app/1` and `erx_starter:packages/2` (docs/design-packaging.md, "Verification and testing"). Add a `pkg-reach` rule
   allowing `erx_domain:system_namespace/0` and `erx_domain_lib:apps/0`, and a publishers rule.
-* [High] apps, an app's session ([design-packaging.md](docs/design-packaging.md#an-apps-session)): `erx_app`
-  and the `app` script exist. The boot view places the app entries (`erx_dom_apps_place`) from the packed `apps`
-  row and the app template, the session template naming no principal (`mf_none`), sized into the principal and
-  held tables, and `erx_domain_lib:apps/0` answers them; the check derives the template from the `apps` row, so
-  QEMU virt's development image boots with four app entries (`erx_domain_lib:apps/0`'s max 4 at the system's
-  Erlang shell under HVF). The session's plan (`erx_domain_core:app_session/4`, from the registry's record,
-  which keeps the admission's rows) and the library's entry (`erx_domain_lib:app_session/6` over
-  `erx_dom_lib_app_session` and `erx_dom_plan_app_session`) exist, and `erx_domain:start_app/2` starts a session
-  from them (its test is the item below). What remains: a mint core that grants a session a subset of its
-  template's rows, where `erx_domain_mints` grants every session of a template all of them; the app's name
-  from the app's pool and its principal number known to the mints and the inspect scope, since
-  `machine_principal` and the mints' parameters name no app principal, which the manifest's names do not
-  hold; a `tree apps` grant's root `apps/NAME/SIGNER/`, whose signer is the registry record's and outside the
-  plan, so the plan's PK10 comparison does not cover it; the session plan's rows as `packages` and the kept
-  needs, and its host test with the three seeded faults; and the app principal's CPU group under an apps group,
-  which Fiasco's flat groups leave out.
 * [High] apps, the start of an app's session (`erx_domain:start_app/2`, `erx_domain_srv`): its host test
   `erx_domain_mints_srv_tests:app_session/0` is written and not run: in its fixture the start is answered
   before the kept row is installed, because configured domain `a` ends after its introduction to the
@@ -191,8 +172,10 @@ it; git history is the record of completed work.
   system's Erlang shell under HVF), the session's plan (`erx_domain_core:app_session/4`, with its host test
   and seeded faults), the library's entry (`erx_domain_lib:app_session/6` over `erx_dom_lib_app_session`)
   and the domain service's start (`erx_domain:start_app/2`, which sends the app's record as
-  `{Ref, app, App}` once the session's namespace is in place) exist. What remains: the start service's
-  package rows (`erx_starter:packages/2`) and their keepers, the only starters of an app's sessions (PK7);
+  `{Ref, app, App}` once the session's namespace is in place), and the start service's package rows
+  (`erx_starter:packages/2`) with their keepers, the only starters of an app's sessions (PK7), exist. What
+  remains: the app's name from the app's pool and its principal number known to the mints and the inspect scope,
+  since `machine_principal` and the mints' parameters name no app principal;
   the app principal's CPU group under an apps group, which Fiasco's flat groups leave out; a `tree
   apps` grant's root `apps/NAME/SIGNER/`, whose signer is the registry record's and outside the plan, so
   the plan's PK10 comparison does not cover it; the rest of the file-backed EROFS mount of
@@ -523,7 +506,8 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   whole-plan check, and a carve, a resize and a destroy adjust the parent's `carved` in the same request, each
   refused where an invariant would break; the root's budget, which has no record, keeps its own pages and the
   walls carved from it in two counters beside the pool's, under the pool's total; the budget topic reports
-  `used` partial with `guarantee`, `cap` and `carved` exact; and the tests and seeded fault the design lists ([design-fiasco.md](docs/design-fiasco.md), "Memory and
+  `used` partial with `guarantee`, `cap` and `carved` exact (the topic refuses every handle but `ERX_CAP_SELF`
+  and reports only `used`: `service.c`, `ERX_INFO_BUDGET`); and the tests and seeded fault the design lists ([design-fiasco.md](docs/design-fiasco.md), "Memory and
   budgets" and "Reporting a budget"). It blocks the release.
 * [High] 0.2 on Fiasco, `liberx/backend/fiasco`: doorbells and device lines placed directly in their holders
   without Fiasco's special right, so a trigger and an acknowledgement are the holder's own `l4_irq_trigger`
@@ -1191,7 +1175,9 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   refusal of a session template whose environment sets the key, with the variable at its longest in its strings
   reserve (`boot_strings_fit` in `liberx/system/dom_boot_view.c`).
 * [Medium] apps, `/etc/start.conf` and the commands of `/etc/start/ctl`
-  ([design-apps.md](docs/design-apps.md#the-start-table)). The settings move from `/etc/rc.conf` to
+  ([design-apps.md](docs/design-apps.md#the-start-table)). The built settings file is `/data/etc/rc.conf`
+  (`erlang/apps/erx_shell/src/erx_cmd_service.erl`, `erlang/apps/erx_starter/src/erx_starter_rc.erl`), and the
+  built `service NAME enable` also starts the row, which the design and FreeBSD do not. The settings move to
   `/etc/start.conf`, an ordinary file in rc.conf(5)'s assignment syntax with the fields `enable`, `display`,
   `restarts`, `restart_period_s` and `flags`, on the data partition's `etc` tree: a service directory with a
   facet `etc`, read-write to the system domain and to the templates that hold `start` (rows the build derives,
@@ -3822,6 +3808,12 @@ handing call's socket process exit and its connection's, is not yet looked for. 
 * [Low] facets, a request past `max_request` (`erlang/apps/erx/src/erx_inspector.erl`, `route/4`): the facet
   drops it unanswered, so the inspector waits `inspect_query_max` and a margin before `{error, failed}`. It can
   refuse such a request at once from the grant's `max_request` (`erx_facet:info/1`).
+* [Medium] tracing, `erx:trace/1` outside the system domain (`erlang/apps/erx/src/erx.erl`, `-define(TRACE_SCOPE, all)`;
+  `erlang/apps/erx/src/erx_trace.erl`, `domains/0` and `domain_of/1`): the trace scope is the constant `all` and
+  the traceable domains the constant `[?SYSTEM_DOMAIN]`, on the premise that every shell runs in the system
+  domain, which the session_domain QEMU suite shows false. A trace started in a session runtime claims scope
+  `all` and counts its own runtime's pids as domain 4's. Take the scope from the caller's trace facet and the
+  domain from the runtime's own domain id, and drop the comments' premise.
 * [Medium] inspection, `erx:inspect/2`'s options (`erlang/apps/erx/src/erx_inspector.erl`, `inspect/2`): through
   the facet `erx_inspect_query` refuses an unknown key, a bad `offset` or `limit` with `{error, badarg}`, while
   in the system domain and on a development host nothing checks them (`#{foo => 1}` answers `ok`, a bad
