@@ -593,7 +593,7 @@ participant remembered a rule.
 [Chapter 6](README.md#chapter-6-correct-by-construction) makes it the
 method of the whole design. erXos has some of its capability
 properties in this form. A program reaches an object only through a
-slot in its own table, which Fiasco looks up on every use. Rights only
+handle, an entry of its own table that the root task checks on every request. Rights only
 shrink: copying or passing a capability intersects its rights with a
 mask, and no call adds a right
 ([design-fiasco.md, Rights](../design-fiasco.md#rights)). Section
@@ -733,15 +733,20 @@ users, and a call Fiasco cannot carry out fails with a plain error,
 `ERX_ENOTSUP`.
 
 Some properties of a capability kernel hold on erXos only as far as
-Fiasco gives them. One is the reused slot of section 2.3.5. A slot on
-Fiasco carries no generation. erXos reuses a freed slot as late as it
-can: the root task takes a program's never-used slots first, then its
-freed slots oldest first. So a program that keeps using a slot number
-after closing it rarely meets a new object. This is not a guarantee:
-if it does meet one, it reaches that object
-([design-fiasco.md, Handles are slots](../design-fiasco.md#handles-are-slots)).
-A slot whose object was deleted is a different case, and is safe: it
-stays reserved, and every later use fails with an error.
+Fiasco gives them. One is the reused slot of section 2.3.5. On Fiasco
+a handle is an entry of a table the root task keeps for each program,
+and its number carries the entry's generation, as section 2.3.5
+describes. So every request that names a closed handle fails with an
+error, as it would on erXos's own kernel. The exception is a doorbell
+or an interrupt line, which a program rings or acknowledges itself
+through a Fiasco slot that the handle's number picks, with no request
+to the root task. Fiasco checks no generation there. erXos reuses a
+freed entry as late as it can, oldest first, so a program that rings a
+doorbell through a closed handle rarely meets a new one. This is not a
+guarantee: if it does meet one, it rings that one
+([design-fiasco.md, Handles](../design-fiasco.md#handles)).
+A handle whose object was deleted is a different case, and is safe:
+its entry stays reserved, and every later use fails with an error.
 [Chapter 8](README.md#chapter-8-the-kernel-interface-and-fiasco)
 describes the interface and how it sits on Fiasco.
 

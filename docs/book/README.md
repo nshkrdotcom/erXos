@@ -848,7 +848,7 @@ DMA spaces, and the system-call fuzz campaign.
    next; the section says so plainly and shows what that means for an
    app and for a server. How an object is destroyed, and what happens to
    its holders.
-   *Draws on:* [design-fiasco.md, Handles are slots](../design-fiasco.md#handles-are-slots),
+   *Draws on:* [design-fiasco.md, Handles](../design-fiasco.md#handles),
    [design-fiasco.md, Rights](../design-fiasco.md#rights),
    [design-fiasco.md, Destroying an object](../design-fiasco.md#destroying-an-object),
    [design-fiasco.md, Passing a handle](../design-fiasco.md#passing-a-handle).

@@ -496,11 +496,20 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   pixel area, the present's answer releases it, and an accepted job keeps its ranges and the area alive
   until its device can no longer reach them, whoever ends first.
 
-* [High] 0.2 on Fiasco, `liberx/backend/fiasco`: handles become Fiasco slots. The root places each
-  capability in its holder's own object space at a slot it picks, with the Fiasco rights the holder's erXos
-  rights allow, and keeps a placement record per task and slot (object, kind, erXos rights); a slot is
-  freed only at its holder's close, so a destroyed object's handle answers `ERX_ESTALE`
-  ([design-fiasco.md](docs/design-fiasco.md#handles-are-slots)).
+* [High] 0.2 on Fiasco, `liberx/backend/core/handles.c`, `liberx/backend/fiasco`: handle values carry no
+  generation. A value is the entry's index plus one (`erx_backend_handle_add`) and a close zeroes the entry
+  (`erx_backend_handle_close`), so a handle used after its own close answers `ERX_EINVAL` until the entry is
+  taken again and then names the new object, where the design answers `ERX_ESTALE` in every service call; a value
+  past the table, or of a free entry, is `ERX_EINVAL` where the design answers `ERX_ESTALE`. IRQ objects are not
+  placed in their holders, so every ring and acknowledgement is a round trip through the root's one service
+  thread (`irq.c`, `erx_fiasco_irq_trigger_body`, `_ack_body`; `service_stubs.c`, `erx_irq_trigger`, `erx_irq_ack`),
+  and `erx_space_create` does not bound `cap_limit` by the IRQ window. The work is the first two parts of the
+  design's [Implementation](docs/design-fiasco.md#handles) note: the entry's generation in bits 24-63 of the value,
+  advanced at close and retired at its last value, checked by `erx_backend_handle_find` before the kind; then the
+  IRQ window, placement at create, duplicate and pass with `L4_CAP_FPAGE_RO`, the unmap at close, the direct
+  `l4_irq_trigger` and `l4_irq_unmask` stubs, and the root's other slots moved past its own window; the *A stale
+  handle*, *direct doorbell* and *destroyed handle* cases, with the size of Fiasco's object space checked by
+  a boot test at the window's last slot.
 * [High] 0.2 on Fiasco, `liberx/backend/fiasco`: a Fiasco factory per domain budget, carved from its parent's
   at the budget's creation with the manifest row's kernel-memory figure, and every object of the domain
   created through it, so a domain that spends its kernel memory fails alone with `ERX_ENOMEM`
@@ -617,8 +626,11 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   ([design-stopgap.md](docs/design-stopgap.md#release-contract)): a test that reads the vault's files raw
   from the partition and finds no key in the clear, with a file written unsealed as the seeded failure
   ([design-system.md](docs/design-system.md#the-vault)).
-* [Medium] 0.2 on Fiasco, `liberx/backend/fiasco`: the root takes a task's free slots oldest-freed first, with the
-  *Slot reuse* case ([design-fiasco.md](docs/design-fiasco.md#handles-are-slots), FD1).
+* [Medium] 0.2 on Fiasco, `liberx/backend/core/handles.c`: free handle entries are taken lowest-first
+  (`erx_backend_handle_add`'s linear search), where the design takes them first in, first out, never-used
+  entries in index order and a page grown only when none is free, which is all that delays a direct ring through
+  a closed IRQ handle from meeting another object; the *Entry reuse* case
+  ([design-fiasco.md](docs/design-fiasco.md#handles), FD1).
 * [Medium] 0.2 on Fiasco, `liberx/backend/fiasco/service_task.c` (`:747-750`): a memory object records its
   `ERX_MEM_JIT` flag at its create, and `erx_mem_copy` refuses a JIT object with `ERX_ETYPE`, as the call table
   says ([design-fiasco.md](docs/design-fiasco.md#the-call-table)).
@@ -8007,10 +8019,10 @@ to the corpus and follow rc
 ## Security residuals
 
 * [High] Fiasco backend, rights per handle (`liberx/backend/fiasco`, `liberx/backend/core/handles.h`), blocks
-  0.2: the design records erXos's rights for every handle and checks them on every call, a duplicate or pass
-  narrowing them by its mask ([design-fiasco.md](docs/design-fiasco.md#rights), the call table's `erx_vm_map`
-  row: a right the caller's record lacks is `ERX_ERIGHTS`). The code records none (`handles.h`: "A handle
-  carries no rights"); the only right enforced is destroy, as creator-only (`object.c`,
+  0.2: the design records erXos's rights in every handle entry, intersects them with the mask on a duplicate
+  or a pass, and checks the right each call needs in the one lookup ([design-fiasco.md](docs/design-fiasco.md#rights),
+  the call table's `erx_vm_map` row: a right the caller's entry lacks is `ERX_ERIGHTS`). The code records none
+  (`handles.h`: "A handle carries no rights"); the only right enforced is destroy, as creator-only (`object.c`,
   `erx_fiasco_object_destroy_body`). So a domain maps read-write, or `erx_mem_copy`s into, any memory object it
   was passed read-only: a connection's peer side, a program's lane side, a pipe's ring
   (`vm_rules.c`, `erx_fiasco_vm_map_rule` and the copy rule check only kinds; `service_task.c`,
@@ -8018,8 +8030,11 @@ to the corpus and follow rc
   rights it never had, since a later pass's mask narrows nothing; and the pass reports in each item's
   descriptor rights it does not enforce (`object.c`, `object_pass_item`: `mask & erx_ktype_rights_mask(type) &
   ~ERX_HR_DESTROY`), a reported value that is not true. Read-only sharing does not exist on this backend.
-  Development builds run trusted code only; the gap blocks release. Record the rights in the handle entry and
-  check them at the one lookup, so every call gets them by construction, with a case per consumer above.
+  Development builds run trusted code only; the gap blocks release. The work is the third part of the
+  design's [Implementation](docs/design-fiasco.md#handles) note: a rights field in `erx_backend_handle_entry_t`,
+  set at create, intersected in `erx_backend_handle_dup` and `object_pass_item`, and a needed-right argument to
+  `erx_backend_handle_find`, so every call gets the check by construction; the *rights shrink*, *a creator's
+  pass* and *writable peer side* cases, with their seeded faults.
 * [Medium] Fiasco backend, placement rights of the request gate and the thread semaphores
   (`liberx/backend/fiasco/service_task.c:306-308`, `service.c:732-734`): both are mapped into the task with
   `L4_CAP_FPAGE_RWS`, where the design places the gate with the send right alone and a semaphore with only the
