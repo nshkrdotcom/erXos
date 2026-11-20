@@ -448,6 +448,16 @@ erx_status_t	erx_dom_lib_pci_report(erx_dom_lib_t *, uint32_t bridge, const erx_
 erx_status_t	erx_dom_lib_pci_mode(erx_dom_lib_t *, uint32_t index, uint32_t mode) ERX_WARN_UNUSED_RESULT;
 
 /*
+ * Records domain as answered in the catalogue of every host bridge whose
+ * device record names it as its holder (docs/design-pcie.md, "Facets",
+ * "Concurrency"): the device service writes it before it sends the answer
+ * to that PCIe incarnation's report, and a restarted device service reads
+ * it back. The caller holds the library's lock. ERX_EINVAL when domain
+ * holds no bridge, 0 included, and nothing is written.
+ */
+erx_status_t	erx_dom_lib_pci_answered(erx_dom_lib_t *, uint32_t domain) ERX_WARN_UNUSED_RESULT;
+
+/*
  * The root's view: erx_dom_view_build over every entry of the opened boot
  * image, each judged by erx_dom_boot_image from the bytes the archive holds
  * at its start (liberx/system/dom_boot.c).

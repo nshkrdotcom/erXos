@@ -271,8 +271,9 @@ load_no_library_module() ->
                  {ok, Tokens, _} = erl_scan:string(Text),
                  {ok, Form} = erl_parse:parse_form(Tokens),
                  Form
-             end || Text <- ["-module(erx_domain_lib).", "-export([register/0, devices/0]).",
-                             "register() -> {error, enotsup}.", "devices() -> {error, enotsup}."]],
+             end || Text <- ["-module(erx_domain_lib).", "-export([register/0, devices/0, pci_bridges/0]).",
+                             "register() -> {error, enotsup}.", "devices() -> {error, enotsup}.",
+                             "pci_bridges() -> {error, enotsup}."]],
     {ok, erx_domain_lib, Beam} = compile:forms(Forms),
     {module, erx_domain_lib} = code:load_binary(erx_domain_lib, "erx_domain_lib.erl", Beam).
 

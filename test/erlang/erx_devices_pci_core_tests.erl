@@ -18,7 +18,7 @@ record(Bridge, Device) -> #{bridge => Bridge, bus => 0, device => Device, functi
 
 layout(Device, State, Confirmed) -> #{record => record(?BRIDGE, Device), state => State, confirmed => Confirmed}.
 
-catalogue(Layouts) -> #{bridge => bridge(?BRIDGE), firmware_lost => false, layouts => Layouts}.
+catalogue(Layouts) -> #{bridge => bridge(?BRIDGE), firmware_lost => false, answered => none, layouts => Layouts}.
 
 mastering() -> #{mode => mastering, route => msi, message => #{address => 16#8000000, data => 1}}.
 
@@ -70,7 +70,7 @@ a_bridge_marked_firmware_lost_keeps_no_row_test() ->
 %% none for gets an empty report; a record naming a bridge the library does not
 %% hold reaches no intake.
 the_report_reaches_only_the_bridges_the_library_holds_test() ->
-    Held = [catalogue([]), #{bridge => bridge(7), firmware_lost => false, layouts => []}],
+    Held = [catalogue([]), #{bridge => bridge(7), firmware_lost => false, answered => none, layouts => []}],
     Reported = [#{record => record(?BRIDGE, 2), kept => true}, #{record => record(9, 1), kept => true},
                 #{record => record(?BRIDGE, 1), kept => false}],
     ?assertEqual({[{?BRIDGE, [record(?BRIDGE, 2), record(?BRIDGE, 1)]}, {7, []}], [record(9, 1)]},
@@ -207,3 +207,25 @@ the_phases_test() ->
     ?assertEqual(synced(), Phase),
     ?assertMatch([{pcie, ?FACET, {set, _, _}, {raise, _, 10, decoding}}, {mode, 10, off},
                   {pcie, ?FACET, {reset, _}, {reset, _, 10}}], Actions).
+
+%% A restarted process begins synced only with the answered incarnation that
+%% still holds the bridge; an ended one's answered, or none, begins between.
+a_restart_resumes_only_the_answered_incarnation_holding_its_bridge_test() ->
+    Answered = (catalogue([]))#{answered => 11},
+    Bridge = fun(Holder) -> #{index => ?BRIDGE, holder => Holder, place => none, setting => none} end,
+    ?assertEqual({await, 11}, erx_devices_pci_core:resume([Answered], [Bridge(11)])),
+    ?assertEqual(between, erx_devices_pci_core:resume([Answered], [Bridge(12)])),
+    ?assertEqual(between, erx_devices_pci_core:resume([Answered], [Bridge(none)])),
+    ?assertEqual(between, erx_devices_pci_core:resume([catalogue([])], [Bridge(11)])).
+
+%% Resumed, the process sends off for every row the library holds at off, then
+%% handles the waiting requests; a later answered report's synced stays.
+resumed_sends_every_row_at_off_then_handles_waiting_test() ->
+    Off = (row(1, 0))#{holder => none, setting => #{mode => off, route => none}},
+    Held = (row(2, 1))#{holder => 7},
+    Request = #{from => from, grantee => 7, operation => {master, {?BRIDGE, 0, 1, 0}}},
+    {{synced, 11, facet}, Actions} = erx_devices_pci_core:resumed(11, facet, {between, start}, [Request], [Off, Held]),
+    ?assertMatch([{pcie, facet, {set, {?BRIDGE, 0, 0, 0}, #{mode := off}}, lowering},
+                  {pcie, facet, {set, {?BRIDGE, 0, 1, 0}, #{mode := mastering}}, {raise, Request, 2, mastering}}],
+                 Actions),
+    ?assertEqual({{synced, 12, later}, []}, erx_devices_pci_core:resumed(11, facet, {synced, 12, later}, [], [Off])).

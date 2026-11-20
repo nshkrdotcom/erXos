@@ -1058,8 +1058,8 @@ section is this document's:
 
 | Interface | Served by | Granted to | Operations |
 | --- | --- | --- | --- |
-| `pci_bus` | the system domain's device service | the PCIe domain alone | `targets() -> {ok, Bridges, Layouts, Settings}`; `report(Functions) -> {ok, Settings}`; `firmware(Bridge) -> ok` |
-| `pci` | the system domain's device service | each configured domain that holds a `pci` device, its scope the devices it holds, as `device` parameters | `open(Place) -> ok`; `master(Place) -> ok`; `reset(Place) -> {ok, flr \| none}` |
+| `pci_bus` | the system domain's device service: its facet (`erx_pci_bus_facet`) stands in front of the domain service and forwards to the registered PCIe process | the PCIe domain alone | `targets() -> {ok, Bridges, Layouts, Settings}`; `report(Functions) -> {ok, Settings}`; `firmware(Bridge) -> ok` |
+| `pci` | the system domain's device service: its facet (`erx_pci_facet`) stands in front of the domain service and forwards to the registered PCIe process | each configured domain that holds a `pci` device, its scope the devices it holds, as `device` parameters | `open(Place) -> ok`; `master(Place) -> ok`; `reset(Place) -> {ok, flr \| none}` |
 | `pcie` | the PCIe domain | the system domain alone | `set(Place, Setting) -> ok`; `reset(Place) -> {ok, flr \| none}` |
 
 Each answer of an error is `{error, Reason}`
@@ -1317,12 +1317,18 @@ report was answered, since the grant is installed whether or not it
 was, so it reads the bridges' `answered` from the library: when an
 entry names the incarnation that the bridge's device record names as
 its holder, it asks `erx_domain:await_grant(pcie, D)` for that
-incarnation's facet and begins in `synced` with it, and
-otherwise begins in `between`. The answer is written to the library
+incarnation's facet and begins in `synced` with it, sending `off` for
+every `pci` row the library holds at `off`, since a holder's end
+forwarded while the process was restarting reached no process; and
+otherwise begins in `between`, where the next start's `targets` carries
+those settings. The answer is written to the library
 before it is sent, so a crash between the two leaves a report that the
 library calls answered and the enumerator never received; the
 enumerator's call fails with the process, the enumerator exits, and
-the new process sees that incarnation end and goes to `between`.
+the new process sees that incarnation end and goes to `between`; if it
+read the library before the end cleared the bridge's holder, it is
+`synced` on that incarnation until the end arrives, and what it sends
+there meanwhile ends with the facet and waits again.
 
 Two orders keep the library from saying more than the function was
 asked for: a lowering (a holder's end, the first step of its `reset`) is
@@ -1374,7 +1380,7 @@ waits for.
 | the VL805's firmware stays absent after the notification | `ready` | it is reported `not_ready`; a later start resets the bridge and asks again |
 | the notification times out | `erx_domain_lib:pci_firmware/1` | the bridge's entry is marked `firmware_lost` in the same call; every later report of the bridge is taken as `not_ready`, so the VL805 is not given until the next boot, even when a late answer loads its firmware and a later start keeps the bridge; a later bring-up's notification answers `ERX_ETIMEDOUT` at once ([design-usb.md](design-usb.md#the-vl805s-firmware)) |
 | a holder ends while the PCIe domain is down | the domain library's `domain_ended`, which the domain service forwards | the library's setting says `off`; the next start applies it |
-| the device service's PCIe process crashes | its supervisor | it restarts, reads every setting, holder and `answered` from the library; it begins in `synced` only with an answered incarnation that still holds its bridges ([Concurrency](#concurrency)); a function whose holder has ended is set `off` |
+| the device service's PCIe process crashes | its supervisor | it restarts, reads every setting, holder and `answered` from the library; it begins in `synced` only with an answered incarnation that still holds its bridges ([Concurrency](#concurrency)), and then sends `off` for every function the library holds at `off`, so a function whose holder ended while it restarted is set `off` |
 | a placing walk's record fails intake | the library | the bridge takes no layouts and places again at its next walk; nothing on it is given; a log line names the record and the field |
 | a later report's record differs from its layout | the enumerator's start and the library | the start takes the function to its layout and the setting `off` with route `none`, whatever its setting, and reports it not kept; the intake leaves it unconfirmed and not given, so the device service lowers its setting; its holder's requests answer `{error, gone}` |
 

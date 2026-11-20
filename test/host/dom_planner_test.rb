@@ -709,6 +709,8 @@ class DomPlannerTest < Minitest::Test
     # the lowering always, and no write to a row that is not a pci row.
     assert_equal ['unheld=-1 held=0 mode=2 past=-1 unconfirmed=-1 off=0 other=-1'],
                  lines.grep(/\Amode /).map { |line| line.split.drop(2).join(' ') }
+    # The incarnation answered: written only to a bridge its domain holds, 0 never.
+    assert_equal ["answered #{row} before=0 unheld=-1 none=-1 held=0 other=-1 after=9"], lines.grep(/\Aanswered /)
   end
 
   # The seeded fault: a raise written without asking whether the catalogue gives the

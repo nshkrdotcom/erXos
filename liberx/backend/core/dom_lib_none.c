@@ -161,3 +161,10 @@ erx_dom_lib_pci_mode(erx_dom_lib_t *lib, uint32_t index, uint32_t mode)
 	(void)lib, (void)index, (void)mode;
 	return (ERX_ENOTSUP);
 }
+
+erx_status_t
+erx_dom_lib_pci_answered(erx_dom_lib_t *lib, uint32_t domain)
+{
+	(void)lib, (void)domain;
+	return (ERX_ENOTSUP);
+}

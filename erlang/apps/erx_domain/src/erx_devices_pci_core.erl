@@ -40,6 +40,14 @@ before it is sent, and a raise (`open`, `master`) only on the enumerator's
 `ok` (pcie_answer/4), so a timed-out raise is never written. A call the
 incarnation's end failed waits again, for the next answered incarnation.
 
+**After a restart** the process cannot learn from a facet's presence
+whether a report was answered, so it reads the library's `answered`
+(resume/2): an incarnation a bridge records as answered that still holds
+the bridge is waited for with `await_grant`, and its facet begins `synced`
+(resumed/5) with every `pci` row the library holds at `off` sent `off`,
+since a holder's end forwarded while the process restarted reached no
+one. With none, the process begins `between`.
+
 The functions return actions for the process to perform in order:
 `{mode, Index, Mode}`, erx_domain_lib:pci_mode/2; `{pcie, Facet, Call,
 Then}`, a `pcie` call whose answer goes to pcie_answer(Then, Answer);
@@ -48,7 +56,8 @@ Then}`, a `pcie` call whose answer goes to pcie_answer(Then, Answer);
 """.
 
 -export([targets/2, reports/2, unlisted/2, lowered/3, settings/1]).
--export([request/3, pcie_answer/4, holder_ended/2, answered/4, incarnation_ended/2, down_timer/3]).
+-export([request/3, pcie_answer/4, holder_ended/2, answered/4, incarnation_ended/2, down_timer/3,
+         resume/2, resumed/5]).
 -export_type([place/0, phase/0, request/0, action/0, then/0]).
 
 -doc "A function by its host bridge's device row and its place, as erx_domain_lib:pci_place() spells it.".
@@ -233,6 +242,35 @@ holder_ended(Rows, Phase) ->
 answered(Id, Facet, Waiting, Devices) ->
     Phase = {synced, Id, Facet},
     {Phase, lists:append([request(Request, Phase, Devices) || Request <- Waiting])}.
+
+-doc """
+How a restarted process begins, from the library's catalogues and device
+catalogue: `{await, D}` when a bridge records incarnation D as answered and
+D holds that bridge's device row; `between` otherwise. Domain ids are never
+reused in a boot, so an ended incarnation's `answered` names no holder.
+""".
+-spec resume([erx_domain_lib:pci_catalogue()], [erx_domain_lib:device()]) -> {await, pos_integer()} | between.
+resume(Catalogues, Devices) ->
+    Holders = #{Index => Holder || #{index := Index, holder := Holder} <- Devices},
+    case [D || #{bridge := #{index := Bridge}, answered := D} <- Catalogues,
+               is_integer(D), maps:get(Bridge, Holders, none) =:= D] of
+        [D | _] -> {await, D};
+        [] -> between
+    end.
+
+-doc """
+A restarted process's wait for answered incarnation Id answered with Facet,
+in Phase: `synced`, every `pci` row the library holds at `off` sent `off`,
+then every waiting request handled in order. A Phase already `synced`, by a
+later incarnation's answered report, stays, and handles them.
+""".
+-spec resumed(pos_integer(), term(), phase(), [request()], [erx_domain_lib:device()]) -> {phase(), [action()]}.
+resumed(_Id, _Facet, {synced, _, _} = Phase, Waiting, Devices) ->
+    {Phase, lists:append([request(Request, Phase, Devices) || Request <- Waiting])};
+resumed(Id, Facet, _Phase, Waiting, Devices) ->
+    {Synced, Handled} = answered(Id, Facet, Waiting, Devices),
+    {Synced, [{pcie, Facet, {set, Place, Setting}, lowering}
+              || #{place := Place, setting := #{mode := off} = Setting} <- Devices, Place =/= none] ++ Handled}.
 
 -doc "Incarnation Id's end: `between`, with its 5 s timer armed, if Id is the answered one.".
 -spec incarnation_ended(pos_integer(), phase()) -> {phase(), [action()]}.

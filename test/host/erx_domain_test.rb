@@ -240,6 +240,20 @@ class ErxDomainTest < Minitest::Test
               from: 'end, Held,', to: 'end, maps:with([], Held),',
               tests: 'erx_devices_pci_tests',
               caught_by: 'a_holders_end_after_the_library_cleared_its_row_is_still_sent_test'),
+    # One that answers a report before it writes answered leaves a restart blind to an
+    # incarnation it answered.
+    Fault.new(name: 'a report answered before answered is written', file: File.join(APPLICATION, 'erx_devices_pci.erl'),
+              from: '%% Written before it is sent, so a restart never misses an answered incarnation.',
+              to: 'gen_server:reply(From, {ok, erx_devices_pci_core:settings(Devices)}),',
+              tests: 'erx_devices_pci_tests',
+              caught_by: 'the_answered_incarnation_is_written_before_the_answer_test'),
+    # One that restarts blind to answered sends no holder's lowering while the answered
+    # incarnation lives.
+    Fault.new(name: 'a restart blind to answered', file: File.join(APPLICATION, 'erx_devices_pci.erl'),
+              from: 'resume(erx_devices_pci_core:resume(catalogues(Lib), Devices), Armed)',
+              to: 'resume(between, Armed)',
+              tests: 'erx_devices_pci_tests',
+              caught_by: 'a_restart_while_the_answered_incarnation_lives_keeps_lowering_test'),
     # One that passes the enumerator's answer on unread hands a term of the PCIe domain's
     # to a holder.
     Fault.new(name: "an enumerator's answer passed on", file: File.join(APPLICATION, 'erx_devices_pci.erl'),

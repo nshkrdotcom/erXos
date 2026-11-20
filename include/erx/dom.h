@@ -356,7 +356,10 @@ typedef struct erx_dom_device_entry {
  * listed it with its layout. A bridge with no layouts takes the next
  * report's as its placing report. A bridge marked firmware_lost gives no
  * function, and shows every one not_ready, for the rest of the boot
- * (docs/design-usb.md, "The VL805's firmware").
+ * (docs/design-usb.md, "The VL805's firmware"). answered is the domain id
+ * of the PCIe incarnation whose report the device service last answered,
+ * 0 for none; ids are never reused in a boot, so an ended incarnation's
+ * names no living holder (docs/design-pcie.md, "Concurrency").
  */
 typedef struct erx_dom_pci_layout {
 	erx_pcie_function_t record;
@@ -367,6 +370,7 @@ typedef struct erx_dom_pci_layout {
 typedef struct erx_dom_pci_bridge {
 	erx_pcie_bridge_t facts;
 	bool		firmware_lost;
+	uint32_t	answered;
 	uint32_t	nlayouts;	/* at most ERX_PCIE_FUNCTIONS_MAX */
 	erx_dom_pci_layout_t layouts[ERX_PCIE_FUNCTIONS_MAX];
 } erx_dom_pci_bridge_t;

@@ -2269,13 +2269,12 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
 * [Medium] domain library and device service, a host bridge's catalogue's callers (`erlang/apps/erx_domain`,
   `erx_devices`; `otp/erts/emulator/nifs/erxos/erx_domain_lib_nif.c`;
   [design-pcie.md](docs/design-pcie.md#the-catalogue-and-gives)): the view holds a catalogue per bridge row, the
-  root joins the tree's windows and `erx_domain_lib:pci_report/2` takes a report into it, but no device service
-  process calls it or `pci_bridges/0` and `pci_mode/2` (package P12), the catalogue has no `answered`, `/dev`'s
-  `status` does not show a pci row's layout, state, mode and route or `firmware lost` (`devices/0` gives the place
+  root joins the tree's windows and `erx_domain_lib:pci_report/2` takes a report into it, as the device service's
+  PCIe process (`erx_devices_pci`) does, but `/dev`'s `status` does not show a pci row's layout, state, mode and route or `firmware lost` (`devices/0` gives the place
   and setting, `pci_bridges/0` the rest), and `erx_domain_lib:pci_firmware/1`, which would hand the notification's status to
   `erx_dom_pci_firmware`, waits for `erx_firmware_request` (the ABI item below). Also refuse in `erx_dt_bridge` a window whose
   PCI, CPU or size is not page-aligned, and check BAR spans across a machine's bridges, not only within one.
-  `pci_report/2`, `pci_bridges/0` and `pci_mode/2` answer any system-domain caller, since their caller is the device
+  `pci_report/2`, `pci_bridges/0`, `pci_mode/2` and `pci_answered/1` answer any system-domain caller, since their caller is the device
   service and not the registered domain service; a process that reports before the PCIe domain lays the bridge's
   layouts for the boot, and one that writes a mode can lower a held function's setting or raise it for its holder
   beyond what the PCIe domain was asked. Hold them to
@@ -2290,12 +2289,10 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   `{error, no_facet}`, so the domain does not start. The device service's PCIe process (`erx_devices_pci`) applies
   `erx_devices_pci_core` behind the `pci_bus` and `pci` facets (`erx_pci_bus_facet`, `erx_pci_facet`, minted in
   front of the domain service and forwarding to the registered process), takes every domain's end from the domain
-  service's forward, and answers `report` after `erx_domain:await_grant(pcie, D)`. Still to build: `answered` in the
-  catalogue, written before the report's answer, and the restarted process beginning `synced` from it (it begins
-  `between` and goes `down` 5 s later while an answered incarnation lives, so a holder's end in that time lowers
-  only the library's setting and the function stays raised until the next PCIe start, and an end forwarded while the
-  process is restarting is dropped); the hold at boot in `erx_domain_srv`;
-  `firmware`, which answers `{error, enotsup}` until `erx_domain_lib:pci_firmware/1` exists; the identity check
+  service's forward, answers `report` after `erx_domain:await_grant(pcie, D)` with the incarnation written to the
+  catalogue's `answered` first, and after a restart begins `synced` from it. Still to build: the hold at boot in
+  `erx_domain_srv`; `firmware`, which answers `{error, enotsup}` until `erx_domain_lib:pci_firmware/1` exists, and
+  that waits for `erx_firmware_request`, which no ABI file or backend declares yet; the identity check
   of a reported function against its row's compatible string ("The catalogue and gives"); a system manifest
   service row for each interface, with the manifest check's grantee rules, and with them the domain service's
   `erx_facet:serve/2` of `pci_bus` and `pci` (the facet-names chokepoint refuses a service no manifest row declares;

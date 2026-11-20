@@ -1343,21 +1343,24 @@ catalogue_term(ErlNifEnv *env, const erx_dom_pci_bridge_t *bridge, ERL_NIF_TERM 
 			return (false);
 		layouts = enif_make_list_cell(env, layout, layouts);
 	}
-	*term = enif_make_tuple3(env, facts, atom(env, bridge->firmware_lost ? "true" : "false"), layouts);
+	*term = enif_make_tuple4(env, facts, atom(env, bridge->firmware_lost ? "true" : "false"),
+	    enif_make_uint(env, bridge->answered), layouts);
 	return (true);
 }
 
 /*
  * pci_bridges(): every host bridge's catalogue (docs/design-pcie.md, "The
  * catalogue and gives"), in device row order, for the device service's
- * targets: {ok, [{Bridge, FirmwareLost, Layouts}]}, Bridge its record's
- * bytes as an erx_pcie_bridge, FirmwareLost true or false, and Layouts
+ * targets: {ok, [{Bridge, FirmwareLost, Answered, Layouts}]}, Bridge its
+ * record's bytes as an erx_pcie_bridge, FirmwareLost true or false,
+ * Answered the domain id the device service last answered or 0, and Layouts
  * [{Record, State, Confirmed}] in its placing report's order, Record the
  * bytes of an erx_pcie_function with that report's state, State the latest
  * report's, 0 when it did not list the function, and Confirmed true or
  * false. Reports change the catalogues, so this reads them under the lock;
  * any caller is answered, as pci_report is, since a catalogue holds what
- * the PCIe domain reported and no domain's data.
+ * the PCIe domain reported and the device service's answered, a domain id,
+ * and no domain's data.
  */
 static ERL_NIF_TERM
 pci_bridges_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
@@ -1402,6 +1405,29 @@ pci_mode_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
 		return (status_error(env, ERX_ENOTSUP));
 	enif_mutex_lock(lib_lock);
 	status = erx_dom_lib_pci_mode(lib, index, mode);
+	enif_mutex_unlock(lib_lock);
+	return (status_term(env, status));
+}
+
+/*
+ * pci_answered(D): records PCIe incarnation D as answered in every bridge it
+ * holds (erx_dom_lib_pci_answered), which the device service writes before
+ * it sends the answer to D's report (docs/design-pcie.md, "Facets"). It
+ * answers any caller, as pci_report does, its caller being the device
+ * service. ok or {error, einval}.
+ */
+static ERL_NIF_TERM
+pci_answered_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
+{
+	unsigned int domain;
+	erx_status_t status;
+
+	if (argc != 1 || !enif_get_uint(env, argv[0], &domain))
+		return (enif_make_badarg(env));
+	if (lib == NULL)
+		return (status_error(env, ERX_ENOTSUP));
+	enif_mutex_lock(lib_lock);
+	status = erx_dom_lib_pci_answered(lib, domain);
 	enif_mutex_unlock(lib_lock);
 	return (status_term(env, status));
 }
@@ -1456,6 +1482,7 @@ static ErlNifFunc nif_funcs[] = {
 	{ "pci_report_nif", 2, pci_report_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND },
 	{ "pci_bridges_nif", 0, pci_bridges_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND },
 	{ "pci_mode_nif", 2, pci_mode_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND },
+	{ "pci_answered_nif", 1, pci_answered_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND },
 };
 
 ERL_NIF_INIT(erx_domain_lib, nif_funcs, load, NULL, NULL, NULL)

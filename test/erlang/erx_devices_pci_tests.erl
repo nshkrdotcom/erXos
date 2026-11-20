@@ -5,25 +5,29 @@
 %% erx_devices_pci_core (docs/design-pcie.md, "Concurrency"), and of the
 %% decoders of its two facets, erx_pci_facet and erx_pci_bus_facet. The
 %% module itself stands in for the domain library (devices/0, pci_bridges/0,
-%% pci_report/2, pci_mode/2), its catalogue kept in persistent_term and every
+%% pci_report/2, pci_mode/2, pci_answered/1), its catalogues kept in persistent_term and every
 %% write sent to the test process; a plain process stands in for the
 %% enumerator's pcie facet and another for the domain service's await_grant.
 -module(erx_devices_pci_tests).
 
 -include_lib("eunit/include/eunit.hrl").
 
--export([devices/0, pci_bridges/0, pci_report/2, pci_mode/2]).
+-export([devices/0, pci_bridges/0, pci_report/2, pci_mode/2, pci_answered/1]).
 
 -define(PLACE, {3, 1, 0, 0}).
 -define(ROW, 5).
 -define(HOLDER, 7).
 -define(PCIE, 11).
+%% The host bridge's device row, the place's first element.
+-define(BRIDGE, 3).
 
 %% The domain library's stand-in.
 devices() -> {ok, persistent_term:get({?MODULE, devices})}.
-pci_bridges() -> {ok, []}.
+pci_bridges() -> {ok, persistent_term:get({?MODULE, bridges}, [])}.
 pci_report(Bridge, Records) -> written({report, Bridge, Records}).
 pci_mode(Index, Mode) -> written({mode, Index, Mode}).
+%% The write lags, so a reply sent before it reaches the test well before the write.
+pci_answered(D) -> timer:sleep(100), written({answered, D}).
 
 written(Write) ->
     persistent_term:get({?MODULE, test}) ! {library, Write},
@@ -52,11 +56,23 @@ serve(Test, Answer) ->
 
 %% The process over the stand-ins, its pcie facet answering Pcie(Call).
 started(Mode, Pcie) ->
+    over([row(Mode)], [], Pcie, [?PCIE]).
+
+%% The process over a library of Devices and pci bridge catalogues Bridges, its
+%% pcie facet answering Pcie(Call); the domain service answers await_grant with
+%% that facet for each incarnation of Live and {error, ended} for any other.
+over(Devices, Bridges, Pcie, Live) ->
     flushed(),
     persistent_term:put({?MODULE, test}, self()),
-    persistent_term:put({?MODULE, devices}, [row(Mode)]),
+    persistent_term:put({?MODULE, devices}, Devices),
+    persistent_term:put({?MODULE, bridges}, Bridges),
     Facet = server(Pcie),
-    Domains = server(fun({await_grant, pcie, ?PCIE}) -> {ok, Facet} end),
+    Domains = server(fun({await_grant, pcie, D}) ->
+                             case lists:member(D, Live) of
+                                 true -> {ok, Facet};
+                                 false -> {error, ended}
+                             end
+                     end),
     {ok, Pid} = erx_devices_pci:start_link(#{lib => ?MODULE, register => false,
                                              await => fun(Name, Id) ->
                                                               gen_server:send_request(Domains, {await_grant, Name, Id})
@@ -71,6 +87,7 @@ flushed() ->
 stopped(Pid) ->
     exit(Pid, kill),
     persistent_term:erase({?MODULE, devices}),
+    persistent_term:erase({?MODULE, bridges}),
     persistent_term:erase({?MODULE, test}).
 
 %% The PCIe incarnation's report, answered once its facet is known.
@@ -91,6 +108,7 @@ a_holders_end_is_written_then_sent_when_synced_test() ->
     synced(Pid),
     %% The report's empty answer lowers the row the catalogue does not keep.
     ?assertEqual({mode, ?ROW, off}, library()),
+    ?assertEqual({answered, ?PCIE}, library()),
     erx_devices_pci:domain_ended(Pid, ?HOLDER),
     ?assertEqual({mode, ?ROW, off}, library()),
     receive {called, Facet, Call} -> ?assertEqual({set, ?PLACE, #{mode => off, route => none}}, Call)
@@ -179,3 +197,47 @@ a_holders_end_after_its_next_incarnation_was_read_is_still_sent_test() ->
     after 1000 -> ?assert(false)
     end,
     stopped(Pid).
+
+%% The library records the answered incarnation before the report's answer is sent.
+the_answered_incarnation_is_written_before_the_answer_test() ->
+    {Pid, _Facet} = started(mastering, fun(_) -> ok end),
+    synced(Pid),
+    %% One sender: the write is in the mailbox at the reply only if it came first.
+    ?assertEqual({mode, ?ROW, off}, receive {library, M} -> M after 0 -> none end),
+    ?assertEqual({answered, ?PCIE}, receive {library, N} -> N after 0 -> none end),
+    stopped(Pid).
+
+%% A process its supervisor restarted while the answered incarnation lives: the
+%% library's answered names the bridge's living holder, so it begins synced, sends
+%% every row the library holds at off (an end forwarded while it restarted is
+%% lost), and goes on sending each holder's lowering.
+a_restart_while_the_answered_incarnation_lives_keeps_lowering_test() ->
+    Ended = (row(off))#{index => ?ROW + 1, holder => none, place => {?BRIDGE, 2, 0, 0}},
+    {Pid, Facet} = restarted(?PCIE, ?PCIE, [row(mastering), Ended]),
+    receive {called, Facet, First} -> ?assertEqual({set, {?BRIDGE, 2, 0, 0}, #{mode => off, route => none}}, First)
+    after 1000 -> ?assert(false)
+    end,
+    erx_devices_pci:domain_ended(Pid, ?HOLDER),
+    ?assertEqual({mode, ?ROW, off}, library()),
+    receive {called, Facet, Call} -> ?assertEqual({set, ?PLACE, #{mode => off, route => none}}, Call)
+    after 1000 -> ?assert(false)
+    end,
+    stopped(Pid).
+
+%% An answered incarnation that has ended, its bridge held by its successor or by
+%% none: the restarted process begins between, and a holder's end sends nothing.
+a_restart_after_the_answered_incarnation_ended_begins_between_test() ->
+    [begin
+         {Pid, Facet} = restarted(?PCIE, Holder, [row(mastering)]),
+         erx_devices_pci:domain_ended(Pid, ?HOLDER),
+         ?assertEqual({mode, ?ROW, off}, library()),
+         receive {called, Facet, Call} -> ?assertEqual(none, Call) after 200 -> ok end,
+         stopped(Pid)
+     end || Holder <- [?PCIE + 1, none]].
+
+%% The process started over a library whose bridge ?BRIDGE records Answered as
+%% answered and is held by Holder, with the pci rows Rows.
+restarted(Answered, Holder, Rows) ->
+    over([#{index => ?BRIDGE, holder => Holder, place => none, setting => none} | Rows],
+         [#{bridge => #{index => ?BRIDGE}, firmware_lost => false, answered => Answered, layouts => []}],
+         fun(_) -> ok end, [Holder]).

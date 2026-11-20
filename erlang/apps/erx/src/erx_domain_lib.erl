@@ -38,17 +38,17 @@ connect/6 and disconnect/1 answer {error, erights} to any other caller, and
 so does crash/1, which reads a domain's crash dump. info/2 answers any
 caller, since a group's or budget's report holds none of the domain's data,
 and so do pci_report/2, the PCIe catalogue's intake, pci_bridges/0, its
-read, and pci_mode/2, the write of a PCIe function's mode, whose caller is
-the device service.
+read, pci_mode/2, the write of a PCIe function's mode, and pci_answered/1,
+the write of the incarnation answered, whose caller is the device service.
 """.
 
 -export([register/0, create/1, start/1, stop/2, retire/1, crash/1, info/2, connect/6, disconnect/1,
          configured/0, configured/3, templates/0, apps/0, devices/0, session/5, app_session/6, code_object/2,
-         code_drop/2, end_commit/1, pci_report/2, pci_bridges/0, pci_mode/2]).
+         code_drop/2, end_commit/1, pci_report/2, pci_bridges/0, pci_mode/2, pci_answered/1]).
 -nifs([register_nif/0, create_nif/1, start_nif/1, stop_nif/2, retire_nif/1, crash_nif/1, info_nif/3, connect_nif/6,
        disconnect_nif/1, configured_nif/0, configured_create_nif/3, templates_nif/0, apps_nif/0, devices_nif/0,
        session_create_nif/5, app_session_create_nif/6, code_object_nif/2, code_drop_nif/2,
-       end_commit_nif/1, pci_report_nif/2, pci_bridges_nif/0, pci_mode_nif/2]).
+       end_commit_nif/1, pci_report_nif/2, pci_bridges_nif/0, pci_mode_nif/2, pci_answered_nif/1]).
 -on_load(on_load/0).
 
 -include("generated/erx_abi.hrl").
@@ -155,11 +155,12 @@ other device.
 
 -doc """
 A host bridge's catalogue (docs/design-pcie.md, "The catalogue and gives"):
-its record, whether its firmware notification timed out, and its layouts in
-its placing report's order.
+its record, whether its firmware notification timed out, the PCIe
+incarnation whose report the device service last answered, or none, and
+its layouts in its placing report's order.
 """.
 -type pci_catalogue() :: #{bridge := erx_abi_layout:erx_pcie_bridge(), firmware_lost := boolean(),
-                           layouts := [pci_layout()]}.
+                           answered := pos_integer() | none, layouts := [pci_layout()]}.
 
 -doc """
 A layout: the function as the placing report gave it, its state that
@@ -382,6 +383,17 @@ pci_mode(Index, Mode) ->
     pci_mode_nif(Index, erx_abi_enums:value(pcie_mode, Mode)).
 
 -doc """
+Records PCIe incarnation D as answered in the catalogue of every host bridge
+it holds (docs/design-pcie.md, "Facets", "Concurrency"): the device service
+writes it before it sends the answer to D's report, and reads it back from
+pci_bridges/0 when it restarts. ok, or {error, einval} when D holds no
+bridge.
+""".
+-spec pci_answered(pos_integer()) -> ok | error().
+pci_answered(D) ->
+    pci_answered_nif(D).
+
+-doc """
 Manifest startup and restart: builds configured row Row under id Id and
 domain pid DomainPid, as create/1 builds a request's domain. The domain service calls it from its
 manifest startup and restart with a row configured/0 gave, never a row a
@@ -513,12 +525,18 @@ pci_bridges_nif() ->
 pci_mode_nif(_Index, _Mode) ->
     erlang:nif_error(undef).
 
+pci_answered_nif(_D) ->
+    erlang:nif_error(undef).
+
 %% The library hands records as the bytes its generated encoders write, which
 %% the generated codec reads: the records' one form in Erlang.
-catalogue({Bridge, FirmwareLost, Layouts}) ->
-    #{bridge => decoded(erx_pcie_bridge, Bridge), firmware_lost => FirmwareLost,
+catalogue({Bridge, FirmwareLost, Answered, Layouts}) ->
+    #{bridge => decoded(erx_pcie_bridge, Bridge), firmware_lost => FirmwareLost, answered => answered(Answered),
       layouts => [#{record => decoded(erx_pcie_function, Record), state => state(State), confirmed => Confirmed}
                   || {Record, State, Confirmed} <- Layouts]}.
+
+answered(0) -> none;
+answered(D) -> D.
 
 state(0) -> none;
 state(State) -> {ok, Name} = erx_abi_enums:name(pcie_state, State), Name.

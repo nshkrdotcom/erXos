@@ -284,6 +284,35 @@ print_modes(erx_dom_lib_t *lib, uint32_t index)
 	*record = kept;
 }
 
+/*
+ * The answered writes of the bridge at catalogue position at
+ * (erx_dom_lib_pci_answered), the library left as it was: with its row
+ * unheld; domain 0; its holder, and the value it leaves; and another domain,
+ * which leaves the holder's.
+ */
+static void
+print_answered(erx_dom_lib_t *lib, uint32_t at)
+{
+	erx_dom_pci_bridge_t *const bridge = &lib->pci_bridges[at];
+	erx_dom_device_t *const record = &lib->device_records[bridge->facts.index];
+	const erx_dom_device_t kept = *record;
+	const uint32_t answered = bridge->answered;
+	int unheld, none, held, other;
+	uint32_t after;
+
+	record->holder = 0;
+	unheld = (int)erx_dom_lib_pci_answered(lib, 9);
+	record->holder = 9;
+	none = (int)erx_dom_lib_pci_answered(lib, 0);
+	held = (int)erx_dom_lib_pci_answered(lib, 9);
+	other = (int)erx_dom_lib_pci_answered(lib, 10);
+	after = bridge->answered;
+	printf("answered %" PRIu32 " before=%" PRIu32 " unheld=%d none=%d held=%d other=%d after=%" PRIu32 "\n",
+	    bridge->facts.index, answered, unheld, none, held, other, after);
+	*record = kept;
+	bridge->answered = answered;
+}
+
 static void
 print_bridges(erx_dom_lib_t *lib)
 {
@@ -351,6 +380,8 @@ print_bridges(erx_dom_lib_t *lib)
 		if (lib->view.devices[index].selector == ERX_MF_SELECTOR_PCI)
 			print_modes(lib, index);
 	}
+	for (uint32_t at = 0; at < lib->view.npci_bridges; at++)
+		print_answered(lib, at);
 }
 
 int

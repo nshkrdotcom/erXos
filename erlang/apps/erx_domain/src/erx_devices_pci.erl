@@ -34,10 +34,13 @@ the holder's next incarnation, which holds the row again, before the
 process takes the forwarded end; so the lowering is sent for every row a
 living holder could have raised.
 
-**After a restart** the process begins `between`, since the library keeps
-no `answered` yet (TODO.md), and goes `down` 5 s later; while the answered
-PCIe incarnation lives, a holder's end then lowers only the library's
-setting, and the function stays as it was until the next PCIe start.
+**`answered`.** The answer to a report writes the incarnation into the
+library (erx_domain_lib:pci_answered/1) before it is sent, so a restarted
+process reads which incarnation, if any, its predecessor answered
+(erx_devices_pci_core:resume/2). While that incarnation still holds its
+bridges, the process sends erx_domain:await_grant(pcie, D) and, on
+`{ok, Facet}`, begins `synced` (erx_devices_pci_core:resumed/5); until
+then, and on any other answer, it is `between`.
 
 **A `pcie` call** is sent with gen_server:send_request/2 and a 2 s
 deadline. The end of the facet before it answered is the end of the
@@ -80,13 +83,22 @@ domain_ended(Server, Id) ->
     gen_server:cast(Server, {domain_ended, Id}).
 
 init(Opts) ->
-    State = #{lib => maps:get(lib, Opts, erx_domain_lib),
+    Lib = maps:get(lib, Opts, erx_domain_lib),
+    State = #{lib => Lib,
               await => maps:get(await, Opts, fun erx_domain:await_grant/2),
               phase => {between, start}, waiting => [], held => #{},
-              %% Outstanding pcie calls and report answers, by request id.
+              %% Outstanding pcie calls, and await_grant waits, {report, From, D} for a report's
+              %% answer or {resume, D} for a restart's, by request id.
               calls => #{}, reports => #{}},
-    {_Devices, Read} = read(State),
-    {ok, act({arm_down, start}, Read)}.
+    {Devices, Read} = read(State),
+    Armed = act({arm_down, start}, Read),
+    {ok, resume(erx_devices_pci_core:resume(catalogues(Lib), Devices), Armed)}.
+
+%% A restarted process waits for the facet of the incarnation its predecessor answered.
+resume({await, D}, #{await := Await, reports := Reports} = State) ->
+    State#{reports := Reports#{Await(pcie, D) => {resume, D}}};
+resume(between, State) ->
+    State.
 
 handle_call({pci, Grantee, Operation}, From, #{phase := Phase, waiting := Waiting} = State) ->
     {Devices, Read} = read(State),
@@ -146,7 +158,7 @@ report(D, Reported, From, #{lib := Lib, await := Await, reports := Reports} = St
      || #{bridge := B, bus := Bus, device := Dev, function := Fn} <- erx_devices_pci_core:unlisted(Reported, Devices)],
     Lowered = erx_devices_pci_core:lowered(catalogues(Lib), Devices, Reported),
     Done = perform([{mode, Index, off} || Index <- Lowered], Read),
-    Done#{reports := Reports#{Await(pcie, D) => {From, D}}}.
+    Done#{reports := Reports#{Await(pcie, D) => {report, From, D}}}.
 
 intake(Lib, Bridge, Records) ->
     case Lib:pci_report(Bridge, Records) of
@@ -175,12 +187,26 @@ answer(Message, Pending) ->
         [] -> none
     end.
 
-grant_answered({From, D}, {reply, {ok, Facet}}, #{waiting := Waiting} = State) ->
+grant_answered({resume, D}, {reply, {ok, Facet}}, #{phase := Phase, waiting := Waiting} = State) ->
     {Devices, Read} = read(State),
+    {Next, Actions} = erx_devices_pci_core:resumed(D, Facet, Phase, Waiting, Devices),
+    perform(Actions, Read#{phase := Next, waiting := []});
+grant_answered({resume, D}, Answer, State) ->
+    logger:notice("erx_devices_pci: answered PCIe domain ~b is not resumed, its pcie facet: ~0p", [D, Answer]),
+    State;
+grant_answered({report, From, D}, {reply, {ok, Facet}}, #{lib := Lib, waiting := Waiting, reports := Reports} = State) ->
+    {Devices, Read} = read(State),
+    %% Written before it is sent, so a restart never misses an answered incarnation.
+    case Lib:pci_answered(D) of
+        ok -> ok;
+        {error, Reason} -> logger:error("erx_devices_pci: the library refused answered ~b: ~0p", [D, Reason])
+    end,
     gen_server:reply(From, {ok, erx_devices_pci_core:settings(Devices)}),
     {Phase, Actions} = erx_devices_pci_core:answered(D, Facet, Waiting, Devices),
-    perform(Actions, Read#{phase := Phase, waiting := []});
-grant_answered({From, D}, Answer, State) ->
+    %% A restart's wait for an earlier incarnation no longer decides the phase.
+    Left = maps:filter(fun(_ReqId, Wait) -> element(1, Wait) =/= resume end, Reports),
+    perform(Actions, Read#{phase := Phase, waiting := [], reports := Left});
+grant_answered({report, From, D}, Answer, State) ->
     logger:error("erx_devices_pci: PCIe domain ~b's report is not answered, its pcie facet: ~0p", [D, Answer]),
     gen_server:reply(From, {error, unavailable}),
     State.

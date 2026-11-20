@@ -664,6 +664,24 @@ erx_dom_lib_pci_mode(erx_dom_lib_t *lib, uint32_t index, uint32_t mode)
 	return (ERX_OK);
 }
 
+erx_status_t
+erx_dom_lib_pci_answered(erx_dom_lib_t *lib, uint32_t domain)
+{
+	erx_status_t status = ERX_EINVAL;
+
+	if (domain == 0)
+		return (ERX_EINVAL);
+	for (uint32_t at = 0; at < lib->view.npci_bridges; at++) {
+		erx_dom_pci_bridge_t *const bridge = &lib->pci_bridges[at];
+
+		if (lib->device_records[bridge->facts.index].holder == domain) {
+			bridge->answered = domain;
+			status = ERX_OK;
+		}
+	}
+	return (status);
+}
+
 /* A framebuffer record takes no more room than the given record the reserve counts for it. */
 _Static_assert(ERX_BOOT_FRAMEBUFFER_WORDS_MAX <= ERX_BOOT_GIVEN_WORDS_MAX, "a framebuffer record fits a given record's room");
 
