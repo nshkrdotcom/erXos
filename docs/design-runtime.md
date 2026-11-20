@@ -400,7 +400,9 @@ distributed. 65. Once the boot script has started every application, and
 before any `-s`, `-run` or `-eval`, `init` sends the domain pid that
 `erx_dist:boot/0` names its ready report,
 `{erx_ready, #{connections => Agent, inspect => InspectAgent, provides => Provides}}`,
-a key left out when no such agent is registered, on which
+a key left out when no such agent is registered, and `Provides` naming
+each mint by its name's text, a binary, which edit 9's safe decode takes
+without making an atom, on which
 `erx_domain:create/1` returns
 ([design-domains.md](design-domains.md#messages-between-the-domain-service-and-a-runtime));
 edit 8 hands both agents to the system domain with `send` as the frame is
@@ -429,7 +431,8 @@ included, gives the peer `send` on it where it holds nothing yet; past the
 table's bound it writes nothing and counts the failure for
 `erx_dist:exports_refused/0`. 9. The distribution decoder takes a safe mode,
 set in the system domain, which creates no atom and reports a refused atom
-apart from a malformed term. 10. In the system domain, a message to a peer
+apart from a malformed term; `erx_dist:atoms_refused/0` counts the payloads it
+refused. 10. In the system domain, a message to a peer
 whose entry's queue, the frames of `async_dist` senders included, is past the
 manifest's `system_queue` is dropped and counted on the receiver instead of
 suspending the sender, and any other signal that does not fit ends the

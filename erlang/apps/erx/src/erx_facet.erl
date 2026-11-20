@@ -129,7 +129,9 @@ before a message is queued, and the facet's queue quota and heap limit.
 Names Mint, a process of this domain, as the mint of the service Name, which a
 configured domain serves (docs/design-system.md, "Facets a configured domain
 serves"). Call it from the service application's start/2, before init's ready
-report, which carries every mint named so far as its provides; a second call
+report, which carries every mint named so far as its provides, each under its
+name's text, so the report makes no atom in the system domain (edit 9 of
+docs/design-runtime.md); a second call
 for Name replaces the first, and a call after the report is refused with
 {error, reported}. The system domain, and a runtime that is no node, report
 nothing, so there the call is taken and reaches no one. The domain service keeps the mints the report named until
@@ -194,7 +196,12 @@ served() ->
 
 -doc """
 A mint's reply to the request tagged Tag (provide/2): {ok, Facet} names the
-facet it started, and any other Reply refuses. It goes to this domain's own
+facet it started, and any other Reply refuses and crosses as the atom
+`refused`: the domain service reads nothing more of a refusal, and the
+system domain decodes the frame in safe mode (edit 9 of
+docs/design-runtime.md), where a reason naming an atom it lacks would drop
+the reply whole and leave the domain service's mint operation to its
+deadline. It goes to this domain's own
 domain pid, which passes it on to the domain service as an answer of this
 domain, so the reply names its domain by the connection it came over, and the
 mint never needs a pid of the system domain. {error, noconnection} in a
@@ -204,8 +211,11 @@ domain with no system connection, which no request reaches.
 minted(Tag, Reply) when is_integer(Tag), Tag > 0 ->
     case persistent_term:get({erx, domain_pid}, none) of
         none -> {error, noconnection};
-        DomainPid -> DomainPid ! {erx_facet_minted, Tag, Reply}, ok
+        DomainPid -> DomainPid ! {erx_facet_minted, Tag, crossing_reply(Reply)}, ok
     end.
+
+crossing_reply({ok, Facet}) when is_pid(Facet) -> {ok, Facet};
+crossing_reply(_Refusal) -> refused.
 
 -doc """
 Starts a facet of Callback for Grant. Opts may name exports, the export table's

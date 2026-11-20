@@ -1267,7 +1267,9 @@ do_boot(Init,Flags,Start) ->
 %% come in ?FACETS_TIMEOUT milliseconds is logged, and the boot goes on without
 %% waiting for it. The report also carries, as provides, the mints the domain's
 %% services named with erx_facet:provide/2 while their applications started
-%% (docs/design-system.md, "Facets a configured domain serves"), and leaves the term
+%% (docs/design-system.md, "Facets a configured domain serves"), each name as its
+%% atom's text, a binary, since the system domain decodes the report in safe mode and
+%% makes no atom from it (edit 9 of docs/design-runtime.md), and leaves the term
 %% reported in their place, so provide/2 refuses a mint named later, which no report
 %% would carry.
 report_ready() ->
@@ -1289,9 +1291,13 @@ report_ready() ->
 %% The ready report's map. A runtime whose inspection agent is not registered leaves the
 %% inspect key out, so the domain pid keeps no agent and has nothing to refuse.
 ready_report(Agent, undefined, Provides) ->
-    #{connections => Agent, provides => Provides};
+    #{connections => Agent, provides => provided_names(Provides)};
 ready_report(Agent, Inspect, Provides) ->
-    #{connections => Agent, inspect => Inspect, provides => Provides}.
+    #{connections => Agent, inspect => Inspect, provides => provided_names(Provides)}.
+
+%% The provides as the report carries them: each mint under its name's text.
+provided_names(Provides) ->
+    #{atom_to_binary(Name) => Mint || Name := Mint <- Provides}.
 
 -define(FACETS_TIMEOUT, 5000).
 

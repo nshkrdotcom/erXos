@@ -11,10 +11,10 @@ Grantee within Limits, ending with the mint, and replies with it, or with the
 reason start/3 failed. Anything else it drops. A facet answers {echo, Term}
 with {echo, Term} and refuses every other request.
 
-foreign_atoms/1 is a frame from another domain naming atoms the system domain
-lacks, for the system domain suite: spawned there by the system domain, it
-sends To a message holding an atom made here, then `foreign_after`, and exits
-with a reason that is an atom made here. The system domain decodes each frame
+foreign_atoms/1, for the system domain suite, names atoms the system domain
+lacks: spawned here by the system domain, it sends To a message holding an atom
+made here, then `foreign_after`, and exits with a reason that is an atom made
+here. The system domain decodes each frame
 in safe mode (edit 9 of docs/design-runtime.md), so the message is dropped and
 the reason arrives as `{erx_foreign_reason, Bin}`.
 """.

@@ -1056,7 +1056,9 @@ dist_spawn_init(MFA) ->
     %%
     %% erXos: the argument list comes from another domain, so edit 16 delivers it in its
     %% envelope; it is the first message, queued by ERTS with the process, so no sender
-    %% can stand a list of its own in front of it.
+    %% can stand a list of its own in front of it. In the system domain a list naming an
+    %% atom the runtime lacks is dropped too, the connection kept (edit 9), and the process
+    %% ends with argument_list_decode_failure below.
     {M, F, _NoA} = MFA,
     receive
         {erx_origin, _, A} ->

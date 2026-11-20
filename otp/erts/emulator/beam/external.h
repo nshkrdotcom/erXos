@@ -18,7 +18,7 @@
  * limitations under the License.
  *
  * Modified by erXos: ErtsDistExternal keeps the creation of the entry a frame arrived on (edit
- * 16).
+ * 16), and records a safe decode's refusal of an atom this runtime lacks (edit 9).
  *
  * %CopyrightEnd%
  */
@@ -136,6 +136,8 @@ typedef struct {
 #define ERTS_DIST_EXT_ATOM_TRANS_TAB ((Uint32) 0x2)
 #define ERTS_DIST_EXT_BTT_SAFE       ((Uint32) 0x4)
 #define ERTS_DIST_EXT_INTERNAL_NC    ((Uint32) 0x8)
+/* erXos: edit 9. The last safe decode failed only on an atom this runtime lacks. */
+#define ERTS_DIST_EXT_ATOM_REFUSED   ((Uint32) 0x10)
 
 #define ERTS_DIST_CON_ID_MASK ((Uint32) 0x00ffffff)
 

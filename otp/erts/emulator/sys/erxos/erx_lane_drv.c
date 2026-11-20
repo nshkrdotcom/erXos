@@ -419,20 +419,23 @@ input_deliver(DistEntry *dep, Uint32 conn_id, uint8_t *buf, size_t len, erx_net_
  * An exit whose payload is over a limit arrives with reason {erx_reason_too_large, Bytes},
  * written behind the held control term: the record buffer never shrinks below
  * ERX_FUNNEL_ASM_FIRST, which leaves room for it behind the longest one; a slot's copy
- * without the room drops it.
+ * without the room drops it. The atom is written from ERTS's own table, so it exists in
+ * every runtime and the system domain's safe decode takes it (edit 9 of
+ * docs/design-runtime.md).
  */
 static void
 input_too_large(lane_conn_t *conn, DistEntry *dep, Uint32 conn_id, const lane_frame_t *frame,
     const erx_funnel_verdict_t *verdict)
 {
 	const size_t at = ERX_FRAME_HEADER_SIZE + verdict->header.ctl_len;
+	const Atom *tag = atom_tab(atom_val(am_erx_reason_too_large));
 	uint8_t reason[TOO_LARGE_REASON_MAX];
 	erx_etf_writer_t writer;
 	size_t reason_len;
 
 	erx_etf_writer_init(&writer, reason, sizeof(reason));
 	erx_etf_put_tuple(&writer, 2);
-	erx_etf_put_atom(&writer, "erx_reason_too_large", 20);
+	erx_etf_put_atom(&writer, (const char *)erts_atom_get_name(tag), (size_t)tag->len);
 	erx_etf_put_integer(&writer, (int64_t)verdict->header.payload_len);
 	if (!erx_etf_writer_done(&writer, &reason_len) || frame->cap < at + reason_len) {
 		count(conn, ERX_LANE_COUNT_DROPPED);

@@ -8071,6 +8071,38 @@ to the corpus and follow rc
   capability with S named through the call's typed item, is unverified: the lookup lives in a Fiasco header
   erXos does not read. If it can, it most likely harms only that task. Map the gate without S, since a send
   needs no right (`ipc_gate.cpp:471-512`), and each semaphore with what up and down need.
+* [Medium] runtime, the system domain's safe decode (edit 9 of
+  [design-runtime.md](docs/design-runtime.md), `erts_proc_sig_decode_dist` in
+  `otp/erts/emulator/beam/erl_proc_sig_queue.c`, `erts_net_message` in `dist.c`):
+  * A payload that names an atom the system domain lacks and also breaks a rule
+    only ERTS's decoder checks (a repeated map key, which the funnel's payload
+    pass leaves to the decoder) is refused for its atom first: a message is
+    dropped, an exit reason delivered as `{erx_foreign_reason, Bin}`, where
+    [design-domains.md](docs/design-domains.md#the-funnel) ends the connection
+    for a malformed term. Both fail safely; only the peer's own bytes are
+    misclassified. Running the funnel's semantic stage (`accept`) on system
+    payloads fixes it, but its scratch grows to about 16 bytes a frame byte
+    (`test/host/erx_funnel_test.rb`, the scratch test), which the system
+    domain's per-domain sum (D12) would have to carry. Decide which.
+  * A control term that names an atom the system domain lacks (a spawn reply's
+    error atom, a spawn request's module, function or option) ends the
+    connection through `erts_net_message`'s decode error, with no log line and
+    no count; the funnel's table for those frames does not say what a refused
+    atom does. Settle it in the design.
+  * Each message family a domain sends the system domain keeps its atoms within
+    what the system domain holds by hand: the ready report's provides cross as
+    binaries, a mint's refusal as `refused`, a lost connection's reason through
+    `lost_reason/1`. A family that names a sender's own atom loses the message
+    silently, its caller waiting out a timeout; a facet forwarding to a service
+    in another domain whose replies name such atoms would hold its in-flight
+    slots until it answers `busy`. Declaring each family's closed atom set in
+    `abi/protocols` would make this hold by construction; the count is global,
+    not per connection.
+  * `{erx_foreign_reason, Bin}` carries the reason's whole encoding; system-domain
+    code that decodes Bin with `binary_to_term/1` without `[safe]` makes the
+    atoms D5 forbids, and no check holds that.
+  * `erx_domain_srv:keep_lines/4` takes a session's provides that are no map
+    without crashing the domain service; no test sends such a session report.
 * [High] Fiasco backend, `liberx/backend/fiasco/service.c` (the `ERX_FIASCO_CALL_TIME_SET_OFFSET` case),
   blocks 0.2: the dispatch passes the body the request's `offset_ns` alone, never its `caller`, and checks
   no right, so any task sets the wall clock, against 0.2's contract that an app cannot

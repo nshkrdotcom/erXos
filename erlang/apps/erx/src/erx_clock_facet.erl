@@ -5,9 +5,11 @@
 -moduledoc """
 The decoder of a request a clock facet admits (docs/design-time.md, "The
 clock facet"): the one reader of what another domain sends the wall
-clock's authority, pure. A request is the term the funnel decoded from the
-grantee's frame, in safe mode, so every atom in it already existed, and
-erx_facet has already held its encoding to the grant's max_request. The
+clock's authority, pure. A request is the term the system domain's ERTS
+decoded in safe mode (edit 9 of docs/design-runtime.md) from the grantee's
+frame, which the funnel had checked, so every atom in it already existed
+there, and erx_facet has already held its encoding to the grant's
+max_request. The
 interface has two operations:
 
 * `{sample, W, Distance, Stratum, Server}`, ntpd's: W a wall offset in

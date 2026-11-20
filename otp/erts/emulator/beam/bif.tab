@@ -19,7 +19,7 @@
 #
 # %CopyrightEnd%
 #
-# Modified by erXos: adds erx_device's, erx_trace_ring's, erx_dist's and erx_bytes's BIFs. Adds erx_dist:aliases/0 (edit 17) and erx_dist:exports_refused/0.
+# Modified by erXos: adds erx_device's, erx_trace_ring's, erx_dist's and erx_bytes's BIFs. Adds erx_dist:aliases/0 (edit 17), erx_dist:exports_refused/0 and erx_dist:atoms_refused/0 (edit 9).
 #
 
 #
@@ -902,6 +902,13 @@ bif erx_dist:exports/1
 bif erx_dist:owner/1
 bif erx_dist:aliases/0
 bif erx_dist:exports_refused/0
+
+#
+# erXos: the count of payloads from other domains whose safe decode refused an atom this
+# runtime lacks (edit 9 of docs/design-runtime.md, erl_proc_sig_queue.c).
+#
+
+bif erx_dist:atoms_refused/0
 
 #
 # erXos: the per-byte primitives and the entropy entry (docs/design-runtime.md, "Per-byte

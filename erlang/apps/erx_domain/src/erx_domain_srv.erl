@@ -499,7 +499,7 @@ handle_cast(_Request, State) ->
 handle_info({domain_ended, Id, End, Record}, State) ->
     {noreply, ended(Id, End, erx_domain_core:fault_where(End, Record), State)};
 handle_info({domain_ready, Ref, Id, Provides, Inspect}, State) ->
-    {noreply, ready(Id, Ref, Provides, Inspect, State)};
+    {noreply, ready(Id, Ref, provided_atoms(Provides), Inspect, State)};
 handle_info({mint_introduced, Tag, Result}, State) ->
     {noreply, mints({introduced, Tag, Result}, State)};
 handle_info({timeout, Timer, {mint_deadline, Tag}}, #{mint_timers := Timers} = State) ->
@@ -1027,11 +1027,34 @@ served_kind(Name, Trees) ->
         false -> message
     end.
 
+%% A ready report's provides as the service reads them. Each name crosses as its text,
+%% a binary, so the report makes no atom in the system domain (edit 9 of
+%% docs/design-runtime.md), and is read here as the atom of that text where the system
+%% domain has one. A binary it has no atom for stays a binary, and any other key, an
+%% atom included, becomes {not_a_name, Key}: neither is an atom, so no manifest row
+%% declares it and no line is named by it, the mint core refuses it as undeclared and
+%% keep_lines/4 passes it by. A value that is no map passes untouched, for the core to
+%% refuse whole.
+provided_atoms(Provides) when is_map(Provides) ->
+    #{provided_atom(Name) => Mint || Name := Mint <- Provides};
+provided_atoms(Provides) ->
+    Provides.
+
+provided_atom(Name) when is_binary(Name) ->
+    try binary_to_existing_atom(Name)
+    catch error:badarg -> Name
+    end;
+provided_atom(Key) ->
+    {not_a_name, Key}.
+
 %% A session's lines, which its ready report names among its provides under the names
 %% of ?ERX_LINES, each a process of the session's own node (erx_web_line, erx_ssh_line). The
 %% service keeps them until the session ends, for erx_domain:line/3 to hand to the
 %% domain a line serves; it hands a pid to no one before then. A provide of another
-%% name, or one that is no process of the session, names no line.
+%% name, or one that is no process of the session, names no line, and a provides that
+%% is no map names none.
+keep_lines(_Id, _Node, Provides, State) when not is_map(Provides) ->
+    State;
 keep_lines(Id, Node, Provides, #{lines := Lines} = State) ->
     case maps:filter(fun(_Name, Line) -> is_pid(Line) andalso node(Line) =:= Node end,
                      maps:with(?ERX_LINES, Provides)) of

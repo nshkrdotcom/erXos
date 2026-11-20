@@ -2383,8 +2383,12 @@ module, and no other module calls its writer.
 **Providers.** A configured domain's services each name a **mint**, a
 process of the domain that mints facets of one service, with
 `erx_facet:provide(Name, Mint)`, before its init reports ready, and the
-ready report carries them as its `provides` map; a mint named after the
-report is refused. A mint lives as long as its domain's incarnation: the
+ready report carries them as its `provides` map, each under its name's
+text, a binary: the system domain decodes the report in safe mode, which
+makes no atom ([design-runtime.md](design-runtime.md#the-edits-outside-syserxos),
+edit 9), so the domain service reads a name as the atom of that text
+where it has one, and a name it has none for is one no row declares. A
+mint named after the report is refused. A mint lives as long as its domain's incarnation: the
 providers are the report's until the domain ends, so a mint's end ends its
 domain, as a permanent application's does, and the restarted domain's
 report provides again. A server reports ready
@@ -2503,7 +2507,10 @@ The record moves on these events, and on nothing else:
   passes on as an answer of its domain, as it passes on
   `connection_mapped`. So no pid of the domain service leaves the system
   domain, and nothing a server sends reaches the domain service but
-  through its domain pid. The reply is untrusted. It
+  through its domain pid. A refusal crosses as the atom `refused`,
+  whatever the server's reason, since the service reads no more of it and
+  the system domain's safe decode would drop a reply naming an atom it
+  lacks. The reply is untrusted. It
   counts only from the pair's server, for an operation in `minting` with
   that tag. `{ok, Facet}` with `Facet` a pid the server's incarnation
   owns, node and creation both, moves the operation to `installing` and

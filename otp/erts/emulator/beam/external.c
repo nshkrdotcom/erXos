@@ -22,7 +22,8 @@
  * arrived on (edit 16). A reference of this node decodes from exactly four words, as an
  * active alias, a magic reference only in a decode outside a connection, or an ordinary
  * one, and an alias encoded for another domain is handed out (edit 17 of
- * docs/design-runtime.md, edit 14).
+ * docs/design-runtime.md, edit 14). In the system domain every frame decodes in safe
+ * mode, and a refused atom is told apart from a malformed term (edit 9).
  *
  * %CopyrightEnd%
  */
@@ -109,6 +110,7 @@ static byte* enc_pid(ErtsAtomCacheMap *, Eterm, byte*, Uint64);
 struct B2TContext_t;
 static const byte* dec_term(ErtsDistExternal*, ErtsHeapFactory*, const byte*, Eterm*, struct B2TContext_t*, Uint32 flags);
 static const byte* dec_atom(ErtsDistExternal *, const byte*, Eterm*, Uint32 flags);
+static int dec_existing_atom(ErtsDistExternal *, const byte *, Uint, Eterm *, ErtsAtomEncoding);
 static const byte* dec_sysname(ErtsDistExternal *, const byte*, Eterm*, Uint32 flags);
 static const byte* dec_pid(ErtsDistExternal *, ErtsHeapFactory*, const byte*, Eterm*, byte tag, Uint32 flags);
 static Sint decoded_size(const byte *ep, const byte* endp, int internal_tags, struct B2TContext_t*);
@@ -961,6 +963,17 @@ erts_prepare_dist_ext(ErtsDistExternal *edep,
 
     if (dep->dflags & (DFLAG_DIST_HDR_ATOM_CACHE|DFLAG_FRAGMENTS))
         edep->flags |= ERTS_DIST_EXT_DFLAG_HDR;
+    /*
+     * erXos: edit 9 of docs/design-runtime.md. The system domain decodes every frame of
+     * another domain in safe mode, which makes no atom (docs/design-domains.md, D5);
+     * dec_term takes the mode from these flags. A distribution header's atom cache
+     * makes atoms of its own, so the system domain refuses a connection that has one.
+     */
+    if (erx_runtime_is_system()) {
+        if (edep->flags & ERTS_DIST_EXT_DFLAG_HDR)
+            goto bad_hdr;
+        edep->flags |= ERTS_DIST_EXT_BTT_SAFE;
+    }
 
     if (ep[1] != DIST_HEADER && ep[1] != DIST_FRAG_HEADER && ep[1] != DIST_FRAG_CONT) {
 	if (edep->flags & ERTS_DIST_EXT_DFLAG_HDR)
@@ -1286,6 +1299,7 @@ erts_decode_dist_ext(ErtsHeapFactory* factory,
     Eterm obj;
     const byte* ep;
 
+    edep->flags &= ~ERTS_DIST_EXT_ATOM_REFUSED; /* erXos: edit 9 */
     ep = edep->data->extp;
 
     if (ep >= edep->data->ext_endp)
@@ -1313,7 +1327,12 @@ erts_decode_dist_ext(ErtsHeapFactory* factory,
  error:
     erts_factory_undo(factory);
 
-    if (kill_connection)
+    /*
+     * erXos: edit 9. A refused atom is the caller's to answer: erts_net_message ends the
+     * connection for a control term's, erts_proc_sig_decode_dist drops a message or
+     * wraps an exit reason.
+     */
+    if (kill_connection && !(edep->flags & ERTS_DIST_EXT_ATOM_REFUSED))
         bad_dist_ext(edep);
 
     return THE_NON_VALUE;
@@ -3038,6 +3057,25 @@ enc_pid(ErtsAtomCacheMap *acmp, Eterm pid, byte* ep, Uint64 dflags)
     return enc_external_pid(acmp, pid, ep, dflags);
 }
 
+/*
+ * erXos: edit 9 of docs/design-runtime.md. Safe mode's one lookup of an atom, which
+ * makes none; a failed lookup is recorded on the frame's edep as a refusal. The funnel
+ * has already refused atoms of invalid text, so a lookup fails only on an atom this
+ * runtime lacks. A term that also breaks a rule only this decoder checks, a repeated map
+ * key, can be refused for its atom before the rule is reached (TODO.md).
+ * binary_to_term/2 decodes with no edep and records nothing.
+ */
+static int
+dec_existing_atom(ErtsDistExternal *edep, const byte *ep, Uint len, Eterm *objp,
+                  ErtsAtomEncoding char_enc)
+{
+    if (erts_atom_get((char*)ep, len, objp, char_enc))
+        return 1;
+    if (edep)
+        edep->flags |= ERTS_DIST_EXT_ATOM_REFUSED;
+    return 0;
+}
+
 /* Expect an atom in plain text or cached */
 static const byte*
 dec_atom(ErtsDistExternal *edep, const byte* ep, Eterm* objp, Uint32 flags)
@@ -3080,7 +3118,7 @@ dec_atom(ErtsDistExternal *edep, const byte* ep, Eterm* objp, Uint32 flags)
 	char_enc = ERTS_ATOM_ENC_UTF8;
     dec_atom_common:
         if (flags & ERTS_DIST_EXT_BTT_SAFE) {
-	    if (!erts_atom_get((char*)ep, len, objp, char_enc)) {
+	    if (!dec_existing_atom(edep, ep, len, objp, char_enc)) {
                 goto error;
 	    }
         } else {
@@ -4544,7 +4582,7 @@ dec_term(ErtsDistExternal *edep,
 	    char_enc = ERTS_ATOM_ENC_UTF8;
 dec_term_atom_common:
 	    if (flags & ERTS_DIST_EXT_BTT_SAFE) {
-		if (!erts_atom_get((char*)ep, n, objp, char_enc)) {
+		if (!dec_existing_atom(edep, ep, n, objp, char_enc)) {
 		    goto error;
 		}
 	    } else {

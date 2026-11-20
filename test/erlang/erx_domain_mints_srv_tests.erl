@@ -78,6 +78,14 @@ funnel_test_() ->
     {setup, fun() -> setup(1, #{facet_names => [echo, other]}) end, fun cleanup/1,
      fun(_) -> {timeout, 20, fun funnel/0} end}.
 
+%% A report's provides name each service by its text (init's report_ready/0): a name
+%% the system domain has no atom for is refused as undeclared and makes none, while the
+%% rest of the report stands, so the grant of echo waits idle for a provider.
+unknown_name_test_() ->
+    Name = <<"erx_mints_srv_tests_no_such_atom">>,
+    {setup, fun() -> setup(1, #{}, fun(Id) -> #{Name => pid('a@erxos', Id, 1)} end) end, fun cleanup/1,
+     fun(_) -> {timeout, 20, fun() -> unknown_name(Name) end} end}.
+
 stopgap_names_test_() ->
     {setup, fun() -> setup(1) end, fun cleanup/1, fun(_) -> {timeout, 20, fun stopgap_names/0} end}.
 
@@ -123,7 +131,7 @@ setup() -> setup(1).
 
 setup(Interface) -> setup(Interface, #{}).
 
-setup(Interface, Opts) -> setup(Interface, Opts, fun(Id) -> #{echo => pid('a@erxos', Id, 1)} end).
+setup(Interface, Opts) -> setup(Interface, Opts, fun(Id) -> #{<<"echo">> => pid('a@erxos', Id, 1)} end).
 
 %% With echo a service of interface Interface, the service's start_link options merged
 %% with Opts, which may name a table of facet names for the funnel's cases, and a's
@@ -152,15 +160,15 @@ cleanup({Log, Service}) ->
     ok.
 
 %% a's reports provide echo's mint at Node, with the reporting incarnation's id.
-provide(Node) -> provide_a(fun(Id) -> #{echo => pid(Node, Id, 1)} end).
+provide(Node) -> provide_a(fun(Id) -> #{<<"echo">> => pid(Node, Id, 1)} end).
 
 %% a's reports provide what Provides answers for the reporting incarnation's id.
 provide_a(Provides) ->
     persistent_term:put({erx_domain_fake_lib, provides},
                         #{<<"a">> => Provides,
-                          <<"root_1">> => fun(Id) -> #{web_line => pid('root_1@erxos', Id, 3),
-                                                       ssh_line => pid('root_1@erxos', Id, 4),
-                                                       rogue_line => pid('root_1@erxos', Id, 6)} end}).
+                          <<"root_1">> => fun(Id) -> #{<<"web_line">> => pid('root_1@erxos', Id, 3),
+                                                       <<"ssh_line">> => pid('root_1@erxos', Id, 4),
+                                                       <<"rogue_line">> => pid('root_1@erxos', Id, 6)} end}).
 
 %% The whole path for both grants: b is introduced to a, a's mint is asked, its reply
 %% installs the facet in b's registry through b's domain pid, and b's acknowledgement
@@ -233,6 +241,11 @@ funnel() ->
     ?assertEqual({error, {bad_spec, boot}}, erx_domain:create(Spec(#{console => self()}))),
     #{core := Core} = sys:get_state(erx_domain_srv),
     ?assertEqual(none, erx_domain_core:fetch(7, Core)).
+
+unknown_name(Name) ->
+    wait_counts(fun(#{{refused, undeclared} := N}) -> N =:= 1 end),
+    ?assertMatch(#{{system, echo} := idle}, grants()),
+    ?assertError(badarg, binary_to_existing_atom(Name)).
 
 %% The running table holds only the manifest's service names: none of the names the
 %% facet-names check exempts travels into it. The funnel's one stopgap name, console,
@@ -873,7 +886,7 @@ app_setup() ->
                           services => [{1, screen, ?ERX_SERVICE_WINDOWS}, {1, clip, ?ERX_SERVICE_FILES}],
                           grants => [{{template, 2}, screen, 1, #{max_request => 64}},
                                      {{template, 2}, clip, 1, #{max_request => 32}}]}),
-    provide_a(fun(Id) -> #{screen => pid('a@erxos', Id, 1), clip => pid('a@erxos', Id, 4)} end),
+    provide_a(fun(Id) -> #{<<"screen">> => pid('a@erxos', Id, 1), <<"clip">> => pid('a@erxos', Id, 4)} end),
     Log = erx_domain_fake_lib:start_log(),
     {ok, Service} = erx_domain_srv:start_link(#{lib => erx_domain_fake_lib, agent => erx_domain_fake_lib,
                                                 exports => erx_domain_fake_lib, principals => ?PRINCIPALS,
