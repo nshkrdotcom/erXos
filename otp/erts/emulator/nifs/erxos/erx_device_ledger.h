@@ -271,9 +271,9 @@ uint64_t		 erx_dma_layout_buffer_offset(const erx_dma_layout_t *layout, uint32_t
 /*
  * The bindings (docs/design-device-dma.md, "The ledger"). erx_dma_ledger_bind binds ring `table`
  * to `endpoint`, not 0, and returns its position to the first record on a new lap of cycle state
- * 1; false, changing nothing, for a table that is not a ring, one bound already, or one a holding
- * holds a record of. erx_dma_ledger_unbind ends a binding, refused while a holding holds a record
- * of the ring. The sequencer calls both, with the effects of each (erx_dma_bind).
+ * 1; false, changing nothing, for a table that is not a ring or one bound already. An unbound
+ * ring holds no record, since only a run on a bound ring holds one and erx_dma_ledger_unbind,
+ * which ends a binding, is refused while a holding holds a record of the ring. The sequencer calls both, with the effects of each (erx_dma_bind).
  */
 bool		erx_dma_ledger_bind(erx_dma_ledger_t *ledger, uint32_t table, uint32_t endpoint);
 bool		erx_dma_ledger_unbind(erx_dma_ledger_t *ledger, uint32_t table);

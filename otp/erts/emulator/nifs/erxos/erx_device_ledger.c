@@ -29,11 +29,6 @@
 #else
 #define SEED_RELEASE_TWICE	false
 #endif
-#ifdef ERX_DMA_SEED_BIND_WHILE_HELD
-#define SEED_BIND_WHILE_HELD	true
-#else
-#define SEED_BIND_WHILE_HELD	false
-#endif
 #ifdef ERX_DMA_SEED_RING_NO_LINK
 #define SEED_RING_NO_LINK	true
 #else
@@ -310,9 +305,9 @@ bool
 erx_dma_ledger_bind(erx_dma_ledger_t *ledger, uint32_t table, uint32_t endpoint)
 {
 	if (endpoint == 0 || table >= ledger->layout.table_count ||
-	    ledger->layout.tables[table].placing != ERX_DMA_PLACED_RING || ledger->bound[table] != 0 ||
-	    (!SEED_BIND_WHILE_HELD && table_held(ledger, table)))
+	    ledger->layout.tables[table].placing != ERX_DMA_PLACED_RING || ledger->bound[table] != 0)
 		return (false);
+	/* An unbound ring holds no record: only a run on a bound ring holds one, and unbind waits for none. */
 	ledger->bound[table] = endpoint;
 	/* The first record, on lap 0, of cycle state 1; the sequencer zeroes the ring with it. */
 	ledger->positions[table] = (erx_dma_position_t){ 0, 0 };
