@@ -1022,8 +1022,8 @@ processes that linked to or monitored its processes get the exit signals
 and `'DOWN'` messages Erlang already defines ([design-runtime.md, Crash
 handling](../design-runtime.md#crash-handling)). **Built**: ERTS runs in
 user mode as the system domain on Fiasco, and other domains each run
-their own ERTS in an address space of their own (README.md, "Current
-status").
+their own ERTS in an address space of their own ([the top-level README, Current
+status](../../README.md#current-status)).
 
 No domain gets a measured share of CPU time; each has a
 **priority band**, the Fiasco priority its threads start at, and a set
@@ -1084,7 +1084,7 @@ same as for a local send; B checks the frame before Q sees anything.*
 
 **Built**: domains message each other as Erlang nodes do, through the
 funnel (`liberx/erx_funnel.c`) and an export table kept by each domain
-(README.md, "Current status"). Chapter 10 explains connections, the
+([the top-level README, Current status](../../README.md#current-status)). Chapter 10 explains connections, the
 funnel and exports.
 
 ### 3.9.3 Supervisors all the way down
@@ -1094,7 +1094,7 @@ A device driver in erXos is an Erlang process under a supervisor, over a
 ([design.md, Drivers and DMA](../design.md#drivers-and-dma)). A driver
 whose device surprises it crashes, and its supervisor restarts it, as
 section 3.3 describes. **Built**: the display and input drivers are
-Erlang processes (README.md, "Current status"). A test under QEMU, the
+Erlang processes ([the top-level README, Current status](../../README.md#current-status)). A test under QEMU, the
 machine emulator erXos's tests run on, kills the disk's driver in the
 middle of a transfer. It finds each kept file cut at a sync (**Built**).
 [Chapter 15](README.md#chapter-15-devices-and-drivers) treats drivers.
@@ -1162,8 +1162,8 @@ Only a domain whose runtime image is marked for JIT gets an address
 space that allows this. The system domain runs the interpreter and makes
 no machine code
 ([design-runtime.md, BeamAsm](../design-runtime.md#beamasm)). **Built**:
-domains run either the interpreter or BeamAsm (README.md, "Current
-status").
+domains run either the interpreter or BeamAsm ([the top-level README, Current
+status](../../README.md#current-status)).
 
 The rule has limits. Any other memory object can be mapped writable in
 one place and executable in another, so any domain can run code it
@@ -1178,8 +1178,7 @@ alias](../design-fiasco.md#shared-objects-and-the-jit-alias)).
 development host. It names each module by the SHA-256 hash of its file,
 and the system checks the bytes against that hash before the loader
 reads them, refusing a mismatch with `hash_mismatch`
-(`erlang/apps/erx_code/src/erx_code_store.erl`). **Built** (README.md,
-"Current status"). The system domain goes further and loads only code
+(`erlang/apps/erx_code/src/erx_code_store.erl`). **Built** ([the top-level README, Current status](../../README.md#current-status)). The system domain goes further and loads only code
 from installed storage, never a binary a service merely received
 ([design-runtime.md, Code in the system
 domain](../design-runtime.md#code-in-the-system-domain)). This is

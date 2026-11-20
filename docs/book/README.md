@@ -76,7 +76,7 @@ marks:
 
 | Mark | Meaning |
 | --- | --- |
-| **Built** | works in the tree today, in a QEMU suite, on the board or in host tests, as [README.md](../../README.md#current-status) "Current status" and the code show it |
+| **Built** | works in the tree today, in a QEMU suite, on the board or in host tests, as [the top-level README, Current status](../../README.md#current-status) and the code show it |
 | **Designed** | specified in the design documents and not implemented |
 
 The outline's marks are what README.md's "Current status" says; the
