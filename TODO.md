@@ -7986,11 +7986,6 @@ to the corpus and follow rc
   entries and hub fields, route, speed, root port and TT left 0, as the design's table says, though a controller that
   evaluates the whole slot context with its add flag would misread them; a non-EP0 control endpoint takes index
   2n + 1 (xHCI 4.5.1); and whether a setup packet's direction bit must match the data stage's.
-* [Low] USB, `erx_xhci_core`'s extended-capability registers (erlang/apps/erx_usb/src/erx_xhci_core.erl, register/0):
-  the legacy support semaphore bytes and the supported-protocol words are abstract names, and their fields
-  (`SEMAPHORE_OWNED`, `PROTOCOL_*`) hand constants, until the device NIF's binding of the
-  extended capabilities (design-usb.md, "Registers at offsets the controller reports") gives them SVD clusters; then the names map to the SVD's registers,
-  the fields come from the generated macros, and `{start, Bound}`'s shape follows what the NIF reports it bound.
 * [Low] USB, a USB 3 root port after a disable (`erx_xhci_core`, port_operation/2): writing PORTSC's PED to disable a
   USB 3 port leaves it in the Disabled link state, which leaves only through a PLS write of RxDetect with LWS set
   (xHCI 1.2, 5.4.8, p. 406); the core writes no PLS, so the port stays dead until the controller restarts. Nor does
@@ -8389,6 +8384,16 @@ to the corpus and follow rc
   the driver starts no process. Both devices come up under HVF; TCG and boards are not checked. Derive the row's
   memory from the queue's needs at the granule the platform reports instead of writing a size by hand.
 
+* [Medium] device NIF, `otp/erts/emulator/nifs/erxos/erx_device.c`: only the driver accesses go through a record's
+  layout (`erx_device_layout_offset`); the NIF's own sequences (`get`/`put`, `register_at` for plan steps, the SD
+  command store, GENET's `rbuf_ctrl`) address registers by their table offset, which is right only for a register
+  at a fixed offset. No such sequence reaches xHCI yet; before one does (the TRB form's install, doorbells, `USBCMD`),
+  `load` and `store` should take a register and element and resolve them, so no raw offset can be written.
+* [Low] device NIF, `otp/erts/emulator/nifs/erxos/erx_device_bif.c`: `write/3` and `write_field/4` take no device lock,
+  though design-device-dma.md ("Register ownership", "Every driver write takes the device lock") has them take the
+  lock the queue calls hold; so the read with which `write/3` checks a register's owned fields (xHCI's `USBCMD` and
+  `IMAN`) is not ordered against a `negotiate/2` another process of the domain runs on the same device. One driver
+  process holds each device, so no driver interleaves them today.
 * [Medium] device NIF, `otp/erts/emulator/nifs/erxos/erx_device_nif.c`, `open/1`: a spec's `peripheral` is the
   caller's, so a driver can open a window as any table peripheral whose block fits it, such as a virtio-mmio
   transport as `sdhci`, and reach the transport's owned offsets through that peripheral's writable registers,

@@ -492,18 +492,6 @@ check_open(const char *name, uint64_t block_bytes)
 	for (uint32_t index = 0; index < ERX_DEVICE_FIELDS_MAX; index++)
 		field_keys[index] = KEY_BASE + index;
 	CHECK(erx_device_get(0) == NULL);
-#ifndef ERX_DEVICE_FIXTURE
-	/*
-	 * xHCI has clusters at offsets the controller reports and fields the NIF owns in
-	 * registers it does not own whole, which this NIF does not resolve or enforce: it
-	 * opens no peripheral with a movable cluster, a stand-in neither.
-	 */
-	spec = spec_of("xhci", 0x9000000);
-	CHECK(erx_device_open(&spec, NULL, NULL, &device) == ERX_EINVAL);
-	spec.form = ERX_DEVICE_FORM_STAND_IN;
-	CHECK(erx_device_open(&spec, NULL, NULL, &device) == ERX_EINVAL);
-	spec = spec_of(name, 0x9000000);
-#endif
 	spec.peripheral_length = strlen(name) - 1;
 	CHECK(erx_device_open(&spec, NULL, NULL, &device) == ERX_EINVAL);
 	spec = spec_of(name, 0x9000000);
@@ -784,9 +772,273 @@ check_peripheral(const erx_device_peripheral_t *fixture, const erx_device_t *dev
 }
 #endif
 
+#ifdef ERX_DEVICE_XHCI
+/*
+ * xHCI's layout (docs/design-usb.md, "Registers at offsets the controller reports"), over a
+ * register file of the test's own, which no controller's specification fixes: the operational
+ * registers at CAPLENGTH 0x40, four ports, the runtime registers at 0x600, the doorbells at
+ * 0x800, and the extended capabilities from 0xc00, past them: legacy support, a capability of an ID no
+ * cluster has, and two supported protocols, USB 2 on ports 1-2 and USB 3 on ports 3-4.
+ */
+#define XHCI_BYTES	WINDOW_BYTES
+#define XHCI_LIST	0xc00u
+
+static void
+put8(uint8_t *file, uint64_t offset, uint8_t value)
+{
+	file[offset] = value;
+}
+
+static void
+put32(uint8_t *file, uint64_t offset, uint32_t value)
+{
+	for (unsigned byte = 0; byte < 4; byte++)
+		file[offset + byte] = (uint8_t)(value >> (8 * byte));
+}
+
+/* An extended capability's first word: its ID and the next entry's offset in words (Table 7-1). */
+static uint32_t
+entry(uint8_t id, uint8_t next, uint8_t major)
+{
+	return ((uint32_t)id | (uint32_t)next << 8 | (uint32_t)major << 24);
+}
+
+static void
+xhci_file(uint8_t *file)
+{
+	memset(file, 0, XHCI_BYTES);
+	put8(file, 0x00, 0x40);				/* CAPLENGTH */
+	put32(file, 0x04, 4u << 24 | 8u);		/* HCSPARAMS1: four ports, eight slots */
+	put32(file, 0x10, (XHCI_LIST / 4) << 16);	/* HCCPARAMS1.XECP, in words */
+	put32(file, 0x14, 0x800);			/* DBOFF */
+	put32(file, 0x18, 0x600);			/* RTSOFF */
+	put32(file, XHCI_LIST, entry(1, 4, 0));		/* legacy support, BIOS owned */
+	put8(file, XHCI_LIST + 2, 1);
+	put32(file, XHCI_LIST + 0x10, entry(10, 4, 0));	/* debug, no cluster's */
+	put32(file, XHCI_LIST + 0x20, entry(2, 4, 2));	/* USB 2: ports 1 and 2 */
+	put32(file, XHCI_LIST + 0x28, 2u << 8 | 1u);
+	put32(file, XHCI_LIST + 0x30, entry(2, 0, 3));	/* USB 3: ports 3 and 4, the list's end */
+	put32(file, XHCI_LIST + 0x38, 2u << 8 | 3u);
+}
+
+/* The resolution of a layout over `file`, run as erx_device_open runs it. */
+static erx_device_resolve_op_t
+resolve(const erx_device_peripheral_t *xhci, const uint8_t *file, uint64_t size, erx_device_layout_t *layout)
+{
+	erx_device_resolve_t step;
+	uint32_t reads = 0;
+
+	erx_device_resolve_begin(xhci, size, layout, &step);
+	while (step.op == ERX_DEVICE_RESOLVE_READ) {
+		uint64_t word = 0;
+
+		CHECK(step.offset % (step.width / 8u) == 0 && step.offset + step.width / 8u <= size && ++reads <= 80);
+		for (unsigned byte = 0; byte < step.width / 8u; byte++)
+			word |= (uint64_t)file[step.offset + byte] << (8 * byte);
+		erx_device_resolve_step(xhci, layout, &step, word);
+	}
+	return (step.op);
+}
+
+static uint64_t
+offset_of(const erx_device_peripheral_t *xhci, const erx_device_layout_t *layout, const char *name, bool indexed,
+    uint64_t index)
+{
+	uint64_t offset = UINT64_MAX;
+
+	CHECK(erx_device_layout_offset(xhci, layout, register_of(xhci, name), indexed, index, &offset));
+	return (offset);
+}
+
+/* Every name resolves where the register file puts it, and no element past what the controller has. */
+static void
+check_xhci_layout(const erx_device_peripheral_t *xhci)
+{
+	static uint8_t file[XHCI_BYTES];
+	erx_device_layout_t layout;
+	uint64_t offset;
+
+	xhci_file(file);
+	CHECK(resolve(xhci, file, XHCI_BYTES, &layout) == ERX_DEVICE_RESOLVE_DONE);
+	CHECK(offset_of(xhci, &layout, "hccparams1", false, 0) == 0x10);
+	CHECK(offset_of(xhci, &layout, "usbcmd", false, 0) == 0x40 && offset_of(xhci, &layout, "config", false, 0) == 0x78);
+	CHECK(offset_of(xhci, &layout, "portsc", true, 3) == 0x40 + 0x400 + 3 * 0x10);
+	CHECK(offset_of(xhci, &layout, "iman", false, 0) == 0x620 && offset_of(xhci, &layout, "db", true, 255) == 0x800 + 255 * 4);
+	CHECK(offset_of(xhci, &layout, "bios_owned", false, 0) == XHCI_LIST + 2);
+	CHECK(offset_of(xhci, &layout, "os_owned", false, 0) == XHCI_LIST + 3);
+	CHECK(offset_of(xhci, &layout, "revision", true, 0) == XHCI_LIST + 0x20);
+	CHECK(offset_of(xhci, &layout, "ports", true, 1) == XHCI_LIST + 0x38);
+	CHECK(layout.elements[erx_device_register_named(xhci, "portsc")] == 4);
+	CHECK(layout.elements[erx_device_register_named(xhci, "revision")] == 2);
+	/* A port past the count, a protocol past those found, and an array named as a register, each refused. */
+	CHECK(!erx_device_layout_offset(xhci, &layout, register_of(xhci, "portsc"), true, 4, &offset));
+	CHECK(!erx_device_layout_offset(xhci, &layout, register_of(xhci, "revision"), true, 2, &offset));
+	CHECK(!erx_device_layout_offset(xhci, &layout, register_of(xhci, "revision"), false, 0, &offset));
+
+	/* Without the legacy entry its registers are unreachable; the list's end at a zero next pointer. */
+	xhci_file(file);
+	put32(file, 0x10, ((XHCI_LIST + 0x20) / 4) << 16);
+	CHECK(resolve(xhci, file, XHCI_BYTES, &layout) == ERX_DEVICE_RESOLVE_DONE);
+	CHECK(!erx_device_layout_offset(xhci, &layout, register_of(xhci, "bios_owned"), false, 0, &offset));
+	CHECK(layout.elements[erx_device_register_named(xhci, "revision")] == 2);
+	/* No list at all: no capability, and the rest as before. */
+	put32(file, 0x10, 0);
+	CHECK(resolve(xhci, file, XHCI_BYTES, &layout) == ERX_DEVICE_RESOLVE_DONE);
+	CHECK(layout.elements[erx_device_register_named(xhci, "revision")] == 0);
+}
+
+/* Each layout the window cannot hold, refused. */
+static void
+check_xhci_refusals(const erx_device_peripheral_t *xhci)
+{
+	static uint8_t file[XHCI_BYTES];
+	erx_device_layout_t layout;
+
+	/* Clusters past the window: the doorbells, the runtime registers, the operational ones misaligned. */
+	xhci_file(file);
+	put32(file, 0x14, XHCI_BYTES - 0x100);
+	CHECK(resolve(xhci, file, XHCI_BYTES, &layout) == ERX_DEVICE_RESOLVE_REFUSED);
+	xhci_file(file);
+	put32(file, 0x18, XHCI_BYTES - 0x20);
+	CHECK(resolve(xhci, file, XHCI_BYTES, &layout) == ERX_DEVICE_RESOLVE_REFUSED);
+	xhci_file(file);
+	put8(file, 0x00, 0x42);
+	CHECK(resolve(xhci, file, XHCI_BYTES, &layout) == ERX_DEVICE_RESOLVE_REFUSED);
+	/*
+	 * Clusters over one another, or over the fixed registers: the runtime registers over the
+	 * operational ones, the legacy capability's semaphores over USBCMD's top bytes, a protocol
+	 * inside the capability registers. Each would let a register a driver writes stand where one the NIF
+	 * owns is.
+	 */
+	xhci_file(file);
+	put32(file, 0x18, 0x40);
+	CHECK(resolve(xhci, file, XHCI_BYTES, &layout) == ERX_DEVICE_RESOLVE_REFUSED);
+	xhci_file(file);
+	put32(file, 0x10, (0x40 / 4) << 16);
+	put32(file, 0x40, entry(1, 0, 0));
+	CHECK(resolve(xhci, file, XHCI_BYTES, &layout) == ERX_DEVICE_RESOLVE_REFUSED);
+	xhci_file(file);
+	put32(file, 0x10, (0x1c / 4) << 16);
+	put32(file, 0x1c, entry(2, 0, 3));
+	CHECK(resolve(xhci, file, XHCI_BYTES, &layout) == ERX_DEVICE_RESOLVE_REFUSED);
+	/* More ports than the window holds; fewer fit. */
+	xhci_file(file);
+	put32(file, 0x04, 255u << 24);
+	CHECK(resolve(xhci, file, XHCI_BYTES, &layout) == ERX_DEVICE_RESOLVE_REFUSED);
+	/* The list's head, and an entry's next, past the window; a capability's registers past it. */
+	xhci_file(file);
+	put32(file, 0x10, (XHCI_BYTES / 4) << 16);
+	CHECK(resolve(xhci, file, XHCI_BYTES, &layout) == ERX_DEVICE_RESOLVE_REFUSED);
+	xhci_file(file);
+	put32(file, 0x10, ((XHCI_BYTES - 0x10) / 4) << 16);
+	put32(file, XHCI_BYTES - 0x10, entry(10, 0xff, 0));
+	CHECK(resolve(xhci, file, XHCI_BYTES, &layout) == ERX_DEVICE_RESOLVE_REFUSED);
+	xhci_file(file);
+	put32(file, 0x10, ((XHCI_BYTES - 4) / 4) << 16);
+	put32(file, XHCI_BYTES - 4, entry(2, 0, 3));
+	CHECK(resolve(xhci, file, XHCI_BYTES, &layout) == ERX_DEVICE_RESOLVE_REFUSED);
+	/* A word of all ones, a function gone from the bus, steps forward until it leaves the window. */
+	xhci_file(file);
+	memset(file + XHCI_LIST, 0xff, XHCI_BYTES - XHCI_LIST);
+	CHECK(resolve(xhci, file, XHCI_BYTES, &layout) == ERX_DEVICE_RESOLVE_REFUSED);
+	/* A second legacy entry, and a ninth protocol, are more than their clusters bind. */
+	xhci_file(file);
+	put32(file, XHCI_LIST + 0x10, entry(1, 4, 0));
+	CHECK(resolve(xhci, file, XHCI_BYTES, &layout) == ERX_DEVICE_RESOLVE_REFUSED);
+	xhci_file(file);
+	for (uint32_t at = 0; at < 9; at++)
+		put32(file, XHCI_LIST + 0x10 * at, entry(2, at < 8 ? 4 : 0, 2));
+	CHECK(resolve(xhci, file, XHCI_BYTES, &layout) == ERX_DEVICE_RESOLVE_REFUSED);
+	put32(file, XHCI_LIST + 0x70, entry(2, 0, 2));
+	CHECK(resolve(xhci, file, XHCI_BYTES, &layout) == ERX_DEVICE_RESOLVE_DONE);
+	/* Sixty-four entries are followed; a sixty-fifth is refused. */
+	xhci_file(file);
+	for (uint32_t at = 0; at < ERX_DEVICE_LIST_ENTRIES_MAX + 1; at++)
+		put32(file, XHCI_LIST + 4 * at, entry(10, at < ERX_DEVICE_LIST_ENTRIES_MAX ? 1 : 0, 0));
+	CHECK(resolve(xhci, file, XHCI_BYTES, &layout) == ERX_DEVICE_RESOLVE_REFUSED);
+	put32(file, XHCI_LIST + 4 * (ERX_DEVICE_LIST_ENTRIES_MAX - 1), entry(10, 0, 0));
+	CHECK(resolve(xhci, file, XHCI_BYTES, &layout) == ERX_DEVICE_RESOLVE_DONE);
+}
+
+/* A record over the register file: its accesses by the layout, the owned fields kept, the elements it reports. */
+static void
+check_xhci_record(const erx_device_peripheral_t *xhci)
+{
+	const erx_device_spec_t spec = spec_of("xhci", 0x9000000);
+	erx_device_spec_t bare = spec_of("xhci", 0x9001000), far = spec_of("xhci", 0x9002000);
+	const erx_device_register_t *const usbcmd = register_of(xhci, "usbcmd"), *const iman = register_of(xhci, "iman");
+	const erx_device_register_t *const portsc = register_of(xhci, "portsc"), *const revision = register_of(xhci, "revision");
+	const erx_device_register_t *const bios = register_of(xhci, "bios_owned"), *const os = register_of(xhci, "os_owned");
+	const erx_device_element_t port3 = { .indexed = true, .index = 3 }, port4 = { .indexed = true, .index = 4 };
+	const erx_device_element_t second = { .indexed = true, .index = 1 }, third = { .indexed = true, .index = 2 };
+	uint8_t *const file = window_memory[next_window];
+	const erx_device_t *record;
+	uint32_t device;
+	uint64_t word;
+
+	/* Each record its own line, as two devices of the domain have. */
+	bare.lines[0] = 34;
+	far.lines[0] = 35;
+	xhci_file(file);
+	put32(file, 0x40, 1);			/* USBCMD.RS */
+	put32(file, 0x620, 3);			/* IMAN: IP and IE */
+	put32(file, 0x40 + 0x400 + 3 * 0x10, 1u << 9 | 1u << 17);	/* port 4: PP and CSC */
+	CHECK(erx_device_open(&spec, NULL, NULL, &device) == ERX_OK && (record = erx_device_get(device)) != NULL);
+	CHECK(erx_device_elements(record, portsc) == 4 && erx_device_elements(record, revision) == 2);
+	CHECK(erx_device_elements(record, bios) == 1 && erx_device_elements(record, usbcmd) == 1);
+	CHECK(erx_device_read(record, revision, second, &word) && word == entry(2, 0, 3));
+	CHECK(!erx_device_read(record, revision, third, &word) && !erx_device_read(record, portsc, port4, &word));
+	CHECK(erx_device_read_field(record, bios, plain, field_of(xhci, bios, "owned"), &word) && word == 1);
+	CHECK(erx_device_write(record, os, plain, 1) && file[XHCI_LIST + 3] == 1 && file[XHCI_LIST + 2] == 1);
+
+	/* USBCMD's owned fields go back as read, and the acting ones as 0: R/S stays, no reset, no save. */
+	CHECK(erx_device_write(record, usbcmd, plain, 1u | 1u << 10) && file[0x41] == 0x04);
+	CHECK(!erx_device_write(record, usbcmd, plain, 0) && !erx_device_write(record, usbcmd, plain, 1u | 1u << 1));
+	CHECK(!erx_device_write(record, usbcmd, plain, 1u | 1u << 7) && !erx_device_write(record, usbcmd, plain, 1u | 1u << 8));
+	CHECK(!erx_device_write_field(record, usbcmd, plain, field_of(xhci, usbcmd, "rs"), 1));
+	CHECK(file[0x40] == 1 && file[0x41] == 0x04);
+	/* IMAN's pending bit is cleared with IE as read, never alone, which would close the interrupter. */
+	CHECK(!erx_device_write(record, iman, plain, 1) && !erx_device_write_field(record, iman, plain, field_of(xhci, iman, "ip"), 1));
+	CHECK(file[0x620] == 3 && erx_device_write(record, iman, plain, 3));
+	/* A port's change bit alone would write PP 0, which powers the port off. */
+	CHECK(!erx_device_write_field(record, portsc, port3, field_of(xhci, portsc, "csc"), 1));
+	CHECK(erx_device_read(record, portsc, port3, &word) && (word & (1u << 9)) != 0);
+
+	/* A controller without the legacy capability: its semaphores are no names of the record. */
+	uint8_t *const other = window_memory[next_window];
+
+	xhci_file(other);
+	put32(other, 0x10, ((XHCI_LIST + 0x20) / 4) << 16);
+	CHECK(erx_device_open(&bare, NULL, NULL, &device) == ERX_OK && (record = erx_device_get(device)) != NULL);
+	CHECK(erx_device_elements(record, bios) == 0 && !erx_device_read(record, bios, plain, &word));
+	CHECK(!erx_device_write(record, os, plain, 1) && other[XHCI_LIST + 3] == 0);
+
+	/* A record whose doorbells lie past its window is refused. */
+	xhci_file(window_memory[next_window]);
+	put32(window_memory[next_window], 0x14, XHCI_BYTES - 0x100);
+	CHECK(erx_device_open(&far, NULL, NULL, &device) == ERX_EINVAL && erx_device_get(2) == NULL);
+}
+
+static void
+check_xhci(void)
+{
+	const erx_device_peripheral_t *const xhci = erx_device_peripheral_find("xhci", 4);
+
+	CHECK(xhci != NULL && xhci->listed);
+	check_xhci_layout(xhci);
+	check_xhci_refusals(xhci);
+	check_xhci_record(xhci);
+}
+#endif
+
 int
 main(void)
 {
+#ifdef ERX_DEVICE_XHCI
+	check_xhci();
+	printf("erx_device xhci done\n");
+	return (0);
+#endif
 #ifdef ERX_DEVICE_FIXTURE
 	const char *const name = "fixture";
 	const uint64_t block_bytes = WINDOW_BYTES;

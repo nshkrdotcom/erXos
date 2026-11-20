@@ -179,12 +179,9 @@ answers the step's error.
 A register by the name the core gives it, which the controller process maps
 to the device NIF's: a capability or operational register by its name in
 hw/svd/xhci/xhci.svd; port n's PORTSC; the legacy support capability's
-semaphore bytes, xECP + 2, whose bit 0 is USBLEGSUP's BIOS-owned bit 16, and
-xECP + 3, whose bit 0 is its OS-owned bit 24, each written alone as the
-capability allows and FreeBSD does (xHCI 7.1.1, Table 7-4, pp. 519-520;
-xhcireg.h:198-199); and the I-th supported-protocol capability's words at
-offsets 0, with its major revision, and 8, with its ports (7.2, Tables 7-6
-and 7-8, pp. 522-523).
+semaphore bytes, its cluster LEGACY's BIOS_OWNED and OS_OWNED there; and the
+I-th supported-protocol capability's REVISION and PORTS, of the I-th instance
+of its cluster PROTOCOL.
 """.
 -type register() :: hcsparams1 | hcsparams2 | hccparams1 | pagesize | usbsts | iman
                   | {portsc, port_no()}
@@ -288,17 +285,6 @@ PORTSC read is awaited, oldest first; `line` the interrupt line: `idle`,
                      commands := [owner()]}.
 
 -define(EP0, 1).
-
-%% The fields of the registers hw/svd/xhci/xhci.svd does not describe yet, whose
-%% spelling waits on the device NIF's binding of the extended capabilities: bit 0 of
-%% each legacy support semaphore byte (7.1.1, Table 7-4, pp. 519-520); a supported-
-%% protocol capability's major revision, bits 31:24 of its word 0, and its compatible
-%% port offset and count, bits 7:0 and 15:8 of its word 8 (7.2, Tables 7-6 and 7-8,
-%% pp. 522-523).
--define(SEMAPHORE_OWNED, 1).
--define(PROTOCOL_MAJOR_SHIFT, 24).
--define(PROTOCOL_COUNT_SHIFT, 8).
--define(PROTOCOL_FIELD, 16#ff).
 -define(IS_BUS_COMMAND(C), (C =:= enable_slot orelse element(1, C) =:= address_device
                             orelse element(1, C) =:= evaluate_context orelse element(1, C) =:= configure_endpoints)).
 
@@ -413,7 +399,7 @@ capabilities_read({ok, Capabilities}, Bound, Now, {S, A}) ->
     case Bound of
         #{legacy := true} ->
             emit({read, [{legacy, bios_owned}]},
-                 emit({write, {legacy, os_owned}, ?SEMAPHORE_OWNED},
+                 emit({write, {legacy, os_owned}, ?ERX_HW_XHCI_OS_OWNED_OWNED_MASK},
                       set_phase({bios_handoff, Now + ?ERX_XHCI_BIOS_HANDOFF_MS, reading}, Read)));
         #{legacy := false} ->
             install(Now, Read)
@@ -425,7 +411,7 @@ capabilities_read({error, Reason}, _Bound, _Now, Acc) ->
 %% FreeBSD gives the BIOS (xhci_pci.c:546-555); otherwise it is read again.
 bios_owned(Byte, Now, Acc = {#{phase := {bios_handoff, GiveUp, reading}}, _}) ->
     if
-        Byte band ?SEMAPHORE_OWNED =:= 0 -> install(Now, Acc);
+        ?ERX_HW_XHCI_BIOS_OWNED_OWNED_GET(Byte) =:= 0 -> install(Now, Acc);
         Now >= GiveUp -> install(Now, emit({log, bios_handoff_timeout}, Acc));
         true -> set_phase({bios_handoff, GiveUp, {poll, Now + ?ERX_XHCI_POLL_MS}}, Acc)
     end.
@@ -630,12 +616,12 @@ decode_capabilities(Words = #{hcsparams1 := Params1, hcsparams2 := Params2, hccp
 %% named before, since a port speaks one protocol.
 protocol_ports(I, Words, Ports, Named) ->
     #{{protocol, I, revision} := Revision, {protocol, I, ports} := PortWord} = Words,
-    First = PortWord band ?PROTOCOL_FIELD,
-    Count = (PortWord bsr ?PROTOCOL_COUNT_SHIFT) band ?PROTOCOL_FIELD,
+    First = ?ERX_HW_XHCI_PORTS_OFFSET_GET(PortWord),
+    Count = ?ERX_HW_XHCI_PORTS_COUNT_GET(PortWord),
     First >= 1 andalso Count >= 1 andalso First + Count - 1 =< Ports orelse throw({malformed, {protocol, I}}),
     Range = lists:seq(First, First + Count - 1),
     lists:any(fun(Port) -> is_map_key(Port, Named) end, Range) andalso throw({malformed, {protocol, I}}),
-    Major = (Revision bsr ?PROTOCOL_MAJOR_SHIFT) band ?PROTOCOL_FIELD,
+    Major = ?ERX_HW_XHCI_REVISION_MAJOR_GET(Revision),
     maps:merge(Named, maps:from_list([{Port, Major} || Port <- Range])).
 
 %% Commands, one at a time

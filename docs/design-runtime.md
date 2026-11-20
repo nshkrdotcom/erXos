@@ -2812,11 +2812,22 @@ written, so the input driver can write only `select` and `subsel`, each one
 byte, as virtio 1.2 sections 4.2.2.2 and 5.8.5.1 require. A cluster whose base
 the controller reports, as xHCI's operational, runtime and doorbell registers
 are, is marked in the SVD source with the register and field its base comes
-from; at open the NIF reads each base once, checks that the cluster lies wholly
-inside the window and refuses the record with `{error, einval}` otherwise, and
-follows the controller's extended-capability list once, at most 64 entries,
-each forward of the last, so every name then resolves to a fixed offset
-([design-usb.md](design-usb.md#registers-at-offsets-the-controller-reports)). Every
+from, and a cluster of an extended capability with the capability's ID, its base
+the entry of that ID on the list whose head the peripheral names; at open the
+NIF reads each base and count once, follows the controller's extended-capability
+list once, at most 64 entries, each forward of the last, checks that every
+element of every register lies wholly inside the window at an offset aligned to
+its width and that no cluster lies over another or over the registers at fixed
+offsets, and refuses the record with `{error, einval}` otherwise, so every name
+then resolves to a fixed offset
+([design-usb.md](design-usb.md#registers-at-offsets-the-controller-reports)).
+The decision is a pure state machine in `erx_device_core`, which asks for one
+read at a time and which the open runs to its end. An array whose live length
+the device reports takes an index below that length, and a capability's
+registers are reached only where the walk found its entry, each instance of one
+that may occur more than once as `{Name, Index}` in list order;
+`erx_device:elements(Dev, Name)` says how many elements of a register the record
+has. Every
 register of a peripheral the NIF drives carries a mark in the SVD source,
 `ownedByNif`, saying whether the NIF owns it, and the generator refuses a
 register without the mark. The NIF owns every register through which a

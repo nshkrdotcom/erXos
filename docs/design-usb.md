@@ -2085,13 +2085,16 @@ the install, the three waits' sum from its first call, and fails the
 controller past it. The scratchpad passes to the device for good.
 
 **Registers it owns.** `DCBAAP`, `CRCR`, `CONFIG`, `ERSTSZ`, `ERSTBA`,
-`ERDP`, every doorbell, `USBCMD`'s run and reset bits, `USBCMD.INTE`,
+`ERDP`, every doorbell, `USBCMD`'s run bit and both resets (`HCRST` and
+`LHCRST`), its save and restore bits (`CSS` and `CRS`), `USBCMD.INTE`,
 `USBCMD.HSEE` and `IMAN.IE` are `ownedByNif` in `hw/svd/xhci/xhci.svd`:
 the first group changes where the controller reads or writes, which
 entries it takes as valid, or which of the DCBAA's entries it may
-follow, and the interrupt gates belong with the install that must open
-them again after every reset, so no driver path can leave them closed
-on an interrupt-driven controller. `PORTSC`, `USBSTS`'s change bits,
+follow; a light reset returns the controller's state as `HCRST` does,
+and a save or a restore moves that state to and from memory; and the
+interrupt gates belong with the install that must open them again after
+every reset, so no driver path can leave them closed on an
+interrupt-driven controller. `PORTSC`, `USBSTS`'s change bits,
 `IMAN`'s pending bit and the extended capabilities' registers are the
 driver's.
 
@@ -2121,8 +2124,24 @@ whose every entry names the next by a non-zero offset in words forward
 from itself (7, p. 517). At open the NIF follows it once, at most 64
 entries, each inside the window, and binds the legacy support capability
 and the supported-protocol capabilities, at most 8, as clusters of the
-same kind; since every step moves forward, the walk ends. This is a
-part of the device NIF's register model
+same kind; since every step moves forward, the walk ends. A list longer
+than 64 entries, an entry outside the window, a second legacy support
+capability, a ninth supported protocol, or bases that put one cluster
+over another or over the capability registers refuses the record with
+`{error, einval}`, and an entry of any other ID is passed over. The SVD
+source declares the list's head once on the peripheral, and each kind of
+capability as one cluster at offset 0 carrying its ID:
+`LEGACY`, whose semaphores are two 8-bit registers, `BIOS_OWNED` at +2
+and `OS_OWNED` at +3, each with its field `OWNED` in bit 0, since the
+capability is written a byte at a time (7.1.1) and registers do not
+overlap, and `PROTOCOL[%s]`, eight instances in list order, each with
+`REVISION`, its word 0 with the major revision, and `PORTS`, its word 8
+with the compatible port offset and count. The Erlang names are a
+register's, an atom, and `{Name, Index}` for an instance, and
+`erx_device:elements/2` says how many there are: `elements(Dev, revision)`
+is the number of protocols bound and `elements(Dev, bios_owned)` 1 with a
+legacy support capability and 0 without. This is a part of the device
+NIF's register model
 ([design-runtime.md](design-runtime.md#the-device-nif)).
 
 ### `qemu-xhci` on QEMU `virt`
