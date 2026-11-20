@@ -277,8 +277,8 @@ the smallest coherent demonstration of domains:
   through the same schema used by the console;
 * exhaust or crash that domain and observe its end, `{domain_down, D,
   Info}` on its domain pid, its connection taken down and every charge
-  back in its principal's budget, reported `unsupported` on Fiasco
-  and checked at M7, without losing the system shell;
+  back in its principal's budget, checked at M7 and on Fiasco through
+  the budget's partial `used`, without losing the system shell;
 * disconnect two introduced domains, observe `noconnection` on everything
   across their connection, introduce them again and complete another
   operation.

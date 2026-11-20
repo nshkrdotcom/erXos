@@ -503,9 +503,16 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   ([design-fiasco.md](docs/design-fiasco.md#handles-are-slots)).
 * [High] 0.2 on Fiasco, `liberx/backend/fiasco`: a Fiasco factory per domain budget, carved from its parent's
   at the budget's creation with the manifest row's kernel-memory figure, and every object of the domain
-  created through it, so a domain that spends its kernel memory fails alone with `ERX_ENOMEM`; user pages
-  charged to the budget's record and refused past its cap
+  created through it, so a domain that spends its kernel memory fails alone with `ERX_ENOMEM`
   ([design-fiasco.md](docs/design-fiasco.md#memory-and-budgets)).
+* [High] 0.2 on Fiasco, `liberx/backend/fiasco`: budgets are not walls over user pages. `budget.c` records a
+  budget's guarantee and cap (`budget.c:37-38`, `:116-117`) but refuses no charge, and the pool takes pages for
+  no budget (`vm.c:161-165`'s `vm_take`), so one domain's commits can drain the pool that every domain and the
+  root's own tables use. The fix is the design's per-budget page count and refusal: each record counts the pool
+  pages charged to it, a page taken is charged to the owning object's budget inside the call's whole-plan check
+  and refused past the wall, a carve reserves its guarantee from its parent, and the budget topic reports `used`
+  partial with `guarantee`, `cap` and `carved` exact ([design-fiasco.md](docs/design-fiasco.md), "Memory and
+  budgets" and "Reporting a budget"). It blocks the release.
 * [High] 0.2 on Fiasco, `liberx/backend/fiasco`: doorbells and device lines placed directly in their holders
   without Fiasco's special right, so a trigger and an acknowledgement are the holder's own `l4_irq_trigger`
   and `l4_irq_unmask` and only the root binds or detaches
