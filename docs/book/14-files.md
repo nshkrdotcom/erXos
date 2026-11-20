@@ -89,7 +89,7 @@ entry starts, as plain names (`/data` is the one name `data`). The
   boot image that holds the domain's own OTP release, in memory the
   kernel mapped before the domain could reach any server;
 * an EROFS image, the read-only format of
-  [chapter 16](16-storage.md), held in a file and read by the
+  [chapter 16](16-storage.md#162-read-only-system-images), held in a file and read by the
   domain's own runtime;
 * a file grant at a file server, named by its pid and the tree it
   serves;
@@ -382,7 +382,7 @@ that several grants share keeps its requests atomic itself, as `/tmp`
 does (section 14.4). Besides `/tmp` and `/proc`, the storage domain's
 littlefs server, the device service's `/dev` and the display's window
 trees are `erx_fs` modules
-([chapter 16](16-storage.md),
+([chapter 16](16-storage.md#163-littlefs-in-the-storage-domain),
 [chapter 22](README.md#chapter-22-displays-windows-and-the-web)).
 
 ### 14.2.5 Stream files and keepers

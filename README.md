@@ -124,8 +124,7 @@ than mirroring pixels. The [overview](docs/overview.md) tells the longer story.
   ([drivers](docs/design-system.md#drivers),
   [device shim](docs/design-runtime.md#the-device-nif))
 * **Storage in Erlang.** Release images are read-only EROFS, checked block
-  by block: the build writes them and a reader checks them, though
-  packages still ride in the boot image. The design keeps data in F2FS
+  by block: the build writes them and a reader checks them. The design keeps data in F2FS
   and removable media in FAT; until F2FS is built, a littlefs stopgap
   serves `/data`. An update will go to a spare slot and commit only after
   a healthy trial boot; none is built yet. A bug in a file system crashes
@@ -338,13 +337,12 @@ Eshell V17.1.1 (type help(). for help)
   release's files with its dm-verity hash tree after it, and the manifest's
   `system_image` row records the tree. On a guest, the `medium_boot` QEMU
   suite reads a release file from the partition through the hash-checking
-  reader. `erx_storage_system`, the read-only backend that will serve the
+  reader. `erx_storage_system`, the read-only backend that serves the
   partition's `apps/` as the `system` tree, is tested on the host: every
   block the EROFS reader parses, directories included, is checked against
   the tree's root hash first, and a block that does not match answers
-  `eio`. The partition holds no `apps/` yet, so a booted system serves an
-  empty `system` tree to no one. Packages still ride in the boot image,
-  and no slot writer or update is built to write the partition.
+  `eio`. Image packages lie in the partition's `apps/`; no slot writer or
+  update is built to write the partition.
 * An F2FS codec reads a volume's superblock and checkpoint pack, its node
   and segment tables, journals, inodes and directory entries, and a mount
   core picks the superblock copy and checkpoint pack and decides the mount

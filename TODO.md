@@ -2557,6 +2557,11 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
 
 ## Bugs by subsystem
 
+* [Medium] docs, `docs/design-shared-devices.md` (lines ~102 and ~456, invariant SD1): the design says a
+  give makes a unit's objects in the holder's budget; the code charges a device's DMA memory to the
+  system domain's budget and keeps it across the holder's restarts (`liberx/system/dom_life.c`
+  ~1117-1130, `.budget = ERX_DOM_OBJ_SYSTEM_BUDGET`; `config/manifest/qemu-virt-development.txt`
+  ~73-75 agrees with the code). Decide which is the design and change the other.
 * [Low] domain library, `liberx/system/dom_boot.c` (the apps budget and each principal's budget): both are
   created with `ERX_BUDGET_ELASTIC`, while the comments beside them and
   [design-fiasco.md](docs/design-fiasco.md) make a domain's budgets walls (cap equal to guarantee). Change

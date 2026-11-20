@@ -106,10 +106,10 @@ three.
 1. **Make the illegal state unrepresentable.** Choose a type in which
    the wrong value cannot be written. A queue that is idle, armed or in
    flight is one value of an enumeration, not three booleans that could
-   all be true at once. A **file grant**, the right to a file or a tree
-   of files that erXos hands a program, is `ro`, `rw` or `rx`. No
-   fourth value means "writable and runnable", so no code can create
-   one.
+   all be true at once. A **file grant**, the process at a file server
+   that stands for one client domain's right to one tree, has rights
+   `ro`, `rw` or `rx`. No fourth value means "writable and runnable",
+   so no code can create one.
 2. **Make the invariant a derived fact.** If two values must agree,
    compute both from one source, so nothing can change one alone. Every
    layer of erXos agrees on the kernel interface because every layer's

@@ -1297,10 +1297,14 @@ capability, and every server speaks 9P2000.L.
 **Background boxes.** The UNIX file model: paths, mounts, descriptors.
 Plan 9 in a page: per-process namespaces and 9P. RAM file systems.
 
-**Status.** Built: per-domain namespaces, file servers across domains,
-`/tmp` on a RAM file system in Erlang, stream files with keepers,
-`/proc` as an inspection tree. Designed: an app's own tree at `/svc/NAME`
-(the chapter's writer checks which parts are built).
+**Status.** Built: per-domain namespaces, file servers in other domains
+reached through file grants and 9P2000.L, the `erx_fs` behaviour, one
+path resolver for every runtime, a program's namespace narrowed from its
+starter's, stream files whose waiting reads a keeper holds, `/tmp` on a
+RAM file system in Erlang, `/proc` as a read-only view of the inspector,
+the host link's 9P bridge, and the session's export. Designed: entries
+on the export in a program's table, shared mappings of files, a
+`sysctl(3)` reader for programs, and an app's own tree at `/svc/NAME`.
 
 1. **A path is the face of a capability.** There is no global root: a
    domain's namespace is a private table from paths to grants, and each
@@ -1354,13 +1358,17 @@ check. Memory-mapped I/O, interrupt controllers and message-signalled
 interrupts. PCIe in a page. USB in a page: hubs, descriptors, transfers.
 Device trees and firmware. virtio.
 
-**Status.** Built: drivers as Erlang processes (virtio block, net, gpu
-and input on QEMU; SD, GENET Ethernet and the firmware framebuffer on the
-Pi 4), the device NIF with its round functions and `erx_device_dma_check`,
-the device tree reader, the driver supervisor restarting a killed driver.
-Built as pure cores with host tests: USB's hub and port state machine
-and decoders, the Pi header's pin ownership core. Designed: the PCIe
-domain and virtio-pci with MSIs.
+**Status.** Built: drivers as supervised Erlang processes (virtio devices
+on QEMU `virt`; the SD card, GENET Ethernet and the firmware
+framebuffer on the Raspberry Pi 4), the device NIF with the virtio and
+GENET descriptor forms and the check of every DMA plan, the device tree
+reader's DMA facts, the unit rule, the driver-control facet and both
+drivers' restarts. Built, and unexercised because no PCIe domain runs:
+the give of a PCIe function. Built as pure code with host tests: the
+PCIe enumerator's parts, USB's cores and decoders, the TRB descriptor
+form, and the check of the Pi 4's header map. Designed: the running PCIe
+and USB domains, MSI delivery, virtio over PCIe, the SD controller's
+ADMA2 form, the Pi 4's header drivers and `/proc/sensors`.
 
 1. **A driver is a process.** Kill the network driver's process
    mid-transfer from the shell; its supervisor restarts it, the device
@@ -1447,13 +1455,18 @@ File-system design: logs, flash translation and why flash wears (F2FS,
 littlefs, EROFS). A/B updates and chains of hashes from boot to system
 image.
 
-**Status.** Built: the storage domain serving `/data` from littlefs
-over virtio block and the Pi 4's SD card, restarting cleanly after a
-driver is killed mid-transfer; the EROFS reader; the build's system
-partition with its dm-verity hash tree; FAT for the card's boot volume.
-Built as pure cores with host tests: the F2FS codec and mount core.
-Designed: A/B updates with a trial boot, the `system` tree, erXos's
-F2FS as a mounted file system.
+**Status.** Built: the storage domain serving `/data` from littlefs over
+the virtio block driver and the Pi 4's SD card, restarting cleanly after
+a driver is killed mid-transfer; each user's home served from `/data`;
+the medium's layout of two slots, the vault's partition and the data
+partition; the boot-selection record the packer writes and the QEMU
+harness reads; the system partition as an EROFS image with a dm-verity
+hash tree, read only through blocks that pass the tree, and the
+partition's packages served as the `system` tree; the pure FAT reader
+for root's login keys on the card; the F2FS codec and mount core, tested
+on the host. Designed: the slot writer, updates with a trial boot and a
+commit, the reset count, the vault's storage domain, the FAT server, and
+erXos's F2FS as a mounted file system with its power-cut harness.
 
 1. **Storage as a service.** Storage runs in a domain of its own, in
    Erlang, over the block driver; a bug in a file system crashes a
