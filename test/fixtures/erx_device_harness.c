@@ -115,8 +115,10 @@ erx_mem_dma_addr(uint64_t mem, uint64_t offset, uint64_t *addr)
 }
 
 int
-erx_irq_create(uint64_t budget, uint64_t resource, uint32_t kind, uint64_t selector, uint64_t *irq)
+erx_irq_create(uint64_t budget, uint64_t resource, uint32_t kind, uint64_t selector, uint64_t *irq,
+    erx_msi_message_t *message)
 {
+	(void)message;
 	(void)budget;
 	(void)resource;
 	CHECK(kind == ERX_IRQ_LINE || kind == ERX_IRQ_SOFT);

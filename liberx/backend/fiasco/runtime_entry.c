@@ -518,7 +518,7 @@ device_give(const erx_boot_device_t *device, const erx_dom_device_entry_t *entry
 	if (erx_mem_create_physical(ERX_CAP_NULL, ERX_CAP_NULL, window.base, window.size, ERX_MEM_ATTR_DEVICE,
 	    &window_handle) != ERX_OK)
 		return ("a device record: the backend refused its register window");
-	if (erx_irq_create(ERX_CAP_NULL, ERX_CAP_NULL, ERX_IRQ_LINE, device->line, &line_handle) != ERX_OK)
+	if (erx_irq_create(ERX_CAP_NULL, ERX_CAP_NULL, ERX_IRQ_LINE, device->line, &line_handle, NULL) != ERX_OK)
 		return ("a device record: the backend refused its line");
 	if (entry->memory != 0 && (reason = device_memory(entry, &memory_handle, &absent)) != NULL)
 		return (reason);

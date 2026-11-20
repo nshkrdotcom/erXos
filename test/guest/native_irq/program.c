@@ -123,10 +123,11 @@ line_label(void)
 }
 
 /*
- * The bind and a second bind that moves the label, then the prompt for the harness's
- * character, its label and its ack. The line is level and its byte stays unread until
- * the root reads it, so the line fires again once the ack unmasks it, which shows the
- * holder's ack opened it; then an unbind.
+ * The bind and a second bind that moves the label, the first ack, which opens the line
+ * (docs/design-kernel.md, "IRQ objects"), then the prompt for the harness's character,
+ * its label and its ack. The line is level and its byte stays unread until the root
+ * reads it, so the line fires again once the ack unmasks it, which shows the holder's
+ * ack opened it; then an unbind.
  */
 static int64_t
 line_take(void)
@@ -135,6 +136,8 @@ line_take(void)
 		return (40);
 	if (erx_irq_bind(handles[HOLDER_LINE], ERX_CAP_SELF, HOLDER_LABEL) != ERX_OK)
 		return (41);
+	if (erx_irq_ack(handles[HOLDER_LINE]) != ERX_OK)
+		return (42);
 	erx_fiasco_task_write(HOLDER_PROMPT, sizeof(HOLDER_PROMPT) - 1);
 	if (line_label() != HOLDER_LABEL)
 		return (50);

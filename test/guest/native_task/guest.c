@@ -125,7 +125,7 @@ case_irq_refused(void)
 {
 	const uint64_t before = erx_fiasco_vm_free_pages();
 	uint64_t bell = 0, space = 0;
-	const bool made = erx_irq_create(0, 0, ERX_IRQ_SOFT, 0, &bell) == ERX_OK && bell >= 1 && bell <= IRQ_SCAN;
+	const bool made = erx_irq_create(0, 0, ERX_IRQ_SOFT, 0, &bell, NULL) == ERX_OK && bell >= 1 && bell <= IRQ_SCAN;
 	const int64_t status = made ? task_run(0, MODE_IRQ_REFUSED, &space) : INT64_MIN;
 	const bool kept = made && erx_object_destroy(bell) == ERX_OK;
 

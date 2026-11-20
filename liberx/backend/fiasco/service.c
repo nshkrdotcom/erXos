@@ -327,7 +327,7 @@ service_message(l4_msgtag_t tag, l4_umword_t label, const l4_msg_regs_t *mr, erx
 }
 
 /*
- * The IRQ calls (irq.c): any task makes a doorbell and the root a line, and any task holding its handle
+ * The IRQ calls (irq.c): any task makes a doorbell and the root a line or an MSI, and any task holding its handle
  * triggers, acks, binds and unbinds it, a task other than the root only within the group
  * it is the home of or a group it created.
  */
@@ -339,7 +339,7 @@ service_irq(const erx_fiasco_wire_decoded_t *decoded, erx_fiasco_reply_t *reply)
 
 	switch (decoded->call) {
 	case ERX_FIASCO_CALL_IRQ_CREATE:
-		return (erx_fiasco_irq_create_body(decoded->task, words, &reply->first));
+		return (erx_fiasco_irq_create_body(decoded->task, words, reply));
 	case ERX_FIASCO_CALL_IRQ_BIND:
 		return (erx_fiasco_irq_bind_body(decoded->task, words));
 	case ERX_FIASCO_CALL_IRQ_UNBIND:

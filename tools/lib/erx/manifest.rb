@@ -606,7 +606,8 @@ module Erx
           'sealing' => @codec.member('seal', 'none'),
           'system_runtime_limits' => reference(machine, 'system_runtime_limits', 'runtime_limits'),
           'native_limits' => reference(machine, 'native_limits', 'limits'),
-          'boot_timeout_s' => boot_timeout(machine)
+          'boot_timeout_s' => boot_timeout(machine),
+          'msi_frame' => msi_frame
         }
         check_lane(header.fetch('system_lane'), 'machine.system_lane')
         %w[system_queue peer_held].each do |key|
@@ -636,6 +637,23 @@ module Erx
         invalid("the machine's boot timeout of #{seconds} s is outside 1 to #{maximum} s", 'machine.boot_timeout_s')
       end
 
+      # The platform record's MSI frame, copied whole, or zeros for a platform without
+      # one (abi/manifest.txt, erx_mf_msi_frame). Its lines lie below
+      # msi_frame_lines_max, the reader's bound.
+      def msi_frame
+        frame = @context.platform['msi_frame']
+        return { 'base' => 0, 'first' => 0, 'count' => 0 } if frame.nil?
+
+        maximum = @codec.constant('msi_frame_lines_max')
+        fields = frame.is_a?(Hash) && frame.keys.sort == %w[base count first] ? frame.slice('base', 'first', 'count') : {}
+        base, first, count = fields.values_at('base', 'first', 'count')
+        return fields if [base, first, count].all?(Integer) && base.between?(1, (1 << 64) - 1) &&
+                         !first.negative? && count.positive? && first + count <= maximum
+
+        invalid("the platform's msi_frame needs a base, and lines from first to first + count at most #{maximum}",
+                'context.platform.msi_frame')
+      end
+
       def check_mode(development:, partial:)
         unless development
           raise Unsupported.new('a release build needs the confinement check that M11 brings', field: 'machine.flags')
@@ -656,7 +674,7 @@ module Erx
       end
 
       def check_device(device)
-        invalid('no domain holds a PCIe function until M9', 'devices.selector') if device.fetch('selector') == @codec.member('mf_selector', 'pci')
+        invalid('no domain holds a PCIe function until Track U (b) builds the enumerator', 'devices.selector') if device.fetch('selector') == @codec.member('mf_selector', 'pci')
         role = device.fetch('role')
         invalid('no domain holds PCIe configuration space until M9', 'devices.role') if role == device_role('configuration')
         invalid('no domain holds a TPM until M11', 'devices.role') if role == device_role('tpm')

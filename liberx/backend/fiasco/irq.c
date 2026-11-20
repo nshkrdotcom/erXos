@@ -6,7 +6,7 @@
 /*
  * The IRQ calls' bodies, on the service, which alone touches this table
  * (docs/design-fiasco.md, "Interrupts and readiness"). An IRQ object is an object
- * record of kind IRQ, any task's to make as a doorbell and the root's alone as a line,
+ * record of kind IRQ, any task's to make as a doorbell and the root's alone as a line or an MSI,
  * and any holder's to trigger, ack and bind; its kernel object sits in one of the root's
  * slots, kept here with its bind. The root binds
  * into any group it holds, as the domain library binds a domain's bell, and the root's own
@@ -20,8 +20,14 @@
  * group has a home with a dispatcher the bind waits, and group.c makes it once both
  * exist; a software fire before then arrives at the bind, as Fiasco keeps it for a
  * detached object. A bind goes with its group, whose end detaches the object. A bound
- * line stays masked from each delivery until its ack, which is Fiasco's own behaviour
- * for a level interrupt.
+ * line stays masked until the holder's first ack after the bind (docs/design-kernel.md,
+ * "IRQ objects"), and from each delivery until its ack, which is Fiasco's own behaviour
+ * for a level interrupt; an ack while the bind waits opens the line once it is made.
+ *
+ * An MSI object is a line of the manifest's MSI frame, the lowest that no object holds
+ * (msi_lines.c), set edge-triggered and bound as a line is; its create answers the
+ * frame's doorbell and the line's interrupt id (docs/design-pcie.md, "The MSI frame on
+ * Fiasco").
  */
 
 #include <stdatomic.h>
@@ -39,6 +45,7 @@
 #include "liberx/backend/core/park_table.h"
 #include "liberx/backend/core/vm_table.h"
 #include "liberx/backend/fiasco/group.h"
+#include "liberx/backend/fiasco/msi_lines.h"
 #include "liberx/backend/fiasco/object.h"
 #include "liberx/backend/fiasco/service_task.h"
 #include "liberx/backend/fiasco/service_wire.h"
@@ -47,17 +54,28 @@
 
 /* What a slot's group holds while the object is bound to none. */
 #define IRQ_UNBOUND	0u
+/*
+ * The MSI frame's doorbell, the register a function writes the line's interrupt id to,
+ * at this offset from the frame's base (docs/design-platforms.md, "MSI frames").
+ */
+#define IRQ_MSI_DOORBELL	UINT64_C(0x40)
 
-/* One kernel object and its bind. */
+/* One kernel object, what it fires from, and its bind. */
 typedef struct irq_object {
 	uint32_t	record;	/* the object record's index plus one, 0 for a free slot */
+	uint32_t	kind;	/* ERX_IRQ_SOFT, ERX_IRQ_LINE or ERX_IRQ_MSI */
+	uint32_t	line;	/* a line's or an MSI's interrupt id, 0 for a software object */
 	uint32_t	group;	/* the group record's index plus one, or IRQ_UNBOUND */
 	uint32_t	entry;	/* its entry in the group, while bound */
 	bool		made;	/* bound to the home's dispatcher, not waiting */
+	bool		opened;	/* acknowledged since the bind, so a line may deliver once made */
 	uint64_t	label;	/* the caller's, which the home's label page holds once made */
 } irq_object_t;
 
 static irq_object_t irq_objects[ERX_FIASCO_IRQS_MAX];
+/* The manifest's MSI frame: its lines and its doorbell, no lines until the root sets it. */
+static erx_fiasco_msi_range_t irq_msi_range;
+static uint64_t irq_msi_doorbell;
 
 static l4_cap_idx_t
 irq_cap(const irq_object_t *object)
@@ -120,7 +138,8 @@ irq_free_entry(uint32_t group)
 
 /*
  * Tries to make a waiting bind: once its group has a home with a dispatcher, stores
- * the label, binds the object to the dispatcher and lets a line deliver, setting made.
+ * the label, binds the object to the dispatcher, setting made, and lets a line deliver
+ * if the holder has acknowledged it since the bind.
  * Before then the bind keeps waiting, made stays false, and the result is ERX_OK; a
  * refusal of the label page or of the kernel's bind is ERX_EINVAL.
  */
@@ -138,7 +157,8 @@ irq_try_make(irq_object_t *object)
 	    object->entry)) < 0)
 		return (ERX_EINVAL);
 	object->made = true;
-	(void)l4_irq_unmask(irq_cap(object));
+	if (object->opened)
+		(void)l4_irq_unmask(irq_cap(object));
 	return (ERX_OK);
 }
 
@@ -159,38 +179,117 @@ irq_unbind(irq_object_t *object)
 	}
 	object->group = IRQ_UNBOUND;
 	object->made = false;
+	object->opened = false;
 }
 
-/* The record's object, in the lowest free slot: a line's is attached to it here. */
+/*
+ * Whether a line or an MSI object holds the interrupt: the object table is the one
+ * record of it, and a wired line inside the frame's range is never taken for an MSI.
+ */
+static bool
+irq_msi_held(uint32_t line, const void *context)
+{
+	(void)context;
+	for (const irq_object_t *object = irq_objects; object < irq_objects + ERX_FIASCO_IRQS_MAX; object++)
+		if (object->record != 0 && object->kind != ERX_IRQ_SOFT && object->line == line)
+			return (true);
+	return (false);
+}
+
+/* The interrupt id an object of the request's kind fires from: a line's selector, or the frame's lowest free line. */
+static int
+irq_line_choose(const erx_fiasco_irq_create_request_t *request, uint32_t *line)
+{
+	switch (request->kind) {
+	case ERX_IRQ_LINE:
+		*line = (uint32_t)request->selector;
+		return (ERX_OK);
+	case ERX_IRQ_MSI:
+		return (erx_fiasco_msi_line_take(irq_msi_range, irq_msi_held, NULL, line));
+	default:
+		*line = 0;
+		return (ERX_OK);
+	}
+}
+
+/*
+ * Attaches the slot's kernel object to its interrupt, false when the kernel will not:
+ * a frame's line is set edge-triggered first, as every frame line is
+ * (docs/design-platforms.md, "MSI frames").
+ */
+static bool
+irq_attach(const irq_object_t *slot, uint32_t kind, uint32_t line)
+{
+	if (kind == ERX_IRQ_MSI && l4_error(l4_icu_set_mode(L4_BASE_ICU_CAP, line, L4_IRQ_F_POS_EDGE)) < 0)
+		return (false);
+	return (l4_error(l4_icu_bind(L4_BASE_ICU_CAP, line, irq_cap(slot))) >= 0);
+}
+
+/* The record's object, in the lowest free slot: a line's or an MSI's is attached to its interrupt here. */
 static int
 irq_fill(uint32_t record, const void *argument)
 {
 	const erx_fiasco_irq_create_request_t *const request = argument;
+	const uint32_t kind = (uint32_t)request->kind;
 	irq_object_t *object = irq_objects;
+	uint32_t line;
+	int status;
 
 	while (object < irq_objects + ERX_FIASCO_IRQS_MAX && object->record != 0)
 		object++;
-	if (object == irq_objects + ERX_FIASCO_IRQS_MAX ||
-	    l4_error(l4_factory_create_irq(L4_BASE_FACTORY_CAP, irq_cap(object))) < 0)
+	if (object == irq_objects + ERX_FIASCO_IRQS_MAX)
 		return (ERX_ENOMEM);
-	if (request->kind == ERX_IRQ_LINE &&
-	    l4_error(l4_icu_bind(L4_BASE_ICU_CAP, (unsigned)request->selector, irq_cap(object))) < 0) {
+	status = irq_line_choose(request, &line);
+	if (status != ERX_OK)
+		return (status);
+	if (l4_error(l4_factory_create_irq(L4_BASE_FACTORY_CAP, irq_cap(object))) < 0)
+		return (ERX_ENOMEM);
+	if (kind != ERX_IRQ_SOFT && !irq_attach(object, kind, line)) {
 		(void)l4_task_delete_obj(L4_BASE_TASK_CAP, irq_cap(object));
 		return (ERX_EBUSY);
 	}
-	*object = (irq_object_t){ .record = record + 1 };
+	*object = (irq_object_t){ .record = record + 1, .kind = kind, .line = line };
 	return (ERX_OK);
 }
 
-int
-erx_fiasco_irq_create_body(uint32_t task, const erx_fiasco_irq_create_request_t *request, uint64_t *irq)
+bool
+erx_fiasco_irq_msi_frame(const erx_mf_msi_frame_t *frame)
 {
-	/* MSI is not offered, and a line is the root's alone. */
-	if (request->kind == ERX_IRQ_MSI || (task != ERX_FIASCO_TASK_ROOT && request->kind == ERX_IRQ_LINE))
-		return (ERX_ENOTSUP);
-	if ((request->kind != ERX_IRQ_SOFT && request->kind != ERX_IRQ_LINE) || request->selector > UINT32_MAX)
+	uint64_t doorbell;
+
+	/* The reader bounds first and count each; a frame's lines and its doorbell are checked whole here. */
+	if (frame->count != 0 && (frame->base == 0 || frame->first + frame->count > ERX_MSI_FRAME_LINES_MAX ||
+	    __builtin_add_overflow(frame->base, IRQ_MSI_DOORBELL, &doorbell)))
+		return (false);
+	irq_msi_range = (erx_fiasco_msi_range_t){ .first = frame->first, .count = frame->count };
+	irq_msi_doorbell = frame->count != 0 ? doorbell : 0;
+	return (true);
+}
+
+int
+erx_fiasco_irq_create_body(uint32_t task, const erx_fiasco_irq_create_request_t *request, erx_fiasco_reply_t *reply)
+{
+	irq_object_t *object;
+	int status;
+
+	if (request->kind != ERX_IRQ_SOFT && request->kind != ERX_IRQ_LINE && request->kind != ERX_IRQ_MSI)
 		return (ERX_EINVAL);
-	return (erx_fiasco_object_create(task, ERX_BACKEND_OBJECT_IRQ, request->budget, irq_fill, request, irq));
+	/* A line and an MSI are the root's alone. */
+	if (task != ERX_FIASCO_TASK_ROOT && request->kind != ERX_IRQ_SOFT)
+		return (ERX_ENOTSUP);
+	/* A line names its interrupt; an MSI's is the frame's to choose, so it names none. */
+	if (request->selector > UINT32_MAX || (request->kind == ERX_IRQ_MSI && request->selector != 0))
+		return (ERX_EINVAL);
+	status = erx_fiasco_object_create(task, ERX_BACKEND_OBJECT_IRQ, request->budget, irq_fill, request, &reply->first);
+	if (status != ERX_OK || request->kind != ERX_IRQ_MSI)
+		return (status);
+	/* The message comes from the line the fill took; the handle was just given, so it names the object. */
+	status = irq_named(task, reply->first, &object);
+	if (status == ERX_OK) {
+		reply->second = irq_msi_doorbell;
+		reply->third = object->line;
+	}
+	return (status);
 }
 
 /*
@@ -253,7 +352,10 @@ erx_fiasco_irq_bind_body(uint32_t task, const erx_fiasco_irq_bind_request_t *req
 	entry = irq_free_entry(group);
 	if (entry == ERX_BACKEND_PARK_OBJECTS_MAX)
 		return (ERX_ELIMIT);
-	*object = (irq_object_t){ .record = object->record, .group = group + 1, .entry = entry, .label = request->label };
+	/* A new bind starts unacknowledged: an unbind left the line masked, as a create did. */
+	object->group = group + 1;
+	object->entry = entry;
+	object->label = request->label;
 	status = irq_try_make(object);
 	if (status != ERX_OK)
 		irq_unbind(object);
@@ -279,10 +381,16 @@ erx_fiasco_irq_ack_body(uint32_t task, uint64_t irq)
 	irq_object_t *object;
 	const int status = irq_named(task, irq, &object);
 
-	/* An object not bound has no receiver: its bind is what opens it. */
-	if (status == ERX_OK && object->made)
+	/*
+	 * An object not bound has no receiver, so its ack opens nothing; a bound one's first
+	 * ack opens it, now or, while the bind waits, when it is made.
+	 */
+	if (status != ERX_OK || object->group == IRQ_UNBOUND)
+		return (status);
+	object->opened = true;
+	if (object->made)
 		(void)l4_irq_unmask(irq_cap(object));
-	return (status);
+	return (ERX_OK);
 }
 
 int

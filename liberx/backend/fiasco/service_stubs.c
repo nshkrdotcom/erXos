@@ -557,7 +557,8 @@ erx_budget_watch(uint64_t budget, uint64_t irq, uint64_t threshold)
 }
 
 int
-erx_irq_create(uint64_t budget, uint64_t resource, uint32_t kind, uint64_t selector, uint64_t *irq)
+erx_irq_create(uint64_t budget, uint64_t resource, uint32_t kind, uint64_t selector, uint64_t *irq,
+    erx_msi_message_t *message)
 {
 	const erx_fiasco_irq_create_request_t request = { .caller = erx_fiasco_thread_self()->index,
 	    .kind = kind, .selector = selector, .budget = budget };
@@ -566,9 +567,13 @@ erx_irq_create(uint64_t budget, uint64_t resource, uint32_t kind, uint64_t selec
 
 	(void)resource;
 	status = erx_fiasco_service_call(ERX_FIASCO_CALL_IRQ_CREATE, &request, sizeof(request), &reply);
-	if (status == ERX_OK)
-		*irq = reply.first;
-	return (status);
+	if (status != ERX_OK)
+		return (status);
+	*irq = reply.first;
+	/* The service writes the data word from a 32-bit interrupt id (irq.c). */
+	if (message != NULL)
+		*message = (erx_msi_message_t){ .address = reply.second, .data = (uint32_t)reply.third };
+	return (ERX_OK);
 }
 
 /*

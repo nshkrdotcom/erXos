@@ -339,6 +339,21 @@ class BootManifestTest < Minitest::Test
     assert_equal 'machine.console', error.field
   end
 
+  # The header's msi_frame (offset 456: base u64, first u32, count u32) is the platform
+  # record's, and zero for a platform without one.
+  def test_the_header_carries_the_platform_s_msi_frame
+    assert_equal [0x0802_0000, 80, 64], admitted.byteslice(456, 16).unpack('Q<L<L<')
+    pi = Erx::Platform.load(root: ROOT, name: 'raspi4b').manifest_source(ROOT)
+    assert_equal [0, 0, 0], admitted(pi, platform: 'raspi4b').byteslice(456, 16).unpack('Q<L<L<')
+  end
+
+  def test_an_incomplete_or_empty_msi_frame_is_refused_at_the_packer
+    [{ 'base' => 0x0802_0000, 'first' => 80 }, { 'base' => 0x0802_0000, 'first' => 80, 'count' => 0 }].each do |frame|
+      error = assert_raises(Erx::Manifest::Invalid) { admitted(record: platform_record('qemu-virt').merge('msi_frame' => frame)) }
+      assert_equal 'context.platform.msi_frame', error.field
+    end
+  end
+
   # The Raspberry Pi 4's development manifest with its framebuffer unit moved from the
   # display domain to the system domain, so a framebuffer row sits on the system domain's page.
   def pi_framebuffer_held_by_system

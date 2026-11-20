@@ -2591,11 +2591,6 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   only in the test that feeds it the other kind of source. Derive the removals from the manifest's
   structure instead, as `Manifest::Edit.without_sessions` already does for session grants: drop a
   configured domain with the services it serves and every facet granting them.
-* [Medium] Fiasco backend, `liberx/backend/fiasco/irq.c:141` (the bind): every bind ends in `l4_irq_unmask`, so a
-  line is unmasked at its first bind, where [design-kernel.md](docs/design-kernel.md#irq-objects) ("Creating") keeps
-  an `ERX_IRQ_LINE` object masked until its driver first acknowledges it. A device that raises its line before its
-  driver is ready then delivers to a sink that has not set up. Unmask a line only at `erx_irq_ack`, with a
-  regression test that binds a pending line and sees no delivery before the first acknowledgement.
 * [Low] Fiasco backend, fault records (`liberx/backend/fiasco/service.c` `service_page_fault`): a
   memory fault's `cause` is Fiasco's access bits (`mr[0] & SERVICE_FAULT_ACCESS`), not the cause
   as the CPU reported it, which [design-kernel.md](docs/design-kernel.md) gives for every fault
@@ -7347,6 +7342,11 @@ to the corpus and follow rc
   GICv2m fact in a generic name. Move it to the platform layer's MSI frame
   description ([design-kernel.md](docs/design-kernel.md#dma-and-the-iommu),
   [design-platforms.md](docs/design-platforms.md#msi-frames)).
+* [Low] Fiasco backend, `liberx/backend/fiasco/irq.c` (`IRQ_MSI_DOORBELL`): the MSI frame's doorbell offset, `0x40`,
+  is a hand-copied register offset of one frame type, where memory-mapped registers come from CMSIS-SVD files, and a
+  frame of another type (the Raspberry Pi 5's MIP) would get it too. Describe the frame in an SVD file and have the
+  packer write the doorbell's address into `erx_mf_msi_frame`, so the root holds no frame-type fact
+  ([design-pcie.md](docs/design-pcie.md#the-msi-frame-on-fiasco)); the `native_irq` guest's `MSI_DOORBELL` goes with it.
 * [Low] kernel, `ERX_MEM_INHERIT`: the flag is the remembered creator mark
   that the copy table of `erx_space_copy` says it avoids. Reconcile the
   two
@@ -9355,18 +9355,9 @@ document's "residual risks accepted" paragraph.
   each (device, drive, partition) once, and a release build's USB domain holding its controller's unit alone and
   running no file system.
 * [Medium] system manifest, `abi/manifest.txt` ([design-abi.md](docs/design-abi.md#devices-and-partition-windows),
-  [design-pcie.md](docs/design-pcie.md#dma)): no `dma_limit` in `erx_mf_device`, no closed flag with its listed places
-  and pins on a bridge's row, and no `msi_frame` platform part on QEMU `virt`. Add them, with the packer's copies from
-  the platform record; the `dt`-case item under Bugs covers `base`, `size` and `line`. `config/platforms/qemu-virt.json`
-  has no `msi_frame` record either, which [The MSI frame on Fiasco](docs/design-pcie.md#the-msi-frame-on-fiasco)
-  relies on: add it with the measured frame, base `0x08020000`, interrupt ids 80 to 143
-  ([the QEMU facts record](docs/research-qemu-pcie-usb.md#the-msi-frame)).
-* [Medium] liberx, `liberx/backend/api.h` (`erx_irq_create`) and `liberx/backend/fiasco/irq.c`: the call returns only
-  the object and the Fiasco backend refuses `ERX_IRQ_MSI` (`irq.c:189`). Return the `erx_msi_message` of
-  `abi/kernel.txt` beside the object, zero for soft and line, in the reply's second and third words on Fiasco
-  (`abi/erx_abi.txt`, `erx_fiasco_irq_create_request`), and build `ERX_IRQ_MSI` over the frame's lines as
-  [The MSI frame on Fiasco](docs/design-pcie.md#the-msi-frame-on-fiasco) says, keeping its refusal of a doorbell
-  outside the function's DMA range.
+  [design-pcie.md](docs/design-pcie.md#dma)): no `dma_limit` in `erx_mf_device`, and no closed flag with its listed
+  places and pins on a bridge's row. Add them, with the packer's copies from the platform record; the `dt`-case item
+  under Bugs covers `base`, `size` and `line`.
 * [Medium] USB, `abi/inspection.txt` ([design-usb.md](docs/design-usb.md#failure-handling)): no `usb` kind. Declare
   `[usb, Controller]`, `[usb, Controller, ports, Route]`, `[usb, Controller, devices, Route]` and the other paths
   Failure handling lists, shown under `/proc/usb`.

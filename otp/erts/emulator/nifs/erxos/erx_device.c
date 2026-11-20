@@ -262,7 +262,7 @@ take_lines(const erx_device_spec_t *spec, uint32_t *entries)
 		*entry = (line_entry_t){ .form = spec->form, .key = spec->lines[line], .irq = spec->lines[line],
 		    .shared = spec->shared[line] };
 		if (spec->form != ERX_DEVICE_FORM_GIVEN)
-			status = erx_irq_create(0, 0, kind, spec->lines[line], &entry->irq);
+			status = erx_irq_create(0, 0, kind, spec->lines[line], &entry->irq, NULL);
 		if (status == ERX_OK)
 			entries[line] = lines_taken++;
 	}

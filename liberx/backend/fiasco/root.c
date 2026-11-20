@@ -32,6 +32,7 @@
 #include "erx/pack.h"
 #include "liberx/backend/core/manifest_dma.h"
 #include "liberx/backend/fiasco/console.h"
+#include "liberx/backend/fiasco/group.h"
 #include "liberx/backend/fiasco/root_open.h"
 #include "liberx/backend/fiasco/runtime_entry.h"
 #include "liberx/backend/fiasco/service.h"
@@ -111,6 +112,8 @@ root_boot(erx_boot_handoff_view_t *handoff, erx_manifest_view_t *manifest, erx_b
 		return ("the kernel command line: a word of erx. that this build refuses");
 	if (!erx_boot_manifest_dma_total(manifest, &dma_bytes))
 		return ("manifest: the devices' memory cannot be counted");
+	if (!erx_fiasco_irq_msi_frame(&manifest->header.msi_frame))
+		return ("manifest: the MSI frame has no base, too many lines or a doorbell past the address space");
 	/*
 	 * The tree comes first, so the generator mixes its seeds in before anything draws
 	 * from it; their bytes are erased once the generator holds them.

@@ -217,7 +217,7 @@ make_step(handle_set_t *set, const erx_dom_step_t *step, uint64_t budget, uint64
 		status = erx_mem_create(budget, pages_of(step->size) * ERX_PAGE_SIZE, 0, &handle);
 		break;
 	case ERX_DOM_STEP_BELL:
-		status = erx_irq_create(budget, ERX_CAP_NULL, ERX_IRQ_SOFT, 0, &handle);
+		status = erx_irq_create(budget, ERX_CAP_NULL, ERX_IRQ_SOFT, 0, &handle, NULL);
 		if (status != ERX_OK)
 			return (status);
 		set_note(set, step, handle);
@@ -420,7 +420,7 @@ apply_give_step(apply_t *apply, uint32_t at, const erx_dom_step_t *step)
 	case ERX_DOM_STEP_IRQ:
 		if ((entry = give_entry(apply, give, step)) == NULL || step->index >= ERX_DEVICE_IRQS_MAX)
 			return (ERX_EINVAL);
-		status = erx_irq_create(budget, resource, ERX_IRQ_LINE, entry->lines[step->index], &handle);
+		status = erx_irq_create(budget, resource, ERX_IRQ_LINE, entry->lines[step->index], &handle, NULL);
 		break;
 	case ERX_DOM_STEP_CONTIGUOUS:
 		if ((entry = give_entry(apply, give, step)) == NULL)

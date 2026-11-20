@@ -48,6 +48,10 @@ limit start_period_default_s u32 600
 # its own.
 limit boot_timeout_default_s u32 60
 limit boot_timeout_max_s u32 3600
+# The MSI frame's lines (docs/design-pcie.md, "The MSI frame on Fiasco"): the
+# manifest's msi_frame names at most this many, from an interrupt id below it, so
+# the root's line allocator scans a bounded range and no line's id overflows.
+limit msi_frame_lines_max u32 1024
 limit quota_none u64 0xffffffffffffffff
 flags manifest_flags u16
   bit development 0
@@ -228,7 +232,17 @@ layout erx_share wire_le 8 48
   field ceiling urgency 41
   field flags group_flags 42
   padding 44 4
-layout erx_manifest wire_le 8 456
+# The platform's MSI frame, which the packer copies from the platform record's
+# msi_frame (docs/design-abi.md, "Devices and partition windows"): its base, the
+# interrupt id of its first line and how many lines it serves, all zero on a
+# platform without one. The root, which may not read the frame's own registers,
+# allocates ERX_IRQ_MSI's lines from it (docs/design-pcie.md, "The MSI frame on
+# Fiasco").
+layout erx_mf_msi_frame wire_le 8 16
+  field base u64 0
+  field first u32 8
+  field count u32 12
+layout erx_manifest wire_le 8 472
   field magic u32 0
   field version u16 4
   field flags manifest_flags 6
@@ -285,6 +299,7 @@ layout erx_manifest wire_le 8 456
   field system_image erx_mf_span 440
   field boot_timeout_s u32 448
   padding 452 4
+  field msi_frame erx_mf_msi_frame 456
 layout erx_mf_principal wire_le 8 80
   field name erx_mf_str 0
   field memory u64 8
@@ -523,11 +538,13 @@ reader manifest erx_manifest @manifest_bytes_max
   extent root.length
   value root.magic @manifest_magic
   value root.version @manifest_version
-  value root.header_size 456
+  value root.header_size 472
   range root.max_domains 0 65536
   range root.max_connections 1 65536
   range root.system_reserve 1 1000
   range root.boot_timeout_s 1 @boot_timeout_max_s
+  range root.msi_frame.first 0 @msi_frame_lines_max
+  range root.msi_frame.count 0 @msi_frame_lines_max
   choice root.flags manifest_mode root.domains.count,root.sessions.count,root.services.count,root.facets.count,root.introductions.count,root.boot_order.count,root.liveness.count,root.starts.count,root.displays.count,root.apps.count,root.app_services.count,root.packages.count,root.signers.count,root.development_key.count,root.system_image.count,root.partial_boot.count
     case release root.domains.count,root.sessions.count,root.services.count,root.facets.count,root.introductions.count,root.boot_order.count,root.liveness.count,root.starts.count,root.displays.count,root.apps.count,root.app_services.count,root.packages.count,root.signers.count,root.system_image.count
     case development root.domains.count,root.sessions.count,root.services.count,root.facets.count,root.introductions.count,root.boot_order.count,root.liveness.count,root.starts.count,root.displays.count,root.apps.count,root.app_services.count,root.packages.count,root.signers.count,root.development_key.count,root.system_image.count

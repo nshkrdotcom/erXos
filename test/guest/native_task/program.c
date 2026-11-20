@@ -311,11 +311,14 @@ mode_irq_refused(void)
 	const uint64_t caller = erx_fiasco_thread_self()->index;
 	const erx_fiasco_irq_create_request_t soft = { .caller = caller, .kind = ERX_IRQ_SOFT };
 	const erx_fiasco_irq_create_request_t line = { .caller = caller, .kind = ERX_IRQ_LINE };
+	const erx_fiasco_irq_create_request_t msi = { .caller = caller, .kind = ERX_IRQ_MSI };
 	const erx_fiasco_irq_bind_request_t bind = { .caller = caller, .irq = ERX_CAP_NULL, .group = ERX_CAP_SELF };
 	const erx_fiasco_irq_request_t none = { .caller = caller, .irq = ERX_CAP_NULL };
 	erx_fiasco_reply_t reply;
 
-	if (erx_fiasco_service_call(ERX_FIASCO_CALL_IRQ_CREATE, &line, sizeof(line), &reply) != ERX_ENOTSUP)
+	/* A line and an MSI are the root's alone. */
+	if (erx_fiasco_service_call(ERX_FIASCO_CALL_IRQ_CREATE, &line, sizeof(line), &reply) != ERX_ENOTSUP ||
+	    erx_fiasco_service_call(ERX_FIASCO_CALL_IRQ_CREATE, &msi, sizeof(msi), &reply) != ERX_ENOTSUP)
 		return (81);
 	if (erx_fiasco_service_call(ERX_FIASCO_CALL_IRQ_BIND, &bind, sizeof(bind), &reply) != ERX_EINVAL)
 		return (82);

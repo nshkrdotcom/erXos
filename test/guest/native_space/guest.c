@@ -831,8 +831,8 @@ case_doorbells(void)
 	const uint64_t epoch = atomic_load_explicit(&erx_fiasco_group_status()->epoch, memory_order_acquire);
 	uint64_t domain = ERX_CAP_NULL, bell = ERX_CAP_NULL, back = ERX_CAP_NULL, task = 0, argument;
 	int64_t status = INT64_MIN;
-	bool passed = erx_group_create(0, 0, &domain) == ERX_OK && erx_irq_create(0, 0, ERX_IRQ_SOFT, 0, &bell) == ERX_OK &&
-	    erx_irq_create(0, 0, ERX_IRQ_SOFT, 0, &back) == ERX_OK && erx_irq_bind(bell, domain, BELL_LABEL) == ERX_OK &&
+	bool passed = erx_group_create(0, 0, &domain) == ERX_OK && erx_irq_create(0, 0, ERX_IRQ_SOFT, 0, &bell, NULL) == ERX_OK &&
+	    erx_irq_create(0, 0, ERX_IRQ_SOFT, 0, &back, NULL) == ERX_OK && erx_irq_bind(bell, domain, BELL_LABEL) == ERX_OK &&
 	    erx_irq_bind(bell, ERX_CAP_SELF, BELL_LABEL) == ERX_ENOTSUP &&
 	    erx_irq_bind(back, ERX_CAP_SELF, BACK_LABEL) == ERX_OK && erx_irq_trigger(bell) == ERX_OK &&
 	    erx_fiasco_launch_make(program_entry, 0, &task, &program_pc) == ERX_OK;

@@ -45,8 +45,8 @@ case_irq_refusals(void)
 {
 	uint64_t irq;
 
-	return (erx_irq_create(0, 0, ERX_IRQ_MSI, 0, &irq) == ERX_ENOTSUP &&
-	    erx_irq_create(0, 0, 77, 0, &irq) == ERX_EINVAL &&
+	return (erx_irq_create(0, 0, ERX_IRQ_MSI, 0, &irq, NULL) == ERX_ENOTSUP &&
+	    erx_irq_create(0, 0, 77, 0, &irq, NULL) == ERX_EINVAL &&
 	    erx_irq_bind(0, function_api_group(), LABEL_A) == ERX_EINVAL && erx_irq_trigger(0) == ERX_EINVAL &&
 	    erx_irq_ack(UINT64_C(1) << 40) == ERX_EINVAL && erx_group_take_ready(1) == ERX_ETYPE);
 }
@@ -56,7 +56,7 @@ case_irq_line_refused(void)
 {
 	uint64_t irq;
 
-	return (erx_irq_create(0, 0, ERX_IRQ_LINE, 0, &irq) == ERX_ENOTSUP);
+	return (erx_irq_create(0, 0, ERX_IRQ_LINE, 0, &irq, NULL) == ERX_ENOTSUP);
 }
 
 /* A software object has no line to mask, so its ack does nothing, bound or not. */
@@ -65,7 +65,7 @@ case_irq_ack_unbound(void)
 {
 	uint64_t irq;
 
-	return (erx_irq_create(0, 0, ERX_IRQ_SOFT, 0, &irq) == ERX_OK && erx_irq_ack(irq) == ERX_OK);
+	return (erx_irq_create(0, 0, ERX_IRQ_SOFT, 0, &irq, NULL) == ERX_OK && erx_irq_ack(irq) == ERX_OK);
 }
 
 /* A label comes once however often its object fired; each fire moves the epoch; rebinding moves the label. */
@@ -78,7 +78,7 @@ ready_once_helper(uint64_t arg)
 	uint64_t irq_b;
 	bool ok;
 
-	ok = erx_irq_create(0, 0, ERX_IRQ_SOFT, 0, &irq_b) == ERX_OK &&
+	ok = erx_irq_create(0, 0, ERX_IRQ_SOFT, 0, &irq_b, NULL) == ERX_OK &&
 	    erx_irq_bind(irq_b, function_api_group(), LABEL_B) == ERX_OK;
 	ok = ok && erx_group_take_ready(ERX_MSG_WORDS) == 0;
 	ok = ok && erx_irq_trigger(irq_a) == ERX_OK && erx_irq_trigger(irq_b) == ERX_OK && erx_irq_trigger(irq_a) == ERX_OK;
@@ -103,7 +103,7 @@ case_irq_ready_once(void)
 	uint64_t irq;
 
 	atomic_store(&function_api_done, 0);
-	if (erx_irq_create(0, 0, ERX_IRQ_SOFT, 0, &irq) != ERX_OK ||
+	if (erx_irq_create(0, 0, ERX_IRQ_SOFT, 0, &irq, NULL) != ERX_OK ||
 	    erx_irq_bind(irq, function_api_group(), LABEL_A) != ERX_OK ||
 	    function_api_spawn_executor(ready_once_helper, irq) != ERX_OK ||
 	    !function_api_wait_for(&function_api_done, 1))
@@ -144,7 +144,7 @@ case_irq_wakes_parked(void)
 {
 	atomic_store(&function_api_done, 0);
 	atomic_store(&helper_ok, 0);
-	if (erx_irq_create(0, 0, ERX_IRQ_SOFT, 0, &helper_irq) != ERX_OK ||
+	if (erx_irq_create(0, 0, ERX_IRQ_SOFT, 0, &helper_irq, NULL) != ERX_OK ||
 	    erx_irq_bind(helper_irq, function_api_group(), LABEL_A) != ERX_OK ||
 	    function_api_spawn_executor(irq_wakes_helper, 0) != ERX_OK)
 		return (false);
@@ -163,7 +163,7 @@ case_irq_objects_run_out(void)
 	uint32_t made = 0;
 	int status;
 
-	while ((status = erx_irq_create(0, 0, ERX_IRQ_SOFT, 0, &irq)) == ERX_OK && made < 4096)
+	while ((status = erx_irq_create(0, 0, ERX_IRQ_SOFT, 0, &irq, NULL)) == ERX_OK && made < 4096)
 		made++;
 	return (status == ERX_ENOMEM && made > 0);
 }
