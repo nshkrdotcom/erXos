@@ -6,12 +6,13 @@
 > The SDK and its public-function check. The image builder's packages:
 > placed in the system partition, then checked, admitted and started
 > at boot, as the kiosk QEMU suite shows. The decoder, file check,
-> admission and recovery, with host tests. `erx_ui_host`.
+> admission and recovery, with host tests. An app's session holding
+> only the `packages` and `system` grants and the services its app
+> names. `erx_ui_host`.
 > **Designed:** installing, updating and removing through `/apps`,
 > `mount` of a package, `service NAME purge`, `/proc/packages`, the
-> app's budget as a wall carved at each session's start, sessions
-> holding only the services their app names, `erx-app test`, and
-> `/svc/NAME`.
+> app's budget as a wall carved at each session's start, the `flags`
+> field, the SDK's host tools, `erx-app test`, and `/svc/NAME`.
 
 **Background needed.** [Chapter 8](08-kernel-interface.md) (the
 kernel interface), [chapter 11](11-security.md) (facets, file grants,
@@ -34,7 +35,8 @@ FreeBSD answers the first half with `pkg`. A package is an archive of
 files with a manifest of metadata; `pkg add` unpacks it into
 `/usr/local`, records it in a database and checks its signature
 against keys the system trusts. A daemon in a package ships an `rc.d`
-script, and it starts at boot once `rc.conf` sets `NAME_enable="YES"`.
+script, and it starts at boot once `rc.conf` sets `NAME_enable="YES"`
+(the box before section 23.1.2 explains both).
 <!-- check: pkg(8) and pkg-add(8) as described; not read in this task -->
 The second half FreeBSD answers with UNIX users: the daemon runs as a
 user the package creates, and file permissions keep it out of other
@@ -99,7 +101,7 @@ template ([design-apps.md, An app](../design-apps.md#an-app)).
 The Raspberry Pi's manifest runs the time daemon this way: a principal
 `ntpd` that pays for the app's sessions, a session template whose
 release holds `ntpd`'s applications, and facet rows that grant the
-template the network. Those rows are the app's whole authority. What
+template the network and the clock. Those rows are the app's whole authority. What
 the system keeps apart per principal it keeps apart per app, with no
 rule of its own: the app's directory, what its inspector facet shows,
 its sessions' names (`ntpd_1`). This is built: `ntpd` runs so on the Raspberry Pi 4
@@ -110,41 +112,58 @@ the manifest, rebuilding the image and growing every sum the manifest
 check makes. That is right for a service the board needs and wrong for
 the shop's dashboard.
 
+> **Background: how FreeBSD starts daemons.** Each daemon FreeBSD can
+> start at boot has an **`rc.d` script**, a short shell script in
+> `/etc/rc.d` (or `/usr/local/etc/rc.d` for one a package added) that
+> knows how to start, stop and query it. Whether it runs at boot is a
+> shell variable: `/etc/defaults/rc.conf` sets each daemon's defaults,
+> such as `ntpd_enable="NO"`, and the machine's own `/etc/rc.conf`
+> overrides them, `ntpd_enable="YES"`. The `service` command runs a
+> script by name: `service ntpd start` starts the daemon now, but only
+> if its variable says `YES`; `service ntpd onestart` starts it once
+> whatever the variable says; and `service ntpd enable` writes the
+> variable into `rc.conf` so that the next boot starts it.
+> <!-- check: FreeBSD rc.d, rc.conf and service(8) as described,
+> including that `service NAME enable` only sets the variable and
+> starts nothing; not read in this task -->
+
 ### 23.1.2 What starts without a person
 
 Something must start an app's session, since no one logs in as an
 app. The **start table** is the one place that says which principals'
 sessions exist without a person. Each row names a principal, whether
 it is enabled, optionally a display it takes over, and a restart
-intensity: more than `restarts` ends within `restart_period_s` leave
+intensity: more than `restarts` ends within `period` seconds leave
 the row down ([design-apps.md, The start table](../design-apps.md#the-start-table)).
+The table keys on a principal and on nothing about where the principal
+came from, so a package's app joins it as `ntpd` does.
 
 The table follows FreeBSD's `rc.d` closely. The manifest declares each
 row and its defaults, as an `rc.d` script and `/etc/defaults/rc.conf`
-do. A file in rc.conf(5)'s assignment syntax holds the machine's own
-settings, `ntpd_enable="YES"`, and `service ntpd enable`, `start`,
-`stop` and `onestart` act on the row as service(8) does. The file is
-read, never run: a line that is not an assignment to a declared row
-is skipped, so a local setting can enable, disable or move a declared
-row and never add one. The design names that file `/etc/start.conf`,
-since it is not FreeBSD's `rc.conf`, which is shell code that may run
-any command. The start service as built reads and writes it as
-`rc.conf` in the data partition's `etc/` directory,
+do, the manifest spelling the period `restart_period_s`. A file in
+rc.conf(5)'s assignment syntax holds the machine's own settings,
+`ntpd_enable="YES"`, and `service ntpd enable`, `start`, `stop` and
+`onestart` act on the row as service(8) does. The file is read, never
+run: a line that is not an assignment to a declared row is skipped, so
+a local setting can enable or disable a declared row, or change its
+display or intensity, and never add one. The design names that file
+`/etc/start.conf`, since it is not FreeBSD's `rc.conf`, which is shell
+code that may run any command. The start service as built reads and
+writes it as `rc.conf` in the data partition's `etc/` directory,
 `/data/etc/rc.conf` (`erlang/apps/erx_starter/src/erx_starter_rc.erl`).
 
 Each kept row has an OTP supervisor of its own, `one_for_one` with the
-row's intensity, whose one child is a **keeper** (in this sense, not
-chapter 14's), a process that asks the domain service for a session
-and links to it (`erlang/apps/erx_starter/src/erx_starter_row.erl`).
-When the session ends, the supervisor starts the keeper again, and one
-row's failure touches no other row. The table and `service` are built;
-chapter [20](README.md#chapter-20-the-command-shell-and-the-unix-surface)
+row's intensity, whose one child is a **session keeper**, a process
+that asks the domain service for a session and links to it
+(`erlang/apps/erx_starter/src/erx_starter_row.erl`, where it is the
+keeper; it is unrelated to chapter 14's keepers of stream files). When the session ends, the supervisor starts the
+session keeper again, and one row's failure touches no other row. The
+table and `service` are built; chapter
+[20](README.md#chapter-20-the-command-shell-and-the-unix-surface)
 covers `service` as a command. The built `enable` also starts the row,
 where the design, as FreeBSD's, has it start nothing until the next
-boot or the row's own `start`.
-
-The table keys on a principal and on nothing about where the principal
-came from, so a package's app joins it as `ntpd` does.
+boot or the row's own `start`. <!-- check: FreeBSD's `service NAME
+enable` sets the variable and starts nothing; not read in this task -->
 
 ### 23.1.3 One row bounds every app
 
@@ -167,9 +186,9 @@ same two services (`config/manifest/qemu-virt-development.txt`).
 
 From the row the build derives the **app template**, one session
 template every app's sessions use. Its release boots the system's
-`app` script, which holds the session's base, the display's client
-side, the network client and `erx_app`, the application that starts
-the app's code (section 23.3.3). The build also derives one facet row
+`app` script, which holds what any session needs and `erx_app`, the
+application that starts the app's code (section 23.3.3). The build
+also derives one facet row
 granted to the template for each service the row names, and two
 read-only file grants every app holds: `packages`, the installed
 packages, and `system`, the image's packages (chapter 16, section
@@ -177,20 +196,21 @@ packages, and `system`, the image's packages (chapter 16, section
 
 The manifest check of chapter 7
 ([section 7.7.1](07-one-source.md#771-the-check)) then counts the app
-template as `max` principals wherever it counts a principal's rows
-(the display's pixel areas and connections, the domain and principal
-tables, the atoms of session names), each holding every service of
-the row. The row may never offer `start`, `apps`, `etc` or `machine`,
-which would let an app command the start table, install packages,
-rewrite the start settings or end the machine. So the build proves,
-before any app exists, that the machine affords its worst case, and
-whatever apps arrive, the board's own domains keep what the build
-proved for them.
+template as `max` principals in every per-principal sum, each holding
+every service of the row. The row may never offer `start`, `apps`,
+`etc` or `machine`, which would let an app command the start table,
+install packages, rewrite the start settings or end the machine. So
+the build proves, before any app exists, that the machine affords its
+worst case, and whatever apps arrive, the board's own domains keep
+what the build proved for them.
 
-The build reads the row, derives the template and its rows, and makes
-part of this check, property 19. The rest, such as counting the
-enabled packages' budgets within the row's memory and the connection
-sums for `max` apps, is designed and not built.
+Part of this check is built: the build derives the template and its
+rows, refuses the forbidden services, adds the row's memory once, and
+counts `max` apps against the machine's domain limit
+(`tools/lib/erx/manifest.rb`). Counting them in the principal table,
+the atoms of session names and each server's connections, and the
+enabled packages' budgets within the row's memory, is designed and
+not built.
 
 ## 23.2 One file per app
 
@@ -212,8 +232,8 @@ The app is named `dashboard`; it wants the display and the network;
 its code is the OTP application `erx_dashboard`. A native app names a
 program in place of applications, such as the SDK's test fixture
 `test/fixtures/sdk_hello/app.txt`, whose code is `program "bin/hello"`.
-Every other field has a default: 64 MiB of memory, version 1, no
-license named ([design-packaging.md, The declaration](../design-packaging.md#the-declaration)).
+Every other field has a default, as Table 23.1 shows
+([design-packaging.md, The declaration](../design-packaging.md#the-declaration)).
 
 | Field | Says | Default |
 | --- | --- | --- |
@@ -223,10 +243,13 @@ license named ([design-packaging.md, The declaration](../design-packaging.md#the
 | `needs` | services of the `apps` row it takes | none |
 | `memory` | what its session's own budget holds | 64 MiB, at least 4 MiB |
 | `version` | a number the inspector shows | 1 |
-| `flags` | default start flags for its start row | empty |
 | `license` | an SPDX license expression | none |
 
 *Table 23.1. The fields of `app.txt`.*
+
+The design adds one more field, `flags`, the default start flags of
+the app's start row; it is designed and not built, and the packer
+refuses it as an unknown field.
 
 What the table lacks is the point. A declaration names no facet
 parameter, quota, CPU share, environment variable or grant, and there
@@ -319,7 +342,8 @@ header in one of two ways:
   key. The app's signer is then `image`.
 * **by signer**, for a package installed at run time: the seal's key
   must be one of the keys the boot image trusts, the manifest's
-  `signer` rows, and the signature valid.
+  `signer` rows and, in a development image, its builder's development
+  key (section 23.6), and the signature valid.
 
 Trust in signers changes only with a system update: the keys lie in
 the boot image, and no record a storage domain could rewrite adds
@@ -327,10 +351,10 @@ one. The decoder and the file check are built, with a fuzz target over
 the header (`test/erlang/erx_pkg_header_fuzz.erl`) and host tests of
 short, long, oversized and misnamed files.
 
-The file check reads only the header. It never looks at the image,
-and the system domain never mounts one: a package's image is parsed
-only in a session, the app's own or that of a person who mounted it.
-The reason is the trusted base of chapter 11
+The file check never looks at the image, and the system domain never
+mounts one: a package's image is parsed only in a session, the app's
+own or that of a person who mounted it. The reason is the trusted base
+of chapter 11
 ([section 11.2.2](11-security.md#1122-the-trusted-base)). A bug in
 the EROFS reader, reached by a crafted image, ends the session that
 read it. The system domain, whose fault resets the machine, reads at
@@ -348,20 +372,19 @@ admission's question: does what the app declares fit the `apps` row?
 the manifest and the boot's registry of app principals
 ([design-packaging.md, Admission](../design-packaging.md#admission)).
 It answers with the facet rows the app keeps, or with the first of
-these that fails:
+these questions that fails, as an error naming it:
 
-1. the manifest has an `apps` row: `no_apps`;
-2. the header's ABI version and architecture are the image's: `{abi,
-   Have, Want}` or `{arch, Have, Want}`;
-3. the name is a valid app name and taken by nothing else: not
-   `root`, not a principal, configured domain, service or facet row of
-   the manifest, and not a package of the image when the header is an
-   installed one's: `{bad_name, N}` or `{name_taken, N}`;
-4. a name the registry holds keeps its signer, `{signer_changed, N}`,
-   and a new name finds a free entry among `max`, `apps_full`;
-5. the memory is a whole number of pages, at least 4 MiB and at most
-   the `apps` row's: `{memory, M}`;
-6. each need is a service of the `apps` row: `{not_offered, S}`.
+1. Does the manifest have an `apps` row?
+2. Are the header's ABI version and architecture the image's?
+3. Is the name a valid app name that nothing else takes: not `root`,
+   not a principal, configured domain, service or facet row of the
+   manifest, and, for an installed package, not a package of the
+   image?
+4. Does a name the registry holds keep its signer, and does a new name
+   find a free entry among the `max`?
+5. Is the memory a whole number of pages, at least 4 MiB and at most
+   the `apps` row's?
+6. Is each need a service of the `apps` row?
 
 Follow the dashboard through it on the Raspberry Pi. Its header was
 built against the image's ABI for the same architecture. Its name,
@@ -372,7 +395,7 @@ of the row. Admission keeps the `packages` and `system` rows and the
 two it needs, and records the signer, `image`.
 
 Suppose the author adds `data` to `needs`, hoping for a directory
-on the data partition. Check 6 answers `{not_offered, data}`, since
+on the data partition. Question 6 fails with `{not_offered, data}`, since
 the Pi's row does not offer it, and the app never starts. Nothing else
 needs judging. A declaration can only name what the row offers, so
 the build's proof over the row is the proof over every app it admits.
@@ -388,9 +411,8 @@ The packer runs the same file check and admission on the host under
 stock OTP, so the build and the machine cannot disagree. Admission is
 built, with host tests
 (`test/erlang/erx_app_admit_tests.erl`). One rule of the design is
-not: the start settings' variable for a name, such as `my_app_enable`
-for an app named `my-app`, must be one no other row uses, which the
-design refuses as `{variable_taken, N, Other}`.
+not built: the start settings' variable for an app's name, such as
+`my_app_enable` for `my-app`, must be one no other row uses.
 
 ### 23.3.2 The app's principal
 
@@ -399,8 +421,8 @@ registers the app as a principal, `erx_principal:register_app/1`, in
 one of the `max` entries the domain library keeps for apps. The record
 holds the app's name, its signer, its declared memory and the rows
 admission kept. An app's principal has no credentials, so no one logs
-in as one and no login starts its sessions: the start table's keepers
-are its only starters.
+in as one and no login starts its sessions: the start table's session
+keepers are its only starters.
 
 An app's principal is never unregistered within a boot: a removed
 app's entry keeps its name until the machine reboots. So however many
@@ -424,14 +446,18 @@ wall carved at each start is designed and not built.
 
 The domain service makes an app's session as it makes any session,
 from the app template, under the app's principal, named from the app's
-own pool: `dashboard_1`. In the design its facets are the template's
-`packages` and `system` grants and the rows admission kept, each
-minted for the app's principal. As built, the session holds every
-facet row of the app template: the mint that grants a subset is
-designed and not built. The dashboard needs both of the Pi's services,
-so the difference does not show there; an app that named only
-`display` would still hold `net`. The build's proof is unaffected,
-since it counts every app as holding every service of the row.
+own pool: `dashboard_1`. Its facets are the template's `packages` and
+`system` grants and the rows admission kept, and no other, each
+minted for the app's principal: an app that names only `display`
+holds no `net`. The build's proof still counts every app as holding
+every service of the row, so the subset only narrows what the proof
+allows. This is built: the session's plan, `erx_domain_core:app_session/4`,
+keeps only the kept rows, and its host tests
+(`test/erlang/erx_app_session_tests.erl`) catch seeded faults such as
+a plan that grants every row of the template. Two things around it are open: the pixel area of an app
+session's display connections is still sized for the template, and
+the domain service's own test of an app session's start is written
+and not yet run.
 
 Once the session's grants have settled, the domain service sends it
 the **app's record**: where the package lies, the image's layout and
@@ -453,8 +479,8 @@ changed byte causes a read error, never a different program
 
 For an Erlang app, `erx_app` puts each `/app/lib/*/ebin` at the end of
 the code path and starts the declared applications, permanent, so the
-end of one ends the session and the start row's keeper starts it
-again. The app's paths come after the release's, so a module that
+end of one ends the session and the start row's session keeper
+starts it again. The app's paths come after the release's, so a module that
 shares a name with one of the system's is never the one loaded: a
 clash breaks only the app that brought it. For a native app, `erx_app`
 starts the program from `/app/bin` through the program handler of
@@ -492,9 +518,7 @@ sequenceDiagram
     A->>A: erx_dashboard draws its window
 ```
 
-*Figure 23.2. From `erx-app pack` to a running app's session. The
-system domain reads only the header; the image is read, and checked,
-only by the app's own session.*
+*Figure 23.2. From `erx-app pack` to a running app's session.*
 
 1. **Packing.** `erx-app pack examples/dashboard` compiles the
    sources with stock OTP's `erlc` against the SDK's public
@@ -511,7 +535,7 @@ only by the app's own session.*
    through its `system` grant, runs the file check by hash and
    admission, registers the principal and logs `packages: admitted
    dashboard`. It hands the start service the package set, and the
-   enabled row's keeper asks for a session.
+   enabled row's session keeper asks for a session.
 4. **The session.** The domain service starts `dashboard_1` and sends
    the record. `erx_app` logs `erx_app: mounted /app` and starts
    `erx_dashboard`, which opens its window through `erx_ui`.
@@ -569,17 +593,17 @@ domain serves, as a truncating create of `clock.app`
 ([design-packaging.md, Installing, updating and removing](../design-packaging.md#installing-updating-and-removing)):
 
 1. The tree opens a fresh temporary file in the data partition's
-   `packages/new/`. It has no name in `/apps`, so no other open can
-   write it, and no app's grant reaches `new/`, so no app runs a byte
-   the file check has not accepted.
-2. `cp` writes the bytes and closes the file. The close waits for the
-   rest, so the bytes checked are the bytes published.
-3. The package process runs the file check by signer, and admission.
-4. It makes the temporary file durable.
-5. If the name already holds an admitted package, it publishes a
-   package set without the app, and the start service answers only
-   once every session of the app has ended.
-6. It renames `new/tmp.K` to `installed/clock.app`, over the old
+   `packages/new/`, and `cp` writes the bytes into it. The file has no
+   name in `/apps`, so no other open can write it, and no app's grant
+   reaches `new/`, so no app runs a byte the file check has not
+   accepted.
+2. When `cp` closes the file, the close waits while the package
+   process runs the file check by signer and admission and makes the
+   file durable, so the bytes checked are the bytes published.
+3. If the name already holds an admitted package, the package process
+   publishes a package set without the app, and the start service
+   answers only once every session of the app has ended.
+4. It renames `new/tmp.K` to `installed/clock.app`, over the old
    package if there is one, in one atomic rename, makes the directory
    durable, and publishes a set with the app. Only then does `cp`
    succeed.
@@ -590,8 +614,8 @@ install. The old package runs until the new one has passed every
 check; then the app stays stopped until `service clock restart` or the
 next boot, since publishing applies nothing of the start settings.
 The old session ends before the rename because it reads its code
-through an open of its package: a keeper that restarted it across the
-rename would start the old layout over the new bytes.
+through an open of its package: a session keeper that restarted it
+across the rename would start the old layout over the new bytes.
 
 A removal publishes a set without the app and then deletes the file.
 The app's data stays, as deleting an app keeps its data on macOS and
@@ -614,15 +638,23 @@ apps hold no files grant but the two read-only package grants.
 
 ### 23.5.4 The package lifetime
 
-A **lifetime** is one run of the package process. Its effects pass
-through two takers, each the only one of its kind: `erx_pkg_io` for
-every file operation on `packages`, and the start service for every
-publication. Each request names its lifetime, and each taker refuses
-one whose lifetime has ended. So when the package process crashes,
-nothing of its run begins again, and the next run starts with a
-**recovery** that reconciles the directory, the registry and the
-package set. A failed rename or deletion ends the lifetime on purpose,
-so the recovery reconciles what the failure left.
+What if the package process crashes halfway through an install? A
+**lifetime** is one run of the package process. Its file operations
+on `packages` all pass through one process, `erx_pkg_io`, and its
+package sets through the start service; each request names its
+lifetime, and both refuse a request whose lifetime has ended. So
+nothing a crashed run asked for can still land after it, and the next
+run starts with a **recovery**: it judges the image's packages again,
+deletes every temporary file in `new/`, judges each installed package
+again, and publishes the set of those admitted.
+
+Say the process crashes after step 2 of section 23.5.2: `new/tmp.K` is
+durable, and the old `clock.app` is still installed and running. The
+recovery deletes `tmp.K`, admits the old package and publishes a set
+holding it, so the old version runs on as if the copy had never
+begun. A failed rename or deletion ends the
+lifetime on purpose, so the recovery reconciles what the failure
+left.
 
 `erx_pkg_io` itself is never restarted, since a restarted one could
 not know whether a request of its predecessor was still on its way to
@@ -646,10 +678,15 @@ SDK from a built tree ([design-packaging.md, The SDK](../design-packaging.md#the
 | `SDK.txt` | the erXos commit, ABI version, architecture, OTP release |
 | `sysroot/` | musl's headers and `libc.a`, the program layer, the draw protocol's header |
 | `share/erxos/sdk.mk` | the compiler flags and link line erXos's own programs use |
-| `erlang/` | the public Erlang applications, `public.txt`, `erx_ui_host` |
-| `host/bin/` | `erx-app` and `fsimg`, and `erx-lvgl` built for the host |
+| `erlang/` | the public Erlang applications and `public.txt` |
+| `host/erlang/ebin` | the modules the packer's file check calls under stock OTP |
 
-*Table 23.2. What the SDK holds.*
+*Table 23.2. What the built SDK export writes (`tools/lib/erx/sdk.rb`).*
+
+The design adds the host tools to the SDK, `erx-app`, `fsimg` and
+`erx-lvgl` built for the host, with `erx_ui_host`; that part is
+designed and not built, and the tree's own tests take them from the
+tree.
 
 **What is public.** For a native program: the POSIX-lite personality
 of chapter 13 ([section 13.7](13-native-programs.md#137-the-posix-lite-personality)),
@@ -683,8 +720,8 @@ stock OTP: while it runs, `erx_ui:open/1` opens its window there,
 server, schema and renderer are those a session runs; only the window
 is a buffer in memory, so a frame drawn on the host is the frame drawn
 on the board. The dashboard's host test compares its frame with a
-reference picture (`test/display/reference/dashboard`). `erx_ui_host`
-is built. `erx-app test DIR`, which runs an app's EUnit and Common Test
+reference picture (`test/display/reference/dashboard.ppm.gz`).
+`erx_ui_host` is built, in the tree's `sdk/`. `erx-app test DIR`, which runs an app's EUnit and Common Test
 suites with the SDK on the path, is designed and not built.
 
 **The development package key.** No private key enters an SDK. The
@@ -698,12 +735,12 @@ mode keeps the header and the file check simple.
 **The examples.** `examples/` holds app directories that are not part
 of erXos: no release, application list or test list of the system
 names them. `examples/dashboard`, the kiosk, is packed through the SDK
-as a third party would pack it, and the landing gate exports the SDK,
-packs it and runs its host tests with nothing but the SDK on the paths
+as a third party would pack it: the landing gate compiles and packs
+it against an SDK exported from the tree and runs its host tests
 ([design-packaging.md, Examples](../design-packaging.md#examples)).
-Doom, the other example, is carried by the media as `/bin/doom`, a
-program of the system's release that root's shell starts, not as a
-package. The SDK's native path is checked instead by
+Doom, the other example, is not a package: the Raspberry Pi 4's card
+and the published QEMU image carry it as `/bin/doom`, a program of the
+system's release that root's shell starts. The SDK's native path is checked instead by
 `test/fixtures/sdk_hello`, a program built with the SDK alone, packed,
 and planned as the loader plans it (`test/host/sdk_test.rb`).
 
@@ -728,13 +765,11 @@ costs only a read error in the session that met it: the storage domain
 can withhold a package, or put back an older one from the same signer,
 but never change one.
 
-The limits of the system as built bear repeating. It runs only
-trusted code (chapter 11, section
+The system as built runs only trusted code (chapter 11, section
 [11.13](11-security.md#1113-trusted-code-only-and-what-a-hostile-app-can-do)),
 and that section's list of what a hostile app could do applies to an
-app's session as to any domain's. An app's session holds every service
-of the `apps` row, not only those it named, and its memory is held by
-budget records, not by a wall.
+app's session as to any domain's. An app's memory is held by budget
+records, not by a wall.
 
 ## 23.8 Design choices
 
@@ -745,9 +780,10 @@ a second path beside run-time install. The `apps` row makes one path,
 which the build proves once.
 
 **Packages on the slot, not in the boot image.** The boot image stays
-in memory for the whole boot; Doom's 28 MiB data file in it made it
-88 MiB. On the system partition, packages are read on demand and
-still change only with a system update.
+in memory for the whole boot, so a package inside it would hold its
+whole size of memory, data files included, from power-on to shutdown.
+On the system partition, packages are read on demand and still change
+only with a system update.
 
 **An image under a hash tree, not files unpacked.** Unpacked files
 would rest on the storage domain's honesty. A read-only image checked
