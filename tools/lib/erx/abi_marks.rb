@@ -11,9 +11,14 @@ module Erx
     # a record is written only by the encoder generated from those marks.
     #
     # A mark names a place: a field that has no bits lines, written FIELD, or
-    # one bits range of a field, written FIELD.BITS. A place no mark claims is
-    # free: a description states its value. Build_layout leaves the mark lines
-    # to this module, which reads them from the layout declarations once every
+    # one bits range of a field, written FIELD.BITS. Every place of a marked
+    # layout is claimed by exactly one mark, so a place is free, stated by a
+    # description, only where a states mark, a reference's length or a
+    # release says so. A place whose field or bits line ends in
+    # device_address holds an address the device follows; in a marked layout
+    # the sequencer writes it (a reference or a derived place), or the device
+    # reports it (a release's place). Build_layout leaves the mark lines to
+    # this module, which reads them from the layout declarations once every
     # type is resolved, since a mark may name an enum declared after its layout.
     module Marks
       # Each mark's spelling, as a refusal states it.
@@ -23,18 +28,27 @@ module Erx
         'refers' => 'FIELD.BITS TARGET [length FIELD.BITS [unit N]]',
         'activates' => 'FIELD.BITS',
         'derived' => 'FIELD.BITS',
+        'states' => 'FIELD.BITS',
         'releases' => 'FIELD.BITS TARGET [when FIELD.BITS ENUM.MEMBER...]'
       }.freeze
       KEYWORDS = SYNTAX.keys.freeze
       WRITERS = %w[cpu device].freeze
       DATA = 'data'
+      # The roles a mark gives a place. A free place is an encoder input a
+      # description states (or, on a report, the device); a placed one the
+      # sequencer supplies; a written one the encoder takes from the mark.
+      FREE = %i[stated reported code].freeze
+      # The roles a device address may take: the sequencer writes it, or the
+      # device reports it.
+      ADDRESS_ROLES = %i[placed reported].freeze
 
       Target = Struct.new(:name, :writer, :line, keyword_init: true)
 
-      # One place of a marked layout. A bits range keeps the accessor's view:
-      # the value it takes is shifted left by shift, so its low shift bits
-      # are zero.
-      Place = Struct.new(:field, :bits, :type, :low, :high, :shift, keyword_init: true) do
+      # One place of a marked layout, with the field or bits line that declares
+      # it. A bits range keeps the accessor's view: the value it takes is
+      # shifted left by shift, so its low shift bits are zero.
+      Place = Struct.new(:field, :bits, :type, :low, :high, :shift, :device_address, :line,
+                         keyword_init: true) do
         def name = bits ? "#{field}_#{bits}" : field
         def spelling = bits ? "#{field}.#{bits}" : field
         def maximum = ((1 << (high - low + 1)) - 1) << shift
@@ -95,6 +109,7 @@ module Erx
 
       def meaning(declaration, layout, number, targets:, types:, constants:)
         declaration.fail!('marks belong to a wire_le layout') unless layout.storage == 'wire_le'
+        layout.tail&.line&.fail!('a marked layout has no tail: its encoder writes the fixed part only')
         layout.fields.reject { |field| field.type.is_a?(IntegerType) && !field.type.signed && !field.array? }
               .each { |field| field.line.fail!('a marked layout holds unsigned integer fields only') }
         places = layout_places(layout)
@@ -102,23 +117,22 @@ module Erx
           Mark.new(keyword: line.words.first, line: line,
                    value: parse_mark(line, places, targets: targets, types: types, constants: constants)).freeze
         end
-        refuse_twice(marks)
         selector, activation, release = %w[selects activates releases].map { |keyword| one(marks, keyword) }
         fixed, references, derived = %w[fixed refers derived].map do |keyword|
           marks.select { |mark| mark.keyword == keyword }.map(&:value).freeze
         end
-        # Placed: what the sequencer supplies. Written: what the encoder writes
-        # from the marks. Free: every other place. Each keeps field order.
-        placed = references.map(&:place) + [activation].compact + derived
-        written = [selector, *fixed].compact.map(&:place)
+        if release && (references.any? || derived.any?)
+          declaration.fail!('a report, a layout with releases, has no refers or derived mark: the device writes it')
+        end
+        roles = claim_once(marks, places)
         Meaning.new(layout: layout, number: number, selector: selector, fixed: fixed,
                     references: references, activation: activation, derived: derived, release: release,
-                    free: places.values.reject { |place| placed.include?(place) || written.include?(place) }.freeze,
-                    placed: places.values.select { |place| placed.include?(place) }.freeze).freeze
+                    free: places.values.select { |place| FREE.include?(roles[place.spelling]) }.freeze,
+                    placed: places.values.select { |place| roles[place.spelling] == :placed }.freeze).freeze
       end
 
       # One mark line's value: a Value for selects and fixed, a Reference, a
-      # Place for activates and derived, or a Release.
+      # Place for activates, derived and states, or a Release.
       def parse_mark(line, places, targets:, types:, constants:)
         keyword, *words = line.words
         case [keyword, words.size]
@@ -135,27 +149,51 @@ module Erx
           place = fetch_place(places, words[0], line)
           line.fail!("activates marks one bit, not #{place.spelling}") unless place.maximum == 1
           place
-        in ['derived', 1] then fetch_place(places, words[0], line)
+        in ['derived' | 'states', 1] then fetch_place(places, words[0], line)
         in ['releases', _] then parse_release(words, places, targets, types, line)
         else line.fail!("#{keyword} requires #{SYNTAX.fetch(keyword)}")
         end
       end
 
-      # The places a mark claims; no place is claimed twice in a layout.
-      def claims(value)
-        case value
-        in Reference then [value.place, value.length].compact
-        in Value | Release then [value.place]
-        in Place then [value]
+      # Each place a mark claims, with its role: a reference claims its address,
+      # placed, and its length, stated; a release the place it names and the
+      # code it is read under, reported and a code; activates and derived a placed
+      # place; selects and fixed a written one; states a stated one.
+      def claims(mark)
+        case mark.value
+        in Reference => reference then [[reference.place, :placed], [reference.length, :stated]].select(&:first)
+        in Release => release then [[release.place, :reported], [release.condition, :code]].select(&:first)
+        in Value => value then [[value.place, :written]]
+        in Place => place then [[place, mark.keyword == 'states' ? :stated : :placed]]
         end
       end
 
-      def refuse_twice(marks)
-        marks.each_with_object({}) do |mark, claimed|
-          claims(mark.value).each do |place|
-            mark.line.fail!("#{place.spelling} is marked twice") if claimed.key?(place.name)
-            claimed[place.name] = true
+      # Each place's role, by its spelling. Every place is claimed by exactly
+      # one mark, so a place is free only where a mark says so, and a device
+      # address is placed by the sequencer or reported by the device, never
+      # stated by a description or fixed by the format. Each refusal names
+      # the line at fault.
+      def claim_once(marks, places)
+        roles = marks.each_with_object({}) do |mark, claimed|
+          claims(mark).each do |place, role|
+            mark.line.fail!("#{place.spelling} is marked twice") if claimed.key?(place.spelling)
+            refuse_free_address(place, role, mark.line)
+            claimed[place.spelling] = role
           end
+        end
+        refuse_unclaimed(places, roles)
+        roles.freeze
+      end
+
+      def refuse_free_address(place, role, line)
+        return if !place.device_address || ADDRESS_ROLES.include?(role)
+
+        line.fail!("device address #{place.spelling} must be a reference's address, derived or released")
+      end
+
+      def refuse_unclaimed(places, roles)
+        places.each_value do |place|
+          place.line.fail!("#{place.spelling} is claimed by no mark") unless roles.key?(place.spelling)
         end
       end
 
@@ -175,7 +213,9 @@ module Erx
                                else line.fail!("refers requires #{SYNTAX.fetch('refers')}")
                                end
         line.fail!('a length unit is a positive byte count') unless unit.positive?
-        Reference.new(place: fetch_place(places, words[0], line), target: target_name(target, targets, line),
+        place = fetch_place(places, words[0], line)
+        line.fail!("refers names a device address, and #{place.spelling} is not one") unless place.device_address
+        Reference.new(place: place, target: target_name(target, targets, line),
                       length: length && fetch_place(places, length, line), unit: unit).freeze
       end
 
@@ -219,15 +259,20 @@ module Erx
       def layout_places(layout)
         layout.fields.flat_map do |field|
           if field.bits.empty?
-            [Place.new(field: field.name, bits: nil, type: field.type, low: 0,
-                       high: field.type.bits - 1, shift: 0).freeze]
+            [Place.new(field: field.name, bits: nil, type: field.type, low: 0, high: field.type.bits - 1,
+                       shift: 0, device_address: field.device_address, line: field.line).freeze]
           else
             field.bits.map do |bits|
               Place.new(field: field.name, bits: bits.fetch(:name), type: field.type, low: bits.fetch(:low),
-                        high: bits.fetch(:high), shift: bits.fetch(:shift)).freeze
+                        high: bits.fetch(:high), shift: bits.fetch(:shift),
+                        device_address: bits.fetch(:device_address), line: bits.fetch(:line)).freeze
             end
           end
-        end.to_h { |place| [place.spelling, place] }
+        end.each_with_object({}) do |place, places|
+          other = places.values.find { |earlier| earlier.name == place.name }
+          place.line.fail!("#{place.spelling} and #{other.spelling} share the encoder member #{place.name}") if other
+          places[place.spelling] = place
+        end
       end
     end
   end

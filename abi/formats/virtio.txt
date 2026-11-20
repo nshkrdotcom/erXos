@@ -64,7 +64,7 @@ target virtq_desc cpu
 # the NEXT flag and next index from where it places the chain; this driver negotiates no
 # VIRTIO_F_INDIRECT_DESC, so INDIRECT is clear.
 layout erx_virtq_desc wire_le 8 16
-  field addr u64 0
+  field addr u64 0 device_address
   field len u32 8
   field flags u16 12
     bits next 0 0
@@ -72,6 +72,7 @@ layout erx_virtq_desc wire_le 8 16
     bits indirect 2 2
   field next u16 14
   refers addr data length len
+  states flags.write
   derived flags.next
   derived next
   fixed flags.indirect 0
@@ -89,6 +90,7 @@ layout erx_virtq_used_elem wire_le 4 8
   field id u32 0
   field len u32 4
   releases id virtq_desc
+  states len
 
 # The header a block request starts with, read by the device.
 layout erx_virtio_blk_req_header wire_le 8 16
@@ -184,7 +186,7 @@ layout erx_virtio_gpu_resource_attach_backing wire_le 8 32
   field nr_entries u32 28
 
 layout erx_virtio_gpu_mem_entry wire_le 8 16
-  field addr u64 0
+  field addr u64 0 device_address
   field length u32 8
   field padding u32 12
 

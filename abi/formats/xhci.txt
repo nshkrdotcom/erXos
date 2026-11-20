@@ -90,7 +90,8 @@ limit xhci_interval_binterval_max u8 16
 # The slot context (xhci.h:74-111): the device's route, speed and hub fields, its
 # last valid context index, the root hub port it is reached through, its
 # transaction translator, its interrupter, and the address and state the
-# controller writes.
+# controller writes, which software sets to 0 in an input context (xHCI 1.2, Table 6-7,
+# p. 447; section 4.5.3, p. 98).
 layout erx_xhci_slot_context wire_le 4 32
   field route u32 0
     bits route_string 0 19
@@ -111,11 +112,25 @@ layout erx_xhci_slot_context wire_le 4 32
     bits address 0 7
     bits slot_state 27 31
   padding 16 16
+  states route.route_string
+  states route.speed
+  states route.multi_tt
+  states route.hub
+  states route.context_entries
+  states ports.exit_latency
+  states ports.root_port
+  states ports.port_count
+  states tt.tt_slot
+  states tt.tt_port
+  states tt.tt_think_time
   fixed tt.interrupter 0
+  fixed state.address 0
+  fixed state.slot_state 0
 
 # The endpoint context (xhci.h:118-161). The dequeue pointer is 16-byte aligned and
 # shares its word with the dequeue cycle state, both derived from the endpoint's bound
-# ring. Mult, MaxPStreams, LSA and HID (xhci.h:130-135, 143-144) are fixed at 0, since
+# ring. The endpoint state is the controller's, 0 in an input context (xHCI 1.2, Table
+# 6-8, p. 450). Mult, MaxPStreams, LSA and HID (xhci.h:130-135, 143-144) are fixed at 0, since
 # MaxPStreams above 0 makes the dequeue pointer a stream context array's address (xHCI
 # 1.2, 6.2.3).
 layout erx_xhci_endpoint_context wire_le 8 32
@@ -133,15 +148,23 @@ layout erx_xhci_endpoint_context wire_le 8 32
     bits max_packet 16 31
   field dequeue u64 8
     bits dequeue_cycle 0 0
-    bits dequeue_pointer 4 63 shift 4
+    bits dequeue_pointer 4 63 shift 4 device_address
   field payload u32 16
     bits average_trb_length 0 15
     bits max_esit_payload 16 31
   padding 20 12
+  fixed info.endpoint_state 0
   fixed info.mult 0
   fixed info.max_pstreams 0
   fixed info.lsa 0
+  states info.interval
+  states config.error_count
+  states config.endpoint_type
   fixed config.hid 0
+  states config.max_burst
+  states config.max_packet
+  states payload.average_trb_length
+  states payload.max_esit_payload
   derived dequeue.dequeue_pointer
   derived dequeue.dequeue_cycle
 
@@ -154,14 +177,16 @@ layout erx_xhci_input_control_context wire_le 4 32
   derived drop
   derived add
 
-# One entry of the event ring segment table (xhci.h:396-400); its size counts the
+# One entry of the event ring segment table (xhci.h:396-400): the segment's address,
+# 64-byte aligned (XHCI_EVENT_RING_SEG_ALIGN, xhci.h:56), and its size, which counts the
 # segment's TRBs in bits 15:0 (xHCI 1.2, 6.5, Table 6-95 of the body text).
 layout erx_xhci_segment_table_entry wire_le 8 16
   field base u64 0
+    bits address 6 63 shift 6 device_address
   field size u32 8
     bits trbs 0 15
   padding 12 4
-  derived base
+  derived base.address
   derived size.trbs
 
 # Every TRB is 16 bytes, 16-byte aligned (XHCI_TRB_ALIGN, xhci.h:59): a 64-bit
@@ -176,14 +201,14 @@ limit xhci_trb_align u32 16
 # writes every entry from the layout alone.
 layout erx_xhci_dcbaa_entry wire_le 8 8
   field entry u64 0
-    bits address 6 63 shift 6
+    bits address 6 63 shift 6 device_address
   derived entry.address
 
 # An entry of the scratchpad buffer array (xhci.h:68): a scratchpad page's address, 4 KiB
 # aligned (XHCI_PAGE_SIZE, xhci.h:61), which the sequencer writes from the layout alone.
 layout erx_xhci_scratchpad_entry wire_le 8 8
   field entry u64 0
-    bits page 12 63 shift 12
+    bits page 12 63 shift 12 device_address
   derived entry.page
 
 # The structures a TRB names (docs/design-device-dma.md, "What the formats say"): a
@@ -194,7 +219,7 @@ target xhci_command_ring cpu
 # A normal TRB (xhci.h:235-277; xHCI 1.2, 6.4.1.1): a buffer's device address and
 # length, the TD size, and the flags.
 layout erx_xhci_trb_normal wire_le 8 16
-  field buffer u64 0
+  field buffer u64 0 device_address
   field status u32 8
     bits length 0 16
     bits td_size 17 21
@@ -208,6 +233,9 @@ layout erx_xhci_trb_normal wire_le 8 16
     bits type 10 15
   selects control.type xhci_trb_type.normal
   refers buffer data length status.length
+  states status.td_size
+  states control.interrupt_on_short
+  states control.interrupt_on_completion
   fixed status.interrupter 0
   fixed control.chain 0
   fixed control.immediate_data 0
@@ -216,7 +244,7 @@ layout erx_xhci_trb_normal wire_le 8 16
 # A control transfer's data stage: a normal TRB's fields and the stage's direction
 # (xhci.h:267, xhci.c:1940-1960).
 layout erx_xhci_trb_data wire_le 8 16
-  field buffer u64 0
+  field buffer u64 0 device_address
   field status u32 8
     bits length 0 16
     bits td_size 17 21
@@ -231,6 +259,10 @@ layout erx_xhci_trb_data wire_le 8 16
     bits direction_in 16 16
   selects control.type xhci_trb_type.data_stage
   refers buffer data length status.length
+  states status.td_size
+  states control.interrupt_on_short
+  states control.interrupt_on_completion
+  states control.direction_in
   fixed status.interrupter 0
   fixed control.chain 0
   fixed control.immediate_data 0
@@ -249,6 +281,8 @@ layout erx_xhci_trb_status wire_le 8 16
     bits type 10 15
     bits direction_in 16 16
   selects control.type xhci_trb_type.status_stage
+  states control.interrupt_on_completion
+  states control.direction_in
   fixed status.interrupter 0
   fixed control.chain 0
   activates control.cycle
@@ -268,6 +302,9 @@ layout erx_xhci_trb_setup wire_le 8 16
     bits type 10 15
     bits transfer_type 16 17
   selects control.type xhci_trb_type.setup_stage
+  states setup
+  states control.interrupt_on_completion
+  states control.transfer_type
   fixed status.length 8
   fixed status.interrupter 0
   fixed control.immediate_data 1
@@ -277,7 +314,7 @@ layout erx_xhci_trb_setup wire_le 8 16
 # flips the ring's cycle state when the controller follows it (xhci.h:241-277).
 layout erx_xhci_trb_link wire_le 8 16
   field segment u64 0
-    bits segment_pointer 4 63 shift 4
+    bits segment_pointer 4 63 shift 4 device_address
   field status u32 8
     bits interrupter 22 31
   field control u32 12
@@ -302,7 +339,7 @@ layout erx_xhci_trb_link wire_le 8 16
 # that have one, and bit 23, Stop Endpoint's suspend flag, stay clear.
 layout erx_xhci_trb_command wire_le 8 16
   field parameter u64 0
-    bits pointer 4 63 shift 4
+    bits pointer 4 63 shift 4 device_address
   field status u32 8
   field control u32 12
     bits cycle 0 0
@@ -316,7 +353,7 @@ layout erx_xhci_trb_command wire_le 8 16
 layout erx_xhci_trb_set_dequeue wire_le 8 16
   field parameter u64 0
     bits dequeue_cycle 0 0
-    bits pointer 4 63 shift 4
+    bits pointer 4 63 shift 4 device_address
   field status u32 8
   field control u32 12
     bits cycle 0 0
@@ -328,7 +365,7 @@ layout erx_xhci_trb_set_dequeue wire_le 8 16
 # 6.4.2.1, Table 6-39 of the body text): the TRB it reports on, the residue, the
 # completion code, the slot and the device context index.
 layout erx_xhci_trb_transfer_event wire_le 8 16
-  field pointer u64 0
+  field pointer u64 0 device_address
   field status u32 8
     bits residue 0 23
     bits code 24 31
@@ -341,12 +378,16 @@ layout erx_xhci_trb_transfer_event wire_le 8 16
   selects control.type xhci_trb_type.transfer_event
   activates control.cycle
   releases pointer xhci_transfer_ring when status.code xhci_completion.success xhci_completion.short_packet
+  states status.residue
+  states control.event_data
+  states control.endpoint
+  states control.slot
 
 # A command completion event (xHCI 1.2, 6.4.2.2): the command TRB it completes, the
 # command's completion parameter, the code and the slot; bits 23:16 are the virtual
 # function's ID, which the NIF does not read.
 layout erx_xhci_trb_command_event wire_le 8 16
-  field pointer u64 0
+  field pointer u64 0 device_address
   field status u32 8
     bits parameter 0 23
     bits code 24 31
@@ -357,6 +398,9 @@ layout erx_xhci_trb_command_event wire_le 8 16
   selects control.type xhci_trb_type.command_completion_event
   activates control.cycle
   releases pointer xhci_command_ring
+  states status.parameter
+  states status.code
+  states control.slot
 
 # A port status change event: the root hub port in bits 31:24 of the parameter
 # (xHCI 1.2, 6.4.2.3, Figure 6-16 and Table 6-43; FreeBSD polls its ports and reads
@@ -371,6 +415,8 @@ layout erx_xhci_trb_port_event wire_le 8 16
     bits type 10 15
   selects control.type xhci_trb_type.port_status_change_event
   activates control.cycle
+  states parameter.port
+  states status.code
 
 # The TRB types (xhci.h:280-313).
 enum xhci_trb_type u8

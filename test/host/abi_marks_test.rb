@@ -11,9 +11,9 @@ require_relative '../../tools/lib/erx/abi'
 # The DMA marks of abi/formats (docs/design-device-dma.md, "What the formats say") and
 # the encoders generated from them. On a sample format, the marks become meanings with
 # their free and placed places, and each malformed mark is refused with a line naming
-# it. On the tree's formats, every address a record holds is placed by the sequencer,
-# never free, and each form's encoder, compiled with ERX_CLANG, writes a record equal to
-# one checked by hand from the specification, and refuses a value its bits cannot hold
+# it. On the tree's formats, a device address left for a description to state is
+# refused, and each form's encoder, compiled with ERX_CLANG, writes a record equal to
+# one checked by hand from the specification, and refuses a value its place cannot hold
 # with the record untouched. Seeded faults in the generator, the formats and the
 # generated code show that each test catches what it guards.
 class AbiMarksTest < Minitest::Test
@@ -30,7 +30,7 @@ class AbiMarksTest < Minitest::Test
       value short 13
     target sample_ring cpu
     layout erx_sample_trb wire_le 8 16
-      field buffer u64 0
+      field buffer u64 0 device_address
       field status u32 8
         bits length 0 16
         bits aligned 17 23 shift 4
@@ -44,12 +44,16 @@ class AbiMarksTest < Minitest::Test
       refers buffer data length status.length
       fixed control.toggle 0
       activates control.cycle
+      states status.aligned
+      states status.code
+      states control.spare
     layout erx_sample_event wire_le 8 16
-      field pointer u64 0
+      field pointer u64 0 device_address
       field status u32 8
         bits code 24 31
       field control u32 12
-        bits cycle 0 0
+        bits valid 0 0
+      activates control.valid
       releases pointer sample_ring when status.code sample_code.ok sample_code.short
   ABI
 
@@ -75,33 +79,40 @@ class AbiMarksTest < Minitest::Test
     'a fixed value below its shift' => ['fixed control.toggle 0', "fixed control.toggle 0\n  fixed status.aligned 8",
                                         'fixed value 8 does not fit status.aligned'],
     'a length unit of zero' => ['length status.length', 'length status.length unit 0', 'a length unit is a positive byte count'],
-    'a signed field' => ['field buffer u64 0', 'field buffer i64 0', 'a marked layout holds unsigned integer fields only']
+    'a signed field' => ['field buffer u64 0 device_address', 'field buffer i64 0', 'a marked layout holds unsigned integer fields only'],
+    'a place claimed by no mark' => ["\n  states control.spare", '', 'control.spare is claimed by no mark'],
+    'a reference to a place that is no device address' => ['field buffer u64 0 device_address', 'field buffer u64 0',
+                                                            'refers names a device address, and buffer is not one'],
+    'a device address a description states' => ['refers buffer data length status.length',
+                                                "states buffer\n  states status.length",
+                                                "device address buffer must be a reference's address, derived or released"],
+    'a report with a derived place' => ['activates control.valid', "activates control.valid\n  derived control.valid",
+                                        'a report, a layout with releases, has no refers or derived mark: the device writes it'],
+    'two places of one encoder member' => ["field status u32 8\n    bits code 24 31\n  field control u32 12\n    bits valid",
+                                           "field control_valid u32 8\n  field control u32 12\n    bits valid",
+                                           'control.valid and control_valid share the encoder member control_valid'],
+    'a tail on a marked layout' => ["\n  states control.spare", "\n  states control.spare\n  tail extra u8 status 4",
+                                    'a marked layout has no tail: its encoder writes the fixed part only'],
+    'a device address on a field with bits' => ["field control u32 12\n    bits valid",
+                                                "field control u32 12 device_address\n    bits valid",
+                                                'device_address on a field with bits belongs on its bits']
   }.freeze
 
-  # The places of the tree's formats that hold a device address; the sequencer writes
-  # each from a name or from where it places the record, so none is free once its layout
-  # is marked. The command TRBs are marked by the package that moves the TRB form.
-  ADDRESSES = {
-    'erx_virtq_desc' => %w[addr],
-    'erx_xhci_trb_normal' => %w[buffer],
-    'erx_xhci_trb_data' => %w[buffer],
-    'erx_xhci_trb_link' => %w[segment.segment_pointer],
-    'erx_xhci_endpoint_context' => %w[dequeue.dequeue_pointer],
-    'erx_xhci_dcbaa_entry' => %w[entry.address],
-    'erx_xhci_scratchpad_entry' => %w[entry.page],
-    'erx_xhci_segment_table_entry' => %w[base],
-    'erx_xhci_trb_command' => %w[parameter.pointer],
-    'erx_xhci_trb_set_dequeue' => %w[parameter.pointer]
-  }.freeze
+  # The seeded format: the descriptor's address and length stated by a description, so
+  # every place is still claimed and only the device address rule refuses it.
+  FREE_ADDRESS = ['abi/formats/virtio.txt', "  refers addr data length len\n", "  states addr\n  states len\n"].freeze
 
   # Each form's records, encoded and compared with bytes worked out by hand:
   # the descriptor (VIRTIO 1.2, 2.7.5) of a 512-byte buffer the device writes, with
   # NEXT set and next 5; a normal TRB (xHCI 1.2, 6.4.1.1) of 64 bytes with interrupt on
   # completion and the cycle bit set, type 1 at bits 15:10; a link TRB (6.4.4.1) to
   # 0x80002000 with toggle cycle, type 6; a setup stage TRB (6.4.1.2.1) of a GET_DESCRIPTOR
-  # (80 06 00 01 00 00 12 00), length 8, immediate data, IN, cycle set, type 2. The two
-  # refused records are a transfer type of 4 in two bits and a link to an address that is
-  # not 16-byte aligned; each must leave the record's 0xaa bytes untouched.
+  # (80 06 00 01 00 00 12 00), length 8, immediate data, IN, cycle set, type 2; an ADMA2
+  # entry (SD Host Controller 4.20, figure 1-10) of 512 bytes at 0x80001000, valid, end,
+  # action transfer (0x23). The refused records are a transfer type of 4 in two bits, a
+  # link to an address that is not 16-byte aligned, a normal TRB's length of 0x100000040,
+  # whose low 32 bits would fit its 17, and an ADMA2 address above 32 bits; each must
+  # leave the record's 0xaa bytes untouched.
   ENCODERS = <<~C
     #include <stdio.h>
     #include <string.h>
@@ -139,10 +150,13 @@ class AbiMarksTest < Minitest::Test
     	static const unsigned char setup_bytes[16] = {
     		0x80, 0x06, 0x00, 0x01, 0x00, 0x00, 0x12, 0x00,
     		0x08, 0x00, 0x00, 0x00, 0x41, 0x08, 0x03, 0x00 };
+    	static const unsigned char adma2_bytes[8] = {
+    		0x23, 0x00, 0x00, 0x02, 0x00, 0x10, 0x00, 0x80 };
     	erx_virtq_desc_t desc;
     	erx_xhci_trb_normal_t normal;
     	erx_xhci_trb_link_t link;
     	erx_xhci_trb_setup_t setup;
+    	erx_sdhci_adma2_entry_t adma2;
     	erx_xhci_trb_setup_free_t setup_free = { .setup = UINT64_C(0x0012000001000680),
     	    .control_transfer_type = 3 };
     	erx_xhci_trb_link_placed_t link_placed = {
@@ -166,6 +180,11 @@ class AbiMarksTest < Minitest::Test
     	check("trb_setup", erx_xhci_trb_setup_encode(&setup, &setup_free,
     	    &(erx_xhci_trb_setup_placed_t){ .control_cycle = 1 }), true, &setup,
     	    setup_bytes, sizeof(setup));
+    	memset(&adma2, 0xaa, sizeof(adma2));
+    	check("adma2_entry", erx_sdhci_adma2_entry_encode(&adma2,
+    	    &(erx_sdhci_adma2_entry_placed_t){ .attributes_end = 1, .length = 0x200,
+    	    .address_data = UINT64_C(0x80001000) }), true, &adma2, adma2_bytes,
+    	    sizeof(adma2));
 
     	setup_free.control_transfer_type = 4;
     	memset(&setup, 0xaa, sizeof(setup));
@@ -176,6 +195,16 @@ class AbiMarksTest < Minitest::Test
     	memset(&link, 0xaa, sizeof(link));
     	check("trb_link refused", erx_xhci_trb_link_encode(&link, &link_placed),
     	    false, &link, untouched, sizeof(link));
+    	memset(&normal, 0xaa, sizeof(normal));
+    	check("trb_normal wide", erx_xhci_trb_normal_encode(&normal,
+    	    &(erx_xhci_trb_normal_free_t){ .status_length = UINT64_C(0x100000040) },
+    	    &(erx_xhci_trb_normal_placed_t){ .buffer = UINT64_C(0x80001000),
+    	    .control_cycle = 1 }), false, &normal, untouched, sizeof(normal));
+    	memset(&adma2, 0xaa, sizeof(adma2));
+    	check("adma2_entry wide", erx_sdhci_adma2_entry_encode(&adma2,
+    	    &(erx_sdhci_adma2_entry_placed_t){ .attributes_end = 1, .length = 0x200,
+    	    .address_data = UINT64_C(0x100001000) }), false, &adma2, untouched,
+    	    sizeof(adma2));
     	return (failures == 0 ? 0 : 1);
     }
   C
@@ -210,22 +239,29 @@ class AbiMarksTest < Minitest::Test
     {
       'an unknown target' => [Erx::ABI::Marks.singleton_class, :target_name, ->(name, *) { name }],
       'a fixed value its bits cannot hold' => [Erx::ABI::Marks::Place, :holds?, ->(*) { true }],
-      'a place marked twice' => [Erx::ABI::Marks.singleton_class, :refuse_twice, ->(*) {}]
+      'a place claimed by no mark' => [Erx::ABI::Marks.singleton_class, :refuse_unclaimed, ->(*) {}],
+      'a device address a description states' => [Erx::ABI::Marks.singleton_class, :refuse_free_address, ->(*) {}]
     }.each do |label, (owner, method, body)|
       original, replacement, = REFUSALS.fetch(label)
       with_fault(owner, method, body) { sample(edit(SAMPLE, original, replacement)) }
     end
   end
 
-  def test_every_address_is_placed
-    assert_empty address_violations(tree_schema(Dir.mktmpdir('erx-abi-marks-')))
+  # A seeded fault in the format: the descriptor's address stated by a description.
+  def test_a_free_device_address_in_a_format_is_refused
+    directory = Dir.mktmpdir('erx-abi-marks-')
+    seed(directory, *FREE_ADDRESS)
+    error = assert_raises(Erx::ABI::SchemaError) { tree_schema(directory, copied: true) }
+    assert_match(%r{\Aabi/formats/virtio.txt:\d+: device address addr must be}, error.message)
   end
 
-  # A seeded fault: the descriptor's address left without its mark, so it is free.
-  def test_an_unmarked_address_is_caught
+  # A seeded fault in the generator: without the device address rule, the same format builds.
+  def test_without_the_device_address_rule_the_seeded_format_builds
     directory = Dir.mktmpdir('erx-abi-marks-')
-    seed(directory, 'abi/formats/virtio.txt', "  refers addr data length len\n", '')
-    assert_equal ['erx_virtq_desc addr is free'], address_violations(tree_schema(directory, copied: true))
+    seed(directory, *FREE_ADDRESS)
+    with_fault(Erx::ABI::Marks.singleton_class, :refuse_free_address, ->(*) {}) do
+      assert meaning(tree_schema(directory, copied: true), 'erx_virtq_desc').free.map(&:spelling).include?('addr')
+    end
   end
 
   def test_encoders_write_hand_checked_records
@@ -237,11 +273,22 @@ class AbiMarksTest < Minitest::Test
   # A seeded fault in the generated code: the link encoder without its toggle cycle bit.
   def test_a_dropped_fixed_value_is_caught
     header = Erx::ABI::CEmitter.header(tree_schema(Dir.mktmpdir('erx-abi-marks-')))
-    seeded = edit(header, "erx_xhci_trb_link_control_toggle_cycle_set(&out.control,\n\t        UINT32_C(1))",
-                  "erx_xhci_trb_link_control_toggle_cycle_set(&out.control,\n\t        UINT32_C(0))")
+    seeded = edit(header, "out.control |= (uint32_t)(UINT32_C(1) << 1);", "out.control |= (uint32_t)(UINT32_C(0) << 1);")
     output, status = run_encoders(seeded)
     refute status.success?
     assert_equal "trb_link: encoded 1, bytes differ 1\n", output
+  end
+
+  # A seeded fault in the generated code: the normal TRB's length without its width
+  # check, so a value wider than 17 bits is cut to its low bits and written.
+  def test_a_dropped_width_check_is_caught
+    header = Erx::ABI::CEmitter.header(tree_schema(Dir.mktmpdir('erx-abi-marks-')))
+    normal = header.index('erx_xhci_trb_normal_encode(')
+    seeded = header[0...normal] + edit(header[normal..], "\tif (described->status_length > UINT64_C(0x1ffff) ||\n\t    ",
+                                       "\tif (")
+    output, status = run_encoders(seeded)
+    refute status.success?
+    assert_equal "trb_normal wide: encoded 1, bytes differ 1\n", output
   end
 
   private
@@ -276,16 +323,6 @@ class AbiMarksTest < Minitest::Test
     FileUtils.cp_r(File.join(ROOT, 'abi'), directory)
     path = File.join(directory, relative)
     File.write(path, edit(File.read(path), original, replacement))
-  end
-
-  def address_violations(schema)
-    ADDRESSES.flat_map do |layout, spellings|
-      marked = meaning(schema, layout)
-      next [] unless marked
-
-      placed = marked.placed.map(&:spelling)
-      spellings.reject { |spelling| placed.include?(spelling) }.map { |spelling| "#{layout} #{spelling} is free" }
-    end
   end
 
   # Runs body with owner's method replaced, and asserts it builds; restores the method.

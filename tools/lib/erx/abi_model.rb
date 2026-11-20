@@ -79,10 +79,13 @@ module Erx
     end
 
     # An array field's count, and numbered_by, the index enum whose members
-    # number its elements when `count` names one, else nil.
+    # number its elements when `count` names one, else nil. device_address
+    # is true for a field that holds an address a device follows into memory
+    # (docs/design-device-dma.md, "What the formats say"); a bits range says
+    # the same of itself in its own :device_address.
     Field = Struct.new(:name, :type, :offset, :count, :numbered_by, :bits, :atomic,
                        :writer, :owners, :zero_mask, :input_masks,
-                       :visibility, :line, keyword_init: true) do
+                       :visibility, :device_address, :line, keyword_init: true) do
       def size
         type.size * (count || 1)
       end
@@ -184,6 +187,10 @@ module Erx
       PACKED_ORDERS = { 'packed_le' => 'little', 'packed_be' => 'big' }.freeze
       STORAGES = (%w[wire_le shared native] + PACKED_ORDERS.keys).freeze
       PACKED_MEMBERS = %w[field padding].freeze
+      # The last word of a field or bits line whose place holds an address a
+      # device follows into memory (docs/design-device-dma.md, "What the
+      # formats say").
+      DEVICE_ADDRESS = 'device_address'
       ELEMENT_REPEATS = %w[once many].freeze
       # The most arg words an event uses; the C table's argument array
       # has this many slots, and each carrier's args array at least as
@@ -679,11 +686,15 @@ module Erx
           case keyword
           when 'field'
             line.fail!('a field cannot follow a tail') if tail
+            words, device_address = device_address_word(words)
             unless [3, 5].include?(words.size) && (words.size == 3 || words[3] == 'count')
-              line.fail!('field requires NAME TYPE OFFSET [count COUNT]')
+              line.fail!("field requires NAME TYPE OFFSET [count COUNT] [#{DEVICE_ADDRESS}]")
             end
             field_name = Names.local(words[0], line: line)
             type = types.fetch(words[1])
+            if device_address && !(type.is_a?(IntegerType) && !type.signed && words.size == 3)
+              line.fail!("#{DEVICE_ADDRESS} marks one unsigned integer")
+            end
             line.fail!('variable layout cannot be embedded') if type.is_a?(Layout) && type.tail
             line.fail!('nested layout storage differs from its owner') if type.is_a?(Layout) && type.storage != storage
             line.fail!('a private layout cannot be embedded') if type.is_a?(Layout) && type.private?
@@ -695,8 +706,8 @@ module Erx
                     end
             line.fail!('array count must be positive and bounded') if count && (!count.positive? || count > MAX_LAYOUT_SIZE)
             offset = unsigned(words[2], line, maximum: size)
-            current_field = { name: field_name, type: type, offset: offset,
-                              count: count, numbered_by: numbered_by, bits: [], line: line }
+            current_field = { name: field_name, type: type, offset: offset, count: count,
+                              numbered_by: numbered_by, bits: [], device_address: device_address, line: line }
             fields << current_field
           when 'padding'
             arity(line, 3)
@@ -929,18 +940,25 @@ module Erx
       end
 
       def validate_bits(line, type)
-        words = line.words
+        words, device_address = device_address_word(line.words)
         unless [4, 6].include?(words.size) && (words.size == 4 || words[4] == 'shift')
-          line.fail!('bits requires NAME LOW HIGH [shift COUNT]')
+          line.fail!("bits requires NAME LOW HIGH [shift COUNT] [#{DEVICE_ADDRESS}]")
         end
         line.fail!('bits require an integer field') unless type.respond_to?(:integer)
+        line.fail!("#{DEVICE_ADDRESS} marks bits of an unsigned field") if device_address && type.integer.signed
         name = Names.local(words[1], line: line)
         low = unsigned(words[2], line)
         high = unsigned(words[3], line)
         shift = words.size == 6 ? unsigned(words[5], line) : 0
         width = type.integer.bits
         line.fail!('invalid bit range or shift') unless low <= high && high < width && shift < width && high - low + 1 + shift <= width
-        { name: name, low: low, high: high, shift: shift, line: line }.freeze
+        { name: name, low: low, high: high, shift: shift, device_address: device_address, line: line }.freeze
+      end
+
+      # A field or bits line's words without its trailing device_address
+      # word, and whether it had one.
+      def device_address_word(words)
+        words.last == DEVICE_ADDRESS ? [words[0...-1], true] : [words, false]
       end
 
       def attach_metadata(fields, metadata, storage:)
@@ -968,6 +986,7 @@ module Erx
               line.fail!('overlapping or duplicate bit range')
             end
           end
+          line.fail!("#{DEVICE_ADDRESS} on a field with bits belongs on its bits") if raw.fetch(:device_address) && !bits.empty?
           atomic = validate_atomic(values['atomic'], type, storage)
           writer = validate_writer(values['writer'])
           owners = {}
