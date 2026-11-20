@@ -2407,7 +2407,7 @@ case_undo(uint32_t program)
 #define GIVEN_PATH	"/virtio_mmio@a000000"
 #define GIVEN_RECORD	ERX_BOOT_RECORD_FLAG "\0given\0block\0virtio_mmio\0" GIVEN_PATH "\0"
 #define GIVEN_PAIR	ERX_BOOT_RECORD_FLAG "\0boot\0normal\0a\0"
-#define GIVEN_NUMBERS	9u			/* WINDOW_H OFFSET SIZE LINE_H MEM_H MEM_SIZE CLOCK COHERENT MAC */
+#define GIVEN_NUMBERS	10u			/* WINDOW_H OFFSET SIZE LINE_H MEM_H MEM_SIZE CLOCK COHERENT MAC INDEX */
 #define GIVEN_MARK	"shared"		/* after LINE_H: every device of the unit names the line */
 #define GIVEN_MARK_AFTER 3u			/* LINE_H's index among the numbers */
 
@@ -2552,15 +2552,16 @@ given_read(uint32_t id, uint64_t numbers[GIVEN_RECORDS][GIVEN_NUMBERS], bool *pa
  * table for its window and line, the registers at `offset` into the
  * window, memory of `memory`
  * bytes, named by a value of its own, or none for 0, a clock of 0 (a
- * transport's driver reads none) and a hardware address of 0 (a block
- * device has none).
+ * transport's driver reads none), a hardware address of 0 (a block
+ * device has none) and `index`, its manifest device row.
  */
 static bool
-given_numbers(const uint64_t *numbers, uint64_t offset, uint64_t memory)
+given_numbers(const uint64_t *numbers, uint64_t offset, uint64_t memory, uint32_t index)
 {
 	return (numbers[0] != ERX_CAP_NULL && numbers[1] == offset && numbers[2] == GIVEN_SIZE &&
 	    numbers[3] != ERX_CAP_NULL && (numbers[4] != ERX_CAP_NULL) == (memory != 0) &&
-	    numbers[5] == memory && numbers[6] == 0 && numbers[8] == 0);
+	    numbers[5] == memory && numbers[6] == 0 && numbers[8] == 0 &&
+	    numbers[9] == index);
 }
 
 /*
@@ -2590,8 +2591,8 @@ given_held(uint32_t id)
 	    kindless->windows[1].raw == ERX_CAP_NULL &&
 	    kindless->irqs[0].raw != ERX_CAP_NULL && kindless->irqs[1].raw == ERX_CAP_NULL &&
 	    kindless->memory.raw == ERX_CAP_NULL && kindless->resource.raw == ERX_CAP_NULL;
-	const bool words = read && given_numbers(numbers[0], 0, GIVEN_MEMORY) &&
-	    given_numbers(numbers[1], ERX_PAGE_SIZE, 0) && numbers[0][0] == numbers[1][0];
+	const bool words = read && given_numbers(numbers[0], 0, GIVEN_MEMORY, GIVEN_KEPT) &&
+	    given_numbers(numbers[1], ERX_PAGE_SIZE, 0, GIVEN_KEPT + 1) && numbers[0][0] == numbers[1][0];
 
 	say_count("given_read", read);
 	say_count("given_pair", pair);

@@ -99,16 +99,16 @@ reference(Arguments) ->
         false -> {error, bad_device_record}
     end.
 
-spec("given", [Path, Window, Offset, Size, Line, Mark, Memory, Bytes, Clock, Coherent, Mac | _]) ->
+spec("given", [Path, Window, Offset, Size, Line, Mark, Memory, Bytes, Clock, Coherent, Mac, Index | _]) ->
     case {[decimal(Word, ?U64) || Word <- [Window, Offset, Size, Line, Memory, Bytes]], decimal(Clock, ?U32),
-          decimal(Mac, ?U48), node_path(Path)} of
-        {[W, O, S, L, M, B], C, A, P} when is_integer(W), is_integer(O), is_integer(S), is_integer(L), is_integer(M),
-                                        is_integer(B), is_integer(C), is_integer(A),
-                                        (Mark =:= "direct" orelse Mark =:= "shared"),
-                                        (Coherent =:= "0" orelse Coherent =:= "1"),
-                                        is_binary(P) ->
-            Spec = #{peripheral => virtio_mmio, path => P, window => {object, W, O, S}, lines => [marked({object, L}, Mark)],
-                     clock => C, coherent => Coherent =:= "1"},
+          decimal(Mac, ?U48), decimal(Index, ?U32), node_path(Path)} of
+        {[W, O, S, L, M, B], C, A, I, P} when is_integer(W), is_integer(O), is_integer(S), is_integer(L), is_integer(M),
+                                           is_integer(B), is_integer(C), is_integer(A), is_integer(I),
+                                           (Mark =:= "direct" orelse Mark =:= "shared"),
+                                           (Coherent =:= "0" orelse Coherent =:= "1"),
+                                           is_binary(P), not (L =:= 0 andalso Mark =:= "shared") ->
+            Spec = #{peripheral => virtio_mmio, path => P, window => {object, W, O, S}, lines => [marked({object, L}, Mark) || L =/= 0],
+                     clock => C, coherent => Coherent =:= "1", index => I},
             WithMemory = case B of
                              0 -> Spec;
                              _ -> Spec#{memory => {object, M, B}}
@@ -230,9 +230,12 @@ entry() ->
     Words = [word() || _ <- lists:seq(1, rand:uniform(?MAX_WORDS + 1) - 1)],
     Form = Pick(["device", "given"]),
     %% The numbers before the mark word and after it.
-    Count = #{"device" => {3, 2}, "given" => {4, 5}},
+    Count = #{"device" => {3, 2}, "given" => {4, 6}},
     {Before, After} = maps:get(Form, Count),
-    Numbers = fun(N) -> [number() || _ <- lists:seq(1, N)] end,
+    %% Half the time each number is 0 or 1, which fits every field, COHERENT's included, so a
+    %% record of a given's ten numbers is still accepted often.
+    Number = Pick([fun number/0, fun() -> Pick(["0", "1"]) end]),
+    Numbers = fun(N) -> [Number() || _ <- lists:seq(1, N)] end,
     case rand:uniform(6) of
         6 -> system_image_entry();
         5 -> framebuffer_entry(Words);

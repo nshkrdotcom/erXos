@@ -176,7 +176,8 @@ bool	erx_boot_device_window(const erx_boot_device_t *device, erx_boot_window_t *
  * device NIF opens it by. window and line are its register window's and its line's IRQ
  * object's; offset and size place its registers in the window; memory is its contiguous
  * memory's, ERX_CAP_NULL with memory_size 0 for none; clock is the device's clock in hertz,
- * 0 for a device whose driver reads none.
+ * 0 for a device whose driver reads none; index is its manifest device row, by which the
+ * PCIe domain matches a host bridge's record to its catalogue entry (erx_pcie_bridge.index).
  */
 typedef struct erx_boot_given {
 	const char	*role;		/* erx/device_kinds.h's role word */
@@ -193,6 +194,7 @@ typedef struct erx_boot_given {
 	/* The firmware's device tree marks its DMA cache-coherent (docs/design-device-tree.md). */
 	bool		coherent;
 	uint64_t	mac;		/* the tree's hardware address, 48 bits; 0 for none */
+	uint64_t	index;		/* its manifest device row */
 } erx_boot_given_t;
 
 /*
@@ -242,7 +244,7 @@ erx_boot_given_t	erx_boot_device_given(const erx_boot_device_t *device, const er
 
 /*
  * Writes -erx_record given ROLE PERIPHERAL PATH WINDOW_H OFFSET SIZE LINE_H MARK MEM_H MEM_SIZE CLOCK
- * COHERENT MAC, the numbers in decimal, COHERENT 1 or 0, MARK direct or shared by line_shared,
+ * COHERENT MAC INDEX, the numbers in decimal, COHERENT 1 or 0, MARK direct or shared by line_shared,
  * and each word ended by NUL, into words, and returns their whole length; 0, having written
  * nothing past capacity, for a path erx_boot_device_path_valid refuses or when they do not
  * fit, which ERX_BOOT_GIVEN_WORDS_MAX bytes (erx/boot_words.h) always do for names within

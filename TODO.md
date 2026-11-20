@@ -2288,9 +2288,10 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   compatible string, which `devices/0` does not give a pci row, then `pci_report/2`, the lowering to `off` and
   `erx_domain:await_grant(pcie, D)`, which the domain service does not have), its `pci` facet, the hold at boot,
   a holder's end; a system manifest service row for each interface, with the manifest check's grantee rules; the
-  `pcie` facet's mint in the PCIe domain over `erx_facet`; and the bridge's driver over its given record, which
-  needs a given record that names its device row (`-erx_record given` carries no INDEX, so the PCIe domain cannot
-  match it to `erx_pcie_bridge.index`; `erx_boot_given_words`, its two writers and `erx_device_record` gain it). Facet places are the bridge's
+  `pcie` facet's mint in the PCIe domain over `erx_facet`; and the bridge's driver over its given record:
+  the enumerator's `open` finds the record of role `configuration` whose INDEX is `erx_pcie_bridge.index`, opens
+  it with `erx_device:open/1` and starts the module its peripheral names, of which only `erx_pcie_ecam` has a
+  `start` over a device (the BCM2711's bridge has its core alone). Facet places are the bridge's
   device row and the function's place, `{Bridge, Bus, Device, Function}`, where the design writes the bridge's path:
   the PCIe domain knows its bridges only by row (`erx_pcie_bridge.index`), so the design should say which.
 * [Medium] PCIe, `erx_pcie_apply`'s verification and the later record (`erlang/apps/erx_pcie/src/erx_pcie_apply.erl`,
@@ -9584,10 +9585,15 @@ document's "residual risks accepted" paragraph.
   `erx_firmware_request` in the machine family, and no firmware request record (name, belonging, tag, argument) in
   the system manifest from the platform record's `firmware_requests`. Add the three.
 * [Medium] domain library, `include/erx/device_kinds.h` ([design-usb.md](docs/design-usb.md#who-holds-a-controller),
-  [design-pcie.md](docs/design-pcie.md#the-bridge-seam)): no rows for the host bridges' kinds, so a bridge row
-  is held but not driven and the enumerator finds no given record to choose its module by. Add `pci_ecam`
-  (`pci-host-ecam-generic`) and `bcm2711_pcie` (`brcm,bcm2711-pcie`) with role `configuration` and their
-  peripherals, with the PCIe domain on QEMU `virt` (package P12).
+  [design-pcie.md](docs/design-pcie.md#the-bridge-seam)): the host bridges' kinds drive a bridge row, but neither
+  platform record (`config/platforms/`) has a `configuration` row and no manifest a PCIe domain, so no bridge is
+  given yet (package P12). No host test checks a bridge's given record (role `configuration`, LINE_H 0 for
+  QEMU's ECAM, INDEX its row) through the domain library's apply, and the manifest check does not refuse a
+  `configuration` row with DMA memory, which the boot view refused while bridges were of no kind.
+* [Low] boot records, `-erx_record given` ([design-fiasco.md](docs/design-fiasco.md#device-records)): the record's
+  field list is kept by hand in its C writer (`erx_boot_given_words`), its room (`ERX_BOOT_GIVEN_WORDS_MAX`), its
+  Erlang reader (`erx_device_record:spec/2`, whose error clauses match a positional tuple), the native guest's
+  reader and `ProductionImage::Run::GIVEN_RECORD_WORDS`; one declared grammar would generate them.
 * [Medium] system manifest, `abi/manifest.txt` ([design-usb.md](docs/design-usb.md#mass-storage-reaches-the-file-servers)):
   the boot-time reader bounds no `windows[].drive` (it has no rule for "`mf_none` or below `usb_drives_max`"); add
   one before `erx_blk_drive` reads the field.

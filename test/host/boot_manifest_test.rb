@@ -127,7 +127,7 @@ class BootManifestTest < Minitest::Test
     assert_includes output, "console_uart pl011 150994944 4096 33 direct 24000000\n"
     assert_includes output, "devices 2\n"
     assert_includes output, "device rtc pl031 151060480 4096 34 direct 0 0 window 151060480 4096 0 " \
-                            "words-erx_record given rtc pl031 /pl031@9010000 11 0 4096 12 direct 0 0 0 0 0 exact 1 short 0\n"
+                            "words-erx_record given rtc pl031 /pl031@9010000 11 0 4096 12 direct 0 0 0 0 0 12 exact 1 short 0\n"
     assert_includes output, "device hostlink pl011 151257088 4096 40 direct 0 24000000 " \
                             "words-erx_record device hostlink pl011 /pl011@9040000 151257088 4096 40 direct 24000000 10 exact 1 short 0\n"
     refute_match(/^device (?:block|net) /, output)
@@ -190,7 +190,7 @@ class BootManifestTest < Minitest::Test
     assert status.success?, output
     assert_includes output, "devices 3\n"
     assert_includes output, "device net virtio_net 167783936 512 71 direct 262144 0 window 167780352 4096 3584 " \
-                            "words-erx_record given net virtio_net /virtio_mmio@a002e00 11 3584 512 12 direct 13 262144 0 0 0 exact 1 short 0\n"
+                            "words-erx_record given net virtio_net /virtio_mmio@a002e00 11 3584 512 12 direct 13 262144 0 0 0 11 exact 1 short 0\n"
   end
 
   # A given device's window object covers whole pages from the one that holds its first
@@ -200,7 +200,7 @@ class BootManifestTest < Minitest::Test
   # names no memory object, whatever handle the root holds.
   def test_a_given_device_s_window_covers_the_pages_of_its_registers
     given = lambda do |window, offset, size|
-      "window #{window} #{offset} words-erx_record given block virtio_mmio /virtio_mmio@a003e00 11 #{offset} #{size} 12 direct 0 0 0 0 0 exact 1 short 0\n"
+      "window #{window} #{offset} words-erx_record given block virtio_mmio /virtio_mmio@a003e00 11 #{offset} #{size} 12 direct 0 0 0 0 0 0 exact 1 short 0\n"
     end
     {
       %w[0xa003e00 0x200] => given.call('167784448 4096', 3584, 512),
@@ -419,37 +419,37 @@ class BootManifestTest < Minitest::Test
     all = 0xffff_ffff_ffff_ffff
     window = 'window 167784448 4096 3584 words-erx_record given'
     assert_equal "asks 1 before none after none #{window} net virtio_mmio /virtio_mmio@a003e00 11 3584 512 12 direct 13 65536 0 1 0 " \
-                 "exact 1 short 0\nline erx: device tree: /virtio_mmio@a003e00: coherent 1 range 0x0 0x0 " \
+                 "0 exact 1 short 0\nline erx: device tree: /virtio_mmio@a003e00: coherent 1 range 0x0 0x0 " \
                  "0xffffffffffffffff mac absent\n",
                  dma('net', 0x10000, 0, 1, 0, 0, all, 0, 0x4800_0000, 0x10000)
     # The Pi model's EMMC2, whose first GiB of CPU addresses it sees from bus address
     # 0xc0000000: memory at CPU 0x10000000 has device address 0xd0000000 and is inside.
     assert_equal "asks 1 before none after none #{window} block virtio_mmio /virtio_mmio@a003e00 11 3584 512 12 direct 13 65536 0 0 0 " \
-                 "exact 1 short 0\nline erx: device tree: /virtio_mmio@a003e00: coherent 0 range 0x0 0xc0000000 " \
+                 "0 exact 1 short 0\nline erx: device tree: /virtio_mmio@a003e00: coherent 0 range 0x0 0xc0000000 " \
                  "0x3fffffff\n",
                  dma('block', 0x10000, 0, 0, 0, 0xc000_0000, 0x3fff_ffff, 0, 0xd000_0000, 0x10000)
     # Its CPU address as if it were the device's lies below the bus addresses, and memory that
     # runs past the last bus address, 0xffffffff, lies outside too; memory ending there is inside.
-    assert_match(/\Aasks 1 before none after outside .* 12 direct 0 0 0 0 0 exact.*\nline .*: dma absent outside\n\z/,
+    assert_match(/\Aasks 1 before none after outside .* 12 direct 0 0 0 0 0 0 exact.*\nline .*: dma absent outside\n\z/,
                  dma('block', 0x10000, 0, 0, 0, 0xc000_0000, 0x3fff_ffff, 0, 0x1000_0000, 0x10000))
     assert_match(/\Aasks 1 before none after outside /,
                  dma('block', 0x10000, 0, 0, 0, 0xc000_0000, 0x3fff_ffff, 0, 0xffff_8000, 0x10000))
-    assert_match(/\Aasks 1 before none after none .* 12 direct 13 65536 0 0 0 exact/,
+    assert_match(/\Aasks 1 before none after none .* 12 direct 13 65536 0 0 0 0 exact/,
                  dma('block', 0x10000, 0, 0, 0, 0xc000_0000, 0x3fff_ffff, 0, 0xffff_0000, 0x10000))
     # A range whose bus addresses would pass 2^64 - 1, which the reader never gives, admits
     # no memory anywhere rather than wrapping.
     assert_match(/\Aasks 1 before none after outside /,
                  dma('block', 0x10000, 0, 0, 0, all - 0xffff, 0x3fff_ffff, 0, all - 0xffff, 0x10000))
-    assert_match(/\Aasks 1 before none after outside .* 12 direct 0 0 0 1 0 exact.*\nline .*: dma absent outside\n\z/,
+    assert_match(/\Aasks 1 before none after outside .* 12 direct 0 0 0 1 0 0 exact.*\nline .*: dma absent outside\n\z/,
                  dma('block', 0x10000, 0, 1, 0, 0, 0x3fff_ffff, 0, 0x3fff_8000, 0x10000))
-    assert_match(/\Aasks 1 before none after none .* 12 direct 13 65536 0 1 0 exact.*\nline .*: coherent 1 range 0x0 0x0 0x3fffffff\n\z/,
+    assert_match(/\Aasks 1 before none after none .* 12 direct 13 65536 0 1 0 0 exact.*\nline .*: coherent 1 range 0x0 0x0 0x3fffffff\n\z/,
                  dma('block', 0x10000, 0, 1, 0, 0, 0x3fff_ffff, 0, 0x3fff_0000, 0x10000))
     assert_match(/\Aasks 1 before none after outside /, dma('block', 0x10000, 0, 1, 0x1000, 0x1000, all, 0, 0, 0x10000))
     assert_match(/\Aasks 1 before none after outside /,
                  dma('block', 0x10000, 0, 1, 0, 0, all, 0, 0xffff_ffff_ffff_f000, 0x10000))
     # Without a range the facts' coherence says nothing: the record is not coherent.
     %w[no_node coherence cells malformed ranges].each.with_index(1) do |reason, status|
-      assert_match(/\Aasks 1 before #{reason} after none .* 12 direct 0 0 0 0 0 exact.*\nline .*: dma absent #{reason}\n\z/,
+      assert_match(/\Aasks 1 before #{reason} after none .* 12 direct 0 0 0 0 0 0 exact.*\nline .*: dma absent #{reason}\n\z/,
                    dma('block', 0x10000, status, 1, 0, 0, all, 0, 0, 0x10000))
     end
   end
@@ -473,13 +473,13 @@ class BootManifestTest < Minitest::Test
   def test_only_a_network_row_carries_the_tree_s_address
     all = 0xffff_ffff_ffff_ffff
     mac = 0xdca632_0102_03
-    assert_match(/ direct 13 65536 0 0 #{mac} exact.*\nline .*: coherent 0 range 0x0 0x0 0xffffffffffffffff mac present\n\z/,
+    assert_match(/ direct 13 65536 0 0 #{mac} 0 exact.*\nline .*: coherent 0 range 0x0 0x0 0xffffffffffffffff mac present\n\z/,
                  dma('net', 0x10000, 0, 0, 0, 0, all, mac, 0x4800_0000, 0x10000))
-    assert_match(/ direct 13 65536 0 0 0 exact.*\nline .*: coherent 0 range 0x0 0x0 0xffffffffffffffff\n\z/,
+    assert_match(/ direct 13 65536 0 0 0 0 exact.*\nline .*: coherent 0 range 0x0 0x0 0xffffffffffffffff\n\z/,
                  dma('block', 0x10000, 0, 0, 0, 0, all, mac, 0x4800_0000, 0x10000))
-    assert_match(/\Aasks 1 before none after none .* 12 direct 0 0 0 0 #{mac} exact.*\nline erx: device tree: \/virtio_mmio@a003e00: mac present\n\z/,
+    assert_match(/\Aasks 1 before none after none .* 12 direct 0 0 0 0 #{mac} 0 exact.*\nline erx: device tree: \/virtio_mmio@a003e00: mac present\n\z/,
                  dma('net', 0, 0, 1, 0, 0, all, mac, 0, 0))
-    assert_match(/\Aasks 0 before none after none .* 12 direct 0 0 0 0 0 exact/, dma('block', 0, 0, 1, 0, 0, all, mac, 0, 0))
+    assert_match(/\Aasks 0 before none after none .* 12 direct 0 0 0 0 0 0 exact/, dma('block', 0, 0, 1, 0, 0, all, mac, 0, 0))
   end
 
   # A line is shared when another device-tree device of the manifest names it too

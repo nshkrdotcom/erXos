@@ -2582,7 +2582,7 @@ distinct line its devices name, so the records of devices that share a page or a
 ([design-shared-devices.md](design-shared-devices.md#the-unit-rule)), and, for a device with DMA memory, the
 device's one contiguous object of that size with `erx_mem_create_contiguous_in` inside its DMA range, each in its own
 table, and adds the same `-erx_record given ROLE PERIPHERAL PATH WINDOW_H OFFSET SIZE LINE_H MARK MEM_H
-MEM_SIZE CLOCK COHERENT MAC` record a holder's page carries, below (`liberx/backend/fiasco/runtime_entry.c`, `device_give`;
+MEM_SIZE CLOCK COHERENT MAC INDEX` record a holder's page carries, below (`liberx/backend/fiasco/runtime_entry.c`, `device_give`;
 `erx_boot_device_window` computes the pages and OFFSET). ROLE and PERIPHERAL are the row's names,
 PERIPHERAL the peripheral's name in the CMSIS-SVD source that `erx_device` opens it as, PATH
 the device-tree path of the row, which names the device to its driver; the
@@ -2708,7 +2708,7 @@ device is behind it. A manifest with no such unit has no record, and a machine w
 device boots the same, with nothing for its driver to drive.
 
 A given record, a holder domain's or the root's own, has a word of its own, `-erx_record given ROLE
-PERIPHERAL PATH WINDOW_H OFFSET SIZE LINE_H MARK MEM_H MEM_SIZE CLOCK COHERENT MAC`. ROLE and
+PERIPHERAL PATH WINDOW_H OFFSET SIZE LINE_H MARK MEM_H MEM_SIZE CLOCK COHERENT MAC INDEX`. ROLE and
 PERIPHERAL come from `include/erx/device_kinds.h`. PATH is the device-tree path of the device's
 manifest row, the name its driver gives it, a node path of at most `device_path_max` bytes
 (`abi/erx_abi.txt`), which the manifest grammar holds `devices[].path` to; the record writers, the
@@ -2717,12 +2717,18 @@ and `erx_device_record` any other PATH word, so a name a driver shows holds no c
 and reaches a display only through that sink's escaping function. WINDOW_H, LINE_H and MEM_H are
 the values, in the holder's own handle table, of the window, line and memory objects the domain
 library installed when it created the domain, or the root made for itself; OFFSET and SIZE place
-the registers in the window; MEM_H and MEM_SIZE are 0 for a device that does no DMA; CLOCK is the
+the registers in the window; in a holder's record LINE_H is 0, the null handle, for a device whose
+node raises no line, as QEMU virt's ECAM bridge's does not, which only the PCIe domain holds, and
+`erx_device_record` reads it as no line, refusing it marked `shared`; MEM_H and
+MEM_SIZE are 0 for a device that does no DMA; CLOCK is the
 device's clock in hertz from its manifest row, 0 for a device whose driver reads none, so a given
 PL011 has its clock as the host link's does; COHERENT is 1 when the device tree the firmware handed
-over marks the device coherent, else 0; and MAC is the hardware address that tree gives a network
+over marks the device coherent, else 0; MAC is the hardware address that tree gives a network
 device, as a 48-bit number, 0 for none
-([design-device-tree.md](design-device-tree.md#facts-into-records)). Since each form has its own
+([design-device-tree.md](design-device-tree.md#facts-into-records)); and INDEX is the device's row
+in the manifest's device table, as a physical record's, by which the PCIe domain finds a host
+bridge's record for the `erx_pcie_bridge` whose `index` is that row
+([design-pcie.md](design-pcie.md#the-bridge-seam)). Since each form has its own
 word, the reader never tells one from the other by counting numbers, and a plain word of the
 command line after a record cannot make one form look like the other.
 
