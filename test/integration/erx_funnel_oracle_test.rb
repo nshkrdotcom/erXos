@@ -60,7 +60,7 @@ class ErxFunnelOracleTest < Minitest::Test
       when 1, 7, 22, 24, 26 then [a_pid, a_pid]
       when 19, 20, 28 then [a_pid, a_pid, a_ref]
       when 29 then [a_ref, a_pid, a_pid, tuple(an_atom, an_atom, integer(@random.rand(256))), an_option_list]
-      when 31 then [a_ref, a_pid, integer(@random.rand(1 << 27)), @random.rand(2).zero? ? a_pid : an_atom]
+      when 31 then [a_ref, a_pid, integer(@random.rand(1 << 27)), @random.rand(2).zero? ? a_pid : a_spawn_error]
       when 33 then [a_pid, a_ref]
       else [integer(1 + @random.rand((1 << 64) - 1)), a_pid, a_pid]
       end
@@ -68,7 +68,9 @@ class ErxFunnelOracleTest < Minitest::Test
 
     def a_pid = pid(NODES.sample(random: @random), *Array.new(3) { @random.rand(1 << 32) })
     def a_ref = ref(NODES.sample(random: @random), @random.rand(1 << 32), Array.new(4) { @random.rand(1 << 32) })
-    def an_atom = [method(:atom), method(:long_atom)].sample(random: @random).call(%w[m f link badarg].sample(random: @random))
+    def an_atom = an_atom_of(%w[m f link badarg])
+    def a_spawn_error = an_atom_of(%w[badopt noconnection system_limit])
+    def an_atom_of(names) = [method(:atom), method(:long_atom)].sample(random: @random).call(names.sample(random: @random))
 
     def an_option_list
       options = Array.new(@random.rand(4)) do

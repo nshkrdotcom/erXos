@@ -40,11 +40,41 @@ limit xhci_scratchpad_array_align u32 64
 # The error count every endpoint context the NIF builds takes (xhci.c:2495-2501).
 limit xhci_endpoint_error_count u32 3
 
+# A command the controller has not answered within this many milliseconds fails the
+# controller, whose restart resets it (design-usb.md, "The controller process"), an erXos
+# choice.
+limit xhci_command_deadline_ms u32 5000
+
+# The controller's start (design-usb.md, "The controller process"): it polls the BIOS's
+# semaphore and calls the install again every 10 ms, FreeBSD's pause in both loops
+# (xhci_pci.c:529-557, xhci.c:430-431); it goes on without the BIOS's release after 5 s,
+# FreeBSD's 500 polls; and the install, three waits of FreeBSD's 1 s each (xhci.c:430-436,
+# :469-477, :494-499) that one {error, ebusy} does not tell apart, fails the controller
+# when it has not answered ok within their sum.
+limit xhci_poll_ms u32 10
+limit xhci_bios_handoff_ms u32 5000
+limit xhci_install_deadline_ms u32 3000
+
+# A running controller's USBSTS is read on every interrupt and, whether interrupts come or
+# not, this often
+# (design-usb.md, "The controller process"), so a controller that stopped without an
+# interrupt, on a host controller error or a halt, or that left the bus, fails within
+# about a second; an erXos choice. Events are never polled.
+limit xhci_status_interval_ms u32 1000
+
+# An interrupt pass stops and acknowledges the line once it has read this many events: two
+# wraps of the event ring's 512 entries (design-usb.md, "The TRB ring form"), where
+# FreeBSD's xhci_interrupt_poll stops (xhci.c:1138, :1167-1176).
+limit xhci_events_per_interrupt u32 1024
+
 # The buffer of an interrupt and of a bulk queue block: an interrupt block's four of
 # 1 KiB and a bulk block's two of 32 KiB (design-usb.md, "The TRB ring form"), each an
 # erXos choice.
 limit xhci_interrupt_buffer_size u32 1024
 limit xhci_bulk_buffer_size u32 32768
+# A control block's one buffer of 4 KiB, which bounds a control transfer's data
+# stage (design-usb.md, "The TRB ring form"), an erXos choice.
+limit xhci_control_buffer_size u32 4096
 
 # An interrupt endpoint's Interval, the base-2 exponent of its period in 125 us units
 # (xHCI 1.2, 6.2.3.6 and Table 6-12, p. 456). At low and full speed bInterval counts

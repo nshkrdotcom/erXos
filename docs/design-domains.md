@@ -813,7 +813,7 @@ must give the sender on the target:
 | `PAYLOAD_EXIT` (24), payload reason | `ToPid` | none |
 | `PAYLOAD_EXIT2` (26), payload reason | `ToPid` | exit |
 | `GROUP_LEADER` (7) | `ToPid` | exit; `FromPid`, the new leader, is a process of the sender's domain |
-| `SPAWN_REQUEST` (29), payload arguments | the receiving domain | spawn, on the domain's name |
+| `SPAWN_REQUEST` (29), payload arguments | the receiving domain | spawn, on the domain's name; malformed into the system domain |
 | `SPAWN_REPLY` (31) | `To` | none: must match a pending spawn of `To` |
 
 **Registered names stay inside their domain.** A registered name is a
@@ -832,6 +832,36 @@ that carries either anyway is malformed.
 `global` and `pg` therefore stay within each domain, and `rpc` and `erpc`,
 which spawn their calls, reach a domain that exports `spawn` to the
 caller's.
+
+**The system domain serves no spawn.** What runs there is the system's
+own code, started by its own policy, and a domain reaches a system
+service through its facet. The system domain exports `spawn` to no
+domain: its runtime answers `erx:export` of `spawn` on its own name with
+`{error, badarg}`, so its export table never holds it. A spawn request
+names its module, function and options by atoms, and the system domain's
+safe decode refuses one it lacks ([The funnel](#the-funnel)) in a
+control term by ending the connection, so a request it would refuse
+anyway could end the connection of a domain that did nothing wrong. As for a registered name, the sender's peer therefore never
+writes one: a spawn toward the system domain's node, the node the boot
+page's system connection names, fails at once in the sender's runtime
+with `noconnection`, what an unauthorised spawn gets, and writes
+nothing. A `SPAWN_REQUEST` on a lane into the system domain is malformed
+whatever the export table holds, so none reaches the system domain's
+decoder.
+
+**A control term names only atoms its receiver holds.** Besides a spawn
+request's module, function and options, the atoms a control term of the
+grammar names are the node names of its pids and references and a spawn
+reply's error. The error is one of the closed set ERTS's spawn-serving
+code writes (`beam/dist.c`, `erts_net_message`'s `DOP_SPAWN_REQUEST`):
+`badopt` for an option list it refuses, `noconnection` for a spawn
+answered as unauthorised or toward a dead target, and `system_limit`
+for one over a limit or a process it could not create. Every runtime
+holds these three, and a reply with any other error is malformed on
+every lane. So a control term into the system domain names no atom but
+its two ends' node names and these three, and its safe decode refuses
+none; were one refused, ERTS would log the refusal, naming the peer and
+not the term, and end the connection.
 
 **Signals that need no right.** An unlink, its acknowledgement, a demonitor,
 a link exit and a `DOWN` each change only a relation between their target
@@ -1068,8 +1098,8 @@ unknown tag, a sending pid of another domain. It ends the connection
 **Over a limit** is what the receiver's own policy declines, which a correct
 sender cannot know in advance: a frame past `max_frame`, a term past
 `max_message_heap` or a facet's request limit, nesting past `funnel_depth`,
-an atom past `foreign_atoms`. It is dropped and counted, as ERTS drops an
-undecodable distribution message, with the substitutions below for signals
+an atom past `foreign_atoms`. It is dropped and counted; ERTS likewise drops a message whose term does not
+decode (`beam/erl_proc_sig_queue.c:5524-5580`), though it does not count it, with the substitutions below for signals
 that must not vanish.
 
 For each record between the lane's `rpos` and the `wpos` it read once:
@@ -1114,12 +1144,16 @@ For each record between the lane's `rpos` and the `wpos` it read once:
    with a node name at the machine's host; unlink identifiers are
    integers from 1 to 2^64 - 1; a spawn request's arity is an integer
    of ERTS's small range and a spawn reply's flags an integer below
-   2^27, as ERTS's distribution input reads them; spawn options are a
+   2^27, as ERTS's distribution input reads them; a spawn reply's error
+   is `badopt`, `noconnection` or `system_limit`, the closed set ERTS's
+   spawn writes ([Frames](#frames), A control term names only atoms its
+   receiver holds); spawn options are a
    proper list of options in the shape of every option ERTS's spawn
    takes, an atom or `{Atom, Value}` with `Value` an atom, an integer
    or a map from atoms to atoms and integers, so no option names a pid,
-   a reference or a fun, and ERTS's spawn answers a well-shaped option
-   it does not know with `badopt`. Stock ERTS's sender passes any other
+   a reference or a fun, and ERTS's spawn in a domain that receives
+   spawns answers a well-shaped option it does not know with `badopt`.
+   Stock ERTS's sender passes any other
    option through, so the sender's peer checks a spawn request's control
    term with the funnel's own grammar before writing it, as it does for
    `REG_SEND`: an option of another shape is answered at once with
@@ -1131,7 +1165,9 @@ For each record between the lane's `rpos` and the `wpos` it read once:
    which ERTS rebuilds as local ones, so the target rule also bounds a
    target pid's number and serial to ERTS's internal range. Every
    refusal of a control term is malformed, since its limits are the
-   grammar's own and the sender's peer keeps them. **The target rule:** every target pid
+   grammar's own and the sender's peer keeps them; so is a
+   `SPAWN_REQUEST` on a lane into the system domain, which no sender's
+   peer writes ([Frames](#frames), The system domain serves no spawn). **The target rule:** every target pid
    or reference, the receiver's own (`ToPid`, `ToProc`, `To`, the alias
    of `ALIAS_SEND`, the reference of `PAYLOAD_MONITOR_P_EXIT` and the
    request identifier of `SPAWN_REPLY`), carries the receiving domain's node name, since a lane
@@ -1340,7 +1376,12 @@ connection, so a malformed exit or `DOWN` reason never silently loses the
 relation's terminal signal; the relation ends with `noconnection`. An atom
 the system domain lacks is a safe-mode refusal, not a malformed term: a
 message is dropped and counted, and an exit reason becomes
-`{erx_foreign_reason, Bin}`. No decoder failure may panic the runtime or
+`{erx_foreign_reason, Bin}`. A payload whose safe decode refuses an atom
+is refused for that atom whatever else is wrong with it: ERTS checks a
+map's keys for uniqueness only once the whole term is read
+(`dec_term`'s map fix-up in `beam/external.c`), and the refusal ends the read before
+then, so a repeated key in such a payload is never judged and the frame
+is not malformed. No decoder failure may panic the runtime or
 enter an unchecked allocator failure path.
 
 **Channel mode.** A program's channel
@@ -1533,8 +1574,9 @@ and drivers](#native-processes-and-drivers)).
   domains that hold little are the last an end reaches.
 * **The system domain's peer** decodes in ERTS's safe mode, distinguishes a
   safe-atom refusal from a semantically malformed encoding, turns an exit
-  reason refused only by that policy into `{erx_foreign_reason, Bin}`, where
-  `Bin` is the reason's encoding, so exits are never lost, and sets no busy
+  reason refused for an atom into `{erx_foreign_reason, Bin}`, where
+  `Bin` is the reason's bytes, opaque and unchecked past the refusal
+  ([Links, monitors and exits](#links-monitors-and-exits)), so exits are never lost, and sets no busy
   limit on its own senders that a domain could exploit: a message from the
   system domain to a domain whose lane from the system domain is full waits
   in the system domain's queue up to `system_queue` (16 KiB by default)
@@ -1674,7 +1716,8 @@ but in its sender or its lane:
   that the receiver does not authorise, or whose target is dead, is
   answered by the receiving runtime on the reverse lane, behind everything
   it sent before, and a spawn request over a limit is answered with
-  `system_limit`;
+  `system_limit`; a spawn request toward the system domain is answered
+  instead by the sender's own runtime, which writes none ([Frames](#frames));
 * **waits in its sender's queue**, in the sender's own memory, until the
   lane has room, its process suspended as ERTS suspends a sender to a busy
   distribution connection (a send with `nosuspend` to a busy queue makes
@@ -1685,8 +1728,8 @@ but in its sender or its lane:
   no sender's queue and no lane, and waits in its control slot only while
   the connection agent is at its queue quota
   ([Connections](#connections));
-* **dropped and counted**, as ERTS drops an undecodable distribution
-  message: at the receiver, a frame over its `max_frame`, a message past
+* **dropped and counted**, as ERTS drops a distribution message whose term
+  does not decode: at the receiver, a frame over its `max_frame`, a message past
   its `max_message_heap` or the target's request limit, a message to the
   system domain with an atom it lacks, a spawn reply that matches no
   pending spawn, and a message, a link exit, an `exit/2` or a
@@ -1885,8 +1928,15 @@ keeps any.
   Bytes}`, where `Bytes` is the payload's length; the funnel reads the
   control term, which names the relation, and skips the reason's bytes. An
   exit reason the system domain cannot decode without creating an atom is
-  delivered there as `{erx_foreign_reason, Bin}`. A reason that fails the
-  grammar or the semantic stage is malformed input and ends the connection,
+  delivered there as `{erx_foreign_reason, Bin}`, whatever else is wrong
+  with it, since the refusal ends the decode before ERTS judges a map's
+  keys ([The funnel](#the-funnel), the semantic stage). `Bin` is the
+  reason's bytes and is opaque: they passed the funnel's structural pass
+  and nothing past the refused atom, so system code that looks inside
+  decodes them only with `binary_to_term(Bin, [safe])` and handles its
+  `badarg`. A reason that fails the
+  grammar or the semantic stage, and names no atom the receiver lacks
+  before the fault, is malformed input and ends the connection,
   so the relation ends with `noconnection`; no unaccepted reason becomes an
   application term, and no relation's terminal signal is silently lost.
 * **A domain dies.** The system domain learns of the end through the fault
@@ -1916,9 +1966,9 @@ process that must act on what a domain sent last, the console facet with
 the domain's last log records and console output among them, traps exits
 or monitors the domain's processes instead of linking without trapping;
 then the exit or `DOWN` arrives as a message behind the tail and is taken
-after it. Every facet traps exits, since the `erx_facet` behaviour does
-([Facets](#facets)), so a facet that links its grantee's processes gets
-the domain's tail whole.
+after it. Every facet monitors the processes its grant ends with, as the
+`erx_facet` behaviour does ([Facets](#facets)), so a facet gets the
+domain's tail whole before its `DOWN`.
 
 ### Killing a process
 
@@ -1946,7 +1996,8 @@ domain's node: `spawn_opt(Node, M, F, A, Opts)`, `spawn_request/5`, and
 1. The caller's runtime starts ERTS's spawn request on its entry for the
    target node, whose controller is their connection; with no connection,
    the request fails as toward a node that cannot be reached, with
-   `noconnection`. The peer
+   `noconnection`, and so does a request toward the system domain's node.
+   The peer
    encodes OTP's `SPAWN_REQUEST`, and encoding the parent and the group
    leader, pids of the caller's domain, exports them toward the target with
    `send`, as handing out any name does, so the child can message and
@@ -1956,7 +2007,9 @@ domain's node: `spawn_opt(Node, M, F, A, Opts)`, `spawn_request/5`, and
    right to the system domain and to its creator, the `spawner` its boot
    information names, before it reads its first frame ([Domain
    lifecycle](#domain-lifecycle)), and a domain gives it to anyone else by
-   `erx:export({domain, Id}, [spawn], Peer)`. Without it, the funnel answers
+   `erx:export({domain, Id}, [spawn], Peer)`; the system domain gives it
+   to no domain, and a spawn toward it fails in step 1, in the caller's
+   runtime ([Frames](#frames), The system domain serves no spawn). Without it, the funnel answers
    `SPAWN_REPLY` with `noconnection`, what a spawn into a domain that has
    died gets, and starts nothing.
 3. The target runtime spawns the child with ERTS's spawn-serving code, which
@@ -2394,11 +2447,11 @@ limits, and whether it is live.
 
 **Composition.** The domain service mints an attenuating facet only within
 the record of the facet behind it, so an attenuated grant is checked once
-against its ancestry. Each attenuating facet is linked to the facet behind
-it, and the behaviour, which traps exits, turns the link into revocation in
-one direction alone: a facet whose facet behind exits exits with the same
+against its ancestry. Each attenuating facet names the facet behind
+it in its `ends_with`, and the behaviour, which monitors it and traps no exits, turns its end into revocation in
+one direction alone: a facet whose facet behind ends ends with the same
 reason, so revoking a grant revokes every grant attenuated from it, and a
-facet behind lets the exit of an attenuating facet pass, so a command
+facet behind does not monitor an attenuating facet, so a command
 domain's end, which ends its facets, leaves its starter's facet running.
 
 **Revocation.** Revoking a grant is its facet's exit. The promise is that no
@@ -2502,7 +2555,7 @@ Each runtime has its own atom table, sized by the domain's `atoms` limit
   atoms over the domain's life (16,384 by default), and frames from any one
   peer at most a sixteenth of that, counted by the lane. Beyond either
   count, a message with an unknown atom is undecodable: the runtime drops it
-  at `receive`, as ERTS drops an undecodable distribution message, and
+  at `receive`, as ERTS drops a distribution message whose term does not decode, and
   counts it. The fun and export tables have the same lifetime counts. Atoms
   are never freed, so lifetime counts are what bound what others can make a
   domain hold, and the share per peer keeps one peer from spending what the
@@ -2810,11 +2863,11 @@ messages in the system connection's ring, outside the domain pid.
 | `{erx_connection_down, Peer, Reason}` | domain pid to agent | the connection is going away, `Reason` being `{domain_down, D, Info}` or `noconnection`; the agent has the port finish at the lane's current position, ends it with `Reason`, which fires its links and monitors with it, unmaps, closes and answers `connection_unmapped`; about a connection the domain has already lost, which it ended from its side while the record was on its way, the agent answers `connection_unmapped` at once, since it has unmapped |
 | `{erx_connection_unmapped, Peer}` | agent to domain pid | the domain has unmapped the connection's objects and closed its capabilities |
 | `{erx_connection_lost, Peer, Reason}` | agent to domain pid | the domain ended the connection from its side, `Reason` saying how: `malformed` for a malformed frame, position or record from the peer, or a peer that does not read its answers, `no_memory` when the runtime could not allocate for it, `disconnect` after `erlang:disconnect_node/1`, and `noconnection` for any other end, a signal past `peer_held` among them; `{map, refused}` when the open or `net_kernel` refused it, and `{map, R}`, `R` one of the four, when it ended before its entry was up; it has already unmapped |
-| `{erx_facets, #{Name => Facet}, Granted}` | domain pid to agent | the domain service's answer to init's ready report: the domain's facets by name, every domain that reported getting one, with no facets too; `Granted`, the names of the facets of configured domains the manifest grants the domain, which `erx:granted/0` reads ([design-system.md](design-system.md#facets-a-configured-domain-serves)); an ordinary message, in the ring; the agent hands it to init, which keeps it for `erx:cap/1` (edit 65) |
+| `{erx_facets, #{Name => Facet}, Granted}` | domain pid to agent | the domain service's answer to init's ready report: the domain's facets by name, every domain that reported getting one, with no facets too; `Granted`, the facets of configured domains the manifest grants the domain, each `{Name, Interface}`, its name and its service's interface number, which `erx:granted/0` and `erx:granted/1` read ([design-system.md](design-system.md#facets-a-configured-domain-serves)); an ordinary message, in the ring; the agent hands it to init, which keeps it for `erx:cap/1` (edit 65) |
 | `{erx_app, App}` | domain pid to agent | in an app's session only, the app's record: its package's place, its header's layout and what it starts, sent once, after the answer to the ready report, once the session's namespace is in place ([design-packaging.md](design-packaging.md#an-apps-session)); an ordinary message in the ring, never suspended, as the answer is; the agent takes it only from its connection to the system domain, keeps it and answers `erx_app`'s question for it (`erx:app/0`), and `erx_ns`'s, which never waits: the record once it has come, `enoent` before (`erx_connections:app_held/0`) |
 | `{erx_facets_install, Tag, Name, Facet}` | domain pid to agent | a facet a configured domain minted for this domain, installed under `Name` in the domain's registry, replacing an older pid of that name; the agent takes it only from its connection to the system domain, an ordinary message in the ring, and answers `facets_installed` ([design-system.md](design-system.md#facets-a-configured-domain-serves)) |
 | `{erx_facets_installed, Tag}` | agent to domain pid | the domain has installed the facet of the install tagged `Tag` |
-| `{erx_facet_minted, Tag, Reply}` | a mint of the domain to domain pid | the reply to the mint request tagged `Tag`, `{ok, Facet}` or a refusal, sent with `erx_facet:minted/2` to the domain's own domain pid, which the agent names to the domain at its start ([design-system.md](design-system.md#facets-a-configured-domain-serves)) |
+| `{erx_facet_minted, Tag, Reply}` | a mint of the domain to domain pid | the reply to the mint request tagged `Tag`, `{ok, Facet}` or `refused`, sent with `erx_facet:minted/2` to the domain's own domain pid, which the agent names to the domain at its start ([design-system.md](design-system.md#facets-a-configured-domain-serves)) |
 | `{erx_inspect_ask, Alias, Query}` | the system domain's inspector to the domain's inspection agent | a question about the domain's own runtime, `Query` being `{inspect, Path, Options}` or `{entries, Path}` for a path the domain owns; the agent takes it only in the system domain's envelope and answers to `Alias`, which the question exported ([design-live.md](design-live.md#the-runtime-agent)) |
 | `{Alias, Answer}` | inspection agent to the inspector | the runtime's attributes for the path, of the inspector's answer types, within `inspect_reply_max`; the inspector validates and marks them `runtime` whatever they claim, and an answer missing after `inspect_agent_wait` is `{timeout, 500}` |
 
@@ -3076,12 +3129,12 @@ domain](#domain-ids-pids-and-references)):
 | `exit/2` or `group_leader/2` on a process of another domain exported to the caller without `exit` | no effect, as on a process that does not exist |
 | An exit reason longer than the receiver's `max_frame` or past its `max_message_heap` | `{erx_reason_too_large, Bytes}` |
 | An exit reason the system domain cannot decode without creating an atom | system-domain processes see `{erx_foreign_reason, Bin}` |
-| A message to a system-domain process carrying an atom it lacks, a fun or an export | dropped and counted, as ERTS drops an undecodable distribution message |
+| A message to a system-domain process carrying an atom it lacks, a fun or an export | dropped and counted, as ERTS drops a distribution message whose term does not decode |
 | A message whose decoding would create atoms, funs or exports beyond the receiving domain's `foreign_atoms` count, in all or for the sender's lane | dropped at `receive` and counted |
 | A message carrying pids of the sender's domain | each the receiver does not yet hold is exported toward it with `send`, which covers messages and monitors; `link`, `exit` and `group_leader/2` on it need an explicit export by its owner, where stock Erlang lets a process link to and exit any pid it knows; pids of other domains in it stay data |
 | A pid or alias of the sender's domain beyond the sender's `exports` | travels, and behaves at the receiver as a dead process; `erx:export/3` returns `{error, system_limit}` |
 | `group_leader(GL, Pid)` with `Pid` in another domain and `GL` in a third | `badarg`; the leader must be a process of the caller's domain |
-| A spawn, `erpc` call or `rpc` call into a domain that has not exported `spawn` to the caller's domain | fails with `noconnection`, as a spawn into a domain that has died; `rpc:call/4` returns `{badrpc, nodedown}`; no child runs |
+| A spawn, `erpc` call or `rpc` call into a domain that has not exported `spawn` to the caller's domain, the system domain among them, which exports it to none | fails with `noconnection`, as a spawn into a domain that has died; `rpc:call/4` returns `{badrpc, nodedown}`; no child runs |
 | A spawn into a domain whose export table is full | fails with `system_limit`, and no child runs |
 | A spawn request the target leaves unanswered | waits, as at a connected node that does not answer; the caller's timeout is `spawn_request/5`'s monitor or `spawn_request_abandon/1` |
 | A message larger than `ERX_FRAME_MAX` | the send fails with `system_limit`; larger data goes in chunks or through a memory object |
@@ -3735,6 +3788,19 @@ How a principal comes to hold a domain name, bound by first use within
 its `names` quota as this design does or assigned by the administrator
 in the configuration, is an open question of
 [design-system.md](design-system.md#risks-and-open-questions).
+
+How a spawn request whose module or function would be an atom past the
+receiver's `foreign_atoms` count
+([Atoms, code, ETS and names](#atoms-code-ets-and-names)) reaches its
+answer is open. Such a request is over a limit, which step 7 of
+[The funnel](#the-funnel) answers with `SPAWN_REPLY` of `system_limit`;
+but the funnel reads no atom table, so the atom is refused only when
+`erts_net_message` decodes the control term, and a refused atom in a
+control term ends the connection. No control grammar can close the
+case, since a module may be any atom. The path from that refusal to the
+over-limit reply is to be designed once for every domain; the system
+domain is the case of a `foreign_atoms` of 0, where the funnel already
+refuses every spawn request.
 
 ## References
 

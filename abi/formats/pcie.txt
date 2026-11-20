@@ -1,0 +1,282 @@
+# Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
+# SPDX-License-Identifier: BSD-2-Clause
+# PCIe (docs/design-pcie.md, "Records"): the records the PCIe domain reports and the
+# device service hands it, the configuration-space offsets and bits the enumerator's
+# parser and planner read, and the bounds a domain meets.
+#
+# Each configuration-space value is the one FreeBSD gives, at release/15.1.0, in
+# sys/dev/pci/pcireg.h (SHA-256 e807eb05747d6c47a5722ff7b2be385d09053b1d2a3acfc16af4a5ab08bd6507)
+# at the line cited. A value that is a choice of erXos's says so. Every multi-byte field
+# of configuration space and of the records is little-endian.
+
+# The bounds (docs/design-pcie.md, "Records"); each is erXos's choice.
+limit pcie_bridges_max u32 2
+limit pcie_functions_max u32 32
+limit pcie_windows_max u32 4
+limit pcie_closed_max u32 4
+
+# A function's configuration space as the walk reads it whole: the snapshot.
+limit pcie_config_size u32 256
+# The highest device on a bus and function of a device (pcireg.h:47-48), which bound the
+# walk of a bus.
+limit pcie_device_max u8 31
+limit pcie_function_max u8 7
+
+# The header both types share (pcireg.h:83-122, :251-253): identity, the command and
+# status registers, the class code from the programming interface up, the header type,
+# the capability pointer and the interrupt pin.
+limit pcie_cfg_vendor u8 0x00
+limit pcie_cfg_device u8 0x02
+limit pcie_cfg_command u8 0x04
+limit pcie_cfg_status u8 0x06
+limit pcie_cfg_revision u8 0x08
+limit pcie_cfg_class_code u8 0x09
+limit pcie_cfg_header u8 0x0e
+limit pcie_cfg_bars u8 0x10
+limit pcie_cfg_cap_ptr u8 0x34
+limit pcie_cfg_pin u8 0x3d
+# The command register's switches (pcireg.h:87-95) and the status register's
+# capability-list bit (pcireg.h:98).
+limit pcie_command_io u16 0x0001
+limit pcie_command_memory u16 0x0002
+limit pcie_command_master u16 0x0004
+limit pcie_command_intx_disable u16 0x0400
+limit pcie_status_capabilities u16 0x0010
+# The header type register: its type and the multifunction bit (pcireg.h:118-122).
+limit pcie_header_type_mask u8 0x7f
+limit pcie_header_multifunction u8 0x80
+# The interrupt pin: 0 for none, 1 to 4 for INTA to INTD.
+limit pcie_pin_max u8 4
+
+# The header types the walk takes (pcireg.h:119-120); a CardBus header, type 2, and
+# any above it are not taken.
+enum pcie_header u8
+  value normal 0
+  value bridge 1
+
+# A type-0 header's subsystem identity (pcireg.h:246-247) and its BAR registers, six
+# from pcie_cfg_bars (pcireg.h:216-218).
+limit pcie_cfg_subvendor u8 0x2c
+limit pcie_cfg_subsystem u8 0x2e
+limit pcie_normal_bars u8 6
+# A type-1 header's two BAR registers (pcireg.h:259), its bus numbers (pcireg.h:262-264),
+# its I/O, memory and prefetchable windows (pcireg.h:267-281) and its bridge control
+# (pcireg.h:287).
+limit pcie_bridge_bars u8 2
+limit pcie_cfg_primary_bus u8 0x18
+limit pcie_cfg_secondary_bus u8 0x19
+limit pcie_cfg_subordinate_bus u8 0x1a
+limit pcie_cfg_io_base u8 0x1c
+limit pcie_cfg_io_limit u8 0x1d
+limit pcie_cfg_memory_base u8 0x20
+limit pcie_cfg_memory_limit u8 0x22
+limit pcie_cfg_prefetch_base u8 0x24
+limit pcie_cfg_prefetch_limit u8 0x26
+limit pcie_cfg_prefetch_base_upper u8 0x28
+limit pcie_cfg_prefetch_limit_upper u8 0x2c
+limit pcie_cfg_io_base_upper u8 0x30
+limit pcie_cfg_io_limit_upper u8 0x32
+limit pcie_cfg_bridge_control u8 0x3e
+# A type-1 header's memory window is 1 MiB granular: its base and limit registers hold
+# address bits 31 to 20 (pcireg.h:289-290).
+limit pcie_bridge_memory_granule u32 0x100000
+# The address bits of a type-1 header's window registers: an I/O base or limit holds
+# address bits 15 to 12 in its high four bits and a memory or prefetchable base or limit
+# address bits 31 to 20 in its high twelve, its low four bits the window's addressing
+# capability or reserved (pcireg.h:271-292, PCIM_BRIO_MASK, PCIM_BRPM_MASK and
+# PCI_PPBMEMBASE); a memory register is its address shifted down 16 bits. A window is
+# closed when its base lies above its limit.
+limit pcie_bridge_io_window_mask u8 0xf0
+limit pcie_bridge_memory_window_mask u16 0xfff0
+limit pcie_bridge_memory_window_shift u8 16
+
+# A BAR register's low bits (pcireg.h:222-232): I/O or memory space, a memory BAR's
+# type, of which 64-bit takes the next register as its upper half, prefetchable, and
+# the base masks below the bits.
+limit pcie_bar_io_space u32 0x00000001
+limit pcie_bar_mem_type_mask u32 0x00000006
+limit pcie_bar_mem_type_64 u32 0x00000004
+limit pcie_bar_mem_prefetch u32 0x00000008
+limit pcie_bar_mem_base u64 0xfffffffffffffff0
+limit pcie_bar_io_base u32 0xfffffffc
+# The largest BAR the 32-bit windows place, as a power of two; a 64-bit BAR whose size
+# needs the high word is reported unplaced (docs/design-pcie.md, "Sizing"). erXos's
+# choice. A report's BAR carries its true size_log2, at most pcie_bar_size_log2_wide, the
+# largest a 64-bit BAR's mask can give: the intake refuses a size_log2 above
+# pcie_bar_size_log2_max only on a placed BAR, and one above pcie_bar_size_log2_wide on
+# any BAR, so a function holding a BAR too large to place is reported unplaced with it.
+limit pcie_bar_size_log2_max u8 31
+limit pcie_bar_size_log2_wide u8 63
+
+# The capability list: the least offset a pointer may hold, the bits of a pointer read
+# (its low two cleared) and the most capabilities 192 bytes from 0x40 hold, past which
+# the list is a loop (docs/design-pcie.md, "The walk").
+limit pcie_cap_first u8 0x40
+limit pcie_cap_pointer_mask u8 0xfc
+limit pcie_caps_max u32 48
+# The capabilities the parser reads (pcireg.h:139-151); each may appear once.
+enum pcie_cap u8
+  value msi 0x05
+  value express 0x10
+  value msix 0x11
+
+# MSI (pcireg.h:601-626): the control word and its bits, then the address, upper
+# address, data and per-vector mask, each from the capability's start; a 64-bit
+# capability's data follows its upper address, and its mask register is the one
+# pcireg.h gives.
+limit pcie_msi_control u8 0x2
+limit pcie_msi_control_vector u16 0x0100
+limit pcie_msi_control_64bit u16 0x0080
+limit pcie_msi_control_mme_mask u16 0x0070
+limit pcie_msi_control_mmc_mask u16 0x000e
+limit pcie_msi_control_enable u16 0x0001
+limit pcie_msi_address u8 0x4
+limit pcie_msi_address_high u8 0x8
+limit pcie_msi_data u8 0x8
+limit pcie_msi_data_64bit u8 0xc
+limit pcie_msi_mask u8 0x10
+limit pcie_msi_pending u8 0x14
+
+# MSI-X (pcireg.h:966-973): the control word and its bits, the table register, whose
+# low three bits are the BAR indicator and the rest the table's offset in it, and the
+# pending-bit array's register, the capability's last. A table entry is 16 bytes (docs/design-pcie.md, "The walk").
+limit pcie_msix_control u8 0x2
+limit pcie_msix_control_enable u16 0x8000
+limit pcie_msix_control_function_mask u16 0x4000
+limit pcie_msix_control_table_size u16 0x07ff
+limit pcie_msix_table u8 0x4
+limit pcie_msix_pba u8 0x8
+limit pcie_msix_bir_mask u32 0x00000007
+limit pcie_msix_entry_size u32 16
+
+# PCI Express (pcireg.h:790-828): the flags word with the device type, the device
+# capabilities with function-level reset, the device control the reset is started
+# through and the device status whose pending transactions it waits on.
+limit pcie_express_flags_word u8 0x2
+limit pcie_express_flags_type u16 0x00f0
+limit pcie_express_device_cap u8 0x4
+limit pcie_express_device_cap_flr u32 0x10000000
+limit pcie_express_device_control u8 0x8
+limit pcie_express_device_status u8 0xa
+
+# A function's state in the PCIe domain's report (docs/design-pcie.md, "Records").
+enum pcie_state u8
+  value ready 1
+  value not_ready 2
+  value unplaced 3
+  value unsupported 4
+  value malformed 5
+
+# A BAR's kind; the upper half of a 64-bit BAR is absent.
+enum pcie_bar_kind u8
+  value absent 0
+  value memory 1
+  value io 2
+flags pcie_bar_flags u8
+  bit addr64 0
+  bit prefetchable 1
+  bit placed 2
+
+# One BAR: its hardware size as a power of two and its PCI address, 0 when not placed.
+# Its span, the size rounded up to the page size, is derived.
+layout erx_pcie_bar wire_le 8 16
+  field kind pcie_bar_kind 0
+  field flags pcie_bar_flags 1
+  field size_log2 u8 2
+  padding 3 5
+  field address u64 8
+
+flags pcie_msi_flags u8
+  bit addr64 0
+  bit vector_mask 1
+flags pcie_express_flags u8
+  bit flr 0
+
+# A function the PCIe domain reports: its host bridge's manifest device row, its place
+# (its requester id, bus << 8 | device << 3 | function, is derived), its identity, its
+# class code (base class, subclass and programming interface, bits 23 to 0), its header
+# type without the multifunction bit, its pin, its BARs in register order (a type-1
+# header's last four absent), and its MSI, MSI-X and PCI Express capabilities, each at
+# offset 0 when absent. msi_vectors is the vectors capable as a power of two;
+# msix_table_size counts entries.
+layout erx_pcie_function wire_le 8 136
+  field bridge u32 0
+  field bus u8 4
+  field device u8 5
+  field function u8 6
+  field state pcie_state 7
+  field vendor u16 8
+  field device_id u16 10
+  field class_code u32 12
+  field revision u8 16
+  field header u8 17
+  field subsystem_vendor u16 18
+  field subsystem u16 20
+  field pin u8 22
+  padding 23 1
+  field bars erx_pcie_bar 24 count 6
+  field msi_offset u8 120
+  field msi_flags pcie_msi_flags 121
+  field msi_vectors u8 122
+  field msix_offset u8 123
+  field msix_table_size u16 124
+  field msix_table_bar u8 126
+  padding 127 1
+  field msix_table_offset u32 128
+  field express_offset u8 132
+  field express_type u8 133
+  field express_flags pcie_express_flags 134
+  padding 135 1
+
+# A function's setting: its mode and its interrupt route, with its one message, the
+# erx_msi_message erx_irq_create returned (kernel.txt), zero for the routes that have
+# none.
+enum pcie_mode u8
+  value off 0
+  value decoding 1
+  value mastering 2
+enum pcie_route u8
+  value none 0
+  value msi 1
+  value msix 2
+  value intx 3
+layout erx_pcie_setting wire_le 8 24
+  field mode pcie_mode 0
+  field route pcie_route 1
+  padding 2 6
+  field message erx_msi_message 8
+
+# One window of a host bridge, from the tree's ranges: its PCI and CPU addresses and
+# its size.
+flags pcie_window_flags u8
+  bit addr64 0
+  bit prefetchable 1
+  bit io 2
+layout erx_pcie_window wire_le 8 32
+  field pci u64 0
+  field cpu u64 8
+  field size u64 16
+  field flags pcie_window_flags 24
+  padding 25 7
+
+# A place below a closed bridge's root port that its platform record lists.
+layout erx_pcie_place wire_le 1 4
+  field bus u8 0
+  field device u8 1
+  field function u8 2
+  field pin u8 3
+
+# A host bridge the device service hands the PCIe domain: its manifest device row, its
+# buses, whether it is closed, its windows and, for a closed bridge, its places. A
+# window of size 0 is unused, and so is a place on bus 0, which lies above every root
+# port.
+flags pcie_bridge_flags u8
+  bit closed 0
+layout erx_pcie_bridge wire_le 8 152
+  field index u32 0
+  field bus_first u8 4
+  field bus_last u8 5
+  field flags pcie_bridge_flags 6
+  padding 7 1
+  field windows erx_pcie_window 8 count @pcie_windows_max
+  field places erx_pcie_place 136 count @pcie_closed_max

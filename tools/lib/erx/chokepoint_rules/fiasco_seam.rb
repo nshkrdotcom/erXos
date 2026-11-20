@@ -66,6 +66,8 @@ module Erx
         liberx/backend/fiasco/lock.h
         liberx/backend/fiasco/log.c
         liberx/backend/fiasco/log.h
+        liberx/backend/fiasco/msi_lines.c
+        liberx/backend/fiasco/msi_lines.h
         liberx/backend/fiasco/page_pool.c
         liberx/backend/fiasco/page_pool.h
         liberx/backend/fiasco/park.c

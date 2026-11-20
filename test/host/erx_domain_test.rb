@@ -86,6 +86,7 @@ class ErxDomainTest < Minitest::Test
   # of the EUnit module tests, must fail.
   Fault = Data.define(:name, :file, :from, :to, :tests, :caught_by)
   SERVICE = File.join(APPLICATION, 'erx_domain_srv.erl')
+  MINTS = File.join(APPLICATION, 'erx_domain_mints.erl')
   FAULTS = [
     # The read-only tree's own refusal of ctl, the seeded fault of P5b: without it the
     # tree walks to ctl, so a session holding only the read-only tree could reset a driver.
@@ -148,8 +149,7 @@ class ErxDomainTest < Minitest::Test
     # The session mark (docs/design-system.md, "Facets a configured domain serves"): a
     # server's end that drops the grants' marks, so its new incarnation's re-mint of the
     # display's session's grant carries none.
-    Fault.new(name: 'a re-mint that drops the session mark',
-              file: File.join(APPLICATION, 'erx_domain_mints.erl'),
+    Fault.new(name: 'a re-mint that drops the session mark', file: MINTS,
               from: %q{reconcile(State#{rows := Rows#{Row => {Id, ended}}})},
               to: %q{reconcile(State#{rows := Rows#{Row => {Id, ended}},
                                       grants := maps:map(fun(_, E) -> E#{mark := false} end, maps:get(grants, State))})},
@@ -196,7 +196,18 @@ class ErxDomainTest < Minitest::Test
     # before the system domain's data grant is installed.
     Fault.new(name: "a wait for the system domain's namespace answered at once", file: SERVICE,
               from: '    case InPlace(system) of', to: '    case is_function(InPlace) of',
-              tests: 'erx_domain_mints_srv_tests', caught_by: 'system_namespace')
+              tests: 'erx_domain_mints_srv_tests', caught_by: 'system_namespace'),
+    # One incarnation's grant (docs/design-pcie.md, "Facets"), the pure decision of
+    # erx_domain_mints:system_grant/3: one matched by the service alone answers a wait for
+    # one incarnation with another's installed facet; and without the idle case the wait
+    # for an incarnation that provides no pcie is never answered.
+    Fault.new(name: 'a grant wait matched by its service alone', file: MINTS,
+              from: '#{Key := #{state := {installed, {Id, _}, Pid}}} ->',
+              to: '#{Key := #{state := {installed, _Pair, Pid}}} ->',
+              tests: 'erx_domain_mints_srv_tests', caught_by: 'await_installed'),
+    Fault.new(name: 'a grant wait without its idle case', file: MINTS,
+              from: 'idle_grant(ready) -> {error, unprovided};', to: 'idle_grant(ready) -> wait;',
+              tests: 'erx_domain_mints_srv_tests', caught_by: 'await_unprovided')
   ].freeze
 
   def test_the_cases_catch_each_seeded_fault

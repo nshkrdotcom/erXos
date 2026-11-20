@@ -33,7 +33,10 @@
  * is one more row here. A framebuffer row has none: its record is the
  * root's framebuffer record (docs/design-device-tree.md, "Facts into
  * records"), and the row names /chosen and ERX_FRAMEBUFFER_COMPATIBLE, which
- * the manifest check proves.
+ * the manifest check proves. A PCIe function's compatible string is its identity,
+ * pci and its vendor and device id in four lowercase hexadecimal digits each
+ * (docs/design-pcie.md, "The catalogue and gives"): qemu-xhci's pci1b36,000d and
+ * the VL805's pci1106,3483, each an xHCI controller (docs/design-usb.md).
  */
 typedef struct erx_device_kind {
 	uint32_t	 role;		/* ERX_MF_DEVICE_ROLE_* */
@@ -53,6 +56,8 @@ static const erx_device_kind_t erx_device_kinds[] = {
 	{ ERX_MF_DEVICE_ROLE_I2C, "brcm,bcm2835-i2c", "i2c", "bsc", true },
 	{ ERX_MF_DEVICE_ROLE_SPI, "brcm,bcm2835-spi", "spi", "bcm2711_spi", true },
 	{ ERX_MF_DEVICE_ROLE_RTC, "arm,pl031", "rtc", "pl031", false },
+	{ ERX_MF_DEVICE_ROLE_USB, "pci1b36,000d", "usb", "xhci", false },
+	{ ERX_MF_DEVICE_ROLE_USB, "pci1106,3483", "usb", "xhci", false },
 };
 
 /*

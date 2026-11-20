@@ -47,6 +47,7 @@ struct erx_device {
 	bool				coherent;	/* its DMA is cache-coherent */
 	uintptr_t			register_keys[ERX_DEVICE_REGISTERS_MAX];
 	uintptr_t			field_keys[ERX_DEVICE_FIELDS_MAX];
+	erx_device_layout_t		layout;		/* where its registers are, decided at open */
 };
 
 static erx_device_t devices[ERX_DEVICE_MAX];
@@ -262,7 +263,7 @@ take_lines(const erx_device_spec_t *spec, uint32_t *entries)
 		*entry = (line_entry_t){ .form = spec->form, .key = spec->lines[line], .irq = spec->lines[line],
 		    .shared = spec->shared[line] };
 		if (spec->form != ERX_DEVICE_FORM_GIVEN)
-			status = erx_irq_create(0, 0, kind, spec->lines[line], &entry->irq);
+			status = erx_irq_create(0, 0, kind, spec->lines[line], &entry->irq, NULL);
 		if (status == ERX_OK)
 			entries[line] = lines_taken++;
 	}
@@ -367,6 +368,39 @@ find_open(const erx_device_spec_t *spec, const erx_device_peripheral_t *peripher
 	return (false);
 }
 
+/* One volatile load of `width` bits at `offset` of a window, which the table holds as 8, 16, 32 or 64. */
+static uint64_t
+load_word(volatile uint8_t *window, uint8_t width, uint64_t offset)
+{
+	switch (width) {
+	case 8:
+		return (erx_device_access_load8(window, offset));
+	case 16:
+		return (erx_device_access_load16(window, offset));
+	case 64:
+		return (erx_device_access_load64(window, offset));
+	default:
+		return (erx_device_access_load32(window, offset));
+	}
+}
+
+/*
+ * The record's layout, erx_device_resolve run over its window of `size` bytes: each read it
+ * asks for is one load, and it asks for no more than its sources and ERX_DEVICE_LIST_ENTRIES_MAX
+ * list entries, each inside the window.
+ */
+static bool
+resolve_layout(erx_device_t *record, uint64_t size)
+{
+	erx_device_resolve_t resolve;
+
+	erx_device_resolve_begin(record->peripheral, size, &record->layout, &resolve);
+	while (resolve.op == ERX_DEVICE_RESOLVE_READ)
+		erx_device_resolve_step(record->peripheral, &record->layout, &resolve,
+		    load_word(record->windows[0], resolve.width, resolve.offset));
+	return (resolve.op == ERX_DEVICE_RESOLVE_DONE);
+}
+
 int
 erx_device_open(const erx_device_spec_t *spec, const uintptr_t *register_keys, const uintptr_t *field_keys,
     uint32_t *device)
@@ -386,14 +420,18 @@ erx_device_open(const erx_device_spec_t *spec, const uintptr_t *register_keys, c
 	if (!lines_agree(spec, open))
 		return (ERX_EBUSY);
 	record = &devices[open];
+	record->peripheral = peripheral;
 	status = take_window(spec, &pages, peripheral->window_size, &record->windows[0]);
+	/* A stand-in's window is the table's size; any other's the spec's, which spec_fits held to at least that. */
+	if (status == ERX_OK &&
+	    !resolve_layout(record, spec->form == ERX_DEVICE_FORM_STAND_IN ? peripheral->window_size : spec->size))
+		status = ERX_EINVAL;
 	if (status == ERX_OK)
 		status = take_lines(spec, record->entries);
 	if (status == ERX_OK)
 		status = map_memory(spec, &record->dma);
 	if (status != ERX_OK)
 		return (status);
-	record->peripheral = peripheral;
 	record->form = spec->form;
 	record->window = spec->window;
 	record->base = spec->base;
@@ -446,22 +484,11 @@ erx_device_field_by_key(const erx_device_t *device, const erx_device_register_t 
 	return (found == reg->field_count ? NULL : &device->peripheral->fields[reg->first_field + found]);
 }
 
-/* The one load of a register: one access of its declared width, which the table holds as 8, 16, 32 or 64. */
+/* The one load of a register: one access of its declared width. */
 static uint64_t
 load(const erx_device_t *device, const erx_device_register_t *reg, uint64_t offset)
 {
-	volatile uint8_t *const window = device->windows[reg->window];
-
-	switch (reg->width) {
-	case 8:
-		return (erx_device_access_load8(window, offset));
-	case 16:
-		return (erx_device_access_load16(window, offset));
-	case 64:
-		return (erx_device_access_load64(window, offset));
-	default:
-		return (erx_device_access_load32(window, offset));
-	}
+	return (load_word(device->windows[reg->window], reg->width, offset));
 }
 
 /* One volatile store of the register's declared width at `offset` of its window. */
@@ -601,26 +628,44 @@ stand_in_stored(const erx_device_t *device, const erx_device_register_t *reg, ui
 }
 #endif
 
+/* Where the element is in the device's window, by the layout its open decided; false for an element it does not have. */
+static bool
+element_at(const erx_device_t *device, const erx_device_register_t *reg, erx_device_element_t element, uint64_t *offset)
+{
+	return (erx_device_layout_offset(device->peripheral, &device->layout, reg, element.indexed, element.index, offset));
+}
+
 bool
 erx_device_read(const erx_device_t *device, const erx_device_register_t *reg, erx_device_element_t element, uint64_t *value)
 {
 	uint64_t offset;
 
-	if (!erx_device_element_offset(reg, element.indexed, element.index, &offset) || !erx_device_read_allowed(reg))
+	if (!element_at(device, reg, element, &offset) || !erx_device_read_allowed(reg))
 		return (false);
 	*value = load(device, reg, offset);
 	return (true);
 }
 
+/*
+ * A write of a register with fields the NIF owns reads it first, which the generator allows
+ * only where the read has no side effect, and is refused when it would change one of them.
+ */
 bool
 erx_device_write(const erx_device_t *device, const erx_device_register_t *reg, erx_device_element_t element, uint64_t value)
 {
 	uint64_t offset;
 
-	if (!erx_device_element_offset(reg, element.indexed, element.index, &offset) || !erx_device_write_allowed(reg, value))
+	if (!element_at(device, reg, element, &offset) || !erx_device_write_allowed(reg, value) ||
+	    (reg->owned != 0 && !erx_device_owned_kept(reg, load(device, reg, offset), value)))
 		return (false);
 	store(device, reg, offset, value);
 	return (true);
+}
+
+uint32_t
+erx_device_elements(const erx_device_t *device, const erx_device_register_t *reg)
+{
+	return (device->layout.elements[reg - device->peripheral->registers]);
 }
 
 /*
@@ -654,8 +699,7 @@ erx_device_read_field(const erx_device_t *device, const erx_device_register_t *r
 {
 	uint64_t offset;
 
-	if (!erx_device_element_offset(reg, element.indexed, element.index, &offset) ||
-	    !erx_device_field_read_allowed(reg, field))
+	if (!element_at(device, reg, element, &offset) || !erx_device_field_read_allowed(reg, field))
 		return (false);
 	*value = erx_device_field_get(field, load(device, reg, offset));
 	return (true);
@@ -681,7 +725,7 @@ erx_device_write_field(const erx_device_t *device, const erx_device_register_t *
 	const erx_device_field_plan_t plan = erx_device_field_plan(reg, field, value);
 	uint64_t offset;
 
-	if (!erx_device_element_offset(reg, element.indexed, element.index, &offset) || plan.op == ERX_DEVICE_FIELD_REFUSED)
+	if (!element_at(device, reg, element, &offset) || plan.op == ERX_DEVICE_FIELD_REFUSED)
 		return (false);
 	store(device, reg, offset, erx_device_field_apply(&plan, plan.op == ERX_DEVICE_FIELD_UPDATE ? load(device, reg, offset) : 0));
 	return (true);

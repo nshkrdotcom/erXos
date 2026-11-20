@@ -30,6 +30,10 @@
  * each entry placed on its unit's holder; the view is refused unless the
  * placement gives every unit whole to one holder (boot_devices), so
  * nothing builds a domain from a placement the view did not admit. Each
+ * PCIe host bridge row has a catalogue beside it (boot_bridges), which the
+ * root joins to the tree's facts (erx_dom_view_bridge) and the PCIe
+ * domain's reports fill under the library's lock (erx_dom_lib_pci_report),
+ * the view's one table written after the boot outside a domain's plan. Each
  * configured row and session template must leave room in its boot page's
  * strings for what the library adds to its own words (boot_strings_fit).
  * The service and facet rows are carried for the domain service
@@ -78,6 +82,9 @@ static bool	boot_lines_meet(const erx_dom_device_entry_t *, const erx_dom_device
 static const char *boot_units(const erx_manifest_view_t *, erx_dom_device_entry_t *);
 static const char *boot_devices(erx_dom_view_t *, const erx_manifest_view_t *,
 		    erx_dom_device_entry_t *, erx_dom_device_t *);
+static uint32_t	boot_bridges_count(const erx_manifest_view_t *);
+static bool	boot_is_bridge(const erx_mf_device_t *);
+static const char *boot_bridges(erx_dom_view_t *, const erx_manifest_view_t *, erx_dom_pci_bridge_t *);
 static bool	boot_strings_fit(uint64_t, uint64_t, uint32_t, bool, bool);
 static bool	boot_env_names_display(const char *, uint32_t);
 static bool	boot_env_sets(const char *, uint32_t, const char *);
@@ -114,7 +121,27 @@ erx_dom_view_sizes(const erx_manifest_view_t *manifest, uint32_t nfiles)
 	    .nservices = manifest->header.services.count,
 	    .nfacets = manifest->header.facets.count,
 	    .noperations = manifest->header.facet_operations.count,
-	    .nparameters = manifest->header.facet_parameters.count });
+	    .nparameters = manifest->header.facet_parameters.count,
+	    .npci_bridges = boot_bridges_count(manifest) });
+}
+
+/* Whether a device row is a PCIe host bridge's: a device-tree row of role configuration. */
+static bool
+boot_is_bridge(const erx_mf_device_t *device)
+{
+	return (device->selector == ERX_MF_SELECTOR_DT && device->role == ERX_MF_DEVICE_ROLE_CONFIGURATION);
+}
+
+/* The manifest's PCIe host bridge rows; a row the reader cannot read counts none, and boot_bridges refuses it. */
+static uint32_t
+boot_bridges_count(const erx_manifest_view_t *manifest)
+{
+	erx_mf_device_t device;
+	uint32_t count = 0;
+
+	for (uint32_t index = 0; index < manifest->header.devices.count; index++)
+		count += erx_manifest_devices_at(manifest, index, &device) && boot_is_bridge(&device) ? 1 : 0;
+	return (count);
 }
 
 /*
@@ -173,7 +200,8 @@ erx_dom_boot_layout(const erx_dom_boot_sizes_t *sizes, uintptr_t base, erx_dom_b
 	    !BOOT_PLACE(services, sizes->nservices) ||
 	    !BOOT_PLACE(facets, sizes->nfacets) ||
 	    !BOOT_PLACE(operations, sizes->noperations) ||
-	    !BOOT_PLACE(parameters, sizes->nparameters))
+	    !BOOT_PLACE(parameters, sizes->nparameters) ||
+	    !BOOT_PLACE(pci_bridges, sizes->npci_bridges))
 		return (false);
 #undef BOOT_PLACE
 	*bytes = used;
@@ -298,8 +326,9 @@ boot_pages_meet(const erx_dom_device_entry_t *a, const erx_dom_device_entry_t *b
 }
 
 /*
- * Whether two entries name one interrupt line; an entry with no line, a PCIe function's, a
- * framebuffer's or a device-tree row's whose line is 0, shares none.
+ * Whether two entries name one interrupt line; an entry with no line, a framebuffer's, a
+ * device-tree row's whose line is 0 or a PCIe function's that is at no closed bridge's
+ * place, shares none.
  */
 static bool
 boot_lines_meet(const erx_dom_device_entry_t *a, const erx_dom_device_entry_t *b)
@@ -337,6 +366,50 @@ boot_kind(const erx_manifest_view_t *manifest, const erx_mf_device_t *device)
 
 		if (kind->role == device->role && boot_compatible_is(manifest, device, kind->compatible))
 			return (kind);
+	}
+	return (NULL);
+}
+
+/*
+ * A PCIe function's entry (docs/design-usb.md, "The Phase 1 part"): its kind
+ * by its identity, the row's role and compatible string as a device-tree
+ * row's is, and its position, the device-tree row of role configuration
+ * whose path its row names as its bridge, and its place on that bridge.
+ * The manifest check proves the bridge a placed PCIe bridge; a row whose
+ * bridge names none, or whose bus no PCIe bus number holds, is refused all
+ * the same, so every function's entry names its bridge's. A function of no
+ * kind is held, not driven, so no give makes its memory.
+ */
+static const char *
+boot_function(const erx_manifest_view_t *manifest, const erx_mf_device_t *device, erx_dom_device_entry_t *entry)
+{
+	const char *const strings = (const char *)manifest->bytes + manifest->header.strings.offset;
+	const erx_device_kind_t *kind = boot_kind(manifest, device);
+	erx_mf_device_t bridge;
+
+	entry->bridge = ERX_MF_NONE;
+	for (uint32_t index = 0; index < manifest->header.devices.count && entry->bridge == ERX_MF_NONE; index++) {
+		if (!erx_manifest_devices_at(manifest, index, &bridge))
+			return ("manifest: a device row the reader cannot read");
+		if (boot_is_bridge(&bridge) &&
+		    bridge.path.length == device->bridge.length &&
+		    memcmp(strings + bridge.path.offset, strings + device->bridge.offset, bridge.path.length) == 0)
+			entry->bridge = index;
+	}
+	if (entry->bridge == ERX_MF_NONE)
+		return ("manifest: a PCIe function's bridge names no PCIe bridge row");
+	if (device->bus > UINT8_MAX)
+		return ("manifest: a PCIe function's bus is not a PCIe bus number");
+	entry->bus = (uint8_t)device->bus;
+	entry->device = device->device;
+	entry->function = device->function;
+	entry->dma_limit = device->dma_limit;
+	if (kind == NULL && entry->memory != 0)
+		return ("manifest: a device of a kind no runtime drives has DMA memory");
+	if (kind != NULL) {
+		entry->role_word = kind->role_word;
+		entry->peripheral = kind->peripheral;
+		entry->compatible = kind->compatible;
 	}
 	return (NULL);
 }
@@ -387,8 +460,10 @@ boot_units(const erx_manifest_view_t *manifest, erx_dom_device_entry_t *entries)
  * "Devices"): an entry per device row, in its unit and on its unit's
  * holder, and a record per entry with no holder and no object yet. A
  * device-tree device has its register window, as whole pages, and its
- * line; a PCIe function has neither, since configuration space gives
- * them. Units are closed under sharing a register page and sharing an
+ * line; a PCIe function has its kind and position (boot_function), no
+ * window, since its report gives its BARs, and a line only at a closed
+ * bridge's place. Units are closed under
+ * sharing a register page and sharing an
  * interrupt line (docs/design-shared-devices.md, "The unit rule"), since a
  * page has at most one MMIO object and a line one IRQ object: devices
  * whose pages meet or that name one line are one unit, so the manifest
@@ -460,7 +535,17 @@ boot_devices(erx_dom_view_t *view, const erx_manifest_view_t *manifest, erx_dom_
 				entry->peripheral = kind->peripheral;
 				entry->compatible = kind->compatible;
 			}
+		} else {
+			/* A function at a closed bridge's place names the INTx line its
+			 * bridge routes for the place's pin, which joins the line
+			 * relation as a device-tree line does; any other names none
+			 * (docs/design-pcie.md, "The closed bus"). */
+			entry->nlines = device.line != 0 ? 1 : 0;
+			entry->lines[0] = device.line;
+			if ((reason = boot_function(manifest, &device, entry)) != NULL)
+				return (reason);
 		}
+		entry->selector = device.selector;
 		records[index] = (erx_dom_device_t){ .index = index, .resource = { ERX_CAP_NULL },
 		    .dma = { ERX_CAP_NULL }, .memory = { ERX_CAP_NULL } };
 		for (uint32_t at = 0; at < ERX_DOM_UNIT_WINDOWS_MAX; at++)
@@ -483,6 +568,71 @@ boot_devices(erx_dom_view_t *view, const erx_manifest_view_t *manifest, erx_dom_
 	}
 	view->ndevices = count;
 	return (NULL);
+}
+
+/*
+ * Each PCIe host bridge row's catalogue (erx/dom.h, docs/design-pcie.md,
+ * "Records"), in device row order: its record's index the row, its flags
+ * the row's closed mark, and its places the places table's span the row
+ * names, with no layouts. Its buses and windows are the tree's, which the
+ * root joins later (erx_dom_view_bridge), so until then they are zero and
+ * no report places a BAR. A row naming more places than a bridge's record
+ * holds refuses the view.
+ */
+static const char *
+boot_bridges(erx_dom_view_t *view, const erx_manifest_view_t *manifest, erx_dom_pci_bridge_t *bridges)
+{
+	erx_dom_pci_bridge_t *bridge;
+	erx_mf_device_t device;
+	uint32_t count = 0, first;
+
+	view->pci_bridges = bridges;
+	view->npci_bridges = 0;
+	for (uint32_t index = 0; index < manifest->header.devices.count; index++) {
+		if (!erx_manifest_devices_at(manifest, index, &device))
+			return ("manifest: a device row the reader cannot read");
+		if (!boot_is_bridge(&device))
+			continue;
+		if (device.places.count > ERX_PCIE_CLOSED_MAX)
+			return ("manifest: a PCIe bridge row lists more places than its record holds");
+		/* A span is the byte offset of its first row; the reader proved the
+		 * spans a partition of the places table. */
+		first = (device.places.offset - manifest->header.places.offset) / ERX_PCIE_PLACE_SIZE;
+		bridge = &bridges[count++];
+		*bridge = (erx_dom_pci_bridge_t){ .facts = { .index = index,
+		    .flags = (device.flags & ERX_MF_DEVICE_CLOSED) != 0 ? ERX_PCIE_BRIDGE_CLOSED : 0 } };
+		for (uint32_t at = 0; at < device.places.count; at++) {
+			if (!erx_manifest_places_at(manifest, first + at, &bridge->facts.places[at]))
+				return ("manifest: a PCIe bridge's place the reader cannot read");
+		}
+	}
+	view->npci_bridges = count;
+	return (NULL);
+}
+
+void
+erx_dom_view_bridge(erx_dom_pci_bridge_t *bridge, const erx_pcie_bridge_t *tree, erx_dt_bridge_status_t status)
+{
+	const bool known = status == ERX_DT_BRIDGE_OK;
+
+	bridge->facts.bus_first = known ? tree->bus_first : 1;
+	bridge->facts.bus_last = known ? tree->bus_last : 0;
+	memcpy(bridge->facts.windows, tree->windows, sizeof(bridge->facts.windows));
+	if (!known)
+		memset(bridge->facts.windows, 0, sizeof(bridge->facts.windows));
+}
+
+erx_status_t
+erx_dom_lib_pci_report(erx_dom_lib_t *lib, uint32_t bridge, const erx_pcie_function_t *report, uint32_t count,
+    erx_dom_pci_refusal_t *refusal)
+{
+	for (uint32_t at = 0; at < lib->view.npci_bridges; at++) {
+		if (lib->pci_bridges[at].facts.index == bridge)
+			return (erx_dom_pci_report(&lib->pci_bridges[at], lib->view.devices, lib->view.ndevices, report,
+			    count, refusal));
+	}
+	*refusal = (erx_dom_pci_refusal_t){ .record = count, .field = "bridge" };
+	return (ERX_EINVAL);
 }
 
 /* A framebuffer record takes no more room than the given record the reserve counts for it. */
@@ -1223,6 +1373,7 @@ erx_dom_view_build(erx_dom_lib_t *lib, const erx_manifest_view_t *manifest, uint
 	lib->held.principals = tables->held;
 	if ((reason = boot_principals(lib, manifest, tables)) != NULL ||
 	    (reason = boot_devices(&lib->view, manifest, tables->devices, tables->device_records)) != NULL ||
+	    (reason = boot_bridges(&lib->view, manifest, tables->pci_bridges)) != NULL ||
 	    (reason = boot_system_image(lib, manifest)) != NULL ||
 	    (reason = boot_configured(&lib->view, manifest, tables->configured, lib->system_image_holder)) != NULL ||
 	    (reason = boot_templates(&lib->view, manifest, tables->templates)) != NULL ||
@@ -1247,6 +1398,7 @@ erx_dom_view_build(erx_dom_lib_t *lib, const erx_manifest_view_t *manifest, uint
 	lib->boot_timeout_s = header->boot_timeout_s;
 	lib->cap_limit = BOOT_CAP_LIMIT;
 	lib->device_records = tables->device_records;
+	lib->pci_bridges = tables->pci_bridges;
 #ifdef ERX_DOM_TEST_HOOKS
 	lib->fail_step = UINT32_MAX;
 #endif

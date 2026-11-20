@@ -423,12 +423,15 @@ erx_fiasco_program_tree(erx_dt_t *tree, const erx_manifest_view_t *manifest, erx
  * Joins the accepted tree's facts to the catalogue's entries once, before any device is
  * given (docs/design-device-tree.md, "Facts into records"). A row of a kind a runtime
  * drives (its role_word is set) that asks (erx_boot_row_asks) has its facts read from
- * tree at its node path, and every entry's DMA memory becomes what its facts admit
+ * tree at its node path, a PCIe function's at its bridge's, and every entry's DMA memory becomes what its facts admit
  * (erx_boot_dma_memory), so a row that asked nothing gets none. The root prints the line of each asking row a holder holds; the line of a row
  * the system domain holds waits for the root's own give, which makes its memory first
  * (device_give). A framebuffer row always asks, and its facts and line are
- * framebuffer_facts'. Returns NULL, or why the root cannot boot: a row that asks names a
- * path that is not a node path.
+ * framebuffer_facts'. Each PCIe host bridge's catalogue takes its buses and windows from
+ * the tree at its row's path (erx_dt_bridge, erx_dom_view_bridge), so a report places
+ * BARs only inside them; a bridge the reader refuses keeps none, its functions are given
+ * nothing, and the root prints a line naming it. Returns NULL, or why the root cannot boot: a row that asks, or a bridge
+ * row, names a path that is not a node path.
  */
 static const char *
 tree_facts(const erx_dt_t *tree)
@@ -440,7 +443,11 @@ tree_facts(const erx_dt_t *tree)
 		erx_dom_device_entry_t *const entry = &library_tables.devices[index];
 		const bool network = entry->role == ERX_MF_DEVICE_ROLE_NETWORK;
 		const uint64_t row_memory = entry->memory;
-		const erx_boot_words_t path = { entry->path, entry->path_len };
+		const bool pci = entry->selector == ERX_MF_SELECTOR_PCI;
+		/* A PCIe function's facts are its bridge node's, read as its own and
+		 * cut at its row's DMA limit (docs/design-pcie.md, "DMA"). */
+		const erx_dom_device_entry_t *const node = pci ? &library_tables.devices[entry->bridge] : entry;
+		const erx_boot_words_t path = { node->path, node->path_len };
 
 		if (entry->role == ERX_MF_DEVICE_ROLE_FRAMEBUFFER) {
 			if ((reason = framebuffer_facts(entry, tree)) != NULL)
@@ -451,12 +458,32 @@ tree_facts(const erx_dt_t *tree)
 		if (entry->asked) {
 			if (!tree_path_set(path))
 				return ("a device record: its device-tree path is not a node path");
-			erx_dt_device(tree, tree_path, ERX_DT_ROW_NODE, &entry->facts);
+			erx_dt_device(tree, tree_path, pci ? ERX_DT_ROW_PCIE : ERX_DT_ROW_NODE, entry->dma_limit,
+			    &entry->facts);
 		}
 		entry->memory = erx_boot_dma_memory(entry->asked ? &entry->facts : NULL, row_memory);
 		if (entry->asked && entry->row != ERX_MF_NONE && (length = erx_boot_tree_line(path, row_memory, network,
 		    &entry->facts, NULL, tree_line, sizeof(tree_line))) != 0)
 			erx_fiasco_console_write(tree_line, length);
+	}
+	for (uint32_t at = 0; at < library.view.npci_bridges; at++) {
+		erx_dom_pci_bridge_t *const bridge = &library_tables.pci_bridges[at];
+		const erx_dom_device_entry_t *const node = &library_tables.devices[bridge->facts.index];
+		erx_pcie_bridge_t facts = { 0 };
+		erx_dt_bridge_status_t status;
+
+		if (!tree_path_set((erx_boot_words_t){ node->path, node->path_len }))
+			return ("a PCIe bridge: its device-tree path is not a node path");
+		status = erx_dt_bridge(tree, tree_path, &facts);
+		erx_dom_view_bridge(bridge, &facts, status);
+		if (status != ERX_DT_BRIDGE_OK) {
+			static const char before[] = "erx: PCIe bridge ";
+			static const char after[] = ": the device tree's bus-range or ranges are refused; it gives no function\n";
+
+			erx_fiasco_console_write(before, sizeof(before) - 1);
+			erx_fiasco_console_write(node->path, node->path_len);
+			erx_fiasco_console_write(after, sizeof(after) - 1);
+		}
 	}
 	return (NULL);
 }
@@ -518,7 +545,7 @@ device_give(const erx_boot_device_t *device, const erx_dom_device_entry_t *entry
 	if (erx_mem_create_physical(ERX_CAP_NULL, ERX_CAP_NULL, window.base, window.size, ERX_MEM_ATTR_DEVICE,
 	    &window_handle) != ERX_OK)
 		return ("a device record: the backend refused its register window");
-	if (erx_irq_create(ERX_CAP_NULL, ERX_CAP_NULL, ERX_IRQ_LINE, device->line, &line_handle) != ERX_OK)
+	if (erx_irq_create(ERX_CAP_NULL, ERX_CAP_NULL, ERX_IRQ_LINE, device->line, &line_handle, NULL) != ERX_OK)
 		return ("a device record: the backend refused its line");
 	if (entry->memory != 0 && (reason = device_memory(entry, &memory_handle, &absent)) != NULL)
 		return (reason);

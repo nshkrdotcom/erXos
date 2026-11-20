@@ -32,6 +32,11 @@ limit usb_drives_max u32 4
 # a settled port waits until its oldest attempt leaves the window.
 limit usb_port_attempts_max u32 3
 limit usb_port_attempt_window_ms u32 60000
+# The restarts of one function in any usb_function_restart_window_ms, counted as a
+# port's attempts are; an end past them detaches the function's device
+# (design-usb.md, "Failure handling").
+limit usb_function_restarts_max u32 3
+limit usb_function_restart_window_ms u32 60000
 
 # A setup packet's bmRequestType: the direction in bit 7, the kind in bits 6:5 and the
 # recipient in bits 4:0 (usb.h:157-165).
@@ -189,6 +194,19 @@ limit usb_hub_multi_tt_alternate u8 1
 enum usb_feature u16
   value endpoint_halt 0
 
+# CLEAR_TT_BUFFER's wValue names the endpoint whose buffered split transaction a
+# translator drops: its number in bits 3:0, the device's address in bits 10:4, its
+# transfer type in bits 12:11 and its direction, the endpoint address's IN bit moved up 8
+# to bit 15 (USB 2.0, 11.24.2.3, Table 11-18). FreeBSD's usbd_req_clear_tt_buffer puts
+# the type at bit 12 (usb_request.c:2259), against the table.
+limit usb_tt_clear_address_shift u32 4
+limit usb_tt_clear_type_shift u32 11
+limit usb_tt_clear_dir_shift u32 8
+
+# A device's bus address is 7 bits, as that wValue holds it (usb_request.c:2259); 0 is the
+# default address a device answers before Address Device gives it its own (usb.h:76).
+limit usb_address_max u8 0x7f
+
 # A hub's features, its own and its ports' (usb.h:247-264), USB 2.0's set: the link
 # state, L1 and the SuperSpeed port features are not used, since no SuperSpeed hub is
 # driven.
@@ -262,6 +280,12 @@ enum usb_bot_status u8
   value good 0
   value failed 1
   value phase_error 2
+# The BOT core's deadlines (design-usb.md, "The block transport"), erXos's choice: a
+# request still queued this long after its acceptance is answered without being sent,
+# and one issued this long ago, its REQUEST SENSE and reset recovery included, ends its
+# medium.
+limit usb_bot_queue_deadline_ms u32 10000
+limit usb_bot_issue_deadline_ms u32 18000
 
 # The SCSI commands the transport sends and no others (design-usb.md, "The SCSI
 # subset"), by operation code (scsi_all.h:2080-2130); READ CAPACITY(16) is SERVICE
@@ -287,6 +311,19 @@ limit scsi_inquiry_length u32 36
 limit scsi_sense_length u32 18
 limit scsi_read_capacity_10_length u32 8
 limit scsi_read_capacity_16_length u32 32
+
+# The fewest relevant bytes INQUIRY's decoder takes (design-usb.md, "The BOT engine"),
+# its standard header, for the device type and the removable bit. The other decoders'
+# minimums are the fields they read, which their binary patterns spell: INQUIRY's
+# vendor[8] at byte 8 and product[16] at byte 16, taken when its first 32 bytes are
+# there (scsi_all.h:2294-2297); fixed-format sense through the additional sense code and
+# its qualifier in bytes 12 and 13, 14 bytes (scsi_all.h:3322-3326); and READ
+# CAPACITY(10)'s 4-byte and (16)'s 8-byte last block address, each followed by the
+# 4-byte block length, 8 and 12 bytes (scsi_all.h:2959-2968).
+limit scsi_inquiry_min u32 5
+# The one block length the transport serves (design-usb.md, "The SCSI subset"), erXos's
+# choice; a medium of any other is not served.
+limit scsi_block_length u32 512
 
 # INQUIRY data's first two bytes: the peripheral qualifier in bits 7:5 and device type
 # in bits 4:0 of byte 0, the removable bit in byte 1 (scsi_all.h:2168, :2204-2206,

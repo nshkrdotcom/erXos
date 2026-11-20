@@ -20,6 +20,7 @@ require_relative '../fixtures/generated_tree'
 # line its seed must change.
 class DomLifeTest < Minitest::Test
   LIFE = 'liberx/system/dom_life.c'
+  CORE = 'liberx/system/dom_core.c'
   EINVAL = -1
   ELIMIT = -7
   EBUSY = -8
@@ -163,7 +164,34 @@ DEVICES = {
               dev_resource_not_root dev_window_system_pays dev_memory_holder_pays dev_window_unaligned
               dev_window_meets dev_out_of_order dev_dma_and_memory dev_system_holder dev_too_many
               dev_kept_not_last dev_record_index dev_line_unmade dev_offset_outside
-              dev_resource_unmade dev_window_elsewhere dev_install_twice dev_kindless_dma].freeze
+              dev_resource_unmade dev_window_elsewhere dev_install_twice dev_kindless_dma
+              pci_line_apart pci_msi_for_intx pci_line_for_msi].freeze
+
+  # PCIe functions' gives (docs/design-pcie.md, "The catalogue and gives"): qemu-xhci
+  # behind an open bridge, by MSI, MSI-X or polled, and the VL805 behind a closed one, by
+  # its row's line; a BAR outside its bridge's windows refuses the give, and a function its
+  # catalogue does not give, or whose identity or pin is not its row's, is held with
+  # nothing but its resource.
+  PCI_HELD = '0 route=0 steps=RESOURCE'
+  PCI_MESSAGE = 'steps=RESOURCE,WINDOW,MSI,CONTIGUOUS,INSTALL,INSTALL,INSTALL window=0x10000000+0x4000'
+  PCIS = {
+  'xhci' => "0 route=1 #{PCI_MESSAGE}",
+  'xhci_msix' => "0 route=2 #{PCI_MESSAGE}",
+  'xhci_mask_unplaced' => "0 route=2 #{PCI_MESSAGE}",
+  'xhci_polled' => '0 route=0 steps=RESOURCE,WINDOW,CONTIGUOUS,INSTALL,INSTALL window=0x10000000+0x4000',
+  'vl805' => '0 route=3 steps=RESOURCE,WINDOW,IRQ,CONTIGUOUS,INSTALL,INSTALL,INSTALL window=0x600000000+0x1000',
+  'bar_outside' => EINVAL, 'bar_below' => EINVAL,
+  'unconfirmed' => PCI_HELD, 'identity' => PCI_HELD, 'wrong_pin' => PCI_HELD, 'place_unlisted' => PCI_HELD,
+  'firmware_lost' => PCI_HELD, 'no_catalogue' => PCI_HELD
+  }.freeze
+
+  # One-line edits of the domain core, each with the driver line it must change.
+  CORE_MUTANTS = {
+  'a bar is given outside its bridge windows' =>
+    ["if (window->size == 0 || (window->flags & ERX_PCIE_WINDOW_IO) != 0 || bar->address < window->pci ||\n" \
+     "\t\t    bar->address - window->pci > window->size || span > window->size - (bar->address - window->pci))",
+     'if (window->size == 0 || (window->flags & ERX_PCIE_WINDOW_IO) != 0)', 'pci bar_outside ']
+  }.freeze
 
   # One-line edits of the core, each with the driver line it must change.
   MUTANTS = {
@@ -181,8 +209,8 @@ DEVICES = {
       ["if (!device->driven)\n\t\t\tcontinue;\n\t\tif (device->nranges",
        "if (false)\n\t\t\tcontinue;\n\t\tif (device->nranges", 'dev dev_kindless_second '],
     'a line object no driven device reads' =>
-      ["if (!device->driven)\n\t\t\tcontinue;\n\t\tfor (uint32_t line",
-       "if (false)\n\t\t\tcontinue;\n\t\tfor (uint32_t line", 'dev dev_kindless_unit '],
+      ["if (!device->driven || (device->pci && device->route != ERX_PCIE_ROUTE_INTX))\n\t\t\tcontinue;",
+       "if (device->pci && device->route != ERX_PCIE_ROUTE_INTX)\n\t\t\tcontinue;", 'dev dev_kindless_unit '],
     'memory given to a device of no kind' =>
       ["if (!draft.devices[d].driven)\n\t\t\tcontinue;\n\t\tkept[d]", "if (false)\n\t\t\tcontinue;\n\t\tkept[d]",
        'dev dev_kindless_memory '],
@@ -305,6 +333,24 @@ DEVICES = {
     assert_results('dev', DEVICES, run_driver(driver, 'cases'))
   end
 
+  def test_every_result_of_a_pci_give
+    assert_results('pci', PCIS, run_driver(driver, 'cases'))
+  end
+
+  def test_each_core_mutant_changes_its_line
+    clean = run_driver(driver, 'cases')
+    CORE_MUTANTS.each do |name, (from, to, line)|
+      text = File.read(File.join(@root, CORE))
+      assert_equal 1, text.scan(from).size, "the #{name} seed no longer applies"
+      mutated = File.join(@directory, "core-#{name.tr(" '", '--')}.c")
+      File.write(mutated, text.sub(from) { to })
+      mutant = build_driver(File.join(@root, LIFE), name: "core-#{name.tr(" '", '--')}", core: mutated)
+      lines = run_driver(mutant, 'cases', check: false)
+      refute_equal clean.grep(/\A#{Regexp.escape(line)}/), lines.grep(/\A#{Regexp.escape(line)}/),
+                   "mutant survived: #{name}"
+    end
+  end
+
   def test_seeded_connections_fail_the_check
     lines = run_driver(driver, 'seeded')
     assert_includes lines, 'seeded valid 0'
@@ -338,11 +384,11 @@ DEVICES = {
 
   def compiler = ENV.fetch('ERX_CLANG', 'clang')
 
-  def build_driver(life, name:)
+  def build_driver(life, name:, core: File.join(@root, CORE))
     output = File.join(@directory, name)
     @runner.run([compiler, '-std=c17', '-D_DARWIN_C_SOURCE', '-Wall', '-Wextra', '-Werror', '-Wswitch-enum',
                  '-pedantic', '-O1', '-g', *@flags, *Erx::Generated.include_flags(root: @root),
-                 '-I', File.join(@root, 'include'), File.join(@root, 'liberx/system/dom_core.c'), life,
+                 '-I', File.join(@root, 'include'), core, life,
                  File.join(@root, 'liberx/erx_lane.c'),
                  Erx::Generated.path('liberx/generated/abi_reader.c', root: @root),
                  File.join(@root, 'test/fixtures/dom_life_driver.c'), '-o', output],

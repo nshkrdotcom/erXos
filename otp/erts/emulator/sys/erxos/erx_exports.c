@@ -31,7 +31,7 @@
 #define EXPORTS_MAX		16384
 /* Stripe locks: a set's address picks one, so unrelated names rarely share a lock. */
 #define STRIPES			64
-/* The rights a pid and the domain's own name may hold. */
+/* The rights a pid and the domain's own name may hold; the system domain's name holds none. */
 #define PID_RIGHTS		(ERX_RIGHT_SEND | ERX_RIGHT_LINK | ERX_RIGHT_EXIT | ERX_RIGHT_INTRODUCE)
 #define DOMAIN_RIGHTS		ERX_RIGHT_SPAWN
 /* What a spawner holds on its child. */
@@ -417,15 +417,16 @@ own_name(Eterm name, uint8_t *allowed)
 	tuple = tuple_val(name);
 	if (tuple[1] != am_domain || !term_to_Uint(tuple[2], &id) || id != erts_this_node->creation)
 		return (NULL);
-	*allowed = DOMAIN_RIGHTS;
+	/* The system domain serves no spawn (design-domains.md, "Frames"). */
+	*allowed = erx_runtime_is_system() ? 0 : DOMAIN_RIGHTS;
 	return (&domain_exports);
 }
 
 /*
  * erx_dist:export(Name, Rights, Peer): sets what the domain Peer holds on Name, one of
  * this domain's own names, to exactly Rights, a list of send, link, exit and introduce
- * for a pid and spawn for the domain's name; [] ends Peer's hold. The hold is on Peer's
- * connection with this domain, and ends with it. ok, {error, badarg} for any other name or
+ * for a pid and spawn for the domain's name, outside the system domain; [] ends Peer's
+ * hold. The hold is on Peer's connection with this domain, and ends with it. ok, {error, badarg} for any other name or
  * a malformed argument, {error, noconnection} for a grant to a Peer with no connection
  * with this domain ([] then answers ok, the peer holding nothing already), {error, system_limit} when the table is full.
  */

@@ -1,0 +1,134 @@
+# Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
+# SPDX-License-Identifier: BSD-2-Clause
+# frozen_string_literal: true
+
+require 'minitest/autorun'
+require 'open3'
+require 'tmpdir'
+require_relative '../fixtures/erlang_build'
+
+# Runs test/erlang/erx_xhci_core_tests.erl, the controller core's pipe machine and
+# reset_pipe's table explored to a fixed point against a model of the NIF's queue states,
+# the traces of each row, the bus commands and the decoders, against the module compiled
+# from source on stock's emulator (ERX_ERL and ERX_ERLC, which make check supplies). Then
+# each seeded fault, applied to a copy of the module, must fail the case named for it:
+# Reset Endpoint issued on a stopped queue; a stopped EP0 dropped and added; the
+# translator's buffer left uncleared after a halt; a reset whose Stop Endpoint still
+# waits keeping it when the endpoint halts, so the stop goes to a halted queue; and a
+# pipe that leaves open dropping the requests waiting on it unanswered; a PORTSC write
+# keeping the change and enable bits it read; a change bit no clear reaches; the install
+# called while the BIOS still owns the controller; the BIOS's semaphore never polled
+# again, a start that stalls; an interrupt before the controller runs acknowledged at
+# once; a held interrupt acknowledged with a failure; a host system error ignored;
+# a host controller error ignored; a halt ignored; a running controller's status never read between
+# interrupts; an interrupt pass not bounded; and a lost command
+# never failing the controller.
+class ErxXhciCoreTest < Minitest::Test
+  APPLICATIONS = %w[erx_usb].freeze
+  CORE = 'erlang/apps/erx_usb/src/erx_xhci_core.erl'
+  TESTS = %w[test/erlang/erx_xhci_core_tests.erl].freeze
+  DEADLINE_SECONDS = '600'
+  EXPLORED = 'the_pipe_machine_is_explored_to_a_fixed_point_test_'
+  START_EXPLORED = 'the_start_is_explored_to_a_fixed_point_test_'
+  STATUS = 'the_status_of_a_running_controller_is_read_each_second_test'
+
+  Seed = Data.define(:fault, :anchor, :replacement, :catching_case)
+
+  SEEDS = [
+    Seed.new(fault: 'Reset Endpoint issued on a stopped queue',
+             anchor: 'replan(Pipe, Reset, stopped, Acc);',
+             replacement: 'replan(Pipe, Reset, halted, Acc);',
+             catching_case: EXPLORED),
+    Seed.new(fault: 'a stopped EP0 dropped and added',
+             anchor: "plan(stopped, \#{type := control}, _Device) ->\n    [set_tr_dequeue];",
+             replacement: "plan(stopped, \#{type := control}, _Device) ->\n    [drop_add];",
+             catching_case: EXPLORED),
+    Seed.new(fault: "the translator's clear skipped",
+             anchor: '[clear_tt || buffered_in_tt(Endpoint, Device)]',
+             replacement: '[clear_tt || buffered_in_tt(Endpoint, Device) andalso false]',
+             catching_case: EXPLORED),
+    Seed.new(fault: 'a waiting Stop Endpoint kept when its endpoint halts',
+             anchor: 'false -> replan(Pipe, Reset, halted, Acc)',
+             replacement: 'false -> replan(Pipe, Reset, busy, Acc)',
+             catching_case: EXPLORED),
+    Seed.new(fault: 'the requests waiting on a pipe that leaves open dropped',
+             anchor: 'Left, Waiting).',
+             replacement: 'Left, []).',
+             catching_case: 'ep0_is_reset_before_its_halted_request_is_answered_test'),
+    Seed.new(fault: 'a PORTSC write keeping the change and enable bits it read',
+             anchor: '(Read band Preserve band bnot Mask) bor Bits',
+             replacement: '(Read band bnot Preserve band bnot Mask) bor Bits',
+             catching_case: 'portsc_writes_set_only_what_they_mean_test'),
+    Seed.new(fault: 'the configuration error change behind no clear',
+             anchor: '?ERX_HW_XHCI_PORTSC_PEC_MASK bor ?ERX_HW_XHCI_PORTSC_CEC_MASK',
+             replacement: '?ERX_HW_XHCI_PORTSC_PEC_MASK',
+             catching_case: 'every_change_bit_can_be_cleared_test'),
+    Seed.new(fault: 'the install called while the BIOS still owns the controller',
+             anchor: '?ERX_HW_XHCI_BIOS_OWNED_OWNED_GET(Byte) =:= 0 -> install(Now, Acc);',
+             replacement: '?ERX_HW_XHCI_BIOS_OWNED_OWNED_GET(Byte) >= 0 -> install(Now, Acc);',
+             catching_case: START_EXPLORED),
+    Seed.new(fault: 'a host system error ignored',
+             anchor: '?ERX_HW_XHCI_USBSTS_HSE_GET(Status) =/= 0 -> host_system_error;',
+             replacement: '?ERX_HW_XHCI_USBSTS_HSE_GET(Status) =:= 2 -> host_system_error;',
+             catching_case: 'an_interrupt_pass_test'),
+    Seed.new(fault: 'a host controller error ignored',
+             anchor: '?ERX_HW_XHCI_USBSTS_HCE_GET(Status) =/= 0 -> host_controller_error;',
+             replacement: '?ERX_HW_XHCI_USBSTS_HCE_GET(Status) =:= 2 -> host_controller_error;',
+             catching_case: STATUS),
+    Seed.new(fault: 'a halt ignored',
+             anchor: '?ERX_HW_XHCI_USBSTS_HCH_GET(Status) =/= 0 -> host_controller_halted;',
+             replacement: '?ERX_HW_XHCI_USBSTS_HCH_GET(Status) =:= 2 -> host_controller_halted;',
+             catching_case: STATUS),
+    Seed.new(fault: "a running controller's status never read between interrupts",
+             anchor: 'phase_deadline({running, At}) -> At;',
+             replacement: 'phase_deadline({running, _At}) -> none;',
+             catching_case: STATUS),
+    Seed.new(fault: 'the command deadline dropped',
+             anchor: "when At =< Now ->\n    emit({fail, {command_timeout, Command}}, Acc);",
+             replacement: "when At =< Now, false ->\n    emit({fail, {command_timeout, Command}}, Acc);",
+             catching_case: 'the_controller_fails_on_a_malformed_answer_or_a_lost_command_test'),
+    Seed.new(fault: "the BIOS's semaphore never polled again",
+             anchor: 'true -> set_phase({bios_handoff, GiveUp, {poll, Now + ?ERX_XHCI_POLL_MS}}, Acc)',
+             replacement: 'true -> set_phase({bios_handoff, GiveUp, reading}, Acc)',
+             catching_case: START_EXPLORED),
+    Seed.new(fault: 'an interrupt before the controller runs acknowledged at once',
+             anchor: "event(interrupt, _Now, {S, A}) ->\n    {S\#{line := held}, A};",
+             replacement: "event(interrupt, _Now, Acc) ->\n    emit(ack, Acc);",
+             catching_case: START_EXPLORED),
+    Seed.new(fault: 'an interrupt pass not bounded',
+             anchor: 'Count =:= 0; Events >= ?ERX_XHCI_EVENTS_PER_INTERRUPT ->',
+             replacement: 'Count =:= 0 ->',
+             catching_case: 'an_interrupt_pass_is_bounded_test'),
+    Seed.new(fault: 'a held interrupt acknowledged with a failure',
+             anchor: 'Fails -> {Next, [lists:last(Fails)]}',
+             replacement: "Fails -> {_, Owed} = release_line({Next, []}), {Next, Owed ++ [lists:last(Fails)]}",
+             catching_case: START_EXPLORED),
+  ].freeze
+
+  def test_xhci_core_cases_pass_under_eunit
+    output, status = run_cases
+    assert status.success?, output
+    assert_match(/All \d+ tests passed/, output)
+  end
+
+  def test_each_seeded_fault_fails_its_case
+    source = File.binread(File.join(ErlangBuild::ROOT, CORE))
+    SEEDS.each do |seed|
+      assert_equal 1, source.scan(seed.anchor).size, "seed anchor for #{seed.fault} is not unique"
+      output, status = run_cases(replaced: { CORE => source.sub(seed.anchor) { seed.replacement } })
+      refute status.success?, "#{seed.fault}: the cases passed"
+      assert_match(/#{Regexp.escape(seed.catching_case)}[^\n]*\*failed\*/, output, seed.fault)
+    end
+  end
+
+  private
+
+  def run_cases(replaced: {})
+    Dir.mktmpdir('erx-xhci-core-test') do |work|
+      ErlangBuild.compile(work, applications: APPLICATIONS, tests: TESTS, replaced: replaced)
+      Open3.capture2e('gtimeout', '-k', '10', DEADLINE_SECONDS, ENV.fetch('ERX_ERL'), '-noshell', '-pa', work,
+                      '-eval', 'halt(case eunit:test(erx_xhci_core_tests, [verbose]) of ok -> 0; _ -> 1 end)',
+                      chdir: work, stdin_data: '')
+    end
+  end
+end

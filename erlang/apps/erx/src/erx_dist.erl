@@ -28,7 +28,7 @@
 -export([listen/2, accept/1, accept_connection/5, setup/5, close/1, select/1,
          address/1, unavailable/2]).
 -export([boot/0, names_dropped/0, export/3, exports/1, owner/1, aliases/0,
-         exports_refused/0]).
+         exports_refused/0, atoms_refused/0]).
 
 -include_lib("kernel/include/net_address.hrl").
 -include_lib("kernel/include/dist.hrl").
@@ -106,6 +106,14 @@ aliases() ->
 %% ERTS (erx_exports.c).
 -spec exports_refused() -> non_neg_integer().
 exports_refused() ->
+    erlang:nif_error(undefined).
+
+%% The number of messages and exit reasons from other domains refused for an atom this
+%% runtime lacks, in the system domain alone (edit 9 of docs/design-runtime.md), whatever
+%% else is wrong with them: each message dropped, each exit reason delivered as
+%% {erx_foreign_reason, Bin}. A BIF of ERTS (erl_proc_sig_queue.c).
+-spec atoms_refused() -> non_neg_integer().
+atoms_refused() ->
     erlang:nif_error(undefined).
 
 -spec listen(atom(), string()) -> {ok, {term(), #net_address{}, pos_integer()}}.

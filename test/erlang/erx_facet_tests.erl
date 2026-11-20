@@ -193,7 +193,10 @@ minted_replies_through_the_domain_pid_test() ->
     try
         ?assertEqual(ok, erx_facet:minted(7, {ok, self()})),
         Self = self(),
-        ?assertEqual({ok, Self}, receive {erx_facet_minted, 7, Reply} -> Reply after 1000 -> timeout end)
+        ?assertEqual({ok, Self}, receive {erx_facet_minted, 7, Reply} -> Reply after 1000 -> timeout end),
+        %% A refusal crosses as refused, whatever its reason.
+        ?assertEqual(ok, erx_facet:minted(8, {error, {enospc, "data"}})),
+        ?assertEqual(refused, receive {erx_facet_minted, 8, Refusal} -> Refusal after 1000 -> timeout end)
     after
         persistent_term:erase({erx, domain_pid})
     end.

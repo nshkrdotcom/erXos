@@ -343,7 +343,7 @@ times its entries, and no path through the reader is longer than the
 tree's length times `ERX_DT_DEPTH_MAX` and `ERX_DT_WINDOWS_MAX`; the
 input's depth drives no recursion.
 
-**The DMA facts.** `erx_dt_device(tree, path, row, &facts)` finds the
+**The DMA facts.** `erx_dt_device(tree, path, row, dma_limit, &facts)` finds the
 device's node and its bus; `row` says whether the path names a device's
 own node or a PCIe function's host bridge. For a device-tree row the node is the one at
 the row's path and the bus is that node's parent. A PCIe function has
@@ -371,16 +371,20 @@ host bridge's own `dma-ranges`, as
   drop out; an empty one passes them; a level without the property
   passes them only when no level above it has a non-empty one and is
   `malformed` otherwise. The root has no parent to map into, so a
-  non-empty `dma-ranges` on the root is `malformed`. Then each window over which no memory range of
-  the view lies drops out, and the windows left are kept whole, not cut
-  to RAM. A walk with no non-empty level leaves the one window, `0`, `0`
-  and `2^64 - 1`. The range is present only when exactly one window
-  remains. Which RAM inside it holds DMA memory is decided where the
-  memory is made ([Facts into records](#facts-into-records)), not here.
-  For a PCIe function the range is then cut at its row's `dma_limit`, a
-  device address, exclusive: `last` becomes the highest CPU address whose
-  device address lies below it, so a bridge that translates keeps its
-  offset ([design-pcie.md](design-pcie.md#dma)).
+  non-empty `dma-ranges` on the root is `malformed`. For a PCIe function
+  each window is then cut at its row's `dma_limit`, a device address,
+  exclusive, which the caller passes, 0 for none and for a device-tree
+  row: a window whose device addresses all lie at or above it drops out,
+  and one that crosses it ends at the highest CPU address whose device
+  address lies below it, so a bridge that translates keeps its offset
+  ([design-pcie.md](design-pcie.md#dma)), and a window the function
+  cannot reach never makes its range ambiguous. Then each window over
+  which no memory range of the view lies drops out, and the windows left
+  are kept whole, not cut to RAM. A walk with no non-empty level leaves
+  the one window, `0`, `0` and `2^64 - 1`. The range is present only
+  when exactly one window remains. Which RAM inside it holds DMA memory
+  is decided where the memory is made
+  ([Facts into records](#facts-into-records)), not here.
 
 Its status is `ok`, `no_node`, `coherence` (as above), `cells` (a cell
 count other than 1 or 2), `malformed` (an entry not a whole number of
@@ -395,9 +399,69 @@ device never has a range without its coherence.
 **A PCI host bridge.** For a host bridge's row the reader also takes the
 bridge's `ranges`, whose child addresses take the same three cells as
 its `dma-ranges`, an entry of I/O space skipped; its `bus-range`; and its
-`interrupt-map`, each entry matched under its `interrupt-map-mask`, which
-for the BCM2711 keeps only the pin, so a closed bus's place
-takes the line the map routes for its position's pin. They are the
+`interrupt-map`. `erx_dt_bridge(tree, path, &bridge)` fills the two
+facts of the tree in the bridge's record, `erx_pcie_bridge` of
+`abi/formats/pcie.txt`, its buses and its windows; the record's row,
+flags and places are the manifest's and the platform record's.
+
+* **Windows.** Each `ranges` entry is the PCI bus binding's three child
+  cells (phys.hi, then the 64-bit PCI address), the parent's address in
+  the parent's `#address-cells` (1 or 2) and the size in the bridge's
+  `#size-cells` (1 or 2), as FreeBSD reads it
+  (`pci_host_generic_fdt.c:179-230`); other cell counts in a bridge with
+  `ranges` give `cells`.
+  An entry of I/O space is skipped, since no consumer places an I/O BAR
+  ([design-pcie.md](design-pcie.md#the-consumers)), and so is one of
+  size 0. Space code 3 sets the window's 64-bit flag and phys.hi's `p`
+  bit its prefetchable flag (PCI bus binding, section 2.2.1.1). An entry
+  of configuration space, one whose PCI or parent range wraps past
+  `2^64 - 1`, a `ranges` not a whole number of entries, and an empty
+  one, which maps nothing a three-cell address can name, are
+  `malformed`. The parent's range is translated to CPU addresses through
+  each bus's `ranges` up to the root, as a register range is
+  ([Facts into records](#facts-into-records)), and must come out whole,
+  in one piece and over none of the tree's RAM, or the bridge is
+  `malformed`: the give maps a function's registers only inside its
+  bridge's windows ([design-pcie.md](design-pcie.md#the-catalogue-and-gives)),
+  so a window over RAM would hand out RAM. A window that meets an
+  earlier one in PCI or in CPU space is `malformed` too, so a BAR's PCI
+  range translates to one CPU range. More than `pcie_windows_max`
+  windows give `ranges`. A bridge without `ranges` has no windows.
+* **Buses.** `bus-range` is two cells, the first bus and the last, each
+  at most 255 and the first not above the last (PCI bus binding, section
+  3.1.2); anything else is `malformed`. A bridge without it spans buses
+  0 to 255, as FreeBSD's host takes them (`pci_host_generic_fdt.c:136-138`).
+
+Any status but `ok` leaves the buses and windows zero, so a record never
+carries part of a bridge's facts; a path that names no node is
+`no_node`, and the root, which has no parent, is `malformed`. The reader cannot tell an ECAM bridge's
+configuration window from another bridge's registers, so a `bus-range`
+wider than the ECAM `reg` holds is left to the ECAM driver's bound by
+its window ([design-pcie.md](design-pcie.md#the-bridge-seam)).
+
+`erx_dt_intx` matches each `interrupt-map` entry under the bridge's
+`interrupt-map-mask`, which for the BCM2711 keeps only the pin, so a closed bus's place
+takes the line the map routes for its position's pin. A place's unit
+interrupt specifier is the PCI bus binding's: its bus, device and
+function in the first address cell, the other two zero, and its pin,
+INTA 1 to INTD 4, in the bridge's one interrupt cell (PCI bus binding,
+sections 2.2.1.1 and 4.1.1; Devicetree Specification v0.4, section
+2.4.4, pp. 21-22); the first entry that matches decides. An entry's
+parent unit address takes its interrupt parent's `#address-cells`, 0
+when it has none, as FreeBSD reads it (`ofw_bus_subr.c:428-430`). The
+map's entries must all name one interrupt parent, so every entry has
+one length and the walk stays linear, and that parent must be an
+interrupt controller whose binding the architecture layer reads, named
+by its compatible string, so no other controller's specifier is read as
+a line of the machine's.
+The matched entry's specifier is read by the controller's binding, which
+the architecture layer holds (`kernel/arch/<arch>/dt_interrupt.c`, the
+one function `erx_dt_interrupt_line`): it gives the line, an interrupt
+id, only for a level-triggered line, since an INTx line is
+level-sensitive ([design-arch-aarch64.md](design-arch-aarch64.md#interrupt-controller)
+for AArch64's). A map with no entry for the place's pin gives no line,
+as does a bridge without a map, and an entry of any other parent or kind
+is refused, never read as a line. They are the
 windows, bus span and lines of the bridge's record that the device
 service hands the PCIe domain ([design-pcie.md](design-pcie.md#records),
 [design-pcie.md](design-pcie.md#the-closed-bus)), and the image suites
@@ -584,7 +648,8 @@ ran.
   three-cell `dma-ranges`, a level split 1,024 ways, a host bridge's
   three-cell `ranges` with a memory and an I/O entry, an `interrupt-map`
   with and without an entry for a place's pin, a PCIe function's range
-  cut at its `dma_limit`). The card's tree
+  cut at its `dma_limit`, and a host bridge's windows and buses in every
+  state `erx_dt_bridge` names). The card's tree
   leaves the memory node as zeros, so every DMA device there reads
   `ranges` until the firmware fills it. A test fails on any manifest DMA
   device whose facts are absent in its platform's tree, so a board tree
@@ -593,8 +658,14 @@ ran.
   translation through the level above the first non-empty one dropped;
   the windows cut to RAM; a PCIe function's walk started above its host
   bridge; the map's pin match dropped, so a closed place takes the first
-  entry's line; the windows' bound removed, which overruns the walk's array
-  under ASan.
+  entry's line; the level test of the controller's binding removed, so an
+  edge-triggered line is taken; the space code read without its mask, so
+  a non-relocatable I/O entry is taken; the I/O entry not skipped; three
+  cells taken above the host bridge; the windows' bound removed, which
+  overruns the walk's array under ASan;
+  the cut at the DMA limit removed; the wrap check on a bridge window's
+  parent range removed, so a window past `2^64 - 1` is taken; the
+  `bus-range` bound removed, so a last bus of 256 reads as 0.
 * **The firmware's edits**, over fixtures made from the card's tree (a
   different `emmc2bus` range, `local-mac-address`, a zero placeholder
   beside a valid `mac-address`, framebuffer nodes in each state). Seeds:
@@ -605,8 +676,8 @@ ran.
   test run over the whole property instead of the bytes given.
 * **The fuzz target**, `tools/fuzz/dt_fuzz.c`, landing with the reader:
   arbitrary bytes into `erx_dt_accept`, and an accepted view into
-  `erx_dt_device`, the host bridge's `ranges`, `bus-range` and
-  `interrupt-map` reads, `erx_dt_framebuffer`, `erx_dt_registers` and
+  `erx_dt_device` with and without a DMA limit, `erx_dt_bridge`, the
+  `interrupt-map` read, `erx_dt_framebuffer`, `erx_dt_registers` and
   `erx_dt_seeds`, under ASan and UBSan, with the platforms' trees, the
   fixtures and a truncated and a nested tree as its corpus, each in a
   buffer of exactly its length. Seeds: `fdt_check_header` called before
@@ -716,7 +787,16 @@ claimed for either.
 * Devicetree Specification, release v0.4
   (`https://github.com/devicetree-org/devicetree-specification/releases/download/v0.4/devicetree-specification-v0.4.pdf`,
   SHA-256 `c141dd78af0971fffed19433f84af5beab6aa058cfff2e33076805cef9f92e02`),
-  sections 2.3.5 and 2.3.8 to 2.3.11.
+  sections 2.3.5, 2.3.8 to 2.3.11 and 2.4.
+* PCI Bus Binding to IEEE Std 1275-1994, revision 2.1
+  (`https://www.devicetree.org/open-firmware/bindings/pci/pci2_1.pdf`,
+  SHA-256 `62b4dadfcc1d41f54a40ec3b56af0226c6c8fa928000873bb7e375f60a83f019`),
+  sections 2.2.1.1 and 4.1.1.
+* FreeBSD `releng/15.1` at `95719d8a895bf8170851e9844d9b4092b1d2b6fe`:
+  `sys/dev/pci/pci_host_generic_fdt.c`
+  (SHA-256 `054d4c979103b417cbe5d427aa45fb05ffd62757e2ca280fe18bc9fbe2333994`),
+  and `sys/dev/ofw/ofw_bus_subr.c`
+  (SHA-256 `093d74b60477e1ae638cff560e61144bb8976cb0e2671b308c9c29d10585f59f`).
 * Raspberry Pi documentation, commit `c6a64966af13`
   (`https://github.com/raspberrypi/documentation`), under
   `documentation/asciidoc/computers/`: `legacy_config_txt/video.adoc`

@@ -1537,7 +1537,8 @@ This stage adds the central role and keeps every rule above:
   in a bounded queue and fold after it, so the key that woke a keyboard
   is not lost.
 * **Input numbers.** The Bluetooth domain serves an input tree of input
-  numbers, granted to a display read-only, through the same module as
+  numbers, a service of the `input` interface under a name of its own,
+  granted to a display read-only, through the same module as
   the USB domain's, whose stream process writes `release` when its
   occupant ends ([design-usb.md](design-usb.md#hid-reaches-the-display)).
   The domain then has, toward that display, the reach of a person at it

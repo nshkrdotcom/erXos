@@ -7,7 +7,8 @@
 %% lacks is badarg, as is anything the table does not allow. read/2, write/3,
 %% read_field/3, write_field/4, field/4, irq_ack/2 and command/2 are BIFs in ERTS (beam/bif.tab), since a
 %% driver makes them one at a time; the clauses below stand for them only in xref and
-%% documentation. open/1, irq_bind/2, irq_bind_owner/2, irq_holder/2, the queue calls, region/3 and framebuffer/0 are NIFs.
+%% documentation. open/1, elements/2, irq_bind/2, irq_bind_owner/2, irq_holder/2, the queue calls, region/3 and
+%% framebuffer/0 are NIFs.
 %%
 %% A read or a write is one volatile access and never waits. write_field/4 on an ordinary
 %% field reads the word and writes it back, so a field's update is not atomic against
@@ -16,7 +17,16 @@
 %% whole with write/3. Both are badarg for a register the NIF owns, which the SVD source
 %% marks `ownedByNif` (virtio's status, features, queue setup, doorbell and ring
 %% addresses; SDHCI's DMA addresses and command register): only the NIF's own sequences
-%% write those, negotiate/2, post/4 and command/2.
+%% write those, negotiate/2, post/4 and command/2. Where the mark sits on single fields, as
+%% on xHCI's USBCMD and IMAN, write/3 reads the register and is badarg for a value that
+%% would change one of them, and write_field/4 is badarg for such a field.
+%%
+%% Registers at offsets the device reports, as xHCI's are, resolve at open (docs/design-usb.md,
+%% "Registers at offsets the controller reports"): an array whose live length the device
+%% reports, as PORTSC's, takes `{Name, Index}` below that length, and the registers of an
+%% extended capability are reachable only where the open found its entry; each instance of a
+%% capability that may occur more than once, as each supported protocol, is `{Name, Index}`
+%% in list order. elements/2 says how many there are, and an element past them is badarg.
 %%
 %% command/2 issues one SD command: the one 32-bit write of Word to an SD host
 %% controller's command register, cmdtm (docs/design-runtime.md, "Issuing an SD command").
@@ -34,7 +44,7 @@
 
 -module(erx_device).
 
--export([open/1]).
+-export([open/1, elements/2]).
 -export([read/2, write/3, read_field/3, write_field/4, field/4, command/2]).
 -export([irq_bind/2, irq_bind_owner/2, irq_holder/2, irq_ack/2]).
 -export([queue_create/4, negotiate/2, post/4, complete/2, region/3, framebuffer/0]).
@@ -83,6 +93,14 @@ init() ->
 %% `stand_in` is `{error, enotsup}`.
 -spec open(spec()) -> {ok, device()} | {error, atom() | {status, integer()}}.
 open(_Spec) ->
+    erlang:nif_error(undef).
+
+%% How many elements of Register, a register's or an array's name, the device has, as its
+%% open resolved them: an array's length, or its live length where the device reports one;
+%% the instances of a capability's registers that the open found; 1 for any other register,
+%% and 0 for one of a capability the device does not have. badarg for a name the table lacks.
+-spec elements(device(), atom()) -> non_neg_integer().
+elements(_Dev, _Register) ->
     erlang:nif_error(undef).
 
 -spec read(device(), register_name()) -> non_neg_integer().

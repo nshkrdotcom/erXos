@@ -12,7 +12,7 @@ its small work itself.
 """.
 
 -export([i/0, i/1, inspect/2, source/1, trace/1, trace_stop/1, export/3, exports/1, owner/1,
-         call_from/3, cap/1, caps/0, granted/0, app/0]).
+         call_from/3, cap/1, caps/0, granted/0, granted/1, app/0]).
 -export_type([app_record/0]).
 
 %%% Source lines: erx:source/1.
@@ -207,6 +207,22 @@ system domain included, which takes its names from the manifest.
 """.
 -spec granted() -> [atom()].
 granted() ->
+    [Name || {Name, _Interface} <- grants()].
+
+-doc """
+The names granted/0 answers whose service is of the interface numbered
+`Interface` in abi/services, such as `?ERX_SERVICE_INPUT`, sorted: how a
+domain granted services of several interfaces picks those of one, as a
+display picks its input trees from among its grants (docs/design-display.md,
+"The display device").
+""".
+-spec granted(pos_integer()) -> [atom()].
+granted(Interface) ->
+    [Name || {Name, Of} <- grants(), Of =:= Interface].
+
+%% The ready answer's grants, each {Name, Interface}, as the domain's agent keeps them
+%% (erx_connections).
+grants() ->
     persistent_term:get({erx, granted}, []).
 
 -doc """

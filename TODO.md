@@ -496,20 +496,46 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   pixel area, the present's answer releases it, and an accepted job keeps its ranges and the area alive
   until its device can no longer reach them, whoever ends first.
 
-* [High] 0.2 on Fiasco, `liberx/backend/fiasco`: handles become Fiasco slots. The root places each
-  capability in its holder's own object space at a slot it picks, with the Fiasco rights the holder's erXos
-  rights allow, and keeps a placement record per task and slot (object, kind, erXos rights); a slot is
-  freed only at its holder's close, so a destroyed object's handle answers `ERX_ESTALE`
-  ([design-fiasco.md](docs/design-fiasco.md#handles-are-slots)).
+* [High] 0.2 on Fiasco, `liberx/backend/core/handles.c`, `liberx/backend/fiasco`: handle values carry no
+  generation. A value is the entry's index plus one (`erx_backend_handle_add`) and a close zeroes the entry
+  (`erx_backend_handle_close`), so a handle used after its own close answers `ERX_EINVAL` until the entry is
+  taken again and then names the new object, where the design answers `ERX_ESTALE` in every service call; a value
+  past the table, or of a free entry, is `ERX_EINVAL` where the design answers `ERX_ESTALE`. IRQ objects are not
+  placed in their holders, so every ring and acknowledgement is a round trip through the root's one service
+  thread (`irq.c`, `erx_fiasco_irq_trigger_body`, `_ack_body`; `service_stubs.c`, `erx_irq_trigger`, `erx_irq_ack`),
+  and `erx_space_create` does not bound `cap_limit` by the IRQ window. The work is the first two parts of the
+  design's [Implementation](docs/design-fiasco.md#handles) note: the entry's generation in bits 24-63 of the value,
+  advanced at close and retired at its last value, checked by `erx_backend_handle_find` before the kind; then the
+  IRQ window, placement at create, duplicate and pass with `L4_CAP_FPAGE_RO`, the unmap at close, the direct
+  `l4_irq_trigger` and `l4_irq_unmask` stubs, and the root's other slots moved past its own window; the *A stale
+  handle*, *direct doorbell* and *destroyed handle* cases, with the size of Fiasco's object space checked by
+  a boot test at the window's last slot.
 * [High] 0.2 on Fiasco, `liberx/backend/fiasco`: a Fiasco factory per domain budget, carved from its parent's
   at the budget's creation with the manifest row's kernel-memory figure, and every object of the domain
-  created through it, so a domain that spends its kernel memory fails alone with `ERX_ENOMEM`; user pages
-  charged to the budget's record and refused past its cap
+  created through it, so a domain that spends its kernel memory fails alone with `ERX_ENOMEM`
   ([design-fiasco.md](docs/design-fiasco.md#memory-and-budgets)).
+* [High] 0.2 on Fiasco, `liberx/backend/fiasco`: budgets are not walls over user pages. `budget.c` records a
+  budget's guarantee and cap (`budget.c:37-38`, `:116-117`) but refuses no charge, and the pool takes pages for
+  no budget (`vm.c:161-165`'s `vm_take`), so one domain's commits can drain the pool that every domain and the
+  root's own tables use. The fix is the design's one invariant per wall, `used + carved <= wall`: each record holds one wall
+  for guarantee and cap (an elastic kind `ERX_ENOTSUP`, unequal values `ERX_EINVAL`), counts the pool pages charged
+  to it and the walls carved from it, a page taken is charged to the owning object's budget inside the call's
+  whole-plan check, and a carve, a resize and a destroy adjust the parent's `carved` in the same request, each
+  refused where an invariant would break; the root's budget, which has no record, keeps its own pages and the
+  walls carved from it in two counters beside the pool's, under the pool's total; the budget topic reports
+  `used` partial with `guarantee`, `cap` and `carved` exact; and the tests and seeded fault the design lists ([design-fiasco.md](docs/design-fiasco.md), "Memory and
+  budgets" and "Reporting a budget"). It blocks the release.
 * [High] 0.2 on Fiasco, `liberx/backend/fiasco`: doorbells and device lines placed directly in their holders
   without Fiasco's special right, so a trigger and an acknowledgement are the holder's own `l4_irq_trigger`
   and `l4_irq_unmask` and only the root binds or detaches
-  ([design-fiasco.md](docs/design-fiasco.md#who-holds-what)).
+  ([design-fiasco.md](docs/design-fiasco.md#who-holds-what)). Create, duplicate and pass place through one
+  placement function that places nothing unless the new entry's rights hold `TRIGGER` or `ACK`, tested with an
+  inspection-only entry from each call and seeded with unconditional placement; and the root's slot layout is
+  the design's derived plan, the root's handle limit what the object space leaves after it, checked by a static
+  assertion, in place of the unbounded root table `object.c:68` opens with `UINT32_MAX`
+  ([design-fiasco.md](docs/design-fiasco.md#handles)). The 65,536-slot figure is read from the source; the
+  boot probe of the last valid and first refused selector, with the alias check the design names, settles it on
+  a running kernel.
 * [High] 0.2 on Fiasco, `liberx/backend/fiasco` and the manifest: priority bands, CPU sets and per-domain
   thread limits from each domain's manifest row, applied at every thread's start, a create past the limit
   `ERX_ELIMIT` ([design-fiasco.md](docs/design-fiasco.md#bands)).
@@ -519,9 +545,18 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   exception reply kept until the resume, `liberx`'s wait and call stubs retrying a cancelled wait or call, and a
   space whose threads do not all arrive within the deadline ended, with no Fiasco patch
   ([design-fiasco.md](docs/design-fiasco.md#threads-bands-and-stops), FD21).
-* [High] 0.2 on Fiasco, `liberx/backend/fiasco`: DMA spaces behind the IOMMU for each confined device, and
-  MSIs through Fiasco's interrupt manager; whether QEMU's SMMUv3 works with Fiasco's binding under HVF is
-  unverified ([design-fiasco.md](docs/design-fiasco.md#devices)).
+* [High] Fiasco backend, `liberx/backend/fiasco`: DMA spaces behind the IOMMU for each confined device, and
+  MSIs as lines of the platform's MSI frame that the root binds through Fiasco's interrupt controller like any
+  other line, Fiasco's own MSI manager unused (`irq.c` answers `ERX_IRQ_MSI` with `ERX_ENOTSUP`); whether QEMU's
+  SMMUv3 works with Fiasco's binding under HVF is unverified ([design-fiasco.md](docs/design-fiasco.md#devices)).
+  It does not block 0.2: no device of 0.2 is behind an IOMMU or raises an MSI (virtio-mmio on QEMU `virt`, no
+  IOMMU and no MSI on the Pi 4), and the unconfined devices are FD12's published downside. It blocks the first
+  release that confines a device or drives virtio-pci.
+* [Medium] Fiasco backend, `liberx/backend/fiasco`: vCPU signals are designed and not built; the backend has no
+  `erx_vcpu_control` or `erx_vcpu_resume` and no bind of an IRQ object to a thread, so `liberx`'s signals in
+  programs have no delivery on Fiasco. Build the call table's row as
+  [vCPU upcalls on Fiasco](docs/design-fiasco.md#vcpu-upcalls-on-fiasco) states, for Track P
+  ([plan.md](docs/plan.md)).
 * [High] 0.2 on Fiasco, the release kernel: `Modules.generic` lists `jdb_object.cpp` only for a kernel built
   with the debugger, so the release kernel's build leaves the GPL-2.0 file out; a boot of that kernel
   checks that `sigma0` ignores its object-naming calls failing
@@ -554,7 +589,8 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   from the app template's `limits session` record as every other limit
   ([design-packaging.md](docs/design-packaging.md)), with no
   table of the root's shared between domains; the machine-wide tables (`irq.c:60`'s `irq_objects`, the page
-  index's labels) become shares of each domain's limits, a create or map past a limit `ERX_ELIMIT`, and the
+  index's labels and its slice entries) become shares of each domain's limits, a create or map past a limit
+  `ERX_ELIMIT`, so no task can fill the 256 IRQ objects (`irq.c:60,171`) and starve every other domain's doorbells, and the
   domain service admits a domain only when the root's kernel memory and tables have its cost left, a session
   only from what lies outside the configured domains' shares
   ([design-fiasco.md](docs/design-fiasco.md#memory-and-budgets), FD14;
@@ -601,8 +637,11 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   ([design-stopgap.md](docs/design-stopgap.md#release-contract)): a test that reads the vault's files raw
   from the partition and finds no key in the clear, with a file written unsealed as the seeded failure
   ([design-system.md](docs/design-system.md#the-vault)).
-* [Medium] 0.2 on Fiasco, `liberx/backend/fiasco`: the root takes a task's free slots oldest-freed first, with the
-  *Slot reuse* case ([design-fiasco.md](docs/design-fiasco.md#handles-are-slots), FD1).
+* [Medium] 0.2 on Fiasco, `liberx/backend/core/handles.c`: free handle entries are taken lowest-first
+  (`erx_backend_handle_add`'s linear search), where the design takes them first in, first out, never-used
+  entries in index order and a page grown only when none is free, which is all that delays a direct ring through
+  a closed IRQ handle from meeting another object; the *Entry reuse* case
+  ([design-fiasco.md](docs/design-fiasco.md#handles), FD1).
 * [Medium] 0.2 on Fiasco, `liberx/backend/fiasco/service_task.c` (`:747-750`): a memory object records its
   `ERX_MEM_JIT` flag at its create, and `erx_mem_copy` refuses a JIT object with `ERX_ETYPE`, as the call table
   says ([design-fiasco.md](docs/design-fiasco.md#the-call-table)).
@@ -614,9 +653,11 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   so any task sets the wall clock. Make it a call on the time page's handle that checks `WRITE` and answers
   `ERX_ERIGHTS` without it, with the release case "the wall clock"
   ([design-fiasco.md](docs/design-fiasco.md#the-releases-cases), [design-time.md](docs/design-time.md#on-fiasco)).
-* [High] 0.2 on Fiasco, `liberx/backend/fiasco` (`vm.c:673`, `irq.c:174`, `watchdog_thread.c:81`, `service.c:186-219`, `:690-694`,
-  `service_task.c:291-295`): the Fiasco calls that charge a task's quota are spread over five files, and a map
-  Fiasco refuses under a range call ends the machine. Move every `l4_task_map`, `l4_factory_create` form and
+* [High] 0.2 on Fiasco, `liberx/backend/fiasco` (`vm.c:735`, `irq.c:174`, `watchdog_thread.c:87`, `service.c:198-232`,
+  `:728-734`, `service_task.c:302-308`): the design's `charge.c` and its `fiasco-charge` chokepoint do not exist:
+  there is no such file and no such rule under `tools/lib/erx/chokepoint_rules`. The Fiasco calls that charge a
+  task's quota are spread over five files, and a map Fiasco refuses under a range call ends the machine. Move
+  every `l4_task_map`, `l4_factory_create` form and
   `l4_task_add_ku_mem` into `charge.c`, each refusal answered `ERX_ENOMEM` with its call undone, add the
   `fiasco-charge` chokepoint with its seeded violation, and the release case "a map at the factory's end"
   ([design-fiasco.md](docs/design-fiasco.md#the-construction)).
@@ -767,8 +808,8 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   the console path, the clock and the cross-compiled core, not a kernel entry.
   The test that a call keeps the caller's registers left with the trap route
   and returns with the `erx` backend's kernel.
-* [Low] Fiasco backend, `liberx/backend/fiasco`: own-task thread handles are still the bare index, not `ERX_FIASCO_THREAD_HANDLE_BASE` plus the index that design-fiasco.md's "Thread handles" names, so thread 0's handle equals `ERX_CAP_NULL` and `erx_gate_bind` reaches thread 0 only through `ERX_CAP_SELF_THREAD`, and an `erx_cap_pass` item holding an own thread's handle is read as the handle table's entry of that number, so it may pass a memory object instead of being refused. Move handles onto the base. Likewise the handle the root or a creator holds to a created space's first thread is the task above the index (`service_thread_handle` in `service.c`), not the handle-table entry "Thread creation" names, so it can equal one of the root's entries once the root holds 256 of them, and `erx_cap_close` or `erx_cap_dup` of it reaches that entry; give it a value no entry can bear, as the base does.
-* [Medium] Fiasco backend, `liberx/backend/fiasco/vm.c`: the page index's size counts the window, contiguous and device pages but not the archive pages a slice adds, one index entry each per live slice, so enough live slices fill the index and `page_find` spins on the service thread. One slice per domain cannot reach it; before a session slices per command, count live slice pages against a cap and refuse past it with `ERX_ENOMEM`, as `vm_device_pages_used` does, and correct `vm_table.h`'s "committing never finds it full".
+* [High] Fiasco backend, `liberx/backend/fiasco`, thread handles, blocks 0.2: the handle the root or a creator holds to a created space's first thread is the task above the index (`service_thread_handle` in `service.c:658`), not the entry of the creator's handle table that design-fiasco.md's "Thread creation" names, so it can equal one of the root's entries once the root holds 256 of them, and `erx_cap_close` or `erx_cap_dup` of it duplicates or closes an unrelated object. Make it the design's ordinary entry, made by the one create path and checked by the one lookup, so no other value can collide with an entry. Own-task thread handles are still the bare index, not `ERX_FIASCO_THREAD_HANDLE_BASE` plus the index that "Thread handles" names, so thread 0's handle equals `ERX_CAP_NULL` and `erx_gate_bind` reaches thread 0 only through `ERX_CAP_SELF_THREAD`, and an `erx_cap_pass` item holding an own thread's handle is read as the handle table's entry of that number, so it may pass a memory object instead of being refused; move them onto the base, above `caps_max`, as the design's reserved values. Tests: a creator's close and duplicate of its first-thread handle with the root holding more than 256 entries, and a pass of an own-thread handle refused; seeded fault: the first-thread handle built as the task above the index.
+* [High] Fiasco backend, `liberx/backend/fiasco/vm.c`, blocks exposing the call table's per-command and per-task slicing: the page index's size counts the window, contiguous and device pages but not the archive pages a slice adds, one index entry each per live slice, overlapping slices adding theirs independently, so enough live slices fill the index and `page_find` spins on the service thread. Build the design's admission ([design-fiasco.md](docs/design-fiasco.md#the-range-table)): the index sized at two slots for each window page and each of `ERX_FIASCO_SLICE_ENTRIES_MAX` slice entries, a slice's entries admitted against the live count before any is added and refused past it with `ERX_ENOMEM`, given back at the slice's end, and a probe bounded by the slot count; correct `vm_table.h`'s "committing never finds it full". Test: slices made until the refusal, then a commit and a lookup that both end; seeded fault: a slice admitted without counting its entries.
 * [Low] Fiasco backend, `erx_mem_child`: the child's handle is in its caller's table before the eager copy fills it, so a thread of the same task that closes the parent's handle and makes another object under the same number between the two calls has the child filled from that object. Make the creation and the copy one service request.
 * [Low] Fiasco backend, `liberx/backend/fiasco/service_wire.c`: the decoder copies a call's words into `decoded.request` without checking them against `ERX_FIASCO_WIRE_WORDS_MAX`; `erx_fiasco_mem_copy_request` fills all seven, so a longer layout would overflow it. Refuse past the maximum in the decoder, or assert every layout's size.
 * [Medium] Fiasco backend, native boot's seeded failures: `user_ptr` left 0, the
@@ -819,11 +860,9 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
 * [Low] BeamAsm, `sys/erxos/erx_jit_memory.c` (`erx_jit_memory_unmap`, `erx_jit_memory_map`): an unmap whose second
   release fails has already removed the first alias, against its header's "a refused call changes nothing", and a
   failed handle close after both maps loses the handle; the alias probe hand-encodes its return instruction.
-* [Medium] Fiasco backend, `liberx/backend/fiasco`, call table of `docs/design-fiasco.md`: `erx_cap_dup`, `erx_cap_close`,
-  `erx_object_destroy`, `erx_budget_create` and `erx_log_read` have no body. Their consumers are the Erlang NIF handles, the launcher, the domain library's root
-  entry and the Erlang log reader, which arrive with M3; each gets its body and a `test/guest/function_api` row then.
-  The pool counts pages for the root's one budget only, which the budget topic names `ERX_CAP_SELF`; a count for
-  each budget follows `erx_budget_create`'s body.
+* [Medium] Fiasco backend, `test/guest/function_api`: `erx_budget_create` and `erx_log_read` have bodies but no
+  case. Their consumers, the domain library's root entry and the Erlang log reader, arrive with M3; each gets its
+  case then.
 * [Low] Fiasco backend, `test/guest/native_task/guest.c`, `request_against_exit`: no seed shows the dropped-request
   count can move, as the thread deletion seed stops the suite at its earlier `service` case.
 * [Low] Fiasco backend, `liberx/backend/fiasco`, fault gates: each space's `dropped` counter of records lost after its gate was
@@ -850,10 +889,12 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   a umtx wait on the semaphore the park shares, so an up the race left over returns that wait early and is
   gone before the quiet park looks. The quiet park catches only an up arriving after `settle`; a wait that
   does not block on the semaphore, or a zero-deadline down right after the race, would catch both.
-* [Medium] Fiasco backend, `liberx/backend/fiasco/object.c`: a space handle is still the task's index, which the
-  launcher turns into the ended semaphore's slot without the service (`launcher.c`). It moves onto records with
-  BK5's space tree (the 1b-A package plan). Until then its value overlaps object handles, so `erx_cap_close` or
-  `erx_object_destroy` given a space handle acts on whatever entry has that number.
+* [Medium] Fiasco backend, lookup error precedence (`liberx/backend/fiasco/service_task.c:330`): the space-create
+  wrapper turns every failure of its `parent` and `fault` lookups into `ERX_ETYPE`, so a stale handle answers
+  `ERX_ETYPE` where design-fiasco.md's "Reserved values and error precedence" passes the lookup's `ERX_ESTALE`
+  through unchanged and keeps `ERX_ETYPE` for a live object of another kind. Return the lookup's status, check the
+  other wrappers that take a handle for the same collapse, and test the wrappers with a stale handle, not only
+  `handle_find`, with the seeded fault the design names.
 * [Medium] security residual, `liberx/backend/fiasco/vm_rules.c`: `erx_vm_map` lets every `erx_mem_create`
   object run, not only a JIT one, so any such object maps read-write at one address and read-execute at another, a protect moves RW to RX freely, and the
   root maps RX into a child made without `ERX_SPACE_JIT`. No single mapping is ever writable and executable,
@@ -1470,11 +1511,22 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
     `shm_stat`, unverified, and a pipe end's size, 0 where FreeBSD reports the bytes readable.
   * **Input from another domain** ([The display device](docs/design-display.md#the-display-device)): the
     display's reader of each file of a granted input tree, a source of the router with one read outstanding, which
-    decodes each read with `erx_input_codec:decode/1` and puts the bytes of a split record before its next read.
+    decodes each read with `erx_input_codec:decode/1` and puts the bytes of a split record before its next read, and
+    `erx_input_follower`, which keeps one reader for each file of each grant of the `input` interface.
   * **The web** ([UIs: the browser renderer](docs/design-web.md#uis-the-browser-renderer)): `erx_ui_server` and
     `erx_ui_browser` start in the application's session; `erx_web_line` keeps the table of open UIs and serves the
     `ui` and `uis` targets as views; `erx_web_conn` decodes an event's record and sends every `open` to the line,
     where it answers `ui`, `uis` and `event` as unsupported today.
+* [Medium] domain service, `erlang/apps/erx_domain/src/erx_domain_mints.erl` (`grant_limits/2`, `installed_facet/3`):
+  a grant is told a files or an input grant by its service name alone (`files`, `inputs`), though names are
+  unique only per server, so a files grant of one server named like another server's input service is minted and
+  held read-only; the interface would better come from one `{Server, Name} => Interface` map, which
+  `erx_domain_srv` builds for the ready answer, and read-only from a declaration of `abi/services/input.txt`
+  rather than from the Erlang that names `?ERX_SERVICE_INPUT`.
+* [Low] display, `erx_input_follower` and `erx_input_reader:files/1`
+  ([The display device](docs/design-display.md#the-display-device)): a tree's listing is held whole, up to
+  `erx_file_remote`'s 1,048,576 entries, before `input_tree_files_max` refuses it, in a lister with no
+  `max_heap_size`, and a tree whose listing fails is listed again each second; a residual of trusted serving domains.
 * [Medium] `tools/lib/erx/abi_input.rb`, [Input records](docs/design-abi.md#input-records): the `input`
   declaration is a fourth reader of tagged records beside the draw messages and the program and web protocols'
   `union`s. Its term rule (`distinct!`) repeats the program grammar's case selection and its member grouping copies
@@ -2203,9 +2255,32 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   `fuzz_window_covered`): the fuzzed view holds two device entries, so a give of three or more devices, runs
   joining several ranges, and a line shared by more than two devices are reached only by the host drivers. Widen the
   view to `ERX_DOM_DEVICES_MAX` entries.
-* [Low] domain library, PCIe functions on a configured row (`liberx/system/dom_boot_view.c`, `boot_devices`): only
-  device-tree selectors get a role word and peripheral, so a PCIe function placed on a configured row would be of
-  no kind and get no record, window or memory. No manifest places one; give the kind test a PCIe arm first.
+* [Medium] domain library and root, a closed place's line against the tree (`liberx/system/dom_boot_view.c`,
+  [design-pcie.md](docs/design-pcie.md#the-closed-bus)): a `pci` row's line at a closed bridge's place is copied
+  from the platform record and joins the unit rule's line relation, but nothing at boot compares it with the line
+  the bridge's `interrupt-map` routes for the place's pin (`erx_dt_intx`) or refuses a route to one of the bridge's
+  own lines, and no give refuses a function whose reported pin is not its place's. A wrong record line passes the
+  unit rule against a line the hardware does not raise. Add the boot view's refusal ("At boot") and the give's
+  ("At the give"), each with its seed; better, carry the line on the place row and have the packer copy it.
+* [Low] system manifest, `tools/lib/erx/manifest.rb` (`check_system_window`, `unit_holder`): the holder of a
+  window's device is found by the device's path, which a `pci` row does not have, so a system window on a
+  block-role PCIe function would be checked against the wrong unit. No platform record has one; key the lookup by
+  device index (a unit's span) when one appears.
+* [Medium] domain library and device service, a host bridge's catalogue's callers (`erlang/apps/erx_domain`,
+  `erx_devices`; `otp/erts/emulator/nifs/erxos/erx_domain_lib_nif.c`;
+  [design-pcie.md](docs/design-pcie.md#the-catalogue-and-gives)): the view holds a catalogue per bridge row, the
+  root joins the tree's windows and `erx_domain_lib:pci_report/2` takes a report into it, but no device service
+  process calls it (package P12), the catalogue has no `answered`, `devices/0` does not show the layouts, the
+  settings or `firmware lost`, and `erx_domain_lib:pci_firmware/1`, which would hand the notification's status to
+  `erx_dom_pci_firmware`, waits for `erx_firmware_request` (the ABI item below). The PCIe domain's record of an
+  unplaced function must carry its BAR's true `size_log2` (`abi/formats/pcie.txt`), where `erx_pcie_cfg:size/2`
+  answers only `{bar_size, Index}` past `pcie_bar_size_log2_max`. Also refuse in `erx_dt_bridge` a window whose
+  PCI, CPU or size is not page-aligned, and check BAR spans across a machine's bridges, not only within one.
+  `pci_report/2` answers any system-domain caller, since its caller is the device service and not the registered
+  domain service; a process that reports before the PCIe domain lays the bridge's layouts for the boot. Hold it to
+  the device service's process (a registration of its own, or the call routed through the domain service), and
+  hold `erx_dom_lib_pci_report` to the NIF and `erx_dom_view_bridge` to the root with chokepoints. The root's join
+  (`tree_facts`) and the NIF's term handling run only on the target; the `pcie` QEMU suite (P12) covers them.
 * [Low] image build, the Pi's single file against the loader's device tree (`ProductionImage::Machine#check_single_file`,
   `Fiasco#first_stage_address`): the bound starts at the entry of users-raspi4b's `bootstrap.elf`, not checked
   against the address QEMU's raspi4b model and the firmware load it at (`QemuPlan::MACHINES` loads, 0x200000). If
@@ -2482,6 +2557,15 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
 
 ## Bugs by subsystem
 
+* [Low] domain library, `liberx/system/dom_boot.c` (the apps budget and each principal's budget): both are
+  created with `ERX_BUDGET_ELASTIC`, while the comments beside them and
+  [design-fiasco.md](docs/design-fiasco.md) make a domain's budgets walls (cap equal to guarantee). Change
+  the kind with the budget-wall implementation package.
+* [Medium] Fiasco backend, `liberx/backend/fiasco/park.c`: `erx_park` and `erx_group_take_ready` refuse a thread
+  that is not an executor (`ERX_ETYPE`), and that is all of the executor rule. Refusing to arm a vCPU
+  upcall on an executor, and refusing an executor every other blocking wait with `ERX_EWOULDBLOCK`
+  ([design-fiasco.md](docs/design-fiasco.md), the blocking-call row, FD18), are not built, and
+  `ERX_EWOULDBLOCK` is not defined in `abi/erx_abi.txt`.
 * [Low] Fiasco backend, a task's first check of a release file still hashes on the service
   thread (`liberx/backend/fiasco/slice.c` `erx_fiasco_release_entry_body`, `check == 1`), so
   every other call of every task and of the root waits for that file's hash. The website's
@@ -2591,11 +2675,6 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   only in the test that feeds it the other kind of source. Derive the removals from the manifest's
   structure instead, as `Manifest::Edit.without_sessions` already does for session grants: drop a
   configured domain with the services it serves and every facet granting them.
-* [Medium] Fiasco backend, `liberx/backend/fiasco/irq.c:141` (the bind): every bind ends in `l4_irq_unmask`, so a
-  line is unmasked at its first bind, where [design-kernel.md](docs/design-kernel.md#irq-objects) ("Creating") keeps
-  an `ERX_IRQ_LINE` object masked until its driver first acknowledges it. A device that raises its line before its
-  driver is ready then delivers to a sink that has not set up. Unmask a line only at `erx_irq_ack`, with a
-  regression test that binds a pending line and sees no delivery before the first acknowledgement.
 * [Low] Fiasco backend, fault records (`liberx/backend/fiasco/service.c` `service_page_fault`): a
   memory fault's `cause` is Fiasco's access bits (`mr[0] & SERVICE_FAULT_ACCESS`), not the cause
   as the CPU reported it, which [design-kernel.md](docs/design-kernel.md) gives for every fault
@@ -2963,6 +3042,27 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
 * [Low] device-tree reader, duplicate sibling names (`kernel/core/dt.c`, `node_find`): `fdt_check_full` does not
   refuse two siblings of one name, and `fdt_path_offset_namelen` takes the first, so a tree the reader could see
   is wrong gives the first node's facts. Refuse a path that matches two nodes. The firmware is trusted.
+* [Medium] device-tree reader, a PCI host bridge's other facts (`kernel/core/dt.c`;
+  [design-device-tree.md](docs/design-device-tree.md#the-reader), "A PCI host bridge";
+  [design-pcie.md](docs/design-pcie.md#dma)): the reader takes a host bridge's three-cell `dma-ranges` and the line
+  its `interrupt-map` routes for a closed place's pin, but not its `ranges` (three cells, an I/O entry skipped) or
+  its `bus-range`, and `erx_dt_device` does not cut a PCIe function's range at its row's `dma_limit`. The bridge
+  record the device service hands the PCIe domain needs all three, and the give's window containment check needs the
+  bridge's `ranges`. The
+  reader takes a closed place (`erx_dt_intx`) as valid, device below 32, function below 8 and pin 1 to 4; the
+  platform record's reader of a bridge's places (`Manifest#bridge_places`) refuses any other.
+* [Low] device-tree reader, a closed place's bounds (`kernel/core/dt.c`, `erx_dt_intx`, `intx_key`): the reader
+  takes the place it is handed as valid, device below 32, function below 8 and pin 1 to 4, and shifts the fields
+  into the unit address unmasked, so a place with device 32 matches another place's entry. The platform record's
+  reader of a bridge's places must refuse any other place when the places land.
+* [Medium] device-tree reader, the PCI ranges entry read twice (`kernel/core/dt.c`, `windows_translate` and
+  `windows_read`): both decode the bus binding's three-cell entry (phys.hi's space code, the PCI address, the
+  parent's address, the size) and skip I/O space, and they already differ: `windows_read` refuses configuration
+  space, `windows_translate` takes a configuration-space entry of a bridge's `dma-ranges` as memory. Give both one
+  entry decoder and refuse configuration space in `dma-ranges` too.
+* [Low] device-tree reader, its sources listed twice (`tools/fuzz/dt_target.rb`, `tools/lib/erx/native_root.rb`,
+  `DEVICE_TREE`): the reader, its architecture's interrupt binding and libfdt's files are named in both, so a new
+  source is added in two places. Derive one list from the other.
 * [Low] device-tree reader linked into no target (`tools/lib/erx/core_archive.rb`, `ROOT_TASK_SOURCES`): only the
   host tests and the fuzz target compile `kernel/core/dt.c`; the root task links it with the package that hands
   the tree over, and a target-only build break surfaces only then.
@@ -3448,6 +3548,12 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   ([design-packaging.md](docs/design-packaging.md#other-subsystems)). Fix: `cp` opens the target itself and
   copies in the 64 KiB pieces design-shell.md's info report describes, checking `file:close/1`'s answer; a
   test with a tree whose close answers `eio`.
+* [Medium] apps, the manifest and package readers ([design-abi.md](docs/design-abi.md#layouts-in-erlang)):
+  the generated structural readers decode an enum or flags field to its integer, so their callers compare
+  against `erx_abi.hrl` macros (`erlang/apps/erx/src/erx_pkg_header.erl:237`, `start/2` on
+  `?ERX_PKG_ERLANG`) while `erx_abi_layout` gives the same fields as atoms and ordsets: two forms of one
+  record. Fix: the structural readers decode a fixed record through `erx_abi_layout` and their callers
+  match names.
 * [Low] apps, `erx_pkg_header` ([design-packaging.md](docs/design-packaging.md#the-declaration)): the
   generated reader checks the declaration's strings by the ABI's string classes, which are wider than the
   declaration's grammar: a need named twice, more than `pkg_args_max` arguments, an application name with
@@ -4919,13 +5025,23 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   flagged `ERX_ENTRY_SYSTEM` is refused; confirm against the boot image's
   layout for domain releases (IM1) that service domains never run the
   system release's ERTS entry.
-* [Low] domain library, `liberx/system/dom_life.c`
-  `erx_dom_plan_unit_give`: it plans the device-tree entries of a unit (their resources,
-  a window per page run, an IRQ object per line, a DMA window or contiguous
-  memory); a PCIe function's give, with its BARs carved inside the
-  bridge's windows, its MSIs and its requester id's stream
-  ([design-system.md](docs/design-system.md#devices)), lands with the PCIe
-  enumerator.
+* [Medium] domain library, the give of a PCIe function (`liberx/system/dom_life.c` `life_unit_function`,
+  `liberx/system/dom_apply.c` `apply_function_words`, [design-pcie.md](docs/design-pcie.md#the-catalogue-and-gives)):
+  the BAR each range came from is found again in the apply by repeating the planner's "memory and placed" test, so
+  a change to one copy pairs a BAR with another's window; store each range's BAR index in `erx_dom_unit_device_t`
+  and read each BAR's window from the planner's layout rather than scanning the WINDOW steps. `erx_dom_unit_check`
+  does not tie an msi or msix device's line to an MSI step from its own resource, nor an intx device's to an IRQ
+  step, so a plan built otherwise could pass with a zero message. A function whose reported pin is not its
+  place's is held silently, where the design wants a log line naming both pins; have `erx_dom_pci_given` return
+  the reason. `erx_dom_pci_route` picks msix without checking that the table's BAR is placed (it fails safe, with
+  no interrupt). `route_word` and `ERX_BOOT_ROUTE_WORD_MAX` copy the generated route names by hand. No host test
+  reads the `-erx_record function` words, the setting or the message, and `tools/fuzz/dom_core_fuzz.c` holds no
+  catalogue, so the PCIe path of the give is not fuzzed.
+* [Medium] runtime, `erlang/apps/erx/src/erx_device_record.erl` and the device NIF: the domain library writes a
+  given PCIe function's `-erx_record function` record ([design-pcie.md](docs/design-pcie.md#the-catalogue-and-gives)),
+  but no reader takes it, so a holder finds no record of its function; read it with a window per placed BAR,
+  and have the NIF write an MSI-X route's table from it. A confined function's DMA window by its requester id
+  waits for erXos's kernel, as every DMA window does.
 * [Medium] drivers, `erlang/apps/erx_blk` (and `erx_net`, `erx_fb`): no
   configured domain's driver starter calls `erx_irq_line:start_owners/1`, so a
   driver on a line its unit shares, which the domain library now marks
@@ -6248,6 +6364,23 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   a live process's signal queue without limit with right-0 signals
   (`UNLINK_ID`, `DEMONITOR_P`, `PAYLOAD_EXIT`); the queue quota covers only
   undecoded messages, and no design text bounds these.
+* [Low] Lane driver, `otp/erts/emulator/sys/erxos/erx_lane_drv.c` (`frame_judge`): a frame the
+  funnel refuses is counted (`ERX_LANE_COUNT_MALFORMED`) and ends the port with
+  `erx_lane_malformed`, but nothing logs the funnel's reason (`verdict.reason`), where
+  design-domains.md's failure table promises a diagnostic with the reason code, logged once
+  per reason. The reason names live only in `test/fixtures/funnel_driver.c`; one table in
+  `liberx` would serve the log and the fixture.
+* [Medium] runtime, `erts_internal_dist_spawn_request_4` in `otp/erts/emulator/beam/dist.c`:
+  design-domains.md ("The funnel", step 4) has the sender's peer check a spawn request's
+  control term with the funnel's grammar before writing it, answering an option of another
+  shape with `badopt` and a term past `ERX_CTL_MAX` with `system_limit`; no such check
+  exists, so such a spawn toward another domain is written, refused there as malformed,
+  and ends the caller's own connection.
+* [Medium] Funnel control grammar, `liberx/erx_funnel.c` `spawn_errors`: the three
+  errors a SPAWN_REPLY may name (badopt, noconnection, system_limit) are kept by hand
+  in step with the writers in `otp/erts/emulator/beam/dist.c`, and the funnel tests and
+  fuzz target repeat the names. One source (an `abi/erx_abi.txt` row generating the
+  funnel table and the ERTS side) would make a new spawn error impossible to forget.
 * [Medium] Funnel authority, design-domains.md "The funnel" step 5: a
   `LINK` without `link` to a live process that holds no link with the
   sender is answered `noproc` by the target process when it handles the
@@ -7347,6 +7480,11 @@ to the corpus and follow rc
   GICv2m fact in a generic name. Move it to the platform layer's MSI frame
   description ([design-kernel.md](docs/design-kernel.md#dma-and-the-iommu),
   [design-platforms.md](docs/design-platforms.md#msi-frames)).
+* [Low] Fiasco backend, `liberx/backend/fiasco/irq.c` (`IRQ_MSI_DOORBELL`): the MSI frame's doorbell offset, `0x40`,
+  is a hand-copied register offset of one frame type, where memory-mapped registers come from CMSIS-SVD files, and a
+  frame of another type (the Raspberry Pi 5's MIP) would get it too. Describe the frame in an SVD file and have the
+  packer write the doorbell's address into `erx_mf_msi_frame`, so the root holds no frame-type fact
+  ([design-pcie.md](docs/design-pcie.md#the-msi-frame-on-fiasco)); the `native_irq` guest's `MSI_DOORBELL` goes with it.
 * [Low] kernel, `ERX_MEM_INHERIT`: the flag is the remembered creator mark
   that the copy table of `erx_space_copy` says it avoids. Reconcile the
   two
@@ -7806,6 +7944,19 @@ to the corpus and follow rc
 * [Medium] SSH stage 2, the login facet ([design-ssh.md](docs/design-ssh.md)): the cookie table is keyed by the connection process, but a service behind `erx_facet` sees the facet's forward (a fresh alias, `erx_facet.erl`'s request handling), not the grantee's pid. The stage-2 design must say how the facet learns the connection: carried in the request, or keyed by the facet's forward and its `'DOWN'`.
 * [Medium] SSH, a job's messages through the session's line (`erlang/apps/erx/src/erx_session_line.erl`, `line/4`; [design-ssh.md](docs/design-ssh.md#sessions-ttys-and-shells)): `open_job`'s channel sends the line `{job_input, Bytes}`, `job_eof`, `job_sent` and `job_hangup` in the SSH domain's envelope, none a call, but the line hands its callback only the peer's admitted calls and drops every other message in an envelope, so a job would wait for a `job_written` that never comes. Building `open_job` needs a callback beside `request/4` that gets the peer's other messages, and never a third domain's.
 * [Low] cross-domain call admission, written twice (`erx:call_from/3` in `erlang/apps/erx/src/erx.erl`, which erx_facet and erx_session_line ask; `erx_net_admit:request/2` in `erlang/apps/erx_net/src/erx_net_admit.erl`, over its own `domain/1`): N12 of [design-network-stack.md](docs/design-network-stack.md#requirements) keeps `erx_net/src` from naming erx, so the network grant cannot ask `erx:call_from/3`, and a change to the rule is two edits. One source needs a choice: the runtime seam (`erx_net_runtime`) answering the check, the operation schema's generator emitting both, or N12 relaxed for this one function.
+* [Medium] USB, the controller core's EP0 rules (`erx_xhci_core`, [design-usb.md](docs/design-usb.md#the-controller-process)):
+  three choices the design does not name. EP0's control requests wait in order in the core, one posted at a time, and
+  a pipe that leaves `open` answers what waits on it as a post (`set_pipe/3`), so one function's STALL on a composite
+  device answers another's queued request, a pipe reset's CLEAR_FEATURE included, `{error, resetting}`, and that
+  reset fails; keeping the queue across EP0's own reset would avoid it. When EP0's reset after a halt fails, the halted
+  request is answered with its own result and EP0 stays `halted`, against "never a reason the pipe stays unusable"; the
+  abort's rule (fail the controller) may fit better. A NIF refusal of a transfer reaches the caller raw as
+  `{error, full}`, an answer `erx_usb_pipe` does not list. Decide each in the design and pin it in the cases.
+* [Medium] USB, the controller core's exploration (`test/erlang/erx_xhci_core_tests.erl`): at most one caller's post
+  per pipe, so a second bulk transfer left on a halted ring is never explored; the `stopped` answers of a restarted
+  ring always precede the command's completion, an order the design does not fix; answer contents are not checked
+  against what the model delivered; no invariant catches EP0 left halted after a stall (only the trace case does);
+  and bus commands never share the command queue with resets.
 * [Medium] USB, the bus core and the controller core (`erx_usb_bus_core`, [design-usb.md](docs/design-usb.md#ports-hubs-and-devices-the-bus-core)):
   the code differs from the design in two places. A detach while Address Device is in flight releases the
   address-zero turn, which the code derives from the port's state alone, before the controller answers the command,
@@ -7818,6 +7969,14 @@ to the corpus and follow rc
   the design detaches the translator's hub, whether or not the addressed device is still
   attached ([The controller process](docs/design-usb.md#the-controller-process), "A failed address"). Bring both
   to the design, with the seeded faults its Verification table names.
+* [Medium] USB, the bus core's re-read after clears (`erx_usb_bus_core`, [design-usb.md](docs/design-usb.md#hubs)):
+  a read that saw changes queues its port again until a read sees none, and `handled` waits for an empty queue, so
+  on an external hub a port whose change bits set again faster than one clear and read (a device toggling its
+  pull-up) holds back the hub's next report while it lasts: a sibling port's unplug or plug goes unseen until it
+  stops, and the hub's EP0 carries reads and clears back to back. The root hub is not affected. Two ways out:
+  answer `handled` once every target the report named has been read once since it, re-reads going on in the queue;
+  or, as FreeBSD bounds it (`usb_hub.c:616-637`, one clear and one fresh read), leave the changes a re-read sees
+  latched at an external hub for its next report.
 * [Low] USB, the bus core's enumeration (`erx_usb_bus_core`, [design-usb.md](docs/design-usb.md#ports-hubs-and-devices-the-bus-core)):
   step 3, the language table and the manufacturer, product and serial strings, is not run, so a device's
   inspection record has no strings; a failure there fails nothing, so adding it is a step between `device` and
@@ -7843,6 +8002,57 @@ to the corpus and follow rc
   so `{disabled, reset_disabled}` and `unsupported_speed` are reached by no case, and it checks no route or
   translator parameter of Address Device. With one external hub it cannot reach a hub given up while a port below it holds the
   turn and another hub could reset; `a_hub_given_up_keeps_its_childs_turn_test` covers that case alone.
+* [High] Device NIF, every descriptor form against the DMA check (`erx_device_dma.c`, `erx_device_queue.c`,
+  `erx_device_genet.c`, `erx_device_trb.c`, `erx_device.c`): the cores store raw ring fields, place their own records
+  and state their own writers, while [The check](docs/design-device-dma.md#the-check) has each core describe records
+  by meaning, fields and names, and the sequencer write them, make each run live, and end what the device holds only
+  by its reports, which it acquires itself (the validity, then the records it covers), against one ledger. The TRB form's tables, bindings and releases are in
+  [design-usb.md](docs/design-usb.md#what-the-dma-check-judges). Until then the TRB form's plans cannot run through
+  `run_call`. Packages, in order: the formats' marks and generated encoders; the ledger, the layout, descriptions,
+  the check's rules, the sequencer's publication and its acquisition, with the split ring moved onto them; GENET,
+  and ADMA2 with its transfer split into entries by the sequencer, moved onto them; the TRB form's publication and
+  bindings; the TRB form's releases from acquired events, each command's reach and the endpoints' states; the
+  stand-ins' ledger check. Before a non-coherent device relies on the acquisition, its unverified AArch64 premise is settled by the Arm
+  ARM passage, the litmus test or the VL805 probe [Releases](docs/design-device-dma.md#releases) names.
+* [Medium] USB, the TRB ring form's commands (`erx_device_trb.c`): one command's behaviour is spread over `accept`,
+  the context builders in `erx_device_trb_command`, `command_words` and `erx_device_trb_command_done`; one entry per
+  command kind holding its acceptance, its build and its completion would keep each together.
+* [Medium] USB, the TRB ring form's contexts, settled from the xHCI specification before the board pass: EP0's
+  average TRB length is written as its packet size and every endpoint's as packet times burst plus one (the design
+  says only "derived from its packet size and burst"); Configure Endpoint's slot context carries only the context
+  entries and hub fields, route, speed, root port and TT left 0, as the design's table says, though a controller that
+  evaluates the whole slot context with its add flag would misread them; a non-EP0 control endpoint takes index
+  2n + 1 (xHCI 4.5.1); and whether a setup packet's direction bit must match the data stage's.
+* [Low] USB, a USB 3 root port after a disable (`erx_xhci_core`, port_operation/2): writing PORTSC's PED to disable a
+  USB 3 port leaves it in the Disabled link state, which leaves only through a PLS write of RxDetect with LWS set
+  (xHCI 1.2, 5.4.8, p. 406); the core writes no PLS, so the port stays dead until the controller restarts. Nor does
+  the core issue a warm reset (WPR) for a port in SS.Inactive, so such a port also waits for a restart.
+* [Medium] USB, events left after a bounded interrupt pass (`erx_xhci_core`, drained/2; design-usb.md, "Completing"):
+  a pass that stops at `xhci_events_per_interrupt` acknowledges the line with events still on the ring, which a next
+  pass reads only if the controller raises the interrupt again. FreeBSD gets that by writing ERDP with its busy bit
+  (EHB) set (xhci.c:1191-1195); the TRB ring form's `complete/2` must publish ERDP the same way, stated in its design
+  with the xHCI section that requires it (not yet read) and covered by the model controller's test.
+* [Low] USB, the TRB ring form's design text (design-usb.md, "Two rules every ring keeps, on every controller"): it says a transfer that
+  continues past the link sets the link's chain bit, but each control stage is a TD of one TRB (xHCI 4.11.2.2), so no
+  TD of the form spans the link and `erx_device_trb.c` never sets it; and a ring's queue starts at the block's enqueue
+  position and cycle state, not at "its ring's base", which keeps stale TRBs of an earlier queue on the other cycle
+  without zeroing the ring. design-device-dma.md's refusals list no answer for a command refused while another is
+  in flight or for want of a free block (`ERX_DEVICE_TRB_REFUSE_FULL`), nor for a post on a queue the command in
+  flight holds (`ERX_DEVICE_TRB_REFUSE_HALTED`).
+* [Low] USB, the TRB ring form's step bounds (`ERX_DEVICE_TRB_POST_STEPS`, `ERX_DEVICE_TRB_COMMAND_STEPS`): counted
+  in comments and asserted only by the harnesses; nothing in the core enforces them.
+* [Low] PCIe, a 32-bit MSI with per-vector masking (`erx_pcie_cfg`, `erx_pcie_plan`): where its mask and pending
+  registers lie is unverified. FreeBSD 15.1.0's `pcireg.h` gives `PCIR_MSI_MASK` (0x10) only for the 64-bit layout,
+  and its `pci.c` never touches the mask register, so the parser ends that layout's extent at its data and the
+  planner leaves its mask register unwritten, where a firmware that masked vector 0 would keep its message masked.
+  Settle the offsets from the PCI Local Bus Specification or another BSD source and plan the register as the 64-bit
+  one is.
+* [Medium] PCIe, a root port's closed windows (`erx_pcie_plan`, [design-pcie.md](docs/design-pcie.md#root-ports)): the
+  plan closes a root port's I/O and prefetchable windows by writing base above limit, but a root port that implements
+  neither window reads those registers as zero and never reads as its target: every walk lowers it to quiet, cutting
+  off the bus below it, and its plan ends `stuck`, so a restart would disturb running functions. Whether
+  QEMU's `pcie-root-port` and the BCM2711's root port implement both is unverified; probe B4 and the `pcie` suite
+  settle it, and a window a root port lacks then drops out of its target.
 * [Low] Erlang edges (docs/style.md, "Functional core"): `erx_tcp_listen` (`:176`), `erx_gen_tcp`
   (`:443`), `erx_pipe_srv` (`:312`), `erx_prog_handler` (`:264`) and `erx_blk_sd` (`:394`) walk a
   step's actions with a loop of their own rather than `erx_actions:perform/3`; the first two match a
@@ -7872,6 +8082,56 @@ to the corpus and follow rc
 
 ## Security residuals
 
+* [High] Fiasco backend, rights per handle (`liberx/backend/fiasco`, `liberx/backend/core/handles.h`), blocks
+  0.2: the design records erXos's rights in every handle entry, intersects them with the mask on a duplicate
+  or a pass, and checks the right each call needs in the one lookup ([design-fiasco.md](docs/design-fiasco.md#rights),
+  the call table's `erx_vm_map` row: a right the caller's entry lacks is `ERX_ERIGHTS`). The code records none
+  (`handles.h`: "A handle carries no rights"); the only right enforced is destroy, as creator-only (`object.c`,
+  `erx_fiasco_object_destroy_body`). So a domain maps read-write, or `erx_mem_copy`s into, any memory object it
+  was passed read-only: a connection's peer side, a program's lane side, a pipe's ring
+  (`vm_rules.c`, `erx_fiasco_vm_map_rule` and the copy rule check only kinds; `service_task.c`,
+  `erx_fiasco_task_vm_map_body` checks only that the caller holds the handle); it passes a handle onward with
+  rights it never had, since a later pass's mask narrows nothing; and the pass reports in each item's
+  descriptor rights it does not enforce (`object.c`, `object_pass_item`: `mask & erx_ktype_rights_mask(type) &
+  ~ERX_HR_DESTROY`), a reported value that is not true. Read-only sharing does not exist on this backend.
+  Development builds run trusted code only; the gap blocks release. The work is the third part of the
+  design's [Implementation](docs/design-fiasco.md#handles) note: a rights field in `erx_backend_handle_entry_t`,
+  set at create from the creation kind's default set in `abi/kernel.txt`, at a carve intersected with the parent
+  entry's rights and `DESTROY`, intersected in `erx_backend_handle_dup` and `object_pass_item`, and a needed-right
+  argument to `erx_backend_handle_find`, so every call gets the check by construction; the *rights shrink*, *a
+  creator's pass* and *writable peer side* cases, and a budget carved through an entry without `SPACES`, with their
+  seeded faults. A duplicate's mask needs a path end to end, since `erx_cap_dup` takes none (`service.h:132`) and
+  its request carries only the caller and the handle (`abi/erx_abi.txt`, `erx_fiasco_cap_request`): give
+  `erx_cap_dup` the mask erXos's kernel's call takes (`include/erx/cap.h`), a generated request with a mask field,
+  the decoder and the dispatch (`service.c`, `ERX_FIASCO_CALL_CAP_DUP`) passing it to the body, and its callers
+  passing their masks.
+* [Medium] Fiasco backend, placement rights of the request gate and the thread semaphores
+  (`liberx/backend/fiasco/service_task.c:306-308`, `service.c:732-734`): both are mapped into the task with
+  `L4_CAP_FPAGE_RWS`, where the design places the gate with the send right alone and a semaphore with only the
+  rights `l4_semaphore_up` and `_down` take ([design-fiasco.md](docs/design-fiasco.md#who-holds-what)). The
+  special right S is the one Fiasco's `Ipc_gate_ctl::bind_thread` requires on the gate, and a bind rewrites the
+  gate's label (`fiasco/kernel/src/kern/ipc_gate.cpp:301-345`), so a task holding its gate with S may rebind it
+  away from the root service and relabel it. Whether a task can complete that rebind, which needs a thread
+  capability with S named through the call's typed item, is unverified: the lookup lives in a Fiasco header
+  erXos does not read. If it can, it most likely harms only that task. Map the gate without S, since a send
+  needs no right (`ipc_gate.cpp:471-512`), and each semaphore with what up and down need.
+* [Medium] runtime, the system domain's safe decode (edit 9 of
+  [design-runtime.md](docs/design-runtime.md), `erts_proc_sig_decode_dist` in
+  `otp/erts/emulator/beam/erl_proc_sig_queue.c`, `erts_net_message` in `dist.c`):
+  * Each message family a domain sends the system domain keeps its atoms within
+    what the system domain holds by hand: the ready report's provides cross as
+    binaries, a mint's refusal as `refused`, a lost connection's reason through
+    `lost_reason/1`. A family that names a sender's own atom loses the message
+    silently, its caller waiting out a timeout; a facet forwarding to a service
+    in another domain whose replies name such atoms would hold its in-flight
+    slots until it answers `busy`. Declaring each family's closed atom set in
+    `abi/protocols` would make this hold by construction; the count is global,
+    not per connection.
+  * `{erx_foreign_reason, Bin}` carries the reason's whole encoding; system-domain
+    code that decodes Bin with `binary_to_term/1` without `[safe]` makes the
+    atoms D5 forbids, and no check holds that.
+  * `erx_domain_srv:keep_lines/4` takes a session's provides that are no map
+    without crashing the domain service; no test sends such a session report.
 * [High] Fiasco backend, `liberx/backend/fiasco/service.c` (the `ERX_FIASCO_CALL_TIME_SET_OFFSET` case),
   blocks 0.2: the dispatch passes the body the request's `offset_ns` alone, never its `caller`, and checks
   no right, so any task sets the wall clock, against 0.2's contract that an app cannot
@@ -8156,6 +8416,16 @@ to the corpus and follow rc
   the driver starts no process. Both devices come up under HVF; TCG and boards are not checked. Derive the row's
   memory from the queue's needs at the granule the platform reports instead of writing a size by hand.
 
+* [Medium] device NIF, `otp/erts/emulator/nifs/erxos/erx_device.c`: only the driver accesses go through a record's
+  layout (`erx_device_layout_offset`); the NIF's own sequences (`get`/`put`, `register_at` for plan steps, the SD
+  command store, GENET's `rbuf_ctrl`) address registers by their table offset, which is right only for a register
+  at a fixed offset. No such sequence reaches xHCI yet; before one does (the TRB form's install, doorbells, `USBCMD`),
+  `load` and `store` should take a register and element and resolve them, so no raw offset can be written.
+* [Low] device NIF, `otp/erts/emulator/nifs/erxos/erx_device_bif.c`: `write/3` and `write_field/4` take no device lock,
+  though design-device-dma.md ("Register ownership", "Every driver write takes the device lock") has them take the
+  lock the queue calls hold; so the read with which `write/3` checks a register's owned fields (xHCI's `USBCMD` and
+  `IMAN`) is not ordered against a `negotiate/2` another process of the domain runs on the same device. One driver
+  process holds each device, so no driver interleaves them today.
 * [Medium] device NIF, `otp/erts/emulator/nifs/erxos/erx_device_nif.c`, `open/1`: a spec's `peripheral` is the
   caller's, so a driver can open a window as any table peripheral whose block fits it, such as a virtio-mmio
   transport as `sdhci`, and reach the transport's owned offsets through that peripheral's writable registers,
@@ -8219,7 +8489,7 @@ to the corpus and follow rc
   a principal that a start row names, an app's or a person's, and that never enrolled can be enrolled by whoever
   first reaches a secure console line, as any principal can, and then logged in to with its authority. Settle it in
   the login design, which covers every place a person meets the system.
-- [Low] program channel on Fiasco (`liberx/backend/fiasco/object.c`): the Fiasco backend records no rights per handle, so a program can map the session's lane side read-write. It can bind or unbind only IRQ objects it holds in its own group: it holds no handle to its channel doorbell, and `irq_group_allowed` refuses the session's doorbell, which is also the gate worker's IRQ for the program's port. A program also holds `TRIGGER` copies of its own pipe ends' doorbells, bound in its own group, and can rebind them to any label, label 1 included; that costs it only its own wakes. Any task can create IRQ objects up to the machine-wide 256 (`ERX_FIASCO_IRQS_MAX`) and starve every other domain's doorbells. erXos's kernel enforces the rights the install grants (`erx_program_core.c` `install_rights`).
+- [Low] program channel on Fiasco (`liberx/backend/fiasco/object.c`): a program can map the session's lane side read-write, the High item on rights per handle above. It can bind or unbind only IRQ objects it holds in its own group: it holds no handle to its channel doorbell, and `irq_group_allowed` refuses the session's doorbell, which is also the gate worker's IRQ for the program's port. A program also holds `TRIGGER` copies of its own pipe ends' doorbells, bound in its own group, and can rebind them to any label, label 1 included; that costs it only its own wakes. That any task can fill the machine-wide 256 IRQ objects is the High per-domain limits item of "0.2 on Fiasco". erXos's kernel enforces the rights the install grants (`erx_program_core.c` `install_rights`).
 
 * [Low] inspect service, the runtime agent leg ([design-live.md](docs/design-live.md#the-runtime-agent)): a
   domain's inspection agent takes questions one at a time, so a holder of scope `all` that asks without pause
@@ -8813,6 +9083,11 @@ document's "residual risks accepted" paragraph.
   any compatible but the PL011's row of `erx_uart_kinds`.
 * [Low] docs/design-fiasco.md, "Device records": the physical record is said to name the page run around its
   registers after CLOCK; the root writes no such words.
+* [Low] Fiasco backend, `erx_info` of `ERX_INFO_BUDGET` (`liberx/backend/fiasco/service.c`, `service_info`):
+  any task asking about its own budget is answered with the page pool's machine-wide used count
+  (`erx_fiasco_vm_used_pages`), so every domain learns how much memory all the others hold. The design reports a
+  budget's own `used` from its record ([design-fiasco.md](docs/design-fiasco.md#reporting-a-budget)); until
+  records count pages, the field is reported unsupported rather than as the pool's count.
 
 ## Planned features
 
@@ -9286,39 +9561,46 @@ document's "residual risks accepted" paragraph.
   `erx_firmware_request` in the machine family, and no firmware request record (name, belonging, tag, argument) in
   the system manifest from the platform record's `firmware_requests`. Add the three.
 * [Medium] domain library, `include/erx/device_kinds.h` ([design-usb.md](docs/design-usb.md#who-holds-a-controller),
-  [design-pcie.md](docs/design-pcie.md#the-bridge-seam)): no rows for the PCIe and USB kinds. Add `pci_ecam`
-  (`pci-host-ecam-generic`) and `bcm2711_pcie` (`brcm,bcm2711-pcie`) with role `configuration`, and `qemu-xhci` and
-  the VL805 by PCI identity and position with role `usb`, each with its SVD peripheral; the PCIe-arm item under the
-  domain library (`dom_boot_view.c`, `boot_devices`) lands with it.
-* [Medium] system manifest, `abi/manifest.txt` ([design-usb.md](docs/design-usb.md#what-the-usb-domain-claims)): no
-  `usb` device role and no `drive` field in `erx_mf_window`. Add both, the field set exactly when the window's device
-  has the `usb` role, and the manifest check's properties 8 and 9 as
-  [design-system.md](docs/design-system.md#the-manifest) states them: at most `usb_drives_max` drives per controller,
-  each (device, drive, partition) once, and a release build's USB domain holding its controller's unit alone and
-  running no file system.
-* [Medium] system manifest, `abi/manifest.txt` ([design-abi.md](docs/design-abi.md#devices-and-partition-windows),
-  [design-pcie.md](docs/design-pcie.md#dma)): no `dma_limit` in `erx_mf_device`, no closed flag with its listed places
-  and pins on a bridge's row, and no `msi_frame` platform part on QEMU `virt`. Add them, with the packer's copies from
-  the platform record; the `dt`-case item under Bugs covers `base`, `size` and `line`. `config/platforms/qemu-virt.json`
-  has no `msi_frame` record either, which [The MSI frame on Fiasco](docs/design-pcie.md#the-msi-frame-on-fiasco)
-  relies on: add it with the measured frame, base `0x08020000`, interrupt ids 80 to 143
-  ([the QEMU facts record](docs/research-qemu-pcie-usb.md#the-msi-frame)).
-* [Medium] liberx, `liberx/backend/api.h` (`erx_irq_create`) and `liberx/backend/fiasco/irq.c`: the call returns only
-  the object and the Fiasco backend refuses `ERX_IRQ_MSI` (`irq.c:189`). Return the `erx_msi_message` of
-  `abi/kernel.txt` beside the object, zero for soft and line, in the reply's second and third words on Fiasco
-  (`abi/erx_abi.txt`, `erx_fiasco_irq_create_request`), and build `ERX_IRQ_MSI` over the frame's lines as
-  [The MSI frame on Fiasco](docs/design-pcie.md#the-msi-frame-on-fiasco) says, keeping its refusal of a doorbell
-  outside the function's DMA range.
+  [design-pcie.md](docs/design-pcie.md#the-bridge-seam)): no rows for the host bridges' kinds, so a bridge row
+  is held but not driven and the enumerator finds no given record to choose its module by. Add `pci_ecam`
+  (`pci-host-ecam-generic`) and `bcm2711_pcie` (`brcm,bcm2711-pcie`) with role `configuration` and their
+  peripherals, with the PCIe domain on QEMU `virt` (package P12).
+* [Medium] system manifest, `abi/manifest.txt` ([design-usb.md](docs/design-usb.md#mass-storage-reaches-the-file-servers)):
+  the boot-time reader bounds no `windows[].drive` (it has no rule for "`mf_none` or below `usb_drives_max`"); add
+  one before `erx_blk_drive` reads the field.
+* [Low] system manifest, `tools/lib/erx/manifest.rb` ([design-system.md](docs/design-system.md#the-manifest)):
+  property 9's USB-domain clause, a release build's USB domain holding its controller's unit alone and running no
+  file system, is not checked, since the check refuses every release build; it lands with the release build's
+  confinement check, with its seed.
 * [Medium] USB, `abi/inspection.txt` ([design-usb.md](docs/design-usb.md#failure-handling)): no `usb` kind. Declare
   `[usb, Controller]`, `[usb, Controller, ports, Route]`, `[usb, Controller, devices, Route]` and the other paths
-  Failure handling lists, shown under `/proc/usb`.
+  Failure handling lists, shown under `/proc/usb`, with the controller and bus processes that report them. The
+  design leaves open the reporter category of a top-level path a configured domain other than the system domain
+  reports (the schema's `service` and `runtime` do not fit as declared), the key types of `Controller` and
+  `Route`, and the shape of a device's functions, each a kind with an input number or a drive, which the schema's
+  types have no alternative for.
+* [Medium] USB, the input tree's service side (`erx_usb_places_sup`, [design-usb.md](docs/design-usb.md#hid-reaches-the-display)):
+  the places start the tree's grants (`input_tree/1`), but nothing yet hands one to the display domain the
+  manifest names, and no `erx_usb_sup` starts the places before the bus. Both come with the USB domain's start.
 * [Medium] USB and PCIe, `hw/svd/` ([design-usb.md](docs/design-usb.md#registers-at-offsets-the-controller-reports),
-  [design-generation.md](docs/design-generation.md#register-inputs)): no `xhci/xhci.svd`, no ECAM file and no BCM2711
-  bridge file. Write `xhci.svd` from FreeBSD's `xhcireg.h` and the xHCI specification's register chapters, its three
-  movable clusters marked with the capability field their base comes from and its owned registers marked; the
-  BCM2711 bridge's registers from the facts record's register map and `bcm2838_pci.c`; and the ECAM and BCM2711
-  configuration-space views (8-, 16- and 32-bit accesses at a computed offset, bounded by the window), with the
-  generator's support for both extensions.
+  [design-generation.md](docs/design-generation.md#register-inputs)): no configuration-space view for ECAM or for the
+  BCM2711 bridge. Write both (8-, 16- and 32-bit accesses at a computed offset, bounded by the window: ECAM's window,
+  and the BCM2711's root port at 0 and endpoint data window at `0x8000`) with the generator's support for them;
+  `erx_pcie_bcm2711_core`'s `cfg_read` and `cfg_write` operations reach configuration space through that view.
+* [Medium] PCIe, `erlang/apps/erx_pcie/src/erx_pcie_bcm2711_core.erl` ([design-pcie.md](docs/design-pcie.md#the-bridge-seam)):
+  the core runs an agenda of closures, so its state cannot be printed, compared or explored exhaustively, and its
+  operation vocabulary (`{wait, Us}`, `{read, Register}`, `{write, Register, Word}`) is a second one beside
+  `erx_genet_core`'s. Recast it as straight-line write lists with its four decision points (the link, the firmware
+  register, the port bit, the link poll) as named states, sharing one effect type with the other register cores.
+* [Low] docs, `docs/research-brcmstb-pcie.md` section 2: the worked `BASE_LIMIT` for the mainline tree's 64 MiB window
+  reads `0x00300000`; FreeBSD's encoder (`bcm2838_pci.c:591-596`) gives `0x03f00000`, the limit being MiB `0x603f`.
+  Re-check the section's worked values in a new dated record.
+* [Medium] PCIe, `erlang/apps/erx_pcie/src/erx_pcie_ecam.erl` ([design-pcie.md](docs/design-pcie.md#the-bridge-seam)):
+  `start/2` answers `{error, unsupported}`, since the device NIF has no access at a computed offset until the ECAM
+  configuration-space view above exists. The driver's accesses go through a `space()` (a module with `read/3` and
+  `write/4` at a window offset) that `open/2` takes and only the host tests supply. When the view lands, `start/2`
+  makes its state from the device record and the `space()` indirection is deleted; the view's bound by the window
+  then also covers a tree whose `bus-range` reaches past its ECAM `reg`.
 * [Medium] USB, `tools/lib/erx/chokepoint_rules/device.rb` ([design-usb.md](docs/design-usb.md#the-block-transport)):
   `device-posters` names neither `erx_xhci` as a poster of `erx_device:post/4` nor `erx_blk_write` as the one caller
   of `erx_usb_pipe:bulk_out/3`, and nothing holds `erx_device` to `erx_xhci` within `erlang/apps/erx_usb/`. Add the
@@ -9329,10 +9611,12 @@ document's "residual risks accepted" paragraph.
 * [Low] docs, design-system.md "The manifest", property 8: the facet grantee rules of
   [design-pcie.md](docs/design-pcie.md#facets) ("The manifest") are not among the check's properties: only the PCIe
   domain holds `pci_bus`, only the system domain holds `pcie`, and a domain holds a `pci` facet exactly when it holds a
-  `pci` device, its scope those devices. State them beside the driver-control facet's rule.
+  `pci` device, its scope those devices. State them beside the driver-control facet's rule; the check's `pci_bus`
+  half is an entry of `PCIE_DOMAIN_REFERENCES` (`tools/lib/erx/manifest.rb`), which refuses every other record that
+  names the domain `pcie`.
 * [Low] docs, design-system.md "Devices": `erx_domain_lib:devices/0` gives each entry's `role` as `block`, `net` or
-  `none`, while the manifest's `mf_device_role` (`abi/manifest.txt`) has twelve values, `network` rather than `net`,
-  and gains `usb` with the manifest item above. Say which roles `devices/0` reports, from the one table.
+  `none`, while the manifest's `mf_device_role` (`abi/manifest.txt`) has thirteen values, `network` rather than `net`,
+  and `usb` among them. Say which roles `devices/0` reports, from the one table.
 * [Medium] docs, design-live.md "Overlays": two loads into one domain other than the system domain at once
   have no stated outcome: whether the code service holds a second candidate overlay until the first is
   published or discarded, or refuses it, so that no published overlay is written from a stale base. State it
@@ -9370,12 +9654,6 @@ document's "residual risks accepted" paragraph.
   a hand-off stops the program. A reservation spanning a hand-off's batches would let a full table
   lose only its own end instead of stopping the program, and would close the window in which a
   program about to be stopped can write through a copy an earlier batch passed; needs a kernel design.
-* [Medium] `kernel/core/dt.c`, the DMA walk ([design-device-tree.md](docs/design-device-tree.md#the-reader),
-  [design-kernel.md](docs/design-kernel.md#dma-and-the-iommu)): a level whose addresses take three cells, a PCI
-  bus's, gives the device no DMA range, since the Devicetree Specification leaves those cells to the PCI bus
-  binding (v0.4, section 2.4.4, p. 22). An unconfined PCIe function that needs DMA, the Pi 5's RP1 devices
-  first, needs the binding read from its specification and the walk extended to its encoding, with a fixture of
-  the BCM2711's and the BCM2712's bridge `dma-ranges`.
 * [Medium] erx_domain boot order (`erlang/apps/erx_domain/src/erx_domain_srv.erl`, `handle_continue/2`;
   [design-system.md](docs/design-system.md#boot)): the domain service starts every configured domain at once
   in the manifest's boot order, so on one CPU the runtimes slow each other and the login waits for the slowest.

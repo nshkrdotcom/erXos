@@ -215,24 +215,132 @@ module Erx
       end
 
       # erx_abi_enums: each enum of the ABI file as the type of its member
-      # names, and each attribute an enum declares as a predicate
-      # ENUM_ATTRIBUTE/1, true for the members that carry it and false for
-      # the others, with no clause for a name that is no member. An enum
-      # named as an Erlang built-in type would fail erlc; none is.
+      # names and each flags type as the type of an ordset of its bit names;
+      # name/2 and value/2, the one translation between a type's integers and
+      # those names (docs/design-abi.md, "Layouts in Erlang"); and each
+      # attribute an enum declares as a predicate ENUM_ATTRIBUTE/1, true for
+      # the members that carry it and false for the others, with no clause for
+      # a name that is no member. A type named as an Erlang built-in type
+      # would fail erlc; none is.
       def enums(schema)
-        types = schema.type_order.map { |name| schema.types.fetch(name) }
-                      .select { |type| type.is_a?(EnumType) && !type.flags }
+        coded = schema.type_order.map { |name| schema.types.fetch(name) }.grep(EnumType)
+        types = coded.reject(&:flags)
+        flags = coded.select(&:flags)
         predicates = types.flat_map { |type| type.attributes.keys.map { |attribute| Predicate.new(type:, attribute:) } }
         duplicate, = predicates.map(&:function).tally.find { |_function, count| count > 1 }
         raise SchemaError, "enum attribute predicate #{duplicate} is named twice" if duplicate
 
         [NOTICE, '-module(erx_abi_enums).',
-         '-moduledoc "The ABI file\'s enums as types of their member names, and their attributes as predicates.".',
-         form_list('export', predicates.map { |predicate| "#{literal(atom(predicate.function))}/1" }),
-         form_list('export_type', types.map { |type| "#{literal(atom(type.name))}/0" }), '',
+         '-moduledoc "The ABI file\'s enum and flags types, their integers and their attributes.".',
+         form_list('export', ['name/2', 'value/2',
+                              *predicates.map { |predicate| "#{literal(atom(predicate.function))}/1" }]),
+         form_list('export_type', ['type/0', *coded.map { |type| "#{literal(atom(type.name))}/0" }]), '',
          *types.map { |type| enum_type(type) },
+         *flags.map { |type| flags_type(type) }, '',
+         coded_type(coded), '',
+         name_function(coded), '',
+         value_function(coded), '',
+         *(flags.empty? ? [] : [FLAGS_HELPERS]),
+         *(flags.any?(&:allowed) ? [ALLOWED_HELPER] : []),
          *predicates.flat_map { |predicate| ['', attribute_predicate(predicate)] }, ''].join("\n")
       end
+
+      # A flags type: an ordset of its bit names, which sort as their atoms do.
+      def flags_type(type)
+        head = "-type #{literal(atom(type.name))}() ::"
+        names = flag_names(type).map { |name| literal(atom(name)) }
+        compact = "#{head} [#{names.join(' | ')}]."
+        return compact if compact.bytesize <= 100
+
+        "#{head}\n      [#{names.join("\n     | ")}]."
+      end
+
+      def flag_names(type) = type.members.keys.sort
+
+      # Each bit of a flags type as {Name, Mask}, in name order, on one line
+      # or one to a line.
+      def flag_bits(type)
+        bits = flag_names(type).map { |name| "{#{literal(atom(name))}, #{type.members.fetch(name)}}" }
+        compact = "[#{bits.join(', ')}]"
+        compact.bytesize <= 60 ? compact : "[#{bits.join(",\n          ")}]"
+      end
+
+      def coded_type(coded)
+        "-doc \"An enum or flags type of the ABI file, by its name.\".\n" \
+          "-type type() ::\n    #{coded.map { |type| literal(atom(type.name)) }.join("\n  | ")}."
+      end
+
+      # The guard that admits a flags value: its bits all declared, and when
+      # the type has an allow line, one of the combinations it lists.
+      def flags_guard(type)
+        return type.allowed.map { |value| "Value =:= #{value}" }.join(' orelse ') if type.allowed
+
+        "is_integer(Value), Value band bnot #{type.mask} =:= 0"
+      end
+
+      def name_function(coded)
+        clauses = coded.flat_map do |type|
+          head = "name(#{literal(atom(type.name))}, "
+          known = if type.flags
+                    ["#{head}Value) when #{flags_guard(type)} ->\n    {ok, bits(Value, #{flag_bits(type)})}"]
+                  else
+                    member_names(type).map { |member| "#{head}#{type.members.fetch(member)}) -> {ok, #{literal(atom(member))}}" }
+                  end
+          known + ["#{head}_) -> error"]
+        end
+        <<~ERLANG.chomp
+          -doc """
+          The name of a value of an enum or flags type: an enum member's atom, or
+          the ordset of a flags value's bit names; error for any other value, an
+          integer that no member holds, a flags value with a bit its type does
+          not declare, or a combination its allow line does not list. A type the
+          ABI file does not declare is a function_clause error.
+          """.
+          -spec name(type(), term()) -> {ok, atom() | [atom()]} | error.
+          #{clauses.join(";\n")}.
+        ERLANG
+      end
+
+      def value_function(coded)
+        clauses = coded.flat_map do |type|
+          head = "value(#{literal(atom(type.name))}, "
+          if type.flags
+            mask = "mask(Names, #{flag_bits(type)})"
+            ["#{head}Names) ->\n    #{type.allowed ? "allowed(#{mask}, #{type.allowed})" : mask}"]
+          else
+            member_names(type).map { |member| "#{head}#{literal(atom(member))}) -> #{type.members.fetch(member)}" }
+          end
+        end
+        <<~ERLANG.chomp
+          -doc """
+          The integer of a name of an enum or flags type, the inverse of name/2:
+          a name that is no member, a bit name the type does not declare, or a
+          combination its allow line does not list is an error.
+          """.
+          -spec value(type(), atom() | [atom()]) -> integer().
+          #{clauses.join(";\n")}.
+        ERLANG
+      end
+
+      FLAGS_HELPERS = <<~ERLANG
+        %% A flags value's bit names, in the order Bits gives them.
+        bits(Value, Bits) ->
+            [Name || {Name, Mask} <- Bits, Value band Mask =/= 0].
+
+        %% The flags value of bit names, each one of Bits; any other is a badmatch.
+        mask(Names, Bits) ->
+            lists:foldl(fun(Name, Value) ->
+                                {Name, Mask} = lists:keyfind(Name, 1, Bits),
+                                Value bor Mask
+                        end, 0, Names).
+      ERLANG
+
+      ALLOWED_HELPER = <<~ERLANG
+        %% A flags value that is one of its type's allowed combinations.
+        allowed(Value, Allowed) ->
+            true = lists:member(Value, Allowed),
+            Value.
+      ERLANG
 
       # -NAME([ITEM, ...]). on one line, or one item to a line.
       def form_list(name, items)

@@ -39,6 +39,12 @@
 #define UART_PHYS	UINT64_C(0x9000000)
 #define UART_LINE	33u
 
+/* QEMU virt's MSI frame, as config/platforms/qemu-virt.json names it, and its doorbell's offset. */
+#define MSI_FRAME_BASE	UINT64_C(0x08020000)
+#define MSI_FIRST	80u
+#define MSI_COUNT	64u
+#define MSI_DOORBELL	UINT64_C(0x40)
+
 #define LABEL_UART	UINT64_C(0x55a0)
 #define LABEL_SOFT	UINT64_C(0x55b1)
 #define LABEL_OTHER	UINT64_C(0x55c2)
@@ -48,6 +54,8 @@
 /* How long a park waits before the case says the wake was lost. */
 #define PATIENCE_NS	(UINT64_C(30000) * NS_PER_MS)
 #define TIMED_PARK_NS	(UINT64_C(20) * NS_PER_MS)
+/* How long a pending line is watched after its bind for a delivery that must not come. */
+#define PENDING_NS	(UINT64_C(200) * NS_PER_MS)
 #define RING_ROUNDS	1000u
 #define REPEATS		3u
 #define STACK_BYTES	16384u
@@ -357,12 +365,11 @@ case_rounds(void)
 
 /* One character: its label, its byte, then the ack. The byte goes first, since the line is level. */
 static void
-case_uart(const char *prompt)
+uart_take(void)
 {
 	uint64_t label;
 	uint64_t byte;
 
-	say(prompt);
 	label = wait_label(false);
 	if (uart_read_field("fr", "rxfe") != 0)
 		fail("erx: irq: the line fired with no byte waiting FAILED\n");
@@ -372,6 +379,42 @@ case_uart(const char *prompt)
 	report("erx: irq: uart label byte", label, byte);
 	if (erx_irq_ack(irq_uart) != ERX_OK)
 		fail("erx: irq: the service refused an ack FAILED\n");
+}
+
+static void
+case_uart(const char *prompt)
+{
+	say(prompt);
+	uart_take();
+}
+
+/*
+ * A restarted driver's path on a real line: an unbind masks it, and a bind leaves it
+ * masked until the driver's first ack (docs/design-kernel.md, "IRQ objects"). The
+ * harness's character arrives while the line is unbound, so the level line is pending
+ * at the bind; a park from before the bind sees no label, and the ack lets it deliver.
+ */
+static void
+case_pending_bind(void)
+{
+	uint64_t group, slot;
+
+	if (erx_irq_bind(irq_uart, ERX_CAP_NULL, 0) != ERX_OK)
+		fail("erx: irq: the line was not unbound FAILED\n");
+	say("erx: irq: type a character\n");
+	while (uart_read_field("fr", "rxfe") != 0)
+		erx_yield();
+	group = group_epoch();
+	slot = slot_epoch();
+	if (erx_irq_bind(irq_uart, ERX_CAP_SELF, LABEL_UART) != ERX_OK)
+		fail("erx: irq: the line was not bound again FAILED\n");
+	if (erx_park(group, slot, erx_time_monotonic_ns() + PENDING_NS) != ERX_ETIMEDOUT ||
+	    erx_group_take_ready(ERX_MSG_WORDS) != 0)
+		fail("erx: irq: a pending line delivered at its bind, before its first ack FAILED\n");
+	say("erx: irq: a pending line stayed masked until its first ack\n");
+	if (erx_irq_ack(irq_uart) != ERX_OK)
+		fail("erx: irq: the service refused an ack FAILED\n");
+	uart_take();
 }
 
 /* One item of the caller's UTCB for erx_cap_pass: a copy of cap with mask's rights. */
@@ -426,7 +469,7 @@ holder_objects_make(uint64_t objects[HOLDER_HANDLES])
 
 	if (erx_object_destroy(irq_uart) != ERX_OK)
 		fail("erx: irq: the root's line object was not destroyed FAILED\n");
-	if (erx_irq_create(0, 0, ERX_IRQ_LINE, UART_LINE, &objects[HOLDER_LINE]) != ERX_OK)
+	if (erx_irq_create(0, 0, ERX_IRQ_LINE, UART_LINE, &objects[HOLDER_LINE], NULL) != ERX_OK)
 		fail("erx: irq: the line's object was not made again FAILED\n");
 	if (erx_mem_create_physical(0, 0, UART_PHYS, ERX_PAGE_SIZE, ERX_MEM_ATTR_DEVICE, &objects[HOLDER_WINDOW]) != ERX_OK)
 		fail("erx: irq: the holder's window was not made FAILED\n");
@@ -510,15 +553,8 @@ executor_main(uint64_t unused)
 	case_timed_park();
 	case_rounds();
 	atomic_store_explicit(&cases_done, 1, memory_order_release);
-	/*
-	 * A restarted driver's path on a real line: an unbind masks it, and the first
-	 * character shows the bind opened it again. The second can arrive only through the
-	 * first's ack, so the rebind comes before both: a bind between them would unmask
-	 * the line in the ack's place.
-	 */
-	if (erx_irq_bind(irq_uart, ERX_CAP_NULL, 0) != ERX_OK || erx_irq_bind(irq_uart, ERX_CAP_SELF, LABEL_UART) != ERX_OK)
-		fail("erx: irq: the line was not bound again FAILED\n");
-	case_uart("erx: irq: type a character\n");
+	/* The second character can arrive only through the first's last ack. */
+	case_pending_bind();
 	case_uart("erx: irq: type another\n");
 	case_holder();
 	say("erx: irq: done\n");
@@ -618,10 +654,10 @@ bind_objects(void)
 	say("erx: irq: the UART's receive line is free\n");
 	if (erx_device_open(&spec, NULL, NULL, &again) != ERX_OK || again != device)
 		fail("erx: irq: a second open was not the same device FAILED\n");
-	if (erx_irq_create(0, 0, ERX_IRQ_SOFT, 0, &irq_soft) != ERX_OK ||
-	    erx_irq_create(0, 0, ERX_IRQ_SOFT, 0, &irq_other) != ERX_OK)
+	if (erx_irq_create(0, 0, ERX_IRQ_SOFT, 0, &irq_soft, NULL) != ERX_OK ||
+	    erx_irq_create(0, 0, ERX_IRQ_SOFT, 0, &irq_other, NULL) != ERX_OK)
 		fail("erx: irq: no software object FAILED\n");
-	if (erx_irq_create(0, 0, ERX_IRQ_LINE, UART_LINE, &unused) != ERX_EBUSY)
+	if (erx_irq_create(0, 0, ERX_IRQ_LINE, UART_LINE, &unused, NULL) != ERX_EBUSY)
 		fail("erx: irq: a second object on the line was not refused FAILED\n");
 	if (erx_irq_bind(irq_uart, group, LABEL_UART) != ERX_OK || erx_irq_bind(irq_soft, group, LABEL_SOFT) != ERX_OK ||
 	    erx_irq_bind(irq_other, group, LABEL_OTHER) != ERX_OK)
@@ -636,6 +672,45 @@ bind_objects(void)
 		fail("erx: irq: a worker's park was not refused FAILED\n");
 	uart_set_field("imsc", "rxim");
 	uart_set_field("imsc", "rtim");
+}
+
+/*
+ * ERX_IRQ_MSI over QEMU virt's MSI frame, which this root, reading no manifest, sets
+ * from config/platforms/qemu-virt.json's msi_frame: each line from the frame's first
+ * with the frame's doorbell, ERX_ELIMIT once every line has an object, a destroyed
+ * object's line taken again, and a selector refused. No MSI arrives here: raising one
+ * is the pcie suite's (docs/design-pcie.md, "The pcie QEMU suite").
+ */
+static void
+check_msi(void)
+{
+	const erx_mf_msi_frame_t frame = { .base = MSI_FRAME_BASE, .first = MSI_FIRST, .count = MSI_COUNT };
+	uint64_t objects[MSI_COUNT], extra;
+	erx_msi_message_t message;
+	int status;
+
+	if (!erx_fiasco_irq_msi_frame(&frame))
+		fail("erx: irq: the MSI frame was refused FAILED\n");
+	for (uint32_t index = 0; index < MSI_COUNT; index++) {
+		status = erx_irq_create(0, 0, ERX_IRQ_MSI, 0, &objects[index], &message);
+		if (status != ERX_OK) {
+			report("erx: irq: an MSI create's status and line", (uint64_t)(int64_t)status, MSI_FIRST + index);
+			fail("erx: irq: the frame refused a free line FAILED\n");
+		}
+		if (message.address != MSI_FRAME_BASE + MSI_DOORBELL || message.data != MSI_FIRST + index)
+			fail("erx: irq: an MSI's message is not the frame's doorbell and its lowest free line FAILED\n");
+	}
+	if (erx_irq_create(0, 0, ERX_IRQ_MSI, 0, &extra, NULL) != ERX_ELIMIT)
+		fail("erx: irq: an MSI past the frame's last line was not refused FAILED\n");
+	if (erx_object_destroy(objects[0]) != ERX_OK || erx_irq_create(0, 0, ERX_IRQ_MSI, 0, &objects[0], &message) != ERX_OK ||
+	    message.data != MSI_FIRST)
+		fail("erx: irq: a destroyed MSI's line was not taken again FAILED\n");
+	if (erx_irq_create(0, 0, ERX_IRQ_MSI, 1, &extra, NULL) != ERX_EINVAL)
+		fail("erx: irq: an MSI that names a line was not refused FAILED\n");
+	for (uint32_t index = 0; index < MSI_COUNT; index++)
+		if (erx_object_destroy(objects[index]) != ERX_OK)
+			fail("erx: irq: an MSI object was not destroyed FAILED\n");
+	say("erx: irq: MSI lines come from the frame's lowest free one\n");
 }
 
 void
@@ -656,6 +731,7 @@ erx_fiasco_root_main(void)
 		fail("erx: irq: the archive holds no holder program FAILED\n");
 	check_time();
 	bind_objects();
+	check_msi();
 	start_executor();
 	ring_when_parked();
 	/* The executor ends the machine: this thread leaves its CPU to it. */

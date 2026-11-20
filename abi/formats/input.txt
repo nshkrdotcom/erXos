@@ -63,6 +63,12 @@ limit input_touch_slot_max u32 9
 limit input_wheel_min i32 -128
 limit input_wheel_max i32 127
 
+# The most files a granted input tree holds (docs/design-display.md, "The display
+# device"): the eight input numbers, hid0 to hid7, of a USB controller's or the
+# Bluetooth domain's tree (docs/design-usb.md, "HID reaches the display"). The display
+# starts no reader for a tree that lists more, so the router's sources stay bounded.
+limit input_tree_files_max u32 8
+
 # The fields of a record, as the scalars and enums its binary form carries: each is held
 # to the bounds above, and its base type is its width on the wire.
 scalar input_rel i32 range @input_rel_min @input_rel_max

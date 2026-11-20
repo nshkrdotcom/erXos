@@ -82,6 +82,10 @@ table waits on before its first read of rc.conf (docs/design-system.md, the
 boot's step 5). erx_domain:display_settled/1 is answered ok, by the same
 checks, once no starting configured row serves the display it names, which
 the start table waits on before it starts a row that names a display.
+erx_domain:await_grant/2 is answered, by the same checks, once the system
+domain's grant of the service it names has settled for the incarnation it
+names (erx_domain_mints:system_grant/3), which the device service waits on
+before it answers a PCIe domain's report (docs/design-pcie.md, "Facets").
 
 A session's ready report names its lines among its provides, each under a
 name of the closed set ?ERX_LINES: its line to the web domain, web_line, and to
@@ -181,8 +185,10 @@ state(Lib, Principals, Opts) ->
     %% before any application and lives as long as the runtime (close_side/4). Waiting
     %% holds, by domain id, each create or session's start not yet answered (wait_created/4),
     %% and system_waiting, newest first, each erx_domain:system_namespace/0 caller not yet
-    %% answered (answer_in_place/1), and display_waiting, newest first, each
-    %% erx_domain:display_settled/1 caller not yet answered, with the service it named.
+    %% answered (answer_in_place/1), display_waiting, newest first, each
+    %% erx_domain:display_settled/1 caller not yet answered, with the service it named,
+    %% and grant_waiting, newest first, each erx_domain:await_grant/2 caller not yet
+    %% answered, with the service and the incarnation it named.
     %% Introducing holds, by the pair's key, each introduce/2 caller, or {mints, Tag} for the mint core (reply/2), waiting for its
     %% connection to come up, with the timer of its deadline (settle_introductions/1).
     %% Held holds, by principal and in arrival order, each start waiting for the
@@ -202,7 +208,7 @@ state(Lib, Principals, Opts) ->
     MintConfig = maps:merge(#{owner => fun erx_dist:owner/1}, maps:with([owner, deadline], maps:get(mints, Opts, #{}))),
     #{lib => Lib, agent => Agent, exports => Exports, node => erlang:is_alive(), core => undefined,
       boot_timeout => ?BOOT_TIMEOUT,
-      configured => #{}, templates => #{}, waiting => #{}, system_waiting => [], display_waiting => [],
+      configured => #{}, templates => #{}, waiting => #{}, system_waiting => [], display_waiting => [], grant_waiting => [],
       links => erx_domain_links:new(),
       introducing => #{}, introduce_timeout => maps:get(introduce_timeout, Opts, ?INTRODUCE_TIMEOUT),
       held => #{}, release_wait => maps:get(release_wait, Opts, ?RELEASE_WAIT),
@@ -211,7 +217,7 @@ state(Lib, Principals, Opts) ->
       served => #{}, lines => #{},
       facet_names => maps:get(facet_names, Opts, ?ERX_FACET_NAMES),
       inspect_policy => inspect_policy(Opts), principals => Principals,
-      facet_rows => [], trees => [], app_entries => AppEntries,
+      facet_rows => [], trees => [], interfaces => #{}, app_entries => AppEntries,
       apps => erx_principal:new(apps_max(AppEntries))}.
 
 %% The app entries the library placed at boot (erx_domain_lib:apps/0), none with no
@@ -299,10 +305,12 @@ booted(#{lib := Lib} = State) ->
             Services = [{Server, Name} || {Server, Name, _Interface} <- maps:get(services, Boot, []), Server =/= system],
             Files = [Name || {_Server, Name, ?ERX_SERVICE_FILES} <- maps:get(services, Boot, [])],
             Windows = [Name || {_Server, Name, ?ERX_SERVICE_WINDOWS} <- maps:get(services, Boot, [])],
+            Inputs = [Name || {_Server, Name, ?ERX_SERVICE_INPUT} <- maps:get(services, Boot, [])],
             Trees = [Name || {_Server, Name, Interface} <- maps:get(services, Boot, []),
                              lists:member(Interface, ?ERX_TREE_SERVICES)],
             Mints = erx_domain_mints:new((maps:get(mint_config, State))#{services => Services,
-                                           grants => Minted, files => Files, windows => Windows}),
+                                           grants => Minted, files => Files, windows => Windows,
+                                           inputs => Inputs}),
             %% Only configured rows, each its index, read Served: a {template, T}
             %% grant reaches each session through the session's own facet rows, and
             %% a grant to the system domain is planned by no ready answer.
@@ -318,6 +326,8 @@ booted(#{lib := Lib} = State) ->
             State#{core := erx_domain_core:new(Host), boot_timeout := Seconds * 1000, configured := Configured,
                    mints := Mints, served := Served,
                    facet_rows := lists:enumerate(0, maps:get(grants, Boot, [])), trees := Trees,
+                   interfaces := maps:from_list([{{Server, Name}, Interface}
+                                                 || {Server, Name, Interface} <- maps:get(services, Boot, [])]),
                    templates := maps:from_list([{P, T} || #{principal := P} = T <- Templates])};
         {{error, _}, _} ->
             State#{core := erx_domain_core:new(<<>>)};
@@ -366,6 +376,8 @@ handle_call({display_settled, Name}, From, #{display_waiting := Displays} = Stat
     catch
         error:badarg -> {reply, ok, State}
     end;
+handle_call({await_grant, Name, Id}, From, #{grant_waiting := Grants} = State) when is_atom(Name), is_integer(Id) ->
+    {noreply, answer_in_place(State#{grant_waiting := [{Name, Id, From} | Grants]})};
 handle_call({register_app, Package}, _From, #{apps := Apps} = State) ->
     case erx_principal:register(Package, Apps) of
         {ok, Registered} -> {reply, ok, State#{apps := Registered}};
@@ -487,7 +499,7 @@ handle_cast(_Request, State) ->
 handle_info({domain_ended, Id, End, Record}, State) ->
     {noreply, ended(Id, End, erx_domain_core:fault_where(End, Record), State)};
 handle_info({domain_ready, Ref, Id, Provides, Inspect}, State) ->
-    {noreply, ready(Id, Ref, Provides, Inspect, State)};
+    {noreply, ready(Id, Ref, provided_atoms(Provides), Inspect, State)};
 handle_info({mint_introduced, Tag, Result}, State) ->
     {noreply, mints({introduced, Tag, Result}, State)};
 handle_info({timeout, Timer, {mint_deadline, Tag}}, #{mint_timers := Timers} = State) ->
@@ -960,8 +972,8 @@ marked(#{}) -> none.
 %% erx_fs grant its erx_fs_grants supervisor starts, and ends with that supervisor. The answer
 %% goes to the domain pid, which hands it to the domain's agent for init (edit 65). Init
 %% waits for it, so every domain that reported is answered, with no facets too. Granted,
-%% the names of the facets of configured domains the manifest grants the domain
-%% (granted/2), goes with it, so the domain mounts what it is granted before the grants
+%% the names and interfaces of the facets of configured domains the manifest grants the
+%% domain (granted/3), goes with it, so the domain mounts what it is granted before the grants
 %% are installed (docs/design-system.md, "Facets a configured domain serves").
 grant_facets(Id, Served, Granted, #{core := Core, exports := Exports} = State) ->
     {ok, #{pid := Pid, ref := Ref, facets := Facets, principal := Principal}} = erx_domain_core:fetch(Id, Core),
@@ -1015,11 +1027,34 @@ served_kind(Name, Trees) ->
         false -> message
     end.
 
+%% A ready report's provides as the service reads them. Each name crosses as its text,
+%% a binary, so the report makes no atom in the system domain (edit 9 of
+%% docs/design-runtime.md), and is read here as the atom of that text where the system
+%% domain has one. A binary it has no atom for stays a binary, and any other key, an
+%% atom included, becomes {not_a_name, Key}: neither is an atom, so no manifest row
+%% declares it and no line is named by it, the mint core refuses it as undeclared and
+%% keep_lines/4 passes it by. A value that is no map passes untouched, for the core to
+%% refuse whole.
+provided_atoms(Provides) when is_map(Provides) ->
+    #{provided_atom(Name) => Mint || Name := Mint <- Provides};
+provided_atoms(Provides) ->
+    Provides.
+
+provided_atom(Name) when is_binary(Name) ->
+    try binary_to_existing_atom(Name)
+    catch error:badarg -> Name
+    end;
+provided_atom(Key) ->
+    {not_a_name, Key}.
+
 %% A session's lines, which its ready report names among its provides under the names
 %% of ?ERX_LINES, each a process of the session's own node (erx_web_line, erx_ssh_line). The
 %% service keeps them until the session ends, for erx_domain:line/3 to hand to the
 %% domain a line serves; it hands a pid to no one before then. A provide of another
-%% name, or one that is no process of the session, names no line.
+%% name, or one that is no process of the session, names no line, and a provides that
+%% is no map names none.
+keep_lines(_Id, _Node, Provides, State) when not is_map(Provides) ->
+    State;
 keep_lines(Id, Node, Provides, #{lines := Lines} = State) ->
     case maps:filter(fun(_Name, Line) -> is_pid(Line) andalso node(Line) =:= Node end,
                      maps:with(?ERX_LINES, Provides)) of
@@ -1090,15 +1125,21 @@ served(request, _Domain, _State) ->
 code_objects_row() ->
     {code_objects, message, #{max_request => ?ERX_CODE_OBJECTS_MAX_REQUEST, in_flight => 4}}.
 
-%% The names of the facets of configured domains the manifest grants a domain of
-%% Origin: its row's, or a session's own rows, and no other domain's; none for a domain
-%% created on request, which the manifest grants nothing.
-granted({configured, Row}, _Domain, #{mints := Mints}) ->
-    erx_domain_mints:granted_names(Row, Mints);
-granted({session, _Template}, Domain, _State) ->
-    lists:usort([Name || {Name, _Server, _Limits} <- minted_rows(Domain)]);
+%% The facets of configured domains the manifest grants a domain of Origin, sorted, each
+%% {Name, Interface}, its name and its service's interface number (abi/services), by which
+%% a domain tells, say, its input trees from its other grants (erx:granted/1): its row's,
+%% or a session's own rows, and no other domain's; none for a domain created on request,
+%% which the manifest grants nothing.
+granted({configured, Row}, _Domain, #{mints := Mints} = State) ->
+    with_interfaces(erx_domain_mints:granted_services(Row, Mints), State);
+granted({session, _Template}, Domain, State) ->
+    with_interfaces([{Name, Server} || {Name, Server, _Limits} <- minted_rows(Domain)], State);
 granted(request, _Domain, _State) ->
     [].
+
+%% Each service of Services, a name and its server row, as {Name, Interface}, sorted.
+with_interfaces(Services, #{interfaces := Interfaces}) ->
+    lists:usort([{Name, maps:get({Server, Name}, Interfaces)} || {Name, Server} <- Services]).
 
 %% A session's rows of configured domains' services, which the mint core grants it.
 minted_rows(#{rows := Rows}) ->
@@ -1539,11 +1580,15 @@ mints(Event, #{mints := Mints} = State) ->
 %%
 %% The start table's callers of erx_domain:display_settled/1 wait in display_waiting
 %% until no starting row serves the display they named (erx_domain_mints:server_settled/3).
+%%
+%% The device service's callers of erx_domain:await_grant/2 wait in grant_waiting until
+%% the system domain's grant of the service they named has settled for the incarnation
+%% they named (erx_domain_mints:system_grant/3), and are answered with what it settled as.
 answer_in_place(#{core := Core, mints := Mints} = State) ->
     Starting = [Row || #{origin := {configured, Row}, state := running} <- erx_domain_core:domains(Core)],
     InPlace = fun(Grantee) -> erx_domain_mints:in_place(Grantee, Starting, Mints) end,
     Settled = fun(Name) -> erx_domain_mints:server_settled(Name, Starting, Mints) end,
-    answer_displays(Settled, answer_system(InPlace, answer_sessions(InPlace, State))).
+    answer_grants(answer_displays(Settled, answer_system(InPlace, answer_sessions(InPlace, State)))).
 
 answer_sessions(InPlace, #{waiting := Waiting, core := Core} = State) ->
     Ready = [Id || Id := #{answer_at := in_place, pid := Pid} <- Waiting, Pid =/= gone, is_ready(Id, Core)],
@@ -1575,6 +1620,12 @@ answer_displays(Settled, #{display_waiting := Displays} = State) ->
     {Answered, Waiting} = lists:partition(fun({Name, _From}) -> Settled(Name) end, Displays),
     lists:foreach(fun({_Name, From}) -> gen_server:reply(From, ok) end, lists:reverse(Answered)),
     State#{display_waiting := Waiting}.
+
+answer_grants(#{grant_waiting := Grants, mints := Mints} = State) ->
+    Answer = fun({Name, Id, _From}) -> erx_domain_mints:system_grant(Name, Id, Mints) end,
+    {Waiting, Answered} = lists:partition(fun(Wait) -> Answer(Wait) =:= wait end, Grants),
+    lists:foreach(fun({_Name, _Id, From} = Wait) -> gen_server:reply(From, Answer(Wait)) end, lists:reverse(Answered)),
+    State#{grant_waiting := Waiting}.
 
 is_ready(Id, Core) ->
     case erx_domain_core:fetch(Id, Core) of

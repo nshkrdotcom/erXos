@@ -30,6 +30,7 @@ controls = {
   'spawn-request' => [tuple.call(small.call(29), sender_ref, from, to,
                                  tuple.call(atom.call('m'), atom.call('f'), small.call(1)), options), true],
   'spawn-reply' => [tuple.call(small.call(31), ref, to, small.call(0), from), false],
+  'spawn-reply-error' => [tuple.call(small.call(31), ref, to, small.call(0), atom.call('badopt')), false],
   'unlink' => [tuple.call(small.call(35), [110, 8, 0, *([0xff] * 8)].pack('C*'), from, to), false]
 }
 payload = "\x83".b + [108, 1].pack('CN') + atom.call('hello') + "\x6a"

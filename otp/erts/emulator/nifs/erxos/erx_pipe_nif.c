@@ -389,7 +389,7 @@ make_bell(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
 	    !enif_get_uint(env, argv[1], &pipe) ||
 	    !enif_get_uint(env, argv[2], &end))
 		return (enif_make_badarg(env));
-	if (erx_irq_create(ERX_CAP_NULL, 0, ERX_IRQ_SOFT, 0, &cap) != ERX_OK)
+	if (erx_irq_create(ERX_CAP_NULL, 0, ERX_IRQ_SOFT, 0, &cap, NULL) != ERX_OK)
 		return (error_term(env, atom_enomem));
 	if ((bell = obj_new(OBJ_BELL, cap, 0)) == NULL) {
 		(void)erx_cap_close((erx_cap_t){ .raw = cap });

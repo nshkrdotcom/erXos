@@ -1,0 +1,409 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
+     SPDX-License-Identifier: BSD-2-Clause
+
+     An xHCI host controller's registers, written by erXos from Intel's "eXtensible
+     Host Controller Interface for Universal Serial Bus (xHCI) Requirements
+     Specification", Revision 1.2, May 2019 (SHA-256
+     9257ca24f34bff08e6020623f707c788ca0f0df657aa713309ff489a68b1731e), chapter 5,
+     cited by section and page beside each register, with FreeBSD's
+     sys/dev/usb/controller/xhcireg.h at release/15.1.0-p6 (commit
+     95719d8a895bf8170851e9844d9b4092b1d2b6fe, SHA-256
+     aa6a4db443f69c08e708a45e754f5259cfc6cf8260aef1bd18239af69a25a13d) as the
+     cross-check; where the two differ the specification is followed. Only the
+     registers the USB design names are here (docs/design-usb.md, "The controller
+     process" and "Registers at offsets the controller reports"), and interrupter 0's
+     alone, the one the controller process uses.
+
+     Four groups (5.3, 5.4, 5.5 and 5.6): the capability registers at the window's
+     start, and the operational, runtime and doorbell registers, each a cluster at
+     the offset a capability register reports, CAPLENGTH, RTSOFF and DBOFF; each
+     names that register's field in baseFrom, whose bits in place are the offset
+     (5.3.1, p. 381; 5.3.7, pp. 387-388; 5.3.8, p. 388). The window this file declares is
+     the capability registers', 0x20 bytes (Table 5-9, p. 381); every other cluster
+     lies where the controller says, inside the window the device NIF opens.
+
+     The extended capabilities (chapter 7, p. 517) are a list whose head
+     HCCPARAMS1's XECP gives in 32-bit words from the window's start, named once on
+     the peripheral in capabilitiesFrom; each entry's first word holds its ID in bits
+     7:0 and, in bits 15:8, the next entry's offset in words forward from itself, 0
+     ending the list (Table 7-1, p. 517). A cluster with a capabilityId lies at the
+     entry with that ID (Table 7-2, p. 517) that the device NIF's walk finds, and
+     PROTOCOL[%s] is one cluster for each of up to dim such entries, in list order,
+     as many as the walk found; neither has a dimIncrement, since each instance lies
+     where its entry does.
+
+     Write semantics follow Table 5-3 (5.1.1, pp. 369-370): RW1C and RW1CS are
+     oneToClear, RW1S oneToSet, and a field the specification says always reads 0 is
+     write-only, as CMSIS-SVD's write-only says a read has no defined result. A
+     reserved bit is in no field, so it is written as zero: RsvdZ asks that, and
+     RsvdP asks the value read, which an implementation of this revision holds at 0.
+     64-bit registers are pairs of 32-bit halves, low then high, which the
+     specification allows every controller (5.1, p. 368) and FreeBSD writes.
+
+     The device NIF owns DCBAAP, CRCR, CONFIG, ERSTSZ, ERSTBA, ERDP and every
+     doorbell whole, and USBCMD's R/S, its two resets HCRST and LHCRST, INTE, HSEE,
+     CSS and CRS, and IMAN's IE as fields
+     (docs/design-usb.md, "Install", "Registers it owns"). -->
+<device schemaVersion="1.3">
+  <name>XHCI</name>
+  <version>1.2</version>
+  <description>xHCI host controller</description>
+  <addressUnitBits>8</addressUnitBits>
+  <width>32</width>
+  <peripherals>
+    <peripheral>
+      <name>XHCI</name>
+      <baseAddress>0</baseAddress>
+      <addressBlock><offset>0</offset><size>0x20</size><usage>registers</usage></addressBlock>
+      <capabilitiesFrom>HCCPARAMS1.XECP</capabilitiesFrom>
+      <registers>
+        <!-- 5.3, Table 5-9, p. 381. -->
+        <cluster>
+          <name>CAPABILITY</name>
+          <addressOffset>0</addressOffset>
+          <!-- 5.3.1, p. 381: the operational registers' offset from the window's start. -->
+          <register>
+            <name>CAPLENGTH</name><ownedByNif>false</ownedByNif><size>8</size><addressOffset>0x00</addressOffset><access>read-only</access>
+            <fields>
+              <field><name>CAPLENGTH</name><bitOffset>0</bitOffset><bitWidth>8</bitWidth></field>
+            </fields>
+          </register>
+          <!-- 5.3.2, pp. 381-382. -->
+          <register>
+            <name>HCIVERSION</name><ownedByNif>false</ownedByNif><size>16</size><addressOffset>0x02</addressOffset><access>read-only</access>
+            <fields>
+              <field><name>VERSION</name><bitOffset>0</bitOffset><bitWidth>16</bitWidth></field>
+            </fields>
+          </register>
+          <!-- 5.3.3, Table 5-10, p. 382. MaxIntrs is bits 18:8 there; xhcireg.h masks ten bits. -->
+          <register>
+            <name>HCSPARAMS1</name><ownedByNif>false</ownedByNif><addressOffset>0x04</addressOffset><access>read-only</access>
+            <fields>
+              <field><name>MAXSLOTS</name><bitOffset>0</bitOffset><bitWidth>8</bitWidth></field>
+              <field><name>MAXINTRS</name><bitOffset>8</bitOffset><bitWidth>11</bitWidth></field>
+              <field><name>MAXPORTS</name><bitOffset>24</bitOffset><bitWidth>8</bitWidth></field>
+            </fields>
+          </register>
+          <!-- 5.3.4, Table 5-11, pp. 383-384. -->
+          <register>
+            <name>HCSPARAMS2</name><ownedByNif>false</ownedByNif><addressOffset>0x08</addressOffset><access>read-only</access>
+            <fields>
+              <field><name>IST</name><bitOffset>0</bitOffset><bitWidth>4</bitWidth></field>
+              <field><name>ERST_MAX</name><bitOffset>4</bitOffset><bitWidth>4</bitWidth></field>
+              <field><name>SPB_MAX_HI</name><bitOffset>21</bitOffset><bitWidth>5</bitWidth></field>
+              <field><name>SPR</name><bitOffset>26</bitOffset><bitWidth>1</bitWidth></field>
+              <field><name>SPB_MAX_LO</name><bitOffset>27</bitOffset><bitWidth>5</bitWidth></field>
+            </fields>
+          </register>
+          <!-- 5.3.5, Table 5-12, pp. 384-385. -->
+          <register>
+            <name>HCSPARAMS3</name><ownedByNif>false</ownedByNif><addressOffset>0x0c</addressOffset><access>read-only</access>
+            <fields>
+              <field><name>U1_DEL</name><bitOffset>0</bitOffset><bitWidth>8</bitWidth></field>
+              <field><name>U2_DEL</name><bitOffset>16</bitOffset><bitWidth>16</bitWidth></field>
+            </fields>
+          </register>
+          <!-- 5.3.6, Table 5-13, pp. 385-387. XECP counts 32-bit words from the window's start. -->
+          <register>
+            <name>HCCPARAMS1</name><ownedByNif>false</ownedByNif><addressOffset>0x10</addressOffset><access>read-only</access>
+            <fields>
+              <field><name>AC64</name><bitOffset>0</bitOffset><bitWidth>1</bitWidth></field>
+              <field><name>BNC</name><bitOffset>1</bitOffset><bitWidth>1</bitWidth></field>
+              <field><name>CSZ</name><bitOffset>2</bitOffset><bitWidth>1</bitWidth></field>
+              <field><name>PPC</name><bitOffset>3</bitOffset><bitWidth>1</bitWidth></field>
+              <field><name>PIND</name><bitOffset>4</bitOffset><bitWidth>1</bitWidth></field>
+              <field><name>LHRC</name><bitOffset>5</bitOffset><bitWidth>1</bitWidth></field>
+              <field><name>LTC</name><bitOffset>6</bitOffset><bitWidth>1</bitWidth></field>
+              <field><name>NSS</name><bitOffset>7</bitOffset><bitWidth>1</bitWidth></field>
+              <field><name>PAE</name><bitOffset>8</bitOffset><bitWidth>1</bitWidth></field>
+              <field><name>SPC</name><bitOffset>9</bitOffset><bitWidth>1</bitWidth></field>
+              <field><name>SEC</name><bitOffset>10</bitOffset><bitWidth>1</bitWidth></field>
+              <field><name>CFC</name><bitOffset>11</bitOffset><bitWidth>1</bitWidth></field>
+              <field><name>MAXPSASIZE</name><bitOffset>12</bitOffset><bitWidth>4</bitWidth></field>
+              <field><name>XECP</name><bitOffset>16</bitOffset><bitWidth>16</bitWidth></field>
+            </fields>
+          </register>
+          <!-- 5.3.7, Table 5-14, pp. 387-388: bits 31:2 in place are the doorbells' byte offset. -->
+          <register>
+            <name>DBOFF</name><ownedByNif>false</ownedByNif><addressOffset>0x14</addressOffset><access>read-only</access>
+            <fields>
+              <field><name>OFFSET</name><bitOffset>2</bitOffset><bitWidth>30</bitWidth></field>
+            </fields>
+          </register>
+          <!-- 5.3.8, Table 5-15, p. 388: bits 31:5 in place are the runtime registers' byte offset. -->
+          <register>
+            <name>RTSOFF</name><ownedByNif>false</ownedByNif><addressOffset>0x18</addressOffset><access>read-only</access>
+            <fields>
+              <field><name>OFFSET</name><bitOffset>5</bitOffset><bitWidth>27</bitWidth></field>
+            </fields>
+          </register>
+          <!-- 5.3.9, Table 5-16, pp. 389-390. -->
+          <register>
+            <name>HCCPARAMS2</name><ownedByNif>false</ownedByNif><addressOffset>0x1c</addressOffset><access>read-only</access>
+            <fields>
+              <field><name>U3C</name><bitOffset>0</bitOffset><bitWidth>1</bitWidth></field>
+              <field><name>CMC</name><bitOffset>1</bitOffset><bitWidth>1</bitWidth></field>
+              <field><name>FSC</name><bitOffset>2</bitOffset><bitWidth>1</bitWidth></field>
+              <field><name>CTC</name><bitOffset>3</bitOffset><bitWidth>1</bitWidth></field>
+              <field><name>LEC</name><bitOffset>4</bitOffset><bitWidth>1</bitWidth></field>
+              <field><name>CIC</name><bitOffset>5</bitOffset><bitWidth>1</bitWidth></field>
+              <field><name>ETC</name><bitOffset>6</bitOffset><bitWidth>1</bitWidth></field>
+              <field><name>ETC_TSC</name><bitOffset>7</bitOffset><bitWidth>1</bitWidth></field>
+              <field><name>GSC</name><bitOffset>8</bitOffset><bitWidth>1</bitWidth></field>
+              <field><name>VTC</name><bitOffset>9</bitOffset><bitWidth>1</bitWidth></field>
+            </fields>
+          </register>
+        </cluster>
+        <!-- 5.4, Tables 5-18 and 5-19, pp. 391-392: at CAPLENGTH. -->
+        <cluster>
+          <name>OPERATIONAL</name>
+          <addressOffset>0</addressOffset>
+          <baseFrom>CAPLENGTH.CAPLENGTH</baseFrom>
+          <!-- 5.4.1, Table 5-20, pp. 393-396. HCRST and LHCRST read 1 until their reset ends;
+               CSS and CRS always read 0. ETE and TSC_EN state no attribute; software sets them. A light reset
+               (LHCRST) resets the controller's state, as HCRST does (4.23.1), so both resets are owned, and
+               so are CSS and CRS, which save the controller's state to memory and restore it from there. -->
+          <register>
+            <name>USBCMD</name><addressOffset>0x00</addressOffset><access>read-write</access>
+            <fields>
+              <field><name>RS</name><bitOffset>0</bitOffset><bitWidth>1</bitWidth><ownedByNif>true</ownedByNif></field>
+              <field><name>HCRST</name><bitOffset>1</bitOffset><bitWidth>1</bitWidth><modifiedWriteValues>oneToSet</modifiedWriteValues><ownedByNif>true</ownedByNif></field>
+              <field><name>INTE</name><bitOffset>2</bitOffset><bitWidth>1</bitWidth><ownedByNif>true</ownedByNif></field>
+              <field><name>HSEE</name><bitOffset>3</bitOffset><bitWidth>1</bitWidth><ownedByNif>true</ownedByNif></field>
+              <field><name>LHCRST</name><bitOffset>7</bitOffset><bitWidth>1</bitWidth><modifiedWriteValues>oneToSet</modifiedWriteValues><ownedByNif>true</ownedByNif></field>
+              <field><name>CSS</name><bitOffset>8</bitOffset><bitWidth>1</bitWidth><access>write-only</access><ownedByNif>true</ownedByNif></field>
+              <field><name>CRS</name><bitOffset>9</bitOffset><bitWidth>1</bitWidth><access>write-only</access><ownedByNif>true</ownedByNif></field>
+              <field><name>EWE</name><bitOffset>10</bitOffset><bitWidth>1</bitWidth></field>
+              <field><name>EU3S</name><bitOffset>11</bitOffset><bitWidth>1</bitWidth></field>
+              <field><name>CME</name><bitOffset>13</bitOffset><bitWidth>1</bitWidth></field>
+              <field><name>ETE</name><bitOffset>14</bitOffset><bitWidth>1</bitWidth></field>
+              <field><name>TSC_EN</name><bitOffset>15</bitOffset><bitWidth>1</bitWidth></field>
+              <field><name>VTIOE</name><bitOffset>16</bitOffset><bitWidth>1</bitWidth></field>
+            </fields>
+          </register>
+          <!-- 5.4.2, Table 5-21, pp. 397-399. -->
+          <register>
+            <name>USBSTS</name><ownedByNif>false</ownedByNif><addressOffset>0x04</addressOffset><access>read-write</access>
+            <fields>
+              <field><name>HCH</name><bitOffset>0</bitOffset><bitWidth>1</bitWidth><access>read-only</access></field>
+              <field><name>HSE</name><bitOffset>2</bitOffset><bitWidth>1</bitWidth><modifiedWriteValues>oneToClear</modifiedWriteValues></field>
+              <field><name>EINT</name><bitOffset>3</bitOffset><bitWidth>1</bitWidth><modifiedWriteValues>oneToClear</modifiedWriteValues></field>
+              <field><name>PCD</name><bitOffset>4</bitOffset><bitWidth>1</bitWidth><modifiedWriteValues>oneToClear</modifiedWriteValues></field>
+              <field><name>SSS</name><bitOffset>8</bitOffset><bitWidth>1</bitWidth><access>read-only</access></field>
+              <field><name>RSS</name><bitOffset>9</bitOffset><bitWidth>1</bitWidth><access>read-only</access></field>
+              <field><name>SRE</name><bitOffset>10</bitOffset><bitWidth>1</bitWidth><modifiedWriteValues>oneToClear</modifiedWriteValues></field>
+              <field><name>CNR</name><bitOffset>11</bitOffset><bitWidth>1</bitWidth><access>read-only</access></field>
+              <field><name>HCE</name><bitOffset>12</bitOffset><bitWidth>1</bitWidth><access>read-only</access></field>
+            </fields>
+          </register>
+          <!-- 5.4.3, Table 5-22, pp. 399-400: bit n set means pages of 2^(n+12) bytes. -->
+          <register>
+            <name>PAGESIZE</name><ownedByNif>false</ownedByNif><addressOffset>0x08</addressOffset><access>read-only</access>
+            <fields>
+              <!-- Bit 0 of the bitmap, pages of 4 KiB, the one size the device NIF lays out. -->
+              <field><name>FOUR_KIB</name><bitOffset>0</bitOffset><bitWidth>1</bitWidth></field>
+            </fields>
+          </register>
+          <!-- 5.4.5, Table 5-24, pp. 401-403. Every writable bit reads 0. -->
+          <register>
+            <name>CRCR_LO</name><ownedByNif>true</ownedByNif><addressOffset>0x18</addressOffset><access>read-write</access>
+            <fields>
+              <field><name>RCS</name><bitOffset>0</bitOffset><bitWidth>1</bitWidth><access>write-only</access></field>
+              <field><name>CS</name><bitOffset>1</bitOffset><bitWidth>1</bitWidth><access>write-only</access><modifiedWriteValues>oneToSet</modifiedWriteValues></field>
+              <field><name>CA</name><bitOffset>2</bitOffset><bitWidth>1</bitWidth><access>write-only</access><modifiedWriteValues>oneToSet</modifiedWriteValues></field>
+              <field><name>CRR</name><bitOffset>3</bitOffset><bitWidth>1</bitWidth><access>read-only</access></field>
+              <field><name>POINTER_LO</name><bitOffset>6</bitOffset><bitWidth>26</bitWidth><access>write-only</access></field>
+            </fields>
+          </register>
+          <register>
+            <name>CRCR_HI</name><ownedByNif>true</ownedByNif><addressOffset>0x1c</addressOffset><access>write-only</access>
+            <fields>
+              <field><name>POINTER_HI</name><bitOffset>0</bitOffset><bitWidth>32</bitWidth></field>
+            </fields>
+          </register>
+          <!-- 5.4.6, Table 5-25, pp. 403-404. -->
+          <register>
+            <name>DCBAAP_LO</name><ownedByNif>true</ownedByNif><addressOffset>0x30</addressOffset><access>read-write</access>
+            <fields>
+              <field><name>POINTER_LO</name><bitOffset>6</bitOffset><bitWidth>26</bitWidth></field>
+            </fields>
+          </register>
+          <register>
+            <name>DCBAAP_HI</name><ownedByNif>true</ownedByNif><addressOffset>0x34</addressOffset><access>read-write</access>
+            <fields>
+              <field><name>POINTER_HI</name><bitOffset>0</bitOffset><bitWidth>32</bitWidth></field>
+            </fields>
+          </register>
+          <!-- 5.4.7, Table 5-26, pp. 404-405. -->
+          <register>
+            <name>CONFIG</name><ownedByNif>true</ownedByNif><addressOffset>0x38</addressOffset><access>read-write</access>
+            <fields>
+              <field><name>MAXSLOTSEN</name><bitOffset>0</bitOffset><bitWidth>8</bitWidth></field>
+              <field><name>U3E</name><bitOffset>8</bitOffset><bitWidth>1</bitWidth></field>
+              <field><name>CIE</name><bitOffset>9</bitOffset><bitWidth>1</bitWidth></field>
+            </fields>
+          </register>
+          <!-- 5.4.8, Table 5-27, pp. 405-413: port n at 0x400 + 0x10 * (n - 1), element n - 1
+               here, for n up to HCSPARAMS1's MaxPorts. PED's 1 disables the port; PLS reads the
+               link's state and a write, taken only with LWS, asks for a transition, so what
+               is read after a write is not what was written; LWS and WPR read 0. -->
+          <register>
+            <name>PORTSC[%s]</name><ownedByNif>false</ownedByNif><addressOffset>0x400</addressOffset><access>read-write</access>
+            <dim>255</dim><dimIncrement>0x10</dimIncrement><dimFrom>HCSPARAMS1.MAXPORTS</dimFrom>
+            <fields>
+              <field><name>CCS</name><bitOffset>0</bitOffset><bitWidth>1</bitWidth><access>read-only</access></field>
+              <field><name>PED</name><bitOffset>1</bitOffset><bitWidth>1</bitWidth><modifiedWriteValues>oneToClear</modifiedWriteValues></field>
+              <field><name>OCA</name><bitOffset>3</bitOffset><bitWidth>1</bitWidth><access>read-only</access></field>
+              <field><name>PR</name><bitOffset>4</bitOffset><bitWidth>1</bitWidth><modifiedWriteValues>oneToSet</modifiedWriteValues></field>
+              <field><name>PLS</name><bitOffset>5</bitOffset><bitWidth>4</bitWidth><modifiedWriteValues>modify</modifiedWriteValues>
+                <!-- Table 5-27, p. 408: 3 is the U3 state, a suspended device. -->
+                <enumeratedValues>
+                  <enumeratedValue><name>U3</name><value>3</value></enumeratedValue>
+                </enumeratedValues>
+              </field>
+              <field><name>PP</name><bitOffset>9</bitOffset><bitWidth>1</bitWidth></field>
+              <field><name>SPEED</name><bitOffset>10</bitOffset><bitWidth>4</bitWidth><access>read-only</access></field>
+              <field><name>PIC</name><bitOffset>14</bitOffset><bitWidth>2</bitWidth></field>
+              <field><name>LWS</name><bitOffset>16</bitOffset><bitWidth>1</bitWidth><access>write-only</access></field>
+              <field><name>CSC</name><bitOffset>17</bitOffset><bitWidth>1</bitWidth><modifiedWriteValues>oneToClear</modifiedWriteValues></field>
+              <field><name>PEC</name><bitOffset>18</bitOffset><bitWidth>1</bitWidth><modifiedWriteValues>oneToClear</modifiedWriteValues></field>
+              <field><name>WRC</name><bitOffset>19</bitOffset><bitWidth>1</bitWidth><modifiedWriteValues>oneToClear</modifiedWriteValues></field>
+              <field><name>OCC</name><bitOffset>20</bitOffset><bitWidth>1</bitWidth><modifiedWriteValues>oneToClear</modifiedWriteValues></field>
+              <field><name>PRC</name><bitOffset>21</bitOffset><bitWidth>1</bitWidth><modifiedWriteValues>oneToClear</modifiedWriteValues></field>
+              <field><name>PLC</name><bitOffset>22</bitOffset><bitWidth>1</bitWidth><modifiedWriteValues>oneToClear</modifiedWriteValues></field>
+              <field><name>CEC</name><bitOffset>23</bitOffset><bitWidth>1</bitWidth><modifiedWriteValues>oneToClear</modifiedWriteValues></field>
+              <field><name>CAS</name><bitOffset>24</bitOffset><bitWidth>1</bitWidth><access>read-only</access></field>
+              <field><name>WCE</name><bitOffset>25</bitOffset><bitWidth>1</bitWidth></field>
+              <field><name>WDE</name><bitOffset>26</bitOffset><bitWidth>1</bitWidth></field>
+              <field><name>WOE</name><bitOffset>27</bitOffset><bitWidth>1</bitWidth></field>
+              <field><name>DR</name><bitOffset>30</bitOffset><bitWidth>1</bitWidth><access>read-only</access></field>
+              <field><name>WPR</name><bitOffset>31</bitOffset><bitWidth>1</bitWidth><access>write-only</access><modifiedWriteValues>oneToSet</modifiedWriteValues></field>
+            </fields>
+          </register>
+        </cluster>
+        <!-- 5.5, Table 5-35, p. 423, and 5.5.2, Table 5-37, p. 424: at RTSOFF; interrupter 0's set at 0x20. -->
+        <cluster>
+          <name>RUNTIME</name>
+          <addressOffset>0</addressOffset>
+          <baseFrom>RTSOFF.OFFSET</baseFrom>
+          <!-- 5.5.1, Table 5-36, p. 423. -->
+          <register>
+            <name>MFINDEX</name><ownedByNif>false</ownedByNif><addressOffset>0x00</addressOffset><access>read-only</access>
+            <fields>
+              <field><name>INDEX</name><bitOffset>0</bitOffset><bitWidth>14</bitWidth></field>
+            </fields>
+          </register>
+          <!-- 5.5.2.1, Table 5-38, pp. 425-426. -->
+          <register>
+            <name>IMAN</name><addressOffset>0x20</addressOffset><access>read-write</access>
+            <fields>
+              <field><name>IP</name><bitOffset>0</bitOffset><bitWidth>1</bitWidth><modifiedWriteValues>oneToClear</modifiedWriteValues></field>
+              <field><name>IE</name><bitOffset>1</bitOffset><bitWidth>1</bitWidth><ownedByNif>true</ownedByNif></field>
+            </fields>
+          </register>
+          <!-- 5.5.2.2, Table 5-39, pp. 426-427. -->
+          <register>
+            <name>IMOD</name><ownedByNif>false</ownedByNif><addressOffset>0x24</addressOffset><access>read-write</access>
+            <fields>
+              <field><name>IMODI</name><bitOffset>0</bitOffset><bitWidth>16</bitWidth></field>
+              <field><name>IMODC</name><bitOffset>16</bitOffset><bitWidth>16</bitWidth></field>
+            </fields>
+          </register>
+          <!-- 5.5.2.3.1, Table 5-40, p. 427. -->
+          <register>
+            <name>ERSTSZ</name><ownedByNif>true</ownedByNif><addressOffset>0x28</addressOffset><access>read-write</access>
+            <fields>
+              <field><name>SIZE</name><bitOffset>0</bitOffset><bitWidth>16</bitWidth></field>
+            </fields>
+          </register>
+          <!-- 5.5.2.3.2, Table 5-41, pp. 427-428. -->
+          <register>
+            <name>ERSTBA_LO</name><ownedByNif>true</ownedByNif><addressOffset>0x30</addressOffset><access>read-write</access>
+            <fields>
+              <field><name>ADDRESS_LO</name><bitOffset>6</bitOffset><bitWidth>26</bitWidth></field>
+            </fields>
+          </register>
+          <register>
+            <name>ERSTBA_HI</name><ownedByNif>true</ownedByNif><addressOffset>0x34</addressOffset><access>read-write</access>
+            <fields>
+              <field><name>ADDRESS_HI</name><bitOffset>0</bitOffset><bitWidth>32</bitWidth></field>
+            </fields>
+          </register>
+          <!-- 5.5.2.3.3, Table 5-42, pp. 428-429. -->
+          <register>
+            <name>ERDP_LO</name><ownedByNif>true</ownedByNif><addressOffset>0x38</addressOffset><access>read-write</access>
+            <fields>
+              <field><name>DESI</name><bitOffset>0</bitOffset><bitWidth>3</bitWidth></field>
+              <field><name>EHB</name><bitOffset>3</bitOffset><bitWidth>1</bitWidth><modifiedWriteValues>oneToClear</modifiedWriteValues></field>
+              <field><name>POINTER_LO</name><bitOffset>4</bitOffset><bitWidth>28</bitWidth></field>
+            </fields>
+          </register>
+          <register>
+            <name>ERDP_HI</name><ownedByNif>true</ownedByNif><addressOffset>0x3c</addressOffset><access>read-write</access>
+            <fields>
+              <field><name>POINTER_HI</name><bitOffset>0</bitOffset><bitWidth>32</bitWidth></field>
+            </fields>
+          </register>
+        </cluster>
+        <!-- 5.6, pp. 429-431: at DBOFF, up to 256 doorbells, as many as HCSPARAMS1's MaxSlots
+             says; doorbell 0 is the command ring's. Both fields read 0 (Table 5-43, pp. 430-431). -->
+        <cluster>
+          <name>DOORBELL</name>
+          <addressOffset>0</addressOffset>
+          <baseFrom>DBOFF.OFFSET</baseFrom>
+          <register>
+            <name>DB[%s]</name><ownedByNif>true</ownedByNif><addressOffset>0x00</addressOffset><access>write-only</access>
+            <dim>256</dim><dimIncrement>4</dimIncrement>
+            <fields>
+              <field><name>TARGET</name><bitOffset>0</bitOffset><bitWidth>8</bitWidth></field>
+              <field><name>STREAM_ID</name><bitOffset>16</bitOffset><bitWidth>16</bitWidth></field>
+            </fields>
+          </register>
+        </cluster>
+        <!-- 7.1, Table 7-4, pp. 519-520: the legacy support capability, ID 1. Its semaphores are
+             the bytes at +2 and +3, bits 16 and 24 of USBLEGSUP, each written alone as 7.1.1 asks and
+             FreeBSD does (xhcireg.h:198-199); USBLEGCTLSTS at +4 is not used. -->
+        <cluster>
+          <name>LEGACY</name>
+          <addressOffset>0</addressOffset>
+          <capabilityId>1</capabilityId>
+          <register>
+            <name>BIOS_OWNED</name><ownedByNif>false</ownedByNif><size>8</size><addressOffset>0x02</addressOffset><access>read-write</access>
+            <fields>
+              <field><name>OWNED</name><bitOffset>0</bitOffset><bitWidth>1</bitWidth></field>
+            </fields>
+          </register>
+          <register>
+            <name>OS_OWNED</name><ownedByNif>false</ownedByNif><size>8</size><addressOffset>0x03</addressOffset><access>read-write</access>
+            <fields>
+              <field><name>OWNED</name><bitOffset>0</bitOffset><bitWidth>1</bitWidth></field>
+            </fields>
+          </register>
+        </cluster>
+        <!-- 7.2, Tables 7-6 and 7-8, pp. 522-523: a supported protocol capability, ID 2, one for
+             each protocol and revision the controller's root ports speak. -->
+        <cluster>
+          <name>PROTOCOL[%s]</name>
+          <addressOffset>0</addressOffset>
+          <capabilityId>2</capabilityId>
+          <dim>8</dim>
+          <register>
+            <name>REVISION</name><ownedByNif>false</ownedByNif><addressOffset>0x00</addressOffset><access>read-only</access>
+            <fields>
+              <field><name>MINOR</name><bitOffset>16</bitOffset><bitWidth>8</bitWidth></field>
+              <field><name>MAJOR</name><bitOffset>24</bitOffset><bitWidth>8</bitWidth></field>
+            </fields>
+          </register>
+          <register>
+            <name>PORTS</name><ownedByNif>false</ownedByNif><addressOffset>0x08</addressOffset><access>read-only</access>
+            <fields>
+              <field><name>OFFSET</name><bitOffset>0</bitOffset><bitWidth>8</bitWidth></field>
+              <field><name>COUNT</name><bitOffset>8</bitOffset><bitWidth>8</bitWidth></field>
+            </fields>
+          </register>
+        </cluster>
+      </registers>
+    </peripheral>
+  </peripherals>
+</device>

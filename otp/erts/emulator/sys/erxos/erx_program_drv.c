@@ -798,7 +798,7 @@ apply(program_t *program, erx_program_action_t action)
 	case ERX_PROGRAM_CHANNEL_MAP:
 		return (channel_map(program));
 	case ERX_PROGRAM_BELL_CREATE:
-		return (erx_irq_create(boot->budget.raw, 0, ERX_IRQ_SOFT, 0, &program->bell));
+		return (erx_irq_create(boot->budget.raw, 0, ERX_IRQ_SOFT, 0, &program->bell, NULL));
 	case ERX_PROGRAM_DATA_CREATE:
 		return (erx_mem_create(boot->budget.raw, data_bytes(program), 0, &program->data));
 	case ERX_PROGRAM_DATA_MAP:
@@ -809,7 +809,7 @@ apply(program_t *program, erx_program_action_t action)
 	case ERX_PROGRAM_GROUP_CREATE:
 		return (erx_group_create(program->budget, boot->spaces_group.raw, &program->group));
 	case ERX_PROGRAM_IRQ_CREATE:
-		return (erx_irq_create(boot->budget.raw, 0, ERX_IRQ_SOFT, 0, &program->irq));
+		return (erx_irq_create(boot->budget.raw, 0, ERX_IRQ_SOFT, 0, &program->irq, NULL));
 	case ERX_PROGRAM_SINK_REGISTER:
 		return (erx_event_register_port(driver_mk_port(program->port), 0, &program->sink));
 	case ERX_PROGRAM_IRQ_BIND:

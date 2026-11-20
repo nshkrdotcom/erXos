@@ -9,7 +9,7 @@
  * manifest's bytes, as tools/host/dom_plan.c does with no archive files,
  * and prints what /dev and the domain service read of it.
  *
- *   dom-view MANIFEST [framebuffer]
+ *   dom-view MANIFEST [framebuffer|pci]
  *
  * One line per catalogue entry, then one per service row, then one per
  * configured row that serves a display, with the display its creation puts
@@ -38,6 +38,24 @@
  *   framebuffer INDEX again placed=0|1 ranges=BASE+SIZE,...
  *
  * numbers in hexadecimal.
+ *
+ * With pci, it prints instead each PCIe host bridge's catalogue as the view
+ * builds it, then the report the library takes for it once the root has
+ * joined the tree's facts (erx_dom_view_bridge), a window moving PCI
+ * PCI_WINDOW_PCI to CPU PCI_WINDOW_CPU over buses 0 and 1: one ready
+ * function at each pci row's place below the bridge, of the row's identity
+ * and its place's pin, each with one 4 KiB 64-bit BAR placed in turn from
+ * the window's start (erx_dom_lib_pci_report), and the same report on the
+ * catalogue joined instead to a tree the reader refused; then whether a give finds
+ * each pci row's function in the view's catalogues (erx_dom_pci_given),
+ * with its first BAR's CPU range:
+ *
+ *   bridge INDEX row=ROW closed=0|1 places=BUS.DEVICE.FUNCTION/PIN,...
+ *   report ROW status=STATUS field=FIELD|none
+ *   refused ROW status=STATUS field=FIELD|none
+ *   given INDEX cpu=BASE+SIZE|none
+ *
+ * numbers in hexadecimal for ranges and decimal elsewhere.
  */
 
 #include <inttypes.h>
@@ -70,6 +88,10 @@ print_device(uint32_t index, const erx_dom_device_entry_t *entry)
 	printf("device %" PRIu32 " unit=%.*s compatible=%s", index, (int)entry->unit_name_len,
 	    entry->unit_name, entry->compatible == NULL ? "none" : entry->compatible);
 	print_ranges(entry);
+	if (entry->selector == ERX_MF_SELECTOR_PCI)
+		printf(" bridge=%" PRIu32 " place=%u.%u.%u role=%s peripheral=%s", entry->bridge, entry->bus,
+		    entry->device, entry->function, entry->role_word == NULL ? "none" : entry->role_word,
+		    entry->peripheral == NULL ? "none" : entry->peripheral);
 	printf(" lines=");
 	for (uint32_t at = 0; at < entry->nlines; at++)
 		printf("%s%" PRIu32, at == 0 ? "" : ",", entry->lines[at]);
@@ -78,6 +100,8 @@ print_device(uint32_t index, const erx_dom_device_entry_t *entry)
 
 #define FRAMEBUFFER_OFFSET	0x400u
 #define FRAMEBUFFER_LENGTH	0x2000u
+#define PCI_WINDOW_PCI		UINT64_C(0xc0000000)
+#define PCI_WINDOW_CPU		UINT64_C(0x600000000)
 
 /*
  * Each framebuffer row's ranges as built and after each of two placements, through tables,
@@ -144,6 +168,93 @@ print_system_image(const erx_dom_lib_t *lib)
 	return (true);
 }
 
+/* The pin a closed bridge lists for entry's place, or 1 (INTA) on an open bridge. */
+static uint8_t
+pci_pin(const erx_dom_pci_bridge_t *bridge, const erx_dom_device_entry_t *entry)
+{
+	for (uint32_t at = 0; at < ERX_PCIE_CLOSED_MAX; at++) {
+		const erx_pcie_place_t *const place = &bridge->facts.places[at];
+
+		if (place->bus == entry->bus && place->device == entry->device && place->function == entry->function)
+			return (place->pin);
+	}
+	return (1);
+}
+
+/*
+ * The same report on a copy of the bridge's catalogue joined to a tree the
+ * reader refused, which takes no report.
+ */
+static void
+pci_refused(erx_dom_lib_t *lib, uint32_t at, const erx_pcie_function_t *report, uint32_t count)
+{
+	const erx_dom_pci_bridge_t kept = lib->pci_bridges[at];
+	const erx_pcie_bridge_t none = { 0 };
+	erx_dom_pci_refusal_t refusal = { .field = "none" };
+
+	lib->pci_bridges[at] = (erx_dom_pci_bridge_t){ .facts = kept.facts };
+	erx_dom_view_bridge(&lib->pci_bridges[at], &none, ERX_DT_BRIDGE_MALFORMED);
+	printf("refused %" PRIu32 " status=%d field=%s\n", kept.facts.index,
+	    (int)erx_dom_lib_pci_report(lib, kept.facts.index, report, count, &refusal), refusal.field);
+	lib->pci_bridges[at] = kept;
+}
+
+static void
+print_bridges(erx_dom_lib_t *lib)
+{
+	const erx_pcie_bridge_t tree = { .bus_first = 0, .bus_last = 1,
+	    .windows = { { .pci = PCI_WINDOW_PCI, .cpu = PCI_WINDOW_CPU, .size = 0x40000000 } } };
+	erx_pcie_function_t report[ERX_PCIE_FUNCTIONS_MAX];
+	const erx_pcie_bridge_t *facts;
+	erx_dom_pci_refusal_t refusal;
+	erx_dom_range_t cpu;
+	unsigned int vendor, device_id;
+	uint32_t count;
+
+	for (uint32_t at = 0; at < lib->view.npci_bridges; at++) {
+		erx_dom_pci_bridge_t *const bridge = &lib->pci_bridges[at];
+
+		printf("bridge %" PRIu32 " row=%" PRIu32 " closed=%d places=", at, bridge->facts.index,
+		    (bridge->facts.flags & ERX_PCIE_BRIDGE_CLOSED) != 0 ? 1 : 0);
+		for (uint32_t place = 0; place < ERX_PCIE_CLOSED_MAX && bridge->facts.places[place].bus != 0; place++)
+			printf("%s%u.%u.%u/%u", place == 0 ? "" : ",", bridge->facts.places[place].bus,
+			    bridge->facts.places[place].device, bridge->facts.places[place].function,
+			    bridge->facts.places[place].pin);
+		printf("\n");
+		erx_dom_view_bridge(bridge, &tree, ERX_DT_BRIDGE_OK);
+		count = 0;
+		for (uint32_t index = 0; index < lib->view.ndevices && count < ERX_PCIE_FUNCTIONS_MAX; index++) {
+			const erx_dom_device_entry_t *const entry = &lib->view.devices[index];
+
+			if (entry->selector != ERX_MF_SELECTOR_PCI || entry->bridge != bridge->facts.index ||
+			    entry->compatible == NULL || sscanf(entry->compatible, "pci%4x,%4x", &vendor, &device_id) != 2)
+				continue;
+			report[count] = (erx_pcie_function_t){ .bridge = bridge->facts.index, .bus = entry->bus,
+			    .device = entry->device, .function = entry->function, .state = ERX_PCIE_STATE_READY,
+			    .vendor = (uint16_t)vendor, .device_id = (uint16_t)device_id, .pin = pci_pin(bridge, entry),
+			    .bars = { { .kind = ERX_PCIE_BAR_MEMORY, .flags = ERX_PCIE_BAR_ADDR64 | ERX_PCIE_BAR_PLACED,
+			    .size_log2 = 12, .address = PCI_WINDOW_PCI + (uint64_t)count * ERX_PAGE_SIZE } } };
+			count++;
+		}
+		refusal = (erx_dom_pci_refusal_t){ .field = "none" };
+		printf("report %" PRIu32 " status=%d field=%s\n", bridge->facts.index,
+		    (int)erx_dom_lib_pci_report(lib, bridge->facts.index, report, count, &refusal), refusal.field);
+		pci_refused(lib, at, report, count);
+	}
+	for (uint32_t index = 0; index < lib->view.ndevices; index++) {
+		const erx_dom_device_entry_t *const entry = &lib->view.devices[index];
+		const erx_dom_pci_layout_t *layout;
+
+		if (entry->selector != ERX_MF_SELECTOR_PCI)
+			continue;
+		layout = erx_dom_pci_given(lib->view.pci_bridges, lib->view.npci_bridges, entry, &facts);
+		if (layout != NULL && erx_dom_pci_bar_cpu(facts, &layout->record.bars[0], &cpu))
+			printf("given %" PRIu32 " cpu=0x%" PRIx64 "+0x%" PRIx64 "\n", index, cpu.base, cpu.size);
+		else
+			printf("given %" PRIu32 " cpu=none\n", index);
+	}
+}
+
 int
 main(int argc, char **argv)
 {
@@ -156,7 +267,7 @@ main(int argc, char **argv)
 	uint8_t *bytes, *region;
 	size_t length, region_len;
 
-	if (argc < 2 || argc > 3 || (argc == 3 && strcmp(argv[2], "framebuffer") != 0) ||
+	if (argc < 2 || argc > 3 || (argc == 3 && strcmp(argv[2], "framebuffer") != 0 && strcmp(argv[2], "pci") != 0) ||
 	    (bytes = erx_host_input_read(argv[1], &length)) == NULL ||
 	    !erx_manifest_open(bytes, length, &manifest, &error))
 		return (2);
@@ -171,6 +282,10 @@ main(int argc, char **argv)
 	memset(region, 0, region_len);
 	if ((reason = erx_dom_view_build(&lib, &manifest, 0, &tables)) != NULL) {
 		printf("refused %s\n", reason);
+		return (fflush(stdout) == 0 ? 0 : 2);
+	}
+	if (argc == 3 && strcmp(argv[2], "pci") == 0) {
+		print_bridges(&lib);
 		return (fflush(stdout) == 0 ? 0 : 2);
 	}
 	if (argc == 3) {

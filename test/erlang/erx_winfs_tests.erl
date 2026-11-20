@@ -397,6 +397,69 @@ next_window() ->
     ?assertEqual({ok, <<"ka", 0>>}, answered(Second)),
     stop(World).
 
+a_reader_routes_its_file_s_records_and_its_end_takes_its_keys_up_test_() ->
+    {timeout, 60, fun reader/0}.
+
+%% A reader of another domain's input file (erx_input_reader) over a file model whose
+%% each read the test answers: a record outside record()'s bounds is dropped, a record
+%% split between two reads arrives whole, and KEY_A's down reaches the shown window only
+%% at the read that completes it; the file's end ends the reader, and the router sends
+%% the window KEY_A's up. A second reader whose read fails ends the same way.
+reader() ->
+    World = start(hold),
+    ok = held_and_answered(),
+    _ = give_area(?SESSION),
+    Session = mint(?SESSION, #{session => true, windows => 1}),
+    {ok, _} = mkdir(Session, <<"first">>),
+    ok = present_held(Session, <<"first">>, 2),
+    Kbd = open(Session, 3, <<"first">>, <<"kbd">>, ?O_RDONLY),
+    Down = erx_input_codec:encode({key, down, 30}),
+    <<Head:3/binary, Tail/binary>> = Down,
+    %% A key whose code, 0xffff, lies past evdev_key_max: tag 4, edge 0, code little-endian.
+    Outside = <<4, 0, 16#ff, 16#ff, 0:((erx_input_codec:size() - 4) * 8)>>,
+    First = start_reader(<<"input/hid0">>),
+    ok = answer_read(First, {ok, <<Outside/binary, Head/binary>>}),
+    Held = call_async(Session, {read, Kbd, 0, 64}),
+    ok = await_read(First),
+    ok = unanswered(Held),
+    ok = answer_read(First, {ok, Tail}),
+    ?assertEqual({ok, <<"ka", 0>>}, answered(Held)),
+    ?assertEqual({ok, <<"ca", 0>>}, read(Session, Kbd)),
+    ok = await_read(First),
+    ok = answer_read(First, eof),
+    ?assertEqual({ok, <<"K", 0>>}, read(Session, Kbd)),
+    ok = ended(First),
+    Second = start_reader(<<"input/hid1">>),
+    ok = answer_read(Second, {ok, Down}),
+    ?assertEqual({ok, <<"ka", 0>>}, read(Session, Kbd)),
+    ?assertEqual({ok, <<"ca", 0>>}, read(Session, Kbd)),
+    ok = await_read(Second),
+    ok = answer_read(Second, {error, eio}),
+    ?assertEqual({ok, <<"K", 0>>}, read(Session, Kbd)),
+    ok = ended(Second),
+    stop(World).
+
+%% A reader of Device, unlinked and monitored, whose file model asks the test for each
+%% read's answer; returned once it waits on its first read.
+start_reader(Device) ->
+    Test = self(),
+    Read = fun() -> Test ! {reader_read, self()}, receive {reader_answer, Answer} -> Answer end end,
+    Reader = erx_input_reader:start_link(Device, fun() -> {ok, Read} end),
+    true = unlink(Reader),
+    _ = monitor(process, Reader),
+    ok = await_read(Reader),
+    Reader.
+
+await_read(Reader) ->
+    receive {reader_read, Reader} -> ok after ?WAIT -> error(no_read) end.
+
+answer_read(Reader, Answer) ->
+    Reader ! {reader_answer, Answer},
+    ok.
+
+ended(Reader) ->
+    receive {'DOWN', _, process, Reader, normal} -> ok after ?WAIT -> error(not_ended) end.
+
 the_first_key_after_the_frame_reaches_the_chosen_window_test_() ->
     {timeout, 60, fun chosen_window/0}.
 

@@ -58,12 +58,33 @@ display_settled_test_() ->
      || {Name, Case} <- [{"ready", fun display_ready/0}, {"ended", fun display_ended/0},
                          {"boot timeout", fun display_timed_out/0}]].
 
+%% One incarnation's grant (docs/design-system.md, "A session takes the console"):
+%% erx_domain:await_grant/2 is answered once the system domain's grant of echo has
+%% settled for the incarnation it names, with the facet, failed, ended or unprovided,
+%% while the service goes on answering other calls; in the last case a's reports
+%% provide nothing.
+await_grant_test_() ->
+    [{setup, fun() -> setup(1, #{}, Provides) end, fun cleanup/1,
+      fun(_) -> {timeout, 20, {Name, Case}} end}
+     || {Name, Case, Provides} <- [{"installed", fun await_installed/0, fun(Id) -> #{<<"echo">> => pid('a@erxos', Id, 1)} end},
+                                   {"failed", fun await_failed/0, fun(Id) -> #{<<"echo">> => pid('a@erxos', Id, 1)} end},
+                                   {"ended", fun await_ended/0, fun(Id) -> #{<<"echo">> => pid('a@erxos', Id, 1)} end},
+                                   {"unprovided", fun await_unprovided/0, fun(_Id) -> #{} end}]].
+
 %% The domain service's funnel for a domain's facets (docs/design-domains.md, "Facets"),
 %% with a table of facet names that holds echo and other, and with the table the
 %% build generates.
 funnel_test_() ->
     {setup, fun() -> setup(1, #{facet_names => [echo, other]}) end, fun cleanup/1,
      fun(_) -> {timeout, 20, fun funnel/0} end}.
+
+%% A report's provides name each service by its text (init's report_ready/0): a name
+%% the system domain has no atom for is refused as undeclared and makes none, while the
+%% rest of the report stands, so the grant of echo waits idle for a provider.
+unknown_name_test_() ->
+    Name = <<"erx_mints_srv_tests_no_such_atom">>,
+    {setup, fun() -> setup(1, #{}, fun(Id) -> #{Name => pid('a@erxos', Id, 1)} end) end, fun cleanup/1,
+     fun(_) -> {timeout, 20, fun() -> unknown_name(Name) end} end}.
 
 stopgap_names_test_() ->
     {setup, fun() -> setup(1) end, fun cleanup/1, fun(_) -> {timeout, 20, fun stopgap_names/0} end}.
@@ -110,7 +131,7 @@ setup() -> setup(1).
 
 setup(Interface) -> setup(Interface, #{}).
 
-setup(Interface, Opts) -> setup(Interface, Opts, fun(Id) -> #{echo => pid('a@erxos', Id, 1)} end).
+setup(Interface, Opts) -> setup(Interface, Opts, fun(Id) -> #{<<"echo">> => pid('a@erxos', Id, 1)} end).
 
 %% With echo a service of interface Interface, the service's start_link options merged
 %% with Opts, which may name a table of facet names for the funnel's cases, and a's
@@ -139,15 +160,15 @@ cleanup({Log, Service}) ->
     ok.
 
 %% a's reports provide echo's mint at Node, with the reporting incarnation's id.
-provide(Node) -> provide_a(fun(Id) -> #{echo => pid(Node, Id, 1)} end).
+provide(Node) -> provide_a(fun(Id) -> #{<<"echo">> => pid(Node, Id, 1)} end).
 
 %% a's reports provide what Provides answers for the reporting incarnation's id.
 provide_a(Provides) ->
     persistent_term:put({erx_domain_fake_lib, provides},
                         #{<<"a">> => Provides,
-                          <<"root_1">> => fun(Id) -> #{web_line => pid('root_1@erxos', Id, 3),
-                                                       ssh_line => pid('root_1@erxos', Id, 4),
-                                                       rogue_line => pid('root_1@erxos', Id, 6)} end}).
+                          <<"root_1">> => fun(Id) -> #{<<"web_line">> => pid('root_1@erxos', Id, 3),
+                                                       <<"ssh_line">> => pid('root_1@erxos', Id, 4),
+                                                       <<"rogue_line">> => pid('root_1@erxos', Id, 6)} end}).
 
 %% The whole path for both grants: b is introduced to a, a's mint is asked, its reply
 %% installs the facet in b's registry through b's domain pid, and b's acknowledgement
@@ -220,6 +241,11 @@ funnel() ->
     ?assertEqual({error, {bad_spec, boot}}, erx_domain:create(Spec(#{console => self()}))),
     #{core := Core} = sys:get_state(erx_domain_srv),
     ?assertEqual(none, erx_domain_core:fetch(7, Core)).
+
+unknown_name(Name) ->
+    wait_counts(fun(#{{refused, undeclared} := N}) -> N =:= 1 end),
+    ?assertMatch(#{{system, echo} := idle}, grants()),
+    ?assertError(badarg, binary_to_existing_atom(Name)).
 
 %% The running table holds only the manifest's service names: none of the names the
 %% facet-names check exempts travels into it. The funnel's one stopgap name, console,
@@ -376,15 +402,15 @@ served() ->
     ?assertEqual(#{}, grants()).
 
 %% The ready answer names the facets of configured domains the manifest grants the
-%% domain, which come later by installation, so the domain mounts each it is granted:
+%% domain, each with its interface, echo's 1, which come later by installation, so the domain mounts each it is granted:
 %% b (row 0) and a session of template 0 are granted echo and their answers name it;
 %% a, which serves echo and is granted nothing, finds none, and a session of template 1,
 %% which the manifest grants nothing, finds none, though template 0 holds a grant.
 granted_names_test_() ->
-    [{"template 0", fun() -> ?assertEqual({[], [echo], [echo]}, granted_names(0)) end},
-     {"template 1", fun() -> ?assertEqual({[], [echo], []}, granted_names(1)) end}].
+    [{"template 0", fun() -> ?assertEqual({[], [{echo, 1}], [{echo, 1}]}, granted_names(0)) end},
+     {"template 1", fun() -> ?assertEqual({[], [{echo, 1}], []}, granted_names(1)) end}].
 
-%% The names the ready answers of a, b and a session of principal 1 carried, with
+%% The grants the ready answers of a, b and a session of principal 1 carried, with
 %% principal 1's sessions made from template Template.
 granted_names(Template) ->
     Self = self(),
@@ -738,6 +764,54 @@ system_namespace() ->
     ?assertEqual({reply, ok}, gen_server:receive_response(First, 2000)),
     ?assertEqual({reply, ok}, gen_server:receive_response(erx_domain:system_namespace(), 2000)).
 
+%% A wait for a (5) while its grant is minting, unanswered after the service has
+%% answered system_namespace/0, which with echo of no files interface waits for
+%% nothing; and the grant's tag.
+await_minting() ->
+    Wait = erx_domain:await_grant(echo, 5),
+    #{{system, echo} := {minting, {5, 4}, Tag}} = wait(fun(#{{system, echo} := {minting, _, _}}) -> true end),
+    ?assertEqual({reply, ok}, gen_server:receive_response(erx_domain:system_namespace(), 2000)),
+    %% wait_response/2 keeps the request on its timeout, where receive_response/2 abandons it.
+    ?assertEqual(timeout, gen_server:wait_response(Wait, 200)),
+    {Wait, Tag}.
+
+%% The grant installed answers the wait with a's facet, and a later wait at once. A wait
+%% for another incarnation, 7, is never answered with a's facet, since the grant carries
+%% another server, and a name the system domain is not granted has nothing to wait for.
+await_installed() ->
+    {Wait, Tag} = await_minting(),
+    Facet = pid('a@erxos', 5, 3),
+    domain_pid(5) ! {erx_origin, 5, {erx_facet_minted, Tag, {ok, Facet}}},
+    ?assertEqual({reply, {ok, Facet}}, gen_server:receive_response(Wait, 2000)),
+    ?assertEqual({reply, {ok, Facet}}, gen_server:receive_response(erx_domain:await_grant(echo, 5), 2000)),
+    ?assertEqual({reply, {error, ended}}, gen_server:receive_response(erx_domain:await_grant(echo, 7), 2000)),
+    ?assertEqual({reply, {error, unprovided}}, gen_server:receive_response(erx_domain:await_grant(other, 5), 2000)).
+
+%% A facet of another node fails the grant, which answers the wait failed.
+await_failed() ->
+    {Wait, Tag} = await_minting(),
+    domain_pid(5) ! {erx_origin, 5, {erx_facet_minted, Tag, {ok, pid('x@erxos', 5, 3)}}},
+    ?assertEqual({reply, {error, failed}}, gen_server:receive_response(Wait, 2000)).
+
+%% a's end answers the wait ended, and a wait for it after its restart, 7, at once; a
+%% wait for 7 waits for 7's own grant.
+await_ended() ->
+    {Wait, _Tag} = await_minting(),
+    erx_domain_srv ! {domain_ended, 5, {stopped, 0}, #{}},
+    ?assertEqual({reply, {error, ended}}, gen_server:receive_response(Wait, 2000)),
+    wait(fun(#{{system, echo} := {minting, {7, 4}, _}}) -> true end),
+    ?assertEqual({reply, {error, ended}}, gen_server:receive_response(erx_domain:await_grant(echo, 5), 2000)),
+    ?assertEqual(timeout, gen_server:wait_response(erx_domain:await_grant(echo, 7), 200)).
+
+%% a ready without echo answers the wait unprovided: its grant is idle and no operation
+%% will start for it. A wait for a's next incarnation, 7, which the core has not heard
+%% of, waits for it.
+await_unprovided() ->
+    Wait = erx_domain:await_grant(echo, 5),
+    ?assertEqual({reply, {error, unprovided}}, gen_server:receive_response(Wait, 2000)),
+    ?assertMatch(#{{system, echo} := idle}, grants()),
+    ?assertEqual(timeout, gen_server:wait_response(erx_domain:await_grant(echo, 7), 200)).
+
 %% The service over b (row 0) and late (row 1, id 5), which serves screen, a windows
 %% service no row is granted.
 display_setup() ->
@@ -812,7 +886,7 @@ app_setup() ->
                           services => [{1, screen, ?ERX_SERVICE_WINDOWS}, {1, clip, ?ERX_SERVICE_FILES}],
                           grants => [{{template, 2}, screen, 1, #{max_request => 64}},
                                      {{template, 2}, clip, 1, #{max_request => 32}}]}),
-    provide_a(fun(Id) -> #{screen => pid('a@erxos', Id, 1), clip => pid('a@erxos', Id, 4)} end),
+    provide_a(fun(Id) -> #{<<"screen">> => pid('a@erxos', Id, 1), <<"clip">> => pid('a@erxos', Id, 4)} end),
     Log = erx_domain_fake_lib:start_log(),
     {ok, Service} = erx_domain_srv:start_link(#{lib => erx_domain_fake_lib, agent => erx_domain_fake_lib,
                                                 exports => erx_domain_fake_lib, principals => ?PRINCIPALS,
@@ -857,7 +931,7 @@ app_session() ->
                      after 2000 -> none end),
         PidA ! {erx_origin, 5, {erx_facet_minted, Tag, {ok, pid('a@erxos', 5, 7)}}},
         {Before, {_, install, Tag, clip, _}} = received(Pid7, fun({_, install, _, _, _}) -> true end, []),
-        ?assertEqual([[clip]], [Granted || {_, facets, _, Granted} <- Before]),
+        ?assertEqual([[{clip, ?ERX_SERVICE_FILES}]], [Granted || {_, facets, _, Granted} <- Before]),
         %% An app's session holds the code_objects facet too, bound to itself.
         [#{code_objects := CodeObjects}] = [Facets || {_, facets, Facets, _} <- Before],
         ?assertMatch(#{grantee := 7}, erx_facet:info(CodeObjects)),

@@ -184,6 +184,83 @@ erx_device_element_offset(const erx_device_register_t *reg, bool indexed, uint64
 	return (true);
 }
 
+/*
+ * Where a record's registers are, decided once at open (docs/design-usb.md, "Registers at
+ * offsets the controller reports"): `slot` holds the base of each instance of each movable
+ * cluster, from its base's `first`, and `elements` how many elements of each register, by its
+ * index in the table, the device has. A counted array has as many as its count field reports;
+ * a register of a capability's cluster has one in each instance the walk found, none when it
+ * found no entry with that ID; every other register has its table count.
+ */
+typedef struct erx_device_layout {
+	uint64_t	slot[ERX_DEVICE_SLOTS_MAX];
+	uint32_t	elements[ERX_DEVICE_REGISTERS_MAX];
+} erx_device_layout_t;
+
+/* The most entries of an extended-capability list the walk follows before it refuses the device. */
+#define ERX_DEVICE_LIST_ENTRIES_MAX	64u
+
+/*
+ * The resolution of a layout, a pure state machine an open runs to its end: each step asks for
+ * one read of the window, or ends it. It reads first each register at a fixed offset that a base,
+ * a count or the list head comes from, once each in table order; then follows the
+ * extended-capability list, an entry at a time, each entry's first word giving its ID in bits
+ * 7:0 and the next entry's offset, in 32-bit words forward from it, in bits 15:8, 0 ending the
+ * list (xHCI 1.2, Table 7-1, p. 517). Since every step moves forward and at most
+ * ERX_DEVICE_LIST_ENTRIES_MAX entries are read, the walk ends. It is refused for an entry
+ * outside the window, a list longer than that, more entries of a capability than its cluster has
+ * instances, and, at its end, any element of any register that does not lie wholly inside the
+ * window at an offset aligned to its width, and any two cluster instances, or an instance and
+ * the registers at fixed offsets, whose bytes overlap.
+ */
+typedef enum erx_device_resolve_op {
+	ERX_DEVICE_RESOLVE_READ,	/* read the `width`-bit word at `offset`, then step with it */
+	ERX_DEVICE_RESOLVE_DONE,	/* the layout is whole and every element lies in the window */
+	ERX_DEVICE_RESOLVE_REFUSED	/* the device reports registers the window does not hold */
+} erx_device_resolve_op_t;
+
+typedef struct erx_device_resolve {
+	erx_device_resolve_op_t	op;
+	uint64_t		offset;
+	uint8_t			width;
+	/* The machine's own: */
+	uint64_t		size;		/* the window's bytes */
+	uint32_t		next;		/* the next register to consider, while reading sources */
+	uint64_t		entry;		/* the list entry being read, 0 for none */
+	uint32_t		entries;	/* the entries read */
+	/* Each base's instances found, by base index: a peripheral has no more bases than slots. */
+	uint32_t		found[ERX_DEVICE_SLOTS_MAX];
+} erx_device_resolve_t;
+
+/* The first step, over a window of `size` bytes; `layout` is the machine's to fill. */
+void	erx_device_resolve_begin(const erx_device_peripheral_t *peripheral, uint64_t size, erx_device_layout_t *layout,
+	    erx_device_resolve_t *resolve);
+/* The next step, given the word the last READ asked for. */
+void	erx_device_resolve_step(const erx_device_peripheral_t *peripheral, erx_device_layout_t *layout,
+	    erx_device_resolve_t *resolve, uint64_t word);
+
+/*
+ * The byte offset in the window of one element of a register, by a record's layout: the form
+ * erx_device_element_offset checks, and an index below the elements the device has, so a port
+ * past the count, or a capability the walk did not find, is refused.
+ */
+static inline bool
+erx_device_layout_offset(const erx_device_peripheral_t *peripheral, const erx_device_layout_t *layout,
+    const erx_device_register_t *reg, bool indexed, uint64_t index, uint64_t *offset)
+{
+	uint64_t base = 0;
+
+	if (!erx_device_element_offset(reg, indexed, index, offset) ||
+	    index >= layout->elements[reg - peripheral->registers])
+		return (false);
+	if (reg->base != 0) {
+		const erx_device_base_t *const cluster = &peripheral->bases[reg->base - 1];
+
+		base = layout->slot[cluster->first + (cluster->instances > 1 ? index : 0)];
+	}
+	return (!__builtin_add_overflow(*offset, base, offset));
+}
+
 static inline bool
 erx_device_read_allowed(const erx_device_register_t *reg)
 {
@@ -195,6 +272,20 @@ static inline bool
 erx_device_write_allowed(const erx_device_register_t *reg, uint64_t value)
 {
 	return (reg->access != ERX_DEVICE_READ_ONLY && !reg->owned_by_nif && (value & ~reg->writable) == 0);
+}
+
+/*
+ * True when `value` writes each owned field that stores what is written as `word`, the
+ * register read just before, holds it, and each owned field whose write acts (one to set, one
+ * to clear, changed by a write, or write-only) as 0 (docs/design-device-dma.md, "Register
+ * ownership"). A register with no owned field passes any value.
+ */
+static inline bool
+erx_device_owned_kept(const erx_device_register_t *reg, uint64_t word, uint64_t value)
+{
+	const uint64_t stored = reg->owned & reg->preserve, acting = reg->owned & ~reg->preserve;
+
+	return ((value & acting) == 0 && (value & stored) == (word & stored));
 }
 
 /*
@@ -229,10 +320,12 @@ erx_device_field_get(const erx_device_field_t *field, uint64_t word)
 }
 
 /*
- * A one-to-clear field is one write, since its siblings ignore zeros. An ordinary field
- * replaces its bits in a word read back, which the generator allows only for a register
- * whose read has no side effect and whose writable fields all mean replacement; any other
- * field is written with the whole register or not at all.
+ * A one-to-clear field is one write where its siblings ignore zeros, in a register that keeps
+ * no bits from the word read, as the generator gives such a field its lone clear only there.
+ * An ordinary field replaces its bits in a word read back, which the generator allows only for
+ * a register whose read has no side effect and whose writable fields all mean replacement, so
+ * the owned fields beside it go back as read; any other field, a field the NIF owns among
+ * them, is written with the whole register or not at all.
  */
 static inline erx_device_field_plan_t
 erx_device_field_plan(const erx_device_register_t *reg, const erx_device_field_t *field, uint64_t value)
@@ -240,11 +333,12 @@ erx_device_field_plan(const erx_device_register_t *reg, const erx_device_field_t
 	const erx_device_field_plan_t refused = { .op = ERX_DEVICE_FIELD_REFUSED };
 	erx_device_field_plan_t plan = { .op = ERX_DEVICE_FIELD_WRITE };
 
-	if (reg->owned_by_nif || field->access == ERX_DEVICE_READ_ONLY || value > (field->mask >> field->shift))
+	if (reg->owned_by_nif || (field->mask & reg->owned) != 0 || field->access == ERX_DEVICE_READ_ONLY ||
+	    value > (field->mask >> field->shift))
 		return (refused);
 	plan.bits = value << field->shift;
 	if (field->clear)
-		return (plan);
+		return (reg->preserve == 0 ? plan : refused);
 	if (!reg->plain_update)
 		return (refused);
 	plan.op = ERX_DEVICE_FIELD_UPDATE;

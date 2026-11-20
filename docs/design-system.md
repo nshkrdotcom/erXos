@@ -430,7 +430,12 @@ violation fails the build with the property, the record and the field:
    network domain holds a network device; and only the system domain
    holds a facet of the driver-control interface, which stops and starts
    another domain's drivers ([The holder's driver-control
-   facet](#the-holders-driver-control-facet)).
+   facet](#the-holders-driver-control-facet)); and only a display
+   domain, one that serves a display's window service, holds a facet of
+   the `input` interface, whose holder reads every key pressed on the
+   devices behind it, whatever window has the keyboard
+   ([design-display.md](design-display.md#the-display-device)). The
+   interface declares no rights, so every such facet is read-only.
 9. **A release build's manifest confines what it can:** each unconfined
    device's holder holds that device's unit and nothing else, so the file
    system or network stack that parses what an unconfined `hostile` device
@@ -1218,9 +1223,11 @@ in place before anyone can connect to it.
   with `D` as its server, `{error, failed}` when it failed with `D` as
   its server, `{error, ended}` when `D` has ended or the grant carries
   another server, and `{error, unprovided}` when `D` is ready and the
-  grant is idle, since `D` provides no `pcie`. The wait is bounded by
+  grant is idle, since `D` provides no `pcie`, or the system domain is
+  granted no `pcie` at all. The wait is bounded by
   the mint core's deadline for an operation in progress and by the
-  machine's boot timeout before `D`'s ready report.
+  machine's boot timeout before the ready report of `D`, an incarnation
+  of the grant's server row.
 * **Why it holds by construction.** The wait reads only state the mint
   core already keeps, the grant of each `files` service to the session,
   and the domain service's own record of which configured domains are
@@ -2376,8 +2383,12 @@ module, and no other module calls its writer.
 **Providers.** A configured domain's services each name a **mint**, a
 process of the domain that mints facets of one service, with
 `erx_facet:provide(Name, Mint)`, before its init reports ready, and the
-ready report carries them as its `provides` map; a mint named after the
-report is refused. A mint lives as long as its domain's incarnation: the
+ready report carries them as its `provides` map, each under its name's
+text, a binary: the system domain decodes the report in safe mode, which
+makes no atom ([design-runtime.md](design-runtime.md#the-edits-outside-syserxos),
+edit 9), so the domain service reads a name as the atom of that text
+where it has one, and a name it has none for is one no row declares. A
+mint named after the report is refused. A mint lives as long as its domain's incarnation: the
 providers are the report's until the domain ends, so a mint's end ends its
 domain, as a permanent application's does, and the restarted domain's
 report provides again. A server reports ready
@@ -2496,7 +2507,10 @@ The record moves on these events, and on nothing else:
   passes on as an answer of its domain, as it passes on
   `connection_mapped`. So no pid of the domain service leaves the system
   domain, and nothing a server sends reaches the domain service but
-  through its domain pid. The reply is untrusted. It
+  through its domain pid. A refusal crosses as the atom `refused`,
+  whatever the server's reason, since the service reads no more of it and
+  the system domain's safe decode would drop a reply naming an atom it
+  lacks. The reply is untrusted. It
   counts only from the pair's server, for an operation in `minting` with
   that tag. `{ok, Facet}` with `Facet` a pid the server's incarnation
   owns, node and creation both, moves the operation to `installing` and
@@ -2537,11 +2551,15 @@ first, since the domain service sends it as it takes the grantee's ready
 report, which every operation for that grantee follows. The ready answer
 also names the facets of configured domains the manifest grants the
 grantee, its row's grants or its session template's, and no other
-domain's, so the grantee knows a name is coming before its grant is
-installed: a domain mounts a files facet only where the manifest grants
+domain's, each with its service's interface number (`abi/services`), so
+the grantee knows a name is coming before its grant is installed and what
+kind of grant it is, as a display tells its input trees from another
+display's window service ([design-display.md](design-display.md#the-display-device)):
+a domain mounts a files facet only where the manifest grants
 it one ([design-files.md](design-files.md#building-binding-and-mounting),
-"A facet's mount"), and the domain's agent keeps the names for
-`erx:granted/0`. The system domain, which holds the manifest, takes its
+"A facet's mount"), and the domain's agent keeps the names and their
+interfaces for `erx:granted/0`, which answers the names, and
+`erx:granted/1`, which answers those of one interface. The system domain, which holds the manifest, takes its
 own names from it. Until its grant is installed, and while its server
 restarts, the grantee finds the name absent or its facet dead, and
 treats both as the service being unavailable.

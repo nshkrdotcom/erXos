@@ -391,6 +391,21 @@ device_of(ErlNifEnv *env, ERL_NIF_TERM term)
 	return (enif_get_uint(env, term, &index) ? erx_device_get(index) : NULL);
 }
 
+/* elements(Dev, Register): how many elements of the register the device's open resolved. */
+static ERL_NIF_TERM
+elements_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
+{
+	const erx_device_t *const device = device_of(env, argv[0]);
+	const erx_device_register_t *reg;
+
+	(void)argc;
+	/* The record's keys are the atoms open/1 made of the table's names. */
+	if (device == NULL || !enif_is_atom(env, argv[1]) ||
+	    (reg = erx_device_register_by_key(device, (uintptr_t)argv[1])) == NULL)
+		return (enif_make_badarg(env));
+	return (enif_make_uint(env, erx_device_elements(device, reg)));
+}
+
 /* queue_create(Dev, Queue, Size, BufferSize) */
 static ERL_NIF_TERM
 queue_create_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
@@ -765,6 +780,7 @@ load(ErlNifEnv *env, void **priv, ERL_NIF_TERM info)
 
 static ErlNifFunc nif_funcs[] = {
 	{ "open", 1, open_nif, 0 },
+	{ "elements", 2, elements_nif, 0 },
 	{ "irq_bind", 2, irq_bind_nif, 0 },
 	{ "irq_bind_owner", 2, irq_bind_owner_nif, 0 },
 	{ "irq_holder", 2, irq_holder_nif, 0 },

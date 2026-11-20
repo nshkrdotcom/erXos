@@ -246,7 +246,9 @@ The fields of configuration space a target decides are of two kinds:
 The **projection** of a target decides them. Data depends on the layout
 and the route alone, in every mode: each BAR holds its layout's address;
 for an `msi` route MSI holds the route's address and data, multiple
-message enable 0 and its vector 0 unmasked. Switches depend on the mode
+message enable 0 and, where it has one, its mask register clear, which
+unmasks vector 0 whichever bit the specification gives it. Switches
+depend on the mode
 and the route:
 
 | Mode | Memory space | Bus master | INTx | MSI (`msi` route) | MSI-X (`msix` route) |
@@ -264,9 +266,19 @@ projection.
 
 `erx_pcie_plan:plan(Read, Target)` is a pure function from the
 function's configuration as read (the parsed snapshot) and its target
-to `{ok, Stages}` or `{error, reset}`. A **stage** is a list of writes
-and the state they lead to; a plan has at most three, in this order,
-and leaves out an empty one:
+to `{ok, Stages}` or an error: `{error, gone}` when the read is not the
+function its layout describes (another vendor or device, header type,
+MSI or MSI-X capability, or a BAR of another kind or width), so no write
+is computed against a structure the layout does not describe;
+`{error, route}` when the route does not fit the function; and
+`{error, reset}` by the mastering rule below. A **stage** is a list of
+whole-register writes, each `{Offset, Width, Value}`, and the state they
+lead to, which carries the function's structure as well as its fields;
+`erx_pcie_plan:differs(Read, State)` names the first field a readback
+does not read as, or `identity` for a readback that is another
+function. A root port's target is its bus numbers and its memory window,
+which the walk derives ([Root ports](#root-ports)). A plan has at most
+three stages, in this order, and leaves out an empty one:
 
 1. **Nothing to do.** When the function reads as the target, the plan
    has no stage.
@@ -460,7 +472,7 @@ restart is the recovery.
 A **bridge driver** implements the `erx_pcie_bridge` behaviour:
 
 ```erlang
--callback start(Facts :: erx_pcie:bridge(), Device :: erx_device:dev()) ->
+-callback start(Facts :: erx_abi_layout:erx_pcie_bridge(), Device :: erx_device:device()) ->
     {ok, State :: term()} | {error, Reason :: atom()}.
 -callback access(Access, State :: term()) -> {Result, State :: term()}
     when Access :: {read, Place, Offset, Width}
@@ -468,7 +480,7 @@ A **bridge driver** implements the `erx_pcie_bridge` behaviour:
          Place :: {Bus :: 0..255, Device :: 0..31, Function :: 0..7},
          Offset :: 0..255, Width :: 1 | 2 | 4,
          Result :: {ok, non_neg_integer()} | ok | {error, absent | link_down}.
--callback ready(Function :: erx_pcie:function(), State :: term()) ->
+-callback ready(Function :: erx_abi_layout:erx_pcie_function(), State :: term()) ->
     {ok | not_ready, State :: term()}.
 ```
 
@@ -572,12 +584,15 @@ adds nothing to that rule.
 ### The walk
 
 `erx_pcie_walk` reads; it writes only the root ports, through the
-planner, and the sizing sequence, and only where [Sizing](#sizing)
-allows. For each host bridge, from the bridge's first bus:
+planner, the sizing sequence, only where [Sizing](#sizing) allows, and
+a malformed function's command register (step 2). For each host bridge, from the bridge's first bus:
 
 1. **The root bus**, devices 0 to 31. For each device, function 0's
-   vendor; absent ends the device. Its header type; a type above 1 is
-   reported `unsupported`; the multifunction bit adds functions 1 to 7.
+   vendor; absent ends the device. Its header type; the multifunction
+   bit adds functions 1 to 7. A function of any number whose header
+   type, read from its snapshot before `erx_pcie_cfg:parse/1`, is above
+   1 is reported `unsupported` from its identity alone, without a parse,
+   since the parser takes only types 0 and 1.
    The bridge driver's `access` answers `absent` for a place it does not
    reach, so the walk is the same for every bridge.
 2. **Each function** is read whole: its 256-byte configuration space, a
@@ -586,8 +601,9 @@ allows. For each host bridge, from the bridge's first bus:
    gets one write, its command register with memory, I/O and bus master
    off and INTx disabled, which needs nothing the parser refused.
 3. **A type-1 header on the root bus** is a root port. It takes the next
-   bus number in place order as its secondary and subordinate bus, and
-   its target is applied at once ([Root ports](#root-ports)), so the bus
+   bus number in place order as its secondary and subordinate bus,
+   before its parse or its BARs decide anything, so every walk gives it
+   the same buses, and its target is applied at once ([Root ports](#root-ports)), so the bus
    below it can be read. Below it, devices 0 to 31 are read as in step 1.
    A type-1 header below a root port is reported `unsupported` and
    nothing below it is read.
@@ -604,7 +620,8 @@ left as it is.
 **The parser** follows the capability list from offset `0x34` only when
 the status register's capability bit is set, and takes each pointer with
 its low two bits cleared. It refuses the snapshot, naming the field,
-for: a pointer below `0x40`; a list of more than 48 capabilities, the
+for: an interrupt pin above 4, which names no INTx line; a pointer
+below `0x40`; a list of more than 48 capabilities, the
 most 192 bytes hold, which a loop makes; a capability whose fields, by
 its own control word, extend past offset 255; a 64-bit BAR in the last
 BAR register, which has no upper half; an MSI-X table whose BAR
@@ -625,8 +642,12 @@ follows FreeBSD's `pci_read_bar`: memory space off, all ones to the BAR
 (both halves of a 64-bit BAR before either is read), read back, the
 original value restored, the command register restored.
 `erx_pcie_cfg:size/2` decodes each answer into the BAR's hardware size.
-It refuses a base mask whose set bits are not contiguous from the top,
-naming the BAR, and the function is reported `malformed`; a 64-bit BAR
+It refuses a memory BAR's base mask whose set bits are not contiguous
+from the top, naming the BAR, and the function is reported `malformed`;
+an I/O BAR, never placed, is sized from its mask's lowest set bit alone,
+as FreeBSD's `pci_mapsize` sizes every BAR (`pci.c:601-614`), so one
+that decodes 16 address bits, its upper half reading back zero, is
+sized from its low 16 bits. A 64-bit BAR
 whose size needs the high word is a size the 32-bit window cannot hold,
 and the function is reported `unplaced`. A memory BAR under 16 bytes is
 ignored, as FreeBSD ignores it. A placing walk finds
@@ -656,9 +677,11 @@ unplaced:
   largest item's.
 * **Packing.** The items are sorted by alignment, largest first, then by
   place and BAR index, and each takes the lowest address from the
-  window's base that is aligned to it and overlaps nothing placed. Since
-  every span is a multiple of its alignment, this packs without a gap,
-  and the same functions always get the same addresses. Each root port
+  window's base that is aligned to it and overlaps nothing placed. A
+  BAR's span is its alignment, so BARs pack without a gap; a root port's
+  span, its extent rounded up to 1 MiB, need not be a multiple of its
+  alignment, and a smaller item later fills the gap it leaves. The same
+  functions always get the same addresses. Each root port
   is one item, so the forwarding windows of two root ports never
   overlap.
 * **What does not fit** is unplaced, and the function is reported
@@ -708,9 +731,13 @@ The records are layouts in a new ABI file, `abi/formats/pcie.txt`, as
 `wire_le` layouts with the configuration-space constants the parser and
 the planner use (offsets and bits from FreeBSD's `pcireg.h`) and the
 limits below. The generator emits their C reader and struct and their
-Erlang codec, as it does for the manifest's records
-([design-abi.md](design-abi.md)), so the PCIe domain, the device service
-and the domain library share one definition.
+Erlang codec, `erx_abi_layout`, whose maps are the records' one Erlang
+form ([design-abi.md](design-abi.md#layouts-in-erlang)), so the PCIe
+domain, the device service and the domain library share one definition.
+The PCIe modules hold the records as those maps and read their flags and
+unused slots through `erx_pcie`'s accessors; a function's configuration
+as read (`erx_pcie_cfg`'s parse) is a different thing, the registers the
+planner writes against, and keeps its own form.
 
 **`erx_pcie_function`**, the layout, which the PCIe domain reports:
 
@@ -720,7 +747,7 @@ and the domain library share one definition.
 | `bus`, `device`, `function` | u8 each | its place; the requester id follows |
 | `state` | u8 | `ready`; `not_ready` (its bridge's `ready` held it back); `unplaced` (a memory BAR did not fit or did not size, or it appeared beside the bridge's layouts); `unsupported` (a header type, level or root-port BAR the walk does not take); `malformed` (its snapshot did not parse) |
 | `vendor`, `device_id` | u16 each | its identity |
-| `class` | u32 | base class, subclass and programming interface, bits 23 to 0 |
+| `class_code` | u32 | base class, subclass and programming interface, bits 23 to 0 |
 | `revision`, `header` | u8 each | revision; header type without the multifunction bit |
 | `subsystem_vendor`, `subsystem` | u16 each | |
 | `pin` | u8 | 0 for none, 1 to 4 for INTA to INTD |
@@ -733,7 +760,10 @@ and the domain library share one definition.
 64-bit BAR is absent), `flags` u8 (64-bit, prefetchable, placed),
 `size_log2` u8, the BAR's hardware size, and `address` u64, the PCI
 address, 0 when not placed. Its span, the size rounded up to the page
-size, is derived.
+size, is derived. `size_log2` is the BAR's true size, up to 63
+(`pcie_bar_size_log2_wide`), so a function whose 64-bit BAR is too
+large to place is reported `unplaced` with that BAR's size; only a
+placed BAR is held to `pcie_bar_size_log2_max`.
 
 **`erx_pcie_setting`**: `mode` u8 (`off`, `decoding`, `mastering`),
 `route` u8 (`none`, `msi`, `msix`, `intx`), and `message`, an
@@ -749,18 +779,24 @@ and `bus_last` u8; `flags` u8 (closed); `windows`, at most
 (64-bit, prefetchable, I/O), from the tree's `ranges`; and, for a closed
 bridge, `places`, every place below its root port that its platform
 record lists, each a bus, device, function and pin, at most
-`pcie_closed_max` (4).
+`pcie_closed_max` (4). A window of size 0 is unused, and so is a place
+on bus 0, which lies above every root port.
 
 Limits: `pcie_bridges_max` 2 per domain, `pcie_functions_max` 32 per
-bridge. The generator checks each layout's offsets and size; the C reader
-refuses a record whose enums are out of their sets, whose capability
-offsets lie outside 256 bytes, or whose 64-bit BAR is not followed by an
-absent upper half, so the library's intake ([The catalogue and
-gives](#the-catalogue-and-gives)) starts from a well-formed record and
-checks only what relates records to windows and to each other.
+bridge. The generator checks each layout's offsets and size, and its C
+reader, `erx_pcie_function_decode`, gives each field as the bytes hold
+it, its capability offsets within 256 bytes by their width. The library's
+intake ([The catalogue and gives](#the-catalogue-and-gives)) refuses a
+record whose device, function, state or BAR kind or flags lies outside
+its set, whose BAR's size is past 63, or past
+`pcie_bar_size_log2_max` for a placed one, whose I/O BAR is marked
+placed, whose placed 32-bit BAR reaches past 4 GiB, which is `ready`
+with a memory BAR not placed, or whose 64-bit BAR
+is not followed by an absent upper half, before it checks what relates
+records to windows and to each other.
 
-**The catalogue.** A host bridge's entry in the domain library's
-`erx_dom_device_t` gains the bridge's **layouts**: every function its
+**The catalogue.** A host bridge's catalogue, `erx_dom_pci_bridge_t`
+beside its entry, holds the bridge's record and its **layouts**: every function its
 placing walk reported, at most `pcie_functions_max`, each with its
 latest reported `state` and `confirmed`, whether the latest report
 listed it with its layout; **`firmware_lost`**, set when the bridge's
@@ -771,8 +807,8 @@ same way without making it
 **`answered`**, the domain id of the PCIe incarnation whose report the
 device service last answered, 0 for none, which domain ids, never reused
 in a boot, keep from naming a later incarnation
-([Concurrency](#concurrency)). A `pci` row's entry gains its
-**setting**. The row finds its function's layout by place in its
+([Concurrency](#concurrency)). A `pci` row's device record gains its
+**setting**, which its give writes. The row finds its function's layout by place in its
 bridge's entry, so no layout is stored twice.
 `erx_domain_lib:devices/0` shows them, with `/dev`'s `status` naming
 the place, the identity, the BARs, the state, the mode and the route,
@@ -1059,21 +1095,21 @@ grant of `pcie` has settled for that incarnation:
   server;
 * `{error, unprovided}` when `D` is ready and the grant is idle, since
   `D` provides no `pcie` and the mint core arms no deadline for it
-  (`erx_domain_mints.erl:412-413`).
+  (`erx_domain_mints:current_pair/2`).
 
 The request is sent, not waited on, as `erx_domain:system_namespace/0`'s
 is, so the device service's PCIe process goes on taking holders' ends
 and requests while it waits; the domain service keeps the waiting
 callers beside those of `system_namespace/0`, which keeps its own rule
 over every `files` grant, and answers both after every step
-(`erx_domain_srv.erl:1372`). An operation in progress is bounded by the
-mint core's 10 s deadline (`erx_domain_mints.erl:113`), and `D` before
+(`erx_domain_srv:answer_in_place/1`). An operation in progress is bounded by the
+mint core's 10 s deadline (`erx_domain_mints`'s `DEADLINE`), and `D` before
 its ready report by the machine's boot timeout. On `{ok, Facet}` the device
 service records `D` as `answered` in each of the incarnation's bridges'
 catalogue entries ([Records](#records)), then answers, and calls
 `pcie` on `Facet` from then on, never on what `erx:cap/1` finds, which
 can still be a dead incarnation's pid until its successor's is
-installed (`erx.erl:143-148`). On any error it answers `{error,
+installed (`erx:cap/1`). On any error it answers `{error,
 unavailable}` and the enumerator exits, so the domain restarts. So every
 change of a setting after the answer reaches that incarnation by
 `pcie`, and every change before it is in the answer: no incarnation
@@ -1093,7 +1129,21 @@ finding each function's manifest row, if any, by place and checking that
 its identity is the row's compatible string, spelled `pci` and the
 vendor and device id in four lowercase hexadecimal digits each,
 `pci1b36,000d`, erXos's own spelling since no tree carries it. A
-function no row names is logged as unlisted and stays off. The
+function no row names is logged as unlisted and stays off. `Functions`
+are `erx_abi_layout` maps, which the call hands the library as the
+layout's bytes, and the answer is `ok` or `{error, {einval, Record,
+Field}}` naming the refused record and field for the log line. The
+device service is not the domain service's registered process, and the
+call answers any caller in the system domain, which runs only trusted
+code: the intake judges a report against its bridge's windows and the
+catalogue, but not who sent it, so a process other than the device
+service could lay a bridge's layouts before the PCIe domain reports. The
+catalogues
+are the view's, one per host bridge row in row order, each record's row,
+flags and places the manifest's from the start and its buses and
+windows the tree's, which the root joins before any device is given
+(`erx_dt_bridge`, `erx_dom_view_bridge`); a bridge whose tree the reader
+refuses keeps none, so no BAR of a report lies inside them. The
 library's intake, `erx_dom_pci_report`, is the boundary check of a
 report. It decides every entry of the bridge from the whole report and
 only then writes them all at once, so no order of processing can leave
@@ -1135,7 +1185,14 @@ inside the DMA range; and the given record, which names the function's
 place, each BAR's window and hardware size, and for an MSI-X route the
 `erx_msi_message` the IRQ object's creation returned, the table BAR,
 offset and size. The setting's route is
-written; the mode stays `off`.
+written; the mode stays `off`. The record is
+`-erx_record function ROLE PERIPHERAL BRIDGE BUS DEVICE FUNCTION LINE_H
+MARK MEM_H MEM_SIZE COHERENT ROUTE ADDRESS DATA TABLE_BAR TABLE_OFFSET
+TABLE_SIZE`, then `WINDOW_H OFFSET SIZE_LOG2` for each of the six BARs in
+register order, a BAR not placed with no window, written by
+`erx_boot_function_words`. A function the give gives nothing for is held
+as a device of no kind: its unit's give makes its resource alone, so a
+line only its row names has no object and no holder reads it.
 
 **The hold at boot.** The domain service starts a configured row whose
 units hold a `pci` device only once the device service has answered the
@@ -1332,7 +1389,7 @@ that touches it.
 
 | Test | Passing case | Seeded failure |
 | --- | --- | --- |
-| `erx_pcie_plan` | exhaustive over every switch state of the read value, every mode and route, each data field equal or differing, and each capability present or absent, run against a model of configuration space: the plan has no stage exactly when the function reads as the target; after each stage the model reads as the stage's state, and after the last as the target; every stage moves one way, each of its writes carrying every switch between its values at the stage's start and in its state; every data write happens while the model is quiet; every lowering precedes every raising; bus master is the first lowering and the last raising; a `mastering` target from anything but `decoding` or `mastering` is `{error, reset}`; after every prefix of every plan, the start's target from that state is the setting only if the state reads as it, and `off` otherwise | the floor taken as the lower of read and target even when data differ, the rule of writing only what differs: a mastering function with a wrong MSI address gets its address written with bus master on, and the quiet check fails; bus master raised before the live step: the order check fails; the mastering rule removed: a blank function's plan to `mastering` is accepted |
+| `erx_pcie_plan` | exhaustive over every switch state of the read value, every mode and route, each data field equal or differing, and each capability present or absent, run against a model of configuration space: the plan has no stage exactly when the function reads as the target; after each stage the model reads as the stage's state, and after the last as the target; every stage moves one way, each of its writes carrying every switch between its values at the stage's start and in its state; every data write happens while the model is quiet; every lowering precedes every raising; bus master is the first lowering and the last raising; a `mastering` target from anything but `decoding` or `mastering` is `{error, reset}`; after every prefix of every plan, the start's target from that state is the setting only if the state reads as it, and `off` otherwise | the floor taken as the lower of read and target even when data differ, the rule of writing only what differs: a decoding function with a wrong BAR gets its BAR written with memory space on, and the quiet check fails; the floor quiet whenever any field differs: a running function's plan to `mastering` turns memory space off first, and the check that no switch drops below both what it read and what the target decides fails; bus master raised before the live step: the order check fails; the mastering rule removed: a blank function's plan to `mastering` is accepted |
 | `erx_pcie_apply`, over a model bridge driver | every plan of the planner's inputs, run once with each of its writes ignored alone, a later write of the same register then repeating it, and once with each register ignoring every write from one write on: no data write is made while the model is not quiet; no switch is raised while a data field of the model differs from the target; the answer is `ok` only when the model reads as the target, `{error, gone}` only when it reads quiet, and `{error, stuck}` otherwise; after a stage that did not take, the only writes are the descent to quiet | one readback after the last stage: with the memory-space disable ignored, a BAR is written while the model decodes and the quiet check fails, and the answer is `ok`; the descent to quiet taken as done without its readback: with the command register ignoring writes, the answer is `{error, gone}` while the model is not quiet |
 | `erx_pcie_cfg` | snapshots of a type-0 and a type-1 header, MSI, MSI-X and Express capabilities, 32- and 64-bit BARs, decode to the expected values; each refusal of [The walk](#the-walk) has a fixture that is refused naming its field; sizing answers for each BAR kind give their hardware sizes, a non-contiguous mask is refused | the step bound removed: the looping fixture does not end within the test's deadline; the table BAR bound removed: the fixture with indicator 6 is accepted |
 | `erx_pcie_place` | for generated sets of BARs, with and without root ports: every placed BAR inside the window, aligned to its span, no two spans overlapping, no two root ports' windows overlapping; the same set in any order gives the same addresses; a fixed set of a 4 KiB, a 64 KiB and a 1 MiB BAR gives the addresses written in the test | the alignment rounding dropped: the 64 KiB BAR lands at 4 KiB and both the alignment property and the fixed addresses fail |
@@ -1364,7 +1421,7 @@ rows, each citing this document; the kinds table's rows for the two
 bridges, with a seeded row whose peripheral has no SVD file; and a
 check that `erx_pcie_apply` is the only caller of `erx_pcie_plan:plan/2`
 and the only module that writes configuration space outside the walk's
-sizing, with a seeded second writer.
+sizing and its one write to a malformed function, with a seeded second writer.
 
 ### The `pcie` QEMU suite
 

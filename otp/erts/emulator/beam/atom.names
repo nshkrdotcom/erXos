@@ -19,7 +19,7 @@
 #
 # %CopyrightEnd%
 #
-# Modified by erXos: adds the atoms of erx_trace_ring's BIFs, entropy, merged and sum of erx_bytes's, erx_untraced, and the export table's (erx_exports.c), and domain_down (edit 56 of docs/design-runtime.md).
+# Modified by erXos: adds the atoms of erx_trace_ring's BIFs, entropy, merged and sum of erx_bytes's, erx_untraced, and the export table's (erx_exports.c), domain_down (edit 56 of docs/design-runtime.md) and erx_foreign_reason and erx_reason_too_large (edit 9).
 #
 
 #
@@ -291,6 +291,8 @@ atom error_logger
 atom error_only
 atom domain erx_origin introduce link spawn
 atom erx_untraced
+atom erx_foreign_reason
+atom erx_reason_too_large
 atom erts_code_purger
 atom erts_debug
 atom erts_dflags

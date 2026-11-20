@@ -23,7 +23,9 @@
  * fragment copies the message's other references (its seq_trace token)
  * into that fragment too. A reference compares four words (edit 17 of
  * docs/design-runtime.md). A lost connection's exits and DOWNs carry its peer
- * domain's end reason where it has one (edit 56).
+ * domain's end reason where it has one (edit 56). In the system domain a payload that
+ * names an atom the runtime lacks is a dropped message or an exit reason delivered as
+ * {erx_foreign_reason, Bin}, and counted (edit 9).
  *
  * %CopyrightEnd%
  */
@@ -92,9 +94,17 @@ Process *ERTS_WRITE_UNLIKELY(erts_dirty_process_signal_handler);
 Process *ERTS_WRITE_UNLIKELY(erts_dirty_process_signal_handler_high);
 Process *ERTS_WRITE_UNLIKELY(erts_dirty_process_signal_handler_max);
 
+/*
+ * erXos: edit 9 of docs/design-runtime.md. The payloads of other domains whose safe
+ * decode refused an atom this runtime lacks: each a message dropped or an exit reason
+ * delivered as {erx_foreign_reason, Bin}.
+ */
+static erts_atomic64_t atoms_refused;
+
 void
 erts_proc_sig_queue_init(void)
 {
+    erts_atomic64_init_nob(&atoms_refused, 0);
     ERTS_CT_ASSERT(ERTS_SIG_Q_OP_MASK > ERTS_SIG_Q_OP_MAX);
     ERTS_CT_ASSERT(ERTS_SIG_Q_TYPE_MASK >= ERTS_SIG_Q_TYPE_MAX);
 }
@@ -5520,6 +5530,43 @@ handle_sync_suspend(Process *c_p, ErtsMessage *mp)
     }
 }
 
+/* erx_dist:atoms_refused/0: the count of those payloads so far. */
+BIF_RETTYPE
+erx_dist_atoms_refused_0(BIF_ALIST_0)
+{
+    const Uint64 refused = (Uint64) erts_atomic64_read_nob(&atoms_refused);
+    Uint size = 0;
+    Eterm *hp;
+
+    (void) erts_bld_uint64(NULL, &size, refused);
+    hp = HAlloc(BIF_P, size);
+    BIF_RET(erts_bld_uint64(&hp, NULL, refused));
+}
+
+/*
+ * erXos: edit 9. {erx_foreign_reason, Bin}, the exit reason a payload becomes when the
+ * system domain cannot decode it without making an atom, built in factory, which it
+ * starts on a fragment of its own with wrap words to spare for the signal's message.
+ * Bin is the reason's encoding, its version byte first: a failed decode leaves extp at
+ * the payload's start, and a lane frame has no distribution header.
+ */
+static Eterm
+foreign_reason(ErtsHeapFactory *factory, const ErtsDistExternal *edep, Uint wrap)
+{
+    const byte *ext = edep->data->extp;
+    const Uint size = (Uint) (edep->data->ext_endp - ext);
+    const Uint bin_words = NBITS(size) <= ERL_ONHEAP_BITS_LIMIT
+        ? heap_bits_size(NBITS(size)) : ERL_REFC_BITS_SIZE;
+    Eterm bin;
+    Eterm *hp;
+
+    ASSERT(!(edep->flags & ERTS_DIST_EXT_DFLAG_HDR));
+    erts_factory_heap_frag_init(factory, new_message_buffer(bin_words + 3 + wrap));
+    bin = erts_hfact_new_binary_from_data(factory, 3 + wrap, size, ext);
+    hp = erts_produce_heap(factory, 3, wrap);
+    return TUPLE2(hp, am_erx_foreign_reason, bin);
+}
+
 int
 erts_proc_sig_decode_dist(Process *proc, ErtsProcLocks proc_locks,
                           ErtsMessage *msgp, int force_off_heap)
@@ -5528,6 +5575,7 @@ erts_proc_sig_decode_dist(Process *proc, ErtsProcLocks proc_locks,
     ErlHeapFragment *hfrag;
     Eterm msg;
     Sint need;
+    Uint wrap; /* the words of the message around the decoded term */
     ErtsDistExternal *edep;
     ErtsExitSignalData *xsigd = NULL;
 
@@ -5552,11 +5600,11 @@ erts_proc_sig_decode_dist(Process *proc, ErtsProcLocks proc_locks,
         case ERTS_SIG_Q_OP_EXIT:
         case ERTS_SIG_Q_OP_EXIT_LINKED:
             /* {'EXIT', From, Reason} */
-            need += 4;
+            wrap = 4;
             break;
         case ERTS_SIG_Q_OP_MONITOR_DOWN:
             /* {'DOWN', Ref, process, From, Reason} */
-            need += 6; /* 5-tuple */
+            wrap = 6; /* 5-tuple */
             break;
         default:
             ERTS_INTERNAL_ERROR("Invalid exit signal op");
@@ -5564,7 +5612,8 @@ erts_proc_sig_decode_dist(Process *proc, ErtsProcLocks proc_locks,
         }
     }
     else
-        need += 4; /* erXos: {erx_origin, D, Msg} (edit 16) */
+        wrap = 4; /* erXos: {erx_origin, D, Msg} (edit 16) */
+    need += wrap;
 
     hfrag = new_message_buffer(need);
     erts_factory_heap_frag_init(&factory, hfrag);
@@ -5575,7 +5624,16 @@ erts_proc_sig_decode_dist(Process *proc, ErtsProcLocks proc_locks,
 
     if (is_non_value(msg)) {
         erts_factory_undo(&factory);
-        return 0;
+        if (!(edep->flags & ERTS_DIST_EXT_ATOM_REFUSED))
+            return 0; /* malformed: bad_dist_ext has ended the connection */
+        /*
+         * erXos: edit 9. The payload names an atom this runtime lacks: a message is
+         * dropped, an exit reason becomes {erx_foreign_reason, Bin}; each is counted.
+         */
+        erts_atomic64_inc_nob(&atoms_refused);
+        if (ERTS_SIG_IS_MSG(msgp))
+            return 0;
+        msg = foreign_reason(&factory, edep, wrap);
     }
 
     if (ERTS_SIG_IS_MSG(msgp)) {

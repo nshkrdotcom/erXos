@@ -172,6 +172,10 @@ module Erx
     #   manifest names it; it exists because check_released requires a release for
     #   erx_bt. erx_bt holds no Security Manager (stage 4), so the script
     #   leaves out the crypto the design's release ships.
+    # * pcie, the PCIe domain's (docs/design-pcie.md, "The PCIe domain"): the enumerator,
+    #   erx_pcie, so no other domain parses what a function writes to its configuration
+    #   space. No manifest names it; it exists because check_released requires a release
+    #   for erx_pcie.
     # * wifi, the WiFi domain's (docs/design-wifi.md, "The WiFi domain"): crypto, which
     #   the supplicant's key arithmetic calls, and erx_wifi (DOMAIN_ONLY), both only
     #   loaded. No manifest names it; it exists because check_released requires a
@@ -196,6 +200,7 @@ module Erx
                            'erx_ui', 'erx_net_client', 'erx_app'].freeze,
                         'usb' => [*DOMAIN_BASE, 'erx_usb'].freeze,
                         'bt' => [*DOMAIN_BASE, 'erx_bt'].freeze,
+                        'pcie' => [*DOMAIN_BASE, 'erx_pcie'].freeze,
                         'ntpd' => [*DOMAIN_BASE, 'erx_net_client', 'erx_ntpd'].freeze,
                         'wifi' => [*DOMAIN_BASE, 'crypto', 'erx_wifi'].freeze }.freeze
 

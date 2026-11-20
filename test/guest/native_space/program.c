@@ -506,16 +506,16 @@ mode_maker(uint64_t argument)
 	if (erx_budget_resize(budget, 1, 1) != ERX_ENOTSUP)
 		return (71);
 	if (erx_group_create(budget, 0, &group) != ERX_OK || erx_group_create(budget, 0, &other) != ERX_OK ||
-	    erx_irq_create(carved, 0, ERX_IRQ_SOFT, 0, &bell) != ERX_OK)
+	    erx_irq_create(carved, 0, ERX_IRQ_SOFT, 0, &bell, NULL) != ERX_OK)
 		return (72);
-	if (erx_irq_create(budget, 0, ERX_IRQ_LINE, 0, &refused) != ERX_ENOTSUP)
+	if (erx_irq_create(budget, 0, ERX_IRQ_LINE, 0, &refused, NULL) != ERX_ENOTSUP)
 		return (73);
 	if (erx_gate_create(budget, &gate) != ERX_OK ||
 	    erx_space_create(budget, ERX_CAP_SELF, gate, MAKER_LABEL, 0, CREATED_CAP_LIMIT, &child) != ERX_OK ||
 	    erx_image_map(child, slice, 0, &pc) != ERX_OK)
 		return (74);
 	if (erx_mem_create(0, PAGE, 0, &program_side) != ERX_OK || erx_mem_create(0, PAGE, 0, &session_side) != ERX_OK ||
-	    erx_irq_create(0, 0, ERX_IRQ_SOFT, 0, &program_bell) != ERX_OK ||
+	    erx_irq_create(0, 0, ERX_IRQ_SOFT, 0, &program_bell, NULL) != ERX_OK ||
 	    !channel_map(SESSION_SIDE_ADDR, session_side, PROGRAM_SIDE_ADDR, program_side))
 		return (75);
 	if (erx_irq_bind(program_bell, group, CHANNEL_LABEL) != ERX_OK)
@@ -576,7 +576,7 @@ mode_program(const uint64_t args[ERX_FIASCO_START_ARGS])
 	if (args[ERX_PROGRAM_ARG_BUDGET] == ERX_CAP_NULL || args[ERX_PROGRAM_ARG_GROUP] == ERX_CAP_NULL ||
 	    !channel_map(PROGRAM_SIDE_ADDR, args[ERX_PROGRAM_ARG_OWN_SIDE], SESSION_SIDE_ADDR, args[ERX_PROGRAM_ARG_PEER_SIDE]))
 		return (133);
-	if (erx_irq_create(args[ERX_PROGRAM_ARG_BUDGET], 0, ERX_IRQ_SOFT, 0, &own) != ERX_OK)
+	if (erx_irq_create(args[ERX_PROGRAM_ARG_BUDGET], 0, ERX_IRQ_SOFT, 0, &own, NULL) != ERX_OK)
 		return (134);
 	other = atomic_load_explicit(channel_word(SESSION_SIDE_ADDR, CHANNEL_OTHER_WORD), memory_order_acquire);
 	if (erx_irq_bind(own, other, BELL_LABEL) != ERX_ETYPE)

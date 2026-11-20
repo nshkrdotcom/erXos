@@ -457,12 +457,18 @@ module Erx
                    name: 'fuzz-erx-virtio-input-core', deadline: 300, chdir: ROOT, env: environment)
         runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_hid_desc.rb'), '--seed', options.fetch(:seed).to_s],
                    name: 'fuzz-erx-hid-desc', deadline: 600, chdir: ROOT, env: environment)
+        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_pcie_cfg.rb'), '--seed', options.fetch(:seed).to_s],
+                   name: 'fuzz-erx-pcie-cfg', deadline: 600, chdir: ROOT, env: environment)
         runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_hid_core.rb'), '--seed', options.fetch(:seed).to_s],
                    name: 'fuzz-erx-hid-core', deadline: 600, chdir: ROOT, env: environment)
         runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_usb_desc.rb'), '--seed', options.fetch(:seed).to_s],
                    name: 'fuzz-erx-usb-desc', deadline: 600, chdir: ROOT, env: environment)
         runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_usb_hub_core.rb'), '--seed', options.fetch(:seed).to_s],
                    name: 'fuzz-erx-usb-hub-core', deadline: 300, chdir: ROOT, env: environment)
+        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_usb_bot_core.rb'), '--seed', options.fetch(:seed).to_s],
+                   name: 'fuzz-erx-usb-bot-core', deadline: 300, chdir: ROOT, env: environment)
+        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_xhci_core.rb'), '--seed', options.fetch(:seed).to_s],
+                   name: 'fuzz-erx-xhci-core', deadline: 300, chdir: ROOT, env: environment)
         runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_virtio_net_frame.rb'), '--seed',
                     options.fetch(:seed).to_s],
                    name: 'fuzz-erx-virtio-net-frame', deadline: 300, chdir: ROOT, env: environment)

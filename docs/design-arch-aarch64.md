@@ -480,6 +480,21 @@ requester id the SMMU also sees, would give each function interrupts of
 its own, but HVF's GIC has no ITS, and erXos keeps one interrupt path
 under both accelerators.
 
+The device-tree reader's interrupt controller binding is the GIC's
+(`kernel/arch/aarch64/dt_interrupt.c`), for a controller compatible with
+`arm,gic-400` or `arm,gic-v3`, the platforms' controllers
+([design-platforms.md](design-platforms.md#data-model)), which turns the specifier a
+closed bus's `interrupt-map` entry names into a line
+([design-device-tree.md](design-device-tree.md#the-reader)). A GIC
+specifier has three cells: the type, 0 for an SPI; the number, an SPI
+from 0 to 987, whose interrupt id is 32 more; and the flags, whose low
+four bits are 4 for level-triggered, active high, as FreeBSD decodes them
+(`sys/arm/arm/gic.c:702-751`, `gic_common.h:58-61`). It gives a line
+only for a level-triggered, active-high SPI, since an INTx line is
+level-sensitive and an SPI cannot be active low; a PPI, an edge, another
+count of cells or a number past 987 gives none. On the Pi 4 the bridge's
+map routes INTA to INTD to SPIs 143 to 146, interrupt ids 175 to 178.
+
 ### CPU start and machine end
 
 Every firmware call goes through one SMCCC routine, using the conduit,
@@ -1124,6 +1139,11 @@ GIC has no ITS, so the GICv2m frame serves both accelerators by one path
   (v7.3), for entry at EL2; `init_el2_state`; `arch/arm64/mm/context.c`
   (ASID allocation) and `arch/arm64/kvm/hyp/entry.S` (SError attribution),
   v7.3.
+* FreeBSD `releng/15.1` at `95719d8a895bf8170851e9844d9b4092b1d2b6fe`:
+  `sys/arm/arm/gic.c`
+  (SHA-256 `e32059f306ff4ec09f83c1c814936f2ee2fa186777e1a7e2f18aaa9904814a33`)
+  and `sys/arm/arm/gic_common.h`
+  (SHA-256 `85c8fc2a1d9a0d56b222092cd39b4493090584f8877fd6cdad875f6e9c6976b4`).
 * Fiasco, https://github.com/kernkonzept/fiasco, commit `50bbe8a9`:
   `arm/iommu-arm-smmuv3.cpp` and `arm/dmar_space-smmuv3.cpp`.
 * TF-A 2.15.0's Raspberry Pi 4 port, as read in

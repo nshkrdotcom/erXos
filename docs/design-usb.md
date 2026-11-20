@@ -525,16 +525,20 @@ file system. Its release script, `usb`, holds the base every domain boots and
 A development build's manifest may put the controller in another domain,
 the display domain for instance, as it may merge other driver domains
 ([design-system.md](design-system.md#devices)); nothing in the stack
-changes, since a place's reader then reads a local process.
+changes, since a place's reader then reads a local process. The display's
+own USB function then feeds `erx_winfs:input/2` directly, as a virtio-input
+driver does, and serves no input tree.
 
 ### HID reaches the display
 
 The USB domain serves an **input tree** through `erx_fs`
 ([design-files.md](design-files.md#serving-the-erx_fs-behaviour)) holding
 the eight files `hid0` to `hid7`, each a stream of records in the binary
-form of `abi/formats/input.txt`. The manifest grants the tree, an
-instance of `files`, read only to the display domain that should receive
-the controller's input, exactly as for any input device another domain
+form of `abi/formats/input.txt`, named by `input_tree` of
+`abi/services/input.txt`. The tree is a service of the `input`
+interface, whose grants are read-only by construction, and the manifest
+grants it only to the display domain that should receive the
+controller's input, exactly as for any input device another domain
 holds ([design-display.md](design-display.md#the-display-device)). The
 display starts one reader for each file of a granted input tree; each
 reader is a source of the router, with one read outstanding, and ends
@@ -549,9 +553,20 @@ function ends, by detach, by crash or by its controller's reset, the
 file carries `release`, then nothing until the number's next occupant.
 The number's stream process monitors its occupant and writes the
 `release` itself when the occupant's process ends, so no path by which a
-function can end has to remember it. A function that finds every number
-taken is not started, and the bus process shows it in the device's
-inspection record as `no input number`.
+function can end has to remember it. A stream holds at most one read's
+worth of unread records ([From reports to records](#from-reports-to-records)),
+and the `release` an end writes is never dropped, so a number is free only
+when it has no occupant and less than one read's worth unread: a display
+that has stopped reading a number keeps it taken, and each number's
+unread bytes pass that bound by at most one `release`. A function that
+finds every number taken is not started, and the bus process shows it in
+the device's inspection record as `no input number`.
+
+A read of a number's file takes whole records only, as many as its count
+holds and the stream has, and a read of at least one byte whose count
+holds no record is refused with `EINVAL`. So no read ends inside a record, and a reader that
+ends, with the display's restart or a flush, never leaves the next one
+reading from the middle of a record.
 
 The input tree is the USB domain's only grant to the display, and it has
 the reach the display design gives any input source: that of a person at
@@ -660,6 +675,7 @@ fixed before any device arrives:
 | commands | one in flight per controller; a device's teardown at most one Stop Endpoint per endpoint and one Disable Slot | the controller process |
 | hub notifications | one status transfer posted per hub, and the next posted only when the bus core has handled every port the last one named; per port at most one operation in flight | [Hubs](#hubs) |
 | enumeration | one port at a time between its reset and its device's address; one attempt per connection; an attempt starts when the port has settled, at most `usb_port_attempts_max` on a port in any `usb_port_attempt_window_ms`; past them a settled port is held in `settling` until its oldest attempt leaves that window; a hub attached again starts its ports' attempts afresh, which its own port's attempts bound | `usb_port_attempts_max`, `usb_port_attempt_window_ms` |
+| function restarts | a function's pipes are reset before each restart, and a function is restarted at most 3 times in any 60 s; an end past them detaches its device and disables its port until its connection changes ([Failure handling](#failure-handling)) | `usb_function_restarts_max`, `usb_function_restart_window_ms` |
 | diagnostics | a port's failure is logged once per connection and an over-current change once per enumeration attempt, so at most one line more than the port's attempts; repeats count in the inspection record | the bus core |
 | processes | one per claimed function, one per ready medium's transport, partition and windows | the claim table and the places |
 | input numbers, drives | 8 input numbers; the drives the manifest names, at most 4 | `usb_input_max`, `usb_drives_max` |
@@ -785,20 +801,28 @@ and 6), each wait a deadline of the core:
 3. Program the inbound window from the tree's `dma-ranges`: `BAR2` with
    its CPU side at physical 0 and its PCI side at the range's lowest
    address, its size the range's size rounded up to a power of two;
-   `SCB0_SIZE` to match; `BAR1` and `BAR3` disabled, `BAR1` because on
-   this family it would map the SoC's own registers to the bus
-   (section 2). A tree whose range breaks the window's rules (a power of
-   two, an offset that is a multiple of the size and not between 2 and
-   4 GiB) fails bring-up with `dma-ranges`. On the Pi 4's 3 GiB range
-   this is a 4 GiB window at PCI 0; FreeBSD's fixed 8 GiB window covers
-   the same memory (section 8, item 4).
+   `BAR1` and `BAR3` disabled, `BAR1` because on this family it would
+   map the SoC's own registers to the bus (section 2). On the Pi 4's
+   3 GiB range this is a 4 GiB window at PCI 0; FreeBSD's fixed 8 GiB
+   window covers the same memory (section 8, item 4).
 4. Read the root-complex bit, bit 7 of `MISC_PCIE_STATUS`; clear, the
    block is an endpoint and bring-up fails with `endpoint mode`.
-5. Set the root port's class code (bits 23:0 of `0x43c`) to `0x060400`,
-   a PCI-to-PCI bridge, since the block resets presenting an endpoint's;
-   set `ENDIAN_MODE_BAR2` (`0x188`) to little endian; program one
-   outbound window for each memory range of the tree's `ranges`, at most
-   four, each in MiB with an inclusive end (section 2).
+5. Set `SCB0_SIZE` in `MISC_CTRL` to match the inbound window; set the
+   root port's class code (bits 23:0 of `0x43c`) to `0x060400`, a
+   PCI-to-PCI bridge, since the block resets presenting an endpoint's;
+   program one outbound window for each memory range of the tree's
+   `ranges`, each in MiB with an inclusive end (section 2); set
+   `ENDIAN_MODE_BAR2` (`0x188`) to little endian.
+
+   Both windows are checked against the tree before any register is
+   touched, so a tree they cannot carry leaves the bridge as it was. A
+   `dma-ranges` range whose CPU side is not 0, which the window's fixed
+   CPU side cannot map as the tree says, or whose window breaks the
+   window's rules (64 KiB to 64 GiB, a PCI offset that is a multiple of
+   the size and not between 2 and 4 GiB) fails bring-up with
+   `dma-ranges`; `ranges` with no memory range, more than four, or one
+   whose CPU base or size is not whole MiB or whose end lies past the
+   40 bits the window registers hold, fails it with `ranges`.
 6. Clear `CLKREQ_DEBUG_ENABLE` and `L1SS_ENABLE` in `0x4204`, the mode
    Linux calls "safe": no clock power management, so no internal-bus
    timeout to lengthen and no L1 substates that could stop the link
@@ -1216,7 +1240,7 @@ the function, and a medium's windows end with its block service.
 `erx_usb_bus_core:step(Event, Now, State) -> {State, Actions}` holds the
 whole topology; `Now` is the time the event is handled at, from which
 the step sets its deadlines. Its state is a map of hubs, the root hub among them, each
-with its ports and its pending change set, and of devices, each with its
+with its ports and its queue of ports to read, and of devices, each with its
 place in the tree (the route of port numbers from the root), its speed,
 its reference, its enumeration state, its configuration and its
 functions; the **address-zero turn**, held from the start of one port's
@@ -1382,6 +1406,22 @@ device keeps the command its predecessor started, and every BOT
 instance starts with its class's reset recovery for that reason
 ([The BOT engine](#the-bot-engine)).
 
+Each instance of a function has a run number, which the bus core keeps
+per function: 1 at the device's configuration, one more at each start
+again. The core's start, `{start, Ref, Functions}`, pairs each function
+with its number, and the bus process keeps the number with the instance
+it starts and passes it back in that instance's end, `{function_ended,
+Ref, Interface, Run}`, and, for a hub function, in each of its reports,
+`{changed, Hub, Set, Run, Pid}`. The core takes an end or a report only
+while the function runs as the instance it names, so one from an
+earlier instance, repeated or late, is stale by construction and
+changes nothing: it cannot reset a running instance's pipes and start a
+second one, nor take `handled` from a hub function's successor, however
+the bus process orders its messages. The numbers cannot stand in for an
+end that never comes, so the bus process sends an instance's end at
+least once: when its process ends, which its monitor gives, and when
+its start fails.
+
 A STALL, a timeout or a malformed answer ends the enumeration as
 FreeBSD's error path does: the device is detached, the port is disabled
 at its hub, by ClearPortFeature(PORT_ENABLE) or a root port's enable bit
@@ -1417,15 +1457,24 @@ the report and explores every port on any (`uhub_intr_callback`,
 sends `{changed, Hub, Bitmap, Pid}`, `Pid` its own, to the bus process
 and posts its next transfer only when the bus process answers
 `{handled, Hub}`; a report that names nothing posts the next transfer at
-once. The bus core keeps the pid of the report it is handling and
-answers that pid alone, and a restarted function's report replaces its
-predecessor's, so no instance ever takes another's answer. Its first report, at
+once. The bus process gives the bus core the report with the run number
+of the instance that sent it ([A function's
+end](#ports-hubs-and-devices-the-bus-core)), and the core takes only the
+running instance's. It keeps the pid of the report it is handling and
+answers that pid alone, and drops it when the instance ends, so no
+instance ever takes another's answer. Its first report, at
 start, names the hub and every port, so each instance, a restarted one
 included, has the bus core read every port's status once. The bus core
-merges the bitmap into the hub's pending set, and for each port in it,
-one at a time, reads GET_STATUS, clears every change bit it read and
+queues the ports of the bitmap the hub's queue does not hold yet, and
+for each port in it, in turn, reads GET_STATUS, clears every change bit it read and
 acts on what the status says; for bit 0 it reads and clears the hub's
-own status. When the set is empty it answers `handled`. A hub port's
+own status. A read that saw a change queues its port again, behind the
+ports already queued, so the port is read again after its last clear,
+and only a read that sees no change takes it out: a change that latches between a read and its clear
+is taken by the clear unseen, and only the read after the clear shows
+what it left, as FreeBSD's `uhub_reattach_port` reads the port again
+after it clears the connection change (`usb_hub.c:620-637`). When the
+queue is empty it answers `handled`. A hub port's
 GET_STATUS gives the speed of the device on it by the hub's own speed,
 as FreeBSD's `uhub_reattach_port` reads it (`usb_hub.c:738-752`): on a
 high-speed hub the high-speed bit, then the low-speed bit, else full
@@ -1440,10 +1489,15 @@ own, do not fail, so one that does ends the bus with its controller; and a root 
 every one of its change bits is cleared (xHCI 4.19.2, p. 322).
 
 So the work a hub can create is bounded by construction: one bitmap in
-flight per hub, one pending set per hub that a repeated bitmap only
-re-marks, one operation in flight per port, and one port at a time in
-the address-zero turn. A hub that reports changes as fast as it can
-only waits longer for its next transfer.
+flight per hub, one queue per hub that holds each port at most
+once, one operation in flight per hub, and one port at a time in
+the address-zero turn. A hub that reports changes as fast as it can,
+only waits longer for its next transfer. A port whose change bits set
+again after every clear is read again behind the ports already queued,
+so the root hub's other ports keep their turns; on an external hub it
+also holds back `handled`, so while it keeps changing the hub reports
+no other port, and the hub's EP0 carries its reads and clears back to
+back.
 
 An over-current change is cleared and logged once per enumeration
 attempt, the first since the port's last attempt started, so a device
@@ -1663,7 +1717,15 @@ except to disable; FreeBSD writes back the value it read with the bits
 of `XHCI_PS_CLEAR` removed (`xhcireg.h:146`; `xhci.c:3633`), and erXos
 derives the same mask from the access type of each field of the SVD
 source, so no constant is copied by hand. The controller writes no `PORTSC` while it
-is halted (xHCI 5.4.8, p. 405).
+is halted (xHCI 5.4.8, p. 405). The bus core reads a root port's changes
+in the USB 2 hub words and clears each one it reads, and a root port
+raises no further event until all of its change bits are clear (4.19.2,
+p. 322), so every `PORTSC` change bit stands behind one USB 2 change: the
+link state change behind the suspend change, which is how FreeBSD's
+`C_PORT_SUSPEND` clears it (`xhci.c:3461-3463`); the warm reset change
+behind the reset change, both the end of a reset
+(`usb_hub.c:1091-1103`); and the configuration error change, a
+SuperSpeed link that failed to come up, behind the enable change.
 
 **Commands** run one at a time, each a post on the command queue whose
 completion is the next command's start. A command not answered in 5 s
@@ -1673,9 +1735,27 @@ fails the controller: the process ends, and its restart resets it.
 interrupt and `IMAN`'s interrupt pending, both write-one-to-clear, then
 calls `erx_device:complete/2` until it answers `{ok, []}`, then
 acknowledges the line, so a level-triggered INTx line is not left
-asserted. Every controller of the kinds table is given with its
-interrupt, an MSI or the Pi 4's INTx line, so no controller is polled
-([A shared line is refused](#interrupts)). Each completion is a transfer's, with its tag, completion code
+asserted. A pass stops once it has read `xhci_events_per_interrupt`
+events, two wraps of the event ring, where FreeBSD's `xhci_interrupt_poll`
+stops (`xhci.c:1138`, `:1167-1176`), and acknowledges the line too. An
+interrupt before the controller runs is held, not
+acknowledged: a line the firmware left asserted, as the VL805's INTx
+may be, stays masked until the install has reset the controller, and
+its one acknowledgement goes out with the bus's start. A controller
+that fails first does not acknowledge it, since the process's exit
+unbinds the line, which masks it. Every controller of the kinds table is given with its
+interrupt, an MSI or the Pi 4's INTx line
+([A shared line is refused](#interrupts)), so events are never polled;
+status is read about once a second. The process reads `USBSTS` on
+every interrupt and, while the controller runs, every
+`xhci_status_interval_ms` (1 s) whether interrupts come or not, and
+fails the controller on a host system error (`HSE`), a host controller
+error (`HCE`), which only a reset clears, or `HCH` set while it should be
+running (xHCI 4.10.2.6, pp. 200-201; 4.24.1, p. 358; 5.4.2, pp.
+397-399). A function that left the bus reads all ones, which
+includes `HSE`, so a controller that stopped or vanished without an
+interrupt fails within about a second rather than leaving its callers
+waiting on completions that never come. Each completion is a transfer's, with its tag, completion code
 and bytes; a command's, with its tag, code and, for enable slot, the
 slot, for address device, the address; or a port's event, with the port.
 Erlang names the codes from `abi/formats/xhci.txt`.
@@ -1793,13 +1873,14 @@ counts read from the controller:
 
 | Region | Size | Writer | Notes |
 | --- | --- | --- | --- |
-| DCBAA | `usb_devices_max + 1` entries | the CPU | an entry is written when a slot is addressed and cleared after its disable completes (xHCI 4.6.4, p. 110) |
-| scratchpad array and pages | the count the controller asks for, at most 64 pages of 4 KiB | the controller, from install to reset | never read by the CPU; install refuses a controller asking for more, or whose page size excludes 4 KiB (5.4.3, p. 400), with `{error, enotsup}` |
+| DCBAA | `usb_devices_max + 1` entries | the CPU | written only by the sequencer: entry 0 at install, entry *k* when slot *k*'s holding begins at its first Address Device, and cleared when Disable Slot's success ends it (xHCI 4.6.4, p. 110); the controller reads no entry of a slot before its first Address Device or of a disabled one (6.1, p. 442) |
+| scratchpad array | one entry for each page | the CPU | written at install, read only by the controller |
+| scratchpad pages | the count the controller asks for, at most 64 pages of 4 KiB | the controller, from install to reset | never read by the CPU; install refuses a controller asking for more, or whose page size excludes 4 KiB (5.4.3, p. 400), with `{error, enotsup}` |
 | event ring segment table | one entry | the CPU | written at install |
 | event ring | one segment of 512 TRBs | the controller | read by observation, dequeue published through `ERDP` |
 | command ring | 16 TRBs, the last a link back | the CPU | one command in flight |
 | input context | one, 33 contexts of the controller's context size | the CPU, handed to the controller with each command that reads it | the command queue's one buffer |
-| device contexts | one per slot, 32 contexts | the controller, while the slot is enabled | zeroed and handed over at address device; the CPU reads one field, the slot's address after Address Device, and never an endpoint context's dequeue pointer or cycle state, which the VL805 writes back wrongly (facts record, section 5), since the NIF keeps both of its own |
+| device contexts | one per slot, 32 contexts | the controller, while the slot is enabled | a buffer to the DMA check, handed over with the slot's holding at its first Address Device, which the sequencer zeroes as it passes, and taken back when Disable Slot succeeds; the CPU reads one field, the slot's address after Address Device, and never an endpoint context's dequeue pointer or cycle state, which the VL805 writes back wrongly (facts record, section 5), since the NIF keeps both of its own |
 | queue blocks | 16 control, 16 interrupt and 4 bulk | per block: its ring the CPU's, each buffer the device's while posted | below |
 
 A **queue block** is a transfer ring of 16 TRBs, the last a link TRB back
@@ -1808,7 +1889,13 @@ interrupt block four 1 KiB buffers, a bulk block two 32 KiB buffers, each
 buffer aligned to its size so that none crosses a 64 KiB boundary, which
 a TRB's buffer may not (6.4.1, p. 465). Nothing is allocated after
 install. With at most 64 scratchpad pages, the record's memory is under
-1 MiB, the `dma_memory` its device row gives.
+1 MiB, the `dma_memory` its device row gives. When a command binds a
+block's ring to a new queue, the first time or a reuse, the sequencer
+clears the ring, rebuilds its link, and sets its position to the ring's
+base with cycle state 1 (4.3.3, p. 89; 6.2.3.1, p. 454). A ring is
+bound only while no queue holds it, so a drop-and-add takes a free
+block, and the old one is free again when the command succeeds. Set TR
+Dequeue on an existing queue keeps the ring's position and cycle state.
 
 **Two rules every ring keeps, on every controller.** Each is a quirk of
 the VL805 that Linux handles for that controller alone (facts record,
@@ -1821,14 +1908,14 @@ a case of its own:
   prefetches past a segment's end, and with the pad what it reads there
   is memory of its own record, never a neighbour's buffer or another
   region. It costs about 17 KiB of the record.
-* **The enqueue position never rests on a link TRB.** A post whose last
-  TRB lands just before the link hands the link over with it, its cycle
-  bit written with the transfer's TRBs before the publication, and moves
-  the enqueue position to the ring's first TRB with the cycle state
-  toggled; a transfer that continues past the link sets the link's chain
-  bit, so the controller follows it into the next TRBs of the same TD
-  (4.11.5.1, pp. 228-229). Set TR Dequeue Pointer takes the enqueue
-  position, so it never points the controller at a link TRB, which the
+* **A ring's position never rests on a link TRB.** A run whose last
+  TRB lands just before the link takes the link with it, its cycle bit
+  written with the run's later TRBs, behind the first, and the sequencer
+  moves the ring's position to its first TRB with the cycle state
+  toggled; its chain bit stays clear, since every TD the form builds is
+  one TRB (3.2.9, p. 68), so a link stands alone between TDs (4.11.7,
+  p. 235). Set TR Dequeue Pointer takes the ring's position from the
+  ledger, so it never points the controller at a link TRB, which the
   VL805 misparses there.
 
 **Queues and their states.** The queue of an endpoint is named
@@ -1864,9 +1951,9 @@ parameters, from which the NIF writes every context and TRB:
 | `Command` | Parameters | What the NIF builds |
 | --- | --- | --- |
 | `enable_slot` | | the TRB |
-| `{address_device, Slot, Device}` | `route` (20 bits, four a tier, each tier 1 to 15), `root_port` (1 to the port count), `speed` (the port's speed number), `tt` (`none`, or the hub's slot, its port and whether it runs one TT per port), `ep0_packet` (8, 64 or 512) | the input control context adding the slot and EP0; the slot context with one context entry and interrupter 0; EP0's context: control type, the packet size, error count 3, interval 0, no streams, multiplier 0, its ring's base and cycle state (4.3.3, pp. 88-89); the TRB with the block-set-address flag clear |
-| `{evaluate_context, Slot, #{ep0_packet := P}}` | `P` 8 to 512 | the input control context adding EP0; EP0's context with the new size; accepted only while EP0 has nothing posted |
-| `{configure_endpoints, Slot, Config}` | `add`: a list of endpoints, each with its number and direction, its type (control, bulk or interrupt; isochronous is `badarg`), its packet size, burst (0 to 15), interval exponent (0 to 15) and service-interval payload (1 to packet size times burst plus one, at most its queue block's buffer, and equal to that product unless the endpoint is an interrupt endpoint of a slot addressed at SuperSpeed); `drop`: a list of device context indexes; `hub`: `none` or its port count (1 to 15), think time (0 to 3) and multi-TT flag | the input control context's add and drop flags; the slot context with the last valid index and the hub fields; each added endpoint's context with error count 3, no streams (`MaxPStreams`, `LSA` and `HID` 0), multiplier 0, its ring's base and cycle state, the average TRB length derived from its packet size and burst, and the maximum service-interval payload from its payload parameter |
+| `{address_device, Slot, Device}` | `route` (20 bits, four a tier, each tier 1 to 15), `root_port` (1 to the port count), `speed` (the port's speed number), `tt` (`none`, or the hub's slot, its port and whether it runs one TT per port), `ep0_packet` (8, 64 or 512) | the input control context adding the slot and EP0; the slot context with one context entry and interrupter 0; EP0's context: control type, the packet size, error count 3, interval 0, no streams, multiplier 0, average TRB length 8 (6.2.3, p. 454), its ring's base and cycle state 1 (4.3.3, pp. 88-89); the TRB with the block-set-address flag clear |
+| `{evaluate_context, Slot, #{ep0_packet := P}}` | `P` 8 to 512 | the input control context adding EP0; EP0's whole context as Address Device builds it, with the new size and its bound ring's position and cycle state, since the sequencer writes every context the add flags name whole; accepted only while EP0 has nothing posted |
+| `{configure_endpoints, Slot, Config}` | `add`: a list of endpoints, each with its number and direction, its type (control, bulk or interrupt; isochronous is `badarg`), its packet size, burst (0 to 15), interval exponent (0 to 15) and service-interval payload (1 to packet size times burst plus one, at most its queue block's buffer, and equal to that product unless the endpoint is an interrupt endpoint of a slot addressed at SuperSpeed); `drop`: a list of device context indexes; `hub`: `none` or its port count (1 to 15), think time (0 to 3) and multi-TT flag | the input control context's add and drop flags; the slot context with the last valid index and the hub fields; each added endpoint's context with error count 3, no streams (`MaxPStreams`, `LSA` and `HID` 0), multiplier 0, its ring's base and cycle state 1, the average TRB length, 8 for a control endpoint (6.2.3, p. 454) and otherwise an initial estimate of its packet size times its burst plus one, and the maximum service-interval payload from its payload parameter |
 | `{stop_endpoint, Slot, Dci}`, `{reset_endpoint, Slot, Dci}` | | the TRB; Reset Endpoint with transfer-state-preserve clear |
 | `{set_tr_dequeue, Slot, Dci}` | | the TRB, with the queue's own enqueue position and cycle state |
 | `{disable_slot, Slot}` | | the TRB |
@@ -1895,23 +1982,28 @@ since xHCI answers it with a TRB error, which may halt the controller
 (4.11.2.2, p. 214; 4.10.2.2, p. 197); each is `badarg`.
 
 **Publication.** A running controller takes a TRB as soon as its cycle
-bit matches, doorbell or not (4.9.2, p. 170), so the doorbell cannot be
-the publication. A post writes every TRB of the transfer with the first
-TRB's cycle bit still the controller's old value, and an `out` buffer's
-bytes; the sequencer cleans them; then the plan's first publication is
-the first TRB's cycle word, a ring field the form names as its
-publication, after the publish barrier and followed by the clean of its
-line; its second is the doorbell, after another barrier
-([design-device-dma.md](design-device-dma.md#calls-observations-and-plans),
-the sequencer). FreeBSD publishes the same way: it flushes the chain,
-then toggles the one cycle bit that activates it (`xhci.c:3010-3043`).
-The command ring uses the same two publications, with doorbell 0.
+bit matches, doorbell or not (4.9.2, pp. 170-171), so the doorbell
+cannot be the publication. The core describes a transfer's TRBs and
+fills an `out` buffer's bytes; the sequencer writes the TRBs at the
+ring's position, the first with its cycle bit still the controller's
+old value and the rest, a link the run reaches included, behind it, and
+cleans them; after the publish barrier it writes the first TRB's cycle
+word, the run's activation, and cleans its line; then the doorbell,
+after another barrier
+([design-device-dma.md](design-device-dma.md#publication)). FreeBSD
+publishes the same way: it flushes the chain, then toggles the one cycle
+bit that activates it (`xhci.c:3010-3043`). A command is published the
+same way on the command ring, with doorbell 0.
 
-**Completing.** `complete/2` observes the event ring from the NIF's
-dequeue position: each entry's cycle bit, then the entries it covers, at
-most 32 a call. For each event it reads its type, slot, endpoint, TRB
-pointer, completion code, length and event-data flag, and decides by its
-own state and the event alone:
+**Completing.** `complete/2` acquires the event ring, at most 32 events a
+call: the sequencer, not the core, reads each event TRB's cycle word
+from the ledger's consumer position, stops at the first not yet written,
+and only then reads the events it covers whole, so the core is handed
+only snapshots of events the controller had finished writing
+([design-device-dma.md](design-device-dma.md#releases)). For each event
+the core takes its type, slot, endpoint, TRB pointer, completion code,
+length and event-data flag, and decides by its own state and the event
+alone:
 
 * A transfer event must name an enabled slot and one of its queues, have
   the event-data flag clear (the NIF builds no event data TRBs), and
@@ -1929,6 +2021,9 @@ own state and the event alone:
   came, and otherwise its length less the event's residue.
 * **An error code** on any TRB of the transfer completes it with that
   code and no bytes, and the queue becomes `halted` (4.10.2, p. 195).
+  Its buffer stays the controller's in the ledger until a command that
+  restarts or removes the ring succeeds, which a halted queue needs
+  before it accepts a post again.
 * **A stop's event**, Stopped, Stopped - Short Packet or Stopped - Length
   Invalid, is accepted only while a Stop Endpoint is in flight on its
   queue, at most one for each stop, and only when its pointer lies in
@@ -1963,8 +2058,11 @@ own state and the event alone:
 A completed transfer copies its bytes into a fresh binary and answers
 `{Tag, Code, Bytes}`; a command completion answers `{Tag, Code, Extra}`
 and applies the state changes above; a port event answers `{port,
-Port}`, with the port checked against the port count. The NIF writes
-`ERDP` with the busy bit after the events it consumed, as FreeBSD does
+Port}`, with the port checked against the port count. Which buffers come
+back is not the core's reading but the ledger's releases
+([What the DMA check judges](#what-the-dma-check-judges)). The sequencer
+writes `ERDP`, at the ledger's consumer position, with the busy bit
+after the events a decision consumed, as FreeBSD does
 (`xhci.c:1193-1196`) and the event ring's rules ask (4.9.4, p. 181).
 
 **The event ring cannot fill.** A full event ring stops the controller's
@@ -1987,6 +2085,143 @@ ports. The NIF enables no other event: no microframe-index wrap, no
 device notification, no event data. A controller that still reports a
 full ring breaks the form, and its restart resets it.
 
+#### What the DMA check judges
+
+The core describes TRBs and input contexts; the sequencer writes them and
+every other record the controller reads, and keeps the ledger of what
+the controller holds
+([design-device-dma.md](design-device-dma.md#the-check)). Fields and
+marks come from `abi/formats/xhci.txt`. The TRB type (6.4.6, Table 6-91,
+p. 511) is a TRB's selector, which the sequencer writes from the
+meaning; a meaning the table does not offer is refused.
+
+**What the core describes.**
+
+| Table | Meanings | Names and lengths | Fixed or derived |
+| --- | --- | --- | --- |
+| each queue block's ring | normal, data stage, setup stage, status stage | normal and data stage: a buffer of the ring's own block and an offset, reaching the TRB's transfer length (6.4.1.1, p. 467; 6.4.1.2.2, p. 471); setup and status stage: none, the setup's parameter being its eight bytes (6.4.1.2.1, p. 469) | immediate data clear on normal and data stage, set on setup stage; chain clear; the interrupter target 0; the cycle bit, and the link at the segment's end, the sequencer's |
+| the command ring | Enable Slot, Disable Slot, Stop Endpoint, Reset Endpoint, Address Device, Configure Endpoint, Evaluate Context, Set TR Dequeue Pointer | Address Device, Configure Endpoint and Evaluate Context: the input context, described in the same plan (6.4.3.4 to 6.4.3.6, pp. 490-492); Set TR Dequeue Pointer: its endpoint, whose bound ring's position and cycle state the sequencer writes as the pointer (6.4.3.9, pp. 494-495); the others: a slot and an endpoint, no address | block set address clear; Reset Endpoint's transfer state preserve clear; the stream ID 0 |
+| the input context | Address Device: the slot context and EP0's; Evaluate Context: EP0's; Configure Endpoint: the slot context, each endpoint it adds and the indexes it drops | each added endpoint context names a free queue block, whose ring the command binds to the endpoint; Evaluate Context's EP0 context points at EP0's bound ring | the add and drop flags, derived from the contexts carried: A0 and A1 alone for Address Device (4.6.5, p. 112), A1 for Evaluate Context, A0 and each added index for Configure Endpoint, with its drops (6.2.5.1, Tables 6-15 and 6-16, p. 461); each dequeue pointer the bound ring's position and cycle state (Table 6-10, p. 453); `MaxPStreams` 0, which otherwise makes the pointer a stream context array's (Table 6-8, p. 451), and `LSA`, `HID` and `Mult` 0; the interrupter target 0 |
+
+The interrupter target is 0 wherever it appears, since interrupter 0 is
+the only one given an event ring, and events aimed at an interrupter
+without one leave its ring undefined (5.5.2.3.1, p. 427).
+
+**What the sequencer writes from the layout alone.** At install: DCBAA
+entry 0, the scratchpad array's address (6.1, Table 6-3, p. 442); the
+scratchpad array, one entry a page (6.6, Table 6-96, p. 516); the
+segment table's one entry, the event ring's base and its 512 TRBs (6.5,
+Tables 6-94 and 6-95, p. 515); `DCBAAP` (5.4.6, p. 403); `CONFIG`'s slot
+count, the DCBAA's declared slot count (5.4.7, p. 404); `ERSTSZ` 1, since
+0 leaves the primary event ring undefined (5.5.2.3.1, p. 427); `ERSTBA`,
+the segment table (5.5.2.3.2, p. 428); `ERDP`, the event ring's first
+TRB; `CRCR`, the command ring's first TRB with cycle state 1 (5.4.5,
+p. 401); and every ring's link, its segment pointer its own ring's first
+TRB, with toggle cycle set (6.4.4.1, pp. 504-505). Afterwards: DCBAA
+entry *k* when slot *k*'s holding begins, cleared when it ends (6.1,
+p. 441); every doorbell, with stream ID 0; `ERDP` after each decision
+that consumes events.
+
+**Bindings and holdings.**
+
+* A transfer ring is bound to at most one endpoint, `{Slot, Dci}`. The
+  command whose input context adds the endpoint binds the named block's
+  ring at the command's publication, and the sequencer initialises the
+  ring then; the ring must be bound to no endpoint. While a command that
+  drops and adds one endpoint is in flight, the endpoint has its old
+  ring and its new one bound, and the command's completion releases one
+  of them. Every record that points an endpoint at a ring, Set TR
+  Dequeue Pointer's and Evaluate Context's EP0 context, points it at a
+  ring bound to it, so no endpoint is given another endpoint's ring, and
+  with it another device's buffers.
+* A transfer's TRBs name only buffers of their own ring's block. Its
+  holding holds its TRBs, a link they reached, and its buffer.
+* A command's holding holds its TRB and the input context it carries, so
+  no command that carries one is published while another's is held.
+* A slot's holding holds its DCBAA entry and its device context. It
+  begins at the publication of the slot's first Address Device, which
+  zeroes the context as it passes; an Address Device for a slot that
+  holds one already adds nothing to it.
+* A command's **reach** is fixed at its publication and kept in the
+  ledger with its holding: the endpoints it closes, which take no new
+  transfer until its completion is consumed, and the transfer holdings
+  its success retires, those live on its rings then. Set TR Dequeue
+  Pointer closes its endpoint and retires every transfer on the
+  endpoint's ring; Configure Endpoint closes each endpoint it drops and
+  retires every transfer on the rings it unbinds; Disable Slot closes
+  every endpoint of the slot and retires every transfer on their rings;
+  Stop Endpoint and Reset Endpoint close their endpoint and retire
+  nothing. Closing is what makes the retired set exact: Set TR Dequeue
+  Pointer moves the controller to the pointer it was given, the ring's
+  position at the publication (4.6.10, pp. 141-142), and a transfer
+  published there afterwards, with its doorbell, would run although the
+  completion said the ring had been moved past it.
+* An endpoint's **state** in the ledger is `running`, `stopped` or
+  `halted`, the controller's states the form reaches (Figure 4-5,
+  4.8.3, p. 163), and changes only on what the trusted side did itself or
+  consumed. The consumed success of the command that binds the endpoint,
+  Address Device for EP0 or a Configure Endpoint adding it, alone or with
+  a drop, sets `running` (Figure 4-5, items 1, 2 and 6, p. 163), and so
+  does the publication of a transfer on it, whose doorbell starts a
+  stopped endpoint (4.8.3, p. 165); a consumed Stop Endpoint or Reset
+  Endpoint success sets `stopped` (4.6.9, p. 140; 4.6.8, p. 129); a
+  consumed transfer
+  event with an error code naming it sets `halted` (4.10.2, p. 195). A
+  failed command changes no state: a Stop Endpoint that fails because
+  the endpoint halted (4.8.3, p. 164) leaves it `halted` if the halting
+  error event was consumed first, and otherwise `running` with the
+  halting transfer live until that event is consumed. A transfer's
+  holding ends only when its last event is consumed, so `running` with
+  no live transfer is the specification's Running but idle: no transfer
+  in progress, the ring empty and every event received (4.6.6, p. 117).
+  The check holds three rules on it:
+  * no transfer is published on a `halted` endpoint, whose doorbell the
+    controller has disabled (4.6.8, p. 128);
+  * a Configure Endpoint that drops an endpoint, alone or with an add, is
+    published only when that endpoint is `stopped`, or `running` with no
+    live transfer, the only states in which a drop is defined (4.6.6,
+    p. 117; for drop-and-add, 4.6.8, p. 132), so a `halted` endpoint
+    needs a successful Reset Endpoint first;
+  * a Disable Slot is published only when no endpoint of its slot is
+    `running` with a live transfer. It moves every endpoint of its slot
+    from any state to Disabled, Halted named among them (Figure 4-5,
+    item 4, p. 163; 4.8.3, p. 165), and a halted endpoint is out of the
+    schedule with its doorbell disabled (4.6.8, p. 128); a running one
+    must have nothing in progress and every event received (4.6.4,
+    pp. 109-110).
+
+  The core reads each endpoint's state and closure from the ledger to
+  choose its commands, and the check refuses a plan that breaks any rule.
+  A Stop Endpoint on a halted endpoint, a Reset Endpoint on one that is
+  not halted and a Set TR Dequeue Pointer on one that is not stopped are
+  rejected with Context State Error, a defined answer that changes
+  nothing (4.8.3, p. 164; 4.6.8, p. 129; 4.6.10, p. 141), so the check
+  leaves those to the queue table above.
+
+**Releases.** Each event is a snapshot the acquisition took at the event
+ring's consumer position, after its cycle bit read as the ledger's
+consumer cycle state there (4.9.4, p. 181; 4.11.3, p. 222), and is
+consumed in order; the completion codes are Table 6-90's (p. 507).
+
+| Event | Release |
+| --- | --- |
+| Transfer Event, Success or Short Packet, naming the last TRB of a live transfer on a ring bound to its slot and endpoint | that transfer's holding |
+| any other Transfer Event: a short packet on a data stage, an error, a stop's | nothing: a transfer's holding ends only when the controller can no longer fetch it, its last TRB done or its ring moved past or removed |
+| Command Completion naming the live command | the command's holding, on every code, and by the command and its code what the rows below add |
+| Address Device or Configure Endpoint, failing | the bindings the command made |
+| Configure Endpoint, succeeding | each binding of an endpoint it drops that was made before it, with the transfers its reach retires |
+| Set TR Dequeue Pointer, succeeding | the transfers its reach retires, those live on the endpoint's ring at its publication |
+| Disable Slot, succeeding | the slot's holding, its DCBAA entry cleared, every binding of the slot, and the transfers its reach retires |
+| Port Status Change | nothing |
+| the controller halted with its reset done, after the reset | every holding |
+
+Stop Endpoint, Reset Endpoint and Evaluate Context release only their
+own holding: the ring stays the endpoint's, and its transfers can be
+fetched again. The core's reading of the same events gives each answer
+and each queue's state, as [Completing](#the-trb-ring-form) says; where
+the two meet, a transfer the core answers with bytes is one the event's
+release returned, or the copy is refused.
+
 #### Install
 
 `negotiate/2` takes one step a call and answers `{error, ebusy}` while
@@ -1997,9 +2232,12 @@ Its steps, each completed by a later call: clear run and stop, then wait
 for halted, which the controller reaches within 16 ms (5.4.1, p. 393);
 write the reset bit, allowed only once halted (p. 394), then wait for
 the reset bit and the controller-not-ready bit to clear before writing
-any other register (p. 394; 4.2, p. 80); then, in one decision, return
-every posted buffer and every block to the free lists, zero and lay out
-every region, clean them, and write the slot count, `DCBAAP`, the event
+any other register (p. 394; 4.2, p. 80); then, once the halted and
+reset-done report has released every holding and every block is free,
+the sequencer, in one decision, lays out and zeroes every region,
+writes DCBAA entry 0, the scratchpad array, the segment table and every
+ring's link, cleans them, and writes, each from the layout, the slot
+count, `DCBAAP`, the event
 ring's size and dequeue pointer, the segment table's base, the
 interrupter's `IMAN.IE`, the command ring's base with its cycle state,
 and `USBCMD` with run and `INTE`, in FreeBSD's order
@@ -2007,25 +2245,33 @@ and `USBCMD` with run and `INTE`, in FreeBSD's order
 controller interrupts only with both gates open (4.2, p. 82), and a
 reset closes `INTE` (5.4.1, p. 394), so both are written by this one
 decision, which runs after every reset and opens both, since every
-controller is given with its interrupt. `USBCMD.HSEE` stays clear: a
-host system error is read from `USBSTS` on every pass of the event loop
-rather than signalled on the bus. The segment table must be clean
+controller is given with its interrupt. `USBCMD.HSEE` stays clear: it
+only signals a host system error out of band, on the bus, gated by
+`SERR#` in the function's command register, which the PCIe domain
+owns; the controller process reads it from `USBSTS` instead, on every
+interrupt and about once a second ([The controller process](#the-controller-process)).
+The segment table must be clean
 before its base is written, since that write makes the controller read
 the table and enables the event ring (4.2, p. 82), which is why FreeBSD
 flushes first (`xhci.c:383-394`); the decision's handoffs clean every
 region before the register that names it. The last step waits for the
-controller to leave halted. The controller core holds each wait's deadline, 1 s as
-FreeBSD's loops (`xhci.c:430-436`, `:469-477`, `:494-499`), and fails
-the controller past it. The scratchpad passes to the device for good.
+controller to leave halted. Each wait is 1 s, as FreeBSD's loops
+(`xhci.c:430-436`, `:469-477`, `:494-499`); since `{error, ebusy}` does
+not say which wait it is in, the controller core holds one deadline for
+the install, the three waits' sum from its first call, and fails the
+controller past it. The scratchpad passes to the device for good.
 
 **Registers it owns.** `DCBAAP`, `CRCR`, `CONFIG`, `ERSTSZ`, `ERSTBA`,
-`ERDP`, every doorbell, `USBCMD`'s run and reset bits, `USBCMD.INTE`,
+`ERDP`, every doorbell, `USBCMD`'s run bit and both resets (`HCRST` and
+`LHCRST`), its save and restore bits (`CSS` and `CRS`), `USBCMD.INTE`,
 `USBCMD.HSEE` and `IMAN.IE` are `ownedByNif` in `hw/svd/xhci/xhci.svd`:
 the first group changes where the controller reads or writes, which
 entries it takes as valid, or which of the DCBAA's entries it may
-follow, and the interrupt gates belong with the install that must open
-them again after every reset, so no driver path can leave them closed
-on an interrupt-driven controller. `PORTSC`, `USBSTS`'s change bits,
+follow; a light reset returns the controller's state as `HCRST` does,
+and a save or a restore moves that state to and from memory; and the
+interrupt gates belong with the install that must open them again after
+every reset, so no driver path can leave them closed on an
+interrupt-driven controller. `PORTSC`, `USBSTS`'s change bits,
 `IMAN`'s pending bit and the extended capabilities' registers are the
 driver's.
 
@@ -2055,8 +2301,24 @@ whose every entry names the next by a non-zero offset in words forward
 from itself (7, p. 517). At open the NIF follows it once, at most 64
 entries, each inside the window, and binds the legacy support capability
 and the supported-protocol capabilities, at most 8, as clusters of the
-same kind; since every step moves forward, the walk ends. This is a
-part of the device NIF's register model
+same kind; since every step moves forward, the walk ends. A list longer
+than 64 entries, an entry outside the window, a second legacy support
+capability, a ninth supported protocol, or bases that put one cluster
+over another or over the capability registers refuses the record with
+`{error, einval}`, and an entry of any other ID is passed over. The SVD
+source declares the list's head once on the peripheral, and each kind of
+capability as one cluster at offset 0 carrying its ID:
+`LEGACY`, whose semaphores are two 8-bit registers, `BIOS_OWNED` at +2
+and `OS_OWNED` at +3, each with its field `OWNED` in bit 0, since the
+capability is written a byte at a time (7.1.1) and registers do not
+overlap, and `PROTOCOL[%s]`, eight instances in list order, each with
+`REVISION`, its word 0 with the major revision, and `PORTS`, its word 8
+with the compatible port offset and count. The Erlang names are a
+register's, an atom, and `{Name, Index}` for an instance, and
+`erx_device:elements/2` says how many there are: `elements(Dev, revision)`
+is the number of protocols bound and `elements(Dev, bios_owned)` 1 with a
+legacy support capability and 0 without. This is a part of the device
+NIF's register model
 ([design-runtime.md](design-runtime.md#the-device-nif)).
 
 ### `qemu-xhci` on QEMU `virt`
@@ -2685,7 +2947,7 @@ medium had gone after the request.
 | a medium removed or changed | TEST UNIT READY, UNIT ATTENTION, the detach | the medium; its windows end | the FAT server unmounts and remounts on the next walk |
 | a medium that cannot flush | the readiness SYNCHRONIZE CACHE | nothing: its flushes answer `no_flush` | none; the FAT server mounts it read-only, with `no flush: read-only` in the mount's record |
 | a control transfer not answered in 5 s | the controller process's deadline | the transfer, answered `timeout` after Stop Endpoint and Set TR Dequeue Pointer past it | the caller's; EP0 is open again |
-| a command not answered in 5 s, an event that fails the form's checks, the controller's host system error, a wait of the install past its deadline | the controller process | the controller process | the bus group restarts; `negotiate/2` resets the controller and returns every buffer; every device is enumerated again; places survive, so each input number carries `release` and each medium's windows end |
+| a command not answered in 5 s, an event that fails the form's checks, the controller's host system error, host controller error or halt while it runs, read from `USBSTS` on an interrupt or once a second, an all-ones read from a function that left the bus among them, a wait of the install past its deadline | the controller process | the controller process | the bus group restarts; `negotiate/2` resets the controller and returns every buffer; every device is enumerated again; places survive, so each input number carries `release` and each medium's windows end |
 | a register access that aborts (the controller fell off its bus) | the kernel, on erXos's kernel; on Fiasco an SError ends the task of the next thread to enter user mode on its CPU, which need not be the USB domain's, and the controller's next deadline fails it | the USB domain, by the fault, on erXos's kernel; the controller process on Fiasco | the domain service restarts the domain, which gets its unit again; the display's readers see their files end and start again when the tree is granted again, and each drive's holder is introduced again, as for a block driver's domain |
 | a configuration access below the root port with the link down | the bridge driver's link reads, before and after | the access, answered `link_down`; the function's position is reported gone | none of its own; an abort that does arrive ends the PCIe domain on erXos's kernel, as the next row |
 | the PCIe domain ends | the domain service | the enumerator and the bridge driver | the domain restarts; with the link up and the VL805's firmware present the bridge driver resets nothing and running functions are unchanged; otherwise it turns the link off cleanly, brings the bridge up again and asks for the firmware |
@@ -2717,9 +2979,9 @@ sink shows it.
 | `erx_device:negotiate/2`, TRB form | `{error, enotsup}` | it asks for more than 64 scratchpad pages, or its page size excludes 4 KiB |
 | `erx_device:negotiate/2`, TRB form | `{error, erange}` | `AC64` is clear and the record's memory lies above 4 GiB |
 | opening an xHCI record | `{error, einval}` | `CAPLENGTH`, `RTSOFF` or `DBOFF` puts a register cluster or a port past the register window, or an extended capability lies outside it |
-| `erx_device:post/4`, TRB form | `badarg` | a command or transfer of another shape; a parameter out of its range; an isochronous endpoint; a command the queue's state does not accept; Disable Slot with a queue running or a command for the slot in flight; a length past the buffer; a setup whose length differs from its data stage; a SET_ADDRESS setup |
+| `erx_device:post/4`, TRB form | `badarg` | a command or transfer of another shape; a parameter out of its range; an isochronous endpoint; a command the queue's state does not accept; Disable Slot with a queue running; a length past the buffer; a setup whose length differs from its data stage; a SET_ADDRESS setup |
 | `erx_device:post/4`, TRB form | `{error, full}` | a command already in flight; no free buffer on the queue; no free block of the kind a command adds |
-| `erx_device:post/4`, TRB form | `{error, halted}` | a transfer on a queue that is not `open` |
+| `erx_device:post/4`, TRB form | `{error, halted}` | a transfer on a queue that is not `open`, or that the command in flight holds: EP0 under Evaluate Context, a queue Configure Endpoint drops, every queue of the slot under Disable Slot |
 | `erx_device:post/4`, `complete/2`, TRB form | `{error, broken}` | an event failed the form's checks, until `negotiate/2` |
 | `erx_usb_pipe` calls | `{error, gone}` | the pipe's device has detached |
 | `erx_usb_pipe` calls | `{error, halted}`, `{error, resetting}`, `{error, stopped}` | the pipe halted and has not been reset; a reset is running; the transfer was still posted when a reset restarted the ring |
@@ -2751,11 +3013,14 @@ targeted traces carry the longer sequences.
 
 | Test | Seeded fault that must fail it |
 | --- | --- |
-| `erx_usb_bus_core`, explored to a fixed point over a root hub of two ports, one external hub of two ports and devices of one and two functions, with references and slots drawn from small sets; then traces of 1,000 attach and detach cycles on one port, a connection storm, a hub detached during its child's enumeration, a chain of six hubs and four connects on one port within a minute; over-current changes read on a root port | a connection change with the port still connected not detaching the occupant; the address-zero turn released at the reset's end instead of the address; a port's new state dropping its occupant without detaching it; a port given up after its address keeping the turn; the turn released at a detach before the address answer, so a second device is reset while the first's Address Device is outstanding; an Address Device answer for a detached device dropped as stale, so the turn is never given back; a hub given up handing on the turn a port below it held; a hub six tiers below the root powering its ports; a full-speed device's EP0 left at 8 bytes when its descriptor says otherwise; a hub configured without its hub descriptor; a device's first request sent at its address answer, without the 10 ms settle; the step an answer echoes ignored, so a stale answer is taken at the step awaiting its kind; a function restarted before its pipes' resets answer, so the new instance meets a transfer its predecessor posted; the attempt throttle removed; a port's attempts never leaving the window; an over-current change logged on every change; the over-current log not rearmed by an attempt |
+| `erx_usb_bus_core`, explored to a fixed point over a root hub of two ports, one external hub of two ports and devices of one and two functions, with references and slots drawn from small sets; then traces of 1,000 attach and detach cycles on one port, a connection storm, a hub detached during its child's enumeration, a chain of six hubs, four connects on one port within a minute, four ends of one function within a minute and a hub function's restart with a device behind it, a device unplugged and plugged in again between the read of its connection change and that change's clear; over-current changes read on a root port; and, at every quiet node of the exploration, every port agreeing with the world on whether something is connected; at every node, the end and the hub reports of every instance not running, the earlier ones and an ended one whose pipes are still being reset, changing nothing, and a restart starting the claimed function unchanged under a run number no earlier instance had | a connection change with the port still connected not detaching the occupant; the address-zero turn released at the reset's end instead of the address; a port's new state dropping its occupant without detaching it; a port given up after its address keeping the turn; the turn released at a detach before the address answer, so a second device is reset while the first's Address Device is outstanding; an Address Device answer for a detached device dropped as stale, so the turn is never given back; a hub given up handing on the turn a port below it held; a hub six tiers below the root powering its ports; a full-speed device's EP0 left at 8 bytes when its descriptor says otherwise; a hub configured without its hub descriptor; a device's first request sent at its address answer, without the 10 ms settle; the step an answer echoes ignored, so a stale answer is taken at the step awaiting its kind; a function restarted before its pipes' resets answer, so the new instance meets a transfer its predecessor posted; an end from a function's earlier instance taken, so a late end resets the running instance's pipes; a report from a hub function's ended instance taken, after its restart or while its pipe is still being reset; the report an ended hub instance was handling kept, so `handled` goes to it; a pipe's failed reset keeping the device; the restart bound removed; a port's failure logged at every move into a failure state; the attempt throttle removed; a port's attempts never leaving the window; an over-current change logged on every change; the over-current log not rearmed by an attempt; a read that saw changes taking its port off the queue, so a change latched before their clear is lost |
 | `erx_usb_hub_core`, its machine explored to a fixed point for hubs of 1, 2, 7, 8 and 15 ports over every report of the port count's length with each port bit and the bits around it, a short report and a failed transfer; its decoders on written cases | a change report sent with the next transfer already posted; `handled` taken without posting the next transfer; the bits above the port count kept; a report shorter than the port count taken as naming nothing |
 | `erx_xhci_core`'s pipe machine, teardown, control abort and failed address, explored to a fixed point over every queue state the NIF reports and every answer of each step, EP0 and other endpoints, behind a translator and not | `reset_pipe` issuing Reset Endpoint on a stopped queue; a stopped EP0 dropped and added; the abort answered after Stop Endpoint alone, so the next request finds EP0 stopped; the translator's clear skipped; Disable Slot issued before the stops answer; an Address Device whose device detached while it was posted left unanswered |
-| `erx_device_trb`, in C on the host, explored to a fixed point over rings of six TRBs and a link, two slots, two queues each, one buffer a queue, events of every code and kind, stops, resets, dequeue moves, drops and disables, so ring wrap and slot reuse are reachable; then traces of 100,000 transfers with random completions and 1,000 slot reuses; then under AddressSanitizer | a short data-stage event treated as completing, so the status event names no transfer and breaks the form; the stop span narrowed to the oldest transfer's first TRB and the enqueue position, so a completion followed by its forced event breaks the form; the enqueue position left on the link after a post that ends before it; Disable Slot accepted with a queue running; the TRB pointer's range check removed |
+| `erx_xhci_core`'s start, explored to a fixed point with and without a legacy support capability over every answer of the BIOS's semaphore and of the install and an interrupt at any time, the clock moving to each deadline; a run that has not ended always has a next step | the install called while the BIOS still owns the controller; the BIOS's semaphore never polled again; an interrupt before the controller runs acknowledged at once, or with a failure |
+| `erx_xhci_core`'s root ports and interrupt pass: every PORTSC write over many words, every change bit cleared by the name it shows as, a host system error, a pass bounded at two wraps of the event ring, `USBSTS` read once a second while running, each of those, a host controller error, a halt and an all-ones read failing the controller on an interrupt and on that read | a PORTSC write keeping the change and enable bits it read; the configuration error change behind no clear; a host system error ignored; a host controller error ignored; a halt ignored; a running controller's status never read between interrupts; an interrupt pass not bounded |
+| `erx_device_trb`, in C on the host, explored to a fixed point over rings of six TRBs and a link, two slots, two queues each, one buffer a queue, events of every code and kind, stops, resets, dequeue moves, drops and disables, so ring wrap and slot reuse are reachable; then traces of 100,000 transfers with random completions and 1,000 slot reuses; then under AddressSanitizer | a short data-stage event treated as completing, so the status event names no transfer and breaks the form; the stop span narrowed to the oldest transfer's first TRB and the enqueue position, so a completion followed by its forced event breaks the form; the enqueue position left on the link after a post that ends before it; the ledger's endpoint state left `stopped` by a transfer's publication, so Disable Slot passes the check with a queue running; the drop test accepting `halted`, so a drop-and-add after a consumed halting error passes the check and the model takes a drop the specification leaves undefined; the TRB pointer's range check removed |
 | the publication, in C on the host, against a model controller that takes a TRB the moment its cycle bit matches | the first TRB's cycle word written with the other TRBs |
+| the releases, in C on the host, against the model controller writing each event's Dwords as separate stores, Dword 3 last, and running any transfer whose TRBs are live when its endpoint's doorbell rings | the acquisition reading events whole in its first phase, so a torn event releases another transfer's buffer; only the second phase's clean and invalidate removed, over a first-phase line holding the previous lap's pointer and the current cycle word, so the stale pointer releases another transfer's buffer; a command's retired holdings taken at its completion with no endpoint closed, so a transfer posted during Set TR Dequeue Pointer is returned while the model runs it |
 | the event ring's bound | the forced stop event left out of the model's sources |
 | the install, in C on the host, against a model controller that interrupts only with both gates open and closes `INTE` at every reset | the `INTE` write dropped, so the model raises nothing after install |
 | `erx_usb_desc` on the boot devices of HID 1.11 Appendix B and E, and on the descriptors QEMU's `usb-kbd`, `usb-tablet`, `usb-storage` and `usb-hub` return, captured once into small fixtures | the walk run over the bytes received instead of `wTotalLength`, with an interface descriptor in the trailing bytes, which is then claimed |
@@ -3054,6 +3319,15 @@ property, and it is read as a reference only:
 
 ```
 9257ca24f34bff08e6020623f707c788ca0f0df657aa713309ff489a68b1731e  extensible-host-controler-interface-usb-xhci.pdf
+```
+
+USB-IF, "Universal Serial Bus Specification", Revision 2.0, from
+`https://www.usb.org/sites/default/files/usb_20_20250603.zip`, fetched
+without click-through; `usb_20.pdf` inside it:
+
+```
+5fe9c53c04033818af396e8852b3acbca5c3a76ba92fab549fd81cd0ea7b3692  usb_20_20250603.zip
+d39698a33486c399124af92bd02e4f978fd9a836b5cf4e52e6e4633eb1d89f61  usb_20.pdf
 ```
 
 usb.org specifications, fetched 2026-11-13 without click-through:

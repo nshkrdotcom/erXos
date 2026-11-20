@@ -856,6 +856,7 @@ dom_step_makes(erx_dom_step_kind_t kind)
 	case ERX_DOM_STEP_RESOURCE:
 	case ERX_DOM_STEP_WINDOW:
 	case ERX_DOM_STEP_IRQ:
+	case ERX_DOM_STEP_MSI:
 	case ERX_DOM_STEP_DMA:
 	case ERX_DOM_STEP_CONTIGUOUS:
 		return (true);
@@ -1417,6 +1418,7 @@ dom_step_ok(const erx_dom_plan_t *plan, const erx_dom_step_t *step,
 	case ERX_DOM_STEP_RESOURCE:
 	case ERX_DOM_STEP_WINDOW:
 	case ERX_DOM_STEP_IRQ:
+	case ERX_DOM_STEP_MSI:
 	case ERX_DOM_STEP_DMA:
 	case ERX_DOM_STEP_CONTIGUOUS:
 		return (false);
@@ -1520,6 +1522,7 @@ erx_dom_step_undo(erx_dom_step_kind_t kind)
 	case ERX_DOM_STEP_RESOURCE:
 	case ERX_DOM_STEP_WINDOW:
 	case ERX_DOM_STEP_IRQ:
+	case ERX_DOM_STEP_MSI:
 	case ERX_DOM_STEP_DMA:
 		return (ERX_DOM_UNDO_DESTROY);
 	case ERX_DOM_STEP_CONTIGUOUS:
@@ -1566,4 +1569,329 @@ erx_dom_plan_undo(const erx_dom_plan_t *plan, uint32_t applied,
     erx_dom_obj_t *undo)
 {
 	return (erx_dom_steps_undo(plan->steps, plan->nsteps, applied, undo));
+}
+
+/*
+ * PCIe functions' layouts (docs/design-pcie.md, "The catalogue and
+ * gives"). A report is refused through pci_refuse, which names the record
+ * and field; nothing is written to the bridge before every check passed.
+ */
+
+#define PCI_BARS	(sizeof(((erx_pcie_function_t *)NULL)->bars) / sizeof(erx_pcie_bar_t))
+
+static erx_status_t
+pci_refuse(erx_dom_pci_refusal_t *refusal, uint32_t record, const char *field)
+{
+	*refusal = (erx_dom_pci_refusal_t){ .record = record, .field = field };
+	return (ERX_EINVAL);
+}
+
+/*
+ * A BAR's span: its hardware size, 2^size_log2, in whole pages. A size_log2 past
+ * ERX_PCIE_BAR_SIZE_LOG2_MAX, which a report refuses on a placed BAR, is taken
+ * at that bound.
+ */
+static uint64_t
+pci_span(const erx_pcie_bar_t *bar)
+{
+	const uint64_t size = UINT64_C(1) << (bar->size_log2 < ERX_PCIE_BAR_SIZE_LOG2_MAX ? bar->size_log2 :
+	    ERX_PCIE_BAR_SIZE_LOG2_MAX);
+
+	return (size < ERX_PAGE_SIZE ? ERX_PAGE_SIZE : size);
+}
+
+static bool
+pci_placed(const erx_pcie_bar_t *bar)
+{
+	return (bar->kind == ERX_PCIE_BAR_MEMORY && (bar->flags & ERX_PCIE_BAR_PLACED) != 0);
+}
+
+bool
+erx_dom_pci_bar_cpu(const erx_pcie_bridge_t *facts, const erx_pcie_bar_t *bar, erx_dom_range_t *cpu)
+{
+	const uint64_t span = pci_span(bar);
+
+	if (!pci_placed(bar))
+		return (false);
+	for (uint32_t at = 0; at < ERX_PCIE_WINDOWS_MAX; at++) {
+		const erx_pcie_window_t *const window = &facts->windows[at];
+
+		/* The tree's windows do not wrap in PCI or CPU space (erx_dt_bridge). */
+		if (window->size == 0 || (window->flags & ERX_PCIE_WINDOW_IO) != 0 || bar->address < window->pci ||
+		    bar->address - window->pci > window->size || span > window->size - (bar->address - window->pci))
+			continue;
+		*cpu = (erx_dom_range_t){ .base = window->cpu + (bar->address - window->pci), .size = span };
+		return (true);
+	}
+	return (false);
+}
+
+static bool
+pci_ranges_meet(erx_dom_range_t a, erx_dom_range_t b)
+{
+	return (a.base <= b.base + (b.size - 1) && b.base <= a.base + (a.size - 1));
+}
+
+/*
+ * Whether a BAR's kind, flags and size are in their sets
+ * (abi/formats/pcie.txt): its true size up to ERX_PCIE_BAR_SIZE_LOG2_WIDE,
+ * so an unplaced function reports a BAR too large to place as it is; only
+ * a memory BAR marked placed, held to ERX_PCIE_BAR_SIZE_LOG2_MAX, and a
+ * placed 32-bit one ending within 4 GiB. A memory BAR of a ready function
+ * is placed, since the walk reports one it did not place unplaced.
+ */
+static bool
+pci_bar_in_sets(const erx_pcie_bar_t *bar, bool ready)
+{
+	const bool placed = (bar->flags & ERX_PCIE_BAR_PLACED) != 0;
+
+	if (bar->kind > ERX_PCIE_BAR_IO || (bar->flags & ~ERX_PCIE_BAR_FLAGS_KNOWN) != 0 ||
+	    bar->size_log2 > ERX_PCIE_BAR_SIZE_LOG2_WIDE)
+		return (false);
+	if (!placed)
+		return (!ready || bar->kind != ERX_PCIE_BAR_MEMORY);
+	if (bar->kind != ERX_PCIE_BAR_MEMORY || bar->size_log2 > ERX_PCIE_BAR_SIZE_LOG2_MAX)
+		return (false);
+	return ((bar->flags & ERX_PCIE_BAR_ADDR64) != 0 ||
+	    bar->address <= (UINT64_C(1) << 32) - (UINT64_C(1) << bar->size_log2));
+}
+
+/*
+ * The checks every report meets, which relate a record to its bridge and
+ * to the others: its bridge, a bus in the bridge's range, a device and
+ * function within their bounds, a place no other record holds, a state and
+ * BARs in their sets, each 64-bit BAR followed by its absent upper half.
+ */
+static erx_status_t
+pci_report_well_formed(const erx_pcie_bridge_t *facts, const erx_pcie_function_t *report, uint32_t count,
+    erx_dom_pci_refusal_t *refusal)
+{
+	for (uint32_t at = 0; at < count; at++) {
+		const erx_pcie_function_t *const record = &report[at];
+
+		if (record->bridge != facts->index)
+			return (pci_refuse(refusal, at, "bridge"));
+		if (record->bus < facts->bus_first || record->bus > facts->bus_last)
+			return (pci_refuse(refusal, at, "bus"));
+		if (record->device > ERX_PCIE_DEVICE_MAX)
+			return (pci_refuse(refusal, at, "device"));
+		if (record->function > ERX_PCIE_FUNCTION_MAX)
+			return (pci_refuse(refusal, at, "function"));
+		for (uint32_t other = 0; other < at; other++) {
+			if (report[other].bus == record->bus && report[other].device == record->device &&
+			    report[other].function == record->function)
+				return (pci_refuse(refusal, at, "function"));
+		}
+		if (record->state < ERX_PCIE_STATE_READY || record->state > ERX_PCIE_STATE_MALFORMED)
+			return (pci_refuse(refusal, at, "state"));
+		for (uint32_t bar = 0; bar < PCI_BARS; bar++) {
+			const erx_pcie_bar_t *const this = &record->bars[bar];
+
+			if (!pci_bar_in_sets(this, record->state == ERX_PCIE_STATE_READY))
+				return (pci_refuse(refusal, at, "bars"));
+			if ((this->flags & ERX_PCIE_BAR_ADDR64) != 0 &&
+			    (bar + 1 == PCI_BARS || record->bars[bar + 1].kind != ERX_PCIE_BAR_ABSENT))
+				return (pci_refuse(refusal, at, "bars"));
+		}
+	}
+	return (ERX_OK);
+}
+
+/*
+ * The placement's own rules, which a placing report's every record meets
+ * before the bridge takes any: each placed memory BAR aligned to its span,
+ * inside a window, meeting no earlier BAR's span and no entry's register
+ * range; each MSI-X table inside its BAR's hardware size.
+ */
+static erx_status_t
+pci_report_placed(const erx_pcie_bridge_t *facts, const erx_dom_device_entry_t *entries, uint32_t nentries,
+    const erx_pcie_function_t *report, uint32_t count, erx_dom_pci_refusal_t *refusal)
+{
+	erx_dom_range_t spans[ERX_PCIE_FUNCTIONS_MAX * PCI_BARS];
+	uint32_t nspans = 0;
+
+	for (uint32_t at = 0; at < count; at++) {
+		const erx_pcie_function_t *const record = &report[at];
+
+		for (uint32_t bar = 0; bar < PCI_BARS; bar++) {
+			erx_dom_range_t cpu;
+
+			if (!pci_placed(&record->bars[bar]))
+				continue;
+			if (record->bars[bar].address % pci_span(&record->bars[bar]) != 0 ||
+			    !erx_dom_pci_bar_cpu(facts, &record->bars[bar], &cpu))
+				return (pci_refuse(refusal, at, "bars"));
+			for (uint32_t other = 0; other < nspans; other++) {
+				if (pci_ranges_meet(cpu, spans[other]))
+					return (pci_refuse(refusal, at, "bars"));
+			}
+			for (uint32_t entry = 0; entry < nentries; entry++) {
+				for (uint32_t range = 0; range < entries[entry].nranges; range++) {
+					if (pci_ranges_meet(cpu, entries[entry].ranges[range]))
+						return (pci_refuse(refusal, at, "bars"));
+				}
+			}
+			spans[nspans++] = cpu;
+		}
+		if (record->msix_offset != 0) {
+			const uint64_t end = (uint64_t)record->msix_table_offset +
+			    (uint64_t)record->msix_table_size * ERX_PCIE_MSIX_ENTRY_SIZE;
+
+			if (record->msix_table_bar >= PCI_BARS ||
+			    record->bars[record->msix_table_bar].kind != ERX_PCIE_BAR_MEMORY ||
+			    end > UINT64_C(1) << record->bars[record->msix_table_bar].size_log2)
+				return (pci_refuse(refusal, at, "msix_table_offset"));
+		}
+	}
+	return (ERX_OK);
+}
+
+/* The record at layout's place in report, or NULL. */
+static const erx_pcie_function_t *
+pci_reported(const erx_pcie_function_t *layout, const erx_pcie_function_t *report, uint32_t count)
+{
+	for (uint32_t at = 0; at < count; at++) {
+		if (report[at].bus == layout->bus && report[at].device == layout->device &&
+		    report[at].function == layout->function)
+			return (&report[at]);
+	}
+	return (NULL);
+}
+
+/* Whether record, without its state, is layout; the decoder zeroes every padding byte. */
+static bool
+pci_same(const erx_pcie_function_t *layout, const erx_pcie_function_t *record)
+{
+	erx_pcie_function_t stateless = *record;
+
+	stateless.state = 0;
+	return (memcmp(layout, &stateless, sizeof(stateless)) == 0);
+}
+
+erx_status_t
+erx_dom_pci_report(erx_dom_pci_bridge_t *bridge, const erx_dom_device_entry_t *entries, uint32_t nentries,
+    const erx_pcie_function_t *report, uint32_t count, erx_dom_pci_refusal_t *refusal)
+{
+	erx_status_t status;
+
+	status = count > ERX_PCIE_FUNCTIONS_MAX ? pci_refuse(refusal, count, "functions") :
+	    pci_report_well_formed(&bridge->facts, report, count, refusal);
+	if (status != ERX_OK) {
+		/* The latest report is refused, so no earlier one gives a function. */
+		for (uint32_t at = 0; at < bridge->nlayouts; at++)
+			bridge->layouts[at].confirmed = false;
+		return (status);
+	}
+	if (bridge->nlayouts == 0) {
+		if ((status = pci_report_placed(&bridge->facts, entries, nentries, report, count, refusal)) != ERX_OK)
+			return (status);
+		for (uint32_t at = 0; at < count; at++) {
+			bridge->layouts[at] = (erx_dom_pci_layout_t){ .record = report[at] };
+			bridge->layouts[at].record.state = 0;
+		}
+		bridge->nlayouts = count;
+	}
+	for (uint32_t at = 0; at < bridge->nlayouts; at++) {
+		erx_dom_pci_layout_t *const layout = &bridge->layouts[at];
+		const erx_pcie_function_t *const record = pci_reported(&layout->record, report, count);
+
+		layout->confirmed = record != NULL && pci_same(&layout->record, record);
+		layout->state = record == NULL ? 0 : record->state;
+		if (record != NULL && bridge->firmware_lost)
+			layout->state = ERX_PCIE_STATE_NOT_READY;
+	}
+	return (ERX_OK);
+}
+
+const erx_dom_pci_layout_t *
+erx_dom_pci_givable(const erx_dom_pci_bridge_t *bridge, uint8_t bus, uint8_t device, uint8_t function)
+{
+	for (uint32_t at = 0; at < bridge->nlayouts && !bridge->firmware_lost; at++) {
+		const erx_dom_pci_layout_t *const layout = &bridge->layouts[at];
+
+		if (layout->record.bus == bus && layout->record.device == device && layout->record.function == function)
+			return (layout->confirmed && layout->state == ERX_PCIE_STATE_READY ? layout : NULL);
+	}
+	return (NULL);
+}
+
+void
+erx_dom_pci_firmware(erx_dom_pci_bridge_t *bridge, erx_status_t status)
+{
+	if (status == ERX_ETIMEDOUT)
+		bridge->firmware_lost = true;
+}
+
+uint8_t
+erx_dom_pci_route(const erx_dom_device_entry_t *entry, const erx_pcie_function_t *function)
+{
+	const bool masked = (function->msi_flags & ERX_PCIE_MSI_VECTOR_MASK) != 0;
+	const bool wide = (function->msi_flags & ERX_PCIE_MSI_ADDR64) != 0;
+
+	if (entry->nlines != 0)
+		return (ERX_PCIE_ROUTE_INTX);
+	/* pcireg.h gives the per-vector mask's offset only for a 64-bit capability. */
+	if (function->msi_offset != 0 && (!masked || wide))
+		return (ERX_PCIE_ROUTE_MSI);
+	if (function->msix_offset != 0)
+		return (ERX_PCIE_ROUTE_MSIX);
+	return (ERX_PCIE_ROUTE_NONE);
+}
+
+/*
+ * Whether compatible, a NUL-terminated string, is the function's identity:
+ * pci, its vendor and device id in four lowercase hexadecimal digits each,
+ * apart by a comma (docs/design-pcie.md, "The catalogue and gives").
+ */
+static bool
+pci_identity(const char *compatible, const erx_pcie_function_t *function)
+{
+	static const char digits[] = "0123456789abcdef";
+	char identity[sizeof("pci0000,0000")] = "pci0000,0000";
+
+	for (uint32_t at = 0; at < 4; at++) {
+		identity[3 + at] = digits[(function->vendor >> (12 - 4 * at)) & 0xf];
+		identity[8 + at] = digits[(function->device_id >> (12 - 4 * at)) & 0xf];
+	}
+	return (compatible != NULL && strcmp(compatible, identity) == 0);
+}
+
+/*
+ * Whether a function of a bridge raises only the line its place's row
+ * names: on an open bridge no row names one, and on a closed one its place
+ * is listed and its reported pin is the place's (docs/design-pcie.md, "The
+ * closed bus").
+ */
+static bool
+pci_pin_listed(const erx_pcie_bridge_t *facts, const erx_pcie_function_t *function)
+{
+	if ((facts->flags & ERX_PCIE_BRIDGE_CLOSED) == 0)
+		return (true);
+	for (uint32_t at = 0; at < ERX_PCIE_CLOSED_MAX; at++) {
+		const erx_pcie_place_t *const place = &facts->places[at];
+
+		if (place->bus != 0 && place->bus == function->bus && place->device == function->device &&
+		    place->function == function->function)
+			return (place->pin == function->pin);
+	}
+	return (false);
+}
+
+const erx_dom_pci_layout_t *
+erx_dom_pci_given(const erx_dom_pci_bridge_t *bridges, uint32_t nbridges, const erx_dom_device_entry_t *entry,
+    const erx_pcie_bridge_t **facts)
+{
+	const erx_dom_pci_layout_t *layout;
+
+	for (uint32_t at = 0; at < nbridges; at++) {
+		if (bridges[at].facts.index != entry->bridge)
+			continue;
+		layout = erx_dom_pci_givable(&bridges[at], entry->bus, entry->device, entry->function);
+		if (layout == NULL || !pci_identity(entry->compatible, &layout->record) ||
+		    !pci_pin_listed(&bridges[at].facts, &layout->record))
+			return (NULL);
+		*facts = &bridges[at].facts;
+		return (layout);
+	}
+	return (NULL);
 }

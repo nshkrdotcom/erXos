@@ -67,9 +67,9 @@ class ManifestCheckTest < Minitest::Test
     platform_with { |value| value.fetch('units') << { 'key' => 'extra', 'devices' => [device] } }
   end
 
-  def window(role:, partition: 1, device: BLOCK, holder: 'system', image: 'none')
-    "window seeded\n  holder #{holder}\n  device \"#{device}\"\n  role #{role}\n  partition #{partition}\n" \
-      "  rights read\n  image #{image}\n"
+  def window(role:, partition: 1, device: BLOCK, holder: 'system', image: 'none', name: 'seeded', drive: nil)
+    "window #{name}\n  holder #{holder}\n  device \"#{device}\"\n  role #{role}\n  partition #{partition}\n" \
+      "  rights read\n  image #{image}\n#{"  drive #{drive}\n" if drive}"
   end
 
   # A device-tree row without its window or line would give its driver zeros to open.
@@ -239,10 +239,254 @@ class ManifestCheckTest < Minitest::Test
             message: /names neither the system domain nor a configured domain/)
   end
 
-  # Property 3: no holder of PCIe configuration space.
-  def test_a_configuration_space_holder_is_refused
-    source, against = with_extra_device(role: 'configuration')
-    refused(Erx::Manifest::Invalid, 'devices.role', source, against, message: /M9/)
+  # Property 3 and the drive windows of property 8 (docs/design-system.md, "The manifest";
+  # docs/design-usb.md, "The Phase 1 part"). usb_platform adds three units to the real
+  # platform: the ECAM bridge, whose node raises no line; qemu-xhci at its place on the
+  # bridge's root bus; and a device-tree USB controller, the one a window can name by
+  # path. usb_source places them, the bridge on the PCIe domain, which here is the
+  # development manifest's web domain renamed pcie, without the web service it serves.
+  BRIDGE = '/pcie@10000000'
+  STICK = '/usb@a004000'
+  USB_HOLDERS = { 'pcie' => '@domain.pcie', 'xhci' => '@domain.network', 'stick' => '@domain.network' }.freeze
+
+  # A platform device row with every field the record carries, inactive ones zero.
+  def usb_row(key, **fields)
+    { 'placement_key' => key, 'selector' => 'dt', 'role' => 'ordinary', 'path' => '', 'bridge' => '', 'compatible' => '',
+      'base' => 0, 'size' => 0, 'line' => 0, 'bus' => 0, 'device' => 0, 'function' => 0, 'clock' => 0,
+      'dma' => 'none', 'dma_memory' => 0, 'flags' => 0 }.merge(fields.transform_keys(&:to_s))
+  end
+
+  def hostile = @codec.member('mf_device_flags', 'hostile')
+
+  def bridge_row = usb_row('pcie', role: 'configuration', path: BRIDGE, compatible: 'pci-host-ecam-generic',
+                                   base: 0x40_1000_0000, size: 0x1000_0000)
+
+  def xhci_row(**fields)
+    usb_row('xhci', selector: 'pci', role: 'usb', bridge: BRIDGE, device: 2, compatible: 'pci1b36,000d',
+                    dma: 'unconfined', dma_memory: 1 << 20, flags: hostile, **fields)
+  end
+
+  def stick_row = usb_row('stick', role: 'usb', path: STICK, compatible: 'generic-xhci', base: 0xa004000, size: 0x1000,
+                                   line: 60, flags: hostile)
+
+  # The real platform with the units of units, each key's list of devices.
+  def usb_platform(**units)
+    rows = { pcie: [bridge_row], xhci: [xhci_row], stick: [stick_row] }.merge(units)
+    platform_with { |value| rows.each { |key, devices| value.fetch('units') << { 'key' => key.to_s, 'devices' => devices } } }
+  end
+
+  # The development manifest with a domain pcie in place of the web domain, serving web
+  # only when serving, and the units of holders.
+  def usb_source(holders = USB_HOLDERS, serving: false)
+    renamed = changed(@source.sub("domain web\n", "domain pcie\n").gsub('@domain.web', '@domain.pcie'))
+    renamed = renamed.sub(/^service web\n(?:  .*\n)*/, '').sub(/^facet web\n(?:  .*\n)*/, '') unless serving
+    renamed + units_of(holders)
+  end
+
+  def units_of(holders) = holders.map { |key, holder| "unit #{key}\n  placement \"#{key}\"\n  holder #{holder}\n" }.join
+
+  def usb_admit(source = usb_source, platform = usb_platform) = admit(source, context(platform: platform))
+
+  def usb_refused(field, message, source = usb_source, platform = usb_platform)
+    refused(Erx::Manifest::Invalid, field, source, context(platform: platform), message: message)
+  end
+
+  def test_the_pcie_domain_holds_the_bridge_and_a_configured_domain_a_function
+    view = @codec.open('manifest', usb_admit.bytes)
+    devices = view.count('devices').times.map { |index| view.fetch('devices', index) }
+    function = devices.find { |device| device.fetch('selector') == @codec.member('mf_selector', 'pci') }
+    assert_equal [@codec.member('mf_device_role', 'usb'), 0, 2, 0], function.values_at('role', 'bus', 'device', 'function')
+  end
+
+  def test_a_bridge_held_by_another_domain_is_refused
+    %w[system @domain.network].each do |holder|
+      usb_refused('unit.holder', /only the domain pcie holds a PCIe bridge's unit/, usb_source(USB_HOLDERS.merge('pcie' => holder)))
+    end
+    usb_refused('unit.holder', /only the domain pcie holds a PCIe bridge's unit/,
+                @source + units_of(USB_HOLDERS.merge('pcie' => '@domain.network')))
+  end
+
+  # A function, even one the platform marks as of the configuration role, is no bridge.
+  def test_the_pcie_domain_holding_another_device_is_refused
+    message = /the domain pcie holds only PCIe bridges' units/
+    usb_refused('unit.holder', message, usb_source(USB_HOLDERS.merge('xhci' => '@domain.pcie')))
+    usb_refused('unit.holder', message, usb_source,
+                usb_platform(pcie: [bridge_row, stick_row.merge('path' => '/usb@a005000', 'base' => 0xa005000)]))
+    usb_refused('unit.holder', message, usb_source, usb_platform(pcie: [bridge_row, xhci_row(role: 'configuration', device: 3)]))
+  end
+
+  def test_the_pcie_domain_holding_a_window_or_a_service_is_refused
+    usb_refused('windows', /pcie holds nothing but PCIe bridges' units, and its windows row/,
+                usb_source + window(role: 'fat', holder: '@domain.pcie'))
+    usb_refused('services', /pcie holds nothing but PCIe bridges' units, and its services row/, usb_source(serving: true))
+  end
+
+  def test_a_function_held_by_the_system_domain_is_refused
+    usb_refused('unit.holder', /a PCIe function is held by a configured domain/, usb_source(USB_HOLDERS.merge('xhci' => 'system')))
+  end
+
+  def test_a_function_that_is_not_unconfined_is_refused
+    usb_refused('devices.dma', /a PCIe function is unconfined/, usb_source, usb_platform(xhci: [xhci_row(dma: 'none', dma_memory: 0)]))
+  end
+
+  def test_a_function_behind_a_bridge_no_unit_places_is_refused
+    usb_refused('devices.bridge', /names no PCIe bridge the manifest places/, usb_source(USB_HOLDERS.except('pcie')))
+    usb_refused('devices.bridge', /names no PCIe bridge the manifest places/, usb_source,
+                usb_platform(xhci: [xhci_row(bridge: STICK)]))
+  end
+
+  def test_a_place_in_two_units_is_refused
+    usb_refused('devices.place', /a device appears in more than one unit/,
+                usb_source(USB_HOLDERS.merge('again' => '@domain.network')), usb_platform(again: [xhci_row]))
+  end
+
+  # QEMU virt's bridge is not closed, so a line given to qemu-xhci would be shared with
+  # whatever the walk finds behind it.
+  def test_an_intx_line_on_a_bridge_the_platform_does_not_close_is_refused
+    usb_refused('context.platform.devices', /a PCIe function names a line only at a closed bridge's place/, usb_source,
+                usb_platform(xhci: [xhci_row(line: 80)]))
+  end
+
+  def test_a_pci_row_must_carry_no_register_window
+    usb_refused('context.platform.devices', /a PCIe function carries a window/, usb_source,
+                usb_platform(xhci: [xhci_row(base: 0x1000, size: 0x1000)]))
+  end
+
+  # A closed bridge, as the Pi 4's record spells the BCM2711's (docs/design-pcie.md, "The
+  # closed bus"): its flags and places in erx_pcie_place's own shape, its DMA limit, and the
+  # VL805 at its one place with the line the bridge routes for the place's pin.
+  CLOSED = '/scb/pcie@7d500000'
+  VL805_LINE = 175
+  PLACE = { 'bus' => 1, 'device' => 0, 'function' => 0, 'pin' => 1 }.freeze
+
+  def closed_bridge_row(**fields)
+    usb_row('pcie', role: 'configuration', path: CLOSED, compatible: 'brcm,bcm2711-pcie', base: 0x40_1000_0000,
+                    **{ size: 0x1000_0000, flags: ['closed'], places: [PLACE], dma_limit: 0x3c00_0000 }.merge(fields))
+  end
+
+  def vl805_row(**fields)
+    xhci_row(**{ bridge: CLOSED, bus: 1, device: 0, compatible: 'pci1106,3483', line: VL805_LINE }.merge(fields))
+  end
+
+  def closed_platform(bridge: closed_bridge_row, function: vl805_row, **units)
+    usb_platform(pcie: [bridge], xhci: [function], **units)
+  end
+
+  def packed_rows(view, table) = view.count(table).times.map { |index| view.fetch(table, index) }
+
+  def test_a_closed_bridge_packs_its_places_and_its_function_its_line_and_dma_limit
+    view = @codec.open('manifest', usb_admit(usb_source, closed_platform).bytes)
+    devices = packed_rows(view, 'devices')
+    bridge = devices.find { |device| device.fetch('role') == @codec.member('mf_device_role', 'configuration') }
+    function = devices.find { |device| device.fetch('selector') == @codec.member('mf_selector', 'pci') }
+    assert_equal @codec.member('mf_device_flags', 'closed'), bridge.fetch('flags') & @codec.member('mf_device_flags', 'closed')
+    assert_equal [PLACE], packed_rows(view, 'places')
+    assert_equal 1, bridge.fetch('places').fetch('count')
+    assert_equal [VL805_LINE, 0x3c00_0000], function.values_at('line', 'dma_limit')
+    assert_equal [0], (devices - [bridge]).map { |device| device.fetch('places').fetch('count') }.uniq
+  end
+
+  # Flags read by name pack as their numbers do.
+  def test_a_flags_field_reads_its_bits_by_name
+    named = usb_admit(usb_source, usb_platform(stick: [stick_row.merge('flags' => ['hostile'])])).bytes
+    assert_equal usb_admit.bytes, named
+    assert_raises(Erx::ABI::DecodeError) { usb_admit(usb_source, usb_platform(stick: [stick_row.merge('flags' => ['made_up'])])) }
+  end
+
+  def test_a_function_behind_a_closed_bridge_at_no_listed_place_is_refused
+    usb_refused('devices.place', /behind the closed bridge #{CLOSED} is at none of its listed places/, usb_source,
+                closed_platform(function: vl805_row(device: 1)))
+  end
+
+  def test_a_function_at_a_closed_place_without_its_line_is_refused
+    usb_refused('context.platform.devices', /names its place's line/, usb_source, closed_platform(function: vl805_row(line: 0)))
+  end
+
+  def test_places_only_on_a_closed_bridge_and_each_well_formed
+    message = /a closed bridge lists its places, and only a closed PCIe bridge/
+    [closed_bridge_row(flags: 0), closed_bridge_row(places: []),
+     closed_bridge_row(places: [PLACE, PLACE.merge('device' => 1), PLACE.merge('device' => 2), PLACE.merge('device' => 3),
+                                PLACE.merge('device' => 4)])].each do |bridge|
+      usb_refused('context.platform.devices', message, usb_source, closed_platform(bridge: bridge))
+    end
+    usb_refused('context.platform.devices', message, usb_source,
+                closed_platform(stick: [stick_row.merge('flags' => %w[hostile closed], 'places' => [PLACE])]))
+    [PLACE.merge('bus' => 0), PLACE.merge('pin' => 0), PLACE.merge('pin' => 5), PLACE.merge('device' => 32),
+     PLACE.merge('function' => 8), PLACE.except('pin'), PLACE.merge('bus' => '1')].each do |place|
+      usb_refused('context.platform.devices', /a closed bridge's place is not/, usb_source,
+                  closed_platform(bridge: closed_bridge_row(places: [place])))
+    end
+    usb_refused('context.platform.devices', /lists a place twice/, usb_source,
+                closed_platform(bridge: closed_bridge_row(places: [PLACE, PLACE.merge('pin' => 2)])))
+  end
+
+  # An unplaced second row at the placed bridge's path, closed and listing the function's
+  # place, must not let the function behind the open bridge name a line.
+  def test_two_bridge_rows_at_one_path_are_refused
+    usb_refused('context.platform.devices', /lists two PCIe bridges at #{BRIDGE}/, usb_source,
+                usb_platform(xhci: [xhci_row(line: 80)],
+                             twin: [closed_bridge_row(path: BRIDGE, places: [PLACE.merge('bus' => 1, 'device' => 2)])]))
+  end
+
+  def test_a_dma_limit_only_on_a_bridge_row
+    usb_refused('context.platform.devices', /only a PCIe bridge row states a DMA limit/, usb_source,
+                closed_platform(function: vl805_row(dma_limit: 1 << 30)))
+    usb_refused('context.platform.devices', /only a PCIe bridge row states a DMA limit/, usb_source,
+                usb_platform(stick: [stick_row.merge('dma_limit' => 1 << 30)]))
+  end
+
+  # A window names a PCIe function by its place (docs/design-abi.md, "Devices and partition
+  # windows"): its bridge's path and its bus, device and function.
+  def test_a_window_names_a_function_by_its_place
+    view = @codec.open('manifest', usb_admit(usb_source + drive_window('da0', device: "#{BRIDGE}:0:2:0")).bytes)
+    window = packed_rows(view, 'windows').find { |row| row.fetch('drive').zero? }
+    function = view.fetch('devices', window.fetch('device'))
+    assert_equal [@codec.member('mf_selector', 'pci'), 0, 2, 0], function.values_at('selector', 'bus', 'device', 'function')
+    ["#{BRIDGE}:0:3:0", "#{BRIDGE}:1:2:0", "#{STICK}:0:2:0", "#{BRIDGE}:0:2", "#{BRIDGE}:0:2:0:0"].each do |name|
+      usb_refused('window.device', /window names no block or USB device the manifest places/, usb_source + drive_window('da0', device: name))
+    end
+  end
+
+  def drive_window(drive, name: 'stick', partition: 1, device: STICK, role: 'fat')
+    window(role: role, partition: partition, device: device, holder: '@domain.storage', name: name, drive: drive)
+  end
+
+  # The packed windows of view, split into those on the controller at path and the rest.
+  def windows_on(view, path)
+    rows = view.count('windows').times.map { |index| view.fetch('windows', index) }
+    rows.partition { |row| view.string(view.fetch('devices', row.fetch('device')).fetch('path')) == path }
+  end
+
+  def test_drive_windows_encode_their_drive_and_others_none
+    stick, others = windows_on(@codec.open('manifest', usb_admit(usb_source + drive_window('da0') + drive_window('da3', name: 'other')).bytes), STICK)
+    assert_equal [0, 3], stick.map { |row| row.fetch('drive') }.sort
+    assert_equal [@codec.constant('mf_none')], others.map { |row| row.fetch('drive') }.uniq
+  end
+
+  def test_a_window_on_a_usb_device_without_a_drive_is_refused
+    usb_refused('window.drive', /a window names a drive exactly when it lies on a USB controller/, usb_source + drive_window(nil))
+  end
+
+  def test_a_drive_on_another_device_is_refused
+    usb_refused('window.drive', /a window names a drive exactly when it lies on a USB controller/,
+                usb_source + drive_window('da0', device: BLOCK))
+  end
+
+  def test_a_drive_named_twice_for_one_partition_is_refused
+    usb_refused('window.partition', /two windows name one role, partition and drive of a device/,
+                usb_source + drive_window('da1') + drive_window('da1', name: 'again'))
+  end
+
+  # Drives are da0 to da(usb_drives_max - 1), so no controller's rows can name more.
+  def test_a_drive_past_usb_drives_max_is_refused
+    drives = @codec.constant('usb_drives_max')
+    ["da#{drives}", 'da', 'da01', 'sda0', '0', '"da0"'].each do |drive|
+      usb_refused('window.drive', /a drive is da0 to da#{drives - 1}/, usb_source + drive_window(drive))
+    end
+  end
+
+  def test_a_usb_controller_s_window_is_fat
+    usb_refused('window.role', /a window on a USB controller is a fat window/, usb_source + drive_window('da0', role: 'data', partition: 0))
   end
 
   # Property 4: budgets, grants and the root startup rule.
@@ -773,17 +1017,17 @@ class ManifestCheckTest < Minitest::Test
 
   def test_a_window_on_no_placed_device_is_refused
     refused(Erx::Manifest::Invalid, 'window.device', @source + window(role: 'fat', device: '/absent@0'),
-            message: /window names no block device the manifest places/)
+            message: /window names no block or USB device the manifest places/)
   end
 
   def test_a_window_on_a_device_that_is_no_block_device_is_refused
     refused(Erx::Manifest::Invalid, 'window.device', @source + window(role: 'fat', device: '/pl011@9000000'),
-            message: /window names no block device the manifest places/)
+            message: /window names no block or USB device the manifest places/)
   end
 
   def test_two_windows_on_one_partition_are_refused
     refused(Erx::Manifest::Invalid, 'window.partition', @source + window(role: 'data', partition: 0),
-            message: /two windows name one role and partition/)
+            message: /two windows name one role, partition and drive of a device/)
   end
 
   def test_a_fixed_role_must_carry_partition_zero
@@ -1100,11 +1344,6 @@ class ManifestCheckTest < Minitest::Test
     assert_equal names.sort, names
     assert_equal 1, view.fetch('services', names.index('alpha')).fetch('interface')
     assert_equal 2, view.fetch('services', names.index('zeta')).fetch('interface')
-  end
-
-  def test_a_pci_function_is_refused
-    source, against = with_extra_device(selector: 'pci', role: 'ordinary', bridge: '/pcie@0', path: '', base: 0, size: 0, line: 0)
-    refused(Erx::Manifest::Invalid, 'devices.selector', source, against, message: /M9/)
   end
 
   def test_an_unassigned_host_link_is_refused

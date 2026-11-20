@@ -50,8 +50,8 @@ stops the domain. A record for a side that has ended is dropped, since the
 domain's end is under way.
 
 The service's answer to the ready report, {Ref, facets, Facets, Granted}, the
-domain's facets by name and the names of the facets of configured domains the
-manifest grants it, the pid sends its agent as {erx_facets, Facets, Granted}, an ordinary
+domain's facets by name and the names and interfaces of the facets of configured
+domains the manifest grants it, the pid sends its agent as {erx_facets, Facets, Granted}, an ordinary
 message, which the agent hands its init (edit 65), and never suspended: if the
 domain's lane is too full to take it, the pid asks the service to stop the
 domain, whose init would wait in vain. The service sends it only

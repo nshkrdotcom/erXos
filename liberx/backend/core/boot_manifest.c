@@ -138,13 +138,13 @@ unit_first_device(const erx_manifest_view_t *view, const erx_mf_unit_t *unit, ui
 }
 
 /*
- * Whether a device-tree device other than the one at index self names line, which makes
+ * Whether a device other than the one at index self names line, which makes
  * the line shared (docs/design-shared-devices.md, "Lines inside a domain"). This is the
  * relation of the domain library's boot view, boot_lines_meet in
  * liberx/system/dom_boot_view.c, over the manifest's own entries: each device-tree entry
  * names exactly its line, except that line 0 is no line, carried by a row whose node raises
  * no interrupt, a framebuffer's or the RNG200's (docs/design-abi.md, "Devices and partition
- * windows"); a PCIe function names none. The boot view refuses a manifest
+ * windows"); a PCIe function names its line only at a closed bridge's place. The boot view refuses a manifest
  * that puts devices sharing a line in two units, so another device of the manifest that
  * names the line is another device of the same unit. erx_manifest_open checked every
  * entry, so every read succeeds.
@@ -155,8 +155,7 @@ line_shared(const erx_manifest_view_t *view, uint32_t self, uint32_t line)
 	erx_mf_device_t other;
 
 	for (uint32_t at = 0; line != 0 && at < view->header.devices.count; at++) {
-		if (at != self && erx_manifest_devices_at(view, at, &other) && other.selector == ERX_MF_SELECTOR_DT &&
-		    other.line == line)
+		if (at != self && erx_manifest_devices_at(view, at, &other) && other.line == line)
 			return (true);
 	}
 	return (false);
@@ -640,6 +639,49 @@ erx_boot_given_words(const erx_boot_given_t *given, char *words, size_t capacity
 	    number_put(words, capacity, &used, given->mac))
 		return (used);
 	return (0);
+}
+
+/* A PCIe function's route as the function record names it: none, msi, msix or intx. */
+static const char *
+route_word(uint8_t route)
+{
+	switch (route) {
+	case ERX_PCIE_ROUTE_MSI:
+		return ("msi");
+	case ERX_PCIE_ROUTE_MSIX:
+		return ("msix");
+	case ERX_PCIE_ROUTE_INTX:
+		return ("intx");
+	default:
+		return ("none");
+	}
+}
+
+size_t
+erx_boot_function_words(const erx_boot_function_t *function, char *words, size_t capacity)
+{
+	size_t used = 0;
+	bool fits = word_put(words, capacity, &used, ERX_BOOT_RECORD_FLAG) && word_put(words, capacity, &used, "function") &&
+	    word_put(words, capacity, &used, function->role) && word_put(words, capacity, &used, function->peripheral) &&
+	    number_put(words, capacity, &used, function->bridge) && number_put(words, capacity, &used, function->bus) &&
+	    number_put(words, capacity, &used, function->device) && number_put(words, capacity, &used, function->function) &&
+	    number_put(words, capacity, &used, function->line) &&
+	    word_put(words, capacity, &used, line_mark(function->line_shared)) &&
+	    number_put(words, capacity, &used, function->memory) &&
+	    number_put(words, capacity, &used, function->memory_size) &&
+	    number_put(words, capacity, &used, function->coherent ? 1 : 0) &&
+	    word_put(words, capacity, &used, route_word(function->route)) &&
+	    number_put(words, capacity, &used, function->message.address) &&
+	    number_put(words, capacity, &used, function->message.data) &&
+	    number_put(words, capacity, &used, function->table_bar) &&
+	    number_put(words, capacity, &used, function->table_offset) &&
+	    number_put(words, capacity, &used, function->table_size);
+
+	for (size_t at = 0; fits && at < sizeof(function->bars) / sizeof(function->bars[0]); at++)
+		fits = number_put(words, capacity, &used, function->bars[at].window) &&
+		    number_put(words, capacity, &used, function->bars[at].offset) &&
+		    number_put(words, capacity, &used, function->bars[at].size_log2);
+	return (fits ? used : 0);
 }
 
 /*

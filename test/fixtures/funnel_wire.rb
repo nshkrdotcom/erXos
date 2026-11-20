@@ -34,7 +34,7 @@ module FunnelWire
       'PAYLOAD_MONITOR_P_EXIT' => [ctl(op(28), from, to, reference), true],
       'SPAWN_REQUEST' => [ctl(op(29), reference, from, to, mfa, options), true],
       'SPAWN_REPLY' => [ctl(op(31), reference, to, EtfWire.small(0), from), false],
-      'SPAWN_REPLY error' => [ctl(op(31), reference, to, EtfWire.small(1), EtfWire.atom('badarg')), false],
+      'SPAWN_REPLY error' => [ctl(op(31), reference, to, EtfWire.small(1), EtfWire.atom('badopt')), false],
       'ALIAS_SEND' => [ctl(op(33), from, reference), true],
       'UNLINK_ID' => [ctl(op(35), EtfWire.small(1), from, to), false],
       'UNLINK_ID_ACK' => [ctl(op(36), EtfWire.int(70_000), from, to), false]

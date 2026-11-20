@@ -186,7 +186,7 @@ irq_start(const ErlNifPid *owner, ErlNifEnv *env)
 	int status = erx_event_register_process(owner, enif_make_atom(env, "erx_stdio_ready"), &label);
 
 	if (status == ERX_OK)
-		status = erx_irq_create(0, 0, ERX_IRQ_SOFT, 0, &input_irq);
+		status = erx_irq_create(0, 0, ERX_IRQ_SOFT, 0, &input_irq, NULL);
 	if (status == ERX_OK)
 		status = erx_irq_bind(input_irq, ERX_CAP_SELF, label);
 	return (status);

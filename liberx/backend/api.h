@@ -131,9 +131,14 @@ void	erx_group_trigger(void);
  * unbound is owed to the next bind on Fiasco, as on erXos's kernel, and dropped hosted,
  * so a sink treats any delivery as a hint. A delivery carries the label bound when it
  * is taken, so an object that fired and was then unbound delivers label 0.
+ *
+ * A create answers the object and, in *message unless it is NULL, the erx_msi_message an
+ * ERX_IRQ_MSI object's function writes, which is zero for every other kind
+ * (docs/design-kernel.md, "IRQ objects"). A bound line stays masked until the first
+ * erx_irq_ack after its bind.
  */
 int	erx_irq_create(uint64_t budget, uint64_t resource, uint32_t kind, uint64_t selector,
-	    uint64_t *irq) ERX_WARN_UNUSED_RESULT;
+	    uint64_t *irq, erx_msi_message_t *message) ERX_WARN_UNUSED_RESULT;
 int	erx_irq_bind(uint64_t irq, uint64_t group, uint64_t label) ERX_WARN_UNUSED_RESULT;
 int	erx_irq_trigger(uint64_t irq) ERX_WARN_UNUSED_RESULT;
 int	erx_irq_ack(uint64_t irq) ERX_WARN_UNUSED_RESULT;

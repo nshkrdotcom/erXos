@@ -10,7 +10,7 @@
  * report. The first output line is the acceptance: "accept ok" or "accept
  * REASON". Then each query on standard input gets one line:
  *
- *   device PATH node|pcie
+ *   device PATH node|pcie [DMA_LIMIT]
  *     -> device DMA coherent C range CPU BUS LAST mac M
  *   fb PATH COMPATIBLE WINDOW_BASE WINDOW_SIZE
  *     -> fb STATUS BASE LENGTH WIDTHxHEIGHT STRIDE FORMAT
@@ -18,6 +18,11 @@
  *     -> seeds rng-seed LENGTH HEX kaslr-seed LENGTH HEX, HEX - for an absent seed
  *   regs PATH COMPATIBLE WINDOW_BASE WINDOW_SIZE
  *     -> regs STATUS
+ *   intx PATH BUS DEVICE FUNCTION PIN
+ *     -> intx STATUS LINE
+ *   bridge PATH
+ *     -> bridge STATUS buses FIRST LAST, then window PCI CPU SIZE FLAGS for each
+ *        window of a size other than 0
  */
 
 #include <inttypes.h>
@@ -25,18 +30,22 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "erx/abi.h"
 #include "erx/core/dt.h"
 
 static const char *const dma_names[] = { "ok", "no_node", "coherence", "cells", "malformed", "ranges" };
 static const char *const fb_names[] = { "ok", "none", "ambiguous", "malformed", "unsupported", "outside" };
 static const char *const regs_names[] = { "ok", "none", "malformed", "other" };
+static const char *const intx_names[] = { "ok", "no_node", "none", "malformed", "unsupported" };
+static const char *const bridge_names[] = { "ok", "no_node", "cells", "malformed", "ranges" };
 
 static void
-device_print(const erx_dt_t *tree, const char *path, const char *row)
+device_print(const erx_dt_t *tree, const char *path, const char *row, const char *dma_limit)
 {
 	erx_dt_device_t facts;
 
-	erx_dt_device(tree, path, strcmp(row, "pcie") == 0 ? ERX_DT_ROW_PCIE : ERX_DT_ROW_NODE, &facts);
+	erx_dt_device(tree, path, strcmp(row, "pcie") == 0 ? ERX_DT_ROW_PCIE : ERX_DT_ROW_NODE,
+	    dma_limit == NULL ? 0 : strtoull(dma_limit, NULL, 0), &facts);
 	printf("device %s coherent %d range 0x%" PRIx64 " 0x%" PRIx64 " 0x%" PRIx64 " mac ", dma_names[facts.dma],
 	    facts.coherent, facts.cpu, facts.bus, facts.last);
 	if (facts.mac_status == ERX_DT_MAC_OK)
@@ -85,10 +94,39 @@ regs_print(const erx_dt_t *tree, const char *path, const char *compatible, const
 	printf("regs %s\n", regs_names[erx_dt_registers(tree, path, compatible, window)]);
 }
 
+static void
+intx_print(const erx_dt_t *tree, char *const words[5])
+{
+	const erx_pcie_place_t place = { (uint8_t)strtoul(words[1], NULL, 0), (uint8_t)strtoul(words[2], NULL, 0),
+		(uint8_t)strtoul(words[3], NULL, 0), (uint8_t)strtoul(words[4], NULL, 0) };
+	erx_dt_intx_status_t status;
+	uint32_t line;
+
+	status = erx_dt_intx(tree, words[0], &place, &line);
+	printf("intx %s %" PRIu32 "\n", intx_names[status], line);
+}
+
+static void
+bridge_print(const erx_dt_t *tree, const char *path)
+{
+	erx_pcie_bridge_t bridge;
+	erx_dt_bridge_status_t status;
+	size_t i;
+
+	memset(&bridge, 0xa5, sizeof(bridge));
+	status = erx_dt_bridge(tree, path, &bridge);
+	printf("bridge %s buses %u %u", bridge_names[status], bridge.bus_first, bridge.bus_last);
+	for (i = 0; i < ERX_PCIE_WINDOWS_MAX; i++)
+		if (bridge.windows[i].size != 0)
+			printf(" window 0x%" PRIx64 " 0x%" PRIx64 " 0x%" PRIx64 " %u", bridge.windows[i].pci,
+			    bridge.windows[i].cpu, bridge.windows[i].size, bridge.windows[i].flags);
+	printf("\n");
+}
+
 int
 main(int argc, char **argv)
 {
-	char line[2048], *words[6], *save;
+	char line[2048], *words[7], *save;
 	unsigned char *bytes;
 	const char *reason;
 	erx_dt_t tree;
@@ -110,16 +148,20 @@ main(int argc, char **argv)
 	printf("accept %s memory %u\n", reason == NULL ? "ok" : reason, tree.memory_count);
 	while (fgets(line, sizeof(line), stdin) != NULL) {
 		count = 0;
-		for (words[0] = strtok_r(line, " \n", &save); words[count] != NULL && count < 5;)
+		for (words[0] = strtok_r(line, " \n", &save); words[count] != NULL && count < 6;)
 			words[++count] = strtok_r(NULL, " \n", &save);
-		if (count == 3 && strcmp(words[0], "device") == 0)
-			device_print(&tree, words[1], words[2]);
+		if ((count == 3 || count == 4) && strcmp(words[0], "device") == 0)
+			device_print(&tree, words[1], words[2], count == 4 ? words[3] : NULL);
 		else if (count == 5 && strcmp(words[0], "fb") == 0)
 			fb_print(&tree, words[1], words[2], words[3], words[4]);
 		else if (count == 1 && strcmp(words[0], "seeds") == 0)
 			seeds_print(&tree);
 		else if (count == 5 && strcmp(words[0], "regs") == 0)
 			regs_print(&tree, words[1], words[2], words[3], words[4]);
+		else if (count == 6 && strcmp(words[0], "intx") == 0)
+			intx_print(&tree, &words[1]);
+		else if (count == 2 && strcmp(words[0], "bridge") == 0)
+			bridge_print(&tree, words[1]);
 		else
 			return (2);
 	}

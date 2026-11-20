@@ -554,6 +554,39 @@ module Erx
     ECHO_ANSWER = '{echo_facet,true,{echo,hi},{error,badarg},' \
                   '#{{refused,foreign_mint} => 1,{refused,undeclared} => 1}}'
     ECHO_START = /\A(?:(?:\([a-z0-9_]+@[a-z0-9_.-]+\))?[0-9]+> )?\{echo_facet,/n
+    # Typed after the echo, while erts runs: the system domain spawns
+    # erx_echo_test:foreign_atoms/1 in erts, monitored, which asks to spawn a module named
+    # by an atom erts made on the system domain's node and sends the shell the error it
+    # got, then a message holding an atom erts made, then foreign_after, and exits with
+    # another such atom. The line also asks to export spawn on the system domain's name.
+    # The line reads the system domain's atom count and erx_dist:atoms_refused/0 before
+    # the spawn and once the DOWN has come, and only then looks at what arrived.
+    FOREIGN_ATOM_EXPRESSION = 'SdFaN0=erlang:system_info(atom_count),SdFaD0=(catch erx_dist:atoms_refused()),' \
+                              "SdFaRef=erlang:spawn_request('erts@erxos',erx_echo_test,foreign_atoms,[self()],[monitor,{reply,error_only}])," \
+                              'SdFaM=fun SdFaQ(SdFaA)->receive {erx_origin,_,foreign_after}->lists:reverse([foreign_after|SdFaA]);' \
+                              '{erx_origin,_,SdFaY}->SdFaQ([SdFaY|SdFaA]) after 10000->lists:reverse([timeout|SdFaA]) end end([]),' \
+                              "SdFaR=receive {'DOWN',SdFaRef,process,_,SdFaX}->SdFaX after 10000->timeout end," \
+                              'SdFaN1=erlang:system_info(atom_count),SdFaD1=(catch erx_dist:atoms_refused()),' \
+                              'io:format("~0kp~n",[{foreign_atom,SdFaN1-SdFaN0,catch SdFaD1-SdFaD0,SdFaM,' \
+                              'lists:keyfind(foreign_spawn,1,SdFaM),' \
+                              'case SdFaR of {erx_foreign_reason,<<131,_/binary>>=SdFaB}->' \
+                              '{erx_foreign_reason,binary:match(SdFaB,<<"erx_foreign_atom_reason">>)=/=nomatch};_->SdFaR end,' \
+                              'is_atom(catch list_to_existing_atom("erx_foreign_atom_message")),' \
+                              'is_atom(catch list_to_existing_atom("erx_foreign_atom_reason")),' \
+                              'is_atom(catch list_to_existing_atom("erx_foreign_atom_module")),' \
+                              'catch erx_dist:export({domain,erlang:system_info(creation)},[spawn],999)}])'
+    # The system domain's atom table did not grow, the two payloads were refused, erts's
+    # own runtime answered the spawn with noconnection, the message was dropped and
+    # foreign_after delivered, the reason arrived as {erx_foreign_reason, Bin} with the
+    # reason's encoding in Bin, none of the three atoms exists in the system domain
+    # (docs/design-domains.md, D5), and the system domain's name takes no spawn export.
+    # A spawn request written to the system domain would end erts's connection: no
+    # message, and a DOWN of noconnection. The keyfind names foreign_spawn in the
+    # line, so the system domain holds that atom and takes erts's message.
+    FOREIGN_ATOM_ANSWER = '{foreign_atom,0,2,[{foreign_spawn,noconnection},foreign_after],' \
+                          '{foreign_spawn,noconnection},{erx_foreign_reason,true},false,false,false,' \
+                          '{error,badarg}}'
+    FOREIGN_ATOM_START = /\A(?:(?:\([a-z0-9_]+@[a-z0-9_.-]+\))?[0-9]+> )?\{foreign_atom,/n
     # peer stopped by its side's end while erts runs, its watcher told noconnection twice;
     # then erts halted with status 69, its watcher told {domain_down, Erts, {halt, 69}} by
     # the link, the monitor and the spawn's error reply, and the library calls given
@@ -612,8 +645,8 @@ module Erx
     end
 
     # The line typed at the Erlang shell: SdSpec bound to later_spec(domain), then
-    # SERVICE_KILL_EXPRESSION.
-    def service_kill_line(domain) = "SdSpec=#{later_spec(domain)},#{ECHO_EXPRESSION},#{SERVICE_KILL_EXPRESSION}"
+    # ECHO_EXPRESSION, FOREIGN_ATOM_EXPRESSION and SERVICE_KILL_EXPRESSION.
+    def service_kill_line(domain) = "SdSpec=#{later_spec(domain)},#{ECHO_EXPRESSION},#{FOREIGN_ATOM_EXPRESSION},#{SERVICE_KILL_EXPRESSION}"
 
     # The production checkpoints to the command shell, then the Erlang shell, the kill and
     # the runtime's end. points must end at the command shell; domain is where the image's
@@ -622,6 +655,7 @@ module Erx
       raise Error, 'the production checkpoints do not end at the shell' unless points.last.fetch(:name) == 'release-shell'
 
       echo = /\A(?:(?:\([a-z0-9_]+@[a-z0-9_.-]+\))?[0-9]+> )?#{Regexp.escape(ECHO_ANSWER)}\r*\n\z/n
+      foreign = /\A(?:(?:\([a-z0-9_]+@[a-z0-9_.-]+\))?[0-9]+> )?#{Regexp.escape(FOREIGN_ATOM_ANSWER)}\r*\n\z/n
       answer = /\A(?:(?:\([a-z0-9_]+@[a-z0-9_.-]+\))?[0-9]+> )?#{Regexp.escape(SERVICE_KILL_ANSWER)}\r*\n\z/n
       ends = /\A#{Regexp.escape(DOMAIN_ENDS_ANSWER)}\r*\n\z/n
       table = /\A#{Regexp.escape(CONTROL_TABLE_ANSWER)}\r*\n\z/n
@@ -634,6 +668,8 @@ module Erx
        ProductionImage::Run::ERLANG_SHELL.merge(type: "#{service_kill_line(domain)}\r").freeze,
        { name: 'echo-facet', pattern: ECHO_START, seconds: 180,
          verify: ->(text) { raise Error, "the echo facet gave #{text.inspect}" unless echo.match?(text) } }.freeze,
+       { name: 'foreign-atom', pattern: FOREIGN_ATOM_START, seconds: 180,
+         verify: ->(text) { raise Error, "the foreign atoms gave #{text.inspect}" unless foreign.match?(text) } }.freeze,
        { name: 'domain-running', pattern: SERVICE_KILL_START, seconds: 180,
          verify: ->(text) { raise Error, "the shell answered #{text.inspect} before the kill" unless answer.match?(text) } }.freeze,
        { name: 'control-table', pattern: CONTROL_TABLE_START, seconds: 180,

@@ -487,7 +487,7 @@ class AbiSchemaTest < Minitest::Test
     assert_equal 96, model.types.fetch('erx_pack_header').size
     assert_equal 64, model.types.fetch('erx_pack_entry').size
     assert_equal 32, model.types.fetch('erx_boot_locator').size
-    assert_equal 456, model.types.fetch('erx_manifest').size
+    assert_equal 480, model.types.fetch('erx_manifest').size
   end
 
   def test_nested_projection_cannot_hide_development_leaf
@@ -541,11 +541,11 @@ class AbiSchemaTest < Minitest::Test
     end
   end
 
-  # The checked-in interfaces served as trees are files, windows and line.
-  def test_files_windows_and_line_are_served_as_trees
+  # The checked-in interfaces served as trees are files, input, windows and line.
+  def test_files_input_windows_and_line_are_served_as_trees
     root = File.expand_path('../..', __dir__)
     services = Erx::ABI::Model.validate(Erx::ABI::Sources.read(root: root)).services
-    assert_equal %w[files line windows], services.select { |service| service.fetch(:served_as) == 'tree' }.map { |service| service.fetch(:name) }.sort
+    assert_equal %w[files input line windows], services.select { |service| service.fetch(:served_as) == 'tree' }.map { |service| service.fetch(:name) }.sort
   end
 
   # The table the boot view checks a facet's parameter rows against (erx_service_parameters):

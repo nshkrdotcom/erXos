@@ -21,6 +21,7 @@ require_relative 'abi_emit_ui_wire_ts'
 require_relative 'abi_emit_draw'
 require_relative 'abi_emit_input'
 require_relative 'abi_emit_packed'
+require_relative 'abi_emit_layout'
 require_relative 'abi_emit_web'
 require_relative 'abi_emit_web_ts'
 require_relative 'abi_emit_theme'
@@ -64,6 +65,7 @@ module Erx
         files.merge!(DrawEmitter.outputs(schema))
         files.merge!(InputEmitter.outputs(schema))
         files.merge!(PackedEmitter.outputs(schema))
+        files.merge!(LayoutEmitter.outputs(schema))
         files.merge!(ThemeEmitter.outputs(schema))
         files.merge!(MuslEmitter.outputs(schema))
         # The protocol hash covers terminal.txt and its Unicode data, which are

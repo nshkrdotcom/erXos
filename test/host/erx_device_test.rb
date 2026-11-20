@@ -59,6 +59,20 @@ class ErxDeviceTest < Minitest::Test
   NO_DMA_CHECK = ['!erx_device_command_allowed(cmdtm, &sdhci->fields[cmdtm->first_field + dma], word)',
                   'false'].freeze
 
+  # xHCI's layout over a register file of the harness's own: every name where the controller
+  # puts it, each layout the window cannot hold refused, and the fields the NIF owns kept.
+  def test_the_xhci_layout_and_its_owned_fields
+    assert_match(/^erx_device xhci done$/, run_harness('-DERX_DEVICE_XHCI'))
+  end
+
+  # The seeded fault of the register model: the window check widened by a megabyte, so doorbells past the
+  # window, where DBOFF puts them, resolve and the refusal fails.
+  NO_WINDOW_CHECK = ['offset > size || bytes > size - offset', 'offset > size + 0x100000 || bytes > size + 0x100000 - offset'].freeze
+
+  def test_a_layout_without_its_window_check_fails_the_harness
+    assert_match(/FAILED .*RESOLVE_REFUSED/, seeded_failure(NO_WINDOW_CHECK, file: 'erx_device_core.c', flags: ['-DERX_DEVICE_XHCI']))
+  end
+
   def test_a_command_without_its_dma_check_fails_the_harness
     assert_match(/FAILED .*erx_device_command\(record, read_block \| dma\)/, seeded_failure(NO_DMA_CHECK))
   end
@@ -73,14 +87,14 @@ class ErxDeviceTest < Minitest::Test
 
   private
 
-  # The harness's output over erx_device.c with `seed` applied; the run must fail.
-  def seeded_failure(seed)
+  # The harness's output over `file` with `seed` applied; the run must fail.
+  def seeded_failure(seed, file: 'erx_device.c', flags: [])
     Dir.mktmpdir('erx-device-seeded-') do |directory|
-      source = File.read(File.join(NIFS, 'erx_device.c'))
+      source = File.read(File.join(NIFS, file))
       assert_includes source, seed.first
-      seeded = File.join(directory, 'erx_device.c')
+      seeded = File.join(directory, file)
       File.write(seeded, source.sub(*seed))
-      output, status = build_and_run(SOURCES.map { |path| path.end_with?('/erx_device.c') ? seeded : path })
+      output, status = build_and_run(SOURCES.map { |path| path.end_with?("/#{file}") ? seeded : path }, *flags)
       refute status.success?, output
       output
     end

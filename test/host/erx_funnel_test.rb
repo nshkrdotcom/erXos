@@ -83,7 +83,7 @@ class ErxFunnelTest < Minitest::Test
     named = ops.keys.zip(answers).to_h
     assert_equal "ok {19,#{from},#{to},#{ref}}", named.fetch('MONITOR_P')
     assert_equal "ok {29,#{ref},#{from},#{to},{<<109>>,<<102>>,2},options}", named.fetch('SPAWN_REQUEST')
-    assert_equal "ok {31,#{ref},#{to},1,<<98,97,100,97,114,103>>}", named.fetch('SPAWN_REPLY error')
+    assert_equal "ok {31,#{ref},#{to},1,<<98,97,100,111,112,116>>}", named.fetch('SPAWN_REPLY error')
     assert_equal "ok {36,70000,#{from},#{to}}", named.fetch('UNLINK_ID_ACK')
   end
 
@@ -139,6 +139,7 @@ class ErxFunnelTest < Minitest::Test
       'flags 2^27 - 1' => [control(ctl(op(31), reference, to, int((1 << 27) - 1), from)), 'ok'],
       'flags -1' => [control(ctl(op(31), reference, to, int(-1), from)), 'field'],
       'result an integer' => [control(ctl(op(31), reference, to, small(0), small(1))), 'field'],
+      'error ERTS never writes' => [control(ctl(op(31), reference, to, small(0), atom('zzz_unknown'))), 'spawn_error'],
       'request id a pid' => [control(ctl(op(29), from, from, to, mfa, nil_), 9), 'field']
     }
     answers(cases).each { |name, answer| assert_equal cases.fetch(name).last, answer.split.first, name }

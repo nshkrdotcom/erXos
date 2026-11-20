@@ -227,9 +227,12 @@ since lists and copies multiply what a file spells out, a peripheral carries at
 most 16384 field and value names. Each register carries the profile's
 one extension, `ownedByNif`, saying whether the device NIF owns it and writes it
 only in sequences of its own (a ring's base address, a queue's setup, the
-device's status and features); `erx/hw/device_owned.h` names each owned register
-by its index in the table, for `erx_device.c` alone;
-a register without it is refused. A register is 8, 16, 32 or 64 bits wide, at an
+device's status and features); the mark may instead sit, as `true`, on single
+writable fields of a register that carries none of its own
+([design-device-dma.md](design-device-dma.md#register-ownership)).
+`erx/hw/device_owned.h` names each register owned whole or in part by its
+index in the table, for `erx_device.c` alone; a register with neither mark is
+refused. A register is 8, 16, 32 or 64 bits wide, at an
 offset aligned to its width, and every access to it is one access of that width,
 as the virtio specification asks of a device's configuration fields (OASIS
 Virtio 1.2, sections 4.2.2.2 and 4.1.3.1).
@@ -254,10 +257,26 @@ ECAM window and for the BCM2711 bridge's index and data registers alike,
 whose view takes 8-, 16- and 32-bit accesses at an offset computed from
 a function's place and the register, each access bounded by the window
 ([design-pcie.md](design-pcie.md#the-bridge-seam)). A cluster whose base
-the controller reports, as xHCI's are, names in an extension the
-capability register and field its base comes from, and the generator
-checks that both exist
-([design-usb.md](design-usb.md#registers-at-offsets-the-controller-reports)). An access
+the controller reports, as xHCI's are, names in an extension,
+`<baseFrom>REGISTER.FIELD</baseFrom>`, the capability register and field its
+base comes from, the field's bits in place being the offset; the cluster sits
+at offset 0, and the generator checks that the field is a readable field of a
+readable register at a fixed offset
+([design-usb.md](design-usb.md#registers-at-offsets-the-controller-reports)).
+A cluster of an extended capability, as xHCI's legacy support and
+supported-protocol capabilities are, carries `<capabilityId>`, the
+capability's ID, 1 to 255, and sits at offset 0; its peripheral names the
+list's head once, in `<capabilitiesFrom>REGISTER.FIELD</capabilitiesFrom>`,
+the field holding the head in 32-bit words from the window's start. One
+such cluster may be an array, `NAME[%s]` with a `dim` and no
+`dimIncrement`, one instance for each entry of its ID up to `dim`, each
+where its entry lies; its registers are not arrays of their own. The
+generator refuses two clusters with one ID, an ID together with a
+`baseFrom`, a `dimIncrement` on such an array, a cluster array of any
+other kind, a capability cluster on a peripheral without a list, and a
+register past the movable span. A register array whose live length the device reports, as xHCI's `PORTSC`
+is, names that field the same way in `<dimFrom>`, and its `dim` must cover
+every count the field can hold. An access
 sequence a device's specification prescribes and SVD cannot express is
 declared in the device's `vendorExtensions` in erXos's own namespace and
 emitted as one function per sequence, with its barriers
@@ -277,9 +296,16 @@ unsigned operations, including full-width fields without undefined shifts.
 Whole-register read-modify-write is emitted only when every writable field
 uses ordinary replacement semantics; a side-effect field excludes that
 operation for all its siblings too.
-The supported SVD profile rejects a register mixing ordinary writable
-fields with one-to-clear fields: clearing one field cannot silently replace
-the ordinary siblings. Such a device needs an explicit access sequence.
+A field's `modifiedWriteValues` is `oneToClear`, `oneToSet` or `modify`, or
+absent for a write that stores its value. A register's preserve mask is the
+bits a write carries from the word read so that it changes only what it means
+to: every readable field that stores what is written. A field whose write
+acts, beside fields to preserve, is written as the word read, masked to the
+preserve mask, with the driver's own bits, so such a register's read must have
+no side effect; it gets no lone clear operation, which would write zero to the
+preserved siblings, and its headers define the mask (`..._PRESERVE`). xHCI's
+`PORTSC` mask is the writable bits FreeBSD's `XHCI_PS_CLEAR` does not remove,
+derived rather than copied ([design-usb.md](design-usb.md#the-controller-process)).
 Hardware access remains an effect owned by the device shim or the
 kernel's early-console writer, as their separate chokepoints require.
 
@@ -294,7 +320,9 @@ names through ([design-runtime.md](design-runtime.md#the-device-nif)):
 `include/erx/hw/device_types.h` its shapes, `device_table.h` each peripheral's
 registers and fields, lower-cased, with window, offset, width, array shape,
 access, masks, the device-address mark, whether a field may be replaced by
-a read and a write, and the peripheral a kind derives from; `device_access.h` the one volatile load and store of each
+a read and a write, the preserve and owned masks, a
+register's movable cluster and an array's count field, the peripheral's movable
+clusters, and the peripheral a kind derives from; `device_access.h` the one volatile load and store of each
 width. No peripheral may take one of those names. A bit the source does not declare
 is written as zero, by a field's update too, so a register's source declares every bit
 the hardware implements.

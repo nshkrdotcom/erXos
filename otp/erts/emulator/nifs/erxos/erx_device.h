@@ -83,9 +83,11 @@ typedef struct erx_device_element {
  * once, and a spec that marks it otherwise than the entry, or names a direct line another
  * record names, is ERX_EBUSY. A new run maps its pages, a physical one's made here and a
  * given one's in its window object; a new line's object is made from its selector, or for a
- * given device taken as it is. A given device's memory is mapped whole. A spec that does not
- * fit its peripheral, whose base misaligns one of its registers, that names a line twice, or
- * whose memory is not whole pages of a given device, is ERX_EINVAL. A hosted stand-in,
+ * given device taken as it is. A given device's memory is mapped whole. A new record's layout
+ * is resolved over its window (erx_device_resolve): the bases and counts the device reports and
+ * its extended capabilities, each read once. A spec that does not fit its peripheral, whose base
+ * misaligns one of its registers, that names a line twice, or whose memory is not whole pages of
+ * a given device, is ERX_EINVAL, and so is a device whose layout the resolution refuses. A hosted stand-in,
  * always a new device, is plain memory of the peripheral's size with software objects for
  * lines; elsewhere one is ERX_ENOTSUP. A failure may leave a run or a line made, kept for the
  * boot and taken by the next open that names it. The keys are what the caller interned the
@@ -104,9 +106,11 @@ const erx_device_field_t *erx_device_field_by_key(const erx_device_t *device, co
 
 /*
  * The accesses. Each is false, having touched nothing, for what the table does not allow: the
- * wrong element, the wrong direction, bits a word may not set, a register holding a device
- * address. The register and the field are the device's own, from the lookups above or from
- * its peripheral.
+ * wrong element, an element past what the device has, the wrong direction, bits a word may not
+ * set, a register holding a device address. A write of a register with fields the NIF owns
+ * reads it first and is false, having written nothing, for a value that would change one of
+ * them. The register and the field are the device's own, from the lookups above or from its
+ * peripheral.
  */
 bool	erx_device_read(const erx_device_t *device, const erx_device_register_t *reg, erx_device_element_t element,
 	    uint64_t *value);
@@ -116,6 +120,13 @@ bool	erx_device_read_field(const erx_device_t *device, const erx_device_register
 	    const erx_device_field_t *field, uint64_t *value);
 bool	erx_device_write_field(const erx_device_t *device, const erx_device_register_t *reg, erx_device_element_t element,
 	    const erx_device_field_t *field, uint64_t value);
+
+/*
+ * How many elements of the register the device has, as its open resolved them: an array's
+ * count, its live count where the device reports one, the instances of a capability's cluster
+ * that its walk found, and for any other register 1, or 0 in a capability's cluster it did not find.
+ */
+uint32_t	erx_device_elements(const erx_device_t *device, const erx_device_register_t *reg);
 
 /*
  * Issues one SD command (docs/design-runtime.md, "Issuing an SD command"): the one 32-bit write

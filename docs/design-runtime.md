@@ -400,7 +400,9 @@ distributed. 65. Once the boot script has started every application, and
 before any `-s`, `-run` or `-eval`, `init` sends the domain pid that
 `erx_dist:boot/0` names its ready report,
 `{erx_ready, #{connections => Agent, inspect => InspectAgent, provides => Provides}}`,
-a key left out when no such agent is registered, on which
+a key left out when no such agent is registered, and `Provides` naming
+each mint by its name's text, a binary, which edit 9's safe decode takes
+without making an atom, on which
 `erx_domain:create/1` returns
 ([design-domains.md](design-domains.md#messages-between-the-domain-service-and-a-runtime));
 edit 8 hands both agents to the system domain with `send` as the frame is
@@ -429,7 +431,9 @@ included, gives the peer `send` on it where it holds nothing yet; past the
 table's bound it writes nothing and counts the failure for
 `erx_dist:exports_refused/0`. 9. The distribution decoder takes a safe mode,
 set in the system domain, which creates no atom and reports a refused atom
-apart from a malformed term. 10. In the system domain, a message to a peer
+apart from a malformed term; `erx_dist:atoms_refused/0` counts the payloads it
+refused for an atom. A control term refused for an atom ends the connection with
+a log line naming the peer; no frame the funnel accepts names such an atom. 10. In the system domain, a message to a peer
 whose entry's queue, the frames of `async_dist` senders included, is past the
 manifest's `system_queue` is dropped and counted on the receiver instead of
 suspending the sender, and any other signal that does not fit ends the
@@ -472,12 +476,15 @@ domain's id after a later domain of its name has connected, while
 entry or to the one connected entry with that creation, and answer `badarg`
 for any other number, one two connected entries share, or one past its
 field's width. 27. On a connection to another domain, the sender keeps every
-operation on the peer's registered names to itself: a send to
+operation the peer's funnel would refuse as malformed to itself, those on
+its registered names and a spawn into the system domain: a send to
 `{Name, Node}` is dropped in the one encoder of a send and counted for
 `erx_dist:names_dropped/0`, a send toward a domain whose connection is not
 up yet included; a monitor by name gets a local `DOWN` with
-`noproc`, or `noconnection` at once toward a domain not connected; and
-`demonitor` sends nothing for a monitor never carried, so stock code writes no
+`noproc`, or `noconnection` at once toward a domain not connected;
+`demonitor` sends nothing for a monitor never carried; and a spawn toward
+the system domain's node, the node the boot page's system connection
+names, which serves none, fails at once with `noconnection`, so stock code writes no
 frame the receiving funnel refuses
 ([design-domains.md](design-domains.md#frames)). A peer is another domain
 when its node name is at this node's host name, the rule of
@@ -1521,8 +1528,8 @@ same entry. The message in an accepted frame stays encoded until its
 receiver takes it, which is ERTS's lazy distribution decode; in the
 system domain that decode runs in safe mode (edit 9), so the system
 domain never learns an atom from another domain (D5), and a reason
-refused only by the atom policy arrives as `{erx_foreign_reason, Bin}`,
-so no exit is lost. The receiver's queued undecoded frames count toward
+refused for an atom arrives as `{erx_foreign_reason, Bin}`, its bytes
+opaque and unchecked past the refusal, so no exit is lost. The receiver's queued undecoded frames count toward
 its **queue quota**: when an authorised frame's target has
 reached it, the drain leaves that frame in the lane and takes nothing
 more from that lane until the target's decodes bring the count below the
@@ -2806,11 +2813,22 @@ written, so the input driver can write only `select` and `subsel`, each one
 byte, as virtio 1.2 sections 4.2.2.2 and 5.8.5.1 require. A cluster whose base
 the controller reports, as xHCI's operational, runtime and doorbell registers
 are, is marked in the SVD source with the register and field its base comes
-from; at open the NIF reads each base once, checks that the cluster lies wholly
-inside the window and refuses the record with `{error, einval}` otherwise, and
-follows the controller's extended-capability list once, at most 64 entries,
-each forward of the last, so every name then resolves to a fixed offset
-([design-usb.md](design-usb.md#registers-at-offsets-the-controller-reports)). Every
+from, and a cluster of an extended capability with the capability's ID, its base
+the entry of that ID on the list whose head the peripheral names; at open the
+NIF reads each base and count once, follows the controller's extended-capability
+list once, at most 64 entries, each forward of the last, checks that every
+element of every register lies wholly inside the window at an offset aligned to
+its width and that no cluster lies over another or over the registers at fixed
+offsets, and refuses the record with `{error, einval}` otherwise, so every name
+then resolves to a fixed offset
+([design-usb.md](design-usb.md#registers-at-offsets-the-controller-reports)).
+The decision is a pure state machine in `erx_device_core`, which asks for one
+read at a time and which the open runs to its end. An array whose live length
+the device reports takes an index below that length, and a capability's
+registers are reached only where the walk found its entry, each instance of one
+that may occur more than once as `{Name, Index}` in list order;
+`erx_device:elements(Dev, Name)` says how many elements of a register the record
+has. Every
 register of a peripheral the NIF drives carries a mark in the SVD source,
 `ownedByNif`, saying whether the NIF owns it, and the generator refuses a
 register without the mark. The NIF owns every register through which a

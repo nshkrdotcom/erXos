@@ -194,7 +194,8 @@ irq_find(uint64_t irq)
 }
 
 int
-erx_irq_create(uint64_t budget, uint64_t resource, uint32_t kind, uint64_t selector, uint64_t *irq)
+erx_irq_create(uint64_t budget, uint64_t resource, uint32_t kind, uint64_t selector, uint64_t *irq,
+    erx_msi_message_t *message)
 {
 	int status = ERX_ENOMEM;
 
@@ -214,6 +215,9 @@ erx_irq_create(uint64_t budget, uint64_t resource, uint32_t kind, uint64_t selec
 		}
 	}
 	(void)pthread_mutex_unlock(&irq_mutex);
+	/* A software object has no message. */
+	if (status == ERX_OK && message != NULL)
+		*message = (erx_msi_message_t){ 0 };
 	return (status);
 }
 

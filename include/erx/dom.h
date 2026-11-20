@@ -243,6 +243,10 @@ typedef struct erx_dom_device {
 					 * its first give, charged to the system
 					 * domain and kept for the boot; else
 					 * ERX_CAP_NULL */
+	/* A PCIe function's setting (docs/design-pcie.md, "Records"): its
+	 * give writes the route and the message its MSI object's creation
+	 * returned, and the mode stays off; all zero for every other device. */
+	erx_pcie_setting_t setting;
 } erx_dom_device_t;
 
 /* A page-aligned range of device addresses. */
@@ -289,6 +293,19 @@ typedef struct erx_dom_device_entry {
 	 * bytes for a row of another selector. */
 	const char	*path;
 	uint32_t	path_len;
+	/* A PCIe function's position, set only when selector is
+	 * ERX_MF_SELECTOR_PCI (docs/design-pcie.md, "The catalogue and
+	 * gives"): bridge is its host bridge's entry, a device-tree row of
+	 * role configuration, and bus, device and function its place there,
+	 * by which its bridge's catalogue finds its layout; dma_limit is its
+	 * row's DMA limit, a device address, exclusive, that cuts its
+	 * bridge's DMA range (docs/design-pcie.md, "DMA"), 0 for none. Its
+	 * DMA facts are its bridge's node's, read as the function's
+	 * (ERX_DT_ROW_PCIE). */
+	uint32_t	selector;	/* its manifest row's, ERX_MF_SELECTOR_* */
+	uint32_t	bridge;
+	uint8_t		bus, device, function;
+	uint64_t	dma_limit;
 	uint64_t	offset;		/* its registers' offset into ranges[0] */
 	uint64_t	size;		/* and their bytes, as the manifest gives them */
 	uint32_t	clock;		/* its clock in hertz, as the manifest gives
@@ -328,6 +345,109 @@ typedef struct erx_dom_device_entry {
 	erx_dt_framebuffer_t framebuffer;
 	const char	*format;
 } erx_dom_device_entry_t;
+
+/*
+ * A host bridge's catalogue of PCIe functions (docs/design-pcie.md,
+ * "Records", "The catalogue and gives"). facts is the bridge's record: its
+ * buses and windows the tree's (erx_dt_bridge), its index, flags and
+ * places the manifest's. A layout is a function as the bridge's placing
+ * report gave it, its record's state 0, with the latest report's state
+ * (0 when the latest report did not list it) and whether that report
+ * listed it with its layout. A bridge with no layouts takes the next
+ * report's as its placing report. A bridge marked firmware_lost gives no
+ * function, and shows every one not_ready, for the rest of the boot
+ * (docs/design-usb.md, "The VL805's firmware").
+ */
+typedef struct erx_dom_pci_layout {
+	erx_pcie_function_t record;
+	uint8_t		state;		/* the latest report's ERX_PCIE_STATE_*; 0 for none */
+	bool		confirmed;
+} erx_dom_pci_layout_t;
+
+typedef struct erx_dom_pci_bridge {
+	erx_pcie_bridge_t facts;
+	bool		firmware_lost;
+	uint32_t	nlayouts;	/* at most ERX_PCIE_FUNCTIONS_MAX */
+	erx_dom_pci_layout_t layouts[ERX_PCIE_FUNCTIONS_MAX];
+} erx_dom_pci_bridge_t;
+
+/* Why erx_dom_pci_report refused a report: the record, by its index in the report, and its field. */
+typedef struct erx_dom_pci_refusal {
+	uint32_t	record;
+	const char	*field;
+} erx_dom_pci_refusal_t;
+
+/*
+ * The library's intake of a report on bridge's functions, count records as
+ * erx_pcie_function_decode gave them (docs/design-pcie.md, "The catalogue
+ * and gives"), against the catalogue's nentries entries, whose register
+ * ranges no BAR may meet. It decides every layout from the whole report and
+ * only then writes them all. A bridge with no layouts takes the report's records
+ * as its layouts only if every placed memory BAR is aligned to its span,
+ * lies whole inside one of the bridge's memory windows and meets no other
+ * span and no entry's register range, and every MSI-X table lies inside
+ * its BAR's hardware size. A bridge with layouts confirms a layout whose record,
+ * without its state, the report repeats, and unconfirms every other. Every
+ * layout takes the report's state, or none, and not_ready on a bridge marked
+ * firmware_lost. ERX_EINVAL, with *refusal naming the record and field,
+ * every layout unconfirmed and nothing else written: a record of another bridge, at a bus outside its range,
+ * a device or function past its bound or at a place another record holds, of a state or BAR outside its
+ * sets (a size past ERX_PCIE_BAR_SIZE_LOG2_WIDE, or past ERX_PCIE_BAR_SIZE_LOG2_MAX on a placed BAR; a
+ * placed BAR not memory; a placed 32-bit BAR past 4 GiB; a ready function's memory BAR not placed), a 64-bit BAR whose upper half is not absent, more than
+ * ERX_PCIE_FUNCTIONS_MAX records, or, to a bridge with no layouts, any placement
+ * check above.
+ */
+erx_status_t	erx_dom_pci_report(erx_dom_pci_bridge_t *bridge, const erx_dom_device_entry_t *entries,
+		    uint32_t nentries, const erx_pcie_function_t *report, uint32_t count,
+		    erx_dom_pci_refusal_t *refusal) ERX_WARN_UNUSED_RESULT;
+
+/*
+ * The CPU range of a placed memory BAR, its span (its hardware size
+ * rounded up to whole pages) from its PCI address translated by the one
+ * memory window of facts that holds it whole (docs/design-pcie.md, "The
+ * catalogue and gives"); false when none does, and for a BAR not placed or
+ * not memory.
+ */
+bool		erx_dom_pci_bar_cpu(const erx_pcie_bridge_t *facts, const erx_pcie_bar_t *bar,
+		    erx_dom_range_t *cpu);
+
+/*
+ * The layout of the function at bus, device and function a give may give:
+ * one the bridge holds, which its latest report confirmed and found ready,
+ * on a bridge not marked firmware_lost; NULL for any other, which a give gives nothing for.
+ */
+const erx_dom_pci_layout_t *erx_dom_pci_givable(const erx_dom_pci_bridge_t *bridge, uint8_t bus,
+		    uint8_t device, uint8_t function);
+
+/*
+ * The bridge's firmware notification answered status (docs/design-usb.md,
+ * "The VL805's firmware"): ERX_ETIMEDOUT marks it firmware_lost, which
+ * nothing clears in the boot, since the kernel answers every later
+ * notification of the boot the same way; any other status leaves it.
+ */
+void		erx_dom_pci_firmware(erx_dom_pci_bridge_t *bridge, erx_status_t status);
+
+/*
+ * The route a give of function, the layout of entry's place, chooses
+ * (docs/design-pcie.md, "The choice"): intx when the row names a line, a
+ * closed bus's; else msi when the function has MSI whose per-vector mask,
+ * if any, is at the offset a 64-bit capability gives; else msix when it has
+ * MSI-X; else none, and its driver polls. ERX_PCIE_ROUTE_*.
+ */
+uint8_t		erx_dom_pci_route(const erx_dom_device_entry_t *entry, const erx_pcie_function_t *function);
+
+/*
+ * The layout a give of PCIe function entry gives, from the nbridges
+ * catalogues of bridges (docs/design-pcie.md, "The catalogue and gives"),
+ * with its bridge's record in *facts: the catalogue naming entry's bridge
+ * gives it (erx_dom_pci_givable), its identity is entry's compatible
+ * string, pci and the vendor and device id in four lowercase hexadecimal
+ * digits each, and on a closed bridge its place is listed and its reported
+ * pin is the place's (docs/design-pcie.md, "The closed bus"). NULL for any
+ * other, which its give gives nothing for, as a device the machine lacks.
+ */
+const erx_dom_pci_layout_t *erx_dom_pci_given(const erx_dom_pci_bridge_t *bridges, uint32_t nbridges,
+		    const erx_dom_device_entry_t *entry, const erx_pcie_bridge_t **facts);
 
 /*
  * Whether a runtime drives entry: a device of a kind (erx/device_kinds.h,
@@ -582,6 +702,11 @@ typedef struct erx_dom_view {
 	const erx_dom_device_entry_t *devices;	/* the catalogue: ndevices entries */
 	const erx_dom_device_t	*device_records; /* ndevices records, entry for entry */
 	uint32_t		 ndevices;
+	/* The host bridges' catalogues (docs/design-pcie.md, "The catalogue
+	 * and gives"), each naming its bridge's entry in facts.index; a PCIe
+	 * function whose bridge has none here is given nothing. */
+	const erx_dom_pci_bridge_t *pci_bridges;
+	uint32_t		 npci_bridges;
 	const erx_dom_file_t	*files;		/* the boot image's files */
 	uint32_t		 nfiles;
 	const erx_dom_configured_t *configured;
@@ -703,6 +828,9 @@ typedef enum erx_dom_step_kind {
 	ERX_DOM_STEP_CONTIGUOUS,	/* obj: contiguous memory of size for the
 					 * device of resource target, charged to
 					 * budget */
+	ERX_DOM_STEP_MSI,		/* obj: an MSI IRQ object for the PCIe
+					 * function of resource target, charged
+					 * to budget */
 	ERX_DOM_STEP_GIVE		/* a creation's: gives[index], applied whole */
 } erx_dom_step_kind_t;
 
@@ -799,10 +927,24 @@ typedef enum erx_dom_parent {
  * has neither, and an unplaced framebuffer no window. shared says another
  * device of the unit, of a kind or not, names that line, which the
  * holder's record marks.
+ *
+ * A PCIe function (pci) is driven only when its bridge's catalogue gives
+ * it (erx_dom_pci_givable): its ranges are then its placed memory BARs'
+ * CPU spans in BAR order, its registers the first placed BAR's
+ * hardware size at offset 0, function its layout's record and route the
+ * one erx_dom_pci_route chooses; its line is its row's for intx, an MSI
+ * object for msi and msix, none for none. One its catalogue does not give
+ * is held as a device of no kind, so its give makes nothing but its
+ * resource and its holder finds no record (docs/design-pcie.md, "The
+ * catalogue and gives").
  */
 typedef struct erx_dom_unit_device {
 	uint32_t	index;		/* its entry and record */
-	bool		driven;		/* erx_dom_entry_driven of its entry */
+	bool		driven;		/* erx_dom_entry_driven of its entry, and
+					 * for a PCIe function given by its catalogue */
+	bool		pci;		/* its entry is a PCIe function's */
+	uint8_t		route;		/* a driven PCIe function's ERX_PCIE_ROUTE_* */
+	erx_pcie_function_t function;	/* and its layout's record */
 	uint32_t	nranges;	/* its entry's register ranges */
 	erx_dom_range_t	ranges[ERX_DEVICE_RANGES_MAX];
 	uint64_t	reg_offset;	/* its registers' offset into ranges[0] */

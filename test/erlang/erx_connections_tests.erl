@@ -281,7 +281,7 @@ facets(Agent) ->
     %% sends, one sent bare, one that is not a map and one wrapped twice are dropped and
     %% counted, so no domain but the system domain names init's facets.
     %% The answer's names of the facets the manifest grants the domain, which come later
-    %% by installation, are kept for erx:granted/0, the atoms alone, before init hears
+    %% by installation, are kept for erx:granted/0,1, the {Name, Interface} pairs alone, before init hears
     %% of the facets, so a domain mounts only what it is granted; a forged answer
     %% changes them no more than it changes the facets.
     Init = whereis(init),
@@ -294,14 +294,16 @@ facets(Agent) ->
         Agent ! {erx_origin, ?SYSTEM, {erx_origin, ?PEER, {erx_facets, #{forged => Facet}, [forged]}}},
         record(Agent, {erx_facets, #{echo => Facet, tree => {Facet, ro}, <<"bin">> => Facet, bad => 3,
                                      wide => {Facet, rwx}, nopid => {3, rw}},
-                       [data, <<"bin">>, 3 | tail]}),
+                       [{data, 5}, data, {<<"bin">>, 5}, {data, files}, 3 | tail]}),
         ?assertEqual(4, erx_connections:dropped()),
         First = init_facets(2000),
         erlang:trace(Init, false, ['receive']),
         ?assertEqual([#{echo => Facet, tree => {Facet, ro}}], First ++ init_facets(100)),
         ?assertEqual(Facet, erx:cap(tree)),
         ?assertEqual(#{echo => Facet, tree => Facet}, erx:caps()),
-        ?assertEqual([data], persistent_term:get({erx, granted}))
+        ?assertEqual([data], erx:granted()),
+        ?assertEqual([data], erx:granted(5)),
+        ?assertEqual([], erx:granted(15))
     after
         persistent_term:erase({erx, granted}),
         persistent_term:erase({erx, facets}),

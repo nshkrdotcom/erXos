@@ -75,7 +75,7 @@ _Static_assert(sizeof(obj_names) / sizeof(obj_names[0]) == ERX_DOM_OBJ_COUNT,
 static const char *const step_names[] = {
 	"CARVE", "SPACE", "GROUP", "MEM", "BELL", "SLICE", "IMAGE_MAP", "MAP",
 	"INSTALL", "BOOTINFO", "THREAD", "RESOURCE", "WINDOW", "IRQ", "DMA",
-	"CONTIGUOUS", "GIVE"
+	"CONTIGUOUS", "MSI", "GIVE"
 };
 
 static erx_grant_t
@@ -225,6 +225,7 @@ model_apply(model_t *m, const erx_dom_step_t *step)
 	case ERX_DOM_STEP_RESOURCE:
 	case ERX_DOM_STEP_WINDOW:
 	case ERX_DOM_STEP_IRQ:
+	case ERX_DOM_STEP_MSI:
 	case ERX_DOM_STEP_DMA:
 	case ERX_DOM_STEP_CONTIGUOUS:
 		return (false);
@@ -1065,6 +1066,180 @@ app_session(uint32_t id, uint32_t entry, uint64_t mib, erx_dom_plan_t *plan)
 	return (status == ERX_OK ? erx_dom_plan_record(&view, plan) : status);
 }
 
+/*
+ * PCIe reports (erx_dom_pci_report): a bridge of the Pi 4's shape, whose one
+ * memory window moves PCI 0xc0000000 to CPU 0x600000000 (docs/design-usb.md,
+ * "The Raspberry Pi 4"), and one device-tree entry inside that CPU range. Each
+ * case prints the report's status and refused field, and whether the
+ * function at bus 1, device 0 is givable after it.
+ */
+#define PCI_BRIDGE	3u
+#define PCI_WINDOW_PCI	UINT64_C(0xc0000000)
+#define PCI_WINDOW_CPU	UINT64_C(0x600000000)
+#define PCI_ENTRY_CPU	(PCI_WINDOW_CPU + 0x100000)
+
+static erx_dom_pci_bridge_t pci_bridge;
+static erx_dom_device_entry_t pci_entries[1];
+
+static void
+pci_fresh(void)
+{
+	pci_bridge = (erx_dom_pci_bridge_t){ .facts = { .index = PCI_BRIDGE, .bus_first = 0, .bus_last = 1,
+	    .windows = { { .pci = PCI_WINDOW_PCI, .cpu = PCI_WINDOW_CPU, .size = 0x40000000 } } } };
+	pci_entries[0] = (erx_dom_device_entry_t){ .nranges = 1, .ranges = { { .base = PCI_ENTRY_CPU, .size = 0x1000 } } };
+}
+
+/* The VL805 at 1.0.0, ready, its one 64-bit BAR of 4 KiB at PCI address at. */
+static erx_pcie_function_t
+pci_function(uint8_t device, uint64_t at)
+{
+	return ((erx_pcie_function_t){ .bridge = PCI_BRIDGE, .bus = 1, .device = device, .state = ERX_PCIE_STATE_READY,
+	    .vendor = 0x1106, .device_id = 0x3483, .class_code = 0x0c0330, .pin = 1,
+	    .bars = { { .kind = ERX_PCIE_BAR_MEMORY, .flags = ERX_PCIE_BAR_ADDR64 | ERX_PCIE_BAR_PLACED, .size_log2 = 12,
+	    .address = at } } });
+}
+
+static void
+pci_case(const char *name, const erx_pcie_function_t *report, uint32_t count)
+{
+	erx_dom_pci_refusal_t refusal = { .field = "none" };
+	const erx_status_t status = erx_dom_pci_report(&pci_bridge, pci_entries, 1, report, count, &refusal);
+
+	printf("pci %s %d %s givable=%d\n", name, (int)status, refusal.field,
+	    erx_dom_pci_givable(&pci_bridge, 1, 0, 0) != NULL ? 1 : 0);
+}
+
+static int
+pcis(void)
+{
+	erx_pcie_function_t report[2];
+	erx_dom_range_t cpu = { 0, 0 };
+
+	pci_fresh();
+	report[0] = pci_function(0, PCI_WINDOW_PCI);
+	pci_case("placed", report, 1);
+	printf("pci cpu %d 0x%llx+0x%llx\n", erx_dom_pci_bar_cpu(&pci_bridge.facts, &report[0].bars[0], &cpu) ? 1 : 0,
+	    (unsigned long long)cpu.base, (unsigned long long)cpu.size);
+	/* A later report confirms the layout it repeats and no other. */
+	pci_case("same", report, 1);
+	report[0].revision = 1;
+	pci_case("changed", report, 1);
+	pci_case("missing", report, 0);
+	report[0] = pci_function(0, PCI_WINDOW_PCI);
+	report[0].state = ERX_PCIE_STATE_NOT_READY;
+	pci_case("not_ready", report, 1);
+	pci_fresh();
+	pci_bridge.firmware_lost = true;
+	report[0] = pci_function(0, PCI_WINDOW_PCI);
+	pci_case("firmware_lost", report, 1);
+	/* The mark set after a confirming report gives nothing all the same. */
+	pci_fresh();
+	pci_case("before_mark", report, 1);
+	pci_bridge.firmware_lost = true;
+	printf("pci marked givable=%d\n", erx_dom_pci_givable(&pci_bridge, 1, 0, 0) != NULL ? 1 : 0);
+	/* A refused later report leaves no earlier confirmation; an empty first report lays nothing. */
+	pci_fresh();
+	pci_case("laid", report, 1);
+	report[1] = report[0];
+	pci_case("refused_later", report, 2);
+	pci_fresh();
+	pci_case("empty", report, 0);
+	pci_case("after_empty", report, 1);
+
+	/* Placement refusals: each leaves the bridge to place again. */
+	const struct { const char *name; uint64_t at; } outside[] = {
+		{ "below", PCI_WINDOW_PCI - 0x1000 },
+		{ "past_end", PCI_WINDOW_PCI + 0x40000000 },
+		{ "unaligned", PCI_WINDOW_PCI + 0x800 },
+		{ "entry", PCI_WINDOW_PCI + (PCI_ENTRY_CPU - PCI_WINDOW_CPU) },
+	};
+	for (size_t at = 0; at < sizeof(outside) / sizeof(outside[0]); at++) {
+		pci_fresh();
+		report[0] = pci_function(0, outside[at].at);
+		pci_case(outside[at].name, report, 1);
+	}
+	pci_fresh();
+	report[0] = pci_function(0, PCI_WINDOW_PCI);
+	report[1] = pci_function(1, PCI_WINDOW_PCI);
+	pci_case("overlap", report, 2);
+	pci_fresh();
+	report[0] = pci_function(0, PCI_WINDOW_PCI);
+	report[0].msix_offset = 0x90;
+	report[0].msix_table_size = 2;
+	report[0].msix_table_offset = 0x1000 - 0x10;
+	pci_case("msix_past", report, 1);
+	report[0].msix_table_offset = 0x1000 - 0x20;
+	pci_case("msix_inside", report, 1);
+	pci_fresh();
+	report[0] = pci_function(0, PCI_WINDOW_PCI);
+	report[0].bars[1] = report[0].bars[0];
+	pci_case("upper_half", report, 1);
+	report[0] = pci_function(0, PCI_WINDOW_PCI);
+	report[0].bridge = PCI_BRIDGE + 1;
+	pci_case("other_bridge", report, 1);
+	report[0] = pci_function(0, PCI_WINDOW_PCI);
+	report[0].bus = 2;
+	pci_case("bus", report, 1);
+	report[0] = pci_function(0, PCI_WINDOW_PCI);
+	report[1] = report[0];
+	pci_case("twice", report, 2);
+	report[0].state = 0;
+	pci_case("state", report, 1);
+	/* A placing report refused whole leaves the next to place. */
+	report[0] = pci_function(0, PCI_WINDOW_PCI);
+	pci_case("after_refusals", report, 1);
+
+	/* A BAR too large to place is reported at its true size on an unplaced function (abi/formats/pcie.txt). */
+	const erx_pcie_bar_t huge = { .kind = ERX_PCIE_BAR_MEMORY, .flags = ERX_PCIE_BAR_ADDR64, .size_log2 = 40 };
+	pci_fresh();
+	report[0] = pci_function(0, PCI_WINDOW_PCI);
+	report[0].state = ERX_PCIE_STATE_UNPLACED;
+	report[0].bars[2] = huge;
+	pci_case("unplaced_huge", report, 1);
+	report[0].bars[2] = huge;
+	report[0].bars[2].size_log2 = 64;
+	pci_case("size_64", report, 1);
+	report[0] = pci_function(0, PCI_WINDOW_PCI);
+	report[0].bars[0].kind = ERX_PCIE_BAR_IO;
+	report[0].bars[0].flags = ERX_PCIE_BAR_PLACED;
+	pci_case("io_placed", report, 1);
+	/* A ready function has every memory BAR placed. */
+	report[0] = pci_function(0, PCI_WINDOW_PCI);
+	report[0].bars[0].flags = ERX_PCIE_BAR_ADDR64;
+	report[0].bars[0].address = 0;
+	pci_case("ready_unplaced", report, 1);
+	/* A window of 4 GiB holds a placed BAR's span clamped to the placing bound, so only the bound refuses one of 8 GiB. */
+	pci_fresh();
+	pci_bridge.facts.windows[0].size = UINT64_C(0x100000000);
+	report[0] = pci_function(0, UINT64_C(0x100000000));
+	report[0].bars[0].size_log2 = 33;
+	pci_case("placed_huge", report, 1);
+	/* A window reaching past 4 GiB holds a 64-bit BAR there and no 32-bit one. */
+	pci_fresh();
+	pci_bridge.facts.windows[0].size = 0x80000000;
+	report[0] = pci_function(0, UINT64_C(0x100000000));
+	report[0].bars[0].flags = ERX_PCIE_BAR_PLACED;
+	pci_case("narrow_above_4g", report, 1);
+	report[0] = pci_function(0, UINT64_C(0x100000000));
+	pci_case("wide_above_4g", report, 1);
+	pci_fresh();
+	report[0] = pci_function(ERX_PCIE_DEVICE_MAX + 1, PCI_WINDOW_PCI);
+	pci_case("device_bound", report, 1);
+	report[0] = pci_function(0, PCI_WINDOW_PCI);
+	report[0].function = ERX_PCIE_FUNCTION_MAX + 1;
+	pci_case("function_bound", report, 1);
+
+	/* Only a timed-out notification loses the bridge's firmware, and nothing finds it again. */
+	pci_fresh();
+	erx_dom_pci_firmware(&pci_bridge, ERX_EBUSY);
+	printf("pci firmware busy lost=%d\n", pci_bridge.firmware_lost ? 1 : 0);
+	erx_dom_pci_firmware(&pci_bridge, ERX_ETIMEDOUT);
+	printf("pci firmware timedout lost=%d\n", pci_bridge.firmware_lost ? 1 : 0);
+	erx_dom_pci_firmware(&pci_bridge, ERX_OK);
+	printf("pci firmware ok lost=%d\n", pci_bridge.firmware_lost ? 1 : 0);
+	return (0);
+}
+
 static int
 apps(void)
 {
@@ -1291,7 +1466,9 @@ main(int argc, char **argv)
 		return (gives());
 	if (argc == 2 && strcmp(argv[1], "apps") == 0)
 		return (apps());
+	if (argc == 2 && strcmp(argv[1], "pci") == 0)
+		return (pcis());
 	fprintf(stderr,
-	    "usage: dom_core_driver explore|cases|seeded|principal|record|gives|apps\n");
+	    "usage: dom_core_driver explore|cases|seeded|principal|record|gives|apps|pci\n");
 	return (2);
 }

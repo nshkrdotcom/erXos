@@ -83,7 +83,9 @@ class NativeSeedsTest < Minitest::Test
                                                    suite: :irq, cpus: 1, expected: /a trigger before the park was lost/),
     'a task binds into a group it does not home' => Seed.new(file: IRQ, from: "\tif (!irq_group_allowed(task, group) || (object->group", to: "\tif ((object->group",
                                                              suite: :irq, cpus: 1, expected: /the holder's status 30 FAILED/),
-    'a task makes an IRQ object' => Seed.new(file: IRQ, from: "\tif (task != ERX_FIASCO_TASK_ROOT || request->kind == ERX_IRQ_MSI)\n", to: "\tif (request->kind == ERX_IRQ_MSI)\n",
+    'a bind opens a pending line' => Seed.new(file: IRQ, from: "\tif (object->opened)\n\t\t(void)l4_irq_unmask", to: "\tif (true)\n\t\t(void)l4_irq_unmask",
+                                              suite: :irq, cpus: 1, expected: /a pending line delivered at its bind, before its first ack FAILED/),
+    'a task makes an IRQ object' => Seed.new(file: IRQ, from: "\tif (task != ERX_FIASCO_TASK_ROOT && request->kind != ERX_IRQ_SOFT)\n", to: "\tif (task != ERX_FIASCO_TASK_ROOT && request->kind == ERX_IRQ_MSI)\n",
                                              suite: :task, cpus: 1, expected: /irq_refused FAILED/)
   }.freeze
 

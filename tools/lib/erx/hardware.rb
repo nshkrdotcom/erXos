@@ -11,20 +11,59 @@ require_relative 'generation_plan'
 module Erx
   module Hardware
     XmlNode = Struct.new(:name, :attributes, :text, :children, keyword_init: true)
-    Field = Struct.new(:name, :offset, :width, :access, :clear, :values, keyword_init: true)
+    # write is the field's modifiedWriteValues: empty for a write that stores its value, or one
+    # of WRITE_ACTIONS; owned says the device NIF owns this field of a register it does not own whole.
+    Field = Struct.new(:name, :offset, :width, :access, :write, :owned, :values, keyword_init: true) do
+      def clear = write == 'oneToClear'
+      def mask = ((1 << width) - 1) << offset
+    end
+    # cluster is the Movable cluster the register belongs to, or nil for a register at a fixed offset;
+    # count_from is the FieldRef whose value is how many elements of an array the device has.
     Register = Struct.new(:name, :offset, :width, :access, :read_action, :fields, :owned_by_nif, :count, :stride,
-                          keyword_init: true)
+                          :count_from, :cluster, keyword_init: true) do
+      # Whether the register's elements are the instances of an array cluster, each at its own
+      # base, rather than elements laid out at its stride from one.
+      def instanced? = !cluster.nil? && cluster.instances > 1
+
+      # The elements the register lays out from one base at its stride.
+      def laid_out = instanced? ? 1 : count
+    end
+    # A field of a register at a fixed offset of the same peripheral, by their SVD names.
+    FieldRef = Data.define(:register, :field)
+    # A cluster whose base the device reports: its name, and where the base comes from, either
+    # `from`, the field whose value in place is the cluster's offset in the window, or
+    # `capability`, the ID of the extended capability whose entry the device NIF's walk of the
+    # peripheral's list finds it at. `instances` is 1, or for an array cluster the most entries
+    # with that ID it binds, each instance at its own entry.
+    Movable = Data.define(:cluster, :from, :capability, :instances) do
+      # What decides where the cluster lies: clusters at one field's base share it, and a
+      # capability's cluster is placed alone.
+      def place = from || cluster
+    end
     # derived_from names the peripheral whose leading cluster this one's registers begin with;
-    # leading is this one's own leading cluster, its name, offset and register count, or nil.
-    Device = Struct.new(:name, :size, :registers, :derived_from, :leading, keyword_init: true)
+    # leading is this one's own leading cluster, its name, offset and register count, or nil;
+    # capabilities is the field that gives the head of its extended-capability list, or nil.
+    Device = Struct.new(:name, :size, :registers, :derived_from, :leading, :capabilities, keyword_init: true) do
+      # Each movable cluster of the device once, in the order its registers first appear.
+      def bases = registers.filter_map(&:cluster).uniq
+    end
     Leading = Data.define(:name, :offset, :count)
     IDENTIFIER = /\A[A-Za-z][A-Za-z0-9_]*\z/
     ARRAY_NAME = /\A(.*)\[%s\]\z/
     ELEMENTS_MAX = 256
+    # An extended capability's ID is the byte its entry's first word begins with; 0 is reserved
+    # (xHCI 1.2, Table 7-2, p. 517).
+    CAPABILITY_IDS = (1..255)
     ENUMERATION_MAX = 256
     NAMES_MAX = 16_384
     WIDTHS = [8, 16, 32, 64].freeze
     PERIPHERALS_MAX = 16
+    # The most a movable cluster's registers may reach past its base; the window bounds it at open.
+    MOVABLE_SPAN_MAX = 1024 * 1024
+    # The write semantics a field may declare beyond storing its value (svd-spec v1.3.9,
+    # doxygen/src/svd_schema.txt, the field element's modifiedWriteValues): a one clears the bit, a
+    # one sets it, or the field may hold another value after any write.
+    WRITE_ACTIONS = %w[oneToClear oneToSet modify].freeze
     # The attributes the profile gives a meaning: the schema's version, a cluster's derivation
     # and an enumeration's.
     ATTRIBUTES = { 'device' => ['schemaVersion'], 'cluster' => ['derivedFrom'],
@@ -175,7 +214,7 @@ module Erx
     end
 
     def parse_peripheral(peripheral, default_width:, earlier:)
-      known_elements(peripheral, allowed: %w[name description baseAddress addressBlock registers])
+      known_elements(peripheral, allowed: %w[name description baseAddress addressBlock capabilitiesFrom registers])
       raise Error, 'SVD peripheral base must be relative zero' unless number(text(peripheral, 'baseAddress')) == 0
       block = child(peripheral, 'addressBlock')
       known_elements(block, allowed: %w[offset size usage])
@@ -190,12 +229,26 @@ module Erx
       raise Error, 'SVD requires 1..4096 registers' unless list.size.between?(1, 4096)
       names = list.map { |register| register.name.downcase }
       raise Error, 'SVD register names collide' unless names.uniq == names
-      ranges = element_ranges(list)
-      ranges.each_cons(2) do |left, right|
-        raise Error, 'SVD register ranges overlap' if left.end > right.begin
+      fixed = list.reject(&:cluster)
+      raise Error, 'SVD peripheral requires a register at a fixed offset' if fixed.empty?
+
+      # Registers at fixed offsets share the block; movable clusters' share the base they are
+      # reported at, and where that falls is the device NIF's to check against the window at open.
+      clusters = list.filter_map(&:cluster).uniq
+      unless clusters.map(&:cluster).uniq.size == clusters.size && clusters.size < 256
+        raise Error, 'SVD movable clusters need distinct names, fewer than 256'
       end
-      # Every register, a copied one included, lies inside this peripheral's own block.
-      raise Error, 'SVD register is outside its aligned block' if ranges.map(&:end).max > size
+      list_head = text(peripheral, 'capabilitiesFrom', default: '')
+      capabilities = list_head.empty? ? nil : field_reference(list_head)
+      check_capabilities(clusters, capabilities)
+      list.group_by { |register| register.cluster&.place }.each_value do |group|
+        element_ranges(group).each_cons(2) do |left, right|
+          raise Error, 'SVD register ranges overlap' if left.end > right.begin
+        end
+      end
+      # Every fixed register, a copied one included, lies inside this peripheral's own block.
+      raise Error, 'SVD register is outside its aligned block' if element_ranges(fixed).map(&:end).max > size
+      check_references(list, fixed, capabilities)
       # Field lists and shared enumerations multiply what the file spells out; this bounds
       # the names a peripheral's headers carry, one per field and one per field's value.
       unless list.sum { |register| register.fields.sum { |field| 1 + field.values.size } } <= NAMES_MAX
@@ -203,7 +256,8 @@ module Erx
       end
 
       Device.new(name: identifier(text(peripheral, 'name')), size: size, registers: list.freeze,
-                 derived_from: parsed.derived_from, leading: parsed.leading).freeze.then do |device|
+                 derived_from: parsed.derived_from, leading: parsed.leading,
+                 capabilities: capabilities).freeze.then do |device|
         validate_symbols(device)
         device
       end
@@ -245,15 +299,86 @@ module Erx
       [parse_register(node, **shape)]
     end
 
-    # A cluster of the profile: one level, no array, its registers at offsets from its own.
+    # A cluster of the profile: one level, its registers at offsets from its own. A cluster
+    # whose base the device reports is movable, and sits at offset 0 with its registers at
+    # offsets from that base, within MOVABLE_SPAN_MAX. Its base comes from one of two erXos
+    # extensions. baseFrom, as xHCI's operational, runtime and doorbell registers have it (xHCI
+    # 1.2, 5.3.1, 5.3.7 and 5.3.8, pp. 381-388), names REGISTER.FIELD, a field of a register at
+    # a fixed offset whose bits in place are the cluster's byte offset in the window;
+    # capabilityId, as xHCI's legacy support and supported protocol capabilities have it (7,
+    # p. 517), is the ID of the extended capability whose entry the cluster lies at. A
+    # capability's cluster may be an array, NAME[%s] with a dim and no dimIncrement: one
+    # instance for each entry with that ID, up to dim, each at its own entry. check_references
+    # resolves the names (docs/design-usb.md, "Registers at offsets the controller reports").
     def cluster_registers(node, block_size:, **shape)
-      known_elements(node, allowed: %w[name description addressOffset register])
-      identifier(text(node, 'name'))
+      known_elements(node, allowed: %w[name description addressOffset baseFrom capabilityId dim dimIncrement register])
+      from = text(node, 'baseFrom', default: '')
+      capability = text(node, 'capabilityId', default: '')
       base = number(text(node, 'addressOffset'), maximum: block_size)
       members = children(node, 'register')
       raise Error, 'SVD cluster requires registers' if members.empty?
+      raise Error, 'an SVD cluster takes baseFrom or capabilityId, not both' unless from.empty? || capability.empty?
+      raise Error, 'an SVD cluster takes no dimIncrement: an array cluster\'s instances lie at their own entries' if child(node, 'dimIncrement', required: false)
+      name, instances = cluster_shape(node, capability: !capability.empty?)
+      if from.empty? && capability.empty?
+        return members.map { |member| parse_register(member, block_size: block_size, base: base, **shape) }
+      end
+      raise Error, 'an SVD movable cluster sits at offset 0' unless base.zero?
 
-      members.map { |member| parse_register(member, block_size: block_size, base: base, **shape) }
+      movable = Movable.new(cluster: name, from: from.empty? ? nil : field_reference(from),
+                            capability: capability.empty? ? nil : number(capability), instances: instances)
+      members.map { |member| parse_register(member, block_size: MOVABLE_SPAN_MAX, movable: movable, **shape) }
+    end
+
+    # A cluster's name and its instances: one, or for NAME[%s] with a dim, which only a
+    # capability's cluster may be, up to dim.
+    def cluster_shape(node, capability:)
+      name = text(node, 'name')
+      return [identifier(name), 1] if child(node, 'dim', required: false).nil?
+
+      base = name[ARRAY_NAME, 1]
+      instances = number(text(node, 'dim'), maximum: ELEMENTS_MAX)
+      raise Error, 'an SVD cluster array is a capability cluster NAME[%s] of dim 2 or more' unless capability && base && instances >= 2
+
+      [identifier(base), instances]
+    end
+
+    # A capability's cluster needs the list its entry is on, and names an ID no other cluster does.
+    def check_capabilities(clusters, capabilities)
+      ids = clusters.filter_map(&:capability)
+      raise Error, "an SVD capability cluster needs its peripheral's capabilitiesFrom" if capabilities.nil? && !ids.empty?
+      raise Error, 'SVD capability IDs must be 1..255, one cluster each' unless ids.uniq == ids && ids.all? { |id| CAPABILITY_IDS.cover?(id) }
+    end
+
+    # REGISTER.FIELD, as baseFrom and dimFrom name a field.
+    def field_reference(value)
+      register, field, *rest = value.split('.', -1)
+      raise Error, 'an SVD field reference is REGISTER.FIELD' unless rest.empty? && register && field
+
+      FieldRef.new(register: identifier(register), field: identifier(field))
+    end
+
+    # Each base and count a peripheral's registers take from another register names a readable
+    # field of a register at a fixed offset whose read has no side effect, which the device NIF reads once at open;
+    # a count field must not report more elements than its array has.
+    def check_references(list, fixed, capabilities)
+      resolve = lambda do |ref, what|
+        register = fixed.find { |candidate| candidate.name == ref.register && candidate.count == 1 }
+        field = register&.fields&.find { |candidate| candidate.name == ref.field }
+        unless field && register.access != 'write-only' && register.read_action.empty? && field.access != 'write-only'
+          raise Error, "SVD #{what} names no readable field of a fixed register: #{ref.register}.#{ref.field}"
+        end
+
+        field
+      end
+      list.filter_map(&:cluster).uniq.select(&:from).each do |movable|
+        resolve.call(movable.from, "cluster #{movable.cluster}'s base")
+      end
+      resolve.call(capabilities, 'capabilitiesFrom') if capabilities
+      list.select(&:count_from).each do |register|
+        field = resolve.call(register.count_from, "array #{register.name}'s count")
+        raise Error, "SVD array #{register.name}'s count can name an element past its dim" if (1 << field.width) - 1 > register.count
+      end
     end
 
     # The named enumerations of one peripheral's fields, each by its name, for an
@@ -310,7 +435,7 @@ module Erx
     # The byte range of each register, one for each element of an array, in address order.
     def element_ranges(registers)
       registers.flat_map do |register|
-        Array.new(register.count) do |index|
+        Array.new(register.laid_out) do |index|
           first = register.offset + index * register.stride
           first...(first + register.width / 8)
         end
@@ -319,21 +444,29 @@ module Erx
 
     # The mark erXos adds to the SVD profile: whether the device NIF owns a register, writing
     # it only in sequences of its own (a ring's base address, a queue's setup, the device's
-    # status and features), so that write/3 and write_field/4 refuse it. A register without the
-    # mark is refused, so no one adds a register without deciding.
-    def owned_mark(node)
-      case text(node, 'ownedByNif', default: '')
-      when 'true' then true
-      when 'false' then false
+    # status and features), so that write/3 and write_field/4 refuse it. The mark may instead
+    # sit on single writable fields, as true, and then the register carries none of its own
+    # (docs/design-device-dma.md, "Register ownership"). A register with neither is refused,
+    # so no one adds a register without deciding.
+    def owned_mark(node, fields:)
+      case [text(node, 'ownedByNif', default: ''), fields.any?(&:owned)]
+      in ['true', false] then true
+      in ['false', false] | ['', true] then false
+      in [_, true] then raise Error, 'an SVD register with owned fields carries no ownedByNif mark of its own'
       else raise Error, 'SVD register lacks its ownedByNif mark'
       end
     end
 
-    # An array is `NAME[%s]` with dim and dimIncrement, one element per index from zero.
+    # An array is `NAME[%s]` with dim and dimIncrement, one element per index from zero. Where
+    # the device reports how many elements it has, as xHCI's MaxPorts gives its PORTSC
+    # registers (xHCI 1.2, 5.3.3, p. 382), dimFrom, an erXos extension, names that field as
+    # REGISTER.FIELD and dim is the most it can report; check_references resolves the name.
     def register_shape(node, width:)
       name = text(node, 'name')
       if child(node, 'dim', required: false).nil?
-        raise Error, 'SVD dimIncrement without dim' if child(node, 'dimIncrement', required: false)
+        if child(node, 'dimIncrement', required: false) || child(node, 'dimFrom', required: false)
+          raise Error, 'SVD dimIncrement or dimFrom without dim'
+        end
 
         return [name, 1, 0]
       end
@@ -347,13 +480,23 @@ module Erx
       [base, count, stride]
     end
 
-    def parse_register(node, default_width:, block_size:, enumerations:, base: 0)
+    def count_reference(node) = child(node, 'dimFrom', required: false) && field_reference(text(node, 'dimFrom'))
+
+    def parse_register(node, default_width:, block_size:, enumerations:, base: 0, movable: nil)
       known_elements(node, allowed: %w[name description addressOffset size access readAction fields
-                                       ownedByNif dim dimIncrement])
+                                       ownedByNif dim dimIncrement dimFrom])
       width = number(text(node, 'size', default: default_width.to_s))
       raise Error, 'SVD access width must be 8, 16, 32 or 64 bits' unless WIDTHS.include?(width)
       offset = base + number(text(node, 'addressOffset'), maximum: block_size)
       name, count, stride = register_shape(node, width: width)
+      # A register of an array cluster has an element in each instance, at its offset from that
+      # instance's base, and is not an array of its own.
+      if movable && movable.instances > 1
+        raise Error, 'an SVD register of a cluster array is not an array' unless count == 1
+
+        count = movable.instances
+        stride = 0
+      end
       span = (count - 1) * stride + width / 8
       unless offset % (width / 8) == 0 && offset <= block_size && span <= block_size - offset
         raise Error, 'SVD register is outside its aligned block'
@@ -376,12 +519,17 @@ module Erx
         names << field.name.downcase
       end
       raise Error, 'SVD field names collide' unless names.uniq == names
-      writable = fields.reject { |field| field.access == 'read-only' }
-      if writable.any?(&:clear) && writable.any? { |field| !field.clear }
-        raise Error, 'mixed SVD write semantics require an explicit access sequence'
+      # A field whose write acts rather than stores, beside a field a write must keep, is
+      # written as the word read with its preserved bits kept (preserve_mask), so the read
+      # must be allowed and change nothing.
+      if acting_fields?(fields) && !preserve_of(fields).zero? && !action.empty?
+        raise Error, 'mixed SVD write semantics need a read without side effects'
       end
+      # A write to a register with owned fields is checked against the word read just before it.
+      raise Error, 'an SVD register with owned fields needs a read without side effects' if fields.any?(&:owned) && !action.empty?
       Register.new(name: identifier(name), offset: offset, width: width, access: mode, read_action: action.freeze,
-                   fields: fields.freeze, owned_by_nif: owned_mark(node), count: count, stride: stride).freeze
+                   fields: fields.freeze, owned_by_nif: owned_mark(node, fields: fields), count: count, stride: stride,
+                   count_from: count_reference(node), cluster: movable).freeze
     end
 
     # The fields one field element describes: itself, or each element of a list. A list is
@@ -391,7 +539,7 @@ module Erx
     # become ordinary fields, so the register's overlap and name checks see each of them.
     def parse_field(node, width:, register_access:, enumerations:)
       known_elements(node, allowed: %w[name description bitOffset bitWidth access modifiedWriteValues enumeratedValues
-                                       dim dimIncrement dimIndex])
+                                       ownedByNif dim dimIncrement dimIndex])
       offset = number(text(node, 'bitOffset'), maximum: width)
       bits = number(text(node, 'bitWidth'), maximum: width)
       mode = access(text(node, 'access', default: register_access))
@@ -399,15 +547,21 @@ module Erx
         raise Error, 'SVD field access exceeds its register'
       end
       modified = text(node, 'modifiedWriteValues', default: '')
-      raise Error, 'unsupported SVD write semantics' unless ['', 'oneToClear'].include?(modified)
-      raise Error, 'read-only SVD field cannot be cleared' if modified == 'oneToClear' && mode == 'read-only'
+      raise Error, 'unsupported SVD write semantics' unless ['', *WRITE_ACTIONS].include?(modified)
+      raise Error, 'read-only SVD field cannot declare write semantics' if !modified.empty? && mode == 'read-only'
+      owned = case text(node, 'ownedByNif', default: '')
+              when '' then false
+              when 'true' then true
+              else raise Error, 'an SVD field is marked ownedByNif true or not at all'
+              end
+      raise Error, 'a read-only SVD field cannot be owned' if owned && mode == 'read-only'
       values = enumerated_values(child(node, 'enumeratedValues', required: false), bits: bits, enumerations: enumerations)
       field_elements(node, width: width).map do |name, shift|
         first = offset + shift
         raise Error, 'SVD field exceeds register width' unless bits.positive? && first < width && bits <= width - first
 
         Field.new(name: name, offset: first, width: bits,
-                  access: mode, clear: modified == 'oneToClear', values: values).freeze
+                  access: mode, write: modified.freeze, owned: owned, values: values).freeze
       end
     end
 
@@ -500,11 +654,13 @@ module Erx
         accessors = []
         accessors << "#{name}_read" unless register.access == 'write-only'
         accessors << "#{name}_write" unless register.access == 'read-only'
+        accessors << "#{name.upcase}_PRESERVE" if acting?(register)
         fields = register.fields.flat_map do |field|
           member = "#{name}_#{field.name.downcase}"
           values = field.values.keys.map { |label| "#{member.upcase}_#{label.upcase}" }
           values << "#{member}_get" unless field.access == 'write-only'
-          values << "#{member}_#{field.clear ? 'clear' : 'set'}" unless field.access == 'read-only'
+          writer = field_writer(register, field)
+          values << "#{member}_#{writer}" if writer
           values
         end
         accessors + fields
@@ -512,11 +668,13 @@ module Erx
       (["ERX_HW_#{device.name.upcase}_H"] + symbols).freeze
     end
 
-    # The name device_owned_header gives a register the NIF owns, which erx_device.c uses.
+    # The name device_owned_header gives a register the NIF owns, whole or in some fields,
+    # which erx_device.c uses.
     def owned_symbol(device, register) = "ERX_DEVICE_OWNED_#{device.name.upcase}_#{register.name.upcase}"
 
     def owned_symbols(device)
-      device.registers.select(&:owned_by_nif).map { |register| owned_symbol(device, register) }.freeze
+      device.registers.reject { |register| owned_mask(register).zero? && !register.owned_by_nif }
+            .map { |register| owned_symbol(device, register) }.freeze
     end
 
     def validate_symbols(device)
@@ -559,12 +717,34 @@ module Erx
     end
 
     def erlang_register(device, register)
-      array = register.count > 1 ? ", #{register.count} of them #{erlang_integer(register.stride)} apart" : ''
+      array = if register.instanced?
+                ", one in each of up to #{register.count} instances"
+              elsif register.count > 1
+                ", #{register.count} of them #{erlang_integer(register.stride)} apart"
+              else
+                ''
+              end
       owner = register.owned_by_nif ? ', owned by the device NIF' : ''
-      ["%%% #{register.name}, at #{erlang_integer(register.offset)}, #{register.width} bits, " \
-       "#{register.access}#{array}#{owner}", '',
+      place = register.cluster ? " of cluster #{register.cluster.cluster}, #{base_words(register.cluster)}" : ''
+      preserve = if acting?(register)
+                   name = "ERX_HW_#{device.name}_#{register.name}_PRESERVE".upcase
+                   ["%% The bits a write keeps from the word read, so it changes only what it means to:",
+                    "-define(#{name}, #{erlang_integer(preserve_mask(register))}).", '']
+                 end
+      ["%%% #{register.name}, at #{erlang_integer(register.offset)}#{place}, #{register.width} bits, " \
+       "#{register.access}#{array}#{owner}", '', *preserve,
        *register.fields.flat_map { |field| erlang_field(device, register, field) }]
     end
+
+    # Where a movable cluster's base comes from, in words for the generated comments.
+    def base_words(movable)
+      return "whose base #{movable.from.register}.#{movable.from.field} reports" if movable.from
+
+      "at the extended capability with ID #{movable.capability}"
+    end
+
+    WRITE_WORDS = { '' => '', 'oneToClear' => ', one to clear', 'oneToSet' => ', one to set',
+                    'modify' => ', changed by a write' }.freeze
 
     def erlang_field(device, register, field)
       name = erlang_field_name(device, register, field)
@@ -572,7 +752,7 @@ module Erx
       field_max = erlang_integer((1 << field.width) - 1)
       location = [device, register, field].map { |part| "'#{part.name.downcase}'" }.join(', ')
       ["%% #{register.name}.#{field.name}, bits #{top}:#{field.offset}, #{field.access}" \
-       "#{field.clear ? ', one to clear' : ''}",
+       "#{WRITE_WORDS.fetch(field.write)}#{field.owned ? ', owned by the device NIF' : ''}",
        "-define(#{name}_SHIFT, #{field.offset}).", "-define(#{name}_WIDTH, #{field.width}).",
        "-define(#{name}_MASK, #{erlang_integer(((1 << field.width) - 1) << field.offset)}).",
        "-define(#{name}_GET(Word), (((Word) bsr #{field.offset}) band #{field_max})).",
@@ -614,13 +794,21 @@ module Erx
         type = "uint#{register.width}_t"
         name = "#{prefix}_#{register.name.downcase}"
         bytes = register.width / 8
-        array = register.count > 1
+        array = register.count > 1 && !register.instanced?
         index = array ? ', uint32_t index' : ''
-        last = register.offset + (register.count - 1) * register.stride + bytes
+        last = register.offset + (register.laid_out - 1) * register.stride + bytes
         at = array ? "#{register.offset} + index * #{register.stride}" : register.offset.to_s
         in_range = array ? "index >= #{register.count} || " : ''
         readable = register.access != 'write-only'
         writable = register.access != 'read-only'
+        if register.cluster
+          view = register.instanced? ? "one instance's view" : "that cluster's view"
+          lines << "/* #{register.name.downcase} is in cluster #{register.cluster.cluster}: device is #{view}, its base " \
+                   "#{base_words(register.cluster).delete_prefix('whose base ')}. */"
+        end
+        if acting?(register)
+          lines << "#define #{name.upcase}_PRESERVE #{c_integer(preserve_mask(register), width: register.width)}"
+        end
         if readable
           lines.concat(['static inline bool', "#{name}_read(erx_mmio_t device#{index}, #{type} *out)", '{',
                         "\tif (#{in_range}out == NULL || device.base == NULL || device.length < #{last} ||",
@@ -646,12 +834,13 @@ module Erx
             lines.concat(['static inline ' + type, "#{field_name}_get(#{type} word)", '{',
                           "\treturn ((word >> #{field.offset}) & #{mask});", '}', ''])
           end
-          next if field.access == 'read-only'
-          if field.clear
+          case field_writer(register, field)
+          when nil then next
+          when 'clear'
             lines.concat(['static inline bool', "#{field_name}_clear(erx_mmio_t device#{index}, #{type} value)", '{',
                           "\tif ((value & ~#{mask}) != 0)", "\t\treturn (false);",
                           "\treturn (#{name}_write(device#{array ? ', index' : ''}, value << #{field.offset}));", '}', ''])
-          else
+          when 'set'
             lines.concat(['static inline bool', "#{field_name}_set(#{type} word, #{type} value, #{type} *out)", '{',
                           "\tif (out == NULL || (value & ~#{mask}) != 0)", "\t\treturn (false);",
                           "\t*out = (word & ~(#{mask} << #{field.offset})) | (value << #{field.offset});",
@@ -663,7 +852,38 @@ module Erx
     end
 
     def writable_mask(register)
-      register.fields.reject { |field| field.access == 'read-only' }.sum { |field| ((1 << field.width) - 1) << field.offset }
+      register.fields.reject { |field| field.access == 'read-only' }.sum(&:mask)
+    end
+
+    # The bits a write carries from the word read so that it changes only what it means to:
+    # every field that can be read and stores what is written. A field whose write acts, by
+    # clearing, setting or changing it, and one that cannot be read back, is written as zero.
+    # For xHCI's PORTSC this is the writable bits FreeBSD's XHCI_PS_CLEAR does not remove
+    # (xhcireg.h:146), derived from the source instead of copied (docs/design-usb.md, "Ports").
+    def preserve_mask(register) = preserve_of(register.fields)
+
+    def preserve_of(fields) = fields.select { |field| field.access == 'read-write' && field.write.empty? }.sum(&:mask)
+
+    # Whether some writable field of the register acts on a write rather than storing it, so a
+    # driver writes the register as the word read, masked to preserve_mask, with its own bits.
+    def acting?(register) = acting_fields?(register.fields)
+
+    def acting_fields?(fields) = fields.any? { |field| field.access != 'read-only' && !field.write.empty? }
+
+    # The bits the device NIF owns: every writable bit of a register it owns, or its owned fields.
+    def owned_mask(register)
+      register.owned_by_nif ? writable_mask(register) : register.fields.select(&:owned).sum(&:mask)
+    end
+
+    # The accessor a writable field gets: a clear for a one-to-clear field, written alone, which
+    # only a register with nothing to preserve allows; a pure set on a word otherwise; none for a
+    # read-only field or for a one-to-clear field beside preserved bits, whose register is
+    # written whole with its preserve mask.
+    def field_writer(register, field)
+      return nil if field.access == 'read-only'
+      return 'set' unless field.clear
+
+      preserve_mask(register).zero? ? 'clear' : nil
     end
 
     # Whether a field of the register may be replaced by reading the word and writing it back:
@@ -671,7 +891,7 @@ module Erx
     # that means something other than replacement, as a write to PL011's RSR clears its errors).
     def plain_update?(register)
       register.access == 'read-write' && register.read_action.empty? && !writable_mask(register).zero? &&
-        register.fields.none? { |field| field.clear || field.access == 'write-only' }
+        register.fields.none? { |field| !field.write.empty? || field.access == 'write-only' }
     end
 
     def generated_header(guard, body, includes: [])
@@ -685,9 +905,12 @@ module Erx
     def device_types_header(devices)
       registers_max = devices.map { |device| device.registers.size }.max
       fields_max = devices.map { |device| device.registers.sum { |register| register.fields.size } }.max
+      slots_max = [1, *devices.map { |device| device.bases.sum(&:instances) }].max
       generated_header('ERX_HW_DEVICE_TYPES_H', <<~C.lines(chomp: true), includes: %w[<stdbool.h> <stddef.h> <stdint.h>])
         #define ERX_DEVICE_REGISTERS_MAX #{registers_max}u
         #define ERX_DEVICE_FIELDS_MAX #{fields_max}u
+        /* The most cluster instances one peripheral's registers are placed at, at least one. */
+        #define ERX_DEVICE_SLOTS_MAX #{slots_max}u
 
         typedef enum erx_device_access {
         \tERX_DEVICE_READ_ONLY,
@@ -716,7 +939,30 @@ module Erx
         \tuint8_t\t\taccess;
         \tbool\t\towned_by_nif;
         \tbool\t\tplain_update;
+        \tuint64_t\tpreserve;	/* the bits a write keeps from the word read */
+        \tuint64_t\towned;		/* the bits the NIF owns: all writable ones if owned_by_nif */
+        \tuint8_t\t\tbase;		/* 1 + the index of its movable cluster in bases, or 0 for a fixed offset */
+        \tbool\t\tcounted;	/* the array's live count is field count_field (an index in the peripheral's
+        \t\t\t\t   fields, not from first_field) of register count_register */
+        \tuint32_t\tcount_register;
+        \tuint32_t\tcount_field;
         } erx_device_register_t;
+
+        /*
+         * A cluster whose base the device reports. With `capability` 0, its registers' offsets
+         * are from the value of field `field` (an index in the peripheral's fields), in place, of
+         * register `reg`, a register at a fixed offset; otherwise from the entry with that ID of
+         * the peripheral's extended-capability list, one instance for each such entry up to
+         * `instances`. Its instances' bases are a record's slots from `first`.
+         */
+        typedef struct erx_device_base {
+        \tconst char\t*name;
+        \tuint32_t\treg;
+        \tuint32_t\tfield;
+        \tuint8_t\t\tcapability;
+        \tuint32_t\tinstances;
+        \tuint32_t\tfirst;
+        } erx_device_base_t;
 
         typedef struct erx_device_peripheral {
         \tconst char\t\t\t*name;
@@ -726,6 +972,11 @@ module Erx
         \tuint32_t\t\t\tregister_count;
         \tuint32_t\t\t\tfield_count;
         \tconst char\t\t\t*derived_from;	/* the peripheral whose registers lead this one's, or NULL */
+        \tconst erx_device_base_t\t\t*bases;		/* its movable clusters, or NULL */
+        \tuint32_t\t\t\tbase_count;
+        \tbool\t\t\t\tlisted;		/* it has an extended-capability list, whose head */
+        \tuint32_t\t\t\tlist_reg;	/* field list_field (an index in its fields) of register */
+        \tuint32_t\t\t\tlist_field;	/* list_reg gives in 32-bit words from the window's start */
         } erx_device_peripheral_t;
       C
     end
@@ -739,21 +990,47 @@ module Erx
         ".access = #{ACCESS_NAMES.fetch(field.access)}, .clear = #{field.clear} },"
     end
 
-    def table_register(register, first_field:)
+    def table_register(device, register, first_field:)
+      count_register, count_field = register.count_from ? table_indexes(device, register.count_from) : [0, 0]
       "\t{ .name = \"#{register.name.downcase}\", .writable = #{c_integer(writable_mask(register), width: register.width)}, " \
         ".offset = #{register.offset}, .count = #{register.count}, .stride = #{register.stride}, " \
         ".first_field = #{first_field}, .field_count = #{register.fields.size}, .window = 0, .width = #{register.width}, " \
         ".access = #{ACCESS_NAMES.fetch(register.access)}, .owned_by_nif = #{register.owned_by_nif}, " \
-        ".plain_update = #{plain_update?(register)} },"
+        ".plain_update = #{plain_update?(register)}, " \
+        ".preserve = #{c_integer(preserve_mask(register), width: register.width)}, " \
+        ".owned = #{c_integer(owned_mask(register), width: register.width)}, " \
+        ".base = #{register.cluster ? device.bases.index(register.cluster) + 1 : 0}, .counted = #{!register.count_from.nil?}, " \
+        ".count_register = #{count_register}, .count_field = #{count_field} },"
+    end
+
+    # The table indexes of the register and the field a reference names: the register's in its
+    # peripheral's registers, the field's in its peripheral's fields. check_references has
+    # resolved every reference to a register at a fixed offset, whose name is unique.
+    def table_indexes(device, ref)
+      register = device.registers.index { |candidate| candidate.name == ref.register && candidate.cluster.nil? }
+      first = device.registers.first(register).sum { |candidate| candidate.fields.size }
+      [register, first + device.registers[register].fields.index { |field| field.name == ref.field }]
     end
 
     def table_device(device)
       prefix = "erx_device_#{device.name.downcase}"
       fields = device.registers.flat_map { |register| register.fields.map { |field| table_field(field, width: register.width) } }
       firsts = device.registers.reduce([0]) { |sums, register| sums + [sums.last + register.fields.size] }
-      registers = device.registers.zip(firsts).map { |register, first| table_register(register, first_field: first) }
+      registers = device.registers.zip(firsts).map { |register, first| table_register(device, register, first_field: first) }
+      firsts = device.bases.reduce([0]) { |sums, movable| sums + [sums.last + movable.instances] }
+      bases = device.bases.zip(firsts).map do |movable, first|
+        register, field = movable.from ? table_indexes(device, movable.from) : [0, 0]
+        "\t{ .name = \"#{movable.cluster.downcase}\", .reg = #{register}, .field = #{field}, " \
+          ".capability = #{movable.capability || 0}, .instances = #{movable.instances}, .first = #{first} },"
+      end
       ["static const erx_device_field_t #{prefix}_fields[] = {", *fields, '};', '',
-       "static const erx_device_register_t #{prefix}_registers[] = {", *registers, '};', '']
+       "static const erx_device_register_t #{prefix}_registers[] = {", *registers, '};', '',
+       *(bases.empty? ? [] : ["static const erx_device_base_t #{prefix}_bases[] = {", *bases, '};', ''])]
+    end
+
+    def table_list(device)
+      register, field = device.capabilities ? table_indexes(device, device.capabilities) : [0, 0]
+      ".listed = #{!device.capabilities.nil?}, .list_reg = #{register}, .list_field = #{field}"
     end
 
     # Static data for the one source that includes it, erx_device_core.c.
@@ -763,7 +1040,9 @@ module Erx
         "\t{ .name = \"#{device.name.downcase}\", .registers = #{prefix}_registers, .fields = #{prefix}_fields, " \
           ".window_size = #{device.size}, .register_count = #{device.registers.size}, " \
           ".field_count = #{device.registers.sum { |register| register.fields.size }}, " \
-          ".derived_from = #{device.derived_from ? %("#{device.derived_from.downcase}") : 'NULL'} },"
+          ".derived_from = #{device.derived_from ? %("#{device.derived_from.downcase}") : 'NULL'}, " \
+          ".bases = #{device.bases.empty? ? 'NULL' : "#{prefix}_bases"}, .base_count = #{device.bases.size}, " \
+          "#{table_list(device)} },"
       end
       generated_header('ERX_HW_DEVICE_TABLE_H', [*devices.flat_map { |device| table_device(device) },
                                                  'static const erx_device_peripheral_t erx_device_peripherals[] = {',
@@ -783,21 +1062,24 @@ module Erx
       generated_header('ERX_HW_DEVICE_ACCESS_H', body, includes: ['<stdint.h>'])
     end
 
-    # Each owned register's index in its peripheral's table, for erx_device.c alone, which the
-    # chokepoint device-owned-registers keeps. What stops a write to an owned register is the
-    # refusal in write/3 and write_field/4 and that only erx_device.c holds the raw accessors;
-    # these names keep the NIF's own sequences readable and in one file.
+    # The index of each register the NIF owns, whole or in some fields, in its peripheral's
+    # table, for erx_device.c alone, which the chokepoint device-owned-registers keeps. What
+    # stops a driver's write to what the NIF owns is the refusal in write/3 and write_field/4 and
+    # that only erx_device.c holds the raw accessors; these names keep the NIF's own sequences
+    # readable and in one file.
     def device_owned_header(devices)
       body = devices.flat_map do |device|
-        owned = device.registers.each_with_index.select { |register, _| register.owned_by_nif }
+        names = owned_symbols(device)
+        owned = device.registers.each_with_index.select { |register, _| names.include?(owned_symbol(device, register)) }
         next [] if owned.empty?
 
         ["/* #{device.name.downcase} */",
          *owned.map { |register, index| "#define #{owned_symbol(device, register)}\t#{index}u" }, '']
       end
       generated_header('ERX_HW_DEVICE_OWNED_H',
-                       ['/*', " * The registers the device NIF owns, each by its index in its peripheral's table:",
-                        ' * write/3 and write_field/4 refuse them, and only erx_device.c names them.', ' */', '', *body])
+                       ['/*', " * The registers the device NIF owns, whole or in some fields, each by its index in",
+                        " * its peripheral's table: write/3 and write_field/4 refuse what it owns, and only",
+                        ' * erx_device.c names them.', ' */', '', *body])
     end
 
     # All parsing and rendering completes before the first output is written.

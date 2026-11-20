@@ -65,7 +65,9 @@ uint64_t	erx_fiasco_service_thread(void);
 /*
  * Task calls of the call table. fault is ERX_CAP_NULL or a gate the caller holds,
  * else ERX_ETYPE, and the space's records go to it with label as their label;
- * parent is accepted and ignored, and budget charges the space as for every create
+ * parent is ERX_CAP_SELF or a space the caller created, else ERX_ETYPE, and one
+ * that is stopping is ERX_EINVAL; the new space joins parent's tree and stops when
+ * parent stops; budget charges the space as for every create
  * (erx_budget_create below); cap_limit bounds the task's handle table, counting ERX_CAP_NULL as erXos's
  * kernel does, and outside 2 to ERX_CAPS_MAX is ERX_EINVAL; any task makes a task below its own
  * space or one it created. erx_image_map loads into a space the caller created: image is
@@ -123,8 +125,9 @@ int	erx_mem_child(uint64_t parent, uint64_t budget, uint64_t offset, uint64_t si
  * handle that is no entry in use is ERX_EINVAL, one whose object has gone ERX_ESTALE.
  * A dup into a full table is ERX_ELIMIT. A close frees the entry, a stale one too,
  * and the object goes with its last handle unless it is mapped. A destroy from a task
- * other than the object's creator's is ERX_ERIGHTS, and of a mapped object
- * ERX_ENOTSUP; the handles to a destroyed object stay, answering ERX_ESTALE.
+ * other than the object's creator's, or of an object the root keeps, is ERX_ERIGHTS,
+ * and of a group that still has threads ERX_ENOTSUP; a destroy revokes every mapping
+ * of the object, and the handles to a destroyed object stay, answering ERX_ESTALE.
  */
 int	erx_cap_dup(uint64_t cap, uint64_t *copy) ERX_WARN_UNUSED_RESULT;
 int	erx_cap_close(erx_cap_t cap) ERX_WARN_UNUSED_RESULT;

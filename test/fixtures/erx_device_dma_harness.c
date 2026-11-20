@@ -147,8 +147,10 @@ erx_vm_release(uint64_t space, uint64_t addr, uint64_t size)
 }
 
 int
-erx_irq_create(uint64_t budget, uint64_t resource, uint32_t kind, uint64_t selector, uint64_t *irq)
+erx_irq_create(uint64_t budget, uint64_t resource, uint32_t kind, uint64_t selector, uint64_t *irq,
+    erx_msi_message_t *message)
 {
+	(void)message;
 	(void)budget;
 	(void)resource;
 	(void)kind;

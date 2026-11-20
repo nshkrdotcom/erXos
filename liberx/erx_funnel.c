@@ -19,6 +19,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <string.h>
 #include <strings.h>
 
 #include "erx/abi.h"
@@ -32,6 +33,19 @@
 #define SMALL_MAX		(((int64_t)1 << 59) - 1)
 /* SPAWN_REPLY's Flags, as ERTS bounds them. */
 #define SPAWN_FLAGS_LIMIT	(1u << 27)
+
+/*
+ * SPAWN_REPLY's error atoms: the closed set ERTS's spawn-serving code
+ * writes (beam/dist.c, erts_net_message's DOP_SPAWN_REQUEST): badopt for
+ * an option list it refuses, noconnection for a spawn answered as
+ * unauthorised or toward a dead target, system_limit for one over a limit
+ * or a process it could not create.  Every runtime holds these atoms, so
+ * no accepted reply names an atom its receiver lacks (design-domains.md,
+ * "Frames", A control term names only atoms its receiver holds).
+ */
+static const char *const spawn_errors[] = {
+	"badopt", "noconnection", "system_limit"
+};
 
 /* An operation's control tuple: its arity and whether a payload follows. */
 typedef struct ctl_shape {
@@ -47,6 +61,7 @@ static erx_funnel_reason_t ctl_elements(erx_etf_reader_t *,
 static erx_funnel_reason_t ctl_options(erx_etf_reader_t *);
 static erx_funnel_reason_t ctl_option(erx_etf_reader_t *);
 static bool next_item(erx_etf_reader_t *, erx_etf_item_t *);
+static bool spawn_error_known(const uint8_t *, size_t);
 static bool take_atom(erx_etf_reader_t *, const uint8_t **, size_t *);
 static bool take_id(erx_etf_reader_t *, uint64_t *);
 static bool take_integer(erx_etf_reader_t *, int64_t, int64_t, int64_t *);
@@ -298,6 +313,9 @@ ctl_elements(erx_etf_reader_t *r, erx_funnel_control_t *c)
 			c->fields |= ERX_FUNNEL_HAS_FROM;
 			c->from = item.u.pid;
 		} else if (item.kind == ERX_ETF_ATOM) {
+			if (!spawn_error_known(item.u.data.bytes,
+			    item.u.data.len))
+				return (ERX_FUNNEL_ERR_SPAWN_ERROR);
 			c->spawn.error = item.u.data.bytes;
 			c->spawn.error_len = item.u.data.len;
 		} else
@@ -382,6 +400,19 @@ next_item(erx_etf_reader_t *r, erx_etf_item_t *item)
 	erx_etf_reason_t reason;
 
 	return (erx_etf_next(r, item, &reason) == ERX_ETF_STEP_ITEM);
+}
+
+/* Whether an atom's name is one of spawn_errors. */
+static bool
+spawn_error_known(const uint8_t *name, size_t len)
+{
+	size_t i;
+
+	for (i = 0; i < sizeof(spawn_errors) / sizeof(spawn_errors[0]); i++)
+		if (len == strlen(spawn_errors[i]) &&
+		    bcmp(name, spawn_errors[i], len) == 0)
+			return (true);
+	return (false);
 }
 
 static bool
@@ -630,7 +661,14 @@ check_frame(const uint8_t *frame, uint32_t frame_len, size_t held,
 	    &v->control, &v->etf);
 	if (reason != ERX_FUNNEL_OK)
 		return (reason);
+	/*
+	 * The system domain serves no spawn, and no sender's runtime writes
+	 * one toward it (design-domains.md, "The system domain serves no
+	 * spawn"), so its decoder never meets a request's atoms.
+	 */
 	v->etf = (erx_etf_result_t){ 0 };
+	if (limits->system && v->control.op == ERX_FUNNEL_SPAWN_REQUEST)
+		return (ERX_FUNNEL_ERR_SYSTEM_SPAWN);
 	payload = frame + ERX_FRAME_HEADER_SIZE + ctl_len;
 	if (payload_len > 0 && payload[0] != ERX_ETF_VERSION)
 		return (ERX_FUNNEL_ERR_VERSION);

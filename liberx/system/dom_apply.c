@@ -38,6 +38,8 @@
 typedef struct apply_give {
 	uint64_t	made[ERX_DOM_OBJ_MADE_COUNT];	/* ERX_CAP_NULL for none */
 	uint64_t	installed[ERX_DOM_OBJ_COUNT];
+	/* Each MSI object's message, by its line, as its creation returned it. */
+	erx_msi_message_t messages[ERX_DOM_UNIT_LINES_MAX];
 	uint32_t	tried;
 } apply_give_t;
 
@@ -56,7 +58,8 @@ typedef struct apply {
 	 * The boot page's -erx_record given record of each device, -erx_record boot, -erx_record build
 	 * and -erx_record system_image.
 	 */
-	char			 given_words[ERX_DOM_DEVICES_MAX][ERX_BOOT_GIVEN_WORDS_MAX];
+	char			 given_words[ERX_DOM_DEVICES_MAX][ERX_BOOT_GIVEN_WORDS_MAX > ERX_BOOT_FUNCTION_WORDS_MAX ?
+				     ERX_BOOT_GIVEN_WORDS_MAX : ERX_BOOT_FUNCTION_WORDS_MAX];
 	char			 pair_words[ERX_BOOT_PAIR_WORDS_MAX];
 	char			 build_words[ERX_BOOT_BUILD_WORDS_MAX];
 	char			 system_image_words[ERX_BOOT_SYSTEM_IMAGE_WORDS_MAX];
@@ -217,7 +220,7 @@ make_step(handle_set_t *set, const erx_dom_step_t *step, uint64_t budget, uint64
 		status = erx_mem_create(budget, pages_of(step->size) * ERX_PAGE_SIZE, 0, &handle);
 		break;
 	case ERX_DOM_STEP_BELL:
-		status = erx_irq_create(budget, ERX_CAP_NULL, ERX_IRQ_SOFT, 0, &handle);
+		status = erx_irq_create(budget, ERX_CAP_NULL, ERX_IRQ_SOFT, 0, &handle, NULL);
 		if (status != ERX_OK)
 			return (status);
 		set_note(set, step, handle);
@@ -390,6 +393,23 @@ give_entry(const apply_t *apply, const erx_dom_unit_plan_t *give, const erx_dom_
 }
 
 /*
+ * Whether a PCIe function writing its message reaches the doorbell its
+ * MSI object's creation answered, a CPU address (docs/design-pcie.md, "The
+ * MSI frame on Fiasco"): its bridge's DMA range, as the root read it for
+ * the function, holds the doorbell and maps it one to one. A function with
+ * no range, or behind a bridge that translates, is refused its route, so
+ * no route aims it at another address.
+ */
+static bool
+apply_doorbell_reached(const erx_dom_device_entry_t *entry, const erx_msi_message_t *message)
+{
+	const erx_dt_device_t *facts = &entry->facts;
+
+	return (entry->asked && facts->dma == ERX_DT_DMA_OK && facts->cpu == facts->bus &&
+	    message->address >= facts->cpu && message->address <= facts->last);
+}
+
+/*
  * One step of give `at`. A window is made over the page run the step
  * names; a line's, DMA window's or memory's object from the catalogue
  * entry of the device whose resource the step names, the manifest's
@@ -420,8 +440,19 @@ apply_give_step(apply_t *apply, uint32_t at, const erx_dom_step_t *step)
 	case ERX_DOM_STEP_IRQ:
 		if ((entry = give_entry(apply, give, step)) == NULL || step->index >= ERX_DEVICE_IRQS_MAX)
 			return (ERX_EINVAL);
-		status = erx_irq_create(budget, resource, ERX_IRQ_LINE, entry->lines[step->index], &handle);
+		status = erx_irq_create(budget, resource, ERX_IRQ_LINE, entry->lines[step->index], &handle, NULL);
 		break;
+	case ERX_DOM_STEP_MSI:
+		/* The plan check holds the object to one of the give's lines. */
+		if ((entry = give_entry(apply, give, step)) == NULL)
+			return (ERX_EINVAL);
+		status = erx_irq_create(budget, resource, ERX_IRQ_MSI, 0, &handle,
+		    &apply->gives[at].messages[step->obj - ERX_DOM_OBJ_DEV_IRQ]);
+		/* Made, so the undo destroys it with the rest. */
+		if (status == ERX_OK && !apply_doorbell_reached(entry, &apply->gives[at].messages[step->obj - ERX_DOM_OBJ_DEV_IRQ]))
+			status = ERX_EINVAL;
+		apply->gives[at].made[step->obj] = handle;
+		return (status);
 	case ERX_DOM_STEP_CONTIGUOUS:
 		if ((entry = give_entry(apply, give, step)) == NULL)
 			return (ERX_EINVAL);
@@ -499,6 +530,71 @@ apply_unit_installed(const apply_t *apply, uint32_t at, erx_dom_obj_t obj, uint3
 }
 
 /*
+ * The message of a PCIe function's line: the one its MSI object's creation
+ * returned, zero for a wired line and for none.
+ */
+static erx_msi_message_t
+apply_message(const apply_t *apply, uint32_t at, const erx_dom_unit_device_t *device)
+{
+	if ((device->route != ERX_PCIE_ROUTE_MSI && device->route != ERX_PCIE_ROUTE_MSIX) ||
+	    device->line >= ERX_DOM_UNIT_LINES_MAX)
+		return ((erx_msi_message_t){ 0 });
+	return (apply->gives[at].messages[device->line]);
+}
+
+/*
+ * The -erx_record function record of PCIe function d of give `at`
+ * (erx_boot_function_words): as a given device's, and its place, its
+ * route, an MSI-X route's message and table, and each placed BAR's window
+ * and offset there, the give's WINDOW step whose run holds the BAR's span,
+ * which the plan check proved is one of them; the BARs' spans are the
+ * device's ranges, in BAR order (erx/dom.h).
+ */
+static size_t
+apply_function_words(apply_t *apply, uint32_t at, uint32_t d, char *words, size_t capacity)
+{
+	const erx_dom_unit_plan_t *give = &apply->plan->gives[at];
+	const erx_dom_unit_device_t *device = &give->devices[d];
+	const erx_dom_device_entry_t *entry = &apply->lib->view.devices[device->index];
+	const erx_pcie_function_t *record = &device->function;
+	const uint64_t *installed = apply->gives[at].installed;
+	const uint64_t held = installed[ERX_DOM_OBJ_DEV_MEMORY + d] != ERX_CAP_NULL ?
+	    installed[ERX_DOM_OBJ_DEV_MEMORY + d] : installed[ERX_DOM_OBJ_DEV_KEPT + d];
+	const bool memory = entry->memory != 0 && apply_memory_inside(apply, at, d);
+	const bool msix = device->route == ERX_PCIE_ROUTE_MSIX;
+	erx_boot_function_t function = { .role = entry->role_word, .peripheral = entry->peripheral,
+	    .bridge = entry->bridge, .bus = record->bus, .device = record->device, .function = record->function,
+	    .line = apply_unit_installed(apply, at, ERX_DOM_OBJ_DEV_IRQ, device->line), .line_shared = device->shared,
+	    .memory = memory ? held : ERX_CAP_NULL, .memory_size = memory ? entry->memory : 0,
+	    .coherent = erx_boot_coherent(entry->asked ? &entry->facts : NULL, entry->memory), .route = device->route,
+	    .message = msix ? apply_message(apply, at, device) : (erx_msi_message_t){ 0 },
+	    .table_bar = msix ? record->msix_table_bar : 0, .table_offset = msix ? record->msix_table_offset : 0,
+	    .table_size = msix ? record->msix_table_size : 0 };
+	uint32_t range = 0;
+
+	for (uint32_t bar = 0; bar < sizeof(function.bars) / sizeof(function.bars[0]); bar++) {
+		function.bars[bar].size_log2 = record->bars[bar].size_log2;
+		function.bars[bar].window = ERX_CAP_NULL;
+		if (record->bars[bar].kind != ERX_PCIE_BAR_MEMORY ||
+		    (record->bars[bar].flags & ERX_PCIE_BAR_PLACED) == 0 || range == device->nranges)
+			continue;
+		const erx_dom_range_t *span = &device->ranges[range++];
+		for (uint32_t step = 0; step < give->nsteps; step++) {
+			const erx_dom_step_t *window = &give->steps[step];
+
+			if (window->kind != ERX_DOM_STEP_WINDOW)
+				continue;
+			if (span->base >= window->base && span->base - window->base < window->size) {
+				function.bars[bar].window = installed[window->obj];
+				function.bars[bar].offset = span->base - window->base;
+				break;
+			}
+		}
+	}
+	return (erx_boot_function_words(&function, words, capacity));
+}
+
+/*
  * The -erx_record given record of device d of give `at` (erx_boot_given_words)
  * into words, capacity bytes: the values its give's installs took in the
  * holder's table, its window's and its line's, marked shared as the plan
@@ -530,6 +626,8 @@ apply_given_words(apply_t *apply, uint32_t at, uint32_t d, char *words, size_t c
 	    .coherent = erx_boot_coherent(facts, entry->memory),
 	    .mac = facts != NULL && entry->role == ERX_MF_DEVICE_ROLE_NETWORK ? erx_boot_mac_number(facts) : 0 };
 
+	if (device->pci)
+		return (device->driven ? apply_function_words(apply, at, d, words, capacity) : 0);
 	if (entry->role == ERX_MF_DEVICE_ROLE_FRAMEBUFFER)
 		return (erx_boot_framebuffer_words(&entry->framebuffer, entry->format, window, device->offset, words,
 		    capacity));
@@ -867,6 +965,9 @@ apply_keep_gives(apply_t *apply)
 			for (uint32_t l = 0; l < ERX_DOM_UNIT_LINES_MAX; l++)
 				record->irqs[l] = d == 0 ? CAP(ERX_DOM_OBJ_DEV_IRQ + l) : (erx_cap_t){ ERX_CAP_NULL };
 			record->dma = CAP(ERX_DOM_OBJ_DEV_DMA + d);
+			record->setting = (erx_pcie_setting_t){ .mode = ERX_PCIE_MODE_OFF,
+			    .route = give->devices[d].driven ? give->devices[d].route : ERX_PCIE_ROUTE_NONE,
+			    .message = apply_message(apply, at, &give->devices[d]) };
 			if (made[ERX_DOM_OBJ_DEV_MEMORY + d] != ERX_CAP_NULL)
 				record->memory = CAP(ERX_DOM_OBJ_DEV_MEMORY + d);
 		}
@@ -906,6 +1007,8 @@ lib_devices_end(erx_dom_lib_t *lib, uint32_t id)
 			(void)erx_cap_close(*caps[at]);
 			*caps[at] = (erx_cap_t){ .raw = ERX_CAP_NULL };
 		}
+		/* Its MSI object is gone, so its setting names no route. */
+		record->setting = (erx_pcie_setting_t){ .mode = ERX_PCIE_MODE_OFF };
 		record->holder = 0;
 	}
 }

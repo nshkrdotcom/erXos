@@ -133,6 +133,9 @@ typedef struct erx_dom_lib {
 	uint64_t	 hwcap2;	/* for each boot page */
 	erx_dom_device_t *device_records; /* view.ndevices: the view's, which a
 					 * holder's creation and end write */
+	erx_dom_pci_bridge_t *pci_bridges; /* view.npci_bridges: the view's, which
+					 * the root's tree facts and the PCIe
+					 * domain's reports write */
 	uint32_t	 cap_limit;	/* each domain's handle table */
 	bool		 det;		/* the system's boot page has ERX_BOOT_DET,
 					 * so each domain's page carries it */
@@ -336,6 +339,7 @@ typedef struct erx_dom_boot_sizes {
 	uint32_t	nfacets;	/* its facet rows */
 	uint32_t	noperations;	/* its facets' operation rows */
 	uint32_t	nparameters;	/* its facets' parameter rows */
+	uint32_t	npci_bridges;	/* its PCIe host bridge rows */
 } erx_dom_boot_sizes_t;
 
 typedef struct erx_dom_boot_tables {
@@ -357,6 +361,7 @@ typedef struct erx_dom_boot_tables {
 	erx_dom_facet_t		*facets;	/* nfacets */
 	const erx_service_operation_t **operations; /* noperations */
 	erx_dom_parameter_t	*parameters;	/* nparameters */
+	erx_dom_pci_bridge_t	*pci_bridges;	/* npci_bridges, in device row order */
 } erx_dom_boot_tables_t;
 
 /* The sizes of the view the manifest and a boot image of nfiles entries describe. */
@@ -403,6 +408,29 @@ const char	*erx_dom_view_build(erx_dom_lib_t *, const erx_manifest_view_t *,
  */
 bool		erx_dom_view_framebuffer(erx_dom_device_entry_t *entry, const erx_dt_framebuffer_t *fb,
 		    const char *format);
+
+/*
+ * Joins the tree's facts of a host bridge, tree as erx_dt_bridge filled it
+ * with status, to its catalogue (erx/dom.h, docs/design-pcie.md, "Records"):
+ * its buses and windows; its index, flags and places stay the manifest's,
+ * which the view wrote. A bridge the reader refused gets no windows and an
+ * empty bus range, first 1 and last 0, so every report on it is refused at
+ * its first record's bus and its functions are given nothing. Pure.
+ */
+void		erx_dom_view_bridge(erx_dom_pci_bridge_t *bridge, const erx_pcie_bridge_t *tree,
+		    erx_dt_bridge_status_t status);
+
+/*
+ * The PCIe domain's report on the bridge of device row index bridge, count
+ * records as erx_pcie_function_decode gave them, into that bridge's
+ * catalogue through erx_dom_pci_report (erx/dom.h), against every entry of
+ * the view's catalogue (docs/design-pcie.md, "The catalogue and gives").
+ * The caller holds the library's lock. ERX_EINVAL with *refusal naming
+ * field bridge and record count for a row with no catalogue; otherwise
+ * erx_dom_pci_report's status and refusal.
+ */
+erx_status_t	erx_dom_lib_pci_report(erx_dom_lib_t *, uint32_t bridge, const erx_pcie_function_t *report,
+		    uint32_t count, erx_dom_pci_refusal_t *refusal) ERX_WARN_UNUSED_RESULT;
 
 /*
  * The root's view: erx_dom_view_build over every entry of the opened boot

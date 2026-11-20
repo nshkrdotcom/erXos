@@ -1918,13 +1918,42 @@ A device in another domain, such as a touch controller on a bus the
 devices domain holds, is served by its driver there as a file of
 records, in the binary form `abi/formats/input.txt` declares
 ([Input records](design-abi.md#input-records)), in a tree
-of that domain which the manifest grants the display domain read-only,
-an instance of `files`. A granted tree may hold several such files, as
-a USB controller's domain serves one for each of its input numbers
-([design-usb.md](design-usb.md#hid-reaches-the-display)); the display
-starts one reader for each file the tree holds when the grant arrives,
-and the set does not change while the serving domain lives, so the
-router's sources stay fixed by the manifest. Each reader is the
+of that domain: a service of the `input` interface
+(`abi/services/input.txt`), served as a tree through the file protocol,
+whose grants are read-only by construction. The interface declares no
+rights, so no facet row can state any, and the domain service has its
+server mint each grant read-only and holds the facet so
+(`erx_domain_mints`). Property 8's input clause of the manifest check
+([design-system.md](design-system.md#the-manifest)) gives such a facet
+only to a display domain, since its holder reads every key pressed on
+the devices behind it whatever window has the keyboard. Several domains
+may serve input trees, each a service of its own name, as the USB and
+Bluetooth domains do, and a display may also hold another display's
+window service, so the display tells its input trees from its other
+grants by their interface: the ready answer names each grant with its
+interface ([design-system.md](design-system.md#facets-a-configured-domain-serves)),
+and `erx:granted/1` picks those of one interface. A granted tree may
+hold several files, as a USB controller's domain serves one for each
+of its input numbers
+([design-usb.md](design-usb.md#hid-reaches-the-display)), at most
+`input_tree_files_max`.
+
+The display follows its input grants with one supervised process,
+`erx_input_follower`, which `erx_fb_sup` starts after the virtio-input
+drivers. Once a second, the first time as it starts, it reads the
+domain's grants of the `input` interface; the names arrive with the
+ready answer, after the display's applications start, so a first look
+that finds none is normal. For each name it does not follow yet whose
+facet is installed, it resolves the grant once, monitors the grant's
+process, lists the tree, attached by `input_tree`, the name every input
+service serves its tree under, in a process of its own, so a slow server holds
+up no other tree, and starts one reader for each file on that same
+grant. When the grant ends it stops that tree's readers and waits for
+each to end before anything else, so no reader of the old grant runs
+beside a replacement, and forgets the tree; the next look
+finds the server's new grant once the domain service installs it. Each
+tree is followed independently, and a reader's end at its file's end
+alone does not restart the tree. Each reader is the
 source of its file's records: it decodes each read with
 `erx_input_codec:decode/1`, which holds each record to the bounds of
 `record()`, drops and counts one outside them, and gives back the bytes

@@ -27,17 +27,17 @@ class ErxUsbBusCoreTest < Minitest::Test
     Seed.new(fault: 'a connection change with the port still connected not detaching the occupant',
              anchor: 'true -> {settling, Now + ?ERX_USB_POWER_UP_DELAY_MS};',
              replacement: 'true when Port =/= empty -> Port; true -> {settling, Now + ?ERX_USB_POWER_UP_DELAY_MS};',
-             catching: [3, 0]),
+             catching: [3, 0, 0]),
     Seed.new(fault: "the address-zero turn released at the reset's end instead of the address",
              anchor: "holds_turn({recovering, _At, _Speed}) -> true;\n" \
                      'holds_turn({enumerating, _Ref, Step}) -> Step =:= enabling_slot orelse Step =:= addressing;',
              replacement: "holds_turn({recovering, _At, _Speed}) -> false;\n" \
                           'holds_turn({enumerating, _Ref, _Step}) -> false;',
-             catching: [2, 0]),
+             catching: [2, 0, 0]),
     Seed.new(fault: 'the turn released when Address Device is sent, before its answer',
              anchor: 'holds_turn({enumerating, _Ref, Step}) -> Step =:= enabling_slot orelse Step =:= addressing;',
              replacement: 'holds_turn({enumerating, _Ref, Step}) -> Step =:= enabling_slot;',
-             catching: [2, 0]),
+             catching: [2, 0, 0]),
     Seed.new(fault: "a port's status read before the hub's power-good time",
              anchor: 'next_read(Id, Hub = #{pending := [Target | _], power := good}) ->',
              replacement: 'next_read(Id, Hub = #{pending := [Target | _]}) ->',
@@ -46,22 +46,19 @@ class ErxUsbBusCoreTest < Minitest::Test
              anchor: '{Actions ++ [{detach, Ref}],',
              replacement: '{[{detach, Ref} | Actions],',
              catching: 'a_hub_detached_during_its_childs_enumeration_test'),
-    Seed.new(fault: "`handled` sent to the first reporter, not a restarted hub function's",
-             anchor: 'Hub#{pending := ordsets:union(P, ordsets:from_list(Named)), reporter := From}',
-             replacement: 'Hub#{pending := ordsets:union(P, ordsets:from_list(Named)), reporter := case Hub of #{reporter := none} -> From; #{reporter := R} -> R end}',
-             catching: 'handled_goes_to_the_reporter_test'),
+
     Seed.new(fault: 'a port given up with its device still enabled, the turn handed on',
              anchor: '{disabling, Reason, holds_turn_below(Old, State)}',
              replacement: '{disabled, Reason}',
-             catching: [2, 0]),
+             catching: [2, 0, 0]),
     Seed.new(fault: 'a port given up after its address keeping the turn, so two ports hold it',
              anchor: '{disabling, Reason, holds_turn_below(Old, State)}',
              replacement: '{disabling, Reason, true}',
-             catching: [2, 1]),
+             catching: [2, 1, 0]),
     Seed.new(fault: "a port's new state dropping its occupant without detaching it",
              anchor: 'case occupant(Old) -- occupant(New) of',
              replacement: 'case occupant(Old) -- occupant(Old) of',
-             catching: [2, 0]),
+             catching: [2, 0, 0]),
     Seed.new(fault: "a hub given up handing on the turn a port below it held",
              anchor: 'holds_turn_below(Old, State)}',
              replacement: 'holds_turn(Old)}',
@@ -69,39 +66,79 @@ class ErxUsbBusCoreTest < Minitest::Test
     Seed.new(fault: "a full-speed device's EP0 packet size left at 8 when its descriptor says otherwise",
              anchor: 'Packet -> request(Ref, ep0_packet, {evaluate_context, #{ep0_packet => Packet}}, State)',
              replacement: '_Packet -> read_device(Ref, State)',
-             catching: [1, 0]),
+             catching: [1, 0, 0]),
     Seed.new(fault: 'the step an answer echoes ignored, so a stale answer is taken at the step awaiting its kind',
              anchor: 'device_answered(Ref, Step, Kind, Result, Now, State = #{devices := Devices}) ->',
              replacement: 'device_answered(Ref, _Echoed, Kind, Result, Now, State = #{devices := Devices}) ->',
-             catching: [1, 0]),
+             catching: [1, 0, 0]),
     Seed.new(fault: "a hub configured without its hub descriptor, so it never enters the bus",
              anchor: "\#{alternate := 0} ->\n            read_hub_descriptor(Ref, State);",
              replacement: "\#{alternate := 0} ->\n            configure_endpoints(Ref, State);",
-             catching: [1, 0]),
+             catching: [1, 0, 0]),
     Seed.new(fault: "a device's first request sent at its address answer, without FreeBSD's settle",
              anchor: 'set_step(Ref, {address_settle, Now + ?ERX_USB_SET_ADDRESS_SETTLE_MS}, State);',
              replacement: 'first_read(Ref, State);',
-             catching: [1, 0]),
+             catching: [1, 0, 0]),
     Seed.new(fault: 'a hub six tiers below the root powering its ports',
              anchor: 'hub_power(Route) when length(Route) > ?ERX_USB_HUB_DEPTH_MAX -> unpowered;',
              replacement: 'hub_power(Route) when length(Route) > ?ERX_USB_HUB_DEPTH_MAX + 1 -> unpowered;',
              catching: 'a_hub_past_the_depth_limit_keeps_its_ports_off_test'),
     Seed.new(fault: 'the attempt throttle removed, so a settled port always starts an attempt',
-             anchor: 'case length(Recent) < ?ERX_USB_PORT_ATTEMPTS_MAX of',
-             replacement: 'case length(Recent) >= 0 of',
+             anchor: 'admit(Attempts, Now, ?ERX_USB_PORT_ATTEMPTS_MAX, ?ERX_USB_PORT_ATTEMPT_WINDOW_MS)',
+             replacement: 'admit(Attempts, Now, 1 bsl 30, ?ERX_USB_PORT_ATTEMPT_WINDOW_MS)',
              catching: 'a_port_starts_at_most_three_attempts_a_minute_test'),
     Seed.new(fault: "a port's attempts never leaving the window",
-             anchor: 'Recent = [T || T <- Attempts, Now - T < ?ERX_USB_PORT_ATTEMPT_WINDOW_MS],',
-             replacement: 'Recent = Attempts,',
+             anchor: 'admit(Attempts, Now, ?ERX_USB_PORT_ATTEMPTS_MAX, ?ERX_USB_PORT_ATTEMPT_WINDOW_MS)',
+             replacement: 'admit(Attempts, Now, ?ERX_USB_PORT_ATTEMPTS_MAX, 1 bsl 60)',
              catching: 'a_port_starts_at_most_three_attempts_a_minute_test'),
     Seed.new(fault: 'an over-current change logged on every change',
              anchor: '{[{log, Id, N, over_current} || not Logged],',
              replacement: '{[{log, Id, N, over_current} || is_boolean(Logged)],',
              catching: 'over_current_changes_are_logged_once_per_attempt_test'),
     Seed.new(fault: 'the over-current log not rearmed by an attempt',
-             anchor: 'Started = History#{attempts := Recent ++ [Now], over_current_logged := false},',
-             replacement: 'Started = History#{attempts := Recent ++ [Now]},',
-             catching: 'over_current_changes_are_logged_once_per_attempt_test')
+             anchor: 'History#{attempts := Admitted, over_current_logged := false}',
+             replacement: 'History#{attempts := Admitted}',
+             catching: 'over_current_changes_are_logged_once_per_attempt_test'),
+    Seed.new(fault: "a function restarted before its pipes' resets answer, so the new instance meets a " \
+                    'transfer its predecessor posted',
+             anchor: "reset_next_or_start(Ref, Interface, [Address || \#{address := Address} <- Pipes],\n",
+             replacement: "reset_next_or_start(Ref, Interface, [],\n",
+             catching: [1, 0, 1]),
+    Seed.new(fault: "a pipe's failed reset keeping the device",
+             anchor: '{error, Reason} -> fail_device(Ref, {function, Interface, {reset_pipe, Reason}}, State)',
+             replacement: '{error, _Reason} -> reset_next_or_start(Ref, Interface, Left, Current, State)',
+             catching: [1, 1, 1]),
+    Seed.new(fault: "the restart bound removed, so a function that keeps ending is restarted forever",
+             anchor: 'admit(Ends, Now, ?ERX_USB_FUNCTION_RESTARTS_MAX, ?ERX_USB_FUNCTION_RESTART_WINDOW_MS)',
+             replacement: 'admit(Ends, Now, 1 bsl 30, ?ERX_USB_FUNCTION_RESTART_WINDOW_MS)',
+             catching: 'a_function_restarts_at_most_three_times_a_minute_test'),
+    Seed.new(fault: "an end from a function's earlier instance taken, so a late end resets the running " \
+                    "instance's pipes and starts it again",
+             anchor: 'Current = #{state := running, number := Run, ends := Ends} ->',
+             replacement: 'Current = #{state := running, ends := Ends} when is_integer(Run) ->',
+             catching: [1, 0, 1]),
+    Seed.new(fault: "a report from a hub function's ended instance taken, so it queues reads and takes " \
+                    "`handled` from its successor",
+             anchor: "\#{state := running, number := Run} ->\n            {[], with_hub(Ref,",
+             replacement: "\#{state := running} when is_integer(Run) ->\n            {[], with_hub(Ref,",
+             catching: 'a_report_from_an_ended_hub_instance_changes_nothing_test'),
+    Seed.new(fault: "a hub function's ended instance's report taken while its pipe is still being reset",
+             anchor: "\#{state := running, number := Run} ->\n            {[], with_hub(Ref,",
+             replacement: "\#{number := Run} ->\n            {[], with_hub(Ref,",
+             catching: [1, 0, 1]),
+    Seed.new(fault: "the report an ended hub instance was handling kept, so `handled` goes to it",
+             anchor: "\#{driver := erx_usb_hub} -> with_hub(Ref, fun(Hub) -> Hub\#{reporter := none} end, State);",
+             replacement: "\#{driver := erx_usb_hub} -> State;",
+             catching: [1, 0, 1]),
+    Seed.new(fault: "a port's failure logged at every move into a failure state, not once per connection",
+             anchor: '{none, {failed, Reason}} -> [{log, Id, N, {failed, Reason}}];',
+             replacement: '{_, {failed, Reason}} -> [{log, Id, N, {failed, Reason}}];',
+             catching: 'a_function_restarts_at_most_three_times_a_minute_test'),
+    Seed.new(fault: 'a read that saw changes taking its port off the queue, so a change latched before ' \
+                    'their clear is lost',
+             anchor: 'Hub#{pending := queued([Target], P -- [Target]),',
+             replacement: 'Hub#{pending := P -- [Target],',
+             catching: [2, 0, 0])
   ].freeze
 
   def test_bus_core_cases_pass_under_eunit
@@ -126,11 +163,11 @@ class ErxUsbBusCoreTest < Minitest::Test
   private
 
   # The eunit test a seed names: a case by its name, or the exploration at a depth of
-  # connects or disconnects and failed answers.
+  # connects or disconnects, failed answers and functions' ends.
   def cases(catching)
     case catching
-    in [Integer => stimuli, Integer => errors]
-      "{timeout, 600, fun() -> erx_usb_bus_core_tests:explored(#{stimuli}, #{errors}) end}"
+    in [Integer => stimuli, Integer => errors, Integer => ends]
+      "{timeout, 600, fun() -> erx_usb_bus_core_tests:explored(#{stimuli}, #{errors}, #{ends}) end}"
     in String => name
       "{test, erx_usb_bus_core_tests, #{name}}"
     end

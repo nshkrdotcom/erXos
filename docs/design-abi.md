@@ -288,6 +288,38 @@ layout a map, and any other array a list. Neither function checks a value
 against more than its width: the bounds are its reader's, such as
 `erx_f2fs_codec`'s.
 
+### Layouts in Erlang
+
+Erlang reads and writes every fixed `wire_le` layout through one
+generated module, `erx_abi_layout`, in the shape of `erx_abi_packed`:
+one clause of a binary pattern of exactly the layout's size per layout,
+and one of the encoder. Each layout is also a `-type` of its map, field
+for field under its declared names, nothing renamed or dropped, so a
+module that holds a record names its type rather than declaring the
+fields again. An integer field is an integer, even one whose values have
+names elsewhere (a header type, a sentinel); an enum field is its
+member's atom; a flags field is the ordset of its bit names; a nested
+layout is a map and an array of layouts a list of maps; an unsigned byte
+array or a `bytes` field is a binary, and any other array a list.
+`erx_abi_enums` owns the translation between names and integers:
+`name/2` and `value/2` for every enum and flags type, and a type of the
+ordset for each flags type. Every atom comes from the ABI file, so no
+input creates one.
+
+`decode/2` returns `{ok, Map}` or `{error, Error}`: `{size, Layout}` for
+bytes of another size, `{padding, Layout}` for a padding byte that is not
+zero, and `{Type, Value}` for an enum value no member holds, a flags
+value with a bit its type does not declare, a combination its `allow`
+line does not list, a scalar outside its range, or bytes that differ from
+their type's fixed value. Each refusal is one throw out of the clause that
+finds it, caught once in `decode/2`. `encode/2` is its inverse, so
+`encode(decode(B))` is `B` for every `B` it accepts, and a value wider
+than its field, a value its type does not admit, or a name its type does
+not have, is an error. Neither
+interprets a sentinel, such as an unused slot of zeros: what it means is
+the reader's, which reads it in one module (`erx_pcie` for the PCIe
+records).
+
 ### Element sequences
 
 An element sequence is records of a tag, a length and a body of that
@@ -1660,9 +1692,19 @@ the selector's `dt` case and are inactive for a function, since
 configuration space gives them, except `line` at a place a closed
 bridge's platform record lists, where it is the INTx line the bridge's
 `interrupt-map` routes for that place's pin
-([design-pcie.md](design-pcie.md#the-closed-bus)). A host bridge's row
-carries the closed flag when its platform record lists every place on
-it, and then those places, each a bus, device, function and pin. A
+([design-pcie.md](design-pcie.md#the-closed-bus)), and a function behind
+a closed bridge lies at one of its listed places, which the manifest
+check proves. A host bridge's row carries the closed flag when its
+platform record lists every place on it, and then those places, each a
+bus, device, function and pin: its `places` span names them in the
+manifest's `places` table of `erx_pcie_place` rows, and every other
+row's span is empty. The platform record spells them in the record's
+own shape, `"flags": ["closed"]` and `"places": [{"bus": 1, "device":
+0, "function": 0, "pin": 1}]`; any flags field of a platform row may be
+written as a list of its bits' names or as their number. A listed place
+lies below the root port, on bus 1 or above, with a pin INTA (1) to
+INTD (4), and no place is listed twice; that the places lie within the
+bridge's bus range is the tree's fact, which the boot reads. A
 device's `dma_limit` is a device address, exclusive, 0 for none, which
 the packer copies from a bridge's unit into each `pci` row behind it, and
 the function's DMA facts are cut at it
@@ -1690,6 +1732,14 @@ from the device tree the firmware hands over
 The packed marks do not establish actual confinement: the device service
 still verifies the machine before assigning the unit.
 
+A window, an image and a device-valued facet parameter name a placed
+device in one spelling: a device-tree device by its node path,
+`"/virtio_mmio@a003e00"`, and a PCIe function by its place, its host
+bridge's node path and its bus, device and function joined by colons,
+`"/pcie@10000000:0:2:0"`, which no node path can be, since a node path
+has no colon. One resolver in the manifest check reads both, and the
+packed row names the device-row index either way.
+
 A window grants its holder one partition of a medium. `abi/manifest.txt`
 marks each window role a configured domain may hold `configured` and
 each role whose window may grant write `writable`, and the manifest
@@ -1699,6 +1749,11 @@ fixed-medium role's sectors come from the medium layout (`medium.txt`),
 and a `system` window's are those of the system partition of the slot
 that the boot value names, so an `unknown` boot gives none. A FAT window
 names a primary partition 1 through 4 on the selected removable device.
+A window on a USB controller's row is a FAT window whose `drive` names
+one of that controller's drives, `da0` to `da3`, the partition being the
+primary entry to serve on whatever medium the drive holds; every other
+window names none, `mf_none`
+([design-usb.md](design-usb.md#mass-storage-reaches-the-file-servers)).
 A window grants at least read, and a window of a role not marked
 `writable` read alone; a manifest has at most one `system` window. No
 record contains a caller-selected sector range. Role/holder checks
