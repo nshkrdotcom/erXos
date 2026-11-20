@@ -2560,6 +2560,15 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   system domain's budget and keeps it across the holder's restarts (`liberx/system/dom_life.c`
   ~1117-1130, `.budget = ERX_DOM_OBJ_SYSTEM_BUDGET`; `config/manifest/qemu-virt-development.txt`
   ~73-75 agrees with the code). Decide which is the design and change the other.
+* [Medium] `otp/erts/emulator/nifs/erxos/erx_device_nif.c` (`status_error`): a hand-kept copy of the ABI's
+  status-to-atom table; a status it lacks reaches Erlang as `{error, {status, N}}`. Generate it from
+  `abi/errno.txt`, as the other tables are, or route it through the one table ERTS already generates.
+* [Low] handles, `erx_group_configure(ERX_CAP_NULL)` (`liberx/backend/fiasco/group.c` and the hosted
+  `group.c`): both backends refuse NULL with `ERX_EINVAL` before the lookup, while the call table's configure
+  row does not take NULL and [Handles](docs/design-fiasco.md#handles) sends a value a call does not take to the
+  lookup, which answers `ERX_ESTALE`. Drop the pre-check on both backends and expect `ERX_ESTALE`, so the rule
+  holds without an exception.
+
 * [Low] domain library, `liberx/system/dom_boot.c` (the apps budget and each principal's budget): both are
   created with `ERX_BUDGET_ELASTIC`, while the comments beside them and
   [design-fiasco.md](docs/design-fiasco.md) make a domain's budgets walls (cap equal to guarantee). Change
