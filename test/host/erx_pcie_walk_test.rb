@@ -50,8 +50,8 @@ class ErxPcieWalkTest < Minitest::Test
   SEEDS = [
     Seed.new(fault: "the pcie facet's setting check removed",
              module_path: 'erlang/apps/erx_pcie/src/erx_pcie_facet.erl',
-             anchor: 'well_formed({set, Key, Setting}) -> key(Key) andalso setting(Setting);',
-             replacement: 'well_formed({set, Key, Setting}) -> key(Key) andalso (setting(Setting) orelse true);',
+             anchor: 'true -> setting(Key, Setting);',
+             replacement: 'true -> {ok, {set, Key, Setting}};',
              catching_case: 'a_request_out_of_shape_reaches_no_enumerator_test'),
     Seed.new(fault: "the closed bridge's place check removed",
              module_path: 'erlang/apps/erx_pcie/src/erx_pcie_bridge.erl',

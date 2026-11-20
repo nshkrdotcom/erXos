@@ -11,6 +11,7 @@ require_relative '../../tools/lib/erx/dom_planner'
 require_relative '../../tools/lib/erx/manifest'
 require_relative '../../tools/lib/erx/net_device'
 require_relative '../../tools/lib/erx/network_domain'
+require_relative '../../tools/lib/erx/pcie_domain'
 require_relative '../../tools/lib/erx/production_image'
 require_relative '../../tools/lib/erx/runner'
 require_relative '../../tools/lib/erx/system_domain'
@@ -166,6 +167,19 @@ class DomPlannerTest < Minitest::Test
       admitted = Erx::Manifest.admit(source: suite.manifest(source), codec: @codec, context: context, planner: @planner)
       assert_equal 4, admitted.report.fetch('child_plan_instances'), suite.name
     end
+  end
+
+  # The pcie suite's manifest (PcieDomain.manifest): the development manifest without its
+  # web domain, the PCIe domain and the test holder, whose grants with storage's,
+  # network's and display's fit the system share's reserve, on the medium machine: the
+  # library plans all five.
+  def test_the_library_plans_the_pcie_suites_domains
+    source = Erx::PcieDomain.manifest(Erx::PcieDomain.manifest_source(ROOT, platform: PLATFORM))
+    arguments = ManifestContextFixture.archive_arguments(@codec, boots: [*%w[app display network ntpd pcie session storage],
+                                                                         Erx::MediumBoot::DOMAIN_BOOT.name])
+    context = Erx::Manifest::Context.new(**arguments.merge(platform: Erx::MediumBoot.machine(PLATFORM).record))
+    admitted = Erx::Manifest.admit(source: source, codec: @codec, context: context, planner: @planner)
+    assert_equal 5, admitted.report.fetch('child_plan_instances')
   end
 
   # The network domain cell's manifest (NetworkDomain.manifest), the development manifest

@@ -12,7 +12,8 @@ module Erx
   # The harness's end of QEMU's machine protocol (QMP) on a UNIX socket QEMU listens on
   # (QemuPlan::Display): one JSON object per line, a greeting, a capabilities command, then
   # commands answered in order with a reply or an error, among events the client skips. It
-  # sends four commands: qmp_capabilities, screendump (format ppm), input-send-event and quit.
+  # sends five commands: qmp_capabilities, screendump (format ppm), input-send-event,
+  # query-pci and quit.
   #
   # QEMU is the peer, and what it says is untrusted all the same: every read is bounded
   # (MAX_LINE_BYTES a line, MAX_SKIPPED_EVENTS events between a command and its reply, one
@@ -121,6 +122,37 @@ module Erx
       command('input-send-event', { 'events' => events })
     end
 
+    # One PCI function as QEMU holds it (query-pci): its place on its bus, its identity, and
+    # its BARs, each a PciRegion.
+    PciFunction = Data.define(:bus, :slot, :function, :vendor, :device, :regions)
+    # One BAR of a function: its index, :memory or :io, and its address, nil while QEMU maps
+    # it nowhere (query-pci's -1), and size.
+    PciRegion = Data.define(:bar, :type, :address, :size)
+    # The query-pci answer's bounds: QEMU's root bus and every bus behind it, 32 slots of 8
+    # functions, 6 BARs and the expansion ROM's region.
+    MAX_PCI_BUSES = 256
+    MAX_PCI_FUNCTIONS = 256
+    MAX_PCI_REGIONS = 7
+
+    # Every function on every bus QEMU's query-pci lists, as PciFunction values in its order,
+    # each field checked against its type and bounds as QEMU 11.1.3 answers; any other shape
+    # is a ProtocolError that quotes nothing of it. A function behind a bridge, which QEMU
+    # nests in its bridge's entry, is not read: the answer nests past MAX_NESTING.
+    def pci_functions
+      buses = command('query-pci')
+      raise ProtocolError, 'QEMU answered query-pci with no list of buses' unless list_within?(buses, MAX_PCI_BUSES)
+
+      functions = buses.flat_map do |bus|
+        devices = bus.is_a?(Hash) && bus['devices']
+        raise ProtocolError, 'QEMU answered query-pci with a bus without its devices' unless list_within?(devices, MAX_PCI_FUNCTIONS)
+
+        devices.map { |device| pci_function(device) }
+      end
+      raise ProtocolError, "QEMU listed more than #{MAX_PCI_FUNCTIONS} PCI functions" if functions.size > MAX_PCI_FUNCTIONS
+
+      functions
+    end
+
     # Ends QEMU's machine. QEMU may close the connection before or after the reply.
     def quit
       command('quit')
@@ -135,6 +167,34 @@ module Erx
     end
 
     private
+
+    def list_within?(value, limit) = value.is_a?(Array) && value.size <= limit
+
+    def integer_within?(value, range) = value.is_a?(Integer) && range.cover?(value)
+
+    # One query-pci device as a PciFunction.
+    def pci_function(device)
+      id = device.is_a?(Hash) && device['id']
+      regions = device.is_a?(Hash) && device['regions']
+      valid = id.is_a?(Hash) && integer_within?(device['bus'], 0..255) && integer_within?(device['slot'], 0..31) &&
+              integer_within?(device['function'], 0..7) && integer_within?(id['vendor'], 0..0xffff) &&
+              integer_within?(id['device'], 0..0xffff) && list_within?(regions, MAX_PCI_REGIONS)
+      raise ProtocolError, 'QEMU answered query-pci with a malformed device' unless valid
+
+      PciFunction.new(bus: device['bus'], slot: device['slot'], function: device['function'], vendor: id['vendor'],
+                      device: id['device'], regions: regions.map { |region| pci_region(region) }.freeze)
+    end
+
+    # One query-pci region as a PciRegion: its address -1, QEMU's "mapped nowhere", is nil.
+    def pci_region(region)
+      valid = region.is_a?(Hash) && integer_within?(region['bar'], 0..6) && %w[memory io].include?(region['type']) &&
+              integer_within?(region['size'], 1..((1 << 64) - 1)) &&
+              (region['address'] == -1 || integer_within?(region['address'], 0..((1 << 64) - 1)))
+      raise ProtocolError, 'QEMU answered query-pci with a malformed region' unless valid
+
+      PciRegion.new(bar: region['bar'], type: region['type'].to_sym, address: region['address'] == -1 ? nil : region['address'],
+                    size: region['size'])
+    end
 
     def check_dump_path(path)
       valid = path.is_a?(String) && path.start_with?('/') && !path.include?("\0") && File.dirname(path) == @directory

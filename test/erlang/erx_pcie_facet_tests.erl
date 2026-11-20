@@ -78,6 +78,15 @@ a_set_and_a_reset_reach_the_enumerator_test() ->
                        ?assertEqual({took, {reset, ?KEY}}, took(0))
                end).
 
+%% A setting with a key the layout does not have is forwarded as the codec reads it
+%% back, so the enumerator never holds the extra key.
+a_set_reaches_the_enumerator_with_the_layout_s_fields_alone_test() ->
+    with_facet(fun(Facet) ->
+                       Set = {set, ?KEY, setting()},
+                       ?assertEqual({took, Set}, call(Facet, {set, ?KEY, (setting())#{extra => 1}})),
+                       ?assertEqual({took, Set}, took(0))
+               end).
+
 a_request_out_of_shape_reaches_no_enumerator_test() ->
     Refused = [{set, {7, 0, 32, 0}, setting()},
                {set, {7, 256, 2, 0}, setting()},

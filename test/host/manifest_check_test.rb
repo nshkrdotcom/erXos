@@ -156,6 +156,20 @@ class ManifestCheckTest < Minitest::Test
     assert_equal 8 << 20, result.report.fetch('root_memory') - result.report.fetch('promised_memory')
   end
 
+  # The pcie QEMU suite's manifest (PcieDomain.manifest), on MediumBoot's machine, passes
+  # too: the test holder's row, the xhci unit it holds and its pci facet.
+  def test_the_pcie_suite_s_manifest_is_accepted
+    platform = Erx::Platform.load(root: ROOT, name: 'qemu-virt')
+    medium = context do |arguments|
+      arguments.merge!(ManifestContextFixture.archive_arguments(@codec, boots: [*%w[app display network ntpd pcie session storage],
+                                                                                Erx::MediumBoot::DOMAIN_BOOT.name]))
+      arguments[:platform] = @platform.merge('ram_bytes' => Erx::MediumBoot.machine(platform).memory_mib << 20)
+    end
+    result = admit(Erx::PcieDomain.manifest(Erx::PcieDomain.manifest_source(ROOT, platform: platform)), medium)
+    view = @codec.open('manifest', result.bytes)
+    assert_equal 5, view.count('domains')
+  end
+
   # The website's manifest passes the same check: its storage and network domains, without
   # the web and display domains, hold the same windows and image and every device but the
   # display unit's, which lists every transport on the gpu's register page.

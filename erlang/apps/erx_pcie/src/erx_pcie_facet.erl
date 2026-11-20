@@ -19,8 +19,10 @@ registered name:
 * `{reset, Key}`.
 
 Any other request, and one whose Key or Setting is not of that shape, is
-refused with `badarg` before the enumerator sees it (well_formed/1), so no
-request of the grantee's can end the enumerator by its shape. The facet
+refused with `badarg` before the enumerator sees it (canonical/1), so no
+request of the grantee's can end the enumerator by its shape. A set goes
+on with its Setting as the codec reads back the bytes it encodes, so a key
+the layout does not have never reaches the enumerator. The facet
 has no operation/1: its manifest row lists no operations, as a configured
 domain's service names none on Fiasco (docs/design-time.md, "On Fiasco"),
 and the grantee may invoke both. A request that finds no
@@ -34,7 +36,8 @@ its `pci_bus` facet; and the enumerator is waiting for the answer to its
 report while the system domain mints the grant, which the device
 service awaits before it answers. Both run below erx_pcie_sup, which
 ends the other when either ends, so no mint outlives its enumerator. A
-facet ends with its mint, so no facet outlives the mint either.
+facet ends with its mint and with the enumerator registered when it was
+minted, both of its grant's ends_with, so no facet outlives either.
 """.
 
 -behaviour(erx_facet).
@@ -65,7 +68,8 @@ mint(System) ->
         Message ->
             _ = case erx_driver_ctl:mint_request(System, pcie, Message) of
                     {grant, Tag, Limits} ->
-                        Grant = Limits#{grantee => System, ends_with => [self()]},
+                        Enumerator = [Pid || Pid <- [whereis(erx_pcie_enumerator)], is_pid(Pid)],
+                        Grant = Limits#{grantee => System, ends_with => [self() | Enumerator]},
                         erx_facet:minted(Tag, erx_facet:start(?MODULE, Grant, #{}));
                     {refuse, Tag} ->
                         erx_facet:minted(Tag, {error, eperm});
@@ -81,15 +85,25 @@ init(_Grant) ->
 
 -doc false.
 admit(Request, _From, State) ->
-    case {well_formed(Request), whereis(erx_pcie_enumerator)} of
-        {false, _Enumerator} -> {refuse, badarg, State};
-        {true, undefined} -> {refuse, unavailable, State};
-        {true, Enumerator} -> {forward, Enumerator, Request, State}
+    case {canonical(Request), whereis(erx_pcie_enumerator)} of
+        {error, _Enumerator} -> {refuse, badarg, State};
+        {{ok, _Canonical}, undefined} -> {refuse, unavailable, State};
+        {{ok, Canonical}, Enumerator} -> {forward, Enumerator, Canonical, State}
     end.
 
-well_formed({set, Key, Setting}) -> key(Key) andalso setting(Setting);
-well_formed({reset, Key}) -> key(Key);
-well_formed(_Request) -> false.
+%% The request as the enumerator takes it, or error for any other term.
+canonical({set, Key, Setting}) ->
+    case key(Key) of
+        true -> setting(Key, Setting);
+        false -> error
+    end;
+canonical({reset, Key} = Request) ->
+    case key(Key) of
+        true -> {ok, Request};
+        false -> error
+    end;
+canonical(_Request) ->
+    error.
 
 key({Bridge, Bus, Device, Function}) ->
     is_integer(Bridge) andalso Bridge >= 0 andalso is_integer(Bus) andalso Bus >= 0 andalso Bus =< 255
@@ -99,12 +113,15 @@ key(_Key) ->
     false.
 
 %% A setting the codec encodes is one the enumerator's planner takes: its
-%% mode and route members of their enums and its message in range.
-setting(Setting) when is_map(Setting) ->
-    try erx_abi_layout:encode(erx_pcie_setting, Setting) of
-        _Bytes -> true
+%% mode and route members of their enums and its message in range. The set
+%% carries the setting the codec reads back from those bytes, which has the
+%% layout's fields alone.
+setting(Key, Setting) when is_map(Setting) ->
+    try erx_abi_layout:decode(erx_pcie_setting, erx_abi_layout:encode(erx_pcie_setting, Setting)) of
+        {ok, Canonical} -> {ok, {set, Key, Canonical}};
+        {error, _} -> error
     catch
-        error:_ -> false
+        error:_ -> error
     end;
-setting(_Setting) ->
-    false.
+setting(_Key, _Setting) ->
+    error.
