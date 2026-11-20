@@ -527,14 +527,10 @@ setup_sets_address(const uint8_t setup[8])
 	    (ERX_USB_REQUEST_TYPE_STANDARD | ERX_USB_RECIPIENT_DEVICE) && setup[1] == ERX_USB_REQUEST_SET_ADDRESS);
 }
 
-/*
- * A transfer the form may post: a control transfer only on a control queue and a normal one
- * only on another, so never on EP0; within the buffer; a normal transfer in its endpoint's
- * direction (4.5.1); a control transfer's data stage in its setup's direction (4.11.2.2) and as
- * long as the setup says, and no SET_ADDRESS. The DMA check carries no direction: it is the form's.
- */
-static bool
-request_valid(const erx_device_trb_request_t *request, erx_device_trb_kind_t kind, uint32_t dci, uint32_t buffer_size)
+/* The one test of a transfer, the post's and the TRB form core's (erx_device_trb.h). */
+bool
+erx_device_trb_request_valid(const erx_device_trb_request_t *request, erx_device_trb_kind_t kind,
+    uint32_t dci, uint32_t buffer_size)
 {
 	if (request->control != (kind == ERX_DEVICE_TRB_CONTROL) || request->length > buffer_size ||
 	    (request->length != 0 && !request->device_writes && request->bytes == NULL))
@@ -612,7 +608,7 @@ erx_device_trb_post(erx_device_trb_t *trb, const erx_device_trb_layout_t *layout
 		return (ERX_DEVICE_TRB_REFUSE_BADARG);
 	block = &trb->blocks[index];
 	kind = erx_device_trb_block_kind(&layout->shape, index);
-	if (!request_valid(request, kind, dci, layout->shape.buffer_size[kind]))
+	if (!erx_device_trb_request_valid(request, kind, dci, layout->shape.buffer_size[kind]))
 		return (ERX_DEVICE_TRB_REFUSE_BADARG);
 	if (block->state != ERX_DEVICE_TRB_OPEN || (trb->command.kind != ERX_DEVICE_TRB_NO_COMMAND &&
 	    trb->command.slot == slot && (trb->command.held >> dci & 1u) != 0))

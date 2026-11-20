@@ -290,6 +290,16 @@ typedef struct erx_device_trb_request {
 } erx_device_trb_request_t;
 
 /*
+ * Whether `request` is a transfer the form may post on queue `dci` of a block of `kind` whose
+ * buffers hold `buffer_size` bytes: a control transfer only on a control queue and a normal one
+ * only on another, so never on EP0; within the buffer; a normal transfer in its endpoint's
+ * direction (4.5.1); a control transfer's data stage in its setup's direction (4.11.2.2) and as
+ * long as the setup says, and no SET_ADDRESS. The DMA check carries no direction: it is the form's.
+ */
+bool	erx_device_trb_request_valid(const erx_device_trb_request_t *request, erx_device_trb_kind_t kind,
+	    uint32_t dci, uint32_t buffer_size);
+
+/*
  * The post of `request` under `tag` on the queue {slot, dci}: its TRBs into the ring and an out
  * transfer's bytes into a free buffer, then the first TRB's control word with the new cycle and
  * the slot's doorbell with the queue's index. REFUSE_BADARG for a queue that does not exist, a
