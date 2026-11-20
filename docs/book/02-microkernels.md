@@ -6,7 +6,7 @@
 > its own kernel interface, `liberx`, and its system domain, the root
 > task, starts and ends the other domains. How erXos uses Fiasco is
 > told in
-> [chapter 8](README.md#chapter-8-the-kernel-interface-and-fiasco).
+> [chapter 8](08-kernel-interface.md).
 
 **Background needed.** [Chapter 1](01-operating-systems.md):
 kernel mode and user mode, address spaces, system calls.
@@ -590,14 +590,14 @@ no code can be written that breaks it.
 This is what the book means by **by construction**: a property holds
 because the wrong state cannot be expressed, not because every
 participant remembered a rule.
-[Chapter 6](README.md#chapter-6-correct-by-construction) makes it the
+[Chapter 6](06-construction.md) makes it the
 method of the whole design. erXos has some of its capability
-properties in this form. A program reaches an object only through a
-slot in its own table, which Fiasco looks up on every use. Rights only
-shrink: copying or passing a capability intersects its rights with a
-mask, and no call adds a right
-([design-fiasco.md, Rights](../design-fiasco.md#rights)). Section
-2.5.4 shows one property that holds only as a likelihood.
+properties in this form. A program names a kernel object only through
+a handle in a table kept for it, and every call that names a handle
+passes one lookup that checks the object's generation, so a destroyed
+object is gone for every holder at once. Section 2.5.4 says what the
+handles do not give: they carry no rights, and a number used after
+its own holder closed it can reach another object.
 
 ## 2.5 The L4 family and Fiasco
 
@@ -732,18 +732,27 @@ Fiasco's own names and data structures never reach Erlang code or
 users, and a call Fiasco cannot carry out fails with a plain error,
 `ERX_ENOTSUP`.
 
-Some properties of a capability kernel hold on erXos only as far as
-Fiasco gives them. One is the reused slot of section 2.3.5. A slot on
-Fiasco carries no generation. erXos reuses a freed slot as late as it
-can: the root task takes a program's never-used slots first, then its
-freed slots oldest first. So a program that keeps using a slot number
-after closing it rarely meets a new object. This is not a guarantee:
-if it does meet one, it reaches that object
-([design-fiasco.md, Handles are slots](../design-fiasco.md#handles-are-slots)).
-A slot whose object was deleted is a different case, and is safe: it
-stays reserved, and every later use fails with an error.
-[Chapter 8](README.md#chapter-8-the-kernel-interface-and-fiasco)
-describes the interface and how it sits on Fiasco.
+A program does not name its kernel objects by Fiasco's slots. It
+names them by **handles**, entries in a table the root task keeps for
+each program; a handle's value is the entry's index plus one. Each
+entry records the generation of the object it names, the counter of
+section 2.3.5, kept with the root task's record of the object rather
+than in the number. So when an object is destroyed, every handle to it
+answers the error `ERX_ESTALE` until its holder closes it, and never
+names whatever object comes next. The generation does not cover a
+holder's own close. A closed number answers `ERX_EINVAL` until it is
+reused, and numbers are reused lowest first, as UNIX reuses file
+descriptors, so a program that keeps using a number after closing it
+reaches whatever object took that number next. Handles carry no
+rights: any holder may use an object as its type allows, and only
+destroying it is kept to the object's creator. The design adds two
+things, designed and not built: rights recorded per handle, which only
+shrink as a handle is duplicated or passed, and a handle value that
+carries the generation, so a use after the holder's own close answers
+`ERX_ESTALE` too
+([chapter 8, section 8.4](08-kernel-interface.md#84-handles-and-destroying-an-object)).
+[Chapter 8](08-kernel-interface.md) describes the interface and how it
+sits on Fiasco.
 
 ## 2.6 What fails, and what a failure reaches
 

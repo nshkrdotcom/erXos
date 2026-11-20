@@ -62,7 +62,7 @@ device reads. C, Erlang, Ruby and TypeScript code all read and write
 them.
 
 The usual defense is a test that compares the copies someone thought
-to compare. [Chapter 6](06-construction.md)
+to compare. [Chapter 6](06-construction.md#611-the-smell-open-ended-enumeration)
 calls this open-ended enumeration: the claim "every copy agrees" rests
 on a list, and the next person to add a consumer does not know the
 list exists.
@@ -235,7 +235,7 @@ generated from it. That is designed and not built. Today the file
 declares one call with the `call` form, `debug_log`, and the generator
 writes its stubs. `liberx`'s other kernel calls are written by hand in
 `liberx/backend/api.h`, using the generated types and status codes.
-[Chapter 8](08-kernel-interface.md) describes them.
+[Chapter 8](08-kernel-interface.md#82-liberx-the-one-issuer-of-kernel-calls) describes them.
 
 ## 7.3 The rules every spec follows
 

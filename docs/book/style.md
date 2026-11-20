@@ -191,7 +191,7 @@ on a laptop before it defines the process. Do the same.
 
 | Before | After |
 | --- | --- |
-| Rights are monotonically non-increasing under derivation. | A domain holds a capability to a file with read and write rights. It hands a copy to a helper with only read. The helper can never get write back. Rights only shrink. |
+| Stale-reference safety is guaranteed via generation-tagged handle resolution. | A domain names a kernel object by a handle, a small number. When the object is destroyed, every handle to it answers `ERX_ESTALE` until its holder closes it. It never names whatever object comes next. |
 
 **Explain before use: background boxes.** When a chapter needs an idea
 from outside erXos (virtual memory, a capability, an Erlang link,
@@ -330,7 +330,7 @@ unexplained ones together.
 
 | Before | After |
 | --- | --- |
-| The capability-mediated IPC rendezvous enforces in-flight-free transfer semantics. | Capabilities move only when sender and receiver meet in one kernel call. The receiver has already reserved a slot for each one. No capability ever waits in a queue. |
+| Handle propagation is constrained to a strictly hierarchical delegation topology. | A handle reaches another domain in one way only: its holder passes it into a space the holder created. A domain cannot send a handle to a sibling. |
 
 **One name per concept.** Use the name the design documents use, and
 the glossary lists, every time. Do not vary it for elegance. A reader
@@ -443,7 +443,7 @@ system's kernel does is [design-fiasco.md](../design-fiasco.md); the
 other `design-*.md` documents are the authority for the rest. Where a
 design document describes a feature only in a form that needs a
 different kernel (grants the kernel enforces, budgets as kernel
-accounts, generation-checked lookups), describe what the system does
+accounts), describe what the system does
 on Fiasco and leave the other form out.
 
 **Every chapter has a status box.** It says what in the chapter is

@@ -5,10 +5,11 @@
 > the actions; the device NIF's pure cores, the independent check of
 > every plan and the one effect loop; the funnel; the chokepoint build
 > checks, each with a seeded violation; and the stack proof of the C17
-> code that Fiasco links. Of the properties in section 6.2, two are
-> Designed: the memory wall of a domain's budget, and Fiasco's refusal
-> of a mapping that is writable and executable at once. The rest are
-> Built, with the limits the section states.
+> code that Fiasco links. Of the properties in section 6.2, three are
+> Designed: the memory wall of a domain's budget, Fiasco's refusal of
+> a mapping that is writable and executable at once, and handles with
+> rights and a generation in their value. The rest are Built, with the
+> limits the section states.
 
 **Background needed.** [Chapter 1](01-operating-systems.md): caches,
 DMA, barriers. [Chapter 2](02-microkernels.md): capabilities, and
@@ -132,12 +133,12 @@ expect, this section says so.
 
 | Property | The one mechanism | Chapter |
 | --- | --- | --- |
-| Only the root service creates kernel objects | no domain holds Fiasco's factory; `liberx` sends every such request to the root service | [8](08-kernel-interface.md), [10](README.md#chapter-10-domains-a-wall-around-some-processes) |
-| A destroyed object is gone for every holder at once | every use of a handle passes one lookup that checks the object's generation | [8](08-kernel-interface.md) |
+| Only the root service creates kernel objects | no domain holds Fiasco's factory; `liberx` sends every such request to the root service | [8](08-kernel-interface.md#83-the-root-service-who-holds-what), [10](README.md#chapter-10-domains-a-wall-around-some-processes) |
+| A destroyed object is gone for every holder at once | every use of a handle passes one lookup that checks the object's generation | [8](08-kernel-interface.md#842-destroying-an-object) |
 | Ending a budget ends what was charged to it | one walk over the root service's records of that budget | [12](README.md#chapter-12-memory-and-budgets) |
 | A pid is a name, not an authority | the receiver's funnel admits an operation only on a process its own export table lists | [10](README.md#chapter-10-domains-a-wall-around-some-processes) |
 | No process acts on a message from another domain that its protocol's owner did not admit | every such message arrives wrapped as `{erx_origin, D, Msg}`; only the protocol's owner unwraps it | [10](README.md#chapter-10-domains-a-wall-around-some-processes) |
-| Every layer agrees on the kernel interface | all are generated from the files under `abi/` | [7](07-one-source.md) |
+| Every layer agrees on the kernel interface | all are generated from the files under `abi/` | [7](07-one-source.md#72-the-abi-file) |
 
 *Table 6.1. The "by construction" properties on Fiasco. No row
 depends on every caller remembering a rule.*
@@ -182,10 +183,16 @@ Handles carry no rights. Any holder may use an object as its type
 allows; only destroying it is kept to the task that created it.
 
 The generation does not cover a holder's own close. A closed handle's
-number is free, and the root service reuses numbers lowest first, as
-UNIX reuses descriptors. A program that closes handle 5 and goes on
+number answers `ERX_EINVAL` until the root service reuses it, and it
+reuses numbers lowest first, as UNIX reuses descriptors. A program that closes handle 5 and goes on
 using 5 reaches whatever object is given that number next. This is a
 limitation of the system.
+
+The design closes both gaps; it is designed and not built. Each
+handle records its rights, which shrink when the handle is
+duplicated or passed and are checked on every use, and a handle's
+value carries its entry's generation, so a use after the holder's
+own close answers `ERX_ESTALE` too and never reaches another object.
 
 ### 6.2.3 Budgets
 
@@ -827,7 +834,7 @@ phrase "make illegal states unrepresentable" comes from Yaron Minsky's
 advice on programming in OCaml. Gary Bernhardt's "functional core,
 imperative shell" names the split of section 6.3. Barrelfish applied
 declarative techniques to configuring an operating system, which
-[chapter 7](07-one-source.md) takes up.
+[chapter 7](07-one-source.md#710-where-logic-languages-fit-and-where-they-do-not) takes up.
 
 ## Summary
 

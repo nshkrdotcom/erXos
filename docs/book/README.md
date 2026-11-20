@@ -262,7 +262,7 @@ services are exactly its interface: everything else runs in user mode.
 [D. Dependencies and Licenses](#appendix-d-dependencies-and-licenses),
 [E. Lineage](#appendix-e-lineage)
 
-About 870 pages in all, at about 400 words a page.
+About 817 pages in all, at about 400 words a page.
 
 ---
 
@@ -548,7 +548,7 @@ took from it.
 
 ### Chapter 5. Design Overview of erXos
 
-*About 34 pages.* The whole system in one chapter: seven concepts, what
+*About 18 pages.* The whole system in one chapter: seven concepts, what
 runs where, and a day in the life of the machine.
 
 **Background needed.** Chapters 1 to 4.
@@ -557,54 +557,59 @@ runs where, and a day in the life of the machine.
 uses one. What a boot image, a manifest and a package are, one paragraph
 each, before the chapter names them.
 
-**Status.** Mixed; the day in the life is annotated step by step. Built:
-the system domain as root task on Fiasco, domains each with its own ERTS,
-the command shell, programs and pipes, storage and networking services,
-the display. Designed: principals with domains of their own at login,
-consoles with a login.
+**Status.** Built: a machine boots on Fiasco into the system domain,
+which starts the storage, network and display domains and logs root in
+at the console; shell commands and a pipeline of a native program and
+Erlang commands; the system's state under `/proc`; inspecting any
+process; creating a domain and seeing a link report its end; memory and
+threads held as records, and ending a domain ends everything charged to
+it. Designed: memory limits that refuse a domain more, CPU limits per
+domain, rights on handles and handles that stay stale after their own
+close, a login that gives each person a domain of their own, and
+toybox's UNIX programs in the session's `/bin`.
 
 1. **Seven concepts, each with one owner.** Process, domain, runtime,
-   group, budget, capability, principal: what each is, who owns it, and
-   why each has exactly one owner. The chapter defines the terms the rest
-   of the book uses (executor, connection, lane, funnel, export, facet,
-   sub-space, namespace, port) in plain words, as a reader's map.
+   group, budget, capability and export, principal: what each is, who
+   owns it, and why each has exactly one owner. The section opens with
+   one process and the seven questions it answers. It defines the terms
+   the rest of the book uses (connection, executor, own and outer
+   budget, handle and generation, export table, session template,
+   session, package) in plain words, as a reader's map.
    *Draws on:* [design.md, The model](../design.md#the-model).
-2. **What runs where.** The kernel in kernel mode, and everything else in
-   user mode: the system domain (ERTS on the interpreter, the root task),
-   Erlang domains, driver domains, and native programs in sub-spaces of a
-   session. For each: what it runs, who trusts it, and what happens when
-   it fails, from "the domain dies and links fire" to "the machine resets
-   after a crash record".
+2. **What runs where.** Fiasco, the only code in kernel mode, and
+   everything else in user mode: the system domain (the root task, its
+   root service, domain library and system services), Erlang domains,
+   driver domains, and native programs in sub-spaces of a session. For
+   each: what it runs, who trusts it, and what a failure reaches, from
+   "the domain dies and links fire" to "the machine resets".
    *Draws on:* [design.md, Overview](../design.md#overview),
    [design.md, Trust placement](../design.md#trust-placement).
 3. **A day in the life.** The machine boots, the system domain starts the
-   domains the system manifest lists, a user logs in and gets a domain, a
-   process sends to a service through a facet, a sandbox domain crashes
-   and a link delivers `{domain_down, D, crash}`, and `find /tmp -type f
-   | wc -l` runs a native program and an Erlang command in one pipeline.
-   Each step names the chapter that explains it and whether it is built
-   or designed.
+   domains the system manifest lists, a session starts, a process sends
+   to a service through a facet, a domain crashes and a link reports it,
+   and `find /tmp -type f | wc -l` runs a native program and an Erlang
+   command in one pipeline. Each step names the chapter that explains it
+   and whether it is built or designed.
    *Draws on:* [design.md, Overview](../design.md#overview).
 4. **Signature experiences.** What a person can do on erXos that a
    conventional system does not offer: the shell is the operating
-   system; the machine is an object; kill a driver mid-transfer and its
-   supervisor restarts it; forge a pid and nothing happens; UNIX tools
-   over live Erlang state. Each is shown as a short transcript, marked
-   built or not.
+   system; the machine is an object you edit; a driver is a process,
+   killed and restarted; a wall around some processes; UNIX tools over
+   live Erlang state; a user with a domain of their own (Designed). Each
+   is shown as a short transcript or sketch, marked built or designed.
    *Draws on:* [design.md, Signature experiences](../design.md#signature-experiences),
    [DEMOS.md](../../DEMOS.md).
-5. **The decisions every reader needs.** A guided tour of the cross-cutting
-   decisions: every runtime in user mode, `liberx` the only issuer of
-   kernel calls, every domain a node, pids naming their owner domain,
-   budgets as space banks, system code in Erlang, drivers included,
-   formats erXos's own from the first day, and no backward compatibility
-   during development. Each with its one-line reason.
+5. **Four decisions every chapter assumes.** `liberx` is the only
+   issuer of kernel calls; every domain is a node; system code is
+   Erlang, drivers included; formats are erXos's own. Each with its
+   one-line reason.
    *Draws on:* [design.md, Decisions](../design.md#decisions).
 6. **Tensions and alternatives.** Where the design pulls against itself
-   (performance against isolation, Erlang against C, a familiar surface
-   against a different model) and the large alternatives rejected: a
-   Linux virtual machine, POSIX as the base, one runtime for the whole
-   machine, a verifier instead of hardware protection.
+   (performance against isolation, Erlang against C, a trusted base
+   above the kernel, a familiar surface over a different model, shared
+   services and shared CPU) and the large alternatives rejected: Linux
+   underneath, POSIX as the base, one runtime for the whole machine, a
+   verifier instead of hardware protection.
    *Draws on:* [design.md, Tensions](../design.md#tensions),
    [design.md, Alternatives considered](../design.md#alternatives-considered),
    [design.md, Why no verifier](../design.md#why-no-verifier).
@@ -617,24 +622,27 @@ diagram, each step tagged with its chapter and status.
 
 ### Chapter 6. Correct by Construction
 
-*About 28 pages.* How erXos is designed: properties that hold because the
+*About 18 pages.* How erXos is designed: properties that hold because the
 wrong state cannot be written, not because every case was remembered.
 
 **Background needed.** Chapters 1 to 3 (chapter 1 for DMA and caches,
-chapter 3 for Erlang).
+chapter 2 for capabilities, chapter 3 for Erlang).
 
 **Background boxes.** Pure functions and side effects, with an Erlang
 example. Model checking, fuzzing and static checks in a paragraph each.
 Why a device's write can bypass a cache, enough for the worked example;
 chapter 15 explains it in full.
 
-**Status.** The method is applied throughout the built tree: pure cores
-returning `{State, Actions}` with one edge loop, `erx_actions:perform/3`
-(Built); the device NIF's round functions and `erx_device_dma_check`
-(Built); the chokepoint checks and the stack proof of the C17 cores
-(Built, in `make check`). The chapter's "by construction" properties
-are those the system has on Fiasco; where Fiasco gives a weaker
-property than a reader would expect, the chapter says so plainly.
+**Status.** The method is Built and runs through the tree: pure Erlang
+cores that return `{State, Actions}`, with edges that perform the
+actions; the device NIF's pure cores, the independent check of every
+plan and the one effect loop; the funnel; the chokepoint build checks,
+each with a seeded violation; and the stack proof of the C17 code that
+Fiasco links. Of the properties in section 6.2, three are Designed: the
+memory wall of a domain's budget, Fiasco's refusal of a mapping that is
+writable and executable at once, and handles with rights and a
+generation in their value. The rest are Built, with the limits the
+chapter states.
 
 1. **Open-ended enumeration is the smell.** A correctness argument that
    depends on remembering every caller, path or exception breaks with the
@@ -646,37 +654,44 @@ property than a reader would expect, the chapter says so plainly.
    *Draws on:* [design.md, Invariants](../design.md#invariants),
    [design.md, Correct by construction in code](../design.md#correct-by-construction-in-code).
 2. **The properties erXos holds by construction.** A tour of the list
-   as it holds on Fiasco: only the root service creates kernel objects
-   and writes object spaces; rights only shrink; no single mapping is
-   writable and executable at once; a domain's memory is bounded by its
-   own budget; a pid is a name, not an authority; no process acts on a
-   message from another domain that its protocol's owner did not admit;
-   every layer agrees on the ABI because all are generated from one
-   file. For each, the one mechanism that makes it hold, and the
-   chapter that shows it.
+   as it holds on Fiasco: only the root service creates kernel objects;
+   a destroyed object's handles answer `ERX_ESTALE` and never name a
+   successor, while a number used after its own close can reach another
+   object; a domain's memory is charged to its own budget, and the wall
+   that refuses a charge past it is Designed; a pid is a name, not an
+   authority; no process acts on a message from another domain that its
+   protocol's owner did not admit; every layer agrees on the ABI because
+   all are generated from one file; the root service refuses a mapping
+   that is writable and executable at once, and Fiasco's own refusal of
+   one is Designed. For each, the one mechanism that makes it hold, and
+   the chapter that shows it.
    *Draws on:* [design.md, Invariants](../design.md#invariants),
    [design-fiasco.md, Contract](../design-fiasco.md#contract),
    [design-domains.md, Invariants](../design-domains.md#invariants).
 3. **Functional core, effects at the edge.** Every decision that can be a
    pure function is one: a state machine that returns the next state and
    a list of actions, a plan validated whole before anything is applied.
-   The section shows the shape in Erlang (`{State, Actions}` and the one
-   edge loop) and in C (a round function, an observation or a decision,
-   one effect loop), and why the opposite shape, a caller stringing
-   helpers together in the right order, keeps producing sequencing bugs.
+   The section shows the shape in C and in Erlang, why the opposite
+   shape, a caller stringing helpers together in the right order, keeps
+   producing sequencing bugs, and why variants beat flags.
    *Draws on:* [design.md, Functional core, effects at the edge](../design.md#functional-core-effects-at-the-edge),
    [style.md, Functional core](../style.md#functional-core).
 4. **A worked example: the device DMA plan.** A preview of chapter 15. A
-   driver's C part never pokes a device freely: its pure core produces a
-   plan, ordered steps such as "write this value at this offset of this
-   region", "publish this register", "copy these bytes back", and one
-   function, `erx_device_dma_check`, checks the whole plan, together with
-   the queue's state before and after, before anything touches the
-   hardware. Every device address stays inside the domain's DMA memory,
-   and no region ever has two writers. Cache maintenance and barriers are
-   derived from the plan by one sequencer, so no driver can forget one.
+   driver's C part never pokes a device freely: its pure core, a form
+   for each kind of device, produces a plan, and one independent check
+   reads the whole plan before anything touches the hardware. Every
+   device address stays inside the queue's DMA memory, and no region
+   ever has two writers. Cache maintenance and barriers are derived from
+   the plan by one effect loop, so no driver can forget one, and a build
+   check keeps them there.
    *Draws on:* [design-device-dma.md, Calls, observations and plans](../design-device-dma.md#calls-observations-and-plans).
-5. **Only X may do Y: chokepoints as build checks.** A rule such as "only
+5. **What construction cannot say.** A structure proves where an
+   operation can be done from, not that the code allowed to do it does
+   it only when it should. Model checking, litmus tests, CBMC and fuzz
+   targets cover the rest, and seeded faults prove each check catches
+   what it guards.
+   *Draws on:* [design-verification.md](../design-verification.md).
+6. **Only X may do Y: chokepoints as build checks.** A rule such as "only
    the device shim touches a device's registers" or "only `liberx`
    issues kernel calls" is a check that fails the build on a new site,
    and each check has a test that plants a violation and expects the
@@ -685,22 +700,23 @@ property than a reader would expect, the chapter says so plainly.
    and a chokepoint check covers only what such a boundary cannot say.
    *Draws on:* [design.md, Chokepoint checks](../design.md#chokepoint-checks),
    `tools/lib/erx/chokepoint_rules/`.
-6. **Bounded stacks and typed numbers.** The C17 code erXos links
-   into Fiasco recurses only through tail calls the compiler must turn
-   into jumps, and each build computes its worst-case stack depth from
-   the call graph. Addresses, sizes and counts have types that do not
-   convert into each other. The section shows how both turn a class of
-   bug into a build failure.
-   *Draws on:* [design.md, Bounded stacks](../design.md#bounded-stacks),
-   [design.md, Typed addresses and counts](../design.md#typed-addresses-and-counts).
-7. **One interface below every runtime.** Every runtime and program
+7. **Bounded stacks.** The C17 code erXos links into Fiasco recurses
+   only through tail calls the compiler must turn into jumps, and each
+   build computes its worst-case stack depth from the call graph.
+   Parsers outside the kernel bound their depth too.
+   *Draws on:* [design.md, Bounded stacks](../design.md#bounded-stacks).
+8. **One interface below every runtime.** Every runtime and program
    reaches the kernel through `liberx`, every shared format is erXos's
-   own, and none of Fiasco's data model reaches Erlang code or a user.
-   The section shows the rule at the kernel interface, at the storage
-   domain's file server and at the display, and what it buys: a
-   component below the interface can change without anything above it
-   moving.
+   own, and none of Fiasco's data model reaches Erlang code or a user,
+   so a component below the interface can change without anything above
+   it moving.
    *Draws on:* [design.md, Decisions](../design.md#decisions).
+9. **When a construction fails, and the choices.** What each failure
+   looks like (a chokepoint violation, a stack proof failure, a refused
+   DMA plan, a core that acts after stopping, a malformed frame), the
+   failures construction does not prevent, and the alternatives:
+   careful review, checks at run time everywhere, a verified kernel, a
+   language that enforces more.
 
 **Figures.** 6.1: a pure core and its effect loop: request in, either
 "observe these reads" or "decide: this plan and the next state", the
@@ -710,7 +726,7 @@ violation.
 
 ### Chapter 7. One Source for Every Fact
 
-*About 26 pages.* Declarative description in erXos: facts stated once,
+*About 13 pages.* Declarative description in erXos: facts stated once,
 and everything that follows from them generated or checked.
 
 **Background needed.** Chapter 6; chapter 3 for Erlang terms.
@@ -720,74 +736,78 @@ two languages must agree on one. Code generation from a specification,
 against writing the same table twice. Datalog in a page: facts, rules,
 queries. How a chip vendor describes registers (CMSIS-SVD).
 
-**Status.** Built: `abi/erx_abi.txt` and its Ruby generators (C headers,
-Erlang modules, Ruby tables); the hardware sources (CMSIS-SVD files and
-Arm's machine-readable register data); the inspection schema
-(`abi/inspection.txt`); the theme file (`abi/theme.txt`) with its
-contrast rules; errno and signal tables with FreeBSD's numbers; the
-system manifest and its build-time check, in Ruby. Datalog is not
-used; the declarative operating-system services of BOOM and Dedalus
-are a research direction, not a design.
+**Status.** Built: the ABI file and its generators; register accessors
+generated from the hardware sources; the theme and its contrast rules;
+the errno and signal tables; the system manifest and its build-time
+check; the declared services and inspection schema. Designed: the ABI
+file declaring every kernel call (it declares one); budgets that refuse
+a charge at run time; per-domain CPU limits; the ADMA2 descriptor form
+for the SD controller.
 
-1. **The problem: parallel copies.** Two places that must change
-   together become a list of places to update, and the list is an
-   enumeration that someone forgets. The section states the rule (every
-   decision, table and format has one implementation; C, Erlang and Ruby
-   share a table only by generation) and its companion: a fact the build
-   can compute is never written by hand and then checked.
+1. **Parallel copies, and the rule that replaces them.** Two places that
+   must change together become a list of places to update, and the list
+   is an enumeration that someone forgets. The section states the rule
+   (every decision, table and format has one implementation; C, Erlang
+   and Ruby share a table only by generation) and its companion: a fact
+   the build can compute is never written by hand and then checked.
    *Draws on:* [design.md, One source for the ABI and the hardware](../design.md#one-source-for-the-abi-and-the-hardware),
    [design-generation.md, Sources and outputs](../design-generation.md#sources-and-outputs).
-2. **The ABI file.** Kernel calls with their argument types and rights,
-   status codes, limits and every fixed binary layout (rings, reader
-   pages, frames, boot information, virtio descriptors) are declared in
-   one text file, and Ruby generators produce the kernel's dispatch, the
-   C bindings of `liberx` and its backends, the Erlang codecs and the
-   host tools' readers. The section walks one declaration from text to
-   each generated output, and shows the rules of a good spec: closed
-   value sets, derived offsets, strict runs, sorted output.
+2. **The ABI file.** Status codes, limits, rights and every fixed binary
+   layout (rings, reader pages, frames, boot information, descriptors)
+   are declared in one text file, and Ruby generators produce the C
+   headers, the Erlang modules and the Ruby tables. The section walks
+   one line from text to each output, and one layout to its offsets and
+   the compiler's word on them.
    *Draws on:* [design-abi.md, Source grammar](../design-abi.md#source-grammar),
    [design-abi.md, A complete declaration example](../design-abi.md#a-complete-declaration-example),
    `abi/erx_abi.txt`.
-3. **The hardware has one source too.** Device registers come from
-   CMSIS-SVD files and each architecture's system registers from Arm's
+3. **The rules every spec follows.** State facts and derive the rest;
+   close every set, strictly; no expressions; fail whole; sorted and
+   deterministic; generated files are not checked in. Tables that must
+   match someone else's, such as FreeBSD's errno numbers.
+4. **The hardware has one source too.** Device registers come from
+   CMSIS-SVD files and the processor's own registers from Arm's
    machine-readable data; accessors are generated and no register bit is
-   packed by hand. Terminal sequences and keymaps come from their own
-   sources the same way.
+   packed by hand. The section follows one register from XML to a
+   driver.
    *Draws on:* [design-generation.md, Hardware and terminal sources](../design-generation.md#hardware-and-terminal-sources),
    [design-generation.md, Register inputs](../design-generation.md#register-inputs).
-4. **The system manifest: the machine's configuration, proved.** One file
-   lists every configured domain with its principal, image, budget,
-   grant, devices, facets and introductions. The build packs it into the
-   boot image and a check refuses a manifest that breaks a property the
-   security argument rests on, such as a domain that parses hostile
-   input holding a device no IOMMU confines. Each property
-   has a test that plants one violation and expects its diagnostic.
+5. **One theme, three languages.** The desktop's type roles, spacing,
+   radii, shadows and palette are one declaration with contrast rules the
+   build checks, and the Erlang, C and TypeScript sides are generated
+   from it.
+   *Draws on:* [design-desktop-programs.md, The theme: one declaration](../design-desktop-programs.md#the-theme-one-declaration).
+6. **The descriptor formats behind the DMA check.** Each kind of
+   device's descriptors are declared once, and the device NIF's forms
+   and the check read the same declaration.
+7. **The system manifest: the machine's configuration, checked.** One
+   file lists every configured domain with its principal, image,
+   budget, devices by unit, facets and introductions. A build check
+   refuses a manifest that breaks a property the security argument rests
+   on, and each property has a seeded test that plants one violation and
+   expects its diagnostic.
    *Draws on:* [design-system.md, The manifest](../design-system.md#the-manifest),
-   [design-abi.md, System-manifest representation](../design-abi.md#system-manifest-representation),
-   [design-fiasco.md, The manifest check](../design-fiasco.md#the-phase-1-manifest-check).
-5. **Declared services and inspection paths.** Every cross-domain facet is
+   [design-abi.md, System-manifest representation](../design-abi.md#system-manifest-representation).
+8. **Declared services and inspection paths.** Every cross-domain facet is
    declared in `abi/services` with the design section that justifies it,
    and every value the system observes is an inspection path declared in
    `abi/inspection.txt`; a build check refuses what the tables do not
-   list. The section explains how this turns "no new mechanism without a
-   design" into something the build enforces.
+   list.
    *Draws on:* [design-generation.md, Service interfaces](../design-generation.md#service-interfaces),
    [design-generation.md, Inspection and diagnostics](../design-generation.md#inspection-and-diagnostics).
-6. **One theme, three renderers.** The desktop's type roles, spacing,
-   radii, shadows and palette are one declaration with contrast rules the
-   build checks, and the Erlang, C and TypeScript sides are generated
-   from it. A small example of the same idea far from the kernel.
-   *Draws on:* [design-desktop-programs.md, The theme: one declaration](../design-desktop-programs.md#the-theme-one-declaration).
-7. **Where Datalog fits, and where it does not.** The section separates
-   the declarative work that is built (the specs above) from what is
-   research (declarative services after BOOM and Dedalus, Barrelfish's
-   system knowledge base). It explains the rule that decides each case:
-   a declarative form is chosen when it turns a property into a checked
-   constraint, never where it adds complexity, and exact budget
-   arithmetic stays in Ruby because awklog has none.
-   *Draws on:* [design-verification.md, Focused tool evaluations](../design-verification.md#focused-tool-evaluations),
-   [research-os-ideas.md, Declarative OS services from BOOM and Dedalus](../research-os-ideas.md#declarative-os-services-from-boom-and-dedalus),
-   [research-os-ideas.md, Barrelfish and declarative hardware management](../research-os-ideas.md#barrelfish-and-declarative-hardware-management).
+9. **When a source is wrong.** A malformed spec, a well-formed but wrong
+   value, and a wrong configuration, and what catches each.
+10. **Where logic languages fit, and where they do not.** Barrelfish's
+    system knowledge base and the BOOM project described systems in a
+    logic language; erXos's principles allow Datalog where it turns a
+    property into a checked constraint, never where it adds complexity.
+    The section says where that holds and where plain generators win.
+    *Draws on:* [design-verification.md, Focused tool evaluations](../design-verification.md#focused-tool-evaluations),
+    [research-os-ideas.md, Declarative OS services from BOOM and Dedalus](../research-os-ideas.md#declarative-os-services-from-boom-and-dedalus),
+    [research-os-ideas.md, Barrelfish and declarative hardware management](../research-os-ideas.md#barrelfish-and-declarative-hardware-management).
+11. **Design choices.** Headers written by hand and tested, the C header
+    as the source, a general interface language, checking the
+    configuration at boot: why each was not chosen.
 
 **Figures.** 7.1: the generation graph: the ABI file, the hardware
 sources, the theme and the inspection schema on the left, the generators
@@ -798,82 +818,93 @@ properties, diagnostics, with one seeded violation traced through.
 
 ### Chapter 8. The Kernel Interface and Fiasco
 
-*About 40 pages.* The kernel's services are its interface: objects,
-capabilities, threads, memory, IPC and interrupts. Fiasco, the L4
+*About 23 pages.* The kernel's services are its interface: objects,
+handles, threads, memory, IPC and interrupts. Fiasco, the L4
 microkernel, is the kernel behind it, and the system domain's root
 service builds every domain over it.
 
-**Background needed.** Chapters 1 to 3 and 5 to 7; chapter 2 for
-capabilities.
+**Background needed.** Chapters 1 to 3; chapter 2 for capabilities,
+IPC gates, the UTCB and the root task. Chapters 5 to 7 help but are not
+required.
 
-**Background boxes.** A capability table recalled from chapter 2 with a
-worked lookup. Fiasco, L4Re and the root task in a page.
+**Background boxes.** A capability table recalled from chapter 2.
+Fiasco, L4Re and the root task in a page.
 
-**Status.** Built: `liberx`'s Fiasco backend, the hosted backend for
-hosted mode, the root service's request decoder and placement code.
-Designed: handles as Fiasco slots, a factory per domain budget, bands,
-DMA spaces, and the system-call fuzz campaign.
+**Status.** Built: `liberx` with its Fiasco backend and its hosted
+backend, held to one test set; the root service, its request decoder
+and its tables; handles as entries of the root's per-task tables, each
+carrying its object's generation; memory objects of seven kinds,
+mappings and the root's page pool; doorbells and device lines; thread
+creation, umtx waits and parking; fault gates and exit records; the
+machine's end on a fault of the root task; budgets as records that end
+what is charged to them. Designed: priority bands and per-domain CPU
+sets; signals through vCPU upcalls; DMA spaces behind an IOMMU; rights
+on handles and the generation in a handle's value; and the system-call
+fuzz campaign.
 
-1. **What the kernel knows, and what it does not.** Threads, groups of
-   threads, memory, capabilities and interrupts; nothing of Erlang. The
-   section explains why the line falls there, what a microkernel buys
-   (every runtime and driver in user mode, a small trusted base) and
-   what it costs (crossings), with Singularity's measurements of hardware
-   crossings as the evidence.
+1. **What the kernel knows, and what it does not.** Spaces, threads,
+   memory objects, IRQ objects, gates and budgets; nothing of Erlang.
+   The section explains why the line falls there.
    *Draws on:* [design-fiasco.md, Contract](../design-fiasco.md#contract),
    [design.md, Trust placement](../design.md#trust-placement).
 2. **`liberx`: the one issuer of kernel calls.** Every kernel call in
-   every runtime and program goes through `liberx`, whose calls are
-   generated from the ABI file; behind it sit the Fiasco backend and the
-   hosted backend, which pass one test set, refusals included. A call
-   the backend cannot implement over Fiasco fails with `ERX_ENOTSUP`,
+   every runtime and program goes through `liberx`, whose numbers come
+   from the ABI file; behind it sit the Fiasco backend, whose calls are
+   local or service calls, and the hosted backend, which pass one test
+   set. A call the backend cannot carry out fails with `ERX_ENOTSUP`,
    and a value it cannot measure is reported as unsupported, never
-   invented.
+   invented. A build check holds the seam.
    *Draws on:* [design-runtime.md, liberx](../design-runtime.md#liberx),
    [design-runtime.md, The liberx interface](../design-runtime.md#the-liberx-interface).
-3. **The root service: who holds what.** The system domain acts as
-   L4Re's root task does: its root service is the only creator of
-   kernel objects and the only writer of any object space or page
-   table. A domain asks it through the backend, and the request decoder
-   and placement code decide what each domain holds. The call table
-   maps each interface call onto Fiasco's own capabilities, factories,
-   interrupts and DMA spaces.
+3. **The root service: who holds what.** One thread of the system domain
+   is the only creator of kernel objects and the only writer of page
+   tables, so its tables need no lock. What a domain holds, the request
+   decoder as the trust boundary, and one request followed end to end:
+   a domain's crash area.
    *Draws on:* [design-fiasco.md, The construction](../design-fiasco.md#the-construction),
    [design-fiasco.md, Who holds what](../design-fiasco.md#who-holds-what),
    [design-fiasco.md, The call table](../design-fiasco.md#the-call-table).
-4. **Handles, rights and destroying an object.** A handle is a slot of
-   a task's object space; rights only shrink when a handle is passed;
-   only the root moves a handle between domains. A slot carries no
-   generation, so a use-after-close bug acts on whatever the slot holds
-   next; the section says so plainly and shows what that means for an
-   app and for a server. How an object is destroyed, and what happens to
-   its holders.
-   *Draws on:* [design-fiasco.md, Handles are slots](../design-fiasco.md#handles-are-slots),
-   [design-fiasco.md, Rights](../design-fiasco.md#rights),
-   [design-fiasco.md, Destroying an object](../design-fiasco.md#destroying-an-object),
+4. **Handles and destroying an object.** A handle is an entry in the
+   caller's table in the root service, one plus its index; the entry
+   records its object's generation, so a destroyed object's handles
+   answer `ERX_ESTALE` and never name a successor. A closed number is
+   reused lowest first, so a use after one's own close can reach another
+   object; the section says what that means for an app and for a
+   server. Handles carry no rights, and only the creator may destroy;
+   rights per handle and a generation in the value are Designed.
+   Handles flow only down, from a space's creator into it.
+   *Draws on:* [design-fiasco.md, Destroying an object](../design-fiasco.md#destroying-an-object),
    [design-fiasco.md, Passing a handle](../design-fiasco.md#passing-a-handle).
-5. **Threads, gates, interrupts and faults.** The objects a runtime uses
-   to run and wait: threads and bands, the user-space mutex (umtx),
-   interrupts and readiness, IPC gates that carry fault and exit
-   records, and vCPU upcalls for signals. How a fault reaches the right
-   handler, and what a fault of the root task does to the machine.
+5. **Threads, waits, gates and faults.** Threads and the reaper, one
+   semaphore per thread for umtx waits and parking, gates that carry
+   fault and exit records, how a fault reaches the right handler, what
+   a fault of the root task does to the machine, and signals through
+   vCPU upcalls (Designed).
    *Draws on:* [design-fiasco.md, Threads, waits and exit](../design-fiasco.md#threads-waits-and-exit),
-   [design-fiasco.md, Interrupts and readiness](../design-fiasco.md#interrupts-and-readiness),
-   [design-fiasco.md, IPC gates and where transfer fits](../design-fiasco.md#ipc-gates-and-where-transfer-fits),
    [design-fiasco.md, vCPU upcalls on Fiasco](../design-fiasco.md#vcpu-upcalls-on-fiasco).
-6. **What Fiasco gives, and what it does not.** Isolation between
+6. **Memory objects and mappings.** One page, one address in the root's
+   window; reserve, commit and map through one range table; the kinds
+   of memory object; who pays.
+7. **Interrupts, doorbells and devices.** One dispatcher per task for
+   device lines and doorbells alike, and what a driver domain holds for
+   a device.
+   *Draws on:* [design-fiasco.md, Interrupts and readiness](../design-fiasco.md#interrupts-and-readiness).
+8. **What Fiasco gives, and what it does not.** Isolation between
    domains rests on Fiasco and on the root service's decoder and
    placement code; where no IOMMU confines a DMA-capable device, also on
    the domain that drives it. The section states plainly what a hostile
-   app can and cannot do on the system, as a property of the system.
+   domain could do and what fails when, as a property of the system.
    *Draws on:* [design-fiasco.md, Security on Fiasco](../design-fiasco.md#security-on-fiasco),
    [design-fiasco.md, What a hostile app can do](../design-fiasco.md#what-a-hostile-app-can-do).
+9. **Design choices.** Runtimes talking to Fiasco directly, a root of
+   several threads, Fiasco's own interface, a refusal as a best effort:
+   why each was not chosen.
 
 **Figures.** 8.1: the kernel interface: runtimes and programs above,
 `liberx` and its generated calls, the Fiasco and hosted backends below
 it. 8.2: the root service between the domains and Fiasco: requests in,
-kernel objects placed in each domain's object space. 8.3: a handle's
-life: a slot taken, passed by the root, closed.
+kernel objects placed in each domain's tables. 8.3: a handle's
+life: created, passed, stale or closed, reused.
 
 ## Part III. Processes
 

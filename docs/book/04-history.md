@@ -484,7 +484,7 @@ no constant is copied by hand. The system's configuration is one
 **system manifest**, a file that names every domain the machine runs,
 with its budget, its devices and the services it may reach; the build
 checks it before making the image
-([chapter 7](README.md#chapter-7-one-source-for-every-fact)).
+([chapter 7](07-one-source.md#77-the-system-manifest-the-machines-configuration-checked)).
 
 ### 4.5.5 UNIX look and feel, honestly
 

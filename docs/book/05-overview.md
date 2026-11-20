@@ -12,7 +12,8 @@ links back to it.
 > create a domain and see a link report its end. Memory and threads are
 > held as records, and ending a domain ends everything charged to it.
 > **Designed** and not built: memory limits that refuse a domain more,
-> CPU limits per domain, a login that gives each person a domain of
+> CPU limits per domain, rights on handles and handles that stay stale
+> after their own close, a login that gives each person a domain of
 > their own, and toybox's UNIX programs in the session's `/bin`.
 
 A FreeBSD machine that runs a web shop has two worlds in it. One is
@@ -212,10 +213,15 @@ address space, a thread or a device's interrupt, and records the
 object's **generation**, a count that grows each time the root
 service frees an object's record. So when an object is destroyed,
 every handle to it answers `ERX_ESTALE` until it is closed, and never
-names whatever object comes next. After a close the number is reused,
-lowest first, as UNIX reuses descriptors. Unlike chapter 2's
+names whatever object comes next. A closed number answers `ERX_EINVAL`
+until it is reused, lowest first, as UNIX reuses descriptors, so a
+program that uses a number after its own close reaches whatever object
+took it next. Unlike chapter 2's
 capabilities, handles carry no rights: whoever holds one may use its object, and only the object's creator
-may destroy it (`liberx/backend/core/handles.h`).
+may destroy it (`liberx/backend/core/handles.h`). The design gives
+handles rights that only shrink as a handle is passed, and a value
+that carries the generation, so a use after the holder's own close
+answers `ERX_ESTALE` too; that is designed and not built.
 
 The second is an **export**, which does the same job for Erlang
 processes. A domain reaches only the processes another domain exported
@@ -321,7 +327,7 @@ capabilities, and knows nothing of Erlang, domains or budgets
 program reaches it through `liberx`, erXos's C library for kernel
 calls, whose calls and status codes are erXos's own
 ([section 2.5.4](02-microkernels.md#254-why-erxos-uses-fiasco-and-liberx-above-it);
-[chapter 8](08-kernel-interface.md)).
+[chapter 8](08-kernel-interface.md#82-liberx-the-one-issuer-of-kernel-calls)).
 
 Everything trusts Fiasco, so a bug in it is every domain's bug.
 Nothing a domain does may panic it. That rests on Fiasco's own code,
@@ -761,7 +767,7 @@ ERTS and the root task reach Fiasco through `liberx`, whose calls are
 generated from one file, `abi/erx_abi.txt`. Nothing above `liberx`
 sees Fiasco's names, so Fiasco's model never leaks into Erlang code
 ([design-runtime.md, liberx](../design-runtime.md#liberx);
-[chapter 7](07-one-source.md)).
+[chapter 7](07-one-source.md#72-the-abi-file)).
 
 **Every domain is a node.** Each domain is an Erlang node, with its
 domain id as the node's creation number, the field that tells apart

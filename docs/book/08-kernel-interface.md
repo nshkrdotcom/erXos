@@ -9,7 +9,8 @@
 > records; the machine's end on a fault of the root task; budgets as
 > records that end what is charged to them. **Designed:** priority
 > bands and per-domain CPU sets; signals through vCPU upcalls; DMA
-> spaces behind an IOMMU; and the system-call fuzz campaign.
+> spaces behind an IOMMU; rights on handles and the generation in a
+> handle's value; and the system-call fuzz campaign.
 
 **Background needed.** [Chapter 1](01-operating-systems.md) for system
 calls, address spaces and page tables; [chapter 2](02-microkernels.md)
@@ -577,6 +578,18 @@ writable mapping of it and get one. Every build runs trusted code only
 and prints `development build: trusted code only` in its banner. In
 such a build, the masks the domain library passes are kept by the
 discipline of the code that receives them, not by the root.
+
+The design closes this gap and the one of section 8.4.3; it is
+designed and not built. Each entry of the per-task table records its
+object, its kind and its rights. Rights are intersected with the mask
+on every duplicate and pass and checked on every use. A handle's value
+carries its entry's generation, in bits the ABI file reserves, so a
+use after the holder's own close answers `ERX_ESTALE`, as a use after
+a destroy does, and never reaches another object. An interrupt object
+or a doorbell is also installed at the Fiasco slot that matches its
+handle, so ringing and acknowledging go straight to Fiasco without
+the root; only that direct use after a close is unchecked, because
+Fiasco checks the slot alone.
 
 ### 8.4.5 Why handles flow only down
 

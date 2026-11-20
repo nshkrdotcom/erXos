@@ -143,7 +143,7 @@ the L4 family ([chapter
 call Fiasco directly. They call erXos's own **kernel interface**, the
 set of requests programs may make of the kernel, which a small library
 called `liberx` carries out over Fiasco ([chapter
-8](README.md#chapter-8-the-kernel-interface-and-fiasco)).
+8](08-kernel-interface.md#82-liberx-the-one-issuer-of-kernel-calls)).
 
 **Where erXos uses this.** erXos draws the line of figure 1.1 in a
 different place. Only the kernel runs with the processor's full power,
