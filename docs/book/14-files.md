@@ -1,15 +1,16 @@
 # Chapter 14. Files, Namespaces and Service Trees
 
 > **Status.** Built: a private namespace for every domain; file
-> servers in other domains reached through grants and 9P2000.L; the
-> `erx_fs` behaviour; one path resolver for every runtime and every
-> program's handler; a program's namespace narrowed from its
+> servers in other domains reached through file grants and 9P2000.L;
+> the `erx_fs` behaviour; one path resolver for every runtime and
+> every program's handler; a program's namespace narrowed from its
 > starter's; stream files whose waiting reads a keeper holds; `/tmp`
 > on a RAM file system in Erlang; `/proc` as a read-only view of the
-> inspector; and the host link's 9P bridge. Designed: shared mappings
-> of files; the session's export of `/bin`, `/dev` and `/etc` to its
-> programs (its server is written, but no session starts it); a
-> `sysctl(3)` reader for programs; and an app's own tree at
+> inspector; the host link's 9P bridge; and the session's export, a
+> file server of `/bin`, `/dev` and `/etc` that every session starts.
+> Designed: entries on the export in a program's table, and the
+> export serving the session's local files; shared mappings of files;
+> a `sysctl(3)` reader for programs; and an app's own tree at
 > `/svc/NAME`.
 
 **Background needed.** [Chapter 1](01-operating-systems.md) for
@@ -41,9 +42,12 @@ tree ([chapter 1](01-operating-systems.md#164-file-systems-and-mounting)).
 erXos takes Plan 9's answer whole. Each domain sees files through its
 own namespace, a private table from path prefixes to the file
 servers it was given, and there is no machine-wide tree to cut from.
-An entry that leads to another domain holds the pid of a file grant
-at that domain's server, so a path is the visible face of a
-capability. Every file server speaks one protocol, 9P2000.L, and an
+An entry that leads to another domain holds the pid of a
+[file grant](11-security.md#1171-a-namespace-of-grants) at that
+domain's server. A pid alone grants nothing
+([chapter 10](10-domains.md#104-exports-a-pid-is-a-name-not-an-authority)),
+but this one was exported to this domain alone, and pid and export
+together act as a capability: a path is their visible face. Every file server speaks one protocol, 9P2000.L, and an
 Erlang file server is a callback module of one behaviour, `erx_fs`.
 The same idea serves state and control: `/proc` for what the system
 observes, and a tree an app serves for what it says.
@@ -69,10 +73,10 @@ a pid that domain's server made for this one
 > server spoke one protocol, 9P. A client attaches to a server's root
 > and gets a **fid**, a number naming a file on that connection. It
 > **walks** the fid down names to new fids, opens one, reads and
-> writes it, and **clunks** it to let it go. 9P2000.L is a version of
-> 9P that adds operations carrying Linux's file semantics, such as
-> `lopen`, `getattr` and `readdir` (Pike and others 1995;
-> [chapter 4](04-history.md#433-plan-9-names-and-files)).
+> writes it, and **clunks** it to let it go (Pike and others 1995;
+> [chapter 4](04-history.md#433-plan-9-names-and-files)). 9P2000.L
+> is a later variant of 9P that adds operations carrying Linux's file
+> semantics, such as `lopen`, `getattr` and `readdir`.
 
 ### 14.1.1 What a namespace holds
 
@@ -81,20 +85,27 @@ point, a provider, a root and rights. The **mount point** is where the
 entry starts, as plain names (`/data` is the one name `data`). The
 **provider** says who serves the names below it, one of:
 
-* `release`, the domain's own release slice at `/`, in memory mapped
-  before the domain could reach any server;
+* `release`, the domain's **release slice** at `/`: the part of the
+  boot image that holds the domain's own OTP release, in memory the
+  kernel mapped before the domain could reach any server;
 * an EROFS image, the read-only format of
-  [chapter 16](README.md#chapter-16-storage-and-updates), held in a
-  file and read by the domain's own runtime;
-* a grant at a file server, named by its pid, with the tree it roots in;
-* a facet's grant, named by the facet's name, looked up afresh at each
-  resolution;
-* `ended`, a grant that has gone, on which every request answers `eio`.
+  [chapter 16](16-storage.md), held in a file and read by the
+  domain's own runtime;
+* a file grant at a file server, named by its pid and the tree it
+  serves;
+* a facet's file grant, named by the facet's name and a tree: the
+  file grant that the domain's **facet registry** (`erx_facets`, the
+  table of every facet the domain holds, by name) has under that name,
+  looked up afresh at each resolution;
+* `ended`, a file grant that has gone, on which every request answers
+  `eio`.
 
-The **root** is where in the provider the entry starts, empty except
-after a bind or a narrowing, and the **rights** are one of `ro`, `rw`
-and `rx`, with no value for write and execute together
-([chapter 11](11-security.md#1171-a-namespace-of-grants)).
+In this chapter, "grant" alone always means a file grant: the process
+at a file server that serves one client domain on one tree
+([chapter 11](11-security.md#1171-a-namespace-of-grants)). The
+**root** is the place below the provider's tree where the entry
+starts, and the **rights** are one of `ro`, `rw` and `rx`, with no
+value for write and execute together.
 
 A runtime keeps one namespace for all of its processes, held as one
 `persistent_term` ([chapter 3](03-erlang.md#353-memory-and-garbage-collection))
@@ -110,7 +121,6 @@ pids are illustrative):
 ```text
 /          release            ro
 /data      facet data         rw
-/machine   facet machine
 /tmp       grant <0.212.0>    rw   its own erx_ramfs, section 14.4
 /proc      grant <0.215.0>    ro   its own erx_procfs, section 14.5
 ```
@@ -238,7 +248,8 @@ to a grant is
 {erx_9p, Alias, Owner, Request}      % e.g. Request = {walk, 0, 1, [<<"notes.txt">>]}
 ```
 
-and the reply comes back to `Alias` as `{erx_9p, Alias, Reply}`.
+and the reply comes back to `Alias` as `{erx_9p, Alias, Reply}`,
+inside its origin envelope when it crosses a wall.
 `Alias` is a fresh alias for each request
 ([chapter 10](10-domains.md#1032-the-checks-in-order)), playing the
 part of 9P's tag, so no reply can be forged or replayed into another
@@ -262,18 +273,20 @@ root's session, traced to the bytes. Figure 14.2 shows the messages.
 
 1. `prim_file` hands the path to `erx_path` with the domain's table.
    The longest matching mount point is `/data`, a facet's entry, so the
-   resolver asks the facet registry for the `data` grant's pid.
+   resolver takes the grant the facet registry has under `data`.
 2. `erx_file_remote`, the one client every Erlang caller uses, sends
-   `attach` to get a fid on the grant's root, then a `walk` of
-   `notes.txt` to a new fid with an `lopen` and a first `read` sent
-   right behind it. Each is a frame on the session's connection to the
-   storage domain, addressed to the grant's pid, each with its own alias.
+   four requests together: `attach` for fid 0 on the grant's root, a
+   `walk` of `notes.txt` from fid 0 to a new fid 1, an `lopen` of fid
+   1, and a `clunk` of fid 0, which the open no longer needs. Each is
+   a frame on the session's connection to the storage domain,
+   addressed to the grant's pid, each with its own alias.
 3. The storage domain's funnel admits the frames, since its runtime
    exported the grant to root's session. The grant checks each
    request's grammar and bounds, client, root and rights, and only
    then calls its tree's callbacks.
-4. Replies return to each alias. The caller reads to the end of the
-   file, sends `clunk`, and `read_file` returns `{ok, Bin}`.
+4. The replies return to their aliases. The caller then asks fid 1's
+   size with `getattr`, reads it in further exchanges, and at close
+   sends `clunk` of fid 1. `read_file` returns `{ok, Bin}`.
 
 ```mermaid
 sequenceDiagram
@@ -281,33 +294,39 @@ sequenceDiagram
   participant G as data grant (storage domain)
   participant T as storage tree
   C->>G: attach, fid 0 on the tree's root
-  G-->>C: ok, qid
   C->>G: walk 0 to 1, notes.txt
   C->>G: lopen 1, read only
-  C->>G: read 1, offset 0, 65536
-  G->>T: walk, open, read callbacks
-  T-->>G: node, handle, bytes
-  G-->>C: qids; qid and iounit; data
+  C->>G: clunk 0
+  G->>T: root, walk, open callbacks
+  T-->>G: node, node, handle
+  G-->>C: qid; qids; qid and iounit; ok
+  C->>G: getattr 1, size
+  G-->>C: attributes
+  C->>G: read 1, offset 0
+  G-->>C: data
   C->>G: clunk 1
   G-->>C: ok
 ```
 
 *Figure 14.2. A 9P2000.L walk, open and read between domains. The
-client sends the open and the first read without waiting for the
-walk's reply; the grant's checks run before any callback of the
-tree.*
+client sends the attach, walk, open and first clunk together, without
+waiting for any reply; the grant's checks run before any callback of
+the tree.*
 
-Sending the open behind the walk saves a round trip across the wall.
-If the walk fails, fid 1 was never made, so the `lopen` and `read`
-fail too. Every step above is built.
+A **qid** in the replies is the server's identity for a file, and an
+**iounit** is the most bytes one read or write may carry. Sending the
+first four requests together saves three round trips across the wall.
+If the walk fails, fid 1 was never made, so the `lopen` fails too,
+with `ebadf`, and changes nothing. Every step above is built.
 
-### 14.2.3 The grant: one client, one tree, one process
+### 14.2.3 The file grant: one client, one tree, one process
 
-A **grant** is the process at a file server that serves one client
-domain on one tree, with a root and rights fixed when it was made.
-Chapter 11 lists its four checks: who asks, form, root and rights
-([chapter 11](11-security.md#1171-a-namespace-of-grants)). Two more
-duties belong to the file system itself.
+A file grant, defined in
+[chapter 11](11-security.md#1171-a-namespace-of-grants), is the
+process at a file server that serves one client domain on one tree,
+with a root and rights fixed when it was made. Chapter 11 lists its
+four checks: who asks, form, root and rights. Two more duties belong
+to the file system itself.
 
 The first is fids. Every fid has an **owner**, a process of the client
 domain named by the request that made it. The grant monitors each
@@ -363,7 +382,7 @@ that several grants share keeps its requests atomic itself, as `/tmp`
 does (section 14.4). Besides `/tmp` and `/proc`, the storage domain's
 littlefs server, the device service's `/dev` and the display's window
 trees are `erx_fs` modules
-([chapter 16](README.md#chapter-16-storage-and-updates),
+([chapter 16](16-storage.md),
 [chapter 22](README.md#chapter-22-displays-windows-and-the-web)).
 
 ### 14.2.5 Stream files and keepers
@@ -439,13 +458,19 @@ only on the program's own table
 
 A session's local files, such as its release slice, are not on any
 grant, so a program cannot reach them through the session's grants.
-The design gives them one: the session's **export**, an `erx_fs`
-server in the session's own domain. It serves the session's local
-providers, and one more tree holding `/bin` (the session's commands,
-`rx`), `/dev` (`null`, `zero`, `urandom` and `tty`) and `/etc`
-(`passwd` and `group`). Its fixed tree is written
-(`erlang/apps/erx_session/src/erx_session_export.erl`), but no session
-starts it, so the export is designed and not built.
+The session therefore runs a file server of its own, its **export**.
+This is a second sense of the word: a file server, not the export of
+a pid of [chapter 10](10-domains.md#104-exports-a-pid-is-a-name-not-an-authority).
+The export is an `erx_fs` module in the session's own domain
+(`erlang/apps/erx_session/src/erx_session_export.erl`), with a fixed
+tree of `/bin` (the session's commands), `/dev` (`null`, `zero`,
+`urandom` and `tty`) and `/etc` (`passwd` and `group`). Every session
+starts it as two grants of its own domain: an `rx` grant for `/bin`
+and an `rw` grant for `/dev` and `/etc`
+(`erlang/apps/erx_session/src/erx_session_sup.erl`). That much is
+built. Two parts are designed and not built: entries on the export in
+a program's table, and the export serving the session's local
+providers as well.
 
 ### 14.3.2 Shared mappings
 
@@ -478,10 +503,9 @@ smallest one erXos has, and it is built
 > **Background: RAM file systems.** A RAM file system gives fast
 > scratch space that needs no disk. It keeps its files in memory, so
 > they vanish when their owner stops. FreeBSD's tmpfs is one: it keeps
-> each file's data as pages of memory, within a size limit set when
-> it is mounted, and needs no journal, because nothing survives a
-> crash anyway.
-<!-- check: tmpfs(5) keeps data in memory pages and takes a size limit as a mount option -->
+> each file's data as pages of memory, which the system may move to
+> swap, within a size limit set when it is mounted. It needs no
+> journal, since its files are not meant to outlive a crash.
 
 Every domain that runs ERTS has its own `/tmp`, served by `erx_ramfs`
 in that domain, charged to the domain's budget and lost when the domain
@@ -526,14 +550,15 @@ How does a user see a domain's run queue, or tell an app to reload?
 In Plan 9's way: state is a file to read, control a file to write.
 Each kind of fact has one of three homes.
 
-* **What the system observes** (the kernel, the system services, a
-  configured domain, a runtime about its own processes) is an
-  inspection path, declared in `abi/inspection.txt` and shown at
-  `/proc` ([chapter 7](07-one-source.md#78-declared-services-and-inspection-paths)).
-* **What an app says about itself, or what someone commands**, is a
-  file tree its owner serves and the reader mounts, with a `status`
-  file to read and a `ctl` file for one-shot control.
-* **A live conversation** is a declared protocol with its own design.
+* **What the system sees**, such as a domain's processes or a CPU's
+  load, is a path of the inspector, declared in `abi/inspection.txt`
+  and shown at `/proc`
+  ([chapter 7](07-one-source.md#78-declared-services-and-inspection-paths)).
+* **What an app says about itself, and the commands it takes**, live
+  in a file tree the app serves: a `status` file to read and a `ctl`
+  file to write a command to.
+* **A conversation**, an exchange that goes on over time, is a
+  protocol with its own design.
 
 Files are a view: Erlang messages stay each service's primary
 interface.
@@ -661,7 +686,8 @@ expects them, and they behave as on FreeBSD. `tty` is a name and not a
 file: a walk and a `stat` reach it, and an open answers `ENXIO`,
 because a terminal in erXos is not a file of the protocol. Its
 reads, modes and readiness belong to the program protocol and the
-session's line discipline
+session's line discipline, the code that edits and echoes typed input
+as `termios` asks
 ([chapter 13](13-native-programs.md#137-the-posix-lite-personality)).
 
 **`/etc/passwd`.** A program that calls `getpwuid` finds its own
@@ -672,8 +698,9 @@ with `EPERM` unless it changes nothing, and grants alone decide what
 a program may reach. So `access` and `test -w` answer from the rights
 of the grant the path resolves through, and predict what `open` does
 ([design-programs.md, The POSIX-lite personality](../design-programs.md#the-posix-lite-personality)).
-The export that serves `/dev` and `/etc` to programs is designed and
-not built (section 14.3.1).
+The session's export serves these `/dev` and `/etc` files and is
+built; a program's table holding entries on it is designed and not
+built (section 14.3.1).
 
 ## 14.7 When a part fails
 
@@ -718,12 +745,13 @@ check; a namespace built from grants needs no check beyond the
 funnel's.
 
 **A file protocol of erXos's own.** It could add what 9P2000.L lacks:
-grants derived per program, readiness reports, server-side offsets.
-Each addition would need its own grammar, its own client in every tool
-and a translation wherever the host link and the network speak
-9P2000.L. Everything it would buy has a home already: the handler
-narrows by walking, a terminal belongs to the program protocol, and a
-shared mapping is the session's.
+a server making a narrowed grant for each program, a terminal saying
+when it is ready to read, and a shared mapping registered with the
+file's server. Each addition would need its own grammar, its own
+client in every tool and a translation wherever the host link and the
+network speak 9P2000.L. Everything it would buy has a home already:
+the handler narrows by walking, a terminal belongs to the program
+protocol, and a shared mapping is the session's.
 
 **A program that speaks the protocol itself.** Each program would hold
 grant pids and send frames. A program would then be a domain, with a
@@ -736,10 +764,10 @@ not work. Handing the text back to the client settles both.
 
 ## Summary
 
-A domain in erXos sees files through its own namespace, a table from
-mount points to providers, and there is no machine-wide tree. An entry that leaves the domain holds a grant's pid
-or a facet's name, so a path reaches only servers the domain was given,
-and mounting or binding never adds authority. One pure resolver,
+Each domain's namespace is its own. An entry that leaves the domain
+holds a file grant's pid or a facet's name, so a path reaches only
+servers the domain was given, and
+mounting or binding never adds authority. One pure resolver,
 `erx_path`, gives every path FreeBSD's meaning on the client's side;
 servers see only plain names and never follow links. Every file server
 speaks 9P2000.L, carried as checked Erlang terms inside the machine and
@@ -764,12 +792,11 @@ only where they behave as a FreeBSD user expects, or refuse with a clear error.
   status lines, `ctl` and FreeBSD's `service` command beside it.
 * [design-live.md, The /proc tree](../design-live.md#the-proc-tree):
   every `/proc` path, the name encoding and the inspector behind it.
-<!-- check: the two Plan 9 papers' authors, venues and years -->
 * Rob Pike, Dave Presotto, Sean Dorward, Bob Flandrena, Ken Thompson,
   Howard Trickey and Phil Winterbottom, "Plan 9 from Bell Labs",
-  *Computing Systems* 8(3), 1995: per-process namespaces and 9P.
+  *Computing Systems*, 1995: per-process namespaces and 9P.
 * Rob Pike, Dave Presotto, Ken Thompson, Howard Trickey and Phil
   Winterbottom, "The Use of Name Spaces in Plan 9", *Operating Systems
   Review* 27(2), 1993: why a private namespace replaces a global tree.
-* FreeBSD's `sys/kern/vfs_lookup.c` (`namei`) and `tmpfs(5)`: the
+* FreeBSD's `sys/kern/vfs_lookup.c` (`namei`) and `tmpfs(4)`: the
   lookup and the RAM file system erXos's resolver and `/tmp` follow.

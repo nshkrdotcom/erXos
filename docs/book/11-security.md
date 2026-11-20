@@ -522,9 +522,13 @@ resolves it over the program's own table
 ([chapter 13](13-native-programs.md#1322-the-handler)). That table is narrowed from its
 starter's: each entry on the same server, rooted at or below the
 starter's, with rights no wider
-([design-files.md, Invariants](../design-files.md#invariants)). The
-session serves its programs' `/bin`, `/dev` and `/etc` itself, through
-an `rx` grant and an `rw` grant of its own (`erx_session_export`).
+([design-files.md, Invariants](../design-files.md#invariants)). Every
+session also runs a file server of its own, its export
+(`erx_session_export`), with a fixed tree of `/bin`, `/dev` and
+`/etc`, as two file grants of its own domain: an `rx` grant for `/bin`
+and an `rw` grant for `/dev` and `/etc`. Entries on the export in a
+program's table are designed and not built
+([chapter 14](14-files.md)).
 
 ## 11.8 A worked example: who may set the clock
 
