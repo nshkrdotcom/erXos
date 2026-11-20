@@ -109,6 +109,7 @@ enum mf_dma u32
   value unconfined 2
 flags mf_device_flags u32
   bit hostile 0
+  bit closed 1
 # A partition window's role (docs/design-abi.md, "Devices and partition windows"): the
 # slots' boot and system partitions and the two records are the slot writer's, which
 # only the system domain holds in Phase 1 (docs/design-storage.md, PW1): a configured
@@ -243,7 +244,7 @@ layout erx_mf_msi_frame wire_le 8 16
   field base u64 0
   field first u32 8
   field count u32 12
-layout erx_manifest wire_le 8 472
+layout erx_manifest wire_le 8 480
   field magic u32 0
   field version u16 4
   field flags manifest_flags 6
@@ -301,6 +302,7 @@ layout erx_manifest wire_le 8 472
   field boot_timeout_s u32 448
   padding 452 4
   field msi_frame erx_mf_msi_frame 456
+  field places erx_mf_span 472
 layout erx_mf_principal wire_le 8 80
   field name erx_mf_str 0
   field memory u64 8
@@ -443,7 +445,12 @@ layout erx_mf_unit wire_le 8 24
   field devices erx_mf_span 12
   field reserved u32 20
   zero reserved all
-layout erx_mf_device wire_le 8 88
+# A device row (docs/design-abi.md, "Devices and partition windows"). dma_limit is a
+# device address, exclusive, 0 for none: a PCIe bridge row carries its bridge's, and the
+# packer copies it into each pci row behind it (docs/design-pcie.md, "DMA"). places spans
+# a closed bridge's listed places in the places table (flag closed), and is empty on every
+# other row (docs/design-pcie.md, "The closed bus").
+layout erx_mf_device wire_le 8 104
   field selector mf_selector 0
   field role mf_device_role 4
   field path erx_mf_str 8
@@ -461,6 +468,8 @@ layout erx_mf_device wire_le 8 88
   field size u64 72
   field clock u32 80
   field reserved u32 84
+  field dma_limit u64 88
+  field places erx_mf_span 96
   zero reserved all
 # A window on a USB controller's row names in drive the controller's drive whose medium
 # it serves, da0 to da(usb_drives_max - 1) as 0 up, and every other window mf_none
@@ -543,7 +552,7 @@ reader manifest erx_manifest @manifest_bytes_max
   extent root.length
   value root.magic @manifest_magic
   value root.version @manifest_version
-  value root.header_size 472
+  value root.header_size 480
   range root.max_domains 0 65536
   range root.max_connections 1 65536
   range root.system_reserve 1 1000
@@ -578,12 +587,13 @@ reader manifest erx_manifest @manifest_bytes_max
   table displays erx_mf_display root.displays.offset root.displays.count @manifest_records_max 4
   table apps erx_mf_apps root.apps.offset root.apps.count 1 8
   table app_services erx_mf_app_service root.app_services.offset root.app_services.count @manifest_records_max 4
+  table places erx_pcie_place root.places.offset root.places.count @manifest_records_max 4
   table packages erx_mf_package root.packages.offset root.packages.count @apps_max_limit 4
   table signers erx_mf_signer root.signers.offset root.signers.count @manifest_records_max 4
   table development_key erx_mf_development_key root.development_key.offset root.development_key.count 1 1
   table system_image erx_mf_system_image root.system_image.offset root.system_image.count 1 8
   string_table strings root.strings.offset root.strings.count @manifest_strings_max
-  order principals domains sessions limits runtime_limits lane_classes units devices windows services facets facet_operations facet_parameters introductions images extents boot_order liveness shell_principals partial_boot starts displays apps app_services packages signers development_key system_image strings
+  order principals domains sessions limits runtime_limits lane_classes units devices places windows services facets facet_operations facet_parameters introductions images extents boot_order liveness shell_principals partial_boot starts displays apps app_services packages signers development_key system_image strings
   index root.system_principal principals
   index root.system_runtime_limits runtime_limits
   index root.native_limits limits
@@ -627,6 +637,11 @@ reader manifest erx_manifest @manifest_bytes_max
     case none none
     case confined none
     case unconfined devices[].dma_memory
+  partition devices[].places.offset devices[].places.count places
+  range places[].bus 1 255
+  range places[].device 0 @pcie_device_max
+  range places[].function 0 @pcie_function_max
+  range places[].pin 1 @pcie_pin_max
   index windows[].holder domains absent 0xffffffff
   index windows[].device devices
   index windows[].image images absent 0xffffffff

@@ -11,7 +11,7 @@ module AbiManifestFixture
   # The header's size (abi/manifest.txt's erx_manifest), where the principal row
   # starts; then the limits row (the principal row is 80 bytes, the domains table
   # empty), the runtime-limits row (limits 160) and the strings (runtime limits 56).
-  HEADER = 472
+  HEADER = 480
   LIMITS_AT = HEADER + 80
   RUNTIME_AT = LIMITS_AT + 160
   STRINGS_AT = RUNTIME_AT + 56
@@ -64,6 +64,7 @@ module AbiManifestFixture
     (400..440).step(8) { |offset| span(bytes, offset, STRINGS_AT, 0) }
     integer(bytes, 448, 60) # the machine's boot_timeout_s, which the reader takes from 1
     # Bytes 456..471 are the msi_frame, all zero: a platform without one.
+    span(bytes, 472, STRINGS_AT, 0)
     # The principal row follows the header; the offsets below are its fields.
     span(bytes, HEADER, 18, 4)
     integer(bytes, HEADER + 8, 268_435_456, width: 8)
@@ -93,7 +94,7 @@ module AbiManifestFixture
   SESSION_FIELDS = { principal: 0, limits: 4, runtime: 8, release: 12, release_files: 16, reserved: 20 }.freeze
 
   # erx_mf_device's size in abi/manifest.txt.
-  DEVICE_ROW = 88
+  DEVICE_ROW = 104
 
   def unit_partition(overlap: false, orphan: false)
     original = valid
@@ -105,7 +106,7 @@ module AbiManifestFixture
     integer(bytes, 8, bytes.bytesize)
     span(bytes, 248, STRINGS_AT, units)
     span(bytes, 256, device_offset, 2)
-    [*(264..352).step(8), *(384..440).step(8)].each { |offset| span(bytes, offset, strings_offset, 0) }
+    [*(264..352).step(8), *(384..440).step(8), 472].each { |offset| span(bytes, offset, strings_offset, 0) }
     span(bytes, 360, strings_offset, text.bytesize)
     units.times do |index|
       base = STRINGS_AT + index * 24
@@ -122,6 +123,7 @@ module AbiManifestFixture
       span(bytes, base + 16, 0, 0)
       span(bytes, base + 24, 11, 7)
       span(bytes, base + 56, 0, 4)
+      span(bytes, base + 96, strings_offset, 0)
     end
     bytes
   end
@@ -143,7 +145,7 @@ module AbiManifestFixture
     integer(service, 8, 0xffffffff)
     facet = "\0".b * 80
     span(facet, 0, 18, 4)
-    # Header472, principal80, domain64, limits160, runtime-limits56,
+    # Header480, principal80, domain64, limits160, runtime-limits56,
     # service24, facet80, parameter32, then strings.
     span(facet, 16, parameter_at, 0)
     span(facet, 24, parameter_at, 1)
@@ -159,7 +161,7 @@ module AbiManifestFixture
     span(bytes, 216, domain_at, 1)
     span(bytes, 224, limits_at, 1)
     span(bytes, 232, runtime_at, 1)
-    (240..264).step(8) { |offset| span(bytes, offset, service_at, 0) }
+    [*(240..264).step(8), 472].each { |offset| span(bytes, offset, service_at, 0) }
     span(bytes, 272, service_at, 1)
     span(bytes, 280, facet_at, 1)
     span(bytes, 288, parameter_at, 0)
@@ -174,7 +176,7 @@ module AbiManifestFixture
   end
 
   # The valid fixture plus one session record; every field index is 0 and
-  # args and env are empty. Header472, principal80, sessions40, limits160,
+  # args and env are empty. Header480, principal80, sessions40, limits160,
   # runtime-limits56, then strings.
   def session_template(**fields)
     original = valid
@@ -194,7 +196,7 @@ module AbiManifestFixture
     span(bytes, 376, LIMITS_AT, 1)
     span(bytes, 384, strings_at, 0)
     span(bytes, 392, strings_at, 0)
-    (400..440).step(8) { |offset| span(bytes, offset, strings_at, 0) }
+    [*(400..440).step(8), 472].each { |offset| span(bytes, offset, strings_at, 0) }
     bytes
   end
 
@@ -204,7 +206,7 @@ module AbiManifestFixture
 
   # The valid fixture as a development manifest plus count start rows, each
   # enabled, of principal 0, with no display and 5 restarts in 600 s, and fields
-  # overriding the first row. Header472, principal80, limits160,
+  # overriding the first row. Header480, principal80, limits160,
   # runtime-limits56, the start rows, then strings.
   def start_rows(count: 1, partial: false, **fields)
     original = valid
@@ -232,7 +234,7 @@ module AbiManifestFixture
   TABLES = {
     principals: [208, 8], domains: [216, 8], sessions: [376, 8], limits: [224, 8],
     runtime_limits: [232, 8], lane_classes: [240, 8], units: [248, 8], devices: [256, 8],
-    windows: [264, 8], services: [272, 8], facets: [280, 8], facet_operations: [288, 4],
+    places: [472, 4], windows: [264, 8], services: [272, 8], facets: [280, 8], facet_operations: [288, 4],
     facet_parameters: [296, 8], introductions: [304, 8], images: [312, 8], extents: [320, 8],
     boot_order: [328, 4], liveness: [336, 4], shell_principals: [344, 4], partial_boot: [352, 8],
     starts: [384, 4], displays: [392, 4], apps: [400, 8], app_services: [408, 4],

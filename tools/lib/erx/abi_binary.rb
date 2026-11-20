@@ -68,6 +68,24 @@ module Erx
         layout(name).size
       end
 
+      # The fields of layout name whose type is a flags type, each with that type's name, so
+      # a source may spell any of them by its bits' names (flag_value).
+      def flags_fields(name)
+        layout(name).fields.select { |field| field.type.is_a?(EnumType) && field.type.flags }
+                    .to_h { |field| [field.name, field.type.name] }
+      end
+
+      # The value of flags type type_name with the named bits set; a name the type does not
+      # declare, or one named twice, is refused.
+      def flag_value(type_name, names)
+        type = @schema.types[type_name.to_s]
+        unless type.is_a?(EnumType) && type.flags && names.is_a?(Array) && names.uniq.size == names.size &&
+               names.all? { |bit| type.members.key?(bit.to_s) }
+          fail_decode('unknown_member', type_name.to_s, 0)
+        end
+        names.sum { |bit| type.members.fetch(bit.to_s) }
+      end
+
       def encode_layout(name, values)
         type = layout(name)
         encode_record(type, values, field: type.name).freeze

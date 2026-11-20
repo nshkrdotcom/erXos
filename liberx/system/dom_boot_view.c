@@ -298,8 +298,9 @@ boot_pages_meet(const erx_dom_device_entry_t *a, const erx_dom_device_entry_t *b
 }
 
 /*
- * Whether two entries name one interrupt line; an entry with no line, a PCIe function's, a
- * framebuffer's or a device-tree row's whose line is 0, shares none.
+ * Whether two entries name one interrupt line; an entry with no line, a framebuffer's, a
+ * device-tree row's whose line is 0 or a PCIe function's that is at no closed bridge's
+ * place, shares none.
  */
 static bool
 boot_lines_meet(const erx_dom_device_entry_t *a, const erx_dom_device_entry_t *b)
@@ -387,8 +388,9 @@ boot_units(const erx_manifest_view_t *manifest, erx_dom_device_entry_t *entries)
  * "Devices"): an entry per device row, in its unit and on its unit's
  * holder, and a record per entry with no holder and no object yet. A
  * device-tree device has its register window, as whole pages, and its
- * line; a PCIe function has neither, since configuration space gives
- * them. Units are closed under sharing a register page and sharing an
+ * line; a PCIe function has no window, since configuration space gives
+ * it, and a line only at a closed bridge's place. Units are closed under
+ * sharing a register page and sharing an
  * interrupt line (docs/design-shared-devices.md, "The unit rule"), since a
  * page has at most one MMIO object and a line one IRQ object: devices
  * whose pages meet or that name one line are one unit, so the manifest
@@ -460,6 +462,13 @@ boot_devices(erx_dom_view_t *view, const erx_manifest_view_t *manifest, erx_dom_
 				entry->peripheral = kind->peripheral;
 				entry->compatible = kind->compatible;
 			}
+		} else {
+			/* A function at a closed bridge's place names the INTx line its
+			 * bridge routes for the place's pin, which joins the line
+			 * relation as a device-tree line does; any other names none
+			 * (docs/design-pcie.md, "The closed bus"). */
+			entry->nlines = device.line != 0 ? 1 : 0;
+			entry->lines[0] = device.line;
 		}
 		records[index] = (erx_dom_device_t){ .index = index, .resource = { ERX_CAP_NULL },
 		    .dma = { ERX_CAP_NULL }, .memory = { ERX_CAP_NULL } };

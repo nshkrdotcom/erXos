@@ -138,13 +138,13 @@ unit_first_device(const erx_manifest_view_t *view, const erx_mf_unit_t *unit, ui
 }
 
 /*
- * Whether a device-tree device other than the one at index self names line, which makes
+ * Whether a device other than the one at index self names line, which makes
  * the line shared (docs/design-shared-devices.md, "Lines inside a domain"). This is the
  * relation of the domain library's boot view, boot_lines_meet in
  * liberx/system/dom_boot_view.c, over the manifest's own entries: each device-tree entry
  * names exactly its line, except that line 0 is no line, carried by a row whose node raises
  * no interrupt, a framebuffer's or the RNG200's (docs/design-abi.md, "Devices and partition
- * windows"); a PCIe function names none. The boot view refuses a manifest
+ * windows"); a PCIe function names its line only at a closed bridge's place. The boot view refuses a manifest
  * that puts devices sharing a line in two units, so another device of the manifest that
  * names the line is another device of the same unit. erx_manifest_open checked every
  * entry, so every read succeeds.
@@ -155,8 +155,7 @@ line_shared(const erx_manifest_view_t *view, uint32_t self, uint32_t line)
 	erx_mf_device_t other;
 
 	for (uint32_t at = 0; line != 0 && at < view->header.devices.count; at++) {
-		if (at != self && erx_manifest_devices_at(view, at, &other) && other.selector == ERX_MF_SELECTOR_DT &&
-		    other.line == line)
+		if (at != self && erx_manifest_devices_at(view, at, &other) && other.line == line)
 			return (true);
 	}
 	return (false);

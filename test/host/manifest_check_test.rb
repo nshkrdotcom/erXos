@@ -343,8 +343,108 @@ class ManifestCheckTest < Minitest::Test
   # QEMU virt's bridge is not closed, so a line given to qemu-xhci would be shared with
   # whatever the walk finds behind it.
   def test_an_intx_line_on_a_bridge_the_platform_does_not_close_is_refused
-    usb_refused('context.platform.devices', /a PCIe function carries a window or line/, usb_source,
+    usb_refused('context.platform.devices', /a PCIe function names a line only at a closed bridge's place/, usb_source,
                 usb_platform(xhci: [xhci_row(line: 80)]))
+  end
+
+  def test_a_pci_row_must_carry_no_register_window
+    usb_refused('context.platform.devices', /a PCIe function carries a window/, usb_source,
+                usb_platform(xhci: [xhci_row(base: 0x1000, size: 0x1000)]))
+  end
+
+  # A closed bridge, as the Pi 4's record spells the BCM2711's (docs/design-pcie.md, "The
+  # closed bus"): its flags and places in erx_pcie_place's own shape, its DMA limit, and the
+  # VL805 at its one place with the line the bridge routes for the place's pin.
+  CLOSED = '/scb/pcie@7d500000'
+  VL805_LINE = 175
+  PLACE = { 'bus' => 1, 'device' => 0, 'function' => 0, 'pin' => 1 }.freeze
+
+  def closed_bridge_row(**fields)
+    usb_row('pcie', role: 'configuration', path: CLOSED, compatible: 'brcm,bcm2711-pcie', base: 0x40_1000_0000,
+                    **{ size: 0x1000_0000, flags: ['closed'], places: [PLACE], dma_limit: 0x3c00_0000 }.merge(fields))
+  end
+
+  def vl805_row(**fields)
+    xhci_row(**{ bridge: CLOSED, bus: 1, device: 0, compatible: 'pci1106,3483', line: VL805_LINE }.merge(fields))
+  end
+
+  def closed_platform(bridge: closed_bridge_row, function: vl805_row, **units)
+    usb_platform(pcie: [bridge], xhci: [function], **units)
+  end
+
+  def packed_rows(view, table) = view.count(table).times.map { |index| view.fetch(table, index) }
+
+  def test_a_closed_bridge_packs_its_places_and_its_function_its_line_and_dma_limit
+    view = @codec.open('manifest', usb_admit(usb_source, closed_platform).bytes)
+    devices = packed_rows(view, 'devices')
+    bridge = devices.find { |device| device.fetch('role') == @codec.member('mf_device_role', 'configuration') }
+    function = devices.find { |device| device.fetch('selector') == @codec.member('mf_selector', 'pci') }
+    assert_equal @codec.member('mf_device_flags', 'closed'), bridge.fetch('flags') & @codec.member('mf_device_flags', 'closed')
+    assert_equal [PLACE], packed_rows(view, 'places')
+    assert_equal 1, bridge.fetch('places').fetch('count')
+    assert_equal [VL805_LINE, 0x3c00_0000], function.values_at('line', 'dma_limit')
+    assert_equal [0], (devices - [bridge]).map { |device| device.fetch('places').fetch('count') }.uniq
+  end
+
+  # Flags read by name pack as their numbers do.
+  def test_a_flags_field_reads_its_bits_by_name
+    named = usb_admit(usb_source, usb_platform(stick: [stick_row.merge('flags' => ['hostile'])])).bytes
+    assert_equal usb_admit.bytes, named
+    assert_raises(Erx::ABI::DecodeError) { usb_admit(usb_source, usb_platform(stick: [stick_row.merge('flags' => ['made_up'])])) }
+  end
+
+  def test_a_function_behind_a_closed_bridge_at_no_listed_place_is_refused
+    usb_refused('devices.place', /behind the closed bridge #{CLOSED} is at none of its listed places/, usb_source,
+                closed_platform(function: vl805_row(device: 1)))
+  end
+
+  def test_a_function_at_a_closed_place_without_its_line_is_refused
+    usb_refused('context.platform.devices', /names its place's line/, usb_source, closed_platform(function: vl805_row(line: 0)))
+  end
+
+  def test_places_only_on_a_closed_bridge_and_each_well_formed
+    message = /a closed bridge lists its places, and only a closed PCIe bridge/
+    [closed_bridge_row(flags: 0), closed_bridge_row(places: []),
+     closed_bridge_row(places: [PLACE, PLACE.merge('device' => 1), PLACE.merge('device' => 2), PLACE.merge('device' => 3),
+                                PLACE.merge('device' => 4)])].each do |bridge|
+      usb_refused('context.platform.devices', message, usb_source, closed_platform(bridge: bridge))
+    end
+    usb_refused('context.platform.devices', message, usb_source,
+                closed_platform(stick: [stick_row.merge('flags' => %w[hostile closed], 'places' => [PLACE])]))
+    [PLACE.merge('bus' => 0), PLACE.merge('pin' => 0), PLACE.merge('pin' => 5), PLACE.merge('device' => 32),
+     PLACE.merge('function' => 8), PLACE.except('pin'), PLACE.merge('bus' => '1')].each do |place|
+      usb_refused('context.platform.devices', /a closed bridge's place is not/, usb_source,
+                  closed_platform(bridge: closed_bridge_row(places: [place])))
+    end
+    usb_refused('context.platform.devices', /lists a place twice/, usb_source,
+                closed_platform(bridge: closed_bridge_row(places: [PLACE, PLACE.merge('pin' => 2)])))
+  end
+
+  # An unplaced second row at the placed bridge's path, closed and listing the function's
+  # place, must not let the function behind the open bridge name a line.
+  def test_two_bridge_rows_at_one_path_are_refused
+    usb_refused('context.platform.devices', /lists two PCIe bridges at #{BRIDGE}/, usb_source,
+                usb_platform(xhci: [xhci_row(line: 80)],
+                             twin: [closed_bridge_row(path: BRIDGE, places: [PLACE.merge('bus' => 1, 'device' => 2)])]))
+  end
+
+  def test_a_dma_limit_only_on_a_bridge_row
+    usb_refused('context.platform.devices', /only a PCIe bridge row states a DMA limit/, usb_source,
+                closed_platform(function: vl805_row(dma_limit: 1 << 30)))
+    usb_refused('context.platform.devices', /only a PCIe bridge row states a DMA limit/, usb_source,
+                usb_platform(stick: [stick_row.merge('dma_limit' => 1 << 30)]))
+  end
+
+  # A window names a PCIe function by its place (docs/design-abi.md, "Devices and partition
+  # windows"): its bridge's path and its bus, device and function.
+  def test_a_window_names_a_function_by_its_place
+    view = @codec.open('manifest', usb_admit(usb_source + drive_window('da0', device: "#{BRIDGE}:0:2:0")).bytes)
+    window = packed_rows(view, 'windows').find { |row| row.fetch('drive').zero? }
+    function = view.fetch('devices', window.fetch('device'))
+    assert_equal [@codec.member('mf_selector', 'pci'), 0, 2, 0], function.values_at('selector', 'bus', 'device', 'function')
+    ["#{BRIDGE}:0:3:0", "#{BRIDGE}:1:2:0", "#{STICK}:0:2:0", "#{BRIDGE}:0:2", "#{BRIDGE}:0:2:0:0"].each do |name|
+      usb_refused('window.device', /window names no block or USB device the manifest places/, usb_source + drive_window('da0', device: name))
+    end
   end
 
   def drive_window(drive, name: 'stick', partition: 1, device: STICK, role: 'fat')

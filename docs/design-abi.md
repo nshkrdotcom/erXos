@@ -1692,9 +1692,19 @@ the selector's `dt` case and are inactive for a function, since
 configuration space gives them, except `line` at a place a closed
 bridge's platform record lists, where it is the INTx line the bridge's
 `interrupt-map` routes for that place's pin
-([design-pcie.md](design-pcie.md#the-closed-bus)). A host bridge's row
-carries the closed flag when its platform record lists every place on
-it, and then those places, each a bus, device, function and pin. A
+([design-pcie.md](design-pcie.md#the-closed-bus)), and a function behind
+a closed bridge lies at one of its listed places, which the manifest
+check proves. A host bridge's row carries the closed flag when its
+platform record lists every place on it, and then those places, each a
+bus, device, function and pin: its `places` span names them in the
+manifest's `places` table of `erx_pcie_place` rows, and every other
+row's span is empty. The platform record spells them in the record's
+own shape, `"flags": ["closed"]` and `"places": [{"bus": 1, "device":
+0, "function": 0, "pin": 1}]`; any flags field of a platform row may be
+written as a list of its bits' names or as their number. A listed place
+lies below the root port, on bus 1 or above, with a pin INTA (1) to
+INTD (4), and no place is listed twice; that the places lie within the
+bridge's bus range is the tree's fact, which the boot reads. A
 device's `dma_limit` is a device address, exclusive, 0 for none, which
 the packer copies from a bridge's unit into each `pci` row behind it, and
 the function's DMA facts are cut at it
@@ -1721,6 +1731,14 @@ from the device tree the firmware hands over
 [design-device-dma.md](design-device-dma.md#device-addresses-and-reach)).
 The packed marks do not establish actual confinement: the device service
 still verifies the machine before assigning the unit.
+
+A window, an image and a device-valued facet parameter name a placed
+device in one spelling: a device-tree device by its node path,
+`"/virtio_mmio@a003e00"`, and a PCIe function by its place, its host
+bridge's node path and its bus, device and function joined by colons,
+`"/pcie@10000000:0:2:0"`, which no node path can be, since a node path
+has no colon. One resolver in the manifest check reads both, and the
+packed row names the device-row index either way.
 
 A window grants its holder one partition of a medium. `abi/manifest.txt`
 marks each window role a configured domain may hold `configured` and

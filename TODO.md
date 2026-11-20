@@ -2255,6 +2255,17 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   `fuzz_window_covered`): the fuzzed view holds two device entries, so a give of three or more devices, runs
   joining several ranges, and a line shared by more than two devices are reached only by the host drivers. Widen the
   view to `ERX_DOM_DEVICES_MAX` entries.
+* [Medium] domain library and root, a closed place's line against the tree (`liberx/system/dom_boot_view.c`,
+  [design-pcie.md](docs/design-pcie.md#the-closed-bus)): a `pci` row's line at a closed bridge's place is copied
+  from the platform record and joins the unit rule's line relation, but nothing at boot compares it with the line
+  the bridge's `interrupt-map` routes for the place's pin (`erx_dt_intx`) or refuses a route to one of the bridge's
+  own lines, and no give refuses a function whose reported pin is not its place's. A wrong record line passes the
+  unit rule against a line the hardware does not raise. Add the boot view's refusal ("At boot") and the give's
+  ("At the give"), each with its seed; better, carry the line on the place row and have the packer copy it.
+* [Low] system manifest, `tools/lib/erx/manifest.rb` (`check_system_window`, `unit_holder`): the holder of a
+  window's device is found by the device's path, which a `pci` row does not have, so a system window on a
+  block-role PCIe function would be checked against the wrong unit. No platform record has one; key the lookup by
+  device index (a unit's span) when one appears.
 * [Low] domain library, PCIe functions on a configured row (`liberx/system/dom_boot_view.c`, `boot_devices`): only
   device-tree selectors get a role word and peripheral, so a PCIe function placed on a configured row would be of
   no kind and get no record, window or memory. No manifest places one; give the kind test a PCIe arm first.
@@ -3023,10 +3034,11 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   [design-device-tree.md](docs/design-device-tree.md#the-reader), "A PCI host bridge";
   [design-pcie.md](docs/design-pcie.md#dma)): the reader takes a host bridge's three-cell `dma-ranges` and the line
   its `interrupt-map` routes for a closed place's pin, but not its `ranges` (three cells, an I/O entry skipped) or
-  its `bus-range`, and `erx_dt_device` does not cut a PCIe function's range at its row's `dma_limit`, which the
-  manifest does not carry yet. The bridge record the device service hands the PCIe domain needs all three. The
+  its `bus-range`, and `erx_dt_device` does not cut a PCIe function's range at its row's `dma_limit`. The bridge
+  record the device service hands the PCIe domain needs all three, and the give's window containment check needs the
+  bridge's `ranges`. The
   reader takes a closed place (`erx_dt_intx`) as valid, device below 32, function below 8 and pin 1 to 4; the
-  platform record's reader of a bridge's places refuses any other when the places land.
+  platform record's reader of a bridge's places (`Manifest#bridge_places`) refuses any other.
 * [Low] device-tree reader, its sources listed twice (`tools/fuzz/dt_target.rb`, `tools/lib/erx/native_root.rb`,
   `DEVICE_TREE`): the reader, its architecture's interrupt binding and libfdt's files are named in both, so a new
   source is added in two places. Derive one list from the other.
@@ -9533,22 +9545,13 @@ document's "residual risks accepted" paragraph.
   (`pci-host-ecam-generic`) and `bcm2711_pcie` (`brcm,bcm2711-pcie`) with role `configuration`, and `qemu-xhci` and
   the VL805 by PCI identity and position with role `usb`, each with its SVD peripheral; the PCIe-arm item under the
   domain library (`dom_boot_view.c`, `boot_devices`) lands with it.
-* [Medium] system manifest, `tools/lib/erx/manifest.rb` ([design-usb.md](docs/design-usb.md#mass-storage-reaches-the-file-servers)):
-  a window names its device by device-tree path alone, so no window can lie on a PCIe function, and `qemu-xhci` and
-  the VL805, both functions, can have no drive. Choose how a window (and a `device` facet parameter) names a
-  function by its place, before the drive grants need one. The boot-time reader bounds no `windows[].drive` (it has
-  no rule for "`mf_none` or below `usb_drives_max`"); add one before `erx_blk_drive` reads the field.
+* [Medium] system manifest, `abi/manifest.txt` ([design-usb.md](docs/design-usb.md#mass-storage-reaches-the-file-servers)):
+  the boot-time reader bounds no `windows[].drive` (it has no rule for "`mf_none` or below `usb_drives_max`"); add
+  one before `erx_blk_drive` reads the field.
 * [Low] system manifest, `tools/lib/erx/manifest.rb` ([design-system.md](docs/design-system.md#the-manifest)):
   property 9's USB-domain clause, a release build's USB domain holding its controller's unit alone and running no
   file system, is not checked, since the check refuses every release build; it lands with the release build's
   confinement check, with its seed.
-* [Medium] system manifest, `abi/manifest.txt` ([design-abi.md](docs/design-abi.md#devices-and-partition-windows),
-  [design-pcie.md](docs/design-pcie.md#dma)): no `dma_limit` in `erx_mf_device`, and no closed flag with its listed
-  places and pins on a bridge's row. Add them, with the packer's copies from the platform record; the `dt`-case item
-  under Bugs covers `base`, `size` and `line`. With them the manifest check takes a `pci` row's line at a listed
-  place of a closed bridge, which it refuses everywhere today (`device_window`), and proves that no other unit holds
-  that line, with the seed of the VL805's line given apart from its function
-  ([design-usb.md](docs/design-usb.md#the-phase-1-part)).
 * [Medium] USB, `abi/inspection.txt` ([design-usb.md](docs/design-usb.md#failure-handling)): no `usb` kind. Declare
   `[usb, Controller]`, `[usb, Controller, ports, Route]`, `[usb, Controller, devices, Route]` and the other paths
   Failure handling lists, shown under `/proc/usb`, with the controller and bus processes that report them. The

@@ -626,6 +626,30 @@ class DomPlannerTest < Minitest::Test
     end
   end
 
+  # A function at a closed bridge's place names the line its bridge routes for the
+  # place's pin, which joins the line relation as a device-tree line does
+  # (docs/design-pcie.md, "The closed bus"): the VL805's line given to another unit, here
+  # the block transport's, apart from its function is a split unit (docs/design-usb.md,
+  # "The Phase 1 part").
+  def test_a_closed_place_s_line_given_apart_from_its_function_fails_the_build
+    platform = JSON.parse(JSON.generate(@context.platform))
+    row = { 'path' => '', 'bridge' => '', 'bus' => 0, 'device' => 0, 'function' => 0, 'clock' => 0, 'base' => 0, 'size' => 0,
+            'line' => 0, 'dma' => 'none', 'dma_memory' => 0, 'flags' => 0 }
+    bridge = row.merge('placement_key' => 'pcie', 'selector' => 'dt', 'role' => 'configuration', 'path' => '/scb/pcie@7d500000',
+                       'compatible' => 'brcm,bcm2711-pcie', 'base' => 0x40_1000_0000, 'size' => 0x1000_0000, 'flags' => ['closed'],
+                       'places' => [{ 'bus' => 1, 'device' => 0, 'function' => 0, 'pin' => 1 }], 'dma_limit' => 0x3c00_0000)
+    function = row.merge('placement_key' => 'vl805', 'selector' => 'pci', 'role' => 'usb', 'bridge' => bridge.fetch('path'),
+                         'bus' => 1, 'compatible' => 'pci1106,3483', 'line' => device_of(platform, 'block').fetch('line'),
+                         'dma' => 'unconfined', 'dma_memory' => 1 << 20, 'flags' => ['hostile'])
+    platform.fetch('units').push({ 'key' => 'pcie', 'devices' => [bridge] }, { 'key' => 'vl805', 'devices' => [function] })
+    @context = Erx::Manifest::Context.new(**ManifestContextFixture.arguments(@codec).merge(platform: platform))
+    source = with_domains('alpha', 'pcie') + "unit pcie\n  placement \"pcie\"\n  holder @domain.pcie\n" \
+                                             "unit vl805\n  placement \"vl805\"\n  holder @domain.alpha\n"
+    error = assert_raises(Erx::Manifest::Invalid) { admit(source) }
+    assert_equal 'view', error.field, error.message
+    assert_match(/share an interrupt line are in two units/, error.message)
+  end
+
   # Line 0 is no line (docs/design-abi.md, "Devices and partition windows"): two rows of no
   # kind whose nodes raise no interrupt, as the Raspberry Pi 4's RNG200 does, share none, so
   # they may sit in two units, on pages of their own.

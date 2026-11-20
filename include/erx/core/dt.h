@@ -187,7 +187,7 @@ void		 erx_dt_device(const erx_dt_t *tree, const char *path, erx_dt_row_t row, e
  * ANDed with the bridge's interrupt-map-mask, matched against each
  * interrupt-map entry in turn; the first match decides. The place comes
  * from the platform record, so it is a valid one: device below 32,
- * function below 8, pin 1 to 4. *line is the interrupt id the matching
+ * function below 8, pin 1 to 4, which the manifest reader proves. *line is the interrupt id the matching
  * entry names, and 0 on any status but ERX_DT_INTX_OK.
  * ERX_DT_INTX_NO_NODE: no node at path.
  * ERX_DT_INTX_NONE: no interrupt-map, or no entry for the place.
