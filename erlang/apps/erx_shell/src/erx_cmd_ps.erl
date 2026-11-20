@@ -6,10 +6,10 @@
 `ps [-mr] [-o keyword[,keyword...]]`: FreeBSD's ps (bin/ps) over the
 session's own process table (docs/design-shell.md, "Text commands").
 
-The table is the session's Erlang processes; in Phase 1 the session runs
-in the system domain, so that is this runtime's processes, and no
-inspect facet is needed, as a UNIX user sees their own processes. The
-session's programs join the table once programs run in sessions.
+The table is the Erlang processes of the runtime the session runs in
+(for the system domain's console session, the system domain's), read in
+that runtime, so no inspect facet is needed, as a UNIX user sees their
+own processes. The session's programs are not in the table.
 
 Columns are FreeBSD's default, `PID TT STAT TIME COMMAND`, or those `-o`
 names, from `pid`, `tt`, `state` (or `stat`), `time`, `pcpu` (or `%cpu`),

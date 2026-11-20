@@ -519,9 +519,18 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   exception reply kept until the resume, `liberx`'s wait and call stubs retrying a cancelled wait or call, and a
   space whose threads do not all arrive within the deadline ended, with no Fiasco patch
   ([design-fiasco.md](docs/design-fiasco.md#threads-bands-and-stops), FD21).
-* [High] 0.2 on Fiasco, `liberx/backend/fiasco`: DMA spaces behind the IOMMU for each confined device, and
-  MSIs through Fiasco's interrupt manager; whether QEMU's SMMUv3 works with Fiasco's binding under HVF is
-  unverified ([design-fiasco.md](docs/design-fiasco.md#devices)).
+* [High] Fiasco backend, `liberx/backend/fiasco`: DMA spaces behind the IOMMU for each confined device, and
+  MSIs as lines of the platform's MSI frame that the root binds through Fiasco's interrupt controller like any
+  other line, Fiasco's own MSI manager unused (`irq.c` answers `ERX_IRQ_MSI` with `ERX_ENOTSUP`); whether QEMU's
+  SMMUv3 works with Fiasco's binding under HVF is unverified ([design-fiasco.md](docs/design-fiasco.md#devices)).
+  It does not block 0.2: no device of 0.2 is behind an IOMMU or raises an MSI (virtio-mmio on QEMU `virt`, no
+  IOMMU and no MSI on the Pi 4), and the unconfined devices are FD12's published downside. It blocks the first
+  release that confines a device or drives virtio-pci.
+* [Medium] Fiasco backend, `liberx/backend/fiasco`: vCPU signals are designed and not built; the backend has no
+  `erx_vcpu_control` or `erx_vcpu_resume` and no bind of an IRQ object to a thread, so `liberx`'s signals in
+  programs have no delivery on Fiasco. Build the call table's row as
+  [vCPU upcalls on Fiasco](docs/design-fiasco.md#vcpu-upcalls-on-fiasco) states, for Track P
+  ([plan.md](docs/plan.md)).
 * [High] 0.2 on Fiasco, the release kernel: `Modules.generic` lists `jdb_object.cpp` only for a kernel built
   with the debugger, so the release kernel's build leaves the GPL-2.0 file out; a boot of that kernel
   checks that `sigma0` ignores its object-naming calls failing
@@ -614,9 +623,11 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   so any task sets the wall clock. Make it a call on the time page's handle that checks `WRITE` and answers
   `ERX_ERIGHTS` without it, with the release case "the wall clock"
   ([design-fiasco.md](docs/design-fiasco.md#the-releases-cases), [design-time.md](docs/design-time.md#on-fiasco)).
-* [High] 0.2 on Fiasco, `liberx/backend/fiasco` (`vm.c:673`, `irq.c:174`, `watchdog_thread.c:81`, `service.c:186-219`, `:690-694`,
-  `service_task.c:291-295`): the Fiasco calls that charge a task's quota are spread over five files, and a map
-  Fiasco refuses under a range call ends the machine. Move every `l4_task_map`, `l4_factory_create` form and
+* [High] 0.2 on Fiasco, `liberx/backend/fiasco` (`vm.c:735`, `irq.c:174`, `watchdog_thread.c:87`, `service.c:198-232`,
+  `:728-734`, `service_task.c:302-308`): the design's `charge.c` and its `fiasco-charge` chokepoint do not exist:
+  there is no such file and no such rule under `tools/lib/erx/chokepoint_rules`. The Fiasco calls that charge a
+  task's quota are spread over five files, and a map Fiasco refuses under a range call ends the machine. Move
+  every `l4_task_map`, `l4_factory_create` form and
   `l4_task_add_ku_mem` into `charge.c`, each refusal answered `ERX_ENOMEM` with its call undone, add the
   `fiasco-charge` chokepoint with its seeded violation, and the release case "a map at the factory's end"
   ([design-fiasco.md](docs/design-fiasco.md#the-construction)).
@@ -7988,6 +7999,30 @@ to the corpus and follow rc
 
 ## Security residuals
 
+* [High] Fiasco backend, rights per handle (`liberx/backend/fiasco`, `liberx/backend/core/handles.h`), blocks
+  0.2: the design records erXos's rights for every handle and checks them on every call, a duplicate or pass
+  narrowing them by its mask ([design-fiasco.md](docs/design-fiasco.md#rights), the call table's `erx_vm_map`
+  row: a right the caller's record lacks is `ERX_ERIGHTS`). The code records none (`handles.h`: "A handle
+  carries no rights"); the only right enforced is destroy, as creator-only (`object.c`,
+  `erx_fiasco_object_destroy_body`). So a domain maps read-write, or `erx_mem_copy`s into, any memory object it
+  was passed read-only: a connection's peer side, a program's lane side, a pipe's ring
+  (`vm_rules.c`, `erx_fiasco_vm_map_rule` and the copy rule check only kinds; `service_task.c`,
+  `erx_fiasco_task_vm_map_body` checks only that the caller holds the handle); it passes a handle onward with
+  rights it never had, since a later pass's mask narrows nothing; and the pass reports in each item's
+  descriptor rights it does not enforce (`object.c`, `object_pass_item`: `mask & erx_ktype_rights_mask(type) &
+  ~ERX_HR_DESTROY`), a reported value that is not true. Read-only sharing does not exist on this backend.
+  Development builds run trusted code only; the gap blocks release. Record the rights in the handle entry and
+  check them at the one lookup, so every call gets them by construction, with a case per consumer above.
+* [Medium] Fiasco backend, placement rights of the request gate and the thread semaphores
+  (`liberx/backend/fiasco/service_task.c:306-308`, `service.c:732-734`): both are mapped into the task with
+  `L4_CAP_FPAGE_RWS`, where the design places the gate with the send right alone and a semaphore with only the
+  rights `l4_semaphore_up` and `_down` take ([design-fiasco.md](docs/design-fiasco.md#who-holds-what)). The
+  special right S is the one Fiasco's `Ipc_gate_ctl::bind_thread` requires on the gate, and a bind rewrites the
+  gate's label (`fiasco/kernel/src/kern/ipc_gate.cpp:301-345`), so a task holding its gate with S may rebind it
+  away from the root service and relabel it. Whether a task can complete that rebind, which needs a thread
+  capability with S named through the call's typed item, is unverified: the lookup lives in a Fiasco header
+  erXos does not read. If it can, it most likely harms only that task. Map the gate without S, since a send
+  needs no right (`ipc_gate.cpp:471-512`), and each semaphore with what up and down need.
 * [High] Fiasco backend, `liberx/backend/fiasco/service.c` (the `ERX_FIASCO_CALL_TIME_SET_OFFSET` case),
   blocks 0.2: the dispatch passes the body the request's `offset_ns` alone, never its `caller`, and checks
   no right, so any task sets the wall clock, against 0.2's contract that an app cannot
@@ -8335,7 +8370,7 @@ to the corpus and follow rc
   a principal that a start row names, an app's or a person's, and that never enrolled can be enrolled by whoever
   first reaches a secure console line, as any principal can, and then logged in to with its authority. Settle it in
   the login design, which covers every place a person meets the system.
-- [Low] program channel on Fiasco (`liberx/backend/fiasco/object.c`): the Fiasco backend records no rights per handle, so a program can map the session's lane side read-write. It can bind or unbind only IRQ objects it holds in its own group: it holds no handle to its channel doorbell, and `irq_group_allowed` refuses the session's doorbell, which is also the gate worker's IRQ for the program's port. A program also holds `TRIGGER` copies of its own pipe ends' doorbells, bound in its own group, and can rebind them to any label, label 1 included; that costs it only its own wakes. Any task can create IRQ objects up to the machine-wide 256 (`ERX_FIASCO_IRQS_MAX`) and starve every other domain's doorbells. erXos's kernel enforces the rights the install grants (`erx_program_core.c` `install_rights`).
+- [Low] program channel on Fiasco (`liberx/backend/fiasco/object.c`): a program can map the session's lane side read-write, the High item on rights per handle above. It can bind or unbind only IRQ objects it holds in its own group: it holds no handle to its channel doorbell, and `irq_group_allowed` refuses the session's doorbell, which is also the gate worker's IRQ for the program's port. A program also holds `TRIGGER` copies of its own pipe ends' doorbells, bound in its own group, and can rebind them to any label, label 1 included; that costs it only its own wakes. Any task can create IRQ objects up to the machine-wide 256 (`ERX_FIASCO_IRQS_MAX`) and starve every other domain's doorbells. erXos's kernel enforces the rights the install grants (`erx_program_core.c` `install_rights`).
 
 * [Low] inspect service, the runtime agent leg ([design-live.md](docs/design-live.md#the-runtime-agent)): a
   domain's inspection agent takes questions one at a time, so a holder of scope `all` that asks without pause

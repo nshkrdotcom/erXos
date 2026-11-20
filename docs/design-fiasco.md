@@ -267,9 +267,11 @@ acknowledgement check no right (`Irq_sender::kinvoke` and `dispatch_irq_proto`, 
 the type gives `trigger` without `ack` (`abi/kernel.txt:505-506`), a difference FD13 records. A ringer's acknowledgement of a
 peer's doorbell does nothing, since a software object has no line to mask
 ([Interrupts and readiness](#interrupts-and-readiness)), and a device line is placed only in the
-domain that holds its device. Only the root passes, and every pass it makes is a creator's into a
-space the creator made, which pass sets do not bind on erXos's kernel either
-([Passing a handle](#passing-a-handle)), so the creator's mask is what narrows it.
+domain that holds its device. Every pass is a creator's into a space the creator made: any task
+passes into a space it created, as the domain library in the root installs a domain and a session
+installs a program ([The call table](#the-call-table)), and pass sets do not bind that case on
+erXos's kernel either ([Passing a handle](#passing-a-handle)), so the creator's mask is what
+narrows it.
 
 ### Destroying an object
 
