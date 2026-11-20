@@ -175,6 +175,8 @@ erx_dma_publication_check(const erx_dma_ledger_t *ledger, const erx_dma_publicat
 	}
 	if (!SEED_NO_ROOM_TEST && !room(ledger, publication, judged))
 		return (ERX_DMA_BREAKS_ROOM);
+	if (publication->fill_count > ERX_DMA_FILLS_MAX)
+		return (ERX_DMA_BREAKS_FILLS);
 	for (uint32_t fill = 0; fill < publication->fill_count; fill++) {
 		if (!SEED_NO_FILLS_TEST && !filled_inside_a_name(publication, judged, &publication->fills[fill]))
 			return (ERX_DMA_BREAKS_FILLS);

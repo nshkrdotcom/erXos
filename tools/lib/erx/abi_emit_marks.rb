@@ -27,6 +27,17 @@ module Erx
     # For each structure S a format declares, erx_meanings_of_S lists the
     # numbers of the meanings every table of S offers, ERX_MEANING_<L>, each a
     # constant of the model.
+    #
+    # What the sequencer reads of a report (docs/design-device-dma.md,
+    # "Releases"), from the record's bytes as the acquisition took them:
+    #
+    #   erx_report_meaning   the meaning a record of a structure the device
+    #                        writes selects; false for a selector that names
+    #                        none of the structure's meanings;
+    #   erx_report_releases  the cpu structure whose record a report names and
+    #                        its release place's value; false for a meaning
+    #                        that releases nothing, or a code its release's
+    #                        `when` does not list.
     module MarksEmitter
       # The encoder's parameter for each input, named apart from free(3).
       PARAMETERS = { 'free' => 'described', 'placed' => 'placed' }.freeze
@@ -45,7 +56,71 @@ module Erx
         [*(written.empty? ? [] : little_endian),
          *written.flat_map { |marked| encoder(marked) },
          *targets.flat_map { |target| meaning_list(target, marks.offered(target)) },
-         *structures(targets, marks.meanings), *descriptions(described)]
+         *structures(targets, marks.meanings), *descriptions(described), *reports(targets, marks.meanings)]
+      end
+
+      def reports(targets, meanings)
+        device = targets.select(&:device?)
+        return [] if device.empty?
+
+        arms = device.flat_map do |target|
+          offered = meanings.select { |meaning| meaning.structure.name == target.name }
+          ["\tcase #{structure_constant(target.name)}:", *offered.flat_map { |meaning| select_arm(meaning) },
+           "\t\treturn (false);"]
+        end
+        reported = meanings.select(&:report?)
+        releasing = reported.select(&:release)
+        ["/* A report as the acquisition took it: its bytes, read as its meaning's layout. */",
+         'typedef union erx_report_record {',
+         *reported.map { |meaning| "\t#{CEmitter.name(meaning.layout.name)}_t\t#{Names.stem(meaning.layout.name)};" },
+         "\tuint8_t\tbytes[#{reported.map { |meaning| meaning.layout.size }.max}];",
+         '} erx_report_record_t;', '',
+         '/*',
+         ' * The meaning a record of structure, which the device writes, selects, into',
+         ' * *meaning; false for a selector that names no meaning of the structure, or a',
+         ' * structure the device does not write.',
+         ' */',
+         'static inline bool',
+         'erx_report_meaning(uint32_t structure, const erx_report_record_t *record, uint32_t *meaning)',
+         '{', "\t(void)record;", "\tswitch (structure) {", *arms, "\tdefault:", "\t\treturn (false);", "\t}", '}', '',
+         '/*',
+         ' * The cpu structure whose record a report of meaning names, into *structure,',
+         " * and its release place's value, into *value; false for a meaning that",
+         ' * releases nothing, or a code its release does not list.',
+         ' */',
+         'static inline bool',
+         'erx_report_releases(uint32_t meaning, const erx_report_record_t *record, uint32_t *structure, uint64_t *value)',
+         '{', "\tswitch (meaning) {", *releasing.flat_map { |meaning| release_arm(meaning) },
+         "\tdefault:", "\t\t(void)record;", "\t\t(void)structure;", "\t\t(void)value;", "\t\treturn (false);", "\t}", '}', '']
+      end
+
+      # One meaning's test in erx_report_meaning: its selector's value, or none
+      # where the structure has that one meaning.
+      def select_arm(meaning)
+        found = ["\t\t*meaning = #{CEmitter.constant(meaning.constant)};", "\t\treturn (true);"]
+        return found unless meaning.selector
+
+        ["\t\tif (#{place_value(meaning, meaning.selector.place, raw: true)} == #{hex(meaning.selector.raw)}) {",
+         *found.map { |line| "\t#{line}" }, "\t\t}"]
+      end
+
+      def release_arm(meaning)
+        release = meaning.release
+        codes = (release.codes || []).map { |code| "#{place_value(meaning, release.condition, raw: false)} == #{hex(code)}" }
+        ["\tcase #{CEmitter.constant(meaning.constant)}:",
+         *(codes.empty? ? [] : ["\t\tif (!(#{codes.join(" ||\n\t\t    ")}))", "\t\t\treturn (false);"]),
+         "\t\t*structure = #{structure_constant(release.target)};",
+         "\t\t*value = #{place_value(meaning, release.place, raw: false)};",
+         "\t\treturn (true);"]
+      end
+
+      # A place's value in a record of meaning's layout: its bits as the field
+      # holds them (raw), or shifted by the place's shift, as its accessor
+      # gives it, read through the report union's member of the layout.
+      def place_value(meaning, place, raw:)
+        record = "record->#{Names.stem(meaning.layout.name)}.#{place.field}"
+        bits = "(((uint64_t)#{record} >> #{place.low}) & #{hex((1 << (place.high - place.low + 1)) - 1)})"
+        raw || place.shift.zero? ? bits : "(#{bits} << #{place.shift})"
       end
 
       # The structures, numbered in name order from 1, so 0 is free to name a

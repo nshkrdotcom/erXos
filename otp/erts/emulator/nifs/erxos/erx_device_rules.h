@@ -24,7 +24,8 @@
  *   room      the run fits: as many unheld records of each table as it describes, the next
  *             record of each table placed in order unheld, and the holding it makes no larger
  *             than a holding holds;
- *   fills     an out segment's bytes go only inside a range a record of the publication names.
+ *   fills     at most ERX_DMA_FILLS_MAX fills, and an out segment's bytes go only inside a range a
+ *             record of the publication names.
  * The calls rule holds by the type: a publication carries records and fills and no other step.
  * The bindings, reach and controls rules, and the releases rule over acquired reports, belong
  * to the forms and the sequencer that move onto this check after the split ring.
@@ -37,6 +38,9 @@
 
 #include "erx/abi.h"
 #include "erx_device_ledger.h"
+
+/* The most fills a publication carries: a post's out segments, at most a chain's. */
+#define ERX_DMA_FILLS_MAX	ERX_DEVICE_CHAIN_MAX
 
 /* A reference as a core names it: a buffer of the pool, and an offset into it. */
 typedef struct erx_dma_name {

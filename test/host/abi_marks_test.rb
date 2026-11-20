@@ -485,6 +485,61 @@ class AbiMarksTest < Minitest::Test
     assert_equal "wrong\n", output
   end
 
+  # What the sequencer reads of a report, generated from the marks: a used element's
+  # meaning and the descriptor its id releases; an event TRB's meaning from its type,
+  # none for a Host Controller Event; a transfer event releasing its TRB only on a code
+  # its release lists; a port event releasing nothing.
+  REPORTS = <<~C
+    #include <stdio.h>
+    #include "erx/abi.h"
+
+    int
+    main(void)
+    {
+    	erx_report_record_t record = { .virtq_used_elem = { .id = 3, .len = 9 } };
+    	uint32_t meaning = 0, structure = 0;
+    	uint64_t value = 0;
+    	int right = erx_report_meaning(ERX_STRUCTURE_VIRTQ_USED, &record, &meaning) &&
+    	    meaning == ERX_MEANING_VIRTQ_USED_ELEM && erx_report_releases(meaning, &record, &structure, &value) &&
+    	    structure == ERX_STRUCTURE_VIRTQ_DESC && value == 3 &&
+    	    !erx_report_meaning(ERX_STRUCTURE_VIRTQ_DESC, &record, &meaning);
+
+    	record = (erx_report_record_t){ .xhci_trb_transfer_event = {
+    	    .control = (uint32_t)ERX_XHCI_TRB_TYPE_HOST_CONTROLLER_EVENT << 10 } };
+    	right = right && !erx_report_meaning(ERX_STRUCTURE_XHCI_EVENT_RING, &record, &meaning);
+    	record = (erx_report_record_t){ .xhci_trb_transfer_event = { .pointer = 0x1230,
+    	    .status = (uint32_t)ERX_XHCI_COMPLETION_SHORT_PACKET << 24,
+    	    .control = (uint32_t)ERX_XHCI_TRB_TYPE_TRANSFER_EVENT << 10 | 1 } };
+    	right = right && erx_report_meaning(ERX_STRUCTURE_XHCI_EVENT_RING, &record, &meaning) &&
+    	    meaning == ERX_MEANING_XHCI_TRB_TRANSFER_EVENT && erx_report_releases(meaning, &record, &structure, &value) &&
+    	    structure == ERX_STRUCTURE_XHCI_TRANSFER_RING && value == 0x1230;
+    	record.xhci_trb_transfer_event.status = (uint32_t)ERX_XHCI_COMPLETION_STALL << 24;
+    	right = right && !erx_report_releases(meaning, &record, &structure, &value) &&
+    	    !erx_report_releases(ERX_MEANING_XHCI_TRB_PORT_EVENT, &record, &structure, &value);
+    	printf("%s\\n", right ? "reported" : "wrong");
+    	return (right ? 0 : 1);
+    }
+  C
+
+  def test_reports_give_their_meaning_and_release
+    header = Erx::ABI::CEmitter.header(tree_schema(Dir.mktmpdir('erx-abi-marks-')))
+    output, status = compile(header, REPORTS) { |program| Open3.capture2e(program, stdin_data: '') }
+    assert status.success?, output
+    assert_equal "reported\n", output
+  end
+
+  # A seeded fault in the generated code: the transfer event's release without its code
+  # condition, so a stalled transfer's event would release its TRB as finished.
+  def test_a_dropped_release_condition_is_caught
+    header = Erx::ABI::CEmitter.header(tree_schema(Dir.mktmpdir('erx-abi-marks-')))
+    seeded = header.sub(/\tcase ERX_MEANING_XHCI_TRB_TRANSFER_EVENT:\n\t\tif \(!\(.*?\t\t\treturn \(false\);\n/m,
+                        "\tcase ERX_MEANING_XHCI_TRB_TRANSFER_EVENT:\n")
+    refute_equal header, seeded
+    output, status = compile(seeded, REPORTS) { |program| Open3.capture2e(program, stdin_data: '') }
+    refute status.success?
+    assert_equal "wrong\n", output
+  end
+
   private
 
   def sample(text = SAMPLE, other: nil)

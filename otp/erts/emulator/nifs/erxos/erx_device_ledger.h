@@ -152,9 +152,10 @@ bool	erx_dma_ledger_hold(erx_dma_ledger_t *ledger, const struct erx_dma_publicat
 	    const erx_dma_place_t *records, uint32_t record_count);
 /*
  * Ends the live holding whose head is `head`, on a report of table `reports`, the table the
- * device writes, at its consumer position. False, changing nothing, when none is live.
+ * device writes, at its consumer position, into `*ended`. False, changing nothing, when none is live.
  */
-bool	erx_dma_ledger_release(erx_dma_ledger_t *ledger, uint32_t reports, erx_dma_place_t head);
+bool	erx_dma_ledger_release(erx_dma_ledger_t *ledger, uint32_t reports, erx_dma_place_t head,
+	    erx_dma_holding_t *ended);
 /* The device's idle report after a reset: every holding ends and every position returns to 0. */
 void	erx_dma_ledger_reset(erx_dma_ledger_t *ledger);
 

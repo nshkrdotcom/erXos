@@ -340,18 +340,20 @@ erx_dma_ledger_hold(erx_dma_ledger_t *ledger, const erx_dma_publication_t *publi
 }
 
 bool
-erx_dma_ledger_release(erx_dma_ledger_t *ledger, uint32_t reports, erx_dma_place_t head)
+erx_dma_ledger_release(erx_dma_ledger_t *ledger, uint32_t reports, erx_dma_place_t head, erx_dma_holding_t *ended)
 {
 	if (reports >= ledger->layout.table_count || !device_writes(&ledger->layout, reports))
 		return (false);
 	for (uint32_t live = 0; live < ledger->live; live++) {
 		if (same_place(ledger->holdings[live].records[0], head)) {
+			*ended = ledger->holdings[live];
 			ledger->holdings[live] = ledger->holdings[--ledger->live];
 			advance(ledger, reports, 1);
 			return (true);
 		}
 	}
 	if (SEED_RELEASE_TWICE) {
+		*ended = (erx_dma_holding_t){ 0 };
 		advance(ledger, reports, 1);
 		return (true);
 	}

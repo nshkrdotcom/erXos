@@ -29,6 +29,9 @@
 enum { SIZE = 4, BUFFER = 100, GRANULE = 64, MEMORY = 192 + SIZE * 128 };
 enum { DESC = 0, AVAIL = 1, USED = 2 };
 
+/* The holding a release ended, which these tests do not read. */
+static erx_dma_holding_t ended;
+
 static erx_dma_layout_t
 split_ring(uint64_t memory, uint64_t base, uint32_t bits)
 {
@@ -223,7 +226,7 @@ test_transitions(void)
 	EXPECT(hold_at(&ledger, 0, (erx_dma_place_t[]){ { DESC, 0 }, { AVAIL, 0 } }, 2), "a chain of one descriptor");
 	EXPECT(!hold_at(&ledger, 0, (erx_dma_place_t[]){ { DESC, 1 }, { AVAIL, 1 } }, 2),
 	    "a buffer a live holding holds, with descriptors free");
-	EXPECT(!erx_dma_ledger_release(&ledger, DESC, head), "a release on a table the CPU writes");
+	EXPECT(!erx_dma_ledger_release(&ledger, DESC, head, &ended), "a release on a table the CPU writes");
 	EXPECT(erx_dma_ledger_free_records(&ledger, DESC) == SIZE - 1, "three free descriptors");
 	erx_dma_ledger_reset(&ledger);
 	EXPECT(erx_dma_ledger_live(&ledger) == 0 && !erx_dma_ledger_buffer_held(&ledger, 0) &&
@@ -303,7 +306,7 @@ step(const erx_dma_ledger_t *before, const model_t *was, unsigned event, unsigne
 		}
 	} else {
 		allowed = (model.heads >> head) & 1;
-		done = erx_dma_ledger_release(ledger, USED, (erx_dma_place_t){ DESC, head });
+		done = erx_dma_ledger_release(ledger, USED, (erx_dma_place_t){ DESC, head }, &ended);
 		if (allowed) {
 			model.descs &= ~model.chain[head];
 			model.buffers &= ~(1u << head);

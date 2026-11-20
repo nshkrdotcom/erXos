@@ -8027,10 +8027,22 @@ to the corpus and follow rc
   sequencer's split never derives one, and the package that writes the split tests it. The encoders are public in
   `include/erx/abi.h`, beside every layout's generic setters; they end up confined to the sequencer (a private header), and the chokepoint of
   [Descriptions](docs/design-device-dma.md#descriptions), that only the sequencer stores into a region holding a
-  structure, is a build check that lands with the sequencer. The ledger, the queue's layout, descriptions and the
-  publication rules are in `erx_device_ledger.c` and `erx_device_rules.c`, host-tested and used by nothing yet; the
-  package that moves the split ring onto them deletes the fold of `erx_device_dma_check` and `erx_device_queue_layout`,
-  so one check and one layout stay. A layout holds one table of each structure, and a table cores describe is placed at any free record, which the
+  structure, is the build check `device-record-encoders`, which names the descriptor formats' layout prefixes rather
+  than deriving the encoders from the marks, and covers the encoders but not yet the generic setters, which
+  `erx_device_queue.c` still uses. The ledger, the queue's layout, descriptions, the publication rules and the
+  sequencer's publication and acquisition for the split ring are in `erx_device_ledger.c`, `erx_device_rules.c` and
+  `erx_device_sequencer.c`, host-tested and used by nothing yet; next, `erx_device.c`'s split-ring post and completion
+  move onto them and `erx_device_queue_layout` goes. `erx_device_dma_check` and `erx_device_dma_order` serve GENET,
+  ADMA2 and the TRB form through `accept_plan` until those move, so the old check goes with the last of them. The
+  sequencer writes virtio's available entry, which no layout holds, without an encoder; it refuses a report that
+  releases nothing (the ledger has no transition that only advances a consumer position) and a release by address,
+  as an event TRB's, both of which the TRB form needs. Before `erx_device.c` moves onto it: `erx_dma_consume` must be
+  tied by construction to the count `erx_dma_acquire_count` returned (an acquisition value consume refuses past), or
+  an effect layer consuming one record too many reads a stale used element whose old id can release a live chain;
+  `ERX_DMA_STORE_BYTES_MAX` is hand-kept and should be derived from the widest encoded layout; `free_record`'s loop
+  is bounded only by the room rule; `erx_dma_publish` returns check verdicts for refusals that mean the check and the
+  sequencer disagree; rule 1 zeroes a buffer's named size while the handover cleans its stride; and the generated
+  `erx_report_meaning` carries an unreachable return and casts for a structure with one meaning. A layout holds one table of each structure, and a table cores describe is placed at any free record, which the
   TRB form's many transfer rings, each placed in order, change when it moves on. Packages, in order: the
   sequencer's publication and its acquisition, with the releases rule and the split ring moved onto them; GENET,
   and ADMA2 with its transfer split into entries by the sequencer, moved onto them; the TRB form's publication and
