@@ -1,47 +1,33 @@
 # Chapter 11. Authority and Security
 
-> **Status.** **Built:** Fiasco and the root service as the only code
-> that keeps domains apart; handles with a creator-only destroy and no
-> rights; exports and the funnel; facets minted from the manifest's
-> rows, checking who asks, size, requests in flight and operations;
-> the declared service table; file grants of `ro`, `rw` or `rx`; the
-> root's refusal of a writable and executable mapping, and JIT memory
-> only for marked images; three runtime images, OpenSSL in two, and an
-> Ed25519 check outside OpenSSL; the line and field escapes from one
-> table; `erx_report`; and the banner
-> `development build: trusted code only` on every build.
-> **Designed:** rights on handles and a generation in a handle's
-> value; the root's check of who may set the clock; budgets as walls;
-> priority bands; DMA behind an IOMMU and the PCIe domain; a facet's
-> admission by CPU share, and a generated admission path; a person's
-> login; the vault and its key facets; Fiasco's own refusal of a
-> writable and executable mapping; and the system-call fuzz campaign.
+> **Status.** Built: the walls between domains, which rest on Fiasco
+> and the root service; handles, exports, facets and file grants; the
+> refusal of a mapping that is writable and executable; the three
+> runtime images; and the escaping of untrusted text. Designed: rights
+> on handles, budgets that refuse, CPU bands, devices behind an IOMMU,
+> a safe decode of other domains' messages in the system domain, login
+> with a passphrase, and the key vault. Table 11.4 in section 11.13
+> lists both in full.
 
 **Background needed.** [Chapter 2](02-microkernels.md) for
 capabilities, the confused deputy and the trusted computing base;
 [chapter 8](08-kernel-interface.md) for handles, the root service and
 what Fiasco gives; [chapter 6](06-construction.md) for exports, the
-funnel and the origin envelope. The domains of
-[chapter 10](README.md#chapter-10-domains-a-wall-around-some-processes)
-are glossed where they are needed.
+funnel and the origin envelope.
 
 A program you download onto a FreeBSD machine and run as yourself can
 read your mail and send it to anyone on the network. It needs no bug
 in the kernel. The kernel checks each `open` against your user id, the
 program runs with your user id, and every check passes.
 
-FreeBSD has three answers. The first is the user id itself: a file
-belongs to a user, and a process acts for one user. The second is the
-jail, which gives a group of processes its own view of the file system
-and the network. The third is Capsicum, in which a process gives up
-its right to open files by name and keeps only the descriptors it
-holds
-([chapter 2](02-microkernels.md#236-capability-systems-in-practice)).
 The user id is **ambient authority**: a process holds it by being who
 it is, not because someone handed it the right to one particular
 thing
 ([chapter 1](01-operating-systems.md#165-permissions-and-the-power-of-a-user)).
-Jails and Capsicum take ambient authority away after the fact.
+FreeBSD narrows it after the fact. A jail gives a group of processes
+its own view of the file system and the network, and Capsicum lets a
+process give up opening files by name and keep only its descriptors
+([chapter 2](02-microkernels.md#236-capability-systems-in-practice)).
 
 erXos starts from the other end. A program holds no authority it was
 not handed. Every right is a thing in somebody's hands: a handle to a
@@ -53,55 +39,46 @@ hold an untrusted program to its rights are designed and not built,
 so every build runs trusted code only and says so at boot. This
 chapter says which checks those are.
 
-Sections 11.1 and 11.2 state the threat model and where trust is
-placed. Sections 11.3 to 11.7 take the four forms of authority. Section
-11.8 follows one authority, the right to set the clock, from the
-manifest to the clock's page and to its refusals. Principals (11.9),
-machine code (11.10), keys (11.11) and untrusted text (11.12) follow,
-and section 11.13 says what a hostile app could do on the system as
-built.
-
-> **Background: threat models.** A security design starts by saying
-> who it defends against and what they can do. That statement is a
-> **threat model**: a list of adversaries, each with what it is
-> assumed able to do and what it must not be able to do, and the
-> assets the design protects. A threat model also says what it leaves
-> out. Without one, a reviewer cannot tell a missing defense from a
-> case the design never meant to cover. "Secure" with no threat model
-> means nothing; "a domain cannot read another domain's memory, unless
-> Fiasco or the root service has a defect" can be checked.
+> **Background: threat models.** A **threat model** names who a
+> security design defends against, what each adversary is assumed able
+> to do and must not be able to do, the assets protected, and what is
+> left out. Without one, a reviewer cannot tell a missing defense from
+> a case the design never meant to cover.
 
 ## 11.1 The threat model
 
 erXos is designed to run code it does not trust: apps a user
 installs, drivers for devices that may be faulty or hostile, programs
-built from someone else's source. The threat model says what each of
-these may do and what it must not
+built from someone else's source
 ([design.md, Threat model](../design.md#threat-model)).
 
 ### 11.1.1 Adversaries and assets
 
-Five adversaries matter for most of this book.
+The unit of protection is the **domain**: an address space with its
+own Erlang runtime and its own processes, walled off from every other
+([chapter 10](10-domains.md)). Five adversaries matter.
 
 * **Code in an Erlang domain.** It may do anything inside its own
-  domain: spend its memory, run its threads, write frames into its
-  lanes. It must not read or write another domain's memory, reach a
-  process that was not exported to it, or act through a facet that
-  was granted to someone else.
+  domain, including send messages to other domains through its
+  **lanes**, the one-way rings of shared memory that carry its
+  messages, as **frames**, to each peer
+  ([chapter 6](06-construction.md#624-pids-exports-and-the-envelope)).
+  It must not touch another domain's memory, reach a process that was
+  not exported to it, or act through a facet granted to someone else.
 * **A native program in a sub-space.** A **sub-space** is an address
   space a domain creates for a program, holding only what the domain
   put there
   ([chapter 5](05-overview.md#525-programs-in-sub-spaces)). The
-  program may use what its creator handed it and ask its creator for
-  anything over its channel. It must not reach any domain, outlive its
-  creator, or reach a file its creator did not give it.
+  program must not reach any domain, outlive its creator, or reach a
+  file its creator did not give it.
 * **A device, and the driver that holds it.** A device writes memory
-  by DMA, and a driver can aim it. Where an IOMMU confines the device,
-  the driver must not aim it outside its own domain's buffers. Where
-  nothing confines it, nothing is enforced, and the domain that holds
-  it is part of the trusted base (section 11.2).
-* **A peer on the network or the host link.** It may send any bytes.
-  It must not make the receiving domain do more than refuse or drop
+  by DMA, and a driver can aim it. An **IOMMU** is a unit that
+  confines the memory a device can reach. Behind one, the driver must
+  not aim the device outside its own domain's buffers. Without one,
+  nothing is enforced, and the driver's domain is part of the trusted
+  base (section 11.2).
+* **A peer on the network or the host link.** It may send any bytes,
+  and must not make the receiving domain do more than refuse or drop
   them, or reach any domain before it has authenticated.
 * **Whoever holds the storage medium.** It may choose every byte a
   file system reads from the data partition. It must not change a
@@ -110,26 +87,19 @@ Five adversaries matter for most of this book.
 
 The assets are the kernel's integrity; each domain's integrity,
 availability and secrecy against every other domain; the bounds of
-budgets; and the operator's terminals, which section 11.12 explains.
+budgets; and the operator's terminals (section 11.12).
 
 ### 11.1.2 Untrusted input
 
-Every input that crosses from outside the trusted base is untrusted,
-wherever it arrives. The list is short enough to remember:
+Every input that crosses from outside the trusted base is untrusted:
+everything a domain hands the kernel interface; every message from
+another domain; everything a device writes to shared memory; every
+byte from the host link; every network packet; every file system
+image and package; and every code artifact a user supplies.
 
-* everything a domain hands the kernel interface: registers,
-  addresses, lengths, handles;
-* every message from another domain;
-* everything a device writes to shared memory;
-* every byte from the host link;
-* every network packet;
-* every file system image and every package;
-* every code artifact a user supplies.
-
-Each kind crosses one narrow checking function: the root service's
-request decoder, each runtime's funnel, the host link's deframer, a
-driver's decoder of what its device wrote, the file protocol's
-decoder. Each has a fuzz target, a test that feeds it random and
+Each kind crosses one narrow checking function, such as the root
+service's request decoder, each runtime's funnel or the host link's
+deframer. Each has a fuzz target, a test that feeds it random and
 mutated input and watches for a crash or a wrong answer. A defect that
 lets bad input through has one place to live, and one test that should
 have caught it.
@@ -137,16 +107,23 @@ have caught it.
 ### 11.1.3 What the threat model leaves out
 
 Three things are outside the model
-([design.md, Residual risks](../design.md#residual-risks)).
+([design.md, Residual risks](../design.md#residual-risks)): side
+channels inside one domain, since the domain is the boundary of
+secrecy; timing between domains, since a domain can learn how busy its
+neighbors are from how fast its own calls return; and, on some
+processors, speculation across domains. On a processor open to
+branch-predictor attacks, explained in the box below, a domain may
+read memory it cannot map. That is a limit of the system on such
+processors.
 
-* **Side channels inside one domain.** The domain is the boundary of
-  secrecy, so two parties that must keep secrets from each other run
-  in two domains.
-* **Timing between domains.** A domain can learn how busy its
-  neighbors are from how fast its own calls return.
-* **Speculation across domains on some processors.** On a processor
-  open to branch-predictor attacks, a domain may read memory it cannot
-  map (section 11.13 explains the attack).
+> **Background: branch-predictor attacks.** A processor guesses which
+> way a branch goes and runs ahead on the guess. A wrong guess's
+> results are thrown away, but the memory it touched stays in the
+> caches, and the time to read that memory later reveals which
+> addresses were touched. An attacker who can train the predictor
+> makes another program, or the kernel, guess wrong into code that
+> reads a secret, and the secret leaks through timing. Defenses live at
+> kernel entry and in the processor's firmware.
 
 ## 11.2 Trust placement
 
@@ -155,19 +132,19 @@ to be. erXos keeps that part small and says exactly what it is.
 
 ### 11.2.1 Two things keep domains apart
 
-Only Fiasco runs in kernel mode. Everything else, the system domain
+Only Fiasco runs in kernel mode; everything else, the system domain
 included, runs in user mode. Two things keep one domain's memory and
-kernel objects apart from every other's, and only two
+kernel objects apart from every other's
 ([chapter 8](08-kernel-interface.md#881-what-isolation-rests-on)):
 
 1. **Fiasco**, with its address spaces, its capability tables and its
    check on every invocation.
 2. **The root service's request decoder and placement code.** The
-   root service is the one thread of the system domain that creates
-   every kernel object and writes every page table, on behalf of the
-   requests `liberx` sends it
+   root service is one thread of the system domain. It creates every
+   kernel object and writes every page table, on behalf of requests
+   from `liberx`, the C library through which every domain makes its
+   kernel calls
    ([chapter 8](08-kernel-interface.md#83-the-root-service-who-holds-what)).
-   It is the only writer of every table Fiasco checks.
 
 A defect in either can break isolation; a defect anywhere else breaks
 only its own domain. **Trust placement** is that statement made for
@@ -182,78 +159,69 @@ each property: the short list of code it rests on
 | which domains exist, with which facets and grants | the system domain |
 | a process's state inside its domain | that domain's runtime |
 
-*Table 11.1. What each isolation property rests on.*
-
-Notice the third row. The receiving runtime checks every frame
-itself, on its own CPU time, so no third party stands between two
-domains whose failure or quota could reach either (section 11.5).
+*Table 11.1. What each isolation property rests on. In the third row,
+the receiving runtime checks every frame itself, so no third party
+stands between two domains (section 11.5).*
 
 ### 11.2.2 The trusted base
 
 The **trusted base**, chapter 2's trusted computing base
 ([chapter 2](02-microkernels.md#241-the-trusted-computing-base)),
-is everything whose failure can break the guarantees above. In erXos
-it is Fiasco, the root service, and the rest of the system domain:
-its ERTS, its `liberx` with the domain library that plans and builds
-domains, and its Erlang services. Figure 11.1 draws it.
+is everything whose failure can break the guarantees above: Fiasco,
+the root service, and the rest of the system domain, with its ERTS,
+its `liberx` and domain library, and its Erlang services. Figure 11.1
+draws it.
 
 ```mermaid
-flowchart TB
-  F[Fiasco, kernel mode] --> R[root service]
-  R --> S[system domain: ERTS and services]
-  S --> P[PCIe domain]
-  S --> U[driver domain, unconfined device]
-  S --> D[driver domain, confined device]
-  S --> E[Erlang domains and sessions]
-  E --> X[sub-spaces: native programs]
+flowchart BT
+  R[root service] --> F[Fiasco, kernel mode]
+  S[system domain: ERTS and services] --> R
+  P[PCIe domain] --> S
+  U[driver domain, unconfined device] --> S
+  D[driver domain, confined device] --> S
+  E[Erlang domains and sessions] --> S
+  X[sub-spaces: native programs] --> E
 ```
 
-*Figure 11.1. The trust map, as designed. An arrow points from what a
-part depends on to the part. Fiasco, the root service, the system
-domain, the PCIe domain and the holder of an unconfined device are the
-trusted base; a domain lower down depends on those and on nothing
-beside or below it.*
+*Figure 11.1. The trust map, as designed. An arrow points from a part
+to what it depends on. Fiasco, the root service, the system domain,
+the PCIe domain and the holder of an unconfined device are the trusted
+base; a domain lower down depends on those and on nothing beside or
+below it.*
 
-The system domain's share is kept small in three ways. It runs ERTS's
-interpreter build, with no JIT, no C++ and no OpenSSL (sections 11.10
-and 11.11). Every input reaches it through one narrow decoder: the
-root's for requests, the funnel for frames. And policy, who gets what,
-is Erlang, while the mechanism isolation rests on, the root's decoder
-and tables, is C17, small and fuzzed.
+The system domain's share is kept small. It runs ERTS's interpreter
+build, with no JIT, no C++ and no OpenSSL (sections 11.10 and 11.11),
+and its inputs come through the root's decoder and the funnel, both
+small and fuzzed. One input escapes
+those narrow decoders: the message inside a frame, which the system
+domain decodes with ERTS's ordinary decoder (section 11.5.1).
 
-Hardware adds to the trusted base. A device that masters DMA without
-an IOMMU, a unit that confines a device's memory accesses, can write
-any page, so the domain that drives it is trusted whatever its code
-([chapter 15](README.md#chapter-15-devices-and-drivers)). In the
-system as built no device is confined: DMA behind an IOMMU is
-designed and not built, so every domain that holds a DMA-capable
-device is in the trusted base. The design also adds a **PCIe domain**,
-which alone reaches PCIe configuration space and so can turn on any
-device's DMA; it is designed and not built.
+No device is confined in the system as built, so every domain that
+holds a DMA-capable device is in the trusted base
+([chapter 15](README.md#chapter-15-devices-and-drivers)). DMA behind
+an IOMMU is designed and not built. So is the **PCIe domain**, which
+alone reaches PCIe configuration space and so can turn on any
+device's DMA.
 
 ### 11.2.3 Why the system domain may stop the machine
 
 A fault in any other domain ends that domain. A fault in the system
 domain or the root service ends the machine
 ([chapter 8](08-kernel-interface.md#855-when-the-root-task-faults)).
-That is a choice. The system domain holds the tables that say who
-owns what and which facets and grants exist. If it carried on after a
-fault, its next decision would come from tables a bug may have
-damaged, and a machine that stops with a reason is safer than one that
-hands out authority from such records. The same reasoning makes the
-root end the machine when Fiasco refuses an unmap the root expected to
-succeed: its records and Fiasco's no longer agree.
+The system domain holds the tables that say who owns what and which
+facets and grants exist; carrying on after a fault would mean handing
+out authority from tables a bug may have damaged. For the same reason
+the root ends the machine when Fiasco refuses an unmap the root
+expected to succeed: their records no longer agree.
 
 ### 11.2.4 Why no verifier
 
-ERTS loads compiled Erlang code without checking it, and treats what
-it loads as fully trusted
-([design.md, Why no verifier](../design.md#why-no-verifier)). A
-crafted module can corrupt the runtime that loads it. Java and eBPF
-answer this with a verifier: code that proves a program safe before
-it runs. erXos does not add one. Untrusted code runs only in its own
-domain, where a malicious module can corrupt only that domain's
-runtime, and Fiasco enforces the domain's boundary in hardware. A
+ERTS loads compiled Erlang code without checking it, and a crafted
+module can corrupt the runtime that loads it
+([design.md, Why no verifier](../design.md#why-no-verifier)). Java and
+eBPF answer this with a verifier, code that proves a program safe
+before it runs. erXos runs untrusted code only in its own domain,
+where a malicious module corrupts only that domain's runtime. A
 verifier would add a large, subtle program to the trusted base, and
 eBPF's history of verifier bugs shows what that costs.
 
@@ -272,8 +240,8 @@ never the same party. Table 11.2 lists the four forms.
 *Table 11.2. The four forms of authority.*
 
 In all four the checker is on the target's side, where the holder
-cannot reach its state. And none of the four grants by being known: a
-pid, a path or a domain's name grants nothing
+cannot reach its state. And none is conferred by being known: a pid,
+a path or a domain's name grants nothing
 ([chapter 2](02-microkernels.md#233-why-a-capability-cannot-be-forged)).
 
 ## 11.4 Handles: authority over kernel objects
@@ -285,12 +253,9 @@ the domain's task
 
 ### 11.4.1 What a handle protects
 
-Three properties hold in the system as built.
-
 * **A handle is meaningless outside its table.** Domain A's handle 7
-  and domain B's handle 7 are different entries, and B cannot use A's
-  number to reach A's object. A handle the root never gave a task
-  names nothing in that task's table.
+  and domain B's handle 7 are different entries; a number the root
+  never gave a task names nothing in that task's table.
 * **Only the creator destroys.** `erx_object_destroy` refuses every
   task but the object's creator with `ERX_ERIGHTS`, and no pass
   conveys the right to destroy.
@@ -298,67 +263,52 @@ Three properties hold in the system as built.
   its object's generation, which a destroy advances, so every other
   holder's entry answers `ERX_ESTALE` until closed, and never names
   the object that takes the record next.
-
-And handles flow only down. A handle reaches another task in one way:
-its holder passes it from its own table into a space it created
-([chapter 8](08-kernel-interface.md#845-why-handles-flow-only-down)).
-Domains do not pass handles to each other, so no domain installs
-anything in another domain's table.
+* **Handles flow only down.** A holder passes a handle from its own
+  table only into a space it created
+  ([chapter 8](08-kernel-interface.md#845-why-handles-flow-only-down)),
+  so no domain installs anything in another domain's table.
 
 ### 11.4.2 What a handle does not protect
 
-Two things a reader would expect from a capability are missing in the
-system as built.
-
 **A handle carries no rights.** Chapter 2's capability is a reference
-*with rights*: read, write, destroy, and the rule that a holder can
-pass on fewer rights, never more
+*with rights*, and a holder can pass on fewer rights, never more
 ([chapter 2](02-microkernels.md#235-delegation-shrinking-rights-and-revocation)).
-An erXos handle is a reference with no rights at all. A pass takes a
-rights mask and reports it back, but no entry stores it
+An erXos handle has no rights at all: a pass takes a rights mask and
+reports it back, but no entry stores it
 ([chapter 8](08-kernel-interface.md#844-rights)). Whoever holds a
 handle may use the object in any way its kind allows.
 
-The consequence is concrete. When the domain library connects two
-domains, it passes each one its own side of the connection to write
-and the other side to read. A domain whose code asks the root for a
-writable mapping of the side it was passed to read gets one. The
-domain's own `liberx` never asks, so trusted code never does it, but
-nothing below `liberx` stops code that bypasses it. Such a mapping is kept out by the discipline of the code that holds
-the handle, not by the root. That is a limit of the system.
+The consequence is concrete. A connection between two domains is a
+pair of shared-memory rings, one for each direction; each domain
+writes its own ring and reads its peer's, and holds handles to both.
+A domain whose code asks the root for a writable mapping of the ring
+it should only read gets one. Its own `liberx` never asks, but nothing
+below `liberx` stops code that bypasses it. The read side stays
+read-only through the holder's own code, not through the root, and
+that is a limit of the system.
 
 **A closed number can be reused.** A closed handle answers
 `ERX_EINVAL` until the task receives another handle, which takes the
-lowest free entry, as a UNIX file descriptor does. A program that
-keeps a number after closing it, and uses it later, reaches whatever
-took its entry
+lowest free entry, as a UNIX file descriptor does. A program that uses
+a number after closing it reaches whatever took its entry
 ([chapter 8](08-kernel-interface.md#843-using-a-handle-after-closing-it)).
-The bug is the holder's own: no other domain can cause it, and it
-reaches only objects the holder was given. In a server that keeps
-handles for many clients, it can send one client's data to another.
+The bug is the holder's own, but in a server that keeps handles for
+many clients it can send one client's data to another.
 
 ### 11.4.3 The design that closes both
 
-The design for the system on Fiasco closes both gaps
-([design-fiasco.md, Rights](../design-fiasco.md#rights)). It is
-designed and not built.
-
-* **Rights in the entry.** Each entry records the holder's rights to
-  its object. A create gives every right of the object's type. A
-  duplicate or a pass intersects the source entry's rights with the
-  caller's mask and drops the right to destroy, so rights only
-  shrink. The root's one lookup checks the right each call needs and
-  refuses a missing one with `ERX_ERIGHTS`. A domain passed a side to
-  read cannot map it writable, whatever its code asks.
-* **A generation in the value.** A handle's value carries its entry's
-  generation, and every close advances it. A use after the holder's
-  own close then answers `ERX_ESTALE`, as a use after a destroy does,
-  and never reaches another object.
-* **Doorbells placed at a Fiasco slot.** The design also places a
-  doorbell's or interrupt's Fiasco capability at a slot matching the
-  handle, so ringing and acknowledging skip the root. Only that direct
-  use after a close goes unchecked, since Fiasco checks the slot
-  alone.
+In the design
+([design-fiasco.md, Rights](../design-fiasco.md#rights)), each entry
+records its holder's rights. A create gives every right of the
+object's type; a duplicate or a pass intersects the source entry's
+rights with the caller's mask, and a pass also drops the right to
+destroy. The root's one lookup checks the right each call needs and
+refuses a missing one with `ERX_ERIGHTS`, so a domain handed a ring
+to read cannot map it writable. A handle's value also carries its
+entry's generation, which every close advances, so a use after the
+holder's own close answers `ERX_ESTALE`. Doorbells and interrupts keep
+a fast path with only Fiasco's check, so a ring through a reused slot
+there stays unchecked. This design is not built.
 
 ## 11.5 Exports and the funnel: authority over processes
 
@@ -367,49 +317,52 @@ keeps that inside a domain and changes it at the wall between
 domains, where a pid is a name and nothing more
 ([chapter 6](06-construction.md#624-pids-exports-and-the-envelope)).
 
-### 11.5.1 The export table
+### 11.5.1 The export table and the funnel
 
 Each domain's runtime keeps an **export table**: its own record of
 which of its processes each peer domain may reach, and with which
 rights. Only the owning runtime writes it, and an entry appears in
 exactly three ways
 ([design-domains.md, Authority](../design-domains.md#authority)):
-
-1. the owner sends one of its own pids or aliases in a message to the
-   peer, which is how stock Erlang hands out a name;
-2. a peer spawns a process into the domain, which exports the new pid
-   to the spawner;
-3. a process calls the explicit export function on one of its own
-   pids or aliases, with the rights it chooses.
+the owner sends one of its own pids or aliases to the peer, as stock
+Erlang hands out a name; a peer spawns a process into the domain; or
+a process exports one of its own pids or aliases by an explicit call.
 
 No operation on the wire adds a right. A peer that passes a pid on to
 a third domain gives that domain nothing: the third domain's frames
 arrive on its own lane, toward which the owner never exported the
-name. So delegation of a process is always its owner handing the name
-out.
+name.
 
 Every frame from another domain passes through the receiving
 runtime's **funnel**, which copies it out of the shared ring, checks
 its structure and its target against the export table, and only then
-decodes it
+hands it on
 ([chapter 3](03-erlang.md#392-distribution-across-a-domains-wall);
 [design-domains.md, The funnel](../design-domains.md#the-funnel)).
 The lane says which domain sent the frame, never a field inside it,
-so a domain cannot speak for another domain's processes. Exports and
-the funnel are Built (`liberx/erx_funnel.c`).
+so a domain cannot speak for another domain's processes.
+
+The message inside an accepted frame stays encoded until the receiving
+process takes it; ERTS's ordinary decoder then adds every atom it
+names to the runtime's atom table, which is never freed and ends the
+runtime when full
+([chapter 3](03-erlang.md#355-the-atom-table)). Elsewhere that harms
+only the domain itself. In the system domain it is a limit of the
+system: a domain that sends frames full of new atoms to any process
+exported to it there, a facet for one, can fill the table, and the
+machine ends. In the design, the system domain decodes other domains'
+messages in safe mode, which creates no atom. That is designed and not
+built.
 
 ### 11.5.2 A missing right is a dead process
 
 When the funnel finds no export for a frame's target, the runtime
-answers as it answers for a process that does not exist: a message is
-dropped, a link or monitor reports the process dead. Otherwise an
-attacker could map another domain's processes by sending to every pid
-and watching which ones answer differently.
-
-A pid's export lasts as long as its process. The revocable name is an
-**alias**, an OTP reference that stands for a process and that its
-owner can deactivate, as stock OTP uses it. The revocable service is a facet,
-which exits (section 11.6).
+answers as for a process that does not exist: a message is dropped, a
+link or monitor reports the process dead. Otherwise an attacker could
+map another domain's processes by watching which pids answer
+differently. A pid's export lasts as long as the process. To revoke
+earlier, the owner exports an **alias**, an OTP reference that stands
+for the process, and deactivates it.
 
 ### 11.5.3 The envelope
 
@@ -417,23 +370,17 @@ What the funnel admits arrives wrapped as `{erx_origin, D, Msg}`,
 where the connection sets `D`. No `receive` written for a local
 message matches that shape, and only the module that owns a protocol
 unwraps its own shapes
-([chapter 6](06-construction.md#624-pids-exports-and-the-envelope)).
-So no list of system processes must remember to check where a message
-came from: none of them sees a foreign message in a shape it would
-act on.
-
-Safe Erlang, a 1999 proposal for running mobile code (Brown and
-Sahlin 1999), gave Erlang capabilities by replacing pids with
-unforgeable, rights-carrying references. erXos takes the opposite road. Pids stay ordinary Erlang
-terms, so every OTP library works unchanged, and the authority lives
-in a table at the receiver that no sender can write.
+([chapter 6](06-construction.md#624-pids-exports-and-the-envelope)),
+so no system process must remember to check where a message came
+from. Safe Erlang, a 1999 proposal, took the other road and replaced
+pids with unforgeable references that carry rights; erXos keeps pids
+as ordinary terms, so every OTP library works unchanged.
 
 ## 11.6 Facets: authority over services
 
-A session that may read `/proc` must not be able to read another
-user's files, and a network domain that may sample the clock must not
-be able to set it. Both are rights to use part of a service, and erXos
-gives each such right a process of its own.
+A network domain that may sample the clock must not be able to set
+it. That is a right to use part of a service, and erXos gives each
+such right a process of its own.
 
 ### 11.6.1 One grant, one grantee, one process
 
@@ -442,12 +389,12 @@ one domain, the **grantee**, and acts for that domain alone
 ([design-domains.md, Facets](../design-domains.md#facets)). The
 grantee is introduced to the facet and never to the service behind
 it. The facet admits only the operations and arguments the grant
-allows, within the grant's limits, and forwards them to the service.
-Most facets are processes of the system domain, standing in front of
-its own services and of services other domains provide.
+allows, within its limits, and forwards them to the service. Most
+facets are processes of the system domain.
 
 A grant is a row of the system manifest. Here is one from
-`config/manifest/development.txt`:
+`config/manifest/development.txt`, abridged (the full row also sets
+a CPU share, section 11.6.2):
 
 ```text
 facet root_clock
@@ -459,74 +406,63 @@ facet root_clock
   in_flight 1
 ```
 
-It says: every session made from the system principal's template,
-which is root's session, gets a facet named `clock` in front of the
-clock service. The facet admits only the `set` operation, takes a
-request of at most 256 encoded bytes, and holds at most one request
-in flight. The manifest check refuses a facet row whose service no
-file under `abi/services/` declares
+Every session made from the system principal's template, which is
+root's session, gets a facet named `clock` in front of the clock
+service. The facet admits only `set`, takes a request of at most 256
+encoded bytes, and holds at most one in flight. The manifest check
+refuses a row whose service no file under `abi/services/` declares
 ([chapter 7](07-one-source.md#78-declared-services-and-inspection-paths)).
 
 When a domain reports that it is ready, the domain service mints its
 facets from the rows that name its template, each bound to that domain
-and to nothing else (`grant_facets` in
-`erlang/apps/erx_domain/src/erx_domain_srv.erl`). It hands the domain
-the facets' pids by name. That is the only way a domain learns a
-facet.
+alone (`grant_facets` in
+`erlang/apps/erx_domain/src/erx_domain_srv.erl`), and hands it their
+pids by name. That is the only way a domain learns a facet.
 
 ### 11.6.2 What every facet checks
 
-Every facet, whatever its service, is an instance of one OTP
-behaviour, `erx_facet` (`erlang/apps/erx/src/erx_facet.erl`), so its
-checks hold for every facet by construction, not by each service
-remembering them. Before a service's own code sees a request, the
-behaviour checks five things.
+Every facet is an instance of one OTP behaviour, `erx_facet`
+(`erlang/apps/erx/src/erx_facet.erl`), so its checks hold for every
+facet by construction. Each service supplies a small callback module:
+`operation/1` names the operation a request invokes, and `admit/3`
+decodes the request's arguments. Before a service's own code sees a
+request, the behaviour checks five things.
 
 1. **Who asks.** The request must arrive in the envelope
-   `{erx_origin, D, ...}` with `D` equal to the grantee. The connection
-   sets `D`, so a domain that learned the facet's pid and sends to it
-   is not the grantee and is dropped. Passing a facet's pid on
-   delegates nothing.
+   `{erx_origin, D, ...}` with `D` equal to the grantee, so passing a
+   facet's pid on delegates nothing.
 2. **Where the answer goes.** The caller's pid and reply alias must
-   both be names of the grantee's, so the reply goes back to the
-   grantee and never to a third domain the request named.
+   both be the grantee's, so the reply never goes to a third domain.
 3. **How large.** The request's encoded size must be at most the
    grant's `max_request`.
 4. **How many.** A request past the grant's `in_flight` limit is
    refused with `{error, busy}`.
-5. **Which operation.** The service's callback maps the request to the
-   operation it invokes, and a request for an operation the grant does
-   not list is refused with `{error, eperm}` before the service's code
-   sees it.
+5. **Which operation.** An operation the grant does not list is
+   refused with `{error, eperm}` before `admit/3` runs.
 
 Anything else is dropped and counted. A facet ends when its grantee's
-domain ends, or the service behind it does. **Revoking a grant
-is the facet's exit**: nothing is admitted after it, and nothing done
-before it is undone.
+domain ends or the service behind it does. **Revoking a grant is the
+facet's exit**: nothing is admitted after it, and nothing done before
+it is undone.
 
-The behaviour and its five checks are Built. Three parts of the
-design are designed and not built: admission by the grantee's
-**share** of the service's CPU time per period, so one grantee cannot
-crowd out another; an admission path generated from each service's
-declaration in place of a hand-written callback; and a check of
-`max_request` in the funnel before a frame is queued
-([design-domains.md, Facets](../design-domains.md#facets)).
+The design adds admission by the grantee's **share** of the service's
+CPU time per period, so one grantee cannot crowd out another. It also
+generates each service's admission path from its declaration, and
+checks `max_request` in the funnel
+([design-domains.md, Facets](../design-domains.md#facets)). These are
+designed and not built.
 
 ### 11.6.3 Why a process and not a list
 
 The usual way to protect a service is an access-control list: the
-service keeps a table of who may do what, and checks each caller
-against it. erXos could have given each service such a list, keyed by
-domain id.
-
-A facet does the job with three advantages. The checks sit in one
+service keeps a table of who may do what and checks each caller
+against it. A facet has three advantages. The checks sit in one
 behaviour every service shares, so no service forgets one. Revocation
 is a process exit, which Erlang already handles: a monitor fires, a
 pending call fails, and no service needs a "revoked" state. And a
-facet carries limits per grantee, which a shared table would have to
-rebuild. The cost is a
-process per grant in the system domain, and a message hop between the
-grantee and the service.
+facet carries limits per grantee, where a table would need a column
+per caller for each limit. The cost is a process per grant in the
+system domain, and a message hop between grantee and service.
 
 A facet also answers chapter 2's **confused deputy**, the server that
 uses its own authority on a client's behalf for an object the client
@@ -538,36 +474,11 @@ has the facet mint a handle from the scope of its own grant, never
 from a name the client supplied
 ([design-domains.md, Authority](../design-domains.md#authority)).
 
-### 11.6.4 Three homes for a new need
-
-A rule that every reach between domains goes through a facet would
-erode if each need got a kind of facet of its own. The design gives a
-need one of three homes
-([design-domains.md, Facets](../design-domains.md#facets)):
-
-* **State the system observes** about itself, its CPUs, its domains,
-  its clock, is an inspection path declared in `abi/inspection.txt`
-  and shown at `/proc`
-  ([chapter 21](README.md#chapter-21-the-live-machine)).
-* **What an app says about itself, bytes someone keeps, or a thing
-  someone commands** is a file tree that its owner serves and the
-  reader mounts, with a `status` file to read and a `ctl` file to
-  write, as in Plan 9
-  ([chapter 14](README.md#chapter-14-files-namespaces-and-service-trees)).
-* **A live conversation** is a declared protocol with a design of its
-  own, such as the clock's or the network's sockets.
-
-Each is declared in a checked-in file that names its design section,
-and a build check refuses a facet name no declared service publishes.
-Authority is an allow-list: a way between domains that nobody
-declared does not build.
-
 ## 11.7 File grants: authority over files
 
-In UNIX, a path is enough to try. A process names any file, and the
-kernel decides by the file's owner and mode bits whether this user
-may open it. In erXos a path is only a way to find a grant, and the
-grant decides.
+In UNIX, a path is enough to try: a process names any file, and the
+kernel decides by the file's owner and mode bits. In erXos a path is
+only a way to find a grant, and the grant decides.
 
 ### 11.7.1 A namespace of grants
 
@@ -579,66 +490,55 @@ An entry that leads to another domain's server holds the pid of a
 domain's right to one tree, with a root and rights the server fixed
 when it made the grant
 ([design-files.md, Who a grant is for](../design-files.md#who-a-grant-is-for)).
-Root's session, for example, mounts `/data` through a grant of the
-storage domain's tree, made read-write and bound to that session's
-domain id by the manifest's `data_session` row.
-
-A grant checks four things before any file system code sees a request.
+Root's session, for example, mounts `/data` through a read-write grant
+of the storage domain's tree. A grant checks four things before any
+file system code sees a request.
 
 * **Who asks.** As a facet does, a grant takes a request only in an
-  envelope whose `D` is its client's domain id, so a third domain that
-  holds the grant's pid cannot act as the client.
-* **That the request is well formed.** It decodes every request of the
-  file protocol, 9P2000.L, against the protocol's grammar and bounds.
-* **The root.** A walk of `..` at the grant's root stays at the root,
-  the grammar refuses a name holding `/`, and the server follows no
-  symbolic link during a walk; a link's text goes back to the client,
-  which resolves it through its own namespace. So no request reaches
-  above the grant's root.
-* **The rights.** A grant's rights are one of three values: `ro`, read
-  only; `rw`, read and write; `rx`, read and run. A grant with `ro` or
-  `rx` refuses every writing operation with `erofs` as part of decoding
-  it (`erx_fs_grant.erl`).
+  envelope whose `D` is its client's domain id.
+* **That the request is well formed**, against the grammar and bounds
+  of the file protocol, 9P2000.L.
+* **The root.** A walk of `..` at the grant's root stays there, a name
+  holding `/` is refused, and the server follows no symbolic link
+  during a walk; the client resolves a link's text through its own
+  namespace. No request reaches above the root.
+* **The rights**, one of `ro`, read only; `rw`, read and write; `rx`,
+  read and run. A grant with `ro` or `rx` refuses every writing
+  operation with `erofs`.
 
-There is no fourth value meaning "write and run". The rights type
-cannot express it, so no grant carries both. Without that rule, a
-program could write a file and then run it, and a bug that let an
-attacker write one file would let them run their own code. A session
-runs a program from a file only through an `rx` entry, which exists
-only over an `rx` grant (`erx_ns.erl` refuses an `rx` mount through
-any other with `eacces`). File grants are Built.
+There is no fourth value meaning "write and run", so no grant carries
+both, and a bug that lets an attacker write a file does not let them
+run it. A session runs a program from a file only through an `rx`
+entry, and a namespace refuses an `rx` mount over any grant but an
+`rx` one with `eacces`.
 
 ### 11.7.2 Narrowing for a program
 
 A native program holds no grant at all. Its sub-space holds its
-channel to its handler, the data area through which its reads and
-writes move, and the memory its session mapped for it; nothing else.
-Every path it opens goes to its **handler**, the session's Erlang
-process that serves that program, which resolves the path over the
-program's own table and answers on the program's behalf
-([chapter 13](README.md#chapter-13-native-programs-pipes-and-posix-lite)).
-
-In the design, a program's table is derived from its starter's: each
-entry on the same server as the starter's, rooted at or below it,
-with rights no wider
-([design-files.md, Invariants](../design-files.md#invariants)). So
-rearranging a namespace or narrowing it for a program never adds
-authority. The handler is Built and answers a program's file
-requests. The file server for the tree a program sees, its `/bin`,
-`/dev` and `/etc`, is written and not yet started by anything.
+channel to its **handler**, the session's Erlang process that serves
+that program, a data area for its reads and writes, and the memory its
+session mapped for it. Every path it opens goes to the handler, which
+resolves it over the program's own table
+([chapter 13](13-native-programs.md)). That table is narrowed from its
+starter's: each entry on the same server, rooted at or below the
+starter's, with rights no wider
+([design-files.md, Invariants](../design-files.md#invariants)). The
+session serves its programs' `/bin`, `/dev` and `/etc` itself, through
+an `rx` grant and an `rw` grant of its own (`erx_session_export`).
 
 ## 11.8 A worked example: who may set the clock
 
-The clock is a small authority with a sharp edge. A clock set a year
-ahead rejects every TLS certificate; a clock set back accepts expired
-ones. This section follows the right to set it.
+A clock set a year ahead rejects every TLS certificate; a clock set
+back accepts expired ones. This section follows the right to set it,
+and ends where the system as built does not hold that right: any task
+can ask the root service to set the clock.
 
 ### 11.8.1 The grants
 
-Two rows grant the clock service. Root's session holds `set`, as
-shown in section 11.6.1. On the Raspberry Pi, the `ntpd` principal's
-session, which runs the network time client, holds `sample`
-(`config/manifest/raspi4b-development.txt`):
+Two rows grant the clock service. Root's session holds `set`
+(section 11.6.1). On the Raspberry Pi, the session of the `ntpd`
+principal, which runs the network time client, holds `sample`
+(`config/manifest/raspi4b-development.txt`, abridged):
 
 ```text
 facet ntpd_clock
@@ -650,8 +550,9 @@ facet ntpd_clock
 
 A `sample` is a time server's measurement, which the clock service
 checks against its step rules; a `set` moves the clock to a time the
-operator names. Neither grant includes the other, and no other
-session holds either ([design-time.md, Who may set it](../design-time.md#who-may-set-it)).
+operator names. Neither includes the other, and no other session
+holds either
+([design-time.md, Who may set it](../design-time.md#who-may-set-it)).
 
 ### 11.8.2 Following one set
 
@@ -674,90 +575,67 @@ sequenceDiagram
   F-->>C: reply, through the session's funnel
 ```
 
-*Figure 11.2. A facet between a domain and a service. The session
-reaches only the facet; the facet decides before the clock service
-sees anything, and tells the service which domain asked.*
+*Figure 11.2. A facet between a domain and a service. The facet
+decides before the clock service sees anything, and tells the service
+which domain asked.*
 
 1. `date`, an Erlang command, computes the offset `W` that makes the
-   clock read the named time, and finds the session's facet named
-   `clock` (`set_clock` in
-   `erlang/apps/erx_shell/src/erx_cmd_date.erl`). It sends the facet a
-   call, `{set, W}`.
-2. The session's runtime encodes the call as a frame and writes it
-   into its lane toward the system domain. The system domain's funnel
-   copies the frame out, checks that the facet's pid is exported to
-   the session, decodes it, and delivers it in the envelope with
-   `D` set to the session's domain id.
+   clock read the named time, finds the session's facet named `clock`
+   (`set_clock` in `erlang/apps/erx_shell/src/erx_cmd_date.erl`), and
+   sends it a call, `{set, W}`.
+2. The session's runtime writes the call as a frame into its lane
+   toward the system domain. The system domain's funnel copies it out,
+   checks that the facet's pid is exported to the session, and
+   delivers the message in the envelope with `D` set to the session's
+   domain id.
 3. The facet checks `D`, the size, the count in flight and the reply
-   names (section 11.6.2). Its callback,
-   `erx_clock_facet:operation/1`, names the operation: `set`, which the
-   grant lists.
-4. The callback's `admit/3` decodes the request once more, checking
-   that `W` is an integer within the clock's range, and forwards
-   `{set, Grantee, W}` to the clock service. The service learns the
-   grantee from the facet, never from the request.
-5. The clock service, in the system domain, calls
-   `erx_time_set_offset`. The root service checks the offset's range
-   and writes the time page, which every domain maps read-only.
-6. The answer travels back along the same path, and `date` prints the
-   new time.
+   names. `erx_clock_facet:operation/1` names the operation, `set`,
+   which the grant lists.
+4. `admit/3` checks that `W` is an integer within the clock's range,
+   and forwards `{set, Grantee, W}` to the clock service, which learns
+   the grantee from the facet, never from the request.
+5. The clock service calls `erx_time_set_offset`. The root service
+   checks the offset's range and writes the time page, which every
+   domain maps read-only. The answer travels back the same way.
 
-The clock's facet, its decoder, `date`'s path and the setter are
-Built.
+### 11.8.3 Three refusals, and one gap
 
-### 11.8.3 Three refusals
+**A session that holds `sample` asks to set.** The operation check in
+`ntpd`'s clock facet finds `set` missing from the grant and answers
+`{error, eperm}`. The clock service never hears of it.
 
-Take the same request from parties that lack the grant.
+**A session with no clock grant at all.** An app's session has no
+facet named `clock`. `date` reports the refusal as FreeBSD's `date`
+does for a user who is not the superuser: `date: clock_settime: `
+and the text of `EPERM`, with exit status 1. Had the app
+learned the pid of root's clock facet, the system domain's funnel
+would drop its frame, because the facet is exported to root's session
+only; the facet's own check of `D` stands behind that.
 
-**A session that holds `sample` asks to set.** `ntpd`'s session sends
-`{set, W}` to its clock facet. The behaviour's operation check finds
-`set` missing from the grant and answers `{error, eperm}` before
-`admit/3` runs. The clock service never hears of it.
-
-**A session with no clock grant at all.** A session made from an
-app's template has no row naming the clock, so the domain service
-minted it no facet. `date` finds no facet named `clock` and reports
-the refusal as FreeBSD's `date` does for a user other than the
-superuser: `date: clock_settime: ` followed by the text of `EPERM`,
-with exit status 1. There is no process to send to and no name to
-guess. A pid of root's clock facet, had the app learned it, would be
-dropped at the facet, because the envelope's `D` names the app's
-domain and not root's session.
-
-**Code that bypasses `liberx`.** This refusal is where the system as
-built falls short. The clock service sets the clock by a request to
-the root service. In every task but the system domain, `liberx`'s own
-`erx_time_set_offset` answers `ERX_ENOTSUP` without sending a request
-(`liberx/backend/fiasco/task_refused.c`). But the root does not check
-which task sent the request: it serves the setter from any task
-(`liberx/backend/fiasco/service.c`). Code that builds the request
-itself, bypassing its `liberx`, could set the clock. In a build that
-runs trusted code only, no code does. The facet rows are therefore
-held by the code that follows them, not enforced against code that
-does not ([design-time.md, On Fiasco](../design-time.md#on-fiasco)).
+**Code that bypasses `liberx`.** Here the system as built falls short.
+The root service does not check which task asks it to set the clock:
+it serves that request from any task. What keeps other domains from
+sending it is their own `liberx`, whose setter answers `ERX_ENOTSUP`
+in every task but the system domain without sending anything. Code
+that builds the request itself can set the clock. In a build that
+runs trusted code only, no code does, so the facet rows are held by
+the code that follows them, not enforced against code that does not
+([design-time.md, On Fiasco](../design-time.md#on-fiasco)).
 
 The design closes the gap with section 11.4.3's rights. The setter
 names the time page's handle, and the root checks the caller's write
 right on it, answering `ERX_ERIGHTS` without one. Only the system
-domain holds the time page with that right, so only the system domain
-can set the clock, whatever any other domain's code does. The facet
-and the check then stand one behind the other: the facet decides
+domain holds the time page with that right. The facet then decides
 which domain may ask the clock service, and the root decides that
 only the clock service may write the page. That check is designed and
 not built.
 
-The example shows the chapter's pattern. The Erlang layer of facets,
-exports, grants and the funnel enforces its rules against any code,
-because a frame reaches another domain only through the receiver's
-funnel. The root's layer below enforces who created an object and
-where it is mapped, but not what each holder may do with it.
-
 ## 11.9 Principals, sessions and quotas
 
-A UNIX user is a number. The kernel compares it with each file's
-owner on every access, and root, user 0, passes every comparison. In
-erXos the user is a **principal**, a record in the system domain's
-Erlang policy, which Fiasco and the root service never see
+A UNIX user is a number, compared with each file's owner on every
+access, and root, user 0, passes every comparison. In erXos the user
+is a **principal**, a record in the system domain's Erlang policy,
+which Fiasco and the root service never see
 ([chapter 5](05-overview.md#517-principal)).
 
 ### 11.9.1 What a principal holds
@@ -768,98 +646,89 @@ Its **session template** says what a session of that principal gets:
 its runtime, its Erlang release, its limits, and, through the
 manifest's facet rows, the services it may use. A **session** is a
 domain made from the template, in which a person's shell, commands and
-programs run. There is no container runtime and no separate idea of a
-user account: a principal's authority is exactly the facets and
-grants its template names, and nothing about the principal is ambient.
+programs run. A principal's authority is exactly the facets and grants
+its template names.
 
-The manifest's principals are Built: the system principal, whose
-template gives root's session, and app principals such as `ntpd`. The
-design also gives each principal a quota of 64 domain names per boot,
-so that no principal can fill the system domain's atom table with
-them. A person who
-logs in with a passphrase and gets a session of their own principal is
-designed and not built: every build's console opens root's session at
-boot with no login, and SSH logs root in with the build's development
-key.
+The manifest's principals are built: the system principal, whose
+template gives root's session, and app principals such as `ntpd`. So
+is a quota of 64 domain names per principal per boot. Domain names
+are atoms in the system domain, and the quota keeps a principal from
+filling the system domain's atom table by naming domains. It does not
+cover the atoms inside other domains' messages (section 11.5.1).
+
+Login with a passphrase, into a session of one's own principal, is
+designed and not built. The console opens root's session at boot with
+no login, and SSH logs root in with the development key, or with the
+keys placed on a board's card.
 
 ### 11.9.2 Limits that hold, and limits that are records
 
 A domain's limits are fixed when it is created, within its
-principal's ceilings. Some hold in the system as built and some do not.
-
-The limits a domain's own runtime applies hold, because the runtime
-that bears the cost enforces them on what it receives: the largest
-frame it takes from a lane, the largest decoded message, the nesting
-depth the funnel accepts, and the size of its export table. The
-number of connections a domain may have holds too, since the domain
-service makes every connection.
+principal's ceilings. The limits its own runtime applies hold, because
+the runtime that bears the cost enforces them: the largest frame it
+takes from a lane, the largest decoded message, the nesting depth the
+funnel accepts, and the size of its export table. The number of a
+domain's connections holds too, since the domain service makes every
+connection.
 
 Memory and CPU are another matter. A **budget** is the record that
-pays for a domain's memory
-([chapter 12](README.md#chapter-12-memory-and-budgets)). In the system
-as built, a budget record stores a guarantee and a cap and refuses
-nothing: every Fiasco object comes from the root's one factory, and
-the root's page pool keeps one count for the whole machine. A domain
-can commit pages past its budget's limit, and when the pool runs dry
-every domain's next allocation fails with `ERX_ENOMEM`. In the design,
-each domain's budgets are walls: a Fiasco factory with a quota per
-domain for kernel memory, and a count of the user pages charged to
-each budget, refused past the wall, so a domain over its budget hurts
-only itself. Walls are designed and not built.
+pays for a domain's memory ([chapter 12](12-memory.md)). One shared
+pool of memory serves every domain, and any domain can drain it: a
+budget record stores a guarantee and a cap and refuses nothing, and
+when the pool runs dry every domain's allocations fail with
+`ERX_ENOMEM`. In the design each domain's budgets are walls. Fiasco
+gives each domain a quota of kernel memory, and each budget counts the
+user pages charged to it and refuses a request past the wall, so a
+domain over its budget hurts only itself. Walls are designed and not
+built.
 
 CPU time is shared the same way. Every thread but the watchdog runs at
 one Fiasco priority, so a domain that spins every thread it may create
-takes its round-robin share of each CPU it runs on, and no domain is
-guaranteed any share. The design gives each domain a **band**, a
-priority level, a CPU set and a thread limit; bands are designed and
-not built.
+takes its round-robin share of each CPU, and no domain is guaranteed
+any share. The design gives each domain a **band**, a priority level,
+a CPU set and a thread limit; bands are designed and not built.
 
 ## 11.10 Machine code
 
 A bug that lets an attacker write into a program's memory is bad. A
 bug that also lets them run what they wrote is worse, and the second
-step needs memory that is both writable and executable. erXos makes
-that state hard to reach and keeps the right to make code out of the
-trusted base.
+step needs memory that is both writable and executable.
 
 ### 11.10.1 No writable and executable mapping
 
-No mapping is writable and executable at once
-([chapter 1](01-operating-systems.md#144-protection-bits)). In the
-system as built, the root service enforces the rule: its range table
-accepts only three protections, read, read and write, or read and
-execute, so a request for both is refused
-(`liberx/backend/core/vm_table.h`). Because the root is the only
-writer of every page table, no domain can get such a mapping by any
-other path. A patch to Fiasco's own map that refuses such a mapping in
-the kernel is designed and not built
+No task's mapping is writable and executable at once
+([chapter 1](01-operating-systems.md#144-protection-bits)). The root
+service enforces the rule: its range table accepts only read, read
+and write, or read and execute (`liberx/backend/core/vm_table.h`), and
+the root is the only writer of every page table. A patch to Fiasco's
+own map that refuses such a mapping in the kernel is designed and not
+built
 ([chapter 6](06-construction.md#626-a-mapping-that-is-never-writable-and-executable)).
-
-The rule covers one mapping, not one page. A page can be writable
-through one mapping and executable through another, and BeamAsm, the
-JIT compiler in ERTS, relies on that: it writes code through a
-writable view of a memory object and runs it through a second,
-executable view of the same object. Both views stay inside the domain
-whose code it is, so they give that domain nothing it did not have
+The rule covers one mapping, not one page: BeamAsm, the JIT compiler
+in ERTS, writes code through a writable view of a memory object and
+runs it through a second, executable view of the same object
 ([design.md, Machine code](../design.md#machine-code)).
 
-### 11.10.2 The right to make code follows from the image
+### 11.10.2 Who may make code
 
-A domain may create memory for a JIT only if its address space allows
-it, and that follows from the runtime image it runs, never from a
-request. The packer marks the BeamAsm image as one that makes code.
-When the domain library builds a domain from a marked image, it
-creates the space with the JIT flag; otherwise without
-(`liberx/system/dom_core.c`). The root service refuses JIT memory in
-a space without the flag, and refuses a space with the flag to a
-creator that lacks it (`liberx/backend/fiasco/service_task.c`). So a
-sub-space can make code only if its creator could.
+A domain may create **JIT memory**, the kind of memory object BeamAsm
+writes code into, only if its address space was made with the JIT
+flag. The packer, the build tool that makes the boot image, marks the
+BeamAsm image as one that makes code, and the domain library sets the
+flag only for a domain built from a marked image
+(`liberx/system/dom_core.c`). The root refuses JIT memory in a space
+without the flag (`liberx/backend/fiasco/service_task.c`).
 
-The system domain runs the interpreter image, which is not marked, so
-the trusted base makes no machine code at run time and links neither
-asmjit nor any C++. All of this is Built. At the level of files the
-same idea appears again: no file grant carries write and run together
-(section 11.7.1).
+The flag gates only JIT memory, though. The root lets any task map a
+plain memory object read-write at one address and read-execute at
+another, and lets a protect move a mapping from read-write to
+read-execute (`liberx/backend/fiasco/vm_rules.c`). So any domain can
+run code it wrote into its own memory, whatever its image. That is a
+limit of the system: the right to make code does not follow from the
+image. The system domain runs the interpreter image, links neither
+asmjit nor any C++, and makes no machine code at run time, but that
+rests on its own code, not on a refusal. For files the rule does
+hold: no file grant carries write and run together (section 11.7.1).
 
 ## 11.11 Keys, the vault and cryptography
 
@@ -867,17 +736,11 @@ Cryptography in erXos has one design rule and one design goal. The
 rule: OpenSSL never runs in the trusted base. The goal: a private key
 never enters the domain that uses it.
 
-> **Background: hashes, signatures and a key vault.** A cryptographic
-> **hash** maps any input to a short fixed value, such that nobody can
-> find a second input with the same value; a hash of a file is a
-> fingerprint that a single changed byte alters. A **public-key
+> **Background: signatures and a key vault.** A **public-key
 > signature** uses a pair of keys: the private key makes a signature
 > over some bytes, and anyone with the public key can check it. A
-> signed update proves who made it, as long as the private key stayed
-> secret. A **key vault** is a program that holds private keys and
-> signs on request, so the programs that need signatures never hold
-> the keys themselves. A bug in such a program can misuse the vault
-> while it runs, but cannot carry the key away.
+> **key vault** is a program that holds private keys and signs on
+> request, so the programs that need signatures never hold the keys.
 
 ### 11.11.1 Three runtime images, and OpenSSL in two
 
@@ -890,31 +753,30 @@ ERTS is linked into three runtime images
 | interpreter image | interpreter | yes | command domains, and domains that choose it |
 | BeamAsm image | BeamAsm JIT | yes | every other Erlang domain |
 
-*Table 11.3. The three runtime images.*
+*Table 11.3. The three runtime images. The interpreter runs compiled
+Erlang code directly; the JIT first turns it into machine code.*
 
-The construction holds by absence. OpenSSL is not in the one file the
-system domain maps, so no list of modules to avoid is needed: a
-`crypto` module loaded there by mistake fails at its `on_load`,
-because the image has no NIF of that name. Every other
-domain finds `crypto` in whichever image it runs, so TLS, SSH and
-HTTPS work in sessions and service domains. OpenSSL seeds its
+The construction holds by absence. Erlang reaches OpenSSL through the
+`crypto` module, whose C half is a **NIF**, a native function an
+Erlang module loads
+([chapter 3](03-erlang.md#354-bifs-nifs-and-ports)) from its
+`on_load` function. The system image has no such NIF, so `crypto`
+loaded there by mistake fails to load, and no list of modules to avoid
+is needed. Every other domain finds `crypto` in its image, so TLS, SSH
+and HTTPS work in sessions and service domains. OpenSSL seeds its
 generator only through `getrandom`, which `liberx` answers from the
-system's entropy or fails, never with a short or substitute answer
-([design-crypto.md, Seeding](../design-crypto.md#seeding)). The three
-images are Built.
+system's entropy or fails
+([design-crypto.md, Seeding](../design-crypto.md#seeding)).
 
 Signatures can still be checked without OpenSSL: ERTS has a small
 Ed25519 check built from Monocypher, a compact C library
-(`erx_bytes:ed25519_verify/3`, in
-`otp/erts/emulator/nifs/erxos/erx_ed25519.c`). It refuses the
-non-canonical encodings Monocypher alone would accept, so a signature
-verifies only with the exact bytes it was made with, and a fuzz target
-runs it on the host. Built.
+(`erx_bytes:ed25519_verify/3`). It refuses alternative byte spellings
+of a signature that Monocypher alone would accept, and a fuzz target
+runs it on the host.
 
-Every key in the system as built is a development key. Root logs in
-over SSH with the clone's development key, and the app packer signs each
-package header with a development key it makes on the host and never
-ships. The trust store for TLS holds five root certificates.
+Every key in the system as built is a development key: the SSH key
+above, and the key the app packer makes on the host to sign packages.
+The trust store for TLS holds five root certificates.
 
 ### 11.11.2 The vault
 
@@ -922,18 +784,13 @@ The vault, `erx_vault`, holds every principal's private keys, after
 Plan 9's factotum
 ([design-system.md, The vault](../design-system.md#the-vault)). A
 domain that must authenticate holds a **key facet**: a facet for one
-purpose, granted by its principal's session, that asks the vault to
-sign input of that purpose's protocol and returns the signature,
-never the key. A key facet's grantee can have its principal's key
-sign any input of the right shape while the grant lives, as a daemon
-holding the key could. It cannot obtain the key, have the facet sign
-input of another purpose, or delegate the facet to another domain.
-
-The vault runs in a service domain of its own, so OpenSSL stays out
-of the system domain, and its files lie on a partition only the
-vault's storage domain reaches. Keys are sealed with a secret derived
-at boot. The vault, key facets
-and login with a passphrase are designed and not built.
+purpose that asks the vault to sign input of that purpose's protocol
+and returns the signature, never the key. Its grantee can have the
+key sign any input of the right shape while the grant lives, but
+cannot obtain the key, have it sign for another purpose, or delegate
+the facet. The vault runs in a service domain of its own, so OpenSSL
+stays out of the system domain. The vault and key facets are designed
+and not built.
 
 ## 11.12 Text from untrusted sources
 
@@ -941,17 +798,15 @@ A log line looks harmless. But if a domain's name, a peer's banner or
 a file name reaches the operator's terminal unchanged, it can drive
 that terminal.
 
-> **Background: terminal escape sequences.** A terminal does not only
-> print characters. Some byte sequences are commands: move the cursor,
-> clear the screen, set the window's title, and in many terminal
-> programs, report that title back as if the user had typed it, or
-> make a link out of text. These start with control characters such as
-> ESC (0x1B). A sequence that reaches the terminal inside text an
-> attacker chose runs with the operator's terminal as its instrument:
-> it can hide earlier lines, forge a prompt, or on some terminals
-> inject input. Unicode adds quieter tricks: a right-to-left override
-> makes text display in a different order from the bytes, and
-> invisible characters make two different names look alike.
+> **Background: terminal escape sequences.** Some byte sequences are
+> commands to a terminal: move the cursor, clear the screen, set the
+> window's title, and in many terminal programs, report that title
+> back as if the user had typed it. They start with control characters
+> such as ESC (0x1B). One that reaches the terminal inside text an
+> attacker chose can hide earlier lines, forge a prompt, or inject
+> input. Unicode adds quieter tricks: a right-to-left override makes
+> text display in a different order from its bytes, and invisible
+> characters make two different names look alike.
 
 ### 11.12.1 One escape, generated from one table
 
@@ -960,22 +815,17 @@ record, a domain's name, an inspected value, writes it through one
 function, the **line escape**
 ([design-live.md, Escape rules](../design-live.md#escape-rules)). It
 renders every character of an unsafe class as a visible token,
-`<U+202E>` for a right-to-left override, and every byte that does not
-start or continue a valid, shortest UTF-8 sequence as `<0x..>`. The
-unsafe classes are the control characters, tab and newline among
-them, the format characters, the line and paragraph separators, and
-the unassigned and invisible code points. Everything else passes
-unchanged.
+`<U+202E>` for a right-to-left override, and every byte that is not
+part of a valid, shortest UTF-8 sequence as `<0x..>`. The unsafe
+classes are the control characters, tab and newline among them, the
+format characters, the line and paragraph separators, and the
+unassigned and invisible code points.
 
-The classes are written once, in `abi/terminal.txt`. A Ruby generator
-reads it with the Unicode tables that OTP carries and emits the
-tables of each escaper: the Erlang module `erx_text`, the host tool's
-`Erx::LineEscape`, the web client's table and the ASCII-only class of
-the root service's log. A shared file of test vectors,
-`test/fixtures/line_escape_vectors.json`, holds what each must answer.
-Every display escapes by the same rules because each has the same
-tables, not because each was written to agree. Figure 11.3 shows the
-sinks.
+The classes are written once, in `abi/terminal.txt`, and a Ruby
+generator emits from it the tables of each escaper: the Erlang module
+`erx_text`, the host tool's, the web client's and the root service's
+log. Every display escapes by the same rules because each has the
+same tables, not because each was written to agree.
 
 ```mermaid
 flowchart LR
@@ -988,32 +838,29 @@ flowchart LR
 ```
 
 *Figure 11.3. The escape at each text sink. Each sink has one escaping
-function, and all of them read tables generated from one file; no
-path takes attributed text to a terminal around them.*
+function, and all of them read tables generated from one file.*
 
-`/proc` needs a second escape. Its files are read by programs, and a
-read must return the exact bytes a reporter chose, so the **field
+`/proc` needs a second escape. Its files are read by programs, which
+must get back the exact bytes a reporter chose, so the **field
 escape** writes tab, newline and backslash as `\t`, `\n` and `\\` and
-each unsafe byte as `\xNN`, and it can be reversed exactly. A
-field-escaped text holds nothing the line escape changes. In the root
-service's log, only the log core's escaper writes record text
-(`kernel/core/log.c`), so a record cannot hold a byte the escape did
-not pass. The escapes and their tables are Built.
+each unsafe byte as `\xNN`, and can be reversed exactly. In the root
+service's log, a build check lets only the log core
+(`kernel/core/log.c`) reach the log's raw store, so record text enters
+it only through the escape.
 
 ### 11.12.2 What is not escaped
 
 A program's own output is not attributed text. As on UNIX, `write`
 and stdio deliver a program's bytes to its terminal unchanged, and
-the terminal's line discipline does only what `termios` asks. The rule separates a shell or editor that draws its screen, which
-needs raw bytes, from a log that shows a stranger's text, which must
-never pass them.
+the line discipline does only what `termios` asks. A shell or editor
+that draws its screen needs raw bytes; a log that shows a stranger's
+text must never pass them.
 
 Crash reports carry a quieter risk: they leak. In every domain but the
-system domain, `erx_report` filters OTP's crash and logger reports, so
-a report names the process, the error's class, the reason's leading
-atom and the stack's functions, and carries no process state, message
-or call argument (Built). A key in a crashed process's state does not
-end up in someone else's log.
+system domain, `erx_report` filters OTP's crash and logger reports
+down to the process, the error's class, the reason's leading atom and
+the stack's functions. A key in a crashed process's state does not
+reach someone else's log.
 
 ## 11.13 Trusted code only, and what a hostile app can do
 
@@ -1023,21 +870,39 @@ Every erXos build prints one line before anything else:
 development build: trusted code only
 ```
 
-The line is a promise about how the build may be used.
+The line is a promise about how the build may be used. Table 11.4
+gathers what holds today and what is designed.
+
+| Area | Built | Designed |
+| --- | --- | --- |
+| walls between domains | Fiasco and the root service keep memory and kernel objects apart | devices behind an IOMMU; the PCIe domain; a fuzz campaign over Fiasco's calls |
+| handles | a per-task table; only the creator destroys; a destroyed object's handles answer `ERX_ESTALE`; no rights | rights in each entry; a generation in the value |
+| processes | exports, the funnel and the envelope | a safe decode of other domains' messages in the system domain; `max_request` checked in the funnel |
+| services | facets and their five checks; 64 domain names per principal | admission by CPU share; a generated admission path |
+| files | file grants of `ro`, `rw` or `rx`; narrowing for programs | |
+| the clock | the facet path; the root sets the clock for any task | the root's check of the write right on the time page |
+| memory and CPU | budget records that refuse nothing; one priority | budgets as walls; bands |
+| machine code | no single mapping writable and executable; JIT memory only for marked images; a plain object mappable writable and executable at two addresses | Fiasco's own refusal of a writable and executable mapping |
+| keys | three runtime images; the Ed25519 check; development keys | the vault, key facets and login with a passphrase |
+| text | the line and field escapes from one table; `erx_report` | |
+
+*Table 11.4. What holds today and what is designed.*
 
 ### 11.13.1 What a hostile app could do
 
 Suppose an app's code were hostile, on the system as built
 ([chapter 8](08-kernel-interface.md#882-what-a-hostile-domain-could-do-and-what-fails);
 [design-fiasco.md, What a hostile app can do](../design-fiasco.md#what-a-hostile-app-can-do)).
-Through the Erlang layer it could do little: its frames meet funnels,
-facets and grants that check who asks. Through the root service it
-could do more than its grants say:
+Its frames meet funnels, facets and grants that check who asks, but
+it could still:
 
-* map writable a side of a connection it was passed to read, since
-  handles carry no rights (section 11.4.2);
-* commit pages past its budget until the machine's pool runs dry,
-  since budgets refuse nothing (section 11.9.2);
+* fill the system domain's atom table with frames, which ends the
+  machine (section 11.5.1);
+* map writable a ring it was handed to read (section 11.4.2);
+* run code it wrote into its own memory, through two mappings of one
+  plain memory object (section 11.10.2);
+* commit pages past its budget until the machine's pool runs dry
+  (section 11.9.2);
 * set the wall clock by sending the root the setter's request itself
   (section 11.8.3);
 * spin every thread it can create, and send requests and take faults
@@ -1046,72 +911,47 @@ could do more than its grants say:
 * ring a peer's doorbell as often as it likes, costing the peer a
   wake each time.
 
-It could not reach another domain's memory or kernel objects without
-a defect in Fiasco or in the root's decoder and placement code. It
-could not change any page table or capability table, get a mapping
-that is writable and executable, hold a device the manifest did not
-give it, or forge a frame from another domain.
-
-> **Background: branch-predictor attacks.** A processor guesses which
-> way a branch goes before it knows, and runs ahead on the guess. If
-> the guess was wrong, it throws the results away, but the memory it
-> touched stays in its caches, and the time to read that memory
-> later reveals which addresses were touched. On a processor whose
-> predictor one program can train, an attacker trains it so that
-> another program, or the kernel, guesses wrong into code that reads a
-> secret. The secret leaks through timing, although the attacker never
-> mapped it. Defenses live at kernel entry and in the processor's
-> firmware.
-
-On a processor open to branch-predictor attacks, a domain may also
-read memory it cannot map, through the attack in the box. That is a
-limit of the system on such processors.
-
-### 11.13.2 What closes the gaps
-
-Each gap has a design. Rights on handles close the writable mapping
-and the clock (sections 11.4.3 and 11.8.3); budget walls close the
-memory gap; bands bound what a spinning domain takes from a higher
-band. A system-call fuzz campaign, which invokes every slot of a
-task's Fiasco capability table with random arguments, checks the one
-part of the trusted base erXos did not write. All of these are
-designed and not built, and until they are, the system is for trusted
-code, as its first line at boot says.
+Without a defect in Fiasco or in the root's decoder and placement
+code, it could not reach another domain's memory or kernel objects.
+It could not hold a device the manifest did not give it, or forge a
+frame from another domain. On a processor open to
+branch-predictor attacks (section 11.1.3), it might also read memory
+it cannot map. Until the designed checks of Table 11.4 are built, the
+system is for trusted code, as its first line at boot says.
 
 ## 11.14 When a guard fails
 
-Each check in this chapter fails in a way that the reader can see, and
-reaches only what it guards.
+Each check fails visibly, and the failure reaches only what the check
+guards.
 
-* **A facet or a file grant faults.** The grantee's pending calls
-  fail with an error; the service and its other clients run on.
+* **A facet or a file grant faults.** The grantee's monitor fires and
+  its pending calls fail; the service and its other clients run on.
 * **The funnel refuses a frame.** The frame is dropped, as a message
-  to a dead process is, and the sender learns nothing it could use to
-  probe.
+  to a dead process is, and the sender learns nothing it could probe
+  with.
 * **A domain's runtime is corrupted by its own code.** The domain
   ends; its links and monitors report it dead to every peer.
 * **The system domain or the root service faults.** The machine ends,
-  with a reason, rather than hand out authority from records a bug may
-  have damaged (section 11.2.3).
-* **Fiasco faults.** Every program depends on the kernel, so the
-  machine is lost. That is why Fiasco is the only code in kernel mode.
+  with a reason (section 11.2.3).
+* **Fiasco faults.** The machine is lost, which is why Fiasco is the
+  only code in kernel mode.
 
 ## 11.15 Design choices
 
 **User ids against held authority.** erXos could have given each
 domain a user id and checked it at each service, as UNIX does at each
-`open`. That is familiar and cheap. It also makes every program run
-with all of its user's authority, which is the mail-reading program
-of this chapter's first paragraph. Held authority costs a manifest row
-per grant and a facet process per grantee, and in return a program
+`open`. That is familiar and cheap, but it makes every program run
+with all of its user's authority: the mail-reading program of this
+chapter's first paragraph. Held authority costs a manifest row per
+grant and a facet process per grantee, and in return a program
 reaches exactly what someone handed it.
 
 **Checks at the receiver against a broker in between.** A single
 broker could check every message between domains. It would be one
-place to audit, and it would also be one party whose failure, queue
-or quota reaches every pair of domains. erXos puts each check with the
-party that bears its cost: the funnel in the receiving runtime, the
-facet in the service's domain, the grant at the file server.
+place to audit, and also one party whose failure, queue or quota
+reaches every pair of domains. erXos puts each check with the party
+that bears its cost: the funnel in the receiving runtime, the facet in
+the service's domain, the grant at the file server.
 
 **Escaping at the sink against cleaning at the source.** Text could be
 cleaned once, where it enters the system. But "clean" depends on the
@@ -1119,64 +959,44 @@ sink: a `/proc` file must keep exact bytes that a terminal must not
 see. So each sink escapes with its own function, and all the
 functions read one generated table.
 
-**What the choices cost.** Rules at the receiver hold against any
-code. The root service's rules hold only as far as its records reach,
-and until its records carry rights, the system says plainly that it is
-for trusted code.
-
 ## Summary
 
 erXos defends a stated threat model: untrusted Erlang code, native
-programs, devices, peers and storage media, each with what it may and
-must not do, and with side channels inside a domain left out. Two
-things keep domains apart, Fiasco and the root service's decoder and
-placement code; the system domain completes the trusted base, runs no
-JIT and no OpenSSL, and stops the machine rather than run on damaged
-records. Authority takes four forms, handles, exports, facets and file
-grants, each held by one party and checked by another on the target's
-side, and none granted by knowing a name. Facets and file grants check
-who asks by the lane, so passing their pids delegates nothing. Handles
-carry no rights, so a domain can map writable an object it was passed
-to read, and the root sets the clock for any task that asks; rights on
-handles, which close both, are designed and not built. Budgets refuse
-nothing and every thread runs at one priority; walls and bands are
-designed. No mapping is
-writable and executable, and only images marked for a JIT make code.
-Every sink that shows a stranger's text escapes it with tables
-generated from one file. Every build says at boot that it runs trusted
-code only.
+programs, devices, peers and storage media. Fiasco and the root
+service's decoder and placement code keep domains apart; the system
+domain completes the trusted base and stops the machine rather than
+run on damaged records. Authority takes four forms, handles, exports,
+facets and file grants, each checked on the target's side, and none
+conferred by knowing a name. The Erlang layer's checks hold against
+any code, except that other domains' messages can fill the system
+domain's atom table. The root's layer holds less: handles carry no
+rights, budgets refuse nothing, any task can set the clock, and any
+domain can run code it wrote into its own memory. Every sink that
+shows a stranger's text escapes it with tables generated from one
+file, and every build says at boot that it runs trusted code only.
 
 The next chapter takes up the memory those budgets pay for.
 
 ## Where to read next
 
 * [design.md, Security](../design.md#security): the full threat
-  model table, trust placement, authority and residual risks.
+  model, trust placement, authority and residual risks.
 * [design-fiasco.md, Security on Fiasco](../design-fiasco.md#security-on-fiasco)
-  and [Rights](../design-fiasco.md#rights): what the system on Fiasco
-  gives against a hostile app, and the design of rights on handles.
-* [design-domains.md, Authority](../design-domains.md#authority) and
-  [Facets](../design-domains.md#facets): exports, facets, what a facet
-  costs and how it admits.
-* [design-files.md, Who a grant is for](../design-files.md#who-a-grant-is-for)
-  and [Invariants](../design-files.md#invariants): file grants, roots
-  and rights.
-* [design-time.md, Who may set it](../design-time.md#who-may-set-it):
-  the clock's grants, this chapter's worked example.
-* [design-system.md, The vault](../design-system.md#the-vault): keys,
-  key facets and sealing.
-* [design-live.md, Escape rules](../design-live.md#escape-rules) and
-  [Attributed text](../design-live.md#attributed-text): the line and
-  field escapes.
+  and [Rights](../design-fiasco.md#rights): what the system gives
+  against a hostile app, and the design of rights on handles.
+* [design-domains.md, Authority](../design-domains.md#authority),
+  [Facets](../design-domains.md#facets) and
+  [design-files.md, Who a grant is for](../design-files.md#who-a-grant-is-for):
+  exports, facets and file grants.
+* [design-time.md, Who may set it](../design-time.md#who-may-set-it),
+  [design-system.md, The vault](../design-system.md#the-vault) and
+  [design-live.md, Escape rules](../design-live.md#escape-rules): the
+  clock, keys and escapes.
 * Jerome Saltzer and Michael Schroeder, "The Protection of
-  Information in Computer Systems", 1975: the principles, least
-  privilege and complete mediation among them, that this chapter's
-  mechanisms apply.
+  Information in Computer Systems", 1975: least privilege, complete
+  mediation and the other principles this chapter's mechanisms apply.
 * Norm Hardy, "The Confused Deputy", 1988: the problem facets and
   minted handles answer.
 * Russ Cox, Eric Grosse, Rob Pike, Dave Presotto and Sean Quinlan,
   "Security in Plan 9", USENIX Security 2002: factotum, the model for
   the vault.
-* Brown and Sahlin, Safe Erlang, 1999: the capability design for
-  Erlang that erXos's exports take a different road from (chapter 4
-  cites it).
