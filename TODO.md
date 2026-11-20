@@ -7806,13 +7806,6 @@ to the corpus and follow rc
 * [Medium] SSH stage 2, the login facet ([design-ssh.md](docs/design-ssh.md)): the cookie table is keyed by the connection process, but a service behind `erx_facet` sees the facet's forward (a fresh alias, `erx_facet.erl`'s request handling), not the grantee's pid. The stage-2 design must say how the facet learns the connection: carried in the request, or keyed by the facet's forward and its `'DOWN'`.
 * [Medium] SSH, a job's messages through the session's line (`erlang/apps/erx/src/erx_session_line.erl`, `line/4`; [design-ssh.md](docs/design-ssh.md#sessions-ttys-and-shells)): `open_job`'s channel sends the line `{job_input, Bytes}`, `job_eof`, `job_sent` and `job_hangup` in the SSH domain's envelope, none a call, but the line hands its callback only the peer's admitted calls and drops every other message in an envelope, so a job would wait for a `job_written` that never comes. Building `open_job` needs a callback beside `request/4` that gets the peer's other messages, and never a third domain's.
 * [Low] cross-domain call admission, written twice (`erx:call_from/3` in `erlang/apps/erx/src/erx.erl`, which erx_facet and erx_session_line ask; `erx_net_admit:request/2` in `erlang/apps/erx_net/src/erx_net_admit.erl`, over its own `domain/1`): N12 of [design-network-stack.md](docs/design-network-stack.md#requirements) keeps `erx_net/src` from naming erx, so the network grant cannot ask `erx:call_from/3`, and a change to the rule is two edits. One source needs a choice: the runtime seam (`erx_net_runtime`) answering the check, the operation schema's generator emitting both, or N12 relaxed for this one function.
-* [High] USB, CLEAR_TT_BUFFER's wValue (`abi/formats/usb.txt`, `usb_tt_clear_type_shift`; `erx_xhci_core`'s
-  `tt_clear/2`): the endpoint type sits at bit 12 as FreeBSD's `usbd_req_clear_tt_buffer` puts it
-  (`usb_request.c:2259-2260`), which is unchecked against USB 2.0, 11.24.2.3, a document not yet obtained; if USB 2.0
-  puts it at bits 12..11, a bulk endpoint's clear names the wrong buffer or stalls and the bulk reset fails. Read the
-  wValue table, fix the shift if needed, and consider stating wValue as a layout with bits rows. The same text settles
-  whether wIndex is the port when a multi-TT-capable hub runs in single-TT mode (the core sends 1; FreeBSD sends 1 only
-  for a single-TT hub, `usb_request.c:2254-2256`).
 * [Medium] USB, the controller core's EP0 rules (`erx_xhci_core`, [design-usb.md](docs/design-usb.md#the-controller-process)):
   three choices the design does not name. EP0's control requests wait in order in the core, one posted at a time, and
   a pipe that leaves `open` answers what waits on it as a post (`set_pipe/3`), so one function's STALL on a composite

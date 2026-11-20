@@ -3056,6 +3056,15 @@ property, and it is read as a reference only:
 9257ca24f34bff08e6020623f707c788ca0f0df657aa713309ff489a68b1731e  extensible-host-controler-interface-usb-xhci.pdf
 ```
 
+USB-IF, "Universal Serial Bus Specification", Revision 2.0, from
+`https://www.usb.org/sites/default/files/usb_20_20250603.zip`, fetched
+without click-through; `usb_20.pdf` inside it:
+
+```
+5fe9c53c04033818af396e8852b3acbca5c3a76ba92fab549fd81cd0ea7b3692  usb_20_20250603.zip
+d39698a33486c399124af92bd02e4f978fd9a836b5cf4e52e6e4633eb1d89f61  usb_20.pdf
+```
+
 usb.org specifications, fetched 2026-11-13 without click-through:
 
 ```

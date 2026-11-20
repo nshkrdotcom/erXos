@@ -190,12 +190,12 @@ enum usb_feature u16
   value endpoint_halt 0
 
 # CLEAR_TT_BUFFER's wValue names the endpoint whose buffered split transaction a
-# translator drops: its number in bits 3:0, the device's address from bit 4, its transfer
-# type from bit 12 and its direction, the endpoint address's IN bit moved up 8 to bit 15
-# (usb_request.c:2259-2260). The type's place is FreeBSD's and is not checked here against
-# USB 2.0, 11.24.2.3.
+# translator drops: its number in bits 3:0, the device's address in bits 10:4, its
+# transfer type in bits 12:11 and its direction, the endpoint address's IN bit moved up 8
+# to bit 15 (USB 2.0, 11.24.2.3, Table 11-18). FreeBSD's usbd_req_clear_tt_buffer puts
+# the type at bit 12 (usb_request.c:2259), against the table.
 limit usb_tt_clear_address_shift u32 4
-limit usb_tt_clear_type_shift u32 12
+limit usb_tt_clear_type_shift u32 11
 limit usb_tt_clear_dir_shift u32 8
 
 # A device's bus address is 7 bits, as that wValue holds it (usb_request.c:2259); 0 is the

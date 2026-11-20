@@ -58,11 +58,11 @@ the_pipe_machine_is_explored_to_a_fixed_point_test_() ->
 %% The rows of the table, each as the commands and requests it posts, every one answered
 %% with success. A halted bulk endpoint behind a single translator clears the
 %% translator's buffer with wValue its number 2, the address 6 from bit 4, type bulk (2)
-%% from bit 12 and IN in bit 15, and wIndex 1.
+%% in bits 12..11 (USB 2.0, Table 11-18) and IN in bit 15, and wIndex 1.
 reset_pipe_takes_the_steps_of_its_queue_state_test() ->
     [Full, Low, High] = devices(),
-    TtFull = {tt, ?HUB_EP0, setup(16#23, 8, 2 bor (6 bsl 4) bor (2 bsl 12) bor 16#8000, 1)},
-    TtLow = {tt, ?HUB_EP0, setup(16#23, 8, 2 bor (6 bsl 4) bor (2 bsl 12) bor 16#8000, 3)},
+    TtFull = {tt, ?HUB_EP0, setup(16#23, 8, 2 bor (6 bsl 4) bor (2 bsl 11) bor 16#8000, 1)},
+    TtLow = {tt, ?HUB_EP0, setup(16#23, 8, 2 bor (6 bsl 4) bor (2 bsl 11) bor 16#8000, 3)},
     ClearHalt = {request, ?DEV_EP0, setup(16#02, 1, 0, ?BULK_ADDRESS)},
     DropAdd = {command, configure_endpoints},
     ?assertEqual([{command, reset_endpoint}, TtFull, ClearHalt, {command, set_tr_dequeue}],
@@ -402,7 +402,8 @@ purpose(_Pipe, {control, <<16#02, 1, 0:16, EpAddress:16/little, 0:16>>, none}, _
 purpose(?HUB_EP0, {control, <<16#23, 8, Value:16/little, Index:16/little, 0:16>>, none}, #{device := Device}) ->
     #{tt := #{port := Port, multi := Multi}} = Device,
     EpAddress = (Value band 16#f) bor ((Value bsr 8) band 16#80),
-    Type = case (Value bsr 12) band 3 of 0 -> control; 2 -> bulk end,
+    %% USB 2.0, Table 11-18: the endpoint type is bits 12..11.
+    Type = case (Value bsr 11) band 3 of 0 -> control; 2 -> bulk end,
     Expected = case Multi of true -> Port; false -> 1 end,
     case {(Value bsr 4) band 16#7f, Index, {endpoint_dci(EpAddress), Type}} of
         {?DEV_ADDRESS, Expected, {1, control}} -> {tt_cleared, ?DEV_EP0};
