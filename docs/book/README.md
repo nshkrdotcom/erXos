@@ -63,31 +63,26 @@ explained.
   it builds on, so the network (chapters 17 to 19), the display (22) or
   startup (24) can be read after the chapters named there.
 
-### Built and target
+### Built and designed
 
-erXos is a development preview. [0.1](../plan.md#01-the-preview), the
-first public preview, is published: a development build on QEMU `virt`
-and the Raspberry Pi 4, with the kiosk, SSH to `rc` and Doom. The next
-milestone is [0.2](../plan.md#02-the-first-release-on-fiasco), the first
-release, on the Fiasco kernel. Phase 2 of the [roadmap](../plan.md)
-builds erXos's own kernel and replaces Fiasco.
-
-The design documents describe the target. The book describes both the
-target and what runs, and never presents the first as the second. Every
-chapter carries a status box, and every passage about something not yet
-running says so in its own sentence. The box uses these marks:
+The book describes erXos as it is today, running on the Fiasco
+microkernel behind erXos's kernel interface, and, where the design is
+not yet built, as it is designed to be on that system. The design
+documents describe the whole design. The book describes both what runs
+and what is designed, and never presents the second as the first.
+Every chapter carries a status box, and every passage about something
+designed and not built says so in its own sentence. The box uses two
+marks:
 
 | Mark | Meaning |
 | --- | --- |
-| **Built** | runs in the tree, in a QEMU suite, on the board or in host tests, as [README.md](../../README.md#current-status) "Current status" records it |
-| **0.2** | designed, and scheduled for the first release on Fiasco |
-| **Phase 2** | designed, and needs erXos's own kernel, or another milestone after 0.2 |
-| **Designed** | designed, and not built; the chapter says which milestone of [plan.md](../plan.md) takes it |
+| **Built** | works in the tree today, in a QEMU suite, on the board or in host tests, as [README.md](../../README.md#current-status) "Current status" and the code show it |
+| **Designed** | specified in the design documents and not implemented |
 
-A pure core with host tests and nothing that runs it on a guest is
-**Built (host)**. The outline's marks are what README.md's "Current
-status" and [plan.md](../plan.md) say; the writer of each chapter checks
-them again against the tree before writing.
+The outline's marks are what README.md's "Current status" says; the
+writer of each chapter checks them again against the tree before
+writing. When "Current status" changes, the status boxes of the
+chapters it touches are checked again in the same change.
 
 ## Preface: why this order
 
@@ -139,8 +134,7 @@ places, each because erXos's structure or its readers ask for it.
 5. **Checking comes last.** How erXos knows it is right (OTP's own
    suites against stock OTP, musl's tests, fuzz targets, model checking,
    seeded faults, reproducible and deterministic boots) draws on every
-   chapter, so it closes Part VII, and an afterword describes the road
-   from Fiasco to erXos's own kernel.
+   chapter, so it closes Part VII.
 
 Kernel services, which the FreeBSD book gives a chapter of their own,
 are chapter 8 here, the kernel interface, because in erXos the kernel's
@@ -154,8 +148,8 @@ services are exactly its interface: everything else runs in user mode.
 * Each chapter is a file in this directory, in GitHub Flavored
   Markdown, its figures Mermaid where GitHub renders it and text diagrams
   otherwise, as [Decisions](#decisions) settles. The file name is the
-  two-digit chapter number and a short slug, `NN-slug.md`; the afterword
-  and the appendices are `afterword.md` and `a-slug.md` to `e-slug.md`.
+  two-digit chapter number and a short slug, `NN-slug.md`; the
+  appendices are `a-slug.md` to `e-slug.md`.
   The table below is the one list of names.
 * A link from one chapter to another is a relative link to the file, with
   a section anchor where the chapter has one (`10-domains.md#103-...`). A
@@ -190,7 +184,7 @@ services are exactly its interface: everything else runs in user mode.
 | 5 | Design Overview of erXos | `05-overview.md` |
 | 6 | Correct by Construction | `06-construction.md` |
 | 7 | One Source for Every Fact | `07-one-source.md` |
-| 8 | The Kernel Interface and Its Two Kernels | `08-kernel-interface.md` |
+| 8 | The Kernel Interface and Fiasco | `08-kernel-interface.md` |
 | 9 | Processes, Runtimes and Two-Level Scheduling | `09-processes.md` |
 | 10 | Domains: A Wall Around Some Processes | `10-domains.md` |
 | 11 | Authority and Security | `11-security.md` |
@@ -208,7 +202,6 @@ services are exactly its interface: everything else runs in user mode.
 | 23 | Apps and Packages | `23-apps.md` |
 | 24 | Startup, Configuration and Shutdown | `24-startup.md` |
 | 25 | Checking the System | `25-checking.md` |
-| Afterword | The Road to erXos's Own Kernel | `afterword.md` |
 | Appendix A | Glossary | `a-glossary.md` |
 | Appendix B | Reading the Design Documents | `b-design-documents.md` |
 | Appendix C | Building and Booting erXos | `c-building.md` |
@@ -229,7 +222,7 @@ services are exactly its interface: everything else runs in user mode.
 5. [Design Overview of erXos](#chapter-5-design-overview-of-erxos)
 6. [Correct by Construction](#chapter-6-correct-by-construction)
 7. [One Source for Every Fact](#chapter-7-one-source-for-every-fact)
-8. [The Kernel Interface and Its Two Kernels](#chapter-8-the-kernel-interface-and-its-two-kernels)
+8. [The Kernel Interface and Fiasco](#chapter-8-the-kernel-interface-and-fiasco)
 
 **Part III. Processes**
 
@@ -263,15 +256,13 @@ services are exactly its interface: everything else runs in user mode.
 24. [Startup, Configuration and Shutdown](#chapter-24-startup-configuration-and-shutdown)
 25. [Checking the System](#chapter-25-checking-the-system)
 
-**Afterword.** [The Road to erXos's Own Kernel](#afterword-the-road-to-erxoss-own-kernel)
-
 **Appendices.** [A. Glossary](#appendix-a-glossary),
 [B. Reading the Design Documents](#appendix-b-reading-the-design-documents),
 [C. Building and Booting erXos](#appendix-c-building-and-booting-erxos),
 [D. Dependencies and Licenses](#appendix-d-dependencies-and-licenses),
 [E. Lineage](#appendix-e-lineage)
 
-About 890 pages in all, at about 400 words a page.
+About 880 pages in all, at about 400 words a page.
 
 ---
 
@@ -394,10 +385,9 @@ from L4 and Fiasco are in chapter 8.
    write, which is the idea the rest of the book returns to.
    *Draws on:* [design.md, The model](../design.md#the-model).
 5. **The L4 family and Fiasco.** L4 and its descendants, Fiasco and L4Re,
-   the root task that creates every kernel object, and why erXos starts
-   on Fiasco and later replaces it with its own kernel.
-   *Draws on:* [design-fiasco.md](../design-fiasco.md),
-   [plan.md, Track K](../plan.md#track-k-erxoss-kernel).
+   the root task that creates every kernel object, and why erXos runs
+   on Fiasco.
+   *Draws on:* [design-fiasco.md](../design-fiasco.md).
 6. **What fails, and what a failure reaches.** A microkernel does not stop
    servers from failing; it changes what a failure reaches, from the whole
    machine to one address space, and what stays unprotected.
@@ -487,8 +477,7 @@ domains.
 ### Chapter 4. History and Goals
 
 *About 15 pages.* Why build an operating system around Erlang, what erXos
-takes from earlier systems, and how it gets from nothing to a working
-machine.
+takes from earlier systems, and the goals and principles that shape it.
 
 **Background needed.** Chapters 1 to 3, for the terms; a reader who
 knows operating systems, microkernels and Erlang starts here.
@@ -496,8 +485,8 @@ knows operating systems, microkernels and Erlang starts here.
 **Background boxes.** None; each term of Part I is linked to its chapter
 at first use.
 
-**Status.** History and goals: no mark. The phases as they stand: 0.1
-built and published; 0.2 next; Phase 2 after.
+**Status.** History, goals and principles: no mark. What runs today:
+Built, as README.md's "Current status" records it.
 
 1. **Erlang systems already behave like operating systems.** Millions of
    isolated processes, preemptive scheduling, failure handled by links
@@ -543,29 +532,19 @@ built and published; 0.2 next; Phase 2 after.
    work in one concrete choice that later chapters return to.
    *Draws on:* [design.md, Decisions](../design.md#decisions),
    [overview.md](../overview.md).
-6. **A working system first: phases and seams.** Phase 1 brought the
-   system up on a near-stock Fiasco behind erXos's own kernel interface;
-   0.1 is a preview of that system; 0.2 ships it on Fiasco with every
-   user feature and a published list of what Fiasco lacks; Phase 2
-   replaces Fiasco with erXos's kernel at parity. The section explains
-   why a stopgap is acceptable only behind an interface erXos owns, and
-   what a stopgap promises and does not. Subsections: seams, what a
-   stopgap promises, release contracts and the downsides table, the
-   phases, and why not another order.
-   *Draws on:* [plan.md, Overview](../plan.md#overview),
-   [design-fiasco.md, Contract](../design-fiasco.md#contract),
-   [design-stopgap.md, Release contract](../design-stopgap.md#release-contract).
-7. **Where erXos stands.** What 0.1 publishes today, what runs under it,
-   and what is designed and not built.
-8. **What the approach costs, and how it fails.** A runtime per domain
+6. **What runs today.** A short account of the system as it runs: on
+   QEMU `virt` and the Raspberry Pi 4, on Fiasco, with the kiosk, the
+   command shell over SSH and native programs, and what in the rest of
+   the book is designed and not built. No release names.
+   *Draws on:* [README.md, Current status](../../README.md#current-status).
+7. **What the approach costs, and how it fails.** A runtime per domain
    costs memory, the system domain is critical, device isolation needs
-   hardware, Fiasco is not erXos's kernel, a stopgap fails safely or not
-   at all, and the plan can fail at the seam. A summary and where to read
-   next close the chapter.
+   hardware, and the system's isolation rests on Fiasco and on the root
+   service. A summary and where to read next close the chapter.
 
-**Figures.** 4.1: the phases and milestones as a strip, 0.1 marked
-published, 0.2 next, Phase 2 after, the seam (the kernel interface)
-drawn as a line that stays put while the kernel below it changes.
+**Figures.** 4.1: the lineage as a timeline: UNIX, L4, EROS, Plan 9,
+Erlang/OTP and the other sources of section 3, each with the idea erXos
+took from it.
 
 ### Chapter 5. Design Overview of erXos
 
@@ -581,8 +560,8 @@ each, before the chapter names them.
 **Status.** Mixed; the day in the life is annotated step by step. Built:
 the system domain as root task on Fiasco, domains each with its own ERTS,
 the command shell, programs and pipes, storage and networking services,
-the display. 0.2: principals with domains of their own at login, release
-consoles with a login. Phase 2: grants enforced by erXos's kernel.
+the display. Designed: principals with domains of their own at login,
+consoles with a login.
 
 1. **Seven concepts, each with one owner.** Process, domain, runtime,
    group, budget, capability, principal: what each is, who owns it, and
@@ -603,8 +582,8 @@ consoles with a login. Phase 2: grants enforced by erXos's kernel.
    process sends to a service through a facet, a sandbox domain crashes
    and a link delivers `{domain_down, D, crash}`, and `find /tmp -type f
    | wc -l` runs a native program and an Erlang command in one pipeline.
-   Each step names the chapter that explains it and whether it runs in
-   0.1.
+   Each step names the chapter that explains it and whether it is built
+   or designed.
    *Draws on:* [design.md, Overview](../design.md#overview).
 4. **Signature experiences.** What a person can do on erXos that a
    conventional system does not offer: the shell is the operating
@@ -653,9 +632,9 @@ chapter 15 explains it in full.
 returning `{State, Actions}` with one edge loop, `erx_actions:perform/3`
 (Built); the device NIF's round functions and `erx_device_dma_check`
 (Built); the chokepoint checks and the stack proof of the C17 cores
-(Built, in `make check`). Many "by construction" properties of the
-kernel hold in full only on erXos's kernel (Phase 2); on Fiasco each
-cites its row of the downsides table.
+(Built, in `make check`). The chapter's "by construction" properties
+are those the system has on Fiasco; where Fiasco gives a weaker
+property than a reader would expect, the chapter says so plainly.
 
 1. **Open-ended enumeration is the smell.** A correctness argument that
    depends on remembering every caller, path or exception breaks with the
@@ -666,15 +645,17 @@ cites its row of the downsides table.
    destroy, make one funnel the only way to the operation.
    *Draws on:* [design.md, Invariants](../design.md#invariants),
    [design.md, Correct by construction in code](../design.md#correct-by-construction-in-code).
-2. **The properties erXos holds by construction.** A tour of the list:
-   a stale capability never names a new object; rights only shrink; no
-   capability is ever in flight; deleting a budget deletes everything
-   charged to it; no mapping is writable and executable at once; a pid
-   is a name, not an authority; no process acts on a message from
-   another domain that its protocol's owner did not admit. For each, the
-   one mechanism that makes it hold, and the chapter that shows it.
+2. **The properties erXos holds by construction.** A tour of the list
+   as it holds on Fiasco: only the root service creates kernel objects
+   and writes object spaces; rights only shrink; no single mapping is
+   writable and executable at once; a domain's memory is bounded by its
+   own budget; a pid is a name, not an authority; no process acts on a
+   message from another domain that its protocol's owner did not admit;
+   every layer agrees on the ABI because all are generated from one
+   file. For each, the one mechanism that makes it hold, and the
+   chapter that shows it.
    *Draws on:* [design.md, Invariants](../design.md#invariants),
-   [design-kernel.md, Invariants](../design-kernel.md#invariants),
+   [design-fiasco.md, Contract](../design-fiasco.md#contract),
    [design-domains.md, Invariants](../design-domains.md#invariants).
 3. **Functional core, effects at the edge.** Every decision that can be a
    pure function is one: a state machine that returns the next state and
@@ -704,30 +685,27 @@ cites its row of the downsides table.
    and a chokepoint check covers only what such a boundary cannot say.
    *Draws on:* [design.md, Chokepoint checks](../design.md#chokepoint-checks),
    `tools/lib/erx/chokepoint_rules/`.
-6. **Bounded stacks and typed numbers.** The kernel's C recurses only
-   through tail calls the compiler must turn into jumps, and each build
-   computes the worst-case stack depth from the call graph. Addresses,
-   sizes and counts have types that do not convert into each other. The
-   section shows how both turn a class of kernel bug into a build
-   failure.
+6. **Bounded stacks and typed numbers.** The C17 code erXos links
+   into Fiasco recurses only through tail calls the compiler must turn
+   into jumps, and each build computes its worst-case stack depth from
+   the call graph. Addresses, sizes and counts have types that do not
+   convert into each other. The section shows how both turn a class of
+   bug into a build failure.
    *Draws on:* [design.md, Bounded stacks](../design.md#bounded-stacks),
-   [design.md, Typed addresses and counts](../design.md#typed-addresses-and-counts),
-   [design-kernel.md, Stack proof](../design-kernel.md#stack-proof).
-7. **Seams, not rewrites.** Every third-party component erXos stands on
-   (Fiasco, littlefs, LVGL, musl, OTP) sits behind an interface erXos
-   owns, so replacing it changes what is behind the interface and nothing
-   above it. The section shows the rule at the kernel interface, at the
-   storage domain's file server and at the display, and explains what a
-   stopgap promises (no memory errors, no deadlock, the results of its
-   calls) and what it records instead of fixing.
-   *Draws on:* [design.md, Decisions](../design.md#decisions),
-   [design-stopgap.md](../design-stopgap.md).
+   [design.md, Typed addresses and counts](../design.md#typed-addresses-and-counts).
+7. **One interface below every runtime.** Every runtime and program
+   reaches the kernel through `liberx`, every shared format is erXos's
+   own, and none of Fiasco's data model reaches Erlang code or a user.
+   The section shows the rule at the kernel interface, at the storage
+   domain's file server and at the display, and what it buys: a
+   component below the interface can change without anything above it
+   moving.
+   *Draws on:* [design.md, Decisions](../design.md#decisions).
 
 **Figures.** 6.1: a pure core and its effect loop: request in, either
 "observe these reads" or "decide: this plan and the next state", the
 effect loop performing reads or the checked plan. 6.2: the "by
-construction" list as a table of property, mechanism, chapter, and the
-Fiasco row that weakens it. 6.3: a chokepoint check with its seeded
+construction" list as a table of property, mechanism and chapter. 6.3: a chokepoint check with its seeded
 violation.
 
 ### Chapter 7. One Source for Every Fact
@@ -747,11 +725,9 @@ Erlang modules, Ruby tables); the hardware sources (CMSIS-SVD files and
 Arm's machine-readable register data); the inspection schema
 (`abi/inspection.txt`); the theme file (`abi/theme.txt`) with its
 contrast rules; errno and signal tables with FreeBSD's numbers; the
-system manifest and its build-time check, in Ruby. Not adopted: Datalog.
-An awklog form of the manifest check is an evaluation the roadmap
-schedules, adopted only if it makes the checks clearer; the declarative
-operating-system services of BOOM and Dedalus are a research direction,
-not a design.
+system manifest and its build-time check, in Ruby. Datalog is not
+used; the declarative operating-system services of BOOM and Dedalus
+are a research direction, not a design.
 
 1. **The problem: parallel copies.** Two places that must change
    together become a list of places to update, and the list is an
@@ -783,12 +759,12 @@ not a design.
    lists every configured domain with its principal, image, budget,
    grant, devices, facets and introductions. The build packs it into the
    boot image and a check refuses a manifest that breaks a property the
-   security argument rests on, such as a release build's domain that
-   parses hostile input holding a device no IOMMU confines. Each property
+   security argument rests on, such as a domain that parses hostile
+   input holding a device no IOMMU confines. Each property
    has a test that plants one violation and expects its diagnostic.
    *Draws on:* [design-system.md, The manifest](../design-system.md#the-manifest),
    [design-abi.md, System-manifest representation](../design-abi.md#system-manifest-representation),
-   [design-fiasco.md, The Phase 1 manifest check](../design-fiasco.md#the-phase-1-manifest-check).
+   [design-fiasco.md, The manifest check](../design-fiasco.md#the-phase-1-manifest-check).
 5. **Declared services and inspection paths.** Every cross-domain facet is
    declared in `abi/services` with the design section that justifies it,
    and every value the system observes is an inspection path declared in
@@ -804,8 +780,6 @@ not a design.
    *Draws on:* [design-desktop-programs.md, The theme: one declaration](../design-desktop-programs.md#the-theme-one-declaration).
 7. **Where Datalog fits, and where it does not.** The section separates
    the declarative work that is built (the specs above) from what is
-   being evaluated (an awklog form of the manifest's relational rules:
-   device ownership, facet targets, boot-order cycles) and what is
    research (declarative services after BOOM and Dedalus, Barrelfish's
    system knowledge base). It explains the rule that decides each case:
    a declarative form is chosen when it turns a property into a checked
@@ -822,26 +796,23 @@ in the middle, every generated header, module and table on the right.
 7.3: the manifest check as a pipeline: reader, normalized facts,
 properties, diagnostics, with one seeded violation traced through.
 
-### Chapter 8. The Kernel Interface and Its Two Kernels
+### Chapter 8. The Kernel Interface and Fiasco
 
-*About 42 pages.* The kernel's services are its interface: objects,
-capabilities, threads, memory, IPC and interrupts. Two kernels stand
-behind it: Fiasco today, erXos's own kernel in Phase 2.
+*About 40 pages.* The kernel's services are its interface: objects,
+capabilities, threads, memory, IPC and interrupts. Fiasco, the L4
+microkernel, is the kernel behind it, and the system domain's root
+service builds every domain over it.
 
 **Background needed.** Chapters 1 to 3 and 5 to 7; chapter 2 for
 capabilities.
 
 **Background boxes.** A capability table recalled from chapter 2 with a
-worked lookup. Fiasco, L4Re and the root task in a page. What a
-generation count prevents.
+worked lookup. Fiasco, L4Re and the root task in a page.
 
 **Status.** Built: `liberx`'s Fiasco backend, the hosted backend for
-hosted mode, the root service's request decoder and placement code, the
-downsides table and its check. 0.2: the Fiasco target (handles as Fiasco
-slots, a factory per domain budget, bands, DMA spaces), the release's
-Fiasco build and the system-call fuzz campaign. Phase 2: erXos's kernel,
-of which host-built C17 cores exist (object store, capability table,
-budgets, page funnel) and none boots.
+hosted mode, the root service's request decoder and placement code.
+Designed: handles as Fiasco slots, a factory per domain budget, bands,
+DMA spaces, and the system-call fuzz campaign.
 
 1. **What the kernel knows, and what it does not.** Threads, groups of
    threads, memory, capabilities and interrupts; nothing of Erlang. The
@@ -849,67 +820,60 @@ budgets, page funnel) and none boots.
    (every runtime and driver in user mode, a small trusted base) and
    what it costs (crossings), with Singularity's measurements of hardware
    crossings as the evidence.
-   *Draws on:* [design-kernel.md, Context](../design-kernel.md#context),
-   [design-kernel.md, Overview](../design-kernel.md#overview).
-2. **Objects and capabilities.** A capability is an object reference with
-   rights, held in a slot of a space. Every kernel call reaches its
-   objects through one lookup that checks generation, type and rights, so
-   a stale capability never names a new object; rights only shrink when a
-   capability is duplicated or passed; capabilities pass only at an IPC
-   rendezvous, so no queue ever holds one. Each property is shown with
-   the data structure that makes it hold.
-   *Draws on:* [design-kernel.md, Objects and capabilities](../design-kernel.md#objects-and-capabilities),
-   [design-kernel.md, Rights](../design-kernel.md#rights),
-   [design-kernel.md, Passing capabilities](../design-kernel.md#passing-capabilities).
-3. **Threads, gates, IRQ objects and faults.** The objects a runtime uses
-   to run and wait: threads and their faults, IPC gates, IRQ objects that
-   serve as doorbells, the user-space mutex (umtx), vCPU upcalls for
-   signals. How a fault reaches the right handler, and why the kernel
-   never loads or stores through an address a domain supplies.
-   *Draws on:* [design-kernel.md, Threads and faults](../design-kernel.md#threads-and-faults),
-   [design-kernel.md, IRQ objects](../design-kernel.md#irq-objects),
-   [design-kernel.md, vCPU upcalls](../design-kernel.md#vcpu-upcalls).
-4. **`liberx`: the one issuer of kernel calls.** Every kernel call in
+   *Draws on:* [design-fiasco.md, Contract](../design-fiasco.md#contract),
+   [design.md, Trust placement](../design.md#trust-placement).
+2. **`liberx`: the one issuer of kernel calls.** Every kernel call in
    every runtime and program goes through `liberx`, whose calls are
-   generated from the ABI file; behind it sit backends (Fiasco, hosted,
-   and later erXos's kernel) that pass one test set, refusals included.
-   A call a backend cannot implement fails with `ERX_ENOTSUP`, and a
-   value it cannot measure is reported as unsupported, never invented.
+   generated from the ABI file; behind it sit the Fiasco backend and the
+   hosted backend, which pass one test set, refusals included. A call
+   the backend cannot implement over Fiasco fails with `ERX_ENOTSUP`,
+   and a value it cannot measure is reported as unsupported, never
+   invented.
    *Draws on:* [design-runtime.md, liberx](../design-runtime.md#liberx),
    [design-runtime.md, The liberx interface](../design-runtime.md#the-liberx-interface).
-5. **erXos on Fiasco.** How the backend implements the interface over
-   Fiasco's own capabilities, factories, interrupts and DMA spaces, the
-   system domain acting as L4Re's root task does: the only creator of
-   kernel objects and the only writer of any object space. The call
-   table, and why the backend never rebuilds in user mode a property only
-   erXos's kernel promises.
+3. **The root service: who holds what.** The system domain acts as
+   L4Re's root task does: its root service is the only creator of
+   kernel objects and the only writer of any object space or page
+   table. A domain asks it through the backend, and the request decoder
+   and placement code decide what each domain holds. The call table
+   maps each interface call onto Fiasco's own capabilities, factories,
+   interrupts and DMA spaces.
    *Draws on:* [design-fiasco.md, The construction](../design-fiasco.md#the-construction),
+   [design-fiasco.md, Who holds what](../design-fiasco.md#who-holds-what),
    [design-fiasco.md, The call table](../design-fiasco.md#the-call-table).
-6. **The downsides table: an honest list.** Every property of erXos's
-   kernel that Fiasco does not have is one row, `FD1` to `FD34`, with
-   what it weakens, what Fiasco has instead, what a user sees and what
-   closes it. The section explains why a single published list beats
-   scattered caveats, and walks a few rows (budgets above a wall, CPU
-   grants, DMA without an IOMMU).
-   *Draws on:* [design-fiasco.md, Downsides against erXos's kernel](../design-fiasco.md#downsides-against-erxoss-kernel),
-   [design-fiasco.md, Security on Fiasco](../design-fiasco.md#security-on-fiasco).
-7. **erXos's own kernel and its L4 lineage.** A C17 reimplementation of
-   Fiasco's proven design, keeping Fiasco's model wherever erXos needs
-   nothing else, with every departure recorded with its reason in a
-   ledger. The section surveys what it adds (budgets as walls for every
-   allocation, CPU grants, bounded kernel paths) and its port contract,
-   the one place an architecture enters.
-   *Draws on:* [design-kernel.md, L4 lineage](../design-kernel.md#l4-lineage),
-   [design-kernel.md, The ledger](../design-kernel.md#the-ledger),
-   [design-kernel.md, Port contract](../design-kernel.md#port-contract),
-   [design-arch-aarch64.md](../design-arch-aarch64.md).
+4. **Handles, rights and destroying an object.** A handle is a slot of
+   a task's object space; rights only shrink when a handle is passed;
+   only the root moves a handle between domains. A slot carries no
+   generation, so a use-after-close bug acts on whatever the slot holds
+   next; the section says so plainly and shows what that means for an
+   app and for a server. How an object is destroyed, and what happens to
+   its holders.
+   *Draws on:* [design-fiasco.md, Handles are slots](../design-fiasco.md#handles-are-slots),
+   [design-fiasco.md, Rights](../design-fiasco.md#rights),
+   [design-fiasco.md, Destroying an object](../design-fiasco.md#destroying-an-object),
+   [design-fiasco.md, Passing a handle](../design-fiasco.md#passing-a-handle).
+5. **Threads, gates, interrupts and faults.** The objects a runtime uses
+   to run and wait: threads and bands, the user-space mutex (umtx),
+   interrupts and readiness, IPC gates that carry fault and exit
+   records, and vCPU upcalls for signals. How a fault reaches the right
+   handler, and what a fault of the root task does to the machine.
+   *Draws on:* [design-fiasco.md, Threads, waits and exit](../design-fiasco.md#threads-waits-and-exit),
+   [design-fiasco.md, Interrupts and readiness](../design-fiasco.md#interrupts-and-readiness),
+   [design-fiasco.md, IPC gates and where transfer fits](../design-fiasco.md#ipc-gates-and-where-transfer-fits),
+   [design-fiasco.md, vCPU upcalls on Fiasco](../design-fiasco.md#vcpu-upcalls-on-fiasco).
+6. **What Fiasco gives, and what it does not.** Isolation between
+   domains rests on Fiasco and on the root service's decoder and
+   placement code; where no IOMMU confines a DMA-capable device, also on
+   the domain that drives it. The section states plainly what a hostile
+   app can and cannot do on the system, as a property of the system.
+   *Draws on:* [design-fiasco.md, Security on Fiasco](../design-fiasco.md#security-on-fiasco),
+   [design-fiasco.md, What a hostile app can do](../design-fiasco.md#what-a-hostile-app-can-do).
 
-**Figures.** 8.1: the seam: runtimes and programs above, `liberx` and its
-generated calls, three backends below it. 8.2: a capability lookup:
-slot, generation, type, rights. 8.3: the downsides table excerpted, with
-the column structure explained.
-
----
+**Figures.** 8.1: the kernel interface: runtimes and programs above,
+`liberx` and its generated calls, the Fiasco and hosted backends below
+it. 8.2: the root service between the domains and Fiasco: requests in,
+kernel objects placed in each domain's object space. 8.3: a handle's
+life: a slot taken, passed by the root, closed.
 
 ## Part III. Processes
 
@@ -929,9 +893,8 @@ writable-or-executable memory.
 
 **Status.** Built: ERTS in user mode in every domain, the system domain
 on the interpreter, BeamAsm in other domains, the C library seam over
-musl, hosted mode. 0.2: priority bands, CPU sets and thread limits from
-the manifest on Fiasco. Phase 2: groups with grants (quota per period,
-capacity, urgency) enforced by erXos's kernel.
+musl, hosted mode. Designed: priority bands, CPU sets and thread limits
+from the manifest.
 
 1. **The Erlang process is the system's process.** A pid, a mailbox,
    links and monitors: the unit of execution and failure for the whole
@@ -940,14 +903,16 @@ capacity, urgency) enforced by erXos's kernel.
    (OTP applications run unmodified, checked against stock OTP).
    *Draws on:* [design.md, The model](../design.md#the-model),
    [design.md, Requirements](../design.md#requirements).
-2. **Groups and grants.** The kernel allocates CPU to groups of threads,
-   each with a grant: a quota per period, a set of CPUs, a capacity and
-   an urgency band; groups form a tree and no group exceeds its parent.
-   The section explains charging, pick and dispatch, and what a grant
-   guarantees, and marks which of it runs on Fiasco as bands.
-   *Draws on:* [design-scheduler.md, Data model](../design-scheduler.md#data-model),
-   [design-scheduler.md, Charging and quota](../design-scheduler.md#charging-and-quota),
-   [design-fiasco.md, Bands](../design-fiasco.md#bands).
+2. **Bands, CPU sets and thread limits.** Fiasco schedules threads by
+   priority. A domain's threads start in its band, a run of priorities
+   from its manifest row, and run on its set of CPUs, up to its thread
+   limit. Six bands, from the watchdog at the top to apps and programs
+   at the bottom, mean a spinning domain delays only its own band and
+   those below. The section explains what a band does and does not
+   promise: it orders domains, and it measures no share of CPU time.
+   *Draws on:* [design-fiasco.md, The scheduler on Fiasco](../design-fiasco.md#the-scheduler-on-fiasco),
+   [design-fiasco.md, Bands](../design-fiasco.md#bands),
+   [design-fiasco.md, Threads, bands and stops](../design-fiasco.md#threads-bands-and-stops).
 3. **The runtime contract.** Executors are threads that only park and
    never block; workers may block. A runtime parks an idle executor
    against an epoch, so a wakeup that arrives between its last look and
@@ -956,6 +921,7 @@ capacity, urgency) enforced by erXos's kernel.
    the six rules that remove the causes of scheduler activations'
    failure.
    *Draws on:* [design-scheduler.md, Park and wake](../design-scheduler.md#park-and-wake),
+   [design-fiasco.md, The park protocol](../design-fiasco.md#the-park-protocol),
    [design-scheduler.md, The runtime contract](../design-scheduler.md#the-runtime-contract),
    [design.md, Decisions](../design.md#decisions).
 4. **ERTS as a parts bin.** ERTS is taken apart and recombined for erXos:
@@ -969,8 +935,8 @@ capacity, urgency) enforced by erXos's kernel.
    runs the interpreter and makes no machine code; other domains may run
    BeamAsm, the JIT, in user mode, with no page ever writable and
    executable at once. One image of shared loaded code mapped into every
-   domain saves memory (Phase 2's shared-code image is designed and not
-   built).
+   domain saves memory; the shared-code image is designed and not
+   built.
    *Draws on:* [design-runtime.md, BeamAsm](../design-runtime.md#beamasm),
    [design-runtime.md, Code in the system domain](../design-runtime.md#code-in-the-system-domain),
    [design.md, The JIT](../design.md#the-jit),
@@ -989,10 +955,10 @@ capacity, urgency) enforced by erXos's kernel.
    *Draws on:* [design-scheduler.md, A worked example](../design-scheduler.md#a-worked-example),
    [design-scheduler.md, Service work](../design-scheduler.md#service-work).
 
-**Figures.** 9.1: the two levels: groups and executors under the kernel,
+**Figures.** 9.1: the two levels: domains' threads under Fiasco,
 Erlang processes on executors under each runtime. 9.2: park and wake with
 the epoch, as a sequence diagram showing the lost-wakeup race and how the
-epoch closes it. 9.3: a group tree with grants. 9.4: the inside of ERTS
+epoch closes it. 9.3: the six bands, top to bottom. 9.4: the inside of ERTS
 on erXos, the adapter and `liberx` beneath it.
 
 ### Chapter 10. Domains: A Wall Around Some Processes
@@ -1012,8 +978,7 @@ node and the external term format are.
 **Status.** Built: domains with their own ERTS, connections and lanes,
 the funnel, exports, the origin envelope, links and monitors across
 domains, `{domain_down, D, Info}`, the domain service creating and ending
-domains. Phase 2: the guarantees that need erXos's kernel, each a row of
-the downsides table.
+domains.
 
 1. **A domain is a node.** Each domain has a node name such as
    `web@erxos`, its own atoms, code, ETS tables and registered names, a
@@ -1064,8 +1029,7 @@ the downsides table.
    [design-domains.md, Domain lifecycle](../design-domains.md#domain-lifecycle).
 7. **The system domain and the domain library.** The root task: Erlang
    policy decides who gets what, and a C17 library in `liberx` plans a
-   domain whole and creates, inspects and ends it. Ending a domain is one
-   operation: destroying its budget.
+   domain whole, and the root service creates, inspects and ends it.
    *Draws on:* [design-system.md, The root task](../design-system.md#the-root-task),
    [design-system.md, The domain library](../design-system.md#the-domain-library),
    [design-system.md, Creating a domain](../design-system.md#creating-a-domain),
@@ -1079,8 +1043,8 @@ fault to `{domain_down, D, crash}` at the linked process.
 ### Chapter 11. Authority and Security
 
 *About 42 pages.* Who may do what, and why: the threat model, trust
-placement, facets, principals, keys, cryptography and the closure that
-makes a release safe for untrusted code.
+placement, facets, principals, keys and cryptography, and what the
+system protects against untrusted code.
 
 **Background needed.** Chapters 2, 8 and 10.
 
@@ -1091,10 +1055,9 @@ Branch-predictor side channels in a page.
 
 **Status.** Built: facets and the declared service table, every
 development build marked `development build: trusted code only`, OpenSSL
-in the runtime images, `erx_report` filtering crash reports. 0.2: the
-security closure in its Fiasco form, release consoles with a login,
-principals with budgets and quotas. Designed, not built: the vault.
-Phase 2: the closure on erXos's kernel.
+in the runtime images, `erx_report` filtering crash reports. Designed:
+consoles with a login, principals with budgets and quotas, the vault,
+the system-call fuzz campaign.
 
 1. **The threat model.** Untrusted Erlang code, drivers and native
    programs run in domains or sub-spaces that cannot read, write, crash or
@@ -1109,8 +1072,8 @@ Phase 2: the closure on erXos's kernel.
    every domain's isolation depends on lives in the kernel (on Fiasco
    also in the root service's decoder and placement code). A domain's
    memory, threads and CPU depend on nothing outside itself but the
-   kernel. The section explains why the system domain may fault the
-   machine and nothing else may.
+   kernel and the root service. The section explains why the system
+   domain may fault the machine and nothing else may.
    *Draws on:* [design.md, Trust placement](../design.md#trust-placement).
 3. **Facets: authority as processes.** A facet is a process of the system
    domain that stands for one grant to one domain and acts only for it.
@@ -1128,10 +1091,12 @@ Phase 2: the closure on erXos's kernel.
    [design-system.md, Resource policy](../design-system.md#resource-policy).
 5. **Machine code and W^X.** No mapping is writable and executable at
    once and the kernel writes no machine code; the right to make code
-   follows from the image, and the trusted base makes none. On Fiasco a
-   patch to its mapping code gives the first half (FD8).
+   follows from the image, and the trusted base makes none. Fiasco's map
+   refuses a single writable and executable mapping; a page can still be
+   writable through one mapping and executable through another, and the
+   section says so plainly.
    *Draws on:* [design.md, Machine code](../design.md#machine-code),
-   [design-fiasco.md, Downsides against erXos's kernel](../design-fiasco.md#downsides-against-erxoss-kernel).
+   [design-fiasco.md, Protection](../design-fiasco.md#protection).
 6. **Keys, the vault and cryptography.** Keys stay in a vault, sealed per
    principal; a domain authenticates through a key facet that signs one
    protocol's input for one purpose, after Plan 9's factotum. OpenSSL 3.5
@@ -1146,12 +1111,12 @@ Phase 2: the closure on erXos's kernel.
    is not such text and reaches its tty unchanged, as on UNIX.
    *Draws on:* [design-live.md, Escape rules](../design-live.md#escape-rules),
    [design-generation.md, Escape rules](../design-generation.md#escape-rules).
-8. **Development builds and the security closure.** Until the closure,
-   every build runs trusted code only and says so at boot. The section
-   explains what 0.2's closure on Fiasco consists of (the release's
-   Fiasco build, the system-call fuzz campaign, the upstream watch) and
-   what a hostile app can still do on Fiasco.
-   *Draws on:* [design-fiasco.md, The security closure](../design-fiasco.md#the-security-closure),
+8. **Trusted code only, and what a hostile app can do.** A build says
+   at boot whether it runs trusted code only. The section states what a
+   hostile app can and cannot do on the system as built on Fiasco, and
+   which designed checks (the system-call fuzz campaign) cover Fiasco's
+   own code.
+   *Draws on:* [design-fiasco.md, Security on Fiasco](../design-fiasco.md#security-on-fiasco),
    [design-fiasco.md, What a hostile app can do](../design-fiasco.md#what-a-hostile-app-can-do).
 
 **Figures.** 11.1: the trust map: kernel, root service, system domain,
@@ -1161,9 +1126,9 @@ each text sink.
 
 ### Chapter 12. Memory and Budgets
 
-*About 38 pages.* Every kernel allocation is charged to a budget carved
-from its parent's; delete a budget, and everything charged to it goes,
-at once.
+*About 36 pages.* Each domain pays for its memory from its own budget,
+a wall set when the domain is created; nothing another domain does can
+take it.
 
 **Background needed.** Chapters 1 (virtual memory) and 8.
 
@@ -1173,18 +1138,16 @@ chapter 1. Copy-on-write and fork. Space banks, the idea behind budgets.
 **Status.** Built: domains in their own spaces, memory objects and
 mappings over Fiasco, the root's page accounting as far as the backend
 implements it (the chapter's writer checks the range table and pool in
-the tree). Built (host): erXos's budget arithmetic and page funnel,
-checked by CBMC. 0.2: budgets as walls for kernel memory through a Fiasco
-factory per domain budget. Phase 2: every kernel allocation charged to a
-budget, by erXos's kernel.
+the tree). Designed: budgets as walls for kernel memory through a Fiasco
+factory per domain budget.
 
-1. **Budgets as space banks.** A budget has a guarantee, memory set aside
-   that no other budget can take, and a cap, up to which it spends what
-   its ancestors have promised to no one. A domain's budgets are walls,
-   cap equal to guarantee, so it is admitted or refused at its own budget
-   alone. The section tells EROS's idea and why it makes ending a domain
-   one operation.
-   *Draws on:* [design-kernel.md, Budgets](../design-kernel.md#budgets),
+1. **Budgets as space banks.** A domain's budget is a wall at its
+   guarantee: memory set aside that no other domain can take, so a
+   domain is admitted or refused at its own budget alone. The section
+   tells EROS's idea, and how the system splits a budget into kernel
+   memory, which a Fiasco factory holds, and user pages, which the
+   root's pool charges.
+   *Draws on:* [design-fiasco.md, Memory and budgets](../design-fiasco.md#memory-and-budgets),
    [design.md, Resource limits](../design.md#resource-limits).
 2. **Own and outer budgets.** Each domain gets two budgets side by side:
    the own budget pays for what the domain alone maps and dies with it;
@@ -1192,33 +1155,34 @@ budget, by erXos's kernel.
    connection through a child budget, and for its crash area. This is how
    what must outlive a party is charged to a budget that outlives it.
    *Draws on:* [design-system.md, Ending a domain](../design-system.md#ending-a-domain).
-3. **Spaces, memory objects and mappings.** A mapping never allows more
-   than the capability that made it: each keeps a ceiling fixed from that
-   capability's rights. Trimming never meets sharing: only private memory
-   is freed by range, and each private page is mapped exactly once.
-   *Draws on:* [design-kernel.md, Memory](../design-kernel.md#memory),
-   [design-kernel.md, Virtual memory](../design-kernel.md#virtual-memory).
-4. **Copy-on-write children and sub-spaces.** A child shares only
-   immutable pages and reserves every page it may copy when it is
-   created; a sub-space a domain creates for code it runs holds only what
-   its creator gave it and ends with its creator.
-   *Draws on:* [design-kernel.md, Copy-on-write children and copies of spaces](../design-kernel.md#copy-on-write-children-and-copies-of-spaces),
-   [design-kernel.md, Creating spaces](../design-kernel.md#creating-spaces).
-5. **Deleted memory faults.** Deleting an object invalidates every
-   capability to it at once, and memory mapped from it faults from then
-   on, so no server maps what a client can delete. The section shows how
-   this shapes shared mappings and the session's mapper.
-   *Draws on:* [design.md, Decisions](../design.md#decisions),
+3. **The pool and the range table.** The root alone maps memory, from
+   its page pool, and keeps a record of every mapping at the rights it
+   was made with, so a mapping's protection never rises above what its
+   capability allowed. Trimming never meets sharing: only private memory
+   is freed by range.
+   *Draws on:* [design-fiasco.md, The pool](../design-fiasco.md#the-pool),
+   [design-fiasco.md, The range table](../design-fiasco.md#the-range-table),
+   [design-fiasco.md, Protection](../design-fiasco.md#protection).
+4. **Sub-spaces and shared objects.** A sub-space a domain creates for
+   code it runs holds only what its creator gave it and ends with its
+   creator. Shared objects, and the JIT's alias of its code, are mapped
+   by the root too.
+   *Draws on:* [design-fiasco.md, Shared objects and the JIT alias](../design-fiasco.md#shared-objects-and-the-jit-alias),
+   [design-fiasco.md, Spaces, parents and exit records](../design-fiasco.md#spaces-parents-and-exit-records).
+5. **Deleted memory.** What happens to the mappings of a destroyed
+   object, and why no server maps what a client can delete. The section
+   shows how this shapes shared mappings and the session's mapper.
+   *Draws on:* [design-fiasco.md, Destroying an object](../design-fiasco.md#destroying-an-object),
    [design-files.md, Shared mappings](../design-files.md#shared-mappings).
-6. **Memory on Fiasco.** The root's page pool and range table, budgets and
-   groups kept as records in the root, and what Fiasco's own kernel memory
-   leaves uncharged (FD5, FD14, FD25).
-   *Draws on:* [design-fiasco.md, Budgets and the ownership of pages](../design-fiasco.md#budgets-and-the-ownership-of-pages),
-   [design-fiasco.md, Memory and budgets](../design-fiasco.md#memory-and-budgets).
+6. **Reporting a budget, and what is not charged.** How a budget's use
+   is reported, as exact, partial or unsupported, and which kernel
+   memory Fiasco keeps outside any domain's budget, stated plainly.
+   *Draws on:* [design-fiasco.md, Reporting a budget](../design-fiasco.md#reporting-a-budget),
+   [design-fiasco.md, Kernel memory and the root budget](../design-fiasco.md#kernel-memory-and-the-root-budget).
 
-**Figures.** 12.1: a budget tree with guarantees and caps, a wall marked.
-12.2: own and outer budgets of two connected domains. 12.3: a mapping and
-its ceiling.
+**Figures.** 12.1: a domain's budget as a wall, split into kernel memory
+and user pages. 12.2: own and outer budgets of two connected domains.
+12.3: a mapping in the range table, with the rights it was made with.
 
 ### Chapter 13. Native Programs, Pipes and POSIX-lite
 
@@ -1234,9 +1198,9 @@ and job control as a UNIX user knows them. File descriptors and pipes.
 
 **Status.** Built: programs in sub-spaces with a channel and a handler,
 pipes in user space, signals and errno with FreeBSD's numbers, toybox
-applets, programs in pipelines with Erlang commands. Not built: terminal
+applets, programs in pipelines with Erlang commands. Designed: terminal
 input for programs, sockets for programs, the POSIX-lite layer as a
-whole (0.2 has the rest of track P on Fiasco).
+whole.
 
 1. **A program is a port.** To its session's Erlang, a native program is
    a port: owned by a process, linked, closed with its owner, reporting
@@ -1358,10 +1322,9 @@ Device trees and firmware. virtio.
 and input on QEMU; SD, GENET Ethernet and the firmware framebuffer on the
 Pi 4), the device NIF with its round functions and `erx_device_dma_check`,
 the device tree reader, the driver supervisor restarting a killed driver.
-Built (host): USB's hub and port state machine and decoders, the Pi
-header's pin ownership core. 0.2: the PCIe domain and virtio-pci with
-MSIs. Phase 2: DMA confined by erXos's kernel through an IOMMU where the
-platform has one.
+Built as pure cores with host tests: USB's hub and port state machine
+and decoders, the Pi header's pin ownership core. Designed: the PCIe
+domain and virtio-pci with MSIs.
 
 1. **A driver is a process.** Kill the network driver's process
    mid-transfer from the shell; its supervisor restarts it, the device
@@ -1397,9 +1360,9 @@ platform has one.
    memory as the device sees it, and every register written is one the
    NIF owns. A plan that fails is a bug in the core, and the call is
    `badarg` with nothing applied. On a platform with no IOMMU, which
-   0.2's QEMU `virt` and Raspberry Pi 4 both are, this check is what
+   QEMU `virt` and the Raspberry Pi 4 both are, this check is what
    stops a driver bug from aiming a device at kernel memory; the driving
-   domain still counts in the trusted base (FD12).
+   domain still counts in the trusted base.
    *Draws on:* [design-device-dma.md, Calls, observations and plans](../design-device-dma.md#calls-observations-and-plans),
    [design-device-dma.md, Device addresses and reach](../design-device-dma.md#device-addresses-and-reach),
    [design-device-dma.md, Register ownership](../design-device-dma.md#register-ownership),
@@ -1409,7 +1372,7 @@ platform has one.
    a device whose facts are absent or malformed gets no DMA memory rather
    than a guess.
    *Draws on:* [design-device-tree.md](../design-device-tree.md),
-   [design-kernel.md, DMA and the IOMMU](../design-kernel.md#dma-and-the-iommu).
+   [design-fiasco.md, Devices](../design-fiasco.md#devices).
 6. **Devices that share.** A register page or an interrupt line shared by
    two devices: the unit rule, and the console.
    *Draws on:* [design-shared-devices.md, The unit rule](../design-shared-devices.md#the-unit-rule).
@@ -1437,7 +1400,7 @@ domains it gives devices to.
 
 ### Chapter 16. Storage and Updates
 
-*About 44 pages.* Releases ship as read-only images checked block by
+*About 44 pages.* The system ships as read-only images checked block by
 block, data lives in a file system written in Erlang, and an update
 leaves a bootable system whatever happens.
 
@@ -1452,9 +1415,9 @@ image.
 over virtio block and the Pi 4's SD card, restarting cleanly after a
 driver is killed mid-transfer; the EROFS reader; the build's system
 partition with its dm-verity hash tree; FAT for the card's boot volume.
-Built (host): the F2FS codec and mount core. 0.2: A/B updates with a
-trial boot, the `system` tree, littlefs under its release contract.
-After 0.2: erXos's F2FS replacing littlefs (M13).
+Built as pure cores with host tests: the F2FS codec and mount core.
+Designed: A/B updates with a trial boot, the `system` tree, erXos's
+F2FS as a mounted file system.
 
 1. **Storage as a service.** Storage runs in a domain of its own, in
    Erlang, over the block driver; a bug in a file system crashes a
@@ -1466,12 +1429,11 @@ After 0.2: erXos's F2FS replacing littlefs (M13).
    that does not match reads as an error.
    *Draws on:* [design-storage.md, Reading EROFS images](../design-storage.md#reading-erofs-images),
    [design-storage.md, The `system` tree](../design-storage.md#the-system-tree).
-3. **littlefs: a stopgap with a release contract.** Where it runs, what
-   it holds, what input reaches it, what its failure ends and which fuzz
-   targets cover it: the contract a shipped stopgap commits to, and no
-   more.
+3. **littlefs in the storage domain.** The file system that holds
+   `/data`: where it runs, what it holds, what input reaches it, what
+   its failure ends and which fuzz targets cover it.
    *Draws on:* [design-stopgap.md, Release contract](../design-stopgap.md#release-contract).
-4. **erXos's F2FS.** The main read-write file system, in Erlang: the
+4. **erXos's F2FS.** A read-write file system in Erlang, designed: the
    durable view is never overwritten, one process owns a volume, and
    recovery replays from a checkpoint. Crash states serve as the oracle,
    and a power-cut harness checks them.
@@ -1514,9 +1476,9 @@ and congestion control. DHCP and NTP.
 **Status.** Built: `erx_net` in a network domain (Ethernet, ARP, IPv4,
 IPv6 neighbour discovery, ICMP, UDP, TCP, DHCP) over virtio-net and the
 Pi 4's GENET, `ifconfig`, `ping`, `host`, `gen_tcp` in and out, NTP.
-Not built: sockets for native programs. The fast path and the stack's
-full verification against FreeBSD belong to M14 (the chapter's writer
-checks which parts of each have landed).
+Designed: sockets for native programs, the fast path, and the stack's
+full verification against FreeBSD (the chapter's writer checks which
+parts of each are built).
 
 1. **Why FreeBSD's stack, and why not a translation.** What the stack
    matches, why FreeBSD's default stack and not another, and what a naive
@@ -1563,7 +1525,7 @@ a study in pure protocol cores.
 **Background needed.** Chapters 3 and 6 (state machines as pure cores),
 chapter 15 (drivers and devices), chapter 17 (the network stack).
 
-**Status.** Built (host): WiFi's join machine, SAE exchange and
+**Status.** Built as pure cores with host tests: WiFi's join machine, SAE exchange and
 EAPOL-Key codec. No radio driver runs on a board.
 
 1. **WiFi on the CYW43455.** What the chip offers, where its firmware is
@@ -1598,11 +1560,11 @@ Erlang, with Low Energy and the peripheral role first.
 **Background needed.** Chapters 3 and 6 (supervised processes, pure
 cores), chapter 15 (drivers and devices).
 
-**Status.** Built (host): Bluetooth's HCI codec and controller process
+**Status.** Built as pure cores with host tests: Bluetooth's HCI codec and controller process
 with its line, links and patch reader. No radio driver runs on a board.
 
 1. **Bluetooth Low Energy, peripheral first.** What the role is, what
-   erXos offers a phone that connects to it, and what comes later.
+   erXos offers a phone that connects to it, and what it does not offer.
    *Draws on:* [design-bluetooth.md](../design-bluetooth.md).
 2. **The HCI codec.** The commands, events and data packets between host
    and controller, parsed once into checked records.
@@ -1641,9 +1603,9 @@ and channels. The rc shell of Plan 9.
 **Status.** Built: rc written in Erlang with job control, Erlang commands
 that follow FreeBSD's output, text pipes, the start table and `service`,
 SSH login for root in development builds, ttys per terminal master.
-Built (host): the line discipline `erx_tty`. 0.2: the SSH domain with
-logins and keys, release consoles with a login. Designed: evi, the
-screen editor run as `vi`.
+Built as a pure core with host tests: the line discipline `erx_tty`.
+Designed: the SSH domain with logins and keys, consoles with a login,
+evi, the screen editor run as `vi`.
 
 1. **UNIX look and feel, honestly.** What a UNIX user already knows is
    kept wherever it fits; where UNIX systems differ, erXos follows
@@ -1756,10 +1718,10 @@ toolkits and widget trees. A browser as a display: WebSocket and canvas.
 draw protocol, virtio-gpu, virtio-input and the Pi's framebuffer drivers
 in Erlang, the kiosk dashboard on QEMU and the Pi 4, `erx-lvgl`, the
 theme, Doom as an example program; the website's browser demo running
-erXos in an AArch64 emulator compiled to WebAssembly. Built (host): the
-rio-style window manager's pure core. Designed: the rest of the
-browser client, the desktop session, find and act, graphics hardware
-(the chapter's writer places each in plan.md).
+erXos in an AArch64 emulator compiled to WebAssembly. Built as a pure
+core with host tests: the rio-style window manager. Designed: the rest
+of the browser client, the desktop session, find and act, graphics
+hardware.
 
 1. **Windows are files.** A display serves each window as a directory of
    files; a program finds its window at `/dev/draw` and draws with Plan
@@ -1779,7 +1741,7 @@ browser client, the desktop session, find and act, graphics hardware
    page; nothing is mirrored.
    *Draws on:* [design-display.md, Widget trees](../design-display.md#widget-trees),
    [design-web.md, UIs: the browser renderer](../design-web.md#uis-the-browser-renderer).
-4. **LVGL inside apps, and its release contract.** LVGL runs as a native
+4. **LVGL inside apps.** LVGL runs as a native
    program confined to a buffer; what it may reach, what its failure
    ends, and what it is fuzzed against.
    *Draws on:* [design-display.md, LVGL's release contract](../design-display.md#lvgls-release-contract).
@@ -1820,8 +1782,8 @@ permissions in app systems, as on a phone.
 
 **Status.** Built: the start table, `erx-app pack` producing a signed
 `.app` file with an EROFS image and a dm-verity tree, packages added to
-an image (the kiosk and Doom). 0.2: installing, updating and removing at
-run time, an app's own session and tree.
+an image (the kiosk and Doom). Designed: installing, updating and
+removing at run time, an app's own session and tree.
 
 1. **An app is a principal.** It gets a session from a template, its
    own budget and its own grants; a user adds apps without editing the
@@ -1865,11 +1827,11 @@ exception levels. Initial images and boot archives. Watchdog timers.
 **Status.** Built: boot on QEMU `virt` (1 to 8 CPUs, HVF and TCG) and the
 Raspberry Pi 4 (QEMU `raspi4b` and a real board), the boot image and
 bootable file, the root task starting the manifest's domains, the
-watchdog, crash records, `reboot` and `halt`, reproducible images. 0.2:
-release consoles, trial boots of an update. Planned: the Raspberry Pi 5.
+watchdog, crash records, `reboot` and `halt`, reproducible images.
+Designed: consoles with a login, trial boots of an update.
 
 1. **The bootable file and the boot image.** The one file a loader boots
-   (Fiasco's `bootstrap` today, erXos's kernel later) with the boot image
+   (Fiasco's `bootstrap`) with the boot image
    inside it: an archive of everything the machine starts with, accepted
    from one startup plan that the kernel checks before it starts the root
    task.
@@ -1899,7 +1861,7 @@ release consoles, trial boots of an update. Planned: the Raspberry Pi 5.
    one watchdog, petted by the system domain once the services it lists
    answer; the crash record written before the machine ends and shown at
    the next boot; ordered shutdown, `reboot` and `halt`.
-   *Draws on:* [design-kernel.md, The watchdog](../design-kernel.md#the-watchdog),
+   *Draws on:* [design-fiasco.md, The watchdog](../design-fiasco.md#the-watchdog),
    [design-system.md, Shutting down](../design-system.md#shutting-down),
    [design-platforms.md, Ending the machine](../design-platforms.md#ending-the-machine).
 6. **Trust in the boot.** What the boot trusts, entropy at boot and the
@@ -1924,12 +1886,11 @@ bounded proofs (CBMC). Reproducible builds.
 
 **Status.** Built: `make check-oracle` against stock OTP 29.1.2 and
 musl's `libc-test`; TLA+ models of the lane, connections and links;
-herd7 litmus tests; CBMC harnesses of the C17 cores; fuzz targets;
+herd7 litmus tests; CBMC harnesses of C17 code; fuzz targets;
 sanitizers; chokepoint checks with seeded violations; the stack proof;
-reproducible images and deterministic boots; QEMU suites. Planned: the
-TLA+ models of the host link's sessions, the update protocol and the
-scheduler's cross-CPU protocol; the kernel interface's conformance
-suite.
+reproducible images and deterministic boots; QEMU suites. Designed: the
+TLA+ models of the host link's sessions and the update protocol; the
+kernel interface's conformance suite.
 
 1. **Agreement with ground truth.** Behaviour that disagrees with an
    independent oracle is a bug until it is explained and pinned by a
@@ -1950,8 +1911,8 @@ suite.
    *Draws on:* [design-verification.md](../design-verification.md).
 4. **Models and bounded proofs.** TLA+ checks protocol models with TLC;
    herd7 checks the lane's wake handshake and the pipe's lock under Arm's
-   memory model and RC11; CBMC checks budget arithmetic and capability
-   code for every input within stated bounds. What each covers and what
+   memory model and RC11; CBMC checks C17 code for every input within
+   stated bounds. What each covers and what
    it does not.
    *Draws on:* [design-verification.md, Models and implementations](../design-verification.md#models-and-implementations),
    [design-verification.md, CBMC harnesses and runner](../design-verification.md#cbmc-harnesses-and-runner).
@@ -1965,32 +1926,16 @@ suite.
    transcript.
    *Draws on:* [design-kernel.md, Deterministic mode](../design-kernel.md#deterministic-mode),
    [design-build.md, Processes and evidence](../design-build.md#processes-and-evidence).
-7. **Two tiers of gates.** Every commit passes `make check` and the QEMU
-   suites it touches; a milestone passes the oracle, the sanitizers, the
-   fuzz budgets, the models and the full QEMU suite. Why iteration speed
-   comes first and the slow gates run off the landing path.
+7. **Fast checks and slow checks.** Every commit passes `make check` and
+   the QEMU suites it touches; the oracle, the sanitizers, the fuzz
+   budgets, the models and the full QEMU suite run less often, off the
+   path of each commit. Why iteration speed comes first.
    *Draws on:* [design-build.md, What the gates run](../design-build.md#what-the-gates-run).
 
 **Figures.** 25.1: the oracles and what each checks. 25.2: a seeded
-fault and the check that catches it. 25.3: the gates as two tiers.
+fault and the check that catches it. 25.3: the fast and the slow checks.
 
 ---
-
-## Afterword: The Road to erXos's Own Kernel
-
-*About 10 pages.* Phase 2 builds erXos's kernel with every guarantee,
-boots the same boot image and replaces Fiasco at parity over 0.2's
-system: every row of the downsides table closes on erXos's kernel alone.
-The afterword tells what is already built of it (host-built cores checked
-by CBMC and the stack proof), how parity is judged (the replacement run
-differentially against Fiasco over the test corpus), and what Fiasco's
-departure changes for the reader of each chapter. It closes with the
-research directions that are recorded and not designed: causal time
-travel, durable actors, confined AI workers, declarative services.
-
-*Draws on:* [plan.md, Track K](../plan.md#track-k-erxoss-kernel),
-[plan.md, M7](../plan.md#m7-fiasco-leaves),
-[research-os-ideas.md](../research-os-ideas.md).
 
 ## Appendix A. Glossary
 
@@ -2011,8 +1956,7 @@ later chapter adds its own.
 
 *About 8 pages.* A reading order for a reader new to the system, what
 each design document is for, the common section layout (context, requirements, construction, invariants, failure,
-refusals, verification), how decisions, residuals and the roadmap are
-split between design documents, `TODO.md` and `plan.md`, and which
+refusals, verification), where decisions are recorded, and which
 chapter leads into which documents.
 *Draws on:* [design.md, Document map](../design.md#document-map).
 
@@ -2026,16 +1970,16 @@ card, and hosted mode.
 
 ## Appendix D. Dependencies and Licenses
 
-*About 6 pages.* The dependency table and the four statuses (permanent,
-release, stopgap, example), why each third-party component pays for
-itself, and how licenses and notices travel with every image.
+*About 6 pages.* The dependency table, why each third-party component
+pays for itself, and how licenses and notices travel with every image.
 *Draws on:* [design.md, Dependencies](../design.md#dependencies),
 [design.md, Licenses and notices](../design.md#licenses-and-notices).
 
 ## Appendix E. Lineage
 
-*About 6 pages.* The systems and papers erXos draws on, each with the
-idea taken and the chapter where it appears.
+*About 6 pages.* The lineage of the system's ideas: the systems and
+papers erXos draws on, each with the idea taken and the chapter where
+it appears.
 *Draws on:* [research-prior-art.md](../research-prior-art.md),
 [design.md, References](../design.md#references).
 
@@ -2047,10 +1991,10 @@ idea taken and the chapter where it appears.
    it cites the design documents and decides nothing. It sits between
    [overview.md](../overview.md) and the design documents, so a review of
    a design change asks whether a chapter needs the same edit.
-2. **How the status boxes stay true.** Each chapter's status box is
-   checked against README.md's "Current status" at every milestone (0.2,
-   then each Phase 2 milestone), in the same commit as the status list. A
-   chapter whose box is stale is a documentation bug.
+2. **How the status boxes stay true.** When README.md's "Current
+   status" changes, each chapter's status box it touches is checked
+   against it in the same commit as the status list. A chapter whose box
+   is stale is a documentation bug.
 3. **Figures.** Figures are Mermaid where GitHub renders it (sequence and
    state diagrams) and plain-text diagrams in code blocks otherwise.
    Screenshots appear only for the display. The book keeps no drawing

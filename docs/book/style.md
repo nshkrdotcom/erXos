@@ -3,8 +3,8 @@
 Every chapter of the book is written by an agent that has never seen
 the other chapters. This guide makes those chapters read as one book.
 It says how a chapter is built, how its sentences are written, how it
-stays honest about what runs, and what the writer checks before
-committing. The outline in [README.md](README.md) says *what* each
+stays honest about what runs and what is only designed, and what the
+writer checks before committing. The outline in [README.md](README.md) says *what* each
 chapter covers; this guide says *how*.
 
 The guide follows its own rules. Where it breaks one, fix the guide.
@@ -177,7 +177,7 @@ at its definition, once, and give it a line in the glossary
 | Before | After |
 | --- | --- |
 | Each message passes through the funnel. | Each message from another domain passes through the **funnel**, the one function that decodes such messages and refuses any that is malformed. |
-| The kernel checks the capability's generation. | Each capability slot carries a **generation**, a counter that goes up when the slot is reused. The kernel compares it on every use. |
+| Each domain pays for its memory from its budget. | Each domain pays for its memory from its **budget**, a fixed amount of memory set aside for it when it is created. A domain that has spent its budget is refused more. |
 
 **A term used before its chapter gets a gloss and a link.** A
 one-clause definition and a forward reference: a **budget** (a kernel
@@ -257,7 +257,7 @@ concrete: the kernel, a domain, the funnel, a driver, a supervisor.
 | Before | After |
 | --- | --- |
 | Validation of the plan is performed prior to hardware access. | `erx_device_dma_check` checks the whole plan before the shim touches the device. |
-| It is ensured that no capability is in flight. | The kernel passes a capability only at a rendezvous, so no queue ever holds one. |
+| It is ensured that no domain creates kernel objects of its own. | The root service creates every kernel object, so no domain ever holds one it was not given. |
 
 The passive is right when the actor is unknown or does not matter, or
 when it keeps old information first (next rule). Otherwise use the
@@ -268,7 +268,7 @@ active.
 
 | Before | After |
 | --- | --- |
-| The deletion of a budget results in the invalidation of all capabilities to objects charged to it. | Deleting a budget deletes every object charged to it, and every capability to those objects stops working at once. |
+| The termination of a domain results in the release of all memory charged to its budget. | When a domain ends, the memory charged to its budget goes back to the pool. |
 
 **Old information before new.** Begin a sentence with what the reader
 already has, from the last sentence or the section's topic. End it
@@ -277,7 +277,7 @@ the next sentence. Prose built this way reads as a chain.
 
 | Before | After |
 | --- | --- |
-| Every kernel call reaches an object through one lookup. A generation, type and rights check is what that lookup performs. Object deletion is detected by the generation. | Every kernel call reaches an object through one lookup. The lookup checks the capability's generation, type and rights. The generation is what catches a deleted object: when a slot is reused, its generation changes, and an old capability no longer matches. |
+| Every message from another domain passes through the funnel. Malformed payloads are what the funnel refuses. The `{erx_origin, D, Msg}` wrapper is added by the funnel to what it accepts. | Every message from another domain passes through the funnel. The funnel decodes the payload and refuses it if it is malformed. What it accepts it wraps as `{erx_origin, D, Msg}`, and the wrapper tells the receiver which domain sent it. |
 
 **The important word goes last.** The end of a sentence carries the
 stress. Put the new term, the number, or the surprise there.
@@ -295,7 +295,7 @@ is not known instead.
 | Before | After |
 | --- | --- |
 | This is a very important property that quite significantly reduces the attack surface. | This property removes one class of attack: a process cannot reach an object it was never handed. |
-| Context switches are probably fairly cheap. | The cost of a context switch on Fiasco is not yet measured; [todo-performance.md](../todo-performance.md) lists it. |
+| Context switches are probably fairly cheap. | The cost of a context switch on Fiasco is not measured; [todo-performance.md](../todo-performance.md) lists it. |
 
 **Five sentences beat a hundred.** Adams's main point: a simple
 argument persuades more readers than a brilliant long one. Make the
@@ -394,12 +394,12 @@ sources are L4 and Fiasco, EROS, Plan 9, FreeBSD and Erlang/OTP;
 
 | Before | After |
 | --- | --- |
-| erXos introduces budgets, a novel memory accounting scheme. | Budgets follow EROS's space banks: every kernel object is paid for by a budget, and deleting a budget deletes everything charged to it. |
+| erXos introduces budgets, a novel memory accounting scheme. | Budgets follow EROS's space banks: every allocation is charged to a budget, and what a domain spends is bounded by its own budget. |
 
 Never call an idea new without checking the prior art. "erXos's take
 on X" is safer than "erXos invents X".
 
-**State the downside.** Every design trades something. Say what, in
+**State the cost.** Every design trades something. Say what, in
 plain words, next to the choice. A reader trusts a book that names its
 costs.
 
@@ -408,42 +408,73 @@ claim is that properties hold because the wrong state cannot be
 written. Show the reader the list of cases a conventional design must
 remember, then the one mechanism that makes the list empty. Chapter 6
 introduces the idea; chapter 2 prepares it, and later chapters point back to it
-when they meet an instance.
+when they meet an instance. Use only mechanisms that hold by
+construction in the system as it runs on Fiasco, built or designed:
+the funnel that every message from another domain passes through, the
+root service as the only creator of kernel objects, the ABI generated
+from one file. A property that the design documents give only for a
+different kernel is not erXos's, and the book does not claim it.
 
 ## Honesty: built and designed
 
-erXos is a development preview. Much of what the design documents
-describe is not built. The book never presents design as working
-code.
+The book describes erXos as it is today, and as it is designed to be
+where the design is not yet built. It never presents design as
+working code, and it never presents the project's schedule.
 
-**Every chapter has a status box.** Its marks are those of the
-outline's [Built and target](README.md#built-and-target): **Built**,
-**Built (host)**, **0.2**, **Phase 2** and **Designed**. The writer
-checks each mark against README.md's
-[Current status](../../README.md#current-status), [plan.md](../plan.md)
-and the tree before writing. Copying the outline's marks is not enough.
+**Fiasco is the kernel.** erXos runs on Fiasco, the L4 microkernel,
+behind erXos's kernel interface, `liberx`. The book says so plainly.
+Fiasco is not "a stopgap", "the kernel for now" or one of two kernels,
+and the book has no other kernel to compare it with. Where a property
+is what Fiasco gives, say what Fiasco gives, as a property of the
+system. Where the system lacks a protection a reader would expect, say
+so plainly as a limitation of the system, not as a gap a future
+kernel closes. A background box may explain a general idea, such as a
+kernel that checks a generation on every capability lookup, as an
+idea; it never promises that erXos becomes such a kernel.
+
+**Two marks: Built and Designed.** **Built** means it works in the
+tree today: README.md's
+[Current status](../../README.md#current-status) and the code show it.
+**Designed** means the design documents specify it and it is not
+implemented. There are no other marks.
+
+**Designed means designed on Fiasco.** The authority for what the
+system's kernel does is [design-fiasco.md](../design-fiasco.md); the
+other `design-*.md` documents are the authority for the rest. Where a
+design document describes a feature only in a form that needs a
+different kernel (grants the kernel enforces, budgets as kernel
+accounts, generation-checked lookups), describe what the system does
+on Fiasco and leave the other form out.
+
+**Every chapter has a status box.** It says what in the chapter is
+built and what is designed, in those two words only. The writer
+checks each mark against README.md's Current status and the tree
+before writing. Copying the outline's marks is not enough.
 
 ```markdown
-> **Status.** The device NIF's round functions and
-> `erx_device_dma_check` are Built. That no page is writable through
-> one mapping while executable through another holds only on erXos's
-> kernel (Phase 2); on Fiasco it is downside FD8.
+> **Status.** The kiosk's full-screen window and `/dev/draw` are
+> Built. The desktop of overlapping windows is Designed.
 ```
 
-**A sentence about something unbuilt says so itself.** A reader who
-skipped the box must not be misled. Name the milestone in the same
-sentence.
+**A sentence about something designed says so in its own sentence.**
+Describe the design in the present tense, as the design. Then say
+once, in a sentence of its own, that it is designed and not built. A
+reader who skipped the box must not be misled.
 
 | Before | After |
 | --- | --- |
-| The kernel bounds how long a stop takes. | erXos's own kernel bounds how long a stop takes (Phase 2). Fiasco, which 0.2 runs on, does not; the downsides table lists the gap as FD20. |
-| No page is ever writable and executable at once. | No single mapping is writable and executable at once. On Fiasco a page can still be writable through one mapping and executable through another; the downsides table lists that as FD8. |
+| A desktop of overlapping windows comes in a later release. | A desktop of overlapping windows runs on the same window system as the kiosk. The desktop is designed and not built. |
+| No page is ever writable and executable at once. | No single mapping is writable and executable at once: Fiasco's map refuses such a mapping. A page can still be writable through one mapping and executable through another. |
 
-**Fiasco's gaps are named, not hidden.** Where a property holds in
-full only on erXos's kernel, cite its row in
-[the downsides table](../design-fiasco.md#downsides-against-erxoss-kernel).
-Do not soften it, and do not dwell on it: one sentence, the row, and
-on.
+**No schedule.** The book names no milestones (M5, M12), no releases
+as a schedule (0.1, 0.2, "the first release", "the preview"), no
+phases, tracks or work orders, and no "next", "later" or "planned
+for". It gives no component a stopgap, release or permanent status,
+no replacement plan and no parity gate. It cites no row of
+design-fiasco.md's downsides table and does not link to that table. A
+component the system uses, such as littlefs, LVGL, musl or OTP, is
+described as the component the system uses and how it fits, not as
+temporary.
 
 **No superlatives without a measurement.** "The fastest", "the
 smallest", "the first" need a citation or go.
@@ -467,9 +498,8 @@ not decided, say so. Never fill the gap from memory or from what
 "should" happen.
 
 **No temporal marks.** No "now", "recently", "as of", "in the latest
-version", "has been fixed". The status box and the milestone names
-carry time. The book describes the system as it is and as it is
-designed.
+version", "has been fixed". The status box carries what runs. The
+book describes the system as it is and as it is designed.
 
 ## Code
 
@@ -625,9 +655,12 @@ pass or fail.
 4. **Built or designed.** For each present-tense sentence about what
    the system does, find the evidence: README.md's Current status, a
    test, a path in the tree (`git ls-files`). A claim with no evidence
-   gets its milestone in the sentence, or goes.
-5. **Fiasco rows.** For each property that holds in full only on
-   erXos's kernel, is its downsides row cited?
+   is either in the design documents, and says in its own sentence
+   that it is designed and not built, or it goes.
+5. **No schedule.** Search for milestones, releases, phases, stopgap
+   status and FD rows, for example with
+   `grep -n -E 'M[0-9]+|0\.[12]|Phase|stopgap|FD[0-9]+|downside|own kernel' FILE`.
+   Is every property one the system has on Fiasco, built or designed?
 6. **Reasons.** For each mechanism, is the reason in the same
    paragraph? For each major choice, is an alternative named?
 7. **Code and paths.** Does every path exist? Does every code block
