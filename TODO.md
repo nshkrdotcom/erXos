@@ -486,14 +486,16 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   test in `test/host/handles_test.rb`, but the wrappers (`service_task.c`, `erx_fiasco_task_create_body`,
   `erx_fiasco_task_image_map_body`; `object.c`, `erx_fiasco_cap_pass_body`) include Fiasco's headers and build
   only for the target, so it belongs in a guest suite, or the design's note changes.
-* [Medium] 0.2 on Fiasco, `liberx/backend/fiasco/root_layout.h`: the root's layout plan lays out
-  `ERX_FIASCO_TASK_RUNS_MAX` (192) task runs, and `task_fill_space` refuses a task past them, where the design's
-  [Handles](docs/design-fiasco.md#handles) section lays out the runs of the most tasks the task table admits
-  (1,024, [Table sizes](docs/design-fiasco.md#table-sizes)). A run is 259 slots, so 1,024 runs take 265,216 slots
-  of an object space of 65,536: no more than about 250 fit beside the root's own slots, and every run the plan
-  holds takes 259 handles from the root's window (15,281 at 192). The figure, and the design's text, wait on a
-  decision: a smaller run (threads and semaphores for fewer than 128 threads a task), a run count, or a fixed
-  root window.
+* [Medium] 0.2 on Fiasco, `liberx/backend/fiasco/root_layout.h`, `service_task.c`, `service.c`: the root's
+  slot pool of [Handles](docs/design-fiasco.md#handles) is not built. The layout plan lays out
+  `ERX_FIASCO_TASK_RUNS_MAX` (192) fixed runs of 259 slots and `task_fill_space` refuses a task past them, so
+  the machine runs fewer tasks than the task table's 1,024 and than `start_rows_max` (256), which the manifest
+  check passes. The design's root window is a declared 16,384, the rest of the object space a pool of slot
+  pairs (one a thread, two a task, recorded in the task's row), taken lowest first and freed with what they
+  hold, with the host test, the guest loop and the seeded faults of its Implementation note; the pool's thread
+  share and the task table join the manifest check's clause 9 (design-packaging.md's clause names only the
+  page index's labels), and the two open decisions of design-fiasco.md (what shares out the task table, where
+  clause 9's figures have one source) bear on that part.
 * [Medium] 0.2 on Fiasco, `liberx/backend/fiasco/irq.c`: an ack is the holder's own `l4_irq_unmask`, so the
   root no longer sees it, and an ack of a level line that is not bound, or whose bind waits for the group's
   dispatcher, reaches an object with no receiver: Fiasco unmasks the line (`irq.cpp:1172-1177`), its next
