@@ -263,7 +263,18 @@ base comes from, the field's bits in place being the offset; the cluster sits
 at offset 0, and the generator checks that the field is a readable field of a
 readable register at a fixed offset
 ([design-usb.md](design-usb.md#registers-at-offsets-the-controller-reports)).
-A register array whose live length the device reports, as xHCI's `PORTSC`
+A cluster of an extended capability, as xHCI's legacy support and
+supported-protocol capabilities are, carries `<capabilityId>`, the
+capability's ID, 1 to 255, and sits at offset 0; its peripheral names the
+list's head once, in `<capabilitiesFrom>REGISTER.FIELD</capabilitiesFrom>`,
+the field holding the head in 32-bit words from the window's start. One
+such cluster may be an array, `NAME[%s]` with a `dim` and no
+`dimIncrement`, one instance for each entry of its ID up to `dim`, each
+where its entry lies; its registers are not arrays of their own. The
+generator refuses two clusters with one ID, an ID together with a
+`baseFrom`, a `dimIncrement` on such an array, a cluster array of any
+other kind, a capability cluster on a peripheral without a list, and a
+register past the movable span. A register array whose live length the device reports, as xHCI's `PORTSC`
 is, names that field the same way in `<dimFrom>`, and its `dim` must cover
 every count the field can hold. An access
 sequence a device's specification prescribes and SVD cannot express is

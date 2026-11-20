@@ -501,7 +501,7 @@ class HardwareTest < Minitest::Test
   # The registers docs/design-usb.md ("Install", "Registers it owns") gives the device NIF
   # whole, and the fields it gives it of USBCMD and IMAN.
   XHCI_OWNED = %w[CRCR_LO CRCR_HI DCBAAP_LO DCBAAP_HI CONFIG ERSTSZ ERSTBA_LO ERSTBA_HI ERDP_LO ERDP_HI DB].freeze
-  XHCI_OWNED_FIELDS = { 'USBCMD' => %w[RS HCRST INTE HSEE LHCRST], 'IMAN' => %w[IE] }.freeze
+  XHCI_OWNED_FIELDS = { 'USBCMD' => %w[RS HCRST INTE HSEE LHCRST CSS CRS], 'IMAN' => %w[IE] }.freeze
 
   def xhci_source = File.binread(File.join(@repository, XHCI_SVD))
   def xhci(source = xhci_source) = Erx::Hardware.parse_svd(source)
@@ -522,8 +522,13 @@ class HardwareTest < Minitest::Test
 
   def test_xhci_clusters_ports_and_the_owned_set
     device = xhci
-    assert_equal [%w[OPERATIONAL CAPLENGTH CAPLENGTH], %w[RUNTIME RTSOFF OFFSET], %w[DOORBELL DBOFF OFFSET]],
-                 device.bases.map { |movable| [movable.cluster, movable.from.register, movable.from.field] }
+    assert_equal [['OPERATIONAL', 'CAPLENGTH', nil, 1], ['RUNTIME', 'RTSOFF', nil, 1], ['DOORBELL', 'DBOFF', nil, 1],
+                  ['LEGACY', nil, 1, 1], ['PROTOCOL', nil, 2, 8]],
+                 device.bases.map { |movable| [movable.cluster, movable.from&.register, movable.capability, movable.instances] }
+    assert_equal Erx::Hardware::FieldRef.new(register: 'HCCPARAMS1', field: 'XECP'), device.capabilities
+    # Each protocol register has one element in each of the eight instances, at its offset from that instance.
+    assert_equal [[0, 8, 0, 32], [8, 8, 0, 32], [2, 1, 0, 8], [3, 1, 0, 8]],
+                 %w[REVISION PORTS BIOS_OWNED OS_OWNED].map { |name| xhci_register(device, name).then { |r| [r.offset, r.count, r.stride, r.width] } }
     assert_equal 0x20, device.size
     portsc = xhci_register(device, 'PORTSC')
     assert_equal [0x400, 255, 0x10, Erx::Hardware::FieldRef.new(register: 'HCSPARAMS1', field: 'MAXPORTS')],
@@ -533,10 +538,14 @@ class HardwareTest < Minitest::Test
       [register.name, register.fields.select(&:owned).map(&:name)]
     }.reject { |_, fields| fields.empty? }
     table = Erx::Hardware.device_table_header([device])
-    assert_match(/\.name = "usbcmd", .*\.owned_by_nif = false, .*\.owned = UINT32_C\(0x8f\), \.base = 1,/, table)
+    assert_match(/\.name = "usbcmd", .*\.owned_by_nif = false, .*\.owned = UINT32_C\(0x38f\), \.base = 1,/, table)
+    assert_match(/\.name = "revision", .*\.count = 8, \.stride = 0, .*\.base = 5,/, table)
+    assert_match(/\{ \.name = "protocol", \.reg = 0, \.field = 0, \.capability = 2, \.instances = 8, \.first = 4 \}/, table)
+    assert_match(/\.base_count = 5, \.listed = true, \.list_reg = 5, \.list_field = 25 \}/, table)
+    assert_includes Erx::Hardware.device_types_header([device]), '#define ERX_DEVICE_SLOTS_MAX 12u'
     assert_match(/\.name = "portsc", .*\.base = 1, \.counted = true, \.count_register = 2, \.count_field = 4 \}/, table)
-    assert_match(/\{ \.name = "runtime", \.reg = 7, \.field = 27 \}/, table)
-    assert_match(/\.name = "xhci", .*\.bases = erx_device_xhci_bases, \.base_count = 3 \}/, table)
+    assert_match(/\{ \.name = "runtime", \.reg = 7, \.field = 27, \.capability = 0, \.instances = 1, \.first = 1 \}/, table)
+    assert_match(/\.name = "xhci", .*\.bases = erx_device_xhci_bases, \.base_count = 5, /, table)
     assert_includes Erx::Hardware.device_owned_header([device]), "#define ERX_DEVICE_OWNED_XHCI_IMAN\t19u"
   end
 
@@ -562,7 +571,22 @@ class HardwareTest < Minitest::Test
       source.sub('<name>IMOD</name><ownedByNif>false</ownedByNif>', '<name>IMOD</name>') => /lacks its ownedByNif/,
       source.sub('<name>IMAN</name><addressOffset>0x20</addressOffset><access>read-write</access>',
                  '<name>IMAN</name><addressOffset>0x20</addressOffset><access>read-write</access><readAction>clear</readAction>') => /read without side effects/,
-      source.sub('<modifiedWriteValues>oneToSet</modifiedWriteValues><ownedByNif>', '<modifiedWriteValues>oneToToggle</modifiedWriteValues><ownedByNif>') => /unsupported SVD write semantics/
+      source.sub('<modifiedWriteValues>oneToSet</modifiedWriteValues><ownedByNif>', '<modifiedWriteValues>oneToToggle</modifiedWriteValues><ownedByNif>') => /unsupported SVD write semantics/,
+      # The extended capabilities' clusters: one ID each, a list to find them on, no stride, no field base too.
+      source.sub('<capabilityId>2</capabilityId>', '<capabilityId>1</capabilityId>') => /one cluster each/,
+      source.sub('<capabilityId>2</capabilityId>', '<capabilityId>0</capabilityId>') => /1\.\.255/,
+      source.sub("      <capabilitiesFrom>HCCPARAMS1.XECP</capabilitiesFrom>\n", '') => /needs its peripheral's capabilitiesFrom/,
+      source.sub('<capabilitiesFrom>HCCPARAMS1.XECP<', '<capabilitiesFrom>HCCPARAMS1.NONE<') => /capabilitiesFrom names no readable field/,
+      source.sub('<capabilityId>1</capabilityId>', "<capabilityId>1</capabilityId><baseFrom>DBOFF.OFFSET</baseFrom>") => /baseFrom or capabilityId, not both/,
+      source.sub('<dim>8</dim>', '<dim>8</dim><dimIncrement>0x10</dimIncrement>') => /no dimIncrement/,
+      source.sub('<name>PROTOCOL[%s]</name>', '<name>PROTOCOL</name>') => /capability cluster NAME\[%s\]/,
+      source.sub('<name>LEGACY</name>', '<name>LEGACY[%s]</name><dim>2</dim>').sub('<capabilityId>1</capabilityId>', '') => /capability cluster NAME\[%s\]/,
+      source.sub('<name>PORTS</name><ownedByNif>false</ownedByNif><addressOffset>0x08</addressOffset>',
+                 '<name>PORTS</name><ownedByNif>false</ownedByNif><addressOffset>0x100000</addressOffset>') => /outside its aligned block/,
+      source.sub('<name>REVISION</name><ownedByNif>false</ownedByNif><addressOffset>0x00</addressOffset><access>read-only</access>',
+                 '<name>REVISION[%s]</name><ownedByNif>false</ownedByNif><addressOffset>0x00</addressOffset><access>read-only</access><dim>2</dim><dimIncrement>4</dimIncrement>') => /cluster array is not an array/,
+      source.sub('<name>USBCMD</name><addressOffset>0x00</addressOffset><access>read-write</access>',
+                 '<name>USBCMD</name><addressOffset>0x00</addressOffset><access>read-write</access><readAction>clear</readAction>') => /read without side effects/
     }.each_with_index do |(bytes, reason), index|
       refute_equal source, bytes, "case #{index} changed nothing"
       error = assert_raises(Erx::Error, "case #{index}") { Erx::Hardware.parse_svd(bytes) }
