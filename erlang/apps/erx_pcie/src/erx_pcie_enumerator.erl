@@ -61,8 +61,14 @@ milliseconds. An access that answers `link_down` exits the process.
 
 -doc "What the enumerator reaches: the pci_bus facet, each bridge's driver, and time.".
 -type edge() :: #{bus := fun((term()) -> term()),
-                  open := fun((erx_abi_layout:erx_pcie_bridge()) -> {ok, erx_pcie_apply:driver()} | {error, atom()}),
+                  open := fun((erx_abi_layout:erx_pcie_bridge()) -> {ok, erx_pcie_apply:driver()} | {error, term()}),
                   sleep := fun((non_neg_integer()) -> ok)}.
+
+%% Each peripheral of role configuration (include/erx/device_kinds.h) and
+%% the bridge driver module that starts over its record; `none` for the
+%% BCM2711's bridge, which has its core (erx_pcie_bcm2711_core) and no
+%% driver module (TODO.md, "the start's leftovers").
+-define(BRIDGE_DRIVERS, #{pci_ecam => erx_pcie_ecam, bcm2711_pcie => none}).
 
 -define(FLR_POLL_MS, 100).
 -define(FLR_POLLS, 10).
@@ -363,12 +369,42 @@ keep_driver({Index, _, _, _}, Driver, #{drivers := Drivers} = State) ->
 bus(_Request) ->
     {error, no_facet}.
 
-%% A bridge's driver on the target. The device NIF has no access to a
-%% configuration window at a computed offset, and a given record does not
-%% name its manifest device row, so no bridge opens there (TODO.md).
-open(#{index := Index}) ->
-    logger:error("pcie: bridge ~b: no configuration-space access", [Index]),
-    {error, unsupported}.
+%% A bridge's driver on the target ("The bridge seam"): the device record of
+%% role `configuration` whose INDEX is the bridge's manifest device row,
+%% opened, and the driver module its peripheral names started over it. A
+%% bridge with no such record, or whose peripheral has no driver module,
+%% opens nothing, and the start, which logs the reason, reports none of
+%% its functions.
+open(#{index := Index} = Bridge) ->
+    case configuration(Index, maps:keys(?BRIDGE_DRIVERS), []) of
+        {ok, Peripheral, Spec} -> start_driver(maps:get(Peripheral, ?BRIDGE_DRIVERS), Bridge, Spec);
+        {error, _} = Error -> Error
+    end.
+
+%% The one device record of role configuration, of one of Peripherals,
+%% whose INDEX is Index; a record that does not parse refuses them all.
+configuration(Index, [Peripheral | Rest], Found) ->
+    case erx_device_record:find(configuration, Peripheral) of
+        {ok, Specs} -> configuration(Index, Rest, [{Peripheral, S} || #{index := I} = S <- Specs, I =:= Index] ++ Found);
+        {error, _} = Error -> Error
+    end;
+configuration(_Index, [], [{Peripheral, Spec}]) ->
+    {ok, Peripheral, Spec};
+configuration(_Index, [], []) ->
+    {error, no_configuration_record};
+configuration(_Index, [], [_, _ | _]) ->
+    {error, two_configuration_records}.
+
+start_driver(none, _Bridge, _Spec) ->
+    {error, no_driver_module};
+start_driver(Module, Bridge, Spec) ->
+    case erx_device:open(Spec) of
+        {ok, Device} -> started(Module, Module:start(Bridge, Device));
+        {error, Reason} -> {error, {open, Reason}}
+    end.
+
+started(Module, {ok, State}) -> {ok, {Module, State}};
+started(_Module, {error, _} = Error) -> Error.
 
 %% --- Records -----------------------------------------------------------------
 
