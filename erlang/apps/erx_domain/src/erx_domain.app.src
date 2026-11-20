@@ -15,6 +15,7 @@
              erx_devfs,
              erx_devfs_core,
              erx_devices,
+             erx_devices_pci_core,
              erx_domain,
              erx_domain_app,
              erx_domain_core,

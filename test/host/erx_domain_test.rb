@@ -48,6 +48,7 @@ class ErxDomainTest < Minitest::Test
     test/erlang/erx_domain_mints_tests.erl
     test/erlang/erx_domain_mints_srv_tests.erl
     test/erlang/erx_devices_tests.erl
+    test/erlang/erx_devices_pci_core_tests.erl
   ].freeze
 
   def test_domain_service_cases_pass_under_eunit
@@ -76,6 +77,10 @@ class ErxDomainTest < Minitest::Test
 
   def test_device_catalogue_presentation_passes_under_eunit
     assert_eunit_passes('erx_devices_tests', deadline: 60)
+  end
+
+  def test_device_service_pci_decisions_pass_under_eunit
+    assert_eunit_passes('erx_devices_pci_core_tests', deadline: 60)
   end
 
   def test_dev_tree_passes_under_eunit
@@ -207,7 +212,15 @@ class ErxDomainTest < Minitest::Test
               tests: 'erx_domain_mints_srv_tests', caught_by: 'await_installed'),
     Fault.new(name: 'a grant wait without its idle case', file: MINTS,
               from: 'idle_grant(ready) -> {error, unprovided};', to: 'idle_grant(ready) -> wait;',
-              tests: 'erx_domain_mints_srv_tests', caught_by: 'await_unprovided')
+              tests: 'erx_domain_mints_srv_tests', caught_by: 'await_unprovided'),
+    # The answer to `report` (docs/design-pcie.md, "Facets"): a lowering that keeps every
+    # function with a layout, blind to the library's confirmed and latest state, leaves
+    # each function of a report the intake refused whole at its setting.
+    Fault.new(name: 'a lowering blind to the intake', file: File.join(APPLICATION, 'erx_devices_pci_core.erl'),
+              from: '#{record := Record, confirmed := true, state := ready} <- Layouts},',
+              to: '#{record := Record} <- Layouts},',
+              tests: 'erx_devices_pci_core_tests',
+              caught_by: 'a_report_refused_whole_lowers_every_function_of_its_bridge_test')
   ].freeze
 
   def test_the_cases_catch_each_seeded_fault

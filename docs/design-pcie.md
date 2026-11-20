@@ -1103,8 +1103,20 @@ since `targets`, and then serves `pcie`.
 
 **The answer to `report`.** The device service takes the report through
 the library's intake ([The catalogue and
-gives](#the-catalogue-and-gives)), lowers to `off` the setting of every
-function the start turned off, and answers with every setting, but only
+gives](#the-catalogue-and-gives)), each bridge the library holds taking
+the report's records that name it and a record naming no held bridge
+reaching no intake; and lowers to `off` the setting of every `pci` row
+whose function the catalogue, as the intake left it, does not keep (one
+with no layout, on a bridge marked `firmware_lost`, one the report did
+not list with its layout, `confirmed`, or one it did not find `ready`),
+and of every function the start turned off, which it reports not kept
+(`erx_devices_pci_core`). The first rule reads the library's catalogue
+alone, so a report the intake refused whole and a function the walk left
+unreported past `pcie_functions_max` are lowered whatever the start
+reported; the second lowers a function the start found disturbed, whose
+record is unchanged. A setting above `off` stays only on a function the
+library could give now and the start left at it. It answers with every
+setting, but only
 once the system domain holds the reporting incarnation's `pcie` facet.
 The incarnation is the domain id `D` that the report's `{erx_origin, D,
 Msg}` envelope names, written by the connection. The device service
@@ -1358,7 +1370,7 @@ waits for.
 | a holder ends while the PCIe domain is down | the device service's monitor | the library's setting says `off`; the next start applies it |
 | the device service's PCIe process crashes | its supervisor | it restarts, reads every setting, holder and `answered` from the library and monitors the holders again; it begins in `synced` only with an answered incarnation that still holds its bridges ([Concurrency](#concurrency)); a function whose holder has ended is set `off` |
 | a placing walk's record fails intake | the library | the bridge takes no layouts and places again at its next walk; nothing on it is given; a log line names the record and the field |
-| a later report's record differs from its layout | the enumerator's start and the library | the start takes the function to its layout and the setting `off` with route `none`, whatever its setting, and reports it not kept, so the device service lowers its setting; the intake leaves it unconfirmed and not given; its holder's requests answer `{error, gone}` |
+| a later report's record differs from its layout | the enumerator's start and the library | the start takes the function to its layout and the setting `off` with route `none`, whatever its setting, and reports it not kept; the intake leaves it unconfirmed and not given, so the device service lowers its setting; its holder's requests answer `{error, gone}` |
 
 A **restart keeps** nothing in the PCIe domain and everything in the
 library: the layouts, the settings and the confirmations. It **re-reads**

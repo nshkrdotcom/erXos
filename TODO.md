@@ -2284,22 +2284,30 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   chokepoints. The root's join
   (`tree_facts`) and the NIF's term handling run only on the target; the `pcie` QEMU suite (P12) covers them.
 * [Medium] PCIe domain and device service, the start's other side (`erlang/apps/erx_pcie/src/erx_pcie_enumerator.erl`,
-  `abi/services/pci_bus.txt`, `pci.txt`, `pcie.txt`, [design-pcie.md](docs/design-pcie.md#facets)): the enumerator
-  runs its start and serves `set` and `reset` over its edge on the host, but on the target its `bus` answers
-  `{error, no_facet}` and its `open` `{error, unsupported}`, so the domain does not start. Still to build: the device
-  service's `pci_bus` process (`targets` from `erx_domain_lib:pci_bridges/0` and `devices/0`; `report` matching
-  each function to its row by place and compatible string, then `pci_report/2`, the lowering to `off` with
-  `pci_mode/2` and `erx_domain:await_grant(pcie, D)`), its `pci` facet, the hold at boot,
-  a holder's end; a system manifest service row for each interface, with the manifest check's grantee rules; the
-  `pcie` facet's mint in the PCIe domain over `erx_facet`; and the bridge's driver over its given record, which
-  needs the ECAM configuration-space view and a record that names its device row.
+  `erlang/apps/erx_domain/src/erx_devices_pci_core.erl`, `abi/services/pci_bus.txt`, `pci.txt`, `pcie.txt`,
+  [design-pcie.md](docs/design-pcie.md#facets)): the enumerator runs its start and serves `set` and `reset` over its
+  edge on the host, and on the target opens an ECAM bridge's driver over its given record, but its `bus` answers
+  `{error, no_facet}`, so the domain does not start. `erx_devices_pci_core` decides `targets` and the answer to
+  `report` (each held bridge's records, and the rows to lower from the library's catalogue), but no process applies
+  it. Still to build: the device service's PCIe process over that core (`pci_bridges/0`, `devices/0`,
+  `pci_report/2` for each held bridge, `pci_mode(Index, off)` for every row `lowered/3` names, then
+  `erx_domain:await_grant(pcie, D)`, `answered` in the catalogue, and the `between`, `synced` and `down` state machine
+  "Concurrency" gives the core), its `pci` facet, the hold at boot, a holder's end; a system manifest service row for
+  each interface, with the manifest check's grantee rules; the `pcie` facet's mint in the PCIe domain over
+  `erx_facet`. The BCM2711's bridge has its core (`erx_pcie_bcm2711_core`) and no driver module with `start` over a
+  device, so the enumerator refuses its record (`no_driver_module`).
 * [Medium] PCIe, the start's leftovers (`erlang/apps/erx_pcie/src/erx_pcie_enumerator.erl`, `abi/services/pci.txt`,
-  [design-pcie.md](docs/design-pcie.md#facets)): the start lowers a function the intake will leave unconfirmed only
-  when its record differs from its layout, by its own copy of the intake's comparison (`changed` in
-  `erx_pcie_enumerator`, `pci_same` in `dom_core.c`); a later report the intake refuses whole, or a layout's function
-  a walk leaves unreported past `pcie_functions_max`, is unconfirmed while the start kept it at its setting. Hold
-  it by construction: "The answer to `report`" lowers every setting whose layout the intake leaves unconfirmed or not
-  givable, from the library's `confirmed`, not the start's `kept`. `erx_domain_lib:pci_mode/2` admits a raise for a
+  [design-pcie.md](docs/design-pcie.md#facets)): the start holds a changed function off by its own copy of the
+  intake's comparison (`changed` in `erx_pcie_enumerator`, `pci_same` in `dom_core.c`), which the answer to `report`
+  does not rely on, since `erx_devices_pci_core:lowered/3` lowers every row the catalogue does not keep; delete the
+  copy if the enumerator can take its off settings from the answer alone. `lowered/3` restates the library's
+  givability (`erx_dom_pci_givable`, `erx_dom_pci_given`) as confirmed, `ready` and not `firmware_lost`, leaving out
+  identity and pin, which fix no setting above `off` today because only a raise through `erx_dom_pci_given` makes
+  one; have `devices/0` answer each `pci` row's `given` from `erx_dom_pci_given` and lower the rows not given, one
+  source. `pci_report_nif` raises `badarg` for more than `pcie_functions_max` records or a record that does not
+  encode, before the intake's refusal that clears every `confirmed`, so a later report refused there leaves the
+  earlier confirmations; pass such a report to `erx_dom_lib_pci_report` as a refusal instead (the PCIe process must
+  meanwhile treat the exception as one). `erx_domain_lib:pci_mode/2` admits a raise for a
   function its catalogue gives now, though its holder's give, made while it was not givable (a VL805 `not_ready`
   before its firmware), drove nothing; record in `erx_dom_device_t` whether the give drove it and require that too.
   No `dom_core_test` case lays a layout from a `not_ready` placing report and confirms it with a `ready` one, the
@@ -2313,12 +2321,6 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   as unsized memory. The planner checks the route in mode `off` too, so an `off` setting cannot lower a function
   whose route no longer fits. `erx_pcie_apply_tests` keeps a broken property's rule and target but not the input's
   switch levels and differing fields, and every walk seed reruns it (about 10 s each).
-  `pcie` facet's mint in the PCIe domain over `erx_facet`; and the bridge's driver over its given record:
-  the enumerator's `open` finds the record of role `configuration` whose INDEX is `erx_pcie_bridge.index`, opens
-  it with `erx_device:open/1` and starts the module its peripheral names, of which only `erx_pcie_ecam` has a
-  `start` over a device (the BCM2711's bridge has its core alone). Facet places are the bridge's
-  device row and the function's place, `{Bridge, Bus, Device, Function}`, where the design writes the bridge's path:
-  the PCIe domain knows its bridges only by row (`erx_pcie_bridge.index`), so the design should say which.
 * [Medium] PCIe, `erx_pcie_apply`'s verification and the later record (`erlang/apps/erx_pcie/src/erx_pcie_apply.erl`,
   `erx_pcie_enumerator.erl`, [design-pcie.md](docs/design-pcie.md#host-tests-of-the-pure-cores)): the host test the
   design names for `erx_pcie_apply` (every plan run with each write ignored alone, and with a register ignoring writes
