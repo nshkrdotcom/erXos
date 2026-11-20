@@ -6,13 +6,13 @@
 > tables, each carrying its object's generation and its own in the
 > handle's value, with the rights it holds; memory objects of
 > seven kinds, mappings and the root's page pool; doorbells and device
-> lines; thread creation, umtx waits and parking; fault gates and exit
+> lines, rung and acknowledged straight through Fiasco on a capability
+> the root places at each handle's slot; thread creation, umtx waits and parking; fault gates and exit
 > records; the machine's end on a fault of the root task; budgets as
 > records that end what is charged to them. **Designed:** priority
 > bands and per-domain CPU sets; signals through vCPU upcalls; DMA
 > spaces behind an IOMMU; rights narrowed per creation kind and checked
-> on every use; interrupt objects and doorbells rung straight through
-> Fiasco; and the system-call fuzz campaign.
+> on every use; and the system-call fuzz campaign.
 
 **Background needed.** [Chapter 1](01-operating-systems.md) for system
 calls, address spaces and page tables; [chapter 2](02-microkernels.md)
@@ -556,10 +556,9 @@ entry never costs the record's next object a holder.
 So the use-after-close bug, a program using a value after closing it,
 fails with `ERX_ESTALE` in every service call instead of reaching
 another object. One use stays unchecked by design: an interrupt object
-or a doorbell rung straight through Fiasco, once section 8.4.4's
-placement is built, is checked by Fiasco at its slot alone, and only
-the first-in-first-out reuse delays a closed slot from naming another
-object.
+or a doorbell rung straight through Fiasco (section 8.4.4) is checked
+by Fiasco at its slot alone, and only the first-in-first-out reuse
+delays a closed slot from naming another object.
 
 ### 8.4.4 Rights
 
@@ -589,11 +588,25 @@ discipline of the code that receives them, not by the root.
 The design closes this gap; it is designed and not built. A create
 records its creation kind's default rights, rights are intersected
 with the mask on every duplicate and pass, and every call checks the
-right it needs, answering `ERX_ERIGHTS` without it. An interrupt
-object or a doorbell is also installed at the Fiasco slot that matches
-its handle, so ringing and acknowledging go straight to Fiasco without
-the root; only that direct use after a close is unchecked, because
-Fiasco checks the slot alone.
+right it needs, answering `ERX_ERIGHTS` without it.
+
+Interrupt objects and doorbells are the one kind a holder invokes
+itself, and that part is built. Each create, duplicate and pass of one
+ends in one placement function (`erx_fiasco_irq_place` in `irq.c`),
+which maps the object into the holder's own Fiasco slot fixed by the
+entry's index, one base past the per-thread slots plus the index, with
+Fiasco's read right alone, so the holder rings and acknowledges but
+never binds. An entry whose rights hold neither trigger nor ack gets
+no capability. A close empties the slot, and a destroy deletes the
+Fiasco object, which empties every holder's slot at once; the entry
+stays taken until its holder closes it, so the slot stays empty. The
+ring and the ack (`erx_irq_trigger` and `erx_irq_ack` in
+`service_stubs.c`) compute the slot from the handle's number and
+invoke it, with no request to the root, and an empty slot answers
+`ERX_ESTALE`. In the root the same window of slots comes first, and
+its gate, its interrupt objects and each task's run lie past it, in
+one layout derived at build time (`thread.h`). Only a direct use after
+a close is unchecked, because Fiasco checks the slot alone.
 
 ### 8.4.5 Why handles flow only down
 
@@ -919,9 +932,9 @@ device that keeps its line raised cannot flood the dispatcher while
 the driver works. A doorbell has no line to mask, and its ack does
 nothing.
 
-Ringing a doorbell and acknowledging a line are service calls: the
-holder has no capability of its own to the IRQ object, so the root
-invokes it for the holder (`erx_fiasco_irq_trigger_body`). Binding
+Ringing a doorbell and acknowledging a line make no request: the
+holder invokes the capability the root placed at its handle's slot
+(section 8.4.4), and the dispatcher wakes with the root not involved. Binding
 decides where deliveries go, so a holder other than the root may bind
 an object only into a group it created or whose threads it runs, and a
 bound object never moves to another group. All of this is Built
