@@ -1670,9 +1670,10 @@ A function submits transfers through the controller process with
 * `interrupt_in(Pipe, Tag, Length)`: posts one interrupt-IN transfer of
   up to `Length` bytes, at most the interrupt buffer; a transfer may span
   several packets and ends at a short packet, as xHCI schedules a TD
-  (4.10.1.1, p. 191); its completion arrives as a message `{usb, Pipe,
-  Tag, Result}`, so a HID function keeps its transfers posted and waits
-  in its own receive;
+  (4.10.1.1, p. 191); it answers `ok`, and its completion, every failure
+  included, a refusal of the pipe's state among them, arrives as a
+  message `{usb, Pipe, Tag, Result}`, so a HID function keeps its
+  transfers posted, waits in its own receive and has one failure path;
 * `bulk_in(Pipe, Tag, Length)` and `bulk_out(Pipe, Tag, Binary)`, whose
   completions arrive the same way, each with the bytes the controller
   reports moved;
@@ -2426,7 +2427,13 @@ A HID function, `erx_usb_hid`, drives one HID interface: it reads the
 interface's report descriptor, chooses the protocol, keeps interrupt-IN
 transfers posted, folds each report into input records and writes them
 into its input number. Its pure parts are `erx_hid_desc`, the report
-descriptor's parser, and `erx_hid_core`, the fold.
+descriptor's parser, and `erx_hid_core`, the protocol's plan and the fold.
+The bus process starts it with the claimed function, the device's
+control pipe, the function's interrupt-IN pipe and the controller's
+places; it takes its input number first, so a start that finds none
+fails, and does the rest after its start has answered. It ends by its
+own decision with `{shutdown, Reason}`, a failed transfer's or the
+plan's, so an expected end such as a detach is not logged as a crash.
 
 ### The report descriptor
 
@@ -2482,14 +2489,22 @@ reads the report descriptor and parses it, then:
 
 * on a boot interface whose descriptor parsed to a layout with a role,
   sends SET_PROTOCOL(report) and uses the parsed layout;
-* on a boot interface whose descriptor the parser refused or whose
-  layout has no role, sends SET_PROTOCOL(boot) and uses the boot layout
-  of Appendix B.1 (keyboard) or B.2 (mouse), built in, which has no
-  report ids;
+* on a boot interface whose descriptor the parser refused, whose layout
+  has no role or whose read failed, sends SET_PROTOCOL(boot) and uses
+  the boot layout of Appendix B.1 (keyboard) or B.2 (mouse), which has
+  no report ids: the layout the parser makes of FreeBSD's boot
+  descriptors (`hidrdesc.h:307-368`), so every layout comes from the one
+  parser;
 * on any other interface, uses the parsed layout or ends with the
-  parser's reason;
-* on a keyboard, sends SET_IDLE(0), so it reports only on change, and
-  ignores a STALL of it, as FreeBSD does.
+  parser's reason, `no_usable_report`, or the failed read's;
+* on a keyboard, a layout with the keys role, sends SET_IDLE(0), so it
+  reports only on change.
+
+It ignores the answers of SET_PROTOCOL and SET_IDLE, as FreeBSD does
+(`hkbd.c:1011-1025`): a device that refuses them still reports, and one
+that has gone fails its first transfer. A keyboard is known by its
+usages, as every role is, not by its interface's protocol, so a
+keyboard that is not a boot interface is set idle too.
 
 So the boot protocol is the fallback for a descriptor the parser
 refuses, not a mode of its own, and a tablet, which has no boot
@@ -3064,6 +3079,7 @@ targeted traces carry the longer sequences.
 | `erx_usb_bot_core`, explored to a fixed point over two units, two media generations a unit and every CSW and sense outcome, and a table of BOT 1.0's thirteen cases (section 6.7) | the tag check removed; the residue rule removed; the medium reference check removed; the engine idle after status 1 with the sense queued behind it, so a queued write runs before a UNIT ATTENTION is seen; a failed sense answered by asking for sense again; a refused flush answered `ok` |
 | a BOT function's replacement, on the host, through `erx_usb_bus_core`'s restart path and `erx_usb_bot_core`, against a model BOT device whose command state (waiting for a CBW, expecting data out, holding data in, holding a CSW) survives the function's end, changes only on a CBW, data, a CSW read or a class reset, and whose halts and toggles survive a class reset (BOT 1.0, section 3.1); the function killed after the device accepted a WRITE(10) CBW, halfway through a WRITE(10)'s data-out and a READ(10)'s data-in phase, and with a CSW not yet read | the start's reset recovery skipped, so the model takes the replacement's CBW as the write's data and no valid CSW answers it; the recovery's halt clears run before its class reset |
 | `erx_blk_write`'s BOT functions on a trial boot value | the trial check removed |
+| the HID function, `erx_usb_hid` with `erx_hid_core`'s plan, from a model device behind a stand-in of `erx_usb_pipe` through the places to the records a reader of the input tree decodes: a keyboard's attach and its requests, typing, removal with a key held, a stop mid-typing and the next instance, a refused descriptor on a boot keyboard, a report storm with no reader, and no free number | a transfer not posted again; one posted again before the stream took its records; SET_IDLE(0) not sent; a failed transfer posted again instead of ending; a refused descriptor kept in the report protocol |
 | the places, a property test over attach, detach, crash, a halted interrupt pipe and restart sequences | `release` skipped on a crash; the window process kept across media |
 | the BCM2711 bridge driver, against a model of its registers whose link can fall at any step and whose VL805 loses its firmware at every PERST# | the bus-0 rule removed; the link read after the access removed, so a value read across a fall is reported; the reset run on a link up with firmware present; the notification skipped after a reset; the 100 ms wait dropped |
 | the stack's own bounds, on the host, and in the QEMU suite on both phases for the cases QEMU can drive | the enumeration throttle removed, so the storm's attempts exceed 3 in 60 s |

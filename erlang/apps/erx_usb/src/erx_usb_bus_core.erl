@@ -342,8 +342,8 @@ hub_answer(_Op, {error, Reason}) -> {error, Reason}.
 
 %% GET_STATUS answers a status word and a change word, 16 bits each.
 get_status(Recipient, Index) ->
-    {setup(?ERX_USB_REQUEST_DIR_IN bor ?ERX_USB_REQUEST_TYPE_CLASS bor Recipient, ?ERX_USB_REQUEST_GET_STATUS,
-           0, Index, 4),
+    {erx_usb_setup:packet(?ERX_USB_REQUEST_DIR_IN bor ?ERX_USB_REQUEST_TYPE_CLASS bor Recipient,
+                          ?ERX_USB_REQUEST_GET_STATUS, 0, Index, 4),
      {in, 4}}.
 
 hub_feature(Request, Recipient, Feature, Index) ->
@@ -539,9 +539,9 @@ read_device(Ref, State) ->
 %% so its port bitmaps are not read (erx_usb_desc:hub/1).
 read_hub_descriptor(Ref, State) ->
     request(Ref, hub_descriptor,
-            {control, setup(?ERX_USB_REQUEST_DIR_IN bor ?ERX_USB_REQUEST_TYPE_CLASS bor ?ERX_USB_RECIPIENT_DEVICE,
-                            ?ERX_USB_REQUEST_GET_DESCRIPTOR, ?ERX_USB_DESCRIPTOR_TYPE_HUB bsl 8, 0,
-                            ?ERX_USB_HUB_DESCRIPTOR_HEAD),
+            {control, erx_usb_setup:packet(?ERX_USB_REQUEST_DIR_IN bor ?ERX_USB_REQUEST_TYPE_CLASS bor ?ERX_USB_RECIPIENT_DEVICE,
+                                           ?ERX_USB_REQUEST_GET_DESCRIPTOR, ?ERX_USB_DESCRIPTOR_TYPE_HUB bsl 8, 0,
+                                           ?ERX_USB_HUB_DESCRIPTOR_HEAD),
              {in, ?ERX_USB_HUB_DESCRIPTOR_HEAD}},
             State).
 
@@ -675,17 +675,13 @@ sent(Ref, Step, {evaluate_context, Context}) -> {evaluate_context, Ref, Step, Co
 sent(Ref, Step, {configure_endpoints, Endpoints}) -> {configure_endpoints, Ref, Step, Endpoints}.
 
 get_descriptor(Type, Length) ->
-    {control, setup(?ERX_USB_REQUEST_DIR_IN bor ?ERX_USB_REQUEST_TYPE_STANDARD bor ?ERX_USB_RECIPIENT_DEVICE,
-                    ?ERX_USB_REQUEST_GET_DESCRIPTOR, Type bsl 8, 0, Length),
+    {control, erx_usb_setup:packet(?ERX_USB_REQUEST_DIR_IN bor ?ERX_USB_REQUEST_TYPE_STANDARD bor ?ERX_USB_RECIPIENT_DEVICE,
+                                   ?ERX_USB_REQUEST_GET_DESCRIPTOR, Type bsl 8, 0, Length),
      {in, Length}}.
 
 %% A request with no data stage.
 control(Kind, Recipient, Request, Value, Index) ->
-    {control, setup(Kind bor Recipient, Request, Value, Index, 0), none}.
-
-%% A setup packet: bmRequestType, bRequest, wValue, wIndex and wLength.
-setup(RequestType, Request, Value, Index, Length) ->
-    <<RequestType, Request, Value:16/little, Index:16/little, Length:16/little>>.
+    {control, erx_usb_setup:packet(Kind bor Recipient, Request, Value, Index, 0), none}.
 
 put_device(Ref, Device, State = #{devices := Devices}) ->
     State#{devices := Devices#{Ref := Device}}.

@@ -14,6 +14,16 @@ Generic Desktop X and Y in one report, relative, or absolute over a range
 whose maximum is above its minimum; `buttons`, Button page usages 1 to 3;
 `wheel`, a Generic Desktop Wheel. A layout with none is not driven.
 
+plan/2 chooses how a function drives its interface (docs/design-usb.md,
+"The protocol"): the parsed layout when it has a role, after
+SET_PROTOCOL(report) on a boot interface; on a boot interface whose
+descriptor was refused, could not be read or has no role,
+SET_PROTOCOL(boot) and the boot layout of HID 1.11, Appendix B.1 or B.2,
+parsed from FreeBSD's boot descriptors (`hidrdesc.h`, lines 307-368), so
+the boot layouts come from the one parser; on any other interface, the
+parsed layout or the reason it is unusable. A layout with the keys role is
+a keyboard, which is sent SET_IDLE(0).
+
 step/3 folds one report. The state keeps, for each report id the layout
 has, the keys and buttons that id's last report held and its last
 absolute position, and the held set is their union, so a report of id 2
@@ -40,13 +50,21 @@ is fixed by the layout however long the device reports. None of it
 raises on any report, which `test/erlang/erx_hid_core_fuzz.erl` checks.
 """.
 
--export([roles/1, transfer_length/1, new/1, step/3, counts/1]).
+-export([plan/2, roles/1, transfer_length/1, new/1, step/3, counts/1]).
 
--export_type([role/0, state/0, counts/0]).
+-export_type([plan/0, role/0, state/0, counts/0]).
 
 -include("generated/erx_abi.hrl").
 
 -type role() :: keys | pointer | buttons | wheel.
+
+-doc """
+How a function drives its interface: the layout its reports are read
+against; the protocol to set first, `none` on an interface that is not a
+boot interface, which need not support SET_PROTOCOL (HID 1.11, section
+4.3); and whether to send SET_IDLE(0), so a keyboard reports only on change.
+""".
+-type plan() :: #{layout := erx_hid_desc:layout(), protocol := none | boot | report, idle := boolean()}.
 
 -type counts() :: #{unmapped := non_neg_integer(), short := non_neg_integer(),
                     unknown_id := non_neg_integer()}.
@@ -60,6 +78,26 @@ raises on any report, which `test/erlang/erx_hid_core_fuzz.erl` checks.
 
 %% An evdev key or button code, as the translations of abi/formats/hid.txt give it.
 -type code() :: non_neg_integer().
+
+%% FreeBSD's boot protocol report descriptors (sys/dev/hid/hidrdesc.h, lines
+%% 307-368, BSD-2-Clause), by the boot interface protocol they serve: their
+%% layouts are HID 1.11's boot reports of Appendix B.1 (keyboard: a modifier
+%% byte, a reserved byte and six key usages 0 to 255) and B.2 (mouse: three
+%% buttons and a relative X and Y of 8 bits).
+-define(BOOT_DESCRIPTORS,
+        #{?ERX_HID_BOOT_PROTOCOL_KEYBOARD =>
+              <<16#05, 16#01, 16#09, 16#06, 16#a1, 16#01, 16#05, 16#07, 16#19, 16#e0, 16#29, 16#e7,
+                16#15, 16#00, 16#25, 16#01, 16#75, 16#01, 16#95, 16#08, 16#81, 16#02, 16#95, 16#01,
+                16#75, 16#08, 16#81, 16#01, 16#95, 16#03, 16#75, 16#01, 16#05, 16#08, 16#19, 16#01,
+                16#29, 16#03, 16#91, 16#02, 16#95, 16#05, 16#75, 16#01, 16#91, 16#01, 16#95, 16#06,
+                16#75, 16#08, 16#15, 16#00, 16#26, 16#ff, 16#00, 16#05, 16#07, 16#19, 16#00, 16#2a,
+                16#ff, 16#00, 16#81, 16#00, 16#c0>>,
+          ?ERX_HID_BOOT_PROTOCOL_MOUSE =>
+              <<16#05, 16#01, 16#09, 16#02, 16#a1, 16#01, 16#09, 16#01, 16#a1, 16#00, 16#95, 16#03,
+                16#75, 16#01, 16#05, 16#09, 16#19, 16#01, 16#29, 16#03, 16#15, 16#00, 16#25, 16#01,
+                16#81, 16#02, 16#95, 16#01, 16#75, 16#05, 16#81, 16#03, 16#75, 16#08, 16#95, 16#02,
+                16#05, 16#01, 16#09, 16#30, 16#09, 16#31, 16#15, 16#81, 16#25, 16#7f, 16#81, 16#06,
+                16#c0, 16#c0>>}).
 
 -define(PAGE(Usage), ((Usage) bsr 16)).
 -define(ID(Usage), ((Usage) band 16#ffff)).
@@ -122,6 +160,43 @@ its interrupt transfer (`usbhid.c`, lines 380-384).
 -spec transfer_length(erx_hid_desc:layout()) -> non_neg_integer().
 transfer_length(#{largest := Largest, numbered := true}) -> Largest + 1;
 transfer_length(#{largest := Largest, numbered := false}) -> Largest.
+
+-doc """
+The plan for an interface of Setting whose report descriptor read gave
+Read, or the reason no function can drive it: the parser's, then
+`no_usable_report` for a layout with no role, or the read's own error.
+""".
+-spec plan(erx_usb_desc:setting(), {ok, binary()} | {error, term()}) -> {ok, plan()} | {error, term()}.
+plan(Setting, Read) ->
+    case {Setting, usable(Read)} of
+        {#{subclass := ?ERX_HID_SUBCLASS_BOOT}, {ok, Layout}} ->
+            {ok, planned(Layout, report)};
+        {#{subclass := ?ERX_HID_SUBCLASS_BOOT, protocol := Boot}, {error, _}} when is_map_key(Boot, ?BOOT_DESCRIPTORS) ->
+            {ok, Layout} = erx_hid_desc:parse(maps:get(Boot, ?BOOT_DESCRIPTORS)),
+            {ok, planned(Layout, boot)};
+        {_, {ok, Layout}} ->
+            {ok, planned(Layout, none)};
+        {_, {error, _} = Unusable} ->
+            Unusable
+    end.
+
+%% The layout Read gives, refused when it has no role.
+usable({ok, Bytes}) ->
+    case erx_hid_desc:parse(Bytes) of
+        {ok, Layout} -> with_role(Layout);
+        Refused -> Refused
+    end;
+usable({error, _} = Failed) ->
+    Failed.
+
+with_role(Layout) ->
+    case roles(Layout) of
+        [] -> {error, no_usable_report};
+        _ -> {ok, Layout}
+    end.
+
+planned(Layout, Protocol) ->
+    #{layout => Layout, protocol => Protocol, idle => lists:member(keys, roles(Layout))}.
 
 -doc "The state before the first report: nothing held and no position, for each report id.".
 -spec new(erx_hid_desc:layout()) -> state().
