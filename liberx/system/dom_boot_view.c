@@ -622,17 +622,41 @@ erx_dom_view_bridge(erx_dom_pci_bridge_t *bridge, const erx_pcie_bridge_t *tree,
 		memset(bridge->facts.windows, 0, sizeof(bridge->facts.windows));
 }
 
+/* The catalogue of the host bridge of device row bridge, or NULL for a row with none. */
+static erx_dom_pci_bridge_t *
+lib_pci_bridge(erx_dom_lib_t *lib, uint32_t bridge)
+{
+	for (uint32_t at = 0; at < lib->view.npci_bridges; at++) {
+		if (lib->pci_bridges[at].facts.index == bridge)
+			return (&lib->pci_bridges[at]);
+	}
+	return (NULL);
+}
+
 erx_status_t
 erx_dom_lib_pci_report(erx_dom_lib_t *lib, uint32_t bridge, const erx_pcie_function_t *report, uint32_t count,
     erx_dom_pci_refusal_t *refusal)
 {
-	for (uint32_t at = 0; at < lib->view.npci_bridges; at++) {
-		if (lib->pci_bridges[at].facts.index == bridge)
-			return (erx_dom_pci_report(&lib->pci_bridges[at], lib->view.devices, lib->view.ndevices, report,
-			    count, refusal));
+	erx_dom_pci_bridge_t *const held = lib_pci_bridge(lib, bridge);
+
+	if (held == NULL) {
+		*refusal = (erx_dom_pci_refusal_t){ .record = count, .field = "bridge" };
+		return (ERX_EINVAL);
 	}
-	*refusal = (erx_dom_pci_refusal_t){ .record = count, .field = "bridge" };
-	return (ERX_EINVAL);
+	return (erx_dom_pci_report(held, lib->view.devices, lib->view.ndevices, report, count, refusal));
+}
+
+erx_status_t
+erx_dom_lib_pci_refuse(erx_dom_lib_t *lib, uint32_t bridge, uint32_t record, const char *field,
+    erx_dom_pci_refusal_t *refusal)
+{
+	erx_dom_pci_bridge_t *const held = lib_pci_bridge(lib, bridge);
+
+	if (held == NULL) {
+		*refusal = (erx_dom_pci_refusal_t){ .record = record, .field = "bridge" };
+		return (ERX_EINVAL);
+	}
+	return (erx_dom_pci_refuse(held, record, field, refusal));
 }
 
 erx_status_t

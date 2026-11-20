@@ -185,6 +185,26 @@ pci_pin(const erx_dom_pci_bridge_t *bridge, const erx_dom_device_entry_t *entry)
 }
 
 /*
+ * A report the caller could not read, on a copy of the laid catalogue
+ * (erx_dom_lib_pci_refuse): refused whole, its first layout left
+ * unconfirmed; and on a row with no catalogue, refused at field bridge.
+ */
+static void
+pci_unread(erx_dom_lib_t *lib, uint32_t at)
+{
+	const erx_dom_pci_bridge_t kept = lib->pci_bridges[at];
+	erx_dom_pci_refusal_t refusal = { .field = "none" };
+	const int status = (int)erx_dom_lib_pci_refuse(lib, kept.facts.index, 2, "record", &refusal);
+
+	printf("unread %" PRIu32 " status=%d record=%" PRIu32 " field=%s confirmed=%d\n", kept.facts.index, status,
+	    refusal.record, refusal.field, lib->pci_bridges[at].nlayouts != 0 && lib->pci_bridges[at].layouts[0].confirmed);
+	lib->pci_bridges[at] = kept;
+	refusal = (erx_dom_pci_refusal_t){ .field = "none" };
+	printf("unread none status=%d field=%s\n", (int)erx_dom_lib_pci_refuse(lib, UINT32_MAX, 2, "record", &refusal),
+	    refusal.field);
+}
+
+/*
  * The same report on a copy of the bridge's catalogue joined to a tree the
  * reader refused, which takes no report.
  */
@@ -287,6 +307,7 @@ print_bridges(erx_dom_lib_t *lib)
 			    bridge->layouts[layout].record.bus, bridge->layouts[layout].record.device,
 			    bridge->layouts[layout].record.function, bridge->layouts[layout].record.state,
 			    bridge->layouts[layout].state, bridge->layouts[layout].confirmed ? 1 : 0);
+		pci_unread(lib, at);
 		pci_refused(lib, at, report, count);
 	}
 	for (uint32_t index = 0; index < lib->view.ndevices; index++) {

@@ -699,6 +699,9 @@ class DomPlannerTest < Minitest::Test
     refute_nil row, lines.inspect
     assert_includes lines, "report #{row} status=0 field=none"
     assert_includes lines, "refused #{row} status=-1 field=bus"
+    # A report the caller could not read is refused whole, and leaves no confirmation.
+    assert_includes lines, "unread #{row} status=-1 record=2 field=record confirmed=0"
+    assert_includes lines, 'unread none status=-1 field=bridge'
     assert_equal ["cpu=0x600000000+0x1000"], lines.grep(/\Agiven /).map { |line| line.split.last }
     # The layout keeps its placing report's state beside the latest one's.
     assert_equal ["layout #{row} 1.0.0 placed=1 state=1 confirmed=1"], lines.grep(/\Alayout /)

@@ -1587,6 +1587,18 @@ pci_refuse(erx_dom_pci_refusal_t *refusal, uint32_t record, const char *field)
 }
 
 /*
+ * A report refused whole: the latest report is refused, so no earlier one
+ * gives a function. A bridge with no layouts, the only one a placement
+ * check refuses for, has nothing to unconfirm.
+ */
+static void
+pci_unconfirm(erx_dom_pci_bridge_t *bridge)
+{
+	for (uint32_t at = 0; at < bridge->nlayouts; at++)
+		bridge->layouts[at].confirmed = false;
+}
+
+/*
  * A BAR's span: its hardware size, 2^size_log2, in whole pages. A size_log2 past
  * ERX_PCIE_BAR_SIZE_LOG2_MAX, which a report refuses on a placed BAR, is taken
  * at that bound.
@@ -1774,12 +1786,10 @@ erx_dom_pci_report(erx_dom_pci_bridge_t *bridge, const erx_dom_device_entry_t *e
 {
 	erx_status_t status;
 
-	status = count > ERX_PCIE_FUNCTIONS_MAX ? pci_refuse(refusal, count, "functions") :
-	    pci_report_well_formed(&bridge->facts, report, count, refusal);
-	if (status != ERX_OK) {
-		/* The latest report is refused, so no earlier one gives a function. */
-		for (uint32_t at = 0; at < bridge->nlayouts; at++)
-			bridge->layouts[at].confirmed = false;
+	if (count > ERX_PCIE_FUNCTIONS_MAX)
+		return (erx_dom_pci_refuse(bridge, count, "functions", refusal));
+	if ((status = pci_report_well_formed(&bridge->facts, report, count, refusal)) != ERX_OK) {
+		pci_unconfirm(bridge);
 		return (status);
 	}
 	if (bridge->nlayouts == 0) {
@@ -1799,6 +1809,13 @@ erx_dom_pci_report(erx_dom_pci_bridge_t *bridge, const erx_dom_device_entry_t *e
 			layout->state = ERX_PCIE_STATE_NOT_READY;
 	}
 	return (ERX_OK);
+}
+
+erx_status_t
+erx_dom_pci_refuse(erx_dom_pci_bridge_t *bridge, uint32_t record, const char *field, erx_dom_pci_refusal_t *refusal)
+{
+	pci_unconfirm(bridge);
+	return (pci_refuse(refusal, record, field));
 }
 
 const erx_dom_pci_layout_t *

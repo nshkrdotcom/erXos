@@ -332,14 +332,29 @@ device service hands on whole (docs/design-pcie.md, "The catalogue and
 gives"), into that bridge's catalogue: every function the walk found, as
 the erx_pcie_function maps of erx_abi_layout. ok when the intake took it;
 {error, {einval, Record, Field}} when it refused it whole, Record the
-refused function's index in Functions counted from 0 (or the list's length
-for a row with no catalogue, with Field bridge) and Field the field it
-names. More functions than a bridge holds is badarg.
+refused function's index in Functions counted from 0 (with Field bridge
+for a row with no catalogue, the list's length or the unread function's
+index) and Field the field it
+names. A report the library cannot read is refused whole all the same, so
+no earlier report's confirmation survives it: more functions than a bridge
+holds, with Field functions and Record the list's length, and a function
+that does not encode, with Field record.
 """.
 -spec pci_report(non_neg_integer(), [erx_abi_layout:erx_pcie_function()]) ->
           ok | {error, {einval, non_neg_integer(), atom()}} | error().
 pci_report(Bridge, Functions) ->
-    pci_report_nif(Bridge, [erx_abi_layout:encode(erx_pcie_function, Function) || Function <- Functions]).
+    pci_report_nif(Bridge, [function_bytes(Function) || Function <- Functions]).
+
+%% A function's bytes, or none for one that does not encode, which the NIF
+%% refuses as a record it cannot read. Every exception of the encoder means a
+%% map it does not take, so a defect of the encoder itself would show as that
+%% refusal, which fails safe: it unconfirms the bridge's every layout.
+function_bytes(Function) ->
+    try
+        erx_abi_layout:encode(erx_pcie_function, Function)
+    catch
+        error:_ -> none
+    end.
 
 -doc """
 Every host bridge's catalogue, in device row order (docs/design-pcie.md,

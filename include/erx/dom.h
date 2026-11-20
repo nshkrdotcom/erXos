@@ -402,6 +402,17 @@ erx_status_t	erx_dom_pci_report(erx_dom_pci_bridge_t *bridge, const erx_dom_devi
 		    erx_dom_pci_refusal_t *refusal) ERX_WARN_UNUSED_RESULT;
 
 /*
+ * A report on bridge's functions refused whole, its record refused at field,
+ * a static name: every layout unconfirmed and nothing else written, as
+ * erx_dom_pci_report refuses one, so no earlier report gives a function:
+ * for a report its caller could not read, such as one with a record of the
+ * wrong size, and for one past ERX_PCIE_FUNCTIONS_MAX records. ERX_EINVAL,
+ * *refusal set.
+ */
+erx_status_t	erx_dom_pci_refuse(erx_dom_pci_bridge_t *bridge, uint32_t record, const char *field,
+		    erx_dom_pci_refusal_t *refusal) ERX_WARN_UNUSED_RESULT;
+
+/*
  * The CPU range of a placed memory BAR, its span (its hardware size
  * rounded up to whole pages) from its PCI address translated by the one
  * memory window of facts that holds it whole (docs/design-pcie.md, "The

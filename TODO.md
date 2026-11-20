@@ -2304,10 +2304,7 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   givability (`erx_dom_pci_givable`, `erx_dom_pci_given`) as confirmed, `ready` and not `firmware_lost`, leaving out
   identity and pin, which fix no setting above `off` today because only a raise through `erx_dom_pci_given` makes
   one; have `devices/0` answer each `pci` row's `given` from `erx_dom_pci_given` and lower the rows not given, one
-  source. `pci_report_nif` raises `badarg` for more than `pcie_functions_max` records or a record that does not
-  encode, before the intake's refusal that clears every `confirmed`, so a later report refused there leaves the
-  earlier confirmations; pass such a report to `erx_dom_lib_pci_report` as a refusal instead (the PCIe process must
-  meanwhile treat the exception as one). `erx_domain_lib:pci_mode/2` admits a raise for a
+  source. `erx_domain_lib:pci_mode/2` admits a raise for a
   function its catalogue gives now, though its holder's give, made while it was not givable (a VL805 `not_ready`
   before its firmware), drove nothing; record in `erx_dom_device_t` whether the give drove it and require that too.
   No `dom_core_test` case lays a layout from a `not_ready` placing report and confirms it with a `ready` one, the

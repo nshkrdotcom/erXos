@@ -1142,6 +1142,16 @@ pcis(void)
 	pci_case("laid", report, 1);
 	report[1] = report[0];
 	pci_case("refused_later", report, 2);
+	/* A report the caller could not read is refused whole as well (erx_dom_pci_refuse). */
+	pci_fresh();
+	pci_case("read", report, 1);
+	{
+		erx_dom_pci_refusal_t refusal = { .field = "none" };
+		const erx_status_t status = erx_dom_pci_refuse(&pci_bridge, 1, "record", &refusal);
+
+		printf("pci unread %d %u %s givable=%d\n", (int)status, refusal.record, refusal.field,
+		    erx_dom_pci_givable(&pci_bridge, 1, 0, 0) != NULL ? 1 : 0);
+	}
 	pci_fresh();
 	pci_case("empty", report, 0);
 	pci_case("after_empty", report, 1);
