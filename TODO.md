@@ -7975,21 +7975,18 @@ to the corpus and follow rc
   so `{disabled, reset_disabled}` and `unsupported_speed` are reached by no case, and it checks no route or
   translator parameter of Address Device. With one external hub it cannot reach a hub given up while a port below it holds the
   turn and another hub could reset; `a_hub_given_up_keeps_its_childs_turn_test` covers that case alone.
-* [High] USB, the TRB ring form against the DMA check (`erx_device_trb.c`, `erx_device_dma.c`,
-  [design-device-dma.md](docs/design-device-dma.md#calls-observations-and-plans)): the form's plans cannot pass
-  `erx_device_dma_check` as it stands, so its round function (Track U's install package) cannot run them through
-  `run_call`. The check accepts one fixed publication offset, while the form publishes the first TRB's control word
-  wherever it lands in any of its 37 rings; it accepts addresses only at the address field of one descriptor table
-  whose length field equals the reach, while the form writes addresses into link TRBs (no length field), endpoint
-  contexts' dequeue pointers (a cycle flag in bit 0, reach derived), DCBAA entries, command TRBs and normal and data
-  TRBs (length field the request's, reach the buffer); and it lets a post or a completion change only buffers' writers,
-  while Address Device hands a device context to the controller and Disable Slot's completion takes it back. The
-  host test runs the plans through `erx_device_dma_order` alone. Open design question: teach the check the form's
-  address map (address fields per region kind with derived reaches, a publication per plan, a device context's
-  handover and return), or reshape the plans.
-* [Medium] USB, the TRB ring form's Disable Slot (`erx_device_trb_command_done`): the design clears the slot's DCBAA
-  entry after the disable completes (design-usb.md, the region table), which needs a hand-over decision after the
-  completion's take-back; the completion package (Track U part (a)) decides where it goes.
+* [High] Device NIF, every descriptor form against the DMA check (`erx_device_dma.c`, `erx_device_queue.c`,
+  `erx_device_genet.c`, `erx_device_trb.c`, `erx_device.c`): the cores store raw ring fields, place their own records
+  and state their own writers, while [The check](docs/design-device-dma.md#the-check) has each core describe records
+  by meaning, fields and names, and the sequencer write them, make each run live, and end what the device holds only
+  by its reports, which it acquires itself (the validity, then the records it covers), against one ledger. The TRB form's tables, bindings and releases are in
+  [design-usb.md](docs/design-usb.md#what-the-dma-check-judges). Until then the TRB form's plans cannot run through
+  `run_call`. Packages, in order: the formats' marks and generated encoders; the ledger, the layout, descriptions,
+  the check's rules, the sequencer's publication and its acquisition, with the split ring moved onto them; GENET,
+  and ADMA2 with its transfer split into entries by the sequencer, moved onto them; the TRB form's publication and
+  bindings; the TRB form's releases from acquired events, each command's reach and the endpoints' states; the
+  stand-ins' ledger check. Before a non-coherent device relies on the acquisition, its unverified AArch64 premise is settled by the Arm
+  ARM passage, the litmus test or the VL805 probe [Releases](docs/design-device-dma.md#releases) names.
 * [Medium] USB, the TRB ring form's commands (`erx_device_trb.c`): one command's behaviour is spread over `accept`,
   the context builders in `erx_device_trb_command`, `command_words` and `erx_device_trb_command_done`; one entry per
   command kind holding its acceptance, its build and its completion would keep each together.
