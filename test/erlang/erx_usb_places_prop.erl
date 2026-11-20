@@ -102,11 +102,14 @@ the_tree_holds_the_eight_numbers_test() ->
     ?assertEqual({error, erofs}, call(Grant, {lcreate, 1, <<"hid9">>, 0, 8#644, 0})),
     stop(P).
 
-%% A grant minted as the domain service mints an input service's (erx_domain_mints's
-%% grant_limits/2: its facet row's limits with rights ro, and session for the marked
-%% grant) starts, and serves the tree read-only. The grant is bound as the domain's
-%% own, so the test's bare requests reach it; the limits apply to every grant alike.
-a_grant_with_the_mint_limits_serves_the_tree_read_only_test() ->
+%% A grant minted with the limits the domain service mints an input service's with
+%% (erx_domain_mints's grant_limits/2: its facet row's limits with rights ro, and session
+%% for the marked grant) is accepted: session returns no einval, the tree attaches under
+%% ?ERX_INPUT_TREE_BYTES, a read opens, and a write open is refused. The refusal does not
+%% test `rights => ro`: the input tree exports no write callback, so erx_fs_grant makes
+%% every grant of it read-only. The grant is bound as the domain's own, so the test's bare
+%% requests reach it; the limits apply to every grant alike.
+a_grant_with_the_mint_limits_is_accepted_and_serves_the_tree_test() ->
     {ok, Places} = erx_usb_places_sup:start_link(),
     unlink(Places),
     {Grants, Streams} = erx_usb_places_sup:input_tree(Places),

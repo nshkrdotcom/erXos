@@ -25,9 +25,19 @@ range(Pci, Cpu, Size) ->
 
 bridge() -> bridge([range(16#c0000000, 16#600000000, 16#40000000)]).
 
+%% The record as the tree decodes it: window and place slots padded to their limits
+%% (pcie_windows_max, pcie_closed_max), the unused ones zeroed, and the VL805 in the
+%% second place slot, so erx_pcie:windows/1 and erx_pcie:places/1 do their filtering.
 bridge(Windows) ->
-    #{index => 0, bus_first => 0, bus_last => 1, flags => [closed], windows => Windows,
-      places => [#{bus => 1, device => 0, function => 0, pin => 1}]}.
+    bridge(Windows, [unused_place(), #{bus => 1, device => 0, function => 0, pin => 1}]).
+
+bridge(Windows, Places) ->
+    #{index => 0, bus_first => 0, bus_last => 1, flags => [closed],
+      windows => pad(Windows, range(0, 0, 0), 4), places => pad(Places, unused_place(), 4)}.
+
+unused_place() -> #{bus => 0, device => 0, function => 0, pin => 0}.
+
+pad(Slots, Unused, Count) -> Slots ++ lists:duplicate(max(0, Count - length(Slots)), Unused).
 
 %% The tree's dma-ranges: PCI 0 at CPU 0, 3 GiB.
 inbound() -> range(0, 0, 16#c0000000).
@@ -208,6 +218,20 @@ the_trees_windows_are_refused_before_any_operation_test_() ->
              ?assertEqual(Expected, Reason),
              ?assertEqual([], ops(Model))
      end || {Expected, Bridge, Inbound} <- Ranges].
+
+%% A bridge whose every place slot is unused has no endpoint: start refuses it as a
+%% bad record, touching no register.
+a_bridge_with_no_endpoint_is_refused_before_any_operation_test() ->
+    {{error, Reason}, _, Model} = start(#{boot => up, firmware => 16#000138c1}, bridge([range(16#c0000000, 16#600000000, 16#40000000)], []), inbound()),
+    ?assertEqual(ranges, Reason),
+    ?assertEqual([], ops(Model)).
+
+%% An access does not need the endpoint: a bridge with no place slot in use still
+%% reaches its root port.
+an_access_needs_no_endpoint_test() ->
+    {Result, _, _} = ?MODEL:run(?MODEL:new(#{boot => down}),
+                                ?CORE:access({read, {0, 0, 0}, 16#3c, 2}, bridge([], []))),
+    ?assertMatch({ok, _}, Result).
 
 %% On bus 0 only the root port, below it only the listed place; every other place
 %% answers absent with no operation (facts record, section 3, unknown 6).

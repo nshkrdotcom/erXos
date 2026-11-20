@@ -100,10 +100,10 @@ up within 100 ms after the PCIe rule's 100 ms.
 -type item() :: {op(), fun((answer()) -> [item()])} | {done, result()}.
 
 %% What every item of a machine may read, fixed when the machine starts: the
-%% bridge, its endpoint (the closed bus's listed place), and the tree's window
-%% writes and memory controller size.
+%% bridge, its endpoint (the closed bus's listed place, `none` for an access, which
+%% does not need it), and the tree's window writes and memory controller size.
 -record(plan, {bridge :: erx_abi_layout:erx_pcie_bridge(),
-               endpoint :: erx_pcie:place(),
+               endpoint = none :: erx_pcie:place() | none,
                inbound = [] :: [{register(), 0..16#ffffffff}],
                outbound = [] :: [{register(), 0..16#ffffffff}],
                scb0_size = 0 :: 0..31}).
@@ -142,16 +142,17 @@ up within 100 ms after the PCIe rule's 100 ms.
 The start of the PCIe domain over a bridge and the tree's inbound range,
 its `dma-ranges` (one window, `erx_abi_layout:erx_pcie_window()`): the keep-or-reset
 decision and what it decides. The bridge's first listed place is its
-endpoint, the VL805.
+endpoint, the VL805; a bridge that lists none fails with `ranges`.
 """.
 -spec start(erx_abi_layout:erx_pcie_bridge(), erx_abi_layout:erx_pcie_window()) -> {core(), action()}.
 start(#{bus_first := 0} = Bridge, Inbound) ->
-    Plan = plan(Bridge),
-    case {inbound(Inbound), outbound(erx_pcie:windows(Bridge))} of
-        {{error, _} = Error, _} -> run(#core{plan = Plan, agenda = [{done, Error}]});
-        {_, {error, _} = Error} -> run(#core{plan = Plan, agenda = [{done, Error}]});
-        {{ok, InboundWrites, Scb0}, {ok, OutboundWrites}} ->
-            Planned = Plan#plan{inbound = InboundWrites, outbound = OutboundWrites, scb0_size = Scb0},
+    case {erx_pcie:places(Bridge), inbound(Inbound), outbound(erx_pcie:windows(Bridge))} of
+        {[], _, _} -> refused(Bridge, {error, ranges});
+        {_, {error, _} = Error, _} -> refused(Bridge, Error);
+        {_, _, {error, _} = Error} -> refused(Bridge, Error);
+        {[Endpoint | _], {ok, InboundWrites, Scb0}, {ok, OutboundWrites}} ->
+            Planned = #plan{bridge = Bridge, endpoint = Endpoint, inbound = InboundWrites,
+                            outbound = OutboundWrites, scb0_size = Scb0},
             run(#core{plan = Planned, agenda = decide(Planned)})
     end.
 
@@ -168,7 +169,7 @@ firmware(#core{path = reset, plan = Plan} = Core) ->
 -doc "One configuration access through the bridge.".
 -spec access(erx_pcie_bridge:access(), erx_abi_layout:erx_pcie_bridge()) -> {core(), action()}.
 access(Access, #{bus_first := 0} = Bridge) ->
-    run(#core{plan = plan(Bridge), agenda = config(Bridge, Access, fun(Result) -> [{done, Result}] end)}).
+    run(#core{plan = #plan{bridge = Bridge}, agenda = config(Bridge, Access, fun(Result) -> [{done, Result}] end)}).
 
 -doc "The machine's next action from the answer to its last operation.".
 -spec step(answer(), core()) -> {core(), action()}.
@@ -191,9 +192,9 @@ firmware_present(Version) ->
 
 %% The machine
 
-plan(Bridge) ->
-    [Endpoint | _] = erx_pcie:places(Bridge),
-    #plan{bridge = Bridge, endpoint = Endpoint}.
+%% A start that ended before its first operation.
+refused(Bridge, Error) ->
+    run(#core{plan = #plan{bridge = Bridge}, agenda = [{done, Error}]}).
 
 %% Runs the agenda to its next operation or its result. A result ends the
 %% machine; the agenda after it is never reached. A bridge that came up keeps

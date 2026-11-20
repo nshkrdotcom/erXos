@@ -472,7 +472,7 @@ restart is the recovery.
 A **bridge driver** implements the `erx_pcie_bridge` behaviour:
 
 ```erlang
--callback start(Facts :: erx_pcie:bridge(), Device :: erx_device:device()) ->
+-callback start(Facts :: erx_abi_layout:erx_pcie_bridge(), Device :: erx_device:device()) ->
     {ok, State :: term()} | {error, Reason :: atom()}.
 -callback access(Access, State :: term()) -> {Result, State :: term()}
     when Access :: {read, Place, Offset, Width}
@@ -480,7 +480,7 @@ A **bridge driver** implements the `erx_pcie_bridge` behaviour:
          Place :: {Bus :: 0..255, Device :: 0..31, Function :: 0..7},
          Offset :: 0..255, Width :: 1 | 2 | 4,
          Result :: {ok, non_neg_integer()} | ok | {error, absent | link_down}.
--callback ready(Function :: erx_pcie:layout(), State :: term()) ->
+-callback ready(Function :: erx_abi_layout:erx_pcie_function(), State :: term()) ->
     {ok | not_ready, State :: term()}.
 ```
 
