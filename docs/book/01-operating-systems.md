@@ -1116,9 +1116,10 @@ malformed ones. The lane's code is built and tested on a development
 host, but on Fiasco domains do not yet carry their messages over lanes:
 lanes are the transport of Phase 2
 ([design-fiasco.md](../design-fiasco.md#what-phase-1-code-must-not-assume)).
-Pipes between programs are designed as rings of the same layout in shared
-memory ([design-pipes.md](../design-pipes.md#overview)), and programs have
-pipes today ([README.md, Current status](../../README.md#current-status)).
+Pipes between programs use the same idea, a ring in shared memory that
+only the writer writes ([design-pipes.md](../design-pipes.md#overview)),
+and they are **Built**: programs have pipes today ([README.md, Current
+status](../../README.md#current-status)).
 
 ## 1.8 From power-on to the first program
 
