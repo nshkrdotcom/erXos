@@ -29,8 +29,7 @@ class ErxDeviceVirtioCoreTest < Minitest::Test
   # device reads after one it writes; pieces laid over each other instead of end to end; a used
   # len past what the chain let the device write answered; and the sequencer's install seeds (its
   # used ring left unzeroed, its used ring's register given another ring's address, its rings'
-  # cleans left out) and the check's idle test removed, so an install zeroes live rings. Each with
-  # the expectation of the harness that catches it.
+  # cleans left out). Each with the expectation of the harness that catches it.
   SEEDS = {
     'EMPTY_PIECE' => 'a post answers as the model says',
     'READ_AFTER_WRITE' => 'a post answers as the model says',
@@ -38,8 +37,7 @@ class ErxDeviceVirtioCoreTest < Minitest::Test
     'LEN_UNCHECKED' => "a len past the chain's writable bytes is ECORRUPT",
     'INSTALL_NOT_ZEROED' => 'the install zeroes every ring',
     'INSTALL_REGISTER' => "the queue registers name the layout's rings",
-    'INSTALL_UNCLEANED' => 'every byte stored is clean before the activation',
-    'NO_IDLE_TEST' => 'an install answers as the model says'
+    'INSTALL_UNCLEANED' => 'every byte stored is clean before the activation'
   }.freeze
 
   def test_state_machine

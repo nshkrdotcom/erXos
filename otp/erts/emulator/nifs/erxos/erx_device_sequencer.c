@@ -508,18 +508,19 @@ report_head(const erx_dma_ledger_t *ledger, uint32_t reports, const erx_report_r
 	return (true);
 }
 
-const erx_dma_holding_t *
+erx_dma_found_t
 erx_dma_report_holding(const erx_dma_ledger_t *ledger, uint32_t reports, const erx_report_record_t *record)
 {
 	erx_dma_place_t head;
 
-	return (report_head(ledger, reports, record, &head) ? erx_dma_ledger_holding(ledger, head) : NULL);
+	return (report_head(ledger, reports, record, &head) ? erx_dma_ledger_holding(ledger, head) :
+	    (erx_dma_found_t){ NULL, 0 });
 }
 
 bool
-erx_dma_consume(erx_dma_ledger_t *ledger, uint32_t reports, const erx_dma_holding_t *holding)
+erx_dma_consume(erx_dma_ledger_t *ledger, uint32_t reports, erx_dma_found_t found)
 {
-	return (erx_dma_ledger_release_holding(ledger, reports, holding));
+	return (erx_dma_ledger_release_holding(ledger, reports, found));
 }
 
 bool

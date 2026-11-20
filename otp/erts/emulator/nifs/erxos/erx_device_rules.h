@@ -15,8 +15,9 @@
  * erx_dma_publication_check judges a publication against the ledger, before anything is placed
  * or written, and names the first rule it breaks:
  *   calls     its call is one the type offers: a run describes at least one record; an
- *             install describes no record and no fill and finds the ledger as the idle report
- *             left it, so no ring it zeroes is one the device may still hold or write; an
+ *             install describes no record and no fill and finds the ledger idle, nothing held,
+ *             acquired or moved, so no ring it zeroes is one a live chain is on (that the queue
+ *             is not ready already is the form core's, as erx_split_ring_install refuses it); an
  *             install passes on this rule alone, its every step derived from the layout;
  *   meanings  each record's structure is a table of the layout that descriptions fill, and its
  *             meaning is one that structure's tables offer;
@@ -36,7 +37,7 @@
  *             record of the publication names, and no two fills share a byte; a region entry's
  *             fill is one entry long and names a persistent region the ledger holds, so a
  *             region of another device, or none, fails.
- * The bindings commands make, the reach and controls rules, and the releases rule over acquired reports, belong
+ * The bindings, reach and controls rules, and the releases rule over acquired reports, belong
  * to the forms and the sequencer that move onto this check after the split ring.
  */
 

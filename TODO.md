@@ -8043,7 +8043,12 @@ to the corpus and follow rc
   live holding), and `erx_dma_ledger_acquire` takes a bare count, so no chokepoint yet keeps the ledger's
   transitions to the sequencer;
   `ERX_DMA_STORE_BYTES_MAX` is hand-kept, checked only by a static assertion against the two layouts the sequencer
-  encodes, and should be derived from the widest encoded layout; `free_record`'s loop
+  encodes, and should be derived from the widest encoded layout; `erx_dma_ledger_make` takes any layout that passes the
+  install's check, so the sequencer's `install()` relies on its one caller, the split ring, deriving its layout
+  through `erx_dma_layout_split_ring` (three tables of one count); the install's sequence
+  leaves `QueueSel` to the effect layer, which must write it from the record before the registers; the
+  publication's `erx_dma_publication_call_t` and `erx_device_dma.h`'s `erx_dma_call_t` are two models of a
+  call until the old check goes; `free_record`'s loop
   is bounded only by the room rule; `erx_dma_publish` returns check verdicts for refusals that mean the check and the
   sequencer disagree; rule 1 zeroes a buffer's named size while the handover cleans its stride; and the generated
   `erx_report_meaning` carries an unreachable return and casts for a structure with one meaning. A layout holds one table of each structure, and a table cores describe is placed at any free record, which the

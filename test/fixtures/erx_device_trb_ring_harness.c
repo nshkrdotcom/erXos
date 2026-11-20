@@ -278,7 +278,7 @@ explore(const erx_dma_ledger_t *ledger, const model_t *model, uint32_t depth)
 			if (!steps[step].link)
 				after.runs[after.live].head = steps[step].position;
 		}
-		EXPECT(erx_dma_ledger_holding(&next, (erx_dma_place_t){ RING0, after.runs[after.live].head }) != NULL,
+		EXPECT(erx_dma_ledger_holding(&next, (erx_dma_place_t){ RING0, after.runs[after.live].head }).holding != NULL,
 		    "the holding's head is the TD's last TRB");
 		after.live++;
 		after.index = index;
@@ -290,10 +290,10 @@ explore(const erx_dma_ledger_t *ledger, const model_t *model, uint32_t depth)
 	if (model->live != 0) {
 		erx_dma_ledger_t next = *ledger;
 		model_t after = *model;
-		const erx_dma_holding_t *holding = erx_dma_ledger_holding(&next,
+		const erx_dma_found_t found = erx_dma_ledger_holding(&next,
 		    (erx_dma_place_t){ RING0, model->runs[0].head });
 
-		EXPECT(erx_dma_ledger_acquire(&next, EVENTS, 1) && erx_dma_ledger_release_holding(&next, EVENTS, holding),
+		EXPECT(erx_dma_ledger_acquire(&next, EVENTS, 1) && erx_dma_ledger_release_holding(&next, EVENTS, found),
 		    "the oldest run's report ends it");
 		memmove(&after.runs[0], &after.runs[1], (after.live - 1) * sizeof(after.runs[0]));
 		after.live--;

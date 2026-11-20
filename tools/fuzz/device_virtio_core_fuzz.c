@@ -113,7 +113,7 @@ pieces_valid(const erx_dma_piece_t *pieces, uint32_t count)
 		if (pieces[index].length == 0 || (index > 0 && pieces[index - 1].device_writes && !pieces[index].device_writes))
 			return (false);
 	}
-	return (total <= layout.pool.size);
+	return (total <= layout.pools[0].size);
 }
 
 /*
@@ -127,14 +127,14 @@ room(uint32_t count)
 	const uint32_t size = layout.tables[erx_dma_ledger_table(ledger, ERX_STRUCTURE_VIRTQ_DESC)].count;
 	uint32_t held = 0;
 
-	for (uint32_t buffer = 0; buffer < layout.pool.count; buffer++) {
+	for (uint32_t buffer = 0; buffer < layout.pools[0].count; buffer++) {
 		if (!shadow[buffer].posted)
 			continue;
 		held += shadow[buffer].desc_count;
 		if (shadow[buffer].avail_slot == posts % size)
 			return (false);
 	}
-	return (posted_count < layout.pool.count && size - held >= count);
+	return (posted_count < layout.pools[0].count && size - held >= count);
 }
 
 /* The posted chain's descriptors, as the sequence stores them, against its pieces. */
@@ -166,17 +166,17 @@ check_posted(const erx_dma_sequence_t *sequence, const erx_dma_piece_t *pieces, 
 		    store->offset - desc->first < (uint64_t)desc->count * desc->stride &&
 		    (store->offset - desc->first) % desc->stride == 0);
 		memcpy(&record, store->bytes, sizeof(record));
-		check(record.addr >= layout.device_base + layout.pool.first);
+		check(record.addr >= layout.device_base + layout.pools[0].first);
 		offset = record.addr - layout.device_base;
 		if (index == 0) {
-			check((offset - layout.pool.first) % layout.pool.stride == 0);
-			buffer = (uint32_t)((offset - layout.pool.first) / layout.pool.stride);
-			check(buffer < layout.pool.count && !shadow[buffer].posted);
+			check((offset - layout.pools[0].first) % layout.pools[0].stride == 0);
+			buffer = (uint32_t)((offset - layout.pools[0].first) / layout.pools[0].stride);
+			check(buffer < layout.pools[0].count && !shadow[buffer].posted);
 			buffer_start = at = offset;
 			chain.head = (uint32_t)((store->offset - desc->first) / desc->stride);
 		}
 		check(offset == at && record.len == pieces[index].length && record.len > 0 &&
-		    at + record.len <= buffer_start + layout.pool.size);
+		    at + record.len <= buffer_start + layout.pools[0].size);
 		check(erx_virtq_desc_flags_write_get(record.flags) == pieces[index].device_writes);
 		check(!writing || pieces[index].device_writes);
 		if (pieces[index].device_writes) {
@@ -249,20 +249,20 @@ acquire(uint16_t index, uint32_t most)
 static uint32_t
 posted_buffer(uint32_t pick)
 {
-	for (uint32_t step = 0; step < layout.pool.count; step++) {
-		const uint32_t buffer = (pick + step) % layout.pool.count;
+	for (uint32_t step = 0; step < layout.pools[0].count; step++) {
+		const uint32_t buffer = (pick + step) % layout.pools[0].count;
 
 		if (shadow[buffer].posted)
 			return (buffer);
 	}
-	return (pick % layout.pool.count);
+	return (pick % layout.pools[0].count);
 }
 
 /* The posted chain whose head is `head`: one at most, since no descriptor is in two chains. */
 static shadow_chain_t *
 posted_chain(uint32_t head)
 {
-	for (uint32_t buffer = 0; buffer < layout.pool.count; buffer++)
+	for (uint32_t buffer = 0; buffer < layout.pools[0].count; buffer++)
 		if (shadow[buffer].posted && shadow[buffer].head == head)
 			return (&shadow[buffer]);
 	return (NULL);
@@ -325,10 +325,10 @@ make(script_t *script)
 	uint64_t memory_size;
 
 	check(erx_dma_layout_split_ring(size, buffer_size, granule, UINT64_MAX, 0, 64, &layout));
-	memory_size = layout.pool.first + (uint64_t)layout.pool.count * layout.pool.stride;
-	check(erx_dma_layout_split_ring(size, buffer_size, granule, memory_size,
-	    (bits & 2) != 0 ? UINT64_MAX - memory_size + 1 : FUZZ_BASE, 64, &layout));
-	check(erx_split_ring_make(&ring, &layout, &no_regions));
+	memory_size = layout.pools[0].first + (uint64_t)layout.pools[0].count * layout.pools[0].stride;
+	check(erx_split_ring_make(&ring, size, buffer_size, granule, memory_size,
+	    (bits & 2) != 0 ? UINT64_MAX - memory_size + 1 : FUZZ_BASE, 64, &no_regions));
+	layout = *erx_dma_ledger_layout(erx_split_ring_ledger(&ring));
 }
 
 int

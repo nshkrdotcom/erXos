@@ -21,8 +21,10 @@
  *             lowest one no holding holds.
  *   acquire   the used index, loaded once, says how many used elements are new: at most the
  *             live chains (erx_dma_acquire).
+ *   install   after the reset's idle report, once: every ring zeroed and cleaned, the queue's
+ *             registers from the layout, then the ready bit (erx_dma_publish's install).
  *   complete  each used element, read whole, releases the chain whose head its id names
- *             (erx_dma_consume), and its len is at most what that chain let the device write;
+ *             (erx_dma_report_holding, then erx_dma_consume), and its len is at most what that chain let the device write;
  *             the chain's answer is its tag and the range of its buffer the device wrote.
  *
  * Anything else a device writes breaks the ring: every later post, acquisition and completion
@@ -56,6 +58,7 @@ typedef struct erx_split_ring_chain {
 typedef struct erx_split_ring {
 	erx_dma_ledger_t	ledger;
 	bool			broken;
+	bool			installed;	/* since the last make or reset: the device's queue is ready */
 	erx_split_ring_chain_t	chains[ERX_DEVICE_QUEUE_SIZE_MAX];	/* by buffer */
 } erx_split_ring_t;
 
@@ -66,21 +69,24 @@ typedef struct erx_split_ring_answer {
 } erx_split_ring_answer_t;
 
 /*
- * An empty ring over `layout`, a split ring's as erx_dma_layout_split_ring makes it, whose region
- * entries name the regions of `regions`, its device's table (erx_dma_ledger_make). False, writing
- * nothing, for a layout erx_dma_ledger_make refuses, one lacking a descriptor table, an available
- * ring or a used ring, one whose three tables' counts differ (the queue's one size, which the
- * install writes), or one of more than ERX_DEVICE_QUEUE_SIZE_MAX buffers.
+ * An empty ring of `size` entries and buffers of `buffer_size` bytes in `memory_size` bytes of
+ * memory at device address `device_base`, laid out by erx_dma_layout_split_ring and no one else,
+ * so the install's registers name virtio's rings wherever a ring is made; its region entries
+ * name the regions of `regions`, its device's table (erx_dma_ledger_make). False, writing
+ * nothing, for arguments erx_dma_layout_split_ring refuses or a layout erx_dma_ledger_make
+ * refuses: one past the memory or its address width.
  */
-bool	erx_split_ring_make(erx_split_ring_t *ring, const erx_dma_layout_t *layout, const erx_dma_regions_t *regions);
+bool	erx_split_ring_make(erx_split_ring_t *ring, uint32_t size, uint32_t buffer_size, uint32_t granule,
+	    uint64_t memory_size, uint64_t device_base, uint32_t address_bits, const erx_dma_regions_t *regions);
 /* The device's idle report after a reset: every chain ends and the ring is whole again. */
 void	erx_split_ring_reset(erx_split_ring_t *ring);
 /*
  * The install that follows the reset's idle report (negotiate/2), into `sequence`: every ring
  * zeroed and cleaned, then the queue's size and its rings' device addresses from the layout, and
  * the ready bit last (erx_device_sequencer.h). ERX_ECORRUPT for a broken ring; ERX_EBUSY for a
- * ring not as the reset left it, a chain live or a position moved, so no ring the device may
- * hold or write is zeroed. Anything but ERX_OK changes nothing.
+ * ring not as the reset left it: installed already, so its queue is ready, a chain live or a
+ * position moved, so no ring the device may hold or write is zeroed and no register of a ready
+ * queue is written. Anything but ERX_OK changes nothing.
  */
 int	erx_split_ring_install(erx_split_ring_t *ring, erx_dma_sequence_t *sequence);
 const erx_dma_ledger_t	*erx_split_ring_ledger(const erx_split_ring_t *ring);

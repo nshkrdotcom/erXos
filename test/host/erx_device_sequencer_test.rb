@@ -24,9 +24,9 @@ class ErxDeviceSequencerTest < Minitest::Test
   COMPILER = ENV.fetch('ERX_CLANG', 'clang')
   DONE = 'erx_device_sequencer done'
 
-  # The seed of the sequencer: rule 1's zeros left out, so a stale byte reaches a buffer
-  # the device holds.
-  SEEDS = %w[NO_ZEROS].freeze
+  # The seeds: rule 1's zeros left out, so a stale byte reaches a buffer the device holds; and the
+  # check's idle test removed, so an install zeroes the rings under a live chain.
+  SEEDS = %w[NO_ZEROS NO_IDLE_TEST].freeze
 
   def test_publication_and_acquisition
     output, status = run_harness

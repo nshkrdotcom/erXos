@@ -31,6 +31,7 @@
 #else
 #define SEED_NO_HELD_TEST	false
 #endif
+/* Caught by test/host/erx_device_sequencer_test.rb. */
 #ifdef ERX_DMA_SEED_NO_IDLE_TEST
 #define SEED_NO_IDLE_TEST	true
 #else

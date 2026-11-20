@@ -603,6 +603,7 @@ erx_dma_ledger_hold(erx_dma_ledger_t *ledger, const erx_dma_publication_t *publi
 
 	if (!holding_of(publication, records, record_count, &holding) || !holding_valid(ledger, &holding, taken))
 		return (false);
+	holding.serial = ++ledger->begun;
 	ledger->holdings[ledger->live++] = holding;
 	for (uint32_t table = 0; table < ledger->layout.table_count; table++)
 		advance(ledger, table, taken[table]);
@@ -624,25 +625,28 @@ erx_dma_ledger_acquired(const erx_dma_ledger_t *ledger, uint32_t table)
 	return (table < ledger->layout.table_count ? ledger->acquired[table] : 0);
 }
 
-const erx_dma_holding_t *
+erx_dma_found_t
 erx_dma_ledger_holding(const erx_dma_ledger_t *ledger, erx_dma_place_t head)
 {
 	for (uint32_t live = 0; live < ledger->live; live++) {
 		if (same_place(ledger->holdings[live].records[0], head))
-			return (&ledger->holdings[live]);
+			return ((erx_dma_found_t){ &ledger->holdings[live], ledger->holdings[live].serial });
 	}
-	return (NULL);
+	return ((erx_dma_found_t){ NULL, 0 });
 }
 
 bool
-erx_dma_ledger_release_holding(erx_dma_ledger_t *ledger, uint32_t reports, const erx_dma_holding_t *holding)
+erx_dma_ledger_release_holding(erx_dma_ledger_t *ledger, uint32_t reports, erx_dma_found_t found)
 {
 	if (reports >= ledger->layout.table_count || !device_writes(&ledger->layout, reports) ||
 	    ledger->acquired[reports] == 0)
 		return (false);
-	/* By equality alone: a pointer the ledger did not give compares equal to none of its holdings. */
+	/*
+	 * By equality: a pointer the ledger did not give compares equal to none of its holdings, and
+	 * a holding begun since has another serial.
+	 */
 	for (uint32_t live = 0; live < ledger->live; live++) {
-		if (&ledger->holdings[live] == holding) {
+		if (&ledger->holdings[live] == found.holding && found.holding->serial == found.serial) {
 			ledger->holdings[live] = ledger->holdings[--ledger->live];
 			ledger->acquired[reports]--;
 			advance(ledger, reports, 1);
