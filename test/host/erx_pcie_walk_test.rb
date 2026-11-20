@@ -23,7 +23,9 @@ require_relative '../fixtures/erlang_build'
 # 0, taken as placement's window, so a BAR that fits the real one is unplaced; the
 # report's answer taken without being applied, so a decoding answer for a function
 # the start set off never reaches it; a function whose identity
-# changed reported without being lowered, so it keeps decoding; one readback after the
+# changed reported without being lowered, so it keeps decoding; a function whose record
+# differs from its layout only where the identity does not look started at its setting,
+# so it keeps mastering; one readback after the
 # last stage, so with a disable ignored a BAR is written while the model decodes; and
 # the descent to quiet taken as done without its readback, so with the command register
 # ignoring writes the answer is gone while the model is not quiet.
@@ -82,6 +84,11 @@ class ErxPcieWalkTest < Minitest::Test
              anchor: '            {_, Quiet} = erx_pcie_apply:quiet(place(Record), Next),',
              replacement: '            Quiet = Next,',
              catching_case: 'a_function_with_another_identity_is_reported_unplaced_and_lowered_test'),
+    Seed.new(fault: 'a changed function started at its setting',
+             module_path: 'erlang/apps/erx_pcie/src/erx_pcie_enumerator.erl',
+             anchor: '      changed => maps:remove(state, Record) =/= maps:remove(state, Target)}.',
+             replacement: '      changed => false}.',
+             catching_case: 'a_changed_function_starts_off_whatever_its_setting_test'),
     Seed.new(fault: 'one readback after the last stage',
              module_path: 'erlang/apps/erx_pcie/src/erx_pcie_apply.erl',
              anchor: '    case erx_pcie_plan:differs(Read, State) of',

@@ -16,7 +16,8 @@ bridge with no layouts gets a placing walk, after which its functions'
 records are placed (erx_pcie_place) and become its layouts, and each
 root port it numbered gets its window opened over them. Then each
 function with a layout gets the start's target of its layout and setting
-(erx_pcie_apply:start/3); one that no longer reads with its layout's
+(erx_pcie_apply:start/3), or `off` with route `none` when its
+record differs from its layout; one that no longer reads with its layout's
 identity, and one at a place with no layout, is lowered to quiet and
 reported `unplaced` from what it reads; a later walk's function is
 reported as it reads, with its layout's BAR sizes and addresses, so the
@@ -94,12 +95,13 @@ init(Edge) ->
 
 handle_continue(start, #{edge := #{bus := Bus} = Edge}) ->
     {ok, Bridges, Layouts, Settings} = Bus(targets),
+    %% A changed function is held at off: an answer or a set for it finds no layout.
     Started = [start_bridge(Bridge, Layouts, Settings, Edge) || Bridge <- Bridges],
     {ok, Answered} = Bus({report, lists:append([Reports || #{reports := Reports} <- Started])}),
     State = #{edge => Edge,
               drivers => maps:from_list([{Index, Driver} || #{index := Index, driver := Driver} <- Started]),
               layouts => maps:from_list([{key(L), L} || #{held := Held} <- Started, L <- Held]),
-              settings => Settings},
+              settings => maps:merge(Settings, maps:from_list([{K, off()} || #{changed := C} <- Started, K <- C]))},
     {noreply, maps:fold(fun answered/3, State, Answered)}.
 
 handle_call({set, Key, Setting}, _From, State) ->
@@ -124,19 +126,21 @@ start_bridge(#{index := Index} = Bridge, Layouts, Settings, #{open := Open}) ->
         {ok, Driver} ->
             {Starts, Held, Walked} = starts(Bridge, [L || #{bridge := B} = L <- Layouts, B =:= Index], Driver),
             {Reports, Started} = lists:mapfoldl(fun(S, D) -> start_function(S, Settings, D) end, Walked, Starts),
-            #{index => Index, driver => Started, held => Held, reports => Reports};
+            #{index => Index, driver => Started, held => Held, reports => Reports,
+              changed => [key(R) || #{record := R, changed := true} <- Starts]};
         {error, Reason} ->
             logger:error("pcie: bridge ~b not started: ~p", [Index, Reason]),
-            #{index => Index, held => [], reports => []}
+            #{index => Index, held => [], reports => [], changed => []}
     end.
 
 %% The walk of a bridge and what each function it found starts from, a
-%% start(): the record to report, the target layout and what the walk
-%% read. A bridge with no layouts gets a placing walk, after which its
-%% functions' records are placed, each its own target, and its root
-%% ports' windows opened over them; a later walk's function is started
-%% against its stored layout and reported as it reads. Answers the starts,
-%% the layouts held for serving, and the driver.
+%% start(): the record to report, the target layout, what the walk read,
+%% and whether the record differs from its layout. A bridge with no
+%% layouts gets a placing walk, after which its functions' records are
+%% placed, each its own target, and its root ports' windows opened over
+%% them; a later walk's function is started against its stored layout and
+%% reported as it reads. Answers the starts, the layouts held for serving,
+%% which leave out every changed one, and the driver.
 starts(#{index := Index} = Bridge, [], Driver) ->
     {#{found := Found, root_ports := RootPorts}, Walked} = walk(Bridge, placing, [], Driver),
     Addresses = erx_pcie_place:layout(Bridge, Found),
@@ -150,7 +154,9 @@ starts(#{index := Index} = Bridge, [], Driver) ->
 starts(#{index := Index} = Bridge, Own, Driver) ->
     {#{found := Found}, Walked} = walk(Bridge, later, Own, Driver),
     ByPlace = maps:from_list([{place(L), L} || L <- Own]),
-    {[later_start(Index, F, ByPlace) || F <- Found], [L || L <- Own, drivable(L)], Walked}.
+    Starts = [later_start(Index, F, ByPlace) || F <- Found],
+    Changed = [place(R) || #{record := R, changed := true} <- Starts],
+    {Starts, [L || L <- Own, drivable(L), not lists:member(place(L), Changed)], Walked}.
 
 %% The walk run to its end; each root port it numbers gets its target from
 %% the layouts the walk starts with, closed at a placing walk.
@@ -178,7 +184,7 @@ placing_start(Index, #{outcome := Outcome} = Found, Addresses) ->
                  {unplaced, _, _} -> erx_pcie_report:read(Index, Found, unplaced);
                  {State, _} -> erx_pcie_report:identity(Index, Found, State)
              end,
-    #{record => Record, target => Record, found => Found}.
+    #{record => Record, target => Record, found => Found, changed => false}.
 
 %% A function a later walk read whole at a drivable layout's place is
 %% started against that layout and reported as it reads; a layout the
@@ -196,19 +202,32 @@ later_start(Index, #{place := Place, outcome := Outcome} = Found, ByPlace) ->
                  {{unplaced, _, _}, _} -> erx_pcie_report:read(Index, Found, unplaced);
                  {{State, _}, _} -> erx_pcie_report:identity(Index, Found, State)
              end,
-    #{record => Record, target => maps:get(Place, ByPlace, Record), found => Found}.
+    Target = maps:get(Place, ByPlace, Record),
+    #{record => Record, target => Target, found => Found,
+      changed => maps:remove(state, Record) =/= maps:remove(state, Target)}.
 
 %% A function's start: a ready one to the start's target of its layout and
 %% setting, which its bridge may then hold back; an unplaced one quiet; a
-%% malformed or unsupported one as the walk left it. A ready one that no
-%% longer reads with its layout's identity is lowered to quiet and
-%% reported unplaced from what the walk read, so the intake does not
-%% confirm its layout.
-start_function(#{record := #{state := ready} = Record, target := Layout, found := Found}, Settings,
-               {Module, _} = Driver) ->
-    Setting = maps:get(key(Record), Settings, off()),
+%% malformed or unsupported one as the walk left it. A ready one whose
+%% record differs from its layout where the planner's identity does not
+%% look (its subsystem, class, revision, pin or capabilities) starts at
+%% off with route none whatever its setting, so no route it no longer
+%% fits can refuse the lowering, and is reported not kept: the intake leaves it
+%% unconfirmed, so it must not go on decoding or mastering for a holder
+%% ("Failure handling and restart"); the enumerator holds no layout for it until its
+%% next start, so neither the answer nor set nor reset raises it. A ready
+%% one that no longer reads with
+%% its layout's identity is lowered to quiet and reported unplaced from
+%% what the walk read, so the intake does not confirm its layout.
+start_function(#{record := #{state := ready} = Record, target := Layout, found := Found, changed := Changed},
+               Settings, {Module, _} = Driver) ->
+    Setting = case Changed of
+                  false -> maps:get(key(Record), Settings, off());
+                  true -> off()
+              end,
     case erx_pcie_apply:start(place(Record), {function, Layout, Setting}, Driver) of
-        {{ok, Kept}, {_, Started}} ->
+        {{ok, AtSetting}, {_, Started}} ->
+            Kept = AtSetting andalso not Changed,
             case Module:ready(Record, Started) of
                 {ok, Ready} -> {#{record => Record, kept => Kept}, {Module, Ready}};
                 {not_ready, Held} -> {#{record => Record#{state := not_ready}, kept => false}, {Module, Held}}

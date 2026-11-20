@@ -142,3 +142,25 @@ a_layout_left_unplaced_stays_unplaced_and_is_never_driven_test() ->
     ?assertEqual(0, command(Table) band 16#7),
     ?assertEqual({error, unknown}, erx_pcie_enumerator:set(Pid, ?KEY, setting(decoding))),
     stop(Pid).
+
+%% A function a previous incarnation left mastering whose later record differs from its
+%% layout only where the planner's identity does not look, here its subsystem, starts
+%% at off and is reported not kept, whatever its setting: the intake leaves it
+%% unconfirmed and gives it to no one, so it must not go on mastering
+%% ("Failure handling and restart"). Neither an answer raising it nor a set does.
+a_changed_function_starts_off_whatever_its_setting_test() ->
+    {_, Layout, _} = placed(),
+    Table = erx_pcie_model:new([endpoint_at(?PLACE, endpoint())]),
+    {First, _} = started(Table, [Layout], #{}, #{?KEY => setting(decoding)}),
+    ok = erx_pcie_enumerator:set(First, ?KEY, setting(mastering)),
+    stop(First),
+    ?assertEqual(16#6, command(Table) band 16#7),
+    ok = erx_pcie_model:write({Table, 0}, 16#8000 + 16#2e, 2, 16#1101),
+    {Pid, [#{record := Record, kept := Kept}]} =
+        started(Table, [Layout], #{?KEY => setting(mastering)}, #{?KEY => setting(decoding)}),
+    ?assertMatch(#{state := ready, subsystem := 16#1101}, Record),
+    ?assertNot(Kept),
+    ?assertEqual(0, command(Table) band 16#7),
+    ?assertEqual({error, unknown}, erx_pcie_enumerator:set(Pid, ?KEY, setting(decoding))),
+    ?assertEqual(0, command(Table) band 16#7),
+    stop(Pid).

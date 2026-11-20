@@ -381,7 +381,18 @@ target. The outcomes:
 a function is its target if the function reads as it, and otherwise the
 same target in mode `off`. A running function's plan is then empty, and
 a disturbed one gets its layout and route written with every switch
-quiet. `erx_pcie_plan:start_target/2` is that choice. A function with no
+quiet. `erx_pcie_plan:start_target/2` is that choice. At a later walk a
+function whose record differs from its layout, without their states,
+where the planner's identity does not look (its subsystem, class code,
+revision, pin, FLR flag or MSI-X table), has the target of its layout
+and the setting `off` with route `none` whatever its setting, so no
+route it no longer fits refuses the lowering, and is reported not kept: the
+intake leaves it unconfirmed and gives it to no one, so it must not go
+on decoding or mastering, and the PCIe domain keeps that guarantee
+itself, whatever the device service answers: until its next start the
+enumerator holds no layout for it, so neither the answer to `report` nor
+a `set` or `reset` raises it ([Failure handling and
+restart](#failure-handling-and-restart)). A function with no
 layout, one that appeared beside its bridge's layouts, is only lowered
 to quiet, by `quiet/1`.
 
@@ -1341,7 +1352,7 @@ waits for.
 | a holder ends while the PCIe domain is down | the device service's monitor | the library's setting says `off`; the next start applies it |
 | the device service's PCIe process crashes | its supervisor | it restarts, reads every setting, holder and `answered` from the library and monitors the holders again; it begins in `synced` only with an answered incarnation that still holds its bridges ([Concurrency](#concurrency)); a function whose holder has ended is set `off` |
 | a placing walk's record fails intake | the library | the bridge takes no layouts and places again at its next walk; nothing on it is given; a log line names the record and the field |
-| a later report's record differs from its layout | the library | its function is unconfirmed and not given; its holder's requests answer `{error, gone}` |
+| a later report's record differs from its layout | the enumerator's start and the library | the start takes the function to its layout and the setting `off` with route `none`, whatever its setting, and reports it not kept, so the device service lowers its setting; the intake leaves it unconfirmed and not given; its holder's requests answer `{error, gone}` |
 
 A **restart keeps** nothing in the PCIe domain and everything in the
 library: the layouts, the settings and the confirmations. It **re-reads**

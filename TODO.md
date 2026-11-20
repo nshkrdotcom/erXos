@@ -2270,38 +2270,45 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   `erx_devices`; `otp/erts/emulator/nifs/erxos/erx_domain_lib_nif.c`;
   [design-pcie.md](docs/design-pcie.md#the-catalogue-and-gives)): the view holds a catalogue per bridge row, the
   root joins the tree's windows and `erx_domain_lib:pci_report/2` takes a report into it, but no device service
-  process calls it (package P12), the catalogue has no `answered`, `devices/0` does not show the layouts, the
-  settings or `firmware lost`, and `erx_domain_lib:pci_firmware/1`, which would hand the notification's status to
+  process calls it or `pci_bridges/0` and `pci_mode/2` (package P12), the catalogue has no `answered`, `/dev`'s
+  `status` does not show a pci row's layout, state, mode and route or `firmware lost` (`devices/0` gives the place
+  and setting, `pci_bridges/0` the rest), and `erx_domain_lib:pci_firmware/1`, which would hand the notification's status to
   `erx_dom_pci_firmware`, waits for `erx_firmware_request` (the ABI item below). Also refuse in `erx_dt_bridge` a window whose
   PCI, CPU or size is not page-aligned, and check BAR spans across a machine's bridges, not only within one.
-  `pci_report/2` answers any system-domain caller, since its caller is the device service and not the registered
-  domain service; a process that reports before the PCIe domain lays the bridge's layouts for the boot. Hold it to
+  `pci_report/2`, `pci_bridges/0` and `pci_mode/2` answer any system-domain caller, since their caller is the device
+  service and not the registered domain service; a process that reports before the PCIe domain lays the bridge's
+  layouts for the boot, and one that writes a mode can lower a held function's setting or raise it for its holder
+  beyond what the PCIe domain was asked. Hold them to
   the device service's process (a registration of its own, or the call routed through the domain service), and
-  hold `erx_dom_lib_pci_report` to the NIF and `erx_dom_view_bridge` to the root with chokepoints. The root's join
+  hold `erx_dom_lib_pci_report` and `erx_dom_lib_pci_mode` to the NIF and `erx_dom_view_bridge` to the root with
+  chokepoints. The root's join
   (`tree_facts`) and the NIF's term handling run only on the target; the `pcie` QEMU suite (P12) covers them.
 * [Medium] PCIe domain and device service, the start's other side (`erlang/apps/erx_pcie/src/erx_pcie_enumerator.erl`,
   `abi/services/pci_bus.txt`, `pci.txt`, `pcie.txt`, [design-pcie.md](docs/design-pcie.md#facets)): the enumerator
   runs its start and serves `set` and `reset` over its edge on the host, but on the target its `bus` answers
   `{error, no_facet}` and its `open` `{error, unsupported}`, so the domain does not start. Still to build: the device
-  service's `pci_bus` process (`targets` from a library read of each bridge's catalogue, its layouts and every pci
-  row's setting, which `erx_domain_lib` does not offer; `report` matching each function to its row by place and
-  compatible string, which `devices/0` does not give a pci row, then `pci_report/2`, the lowering to `off` and
-  `erx_domain:await_grant(pcie, D)`, which the domain service does not have), its `pci` facet, the hold at boot,
+  service's `pci_bus` process (`targets` from `erx_domain_lib:pci_bridges/0` and `devices/0`; `report` matching
+  each function to its row by place and compatible string, then `pci_report/2`, the lowering to `off` with
+  `pci_mode/2` and `erx_domain:await_grant(pcie, D)`), its `pci` facet, the hold at boot,
   a holder's end; a system manifest service row for each interface, with the manifest check's grantee rules; the
   `pcie` facet's mint in the PCIe domain over `erx_facet`; and the bridge's driver over its given record, which
   needs the ECAM configuration-space view and a record that names its device row.
 * [Medium] PCIe, the start's leftovers (`erlang/apps/erx_pcie/src/erx_pcie_enumerator.erl`, `abi/services/pci.txt`,
-  [design-pcie.md](docs/design-pcie.md#facets)): `targets` must carry each layout's latest state, which the library's
-  intake zeroes, since the enumerator drives only layouts found ready or not_ready. A start whose route does not fit
+  [design-pcie.md](docs/design-pcie.md#facets)): the start lowers a function the intake will leave unconfirmed only
+  when its record differs from its layout, by its own copy of the intake's comparison (`changed` in
+  `erx_pcie_enumerator`, `pci_same` in `dom_core.c`); a later report the intake refuses whole, or a layout's function
+  a walk leaves unreported past `pcie_functions_max`, is unconfirmed while the start kept it at its setting. Hold
+  it by construction: "The answer to `report`" lowers every setting whose layout the intake leaves unconfirmed or not
+  givable, from the library's `confirmed`, not the start's `kept`. `erx_domain_lib:pci_mode/2` admits a raise for a
+  function its catalogue gives now, though its holder's give, made while it was not givable (a VL805 `not_ready`
+  before its firmware), drove nothing; record in `erx_dom_device_t` whether the give drove it and require that too.
+  No `dom_core_test` case lays a layout from a `not_ready` placing report and confirms it with a `ready` one, the
+  VL805's path, which a `pci_same` comparing the states would break. A start whose route does not fit
   leaves the function as it reads, where Failure handling turns it off; a root port's reopening that fails and the
   walk's `past_bound` are not logged. The `pci` interface's scope, a `device` parameter for each device its grantee
   holds, is not declared: the service grammar takes a parameter set of `u64` alone (`tools/lib/erx/abi_contracts.rb`),
   and the manifest check has no checker to hold the scope to the grantee's `pci` rows, so both wait for the device
-  service's `pci` facet. A later start keeps a function at its setting, `mastering` included, when it changed only
-  where the planner's identity does not look (subsystem, class, revision, pin, FLR flag, MSI-X table): its record
-  shows the change and the intake leaves it unconfirmed, but nothing in the design says the answer then lowers it, so
-  either the enumerator starts a function whose record differs from its layout at `off`, or "The answer to
-  `report`" lowers every function the intake leaves unconfirmed. `erx_pcie_report:later/3` reports a BAR its layout
+  service's `pci` facet. `erx_pcie_report:later/3` reports a BAR its layout
   calls absent as absent even when it reads nonzero, which hides an implemented BAR from the intake; report such a BAR
   as unsized memory. The planner checks the route in mode `off` too, so an `off` setting cannot lower a function
   whose route no longer fits. `erx_pcie_apply_tests` keeps a broken property's rule and target but not the input's
