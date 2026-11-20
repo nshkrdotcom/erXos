@@ -11,7 +11,8 @@ supervisors and ERTS. A reader who knows all three starts here.
 > runtime each, the park protocol between executors and Fiasco, and
 > budgets as records that end everything charged to them are
 > **Built**. Priority bands, per-domain CPU sets and thread limits,
-> and budgets that refuse a charge past their limit are **Designed**.
+> budgets that refuse a charge past their limit, and `liberx`'s refusal
+> to arm an upcall on an executor or to let one block are **Designed**.
 
 An Erlang program on FreeBSD can run hundreds of thousands of
 processes, and `ps` lists one of them. That one line is `beam.smp`,
@@ -188,16 +189,21 @@ runtime along rules that each remove a failure of an earlier system
    them like any other thread.
 2. **No upcall reaches an executor.** Fiasco has one upcall, its vCPU
    interface, and erXos uses it only to deliver POSIX signals to a
-   native program's worker threads. Arming it refuses an executor, so
-   the runtime is never entered at an unsafe point
-   ([design.md, Invariants](../design.md#invariants)).
+   native program's worker threads, so the runtime is never entered
+   at an unsafe point
+   ([design.md, Invariants](../design.md#invariants)). In the design,
+   arming it on an executor is refused; that refusal is designed and
+   not built.
 3. **No wakeup is lost.** A wakeup is a queued event: it advances a
    counter that an executor about to park compares under the same
    lock, so a park that would miss it returns at once, and a running
    executor finds the work at its next safe point
    ([design-fiasco.md, The park protocol](../design-fiasco.md#the-park-protocol)).
 4. **Executors never block except to park.** `liberx`, the library
-   under every runtime, refuses an executor every other kind of wait.
+   under every runtime, refuses a thread that is not an executor the
+   executors' own calls, parking and taking ready work. In the design
+   it also refuses an executor every other kind of wait, with
+   `ERX_EWOULDBLOCK`; that refusal is designed and not built.
 5. **The kernel decides who runs.** Fiasco's fixed-priority scheduler
    picks the thread; what the runtime says about its own load is
    advice that nothing in the kernel acts on.

@@ -576,8 +576,10 @@ session's. The request goes as follows.
    sending domain, and decodes it. The lane, not a field in the frame,
    says who sent it.
 4. The facet admits the request only if the session has fewer requests
-   in flight than its limit, and has system-domain time left this
-   period ([design-domains.md, Facets](../design-domains.md#facets)).
+   in flight than its limit
+   ([design-domains.md, Facets](../design-domains.md#facets)). The
+   design also admits it only while the session has system-domain
+   time left this period; that check is designed and not built.
 5. The inspector answers. The reply returns on the other lane, through
    the session's own funnel, to `cat`, which prints it.
 
@@ -623,10 +625,14 @@ under it are built, for any program a build puts in `/bin`.
 starts `find` as a port: a sub-space with a channel to a new handler.
 It maps into the sub-space, as standard output, a **pipe**: a one-way
 byte stream held in a ring that the session's pipe server makes. `wc`
-runs as an Erlang process of the session that reads the pipe's other
-end. When `find` exits, the shell puts its exit status in `$status`.
-When the pipe is drained, `wc` sees the end of the stream and prints
-its count.
+runs as an Erlang process of the session. The pipe's other end is
+held by a **pump**, an Erlang process of the shell's program starter,
+which reads what `find` writes and passes the bytes on to `wc`
+through the shell's own pipe between the two stages
+(`erlang/apps/erx_shell/src/erx_shell_program.erl`). When `find`
+has exited and the pump has passed on all it wrote, the shell puts
+`find`'s exit status in `$status`, and `wc` sees the end of its
+input and prints its count.
 
 The end of the stream is the subtle part. On UNIX the kernel tracks
 when every descriptor for the write end is closed. On erXos the

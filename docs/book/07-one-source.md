@@ -588,7 +588,8 @@ service clock 13
 ```
 
 The service has a number, 13, is reached by messages, and offers two
-operations, read the clock and set it. The citation in the head
+operations: `sample`, by which ntpd hands the clock a measurement of
+the time, and `set`, by which the operator sets it. The citation in the head
 comment is not decoration. The facet check,
 `tools/lib/erx/facet_names.rb`, takes it as the section that justifies
 the interface, and refuses a file that cites no section or one the

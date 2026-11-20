@@ -8,8 +8,9 @@
 > Erlang processes (section 3.9). Domains message each other as Erlang
 > nodes do (section 3.6). Device drivers are supervised Erlang
 > processes, and modules are reloaded from the development host.
-> **Designed**: each domain's priority band, and the refusal, by erXos's
-> most trusted domain, of code that is not installed.
+> **Designed**: each domain's priority band, the refusal, by erXos's
+> most trusted domain, of code that is not installed, and its decoding
+> of other domains' messages without creating atoms.
 
 **Background needed.** [Chapter
 1](01-operating-systems.md) (processes,
@@ -1054,8 +1055,12 @@ end.
 
 Each frame that arrives is decoded by the receiving domain's **funnel**,
 the one function that decodes messages from another domain. The funnel
-refuses any malformed frame and creates no atoms, so the atom-table
-attack of section 3.5.5 does not cross the wall.
+refuses any malformed frame and creates no atoms itself. The message
+inside stays encoded until the receiving process takes it, and ERTS's
+ordinary decoder then adds the atoms it names, so the atom-table
+attack of section 3.5.5 can reach a domain that receives from another.
+In the design, the system domain decodes other domains' messages in a
+safe mode that creates no atom; that is designed and not built.
 
 A domain reaches only the processes another domain has **exported** to
 it. A domain exports one of its processes to a peer when it sends the
