@@ -2808,7 +2808,6 @@ root's first line if Fiasco's own boot proves not deterministic, recorded as a d
 
 * **Handles are opaque**, not Fiasco capabilities and not stable across a boot.
 * **A committed page is present here, and Phase 2 populates lazily.** Read no timing or fault counts from it. (FD7)
-* **One node in Phase 1.** Local message delivery is Phase 1's transport and a frame on a lane is Phase 2's.
 * **`erx_device` keeps physical addresses behind the DMA profile**, and nothing else sees one.
 * **Faults reach code as crash records**, never as Fiasco's exception messages.
 * **Callers check `ERX_ENOTSUP`**, and show `unsupported` and `partial` as such.
