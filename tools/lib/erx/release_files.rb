@@ -49,8 +49,9 @@ module Erx
     # "Starting an app"). The system release ships erx_session (SYSTEM_APPLICATIONS)
     # and not erx_app, which only the app script holds. erx_wifi, the WiFi domain's
     # (docs/design-wifi.md, "The WiFi domain"), is only loaded until the domain's
-    # station starts it once it holds its facets.
-    DOMAIN_ONLY = %w[erx_session erx_app erx_wifi].freeze
+    # station starts it once it holds its facets. erx_ntpd, the ntpd session's
+    # (docs/design-time.md, "Who does what"), is started by the ntpd template's -eval.
+    DOMAIN_ONLY = %w[erx_session erx_app erx_wifi erx_ntpd].freeze
     raise Error, "DOMAIN_ONLY names what the release does not ship: #{DOMAIN_ONLY - APPLICATIONS}" unless
       (DOMAIN_ONLY - APPLICATIONS).empty?
     # OTP's applications that only the domains' runtime images run (DomainImageApps).
@@ -174,8 +175,7 @@ module Erx
     #   leaves out the crypto the design's release ships.
     # * pcie, the PCIe domain's (docs/design-pcie.md, "The PCIe domain"): the enumerator,
     #   erx_pcie, so no other domain parses what a function writes to its configuration
-    #   space. No manifest names it; it exists because check_released requires a release
-    #   for erx_pcie.
+    #   space. The pcie QEMU suite's manifest names it (Erx::PcieDomain).
     # * wifi, the WiFi domain's (docs/design-wifi.md, "The WiFi domain"): crypto, which
     #   the supplicant's key arithmetic calls, and erx_wifi (DOMAIN_ONLY), both only
     #   loaded. No manifest names it; it exists because check_released requires a
