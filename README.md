@@ -118,8 +118,9 @@ than mirroring pixels. The [overview](docs/overview.md) tells the longer story.
   speaks 9P2000.L. ([files](docs/design-files.md),
   [`/tmp`](docs/design-tmp.md))
 * **Drivers are Erlang processes.** A driver is a supervised process over
-  a thin device shim. Kill the block driver mid-transfer. Its
-  supervisor restarts it, and the storage domain carries on. *HydrOS* and *Midori* took the same view.
+  a thin device shim. Kill the network driver mid-transfer. Its
+  supervisor restarts it and resets the device, and the rest of the
+  network domain carries on. *HydrOS* and *Midori* took the same view.
   ([drivers](docs/design-system.md#drivers),
   [device shim](docs/design-runtime.md#the-device-nif))
 * **Storage in Erlang.** Release images are read-only EROFS, checked block
@@ -246,9 +247,10 @@ Eshell V17.1.1 (type help(). for help)
   show processes and kernel objects; a value Fiasco cannot measure
   reads as unsupported or partial.
 * `erx:inspect(Path, Options)` reads an inspection path with a wait of the
-  caller's own. Every session sees the machine's load (each CPU's idle
-  time and ready threads) and the clock's state at `/proc/time/status`:
-  unset, boot, approximate or set, and `/proc/time` shows who set it.
+  caller's own. Every session sees each CPU's record at `/proc/cpus/N`,
+  whose idle time and ready threads read unsupported on Fiasco, and the
+  clock's state at `/proc/time/status`: unset, boot, approximate or set,
+  and `/proc/time` shows who set it.
   On QEMU `virt` the clock reads the
   PL031 real-time clock at boot. A machine with no real-time clock
   starts at the build's date, approximate, so HTTPS works from boot

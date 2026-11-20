@@ -1145,7 +1145,7 @@ each action to its network interface, which frames and sends the
 packets, and arms the timer. The core touches nothing, so
 `test/erlang/erx_dhcp4_tests.erl` tests it on the development host by
 stepping it through its states, with no network. [Chapter
-6](README.md#chapter-6-correct-by-construction) explains the method.
+6](06-construction.md#63-functional-core-effects-at-the-edge) explains the method.
 
 ### 3.9.5 ERTS as a parts bin
 
