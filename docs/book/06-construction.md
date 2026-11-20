@@ -424,7 +424,7 @@ and its edge sets one timer to it.
 ## 6.4 A worked example: the device DMA plan
 
 The device DMA path shows the chapter's ideas in one place.
-[Chapter 15](README.md#chapter-15-devices-and-drivers) explains the
+[Chapter 15](15-devices.md) explains the
 device NIF in full; this section follows one call.
 
 > **Background: a device that does not see the cache.** A device that

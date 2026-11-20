@@ -789,5 +789,5 @@ system domain carry no term.
   1987: the Lisp machine whose live, inspectable environment this
   chapter follows. <!-- check: citation details. -->
 * Stuart Cheshire and Mary Baker, "Consistent Overhead Byte Stuffing",
-  *IEEE/ACM Transactions on Networking* 7(2), 1999: the framing of the
+  *IEEE/ACM Transactions on Networking* 7(2):159-172, 1999: the framing of the
   host link.

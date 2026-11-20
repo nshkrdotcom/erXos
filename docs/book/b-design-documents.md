@@ -286,8 +286,8 @@ read next" names.
 | [21](21-live-machine.md) | design-live.md; design-log.md; design-system.md (the crash record); design-fiasco.md (reporting kernel objects, the trace ring) |
 | [22](22-display.md) | design-display.md; design-desktop-programs.md; design-find-act.md; design-web.md |
 | [23](23-apps.md) | design-apps.md; design-packaging.md; design-app-trees.md; design-storage.md |
-| [24](README.md#chapter-24-startup-configuration-and-shutdown) | design-system.md; design-fiasco.md; design-kernel.md (boot); design-abi.md; design-platforms.md |
-| [25](README.md#chapter-25-checking-the-system) | design-verification.md; design-host-oracle.md; design-build.md; design-network-stack.md (its tests) |
+| [24](24-startup.md) | design-system.md; design-fiasco.md; design-kernel.md (boot); design-abi.md; design-platforms.md |
+| [25](25-checking.md) | design-verification.md; design-host-oracle.md; design-build.md; design-network-stack.md (its tests) |
 
 *Table B.2. Which chapter prepares a reader for which documents, from
 each chapter's "Where to read next" and the outline of chapters 24
@@ -297,9 +297,9 @@ design-arch-aarch64.md has no chapter: it binds design-kernel.md's
 form of the interface to AArch64's registers and instructions, and is
 for a reader of that document. Building and booting the
 system is the subject of
-[Appendix C](README.md#appendix-c-building-and-booting-erxos), and
+[Appendix C](c-building.md), and
 design.md's dependency table, with every component's license, of
-[Appendix D](README.md#appendix-d-dependencies-and-licenses).
+[Appendix D](d-dependencies.md).
 
 ## Summary
 

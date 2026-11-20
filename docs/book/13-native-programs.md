@@ -214,7 +214,7 @@ host. The Built requests are the file calls, making a pipe, and
 `kill`. A path is
 resolved over the program's narrowed namespace alone, so a file the
 starter could not reach is not found
-([chapter 14](README.md#chapter-14-files-namespaces-and-service-trees)).
+([chapter 14](14-files.md)).
 
 ### 13.2.3 The command server
 

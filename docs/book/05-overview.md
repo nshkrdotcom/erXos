@@ -502,7 +502,7 @@ ERTS through the start path of musl, the C library ERTS is built on
 (`liberx/backend/fiasco/root.c`). ERTS boots OTP's `kernel` and
 `stdlib`, then the system release, and a development build prints
 `development build: trusted code only`. All of this is **Built**
-([chapter 24](README.md#chapter-24-startup-configuration-and-shutdown)).
+([chapter 24](24-startup.md)).
 
 ### 5.3.2 The system domain starts the configured domains
 
@@ -529,7 +529,7 @@ The device service gives each device to the domain the manifest names,
 such as the SD card to the storage domain, and each domain's ERTS
 boots its own small release as a node. Domain creation from the manifest is **Built**
 ([chapter 10](10-domains.md#1082-creating-a-domain);
-[chapter 15](README.md#chapter-15-devices-and-drivers)).
+[chapter 15](15-devices.md)).
 
 ### 5.3.3 A session starts
 

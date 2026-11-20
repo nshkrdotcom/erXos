@@ -1917,11 +1917,22 @@ one system manifest, and back down to a reset.
 **Background boxes.** Booting an AArch64 machine: firmware, boot loader,
 exception levels. Initial images and boot archives. Watchdog timers.
 
-**Status.** Built: boot on QEMU `virt` (1 to 8 CPUs, HVF and TCG) and the
-Raspberry Pi 4 (QEMU `raspi4b` and a real board), the boot image and
-bootable file, the root task starting the manifest's domains, the
-watchdog, crash records, `reboot` and `halt`, reproducible images.
-Designed: consoles with a login, trial boots of an update.
+**Status.** Built: booting on QEMU `virt` (1 to 8 CPUs, under HVF and
+TCG) and on the Raspberry Pi 4 (QEMU's `raspi4b` model and a real 4 GB
+board); the bootable file in both forms, with every check on the boot
+image made before a byte moves; the root task's first steps and ERTS
+booting the system release; the domain service starting the manifest's
+domains in boot order and restarting them within their intensity;
+root's automatic session at the console in a development build; the
+root service's watchdog, petted by `erx_watchdog`, and on the Pi 4 the
+code that arms the board's hardware watchdog; one end path with a
+crash record on the console; `reboot` and `halt`; seeding from the Pi
+4's hardware random generator; reproducible images. Designed: a typed
+login at the console; the manifest's partial boot; a watchdog pet that
+waits on the services' answers; the ordered end's deadline, the
+vault's quiesce and the storage freeze; the reset count and the rescue
+configuration; the trial request; a release that refuses to boot on a
+weak seed; signed slots; the Raspberry Pi 5.
 
 1. **The bootable file and the boot image.** The one file a loader boots
    (Fiasco's `bootstrap`) with the boot image
@@ -1977,18 +1988,29 @@ outside its own code.
 Coverage-guided fuzzing and sanitizers. Model checking (TLA+) and
 bounded proofs (CBMC). Reproducible builds.
 
-**Status.** Built: `make check-oracle` against stock OTP 29.1.2 and
-musl's `libc-test`; TLA+ models of the lane, connections and links;
-herd7 litmus tests; CBMC harnesses of C17 code; fuzz targets;
-sanitizers; chokepoint checks with seeded violations; the stack proof;
-reproducible images and deterministic boots; QEMU suites. Designed: the
-TLA+ models of the host link's sessions and the update protocol; the
-kernel interface's conformance suite.
+**Status.** Built: the oracles: `make check-oracle`, which runs OTP
+29.1.2's emulator, kernel, stdlib and compiler suites on erXos and on
+stock OTP and compares them case by case, then runs musl's
+`libc-test`; the funnel's differential test against
+`binary_to_term/1`; and the command shell against plan9port's `rc` and
+the terminal emulator against libvterm. Also built are the fuzz
+targets and their budgets, the sanitizer runs, the chokepoint checks
+and the stack proof. The models and bounded proofs are built: the TLA+
+models of the lane, connections and links, the herd7 litmus tests and
+the CBMC harnesses. So are the exhaustive explorations of the TCP
+core, the USB hub machine, the pipe server and the host link's 9P
+bridge; reproducible boot images and the deterministic-mode
+transcript; the QEMU suites; and the seeded faults of each of these.
+Designed: the TLA+ models of the update protocol and of the host
+link's sessions; the kernel interface's conformance cases (the harness
+is built, its roster holds one pending case); the full suites of
+hostile programs; the fuzz campaign against Fiasco's system calls; and
+the further oracles section 25.1.4 lists.
 
 1. **Agreement with ground truth.** Behaviour that disagrees with an
    independent oracle is a bug until it is explained and pinned by a
-   test. OTP's own suites run on erXos and on stock OTP in an isolated
-   Linux container, compared case by case; musl's tests run against
+   test. OTP's own suites run on erXos and on stock OTP on the
+   development host, compared case by case; musl's tests run against
    erXos's C library.
    *Draws on:* [design.md, Testing and the oracle](../design.md#testing-and-the-oracle),
    [design-host-oracle.md](../design-host-oracle.md).
@@ -2042,8 +2064,8 @@ chapter's Background box (TCP window, GATT, ELF, 9P), and erXos's own
 [design.md, The model](../design.md#the-model) and the terms each chapter
 introduces. A reader who meets a term before its chapter finds it here,
 in alphabetical order, with the chapter to turn to. The first version,
-[a-glossary.md](a-glossary.md), lists the terms of chapters 1 to 4; each
-later chapter adds its own.
+[a-glossary.md](a-glossary.md), lists the terms of chapters 1 to 25
+and the appendices.
 
 ## Appendix B. Reading the Design Documents
 
@@ -2058,6 +2080,14 @@ chapter leads into which documents.
 *About 8 pages.* Host setup, fetching pinned sources, the oracle
 bootstrap, `make check`, booting in QEMU and making a Raspberry Pi 4
 card, and hosted mode.
+
+**Status.** Built: everything this appendix tells you to run. The host
+setup on macOS and FreeBSD, `make fetch` against the pins of
+`deps.lock`, `make setup` and the oracle bootstrap, `make check` and
+the slower gates, `tools/erx boot` on QEMU, the QEMU medium and the
+Raspberry Pi 4 card from `make pack`, netbooting a board from a Mac,
+and hosted mode on macOS.
+
 *Draws on:* [README.md, Getting started](../../README.md#getting-started),
 [guide/README.md](../guide/README.md), [design-build.md](../design-build.md).
 
@@ -2065,6 +2095,15 @@ card, and hosted mode.
 
 *About 6 pages.* The dependency table, why each third-party component
 pays for itself, and how licenses and notices travel with every image.
+
+**Status.** Built: the pins of `deps.lock` and their check at fetch; an
+`ORIGIN.md` beside every import, with the change-notice check that
+`make check` runs; the packer's refusal of any file of unknown
+provenance; the license rule `LicenseCheck` and its closed table; and
+the `NOTICES` file that every packed system image carries as
+`system/NOTICES`. Designed: a copy of `NOTICES` beside the boot image
+in each slot's boot partition, and the rows marked as designed.
+
 *Draws on:* [design.md, Dependencies](../design.md#dependencies),
 [design.md, Licenses and notices](../design.md#licenses-and-notices).
 

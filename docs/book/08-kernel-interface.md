@@ -931,7 +931,7 @@ bound object never moves to another group. All of this is Built
 
 A device belongs to the domain that the system manifest, the file that
 lists the machine's domains and what each holds, gives it to
-([chapter 15](README.md#chapter-15-devices-and-drivers)). The root
+([chapter 15](15-devices.md)). The root
 makes the objects a driver needs, and the domain library passes them
 on, as it passed the crash area:
 
