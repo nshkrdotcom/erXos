@@ -108,6 +108,33 @@ answer, or descriptor erx_usb_desc or the claim refuses, gives the port up
 with the step and the reason, through one throw caught in
 device_answered/6.
 
+**A function's end.** `{function_ended, Ref, Interface}`, which the bus
+process sends when a running function's process ends while its device
+stays, resets the function's pipes other than EP0 one at a time,
+`{reset_pipe, Ref, Interface, Address}` each, the next sent only on the
+last one's `ok`, and `{start, Ref, [Function]}` starts the function again
+once every one has answered, so its new instance never meets a transfer, a
+halt or a toggle of the old one. A function starts again at most
+`usb_function_restarts_max` times in any `usb_function_restart_window_ms`,
+counted as a port's attempts are, by admit/4; an end past them, or a reset
+that fails, gives its device's port up.
+
+A function's run is `running` or the pipes it has still to reset, the first
+of them in flight. An end named for a function not running, or a reset's
+answer for a pipe not in flight, is ignored. A reset's answer is stale by
+construction, since the controller answers every reset once and a pipe's
+next reset is sent only after its last answer was taken. An end is not:
+the bus process sends exactly one end for each instance it started, after
+every message that instance sent, which a monitor of the instance's own
+process gives, and reports a start that fails as that instance's end. A hub function's end leaves the report it was handling answered to
+no one, and its next instance's first report reads every port again, leaving
+each whose status agrees with its state as it is.
+
+**Diagnostics.** A port is logged as given up, `{log, Hub, Port, {failed,
+Reason}}`, when update_port/4 moves it into `disabling` or `disabled` from
+a state that is neither; only a connection change leaves those two, so a
+port's failure is logged once per connection.
+
 Every status word comes from a device and is decoded by erx_usb_hub_core,
 which refuses a malformed one; a malformed status or answer, like a failed
 port operation, detaches an external hub. The root hub's operations are the
@@ -116,7 +143,7 @@ controller process's register accesses and do not fail.
 
 -export([new/1, step/3, ports/1, histories/1, devices/1]).
 
--export_type([state/0, event/0, action/0, hub_id/0, ref/0, port_state/0, port_history/0, step/0]).
+-export_type([state/0, event/0, action/0, hub_id/0, ref/0, port_state/0, port_history/0, step/0, run/0]).
 
 -include("generated/erx_abi.hrl").
 
@@ -179,6 +206,8 @@ hub's.
                | {addressed, ref(), step(), {ok, pos_integer()} | {error, term()}}
                | {control_done, ref(), step(), {ok, binary()} | {error, term()}}
                | {evaluated | endpoints_configured, ref(), step(), ok | {error, term()}}
+               | {function_ended, ref(), Interface :: byte()}
+               | {pipe_reset, ref(), Interface :: byte(), Address :: byte(), ok | {error, term()}}
                | expired.
 
 -doc "An enumeration request as the core makes it, before request/4 names its device and step.".
@@ -203,8 +232,9 @@ hub's.
                 | {evaluate_context, ref(), step(), #{ep0_packet := pos_integer()}}
                 | {configure_endpoints, ref(), step(), endpoints()}
                 | {start, ref(), [erx_usb_claim:function_()]}
+                | {reset_pipe, ref(), Interface :: byte(), Address :: byte()}
                 | {detach, ref()}
-                | {log, hub_id(), port_no(), over_current}
+                | {log, hub_id(), port_no(), over_current | {failed, term()}}
                 | {deadline, ms()}.
 
 %% A hub; `ports` and `histories` have the same keys, every port of the hub, since
@@ -218,14 +248,24 @@ hub's.
 -doc """
 A device: its place, speed, slot and translator, and what its enumeration
 has read so far: its device descriptor, its claimed functions and, for a
-hub, its hub descriptor.
+hub, its hub descriptor; and, once configured, its functions' runs by
+interface.
 """.
 -type device() :: #{port := {hub_id(), port_no()}, route := [port_no(), ...], speed := speed(),
                     slot := none | pos_integer(),
                     tt := none | {hub_id(), port_no()},
                     descriptor := none | erx_usb_desc:device(),
                     functions := [erx_usb_claim:function_()],
+                    runs := #{Interface :: byte() => run()},
                     hub := none | erx_usb_desc:hub()}.
+
+-doc """
+A claimed function's run: `running`, or ended and with the addresses of its
+pipes still to reset, in order, the first of them in flight; and the times of
+its ends within the last `usb_function_restart_window_ms`, oldest first, at
+most `usb_function_restarts_max` of them.
+""".
+-type run() :: #{state := running | {resetting, [byte(), ...]}, ends := [ms()]}.
 
 -opaque state() :: #{hubs := #{hub_id() => hub()}, devices := #{ref() => device()},
                      waiting := [{hub_id(), port_no()}], next := ref()}.
@@ -280,6 +320,10 @@ event({Kind, Ref, Step, Result}, Now, State)
   when Kind =:= slot; Kind =:= addressed; Kind =:= control_done; Kind =:= evaluated;
        Kind =:= endpoints_configured ->
     device_answered(Ref, Step, Kind, Result, Now, State);
+event({function_ended, Ref, Interface}, Now, State) ->
+    function_ended(Ref, Interface, Now, State);
+event({pipe_reset, Ref, Interface, Address, Result}, _Now, State) ->
+    pipe_reset(Ref, Interface, Address, Result, State);
 event(expired, Now, State = #{hubs := Hubs}) ->
     lists:foldl(fun(Id, Acc) -> expire_hub(Id, Now, Acc) end, {[], State}, lists:sort(maps:keys(Hubs))).
 
@@ -447,18 +491,87 @@ multi_tt(Functions) ->
     #{alternate := Alternate} = hub_function(Functions),
     Alternate =:= ?ERX_USB_HUB_MULTI_TT_ALTERNATE.
 
-%% The device configured: its port `running`, its functions started, and a hub's
-%% ports added `off`.
-configured(Ref, #{port := {Id, N}, speed := Speed, route := Route, functions := Functions, hub := Hub},
+%% The device configured: its port `running`, its functions started and running,
+%% and a hub's ports added `off`.
+configured(Ref, Device = #{port := {Id, N}, speed := Speed, route := Route, functions := Functions, hub := Hub},
            State0 = #{hubs := Hubs}) ->
+    Runs = maps:from_list([{Interface, #{state => running, ends => []}} || #{interface := Interface} <- Functions]),
+    State1 = put_device(Ref, Device#{runs := Runs}, State0),
     State = case Hub of
                 none ->
-                    State0;
+                    State1;
                 #{ports := Ports, power_good := Units} ->
                     Added = hub({hub, hub_speed(Speed)}, Ports, Units, multi_tt(Functions), hub_power(Route)),
-                    State0#{hubs := Hubs#{Ref => Added}}
+                    State1#{hubs := Hubs#{Ref => Added}}
             end,
     then([{start, Ref, Functions}], set_port(Id, N, {running, Ref}, State)).
+
+%% A function's end (docs/design-usb.md, "A function's end" and "Failure handling").
+
+%% Function Interface of device Ref ended while the device stays: its pipes are
+%% reset, then it starts again, when fewer than usb_function_restarts_max of its
+%% ends fell in the last usb_function_restart_window_ms; past them its device's
+%% port is given up. An end named for a device gone or a function not running is
+%% stale.
+function_ended(Ref, Interface, Now, State) ->
+    case find_run(Ref, Interface, State) of
+        #{state := running, ends := Ends} ->
+            case admit(Ends, Now, ?ERX_USB_FUNCTION_RESTARTS_MAX, ?ERX_USB_FUNCTION_RESTART_WINDOW_MS) of
+                {admitted, Admitted} ->
+                    #{pipes := Pipes} = claimed(Ref, Interface, State),
+                    reset_next_or_start(Ref, Interface, [Address || #{address := Address} <- Pipes], Admitted,
+                                        drop_reporter(Ref, Interface, State));
+                {refused, _Until} ->
+                    fail_device(Ref, {function, Interface, restarts}, State)
+            end;
+        _NotRunning ->
+            {[], State}
+    end.
+
+%% The answer to the reset of pipe Address of ended function Interface, taken only
+%% while that reset is in flight: on `ok` the next pipe's reset or the function's
+%% start; otherwise its device's port is given up.
+pipe_reset(Ref, Interface, Address, Result, State) ->
+    case find_run(Ref, Interface, State) of
+        #{state := {resetting, [Address | Left]}, ends := Ends} ->
+            case Result of
+                ok -> reset_next_or_start(Ref, Interface, Left, Ends, State);
+                {error, Reason} -> fail_device(Ref, {function, Interface, {reset_pipe, Reason}}, State)
+            end;
+        _NotInFlight ->
+            {[], State}
+    end.
+
+%% An ended function's next pipe reset, or, with none left, its start again.
+reset_next_or_start(Ref, Interface, [], Ends, State) ->
+    {[{start, Ref, [claimed(Ref, Interface, State)]}],
+     put_run(Ref, Interface, #{state => running, ends => Ends}, State)};
+reset_next_or_start(Ref, Interface, Left = [Address | _], Ends, State) ->
+    {[{reset_pipe, Ref, Interface, Address}],
+     put_run(Ref, Interface, #{state => {resetting, Left}, ends => Ends}, State)}.
+
+%% A hub function's end: the report its hub was handling is the ended instance's,
+%% so it is answered to no one; the next instance's first report names every port.
+drop_reporter(Ref, Interface, State) ->
+    case claimed(Ref, Interface, State) of
+        #{driver := erx_usb_hub} -> with_hub(Ref, fun(Hub) -> Hub#{reporter := none} end, State);
+        #{} -> State
+    end.
+
+find_run(Ref, Interface, #{devices := Devices}) ->
+    case Devices of
+        #{Ref := #{runs := #{Interface := Run}}} -> Run;
+        #{} -> none
+    end.
+
+put_run(Ref, Interface, Run, State = #{devices := Devices}) ->
+    Device = #{runs := Runs} = maps:get(Ref, Devices),
+    State#{devices := Devices#{Ref := Device#{runs := Runs#{Interface := Run}}}}.
+
+claimed(Ref, Interface, #{devices := Devices}) ->
+    #{functions := Functions} = maps:get(Ref, Devices),
+    [Function] = [F || F = #{interface := I} <- Functions, I =:= Interface],
+    Function.
 
 %% Device Ref's next step, Step, and its one request, sent naming the device and the
 %% step. The one maker of an enumeration request, so the step a request names, which
@@ -654,23 +767,33 @@ expire_port(_Id, _N, _Port, _Now, State) ->
 %% A settled port starts an enumeration attempt when fewer than usb_port_attempts_max
 %% started in the last usb_port_attempt_window_ms (docs/design-usb.md, "What a device
 %% can make the domain spend"); otherwise it is held until its oldest attempt leaves
-%% the window. Only attempts within the window are kept, so a port keeps at most the
-%% bound however often its device reconnects. A started attempt rearms the port's
-%% over-current log (over_current/4).
+%% the window. A started attempt rearms the port's over-current log (over_current/4).
 attempt(Id, N, Now, State) ->
     History = #{attempts := Attempts} = history(Id, N, State),
-    Recent = [T || T <- Attempts, Now - T < ?ERX_USB_PORT_ATTEMPT_WINDOW_MS],
-    case length(Recent) < ?ERX_USB_PORT_ATTEMPTS_MAX of
-        true ->
-            Started = History#{attempts := Recent ++ [Now], over_current_logged := false},
-            {started, put_history(Id, N, Started, State)};
-        false -> {held, hd(Recent) + ?ERX_USB_PORT_ATTEMPT_WINDOW_MS}
+    case admit(Attempts, Now, ?ERX_USB_PORT_ATTEMPTS_MAX, ?ERX_USB_PORT_ATTEMPT_WINDOW_MS) of
+        {admitted, Admitted} ->
+            {started, put_history(Id, N, History#{attempts := Admitted, over_current_logged := false}, State)};
+        {refused, Until} ->
+            {held, Until}
+    end.
+
+%% The window a port's attempts and a function's restarts are counted in: an event
+%% at Now is admitted when fewer than Max of Times, the earlier ones' times oldest
+%% first, fell in the last Window ms, and Times keeps only those and Now, so it never
+%% holds more than Max however often the event recurs; otherwise it is refused until
+%% the oldest of them leaves the window.
+admit(Times, Now, Max, Window) ->
+    Recent = [T || T <- Times, Now - T < Window],
+    case length(Recent) < Max of
+        true -> {admitted, Recent ++ [Now]};
+        false -> {refused, hd(Recent) + Window}
     end.
 
 %% A device for the port at the end of its reset recovery.
 enumerate(Id, N, Speed, State = #{devices := Devices, next := Ref = {device, Next}}) ->
     Device = #{port => {Id, N}, route => route(Id, State) ++ [N], speed => Speed, slot => none,
-               tt => translator(Id, N, Speed, State), descriptor => none, functions => [], hub => none},
+               tt => translator(Id, N, Speed, State), descriptor => none, functions => [], runs => #{},
+               hub => none},
     request(Ref, enabling_slot, enable_slot, State#{devices := Devices#{Ref => Device}, next := {device, Next + 1}}).
 
 route(root, _State) -> [];
@@ -871,7 +994,8 @@ set_port(Id, N, Port, State) ->
 
 %% The one way a port's state changes: an occupant the new state does not keep is
 %% detached first, with every device below it, so the state holds a device exactly
-%% while a port holds its reference. A port of a hub already gone is left alone.
+%% while a port holds its reference, and a port given up is logged as it is. A port
+%% of a hub already gone is left alone.
 update_port(Id, N, Fun, State) ->
     case find_port(Id, N, State) of
         none ->
@@ -882,9 +1006,23 @@ update_port(Id, N, Fun, State) ->
                                       [Ref] -> detach_device(Ref, State);
                                       [] -> {[], State}
                                   end,
-            {Detached, with_hub(Id, fun(Hub = #{ports := Ports}) -> Hub#{ports := Ports#{N := New}} end,
-                                Vacated)}
+            {Detached ++ failure_log(Id, N, Old, New),
+             with_hub(Id, fun(Hub = #{ports := Ports}) -> Hub#{ports := Ports#{N := New}} end, Vacated)}
     end.
+
+%% A port's failure is logged as the port moves into `disabling` or `disabled` from
+%% a state that is neither. Only a connection change leaves those two, so a port's
+%% failure is logged once per connection (docs/design-usb.md, "What a device can
+%% make the domain spend").
+failure_log(Id, N, Old, New) ->
+    case {failure(Old), failure(New)} of
+        {none, {failed, Reason}} -> [{log, Id, N, {failed, Reason}}];
+        {_Old, _New} -> []
+    end.
+
+failure({disabling, Reason, _Held}) -> {failed, Reason};
+failure({disabled, Reason}) -> {failed, Reason};
+failure(_Port) -> none.
 
 %% The actions Actions, then those of a step's answer.
 then(Actions, {More, State}) -> {Actions ++ More, State}.

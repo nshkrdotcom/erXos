@@ -7865,6 +7865,14 @@ to the corpus and follow rc
   the settle would break the argument silently. Check it instead: in `follow/2`, assert for every answer taken alone
   that its actions are only the device's next request, its `start` or its new hub's `power_on`, with the deadline
   unchanged and no detach.
+* [Medium] USB, the bus core's function ends (`erx_usb_bus_core`, [design-usb.md](docs/design-usb.md#ports-hubs-and-devices-the-bus-core)):
+  `{function_ended, Ref, Interface}` and a hub function's `{changed, ...}` carry no instance, so their staleness rests
+  on the bus process (P32) sending one end per instance after everything that instance sent, which the moduledoc
+  states as its contract; a second notice of one end would reset a live instance's pipes and start a second one,
+  and an ended hub instance's late report would take `handled` from its successor. A run generation that `start`
+  carries and the bus process echoes would make both stale by construction; decide it with P32's design. The
+  exploration also never checks that a restart starts the claimed function unchanged, and no seed removes the
+  hub function's reporter drop.
 * [Medium] USB, the bus core's seeded depths (`test/host/erx_usb_bus_core_test.rb`): each exploration seed names a
   depth that must lie within one of the test module's `?DEPTHS`, and nothing checks that; export the depths and have
   the host test assert it, so dropping a depth from the module cannot leave a seed caught only by its own run.

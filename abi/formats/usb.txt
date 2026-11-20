@@ -32,6 +32,11 @@ limit usb_drives_max u32 4
 # a settled port waits until its oldest attempt leaves the window.
 limit usb_port_attempts_max u32 3
 limit usb_port_attempt_window_ms u32 60000
+# The restarts of one function in any usb_function_restart_window_ms, counted as a
+# port's attempts are; an end past them detaches the function's device
+# (design-usb.md, "Failure handling").
+limit usb_function_restarts_max u32 3
+limit usb_function_restart_window_ms u32 60000
 
 # A setup packet's bmRequestType: the direction in bit 7, the kind in bits 6:5 and the
 # recipient in bits 4:0 (usb.h:157-165).
