@@ -7880,7 +7880,7 @@ to the corpus and follow rc
   entries and hub fields, route, speed, root port and TT left 0, as the design's table says, though a controller that
   evaluates the whole slot context with its add flag would misread them; a non-EP0 control endpoint takes index
   2n + 1 (xHCI 4.5.1); and whether a setup packet's direction bit must match the data stage's.
-* [Low] USB, the TRB ring form's design text (design-usb.md, "Two rules every ring keeps"): it says a transfer that
+* [Low] USB, the TRB ring form's design text (design-usb.md, "Two rules every ring keeps, on every controller"): it says a transfer that
   continues past the link sets the link's chain bit, but each control stage is a TD of one TRB (xHCI 4.11.2.2), so no
   TD of the form spans the link and `erx_device_trb.c` never sets it; and a ring's queue starts at the block's enqueue
   position and cycle state, not at "its ring's base", which keeps stale TRBs of an earlier queue on the other cycle
