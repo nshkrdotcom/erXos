@@ -1,17 +1,18 @@
 # Chapter 25. Checking the System
 
-> **Status.** **Built:** `make check-oracle`, which runs OTP 29.1.2's
-> emulator, kernel, stdlib and compiler suites on erXos and on stock
-> OTP and compares them case by case, then runs musl's `libc-test`;
-> the funnel's differential test against `binary_to_term/1`; the
-> command shell against plan9port's `rc` and the terminal emulator
-> against libvterm; the fuzz targets and their budgets; the
-> sanitizer runs; the chokepoint checks and the stack proof; the TLA+
-> models of the lane, connections and links; the herd7 litmus tests;
-> the CBMC harnesses; the exhaustive explorations of the TCP core, the
-> USB hub machine, the pipe server and the host link's 9P bridge;
-> reproducible boot images and the deterministic-mode transcript; the
-> QEMU suites; and the seeded faults of each of these.
+> **Status.** **Built:** the oracles: `make check-oracle`, which runs
+> OTP 29.1.2's emulator, kernel, stdlib and compiler suites on erXos
+> and on stock OTP and compares them case by case, then runs musl's
+> `libc-test`; the funnel's differential test against
+> `binary_to_term/1`; and the command shell against plan9port's `rc`
+> and the terminal emulator against libvterm. Also built are the fuzz
+> targets and their budgets, the sanitizer runs, the chokepoint checks
+> and the stack proof. The models and bounded proofs are built: the
+> TLA+ models of the lane, connections and links, the herd7 litmus
+> tests and the CBMC harnesses. So are the exhaustive explorations of
+> the TCP core, the USB hub machine, the pipe server and the host
+> link's 9P bridge; reproducible boot images and the deterministic-mode
+> transcript; the QEMU suites; and the seeded faults of each of these.
 > **Designed:** the TLA+ models of the update protocol and of the host
 > link's sessions; the kernel interface's conformance cases (the
 > harness is built, its roster holds one pending case); the full
@@ -34,9 +35,10 @@ what its author expected.
 FreeBSD checks itself with a test suite installed under `/usr/tests`
 and run by Kyua, with continuous builds of every architecture, and
 with outside fuzzers such as syzkaller driving its system calls.
-<!-- check: FreeBSD's test suite lives in /usr/tests and runs under
-Kyua; syzkaller fuzzes FreeBSD's system calls. Not read from a source
-in this task. -->
+<!-- check: syzkaller fuzzes FreeBSD's system calls (syzkaller's
+docs/freebsd); FreeBSD runs continuous builds of every architecture.
+Neither read from a source. /usr/tests and Kyua are confirmed by
+tests(7). -->
 Most of those tests, like most tests anywhere, state their expected
 answers by hand.
 
@@ -104,7 +106,8 @@ at six to seven hours.
 
 A difference is allowed only when a row of
 `test/oracle/hosted_known_differences/` explains it. Two rows of the
-emulator group's table:
+emulator group's table, abridged (the spacing is narrowed and the
+second reason cut short):
 
 ```text
 a_SUITE  -  long_timers    failed  cannot run: no distribution; the case starts a peer node
@@ -126,7 +129,8 @@ The hosted runtime, a macOS process, reads the same tables
 (`make check-oracle-hosted` runs a fast subset on it), so a case that
 differs there and not under QEMU is a bug in one of the two.
 
-Stock OTP's full suites also run alone in an offline Linux container
+Stock OTP's emulator, kernel and stdlib suites, in full, also run
+alone in an offline Linux container
 with no route out (`make check-oracle-host`,
 [design-host-oracle.md](../design-host-oracle.md#oracle-behavior-and-verification)).
 Both runs are **Built**.
@@ -138,13 +142,14 @@ UNIX kernel
 ([chapter 13](13-native-programs.md#137-the-posix-lite-personality)).
 musl's maintainers publish `libc-test`, small C programs that each
 print an error line for every contract they find broken.
-`make check-oracle` runs it in test tasks under QEMU, on four CPUs,
-after OTP's suites.
+`make check-oracle` runs them under QEMU, each test as a small program
+of its own, on four CPUs, after OTP's suites.
 
 The verdicts live in `test/conformance/libc-test-verdicts.txt`. A test
 not listed there must pass. Each listed test names the result it must
 have, the kind of cause and the reason, and a failure also names the
-source lines of libc-test that its error lines cite. One line:
+source lines of libc-test that its error lines cite. One line, its
+spacing narrowed:
 
 ```text
 functional/pthread_cancel  timed_out  fiasco  a thread blocked in a call is not interrupted by pthread_cancel: design-fiasco.md
@@ -166,7 +171,8 @@ frame from another domain
 own code facing a hostile writer. Section
 [10.3.4](10-domains.md#1034-how-the-funnel-is-checked) introduced its
 differential test, `test/integration/erx_funnel_oracle_test.rb`. The
-test generates random and mutated control terms and payloads. For
+test generates random control terms, the same terms mutated, and
+random payloads. For
 every control term the funnel accepts, stock ERTS's `binary_to_term/1` must
 decode the same tuple, element by element. For every payload it
 accepts, the funnel must charge exactly the heap words that ERTS's own
@@ -232,8 +238,9 @@ fail on exactly that property. The runner matches the property's name
 and TLC's exit status, not a substring of its output, so a parser
 error, a timeout or another property fails the run.
 
-**A litmus test** has a twin without its fences, which must reach the
-bad outcome the fenced test never reaches (section 25.4.2).
+**A litmus test** has a twin with its fences, or its acquire and
+release orderings, removed; the twin must reach the bad outcome the
+original never reaches (section 25.4.2).
 
 **A CBMC harness** has seeded defects in `test/cbmc/roster.json`. Each
 is one edit of the C core the harness checks, applied to a copy of the
@@ -248,7 +255,8 @@ seven broken copies of it. One allows 257 levels of nesting instead of
 command's length wrong. Each copy must be caught by the property aimed
 at it.
 
-**The QEMU gate** is seeded by mutating `liberx` itself.
+**The QEMU gate**, which boots the system and judges its console
+(section 25.7), is seeded by mutating `liberx` itself.
 `test/integration/qemu_gate_mutant_test.rb` builds a probe guest from
 a copy of the sources in which the Fiasco backend's message call asks
 for one byte more than a full message holds. The guest must fail its
@@ -274,12 +282,13 @@ control run matters as much as the mutant: without it, a gate that
 always failed would pass the test.*
 
 `make check-native-seeds` does the same for the native threads,
-watchdog and interrupt suites. All of these seeds are **Built**.
+watchdog, task and interrupt suites. All of these seeds are **Built**.
 
 One more seed guards the gates themselves. Gates find what they run
 from files in the tree (section 25.8), so deleting a fuzz target or a
 rule would make a gate quietly run less. `test/host/gate_baseline_test.rb`
-holds a floor: each chokepoint rule's and each fuzz target's least
+holds a floor under what each gate runs: the sanitizer tests, the
+QEMU suites, and each chokepoint rule's and C fuzz target's least
 number of seeds. Adding to a gate never touches that file; taking
 something away must, so every removal is a visible edit.
 
@@ -314,9 +323,9 @@ target for executable headers, `elf_target.rb`, compiles
 `liberx/elf_plan.c` and `liberx/exec/load_plan.c`, the files the
 system links. Its seeds, built in Ruby, include valid executables,
 every prefix of each, and one with an unlisted dynamic tag. It checks
-more than the absence of a crash. Every plan the parser accepts is
-laid out as the loader lays it out, and each step must stay inside its
-span and never write code.
+more than the absence of a crash. Every position-independent plan the
+parser accepts is laid out as the loader lays it out, and each step
+must stay inside its span and never write code.
 
 `make check-fuzz` compiles each target with
 `-fsanitize=fuzzer,address,undefined` and runs it for a fixed number
@@ -432,19 +441,25 @@ program. Here is the lane's wake handshake, from
 
 ```text
 AArch64 lane-wake-fenced
-{ 0:X1=a; 0:X3=b; 1:X1=a; 1:X3=b; }
- P0           | P1           ;
- MOV W0,#16   | MOV W0,#17   ;
+"the producer stores wpos (a), fences, loads wake (b); the consumer stores wake, fences, loads wpos: one load sees the other store"
+{
+0:X1=a; 0:X3=b;
+1:X1=a; 1:X3=b;
+}
+ P0           | P1 ;
+ MOV W0,#16   | MOV W0,#17 ;
  STLR W0,[X1] | STLR W0,[X3] ;
- DMB ISH      | DMB ISH      ;
+ DMB ISH      | DMB ISH ;
  LDR W2,[X3]  | LDAR W2,[X1] ;
 exists (0:X2=0 /\ 1:X2=0)
 ```
 
 P0, the producer, stores its write position (`a`), fences, and loads
 the consumer's wake flag (`b`). P1, the consumer, does the mirror
-image. The `exists` line is the lost wake. Both loads read 0: the
-producer thinks the consumer is awake, the consumer thinks nothing was
+image: it sets the wake flag to ask to be woken, fences, and loads
+the write position. The `exists` line is the lost wake. Both loads
+read 0: the producer sees no request to wake anyone, the consumer
+thinks nothing was
 written, and both wait. herd7 must report that the outcome never
 happens under Arm's model. The twin, `lane-wake-unfenced.litmus`, is
 the same program without the two `DMB ISH` lines, and must reach it.
@@ -454,7 +469,13 @@ the bad outcome.
 `test/litmus/` holds sixteen such files, for the lane's wake and ring
 positions and the pipe's lock
 ([chapter 13](13-native-programs.md#1345-doorbells-and-lost-wakeups)).
-The C11 forms run under RC11, a repaired model of C11's atomics.
+Five of the eight pairs test acquire and release orderings rather
+than fences: a release store keeps every earlier access before it,
+and an acquire load keeps every later access after it
+([section 1.7.3](01-operating-systems.md#173-memory-ordering)), and
+the twin uses relaxed accesses, which order nothing. One pair is
+written in C11's atomics rather than Arm instructions; herd7 runs it
+under RC11, a repaired model of C11's atomics.
 `make check-litmus` is **Built**. It checks the litmus programs, not
 the compiled lane, so a compiler that dropped a fence would go unseen.
 
@@ -469,7 +490,16 @@ runner](../design-verification.md#cbmc-harnesses-and-runner)). The
 harnesses cover four C17 cores that Fiasco links
 ([chapter 6, section 6.7.1](06-construction.md#671-the-stack-proof)):
 the budget arithmetic; the capability table's lookup, rights and
-slot-closing; the grace tracker; and the page funnel.
+slot-closing; the grace tracker; and the page funnel. The **grace
+tracker** decides when memory that another CPU might still be reading
+may be reused. A retired item is stamped with a period. The period
+completes once every CPU has reported passing a point where it holds
+no such reference. The **page funnel** moves pages between a budget's
+reserve and the lists of free and released pages, keeping each
+reserve's count equal to the pages it holds. A released page goes on
+its list, stamped by the grace tracker, before the budget it was
+charged to is refunded, and it is reused only once its period has
+completed.
 
 A harness computes its expected answer from the contract in the
 design and the core's header, never from the core's own helpers.
@@ -602,7 +632,9 @@ An expected cell the suite did not report becomes `not_run`, never
 ([chapter 21, section 21.2](21-live-machine.md#212-never-fabricate)),
 applied to tests.
 
-Suites run under HVF. TCG runs the deterministic transcript, one boot
+Suites run under HVF, except that the landing gate of section 25.8
+may move a suite's multi-CPU cells to a second host, which runs them
+under TCG. TCG also runs the deterministic transcript, one boot
 to the shell on one CPU, and the Raspberry Pi 4 suite, whose board
 model starts its CPUs at a privilege level HVF cannot host. A host
 whose QEMU lacks either accelerator fails the gate before anything is
@@ -651,7 +683,8 @@ stand-in tools. A touched suite runs through
 `tools/erx check-qemu --suite NAME`, which reuses passing boots.
 
 The **full gate** runs before a large body of work merges, and in the
-background on a spare machine. It is `make check-oracle`, the
+background on a spare machine; design-build.md and `tools/erx` call
+this tier the milestone gate. It is `make check-oracle`, the
 sanitizer runs, the fuzz budgets of `make check-fuzz`,
 `make check-reproducible`, `make check-cbmc`, `make check-tla`,
 `make check-litmus`, and `make check-qemu`, which boots every suite
@@ -679,8 +712,11 @@ failure they find gets a regression test rather than a revert.*
 The gates run what the tree declares. A chokepoint rule is a file in
 `tools/lib/erx/chokepoint_rules/`, a sanitizer test carries its comment
 line, a QEMU suite is a file in `tools/lib/erx/qemu_suites/`, and a
-fuzz target is its pair of files. Adding a check means adding a file,
-so parallel work never edits a shared list, and the baseline of
+fuzz target is its pair of files. Adding a chokepoint rule, a
+sanitizer test, a suite or a fuzz target means adding a file, so
+parallel work never edits a shared list for them. The litmus tests,
+the TLA+ configurations and the CBMC harnesses are the exception:
+each kind is listed in one central file. The baseline of
 section 25.2 makes removal visible. Every command runs under one
 runner with a log and a hard deadline, and a check that cannot run,
 for a missing tool or a timeout, fails; none is reported as skipped
@@ -693,7 +729,7 @@ Every check here answers a narrower question than its name suggests.
 TLC checks a model, not the machine code. herd7 checks litmus
 programs, not the compiled lane. CBMC's answer holds only within its
 bounds, for one thread. ThreadSanitizer finds data races but does not
-show that an acquire-release protocol is right. An oracle cannot see a
+show that a protocol's memory ordering is right. An oracle cannot see a
 bug it shares with erXos.
 
 Some parts of the system are checked less than the rest. Fiasco's C++
@@ -713,9 +749,11 @@ against the runtime they built, borrows decades of their judgment. The
 price is the known-differences tables, which must stay exact; the
 stale-row rule keeps them from becoming a place to hide bugs.
 
-**Bounded tools over a full proof.** seL4 shows that a microkernel can
-be proved correct down to its binary, at a cost of many person-years
-(Klein et al., 2009). erXos runs on Fiasco and checks its own code
+**Bounded tools over a full proof.** seL4's proof of 2009 shows that
+a microkernel's C code can be proved correct against its
+specification, at a cost of many person-years (Klein et al., 2009).
+<!-- check: the person-years cost is not read from a source in the
+tree; check it against Klein et al., SOSP 2009. --> erXos runs on Fiasco and checks its own code
 with tools whose cost grows with what they check: models of the
 protocols that are hard to get right, bounded proofs of small C cores,
 and exhaustive exploration of pure cores. Each says exactly what it
@@ -724,6 +762,9 @@ covers.
 **Discovery from files over a central list.** A central list of tests
 is an enumeration every change must remember to update
 ([chapter 6, section 6.1](06-construction.md#61-the-list-that-is-never-complete)).
+Files remove that duty. The price is that a deleted file goes
+unnoticed unless something counts it, which is the baseline's job
+(section 25.2), and that removal edits that baseline.
 
 **Slow checks off the commit path.** erXos accepts that a slow check
 may find a fault a few commits late, and fixes it forward with a test,
@@ -763,12 +804,18 @@ every commit; slow ones run on what has landed.
   each check's command, in one list.
 * Leslie Lamport, *Specifying Systems* (2002): TLA+ and TLC, from the
   language's author.
+  <!-- check: Lamport, Specifying Systems, 2002; not verified. -->
 * Jade Alglave, Luc Maranget and Michael Tautschnig, "Herding Cats:
   Modelling, Simulation, Testing, and Data Mining for Weak Memory"
   (2014): the method behind herd7 and its litmus tests.
+  <!-- check: Alglave, Maranget and Tautschnig, Herding Cats, 2014;
+  not verified. -->
 * Daniel Kroening and Michael Tautschnig, "CBMC: C Bounded Model
-  Checker" (2014): the tool behind the C harnesses.
+  Checker", TACAS 2014, LNCS 8413, pp. 389-391: the tool behind the C
+  harnesses.
 * Gerwin Klein et al., "seL4: Formal Verification of an OS Kernel"
   (2009): what a full proof of a microkernel costs and gives.
 * William M. McKeeman, "Differential Testing for Software" (1998):
   the method of section 25.1.
+  <!-- check: McKeeman, Differential Testing for Software, 1998; not
+  verified. -->
