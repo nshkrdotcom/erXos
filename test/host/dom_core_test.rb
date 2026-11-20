@@ -101,7 +101,10 @@ class DomCoreTest < Minitest::Test
       ['index < view->apps.max; index++)', 'index + 1 < view->apps.max; index++)'],
     'an app entry may run two sessions' => [".domains_max = 1, .share = source->grant,", ".domains_max = 2, .share = source->grant,"],
     'a refused placement keeps its entries' => ["\t\t\tview->nprincipals = first - 1;\n", ""],
-    'an app session takes the template memory' => ["\tspec->memory = memory;\n", "\tspec->memory = memory > 0 ? source->memory : 0;\n"]
+    'an app session takes the template memory' => ["\tspec->memory = memory;\n", "\tspec->memory = memory > 0 ? source->memory : 0;\n"],
+    'a bar is taken outside the bridge windows' =>
+      ["bar->address < window->pci ||\n\t\t    bar->address - window->pci > window->size || " \
+       'span > window->size - (bar->address - window->pci))', 'false)']
   }.freeze
 
   def setup
@@ -282,6 +285,29 @@ class DomCoreTest < Minitest::Test
     assert_equal APPS, run_driver(driver, 'apps')
   end
 
+  # The intake of a PCIe report (docs/design-pcie.md, "The catalogue and gives"), as the
+  # driver's pci mode prints each case: its status, the field refused, and whether the
+  # function at 1.0.0 is givable after it. A placing report is taken whole, its BAR
+  # translated by the window from PCI 0xc0000000 to CPU 0x600000000; a later report
+  # gives only what it repeats ready; a BAR outside the window, unaligned, over an
+  # entry's registers or another BAR, or an MSI-X table past its BAR, refuses the report
+  # whole, so the next places again.
+  PCI = [
+    'pci placed 0 none givable=1', 'pci cpu 1 0x600000000+0x1000', 'pci same 0 none givable=1',
+    *%w[changed missing not_ready firmware_lost].map { |name| "pci #{name} 0 none givable=0" },
+    'pci before_mark 0 none givable=1', 'pci marked givable=0', 'pci laid 0 none givable=1',
+    "pci refused_later #{EINVAL} function givable=0", 'pci empty 0 none givable=0', 'pci after_empty 0 none givable=1',
+    *%w[below past_end unaligned entry overlap].map { |name| "pci #{name} #{EINVAL} bars givable=0" },
+    "pci msix_past #{EINVAL} msix_table_offset givable=0", 'pci msix_inside 0 none givable=1',
+    "pci upper_half #{EINVAL} bars givable=0", "pci other_bridge #{EINVAL} bridge givable=0",
+    "pci bus #{EINVAL} bus givable=0", "pci twice #{EINVAL} function givable=0",
+    "pci state #{EINVAL} state givable=0", 'pci after_refusals 0 none givable=1'
+  ].freeze
+
+  def test_a_pci_report_is_taken_whole_or_refused
+    assert_equal PCI, run_driver(driver, 'pci')
+  end
+
   def test_each_mutant_is_caught
     MUTANTS.each do |name, (from, to)|
       text = File.read(File.join(@root, CORE))
@@ -296,7 +322,7 @@ class DomCoreTest < Minitest::Test
 
   private
 
-  MODES = %w[explore cases seeded principal record gives apps].freeze
+  MODES = %w[explore cases seeded principal record gives apps pci].freeze
 
   def clean_lines = @clean_lines ||= MODES.flat_map { |mode| run_driver(driver, mode) }
 

@@ -2266,9 +2266,20 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   window's device is found by the device's path, which a `pci` row does not have, so a system window on a
   block-role PCIe function would be checked against the wrong unit. No platform record has one; key the lookup by
   device index (a unit's span) when one appears.
-* [Low] domain library, PCIe functions on a configured row (`liberx/system/dom_boot_view.c`, `boot_devices`): only
-  device-tree selectors get a role word and peripheral, so a PCIe function placed on a configured row would be of
-  no kind and get no record, window or memory. No manifest places one; give the kind test a PCIe arm first.
+* [Medium] domain library and root, a host bridge's catalogue at boot (`liberx/system/dom_core.c`,
+  `erx_dom_pci_report`; `liberx/backend/fiasco/runtime_entry.c`, `tree_facts`;
+  [design-pcie.md](docs/design-pcie.md#records)): the intake takes a report into an `erx_dom_pci_bridge_t`, but
+  nothing yet holds one per bridge entry, fills its facts from the tree (`erx_dt_bridge`) and the manifest row's
+  index, flags and places, or calls the intake from `erx_domain_lib:pci_report`, and `erx_dom_pci_firmware` does
+not set `firmware_lost`. Land them with the give of a function and the PCIe domain's first report.
+  Until the give of a function lands, a `pci` row of a kind is driven but its give has no record path for it
+  (`dom_apply.c`, `apply_given_words` refuses its empty PATH), so a configured row holding one fails its creation
+  safely; no shipped manifest places one. With the give: compare the layout's vendor and device id with the
+  entry's compatible string in `erx_dom_pci_givable` rather than only in the device service; state in
+  `abi/formats/pcie.txt` how a BAR too large to place is encoded, since the intake refuses a report with any BAR
+  past `pcie_bar_size_log2_max`; refuse in `erx_dt_bridge` a window whose PCI, CPU or size is not page-aligned;
+  check spans across a machine's bridges; and refuse an I/O BAR marked placed, a 32-bit BAR above 4 GiB and a
+  device or function past its bound.
 * [Low] image build, the Pi's single file against the loader's device tree (`ProductionImage::Machine#check_single_file`,
   `Fiasco#first_stage_address`): the bound starts at the entry of users-raspi4b's `bootstrap.elf`, not checked
   against the address QEMU's raspi4b model and the firmware load it at (`QemuPlan::MACHINES` loads, 0x200000). If

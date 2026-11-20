@@ -343,6 +343,50 @@ boot_kind(const erx_manifest_view_t *manifest, const erx_mf_device_t *device)
 }
 
 /*
+ * A PCIe function's entry (docs/design-usb.md, "The Phase 1 part"): its kind
+ * by its identity, the row's role and compatible string as a device-tree
+ * row's is, and its position, the device-tree row of role configuration
+ * whose path its row names as its bridge, and its place on that bridge.
+ * The manifest check proves the bridge a placed PCIe bridge; a row whose
+ * bridge names none, or whose bus no PCIe bus number holds, is refused all
+ * the same, so every function's entry names its bridge's. A function of no
+ * kind is held, not driven, so no give makes its memory.
+ */
+static const char *
+boot_function(const erx_manifest_view_t *manifest, const erx_mf_device_t *device, erx_dom_device_entry_t *entry)
+{
+	const char *const strings = (const char *)manifest->bytes + manifest->header.strings.offset;
+	const erx_device_kind_t *kind = boot_kind(manifest, device);
+	erx_mf_device_t bridge;
+
+	entry->bridge = ERX_MF_NONE;
+	for (uint32_t index = 0; index < manifest->header.devices.count && entry->bridge == ERX_MF_NONE; index++) {
+		if (!erx_manifest_devices_at(manifest, index, &bridge))
+			return ("manifest: a device row the reader cannot read");
+		if (bridge.selector == ERX_MF_SELECTOR_DT && bridge.role == ERX_MF_DEVICE_ROLE_CONFIGURATION &&
+		    bridge.path.length == device->bridge.length &&
+		    memcmp(strings + bridge.path.offset, strings + device->bridge.offset, bridge.path.length) == 0)
+			entry->bridge = index;
+	}
+	if (entry->bridge == ERX_MF_NONE)
+		return ("manifest: a PCIe function's bridge names no PCIe bridge row");
+	if (device->bus > UINT8_MAX)
+		return ("manifest: a PCIe function's bus is not a PCIe bus number");
+	entry->bus = (uint8_t)device->bus;
+	entry->device = device->device;
+	entry->function = device->function;
+	entry->dma_limit = device->dma_limit;
+	if (kind == NULL && entry->memory != 0)
+		return ("manifest: a device of a kind no runtime drives has DMA memory");
+	if (kind != NULL) {
+		entry->role_word = kind->role_word;
+		entry->peripheral = kind->peripheral;
+		entry->compatible = kind->compatible;
+	}
+	return (NULL);
+}
+
+/*
  * Each entry's unit, its unit's name and its holder, from the unit rows'
  * spans of the device table. The reader proved the spans a partition of
  * the table; a span off a row boundary, past the table, or over a device
@@ -388,8 +432,9 @@ boot_units(const erx_manifest_view_t *manifest, erx_dom_device_entry_t *entries)
  * "Devices"): an entry per device row, in its unit and on its unit's
  * holder, and a record per entry with no holder and no object yet. A
  * device-tree device has its register window, as whole pages, and its
- * line; a PCIe function has no window, since configuration space gives
- * it, and a line only at a closed bridge's place. Units are closed under
+ * line; a PCIe function has its kind and position (boot_function), no
+ * window, since its report gives its BARs, and a line only at a closed
+ * bridge's place. Units are closed under
  * sharing a register page and sharing an
  * interrupt line (docs/design-shared-devices.md, "The unit rule"), since a
  * page has at most one MMIO object and a line one IRQ object: devices
@@ -469,7 +514,10 @@ boot_devices(erx_dom_view_t *view, const erx_manifest_view_t *manifest, erx_dom_
 			 * (docs/design-pcie.md, "The closed bus"). */
 			entry->nlines = device.line != 0 ? 1 : 0;
 			entry->lines[0] = device.line;
+			if ((reason = boot_function(manifest, &device, entry)) != NULL)
+				return (reason);
 		}
+		entry->selector = device.selector;
 		records[index] = (erx_dom_device_t){ .index = index, .resource = { ERX_CAP_NULL },
 		    .dma = { ERX_CAP_NULL }, .memory = { ERX_CAP_NULL } };
 		for (uint32_t at = 0; at < ERX_DOM_UNIT_WINDOWS_MAX; at++)

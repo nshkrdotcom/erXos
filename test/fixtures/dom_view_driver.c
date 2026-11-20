@@ -70,6 +70,10 @@ print_device(uint32_t index, const erx_dom_device_entry_t *entry)
 	printf("device %" PRIu32 " unit=%.*s compatible=%s", index, (int)entry->unit_name_len,
 	    entry->unit_name, entry->compatible == NULL ? "none" : entry->compatible);
 	print_ranges(entry);
+	if (entry->selector == ERX_MF_SELECTOR_PCI)
+		printf(" bridge=%" PRIu32 " place=%u.%u.%u role=%s peripheral=%s", entry->bridge, entry->bus,
+		    entry->device, entry->function, entry->role_word == NULL ? "none" : entry->role_word,
+		    entry->peripheral == NULL ? "none" : entry->peripheral);
 	printf(" lines=");
 	for (uint32_t at = 0; at < entry->nlines; at++)
 		printf("%s%" PRIu32, at == 0 ? "" : ",", entry->lines[at]);

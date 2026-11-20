@@ -780,15 +780,16 @@ record lists, each a bus, device, function and pin, at most
 on bus 0, which lies above every root port.
 
 Limits: `pcie_bridges_max` 2 per domain, `pcie_functions_max` 32 per
-bridge. The generator checks each layout's offsets and size; the C reader
-refuses a record whose enums are out of their sets, whose capability
-offsets lie outside 256 bytes, or whose 64-bit BAR is not followed by an
-absent upper half, so the library's intake ([The catalogue and
-gives](#the-catalogue-and-gives)) starts from a well-formed record and
-checks only what relates records to windows and to each other.
+bridge. The generator checks each layout's offsets and size, and its C
+reader, `erx_pcie_function_decode`, gives each field as the bytes hold
+it, its capability offsets within 256 bytes by their width. The library's
+intake ([The catalogue and gives](#the-catalogue-and-gives)) refuses a
+record whose state or BAR kind, flags or size lies outside its set, or
+whose 64-bit BAR is not followed by an absent upper half, before it
+checks what relates records to windows and to each other.
 
-**The catalogue.** A host bridge's entry in the domain library's
-`erx_dom_device_t` gains the bridge's **layouts**: every function its
+**The catalogue.** A host bridge's catalogue, `erx_dom_pci_bridge_t`
+beside its entry, holds the bridge's record and its **layouts**: every function its
 placing walk reported, at most `pcie_functions_max`, each with its
 latest reported `state` and `confirmed`, whether the latest report
 listed it with its layout; **`firmware_lost`**, set when the bridge's

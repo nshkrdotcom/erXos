@@ -650,6 +650,32 @@ class DomPlannerTest < Minitest::Test
     assert_match(/share an interrupt line are in two units/, error.message)
   end
 
+  # A PCIe function's entry (docs/design-usb.md, "The Phase 1 part"): the VL805's row takes
+  # its kind from erx/device_kinds.h by its role and identity, pci1106,3483, so its holder
+  # drives it as usb over the xhci peripheral, and its position names its bridge's entry and
+  # its place there; it has no register range until its report, and its line is its place's.
+  def test_a_pci_function_takes_its_kind_and_position
+    platform = JSON.parse(JSON.generate(@context.platform))
+    row = { 'path' => '', 'bridge' => '', 'bus' => 0, 'device' => 0, 'function' => 0, 'clock' => 0, 'base' => 0, 'size' => 0,
+            'line' => 0, 'dma' => 'none', 'dma_memory' => 0, 'flags' => 0 }
+    bridge = row.merge('placement_key' => 'pcie', 'selector' => 'dt', 'role' => 'configuration', 'path' => '/scb/pcie@7d500000',
+                       'compatible' => 'brcm,bcm2711-pcie', 'base' => 0x40_1000_0000, 'size' => 0x1000_0000, 'flags' => ['closed'],
+                       'places' => [{ 'bus' => 1, 'device' => 0, 'function' => 0, 'pin' => 1 }], 'dma_limit' => 0x3c00_0000)
+    function = row.merge('placement_key' => 'vl805', 'selector' => 'pci', 'role' => 'usb', 'bridge' => bridge.fetch('path'),
+                         'bus' => 1, 'compatible' => 'pci1106,3483', 'line' => 175, 'dma' => 'unconfined',
+                         'dma_memory' => 1 << 20, 'flags' => ['hostile'])
+    platform.fetch('units').push({ 'key' => 'pcie', 'devices' => [bridge] }, { 'key' => 'vl805', 'devices' => [function] })
+    @context = Erx::Manifest::Context.new(**ManifestContextFixture.arguments(@codec).merge(platform: platform))
+    source = with_domains('alpha', 'pcie') + "unit pcie\n  placement \"pcie\"\n  holder @domain.pcie\n" \
+                                             "unit vl805\n  placement \"vl805\"\n  holder @domain.alpha\n"
+    lines = view_lines(admit(source).bytes, 'pci')
+    bridge_line = lines.find { |line| line.start_with?('device ') && line.include?('unit=pcie ') }
+    refute_nil bridge_line, lines.inspect
+    index = bridge_line[/\Adevice (\d+) /, 1]
+    entry = /\Adevice \d+ unit=vl805 compatible=pci1106,3483 ranges= bridge=#{index} place=1\.0\.0 role=usb peripheral=xhci lines=175 confined=0\z/
+    assert(lines.any? { |line| line.match?(entry) }, lines.inspect)
+  end
+
   # Line 0 is no line (docs/design-abi.md, "Devices and partition windows"): two rows of no
   # kind whose nodes raise no interrupt, as the Raspberry Pi 4's RNG200 does, share none, so
   # they may sit in two units, on pages of their own.
