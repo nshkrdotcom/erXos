@@ -1089,6 +1089,12 @@ within about 20 percent of the length, write plain code.
   * [TODO.md](TODO.md) is the index of open work outside the roadmap.
   * [docs/guide/](docs/guide/README.md) is the user guide: how to build,
     write, boot and use erXos.
+  * [docs/book/](docs/book/README.md) is the book, *The Design and
+    Implementation of the erXos Operating System*: a reader's account of
+    the whole system that cites the design documents and decides nothing.
+    Each chapter's status box says what is built and what is designed;
+    the boxes are re-checked at each milestone, in the same commit as
+    README's "Current status".
   * Research records (`docs/research-*.md`, measurement and conformance
     reports) are point-in-time reports.
 * **For every major feature, write `docs/design-<feature>.md` first** and

@@ -44,6 +44,7 @@ evidence, not design contracts.
 | Document | Role |
 | --- | --- |
 | [overview.md](overview.md) | a reader's introduction to the design |
+| [book/](book/README.md) | *The Design and Implementation of the erXos Operating System*, a book-length account that cites the design documents and decides nothing |
 | this document | the architecture and every decision that constrains more than one subsystem |
 | [design-kernel.md](design-kernel.md) | erXos's kernel: objects, capabilities, budgets, memory, spaces, threads, IPC, interrupts, boot, the ABI and its L4 lineage |
 | [design-fiasco.md](design-fiasco.md) | erXos on Fiasco, the kernel of Phase 1 and of the first release: the backend, the call table, the downsides against erXos's kernel, the release build |
