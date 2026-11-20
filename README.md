@@ -331,7 +331,8 @@ Eshell V17.1.1 (type help(). for help)
 * A storage domain serves `/data` from littlefs over a virtio block driver
   on QEMU and an SD driver on the Pi 4, and restarts cleanly after a
   failure. A QEMU suite kills the block driver in the middle of a transfer
-  and finds each kept file cut at a sync. An EROFS reader mounts read-only
+  and finds every closed file intact and the file being written cut at a
+  sync. An EROFS reader mounts read-only
   images.
 * The build writes a slot's system partition, an EROFS image of the system
   release's files with its dm-verity hash tree after it, and the manifest's
