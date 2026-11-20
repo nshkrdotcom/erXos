@@ -28,6 +28,7 @@ module Erx
     # architecture's file finds the NIF's headers as ERTS's build lets it, by directory.
     DEVICE_NIF_DIRECTORY = 'otp/erts/emulator/nifs/erxos'
     DEVICE_NIF = %w[erx_device.c erx_device_core.c erx_device_queue.c erx_device_dma.c erx_device_genet.c
+                    erx_device_ledger.c erx_device_rules.c erx_device_sequencer.c erx_device_virtio_core.c
                     arch/aarch64/erx_dma_arch.c].map { |name| File.join(DEVICE_NIF_DIRECTORY, name) }.freeze
     DEVICE_NIF_FLAGS = ['-I', DEVICE_NIF_DIRECTORY].freeze
     SOURCES = [*NativeRoot::RUNTIME, *NativeRoot::VM, *NativeRoot::SERVICE, *NativeRoot::LAUNCH, *DEVICE_NIF,

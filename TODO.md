@@ -8022,8 +8022,7 @@ to the corpus and follow rc
   device address in `abi/formats` carries `device_address`, and a marked layout refuses one a description would
   state or the format fix; a device address in an unmarked layout is not refused yet: that rule turns on when the
   last form moves onto the encoders. The sequencer encodes virtio-gpu's region entry, `erx_virtio_gpu_mem_entry`, from a fill that
-  names a persistent region its ledger holds; until `erx_device.c` moves onto it and adds each region to its device's
-  queue ledgers, `resolve_regions` there writes the entry by hand, its length bounded where the region is carved. The ADMA2 entry's encoder accepts a length of 0, which moves 65,536 bytes; the
+  names a persistent region its ledger holds; `erx_device.c` adds each region to its device's queue ledgers. The ADMA2 entry's encoder accepts a length of 0, which moves 65,536 bytes; the
   sequencer's split never derives one, and the package that writes the split tests it. The encoders are public in
   `include/erx/abi.h`, beside every layout's generic setters; they end up confined to the sequencer (a private header), and the chokepoint of
   [Descriptions](docs/design-device-dma.md#descriptions), that only the sequencer stores into a region holding a
@@ -8031,12 +8030,21 @@ to the corpus and follow rc
   than deriving the encoders from the marks, and covers the encoders but not yet the generic setters, which
   `erx_device_queue.c` still uses. The ledger, the queue's layout, descriptions, the publication rules and the
   sequencer's publication and acquisition for the split ring are in `erx_device_ledger.c`, `erx_device_rules.c` and
-  `erx_device_sequencer.c`, host-tested and used by nothing yet; next, `erx_device.c`'s split-ring post and completion
-  move onto them and `erx_device_queue_layout` goes. `erx_device_dma_check` and `erx_device_dma_order` serve GENET,
+  `erx_device_sequencer.c`, and `erx_device.c`'s split ring installs, posts and completes through them; next, the
+  old virtio core (`erx_device_queue.c`, with `erx_device_queue_layout`) goes, `erx_device_queue_features` moves
+  beside the split ring, and the old core's harness, `erx_device_dma_model_harness.c` and the `device_queue` fuzz
+target move onto the split ring. With them go what the split ring's wiring left in `erx_device.c`:
+`queue_broken`, `break_queue`, `form_round` and `run_call` read `record->genet` from the queue union unchecked
+(right only because every split-ring path returns before them), so they should take a `register_ring_t`, with
+the record's `context` and `state`, which only GENET uses, moved into it; `queue_bytes`'s ring bytes, always 0,
+`pool_offset`, the record's `ready` beside the ring's `installed`, and the comments that still describe one
+effect layer for both forms; the completion's used index located by `offsetof` rather than handed over by the
+core as its elements are; the activation store copied into a `uint64_t` while its type allows 16 bytes; and
+`erx_device_region` keeping its carve when `erx_dma_regions_add` refuses (unreachable while names are fresh). `erx_device_dma_check` and `erx_device_dma_order` serve GENET,
   ADMA2 and the TRB form through `accept_plan` until those move, so the old check goes with the last of them. The
   sequencer writes virtio's available entry, which no layout holds, without an encoder; it refuses a report that
   releases nothing (the ledger has no transition that only advances a consumer position) and a release by address,
-  as an event TRB's, both of which the TRB form needs. Before `erx_device.c` moves onto it:
+  as an event TRB's, both of which the TRB form needs.
   `erx_dma_report_holding` takes the record the effect layer read, and nothing ties it to the record at the consumer
   position (an acquisition that holds its second-phase snapshots and consumes them in order would); the ledger's
   exhaustive harness does not explore its acquire transition (each release there follows an acquisition of every
@@ -8045,8 +8053,7 @@ to the corpus and follow rc
   `ERX_DMA_STORE_BYTES_MAX` is hand-kept, checked only by a static assertion against the two layouts the sequencer
   encodes, and should be derived from the widest encoded layout; `erx_dma_ledger_make` takes any layout that passes the
   install's check, so the sequencer's `install()` relies on its one caller, the split ring, deriving its layout
-  through `erx_dma_layout_split_ring` (three tables of one count); the install's sequence
-  leaves `QueueSel` to the effect layer, which must write it from the record before the registers; the
+  through `erx_dma_layout_split_ring` (three tables of one count); the
   publication's `erx_dma_publication_call_t` and `erx_device_dma.h`'s `erx_dma_call_t` are two models of a
   call until the old check goes; `free_record`'s loop
   is bounded only by the room rule; `erx_dma_publish` returns check verdicts for refusals that mean the check and the

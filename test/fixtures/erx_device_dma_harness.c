@@ -738,12 +738,12 @@ check_given(void)
 	CHECK((const uint8_t *)rings.desc == base + SMALL_QUEUE_PAGES * ERX_PAGE_SIZE);
 	CHECK((const uint8_t *)rings.avail == (const uint8_t *)rings.desc + layout.avail);
 	CHECK((const uint8_t *)rings.used == (const uint8_t *)rings.desc + layout.used);
-	/* The first queue's chain lies in its pool, after its rings' page and before the second queue. */
+	/* The first queue's chain lies in its pool, right after its rings, and before the second queue. */
 	CHECK(erx_device_queue_layout(QUEUE_SIZE, erx_dma_granule(), &layout));
 	CHECK(post_one(device, first, 1) == ERX_OK);
 	const erx_virtq_desc_t *const table = (const erx_virtq_desc_t *)(const void *)base;
 	const uint16_t head = ((const uint16_t *)(const void *)(base + layout.avail + ERX_VIRTQ_RING_HEAD_SIZE))[0];
-	CHECK(table[head].addr >= (uint64_t)(uintptr_t)(base + ERX_PAGE_SIZE));
+	CHECK(table[head].addr >= (uint64_t)(uintptr_t)(base + layout.bytes));
 	CHECK(table[head].addr + SMALL_BUFFER <= (uint64_t)(uintptr_t)(base + SMALL_QUEUE_PAGES * ERX_PAGE_SIZE));
 }
 
@@ -782,6 +782,42 @@ static void
 check_non_coherent_queue(void)
 {
 	CHECK(post_maintenance(false) > 0);
+}
+
+/*
+ * What a device that is not coherent is handed and given back: a post cleans the descriptor,
+ * the available entry and the available index it wrote, and a completion invalidates the used
+ * index, the used element and the bytes the device wrote before it reads them.
+ */
+static void
+check_non_coherent_maintenance(void)
+{
+	erx_device_spec_t spec = given_spec(make_memory(ERX_PAGE_SIZE), make_memory(SMALL_QUEUE_PAGES * ERX_PAGE_SIZE));
+	const erx_device_t *device;
+	uint32_t queue, count;
+	uint16_t seen = 0, head;
+	rings_t rings;
+
+	spec.coherent = false;
+	device = open_given(&spec);
+	device_offers();
+	CHECK(erx_device_queue_create(device, 0, QUEUE_SIZE, SMALL_BUFFER, &queue) == ERX_OK);
+	CHECK(negotiate(device) == ERX_OK);
+	rings = device_rings();
+	erx_dma_forget_ranges();
+	CHECK(post_one(device, queue, 5) == ERX_OK);
+	head = rings.avail_ring[0];
+	CHECK(erx_dma_maintained(&rings.desc[head], sizeof(rings.desc[head]), false));
+	CHECK(erx_dma_maintained(&rings.avail_ring[0], sizeof(rings.avail_ring[0]), false));
+	CHECK(erx_dma_maintained(&rings.avail->idx, sizeof(rings.avail->idx), false));
+	CHECK(device_serve(&rings, &seen, 0x3c, 100) == head);
+	erx_dma_forget_ranges();
+	sunk = 0;
+	CHECK(erx_device_complete(device, queue, sink, &sunk, &count) == ERX_OK && count == 1);
+	CHECK(sunk == 1 && sunk_tags[0] == 5 && sunk_lengths[0] == 100 && sunk_bytes[0][99] == 0x3c);
+	CHECK(erx_dma_maintained(&rings.used->idx, sizeof(rings.used->idx), true));
+	CHECK(erx_dma_maintained(&rings.used_ring[0], sizeof(rings.used_ring[0]), true));
+	CHECK(erx_dma_maintained((const void *)(uintptr_t)rings.desc[head].addr, 100, true));
 }
 
 /*
@@ -1031,6 +1067,7 @@ main(void)
 	passed &= run("given", check_given);
 	passed &= run("coherent queue", check_coherent_queue);
 	passed &= run("non-coherent queue", check_non_coherent_queue);
+	passed &= run("non-coherent maintenance", check_non_coherent_maintenance);
 	passed &= run("driver restart", check_driver_restart);
 	passed &= run("regions", check_regions);
 	kept = given_spec(make_memory(ERX_PAGE_SIZE), make_memory(SMALL_QUEUE_PAGES * ERX_PAGE_SIZE));

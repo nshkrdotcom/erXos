@@ -16,8 +16,11 @@ class ErxDeviceQueueTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
   NIFS = File.join(ROOT, 'otp/erts/emulator/nifs/erxos')
   CORE = File.join(NIFS, 'erx_device_queue.c')
-  # The sequencer and a host DMA architecture layer that counts its maintenance, which erx_device.c's queues run through.
-  DMA = [File.join(NIFS, 'erx_device_dma.c'), File.join(NIFS, 'erx_device_genet.c'), File.join(ROOT, 'test/fixtures/erx_dma_arch_counting.c')].freeze
+  # The check, the split ring's core over the sequencer, GENET's core and a host DMA architecture layer that
+  # counts its maintenance, which erx_device.c's queues run through.
+  DMA = [*%w[erx_device_dma.c erx_device_genet.c erx_device_ledger.c erx_device_rules.c erx_device_sequencer.c
+            erx_device_virtio_core.c].map { |source| File.join(NIFS, source) },
+         File.join(ROOT, 'test/fixtures/erx_dma_arch_counting.c')].freeze
   FLAGS = ['-std=c17', '-D_DARWIN_C_SOURCE', '-Wall', '-Wextra', '-Werror', '-O1', '-g',
            '-fsanitize=address,undefined', '-fno-sanitize-recover=undefined'].freeze
   COMPILER = ENV.fetch('ERX_CLANG', 'clang')
@@ -57,13 +60,13 @@ class ErxDeviceQueueTest < Minitest::Test
   end
 
   # The seeded faults of docs/design-runtime.md, "Regions": a region that leaves its pages to
-  # the next queue, so the two overlap; a post that takes another device's region; and a region
+  # the next queue, so the two overlap; every device sharing the first device's region table, so a
+  # post takes another device's region; and a region
   # made on a device that is not coherent. Each fails the regions scenario.
   REGION_SEEDS = {
     overlap: ["\tbzero(record->mapping, carve.length);\n\t*taken = carve.end;\n",
               "\tbzero(record->mapping, carve.length);\n"],
-    foreign: ['regions_open, memory_order_relaxed) || regions[region].device != device)',
-              'regions_open, memory_order_relaxed) || (false && regions[region].device != device))'],
+    foreign: ['return (&device_regions[device - devices]);', 'return (&device_regions[device - devices - (device - devices)]);'],
     coherent: ['device->form == ERX_DEVICE_FORM_PHYSICAL || !device->coherent)',
                'device->form == ERX_DEVICE_FORM_PHYSICAL)']
   }.freeze
@@ -77,11 +80,21 @@ class ErxDeviceQueueTest < Minitest::Test
     end
   end
 
-  # The effect layer keeps each queue's last accepted state as the next plan's `before`; seeded
-  # to keep none, a later post or completion is refused by the check and the harness fails.
-  def test_a_queue_that_keeps_no_state_fails_the_harness
-    output = seeded_dma_output(["\tif (after != &record->state)\n\t\trecord->state = *after;\n", "\t(void)after;\n"])
+  # The split ring's effect layer seeded to skip the invalidate of what the device wrote before
+  # copying it out, so on a device that is not coherent the copy could read stale cache lines;
+  # the counting layer's kept ranges show the completion maintained no such range.
+  def test_a_completion_seeded_without_its_invalidate_fails_the_harness
+    output = seeded_dma_output(["\t\tmaintained |= maintain(record, ring_answers[at].written, true);\n",
+                                "\t\tmaintained |= false;\n"])
     assert_match(/FAILED .*erx_device_dma_harness\.c/, output)
+    refute_match(/^non-coherent maintenance ok$/, output)
+  end
+
+  # The effect layer keeps each register ring's last accepted state as the next plan's `before`;
+  # seeded to keep none, a later post or completion is refused by the check and the harness fails.
+  def test_a_queue_that_keeps_no_state_fails_the_harness
+    output = genet_output(["\tif (after != &record->state)\n\t\trecord->state = *after;\n", "\t(void)after;\n"])
+    assert_match(/FAILED .*erx_device_genet_harness\.c/, output)
   end
 
   # The seeded fault of the core's post: each descriptor's address one byte past its segment.

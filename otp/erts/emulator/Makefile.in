@@ -1363,6 +1363,10 @@ OS_OBJS = \
 	$(OBJDIR)/erx_device_queue.o \
 	$(OBJDIR)/erx_device_dma.o \
 	$(OBJDIR)/erx_device_genet.o \
+	$(OBJDIR)/erx_device_ledger.o \
+	$(OBJDIR)/erx_device_rules.o \
+	$(OBJDIR)/erx_device_sequencer.o \
+	$(OBJDIR)/erx_device_virtio_core.o \
 	$(if $(findstring hosted,$(TARGET)),$(OBJDIR)/erx_device_genet_model.o) \
 	$(OBJDIR)/erx_dma_arch.o \
 	$(OBJDIR)/erx_crc32c.o \
