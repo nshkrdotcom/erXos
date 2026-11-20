@@ -246,7 +246,9 @@ The fields of configuration space a target decides are of two kinds:
 The **projection** of a target decides them. Data depends on the layout
 and the route alone, in every mode: each BAR holds its layout's address;
 for an `msi` route MSI holds the route's address and data, multiple
-message enable 0 and its vector 0 unmasked. Switches depend on the mode
+message enable 0 and, where it has one, its mask register clear, which
+unmasks vector 0 whichever bit the specification gives it. Switches
+depend on the mode
 and the route:
 
 | Mode | Memory space | Bus master | INTx | MSI (`msi` route) | MSI-X (`msix` route) |
@@ -264,9 +266,19 @@ projection.
 
 `erx_pcie_plan:plan(Read, Target)` is a pure function from the
 function's configuration as read (the parsed snapshot) and its target
-to `{ok, Stages}` or `{error, reset}`. A **stage** is a list of writes
-and the state they lead to; a plan has at most three, in this order,
-and leaves out an empty one:
+to `{ok, Stages}` or an error: `{error, gone}` when the read is not the
+function its layout describes (another vendor or device, header type,
+MSI or MSI-X capability, or a BAR of another kind or width), so no write
+is computed against a structure the layout does not describe;
+`{error, route}` when the route does not fit the function; and
+`{error, reset}` by the mastering rule below. A **stage** is a list of
+whole-register writes, each `{Offset, Width, Value}`, and the state they
+lead to, which carries the function's structure as well as its fields;
+`erx_pcie_plan:differs(Read, State)` names the first field a readback
+does not read as, or `identity` for a readback that is another
+function. A root port's target is its bus numbers and its memory window,
+which the walk derives ([Root ports](#root-ports)). A plan has at most
+three stages, in this order, and leaves out an empty one:
 
 1. **Nothing to do.** When the function reads as the target, the plan
    has no stage.
@@ -608,7 +620,8 @@ left as it is.
 **The parser** follows the capability list from offset `0x34` only when
 the status register's capability bit is set, and takes each pointer with
 its low two bits cleared. It refuses the snapshot, naming the field,
-for: a pointer below `0x40`; a list of more than 48 capabilities, the
+for: an interrupt pin above 4, which names no INTx line; a pointer
+below `0x40`; a list of more than 48 capabilities, the
 most 192 bytes hold, which a loop makes; a capability whose fields, by
 its own control word, extend past offset 255; a 64-bit BAR in the last
 BAR register, which has no upper half; an MSI-X table whose BAR
@@ -629,8 +642,12 @@ follows FreeBSD's `pci_read_bar`: memory space off, all ones to the BAR
 (both halves of a 64-bit BAR before either is read), read back, the
 original value restored, the command register restored.
 `erx_pcie_cfg:size/2` decodes each answer into the BAR's hardware size.
-It refuses a base mask whose set bits are not contiguous from the top,
-naming the BAR, and the function is reported `malformed`; a 64-bit BAR
+It refuses a memory BAR's base mask whose set bits are not contiguous
+from the top, naming the BAR, and the function is reported `malformed`;
+an I/O BAR, never placed, is sized from its mask's lowest set bit alone,
+as FreeBSD's `pci_mapsize` sizes every BAR (`pci.c:601-614`), so one
+that decodes 16 address bits, its upper half reading back zero, is
+sized from its low 16 bits. A 64-bit BAR
 whose size needs the high word is a size the 32-bit window cannot hold,
 and the function is reported `unplaced`. A memory BAR under 16 bytes is
 ignored, as FreeBSD ignores it. A placing walk finds
@@ -1339,7 +1356,7 @@ that touches it.
 
 | Test | Passing case | Seeded failure |
 | --- | --- | --- |
-| `erx_pcie_plan` | exhaustive over every switch state of the read value, every mode and route, each data field equal or differing, and each capability present or absent, run against a model of configuration space: the plan has no stage exactly when the function reads as the target; after each stage the model reads as the stage's state, and after the last as the target; every stage moves one way, each of its writes carrying every switch between its values at the stage's start and in its state; every data write happens while the model is quiet; every lowering precedes every raising; bus master is the first lowering and the last raising; a `mastering` target from anything but `decoding` or `mastering` is `{error, reset}`; after every prefix of every plan, the start's target from that state is the setting only if the state reads as it, and `off` otherwise | the floor taken as the lower of read and target even when data differ, the rule of writing only what differs: a mastering function with a wrong MSI address gets its address written with bus master on, and the quiet check fails; bus master raised before the live step: the order check fails; the mastering rule removed: a blank function's plan to `mastering` is accepted |
+| `erx_pcie_plan` | exhaustive over every switch state of the read value, every mode and route, each data field equal or differing, and each capability present or absent, run against a model of configuration space: the plan has no stage exactly when the function reads as the target; after each stage the model reads as the stage's state, and after the last as the target; every stage moves one way, each of its writes carrying every switch between its values at the stage's start and in its state; every data write happens while the model is quiet; every lowering precedes every raising; bus master is the first lowering and the last raising; a `mastering` target from anything but `decoding` or `mastering` is `{error, reset}`; after every prefix of every plan, the start's target from that state is the setting only if the state reads as it, and `off` otherwise | the floor taken as the lower of read and target even when data differ, the rule of writing only what differs: a decoding function with a wrong BAR gets its BAR written with memory space on, and the quiet check fails; the floor quiet whenever any field differs: a running function's plan to `mastering` turns memory space off first, and the check that no switch drops below both what it read and what the target decides fails; bus master raised before the live step: the order check fails; the mastering rule removed: a blank function's plan to `mastering` is accepted |
 | `erx_pcie_apply`, over a model bridge driver | every plan of the planner's inputs, run once with each of its writes ignored alone, a later write of the same register then repeating it, and once with each register ignoring every write from one write on: no data write is made while the model is not quiet; no switch is raised while a data field of the model differs from the target; the answer is `ok` only when the model reads as the target, `{error, gone}` only when it reads quiet, and `{error, stuck}` otherwise; after a stage that did not take, the only writes are the descent to quiet | one readback after the last stage: with the memory-space disable ignored, a BAR is written while the model decodes and the quiet check fails, and the answer is `ok`; the descent to quiet taken as done without its readback: with the command register ignoring writes, the answer is `{error, gone}` while the model is not quiet |
 | `erx_pcie_cfg` | snapshots of a type-0 and a type-1 header, MSI, MSI-X and Express capabilities, 32- and 64-bit BARs, decode to the expected values; each refusal of [The walk](#the-walk) has a fixture that is refused naming its field; sizing answers for each BAR kind give their hardware sizes, a non-contiguous mask is refused | the step bound removed: the looping fixture does not end within the test's deadline; the table BAR bound removed: the fixture with indicator 6 is accepted |
 | `erx_pcie_place` | for generated sets of BARs, with and without root ports: every placed BAR inside the window, aligned to its span, no two spans overlapping, no two root ports' windows overlapping; the same set in any order gives the same addresses; a fixed set of a 4 KiB, a 64 KiB and a 1 MiB BAR gives the addresses written in the test | the alignment rounding dropped: the 64 KiB BAR lands at 4 KiB and both the alignment property and the fixed addresses fail |

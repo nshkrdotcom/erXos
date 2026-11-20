@@ -87,10 +87,10 @@ an_endpoint_decodes_its_header_and_bars_test() ->
 
 an_endpoint_decodes_its_capabilities_test() ->
     Read = parsed(endpoint()),
-    ?assertEqual(#{offset => 16#40, table_size => 3, table_bar => 2, table_offset => 16#2000,
+    ?assertEqual(#{offset => 16#40, control => 16#8002, table_size => 3, table_bar => 2, table_offset => 16#2000,
                    enabled => true, function_mask => false},
                  maps:get(msix, Read)),
-    ?assertEqual(#{offset => 16#50, addr64 => true, vector_mask => true, vectors_log2 => 2,
+    ?assertEqual(#{offset => 16#50, control => 16#0184, addr64 => true, vector_mask => true, vectors_log2 => 2,
                    enabled => false, mme => 0, address => 16#fee00000, data => 16#4021,
                    mask => 1},
                  maps:get(msi, Read)),
@@ -98,7 +98,7 @@ an_endpoint_decodes_its_capabilities_test() ->
 
 a_32_bit_msi_reads_its_data_after_the_low_address_test() ->
     S = puts(endpoint(), [{16#52, 2, 16#0001}, {16#58, 2, 16#0031}, {16#5c, 2, 16#ffff}]),
-    ?assertEqual(#{offset => 16#50, addr64 => false, vector_mask => false, vectors_log2 => 0,
+    ?assertEqual(#{offset => 16#50, control => 16#0001, addr64 => false, vector_mask => false, vectors_log2 => 0,
                    enabled => true, mme => 0, address => 16#fee00000, data => 16#0031,
                    mask => none},
                  maps:get(msi, parsed(S))).
@@ -212,8 +212,13 @@ sizing_gives_each_kind_its_hardware_size_test() ->
 
 sizing_refuses_a_noncontiguous_mask_test() ->
     ?assertEqual({error, {bar_mask, 0}}, erx_pcie_cfg:size(bar(0, memory, false), 16#fff0f000)),
-    ?assertEqual({error, {bar_mask, 1}}, erx_pcie_cfg:size(bar(1, io, false), 16#0000fff1)),
     ?assertEqual({error, {bar_mask, 2}}, erx_pcie_cfg:size(bar(2, memory, true), 16#00000000fff0000c)).
+
+%% An I/O BAR is sized from its lowest base bit, as FreeBSD's pci_mapsize sizes
+%% it: one decoding 16 address bits reads back zero in its upper half.
+an_io_bar_decoding_16_bits_is_sized_from_its_low_16_test() ->
+    ?assertEqual({ok, 4}, erx_pcie_cfg:size(bar(1, io, false), 16#0000fff1)),
+    ?assertEqual({ok, 8}, erx_pcie_cfg:size(bar(1, io, false), 16#0000ff01)).
 
 sizing_refuses_a_64_bit_bar_that_needs_the_high_word_test() ->
     ?assertEqual({error, {bar_size, 2}}, erx_pcie_cfg:size(bar(2, memory, true), 16#ffffffff0000000c)),

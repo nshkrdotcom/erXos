@@ -7896,6 +7896,18 @@ to the corpus and follow rc
   flight holds (`ERX_DEVICE_TRB_REFUSE_HALTED`).
 * [Low] USB, the TRB ring form's step bounds (`ERX_DEVICE_TRB_POST_STEPS`, `ERX_DEVICE_TRB_COMMAND_STEPS`): counted
   in comments and asserted only by the harnesses; nothing in the core enforces them.
+* [Low] PCIe, a 32-bit MSI with per-vector masking (`erx_pcie_cfg`, `erx_pcie_plan`): where its mask and pending
+  registers lie is unverified. FreeBSD 15.1.0's `pcireg.h` gives `PCIR_MSI_MASK` (0x10) only for the 64-bit layout,
+  and its `pci.c` never touches the mask register, so the parser ends that layout's extent at its data and the
+  planner leaves its mask register unwritten, where a firmware that masked vector 0 would keep its message masked.
+  Settle the offsets from the PCI Local Bus Specification or another BSD source and plan the register as the 64-bit
+  one is.
+* [Medium] PCIe, a root port's closed windows (`erx_pcie_plan`, [design-pcie.md](docs/design-pcie.md#root-ports)): the
+  plan closes a root port's I/O and prefetchable windows by writing base above limit, but a root port that implements
+  neither window reads those registers as zero and never reads as its target: every walk lowers it to quiet, cutting
+  off the bus below it, and its plan ends `stuck`, so a restart would disturb running functions. Whether
+  QEMU's `pcie-root-port` and the BCM2711's root port implement both is unverified; probe B4 and the `pcie` suite
+  settle it, and a window a root port lacks then drops out of its target.
 * [Low] Erlang edges (docs/style.md, "Functional core"): `erx_tcp_listen` (`:176`), `erx_gen_tcp`
   (`:443`), `erx_pipe_srv` (`:312`), `erx_prog_handler` (`:264`) and `erx_blk_sd` (`:394`) walk a
   step's actions with a loop of their own rather than `erx_actions:perform/3`; the first two match a

@@ -60,8 +60,8 @@ class ErxPcieCfgTest < Minitest::Test
              replacement: 'ok,',
              catching_case: 'a_capability_past_offset_255_is_refused_test'),
     Seed.new(fault: 'a sizing mask with holes taken',
-             anchor: 'Bits + Lowest =/= 1 bsl Width -> {error, {bar_mask, Index}};',
-             replacement: 'false -> {error, {bar_mask, Index}};',
+             anchor: 'case contiguous(Bits, Lowest, Width) of',
+             replacement: 'case true of',
              catching_case: 'sizing_refuses_a_noncontiguous_mask_test')
   ].freeze
 

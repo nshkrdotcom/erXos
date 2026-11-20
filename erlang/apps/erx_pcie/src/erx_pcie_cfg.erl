@@ -35,10 +35,14 @@ offset lies inside configuration space's first 256 bytes.
 
 Sizing follows FreeBSD's pci_read_bar and pci_mapsize (pci.c:3154-3228,
 :601-614): the size is the lowest set bit of the answer's base bits. It
-refuses an answer whose base bits are not contiguous from the top, and a
-64-bit BAR whose size needs the high word, which the 32-bit windows
-cannot place. An answer with no base bit set is a BAR the function does
-not implement. Where FreeBSD differs: it checks no contiguity; it gives
+refuses a memory answer whose base bits are not contiguous from the top,
+and a 64-bit BAR whose size needs the high word, which the 32-bit windows
+cannot place. An I/O BAR is never placed, so its answer is sized as
+FreeBSD sizes every answer, from the lowest set bit alone: one that
+decodes 16 address bits, its upper half reading back zero, is sized from
+its low 16. An answer with no base bit set is a BAR the function does
+not implement. Where FreeBSD differs: it checks no memory BAR's
+contiguity; it gives
 a memory BAR of type 2 (below 1 MiB) or the reserved type 6 a range of
 its own (pci_maprange, pci.c:648-666), where this reads both as 32-bit;
 and it ignores an I/O answer with reserved bit 1 set (pci.c:3402), where
@@ -47,7 +51,7 @@ this masks the bit off.
 Every offset, bit and bound comes from `abi/formats/pcie.txt`.
 """.
 
--export([parse/1, identity/1, size/2]).
+-export([parse/1, identity/1, size/2, bridge_registers/0]).
 -export_type([read/0, identity/0, bar/0, msi/0, msix/0, express/0, bridge/0,
               reason/0, size_reason/0]).
 
@@ -65,13 +69,14 @@ type-1 header's registers past its second, are `absent`.
                  address := 0..16#ffffffffffffffff}.
 
 -doc """
-An MSI capability: its offset, whether its address is 64-bit and it can
-mask per vector, the vectors it can take as a power of two, its enable
-bit and multiple message enable, its address and data, and its mask
-register where `pcireg.h` gives one (a 64-bit capability with per-vector
-masking), else `none`.
+An MSI capability: its offset, its control word as it reads, and from it
+whether its address is 64-bit and it can mask per vector, the vectors it
+can take as a power of two, its enable bit and multiple message enable;
+its address and data, and its mask register where `pcireg.h` gives one
+(a 64-bit capability with per-vector masking), else `none`.
 """.
 -type msi() :: #{offset := byte(),
+                 control := 0..16#ffff,
                  addr64 := boolean(),
                  vector_mask := boolean(),
                  vectors_log2 := 0..7,
@@ -82,10 +87,12 @@ masking), else `none`.
                  mask := none | 0..16#ffffffff}.
 
 -doc """
-An MSI-X capability: its offset, its table's entries, BAR and offset in
-that BAR, and its enable and function-mask bits.
+An MSI-X capability: its offset, its control word as it reads, its
+table's entries, BAR and offset in that BAR, and its enable and
+function-mask bits.
 """.
 -type msix() :: #{offset := byte(),
+                  control := 0..16#ffff,
                   table_size := 1..2048,
                   table_bar := 0..5,
                   table_offset := 0..16#fffffff8,
@@ -193,24 +200,27 @@ size(#{index := Index, kind := Kind, addr64 := Wide}, Answer) ->
     sized(Index, Answer band Mask, Width).
 
 %% The bits of a BAR register that hold its address, and the register's
-%% width in bits.
-base(io, _Wide) -> {?ERX_PCIE_BAR_IO_BASE, 32};
+%% width in bits for the contiguity check, which an I/O BAR is spared.
+base(io, _Wide) -> {?ERX_PCIE_BAR_IO_BASE, spared};
 base(memory, false) -> {?ERX_PCIE_BAR_MEM_BASE band 16#ffffffff, 32};
 base(memory, true) -> {?ERX_PCIE_BAR_MEM_BASE, 64}.
 
 sized(_Index, 0, _Width) ->
     absent;
-%% Bits are contiguous from the register's top bit down to Lowest, their
-%% lowest set bit, exactly when adding Lowest carries out of the register:
-%% Bits + Lowest = 2^Width.
 sized(Index, Bits, Width) ->
     Lowest = Bits band -Bits,
     Log2 = log2(Lowest),
-    if
-        Bits + Lowest =/= 1 bsl Width -> {error, {bar_mask, Index}};
-        Log2 > ?ERX_PCIE_BAR_SIZE_LOG2_MAX -> {error, {bar_size, Index}};
+    case contiguous(Bits, Lowest, Width) of
+        false -> {error, {bar_mask, Index}};
+        true when Log2 > ?ERX_PCIE_BAR_SIZE_LOG2_MAX -> {error, {bar_size, Index}};
         true -> {ok, Log2}
     end.
+
+%% Bits are contiguous from the register's top bit down to Lowest, their
+%% lowest set bit, exactly when adding Lowest carries out of the register:
+%% Bits + Lowest = 2^Width.
+contiguous(_Bits, _Lowest, spared) -> true;
+contiguous(Bits, Lowest, Width) -> Bits + Lowest =:= 1 bsl Width.
 
 %% The exponent of a power of two: its digits in base 2, less one.
 log2(Power) -> length(integer_to_list(Power, 2)) - 1.
@@ -343,6 +353,7 @@ msi(Snapshot, At) ->
                false -> none
            end,
     #{offset => At,
+      control => Control,
       addr64 => Wide,
       vector_mask => VectorMask,
       vectors_log2 => bits(Control, ?ERX_PCIE_MSI_CONTROL_MMC_MASK),
@@ -367,6 +378,7 @@ msix(Snapshot, At, Bars) ->
     check(Offset + Entries * ?ERX_PCIE_MSIX_ENTRY_SIZE =< 1 bsl 32,
           msix_table_offset),
     #{offset => At,
+      control => Control,
       table_size => Entries,
       table_bar => Indicator,
       table_offset => Offset,
@@ -389,6 +401,11 @@ bridge(Snapshot, bridge) ->
     maps:from_list([{Name, read(Snapshot, Offset, Bytes, snapshot)}
                     || {Name, Offset, Bytes} <- bridge_registers()]).
 
+-doc """
+A type-1 header's bridge registers as `bridge()` names them, each with
+its offset and width in bytes; the planner writes them by the same table.
+""".
+-spec bridge_registers() -> [{atom(), byte(), 1 | 2 | 4}].
 bridge_registers() ->
     [{primary_bus, ?ERX_PCIE_CFG_PRIMARY_BUS, 1},
      {secondary_bus, ?ERX_PCIE_CFG_SECONDARY_BUS, 1},

@@ -80,6 +80,15 @@ limit pcie_cfg_bridge_control u8 0x3e
 # A type-1 header's memory window is 1 MiB granular: its base and limit registers hold
 # address bits 31 to 20 (pcireg.h:289-290).
 limit pcie_bridge_memory_granule u32 0x100000
+# The address bits of a type-1 header's window registers: an I/O base or limit holds
+# address bits 15 to 12 in its high four bits and a memory or prefetchable base or limit
+# address bits 31 to 20 in its high twelve, its low four bits the window's addressing
+# capability or reserved (pcireg.h:271-292, PCIM_BRIO_MASK, PCIM_BRPM_MASK and
+# PCI_PPBMEMBASE); a memory register is its address shifted down 16 bits. A window is
+# closed when its base lies above its limit.
+limit pcie_bridge_io_window_mask u8 0xf0
+limit pcie_bridge_memory_window_mask u16 0xfff0
+limit pcie_bridge_memory_window_shift u8 16
 
 # A BAR register's low bits (pcireg.h:222-232): I/O or memory space, a memory BAR's
 # type, of which 64-bit takes the next register as its upper half, prefetchable, and
@@ -215,8 +224,9 @@ layout erx_pcie_function wire_le 8 136
   field express_flags pcie_express_flags 134
   padding 135 1
 
-# A function's setting: its mode and its interrupt route, with the doorbell address and
-# data of its one message, zero for the routes that have none.
+# A function's setting: its mode and its interrupt route, with its one message, the
+# erx_msi_message erx_irq_create returned (kernel.txt), zero for the routes that have
+# none.
 enum pcie_mode u8
   value off 0
   value decoding 1
@@ -226,12 +236,11 @@ enum pcie_route u8
   value msi 1
   value msix 2
   value intx 3
-layout erx_pcie_setting wire_le 8 16
+layout erx_pcie_setting wire_le 8 24
   field mode pcie_mode 0
   field route pcie_route 1
-  padding 2 2
-  field data u32 4
-  field address u64 8
+  padding 2 6
+  field message erx_msi_message 8
 
 # One window of a host bridge, from the tree's ranges: its PCI and CPU addresses and
 # its size.
