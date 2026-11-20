@@ -66,9 +66,9 @@ display_settled_test_() ->
 await_grant_test_() ->
     [{setup, fun() -> setup(1, #{}, Provides) end, fun cleanup/1,
       fun(_) -> {timeout, 20, {Name, Case}} end}
-     || {Name, Case, Provides} <- [{"installed", fun await_installed/0, fun(Id) -> #{echo => pid('a@erxos', Id, 1)} end},
-                                   {"failed", fun await_failed/0, fun(Id) -> #{echo => pid('a@erxos', Id, 1)} end},
-                                   {"ended", fun await_ended/0, fun(Id) -> #{echo => pid('a@erxos', Id, 1)} end},
+     || {Name, Case, Provides} <- [{"installed", fun await_installed/0, fun(Id) -> #{<<"echo">> => pid('a@erxos', Id, 1)} end},
+                                   {"failed", fun await_failed/0, fun(Id) -> #{<<"echo">> => pid('a@erxos', Id, 1)} end},
+                                   {"ended", fun await_ended/0, fun(Id) -> #{<<"echo">> => pid('a@erxos', Id, 1)} end},
                                    {"unprovided", fun await_unprovided/0, fun(_Id) -> #{} end}]].
 
 %% The domain service's funnel for a domain's facets (docs/design-domains.md, "Facets"),
