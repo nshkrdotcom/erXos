@@ -17,6 +17,10 @@ limit pcie_closed_max u32 4
 
 # A function's configuration space as the walk reads it whole: the snapshot.
 limit pcie_config_size u32 256
+# The highest device on a bus and function of a device (pcireg.h:47-48), which bound the
+# walk of a bus.
+limit pcie_device_max u8 31
+limit pcie_function_max u8 7
 
 # The header both types share (pcireg.h:83-122, :251-253): identity, the command and
 # status registers, the class code from the programming interface up, the header type,
@@ -73,6 +77,9 @@ limit pcie_cfg_prefetch_limit_upper u8 0x2c
 limit pcie_cfg_io_base_upper u8 0x30
 limit pcie_cfg_io_limit_upper u8 0x32
 limit pcie_cfg_bridge_control u8 0x3e
+# A type-1 header's memory window is 1 MiB granular: its base and limit registers hold
+# address bits 31 to 20 (pcireg.h:289-290).
+limit pcie_bridge_memory_granule u32 0x100000
 
 # A BAR register's low bits (pcireg.h:222-232): I/O or memory space, a memory BAR's
 # type, of which 64-bit takes the next register as its upper half, prefetchable, and

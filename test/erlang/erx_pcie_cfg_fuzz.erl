@@ -25,6 +25,7 @@ run([Seed]) ->
     io:format("fuzz: ~b rounds ok, ~b accepted, ~b sized~n", [2 * ?ROUNDS, Accepted, Sized]).
 
 parse_round(Bytes) ->
+    identity_sound(Bytes),
     Answer = try erx_pcie_cfg:parse(Bytes)
              catch Class:Reason:Stack -> fail(crash, Bytes, {Class, Reason, Stack})
              end,
@@ -41,6 +42,18 @@ parse_round(Bytes) ->
             0;
         Other ->
             fail(crash, Bytes, Other)
+    end.
+
+%% identity/1 takes every 256-byte snapshot, whatever its header type, and
+%% refuses any other length.
+identity_sound(Bytes) ->
+    Answer = try erx_pcie_cfg:identity(Bytes)
+             catch Class:Reason:Stack -> fail(crash, Bytes, {Class, Reason, Stack})
+             end,
+    case {byte_size(Bytes), Answer} of
+        {?SNAPSHOT, {ok, #{header_type := Type}}} when Type =< 16#7f -> ok;
+        {Size, {error, snapshot}} when Size =/= ?SNAPSHOT -> ok;
+        _ -> fail(crash, Bytes, Answer)
     end.
 
 %% What a read value promises, restated from the design rather than from the module.

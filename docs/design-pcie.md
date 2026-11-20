@@ -460,7 +460,7 @@ restart is the recovery.
 A **bridge driver** implements the `erx_pcie_bridge` behaviour:
 
 ```erlang
--callback start(Facts :: erx_pcie:bridge(), Device :: erx_device:dev()) ->
+-callback start(Facts :: erx_pcie:bridge(), Device :: erx_device:device()) ->
     {ok, State :: term()} | {error, Reason :: atom()}.
 -callback access(Access, State :: term()) -> {Result, State :: term()}
     when Access :: {read, Place, Offset, Width}
@@ -468,7 +468,7 @@ A **bridge driver** implements the `erx_pcie_bridge` behaviour:
          Place :: {Bus :: 0..255, Device :: 0..31, Function :: 0..7},
          Offset :: 0..255, Width :: 1 | 2 | 4,
          Result :: {ok, non_neg_integer()} | ok | {error, absent | link_down}.
--callback ready(Function :: erx_pcie:function(), State :: term()) ->
+-callback ready(Function :: erx_pcie:layout(), State :: term()) ->
     {ok | not_ready, State :: term()}.
 ```
 
@@ -572,12 +572,15 @@ adds nothing to that rule.
 ### The walk
 
 `erx_pcie_walk` reads; it writes only the root ports, through the
-planner, and the sizing sequence, and only where [Sizing](#sizing)
-allows. For each host bridge, from the bridge's first bus:
+planner, the sizing sequence, only where [Sizing](#sizing) allows, and
+a malformed function's command register (step 2). For each host bridge, from the bridge's first bus:
 
 1. **The root bus**, devices 0 to 31. For each device, function 0's
-   vendor; absent ends the device. Its header type; a type above 1 is
-   reported `unsupported`; the multifunction bit adds functions 1 to 7.
+   vendor; absent ends the device. Its header type; the multifunction
+   bit adds functions 1 to 7. A function of any number whose header
+   type, read from its snapshot before `erx_pcie_cfg:parse/1`, is above
+   1 is reported `unsupported` from its identity alone, without a parse,
+   since the parser takes only types 0 and 1.
    The bridge driver's `access` answers `absent` for a place it does not
    reach, so the walk is the same for every bridge.
 2. **Each function** is read whole: its 256-byte configuration space, a
@@ -586,8 +589,9 @@ allows. For each host bridge, from the bridge's first bus:
    gets one write, its command register with memory, I/O and bus master
    off and INTx disabled, which needs nothing the parser refused.
 3. **A type-1 header on the root bus** is a root port. It takes the next
-   bus number in place order as its secondary and subordinate bus, and
-   its target is applied at once ([Root ports](#root-ports)), so the bus
+   bus number in place order as its secondary and subordinate bus,
+   before its parse or its BARs decide anything, so every walk gives it
+   the same buses, and its target is applied at once ([Root ports](#root-ports)), so the bus
    below it can be read. Below it, devices 0 to 31 are read as in step 1.
    A type-1 header below a root port is reported `unsupported` and
    nothing below it is read.
@@ -656,9 +660,11 @@ unplaced:
   largest item's.
 * **Packing.** The items are sorted by alignment, largest first, then by
   place and BAR index, and each takes the lowest address from the
-  window's base that is aligned to it and overlaps nothing placed. Since
-  every span is a multiple of its alignment, this packs without a gap,
-  and the same functions always get the same addresses. Each root port
+  window's base that is aligned to it and overlaps nothing placed. A
+  BAR's span is its alignment, so BARs pack without a gap; a root port's
+  span, its extent rounded up to 1 MiB, need not be a multiple of its
+  alignment, and a smaller item later fills the gap it leaves. The same
+  functions always get the same addresses. Each root port
   is one item, so the forwarding windows of two root ports never
   overlap.
 * **What does not fit** is unplaced, and the function is reported
@@ -1365,7 +1371,7 @@ rows, each citing this document; the kinds table's rows for the two
 bridges, with a seeded row whose peripheral has no SVD file; and a
 check that `erx_pcie_apply` is the only caller of `erx_pcie_plan:plan/2`
 and the only module that writes configuration space outside the walk's
-sizing, with a seeded second writer.
+sizing and its one write to a malformed function, with a seeded second writer.
 
 ### The `pcie` QEMU suite
 

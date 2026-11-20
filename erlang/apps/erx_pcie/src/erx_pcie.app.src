@@ -2,11 +2,13 @@
 %% SPDX-License-Identifier: BSD-2-Clause
 
 %% The PCIe enumerator (docs/design-pcie.md). Its pure cores build and are tested on
-%% the host: erx_pcie_cfg, the configuration-space parser and BAR sizing.
+%% the host: erx_pcie_cfg, the configuration-space parser and BAR sizing; erx_pcie_walk,
+%% the walk; erx_pcie_place, placement. erx_pcie_bridge is the bridge seam, erx_pcie_ecam
+%% its ECAM driver.
 {application, erx_pcie,
  [{description, "erXos PCIe enumerator"},
   {vsn, "1"},
-  {modules, [erx_pcie_cfg]},
+  {modules, [erx_pcie, erx_pcie_bridge, erx_pcie_cfg, erx_pcie_ecam, erx_pcie_place, erx_pcie_walk]},
   {registered, []},
   {applications, [kernel, stdlib, erx]},
   {env, []}]}.

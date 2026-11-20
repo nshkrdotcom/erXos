@@ -47,9 +47,9 @@ this masks the bit off.
 Every offset, bit and bound comes from `abi/formats/pcie.txt`.
 """.
 
--export([parse/1, size/2]).
--export_type([read/0, bar/0, msi/0, msix/0, express/0, bridge/0, reason/0,
-              size_reason/0]).
+-export([parse/1, identity/1, size/2]).
+-export_type([read/0, identity/0, bar/0, msi/0, msix/0, express/0, bridge/0,
+              reason/0, size_reason/0]).
 
 -include("generated/erx_abi.hrl").
 
@@ -137,6 +137,18 @@ header has no subsystem identity in its header; both read 0.
                   express := none | express(),
                   bridge := none | bridge()}.
 
+-doc """
+What every header type holds at the same offsets: the identity, the class
+code, the header type without the multifunction bit, and that bit. The
+walk reads it before parse/1, which takes only types 0 and 1.
+""".
+-type identity() :: #{vendor := 0..16#ffff,
+                      device_id := 0..16#ffff,
+                      class_code := 0..16#ffffff,
+                      revision := byte(),
+                      header_type := 0..16#7f,
+                      multifunction := boolean()}.
+
 -type capability() :: erx_abi_enums:pcie_cap().
 
 -doc "The field a snapshot was refused for.".
@@ -156,6 +168,14 @@ a size the 32-bit windows cannot place, for which it is reported
 -spec parse(binary()) -> {ok, read()} | {error, reason()}.
 parse(Snapshot) when is_binary(Snapshot) ->
     decoded(fun() -> decode_function(Snapshot) end).
+
+-doc """
+The identity of a 256-byte snapshot of any header type, or `snapshot` for
+bytes of another length.
+""".
+-spec identity(binary()) -> {ok, identity()} | {error, snapshot}.
+identity(Snapshot) when is_binary(Snapshot) ->
+    decoded(fun() -> decode_identity(Snapshot) end).
 
 -doc """
 The hardware size, as a power of two, of a BAR of the read value from its
@@ -195,22 +215,27 @@ sized(Index, Bits, Width) ->
 %% The exponent of a power of two: its digits in base 2, less one.
 log2(Power) -> length(integer_to_list(Power, 2)) - 1.
 
-decode_function(Snapshot) ->
+decode_identity(Snapshot) ->
     check(byte_size(Snapshot) =:= ?ERX_PCIE_CONFIG_SIZE, snapshot),
     HeaderType = u8(Snapshot, ?ERX_PCIE_CFG_HEADER),
-    Header = header(HeaderType band ?ERX_PCIE_HEADER_TYPE_MASK),
+    #{vendor => u16(Snapshot, ?ERX_PCIE_CFG_VENDOR),
+      device_id => u16(Snapshot, ?ERX_PCIE_CFG_DEVICE),
+      class_code => read(Snapshot, ?ERX_PCIE_CFG_CLASS_CODE, 3, snapshot),
+      revision => u8(Snapshot, ?ERX_PCIE_CFG_REVISION),
+      header_type => HeaderType band ?ERX_PCIE_HEADER_TYPE_MASK,
+      multifunction => set(HeaderType, ?ERX_PCIE_HEADER_MULTIFUNCTION)}.
+
+decode_function(Snapshot) ->
+    #{header_type := HeaderType} = Identity = decode_identity(Snapshot),
+    Header = header(HeaderType),
     Pin = u8(Snapshot, ?ERX_PCIE_CFG_PIN),
     check(Pin =< ?ERX_PCIE_PIN_MAX, pin),
     {SubsystemVendor, Subsystem} = subsystem(Snapshot, Header),
     Bars = bars(Snapshot, Header),
     Found = capabilities(Snapshot),
-    #{vendor => u16(Snapshot, ?ERX_PCIE_CFG_VENDOR),
-      device_id => u16(Snapshot, ?ERX_PCIE_CFG_DEVICE),
+    (maps:remove(header_type, Identity))#{
       command => u16(Snapshot, ?ERX_PCIE_CFG_COMMAND),
-      class_code => read(Snapshot, ?ERX_PCIE_CFG_CLASS_CODE, 3, snapshot),
-      revision => u8(Snapshot, ?ERX_PCIE_CFG_REVISION),
       header => Header,
-      multifunction => set(HeaderType, ?ERX_PCIE_HEADER_MULTIFUNCTION),
       subsystem_vendor => SubsystemVendor,
       subsystem => Subsystem,
       pin => Pin,

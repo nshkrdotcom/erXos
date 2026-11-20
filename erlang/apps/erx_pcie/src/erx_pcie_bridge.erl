@@ -1,0 +1,58 @@
+%% Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
+%% SPDX-License-Identifier: BSD-2-Clause
+
+-module(erx_pcie_bridge).
+-moduledoc """
+The bridge seam (docs/design-pcie.md, "The bridge seam"): what a host
+bridge driver gives the enumerator. `start` brings the bridge up;
+`access` is one configuration access at a place; `ready` lets a bridge
+hold back a function its board must start first. The walk, sizing,
+placement and the planner reach configuration space through `access`
+alone, so a third bridge is one more module.
+
+`access` answers `{error, absent}`, without touching the hardware, for
+a place its bridge must not be asked about. Which places those are is
+one decision over the bridge's record, reaches/2, which every driver
+asks before it touches anything: an open bridge reaches every place on
+its bus range; a closed one reaches only its root port, at device 0,
+function 0 of its first bus, and the places below it that its platform
+record lists, since any other access on the BCM2711's bus locks up the
+memory controller (docs/design-pcie.md, "The closed bus").
+""".
+
+-export([reaches/2]).
+-export_type([access/0, result/0]).
+
+-doc """
+One configuration access at a place: a read or a write of Width bytes at
+Offset in its configuration space, aligned to Width.
+""".
+-type access() :: {read, erx_pcie:place(), Offset :: 0..255, Width :: 1 | 2 | 4}
+                | {write, erx_pcie:place(), Offset :: 0..255, Width :: 1 | 2 | 4,
+                   Value :: 0..16#ffffffff}.
+
+-doc """
+A read's value, a write's `ok`, or `absent` for a place the bridge does
+not reach or a function that is not there, or `link_down` when the
+bridge's link was down around the access, whose answer is then not taken.
+""".
+-type result() :: {ok, 0..16#ffffffff} | ok | {error, absent | link_down}.
+
+-callback start(Facts :: erx_pcie:bridge(), Device :: erx_device:device()) ->
+    {ok, State :: term()} | {error, Reason :: atom()}.
+-callback access(Access :: access(), State :: term()) -> {result(), State :: term()}.
+-callback ready(Function :: erx_pcie:layout(), State :: term()) ->
+    {ok | not_ready, State :: term()}.
+
+-doc """
+Whether a driver of the bridge may make an access at the place: for an
+open bridge, any place whose bus lies in its range; for a closed one,
+only its root port and the places its record lists.
+""".
+-spec reaches(erx_pcie:bridge(), erx_pcie:place()) -> boolean().
+reaches(#{closed := false, bus_first := First, bus_last := Last}, {Bus, _Device, _Function}) ->
+    First =< Bus andalso Bus =< Last;
+reaches(#{closed := true, bus_first := First}, {First, Device, Function}) ->
+    Device =:= 0 andalso Function =:= 0;
+reaches(#{closed := true, places := Places}, Place) ->
+    lists:any(fun(#{place := Listed}) -> Listed =:= Place end, Places).

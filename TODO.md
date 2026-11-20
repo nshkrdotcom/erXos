@@ -9372,6 +9372,12 @@ document's "residual risks accepted" paragraph.
   BCM2711 bridge's registers from the facts record's register map and `bcm2838_pci.c`; and the ECAM and BCM2711
   configuration-space views (8-, 16- and 32-bit accesses at a computed offset, bounded by the window), with the
   generator's support for both extensions.
+* [Medium] PCIe, `erlang/apps/erx_pcie/src/erx_pcie_ecam.erl` ([design-pcie.md](docs/design-pcie.md#the-bridge-seam)):
+  `start/2` answers `{error, unsupported}`, since the device NIF has no access at a computed offset until the ECAM
+  configuration-space view above exists. The driver's accesses go through a `space()` (a module with `read/3` and
+  `write/4` at a window offset) that `open/2` takes and only the host tests supply. When the view lands, `start/2`
+  makes its state from the device record and the `space()` indirection is deleted; the view's bound by the window
+  then also covers a tree whose `bus-range` reaches past its ECAM `reg`.
 * [Medium] USB, `tools/lib/erx/chokepoint_rules/device.rb` ([design-usb.md](docs/design-usb.md#the-block-transport)):
   `device-posters` names neither `erx_xhci` as a poster of `erx_device:post/4` nor `erx_blk_write` as the one caller
   of `erx_usb_pipe:bulk_out/3`, and nothing holds `erx_device` to `erx_xhci` within `erlang/apps/erx_usb/`. Add the
