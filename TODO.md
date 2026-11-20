@@ -7843,6 +7843,39 @@ to the corpus and follow rc
   so `{disabled, reset_disabled}` and `unsupported_speed` are reached by no case, and it checks no route or
   translator parameter of Address Device. With one external hub it cannot reach a hub given up while a port below it holds the
   turn and another hub could reset; `a_hub_given_up_keeps_its_childs_turn_test` covers that case alone.
+* [High] USB, the TRB ring form against the DMA check (`erx_device_trb.c`, `erx_device_dma.c`,
+  [design-device-dma.md](docs/design-device-dma.md#calls-observations-and-plans)): the form's plans cannot pass
+  `erx_device_dma_check` as it stands, so its round function (Track U's install package) cannot run them through
+  `run_call`. The check accepts one fixed publication offset, while the form publishes the first TRB's control word
+  wherever it lands in any of its 37 rings; it accepts addresses only at the address field of one descriptor table
+  whose length field equals the reach, while the form writes addresses into link TRBs (no length field), endpoint
+  contexts' dequeue pointers (a cycle flag in bit 0, reach derived), DCBAA entries, command TRBs and normal and data
+  TRBs (length field the request's, reach the buffer); and it lets a post or a completion change only buffers' writers,
+  while Address Device hands a device context to the controller and Disable Slot's completion takes it back. The
+  host test runs the plans through `erx_device_dma_order` alone. Open design question: teach the check the form's
+  address map (address fields per region kind with derived reaches, a publication per plan, a device context's
+  handover and return), or reshape the plans.
+* [Medium] USB, the TRB ring form's Disable Slot (`erx_device_trb_command_done`): the design clears the slot's DCBAA
+  entry after the disable completes (design-usb.md, the region table), which needs a hand-over decision after the
+  completion's take-back; the completion package (Track U part (a)) decides where it goes.
+* [Medium] USB, the TRB ring form's commands (`erx_device_trb.c`): one command's behaviour is spread over `accept`,
+  the context builders in `erx_device_trb_command`, `command_words` and `erx_device_trb_command_done`; one entry per
+  command kind holding its acceptance, its build and its completion would keep each together.
+* [Medium] USB, the TRB ring form's contexts, settled from the xHCI specification before the board pass: EP0's
+  average TRB length is written as its packet size and every endpoint's as packet times burst plus one (the design
+  says only "derived from its packet size and burst"); Configure Endpoint's slot context carries only the context
+  entries and hub fields, route, speed, root port and TT left 0, as the design's table says, though a controller that
+  evaluates the whole slot context with its add flag would misread them; a non-EP0 control endpoint takes index
+  2n + 1 (xHCI 4.5.1); and whether a setup packet's direction bit must match the data stage's.
+* [Low] USB, the TRB ring form's design text (design-usb.md, "Two rules every ring keeps"): it says a transfer that
+  continues past the link sets the link's chain bit, but each control stage is a TD of one TRB (xHCI 4.11.2.2), so no
+  TD of the form spans the link and `erx_device_trb.c` never sets it; and a ring's queue starts at the block's enqueue
+  position and cycle state, not at "its ring's base", which keeps stale TRBs of an earlier queue on the other cycle
+  without zeroing the ring. design-device-dma.md's refusals list no answer for a command refused while another is
+  in flight or for want of a free block (`ERX_DEVICE_TRB_REFUSE_FULL`), nor for a post on a queue the command in
+  flight holds (`ERX_DEVICE_TRB_REFUSE_HALTED`).
+* [Low] USB, the TRB ring form's step bounds (`ERX_DEVICE_TRB_POST_STEPS`, `ERX_DEVICE_TRB_COMMAND_STEPS`): counted
+  in comments and asserted only by the harnesses; nothing in the core enforces them.
 * [Low] Erlang edges (docs/style.md, "Functional core"): `erx_tcp_listen` (`:176`), `erx_gen_tcp`
   (`:443`), `erx_pipe_srv` (`:312`), `erx_prog_handler` (`:264`) and `erx_blk_sd` (`:394`) walk a
   step's actions with a loop of their own rather than `erx_actions:perform/3`; the first two match a

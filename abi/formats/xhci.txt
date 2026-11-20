@@ -45,6 +45,9 @@ limit xhci_endpoint_error_count u32 3
 # erXos choice.
 limit xhci_interrupt_buffer_size u32 1024
 limit xhci_bulk_buffer_size u32 32768
+# A control block's one buffer of 4 KiB, which bounds a control transfer's data
+# stage (design-usb.md, "The TRB ring form"), an erXos choice.
+limit xhci_control_buffer_size u32 4096
 
 # An interrupt endpoint's Interval, the base-2 exponent of its period in 125 us units
 # (xHCI 1.2, 6.2.3.6 and Table 6-12, p. 456). At low and full speed bInterval counts
