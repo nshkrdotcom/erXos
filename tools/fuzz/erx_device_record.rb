@@ -15,7 +15,10 @@ require_relative '../lib/erx/generated'
 # given record that keeps a memory key of 0 bytes shows it holds a device of no DMA to
 # having no memory object, and a reader that takes a shared line for a direct one shows it
 # holds each record to its line's mark, and one that reads a hardware address as 64 bits
-# wide shows it holds MAC to 48. For framebuffers, a reader that takes a stride a byte short
+# wide shows it holds MAC to 48, one that reads a given record's INDEX as 64 bits wide that it
+# holds INDEX to 32, and one that reads a null line handle as a line that it holds a device
+# whose node raises no line to having none, and one that takes that null line marked shared that
+# it refuses the mark. For framebuffers, a reader that takes a stride a byte short
 # of a row, rows past the record's bytes, or r8g8b8 as 16 bits a pixel shows the reference
 # holds a record to the geometry the tree's reader passed. For system_image, a reader that
 # takes a root hash of any length, a salt of no bytes or of 33, any sixth word as the
@@ -31,6 +34,9 @@ module ErxDeviceRecordFuzz
     'keeping a memory key of 0 bytes' => ["with_memory(Spec, _Memory, 0) -> Spec;\n", ''],
     'reading a shared line as direct' => ['marked(shared, Line) -> {shared, Line}.', 'marked(shared, Line) -> Line.'],
     'reading a hardware address as 64 bits wide' => ['number(Mac, 48)', 'number(Mac, 64)'],
+    'reading a given index as 64 bits wide' => ["number(Index, 32)},\n          mark(Mark)", "number(Index, 64)},\n          mark(Mark)"],
+    'taking a null line marked shared' => ["{{ok, [_, _, _, ?ERX_CAP_NULL, _, _]}, {{ok, _}, {ok, _}}, {ok, shared},", "{{ok, [_, _, _, -1, _, _]}, {{ok, _}, {ok, _}}, {ok, shared},"],
+    'reading a null line handle as a line' => ["given_lines(_Sharing, ?ERX_CAP_NULL) -> [];\n", ''],
     'taking a stride short of a row' => ['R * 8 >= X * Bits', 'R * 8 + 8 >= X * Bits'],
     'taking rows past the bytes' => ['R * Y =< S', 'R * (Y - 1) =< S'],
     'reading r8g8b8 as 16 bits a pixel' => ['{ok, r8g8b8, 24}', '{ok, r8g8b8, 16}'],

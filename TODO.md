@@ -2313,6 +2313,23 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   as unsized memory. The planner checks the route in mode `off` too, so an `off` setting cannot lower a function
   whose route no longer fits. `erx_pcie_apply_tests` keeps a broken property's rule and target but not the input's
   switch levels and differing fields, and every walk seed reruns it (about 10 s each).
+  `pcie` facet's mint in the PCIe domain over `erx_facet`; and the bridge's driver over its given record:
+  the enumerator's `open` finds the record of role `configuration` whose INDEX is `erx_pcie_bridge.index`, opens
+  it with `erx_device:open/1` and starts the module its peripheral names, of which only `erx_pcie_ecam` has a
+  `start` over a device (the BCM2711's bridge has its core alone). Facet places are the bridge's
+  device row and the function's place, `{Bridge, Bus, Device, Function}`, where the design writes the bridge's path:
+  the PCIe domain knows its bridges only by row (`erx_pcie_bridge.index`), so the design should say which.
+* [Medium] PCIe, `erx_pcie_apply`'s verification and the later record (`erlang/apps/erx_pcie/src/erx_pcie_apply.erl`,
+  `erx_pcie_enumerator.erl`, [design-pcie.md](docs/design-pcie.md#host-tests-of-the-pure-cores)): the host test the
+  design names for `erx_pcie_apply` (every plan run with each write ignored alone, and with a register ignoring writes
+  from one write on) and its two seeded faults are not written; the model has no write-ignoring registers. A later
+  start reports a drivable function as its stored layout rather than as it reads, so a change the planner's identity
+  does not cover (class, subsystem, pin, MSI-X table, Express offset or FLR flag) is confirmed; build the later record
+  from the read with the layout's BAR sizes and addresses. `targets` must carry each layout's latest state, which the
+  library's intake zeroes, since the enumerator drives only layouts found ready or not_ready. A `set` the planner
+  refuses for the mastering rule is answered `{error, reset}` without turning the function off, and a start whose route
+  does not fit leaves it as it reads, where Failure handling turns it off; a root port's reopening that fails and the
+  walk's `past_bound` are not logged. The `pci` interface's scope, its `device` parameters, is not declared.
 * [Low] image build, the Pi's single file against the loader's device tree (`ProductionImage::Machine#check_single_file`,
   `Fiasco#first_stage_address`): the bound starts at the entry of users-raspi4b's `bootstrap.elf`, not checked
   against the address QEMU's raspi4b model and the firmware load it at (`QemuPlan::MACHINES` loads, 0x200000). If
@@ -9593,10 +9610,15 @@ document's "residual risks accepted" paragraph.
   `erx_firmware_request` in the machine family, and no firmware request record (name, belonging, tag, argument) in
   the system manifest from the platform record's `firmware_requests`. Add the three.
 * [Medium] domain library, `include/erx/device_kinds.h` ([design-usb.md](docs/design-usb.md#who-holds-a-controller),
-  [design-pcie.md](docs/design-pcie.md#the-bridge-seam)): no rows for the host bridges' kinds, so a bridge row
-  is held but not driven and the enumerator finds no given record to choose its module by. Add `pci_ecam`
-  (`pci-host-ecam-generic`) and `bcm2711_pcie` (`brcm,bcm2711-pcie`) with role `configuration` and their
-  peripherals, with the PCIe domain on QEMU `virt` (package P12).
+  [design-pcie.md](docs/design-pcie.md#the-bridge-seam)): the host bridges' kinds drive a bridge row, but neither
+  platform record (`config/platforms/`) has a `configuration` row and no manifest a PCIe domain, so no bridge is
+  given yet (package P12). No host test checks a bridge's given record (role `configuration`, LINE_H 0 for
+  QEMU's ECAM, INDEX its row) through the domain library's apply, and the manifest check does not refuse a
+  `configuration` row with DMA memory, which the boot view refused while bridges were of no kind.
+* [Low] boot records, `-erx_record given` ([design-fiasco.md](docs/design-fiasco.md#device-records)): the record's
+  field list is kept by hand in its C writer (`erx_boot_given_words`), its room (`ERX_BOOT_GIVEN_WORDS_MAX`), its
+  Erlang reader (`erx_device_record:spec/2`, whose error clauses match a positional tuple), the native guest's
+  reader and `ProductionImage::Run::GIVEN_RECORD_WORDS`; one declared grammar would generate them.
 * [Medium] system manifest, `abi/manifest.txt` ([design-usb.md](docs/design-usb.md#mass-storage-reaches-the-file-servers)):
   the boot-time reader bounds no `windows[].drive` (it has no rule for "`mf_none` or below `usb_drives_max`"); add
   one before `erx_blk_drive` reads the field.
@@ -9615,10 +9637,15 @@ document's "residual risks accepted" paragraph.
   the places start the tree's grants (`input_tree/1`), but nothing yet hands one to the display domain the
   manifest names, and no `erx_usb_sup` starts the places before the bus. Both come with the USB domain's start.
 * [Medium] USB and PCIe, `hw/svd/` ([design-usb.md](docs/design-usb.md#registers-at-offsets-the-controller-reports),
-  [design-generation.md](docs/design-generation.md#register-inputs)): no configuration-space view for ECAM or for the
-  BCM2711 bridge. Write both (8-, 16- and 32-bit accesses at a computed offset, bounded by the window: ECAM's window,
-  and the BCM2711's root port at 0 and endpoint data window at `0x8000`) with the generator's support for them;
+  [design-generation.md](docs/design-generation.md#register-inputs)): no configuration-space view for the BCM2711
+  bridge. Write its `<configurationSpace>` rows (the root port at 0 and the endpoint data window at `0x8000`, each one
+  block, as `pci_ecam.svd` does ECAM's) beside its registers;
   `erx_pcie_bcm2711_core`'s `cfg_read` and `cfg_write` operations reach configuration space through that view.
+  `check_spaces` (`tools/lib/erx/hardware.rb`) refuses a space over a register, and the root port's block at 0 holds
+  the SVD's `RC_CFG_*` registers, so the design must first say whether a space may cover named registers.
+* [Medium] device NIF, `erx_device.c` `erx_device_config_read`/`_write` and `erx_device_nif.c` `decode_config`: no test
+  reaches them (the harness checks the core only): open a `pci_ecam` stand-in and check a round trip at each width,
+  a value wider than its width refused, block 256 refused and `elements/2` 256, with a seed on the value bound.
 * [Medium] PCIe, `erlang/apps/erx_pcie/src/erx_pcie_bcm2711_core.erl` ([design-pcie.md](docs/design-pcie.md#the-bridge-seam)):
   the core runs an agenda of closures, so its state cannot be printed, compared or explored exhaustively, and its
   operation vocabulary (`{wait, Us}`, `{read, Register}`, `{write, Register, Word}`) is a second one beside
@@ -9627,12 +9654,6 @@ document's "residual risks accepted" paragraph.
 * [Low] docs, `docs/research-brcmstb-pcie.md` section 2: the worked `BASE_LIMIT` for the mainline tree's 64 MiB window
   reads `0x00300000`; FreeBSD's encoder (`bcm2838_pci.c:591-596`) gives `0x03f00000`, the limit being MiB `0x603f`.
   Re-check the section's worked values in a new dated record.
-* [Medium] PCIe, `erlang/apps/erx_pcie/src/erx_pcie_ecam.erl` ([design-pcie.md](docs/design-pcie.md#the-bridge-seam)):
-  `start/2` answers `{error, unsupported}`, since the device NIF has no access at a computed offset until the ECAM
-  configuration-space view above exists. The driver's accesses go through a `space()` (a module with `read/3` and
-  `write/4` at a window offset) that `open/2` takes and only the host tests supply. When the view lands, `start/2`
-  makes its state from the device record and the `space()` indirection is deleted; the view's bound by the window
-  then also covers a tree whose `bus-range` reaches past its ECAM `reg`.
 * [Medium] USB, `tools/lib/erx/chokepoint_rules/device.rb` ([design-usb.md](docs/design-usb.md#the-block-transport)):
   `device-posters` names neither `erx_xhci` as a poster of `erx_device:post/4` nor `erx_blk_write` as the one caller
   of `erx_usb_pipe:bulk_out/3`, and nothing holds `erx_device` to `erx_xhci` within `erlang/apps/erx_usb/`. Add the

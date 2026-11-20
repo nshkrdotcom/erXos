@@ -597,10 +597,12 @@ apply_function_words(apply_t *apply, uint32_t at, uint32_t d, char *words, size_
 /*
  * The -erx_record given record of device d of give `at` (erx_boot_given_words)
  * into words, capacity bytes: the values its give's installs took in the
- * holder's table, its window's and its line's, marked shared as the plan
+ * holder's table, its window's and its line's, ERX_CAP_NULL for a device
+ * whose node raises no line, marked shared as the plan
  * says, and its memory's; its registers' offset into its window from the
  * plan; the facts of its catalogue entry, COHERENT and, for a network row,
- * MAC, or for a framebuffer row its -erx_record framebuffer record
+ * MAC, and its catalogue entry's index, its manifest device row, as
+ * INDEX; or for a framebuffer row its -erx_record framebuffer record
  * (erx_boot_framebuffer_words) over its window; and its length, or 0 when
  * the words do not fit, which the view's names and paths rule out. A device of no
  * kind has no role word to write, so apply_given_words answers 0 for one;
@@ -624,7 +626,8 @@ apply_given_words(apply_t *apply, uint32_t at, uint32_t d, char *words, size_t c
 	    .line = apply_unit_installed(apply, at, ERX_DOM_OBJ_DEV_IRQ, device->line), .line_shared = device->shared,
 	    .memory = memory ? held : ERX_CAP_NULL, .memory_size = memory ? entry->memory : 0, .clock = entry->clock,
 	    .coherent = erx_boot_coherent(facts, entry->memory),
-	    .mac = facts != NULL && entry->role == ERX_MF_DEVICE_ROLE_NETWORK ? erx_boot_mac_number(facts) : 0 };
+	    .mac = facts != NULL && entry->role == ERX_MF_DEVICE_ROLE_NETWORK ? erx_boot_mac_number(facts) : 0,
+	    .index = device->index };
 
 	if (device->pci)
 		return (device->driven ? apply_function_words(apply, at, d, words, capacity) : 0);

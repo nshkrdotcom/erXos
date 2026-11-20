@@ -16,13 +16,18 @@ read of all ones at offset 0, which no present function's vendor reads,
 answers `{error, absent}`. Its `ready` is always `ok`; an ECAM bridge
 holds no function back.
 
-The window is reached through a `space()`: a module with `read/3` and
-`write/4` at a byte offset of the window and a handle it takes. The
-device NIF reaches a device only by register name, from its
-peripheral's SVD source, and has no access at a computed offset, so
-start/2 answers `{error, unsupported}` and open/2 makes the driver's
-state over any `space()`, such as the model of configuration space its
-tests use (TODO.md).
+The window is the device's configuration space `function`
+(hw/svd/pci_ecam/pci_ecam.svd): one block of 4 KiB for each routing ID,
+`(bus - bus_first) << 8 | device << 3 | function`, so the block's
+offset in the window is the layout above, and the device NIF makes each
+access inside its block. A place whose block lies past the window, a
+bus the tree's `bus-range` names but its `reg` does not cover, answers
+`{error, absent}` too, before the device NIF is asked.
+
+start/2 reaches the window through erx_device; open/2 takes any module
+of that shape (elements/2, config_read/4 and config_write/5), as the
+model of configuration space the host tests use, which cannot load the
+device NIF.
 """.
 
 -behaviour(erx_pcie_bridge).
@@ -31,56 +36,53 @@ tests use (TODO.md).
 -export_type([space/0, state/0]).
 
 -doc """
-A configuration window: `Module:read(Handle, Offset, Width)` answers the
-value of Width bytes at Offset of the window, and
-`Module:write(Handle, Offset, Width, Value)` stores them, each one
-volatile access of that width.
+A configuration window in erx_device's shape: `Module:elements(Handle,
+function)` is how many blocks of the window's `function` space it
+holds, `Module:config_read(Handle, {function, Routing}, Offset, Width)`
+the value of Width bytes at Offset of a block, and
+`Module:config_write(Handle, {function, Routing}, Offset, Width, Value)`
+stores them, each one access of that width.
 """.
 -type space() :: {Module :: module(), Handle :: term()}.
 
--opaque state() :: {ecam, erx_abi_layout:erx_pcie_bridge(), space()}.
+%% The bridge's record, its window, and how many blocks of the window's space it holds.
+-opaque state() :: {ecam, erx_abi_layout:erx_pcie_bridge(), space(), Blocks :: non_neg_integer()}.
 
--doc """
-The bridge's state over its device's configuration window: unsupported,
-since the device NIF has no access at a computed offset.
-""".
--spec start(erx_abi_layout:erx_pcie_bridge(), erx_device:device()) -> {error, unsupported}.
-start(_Bridge, _Device) ->
-    {error, unsupported}.
+-doc "The bridge's state over its device's configuration window. Bring-up does nothing.".
+-spec start(erx_abi_layout:erx_pcie_bridge(), erx_device:device()) -> {ok, state()}.
+start(Bridge, Device) ->
+    open(Bridge, {erx_device, Device}).
 
 -doc "The bridge's state over a configuration window reached as a `space()`.".
 -spec open(erx_abi_layout:erx_pcie_bridge(), space()) -> {ok, state()}.
-open(Bridge, {Module, _Handle} = Space) when is_atom(Module) ->
-    {ok, {ecam, Bridge, Space}}.
+open(Bridge, {Module, Handle} = Space) when is_atom(Module) ->
+    {ok, {ecam, Bridge, Space, Module:elements(Handle, function)}}.
 
 -doc """
 One configuration access, or `{error, absent}` for a bus outside the
-bridge's range or a read of all ones at offset 0.
+bridge's range or past its window, or a read of all ones at offset 0.
 """.
 -spec access(erx_pcie_bridge:access(), state()) -> {erx_pcie_bridge:result(), state()}.
-access(Access, {ecam, Bridge, Space} = State) ->
-    {make(Access, Bridge, Space), State}.
+access(Access, {ecam, Bridge, Space, Blocks} = State) ->
+    {make(Access, block(Bridge, Blocks, element(2, Access)), Space), State}.
 
 -doc "Always `ok`: an ECAM bridge holds no function back.".
 -spec ready(erx_abi_layout:erx_pcie_function(), state()) -> {ok, state()}.
 ready(_Function, State) ->
     {ok, State}.
 
-make({read, Place, Offset, Width}, Bridge, {Module, Handle}) when Offset rem Width =:= 0 ->
-    case function_base(Bridge, Place) of
-        unreached -> {error, absent};
-        Base -> erx_pcie_bridge:read_answer(Offset, Width, Module:read(Handle, Base + Offset, Width))
-    end;
-make({write, Place, Offset, Width, Value}, Bridge, {Module, Handle}) when Offset rem Width =:= 0 ->
-    case function_base(Bridge, Place) of
-        unreached -> {error, absent};
-        Base -> ok = Module:write(Handle, Base + Offset, Width, Value)
-    end.
+make(_Access, unreached, _Space) ->
+    {error, absent};
+make({read, _Place, Offset, Width}, Block, {Module, Handle}) when Offset rem Width =:= 0 ->
+    erx_pcie_bridge:read_answer(Offset, Width, Module:config_read(Handle, Block, Offset, Width));
+make({write, _Place, Offset, Width, Value}, Block, {Module, Handle}) when Offset rem Width =:= 0 ->
+    ok = Module:config_write(Handle, Block, Offset, Width, Value).
 
-%% Where the place's 4 KiB of configuration space starts in the window, or
-%% `unreached` for a place the bridge does not reach.
-function_base(#{bus_first := First} = Bridge, {Bus, Device, Function} = Place) ->
-    case erx_pcie_bridge:reaches(Bridge, Place) of
-        true -> ((Bus - First) bsl 20) bor (Device bsl 15) bor (Function bsl 12);
+%% The place's block of the window's space, its routing ID from the bridge's first bus,
+%% or `unreached` for a place the bridge does not reach or the window does not hold.
+block(#{bus_first := First} = Bridge, Blocks, {Bus, Device, Function} = Place) ->
+    Routing = ((Bus - First) bsl 8) bor (Device bsl 3) bor Function,
+    case erx_pcie_bridge:reaches(Bridge, Place) andalso Routing < Blocks of
+        true -> {function, Routing};
         false -> unreached
     end.

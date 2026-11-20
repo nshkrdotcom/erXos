@@ -498,12 +498,18 @@ A **bridge driver** implements the `erx_pcie_bridge` behaviour:
 
 `start` brings the bridge up; `access` is one configuration access at a
 place, and answers `{error, absent}` without touching the hardware for
-a place its bridge must not be asked about; `ready` lets a bridge hold
+a place its bridge must not be asked about, or whose device is past 31
+or function past 7, which would name another function's routing ID, as
+FreeBSD reads all ones there ([What is matched](#what-is-matched),
+ECAM); `ready` lets a bridge hold
 back a function its board must start first. The walk, sizing, placement
 and planner call nothing else, so a third bridge is one more module. The
 enumerator chooses the module by the bridge's given record's
 peripheral, `pci_ecam` or `bcm2711_pcie`, rows of
-`include/erx/device_kinds.h` with role `configuration`.
+`include/erx/device_kinds.h` with role `configuration`, and finds that
+record by its INDEX, the bridge's manifest device row, which is the
+`erx_pcie_bridge`'s `index`
+([design-fiasco.md](design-fiasco.md#device-records)).
 
 **ECAM** (`erx_pcie_ecam`). `start` does nothing. An access at a place
 whose bus lies outside the bridge's bus range, from the tree's

@@ -1025,11 +1025,11 @@ module Erx
       # Every word of ERTS's arguments that the manifest's own words do not add.
       def self.arguments_always(root) = ARGUMENTS_FIXED + allocator_words(root).size
       # The words of -erx_record given ROLE PERIPHERAL PATH WINDOW_H OFFSET SIZE LINE_H MARK MEM_H
-      # MEM_SIZE CLOCK COHERENT MAC, which the root adds for each device of a kind in a unit the system
+      # MEM_SIZE CLOCK COHERENT MAC INDEX, which the root adds for each device of a kind in a unit the system
       # domain holds, and of -erx_record device ROLE PERIPHERAL PATH BASE SIZE LINE MARK CLOCK INDEX, the
       # host link's and the line grant's UART's physical record (docs/design-fiasco.md, "Device
       # records"; held_record_words).
-      GIVEN_RECORD_WORDS = 15
+      GIVEN_RECORD_WORDS = 16
       DEVICE_RECORD_WORDS = 11
       # The words of the records the root adds to the system domain's arguments, for the
       # manifest at source on its platform (held_record_words).

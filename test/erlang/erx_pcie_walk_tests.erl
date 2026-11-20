@@ -227,10 +227,33 @@ ecam_answers_absent_below_its_first_bus_test() ->
     ?assertMatch({{error, absent}, _}, erx_pcie_ecam:access({read, {0, 0, 0}, 0, 4}, State)),
     ?assertEqual([], erx_pcie_model:hardware(Table)).
 
+%% A device past 31 or a function past 7 would carry into the routing ID's next field,
+%% {0, 32, 0} into {1, 0, 0}'s block and {0, 0, 8} into {0, 1, 0}'s, so such a place
+%% answers absent without touching the window.
+ecam_answers_absent_at_a_device_or_function_past_its_field_test() ->
+    Table = erx_pcie_model:new([single_at({1, 0, 0}), single_at({0, 1, 0})]),
+    erx_pcie_model:open_bus(Table, 1),
+    {ok, State} = erx_pcie_ecam:open(open_bridge(255), {erx_pcie_model, {Table, 0}}),
+    ?assertMatch({{error, absent}, _}, erx_pcie_ecam:access({read, {0, 32, 0}, 0, 4}, State)),
+    ?assertMatch({{error, absent}, _}, erx_pcie_ecam:access({read, {0, 0, 8}, 0, 4}, State)),
+    ?assertMatch({{error, absent}, _}, erx_pcie_ecam:access({write, {0, 0, 8}, 4, 2, 0}, State)),
+    ?assertEqual([], erx_pcie_model:hardware(Table)).
+
 ecam_takes_all_ones_as_absent_only_at_offset_0_test() ->
     Table = erx_pcie_model:new([]),
     {ok, State} = erx_pcie_ecam:open(open_bridge(255), {erx_pcie_model, {Table, 0}}),
     ?assertMatch({{error, absent}, _}, erx_pcie_ecam:access({read, {0, 0, 0}, 0, 4}, State)),
     ?assertMatch({{ok, 16#ffff}, _}, erx_pcie_ecam:access({read, {0, 0, 0}, 4, 2}, State)),
-    ?assertMatch({ok, _}, erx_pcie_ecam:ready(#{}, State)),
-    ?assertEqual({error, unsupported}, erx_pcie_ecam:start(open_bridge(255), 0)).
+    ?assertMatch({ok, _}, erx_pcie_ecam:ready(#{}, State)).
+
+%% A tree whose bus-range reaches past its ECAM reg: the window holds two buses, so a place
+%% on bus 2 answers absent before the window is asked, and one on bus 1 is reached.
+ecam_answers_absent_past_its_window_test() ->
+    Table = erx_pcie_model:new([single_at({1, 0, 0}), single_at({2, 0, 0})]),
+    erx_pcie_model:open_bus(Table, 1),
+    erx_pcie_model:open_bus(Table, 2),
+    {ok, State} = erx_pcie_ecam:open(open_bridge(255), {erx_pcie_model, {Table, 0, 2}}),
+    ?assertMatch({{error, absent}, _}, erx_pcie_ecam:access({read, {2, 0, 0}, 0, 4}, State)),
+    ?assertMatch({{error, absent}, _}, erx_pcie_ecam:access({write, {2, 0, 0}, 4, 2, 0}, State)),
+    ?assertMatch({{ok, 16#1af4}, _}, erx_pcie_ecam:access({read, {1, 0, 0}, 0, 2}, State)),
+    ?assertEqual([{read, {1, 0, 0}, 0}], erx_pcie_model:hardware(Table)).
