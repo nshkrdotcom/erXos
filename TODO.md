@@ -2564,6 +2564,12 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
 
 ## Bugs by subsystem
 
+* [Medium] tests, `test/host/erx_net_effect_test.rb:250` (`test_seeded_fault_fails_credit_counts_segments`)
+  is timing-dependent: on a loaded host (a 610 s run) `erx_net_driver_tests` failed
+  `dhcp_starts_when_the_link_comes_up_test` (line 383, `dhcp_sent(300)` saw `discover`) and timed out in
+  `far_end_end_restarts_the_link` (`wait_gone/1`, line 427) before the seed's own failure, so the seed's
+  expected name never appeared. The same tree passed in 456 s. The driver tests' fixed waits want to wait
+  on the event, not a time.
 * [Medium] docs, `docs/design-shared-devices.md` (lines ~102 and ~456, invariant SD1): the design says a
   give makes a unit's objects in the holder's budget; the code charges a device's DMA memory to the
   system domain's budget and keeps it across the holder's restarts (`liberx/system/dom_life.c`
