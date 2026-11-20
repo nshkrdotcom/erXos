@@ -6321,6 +6321,18 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   a live process's signal queue without limit with right-0 signals
   (`UNLINK_ID`, `DEMONITOR_P`, `PAYLOAD_EXIT`); the queue quota covers only
   undecoded messages, and no design text bounds these.
+* [Low] Lane driver, `otp/erts/emulator/sys/erxos/erx_lane_drv.c` (`frame_judge`): a frame the
+  funnel refuses is counted (`ERX_LANE_COUNT_MALFORMED`) and ends the port with
+  `erx_lane_malformed`, but nothing logs the funnel's reason (`verdict.reason`), where
+  design-domains.md's failure table promises a diagnostic with the reason code, logged once
+  per reason. The reason names live only in `test/fixtures/funnel_driver.c`; one table in
+  `liberx` would serve the log and the fixture.
+* [Medium] runtime, `erts_internal_dist_spawn_request_4` in `otp/erts/emulator/beam/dist.c`:
+  design-domains.md ("The funnel", step 4) has the sender's peer check a spawn request's
+  control term with the funnel's grammar before writing it, answering an option of another
+  shape with `badopt` and a term past `ERX_CTL_MAX` with `system_limit`; no such check
+  exists, so such a spawn toward another domain is written, refused there as malformed,
+  and ends the caller's own connection.
 * [Medium] Funnel authority, design-domains.md "The funnel" step 5: a
   `LINK` without `link` to a live process that holds no link with the
   sender is answered `noproc` by the target process when it handles the
@@ -8074,21 +8086,11 @@ to the corpus and follow rc
 * [Medium] runtime, the system domain's safe decode (edit 9 of
   [design-runtime.md](docs/design-runtime.md), `erts_proc_sig_decode_dist` in
   `otp/erts/emulator/beam/erl_proc_sig_queue.c`, `erts_net_message` in `dist.c`):
-  * A payload that names an atom the system domain lacks and also breaks a rule
-    only ERTS's decoder checks (a repeated map key, which the funnel's payload
-    pass leaves to the decoder) is refused for its atom first: a message is
-    dropped, an exit reason delivered as `{erx_foreign_reason, Bin}`, where
-    [design-domains.md](docs/design-domains.md#the-funnel) ends the connection
-    for a malformed term. Both fail safely; only the peer's own bytes are
-    misclassified. Running the funnel's semantic stage (`accept`) on system
-    payloads fixes it, but its scratch grows to about 16 bytes a frame byte
-    (`test/host/erx_funnel_test.rb`, the scratch test), which the system
-    domain's per-domain sum (D12) would have to carry. Decide which.
-  * A control term that names an atom the system domain lacks (a spawn reply's
-    error atom, a spawn request's module, function or option) ends the
-    connection through `erts_net_message`'s decode error, with no log line and
-    no count; the funnel's table for those frames does not say what a refused
-    atom does. Settle it in the design.
+  * A spawn reply whose error atom the system domain lacks, which only a sender
+    that is not ERTS writes, ends the connection through `erts_net_message`'s
+    decode error with no count: the lane driver counts only what the funnel
+    refuses. It is the one control term left that can name such an atom, since
+    a `SPAWN_REQUEST` into the system domain is malformed at the funnel.
   * Each message family a domain sends the system domain keeps its atoms within
     what the system domain holds by hand: the ready report's provides cross as
     binaries, a mint's refusal as `refused`, a lost connection's reason through

@@ -630,7 +630,14 @@ check_frame(const uint8_t *frame, uint32_t frame_len, size_t held,
 	    &v->control, &v->etf);
 	if (reason != ERX_FUNNEL_OK)
 		return (reason);
+	/*
+	 * The system domain serves no spawn, and no sender's runtime writes
+	 * one toward it (design-domains.md, "The system domain serves no
+	 * spawn"), so its decoder never meets a request's atoms.
+	 */
 	v->etf = (erx_etf_result_t){ 0 };
+	if (limits->system && v->control.op == ERX_FUNNEL_SPAWN_REQUEST)
+		return (ERX_FUNNEL_ERR_SYSTEM_SPAWN);
 	payload = frame + ERX_FRAME_HEADER_SIZE + ctl_len;
 	if (payload_len > 0 && payload[0] != ERX_ETF_VERSION)
 		return (ERX_FUNNEL_ERR_VERSION);

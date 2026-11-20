@@ -432,7 +432,7 @@ table's bound it writes nothing and counts the failure for
 `erx_dist:exports_refused/0`. 9. The distribution decoder takes a safe mode,
 set in the system domain, which creates no atom and reports a refused atom
 apart from a malformed term; `erx_dist:atoms_refused/0` counts the payloads it
-refused. 10. In the system domain, a message to a peer
+refused for an atom. 10. In the system domain, a message to a peer
 whose entry's queue, the frames of `async_dist` senders included, is past the
 manifest's `system_queue` is dropped and counted on the receiver instead of
 suspending the sender, and any other signal that does not fit ends the
@@ -475,12 +475,15 @@ domain's id after a later domain of its name has connected, while
 entry or to the one connected entry with that creation, and answer `badarg`
 for any other number, one two connected entries share, or one past its
 field's width. 27. On a connection to another domain, the sender keeps every
-operation on the peer's registered names to itself: a send to
+operation the peer's funnel would refuse as malformed to itself, those on
+its registered names and a spawn into the system domain: a send to
 `{Name, Node}` is dropped in the one encoder of a send and counted for
 `erx_dist:names_dropped/0`, a send toward a domain whose connection is not
 up yet included; a monitor by name gets a local `DOWN` with
-`noproc`, or `noconnection` at once toward a domain not connected; and
-`demonitor` sends nothing for a monitor never carried, so stock code writes no
+`noproc`, or `noconnection` at once toward a domain not connected;
+`demonitor` sends nothing for a monitor never carried; and a spawn toward
+the system domain's node, the node the boot page's system connection
+names, which serves none, fails at once with `noconnection`, so stock code writes no
 frame the receiving funnel refuses
 ([design-domains.md](design-domains.md#frames)). A peer is another domain
 when its node name is at this node's host name, the rule of
@@ -1524,8 +1527,8 @@ same entry. The message in an accepted frame stays encoded until its
 receiver takes it, which is ERTS's lazy distribution decode; in the
 system domain that decode runs in safe mode (edit 9), so the system
 domain never learns an atom from another domain (D5), and a reason
-refused only by the atom policy arrives as `{erx_foreign_reason, Bin}`,
-so no exit is lost. The receiver's queued undecoded frames count toward
+refused for an atom arrives as `{erx_foreign_reason, Bin}`, its bytes
+opaque and unchecked past the refusal, so no exit is lost. The receiver's queued undecoded frames count toward
 its **queue quota**: when an authorised frame's target has
 reached it, the drain leaves that frame in the lane and takes nothing
 more from that lane until the target's decodes bring the count below the

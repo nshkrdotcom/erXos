@@ -24,7 +24,8 @@
  * connection that ends with its peer domain's {domain_down, D, Info} fires what it held
  * with that reason (edit 56). A lane port's entry takes its creation from the port,
  * and the port the connection's serial from the entry. erts_dist_other_run tells a
- * pid of an ended domain of a connected peer's name (edit 66).
+ * pid of an ended domain of a connected peer's name (edit 66). A spawn toward the
+ * system domain's node fails with noconnection and writes nothing.
  *
  * %CopyrightEnd%
  */
@@ -1688,6 +1689,20 @@ erts_dist_other_run(DistEntry *dep, Eterm pid)
     return (dep->state == ERTS_DE_STATE_CONNECTED
             && erts_dist_peer_is_domain(dep)
             && external_pid_creation(pid) != dep->creation);
+}
+
+/*
+ * Whether dep's node is the system domain's, the node the boot page's system connection
+ * names. In the system domain the page names no system connection (length 0), so no node
+ * matches.
+ */
+static int
+peer_is_system_domain(DistEntry *dep)
+{
+    size_t len = 0;
+    const char *system = erx_runtime_system_node(&len);
+
+    return (len != 0 && erts_is_atom_utf8_bytes((byte *) system, len, dep->sysname));
 }
 
 /*
@@ -6159,6 +6174,14 @@ BIF_RETTYPE erts_internal_dist_spawn_request_4(BIF_ALIST_4)
         ASSERT(BIF_ARG_4 == am_spawn_opt);
         ok_result = TUPLE2(hp, ref, spawns_monitor);
     }
+
+    /*
+     * erXos: the system domain serves no spawn (docs/design-domains.md, "The system
+     * domain serves no spawn"): a request toward its node fails here as one it does not
+     * authorise, and no frame is written, since its funnel refuses one as malformed.
+     */
+    if (peer_is_system_domain(dep))
+        goto noconnection;
 
     code = erts_dsig_prepare(&ctx, dep,
                              BIF_P, ERTS_PROC_LOCK_MAIN,

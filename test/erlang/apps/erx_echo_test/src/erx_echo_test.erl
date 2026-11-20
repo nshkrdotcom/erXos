@@ -12,11 +12,16 @@ reason start/3 failed. Anything else it drops. A facet answers {echo, Term}
 with {echo, Term} and refuses every other request.
 
 foreign_atoms/1, for the system domain suite, names atoms the system domain
-lacks: spawned here by the system domain, it sends To a message holding an atom
-made here, then `foreign_after`, and exits with a reason that is an atom made
-here. The system domain decodes each frame
-in safe mode (edit 9 of docs/design-runtime.md), so the message is dropped and
-the reason arrives as `{erx_foreign_reason, Bin}`.
+lacks: spawned here by the system domain, it first asks to spawn a process of a
+module named by an atom made here on To's node, the system domain's, and sends
+To `{foreign_spawn, Why}` with the error the request failed with, then a
+message holding an atom made here, then `foreign_after`, and exits with a
+reason that is an atom made here. The system domain serves no spawn, so this
+runtime answers the request itself with `noconnection` and writes nothing
+(docs/design-domains.md, "The system domain serves no spawn"). The
+system domain decodes each frame in safe mode (edit 9 of
+docs/design-runtime.md), so the message is dropped and the reason arrives as
+`{erx_foreign_reason, Bin}`.
 """.
 -export([mint/0, foreign_atoms/1]).
 %% erx_facet's callbacks; erx_facet is not on this application's compile path.
@@ -39,6 +44,10 @@ mint() ->
 
 -spec foreign_atoms(pid()) -> no_return().
 foreign_atoms(To) ->
+    Spawn = erlang:spawn_request(node(To), list_to_atom("erx_foreign_atom_module"), f, [],
+                                 [{reply, error_only}]),
+    Why = receive {spawn_reply, Spawn, error, Error} -> Error after 10000 -> timeout end,
+    To ! {foreign_spawn, Why},
     To ! {foreign, list_to_atom("erx_foreign_atom_message")},
     To ! foreign_after,
     exit(list_to_atom("erx_foreign_atom_reason")).

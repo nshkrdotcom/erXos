@@ -555,8 +555,10 @@ module Erx
                   '#{{refused,foreign_mint} => 1,{refused,undeclared} => 1}}'
     ECHO_START = /\A(?:(?:\([a-z0-9_]+@[a-z0-9_.-]+\))?[0-9]+> )?\{echo_facet,/n
     # Typed after the echo, while erts runs: the system domain spawns
-    # erx_echo_test:foreign_atoms/1 in erts, monitored, which sends the shell a message
-    # holding an atom erts made, then foreign_after, and exits with another such atom.
+    # erx_echo_test:foreign_atoms/1 in erts, monitored, which asks to spawn a module named
+    # by an atom erts made on the system domain's node and sends the shell the error it
+    # got, then a message holding an atom erts made, then foreign_after, and exits with
+    # another such atom. The line also asks to export spawn on the system domain's name.
     # The line reads the system domain's atom count and erx_dist:atoms_refused/0 before
     # the spawn and once the DOWN has come, and only then looks at what arrived.
     FOREIGN_ATOM_EXPRESSION = 'SdFaN0=erlang:system_info(atom_count),SdFaD0=(catch erx_dist:atoms_refused()),' \
@@ -566,15 +568,24 @@ module Erx
                               "SdFaR=receive {'DOWN',SdFaRef,process,_,SdFaX}->SdFaX after 10000->timeout end," \
                               'SdFaN1=erlang:system_info(atom_count),SdFaD1=(catch erx_dist:atoms_refused()),' \
                               'io:format("~0kp~n",[{foreign_atom,SdFaN1-SdFaN0,catch SdFaD1-SdFaD0,SdFaM,' \
+                              'lists:keyfind(foreign_spawn,1,SdFaM),' \
                               'case SdFaR of {erx_foreign_reason,<<131,_/binary>>=SdFaB}->' \
                               '{erx_foreign_reason,binary:match(SdFaB,<<"erx_foreign_atom_reason">>)=/=nomatch};_->SdFaR end,' \
                               'is_atom(catch list_to_existing_atom("erx_foreign_atom_message")),' \
-                              'is_atom(catch list_to_existing_atom("erx_foreign_atom_reason"))}])'
-    # The system domain's atom table did not grow, the two payloads were refused, the
-    # message was dropped and foreign_after delivered, the reason arrived as
-    # {erx_foreign_reason, Bin} with the reason's encoding in Bin, and neither atom
-    # exists in the system domain (docs/design-domains.md, D5).
-    FOREIGN_ATOM_ANSWER = '{foreign_atom,0,2,[foreign_after],{erx_foreign_reason,true},false,false}'
+                              'is_atom(catch list_to_existing_atom("erx_foreign_atom_reason")),' \
+                              'is_atom(catch list_to_existing_atom("erx_foreign_atom_module")),' \
+                              'catch erx_dist:export({domain,erlang:system_info(creation)},[spawn],999)}])'
+    # The system domain's atom table did not grow, the two payloads were refused, erts's
+    # own runtime answered the spawn with noconnection, the message was dropped and
+    # foreign_after delivered, the reason arrived as {erx_foreign_reason, Bin} with the
+    # reason's encoding in Bin, none of the three atoms exists in the system domain
+    # (docs/design-domains.md, D5), and the system domain's name takes no spawn export.
+    # A spawn request written to the system domain would end erts's connection: no
+    # message, and a DOWN of noconnection. The keyfind names foreign_spawn in the
+    # line, so the system domain holds that atom and takes erts's message.
+    FOREIGN_ATOM_ANSWER = '{foreign_atom,0,2,[{foreign_spawn,noconnection},foreign_after],' \
+                          '{foreign_spawn,noconnection},{erx_foreign_reason,true},false,false,false,' \
+                          '{error,badarg}}'
     FOREIGN_ATOM_START = /\A(?:(?:\([a-z0-9_]+@[a-z0-9_.-]+\))?[0-9]+> )?\{foreign_atom,/n
     # peer stopped by its side's end while erts runs, its watcher told noconnection twice;
     # then erts halted with status 69, its watcher told {domain_down, Erts, {halt, 69}} by

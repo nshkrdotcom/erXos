@@ -16,7 +16,7 @@
  *     -> accepted WORDS | malformed ETF_REASON | over ETF_REASON
  *   channel SYSTEM DEPTH WORDS HEX  a channel record, by erx_funnel_channel
  *     -> as payload's
- *   check RIGHTS REQUEST_WORDS HELD WORDS HEX
+ *   check SYSTEM RIGHTS REQUEST_WORDS HELD WORDS HEX
  *     -> ACTION CAUSE REASON ASKED WORDS
  *   scratch WORDS HELD         the scratch erx_funnel_check needs to judge
  *     -> BYTES                 HELD bytes of a frame, under the check
@@ -32,8 +32,9 @@
  * sees a write past it.
  *
  * check is erx_funnel_check of one frame (HEX, its header included) on a
- * lane from web@erxos, domain 3, to system@erxos, domain 1, the system
- * domain, with funnel_depth 16 and max_message_heap WORDS.  Its export
+ * lane from web@erxos, domain 3, to system@erxos, domain 1, which is the
+ * system domain when SYSTEM is 1, with funnel_depth 16 and
+ * max_message_heap WORDS.  Its export
  * table gives RIGHTS (ERX_RIGHT_* bits) and REQUEST_WORDS on every name.
  * HELD is the bytes the caller copied, or - for the whole frame.  ASKED
  * is the name the table was asked about (pid:ID, alias:FIRST_WORD,
@@ -67,6 +68,7 @@ static const char *const funnel_reasons[] = {
 	[ERX_FUNNEL_ERR_PAYLOAD_TERM] = "payload_term",
 	[ERX_FUNNEL_ERR_HELD] = "held",
 	[ERX_FUNNEL_ERR_VERDICT] = "verdict",
+	[ERX_FUNNEL_ERR_SYSTEM_SPAWN] = "system_spawn",
 };
 
 static const char *const etf_reasons[] = {
@@ -379,7 +381,7 @@ check_request(FILE *out, const char *args, uint8_t *bytes)
 {
 	static const char sender[] = "web@erxos", receiver[] = "system@erxos";
 	erx_funnel_limits_t limits = { .host = host,
-	    .host_len = sizeof(host) - 1, .depth = 16, .system = true };
+	    .host_len = sizeof(host) - 1, .depth = 16 };
 	asked_t asked = { .name = "-" };
 	exports_t exports = { .asked = &asked };
 	const erx_funnel_lane_t lane = {
@@ -394,20 +396,21 @@ check_request(FILE *out, const char *args, uint8_t *bytes)
 	};
 	erx_funnel_verdict_t v;
 	unsigned long long request_words, words;
-	unsigned rights;
+	unsigned system, rights;
 	char held_text[24];
 	size_t copied, len, held, scratch_len;
 	uint8_t *frame;
 	void *scratch;
 	int skip;
 
-	if (sscanf(args, "%u %llu %23s %llu %n", &rights, &request_words,
-	    held_text, &words, &skip) != 4) {
+	if (sscanf(args, "%u %u %llu %23s %llu %n", &system, &rights,
+	    &request_words, held_text, &words, &skip) != 5) {
 		fputs("bad request\n", out);
 		return;
 	}
 	exports.hold = (erx_funnel_hold_t){ .rights = (uint8_t)rights,
 	    .request_words = request_words };
+	limits.system = system != 0;
 	limits.max_words = words;
 	len = unhex(args + skip, bytes);
 	held = strcmp(held_text, "-") == 0 ? len :

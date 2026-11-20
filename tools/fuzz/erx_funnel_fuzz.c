@@ -205,7 +205,7 @@ lookup(const void *table, const erx_funnel_name_t *name)
  * is malformed exactly for a malformed cause, which has a reason and no
  * other does; no cause reaches the table's unreachable entries; the
  * table is asked at most once, always for an unauthorised frame and never
- * for a dead one; an
+ * for a dead one; a SPAWN_REQUEST into the system domain is malformed; an
  * accepted frame's payload stays within the limit, and its sender and
  * target agree with the lane.
  */
@@ -257,6 +257,8 @@ check(const uint8_t *body, size_t len, size_t held, uint8_t mode,
 	    (v.cause == ERX_FUNNEL_CAUSE_UNAUTHORISED && asked != 1) ||
 	    (v.cause == ERX_FUNNEL_CAUSE_DEAD && asked != 0) ||
 	    v.reason == ERX_FUNNEL_ERR_VERDICT ||
+	    (limits.system && v.control.op == ERX_FUNNEL_SPAWN_REQUEST &&
+	    v.cause != ERX_FUNNEL_CAUSE_MALFORMED) ||
 	    v.etf.reason == ERX_ETF_ERR_SCRATCH)
 		abort();
 	if (v.cause == ERX_FUNNEL_CAUSE_MALFORMED) {

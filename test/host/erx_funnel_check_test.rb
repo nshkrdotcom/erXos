@@ -11,13 +11,15 @@ require_relative '../fixtures/funnel_wire'
 
 # Judges erx_funnel_check, liberx/erx_funnel.c's whole judgment of a frame,
 # through test/fixtures/funnel_driver.c's check request, on a lane from
-# web@erxos (domain 3) to system@erxos (domain 1): the verdict table row by
+# web@erxos (domain 3) to system@erxos (domain 1), a domain that receives
+# spawns unless a test makes it the system domain: the verdict table row by
 # row, each operation with and without the right it needs, toward a dead
 # target and over a limit; authority decided before limits; the sender and
 # target rules, the latter bounding the receiver's own pids to ERTS's
 # internal range; the payload's version byte, discard mode and the
 # target's request limit; and the export table asked once, about the
-# operation's target, or not at all.
+# operation's target, or not at all; and into the system domain, a spawn
+# request malformed whatever the rights, every other row as elsewhere.
 class ErxFunnelCheckTest < Minitest::Test
   include FunnelWire
 
@@ -193,6 +195,21 @@ class ErxFunnelCheckTest < Minitest::Test
     assert_equal 'malformed malformed header - 0', check_raw("\x01\x00\x00\x00".b, rights: ALL)
   end
 
+  def test_a_spawn_request_into_the_system_domain_is_malformed_whatever_its_rights
+    control, payload = frame_of('SPAWN_REQUEST')
+    [0, SPAWN, ALL].each do |rights|
+      assert_equal 'malformed malformed system_spawn - 0', check(control, payload, rights: rights, system: 1), rights.to_s
+    end
+    # Judged before the version byte and the sender rule: a request that also
+    # breaks either is refused for being a spawn into the system domain.
+    assert_equal 'malformed malformed system_spawn - 0', check(control, "\x82".b, rights: ALL, system: 1)
+    assert_equal 'malformed malformed system_spawn - 0',
+                 check(ctl(op(29), reference, from, to, mfa, options), payload, rights: ALL, system: 1)
+    others = TABLE.reject { |name, _| name == 'SPAWN_REQUEST' }
+    rows = others.map { |name, row| [name, check(*frame_of(name), rights: row.right, system: 1).sub(/ \d+\z/, '')] }
+    assert_equal(others.map { |name, row| [name, "deliver accepted ok #{row.asked}"] }, rows)
+  end
+
   def test_refusals_of_the_grammar_stay_malformed
     assert_equal 'malformed malformed op - 0', check(ctl(op(2), from, to), '', rights: ALL)
     assert_equal 'malformed malformed payload - 0', check(ctl(op(1), from, to), PAYLOAD, rights: ALL)
@@ -214,12 +231,12 @@ class ErxFunnelCheckTest < Minitest::Test
     [control, with_payload ? PAYLOAD : ''.b]
   end
 
-  def check(control, payload, rights:, request_words: 0, held: nil, words: WORDS)
+  def check(control, payload, rights:, request_words: 0, held: nil, words: WORDS, system: 0)
     body = [control.bytesize, payload.bytesize].pack('VV') + control + payload
-    check_raw(body, rights: rights, request_words: request_words, held: held, words: words)
+    check_raw(body, rights: rights, request_words: request_words, held: held, words: words, system: system)
   end
 
-  def check_raw(body, rights:, request_words: 0, held: nil, words: WORDS)
-    @driver.check(["check #{rights} #{request_words} #{held || '-'} #{words} #{body.unpack1('H*')}"]).first
+  def check_raw(body, rights:, request_words: 0, held: nil, words: WORDS, system: 0)
+    @driver.check(["check #{system} #{rights} #{request_words} #{held || '-'} #{words} #{body.unpack1('H*')}"]).first
   end
 end

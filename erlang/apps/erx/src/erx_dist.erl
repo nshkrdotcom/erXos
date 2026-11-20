@@ -108,9 +108,10 @@ aliases() ->
 exports_refused() ->
     erlang:nif_error(undefined).
 
-%% The number of payloads from other domains whose safe decode refused an atom this runtime
-%% lacks, in the system domain alone (edit 9 of docs/design-runtime.md): each message dropped, each
-%% exit reason delivered as {erx_foreign_reason, Bin}. A BIF of ERTS (erl_proc_sig_queue.c).
+%% The number of messages and exit reasons from other domains refused for an atom this
+%% runtime lacks, in the system domain alone (edit 9 of docs/design-runtime.md), whatever
+%% else is wrong with them: each message dropped, each exit reason delivered as
+%% {erx_foreign_reason, Bin}. A BIF of ERTS (erl_proc_sig_queue.c).
 -spec atoms_refused() -> non_neg_integer().
 atoms_refused() ->
     erlang:nif_error(undefined).

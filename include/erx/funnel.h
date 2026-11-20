@@ -110,6 +110,8 @@ typedef enum erx_funnel_reason {
 	ERX_FUNNEL_ERR_VERDICT,	/* the verdict table has no action for the
 				   operation and cause, which no frame
 				   reaches */
+	ERX_FUNNEL_ERR_SYSTEM_SPAWN, /* a SPAWN_REQUEST into the system
+				   domain, which serves no spawn */
 } erx_funnel_reason_t;
 
 /* A frame's two terms: control first, then payload (absent when 0). */
@@ -234,7 +236,8 @@ erx_funnel_reason_t erx_funnel_control(const uint8_t *term, size_t len,
  * The receiver's limits on a payload: the machine's host, its word limit
  * (max_message_heap, or a facet's lower request limit), its funnel_depth,
  * and whether it is the system domain, whose payloads are in the system
- * grammar; every other domain's are in the domain grammar.
+ * grammar and which takes no SPAWN_REQUEST; every other domain's are in
+ * the domain grammar.
  */
 typedef struct erx_funnel_limits {
 	const char		*host;
@@ -398,7 +401,9 @@ typedef struct erx_funnel_verdict {
  * as design-domains.md's, each able to end the judgment:
  *
  *   2. the header and the payload's version byte: malformed on refusal;
- *   4. the control term (erx_funnel_control), malformed on refusal; the
+ *   4. the control term (erx_funnel_control), malformed on refusal, and
+ *      a SPAWN_REQUEST into the system domain is malformed whatever else
+ *      it holds, since that domain serves no spawn; the
  *      sender rule: from and sender_ref carry the lane's sender node and
  *      id, else malformed; the target rule: to and receiver_ref carry the
  *      receiver's node, else malformed, and one of another creation names
