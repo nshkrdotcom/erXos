@@ -20,10 +20,10 @@ explained where it first appears.
 The model is McKusick, Neville-Neil and Watson, *The Design and
 Implementation of the FreeBSD Operating System* (2nd edition,
 Addison-Wesley, 2014). The book borrows its arc and its manner, not its
-text: an opening part on history, goals and the overall design; then
-processes, memory, the I/O system, communication and the operation of
-the running system; each chapter opening with the concepts and the
-terms, then the structures that carry them, then how they behave and
+text: an opening part of background, then a part on history, goals and
+the overall design; then processes, memory, the I/O system,
+communication and the operation of the running system; each chapter
+opening with the concepts and the terms, then the structures that carry them, then how they behave and
 fail.
 
 ### Readers
@@ -39,9 +39,29 @@ fail.
 * People who will work on erXos, as the reading that comes before the
   design documents.
 
-The book assumes C and a reading knowledge of Erlang (processes,
-messages, links, supervisors). It does not assume L4, Plan 9 or OTP's
-internals; it explains what it uses of them.
+The book assumes a reader who can program, in any language, and may know
+little about operating systems, microkernels or Erlang. It does not
+assume C, Erlang, L4, Plan 9 or OTP's internals. Every term is explained
+where it first appears: in Part I for the three subjects everything
+rests on, and in a Background box at the head of the chapter that first
+needs anything more specialised (DMA, TCP, USB, WiFi and the like). The
+glossary, Appendix A, lists every such term and points to where it is
+explained.
+
+**Reading paths.**
+
+* No background: read in order, from chapter 1.
+* Knows operating systems but not microkernels or Erlang: chapters 2 and
+  3, then from chapter 4.
+* Knows Erlang and OTP but not operating systems: chapters 1 and 2, the
+  rest of chapter 3 only for ERTS (section 5), then from chapter 4.
+* Knows operating systems and Erlang, new to L4 and capabilities: chapter
+  2, then from chapter 4.
+* Knows all three: from chapter 4. A term met on the way is linked to its
+  chapter or Background box.
+* Wants one thread: each chapter's "Background needed" line names what
+  it builds on, so the network (chapters 17 to 19), the display (22) or
+  startup (24) can be read after the chapters named there.
 
 ### Built and target
 
@@ -72,99 +92,131 @@ them again against the tree before writing.
 ## Preface: why this order
 
 The book follows the FreeBSD book's arc: overview, processes, the I/O
-system, communication, system operation. It departs from it in four
-places, each because erXos's structure asks for it.
+system, communication, system operation. It departs from it in five
+places, each because erXos's structure or its readers ask for it.
 
-1. **Method comes early.** Two chapters of Part I (3 and 4) explain how
+1. **Background comes first.** The FreeBSD book can assume that its
+   reader knows what a kernel, a page table and a system call are. This
+   book cannot: its readers include programmers who have never opened an
+   operating system and Erlang programmers who have never met a
+   microkernel. Part I (chapters 1 to 3) therefore teaches, from the
+   ground up and with no erXos in it, the three subjects every later
+   chapter leans on: operating systems, microkernels and capabilities,
+   and Erlang with OTP. A reader who knows one of them skips its chapter,
+   and the reading paths above say which. What only one chapter needs
+   (DMA and cache coherence for devices, TCP for the network stack, the
+   handshake of WiFi) is not in Part I: it opens that chapter, in a set
+   apart Background box, so it is read where it is used. Each chapter
+   begins with a "Background needed" line naming the chapters and boxes
+   it builds on. The alternatives were worse: an appendix of background
+   is not read before the chapters that need it, and boxes alone would
+   repeat three large subjects in every chapter.
+2. **Method comes early.** Two chapters of Part II (6 and 7) explain how
    erXos is designed before any subsystem is: decisions as pure
    functions and effects at the edge, properties that hold by
    construction instead of by a list of cases, rules of the form "only X
    may do Y" as build checks, and one declared source for every shared
    fact, from which C, Erlang and Ruby are generated. Every later
-   chapter uses these ideas (the device DMA plan of chapter 12 is a
-   plan validated whole; the kernel calls of chapter 5 are generated),
+   chapter uses these ideas (the device DMA plan of chapter 15 is a
+   plan validated whole; the kernel calls of chapter 8 are generated),
    so the reader meets them once, with small examples, and then sees
    them recur.
-2. **The domain comes before memory.** In FreeBSD the process is the
+3. **The domain comes before memory.** In FreeBSD the process is the
    unit of both execution and protection. In erXos the Erlang process is
    the unit of execution and failure, and the domain, a group of
    processes behind an address space, is the unit of protection. So
-   Part II goes process and scheduler, then domains, then authority and
+   Part III goes process and scheduler, then domains, then authority and
    security, then memory and budgets, then native programs, which are
    ports of a session and make sense only once domains and authority do.
-3. **The user's machine is a part of its own.** The shell, the live
+4. **The user's machine is a part of its own.** The shell, the live
    machine, the display and apps are not utilities on top of the system:
-   each is a service built from the pieces of Parts II to IV (domains,
+   each is a service built from the pieces of Parts III to V (domains,
    facets, file trees, pure cores), and each shows one of erXos's
    distinctive ideas (UNIX tools over live Erlang state, a machine you
    can inspect while it runs, one interface rendered natively by every
    display). They come after the parts they are built from and before
    system operation.
-4. **Checking comes last.** How erXos knows it is right (OTP's own
+5. **Checking comes last.** How erXos knows it is right (OTP's own
    suites against stock OTP, musl's tests, fuzz targets, model checking,
    seeded faults, reproducible and deterministic boots) draws on every
-   chapter, so it closes Part VI, and an afterword describes the road
+   chapter, so it closes Part VII, and an afterword describes the road
    from Fiasco to erXos's own kernel.
 
 Kernel services, which the FreeBSD book gives a chapter of their own,
-are chapter 5 here, the kernel interface, because in erXos the kernel's
+are chapter 8 here, the kernel interface, because in erXos the kernel's
 services are exactly its interface: everything else runs in user mode.
 
 ## Conventions
 
 * Each chapter is a file `NN-name.md` in this directory, in GitHub
-  Flavored Markdown, its figures in text form as the
-  [open decision on figures](#open-decisions) settles.
+  Flavored Markdown, its figures Mermaid where GitHub renders it and
+  text diagrams otherwise, as [Decisions](#decisions) settles.
 * Each chapter cites the design documents by relative link and section,
   and the tree by path. It explains; it decides nothing. When a chapter
   and a design document disagree, the design document is right and the
   chapter is fixed.
 * Plain language: the concrete file, call or check, and a term explained
-  where it first appears and listed in the glossary. UNIX in capitals;
-  "license".
+  where it first appears and listed in the glossary, Appendix A, with a
+  pointer to where it is explained. A term of operating systems,
+  microkernels or Erlang is explained in Part I or in the Background box
+  of the chapter that first needs it; a chapter never uses such a term
+  unexplained, and never assumes that the reader met it elsewhere. UNIX
+  in capitals; "license".
+* Each chapter opens with a "Background needed" line, naming the earlier
+  chapters and boxes it depends on, so a reader can follow one thread
+  (the network, say) without reading all that comes before. Its
+  "Background boxes" are short titled passages, set apart, that explain
+  a concept before the chapter first uses it; the outline lists them.
 * Present tense throughout. Whether a thing is built is said in the
   chapter's status box and in the sentence that describes it.
 
 ## Contents
 
-**Part I. Overview**
+**Part I. Background**
 
-1. [History and Goals](#chapter-1-history-and-goals)
-2. [Design Overview of erXos](#chapter-2-design-overview-of-erxos)
-3. [Correct by Construction](#chapter-3-correct-by-construction)
-4. [One Source for Every Fact](#chapter-4-one-source-for-every-fact)
-5. [The Kernel Interface and Its Two Kernels](#chapter-5-the-kernel-interface-and-its-two-kernels)
+1. [Operating Systems from the Ground Up](#chapter-1-operating-systems-from-the-ground-up)
+2. [Microkernels and Capabilities](#chapter-2-microkernels-and-capabilities)
+3. [Erlang and OTP](#chapter-3-erlang-and-otp)
 
-**Part II. Processes**
+**Part II. Overview**
 
-6. [Processes, Runtimes and Two-Level Scheduling](#chapter-6-processes-runtimes-and-two-level-scheduling)
-7. [Domains: A Wall Around Some Processes](#chapter-7-domains-a-wall-around-some-processes)
-8. [Authority and Security](#chapter-8-authority-and-security)
-9. [Memory and Budgets](#chapter-9-memory-and-budgets)
-10. [Native Programs, Pipes and POSIX-lite](#chapter-10-native-programs-pipes-and-posix-lite)
+4. [History and Goals](#chapter-4-history-and-goals)
+5. [Design Overview of erXos](#chapter-5-design-overview-of-erxos)
+6. [Correct by Construction](#chapter-6-correct-by-construction)
+7. [One Source for Every Fact](#chapter-7-one-source-for-every-fact)
+8. [The Kernel Interface and Its Two Kernels](#chapter-8-the-kernel-interface-and-its-two-kernels)
 
-**Part III. The I/O System**
+**Part III. Processes**
 
-11. [Files, Namespaces and Service Trees](#chapter-11-files-namespaces-and-service-trees)
-12. [Devices and Drivers](#chapter-12-devices-and-drivers)
-13. [Storage and Updates](#chapter-13-storage-and-updates)
+9. [Processes, Runtimes and Two-Level Scheduling](#chapter-9-processes-runtimes-and-two-level-scheduling)
+10. [Domains: A Wall Around Some Processes](#chapter-10-domains-a-wall-around-some-processes)
+11. [Authority and Security](#chapter-11-authority-and-security)
+12. [Memory and Budgets](#chapter-12-memory-and-budgets)
+13. [Native Programs, Pipes and POSIX-lite](#chapter-13-native-programs-pipes-and-posix-lite)
 
-**Part IV. Communication**
+**Part IV. The I/O System**
 
-14. [The Network Stack](#chapter-14-the-network-stack)
-15. [Radios: WiFi and Bluetooth](#chapter-15-radios-wifi-and-bluetooth)
+14. [Files, Namespaces and Service Trees](#chapter-14-files-namespaces-and-service-trees)
+15. [Devices and Drivers](#chapter-15-devices-and-drivers)
+16. [Storage and Updates](#chapter-16-storage-and-updates)
 
-**Part V. The User's Machine**
+**Part V. Communication**
 
-16. [The Command Shell and the UNIX Surface](#chapter-16-the-command-shell-and-the-unix-surface)
-17. [The Live Machine](#chapter-17-the-live-machine)
-18. [Displays, Windows and the Web](#chapter-18-displays-windows-and-the-web)
-19. [Apps and Packages](#chapter-19-apps-and-packages)
+17. [The Network Stack](#chapter-17-the-network-stack)
+18. [WiFi](#chapter-18-wifi)
+19. [Bluetooth](#chapter-19-bluetooth)
 
-**Part VI. System Operation**
+**Part VI. The User's Machine**
 
-20. [Startup, Configuration and Shutdown](#chapter-20-startup-configuration-and-shutdown)
-21. [Checking the System](#chapter-21-checking-the-system)
+20. [The Command Shell and the UNIX Surface](#chapter-20-the-command-shell-and-the-unix-surface)
+21. [The Live Machine](#chapter-21-the-live-machine)
+22. [Displays, Windows and the Web](#chapter-22-displays-windows-and-the-web)
+23. [Apps and Packages](#chapter-23-apps-and-packages)
+
+**Part VII. System Operation**
+
+24. [Startup, Configuration and Shutdown](#chapter-24-startup-configuration-and-shutdown)
+25. [Checking the System](#chapter-25-checking-the-system)
 
 **Afterword.** [The Road to erXos's Own Kernel](#afterword-the-road-to-erxoss-own-kernel)
 
@@ -174,17 +226,198 @@ services are exactly its interface: everything else runs in user mode.
 [D. Dependencies and Licenses](#appendix-d-dependencies-and-licenses),
 [E. Lineage](#appendix-e-lineage)
 
-About 780 pages in all, at about 450 words a page.
+About 940 pages in all, at about 450 words a page.
 
 ---
 
-## Part I. Overview
+## Part I. Background
 
-### Chapter 1. History and Goals
+The three chapters of this part teach what the rest of the book takes for
+granted, to a reader who can program and may know little about operating
+systems, microkernels or Erlang. They describe systems in general; erXos
+appears only where a chapter says that it does. Each is written to be
+skipped by a reader who already knows its subject (see the reading
+paths in [Readers](#readers)).
+
+### Chapter 1. Operating Systems from the Ground Up
+
+*About 40 pages.* What an operating system is for and how one works:
+the kernel, the two modes of the processor, processes, virtual memory,
+files, devices and the boundary between a program and the machine.
+
+**Background needed.** None. This is where the book starts; it assumes
+only that the reader can program.
+
+**Status.** Background: no mark. Chapters 2 and 3 do the same for
+microkernels and for Erlang; the chapters after them say what erXos does.
+
+1. **What an operating system is for.** Sharing one machine among many
+   programs, hiding the hardware behind a few simple ideas (a file, a
+   process, an address space), and keeping programs from harming each
+   other. The kernel, the programs, the libraries and the services, and
+   which of them run with what power.
+   *Draws on:* [overview.md](../overview.md),
+   [design.md, The model](../design.md#the-model).
+2. **The processor's two modes, and the way across.** User mode and
+   kernel mode, why a program cannot touch the hardware directly, and the
+   three ways into the kernel: a system call, an exception such as a page
+   fault, and an interrupt. The timer interrupt and preemption. The
+   names an architecture gives its modes (AArch64's exception levels) in
+   one paragraph.
+   *Draws on:* [design-arch-aarch64.md](../design-arch-aarch64.md).
+3. **Processes, threads and scheduling.** What a process and a thread
+   are, the context switch, run queues, priorities and fairness, and
+   cooperative against preemptive scheduling.
+   *Draws on:* [design-scheduler.md](../design-scheduler.md).
+4. **Virtual memory.** Address spaces, pages, page tables and the TLB, a
+   page fault walked step by step, demand paging, copy-on-write,
+   memory-mapped files, and protection bits including
+   writable-or-executable.
+   *Draws on:* [design-kernel.md](../design-kernel.md).
+5. **Devices, interrupts, DMA and caches.** Memory-mapped registers,
+   device interrupts and the interrupt controller, drivers, direct memory
+   access, why a cache can hide a device's write from the processor and
+   what an IOMMU does about a device that writes where it should not.
+   *Draws on:* [design-device-dma.md](../design-device-dma.md).
+6. **Files and block devices.** The file as the central abstraction, file
+   systems on block devices, directories, mounting, and what a path
+   names.
+   *Draws on:* [design-files.md](../design-files.md).
+7. **Talking and sharing.** Locks, atomic operations and memory ordering
+   in one page; pipes, sockets and messages; shared memory.
+   *Draws on:* [design-pipes.md](../design-pipes.md).
+8. **From power-on to the first program.** Firmware, a boot loader, the
+   kernel and the first user program.
+   *Draws on:* [design-platforms.md](../design-platforms.md).
+
+**Background boxes.** None: the chapter is the background.
+*Further reading* (the chapter's writer checks each citation): Ritchie and
+Thompson, "The UNIX Time-Sharing System" (1974); McKusick, Neville-Neil
+and Watson, *The Design and Implementation of the FreeBSD Operating
+System*.
+
+**Figures.** 1.1: the layers of a computer, from hardware to a program.
+1.2: a system call from a program into the kernel and back. 1.3: a
+virtual address translated through a page table. 1.4: a device's DMA
+write with and without a cache that is coherent with it.
+
+### Chapter 2. Microkernels and Capabilities
+
+*About 28 pages.* The design family erXos belongs to: a kernel that does
+as little as it can, services in user mode, and authority held as
+unforgeable references.
+
+**Background needed.** Chapter 1 (kernel and user mode, address spaces,
+system calls).
+
+**Status.** Background: no mark. The sentences that say what erXos takes
+from L4 and Fiasco are in chapter 8.
+
+1. **Monolithic kernels and microkernels.** What a monolithic kernel
+   holds (file systems, network stack, drivers), what a microkernel
+   leaves out, and the trade: isolation of a failing driver against the
+   cost of crossing between servers. Mach, QNX, MINIX and the L4 family
+   as examples.
+   *Draws on:* [research-kernel-bases.md](../research-kernel-bases.md).
+2. **Inter-process communication.** Synchronous message passing between
+   address spaces, the rendezvous, why L4 made it fast, shared memory
+   beside it, and a file or network server as a user-mode process that
+   clients call.
+   *Draws on:* [design-kernel.md](../design-kernel.md).
+3. **Capabilities.** An unforgeable reference to an object together with
+   the rights to use it; ambient authority (a user id, a path anyone can
+   open) against held authority; the confused deputy; delegation,
+   rights that only shrink, and revocation. KeyKOS, EROS, seL4, Zircon
+   and Capsicum as examples.
+   *Draws on:* [research-prior-art.md](../research-prior-art.md).
+4. **Security by construction.** What a trusted computing base is, why
+   a small one is checkable, and how a design where every access goes
+   through a capability makes whole classes of mistake impossible to
+   write, which is the idea the rest of the book returns to.
+   *Draws on:* [design.md, The model](../design.md#the-model).
+5. **The L4 family and Fiasco.** L4 and its descendants, Fiasco and L4Re,
+   the root task that creates every kernel object, and why erXos starts
+   on Fiasco and later replaces it with its own kernel.
+   *Draws on:* [design-fiasco.md](../design-fiasco.md),
+   [plan.md, Track K](../plan.md#track-k-erxoss-kernel).
+
+**Background boxes.** None: the chapter is the background.
+*Further reading* (the chapter's writer checks each citation): Liedtke,
+"On micro-kernel construction" (1995); Dennis and Van Horn, "Programming
+Semantics for Multiprogrammed Computations" (1966); Saltzer and
+Schroeder, "The Protection of Information in Computer Systems" (1975).
+
+**Figures.** 2.1: a monolithic kernel and a microkernel with servers,
+side by side. 2.2: a client calling a server by IPC. 2.3: a capability
+as a slot in a table, with its rights. 2.4: the confused deputy with an
+access list and with capabilities.
+
+### Chapter 3. Erlang and OTP
+
+*About 40 pages.* Enough Erlang to read the rest of the book: the
+language, processes and messages, failure handled by supervisors, OTP's
+behaviours, and the virtual machine that runs it.
+
+**Background needed.** Chapter 1 (processes, scheduling); no Erlang.
+
+**Status.** Background: no mark. A reader fluent in Erlang and OTP skips
+to section 5, the BEAM and ERTS, which is what erXos takes apart.
+
+1. **The language in a sitting.** Terms (numbers, atoms, tuples, lists,
+   maps, binaries), pattern matching, immutable data, functions and
+   modules, recursion in place of loops, and the book's notation for
+   specs and records.
+   *Draws on:* [style.md](../style.md).
+2. **Processes and messages.** Lightweight processes, mailboxes,
+   `spawn`, `!` and `receive`, selective receive, process identifiers and
+   registered names, and why nothing is shared.
+   *Draws on:* [design-runtime.md](../design-runtime.md).
+3. **Let it crash.** Links and exit signals, monitors, trapping exits,
+   supervisors, restart strategies and supervision trees: why a process
+   that meets the unexpected stops and its supervisor starts it again.
+   *Draws on:* [design-runtime.md](../design-runtime.md).
+4. **OTP behaviours.** `gen_server`, `gen_statem`, `supervisor`,
+   `application` and releases: a callback module around a generic
+   process, and what each behaviour saves the programmer from writing.
+   *Draws on:* [design-runtime.md](../design-runtime.md).
+5. **The BEAM and ERTS.** Bytecode and the JIT (BeamAsm), one scheduler
+   per processor, reductions, a heap and garbage collection per process,
+   ports, NIFs and built-in functions, and the atom table.
+   *Draws on:* [research-erts-internals.md](../research-erts-internals.md).
+6. **Code loading and distribution.** Two versions of a module at once,
+   hot code loading, nodes, node names and cookies, and how a message
+   crosses between nodes, which chapter 10 reuses across a domain's wall.
+   *Draws on:* [design-runtime.md](../design-runtime.md).
+7. **Looking at a running system.** Tracing, the shell, and the tools an
+   Erlang programmer uses, as the baseline that chapter 21 extends to
+   the whole machine.
+   *Draws on:* [design-live.md](../design-live.md).
+
+**Background boxes.** None: the chapter is the background.
+*Further reading* (the chapter's writer checks each citation): Armstrong,
+"Making Reliable Distributed Systems in the Presence of Software Errors"
+(2003); the OTP documentation shipped with the tree.
+
+**Figures.** 3.1: a process, its mailbox, links and monitors. 3.2: a
+supervision tree and one restart. 3.3: a `gen_statem` as a state
+diagram. 3.4: the BEAM inside one operating-system process: schedulers
+on threads, processes on schedulers.
+
+---
+
+## Part II. Overview
+
+### Chapter 4. History and Goals
 
 *About 24 pages.* Why build an operating system around Erlang, what erXos
 takes from earlier systems, and how it gets from nothing to a working
 machine.
+
+**Background needed.** Chapters 1 to 3, for the terms; a reader who
+knows operating systems, microkernels and Erlang starts here.
+
+**Background boxes.** None; each term of Part I is linked to its chapter
+at first use.
 
 **Status.** History and goals: no mark. The phases as they stand: 0.1
 built and published; 0.2 next; Phase 2 after.
@@ -243,15 +476,21 @@ built and published; 0.2 next; Phase 2 after.
    [design-fiasco.md, Contract](../design-fiasco.md#contract),
    [design-stopgap.md, Release contract](../design-stopgap.md#release-contract).
 
-**Figures.** 1.1: a timeline of the systems erXos draws on, with the idea
-taken from each. 1.2: the phases and milestones as a strip, 0.1 marked
+**Figures.** 4.1: a timeline of the systems erXos draws on, with the idea
+taken from each. 4.2: the phases and milestones as a strip, 0.1 marked
 published, 0.2 next, Phase 2 after, the seam (the kernel interface)
 drawn as a line that stays put while the kernel below it changes.
 
-### Chapter 2. Design Overview of erXos
+### Chapter 5. Design Overview of erXos
 
 *About 34 pages.* The whole system in one chapter: seven concepts, what
 runs where, and a day in the life of the machine.
+
+**Background needed.** Chapters 1 to 4.
+
+**Background boxes.** Reading a sequence diagram, as the day in the life
+uses one. What a boot image, a manifest and a package are, one paragraph
+each, before the chapter names them.
 
 **Status.** Mixed; the day in the life is annotated step by step. Built:
 the system domain as root task on Fiasco, domains each with its own ERTS,
@@ -305,16 +544,24 @@ consoles with a login. Phase 2: grants enforced by erXos's kernel.
    [design.md, Alternatives considered](../design.md#alternatives-considered),
    [design.md, Why no verifier](../design.md#why-no-verifier).
 
-**Figures.** 2.1: the layer diagram of [design.md,
+**Figures.** 5.1: the layer diagram of [design.md,
 Overview](../design.md#overview), redrawn: domains, sub-spaces,
-connections, the system domain, the kernel. 2.2: the seven concepts and
-their owners as a table-diagram. 2.3: the day in the life as a sequence
+connections, the system domain, the kernel. 5.2: the seven concepts and
+their owners as a table-diagram. 5.3: the day in the life as a sequence
 diagram, each step tagged with its chapter and status.
 
-### Chapter 3. Correct by Construction
+### Chapter 6. Correct by Construction
 
 *About 28 pages.* How erXos is designed: properties that hold because the
 wrong state cannot be written, not because every case was remembered.
+
+**Background needed.** Chapters 1 to 3 (chapter 1 for DMA and caches,
+chapter 3 for Erlang).
+
+**Background boxes.** Pure functions and side effects, with an Erlang
+example. Model checking, fuzzing and static checks in a paragraph each.
+Why a device's write can bypass a cache, enough for the worked example;
+chapter 15 explains it in full.
 
 **Status.** The method is applied throughout the built tree: pure cores
 returning `{State, Actions}` with one edge loop, `erx_actions:perform/3`
@@ -352,7 +599,7 @@ cites its row of the downsides table.
    helpers together in the right order, keeps producing sequencing bugs.
    *Draws on:* [design.md, Functional core, effects at the edge](../design.md#functional-core-effects-at-the-edge),
    [style.md, Functional core](../style.md#functional-core).
-4. **A worked example: the device DMA plan.** A preview of chapter 12. A
+4. **A worked example: the device DMA plan.** A preview of chapter 15. A
    driver's C part never pokes a device freely: its pure core produces a
    plan, ordered steps such as "write this value at this offset of this
    region", "publish this register", "copy these bytes back", and one
@@ -390,17 +637,24 @@ cites its row of the downsides table.
    *Draws on:* [design.md, Decisions](../design.md#decisions),
    [design-stopgap.md](../design-stopgap.md).
 
-**Figures.** 3.1: a pure core and its effect loop: request in, either
+**Figures.** 6.1: a pure core and its effect loop: request in, either
 "observe these reads" or "decide: this plan and the next state", the
-effect loop performing reads or the checked plan. 3.2: the "by
+effect loop performing reads or the checked plan. 6.2: the "by
 construction" list as a table of property, mechanism, chapter, and the
-Fiasco row that weakens it. 3.3: a chokepoint check with its seeded
+Fiasco row that weakens it. 6.3: a chokepoint check with its seeded
 violation.
 
-### Chapter 4. One Source for Every Fact
+### Chapter 7. One Source for Every Fact
 
 *About 26 pages.* Declarative description in erXos: facts stated once,
 and everything that follows from them generated or checked.
+
+**Background needed.** Chapter 6; chapter 3 for Erlang terms.
+
+**Background boxes.** What an application binary interface is and why
+two languages must agree on one. Code generation from a specification,
+against writing the same table twice. Datalog in a page: facts, rules,
+queries. How a chip vendor describes registers (CMSIS-SVD).
 
 **Status.** Built: `abi/erx_abi.txt` and its Ruby generators (C headers,
 Erlang modules, Ruby tables); the hardware sources (CMSIS-SVD files and
@@ -475,18 +729,25 @@ not a design.
    [research-os-ideas.md, Declarative OS services from BOOM and Dedalus](../research-os-ideas.md#declarative-os-services-from-boom-and-dedalus),
    [research-os-ideas.md, Barrelfish and declarative hardware management](../research-os-ideas.md#barrelfish-and-declarative-hardware-management).
 
-**Figures.** 4.1: the generation graph: the ABI file, the hardware
+**Figures.** 7.1: the generation graph: the ABI file, the hardware
 sources, the theme and the inspection schema on the left, the generators
 in the middle, every generated header, module and table on the right.
-4.2: one declaration and its C, Erlang and Ruby outputs side by side.
-4.3: the manifest check as a pipeline: reader, normalized facts,
+7.2: one declaration and its C, Erlang and Ruby outputs side by side.
+7.3: the manifest check as a pipeline: reader, normalized facts,
 properties, diagnostics, with one seeded violation traced through.
 
-### Chapter 5. The Kernel Interface and Its Two Kernels
+### Chapter 8. The Kernel Interface and Its Two Kernels
 
 *About 42 pages.* The kernel's services are its interface: objects,
 capabilities, threads, memory, IPC and interrupts. Two kernels stand
 behind it: Fiasco today, erXos's own kernel in Phase 2.
+
+**Background needed.** Chapters 1 to 3 and 5 to 7; chapter 2 for
+capabilities.
+
+**Background boxes.** A capability table recalled from chapter 2 with a
+worked lookup. Fiasco, L4Re and the root task in a page. What a
+generation count prevents.
 
 **Status.** Built: `liberx`'s Fiasco backend, the hosted backend for
 hosted mode, the root service's request decoder and placement code, the
@@ -557,20 +818,28 @@ budgets, page funnel) and none boots.
    [design-kernel.md, Port contract](../design-kernel.md#port-contract),
    [design-arch-aarch64.md](../design-arch-aarch64.md).
 
-**Figures.** 5.1: the seam: runtimes and programs above, `liberx` and its
-generated calls, three backends below it. 5.2: a capability lookup:
-slot, generation, type, rights. 5.3: the downsides table excerpted, with
+**Figures.** 8.1: the seam: runtimes and programs above, `liberx` and its
+generated calls, three backends below it. 8.2: a capability lookup:
+slot, generation, type, rights. 8.3: the downsides table excerpted, with
 the column structure explained.
 
 ---
 
-## Part II. Processes
+## Part III. Processes
 
-### Chapter 6. Processes, Runtimes and Two-Level Scheduling
+### Chapter 9. Processes, Runtimes and Two-Level Scheduling
 
 *About 38 pages.* Every Erlang process is a process of the operating
 system; the kernel gives CPU time to runtimes, and each runtime schedules
 its own processes.
+
+**Background needed.** Chapters 1 and 3 (scheduling, the BEAM), chapter
+8.
+
+**Background boxes.** How a BEAM scheduler runs a process: reductions,
+run queues, dirty schedulers. Preemption by the timer interrupt. A C
+library and what musl is. Just-in-time compilation and
+writable-or-executable memory.
 
 **Status.** Built: ERTS in user mode in every domain, the system domain
 on the interpreter, BeamAsm in other domains, the C library seam over
@@ -634,18 +903,25 @@ capacity, urgency) enforced by erXos's kernel.
    *Draws on:* [design-scheduler.md, A worked example](../design-scheduler.md#a-worked-example),
    [design-scheduler.md, Service work](../design-scheduler.md#service-work).
 
-**Figures.** 6.1: the two levels: groups and executors under the kernel,
-Erlang processes on executors under each runtime. 6.2: park and wake with
+**Figures.** 9.1: the two levels: groups and executors under the kernel,
+Erlang processes on executors under each runtime. 9.2: park and wake with
 the epoch, as a sequence diagram showing the lost-wakeup race and how the
-epoch closes it. 6.3: a group tree with grants. 6.4: the inside of ERTS
+epoch closes it. 9.3: a group tree with grants. 9.4: the inside of ERTS
 on erXos, the adapter and `liberx` beneath it.
 
-### Chapter 7. Domains: A Wall Around Some Processes
+### Chapter 10. Domains: A Wall Around Some Processes
 
 *About 42 pages.* The unit of isolation: a domain is an address space
 with its own runtime and an Erlang node of its own, and processes in
 different domains link, monitor and message each other as Erlang
 processes always have.
+
+**Background needed.** Chapters 1, 2 and 8; chapter 9 for runtimes;
+chapter 3 for nodes.
+
+**Background boxes.** Address spaces and page tables recalled from
+chapter 1. Ring buffers in shared memory and doorbells. What an Erlang
+node and the external term format are.
 
 **Status.** Built: domains with their own ERTS, connections and lanes,
 the funnel, exports, the origin envelope, links and monitors across
@@ -709,16 +985,23 @@ the downsides table.
    [design-system.md, Creating a domain](../design-system.md#creating-a-domain),
    [design-system.md, Ending a domain](../design-system.md#ending-a-domain).
 
-**Figures.** 7.1: two domains and their connection: rings, reader pages,
-doorbells. 7.2: a frame's path through the funnel: copy, check, decode.
-7.3: a pid's bits and the export table lookup. 7.4: a sandbox crash from
+**Figures.** 10.1: two domains and their connection: rings, reader pages,
+doorbells. 10.2: a frame's path through the funnel: copy, check, decode.
+10.3: a pid's bits and the export table lookup. 10.4: a sandbox crash from
 fault to `{domain_down, D, crash}` at the linked process.
 
-### Chapter 8. Authority and Security
+### Chapter 11. Authority and Security
 
-*About 40 pages.* Who may do what, and why: the threat model, trust
+*About 42 pages.* Who may do what, and why: the threat model, trust
 placement, facets, principals, keys, cryptography and the closure that
 makes a release safe for untrusted code.
+
+**Background needed.** Chapters 2, 8 and 10.
+
+**Background boxes.** Threat models: what an attacker is assumed able to
+do. Hashes, public-key signatures and what a key vault protects.
+Terminal escape sequences and why raw control characters are an attack.
+Branch-predictor side channels in a page.
 
 **Status.** Built: facets and the declared service table, every
 development build marked `development build: trusted code only`, OpenSSL
@@ -785,16 +1068,21 @@ Phase 2: the closure on erXos's kernel.
    *Draws on:* [design-fiasco.md, The security closure](../design-fiasco.md#the-security-closure),
    [design-fiasco.md, What a hostile app can do](../design-fiasco.md#what-a-hostile-app-can-do).
 
-**Figures.** 8.1: the trust map: kernel, root service, system domain,
+**Figures.** 11.1: the trust map: kernel, root service, system domain,
 driver domains, other domains, sub-spaces, with arrows for "depends on".
-8.2: a facet between a domain and a service. 8.3: the escape function at
+11.2: a facet between a domain and a service. 11.3: the escape function at
 each text sink.
 
-### Chapter 9. Memory and Budgets
+### Chapter 12. Memory and Budgets
 
-*About 36 pages.* Every kernel allocation is charged to a budget carved
+*About 38 pages.* Every kernel allocation is charged to a budget carved
 from its parent's; delete a budget, and everything charged to it goes,
 at once.
+
+**Background needed.** Chapters 1 (virtual memory) and 8.
+
+**Background boxes.** Page tables, the TLB and page faults recalled from
+chapter 1. Copy-on-write and fork. Space banks, the idea behind budgets.
 
 **Status.** Built: domains in their own spaces, memory objects and
 mappings over Fiasco, the root's page accounting as far as the backend
@@ -842,15 +1130,21 @@ budget, by erXos's kernel.
    *Draws on:* [design-fiasco.md, Budgets and the ownership of pages](../design-fiasco.md#budgets-and-the-ownership-of-pages),
    [design-fiasco.md, Memory and budgets](../design-fiasco.md#memory-and-budgets).
 
-**Figures.** 9.1: a budget tree with guarantees and caps, a wall marked.
-9.2: own and outer budgets of two connected domains. 9.3: a mapping and
+**Figures.** 12.1: a budget tree with guarantees and caps, a wall marked.
+12.2: own and outer budgets of two connected domains. 12.3: a mapping and
 its ceiling.
 
-### Chapter 10. Native Programs, Pipes and POSIX-lite
+### Chapter 13. Native Programs, Pipes and POSIX-lite
 
-*About 32 pages.* UNIX programs where they pay: a native program is a
+*About 34 pages.* UNIX programs where they pay: a native program is a
 port of its session, running in a sub-space with only what it was
 handed.
+
+**Background needed.** Chapters 1, 2, 9, 10 and 12.
+
+**Background boxes.** Executable files (ELF), loaders and linking. What
+POSIX is and what a POSIX-like layer promises. Signals, process groups
+and job control as a UNIX user knows them. File descriptors and pipes.
 
 **Status.** Built: programs in sub-spaces with a channel and a handler,
 pipes in user space, signals and errno with FreeBSD's numbers, toybox
@@ -898,19 +1192,24 @@ whole (0.2 has the rest of track P on Fiasco).
    *Draws on:* [design-programs.md, The second tier](../design-programs.md#the-second-tier),
    [design-programs.md, The cost of a program](../design-programs.md#the-cost-of-a-program).
 
-**Figures.** 10.1: a session with two programs in sub-spaces, their
-channels, handlers and a pipe between them. 10.2: the life of `find |
+**Figures.** 13.1: a session with two programs in sub-spaces, their
+channels, handlers and a pipe between them. 13.2: the life of `find |
 wc` from the shell's line to `$status`.
 
 ---
 
-## Part III. The I/O System
+## Part IV. The I/O System
 
-### Chapter 11. Files, Namespaces and Service Trees
+### Chapter 14. Files, Namespaces and Service Trees
 
-*About 34 pages.* Plan 9's idea, kept whole: each domain sees files
+*About 36 pages.* Plan 9's idea, kept whole: each domain sees files
 through its own table of file servers, a path is the visible face of a
 capability, and every server speaks 9P2000.L.
+
+**Background needed.** Chapters 1, 2, 10 and 11.
+
+**Background boxes.** The UNIX file model: paths, mounts, descriptors.
+Plan 9 in a page: per-process namespaces and 9P. RAM file systems.
 
 **Status.** Built: per-domain namespaces, file servers across domains,
 `/tmp` on a RAM file system in Erlang, stream files with keepers,
@@ -951,15 +1250,23 @@ capability, and every server speaks 9P2000.L.
    does not do?") applied to `/proc`, `/dev` and `/etc/passwd`.
    *Draws on:* [design-app-trees.md, What FreeBSD does](../design-app-trees.md#what-freebsd-does).
 
-**Figures.** 11.1: two domains' namespaces over the same file servers,
-showing what each can and cannot reach. 11.2: a 9P2000.L walk, open and
-read between domains. 11.3: an app's `/svc/NAME` tree beside `/proc`.
+**Figures.** 14.1: two domains' namespaces over the same file servers,
+showing what each can and cannot reach. 14.2: a 9P2000.L walk, open and
+read between domains. 14.3: an app's `/svc/NAME` tree beside `/proc`.
 
-### Chapter 12. Devices and Drivers
+### Chapter 15. Devices and Drivers
 
-*About 46 pages.* A driver is a supervised Erlang process over a thin
+*About 52 pages.* A driver is a supervised Erlang process over a thin
 device shim; the shim's C is a functional core whose every plan is
 checked before it touches the hardware.
+
+**Background needed.** Chapters 1 (interrupts, DMA, caches), 2, 9 and
+10.
+
+**Background boxes.** DMA, cache coherence and IOMMUs, before the DMA
+check. Memory-mapped I/O, interrupt controllers and message-signalled
+interrupts. PCIe in a page. USB in a page: hubs, descriptors, transfers.
+Device trees and firmware. virtio.
 
 **Status.** Built: drivers as Erlang processes (virtio block, net, gpu
 and input on QEMU; SD, GENET Ethernet and the firmware framebuffer on the
@@ -1035,18 +1342,25 @@ platform has one.
    *Draws on:* [design-header-io.md](../design-header-io.md),
    [design-board-sensors.md](../design-board-sensors.md).
 
-**Figures.** 12.1: a driver domain: supervisor, driver process, device
-NIF, device, interrupts. 12.2: a call through the device NIF: rounds of
+**Figures.** 15.1: a driver domain: supervisor, driver process, device
+NIF, device, interrupts. 15.2: a call through the device NIF: rounds of
 observation and decision, the check, the sequencer's maintenance and
-barriers, the effects. 12.3: a region's writer passing between CPU and
-device across a post and a completion. 12.4: the PCIe domain and the
+barriers, the effects. 15.3: a region's writer passing between CPU and
+device across a post and a completion. 15.4: the PCIe domain and the
 domains it gives devices to.
 
-### Chapter 13. Storage and Updates
+### Chapter 16. Storage and Updates
 
-*About 40 pages.* Releases ship as read-only images checked block by
+*About 44 pages.* Releases ship as read-only images checked block by
 block, data lives in a file system written in Erlang, and an update
 leaves a bootable system whatever happens.
+
+**Background needed.** Chapters 1, 14 and 15.
+
+**Background boxes.** Block devices, partitions and the SD card.
+File-system design: logs, flash translation and why flash wears (F2FS,
+littlefs, EROFS). A/B updates and chains of hashes from boot to system
+image.
 
 **Status.** Built: the storage domain serving `/data` from littlefs
 over virtio block and the Pi 4's SD card, restarting cleanly after a
@@ -1091,19 +1405,25 @@ After 0.2: erXos's F2FS replacing littlefs (M13).
    *Draws on:* [design-storage.md, System updates](../design-storage.md#system-updates),
    [design-platforms.md, Slots and the boot-selection record](../design-platforms.md#slots-and-the-boot-selection-record).
 
-**Figures.** 13.1: the card's partitions (record, boot and system slots,
-vault, data). 13.2: the boot-selection record as a state machine. 13.3:
+**Figures.** 16.1: the card's partitions (record, boot and system slots,
+vault, data). 16.2: the boot-selection record as a state machine. 13.3:
 an EROFS read checked against the hash tree.
 
 ---
 
-## Part IV. Communication
+## Part V. Communication
 
-### Chapter 14. The Network Stack
+### Chapter 17. The Network Stack
 
-*About 44 pages.* FreeBSD's default TCP/IP stack, redesigned as
+*About 50 pages.* FreeBSD's default TCP/IP stack, redesigned as
 idiomatic Erlang: matching FreeBSD's observable behaviour is the
 acceptance test, and the structure is new.
+
+**Background needed.** Chapters 1, 3, 6 and 15.
+
+**Background boxes.** TCP/IP in one chapter's worth: layers, Ethernet,
+ARP, IP, ICMP, UDP, TCP and DNS. How TCP works: windows, retransmission
+and congestion control. DHCP and NTP.
 
 **Status.** Built: `erx_net` in a network domain (Ethernet, ARP, IPv4,
 IPv6 neighbour discovery, ICMP, UDP, TCP, DHCP) over virtio-net and the
@@ -1145,42 +1465,92 @@ checks which parts of each have landed).
    start, the real-time clock at boot, and who may set the clock.
    *Draws on:* [design-time.md, The construction](../design-time.md#the-construction).
 
-**Figures.** 14.1: the network domain's process tree. 14.2: a received
-segment from driver to socket, with the copies counted. 14.3: the TCP
+**Figures.** 17.1: the network domain's process tree. 17.2: a received
+segment from driver to socket, with the copies counted. 17.3: the TCP
 core as state, event, step and actions.
 
-### Chapter 15. Radios: WiFi and Bluetooth
+### Chapter 18. WiFi
 
-*About 18 pages.* Two radios on the Raspberry Pi 4, each driven from
-Erlang, as studies in pure protocol cores.
+*About 12 pages.* The Raspberry Pi 4's WiFi chip, driven from Erlang, as
+a study in pure protocol cores.
+
+**Background needed.** Chapters 3 and 6 (state machines as pure cores),
+chapter 15 (drivers and devices), chapter 17 (the network stack).
 
 **Status.** Built (host): WiFi's join machine, SAE exchange and
-EAPOL-Key codec; Bluetooth's HCI codec and controller process with its
-line, links and patch reader. No radio driver runs on a board.
+EAPOL-Key codec. No radio driver runs on a board.
 
-1. **WiFi on the CYW43455.** What the chip offers, the join state
-   machine, SAE and WPA's key exchange as pure cores, and where the
-   firmware is trusted and where it is not.
+1. **WiFi on the CYW43455.** What the chip offers, where its firmware is
+   trusted and where it is not, and the driver's place beside the network
+   stack.
    *Draws on:* [design-wifi.md](../design-wifi.md).
-2. **Bluetooth Low Energy, peripheral first.** The HCI codec, the
-   controller process and the role erXos takes first.
+2. **The join machine.** Scanning, authentication, association and the
+   states between them as a pure state machine that returns the next
+   action.
+   *Draws on:* [design-wifi.md](../design-wifi.md).
+3. **SAE and the key exchange.** WPA3's password exchange and the
+   EAPOL-Key handshake as pure cores, and the keys they leave.
+   *Draws on:* [design-wifi.md](../design-wifi.md),
+   [research-wifi-iwd.md](../research-wifi-iwd.md).
+4. **Testing a radio without a lab.** Host tests of the cores against
+   recorded exchanges, and what only a board can tell.
+   *Draws on:* [research-wifi-pi4.md](../research-wifi-pi4.md).
+
+**Background boxes.** How WiFi works: access points, networks, scanning,
+association and the frames that carry them. WPA2 and WPA3 in one page:
+what a pairwise key is and what the four-way handshake proves. Why a
+chip's firmware is a trusted blob.
+
+**Figures.** 18.1: the WiFi join machine. 18.2: the key exchange as a
+sequence between station and access point.
+
+### Chapter 19. Bluetooth
+
+*About 12 pages.* The Raspberry Pi 4's Bluetooth controller, driven from
+Erlang, with Low Energy and the peripheral role first.
+
+**Background needed.** Chapters 3 and 6 (supervised processes, pure
+cores), chapter 15 (drivers and devices).
+
+**Status.** Built (host): Bluetooth's HCI codec and controller process
+with its line, links and patch reader. No radio driver runs on a board.
+
+1. **Bluetooth Low Energy, peripheral first.** What the role is, what
+   erXos offers a phone that connects to it, and what comes later.
    *Draws on:* [design-bluetooth.md](../design-bluetooth.md).
-3. **Testing radios without a lab.** Host tests of the cores, a Bumble
+2. **The HCI codec.** The commands, events and data packets between host
+   and controller, parsed once into checked records.
+   *Draws on:* [design-bluetooth.md](../design-bluetooth.md).
+3. **The controller process.** The line to the chip, links, the patch
+   reader that loads the controller's firmware, and the supervision of
+   all three.
+   *Draws on:* [design-bluetooth.md](../design-bluetooth.md).
+4. **Testing a radio without a lab.** Host tests of the cores, a Bumble
    test peer, and what only a board can tell.
    *Draws on:* [design-bluetooth.md](../design-bluetooth.md),
    [research-wifi-pi4.md](../research-wifi-pi4.md).
 
-**Figures.** 15.1: the WiFi join machine. 15.2: the Bluetooth controller
-process and its line to the chip.
+**Background boxes.** How Bluetooth Low Energy works: advertising,
+connections, roles and the attribute protocol. The host controller
+interface: why a host talks to a controller chip over a serial line.
+
+**Figures.** 19.1: the Bluetooth controller process and its line to the
+chip. 19.2: advertising, connecting and one attribute read as a sequence.
 
 ---
 
-## Part V. The User's Machine
+## Part VI. The User's Machine
 
-### Chapter 16. The Command Shell and the UNIX Surface
+### Chapter 20. The Command Shell and the UNIX Surface
 
-*About 34 pages.* The system feels like UNIX, as QNX and Plan 9 do,
+*About 36 pages.* The system feels like UNIX, as QNX and Plan 9 do,
 wherever that is also how it works.
+
+**Background needed.** Chapters 1, 3, 13 and 14.
+
+**Background boxes.** What a shell does: parse, expand, start, connect
+with pipes. Terminals, ttys and the line discipline. SSH in a page: keys
+and channels. The rc shell of Plan 9.
 
 **Status.** Built: rc written in Erlang with job control, Erlang commands
 that follow FreeBSD's output, text pipes, the start table and `service`,
@@ -1227,15 +1597,20 @@ screen editor run as `vi`.
    shows about the terminal stack.
    *Draws on:* [design-vi.md](../design-vi.md).
 
-**Figures.** 16.1: a pipeline mixing Erlang commands and a native
-program. 16.2: a tty between a terminal and a session's shells. 16.3: an
+**Figures.** 20.1: a pipeline mixing Erlang commands and a native
+program. 20.2: a tty between a terminal and a session's shells. 20.3: an
 SSH login's path to a shell.
 
-### Chapter 17. The Live Machine
+### Chapter 21. The Live Machine
 
-*About 34 pages.* Genera's legacy: one inspector shows CPUs, kernel
+*About 36 pages.* Genera's legacy: one inspector shows CPUs, kernel
 objects, domains, budgets and processes as live records, each value
 marked with who reported it, and code loads into the running machine.
+
+**Background needed.** Chapters 3, 5, 9 and 11.
+
+**Background boxes.** How the BEAM traces a process. Module identity and
+what a code hash names. Logging and crash dumps.
 
 **Status.** Built: `erx:i()`, `erx:source/1`, `erx:trace/1`,
 `erx:inspect/2`, `/proc`, the host link with `tools/erx load`, `watch`
@@ -1275,15 +1650,21 @@ Fiasco reports of it).
    sinks to protect.
    *Draws on:* [design-live.md, Attributed text](../design-live.md#attributed-text).
 
-**Figures.** 17.1: an `erx:i()` screen with reporters marked. 17.2: the
-host link: the Mac, the frames, the machine's code store. 17.3: a trace
+**Figures.** 21.1: an `erx:i()` screen with reporters marked. 21.2: the
+host link: the Mac, the frames, the machine's code store. 21.3: a trace
 timeline across two domains.
 
-### Chapter 18. Displays, Windows and the Web
+### Chapter 22. Displays, Windows and the Web
 
-*About 42 pages.* Windows are files, as in Plan 9's rio; an application
+*About 48 pages.* Windows are files, as in Plan 9's rio; an application
 describes its interface as a term, and every display, a screen, a panel
 or a browser, renders the same stream of changes in its own idiom.
+
+**Background needed.** Chapters 1, 11, 14 and 15.
+
+**Background boxes.** Framebuffers, pixel formats and compositing. GPUs:
+command streams, shaders and their page tables. Event-driven GUI
+toolkits and widget trees. A browser as a display: WebSocket and canvas.
 
 **Status.** Built: the window server serving windows as files, Plan 9's
 draw protocol, virtio-gpu, virtio-input and the Pi's framebuffer drivers
@@ -1336,15 +1717,20 @@ browser client, the desktop session, find and act, graphics hardware
    *Draws on:* [design-display.md, Graphics hardware](../design-display.md#graphics-hardware),
    [research-gpu.md](../research-gpu.md).
 
-**Figures.** 18.1: a window's directory of files. 18.2: one widget tree
-rendered three ways: screen, LVGL panel, browser. 18.3: the kiosk on the
-Pi 4 (a screenshot). 18.4: the browser demo's layers: page, emulator,
+**Figures.** 22.1: a window's directory of files. 22.2: one widget tree
+rendered three ways: screen, LVGL panel, browser. 22.3: the kiosk on the
+Pi 4 (a screenshot). 22.4: the browser demo's layers: page, emulator,
 erXos.
 
-### Chapter 19. Apps and Packages
+### Chapter 23. Apps and Packages
 
-*About 26 pages.* An app is a principal with a session template,
+*About 28 pages.* An app is a principal with a session template,
 installed at run time as one file with its needs declared and checked.
+
+**Background needed.** Chapters 8, 11, 14 and 22.
+
+**Background boxes.** Package managers and manifests. Declared
+permissions in app systems, as on a phone.
 
 **Status.** Built: the start table, `erx-app pack` producing a signed
 `.app` file with an EROFS image and a dm-verity tree, packages added to
@@ -1373,17 +1759,22 @@ run time, an app's own session and tree.
    *Draws on:* [design-packaging.md, The SDK](../design-packaging.md#the-sdk),
    [design-packaging.md, Examples](../design-packaging.md#examples).
 
-**Figures.** 19.1: a package's layout. 19.2: from `erx-app pack` to a
+**Figures.** 23.1: a package's layout. 23.2: from `erx-app pack` to a
 running app's session.
 
 ---
 
-## Part VI. System Operation
+## Part VII. System Operation
 
-### Chapter 20. Startup, Configuration and Shutdown
+### Chapter 24. Startup, Configuration and Shutdown
 
-*About 36 pages.* From the firmware's handover to a login prompt, from
+*About 38 pages.* From the firmware's handover to a login prompt, from
 one system manifest, and back down to a reset.
+
+**Background needed.** Chapters 1, 2, 8, 15 and 16.
+
+**Background boxes.** Booting an AArch64 machine: firmware, boot loader,
+exception levels. Initial images and boot archives. Watchdog timers.
 
 **Status.** Built: boot on QEMU `virt` (1 to 8 CPUs, HVF and TCG) and the
 Raspberry Pi 4 (QEMU `raspi4b` and a real board), the boot image and
@@ -1406,7 +1797,7 @@ release consoles, trial boots of an update. Planned: the Raspberry Pi 5.
    *Draws on:* [design-system.md, The root task](../design-system.md#the-root-task),
    [design-system.md, Boot](../design-system.md#boot).
 3. **The system manifest at boot.** How the manifest proved at build time
-   (chapter 4) drives what starts: every configured domain created by the
+   (chapter 7) drives what starts: every configured domain created by the
    domain service, every device given to the domain the manifest names,
    ordering and partial boots.
    *Draws on:* [design-system.md, The manifest](../design-system.md#the-manifest),
@@ -1430,14 +1821,20 @@ release consoles, trial boots of an update. Planned: the Raspberry Pi 5.
    *Draws on:* [design-platforms.md, Trust in the boot](../design-platforms.md#trust-in-the-boot),
    [design-platforms.md, Entropy sources](../design-platforms.md#entropy-sources).
 
-**Figures.** 20.1: the boot sequence from firmware to login prompt, with
-the build-time manifest check drawn beside it. 20.2: the boot image's
-layout. 20.3: the watchdog's chain of answers.
+**Figures.** 24.1: the boot sequence from firmware to login prompt, with
+the build-time manifest check drawn beside it. 24.2: the boot image's
+layout. 24.3: the watchdog's chain of answers.
 
-### Chapter 21. Checking the System
+### Chapter 25. Checking the System
 
-*About 36 pages.* How erXos knows it is right: answers that come from
+*About 40 pages.* How erXos knows it is right: answers that come from
 outside its own code.
+
+**Background needed.** The whole book; chapters 6 and 7 most.
+
+**Background boxes.** Test oracles and differential testing.
+Coverage-guided fuzzing and sanitizers. Model checking (TLA+) and
+bounded proofs (CBMC). Reproducible builds.
 
 **Status.** Built: `make check-oracle` against stock OTP 29.1.2 and
 musl's `libc-test`; TLA+ models of the lane, connections and links;
@@ -1488,8 +1885,8 @@ suite.
    comes first and the slow gates run off the landing path.
    *Draws on:* [design-build.md, What the gates run](../design-build.md#what-the-gates-run).
 
-**Figures.** 21.1: the oracles and what each checks. 21.2: a seeded
-fault and the check that catches it. 21.3: the gates as two tiers.
+**Figures.** 25.1: the oracles and what each checks. 25.2: a seeded
+fault and the check that catches it. 25.3: the gates as two tiers.
 
 ---
 
@@ -1511,14 +1908,21 @@ travel, durable actors, confined AI workers, declarative services.
 
 ## Appendix A. Glossary
 
-*About 10 pages.* Every term the book defines, in one line, with the
-chapter that explains it: from [design.md, The model](../design.md#the-model)
-and the terms each chapter introduces.
+*About 14 pages.* Every term a newcomer meets, in one line, with a
+pointer to the chapter or Background box that explains it. It covers
+the terms of operating systems (page table, DMA, interrupt, system
+call), of microkernels (capability, IPC, rendezvous, root task), of
+Erlang and OTP (supervisor, `gen_server`, link, node), of each
+chapter's Background box (TCP window, GATT, ELF, 9P), and erXos's own
+(domain, facet, lane, budget, funnel), from
+[design.md, The model](../design.md#the-model) and the terms each chapter
+introduces. A reader who meets a term before its chapter finds it here,
+in alphabetical order, with the chapter to turn to.
 
 ## Appendix B. Reading the Design Documents
 
-*About 6 pages.* What each design document is for, the common section
-layout (context, requirements, construction, invariants, failure,
+*About 8 pages.* A reading order for a reader new to the system, what
+each design document is for, the common section layout (context, requirements, construction, invariants, failure,
 refusals, verification), how decisions, residuals and the roadmap are
 split between design documents, `TODO.md` and `plan.md`, and which
 chapter leads into which documents.
@@ -1547,23 +1951,33 @@ idea taken and the chapter where it appears.
 *Draws on:* [research-prior-art.md](../research-prior-art.md),
 [design.md, References](../design.md#references).
 
-## Open decisions
+## Decisions
 
-1. **Where the book sits among the documents.** The document roles of
-   the repository's instructions and the document map of
-   [design.md](../design.md#document-map) do not list the book.
-   Recommendation: list it as the reader's introduction that cites the
-   design documents and decides nothing, between
-   [overview.md](../overview.md) and the design documents, so a review
-   of a design change asks whether a chapter needs the same edit.
-2. **How the status boxes stay true.** Recommendation: each chapter's box
-   is checked against README.md's "Current status" at every milestone
-   (0.2, then each Phase 2 milestone), in the same commit as the status
-   list, and a chapter whose box is stale is a documentation bug.
-3. **Figures.** Recommendation: Mermaid where GitHub renders it
-   (sequence and state diagrams), plain-text diagrams in code blocks
-   otherwise, and screenshots only for the display; no drawing tool's
-   source files.
+1. **Where the book sits among the documents.** The book is listed in the
+   document roles of [CLAUDE.md](../../CLAUDE.md) and in the document map
+   of [design.md](../design.md#document-map) as the reader's introduction:
+   it cites the design documents and decides nothing. It sits between
+   [overview.md](../overview.md) and the design documents, so a review of
+   a design change asks whether a chapter needs the same edit.
+2. **How the status boxes stay true.** Each chapter's status box is
+   checked against README.md's "Current status" at every milestone (0.2,
+   then each Phase 2 milestone), in the same commit as the status list. A
+   chapter whose box is stale is a documentation bug.
+3. **Figures.** Figures are Mermaid where GitHub renders it (sequence and
+   state diagrams) and plain-text diagrams in code blocks otherwise.
+   Screenshots appear only for the display. The book keeps no drawing
+   tool's source files.
 4. **Overview and book.** [overview.md](../overview.md) covers the ground
-   of chapters 1 and 2 in short. Recommendation: keep it as the short
-   introduction and link it from chapter 1, rather than folding it in.
+   of chapters 4 and 5 in short. It stays the short introduction, and
+   chapter 4 links it.
+5. **The reader without background.** Every chapter is written for a
+   reader who can program and has no Erlang, operating-system or
+   microkernel background. Part I teaches those three subjects; a chapter
+   states the background it needs, explains in a Background box what only
+   it uses, and never uses a term of those subjects before one of them
+   has explained it. Appendix A lists every such term with its place. A
+   chapter that needs the reader to know something Part I and its boxes
+   do not give is incomplete.
+6. **WiFi and Bluetooth have a chapter each.** They share a board and a
+   test approach but no protocol, no core and no design document, so
+   chapters 18 and 19 stand apart and each carries its own status box.

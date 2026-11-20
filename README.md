@@ -73,20 +73,22 @@ whether it is known. The command shell feels like FreeBSD's, `ps | grep`
 included, though its commands are Erlang; one `erl` away, the same
 processes are live values to link to, trace or open at their source
 line. And a
-browser is simply another display: it receives the same widget commands
-as a screen and renders them in its own medium, rather than mirroring
-pixels. The [overview](docs/overview.md) tells the longer story.
+browser is designed to be simply another display: it receives the same
+widget commands as a screen and renders them in its own medium, rather
+than mirroring pixels. The [overview](docs/overview.md) tells the longer story.
 
 * **A capability microkernel.** The kernel knows threads, memory,
   capabilities and interrupts. It knows nothing of Erlang. Everything
   else runs in user mode, the runtimes included. erXos's own kernel
-  follows *L4* and *Fiasco*, with lessons from *seL4* and *Zircon*. Until it is
-  written, a near-stock Fiasco stands in behind the same interface.
+  follows *L4* and *Fiasco*, with lessons from *seL4* and *Zircon*; so far
+  it is host-built cores that do not boot. A near-stock Fiasco stands in
+  behind the same interface and runs today.
   ([kernel](docs/design-kernel.md), [Fiasco](docs/design-fiasco.md))
-* **Two-level scheduling, one CPU authority.** The kernel grants CPU time
-  to groups of threads. Each runtime schedules its processes on the
-  threads its group pays for, without a kernel call. The kernel enforces
-  every grant and never calls back into a runtime's scheduler. *Psyche*,
+* **Two-level scheduling, one CPU authority.** In erXos's own kernel, the
+  kernel grants CPU time to groups of threads, enforces every grant and
+  never calls back into a runtime's scheduler. On Fiasco a domain gets a
+  priority band, a CPU set and a thread limit instead. Either way each
+  runtime schedules its processes on its threads without a kernel call. *Psyche*,
   *Akaros* and *Barrelfish* showed the way; *scheduler activations*, long
   abandoned, showed what to avoid.
   ([scheduler](docs/design-scheduler.md))
@@ -98,11 +100,13 @@ pixels. The [overview](docs/overview.md) tells the longer story.
   A crashed domain looks like a dead node. Think of Erlang distribution
   inside one machine, with *Safe Erlang*'s pids as capabilities.
   ([domains](docs/design-domains.md))
-* **A budget for everything.** Every kernel allocation is charged to a
-  budget carved from its parent's. Delete the budget, and everything
-  charged to it goes too, so ending a domain is one operation. Users get
-  memory quotas and a CPU share without a container runtime. *EROS*'s
-  space banks are the model, with *Genode*'s quotas.
+* **A budget for everything.** In erXos's own kernel every allocation is
+  charged to a budget carved from its parent's. Delete the budget, and
+  everything charged to it goes too, so ending a domain is one operation,
+  and users get memory quotas and a CPU share without a container
+  runtime. On Fiasco budgets are not walls, and the inspector reports a
+  domain's budget as unsupported. *EROS*'s space banks are the model,
+  with *Genode*'s quotas.
   ([budgets](docs/design-kernel.md#budgets),
   [resource policy](docs/design-system.md#resource-policy))
 * **Private namespaces, one file protocol.** This comes straight from
@@ -112,15 +116,17 @@ pixels. The [overview](docs/overview.md) tells the longer story.
   speaks 9P2000.L. ([files](docs/design-files.md),
   [`/tmp`](docs/design-tmp.md))
 * **Drivers are Erlang processes.** A driver is a supervised process over
-  a thin device shim. Kill the network driver mid-transfer. Its
-  supervisor resets the device and restarts it, and the shell never
-  notices. *HydrOS* and *Midori* took the same view.
+  a thin device shim. Kill the block driver mid-transfer. Its
+  supervisor restarts it, and the storage domain carries on. *HydrOS* and *Midori* took the same view.
   ([drivers](docs/design-system.md#drivers),
   [device shim](docs/design-runtime.md#the-device-nif))
-* **Storage in Erlang.** Releases ship as read-only EROFS images, checked
-  block by block. Data lives in F2FS, removable media in FAT. An update
-  goes to a spare slot and commits only after a healthy trial boot. A
-  bug in a file system crashes a process, not the machine.
+* **Storage in Erlang.** Release images are read-only EROFS, checked block
+  by block: the build writes them and a reader checks them, though
+  packages still ride in the boot image. The design keeps data in F2FS
+  and removable media in FAT; until F2FS is built, a littlefs stopgap
+  serves `/data`. An update will go to a spare slot and commit only after
+  a healthy trial boot; none is built yet. A bug in a file system crashes
+  a process, not the machine.
   ([storage](docs/design-storage.md))
 * **The live machine.** This is *Genera*'s legacy. One inspector shows
   CPUs, kernel objects, domains, budgets and processes as live records,
@@ -129,11 +135,12 @@ pixels. The [overview](docs/overview.md) tells the longer story.
   shell or from your laptop. ([live machine](docs/design-live.md))
 * **Windows are files.** A display serves each window as a directory of
   files, as *Plan 9*'s *rio* does. A program finds its window at
-  `/dev/draw` and draws with *Plan 9*'s draw protocol. A terminal is a
-  window too, and keeps shell output linked to the values behind it, as
-  *Genera*'s dynamic windows did. The same window system runs a desktop
-  of overlapping windows, or a kiosk, a dashboard or a pair of smart
-  glasses with one full-screen window. ([display](docs/design-display.md))
+  `/dev/draw` and draws with *Plan 9*'s draw protocol. The kiosk's
+  dashboard runs today as one full-screen window. A terminal window that
+  keeps shell output linked to the values behind it, as *Genera*'s
+  dynamic windows did, and a desktop of overlapping windows or a pair of
+  smart glasses are designed on the same window system; the desktop's
+  policy is a tested core that no guest runs yet. ([display](docs/design-display.md))
 * **One interface, every medium.** An Erlang application never draws. It
   describes its interface as a term: a tree that says what the widgets
   are, what they hold and which events they raise. When its state
@@ -142,15 +149,17 @@ pixels. The [overview](docs/overview.md) tells the longer story.
   ([widgets](docs/design-display.md#widget-trees))
 * **Same stream, different medium.** Every display gets the same stream
   of widget changes and sends back the same events. Each renders it in
-  its own idiom: a screen as pixels, a panel as *LVGL* widgets, a browser
-  as a web page. Nothing is mirrored. One application, unchanged, looks
-  native on a touch panel and in a browser tab.
+  its own idiom: a screen as pixels and a panel as *LVGL* widgets today,
+  a browser as a web page by design, since the rest of its client is not
+  built. Nothing is mirrored. One application, unchanged, is meant to
+  look native on a touch panel and in a browser tab.
   ([web](docs/design-web.md))
 * **UNIX on the surface.** As on *QNX* and *Plan 9*, UNIX is how the system
   looks wherever that is also how it works, not what it is built on. The command shell speaks rc's language
   and pipes text between commands, as UNIX does. Toybox supplies the
-  familiar tools. Native programs run on a POSIX-lite layer over musl,
-  each holding only what its starter handed it.
+  familiar tools. Native programs run over musl, each holding only what
+  its starter handed it; the POSIX-lite layer that completes them is
+  designed and not built.
   ([shell](docs/design-shell.md), [programs](docs/design-programs.md),
   [pipes](docs/design-pipes.md))
 * **Declarative where it is simpler.** One system manifest says what the
