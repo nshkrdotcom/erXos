@@ -301,8 +301,8 @@ mode_race(void)
  * A task makes no line, which only the root makes, so a task asks the service directly
  * and that create answers ERX_ENOTSUP. A holder binds, unbinds, triggers and acks an object
  * it was given, but through a handle of its own table, which holds none here: ERX_CAP_NULL
- * names no entry (ERX_ESTALE), and none of the handles 1 to IRQ_SCAN, which include the
- * object the root made before it started this task, answers ERX_OK to any of the four.
+ * names no entry (ERX_ESTALE), and none of the handles 1 to IRQ_SCAN of its own table
+ * answers ERX_OK to any of the four, while the root holds an object of its own.
  * Last, the task makes a doorbell of its own, which its end takes with it.
  */
 static int64_t

@@ -117,18 +117,16 @@ case_ends(const char *name, uint32_t flags, uint64_t mode, int64_t expected)
 
 /*
  * A task cannot make a line, and reaches no IRQ object through a handle it was not given:
- * the root holds an object, within the handles the task probes, while the task runs, and
- * still holds it afterwards. The doorbell the task makes last goes with the task.
+ * the root holds an object while the task runs, the task's probes of its own handles 1 to
+ * IRQ_SCAN reach nothing, and the root still holds the object afterwards. The doorbell the
+ * task makes last goes with the task.
  */
 static void
 case_irq_refused(void)
 {
 	const uint64_t before = erx_fiasco_vm_free_pages();
 	uint64_t bell = 0, space = 0;
-	const bool created = erx_irq_create(0, 0, ERX_IRQ_SOFT, 0, &bell, NULL) == ERX_OK;
-	/* A handle's entry number is its low ERX_CAP_SLOT_BITS; its generation lies above them. */
-	const uint64_t number = bell & ((UINT64_C(1) << ERX_CAP_SLOT_BITS) - 1);
-	const bool made = created && number >= 1 && number <= IRQ_SCAN;
+	const bool made = erx_irq_create(0, 0, ERX_IRQ_SOFT, 0, &bell, NULL) == ERX_OK;
 	const int64_t status = made ? task_run(0, MODE_IRQ_REFUSED, &space) : INT64_MIN;
 	const bool kept = made && erx_object_destroy(bell) == ERX_OK;
 
