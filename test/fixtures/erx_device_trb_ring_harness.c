@@ -27,8 +27,12 @@
 		}								\
 	} while (0)
 
-/* Two transfer rings of RING TRBs, the last each one's link, each with a pool of two buffers. */
-enum { RING = 5, RING0 = 0, RING1 = 1, EVENTS = 2, BUFFERS = 2, DEPTH = 8, RUN_MAX = 3 };
+/*
+ * Two transfer rings of RING TRBs, the last each one's link, each with a pool of two buffers, which
+ * take runs only once bound; and a ring of TRBs that needs no binding, the stand-in for the command
+ * ring until commands have meanings, with a pool of one buffer.
+ */
+enum { RING = 5, RING0 = 0, RING1 = 1, EVENTS = 2, COMMANDS = 3, BUFFERS = 2, DEPTH = 8, RUN_MAX = 3 };
 #define BASE		UINT64_C(0x40000)
 #define ENDPOINT0	UINT32_C(0x21)	/* slot 1, EP0 */
 #define ENDPOINT1	UINT32_C(0x22)
@@ -40,18 +44,21 @@ static erx_dma_layout_t
 layout(void)
 {
 	return ((erx_dma_layout_t){
-		.memory_size = 1024, .device_base = BASE, .address_bits = 64, .granule = 64, .table_count = 3,
+		.memory_size = 1024, .device_base = BASE, .address_bits = 64, .granule = 64, .table_count = 4,
 		.tables = {
-			{ .structure = ERX_STRUCTURE_XHCI_TRANSFER_RING, .placing = ERX_DMA_PLACED_RING, .pool = 0,
-			  .region = 0, .region_length = 128, .first = 0, .count = RING, .stride = 16 },
-			{ .structure = ERX_STRUCTURE_XHCI_TRANSFER_RING, .placing = ERX_DMA_PLACED_RING, .pool = 1,
-			  .region = 128, .region_length = 128, .first = 128, .count = RING, .stride = 16 },
+			{ .structure = ERX_STRUCTURE_XHCI_TRANSFER_RING, .placing = ERX_DMA_PLACED_RING, .needs_binding = true,
+			  .pool = 0, .region = 0, .region_length = 128, .first = 0, .count = RING, .stride = 16 },
+			{ .structure = ERX_STRUCTURE_XHCI_TRANSFER_RING, .placing = ERX_DMA_PLACED_RING, .needs_binding = true,
+			  .pool = 1, .region = 128, .region_length = 128, .first = 128, .count = RING, .stride = 16 },
 			{ .structure = ERX_STRUCTURE_XHCI_EVENT_RING, .region = 256, .region_length = 128, .first = 256,
 			  .count = 8, .stride = 16 },
+			{ .structure = ERX_STRUCTURE_XHCI_TRANSFER_RING, .placing = ERX_DMA_PLACED_RING, .pool = 2,
+			  .region = 640, .region_length = 128, .first = 640, .count = RING, .stride = 16 },
 		},
-		.pool_count = 2,
+		.pool_count = 3,
 		.pools = { { .first = 512, .count = BUFFERS, .size = 64, .stride = 64 },
-			   { .first = 384, .count = BUFFERS, .size = 64, .stride = 64 } },
+			   { .first = 384, .count = BUFFERS, .size = 64, .stride = 64 },
+			   { .first = 768, .count = 1, .size = 64, .stride = 64 } },
 	});
 }
 
@@ -110,6 +117,29 @@ on(uint32_t endpoint, const erx_dma_description_t *records, uint32_t count)
 {
 	return ((erx_dma_publication_t){ .record_count = count, .records = records, .call = ERX_DMA_PUBLISH_RUN,
 	    .endpoint = endpoint });
+}
+
+/*
+ * A binding command: one TRB on the command ring, carrying the binding of `ring` to `endpoint`,
+ * which its holding makes. `command` is its TRB's description.
+ */
+static erx_dma_verdict_t
+bind(erx_dma_ledger_t *ledger, uint32_t ring, uint32_t endpoint, erx_dma_description_t command,
+    erx_dma_sequence_t *sequence)
+{
+	const erx_dma_publication_t publication = { .record_count = 1, .records = &command, .call = ERX_DMA_PUBLISH_RUN,
+	    .binds = { endpoint, ring } };
+
+	return (erx_dma_publish(ledger, &publication, sequence));
+}
+
+/* The command's report ends its holding, as a success leaves the binding it made. */
+static void
+complete_command(erx_dma_ledger_t *ledger, uint32_t index)
+{
+	EXPECT(erx_dma_ledger_acquire(ledger, EVENTS, 1) &&
+	    erx_dma_ledger_release_holding(ledger, EVENTS, erx_dma_ledger_holding(ledger, (erx_dma_place_t){ COMMANDS, index })),
+	    "the command's report ends it");
 }
 
 /* The control word of a stored TRB, and its fields, by the generated accessors. */
@@ -301,6 +331,57 @@ explore(const erx_dma_ledger_t *ledger, const model_t *model, uint32_t depth)
 	}
 }
 
+/* The stored TRB at `offset` of a sequence, or NULL. */
+static const erx_dma_store_t *
+stored_at(const erx_dma_sequence_t *sequence, uint64_t offset)
+{
+	for (uint32_t index = 0; index < sequence->store_count; index++) {
+		if (sequence->stores[index].offset == offset)
+			return (&sequence->stores[index]);
+	}
+	return (NULL);
+}
+
+/* A binding command's binding is judged with the rest of its publication and made with its holding. */
+static void
+test_binding_command(void)
+{
+	const erx_dma_layout_t planned = layout();
+	erx_dma_ledger_t ledger;
+	erx_dma_sequence_t sequence;
+	erx_dma_found_t found;
+	erx_xhci_trb_link_t link;
+	const erx_dma_store_t *ring_link;
+
+	EXPECT(erx_dma_ledger_make(&ledger, &planned, &no_regions), "two rings that need a binding and one that needs none");
+	EXPECT(bind(&ledger, RING0, ENDPOINT0, status(), &sequence) == ERX_DMA_PASSES, "a binding command binds ring 0");
+	ring_link = stored_at(&sequence, (RING - 1) * 16u);
+	EXPECT(ring_link != NULL, "the bound ring's link is stored");
+	memcpy(&link, ring_link->bytes, sizeof(link));
+	EXPECT(sequence.zero_count == 1 && sequence.zeros[0].offset == 0 && sequence.zeros[0].length == 128 &&
+	    sequence.store_count == 2 && stored_at(&sequence, 640) != NULL && sequence.clean_count == 2 &&
+	    erx_xhci_trb_link_control_cycle_get(link.control) == 1 &&
+	    sequence.activation.store.offset == 640 + ERX_XHCI_TRB_NORMAL_OFF_CONTROL,
+	    "the command zeroes the ring, writes its link with cycle 1 and cleans it, and activates its own TRB");
+	found = erx_dma_ledger_holding(&ledger, (erx_dma_place_t){ COMMANDS, 0 });
+	EXPECT(erx_dma_ledger_binding(&ledger, RING0) == ENDPOINT0 && erx_dma_ledger_bound_table(&ledger, ENDPOINT0) == RING0 &&
+	    found.holding != NULL && found.holding->binding.table == RING0 && found.holding->binding.endpoint == ENDPOINT0,
+	    "the ring is bound, and the command's holding records the binding its failure ends");
+
+	EXPECT(bind(&ledger, RING0, ENDPOINT1, status(), &sequence) == ERX_DMA_BREAKS_BINDINGS &&
+	    bind(&ledger, RING1, ENDPOINT0, status(), &sequence) == ERX_DMA_BREAKS_BINDINGS &&
+	    bind(&ledger, COMMANDS, ENDPOINT1, status(), &sequence) == ERX_DMA_BREAKS_BINDINGS &&
+	    bind(&ledger, EVENTS, ENDPOINT1, status(), &sequence) == ERX_DMA_BREAKS_BINDINGS &&
+	    bind(&ledger, 9, ENDPOINT1, status(), &sequence) == ERX_DMA_BREAKS_BINDINGS,
+	    "a bound ring, a bound endpoint, rings that need no binding and a table past the layout are refused");
+	EXPECT(bind(&ledger, RING1, ENDPOINT1, normal(2 * BUFFERS, 128), &sequence) == ERX_DMA_BREAKS_LENGTHS,
+	    "a binding command whose TRB names more than its buffer");
+	EXPECT(erx_dma_ledger_binding(&ledger, RING1) == 0 && erx_dma_ledger_live(&ledger) == 1,
+	    "a refused binding command binds nothing and holds nothing");
+	complete_command(&ledger, 0);
+	EXPECT(erx_dma_ledger_binding(&ledger, RING0) == ENDPOINT0, "the command's success keeps its binding");
+}
+
 static void
 test_bindings(void)
 {
@@ -309,37 +390,29 @@ test_bindings(void)
 	erx_dma_sequence_t sequence;
 	erx_dma_description_t records[RUN_MAX];
 	erx_dma_publication_t publication;
-	erx_xhci_trb_link_t link;
 
 	EXPECT(erx_dma_ledger_make(&ledger, &planned, &no_regions), "two rings of one structure, pools before them, pass");
 	publication = on(ENDPOINT0, records, run(1, 0, records));
 	EXPECT(erx_dma_publish(&ledger, &publication, &sequence) == ERX_DMA_BREAKS_BINDINGS,
 	    "a run on an endpoint no ring is bound to");
-	EXPECT(erx_dma_bind(&ledger, RING0, ENDPOINT0, &sequence), "a ring bound to an endpoint");
-	memcpy(&link, sequence.stores[0].bytes, sizeof(link));
-	EXPECT(sequence.zero_count == 1 && sequence.zeros[0].offset == 0 && sequence.zeros[0].length == 128 &&
-	    sequence.clean_count == 1 && sequence.store_count == 1 && sequence.stores[0].offset == (RING - 1) * 16u &&
-	    erx_xhci_trb_link_control_cycle_get(link.control) == 1,
-	    "a binding zeroes the ring, writes its link with cycle 1 and cleans it");
-	EXPECT(!erx_dma_bind(&ledger, RING0, ENDPOINT1, &sequence) && !erx_dma_bind(&ledger, EVENTS, ENDPOINT1, &sequence) &&
-	    !erx_dma_ledger_bind(&ledger, RING1, 0), "a bound ring, a table that is no ring and endpoint 0 are refused");
-	EXPECT(erx_dma_ledger_bound_table(&ledger, ENDPOINT0) == RING0 && erx_dma_ledger_binding(&ledger, RING0) == ENDPOINT0,
-	    "the endpoint's ring");
+	publication = on(0, records, run(1, 0, records));
+	EXPECT(erx_dma_publish(&ledger, &publication, &sequence) == ERX_DMA_BREAKS_BINDINGS,
+	    "a transfer of endpoint 0 is the command ring's, whose pool is its own");
+	EXPECT(bind(&ledger, RING0, ENDPOINT0, status(), &sequence) == ERX_DMA_PASSES, "ring 0 bound to endpoint 0");
 
 	publication = on(ENDPOINT0, records, run(1, BUFFERS, records));
 	EXPECT(erx_dma_publish(&ledger, &publication, &sequence) == ERX_DMA_BREAKS_BINDINGS,
 	    "a TRB naming another ring's pool's buffer");
-	publication = on(ENDPOINT0, records, run(1, 2 * BUFFERS, records));
+	publication = on(ENDPOINT0, records, run(1, 2 * BUFFERS + 1, records));
 	EXPECT(erx_dma_publish(&ledger, &publication, &sequence) == ERX_DMA_BREAKS_NAMES, "a buffer past every pool");
+	publication = (erx_dma_publication_t){ .record_count = 1, .records = records, .call = ERX_DMA_PUBLISH_RUN,
+	    .endpoint = ENDPOINT0, .binds = { ENDPOINT1, RING1 } };
+	run(1, 0, records);
+	EXPECT(erx_dma_publish(&ledger, &publication, &sequence) == ERX_DMA_BREAKS_BINDINGS &&
+	    erx_dma_ledger_binding(&ledger, RING1) == 0, "a transfer carries no binding");
 
-	EXPECT(erx_dma_bind(&ledger, RING1, ENDPOINT0, &sequence), "a second ring bound to one endpoint");
+	EXPECT(bind(&ledger, RING1, ENDPOINT1, status(), &sequence) == ERX_DMA_PASSES, "ring 1 bound to endpoint 1");
 	publication = on(ENDPOINT0, records, run(1, 0, records));
-	EXPECT(erx_dma_ledger_bound_table(&ledger, ENDPOINT0) == -1 &&
-	    erx_dma_publish(&ledger, &publication, &sequence) == ERX_DMA_BREAKS_BINDINGS,
-	    "a run on an endpoint with two rings has no ring");
-	EXPECT(erx_dma_ledger_unbind(&ledger, RING1) && erx_dma_bind(&ledger, RING1, ENDPOINT1, &sequence),
-	    "an idle ring is unbound and bound again");
-
 	EXPECT(erx_dma_publish(&ledger, &publication, &sequence) == ERX_DMA_PASSES, "a run on the bound ring");
 	EXPECT(!erx_dma_ledger_unbind(&ledger, RING0), "a ring a run holds stays bound");
 	publication = on(ENDPOINT1, records, run(1, BUFFERS, records));
@@ -348,11 +421,14 @@ test_bindings(void)
 	erx_dma_ledger_reset(&ledger);
 	EXPECT(erx_dma_ledger_binding(&ledger, RING0) == 0 && erx_dma_ledger_idle(&ledger),
 	    "the reset's idle report ends every binding");
+	EXPECT(bind(&ledger, RING1, ENDPOINT0, status(), &sequence) == ERX_DMA_PASSES &&
+	    erx_dma_ledger_unbind(&ledger, RING1) && erx_dma_ledger_binding(&ledger, RING1) == 0,
+	    "an idle ring is unbound");
 }
 
-/* A ring that is its structure's one table, as the command ring is, takes runs unbound. */
+/* The layout's check of the tables and their bindings. */
 static void
-test_sole_ring(void)
+test_layout(void)
 {
 	erx_dma_layout_t planned = layout();
 	erx_dma_ledger_t ledger;
@@ -360,18 +436,33 @@ test_sole_ring(void)
 	erx_dma_description_t records[RING];
 	erx_dma_publication_t publication;
 
-	planned.tables[RING1].structure = ERX_STRUCTURE_XHCI_COMMAND_RING;
-	EXPECT(erx_dma_ledger_make(&ledger, &planned, &no_regions), "one transfer ring and a command ring");
+	EXPECT(erx_dma_ledger_make(&ledger, &planned, &no_regions), "the harness's layout");
 	for (uint32_t index = 0; index < RING; index++)
 		records[index] = status();
 	publication = on(0, records, RING);
 	EXPECT(erx_dma_publication_check(&ledger, &publication) == ERX_DMA_BREAKS_ROOM &&
 	    erx_dma_publish(&ledger, &publication, &sequence) == ERX_DMA_BREAKS_ROOM,
 	    "a run as long as its ring would name a position twice");
-	publication = on(0, records, run(1, 0, records));
-	EXPECT(erx_dma_publish(&ledger, &publication, &sequence) == ERX_DMA_PASSES, "a run on the sole ring");
-	EXPECT(!erx_dma_bind(&ledger, RING0, ENDPOINT0, &sequence),
-	    "a ring a run holds is not bound, which would zero the TRBs the device holds");
+	publication = on(0, records, 1);
+	EXPECT(erx_dma_publish(&ledger, &publication, &sequence) == ERX_DMA_PASSES, "a run on the ring that needs no binding");
+
+	planned.tables[RING0].stride = 8;
+	EXPECT(!erx_dma_ledger_make(&ledger, &planned, &no_regions), "a ring of TRBs at a stride of 8 bytes");
+	planned = layout();
+	planned.tables[COMMANDS].structure = ERX_STRUCTURE_XHCI_COMMAND_RING;
+	planned.tables[COMMANDS].stride = 8;
+	EXPECT(!erx_dma_ledger_make(&ledger, &planned, &no_regions),
+	    "a ring of a structure with no meanings at a stride other than its link's, which would overrun the ring");
+	planned = layout();
+	planned.tables[RING0].needs_binding = false;
+	EXPECT(!erx_dma_ledger_make(&ledger, &planned, &no_regions),
+	    "two tables of one structure that need no binding, between which a run could not choose");
+	planned = layout();
+	planned.tables[EVENTS].needs_binding = true;
+	EXPECT(!erx_dma_ledger_make(&ledger, &planned, &no_regions), "a ring the device writes needs no binding");
+	planned = layout();
+	planned.tables[RING0].placing = ERX_DMA_PLACED_FREE;
+	EXPECT(!erx_dma_ledger_make(&ledger, &planned, &no_regions), "a table placed free needs no binding");
 }
 
 int
@@ -382,10 +473,12 @@ main(void)
 	erx_dma_sequence_t sequence;
 	const model_t start = { 0 };
 
+	test_binding_command();
 	test_bindings();
-	test_sole_ring();
-	EXPECT(erx_dma_ledger_make(&ledger, &planned, &no_regions) && erx_dma_bind(&ledger, RING0, ENDPOINT0, &sequence),
-	    "ring 0 bound");
+	test_layout();
+	EXPECT(erx_dma_ledger_make(&ledger, &planned, &no_regions) &&
+	    bind(&ledger, RING0, ENDPOINT0, status(), &sequence) == ERX_DMA_PASSES, "ring 0 bound");
+	complete_command(&ledger, 0);
 	explore(&ledger, &start, DEPTH);
 	printf("erx_device_trb_ring done\n");
 	return (0);

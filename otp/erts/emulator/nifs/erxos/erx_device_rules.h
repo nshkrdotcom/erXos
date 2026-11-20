@@ -15,18 +15,21 @@
  * erx_dma_publication_check judges a publication against the ledger, before anything is placed
  * or written, and names the first rule it breaks:
  *   calls     its call is one the type offers: a run describes at least one record; an
- *             install describes no record and no fill and finds the ledger idle, nothing held,
- *             acquired or moved, so no ring it zeroes is one a live chain is on (that the queue
- *             is not ready already is the form core's, as erx_split_ring_install refuses it); an
+ *             install describes no record, no fill, no endpoint and no binding and finds the
+ *             ledger idle, nothing held, acquired or moved, so no ring it zeroes is one a live
+ *             chain is on (that the queue is not ready already is the form core's, as
+ *             erx_split_ring_install refuses it); an
  *             install passes on this rule alone, its every step derived from the layout;
  *   meanings  each record's structure is a table of the layout that descriptions fill, and its
  *             meaning is one that structure's tables offer;
  *   widths    each free value fits its place, as the meaning's encoder takes it;
  *   names     each reference names a buffer of the layout, as many names as the meaning has
  *             references, each of a buffer's data;
- *   bindings  a run's records are of one table: its structure's one table, or the ring the
- *             ledger binds to the publication's endpoint alone; each name is of a buffer of that
- *             table's pool, so a transfer reaches only its own queue's buffers;
+ *   bindings  a run's records are of one table: the ring the ledger binds to the publication's
+ *             endpoint, or, for endpoint 0, its structure's one table that needs no binding;
+ *             each name is of a buffer of that table's pool, so a transfer reaches only its own
+ *             queue's buffers; a binding it carries is one erx_dma_ledger_may_bind allows, and its
+ *             run is on a table that needs none, as a binding command is on the command ring;
  *   held      no name is of a buffer a live holding holds;
  *   lengths   each reference's length lies inside its buffer from its offset;
  *   room      the run fits: as many unheld records of each table placed free as it describes,
@@ -37,8 +40,8 @@
  *             record of the publication names, and no two fills share a byte; a region entry's
  *             fill is one entry long and names a persistent region the ledger holds, so a
  *             region of another device, or none, fails.
- * The bindings, reach and controls rules, and the releases rule over acquired reports, belong
- * to the forms and the sequencer that move onto this check after the split ring.
+ * The reach and controls rules, which commands may bind, and the releases rule over acquired
+ * reports belong to the forms and the sequencer that move onto this check after the split ring.
  */
 
 #ifndef ERX_DEVICE_RULES_H
@@ -98,14 +101,19 @@ typedef enum erx_dma_publication_call {
 	ERX_DMA_PUBLISH_INSTALL,
 } erx_dma_publication_call_t;
 
-/* What a decision that hands over describes: its records, in the order of the run, its fills and its call. */
+/*
+ * What a decision that hands over describes: its records, in the order of the run, its fills and
+ * its call; for a transfer, the endpoint whose ring it runs on; for a binding command, the binding
+ * its holding makes (erx_dma_ledger_hold), endpoint 0 for none.
+ */
 typedef struct erx_dma_publication {
 	uint32_t			record_count;
 	const erx_dma_description_t	*records;
 	uint32_t			fill_count;
 	const erx_dma_fill_t		*fills;
 	erx_dma_publication_call_t	call;
-	uint32_t			endpoint;	/* a run on a ring: the endpoint it is bound to */
+	uint32_t			endpoint;
+	erx_dma_binding_t		binds;
 } erx_dma_publication_t;
 
 /* The rule a publication breaks first, or ERX_DMA_PASSES. */
@@ -126,10 +134,11 @@ erx_dma_verdict_t	erx_dma_publication_check(const erx_dma_ledger_t *ledger,
 			    const erx_dma_publication_t *publication);
 
 /*
- * The table a run's record of `structure` is placed in: the layout's one table of it, or, where it
- * holds several, the ring the ledger binds to the publication's endpoint alone; -1 for neither.
+ * The table a run is placed in, as the bindings rule gives it: the ring bound to the publication's
+ * endpoint, or for endpoint 0 the one table of its first record's structure that needs no binding;
+ * -1 for none.
  */
-int	erx_dma_run_table(const erx_dma_ledger_t *ledger, const erx_dma_publication_t *publication, uint32_t structure);
+int	erx_dma_run_table(const erx_dma_ledger_t *ledger, const erx_dma_publication_t *publication);
 
 /*
  * The buffers a publication's names reach, each once, in the order first named: what its holding

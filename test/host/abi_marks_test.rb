@@ -430,6 +430,23 @@ class AbiMarksTest < Minitest::Test
     refute header.include?('ERX_MEANING_XHCI_TRB_LINK'), 'the link TRB, no meaning, has a number'
   end
 
+  # The size of each structure's records, which the ledger asks a table's stride to be: a TRB's
+  # 16 bytes for a transfer ring and the event ring, a used element's 8, and none for the
+  # command ring, whose commands have no marks, or the available ring, the sequencer's own.
+  def test_each_structure_gives_its_record_size
+    header = Erx::ABI::CEmitter.header(tree_schema(Dir.mktmpdir('erx-abi-marks-')))
+    body = header[/^erx_structure_record_size\(uint32_t structure\)\n\{\n(.*?)^\}/m, 1]
+    sizes = body.scan(/((?:\tcase \w+:\n)+)\t\treturn \(UINT32_C\((\d+)\)\);/).flat_map do |cases, size|
+      cases.scan(/ERX_STRUCTURE_\w+/).map { |structure| [structure, size.to_i] }
+    end.to_h
+    assert_equal({ 'ERX_STRUCTURE_XHCI_TRANSFER_RING' => 16, 'ERX_STRUCTURE_XHCI_EVENT_RING' => 16,
+                   'ERX_STRUCTURE_VIRTQ_USED' => 8, 'ERX_STRUCTURE_VIRTQ_DESC' => 16 },
+                 sizes.slice('ERX_STRUCTURE_XHCI_TRANSFER_RING', 'ERX_STRUCTURE_XHCI_EVENT_RING',
+                             'ERX_STRUCTURE_VIRTQ_USED', 'ERX_STRUCTURE_VIRTQ_DESC'))
+    refute sizes.key?('ERX_STRUCTURE_XHCI_COMMAND_RING'), 'the command ring, with no meaning, has a size'
+    refute sizes.key?('ERX_STRUCTURE_VIRTQ_AVAIL'), 'the available ring, with no meaning, has a size'
+  end
+
   # Encoding a report does not build: nothing the device states is an encoder input.
   def test_encoding_a_report_does_not_build
     header = Erx::ABI::CEmitter.header(tree_schema(Dir.mktmpdir('erx-abi-marks-')))

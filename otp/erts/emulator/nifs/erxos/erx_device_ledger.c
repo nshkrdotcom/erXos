@@ -29,10 +29,15 @@
 #else
 #define SEED_RELEASE_TWICE	false
 #endif
-#ifdef ERX_DMA_SEED_BIND_WHILE_HELD
-#define SEED_BIND_WHILE_HELD	true
+#ifdef ERX_DMA_SEED_BIND_BOUND_ENDPOINT
+#define SEED_BIND_BOUND_ENDPOINT	true
 #else
-#define SEED_BIND_WHILE_HELD	false
+#define SEED_BIND_BOUND_ENDPOINT	false
+#endif
+#ifdef ERX_DMA_SEED_NO_STRIDE_TEST
+#define SEED_NO_STRIDE_TEST	true
+#else
+#define SEED_NO_STRIDE_TEST	false
 #endif
 #ifdef ERX_DMA_SEED_RING_NO_LINK
 #define SEED_RING_NO_LINK	true
@@ -149,16 +154,45 @@ table_valid(const erx_dma_layout_t *layout, uint32_t index, uint64_t *end)
 	const erx_dma_table_t *table = &layout->tables[index];
 
 	const bool described = table->placing != ERX_DMA_PLACED_IN_ORDER && !device_writes(layout, index);
+	const uint32_t record_size = erx_structure_record_size(table->structure);
 
 	*end = 0;
 	if (!region_valid(layout, table->region, table->region_length, end))
 		return (false);
-	/* A ring holds its link and at least one description. */
+	/*
+	 * A ring holds its link and at least one description, at the link's stride, since the
+	 * sequencer writes a link into every ring, whether its structure has meanings or not.
+	 */
 	return (table->structure != ERX_REFERS_DATA && table->count != 0 && table->stride != 0 &&
+	    (SEED_NO_STRIDE_TEST || ((record_size == 0 || table->stride == record_size) &&
+	    (table->placing != ERX_DMA_PLACED_RING || table->stride == ERX_XHCI_TRB_LINK_SIZE))) &&
 	    table->first >= table->region &&
 	    erx_dma_inside(table->first - table->region, (uint64_t)table->count * table->stride, table->region_length) &&
 	    (table->placing != ERX_DMA_PLACED_RING || table->count >= 2) &&
-	    (!described || table->pool < layout->pool_count));
+	    (!described || table->pool < layout->pool_count) &&
+	    (!table->needs_binding || (described && table->placing == ERX_DMA_PLACED_RING)));
+}
+
+/* A table a run finds by its structure: one descriptions fill that needs no binding. */
+static bool
+found_by_structure(const erx_dma_layout_t *layout, uint32_t table)
+{
+	return (!layout->tables[table].needs_binding && layout->tables[table].placing != ERX_DMA_PLACED_IN_ORDER &&
+	    !device_writes(layout, table));
+}
+
+/* Whether two tables a run finds by structure share one, so a run of it could not find its table. */
+static bool
+structure_shared(const erx_dma_layout_t *layout)
+{
+	for (uint32_t one = 0; one < layout->table_count; one++) {
+		for (uint32_t other = 0; other < one; other++) {
+			if (found_by_structure(layout, one) && found_by_structure(layout, other) &&
+			    layout->tables[one].structure == layout->tables[other].structure)
+				return (true);
+		}
+	}
+	return (false);
 }
 
 /* Whether the `count` regions of `starts` and `ends` share no byte, in whatever order they lie. */
@@ -190,7 +224,8 @@ layout_valid(const erx_dma_layout_t *layout)
 	uint32_t regions = 0;
 
 	if (!power_of_two(layout->granule) || layout->address_bits == 0 || layout->address_bits > 64 ||
-	    layout->table_count > ERX_DMA_TABLES_MAX || layout->pool_count == 0 || layout->pool_count > ERX_DMA_POOLS_MAX)
+	    layout->table_count > ERX_DMA_TABLES_MAX || layout->pool_count == 0 || layout->pool_count > ERX_DMA_POOLS_MAX ||
+	    structure_shared(layout))
 		return (false);
 	for (uint32_t index = 0; index < layout->table_count; index++, regions++) {
 		if (!table_valid(layout, index, &ends[regions]))
@@ -307,16 +342,11 @@ table_held(const erx_dma_ledger_t *ledger, uint32_t table)
 }
 
 bool
-erx_dma_ledger_bind(erx_dma_ledger_t *ledger, uint32_t table, uint32_t endpoint)
+erx_dma_ledger_may_bind(const erx_dma_ledger_t *ledger, erx_dma_binding_t binding)
 {
-	if (endpoint == 0 || table >= ledger->layout.table_count ||
-	    ledger->layout.tables[table].placing != ERX_DMA_PLACED_RING || ledger->bound[table] != 0 ||
-	    (!SEED_BIND_WHILE_HELD && table_held(ledger, table)))
-		return (false);
-	ledger->bound[table] = endpoint;
-	/* The first record, on lap 0, of cycle state 1; the sequencer zeroes the ring with it. */
-	ledger->positions[table] = (erx_dma_position_t){ 0, 0 };
-	return (true);
+	return (binding.endpoint != 0 && binding.table < ledger->layout.table_count &&
+	    ledger->layout.tables[binding.table].needs_binding && ledger->bound[binding.table] == 0 &&
+	    (SEED_BIND_BOUND_ENDPOINT || erx_dma_ledger_bound_table(ledger, binding.endpoint) < 0));
 }
 
 bool
@@ -337,16 +367,11 @@ erx_dma_ledger_binding(const erx_dma_ledger_t *ledger, uint32_t table)
 int
 erx_dma_ledger_bound_table(const erx_dma_ledger_t *ledger, uint32_t endpoint)
 {
-	int found = -1;
-
 	for (uint32_t table = 0; table < ledger->layout.table_count && endpoint != 0; table++) {
-		if (ledger->bound[table] != endpoint)
-			continue;
-		if (found >= 0)
-			return (-1);
-		found = (int)table;
+		if (ledger->bound[table] == endpoint)
+			return ((int)table);
 	}
-	return (found);
+	return (-1);
 }
 
 /* The cycle state on lap `lap` of a ring: 1 on lap 0, where a binding starts it, toggled by each link. */
@@ -425,26 +450,12 @@ erx_dma_ledger_layout(const erx_dma_ledger_t *ledger)
 int
 erx_dma_ledger_table(const erx_dma_ledger_t *ledger, uint32_t structure)
 {
-	int found = -1;
-
+	/* The layout's check let at most one such table of a structure through. */
 	for (uint32_t index = 0; index < ledger->layout.table_count; index++) {
-		if (ledger->layout.tables[index].structure != structure)
-			continue;
-		if (found >= 0)
-			return (-1);
-		found = (int)index;
+		if (ledger->layout.tables[index].structure == structure && !ledger->layout.tables[index].needs_binding)
+			return ((int)index);
 	}
-	return (found);
-}
-
-uint32_t
-erx_dma_ledger_tables(const erx_dma_ledger_t *ledger, uint32_t structure)
-{
-	uint32_t count = 0;
-
-	for (uint32_t index = 0; index < ledger->layout.table_count; index++)
-		count += ledger->layout.tables[index].structure == structure;
-	return (count);
+	return (-1);
 }
 
 erx_dma_position_t
@@ -579,14 +590,17 @@ holding_valid(const erx_dma_ledger_t *ledger, const erx_dma_holding_t *holding, 
 }
 
 /*
- * The holding of `publication` at `records`, with the buffers its names reach. False when there
- * are more records or buffers than a holding holds.
+ * The holding of `publication` at `records`, with the buffers its names reach and the binding it
+ * carries. False when there are more records or buffers than a holding holds.
  */
 static bool
 holding_of(const erx_dma_publication_t *publication, const erx_dma_place_t *records, uint32_t record_count,
     erx_dma_holding_t *holding)
 {
 	*holding = (erx_dma_holding_t){ .record_count = record_count };
+	/* Endpoint 0 is no binding, whatever table it names: the holding keeps none. */
+	if (publication->binds.endpoint != 0)
+		holding->binding = publication->binds;
 	if (record_count == 0 || record_count > ERX_DMA_HELD_RECORDS_MAX)
 		return (false);
 	for (uint32_t record = 0; record < record_count; record++)
@@ -603,10 +617,19 @@ erx_dma_ledger_hold(erx_dma_ledger_t *ledger, const erx_dma_publication_t *publi
 
 	if (!holding_of(publication, records, record_count, &holding) || !holding_valid(ledger, &holding, taken))
 		return (false);
+	/* A binding's ring, bound to no endpoint, takes none of the run: it holds no record before or after. */
+	if (holding.binding.endpoint != 0 &&
+	    (!erx_dma_ledger_may_bind(ledger, holding.binding) || taken[holding.binding.table] != 0))
+		return (false);
 	holding.serial = ++ledger->begun;
 	ledger->holdings[ledger->live++] = holding;
 	for (uint32_t table = 0; table < ledger->layout.table_count; table++)
 		advance(ledger, table, taken[table]);
+	if (holding.binding.endpoint != 0) {
+		ledger->bound[holding.binding.table] = holding.binding.endpoint;
+		/* The first record, on lap 0, of cycle state 1, where the sequencer's zeroed ring starts. */
+		ledger->positions[holding.binding.table] = (erx_dma_position_t){ .index = 0, .lap = 0 };
+	}
 	return (true);
 }
 

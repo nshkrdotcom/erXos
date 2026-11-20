@@ -325,6 +325,27 @@ place_in_order(const erx_dma_ledger_t *ledger, uint32_t table, erx_dma_place_t h
 	return (true);
 }
 
+/*
+ * The effects of a binding a publication carries, which its holding makes (erx_dma_ledger_hold):
+ * ring `table`'s region zeroed, its link written on lap 0, where the binding starts it, so its
+ * cycle bit is that lap's state, and the region cleaned, all before the command's activation, so
+ * the controller finds a ring of TRBs whose cycle bit is 0 behind the position. False where the
+ * link's encoder refuses the layout's address.
+ */
+static bool
+bind_ring(const erx_dma_layout_t *layout, uint32_t table, erx_dma_sequence_t *out)
+{
+	const erx_dma_ring_step_t link = { .place = { .table = table, .index = layout->tables[table].count - 1 },
+	    .cycle = 1, .link = true };
+
+	if (!encode_link(layout, link, &out->stores[out->store_count]))
+		return (false);
+	out->store_count++;
+	add_range(out->zeros, &out->zero_count, layout->tables[table].region, layout->tables[table].region_length);
+	add_range(out->cleans, &out->clean_count, layout->tables[table].region, layout->tables[table].region_length);
+	return (true);
+}
+
 /* The device address of a table's region, where a ring's head is: what a queue register names. */
 static uint64_t
 table_address(const erx_dma_layout_t *layout, int table)
@@ -378,25 +399,25 @@ erx_dma_publish(erx_dma_ledger_t *ledger, const erx_dma_publication_t *publicati
 	uint32_t buffers[ERX_DMA_HELD_BUFFERS_MAX], buffer_count, count = 0;
 	erx_dma_sequence_t out = { 0 };
 	bool activated = false, on_ring = false;
-	uint32_t ring, pool;
+	uint32_t run, pool;
 
 	if (verdict != ERX_DMA_PASSES)
 		return (verdict);
 	if (publication->call == ERX_DMA_PUBLISH_INSTALL)
 		return (install(ledger, sequence));
-	/* The check passed: every record is in one ring, or in tables placed free, with room for the run. */
-	ring = (uint32_t)erx_dma_run_table(ledger, publication, publication->records[0].structure);
-	if (layout->tables[ring].placing == ERX_DMA_PLACED_RING) {
-		const erx_dma_verdict_t placed = place_ring(ledger, publication, ring, places, &count, &out);
+	/* The check passed: every record is in the run's one table, a ring or one placed free, with room for the run. */
+	run = (uint32_t)erx_dma_run_table(ledger, publication);
+	if (layout->tables[run].placing == ERX_DMA_PLACED_RING) {
+		const erx_dma_verdict_t placed = place_ring(ledger, publication, run, places, &count, &out);
 
 		if (placed != ERX_DMA_PASSES)
 			return (placed);
 		activated = on_ring = true;
 	}
+	if (publication->binds.endpoint != 0 && !bind_ring(layout, publication->binds.table, &out))
+		return (ERX_DMA_BREAKS_BINDINGS);
 	for (uint32_t record = 0; !on_ring && record < publication->record_count; record++) {
-		const uint32_t table = (uint32_t)erx_dma_run_table(ledger, publication, publication->records[record].structure);
-
-		places[count] = (erx_dma_place_t){ table, free_record(ledger, table, places, count) };
+		places[count] = (erx_dma_place_t){ run, free_record(ledger, run, places, count) };
 		count++;
 	}
 	for (uint32_t record = 0; !on_ring && record < publication->record_count; record++) {
@@ -521,24 +542,4 @@ bool
 erx_dma_consume(erx_dma_ledger_t *ledger, uint32_t reports, erx_dma_found_t found)
 {
 	return (erx_dma_ledger_release_holding(ledger, reports, found));
-}
-
-bool
-erx_dma_bind(erx_dma_ledger_t *ledger, uint32_t table, uint32_t endpoint, erx_dma_sequence_t *sequence)
-{
-	const erx_dma_layout_t *layout = erx_dma_ledger_layout(ledger);
-	erx_dma_sequence_t out = { 0 };
-	erx_dma_ring_step_t link;
-
-	if (table >= layout->table_count || layout->tables[table].placing != ERX_DMA_PLACED_RING)
-		return (false);
-	/* The link on lap 0, where the binding starts the ring, so its cycle bit is that lap's state. */
-	link = (erx_dma_ring_step_t){ { table, layout->tables[table].count - 1 }, 1, true };
-	if (!encode_link(layout, link, &out.stores[0]) || !erx_dma_ledger_bind(ledger, table, endpoint))
-		return (false);
-	out.store_count = 1;
-	add_range(out.zeros, &out.zero_count, layout->tables[table].region, layout->tables[table].region_length);
-	add_range(out.cleans, &out.clean_count, layout->tables[table].region, layout->tables[table].region_length);
-	*sequence = out;
-	return (true);
 }

@@ -477,10 +477,15 @@ may lie in any order, disjoint. Its buffers lie in **pools**, each of
 one size and stride, numbered across the layout; a table that
 descriptions fill names its pool, the buffers of its binding: virtio's
 descriptor table the one pool, a transfer ring its block's. A name of a
-buffer outside its record's table's pool breaks the bindings rule. A run
-describes records of one table: of the one table of its structure, or,
-where the layout holds several, of the table the ledger binds to the
-endpoint the publication names, which must be bound to it alone. A table
+buffer outside its record's table's pool breaks the bindings rule.
+Whether a table **needs a binding** is the layout's to say, table by
+table: a transfer ring needs one, the command ring and virtio's tables
+do not, and no two tables of one structure need none. A run describes
+records of one table: the ring the ledger binds to the endpoint the
+publication names, or, for none, the one table of its structure that
+needs no binding. A table's stride is the size its structure's records
+share, which the generator emits from the formats, and a ring's is also
+its link TRB's, since the sequencer writes a link into every ring. A table
 is placed free (virtio's descriptors), in order by the sequencer alone
 (virtio's available ring), or as a **ring**, whose descriptions take its
 next positions: its last record is the sequencer's link, which a run
@@ -488,10 +493,13 @@ takes where it reaches it, and where it ends just before it, so the
 position never rests there; the cycle state at a position is 1 on the
 lap a binding started and toggles with each lap. The room rule asks
 every position a run takes, its links included, to be unheld, so a wrap
-never reuses a held TRB. A binding is one transition of the ledger,
-refused unless the ring is bound to no endpoint and holds no record; it
-returns the position to the first record on a new lap of cycle state 1,
-and the sequencer zeroes the ring and writes its link with it. A
+never reuses a held TRB. A binding begins only with the holding of the
+binding command's publication, refused unless the ring needs a binding
+and is bound to no endpoint and the endpoint is bound to no ring; such a
+ring holds no record, since it takes no run unbound and a binding ends
+only while it holds none. It returns the position to the first record on
+a new lap of cycle state 1, and the command's sequence zeroes the ring
+and writes its link before the command's activation. A
 holding's head, the record its ending report names, is a chain's first
 descriptor and a TRB run's last description, the TD's last TRB, which
 its success or short packet names; the report's device address names a
@@ -625,7 +633,11 @@ live. The sequencer:
    persistent region is none of them), and the report that ends it; for a TRB
    command, also its reach, the endpoints it closes and the holdings its
    success retires, as they stand at this publication
-   ([design-usb.md](design-usb.md#what-the-dma-check-judges)).
+   ([design-usb.md](design-usb.md#what-the-dma-check-judges)); for a
+   command that binds, the binding its publication carries, a ring and
+   an endpoint the check judged with the rest of it, which the holding
+   makes as it begins, so a refused publication binds nothing, and keeps
+   as the binding the command's failure ends.
 
 **Nothing of a run is reachable before its activation.** A device
 reaches a ring's records only from its own position, and stops at the

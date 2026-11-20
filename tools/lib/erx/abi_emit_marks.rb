@@ -126,19 +126,27 @@ module Erx
       end
 
       # The structures, numbered in name order from 1, so 0 is free to name a
-      # buffer's data; which of them the device writes; and the structure each
-      # meaning belongs to. The check reads these, never a copy of the formats.
+      # buffer's data; which of them the device writes; the size of a record
+      # of each, the size its meanings share (check_meanings), which a table's
+      # stride must be; and the structure each meaning belongs to. The check
+      # reads these, never a copy of the formats.
       def structures(targets, meanings)
         return [] if targets.empty?
 
         numbers = targets.each_with_index.map do |target, index|
           "#define #{structure_constant(target.name)} UINT32_C(#{index + 1})"
         end
+        sizes = targets.filter_map do |target|
+          offered = meanings.find { |meaning| meaning.structure.name == target.name }
+          offered && [structure_constant(target.name), "UINT32_C(#{offered.layout.size})"]
+        end
         ['/* The structures the formats declare; 0 names a buffer\'s data, which no structure is. */',
          '#define ERX_REFERS_DATA UINT32_C(0)', *numbers, '',
          *switch_function('Whether the device writes structure, as its format declares; false for one the CPU writes or none.',
                           'bool', 'erx_structure_device_writes(uint32_t structure)', 'structure',
                           targets.select(&:device?).map { |target| [structure_constant(target.name), 'true'] }, 'false'),
+         *switch_function('The size of a record of structure, which its meanings share; 0 for one no meaning belongs to, or none.',
+                          'uint32_t', 'erx_structure_record_size(uint32_t structure)', 'structure', sizes, '0'),
          *switch_function('The structure whose tables offer meaning, or 0 for a number that is no meaning.',
                           'uint32_t', 'erx_meaning_structure(uint32_t meaning)', 'meaning',
                           meanings.map { |meaning| [CEmitter.constant(meaning.constant), structure_constant(meaning.structure.name)] },

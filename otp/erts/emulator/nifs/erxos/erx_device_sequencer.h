@@ -12,11 +12,14 @@
  * description at a free record of its table, chained in the plan's order; each table placed in
  * order at its position), encodes every record whole through its meaning's generated encoder,
  * and each region entry through its layout's from the ledger's record of the region it names,
- * derives the activation and begins the publication's holding. An install places nothing and
+ * derives the activation and begins the publication's holding. A binding command's publication
+ * also zeroes the ring it binds, writes the ring's link on lap 0 and cleans the ring, all before
+ * the command's activation, as the holding binds it. An install places nothing and
  * begins no holding: it zeroes and cleans every table, derives the queue's size and its rings'
  * device addresses from the layout, and activates with the ready bit, so no ring is live before
  * it is zero in memory. What it returns is applied as:
- *   1. the zeros, rule 1: every byte of a buffer passing to the device that no fill covers;
+ *   1. the zeros: rule 1's, every byte of a buffer passing to the device that no fill covers, and
+ *      the whole region of an install's tables and of a ring a binding command binds;
  *   2. the fills, the publication's `out` bytes, at the offsets given here; a region entry's
  *      fill is empty here, since its entry is a store;
  *   3. the stores, each record whole, region entries included;
@@ -47,12 +50,12 @@
 
 /* The widest record the sequencer writes: a descriptor or a region entry. */
 #define ERX_DMA_STORE_BYTES_MAX		16u
-/* Each record of a run, its available entry, and a region entry for each fill. */
-#define ERX_DMA_STORES_MAX		(ERX_DMA_HELD_RECORDS_MAX + ERX_DMA_FILLS_MAX)
-/* Rule 1 leaves at most one gap before each fill of a buffer and one after the last. */
-#define ERX_DMA_ZEROS_MAX		(ERX_DMA_HELD_BUFFERS_MAX + ERX_DMA_FILLS_MAX)
-/* Each buffer passing to the device, each record and the available entry. */
-#define ERX_DMA_CLEANS_MAX		(ERX_DMA_HELD_BUFFERS_MAX + ERX_DMA_HELD_RECORDS_MAX)
+/* Each record of a run, its available entry, a region entry for each fill, and a binding's link. */
+#define ERX_DMA_STORES_MAX		(ERX_DMA_HELD_RECORDS_MAX + ERX_DMA_FILLS_MAX + 1u)
+/* Rule 1 leaves at most one gap before each fill of a buffer and one after the last; a binding's ring. */
+#define ERX_DMA_ZEROS_MAX		(ERX_DMA_HELD_BUFFERS_MAX + ERX_DMA_FILLS_MAX + 1u)
+/* Each buffer passing to the device, each record and the available entry, and a binding's ring. */
+#define ERX_DMA_CLEANS_MAX		(ERX_DMA_HELD_BUFFERS_MAX + ERX_DMA_HELD_RECORDS_MAX + 1u)
 /* An install's queue size and three ring addresses. */
 #define ERX_DMA_REGISTERS_MAX		4u
 
@@ -155,14 +158,5 @@ erx_dma_found_t		erx_dma_report_holding(const erx_dma_ledger_t *ledger, uint32_t
  * ended since it was found (erx_dma_ledger_release_holding).
  */
 bool	erx_dma_consume(erx_dma_ledger_t *ledger, uint32_t reports, erx_dma_found_t found);
-
-/*
- * The binding of ring `table` to `endpoint` (docs/design-device-dma.md, "The ledger"), the part of
- * a binding command's publication that initialises the ring: the ledger binds it
- * (erx_dma_ledger_bind), and `sequence` zeroes its region, writes its link on lap 0 and cleans the
- * region, with no activation of its own; the command's publication activates after it. False,
- * changing nothing, for a table that is not a ring or a binding the ledger refuses.
- */
-bool	erx_dma_bind(erx_dma_ledger_t *ledger, uint32_t table, uint32_t endpoint, erx_dma_sequence_t *sequence);
 
 #endif /* ERX_DEVICE_SEQUENCER_H */

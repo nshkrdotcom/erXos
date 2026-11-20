@@ -23,7 +23,9 @@
  *            and the buffers its names reach, each once, taken from the publication itself so
  *            no buffer it names goes to the device unheld: none of them is held already, its
  *            records of a table placed in order are the next ones from that table's position,
- *            which moves past them, and it holds no record of a table the device writes;
+ *            which moves past them, and it holds no record of a table the device writes; and
+ *            makes the binding a binding command's publication carries, which the check judged
+ *            with the rest of it, so a refused publication binds nothing;
  *   acquire  records how many reports of a table the device writes its validity covers from
  *            the consumer position, at most the live holdings;
  *   release  ends the live holding a report names, from the report table's consumer position,
@@ -76,9 +78,16 @@ typedef enum erx_dma_placing {
 	ERX_DMA_PLACED_RING,	/* descriptions at its next positions, its last record the sequencer's link (a TRB ring) */
 } erx_dma_placing_t;
 
+/*
+ * A table of the layout. A ring that needs a binding, a transfer ring, takes runs only while a
+ * binding command's publication has bound it to an endpoint; a table that needs none, the command
+ * ring or a split ring's table, is the one of its structure, which a run of it finds by structure.
+ * The stride of a structure's table is the size its meanings' records share (erx/abi.h).
+ */
 typedef struct erx_dma_table {
 	uint32_t		structure;	/* ERX_STRUCTURE_* of erx/abi.h */
 	erx_dma_placing_t	placing;
+	bool			needs_binding;	/* a ring descriptions fill, never one the device writes */
 	uint32_t		pool;		/* a table descriptions fill: the pool its names reach */
 	uint64_t		region;		/* the offset of the table's region */
 	uint64_t		region_length;	/* whole granules */
@@ -112,12 +121,22 @@ typedef struct erx_dma_place {
 	uint32_t	index;
 } erx_dma_place_t;
 
+/*
+ * A binding (docs/design-device-dma.md, "The ledger"): ring `table`, one that needs a binding, to
+ * `endpoint`. Endpoint 0 is no binding, so a zeroed value binds nothing.
+ */
+typedef struct erx_dma_binding {
+	uint32_t	endpoint;
+	uint32_t	table;
+} erx_dma_binding_t;
+
 typedef struct erx_dma_holding {
-	uint32_t	record_count;
-	erx_dma_place_t	records[ERX_DMA_HELD_RECORDS_MAX];	/* records[0] is the head */
-	uint32_t	buffer_count;
-	uint32_t	buffers[ERX_DMA_HELD_BUFFERS_MAX];
-	uint64_t	serial;		/* the ledger's count of holdings begun when it began, from 1 */
+	uint32_t		record_count;
+	erx_dma_place_t		records[ERX_DMA_HELD_RECORDS_MAX];	/* records[0] is the head */
+	uint32_t		buffer_count;
+	uint32_t		buffers[ERX_DMA_HELD_BUFFERS_MAX];
+	erx_dma_binding_t	binding;	/* the binding its publication made: the one its failure ends */
+	uint64_t		serial;		/* the ledger's count of holdings begun when it began, from 1 */
 } erx_dma_holding_t;
 
 /*
@@ -208,11 +227,14 @@ bool	erx_dma_layout_split_ring(uint32_t size, uint32_t buffer_size, uint32_t gra
 	    uint64_t device_base, uint32_t address_bits, erx_dma_layout_t *layout);
 
 /*
- * A ledger with no holding and every position at 0, from `layout` if it passes the install's
- * check: every region whole granules, disjoint in whatever order it lies, inside the
- * memory and below the address width; each table's records inside its region, a ring of at least two,
- * a table descriptions fill naming one of its pools; and one buffer's bytes no more than its stride. False, writing nothing, otherwise. `regions` is
- * its device's table, which the ledger reads and never changes.
+ * A ledger with no holding, no binding and every position at 0, from `layout` if it passes the
+ * install's check: every region whole granules, disjoint in whatever order it lies, inside the
+ * memory and below the address width; each table's records inside its region, at the stride of
+ * its structure's records where its meanings give one, a ring of at least two, a table
+ * descriptions fill naming one of its pools, a table that needs a binding a ring descriptions
+ * fill, and no two tables of one structure that need none; and one buffer's bytes no more than
+ * its stride. False, writing nothing, otherwise. `regions` is its device's table, which the
+ * ledger reads and never changes.
  */
 bool	erx_dma_ledger_make(erx_dma_ledger_t *ledger, const erx_dma_layout_t *layout, const erx_dma_regions_t *regions);
 
@@ -253,11 +275,10 @@ bool	erx_dma_regions_add(erx_dma_regions_t *regions, erx_dma_persistent_region_t
 /* The accessors. A table or buffer number outside the layout is held by nothing. */
 const erx_dma_layout_t	*erx_dma_ledger_layout(const erx_dma_ledger_t *ledger);
 /*
- * The index of the layout's one table of `structure`, or -1 for none or several, where a binding
- * names the table; and how many tables of `structure` the layout holds.
+ * The index of the layout's one table of `structure` that needs no binding, or -1 for none, as
+ * for a transfer ring, whose run the endpoint's binding places.
  */
 int			 erx_dma_ledger_table(const erx_dma_ledger_t *ledger, uint32_t structure);
-uint32_t		 erx_dma_ledger_tables(const erx_dma_ledger_t *ledger, uint32_t structure);
 erx_dma_position_t	 erx_dma_ledger_position(const erx_dma_ledger_t *ledger, uint32_t table);
 bool			 erx_dma_ledger_record_held(const erx_dma_ledger_t *ledger, erx_dma_place_t place);
 bool			 erx_dma_ledger_buffer_held(const erx_dma_ledger_t *ledger, uint32_t buffer);
@@ -287,17 +308,19 @@ const erx_dma_pool_t	*erx_dma_layout_buffer_pool(const erx_dma_layout_t *layout,
 uint64_t		 erx_dma_layout_buffer_offset(const erx_dma_layout_t *layout, uint32_t buffer, uint64_t offset);
 
 /*
- * The bindings (docs/design-device-dma.md, "The ledger"). erx_dma_ledger_bind binds ring `table`
- * to `endpoint`, not 0, and returns its position to the first record on a new lap of cycle state
- * 1; false, changing nothing, for a table that is not a ring, one bound already, or one a holding
- * holds a record of. erx_dma_ledger_unbind ends a binding, refused while a holding holds a record
- * of the ring. The sequencer calls both, with the effects of each (erx_dma_bind).
+ * The bindings (docs/design-device-dma.md, "The ledger"). A binding begins only with the holding
+ * of the binding command's publication (erx_dma_ledger_hold), which returns the ring's position
+ * to the first record on lap 0, of cycle state 1, as the sequencer zeroes the ring and writes its
+ * link. erx_dma_ledger_may_bind is the one test, the check's and the hold's: an endpoint not 0
+ * and bound to no ring, and a ring that needs a binding and is bound to no endpoint. Such a ring
+ * holds no record by construction: it takes no run unbound, and erx_dma_ledger_unbind, which ends
+ * a binding, is refused while a holding holds a record of the ring.
  */
-bool		erx_dma_ledger_bind(erx_dma_ledger_t *ledger, uint32_t table, uint32_t endpoint);
+bool		erx_dma_ledger_may_bind(const erx_dma_ledger_t *ledger, erx_dma_binding_t binding);
 bool		erx_dma_ledger_unbind(erx_dma_ledger_t *ledger, uint32_t table);
 /* The endpoint ring `table` is bound to, or 0. */
 uint32_t	erx_dma_ledger_binding(const erx_dma_ledger_t *ledger, uint32_t table);
-/* The one ring bound to `endpoint`, or -1 for none or more than one. */
+/* The ring bound to `endpoint`, or -1 for none: at most one, as a binding is refused a bound endpoint. */
 int		erx_dma_ledger_bound_table(const erx_dma_ledger_t *ledger, uint32_t endpoint);
 /*
  * The positions a run of `descriptions` records takes on ring `table` from its position, in ring

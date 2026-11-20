@@ -8051,8 +8051,7 @@ to the corpus and follow rc
   call until the old check goes; `free_record`'s loop
   is bounded only by the room rule; `erx_dma_publish` returns check verdicts for refusals that mean the check and the
   sequencer disagree; rule 1 zeroes a buffer's named size while the handover cleans its stride; and the generated
-  `erx_report_meaning` carries an unreachable return and casts for a structure with one meaning. A layout holds one table of each structure, and a table cores describe is placed at any free record, which the
-  TRB form's many transfer rings, each placed in order, change when it moves on. Packages, in order: the
+  `erx_report_meaning` carries an unreachable return and casts for a structure with one meaning. Packages, in order: the
   sequencer's publication and its acquisition, with the releases rule and the split ring moved onto them; GENET,
   and ADMA2 with its transfer split into entries by the sequencer, moved onto them; the TRB form's publication and
   bindings; the TRB form's releases from acquired events, each command's reach and the endpoints' states; the

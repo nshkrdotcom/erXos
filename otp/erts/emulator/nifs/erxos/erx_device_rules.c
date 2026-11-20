@@ -81,34 +81,30 @@ typedef struct judged {
 } judged_t;
 
 int
-erx_dma_run_table(const erx_dma_ledger_t *ledger, const erx_dma_publication_t *publication, uint32_t structure)
+erx_dma_run_table(const erx_dma_ledger_t *ledger, const erx_dma_publication_t *publication)
 {
-	const erx_dma_layout_t *layout = erx_dma_ledger_layout(ledger);
-	const int one = erx_dma_ledger_table(ledger, structure);
-	const int bound = erx_dma_ledger_bound_table(ledger, publication->endpoint);
-
-	if (one >= 0)
-		return (one);
-	return (bound >= 0 && layout->tables[bound].structure == structure ? bound : -1);
+	if (publication->endpoint != 0)
+		return (erx_dma_ledger_bound_table(ledger, publication->endpoint));
+	return (publication->record_count == 0 ? -1 : erx_dma_ledger_table(ledger, publication->records[0].structure));
 }
 
-/* The meanings, bindings, widths, names, held and lengths rules over one record. */
+/*
+ * The meanings, bindings, widths, names, held and lengths rules over one record of a run placed
+ * in `table`, the run's one table.
+ */
 static erx_dma_verdict_t
-judge_record(const erx_dma_ledger_t *ledger, const erx_dma_publication_t *publication,
-    const erx_dma_description_t *record, judged_t *judged)
+judge_record(const erx_dma_ledger_t *ledger, uint32_t table, const erx_dma_description_t *record, judged_t *judged)
 {
 	const erx_dma_layout_t *layout = erx_dma_ledger_layout(ledger);
-	const int table = erx_dma_run_table(ledger, publication, record->structure);
 	const erx_dma_pool_t *pool;
 	uint32_t pool_index;
 
-	if (table < 0 && erx_dma_ledger_tables(ledger, record->structure) > 1)
+	if (record->structure != layout->tables[table].structure)
 		return (ERX_DMA_BREAKS_BINDINGS);
-	if (table < 0 || erx_structure_device_writes(record->structure) ||
-	    layout->tables[table].placing == ERX_DMA_PLACED_IN_ORDER ||
+	if (erx_structure_device_writes(record->structure) || layout->tables[table].placing == ERX_DMA_PLACED_IN_ORDER ||
 	    (!SEED_NO_MEANING_TEST && erx_meaning_structure(record->meaning) != record->structure))
 		return (ERX_DMA_BREAKS_MEANINGS);
-	judged->table = (uint32_t)table;
+	judged->table = table;
 	if (!erx_meaning_describes(record->meaning, &record->described, judged->references,
 	    &judged->reference_count)) {
 		if (!SEED_NO_WIDTH_TEST)
@@ -250,16 +246,37 @@ call_valid(const erx_dma_ledger_t *ledger, const erx_dma_publication_t *publicat
 	case ERX_DMA_PUBLISH_RUN:
 		return (publication->record_count > 0);
 	case ERX_DMA_PUBLISH_INSTALL:
-		return (publication->record_count == 0 && publication->fill_count == 0 &&
+		return (publication->record_count == 0 && publication->fill_count == 0 && publication->endpoint == 0 &&
+		    publication->binds.endpoint == 0 &&
 		    (SEED_NO_IDLE_TEST || erx_dma_ledger_idle(ledger)));
 	}
 	return (false);
+}
+
+/*
+ * The bindings rule over the run's table and the binding it carries. A run of endpoint 0 that
+ * finds no table, and carries no binding, breaks the meanings rule: no table of the layout offers
+ * its structure unbound.
+ */
+static erx_dma_verdict_t
+judge_bindings(const erx_dma_ledger_t *ledger, const erx_dma_publication_t *publication, int table)
+{
+	if (table < 0)
+		return (publication->endpoint != 0 || publication->binds.endpoint != 0 ? ERX_DMA_BREAKS_BINDINGS :
+		    ERX_DMA_BREAKS_MEANINGS);
+	/* A transfer, a run of an endpoint, carries no binding: a binding command runs on the command ring. */
+	if (publication->binds.endpoint != 0 &&
+	    (publication->endpoint != 0 || !erx_dma_ledger_may_bind(ledger, publication->binds)))
+		return (ERX_DMA_BREAKS_BINDINGS);
+	return (ERX_DMA_PASSES);
 }
 
 erx_dma_verdict_t
 erx_dma_publication_check(const erx_dma_ledger_t *ledger, const erx_dma_publication_t *publication)
 {
 	judged_t judged[ERX_DMA_HELD_RECORDS_MAX];
+	int table;
+	erx_dma_verdict_t verdict;
 
 	if (!call_valid(ledger, publication))
 		return (ERX_DMA_BREAKS_CALLS);
@@ -268,14 +285,12 @@ erx_dma_publication_check(const erx_dma_ledger_t *ledger, const erx_dma_publicat
 	/* A run of more records than a holding holds cannot fit, and none is judged past the bound. */
 	if (publication->record_count > ERX_DMA_HELD_RECORDS_MAX)
 		return (ERX_DMA_BREAKS_ROOM);
+	table = erx_dma_run_table(ledger, publication);
+	if ((verdict = judge_bindings(ledger, publication, table)) != ERX_DMA_PASSES)
+		return (verdict);
+	/* Every record is judged in the run's one table, so a ring's run is placed whole on its ring. */
 	for (uint32_t record = 0; record < publication->record_count; record++) {
-		const erx_dma_verdict_t verdict = judge_record(ledger, publication, &publication->records[record],
-		    &judged[record]);
-
-		/* A run's records lie in one table, so a ring's run is placed whole on its ring. */
-		if (verdict == ERX_DMA_PASSES && judged[record].table != judged[0].table)
-			return (ERX_DMA_BREAKS_BINDINGS);
-
+		verdict = judge_record(ledger, (uint32_t)table, &publication->records[record], &judged[record]);
 		if (verdict != ERX_DMA_PASSES)
 			return (verdict);
 	}
