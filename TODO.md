@@ -4875,14 +4875,20 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   loaded multi-CPU cell would leave a grant at `none` and fail the cell. Wait for the old pair
   rows to go (or give the room one row of slack) if the cell flakes.
 * [Medium] facets, `erx_facet_mint` and configured servers' mints
-  (`test/erlang/apps/erx_echo_test`): the mint request names the grantee by its domain id only, so
-  a configured server has nothing to put in the facet's `ends_with` for the grantee, and a facet
-  minted for an incarnation that ended lives on until its server ends, one per grantee restart,
-  and one per session for each grant to a session template, so per login.
-  It admits only that grantee's id, which no later domain takes, so it grants nothing; it is a
-  leak, and design-system.md's "ends with its grantee" has no mechanism behind it for configured
-  servers. Give the mint a handle that ends with the grantee's incarnation, and have the
-  re-grant boot check the old facet ends.
+  (`test/erlang/apps/erx_echo_test`): `erx_facet`'s `ends_with` takes the port of this domain's
+  connection to the grantee (`erx_connections:connection/1`), but no configured server's mint
+  passes it yet, so a facet minted for an incarnation that ended lives on until its server ends,
+  one per grantee restart, and one per session for each grant to a session template, so per
+  login. It admits only that grantee's id, which no later domain takes, so it grants nothing; it
+  is a leak against design-system.md's "ends with its grantee". Have the echo test mint and the
+  Bluetooth mint add the grantee's connection to `ends_with` (refusing the mint when there is
+  none, as `erx_net_erxos` does), and have the re-grant boot check the old facet ends.
+* [Low] facets and files, `erlang/apps/erx/src/erx_facet.erl` (`is_end/1`, `monitor_end/1`,
+  `ended/1`) and `erlang/apps/erx_files/src/erx_fs.erl` (`connection_monitor/2`): two owners of
+  "what a grant ends with", a process or a connection's port, with different types, a different
+  rule for one already ended (`erx_facet` refuses with `noproc`, `erx_fs` exports and ends at the
+  immediate `DOWN`) and different exit reasons. Give one module the type and the monitor, and
+  have both use it.
 * [Medium] domain service, `erlang/apps/erx_domain/src/erx_domain_core.erl`: the names
   quota is fixed at 64 per principal, not the manifest principal's own field, which the
   library's view does not expose yet. Expose it in `configured/0` (or a principal entry) and

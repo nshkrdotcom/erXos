@@ -10,11 +10,15 @@ when it is minted, so the checks below hold for every facet by construction.
 start/3 runs the callback's init/1 in the new process, exports the facet's
 pid toward the grantee with send alone, and only then returns the pid, so
 the grantee can message and monitor the facet and nothing more, before
-anyone hands the pid out. The facet ends, with the same reason, when a
-process its grant names in ends_with ends: the grantee's domain pid, so
-the facet ends with its domain, and the facet or service behind it, so
-revoking that grant revokes this one. It monitors them and traps no exits,
-so its own end ends nothing but itself.
+anyone hands the pid out. The facet ends, with the same reason, when any
+process or port its grant names in ends_with ends. A mint names:
+
+* the grantee, as its domain pid, or as the port of this domain's
+  connection to it (erx_connections:connection/1), so the facet ends with
+  that domain or that connection;
+* the facet or service behind it, so revoking that grant revokes this one.
+
+It monitors them and traps no exits, so its own end ends nothing but itself.
 
 What arrives is sorted by its shape before the callback sees a request:
 
@@ -24,8 +28,8 @@ What arrives is sorted by its shape before the callback sees a request:
   in the envelope; the facet passes the reply to the grantee's caller. A
   reply from any other party, or a second one, matches nothing and is
   dropped;
-* a 'DOWN' of one of its monitors: the end of a process in ends_with ends
-  the facet, and the end of a forward's service before it replied answers
+* a 'DOWN' of one of its monitors: the end of a process or port in
+  ends_with ends the facet, and the end of a forward's service before it replied answers
   the grantee's caller {error, failed}, the request having failed there,
   as an inspect facet's query worker does that OTP ends at its heap limit;
   every other 'DOWN' is dropped. A service's reply precedes its 'DOWN',
@@ -100,11 +104,11 @@ before a message is queued, and the facet's queue quota and heap limit.
 
 -export_type([grant/0]).
 
-%% A grant: the grantee's domain id, the processes whose end ends the facet, the largest
-%% message the facet takes from the grantee, in encoded bytes, how many forwards may
-%% be outstanding at once, and the operations it grants, none if absent; the callback's
-%% own keys besides.
--type grant() :: #{grantee := pos_integer(), ends_with := [pid()],
+%% A grant: the grantee's domain id, the processes and ports whose end ends the facet, the
+%% largest message the facet takes from the grantee, in encoded bytes, how many forwards
+%% may be outstanding at once, and the operations it grants, none if absent; the
+%% callback's own keys besides.
+-type grant() :: #{grantee := pos_integer(), ends_with := [pid() | port()],
                    max_request => pos_integer(), in_flight => pos_integer(), operations => [atom()],
                    atom() => term()}.
 
@@ -122,7 +126,7 @@ before a message is queued, and the facet's queue quota and heap limit.
 -type forward() :: #{from := {pid(), [alias | reference()]} | none, service := pid()}.
 -type state() :: #{callback := module(), cb_state := term(), grantee := pos_integer(), operations := all | [atom()],
                    max_request := pos_integer(), in_flight := pos_integer(), exports := module(),
-                   ends_with := #{reference() => pid()}, forwards := #{reference() => forward()},
+                   ends_with := #{reference() => pid() | port()}, forwards := #{reference() => forward()},
                    dropped := non_neg_integer(), refused := non_neg_integer()}.
 
 -doc """
@@ -221,17 +225,25 @@ crossing_reply(_Refusal) -> refused.
 Starts a facet of Callback for Grant. Opts may name exports, the export table's
 module (erx_dist), for a host test's stand-in. {error, unchecked_operations} for a
 grant that lists operations to a callback without operation/1, {error, badarg} for
-operations that are no list, and {error, Reason} when the callback's init fails,
-when a process of ends_with has already ended, or when the export table refuses the
+operations that are no list or an ends_with that names anything but processes and
+ports of this node, and {error, Reason} when the callback's init fails,
+when a process or port of ends_with has already ended, or when the export table refuses the
 export.
 """.
 -spec start(module(), grant(), #{exports => module()}) -> {ok, pid()} | {error, term()}.
 start(Callback, #{grantee := Grantee, ends_with := EndsWith} = Grant, Opts)
   when is_atom(Callback), is_integer(Grantee), Grantee > 0, is_list(EndsWith) ->
-    case operations(Callback, maps:get(operations, Grant, [])) of
-        {ok, Operations} -> start(Callback, Grant, Operations, maps:get(exports, Opts, erx_dist));
-        {error, _} = Error -> Error
+    maybe
+        true ?= lists:all(fun is_end/1, EndsWith) orelse {error, badarg},
+        {ok, Operations} ?= operations(Callback, maps:get(operations, Grant, [])),
+        start(Callback, Grant, Operations, maps:get(exports, Opts, erx_dist))
     end.
+
+%% What a facet can end with: a process, or a port of this node, the only port
+%% erlang:monitor/2 takes.
+is_end(Pid) when is_pid(Pid) -> true;
+is_end(Port) when is_port(Port) -> node(Port) =:= node();
+is_end(_) -> false.
 
 start(Callback, Grant, Operations, Exports) ->
     Parent = self(),
@@ -269,11 +281,12 @@ operations(_Callback, _Listed) ->
     {error, badarg}.
 
 init(Parent, Tag, Callback, #{grantee := Grantee, ends_with := EndsWith} = Grant, Operations, Exports) ->
-    Monitors = maps:from_list([{monitor(process, Pid), Pid} || Pid <- EndsWith]),
+    Monitors = maps:from_list([{monitor_end(End), End} || End <- EndsWith]),
     {ok, CbState} = Callback:init(Grant),
-    %% No facet starts, or is exported, for a grant one of whose local processes has
-    %% ended; the 'DOWN' of one that ends from here on, or of a remote one, ends the facet.
-    case [Pid || Pid <- EndsWith, node(Pid) =:= node(), not is_process_alive(Pid)] of
+    %% No facet starts, or is exported, for a grant one of whose local processes or ports
+    %% has ended; the 'DOWN' of one that ends from here on, or of a remote process, ends
+    %% the facet.
+    case [End || End <- EndsWith, ended(End)] of
         [] -> ok;
         [_ | _] -> exit(noproc)
     end,
@@ -287,6 +300,14 @@ init(Parent, Tag, Callback, #{grantee := Grantee, ends_with := EndsWith} = Grant
            in_flight => maps:get(in_flight, Grant, ?IN_FLIGHT), exports => Exports,
            ends_with => Monitors, forwards => #{}, dropped => 0, refused => 0}).
 
+%% The monitor of a process or port the facet ends with (is_end/1), and whether a local
+%% one has already ended.
+monitor_end(Pid) when is_pid(Pid) -> monitor(process, Pid);
+monitor_end(Port) when is_port(Port) -> monitor(port, Port).
+
+ended(Pid) when is_pid(Pid) -> node(Pid) =:= node() andalso not is_process_alive(Pid);
+ended(Port) when is_port(Port) -> erlang:port_info(Port, id) =:= undefined.
+
 -spec loop(state()) -> no_return().
 loop(#{ends_with := EndsWith, forwards := Forwards, exports := Exports} = State) ->
     receive
@@ -298,7 +319,7 @@ loop(#{ends_with := EndsWith, forwards := Forwards, exports := Exports} = State)
                 D -> loop(replied(Alias, Reply, State));
                 _ -> loop(request(Message, State))
             end;
-        {'DOWN', Monitor, process, _Pid, Reason} when is_map_key(Monitor, EndsWith) ->
+        {'DOWN', Monitor, _Type, _End, Reason} when is_map_key(Monitor, EndsWith) ->
             exit(Reason);
         {'DOWN', Monitor, process, _Pid, _Reason} when is_map_key(Monitor, Forwards) ->
             loop(replied(Monitor, {error, failed}, State));

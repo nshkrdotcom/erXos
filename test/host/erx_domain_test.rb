@@ -172,6 +172,13 @@ class ErxDomainTest < Minitest::Test
               from: 'loop(replied(Monitor, {error, failed}, State));',
               to: 'loop(State#{forwards := maps:remove(Monitor, Forwards)});',
               tests: 'erx_facet_tests', caught_by: 'a_forwards_service_that_ends_answers_failed_test'),
+    # A facet that ends only with processes outlives its grantee's connection, a port, so
+    # each grantee restart leaves an old facet and its grant behind.
+    Fault.new(name: 'a facet that ignores the end of a port it ends with',
+              file: 'erlang/apps/erx/src/erx_facet.erl',
+              from: %q{{'DOWN', Monitor, _Type, _End, Reason} when is_map_key(Monitor, EndsWith)},
+              to: %q{{'DOWN', Monitor, process, _End, Reason} when is_map_key(Monitor, EndsWith)},
+              tests: 'erx_facet_tests', caught_by: 'ends_with_a_connection_port_test'),
     # The check of a call from another domain that erx_facet and erx_session_line share
     # (erx:call_from/3): one that does not compare its reply alias's domain lets the
     # grantee have the facet's reply go to a third domain.

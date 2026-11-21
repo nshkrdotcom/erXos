@@ -172,6 +172,23 @@ ends_with_its_grant_test() ->
                  erx_facet:start(erx_domain_facet, #{grantee => ?GRANTEE, ends_with => [Gone], behind => Gone},
                                  #{exports => ?MODULE})).
 
+%% The facet ends with a port of its grant, as a grantee's connection is one
+%% (erx_connections:connection/1), when that port closes; a grant whose port has already
+%% closed starts no facet, nor does one that names neither a process nor a port.
+ends_with_a_connection_port_test() ->
+    Connection = open_port({spawn_executable, "/bin/cat"}, [binary]),
+    Facet = facet(echo(), Connection, #{}),
+    Monitor = monitor(process, Facet),
+    ?assertEqual({echo, ping}, call(Facet, ping)),
+    true = port_close(Connection),
+    ?assertEqual(normal, receive {'DOWN', Monitor, process, _, R} -> R after 1000 -> timeout end),
+    ?assertEqual({error, noproc},
+                 erx_facet:start(erx_domain_facet, #{grantee => ?GRANTEE, ends_with => [Connection], behind => echo()},
+                                 #{exports => ?MODULE})),
+    ?assertEqual({error, badarg},
+                 erx_facet:start(erx_domain_facet, #{grantee => ?GRANTEE, ends_with => [connection], behind => echo()},
+                                 #{exports => ?MODULE})).
+
 %% A forward's service that ends before it replies, killed as OTP kills a query worker at
 %% its heap limit, answers the grantee's caller {error, failed}, and the facet lives on.
 a_forwards_service_that_ends_answers_failed_test() ->
