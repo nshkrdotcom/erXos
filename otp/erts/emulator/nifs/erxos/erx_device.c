@@ -991,10 +991,11 @@ static uint64_t
 split_ring_bytes(uint32_t size, uint32_t buffer_size, uint32_t granule)
 {
 	erx_dma_layout_t layout;
+	const erx_dma_pool_t *const pool = &layout.pools[0];	/* the split ring's one pool, past its tables */
 
 	if (!erx_dma_layout_split_ring(size, buffer_size, granule, UINT64_MAX, 0, 64, &layout))
 		return (0);
-	return (layout.pools[0].first + (uint64_t)layout.pools[0].count * layout.pools[0].stride);
+	return (pool->first + (uint64_t)pool->count * pool->stride);
 }
 
 /*
