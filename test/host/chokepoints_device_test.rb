@@ -100,7 +100,7 @@ class ChokepointsDeviceTest < Minitest::Test
     encoders = [rule('device-record-encoders')]
     text = "void f(void) { erx_virtq_desc_encode(0, 0, 0); }\n"
     assert_empty evaluate(encoders, { 'otp/erts/emulator/nifs/erxos/erx_device_sequencer.c' => text })
-    %w[otp/erts/emulator/nifs/erxos/erx_device.c otp/erts/emulator/nifs/erxos/erx_device_queue.c
+    %w[otp/erts/emulator/nifs/erxos/erx_device.c otp/erts/emulator/nifs/erxos/erx_device_virtio_core.c
        otp/erts/emulator/nifs/erxos/erx_device_trb.c test/fixtures/erx_device_harness.c].each do |path|
       refute_empty evaluate(encoders, { path => text }), path
     end

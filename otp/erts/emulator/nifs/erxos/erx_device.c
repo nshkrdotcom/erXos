@@ -1424,11 +1424,11 @@ install_check(const queue_record_t *record)
 }
 
 /*
- * The effect layer (docs/design-device-dma.md, "Calls, observations and plans"). Every form
- * answers a queue call through one pure round function (erx_device_queue_round,
- * erx_device_genet_round); run_call asks it for round after round. Each round's answers are
- * checked against its copies (answers_fit) and its plan against the record's last state and the
- * state after it, then ordered by the sequencer (accept_plan), all before any effect; then the
+ * The register ring's effect layer (docs/design-device-dma.md, "Calls, observations and plans"):
+ * GENET answers a queue call through its pure round function (erx_device_genet_round); run_call
+ * asks it for round after round. Each round's answers are checked against its copies
+ * (answers_fit) and its plan against the record's last state and the state after it, then
+ * ordered by the sequencer (accept_plan), all before any effect; then the
  * answers are given to the caller (deliver), the effects run in that order (apply_plan), and
  * the plan's `after` becomes the next plan's `before`. Nothing here chooses a step, a cache operation, a barrier or an order within a
  * call; the order of calls across the two directions of a GENET record is the negotiation's.
@@ -1442,9 +1442,7 @@ install_check(const queue_record_t *record)
 #define PLAN_MAX(a, b)	((a) > (b) ? (a) : (b))
 _Static_assert(ERX_DEVICE_BUFFER_MAX <= ERX_DEVICE_COMPLETE_BYTES, "a completion takes at least one buffer");
 #define PLAN_STEPS_MAX	PLAN_MAX(ERX_DEVICE_GENET_INSTALL_STEPS, ERX_DEVICE_COMPLETE_ENTRIES * ERX_DEVICE_CHAIN_MAX)
-_Static_assert(PLAN_STEPS_MAX >= ERX_DEVICE_QUEUE_POST_STEPS && PLAN_STEPS_MAX >= ERX_DEVICE_QUEUE_INSTALL_STEPS &&
-    PLAN_STEPS_MAX >= ERX_DEVICE_COMPLETE_ENTRIES * ERX_DEVICE_QUEUE_ENTRY_REPORTS &&
-    PLAN_STEPS_MAX >= ERX_DEVICE_GENET_POST_STEPS && PLAN_STEPS_MAX >= ERX_DEVICE_COMPLETE_ENTRIES,
+_Static_assert(PLAN_STEPS_MAX >= ERX_DEVICE_GENET_POST_STEPS && PLAN_STEPS_MAX >= ERX_DEVICE_COMPLETE_ENTRIES,
     "a plan's steps fit");
 _Static_assert(ERX_DEVICE_COMPLETE_ENTRIES <= ERX_DMA_ANSWERS_MAX, "a completion's answers fit");
 
@@ -1943,7 +1941,7 @@ split_ring_negotiate(const erx_device_t *device, uint64_t wanted, uint64_t *acce
 	put(device, regs.status, device_status);
 	device_status |= regs.driver_bit;
 	put(device, regs.status, device_status);
-	if (!erx_device_queue_features(wanted, offered_features(device, &regs), &taken))
+	if (!erx_split_ring_features(wanted, offered_features(device, &regs), &taken))
 		result = ERX_ENOTSUP;
 	if (result == ERX_OK) {
 		accept_features(device, &regs, taken);

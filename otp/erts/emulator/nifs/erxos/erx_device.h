@@ -21,7 +21,7 @@
 #include <stdint.h>
 
 #include "erx_device_core.h"
-#include "erx_device_queue.h"
+#include "erx_device_dma.h"
 
 #define ERX_DEVICE_MAX		8u
 #define ERX_DEVICE_LINES_MAX	4u
@@ -178,11 +178,11 @@ erx_device_bind_t erx_device_bind_check(const erx_device_t *device, uint64_t lin
 
 /*
  * Queues (docs/design-runtime.md, "Queues" to "The reset rule"), for a virtio-mmio device of
- * version 2. A queue is state of the device's record for the boot: erx_device_queue's
- * bookkeeping, its rings and its pool of `size` buffers, in contiguous memory mapped here,
- * whose device addresses nothing outside this file sees. A given device's queues are carved
- * from its one memory object; a physical device has none. The bookkeeping lives
- * in this record alone and the rings are written whole at the install, so a new record over
+ * version 2. A queue is state of the device's record for the boot: its split ring's
+ * bookkeeping (erx_device_virtio_core.h), its rings and its pool of `size` buffers, in
+ * contiguous memory mapped here, whose device addresses nothing outside this file sees. A
+ * given device's queues are carved from its one memory object; a physical device has none.
+ * The bookkeeping lives in this record alone and the rings are written whole at the install, so a new record over
  * memory a former record and the device wrote never reads what they left. The caller
  * serialises every call below; the register accesses above stay lock-free.
  */
@@ -281,7 +281,7 @@ bool	erx_device_framebuffer_memory(uint32_t framebuffer, volatile uint8_t **base
 
 /*
  * Virtio's initialisation, whole, and the reset rule with it: the NIF resets the device,
- * reads the features it offers, accepts the ones erx_device_queue_features allows of those
+ * reads the features it offers, accepts the ones erx_split_ring_features allows of those
  * and of `wanted`, has the device confirm them with FEATURES_OK, installs every queue of the device
  * and sets DRIVER_OK. Installing a queue forgets its chains, returns its buffers to its pool,
  * zeroes its rings and gives the device its size, addresses and ready bit. ERX_OK with the

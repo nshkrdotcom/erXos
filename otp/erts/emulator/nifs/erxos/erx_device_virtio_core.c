@@ -41,6 +41,16 @@ used_table(const erx_split_ring_t *ring)
 }
 
 bool
+erx_split_ring_features(uint64_t wanted, uint64_t offered, uint64_t *accepted)
+{
+	const uint64_t version_1 = UINT64_C(1) << ERX_VIRTIO_F_VERSION_1;
+	const uint64_t access_platform = UINT64_C(1) << ERX_VIRTIO_F_ACCESS_PLATFORM;
+
+	*accepted = (wanted & offered & ERX_VIRTIO_F_DEVICE_TYPE_MASK) | version_1 | (offered & access_platform);
+	return ((offered & version_1) != 0);
+}
+
+bool
 erx_split_ring_make(erx_split_ring_t *ring, uint32_t size, uint32_t buffer_size, uint32_t granule,
     uint64_t memory_size, uint64_t device_base, uint32_t address_bits, const erx_dma_regions_t *regions)
 {

@@ -65,6 +65,19 @@ test_layout(void)
 	    layout.pool.stride == 128, "each ring a region of its own from a granule, buffers at a granule stride");
 	EXPECT(erx_dma_ledger_table(&ledger, ERX_STRUCTURE_VIRTQ_USED) == USED, "the used ring's table");
 	EXPECT(!erx_dma_layout_split_ring(3, BUFFER, GRANULE, MEMORY, 0, 32, &planted), "a size not a power of two");
+	/* The bounds the queue's arrays rest on: a split ring's chains are ERX_DEVICE_QUEUE_SIZE_MAX long. */
+	EXPECT(!erx_dma_layout_split_ring(0, BUFFER, GRANULE, MEMORY, 0, 32, &planted), "a size of 0");
+	EXPECT(erx_dma_layout_split_ring(ERX_DEVICE_QUEUE_SIZE_MAX, BUFFER, GRANULE, UINT64_MAX, 0, 64, &planted) &&
+	    !erx_dma_layout_split_ring(2 * ERX_DEVICE_QUEUE_SIZE_MAX, BUFFER, GRANULE, UINT64_MAX, 0, 64, &planted),
+	    "a size past ERX_DEVICE_QUEUE_SIZE_MAX");
+	EXPECT(!erx_dma_layout_split_ring(SIZE, 0, GRANULE, MEMORY, 0, 32, &planted) &&
+	    erx_dma_layout_split_ring(SIZE, ERX_DEVICE_BUFFER_MAX, GRANULE, UINT64_MAX, 0, 64, &planted) &&
+	    !erx_dma_layout_split_ring(SIZE, ERX_DEVICE_BUFFER_MAX + 1, GRANULE, UINT64_MAX, 0, 64, &planted),
+	    "a buffer of 0 or past ERX_DEVICE_BUFFER_MAX");
+	EXPECT(!erx_dma_layout_split_ring(SIZE, BUFFER, 0, MEMORY, 0, 32, &planted) &&
+	    !erx_dma_layout_split_ring(SIZE, BUFFER, 48, MEMORY, 0, 32, &planted) &&
+	    !erx_dma_layout_split_ring(SIZE, BUFFER, 2 * ERX_DEVICE_GRANULE_MAX, MEMORY, 0, 32, &planted),
+	    "a granule of 0, not a power of two, or past ERX_DEVICE_GRANULE_MAX");
 	EXPECT(!erx_dma_layout_split_ring(SIZE, BUFFER, GRANULE, MEMORY, 8, 32, &planted),
 	    "a device base off the descriptor table's alignment");
 	EXPECT(erx_dma_layout_split_ring(SIZE, BUFFER, 1, MEMORY, 0, 32, &planted) &&

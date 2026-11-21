@@ -38,7 +38,13 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "erx_device_queue.h"
+/* Bounds of the device NIF, not of a form: a queue's size, and the pieces of one chain. */
+#define ERX_DEVICE_QUEUE_SIZE_MAX	256u
+#define ERX_DEVICE_CHAIN_MAX		4u
+/* A buffer's largest size, so a post's copy and a completion's stay within a call's bound. */
+#define ERX_DEVICE_BUFFER_MAX		65536u
+/* The largest cache-writeback granule a queue lays out on: one page. */
+#define ERX_DEVICE_GRANULE_MAX		4096u
 
 /* A queue's regions: each of its buffers, and at most two ring regions. */
 #define ERX_DMA_REGIONS_MAX	(ERX_DEVICE_QUEUE_SIZE_MAX + 2u)
@@ -165,9 +171,8 @@ typedef enum erx_dma_request_kind {
 /*
  * One piece of a post: `length` bytes the device reads from `bytes`, or `length` bytes it
  * writes. `names_region` says the piece is the entry of the region named `region`: the split ring's
- * form core over the sequencer has the sequencer encode it, with `bytes` and `length` unused, and
- * erx_device_queue's core copies the entry's bytes the effect layer resolved into `bytes`. A form
- * that takes no region refuses it.
+ * form core over the sequencer has the sequencer encode it, with `bytes` and `length` unused. A
+ * form that takes no region refuses it.
  */
 typedef struct erx_dma_piece {
 	const uint8_t	*bytes;

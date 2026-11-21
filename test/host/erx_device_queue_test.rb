@@ -10,13 +10,12 @@ require_relative '../../tools/lib/erx/sanitizer_environment'
 require_relative '../../tools/lib/erx/device_nif'
 require_relative '../fixtures/generated_tree'
 
-# The pure core of a device's queue (test/fixtures/erx_device_queue_harness.c), and the
-# effects that put it on a virtio-mmio device the harness plays
-# (test/fixtures/erx_device_dma_harness.c), clean under the address and undefined sanitizers.
+# The effects that put a device's queues on a virtio-mmio device the harness plays
+# (test/fixtures/erx_device_dma_harness.c) and on GENET's register ring
+# (test/fixtures/erx_device_genet_harness.c), clean under the address and undefined sanitizers.
 class ErxDeviceQueueTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
   NIFS = File.join(ROOT, 'otp/erts/emulator/nifs/erxos')
-  CORE = File.join(NIFS, 'erx_device_queue.c')
   # erx_device.c's cores from their one list (tools/lib/erx/device_nif.rb), over a host DMA
   # architecture layer that counts its maintenance.
   DEVICE = File.join(NIFS, 'erx_device.c')
@@ -25,11 +24,6 @@ class ErxDeviceQueueTest < Minitest::Test
   FLAGS = ['-std=c17', '-D_DARWIN_C_SOURCE', '-Wall', '-Wextra', '-Werror', '-O1', '-g',
            '-fsanitize=address,undefined', '-fno-sanitize-recover=undefined'].freeze
   COMPILER = ENV.fetch('ERX_CLANG', 'clang')
-
-  def test_posts_completions_refusals_and_resets
-    output = run_harness(File.join(ROOT, 'test/fixtures/erx_device_queue_harness.c'), CORE)
-    assert_match(/^erx_device_queue done$/, output)
-  end
 
   def test_queues_on_a_device
     output = run_harness(File.join(ROOT, 'test/fixtures/erx_device_dma_harness.c'), *device_sources,
@@ -95,23 +89,6 @@ class ErxDeviceQueueTest < Minitest::Test
   def test_a_queue_that_keeps_no_state_fails_the_harness
     output = genet_output(["\tif (after != &record->state)\n\t\trecord->state = *after;\n", "\t(void)after;\n"])
     assert_match(/FAILED .*erx_device_genet_harness\.c/, output)
-  end
-
-  # The seeded fault of the core's post: each descriptor's address one byte past its segment.
-  # The harness reads the descriptors back from the post's ring-write steps and refuses it.
-  POST_SEED = ['device_base + buffer + taken->offset, taken->length);',
-               'device_base + buffer + taken->offset + 1, taken->length);'].freeze
-
-  def test_a_post_seeded_with_an_address_off_by_one_fails_the_harness
-    text = File.read(CORE)
-    assert_includes text, POST_SEED.first
-    Dir.mktmpdir('erx-device-queue-seed-') do |directory|
-      core = File.join(directory, 'erx_device_queue.c')
-      File.write(core, text.sub(*POST_SEED))
-      output, status = harness_output(File.join(ROOT, 'test/fixtures/erx_device_queue_harness.c'), core)
-      refute status.success?, output
-      assert_match(/erx_device_queue_harness\.c:\d+: .*\baddr\b/, output)
-    end
   end
 
   private

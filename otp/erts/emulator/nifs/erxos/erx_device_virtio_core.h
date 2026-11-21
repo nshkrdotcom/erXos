@@ -44,6 +44,15 @@
 #include "erx_device_ledger.h"
 #include "erx_device_sequencer.h"
 
+/*
+ * The features a negotiation accepts of those the driver wants and the device offers: the
+ * device type's own bits the driver wants; VERSION_1, which this split ring of version 1
+ * needs; ACCESS_PLATFORM whenever the device offers it, since every address the NIF gives is
+ * the device's own view of memory; and never a bit that changes the ring or the transport
+ * (abi/formats/virtio.txt). False for a device that does not offer VERSION_1.
+ */
+bool	erx_split_ring_features(uint64_t wanted, uint64_t offered, uint64_t *accepted);
+
 /* What the ring posted in a buffer: the tag to give back and the range the device may write. */
 typedef struct erx_split_ring_chain {
 	uint64_t	tag;
