@@ -76,7 +76,7 @@ data(?ERX_SMP_CODE_PAIRING_PUBLIC_KEY, <<X:32/binary, Y:32/binary>>) ->
 data(?ERX_SMP_CODE_PAIRING_DHKEY_CHECK, <<Value:16/binary>>) -> {pairing_dhkey_check, reversed(Value)};
 data(?ERX_SMP_CODE_PAIRING_KEYPRESS_NOTIFICATION, <<Type>>) -> {pairing_keypress_notification, Type};
 data(Code, _Data) when Code >= ?ERX_SMP_CODE_PAIRING_REQUEST, Code =< ?ERX_SMP_CODE_PAIRING_KEYPRESS_NOTIFICATION,
-                       Code =/= 16#0A ->
+                       Code =/= ?ERX_SMP_CODE_PREVIOUSLY_USED ->
     {invalid, Code};
 data(Code, _Data) -> {reserved, Code}.
 

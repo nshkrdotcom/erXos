@@ -26,7 +26,7 @@ class ErxBtSmpTest < Minitest::Test
   SEEDS = [
     Seed.new(fault: 'the key-size check removed',
              module_path: CORE,
-             anchor: 'require(MaxKey >= ?ERX_SMP_KEY_SIZE_MAX, ?ERX_SMP_REASON_ENCRYPTION_KEY_SIZE, key_size),',
+             anchor: 'require(MaxKey >= ?ERX_SMP_KEY_SIZE_ERXOS, ?ERX_SMP_REASON_ENCRYPTION_KEY_SIZE, key_size),',
              replacement: '',
              catching_case: 'key_size_test'),
     Seed.new(fault: 'the curve check removed, so the y + 1 point is accepted',

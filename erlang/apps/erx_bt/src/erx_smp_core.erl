@@ -41,13 +41,21 @@ Confirm Value Failed. A PDU out of its turn fails the pairing with Unspecified R
 or Command Not Supported for a command a responder never takes. Every failure of a
 pairing goes through one route, `fail/2`, which sends Pairing Failed, reports the
 reason (`{failed, Reason}`) and stops the timer; the phone's Pairing Failed is
-reported as `{peer, Code}`. A timeout reports `timeout`, sends nothing more and ends
+reported as `{peer, Code}`. Two refusals are not pairings and report nothing: no
+window and the pairing wait. A Pairing Request after the bond is refused in `done`
+itself and reported as `already_bonded`, since the link holds a key. A timeout reports `timeout`, sends nothing more and ends
 the link (`end_link`); the state is then `ended`, which ignores everything (3.4).
 Reserved codes, empty PDUs and keypress notifications are ignored in every phase: erXos
 never sets the keypress flag, so they never restart the timer.
 
 `timer` restarts the 30 s timer and `timer_stop` stops it; `{passkey, N}` is the
 passkey for the window to show.
+
+Two obligations fall on the link that runs this core. It answers `admit` before it
+steps any other input, so a verdict always belongs to the request that asked for it.
+And the state, the verdict's fresh values and the `key` and `bonded` actions carry
+secrets (the private key, the passkey, the DHKey, the LTK), which the link keeps out
+of crash reports and status output.
 """.
 
 -include("generated/erx_abi.hrl").
@@ -116,11 +124,15 @@ phase({pdu, {identity_address_information, Type, Address}}, {identity_address, B
     {[{bonded, Bond#{identity => {identity_type(Type), Address}}}, timer_stop], done};
 phase(encrypted, Phase, _State) -> {[], Phase};
 phase({admission, _}, Phase, _State) -> {[], Phase};
-phase({pdu, Pdu}, _Phase, _State) when element(1, Pdu) =:= pairing_response; element(1, Pdu) =:= security_request;
-                                       element(1, Pdu) =:= encryption_information;
-                                       element(1, Pdu) =:= central_identification ->
-    fail(?ERX_SMP_REASON_COMMAND_NOT_SUPPORTED, unexpected);
-phase({pdu, _}, _Phase, _State) -> fail(?ERX_SMP_REASON_UNSPECIFIED_REASON, unexpected).
+phase({pdu, Pdu}, _Phase, _State) ->
+    case responder_never_takes(element(1, Pdu)) of
+        true -> fail(?ERX_SMP_REASON_COMMAND_NOT_SUPPORTED, unexpected);
+        false -> fail(?ERX_SMP_REASON_UNSPECIFIED_REASON, unexpected)
+    end.
+
+%% The commands only a responder sends, and legacy pairing's keys (3.3, 3.6.1).
+responder_never_takes(Kind) ->
+    lists:member(Kind, [pairing_response, security_request, encryption_information, central_identification]).
 
 admitted(closed, _Request) -> {[{send, {pairing_failed, ?ERX_SMP_REASON_PAIRING_NOT_SUPPORTED}}, timer_stop], idle};
 admitted(waiting, _Request) -> {[{send, {pairing_failed, ?ERX_SMP_REASON_REPEATED_ATTEMPTS}}, timer_stop], idle};
@@ -139,7 +151,7 @@ method(#{io := Io, oob := Oob, auth := Auth, max_key := MaxKey, initiator_keys :
             ?ERX_SMP_REASON_INVALID_PARAMETERS, invalid),
     #{sc := Sc, bonding := Bonding} = erx_smp:auth(Auth),
     require(Sc, ?ERX_SMP_REASON_AUTHENTICATION_REQUIREMENTS, secure_connections_required),
-    require(MaxKey >= ?ERX_SMP_KEY_SIZE_MAX, ?ERX_SMP_REASON_ENCRYPTION_KEY_SIZE, key_size),
+    require(MaxKey >= ?ERX_SMP_KEY_SIZE_ERXOS, ?ERX_SMP_REASON_ENCRYPTION_KEY_SIZE, key_size),
     require(Oob =/= ?ERX_SMP_OOB_PRESENT, ?ERX_SMP_REASON_AUTHENTICATION_REQUIREMENTS, method),
     require(Bonding =:= ?ERX_SMP_BONDING andalso maps:get(id, erx_smp:keys(Keys)),
             ?ERX_SMP_REASON_AUTHENTICATION_REQUIREMENTS, bonding),
@@ -161,7 +173,7 @@ response(Mode) ->
     #{io => Io, oob => 0,
       auth => erx_smp:auth_octet(#{bonding => ?ERX_SMP_BONDING, mitm => Mode =:= display, sc => true,
                                    keypress => false, ct2 => false}),
-      max_key => ?ERX_SMP_KEY_SIZE_MAX,
+      max_key => ?ERX_SMP_KEY_SIZE_ERXOS,
       initiator_keys => erx_smp:keys_octet(#{enc => false, id => true, link => false}),
       responder_keys => erx_smp:keys_octet(#{enc => false, id => false, link => false})}.
 
@@ -191,9 +203,13 @@ confirm(Round, #{peer := {PeerX, _}, fresh := #{public := {OwnX, _}}} = P) ->
 random(Na, Round, Confirm, #{method := Method, peer := {PeerX, _}, fresh := #{public := {OwnX, _}}} = P) ->
     Nb = nonce(Round, P),
     Last = Method =:= just_works orelse Round + 1 =:= ?ERX_SMP_PASSKEY_ROUNDS,
-    Method =:= just_works orelse
-        require(crypto:hash_equals(Confirm, erx_smp_crypto:f4(PeerX, OwnX, Na, z(Round, P))),
-                ?ERX_SMP_REASON_CONFIRM_VALUE_FAILED, confirm),
+    case Method of
+        passkey ->
+            require(crypto:hash_equals(Confirm, erx_smp_crypto:f4(PeerX, OwnX, Na, z(Round, P))),
+                    ?ERX_SMP_REASON_CONFIRM_VALUE_FAILED, confirm);
+        just_works ->
+            ok
+    end,
     Next = case Last of
                true -> {dhkey_check, Na, Nb, P};
                false -> {confirm, Round + 1, P}

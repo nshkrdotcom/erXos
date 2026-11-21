@@ -8512,6 +8512,16 @@ model harness drive `erx_device.c` itself. `erx_device_dma_check` and `erx_devic
   termination already in progress, so a remote peer leaving as the host disconnects it may reset every link.
   Check Core 6.3 Vol 4 Part E 7.1.6 and 7.7.5 for the statuses a controller sends in that race, and accept the
   ones that mean the handle is going.
+* [Medium] bluetooth, the link's duties to `erx_smp_core` (docs/design-bluetooth.md "Secure Connections
+  only"; the core's moduledoc): the link must answer `admit` before stepping any other input, or a late
+  verdict could open a later Pairing Request after the window has closed; a tag carried by `admit` and the
+  verdict would make that hold by construction. The link must also keep the core's state, the verdict's
+  fresh values and the `key` and `bonded` actions out of crash reports and `sys` status (`format_status/1`),
+  since they hold the private key, passkey, DHKey and LTK. Decide too whether closing the window withdraws a
+  pairing in progress, and what the link does with a key given before a failure in the third phase.
+* [Medium] bluetooth, Passkey Entry's bit order (`erx_smp_core`'s `z/2`): the test's honest phone takes the
+  passkey's bits least significant first, as the core does, citing Bumble v0.0.237's bumble/smp.py; the
+  specification's Figure 2.4 does not settle it. Pin it with the Bumble test peer before the board run.
 * [Low] bluetooth, a static random identity address (`erx_smp_core`'s `identity_type/1`; docs/design-bluetooth.md
   "Secure Connections only"): the phone's Identity Address Information is taken with any address of type 0x01,
   but a static random address has its two most significant bits set (Core 6.3 Vol 6 Part B, 1.3.2.1, not yet

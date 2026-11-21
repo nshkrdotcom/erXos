@@ -301,7 +301,9 @@ wrong_confirm_fails_test() ->
          Wrong = lists:sublist(Inputs, Index - 1) ++ [{pdu, {pairing_confirm, <<(B bxor 1), Rest/binary>>}},
                                                      {pdu, {pairing_random, Nonce(Round)}}],
          {Actions, _} = run(Wrong),
-         ?assertEqual({[4], [confirm]}, {sent_failure(Actions), failures(Actions)})
+         ?assertEqual({[4], [confirm]}, {sent_failure(Actions), failures(Actions)}),
+         %% erXos's nonce of the failed round is never revealed.
+         ?assertEqual(Round, length([R || {send, {pairing_random, R}} <- Actions]))
      end || Round <- [0, 19]].
 
 wrong_dhkey_check_fails_test() ->
