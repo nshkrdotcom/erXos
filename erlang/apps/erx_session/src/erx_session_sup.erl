@@ -8,9 +8,12 @@ The session's supervisor. Its children are the session's pipe server
 server (erx_command_srv), which assigns process ids and spawns every program's
 handler, and which nothing restarts, since a new one could give an id again: a
 significant child, its end ends the supervisor and with it the session
-(docs/design-programs.md, "The command server"); the session's console
-tty (erx_session_tty:start_link/0), which ends normally only when its line has
-hung up, with every shell on it, and then nothing restarts it; a tty for each
+(docs/design-programs.md, "The command server"); the session's line
+(line/1): its console tty (erx_session_tty:start_link/0) when it holds a
+console facet, which ends normally only when its line has hung up, with every
+shell on it, and then nothing restarts it, and otherwise erx_log_user, the
+`user` of a session with no terminal, whose output becomes log records under
+the session's name (docs/design-apps.md, "Starting a session"); a tty for each
 master of the session that opens one (erx_session_tty:open/1), which nothing
 restarts; and the two grants of the session's export (erx_session_export),
 which serve its fixed tree to the session's own domain: an `rx` grant, through
@@ -23,18 +26,13 @@ crash restarts a grant, which then serves new files.
 -include("generated/erx_abi.hrl").
 
 -export([start_link/0, init/1]).
--export([export_args/3, home/0]).
+-export([export_args/3, home/0, line/1]).
 
 -spec start_link() -> supervisor:startlink_ret().
 start_link() ->
     supervisor:start_link({local, ?MODULE}, ?MODULE, []).
 
 init([]) ->
-    Tty = #{id => erx_session_tty,
-            start => {erx_session_tty, start_link, []},
-            restart => transient,
-            type => worker,
-            modules => [erx_session_tty, erx_console, erx_session_relay]},
     Pipes = #{id => erx_pipe_srv,
               start => {erx_pipe_srv, start_link, []},
               restart => permanent,
@@ -55,7 +53,27 @@ init([]) ->
                  type => worker,
                  modules => [erx_fs, erx_session_export]} || Rights <- [rx, rw]],
     {ok, {#{strategy => one_for_one, intensity => 5, period => 10, auto_shutdown => any_significant},
-          [Pipes, Commands, Tty | Exports]}}.
+          [Pipes, Commands, line(erx:cap(console)) | Exports]}}.
+
+-doc """
+The child that holds the session's line, from Console, its console facet as
+erx:cap/1 finds it: the session's console tty, whose console holds `user`, for a
+session that holds one, and for a session with none, which has no terminal,
+erx_log_user, which holds `user` and sends what is written to it to the log.
+""".
+-spec line(pid() | undefined) -> supervisor:child_spec().
+line(undefined) ->
+    #{id => erx_log_user,
+      start => {erx_log_user, start_link, []},
+      restart => permanent,
+      type => worker,
+      modules => [erx_log_user]};
+line(Console) when is_pid(Console) ->
+    #{id => erx_session_tty,
+      start => {erx_session_tty, start_link, []},
+      restart => transient,
+      type => worker,
+      modules => [erx_session_tty, erx_console, erx_session_relay]}.
 
 -doc """
 What the session's export starts from (erx_session_export:args/0): its
