@@ -89,6 +89,10 @@ module Erx
                                         permits: %r{\A(?:#\s*include\s*"erx/hw/pm_wdt\.h"|erx_pm_wdt_\w+)\z})
     PM_WDT_CORE = Chokepoints::Site.new(glob: 'kernel/core/pm_wdt.c',
                                         permits: %r{\A(?:#\s*include\s*"erx/hw/pm_wdt\.h"|erx_pm_wdt_\w+_set|ERX_PM_WDT_\w+)\z})
+# The xHCI harness's stand-in controller answers the device NIF's register accesses and
+# reads the registers it wrote through the generated xHCI header, as GENET's harness does
+# for its engines; it is a host test and reaches no device.
+XHCI_HARNESS = Chokepoints::Site.new(glob: 'test/fixtures/erx_device_xhci_harness.c')
     # The prefix of every name Hardware.owned_symbols makes, so no list can fall behind the SVD files.
     OWNED_REGISTER = /\bERX_DEVICE_OWNED_\w+/
 
@@ -138,7 +142,7 @@ module Erx
                   Chokepoints::Site.new(glob: 'test/fixtures/device_model/erx/hw/device_access.h'),
                   Chokepoints::Site.new(glob: 'test/fixtures/erx_device_dma_harness.c'),
                   # GENET's harness, whose stand-in engines answer the register ring through them.
-                  Chokepoints::Site.new(glob: 'test/fixtures/erx_device_genet_harness.c')],
+                  Chokepoints::Site.new(glob: 'test/fixtures/erx_device_genet_harness.c'), XHCI_HARNESS],
           seed: { 'otp/erts/emulator/beam/seeded.c' => "void f(void) { erx_device_access_load32(0, 0); }\n" }
         ),
         # The generated peripheral accessors are static inline, so they leave no symbol for the
@@ -149,7 +153,7 @@ module Erx
           design: DEVICE_DESIGN,
           scope: DEVICE_SCOPE,
           pattern: PERIPHERAL_INCLUDE,
-          sites: [PLATFORM_LAYER, PROBE_HEADERS, RNG200_SHIM, PM_WDT_SHIM, PM_WDT_CORE],
+          sites: [PLATFORM_LAYER, PROBE_HEADERS, RNG200_SHIM, PM_WDT_SHIM, PM_WDT_CORE, XHCI_HARNESS],
           seed: { 'otp/erts/emulator/beam/seeded.c' => "#include <erx/hw/pl011.h>\n" }
         ),
         Chokepoints::Forbidden.new(
@@ -159,7 +163,7 @@ module Erx
           scope: DEVICE_SCOPE,
           pattern: /\b(?:#{PERIPHERAL_SYMBOLS.map { |symbol| Regexp.escape(symbol) }.join('|')})\b/,
           sites: PERIPHERAL_HEADERS.map { |header| Chokepoints::Site.new(glob: header) } +
-                 [PLATFORM_LAYER, PROBE_ACCESSORS, RNG200_SHIM, PM_WDT_SHIM, PM_WDT_CORE],
+                 [PLATFORM_LAYER, PROBE_ACCESSORS, RNG200_SHIM, PM_WDT_SHIM, PM_WDT_CORE, XHCI_HARNESS],
           seed: { 'otp/erts/emulator/nifs/erxos/seeded.c' => "void f(erx_mmio_t d) { erx_pl011_dr_write(d, 65); }\n",
                   # The watchdog's core may name its setters, never a register access.
                   'kernel/core/pm_wdt.c' => "void f(erx_mmio_t d) { erx_pm_wdt_rstc_write(d, 0); }\n" }
