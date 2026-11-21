@@ -29,10 +29,13 @@ class RuntimeReleaseTest < Minitest::Test
 
   # Each test reads the hosted build, so it runs holding the runtime tree's lock
   # shared, and a build waits for it (Runtime.reading). The second pack comes
-  # first, once, into a directory of this run's own: packing writes the work
-  # directory beside the hosted release, so it holds the lock exclusively.
+  # first, once: packing writes the work directory beside the hosted release, so
+  # it holds the lock exclusively. Its archive goes to a directory of this run's
+  # own under build/, since a pack writes only inside the tree it packs
+  # (OutputDirectory).
   def run
-    self.class.second ||= File.join(Dir.mktmpdir('erx-second-release'), 'second.pack').tap do |path|
+    self.class.second ||= File.join(Dir.mktmpdir('erx-second-release-', File.join(ROOT, 'build')),
+                                    'second.pack').tap do |path|
       Erx::Release.new(root: ROOT, output: OUTPUT, platform: Erx::Platform.development(ROOT)).build(output: path)
     end
     Erx::Runtime.reading(root: ROOT) { super }

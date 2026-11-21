@@ -16,9 +16,10 @@ module Erx
     Report = Data.define(:violations, :unused)
     IMPORTS_FILE = 'erts/emulator/sys/erxos/imports.txt'
     # Sections only the hosted build uses: libSystem's names, the liberx calls only
-    # hosted objects make, and the calls of erx_stdio_nif.c, an object the native build
-    # does not link. The native check leaves them out, so they do not count as unused there.
-    HOSTED_ONLY = %w[libsystem liberx_hosted only_erx_stdio_nif].freeze
+    # hosted objects make, the calls of erx_stdio_nif.c, an object the native build
+    # does not link, and those of erx_device.c's stand-in device, which only a hosted
+    # build compiles. The native check leaves them out, so they do not count as unused there.
+    HOSTED_ONLY = %w[libsystem liberx_hosted only_erx_stdio_nif only_erx_device].freeze
     # The section only the native build uses: musl's names. The hosted check leaves it out.
     NATIVE_ONLY = %w[musl].freeze
     # Sections only the BeamAsm flavour's objects use: the hosted build and the native

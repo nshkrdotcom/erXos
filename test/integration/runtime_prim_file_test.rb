@@ -9,7 +9,6 @@ require 'minitest/autorun'
 require 'open3'
 require 'timeout'
 require 'tmpdir'
-require 'zlib'
 require_relative '../../tools/lib/erx/abi'
 require_relative '../../tools/lib/erx/pack_tools'
 require_relative '../../tools/lib/erx/pack_wire'
@@ -108,9 +107,8 @@ class RuntimePrimFileTest < Minitest::Test
     # Two runs' memory figures differ by nature, and test_results_agree_with_stock... exempts them too.
     # The restart case's supervisor report reaches the console as a log line that carries the
     # time of each run.
-    # The image case's kernel log line carries its time.
     other = (lines - @fixture.release).reject do |line|
-      line.start_with?('resources') || line.match?(SUPERVISOR_LOG) || line.match?(IMAGE_LOG)
+      line.start_with?('resources') || line.match?(SUPERVISOR_LOG)
     end
     diagnostics, refused = other.partition { |line| line.start_with?('prim_file: ') }
     assert_includes diagnostics.first.to_s, 'file_hash'
@@ -123,7 +121,7 @@ class RuntimePrimFileTest < Minitest::Test
     stock = table(@fixture.stock)
     assert_operator stock.size, :>, 200, 'the comparison ran its corpus'
     differences = (stock.keys | release.keys).filter_map do |key|
-      next if release[key] == stock[key] || key.start_with?('pin ', 'ns ', 'image ', 'remote ', 'resources', 'tmp', 'open ')
+      next if release[key] == stock[key] || key.start_with?('pin ', 'ns ', 'remote ', 'resources', 'tmp', 'open ')
       next if named?(key) || only_mounts_added?(key, stock[key], release[key])
 
       "#{describe(key)}\n  stock:   #{stock[key]}\n  release: #{release[key]}"
@@ -396,41 +394,7 @@ class RuntimePrimFileTest < Minitest::Test
     end
   end
 
-  # An EROFS image mounted with erx_ns from a window: prim_file's operations on its paths
-  # run through the EROFS reader, links on it are followed, operations that write answer
-  # erofs, and the image leaves with its entry. The image is the reader's compact fixture,
-  # whose files tools/erofs_fixtures.rb fills with contents(size, seed).
-  def test_an_image_mount_reads_through_the_erofs_reader
-    release = table(@fixture.release)
-    big = contents(12_388, 3)
-    small = "{ok,#{Zlib.crc32(contents(100, 1))}}"
-    { 'image mount' => 'ok', 'image read' => "{ok,#{Zlib.crc32(big)}}",
-      'image info' => "{ok,regular,12388,read,#{0o100644}}", 'image dir info' => "{ok,directory,read,#{0o40755}}",
-      'image list' => '{ok,["b"]}', 'image link' => '{ok,"small"}',
-      'image link info' => "{ok,symlink,read,#{0o120777}}", 'image via link' => small, 'image up link' => small,
-      'image absolute link' => '{error,enoent}', 'image missing' => '{error,enoent}',
-      'image not dir' => '{error,enotdir}', 'image open read' => "{ok,#{Zlib.crc32(big[0, 5000])}}",
-      'image open pread' => "{ok,#{Zlib.crc32(big[12_000, 388])}}", 'image open position' => '{ok,12388}',
-      'image open write' => '{error,ebadf}', 'image open close' => 'ok', 'image open dir' => '{error,eisdir}',
-      'image cwd' => 'ok', 'image cwd read' => "{ok,#{Zlib.crc32(contents(10, 4))}}", 'image cwd up' => small,
-      'image cwd file' => '{error,enotdir}', 'image make_dir' => '{error,erofs}',
-      'image make_dir missing' => '{error,enoent}', 'image make_dir existing' => '{error,eexist}',
-      'image open exclusive' => '{error,eexist}', 'image open dir to write' => '{error,eisdir}',
-      'image create via link' => '{error,enoent}', 'image symlink existing' => '{error,eexist}',
-      'image open to write' => '{error,erofs}',
-      'image write_file' => '{error,erofs}', 'image delete' => '{error,erofs}', 'image del_dir' => '{error,erofs}',
-      'image rename' => '{error,erofs}', 'image write_file_info' => '{error,erofs}',
-      'image symlink' => '{error,erofs}', 'image link to' => '{error,erofs}', 'image bad image' => '{error,eio}',
-      'image unmount' => 'ok', 'image after' => '{error,enoent}' }.each do |step, want|
-      assert_equal want, release.fetch(step), step
-    end
-    assert(@fixture.release.any? { |line| line.match?(IMAGE_LOG) }, "the refused image's diagnostic reaches the kernel log")
-  end
-
   SUPERVISOR_LOG = /error domain \d+ principal \d+ system: Supervisor: \{<[0-9.]+>,erx_ramfs_sup\}\. Context: child_terminated\./
-  IMAGE_LOG = /debug space \d+: erx_ns: image <[0-9.]+>: erofs: block 0: no EROFS magic\z/
-
-  def contents(size, seed) = (0...size).map { |index| ((index * 7) + seed) & 0xff }.pack('C*')
 
   DIRECTORY = "{ok,directory,read_write,#{0o40755}}"
   FILE = "{ok,regular,0,read_write,#{0o100644}}"
@@ -686,7 +650,6 @@ class RuntimePrimFileTest < Minitest::Test
     File.write(File.join(corpus, 'sub0'), "sorts after sub/\n")
     File.binwrite(File.join(tree, 'manifest'), Erx::Release.file_bytes(archive: OUTPUT.archive, path: 'system/manifest', codec: codec))
     File.write(File.join(tree, 'root'), "a root image's place\n")
-    FileUtils.cp(File.join(ROOT, 'test/fixtures/erofs/compact.img'), File.join(tree, 'image.erofs'))
     APPLICATIONS.each do |application|
       ebin = File.join(tree, 'lib', application, 'ebin')
       FileUtils.mkdir_p(ebin)

@@ -146,6 +146,12 @@ erx_pipe_wstart erx_pipe_wrun erx_pipe_rstart erx_pipe_rrun erx_pipe_rtake
 [only_erx_stdio_nif]
 cfmakeraw fcntl ioctl pipe poll sigaction tcgetattr tcsetattr
 
+# erx_device.c alone, and only hosted, where ERX_DEVICE_STAND_IN gives it a stand-in
+# device: a stand-in queue's rings and pool, aligned to the queue's granule, and a
+# stand-in region, aligned to a page, are plain memory.
+[only_erx_device]
+aligned_alloc
+
 # erx_littlefs_nif.c alone, the block callbacks of /data's littlefs volume: each waits
 # for the volume's owner to answer until a deadline on the clock musl's timed waits
 # read, and a directory entry's name is measured within its buffer.

@@ -576,9 +576,11 @@ class RuntimeHostedSmokeTest < Minitest::Test
       'inet:getaddr("localhost", inet).' => /^\{ok,\{127,0,0,1\}\}$/,
       'inet:gethostbyname("no.such.name").' => /^\{error,nxdomain\}$/,
       # ERTS has no socket driver: gen_tcp and gen_udp reach the network grant through the erx
-      # backend, the default. It opens datagram sockets and does not offer gen_tcp:listen.
-      'gen_tcp:listen(0, []).' => /^\{error,enotsup\}$/,
-      'gen_udp:open(0, []).' => /^\{ok,\{'\$inet',erx_gen_udp,<\d+\.\d+\.\d+>\}\}$/,
+      # backend, the default. The system domain holds no net grant, so each open is refused
+      # with eacces, as POSIX's socket refuses a protocol (docs/design-network-stack.md,
+      # "The grant").
+      'gen_tcp:listen(0, []).' => /^\{error,eacces\}$/,
+      'gen_udp:open(0, []).' => /^\{error,eacces\}$/,
       'application:which_applications().' => /kernel/
     }
     Dir.mktmpdir('erx-hosted-home-') do |home|

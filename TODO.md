@@ -992,10 +992,30 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   as `ENOSYS` tracing shows it;
 * [Low] `test/fixtures/runtime_event_harness.c`: the sleep step's model copies the park core by hand and has no waker; driving
   `erx_backend_park_step` and a waker would pin the reason the epochs come before the flag.
-* [Low] `erlang/apps/erx_net_client/src/erx_inet.erl` (`find/0`): without a grant, `gen_tcp:connect/4`,
-  `gen_tcp:listen/2` and `gen_udp:open/2` answer the grant key's `{error, enotconn}` (`erx_net:local_grant/0` on a node
-  without the stack), where `docs/design-runtime.md` says `{error, eacces}`. Map a missing grant to `eacces` in the one
-  path to the grant, with a case per open.
+* [Medium] network, a domain without a net grant (`erlang/apps/erx_net_client/src/erx_inet.erl` `find/0`,
+  `tools/lib/erx/release_files.rb` `SYSTEM_APPLICATIONS`): `docs/design-runtime.md` and design-network-stack's
+  "The grant" say every open answers `{error, eacces}` there, but no domain without the grant does. A release that
+  ships no `erx_net_client` (the system release, an app template's) has no `erx_gen_tcp` or `erx_gen_udp`, which the
+  default `erx` backend names (`otp/lib/kernel/src/inet.erl`), so `gen_tcp:listen/2` and `gen_udp:open/2` raise
+  `undef`; and where `erx_net_client` ships without a grant key, `find/0` falls back to `erx_net:local_grant/0` and
+  answers `{error, enotconn}`, or `undef` where `erx_net` is absent too. `runtime_hosted_smoke_test`'s
+  `test_init_runs_from_the_archive_alone` expects `eacces` from the system domain and fails until this lands. Either
+  ship `erx_net_client` in every release and answer `eacces` from `find/0` when no grant key is set (the node that
+  runs the stack sets the key to `local_grant`), or have `inet`'s backend choice answer `eacces` when the backend's
+  application is absent; the first keeps one path to the grant but undoes the network domain's removal of the client
+  from the system release, so it wants a decision.
+* [Medium] `test/integration/runtime_prim_file_test.rb`: no hosted test reads through an EROFS entry with prim_file
+  since erx_ns's only EROFS mount became `{erofs, app}`, which takes the session's app record and a file grant; the
+  system domain the test boots holds neither. `erx_ns_tests` reads the mount with erx_erofs directly, never through
+  prim_file, so no test covers prim_file forwarding an image descriptor to `erx_erofs_file` (read, pread, position,
+  write answering ebadf, close, a directory answering eisdir), `set_cwd` into an image, links on an image, or the
+  order of erofs against eexist and enoent. A hosted case needs the app record and a packages grant standing in, as
+  `erx_ns_tests:app_package/1` does on the host.
+* [Medium] `make check-runtime-hosted`, failures that earlier aborts hid: `runtime_release_test`'s shipped list lacks
+  erx_rtc and erx_ssh_login, and its erx_files module check finds `erx_ramfs_serving.beam` it does not expect;
+  `runtime_prim_file_test`'s changed-byte case counts the second run's timed log lines (erx_syslog's start,
+  erx_clock's build-facts warning, a supervisor report) as refusals, and `test_tmp_serves_the_domain` answers
+  `tmpx old owners counted` false. Each wants its cause found before its expectation moves.
 * [Low] `otp/erts/emulator/test/binary_SUITE.erl`: `make_port/0` is `hd(erlang:ports())`, and `ports()` is empty by design,
   so its term-ordering cases fail with `hd([])`. Opening `{spawn_driver, "ram_file_drv"}` there gives a real port (checked on
   hosted), and is the route when the suite is next run for its results.
@@ -5722,7 +5742,8 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   reach the tree as one step. Not reproduced; found by reading the code.
 * [Medium] `otp/erts/preloaded/src/prim_file.erl` (`?ERX_FILE`), `erx_erofs_file`: prim_file forwards each open-file
   operation on a descriptor of `erx_file_remote` or `erx_erofs_file` to that module, but only the `/tmp` half is tested
-  (`tmp_prim_file_handle` in `test/integration/prim_file_compare.erl`); add the same steps on an image file (`/img/big`).
+  (`tmp_prim_file_handle` in `test/integration/prim_file_compare.erl`); the image half waits on a hosted EROFS mount (the
+  `runtime_prim_file_test` item).
   `erx_erofs_file` has no `ipread_s32bu_p32bu/3` and no `copy/3`, so `prim_file:` and `file:ipread_s32bu_p32bu` and
   `file:copy` on an image descriptor raise `undef` (DETS lookups through `dets_utils` on an image); `prim_file:copy/3`, `get_handle/1` and
   `internal_get_nif_resource/1` do not forward. Make the two lists (the modules `open/2` returns, the operations that
