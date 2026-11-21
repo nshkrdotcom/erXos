@@ -55,8 +55,8 @@ typedef enum erx_device_trb_kind {
  * The form's sizes: its rings' TRBs and, by kind, its blocks, each block's buffers and their
  * bytes. erx_device_trb_shape is the form's own; a host test explores a smaller one. A shape is
  * refused unless every block's posted TRBs, at most its buffers times three, leave three positions
- * of its ring free, the link, the start of the stop span and the enqueue position, so the span
- * always covers every posted TRB.
+ * of its ring free beside them, the link among them, so a block whose every buffer is posted still
+ * has room on its ring; whether the form needs all three is open (TODO.md).
  */
 typedef struct erx_device_trb_shape {
 	uint32_t	ring_trbs;
@@ -88,7 +88,7 @@ typedef struct erx_device_trb_region {
 } erx_device_trb_region_t;
 
 /*
- * The record's memory laid out, with the controller's facts the plans name. `regions` is in
+ * The record's memory laid out, with the controller's facts the form names. `regions` is in
  * placement order, ascending and disjoint; the other tables index into it.
  */
 typedef struct erx_device_trb_layout {

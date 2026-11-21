@@ -193,7 +193,10 @@ uint32_t	erx_trb_form_endpoint(uint32_t slot, uint32_t dci);
  *   ERX_DEVICE_TRB_REFUSE_BADARG  no ring bound to the queue's endpoint, or a request
  *                                 erx_device_trb_request_valid refuses for the ring's block;
  *   ERX_DEVICE_TRB_REFUSE_FULL    no free buffer in the ring's pool, or too few free positions on
- *                                 the ring (the check's room rule);
+ *                                 the ring (the check's room rule), judged before the next, so a
+ *                                 full ring of a closed endpoint is full;
+ *   ERX_DEVICE_TRB_REFUSE_HALTED  an endpoint not running, or one the command in flight closes
+ *                                 (the check's reach rule; design-usb.md's queue table);
  *   ERX_DEVICE_TRB_REFUSE_BADARG  any other verdict, a bug of this core.
  * Anything but ERX_DEVICE_TRB_ACCEPTED changes nothing.
  */

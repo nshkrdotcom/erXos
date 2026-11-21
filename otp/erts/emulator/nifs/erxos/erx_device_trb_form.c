@@ -350,7 +350,6 @@ parameters_valid(const erx_trb_form_t *form, const erx_trb_command_t *command)
 		    adds_valid(form, command));
 	case ERX_TRB_COMMAND_CONFIGURE_ENDPOINT:
 		return ((slot_addressed(form, command->slot) || SEED_CONFIGURE_UNADDRESSED) &&
-		    command->add_count <= ERX_DMA_BINDS_MAX &&
 		    erx_device_trb_configure_slot_valid(&command->slot_context) && adds_valid(form, command));
 	case ERX_TRB_COMMAND_EVALUATE_CONTEXT:
 		return (command->add_count == 0 && erx_device_trb_ep0_valid(&(erx_xhci_endpoint_context_free_t){
@@ -444,8 +443,9 @@ erx_trb_form_command(erx_trb_form_t *form, const erx_trb_command_t *command, uin
 	case ERX_DMA_BREAKS_ROOM:
 	case ERX_DMA_BREAKS_HELD:
 		return (ERX_DEVICE_TRB_REFUSE_FULL);
+	case ERX_DMA_BREAKS_REACH:
+		/* A command the queue's state does not accept is badarg (design-usb.md's queue table). */
 	default:
-		/* A reach refusal among them: a command the queue's state does not accept is badarg. */
 		return (ERX_DEVICE_TRB_REFUSE_BADARG);
 	}
 }

@@ -1922,7 +1922,7 @@ one of these holds device addresses, and a cycle bit or a link TRB makes
 the controller fetch from an address, so under the DMA rules the NIF
 builds all of it ([design-device-dma.md](design-device-dma.md#register-ownership)).
 The form is the fourth beside the split ring, the register ring and
-ADMA2, with a pure core, `erx_device_trb`, whose round function returns
+ADMA2, with a pure core, `erx_device_trb_form`, whose round function returns
 observations and decisions to `run_call` like the others
 ([design-device-dma.md](design-device-dma.md#calls-observations-and-plans)).
 
@@ -2323,8 +2323,9 @@ that consumes events.
 
   The core reads each endpoint's state and closure from the ledger to
   choose its commands, and the check refuses a plan that breaks any rule
-  with `ERX_DMA_BREAKS_REACH`, which the core answers as the refusal
-  `ERX_DEVICE_TRB_REFUSE_HALTED`. A Stop Endpoint on a halted endpoint, a Reset Endpoint on one that is
+  with `ERX_DMA_BREAKS_REACH`, which the core answers as `{error, halted}`
+  for a transfer and `badarg` for a command, as the queue table's
+  refusals are. A Stop Endpoint on a halted endpoint, a Reset Endpoint on one that is
   not halted and a Set TR Dequeue Pointer on one that is not stopped are
   rejected with Context State Error, a defined answer that changes
   nothing (4.8.3, p. 164; 4.6.8, p. 129; 4.6.10, p. 141), so the check
@@ -3178,7 +3179,7 @@ targeted traces carry the longer sequences.
 | `erx_xhci_core`'s pipe machine, teardown, control abort and failed address, explored to a fixed point over every queue state the NIF reports and every answer of each step, EP0 and other endpoints, behind a translator and not | `reset_pipe` issuing Reset Endpoint on a stopped queue; a stopped EP0 dropped and added; the abort answered after Stop Endpoint alone, so the next request finds EP0 stopped; the translator's clear skipped; Disable Slot issued before the stops answer; an Address Device whose device detached while it was posted left unanswered |
 | `erx_xhci_core`'s start, explored to a fixed point with and without a legacy support capability over every answer of the BIOS's semaphore and of the install and an interrupt at any time, the clock moving to each deadline; a run that has not ended always has a next step | the install called while the BIOS still owns the controller; the BIOS's semaphore never polled again; an interrupt before the controller runs acknowledged at once, or with a failure |
 | `erx_xhci_core`'s root ports and interrupt pass: every PORTSC write over many words, every change bit cleared by the name it shows as, a host system error, a pass bounded at two wraps of the event ring, `USBSTS` read once a second while running, each of those, a host controller error, a halt and an all-ones read failing the controller on an interrupt and on that read | a PORTSC write keeping the change and enable bits it read; the configuration error change behind no clear; a host system error ignored; a host controller error ignored; a halt ignored; a running controller's status never read between interrupts; an interrupt pass not bounded |
-| `erx_device_trb`, in C on the host, explored to a fixed point over rings of six TRBs and a link, two slots, two queues each, one buffer a queue, events of every code and kind, stops, resets, dequeue moves, drops and disables, so ring wrap and slot reuse are reachable; then traces of 100,000 transfers with random completions and 1,000 slot reuses; then under AddressSanitizer | a short data-stage event treated as completing, so the status event names no transfer and breaks the form; the stop span narrowed to the oldest transfer's first TRB and the enqueue position, so a completion followed by its forced event breaks the form; the enqueue position left on the link after a post that ends before it; the ledger's endpoint state left `stopped` by a transfer's publication, so Disable Slot passes the check with a queue running; the drop test accepting `halted`, so a drop-and-add after a consumed halting error passes the check and the model takes a drop the specification leaves undefined; the TRB pointer's range check removed |
+| the TRB form, `erx_device_trb_form`, in C on the host, explored to a fixed point over rings of six TRBs and a link, two slots, two queues each, one buffer a queue, events of every code and kind, stops, resets, dequeue moves, drops and disables, so ring wrap and slot reuse are reachable; then traces of 100,000 transfers with random completions and 1,000 slot reuses; then under AddressSanitizer | a short data-stage event treated as completing, so the status event names no transfer and breaks the form; the stop span narrowed to the oldest transfer's first TRB and the enqueue position, so a completion followed by its forced event breaks the form; the enqueue position left on the link after a post that ends before it; the ledger's endpoint state left `stopped` by a transfer's publication, so Disable Slot passes the check with a queue running; the drop test accepting `halted`, so a drop-and-add after a consumed halting error passes the check and the model takes a drop the specification leaves undefined; the TRB pointer's range check removed |
 | the publication, in C on the host, against a model controller that takes a TRB the moment its cycle bit matches | the first TRB's cycle word written with the other TRBs |
 | the releases, in C on the host, against the model controller writing each event's Dwords as separate stores, Dword 3 last, and running any transfer whose TRBs are live when its endpoint's doorbell rings | the acquisition reading events whole in its first phase, so a torn event releases another transfer's buffer; only the second phase's clean and invalidate removed, over a first-phase line holding the previous lap's pointer and the current cycle word, so the stale pointer releases another transfer's buffer; a command's retired holdings taken at its completion with no endpoint closed, so a transfer posted during Set TR Dequeue Pointer is returned while the model runs it |
 | the event ring's bound | the forced stop event left out of the model's sources |
@@ -3219,7 +3220,7 @@ Erlang ones run on the host's stock OTP, as the FAT decoders do:
 * `erx_usb_bot_core`'s decoders, all of them: the CSW, Get Max LUN's
   answer, INQUIRY, READ CAPACITY(10) and (16) and REQUEST SENSE;
 * `erx_xhci_core`'s decoders of completion codes and command answers;
-* `erx_device_trb`'s completion, in C, over a fuzzed event ring and
+* `erx_trb_form_complete`, the TRB form's completion, in C, over a fuzzed event ring and
   fuzzed output-context address byte: the one C reader of memory a USB
   controller writes;
 * the NIF's extended-capability walk and cluster bounds, in C, over

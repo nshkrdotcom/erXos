@@ -41,7 +41,6 @@ _Static_assert(ERX_XHCI_TRB_LINK_SIZE == TRB_SIZE && ERX_XHCI_TRB_SETUP_SIZE == 
     ERX_XHCI_TRB_COMMAND_SIZE == TRB_SIZE, "every TRB is one size");
 _Static_assert(16u + 16u + 4u == ERX_DEVICE_TRB_BLOCKS_MAX, "the form's blocks fill the bound");
 
-/* A plan being built into the caller's steps. */
 /* The layout. */
 
 static bool
@@ -250,7 +249,7 @@ setup_sets_address(const uint8_t setup[8])
 	    (ERX_USB_REQUEST_TYPE_STANDARD | ERX_USB_RECIPIENT_DEVICE) && setup[1] == ERX_USB_REQUEST_SET_ADDRESS);
 }
 
-/* The one test of a transfer, the post's and the TRB form core's (erx_device_trb.h). */
+/* The one test of a transfer, the TRB form's at its post (erx_device_trb.h). */
 bool
 erx_device_trb_request_valid(const erx_device_trb_request_t *request, erx_device_trb_kind_t kind,
     uint32_t dci, uint32_t buffer_size)
