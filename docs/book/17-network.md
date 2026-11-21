@@ -633,10 +633,8 @@ say nothing about QEMU or the Pi 4.
 
 ## 17.6 Sockets act for one domain
 
-On UNIX any process can call `socket(2)`, and the kernel decides
-what it may do from its user id. In erXos a domain without
-the network service's facet cannot open a socket, and every socket
-acts for one domain alone
+A domain without the network service's facet cannot open a socket, and
+every socket acts for one domain alone
 ([design-network-stack.md, Authority and admission](../design-network-stack.md#authority-and-admission)).
 
 ### 17.6.1 Who holds the network device

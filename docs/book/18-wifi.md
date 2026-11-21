@@ -98,7 +98,7 @@ station](../design-wifi.md#the-seam-to-the-station)).
 
 The station above it asks for standard 802.11 operations, `scan`,
 `connect`, `set_keys`, and names no firmware variable. The firmware's
-own supplicant is turned off, as OpenBSD turns it off, so every check
+own supplicant is turned off, so every check
 of section 18.3 runs in Erlang, where it can be read and tested.
 
 ### 18.1.3 Three domains, one medium
@@ -363,22 +363,21 @@ access point's statement of its security options, equal byte for
 byte to the one the scan reported. A mismatch there means the scan
 saw a forgery, and the station drops the association.
 
-The reinstallation attack of 2017 replays message 3: a supplicant
-that installs the same key again resets its packet counter, and the
+The reinstallation attack of 2017 replays message 3: a supplicant that
+installs the same key again resets its packet counter, and the
 cipher's safety depends on never reusing one. The join machine keeps
-three things per association: the **replay watermark**, the counter
-of the last message accepted under a valid MIC; the pending PTK; and
-the **key slots**, for each slot of the chip the key it was last
-asked to hold, the install that asked, and whether the chip confirmed
-it. Then one rule: a `set_keys` request carries only the keys that
-differ from their slot's. A retransmitted message 3 yields the PTK
-already in the slot and installs nothing; a replayed one is refused
-by the watermark before any key is read. A genuine rekey still
-installs, because a new message 1 brings a new nonce and so a
-different PTK. OpenBSD keeps the same property with a flag for the
-pairwise key and a comparison for each group key; here one rule
-covers every slot. A confirmation confirms only the slots its own
-install filled, so a late one never confirms a newer key.
+three things per association: the **replay watermark**, the counter of
+the last message accepted under a valid MIC; the pending PTK; and the
+**key slots**, for each slot of the chip the key it was last asked to
+hold, the install that asked, and whether the chip confirmed it. Then
+one rule: a `set_keys` request carries only the keys that differ from
+their slot's. A retransmitted message 3 yields the PTK already in the
+slot and installs nothing; a replayed one is refused by the watermark
+before any key is read. A genuine rekey still installs, because a new
+message 1 brings a new nonce and so a different PTK. The one rule
+covers the pairwise key and every group key alike. A confirmation
+confirms only the slots its own install filled, so a late one never
+confirms a newer key.
 
 The handshake, the slots and the watermark are built, in
 `erx_wifi_join.erl`, with the EAPOL-Key frame codec in
@@ -512,15 +511,16 @@ a blob, and SAE from a password, which would hand the password to the
 chip. erXos turns the first off and refuses the second; a firmware
 without external SAE means WPA3 is reported unsupported.
 
-**One score, or separate parts.** OpenBSD ranks access points with
-one score that adds a bonus for never having failed to bonuses for
-RSN and privacy, so a forged failure can move a station to a weaker
-method. erXos keeps admission apart from the memory (section 18.2.1).
+**One score, or separate parts.** The station could rank access points
+with one score that adds a bonus for never having failed to bonuses
+for RSN and privacy, so a forged failure can move a station to a
+weaker method. erXos keeps admission apart from the memory (section
+18.2.1).
 
-**A hold a person must lift.** Android disables a network after a
-wrong password until the user acts. An impostor in range can make any
-join fail, so such a hold turns minutes of interference into an
-outage of an unattended board. A hold that doubles to an hour and
+**A hold a person must lift.** The station could disable a network
+after a wrong password until the user acts. An impostor in range can
+make any join fail, so such a hold turns minutes of interference into
+an outage of an unattended board. A hold that doubles to an hour and
 then lifts bounds an attacker who keeps every join failing to about
 one exchange an hour.
 

@@ -35,12 +35,11 @@ back every time, with every file it promised to keep and a system
 that boots, from an SD card that promises little about power cuts and
 whose every byte may have been changed by someone holding it.
 
-A UNIX system such as FreeBSD keeps its file systems consistent
-across a crash with soft updates or ZFS, replaces system files in
-place, and can keep the old system as a snapshot to boot if the new
-one fails. Its file systems run in the kernel, so a bug in a file
-system's parser is a kernel bug, and a crafted disk image is an attack
-on the kernel.
+A system can keep its file systems consistent across a crash with
+journals or copy-on-write, replace system files in place, and keep
+the old system as a snapshot to boot if the new one fails. If its file
+systems run in the kernel, a bug in a file system's parser is a kernel
+bug, and a crafted disk image is an attack on the kernel.
 
 erXos runs storage as services in Erlang domains of their own. The
 system itself is a read-only image whose every block is checked
