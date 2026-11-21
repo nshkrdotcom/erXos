@@ -1,7 +1,7 @@
 # Chapter 25. Checking the System
 
 > **Status.** **Built:** the oracles: `make check-oracle`, which runs
-> OTP 29.1.2's emulator, kernel, stdlib and compiler suites on erXos
+> OTP's emulator, kernel, stdlib and compiler suites on erXos
 > and on stock OTP and compares them case by case, then runs musl's
 > `libc-test`; the funnel's differential test against
 > `binary_to_term/1`; and the command shell against plan9port's `rc`
@@ -32,14 +32,7 @@ runtime that prints a pid differently, a C library whose
 accepts one malformed term. Each is invisible to a test that asks only
 what its author expected.
 
-FreeBSD checks itself with a test suite installed under `/usr/tests`
-and run by Kyua, with continuous builds of every architecture, and
-with outside fuzzers such as syzkaller, which can fuzz a FreeBSD
-kernel running in a virtual machine (syzkaller's `docs/freebsd`).
-Most of those tests, like most tests anywhere, state their expected
-answers by hand.
-
-erXos asks for answers that do not come from its own code. Where an
+Most tests anywhere state their expected answers by hand. erXos asks for answers that do not come from its own code. Where an
 independent implementation of the same contract exists, such as stock
 OTP or musl's own tests, the two run side by side and every difference
 must be explained. Where none exists, a model checker or a bounded
@@ -77,7 +70,7 @@ Figure 25.1 shows the oracles erXos uses and what each judges.
 
 ```mermaid
 flowchart LR
-    otp[stock OTP 29.1.2] --> suites[OTP's suites, case by case]
+    otp[stock OTP] --> suites[OTP's suites, case by case]
     musl[musl's libc-test] --> libc[erXos's C library]
     btt[binary_to_term/1] --> funnel[the funnel]
     rc[plan9port rc] --> shell[the command shell]
@@ -95,7 +88,7 @@ emulator, kernel, stdlib and compiler groups are compiled once, by
 stock OTP's compiler, and run under Common Test, OTP's test framework.
 On one side they run in erXos's system domain, booted under QEMU on
 one CPU with HVF, Apple's hypervisor framework. On the other they run
-on stock OTP 29.1.2 built on the development host
+on stock OTP of the same release, built on the development host
 ([README.md, Guest and stock oracle](../../README.md#guest-and-stock-oracle)).
 A Ruby tool compares the two case by case
 (`tools/lib/erx/oracle_suites.rb`). The README estimates the full run
@@ -187,19 +180,18 @@ Two more oracles are **Built**:
   scripts under both.
 * **libvterm** for the terminal emulator
   ([chapter 22](22-display.md#222-input-routing-and-the-terminal)):
-  `tools/lib/erx/vt_oracle.rb` builds libvterm 0.3.3 with a small
+  `tools/lib/erx/vt_oracle.rb` builds libvterm with a small
   harness, and the emulator's screens are compared with its, against
   the differences listed in `test/vt/differences.txt`.
 
-FreeBSD's TCP/IP stack is the reference for how `erx_net` behaves on
-the wire ([chapter 17](17-network.md#171-why-freebsds-stack)), and the
-TCP core's exploration of section 25.5 checks FreeBSD's rules.
+The network stack's model, FreeBSD's TCP/IP stack
+([chapter 17](17-network.md#171-why-freebsds-stack)), supplies the
+rules that the TCP core's exploration of section 25.5 checks.
 
 The design names more oracles, each designed and not built: the Open
 POSIX Test Suite for the POSIX-lite personality, toybox's own tests,
-the commands named like FreeBSD utilities against FreeBSD's in a
-guest, FreeBSD's TCP test scripts run against `erx_net` on the FreeBSD
-x86-64 test host, and erXos's F2FS against Linux's in a guest
+FreeBSD's utilities for the commands that share their names, FreeBSD's
+TCP test scripts for `erx_net`, and Linux's F2FS for erXos's
 ([design.md, Testing and the oracle](../design.md#testing-and-the-oracle)).
 
 ## 25.2 Seeded faults
@@ -746,11 +738,11 @@ against the runtime they built, borrows decades of their judgment. The
 price is the known-differences tables, which must stay exact; the
 stale-row rule keeps them from becoming a place to hide bugs.
 
-**Bounded tools over a full proof.** seL4's proof of 2009 shows that
-a microkernel's C code can be proved correct against its
-specification, at a cost its authors put at about 20 person-years in all, of which
-about 11 went into the seL4-specific proof (Klein et al., 2009). erXos
-runs on Fiasco and checks its own code with tools whose cost grows with what they check. They are models of the
+**Bounded tools over a full proof.** A microkernel's C code can be
+proved correct against its specification, at a cost seL4's authors
+put at about 20 person-years in all, of which about 11 went into the
+kernel-specific proof (Klein et al., 2009). erXos runs on Fiasco and
+checks its own code with tools whose cost grows with what they check. They are models of the
 protocols that are hard to get right, bounded proofs of small C cores,
 and exhaustive exploration of pure cores. Each says exactly what it
 covers.

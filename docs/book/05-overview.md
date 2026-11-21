@@ -16,22 +16,19 @@ links back to it.
 > and checked on every use, a login that gives each person a domain of
 > their own, and toybox's UNIX programs in the session's `/bin`.
 
-A FreeBSD machine that runs a web shop has two worlds in it. One is
-the kernel's: processes, file descriptors, sockets, a scheduler, a
-`ps` listing. The other is the application's: inside the one
-`beam.smp` process that `ps` shows, thousands of Erlang processes
-serve requests, crash, restart and are replaced while they run.
-Neither world sees into the other. When the shop is slow, the
-operator asks the kernel about one process and Erlang about its
-processes, and joins the answers by hand.
+An erXos machine that runs a web shop has one world in it. The
+thousands of Erlang processes that serve requests, crash, restart and
+are replaced while they run are the processes `ps` lists, and the
+services, file systems and drivers are Erlang processes too. When the
+shop is slow, the operator asks one system about every process. (On
+FreeBSD the shop is one `beam.smp` process, and the kernel sees none
+of the Erlang processes inside it.)
 
-FreeBSD's kernel holds every facility, and processes reach it through
-system calls. erXos is built another way. Its kernel is Fiasco, a
-microkernel of the L4 family that knows nothing of Erlang
+The kernel is Fiasco, a microkernel of the L4 family that knows
+nothing of Erlang
 ([chapter 2](02-microkernels.md#25-the-l4-family-and-fiasco)). Above
 it, the machine is one Erlang system divided by walls. Every process a
-user lists, links to or supervises is an Erlang process, and so are
-the services, file systems and drivers.
+user lists, links to or supervises is an Erlang process.
 
 This chapter is the map: the seven concepts the system is built from,
 what runs where and what its failure reaches, a day in the life of a
@@ -124,7 +121,7 @@ started from the system manifest or on request, are **Built**.
 ### 5.1.3 Runtime
 
 A domain's **runtime** is the code that schedules its processes. In
-every domain it is ERTS, built from OTP 29.1.2 with erXos's changes
+every domain it is ERTS, Erlang's runtime system
 ([section 3.5](03-erlang.md#35-the-beam-and-erts)). The runtime
 belongs to its domain, and that is the point. It runs in user mode
 inside the domain's address space, so a bug in it, or in code it
@@ -207,7 +204,7 @@ The first is a **capability**, chapter 2's reference to a kernel
 object
 ([section 2.3.2](02-microkernels.md#232-a-capability-is-a-reference-with-rights)).
 A domain holds its capabilities as **handles**. A handle is a small
-number, like a UNIX file descriptor, that indexes the root service's
+number, much as a UNIX file descriptor is, that indexes the root service's
 handle table for that domain. Its entry names an object, such as an
 address space, a thread or a device's interrupt, and records the
 object's **generation**, a count that grows each time the root
@@ -241,10 +238,9 @@ nothing between it and the sender. Both are **Built**.
 
 A **principal** is the unit of identity: a user in erXos's sense, with
 a budget, quotas and sessions
-([section 4.4.1](04-history.md#441-what-erxos-must-do)). A UNIX user
-is a number the kernel compares on every file access. A principal is
-a record in the system domain's Erlang policy, which decides what the
-domains started for it receive. The kernel never sees it.
+([section 4.4.1](04-history.md#441-what-erxos-must-do)). A principal
+is a record in the system domain's Erlang policy, which decides what
+the domains started for it receive. The kernel never sees it.
 
 Each principal has a **session template**, which describes the domain
 a session of that principal gets: its runtime, its Erlang release, its
@@ -275,12 +271,12 @@ started at boot, are **Built**; installing a package at run time is
 A concept with two owners needs a protocol between them, and every
 such protocol has a moment when the two disagree.
 
-UNIX shows the cost. A file's permission is checked at `open(2)`, not
-at each later `read(2)`. When the file's owner removes a user's
-access, a process that opened the file before keeps reading it. The
-right to read has two owners, the file's mode and every open
-descriptor. "Revoking access does not reach open files" is a rule
-every caller must remember. erXos gives each concept one owner, so
+Take a file whose permission is checked when it is opened, not at
+each later read. When the file's owner removes a user's access, a
+process that opened the file before keeps reading it. The right to
+read has two owners, the file's mode and every open descriptor.
+"Revoking access does not reach open files" is a rule every caller
+must remember. erXos gives each concept one owner, so
 "who decides this?" has one answer and one place in the code.
 [Chapter 6](06-construction.md) shows how a single owner turns a list
 of rules into a property that holds by construction.
@@ -463,8 +459,7 @@ Failure is contained at three nested levels, each with its own
 recovery: a process restarted by its supervisor, a domain ended and
 reported to its links, the machine reset. Erlang already had the
 first. The domain adds the second. Only the system domain's failure
-reaches the third. A conventional system has the third level, the
-kernel panic, and no second.
+reaches the third.
 
 ## 5.3 A day in the life
 
@@ -480,8 +475,7 @@ whether it is built.
 > with: Fiasco's kernel, the root task, ERTS, the system manifest and
 > the Erlang releases of the configured domains
 > ([design-fiasco.md, Boot handoff](../design-fiasco.md#boot-handoff)).
-> A FreeBSD machine reads its kernel and modules from a file system;
-> an erXos machine needs none until the storage domain is up.
+> The machine needs no file system until the storage domain is up.
 
 ### 5.3.1 Power-on to the first Erlang process
 
@@ -636,10 +630,9 @@ has exited and the pump has passed on all it wrote, the shell puts
 `find`'s exit status in `$status`, and `wc` sees the end of its
 input and prints its count.
 
-The end of the stream is the subtle part. On UNIX the kernel tracks
-when every descriptor for the write end is closed. On erXos the
-session itself hands every pipe end to every program and command it
-starts, so it knows who holds each, and the end of the stream follows
+The end of the stream is the subtle part. The session itself hands
+every pipe end to every program and command it starts, so it knows
+who holds each, and the end of the stream follows
 ([design-pipes.md](../design-pipes.md)). Programs in pipelines with
 Erlang commands are **Built**
 ([README.md, Current status](../../README.md#current-status);
@@ -682,8 +675,8 @@ talks only to its session. Every step is built except the program
 
 ## 5.4 Signature experiences
 
-What can a person do on erXos that a conventional system does not
-offer? The architecture names a handful of experiences
+What does this architecture let a person do? It names a handful of
+experiences
 ([design.md, Signature experiences](../design.md#signature-experiences)).
 Each is shown as a sketch of what the reader types; outputs are left
 out.
@@ -729,8 +722,7 @@ Kill the block driver instead, and the storage domain restarts whole.
 A QEMU test does this in the middle of a transfer and finds each file
 it kept cut at a `sync`, never corrupt. Both are **Built**
 (`erlang/apps/erx_net/src/erx_net_sup.erl`;
-[README.md, Current status](../../README.md#current-status)). On
-FreeBSD either driver is kernel code, and its crash is a kernel panic.
+[README.md, Current status](../../README.md#current-status)).
 
 ### 5.4.4 A wall around some processes
 
@@ -742,15 +734,15 @@ the sender cannot learn whether it exists. This is **Built**.
 
 ### 5.4.5 UNIX tools over live Erlang state
 
-The command shell's commands are Erlang commands that follow FreeBSD's
-output, and `/proc` shows the inspector's state as files. Sketch:
+The command shell's commands are Erlang commands with FreeBSD's
+familiar output, and `/proc` shows the inspector's state as files. Sketch:
 
 ```sh
 % ps | wc -l
 % top
 ```
 
-`ps` lists the session's Erlang processes in FreeBSD's columns, `wc`
+`ps` lists the session's Erlang processes in the usual columns, `wc`
 counts the lines, and `top` refreshes the listing. These are
 **Built**.
 
@@ -779,11 +771,10 @@ sees Fiasco's names, so Fiasco's model never leaks into Erlang code
 
 **Every domain is a node.** Each domain is an Erlang node, with its
 domain id as the node's creation number, the field that tells apart
-two lives of a node with the same name. Stock distribution's identity
+two lives of a node with the same name. Erlang distribution's identity
 then does the work of section 5.1.1: a pid is unique, says where it
-lives and goes stale safely. The differences from stock OTP, such as
-sending to a registered name in another domain, are documented and
-tested
+lives and goes stale safely. Where a domain differs from an ordinary node, such as in sending to a
+registered name in another domain, the difference is documented
 ([design-domains.md, Domain ids, pids and references](../design-domains.md#domain-ids-pids-and-references)).
 
 **System code is Erlang, drivers included.** Every connection, file
@@ -844,8 +835,8 @@ reset instead, as OTP's `heart` restarts a node
 
 ### 5.6.4 A familiar surface over a different model
 
-erXos looks like UNIX: `ls`, `cat`, `ps` and `service` behave as
-FreeBSD's do. But a path is resolved in the domain's **namespace**,
+erXos looks like UNIX: `ls`, `cat`, `ps` and `service` behave as a
+UNIX user expects. But a path is resolved in the domain's **namespace**,
 its private table from paths to the file servers it was given, with
 no machine-wide root; a process is an Erlang process, and a user is a
 principal. Each familiar name must behave as it promises, or take a
@@ -861,22 +852,22 @@ a CPU, so CPU time between domains is a matter of priority, not of
 fraction
 ([design-fiasco.md, The scheduler on Fiasco](../design-fiasco.md#the-scheduler-on-fiasco)).
 A service such as storage runs on its own threads, never its clients'.
-Some kernels lend a client's CPU time to the service that works for
-it; erXos does not, so nothing must work out who pays. The price is
-that a saturated service slows all its clients together.
+A service never runs on its client's CPU time, so nothing must work
+out who pays. The price is that a saturated service slows all its
+clients together.
 
 ### 5.6.6 The large alternatives
 
 Four whole designs would each have been simpler to start. Each lost
 for a reason that names something erXos is for.
 
-**Linux underneath.** erXos could run one Erlang node on Linux, as
-Nerves does, or each domain as a stock node over TCP distribution.
-Either is a conventional kernel running Erlang nodes. The kernel's
-processes and Erlang's stay two worlds, and the kernel sees nothing of
+**A general-purpose kernel underneath.** erXos could run one Erlang
+node on a general-purpose kernel, as Nerves does on Linux, or each
+domain as a stock node over TCP distribution. The kernel's
+processes and Erlang's would stay two worlds, and the kernel would see nothing of
 supervision or of who may message whom
 ([design.md, Alternatives considered](../design.md#alternatives-considered)).
-erXos keeps stock distribution's meaning between domains, but on
+erXos keeps Erlang distribution's meaning between domains, but on
 connections the system domain makes, with each runtime's export table
 as the authority
 ([design-domains.md, Alternatives considered](../design-domains.md#alternatives-considered)).
@@ -885,8 +876,8 @@ as the authority
 ERTS on it as one more program. The UNIX process, not the Erlang
 process, would then be what the system knows, and drivers and file
 systems would be kernel code again. erXos keeps POSIX as a layer for
-recompiled programs in sub-spaces, over musl with FreeBSD's error and
-signal numbers, and does not run Linux binaries unmodified
+recompiled programs in sub-spaces, over musl, so a program runs only
+once it is rebuilt for erXos
 ([design-programs.md, Alternatives considered](../design-programs.md#alternatives-considered)).
 
 **One runtime for the whole machine.** ERTS could run in kernel mode

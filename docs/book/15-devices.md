@@ -25,12 +25,10 @@ make the card overwrite any page of memory, and on most machines
 nothing in the processor notices. Drivers are also the largest and
 least tested part of most kernels.
 
-FreeBSD runs its drivers in the kernel, registered with its device
-framework, `newbus`. A driver programs descriptor rings with addresses
-it computes, places each cache flush and barrier through the `bus_dma`
-interface by hand, and parses whatever the device wrote, all in kernel
-mode. A wrong pointer anywhere in this is a kernel panic, or silent
-corruption.
+A driver that runs in kernel mode programs descriptor rings with
+addresses it computes, places each cache flush and barrier by hand,
+and parses whatever the device wrote. A wrong pointer anywhere in this
+is a kernel panic, or silent corruption.
 
 erXos runs each driver as a supervised Erlang process, in a domain
 that holds its device. Under the process sits one small piece of C,
@@ -48,9 +46,8 @@ failure and the choices.
 
 Open a TCP connection from root's Erlang shell to an echo server
 outside the guest, restart the network driver under it, and the
-connection carries on. A QEMU suite does that
-(`tools/lib/erx/qemu_suites/driver_domains.rb`), typing one line in
-the system domain's shell:
+connection carries on. The restart is one line in the system domain's
+shell:
 
 ```erlang
 erx_driver_ctl:restart(erx:cap(network_ctl), net).
@@ -61,15 +58,15 @@ The line goes through the network domain's **driver-control facet**
 through which the system domain stops, starts or restarts a domain's
 drivers. The driver process ends. A new one resets the virtio network
 device and reinstalls its queue, and the interface and its DHCP client
-start again over it. The suite then sends `survives` over the old
-connection and reads it back: the connection lives in the network
-stack's processes, which never stopped. That run is **Built**.
+start again over it. Bytes sent over the old connection still come
+back: the connection lives in the network stack's processes, which
+never stopped. This is **Built**.
 
 ### 15.1.1 What a driver's end reaches
 
 A driver's supervisors, not the driver, decide what its end reaches.
 In the network domain each interface has a **link supervisor** whose
-first child is the driver (`erlang/apps/erx_net/src/erx_net_sup.erl`).
+first child is the driver.
 The driver is the link's *significant* child: in OTP's terms, its end
 shuts the link supervisor down, and the supervisor above starts the
 link again whole. The driver comes first and resets the device; then
@@ -79,14 +76,14 @@ least a second, so a dead cable restarts its link once a second rather
 than in a tight loop.
 
 The storage domain is arranged the other way, on purpose. Its block
-driver's supervisor (`erlang/apps/erx_blk/src/erx_blk_sup.erl`)
-restarts nothing: every child is permanent, under a restart intensity
+driver's supervisor restarts nothing: every child is permanent, under a restart intensity
 of zero. So the block driver's end ends the storage domain, and the
 domain service starts it again with its device. The reason is littlefs
 above the driver: a file system that ran on across a driver restart
 would have to reason about half-done writes, while a fresh domain
-mounts the volume as of its last `sync`. A QEMU test kills the block driver mid-transfer and finds
-every closed file intact and the file being written cut at a sync.
+mounts the volume as of its last `sync`. A block driver killed
+mid-transfer leaves every closed file intact and the file being
+written cut at a sync.
 Both arrangements are **Built**.
 
 ### 15.1.2 Why drivers are Erlang
@@ -100,16 +97,17 @@ read it, and its supervisor starts it again; in C the same mistake
 reads past a buffer.
 
 What stays in C is small and named. The **device shim** is the device
-NIF's C, in `otp/erts/emulator/nifs/erxos/`: register access, interrupt
+NIF's C: register access, interrupt
 binding, queues, and the DMA plan with its check. The per-byte
 primitives, such as checksums and bulk copies, are C because a per-byte
 loop costs too much in Erlang. Any other native driver code would need
 a row of the **driver table**
 ([design-system.md, The driver
 table](../design-system.md#the-driver-table)), naming the device and
-the measurement that showed Erlang too slow for it. On Fiasco a
-measurement admits none, because it would time Fiasco's interrupt path
-rather than the driver, and the table has no rows. Every driver erXos
+the measurement that showed Erlang too slow for it. On
+Fiasco, a measurement admits none, because it would time
+the kernel's interrupt path rather than the driver, and the table has
+no rows. Every driver erXos
 runs is Erlang.
 
 Figure 15.1 shows the parts of one driver domain.
@@ -131,8 +129,8 @@ reaches the driver as a message.*
 
 ## 15.2 How a device reaches its driver
 
-No driver in erXos discovers its device, as FreeBSD's `newbus` probes
-for one at run time. A device belongs to the domain the **system
+No driver in erXos probes for its device at run time. A device belongs
+to the domain the **system
 manifest** gives it to, the checked file that lists the machine's
 domains and what each holds ([chapter
 7](07-one-source.md#77-the-system-manifest-the-machines-configuration-checked)).
@@ -143,9 +141,8 @@ boots, and the device reaches its driver as a record.
 
 The manifest gives devices out by **unit**: a set of devices that
 share a register page or an interrupt line, given whole to one domain,
-its **holder**. The Raspberry Pi 4's manifest
-(`config/manifest/raspi4b-development.txt`) gives the SD unit to the
-storage domain in three lines:
+its **holder**. The Raspberry Pi 4's manifest gives the SD unit to
+the storage domain in three lines:
 
 ```text
 unit block
@@ -154,8 +151,8 @@ unit block
 ```
 
 The placement `sd` names an entry of the board's **platform record**,
-the file that lists the board's devices, their addresses and its pins
-(`config/platforms/raspi4b.json`). It holds the EMMC2 controller, which
+the file that lists the board's devices, their addresses and its
+pins. It holds the EMMC2 controller, which
 drives the SD card, and the board's older SD controller, which shares
 EMMC2's interrupt line (section 15.5). The unit is named `block` on
 QEMU `virt` too, so the system shell's
@@ -169,7 +166,7 @@ object for DMA, and an IRQ object for each line
 ([chapter 8](08-kernel-interface.md#872-devices)). A device's DMA
 memory is charged to the system domain's budget, not the holder's, and
 is kept across the holder's restarts, so a restarted holder gets the
-same memory back (`liberx/system/dom_life.c`). The **device service**,
+same memory back. The **device service**,
 the system domain's service that hands each holder its devices, then
 sends the holder each device's record: the handles of its objects, its
 peripheral's name in the CMSIS-SVD sources, its device-tree path,
@@ -194,11 +191,11 @@ The **coherent** flag comes from the node's `dma-coherent` property:
 QEMU `virt` marks each virtio node, and the BCM2711's tree marks none.
 The **DMA range** comes from the `dma-ranges` properties above the node:
 the device sees processor address `dma_cpu + x` at bus address `dma_bus
-+ x`. The reader, `kernel/core/dt.c`, answers each fact with a value or
++ x`. The reader answers each fact with a value or
 with an absence. A device whose facts are missing or malformed gets no
 DMA memory at all: the reader never fills in a default, and no table
 written at build time holds a range that could disagree with the board
-that boots. The reader is **Built** (`test/host/dt_test.rb`). It cannot
+that boots. The reader is **Built**. It cannot
 check that the hardware does what the tree says: the firmware is
 trusted as part of the machine.
 
@@ -206,8 +203,7 @@ trusted as part of the machine.
 
 A driver reaches its device through one Erlang module, `erx_device`,
 and nothing else. A build check fails the build if a module outside
-the driver applications and the console's UART drivers names it
-(`device-callers`, in `tools/lib/erx/chokepoint_rules/device.rb`);
+the driver applications and the console's UART drivers names it;
 similar checks guard the NIF's other narrow calls.
 
 > **Background: virtio.** An emulator such as QEMU offers devices
@@ -224,8 +220,7 @@ similar checks guard the NIF's other narrow calls.
 ### 15.3.1 A driver, start to finish
 
 The virtio block driver shows the whole interface in a few lines.
-`start_device/1`, in `erlang/apps/erx_blk/src/erx_blk_virtio.erl`,
-brings the device up:
+Its `start_device/1` brings the device up:
 
 ```erlang
 start_device(Spec) ->
@@ -269,7 +264,7 @@ The Pi 4's SD driver shows the rule at its sharpest. Some SD commands
 start a DMA transfer, so the NIF keeps the command register:
 `erx_device:command/2` is the one way to write it, and it refuses any
 command word that would start DMA, because the NIF arms no DMA queue
-for the SD controller (`erx_device.h`). So the SD driver moves every
+for the SD controller. So the SD driver moves every
 byte through the data register, by programmed I/O.
 
 ### 15.3.3 Interrupts are messages
@@ -292,7 +287,7 @@ driver acknowledges before it drains the completions, so one that
 lands during the drain fires the line again instead of being missed.
 No thread blocks waiting: the domain's **dispatcher**
 ([chapter 8](08-kernel-interface.md#871-one-path-for-devices-and-peers))
-waits in Fiasco for all its IRQ objects. Every delivery is a hint to
+waits in the kernel for all its IRQ objects. Every delivery is a hint to
 look, so a late, repeated or spurious interrupt costs one status read
 and a drain that finds nothing.
 
@@ -301,8 +296,8 @@ and a drain that finds nothing.
 A queue, and the pool of buffers behind it, belongs to the device's
 record in the NIF, never to the driver process, so a driver's crash
 leaves the buffers it posted posted, where the device may still write
-them. A restarted driver that asks for the same queue gets it back
-(`erx_device_queue_create` in `erx_device.h`). Its `negotiate` resets
+them. A restarted driver that asks for the same queue gets it back.
+Its `negotiate` resets
 the device first, and only once the device reports idle does the NIF
 take back the old buffers and install the queue again. So nothing a
 device may still hold an address for is given out again. This is
@@ -332,13 +327,11 @@ ending in more reads, in a **plan** and the queue's next state, or in
 the call's end ([design-device-dma.md, Calls, observations and
 plans](../design-device-dma.md#calls-observations-and-plans)).
 
-One independent check, `erx_device_dma_check` in
-`otp/erts/emulator/nifs/erxos/erx_device_dma.c`, stands between every
+One independent check, `erx_device_dma_check`, stands between every
 plan and the hardware. It verifies that every device address and
 length the plan writes stays inside the queue's DMA memory, as the
 device sees it, and that no **region**, a span of that memory such as
-a ring or a buffer, has two writers. The effect layer, `erx_device.c`,
-calls the check and applies only a plan it accepted; a refused plan is
+a ring or a buffer, has two writers. The effect layer calls the check and applies only a plan it accepted; a refused plan is
 a bug in the form, and the call fails with nothing applied. Figure
 15.2 shows one call.
 
@@ -371,8 +364,7 @@ every virtio driver on QEMU `virt`, and GENET's register ring on the
 Pi 4. GENET's descriptors are device registers, and the NIF writes
 their addresses once, when the queue is installed. A third form, the
 TRB ring of a USB host controller, is built as pure code with host
-tests (`erx_device_trb.c`), drives no device and is not part of the
-NIF. The SD controller's ADMA2 form is designed and not built, which
+tests, drives no device and is not part of the NIF. The SD controller's ADMA2 form is designed and not built, which
 is why the SD driver uses programmed I/O.
 
 ### 15.4.2 Writers, and the maintenance that follows
@@ -454,7 +446,7 @@ base ([chapter 11](11-security.md#112-trust-placement)).
 On QEMU `virt` each virtio device has a 512-byte register window,
 eight to a 4 KiB page. On the Pi 4 the mini UART, the console, shares
 a register page with two SPI controllers, and EMMC2 shares its
-interrupt line with the older SD controller. Fiasco maps memory in
+interrupt line with the older SD controller. The kernel maps memory in
 whole pages and binds one IRQ object to a line, so neither a page nor
 a line can be split between two domains.
 
@@ -467,10 +459,8 @@ that share either are in one unit, given whole to one domain. The
 manifest check refuses a manifest that splits a unit, and the give
 makes one register window per run of pages and one IRQ object per
 line, so the kernel never meets a page or a line claimed twice. The
-rule is **Built**: in the manifest checker
-(`tools/lib/erx/manifest.rb`), the domain library
-(`liberx/system/dom_core.c`) and the QEMU harness, which places the
-virtio devices by unit.
+rule is **Built**, in the manifest checker, the domain library and
+the QEMU harness, which places the virtio devices by unit.
 
 ### 15.5.2 Sharing inside one domain
 
@@ -480,7 +470,7 @@ since every name resolves inside its device's window. A shared line
 needs one more rule, because one line delivers one message. The line
 has a **line owner**, a process that binds it once, and the drivers of the devices that name it join the line owner
 instead of binding. The storage domain on the Pi 4 starts the line
-owner of EMMC2's line before the block driver (`erx_blk_sup.erl`). No
+owner of EMMC2's line before the block driver. No
 driver runs the older SD controller: the domain holds it as part of
 the unit and opens nothing of it. Only `erx_irq_line` binds or
 acknowledges a line. The console, in the system domain, joins the line
@@ -512,8 +502,8 @@ power to one place alone.
 
 In the design, the **PCIe domain** holds each host bridge's
 configuration window and no other device, because it is in the trusted
-base whole. Its one process, the **enumerator**
-(`erlang/apps/erx_pcie/`), walks the bus, places each function's BARs
+base whole. Its one process, the **enumerator**, walks the bus,
+places each function's BARs
 inside the bridge's windows, and reports each function to the device
 service ([design-pcie.md, The PCIe domain](../design-pcie.md#the-pcie-domain)).
 A function then goes to its manifest holder like any device: the give
@@ -550,7 +540,7 @@ No image erXos boots runs the PCIe domain; that is designed and not
 built, as are MSI delivery, virtio over PCIe and every PCIe driver.
 The enumerator's parts, from the configuration-space decoder to the
 plan and the BCM2711 bridge's bring-up core, are **Built** as pure
-code with host tests (`test/erlang/erx_pcie_*`). The domain library's
+code with host tests. The domain library's
 intake of a PCIe report and its give of a function are **Built** in C,
 wired into the system domain and unexercised, since no PCIe domain
 sends a report.
@@ -603,8 +593,8 @@ that it holds nothing of them.
 
 The bus core knows one kind of port, a hub's: read status, reset,
 clear a change, power on and off. The controller process answers these
-for its root ports by translating them into registers, as FreeBSD's
-xHCI driver emulates a root hub for `uhub`, so a device on a root port
+for its root ports by translating them into registers, so a device on
+a root port
 and one three hubs down run the same states. Three kinds of process
 own all the state, each deciding by a pure step: one for the
 controller, one for the bus, and one for each claimed interface.
@@ -612,7 +602,7 @@ controller, one for the bus, and one for each claimed interface.
 Both machines' controllers sit on PCIe (`qemu-xhci`, and the Pi 4's
 VL805 chip), so USB needs the PCIe domain. The cores, the descriptor
 and HID report decoders and the input tree are **Built** as pure
-code, with host tests and fuzz targets, in `erlang/apps/erx_usb/`. No
+code, with host tests and fuzz targets. No
 USB driver runs on a booted machine; that is designed and not built.
 
 ## 15.8 The Raspberry Pi 4's small devices
@@ -629,8 +619,8 @@ construction](../design-header-io.md#the-construction-one-map-of-the-header)).
 For each of GPIO 0 to 27 it gives a use: plain `gpio`, a device's signal
 with its function and pull, the JTAG debug port, or `reserved`. The map
 is checked against a table of the chip's pins from the BCM2711
-datasheet, `hw/pins/bcm2711.txt`, so it cannot give the console's pins
-to SPI. That check is **Built** (`tools/lib/erx/pins.rb`). In the
+datasheet, so it cannot give the console's pins to SPI. That check is
+**Built**. In the
 design, drivers serve `/dev/gpio`, `/dev/i2c1`, `/dev/spi0` and
 `/dev/pwm0`, each from the domain that holds its controller; they are
 designed and not built.
@@ -654,30 +644,30 @@ designed and not built.
 | the block driver crashes | the storage domain ends and the domain service starts it again | `/data` returns, each file as of its last `sync` |
 | a device writes nonsense into a buffer | the driver's pattern match fails and the process crashes | as for that driver's crash |
 | a form returns an unsafe plan | the check refuses it; nothing is applied | the driver's call fails |
-| a device stops answering, so a register access aborts | usually the driver's domain ends; an error Fiasco takes late can end another domain | as for that domain's restart |
+| a device stops answering, so a register access aborts | usually the driver's domain ends; an error the kernel takes late can end another domain | as for that domain's restart |
 | a device's DMA facts are absent | the device gets no DMA memory | its driver's `queue_create` is refused, and the driver does not start |
 | a driver domain is taken over | on these machines its device can write any memory | nothing stops it; the domain is in the trusted base |
 
 Three limits deserve plain words. A fault in the device NIF, native
 code in the runtime, ends its whole domain rather than one process. A
-device error that the processor reports while it runs in Fiasco is
-charged to whichever thread next enters user mode, so it can end
-another domain's task. A device that misbehaves can hang or panic
-Fiasco, which stops the whole machine. And a device the firmware or
+device error that the processor reports while it runs in the kernel
+is charged to whichever thread next enters user mode, so it can end
+another domain's task. A device that misbehaves can hang or panic the
+kernel, which stops the whole machine. And a device the firmware or
 boot loader left running can write memory before its driver's first
 reset ([design-platforms.md](../design-platforms.md#dma)).
 
 ## 15.10 Design choices
 
-**Drivers in Erlang, not in C.** erXos follows sDDF, the seL4 Device
-Driver Framework, in splitting a driver from the policy beside it, but
-writes the driver in Erlang, for the reasons of section 15.1.2. The
+**Drivers in Erlang, not in C.** A driver is split from the policy
+beside it, after sDDF, the seL4 Device Driver Framework, and written
+in Erlang for the reasons of section 15.1.2. The
 cost is an interrupt's path through the dispatcher and the runtime's
 scheduler.
 
-**A plan and a check, not careful code.** FreeBSD's `bus_dma` gives a
-driver the cache operations, but the driver still places each one. In
-erXos forms cannot express maintenance, and the check is a second,
+**A plan and a check, not careful code.** A kernel's DMA interface can
+hand a driver the cache operations, but the driver still places each
+one. In erXos forms cannot express maintenance, and the check is a second,
 independent statement of the rules, so a bug must pass two pieces of
 code written to different specifications.
 
@@ -718,7 +708,7 @@ domain; their cores are built.
   the Pi 4's header and its firmware readings.
 * Marshall Kirk McKusick, George V. Neville-Neil and Robert N. M.
   Watson, *The Design and Implementation of the FreeBSD Operating
-  System*, second edition, 2014: its chapter on devices covers
-  `newbus` and `bus_dma`, the baseline this chapter departs from.
+  System*, second edition, 2014: its chapter on devices describes
+  drivers in a conventional kernel.
 * OASIS, *Virtual I/O Device (VIRTIO) Version 1.2*, 2022, section 2.7:
   the split ring.

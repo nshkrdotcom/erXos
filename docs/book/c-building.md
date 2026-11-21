@@ -13,10 +13,7 @@ what `deps.lock` names and checked every byte against its hash. Only
 the fetch step (section C.2) reaches the network; every other command
 runs offline, under a deadline, with its output in a log.
 
-On FreeBSD, building the system is `make buildworld` in a checkout of
-`/usr/src`, with tools from the base system and nothing fetched. erXos
-cannot work that way: it builds with sources it does not keep in its
-tree, such as LLVM's runtime libraries, the Raspberry Pi firmware and
+erXos builds with sources it does not keep in its tree, such as LLVM's runtime libraries, the Raspberry Pi firmware and
 the boards' device trees, and it tests itself against programs it does
 not ship, such as stock OTP. So it pins each one by URL and SHA-256.
 
@@ -171,7 +168,7 @@ verified, with its own `configure`, offline. One build has the JIT,
 and is the oracle OTP's test suites are compared against. The other is
 the `emu` interpreter, which the hosted runtime's build runs as its
 host OTP. Homebrew's OTP will not do: it is a different release and
-cannot cross-build 29.1.2. To rebuild one oracle:
+cannot cross-build erXos's. To rebuild one oracle:
 
 ```sh
 tools/erx oracle build --backend native --flavour jit --clean

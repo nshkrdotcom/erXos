@@ -8152,7 +8152,7 @@ to the corpus and follow rc
   translator parameter of Address Device. With one external hub it cannot reach a hub given up while a port below it holds the
   turn and another hub could reset; `a_hub_given_up_keeps_its_childs_turn_test` covers that case alone.
 * [High] Device NIF, every descriptor form against the DMA check (`erx_device_dma.c`,
-  `erx_device_genet.c`, `erx_device_trb.c`, `erx_device.c`): the cores store raw ring fields, place their own records
+  `erx_device_genet.c`, `erx_device.c`): the cores store raw ring fields, place their own records
   and state their own writers, while [The check](docs/design-device-dma.md#the-check) has each core describe records
   by meaning, fields and names, and the sequencer write them, make each run live, and end what the device holds only
   by its reports, which it acquires itself (the validity, then the records it covers), against one ledger. The TRB form's tables, bindings and releases are in
@@ -8210,9 +8210,36 @@ model harness drive `erx_device.c` itself. `erx_device_dma_check` and `erx_devic
   bindings; the TRB form's releases from acquired events; the
   stand-ins' ledger check. Before a non-coherent device relies on the acquisition, its unverified AArch64 premise is settled by the Arm
   ARM passage, the litmus test or the VL805 probe [Releases](docs/design-device-dma.md#releases) names.
-* [Medium] DMA, the TRB form's core (`erx_device_trb_form.c`): its layout, posts and commands are host-tested and used by nothing yet: `erx_device.c` calls neither `erx_trb_form_post` nor `erx_trb_form_command`. Before `erx_device.c`'s TRB post and commands move onto it, its releases from the event ring are host-tested too (`erx_trb_form_acquire`, `erx_trb_form_complete`). It still needs the form's 64-bit address width checked against the controller's AC64; and a generated way to write `ERDP` with its busy bit, whose `oneToClear` field in a register with other fields gets no setter from the SVD generator (`erx_trb_form_complete` gives the dequeue pointer alone); and the install that zeroes and cleans the event ring at a reset, which `erx_trb_form_reset` requires (an event left from before it carries the first lap's cycle bit). Also open there: `describe` repeats `transfer_words`' setup type and status direction, and `block_count` repeats erx_device_trb.c's, until `erx_device_trb_post` moves over and they go; `pool_first_buffer` repeats the ledger's numbering of buffers across pools; the ledger's bounds come from `erx_device_trb.h`, which a neutral bounds header would hold instead; the input context's pool size is its region's granule-rounded length. Neither TRB core is in `erx_device.mk` yet, so `libc_free_entries_test.rb` does not hold them to `liberx/backend/core/mem.h` until they join it.
-* [Medium] DMA, the TRB form's commands (`erx_device_trb.c` beside `erx_device_trb_form.c`): until `erx_device_trb.c`'s commands move onto the form, it derives the add flags' inputs (drops, Context Entries, dequeue words) itself and passes them to the public `erx_dma_input_context`, ignores the composition's refusal, checks the hub fields in `accept_configure` beside `erx_device_trb_configure_slot_valid`, and gives Configure Endpoint a slot context of the hub fields alone, speed 0, where design-usb.md's table and the form carry the slot's addressed fields (xHCI 1.2, 6.2.2.2, p. 448: a high-speed hub's think time and multi-TT need its speed), since its slots keep only the speed; the commands that carry the input context are listed twice (by kind in the form, by meaning in the sequencer), where a mark in abi/formats could give one list. `place_input_context` composes into 33 parts though a publication carries at most `ERX_DMA_INPUT_PARTS_MAX`. Nor is a slot's holding, its DCBAA entry and device context from its first Address Device, in the ledger, as design-usb.md's "Bindings and holdings" gives it.
-* [Medium] DMA, the TRB form's command refusals (`erx_trb_form_command` in `erx_device_trb_form.c`): a command the ledger's reach rule refuses (a stop or restart of a disabled endpoint, a drop of a halted, disabled or busy one, Disable Slot with a busy endpoint, Evaluate Context on an EP0 not running or stopped, or not idle) is answered `ERX_DEVICE_TRB_REFUSE_HALTED`, as `erx_device_trb_form.h` states and the harness pins, while design-usb.md's refusal table and `erx_device_trb.c` answer `badarg` for a command the queue's state does not accept and keep `{error, halted}` for transfers. Settle one contract before `erx_device.c`'s commands move onto the form; mapping `ERX_DMA_BREAKS_REACH` to BADARG for commands matches the table and the code the form replaces.
+* [Medium] DMA, the TRB form's core (`erx_device_trb_form.c`): it is the one xHCI path, host-tested, and the NIF does not run it yet: `erx_device.c` has no xHCI queue, so design-usb.md's `erx_device:post(Dev, command, Tag, Command)` and `erx_device:post(Dev, {Slot, Dci}, Tag, Transfer)` are not built, and the NIF answers neither. It still needs the form's 64-bit address width checked against the controller's AC64; and a generated way to write `ERDP` with its busy bit, whose `oneToClear` field in a register with other fields gets no setter from the SVD generator (`erx_trb_form_complete` gives the dequeue pointer alone); and the install that zeroes and cleans the event ring at a reset, which `erx_trb_form_reset` requires (an event left from before it carries the first lap's cycle bit). Also open there: `pool_first_buffer` repeats the ledger's numbering of buffers across pools; the ledger's bounds come from `erx_device_trb.h`, which a neutral bounds header would hold instead; the input context's pool size is its region's granule-rounded length. Neither `erx_device_trb.c` nor `erx_device_trb_form.c` is in `erx_device.mk` yet, since the NIF links neither, so `libc_free_entries_test.rb` does not hold them to `liberx/backend/core/mem.h` until they join it.
+* [Medium] DMA, the TRB form's input context and slots (`erx_device_sequencer.c`, `erx_device_ledger.c`): `place_input_context` composes into 33 parts though a publication carries at most `ERX_DMA_INPUT_PARTS_MAX`; the commands that carry the input context are one list (`erx_dma_carries_input_context`), where a mark in abi/formats could make it generated; nor is a slot's holding, its DCBAA entry and device context from its first Address Device, in the ledger, as design-usb.md's "Bindings and holdings" gives it.
+* [Medium] DMA, the TRB form's commands against the queue state (`erx_device_ledger.c`, `reach_stop`, `reach_restart`;
+  design-usb.md, "Queues and their states" and "What the DMA check judges"): the queue table's last column accepts
+  Stop Endpoint only on `open`, Reset Endpoint only on `halted` and Set TR Dequeue Pointer only on `stopped`, while
+  the reach rules refuse only a disabled endpoint and design-usb.md's check section leaves the rest to the
+  controller's Context State Error, which changes nothing (4.8.3, 4.6.8, 4.6.10); the form harness pins "accepted in
+  any of its states". A controller answering success to a Set TR Dequeue Pointer on a running ring would have the
+  ledger retire transfers it still runs, their buffers posted again while the device may write them. Settle one
+  contract: state columns in `reach_rule_t` (stop from running, reset from halted, restart from stopped, which needs
+  a `reset` reach mark in abi/formats/xhci.txt apart from `stop`), or the table's column restated as what the
+  controller accepts. Recommended: the columns, as the table says.
+* [Low] DMA, the TRB form's slots (`parameters_valid` in `erx_device_trb_form.c`): an Address Device is accepted on
+  any slot of the layout's, not only one an Enable Slot gave; the controller answers Slot Not Enabled, and
+  `reach_address`'s `failure_keeps` leaves the control block bound until a Disable Slot, so sixteen such posts leave
+  no block for an Address Device until a reset. A slot's enabled bit, set from Enable Slot's success and cleared by
+  Disable Slot's, would refuse it as badarg.
+* [Low] DMA, the TRB form's shape (`shape_valid` in `erx_device_trb.c`): a shape must leave three positions of each
+  ring free beside its posted TRBs, a reserve sized for a stop span the form does not keep; the check's room rule
+  may make one or two enough.
+* [Medium] DMA, the TRB form's model harness (`test/fixtures/erx_device_trb_form_model_harness.c`,
+  `erx_device_trb_model.c`): the model's Stopped event inside a TD never runs, since the form publishes a whole TD
+  at once and the model takes it in one go (a per-call TRB budget would let a run end mid-TD), and the trace checks
+  none of its failure, short and stopped counts; its effect layer (`maintain`, `activate_run`, the zeros, fills,
+  stores and cleans of `apply_sequence`) copies `erx_device_dma_model_harness.c`'s, which one fixture header could
+  hold, settle and activation passed in; the transaction-error check trusts a count `start_ring`, drops and Disable
+  Slot leave stale, where the model could record the TD it failed; the seed tests match any FAILED line rather than
+  each seed's check; the model refuses ERDP's low bits, where the form's header has the effect layer write the busy
+  bit; `report` writes Command Completion events through the Transfer Event's offsets, equal in abi/formats/xhci.txt
+  but unasserted; and the harness sets the model's `fail` and `short_packet` fields directly.
 * [Low] DMA, the TRB form's stop events (`stop_event` in `erx_device_trb_form.c`): a stop's transfer event is accepted when it names any record of the ring bound to the stopping endpoint, not only one inside the stop span design-usb.md's "Completing" gives. It completes nothing, so the gap fails safe, but an event the controller could not have written passes.
 * [Low] DMA, a failed Address Device (`reach_address` in `erx_device_ledger.c`): its failure keeps EP0's binding, EP0 disabled, until Disable Slot succeeds, as xHCI 1.2, 4.6.5, p. 114 leaves the slot in the Default state; for a slot no Enable Slot enabled (Slot Not Enabled Error, which changes nothing) no Disable Slot can succeed, so the ring stays held until the controller's reset. Fails safe; ending the binding on the codes 4.6.5 says change nothing (Parameter Error, Context State Error, Slot Not Enabled Error) would need the ledger to take the completion code, not a success flag.
 * [Low] DMA, the ledger's reach rules (`reach_rule_t` in `erx_device_ledger.c`): the endpoints a reach acts on are two flags (`names_one`, `whole_group`) and a mask (`holds`) beside the implicit binds-and-drops case, so a row can set several, where an enum would make that unwritable; the state preconditions in `erx_dma_ledger_reach_allows` (named means enabled, a drop neither disabled nor halted, a removal not busy, a held endpoint running or stopped and idle) are code, not columns; and no test keeps the attempt to build a reach without its row (`ERX_REACHES`), which fails by construction (`&reach_##name` names an undeclared identifier).
@@ -8224,14 +8251,8 @@ model harness drive `erx_device.c` itself. `erx_device_dma_check` and `erx_devic
   enum (the device reads, the device writes, a region) makes it unrepresentable. About sixty sites in eighteen
   files use the booleans, most in the old virtio core, its harness and fuzz target and the TRB form; done after
   the old core goes, and with the TRB form's branch landed, it is a mechanical change.
-* [Medium] USB, the TRB ring form's commands (`erx_device_trb.c`): one command's behaviour is spread over `accept`,
-  the context builders in `erx_device_trb_command`, `command_words` and `erx_device_trb_command_done`; one entry per
-  command kind holding its acceptance, its build and its completion would keep each together.
-* [Medium] USB, the TRB ring form's contexts, settled from the xHCI specification before the board pass: EP0's
-  average TRB length is written as its packet size and every endpoint's as packet times burst plus one (the design
-  says only "derived from its packet size and burst"); Configure Endpoint's slot context carries only the context
-  entries and hub fields, route, speed, root port and TT left 0, as the design's table says, though a controller that
-  evaluates the whole slot context with its add flag would misread them; a non-EP0 control endpoint takes index
+* [Medium] USB, the TRB ring form's contexts, settled from the xHCI specification before the board pass: a non-EP0
+  control endpoint takes index
   2n + 1 (xHCI 4.5.1).
 * [Low] USB, a USB 3 root port after a disable (`erx_xhci_core`, port_operation/2): writing PORTSC's PED to disable a
   USB 3 port leaves it in the Disabled link state, which leaves only through a PLS write of RxDetect with LWS set
@@ -8244,13 +8265,9 @@ model harness drive `erx_device.c` itself. `erx_device_dma_check` and `erx_devic
   with the xHCI section that requires it (not yet read) and covered by the model controller's test.
 * [Low] USB, the TRB ring form's design text (design-usb.md, "Two rules every ring keeps, on every controller"): it says a transfer that
   continues past the link sets the link's chain bit, but each control stage is a TD of one TRB (xHCI 4.11.2.2), so no
-  TD of the form spans the link and `erx_device_trb.c` never sets it; and a ring's queue starts at the block's enqueue
-  position and cycle state, not at "its ring's base", which keeps stale TRBs of an earlier queue on the other cycle
-  without zeroing the ring. design-device-dma.md's refusals list no answer for a command refused while another is
+  TD of the form spans the link and the sequencer never sets it. design-device-dma.md's refusals list no answer for a command refused while another is
   in flight or for want of a free block (`ERX_DEVICE_TRB_REFUSE_FULL`), nor for a post on a queue the command in
   flight holds (`ERX_DEVICE_TRB_REFUSE_HALTED`).
-* [Low] USB, the TRB ring form's step bounds (`ERX_DEVICE_TRB_POST_STEPS`, `ERX_DEVICE_TRB_COMMAND_STEPS`): counted
-  in comments and asserted only by the harnesses; nothing in the core enforces them.
 * [Low] PCIe, a 32-bit MSI with per-vector masking (`erx_pcie_cfg`, `erx_pcie_plan`): where its mask and pending
   registers lie is unverified. FreeBSD 15.1.0's `pcireg.h` gives `PCIR_MSI_MASK` (0x10) only for the 64-bit layout,
   and its `pci.c` never touches the mask register, so the parser ends that layout's extent at its data and the

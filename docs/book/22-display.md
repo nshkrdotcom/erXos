@@ -2,7 +2,7 @@
 
 > **Status.** Built: the display domain, whose window server serves
 > each window as a directory of files; the pixel area and `present`,
-> by the copy path; Plan 9's draw protocol, executed in the client's
+> by the copy path; the draw protocol, executed in the client's
 > session, and `/dev/draw` for a program started with a window; the
 > virtio-gpu, virtio-input and Raspberry Pi framebuffer drivers in
 > Erlang; the input router; the single window policy; the widget
@@ -31,18 +31,9 @@ things a person has. It sees every password typed at the machine and
 every pixel of every window. If it also runs code its clients send it,
 a bug in that code sees all of that too.
 
-On FreeBSD the usual answer is the X Window System: a server, Xorg,
-owns the graphics hardware and the input devices, and programs connect
-to it over a socket. The classic X protocol asks the server to draw
-lines, rectangles and text in its own fonts. Modern toolkits draw into
-images of their own and hand the server finished pixels. A compositor,
-another client, puts the windows together.
-Either way the server is a large program with an authority model of
-its own, and it parses every client's requests.
-
 erXos's answer has four parts. A **display** is a domain that holds a
 screen and its input devices and serves each window as a directory of
-files, as Plan 9's window system, rio, did. A window's pixels are a
+files, an idea from Plan 9's window system. A window's pixels are a
 buffer that its client writes and the display only reads. The client
 names the rectangles that changed with one command, `present`, and the
 display parses nothing else a client sends. An Erlang application
@@ -123,15 +114,14 @@ flowchart TB
 rooted at its own directory, so no other client's windows are names in
 its tree.*
 
-The formats are Plan 9's and 9front's: Plan 9's 49-byte `mouse`
-records, and 9front's `kbd` records, a byte naming the kind, the key's
-characters in UTF-8 and a NUL. A read of `mouse` or `kbd` that finds
+The formats come from Plan 9: 49-byte `mouse` records, and `kbd`
+records of a byte naming the kind, the key's characters in UTF-8 and a
+NUL. A read of `mouse` or `kbd` that finds
 nothing waits for the next record. These are stream files, and the
 window process is their keeper
-([chapter 14](14-files.md#1425-stream-files-and-keepers)). A Plan 9
-programmer finds what they expect. Names the model has no use for,
-such as `cons` and `wsys`, do not exist, because a terminal is a
-program's choice (section 22.2.3).
+([chapter 14](14-files.md#1425-stream-files-and-keepers)). A window
+serves no terminal file, because a terminal is a program's choice
+(section 22.2.3).
 
 A window ends when the process that made it ends, when its directory
 is removed, or when the grant ends. The window server records each
@@ -178,17 +168,13 @@ The answer to the write comes when the device has taken the frame. It
 does three jobs. It tells the client that the buffer presented before
 is free to draw into. It paces the client to the device. And since a
 window sends its next present only after the answer, each window has
-at most one present in flight. Wayland sends a release event and a
-frame callback for these; erXos needs neither, because the answer to a
-write is already a signal.
+at most one present in flight. No release event or frame callback is
+needed, because the answer to a write is already a signal.
 
 ### 22.1.3 A present, end to end
 
 Follow a program that draws a red square into its window. Every step
-is built. In QEMU, the kiosk suite runs a program that draws through
-`/dev/draw` this way and checks that its frames change the screen.
-The display suite's client draws into its buffer from Erlang instead,
-and the suite compares the screen with a reference picture.
+is built.
 
 1. The program's first open of `/dev/draw` made its handler
    ([chapter 13](13-native-programs.md#1322-the-handler)) open it a
@@ -196,7 +182,7 @@ and the suite compares the screen with a reference picture.
    a `/dev` of its own, with `draw`, `ctl`, `kbd`, `mouse`, `wctl` and
    `label`. The session read `screen`, made the window, then allocated
    its buffer at the screen's size in the pixel area.
-2. The program writes Plan 9 draw messages to `/dev/draw`: allocate an
+2. The program writes draw messages, Plan 9's draw protocol, to `/dev/draw`: allocate an
    image of solid red, draw it over a rectangle of image 0, the
    connection's name for the window itself, and send `v`, the message
    that flushes. The write reaches the session's **draw connection**,
@@ -223,11 +209,8 @@ and the suite compares the screen with a reference picture.
    again.
 
 The display decoded no draw message, loaded no font and ran nothing on
-the program's behalf. Plan 9 executed draw messages in its kernel.
-erXos executes them in the client's session, much as plan9port, Plan
-9's port to other systems, executes them in a separate program,
-devdraw, that its clients start. A Plan 9 draw client needs only its
-connection code changed.
+the program's behalf: draw messages are executed in the client's own
+session (section 22.10).
 
 `erx_screen` never waits on the driver. A frame request returns at
 once and the answer arrives as a message, so the mailbox keeps
@@ -328,21 +311,19 @@ writes comes back as typed input. A
 title report, which in some terminals echoes attacker-chosen text to
 the shell, does not exist.
 
-The terminal type is an xterm-compatible subset named `xterm`, as
-FreeBSD's console driver vt(4) names itself, since every program and
-remote system knows that name. A type of erXos's own would be honest
-and unknown everywhere. Terminal descriptions follow FreeBSD's termcap,
-not terminfo. `erx_vt` is built, with host tests, a fuzz target and a
-comparison against an oracle. `erx_term`, the window around it, is
+The terminal type is an xterm-compatible subset named `xterm`, since
+every program and remote system knows that name. A type of erXos's own
+would be honest and unknown everywhere. Terminal descriptions are in
+termcap, not terminfo. `erx_vt` is built, with host tests and a fuzz
+target. `erx_term`, the window around it, is
 designed and not built; the shell runs on the serial console and over
 SSH.
 
 ### 22.2.4 Output that remembers its value
 
-Genera, the operating system of the Symbolics Lisp machines, kept output
-bound to the object it showed. A command that wanted a process could
-take any process on the screen with a click. erXos takes the idea in a
-form that grants nothing. When the shell or the inspector writes a
+Output on erXos stays bound to the value it shows, an idea from
+Genera, the Lisp machines' operating system, in a form that grants
+nothing. When the shell or the inspector writes a
 typed value to a terminal that understands links, it wraps the text in
 an OSC 8 hyperlink, an escape sequence that marks text as a link,
 whose target is `erx:TYPE/TEXT`. This is a
@@ -446,7 +427,7 @@ dashboard booted with no network shows why each quote has no data.
 
 The widget server, the model and the generated codecs are built and
 host-tested. `erx_ui_host` runs an application's interface on the
-development host under stock OTP.
+development host.
 
 ### 22.3.3 Three renderers, one tree
 
@@ -551,10 +532,7 @@ rectangles that changed.*
 
 The dashboard is built and runs on QEMU and the Pi 4. On the Pi the
 quotes come live over the board's Ethernet. On QEMU it boots with no
-network, and one suite cell fetches quotes from an offline HTTPS
-fixture. The Pi's screen is checked by hand. QEMU's is compared with
-the host's own drawing of the dashboard at the minute the guest
-logged.
+network, and shows why each quote has no data.
 
 A window of any other domain stays hidden on a kiosk. The exception is
 a **front** grant, which only a development build gives, to the root
@@ -582,7 +560,7 @@ under the overlapping policy, is designed and not built.
 
 ### 22.5.3 One theme
 
-Plan 9 shaped how erXos's windows work, not how they look. The look is
+The look is
 modern and quiet: anti-aliased type on a 4-pixel grid, a light palette
 and a dark one, rounded controls and soft shadows where they help. It
 all comes from one file, `abi/theme.txt`, which declares type roles,
@@ -634,8 +612,8 @@ The value enters the line only as the rc variable `$1`, which rc never
 splits or expands again. A file named `; rm -rf /` stays one argument.
 The command runs through the shell's own facet checks with the
 session's capabilities, so the palette adds no authority and no second
-command system. A bound key, a context menu and the rc command `plumb`,
-after Plan 9's plumber, build the same line other ways. Find and act is
+command system. A bound key, a context menu and the rc command `plumb`
+build the same line other ways. Find and act is
 designed and not built.
 
 ## 22.7 erXos in a browser
@@ -794,17 +772,16 @@ between other domains.
 
 ## 22.10 Design choices
 
-**Rendering in the client.** Plan 9 executed every draw message in the
-display. That keeps the display parsing every client's bytes. A
+**Rendering in the client.** The display could execute every client's
+draw messages, but it would then parse every client's bytes. A
 picture a client rendered itself, LVGL's or a GPU's, would have to be
 sent as draw messages that load an image. Its bytes would then be
 copied five times: into a lane, out of it, through the file server
 into the image, into the screen image, and to the device. A buffer is
 copied once. Doing both would
 give two kinds of window content, two quotas and two sets of failures.
-QNX Screen, Wayland and Fuchsia's Flatland all render in the client.
-erXos takes their rules and none of their protocols, because a `ctl`
-file and the answer to a write carry the same rules.
+A `ctl` file and the answer to a write carry the buffer's rules
+without a protocol of their own.
 
 **One pixel area, not an object per buffer.** An object per window
 would fit each window exactly. But every window and resize would then
@@ -819,9 +796,9 @@ and on its budget. A kiosk would become a different system from a
 desktop, with its own failures and tests. In the session, a kiosk is a
 policy.
 
-**A tree, not widget commands.** Imperative widgets, as OTP's old `gs`
-had, put an ordering protocol on every application. Inferno's Tk took
-commands as strings, with Tk's quoting problems. A term checked by a
+**A tree, not widget commands.** Imperative widget commands would put
+an ordering protocol on every application, and commands sent as
+strings bring quoting problems. A term checked by a
 generated schema needs no parser and has no order.
 
 **The terminal in the session.** In the display it would make the
@@ -830,21 +807,21 @@ window serves. A C emulator such as libvterm, as a NIF, would be a
 native parser of untrusted output whose fault ends the session's whole
 runtime. In Erlang a fault ends one terminal.
 
-**Not X11, GTK or Qt.** Each brings a large native stack with its own
-authority model or event loop, against erXos's rules on languages and
-simplicity. A rootless X server over the draw protocol stays possible
-as a compatibility layer for FreeBSD programs and changes nothing here.
+**No imported native window system.** An imported window system or
+toolkit (X11, GTK, Qt) would bring a large native stack with its own
+authority model or event loop into every session. A rootless X server over the draw protocol stays possible
+as a compatibility layer for ported programs and changes nothing here.
 
 ## Summary
 
 A display is a domain that composes windows and routes input and does
-nothing else for any client. A window is a directory of five files in
-Plan 9's formats, reached through a file grant rooted at the client's
+nothing else for any client. A window is a directory of five files,
+reached through a file grant rooted at the client's
 own directory. Its pixels are a buffer in the client's pixel area,
 which the display maps read-only. The one command `present` names the
 buffer and its changed rectangles, and its answer frees the previous
 buffer and paces the client. Drawing happens in the client's session,
-by Plan 9's draw protocol or a widget toolkit. One pure router asks a
+by the draw protocol or a widget toolkit. One pure router asks a
 policy only about what starts something. An application describes its
 interface as a term, which a renderer of each medium shows; LVGL runs
 confined in the application's session. A kiosk is an app under the

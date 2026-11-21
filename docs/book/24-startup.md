@@ -35,17 +35,10 @@ boot everything else and say which part is stuck. A machine told to
 `reboot` must go down in order; one that hangs with nobody there must
 come back by itself.
 
-FreeBSD spreads this over many programs. The firmware loads `loader`,
-which reads `/boot/loader.conf` and loads the kernel and its modules
-from the root file system. The kernel starts `init`, which runs
-`/etc/rc`; the rc scripts read `/etc/rc.conf` and start each daemon in
-the order their `REQUIRE` lines give. `shutdown -r now` signals `init`,
-which runs `/etc/rc.shutdown` to stop the daemons, syncs the disks
-and resets. A hang is
-the business of `watchdogd(8)`, which pets the hardware watchdog
-while the system lives.
-Each program reads its own configuration at its own moment, so none
-can say before boot whether the whole is consistent.
+A UNIX system spreads this over many programs, a loader, `init`, rc
+scripts and a watchdog daemon, each reading its own configuration at
+its own moment, so none can say before boot whether the whole is
+consistent.
 
 erXos boots one file that carries everything the machine starts with,
 checked by hash before anything in it runs. One system manifest,
@@ -188,7 +181,7 @@ root task at the paths the ABI file names, checks each file's hash and
 reads each executable's headers. Then it decides where each image
 goes. The root task runs at the physical addresses it is linked at.
 If it would land on the archive, the plan moves the archive, whole,
-behind it, as stock Fiasco's `bootstrap` moves its modules.
+behind it.
 
 Every check and every reservation of memory comes before any byte is
 copied, so a refusal prints one line and stops with nothing moved.
@@ -385,10 +378,8 @@ order down. The packer derives it as a topological order of the
 domains' dependencies, breaks ties by the bytes of the domain names
 so one manifest always gives one order, and refuses a cycle
 ([design-abi.md, Ordering and partial boots](../design-abi.md#ordering-and-partial-boots)).
-FreeBSD's `rcorder(8)` does the same for rc scripts at every boot,
-from their `REQUIRE` and `PROVIDE` lines. erXos does it once, at
-build time, so a cycle is a build error and never a boot that stops
-half way.
+The order is derived once, at build time, so a cycle is a build error
+and never a boot that stops half way.
 
 Before a domain's first thread runs, the device service gives it the
 units the manifest names, so a driver never starts without its device
@@ -696,13 +687,12 @@ pins keeps no record of why it reset.
 
 ### 24.6.2 `reboot`, traced
 
-`reboot` behaves as FreeBSD's `reboot(8)`: the same name, the same
-`-p` to power off instead, and `halt` as the same program under
-another name (`erlang/apps/erx_shell/src/erx_cmd_reboot.erl`). Where
-erXos's model differs, the command says so. `halt` powers off, since
-erXos has no end that halts without powering off. The flags for a
+`reboot` resets the machine, `-p` powers it off instead, and `halt`
+is the same program under another name
+(`erlang/apps/erx_shell/src/erx_cmd_reboot.erl`). `halt` powers off, since
+every end of the machine powers it off or resets it. The flags for a
 power cycle, a kernel dump, the next boot's kernel, a reroot and a
-sync are usage errors, because erXos has none of those things.
+sync are usage errors.
 
 Here is `reboot` at root's session, end to end:
 
@@ -711,8 +701,7 @@ Here is `reboot` at root's session, end to end:
    before it starts.
 2. It writes `reset\n` to `/machine/ctl`, a file of the domain
    service's `machine` tree, reached through the session's grant
-   ([chapter 14](14-files.md)). Control is a file to write, as in
-   Plan 9.
+   ([chapter 14](14-files.md)): control is a file to write.
 3. The tree's server hands the request to `erx_machine:request/2`, the
    coordinator of the machine's end, with the user the grant was made
    for, `root`.
@@ -827,16 +816,16 @@ is ever asked for. The trial request is designed and not built.
 
 ## 24.9 Design choices
 
-**One file, not a loader and a file system.** FreeBSD's `loader`
-reads the kernel and modules from the root file system, so a user can
-swap a module by copying a file. erXos packs everything into one
+**One file, not a loader and a file system.** A loader that reads
+the kernel and modules from the root file system lets a user swap a
+module by copying a file. erXos packs everything into one
 archive under one hash: the boot needs no file system, the image the
 host packed is provably the image that runs, and a slot is one file
 to write and to sign. The cost: changing any boot file means packing
 a new image.
 
-**One manifest, proved before boot.** rc scripts can start anything,
-in whatever order their `REQUIRE` lines produce, and a mistake shows
+**One manifest, proved before boot.** Start-up scripts can start
+anything, in whatever order their dependency lines produce, and a mistake shows
 only at boot. A manifest is a description, not a program: the build
 derives the boot order, checks every holder and facet, and refuses a
 cycle. The cost is that the configuration changes by building a new
@@ -891,9 +880,9 @@ slots, which are designed.
   loader, console, firmware, watchdog, entropy and trust root.
 * [design-abi.md, Ordering and partial boots](../design-abi.md#ordering-and-partial-boots):
   how the boot order is derived.
-* FreeBSD Project, loader(8), rc(8), rc.conf(5), rcorder(8), init(8),
-  shutdown(8), reboot(8) and watchdogd(8) manual pages, FreeBSD 14.3:
-  the familiar baseline this chapter measures erXos against.
+* FreeBSD Project, loader(8), rc(8), rcorder(8), init(8), reboot(8)
+  and watchdogd(8) manual pages: the conventional boot and shutdown
+  this chapter's design choices weigh.
 * Arm, *Power State Coordination Interface*, document DEN 0022,
   <https://developer.arm.com/documentation/den0022>: the firmware
   interface the PSCI box in section 24.1 describes.

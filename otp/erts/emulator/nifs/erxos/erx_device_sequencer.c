@@ -507,6 +507,32 @@ install(const erx_dma_ledger_t *ledger, erx_dma_sequence_t *sequence)
 	return (ERX_DMA_PASSES);
 }
 
+/*
+ * What the sequencer derives for a publication's input context, never its poster: whether the
+ * slot context is carried (Address Device, Configure Endpoint) with its Context Entries, the drop
+ * flags, and, by device context index, each carried endpoint's TR Dequeue Pointer with its cycle
+ * state in bit 0, the endpoint context's dequeue word; and the context size, the controller's. They come
+ * from the publication's meaning, bindings and drops and the ledger's rings, and the size from its
+ * layout.
+ */
+typedef struct erx_dma_context_derivation {
+	bool		slot;
+	uint32_t	entries;
+	uint32_t	drop;
+	uint64_t	dequeue[ERX_XHCI_DEVICE_CONTEXTS];
+	uint32_t	context_size;	/* 32 or 64 bytes (HCCPARAMS1.CSZ) */
+} erx_dma_context_derivation_t;
+
+/* One context of an input context: its offset from the input context's start, its endpoint's index or 0, its bytes. */
+typedef struct erx_dma_context_part {
+	uint32_t	offset;
+	uint32_t	dci;
+	uint8_t		bytes[ERX_XHCI_SLOT_CONTEXT_SIZE];
+} erx_dma_context_part_t;
+
+/* The input control context, the slot context and an endpoint context for each index (xHCI 1.2, 6.2.5, p. 460). */
+#define CONTEXT_PARTS_MAX	(1u + ERX_XHCI_DEVICE_CONTEXTS)
+
 /* One context's 32 bytes at context `index` of the input context, through its encoder's output. */
 static void
 add_part(erx_dma_context_part_t *parts, uint32_t *count, uint32_t context_size, uint32_t index, uint32_t dci,
@@ -517,9 +543,24 @@ add_part(erx_dma_context_part_t *parts, uint32_t *count, uint32_t context_size, 
 	(*count)++;
 }
 
-uint32_t
-erx_dma_input_context(const erx_device_trb_contexts_t *stated, const erx_dma_context_derivation_t *derived,
-    erx_dma_context_part_t parts[ERX_DMA_CONTEXT_PARTS_MAX])
+/*
+ * The one composition of the input context (xHCI 1.2, 6.2.5, Figure 6-5, p. 460), every context
+ * through its layout's generated encoder, into `parts`; their count, or 0 for a refusal. Context k
+ * lies at k times the context size, the input control context first and the slot context next, so
+ * endpoint context dci at dci + 1 (6.2.5, p. 460, with 64-byte contexts at 40h apart); each part
+ * is the context's first 32 bytes, the rest of a 64-byte context reserved and zero (6.2.2,
+ * p. 447; 6.2.3, p. 453; 6.2.5.1, p. 461), as is every byte no part covers. The add flags are
+ * the contexts written, A0 with the slot context and A(dci) with each endpoint context, so a flag
+ * never names a context left zero (Table 6-16, p. 461); the drop flags, Context Entries and each
+ * dequeue word are `derived`'s; the average TRB length 8 for a control endpoint and otherwise the
+ * packet times the burst plus one (6.2.3, the note on p. 454). Refused: a context size
+ * other than 32 or 64, more endpoints than ERX_DEVICE_TRB_DCI_MAX, an index outside 1..31 or
+ * written twice, drop flags on indexes 0 and 1 (Table 6-15, p. 461), and a value its encoder
+ * refuses. An index both dropped and added is Configure Endpoint's drop-and-add (4.6.6, p. 119).
+ */
+static uint32_t
+input_context(const erx_device_trb_contexts_t *stated, const erx_dma_context_derivation_t *derived,
+    erx_dma_context_part_t parts[CONTEXT_PARTS_MAX])
 {
 	const uint32_t size = derived->context_size;
 	erx_xhci_input_control_context_placed_t control = { .drop = derived->drop };
@@ -567,9 +608,8 @@ erx_dma_input_context(const erx_device_trb_contexts_t *stated, const erx_dma_con
 	return (count);
 }
 
-/* Whether `meaning` is a command whose TRB names the input context (xHCI 1.2, 6.4.3.4 to 6.4.3.6, pp. 490-492). */
-static bool
-carries_input_context(uint32_t meaning)
+bool
+erx_dma_carries_input_context(uint32_t meaning)
 {
 	return (meaning == ERX_MEANING_XHCI_TRB_ADDRESS_DEVICE_COMMAND ||
 	    meaning == ERX_MEANING_XHCI_TRB_CONFIGURE_ENDPOINT_COMMAND ||
@@ -655,22 +695,22 @@ place_input_context(const erx_dma_ledger_t *ledger, const erx_dma_publication_t 
 {
 	const erx_dma_layout_t *const layout = erx_dma_ledger_layout(ledger);
 	const erx_dma_description_t *const command = &publication->records[0];
-	erx_dma_context_part_t parts[ERX_DMA_CONTEXT_PARTS_MAX];
+	erx_dma_context_part_t parts[CONTEXT_PARTS_MAX];
 	erx_dma_context_derivation_t derived;
 	const erx_dma_name_t name = command->names[0];
 	uint64_t size;
 	uint32_t count, pool;
 
-	if (publication->record_count != 1 || !carries_input_context(command->meaning))
+	if (publication->record_count != 1 || !erx_dma_carries_input_context(command->meaning))
 		return (publication->contexts == NULL ? ERX_DMA_PASSES : ERX_DMA_BREAKS_MEANINGS);
 	if (publication->contexts == NULL || command->name_count != 1)
 		return (ERX_DMA_BREAKS_MEANINGS);
 	if (!derive_input_context(ledger, publication, &derived))
 		return (ERX_DMA_BREAKS_BINDINGS);
-	count = erx_dma_input_context(publication->contexts, &derived, parts);
+	count = input_context(publication->contexts, &derived, parts);
 	size = erx_dma_layout_buffer_pool(layout, name.buffer, &pool)->size;
 	if (count == 0 || count > ERX_DMA_INPUT_PARTS_MAX || name.offset > size ||
-	    (uint64_t)ERX_DMA_CONTEXT_PARTS_MAX * layout->context_size > size - name.offset)
+	    (uint64_t)CONTEXT_PARTS_MAX * layout->context_size > size - name.offset)
 		return (ERX_DMA_BREAKS_MEANINGS);
 	for (uint32_t part = 0; part < count; part++) {
 		erx_dma_store_t *const store = &out->stores[out->store_count++];

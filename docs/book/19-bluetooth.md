@@ -23,14 +23,9 @@ over the air, then hands the host what it decided to pass on. A host
 stack that trusts those bytes trusts both the firmware and every
 stranger in the room.
 
-FreeBSD implements its Bluetooth stack in the kernel, as nodes of the
-`netgraph(4)` framework: a driver such as `ng_ubt` for USB dongles,
-one HCI node for each device and an L2CAP node above it (FreeBSD
-Handbook, "Bluetooth"). A parser defect in any of those nodes is a
-defect in kernel mode.
-
 erXos parses every byte from the controller in a domain of its own,
-the **Bluetooth domain**, written in Erlang, which holds no device.
+the **Bluetooth domain**, written in Erlang, which holds no device,
+so a parser defect is never a defect in kernel mode.
 The system domain holds the chip's UART and serves it as a file tree
 of two files, `data` and `ctl`, parsing none of the bytes it moves.
 Above the line, one controller process, built around a pure core,
@@ -479,7 +474,7 @@ disconnect command. The patch reader, the line tree and the PL011
 programming have host tests too. All of these tests are **Built**.
 
 For the protocol above HCI, the design uses Bumble, a Bluetooth stack
-written in Python (Google, Bumble README), whose virtual controllers
+written in Python, whose virtual controllers
 speak H4 over a TCP socket
 ([design-bluetooth.md, Hosted mode against Bumble](../design-bluetooth.md#hosted-mode-against-bumble)).
 erXos runs in [hosted mode](09-processes.md#962-hosted-mode) on one
@@ -514,9 +509,9 @@ a controller at another rate, patched or half-patched, a UART holding
 the last controller's bytes.
 
 **The patch named by the manifest, not chosen by the controller.**
-NetBSD chooses the patch file by the name the controller reports.
-That name is text the controller writes, so in erXos it chooses
-nothing.
+The driver could choose the patch file by the name the controller
+reports, but that name is text the controller writes, so in erXos it
+chooses nothing.
 
 **115200 baud rather than 3 Mbaud.** A faster rate needs vendor
 commands that differ between hosts and a switch timed to a response.
@@ -544,8 +539,5 @@ the GATT table, its gate and pairing are designed.
 * Bluetooth SIG, *Bluetooth Core Specification*, version 6.3, 2026:
   Vol 4 Part A for the H4 transport, Vol 4 Part E for HCI, Vol 3
   Parts F and G for ATT and GATT, Vol 3 Part H for pairing.
-* The FreeBSD Project, *FreeBSD Handbook*, "Bluetooth" in the chapter
-  on advanced networking: the `netgraph` stack this chapter departs
-  from.
 * Google, *Bumble* (github.com/google/bumble): the Python stack the
   design tests against.

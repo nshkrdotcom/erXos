@@ -12,8 +12,7 @@
 > **Designed:** two speed-ups that work today only in host tests
 > (checksums computed in the copy, and sending many segments as one
 > unit); a leaner per-segment step; a faster host test transport;
-> sockets for native programs; running FreeBSD's TCP test scripts
-> against the stack; generated admission code; enabling `ntpd` from
+> sockets for native programs; generated admission code; enabling `ntpd` from
 > `/etc/start.conf`; WiFi as a network interface.
 
 **Background needed.** [Chapter 1](01-operating-systems.md) (drivers,
@@ -27,22 +26,15 @@ A TCP connection meets every kind of trouble a network can send.
 Segments arrive out of order, twice, or not at all. A stranger sprays
 forged resets in the hope that one lands inside the window. A flood
 of SYNs asks the machine to remember a million half-open connections.
-Each case has an answer that took FreeBSD's developers years to get
-right, and the answer is in the code, not in the RFCs.
+Each case has an answer that mature stacks took years to get right,
+and the answer is in their code, not in the RFCs.
 
-FreeBSD runs its stack, `netinet`, in the kernel. A received frame is
-an **mbuf** chain, the kernel's linked list of packet buffers, and
-climbs to a socket buffer under locks with a lock order. Each
-connection's state, `struct tcpcb`, is reached through reference
-counts, and its timers must be stopped and drained before it is
-freed. A bug anywhere in that path is a kernel bug.
-
-erXos keeps FreeBSD's decisions and discards its structure. The stack
-is Erlang, in a domain of its own. Every piece of state has one owner
-process, every decision is a pure function, every queue between
-processes is bounded by a credit, and every connection is a process
-that the inspector shows. What the stack sends on the wire is meant
-to be what FreeBSD sends, and the tests compare the two. The chapter
+erXos's stack, `erx_net`, is modelled on FreeBSD's for its protocol
+behaviour; its structure is its own. The stack is Erlang, in a domain
+of its own, so a bug in it is not a kernel bug.
+Every piece of state has one owner process, every decision is a pure
+function, every queue between processes is bounded by a credit, and
+every connection is a process that the inspector shows. The chapter
 follows the rules of construction, a packet's path, the TCP core and
 the fast path, then who may use the network, network time and
 failure.
@@ -77,52 +69,45 @@ failure.
 
 ## 17.1 Why FreeBSD's stack
 
-A TCP stack written from the RFCs alone fails in the field, so erXos
-takes its protocol behaviour from one implementation that has thirty
-years of interoperation in its code, and checks against it.
+A TCP stack written from the RFCs alone fails in the field, so the
+stack takes its protocol behaviour from one implementation with
+thirty years of interoperation in its code, FreeBSD's default TCP
+stack: BSD-licensed, and part of the UNIX erXos follows
+([chapter 4](04-history.md#455-unix-look-and-feel-honestly)).
 
 ### 17.1.1 What the stack matches
 
 Three things fix the stack's behaviour
 ([design-network-stack.md, What the stack matches](../design-network-stack.md#what-the-stack-matches)):
 
-* **The wire, as FreeBSD's default stack behaves** at one pinned
-  commit of FreeBSD 16.0-CURRENT, the kernel of the FreeBSD x86-64
-  test host. The decisions are read from FreeBSD 15.1's source, and
-  visible changes and real bug fixes between the two are carried
-  over. Every difference a test finds is a bug, a departure the
-  design document states with its reason and a test, or a FreeBSD bug
-  recorded as such.
-* **The Erlang API, as stock OTP 29.1.2 behaves,** so existing
-  `gen_tcp` and `gen_udp` code runs unchanged.
+* **The wire.** What the stack sends and how it answers follow its
+  model; a deliberate departure is stated in the design document with
+  its reason.
+* **The Erlang API.** Existing `gen_tcp` and `gen_udp` code runs
+  unchanged.
 * **erXos's architecture.** Every connection is a process of the
   network domain, per-packet work is Erlang and per-byte work is C,
   and the facet a client domain holds bounds what it can make the
   network domain spend (section 17.6.2).
 
-FreeBSD's code is BSD-licensed and tested by its own TCP test suite,
-and FreeBSD is the UNIX erXos follows ([chapter 4](04-history.md#455-unix-look-and-feel-honestly)).
-
 ### 17.1.2 Why the default stack
 
-FreeBSD 15.1 builds three TCP stacks. The default, named "freebsd",
-is the one FreeBSD runs and its test suite checks; RACK and BBR are
-loadable modules that a GENERIC kernel does not load, each replacing
-the whole input and output path, and together about twice the
-default's size
+The alternative TCP stacks, RACK and BBR, each replace the whole
+input and output path and together are about twice the default's
+size, so they stay behind seams
 ([design-network-stack.md, Why FreeBSD's default stack](../design-network-stack.md#why-freebsds-default-stack)).
-Most of the default stack's volume is locking, mbuf handling, sysctls
-and logging, which the Erlang stack does not need; what is translated
-is its decisions.
+Most of a kernel stack's volume is locking, buffer handling, tunables
+and logging, which an Erlang stack does not need; only the decisions
+carry over.
 
 ### 17.1.3 What a naive Erlang stack gets wrong
 
-An Erlang stack that starts from the RFC's state diagram, such as the
-open-source aloha, shows what goes wrong
+An Erlang stack that starts from the RFC's state diagram shows what
+goes wrong
 ([design-network-stack.md, What a naive Erlang stack gets wrong](../design-network-stack.md#what-a-naive-erlang-stack-gets-wrong)).
 One fault needs background. A **SYN flood** sends opening SYNs from
 forged addresses, each asking the receiver to remember a half-open
-connection. FreeBSD answers with a **syncache**, a small bounded table
+connection. The answer is a **syncache**, a small bounded table
 of half-open connections, and, when it is full, **SYN cookies**: the
 connection's state is encoded in the SYN-ACK's sequence number, so
 the receiver remembers nothing until the peer's ACK returns it.
@@ -130,11 +115,11 @@ the receiver remembers nothing until the peer's ACK returns it.
 | Fault | erXos's answer |
 | --- | --- |
 | one malformed frame crashes the unsupervised interface process | decoders that never raise; a failing step drops the frame and keeps the state |
-| initial sequence number 0 | RFC 6528's keyed hash, from FreeBSD's `tcp_new_isn` |
-| any RST inside the window resets the connection | RFC 5961's checks, from `tcp_input.c` |
+| initial sequence number 0 | RFC 6528's keyed hash |
+| any RST inside the window resets the connection | RFC 5961's checks |
 | a process per SYN, never expired | a bounded syncache in the interface process, with SYN cookies |
 | window arithmetic that breaks at the 2^32 wrap | sequence numbers as unbounded integers (section 17.2.4) |
-| no congestion control, dropped out-of-order data | FreeBSD's loss detection, CUBIC and reassembly queue |
+| no congestion control, dropped out-of-order data | loss detection, CUBIC and a reassembly queue |
 | a payload copied four times on transmit, checksum in Erlang | one copy each way, which is designed to compute the checksum too (section 17.3.4) |
 
 Behind the table lie three habits: a timer per connection, mailboxes
@@ -144,11 +129,8 @@ Section 17.2 removes each.
 ### 17.1.4 Decisions, not structure
 
 erXos ports by redesign: matching behaviour is the test, and the
-structure is new. Every Erlang function that takes a decision from
-FreeBSD names the FreeBSD function it comes from, so a reviewer can
-put the two side by side, and the translating modules carry FreeBSD's
-copyright notices (`erlang/apps/erx_net/NOTICE-freebsd`). Where
-FreeBSD offers a knob, the stack does what its default does.
+structure is new. Where the model offers a knob, the stack does what
+its default does.
 
 The stack is also an ordinary OTP application. Four seams (the
 driver's transport, the clock and entropy, the per-byte C primitives,
@@ -162,7 +144,7 @@ This is **Built**.
 
 ## 17.2 The construction
 
-FreeBSD's TCP code spends much of its length on locks, timers that
+A kernel TCP stack spends much of its length on locks, timers that
 must be stopped safely, buffers that can grow, and sequence-number
 comparisons that survive wrapping. Four rules make each disappear
 ([design-network-stack.md, The construction](../design-network-stack.md#the-construction)).
@@ -204,7 +186,7 @@ others may read, and every row has one writer.
 Random values follow the same rule: each owner keeps a generator, a
 pure value of `erx_net_rand` built on SipHash, in its state, so a
 test that fixes the key gets the same stream, while an observer
-cannot predict it as it could OTP's `rand`.
+cannot predict it.
 
 ### 17.2.2 Deadlines, not timers
 
@@ -216,25 +198,22 @@ stack starts an Erlang timer for each and cancels it when it is no
 longer wanted. Every cancel then races with a timer message already in
 the mailbox, and each handler must recognise a stale one.
 
-FreeBSD 15 keeps an array of deadlines in each control block and one
-callout set at the earliest, and the stack keeps that shape. A
-connection's state holds its deadlines, `erx_tcp:next_deadline/1`
-returns the earliest, and after every step the process makes sure one
+Instead a connection's state holds its deadlines,
+`erx_tcp:next_deadline/1` returns the earliest, and after every step the process makes sure one
 **hint** is armed no later than that deadline. When a hint arrives,
 the step runs every deadline that is due. A timer message carries no
 meaning of its own, so there is nothing to cancel: restarting the
 retransmission timer on an ACK is a field update, and a hint that
 arrives early finds nothing due.
 
-FreeBSD's rule that the retransmission and persist timers are never
-both armed becomes a type, so it cannot be broken. The field in
+The rule that the retransmission and persist timers are never both
+armed is a type, so it cannot be broken. The field in
 `erlang/apps/erx_net/include/erx_tcp.hrl`, whose integers are
 deadlines:
 
 ```erlang
 send_timer = none :: none | {rexmt, integer()} | {persist, integer()},
 ```
-
 
 ### 17.2.3 Credited queues
 
@@ -302,17 +281,16 @@ wire(Integer) when is_integer(Integer) ->
 lies nearest a reference (`rcv_nxt` for a received sequence number,
 `snd_una` for an acknowledgement), and `wire` returns the low 32 bits
 for encoding. After lifting, the protocol code uses ordinary `<` and
-`+`, and FreeBSD's `SEQ_LT` macros have nothing left to do.
+`+`, and no wrap-safe comparison macros are needed.
 
 The lifted segment is a different record from the decoded one, so a
 step cannot confuse the two. Lifting differs from modular comparison
 only for a number exactly 2^31 away, which modular comparison calls
-both greater and smaller; both stacks drop such a segment, by
-different code paths.
+both greater and smaller; the stack drops such a segment.
 
 Together the four rules remove per-connection locks and their order,
-reference counts and epochs, the races of stopping a callout, and
-mbuf chain surgery, which binaries and sub-binaries replace
+reference counts and epochs, the races of stopping a timer, and
+buffer-chain surgery, which binaries and sub-binaries replace
 ([design-network-stack.md, What disappears](../design-network-stack.md#what-disappears)).
 
 ## 17.3 The packet path
@@ -361,8 +339,8 @@ with its device. Restarting the whole domain is simpler than a
 restart at the top: every client gets a fresh facet, and no code has
 to work out which facets a partial restart broke.
 
-Ordinary failures stay lower down. Each interface, named as FreeBSD
-names it (`vtnet0` on QEMU, `genet0` on the Pi 4), has a link
+Ordinary failures stay lower down. Each interface, named by its
+driver (`vtnet0` on QEMU, `genet0` on the Pi 4), has a link
 supervisor; the driver's end ends the link, which the interfaces
 supervisor starts again, losing only soft state such as neighbour
 entries
@@ -431,8 +409,8 @@ a token of the interface's ingress bucket). Only a frame that holds
 its unit reaches `verify/1`, which runs the TCP, UDP or ICMP decoder,
 checksum first; a frame that fails gives its unit back and is
 dropped. So a frame dropped for want of room costs a header decode
-and one lookup. FreeBSD checks the checksum first; the reversed order
-changes nothing on the wire, since a bad frame is dropped either way
+and one lookup. Checking the checksum after the reservation changes
+nothing on the wire, since a bad frame is dropped either way
 ([design-network-stack.md, Receiving](../design-network-stack.md#receiving)).
 
 ### 17.3.4 Transmitting, and checksums in the copy
@@ -451,8 +429,9 @@ The Internet checksum is a sum of 16-bit words, and a copy reads every
 word, so the copy can sum what it copies. On receive each layer
 derives its checksum from the frame's sum by subtracting the headers
 it reads anyway. On transmit the TCP code leaves only the
-pseudo-header's sum in the checksum field, as FreeBSD's `tcp_output`
-does for a capable network card, and the copy finishes it. The copy hands over a sum, never a verdict,
+pseudo-header's sum in the checksum field, as a stack does for a
+network card that offloads checksums, and the copy finishes it. The
+copy hands over a sum, never a verdict,
 because it parses nothing
 ([design-network-stack.md, Checksums in the copy](../design-network-stack.md#checksums-in-the-copy)).
 The host's tap transport does both, **Built**
@@ -468,18 +447,17 @@ around it, so the core can be explored state by state on a host.
 
 ### 17.4.1 The control block
 
-The control block is one Erlang record, `#tcb{}`, translated from
-FreeBSD's `struct tcpcb`. Where FreeBSD keeps a word of flags whose
-combinations are not all legal, the record keeps a variant that can
-hold only the legal ones, the approach of
+The control block is one Erlang record, `#tcb{}`. Where a word of
+flags would allow combinations that are not legal, the record keeps a
+variant that can hold only the legal ones, the approach of
 [chapter 6, section 6.3.4](06-construction.md#634-variants-not-flags):
 
-| FreeBSD | `#tcb{}` |
+| Field | Values |
 | --- | --- |
-| `TF_SENTFIN`, `TF_NEEDFIN` | `fin`: `none`, `queued` or `{sent, Seq}` |
-| `TF_SACK_PERMIT` | `sack`: `off`, `requested` or `on` |
-| `t_timers[]` | `send_timer` and a record of deadlines |
-| `snd_una`, `snd_nxt`, `rcv_nxt` and the rest | the same names, as unwrapped integers |
+| `fin` | `none`, `queued` or `{sent, Seq}` |
+| `sack` | `off`, `requested` or `on` |
+| `send_timer` | `none`, `{rexmt, Deadline}` or `{persist, Deadline}`, beside a record of the other deadlines |
+| `snd_una`, `snd_nxt`, `rcv_nxt` and the rest | unwrapped integers (section 17.2.4) |
 
 A connection cannot be "FIN sent" without the FIN's sequence number,
 because the record has no way to say so.
@@ -500,21 +478,20 @@ happen to a connection:
 -spec step(event(), #tcb{}, #tcp_ctx{}) -> {#tcb{}, [action()]}.
 ```
 
-Nothing else enters. The step hands the event to the module that translates the FreeBSD code
-for it (`erx_tcp_input`, `erx_tcp_user`, `erx_tcp_timer`) and then
-runs output, as FreeBSD's `tcp_do_segment` ends by calling
-`tcp_output`. Its actions are a closed set: transmit, deliver, notify,
+Nothing else enters. The step hands the event to the module for its
+kind (`erx_tcp_input`, `erx_tcp_user`, `erx_tcp_timer`) and then
+runs output. Its actions are a closed set: transmit, deliver, notify,
 reply, reserve a buffer, reset, and a few more. Only the connection
 process around the step touches the world; the step is a function a
 test can call.
 
-The step also departs from FreeBSD where FreeBSD leaks. A RST that
-answers a segment is sent only within the interface's RST rate limit,
-and a challenge ACK to a SYN or an ACK is charged against that limit,
-as in FreeBSD. A challenge ACK to a RST charges nothing. FreeBSD's
-charge there lets a blind attacker learn that its forged RST landed
-inside a window, the same class of side channel as Linux's
-CVE-2016-5696, a shared challenge-ACK limit. The design closes it
+The step also limits what an attacker can learn. A RST that answers
+a segment is sent only within the interface's RST rate limit, and a
+challenge ACK to a SYN or an ACK is charged against that limit. A
+challenge ACK to a RST charges nothing: a charge there would let a
+blind attacker learn that its forged RST landed inside a window, the
+class of side channel behind CVE-2016-5696, a shared challenge-ACK
+limit
 ([design-network-stack.md, Events and the step](../design-network-stack.md#events-and-the-step)).
 
 ### 17.4.3 Output, the send log and reassembly
@@ -523,15 +500,14 @@ The sender's record of what it has sent is one structure,
 `erx_tcp_sendlog`: an ordered tree, keyed by the integer sequence
 numbers, from each sent range to its segment size, last transmission
 time, transmission count, and whether it is SACKed, lost or
-retransmitted. FreeBSD keeps two structures for this job, one in each
-of its stacks; here the loss modules read and mark the one log, and
-output takes the next range to send from it. A SACK block marks only
+retransmitted. The loss modules read and mark the log, and output
+takes the next range to send from it. A SACK block marks only
 whole segments the sender cut, so a peer cannot split the log finer
 than what was sent or grow it.
 
-On the receiving side, `erx_tcp_reass` translates FreeBSD's
-`tcp_reass`, with its overlap trimming and its cap of 100 queued
-segments, and `erx_tcp_sack` builds the SACK blocks from it.
+On the receiving side, `erx_tcp_reass` queues out-of-order segments,
+trimming overlaps, up to a cap of 100 segments, and `erx_tcp_sack`
+builds the SACK blocks from that queue.
 
 ### 17.4.4 Loss detection and congestion control
 
@@ -542,21 +518,20 @@ segments, and `erx_tcp_sack` builds the SACK blocks from it.
 > sender raises while data gets through and cuts when a loss suggests
 > a queue overflowed somewhere. A new connection doubles the window
 > each round trip (slow start). Past that, NewReno raises it by one
-> segment per round trip; **CUBIC**, FreeBSD's default, grows it along
+> segment per round trip; **CUBIC**, the stack's default, grows it along
 > a cubic curve of the time since the last cut, which fills fast, long
 > paths sooner.
 
 Two Erlang **behaviours**, OTP's form of an interface that a module
-implements by exporting named callbacks, carry FreeBSD's seams.
-`erx_tcp_loss` is the loss-detection part of FreeBSD's interface for
-pluggable TCP stacks: its callbacks handle an acknowledgement, a
-rewind when the retransmission timer expires, and the module's own
-deadline. `erx_tcp_cc` mirrors FreeBSD's `struct cc_algo`; its
+implements by exporting named callbacks, make loss detection and
+congestion control replaceable. `erx_tcp_loss`'s callbacks handle an
+acknowledgement, a rewind when the retransmission timer expires, and
+the module's own deadline. `erx_tcp_cc`'s
 modules are `erx_tcp_cc_cubic`, the default, and
 `erx_tcp_cc_newreno`, and a socket names one by a string looked up in
 a closed table, so the name never becomes an atom. A loss module
 never calls the congestion module: it returns events, and the
-connection makes the calls in FreeBSD's order, so either side can be
+connection makes the calls in a fixed order, so either side can be
 replaced alone. All of this is **Built**.
 
 ### 17.4.5 How the core is checked
@@ -580,22 +555,11 @@ at the wrap. On every transition it checks properties such as these
 * no segment is sent beyond the peer's window, except a one-byte
   window probe;
 * every state change is one RFC 9293's state diagram allows;
-* where header prediction, FreeBSD's shortcut for the common cases,
+* where header prediction, the shortcut for the common cases,
   accepts a segment, the general path gives the same result.
 
-The explorer is **Built**, and runs in the host tests. The codecs are
-checked by fuzz targets against an independent decoder, the pkt
-library, behind `test/erlang/erx_net_pkt_oracle.erl`, whose comments
-list where that judge itself falls short.
-
-The second check compares behaviour with FreeBSD itself. FreeBSD's
-TCP test suite is a set of packetdrill scripts, small programs that
-inject segments and expect replies. The FreeBSD x86-64 test host
-records each script's verdict on FreeBSD; an Erlang runner,
-`erx_net_script`, drives the stack through the same scripts under a
-virtual clock, and every verdict must equal FreeBSD's
-([design-network-stack.md, Packet scripts against FreeBSD](../design-network-stack.md#packet-scripts-against-freebsd)).
-That runner is designed and not built.
+The explorer is **Built**, and runs in the host tests. The packet
+decoders have fuzz targets.
 
 ## 17.5 The fast path
 
@@ -606,16 +570,12 @@ too thin to optimise away, and changed the unit of work instead
 
 ### 17.5.1 What was measured
 
-The measurement ran on the FreeBSD x86-64 test host on 2026-11-09:
-FreeBSD 16.0-CURRENT on an AMD Ryzen Threadripper PRO 5995WX, native;
-stock OTP 29.1.1 with the JIT; `erx_net` at commit f3c91786 with its
-C primitives as a NIF, over `/dev/tap1` to a jail running FreeBSD's
-own stack. Each transfer moved 512 MiB in 64 KiB sends, median of
-three. The baseline was lwIP 2.2.1, a C stack, one thread, `-O2`,
-over the same tap. The raw data are in the separate history
-repository at commit `d5bcd46`: `erx_net`'s runs in
-`~/erxos-history/net-perf-freebsd-2026-11-09/` and lwIP's in
-`~/erxos-history/net-bench-freebsd-lwip-2026-11-09/`.
+The stack ran on a development host, natively, on stock OTP with the
+JIT and its C primitives as a NIF, over a tap device to a peer
+running FreeBSD's stack (an AMD Ryzen Threadripper PRO 5995WX under
+FreeBSD 16.0-CURRENT, 2026-11-09). Each transfer moved 512 MiB in
+64 KiB sends, median of three. The baseline was lwIP 2.2.1, a C
+stack, one thread, `-O2`, over the same tap.
 
 | | `erx_net` | lwIP |
 | --- | --- | --- |
@@ -633,8 +593,8 @@ function above 4 percent, and nothing was batched.
 
 Removing every measured share from the per-segment step would bring
 it down perhaps twofold, not the sixfold the gap needs. C stacks pay
-those costs once per batch or never: FreeBSD hands a capable network
-card one large segment to cut and takes merged segments from large
+those costs once per batch or never: they hand a capable network
+card one large segment to cut and take merged segments from large
 receive offload (LRO). So a step takes and emits many segments at
 once, and the work left for one segment is made lean. Its
 bulk target is two thirds of lwIP's throughput each way.
@@ -650,7 +610,7 @@ above the copy pays once per run.
 
 On receive the interface **merges** each batch before it classifies:
 consecutive in-order segments of one flow become one merged segment,
-by the rule of FreeBSD's LRO (`tcp_lro.c`), which takes one
+by the rule of LRO, which takes one
 classification and one step but still one credit unit per segment.
 Every TCP decision stays in Erlang: the C of the cut and the merge
 (`erlang/apps/erx_net/c_src/`) copies, sums, writes the header values
@@ -666,17 +626,15 @@ cutting runs in erXos's device NIF is designed and not built, so on
 erXos output sends one frame per segment. Designed and not built too
 are the lean step, which splits the control block into a small record
 that changes per segment and a cold one, and a faster host test
-transport over netmap, FreeBSD's framework for moving packets without
+transport over netmap, a framework for moving packets without
 a system call per packet. The development manifests run the network
 domain on the interpreter rather than the JIT, so the figures above
 say nothing about QEMU or the Pi 4.
 
 ## 17.6 Sockets act for one domain
 
-On FreeBSD any process can call `socket(2)`, and the kernel decides
-what it may do from its user id and jail. In erXos a domain without
-the network service's facet cannot open a socket, and every socket
-acts for one domain alone
+A domain without the network service's facet cannot open a socket, and
+every socket acts for one domain alone
 ([design-network-stack.md, Authority and admission](../design-network-stack.md#authority-and-admission)).
 
 ### 17.6.1 Who holds the network device
@@ -706,7 +664,7 @@ calls it `erx_net_grant`. It starts the domain's sockets and charges
 their work to its account, within the manifest's facet row and the
 bounds of `abi/services/net.txt`: at most 4,096 sockets, 128 KiB to
 64 MiB of buffers across them, and ports below 1024 only when the
-row lists them, as FreeBSD reserves those ports. The facet process
+row lists them. The facet process
 monitors the network domain's connection to its client before it
 exports itself, so the connection's end ends the facet and every
 socket it started.
@@ -728,7 +686,7 @@ Erlang shell:
 {ok, S} = gen_tcp:connect("example.org", 80, [binary, {active, true}]).
 ```
 
-Stock OTP's `gen_tcp` dispatches every call on a socket of the form
+`gen_tcp` dispatches every call on a socket of the form
 `{'$inet', Module, Handle}` to `Module`, and on erXos the default
 backend is `erx_gen_tcp` (`erlang/apps/erx_net_client/src/erx_gen_tcp.erl`).
 It starts a **socket process** in root's session domain, a
@@ -751,7 +709,7 @@ connection from the harness.
 The demultiplexing table maps a key to the one socket that receives
 for it: a connection's four-tuple, a listener's local address and
 port, a connected or bound UDP socket. Lookup goes from the most
-specific key to the wildcard, as FreeBSD's `in_pcblookup_hash` does.
+specific key to the wildcard.
 Every insertion goes through `erx_net_bind` with ETS's `insert_new`,
 which inserts only when the key is absent, so a key is held by one
 socket and ERTS decides a race between two binders.
@@ -846,10 +804,9 @@ decides the wall clock
 runs where the machine's manifest starts it: the Raspberry Pi 4 image
 starts it against `pool.ntp.org`, named in the session's environment
 (`config/manifest/raspi4b-development.txt`). Enabling it from
-`/etc/start.conf`, as FreeBSD's `rc.conf` does, is designed and not
-built. The QEMU suite runs `ntpd` against the harness and checks the
-step, `ntpctl step` and `date`. The rest of section 17.7 is
-**Built**.
+`/etc/start.conf` is designed and not built. The QEMU suite runs
+`ntpd` against the harness and checks the step, `ntpctl step` and
+`date`. The rest of section 17.7 is **Built**.
 
 ## 17.8 What fails, and what it reaches
 
@@ -888,9 +845,9 @@ state, decodes once, and hands checked records on.
 
 ## Summary
 
-erXos's TCP/IP stack is Erlang, in the network domain, and takes every
-protocol decision from FreeBSD's default stack while sharing none of
-its structure. Each piece of state has one owner process that decides
+erXos's TCP/IP stack is Erlang, in the network domain, modelled on
+FreeBSD's for its protocol behaviour and with a structure of its own.
+Each piece of state has one owner process that decides
 by a pure step, every queue is bounded by a credit, and the TCP core,
 one pure function over one record, is explored exhaustively on a
 host. Merging makes one step serve many segments. A domain uses the
@@ -900,8 +857,7 @@ packet, and network time reaches the clock as one integer.
 ## Where to read next
 
 * [design-network-stack.md](../design-network-stack.md): the stack's
-  whole design, with every FreeBSD function each module translates,
-  the departures and their reasons, the fast path and the
+  whole design, the departures from its model and their reasons, the fast path and the
   verification plan.
 * [design-time.md](../design-time.md): network time, the clock
   service, the approximate start and the step rules.
@@ -909,13 +865,10 @@ packet, and network time reaches the clock as one integer.
   wireless media.
 * Marshall Kirk McKusick, George V. Neville-Neil and Robert N. M.
   Watson, *The Design and Implementation of the FreeBSD Operating
-  System*, 2nd ed., 2014, its networking chapters: FreeBSD's network
-  stack as the C code erXos translates from.
+  System*, 2nd ed., 2014, its networking chapters: the stack erXos's
+  is modelled on.
 * W. Richard Stevens, *TCP/IP Illustrated, Volume 1*: the protocols,
   one packet trace at a time.
 * RFC 9293, "Transmission Control Protocol", 2022; RFC 6675, SACK-based
   loss recovery; RFC 5961, defences against blind in-window attacks;
   RFC 6528, initial sequence numbers: the RFCs the design cites most.
-* FreeBSD's TCP test suite,
-  <https://github.com/freebsd-net/tcp-testsuite>: the packetdrill
-  scripts the designed runner reads.

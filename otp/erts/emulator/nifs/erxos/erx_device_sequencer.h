@@ -55,7 +55,7 @@
 /*
  * The contexts of an input context a publication carries: the input control context, the slot
  * context, and an endpoint context for each binding, or EP0's for Evaluate Context, which binds
- * none (erx_dma_input_context).
+ * none (the composition in erx_device_sequencer.c).
  */
 #define ERX_DMA_INPUT_PARTS_MAX		(2u + ERX_DMA_BINDS_MAX)
 /* Each record of a run, its available entry, a region entry for each fill, each binding's link and the input context. */
@@ -199,47 +199,10 @@ bool	erx_dma_pass(erx_dma_ledger_t *ledger, uint32_t reports, const erx_report_r
 uint64_t	erx_dma_dequeue_address(const erx_dma_ledger_t *ledger, uint32_t reports);
 
 /*
- * What the core posting a command derives for its input context, never its caller: whether the
- * slot context is carried (Address Device, Configure Endpoint) with its Context Entries, the drop
- * flags, and, by device context index, each carried endpoint's TR Dequeue Pointer with its cycle
- * state in bit 0, the endpoint context's dequeue word; and the context size, the controller's. A
- * publication's are the sequencer's own, from the publication's meaning, bindings and drops and the
- * ledger's rings, and the size from its layout.
+ * Whether `meaning` is a command whose TRB names the input context, which a publication of it carries
+ * (xHCI 1.2, 6.4.3.4 to 6.4.3.6, pp. 490-492): Address Device, Configure Endpoint and Evaluate
+ * Context. The one list of them.
  */
-typedef struct erx_dma_context_derivation {
-	bool		slot;
-	uint32_t	entries;
-	uint32_t	drop;
-	uint64_t	dequeue[ERX_XHCI_DEVICE_CONTEXTS];
-	uint32_t	context_size;	/* 32 or 64 bytes (HCCPARAMS1.CSZ) */
-} erx_dma_context_derivation_t;
-
-/* One context of an input context: its offset from the input context's start, its endpoint's index or 0, its bytes. */
-typedef struct erx_dma_context_part {
-	uint32_t	offset;
-	uint32_t	dci;
-	uint8_t		bytes[ERX_XHCI_SLOT_CONTEXT_SIZE];
-} erx_dma_context_part_t;
-
-/* The input control context, the slot context and an endpoint context for each index (xHCI 1.2, 6.2.5, p. 460). */
-#define ERX_DMA_CONTEXT_PARTS_MAX	(1u + ERX_XHCI_DEVICE_CONTEXTS)
-
-/*
- * The one composition of the input context (xHCI 1.2, 6.2.5, Figure 6-5, p. 460), every context
- * through its layout's generated encoder, into `parts`; their count, or 0 for a refusal. Context k
- * lies at k times the context size, the input control context first and the slot context next, so
- * endpoint context dci at dci + 1 (6.2.5, p. 460, with 64-byte contexts at 40h apart); each part
- * is the context's first 32 bytes, the rest of a 64-byte context reserved and zero (6.2.2,
- * p. 447; 6.2.3, p. 453; 6.2.5.1, p. 461), as is every byte no part covers. The add flags are
- * the contexts written, A0 with the slot context and A(dci) with each endpoint context, so a flag
- * never names a context left zero (Table 6-16, p. 461); the drop flags, Context Entries and each
- * dequeue word are `derived`'s; the average TRB length 8 for a control endpoint and otherwise the
- * packet times the burst plus one (6.2.3, the note on p. 454). Refused: a context size
- * other than 32 or 64, more endpoints than ERX_DEVICE_TRB_DCI_MAX, an index outside 1..31 or
- * written twice, drop flags on indexes 0 and 1 (Table 6-15, p. 461), and a value its encoder
- * refuses. An index both dropped and added is Configure Endpoint's drop-and-add (4.6.6, p. 119).
- */
-uint32_t	erx_dma_input_context(const erx_device_trb_contexts_t *stated, const erx_dma_context_derivation_t *derived,
-		    erx_dma_context_part_t parts[ERX_DMA_CONTEXT_PARTS_MAX]);
+bool	erx_dma_carries_input_context(uint32_t meaning);
 
 #endif /* ERX_DEVICE_SEQUENCER_H */

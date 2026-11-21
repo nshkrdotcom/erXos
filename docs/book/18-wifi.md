@@ -28,14 +28,9 @@ the counters that keep encryption safe. The bug was not in the
 cryptography. It was in the order of events a supplicant, the program
 that runs a station's handshakes, accepted.
 
-FreeBSD splits WiFi in two. Its 802.11 layer, `net80211`, and the chip
-drivers run in the kernel; `wpa_supplicant`, a program in user space,
-runs the key handshakes and installs keys through `ioctl` calls. A
-user types `ifconfig wlan0 scan`, lists networks in
-`wpa_supplicant.conf`, and runs DHCP on `wlan0`.
-
-erXos keeps that surface and moves everything else into one domain of
-Erlang, the WiFi domain, which turns the Raspberry Pi 4's WiFi chip
+A user sees FreeBSD's surface: `ifconfig wlan0 scan`, networks listed
+in `wpa_supplicant.conf`, and DHCP on `wlan0`. Behind it, WiFi is one
+domain of Erlang, the WiFi domain, which turns the Raspberry Pi 4's WiFi chip
 into an Ethernet **medium**, the network stack's word for a link it
 sends frames through ([chapter 17](17-network.md#1731-the-process-tree)). Its station is
 three pure functions, one of them a state machine whose every legal
@@ -103,7 +98,7 @@ station](../design-wifi.md#the-seam-to-the-station)).
 
 The station above it asks for standard 802.11 operations, `scan`,
 `connect`, `set_keys`, and names no firmware variable. The firmware's
-own supplicant is turned off, as OpenBSD turns it off, so every check
+own supplicant is turned off, so every check
 of section 18.3 runs in Erlang, where it can be read and tested.
 
 ### 18.1.3 Three domains, one medium
@@ -368,22 +363,21 @@ access point's statement of its security options, equal byte for
 byte to the one the scan reported. A mismatch there means the scan
 saw a forgery, and the station drops the association.
 
-The reinstallation attack of 2017 replays message 3: a supplicant
-that installs the same key again resets its packet counter, and the
+The reinstallation attack of 2017 replays message 3: a supplicant that
+installs the same key again resets its packet counter, and the
 cipher's safety depends on never reusing one. The join machine keeps
-three things per association: the **replay watermark**, the counter
-of the last message accepted under a valid MIC; the pending PTK; and
-the **key slots**, for each slot of the chip the key it was last
-asked to hold, the install that asked, and whether the chip confirmed
-it. Then one rule: a `set_keys` request carries only the keys that
-differ from their slot's. A retransmitted message 3 yields the PTK
-already in the slot and installs nothing; a replayed one is refused
-by the watermark before any key is read. A genuine rekey still
-installs, because a new message 1 brings a new nonce and so a
-different PTK. OpenBSD keeps the same property with a flag for the
-pairwise key and a comparison for each group key; here one rule
-covers every slot. A confirmation confirms only the slots its own
-install filled, so a late one never confirms a newer key.
+three things per association: the **replay watermark**, the counter of
+the last message accepted under a valid MIC; the pending PTK; and the
+**key slots**, for each slot of the chip the key it was last asked to
+hold, the install that asked, and whether the chip confirmed it. Then
+one rule: a `set_keys` request carries only the keys that differ from
+their slot's. A retransmitted message 3 yields the PTK already in the
+slot and installs nothing; a replayed one is refused by the watermark
+before any key is read. A genuine rekey still installs, because a new
+message 1 brings a new nonce and so a different PTK. The one rule
+covers the pairwise key and every group key alike. A confirmation
+confirms only the slots its own install filled, so a late one never
+confirms a newer key.
 
 The handshake, the slots and the watermark are built, in
 `erx_wifi_join.erl`, with the EAPOL-Key frame codec in
@@ -418,11 +412,10 @@ scalar and a point on an elliptic curve. Of what lets a password
 guess be tested, only the commit, which goes on the air anyway, and
 one exchange's KCK leave the holder.*
 
-`erx_sae`, the public half, follows wpa_supplicant's
-implementation, using the method in which PT is computed once from
-the password rather than per exchange. Its states are
-wpa_supplicant's four, `nothing`, `committed`, `confirmed` and
-`accepted`, with two more while the holder works. While the holder
+`erx_sae`, the public half, uses the method in which PT is computed
+once from the password rather than per exchange. Its states are
+`nothing`, `committed`, `confirmed` and `accepted`, with two more
+while the holder works. While the holder
 computes the keys of one peer commit, any other commit is dropped, so
 the station confirms only over the commit whose key it asked for.
 `erx_sae` is built, and runs in its tests against a test-only holder
@@ -483,9 +476,8 @@ No host test can tell how the chip and board behave. The design
 lists such facts
 ([design-wifi.md, Facts this design does not
 have](../design-wifi.md#facts-this-design-does-not-have)), such as
-whether the pinned firmware offers external SAE at all. Some board
-facts appear only in Linux, whose GPL source erXos's designers do not
-read; a separate writer recorded them in their own words
+whether the firmware offers external SAE at all. What is known of the
+board is gathered in a clean-room facts record
 ([research-wifi-pi4.md](../research-wifi-pi4.md)).
 
 ## 18.5 What fails, and what it reaches
@@ -508,10 +500,10 @@ outlives a restart.
 
 ## 18.6 Design choices
 
-**WiFi in the network domain.** FreeBSD's 802.11 layer sits beside its
-IP stack. In erXos that would put a firmware parser, keys and
-`crypto` into the domain every socket depends on; a separate domain
-costs one facet.
+**WiFi in the network domain.** The 802.11 layer could sit beside the
+IP stack. That would put a firmware parser, keys and `crypto` into
+the domain every socket depends on; a separate domain costs one
+facet.
 
 **The firmware's supplicant, or its own SAE.** The firmware can run
 WPA2's handshake, which would hide the checks of section 18.3.2 inside
@@ -519,15 +511,16 @@ a blob, and SAE from a password, which would hand the password to the
 chip. erXos turns the first off and refuses the second; a firmware
 without external SAE means WPA3 is reported unsupported.
 
-**One score, or separate parts.** OpenBSD ranks access points with
-one score that adds a bonus for never having failed to bonuses for
-RSN and privacy, so a forged failure can move a station to a weaker
-method. erXos keeps admission apart from the memory (section 18.2.1).
+**One score, or separate parts.** The station could rank access points
+with one score that adds a bonus for never having failed to bonuses
+for RSN and privacy, so a forged failure can move a station to a
+weaker method. erXos keeps admission apart from the memory (section
+18.2.1).
 
-**A hold a person must lift.** Android disables a network after a
-wrong password until the user acts. An impostor in range can make any
-join fail, so such a hold turns minutes of interference into an
-outage of an unattended board. A hold that doubles to an hour and
+**A hold a person must lift.** The station could disable a network
+after a wrong password until the user acts. An impostor in range can
+make any join fail, so such a hold turns minutes of interference into
+an outage of an unattended board. A hold that doubles to an hour and
 then lifts bounds an attacker who keeps every join failing to about
 one exchange an hour.
 

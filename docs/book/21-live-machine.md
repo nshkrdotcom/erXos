@@ -29,14 +29,8 @@ driver waiting for an interrupt that never comes? To answer, a
 developer must see every layer of the machine at once, and trust that
 each number means what it says.
 
-On FreeBSD the answer lies in a dozen tools, each with its own view and
-format. `ps` and `top` read process state through `sysctl`; `procstat`
-shows one process's threads, files and memory; `dtrace` and `ktrace`
-trace the kernel and system calls; `dmesg` prints the kernel's message
-buffer and `syslogd` writes `/var/log/messages`; `kldload` loads code
-into the running kernel; `savecore` keeps a kernel dump for the next
-boot. Each does its job, and none knows about the others.
-
+Where FreeBSD answers with a dozen tools (`ps` and `top`, `procstat`,
+`dtrace` and `ktrace`, `dmesg` and `syslogd`, `kldload`, `savecore`),
 erXos gives the machine one **inspector**: a service in the system
 domain that answers for any part of the machine, from a CPU to one
 Erlang process, as a record of attributes, each carrying who reported
@@ -49,11 +43,10 @@ and fails the ordinary way: one process ends, and the rest goes on.
 
 ## 21.1 The machine is an object
 
-Genera, the operating system of the Symbolics Lisp machines, let its
-user inspect anything on the screen as a live object and change the
-code behind it while it ran
-([chapter 4](04-history.md#43-the-lineage)). erXos adds the walls
-Genera lacked: each domain sees only what its facet allows.
+Every part of the running machine can be inspected as a live object,
+an idea from Genera, the Lisp machines' operating system
+([chapter 4](04-history.md#43-the-lineage)), and each domain sees only
+what its facet allows.
 
 ### 21.1.1 Paths and records
 
@@ -191,11 +184,7 @@ The kernel call `erx_object_info` is made only for the machine, the
 CPUs, the system domain's threads, and a domain's group or budget; on
 Fiasco another domain's group or budget reads `unsupported` (21.2.2).
 
-The agent, the query worker and the inspect facet are **Built**. The
-session-domain QEMU suite reads a process of root's session from the
-system domain's shell, through the session's agent, and runs
-`cat /proc/status` and `dmesg` in root's session through its facet
-(`tools/lib/erx/session_domain.rb`).
+The agent, the query worker and the inspect facet are **Built**.
 
 ### 21.1.4 Scope
 
@@ -272,9 +261,8 @@ Every value carries one of six statuses:
 | `{timeout, Ms}` | the reporter did not answer within Ms milliseconds | `[timeout Ms]` |
 | `{error, Why}` | the collection failed | `[error]` |
 
-Each status has its own test in `test/erlang/erx_inspector_tests.erl`.
 `erx:i/1`, `/proc` files and `ntpctl` print a status other than `ok`
-in its brackets, as in the table. `top`, which keeps FreeBSD's layout,
+in its brackets, as in the table. `top`
 prints a missing figure as `-` followed by its reason, such as
 `- [unsupported]`, and a partial figure's number with its reporter
 named beside it or in the line's label. No command prints such a value
@@ -330,7 +318,7 @@ memory ([design-live.md, The /proc tree](../design-live.md#the-proc-tree)).
 **A gap is shown, never filled.** `/proc/kernel/log` shows the kernel
 log from the oldest line the ring still holds. Where entries of the
 sequence are missing, a line `[missing N]` stands in their place.
-`dmesg` writes that file, as FreeBSD's prints the message buffer.
+`dmesg` writes that file.
 `/proc` and `/proc/kernel/log` are **Built**
 (`erlang/apps/erx_files/src/erx_procfs.erl`).
 
@@ -341,7 +329,7 @@ the driver's process run, the executor park and the interrupt arrive?
 
 > **Background: how the BEAM traces a process.** Tracing lets a
 > running Erlang system report events of chosen processes without
-> recompiling or stopping them. A **trace session**, in OTP 29, is a
+> recompiling or stopping them. A **trace session** is a
 > handle that holds which processes are traced, for
 > which events, and which process receives the trace messages, the
 > **tracer**. The flag `running` reports each time a process is
@@ -690,9 +678,7 @@ fault or a missed pet; even `erlang:halt(abort)` arrives as a fault.
 When the ending thread owns the kernel log, the root first writes the
 log records still waiting for a reader; on any other thread the log
 may be mid-write, so it is skipped (`liberx/backend/fiasco/end.c`).
-The record is **Built**; the system-domain QEMU suite crashes the
-system domain's runtime and reads the record from the serial log
-(`tools/lib/erx/qemu_suites/system_domain.rb`).
+The record is **Built**.
 
 No memory region survives the reset, so the record lives only in the
 console's output: the harness's log on QEMU, and whatever is wired to
@@ -712,8 +698,7 @@ built.
 
 Text shown under its source's name is **attributed text**: a domain's
 name, a log line, a source line from a file a domain supplied. It is
-escaped by whatever displays it, as FreeBSD's `ls` escapes odd file
-names; a program's own output is not
+escaped by whatever displays it; a program's own output is not
 ([chapter 11](11-security.md#11122-what-is-not-escaped)).
 
 Each display has its one escaping function, and the tables of each are
@@ -737,9 +722,9 @@ terminal stream, a tty's output, as `ssh` passes a remote shell's.
 
 ## 21.7 Design choices
 
-**One tree, not many tools.** FreeBSD's `sysctl` names, `procfs` files
-and `procstat` output are three models of overlapping data, with three
-permission rules. erXos keeps one schema, and `erx:i/1`, `/proc` and
+**One tree, not many tools.** Separate tools would each keep a model
+of overlapping data, with a permission rule of its own. erXos keeps
+one schema, and `erx:i/1`, `/proc` and
 the browser are views of it behind one facet: the schema must name
 everything, and a new attribute appears in every view at once.
 

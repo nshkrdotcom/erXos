@@ -915,7 +915,7 @@ check_disable(state_t *state)
 		check_command(state, disable);
 		return (false);
 	}
-	EXPECT(erx_trb_form_command(&state->form, &disable, model->next_tag, &sequence) == ERX_DEVICE_TRB_REFUSE_HALTED &&
+	EXPECT(erx_trb_form_command(&state->form, &disable, model->next_tag, &sequence) == ERX_DEVICE_TRB_REFUSE_BADARG &&
 	    erx_dma_ledger_live(&state->form.ledger) == live, "a Disable Slot with a busy endpoint is refused");
 	return (true);
 }
@@ -962,7 +962,7 @@ test_commands(void)
 		    .drops = 1u << block_dci[IN_BLOCK] };
 		const uint32_t head = state.model.transfers[model_oldest_on(&state.model, IN_BLOCK)].head;
 
-		EXPECT(erx_trb_form_command(&state.form, &drop, 1, &sequence) == ERX_DEVICE_TRB_REFUSE_HALTED,
+		EXPECT(erx_trb_form_command(&state.form, &drop, 1, &sequence) == ERX_DEVICE_TRB_REFUSE_BADARG,
 		    "a drop of a halted endpoint is refused");
 		check_command(&state, naming(ERX_TRB_COMMAND_RESET_ENDPOINT, IN_BLOCK));
 		check_command_end(&state, true);
@@ -1004,9 +1004,9 @@ test_commands(void)
 		EXPECT(erx_trb_form_post(&state.form, SLOT, 1, &control, 1, &sequence) == ERX_DEVICE_TRB_REFUSE_HALTED,
 		    "EP0 after a failed Address Device takes no transfer");
 		EXPECT(erx_trb_form_command(&state.form, &(erx_trb_command_t){ .kind = ERX_TRB_COMMAND_SET_TR_DEQUEUE,
-		    .slot = SLOT, .dci = 1 }, 1, &sequence) == ERX_DEVICE_TRB_REFUSE_HALTED &&
+		    .slot = SLOT, .dci = 1 }, 1, &sequence) == ERX_DEVICE_TRB_REFUSE_BADARG &&
 		    erx_trb_form_command(&state.form, &(erx_trb_command_t){ .kind = ERX_TRB_COMMAND_STOP_ENDPOINT,
-		    .slot = SLOT, .dci = 1 }, 1, &sequence) == ERX_DEVICE_TRB_REFUSE_HALTED,
+		    .slot = SLOT, .dci = 1 }, 1, &sequence) == ERX_DEVICE_TRB_REFUSE_BADARG,
 		    "nor a stop or a restart of it");
 		EXPECT(erx_trb_form_command(&state.form, &again, 1, &sequence) == ERX_DEVICE_TRB_REFUSE_BADARG,
 		    "nor another Address Device binding it a ring");
@@ -1456,7 +1456,7 @@ check_evaluate_while_posted(void)
 	EXPECT(erx_trb_form_post(&state.form, SLOT, 1, &request, 9, &sequence) == ERX_DEVICE_TRB_ACCEPTED,
 	    "a SET_CONFIGURATION on EP0");
 	live = erx_dma_ledger_live(&state.form.ledger);
-	EXPECT(erx_trb_form_command(&state.form, &evaluate, 1, &sequence) == ERX_DEVICE_TRB_REFUSE_HALTED &&
+	EXPECT(erx_trb_form_command(&state.form, &evaluate, 1, &sequence) == ERX_DEVICE_TRB_REFUSE_BADARG &&
 	    erx_dma_ledger_live(&state.form.ledger) == live, "an Evaluate Context while EP0 has a transfer posted");
 }
 
@@ -1483,7 +1483,7 @@ check_command_preconditions(void)
 	make_unbound(&state, 32);
 	EXPECT(erx_trb_form_command(&state.form, &configure, 1, &sequence) == ERX_DEVICE_TRB_REFUSE_BADARG &&
 	    erx_dma_ledger_live(&state.form.ledger) == 0, "a Configure Endpoint on a slot never addressed");
-	EXPECT(erx_trb_form_command(&state.form, &evaluate, 1, &sequence) == ERX_DEVICE_TRB_REFUSE_HALTED &&
+	EXPECT(erx_trb_form_command(&state.form, &evaluate, 1, &sequence) == ERX_DEVICE_TRB_REFUSE_BADARG &&
 	    erx_dma_ledger_live(&state.form.ledger) == 0, "an Evaluate Context on a slot never addressed");
 	EXPECT(erx_trb_form_command(&state.form, &(erx_trb_command_t){ .kind = ERX_TRB_COMMAND_DISABLE_SLOT,
 	    .slot = state.form.slots + 1 }, 1, &sequence) == ERX_DEVICE_TRB_REFUSE_BADARG &&

@@ -114,7 +114,7 @@ typedef enum erx_dma_publication_call {
  * its call; for a transfer, the endpoint whose ring it runs on; for a command, the endpoints it
  * acts on, and, for one whose meaning binds, the bindings its holding makes (erx_dma_ledger_hold);
  * for a command whose TRB names the input context, the parameters its caller states, from which
- * the sequencer writes it (erx_dma_input_context), and NULL for any other publication.
+ * the sequencer writes it (the composition in erx_device_sequencer.c), and NULL for any other publication.
  */
 typedef struct erx_dma_publication {
 	uint32_t			record_count;

@@ -15,7 +15,7 @@ capabilities, the confused deputy and the trusted computing base;
 what Fiasco gives; [chapter 6](06-construction.md) for exports, the
 funnel and the origin envelope.
 
-A program you download onto a FreeBSD machine and run as yourself can
+A program you download onto a UNIX machine and run as yourself can
 read your mail and send it to anyone on the network. It needs no bug
 in the kernel. The kernel checks each `open` against your user id, the
 program runs with your user id, and every check passes.
@@ -24,10 +24,6 @@ The user id is **ambient authority**: a process holds it by being who
 it is, not because someone handed it the right to one particular
 thing
 ([chapter 1](01-operating-systems.md#165-permissions-and-the-power-of-a-user)).
-FreeBSD narrows it after the fact. A jail gives a group of processes
-its own view of the file system and the network, and Capsicum lets a
-process give up opening files by name and keep only its descriptors
-([chapter 2](02-microkernels.md#236-capability-systems-in-practice)).
 
 erXos starts from the other end. A program holds no authority it was
 not handed. Every right is a thing in somebody's hands: a handle to a
@@ -478,9 +474,9 @@ from a name the client supplied
 
 ## 11.7 File grants: authority over files
 
-In UNIX, a path is enough to try: a process names any file, and the
-kernel decides by the file's owner and mode bits. In erXos a path is
-only a way to find a grant, and the grant decides.
+In erXos a path is only a way to find a grant, and the grant, not the
+file's owner and mode bits, decides what a domain may do with the
+file.
 
 ### 11.7.1 A namespace of grants
 
@@ -611,9 +607,9 @@ which domain asked.*
 `{error, eperm}`. The clock service never hears of it.
 
 **A session with no clock grant at all.** An app's session has no
-facet named `clock`. `date` reports the refusal as FreeBSD's `date`
-does for a user who is not the superuser: `date: clock_settime: `
-and the text of `EPERM`, with exit status 1. Had the app
+facet named `clock`. `date` reports the refusal as it does for a user
+who is not the superuser: `date: clock_settime: ` and the text of
+`EPERM`, with exit status 1. Had the app
 learned the pid of root's clock facet, the system domain's funnel
 would drop its frame, because the facet is exported to root's session
 only; the facet's own check of `D` stands behind that.
@@ -638,10 +634,9 @@ not built.
 
 ## 11.9 Principals, sessions and quotas
 
-A UNIX user is a number, compared with each file's owner on every
-access, and root, user 0, passes every comparison. In erXos the user
-is a **principal**, a record in the system domain's Erlang policy,
-which Fiasco and the root service never see
+Where UNIX has a user id, erXos has a **principal**, a record in the
+system domain's Erlang policy, which Fiasco and the root service never
+see
 ([chapter 5](05-overview.md#517-principal)).
 
 ### 11.9.1 What a principal holds

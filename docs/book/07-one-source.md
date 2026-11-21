@@ -25,15 +25,9 @@ on one line of one text file, and a program in the build writes every
 other copy. This chapter is about that habit: state a fact once, and
 let the build write every copy and check every rule that follows.
 
-UNIX systems know the idea in a few places. FreeBSD keeps its system
-calls in one file, `sys/kern/syscalls.master`, whose header says it is
-"Processed to created init_sysent.c, syscalls.c and syscall.h". The
-entry for `read` gives its number, 3, and its C prototype, and the
-kernel's dispatch table follows from it. Much else is still written
-twice by hand, such as a device's register offsets, in a driver and
-again in a debugger.
-
-erXos makes the FreeBSD habit the rule. Where C, Erlang, Ruby and
+The habit has a UNIX precedent: FreeBSD generates its system-call
+tables from one file, `sys/kern/syscalls.master`. erXos makes the
+habit the rule. Where C, Erlang, Ruby and
 TypeScript need the same fact, a Ruby generator writes all four from
 one source during the build. Where a fact can be checked, such as a
 color's contrast or a configuration's sums, the build checks it.
@@ -279,14 +273,12 @@ would be a second copy, and someone would edit it.
 
 ### 7.3.1 Tables that must match someone else's
 
-Some facts belong to another system. A program ported from FreeBSD
+Some facts belong to another system. A program written for FreeBSD
 expects `ENOENT` to be 2 and `strerror` to say "No such file or
 directory". erXos's errno table, `abi/errno.txt`, gives every name
-FreeBSD 15.1's number, and the generator writes musl's `bits/errno.h`
-from it. Here the real source is outside the tree, so a test,
-`test/host/abi_errno_test.rb`, holds erXos's one table to FreeBSD's
-`sys/sys/errno.h` at a pinned version. The signal table,
-`abi/signals.txt`, takes FreeBSD's numbers and texts the same way.
+FreeBSD's number and text, and the generator writes musl's
+`bits/errno.h` from it. The signal table, `abi/signals.txt`, does the
+same for signals.
 
 ## 7.4 The hardware has one source too
 
@@ -330,7 +322,6 @@ declaration in `hw/svd/genet/genet.svd` reads, shortened:
 </register>
 ```
 
-Each field cites the FreeBSD header its meaning came from.
 `tools/gen_hw.rb` checks the file and writes a C header and an Erlang
 include file. For the `PMD` field, the PHY's
 address, `erx_hw_genet.hrl` defines its shift, width and mask, and
@@ -377,12 +368,11 @@ A processor also has system registers, read with special instructions
 rather than at memory addresses, such as those that say which
 instructions the CPU supports. Arm publishes their encodings and
 fields as machine-readable data under a BSD license. erXos extracts
-the registers it uses from one pinned release into
+the registers it uses from that data into
 `hw/sysreg/aarch64.json`, and the generator writes
 `erx/arch/aarch64/sysreg.h` from it. erXos's boot code reads the
 registers through it, in kernel mode, and `liberx` decodes their
-fields with it. A command recreates the JSON from the pinned archive
-and reports any difference. Terminal escape rules and keyboard layouts
+fields with it. Terminal escape rules and keyboard layouts
 have generators of their own in the same way.
 
 ## 7.5 One theme, three languages
@@ -456,12 +446,9 @@ is designed and not built.
 
 ## 7.7 The system manifest: the machine's configuration, checked
 
-A FreeBSD machine's configuration is spread across `/boot/loader.conf`,
-`/etc/rc.conf`, `/etc/devfs.rules` and more, each read by a different
-program at a different moment, so no program can say whether the
-whole is safe.
-
-erXos has one, the **system manifest** ([chapter 4, section
+Where FreeBSD configures a machine in `/boot/loader.conf`,
+`/etc/rc.conf` and `/etc/devfs.rules`, erXos has one file the build
+checks whole, the **system manifest** ([chapter 4, section
 4.5.4](04-history.md#454-declarative-where-it-simplifies)), assembled
 from a part every board shares (`config/manifest/development.txt`)
 and the board's own part. It names the machine's memory, each domain,

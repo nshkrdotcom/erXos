@@ -35,15 +35,11 @@ back every time, with every file it promised to keep and a system
 that boots, from an SD card that promises little about power cuts and
 whose every byte may have been changed by someone holding it.
 
-FreeBSD meets these needs with familiar tools. UFS with soft updates, or
-ZFS, keeps a file system consistent across a crash. `freebsd-update`
-replaces system files in place, and ZFS boot environments let an
-administrator keep the old system as a snapshot to boot if the new one
-fails. `nextboot` boots a different kernel once and falls back on the
-next reboot (FreeBSD Project, bectl(8), nextboot(8)). These file
-systems run in the kernel, so a bug in a file
-system's parser is a kernel bug, and a crafted disk image is an attack
-on the kernel.
+A system can keep its file systems consistent across a crash with
+journals or copy-on-write, replace system files in place, and keep
+the old system as a snapshot to boot if the new one fails. If its file
+systems run in the kernel, a bug in a file system's parser is a kernel
+bug, and a crafted disk image is an attack on the kernel.
 
 erXos runs storage as services in Erlang domains of their own. The
 system itself is a read-only image whose every block is checked
@@ -106,9 +102,8 @@ volume labelled `ERXOS` that holds the boot-selection record (section
 the vault (chapter 11, section
 [11.11.2](11-security.md#11112-the-vault)), and the data partition, the
 last, holds `/data`. Every boundary falls on a 1 MiB line, the erase
-unit the layout assumes. The layout is built: `make pack
-PLATFORM=raspi4b` writes it to a card image and the QEMU disk image has
-it too.
+unit the layout assumes. The layout is built: the packer writes it to
+a card image, and the QEMU disk image has it too.
 
 ### 16.1.2 Partition windows
 
@@ -122,9 +117,8 @@ system that asks for a sector past its partition's end gets `erange`.
 
 The system manifest declares which domain may hold each window, and a
 build check proves the declaration safe: it refuses, for example, a
-window on a slot held by anyone but the system domain. The development
-manifest, `config/manifest/qemu-virt-development.txt`, declares the
-data partition's:
+window on a slot held by anyone but the system domain. On QEMU the
+development manifest declares the data partition's:
 
 ```text
 window data
@@ -136,7 +130,7 @@ window data
   image none
 ```
 
-The block driver, `erlang/apps/erx_blk`, does not read these rows. It
+The block driver does not read these rows. It
 is a few processes in the storage domain: a device process that talks
 to the controller through the device NIF (chapter 15), a partition
 process, and the windows. The partition process reads the partition
@@ -169,13 +163,12 @@ one runs. The file system breaks at its next request, the domain ends,
 and the restarted domain mounts the volume afresh from what the medium
 holds.
 
-The `driver_domains` QEMU suite runs that event
-(`tools/lib/erx/qemu_suites/driver_domains.rb`):
+Follow that event when the block driver is killed:
 
-1. The guest writes files to `/data`, syncing some, and keeps a
-   transfer running.
-2. The suite kills the block driver in the storage domain while the
-   transfer runs.
+1. Files are written to `/data`, some of them synced, and a transfer
+   is running.
+2. The block driver in the storage domain is killed while the transfer
+   runs.
 3. littlefs's next block request gets `eio` from the window; the
    volume is broken, and littlefs, its supervisors and the storage
    domain end.
@@ -184,8 +177,8 @@ The `driver_domains` QEMU suite runs that event
 5. The domain service restarts the domain. The driver resets the
    device, and the domain reports ready only once littlefs has mounted
    the volume.
-6. The suite reads `/data` again: every synced file is present, each
-   kept file cut at a sync.
+6. `/data` reads again: every synced file is present, each kept file
+   cut at a sync.
 
 Root's session does not fail; it sees a pause in `/data`.
 
@@ -212,15 +205,15 @@ The system partition holds an EROFS image. EROFS, the Enhanced Read-Only
 File System, is a Linux file system for read-only images: nothing on it
 changes, so it needs no free-space map and no journal, and a reader has
 little to get wrong. The tree after it is dm-verity's format, version 1,
-with SHA-256 and 4 KiB blocks, so each tree block holds 128 hashes
-(`otp/erts/preloaded/src/erx_verity_tree.erl`). The image's manifest,
+with SHA-256 and 4 KiB blocks, so each tree block holds 128 hashes.
+The image's manifest,
 inside the slot's boot image, records the root hash, the tree's offset
 and its salt. The firmware loads the boot image from the boot partition,
 so the root hash does not pass through the partition it checks.
 
-The packer has fsimg, a tool outside the tree, write the EROFS image,
-computes the tree itself, and records the tree in the manifest's
-`system_image` row.
+The packer writes the EROFS image with the fsimg tool, computes the
+tree itself, and records the tree in the manifest's `system_image`
+row.
 
 ### 16.2.2 Every block checked before it is parsed
 
@@ -254,16 +247,15 @@ its parser.*
 
 The check runs in the calling process, in Erlang, with the runtime's
 SHA-256 built-in, and asks for the tree blocks it needs on every read.
-The parser also checks every bound, because its fuzz target,
-`test/erlang/erx_erofs_fuzz.erl`, feeds it images no tree vouches for.
+The parser still checks every bound itself, and a fuzz target feeds it
+images no tree vouches for.
 
 Flip one byte of a directory block in the system partition. Its hash
 no longer matches the tree, so the read answers `eio`; the reader
 fails that one operation and logs the image and block, and the process
-that asked carries on. A host test does this to a fixture
-partition (`test/erlang/erx_storage_system_tests.erl`), and a second
-changes files and rebuilds the tree to match: every read still answers
-`eio`, because the root hash comes from the boot image.
+that asked carries on. Change files and rebuild the tree to match, and
+every read still answers `eio`, because the root hash comes from the
+boot image.
 
 ### 16.2.3 The `system` tree, and every reader checks for itself
 
@@ -284,10 +276,7 @@ reader accepts. The system domain and the app template each hold a
 read-only **file grant** of the tree, a process of the storage domain
 that serves the tree to that one holder (chapter 11, section
 [11.7.1](11-security.md#1171-a-namespace-of-grants)); the build
-derives both from the manifest. This is
-built; `erx_storage_system` is tested on the host, and the
-`medium_boot` QEMU suite reads a system release file from the
-partition through the hash-checking reader on a guest.
+derives both from the manifest. This is built.
 
 Nothing at boot needs the tree: every domain's code lies in the boot
 image (chapter 10, section
@@ -297,13 +286,11 @@ partition costs packages, never the boot.
 ## 16.3 littlefs in the storage domain
 
 `/data` is served by littlefs, a small file system from the embedded
-world. Its README says it "is designed to handle random power
-failures" (littlefs README, v2.11.3); it also promises copy-on-write
-guarantees and RAM use that stays bounded as the file system grows,
-and it spreads writes over the blocks it rewrites (dynamic wear
-levelling). erXos
-imports littlefs v2.11.3 into `littlefs/`, and the storage domain runs
-it as a NIF (chapter 3), C code inside the domain's runtime
+world, designed to survive random power failures. It gives
+copy-on-write guarantees, keeps its RAM use bounded as the file system
+grows, and spreads writes over the blocks it rewrites (dynamic wear
+levelling). The storage domain runs it as a NIF (chapter 3), C code
+inside the domain's runtime
 ([littlefs in the storage
 domain](../design-stopgap.md#littlefs-in-the-storage-domain)).
 
@@ -342,8 +329,7 @@ the owner, which waits for nothing, so no cycle of waits can form.
 
 Two kinds of untrusted input reach littlefs. The partition's bytes
 reach it through littlefs's own bounds checks and checksums, and a
-fuzz target, `tools/fuzz/lfs_image_fuzz.c`, feeds it crafted images
-under the NIF's own configuration. A client's paths, sizes and offsets
+fuzz target feeds it crafted images under the NIF's own configuration. A client's paths, sizes and offsets
 reach it through the NIF's argument decoding, which bounds each before
 littlefs sees it. A mount that fails never formats the partition.
 
@@ -404,16 +390,14 @@ partition is a second volume because the vault's sealed keys are kept
 apart from everyone's files: in the design a storage domain of its own
 serves it, the vault is its only client, and so no user's request
 reaches it ([design-storage.md, Data
-model](../design-storage.md#data-model)). It writes
-Linux's on-disk format, so Linux can mount and check what erXos writes,
-and erXos can mount what Linux writes. No Linux code enters the tree:
-the implementation works from a record of the format written in other
-words by separate writers, a clean room. erXos's F2FS as a mounted file
-system is designed and not built. Two pure parts are built and tested on
-the host: the codec in `erlang/apps/erx_f2fs/src/erx_f2fs_codec.erl`,
-which reads a volume's on-disk structures, and the mount core, which
-picks the superblock copy and checkpoint and decides the mount mode. The
-codec has a fuzz target, `test/erlang/erx_f2fs_fuzz.erl`.
+model](../design-storage.md#data-model)). It writes the standard
+on-disk format, so other systems can mount and check what erXos
+writes, and erXos can mount what they write. erXos's F2FS as a
+mounted file system is designed and not built. Two pure parts are
+built and tested on the host: the codec, which reads a volume's
+on-disk structures, and the mount core, which picks the superblock
+copy and checkpoint and decides the mount mode. The codec has a fuzz
+target.
 
 ### 16.4.1 The durable view is never overwritten
 
@@ -455,8 +439,7 @@ chapter 6's pattern of a pure decision that returns a plan.
 ### 16.4.3 Crash states as the oracle
 
 The F2FS design lists every state a power cut can leave, row by row, and
-says what erXos's mount and Linux's mount of the same image must show
-for each ([design-f2fs.md, The crash states as the
+says what a mount of the image must show for each ([design-f2fs.md, The crash states as the
 oracle](../design-f2fs.md#the-crash-states-as-the-oracle)). A cut during
 a checkpoint's last block, for example, must leave either the old
 checkpoint with its chain or the new one, whole, and never a mixture.
@@ -481,8 +464,7 @@ FAT is the file system every camera and every other computer can
 read, which is why the record partition is FAT16: a user writes
 `authorized_keys` to the `ERXOS` volume from a laptop before the first
 boot. The storage domain reads it with `erx_fat_read`, a pure core
-that finds one file in the root directory by its long name
-(`erlang/apps/erx_storage/src/erx_fat_read.erl`). It admits the boot
+that finds one file in the root directory by its long name. It admits the boot
 sector only if it lays the volume out as `abi/medium.txt` says, reads
 exactly the clusters the file's size needs, and refuses a chain that
 loops or leaves the data area, so whatever the card holds, the read is
@@ -515,8 +497,8 @@ controller](../design-storage.md#the-sd-host-controller)). It moves data
 by programmed I/O through the controller's data port, at default speed
 and 3.3 V. `erx_blk_write` builds every read, write and status command,
 and one table lists the identification commands, so one table and one
-module decide what reaches the card. The driver and its fuzz target,
-`test/erlang/erx_blk_sd_fuzz.erl`, are built; on a 4 GB board `/data`
+module decide what reaches the card. The driver and its fuzz target
+are built; on a 4 GB board `/data`
 survives a power cycle. Moving data by DMA through the controller's
 descriptor tables is designed and not built.
 
@@ -548,9 +530,7 @@ Partition 2 is boot A and partition 3 boot B. When the system asks for a
 trial, it sets the firmware's one-shot `tryboot` flag and resets; the
 firmware boots partition 3 under the `[tryboot]` section, and clears the
 flag, so the boot after that returns to partition 2 unless something
-rewrote the record. Raspberry Pi's documentation of `config.txt` says
-the flag is "automatically cleared" after use. While B is committed the
-two numbers swap.
+rewrote the record. While B is committed the two numbers swap.
 
 The record has exactly two encodings of the same length, so a commit
 rewrites one sector and never the file's directory entry
@@ -559,8 +539,8 @@ record](../design-platforms.md#slots-and-the-boot-selection-record)). A
 sector that is neither allows no write; the record sits alone in its
 erase unit. The packer writes it, committing slot A, and the QEMU
 harness plays the firmware: it reads the record, parses the slot it
-names, and boots it (`tools/lib/erx/boot_record.rb`, with a fuzz
-target). These are built.
+names, and boots it; its parser of the record has a fuzz target.
+These are built.
 
 Write C for the committed slot, the one the record names, and S for
 the spare. The boot value, introduced in section 16.6.2, is
@@ -630,25 +610,24 @@ boot the block driver's one write path, `erx_blk_write`, refuses every
 write except to the record and the reset count, and every file system
 mounts read-only. `erx_blk_write` is the only module that builds a
 write request for the device: a build check refuses any other module
-that posts one (`tools/lib/erx/chokepoint_rules/device.rb`), and this
-is built. With one write path, the rule holds whatever the storage
+that posts one, and this is built. With one write path, the rule holds whatever the storage
 services and the system domain do. The trial rule itself is designed
 and not built: `erx_blk_write` does not apply it.
 
 ### 16.6.4 Hangs, faults and the reset count
 
 A trial must end in a boot of the committed slot whatever goes wrong.
-On Fiasco every end of the machine nobody ordered, a fault of the
+Every end of the machine nobody ordered, a fault of the
 system domain, a missed watchdog pet or a failed boot, is a reset
 ([design-fiasco.md, The end path](../design-fiasco.md#the-end-path)).
 After a trial the firmware's flag is spent, so that reset boots the
 committed slot. The root service's watchdog thread resets the machine
 when the system domain's runtime stops petting it, and on the
 Raspberry Pi 4 it also arms the hardware watchdog with a 4 s timeout,
-so a hang of Fiasco or of the root service resets the board
+so a hang of the kernel or of the root service resets the board
 ([design-fiasco.md, The watchdog](../design-fiasco.md#the-watchdog)).
 Both watchdogs are built. A hang before that thread starts, in the
-firmware's own stage or in Fiasco's boot, is not covered and needs a
+firmware's own stage or in the kernel's boot, is not covered and needs a
 power cycle. The call that asks the firmware for a trial boot is
 designed and not built: the kernel interface refuses it, so no trial
 is ever asked for.
@@ -694,8 +673,8 @@ check hashes for everyone would save a second hash of each package
 block; checking in every reader makes a storage domain that can
 withhold a file but never forge one.
 
-**Two slots, not an update in place.** `freebsd-update` replaces files
-in a running system; a cut halfway leaves a mixture. Two slots double
+**Two slots, not an update in place.** An update in place replaces
+files in a running system; a cut halfway leaves a mixture. Two slots double
 the space the system takes on the card, in return for a running slot
 that is never written and a fallback that needs no repair.
 
@@ -735,7 +714,7 @@ record's layout is built, and the trial and commit are designed.
 * Changman Lee, Dongho Sim, Joo-Young Hwang and Sangyeun Cho, "F2FS: A
   New File System for Flash Storage", USENIX FAST, 2015: the design of
   F2FS.
-* littlefs project, README of littlefs v2.11.3,
+* littlefs project, README,
   <https://github.com/littlefs-project/littlefs>: littlefs's goals.
 * Raspberry Pi Ltd, "config.txt" documentation, sections on
   `autoboot.txt` and `tryboot`,

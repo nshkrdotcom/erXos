@@ -30,19 +30,6 @@ or rebuild the system. The machine's builder should not have to trust
 the author: the dashboard must not read the shop's files or take
 memory the system's own services were promised.
 
-FreeBSD answers the first half with `pkg`. A package is an archive of
-files with a manifest of metadata; `pkg add` installs it, and the
-package is recorded in a database; a repository can be set to
-require a signature checked against a public key or fingerprints the
-system trusts (pkg-add(8), pkg(8), pkg.conf(5), pkg-repository(5)).
-A daemon in a package ships an `rc.d`
-script, and it starts at boot once `rc.conf` sets `NAME_enable="YES"`
-(the box before section 23.1.2 explains both).
-The second half FreeBSD answers with UNIX users: the daemon runs as a
-user the package creates, and file permissions keep it out of other
-users' files. Nothing bounds what the package's install scripts do,
-since they run as root.
-
 erXos makes an app a principal of its own. A package is one file,
 `NAME.app`, that declares the app's name, its code and the services it
 needs, beside a read-only image of its files that the reader checks
@@ -123,9 +110,6 @@ the shop's dashboard.
 > if its variable says `YES`; `service ntpd onestart` starts it once
 > whatever the variable says; and `service ntpd enable` writes the
 > variable into `rc.conf` so that the next boot starts it.
-> (rc(8), rc.conf(5) and service(8) describe each of these; `enable`
-> only writes `rc.conf`, and service(8)'s own example follows it with a
-> separate `service sshd start`.)
 
 ### 23.1.2 What starts without a person
 
@@ -138,19 +122,18 @@ the row down ([design-apps.md, The start table](../design-apps.md#the-start-tabl
 The table keys on a principal and on nothing about where the principal
 came from, so a package's app joins it as `ntpd` does.
 
-The table follows FreeBSD's `rc.d` closely. The manifest declares each
-row and its defaults, as an `rc.d` script and `/etc/defaults/rc.conf`
-do, the manifest spelling the period `restart_period_s`. A file in
-rc.conf(5)'s assignment syntax holds the machine's own settings,
-`ntpd_enable="YES"`, and `service ntpd enable`, `start`, `stop` and
-`onestart` act on the row as service(8) does. The file is read, never
-run: a line that is not an assignment to a declared row is skipped, so
-a local setting can enable or disable a declared row, or change its
-display or intensity, and never add one. The design names that file
-`/etc/start.conf`, since it is not FreeBSD's `rc.conf`, which is shell
-code that may run any command. The start service as built reads and
-writes it as `rc.conf` in the data partition's `etc/` directory,
-`/data/etc/rc.conf` (`erlang/apps/erx_starter/src/erx_starter_rc.erl`).
+The table takes its surface from FreeBSD's `rc.d`. The manifest
+declares each row and its defaults, the period spelled
+`restart_period_s`. A file of shell-style assignments holds the
+machine's own settings, `ntpd_enable="YES"`, and `service ntpd
+enable`, `start`, `stop` and `onestart` act on the row. The file is
+read, never run: a line that is not an assignment to a declared row is
+skipped, so a local setting can enable or disable a declared row, or
+change its display or intensity, and never add one. Because it runs
+nothing, the design names the file `/etc/start.conf` rather than
+`rc.conf`. The start service as built reads and writes it as
+`/data/etc/rc.conf`, in the data partition's `etc/` directory
+(`erlang/apps/erx_starter/src/erx_starter_rc.erl`).
 
 Each kept row has an OTP supervisor of its own, `one_for_one` with the
 row's intensity, whose one child is a **session keeper**, a process
@@ -159,10 +142,10 @@ that asks the domain service for a session and links to it
 keeper; it is unrelated to chapter 14's keepers of stream files). When the session ends, the supervisor starts the
 session keeper again, and one row's failure touches no other row. The
 table and `service` are built; chapter
-[20](20-shell.md#205-services-as-freebsd-starts-them)
+[20](20-shell.md#205-starting-services)
 covers `service` as a command. The built `enable` also starts the row,
-where the design, as FreeBSD's, has it start nothing until the next
-boot or the row's own `start`.
+where the design has it start nothing until the next boot or the
+row's own `start`.
 
 ### 23.1.3 One row bounds every app
 
@@ -313,7 +296,7 @@ beneath `/app` leads out of the package. Every entry carries a fixed
 owner, mode and time, so the same inputs give the same bytes and
 nothing of the developer's host leaks into the file.
 
-Why one file and not a directory, as macOS's app bundles are? A file
+Why one file and not a directory of files? A file
 is copied, checked and replaced in one step, and its integrity rests
 on one header. A directory's would rest on every file in it, and on
 the storage domain's honesty about all of them.
@@ -575,15 +558,12 @@ rm /apps/clock.app           remove it; its data stays
 service clock purge          remove its data as well
 ```
 
-There is no `pkg add`, `pkg delete` or `pkg info`: each would be a
-command, a grammar and a table of errors for what a copy, a removal
-and a listing already say. Installing by copying into a directory is
-how macOS installs into `/Applications`, and an install starts no
-service, as on FreeBSD. The image's packages appear in `/apps` too,
-read-only: a copy over one answers `EROFS`, so an installed app never
-takes an image app's name. Where erXos's model differs from FreeBSD's,
-the surface shows it: a package stays one file, so `ls /apps` is the
-list of installed software and no database beside it can disagree.
+Where FreeBSD has `pkg add`, `pkg delete` and `pkg info`, erXos has
+`cp`, `rm` and `ls` on `/apps`. An install starts no service. The image's
+packages appear in `/apps` too, read-only: a copy over one answers
+`EROFS`, so an installed app never takes an image app's name. A
+package stays one file, so `ls /apps` is the list of installed
+software and no database beside it can disagree.
 
 ### 23.5.2 One copy, end to end
 
@@ -617,9 +597,7 @@ through an open of its package: a session keeper that restarted it
 across the rename would start the old layout over the new bytes.
 
 A removal publishes a set without the app and then deletes the file.
-The app's data stays, as deleting an app keeps its data on macOS and
-deleting a package keeps a user's files on FreeBSD. `service NAME
-purge` removes it on purpose.
+The app's data stays; `service NAME purge` removes it on purpose.
 
 ### 23.5.3 Whose data is it?
 
@@ -628,8 +606,7 @@ the app's name and its signer together, `image` for a package of the
 image and otherwise a prefix of the hash of the signer's key
 ([design-packaging.md, Where an app's files lie](../design-packaging.md#where-an-apps-files-lie)).
 A package of the same name signed by another key finds an empty
-directory of its own, as an Android app signed by another key is
-another app. No record keeps the signer beside the data: the path
+directory of its own: to the machine it is another app. No record keeps the signer beside the data: the path
 makes the separation. That apps get such a directory is
 designed and not built: the storage service cannot yet root a grant
 there, so the build refuses a files service on the `apps` row, and
@@ -728,7 +705,7 @@ packer makes its own Ed25519 key the first time it signs without
 `--key`, one per user and host, in `~/.erxos/package-key/`, and a
 development image trusts the public half of its builder's key, so a
 third party's packages are trusted only by images that party builds.
-There is no unsigned mode: signing costs a developer nothing, and one
+Every package is signed: signing costs a developer nothing, and one
 mode keeps the header and the file check simple.
 
 **The examples.** `examples/` holds app directories that are not part
@@ -839,6 +816,5 @@ session running across it.
   the reader and the hash check every package mount goes through.
 * [examples/dashboard/README.md](../../examples/dashboard/README.md):
   the kiosk app, its host test and its QEMU cells.
-* FreeBSD Project, pkg(8), pkg-add(8), pkg.conf(5), rc(8), rc.conf(5)
-  and service(8) manual pages, FreeBSD 14.3 and pkg 1.21.3: the package
-  manager and start settings erXos's surface is measured against.
+* FreeBSD Project, rc(8), rc.conf(5) and service(8) manual pages: the
+  start settings the start table's surface follows.

@@ -1,8 +1,7 @@
 # Chapter 3. Erlang and OTP
 
-> **Status.** Background: sections 3.1 to 3.8 describe stock Erlang/OTP
-> 29.1.2, whose source erXos carries, modified, in `otp/`, and no mark
-> applies to them. Section 3.9 says what erXos does with each idea and
+> **Status.** Background: sections 3.1 to 3.8 describe Erlang/OTP as
+> its developers ship it, and no mark applies to them. Section 3.9 says what erXos does with each idea and
 > marks each claim there. **Built**: the Erlang runtime system (ERTS,
 > section 3.5) runs in every **domain**, erXos's protected group of
 > Erlang processes (section 3.9). Domains message each other as Erlang
@@ -725,7 +724,6 @@ that erXos takes apart.
 Two names are used for it. The **BEAM** is Erlang's virtual machine: the
 instruction set the compiler targets and the engine that runs it.
 **ERTS**, the Erlang Run-Time System, is the whole program around it.
-OTP 29.1.2 ships ERTS 17.1.1.
 
 ### 3.5.1 From source to running code
 
@@ -1154,10 +1152,10 @@ stepping it through its states, with no network. [Chapter
 
 ### 3.9.5 ERTS as a parts bin
 
-erXos treats ERTS as its own code to take apart, not as a program to
-host ([design-runtime.md](../design-runtime.md)). It keeps the
-scheduler, the collector, the loader, the JIT and distribution, and
-removes the layers that only adapt it to running as a program on UNIX.
+In erXos, ERTS is a runtime of the system, not a program hosted on
+it ([design-runtime.md](../design-runtime.md)). It has the scheduler,
+the collector, the loader, the JIT and distribution, and none of the
+layers that adapt a runtime to running as a program on UNIX.
 
 The JIT shows the kind of change. erXos's kernel interface has no
 mapping that is writable and executable at once, and its C library

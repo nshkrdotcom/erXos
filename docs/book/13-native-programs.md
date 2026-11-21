@@ -23,19 +23,15 @@ fault gates and doorbells.
 
 A user who has ported a C program to erXos types its name at the
 command shell, and the program runs. It reads standard input, writes
-standard output and exits with a status, as on FreeBSD.
+standard output and exits with a status.
 
 What may this program touch? A bug in it, or a hostile line in a
 library it links, must not reach the user's files beyond what it was
 handed, the session's Erlang processes or any other domain.
 
-FreeBSD answers with the process. Each program gets an address space,
-a descriptor table and the user's identity. It can open any file its
-user can open, signal any process its user owns, and start any program
-with `fork` and `exec`, unless a jail or Capsicum narrows it.
-
-erXos answers differently. A native program runs in a sub-space of its
-session, an address space the session made and ends. It holds no
+erXos answers with a sub-space and a handler. A native program runs
+in a sub-space of its session, an address space the session made and
+ends. It holds no
 authority of its own: it reaches everything by asking one Erlang
 process, its handler, which checks each request against a table built
 from what the program's **starter** handed it. The starter is the
@@ -58,8 +54,8 @@ It has no domain id, no node name and no connection to any other
 domain; to the session's Erlang code it looks like a port.
 
 > **Background: executable files.** A compiler turns C source into an
-> **executable file**, which on FreeBSD, Linux and erXos is in ELF, the
-> Executable and Linkable Format. Its **segments** say which bytes of
+> **executable file**, on erXos in ELF, the Executable and Linkable
+> Format. Its **segments** say which bytes of
 > the file go at which address, and with which permissions: code
 > readable and executable, data readable and writable. A **loader**
 > maps each segment into a fresh address space and jumps to the entry
@@ -69,9 +65,9 @@ domain; to the session's Erlang code it looks like a port.
 
 ### 13.1.1 What a program consists of
 
-A FreeBSD process has an address space, threads, a descriptor table, a
-process id and a parent. A program on erXos has the same parts, kept
-in different places, and the program itself holds almost none of them
+A program on erXos has the parts of a UNIX process (an address space,
+threads, a descriptor table, a process id and a parent), and the
+program itself holds almost none of them
 (Table 13.1;
 [design-programs.md, A program is a port](../design-programs.md#a-program-is-a-port)).
 
@@ -97,9 +93,8 @@ starts hang from its anchor, so when the designed `exec` replaces the
 image (section 13.8), they stay. There is no `init` to adopt orphans,
 because no child is ever left without a parent.
 
-All of these are Built. The session's port driver, `erx_program`
-(`otp/erts/emulator/sys/erxos/erx_program_drv.c`), makes them from one
-plan.
+All of these are Built. The session's port driver, `erx_program`,
+makes them from one plan.
 
 ### 13.1.2 Why a port
 
@@ -298,12 +293,11 @@ session arranges, and `liberx` reads and writes it directly.
 
 ### 13.4.1 Why not in the kernel
 
-FreeBSD keeps a pipe in the kernel: a buffer and a count of the ends
-open on each side. `write` copies into the buffer, `read` copies out,
-and when no write end remains, `read` returns 0. Every byte crosses
-the kernel twice.
+A kernel could keep a pipe as a buffer and a count of the ends open
+on each side: when no write end remained, `read` would return 0, and
+every byte would cross the kernel twice.
 
-Fiasco offers no pipe, and erXos does not want one. A pipe is lanes
+erXos's kernel has no pipe. A pipe is lanes
 with a little more, so the data path makes no kernel call while the
 other side is awake, and who holds which end stays in Erlang
 ([design-pipes.md](../design-pipes.md)). End of stream, which a kernel
@@ -395,30 +389,27 @@ and rings each sleeper whose bit it finds. Each end has its own
 doorbell, so only readers that wait are woken.
 
 Arm cores may reorder memory accesses ([section
-1.7.3](01-operating-systems.md#173-memory-ordering)), so `make
-check-litmus` tests the pipe's reader lock with herd7, a tool that
-lists every outcome Arm's memory model allows. The lock released with
-a **store-release** (a store the processor may not make visible
-before the stores ahead of it) must never let a reader miss the record
-the last holder claimed. A twin that uses a plain store must let it,
-or the test proves nothing: the seeded fault of [section
-6.5](06-construction.md#65-what-construction-cannot-say). The pipe
-core is also run on the host through every interleaving of a small
-model of one pipe (`test/host/pipe_core_test.rb`). Both checks are
-Built.
+1.7.3](01-operating-systems.md#173-memory-ordering)), so the reader
+lock is released with a **store-release**, a store the processor may
+not make visible before the stores ahead of it; with a plain store, a
+reader could miss the record the last holder claimed. A memory-model
+test proves the difference, with the plain store as its seeded fault
+([section 6.5](06-construction.md#65-what-construction-cannot-say)),
+and the pipe core is run on the host through every interleaving of a
+small model of one pipe. Both checks are Built.
 
 ## 13.5 A pipeline, end to end
 
-The QEMU programs suite types a line beginning with this one at root's
-command shell and checks that `PIPED TEXT` comes back:
+Root types this line at the command shell, and `PIPED TEXT` comes
+back:
 
 ```sh
 echo piped text | rcio upcase
 ```
 
-`echo` is an Erlang command. `rcio` is a native test program in the
-suite's release (`test/guest/programs/rcio.c`). With `upcase` it
-copies standard input to standard output in upper case:
+`echo` is an Erlang command. `rcio` is a small native test program.
+With `upcase` it copies standard input to standard output in upper
+case:
 
 ```c
 	while ((got = read(0, buffer, sizeof(buffer))) > 0) {
@@ -439,8 +430,7 @@ rings instead, so its starter runs **pumps**: Erlang processes linked
 to the starter, each holding one pipe end through the pipe NIF. A
 **feed pump** copies bytes from the shell into the program's standard
 input pipe; a **drain pump** copies the program's output out of its
-pipe. Every step below is Built and runs in that suite; Figure 13.2
-shows them.
+pipe. Every step below is Built; Figure 13.2 shows them.
 
 ```mermaid
 sequenceDiagram
@@ -533,10 +523,9 @@ A signal whose default action is to terminate ends the program:
 which the Erlang side reads as `{signaled, Signal}`. `SIGPIPE` runs
 this path. A write to a pipe with no reader raises it inside `liberx`;
 with the default action the program ends with status 269, 256 plus 13,
-and with `SIGPIPE` ignored the write fails with `EPIPE`. The programs
-suite checks both (`test/guest/programs/pipeio.c`).
+and with `SIGPIPE` ignored the write fails with `EPIPE`.
 
-A fault becomes a signal the same way. Fiasco stops the faulting
+A fault becomes a signal the same way. The kernel stops the faulting
 thread, and the fault record reaches the session's fault gate
 ([section 8.5.3](08-kernel-interface.md#853-gates-for-faults-and-exits)).
 The port driver ends the program with the signal the ABI's fault table
@@ -556,7 +545,7 @@ so a `kill` tells a program nothing about processes beyond its reach.
 which names a process group, fails with `ENOSYS`, and process 1 with
 `ESRCH`.
 
-Aimed at itself, `kill` does less than on UNIX. Only `SIGKILL` acts:
+Aimed at itself, `kill` acts only for `SIGKILL`:
 it stops the program and answers 0. A stop or continue signal belongs
 to the session's job control and fails with `EPERM`. Every other
 signal fails with `ENOSYS`: the protocol has no report that carries a
@@ -565,8 +554,8 @@ signaled. `kill(pid, 0)`, which asks whether a `kill` would reach,
 answers 0 for the program itself. All of this is Built
 (`erx_prog_handler_core.erl`).
 
-On FreeBSD a process id is enough to signal any process of the same
-user. On erXos a pid grants nothing, as an Erlang pid grants nothing
+A process id alone does not let a program signal another program: on
+erXos a pid grants nothing, as an Erlang pid grants nothing
 ([section 6.2.4](06-construction.md#624-pids-exports-and-the-envelope)):
 the handler holds the table, and the table says no.
 
@@ -586,11 +575,11 @@ return to user mode. Each pause has a **cause** the session keeps,
 `job` for `Ctrl-Z`, `fg` and `bg`, and `signal` for the stop signals
 of the second tier, and a program runs only when no cause remains
 ([design-programs.md, Job control](../design-programs.md#job-control)).
-On Fiasco this needs the root service to pause a whole space.
+This needs the root service to pause a whole space.
 
 ### 13.6.4 Signals through vCPU upcalls
 
-Catchable signals are designed to arrive through Fiasco's vCPU upcall
+Catchable signals are designed to arrive through the kernel's vCPU upcall
 ([section 8.5.6](08-kernel-interface.md#856-signals-through-vcpu-upcalls)):
 the kernel interrupts a thread and makes it jump to a function its
 library registered. A sender first bumps the thread's **wake word**,
@@ -600,7 +589,7 @@ object**, an interrupt object aimed at that one thread. `liberx` runs
 the program's handler only when the thread is outside `liberx`'s own
 code, never while it holds a lock
 ([design-programs.md, Signals in liberx](../design-programs.md#signals-in-liberx)).
-Fiasco looks for a queued upcall only at a vCPU resume and after a
+The kernel looks for a queued upcall only at a vCPU resume and after a
 fault, so a signal sent during a kernel call arrives at the program's
 next return to its own code
 ([design-fiasco.md, vCPU upcalls on Fiasco](../design-fiasco.md#vcpu-upcalls-on-fiasco)).
@@ -608,10 +597,9 @@ Signal delivery through vCPU upcalls is designed and not built.
 
 ### 13.6.5 One numbering, FreeBSD's
 
-`SIGSTOP` is 17 on FreeBSD and 19 on Linux. erXos numbers its signals
-and errno values as FreeBSD 15.1 does, everywhere: in musl's headers,
-in `liberx`, in the program protocol, in the shell's `kill` and in
-the Erlang reading of a status
+erXos uses FreeBSD's signal and errno numbers everywhere: in the C
+library's headers, in `liberx`, in the program
+protocol, in the shell's `kill` and in the Erlang reading of a status
 ([design-programs.md, Signal numbers](../design-programs.md#signal-numbers)).
 One table, `abi/signals.txt`, holds the signals:
 
@@ -624,9 +612,8 @@ signal pipe 13 terminate "Broken pipe"
 
 Each line gives the name, the number, the default action and
 `strsignal`'s text, and every consumer is generated from it;
-`abi/errno.txt` does the same for errors. A test compares both tables
-with FreeBSD's own headers, fetched at a pinned version ([section
-7.3.1](07-one-source.md#731-tables-that-must-match-someone-elses)).
+`abi/errno.txt` does the same for errors
+([section 7.3.1](07-one-source.md#731-tables-that-must-match-someone-elses)).
 This is Built.
 
 ## 13.7 The POSIX-lite personality
@@ -647,7 +634,7 @@ The **POSIX-lite personality** is musl's POSIX functions over
 `liberx`: enough to recompile and statically link an ordinary UNIX
 program without porting it
 ([design-programs.md, The POSIX-lite personality](../design-programs.md#the-posix-lite-personality)).
-It is source compatibility, not binary: there is no Linux system call.
+It is source compatibility, not binary.
 A descriptor the program's table does not hold is `EBADF`, never the
 console, so a program writes only where its session gave it
 descriptors. Table 13.2 says which parts run.
@@ -689,11 +676,10 @@ personality, with its process helpers rewritten over `posix_spawn`
 applets that read Linux's `/proc`, such as `ps`, are left out. toybox
 is designed and not built.
 
-The file utilities are a choice, not a gap. `cat`, `ls`, `cp`, `mv`,
-`rm`, `mkdir`, `echo` and `pwd` are Erlang commands of the shell, and
-stay so; so are `wc`, `sort` and `grep`. They run in the session,
-follow FreeBSD's output, and read live Erlang state where a UNIX tool
-would read a kernel's.
+The file utilities `cat`, `ls`, `cp`, `mv`, `rm`, `mkdir`, `echo` and
+`pwd` are Erlang commands of the shell, and stay so; so are `wc`,
+`sort` and `grep`. They run in the session, follow FreeBSD's output,
+and read live Erlang state.
 
 ## 13.8 The second tier
 
@@ -735,8 +721,7 @@ starter (Table 13.3).
 | the starter dies, or the user types `Ctrl-C` | the program | `SIGKILL`'s status |
 | the session or its command server ends | every program of the session | no one remains to learn |
 
-*Table 13.3. Failures and what they end. The programs suite runs a
-faulting program (`test/guest/programs/fault.c`).*
+*Table 13.3. Failures and what they end.*
 
 A status is never invented: a port that closes with none gives
 `no status` in the shell.
@@ -752,8 +737,8 @@ three. A sub-space costs ten kernel objects and a few Erlang terms,
 and involves no domain but the session.
 
 **Linux binary compatibility.** Running Linux binaries unchanged
-brings much software at once, as FreeBSD's Linux layer does, but means
-imitating Linux's system calls, signal numbers and `/proc`, which the
+brings much software at once, but means imitating Linux's system
+calls, signal numbers and `/proc`, which the
 principle "UNIX look and feel, honestly" rules out.
 
 **A handler per program.** One Erlang process could serve every
@@ -781,7 +766,7 @@ a signal, and its `kill` reaches only itself.
 * [design-pipes.md](../design-pipes.md): the pipe's layouts, reading
   and merging, hand-offs and the pipe server's model.
 * [design-fiasco.md, vCPU upcalls on Fiasco](../design-fiasco.md#vcpu-upcalls-on-fiasco):
-  what Fiasco's vCPU interface gives signals, read from its source.
+  what the kernel's vCPU interface gives signals.
 * [design-shell.md](../design-shell.md): how the command shell finds,
   starts and waits for programs, and its pipelines.
 * The Open Group, *The Open Group Base Specifications Issue 8* (IEEE

@@ -22,7 +22,7 @@ processes, links, nodes and the external term format;
 handles and doorbells. [Chapter 9](09-processes.md) explains runtimes;
 this chapter needs only that every domain runs its own ERTS.
 
-A web shop on FreeBSD runs as one `beam.smp` process. Its HTTP server,
+A web shop on a UNIX system runs as one `beam.smp` process. Its HTTP server,
 its database driver and its image resizer are OTP applications in that
 one process. The resizer links a NIF, C code loaded into ERTS
 ([section 3.5.4](03-erlang.md#354-bifs-nifs-and-ports)), and a crafted
@@ -32,7 +32,7 @@ prices. A stray C pointer is not a process failure, so "let it crash"
 cannot help
 ([section 3.3.6](03-erlang.md#336-what-let-it-crash-does-not-fix)).
 
-On FreeBSD the remedy is a second `beam.smp`, whose page tables keep
+On UNIX the remedy is a second `beam.smp`, whose page tables keep
 the resizer's writes out of the shop's memory. The two talk through
 Erlang distribution over TCP: the same `!`, links and monitors. But
 distribution was built for trusted clusters. A node that presents the
@@ -78,7 +78,7 @@ passes arrives wrapped, so no process takes it for a local one.
 
 What makes a domain distinct from every other domain? It holds an
 Erlang node, and its identity is ERTS's own node identity, a name and
-a number, used as stock ERTS uses it.
+a number.
 
 ### 10.1.1 What a domain holds
 
@@ -105,7 +105,7 @@ domain takes the next unused id. The id is the domain's node
 **creation**, the number ERTS uses to tell one run of a node from the
 next run under the same name
 ([section 5.5](05-overview.md#55-four-decisions-every-chapter-assumes)).
-It starts at 4 because stock ERTS gives no node a creation below 4
+It starts at 4 because ERTS gives no node a creation below 4
 ([design-domains.md, Domain ids, pids and
 references](../design-domains.md#domain-ids-pids-and-references)).
 A domain's node name is its name at the machine's host name, such as
@@ -117,8 +117,8 @@ that number, with the node name and creation of the domain that owns
 the process. So a pid names its owner domain by construction; no table
 maps pids to domains, and no table can disagree. erXos prints a pid as
 `<D.N.S>`: domain id, process number, serial. `<7.300.0>` is process
-300, serial 0, of domain 7, wherever it is printed; stock ERTS would
-print the same pid differently on each node. This is Built.
+300, serial 0, of domain 7, and it prints the same on every node and
+in every log. This is Built.
 
 When a domain ends and a later domain takes the same name, the later
 one gets a new id. A pid of the ended domain keeps the old id as its
@@ -439,14 +439,11 @@ fires and nobody waits forever on a dead process.
 
 A parser facing a hostile writer must be right on inputs no test
 author thought of. Besides the chokepoint checks of section 10.3.1,
-two tests check the funnel, both Built. A fuzz target,
-`tools/fuzz/erx_funnel_fuzz.c`, drives `erx_funnel_check` with
-generated frames on the host. A differential test,
-`test/integration/erx_funnel_oracle_test.rb`, compares the funnel,
-erXos's own C, with stock ERTS's `binary_to_term/1`, an independent
-decoder of the same format with decades of use: every payload the
-funnel accepts must decode to the same term. Where the two disagree,
-one is wrong, and the test says where.
+two tests check the funnel, both Built. A fuzz target drives
+`erx_funnel_check` with generated frames, and a differential test
+holds it to ERTS's own `binary_to_term/1`, a decoder of the same
+format with decades of use: every payload the funnel accepts must
+decode to the same term.
 
 ## 10.4 Exports: a pid is a name, not an authority
 
@@ -540,16 +537,12 @@ monitors the client instead
 
 ### 10.4.4 Safe Erlang
 
-The problem is older than erXos. Brown and Sahlin's Safe Erlang (1999)
-observed that pids are "both forgeable and too powerful". Their answer
-made pids into capabilities: a pid carried its rights and a keyed
-hash, so it could not be forged
+Pids are "both forgeable and too powerful", as Brown and Sahlin's Safe
+Erlang (1999) put it
 ([research-prior-art.md, Safe Erlang](../research-prior-art.md#safe-erlang)).
-
-erXos takes the diagnosis and a different cure. OTP prints, compares
-and parses pids everywhere, and an unforgeable pid would change every
-one of those places. Exports leave the pid as it is and keep authority
-in the receiver, as Zircon keeps rights in a handle table.
+An unforgeable pid would change every place OTP prints, compares or
+parses one, so exports leave the pid as it is and keep authority in
+the receiver.
 
 ## 10.5 The origin envelope
 
@@ -931,7 +924,7 @@ Erlang program expects. Revocation goes instead through aliases, which
 an owner deactivates, and facets, which exit.
 
 **Synchronous calls between domains.** A call primitive could make a
-request and its reply one kernel operation, as L4's IPC does. Erlang's
+request and its reply one kernel operation. Erlang's
 model is asynchronous messages with links and monitors, and the lanes
 carry that model as it is. The system has no synchronous call
 primitive at all: its gates carry only fault and exit records, and
