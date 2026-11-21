@@ -593,12 +593,12 @@ record C holds reaches Erlang as the bytes `erx_abi_layout` decodes, as
 the domain library hands the PCIe catalogue to the device service
 ([design-pcie.md](design-pcie.md#the-catalogue-and-gives)). The device
 records are the exception: every layout of a descriptor format, a
-format file that holds a layout with DMA marks, is a record a device
-reads or writes, and only the sequencer writes one, through the encoder
-its marks give it in `erx/abi.h` or, for a report, none
-([design-device-dma.md](design-device-dma.md#descriptions)); the reader
-gives a device record no encoder, and a build check keeps every other
-caller off those encoders.
+format file that holds a layout with DMA marks, is a record of a ring
+or table a device follows or payload a driver posts in a buffer. The
+reader gives none an encoder, so a device record's only C encoder is
+the one its marks give it in `erx/abi.h`, a report has none, and a build
+check keeps every caller but the sequencer off those encoders
+([design-device-dma.md](design-device-dma.md#descriptions)).
 
 A reader whose input is the front of a larger file, such as a package's
 header ([design-packaging.md](design-packaging.md#the-package)), declares

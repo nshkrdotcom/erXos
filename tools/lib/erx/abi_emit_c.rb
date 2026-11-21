@@ -636,9 +636,9 @@ module Erx
       end
 
       # The wire_le layouts the reader encodes: each fixed one but the device
-      # records, the layouts of a descriptor format, which only the sequencer
-      # writes (Marks::Schema#device_record?); a marked one is written by the
-      # encoder its marks give it in abi.h (MarksEmitter), and a report by none.
+      # records, the layouts of a descriptor format (Marks::Schema#device_record?).
+      # A marked one has the encoder its marks give it in abi.h (MarksEmitter), a
+      # report none, and only the sequencer calls a C encoder of one.
       def wire_encoded_layouts(schema)
         wire_layouts(schema).reject { |layout| layout.tail || schema.marks.device_record?(layout) }
       end
@@ -655,8 +655,8 @@ module Erx
         out.concat(['', '/*', ' * Encoders write a layout whole, its padding zero, into the first SIZE',
                     ' * of length bytes, as the decoder reads them; false, writing nothing, when',
                     ' * length is shorter. A layout with a tail has none, and neither has a',
-                    ' * device record, a layout of a descriptor format, which only the',
-                    ' * sequencer writes.', ' */'])
+                    ' * device record, a layout of a descriptor format, whose only C',
+                    ' * encoders are the ones its marks give it in erx/abi.h.', ' */'])
         wire_encoded_layouts(schema).each do |layout|
           out << "bool #{name(layout.name)}_encode(const #{c_type(layout)} *value,"
           out << '    uint8_t *bytes, size_t length);'

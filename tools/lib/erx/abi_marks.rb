@@ -114,8 +114,9 @@ module Erx
         # What every table of target offers: the meanings whose line names it.
         def offered(target) = meanings.select { |meaning| meaning.structure.name == target.name }
         # The descriptor formats: each source file that holds a marked layout. Every
-        # layout of one is a device record, one a device reads or writes, and only the
-        # sequencer writes one, through its generated encoder
+        # layout of one is a device record: a record of a ring or table a device
+        # follows, or payload a driver posts in a buffer. The C reader encodes none,
+        # and only the sequencer calls a generated C encoder of one
         # (docs/design-device-dma.md#descriptions).
         def descriptor_formats = layouts.to_set { |marked| marked.layout.line.path }
         def device_record?(layout) = descriptor_formats.include?(layout.line.path)

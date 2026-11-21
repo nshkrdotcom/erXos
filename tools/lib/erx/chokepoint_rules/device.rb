@@ -46,10 +46,14 @@ module Erx
     PERIPHERALS = Hardware.devices(root: REPOSITORY)
     # The generated encoder of each device record, a layout of a descriptor format
     # (ABI::Marks::Schema#device_record?), read from the ABI model, so a record or format
-    # is covered as it is declared.
+    # is covered as it is declared. An empty list would make the rule's pattern match at
+    # every word boundary, so it is refused.
     DEVICE_RECORD_ENCODERS = ABI::Model.validate(ABI::Sources.read(root: REPOSITORY)).then do |schema|
       schema.types.values.select { |type| type.is_a?(ABI::Layout) && schema.marks.device_record?(type) }
             .map { |layout| "#{ABI::CEmitter.name(layout.name)}_encode" }.sort.freeze
+    end
+    if DEVICE_RECORD_ENCODERS.empty?
+      raise Error, 'no descriptor format holds a marked layout: device-record-encoders has nothing to guard'
     end
     PERIPHERAL_HEADERS = PERIPHERALS.map { |device| Hardware.device_header_path(device) }.freeze
     PERIPHERAL_SYMBOLS = PERIPHERALS.flat_map { |device| Hardware.generated_symbols(device) }.freeze
