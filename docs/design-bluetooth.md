@@ -216,8 +216,7 @@ declarations in table order (`erx_bytes:sha256/1`), names it.
 Every access passes one pure function, the **gate**:
 
 ```erlang
--spec erx_gatt_gate:check(access(), level(), link_security()) -> ok | {error, att_error()}.
--type access() :: read | write | notify.          % indications and configuration writes are notify's
+-spec erx_gatt_gate:check(level(), link_security()) -> ok | {error, att_error()}.
 -type level() :: open | encrypted | authenticated. % GAP 10.2.1 levels 1, 2 and 4
 -type link_security() :: #{key := none | encrypted | authenticated, encrypted := boolean()}.
 ```
@@ -691,7 +690,7 @@ table, fixed before any peer arrives:
 | packets and commands waiting to be written | one: the writer takes the next only after its last write returned | the controller process and the writer |
 | notifications waiting for a link's credits | `bt_notify_queue`, 16, per link; past it `notify` answers `{error, busy}` | the link |
 | an ACL packet from the controller | `bt_acl_rx_max`, 251 octets of data, which the bring-up states with Host Buffer Size; a longer one is a loss of synchronization | `erx_h4` |
-| an L2CAP frame being reassembled | 4 bytes of header and the channel's MTU: 247 for ATT, 65 for SMP, 23 for signaling; a longer frame ends the link | `erx_bt_link_core` |
+| an L2CAP frame being reassembled | 4 bytes of header and the channel's MTU: 65 for SMP, and ATT's 247 for ATT and every other channel; a longer frame ends the link, and a signaling frame past MTUsig, 23, is answered Command Reject (L2CAP 4) | `erx_bt_link_core` |
 | ATT requests | one outstanding (ATT 3.3.2); a second before the response ends the link | the link |
 | ATT commands waiting for a handler | `bt_write_queue`, 16; past it a command is discarded and counted, as ATT 3.3.2 allows | the link |
 | a prepared (long) write | one per link, at most the characteristic's maximum, 512 octets at most | the link |
@@ -1080,7 +1079,8 @@ hexadecimal, so a constant needs no handler.
 term per service, and the list of names the manifest check holds a row
 to. It refuses a missing or repeated `service` line, a name that differs
 from its file's, a UUID that is malformed or is one of the GATT and GAP
-declarations' own, two characteristics of one name or UUID, a maximum
+declarations' own, a service named `gap` or `gatt`, the names the table
+gives GAP's and GATT's own services, two characteristics of one name or UUID, a maximum
 over 512, an access without a level or repeated, a `notify` and an
 `indicate` with different levels, a characteristic with no access, an
 initial value longer than its maximum or on a characteristic that is not
@@ -1119,8 +1119,13 @@ named in no stage.
 
 ### The ATT server
 
-`erx_gatt_server:request(Pdu, Table, Bearer) -> {Response, Effects,
-Bearer}` answers one request over the table and the bearer's state. It
+`erx_gatt_server:request(Pdu, Server, Bearer) -> {Actions, Bearer}`
+answers one PDU over `Server`, the table, the values the handlers last
+set and the link's security, and the bearer's state; `reply(Answer,
+Server, Bearer)` takes a handler's answer to the write the bearer waits
+on, and `notify(Kind, Key, Value, Server, Bearer)` makes a notification
+or an indication the gate allows. The actions are the PDUs to send, the
+write for the handler, and the events for the handlers. It
 answers Exchange MTU with 247, Find Information, Find By Type Value, Read
 By Type, Read, Read Blob, Read By Group Type, Write Request, Prepare
 Write and Execute Write, and takes Write Command and Handle Value
@@ -1130,10 +1135,17 @@ wrong is Invalid PDU. These cover the server's mandatory features and
 the optional ones a first stage needs (GATT Table 4.1): Read Multiple and
 Read Multiple Variable stay unsupported. A write of a characteristic's
 value whose length exceeds its maximum is Invalid Attribute Value Length;
-a prepared write that would exceed it is Prepare Queue Full.
+a prepared write that would exceed it, or that names another
+characteristic than the one already prepared, is Prepare Queue Full,
+and one to a descriptor is Write Not Permitted. Execute Write joins the
+parts from an empty value, each at an offset at most the length the
+parts before it wrote, so the handler receives the whole value; ATT
+leaves a long value's meaning to the higher layer (3.4.6.1). A request
+longer than the bearer's MTU is Invalid PDU, and a command that long is
+ignored.
 
-`erx_att` is the PDU codec, generated from `abi/formats/bluetooth.txt`
-with a fuzz target. Its MTU is per bearer, 23 until the client exchanges
+`erx_att` is the PDU codec, whose codes `abi/formats/bluetooth.txt`
+holds, with a fuzz target. Its MTU is per bearer, 23 until the client exchanges
 it (GATT 5.2.1).
 
 ### The `ble` facet
@@ -1185,12 +1197,17 @@ calls are what it uses.
 
 A link process reassembles L2CAP B-frames from the ACL packets of its
 handle, as HCI 5.4.2's packet-boundary flags mark them, and refuses a
-frame longer than its channel's MTU or a continuation without a start,
-which ends the link. Channel `0x0004` is the ATT bearer; `0x0006` is SMP;
-on `0x0005`, LE signaling, it answers Command Reject, "Command not
-understood", to every request, and drops responses: erXos asks no
-connection parameter update and offers no credit-based channel. A frame
-on any other channel is dropped and counted.
+frame longer than its channel's bound, a continuation without a start, a
+start inside a frame or bytes past a frame's length, which ends the link
+(`erx_l2cap`). Channel `0x0004` is the ATT bearer; `0x0006` is SMP; on
+`0x0005`, LE signaling, it answers Command Reject, "Command not
+understood", to every command but a response, and drops responses:
+erXos asks no connection parameter update and offers no credit-based
+channel. A signaling frame longer than MTUsig, 23 octets, is answered
+Command Reject, "Signaling MTU exceeded", with 23, as L2CAP 4 requires,
+rather than ending the link; one too short to carry a command, or whose
+Data Length disagrees with it, is not correctly formed (L2CAP 4) and is
+dropped. A frame on any other channel is dropped and counted.
 
 ## Stage 3: the serial service
 

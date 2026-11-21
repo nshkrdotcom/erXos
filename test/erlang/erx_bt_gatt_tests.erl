@@ -273,6 +273,8 @@ range_requests_check_their_handles_test() ->
     ?assertEqual(error_rsp(16#04, 0, 16#01), answer(find_info(0, 5), S, B)),
     ?assertEqual(error_rsp(16#04, 6, 16#01), answer(find_info(6, 5), S, B)),
     ?assertEqual(error_rsp(16#04, 22, 16#0A), answer(find_info(22, 16#FFFF), S, B)),
+    ?assertEqual(error_rsp(16#04, 100, 16#0A), answer(find_info(100, 16#FFFF), S, B)),
+    ?assertEqual(error_rsp(16#10, 5149, 16#0A), answer(read_by_group_type(5149, 16#FFFF, <<0, 16#28>>), S, B)),
     ?assertEqual(error_rsp(16#10, 1, 16#10), answer(read_by_group_type(1, 16#FFFF, <<3, 16#28>>), S, B)),
     ?assertEqual(error_rsp(16#08, 9, 16#01), answer(read_by_type(9, 1, <<3, 16#28>>), S, B)).
 

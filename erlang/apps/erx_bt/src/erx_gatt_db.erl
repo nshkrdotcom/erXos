@@ -76,10 +76,10 @@ lookup(Handle, #{attributes := Attributes}) when Handle >= 1, Handle =< tuple_si
 lookup(_Handle, _Table) ->
     error.
 
--doc "The attributes from `Start` to `End`, in handle order; `Start` is at least 1.".
+-doc "The attributes from `Start` to `End`, in handle order; `Start` is at least 1, and may be past the table.".
 -spec range(erx_att:handle(), erx_att:handle(), table()) -> [attribute()].
 range(Start, End, #{attributes := Attributes}) ->
-    [element(Handle, Attributes) || Handle <- lists:seq(Start, min(End, tuple_size(Attributes)))].
+    [element(Handle, Attributes) || Handle <- lists:seq(Start, max(Start - 1, min(End, tuple_size(Attributes))))].
 
 -doc "The characteristic named `Key`.".
 -spec characteristic(key(), table()) -> {ok, char_info()} | error.
