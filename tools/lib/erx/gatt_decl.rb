@@ -26,12 +26,15 @@ module Erx
   # of LEVELS, each access given once; HEX the initial value, two lower-case
   # hexadecimal digits an octet.
   #
-  # UUIDs are compared as 128-bit UUIDs, as ATT compares attribute types (Core 6.3,
-  # Vol 3 Part F, 3.4.4.1 and 3.4.4.9, notes): a 16-bit UUID is placed in the
-  # Bluetooth Base UUID (Vol 3 Part B, 2.5.1, which was not read; BASE_UUID is
-  # Bumble v0.0.237's, bumble/core.py, lines 202 and 212, and is unverified against
-  # Part B). So a characteristic UUID given once short and once long is given twice,
-  # and the long form of one of GATT's and GAP's own UUIDs is theirs.
+  # Each UUID has one spelling: a UUID of the Bluetooth Base UUID with a 16-bit
+  # value is written as those 16 bits, and its 128-bit form is refused as
+  # malformed. ATT compares attribute types as 128-bit UUIDs (Core 6.3, Vol 3
+  # Part F, 3.4.4.1 and 3.4.4.9, notes) but Find By Type Value compares the octets
+  # of a service declaration's value (3.4.3.3), so a phone that looks for a 16-bit
+  # service UUID finds only its 2-octet form. With one spelling, UUIDs are equal
+  # exactly when their spellings are. (The Base UUID is Vol 3 Part B, 2.5.1, which
+  # was not read; BASE_UUID is Bumble v0.0.237's, bumble/core.py, lines 202 and
+  # 212, and is unverified against Part B.)
   module GattDecl
     class DeclarationError < Error; end
 
@@ -53,18 +56,17 @@ module Erx
     DECIMAL = /\A(?:0|[1-9][0-9]{0,5})\z/
     HEX = /\A(?:[0-9a-f]{2})+\z/
     BASE_UUID = 0x0000_0000_0000_1000_8000_0080_5f9b_34fb
+    # The bits of a 128-bit UUID a 16-bit UUID sets in the Base UUID.
+    SHORT_BITS = 0xffff << 96
 
     # A UUID as written, 16 or 128 bits wide, and its value.
-    Uuid = Data.define(:bits, :value) do
-      # The UUID as 128 bits, by which UUIDs are compared.
-      def wide = bits == 128 ? value : BASE_UUID | (value << 96)
-    end
+    Uuid = Data.define(:bits, :value)
     # access: ACCESSES member => LEVELS member, in ACCESSES order. value: the
     # initial value's octets, or nil.
     Characteristic = Data.define(:name, :uuid, :max, :access, :value)
     Service = Data.define(:name, :uuid, :advertise, :characteristics)
-    # What a declaration is checked against, from the ABI: the reserved UUIDs by
-    # their wide value => their gatt_uuid member, and the longest value.
+    # What a declaration is checked against, from the ABI: the reserved UUIDs =>
+    # their gatt_uuid member, and the longest value.
     Vocabulary = Data.define(:reserved, :value_max)
 
     module_function
@@ -92,7 +94,7 @@ module Erx
       end
 
       limit = schema.constants[VALUE_MAX_LIMIT] or raise DeclarationError, "the ABI declares no #{VALUE_MAX_LIMIT}"
-      reserved = type.members.to_h { |member, value| [Uuid.new(bits: 16, value: value).wide, member] }
+      reserved = type.members.to_h { |member, value| [Uuid.new(bits: 16, value: value), member] }
       Vocabulary.new(reserved: reserved.freeze, value_max: limit.value)
     end
 
@@ -152,7 +154,7 @@ module Erx
       raise DeclarationError, "#{where}: #{name} is the name of the table's own service" if RESERVED_NAMES.include?(name)
       raise DeclarationError, "#{where}: service #{name} in a file named #{file_name}" unless name == file_name
 
-      Service.new(name: name, uuid: uuid(uuid, vocabulary: vocabulary, where: where), advertise: advertise,
+      Service.new(name: name, uuid: parse_uuid(uuid, vocabulary: vocabulary, where: where), advertise: advertise,
                   characteristics: [].freeze)
     end
     private_class_method :service_line
@@ -164,10 +166,15 @@ module Erx
 
       _keyword, name, uuid, max, *rest = tokens
       identifier(name, where: where)
-      accesses, value = rest.include?('value') ? [rest[0...rest.index('value')], rest[rest.index('value')..]] : [rest, []]
-      characteristic = Characteristic.new(name: name, uuid: uuid(uuid, vocabulary: vocabulary, where: where),
-                                          max: max(max, vocabulary: vocabulary, where: where),
-                                          access: access(accesses, name: name, where: where), value: nil)
+      # The accesses run up to the first value token (a find pattern matches the
+      # leftmost), which starts the initial value.
+      accesses, value = case rest
+                        in [*before, 'value', *after] then [before, ['value', *after]]
+                        else [rest, []]
+                        end
+      characteristic = Characteristic.new(name: name, uuid: parse_uuid(uuid, vocabulary: vocabulary, where: where),
+                                          max: parse_max(max, vocabulary: vocabulary, where: where),
+                                          access: parse_access(accesses, name: name, where: where), value: nil)
       value.empty? ? characteristic : characteristic.with(value: initial_value(value, characteristic, where: where))
     end
     private_class_method :characteristic_line
@@ -177,20 +184,23 @@ module Erx
     end
     private_class_method :identifier
 
-    def uuid(token, vocabulary:, where:)
+    def parse_uuid(token, vocabulary:, where:)
       uuid = case token
              when UUID16 then Uuid.new(bits: 16, value: token.to_i(16))
              when UUID128 then Uuid.new(bits: 128, value: token.delete('-').to_i(16))
              else raise DeclarationError, "#{where}: #{token} is not a 16-bit or 128-bit UUID"
              end
-      member = vocabulary.reserved[uuid.wide]
+      if uuid.bits == 128 && uuid.value & ~SHORT_BITS == BASE_UUID
+        raise DeclarationError, format('%s: %s is written %04x, in 16 bits', where, token, uuid.value >> 96)
+      end
+      member = vocabulary.reserved[uuid]
       raise DeclarationError, "#{where}: #{token} is GATT's or GAP's own UUID #{member}" if member
 
       uuid
     end
-    private_class_method :uuid
+    private_class_method :parse_uuid
 
-    def max(token, vocabulary:, where:)
+    def parse_max(token, vocabulary:, where:)
       raise DeclarationError, "#{where}: #{token} is not a length in decimal" unless token.match?(DECIMAL)
 
       max = token.to_i
@@ -198,12 +208,13 @@ module Erx
 
       max
     end
-    private_class_method :max
+    private_class_method :parse_max
 
     # The accesses and their levels, in pairs; an access followed by another access,
-    # by value or by nothing has no level.
-    def access(tokens, name:, where:)
-      access = tokens.each_slice(2).each_with_object({}) do |(access, level), map|
+    # by value or by nothing has no level. The result is in ACCESSES order, so the
+    # generated module does not depend on the order a line gives them in.
+    def parse_access(tokens, name:, where:)
+      levels = tokens.each_slice(2).each_with_object({}) do |(access, level), map|
         raise DeclarationError, "#{where}: #{access} is not an access" unless ACCESSES.include?(access)
         raise DeclarationError, "#{where}: #{access} given twice" if map.key?(access)
         raise DeclarationError, "#{where}: #{access} has no level" if level.nil? || ACCESSES.include?(level)
@@ -211,14 +222,14 @@ module Erx
 
         map[access] = level
       end
-      raise DeclarationError, "#{where}: #{name} allows no access" if access.empty?
-      if access.key?('notify') && access.key?('indicate') && access['notify'] != access['indicate']
-        raise DeclarationError, "#{where}: #{name} notifies #{access['notify']} and indicates #{access['indicate']}"
+      raise DeclarationError, "#{where}: #{name} allows no access" if levels.empty?
+      if levels.key?('notify') && levels.key?('indicate') && levels['notify'] != levels['indicate']
+        raise DeclarationError, "#{where}: #{name} notifies #{levels['notify']} and indicates #{levels['indicate']}"
       end
 
-      ACCESSES.select { |key| access.key?(key) }.to_h { |key| [key, access.fetch(key)] }.freeze
+      levels.sort_by { |access, _level| ACCESSES.index(access) }.to_h.freeze
     end
-    private_class_method :access
+    private_class_method :parse_access
 
     def initial_value(tokens, characteristic, where:)
       hex = case tokens
@@ -242,7 +253,7 @@ module Erx
       if earlier.any? { |other| other.name == characteristic.name }
         raise DeclarationError, "#{where}: a second characteristic #{characteristic.name}"
       end
-      return unless (other = earlier.find { |candidate| candidate.uuid.wide == characteristic.uuid.wide })
+      return unless (other = earlier.find { |candidate| candidate.uuid == characteristic.uuid })
 
       raise DeclarationError, "#{where}: #{characteristic.name} has #{other.name}'s UUID"
     end
@@ -275,7 +286,7 @@ module Erx
         names() ->
             [#{names.join(', ')}].
 
-        -doc "The services whose declarations say `advertise`.".
+        -doc "The declared services whose declarations say `advertise`, served or not.".
         -spec advertised() -> [name()].
         advertised() ->
             [#{advertised.join(', ')}].

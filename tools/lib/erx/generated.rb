@@ -16,7 +16,7 @@ require_relative 'sysreg_headers'
 require_relative 'facet_names'
 require_relative 'terminal_generation'
 require_relative 'keymap'
-require_relative %q(gatt_decl)
+require_relative 'gatt_decl'
 require_relative 'splash_mark'
 
 module Erx

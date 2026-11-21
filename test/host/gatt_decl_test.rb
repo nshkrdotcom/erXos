@@ -63,11 +63,19 @@ class GattDeclTest < Minitest::Test
     assert_equal 0x2a37, parse('characteristic c 2a37 20 read open').characteristics.first.uuid.value
   end
 
-  # Every member of the enum gatt_uuid is refused, short or in the Base UUID.
+  # A UUID of the Base UUID with a 16-bit value has one spelling, its 16 bits, so a phone's
+  # Find By Type Value of the 2-octet form finds it; a 32-bit one keeps its 128-bit form.
+  def test_the_long_form_of_a_16_bit_uuid_is_refused
+    assert_refused(/00002a37-0000-1000-8000-00805f9b34fb is written 2a37, in 16 bits/,
+                   'characteristic c 00002a37-0000-1000-8000-00805f9b34fb 20 read open')
+    assert_refused(/00002902-0000-1000-8000-00805f9b34fb is written 2902, in 16 bits/,
+                   'characteristic c 00002902-0000-1000-8000-00805f9b34fb 20 read open')
+    long = parse('characteristic c 00012a37-0000-1000-8000-00805f9b34fb 20 read open').characteristics.first.uuid
+    assert_equal 128, long.bits
+  end
+
   def test_gatt_and_gaps_own_uuids_are_refused
     assert_refused(/2803 is GATT's or GAP's own UUID characteristic/, 'characteristic c 2803 20 read open')
-    assert_refused(/is GATT's or GAP's own UUID client_configuration/,
-                   'characteristic c 00002902-0000-1000-8000-00805f9b34fb 20 read open')
     assert_refused(/1800 is GATT's or GAP's own UUID gap_service/, service: 'service svc 1800')
     assert_equal 9, VOCABULARY.reserved.size
   end
@@ -82,8 +90,7 @@ class GattDeclTest < Minitest::Test
   def test_two_characteristics_of_one_name_or_uuid_are_refused
     assert_refused(/:3: a second characteristic c/, "#{CHAR} 20 read open", 'characteristic c 2a37 20 read open')
     assert_refused(/:3: d has c's UUID/, "#{CHAR} 20 read open", 'characteristic d 0000aaab-0000-4000-8000-00000000beef 20 read open')
-    assert_refused(/:3: d has c's UUID/, 'characteristic c 2a37 20 read open',
-                   'characteristic d 00002a37-0000-1000-8000-00805f9b34fb 20 read open')
+    assert_refused(/:3: d has c's UUID/, 'characteristic c 2a37 20 read open', 'characteristic d 2a37 20 read open')
   end
 
   def test_a_maximum_over_512_is_refused

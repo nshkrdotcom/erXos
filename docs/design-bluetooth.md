@@ -1077,11 +1077,13 @@ hexadecimal, so a constant needs no handler.
 
 `tools/gen_gatt.rb` reads every file and generates `erx_gatt_decl`, one
 term per service, the list of names the manifest check holds a row
-to, and the names of those that say `advertise`. UUIDs are compared as
-128-bit UUIDs, as ATT compares attribute types (ATT 3.4.4.1), so a
-16-bit UUID equals its form in the Base UUID. It refuses a missing or
-repeated `service` line, a name that differs
-from its file's, a UUID that is malformed or is one of the GATT and GAP
+to, and the names of those that say `advertise`. A UUID has one
+spelling: one of the Base UUID with a 16-bit value is written in 16
+bits, since Find By Type Value compares a service declaration's value
+octet by octet (ATT 3.4.3.3) and a phone looks for the 2-octet form. It
+refuses a missing or repeated `service` line, a name that differs
+from its file's, a UUID that is malformed, the 128-bit form of a 16-bit
+one included, or is one of the GATT and GAP
 declarations' own (the enum `gatt_uuid` of `abi/formats/bluetooth.txt`),
 a service named `gap` or `gatt`, the names the table
 gives GAP's and GATT's own services, two characteristics of one name or UUID, a maximum

@@ -8543,12 +8543,26 @@ model harness drive `erx_device.c` itself. `erx_device_dma_check` and `erx_devic
   bond's subscriptions at reconnection. Reshape with Stage 4: the configuration write awaits an answer as a value
   write does, the bearer changes at the answer, the descriptor takes Write Command at its write level, and
   `new/1` takes the kept subscriptions.
+* [Medium] bluetooth, the table's handle count (`erx_gatt_db`, design-bluetooth.md, "Declarations: `abi/gatt`"):
+  nothing bounds the attributes of the served services, and `erx_gatt_db:build/1` writes handles as 16 bits, so
+  past 0xFFFF a characteristic declaration names a wrapped handle. One 64 KiB declaration holds some 5,700
+  handles, so only a manifest serving many large services reaches it. The manifest check, which already refuses
+  more than `gatt_services_max` services, should refuse a served set past 0xFFFF handles.
+* [Low] bluetooth, the GATT declarations' smaller gaps (`Erx::GattDecl`, `erx_gatt_db`): only the table's own
+  UUIDs (the enum `gatt_uuid`) are refused, so a characteristic of type Include (0x2802) or a descriptor type
+  (0x2900-0x29ff) is accepted and a client's Find Included Services would read it as an include; the one level
+  of a Client Characteristic Configuration rests on the generator's refusal of `notify` and `indicate` at
+  different levels, not on `erx_gatt_db:service()`, which could carry one `subscribe` level instead; the names
+  `gap` and `gatt` are written both in `erx_gatt_db` and in the generator's `RESERVED_NAMES`; and a
+  characteristic may notify at a weaker level than it is read at (`read authenticated notify open`), which the
+  design neither refuses nor states.
 * [Low] bluetooth, the ATT server's smaller gaps (`erx_gatt_server`, `erx_gatt_db`, `erx_att`): Execute Write
   joins parts from an empty value, so a client rewriting the tail of an existing value gets Invalid Offset (ATT
   3.4.6.3 measures from the current value); a second `indicate` in flight answers `busy`, which the facet's
   table lists only for notifications, so the link must queue indications or the design list `busy`; the table's
   hash covers the internal attribute maps rather than the declarations alone, so an OTP upgrade can send an
-  unneeded Service Changed; the Bluetooth Base UUID in `erx_att:uuid128/1` is Bumble's, unverified against Vol 3
+  unneeded Service Changed; the Bluetooth Base UUID in `erx_att:uuid128/1` and in the GATT declarations'
+  generator (`Erx::GattDecl::BASE_UUID`) is Bumble's, unverified against Vol 3
   Part B 2.5.1, and the case that uses it is circular; the bearer exploration checks response counts but not
   which request a response answers, and the ATT fuzz target runs at security `none` and checks at most one
   answer rather than exactly one.
