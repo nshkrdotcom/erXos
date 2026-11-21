@@ -154,16 +154,21 @@ port_operation() ->
     Word = word(),
     Op = pick([get_status, power_on, reset, disable, {clear, connection}, {clear, enabled},
                {clear, suspend}, {clear, over_current}, {clear, reset}]),
-    case call(fun() -> erx_xhci_core:port_operation(Op, Word) end, {Op, Word}) of
-        {[], {ok, <<_:32>>, Speed}} ->
-            sound(Op =:= get_status andalso Speed =< 15, {Op, Word, Speed});
-        {[Written], ok} ->
-            Changes = Written band 16#fe0000,
-            sound(Written band 16#80010000 =:= 0
-                  andalso (Written band 2 =:= 0 orelse Op =:= disable)
-                  andalso (Changes =:= 0 orelse is_tuple(Op))
-                  andalso Written < 1 bsl 32,
-                  {Op, Word, Written})
+    Reported = word() band 16#fe0000,
+    case call(fun() -> erx_xhci_core:port_operation(Op, Word, Reported) end, {Op, Word, Reported}) of
+        {[], {ok, <<_:32>>, Speed}, Left} ->
+            sound(Op =:= get_status andalso Speed =< 15 andalso Left =:= Word band 16#fe0000, {Op, Word, Speed});
+        {Writes, ok, Left} when length(Writes) =< 1 ->
+            sound(Left band bnot Reported =:= 0, {Op, Word, Reported, Left}),
+            [begin
+                 Changes = Written band 16#fe0000,
+                 sound(Written band 16#80010000 =:= 0
+                       andalso (Written band 2 =:= 0 orelse Op =:= disable)
+                       andalso (Changes =:= 0 orelse is_tuple(Op))
+                       andalso Changes band bnot Reported =:= 0
+                       andalso Written < 1 bsl 32,
+                       {Op, Word, Written})
+             end || Written <- Writes]
     end,
     0.
 

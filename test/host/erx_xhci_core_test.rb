@@ -21,8 +21,9 @@ require_relative '../fixtures/erlang_build'
 # again, a start that stalls; an interrupt before the controller runs acknowledged at
 # once; a held interrupt acknowledged with a failure; a host system error ignored;
 # a host controller error ignored; a halt ignored; a running controller's status never read between
-# interrupts; an interrupt pass not bounded; and a lost command
-# never failing the controller.
+# interrupts; an interrupt pass not bounded; a lost command never failing the
+# controller; a reported change bit left set by its clear; a change bit cleared that
+# no status read reported; and one port's reported changes taken as another's.
 class ErxXhciCoreTest < Minitest::Test
   APPLICATIONS = %w[erx_usb].freeze
   CORE = 'erlang/apps/erx_usb/src/erx_xhci_core.erl'
@@ -31,6 +32,7 @@ class ErxXhciCoreTest < Minitest::Test
   EXPLORED = 'the_pipe_machine_is_explored_to_a_fixed_point_test_'
   START_EXPLORED = 'the_start_is_explored_to_a_fixed_point_test_'
   STATUS = 'the_status_of_a_running_controller_is_read_each_second_test'
+  PORTS_EXPLORED = 'the_root_port_machine_is_explored_to_a_fixed_point_test_'
 
   Seed = Data.define(:fault, :anchor, :replacement, :catching_case)
 
@@ -103,6 +105,18 @@ class ErxXhciCoreTest < Minitest::Test
              anchor: 'Fails -> {Next, [lists:last(Fails)]}',
              replacement: "Fails -> {_, Owed} = release_line({Next, []}), {Next, Owed ++ [lists:last(Fails)]}",
              catching_case: START_EXPLORED),
+    Seed.new(fault: 'a reported change bit not cleared (the USB 2 word kept as the PORTSC bits)',
+             anchor: 'Word band change_bits()};',
+             replacement: 'port_changes(Word)};',
+             catching_case: PORTS_EXPLORED),
+    Seed.new(fault: 'a change bit cleared that was not reported',
+             anchor: 'Clear = Bits band Reported,',
+             replacement: 'Clear = Bits,',
+             catching_case: PORTS_EXPLORED),
+    Seed.new(fault: "a port's reset change taken as another port's",
+             anchor: 'reported := Reported#{Port => Left}',
+             replacement: 'reported := Reported#{1 => Left}',
+             catching_case: PORTS_EXPLORED)
   ].freeze
 
   def test_xhci_core_cases_pass_under_eunit

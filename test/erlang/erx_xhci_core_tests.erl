@@ -580,25 +580,128 @@ portsc_writes_set_only_what_they_mean_test() ->
            {{clear, suspend}, ?PS_PLC}, {{clear, over_current}, ?PS_OCC},
            {{clear, reset}, ?PS_PRC bor ?PS_WRC}],
     [begin
-         {[Written], ok} = erx_xhci_core:port_operation(Op, Word),
+         {[Written], ok, _} = erx_xhci_core:port_operation(Op, Word, ?PS_CHANGES),
          ?assertEqual({Op, Word, Set band ?PS_CHANGES}, {Op, Word, Written band ?PS_CHANGES}),
          ?assertEqual({Op, Word, Set band ?PS_PED}, {Op, Word, Written band ?PS_PED}),
          ?assertEqual({Op, Word, Set band ?PS_PR}, {Op, Word, Written band ?PS_PR}),
          ?assertEqual({Op, Word, (Word band ?PS_KEPT) bor (Set band ?PS_PP)}, {Op, Word, Written band ?PS_KEPT}),
          ?assertEqual({Op, Word, 0}, {Op, Word, Written band (?PS_LWS bor ?PS_WPR)})
      end || Word <- Words, {Op, Set} <- Ops],
-    ?assertEqual({[], {error, badarg}}, erx_xhci_core:port_operation({clear, test}, 0)).
+    ?assertEqual({[], {error, badarg}, 0}, erx_xhci_core:port_operation({clear, test}, 0, 0)).
 
 %% xHCI 4.19.2 (p. 322): a root port raises no further event until every change bit is
 %% clear, so each one shows in wPortChange and the clear of the name it shows as clears it.
 every_change_bit_can_be_cleared_test() ->
     Names = [{1, connection}, {2, enabled}, {4, suspend}, {8, over_current}, {16, reset}],
     [begin
-         {[], {ok, <<0:16, Change:16/little>>, 0}} = erx_xhci_core:port_operation(get_status, Bit),
+         {[], {ok, <<0:16, Change:16/little>>, 0}, Bit} = erx_xhci_core:port_operation(get_status, Bit, 0),
          {Change, Name} = lists:keyfind(Change, 1, Names),
-         {[Written], ok} = erx_xhci_core:port_operation({clear, Name}, Bit),
-         ?assertEqual({Bit, Bit}, {Bit, Written band Bit})
+         {[Written], ok, 0} = erx_xhci_core:port_operation({clear, Name}, Bit, Bit),
+         ?assertEqual({Bit, Bit}, {Bit, Written band ?PS_CHANGES})
      end || Bit <- [?PS_CSC, ?PS_PEC, ?PS_WRC, ?PS_OCC, ?PS_PRC, ?PS_PLC, ?PS_CEC]].
+
+%% A clear writes only the change bits the port's last status read reported: a
+%% configuration error that sets after a read that saw the enable change alone stays set
+%% for the bus core's next read, and a name with nothing reported writes nothing.
+a_clear_writes_only_what_was_reported_test() ->
+    {[], {ok, _, _}, ?PS_PEC} = erx_xhci_core:port_operation(get_status, ?PS_PEC bor ?PS_PP, 0),
+    {[Written], ok, 0} = erx_xhci_core:port_operation({clear, enabled}, ?PS_PEC bor ?PS_CEC bor ?PS_PP, ?PS_PEC),
+    ?assertEqual(?PS_PEC, Written band ?PS_CHANGES),
+    ?assertEqual({[], ok, 0}, erx_xhci_core:port_operation({clear, reset}, ?PS_PRC, 0)).
+
+%% Root ports are 1 to the port count: the bus's operation on another is refused without
+%% a read, and a port event naming one fails the controller, which wrote it.
+root_ports_are_bounded_test() ->
+    S0 = running(),
+    ?assertMatch({_, [{reply, bus, {error, badarg}}]}, erx_xhci_core:step({port, bus, 5, get_status}, 0, S0)),
+    ?assertMatch({_, [{reply, bus, {error, badarg}}]}, erx_xhci_core:step({port, bus, 0, reset}, 0, S0)),
+    {S1, [{read, [usbsts, iman]}]} = erx_xhci_core:step(interrupt, 0, S0),
+    {S2, [{write, usbsts, _}, {write, iman, _}, complete]} = erx_xhci_core:step({read, #{usbsts => 0, iman => 2}}, 0, S1),
+    ?assertMatch({_, [{port_event, 4}, complete]}, erx_xhci_core:step({completed, {ok, [{port, 4}]}}, 0, S2)),
+    ?assertMatch({_, [{fail, {malformed_event, {port, 5}}}]},
+                 erx_xhci_core:step({completed, {ok, [{port, 5}]}}, 0, S2)),
+    ?assertMatch({_, [{fail, {malformed_event, oops}}]}, erx_xhci_core:step({completed, {ok, [oops]}}, 0, S2)).
+
+-define(BYSTANDER, (?PS_PP bor ?PS_PED bor 1 bor ?PS_PRC)).
+-define(PORT_HARDWARE, [connect, disconnect, reset_done, warm_reset_done, enable_change, config_error]).
+-define(PORT_OPS, [get_status, power_on, reset, disable,
+                   {clear, connection}, {clear, enabled}, {clear, reset}]).
+
+%% The root-port machine explored to a fixed point (xHCI 4.19.2, p. 322; 5.4.8, pp.
+%% 405-411): port 2 of a modelled PORTSC, whose hardware may connect, disconnect, end a
+%% reset or a warm reset and raise an enable or a configuration error change at any
+%% point, under every bus operation in any order. At every write: no change bit is
+%% written that the port's last status read did not report, and a clear leaves none of
+%% its name's reported bits set. Beside it port 1 holds a reset change reported before
+%% the exploration began, which a clear of port 1's reset must clear in every state, so
+%% no state of port 2 is read or cleared as port 1's.
+the_root_port_machine_is_explored_to_a_fixed_point_test_() ->
+    {timeout, 120, fun() ->
+        {S1, [{read, [{portsc, 1}]}]} = erx_xhci_core:step({port, bus, 1, get_status}, 0, running()),
+        {S2, [{reply, bus, {ok, _, _}}]} = erx_xhci_core:step({read, #{{portsc, 1} => ?BYSTANDER}}, 0, S1),
+        Start = {S2, ?PS_PP, 0},
+        Seen = explore_port([Start], #{Start => true}),
+        ?assert(map_size(Seen) > 1000)
+    end}.
+
+explore_port([], Seen) ->
+    Seen;
+explore_port([Node | Rest], Seen) ->
+    probe_bystander(Node),
+    Next = [N || N <- [hardware(H, Node) || H <- ?PORT_HARDWARE] ++ [bus_op(Op, Node) || Op <- ?PORT_OPS],
+                 not is_map_key(N, Seen)],
+    Unique = lists:usort(Next),
+    explore_port(Unique ++ Rest, maps:merge(Seen, maps:from_keys(Unique, true))).
+
+%% The modelled port's hardware. CCS is bit 0; a disconnect drops the enable; a reset
+%% in progress ends enabled; each change bit sets as its event happens.
+hardware(connect, {S, Word, Saw}) when Word band 1 =:= 0 -> {S, Word bor 1 bor ?PS_CSC, Saw};
+hardware(disconnect, {S, Word, Saw}) when Word band 1 =:= 1 ->
+    {S, (Word band bnot (1 bor ?PS_PED bor ?PS_PR)) bor ?PS_CSC, Saw};
+hardware(reset_done, {S, Word, Saw}) when Word band ?PS_PR =/= 0 ->
+    {S, (Word band bnot ?PS_PR) bor ?PS_PED bor ?PS_PRC, Saw};
+hardware(warm_reset_done, {S, Word, Saw}) -> {S, Word bor ?PS_WRC, Saw};
+hardware(enable_change, {S, Word, Saw}) -> {S, Word bor ?PS_PEC, Saw};
+hardware(config_error, {S, Word, Saw}) -> {S, Word bor ?PS_CEC, Saw};
+hardware(_Event, Node) -> Node.
+
+%% One bus operation on port 2, its PORTSC read answered from the model and each write
+%% applied as the register takes it: a change bit written 1 clears, the reset bit starts
+%% a reset, the enable bit disables, port power is read-write. Saw is what the bus has
+%% seen and not cleared, the change bits of the last status read.
+bus_op(Op, {S0, Word, Saw}) ->
+    {S1, [{read, [{portsc, 2}]}]} = erx_xhci_core:step({port, bus, 2, Op}, 0, S0),
+    {S2, Actions} = erx_xhci_core:step({read, #{{portsc, 2} => Word}}, 0, S1),
+    Writes = [W || {write, {portsc, 2}, W} <- Actions],
+    [{reply, bus, _}] = Actions -- [{write, {portsc, 2}, W} || W <- Writes],
+    [?assertEqual({Op, Word, Saw, 0}, {Op, Word, Saw, W band ?PS_CHANGES band bnot Saw}) || W <- Writes],
+    After = lists:foldl(fun portsc_write/2, Word, Writes),
+    case Op of
+        get_status ->
+            {S2, After, Word band ?PS_CHANGES};
+        {clear, Name} ->
+            Behind = name_bits(Name) band Saw,
+            ?assertEqual({Op, Word, Saw, 0}, {Op, Word, Saw, After band Behind}),
+            {S2, After, Saw band bnot name_bits(Name)};
+        _ ->
+            {S2, After, Saw}
+    end.
+
+name_bits(connection) -> ?PS_CSC;
+name_bits(enabled) -> ?PS_PEC bor ?PS_CEC;
+name_bits(reset) -> ?PS_PRC bor ?PS_WRC.
+
+portsc_write(W, Word) ->
+    Cleared = Word band bnot (W band ?PS_CHANGES),
+    Reset = case W band ?PS_PR of 0 -> Cleared; _ -> (Cleared bor ?PS_PR) band bnot ?PS_PED end,
+    Disabled = case W band ?PS_PED of 0 -> Reset; _ -> Reset band bnot ?PS_PED end,
+    (Disabled band bnot ?PS_PP) bor (W band ?PS_PP).
+
+%% Port 1's reported reset change is still port 1's to clear, whatever port 2 did.
+probe_bystander({S, _Word, _Saw}) ->
+    {S1, [{read, [{portsc, 1}]}]} = erx_xhci_core:step({port, bus, 1, {clear, reset}}, 0, S),
+    ?assertMatch({_, [{write, {portsc, 1}, W}, {reply, bus, ok}]} when W band ?PS_CHANGES =:= ?PS_PRC,
+                 erx_xhci_core:step({read, #{{portsc, 1} => ?BYSTANDER}}, 0, S1)).
 
 root_ports_answer_from_portsc_test() ->
     S0 = running(),
