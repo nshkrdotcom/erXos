@@ -1444,6 +1444,76 @@ an_interrupt_pass_is_bounded_test() ->
     %% The next interrupt begins a new pass.
     ?assertMatch({_, [{read, [usbsts, iman]}]}, erx_xhci_core:step(interrupt, 0, S34)).
 
+%% A level-triggered line, the Pi 4's INTx (docs/design-usb.md, "Interrupts" and "Events"),
+%% explored to a fixed point: the line is asserted while IMAN.IP is set (xHCI 4.17.2, p.
+%% 296), each event the controller writes to the ring sets IP and USBSTS.EINT (interrupt
+%% moderation and IMAN.IE left out, and ERDP's event handler busy bit too, so IP is set
+%% more often than a controller sets it), and the platform's interrupt controller delivers
+%% an asserted line only while it is unmasked, masking it until the core's ack. The
+%% process's order is kept (erx_xhci's moduledoc): a step's actions are performed in order and their answers
+%% stepped before the answers still waiting, and an interrupt is taken only when nothing is
+%% left to perform or step. The controller writes an event at any point between two
+%% actions, ?LEVEL_EVENTS of them in all. At every interrupt no more interrupts have been
+%% taken than events written, or the line storms; and once nothing is left to do and no
+%% event is still to come, the ring is empty and the line unmasked, or an event is lost.
+%% Its passes stay under xhci_events_per_interrupt, whose bound
+%% an_interrupt_pass_is_bounded_test covers.
+-define(LEVEL_EVENTS, 3).
+
+a_level_line_neither_storms_nor_loses_an_event_test() ->
+    Start = #{core => running(), ip => 0, ring => 0, masked => false, todo => [], answers => [], queue => [],
+              left => ?LEVEL_EVENTS, made => 0, taken => 0},
+    Seen = level_explore([Start], #{}),
+    ?assert(lists:any(fun(#{taken := Taken}) -> Taken =:= ?LEVEL_EVENTS end, maps:keys(Seen))).
+
+level_explore([], Seen) ->
+    Seen;
+level_explore([M | More], Seen) when is_map_key(M, Seen) ->
+    level_explore(More, Seen);
+level_explore([M | More], Seen) ->
+    level_explore(level_next(M) ++ More, Seen#{M => true}).
+
+%% The model's next states: an event written, while one is still to come, and the
+%% process's own next move.
+level_next(M = #{left := Left, ring := Ring, made := Made}) ->
+    [M#{ring := Ring + 1, ip := 1, left := Left - 1, made := Made + 1} || Left > 0] ++ level_move(M).
+
+level_move(M = #{todo := [Action | Rest], answers := Answers}) ->
+    {Next, Answer} = level_perform(Action, M#{todo := Rest}),
+    [Next#{answers := Answers ++ Answer}];
+level_move(M = #{todo := [], answers := Answers, queue := Queue}) when Answers =/= []; Queue =/= [] ->
+    [Event | Rest] = Answers ++ Queue,
+    [level_step(Event, M#{answers := [], queue := Rest})];
+level_move(M = #{ip := 1, masked := false, made := Made, taken := Taken}) ->
+    Taken < Made orelse error({line_storm, M}),
+    [level_step(interrupt, M#{masked := true, taken := Taken + 1})];
+level_move(#{left := 0, ring := 0, masked := false}) ->
+    [];
+level_move(M = #{left := 0}) ->
+    error({event_lost_or_line_masked, M});
+level_move(_M) ->
+    [].
+
+level_step(Event, M = #{core := Core}) ->
+    {Next, Actions} = erx_xhci_core:step(Event, 0, Core),
+    M#{core := Next, todo := Actions}.
+
+%% Performs Action against the controller and its line, with the answers it gives.
+level_perform({read, [usbsts, iman]}, M = #{ip := Ip}) ->
+    {M, [{read, #{usbsts => Ip * 16#8, iman => 16#2 bor Ip}}]};
+level_perform({write, iman, Word}, M) when Word band 16#1 =:= 16#1 ->
+    {M#{ip := 0}, []};
+level_perform({write, _Register, _Word}, M) ->
+    {M, []};
+level_perform(complete, M = #{ring := Ring}) ->
+    {M#{ring := 0}, [{completed, {ok, lists:duplicate(Ring, {port, 1})}}]};
+level_perform(ack, M) ->
+    {M#{masked := false}, []};
+level_perform({bus, _Answer}, M) ->
+    {M, []};
+level_perform(Action, M) ->
+    error({unexpected_action, Action, M}).
+
 %% An interrupt before the controller runs is held: no ack until the bus starts, or the
 %% controller fails, and then exactly one.
 an_interrupt_before_running_is_held_test() ->

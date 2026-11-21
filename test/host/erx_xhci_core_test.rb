@@ -31,7 +31,9 @@ require_relative '../fixtures/erlang_build'
 # again, a start that stalls; an interrupt before the controller runs acknowledged at
 # once; a held interrupt acknowledged with a failure; a host system error ignored;
 # a host controller error ignored; a halt ignored; a running controller's status never read between
-# interrupts; an interrupt pass not bounded; a lost command never failing the
+# interrupts; an interrupt pass not bounded; the interrupter's pending bit left set
+# when the line is acknowledged; that bit cleared only after the event ring is read; a
+# lost command never failing the
 # controller; a reported change bit left set by its clear; a change bit cleared that
 # no status read reported; one port's reported changes taken as another's; and every
 # add of a configuration posted in one Configure Endpoint, past the adds one carries; and
@@ -48,6 +50,7 @@ class ErxXhciCoreTest < Minitest::Test
   PORTS_EXPLORED = 'the_root_port_machine_is_explored_to_a_fixed_point_test'
   OWN_PORT = 'a_port_keeps_its_own_reported_changes_test'
   CONFIGURE_EXPLORED = 'the_configuration_is_explored_to_a_fixed_point_test_'
+  LEVEL_LINE = 'a_level_line_neither_storms_nor_loses_an_event_test'
 
   Seed = Data.define(:fault, :anchor, :replacement, :catching_case)
 
@@ -177,6 +180,15 @@ class ErxXhciCoreTest < Minitest::Test
              anchor: 'Count =:= 0; Events >= ?ERX_XHCI_EVENTS_PER_INTERRUPT ->',
              replacement: 'Count =:= 0 ->',
              catching_case: 'an_interrupt_pass_is_bounded_test'),
+    Seed.new(fault: "the interrupter's pending bit left set when the line is acknowledged",
+             anchor: 'Cleared = emit({write, iman, modify(Iman, ?ERX_HW_XHCI_IMAN_PRESERVE, Ip, Ip)},',
+             replacement: 'Cleared = emit({write, iman, modify(Iman, ?ERX_HW_XHCI_IMAN_PRESERVE, Ip, 0)},',
+             catching_case: LEVEL_LINE),
+    Seed.new(fault: "the interrupter's pending bit cleared only after the event ring is read",
+             anchor: "            emit(complete, set_line({draining, 0}, Cleared));",
+             replacement: "            {S1, A1} = set_line({draining, 0}, Acc), {_, [Iman1, Usbsts1 | _]} = Cleared,\n" \
+                          "            {S1, [Iman1, Usbsts1, complete | A1]};",
+             catching_case: LEVEL_LINE),
     Seed.new(fault: 'a held interrupt acknowledged with a failure',
              anchor: 'Fails -> {Next, [lists:last(Fails)]}',
              replacement: "Fails -> {_, Owed} = release_line({Next, []}), {Next, Owed ++ [lists:last(Fails)]}",
