@@ -988,9 +988,28 @@ states is ever an encoder input, and no description can state it. Since
 a layout has one selector, each command the
 command ring offers is a layout of its own. Where a record is composed of several layouts at a size
 the controller reports, as the input context is of contexts of 32 or 64
-bytes (xHCI 6.2.5), the encoder places each at its offset. The xHCI
+bytes (xHCI 6.2.5), the encoder places each at its offset: the
+sequencer's one composition of the input context (`erx_dma_input_context`)
+encodes the input control, slot and endpoint contexts through their
+layouts' encoders, context k at k times the controller's context size
+(`HCCPARAMS1.CSZ`), the upper half of a 64-byte context left zero, and
+refuses a size other than 32 or 64 and a composition past the buffer
+the command names. A command's caller states only the free places, the
+slot context's route, speed, root port, TT and hub fields and each
+endpoint's type, packet size, burst, interval and service-interval
+payload, which the form checks once where the command enters it; the
+sequencer derives every other place from the publication: the add
+flags from the contexts it writes, so a flag never names a context left
+zero, the drop flags from its drops, Context Entries from the slot's
+bindings that remain, each dequeue pointer and cycle state from the
+ring the publication binds to the endpoint, at the binding's start, or,
+for Evaluate Context, from EP0's bound ring at its position, and the
+average TRB length from the type, packet and burst. A binding with no
+carried context, or a carried context with no such ring, breaks the
+publication. The xHCI
 file holds the DCBAA's and the scratchpad array's entry layouts, the
-endpoint context's `Mult`, `MaxPStreams`, `LSA` and `HID` bits, the
+endpoint context's `Mult`, `MaxPStreams`, `LSA` and `HID` bits and its
+error count of 3, the slot context's exit latency of 0, the
 normal and data stage TRBs' immediate-data bit and the event TRBs'
 release marks; the slot context's address and slot state and the
 endpoint context's state are fixed at 0, the controller's to write,
