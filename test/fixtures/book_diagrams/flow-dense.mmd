@@ -1,0 +1,30 @@
+flowchart TB
+    subgraph mono [Monolithic kernel]
+        direction TB
+        subgraph mu [user mode]
+            p1[program]
+            p2[program]
+        end
+        subgraph mk [kernel mode: one address space, all within the bug's reach]
+            fs1[file system]
+            net1[network stack]
+            drv1[network driver with a bug]
+            sch1[scheduler and memory]
+        end
+        p1 ~~~ fs1
+    end
+    subgraph micro [Microkernel]
+        direction TB
+        subgraph uu [user mode: one address space per box]
+            p3[program]
+            fs2[file server]
+            net2[network server]
+            drv2[network driver with a bug: only this box in reach]
+        end
+        subgraph kk [kernel mode]
+            mk2[microkernel: spaces, threads, IPC]
+        end
+        p3 ~~~ mk2
+    end
+    classDef bug stroke:#c00,stroke-width:3px
+    class drv1,drv2 bug

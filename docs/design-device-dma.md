@@ -301,9 +301,9 @@ pure sequencer: the core owns the protocol over the sequencer, which
 judges each decision and returns its effects with the next ledger, and
 the effect layer applies that output. A queue call
 runs in rounds. Each form
-supplies one pure **round function** (`erx_device_queue_round` for the
-split ring, `erx_device_genet_round` for the register ring, and ADMA2's
-beside them), the form's only entry from the effect layer. It takes a
+supplies one pure **round function** (`erx_device_genet_round` for the register
+ring, ADMA2's beside it, and for the split ring the `erx_split_ring_*` calls of
+`erx_device_virtio_core`), the form's only entry from the effect layer. It takes a
 **request**, the call (install, post, complete, and for a form that has
 them the idle report and the engine's start) with the record's facts the
 form reads (the queue's number, its device base and pool offset, whether
@@ -1042,7 +1042,7 @@ are derived, and the link's other fields fixed.
 
 | Form | What the core describes | What the sequencer writes from the layout | Reports |
 | --- | --- | --- | --- |
-| split ring | a chain of descriptors, each with its address a buffer and an offset reaching `len`, `WRITE` free and `INDIRECT` fixed clear | the queue's registers, `QueueNum` the descriptor table's count, the rings' addresses as the queue's layout places them (`erx_device_queue.c`); each `next` and `NEXT`; the available ring | an acquisition: the used index, then each used element it covers, whose `id` releases its chain |
+| split ring | a chain of descriptors, each with its address a buffer and an offset reaching `len`, `WRITE` free and `INDIRECT` fixed clear | the queue's registers, `QueueNum` the descriptor table's count, the rings' addresses as the queue's layout places them (`erx_device_sequencer.c`); each `next` and `NEXT`; the available ring | an acquisition: the used index, then each used element it covers, whose `id` releases its chain |
 | register ring | a transmit position's status word: the length, of its standing buffer; start, end and append-CRC fixed | each descriptor's address, descriptor *k* to buffer *k*, at install; the ring's registers: the descriptor count the ring's size, start, end and the four pointers its first word, its last word and 0, the buffer length the pool's buffer size, the ring enables the form's own ring | the transmit consumer index; the receive producer index and each status word it covers |
 | ADMA2 table | one transfer: the buffer and the extent, a count of 512-byte blocks from one to the buffer's | the entries the extent splits into, 64 blocks each and the last the rest, each with its address the buffer's plus its offset, valid set, its action a transfer and interrupt clear; the end attribute on the last; `adma_address`, the table's start | `interrupt` |
 | TRB ring | as [design-usb.md](design-usb.md#what-the-dma-check-judges) lists | | |
@@ -1299,7 +1299,7 @@ here lists in full, and the design does not need it to.
 
 ## The descriptor forms
 
-Each form is a pure core beside `erx_device_queue` whose round function
+Each form is a pure core beside `erx_device_sequencer` whose round function
 returns its observations and decisions. `queue_create/4`, `post/4`, `post_frame/5`,
 `complete/2` and `negotiate/2` keep their meaning and their answers for
 every form; the record names the form its peripheral uses.

@@ -1,0 +1,16 @@
+flowchart TB
+    subgraph user [user mode]
+        web[domain web: ERTS, processes]
+        sess[root's session: ERTS, shell, handlers]
+        prog1[program in a sub-space]
+        prog2[program in a sub-space]
+        stor[storage domain: ERTS, block driver]
+        sys[system domain: root task, domain service, facets, console]
+    end
+    kern[Fiasco, kernel mode: address spaces, threads, IPC, interrupts]
+    sess --- prog1
+    sess --- prog2
+    web -- connection --> sys
+    sess -- connection --> sys
+    stor -- connection --> sys
+    sys --> kern

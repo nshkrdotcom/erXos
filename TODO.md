@@ -9233,8 +9233,41 @@ document's "residual risks accepted" paragraph.
   design documents and the tree; built and unbuilt parts marked. Each chapter is written for a reader
   without Erlang, operating-system or microkernel background: Part I teaches the three subjects, and
   each chapter states the background it needs and explains in a Background box what only it uses.
-  design documents and the tree; built and unbuilt parts marked. Chapters follow the prose guide,
-  [docs/book/style.md](docs/book/style.md).
+  Chapters follow the prose guide, [docs/book/style.md](docs/book/style.md).
+* [Low] book site, the diagram step (`tools/book/diagrams.ts`,
+  [design-book-site.md](docs/design-book-site.md#the-parse-check)): no diagram is checked against
+  official Mermaid, so the repository host's renderer may reject a diagram the site draws
+  (beautiful-mermaid accepts more than Mermaid does: two book diagrams with `;` in a sequence
+  message were). `mermaid.parse` needs a DOM under Node, failing in DOMPurify on 40 of the book's 61
+  diagrams. Options: a DOM shim such as jsdom for DOMPurify under the driver (a new pinned
+  dependency, mermaid pinned with it), or a narrower check of the constructs Mermaid refuses and
+  beautiful-mermaid draws. Until then GitHub's preview and the review of rendered pages catch them.
+* [Medium] book site, the diagram bundle (`tools/lib/erx/book_diagrams.rb`, `build_bundle` and
+  `bundled_versions`): esbuild resolves `elkjs` and `entities` through every `node_modules`
+  directory above the importing file (`tools/book/node_modules`, the checkout's parents, `~`)
+  before `NODE_PATH`, so a stray install there is bundled unpinned while the build record names
+  the pinned versions read from `build/book-modules`. Pass `--metafile`, refuse any input outside
+  the import, the driver and `build/book-modules/node_modules`, and take the versions from the
+  packages esbuild resolved; or bundle from a staged copy under `build/`, as `WebBuild` does.
+* [Medium] book site, the bundle's reuse record (`book_diagrams.rb`, `sources_digest`): it names
+  the library, the driver, the package files and the versions but not `ESBUILD_OPTIONS` or the
+  bundle's own SHA-256, so a change to esbuild's target or charset reuses an old bundle. Add the
+  argument vector and the bundle's digest to the record and check the digest before reuse.
+* [Medium] book site, the diagram tool tests (`test/host/book_diagrams_test.rb`): they run Node
+  and esbuild in `make check` whenever `tools/erx fetch` installed the book's packages, while
+  docs/design-book-site.md's "Tests" puts them in `test/host/book_test.rb`, run with the site
+  tests on demand. Move them behind the site-test entry, or change the design.
+* [Low] book site, the diagram step's smaller gaps (`book_diagrams.rb`, `tools/book/diagrams.ts`):
+  the `--allow-fs-read` guard refuses a comma, but Node 26.13 treats `*` as a wildcard and loads
+  the entry script without any grant, so probe Node 25.0 and 26.13 and either drop the grant or
+  refuse `*` too, with a test; concurrent bundle builds share `diagrams.mjs.next` and write the
+  record after the rename; a diagram that hangs past the deadline is not named (the driver could
+  write `diagram N` to standard error before each); Node's output has no `output_limit`; the reply
+  check accepts a negative `line` and the unproduced `parse` stage; `Drawn.svgs` is raw
+  third-party SVG with nothing in its name or type to keep it out of a page until the SVG writer
+  lands; and the module's internals (`request`, `result?`, `build_bundle`, `bundled_versions`) are
+  public, `draw`'s local `bundle` shadows the method, and `reply` checks its shape with chained
+  conditionals where a `case ... in` pattern reads better.
 * [Low] display, `erx_ui:open/1` falls back to the session's only display
   ([design-display.md](docs/design-display.md#choosing-a-display)): when `Options` and the
   `display` variable name none, open on the one display the session holds where it holds exactly

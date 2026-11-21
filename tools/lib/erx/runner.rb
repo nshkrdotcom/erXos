@@ -62,9 +62,11 @@ module Erx
     # any other regular file they write, and disables their core dumps.
     # The command reads standard input from stdin, a path, or from the null
     # device, and writes standard output to stdout, a path it creates owner-only
-    # or truncates, or to the log with its standard error.
-    def run(argv, name:, deadline:, chdir: Dir.pwd, env: {}, success: nil, cancelled: nil, output_limit: nil,
-            stdin: nil, stdout: nil)
+    # or truncates, or to the log with its standard error. The command
+    # inherits this process's environment with env applied, or with clear_env
+    # only env, which must then name PATH for the command to be found.
+    def run(argv, name:, deadline:, chdir: Dir.pwd, env: {}, clear_env: false, success: nil, cancelled: nil,
+            output_limit: nil, stdin: nil, stdout: nil)
       validate(argv, name: name, deadline: deadline)
       unless output_limit.nil? || (output_limit.is_a?(Integer) && output_limit.between?(1, 1 << 40))
         raise Error, 'output limit must be a positive byte count at most 1 TiB'
@@ -85,7 +87,7 @@ module Erx
         File.open(record.fetch('log'), 'wb') do |log|
           output = stdout ? [stdout, File::WRONLY | File::CREAT | File::TRUNC, 0o600] : log
           spawn_options = { chdir: chdir, in: stdin || File::NULL, out: output, err: log,
-                            pgroup: true, close_others: true }
+                            pgroup: true, close_others: true, unsetenv_others: clear_env }
           if output_limit
             spawn_options.merge!(rlimit_fsize: [file_limit, file_limit], rlimit_core: [0, 0])
           end

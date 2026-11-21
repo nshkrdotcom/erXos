@@ -46,6 +46,16 @@ class RunnerTest < Minitest::Test
     assert_equal 0o600, File.stat(result.fetch('log')).mode & 0o777
   end
 
+  # Seeded fault: spawn without unsetenv_others, so the caller's variable leaks.
+  def test_a_cleared_environment_holds_only_what_the_caller_names
+    ENV['ERX_RUNNER_LEAK'] = 'leaked'
+    result = ruby('print ENV.keys.grep(/\AERX_/).sort.inspect',
+                  env: { 'PATH' => ENV.fetch('PATH'), 'ERX_NAMED' => '1' }, clear_env: true)
+    assert_equal '["ERX_NAMED"]', File.read(result.fetch('log'))
+  ensure
+    ENV.delete('ERX_RUNNER_LEAK')
+  end
+
   def test_no_shell_interpretation
     argument = '$(touch SHOULD_NOT_EXIST); `false`'
     result = @runner.run([RbConfig.ruby, '-e', 'print ARGV.fetch(0)', argument],
