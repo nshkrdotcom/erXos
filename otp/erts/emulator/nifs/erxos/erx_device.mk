@@ -9,4 +9,5 @@
 # (arch/<arch>/erx_dma_arch.c) itself, since the architecture is the user's choice. It stays
 # one plain assignment of names, with no other make syntax, which the Ruby reader refuses.
 ERX_DEVICE_CORES = erx_device erx_device_core erx_device_dma erx_device_genet \
-	erx_device_ledger erx_device_rules erx_device_sequencer erx_device_virtio_core
+	erx_device_ledger erx_device_rules erx_device_sequencer erx_device_trb erx_device_trb_form \
+	erx_device_virtio_core
