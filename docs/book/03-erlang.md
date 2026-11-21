@@ -1079,7 +1079,7 @@ sequenceDiagram
     P->>EA: Q ! {add, 1}
     EA->>C: frame: header and external term format bytes
     C->>F: frame arrives
-    F->>F: decode; refuse if malformed; make no atoms
+    F->>F: decode, refuse if malformed, make no atoms
     F->>F: is Q exported to A? if not, drop
     F->>Q: message into Q's mailbox
 ```

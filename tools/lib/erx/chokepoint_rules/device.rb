@@ -211,6 +211,26 @@ module Erx
                   'otp/erts/emulator/beam/seeded.c' => "void f(void) { erx_dma_completion_barrier(); }\n",
                   'test/fixtures/erx_device_dma_harness.c' => "void f(void) { erx_dma_publish_barrier(1); }\n" }
         ),
+        # A record a device reads is written whole by its layout's generated encoder, so no
+        # field the core did not describe keeps a value from before and no address the check
+        # did not derive reaches the device; with the encoders called only here, only the
+        # sequencer builds what is stored into a region holding a structure.
+        Chokepoints::Forbidden.new(
+          name: 'device-record-encoders',
+          rule: "only the sequencer, erx_device_sequencer.c, calls a DMA record's generated encoder",
+          design: 'docs/design-device-dma.md#descriptions',
+          scope: DEVICE_SCOPE,
+          # The layouts of the descriptor formats (abi/formats/virtio.txt, xhci.txt, sdhci.txt,
+          # genet.txt) are the only ones with generated record encoders.
+          pattern: /\berx_(?:virtq|virtio|xhci|sdhci|genet)_[a-z0-9_]+_encode\b/,
+          # The generated ABI header defines them and calls none.
+          sites: [Chokepoints::Site.new(glob: "#{DEVICE_NIFS}/erx_device_sequencer.c"),
+                  Chokepoints::Site.new(glob: 'include/erx/abi.h')],
+          seed: { 'otp/erts/emulator/nifs/erxos/erx_device_virtio_core.c' =>
+                    "void f(void) { erx_virtq_desc_encode(0, 0, 0); }\n",
+                  'otp/erts/emulator/nifs/erxos/erx_device.c' =>
+                    "void f(void) { erx_virtio_gpu_mem_entry_encode(0, 0); }\n" }
+        ),
         Chokepoints::Forbidden.new(
           name: 'device-table-include',
           rule: 'only erx_device_core.c includes the generated table, whose static data has one owner',

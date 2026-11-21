@@ -93,4 +93,16 @@ class ChokepointsDeviceTest < Minitest::Test
     assert_empty evaluate(maintenance, { 'test/fixtures/erx_device_dma_harness.c' =>
                                            "unsigned g(void) { return erx_dma_granule() + erx_dma_line(); }\n" })
   end
+
+  # A DMA record's encoder is the sequencer's alone: a call of one in the effect layer, a
+  # form's core or a harness fails, and the sequencer's passes.
+  def test_a_record_encoder_outside_the_sequencer_fails
+    encoders = [rule('device-record-encoders')]
+    text = "void f(void) { erx_virtq_desc_encode(0, 0, 0); }\n"
+    assert_empty evaluate(encoders, { 'otp/erts/emulator/nifs/erxos/erx_device_sequencer.c' => text })
+    %w[otp/erts/emulator/nifs/erxos/erx_device.c otp/erts/emulator/nifs/erxos/erx_device_virtio_core.c
+       otp/erts/emulator/nifs/erxos/erx_device_trb.c test/fixtures/erx_device_harness.c].each do |path|
+      refute_empty evaluate(encoders, { path => text }), path
+    end
+  end
 end

@@ -10,28 +10,36 @@ require_relative '../../tools/lib/erx/sanitizer_environment'
 require_relative '../fixtures/generated_tree'
 
 # The pure core of DMA by devices that are not cache-coherent (docs/design-device-dma.md,
-# Verification): the sequencer and the whole-plan check over every transition of a small
-# queue (test/fixtures/erx_device_dma_order_harness.c), and a split ring driven through them
-# over the hosted model of a non-coherent cache (test/fixtures/erx_device_dma_model_harness.c),
-# clean under the address and undefined sanitizers. Each seeded fault the design names is
-# planted and shown to fail its assertion.
+# Verification): the plan sequencer and the whole-plan check over every transition of a small
+# queue (test/fixtures/erx_device_dma_order_harness.c), and the split ring's core and its
+# sequencer applied over the hosted model of a non-coherent cache
+# (test/fixtures/erx_device_dma_model_harness.c), clean under the address and undefined
+# sanitizers. Each seeded fault the design names is planted and shown to fail its assertion:
+# the order harness's in erx_device_dma.c, the model harness's in the split ring's sequencer
+# and in the harness's own effect layer.
 class ErxDeviceDmaTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
   NIFS = File.join(ROOT, 'otp/erts/emulator/nifs/erxos')
   ORDER = { harness: 'test/fixtures/erx_device_dma_order_harness.c',
             sources: %w[erx_device_dma.c], done: 'erx_device_dma_order done' }.freeze
   MODEL = { harness: 'test/fixtures/erx_device_dma_model_harness.c',
-            sources: %w[erx_device_dma.c erx_dma_model.c erx_device_queue.c],
+            sources: %w[erx_device_ledger.c erx_device_rules.c erx_device_sequencer.c
+                        erx_device_virtio_core.c erx_dma_model.c],
             done: 'erx_device_dma_model done' }.freeze
   FLAGS = ['-std=c17', '-D_DARWIN_C_SOURCE', '-Wall', '-Wextra', '-Werror', '-O1', '-g',
            '-fsanitize=address,undefined', '-fno-sanitize-recover=undefined'].freeze
   COMPILER = ENV.fetch('ERX_CLANG', 'clang')
 
-  # Each seed of the sequencer or the check, and the harness whose assertion it fails.
+  # Each seed of erx_device_dma.c's sequencer or check that the order harness catches.
   ORDER_SEEDS = %w[PUBLISH_BEFORE_CLEAN NO_REPORT_BARRIER REPORT_BARRIER_LOADS STEP_BY_GRANULE
                    NO_GRANULE_CHECK].freeze
-  MODEL_SEEDS = %w[NO_CLEAN NO_TAKE_BACK STEP_BY_GRANULE NO_BUFFER_HANDOVER PUBLISH_BEFORE_CLEAN
-                   HANDOVER_BUFFERS_ONLY NO_ZEROING].freeze
+  # What the model harness catches over a non-coherent cache. The split ring's sequencer: the
+  # install leaving the used ring's former bytes, its zeroing left in the cache, rule 1's zeros
+  # left out. The harness's own effect layer (its header comment): a post's cleans skipped, its
+  # available index published before them, a written range read back without its invalidate.
+  MODEL_SEEDS = %w[ERX_DMA_SEED_INSTALL_NOT_ZEROED ERX_DMA_SEED_INSTALL_UNCLEANED ERX_DMA_SEED_NO_ZEROS
+                   HARNESS_SEED_NO_POST_CLEANS HARNESS_SEED_PUBLISH_BEFORE_CLEAN
+                   HARNESS_SEED_NO_WRITTEN_INVALIDATE].freeze
 
   def test_order_and_check
     output, status = run_harness(ORDER)
@@ -50,12 +58,7 @@ class ErxDeviceDmaTest < Minitest::Test
   end
 
   MODEL_SEEDS.each do |seed|
-    define_method("test_model_seed_#{seed.downcase}") { assert_seed_caught(MODEL, "-DERX_DMA_SEED_#{seed}") }
-  end
-
-  # The buffer stride left unrounded is the form's fault, not the core's, so the harness plants it.
-  def test_model_seed_unrounded_stride
-    assert_seed_caught(MODEL, '-DHARNESS_SEED_UNROUNDED_STRIDE')
+    define_method("test_model_seed_#{seed.downcase}") { assert_seed_caught(MODEL, "-D#{seed}") }
   end
 
   private

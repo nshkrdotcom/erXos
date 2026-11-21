@@ -7,6 +7,7 @@ require 'fileutils'
 require 'minitest/autorun'
 require 'open3'
 require 'tmpdir'
+require_relative '../../tools/lib/erx/device_nif'
 require_relative '../../tools/lib/erx/hardware'
 require_relative '../../tools/lib/erx/sanitizer_environment'
 require_relative '../fixtures/generated_tree'
@@ -18,12 +19,7 @@ class ErxDeviceTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
   NIFS = File.join(ROOT, 'otp/erts/emulator/nifs/erxos')
   SOURCES = [File.join(ROOT, 'test/fixtures/erx_device_harness.c'),
-             File.join(ROOT, 'otp/erts/emulator/nifs/erxos/erx_device_core.c'),
-             File.join(ROOT, 'otp/erts/emulator/nifs/erxos/erx_device.c'),
-             File.join(ROOT, 'otp/erts/emulator/nifs/erxos/erx_device_queue.c'),
-             File.join(ROOT, 'otp/erts/emulator/nifs/erxos/erx_device_dma.c'),
-             File.join(ROOT, 'otp/erts/emulator/nifs/erxos/erx_device_genet.c'),
-             File.join(ROOT, 'otp/erts/emulator/nifs/erxos/arch/host/erx_dma_arch.c')].freeze
+             *Erx::DeviceNif.sources(root: ROOT, arch: 'host').map { |path| File.join(ROOT, path) }].freeze
   FIXTURE = File.join(ROOT, 'test/fixtures/device_table_fixture.svd')
   FLAGS = ['-std=c17', '-D_DARWIN_C_SOURCE', '-Wall', '-Wextra', '-Werror', '-O1', '-g',
            '-fsanitize=address,undefined', '-fno-sanitize-recover=undefined'].freeze

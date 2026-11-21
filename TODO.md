@@ -1920,9 +1920,9 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
 * [Medium] `erlang/apps/erx_net/erxos/erx_virtio_net.erl`, `erlang/apps/erx_blk`: no test runs a real driver under a hostile device. `test/integration/runtime_device_test.rb` breaks a hosted stand-in's queue under a driver written in the test, so the drivers' own broken-queue path (`error({virtio_net, broken, rx})`), its supervision and restart, and that the crash ends only the driver process (the network driver; the block driver's crash ends the storage domain) are unchecked; plan.md's 1b-E exit criterion asks for it under QEMU. Running `erx_virtio_net` over a virtio stand-in hosted, or a hostile model device under QEMU, would settle it.
 * [Medium] `otp/erts/emulator/nifs/erxos/erx_device.c`, the hosted stand-in: its virtio model (`stand_in_preset`, `stand_in_stored`, a hook in `store()`) is a second model of a virtio-mmio transport beside `test/fixtures/erx_device_dma_harness.c`'s, which sits at the access seam and leaves `erx_device.c` untouched. A hosted-only `device_access` over the fixture's model would remove the hook and the duplicate, and keep `queue_ready` per selected queue, which the stand-in's one word cannot (so one queue still ready, `ERX_EBUSY`, is not expressible hosted). Settle it before the SD host gets a stand-in, so each device has one model, as GENET's is `erx_device_genet_model`, which the hosted stand-in and the host harness share.
 * [Low] `test/fixtures/erx_device_genet_harness.c` (erx_device_queue_test.rb) plays GENET's controller itself at the access seam: its DMA status, stop reads and both engines, beside `erx_device_genet_model`. Running the model there, with the harness keeping its own checks (ring registers written only while both engines are stopped, both rings installed before a start, receive started first) and a stop count per direction (the transmit engine stops later), would leave one GENET controller model.
-* [Medium] `otp/erts/emulator/nifs/erxos/erx_device_queue.c`, `erx_device_genet.c`, the round functions: no fuzz
-  target drives `erx_device_queue_round` or `erx_device_genet_round`. `tools/fuzz/device_queue_fuzz.c` and
-  `device_genet_fuzz.c` drive the cores beneath them, so the rounds' handling of the used index, the entries,
+* [Medium] `otp/erts/emulator/nifs/erxos/erx_device_genet.c`, the round function: no fuzz
+  target drives `erx_device_genet_round`. `tools/fuzz/device_genet_fuzz.c`
+  drives the core beneath it, so the round's handling of the entries,
   GENET's statuses and `bytes_max` is tested only end to end through the stand-ins. Run each round function in a
   loop like `run_call`'s, with fuzzed observation values, and check that its steps and answers stay within the
   effect layer's arrays, every completion step is a copy, each answer's copies sum to its length, and the call
@@ -8142,28 +8142,73 @@ to the corpus and follow rc
   so `{disabled, reset_disabled}` and `unsupported_speed` are reached by no case, and it checks no route or
   translator parameter of Address Device. With one external hub it cannot reach a hub given up while a port below it holds the
   turn and another hub could reset; `a_hub_given_up_keeps_its_childs_turn_test` covers that case alone.
-* [High] Device NIF, every descriptor form against the DMA check (`erx_device_dma.c`, `erx_device_queue.c`,
+* [High] Device NIF, every descriptor form against the DMA check (`erx_device_dma.c`,
   `erx_device_genet.c`, `erx_device_trb.c`, `erx_device.c`): the cores store raw ring fields, place their own records
   and state their own writers, while [The check](docs/design-device-dma.md#the-check) has each core describe records
   by meaning, fields and names, and the sequencer write them, make each run live, and end what the device holds only
   by its reports, which it acquires itself (the validity, then the records it covers), against one ledger. The TRB form's tables, bindings and releases are in
   [design-usb.md](docs/design-usb.md#what-the-dma-check-judges). Until then the TRB form's plans cannot run through
-  `run_call`. The formats' marks and their generated encoders are in `abi/formats` (virtio, xHCI, and SDHCI's ADMA2
-  entry, which nothing uses yet); the command TRBs (one layout per command, Set TR Dequeue Pointer's among them) and
-  the input context's composed encoder have no marks yet, and the packages that move those forms add them. Every
+  `run_call`. The formats' marks are in `abi/formats` (virtio, xHCI, and SDHCI's ADMA2 entry), and the encoders and
+  each structure's meaning list generated from them in `include/erx/abi.h`, which nothing uses yet; the command TRBs (one layout per
+  command, Set TR Dequeue Pointer's among them) and the input context's composed encoder have no marks yet, and the packages that move those forms add them. Every
   device address in `abi/formats` carries `device_address`, and a marked layout refuses one a description would
   state or the format fix; a device address in an unmarked layout is not refused yet: that rule turns on when the
-  last form moves onto the encoders. virtio-gpu's `erx_virtio_gpu_mem_entry` moves with the split ring, as a region
-  entry; until then `resolve_regions` in `erx_device.c` writes it by hand, its length bounded where the region is
-  carved, not at the write. The ADMA2 entry's encoder accepts a length of 0, which moves 65,536 bytes; the
-  sequencer's split never derives one, and the package that writes the split tests it. The encoders are public in `include/erx/abi.h` and exist for report layouts too; they end up confined
-  to the sequencer (a private header), and the rule worth a build check is that only the sequencer stores into a
-  region holding a structure. Packages, in order: the ledger, the layout, descriptions,
-  the check's rules, the sequencer's publication and its acquisition, with the split ring moved onto them; GENET,
+  last form moves onto the encoders. The sequencer encodes virtio-gpu's region entry, `erx_virtio_gpu_mem_entry`, from a fill that
+  names a persistent region its ledger holds; `erx_device.c` adds each region to its device's queue ledgers. The ADMA2 entry's encoder accepts a length of 0, which moves 65,536 bytes; the
+  sequencer's split never derives one, and the package that writes the split tests it. The encoders are public in
+  `include/erx/abi.h`, beside every layout's generic setters; they end up confined to the sequencer (a private header), and the chokepoint of
+  [Descriptions](docs/design-device-dma.md#descriptions), that only the sequencer stores into a region holding a
+  structure, is the build check `device-record-encoders`, which names the descriptor formats' layout prefixes rather
+  than deriving the encoders from the marks, and covers the encoders but not yet the generic setters. The ledger, the queue's layout, descriptions, the publication rules and the
+  sequencer's publication and acquisition for the split ring are in `erx_device_ledger.c`, `erx_device_rules.c` and
+  `erx_device_sequencer.c`, and `erx_device.c`'s split ring installs, posts and completes through them. Left in `erx_device.c` by the
+split ring's wiring:
+`queue_broken`, `break_queue`, `form_round` and `run_call` read `record->genet` from the queue union unchecked
+(right only because every split-ring path returns before them), so they should take a `register_ring_t`, with
+the record's `context` and `state`, which only GENET uses, moved into it; `queue_bytes`'s ring bytes, always 0,
+`pool_offset`, the record's `ready` beside the ring's `installed`, and the comments that still describe one
+effect layer for both forms; the completion's used index located by `offsetof` rather than handed over by the
+core as its elements are; the activation store copied into a `uint64_t` while its type allows 16 bytes; and
+`erx_device_region` keeping its carve when `erx_dma_regions_add` refuses (unreachable while names are fresh).
+`ERX_DMA_SEED_HANDOVER_BUFFERS_ONLY` (`erx_device_dma.c`, a ring region passing to the device left uncleaned) is
+planted by no test since the split ring left the check; planted in the TRB model harness it passes, so that
+harness needs a schedule where a ring region passes to the device dirty (the event ring's zeroing) before it can
+plant it (Medium). The split ring's non-coherent order (cleans before the available index and the ready bit,
+invalidates before loads) lives in `erx_device.c`'s `apply_sequence` and `split_ring_complete`, and
+`erx_device_dma_model_harness.c` checks its own copy of them over the cache model, so a reordering in
+`erx_device.c` passes it (Medium): the record memory's effects behind a small interface with a hosted
+implementation over `erx_dma_model`, or one ordered effect list from the sequencer that both run, would let the
+model harness drive `erx_device.c` itself. `erx_device_dma_check` and `erx_device_dma_order` serve GENET,
+  ADMA2 and the TRB form through `accept_plan` until those move, so the old check goes with the last of them. The
+  sequencer writes virtio's available entry, which no layout holds, without an encoder; it refuses a report that
+  releases nothing (the ledger has no transition that only advances a consumer position) and a release by address,
+  as an event TRB's, both of which the TRB form needs.
+  `erx_dma_report_holding` takes the record the effect layer read, and nothing ties it to the record at the consumer
+  position (an acquisition that holds its second-phase snapshots and consumes them in order would); the ledger's
+  exhaustive harness does not explore its acquire transition (each release there follows an acquisition of every
+  live holding), and `erx_dma_ledger_acquire` takes a bare count, so no chokepoint yet keeps the ledger's
+  transitions to the sequencer;
+  `ERX_DMA_STORE_BYTES_MAX` is hand-kept, checked only by a static assertion against the two layouts the sequencer
+  encodes, and should be derived from the widest encoded layout; `erx_dma_ledger_make` takes any layout that passes the
+  install's check, so the sequencer's `install()` relies on its one caller, the split ring, deriving its layout
+  through `erx_dma_layout_split_ring` (three tables of one count); the
+  publication's `erx_dma_publication_call_t` and `erx_device_dma.h`'s `erx_dma_call_t` are two models of a
+  call until the old check goes; `free_record`'s loop
+  is bounded only by the room rule; `erx_dma_publish` returns check verdicts for refusals that mean the check and the
+  sequencer disagree; rule 1 zeroes a buffer's named size while the handover cleans its stride; and the generated
+  `erx_report_meaning` carries an unreachable return and casts for a structure with one meaning. A layout holds one table of each structure, and a table cores describe is placed at any free record, which the
+  TRB form's many transfer rings, each placed in order, change when it moves on. Packages, in order: the
+  sequencer's publication and its acquisition, with the releases rule and the split ring moved onto them; GENET,
   and ADMA2 with its transfer split into entries by the sequencer, moved onto them; the TRB form's publication and
   bindings; the TRB form's releases from acquired events, each command's reach and the endpoints' states; the
   stand-ins' ledger check. Before a non-coherent device relies on the acquisition, its unverified AArch64 premise is settled by the Arm
   ARM passage, the litmus test or the VL805 probe [Releases](docs/design-device-dma.md#releases) names.
+* [Medium] devices, a piece's kind (`erx_device.h`'s `erx_device_piece_t`, `erx_device_dma.h`'s
+  `erx_dma_piece_t`): two booleans, `device_writes` and `names_region`, say what a piece is, so a region the
+  device writes is representable and refused at run time (`erx_device_virtio_core.c`'s chain check). One closed
+  enum (the device reads, the device writes, a region) makes it unrepresentable. About sixty sites in eighteen
+  files use the booleans, most in the old virtio core, its harness and fuzz target and the TRB form; done after
+  the old core goes, and with the TRB form's branch landed, it is a mechanical change.
 * [Medium] USB, the TRB ring form's commands (`erx_device_trb.c`): one command's behaviour is spread over `accept`,
   the context builders in `erx_device_trb_command`, `command_words` and `erx_device_trb_command_done`; one entry per
   command kind holding its acceptance, its build and its completion would keep each together.
@@ -8172,7 +8217,7 @@ to the corpus and follow rc
   says only "derived from its packet size and burst"); Configure Endpoint's slot context carries only the context
   entries and hub fields, route, speed, root port and TT left 0, as the design's table says, though a controller that
   evaluates the whole slot context with its add flag would misread them; a non-EP0 control endpoint takes index
-  2n + 1 (xHCI 4.5.1); and whether a setup packet's direction bit must match the data stage's.
+  2n + 1 (xHCI 4.5.1).
 * [Low] USB, a USB 3 root port after a disable (`erx_xhci_core`, port_operation/2): writing PORTSC's PED to disable a
   USB 3 port leaves it in the Disabled link state, which leaves only through a PLS write of RxDetect with LWS set
   (xHCI 1.2, 5.4.8, p. 406); the core writes no PLS, so the port stays dead until the controller restarts. Nor does

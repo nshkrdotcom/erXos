@@ -218,12 +218,24 @@ commands(erx_device_trb_command_t *out)
 static void
 expand(uint32_t index)
 {
-	static const uint8_t control_in[8] = { 0x80, 6, 0, 1, 0, 0, 8, 0 };
-	static const uint8_t control_none[8] = { 0x00, 9, 1, 0, 0, 0, 0, 0 };
-	const erx_device_trb_request_t requests[] = {
-		{ .control = true, .data = false, .setup = { 0 } },
-		{ .control = true, .data = true, .device_writes = true, .length = 8 },
-		{ .control = false, .device_writes = true, .length = 8 },
+	static const uint8_t payload[8] = { 0 };
+	/* Each request, and whether the form may ever accept it on EP0 or on the IN endpoint. */
+	static const struct {
+		erx_device_trb_request_t	request;
+		bool				acceptable;
+	} requests[] = {
+		{ { .control = true, .data = false, .setup = { 0x00, 9, 1, 0, 0, 0, 0, 0 } }, true },
+		{ { .control = true, .data = true, .device_writes = true, .length = 8,
+		    .setup = { 0x80, 6, 0, 1, 0, 0, 8, 0 } }, true },
+		{ { .control = false, .device_writes = true, .length = 8 }, true },
+		/* A data stage the device writes behind a setup whose direction is OUT. */
+		{ { .control = true, .data = true, .device_writes = true, .length = 8,
+		    .setup = { 0x00, 9, 1, 0, 0, 0, 8, 0 } }, false },
+		/* A data stage the device reads behind a setup whose direction is IN. */
+		{ { .control = true, .data = true, .device_writes = false, .length = 8, .bytes = payload,
+		    .setup = { 0x80, 6, 0, 1, 0, 0, 8, 0 } }, false },
+		/* A normal transfer the device reads, against EP0's kind and the IN endpoint's direction. */
+		{ { .control = false, .device_writes = false, .length = 8, .bytes = payload }, false },
 	};
 	const uint32_t depth = depths[index] + 1u;
 	erx_device_trb_command_t list[32];
@@ -258,13 +270,11 @@ expand(uint32_t index)
 	for (uint32_t slot = 1; slot <= SLOTS; slot++) {
 		for (uint32_t dci = 1; dci <= EP1_IN; dci += 2) {
 			for (uint32_t request = 0; request < sizeof(requests) / sizeof(requests[0]); request++) {
-				erx_device_trb_request_t transfer = requests[request];
-
-				memcpy(transfer.setup, request == 1 ? control_in : control_none, sizeof(transfer.setup));
 				trb = before;
-				if (erx_device_trb_post(&trb, &layout, slot, dci, &transfer, 0, steps, &count) !=
+				if (erx_device_trb_post(&trb, &layout, slot, dci, &requests[request].request, 0, steps, &count) !=
 				    ERX_DEVICE_TRB_ACCEPTED)
 					continue;
+				CHECK(requests[request].acceptable);
 				CHECK(count <= ERX_DEVICE_TRB_POST_STEPS);
 				CHECK(!held(&before, slot, dci));
 				check_state(&trb);

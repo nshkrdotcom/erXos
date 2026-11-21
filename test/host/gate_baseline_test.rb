@@ -41,7 +41,6 @@ class GateBaselineTest < Minitest::Test
     'dispatch' => { seeds: 8, sources: %w[kernel/core/admit.c kernel/core/debug_log.c kernel/core/dispatch.c
                                           kernel/core/log.c build/gen/kernel/generated/abi_decode.c
                                           build/gen/kernel/generated/abi_run.c] },
-    'device_queue' => { seeds: 8, sources: %w[otp/erts/emulator/nifs/erxos/erx_device_queue.c] },
     'dom_core' => { seeds: 9, sources: %w[liberx/system/dom_core.c liberx/system/dom_life.c liberx/erx_lane.c
                                           build/gen/liberx/generated/abi_reader.c] },
     'ed25519' => { seeds: 16, sources: %w[otp/erts/emulator/nifs/erxos/erx_ed25519.c monocypher/monocypher.c
