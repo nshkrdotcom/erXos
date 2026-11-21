@@ -205,11 +205,12 @@ erx_device_trb_verdict_t	erx_trb_form_post(erx_trb_form_t *form, uint32_t slot, 
  * the input context when it carries it, with the bindings of the endpoints it adds and its reach
  * (erx_device_ledger.h), which the check judges. The refusals:
  *   ERX_DEVICE_TRB_REFUSE_FULL    a command in flight: the ledger takes one at a time;
- *   ERX_DEVICE_TRB_REFUSE_HALTED  an endpoint whose state its reach does not allow (the check's
- *                                 reach rule): a stop or restart of a disabled endpoint, a drop of
- *                                 a halted, disabled or busy one, a disable of a slot with a busy one,
- *                                 an Evaluate Context while EP0 is not running or stopped, or has a
- *                                 transfer posted;
+ *   ERX_DEVICE_TRB_REFUSE_BADARG  an endpoint whose state its reach does not allow (the check's
+ *                                 reach rule), a command the queue's state does not accept as
+ *                                 design-usb.md's queue table has it: a stop or restart of a
+ *                                 disabled endpoint, a drop of a halted, disabled or busy one, a
+ *                                 disable of a slot with a busy one, an Evaluate Context while EP0
+ *                                 is not running or stopped, or has a transfer posted;
  *   ERX_DEVICE_TRB_REFUSE_BADARG  any other: a stated parameter its check in erx_device_trb.h
  *                                 refuses, judged first (Address Device adds EP0 alone, on a control
  *                                 block; Configure Endpoint adds indexes 2 and up, each on a block of

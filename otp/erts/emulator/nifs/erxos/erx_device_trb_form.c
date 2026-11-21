@@ -459,9 +459,8 @@ erx_trb_form_command(erx_trb_form_t *form, const erx_trb_command_t *command, uin
 	case ERX_DMA_BREAKS_ROOM:
 	case ERX_DMA_BREAKS_HELD:
 		return (ERX_DEVICE_TRB_REFUSE_FULL);
-	case ERX_DMA_BREAKS_REACH:
-		return (ERX_DEVICE_TRB_REFUSE_HALTED);
 	default:
+		/* A reach refusal among them: a command the queue's state does not accept is badarg. */
 		return (ERX_DEVICE_TRB_REFUSE_BADARG);
 	}
 }
