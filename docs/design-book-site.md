@@ -877,12 +877,15 @@ writing the output.
   or stylesheet of `PAGE_FILES` that loads a resource from an absolute
   address: a `link`, `script` or `img` whose address has a scheme or
   begins with `//`, or a CSS `url()` or `@import` that does. Links a
-  reader follows (`<a href>`) are not loads. It prevents a page from
+  reader follows (`<a href>`) are not loads. It refuses a script of
+  `PAGE_FILES` that names an absolute address at all, as a string or
+  template literal beginning with `scheme://` or `//`; the console's
+  xterm.js is the site's own copy (`site/README.md`). It prevents a page from
   sending its readers' addresses to another host again; the book's
   pages meet the same rule by construction, since the renderer writes
   no load from another host.
 * The publishing workflow (`.github/workflows/site.yml`) runs `tools/erx
-  fetch` for cmark-gfm, the fonts and both package sets, and installs
+  fetch` for cmark-gfm, the fonts and the package sets, and installs
   the one Node version it pins.
 * The writing guide's checklist item 13 names `ruby
   tools/build_book.rb` as the check, and the scratch link script
