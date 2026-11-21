@@ -31,6 +31,19 @@ class ErxDeviceQueueTest < Minitest::Test
     assert_match(/^erx_device_dma done$/, output)
   end
 
+  # The TRB ring form on an xHCI controller the harness plays: the record its first negotiation
+  # makes, the reset and start one step a call, the install's registers from the table's fields.
+  def test_the_trb_ring_on_an_xhci_controller
+    assert_match(/^erx_device_xhci done$/, xhci_output)
+  end
+
+  # The install writing IMAN with its pending bit as read, which clears an interrupt the reset
+  # left pending, fails the xHCI harness.
+  def test_a_register_word_keeping_a_one_to_clear_bit_fails_the_harness
+    xhci_output(["out->word = r.reg->preserve == 0 ? 0 : load(device, r.reg, r.offset) & r.reg->preserve;",
+                 "out->word = load(device, r.reg, r.offset);"])
+  end
+
   def test_the_register_ring_on_a_device
     assert_match(/^erx_device_genet done$/, genet_output)
   end
@@ -106,6 +119,25 @@ class ErxDeviceQueueTest < Minitest::Test
         File.write(source, text.sub(*seed))
       end
       output, status = harness_output(GENET_HARNESS, *device_sources(source),
+                                      includes: [File.join(ROOT, 'test/fixtures/device_model')])
+      assert_equal seed.nil?, status.success?, output
+      output
+    end
+  end
+
+  XHCI_HARNESS = File.join(ROOT, 'test/fixtures/erx_device_xhci_harness.c')
+
+  # The xHCI harness's output over erx_device.c, with `seed` applied, which must fail it.
+  def xhci_output(seed = nil)
+    Dir.mktmpdir('erx-device-xhci-') do |directory|
+      source = File.join(NIFS, 'erx_device.c')
+      if seed
+        text = File.read(source)
+        assert_includes text, seed.first
+        source = File.join(directory, 'erx_device.c')
+        File.write(source, text.sub(*seed))
+      end
+      output, status = harness_output(XHCI_HARNESS, *device_sources(source),
                                       includes: [File.join(ROOT, 'test/fixtures/device_model')])
       assert_equal seed.nil?, status.success?, output
       output

@@ -21,6 +21,7 @@
 #include "erx_device_dma.h"
 #include "erx_device_genet.h"
 #include "erx_device_genet_model.h"
+#include "erx_device_trb_form.h"
 #include "erx_device_virtio_core.h"
 #include "erx_dma_arch.h"
 
@@ -859,6 +860,7 @@ typedef struct virtio_registers {
 typedef enum queue_form {
 	QUEUE_SPLIT_RING,		/* virtio-mmio */
 	QUEUE_REGISTER_RING,		/* GENET */
+	QUEUE_TRB_RING,			/* xHCI */
 } queue_form_t;
 
 /* A split ring: its device's virtio-mmio registers and the form's core, which owns its layout. */
@@ -872,6 +874,43 @@ typedef struct register_ring {
 	erx_dma_length_reg_t		length_reg;	/* the ring's buffer size, which the context names as a length */
 	erx_device_genet_queue_t	core;
 } register_ring_t;
+
+/* A register of an xHCI controller where the device's open placed it (docs/design-usb.md, "Registers at offsets the controller reports"). */
+typedef struct xhci_reg {
+	const erx_device_register_t	*reg;
+	uint64_t			offset;		/* in its window */
+} xhci_reg_t;
+
+/*
+ * The registers of an xHCI controller its start reads and writes (docs/design-usb.md,
+ * "Install"), and the fields it names, all from the device's table: every word the start reads
+ * is taken apart, and every word it writes made, through these fields, an address as its low
+ * word's register, then its high word's.
+ */
+typedef struct xhci_registers {
+	/* Read once, when the record is made: the counts its layout needs, AC64 and the context size. */
+	xhci_reg_t			hcsparams1, hcsparams2, hccparams1, pagesize;
+	const erx_device_field_t	*max_slots, *max_ports, *scratchpads_hi, *scratchpads_lo, *ac64, *csz, *four_kib;
+	uint64_t			doorbells;	/* doorbell 0's offset in the window */
+	/* Read by each call of the start. */
+	xhci_reg_t			usbsts;
+	const erx_device_field_t	*hch, *cnr;
+	/* The registers the NIF owns (erx/hw/device_owned.h), which only this file writes. */
+	xhci_reg_t			usbcmd, config, erstsz, iman, dcbaap[2], erstba[2], erdp[2], crcr[2];
+	const erx_device_field_t	*rs, *hcrst, *inte, *max_slots_en, *erst_size, *ie, *rcs;
+	const erx_device_field_t	*dcbaap_field[2], *erstba_field[2], *erdp_field[2], *crcr_field[2];
+} xhci_registers_t;
+
+/*
+ * An xHCI controller's record: the TRB form over its memory, laid out once from the counts it
+ * read when it was made, and where its start stands between negotiate calls.
+ */
+typedef struct trb_ring {
+	xhci_registers_t	regs;
+	bool			reaches_64_bits;	/* HCCPARAMS1.AC64 */
+	erx_trb_start_step_t	step;
+	erx_trb_form_t		form;
+} trb_ring_t;
 
 typedef struct queue_record {
 	const erx_device_t		*device;
@@ -887,6 +926,7 @@ typedef struct queue_record {
 	union {
 		split_ring_t		split;		/* QUEUE_SPLIT_RING */
 		register_ring_t		genet;		/* QUEUE_REGISTER_RING */
+		trb_ring_t		trb;		/* QUEUE_TRB_RING */
 	};
 } queue_record_t;
 
@@ -1009,6 +1049,13 @@ static bool
 register_ring_device(const erx_device_t *device)
 {
 	return (device->peripheral == erx_device_peripheral_find("genet", sizeof("genet") - 1));
+}
+
+/* Whether the device's queues are the TRB ring form's: its peripheral is xHCI's. */
+static bool
+trb_ring_device(const erx_device_t *device)
+{
+	return (device->peripheral == erx_device_peripheral_find("xhci", sizeof("xhci") - 1));
 }
 
 /*
@@ -1248,6 +1295,9 @@ erx_device_queue_create(const erx_device_t *device, uint32_t index, uint32_t siz
 
 	/* A physical device does no DMA, so it has no queue (docs/design-fiasco.md, "Device records"). */
 	if (device->form == ERX_DEVICE_FORM_PHYSICAL)
+		return (ERX_ENOTSUP);
+	/* An xHCI device's one record is the TRB form's, which its first negotiation makes. */
+	if (trb_ring_device(device))
 		return (ERX_ENOTSUP);
 	if (buffer_size == 0 || buffer_size > ERX_DEVICE_BUFFER_MAX || (form == QUEUE_REGISTER_RING ?
 	    index > GENET_QUEUE_TX || size != ERX_GENET_RING_SIZE : split_ring_bytes(size, buffer_size, granule) == 0))
@@ -1863,12 +1913,9 @@ put_ring_register(const queue_record_t *record, erx_dma_register_write_t write)
  * the publish barrier.
  */
 static void
-apply_sequence(const queue_record_t *record, const erx_dma_sequence_t *sequence, const erx_dma_piece_t *pieces)
+apply_memory(const queue_record_t *record, const erx_dma_sequence_t *sequence, const erx_dma_piece_t *pieces)
 {
-	const erx_device_t *const device = record->device;
-	const erx_dma_activation_t *const activation = &sequence->activation;
 	volatile uint8_t *const memory = record->memory;
-	uint64_t value = 0;
 
 	for (uint32_t at = 0; at < sequence->zero_count; at++)
 		bzero((void *)(uintptr_t)(memory + sequence->zeros[at].offset), sequence->zeros[at].length);
@@ -1882,7 +1929,19 @@ apply_sequence(const queue_record_t *record, const erx_dma_sequence_t *sequence,
 		    sequence->stores[at].length);
 	for (uint32_t at = 0; at < sequence->clean_count; at++)
 		maintain(record, sequence->cleans[at], false);
-	erx_dma_publish_barrier(!device->coherent);
+	erx_dma_publish_barrier(!record->device->coherent);
+}
+
+/* A split ring's sequence whole: its memory (apply_memory), then an install's registers or a run's activation. */
+static void
+apply_sequence(const queue_record_t *record, const erx_dma_sequence_t *sequence, const erx_dma_piece_t *pieces)
+{
+	const erx_device_t *const device = record->device;
+	const erx_dma_activation_t *const activation = &sequence->activation;
+	volatile uint8_t *const memory = record->memory;
+	uint64_t value = 0;
+
+	apply_memory(record, sequence, pieces);
 	if (activation->kind == ERX_DMA_ACTIVATE_REGISTER) {
 		put(device, record->split.regs.sel, record->index);
 		for (uint32_t at = 0; at < sequence->register_count; at++)
@@ -2085,10 +2144,404 @@ register_ring_negotiate(const erx_device_t *device, uint64_t *accepted)
 	return (ERX_OK);
 }
 
+/*
+ * The TRB ring form's effects (docs/design-usb.md, "Install"): an xHCI controller's record, its
+ * reset and start, one step a call. The form's core decides every byte of memory and every
+ * register value, and its start core (erx_trb_form_start_next) every step; what follows only
+ * reads the controller's registers and writes them, through the fields of the device's table.
+ */
+
+/* The register `name` of the device's table, where the device's open placed it; false for none. */
+static bool
+xhci_register(const erx_device_t *device, const char *name, xhci_reg_t *out)
+{
+	const erx_device_peripheral_t *const xhci = device->peripheral;
+	const uint32_t found = erx_device_register_named(xhci, name);
+
+	if (found == xhci->register_count)
+		return (false);
+	out->reg = &xhci->registers[found];
+	return (element_at(device, out->reg, (erx_device_element_t){ .indexed = false }, &out->offset));
+}
+
+/* The field `name` of `r`, or NULL. */
+static const erx_device_field_t *
+xhci_field(const erx_device_t *device, xhci_reg_t r, const char *name)
+{
+	const uint32_t found = erx_device_field_named(device->peripheral, r.reg, name);
+
+	return (found < r.reg->field_count ? &device->peripheral->fields[r.reg->first_field + found] : NULL);
+}
+
+/* An address's two registers, low word then high, and their address fields. */
+static bool
+xhci_address(const erx_device_t *device, const char *low, const char *high, const char *low_field,
+    const char *high_field, xhci_reg_t r[2], const erx_device_field_t *f[2])
+{
+	if (!xhci_register(device, low, &r[0]) || !xhci_register(device, high, &r[1]))
+		return (false);
+	f[0] = xhci_field(device, r[0], low_field);
+	f[1] = xhci_field(device, r[1], high_field);
+	return (f[0] != NULL && f[1] != NULL);
+}
+
+/* Every register and field the start names, from the device's table; false when one is missing. */
+static bool
+xhci_registers(const erx_device_t *device, xhci_registers_t *regs)
+{
+	const uint32_t doorbell = erx_device_register_named(device->peripheral, "db");
+	const erx_device_field_t *fields[16];
+	uint32_t count = 0;
+
+	if (!xhci_register(device, "hcsparams1", &regs->hcsparams1) || !xhci_register(device, "hcsparams2", &regs->hcsparams2) ||
+	    !xhci_register(device, "hccparams1", &regs->hccparams1) || !xhci_register(device, "pagesize", &regs->pagesize) ||
+	    !xhci_register(device, "usbsts", &regs->usbsts) || !xhci_register(device, "usbcmd", &regs->usbcmd) ||
+	    !xhci_register(device, "config", &regs->config) || !xhci_register(device, "erstsz", &regs->erstsz) ||
+	    !xhci_register(device, "iman", &regs->iman) ||
+	    !xhci_address(device, "dcbaap_lo", "dcbaap_hi", "pointer_lo", "pointer_hi", regs->dcbaap, regs->dcbaap_field) ||
+	    !xhci_address(device, "erstba_lo", "erstba_hi", "address_lo", "address_hi", regs->erstba, regs->erstba_field) ||
+	    !xhci_address(device, "erdp_lo", "erdp_hi", "pointer_lo", "pointer_hi", regs->erdp, regs->erdp_field) ||
+	    !xhci_address(device, "crcr_lo", "crcr_hi", "pointer_lo", "pointer_hi", regs->crcr, regs->crcr_field) ||
+	    doorbell == device->peripheral->register_count || !element_at(device, &device->peripheral->registers[doorbell],
+	    (erx_device_element_t){ .indexed = true, .index = 0 }, &regs->doorbells))
+		return (false);
+	fields[count++] = regs->max_slots = xhci_field(device, regs->hcsparams1, "maxslots");
+	fields[count++] = regs->max_ports = xhci_field(device, regs->hcsparams1, "maxports");
+	fields[count++] = regs->scratchpads_hi = xhci_field(device, regs->hcsparams2, "spb_max_hi");
+	fields[count++] = regs->scratchpads_lo = xhci_field(device, regs->hcsparams2, "spb_max_lo");
+	fields[count++] = regs->ac64 = xhci_field(device, regs->hccparams1, "ac64");
+	fields[count++] = regs->csz = xhci_field(device, regs->hccparams1, "csz");
+	fields[count++] = regs->four_kib = xhci_field(device, regs->pagesize, "four_kib");
+	fields[count++] = regs->hch = xhci_field(device, regs->usbsts, "hch");
+	fields[count++] = regs->cnr = xhci_field(device, regs->usbsts, "cnr");
+	fields[count++] = regs->rs = xhci_field(device, regs->usbcmd, "rs");
+	fields[count++] = regs->hcrst = xhci_field(device, regs->usbcmd, "hcrst");
+	fields[count++] = regs->inte = xhci_field(device, regs->usbcmd, "inte");
+	fields[count++] = regs->max_slots_en = xhci_field(device, regs->config, "maxslotsen");
+	fields[count++] = regs->erst_size = xhci_field(device, regs->erstsz, "size");
+	fields[count++] = regs->ie = xhci_field(device, regs->iman, "ie");
+	fields[count++] = regs->rcs = xhci_field(device, regs->crcr[0], "rcs");
+	for (uint32_t at = 0; at < count; at++) {
+		if (fields[at] == NULL)
+			return (false);
+	}
+	return (true);
+}
+
+/* Field `field` of `word`, a word read from `r`, into `*value`; false for a field the table lets no one read. */
+static bool
+xhci_field_of(xhci_reg_t r, const erx_device_field_t *field, uint64_t word, uint64_t *value)
+{
+	return (erx_device_field_of(r.reg, (erx_device_element_t){ .indexed = false }, field, word, value));
+}
+
+/* One word to store into a register: the start composes every word of a step before it stores any. */
+typedef struct xhci_word {
+	xhci_reg_t	r;
+	uint64_t	word;
+} xhci_word_t;
+
+/*
+ * `*word` with `field` replaced by `value`; false for a value the field cannot hold, which the
+ * values the form's core gives never are.
+ */
+static bool
+with_field(const erx_device_field_t *field, uint64_t value, uint64_t *word)
+{
+	if (value > field->mask >> field->shift)
+		return (false);
+	*word = (*word & ~field->mask) | value << field->shift;
+	return (true);
+}
+
+/*
+ * A word of `r` to store with `field` set to `value`: the bits a store keeps (the register's
+ * preserve mask) as one read finds them, and every other bit 0, so a one-to-clear bit such as
+ * IMAN.IP or ERDP.EHB clears nothing and a one-to-set bit such as HCRST sets nothing.
+ */
+static bool
+field_word(const erx_device_t *device, xhci_reg_t r, const erx_device_field_t *field, uint64_t value, xhci_word_t *out)
+{
+	out->r = r;
+	out->word = r.reg->preserve == 0 ? 0 : load(device, r.reg, r.offset) & r.reg->preserve;
+	return (with_field(field, value, &out->word));
+}
+
+/*
+ * An address as the two words of its registers, low word then high: the low word's field holds
+ * its bits from the field's shift up, and the address has none below, beside the bits `low_bits`
+ * of the low word, which the caller sets.
+ */
+static bool
+address_words(const erx_device_t *device, const xhci_reg_t r[2], const erx_device_field_t *const f[2], uint64_t address,
+    uint64_t low_bits, xhci_word_t out[2])
+{
+	const uint64_t low = address & UINT32_MAX & ~low_bits;
+
+	return ((low & ~f[0]->mask) == 0 && field_word(device, r[0], f[0], low >> f[0]->shift, &out[0]) &&
+	    field_word(device, r[1], f[1], address >> 32, &out[1]));
+}
+
+/*
+ * The words of one register write of the install (erx_device_sequencer.h), appended at
+ * `words[*count]`, room for two; false for a write the controller's registers cannot state, a
+ * virtio-mmio register among them, which is a bug of the form's core.
+ */
+static bool
+install_words(const erx_device_t *device, const xhci_registers_t *regs, erx_dma_register_write_t write,
+    xhci_word_t *words, uint32_t *count)
+{
+	xhci_word_t *const out = &words[*count];
+	uint32_t made_count = 1;
+	bool made = false;
+
+	switch (write.reg) {
+	case ERX_DMA_XHCI_SLOTS:
+		made = field_word(device, regs->config, regs->max_slots_en, write.value, out);
+		break;
+	case ERX_DMA_XHCI_EVENT_RING_SIZE:
+		made = field_word(device, regs->erstsz, regs->erst_size, write.value, out);
+		break;
+	case ERX_DMA_XHCI_INTERRUPTER_ENABLE:
+		made = field_word(device, regs->iman, regs->ie, write.value, out);
+		break;
+	case ERX_DMA_XHCI_RUN:
+		made = field_word(device, regs->usbcmd, regs->rs, write.value, out) &&
+		    with_field(regs->inte, write.value, &out->word);
+		break;
+	case ERX_DMA_XHCI_DCBAA:
+		made_count = 2;
+		made = address_words(device, regs->dcbaap, regs->dcbaap_field, write.value, 0, out);
+		break;
+	case ERX_DMA_XHCI_EVENT_DEQUEUE:
+		made_count = 2;
+		made = address_words(device, regs->erdp, regs->erdp_field, write.value, 0, out);
+		break;
+	case ERX_DMA_XHCI_SEGMENT_TABLE:
+		made_count = 2;
+		made = address_words(device, regs->erstba, regs->erstba_field, write.value, 0, out);
+		break;
+	case ERX_DMA_XHCI_COMMAND_RING:
+		/* Its cycle state rides in bit 0 of the position, the low word's RCS. */
+		made_count = 2;
+		made = address_words(device, regs->crcr, regs->crcr_field, write.value, regs->rcs->mask, out) &&
+		    with_field(regs->rcs, (write.value & regs->rcs->mask) >> regs->rcs->shift, &out[0].word);
+		break;
+	case ERX_DMA_VIRTQ_NUM:
+	case ERX_DMA_VIRTQ_DESC:
+	case ERX_DMA_VIRTQ_DRIVER:
+	case ERX_DMA_VIRTQ_DEVICE:
+	case ERX_DMA_VIRTQ_READY:
+		break;
+	}
+	*count += made_count;
+	return (made);
+}
+
+/* The layout a new record is laid out into, too large for a scheduler's stack; used only under the caller's lock. */
+static erx_device_trb_layout_t trb_layout;
+
+/*
+ * The counts the layout needs, read once from the capability registers (xHCI 1.2, 5.3.3-5.3.6):
+ * the slots it enables, the controller's own, at most ERX_DEVICE_TRB_SLOTS_MAX; its ports; its
+ * scratchpad pages, whose count is split across two fields, the low one's width the table's; the
+ * context size; doorbell 0's place. ERX_ENOTSUP for a field no one may read, more scratchpad pages
+ * than ERX_DEVICE_TRB_SCRATCHPADS_MAX, or a page size that excludes 4 KiB (5.4.3, p. 400).
+ */
+static int
+controller_counts(const erx_device_t *device, trb_ring_t *ring, erx_device_trb_controller_t *controller)
+{
+	const xhci_registers_t *const regs = &ring->regs;
+	const uint64_t params1 = load(device, regs->hcsparams1.reg, regs->hcsparams1.offset);
+	const uint64_t params2 = load(device, regs->hcsparams2.reg, regs->hcsparams2.offset);
+	const uint64_t capabilities = load(device, regs->hccparams1.reg, regs->hccparams1.offset);
+	const uint64_t pagesize = load(device, regs->pagesize.reg, regs->pagesize.offset);
+	uint64_t slots, ports, high, low, ac64, csz, four_kib;
+
+	if (!xhci_field_of(regs->hcsparams1, regs->max_slots, params1, &slots) ||
+	    !xhci_field_of(regs->hcsparams1, regs->max_ports, params1, &ports) ||
+	    !xhci_field_of(regs->hcsparams2, regs->scratchpads_hi, params2, &high) ||
+	    !xhci_field_of(regs->hcsparams2, regs->scratchpads_lo, params2, &low) ||
+	    !xhci_field_of(regs->hccparams1, regs->ac64, capabilities, &ac64) ||
+	    !xhci_field_of(regs->hccparams1, regs->csz, capabilities, &csz) ||
+	    !xhci_field_of(regs->pagesize, regs->four_kib, pagesize, &four_kib))
+		return (ERX_ENOTSUP);
+	controller->scratchpads = (uint32_t)(high << __builtin_popcountll(regs->scratchpads_lo->mask) | low);
+	if (four_kib == 0 || controller->scratchpads > ERX_DEVICE_TRB_SCRATCHPADS_MAX)
+		return (ERX_ENOTSUP);
+	controller->slots = (uint32_t)(slots < ERX_DEVICE_TRB_SLOTS_MAX ? slots : ERX_DEVICE_TRB_SLOTS_MAX);
+	controller->ports = (uint32_t)ports;
+	controller->context_size = csz != 0 ? 2u * ERX_XHCI_SLOT_CONTEXT_SIZE : ERX_XHCI_SLOT_CONTEXT_SIZE;
+	controller->doorbells = (uint32_t)regs->doorbells;
+	ring->reaches_64_bits = ac64 != 0;
+	return (ERX_OK);
+}
+
+/*
+ * An xHCI device's record, made by its first negotiate call before anything is written: its
+ * registers from the table, its counts from the controller, and the TRB form over the next pages
+ * of the device's memory, which the device addresses contiguously, laid out once and kept until
+ * the device closes. ERX_ENOTSUP for a device that is not given or a table without what the start
+ * names, besides controller_counts's; ERX_ERANGE for memory the layout does not fit or, on a
+ * controller without AC64, memory past 4 GiB (docs/design-usb.md, "Address width"), checked by
+ * the install's own test; ERX_ELIMIT with every record taken. Nothing is taken on a refusal.
+ */
+static int
+trb_ring_create(const erx_device_t *device, queue_record_t **made)
+{
+	uint64_t *const taken = &memory_taken[device - devices];
+	queue_record_t *record;
+	erx_device_trb_controller_t controller;
+	erx_device_carve_t carve;
+	uint64_t base, last;
+	int status;
+
+	if (device->form != ERX_DEVICE_FORM_GIVEN)
+		return (ERX_ENOTSUP);
+	if (queues_open == ERX_DEVICE_QUEUES_MAX)
+		return (ERX_ELIMIT);
+	record = &queues[queues_open];
+	bzero(record, sizeof(*record));
+	record->device = device;
+	record->form = QUEUE_TRB_RING;
+	if (!xhci_registers(device, &record->trb.regs))
+		return (ERX_ENOTSUP);
+	status = controller_counts(device, &record->trb, &controller);
+	if (status != ERX_OK)
+		return (status);
+	if (*taken >= device->memory_size || erx_mem_dma_addr(device->memory, *taken, &base) != ERX_OK ||
+	    !erx_device_trb_layout(&trb_layout, &erx_device_trb_shape, &controller, base, erx_dma_granule(),
+	    device->memory_size - *taken) || !erx_device_carve(*taken, device->memory_size, 0, trb_layout.bytes, &carve) ||
+	    erx_mem_dma_addr(device->memory, carve.end - 1, &last) != ERX_OK || last - base != carve.end - 1 - carve.rings ||
+	    !erx_trb_form_make(&record->trb.form, &trb_layout, regions_of(device)))
+		return (ERX_ERANGE);
+	status = erx_trb_form_install(&record->trb.form, record->trb.reaches_64_bits, &ring_sequence);
+	if (status != ERX_OK)
+		return (status == ERX_ERANGE ? ERX_ERANGE : ERX_EINVAL);
+	record->memory = device->dma + carve.rings;
+	record->memory_size = carve.end - carve.rings;
+	record->device_base = base;
+	*taken = carve.end;
+	*made = &queues[queues_open++];
+	return (ERX_OK);
+}
+
+/*
+ * The install, once the reset has ended: the reset's idle report ends every holding, then the
+ * form's sequence (erx_device_sequencer.h), its registers composed whole first, so a write the
+ * table cannot state, a bug, applies nothing; then its memory, then its registers in order, run
+ * last. ERX_ERANGE or ERX_EINVAL as erx_trb_form_install refuses.
+ */
+static int
+trb_ring_install(queue_record_t *record)
+{
+	const erx_device_t *const device = record->device;
+	trb_ring_t *const ring = &record->trb;
+	xhci_word_t words[2u * (ERX_DMA_REGISTERS_MAX + 1u)];
+	uint32_t count = 0;
+	int status;
+
+	erx_trb_form_reset(&ring->form);
+	status = erx_trb_form_install(&ring->form, ring->reaches_64_bits, &ring_sequence);
+	if (status != ERX_OK)
+		return (status == ERX_ERANGE ? ERX_ERANGE : ERX_EINVAL);
+	if (ring_sequence.activation.kind != ERX_DMA_ACTIVATE_REGISTER)
+		return (ERX_EINVAL);
+	for (uint32_t at = 0; at <= ring_sequence.register_count; at++) {
+		const erx_dma_register_write_t write = at < ring_sequence.register_count ? ring_sequence.registers[at] :
+		    ring_sequence.activation.reg;
+
+		if (!install_words(device, &ring->regs, write, words, &count))
+			return (ERX_EINVAL);
+	}
+	apply_memory(record, &ring_sequence, NULL);
+	for (uint32_t at = 0; at < count; at++)
+		store(device, words[at].r.reg, words[at].r.offset, words[at].word);
+	return (ERX_OK);
+}
+
+/* The call's one reading of the controller, USBCMD's and USBSTS's words taken apart by the table's fields. */
+static bool
+start_seen(const erx_device_t *device, const xhci_registers_t *regs, erx_trb_start_seen_t *seen)
+{
+	const uint64_t command = load(device, regs->usbcmd.reg, regs->usbcmd.offset);
+	const uint64_t status = load(device, regs->usbsts.reg, regs->usbsts.offset);
+	uint64_t halted, resetting, not_ready;
+
+	if (!xhci_field_of(regs->usbsts, regs->hch, status, &halted) ||
+	    !xhci_field_of(regs->usbcmd, regs->hcrst, command, &resetting) ||
+	    !xhci_field_of(regs->usbsts, regs->cnr, status, &not_ready))
+		return (false);
+	*seen = (erx_trb_start_seen_t){ .halted = halted != 0, .resetting = resetting != 0, .not_ready = not_ready != 0 };
+	return (true);
+}
+
+/* USBCMD's `field` written as `value`, its other kept bits as read (field_word). */
+static bool
+command_put(const erx_device_t *device, const xhci_registers_t *regs, const erx_device_field_t *field, uint64_t value)
+{
+	xhci_word_t word;
+
+	if (!field_word(device, regs->usbcmd, field, value, &word))
+		return (false);
+	store(device, word.r.reg, word.r.offset, word.word);
+	return (true);
+}
+
+/*
+ * negotiate/2 on an xHCI device (docs/design-usb.md, "Install"): its record made by the first
+ * call, then one step of the controller's reset and start a call, as erx_trb_form_start_next
+ * decides from the call's one reading. ERX_EBUSY until the controller has started; ERX_OK, with
+ * no feature accepted, once it has, and the record is ready. A refused install ends the
+ * negotiation with its error and the next call begins again.
+ */
+static int
+trb_ring_negotiate(const erx_device_t *device, uint64_t *accepted)
+{
+	queue_record_t *record = queue_numbered(device, 0);
+	erx_trb_start_seen_t seen;
+	erx_trb_start_next_t next;
+	trb_ring_t *ring;
+	int status = ERX_OK;
+
+	if (record == NULL) {
+		status = trb_ring_create(device, &record);
+		if (status != ERX_OK)
+			return (status);
+	}
+	ring = &record->trb;
+	if (!start_seen(device, &ring->regs, &seen))
+		return (ERX_EINVAL);
+	next = erx_trb_form_start_next(ring->step, seen);
+	switch (next.effect) {
+	case ERX_TRB_START_NOTHING:
+		break;
+	case ERX_TRB_START_CLEAR_RUN:
+		status = command_put(device, &ring->regs, ring->regs.rs, 0) ? ERX_OK : ERX_EINVAL;
+		break;
+	case ERX_TRB_START_RESET:
+		status = command_put(device, &ring->regs, ring->regs.hcrst, 1) ? ERX_OK : ERX_EINVAL;
+		break;
+	case ERX_TRB_START_INSTALL:
+		status = trb_ring_install(record);
+		break;
+	}
+	ring->step = status == ERX_OK ? next.step : ERX_TRB_START_BEGIN;
+	if (status != ERX_OK)
+		return (status);
+	if (!next.started)
+		return (ERX_EBUSY);
+	record->ready = true;
+	*accepted = 0;
+	return (ERX_OK);
+}
+
 int
 erx_device_negotiate(const erx_device_t *device, uint64_t wanted, uint64_t *accepted)
 {
 	unready_queues(device);
+	if (trb_ring_device(device))
+		return (trb_ring_negotiate(device, accepted));
 	if (register_ring_device(device))
 		return (register_ring_negotiate(device, accepted));
 	return (split_ring_negotiate(device, wanted, accepted));
@@ -2097,7 +2550,8 @@ erx_device_negotiate(const erx_device_t *device, uint64_t wanted, uint64_t *acce
 static queue_record_t *
 queue_of(const erx_device_t *device, uint32_t queue)
 {
-	return (queue < queues_open && queues[queue].device == device ? &queues[queue] : NULL);
+	return (queue < queues_open && queues[queue].device == device && queues[queue].form != QUEUE_TRB_RING ?
+	    &queues[queue] : NULL);
 }
 
 /*
