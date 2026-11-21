@@ -8561,10 +8561,17 @@ model harness drive `erx_device.c` itself. `erx_device_dma_check` and `erx_devic
   (`accepts/2`) beside the core's `input()`; `init/1` calls `erx_bt_store:address/0` inside the controller's
   synchronous `start_child`; the table, values, pairing flag and bond come from an optional `domain` key the
   controller does not pass; a reserved Peer_Address_Type fails the link's start and so resets the controller
-  group; and LE Connection Update Complete is forwarded to a link that ignores it. Build the section: the
-  link's pid as its address with owners' monitors, role-tagged inputs and actions, the identity address in
-  `link_up`'s `Info`, `resolve` and `join` after `init/1`, no pairing flag, Peer_Address_Type decoded or
-  malformed in `erx_hci`, and the host tests the Verification table lists for them.
+  group; `erx_hci` checks a failed LE Connection Complete's handle, which HCI 4.5.1's Table 4.1 leaves
+  invalid, so a failure carrying a reserved handle restarts the controller group; LE Connection Update
+  Complete is forwarded to a link that ignores it; the controller forwards to a link without bound, so a link
+  held up fills its mailbox; the link reports `bonded` from its start for a resolved bond; and `erx_smp_core`
+  ignores a withdrawal in `done` without the link telling the window it handed the bond on. Build the section:
+  the link's pid as its address with owners' monitors, role-tagged inputs and actions, the identity address in
+  `link_up`'s `Info`, `resolve` and `join` (without `bonded`) after `init/1`, no pairing flag, LE Connection
+  Complete's Status read first and Peer_Address_Type decoded or malformed in `erx_hci`, the link's backlog
+  (`taken` and `bt_link_backlog` in `abi/formats/bluetooth.txt`), a resolved bond's subscriptions and hash
+  taken only at encryption, `keep` with its tag beside `keeping`, and the host tests the Verification table
+  lists for them.
 * [Low] bluetooth, the link core's deadlines and Encryption_Enabled (`erlang/apps/erx_bt/src/erx_bt_link_core.erl`,
   its `HANDLER_TIMEOUT_MS`, `ATT_TRANSACTION_MS`, `SMP_TIMEOUT_MS` and `ENCRYPTION_ON_LE`): "What a radio peer can
   make the domain spend" makes every bound a constant of `abi/formats/bluetooth.txt`, but these four are module
@@ -8594,8 +8601,9 @@ model harness drive `erx_device.c` itself. `erx_device_dma_check` and `erx_devic
   store keeps it or roll back on its failure; a Write Command to the descriptor is ignored where the design has it
   change the configuration; a write that changes nothing still emits `subscribed`; and `new/0` cannot take a
   bond's subscriptions at reconnection. Reshape with Stage 4: the configuration write awaits an answer as a value
-  write does, the bearer changes at the answer, the descriptor takes Write Command at its write level, and
-  `new/1` takes the kept subscriptions.
+  write does, the bearer changes at the answer, the descriptor takes Write Command at its write level, which is
+  at least `encrypted` on a link that holds a key, and the bearer takes the kept subscriptions at the link's
+  encryption with the bond's key.
 * [Medium] bluetooth, the table's handle count (`erx_gatt_db`, design-bluetooth.md, "Declarations: `abi/gatt`"):
   nothing bounds the attributes of the served services, and `erx_gatt_db:build/1` writes handles as 16 bits, so
   past 0xFFFF a characteristic declaration names a wrapped handle. One 64 KiB declaration holds some 5,700

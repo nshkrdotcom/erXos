@@ -332,6 +332,8 @@ round trip to a handler is one step out and one step back.
 | an app that opens windows one after another lets a guesser retry at once | the pairing wait is the window process's and outlives every window |
 | a weaker pairing overwrites a stronger bond (BLURtooth's class) | pairing never replaces a bond; only `forget` ends one |
 | a phone's subscription lost at a power cut | a bonded link's configuration write is answered only once the store has kept it |
+| a peer with a bonded phone's address changes that bond's kept subscriptions or table hash | a link is its bond's only from its encryption with the bond's key, and only the bond's own link writes them |
+| a window closed as its pairing completes leaves a kept bond counted failed, or a failure kept | the link's one step that hands the bond to the store decides which side the close fell on, and the store's answer is the outcome |
 | an app's crash leaves dangling attributes | attributes are configuration; the handler detaches, values stay |
 
 ## Stages
@@ -690,6 +692,7 @@ table, fixed before any peer arrives:
 | packets and commands waiting to be written | one: the writer takes the next only after its last write returned | the controller process and the writer |
 | notifications waiting for a link's credits | `bt_notify_queue`, 16 frames, per link; past it `notify` answers `{error, busy}`, and an SMP or signaling answer is dropped and counted, a dropped SMP answer failing its pairing at SMP's timeout; ATT's responses and its one indication queue past it, and one that would make the queue hold more than 18 frames ends the link, since an honest phone sends a request only after it received the last response (ATT 3.3.2) | the link |
 | an ACL packet from the controller | `bt_acl_rx_max`, 251 octets of data, which the bring-up states with Host Buffer Size; a longer one is a loss of synchronization | `erx_h4` |
+| messages from the controller process waiting in a link's mailbox | `bt_link_backlog`, 32, each an event or one ACL packet; the link acknowledges each once stepped, and a link at the bound is sent nothing more and disconnected ([Commands and data credits](#commands-and-data-credits)) | the controller process |
 | an L2CAP frame being reassembled | 4 bytes of header and the channel's MTU: 65 for SMP, and ATT's 247 for ATT and every other channel; a longer frame ends the link, and a signaling frame past MTUsig, 23, is answered Command Reject (L2CAP 4) | `erx_bt_link_core` |
 | ATT requests | one outstanding (ATT 3.3.2); a second before the response ends the link | the link |
 | ATT commands waiting for a handler | `bt_write_queue`, 16; past it a command is discarded and counted, as ATT 3.3.2 allows | the link |
@@ -698,7 +701,7 @@ table, fixed before any peer arrives:
 | pairings | one at a time, in an open window, which closes at the first, and none during the pairing wait | the window |
 | bonds | `bt_bonds_max`, 8 | the store |
 | the stored state | `bt_state_max`, 4 KiB | the store |
-| time | every HCI command 5 s; every handler's answer 5 s; SMP 30 s (SMP 3.4); an indication 30 s (ATT 3.3.3) | each owner |
+| time | every HCI command 5 s; every handler's answer 5 s; every call of the store's backend 5 s; SMP 30 s (SMP 3.4); an indication 30 s (ATT 3.3.3) | each owner |
 
 A peer that passes a bound loses its link and costs nothing more; the
 controller's report of the disconnection returns its credits.
@@ -887,6 +890,29 @@ link that meets it ends, and its end disconnects it
 Controller-to-host flow control is not enabled: the host always reads,
 and the line's bound is the backstop.
 
+**A link's backlog** is the other direction's share. The controller
+process never waits on a link, so what it forwards faster than the link
+steps would otherwise wait in the link's mailbox without bound, as it
+does while the link makes its two calls at its start ([The link's
+messages](#the-links-messages)). The core keeps, for each live handle,
+how many of the messages it has sent the handle's link, events and ACL
+packets alike, the link has not yet taken; the link's core returns
+`taken` from its step of each such message, which the link process
+sends as a request in the link's envelope like its packets, so the
+acknowledgement of a link that has gone changes nothing. A message for
+a link whose backlog is `bt_link_backlog`, 32, is not sent: the core
+drops it, sends that link nothing more, and asks the handle's
+disconnect with Remote Device Terminated Connection due to Low
+Resources (`0x14`, one of the reasons HCI 7.1.6 allows), and the link
+ends at its `link_down` as every link does. So a link's mailbox holds
+at most 32 of the controller's messages, about 8 KiB, whatever the peer
+sends and however long the link is held up, and a peer that outruns
+its link loses the link, as a peer that passes any other bound does.
+An honest phone does not meet it: it sends an ATT request only after
+the last response (ATT 3.3.2) and a link steps a packet in far less
+time than the line takes to carry one; a stream of Write Commands
+past `bt_write_queue` is discarded as the link steps it, not held.
+
 The controller process does no I/O itself: a reader process keeps one
 read of `data` outstanding and sends the bytes it got, waiting for the
 controller process's acknowledgement before the next read, and a writer
@@ -896,8 +922,10 @@ the controller process gives the next only after the acknowledgement.
 So what waits for the line is bounded locally, by one item at the writer
 and the credits and the command slot at the controller process, whatever
 the controller reports; the controller process never waits on the line
-and always takes events; and what the line delivers faster than the stack
-consumes waits in the line service, up to its bound. How the process
+and always takes events; what the line delivers faster than the
+controller process consumes waits in the line service, up to its bound;
+and what the controller process forwards faster than a link consumes
+waits in that link's mailbox, up to its backlog. How the process
 finds its reader, writer and links, and where its configuration comes
 from, is [The controller process's effects](#the-controller-processs-effects).
 
@@ -1120,7 +1148,9 @@ readable openly and writable at the one level of the characteristic's
 `notify` or `indicate`, whichever it declares, since the generator
 refuses the two at different levels, so subscribing is gated as
 notifying and indicating are, for Service Changed's `indicate open` as
-for any other. The GATT service has
+for any other; on a link that holds a key the write requires at least
+`encrypted`, since there it writes the bond's kept configuration
+([The link's messages](#the-links-messages)). The GATT service has
 no Database Hash: with Service Changed alone, robust caching is not
 required (GATT 2.5.2.1).
 
@@ -1192,7 +1222,7 @@ handler receives, through the envelope rule, which the client module
 
 | Event | Meaning |
 | --- | --- |
-| `{connected, Conn, #{address := A, bonded := boolean(), level := L}}` | a phone connected, or its link's security changed: `level` is what the link reaches now, `open` until it is encrypted and then its key's, and `bonded` is true once its key is a kept bond's |
+| `{connected, Conn, #{address := A, bonded := boolean(), level := L}}` | a phone connected, or its link's security changed: `level` is what the link reaches now, `open` until it is encrypted and then its key's, and `bonded` is true once the link is encrypted with a kept bond's key, a resolved bond's or its own pairing's once kept |
 | `{mtu, Conn, Mtu}` | the bearer's MTU changed; a notification carries at most `Mtu - 3` octets |
 | `{subscribed, Conn, Char, none \| notify \| indicate}` | the phone wrote the characteristic's configuration |
 | `{write, Req, Conn, Char, Value}` | a write the gate allowed; the handler answers `erx_gatt:reply(Req, ok \| {error, Code})`, where `Req` is a reference the facet made for this write, which names it to no other handler, link or write |
@@ -1255,7 +1285,7 @@ monitor's `'DOWN'`:
 | --- | --- | --- |
 | the controller process | from `link_up` | disconnects the handle |
 | the registry | from the link's `join` | tells the handlers `disconnected`; `Conn` answers `{error, gone}` from then on |
-| the window | from its `open` verdict until the pairing's `outcome` | counts the pairing failed, `disconnected`, for the pairing wait, and writes `failed ADDR disconnected` if the window is still open |
+| the window | from its `open` verdict until the link reports the pairing failed or hands its bond to the store (`keeping`) | counts the pairing failed, `disconnected`, for the pairing wait, and writes `failed ADDR disconnected` if the window is still open |
 | the store | from a `resolve` it answers with a bond, or a `keep` it answers `ok` | drops the link |
 
 So no owner learns of a link's end from the link. A kill, the shutdown
@@ -1285,31 +1315,67 @@ call of the controller process, so `init/1` reads only its argument and
 nothing in it can fail: the link's name and `Conn`, the controller
 process's pid and, from `link_up`'s `Info`, the phone's address, which
 `erx_hci` decodes as `{public | random, Address}`, the identity address
-the controller advertises with, `acl_tx_max` and the share. A
+the controller advertises with, `acl_tx_max` and the share. `erx_hci`
+reads LE Connection Complete's Status first: a failed one carries no
+valid parameter but its Status (HCI 4.5.1, Table 4.1), so it decodes as
+`{le_connection_complete, {failed, Status}}` with nothing after the
+Status read, whatever those octets hold, and the controller core takes
+it as no connection. Only a successful one is read further, and there a
 Peer_Address_Type other than `0x00` and `0x01` is reserved (HCI
-7.7.65.1), so `erx_hci` decodes LE Connection Complete carrying one as
-malformed, as it does a reserved handle, and the controller process
-ends as for any malformed event: a controller's breach of HCI, not a
-start that fails. The controller process's `{ok, Pid} =
-start_child(...)` therefore holds. Then, before its first step, the link
-makes its only two calls, each to an owner that never waits on a link:
+7.7.65.1), so `erx_hci` decodes it as malformed, as it does a reserved
+handle, and the controller process ends as for any malformed event: a
+controller's breach of HCI, not a start that fails. The controller
+process's `{ok, Pid} = start_child(...)` therefore holds. Then, before
+its first step, the link makes its only two calls, each to an owner
+that never waits on a link:
 
 1. `erx_bt_store:resolve(Address) -> none | Bond`. The store resolves
    the address against the bonds ([Reconnection](#reconnection)) and
    answers the one bond it names, with its LTK, level, identity, table
    hash and subscriptions and without its IRK, so no other bond's key
-   leaves the store. A store that is `unknown` answers `none`.
-2. `erx_gatt_srv:join(Conn, #{address := Address, bonded := boolean()})
-   -> #{table := Table, values := Values}`. The registry maps `Conn` to
-   the link, tells the services' handlers `connected` at level `open`,
-   and answers the table and the values the handlers last set. It takes
-   `join` and `set` in one order, so every `set` after the values it
-   answered reaches the link.
+   leaves the store. A store that is `unknown` answers `none`. The
+   address names a candidate, not a proven bond: what of the bond the
+   link may use before its encryption is the key alone (below).
+2. `erx_gatt_srv:join(Conn, #{address := Address}) -> #{table := Table,
+   values := Values}`. The registry maps `Conn` to the link, tells the
+   services' handlers `connected` at level `open` and not bonded, as
+   every link starts, and answers the table and the values the handlers
+   last set. It takes `join` and `set` in one order, so every `set`
+   after the values it answered reaches the link.
 
 `erx_bt_link_core:new/1` builds the core from these. What the controller
-process sends meanwhile waits in the mailbox and is stepped in order
-after. A call that fails, or is not answered within OTP's 5 s default,
-ends the link, and the phone reconnects.
+process sends meanwhile waits in the mailbox, within the link's backlog
+([Commands and data credits](#commands-and-data-credits)), and is
+stepped in order after. A call that fails, or is not answered within
+OTP's 5 s default, ends the link, and the phone reconnects.
+
+**A link is its bond's only from its encryption.** An address is
+whatever the peer sends: a public address is copied by anyone, and a
+resolvable private address resolves for whoever repeats it, since `ah`
+is computed from the address's own random part and the IRK alone (SMP
+2.2.2). Only the key proves the bond, since a central must hold the
+LTK to set up an encrypted session with it (SMP 2.4.4.2), which is the
+same fact the gate rests on. So the core holds a resolved bond in two
+parts. The key it holds from its start: it answers the Long Term Key
+Request and gives the gate its column, so an `encrypted` access answers
+Insufficient Encryption and the phone knows to encrypt (ATT 3.2.5). The
+rest, the bond's subscriptions and table
+hash, enters the core only at the transition that sets `encrypted`
+([One table, one gate](#one-table-one-gate)): there the link restores
+the subscriptions, tells the registry `bonded`, and may indicate
+Service Changed ([Reconnection](#reconnection)). Every store write for
+a bonded link, `subscriptions` and `served`, is made from that rest, so
+a link not yet encrypted has nothing to send one from, and a peer
+without the key never changes a bond's kept state. A pairing's bond is
+made over its link encrypted with the pairing's key (SMP 2.4.3.2), so the
+same holds for it. A configuration
+write is a write of that state, which GATT lets a server guard (GATT
+3.3.3.3: "Authentication and authorization may be required by the
+server to write the configuration descriptor"): on a link that holds a
+key, the descriptor's write requires at least `encrypted`, so until the
+link is encrypted the gate answers it Insufficient Encryption, as it
+answers any `encrypted` access there, and the configuration stays the
+link's default.
 
 No setting says whether a link may pair. Every link runs its Security
 Manager, and the window decides: its verdict is `closed` while no window
@@ -1335,12 +1401,14 @@ takes it and forwards nothing.
 | | `{ltk_reply_complete, ok \| {failed, Status}}` | the controller answered the link's `ltk_reply` | a Reply that failed counts as none |
 | link, controller process | `{send, Boundary, Data}` | while the link's packets outstanding are below its share | the writer; nothing reaches the phone |
 | | `{ltk_reply, Ltk \| none}` | at each Long Term Key Request | Reply, or for `none` Negative Reply (HCI 7.8.25, 7.8.26); the phone's encryption never completes |
+| | `taken` | with the step of every message the controller process sent | the link's backlog ([Commands and data credits](#commands-and-data-credits)); without it the controller's messages would wait in the mailbox without bound |
 | link, window | `{admit, Tag, Address}` | a Pairing Request | the window's verdict; at `open` the window monitors the link |
 | | `{passkey, Tag, N}` | Passkey Entry made its passkey | the `passkey` line; nobody can type it |
-| | `{outcome, Tag, {bonded, Identity, Level} \| {failed, Reason}}` | the admitted pairing ended and the link lives | the `bonded` or `failed` line and the pairing wait; the window then drops its monitor, and ignores an outcome for a pairing it does not await. Without it every pairing would end as `disconnected` |
+| | `{outcome, Tag, {failed, Reason}}` | the admitted pairing failed while the link ran it | the `failed` line and the pairing wait; the window then drops its monitor. Without it every failure would end as `disconnected` |
+| | `{keeping, Tag}` | the link handed the pairing's bond to the store, in the step that sends `keep` | the window drops its monitor and takes the store's `outcome` as the pairing's; without it a link that ends while the store writes would count a kept bond as failed |
 | | `wait` | a link holding a kept bond's key, at its start and at the deadline the last answer set | the Security Request ([Reconnection](#reconnection)), which SMP 2.3.6 holds to the pairing wait |
 | window, link | `{admission, Tag, Verdict}` | at once, for each `admit` | the Security Manager |
-| | `{withdraw, Tag}` | the window closes while its pairing runs | Pairing Failed, Unspecified Reason, and the outcome `withdrawn` ([The pairing window](#the-pairing-window)) |
+| | `{withdraw, Tag}` | the window closes while the link runs its pairing, before its `keeping` | Pairing Failed, Unspecified Reason, and the outcome `withdrawn` ([The pairing window](#the-pairing-window)); after the link sent `keeping` it changes nothing |
 | | `{wait, Ms}` | at once, for each `wait` | at `0` the link sends the Security Request unless the phone has begun encryption; otherwise it asks again `Ms` later |
 | link, registry | `{write, Ref, Key, Value}` | a write the gate allowed | the service's handler, which the facet hands it under a fresh `Req` |
 | | `{subscribed, Key, none \| notify \| indicate}`, `{mtu, Mtu}` | the phone wrote a configuration; the bearer's MTU changed | the handlers' `subscribed` and `mtu` |
@@ -1348,18 +1416,40 @@ takes it and forwards nothing.
 | registry, link | `{answer, Ref, Answer}` | the handler answered the write `Ref` | the write's response; an answer to a write no longer awaited changes nothing |
 | | `{set, Key, Value}` | a handler set a value | reads return it |
 | | `{notify, notify \| indicate, Key, Value}`, a request of `gen_server:send_request/2`, answered `ok \| {error, Reason}` | a handler's `notify` or `indicate` | the registry answers its own caller from the answer, and the request's monitor makes a link that ends first answer `{error, gone}`; a caller's `From` passed to the link would wait for nothing when the link ends |
-| link, store | `{keep, Bond, Subscriptions}` | the pairing's third phase ended | the store keeps the bond and, at `ok`, monitors the link ([Bonds and the store](#bonds-and-the-store)) |
-| | `{subscriptions, Subscriptions}` | a link with a kept bond's key changed a configuration | GATT 3.3.3.3: the Write Response waits for the store's answer |
-| | `{served, Hash}` | the phone confirmed Service Changed | the bond's table hash; not answered, since a hash not kept costs one more Service Changed |
-| store, link | `{kept, ok \| {error, Reason}}` | the store's answer to `keep` or `subscriptions` | the pairing's outcome; the configuration write's response or Unlikely Error |
+| link, store | `{keep, Tag, Bond, Subscriptions}` | the pairing's third phase ended | the store keeps the bond, tells the window the outcome and, at `ok`, monitors the link ([Bonds and the store](#bonds-and-the-store)) |
+| | `{subscriptions, Subscriptions}` | a link encrypted with a kept bond's key changed a configuration | GATT 3.3.3.3: the Write Response waits for the store's answer |
+| | `{served, Hash}` | a link encrypted with a kept bond's key had Service Changed confirmed | the bond's table hash; not answered, since a hash not kept costs one more Service Changed |
+| store, window | `{outcome, Link, Tag, {bonded, Identity, Level} \| {failed, Reason}}` | the store answered the `keep` of `Link`, the pid it came from | the `bonded` or `failed` line and the pairing wait |
+| store, link | `{kept, ok \| {error, Reason}}` | the store answered `keep` or `subscriptions` | for `keep`, at `ok` the key is a kept bond's, otherwise the link ends; the configuration write's response or Unlikely Error |
 | | `forgotten` | the link's bond is forgotten, or missing from the state read after a `put` left unconfirmed | the link ends ([Bonds and the store](#bonds-and-the-store)) |
+
+**A pairing's outcome has one ordering point: the link's step that ends
+its third phase.** Before that step the pairing is the link's: a
+withdrawal or the link's end fails it, and no key reaches the store.
+In that step the link sends `keep` to the store and `keeping` to the
+window, and from it the pairing is the store's: the link's Security
+Manager is done, so a withdrawal that arrives later changes nothing,
+and the store's answer to `keep` is the outcome, which it sends the
+window whether or not the link still lives. The window learns which
+side of the step a link's end fell on from the link's own messages,
+since a process's messages reach the window before the `'DOWN'` its end
+gives: `keeping` then `'DOWN'` is a pairing the store decides,
+`'DOWN'` alone one the link's end failed. So the outcome the window
+counts and writes is the store's own answer to `keep` whenever the
+store was asked, and a pairing the window counts failed before that
+step never reached the store; a `put` left unconfirmed is the store's
+`unavailable`, with what follows it there. The window matches each
+outcome by the link and its tag.
 
 The store finds the bond of `subscriptions` and `served` by the link it
 monitors, and `kept` carries no tag because a link asks the store one
-thing at a time: a pairing's `keep` comes only from a link without a
-kept bond's key and `subscriptions` only from one with it, and a
-configuration write, request or command, waits for the store's last
-answer as a write request waits for its handler. The link process takes
+thing at a time and the store answers every request
+([Bonds and the store](#bonds-and-the-store)), so a link never
+abandons one and no late answer can meet a later request: a pairing's
+`keep` comes only from a link without a kept bond's key and
+`subscriptions` only from one encrypted with it, and a configuration
+write, request or command, waits for the store's last answer as a
+write request waits for its handler. The link process takes
 the registry's request in `handle_call/3` and steps it as `{registry,
 {notify, From, Kind, Key, Value}}`; the core answers `{reply, From,
 Answer}` when the notification is queued or refused, or the indication
@@ -1485,7 +1575,9 @@ Manager ignores in every phase.
 ### The pairing window
 
 A window is an open fid of the control tree's `pair` file. Opening it
-while another window is open answers `ebusy`. The opener writes one
+while another window is open, or while the pairing a closed window
+admitted has no outcome yet, answers `ebusy`, so the window process
+awaits at most one pairing. The opener writes one
 line, `display` or `nodisplay`, at most 16 bytes, which opens the window
 for `bt_pair_window_s`, 120 s, and reads lines that the window writes,
 each ASCII the window composes from numbers and addresses alone:
@@ -1510,8 +1602,8 @@ one pairing: whatever its outcome, the window closes.
 
 **Closing a window withdraws its pairing.** The authority to bond is the
 opener's, so it ends with the window: when the fid is clunked, or the
-opener ends, while the pairing the window admitted is in progress, the
-window withdraws it, and the link fails it with Pairing Failed,
+opener ends, while the link still runs the pairing the window admitted,
+the window withdraws it, and the link fails it with Pairing Failed,
 Unspecified Reason (`0x08`) and reports `withdrawn` to the window
 process, which counts it as a failure like any other for the pairing
 wait and writes the log's record; the `pair` file has no reader by
@@ -1521,7 +1613,14 @@ line names an address the opener does not expect. A pairing withdrawn
 after its second phase ends its link with the pairing's key, as every
 failure does once a link has a key
 ([One table, one gate](#one-table-one-gate)); the key never reaches
-the store. The window's time bounds admission only: once it has
+the store. A pairing whose third phase the link ended before the
+withdrawal reached it is complete: the opener's window was open when
+the phone distributed its keys, the link has handed the bond to the
+store, and the store's answer is its outcome, which the window process
+counts and logs as for any other pairing
+([The link's messages](#the-links-messages)). Closing a window and a
+pairing completing race only at that one step of the link, and
+whichever comes first decides. The window's time bounds admission only: once it has
 admitted a pairing, it waits for that pairing's outcome, so a person
 typing a passkey as the time runs out is not cut off. SMP's 30 s timer
 bounds each step, not the pairing (3.4): a phone that steps just inside
@@ -1543,8 +1642,9 @@ wait, which starts at
 `bt_pair_wait_max_s`, 64 s, and halves for each `bt_pair_wait_decay_s`,
 600 s, without a failure, down to the minimum; a success leaves it as
 it is. The window process monitors a link from its `open` verdict until
-the link reports the pairing's outcome, so a link that ends first,
-however it ends, is a failure, `disconnected`
+the link reports the pairing failed or hands its bond to the store, so
+a link that ends first, however it ends, is a failure, `disconnected`,
+and one that ends while the store writes is not
 ([The link's messages](#the-links-messages)). A request during the wait is answered Pairing Failed, Repeated
 Attempts (`0x09`), which is not a pairing and changes neither the wait
 nor the window. SMP asks the wait of a device claiming the failed one's
@@ -1612,6 +1712,23 @@ What `get` returns is untrusted wherever the medium can be written:
 `erx_bt_state` decodes it, and a blob that does not decode is not a
 state.
 
+**Every call of the backend ends by a deadline.** Neither store behind
+the seam promises to answer in any time: a vault checkpoint or a
+storage domain may stall. So the store makes each `get` and `put` from
+a short-lived process of its own that it monitors, and ends that
+process at `bt_store_timeout_ms`, 5 s. A `get` not answered by then is
+`{error, unavailable}`, and a `put` not answered by then is
+unconfirmed, as any `put` that does not answer `ok` is (below): it may
+yet complete, so the store becomes `unknown` and the next change reads
+first. Those are results the store already takes, so the deadline adds
+no state. The store waits on nothing else, so it answers every request
+it takes, a pairing's `keep` and a link's `subscriptions` included,
+within two backend calls, a read and a put, of reaching it; no link,
+window or configuration write waits on the store without end, and none
+keeps a deadline of its own for it. A link that starts while the store
+waits on its backend may meet its own call's 5 s and end, and the
+phone reconnects.
+
 **The domain changes only a state it has read.** The store process
 holds the store as one of two values: `read`, the state last read or
 confirmed, or `unknown`. At the start of the Bluetooth domain it starts
@@ -1659,7 +1776,10 @@ encoder bounds a state to `bt_bonds_max` bonds, whose largest encoding
 fits the vault's 4 KiB, so meeting it is a bug.
 
 A pairing that completes asks the store to keep the new state, the
-bond with the subscriptions its link has made so far, and the link's key
+bond with the subscriptions its link has made so far, under the tag the
+window admitted it by; the store tells the window its answer, which is
+the pairing's outcome however the link has fared since
+([The link's messages](#the-links-messages)). The link's key
 is a kept bond's once the store answered `ok`, which `connected` tells
 the handlers with `bonded => true`; the link's level does not wait on
 the store ([One table, one gate](#one-table-one-gate)). A pairing whose
@@ -1683,20 +1803,25 @@ ever overwriting a kept one.
 
 A bonded link's subscriptions persist across connections, as GATT
 3.3.3.3 requires: a write of a Client Characteristic Configuration that
-changes it on a link with a kept bond's key is answered with its Write
-Response only once the store has kept the new state, and a store that
-is `unknown` or does not answer `ok` answers Unlikely Error and leaves
-the configuration as it was. So a phone that saw its write answered may rely on it after a
-power cut, Service Changed's configuration included, which a change of
-the table at a later start needs. A write that changes nothing, and
-every write on a link whose key is not yet kept and not being kept, is
-answered at once; one that comes while the store keeps the link's
-pairing waits for the store's answer, and is then kept as a bonded
-link's write is, so `keep` never leaves out a subscription the phone
-saw answered; a
-Write Command to the descriptor, which has no answer, changes the
-configuration and is kept as a request's would be. ATT's one request at
-a time and a bonded peer bound the store's writes.
+changes it on a link encrypted with a kept bond's key is answered with
+its Write Response only once the store has kept the new state, and a
+store that is `unknown` or does not answer `ok` answers Unlikely Error
+and leaves the configuration as it was. So a phone that saw its write
+answered may rely on it after a power cut, Service Changed's
+configuration included, which a change of the table at a later start
+needs. On a link that holds a key and is not yet encrypted, a resolved
+one or a pairing's between its second phase and the encryption, the
+write is answered Insufficient Encryption and changes nothing, since
+only the key in use proves whose configuration it is ([The link's
+messages](#the-links-messages)). A write that changes nothing, and
+every other write the gate allows on a link whose key is neither kept
+nor being kept, is answered at once; one that comes
+while the store keeps the link's pairing waits for the store's answer,
+and is then kept as a bonded link's write is, so `keep` never leaves
+out a subscription the phone saw answered; a Write Command to the
+descriptor, which has no answer, changes the configuration where the
+gate allows the write, and is then kept as a request's would be. ATT's
+one request at a time and a bonded peer bound the store's writes.
 
 ### Reconnection
 
@@ -1712,13 +1837,18 @@ answered Negative Reply. A resolved link also sends a Security Request
 an `authenticated` bond, as soon as the pairing wait has passed, unless
 the phone has already begun encryption, which SMP 2.4.6 forbids it to
 interrupt: a bonded phone that only waits for its notifications is
-thereby asked to encrypt, rather than left waiting, and until it does
-the gate keeps every notification above `open` from it. At encryption
-the registry tells the handlers with `connected`, and the link restores
-the bond's subscriptions. When the
-bond's table hash differs from the table's and the phone subscribed to
-Service Changed, the link indicates Service Changed for `0x0001` to
-`0xFFFF` (GATT 2.5.2) and, at the confirmation, records the new hash.
+thereby asked to encrypt, rather than left waiting. Until it does, the
+link is not yet its bond's ([The link's messages](#the-links-messages)):
+it has the default configuration and no subscription, refuses a
+configuration write with Insufficient Encryption, and sends no
+notification. At encryption the link becomes the bond's: the registry
+tells the handlers with `connected`, now `bonded`, and the link
+restores the bond's subscriptions. Then, when the bond's table hash
+differs from the table's and the phone subscribed to Service Changed,
+the link indicates Service Changed for `0x0001` to `0xFFFF` (GATT
+2.5.2) and, at the confirmation, records the new hash. So neither the
+subscriptions nor the hash a bond keeps change at the word of a peer
+that only copied its phone's address.
 
 ## Later stages
 
@@ -1823,7 +1953,9 @@ classes and arities.
   decides access from the link's encryption state, set only by the
   controller for a key the link supplied, never from the peer's
   address, so a peer spoofing a bonded phone's address without its LTK
-  gets errors. As a client, in the HID stage, the GATT client sends no
+  gets errors; nor does it reach the bond's kept subscriptions or table
+  hash, which a link takes on only at encryption with the bond's key.
+  As a client, in the HID stage, the GATT client sends no
   request and the HID function takes no notification before encryption
   with the bond's key, and a failed encryption ends the link.
 * **Unauthenticated HID injection,** a host taking HID reports from a
@@ -1890,16 +2022,21 @@ its line at the system domain's `/proc`: bytes each way, breaks, resets.
   it had.
 * **One window** exists at a time; its state and the pairing wait are
   the window process's, and the link asks it at a Pairing Request and
-  before a Security Request, and tells it the outcome; the window
-  process monitors a link from its `open` verdict until the outcome, so
-  a link that ends mid-pairing, however it ends, counts as a failure.
-  The window process
+  before a Security Request, and tells it a failure or that the store
+  has the bond, whose answer the store then sends it; the window
+  process monitors a link from its `open` verdict until one of those,
+  so a link that ends mid-pairing, however it ends, counts as a
+  failure, and one that ends while the store writes its bond does not.
+  The window process needs no monitor of the store: the store sits
+  before it under `rest_for_one`, so the store's end ends the window
+  process too. The window process
   sits before the controller group, so a controller restart, the only
   restart a radio peer's traffic can cause beyond its own link, keeps the
   wait.
 * **The store** is one process; a pairing's `put` and a link's
   configuration writes are serialized there, and each `put` writes the
-  whole state.
+  whole state. Its one wait, on its backend, ends at
+  `bt_store_timeout_ms`, so it answers every request it takes.
 * **The line service** serves one reader and writers in arrival order; the
   Bluetooth domain has one of each. Its reads, writes and resets that
   wait are waiting requests the line's process keeps, so a read that
@@ -1938,10 +2075,11 @@ and stops in the reverse order, the controller process first.
 | --- | --- | --- | --- |
 | a framing error, a malformed event (a reserved handle or Peer_Address_Type included), a Hardware Error event, a command not answered in 5 s, an answer to another command, a completion for a handle not live or beyond its outstanding packets, a failed bring-up step, a line reset not answered in 5 s; a failed open, read or write of `data` or `ctl` | the controller process; for the line's files, the reader or the writer, whose end ends the group | the controller group: the controller process, the line's reader and writer, every link | the group restarts: `reset`, then the bring-up; past 5 restarts in 60 s the domain ends and the domain service restarts it within its intensity |
 | a malformed L2CAP frame, a second outstanding ATT request, an SMP timeout, an encryption change the link did not key, a packet the core answered `busy`, a link process's crash | the link | the link: its end makes the controller process send Disconnect | the phone reconnects |
+| a link whose backlog of the controller's messages reaches `bt_link_backlog` | the controller process | the link: its handle is disconnected with `0x14` and it ends at `link_down` | the phone reconnects |
 | a malformed ATT request | the ATT server | nothing: Invalid PDU | none needed |
 | a handler that does not answer in 5 s | the link's deadline | nothing: Unlikely Error | none |
 | a handler that ends | the facet's monitor | the handler's attachment | the app attaches again |
-| the store answers `unavailable`, returns a blob that does not decode, or leaves a `put` unconfirmed | the store | the pairing; at start, the bonds: the domain runs without them and refuses pairing; the configuration write; `forget` | `/proc/bt` and the log say `store_unavailable` or `store_unreadable`; the store is `unknown`; after an unconfirmed `put` a change reads first and fails unless the read succeeds; after the start's read the next start reads again; `forget all` alone replaces a blob that does not decode ([Bonds and the store](#bonds-and-the-store)) |
+| the store answers `unavailable`, returns a blob that does not decode, or leaves a `put` unconfirmed, a backend call past `bt_store_timeout_ms` included | the store | the pairing; at start, the bonds: the domain runs without them and refuses pairing; the configuration write; `forget` | `/proc/bt` and the log say `store_unavailable` or `store_unreadable`; the store is `unknown`; after an unconfirmed `put` a change reads first and fails unless the read succeeds; after the start's read the next start reads again; `forget all` alone replaces a blob that does not decode ([Bonds and the store](#bonds-and-the-store)) |
 | a broken line | the line service | reads of `data` | the controller group's restart writes `reset` |
 | a line tree or the host link ends, or line 153's owner | its line group's supervisor | the group after it: on the Pi 4, the tree's fids and, for the owner, the host link's sessions | the group restarts, its owner first; the console, in no group, is untouched. The Bluetooth domain's `line` grant ended with the tree, and a grant of a system domain's service comes only in a ready answer, so `/line` answers `eio` to the controller group's restarts until the domain ends at its intensity; the domain service restarts it, and its ready answer brings a grant of the new tree |
 | a power notification that fails | `reset`'s answer, `eio` | the bring-up | the group's restart retries within its intensity; after an unanswered request every later notification of the boot fails at once, the VL805's included, so the Bluetooth domain ends at its intensity, and its log records and the line service's `/proc` show why |
@@ -1971,6 +2109,7 @@ and stops in the reverse order, the controller process first.
 | a pairing, on `pair` | `failed ADDR not_supported`, `secure_connections_required`, `key_size`, `method`, `confirm`, `dhkey`, `bonding`, `invalid`, `unexpected`, `peer`, `timeout`, `already_bonded`, `bonds_full`, `unavailable`, `disconnected` | SMP's reasons and the store's, each mapped from one Pairing Failed code or one event |
 | a Pairing Request during the pairing wait | Pairing Failed, Repeated Attempts (`0x09`) | the wait has not passed; no line on `pair`, the window stays open |
 | a configuration write on a bonded link | Unlikely Error (`0x0E`) | the store is `unknown` or its `put` was not `ok` |
+| a configuration write on a link that holds a key | Insufficient Encryption (`0x0F`) | the link is not yet encrypted |
 
 The ATT errors erXos sends are Table 3.4's: Invalid Handle, Read Not
 Permitted, Write Not Permitted, Invalid PDU, Insufficient Authentication,
@@ -1998,8 +2137,8 @@ Each core's test is paired with the seeded faults it must catch.
 | `erx_bt_patch` | a synthetic patch replays in order; a truncated last record or a foreign opcode refuses the file whole, before any record is sent | the record length not checked against the bytes left |
 | `erx_gatt_db` | a built table matches a hand-written one; the hash changes with a characteristic and not with the manifest's row order | services laid out in manifest order |
 | `erx_gatt_gate` | GAP Table 10.2's rows for levels 1, 2 and 4 | Insufficient Encryption answered on a link with no key |
-| `erx_gatt_server` | each supported request; long reads and prepared writes at every MTU from 23 to 247; the gate asked for every value and descriptor access | the gate skipped for Read Blob; the descriptor's write level taken from `read` |
-| `erx_bt_link_core`, explored | reassembly at every fragment size; one outstanding request; commands past the queue discarded and counted; a first pairing reaches its level before the store answers, a reconnection the bond's; a Pairing Request on a resolved link fails; `encrypted` set only by a success report after a Reply; one Security Request, never during encryption; a bonded configuration write answered only after the store's `ok` | an Encryption Change accepted after a Negative Reply; encryption accepted only for kept bonds; the configuration write answered before the store |
+| `erx_gatt_server` | each supported request; long reads and prepared writes at every MTU from 23 to 247; the gate asked for every value and descriptor access; a descriptor write on a link that holds a key and is not encrypted answers Insufficient Encryption, at every level the characteristic declares | the gate skipped for Read Blob; the descriptor's write level taken from `read`; the descriptor's write level taken from the declaration alone (an `open` write before encryption answered) |
+| `erx_bt_link_core`, explored | reassembly at every fragment size; one outstanding request; commands past the queue discarded and counted; a first pairing reaches its level before the store answers, a reconnection the bond's; a Pairing Request on a resolved link fails; `encrypted` set only by a success report after a Reply; one Security Request, never during encryption; a bonded configuration write answered only after the store's `ok`; a resolved link sends no `subscriptions` or `served` and indicates no Service Changed before its encryption, and restores the bond's subscriptions at it; every controller message's step returns `taken`; `keep` and `keeping` leave in one step, and a `withdraw` after it changes nothing | an Encryption Change accepted after a Negative Reply; encryption accepted only for kept bonds; the configuration write answered before the store; the bond's subscriptions taken at `new/1` (a resolved link's configuration reads as the bond's before encryption); a `withdraw` taken in the Security Manager's `done` (the outcome `withdrawn` while the store keeps the bond) |
 | `erx_smp_core`, explored over every message order | Passkey Entry and Just Works complete; every refusal of [Secure Connections only](#secure-connections-only) fires; a `display` window refuses Just Works; one pairing per window | the key-size check removed; the curve check removed (the `y + 1` point accepted); the link-key bit kept |
 | `erx_bt_window` | the wait doubles from 2 to 64 s after failures, a disconnection mid-pairing counting as one, and halves after 600 s without one; a Pairing Request during it answers Repeated Attempts and leaves the window open; back-to-back windows do not shorten it | the wait reset when a window opens; a disconnection not counted |
 | `erx_pl011:program/1` | `fresh` writes `CR` 0 first, clears `FEN` before the divisors, drains the receive side within 33 reads, writes the divisors before `LCR_H` and `CR` whole last with the flow enables; `keep` clears no FIFO and programs the divisors only of an unprogrammed UART | `LCR_H` before the divisors, so the rate never latches; `fresh` keeping the boot's divisors |
@@ -2012,11 +2151,15 @@ Each core's test is paired with the seeded faults it must catch.
 | flushes of begun and buffered requests, with power notifications held by the test | a `reset` flushed at any step is answered once its last step is done, then the flush; a write flushed after the driver took its bytes answers its count; a read flushed with bytes buffered answers with them, and before bytes arrive `eintr`, the next read getting them whole | a flushed `reset` answered `eintr` while its steps run; a read held while bytes are buffered |
 | the identity address | 10,000 addresses have the static form and parse in Bumble's `Address` as static | the top bits cleared |
 | the controller group, over a model line, store and registry (the group's start takes the open function, since on stock's emulator no namespace reaches a mounted tree; the model `ctl` answers after a set delay, and a `data` read waiting at a reset answers `eio`) | `ready` from start and again after the controller process is killed; the first `data` read after `ctl`'s answer; the identity address unchanged across the restart; a killed link process leads to one `HCI_Disconnect` with reason `0x13`; after `link_down` a `to_link` for the name reaches no process; completions reach their links; a `ctl` answering `eio` ends the group | the reader reading at its start, so the group never reaches `ready`; the controller process making the address itself; a link process's end ignored; completions not passed to the link |
-| `erx_hci`'s LE Connection Complete | Peer_Address_Type `0x00` and `0x01` decode as `public` and `random`; `0x02` and `0xFF` make the event malformed | the type passed through as its octet |
+| `erx_hci`'s LE Connection Complete | Peer_Address_Type `0x00` and `0x01` decode as `public` and `random`; `0x02` and `0xFF` make a successful event malformed; a failed one, Status `0x3C` with Peer_Address_Type `0xFF` and handle `0xFFFF`, decodes as `{failed, 16#3C}` | the type passed through as its octet; the type or the handle checked before the Status (the failed event malformed) |
 | the link's start, against a store and a registry that hold its calls until the test releases them | `start_child` returns while both calls wait; what the controller process sends meanwhile is stepped in order once the core is built; a phone whose address resolves gets its bond's key | the store's `resolve` called from `init/1`, so `start_child` does not return within the test's deadline |
 | a link's end, with the window process and the registry running | a link killed by `exit(Link, kill)` after an `open` verdict writes `failed ADDR disconnected` and doubles the wait; a link that reports its outcome and then ends counts once; the handlers hear `disconnected` once | the window's monitor not taken (nothing written, the wait unchanged); the monitor kept after the outcome (counted twice) |
 | a notification to a link that ends before answering it | the registry's caller gets `{error, gone}` | the caller's `From` handed to the link in a plain message (the caller waits until its own timeout) |
 | `forget` with bonded links connected | the link whose address resolved to the forgotten bond at its start ends; a link of another bond stays | the store taking a link's pid only at `keep` |
+| `erx_bt_hci_core`'s backlog, case by case | a link that acknowledges nothing is sent exactly `bt_link_backlog` messages, events and ACL packets alike; the next is dropped, the handle's disconnect is asked with `0x14`, and nothing more reaches the link; a link that acknowledges every message is never disconnected; a `taken` naming a gone link changes nothing, even on a reused handle | the bound compared one too late (33 sent); `completed` not counted; `taken` taken without its name (a gone link's acknowledgement lowers the next link's backlog) |
+| the link's backlog through the controller group, a link held at its start by a store that does not answer while the model line delivers 40 ACL packets for its handle | `HCI_Disconnect` with `0x14` is written after the 32nd; the link's mailbox never holds more than 32 of the controller's messages | the backlog not counted while the link has not yet stepped (all 40 delivered) |
+| a pairing's outcome, with the link, the window process and the store running | a window closed after the link's `keeping` leaves the bond kept, the window process logging `bonded` and counting no failure; a window closed before it fails the pairing `withdrawn`, and the store gets no `keep`; a link killed after `keeping` leaves the store's outcome as the pairing's; a window opened before that outcome answers `ebusy` | the window's monitor kept past `keeping` (the killed link counted `disconnected` while its bond is kept); the store's outcome sent to the link alone (the window waits) |
+| the store against a backend that never answers | a `put` is unconfirmed at `bt_store_timeout_ms`: the pairing fails `unavailable`, the window gets that outcome, a configuration write answers Unlikely Error, and the store is `unknown`; a `get` at the start leaves the store `unknown` at the same deadline | the backend called with no deadline (the test's own deadline passes with `keep` unanswered) |
 
 ### Fuzz targets
 
@@ -2055,6 +2198,7 @@ argument vector:
 | 4 | a second `apps/pair.py` run with the same address and an empty key store, in a new window | `failed ... already_bonded`; the first key store still encrypts | the bond replaced |
 | 4 | `apps/pair.py` with a wrong passkey, then again at once in a new window | the first `failed ... confirm`; the second answered Repeated Attempts until 2 s have passed, then pairs | the wait not kept across windows |
 | 4 | a bonded peer subscribes, the Bluetooth domain is killed at once after the Write Response, and the peer reconnects encrypting only on erXos's Security Request | the subscription is restored and a notification arrives | the configuration kept only at the link's end; no Security Request sent |
+| 4 | a peer with the bonded peer's address and an empty key store connects and writes Service Changed's configuration | Insufficient Encryption; the bonded peer then reconnects and finds its subscription as it kept it | the configuration write kept on a resolved link before its encryption |
 
 Reconnection with a resolvable private address uses Bumble's
 `examples/device_with_rpa.json` as the peer's configuration;
