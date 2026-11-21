@@ -1267,14 +1267,18 @@ sample data of SMP Appendix D as its tests. The responder:
   address, and distributes none of its own, since erXos's identity
   address is static; it clears the link-key bit in both directions, so no
   key for another transport is ever derived (SMP 2.3.5.7);
+* fails, with Authentication Requirements, a request that does not ask
+  for bonding or does not offer the phone's identity key, since such a
+  pairing could leave no bond ([Bonds and the store](#bonds-and-the-store));
 * checks the phone's public key on the curve, `y^2 = x^3 - 3x + b mod p`
   with both coordinates below `p`, in Erlang before any key agreement,
   and fails a key off the curve with DHKey Check Failed, as SMP
   2.3.5.6.1 requires; it refuses SMP's debug key with Invalid Parameters,
   and a key with the X coordinate of its own with DHKey Check Failed
   (2.3.5.6.1). The curve's constants, which the specification gives in
-  Vol 2 Part H 7.6 (not fetched), come from the OpenSSL tree erXos
-  already holds, and the check's test feeds a point with `y + 1`;
+  Vol 2 Part H 7.6 (not fetched), come from OTP crypto's curve table,
+  `crypto:ec_curve(secp256r1)`, so no copy of them is written down, and
+  the check's test feeds a point with `y + 1`;
 * makes a fresh key pair and, for Passkey Entry, a fresh six-digit
   passkey from `crypto:strong_rand_bytes/1` for every pairing (SMP
   2.3.5.6.3, 2.3.6);
@@ -1733,7 +1737,7 @@ and stops in the reverse order, the controller process first.
 | | `{error, gone}` | a dead `Conn` |
 | | `{error, not_subscribed}`, `{error, insufficient_security}` | the phone did not subscribe; the gate refused |
 | | `{error, timeout}` | an indication unconfirmed in 30 s, after which the link ends (ATT 3.3.3) |
-| a pairing, on `pair` | `failed ADDR not_supported`, `secure_connections_required`, `key_size`, `method`, `confirm`, `dhkey`, `timeout`, `already_bonded`, `bonds_full`, `unavailable`, `disconnected` | SMP's reasons and the store's, each mapped from one Pairing Failed code or one event |
+| a pairing, on `pair` | `failed ADDR not_supported`, `secure_connections_required`, `key_size`, `method`, `confirm`, `dhkey`, `bonding`, `invalid`, `unexpected`, `peer`, `timeout`, `already_bonded`, `bonds_full`, `unavailable`, `disconnected` | SMP's reasons and the store's, each mapped from one Pairing Failed code or one event |
 | a Pairing Request during the pairing wait | Pairing Failed, Repeated Attempts (`0x09`) | the wait has not passed; no line on `pair`, the window stays open |
 | a configuration write on a bonded link | Unlikely Error (`0x0E`) | the store is `unknown` or its `put` was not `ok` |
 
