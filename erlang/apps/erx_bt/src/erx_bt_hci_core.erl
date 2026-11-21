@@ -78,6 +78,16 @@ passes each handle's count to its link as `{completed, Count}`. A controller wit
 buffers than the limit lowers the limit to its buffer count, so every share is at least
 one buffer.
 
+**A link's backlog** (docs/design-bluetooth.md, "Commands and data credits"): every
+message for a link, events, ACL packets, completions, Long Term Key reply outcomes and
+`busy` alike, goes through one funnel, `to_link/3`, which counts the messages the link
+has not yet acknowledged; the link's `taken`, a request in its envelope, acknowledges
+one, so a gone link's acknowledgement changes nothing. A message for a link whose
+backlog is `bt_link_backlog` is dropped, the link is cut off and sent nothing more, and
+its handle's disconnect is asked with Remote Device Terminated Connection due to Low
+Resources (Part E, 7.1.6), so a link's mailbox holds at most that many of the
+controller process's messages however long the link is held up.
+
 **The writer** is given one item at a time, the next only after `written`: the due
 command first, once the controller allows one, then the credited packets in order. A
 command is in flight only once the writer has it, so what waits for the line is the one
@@ -113,15 +123,24 @@ slice): this core sends what it is given.
                | {event, erx_hci:event()}
                | {acl, handle(), 0..3, 0..3, binary()}
                | {request, link(), request()}.
--type request() :: {send, 0..3, binary()} | {disconnect, byte()} | {ltk_reply, erx_hci:key() | none}.
+-type request() :: {send, 0..3, binary()} | {disconnect, byte()} | {ltk_reply, erx_hci:key() | none} | taken.
 -type action() :: line_reset | {write, binary()} | {ready, map()} | {link_up, link(), map()} | {link_down, link()}
-                | {to_link, link(), term()} | {busy, link()} | {stop, term()}.
+                | {to_link, link(), term()} | {stop, term()}.
 
 %% A bring-up step: reset the line, send a command under a label, or wait.
 -type step() :: line_reset | {command, term(), erx_hci:command()} | {wait, pos_integer()}.
 
+%% A live handle's link: the serial of the connection that gave it the handle, its packets
+%% in flight, and the messages sent it and not yet taken, or `cut` once one was dropped.
+-record(live, {
+    serial :: pos_integer(),
+    in_flight = 0 :: non_neg_integer(),
+    backlog = 0 :: 0..?ERX_BT_LINK_BACKLOG | cut
+}).
+
 -record(core, {
     limit :: 1..?ERX_BT_CONNECTIONS_MAX,
+    identity :: <<_:48>>,                      % the identity address, for each link_up
     manufacturer :: none | 0..16#FFFF,
     plan :: [step()],                          % the bring-up steps left; [] once ready
     stage = bringup :: bringup | ready,
@@ -133,7 +152,7 @@ slice): this core sends what it is given.
     credits = 0 :: 0..?ERX_BT_ACL_CREDITS_MAX,
     acl_tx_max = 0 :: 0..16#FFFF,
     serial = 0 :: non_neg_integer(),           % the connections so far, the last link's serial
-    links = #{} :: #{handle() => {Serial :: pos_integer(), InFlight :: non_neg_integer()}},  % per live handle
+    links = #{} :: #{handle() => #live{}},
     advertising = false :: boolean(),
     disconnects = [] :: [{handle(), {asked, Reason :: byte()} | taken}],  % live handles only
     replies = [] :: [{handle(), erx_hci:key() | none}],  % asked and not taken, live handles only
@@ -144,9 +163,10 @@ slice): this core sends what it is given.
 
 -doc "The state before `start`, with the bring-up's steps fixed from the configuration.".
 -spec new(config()) -> core().
-new(#{connections := Limit, patch := Patch} = Config) when Limit >= 1, Limit =< ?ERX_BT_CONNECTIONS_MAX ->
+new(#{connections := Limit, address := Address, patch := Patch} = Config)
+  when Limit >= 1, Limit =< ?ERX_BT_CONNECTIONS_MAX ->
     Manufacturer = case Patch of none -> none; #{manufacturer := M} -> M end,
-    #core{limit = Limit, manufacturer = Manufacturer, plan = plan(Config)}.
+    #core{limit = Limit, identity = Address, manufacturer = Manufacturer, plan = plan(Config)}.
 
 plan(#{address := Address, advertising_data := AdvertisingData, scan_response_data := ScanData,
        patch := Patch}) ->
@@ -178,14 +198,14 @@ mask(Members) -> lists:foldl(fun({_Event, Bit}, Mask) -> Mask bor (1 bsl Bit) en
 
 -doc """
 For `/proc/bt`: what the bring-up read from the controller, the events dropped, the
-connection limit in force, each live handle's packets in flight, the free credits and
-whether advertising is on.
+connection limit in force, each live handle's packets in flight and its link's backlog,
+the free credits and whether advertising is on.
 """.
 -spec facts(core()) -> map().
 facts(#core{facts = Facts, dropped = Dropped, limit = Limit, links = Links, advertising = Advertising} = Core) ->
-    InFlight = #{Handle => N || Handle := {_Serial, N} <- Links},
-    Facts#{dropped => Dropped, limit => Limit, links => InFlight, free => free(Core),
-            advertising => Advertising}.
+    Facts#{dropped => Dropped, limit => Limit, free => free(Core), advertising => Advertising,
+           links => #{Handle => N || Handle := #live{in_flight = N} <- Links},
+           backlogs => #{Handle => Backlog || Handle := #live{backlog = Backlog} <- Links}}.
 
 -doc """
 One input at the time `Now`: the next state and the actions to perform, in order. A stop
@@ -248,50 +268,62 @@ untimed({acl, Handle, Boundary, _Broadcast, Data}, Core) ->
     to_link(Handle, {acl, Boundary, Data}, Core);
 untimed({request, Link, Request}, Core) ->
     case current(Link, Core) of
-        {current, InFlight} -> request(Request, Link, InFlight, Core);
+        {current, Live} -> request(Request, Link, Live, Core);
         gone -> {[], Core}
     end;
 untimed(Input, _Core) ->
     stop({unexpected_input, Input}).
 
-%% A request's link: its packets in flight when it is its handle's current link, else
-%% gone. Every request comes in one envelope, whose one clause asks this first.
+%% A request's link, when it is its handle's current link, else gone. Every request
+%% comes in one envelope, whose one clause asks this first.
 current({Handle, Serial}, #core{links = Links}) ->
     case Links of
-        #{Handle := {Serial, InFlight}} -> {current, InFlight};
+        #{Handle := #live{serial = Serial} = Live} -> {current, Live};
         #{} -> gone
     end.
 
-%% A request of a link current on its handle, which has InFlight packets in flight.
-request({send, Boundary, Data}, {Handle, Serial} = Link, InFlight,
+%% A request of a link current on its handle.
+request({send, Boundary, Data}, {Handle, _Serial}, #live{in_flight = InFlight} = Live,
         #core{links = Links, out = Out} = Core) ->
     case InFlight < share(Core) andalso free(Core) > 0 of
         true ->
             Packet = erx_h4:acl(Handle, Boundary, Data),
             {[], Core#core{out = Out ++ [{Handle, Packet}],
-                           links = Links#{Handle := {Serial, InFlight + 1}}}};
+                           links = Links#{Handle := Live#live{in_flight = InFlight + 1}}}};
         false ->
-            {[{busy, Link}], Core}
+            to_link(Handle, busy, Core)
     end;
-request({disconnect, Reason}, {Handle, _Serial}, _InFlight,
-        #core{disconnects = Pending} = Core) ->
-    case lists:keymember(Handle, 1, Pending) of
-        false -> {[], Core#core{disconnects = Pending ++ [{Handle, {asked, Reason}}]}};
-        true -> {[], Core}
-    end;
-request({ltk_reply, Key}, {Handle, _Serial}, _InFlight, #core{replies = Replies} = Core)
+request({disconnect, Reason}, {Handle, _Serial}, _Live, Core) ->
+    {[], disconnect(Handle, Reason, Core)};
+%% A link's acknowledgement of one message it was sent; once it is cut off, its
+%% acknowledgements of the messages already in its mailbox change nothing. One beyond
+%% what it was sent is a defect of the domain's own link and stops, as any request the
+%% core does not take does.
+request(taken, _Link, #live{backlog = cut}, Core) ->
+    {[], Core};
+request(taken, {Handle, _Serial}, #live{backlog = Backlog} = Live, #core{links = Links} = Core) when is_integer(Backlog), Backlog > 0 ->
+    {[], Core#core{links = Links#{Handle := Live#live{backlog = Backlog - 1}}}};
+request({ltk_reply, Key}, {Handle, _Serial}, _Live, #core{replies = Replies} = Core)
   when Key =:= none; bit_size(Key) =:= 128 ->
     case lists:keymember(Handle, 1, Replies) of
         false -> {[], Core#core{replies = Replies ++ [{Handle, Key}]}};
         true -> {[], Core}
     end;
 %% The request is left out of the reason: a malformed reply may hold a key.
-request(_Request, Link, _InFlight, _Core) ->
+request(_Request, Link, _Live, _Core) ->
     stop({unexpected_request, Link}).
+
+%% A disconnect asked for a live handle, which stays with the handle until its
+%% Disconnection Complete: a second one is ignored.
+disconnect(Handle, Reason, #core{disconnects = Pending} = Core) ->
+    case lists:keymember(Handle, 1, Pending) of
+        false -> Core#core{disconnects = Pending ++ [{Handle, {asked, Reason}}]};
+        true -> Core
+    end.
 
 %% The credits no live handle holds, and a link's share of all of them.
 free(#core{credits = Credits, links = Links}) ->
-    Credits - lists:sum([InFlight || _ := {_Serial, InFlight} <- Links]).
+    Credits - lists:sum([InFlight || _ := #live{in_flight = InFlight} <- Links]).
 
 %% At least one: the bring-up keeps the limit at most the credits.
 share(#core{credits = Credits, limit = Limit}) -> Credits div Limit.
@@ -305,16 +337,16 @@ event({command_status, Status, Allowed, Opcode}, Core) ->
     answer(Opcode, {status, Status}, Core#core{allowed = Allowed});
 event({hardware_error, Code}, _Core) ->
     stop({hardware_error, Code});
-event({number_of_completed_packets, Pairs}, #core{links = Links, out = Out} = Core) ->
-    {Completed, Returned} = lists:mapfoldl(fun(Pair, Acc) -> complete(Pair, Out, Acc) end, Links, Pairs),
-    {lists:append(Completed), Core#core{links = Returned}};
-event({le_connection_complete, ?ERX_HCI_STATUS_SUCCESS, Handle, Info}, Core) ->
-    connected(Handle, Info, Core);
-event({le_connection_complete, _Failed, _Handle, _Info}, Core) ->
+event({number_of_completed_packets, Pairs}, Core) ->
+    {Completed, Returned} = lists:mapfoldl(fun complete/2, Core, Pairs),
+    {lists:append(Completed), Returned};
+event({le_connection_complete, Handle, Peer}, Core) ->
+    connected(Handle, Peer, Core);
+event({le_connection_complete, {failed, _Status}}, Core) ->
     {[], Core};
 event({disconnection_complete, ?ERX_HCI_STATUS_SUCCESS, Handle, _Reason}, #core{links = Links} = Core) ->
     case Links of
-        #{Handle := {Serial, _}} ->
+        #{Handle := #live{serial = Serial}} ->
             %% A packet still waiting for the writer is dropped with its handle, which the
             %% controller may give the next peer, and so is the handle's disconnect. The
             %% packet the writer already holds is on the line (TODO.md, security residuals).
@@ -326,9 +358,11 @@ event({disconnection_complete, ?ERX_HCI_STATUS_SUCCESS, Handle, _Reason}, #core{
         #{} ->
             {[], dropped(Core)}
     end;
-event({Kind, _Status, Handle} = Event, Core) when Kind =:= encryption_key_refresh_complete;
-                                                   Kind =:= le_connection_update_complete ->
+event({encryption_key_refresh_complete, _Status, Handle} = Event, Core) ->
     to_link(Handle, Event, Core);
+%% New connection parameters change nothing for erXos, which asks for none: no consumer.
+event({le_connection_update_complete, _Status, _Handle}, Core) ->
+    {[], Core};
 event({encryption_change, _Status, Handle, _Enabled} = Event, Core) ->
     to_link(Handle, Event, Core);
 event({le_long_term_key_request, Handle, _Random, _Ediv} = Event, Core) ->
@@ -340,43 +374,59 @@ event({unknown, _Code}, Core) ->
 event(malformed, _Core) ->
     stop(malformed_event).
 
-%% A controller's report for a handle goes to the handle's current link, named in full.
-to_link(Handle, Event, #core{links = Links} = Core) ->
+%% The one funnel of every message for a link: a message for a handle goes to the
+%% handle's current link, named in full, and counts in its backlog; at the backlog's
+%% bound it is dropped instead, the link is cut off, and the handle's disconnect is
+%% asked. A cut-off link is sent nothing more; a handle not live drops the message. Every
+%% message dropped counts among the dropped events.
+to_link(Handle, Message, #core{links = Links} = Core) ->
     case Links of
-        #{Handle := {Serial, _}} -> {[{to_link, {Handle, Serial}, Event}], Core};
-        #{} -> {[], dropped(Core)}
+        #{Handle := #live{backlog = cut}} ->
+            {[], dropped(Core)};
+        #{Handle := #live{backlog = ?ERX_BT_LINK_BACKLOG} = Live} ->
+            Cut = Core#core{links = Links#{Handle := Live#live{backlog = cut}}},
+            {[], dropped(disconnect(Handle, ?ERX_HCI_DISCONNECT_REASON_LOW_RESOURCES, Cut))};
+        #{Handle := #live{serial = Serial, backlog = Backlog} = Live} ->
+            {[{to_link, {Handle, Serial}, Message}],
+             Core#core{links = Links#{Handle := Live#live{backlog = Backlog + 1}}}};
+        #{} ->
+            {[], dropped(Core)}
     end.
 
 %% A completion returns a live handle's packets, never more than it has given the
 %% writer: one still on the writer's list has not reached the controller, and freeing
 %% its credit would let the list grow while the line is stalled. The packets returned
-%% go to the handle's link, named in full, so the link counts its share back; a count of
-%% 0 returns nothing and tells the link nothing.
-complete({Handle, Count}, Out, Links) ->
+%% go to the handle's link, so the link counts its share back; a count of 0 returns
+%% nothing and tells the link nothing.
+complete({Handle, Count}, #core{links = Links, out = Out} = Core) ->
     Queued = length([Owner || {Owner, _} <- Out, Owner =:= Handle]),
     case Links of
-        #{Handle := {Serial, InFlight}} when Count =< InFlight - Queued ->
-            {[{to_link, {Handle, Serial}, {completed, Count}} || Count > 0],
-             Links#{Handle := {Serial, InFlight - Count}}};
+        #{Handle := #live{in_flight = InFlight} = Live} when Count =< InFlight - Queued ->
+            Returned = Core#core{links = Links#{Handle := Live#live{in_flight = InFlight - Count}}},
+            completed(Handle, Count, Returned);
         #{Handle := _} -> stop({completion_beyond_in_flight, Handle, Count});
         #{} -> stop({completion_for_dead_handle, Handle})
     end.
 
+completed(_Handle, 0, Core) -> {[], Core};
+completed(Handle, Count, Core) -> to_link(Handle, {completed, Count}, Core).
+
 %% A connection, which ends the controller's advertising (Part E, 7.8.9).
-connected(Handle, _Info, #core{stage = bringup}) ->
+connected(Handle, _Peer, #core{stage = bringup}) ->
     stop({connection_during_bringup, Handle});
-connected(Handle, _Info, #core{links = Links}) when is_map_key(Handle, Links) ->
+connected(Handle, _Peer, #core{links = Links}) when is_map_key(Handle, Links) ->
     stop({duplicate_handle, Handle});
-connected(Handle, _Info, #core{slot = {sent, {disconnect, Handle}, _, _, _}}) ->
+connected(Handle, _Peer, #core{slot = {sent, {disconnect, Handle}, _, _, _}}) ->
     stop({connection_while_disconnecting, Handle});
-connected(Handle, _Info, #core{slot = {sent, {ltk_reply, Handle}, _, _, _}}) ->
+connected(Handle, _Peer, #core{slot = {sent, {ltk_reply, Handle}, _, _, _}}) ->
     stop({connection_while_replying, Handle});
-connected(Handle, _Info, #core{links = Links, limit = Limit}) when map_size(Links) >= Limit ->
+connected(Handle, _Peer, #core{links = Links, limit = Limit}) when map_size(Links) >= Limit ->
     stop({connection_beyond_limit, Handle});
-connected(Handle, Info, #core{links = Links, serial = Last, acl_tx_max = TxMax, slot = Slot} = Core) ->
+connected(Handle, Peer, #core{links = Links, serial = Last, identity = Identity, acl_tx_max = TxMax,
+                              slot = Slot} = Core) ->
     Serial = Last + 1,
-    {[{link_up, {Handle, Serial}, Info#{acl_tx_max => TxMax, share => share(Core)}}],
-     Core#core{links = Links#{Handle => {Serial, 0}}, serial = Serial, advertising = false,
+    {[{link_up, {Handle, Serial}, #{peer => Peer, identity => Identity, acl_tx_max => TxMax, share => share(Core)}}],
+     Core#core{links = Links#{Handle => #live{serial = Serial}}, serial = Serial, advertising = false,
                slot = overtaken(Slot)}}.
 
 %% A connection while the advertising enable is sent came from that enable, which the

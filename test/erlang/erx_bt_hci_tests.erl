@@ -11,6 +11,8 @@
 -include_lib("eunit/include/eunit.hrl").
 
 -define(READY_CONFIG(Limit), config(Limit)).
+%% The phone every connection of the cases comes from.
+-define(PEER, {random, <<16#C1, 1, 2, 3, 4, 5>>}).
 %% LE Long Term Key Request Reply and Negative Reply.
 -define(IS_LTK(Opcode), (Opcode =:= 16#201A orelse Opcode =:= 16#201B)).
 
@@ -75,7 +77,7 @@ events_decode_test() ->
     ?assertEqual({number_of_completed_packets, [{1, 2}, {3, 4}]},
                  erx_hci:event(16#13, <<2, 1, 0, 2, 0, 3, 0, 4, 0>>)),
     ?assertEqual({hardware_error, 9}, erx_hci:event(16#10, <<9>>)),
-    ?assertMatch({le_connection_complete, 0, 16#40, #{role := 1, peer := <<6, 5, 4, 3, 2, 1>>}},
+    ?assertEqual({le_connection_complete, 16#40, {public, <<6, 5, 4, 3, 2, 1>>}},
                  erx_hci:event(16#3E, <<1, 0, 16#40, 0, 1, 0, 1, 2, 3, 4, 5, 6, 24, 0, 0, 0, 16#48, 0, 0>>)),
     ?assertEqual({le_long_term_key_request, 16#40, <<0:64>>, 0}, erx_hci:event(16#3E, <<5, 16#40, 0, 0:64, 0:16>>)).
 
@@ -83,10 +85,28 @@ wrong_lengths_are_malformed_and_unknown_codes_are_named_test() ->
     ?assertEqual(malformed, erx_hci:event(16#13, <<2, 1, 0, 2, 0>>)),
     ?assertEqual(malformed, erx_hci:event(16#13, <<1, 1, 0, 2, 0, 0>>)),
     ?assertEqual(malformed, erx_hci:event(16#05, <<0, 1, 0>>)),
-    ?assertEqual(malformed, erx_hci:event(16#3E, <<1, 0>>)),
+    ?assertEqual(malformed, erx_hci:event(16#3E, <<1, 0, 16#40, 0, 1, 0>>)),
     ?assertEqual(malformed, erx_hci:event(16#05, <<0, 0, 16#0F, 16#13>>)),
     ?assertEqual({unknown, 16#FF}, erx_hci:event(16#FF, <<1, 2, 3>>)),
     ?assertEqual({unknown, {le_meta, 16#02}}, erx_hci:event(16#3E, <<2, 0>>)).
+
+%% LE Connection Complete (7.7.65.1): Peer_Address_Type 0x00 and 0x01 are a public and a
+%% random device address, and any other value is reserved, so a successful event that
+%% carries one is malformed, as one with a reserved handle is. A failed event carries no
+%% valid parameter but its Status (4.5.1, Table 4.1): it decodes from its Status alone,
+%% whatever the octets after it hold.
+le_connection_complete_reads_its_status_first_test() ->
+    Event = fun(Status, Handle, Type) ->
+                    erx_hci:event(16#3E, <<1, Status, Handle:16/little, 1, Type, 1, 2, 3, 4, 5, 6,
+                                           24, 0, 0, 0, 16#48, 0, 0>>)
+            end,
+    ?assertEqual({le_connection_complete, 16#40, {public, <<6, 5, 4, 3, 2, 1>>}}, Event(0, 16#40, 0)),
+    ?assertEqual({le_connection_complete, 16#40, {random, <<6, 5, 4, 3, 2, 1>>}}, Event(0, 16#40, 1)),
+    ?assertEqual(malformed, Event(0, 16#40, 2)),
+    ?assertEqual(malformed, Event(0, 16#40, 16#FF)),
+    ?assertEqual(malformed, Event(0, 16#FFFF, 0)),
+    ?assertEqual({le_connection_complete, {failed, 16#3C}}, Event(16#3C, 16#FFFF, 16#FF)),
+    ?assertEqual({le_connection_complete, {failed, 16#3C}}, erx_hci:event(16#3E, <<1, 16#3C>>)).
 
 returns_decode_test() ->
     ?assertEqual({ok, #{hci_version => 9, hci_subversion => 16#0102, lmp_version => 9, company => 15,
@@ -184,7 +204,97 @@ a_link_beyond_its_share_is_busy_test() ->
     {Link, Core} = linked(2, 16#40),
     {One, _} = going(step({request, Link, {send, 0, <<1>>}}, Core)),
     {Two, _} = going(step({request, Link, {send, 1, <<2>>}}, One)),
-    ?assertMatch({_, [{busy, Link}]}, step({request, Link, {send, 1, <<3>>}}, Two)).
+    ?assertMatch({_, [{to_link, Link, busy}]}, step({request, Link, {send, 1, <<3>>}}, Two)).
+
+%% link_up names the phone, as erx_hci decodes it, and the identity address the
+%% controller advertises with, so the link reads nothing at its start to learn either.
+link_up_carries_the_phone_and_the_identity_address_test() ->
+    {_, Core} = ready(1),
+    {_, [{link_up, {16#41, 1}, Info}]} = answer(Core, {le_connection_complete, 16#41, ?PEER}),
+    ?assertEqual(#{peer => ?PEER, identity => <<16#C0, 1, 2, 3, 4, 5>>, acl_tx_max => 27, share => 4}, Info).
+
+%% A failed LE Connection Complete is no connection: nothing changes.
+a_failed_connection_changes_nothing_test() ->
+    {_, Core} = ready(1),
+    ?assertEqual({Core, []}, answer(Core, {le_connection_complete, {failed, 16#3C}})).
+
+%% LE Connection Update Complete has no consumer: it reaches no link.
+a_connection_update_reaches_no_link_test() ->
+    {_Link, Core} = linked(1, 16#41),
+    ?assertMatch({_, []}, going(answer(Core, {le_connection_update_complete, 0, 16#41}))).
+
+%% A link's backlog (docs/design-bluetooth.md, "Commands and data credits"): the core
+%% counts every message it sends a link, events, ACL packets and completions alike, until
+%% the link's `taken` acknowledges it. A link that acknowledges nothing is sent exactly
+%% bt_link_backlog, 32, messages; the next is dropped, the handle's disconnect is asked
+%% with Low Resources (0x14, HCI 7.1.6) and written at once, and nothing more reaches the
+%% link, acknowledged or not.
+a_link_that_acknowledges_nothing_is_sent_32_messages_test() ->
+    {Link, Core} = linked(1, 16#41),
+    {Full, Sent} = traffic(Link, 16, Core),
+    ?assertEqual(32, length(Sent)),
+    ?assertEqual(16, length([C || {completed, _} = C <- Sent])),
+    {Cut, Actions} = going(step({event, {encryption_change, 0, 16#41, 1}}, Full)),
+    ?assertEqual([{write, <<1, 16#06, 16#04, 3, 16#41, 0, 16#14>>}], Actions),
+    {Acknowledged, []} = going(step({request, Link, taken}, Cut)),
+    {_, Later} = traffic(Link, 4, element(1, going(step(written, Acknowledged)))),
+    ?assertEqual([], Later).
+
+%% A link that acknowledges every message it is sent is never cut off.
+a_link_that_acknowledges_everything_is_never_disconnected_test() ->
+    {Link, Core} = linked(1, 16#41),
+    {_, Sent} = lists:foldl(fun(_, {C, All}) ->
+                                    {Next, Messages} = traffic(Link, 1, C),
+                                    {Taken, []} = lists:foldl(fun(_, {T, []}) -> going(step({request, Link, taken}, T)) end,
+                                                              {Next, []}, Messages),
+                                    {Taken, All ++ Messages}
+                            end, {Core, []}, lists:seq(1, 40)),
+    ?assertEqual(80, length(Sent)).
+
+%% A cut-off link's handle, once its Disconnection Complete gives it a new peer, starts
+%% the new link with an empty backlog: it is sent its own 32 messages.
+a_cut_handle_given_a_new_peer_starts_afresh_test() ->
+    {Old, Core} = linked(1, 16#41),
+    {Full, _} = traffic(Old, 16, Core),
+    {Cut, [{write, _}]} = going(step({acl, 16#41, 2, 0, <<3>>}, Full)),
+    {Answered, []} = going(answer(element(1, going(step(written, Cut))), {command_status, 0, 1, 16#0406})),
+    {Gone, _} = going(answer(Answered, {disconnection_complete, 0, 16#41, 16#14})),
+    {Reused, Up} = going(answer(Gone, {le_connection_complete, 16#41, ?PEER})),
+    {_, Sent} = traffic(link_of(Up), 16, element(1, going(step(written, Reused)))),
+    ?assertEqual(32, length(Sent)).
+
+%% A link cut off after asking its own disconnect keeps that one: the handle's disconnect
+%% is written once, with the link's reason.
+a_cut_after_the_links_own_disconnect_writes_one_disconnect_test() ->
+    {Link, Core} = linked(1, 16#41),
+    {Full, _} = traffic(Link, 16, Core),
+    {Asked, [{write, Written}]} = going(step({request, Link, {disconnect, 16#13}}, Full)),
+    ?assertEqual(<<1, 16#06, 16#04, 3, 16#41, 0, 16#13>>, Written),
+    ?assertMatch({_, []}, going(step({acl, 16#41, 2, 0, <<3>>}, element(1, going(step(written, Asked)))))).
+
+%% A gone link's acknowledgement changes nothing, even with its handle given a new
+%% peer: it never lowers the new link's backlog.
+a_gone_links_acknowledgement_changes_nothing_test() ->
+    {Old, Core} = linked(1, 16#41),
+    {Some, _} = traffic(Old, 2, Core),
+    {Gone, _} = going(answer(Some, {disconnection_complete, 0, 16#41, 16#13})),
+    {Reused, Up} = going(answer(Gone, {le_connection_complete, 16#41, ?PEER})),
+    New = link_of(Up),
+    {Full, _} = traffic(New, 16, element(1, going(step(written, Reused)))),
+    ?assertEqual({Full, []}, step({request, Old, taken}, Full)).
+
+%% Rounds of a link's traffic: a packet the link sends, written and completed, and an
+%% ACL packet for it, so each round sends the link a completion and a packet. Returns
+%% the core and the messages the link was sent.
+traffic(Link, Rounds, Core) ->
+    lists:foldl(fun(_, {C, Sent}) -> traffic_round(Link, C, Sent) end, {Core, []}, lists:seq(1, Rounds)).
+
+traffic_round({Handle, _} = Link, Core, Sent) ->
+    {Sending, _} = going(step({request, Link, {send, 0, <<1>>}}, Core)),
+    {Written, []} = going(step(written, Sending)),
+    {Completed, A1} = going(answer(Written, {number_of_completed_packets, [{Handle, 1}]})),
+    {Delivered, A2} = going(step({acl, Handle, 2, 0, <<2>>}, Completed)),
+    {Delivered, Sent ++ [Message || {to_link, To, Message} <- A1 ++ A2, To =:= Link]}.
 
 advertising_resumes_after_a_disconnection_test() ->
     {_, Core} = connected(1, 16#40),
@@ -214,7 +324,7 @@ a_disconnect_never_reaches_a_reused_handle_test() ->
     {Asked, []} = step({request, Link, {disconnect, 16#13}}, Busy),
     ?assertEqual(5000, erx_bt_hci_core:next_deadline(Asked)),
     {Gone, _} = going(answer(Asked, {disconnection_complete, 0, 1, 16#13})),
-    {Reused, _} = going(answer(Gone, {le_connection_complete, 0, 1, #{}})),
+    {Reused, _} = going(answer(Gone, {le_connection_complete, 1, ?PEER})),
     ?assertEqual({ok, [{write, <<1, 16#0A, 16#20, 1, 1>>}]},
                  element_pair(step(written, Reused))).
 
@@ -227,7 +337,7 @@ a_gone_links_requests_never_reach_the_handles_next_peer_test() ->
     {Gone, Down} = answer(Core, {disconnection_complete, 0, 1, 16#13}),
     ?assert(lists:member({link_down, Old}, Down)),
     {Written, []} = step(written, Gone),
-    {Reused, Up} = answer(Written, {le_connection_complete, 0, 1, #{}}),
+    {Reused, Up} = answer(Written, {le_connection_complete, 1, ?PEER}),
     New = link_of(Up),
     ?assertNotEqual(Old, New),
     {Settled, []} = answer(Reused, complete(16#200A, <<0>>)),
@@ -256,7 +366,7 @@ a_disconnect_is_asked_once_and_its_failure_stops_test() ->
 %% enables it again.
 a_connection_before_the_enable_answer_leaves_advertising_off_test() ->
     {_, Core} = to_command(16#200A, new(1)),
-    {Connected, _} = going(answer(Core, {le_connection_complete, 0, 1, #{}})),
+    {Connected, _} = going(answer(Core, {le_connection_complete, 1, ?PEER})),
     {Written, []} = step(written, Connected),
     {Answered, []} = answer(Written, complete(16#200A, <<0>>)),
     ?assertMatch(#{advertising := false}, erx_bt_hci_core:facts(Answered)),
@@ -281,7 +391,7 @@ a_connection_on_a_handle_being_disconnected_stops_test() ->
     {Asked, [{write, <<1, 6, 4, 3, 1, 0, 16#13>>}]} =
         step({request, Link, {disconnect, 16#13}}, Advertising),
     {Gone, _} = going(answer(Asked, {disconnection_complete, 0, 1, 16#13})),
-    ?assertMatch({_, [{stop, {connection_while_disconnecting, 1}}]}, answer(Gone, {le_connection_complete, 0, 1, #{}})).
+    ?assertMatch({_, [{stop, {connection_while_disconnecting, 1}}]}, answer(Gone, {le_connection_complete, 1, ?PEER})).
 
 element_pair({_Core, Actions}) -> {ok, Actions}.
 
@@ -303,10 +413,10 @@ a_command_the_controller_never_allows_stops_on_its_deadline_test() ->
 %% full, so the link counts its own share back.
 completions_reach_each_handles_link_test() ->
     {_, Ready} = ready(2),
-    {One, Up1} = answer(Ready, {le_connection_complete, 0, 16#40, #{}}),
+    {One, Up1} = answer(Ready, {le_connection_complete, 16#40, ?PEER}),
     {Advertising, _} = going(step(written, One)),
     {Enabled, _} = going(answer(Advertising, complete(16#200A, <<0>>))),
-    {Two, Up2} = answer(Enabled, {le_connection_complete, 0, 16#41, #{}}),
+    {Two, Up2} = answer(Enabled, {le_connection_complete, 16#41, ?PEER}),
     {A, B} = {link_of(Up1), link_of(Up2)},
     {S1, [{write, _}]} = step({request, A, {send, 0, <<1>>}}, Two),
     {W1, []} = step(written, S1),
@@ -361,7 +471,7 @@ shared_buffers_take_any_length_from_one_test() ->
 a_long_term_key_reply_reaches_the_controller_and_its_answer_the_link_test() ->
     {Link, Core} = linked(1, 16#41),
     Request = {le_long_term_key_request, 16#41, <<0:64>>, 0},
-    ?assertEqual({Core, [{to_link, Link, Request}]}, answer(Core, Request)),
+    ?assertMatch({_, [{to_link, Link, Request}]}, answer(Core, Request)),
     Key = list_to_binary(lists:seq(1, 16)),
     {Asked, [{write, Written}]} = going(step({request, Link, {ltk_reply, Key}}, Core)),
     ?assertEqual(<<1, 16#1A, 16#20, 18, 16#41, 0, (list_to_binary(lists:seq(16, 1, -1)))/binary>>, Written),
@@ -405,7 +515,7 @@ a_reply_never_reaches_a_reused_handle_test() ->
     {Sending, [{write, <<1, 16#1A, 16#20, _/binary>>}]} = step({request, Link2, {ltk_reply, <<9:128>>}}, Core2),
     {Down, [{link_down, Link2}]} = answer(Sending, {disconnection_complete, 0, 16#41, 16#13}),
     ?assertEqual({Down, [{stop, {connection_while_replying, 16#41}}]},
-                 answer(Down, {le_connection_complete, 0, 16#41, #{}})).
+                 answer(Down, {le_connection_complete, 16#41, ?PEER})).
 
 %% A request the core does not know stops without the request in the reason, since a
 %% malformed reply may hold a key.
@@ -507,7 +617,8 @@ visit(#world{core = Before, now = Now} = World, Input, {Queue, Seen, Stats}) ->
             ?assertNotMatch({unexpected_request, _}, Reason),
             {Queue, Seen, Stats#{stops := maps:update_with(element(1, tuple(Reason)), fun(N) -> N + 1 end, 1,
                                                           maps:get(stops, Stats))}};
-        {Core, Actions} ->
+        {Stepped1, Actions} ->
+            Core = acknowledged(Actions, Now, Stepped1),
             check_deadline_kept(Input, World),
             check_expiry_acts(Input, Before, Core),
             check_completions_passed(Input, World, Actions),
@@ -520,6 +631,16 @@ visit(#world{core = Before, now = Now} = World, Input, {Queue, Seen, Stats}) ->
                 false -> {queue:in(Next, Queue), sets:add_element(Key, Seen), Stats}
             end
     end.
+
+%% Each link acknowledges every message it was sent, as a link that keeps up does, so
+%% the backlogs stay empty and no link is ever cut off: every acknowledgement is taken
+%% and changes nothing but the backlog.
+acknowledged(Actions, Now, Core) ->
+    lists:foldl(fun({to_link, Link, _}, Acc) ->
+                        {Taken, []} = erx_bt_hci_core:step({request, Link, taken}, Now, Acc),
+                        Taken;
+                   (_, Acc) -> Acc
+                end, Core, Actions).
 
 tuple(Reason) when is_tuple(Reason) -> Reason;
 tuple(Reason) -> {Reason}.
@@ -552,13 +673,13 @@ inputs(#world{core = Core, line = Line, writer = Writer, command = Command, read
         [{expired, Deadline} || Deadline =/= infinity] ++
         answers(Command) ++
         [{event, {command_complete, Allowed, 0, <<>>}} || Allowed <- [0, 1]] ++
-        [{event, {hardware_error, 1}}, {event, malformed}] ++
+        [{event, {hardware_error, 1}}, {event, malformed}, {event, {le_connection_complete, {failed, 16#3C}}}] ++
         [Drop || Dropped =:= 0, Drop <- [{event, {unknown, 16#FF}}, {acl, 3, 2, 0, <<1>>},
                                          {event, {disconnection_complete, 0, 3, 16#13}}]] ++
-        [{event, {le_connection_complete, 0, Handle, #{}}} || Connections < ?EXPLORE_CONNECTIONS, Handle <- [1, 2],
+        [{event, {le_connection_complete, Handle, ?PEER}} || Connections < ?EXPLORE_CONNECTIONS, Handle <- [1, 2],
                                                               not is_map_key(Handle, Links)] ++
-        [{event, {le_connection_complete, 0, 4, #{}}} || Ready, map_size(Links) >= Limit] ++
-        lists:append([[{event, {le_connection_complete, 0, Handle, #{}}},
+        [{event, {le_connection_complete, 4, ?PEER}} || Ready, map_size(Links) >= Limit] ++
+        lists:append([[{event, {le_connection_complete, Handle, ?PEER}},
                        {event, {disconnection_complete, 0, Handle, 16#13}},
                        {request, map_get(Handle, Ids), {disconnect, 16#13}},
                        {request, map_get(Handle, Ids), {send, 0, <<Handle>>}},
@@ -679,7 +800,9 @@ key_of(1) -> <<16#AA, 1:120>>;
 key_of(2) -> none.
 
 check(#world{core = Core, patches = Patches}) ->
-    #{links := Links, free := Free, limit := Limit, advertising := Advertising} = erx_bt_hci_core:facts(Core),
+    #{links := Links, free := Free, limit := Limit, advertising := Advertising, backlogs := Backlogs} =
+        erx_bt_hci_core:facts(Core),
+    ?assert(lists:all(fun(Backlog) -> Backlog =:= 0 end, maps:values(Backlogs))),
     ?assert(Patches =< 1),
     ?assert(not Advertising orelse map_size(Links) < Limit),
     ?assert(Free >= 0),
@@ -721,10 +844,12 @@ check_early_wake_up(#world{core = Core, now = Now}) ->
     ?assertEqual({Core, []}, erx_bt_hci_core:step(expired, Early, Core)).
 
 %% A gone link's requests are refused, whether its handle is live again or not: nothing
-%% changes, so its packet and its disconnect never reach the handle's next peer.
+%% changes, so its packet and its disconnect never reach the handle's next peer, and its
+%% acknowledgement never lowers the next link's backlog.
 check_gone_refused(#world{core = Core, now = Now, gone = Gone}) ->
     [?assertEqual({Core, []}, erx_bt_hci_core:step({request, Link, Request}, Now, Core))
-     || Link <- Gone, Request <- [{send, 0, <<0>>}, {disconnect, 16#13}, {ltk_reply, <<0:128>>}, {ltk_reply, none}]],
+     || Link <- Gone, Request <- [{send, 0, <<0>>}, {disconnect, 16#13}, {ltk_reply, <<0:128>>}, {ltk_reply, none},
+                                  taken]],
     ok.
 
 %% Before ready, the core always has a deadline, which passes into the next step or a
@@ -829,5 +954,5 @@ linked(Limit, Handle) ->
 %% A ready core with one link on Handle.
 connected(Limit, Handle) ->
     {_, Core} = ready(Limit),
-    {Linked, Actions} = answer(Core, {le_connection_complete, 0, Handle, #{}}),
+    {Linked, Actions} = answer(Core, {le_connection_complete, Handle, ?PEER}),
     {Actions, Linked}.

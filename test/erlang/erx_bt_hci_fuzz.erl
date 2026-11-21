@@ -36,6 +36,7 @@
 -define(ROUNDS, 20000).
 -define(ACL_MAX, 251).
 -define(HANDLE_MAX, 16#EFF).
+-define(SUCCESS, 16#00).
 %% The events erx_hci decodes, and the LE Meta subevents among them.
 -define(EVENTS, [16#05, 16#08, 16#0E, 16#0F, 16#10, 16#13, 16#30, 16#3E]).
 -define(LE_SUBEVENTS, [16#01, 16#03, 16#05]).
@@ -220,15 +221,16 @@ split_back(Input, Packets, Said) ->
     end.
 
 %% HCI events: {Code, Parameters, Term} for a written one, malformed for one written
-%% with a reserved handle, none for one mutated or random.
+%% with a reserved handle (but a failed LE Connection Complete, whose handle is never
+%% read), none for one mutated or random.
 event_case() ->
     Live = rand:uniform(?HANDLE_MAX + 1) - 1,
     case rand:uniform(6) of
         N when N =< 2 -> written_event(pick(?HANDLED ++ ?UNHANDLED), Live);
         N when N =< 4 -> {Code, Parameters, _} = written_event(pick(?HANDLED ++ ?UNHANDLED), Live),
                          {Code, mutate(Parameters), none};
-        5 -> {Code, Parameters, _} = written_event(pick(?HANDLED), ?HANDLE_MAX + rand:uniform(16#FFF - ?HANDLE_MAX)),
-             {Code, Parameters, malformed};
+        5 -> {Code, Parameters, Term} = written_event(pick(?HANDLED), ?HANDLE_MAX + rand:uniform(16#FFF - ?HANDLE_MAX)),
+             {Code, Parameters, reserved(Term)};
         6 -> {byte(), bytes(rand:uniform(32) - 1), none}
     end.
 
@@ -265,13 +267,15 @@ written_event(Kind, Handle) ->
         no_completed_packets ->
             {16#13, <<0>>, {number_of_completed_packets, []}};
         le_connection_complete ->
-            [Role, PeerType, Accuracy] = [byte() || _ <- [role, peer_type, accuracy]],
+            %% Success half the time, so the peer's address type is read; a type of 0 or
+            %% 1 mostly, else a reserved one.
+            Connected = pick([?SUCCESS, Status]),
+            PeerType = pick([16#00, 16#01, byte()]),
+            [Role, Accuracy] = [byte() || _ <- [role, accuracy]],
             Peer = bytes(6),
-            [Interval, Latency, Timeout] = [rand:uniform(16#10000) - 1 || _ <- [interval, latency, timeout]],
-            {16#3E, <<16#01, Status, Word:16/little, Role, PeerType, (reverse(Peer))/binary, Interval:16/little,
-                      Latency:16/little, Timeout:16/little, Accuracy>>,
-             {le_connection_complete, Status, Handle, #{role => Role, peer_type => PeerType, peer => Peer,
-                                                        interval => Interval, latency => Latency, timeout => Timeout}}};
+            {16#3E, <<16#01, Connected, Word:16/little, Role, PeerType, (reverse(Peer))/binary, (bytes(6))/binary,
+                      Accuracy>>,
+             connection(Connected, Handle, PeerType, Peer)};
         le_connection_update_complete ->
             {16#3E, <<16#03, Status, Word:16/little, (bytes(6))/binary>>, {le_connection_update_complete, Status, Handle}};
         le_long_term_key_request ->
@@ -282,8 +286,23 @@ written_event(Kind, Handle) ->
             {16#3E, <<Subevent, (bytes(rand:uniform(20) - 1))/binary>>, {unknown, {le_meta, Subevent}}}
     end.
 
+%% LE Connection Complete as decoded (7.7.65.1): a failed one from its Status alone (4.5.1,
+%% Table 4.1), whatever the rest holds; a successful one with its handle and its peer's
+%% address, malformed for a reserved handle or Peer_Address_Type.
+connection(Status, _Handle, _PeerType, _Peer) when Status =/= ?SUCCESS -> {le_connection_complete, {failed, Status}};
+connection(_Success, Handle, _PeerType, _Peer) when Handle > ?HANDLE_MAX -> malformed;
+connection(_Success, Handle, 16#00, Peer) -> {le_connection_complete, Handle, {public, Peer}};
+connection(_Success, Handle, 16#01, Peer) -> {le_connection_complete, Handle, {random, Peer}};
+connection(_Success, _Handle, _Reserved, _Peer) -> malformed.
+
+%% A written event's term once its handle is reserved: malformed, but for a failed LE
+%% Connection Complete, whose handle is never read.
+reserved({le_connection_complete, {failed, _}} = Failed) -> Failed;
+reserved(_Term) -> malformed.
+
 check_event(Code, Parameters, malformed) ->
-    lists:member(Code, ?EVENTS) orelse error({malformed_unknown_code, Code, Parameters});
+    lists:member(Code, ?EVENTS) orelse error({malformed_unknown_code, Code, Parameters}),
+    not failed_connection(Code, Parameters) orelse error({failed_connection_malformed, Parameters});
 check_event(Code, Parameters, {unknown, {le_meta, Subevent}}) ->
     Code =:= 16#3E andalso not lists:member(Subevent, ?LE_SUBEVENTS) andalso binary:first(Parameters) =:= Subevent
         orelse error({unknown_subevent_wrongly, Parameters});
@@ -293,7 +312,12 @@ check_event(Code, Parameters, Term) ->
     layout(Term) =:= Code orelse error({wrong_kind, Code, Term}),
     byte_size(Parameters) =:= length_of(Code, Parameters) orelse error({length_disagrees, Code, Parameters, Term}),
     lists:all(fun(Handle) -> Handle >= 0 andalso Handle =< ?HANDLE_MAX end, handles(Term))
-        orelse error({reserved_handle, Code, Parameters, Term}).
+        orelse error({reserved_handle, Code, Parameters, Term}),
+    case Term of
+        {le_connection_complete, _, {Type, <<_:48>>}} when Type =:= public; Type =:= random -> ok;
+        {le_connection_complete, _, Peer} -> error({reserved_peer_type, Parameters, Peer});
+        _ -> ok
+    end.
 
 %% The code each decoded term comes from.
 layout({command_complete, _, _, _}) -> 16#0E;
@@ -303,13 +327,15 @@ layout({encryption_change, _, _, _}) -> 16#08;
 layout({encryption_key_refresh_complete, _, _}) -> 16#30;
 layout({hardware_error, _}) -> 16#10;
 layout({number_of_completed_packets, _}) -> 16#13;
-layout({le_connection_complete, _, _, _}) -> 16#3E;
+layout({le_connection_complete, _, _}) -> 16#3E;
+layout({le_connection_complete, {failed, _}}) -> 16#3E;
 layout({le_connection_update_complete, _, _}) -> 16#3E;
 layout({le_long_term_key_request, _, _, _}) -> 16#3E;
 layout(Term) -> error({not_an_event, Term}).
 
 %% Each layout's length (7.7.5, 7.7.8, 7.7.14, 7.7.15, 7.7.16, 7.7.19, 7.7.39, 7.7.65.1,
-%% 7.7.65.3, 7.7.65.5); Command Complete's return parameters take whatever follows.
+%% 7.7.65.3, 7.7.65.5); Command Complete's return parameters take whatever follows, and
+%% so do a failed LE Connection Complete's octets after its Status.
 length_of(16#05, _) -> 4;
 length_of(16#08, _) -> 4;
 length_of(16#0E, Parameters) -> max(3, byte_size(Parameters));
@@ -317,18 +343,24 @@ length_of(16#0F, _) -> 4;
 length_of(16#10, _) -> 1;
 length_of(16#13, <<Count, _/binary>>) -> 1 + 4 * Count;
 length_of(16#30, _) -> 3;
+length_of(16#3E, <<16#01, Status, _/binary>> = Parameters) when Status =/= ?SUCCESS -> byte_size(Parameters);
 length_of(16#3E, <<16#01, _/binary>>) -> 19;
 length_of(16#3E, <<16#03, _/binary>>) -> 10;
 length_of(16#3E, <<16#05, _/binary>>) -> 13;
 length_of(Code, Parameters) -> error({no_layout, Code, Parameters}).
 
 handles({number_of_completed_packets, Pairs}) -> [Handle || {Handle, _} <- Pairs];
-handles({Kind, _, Handle, _}) when Kind =:= disconnection_complete; Kind =:= encryption_change;
-                                   Kind =:= le_connection_complete -> [Handle];
+handles({Kind, _, Handle, _}) when Kind =:= disconnection_complete; Kind =:= encryption_change -> [Handle];
+handles({le_connection_complete, Handle, _Peer}) when is_integer(Handle) -> [Handle];
 handles({Kind, _, Handle}) when Kind =:= encryption_key_refresh_complete;
                                 Kind =:= le_connection_update_complete -> [Handle];
 handles({le_long_term_key_request, Handle, _, _}) -> [Handle];
 handles(_) -> [].
+
+%% Whether the parameters are those of a failed LE Connection Complete, which is never
+%% malformed: nothing after its Status is read.
+failed_connection(16#3E, <<16#01, Status, _/binary>>) -> Status =/= ?SUCCESS;
+failed_connection(_Code, _Parameters) -> false.
 
 %% Command Complete returns: {Name, Return, Decoded} for a success written in its
 %% layout or a failure; {Name, Return, none} for a success of any other length.

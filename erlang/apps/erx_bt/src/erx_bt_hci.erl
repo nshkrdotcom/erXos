@@ -19,10 +19,13 @@ ends it, and the group's restart resets the line and the controller.
   with `erx_h4:split/1`, decoded with `erx_hci` and stepped packet by packet, and then
   acknowledged. A split error stops the process.
 - **Links.** `link_up` starts a temporary `erx_bt_link` under `erx_bt_link_sup` with a fresh
-  `Conn`, monitors it and maps the link's full name to it; `to_link` and `busy` go to the
-  process a name maps to, and are dropped for a name that maps to none; `link_down` removes
+  `Conn`, monitors it and maps the link's full name to it; `to_link` goes as `{hci, Event}`, the
+  role the link knows the controller process by, to the process a
+  name maps to, and is dropped for a name that maps to none; `link_down` removes
   the name and ends its process. A link process that ends while its name is mapped is its
-  disconnect: the name is removed and `{request, Name, {disconnect, 16#13}}` is stepped.
+  disconnect: the name is removed and `{request, Name, {disconnect, 16#13}}`, Remote User
+  Terminated Connection, is stepped. A link's requests, its `taken` included, are stepped
+  as they come.
   Names are unique only within one run of the core, so names, never handles, are mapped,
   and every link is in the group, which ends with the core.
 - **Time.** One wake-up timer, at the core's deadline, is only a hint: `expired` changes
@@ -30,11 +33,10 @@ ends it, and the group's restart resets the line and the controller.
 """.
 -behaviour(gen_server).
 
+-include("generated/erx_abi.hrl").
+
 -export([start_link/0, facts/0]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, format_status/1]).
-
-%% Remote User Terminated Connection (bumble/hci.py, line 752): a link's end.
--define(LINK_ENDED, 16#13).
 
 -record(hci, {
     core :: erx_bt_hci_core:core(),
@@ -105,7 +107,7 @@ handle_info({'DOWN', Monitor, process, _Pid, _Reason}, #hci{monitors = Monitors,
     case maps:take(Monitor, Monitors) of
         {Name, Rest} ->
             Ended = State#hci{monitors = Rest, links = maps:remove(Name, Links)},
-            step_noreply({request, Name, {disconnect, ?LINK_ENDED}}, Ended);
+            step_noreply({request, Name, {disconnect, ?ERX_HCI_DISCONNECT_REASON_REMOTE_USER_TERMINATED}}, Ended);
         error ->
             {noreply, State}
     end;
@@ -136,6 +138,7 @@ format_status(Status) ->
     Status.
 
 kind(Request) when is_tuple(Request), tuple_size(Request) > 0 -> element(1, Request);
+kind(Request) when is_atom(Request) -> Request;
 kind(_Request) -> request.
 
 %% A packet from the controller as the core's input.
@@ -180,8 +183,6 @@ perform({link_up, Name, Info}, #hci{links = Links, monitors = Monitors} = State)
     State#hci{links = Links#{Name => Pid}, monitors = Monitors#{monitor(process, Pid) => Name}};
 perform({to_link, Name, Event}, State) ->
     to_link(Name, Event, State);
-perform({busy, Name}, State) ->
-    to_link(Name, busy, State);
 perform({link_down, Name}, #hci{links = Links, monitors = Monitors} = State) ->
     case maps:take(Name, Links) of
         {Pid, Rest} ->
@@ -196,7 +197,7 @@ perform({link_down, Name}, #hci{links = Links, monitors = Monitors} = State) ->
 %% An action for a name that maps to no process is dropped: its link has already ended.
 to_link(Name, Event, #hci{links = Links} = State) ->
     case Links of
-        #{Name := Pid} -> Pid ! {erx_bt_hci, Event};
+        #{Name := Pid} -> Pid ! {hci, Event};
         #{} -> ok
     end,
     State.

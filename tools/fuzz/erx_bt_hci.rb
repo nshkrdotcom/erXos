@@ -59,7 +59,20 @@ module ErxBtHciFuzz
               module_path: HCI,
               anchor: 'try {ok, handle(Word)} catch throw:malformed -> malformed end;',
               replacement: '{ok, Word band 16#FFF};',
-              verdict: '{return_handle_disagrees,')
+              verdict: '{return_handle_disagrees,'),
+    Fault.new(fault: "a failed LE Connection Complete's handle and address type checked before its Status",
+              module_path: HCI,
+              anchor: "<<Status, _/binary>>) when Status =/= ?ERX_HCI_STATUS_SUCCESS ->\n" \
+                      "    {le_connection_complete, {failed, Status}};",
+              replacement: "<<Status, Handle:16/little, _Role, PeerType, _/binary>>) when Status =/= ?ERX_HCI_STATUS_SUCCESS ->\n" \
+                           "    _ = {handle(Handle), peer_type(PeerType)},\n" \
+                           "    {le_connection_complete, {failed, Status}};",
+              verdict: '{failed_connection_malformed,'),
+    Fault.new(fault: "LE Connection Complete's Peer_Address_Type passed through as its octet",
+              module_path: HCI,
+              anchor: '{le_connection_complete, handle(Handle), {peer_type(PeerType), reverse(Peer)}};',
+              replacement: '{le_connection_complete, handle(Handle), {PeerType, reverse(Peer)}};',
+              verdict: '{reserved_peer_type,')
   ].freeze
 
   module_function

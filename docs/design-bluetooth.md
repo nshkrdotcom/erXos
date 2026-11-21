@@ -1004,9 +1004,10 @@ link the core has named:
   `erx_bt_link_sup` with `Name`, `Conn`, `Info` (the peer's address,
   the identity address, `acl_tx_max` and the link's share) and its own
   pid, monitors it, and maps `Name` to it;
-* `{to_link, Name, Event}` and `{busy, Name}`: sent as `{hci, Event}`
-  and `{hci, busy}` to the process `Name` maps to; an action for a name that maps to none is dropped, since
-  its link has already ended;
+* `{to_link, Name, Event}`, `busy` among the events: sent as `{hci, Event}`
+  to the process `Name` maps to; an action for a name that maps to none is dropped, since
+  its link has already ended. Every message for a link, `busy` included, leaves the core
+  through the one count of the link's backlog ([Commands and data credits](#commands-and-data-credits));
 * `{link_down, Name}`: the controller process removes `Name` and ends its
   process through `erx_bt_link_sup`;
 * a link process that ends while its name is mapped: the controller

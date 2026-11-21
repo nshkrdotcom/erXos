@@ -11,14 +11,15 @@ Core Specification 6.3, Vol 4 Part E, whose codes abi/formats/bluetooth.txt hold
 event packet's code and parameters into a term, and `return/2` a Command Complete's
 return parameters for the command they answer. Every event controller input reaches
 is checked whole against its section's layout, so a length that does not match is
-`malformed` rather than read past; an event or LE subevent this host does not use is
+`malformed` rather than read past, but for a failed LE Connection Complete, read only to
+its Status (4.5.1, Table 4.1); an event or LE subevent this host does not use is
 `{unknown, Code}`, which the caller counts and drops. Nothing here makes an atom.
 """.
 
 -include("generated/erx_abi.hrl").
 
 -export([command/1, opcode/1, event/2, return/2]).
--export_type([command/0, command_name/0, event/0, return/0, handle/0, key/0]).
+-export_type([command/0, command_name/0, event/0, return/0, handle/0, key/0, peer/0]).
 
 %% A Connection_Handle's bits, the low ones of its word.
 -define(HANDLE_MASK, ((1 bsl ?ERX_HCI_HANDLE_BITS) - 1)).
@@ -26,6 +27,8 @@ is checked whole against its section's layout, so a length that does not match i
 -doc "A Connection_Handle's 12 bits, as a handle word carries them (Part E, section 5.4.2).".
 -type handle() :: 0..?HANDLE_MASK.
 -type address() :: <<_:48>>.
+-doc "A peer's device address and its type, most significant octet first (7.7.65.1).".
+-type peer() :: {public | random, address()}.
 -doc "A Long_Term_Key, most significant octet first, as the host keeps it (7.8.25).".
 -type key() :: <<_:128>>.
 
@@ -53,7 +56,7 @@ is checked whole against its section's layout, so a length that does not match i
                | {encryption_key_refresh_complete, Status :: byte(), handle()}
                | {hardware_error, byte()}
                | {number_of_completed_packets, [{handle(), 0..16#FFFF}]}
-               | {le_connection_complete, Status :: byte(), handle(), #{atom() => term()}}
+               | {le_connection_complete, handle(), peer()} | {le_connection_complete, {failed, Status :: 1..255}}
                | {le_connection_update_complete, Status :: byte(), handle()}
                | {le_long_term_key_request, handle(), Random :: <<_:64>>, Ediv :: 0..16#FFFF}
                | {unknown, byte() | {le_meta, byte()}}
@@ -161,13 +164,16 @@ decode(Code, _) ->
     {unknown, Code}.
 
 %% LE Connection Complete (7.7.65.1), LE Connection Update Complete (7.7.65.3) and LE
-%% Long Term Key Request (7.7.65.5), each after its subevent code.
+%% Long Term Key Request (7.7.65.5), each after its subevent code. A failed LE Connection
+%% Complete carries no valid parameter but its Status (4.5.1, Table 4.1), so nothing after
+%% the Status is read, whatever it holds; only a successful one is read whole, its handle
+%% and its peer's address type checked.
+le_event(?ERX_HCI_LE_SUBEVENT_CONNECTION_COMPLETE, <<Status, _/binary>>) when Status =/= ?ERX_HCI_STATUS_SUCCESS ->
+    {le_connection_complete, {failed, Status}};
 le_event(?ERX_HCI_LE_SUBEVENT_CONNECTION_COMPLETE,
-         <<Status, Handle:16/little, Role, PeerType, Peer:6/binary, Interval:16/little, Latency:16/little,
-           Timeout:16/little, _ClockAccuracy>>) ->
-    {le_connection_complete, Status, handle(Handle),
-     #{role => Role, peer_type => PeerType, peer => reverse(Peer), interval => Interval, latency => Latency,
-       timeout => Timeout}};
+         <<_Success, Handle:16/little, _Role, PeerType, Peer:6/binary, _Interval:16, _Latency:16, _Timeout:16,
+           _ClockAccuracy>>) ->
+    {le_connection_complete, handle(Handle), {peer_type(PeerType), reverse(Peer)}};
 le_event(?ERX_HCI_LE_SUBEVENT_CONNECTION_UPDATE_COMPLETE,
          <<Status, Handle:16/little, _Interval:16, _Latency:16, _Timeout:16>>) ->
     {le_connection_update_complete, Status, handle(Handle)};
@@ -184,6 +190,13 @@ le_event(Subevent, _) ->
 %% handle makes the event malformed.
 handle(Word) when Word band ?HANDLE_MASK =< ?ERX_HCI_HANDLE_MAX -> Word band ?HANDLE_MASK;
 handle(_Word) -> throw(malformed).
+
+%% Peer_Address_Type (7.7.65.1): the controller resolves no address for erXos, so a peer
+%% uses a public or a random device address; any other value is reserved and makes the
+%% event malformed.
+peer_type(?ERX_HCI_PEER_ADDRESS_TYPE_PUBLIC) -> public;
+peer_type(?ERX_HCI_PEER_ADDRESS_TYPE_RANDOM) -> random;
+peer_type(_Type) -> throw(malformed).
 
 -doc """
 A Command Complete's return parameters for the command named, which begin with its

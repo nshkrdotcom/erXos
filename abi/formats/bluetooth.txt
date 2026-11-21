@@ -95,6 +95,18 @@ limit hci_status_success u8 0x00
 # Unknown Connection Identifier (Vol 1 Part F, 2.2): a disconnect naming a handle the
 # controller has already let go.
 limit hci_status_unknown_connection u8 0x02
+# The reasons the host gives Disconnect, among those 7.1.6 allows (Vol 1 Part F, 2.19,
+# 2.20): Remote User Terminated Connection for a link that ended, and Remote Device
+# Terminated Connection due to Low Resources for a link whose backlog reached
+# bt_link_backlog (docs/design-bluetooth.md, "Commands and data credits").
+enum hci_disconnect_reason u8
+  value remote_user_terminated 0x13
+  value low_resources 0x14
+# LE Connection Complete's Peer_Address_Type (7.7.65.1): a public or a random device
+# address; every other value is reserved.
+enum hci_peer_address_type u8
+  value public 0x00
+  value random 0x01
 # A Connection_Handle is the low 12 bits of its 16-bit word, below the two bits each of
 # Packet_Boundary_Flag and Broadcast_Flag, and runs from 0x000 to 0xEFF (5.4.2).
 limit hci_handle_bits u8 12
@@ -138,6 +150,10 @@ limit bt_advertising_interval_us u32 100000
 # The notifications a link holds waiting for its share of the credits (docs/design-bluetooth.md,
 # "What a radio peer can make the domain spend").
 limit bt_notify_queue u8 16
+# The controller process's messages a link holds and has not acknowledged, events and ACL
+# packets alike (docs/design-bluetooth.md, "Commands and data credits"); at the bound the
+# link is sent nothing more and disconnected.
+limit bt_link_backlog u8 32
 
 # erXos's deadlines (docs/design-bluetooth.md, "The bring-up"): every command's answer,
 # and the patch's two waits, NetBSD's (usr.sbin/btattach/init_bcm43xx.c, lines 123-125

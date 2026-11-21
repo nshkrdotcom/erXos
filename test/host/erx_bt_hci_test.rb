@@ -29,6 +29,7 @@ class ErxBtHciTest < Minitest::Test
   H4 = 'erlang/apps/erx_bt/src/erx_h4.erl'
   CORE = 'erlang/apps/erx_bt/src/erx_bt_hci_core.erl'
   PATCH = 'erlang/apps/erx_bt/src/erx_bt_patch.erl'
+  HCI = 'erlang/apps/erx_bt/src/erx_hci.erl'
 
   Seed = Data.define(:fault, :module_path, :anchor, :replacement, :catching_case)
 
@@ -67,8 +68,8 @@ class ErxBtHciTest < Minitest::Test
              catching_case: 'disconnection_returns_a_handles_packets_test'),
     Seed.new(fault: "a completion's count taken without the in-flight bound",
              module_path: CORE,
-             anchor: '#{Handle := {Serial, InFlight}} when Count =< InFlight - Queued ->',
-             replacement: '#{Handle := {Serial, InFlight}} ->',
+             anchor: '#{Handle := #live{in_flight = InFlight} = Live} when Count =< InFlight - Queued ->',
+             replacement: '#{Handle := #live{in_flight = InFlight} = Live} ->',
              catching_case: 'a_forged_completion_stops_test'),
     Seed.new(fault: 'advertising not enabled again after a disconnection',
              module_path: CORE,
@@ -108,7 +109,7 @@ class ErxBtHciTest < Minitest::Test
              catching_case: 'explored_core_keeps_its_invariants_test_'),
     Seed.new(fault: 'a connection accepted on a handle whose disconnect is handed over and unanswered',
              module_path: CORE,
-             anchor: "connected(Handle, _Info, #core{slot = {sent, {disconnect, Handle}, _, _, _}}) ->\n" \
+             anchor: "connected(Handle, _Peer, #core{slot = {sent, {disconnect, Handle}, _, _, _}}) ->\n" \
                      "    stop({connection_while_disconnecting, Handle});\n",
              replacement: '',
              catching_case: 'a_connection_on_a_handle_being_disconnected_stops_test'),
@@ -132,8 +133,8 @@ class ErxBtHciTest < Minitest::Test
              catching_case: 'explored_core_keeps_its_invariants_test_'),
     Seed.new(fault: 'completions not passed to their links, so a link never counts its share back',
              module_path: CORE,
-             anchor: '{[{to_link, {Handle, Serial}, {completed, Count}} || Count > 0],',
-             replacement: '{[],',
+             anchor: 'completed(Handle, Count, Core) -> to_link(Handle, {completed, Count}, Core).',
+             replacement: 'completed(_Handle, _Count, Core) -> {[], Core}.',
              catching_case: 'explored_core_keeps_its_invariants_test_'),
     Seed.new(fault: 'a deadline passed only after its instant',
              module_path: CORE,
@@ -148,9 +149,9 @@ class ErxBtHciTest < Minitest::Test
     Seed.new(fault: "a request's link identity ignored, so a gone link's packet reaches its handle's next peer",
              module_path: CORE,
              anchor: "current({Handle, Serial}, #core{links = Links}) ->\n    case Links of\n" \
-                     "        \#{Handle := {Serial, InFlight}} -> {current, InFlight};",
+                     "        \#{Handle := #live{serial = Serial} = Live} -> {current, Live};",
              replacement: "current({Handle, _Serial}, #core{links = Links}) ->\n    case Links of\n" \
-                          "        \#{Handle := {_, InFlight}} -> {current, InFlight};",
+                          "        \#{Handle := #live{} = Live} -> {current, Live};",
              catching_case: 'explored_core_keeps_its_invariants_test_'),
     Seed.new(fault: "a Long Term Key reply kept past its handle's Disconnection Complete",
              module_path: CORE,
@@ -161,7 +162,41 @@ class ErxBtHciTest < Minitest::Test
              module_path: CORE,
              anchor: '        {ok, Handle} -> to_link(Handle, {ltk_reply_complete, ok}, Core);',
              replacement: '        {ok, _} -> to_link(Handle, {ltk_reply_complete, ok}, Core);',
-             catching_case: 'a_long_term_key_reply_reaches_the_controller_and_its_answer_the_link_test')
+             catching_case: 'a_long_term_key_reply_reaches_the_controller_and_its_answer_the_link_test'),
+    Seed.new(fault: "a link's backlog bound compared one too late, so 33 messages are sent",
+             module_path: CORE,
+             anchor: '#{Handle := #live{backlog = ?ERX_BT_LINK_BACKLOG} = Live} ->',
+             replacement: '#{Handle := #live{backlog = ?ERX_BT_LINK_BACKLOG + 1} = Live} ->',
+             catching_case: 'a_link_that_acknowledges_nothing_is_sent_32_messages_test'),
+    Seed.new(fault: "completions sent past the backlog's funnel, so they are not counted",
+             module_path: CORE,
+             anchor: 'completed(Handle, Count, Core) -> to_link(Handle, {completed, Count}, Core).',
+             replacement: 'completed(Handle, Count, #core{links = Links} = Core) -> ' \
+                          '{[{to_link, {Handle, (map_get(Handle, Links))#live.serial}, {completed, Count}}], Core}.',
+             catching_case: 'a_link_that_acknowledges_nothing_is_sent_32_messages_test'),
+    Seed.new(fault: "a link's taken read by its handle without its name, so a gone link's lowers the next link's backlog",
+             module_path: CORE,
+             anchor: "untimed({request, Link, Request}, Core) ->\n",
+             replacement: "untimed({request, {Handle, _}, taken}, #core{links = Links} = Core)\n" \
+                          "  when is_map_key(Handle, Links), is_integer((map_get(Handle, Links))#live.backlog),\n" \
+                          "       (map_get(Handle, Links))#live.backlog > 0 ->\n" \
+                          "    Live = map_get(Handle, Links),\n" \
+                          "    {[], Core#core{links = Links\#{Handle := Live#live{backlog = Live#live.backlog - 1}}}};\n" \
+                          "untimed({request, Link, Request}, Core) ->\n",
+             catching_case: 'a_gone_links_acknowledgement_changes_nothing_test'),
+    Seed.new(fault: "LE Connection Complete's Peer_Address_Type passed through as its octet",
+             module_path: HCI,
+             anchor: '{le_connection_complete, handle(Handle), {peer_type(PeerType), reverse(Peer)}};',
+             replacement: '{le_connection_complete, handle(Handle), {PeerType, reverse(Peer)}};',
+             catching_case: 'le_connection_complete_reads_its_status_first_test'),
+    Seed.new(fault: "a failed LE Connection Complete's handle and address type checked before its Status",
+             module_path: HCI,
+             anchor: "<<Status, _/binary>>) when Status =/= ?ERX_HCI_STATUS_SUCCESS ->\n" \
+                     "    {le_connection_complete, {failed, Status}};",
+             replacement: "<<Status, Handle:16/little, _Role, PeerType, _/binary>>) when Status =/= ?ERX_HCI_STATUS_SUCCESS ->\n" \
+                          "    _ = {handle(Handle), peer_type(PeerType)},\n" \
+                          "    {le_connection_complete, {failed, Status}};",
+             catching_case: 'le_connection_complete_reads_its_status_first_test')
   ].freeze
 
   def test_bluetooth_cases_pass_under_eunit
