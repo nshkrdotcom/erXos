@@ -284,15 +284,22 @@ install(harness_t *h)
 {
 	const erx_device_trb_region_t *const event_ring = &h->layout.regions[h->layout.event_ring];
 	const erx_device_trb_region_t *const table = &h->layout.regions[h->layout.segment_table];
-	const erx_xhci_segment_table_entry_placed_t placed = { .base_address = DEVICE_BASE + event_ring->offset,
-	    .size_trbs = LAP };
-	erx_xhci_segment_table_entry_t entry;
+	uint64_t base = 0;
+	uint32_t size = 0;
 
 	CHECK(erx_dma_model_cpu_zero(&h->cache, 0, h->cache.size));
 	maintain(h, (erx_dma_range_t){ 0, h->cache.size }, false);
-	CHECK(erx_xhci_segment_table_entry_encode(&entry, &placed));
-	CHECK(erx_dma_model_cpu_store(&h->cache, table->offset, &entry, sizeof(entry)));
-	maintain(h, (erx_dma_range_t){ table->offset, sizeof(entry) }, false);
+	/*
+	 * The install's one record, written field by field through the generated setters: only the
+	 * sequencer calls a record's encoder, and the form has no install of its own yet (TODO.md).
+	 */
+	CHECK(erx_xhci_segment_table_entry_base_address_set(&base, DEVICE_BASE + event_ring->offset) &&
+	    erx_xhci_segment_table_entry_size_trbs_set(&size, LAP));
+	CHECK(erx_dma_model_cpu_store(&h->cache, table->offset + ERX_XHCI_SEGMENT_TABLE_ENTRY_OFF_BASE, &base,
+	    sizeof(base)));
+	CHECK(erx_dma_model_cpu_store(&h->cache, table->offset + ERX_XHCI_SEGMENT_TABLE_ENTRY_OFF_SIZE, &size,
+	    sizeof(size)));
+	maintain(h, (erx_dma_range_t){ table->offset, ERX_XHCI_SEGMENT_TABLE_ENTRY_SIZE }, false);
 	CHECK(erx_device_trb_model_segment_table(&h->device, DEVICE_BASE + table->offset));
 	h->dequeue = DEVICE_BASE + event_ring->offset;
 	CHECK(erx_device_trb_model_dequeue(&h->device, h->dequeue));
