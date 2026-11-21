@@ -9945,6 +9945,16 @@ document's "residual risks accepted" paragraph.
 * [Low] docs, `docs/research-brcmstb-pcie.md` section 2: the worked `BASE_LIMIT` for the mainline tree's 64 MiB window
   reads `0x00300000`; FreeBSD's encoder (`bcm2838_pci.c:591-596`) gives `0x03f00000`, the limit being MiB `0x603f`.
   Re-check the section's worked values in a new dated record.
+* [Medium] USB, `docs/design-usb.md` ([The TRB ring form](docs/design-usb.md#the-trb-ring-form)): the design names
+  no Erlang call for a queue's state, which `reset_pipe` and `erx_xhci_core` need, nor `complete/2`'s second
+  argument or `negotiate/2`'s wanted value and answer for the TRB form. `erx_xhci` assumes
+  `erx_device:queue_state(Dev, {Slot, Dci})` answering `idle`, `busy`, `stopped` or `halted`,
+  `complete(Dev, events)` and `negotiate(Dev, 0)` answering `{ok, _}`, all in its section "The device NIF's TRB
+  ring form"; state the NIF's shapes in the design and make that section match. Neither design document states
+  that a register array's `{Name, Index}` counts from 0, which `erx_xhci`'s register mapping assumes.
+* [Low] USB, `test/erlang/erx_xhci_tests.erl`: a case that runs past 1 s after its controller's install meets the
+  core's status read of `USBSTS` where it expects another call; the cases finish in milliseconds, but a loaded host
+  could make one flake. A failed case also leaves its controller waiting on the stand-in.
 * [Medium] USB, `tools/lib/erx/chokepoint_rules/device.rb` ([design-usb.md](docs/design-usb.md#the-block-transport)):
   nothing names `erx_blk_write` as the one caller of `erx_usb_pipe:bulk_out/3`. Add it, with a seeded violation.
 * [Low] USB, `abi/formats/evdev.txt` ([design-usb.md](docs/design-usb.md#the-usage-table)): the key codes FreeBSD's

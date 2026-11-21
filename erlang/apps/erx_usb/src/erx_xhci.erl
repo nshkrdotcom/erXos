@@ -22,10 +22,11 @@ arrives as `{erx_origin, D, Msg}`.
 NIF answers give the core its next event: a register read gives `{read,
 Words}`, the install `{negotiated, Result}`, a pass over the event ring
 `{completed, Result}`, a queue's state `{queue_state, Pipe, Report}`, and a
-post the NIF refuses `{refused, Tag, Reason}`. Each such answer is stepped
-after the answers already waiting and before any message is taken, so the
-core sees every answer in the order the calls were made and no interrupt or
-request between a call and its answer. `{fail, Reason}`, which the core gives
+post the NIF refuses `{refused, Tag, Reason}`. A step's answers, in the
+order of the calls that gave them, are stepped before any other event: before
+the answers still waiting from an earlier step and before any message is
+taken, so the core sees `{queue_state, Pipe, Report}` before any other event,
+as it requires, and no interrupt or request between a call and its answer. `{fail, Reason}`, which the core gives
 alone, ends the process with Reason; its supervisor's restart resets the
 controller, and the exit unbinds the interrupt line, which masks it.
 
@@ -45,7 +46,7 @@ I-th supported-protocol capability's REVISION `{revision, I - 1}`.
 -define(IRQ_LINE, 0).
 
 -record(controller, {dev :: erx_device:device(),
-                     irq :: term(),
+                     irq :: erx_irq_line:handle(),
                      bus = none :: none | pid(),
                      core :: erx_xhci_core:state(),
                      timer = none :: none | {reference(), At :: integer()}}).
@@ -103,18 +104,19 @@ event(Message, C) ->
     end.
 
 %% Steps the core on each event in turn and performs its actions; the answers the
-%% NIF gives to them are stepped after the events already waiting, and the timer is
-%% armed once none is left.
+%% NIF gives to them are stepped next, ahead of the events already waiting, and the
+%% timer is armed once none is left.
 run([], C) ->
     armed(C);
 run([Event | Waiting], C = #controller{core = Core}) ->
     {Next, Actions} = erx_xhci_core:step(Event, erlang:monotonic_time(millisecond), Core),
     Answers = lists:flatmap(fun(Action) -> perform(Action, C) end, Actions),
-    run(Waiting ++ Answers, C#controller{core = Next}).
+    run(Answers ++ Waiting, C#controller{core = Next}).
 
-%% Performs Action and answers the events the NIF's answer to it gives the core.
-perform({command, Tag, Command}, C) -> posted(Tag, post(C, command, Tag, Command));
-perform({transfer, Pipe, Tag, Transfer}, C) -> posted(Tag, post(C, Pipe, Tag, Transfer));
+%% Performs Action; answers the events it gives the core, none for an action the
+%% NIF does not answer.
+perform({command, Tag, Command}, C) -> posted(Tag, post_command(C, Tag, Command));
+perform({transfer, Pipe, Tag, Transfer}, C) -> posted(Tag, post_transfer(C, Pipe, Tag, Transfer));
 perform({queue_state, Pipe}, C) -> [{queue_state, Pipe, queue_state(C, Pipe)}];
 perform({read, Registers}, C) -> [{read, maps:from_list([{Register, read(C, Register)} || Register <- Registers])}];
 perform({write, Register, Word}, C) -> ok = write(C, Register, Word), [];
@@ -158,7 +160,9 @@ cancel({Ref, _At}) -> erlang:cancel_timer(Ref, [{async, true}, {info, false}]).
 bound(#controller{dev = Dev}) ->
     #{legacy => erx_device:elements(Dev, bios_owned) =:= 1, protocols => erx_device:elements(Dev, revision)}.
 
-post(#controller{dev = Dev}, Queue, Tag, Item) -> erx_device:post(Dev, Queue, Tag, Item).
+post_command(#controller{dev = Dev}, Tag, Command) -> erx_device:post(Dev, command, Tag, Command).
+
+post_transfer(#controller{dev = Dev}, Pipe, Tag, Transfer) -> erx_device:post(Dev, Pipe, Tag, Transfer).
 
 complete(#controller{dev = Dev}) -> erx_device:complete(Dev, events).
 

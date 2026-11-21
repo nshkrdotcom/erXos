@@ -58,8 +58,28 @@ a_port_event_reaches_the_bus_and_its_status_is_read_test() ->
     ?assertMatch({port_done, root, 1, {ok, _Words, _Speed}}, bus_answer()),
     stop(Controller).
 
+%% A message that comes while a pass reads the event ring waits for the pass's end:
+%% the pass reads on and acknowledges the line before the bus's request is taken.
+a_pass_ends_before_the_next_message_is_taken_test() ->
+    Controller = running(),
+    Controller ! {erx_irq, device(), ?IRQ_LINE},
+    {read, usbsts} = play(?EINT),
+    {read, iman} = play(?IMAN),
+    {write, usbsts, _} = play(ok),
+    {write, iman, _} = play(ok),
+    {Caller, {complete, Ring}} = next_call(),
+    ok = erx_usb_bus_link:request(Controller, {port, root, 1, get_status}),
+    Caller ! {erx_device, {ok, [{port, 1}]}},
+    ?assertEqual({complete, Ring}, play({ok, []})),
+    ?assertEqual({ack, ?IRQ_LINE}, play(ok)),
+    ?assertEqual({read, {portsc, 0}}, play(16#20201)),
+    ?assertEqual({port_event, 1}, bus_answer()),
+    ?assertMatch({port_done, root, 1, {ok, _Words, _Speed}}, bus_answer()),
+    stop(Controller).
+
 %% A device is enabled and addressed, a function's control transfer on its EP0 is posted
-%% and answered with its bytes, and its detach disables the slot, after which its pipe is
+%% and answered with its bytes, a reset of its idle EP0 asks the NIF for the queue's state
+%% and needs no step, and its detach disables the slot, after which its pipe is
 %% answered gone without a post.
 a_device_is_addressed_used_and_detached_test() ->
     Controller = running(),
@@ -70,6 +90,9 @@ a_device_is_addressed_used_and_detached_test() ->
     {post, {?SLOT, 1}, Tag, {control, ?GET_STATUS, {in, 2}}} = play(ok),
     interrupt(Controller, [{Tag, ?SUCCESS, <<1, 0>>}]),
     ?assertEqual({ok, <<1, 0>>}, receive {function, Answer} -> Answer after 2000 -> error(no_answer) end),
+    ok = erx_usb_bus_link:request(Controller, {reset_pipe, ?REF, 0, 0}),
+    ?assertEqual({queue_state, {?SLOT, 1}}, play(idle)),
+    ?assertEqual({pipe_reset, ?REF, 0, 0, ok}, bus_answer()),
     ok = erx_usb_bus_link:request(Controller, {detach, ?REF}),
     {post, command, Disable, {disable_slot, ?SLOT}} = play(ok),
     interrupt(Controller, [{Disable, ?SUCCESS, none}]),
@@ -104,8 +127,9 @@ a_failure_ends_the_process_with_its_reason_test() ->
     ?assertEqual(none, receive {erx_device, _, Call} -> Call after 100 -> none end).
 
 %% A controller started over a device the test plays, unlinked so that its failure does
-%% not end the test.
+%% not end the test, after what an earlier case's controller left in the mailbox.
 start() ->
+    flush(),
     {ok, Controller} = erx_xhci:start_link(#{stand_in => self()}),
     unlink(Controller),
     Controller.
@@ -116,6 +140,9 @@ stop(Controller) ->
     receive {'DOWN', Monitor, process, Controller, _} -> ok end.
 
 device() -> {stand_in, self()}.
+
+flush() ->
+    receive _ -> flush() after 0 -> ok end.
 
 %% A started controller, its bus attached and its root ports answered.
 running() ->
@@ -155,10 +182,14 @@ interrupt(Controller, Events) ->
 
 %% The controller's next NIF call, answered Answer.
 play(Answer) ->
+    {Caller, Call} = next_call(),
+    Caller ! {erx_device, Answer},
+    Call.
+
+%% The controller's next NIF call and the process waiting for its answer.
+next_call() ->
     receive
-        {erx_device, Caller, Call} ->
-            Caller ! {erx_device, Answer},
-            Call
+        {erx_device, Caller, Call} -> {Caller, Call}
     after 2000 ->
         error(no_call)
     end.

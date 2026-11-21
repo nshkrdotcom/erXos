@@ -7,10 +7,11 @@
 %% a hub function's status pipe and the hub status decoders; erx_usb_bot_core, the Bulk-Only
 %% transport engine of a mass-storage function; erx_usb_bus_core, the bus process's topology of
 %% hubs, ports and devices; and erx_xhci_core, the controller process's commands, pipes and
-%% transfers, and erx_xhci, the controller process over it; erx_usb_setup, a control request's setup packet. Beside them run the places,
+%% transfers; erx_usb_setup, a control request's setup packet. Beside them run the places,
 %% erx_usb_places_sup: each input number's stream, erx_usb_input_stream, and the input tree,
 %% erx_usb_input_tree, that serves them. Around the bus core run a controller's supervisor,
-%% erx_usb_sup, over its places and its bus group, erx_usb_bus_sup; the bus process, erx_usb_bus,
+%% erx_usb_sup, over its places and its bus group, erx_usb_bus_sup; the controller process, erx_xhci;
+%% the bus process, erx_usb_bus,
 %% which speaks to its controller through erx_usb_bus_link; and the functions, the hub function,
 %% erx_usb_hub, and the HID function, erx_usb_hid, whose transfers go through erx_usb_pipe.
 {application, erx_usb,
