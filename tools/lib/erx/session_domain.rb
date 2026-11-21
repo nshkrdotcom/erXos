@@ -66,12 +66,21 @@ module Erx
     ESC = ProductionImage::Run::ESC
     MENU_LEFT = ProductionImage::Run::MENU_LEFT
     ERL = ProductionImage::Run::ERL_LINE
-    # The domain id root's first session takes: the development manifest configures six
-    # domains, display, network, pcie, storage, usb and web, which take the domain service's
-    # first ids, 5 to 10, in name order at boot, so the login's is 11; each later start of a
-    # session or of a configured domain takes the next, a refused one too, since admission
-    # spends the id.
-    FIRST_SESSION = 11
+    # The domain ids root's sessions take. The development manifest configures six domains,
+    # display, network, pcie, storage, usb and web, and the console's login starts root's
+    # first session as the domain service starts; those seven starts take the ids above the
+    # system domain's, 5 to 11, so root's next session takes 12 (NEXT_SESSION), and each
+    # later start of a session or of a configured domain takes the next, a refused one too,
+    # since admission spends the id.
+    #
+    # Of the seven, the five configured rows holding no pci device start first, at 5 to 9,
+    # and the login's session takes 10. The boot holds usb, whose xHCI is a pci device,
+    # until the device service has answered the PCIe domain's report (docs/design-pcie.md,
+    # "The hold at boot"), which waits for that domain's runtime to boot and enumerate, so
+    # usb takes 11, after the login's session.
+    BOOT_STARTS = 7
+    FIRST_SESSION = 10
+    NEXT_SESSION = MediumBoot::CONFIGURED_ID + BOOT_STARTS
     # A domain id no domain takes in a boot of this cell, which starts far fewer: a path
     # that names it answers `scope` at every scope, root's `all` among them, as a domain
     # outside the scope does (docs/design-live.md, "The /proc tree").
@@ -158,7 +167,7 @@ module Erx
     # that reaches the dead grant and answers eio.
     # Typed at the system domain's Erlang shell: the record of root_1's init process, the
     # first process of every runtime, in the session's second domain (relogin-listed).
-    SESSION_PROCESS = "erx:i([processes, {pid, #{FIRST_SESSION + 1}, 0, 0}]).\r".freeze
+    SESSION_PROCESS = "erx:i([processes, {pid, #{NEXT_SESSION}, 0, 0}]).\r".freeze
     # erx:i/1's reductions line, whose value only the session's runtime reports; a
     # missed or refused answer shows a status in its place.
     SESSION_REDUCTIONS = /\A +reductions +runtime +[0-9]+\r*\n\z/n
@@ -396,7 +405,7 @@ module Erx
        { name: 'root_1-ended', pattern: line('session root_1 ended: {halt,3}'), seconds: 60 }.freeze,
        session_shell('relogin-shell', CTRL_G),
        { name: 'relogin-menu', pattern: CTRL_G_MENU, seconds: 30 }.freeze,
-       { name: 'relogin-listed', pattern: menu_entry(1, 'root_1', FIRST_SESSION + 1), seconds: 30 }.freeze,
+       { name: 'relogin-listed', pattern: menu_entry(1, 'root_1', NEXT_SESSION), seconds: 30 }.freeze,
        { name: 'start-entry', pattern: menu_line('n', 'start a session'), seconds: 30, type: 'n' }.freeze,
        { name: 'start-refused', pattern: /\Aerx_console: cannot start a session: /n, seconds: 60, type: 's' }.freeze,
        { name: 'system-shell', pattern: MENU_LEFT, seconds: 30, type: COUNT_SERVICE }.freeze,
@@ -411,7 +420,9 @@ module Erx
        { name: 'session-killed', pattern: answer('true'), seconds: 60 }.freeze,
        session_shell('killed-relogin-shell', CTRL_G),
        { name: 'killed-relogin-menu', pattern: CTRL_G_MENU, seconds: 30 }.freeze,
-       { name: 'killed-relogin-listed', pattern: menu_entry(1, 'root_1', FIRST_SESSION + 4), seconds: 30,
+       # After the relogin's id, the refused start (start-refused) and the storage domain's
+       # restart (storage-regranted) each spend one, so the relogin after the kill is the third.
+       { name: 'killed-relogin-listed', pattern: menu_entry(1, 'root_1', NEXT_SESSION + 3), seconds: 30,
          type: ESC }.freeze,
        { name: 'killed-relogin-left', pattern: MENU_LEFT, seconds: 30, type: ERL }.freeze,
        shell.merge(name: 'relogin-erlang-shell', type: with_data(READ_ACROSS)).freeze,
