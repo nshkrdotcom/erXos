@@ -2,8 +2,8 @@
 %% SPDX-License-Identifier: BSD-2-Clause
 
 %% The device records a domain's ERTS finds among its boot arguments (docs/design-fiasco.md,
-%% "Device records"), one per device the domain drives, in one of two forms, each with its
-%% own word so neither is told from the other by counting:
+%% "Device records"), one per device the domain drives, in one of three forms, each with its
+%% own word so none is told from another by counting:
 %%
 %% - `-erx_record given ROLE PERIPHERAL PATH WINDOW_H OFFSET SIZE LINE_H MARK MEM_H MEM_SIZE CLOCK COHERENT MAC
 %%   INDEX`,
@@ -16,29 +16,38 @@
 %% - `-erx_record device ROLE PERIPHERAL PATH BASE SIZE LINE MARK CLOCK INDEX`, the system domain's physical record
 %%   of its host link's UART or its line's, which do no DMA, built by
 %%   liberx/backend/core/boot_manifest.c from the system manifest; INDEX is the device's
-%%   row in the manifest's device table, which a line grant's uart names.
+%%   row in the manifest's device table, which a line grant's uart names;
+%% - `-erx_record function ROLE PERIPHERAL BRIDGE BUS DEVICE FUNCTION LINE_H MARK MEM_H MEM_SIZE COHERENT
+%%   ROUTE ADDRESS DATA TABLE_BAR TABLE_OFFSET TABLE_ENTRIES`, then six `WINDOW_H OFFSET SIZE_LOG2`
+%%   triples, a given PCIe function (docs/design-pcie.md, "The catalogue and gives"), written
+%%   by erx_boot_function_words: its place, the handles of its line and memory objects as a
+%%   given device's, its interrupt route (none, msi, msix or intx), an MSI-X route's message
+%%   and table, 0 for another route, and each BAR's window handle, its offset there and its
+%%   hardware size, 2 to SIZE_LOG2, a BAR not placed with the null handle. Its spec names it by
+%%   its place, not a PATH, and its window is its first placed BAR's.
 %%
-%% A domain that holds a framebuffer finds a third form, `-erx_record framebuffer WINDOW_H OFFSET
+%% A domain that holds a framebuffer finds a fourth form, `-erx_record framebuffer WINDOW_H OFFSET
 %% SIZE WIDTH HEIGHT STRIDE FORMAT`, read by framebuffers/0 (docs/design-device-tree.md,
 %% "Facts into records"): the handle of the object over the framebuffer's pages, the
 %% framebuffer's offset in them and its bytes, its geometry and its format's name, all from
 %% the firmware's device tree. The root writes it only for a framebuffer the tree placed in
 %% its row's window, so a domain whose firmware set none up finds `{ok, []}`. The storage
-%% domain that serves `system` finds a fourth, `-erx_record system_image`, read by
+%% domain that serves `system` finds a fifth, `-erx_record system_image`, read by
 %% system_image/0: the layout and root hash of the booted slot's system partition, and
 %% whether the domain holds the manifest's record_volume window too (record_volume/1).
 %%
-%% In both device forms PATH is the device's device-tree path from its manifest row, its name
+%% In the given and device forms PATH is the device's device-tree path from its manifest row, its name
 %% (docs/design-system.md, "Devices"): a node path of the characters a device tree allows in
 %% names, `/` first, of at most ERX_DEVICE_PATH_MAX bytes, as the writer
 %% (erx_boot_device_path_valid) has it; any other word refuses the record, so a name a driver
 %% shows holds no control or escape, and it reaches a display only through that sink's
 %% escaping function.
 %%
-%% In both device forms CLOCK is the device's clock in hertz from its manifest row, 0 for a device
-%% whose driver reads none, so a driver reads its clock the same way whichever form it gets.
-%% MARK is `shared` when another device of the unit names the line and `direct` otherwise,
-%% as the record's writer found it (docs/design-shared-devices.md, "Lines inside a domain"),
+%% In the given and device forms CLOCK is the device's clock in hertz from its manifest row, 0
+%% for a device whose driver reads none, so a driver reads its clock the same way whichever
+%% form it gets. In every device form MARK is `shared` when another device of the unit
+%% names the line and `direct` otherwise, as the record's writer found it
+%% (docs/design-shared-devices.md, "Lines inside a domain"),
 %% and a shared line reaches erx_device:open/1 as `{shared, Line}`; any other word refuses
 %% the record, so no line is read as one mark or the other by default.
 %%
@@ -71,7 +80,7 @@
                   lines := [{object, non_neg_integer()} | {shared, {object, non_neg_integer()}}],
                   memory => {object, non_neg_integer(), pos_integer()}, coherent := boolean(),
                   msix => #{address := non_neg_integer(), data := non_neg_integer(), bar := 0..5,
-                            offset := non_neg_integer(), entries := 0..2048}}.
+                            offset := non_neg_integer(), entries := 1..2048}}.
 
 %% A framebuffer record as its display driver takes it: the window object and the
 %% framebuffer's offset and bytes in it, as a given record's window, and its geometry.
@@ -272,33 +281,33 @@ spec(Peripheral, {"device", [Path, Base, Size, Line, Mark, Clock, Index | _]}) -
 spec(_Peripheral, {"device", _}) ->
     bad("a device record has fewer than a path, five numbers and a line mark");
 %% A given PCIe function's record (docs/design-pcie.md, "The catalogue and gives"), written by
-%% erx_boot_function_words: its place, its line, its memory, its coherence, its route with an
-%% MSI-X route's message and table, then each of the six BARs' WINDOW_H OFFSET SIZE_LOG2, a BAR
-%% not placed with the null handle. Its window is its first placed BAR's, BAR 0 for every
-%% function erXos drives; `place` is what the device service's `pci` facet names it by, and
-%% `msix` the message and table the NIF writes after the driver's reset.
+%% erx_boot_function_words. Its words are checked in order, each step's refusal naming what
+%% failed: the numbers within their fields, the line mark, the coherence, the route, the six
+%% BARs and, for an MSI-X route, its table. `place` is what the device service's `pci` facet
+%% names the function by; the window is its first placed BAR's, BAR 0 for every function
+%% erXos drives; and `msix`, present only for an MSI-X route, is the route's message and its
+%% table's BAR, offset and entries, the table checked to lie inside the window's BAR, for
+%% the device NIF to write the table from after the driver's reset (docs/design-pcie.md).
 spec(Peripheral, {"function", [Bridge, Bus, Device, Function, Line, Mark, Memory, MemorySize, Coherent, Route,
-                               Address, Data, TableBar, TableOffset, TableSize | Bars]}) when length(Bars) >= 18 ->
-    case {numbers([Bridge, Bus, Device, Function, Line, Memory, MemorySize, Address, Data, TableBar, TableOffset,
-                   TableSize]), mark(Mark), coherent(Coherent), route(Route), function_window(lists:sublist(Bars, 18))} of
-        {{ok, [B, Bu, D, F, L, M, MS, A, Da, TB, TO, TS]}, {ok, Sharing}, {ok, Co}, {ok, R}, {ok, Window}}
-          when B =< 16#ffffffff, Bu =< 255, D =< 31, F =< 7, Da =< 16#ffffffff, TB =< 5, TO =< 16#ffffffff,
-               TS =< 2048 ->
-            Spec = #{peripheral => Peripheral, place => {B, Bu, D, F}, window => Window,
-                     lines => given_lines(Sharing, L), coherent => Co},
-            Table = #{address => A, data => Da, bar => TB, offset => TO, entries => TS},
-            {ok, with_msix(with_memory(Spec, M, MS), R, Table)};
-        {{ok, _}, {ok, _}, {ok, _}, {ok, _}, error} ->
-            bad("a function record places no memory BAR");
-        {{ok, _}, {ok, _}, {ok, _}, error, _} ->
-            bad("a function record's route is not none, msi, msix or intx");
-        {{ok, _}, error, _, _, _} ->
-            bad("a function record's line mark is neither direct nor shared");
-        {{ok, _}, {ok, _}, error, _, _} ->
-            bad("a function record's coherence is neither 0 nor 1");
-        _ ->
-            bad("a function record's place, handle, size, message or table is not a decimal number "
-                "of its field's width")
+                               Address, Data, TableBar, TableOffset, TableSize | Rest]}) when length(Rest) >= 18 ->
+    maybe
+        {ok, [BridgeN, BusN, DeviceN, FunctionN, LineH, MemoryH, Bytes, AddressN, DataN, TableBarN, TableOffsetN,
+              Entries]} ?=
+            need(all([number(Bridge, 32), number(Bus, 8), at_most(Device, ?ERX_PCIE_DEVICE_MAX),
+                      at_most(Function, ?ERX_PCIE_FUNCTION_MAX), number(Line, 64), number(Memory, 64),
+                      number(MemorySize, 64), number(Address, 64), number(Data, 32), number(TableBar, 8),
+                      number(TableOffset, 32), number(TableSize, 16)]),
+                 "a function record's place, handle, size, message or table is not a decimal number "
+                 "of its field's width"),
+        {ok, Sharing} ?= need(mark(Mark), "a function record's line mark is neither direct nor shared"),
+        {ok, Lines} ?= function_lines(Sharing, LineH),
+        {ok, Co} ?= need(coherent(Coherent), "a function record's coherence is neither 0 nor 1"),
+        {ok, R} ?= need(route(Route), "a function record's route is not none, msi, msix or intx"),
+        {ok, Bar, Window} ?= function_window(lists:sublist(Rest, 18)),
+        Spec = with_memory(#{peripheral => Peripheral, place => {BridgeN, BusN, DeviceN, FunctionN}, window => Window,
+                             lines => Lines, coherent => Co}, MemoryH, Bytes),
+        with_msix(Spec, R, Bar, Window, #{address => AddressN, data => DataN, bar => TableBarN, offset => TableOffsetN,
+                                          entries => Entries})
     end;
 spec(_Peripheral, {"function", _}) ->
     bad("a function record has fewer than its place, a line mark, a route and six BARs").
@@ -309,25 +318,49 @@ route("msix") -> {ok, msix};
 route("intx") -> {ok, intx};
 route(_Word) -> error.
 
-%% The first placed BAR's window over its hardware size, 2 to its SIZE_LOG2, from the six
-%% BARs' words, or error when a word is not a number or the record places no BAR. Every word
-%% is read before a window is chosen.
+%% As a given record's lines: none for the null handle, a function that raises no line, which
+%% no mark calls shared.
+function_lines(shared, ?ERX_CAP_NULL) -> bad("a function record marks no line shared");
+function_lines(Sharing, Line) -> {ok, given_lines(Sharing, Line)}.
+
+%% The first placed BAR's index and its window over its hardware size, 2 to its SIZE_LOG2,
+%% from the six BARs' WINDOW_H OFFSET SIZE_LOG2 words, a BAR not placed with the null handle.
+%% Every word must be a number and every placed BAR's size one a placed memory BAR has, at
+%% least the 16 bytes a memory BAR decodes and at most pcie_bar_size_log2_max, or the record
+%% is refused, so no later BAR's window stands in for one the writer got wrong.
 function_window(Words) ->
     case numbers(Words) of
-        {ok, Numbers} ->
-            case [{object, W, O, 1 bsl S} || {W, O, S} <- triples(Numbers), W =/= ?ERX_CAP_NULL, S >= 4, S =< 63] of
-                [Window | _] -> {ok, Window};
-                [] -> error
-            end;
         error ->
-            error
+            bad("a function record's BAR handle, offset or size is not a decimal number of 64 bits");
+        {ok, Numbers} ->
+            Placed = [{Bar, W, O, S} || {Bar, {W, O, S}} <- lists:enumerate(0, triples(Numbers)), W =/= ?ERX_CAP_NULL],
+            Sized = lists:all(fun({_, _, _, S}) -> S >= 4 andalso S =< ?ERX_PCIE_BAR_SIZE_LOG2_MAX end, Placed),
+            case {Placed, Sized} of
+                {_, false} ->
+                    bad("a function record places a BAR whose size is not 16 bytes to 2 to the "
+                        ++ integer_to_list(?ERX_PCIE_BAR_SIZE_LOG2_MAX));
+                {[], true} ->
+                    bad("a function record places no memory BAR");
+                {[{Bar, W, O, S} | _], true} ->
+                    {ok, Bar, {object, W, O, 1 bsl S}}
+            end
     end.
 
 triples([W, O, S | Rest]) -> [{W, O, S} | triples(Rest)];
 triples([]) -> [].
 
-with_msix(Spec, msix, Table) -> Spec#{msix => Table};
-with_msix(Spec, _Route, _Table) -> Spec.
+%% An MSI-X route's table lies inside the window's BAR: that BAR, at least one entry and at
+%% most the count a table's size field spells, its pcie_msix_entry_size-byte entries ending
+%% within the BAR. Any other route carries no table.
+with_msix(Spec, msix, Bar, {object, _, _, Size}, #{bar := Bar, offset := Offset, entries := Entries} = Table)
+  when Entries >= 1, Entries =< ?ERX_PCIE_MSIX_CONTROL_TABLE_SIZE + 1,
+       Offset + Entries * ?ERX_PCIE_MSIX_ENTRY_SIZE =< Size ->
+    {ok, Spec#{msix => Table}};
+with_msix(_Spec, msix, _Bar, _Window, _Table) ->
+    bad("a function record's MSI-X table is not 1 to " ++ integer_to_list(?ERX_PCIE_MSIX_CONTROL_TABLE_SIZE + 1)
+        ++ " entries inside its window's BAR");
+with_msix(Spec, _Route, _Bar, _Window, _Table) ->
+    {ok, Spec}.
 
 %% A device record's PATH as erx_boot_device_path_valid admits it: `/` and the characters a
 %% device tree allows in names, at most ERX_DEVICE_PATH_MAX bytes, so with its NUL it fits
@@ -372,11 +405,18 @@ bad(Text) ->
     {error, {bad_device_record, Text}}.
 
 numbers(Words) ->
-    Parsed = [number(Word, 64) || Word <- Words],
+    all([number(Word, 64) || Word <- Words]).
+
+%% The values of readers' results when every one is {ok, Value}, else error.
+all(Parsed) ->
     case lists:all(fun(Result) -> Result =/= error end, Parsed) of
         true -> {ok, [Value || {ok, Value} <- Parsed]};
         false -> error
     end.
+
+%% A reader's {ok, Value} as it is, or its error as the refusal Text.
+need({ok, _} = Parsed, _Text) -> Parsed;
+need(error, Text) -> bad(Text).
 
 %% Lowercase hex digits spelling MinBytes to MaxBytes bytes, two digits a byte, as those
 %% bytes. The length is checked before the digits, so no word longer than the bound is decoded.
@@ -391,10 +431,13 @@ hex(Word, MinBytes, MaxBytes) ->
             error
     end.
 
+%% A number of a field Bits wide.
+number(Word, Bits) ->
+    at_most(Word, (1 bsl Bits) - 1).
+
 %% Digits only, at most as many as the field's largest value has, so no word builds a large
 %% integer before the range check.
-number(Word, Bits) ->
-    Max = (1 bsl Bits) - 1,
+at_most(Word, Max) ->
     case Word =/= [] andalso length(Word) =< length(integer_to_list(Max))
         andalso lists:all(fun(C) -> C >= $0 andalso C =< $9 end, Word) of
         true ->

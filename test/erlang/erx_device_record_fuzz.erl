@@ -1,9 +1,11 @@
 %% Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
 %% SPDX-License-Identifier: BSD-2-Clause
 
-%% Random argument lists through erx_device_record:find/3, framebuffers/1 and system_image/1.
+%% Random argument lists through erx_device_record:find/3, framebuffers/1 and system_image/1,
+%% find/3 asked both for a given or device record and for a PCIe function record.
 %% Whatever arrives, each returns {ok, Value} or {error, {bad_device_record, Text}}, and what it
-%% says agrees with reference/1, framebuffer_reference/1 or system_image_reference/1, readers
+%% says agrees with reference/1, function_reference/1, framebuffer_reference/1 or
+%% system_image_reference/1, readers
 %% that share no code with it:
 %% they find records by filtering and numbers by a regular expression, and take a format's
 %% bits from a table of their own. The words come from a small alphabet of record heads,
@@ -24,25 +26,28 @@
 -define(FORMATS, [{"a1r5g5b5", 16}, {"a2r10g10b10", 32}, {"a8b8g8r8", 32}, {"a8r8g8b8", 32}, {"r5g6b5", 16},
                   {"r5g5b5a1", 16}, {"r8g8b8", 24}, {"x1r5g5b5", 16}, {"x2r10g10b10", 32}, {"x8r8g8b8", 32},
                   {"x8b8g8r8", 32}]).
-%% The fewest rounds that must find a device record, and a framebuffer record, so an edit
-%% to the generator cannot leave either accepting path untried.
+%% The fewest rounds that must find each form, a device record, a function record, a
+%% framebuffer record and a system image, so an edit to the generator cannot leave any
+%% accepting path untried.
 -define(MIN_ACCEPTED, ?ROUNDS div 100).
 
 run([Seed]) ->
     rand:seed(exsss, {20, 26, list_to_integer(Seed)}),
     Verdicts = [round_of(arguments()) || _ <- lists:seq(1, ?ROUNDS)],
-    Accepted = length([ok || {accepted, _, _} <- Verdicts]),
-    Framebuffers = length([ok || {_, accepted, _} <- Verdicts]),
-    Images = length([ok || {_, _, accepted} <- Verdicts]),
-    case Accepted >= ?MIN_ACCEPTED andalso Framebuffers >= ?MIN_ACCEPTED andalso Images >= ?MIN_ACCEPTED of
-        true -> io:format("fuzz: ~p rounds ok, ~p accepted, ~p framebuffers accepted, ~p system images accepted~n",
-                          [?ROUNDS, Accepted, Framebuffers, Images]);
-        false -> error({too_few_accepted, Accepted, Framebuffers, Images})
+    Accepted = length([ok || {accepted, _, _, _} <- Verdicts]),
+    Functions = length([ok || {_, accepted, _, _} <- Verdicts]),
+    Framebuffers = length([ok || {_, _, accepted, _} <- Verdicts]),
+    Images = length([ok || {_, _, _, accepted} <- Verdicts]),
+    case lists:min([Accepted, Functions, Framebuffers, Images]) >= ?MIN_ACCEPTED of
+        true -> io:format("fuzz: ~p rounds ok, ~p accepted, ~p functions accepted, ~p framebuffers accepted, "
+                          "~p system images accepted~n", [?ROUNDS, Accepted, Functions, Framebuffers, Images]);
+        false -> error({too_few_accepted, Accepted, Functions, Framebuffers, Images})
     end.
 
-%% The verdicts of the three readers on one argument list, each accepted or refused.
+%% The verdicts of the readers on one argument list, each accepted or refused.
 round_of(Arguments) ->
-    {devices_round(Arguments), framebuffers_round(Arguments), system_image_round(Arguments)}.
+    {devices_round(Arguments), functions_round(Arguments), framebuffers_round(Arguments),
+     system_image_round(Arguments)}.
 
 devices_round(Arguments) ->
     Said = erx_device_record:find(block, virtio_mmio, Arguments),
@@ -56,6 +61,75 @@ devices_round(Arguments) ->
         true -> refused;
         false -> error({disagrees_with_reference, Arguments, Said})
     end.
+
+functions_round(Arguments) ->
+    Said = erx_device_record:find(usb, xhci, Arguments),
+    case Said of
+        {ok, Specs} when is_list(Specs) -> ok;
+        {error, {bad_device_record, Text}} when is_list(Text) -> ok
+    end,
+    case verdict(Said) =:= function_reference(Arguments) of
+        true when Said =:= {ok, []} -> refused;
+        true when element(1, Said) =:= ok -> accepted;
+        true -> refused;
+        false -> error({disagrees_with_reference, Arguments, Said})
+    end.
+
+%% The function records of usb and xhci: fifteen words, then six BARs of three, every one a
+%% decimal within its field, the place's device and function within pcie_device_max and
+%% pcie_function_max, a known mark, coherence and route, and a null line never marked
+%% shared. At least one BAR is placed, every placed BAR's SIZE_LOG2 is 4 to
+%% pcie_bar_size_log2_max, and the first is the window; an MSI-X route's table is in that
+%% BAR, of 1 to 2048 entries of 16 bytes ending inside it.
+function_reference(Arguments) ->
+    Specs = [function_spec(Words) || ["function", "usb", "xhci" | Words] <- Arguments],
+    case lists:all(fun is_map/1, Specs) of
+        true -> {ok, Specs};
+        false -> {error, bad_device_record}
+    end.
+
+function_spec([Bridge, Bus, Device, Function, Line, Mark, Memory, Bytes, Coherent, Route, Address, Data, TableBar,
+               TableOffset, Entries | Rest]) when length(Rest) >= 18 ->
+    Numbers = [decimal(Word, Max) || {Word, Max} <- [{Bridge, ?U32}, {Bus, 255}, {Device, ?ERX_PCIE_DEVICE_MAX},
+                                                    {Function, ?ERX_PCIE_FUNCTION_MAX}, {Line, ?U64},
+                                                    {Memory, ?U64}, {Bytes, ?U64}, {Address, ?U64}, {Data, ?U32},
+                                                    {TableBar, 255}, {TableOffset, ?U32}, {Entries, 16#ffff}]]
+        ++ [decimal(Word, ?U64) || Word <- lists:sublist(Rest, 18)],
+    Known = lists:member(Mark, ["direct", "shared"]) andalso lists:member(Coherent, ["0", "1"])
+        andalso lists:member(Route, ["none", "msi", "msix", "intx"]),
+    case lists:all(fun is_integer/1, Numbers) andalso Known of
+        true -> function_map(Numbers, Mark, Coherent, Route);
+        false -> bad
+    end;
+function_spec(_Words) ->
+    bad.
+
+function_map([B, Bu, D, F, L, M, Bytes, A, Da, TableBar, TableOffset, Entries | BarWords], Mark, Coherent, Route) ->
+    Placed = [{Bar, W, O, S} || {Bar, [W, O, S]} <- lists:zip(lists:seq(0, 5), threes(BarWords)), W =/= ?ERX_CAP_NULL],
+    Sized = lists:all(fun({_, _, _, S}) -> S >= 4 andalso S =< ?ERX_PCIE_BAR_SIZE_LOG2_MAX end, Placed),
+    case Placed of
+        [{Bar, W, O, S} | _] when Sized, not (L =:= ?ERX_CAP_NULL andalso Mark =:= "shared") ->
+            Table = TableBar =:= Bar andalso Entries >= 1 andalso Entries =< 2048
+                andalso TableOffset + 16 * Entries =< 1 bsl S,
+            Spec = #{peripheral => xhci, place => {B, Bu, D, F}, window => {object, W, O, 1 bsl S},
+                     lines => [marked({object, L}, Mark) || L =/= ?ERX_CAP_NULL], coherent => Coherent =:= "1"},
+            WithMemory = case Bytes of
+                             0 -> Spec;
+                             _ -> Spec#{memory => {object, M, Bytes}}
+                         end,
+            case Route of
+                "msix" when Table ->
+                    WithMemory#{msix => #{address => A, data => Da, bar => TableBar, offset => TableOffset,
+                                          entries => Entries}};
+                "msix" -> bad;
+                _ -> WithMemory
+            end;
+        _ ->
+            bad
+    end.
+
+threes([A, B, C | Rest]) -> [[A, B, C] | threes(Rest)];
+threes([]) -> [].
 
 framebuffers_round(Arguments) ->
     Said = erx_device_record:framebuffers(Arguments),
@@ -236,7 +310,8 @@ entry() ->
     %% record of a given's ten numbers is still accepted often.
     Number = Pick([fun number/0, fun() -> Pick(["0", "1"]) end]),
     Numbers = fun(N) -> [Number() || _ <- lists:seq(1, N)] end,
-    case rand:uniform(6) of
+    case rand:uniform(7) of
+        7 -> function_entry(Words);
         6 -> system_image_entry();
         5 -> framebuffer_entry(Words);
         1 -> [Form, "block", "virtio_mmio" | Words];
@@ -294,6 +369,39 @@ system_image_entry() ->
         2 -> ["system_image" | Fields ++ [word()]];
         3 -> ["system_image" | Fields ++ ["record_volume"]];
         _ -> ["system_image" | Fields]
+    end.
+
+%% A function record of usb and xhci, most fields well formed so the accepting path is
+%% reached often, each otherwise at or just past its bound: a place one past its largest or
+%% with a leading zero, a null line marked shared, a route the writer never spells, the
+%% first placed BAR not BAR 0, a placed BAR under 16 bytes or over 2 to
+%% pcie_bar_size_log2_max, or none placed, an MSI-X table in another BAR, of no entries or
+%% 2049, or ending a byte past its BAR; some records too short, some run on into other words.
+function_entry(Words) ->
+    Pick = fun(List) -> lists:nth(rand:uniform(length(List)), List) end,
+    Often = fun(Good, Bad) -> case rand:uniform(12) of 1 -> Pick(Bad); _ -> Good end end,
+    Null = integer_to_list(?ERX_CAP_NULL),
+    Log2 = Often(Pick([4, 14, ?ERX_PCIE_BAR_SIZE_LOG2_MAX]), [3, ?ERX_PCIE_BAR_SIZE_LOG2_MAX + 1]),
+    Entries = Often(Pick([1, 16, 2048]), [0, 2049]),
+    Offset = Often(Pick([0, (1 bsl Log2) - 16 * Entries]), [(1 bsl Log2) - 16 * Entries + 1]),
+    First = Often(0, [1, 5, none]),
+    Table = Often(case First of none -> 0; _ -> First end, [1, 6]),
+    Bar = fun(At) when At =:= First -> [Pick(["11", number()]), Pick(["0", number()]), integer_to_list(Log2)];
+             (At) when First =:= none; At < First -> [Null, Pick(["0", "4096"]), Pick(["0", "14", "40"])];
+             (_At) -> Pick([[Null, "0", "0"], ["12", "0", Often(Pick(["12", "20"]), ["3", "32", "x"])]])
+          end,
+    Record = ["function", "usb", "xhci", Often(Pick(["0", "4294967295"]), [number()]),
+              Often(Pick(["0", "255"]), ["256", "0255"]),
+              Often(Pick(["0", "31"]), ["32", "031"]), Often(Pick(["0", "7"]), ["8"]), Pick(["9", Null]),
+              Often(Pick(["direct", "shared"]), [mark()]), Pick(["10", number()]), Pick(["0", "65536", number()]),
+              Often(Pick(["0", "1"]), ["2", ""]), Often(Pick(["none", "msi", "msix", "msix", "intx"]), ["MSIX", ""]),
+              number(), Often(Pick(["17", "4294967295"]), [number()]), integer_to_list(Table), integer_to_list(Offset),
+              integer_to_list(Entries)
+              | lists:append([Bar(At) || At <- lists:seq(0, 5)])],
+    case rand:uniform(8) of
+        1 -> lists:sublist(Record, rand:uniform(length(Record)) - 1);
+        2 -> Record ++ Words;
+        _ -> Record
     end.
 
 mark() ->

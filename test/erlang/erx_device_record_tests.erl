@@ -334,3 +334,65 @@ function_record_route_and_bars_test() ->
                  erx_device_record:find(usb, xhci, [function_words("msiX", "11")])),
     ?assertMatch({error, {bad_device_record, [_ | _]}},
                  erx_device_record:find(usb, xhci, [lists:sublist(function_words("msix", "11"), 20)])).
+
+%% function_words/2 with each {Position, Word} of Edits put in place, the form word at 1: the
+%% place at 4 to 7, the line and its mark at 8 and 9, the route at 13, the table's BAR,
+%% offset and entries at 16 to 18, and BAR N's window, offset and SIZE_LOG2 at 19 + 3N on.
+function_edited(Route, Edits) ->
+    lists:foldl(fun({At, Word}, Words) -> setelement_list(At, Words, Word) end, function_words(Route, "11"), Edits).
+
+refusal(Words) ->
+    {error, {bad_device_record, Text}} = erx_device_record:find(usb, xhci, [Words]),
+    Text.
+
+%% A placed BAR whose size no placed memory BAR has, under 16 bytes or over
+%% pcie_bar_size_log2_max, refuses the record, whether or not another BAR is placed after it;
+%% no later BAR's window is taken in its place.
+function_record_placed_bar_size_test() ->
+    Text = "a function record places a BAR whose size is not 16 bytes to 2 to the "
+        ++ integer_to_list(?ERX_PCIE_BAR_SIZE_LOG2_MAX),
+    Bar1 = [{22, "12"}, {23, "0"}, {24, "14"}],
+    ?assertEqual(Text, refusal(function_edited("intx", [{21, "3"} | Bar1]))),
+    ?assertEqual(Text, refusal(function_edited("intx", [{21, integer_to_list(?ERX_PCIE_BAR_SIZE_LOG2_MAX + 1)}]))),
+    ?assertEqual(Text, refusal(function_edited("intx", [{24, "3"} | lists:droplast(Bar1)]))),
+    ?assertMatch({ok, [#{window := {object, 11, 0, 16}}]},
+                 erx_device_record:find(usb, xhci, [function_edited("intx", [{21, "4"}])])).
+
+%% An MSI-X route's table is in the window's BAR, has 1 to 2048 entries of 16 bytes and ends
+%% within that BAR; any other is refused. Another route's table words are not read.
+function_record_msix_table_inside_window_bar_test() ->
+    Text = "a function record's MSI-X table is not 1 to 2048 entries inside its window's BAR",
+    Bar1 = [{22, "12"}, {23, "0"}, {24, "14"}],
+    ?assertEqual(Text, refusal(function_edited("msix", [{16, "1"} | Bar1]))),
+    ?assertEqual(Text, refusal(function_edited("msix", [{18, "0"}]))),
+    ?assertEqual(Text, refusal(function_edited("msix", [{18, "2049"}, {17, "0"}, {21, "16"}]))),
+    ?assertEqual(Text, refusal(function_edited("msix", [{17, "16129"}]))),
+    ?assertMatch({ok, [#{msix := #{offset := 16128, entries := 16}}]},
+                 erx_device_record:find(usb, xhci, [function_edited("msix", [{17, "16128"}])])),
+    ?assertMatch({ok, [#{msix := #{entries := 2048}}]},
+                 erx_device_record:find(usb, xhci, [function_edited("msix", [{18, "2048"}, {17, "0"}, {21, "15"}])])),
+    ?assertMatch({ok, [Spec]} when not is_map_key(msix, Spec),
+                 erx_device_record:find(usb, xhci, [function_edited("msi", [{16, "1"}, {18, "0"}])])).
+
+%% The null line handle marked shared is refused, as in a given record.
+function_record_null_line_marked_shared_test() ->
+    ?assertEqual("a function record marks no line shared",
+                 refusal(function_edited("intx", [{8, integer_to_list(?ERX_CAP_NULL)}, {9, "shared"}]))),
+    ?assertMatch({ok, [#{lines := [{shared, {object, 9}}]}]},
+                 erx_device_record:find(usb, xhci, [function_edited("intx", [{9, "shared"}])])).
+
+%% A BAR word that is not a number says so, not that no BAR is placed.
+function_record_bad_bar_word_test() ->
+    ?assertEqual("a function record's BAR handle, offset or size is not a decimal number of 64 bits",
+                 refusal(function_edited("intx", [{25, "x"}]))).
+
+%% The place's words are read at their fields' widths: a bus of 8 bits, a device to
+%% pcie_device_max and a function to pcie_function_max, no word longer than its field's
+%% largest value.
+function_record_place_widths_test() ->
+    Text = "a function record's place, handle, size, message or table is not a decimal number of its field's width",
+    [?assertEqual(Text, refusal(function_edited("intx", [Edit])))
+     || Edit <- [{5, "0255"}, {5, "256"}, {6, "32"}, {6, "031"}, {7, "8"}, {4, "4294967296"}]],
+    ?assertMatch({ok, [#{place := {4294967295, 255, 31, 7}}]},
+                 erx_device_record:find(usb, xhci, [function_edited("intx", [{4, "4294967295"}, {5, "255"}, {6, "31"},
+                                                                           {7, "7"}])])).

@@ -5170,15 +5170,16 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   does not tie an msi or msix device's line to an MSI step from its own resource, nor an intx device's to an IRQ
   step, so a plan built otherwise could pass with a zero message. A function whose reported pin is not its
   place's is held silently, where the design wants a log line naming both pins; have `erx_dom_pci_given` return
-  the reason. `erx_dom_pci_route` picks msix without checking that the table's BAR is placed (it fails safe, with
-  no interrupt). `route_word` and `ERX_BOOT_ROUTE_WORD_MAX` copy the generated route names by hand. No host test
+  the reason. `erx_dom_pci_route` and the plan check take msix for a table in any memory BAR it fits, where
+  `erx_device_record` takes only a table in the first placed BAR, so a function whose table is elsewhere is handed
+  over with a record its holder refuses (it fails safe, with no record); refuse or downgrade such a route at the plan. `route_word` and `ERX_BOOT_ROUTE_WORD_MAX` copy the generated route names by hand. No host test
   reads the `-erx_record function` words, the setting or the message, and `tools/fuzz/dom_core_fuzz.c` holds no
   catalogue, so the PCIe path of the give is not fuzzed.
-* [Medium] runtime, `erlang/apps/erx/src/erx_device_record.erl` and the device NIF: the domain library writes a
-  given PCIe function's `-erx_record function` record ([design-pcie.md](docs/design-pcie.md#the-catalogue-and-gives)),
-  but no reader takes it, so a holder finds no record of its function (the `pcie` QEMU suite's hold line matches its
-  words by position meanwhile, `tools/lib/erx/pcie_domain.rb`); read it with a window per placed BAR,
-  and have the NIF write an MSI-X route's table from it. A confined function's DMA window by its requester id
+* [Medium] runtime, the device NIF: `erx_device_record` reads a given PCIe function's `-erx_record function`
+  record ([design-pcie.md](docs/design-pcie.md#the-catalogue-and-gives)) with its first placed BAR's window and an
+  MSI-X route's message and table, checked to lie in that BAR, but nothing writes the table from it yet; have
+  the NIF write it after the driver's reset, and give a driver a window per placed BAR when one needs more than
+  BAR 0. A confined function's DMA window by its requester id
   waits for erXos's kernel, as every DMA window does.
 * [Medium] drivers, `erlang/apps/erx_blk` (and `erx_net`, `erx_fb`): no
   configured domain's driver starter calls `erx_irq_line:start_owners/1`, so a
@@ -5904,7 +5905,7 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   below its own `foreign_atoms`; once `foreign_atoms` is enforced the lowering should be bounded by it.
 * [Medium] runtime, `tools/fuzz/boot_manifest_fuzz.c`: the target compares the page with the reader's own result, so a swapped limit or a wrong host byte in `erx_boot_manifest_read` passes. Compare with `erx_manifest_open` and `erx_manifest_runtime_limits_at` called directly, field by field.
 * [Low] runtime, `liberx/backend/fiasco/runtime_entry.c`: an `erx.arg` word of the kernel command line reaches ERTS's flag diagnostics unchecked, where the reader in `boot_manifest.c` holds `system_args` to printable ASCII. The command line is the operator's own.
-* [Medium] runtime, `erlang/apps/erx/src/erx_device_record.erl`: `erx.arg` words of the kernel command line can spell `-erx_record device ...` or `-erx_record given ...` and add a device record the manifest never assigned, which a driver opens like the root's own, or `-erx_record system_image ...` and so start the read-only `system` window in the system domain, against `check_system_window`; on Fiasco the command line is the operator's, but the manifest should stay the one source of which domain holds a device. Carry the records in a boot-information field only the root writes, or have the system domain's Erlang select them from the manifest through `erx_manifest`.
+* [Medium] runtime, `erlang/apps/erx/src/erx_device_record.erl`: `erx.arg` words of the kernel command line can spell `-erx_record device ...`, `-erx_record given ...` or `-erx_record function ...` and add a device record the manifest never assigned, which a driver opens like the root's own, or `-erx_record system_image ...` and so start the read-only `system` window in the system domain, against `check_system_window`; on Fiasco the command line is the operator's, but the manifest should stay the one source of which domain holds a device. Carry the records in a boot-information field only the root writes, or have the system domain's Erlang select them from the manifest through `erx_manifest`.
 * [Medium] runtime, `erx_prim_file.c`: that a release file's bytes reach a read only after `erx_release_check` rests on `erx_copy_out` being ERTS's one user of `erx_release_addr`, with no build check. One call, `erx_release_open`, returning the bytes after the verdict with the cache inside `liberx`, removes the import and ERTS's flag, and Phase 2 then changes only what is behind it.
 * [Low] runtime, `erx_prim_file.c`: a refused file is hashed and reported again at each open; `docs/design-kernel.md` has later uses fail at once.
 * [Low] runtime, `liberx/backend/core/boot_manifest.c`: the printable rule for `system_args` lives in the reader, so `Manifest.admit` packs a manifest that then fails at boot, and `domains[].args`, the same string class, is not covered. The rule belongs in the `args` class of the ABI generator.

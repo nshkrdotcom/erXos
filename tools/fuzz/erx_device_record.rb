@@ -46,7 +46,13 @@ module ErxDeviceRecordFuzz
     'taking a salt of no bytes' => ['hex(Salt, 1, ?ERX_VERITY_SALT_SIZE)', 'hex(Salt, 0, ?ERX_VERITY_SALT_SIZE)'],
     'taking a salt of 33 bytes' => ['hex(Salt, 1, ?ERX_VERITY_SALT_SIZE)', 'hex(Salt, 1, ?ERX_VERITY_SALT_SIZE + 1)'],
     'reading any sixth word as the record_volume window' => ['Windows =:= ["record_volume"] ->', 'length(Windows) =:= 1 ->'],
-    'taking the first of two system_image records' => ["case [Words || [\"system_image\" | Words] <- Arguments] of", "case lists:sublist([Words || [\"system_image\" | Words] <- Arguments], 1) of"]
+    'taking the first of two system_image records' => ["case [Words || [\"system_image\" | Words] <- Arguments] of", "case lists:sublist([Words || [\"system_image\" | Words] <- Arguments], 1) of"],
+    'taking a placed BAR of 8 bytes' => ['S >= 4 andalso S =< ?ERX_PCIE_BAR_SIZE_LOG2_MAX', 'S >= 3 andalso S =< ?ERX_PCIE_BAR_SIZE_LOG2_MAX'],
+    'reading a function number as 8 bits wide' => ['at_most(Function, ?ERX_PCIE_FUNCTION_MAX)', 'number(Function, 8)'],
+    'taking a function record with a null line marked shared' => ["function_lines(shared, ?ERX_CAP_NULL) -> bad(\"a function record marks no line shared\");\n", ''],
+    'taking an MSI-X table in another BAR' => ['#{bar := Bar, offset := Offset', '#{bar := _, offset := Offset'],
+    'taking an MSI-X table of no entries' => ['when Entries >= 1, Entries', 'when Entries >= 0, Entries'],
+    'taking an MSI-X table that ends past its BAR' => ['Offset + Entries * ?ERX_PCIE_MSIX_ENTRY_SIZE =< Size', 'Offset < Size']
   }.freeze
   DEADLINE_SECONDS = '120'
 
@@ -57,12 +63,12 @@ module ErxDeviceRecordFuzz
     MUTANTS.each_value { |from, _to| raise "#{from.inspect} is not in #{MODULE_SOURCE}" unless source.include?(from) }
 
     output, status = fuzz(source, seed: seed)
-    abort(output) unless status.success? && output.match?(/^fuzz: \d+ rounds ok, \d+ accepted, \d+ framebuffers accepted, \d+ system images accepted$/)
+    abort(output) unless status.success? && output.match?(/^fuzz: \d+ rounds ok, \d+ accepted, \d+ functions accepted, \d+ framebuffers accepted, \d+ system images accepted$/)
     MUTANTS.each do |name, (from, to)|
       output, status = fuzz(source.sub(from, to), seed: seed)
       abort("#{name} passed:\n#{output}") if status.success? || !output.include?('disagrees_with_reference')
     end
-    puts "erx_device_record:find/3, framebuffers/1 and system_image/1 agree with their references, and no seeded copy does (#{MUTANTS.keys.join('; ')})"
+    puts "erx_device_record:find/3, for device and function records, framebuffers/1 and system_image/1 agree with their references, and no seeded copy does (#{MUTANTS.keys.join('; ')})"
   end
 
   # In a directory of its own, which also takes the crash dump of a failed round.

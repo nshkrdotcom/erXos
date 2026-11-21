@@ -114,14 +114,12 @@ module Erx
       # PcAsk(Fun): Fun run at the holder's node, or the class and reason of its failure.
       "PcAsk=fun(PcF)->try erpc:call(#{HOLDER_NODE},PcF,10000) catch PcC:PcR->{PcC,PcR} end end",
       # The hold case: the holder's usb function records (docs/design-pcie.md, "The catalogue
-      # and gives"), each its role, peripheral and BAR 0's size, 2 to its SIZE_LOG2, the
-      # record's 21st word: the form, ROLE, PERIPHERAL, the place's four words, LINE_H,
-      # MARK, MEM_H, MEM_SIZE, COHERENT, ROUTE, ADDRESS, DATA, the table's three words,
-      # then BAR 0's WINDOW_H, OFFSET and SIZE_LOG2. No Erlang reader of the form exists
-      # before the xHCI driver's (TODO.md, erx_device_record), so the line matches it here.
-      'io:format("~0kp~n",[{pcie_hold,PcAsk(fun()->[{PcRo,PcPe,1 bsl list_to_integer(PcLg)}||' \
-      '["function",PcRo,PcPe,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,PcLg|_]<-erx_device_record:records(),' \
-      'PcRo=:="usb"] end)}])',
+      # and gives") as erx_device_record:find/2 reads them, for each peripheral a usb function
+      # record names, each its role, peripheral and window's size, its first placed BAR's
+      # hardware size; a refusal is printed as it is, so check_hold names it.
+      'io:format("~0kp~n",[{pcie_hold,PcAsk(fun()->lists:append([case erx_device_record:find(usb,PcPe) of ' \
+      '{ok,PcSs}->[{"usb",atom_to_list(PcPe),PcSz}||#{window:={object,_,_,PcSz}}<-PcSs];PcE->[PcE] end||' \
+      'PcPe<-lists:usort([list_to_atom(PcP)||["function","usb",PcP|_]<-erx_device_record:records()])]) end)}])',
       # The catalogue's records, and whether each bridge's report was answered.
       'PcCats=case erx_domain_lib:pci_bridges() of {ok,PcCs}->PcCs;PcCe->[PcCe] end',
       'PcRecs=[PcRec||#{layouts:=PcLs}<-PcCats,#{record:=PcRec}<-PcLs]',

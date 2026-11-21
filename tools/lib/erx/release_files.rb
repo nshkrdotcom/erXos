@@ -168,8 +168,9 @@ module Erx
     #   file names erx_session, since the design starts a native app's program through
     #   the session's servers.
     # * usb, the USB domain's (docs/design-usb.md, "Domains and authority"): the USB
-    #   stack, erx_usb, so no other domain parses what a USB device writes. No manifest
-    #   names it; it exists because check_released requires a release for erx_usb.
+    #   stack, erx_usb, so no other domain parses what a USB device writes. No checked-in manifest
+    #   names it: the usb QEMU suite's test holder boots on it (UsbBoot), and
+    #   check_released requires a release for erx_usb.
     # * bt, the Bluetooth domain's (docs/design-bluetooth.md, "The Bluetooth domain"): the
     #   Bluetooth stack, erx_bt, so no other domain parses what a controller writes. No
     #   manifest names it; it exists because check_released requires a release for
