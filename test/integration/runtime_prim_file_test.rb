@@ -106,9 +106,11 @@ class RuntimePrimFileTest < Minitest::Test
     refute_includes lines.join("\n"), 'torts before'
     # Two runs' memory figures differ by nature, and test_results_agree_with_stock... exempts them too.
     # Log records (erx_syslog's start, erx_clock's warning, the restart case's supervisor
-    # report) reach the console carrying the time of each run.
-    other = (lines - @fixture.release).reject do |line|
-      line.start_with?('resources') || line.match?(LOG_RECORD)
+    # report) carry each run's time and pids, so both runs' lines are compared without
+    # them: a record both runs print cancels, and one only the damaged run prints, a
+    # crash report among them, stays and fails the comparison below.
+    other = (lines.map { |line| timeless(line) } - @fixture.release.map { |line| timeless(line) }).reject do |line|
+      line.start_with?('resources')
     end
     diagnostics, refused = other.partition { |line| line.start_with?('prim_file: ') }
     assert_includes diagnostics.first.to_s, 'file_hash'
@@ -394,9 +396,14 @@ class RuntimePrimFileTest < Minitest::Test
     end
   end
 
-  # A log record as the console shows it: the kernel log's, which opens with the monotonic
-  # time and the level, or logger's own, which opens with the time of day.
-  LOG_RECORD = /\A(?:\d+\.\d+ [a-z]+ domain \d+ principal |\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)/
+  # The time a log record opens with as the console shows it: the kernel log's monotonic
+  # time, before the level, or logger's time of day.
+  LOG_TIME = /\A(?:\d+\.\d+(?= [a-z]+ domain \d+ principal )|\d{4}-\d\d-\d\dT[0-9:.+Z-]+)/
+  PID = /<\d+\.\d+\.\d+>/
+
+  # A console line without what differs between two runs of one release: a log record's
+  # opening time and every pid.
+  def timeless(line) = line.sub(LOG_TIME, '').gsub(PID, '<pid>')
 
   DIRECTORY = "{ok,directory,read_write,#{0o40755}}"
   FILE = "{ok,regular,0,read_write,#{0o100644}}"

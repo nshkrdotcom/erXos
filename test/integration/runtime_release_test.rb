@@ -76,7 +76,7 @@ class RuntimeReleaseTest < Minitest::Test
       sources = Erx::ErlangApps.modules(root: ROOT, application: application)
       beams = paths.filter_map { |path| path[%r{\Asystem/lib/#{application}-[^/]+/ebin/([^/]+\.beam)\z}, 1] }
       modules = sources.map { |source| File.basename(source, '.erl') } +
-                Erx::ErlangApps.derived(application).map { |derived| derived::MODULE }
+                Erx::ErlangApps.derived(application).map { |deriving| deriving::MODULE }
       assert_equal modules.map { |mod| "#{mod}.beam" }.sort, beams.sort, application
     end
     otp_held = paths.filter_map do |path|
