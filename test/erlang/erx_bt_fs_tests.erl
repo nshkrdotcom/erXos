@@ -5,11 +5,16 @@
 %% file service erx_bt_fs (docs/design-bluetooth.md, "The pairing window"; docs/
 %% design-files.md, "Waiting requests"). The test stands in for the links, sending
 %% `{erx_bt_link, Link, Message}` from processes it spawns, and for the store, sending
-%% `{outcome, Link, Tag, Outcome}`. Each wait the cases assert on has a deadline of 1 s.
+%% `{outcome, Link, Tag, Outcome}`, but for one case, which runs the real store and the service
+%% under erx_bt_sup's own child specifications. Each wait the cases assert on has a deadline
+%% of 1 s.
 -module(erx_bt_fs_tests).
+-behaviour(supervisor).
 
 -include_lib("eunit/include/eunit.hrl").
 -include("generated/erx_abi.hrl").
+
+-export([init/1]).
 
 -define(NOFID, 16#ffffffff).
 -define(PHONE, {random, <<16#C0, 1, 2, 3, 4, 5>>}).
@@ -23,6 +28,10 @@ service(State) ->
     [stop(#{fs => Old, grant => Old}) || Old <- [whereis(erx_bt_fs)], is_pid(Old)],
     {ok, Fs} = erx_bt_fs:start_link(State),
     unlink(Fs),
+    grant(Fs).
+
+%% A grant of the tree of the service Fs, with fid 1 at the root.
+grant(Fs) ->
     {ok, Grant} = erx_fs:start_link(erx_bt_fs_tree, Fs, rw),
     unlink(Grant),
     {ok, _} = call(Grant, {attach, 1, ?NOFID, <<"user">>, <<"bt">>, 0}),
@@ -111,9 +120,48 @@ pair_refuses_a_second_window_and_a_bad_mode_test() ->
     stop(S).
 
 pair_answers_eio_while_the_store_is_unknown_test() ->
-    #{grant := Grant} = S = service(unknown),
+    #{grant := Grant} = S = service({unknown, start}),
     ?assertEqual({error, eio}, open(Grant, 2)),
     stop(S).
+
+%% The window under erx_bt_sup's own child specifications and strategy, the store's and
+%% its own: it starts with the store's state, so a store whose start found no volume for
+%% its directory makes pair answer eio, and the store's restart restarts the window with the
+%% new store's state.
+the_window_starts_with_the_store_and_restarts_with_it_test() ->
+    Volume = filename:absname("bt-volume"),
+    _ = file:del_dir_r(Volume),
+    ok = application:set_env(erx_bt, state_dir, filename:join(Volume, "bt")),
+    {ok, {Flags, Children}} = erx_bt_sup:init([]),
+    Window = [Spec || #{id := Id} = Spec <- Children, Id =:= erx_bt_store orelse Id =:= erx_bt_fs],
+    ?assertMatch([#{id := erx_bt_store}, #{id := erx_bt_fs}], Window),
+    ?assertMatch(#{strategy := rest_for_one}, Flags),
+    {ok, Sup} = supervisor:start_link(?MODULE, {Flags, Window}),
+    unlink(Sup),
+    %% The supervisor, the setting and the directory go whatever the case's outcome, so a
+    %% failure leaves no store or service registered for the cases after it.
+    try
+        Unread = grant(whereis(erx_bt_fs)),
+        ?assertEqual({error, eio}, open(maps:get(grant, Unread), 2)),
+        ok = file:make_dir(Volume),
+        Monitor = monitor(process, maps:get(fs, Unread)),
+        exit(whereis(erx_bt_store), kill),
+        receive {'DOWN', Monitor, _, _, _} -> ok after 1000 -> erlang:error(window_not_ended) end,
+        [Fs] = [Pid || {erx_bt_fs, Pid, _, _} <- supervisor:which_children(Sup)],
+        Read = grant(Fs),
+        ?assertMatch({ok, _, _}, open(maps:get(grant, Read), 2)),
+        [exit(Grant, kill) || #{grant := Grant} <- [Unread, Read]]
+    after
+        Down = monitor(process, Sup),
+        exit(Sup, shutdown),
+        receive {'DOWN', Down, _, _, _} -> ok end,
+        application:unset_env(erx_bt, state_dir),
+        _ = file:del_dir_r(Volume)
+    end.
+
+-doc false.
+init(Spec) ->
+    {ok, Spec}.
 
 %% Clunking the window withdraws the pairing it took; the window answers ebusy until the
 %% link reports the withdrawal, and the wait it then starts holds the next window.

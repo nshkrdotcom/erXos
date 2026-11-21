@@ -163,8 +163,9 @@ limit bt_state_max u16 4096
 limit bt_store_timeout_ms u32 5000
 # The pairing window (docs/design-bluetooth.md, "The pairing window"): the time a window
 # admits a pairing; the longest first write of its `pair` file, `display` or `nodisplay`;
-# and SMP's pairing wait (Vol 3 Part H, 2.3.6), which starts at the minimum, doubles at
-# each further failure up to the maximum and halves for each decay interval without one.
+# and SMP's pairing wait (Vol 3 Part H, 2.3.6): the minimum for the first failure, then
+# twice the last failure's wait halved for each whole decay interval since it, kept
+# between the minimum and the maximum.
 limit bt_pair_window_s u32 120
 limit bt_pair_write_max u32 16
 limit bt_pair_wait_min_s u32 2

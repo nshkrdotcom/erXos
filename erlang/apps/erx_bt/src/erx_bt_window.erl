@@ -11,8 +11,13 @@ core next wants an `expired` step, or `infinity`.
 
 **A window** is an open of the control tree's `pair` file, named by the `Id` the process
 gives each open. While one is open, or while the pairing a closed window admitted has no
-outcome, `open` answers `ebusy`, so at most one pairing is awaited; while the start's
-read has left the store `unknown`, `eio`. The opener's first write, `display` or
+outcome, `open` answers `ebusy`, so at most one pairing is awaited; while the store is
+`unknown` since its start, which refuses every change, `eio`. The core takes the store's
+state at its start (`erx_bt_store:known/0`): it leaves `unknown` since its start only by
+`forget all`, whose answer reaches the process that serves `ctl`, and enters it only at
+the store's start, which restarts this process. After an unconfirmed put the store reads
+before the next change, so a window opens, and the store's outcome tells what came of its
+pairing. The opener's first write, `display` or
 `nodisplay`, starts the window's `bt_pair_window_s`; later writes are `einval`. A window
 then moves through these phases:
 
@@ -29,17 +34,17 @@ its Pairing Request and the phone's address, `running` from the `open` verdict, 
 the core monitors the link, and `keeping` from the link's `keeping`, when it drops the
 monitor and the store's outcome alone decides. Before `keeping` the link's failure or
 its `'DOWN'`, `disconnected`, decides; the store's outcome is taken in either stage,
-since the store's message and the link's `keeping` come from two processes. Closing
+since the store's message and the link's `keeping` come from two processes and a link
+sends `keeping` or a failure, never both. Closing
 a window while its pairing runs sends the link `{withdraw, Tag}`, and the pairing stays
 awaited, without a window, until its outcome. Every message is matched by its link and
 tag, so a late one changes nothing.
 
-**The pairing wait** belongs to the core, not to a window: the first failure since
-the start sets it to `bt_pair_wait_min_s`, each further one doubles it up to
-`bt_pair_wait_max_s`, and each `bt_pair_wait_decay_s` without a failure halves it,
-down to the minimum. The core keeps the length the next failure will impose and the
-instant of the last failure, and decays the length when a failure comes, so it needs
-no timer of its own. A success leaves the wait as it is.
+**The pairing wait** belongs to the core, not to a window. The first failure since the
+start imposes `bt_pair_wait_min_s`; every later one imposes twice the wait the last
+failure imposed, halved for each whole `bt_pair_wait_decay_s` since that failure, kept
+between `bt_pair_wait_min_s` and `bt_pair_wait_max_s`. The core keeps the last failure's
+instant and its wait, so it needs no timer of its own. A success leaves the wait as it is.
 
 **The lines** each open reads are ASCII the core composes from numbers and addresses
 alone, so nothing a radio peer sends reaches them as text and they need no escaping:
@@ -65,20 +70,20 @@ link, its messages to the window; from the store, its answer to a pairing's `kee
 monitored link's end; and `expired`, when the deadline is due.
 """.
 -type input() :: {open, id()} | {write, id(), mode()} | {clunk, id()}
-               | {link, link(), {admit, tag(), erx_smp_crypto:address()} | {passkey, tag(), non_neg_integer()}
-                              | {outcome, tag(), {failed, erx_smp_core:reason()}} | {keeping, tag()} | wait}
+               | {link, link(), erx_bt_link_core:to_window() | wait}
                | {store, {outcome, link(), tag(), {bonded, erx_smp_crypto:address(), authenticated | unauthenticated}
                                                 | {failed, atom()}}}
                | {down, link()}
                | expired.
 -doc """
-What the process does, in order: answer the file request it stepped; send a link its
-verdict (an `open` verdict to which the process adds the pairing's fresh values), a
-withdrawal or the wait; take or drop a monitor of a link; log a pairing's outcome.
+What the process does, in order: answer the file request it stepped; send a link an
+`open` verdict in this mode, to which the process adds the pairing's fresh values, or
+another verdict, a withdrawal or the wait; take or drop a monitor of a link; log a
+pairing's outcome.
 """.
 -type action() :: {answer, ok | {error, ebusy | eio | einval}}
-                | {send, link(), {admission, tag(), {open, mode()} | closed | waiting}
-                                | {withdraw, tag()} | {wait, non_neg_integer()}}
+                | {open, link(), tag(), mode()}
+                | {send, link(), erx_bt_link_core:from_window() | {wait, non_neg_integer()}}
                 | {monitor, link()} | {demonitor, link()}
                 | {log, #{address := erx_smp_crypto:address(), outcome := term()}}.
 
@@ -86,20 +91,19 @@ withdrawal or the wait; take or drop a monitor of a link; log a pairing's outcom
 -type pairing() :: none | {link(), tag(), erx_smp_crypto:address(), running | keeping}.
 
 -record(core, {
-    store :: read | unknown,
+    refusing :: boolean(),                                % the store is `unknown` since its start
     window = none :: phase(),
     pairing = none :: pairing(),
-    next_wait = ?ERX_BT_PAIR_WAIT_MIN_S * 1000 :: pos_integer(),  % what the next failure imposes, before decay
-    last_failure = none :: none | integer(),
-    until = none :: none | integer(),                              % the instant the current wait passes
-    lines = #{} :: #{id() => {binary(), open | ended}}             % each open's unread lines
+    last_failure = none :: none | {integer(), pos_integer()},  % its instant and the wait it imposed
+    lines = #{} :: #{id() => {binary(), open | ended}}    % each open's unread lines
 }).
 -opaque core() :: #core{}.
 
--doc "A core with no window and no wait, over a store the start's read left `read` or `unknown`.".
--spec new(read | unknown) -> core().
-new(Store) when Store =:= read; Store =:= unknown ->
-    #core{store = Store}.
+-doc "A core with no window and no wait, over the store's state at this start.".
+-spec new(erx_bt_store:known()) -> core().
+new(read) -> #core{refusing = false};
+new({unknown, start}) -> #core{refusing = true};
+new({unknown, put}) -> #core{refusing = false}.
 
 -doc """
 What the opener's first write asks: `display` or `nodisplay`, each with at most one
@@ -140,8 +144,9 @@ take(Id, Count, #core{lines = Lines} = Core) ->
 
 -doc "The instant of the next `expired` step: the window's deadline or its wait's end.".
 -spec next_deadline(core()) -> integer() | infinity.
-next_deadline(#core{window = {admitting, _, _, Deadline, true}}) -> Deadline;
-next_deadline(#core{window = {admitting, _, _, Deadline, false}, until = Until}) -> min(Deadline, Until);
+next_deadline(#core{window = {admitting, _, _, Deadline, false}, last_failure = {At, Wait}}) ->
+    min(Deadline, At + Wait);
+next_deadline(#core{window = {admitting, _, _, Deadline, _}}) -> Deadline;
 next_deadline(#core{}) -> infinity.
 
 -doc "The opens the core knows, the window's and closed windows' with unread lines.".
@@ -150,10 +155,12 @@ opens(#core{lines = Lines}) -> maps:keys(Lines).
 
 -doc "The core without its lines, which may hold a passkey: for crash reports and status.".
 -spec facts(core()) -> map().
-facts(#core{store = Store, window = Window, pairing = Pairing, next_wait = Next, last_failure = Last, until = Until}) ->
-    #{store => Store, window => Window,
+facts(#core{refusing = Refusing, window = Window, pairing = Pairing, last_failure = Last} = Core) ->
+    #{refusing => Refusing, window => Window,
       pairing => case Pairing of none -> none; {Link, Tag, _, Stage} -> {Link, Tag, Stage} end,
-      next_wait_ms => Next, last_failure => Last, wait_until => Until}.
+      last_failure => case Last of none -> none; {At, _} -> At end,
+      last_wait_ms => case Last of none -> none; {_, Wait} -> Wait end,
+      wait_until => case Last of none -> none; _ -> until(Core) end}.
 
 %% ---------------------------------------------------------------------------
 %% Time
@@ -173,7 +180,7 @@ tick(_Now, Core) ->
 %% The file side
 %% ---------------------------------------------------------------------------
 
-input({open, _Id}, _Now, #core{store = unknown} = Core) ->
+input({open, _Id}, _Now, #core{refusing = true} = Core) ->
     {[{answer, {error, eio}}], Core};
 input({open, Id}, _Now, #core{window = none, pairing = none, lines = Lines} = Core) ->
     {[{answer, ok}], Core#core{window = {reserved, Id}, lines = Lines#{Id => {<<>>, open}}}};
@@ -193,7 +200,7 @@ input({clunk, Id}, _Now, #core{lines = Lines} = Core) ->
 input({link, Link, {admit, Tag, Address}}, Now, #core{window = {admitting, Id, Mode, _, _}, pairing = none} = Core) ->
     case left(Now, Core) of
         0 ->
-            {[{send, Link, {admission, Tag, {open, Mode}}}, {monitor, Link}],
+            {[{open, Link, Tag, Mode}, {monitor, Link}],
              Core#core{window = {pairing, Id}, pairing = {Link, Tag, Address, running}}};
         _ ->
             {[{send, Link, {admission, Tag, waiting}}], Core}
@@ -242,9 +249,12 @@ announce(Id, Now, Core) ->
         Left -> write(Id, iolist_to_binary(io_lib:format("wait ~B~n", [(Left + 999) div 1000])), Core)
     end.
 
-%% The milliseconds the pairing wait has left to run at Now, 0 once it has passed.
-left(_Now, #core{until = none}) -> 0;
-left(Now, #core{until = Until}) -> max(0, Until - Now).
+%% The milliseconds the pairing wait has left to run at Now, 0 once it has passed, and
+%% the instant it passes.
+left(_Now, #core{last_failure = none}) -> 0;
+left(Now, Core) -> max(0, until(Core) - Now).
+
+until(#core{last_failure = {At, Wait}}) -> At + Wait.
 
 %% Closing an open: the window ends, and a pairing it took that the link still runs is
 %% withdrawn; one at `keeping` is the store's already.
@@ -272,16 +282,17 @@ failure(Address, Reason, Now, Core) ->
     Line = iolist_to_binary(["failed ", address(Address), $\s, reason(Reason), $\n]),
     {[{log, #{address => Address, outcome => {failed, Reason}}}], ended(Line, wait_from(Now, Core))}.
 
-%% A failure's wait: the wait the next failure imposes, decayed by the time since the last
-%% one, starts now, and the next one doubles it up to the maximum.
-wait_from(Now, #core{next_wait = Next, last_failure = Last} = Core) ->
-    Wait = decayed(Next, Last, Now),
-    Core#core{until = Now + Wait, next_wait = min(2 * Wait, ?ERX_BT_PAIR_WAIT_MAX_S * 1000), last_failure = Now}.
+%% A failure at Now starts the wait it imposes: the minimum for the first, else twice the
+%% last failure's wait halved for each whole decay period since it, within the minimum
+%% and the maximum (docs/design-bluetooth.md, "The pairing window").
+wait_from(Now, #core{last_failure = Last} = Core) ->
+    Core#core{last_failure = {Now, imposed(Now, Last)}}.
 
-decayed(Next, none, _Now) ->
-    Next;
-decayed(Next, Last, Now) ->
-    max(?ERX_BT_PAIR_WAIT_MIN_S * 1000, Next bsr min(16, (Now - Last) div (?ERX_BT_PAIR_WAIT_DECAY_S * 1000))).
+imposed(_Now, none) ->
+    ?ERX_BT_PAIR_WAIT_MIN_S * 1000;
+imposed(Now, {At, Wait}) ->
+    Halvings = (Now - At) div (?ERX_BT_PAIR_WAIT_DECAY_S * 1000),
+    max(?ERX_BT_PAIR_WAIT_MIN_S * 1000, min(?ERX_BT_PAIR_WAIT_MAX_S * 1000, (2 * Wait) bsr Halvings)).
 
 write(Id, Line, #core{lines = Lines} = Core) ->
     case Lines of

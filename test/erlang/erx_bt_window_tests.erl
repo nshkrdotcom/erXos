@@ -122,7 +122,8 @@ check(Input, Before, Actions, After, Monitored, Monitored1, Now) ->
     %% the wait passed.
     case Input of
         {link, Link0, {admit, Tag0, _}} ->
-            [{send, Link0, {admission, Tag0, Verdict}}] = [A || {send, _, {admission, _, _}} = A <- Actions],
+            [{Link0, Tag0, Verdict}] = [{L, T, {open, M}} || {open, L, T, M} <- Actions]
+                                       ++ [{L, T, V} || {send, L, {admission, T, V}} <- Actions],
             [?assertMatch(#{pairing := none, window := {admitting, _, _, _, _}}, Before) || {open, _} <- [Verdict]],
             [?assert(case Before of #{wait_until := none} -> true; #{wait_until := U} -> U =< Now end)
              || {open, _} <- [Verdict]];
@@ -213,12 +214,20 @@ wait_doubles_to_its_maximum_test() ->
                                 new(), lists:seq(1, 7)),
     ?assertEqual([2000, 4000, 8000, 16000, 32000, 64000, 64000], Waits).
 
+%% A failure imposes twice the last one's wait, halved per whole 600 s since it, within
+%% 2 s and 64 s.
 wait_halves_for_each_decay_without_a_failure_test() ->
     C = lists:foldl(fun(I, Acc) -> element(1, failed_once(I * 100000, Acc)) end, new(), lists:seq(1, 6)),
-    %% After a 64 s wait the next would be 64 s; 600 s later 32 s, 1200 s later 16 s.
-    ?assertEqual(32000, element(2, failed_once(600000 + 600000, C))),
-    ?assertEqual(16000, element(2, failed_once(600000 + 1200000, C))),
-    ?assertEqual(2000, element(2, failed_once(600000 + 6000000, C))).
+    %% After a 64 s wait: 64 s until 1200 s have passed, then 32 s, and 2 s at last.
+    ?assertEqual(64000, element(2, failed_once(600000 + 599999, C))),
+    ?assertEqual(64000, element(2, failed_once(600000 + 600000, C))),
+    ?assertEqual(32000, element(2, failed_once(600000 + 1200000, C))),
+    ?assertEqual(2000, element(2, failed_once(600000 + 6000000, C))),
+    %% After a 4 s wait: 8 s once it has passed, 4 s after 600 s, never below 2 s.
+    {C2, 4000} = failed_once(200000, element(1, failed_once(100000, new()))),
+    ?assertEqual(8000, element(2, failed_once(204000, C2))),
+    ?assertEqual(4000, element(2, failed_once(800000, C2))),
+    ?assertEqual(2000, element(2, failed_once(2000000, C2))).
 
 a_request_during_the_wait_is_repeated_attempts_and_leaves_the_window_test() ->
     {C, 2000} = failed_once(0, new()),
@@ -229,7 +238,7 @@ a_request_during_the_wait_is_repeated_attempts_and_leaves_the_window_test() ->
     ?assertEqual(2000, erx_bt_window:next_deadline(W1)),
     {[], W2} = erx_bt_window:step(expired, 2000, W1),
     ?assertEqual(<<"wait 2\nwaiting\n">>, lines(a, W2)),
-    ?assertMatch({[{send, _, {admission, 8, {open, display}}}, {monitor, _}], _},
+    ?assertMatch({[{open, _, 8, display}, {monitor, _}], _},
                  erx_bt_window:step({link, ?L2, {admit, 8, ?PHONE}}, 2000, W2)).
 
 back_to_back_windows_do_not_shorten_the_wait_test() ->
@@ -283,7 +292,7 @@ stale_tags_change_nothing_test() ->
 the_store_outcome_before_keeping_decides_test() ->
     W = window(a, display, 0, new()),
     {Actions, W1} = run([{link, ?L1, {admit, 1, ?PHONE}}, {store, {outcome, ?L1, 1, {failed, already_bonded}}}], 10, W),
-    ?assertMatch([{send, _, _}, {monitor, _}, {demonitor, _}, {log, _}], Actions),
+    ?assertMatch([{open, _, 1, display}, {monitor, _}, {demonitor, _}, {log, _}], Actions),
     ?assertEqual(<<"waiting\nfailed C0:01:02:03:04:05 already_bonded\n">>, lines(a, W1)),
     ?assertEqual({[], W1}, erx_bt_window:step({link, ?L1, {keeping, 1}}, 20, W1)).
 
@@ -298,8 +307,11 @@ no_window_admits_nothing_and_the_time_runs_out_test() ->
     ?assertMatch({[{send, _, {admission, 1, closed}}], _}, erx_bt_window:step({link, ?L1, {admit, 1, ?PHONE}}, 120000, W1)),
     ?assertMatch({[{answer, ok}], _}, erx_bt_window:step({open, b}, 120001, W1)).
 
+%% Only a store unknown since its start refuses; after an unconfirmed put the store reads
+%% before the pairing's keep, so the window opens.
 open_refusals_test() ->
-    ?assertMatch({[{answer, {error, eio}}], _}, erx_bt_window:step({open, a}, 0, erx_bt_window:new(unknown))),
+    ?assertMatch({[{answer, {error, eio}}], _}, erx_bt_window:step({open, a}, 0, erx_bt_window:new({unknown, start}))),
+    ?assertMatch({[{answer, ok}], _}, erx_bt_window:step({open, a}, 0, erx_bt_window:new({unknown, put}))),
     {_, R} = erx_bt_window:step({open, a}, 0, new()),
     ?assertMatch({[{answer, {error, ebusy}}], _}, erx_bt_window:step({open, b}, 0, R)),
     {_, W} = erx_bt_window:step({write, a, display}, 0, R),

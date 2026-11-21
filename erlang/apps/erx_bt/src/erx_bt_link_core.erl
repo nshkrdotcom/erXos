@@ -82,7 +82,7 @@ status output, and since a crash's stack trace carries `step/3`'s arguments, it 
 -include("generated/erx_abi.hrl").
 
 -export([new/1, step/3, next_deadline/1, facts/1]).
--export_type([core/0, config/0, resolved/0, input/0, action/0, time/0]).
+-export_type([core/0, config/0, resolved/0, input/0, action/0, time/0, to_window/0, from_window/0]).
 
 %% The handler's answer to a write (docs/design-bluetooth.md, "The `ble` facet"), ATT's
 %% transaction timeout (Part F, 3.3.3) and the Security Manager Timer (Part H, 3.4).
@@ -109,6 +109,15 @@ table hash it takes on at its encryption with that key.
                     addresses := #{central := erx_smp_crypto:address(), peripheral := erx_smp_crypto:address()},
                     bond := none | resolved(), share := pos_integer(), acl_tx_max := pos_integer()}.
 -doc """
+What a link tells the window (docs/design-bluetooth.md, "The link's messages"): a Pairing
+Request to admit, the passkey, a failure of the pairing it admitted, or `keeping` when
+the bond goes to the store. `erx_bt_window` takes these as they are.
+""".
+-type to_window() :: {admit, tag(), erx_smp_crypto:address()} | {passkey, tag(), 0..?ERX_SMP_PASSKEY_MAX}
+                   | {outcome, tag(), {failed, erx_smp_core:reason()}} | {keeping, tag()}.
+-doc "What the window tells a link: its verdict on a Pairing Request, or its withdrawal.".
+-type from_window() :: {admission, tag(), erx_smp_core:verdict()} | {withdraw, tag()}.
+-doc """
 What reaches the link, keyed by the owner that sends it: from the controller process, an
 ACL packet, completed packets, its `busy`, the controller's reports about encryption as
 `erx_hci` decodes them, and its answer to the link's `ltk_reply`; from the window, its
@@ -122,7 +131,7 @@ earliest deadline is due.
                        | {encryption_change, byte(), erx_hci:handle(), byte()}
                        | {encryption_key_refresh_complete, byte(), erx_hci:handle()}
                        | {ltk_reply_complete, ok | {failed, byte()}}}
-               | {window, {admission, tag(), erx_smp_core:verdict()} | {withdraw, tag()}}
+               | {window, from_window()}
                | {registry, {answer, ref(), term()} | {set, key(), binary()}
                             | {notify, From :: term(), notify | indicate, key(), binary()}}
                | {store, {kept, ok | {error, atom()}} | forgotten}
@@ -139,8 +148,7 @@ link's end, which disconnects it.
 -type action() :: {hci, {send, 0..3, binary()} | {ltk_reply, erx_smp_crypto:value() | none} | taken}
                 | {registry, {write, ref(), key(), binary()} | {subscribed, key(), subscription()}
                              | {mtu, pos_integer()} | {security, #{level := erx_gatt_gate:level(), bonded := boolean()}}}
-                | {window, {admit, tag(), erx_smp_crypto:address()} | {passkey, tag(), 0..?ERX_SMP_PASSKEY_MAX}
-                           | {outcome, tag(), {failed, erx_smp_core:reason()}} | {keeping, tag()}}
+                | {window, to_window()}
                 | {store, {keep, tag(), erx_smp_core:bond(), #{key() => subscription()}}}
                 | {reply, From :: term(), ok | {error, atom()}}
                 | {close, term()}.

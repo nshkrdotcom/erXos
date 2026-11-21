@@ -4,9 +4,13 @@
 -module(erx_bt_sup).
 -moduledoc """
 The top of `erx_bt` (docs/design-bluetooth.md, "Concurrency"): `rest_for_one`, the store
-first, then the controller group. The store holds the identity address the controller
-group reads at each of its starts, so a store's restart restarts the group after it, and
-a group's restart leaves the store and its address alone.
+first, then the file service `erx_bt_fs` with the pairing window, then the controller
+group. The store holds the identity address the controller group reads at each of its
+starts, and the window takes the store's state at its own start, so a store's restart
+restarts both after it; a window's restart leaves the store alone and restarts the
+group, ending every link it would have to answer; a group's restart, the one a radio
+peer's traffic can cause beyond its own link, leaves the store, its address and the
+pairing wait alone.
 """.
 -behaviour(supervisor).
 
@@ -20,4 +24,5 @@ start_link() ->
 init([]) ->
     {ok, {#{strategy => rest_for_one},
           [#{id => erx_bt_store, start => {erx_bt_store, start_link, []}},
+           #{id => erx_bt_fs, start => {erx_bt_fs, start_link, []}},
            #{id => erx_bt_host_sup, start => {erx_bt_host_sup, start_link, []}, type => supervisor}]}}.

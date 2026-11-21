@@ -51,20 +51,26 @@ alone, so neither the raise's terms nor a queued `keep` reach a crash report.
 
 -include("generated/erx_abi.hrl").
 
--export([start_link/0, start_link/1, address/0, resolve/1, forget/1, facts/0, static_address/1]).
+-export([start_link/0, start_link/1, address/0, known/0, resolve/1, forget/1, facts/0, static_address/1]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, format_status/1]).
--export_type([backend/0]).
+-export_type([backend/0, known/0]).
 
 -doc "The two calls of the store's seam, each run under the store's deadline.".
 -type backend() :: #{get := fun(() -> {ok, generation(), binary() | none} | {error, unavailable}),
                      put := fun((pos_integer(), binary()) -> ok | {error, too_large | unavailable})}.
+-doc """
+The store's state (docs/design-bluetooth.md, "Bonds and the store"): `read`; `unknown`
+since its start, whose read gave no state, which refuses every change until `forget
+all`; or `unknown` since a put it could not confirm, which reads before the next change.
+""".
+-type known() :: read | {unknown, start | put}.
 -type generation() :: erx_bt_state_file:generation().
 -type bond() :: erx_bt_state:bond().
 -type identity() :: erx_smp_crypto:address().
 
 -record(store, {
     address :: <<_:48>>,
-    known :: read | {unknown, start | put},
+    known :: known(),
     reason = none :: none | store_unavailable | store_unreadable,
     bonds = [] :: [bond()],                                % secret: never shown, see format_status/1
     links = #{} :: #{reference() => {pid(), identity()}},  % the links it monitors, by monitor
@@ -92,6 +98,14 @@ start_link(Options) ->
 -spec address() -> <<_:48>>.
 address() ->
     gen_server:call(?MODULE, address, infinity).
+
+-doc """
+The store's state, which the window takes at its start (docs/design-bluetooth.md, "The
+pairing window"). The store answers after the requests queued before it, each within a read and a put.
+""".
+-spec known() -> known().
+known() ->
+    gen_server:call(?MODULE, known, infinity).
 
 -doc """
 The one bond a link's phone address names, without its IRK, or `none`
@@ -167,6 +181,8 @@ guarded(Fun, Store) ->
 
 call(address, _From, #store{address = Address} = Store) ->
     {reply, Address, Store};
+call(known, _From, #store{known = Known} = Store) ->
+    {reply, Known, Store};
 call({resolve, Address}, {Link, _}, #store{bonds = Bonds} = Store) ->
     case find(Address, Bonds) of
         none -> {reply, none, Store};
@@ -405,12 +421,12 @@ find_private(_Address, _Bonds) ->
 %% What the store shows: the address, its state and reason, each bond's identity and
 %% level, and how many links it monitors; never a key.
 facts(#store{address = Address, known = Known, reason = Reason, bonds = Bonds, links = Links}) ->
-    #{address => Address, store => known(Known), reason => Reason,
+    #{address => Address, store => shown(Known), reason => Reason,
       bonds => [{Identity, Level} || #{identity := Identity, level := Level} <- Bonds],
       links => map_size(Links)}.
 
-known(read) -> read;
-known({unknown, _}) -> unknown.
+shown(read) -> read;
+shown({unknown, _}) -> unknown.
 
 format_status(#{state := #store{} = Store} = Status) ->
     hide_log(hide_message(Status#{state := facts(Store)}));

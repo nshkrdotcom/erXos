@@ -23,11 +23,12 @@ class ErxBtWindowTest < Minitest::Test
   SEEDS = [
     Seed.new(fault: 'the wait reset when a window opens',
              anchor: '    Opened = Core#core{window = {admitting, Id, Mode, Deadline, false}},',
-             replacement: '    Opened = Core#core{window = {admitting, Id, Mode, Deadline, false}, until = none},',
+             replacement: '    Opened = Core#core{window = {admitting, Id, Mode, Deadline, false}, last_failure = none},',
              catching_case: 'back_to_back_windows_do_not_shorten_the_wait_test'),
     Seed.new(fault: 'a disconnection mid-pairing not counted',
              anchor: '    failure(Address, disconnected, Now, Core);',
-             replacement: '    {Actions, Failed} = failure(Address, disconnected, Now, Core), {Actions, Failed#core{until = Core#core.until}};',
+             replacement: '    {Actions, Failed} = failure(Address, disconnected, Now, Core), ' \
+                          '{Actions, Failed#core{last_failure = Core#core.last_failure}};',
              catching_case: 'a_disconnection_mid_pairing_fails_and_counts_test'),
     Seed.new(fault: "the link's monitor kept past its keeping, so its end fails a kept bond",
              anchor: '    {[{demonitor, Link}], Core#core{pairing = {Link, Tag, Address, keeping}}};',
@@ -46,8 +47,12 @@ class ErxBtWindowTest < Minitest::Test
              replacement: 'input({open, Id}, _Now, #core{window = none, lines = Lines} = Core) ->',
              catching_case: 'keeping_then_down_leaves_the_store_to_decide_test'),
     Seed.new(fault: 'the wait never decayed',
-             anchor: '    max(?ERX_BT_PAIR_WAIT_MIN_S * 1000, Next bsr min(16, (Now - Last) div (?ERX_BT_PAIR_WAIT_DECAY_S * 1000))).',
-             replacement: '    _ = {Last, Now}, Next.',
+             anchor: '    Halvings = (Now - At) div (?ERX_BT_PAIR_WAIT_DECAY_S * 1000),',
+             replacement: '    Halvings = 0 * (Now - At),',
+             catching_case: 'wait_halves_for_each_decay_without_a_failure_test'),
+    Seed.new(fault: 'the maximum applied before the decay, so 600 s of quiet after a 64 s wait shortens the next',
+             anchor: '    max(?ERX_BT_PAIR_WAIT_MIN_S * 1000, min(?ERX_BT_PAIR_WAIT_MAX_S * 1000, (2 * Wait) bsr Halvings)).',
+             replacement: '    max(?ERX_BT_PAIR_WAIT_MIN_S * 1000, min(?ERX_BT_PAIR_WAIT_MAX_S * 1000, 2 * Wait) bsr Halvings).',
              catching_case: 'wait_halves_for_each_decay_without_a_failure_test')
   ].freeze
 

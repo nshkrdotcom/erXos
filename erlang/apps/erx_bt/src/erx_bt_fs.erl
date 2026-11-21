@@ -32,7 +32,7 @@ report and `sys:get_status/1` show the core's `facts/1` alone.
 -include_lib("kernel/include/logger.hrl").
 -include("erx_fs_waits.hrl").
 
--export([start_link/1]).
+-export([start_link/0, start_link/1]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, format_status/1]).
 
 -record(fs, {core :: erx_bt_window:core(),
@@ -43,18 +43,26 @@ report and `sys:get_status/1` show the core's `facts/1` alone.
              waits = erx_fs_waits:new() :: erx_fs_waits:waits()}).
 
 -doc """
-Starts the service, registered as `erx_bt_fs`, over a store the start's read left
-`read` or `unknown`, and the grants of its tree, linked.
+Starts the service under `erx_bt_sup`, after the store, over the state the store answers
+now (`erx_bt_store:known/0`); a restart of the store restarts it.
 """.
--spec start_link(read | unknown) -> gen_server:start_ret().
-start_link(Store) ->
-    gen_server:start_link({local, ?MODULE}, ?MODULE, Store, []).
+-spec start_link() -> gen_server:start_ret().
+start_link() ->
+    start_link(erx_bt_store:known()).
+
+-doc """
+Starts the service, registered as `erx_bt_fs`, over the store's state `Known`, and the
+grants of its tree, linked.
+""".
+-spec start_link(erx_bt_store:known()) -> gen_server:start_ret().
+start_link(Known) ->
+    gen_server:start_link({local, ?MODULE}, ?MODULE, Known, []).
 
 -doc false.
-init(Store) ->
+init(Known) ->
     process_flag(trap_exit, true),
     {ok, Grants} = erx_fs_grants:start_link(erx_bt_fs_tree, self()),
-    {ok, #fs{core = erx_bt_window:new(Store), grants = Grants}}.
+    {ok, #fs{core = erx_bt_window:new(Known), grants = Grants}}.
 
 %% An open is named by the opening grant and a reference, and its grant is monitored, so
 %% a grant's end closes it.
@@ -140,7 +148,7 @@ step(Input, #fs{core = Core} = Fs) ->
 
 perform({answer, Answer}, {_, Fs}) ->
     {Answer, Fs};
-perform({send, Link, {admission, Tag, {open, Mode}}}, Acc) ->
+perform({open, Link, Tag, Mode}, Acc) ->
     Link ! {window, {admission, Tag, {open, Mode, erx_smp_crypto:fresh()}}},
     Acc;
 perform({send, Link, Message}, Acc) ->

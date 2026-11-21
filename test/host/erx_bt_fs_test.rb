@@ -44,7 +44,11 @@ class ErxBtFsTest < Minitest::Test
     Seed.new(fault: 'the state shown whole, with its passkey line',
              anchor: '    maps:map(fun(state, #fs{core = Core}) -> erx_bt_window:facts(Core);',
              replacement: '    maps:map(fun(state, #fs{} = State) -> State;',
-             catching_case: 'status_hides_the_lines_test')
+             catching_case: 'status_hides_the_lines_test'),
+    Seed.new(fault: "the window started without the store's state, so it opens over a store that refuses changes",
+             anchor: '    start_link(erx_bt_store:known()).',
+             replacement: '    start_link(read).',
+             catching_case: 'the_window_starts_with_the_store_and_restarts_with_it_test')
   ].freeze
 
   def test_pair_cases_pass_under_eunit

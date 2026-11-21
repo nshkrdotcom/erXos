@@ -222,6 +222,7 @@ identities(#{bonds := Bonds}) -> [Identity || #{identity := Identity} <- Bonds].
 start_reading_none_makes_the_address_test() ->
     {Store, Script} = start(none, [], []),
     #{store := read, reason := none, bonds := [], address := <<2#11:2, _:46>> = Address} = erx_bt_store:facts(),
+    ?assertEqual(read, erx_bt_store:known()),
     ?assertEqual(Address, erx_bt_store:address()),
     Link = fake_link(),
     keep(Link, 1),
@@ -246,6 +247,7 @@ start_unread(Get, Reason) ->
     {Store, Script} = start(blob([bond(1)]), [Get], []),
     #{store := unknown, reason := Reason, bonds := [], address := Address} = erx_bt_store:facts(),
     ?assertNotEqual(?ADDRESS, Address),
+    ?assertEqual({unknown, start}, erx_bt_store:known()),
     ?assertEqual(none, erx_bt_store:resolve({public, <<0, 0, 0, 0, 0, 1>>})),
     Link = fake_link(),
     keep(Link, 2),
@@ -256,6 +258,7 @@ start_unread(Get, Reason) ->
     ?assertEqual(ok, erx_bt_store:forget(all)),
     ?assertEqual(#{address => Address, bonds => []}, medium(Script)),
     ?assertMatch(#{store := read, reason := none}, erx_bt_store:facts()),
+    ?assertEqual(read, erx_bt_store:known()),
     stop(Store).
 
 %% A put that reached the medium and answered unavailable fails its pairing; the next
@@ -267,11 +270,13 @@ unconfirmed_put_reads_before_the_next_change_test() ->
     ?assertEqual({error, unavailable}, kept(First)),
     ?assertEqual({failed, unavailable}, outcome(First)),
     ?assertMatch(#{store := unknown, reason := store_unavailable, bonds := []}, erx_bt_store:facts()),
+    ?assertEqual({unknown, put}, erx_bt_store:known()),
     Second = fake_link(),
     keep(Second, 2),
     ?assertEqual(ok, kept(Second)),
     ?assertEqual([identity(1), identity(2)], identities(medium(Script))),
     ?assertEqual(identities(medium(Script)), [I || {I, _} <- maps:get(bonds, erx_bt_store:facts())]),
+    ?assertEqual(read, erx_bt_store:known()),
     stop(Store).
 
 identity(N) -> maps:get(identity, bond(N)).

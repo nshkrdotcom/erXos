@@ -9,9 +9,9 @@
 %% the gate; erx_gatt_server, the ATT server; erx_gatt_srv, the registry's calls; and the Security Manager's: erx_smp, its
 %% codec, erx_smp_core, its responder, and erx_smp_crypto, its toolbox. Its processes,
 %% under erx_bt_sup, which erx_bt_app starts once it has mounted the line at /line: the
-%% store, erx_bt_store, over erx_bt_state_file in development builds, and the controller group, erx_bt_host_sup, of the link supervisor,
-%% the line's reader and writer and the controller process, erx_bt_hci. The window: erx_bt_window,
-%% its core, run by the file service erx_bt_fs, which serves the control tree, erx_bt_fs_tree.
+%% store, erx_bt_store, over erx_bt_state_file in development builds; the file service erx_bt_fs, which serves the
+%% control tree, erx_bt_fs_tree, and runs the window's core, erx_bt_window; and the controller group, erx_bt_host_sup,
+%% of the link supervisor, the line's reader and writer and the controller process, erx_bt_hci.
 {application, erx_bt,
  [{description, "erXos Bluetooth Low Energy"},
   {vsn, "1"},

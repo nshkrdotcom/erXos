@@ -1443,7 +1443,11 @@ counts and writes is the store's own answer to `keep` whenever the
 store was asked, and a pairing the window counts failed before that
 step never reached the store; a `put` left unconfirmed is the store's
 `unavailable`, with what follows it there. The window matches each
-outcome by the link and its tag.
+outcome by the link and its tag. The store's outcome and the link's
+`keeping` come from two processes and reach the window in either
+order, so the window takes the outcome before `keeping` as after it:
+a link sends `keeping` or a failure for a pairing, never both, so an
+outcome that comes first never meets a second one from the link.
 
 The store finds the bond of `subscriptions` and `served` by the link it
 monitors, and `kept` carries no tag because a link asks the store one
@@ -1581,7 +1585,18 @@ Manager ignores in every phase.
 A window is an open fid of the control tree's `pair` file. Opening it
 while another window is open, or while the pairing a closed window
 admitted has no outcome yet, answers `ebusy`, so the window process
-awaits at most one pairing. The opener writes one
+awaits at most one pairing. The window process takes the store's state
+at its start (`erx_bt_store:known/0`) and answers `eio` to every open
+while the store is `unknown` since its start, which refuses every
+change ([Bonds and the store](#bonds-and-the-store)). The store leaves
+that state only by `forget all`, which the control tree's `ctl`, served
+by the window process, asks of it, so the answer tells the window
+process; it enters that state only at its own start, which restarts the
+window process after it ([Concurrency](#concurrency)). A store
+`unknown` since a put it could not confirm reads before its next
+change, so a window still opens, and the store's outcome of that
+pairing, `failed ... unavailable` when the read or the put fails, is
+all the window needs of it. The opener writes one
 line, `display` or `nodisplay`, at most 16 bytes, which opens the window
 for `bt_pair_window_s`, 120 s, and reads lines that the window writes,
 each ASCII the window composes from numbers and addresses alone:
@@ -1641,11 +1656,13 @@ by any window, so whoever opens windows, and however fast, does not
 shorten it. After a pairing fails, whatever the reason, the timeout and
 the end of its link included, so that leaving halfway through Passkey
 Entry's rounds is a failure too, no Pairing Request is answered for the
-wait, which starts at
-`bt_pair_wait_min_s`, 2 s, doubles at each further failure up to
-`bt_pair_wait_max_s`, 64 s, and halves for each `bt_pair_wait_decay_s`,
-600 s, without a failure, down to the minimum; a success leaves it as
-it is. The window process monitors a link from its `open` verdict until
+wait the failure imposes: `bt_pair_wait_min_s`, 2 s, for the window
+process's first failure, and after that twice the wait the previous
+failure imposed, halved for each whole `bt_pair_wait_decay_s`, 600 s,
+since that failure, and kept between 2 s and `bt_pair_wait_max_s`, 64 s.
+So the wait doubles at each failure up to 64 s and quiet brings it
+down: after a 64 s wait the next failure imposes 64 s until 1200 s have
+passed, and 32 s then. A success leaves it as it is. The window process monitors a link from its `open` verdict until
 the link reports the pairing failed or hands its bond to the store, so
 a link that ends first, however it ends, is a failure, `disconnected`,
 and one that ends while the store writes is not
@@ -2131,7 +2148,7 @@ and stops in the reverse order, the controller process first.
 | the line's `data` | `eio` | the line is broken |
 | the control tree's `pair` | `ebusy` | another window is open |
 | | `einval` | a first write other than `display` or `nodisplay` |
-| | `eio` | the store is `unknown` after its read |
+| | `eio` | the store is `unknown` since its start |
 | the control tree's `ctl` | `einval` | any write but `forget ADDRESS` or `forget all` |
 | | `eio` | `forget ADDRESS` while the store stays `unknown`, or any `forget` whose `put` is unconfirmed |
 | | `enoent` | no bond has that identity |
@@ -2143,7 +2160,7 @@ and stops in the reverse order, the controller process first.
 | | `{error, gone}` | a dead `Conn` |
 | | `{error, not_subscribed}`, `{error, insufficient_security}` | the phone did not subscribe; the gate refused |
 | | `{error, timeout}` | an indication unconfirmed in 30 s, after which the link ends (ATT 3.3.3) |
-| a pairing, on `pair` | `failed ADDR not_supported`, `secure_connections_required`, `key_size`, `method`, `confirm`, `dhkey`, `bonding`, `invalid`, `unexpected`, `peer`, `timeout`, `already_bonded`, `bonds_full`, `unavailable`, `disconnected` | SMP's reasons and the store's, each mapped from one Pairing Failed code or one event |
+| a pairing, on `pair` | `failed ADDR secure_connections_required`, `key_size`, `method`, `confirm`, `dhkey`, `bonding`, `invalid`, `unexpected`, `peer`, `timeout`, `already_bonded`, `bonds_full`, `unavailable`, `disconnected` | SMP's reasons and the store's, each mapped from one Pairing Failed code or one event |
 | a Pairing Request during the pairing wait | Pairing Failed, Repeated Attempts (`0x09`) | the wait has not passed; no line on `pair`, the window stays open |
 | a configuration write on a bonded link | Unlikely Error (`0x0E`) | the store is `unknown` or its `put` was not `ok` |
 | a configuration write on a link that holds a key | Insufficient Encryption (`0x0F`) | the link is not yet encrypted |
@@ -2177,7 +2194,7 @@ Each core's test is paired with the seeded faults it must catch.
 | `erx_gatt_server` | each supported request; long reads and prepared writes at every MTU from 23 to 247; the gate asked for every value and descriptor access; a descriptor write on a link that holds a key and is not encrypted answers Insufficient Encryption, at every level the characteristic declares | the gate skipped for Read Blob; the descriptor's write level taken from `read`; the descriptor's write level taken from the declaration alone (an `open` write before encryption answered) |
 | `erx_bt_link_core`, explored | reassembly at every fragment size; one outstanding request; commands past the queue discarded and counted; a first pairing reaches its level before the store answers, a reconnection the bond's; a Pairing Request on a resolved link fails; `encrypted` set only by a success report after a Reply; one Security Request, never during encryption; a bonded configuration write answered only after the store's `ok`; a resolved link sends no `subscriptions` or `served` and indicates no Service Changed before its encryption, and restores the bond's subscriptions at it; every controller message's step returns `taken`; `keep` and `keeping` leave in one step, and a `withdraw` after it changes nothing | an Encryption Change accepted after a Negative Reply; encryption accepted only for kept bonds; the configuration write answered before the store; the bond's subscriptions taken at `new/1` (a resolved link's configuration reads as the bond's before encryption); a `withdraw` taken in the Security Manager's `done` (the outcome `withdrawn` while the store keeps the bond) |
 | `erx_smp_core`, explored over every message order | Passkey Entry and Just Works complete; every refusal of [Secure Connections only](#secure-connections-only) fires; a `display` window refuses Just Works; one pairing per window | the key-size check removed; the curve check removed (the `y + 1` point accepted); the link-key bit kept |
-| `erx_bt_window` | the wait doubles from 2 to 64 s after failures, a disconnection mid-pairing counting as one, and halves after 600 s without one; a Pairing Request during it answers Repeated Attempts and leaves the window open; back-to-back windows do not shorten it | the wait reset when a window opens; a disconnection not counted |
+| `erx_bt_window` | the wait doubles from 2 to 64 s after failures, a disconnection mid-pairing counting as one, and a failure imposes twice the last one's wait halved for each whole 600 s since it, within 2 and 64 s; a Pairing Request during it answers Repeated Attempts and leaves the window open; back-to-back windows do not shorten it | the wait reset when a window opens; a disconnection not counted; the wait never decayed; the maximum applied before the decay |
 | `erx_pl011:program/1` | `fresh` writes `CR` 0 first, clears `FEN` before the divisors, drains the receive side within 33 reads, writes the divisors before `LCR_H` and `CR` whole last with the flow enables; `keep` clears no FIFO and programs the divisors only of an unprogrammed UART | `LCR_H` before the divisors, so the rate never latches; `fresh` keeping the boot's divisors |
 | `erx_smp_crypto` | SMP Appendix D's sample data for `f4`, `f5`, `f6` and `ah` | the AES-CMAC key byte order reversed |
 | `erx_bt_state` | a state round-trips; another version, a truncation and an oversized count are refused; the largest state encodes in at most 4 KiB | the bond count read without its bound |

@@ -8596,7 +8596,8 @@ model harness drive `erx_device.c` itself. `erx_device_dma_check` and `erx_devic
   SMP 3.6.7 after the pairing wait and never during encryption), indicates no Service Changed when the bond's
   table hash differs and so sends no `served`, and a configuration write on a bonded link is answered at once
   instead of after the store's `kept` for its `subscriptions`. The core holds the bond's hash as `served` for
-  them. Build them with the host tests the Verification table lists ("one Security Request, never during
+  them. Name `wait` and `{wait, Ms}` in the link core's exported `to_window()` and `from_window()`, which
+  `erx_bt_window` adds them to meanwhile. Build them with the host tests the Verification table lists ("one Security Request, never during
   encryption", "a bonded configuration write answered only after the store's `ok`").
 * [Medium] bluetooth, the link core's bond state (`erx_bt_link_core`'s `kept`, `keeping`, `candidate` and
   `served`): four fields hold one lifecycle (none, a resolved candidate, proven, keeping, kept), so meaningless
@@ -8609,12 +8610,13 @@ model harness drive `erx_device.c` itself. `erx_device_dma_check` and `erx_devic
   `awaiting` at a verdict other than `open`, or state in "The pairing window" that the window ignores an
   outcome for a tag it did not open. Also add a link-core case writing `ind`'s open configuration on a
   resolved link before encryption, which only `erx_bt_gatt_tests` and the fuzz invariant cover now.
-* [High] bluetooth, the registry, the window and the store's bonds (`erx_gatt_srv`, `erx_bt_fs`,
-  `erx_bt_store`; docs/design-bluetooth.md "The `ble` facet", "The pairing window", "Bonds and the store"):
-  `erx_gatt_srv` has only its `join/2` call and no process, so every link ends at its start
-  (`{shutdown, {start, registry}}`) and no phone stays connected; with no window registered, a Pairing Request
-  is never admitted and fails at the Security Manager Timer, 30 s, ending the link. Build the two processes; the
-  store keeps bonds and sends the window its `outcome` to the name `erx_bt_fs`.
+* [High] bluetooth, the registry and the control tree's `ctl` (`erx_gatt_srv`, `erx_bt_fs`;
+  docs/design-bluetooth.md "The `ble` facet", "The pairing window", "Bonds and the store"): `erx_gatt_srv` has
+  only its `join/2` call and no process, so every link ends at its start (`{shutdown, {start, registry}}`) and no
+  phone stays connected; build it, between the store and `erx_bt_fs` under `erx_bt_sup`. `erx_bt_fs` serves
+  `pair` alone: `ctl`'s `forget ADDRESS` and `forget all` are unbuilt, so a store `unknown` since its start stays
+  so until the next start. When `ctl` calls `erx_bt_store:forget(all)`, its `ok` must step the window's core off
+  `unknown` since its start, which `erx_bt_window` takes only at `new/1` and has no input for yet.
 * [Medium] bluetooth, the store's development file has no grant (`erx_bt_store:start_link/0`,
   `erx_bt_state_file`; docs/design-bluetooth.md "Bonds and the store"): the design keeps the state in "the
   Bluetooth domain's directory on the data partition" but names no files service or manifest row that reaches it,
@@ -8658,12 +8660,6 @@ model harness drive `erx_device.c` itself. `erx_device_dma_check` and `erx_devic
   or configuration write `unavailable`. Eight bonds with three subscriptions of the longest names fit
   (`state_largest_fits_test`). Derive the bound in `Erx::GattDecl`: fail the build when eight bonds subscribed to
   every such characteristic of the table would pass 4 KiB.
-  is never admitted and fails at the Security Manager Timer, 30 s, ending the link; and `erx_bt_store:resolve/1`
-  answers `none` because the store keeps no bonds. The window is built (`erx_bt_fs` over `erx_bt_window`, the
-  control tree `erx_bt_fs_tree` with `pair` alone) but `erx_bt_sup` does not start it: `erx_bt_fs:start_link/1`
-  takes whether the start's read left the store `read` or `unknown`, which the store must answer once it reads
-  its state, and the design names no call for it yet; `forget all` through the tree's `ctl`, also unbuilt, is
-  the one other change of it. Build the registry and the store, the store's answer, `ctl`, and the wiring.
 * [Low] bluetooth, the link core's deadlines and Encryption_Enabled (`erlang/apps/erx_bt/src/erx_bt_link_core.erl`,
   its `HANDLER_TIMEOUT_MS`, `ATT_TRANSACTION_MS`, `SMP_TIMEOUT_MS` and `ENCRYPTION_ON_LE`): "What a radio peer can
   make the domain spend" makes every bound a constant of `abi/formats/bluetooth.txt`, but these four are module
