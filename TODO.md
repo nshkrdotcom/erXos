@@ -10044,12 +10044,6 @@ document's "residual risks accepted" paragraph.
   [design-board-sensors.md](docs/design-board-sensors.md#the-requests)): no `erx_firmware_request` in the machine
   family, and no firmware request record (name, belonging, tag, argument) in the system manifest from the platform
   record's `firmware_requests`. Add the two.
-* [Medium] firmware mailbox core, `kernel/core/vc_property.c` ([design-kernel.md](docs/design-kernel.md#firmware-requests),
-  [design-board-sensors.md](docs/design-board-sensors.md#verification)): the request writer and the answer check are
-  built, host-tested and fuzzed (`tools/fuzz/vc_property_fuzz.c`), but the one-request-at-a-time state (the buffer's address match, `ERX_EBUSY`, the
-  deadline and every call after `ERX_ETIMEDOUT`) against a model mailbox is not built. The core sits in
-  `kernel/core/`, so `CoreArchive` links it into Fiasco's `erx_cores.a` too, where the design runs it in the root
-  task: the root backend's commit places it.
 * [Medium] domain library, `include/erx/device_kinds.h` ([design-usb.md](docs/design-usb.md#who-holds-a-controller),
   [design-pcie.md](docs/design-pcie.md#the-bridge-seam)): the host bridges' kinds drive a bridge row, but neither
   platform record (`config/platforms/`) has a `configuration` row and no manifest a PCIe domain, so no bridge is

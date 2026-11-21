@@ -44,6 +44,11 @@ limit vc_end_tag u32 0
 limit vc_window_max u32 64
 limit vc_request_max u32 64
 
+# How long one request may take, from the call's start to its answer, the wait for room
+# to post included (docs/design-kernel.md, "Firmware requests"): erXos's bound for every
+# mailbox request, in nanoseconds.
+limit vc_deadline_ns u64 1000000000
+
 # The tags erXos sends. NOTIFY_XHCI_RESET has the USB controller behind a PCIe bridge load
 # its firmware: its request is one word, the function's address bus << 20 | device << 15
 # | function << 12, and its answer is empty (docs/research-brcmstb-pcie.md, section 5;
