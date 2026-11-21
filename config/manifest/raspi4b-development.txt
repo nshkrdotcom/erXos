@@ -4,13 +4,14 @@
 # The Raspberry Pi 4 Model B's part of its development manifest on Fiasco
 # (config/platforms/raspi4b.json; docs/plan.md, 1b-I). The manifest is the records every
 # board takes, config/manifest/development.txt, followed by these (Platform#manifest_source).
-# Together they configure the system domain, three configured domains, storage, network and
-# display, and the system principal's session template, from which the console starts root's
-# session at boot (docs/design-system.md, "Boot"). This part holds the machine, the
-# system principal, the apps row, the display domain's limits, the units and windows of
-# the board's devices and the network domain's row, whose driver is the board's. The
-# common part holds the storage and display domains' rows, the shares, runtime limits and
-# the other limits, and the services and facets; QEMU virt's part
+# Together they configure the system domain, five configured domains, storage, network,
+# display, pcie and usb, and the system principal's session template, from which the console
+# starts root's session at boot (docs/design-system.md, "Boot"). This part holds the
+# machine, the system principal, the apps row, the display domain's limits, the units and
+# windows of the board's devices, the network domain's row, whose driver is the board's,
+# and the USB domain's rows. The common part holds the storage, display and PCIe domains'
+# rows, the shares,
+# runtime limits and the other limits, and the services and facets; QEMU virt's part
 # (config/manifest/qemu-virt-development.txt) gives their measurements.
 #
 # The storage domain, an interpreter service domain, holds the platform record's sd unit,
@@ -50,17 +51,18 @@
 # own memory, one 1920x1080 screen of 32 bits (8,294,400 bytes), with 8 MiB of headroom; a
 # larger screen, 4K's 31.6 MiB among them, does not fit, and the driver ignores it. Its
 # outer budget is 1 MiB and one pixel area of windows_pixels_default, 8 MiB, with its
-# 4 KiB lane, for the apps row's one app, and five more for the sessions of root's
-# template, which display_root grants the display (development.txt), 40 MiB and 20 KiB;
-# its quota of three connections is that app's, root's session's and its replacement's.
+# 4 KiB lane, for the apps row's one app, and seven more for the sessions of root's
+# template that the system principal's domains quota lets live at once, which display_root
+# grants the display (development.txt), 56 MiB and 28 KiB; its quota of four connections is that
+# app's, root's session's, its replacement's and the USB domain's input tree's.
 # Its memory and the display share's 100 mcpu are measured on neither board (TODO.md).
 limits display
   memory 41943040
-  outer 51404800
+  outer 68190208
   grant @share.display
   spaces none
   lane 4096
-  connections 3
+  connections 4
   crash 0
   flags none
   runtime_limits @runtime_limits.display
@@ -69,16 +71,18 @@ limits display
 # The system principal holds root's one session, 36 MiB and outer 1 MiB, and 1 MiB for
 # the outer budget of a domain that has ended while another still holds a connection to
 # it, as QEMU virt's comment explains; the storage domain, 30 MiB and outer 1 MiB; the
-# network domain, 36 MiB and outer 1 MiB; and the display domain, 40 MiB and outer 49 MiB
-# and 24 KiB: 195 MiB and 24 KiB in all. The system baseline is QEMU virt's 46 MiB.
-# root_memory, 315 MiB and 24 KiB, admits the baseline, the principal's 195 MiB and 24 KiB,
-# the apps row's 66 MiB, the SD controller's 1 MiB of DMA memory and GENET's 1 MiB of
-# device memory with 6 MiB no one is promised, and lies well below what the smallest Pi 4
-# the record names leaves the root: RAM less fiasco_reserve is 890 MiB there.
+# network domain, 36 MiB and outer 1 MiB; the display domain, 40 MiB and outer 65 MiB
+# and 32 KiB; the PCIe domain, 25 MiB and outer 1 MiB; and the USB domain, 32 MiB and
+# outer 1 MiB: 270 MiB and 32 KiB in all. The system baseline is QEMU virt's 46 MiB.
+# root_memory, 391 MiB and 32 KiB before ntpd's principal adds its own (its comment),
+# admits the baseline, the principal's 270 MiB and 32 KiB, the apps row's 66 MiB, the SD
+# controller's 1 MiB of DMA memory, GENET's 1 MiB of device memory and the VL805's 1 MiB
+# of contiguous memory with 6 MiB no one is promised, and lies well below what the
+# smallest Pi 4 the record names leaves the root: RAM less fiasco_reserve is 890 MiB there.
 principal system
-  memory 204496896
+  memory 283148288
   grant @share.users
-  domains 5
+  domains 7
   names 64
   default_limits @limits.native
   ceiling_limits @limits.native
@@ -87,9 +91,10 @@ principal system
 # the card's one app, the dashboard, so the display domain's outer budget pays for one
 # pixel area; and the display and net, which the build grants the app template. The app
 # is a principal with a domains quota of one, so max_domains is the system principal's
-# five and the one app. max_connections, 18, holds the eleven of the network domain's
-# comment and the app's session's four: its system connection, packages, the display and
-# net, and two more for root's session's display connection and its replacement's.
+# seven and the one app. max_connections, 21 with ntpd's session's, holds the 14 of the
+# network domain's comment and the app's session's four: its system connection, packages,
+# the display and net, and two more for root's session's display connection and its
+# replacement's.
 apps
   memory 69206016
   max 1
@@ -100,13 +105,13 @@ machine
   console "/soc/serial@7e215040"
   hostlink "/soc/serial@7e201600"
   platform "raspi4b"
-  root_memory 369123328
+  root_memory 448823296
   system_baseline 48234496
   system_share @share.system
   users_share @share.users
   system_principal @principal.system
-  max_domains 7
-  max_connections 18
+  max_domains 9
+  max_connections 21
   system_lane 4096
   system_queue 16384
   peer_held 4096
@@ -127,6 +132,16 @@ unit rng
 unit watchdog
   placement "watchdog"
   holder system
+# pcie: the PCIe domain's unit, whose domain's rows are the common part's: the BCM2711's
+# bridge, closed, with its one listed place, the VL805, and its first line, SPI 147, which
+# the PCIe domain holds masked (docs/design-pcie.md, "The closed bus"; docs/design-platforms.md,
+# "PCIe bridges"); its second, SPI 148, is in no unit (TODO.md, "the bridge's second line").
+# The bridge has no driver module yet, so the enumerator refuses it at every boot, logs that
+# the bridge is not started, and reports no functions: the VL805 is never given and the USB
+# domain runs no controller (TODO.md, "USB on the Raspberry Pi 4").
+unit pcie
+  placement "pcie"
+  holder @domain.pcie
 # data: the card's data partition, whose sectors the medium layout gives (partition 0,
 # abi/medium.txt), read-write for the storage domain alone, as on QEMU virt.
 # record_volume: the whole record partition, the FAT volume that holds root's
@@ -178,11 +193,11 @@ system_image
 #
 # Its quota of two connections holds root's session and one more while a session is
 # replaced; its system connection counts against no quota (life_connections,
-# liberx/system/dom_life.c). At rest the machine holds six of the 11 these rows take: the system
-# connections of root's session and of the storage, network and display domains, and the
-# session's data and net; the other five are the three a replacement session makes beside
-# its predecessor's closing rows and the two a restarted configured domain makes, as on
-# QEMU virt. The apps row's one app takes four more (the apps row's comment).
+# liberx/system/dom_life.c). At rest the machine holds nine of the 14 these rows take: the
+# system connections of root's session and of the storage, network, display, PCIe and USB
+# domains, the session's data and net, and the display's usb_input; the other five are the
+# three a replacement session makes beside its predecessor's closing rows and the two a
+# restarted configured domain makes, as on QEMU virt. The apps row's one app takes four more (the apps row's comment).
 domain network
   principal @principal.system
   limits @limits.network
@@ -245,98 +260,80 @@ facet ntpd_clock
   max_heap_size 8192
 start ntpd
   enable YES
-# The USB domain's rows, held back. The Pi 4's USB domain holds the VL805, the one function
-# at bus 1, device 0 behind the BCM2711's closed bridge, with the INTx line its pin routes,
-# SPI 143, as one unit (docs/design-usb.md, "Who holds a controller", "Interrupts" and "The
-# VL805 on the Raspberry Pi 4"), and serves the display its input tree. Its rows are QEMU
-# virt's (config/manifest/qemu-virt-development.txt gives their reasons and figures), and
-# nothing in them differs on the Pi 4: the controller's driver takes its line as it takes
-# an MSI, clearing USBSTS's event interrupt and IMAN's interrupt pending before it reads
-# the event ring and acknowledging the line only after, so the line is deasserted when it
-# is unmasked unless an event came after the last read, which then interrupts again
-# (erx_xhci_core, "Events"). What differs lies outside these rows: the platform record's
-# xhci unit is the VL805's function row, placement key xhci, selector pci, role usb,
-# bridge /scb/pcie@7d500000, bus 1, device 0, function 0, compatible pci1106,3483, line
-# 175 (SPI 143, which its place's pin routes), flags hostile, as every USB host
-# controller's (docs/design-system.md, "Devices"), dma unconfined, and dma_memory 1 MiB,
-# contiguous memory below the bridge row's dma_limit; and the domain is in the trusted
-# base, as every unconfined device's domain is. The manifest check refuses a unit behind a
-# bridge no unit places, so these rows go in with the PCIe domain's Pi 4 rows and the
-# bridge's closed row in the platform record (TODO.md, "USB on the Raspberry Pi 4"), and
-# with them: the display's connections one more, for usb_input; the system principal's
-# domains one more, and so the display's outer budget 8 MiB and 4 KiB more, one more
-# session's pixel area and lane; the principal's memory 41 MiB and 4 KiB more, the
-# domain's 32 MiB and outer 1 MiB and the display's added outer budget; max_domains one
-# more; max_connections two more, the domain's system connection and usb_input; and
-# root_memory 42 MiB and 4 KiB more, the principal's added memory and the VL805's 1 MiB
-# of contiguous memory. Added to this part's figures alone, before the PCIe domain's own,
-# they make the display's connections 4 and outer 59797504, the principal's domains 6 and
-# memory 247492608, max_domains 8, max_connections 20 and root_memory 413167616. Each row
-# below is QEMU virt's with "# " in front.
-# runtime_limits usb
-#   max_frame 131072
-#   max_message_heap 131072
-#   funnel_depth 64
-#   exports 256
-#   tmp 0
-#   overlay 0
-#   atoms 16384
-#   foreign_atoms 1024
-#   processes 1024
-# share usb
-#   quota_ns 1000000
-#   period_ns 10000000
-#   cpuset 1
-#   capacity_mcpu 100
-#   capacity_first 0
-#   slice_us 1000
-#   grace_us 5
-#   base 16
-#   ceiling 31
-#   flags none
-# limits usb
-#   memory 33554432
-#   outer 1048576
-#   grant @share.usb
-#   spaces none
-#   lane 4096
-#   connections 2
-#   crash 0
-#   flags none
-#   runtime_limits @runtime_limits.usb
-#   peer_held 4096
-#   peer_held_total 4096
-# domain usb
-#   principal @principal.system
-#   limits @limits.usb
-#   kind service
-#   flags none
-#   runtime @artifact.emu
-#   release @artifact.usb
-#   restarts 5
-#   restart_period_s 600
-#   args "-- -root / -bindir /bin -progname erl -home / -nouser -nocookie -no_epmd -proto_dist erx -eval ok=erx_usb:start_controllers()"
-# unit xhci
-#   placement "xhci"
-#   holder @domain.usb
-# facet pci
-#   grantee @domain.usb
-#   service @service.pci
-#   operations open,master,reset
-#   max_request 1024
-#   in_flight 1
-#   reductions 100000
-#   period_ns 1000000000
-#   max_heap_size 8192
-# service usb_input
-#   server @domain.usb
-#   interface input
-# facet usb_input
-#   grantee @domain.display
-#   service @service.usb_input
-#   operations none
-#   max_request 131072
-#   in_flight 16
-#   reductions 100000
-#   period_ns 1000000000
-#   max_heap_size 262144
+# The USB domain's rows, QEMU virt's row for row (config/manifest/qemu-virt-development.txt,
+# whose comment explains their figures): nothing in them differs on the Pi 4, whose
+# controller's driver takes its INTx line as it takes an MSI (erx_xhci_core, "Events").
+# They are each board's own, not the common part's, because a board need not have a USB
+# domain: the Raspberry Pi 5's USB hosts are in RP1's unit (docs/design-platforms.md).
+# xhci is the VL805's function at the bridge's place with the INTx line its pin routes,
+# SPI 143, as one unit (docs/design-usb.md, "The VL805 on the Raspberry Pi 4"); its DMA is
+# unconfined, so the USB domain is in the trusted base, and its 1 MiB of contiguous memory
+# lies below the bridge's dma_limit. Neither this domain's memory nor the PCIe domain's is
+# measured on the Pi 4 (TODO.md, "USB on the Raspberry Pi 4").
+runtime_limits usb
+  max_frame 131072
+  max_message_heap 131072
+  funnel_depth 64
+  exports 256
+  tmp 0
+  overlay 0
+  atoms 16384
+  foreign_atoms 1024
+  processes 1024
+share usb
+  quota_ns 1000000
+  period_ns 10000000
+  cpuset 1
+  capacity_mcpu 100
+  capacity_first 0
+  slice_us 1000
+  grace_us 5
+  base 16
+  ceiling 31
+  flags none
+limits usb
+  memory 33554432
+  outer 1048576
+  grant @share.usb
+  spaces none
+  lane 4096
+  connections 2
+  crash 0
+  flags none
+  runtime_limits @runtime_limits.usb
+  peer_held 4096
+  peer_held_total 4096
+domain usb
+  principal @principal.system
+  limits @limits.usb
+  kind service
+  flags none
+  runtime @artifact.emu
+  release @artifact.usb
+  restarts 5
+  restart_period_s 600
+  args "-- -root / -bindir /bin -progname erl -home / -nouser -nocookie -no_epmd -proto_dist erx -eval ok=erx_usb:start_controllers()"
+unit xhci
+  placement "xhci"
+  holder @domain.usb
+facet pci
+  grantee @domain.usb
+  service @service.pci
+  operations open,master,reset
+  max_request 1024
+  in_flight 1
+  reductions 100000
+  period_ns 1000000000
+  max_heap_size 8192
+service usb_input
+  server @domain.usb
+  interface input
+facet usb_input
+  grantee @domain.display
+  service @service.usb_input
+  operations none
+  max_request 131072
+  in_flight 16
+  reductions 100000
+  period_ns 1000000000
+  max_heap_size 262144

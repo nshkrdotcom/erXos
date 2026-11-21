@@ -43,8 +43,8 @@
 # function's configuration space, and holds nothing else (docs/design-pcie.md, "The PCIe
 # domain"); it serves pcie, its bridge facet, to the system domain alone, and takes
 # pci_bus, the system domain's device service, which no other domain holds
-# (docs/design-pcie.md, "Facets"). Its rows and their figures end this part, followed by
-# the USB domain's: usb is an interpreter service domain that holds the xhci unit,
+# (docs/design-pcie.md, "Facets"). Its rows and their figures are the common part's, and
+# its unit ends this part, followed by the USB domain's rows: usb is an interpreter service domain that holds the xhci unit,
 # qemu-xhci by place behind the PCIe domain, and nothing else, and runs the USB stack,
 # erx_usb (docs/design-usb.md, "Who holds a controller"); it takes pci, the device
 # service's facet for its function (docs/design-pcie.md, "Facets"). Fixed
@@ -423,91 +423,10 @@ facet web
   reductions 100000
   period_ns 1000000000
   max_heap_size 262144
-# The PCIe domain's rows (docs/design-pcie.md, "The rows and the facets' limits"). Its
-# release, pcie, boots erx_pcie's supervisor and the mint of its pcie facet, and its
-# -eval starts the enumerator once init holds the ready answer's facets, pci_bus among
-# them (docs/design-pcie.md, "Processes"). max_frame holds the widest answer it takes,
-# targets' 69,957 bytes, and max_message_heap that answer's 14,580 decoded words several
-# times over. Its memory, 25 MiB, is its largest use rounded up to a whole MiB, and 2 MiB
-# of headroom, as the network row's: 5,750 pool pages, 22.5 MiB, at rest after the boot's
-# walk and report and the pcie suite's open (docs/design-pcie.md, "The rows and the
-# facets' limits").
-# Its grant, 50 mcpu on CPU 0, is a share of its own, sized for the start's walk and one
-# set or reset per holder's change.
-#
-# The grants (docs/design-pcie.md, "Facets"): pci_bus, the system domain's device
-# service, to the PCIe domain alone, its max_request the floor pci_bus_max_request_min,
-# 65,536, which the widest report of 64 functions needs, in_flight 1, the enumerator's
-# one call, and the share of one firmware request at its 1 s deadline per 10 s; pcie,
-# the PCIe domain's, to the system domain alone, max_request 1,024 over the widest set
-# of 678 bytes, in_flight 1, the device service's one call at a time.
-runtime_limits pcie
-  max_frame 131072
-  max_message_heap 131072
-  funnel_depth 64
-  exports 256
-  tmp 0
-  overlay 0
-  atoms 16384
-  foreign_atoms 1024
-  processes 1024
-share pcie
-  quota_ns 500000
-  period_ns 10000000
-  cpuset 1
-  capacity_mcpu 50
-  capacity_first 0
-  slice_us 1000
-  grace_us 5
-  base 16
-  ceiling 31
-  flags none
-limits pcie
-  memory 26214400
-  outer 1048576
-  grant @share.pcie
-  spaces none
-  lane 4096
-  connections 1
-  crash 0
-  flags none
-  runtime_limits @runtime_limits.pcie
-  peer_held 4096
-  peer_held_total 4096
-domain pcie
-  principal @principal.system
-  limits @limits.pcie
-  kind service
-  flags none
-  runtime @artifact.emu
-  release @artifact.pcie
-  restarts 5
-  restart_period_s 600
-  args "-- -root / -bindir /bin -progname erl -home / -nouser -nocookie -no_epmd -proto_dist erx -eval ok=erx_pcie_sup:start_enumerator()"
+# pcie: the PCIe domain's unit, the ECAM bridge, whose domain's rows are the common part's.
 unit pcie
   placement "pcie"
   holder @domain.pcie
-service pcie
-  server @domain.pcie
-  interface pcie
-facet pci_bus
-  grantee @domain.pcie
-  service @service.pci_bus
-  operations targets,report,firmware
-  max_request 65536
-  in_flight 1
-  reductions 5000000
-  period_ns 10000000000
-  max_heap_size 65536
-facet pcie
-  grantee system
-  service @service.pcie
-  operations none
-  max_request 1024
-  in_flight 1
-  reductions 100000
-  period_ns 1000000000
-  max_heap_size 8192
 # The USB domain's rows (docs/design-usb.md, "Who holds a controller", "The rows"). Its
 # release, usb, boots erx_usb, whose supervisor starts the places and the mint of the
 # input tree before init's ready report; its -eval, once init holds the ready answer's

@@ -3,8 +3,8 @@
 #
 # The records every board's development manifest takes: the shares, runtime limits and
 # limits, root's session template, the console's, host link's and network's units, the
-# storage and display domains, and the services and facets of the system, storage,
-# network and display domains. A board's development manifest is this text followed by
+# storage, display and PCIe domains, and the services and facets of the system,
+# storage, network, display and PCIe domains. A board's development manifest is this text followed by
 # the board's own part, config/manifest/BOARD-development.txt, which holds what differs:
 # its machine record, its system principal's memory, its apps row, the display domain's
 # limits, which follow from the board's screen and its apps row's pixel areas, the units
@@ -397,14 +397,98 @@ service code_objects
 # served by the system domain, where the domain service registers as their server
 # (erx_facet:serve/2) and forwards each request to the device service's PCIe process.
 # The manifest check grants pci_bus to the domain pcie alone and pci to exactly the
-# configured domains that hold a pci device; a board whose part places no PCIe bridge
-# grants neither.
+# configured domains that hold a pci device. The PCIe domain, which takes pci_bus, is a
+# row of this part, which every board takes, and each board's part places its bridge's
+# unit; a domain that takes pci, as the USB domain does, is its board part's.
 service pci_bus
   server system
   interface pci_bus
 service pci
   server system
   interface pci
+# The PCIe domain's rows, the same on every board, whose part places the unit of its
+# bridge (docs/design-pcie.md, "The rows and the facets' limits"). Its
+# release, pcie, boots erx_pcie's supervisor and the mint of its pcie facet, and its
+# -eval starts the enumerator once init holds the ready answer's facets, pci_bus among
+# them (docs/design-pcie.md, "Processes"). max_frame holds the widest answer it takes,
+# targets' 69,957 bytes, and max_message_heap that answer's 14,580 decoded words several
+# times over. Its memory, 25 MiB, is its largest use rounded up to a whole MiB, and 2 MiB
+# of headroom, as the network row's: 5,750 pool pages, 22.5 MiB, at rest after the boot's
+# walk and report and the pcie suite's open on QEMU virt (docs/design-pcie.md, "The rows and the
+# facets' limits").
+# Its grant, 50 mcpu on CPU 0, is a share of its own, sized for the start's walk and one
+# set or reset per holder's change.
+#
+# The grants (docs/design-pcie.md, "Facets"): pci_bus, the system domain's device
+# service, to the PCIe domain alone, its max_request the floor pci_bus_max_request_min,
+# 65,536, which the widest report of 64 functions needs, in_flight 1, the enumerator's
+# one call, and the share of one firmware request at its 1 s deadline per 10 s; pcie,
+# the PCIe domain's, to the system domain alone, max_request 1,024 over the widest set
+# of 678 bytes, in_flight 1, the device service's one call at a time.
+runtime_limits pcie
+  max_frame 131072
+  max_message_heap 131072
+  funnel_depth 64
+  exports 256
+  tmp 0
+  overlay 0
+  atoms 16384
+  foreign_atoms 1024
+  processes 1024
+share pcie
+  quota_ns 500000
+  period_ns 10000000
+  cpuset 1
+  capacity_mcpu 50
+  capacity_first 0
+  slice_us 1000
+  grace_us 5
+  base 16
+  ceiling 31
+  flags none
+limits pcie
+  memory 26214400
+  outer 1048576
+  grant @share.pcie
+  spaces none
+  lane 4096
+  connections 1
+  crash 0
+  flags none
+  runtime_limits @runtime_limits.pcie
+  peer_held 4096
+  peer_held_total 4096
+domain pcie
+  principal @principal.system
+  limits @limits.pcie
+  kind service
+  flags none
+  runtime @artifact.emu
+  release @artifact.pcie
+  restarts 5
+  restart_period_s 600
+  args "-- -root / -bindir /bin -progname erl -home / -nouser -nocookie -no_epmd -proto_dist erx -eval ok=erx_pcie_sup:start_enumerator()"
+service pcie
+  server @domain.pcie
+  interface pcie
+facet pci_bus
+  grantee @domain.pcie
+  service @service.pci_bus
+  operations targets,report,firmware
+  max_request 65536
+  in_flight 1
+  reductions 5000000
+  period_ns 10000000000
+  max_heap_size 65536
+facet pcie
+  grantee system
+  service @service.pcie
+  operations none
+  max_request 1024
+  in_flight 1
+  reductions 100000
+  period_ns 1000000000
+  max_heap_size 8192
 # inspect: the inspector's queries for each session made from root's template
 # (docs/design-live.md, "The inspect service"), served by the system domain, so it
 # travels on the session's system connection and takes none of max_connections. A

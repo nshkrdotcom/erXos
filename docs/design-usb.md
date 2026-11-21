@@ -726,7 +726,9 @@ constants the stack reads.
 On QEMU `virt` the USB domain is the configured row `usb` of the board
 part of the development manifest,
 `config/manifest/qemu-virt-development.txt`, after the PCIe domain's
-rows ([design-pcie.md](design-pcie.md#the-rows-and-the-facets-limits)):
+unit ([design-pcie.md](design-pcie.md#the-rows-and-the-facets-limits)),
+and the Raspberry Pi 4's part, `config/manifest/raspi4b-development.txt`,
+has the same rows over the VL805:
 an interpreter service domain on the `usb` release, holding the
 platform's `xhci` unit and nothing else, with the `pci` facet
 [design-pcie.md](design-pcie.md#facets) gives every holder of a `pci`

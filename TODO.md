@@ -2287,6 +2287,13 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   own lines, and no give refuses a function whose reported pin is not its place's. A wrong record line passes the
   unit rule against a line the hardware does not raise. Add the boot view's refusal ("At boot") and the give's
   ("At the give"), each with its seed; better, carry the line on the place row and have the packer copy it.
+* [Medium] system manifest, the bridge's second line (`tools/lib/erx/manifest.rb`, `device_window`;
+  `config/platforms/raspi4b.json`, unit `pcie`): a device-tree row carries only its node's first interrupt, so the
+  BCM2711 bridge's unit holds SPI 147 and its MSI line, SPI 148, is in no unit and not in the unit rule's line
+  relation, though [design-pcie.md](docs/design-pcie.md) and [design-platforms.md](docs/design-platforms.md#pcie-bridges)
+  make both lines the bridge's. A row of another domain naming SPI 148 would pass the unit rule, and the boot
+  view's refusal of a place routed to one of the bridge's own lines cannot see it. Let a row carry each of its
+  node's lines, or derive the unit's lines from the node.
 * [Low] system manifest, `tools/lib/erx/manifest.rb` (`check_system_window`, `unit_holder`): the holder of a
   window's device is found by the device's path, which a `pci` row does not have, so a system window on a
   block-role PCIe function would be checked against the wrong unit. No platform record has one; key the lookup by
@@ -8115,7 +8122,8 @@ to the corpus and follow rc
   Device, xHCI 4.6.11) or a wider drop mask would let the CPU zero a context the controller holds. Make it a
   ledger fact: a host test over the reach rules with a seed that widens a drop mask, or a ledger predicate the
   sequencer asks.
-* [Medium] USB, the USB domain's figures (`config/manifest/qemu-virt-development.txt`, `limits usb`, `share usb`):
+* [Medium] USB, the USB domain's figures (`config/manifest/qemu-virt-development.txt` and
+  `config/manifest/raspi4b-development.txt`, `limits usb`, `share usb`):
   its memory, 32 MiB with outer 1 MiB, and its grant, 100 mcpu on CPU 0, are not measured. Measure the domain
   with `Footprint` as the PCIe row was (its largest pool use at rest and with a keyboard typing, rounded up
   with 2 MiB of headroom), and its CPU while a keyboard types, then set the row and move the totals it
@@ -8135,6 +8143,20 @@ to the corpus and follow rc
 * [Low] Runtime, upstream: `erts_resume_paused_proc_timer` (`otp/erts/emulator/beam/erl_hl_timer.c`) restores an
   expired paused timer with `erts_set_proc_timer_uword(c_p, 0)`, which sets `F_TIMO`, the after-infinity state, so a
   receive whose timer expired while the debugger paused it waits forever. Unverified by a test.
+  counts (the system principal's memory, `root_memory`) in both board parts.
+* [Low] system manifest, the USB domain's rows copied in two board parts (`config/manifest/qemu-virt-development.txt`,
+  `config/manifest/raspi4b-development.txt`): QEMU virt and the Raspberry Pi 4 carry the same USB domain rows, which
+  cannot be in `config/manifest/development.txt` because a board need not have a USB domain (the Raspberry Pi 5's
+  USB hosts are in RP1's unit, [design-platforms.md](docs/design-platforms.md)). Give the manifest source a part
+  that only boards with a USB domain of their own take (`Platform#manifest_source`), so the rows have one copy.
+* [Medium] Runtime, an interpreted receive whose match runs a receive of its own (`otp/erts/preloaded/src/prim_eval.S`,
+  `erl_eval:receive_clauses/8`): the match fun runs inside `loop_rec`, and a nested receive (erl_eval loading
+  `eval_bits` through the code server on its first binary pattern) moves the queue's save pointer to the first
+  message, so when the match then succeeds, `remove_message` removes the queue's first message, not the one
+  matched, whenever earlier messages did not match: one message is lost and the matched one is matched again.
+  Upstream OTP 29.1.2 behaves the same. The message the match sees is a heap copy, so memory stays sound; a fix
+  needs `prim_eval` to remove the message it handed out (a marker or a removal by position), not whatever the save
+  pointer names.
 * [Low] USB, the review's open points on the input tree's hand-out: the USB domain's `connections 2` has no
   room for a display incarnation minted before the old connection is unmapped (design-system A3); the places'
   host fixture finds the grants supervisor through the mint's links (`erx_usb_places_prop:mint_grants/1`)
@@ -10026,11 +10048,12 @@ document's "residual risks accepted" paragraph.
   ([plan.md](docs/plan.md#track-u-usb)); its design keeps the three rules the USB design records.
 * [Medium] USB on the Raspberry Pi 4 (`config/manifest/raspi4b-development.txt`,
   [design-usb.md](docs/design-usb.md#who-holds-a-controller); [plan.md](docs/plan.md#track-u-usb), part (c)): the
-  USB domain's rows are held back, commented out at the end of the Pi 4's part of the development manifest, since
-  the manifest check refuses a unit behind a bridge no unit places and the Pi 4 has no PCIe rows. They go in with
-  the PCIe domain's Pi 4 rows, the platform record's bridge row (`/scb/pcie@7d500000`, flag `closed`, its one place
-  bus 1, device 0, function 0, pin 1, `dma_limit` `0x3c000000`) and the VL805's function row the comment spells,
-  `hostile` among its flags, with the count and memory edits it lists. Then the board checklist of design-usb.md's
+  Pi 4's development manifest places the bridge's and the VL805's units and runs the PCIe and USB domains, but the
+  bridge has no driver module (`erx_pcie_enumerator`, `bcm2711_pcie => none`), so every boot logs that the bridge is
+  not started, reports no functions, never gives the VL805 and leaves the USB domain idle. Both domains' memory is
+  unmeasured on the board (the PCIe domain's 25 MiB is QEMU virt's measurement, the USB domain's 32 MiB is measured
+  nowhere). Nothing at boot checks the VL805's line against the bridge's `interrupt-map` yet ("a closed place's
+  line against the tree" under the domain library). Once the driver lands, the board checklist of design-usb.md's
   [QEMU suites](docs/design-usb.md#qemu-suites) section, its non-coherent DMA steps among them, becomes steps of the
   guide's Pi 4 checks ([raspberry-pi-4.md](docs/guide/raspberry-pi-4.md)). The controller's level-line handling is
   host-tested (`a_level_line_neither_storms_nor_loses_an_event_test`); on the board it waits on the bridge driver,

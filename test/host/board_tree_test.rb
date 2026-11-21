@@ -96,9 +96,10 @@ class BoardTreeTest < Minitest::Test
     refute_match(/\d{4}-\d\d-\d\d/, notice)
   end
 
-  # The record's units, the mini UART's page, the PL011s', GENET's, the SD controllers' and the
-  # framebuffer's, against the board's
-  # tree: each device's path, compatible string, base on the CPU, size and line, as the
+  # The record's units, the mini UART's page, the PL011s', GENET's, the SD controllers', the PCIe
+  # bridge's and the framebuffer's, against the board's
+  # tree, all but the VL805's, a PCIe function the record names by its place behind the
+  # bridge, of which the tree has no node: each device's path, compatible string, base on the CPU, size and line, as the
   # production image suite checks QEMU virt's record against QEMU's tree. GENET sits on
   # /scb and EMMC2 on /emmc2bus, whose two address cells and ranges differ from /soc's.
   def test_the_records_devices_match_the_board_tree
@@ -106,7 +107,8 @@ class BoardTreeTest < Minitest::Test
     built = Erx::BoardTree.build(root: ROOT, runner: runner, platform: PI, compiler: ENV.fetch('ERX_CLANG', 'clang'),
                                  revision: REVISION)
     devices = PI.record.fetch('units').flat_map { |unit| unit.fetch('devices') }
-    paths = devices.reject { |device| device.fetch('role') == 'framebuffer' }.map { |device| device.fetch('path') }
+    paths = devices.select { |device| device.fetch('selector') == 'dt' }
+                   .reject { |device| device.fetch('role') == 'framebuffer' }.map { |device| device.fetch('path') }
     buses = paths.map { |path| File.dirname(path) }.uniq.to_h do |bus|
       [bus, { address_cells: cells(built.board, bus, '#address-cells').first, size_cells: cells(built.board, bus, '#size-cells').first }]
     end
@@ -130,11 +132,13 @@ class BoardTreeTest < Minitest::Test
     nodes['/chosen'] = { compatible: [] } if children.split.include?('chosen')
     assert_equal [], Erx::BoardTree.device_problems(PI, nodes: nodes, ranges: ranges)
 
-    # Seeded faults, on the mini UART's unit, GENET's and EMMC2's: a line one off, a base a page
-    # off, a path the tree lacks, and GENET's second line in place of its first.
+    # Seeded faults, on the mini UART's unit, GENET's, EMMC2's and the PCIe bridge's: a line one
+    # off (but on the bridge), a base a page off, a path the tree lacks, and GENET's and the
+    # bridge's second line in place of their first.
     seeds = { 'console-uart' => [line_off_by_one, page_off, path('/soc/serial@7e215000')],
               'net' => [line_off_by_one, page_off, path('/scb/ethernet@7d590000'), second_line],
-              'sd' => [line_off_by_one, page_off, path('/emmc2bus/mmc@7e350000')] }
+              'sd' => [line_off_by_one, page_off, path('/emmc2bus/mmc@7e350000')],
+              'pcie' => [page_off, path('/scb/pcie@7d500100'), second_line] }
     seeds.each do |key, faults|
       faults.each do |name, fault|
         refute_empty Erx::BoardTree.device_problems(first_device_changed(key, &fault), nodes: nodes, ranges: ranges),

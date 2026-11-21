@@ -157,7 +157,7 @@ of its run) are in the full list as it stood before it was grouped,
 
 ## Domains, cross-domain messaging and inspection
 
-* [Low] Boot, the PCIe domain (`config/manifest/qemu-virt-development.txt`, `domain pcie`): every boot of
+* [Low] Boot, the PCIe domain (`config/manifest/development.txt`, `domain pcie`): every boot of
   QEMU virt's development manifest starts one more interpreter domain, 22.5 MiB at rest, which walks the
   ECAM bridge and reports before its holders start. Settle it with `tools/erx bench boot --accel hvf` on
   the development image with and without the domain's rows.

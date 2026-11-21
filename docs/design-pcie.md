@@ -1592,11 +1592,14 @@ domain pcie
 * **The release** `pcie` is a bare release with `erx_pcie`
   ([Processes](#processes)), built as the web row's release is.
 
-**Where the rows live.** The rows above, the unit, the `pcie` service and
-the `pci_bus` and `pcie` facets, spelled as above, are rows of
-`config/manifest/qemu-virt-development.txt`, QEMU `virt`'s board part,
-which holds the system principal's memory, its domains quota,
-`max_domains`, `max_connections` and `root_memory` with the PCIe
+**Where the rows live.** The `pcie` service, the `pci_bus` and `pcie`
+facets and every row above except the unit, spelled as above, are rows
+of the development manifest's shared part, `config/manifest/development.txt`,
+which every board takes. Each board's part, QEMU `virt`'s
+`config/manifest/qemu-virt-development.txt` and the Raspberry Pi 4's
+`config/manifest/raspi4b-development.txt`, holds the unit `pcie`, which
+places its own bridge, and the system principal's memory, its domains
+quota, `max_domains`, `max_connections` and `root_memory` with the PCIe
 domain's 25 MiB and outer 1 MiB, its place in the quota and its system
 connection counted. Its grant's room in `system` comes from the
 development manifest's shared part, `config/manifest/development.txt`:
@@ -1609,8 +1612,8 @@ of [design-system.md](design-system.md#the-manifest) holds the
 configured service domains' grants to `system`'s rate less
 `system_reserve` of it, 2.325 CPUs after the reserve's 250 thousandths,
 of which the storage and network domains, on `users`, take 0.9 each,
-the web share 0.15, the display share 0.1 and the PCIe share 0.05, 2.1
-in all. Growing `system` keeps the reserve's headroom and takes nothing
+on QEMU `virt` the web share 0.15, the display and USB shares 0.1 each
+and the PCIe share 0.05, 2.2 in all. Growing `system` keeps the reserve's headroom and takes nothing
 from the web and display shares; the 0.1 CPU `users` gives up is a tenth
 of the storage and network domains' grants, none of them measured, which
 nothing enforces on Fiasco ([design-fiasco.md](design-fiasco.md#downsides-against-erxoss-kernel),

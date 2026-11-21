@@ -652,6 +652,57 @@
           "placement_key": "watchdog"
         }
       ]
+    },
+    {
+      "key": "pcie",
+      "devices": [
+        {
+          "selector": "dt",
+          "role": "configuration",
+          "path": "/scb/pcie@7d500000",
+          "bridge": "",
+          "base": 4249878528,
+          "size": 37648,
+          "line": 179,
+          "compatible": "brcm,bcm2711-pcie",
+          "bus": 0,
+          "device": 0,
+          "function": 0,
+          "dma": "none",
+          "flags": 2,
+          "dma_memory": 0,
+          "dma_limit": 1006632960,
+          "places": [
+            {
+              "bus": 1,
+              "device": 0,
+              "function": 0,
+              "pin": 1
+            }
+          ],
+          "placement_key": "pcie"
+        }
+      ]
+    },
+    {
+      "key": "xhci",
+      "devices": [
+        {
+          "selector": "pci",
+          "role": "usb",
+          "path": "",
+          "bridge": "/scb/pcie@7d500000",
+          "line": 175,
+          "compatible": "pci1106,3483",
+          "bus": 1,
+          "device": 0,
+          "function": 0,
+          "dma": "unconfined",
+          "flags": 1,
+          "dma_memory": 1048576,
+          "placement_key": "xhci"
+        }
+      ]
     }
   ]
 }
