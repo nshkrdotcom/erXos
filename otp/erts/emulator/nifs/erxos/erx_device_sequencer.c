@@ -142,6 +142,15 @@ free_record(const erx_dma_ledger_t *ledger, uint32_t table, const erx_dma_place_
 	}
 }
 
+/* A command TRB's 16 bytes, as its encoder wrote them, into `store`. */
+static bool
+command_store(erx_dma_store_t *store, const void *record)
+{
+	store->length = ERX_XHCI_TRB_ALIGN;
+	memcpy(store->bytes, record, ERX_XHCI_TRB_ALIGN);
+	return (true);
+}
+
 /*
  * One description's record, whole, through its meaning's encoder: its references' addresses
  * from its names and the layout, the chain's link to `next` when the run goes on, and a TRB's
@@ -149,9 +158,11 @@ free_record(const erx_dma_ledger_t *ledger, uint32_t table, const erx_dma_place_
  * encoder refuses.
  */
 static bool
-encode(const erx_dma_layout_t *layout, const erx_dma_description_t *description, erx_dma_place_t place,
-    const erx_dma_place_t *next, uint32_t cycle, erx_dma_store_t *store)
+encode(const erx_dma_ledger_t *ledger, const erx_dma_publication_t *publication, const erx_dma_description_t *description,
+    erx_dma_place_t place, const erx_dma_place_t *next, uint32_t cycle, erx_dma_store_t *store)
 {
+	const erx_dma_layout_t *const layout = erx_dma_ledger_layout(ledger);
+	const erx_dma_reach_t *const target = &publication->reach;
 	/* A TRB names at most one buffer, its data; one that names none has no address place. */
 	const uint64_t data = description->name_count == 0 ? 0 : layout->device_base +
 	    buffer_offset(layout, description->names[0].buffer, description->names[0].offset);
@@ -217,11 +228,70 @@ encode(const erx_dma_layout_t *layout, const erx_dma_description_t *description,
 		const erx_xhci_trb_noop_command_placed_t placed = { .control_cycle = cycle };
 		erx_xhci_trb_noop_command_t record;
 
-		if (!erx_xhci_trb_noop_command_encode(&record, &placed))
+		return (erx_xhci_trb_noop_command_encode(&record, &placed) && command_store(store, &record));
+	}
+	case ERX_MEANING_XHCI_TRB_ENABLE_SLOT_COMMAND: {
+		const erx_xhci_trb_enable_slot_command_placed_t placed = { .control_cycle = cycle };
+		erx_xhci_trb_enable_slot_command_t record;
+
+		return (erx_xhci_trb_enable_slot_command_encode(&record, &placed) && command_store(store, &record));
+	}
+	case ERX_MEANING_XHCI_TRB_DISABLE_SLOT_COMMAND: {
+		const erx_xhci_trb_disable_slot_command_placed_t placed = { .control_cycle = cycle,
+		    .control_slot = target->group };
+		erx_xhci_trb_disable_slot_command_t record;
+
+		return (erx_xhci_trb_disable_slot_command_encode(&record, &placed) && command_store(store, &record));
+	}
+	/* The commands that carry the input context name it, the command ring's one buffer: `data`. */
+	case ERX_MEANING_XHCI_TRB_ADDRESS_DEVICE_COMMAND: {
+		const erx_xhci_trb_address_device_command_placed_t placed = { .parameter_pointer = data,
+		    .control_cycle = cycle, .control_slot = target->group };
+		erx_xhci_trb_address_device_command_t record;
+
+		return (erx_xhci_trb_address_device_command_encode(&record, &placed) && command_store(store, &record));
+	}
+	case ERX_MEANING_XHCI_TRB_CONFIGURE_ENDPOINT_COMMAND: {
+		const erx_xhci_trb_configure_endpoint_command_placed_t placed = { .parameter_pointer = data,
+		    .control_cycle = cycle, .control_slot = target->group };
+		erx_xhci_trb_configure_endpoint_command_t record;
+
+		return (erx_xhci_trb_configure_endpoint_command_encode(&record, &placed) && command_store(store, &record));
+	}
+	case ERX_MEANING_XHCI_TRB_EVALUATE_CONTEXT_COMMAND: {
+		const erx_xhci_trb_evaluate_context_command_placed_t placed = { .parameter_pointer = data,
+		    .control_cycle = cycle, .control_slot = target->group };
+		erx_xhci_trb_evaluate_context_command_t record;
+
+		return (erx_xhci_trb_evaluate_context_command_encode(&record, &placed) && command_store(store, &record));
+	}
+	case ERX_MEANING_XHCI_TRB_RESET_ENDPOINT_COMMAND: {
+		const erx_xhci_trb_reset_endpoint_command_placed_t placed = { .control_cycle = cycle,
+		    .control_endpoint = target->index, .control_slot = target->group };
+		erx_xhci_trb_reset_endpoint_command_t record;
+
+		return (erx_xhci_trb_reset_endpoint_command_encode(&record, &placed) && command_store(store, &record));
+	}
+	case ERX_MEANING_XHCI_TRB_STOP_ENDPOINT_COMMAND: {
+		const erx_xhci_trb_stop_endpoint_command_placed_t placed = { .control_cycle = cycle,
+		    .control_endpoint = target->index, .control_slot = target->group };
+		erx_xhci_trb_stop_endpoint_command_t record;
+
+		return (erx_xhci_trb_stop_endpoint_command_encode(&record, &placed) && command_store(store, &record));
+	}
+	case ERX_MEANING_XHCI_TRB_SET_DEQUEUE_COMMAND: {
+		/* The ring bound to its endpoint, at its position, which the reach rule found bound. */
+		const int ring = erx_dma_ledger_bound_table(ledger, erx_dma_endpoint(target->group, target->index));
+		erx_xhci_trb_set_dequeue_command_placed_t placed = { .control_cycle = cycle,
+		    .control_endpoint = target->index, .control_slot = target->group };
+		erx_xhci_trb_set_dequeue_command_t record;
+
+		if (ring < 0)
 			return (false);
-		store->length = sizeof(record);
-		memcpy(store->bytes, &record, sizeof(record));
-		return (true);
+		placed.parameter_pointer = layout->device_base + record_offset(layout, (erx_dma_place_t){ (uint32_t)ring,
+		    erx_dma_ledger_position(ledger, (uint32_t)ring).index });
+		placed.parameter_dequeue_cycle = erx_dma_ledger_cycle(ledger, (uint32_t)ring);
+		return (erx_xhci_trb_set_dequeue_command_encode(&record, &placed) && command_store(store, &record));
 	}
 	default:
 		return (false);
@@ -275,9 +345,9 @@ place_ring(const erx_dma_ledger_t *ledger, const erx_dma_publication_t *publicat
 		} else {
 			const erx_dma_description_t *const record = &publication->records[description];
 
-			if (!encode(layout, record, steps[step].place, NULL,
+			if (!encode(ledger, publication, record, steps[step].place, NULL,
 			    first && !SEED_FIRST_CYCLE_LIVE ? !steps[step].cycle : steps[step].cycle, store) ||
-			    (first && !encode(layout, record, steps[step].place, NULL, steps[step].cycle, &live)))
+			    (first && !encode(ledger, publication, record, steps[step].place, NULL, steps[step].cycle, &live)))
 				return (ERX_DMA_BREAKS_MEANINGS);
 			if (++description == publication->record_count)
 				places[0] = steps[step].place;
@@ -429,8 +499,10 @@ erx_dma_publish(erx_dma_ledger_t *ledger, const erx_dma_publication_t *publicati
 			return (placed);
 		activated = on_ring = true;
 	}
-	if (publication->binds.endpoint != 0 && !bind_ring(layout, publication->binds.table, &out))
-		return (ERX_DMA_BREAKS_BINDINGS);
+	for (uint32_t k = 0; k < publication->bind_count; k++) {
+		if (!bind_ring(layout, publication->binds[k].table, &out))
+			return (ERX_DMA_BREAKS_BINDINGS);
+	}
 	for (uint32_t record = 0; !on_ring && record < publication->record_count; record++) {
 		places[count] = (erx_dma_place_t){ run, free_record(ledger, run, places, count) };
 		count++;
@@ -438,7 +510,7 @@ erx_dma_publish(erx_dma_ledger_t *ledger, const erx_dma_publication_t *publicati
 	for (uint32_t record = 0; !on_ring && record < publication->record_count; record++) {
 		const bool chained = record + 1 < publication->record_count && places[record + 1].table == places[record].table;
 
-		if (!encode(layout, &publication->records[record], places[record], chained ? &places[record + 1] : NULL,
+		if (!encode(ledger, publication, &publication->records[record], places[record], chained ? &places[record + 1] : NULL,
 		    0, &out.stores[out.store_count]))
 			return (ERX_DMA_BREAKS_MEANINGS);
 		add_range(out.cleans, &out.clean_count, out.stores[out.store_count].offset,

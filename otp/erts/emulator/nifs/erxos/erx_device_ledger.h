@@ -130,19 +130,68 @@ typedef struct erx_dma_place {
 
 /*
  * A binding (docs/design-device-dma.md, "The ledger"): ring `table`, one that needs a binding, to
- * `endpoint`. Endpoint 0 is no binding, so a zeroed value binds nothing.
+ * `endpoint`. An endpoint is numbered within its group, a TRB form's slot: group *
+ * ERX_DMA_GROUP_ENDPOINTS + index, its index 1..ERX_DMA_GROUP_ENDPOINTS - 1, a device context
+ * index (erx_trb_form_endpoint). Endpoint 0 is no endpoint.
  */
 typedef struct erx_dma_binding {
 	uint32_t	endpoint;
 	uint32_t	table;
 } erx_dma_binding_t;
 
+#define ERX_DMA_GROUP_ENDPOINTS	32u
+
+/* Endpoint `index` of group `group`, or 0 for an index outside 1..ERX_DMA_GROUP_ENDPOINTS - 1 or a group past the numbers. */
+static inline uint32_t
+erx_dma_endpoint(uint32_t group, uint32_t index)
+{
+	if (index == 0 || index >= ERX_DMA_GROUP_ENDPOINTS || group > UINT32_MAX / ERX_DMA_GROUP_ENDPOINTS - 1u)
+		return (0);
+	return (group * ERX_DMA_GROUP_ENDPOINTS + index);
+}
+
+/*
+ * The bindings one publication carries at most: the endpoints one Configure Endpoint adds, a
+ * mass storage interface's bulk IN and OUT and a composite device's interrupt endpoints. A
+ * configuration that adds more is added by several commands (docs/design-usb.md, "What the DMA
+ * check judges").
+ */
+#define ERX_DMA_BINDS_MAX	4u
+
+/*
+ * The endpoints a command acts on, as its publication names them (docs/design-usb.md, "What the
+ * DMA check judges"): their group, the index of the one endpoint a stop or a restart names, and
+ * the indexes a binding command drops, a mask of bit `index`. What the command does to them is
+ * its meaning's reach (erx_meaning_reach), which the ledger takes from the publication's record,
+ * never from a core's word. The sequencer writes the command's slot and endpoint from it.
+ */
+typedef struct erx_dma_reach {
+	uint32_t	group;
+	uint32_t	index;
+	uint32_t	drops;
+} erx_dma_reach_t;
+
+/*
+ * An endpoint's state (docs/design-usb.md, "What the DMA check judges"): the controller's states
+ * the form reaches, Figure 4-5 of xHCI 1.2, each changed only on what the trusted side did or
+ * consumed. An endpoint no ring is bound to is disabled.
+ */
+typedef enum erx_dma_endpoint_state {
+	ERX_DMA_ENDPOINT_DISABLED,
+	ERX_DMA_ENDPOINT_RUNNING,
+	ERX_DMA_ENDPOINT_STOPPED,
+	ERX_DMA_ENDPOINT_HALTED,
+} erx_dma_endpoint_state_t;
+
 typedef struct erx_dma_holding {
 	uint32_t		record_count;
 	erx_dma_place_t		records[ERX_DMA_HELD_RECORDS_MAX];	/* records[0] is the head */
 	uint32_t		buffer_count;
 	uint32_t		buffers[ERX_DMA_HELD_BUFFERS_MAX];
-	erx_dma_binding_t	binding;	/* the binding its publication made: the one its failure ends */
+	uint32_t		bind_count;
+	erx_dma_binding_t	binds[ERX_DMA_BINDS_MAX];	/* the bindings its publication made: those its failure ends */
+	uint32_t		reach;		/* ERX_REACH_* of its head's meaning; ERX_REACH_NONE for a transfer */
+	erx_dma_reach_t		target;		/* the endpoints its reach acts on */
 	uint64_t		serial;		/* the ledger's count of holdings begun when it began, from 1 */
 } erx_dma_holding_t;
 
@@ -204,6 +253,7 @@ typedef struct erx_dma_ledger {
 	uint32_t		live;
 	erx_dma_holding_t	holdings[ERX_DMA_HOLDINGS_MAX];
 	uint32_t		bound[ERX_DMA_TABLES_MAX];	/* a ring's endpoint, 0 when unbound */
+	erx_dma_endpoint_state_t	states[ERX_DMA_TABLES_MAX];	/* a bound ring's endpoint's state */
 	const erx_dma_regions_t	*regions;	/* the device record's, never NULL */
 	uint64_t		begun;		/* holdings begun, kept across resets: the last serial */
 } erx_dma_ledger_t;
@@ -346,17 +396,51 @@ bool	erx_dma_layout_place(const erx_dma_layout_t *layout, uint32_t structure, ui
  * The bindings (docs/design-device-dma.md, "The ledger"). A binding begins only with the holding
  * of the binding command's publication (erx_dma_ledger_hold), which returns the ring's position
  * to the first record on lap 0, of cycle state 1, as the sequencer zeroes the ring and writes its
- * link. erx_dma_ledger_may_bind is the one test, the check's and the hold's: an endpoint not 0
- * and bound to no ring, and a ring that needs a binding and is bound to no endpoint. Such a ring
- * holds no record by construction: it takes no run unbound, and erx_dma_ledger_unbind, which ends
- * a binding, is refused while a holding holds a record of the ring.
+ * link. erx_dma_ledger_may_bind is the one test, the check's and the hold's, of every binding a
+ * publication carries: only a command whose meaning's reach binds carries any, at most
+ * ERX_DMA_BINDS_MAX; each binds an endpoint of the command's group to a ring that needs a binding
+ * and is bound to no endpoint, no two of them one endpoint or one ring; and its endpoint is bound
+ * to no ring, or to one the command drops, a drop-and-add. Such a ring holds no record by
+ * construction: it takes no run unbound, and a binding ends only at a command's consumed
+ * completion, retiring every transfer on its ring, or at its own command's failure, while the
+ * reach has kept its endpoint closed.
  */
-bool		erx_dma_ledger_may_bind(const erx_dma_ledger_t *ledger, erx_dma_binding_t binding);
-bool		erx_dma_ledger_unbind(erx_dma_ledger_t *ledger, uint32_t table);
+bool		erx_dma_ledger_may_bind(const erx_dma_ledger_t *ledger, const struct erx_dma_publication *publication);
 /* The endpoint ring `table` is bound to, or 0. */
 uint32_t	erx_dma_ledger_binding(const erx_dma_ledger_t *ledger, uint32_t table);
-/* The ring bound to `endpoint`, or -1 for none: at most one, as a binding is refused a bound endpoint. */
+/*
+ * The ring bound to `endpoint`, or -1 for none. While a drop-and-add of the endpoint is in flight
+ * it has two, and this is the old one, whose binding the command's success ends.
+ */
 int		erx_dma_ledger_bound_table(const erx_dma_ledger_t *ledger, uint32_t endpoint);
+
+/*
+ * The reach and the endpoints' states (docs/design-usb.md, "What the DMA check judges"). A live
+ * command's holding closes the endpoints of its target its reach acts on: those it binds and
+ * drops, the one it stops or restarts, or every endpoint of its group for a disable. A closed
+ * endpoint takes no transfer, so the transfers a command's success retires, every live one on
+ * the rings it restarts or unbinds, are those live there at its publication.
+ */
+bool				erx_dma_ledger_closed(const erx_dma_ledger_t *ledger, uint32_t endpoint);
+erx_dma_endpoint_state_t	erx_dma_ledger_endpoint_state(const erx_dma_ledger_t *ledger, uint32_t endpoint);
+/*
+ * Ends the live command holding `found` on its completion, a report of table `reports` at its
+ * consumer position, judged whole before anything changes. On success its reach acts: a stop
+ * leaves its endpoint stopped; a restart retires every transfer on its endpoint's ring; a bind
+ * ends each binding of an endpoint it drops made before it, retiring its ring's transfers, and its
+ * own bindings' endpoints run; a disable retires every transfer on its group's rings and ends their
+ * bindings. On failure only its own bindings end. False, changing nothing, as
+ * erx_dma_ledger_release_holding refuses, or for a holding that is no command's.
+ */
+bool	erx_dma_ledger_complete_command(erx_dma_ledger_t *ledger, uint32_t reports, erx_dma_found_t found, bool success);
+/*
+ * Halts the endpoint ring `table` is bound to, on a consumed transfer event with an error code
+ * (xHCI 1.2, 4.10.2): it takes no transfer until a Reset Endpoint succeeds. False, changing
+ * nothing, for a ring bound to no endpoint.
+ */
+bool	erx_dma_ledger_halt(erx_dma_ledger_t *ledger, uint32_t table);
+/* The oldest live holding whose head lies in table `table`, the first its ring runs; NULL for none. */
+erx_dma_found_t	erx_dma_ledger_oldest_on(const erx_dma_ledger_t *ledger, uint32_t table);
 /*
  * The positions a run of `descriptions` records takes on ring `table` from its position, in ring
  * order, into `steps`: a description's, and a link's where the run reaches it or ends just before

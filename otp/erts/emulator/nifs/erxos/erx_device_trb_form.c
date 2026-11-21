@@ -12,6 +12,21 @@
 
 #include "erx_device_trb_form.h"
 
+#ifdef ERX_TRB_FORM_SEED_ANY_STOP
+#define SEED_ANY_STOP	true
+#else
+#define SEED_ANY_STOP	false
+#endif
+#ifdef ERX_TRB_FORM_SEED_ANY_TRANSFER
+#define SEED_ANY_TRANSFER	true
+#else
+#define SEED_ANY_TRANSFER	false
+#endif
+#ifdef ERX_TRB_FORM_SEED_HALT_HEAD_OF_NEWEST
+#define SEED_HALT_HEAD_OF_NEWEST	true
+#else
+#define SEED_HALT_HEAD_OF_NEWEST	false
+#endif
 #ifdef ERX_TRB_FORM_SEED_HIGHEST_BUFFER
 #define SEED_HIGHEST_BUFFER	true
 #else
@@ -249,6 +264,66 @@ erx_trb_form_post(erx_trb_form_t *form, uint32_t slot, uint32_t dci, const erx_d
 		return (ERX_DEVICE_TRB_ACCEPTED);
 	case ERX_DMA_BREAKS_ROOM:
 		return (ERX_DEVICE_TRB_REFUSE_FULL);
+	case ERX_DMA_BREAKS_REACH:
+		return (ERX_DEVICE_TRB_REFUSE_HALTED);
+	default:
+		return (ERX_DEVICE_TRB_REFUSE_BADARG);
+	}
+}
+
+/* Each command's meaning, by kind. */
+static const uint32_t command_meanings[ERX_TRB_COMMAND_KINDS] = {
+	[ERX_TRB_COMMAND_NOOP] = ERX_MEANING_XHCI_TRB_NOOP_COMMAND,
+	[ERX_TRB_COMMAND_ENABLE_SLOT] = ERX_MEANING_XHCI_TRB_ENABLE_SLOT_COMMAND,
+	[ERX_TRB_COMMAND_DISABLE_SLOT] = ERX_MEANING_XHCI_TRB_DISABLE_SLOT_COMMAND,
+	[ERX_TRB_COMMAND_ADDRESS_DEVICE] = ERX_MEANING_XHCI_TRB_ADDRESS_DEVICE_COMMAND,
+	[ERX_TRB_COMMAND_CONFIGURE_ENDPOINT] = ERX_MEANING_XHCI_TRB_CONFIGURE_ENDPOINT_COMMAND,
+	[ERX_TRB_COMMAND_EVALUATE_CONTEXT] = ERX_MEANING_XHCI_TRB_EVALUATE_CONTEXT_COMMAND,
+	[ERX_TRB_COMMAND_RESET_ENDPOINT] = ERX_MEANING_XHCI_TRB_RESET_ENDPOINT_COMMAND,
+	[ERX_TRB_COMMAND_STOP_ENDPOINT] = ERX_MEANING_XHCI_TRB_STOP_ENDPOINT_COMMAND,
+	[ERX_TRB_COMMAND_SET_TR_DEQUEUE] = ERX_MEANING_XHCI_TRB_SET_DEQUEUE_COMMAND,
+};
+
+/* Whether a command of `kind` carries the input context: those whose TRB refers to it. */
+static bool
+carries_input_context(erx_trb_command_kind_t kind)
+{
+	return (kind == ERX_TRB_COMMAND_ADDRESS_DEVICE || kind == ERX_TRB_COMMAND_CONFIGURE_ENDPOINT ||
+	    kind == ERX_TRB_COMMAND_EVALUATE_CONTEXT);
+}
+
+erx_device_trb_verdict_t
+erx_trb_form_command(erx_trb_form_t *form, const erx_trb_command_t *command, uint64_t tag, erx_dma_sequence_t *sequence)
+{
+	const erx_dma_layout_t *const layout = erx_dma_ledger_layout(&form->ledger);
+	const uint32_t command_pool = block_count(&form->shape);
+	erx_dma_description_t record = { .structure = ERX_STRUCTURE_XHCI_COMMAND_RING };
+	erx_dma_publication_t publication = { .records = &record, .record_count = 1, .call = ERX_DMA_PUBLISH_RUN,
+	    .reach = { .group = command->slot, .index = command->dci, .drops = command->drops } };
+
+	if ((uint32_t)command->kind >= ERX_TRB_COMMAND_KINDS || command->add_count > ERX_DMA_BINDS_MAX)
+		return (ERX_DEVICE_TRB_REFUSE_BADARG);
+	record.meaning = command_meanings[command->kind];
+	if (carries_input_context(command->kind)) {
+		record.name_count = 1;
+		record.names[0] = (erx_dma_name_t){ .buffer = pool_first_buffer(layout, command_pool), .offset = 0 };
+	}
+	publication.bind_count = command->add_count;
+	for (uint32_t k = 0; k < command->add_count; k++) {
+		publication.binds[k] = (erx_dma_binding_t){ .endpoint = erx_trb_form_endpoint(command->slot,
+		    command->adds[k].dci), .table = command->adds[k].block };
+	}
+	switch (erx_dma_publish(&form->ledger, &publication, sequence)) {
+	case ERX_DMA_PASSES:
+		form->command = *command;
+		form->command_tag = tag;
+		form->stop_event = false;
+		return (ERX_DEVICE_TRB_ACCEPTED);
+	case ERX_DMA_BREAKS_ROOM:
+	case ERX_DMA_BREAKS_HELD:
+		return (ERX_DEVICE_TRB_REFUSE_FULL);
+	case ERX_DMA_BREAKS_REACH:
+		return (ERX_DEVICE_TRB_REFUSE_HALTED);
 	default:
 		return (ERX_DEVICE_TRB_REFUSE_BADARG);
 	}
@@ -301,21 +376,38 @@ erx_trb_form_event(const erx_trb_form_t *form, uint32_t k)
 	return (erx_dma_acquire_record(&form->ledger, event_ring(form), k));
 }
 
-/* Whether ring `table` is bound to the endpoint a transfer event names by its slot and dci. */
-static bool
-bound_to_event(const erx_trb_form_t *form, uint32_t table, uint32_t control)
+/* The endpoint a transfer event names by its slot and dci, or 0. */
+static uint32_t
+event_endpoint(const erx_report_record_t *event)
 {
-	const uint32_t endpoint = erx_trb_form_endpoint(erx_xhci_trb_transfer_event_control_slot_get(control),
-	    erx_xhci_trb_transfer_event_control_endpoint_get(control));
+	return (erx_trb_form_endpoint(erx_xhci_trb_transfer_event_control_slot_get(event->xhci_trb_transfer_event.control),
+	    erx_xhci_trb_transfer_event_control_endpoint_get(event->xhci_trb_transfer_event.control)));
+}
+
+/* Whether ring `table` is bound to the endpoint a transfer event names. */
+static bool
+bound_to_event(const erx_trb_form_t *form, uint32_t table, const erx_report_record_t *event)
+{
+	const uint32_t endpoint = event_endpoint(event);
 
 	return (SEED_ANY_ENDPOINT || (endpoint != 0 && erx_dma_ledger_binding(&form->ledger, table) == endpoint));
 }
 
 /*
+ * Whether `found`, a live holding on ring `table`, is the ring's oldest, the TD the controller
+ * runs first (docs/design-usb.md, "Completing").
+ */
+static bool
+oldest_on_ring(const erx_trb_form_t *form, uint32_t table, erx_dma_found_t found)
+{
+	return (SEED_ANY_TRANSFER || erx_dma_ledger_oldest_on(&form->ledger, table).holding == found.holding);
+}
+
+/*
  * A short packet on a control transfer's data stage, at `place`: the TRB just before the head of
- * a live transfer with a data stage on its ring, skipping no link, since a link is never the data
- * stage; the first such event for it, its residue inside the stage's length. Passed, ending
- * nothing; the bytes the stage moved are kept for the status stage's event.
+ * its ring's oldest live transfer, which has a data stage, skipping no link, since a link is never
+ * the data stage; the first such event for it, its residue inside the stage's length. Passed,
+ * ending nothing; the bytes the stage moved are kept for the status stage's event.
  */
 static bool
 short_data_stage(erx_trb_form_t *form, const erx_report_record_t *event, erx_dma_place_t place)
@@ -324,23 +416,101 @@ short_data_stage(erx_trb_form_t *form, const erx_report_record_t *event, erx_dma
 	const uint32_t link = layout->tables[place.table].count - 1u;
 	const uint32_t residue = erx_xhci_trb_transfer_event_status_residue_get(event->xhci_trb_transfer_event.status);
 	erx_dma_place_t head = { place.table, place.index + 1u == link ? 0 : place.index + 1u };
+	erx_dma_found_t found;
 	erx_trb_transfer_t *transfer;
 
-	if (place.index == link || erx_dma_ledger_holding(&form->ledger, head).holding == NULL)
+	if (place.index == link || (found = erx_dma_ledger_holding(&form->ledger, head)).holding == NULL ||
+	    !oldest_on_ring(form, place.table, found))
 		return (false);
 	transfer = &form->transfers[head.table][head.index];
-	if (!transfer->data_stage || transfer->short_data || residue > transfer->length ||
-	    !bound_to_event(form, place.table, event->xhci_trb_transfer_event.control) ||
-	    !erx_dma_pass(&form->ledger, event_ring(form), event))
+	if (!transfer->data_stage || transfer->short_data || transfer->halted || residue > transfer->length ||
+	    !bound_to_event(form, place.table, event) || !erx_dma_pass(&form->ledger, event_ring(form), event))
 		return (false);
 	transfer->short_data = true;
 	transfer->moved = transfer->length - residue;
 	return (true);
 }
 
+/* Whether `place` is one of the records `holding` holds: a TRB of its TD, or a link it reached. */
+static bool
+holds_record(const erx_dma_holding_t *holding, erx_dma_place_t place)
+{
+	for (uint32_t k = 0; k < holding->record_count; k++) {
+		if (holding->records[k].table == place.table && holding->records[k].index == place.index)
+			return (true);
+	}
+	return (false);
+}
+
 /*
- * A transfer event: the end of the transfer whose head it names, or a short data stage, as the
- * header says; *answered whether it answers. False for any other.
+ * An error code on a TRB of the oldest live transfer on a ring bound to the event's endpoint, not
+ * answered yet: the endpoint halts, and the transfer is answered with the code and no bytes, its
+ * holding kept (xHCI 1.2, 4.10.2).
+ */
+static bool
+error_event(erx_trb_form_t *form, const erx_report_record_t *event, uint32_t code, erx_trb_answer_t *answer)
+{
+	const erx_dma_layout_t *const layout = erx_dma_ledger_layout(&form->ledger);
+	erx_dma_found_t oldest;
+	erx_dma_place_t place, head;
+	erx_trb_transfer_t *transfer;
+
+	if (!erx_dma_layout_place(layout, ERX_STRUCTURE_XHCI_TRANSFER_RING, event->xhci_trb_transfer_event.pointer, &place) ||
+	    (oldest = erx_dma_ledger_oldest_on(&form->ledger, place.table)).holding == NULL ||
+	    !holds_record(oldest.holding, place) || !bound_to_event(form, place.table, event))
+		return (false);
+	/* The seed halts the newest transfer, an error event releasing the wrong holding. */
+	head = (SEED_HALT_HEAD_OF_NEWEST ? erx_dma_ledger_newest(&form->ledger) : oldest).holding->records[0];
+	transfer = &form->transfers[head.table][head.index];
+	if (transfer->halted || !erx_dma_pass(&form->ledger, event_ring(form), event) ||
+	    !erx_dma_ledger_halt(&form->ledger, place.table))
+		return (false);
+	transfer->halted = true;
+	*answer = (erx_trb_answer_t){ .kind = ERX_TRB_ANSWER_TRANSFER, .code = code, .tag = transfer->tag };
+	return (true);
+}
+
+/* Whether the command ring holds a command: form->command is the one in flight. */
+static bool
+command_in_flight(const erx_trb_form_t *form)
+{
+	return (erx_dma_ledger_holdings_on(&form->ledger,
+	    (uint32_t)erx_dma_ledger_table(&form->ledger, ERX_STRUCTURE_XHCI_COMMAND_RING)) != 0);
+}
+
+/*
+ * A stop's event: a record of the ring bound to the endpoint the Stop Endpoint in flight names,
+ * the first for that stop. Passed; it completes nothing and its length is not read.
+ */
+static bool
+stop_event(erx_trb_form_t *form, const erx_report_record_t *event)
+{
+	const erx_dma_layout_t *const layout = erx_dma_ledger_layout(&form->ledger);
+	const uint32_t endpoint = event_endpoint(event);
+	const bool stopping = command_in_flight(form) && form->command.kind == ERX_TRB_COMMAND_STOP_ENDPOINT &&
+	    !form->stop_event && endpoint == erx_trb_form_endpoint(form->command.slot, form->command.dci);
+	erx_dma_place_t place;
+
+	/* The seed takes a stop's event with no Stop Endpoint in flight, or a second one. */
+	if ((!stopping && !SEED_ANY_STOP) || endpoint == 0 ||
+	    !erx_dma_layout_place(layout, ERX_STRUCTURE_XHCI_TRANSFER_RING, event->xhci_trb_transfer_event.pointer, &place) ||
+	    erx_dma_ledger_binding(&form->ledger, place.table) != endpoint ||
+	    !erx_dma_pass(&form->ledger, event_ring(form), event))
+		return (false);
+	form->stop_event = true;
+	return (true);
+}
+
+static bool
+stop_code(uint32_t code)
+{
+	return (code == ERX_XHCI_COMPLETION_STOPPED || code == ERX_XHCI_COMPLETION_STOPPED_LENGTH_INVALID ||
+	    code == ERX_XHCI_COMPLETION_STOPPED_SHORT_PACKET);
+}
+
+/*
+ * A transfer event: the end of the transfer whose head it names, a short data stage, an error or
+ * a stop's event, as the header says; *answered whether it answers. False for any other.
  */
 static bool
 transfer_event(erx_trb_form_t *form, const erx_report_record_t *event, erx_trb_answer_t *answer, bool *answered)
@@ -348,16 +518,20 @@ transfer_event(erx_trb_form_t *form, const erx_report_record_t *event, erx_trb_a
 	const erx_xhci_trb_transfer_event_t *const record = &event->xhci_trb_transfer_event;
 	const uint32_t code = erx_xhci_trb_transfer_event_status_code_get(record->status);
 	const uint32_t residue = erx_xhci_trb_transfer_event_status_residue_get(record->status);
-	const erx_dma_found_t found = erx_dma_report_holding(&form->ledger, event_ring(form), event);
 	const erx_dma_layout_t *const layout = erx_dma_ledger_layout(&form->ledger);
+	erx_dma_found_t found;
 	erx_trb_transfer_t transfer;
 	erx_dma_place_t place;
 	uint32_t moved;
 
 	*answered = false;
-	if (erx_xhci_trb_transfer_event_control_event_data_get(record->control) != 0 ||
-	    (code != ERX_XHCI_COMPLETION_SUCCESS && code != ERX_XHCI_COMPLETION_SHORT_PACKET))
+	if (erx_xhci_trb_transfer_event_control_event_data_get(record->control) != 0)
 		return (false);
+	if (stop_code(code))
+		return (stop_event(form, event));
+	if (code != ERX_XHCI_COMPLETION_SUCCESS && code != ERX_XHCI_COMPLETION_SHORT_PACKET)
+		return (*answered = error_event(form, event, code, answer));
+	found = erx_dma_report_holding(&form->ledger, event_ring(form), event);
 	if (found.holding == NULL) {
 		return (code == ERX_XHCI_COMPLETION_SHORT_PACKET &&
 		    erx_dma_layout_place(layout, ERX_STRUCTURE_XHCI_TRANSFER_RING, record->pointer, &place) &&
@@ -366,7 +540,7 @@ transfer_event(erx_trb_form_t *form, const erx_report_record_t *event, erx_trb_a
 	place = found.holding->records[0];
 	transfer = form->transfers[place.table][place.index];
 	/* A control transfer's last TRB is its status stage, which moves nothing: its residue is 0. */
-	if (!bound_to_event(form, place.table, record->control) ||
+	if (!bound_to_event(form, place.table, event) || !oldest_on_ring(form, place.table, found) || transfer.halted ||
 	    residue > (transfer.data_stage || !transfer.names_buffer ? 0 : transfer.length))
 		return (false);
 	moved = transfer.short_data ? transfer.moved : transfer.length - residue;
@@ -380,9 +554,8 @@ transfer_event(erx_trb_form_t *form, const erx_report_record_t *event, erx_trb_a
 }
 
 /*
- * A command completion naming the live command: its holding ends on every code, and a failing
- * command's binding with it. A failing binding command whose ring a transfer holds is refused
- * before anything ends: the reach rule keeps such a transfer from being posted.
+ * A command completion naming the live command: its holding ends on every code, and its reach
+ * acts on success, or its own bindings end on failure, as erx_dma_ledger_complete_command says.
  */
 static bool
 command_event(erx_trb_form_t *form, const erx_report_record_t *event, erx_trb_answer_t *answer)
@@ -390,19 +563,11 @@ command_event(erx_trb_form_t *form, const erx_report_record_t *event, erx_trb_an
 	const erx_xhci_trb_command_event_t *const record = &event->xhci_trb_command_event;
 	const uint32_t code = erx_xhci_trb_command_event_status_code_get(record->status);
 	const erx_dma_found_t found = erx_dma_report_holding(&form->ledger, event_ring(form), event);
-	const erx_dma_layout_t *const layout = erx_dma_ledger_layout(&form->ledger);
-	erx_dma_binding_t ends = { 0 };
 
-	if (found.holding == NULL)
+	if (found.holding == NULL ||
+	    !erx_dma_ledger_complete_command(&form->ledger, event_ring(form), found, code == ERX_XHCI_COMPLETION_SUCCESS))
 		return (false);
-	if (code != ERX_XHCI_COMPLETION_SUCCESS)
-		ends = found.holding->binding;
-	if ((ends.endpoint != 0 &&
-	    erx_dma_ledger_free_records(&form->ledger, ends.table) != layout->tables[ends.table].count) ||
-	    !erx_dma_consume(&form->ledger, event_ring(form), found) ||
-	    (ends.endpoint != 0 && !erx_dma_ledger_unbind(&form->ledger, ends.table)))
-		return (false);
-	*answer = (erx_trb_answer_t){ .kind = ERX_TRB_ANSWER_COMMAND, .code = code,
+	*answer = (erx_trb_answer_t){ .kind = ERX_TRB_ANSWER_COMMAND, .code = code, .tag = form->command_tag,
 	    .parameter = erx_xhci_trb_command_event_status_parameter_get(record->status),
 	    .slot = erx_xhci_trb_command_event_control_slot_get(record->control) };
 	return (true);
@@ -462,5 +627,8 @@ erx_trb_form_reset(erx_trb_form_t *form)
 {
 	erx_dma_ledger_reset(&form->ledger);
 	bzero(form->transfers, sizeof(form->transfers));
+	bzero(&form->command, sizeof(form->command));
+	form->command_tag = 0;
+	form->stop_event = false;
 	form->broken = false;
 }

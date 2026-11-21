@@ -34,7 +34,7 @@ const erx_device_trb_shape_t erx_device_trb_shape = {
 #define ROUTE_TIER_MASK		((1u << ERX_XHCI_ROUTE_TIER_BITS) - 1u)
 
 _Static_assert(ERX_XHCI_TRB_LINK_SIZE == TRB_SIZE && ERX_XHCI_TRB_SETUP_SIZE == TRB_SIZE &&
-    ERX_XHCI_TRB_COMMAND_SIZE == TRB_SIZE && ERX_XHCI_TRB_SET_DEQUEUE_OFF_PARAMETER == TRB_PARAMETER &&
+    ERX_XHCI_TRB_COMMAND_SIZE == TRB_SIZE && ERX_XHCI_TRB_SET_DEQUEUE_COMMAND_OFF_PARAMETER == TRB_PARAMETER &&
     ERX_XHCI_TRB_LINK_OFF_CONTROL == TRB_CONTROL && ERX_XHCI_TRB_COMMAND_OFF_CONTROL == TRB_CONTROL,
     "every TRB format has one shape");
 _Static_assert(16u + 16u + 4u == ERX_DEVICE_TRB_BLOCKS_MAX, "the form's blocks fill the bound");

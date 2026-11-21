@@ -14,6 +14,31 @@
 #include "erx_device_ledger.h"
 #include "erx_device_rules.h"
 
+#ifdef ERX_DMA_SEED_KEEP_DROPPED_BINDING
+#define SEED_KEEP_DROPPED_BINDING	true
+#else
+#define SEED_KEEP_DROPPED_BINDING	false
+#endif
+#ifdef ERX_DMA_SEED_ANY_COMMAND_BINDS
+#define SEED_ANY_COMMAND_BINDS	true
+#else
+#define SEED_ANY_COMMAND_BINDS	false
+#endif
+#ifdef ERX_DMA_SEED_NO_CLOSURE
+#define SEED_NO_CLOSURE	true
+#else
+#define SEED_NO_CLOSURE	false
+#endif
+#ifdef ERX_DMA_SEED_RETIRE_NOTHING
+#define SEED_RETIRE_NOTHING	true
+#else
+#define SEED_RETIRE_NOTHING	false
+#endif
+#ifdef ERX_DMA_SEED_KEEP_FAILED_BINDING
+#define SEED_KEEP_FAILED_BINDING	true
+#else
+#define SEED_KEEP_FAILED_BINDING	false
+#endif
 #ifdef ERX_DMA_SEED_FIND_BOUND_RING
 #define SEED_FIND_BOUND_RING	true
 #else
@@ -325,6 +350,7 @@ erx_dma_ledger_reset(erx_dma_ledger_t *ledger)
 	bzero(ledger->positions, sizeof(ledger->positions));
 	bzero(ledger->acquired, sizeof(ledger->acquired));
 	bzero(ledger->bound, sizeof(ledger->bound));
+	bzero(ledger->states, sizeof(ledger->states));
 }
 
 uint32_t
@@ -361,28 +387,114 @@ erx_dma_layout_buffer_offset(const erx_dma_layout_t *layout, uint32_t buffer, ui
 	return (layout->pools[index].first + (uint64_t)buffer * layout->pools[index].stride + offset);
 }
 
-/* Whether a holding holds a record of `table`. */
 static bool
-table_held(const erx_dma_ledger_t *ledger, uint32_t table)
+in_group(uint32_t endpoint, uint32_t group)
 {
-	return (erx_dma_ledger_free_records(ledger, table) != ledger->layout.tables[table].count);
+	return (endpoint != 0 && endpoint / ERX_DMA_GROUP_ENDPOINTS == group);
+}
+
+static bool
+drops(const erx_dma_reach_t *target, uint32_t endpoint)
+{
+	return ((target->drops >> (endpoint % ERX_DMA_GROUP_ENDPOINTS) & 1u) != 0);
+}
+
+/* Whether binding `binding` is one of the bindings `holding`'s publication made. */
+static bool
+made_by(const erx_dma_holding_t *holding, erx_dma_binding_t binding)
+{
+	for (uint32_t k = 0; k < holding->bind_count; k++) {
+		if (holding->binds[k].endpoint == binding.endpoint && holding->binds[k].table == binding.table)
+			return (true);
+	}
+	return (false);
+}
+
+/*
+ * The live command's holding, whose reach closes endpoints: at most one, as the room rule keeps a
+ * ring's holdings fewer than its pool's buffers and a TRB form's command ring has a pool of one
+ * buffer, the input context (erx_trb_form_make).
+ */
+static const erx_dma_holding_t *
+command_holding(const erx_dma_ledger_t *ledger)
+{
+	for (uint32_t live = 0; live < ledger->live; live++) {
+		if (!needs_binding(&ledger->layout, ledger->holdings[live].records[0].table) &&
+		    ledger->holdings[live].reach != ERX_REACH_NONE)
+			return (&ledger->holdings[live]);
+	}
+	return (NULL);
+}
+
+/* Whether ring `table`'s binding is one the live command made, which its failure ends. */
+static bool
+pending(const erx_dma_ledger_t *ledger, uint32_t table)
+{
+	const erx_dma_holding_t *const command = command_holding(ledger);
+
+	return (command != NULL && made_by(command, (erx_dma_binding_t){ ledger->bound[table], table }));
 }
 
 bool
-erx_dma_ledger_may_bind(const erx_dma_ledger_t *ledger, erx_dma_binding_t binding)
+erx_dma_ledger_may_bind(const erx_dma_ledger_t *ledger, const erx_dma_publication_t *publication)
 {
-	return (binding.endpoint != 0 && binding.table < ledger->layout.table_count &&
-	    needs_binding(&ledger->layout, binding.table) && ledger->bound[binding.table] == 0 &&
-	    (SEED_BIND_BOUND_ENDPOINT || erx_dma_ledger_bound_table(ledger, binding.endpoint) < 0));
-}
+	const erx_dma_reach_t *const target = &publication->reach;
+	uint32_t reach;
 
-bool
-erx_dma_ledger_unbind(erx_dma_ledger_t *ledger, uint32_t table)
-{
-	if (table >= ledger->layout.table_count || ledger->bound[table] == 0 || table_held(ledger, table))
+	if (publication->record_count == 0)
+		return (publication->bind_count == 0);
+	if (publication->bind_count > ERX_DMA_BINDS_MAX)
 		return (false);
-	ledger->bound[table] = 0;
+	reach = SEED_ANY_COMMAND_BINDS ? ERX_REACH_CONFIGURE : erx_meaning_reach(publication->records[0].meaning);
+	/* A command that binds is judged with or without bindings: what it may drop is its reach's too. */
+	if (publication->bind_count == 0 && reach != ERX_REACH_ADDRESS && reach != ERX_REACH_CONFIGURE)
+		return (true);
+	/*
+	 * Address Device binds EP0, index 1, and drops nothing (xHCI 1.2, 4.6.5); Configure Endpoint
+	 * adds and drops indexes 2 and up, as it ignores EP0's flags (4.6.6). A binding no command
+	 * makes would point the ledger at a ring the controller does not serve.
+	 */
+	switch (reach) {
+	case ERX_REACH_ADDRESS:
+		if (publication->bind_count != 1 || target->drops != 0 ||
+		    publication->binds[0].endpoint != erx_dma_endpoint(target->group, 1))
+			return (false);
+		break;
+	case ERX_REACH_CONFIGURE:
+		if ((target->drops & 3u) != 0)
+			return (false);
+		for (uint32_t k = 0; k < publication->bind_count; k++) {
+			if (publication->binds[k].endpoint % ERX_DMA_GROUP_ENDPOINTS < 2u)
+				return (false);
+		}
+		break;
+	default:
+		return (false);
+	}
+	for (uint32_t k = 0; k < publication->bind_count; k++) {
+		const erx_dma_binding_t binding = publication->binds[k];
+		const int old = erx_dma_ledger_bound_table(ledger, binding.endpoint);
+
+		if (!in_group(binding.endpoint, target->group) || binding.endpoint % ERX_DMA_GROUP_ENDPOINTS == 0 ||
+		    binding.table >= ledger->layout.table_count || !needs_binding(&ledger->layout, binding.table) ||
+		    ledger->bound[binding.table] != 0 ||
+		    (old >= 0 && !SEED_BIND_BOUND_ENDPOINT && !drops(target, binding.endpoint)))
+			return (false);
+		for (uint32_t earlier = 0; earlier < k; earlier++) {
+			if (publication->binds[earlier].endpoint == binding.endpoint ||
+			    publication->binds[earlier].table == binding.table)
+				return (false);
+		}
+	}
 	return (true);
+}
+
+/* Ends ring `table`'s binding, which holds no record by then. */
+static void
+unbind(erx_dma_ledger_t *ledger, uint32_t table)
+{
+	ledger->bound[table] = 0;
+	ledger->states[table] = ERX_DMA_ENDPOINT_DISABLED;
 }
 
 uint32_t
@@ -394,11 +506,63 @@ erx_dma_ledger_binding(const erx_dma_ledger_t *ledger, uint32_t table)
 int
 erx_dma_ledger_bound_table(const erx_dma_ledger_t *ledger, uint32_t endpoint)
 {
+	int found = -1;
+
 	for (uint32_t table = 0; table < ledger->layout.table_count && endpoint != 0; table++) {
-		if (ledger->bound[table] == endpoint)
+		if (ledger->bound[table] != endpoint)
+			continue;
+		if (!pending(ledger, table))
 			return ((int)table);
+		found = (int)table;
 	}
-	return (-1);
+	return (found);
+}
+
+bool
+erx_dma_ledger_closed(const erx_dma_ledger_t *ledger, uint32_t endpoint)
+{
+	const erx_dma_holding_t *const command = command_holding(ledger);
+
+	if (SEED_NO_CLOSURE || command == NULL || !in_group(endpoint, command->target.group))
+		return (false);
+	switch (command->reach) {
+	case ERX_REACH_ADDRESS:
+	case ERX_REACH_CONFIGURE:
+		for (uint32_t k = 0; k < command->bind_count; k++) {
+			if (command->binds[k].endpoint == endpoint)
+				return (true);
+		}
+		return (drops(&command->target, endpoint));
+	case ERX_REACH_STOP:
+	case ERX_REACH_RESTART:
+		return (endpoint == erx_dma_endpoint(command->target.group, command->target.index));
+	case ERX_REACH_DISABLE:
+		return (true);
+	default:
+		return (false);
+	}
+}
+
+erx_dma_endpoint_state_t
+erx_dma_ledger_endpoint_state(const erx_dma_ledger_t *ledger, uint32_t endpoint)
+{
+	const int table = erx_dma_ledger_bound_table(ledger, endpoint);
+
+	return (table < 0 ? ERX_DMA_ENDPOINT_DISABLED : ledger->states[table]);
+}
+
+erx_dma_found_t
+erx_dma_ledger_oldest_on(const erx_dma_ledger_t *ledger, uint32_t table)
+{
+	const erx_dma_holding_t *oldest = NULL;
+
+	for (uint32_t live = 0; live < ledger->live; live++) {
+		const erx_dma_holding_t *const holding = &ledger->holdings[live];
+
+		if (holding->records[0].table == table && (oldest == NULL || holding->serial < oldest->serial))
+			oldest = holding;
+	}
+	return ((erx_dma_found_t){ oldest, oldest == NULL ? 0 : oldest->serial });
 }
 
 /*
@@ -655,19 +819,21 @@ holding_valid(const erx_dma_ledger_t *ledger, const erx_dma_holding_t *holding, 
 }
 
 /*
- * The holding of `publication` at `records`, with the buffers its names reach and the binding it
- * carries. False when there are more records or buffers than a holding holds.
+ * The holding of `publication` at `records`, with the buffers its names reach, the bindings it
+ * carries and its reach. False when there are more records or buffers than a holding holds.
  */
 static bool
 holding_of(const erx_dma_publication_t *publication, const erx_dma_place_t *records, uint32_t record_count,
     erx_dma_holding_t *holding)
 {
-	*holding = (erx_dma_holding_t){ .record_count = record_count };
-	/* Endpoint 0 is no binding, whatever table it names: the holding keeps none. */
-	if (publication->binds.endpoint != 0)
-		holding->binding = publication->binds;
-	if (record_count == 0 || record_count > ERX_DMA_HELD_RECORDS_MAX)
+	*holding = (erx_dma_holding_t){ .record_count = record_count, .target = publication->reach };
+	if (record_count == 0 || record_count > ERX_DMA_HELD_RECORDS_MAX || publication->bind_count > ERX_DMA_BINDS_MAX)
 		return (false);
+	/* A transfer has no reach: the meanings of a ring that needs a binding have none. */
+	holding->reach = erx_meaning_reach(publication->records[0].meaning);
+	holding->bind_count = publication->bind_count;
+	for (uint32_t k = 0; k < publication->bind_count; k++)
+		holding->binds[k] = publication->binds[k];
 	for (uint32_t record = 0; record < record_count; record++)
 		holding->records[record] = records[record];
 	return (erx_dma_publication_buffers(publication, holding->buffers, &holding->buffer_count));
@@ -680,20 +846,27 @@ erx_dma_ledger_hold(erx_dma_ledger_t *ledger, const erx_dma_publication_t *publi
 	uint32_t taken[ERX_DMA_TABLES_MAX] = { 0 };
 	erx_dma_holding_t holding;
 
-	if (!holding_of(publication, records, record_count, &holding) || !holding_valid(ledger, &holding, taken))
+	if (!holding_of(publication, records, record_count, &holding) || !holding_valid(ledger, &holding, taken) ||
+	    !erx_dma_ledger_may_bind(ledger, publication))
 		return (false);
 	/* A binding's ring, bound to no endpoint, takes none of the run: it holds no record before or after. */
-	if (holding.binding.endpoint != 0 &&
-	    (!erx_dma_ledger_may_bind(ledger, holding.binding) || taken[holding.binding.table] != 0))
-		return (false);
+	for (uint32_t k = 0; k < holding.bind_count; k++) {
+		if (taken[holding.binds[k].table] != 0)
+			return (false);
+	}
 	holding.serial = ++ledger->begun;
 	ledger->holdings[ledger->live++] = holding;
 	for (uint32_t table = 0; table < ledger->layout.table_count; table++)
 		advance(ledger, table, taken[table]);
-	if (holding.binding.endpoint != 0) {
-		ledger->bound[holding.binding.table] = holding.binding.endpoint;
+	/* A transfer's doorbell starts a stopped endpoint (xHCI 1.2, 4.8.3). */
+	if (taken[records[0].table] != 0 && needs_binding(&ledger->layout, records[0].table))
+		ledger->states[records[0].table] = ERX_DMA_ENDPOINT_RUNNING;
+	for (uint32_t k = 0; k < holding.bind_count; k++) {
+		ledger->bound[holding.binds[k].table] = holding.binds[k].endpoint;
+		/* Closed until its command's success, when it runs (Figure 4-5, items 1, 2 and 6). */
+		ledger->states[holding.binds[k].table] = ERX_DMA_ENDPOINT_RUNNING;
 		/* The first record, on lap 0, of cycle state 1, where the sequencer's zeroed ring starts. */
-		ledger->positions[holding.binding.table] = (erx_dma_position_t){ .index = 0, .lap = 0 };
+		ledger->positions[holding.binds[k].table] = (erx_dma_position_t){ .index = 0, .lap = 0 };
 	}
 	return (true);
 }
@@ -768,7 +941,7 @@ erx_dma_ledger_release_holding(erx_dma_ledger_t *ledger, uint32_t reports, erx_d
 	if (reports >= ledger->layout.table_count || !device_writes(&ledger->layout, reports) ||
 	    ledger->acquired[reports] == 0)
 		return (false);
-	if (!erx_dma_ledger_found_live(ledger, found))
+	if (!SEED_RELEASE_TWICE && !erx_dma_ledger_found_live(ledger, found))
 		return (false);
 	for (uint32_t live = 0; live < ledger->live; live++) {
 		if (&ledger->holdings[live] == found.holding) {
@@ -783,4 +956,84 @@ erx_dma_ledger_release_holding(erx_dma_ledger_t *ledger, uint32_t reports, erx_d
 		return (true);
 	}
 	return (false);
+}
+
+/* Ends every live holding on ring `table`: the transfers a command's success retires. */
+static void
+retire(erx_dma_ledger_t *ledger, uint32_t table)
+{
+	for (uint32_t live = 0; live < ledger->live;) {
+		if (ledger->holdings[live].records[0].table == table)
+			ledger->holdings[live] = ledger->holdings[--ledger->live];
+		else
+			live++;
+	}
+}
+
+/*
+ * What the success of `command` does to ring `table`, bound to an endpoint of its group: whether
+ * it ends the ring's binding, and, through *retires, whether it retires the ring's transfers.
+ */
+static bool
+success_unbinds(const erx_dma_holding_t *command, uint32_t table, uint32_t endpoint, bool *retires)
+{
+	const bool named = endpoint == erx_dma_endpoint(command->target.group, command->target.index);
+	const bool old = !made_by(command, (erx_dma_binding_t){ endpoint, table });
+
+	switch (command->reach) {
+	case ERX_REACH_ADDRESS:
+	case ERX_REACH_CONFIGURE:
+		*retires = old && drops(&command->target, endpoint);
+		return (*retires && !SEED_KEEP_DROPPED_BINDING);
+	case ERX_REACH_RESTART:
+		*retires = named && !SEED_RETIRE_NOTHING;
+		return (false);
+	case ERX_REACH_DISABLE:
+		*retires = true;
+		return (true);
+	default:
+		*retires = false;
+		return (false);
+	}
+}
+
+bool
+erx_dma_ledger_complete_command(erx_dma_ledger_t *ledger, uint32_t reports, erx_dma_found_t found, bool success)
+{
+	erx_dma_holding_t command;
+
+	if (!erx_dma_ledger_found_live(ledger, found) || needs_binding(&ledger->layout, found.holding->records[0].table))
+		return (false);
+	command = *found.holding;
+	if (!erx_dma_ledger_release_holding(ledger, reports, found))
+		return (false);
+	for (uint32_t table = 0; table < ledger->layout.table_count; table++) {
+		const uint32_t endpoint = ledger->bound[table];
+		bool retires;
+
+		if (!in_group(endpoint, command.target.group) && !made_by(&command, (erx_dma_binding_t){ endpoint, table }))
+			continue;
+		if (!success) {
+			/* Its endpoints were closed since its publication: its own rings hold nothing. */
+			if (made_by(&command, (erx_dma_binding_t){ endpoint, table }) && !SEED_KEEP_FAILED_BINDING)
+				unbind(ledger, table);
+			continue;
+		}
+		if (success_unbinds(&command, table, endpoint, &retires))
+			unbind(ledger, table);
+		if (retires)
+			retire(ledger, table);
+		if (command.reach == ERX_REACH_STOP && endpoint == erx_dma_endpoint(command.target.group, command.target.index))
+			ledger->states[table] = ERX_DMA_ENDPOINT_STOPPED;
+	}
+	return (true);
+}
+
+bool
+erx_dma_ledger_halt(erx_dma_ledger_t *ledger, uint32_t table)
+{
+	if (table >= ledger->layout.table_count || ledger->bound[table] == 0)
+		return (false);
+	ledger->states[table] = ERX_DMA_ENDPOINT_HALTED;
+	return (true);
 }

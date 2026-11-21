@@ -32,7 +32,8 @@ class ErxDeviceTrbRingTest < Minitest::Test
   # gave it; a ring taking more TDs or commands than its pool has buffers, as runs of a setup
   # and a status stage name none.
   SEEDS = %w[RING_NO_LINK FIRST_CYCLE_LIVE NO_BINDING_TEST RING_REUSE_HELD BIND_BOUND_ENDPOINT NO_STRIDE_TEST
-             FIND_BOUND_RING NO_RING_BOUND].freeze
+             FIND_BOUND_RING NO_RING_BOUND ANY_COMMAND_BINDS NO_CLOSURE KEEP_DROPPED_BINDING KEEP_FAILED_BINDING
+             NO_REACH_TEST].freeze
 
   def test_rings_and_bindings
     output, status = run_harness

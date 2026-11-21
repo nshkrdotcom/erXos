@@ -461,8 +461,8 @@ reads and none changes.
 | the positions | for each ring the CPU writes, the next position the sequencer publishes at, with a TRB ring's cycle state there; for each structure the device writes in order, the next position the CPU consumes, with the event ring's cycle state there | publications and releases |
 | the holdings | one for each publication the device may still act on: the records it made live, the regions it handed to the device, and the report that ends it | publications begin them, releases end them |
 | the persistent regions | the device's regions a region entry may name, each by its name, with its device address and whole length: the device record's one region table, read through a pointer | added to the device's table one at a time, each once, under the device lock, the same region again adding nothing; kept for the boot, a reset included |
-| the bindings | the TRB form's: the endpoint each transfer ring is bound to | the commands that bind, and releases |
-| the command's reach | the TRB form's: the endpoints the command in flight closes to new transfers, and the transfer holdings its success retires, fixed at its publication; each endpoint's **state**, `running`, `stopped` or `halted` | a command's publication fixes its reach and its completion ends it; an endpoint's state changes only on what the trusted side did or consumed: the consumed success of the command that binds it, or the publication of a transfer on it, sets `running`; a consumed Stop Endpoint or Reset Endpoint success sets `stopped`; a consumed error event that halts it sets `halted` |
+| the bindings | the TRB form's: the endpoint each transfer ring is bound to, and while a drop-and-add is in flight an endpoint's old ring and its new one | the publications of the commands that bind, and their completions |
+| the command's reach | the TRB form's: the command in flight's reach, its meaning's `reach` mark, and the endpoints it acts on, which it closes to new transfers; each endpoint's **state**, `disabled`, `running`, `stopped` or `halted` | a command's publication records its reach and its completion ends it, its success retiring every live transfer holding on the rings it restarts or unbinds, the ones live there at its publication since the closure admits no post in between; an endpoint's state changes only on what the trusted side did or consumed: an endpoint no ring is bound to is `disabled`; a binding, or the publication of a transfer, sets `running`; a consumed Stop Endpoint or Reset Endpoint success sets `stopped`; a consumed error event that halts it sets `halted` |
 
 A region's writer is derived: the device's while a holding holds it, the
 CPU's otherwise. A record is live while a holding holds it. A core reads
@@ -503,10 +503,16 @@ transfer without a data stage or a command without an input context,
 still counts against its pool: a transfer ring's TDs in flight never
 outnumber its block's buffers, and the command ring, whose pool holds
 just the input context, has one command in flight. A binding begins only with the holding of the
-binding command's publication, refused unless the ring needs a binding
-and is bound to no endpoint and the endpoint is bound to no ring; such a
-ring holds no record, since it takes no run unbound and a binding ends
-only while it holds none. It returns the position to the first record on
+binding command's publication, which carries at most `ERX_DMA_BINDS_MAX`
+bindings, only if its meaning's reach binds. Each is refused unless the
+ring needs a binding and is bound to no endpoint, no two of them name
+one endpoint or one ring, and the endpoint is bound to no ring or to
+one the command drops, a drop-and-add
+([design-usb.md](design-usb.md#what-the-dma-check-judges)). Such a ring
+holds no record, since it takes no run unbound, and a binding ends only
+at a command's consumed success, which retires every transfer on its
+ring, or at its own command's failure, while the reach has kept its
+endpoint closed. It returns the position to the first record on
 a new lap of cycle state 1, and the command's sequence zeroes the ring
 and writes its link before the command's activation. A
 holding's head, the record its ending report names, is a chain's first
@@ -640,13 +646,13 @@ live. The sequencer:
 5. records the holding: the positions and records the run made live,
    every region of the queue's layout its names reach (a region entry's
    persistent region is none of them), and the report that ends it; for a TRB
-   command, also its reach, the endpoints it closes and the holdings its
-   success retires, as they stand at this publication
+   command, also its meaning's reach and the endpoints it acts on, which
+   it closes until its completion
    ([design-usb.md](design-usb.md#what-the-dma-check-judges)); for a
-   command that binds, the binding its publication carries, a ring and
-   an endpoint the check judged with the rest of it, which the holding
-   makes as it begins, so a refused publication binds nothing, and keeps
-   as the binding the command's failure ends.
+   command that binds, the bindings its publication carries, each a ring
+   and an endpoint the check judged with the rest of it, which the
+   holding makes as it begins, so a refused publication binds nothing,
+   and keeps as the bindings the command's failure ends.
 
 **Nothing of a run is reachable before its activation.** A device
 reaches a ring's records only from its own position, and stops at the
@@ -776,9 +782,9 @@ one pass. A plan passes when every rule holds:
 | calls | each step is one its call makes, from a closed set of calls: records and fills in a run's publication; in an install's, no record and no fill, only the zeroed rings, the queue registers the layout gives and the ready bit, on a ledger as the idle report left it; a control in a reset, copies in a take-back, reports in an observation | a store while the device may hold what it changes, such as an install zeroing a ring a live chain is on; a copy outside a take-back |
 | meanings | each record's meaning is one its table offers, and each free field's value fits its bits | a record the form never builds reaching the device (a link, an indirect table, streams, event data); a value spilling into a neighbouring field, such as a length into the interrupter target |
 | names | each name lies in its target: a buffer of the record's binding, the queue's input context, an endpoint with a ring bound to it; no name names a buffer a live holding holds; one publication may name a buffer at several ranges, each inside it, and its holding holds that buffer once | an address outside the memory or between records; a buffer the device holds posted again |
-| bindings | a transfer record names only buffers of its own ring's block; a command that binds names a ring bound to no endpoint | one queue's transfer reaching another's buffer; device A's endpoint run on device B's ring |
+| bindings | a transfer record names only buffers of its own ring's block; only a command whose meaning's reach binds carries bindings, at most `ERX_DMA_BINDS_MAX`, Address Device's EP0 alone and Configure Endpoint's indexes 2 and up, each to a ring bound to no endpoint, no two to one endpoint or one ring, and to an endpoint already bound only when the command drops it | one queue's transfer reaching another's buffer; device A's endpoint run on device B's ring; a binding no command makes, which points the ledger at a ring the controller does not serve |
 | lengths | each length lies inside its named buffer from the named offset; an ADMA2 extent is at least one block | a transfer past its buffer; an ADMA2 entry of length 0, which moves 65,536 bytes |
-| reach | the TRB form's: no transfer is published on an endpoint the command in flight closes, or on a `halted` one; a Configure Endpoint that drops an endpoint, alone or with an add, is published only when that endpoint is `stopped`, or `running` with no live transfer; a Disable Slot only when no endpoint of its slot is `running` with a live transfer | a Set TR Dequeue Pointer whose success retires a transfer published after its pointer was fixed, which the controller then runs; a command the specification leaves undefined in the endpoint's state, a drop on a halted endpoint or on a running one that is not idle (xHCI 4.6.6, p. 117; 4.6.8, p. 132), a Disable Slot with a transfer in progress (4.6.4, p. 109); a transfer on a halted endpoint, whose doorbell the controller disables (4.6.8, p. 128), leaving the ledger's state wrong |
+| reach | the TRB form's, judged by the command's meaning's `reach` mark: no transfer is published on an endpoint the command in flight closes, or on a `halted` one; a Stop Endpoint, Reset Endpoint or Set TR Dequeue Pointer names an endpoint that is not `disabled`; a Configure Endpoint that drops an endpoint, alone or with an add, is published only when that endpoint is `stopped`, or `running` with no live transfer; a Disable Slot only when no endpoint of its slot is `running` with a live transfer | a Set TR Dequeue Pointer whose success retires a transfer published after its pointer was fixed, which the controller then runs; a transfer on a ring a binding command in flight may yet unbind; a command the specification leaves undefined in the endpoint's state, a drop on a halted endpoint or on a running one that is not idle (xHCI 4.6.6, p. 117; 4.6.8, p. 132), a Disable Slot with a transfer in progress (4.6.4, p. 109); a transfer on a halted endpoint, whose doorbell the controller disables (4.6.8, p. 128), leaving the ledger's state wrong |
 | room | the run fits: as many free positions as it takes, a link it reaches among them; free descriptors and a free available entry; a carried record no holding holds | a live record overwritten, such as a TRB the controller has not fetched or the input context of a command in flight |
 | fills | an `out` segment's bytes go only inside a range a record of the plan names, and no two fills share a byte; a region entry's fill is one entry long and names a persistent region the ledger holds | the CPU storing into a buffer the device holds; a later fill overwriting part of an earlier, as one region entry's length written over another's address; the device sent through a region entry to an address outside the device's regions, another device's region among them |
 | controls | a control step writes an owned register inside the window, with every field its table fixes for a stop or a reset | a core aiming the device through a register |
@@ -987,9 +993,12 @@ endpoint context's state are fixed at 0, the controller's to write,
 which software sets to 0 in an input context (xHCI 1.2, Table 6-7,
 p. 447; Table 6-8, p. 450); it declares the transfer rings and the
 command ring as `cpu` structures, the transfer ring marked
-`needs_binding`, and the event ring as a `device` one, the No Op command
-as the command ring's meaning (xHCI 1.2, 6.4.3.1), and the event TRBs as
-the event ring's. The virtio file holds the
+`needs_binding`, and the event ring as a `device` one, the nine commands
+as the command ring's meanings (xHCI 1.2, 6.4.3), each with its `reach`
+mark (`address`, `configure`, `stop`, `restart`, `disable`, or none for
+No Op, Enable Slot and Evaluate Context) and its slot and endpoint
+fields derived, the sequencer's from the publication's reach, and the
+event TRBs as the event ring's. The virtio file holds the
 descriptor's flag bits, the used element's release mark, the
 descriptor table as a `cpu` structure and the used ring as a `device`
 one, and the region entry `erx_virtio_gpu_mem_entry`, its address and
@@ -1031,7 +1040,7 @@ folds a plan's raw stores into each record's end state and judges it:
 | who holds a buffer | the core's next state, checked for direction | derived from the ledger's holdings |
 | what ends a holding | the core's next state | a report the effect layer read, by its meaning's release |
 | when a report is whole | the core's order of reads | the acquisition's: validity, then the records it covers |
-| what a command retires | every transfer on its ring at completion | the holdings its publication fixed, on endpoints it closed meanwhile |
+| what a command retires | every transfer on its ring at completion | every live holding on the rings its reach restarts or unbinds at its completion, on endpoints it kept closed since its publication, so none published meanwhile |
 | binding | a ring to its block's buffers | also an endpoint to its ring |
 | region and width checks | every plan | once, on the layout at install |
 
@@ -1685,10 +1694,10 @@ ran.
     Configure Endpoint dropping and adding that endpoint, with the drop
     test accepting `halted`: the model takes a drop on a halted endpoint,
     which the specification leaves undefined;
-  * a command's retired holdings taken at its completion rather than its
-    publication, with the reach test removed and a core that posts B on
-    the endpoint while its Set TR Dequeue Pointer is in flight: the
-    completion returns B's buffer while the model runs B;
+  * the closure removed, so a command in flight closes no endpoint, and a
+    core that posts B on the endpoint while its Set TR Dequeue Pointer is
+    in flight: the completion retires every live holding on the ring, B
+    among them, and returns B's buffer while the model runs B;
   * the ADMA2 split rounding the entry count up once too often, so an
     extent of a multiple of 64 blocks ends in an entry of length 0, and
     the model, reading it as 65,536 bytes, moves past the buffer.

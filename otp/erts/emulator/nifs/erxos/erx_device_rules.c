@@ -11,6 +11,16 @@
 
 #include "erx_device_rules.h"
 
+#ifdef ERX_DMA_SEED_NO_REACH_TEST
+#define SEED_NO_REACH_TEST	true
+#else
+#define SEED_NO_REACH_TEST	false
+#endif
+#ifdef ERX_DMA_SEED_DROP_HALTED
+#define SEED_DROP_HALTED	true
+#else
+#define SEED_DROP_HALTED	false
+#endif
 #ifdef ERX_DMA_SEED_NO_MEANING_TEST
 #define SEED_NO_MEANING_TEST	true
 #else
@@ -256,7 +266,7 @@ call_valid(const erx_dma_ledger_t *ledger, const erx_dma_publication_t *publicat
 		return (publication->record_count > 0);
 	case ERX_DMA_PUBLISH_INSTALL:
 		return (publication->record_count == 0 && publication->fill_count == 0 && publication->endpoint == 0 &&
-		    publication->binds.endpoint == 0 &&
+		    publication->bind_count == 0 &&
 		    (SEED_NO_IDLE_TEST || erx_dma_ledger_idle(ledger)));
 	}
 	return (false);
@@ -271,13 +281,68 @@ static erx_dma_verdict_t
 judge_bindings(const erx_dma_ledger_t *ledger, const erx_dma_publication_t *publication, int table)
 {
 	if (table < 0)
-		return (publication->endpoint != 0 || publication->binds.endpoint != 0 ? ERX_DMA_BREAKS_BINDINGS :
+		return (publication->endpoint != 0 || publication->bind_count != 0 ? ERX_DMA_BREAKS_BINDINGS :
 		    ERX_DMA_BREAKS_MEANINGS);
 	/* A transfer, a run of an endpoint, carries no binding: a binding command runs on the command ring. */
-	if (publication->binds.endpoint != 0 &&
-	    (publication->endpoint != 0 || !erx_dma_ledger_may_bind(ledger, publication->binds)))
+	if ((publication->bind_count != 0 && publication->endpoint != 0) ||
+	    (publication->endpoint == 0 && !erx_dma_ledger_may_bind(ledger, publication)))
 		return (ERX_DMA_BREAKS_BINDINGS);
 	return (ERX_DMA_PASSES);
+}
+
+/* Whether `endpoint` is running with a live transfer on its ring: in progress, not idle (xHCI 1.2, 4.6.6). */
+static bool
+busy(const erx_dma_ledger_t *ledger, uint32_t endpoint)
+{
+	const int ring = erx_dma_ledger_bound_table(ledger, endpoint);
+
+	return (ring >= 0 && erx_dma_ledger_endpoint_state(ledger, endpoint) == ERX_DMA_ENDPOINT_RUNNING &&
+	    erx_dma_ledger_holdings_on(ledger, (uint32_t)ring) != 0);
+}
+
+/*
+ * The reach rule, as the header gives it, over a run the bindings rule placed: a transfer, a run
+ * of an endpoint, or a command, whose meaning's reach says what its endpoints must be.
+ */
+static erx_dma_verdict_t
+judge_reach(const erx_dma_ledger_t *ledger, const erx_dma_publication_t *publication)
+{
+	const erx_dma_reach_t *const target = &publication->reach;
+	const uint32_t reach = erx_meaning_reach(publication->records[0].meaning);
+	const uint32_t named = erx_dma_endpoint(target->group, target->index);
+
+	if (publication->endpoint != 0) {
+		return (!erx_dma_ledger_closed(ledger, publication->endpoint) &&
+		    erx_dma_ledger_endpoint_state(ledger, publication->endpoint) != ERX_DMA_ENDPOINT_HALTED ?
+		    ERX_DMA_PASSES : ERX_DMA_BREAKS_REACH);
+	}
+	switch (reach) {
+	case ERX_REACH_STOP:
+	case ERX_REACH_RESTART:
+		return (erx_dma_ledger_endpoint_state(ledger, named) != ERX_DMA_ENDPOINT_DISABLED ? ERX_DMA_PASSES :
+		    ERX_DMA_BREAKS_REACH);
+	case ERX_REACH_CONFIGURE:
+		/* A drop is defined only on a stopped endpoint or a running idle one (4.6.6; 4.6.8). */
+		for (uint32_t index = 1; index < ERX_DMA_GROUP_ENDPOINTS; index++) {
+			const uint32_t endpoint = erx_dma_endpoint(target->group, index);
+			const erx_dma_endpoint_state_t state = erx_dma_ledger_endpoint_state(ledger, endpoint);
+
+			if ((target->drops >> index & 1u) != 0 &&
+			    (state == ERX_DMA_ENDPOINT_DISABLED || (state == ERX_DMA_ENDPOINT_HALTED && !SEED_DROP_HALTED) ||
+			    busy(ledger, endpoint)))
+				return (ERX_DMA_BREAKS_REACH);
+		}
+		return (ERX_DMA_PASSES);
+	case ERX_REACH_DISABLE:
+		/* Disable Slot disables halted endpoints too, but not one with a transfer in progress (4.6.4). */
+		for (uint32_t index = 1; index < ERX_DMA_GROUP_ENDPOINTS; index++) {
+			if (busy(ledger, erx_dma_endpoint(target->group, index)))
+				return (ERX_DMA_BREAKS_REACH);
+		}
+		return (ERX_DMA_PASSES);
+	default:
+		return (ERX_DMA_PASSES);
+	}
 }
 
 erx_dma_verdict_t
@@ -316,5 +381,6 @@ erx_dma_publication_check(const erx_dma_ledger_t *ledger, const erx_dma_publicat
 				return (ERX_DMA_BREAKS_FILLS);
 		}
 	}
-	return (ERX_DMA_PASSES);
+	/* Last: the endpoints' states, once the run is known to be well formed. */
+	return (SEED_NO_REACH_TEST ? ERX_DMA_PASSES : judge_reach(ledger, publication));
 }

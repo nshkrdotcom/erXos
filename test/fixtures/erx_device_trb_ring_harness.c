@@ -29,14 +29,13 @@
 
 /*
  * Two transfer rings of RING TRBs, the last each one's link, each with a pool of two buffers, which
- * take runs only once bound; and the command ring, which needs none, with a pool of one buffer, whose
- * No Op command stands in for a binding command until the commands that bind have meanings: the
- * ledger does not yet tell a command that binds from one that does not (TODO.md).
+ * take runs only once bound; and the command ring, which needs none, with a pool of one buffer, the
+ * input context a Configure Endpoint names as it binds a ring to an endpoint of slot 1.
  */
 enum { RING = 5, RING0 = 0, RING1 = 1, EVENTS = 2, COMMANDS = 3, BUFFERS = 2, DEPTH = 8, RUN_MAX = 3 };
 #define BASE		UINT64_C(0x40000)
-#define ENDPOINT0	UINT32_C(0x21)	/* slot 1, EP0 */
-#define ENDPOINT1	UINT32_C(0x22)
+#define ENDPOINT0	UINT32_C(0x22)	/* slot 1, device context index 2 */
+#define ENDPOINT1	UINT32_C(0x23)
 #define NO_BUFFER	UINT32_MAX
 
 static const erx_dma_regions_t no_regions;
@@ -77,6 +76,14 @@ noop(void)
 {
 	return ((erx_dma_description_t){ .structure = ERX_STRUCTURE_XHCI_COMMAND_RING,
 	    .meaning = ERX_MEANING_XHCI_TRB_NOOP_COMMAND });
+}
+
+/* A Configure Endpoint, naming the command ring's one buffer, the input context. */
+static erx_dma_description_t
+configure(void)
+{
+	return ((erx_dma_description_t){ .structure = ERX_STRUCTURE_XHCI_COMMAND_RING,
+	    .meaning = ERX_MEANING_XHCI_TRB_CONFIGURE_ENDPOINT_COMMAND, .name_count = 1, .names = { { 2u * BUFFERS, 0 } } });
 }
 
 static erx_dma_description_t
@@ -137,7 +144,7 @@ bind(erx_dma_ledger_t *ledger, uint32_t ring, uint32_t endpoint, erx_dma_descrip
     erx_dma_sequence_t *sequence)
 {
 	const erx_dma_publication_t publication = { .record_count = 1, .records = &command, .call = ERX_DMA_PUBLISH_RUN,
-	    .binds = { endpoint, ring } };
+	    .bind_count = 1, .binds = { { endpoint, ring } }, .reach = { .group = endpoint / ERX_DMA_GROUP_ENDPOINTS } };
 
 	return (erx_dma_publish(ledger, &publication, sequence));
 }
@@ -147,7 +154,8 @@ static void
 complete_command(erx_dma_ledger_t *ledger, uint32_t index)
 {
 	EXPECT(erx_dma_ledger_acquire(ledger, EVENTS, 1) &&
-	    erx_dma_ledger_release_holding(ledger, EVENTS, erx_dma_ledger_holding(ledger, (erx_dma_place_t){ COMMANDS, index })),
+	    erx_dma_ledger_complete_command(ledger, EVENTS, erx_dma_ledger_holding(ledger, (erx_dma_place_t){ COMMANDS, index }),
+	    true),
 	    "the command's report ends it");
 }
 
@@ -366,29 +374,30 @@ test_binding_command(void)
 	const erx_dma_store_t *ring_link;
 
 	EXPECT(erx_dma_ledger_make(&ledger, &planned, &no_regions), "two rings that need a binding and one that needs none");
-	EXPECT(bind(&ledger, RING0, ENDPOINT0, noop(), &sequence) == ERX_DMA_PASSES, "a binding command binds ring 0");
+	EXPECT(bind(&ledger, RING0, ENDPOINT0, configure(), &sequence) == ERX_DMA_PASSES, "a binding command binds ring 0");
 	ring_link = stored_at(&sequence, (RING - 1) * 16u);
 	EXPECT(ring_link != NULL, "the bound ring's link is stored");
 	memcpy(&link, ring_link->bytes, sizeof(link));
-	EXPECT(sequence.zero_count == 1 && sequence.zeros[0].offset == 0 && sequence.zeros[0].length == 128 &&
-	    sequence.store_count == 2 && stored_at(&sequence, 640) != NULL && sequence.clean_count == 2 &&
+	EXPECT(sequence.zero_count == 2 && sequence.zeros[0].offset == 0 && sequence.zeros[0].length == 128 &&
+	    sequence.store_count == 2 && stored_at(&sequence, 640) != NULL && sequence.clean_count == 3 &&
 	    erx_xhci_trb_link_control_cycle_get(link.control) == 1 &&
 	    sequence.activation.store.offset == 640 + ERX_XHCI_TRB_NORMAL_OFF_CONTROL,
-	    "the command zeroes the ring, writes its link with cycle 1 and cleans it, and activates its own TRB");
+	    "the command zeroes the ring, writes its link with cycle 1 and cleans it and the input context it names, and activates its own TRB");
 	found = erx_dma_ledger_holding(&ledger, (erx_dma_place_t){ COMMANDS, 0 });
 	EXPECT(erx_dma_ledger_binding(&ledger, RING0) == ENDPOINT0 && erx_dma_ledger_bound_table(&ledger, ENDPOINT0) == RING0 &&
-	    found.holding != NULL && found.holding->binding.table == RING0 && found.holding->binding.endpoint == ENDPOINT0,
+	    found.holding != NULL && found.holding->bind_count == 1 && found.holding->binds[0].table == RING0 &&
+	    found.holding->binds[0].endpoint == ENDPOINT0,
 	    "the ring is bound, and the command's holding records the binding its failure ends");
 
-	EXPECT(bind(&ledger, RING0, ENDPOINT1, noop(), &sequence) == ERX_DMA_BREAKS_BINDINGS &&
-	    bind(&ledger, RING1, ENDPOINT0, noop(), &sequence) == ERX_DMA_BREAKS_BINDINGS &&
-	    bind(&ledger, COMMANDS, ENDPOINT1, noop(), &sequence) == ERX_DMA_BREAKS_BINDINGS &&
-	    bind(&ledger, EVENTS, ENDPOINT1, noop(), &sequence) == ERX_DMA_BREAKS_BINDINGS &&
-	    bind(&ledger, 9, ENDPOINT1, noop(), &sequence) == ERX_DMA_BREAKS_BINDINGS,
+	EXPECT(bind(&ledger, RING0, ENDPOINT1, configure(), &sequence) == ERX_DMA_BREAKS_BINDINGS &&
+	    bind(&ledger, RING1, ENDPOINT0, configure(), &sequence) == ERX_DMA_BREAKS_BINDINGS &&
+	    bind(&ledger, COMMANDS, ENDPOINT1, configure(), &sequence) == ERX_DMA_BREAKS_BINDINGS &&
+	    bind(&ledger, EVENTS, ENDPOINT1, configure(), &sequence) == ERX_DMA_BREAKS_BINDINGS &&
+	    bind(&ledger, 9, ENDPOINT1, configure(), &sequence) == ERX_DMA_BREAKS_BINDINGS,
 	    "a bound ring, a bound endpoint, rings that need no binding and a table past the layout are refused");
 	wrong_meaning.meaning = ERX_MEANING_XHCI_TRB_NORMAL;
-	EXPECT(bind(&ledger, RING1, ENDPOINT1, wrong_meaning, &sequence) == ERX_DMA_BREAKS_MEANINGS,
-	    "a binding command whose TRB is no meaning of the command ring");
+	EXPECT(bind(&ledger, RING1, ENDPOINT1, wrong_meaning, &sequence) == ERX_DMA_BREAKS_BINDINGS,
+	    "a binding on a TRB whose meaning has no reach that binds");
 	EXPECT(erx_dma_ledger_binding(&ledger, RING1) == 0 && erx_dma_ledger_live(&ledger) == 1,
 	    "a refused binding command binds nothing and holds nothing");
 	complete_command(&ledger, 0);
@@ -411,7 +420,7 @@ test_bindings(void)
 	publication = on(0, records, run(1, 0, records));
 	EXPECT(erx_dma_publish(&ledger, &publication, &sequence) == ERX_DMA_BREAKS_MEANINGS,
 	    "a transfer of endpoint 0 finds no table: a transfer ring needs a binding");
-	EXPECT(bind(&ledger, RING0, ENDPOINT0, noop(), &sequence) == ERX_DMA_PASSES, "ring 0 bound to endpoint 0");
+	EXPECT(bind(&ledger, RING0, ENDPOINT0, configure(), &sequence) == ERX_DMA_PASSES, "ring 0 bound to endpoint 0");
 
 	publication = on(ENDPOINT0, records, run(1, BUFFERS, records));
 	EXPECT(erx_dma_publish(&ledger, &publication, &sequence) == ERX_DMA_BREAKS_BINDINGS,
@@ -419,27 +428,86 @@ test_bindings(void)
 	publication = on(ENDPOINT0, records, run(1, 2 * BUFFERS + 1, records));
 	EXPECT(erx_dma_publish(&ledger, &publication, &sequence) == ERX_DMA_BREAKS_NAMES, "a buffer past every pool");
 	publication = (erx_dma_publication_t){ .record_count = 1, .records = records, .call = ERX_DMA_PUBLISH_RUN,
-	    .endpoint = ENDPOINT0, .binds = { ENDPOINT1, RING1 } };
+	    .endpoint = ENDPOINT0, .bind_count = 1, .binds = { { ENDPOINT1, RING1 } } };
 	run(1, 0, records);
 	EXPECT(erx_dma_publish(&ledger, &publication, &sequence) == ERX_DMA_BREAKS_BINDINGS &&
 	    erx_dma_ledger_binding(&ledger, RING1) == 0, "a transfer carries no binding");
 
-	EXPECT(bind(&ledger, RING1, ENDPOINT1, noop(), &sequence) == ERX_DMA_BREAKS_ROOM,
-	    "a second command while one is in flight: the command ring's pool holds one buffer");
+	{
+		/* No binding, so the check reaches the held rule: the bindings rule comes first. */
+		const erx_dma_description_t command = configure();
+		const erx_dma_publication_t second = { .record_count = 1, .records = &command, .call = ERX_DMA_PUBLISH_RUN,
+		    .reach = { .group = ENDPOINT1 / ERX_DMA_GROUP_ENDPOINTS } };
+
+		EXPECT(erx_dma_publish(&ledger, &second, &sequence) == ERX_DMA_BREAKS_HELD,
+		    "a second command while one is in flight: the command ring's pool holds one buffer, the input context");
+	}
+	{
+		/* A Stop Endpoint names no buffer: the room rule refuses it, as the pool's one buffer is one command. */
+		const erx_dma_description_t stop = { .structure = ERX_STRUCTURE_XHCI_COMMAND_RING,
+		    .meaning = ERX_MEANING_XHCI_TRB_STOP_ENDPOINT_COMMAND };
+		const erx_dma_publication_t second = { .record_count = 1, .records = &stop, .call = ERX_DMA_PUBLISH_RUN,
+		    .reach = { .group = ENDPOINT0 / ERX_DMA_GROUP_ENDPOINTS, .index = ENDPOINT0 % ERX_DMA_GROUP_ENDPOINTS } };
+
+		EXPECT(erx_dma_publish(&ledger, &second, &sequence) == ERX_DMA_BREAKS_ROOM && erx_dma_ledger_live(&ledger) == 1,
+		    "a second command that names no buffer while one is in flight");
+	}
 	complete_command(&ledger, 0);
-	EXPECT(bind(&ledger, RING1, ENDPOINT1, noop(), &sequence) == ERX_DMA_PASSES, "ring 1 bound to endpoint 1");
+	EXPECT(bind(&ledger, RING1, ENDPOINT1, configure(), &sequence) == ERX_DMA_PASSES, "ring 1 bound to endpoint 1");
 	publication = on(ENDPOINT0, records, run(1, 0, records));
 	EXPECT(erx_dma_publish(&ledger, &publication, &sequence) == ERX_DMA_PASSES, "a run on the bound ring");
-	EXPECT(!erx_dma_ledger_unbind(&ledger, RING0), "a ring a run holds stays bound");
 	publication = on(ENDPOINT1, records, run(1, BUFFERS, records));
+	EXPECT(erx_dma_publish(&ledger, &publication, &sequence) == ERX_DMA_BREAKS_REACH,
+	    "an endpoint its binding command still holds is closed");
+	complete_command(&ledger, 1);
+	{
+		/* What a binding reach may drop is judged without bindings too. */
+		const erx_dma_description_t address = { .structure = ERX_STRUCTURE_XHCI_COMMAND_RING,
+		    .meaning = ERX_MEANING_XHCI_TRB_ADDRESS_DEVICE_COMMAND, .name_count = 1, .names = { { 2u * BUFFERS, 0 } } };
+		const erx_dma_description_t command = configure();
+		erx_dma_publication_t drop = { .record_count = 1, .records = &command, .call = ERX_DMA_PUBLISH_RUN,
+		    .reach = { .group = ENDPOINT0 / ERX_DMA_GROUP_ENDPOINTS, .drops = 2u } };
+
+		EXPECT(erx_dma_publish(&ledger, &drop, &sequence) == ERX_DMA_BREAKS_BINDINGS, "a Configure Endpoint dropping EP0");
+		drop.records = &address;
+		drop.reach.drops = 1u << (ENDPOINT0 % ERX_DMA_GROUP_ENDPOINTS);
+		EXPECT(erx_dma_publish(&ledger, &drop, &sequence) == ERX_DMA_BREAKS_BINDINGS &&
+		    erx_dma_ledger_live(&ledger) == 1, "an Address Device with no binding of EP0, dropping an endpoint");
+	}
 	EXPECT(erx_dma_publish(&ledger, &publication, &sequence) == ERX_DMA_PASSES &&
 	    sequence.stores[0].offset == 128, "the other endpoint's run on its own ring, from its own pool");
 	erx_dma_ledger_reset(&ledger);
 	EXPECT(erx_dma_ledger_binding(&ledger, RING0) == 0 && erx_dma_ledger_idle(&ledger),
 	    "the reset's idle report ends every binding");
-	EXPECT(bind(&ledger, RING1, ENDPOINT0, noop(), &sequence) == ERX_DMA_PASSES &&
-	    erx_dma_ledger_unbind(&ledger, RING1) && erx_dma_ledger_binding(&ledger, RING1) == 0,
-	    "an idle ring is unbound");
+	EXPECT(bind(&ledger, RING1, ENDPOINT0, configure(), &sequence) == ERX_DMA_PASSES && erx_dma_ledger_acquire(&ledger, EVENTS, 1) &&
+	    erx_dma_ledger_complete_command(&ledger, EVENTS, erx_dma_ledger_holding(&ledger, (erx_dma_place_t){ COMMANDS, 0 }),
+	    false) && erx_dma_ledger_binding(&ledger, RING1) == 0, "a failed binding command's binding ends");
+
+	/* A drop-and-add: the new ring is bound beside the old while the endpoint is closed. */
+	EXPECT(bind(&ledger, RING0, ENDPOINT0, configure(), &sequence) == ERX_DMA_PASSES, "ring 0 bound again");
+	complete_command(&ledger, 1);
+	{
+		const erx_dma_description_t command = configure();
+		erx_dma_publication_t drop_add = { .record_count = 1, .records = &command, .call = ERX_DMA_PUBLISH_RUN,
+		    .bind_count = 1, .binds = { { ENDPOINT0, RING1 } },
+		    .reach = { .group = ENDPOINT0 / ERX_DMA_GROUP_ENDPOINTS, .drops = 1u << (ENDPOINT0 % ERX_DMA_GROUP_ENDPOINTS) } };
+
+		drop_add.reach.drops = 0;
+		EXPECT(erx_dma_publish(&ledger, &drop_add, &sequence) == ERX_DMA_BREAKS_BINDINGS,
+		    "an add of a bound endpoint the command does not drop");
+		drop_add.reach.drops = 1u << (ENDPOINT0 % ERX_DMA_GROUP_ENDPOINTS);
+		EXPECT(erx_dma_publish(&ledger, &drop_add, &sequence) == ERX_DMA_PASSES &&
+		    erx_dma_ledger_bound_table(&ledger, ENDPOINT0) == RING0 && erx_dma_ledger_binding(&ledger, RING1) == ENDPOINT0 &&
+		    erx_dma_ledger_closed(&ledger, ENDPOINT0), "a drop-and-add binds the new ring beside the old");
+		publication = on(ENDPOINT0, records, run(1, 0, records));
+		EXPECT(erx_dma_publish(&ledger, &publication, &sequence) == ERX_DMA_BREAKS_REACH, "the closed endpoint takes no run");
+		complete_command(&ledger, 2);
+		EXPECT(erx_dma_ledger_binding(&ledger, RING0) == 0 && erx_dma_ledger_bound_table(&ledger, ENDPOINT0) == RING1 &&
+		    !erx_dma_ledger_closed(&ledger, ENDPOINT0), "its success ends the old ring's binding: one ring per endpoint");
+	}
+	/* A No Op carries no binding: only a command whose meaning's reach binds does. */
+	EXPECT(bind(&ledger, RING0, ENDPOINT1, noop(), &sequence) == ERX_DMA_BREAKS_BINDINGS &&
+	    erx_dma_ledger_binding(&ledger, RING0) == 0, "a command carrying a binding its meaning does not allow");
 }
 
 /* The layout's check of the tables and their bindings. */
@@ -494,7 +562,7 @@ main(void)
 	test_bindings();
 	test_layout();
 	EXPECT(erx_dma_ledger_make(&ledger, &planned, &no_regions) &&
-	    bind(&ledger, RING0, ENDPOINT0, noop(), &sequence) == ERX_DMA_PASSES, "ring 0 bound");
+	    bind(&ledger, RING0, ENDPOINT0, configure(), &sequence) == ERX_DMA_PASSES, "ring 0 bound");
 	complete_command(&ledger, 0);
 	explore(&ledger, &start, DEPTH);
 	printf("erx_device_trb_ring done\n");

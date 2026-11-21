@@ -28,8 +28,14 @@
  *   bindings  a run's records are of one table: the ring the ledger binds to the publication's
  *             endpoint, or, for endpoint 0, its structure's one table that needs no binding;
  *             each name is of a buffer of that table's pool, so a transfer reaches only its own
- *             queue's buffers; a binding it carries is one erx_dma_ledger_may_bind allows, and its
- *             run is on a table that needs none, as a binding command is on the command ring;
+ *             queue's buffers; the bindings it carries are ones erx_dma_ledger_may_bind allows, so
+ *             only a command whose meaning binds carries any, and its run is on a table that needs
+ *             none, as a binding command is on the command ring;
+ *   reach     a transfer's endpoint is neither closed by the live command nor halted, and it
+ *             names no command's endpoints; a command's endpoints exist where its reach acts:
+ *             the endpoint a stop or a restart names is bound, each a bind drops is bound and
+ *             stopped, or running with no live transfer, and no endpoint of a disable's group is
+ *             running with a live transfer;
  *   held      no name is of a buffer a live holding holds;
  *   lengths   each reference's length lies inside its buffer from its offset;
  *   room      the run fits: as many unheld records of each table placed free as it describes,
@@ -40,8 +46,8 @@
  *             record of the publication names, and no two fills share a byte; a region entry's
  *             fill is one entry long and names a persistent region the ledger holds, so a
  *             region of another device, or none, fails.
- * The reach and controls rules, which commands may bind, and the releases rule over acquired
- * reports belong to the forms and the sequencer that move onto this check after the split ring.
+ * The controls rule and the releases rule over acquired reports belong to the forms and the
+ * sequencer that move onto this check after the split ring.
  */
 
 #ifndef ERX_DEVICE_RULES_H
@@ -103,8 +109,8 @@ typedef enum erx_dma_publication_call {
 
 /*
  * What a decision that hands over describes: its records, in the order of the run, its fills and
- * its call; for a transfer, the endpoint whose ring it runs on; for a binding command, the binding
- * its holding makes (erx_dma_ledger_hold), endpoint 0 for none.
+ * its call; for a transfer, the endpoint whose ring it runs on; for a command, the endpoints it
+ * acts on, and, for one whose meaning binds, the bindings its holding makes (erx_dma_ledger_hold).
  */
 typedef struct erx_dma_publication {
 	uint32_t			record_count;
@@ -113,7 +119,9 @@ typedef struct erx_dma_publication {
 	const erx_dma_fill_t		*fills;
 	erx_dma_publication_call_t	call;
 	uint32_t			endpoint;
-	erx_dma_binding_t		binds;
+	uint32_t			bind_count;
+	erx_dma_binding_t		binds[ERX_DMA_BINDS_MAX];
+	erx_dma_reach_t			reach;
 } erx_dma_publication_t;
 
 /* The rule a publication breaks first, or ERX_DMA_PASSES. */
@@ -128,6 +136,7 @@ typedef enum erx_dma_verdict {
 	ERX_DMA_BREAKS_ROOM,
 	ERX_DMA_BREAKS_FILLS,
 	ERX_DMA_BREAKS_BINDINGS,
+	ERX_DMA_BREAKS_REACH,
 } erx_dma_verdict_t;
 
 erx_dma_verdict_t	erx_dma_publication_check(const erx_dma_ledger_t *ledger,
