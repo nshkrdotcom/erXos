@@ -168,10 +168,19 @@ module Erx
          *switch_function('The structure whose tables offer meaning, or 0 for a number that is no meaning.',
                           'uint32_t', 'erx_meaning_structure(uint32_t meaning)', 'meaning',
                           meanings.map { |meaning| [CEmitter.constant(meaning.constant), structure_constant(meaning.structure.name)] },
-                          '0')]
+                          '0'),
+         '/* The reaches a command meaning has (abi_marks.rb, REACHES); 0 is none. */',
+         '#define ERX_REACH_NONE UINT32_C(0)',
+         *Marks::REACHES.each_with_index.map { |kind, index| "#define #{reach_constant(kind)} UINT32_C(#{index + 1})" }, '',
+         *switch_function('What the success or failure of meaning does to the endpoints its command names, as its ' \
+                          'reach mark says; ERX_REACH_NONE for a meaning with none, or a number that is no meaning.',
+                          'uint32_t', 'erx_meaning_reach(uint32_t meaning)', 'meaning',
+                          meanings.select(&:reach).map { |meaning| [CEmitter.constant(meaning.constant), reach_constant(meaning.reach)] },
+                          'ERX_REACH_NONE')]
       end
 
       def structure_constant(name) = CEmitter.constant("structure_#{name}")
+      def reach_constant(kind) = CEmitter.constant("reach_#{kind}")
 
       # One switch from value to result, the cases with one result sharing it.
       def switch_function(summary, type, signature, value, cases, otherwise)

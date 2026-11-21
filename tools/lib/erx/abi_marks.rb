@@ -40,12 +40,19 @@ module Erx
         'activates' => 'FIELD.BITS',
         'derived' => 'FIELD.BITS',
         'states' => 'FIELD.BITS',
-        'releases' => 'FIELD.BITS TARGET [when FIELD.BITS ENUM.MEMBER...]'
+        'releases' => 'FIELD.BITS TARGET [when FIELD.BITS ENUM.MEMBER...]',
+        'reach' => 'address|configure|stop|restart|disable'
       }.freeze
       KEYWORDS = SYNTAX.keys.freeze
       WRITERS = %w[cpu device].freeze
       NEEDS_BINDING = 'needs_binding'
       DATA = 'data'
+      # What a command's success or failure does to the endpoints it names
+      # (docs/design-usb.md, "What the DMA check judges"), the reach the ledger
+      # derives from its meaning: address binds EP0's ring; configure adds
+      # endpoints, binding their rings, and may drop others; stop leaves its endpoint stopped; restart moves its
+      # endpoint's ring past every transfer on it; disable ends its slot.
+      REACHES = %w[address configure stop restart disable].freeze
       # The roles a mark gives a place. A free place is one a description
       # states, or, on a report, the device; a placed one the sequencer
       # supplies; a written one the encoder takes from the mark.
@@ -92,6 +99,7 @@ module Erx
       # cpu structure that holding is of, and the codes it ends it under, nil
       # for every code.
       Release = Struct.new(:place, :target, :condition, :codes, keyword_init: true)
+      Reach = Struct.new(:kind, :line, keyword_init: true)
 
       # One marked layout. structure is the target its meaning line names and
       # meaning_line that line, both nil for a layout that is no meaning (the
@@ -102,7 +110,7 @@ module Erx
       # reference's address, the activation and each derived field). A report
       # has no encoder, and its free places are what the device states.
       MarkedLayout = Data.define(:layout, :structure, :meaning_line, :number, :selector, :fixed,
-                                 :references, :activation, :derived, :release, :free, :placed) do
+                                 :references, :activation, :derived, :release, :reach, :free, :placed) do
         def meaning? = !structure.nil?
         def report? = meaning? && structure.device?
         def constant = "meaning_#{Names.stem(layout.name)}"
@@ -170,11 +178,13 @@ module Erx
           marks.select { |mark| mark.keyword == keyword }.map(&:value).freeze
         end
         refuse_writer_marks(declaration, marks, report: structure&.device?)
+        reach = one(marks, 'reach')
+        refuse_misplaced_reach(reach, structure)
         roles = claim_once(marks, places)
         MarkedLayout.new(layout: layout, structure: structure, number: nil,
                          meaning_line: marks.find { |mark| mark.keyword == 'meaning' }&.line,
                          selector: selector, fixed: fixed, references: references, activation: activation,
-                         derived: derived, release: release,
+                         derived: derived, release: release, reach: reach&.kind,
                          free: places.values.select { |place| FREE.include?(roles[place.spelling]) }.freeze,
                          placed: places.values.select { |place| roles[place.spelling] == :placed }.freeze)
       end
@@ -187,6 +197,15 @@ module Erx
 
       # A report is written by the device, so it has no reference or derived
       # place for the sequencer to supply; and only a report ends a holding.
+      # A reach belongs to a command: a meaning of a structure the CPU writes
+      # that needs no binding, the command ring. On a transfer ring or a report
+      # it would let a run that is no command close or bind an endpoint.
+      def refuse_misplaced_reach(reach, structure)
+        return if reach.nil? || (structure && !structure.device? && !structure.needs_binding?)
+
+        reach.line.fail!('a reach belongs to a command: a meaning of a cpu structure that needs no binding')
+      end
+
       def refuse_writer_marks(declaration, marks, report:)
         keywords = marks.map(&:keyword)
         if report && (keywords & %w[refers derived]).any?
@@ -274,6 +293,9 @@ module Erx
           place
         in ['derived' | 'states', 1] then fetch_place(places, words[0], line)
         in ['releases', _] then parse_release(words, places, targets, types, line)
+        in ['reach', 1]
+          line.fail!("reach is one of #{REACHES.join(', ')}, not #{words[0]}") unless REACHES.include?(words[0])
+          Reach.new(kind: words[0], line: line).freeze
         else line.fail!("#{keyword} requires #{SYNTAX.fetch(keyword)}")
         end
       end
@@ -288,6 +310,7 @@ module Erx
         in Target then []
         in Reference => reference then [[reference.place, :placed], [reference.length, :stated]].select(&:first)
         in Release => release then [[release.place, :reported], [release.condition, :code]].select(&:first)
+        in Reach then []
         in Value => value then [[value.place, :written]]
         in Place => place then [[place, mark.keyword == 'states' ? :stated : :placed]]
         end

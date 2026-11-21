@@ -108,6 +108,10 @@ class AbiMarksTest < Minitest::Test
     'a fixed value below its shift' => ['fixed control.toggle 0', "fixed control.toggle 0\n  fixed status.aligned 8",
                                         'fixed value 8 does not fit status.aligned'],
     'a length unit of zero' => ['length status.length', 'length status.length unit 0', 'a length unit is a positive byte count'],
+    'an unknown reach' => ['activates control.live', "activates control.live\n  reach park",
+                           'reach is one of address, configure, stop, restart, disable, not park'],
+    'a reach on a report' => ['sample_code.ok sample_code.short', "sample_code.ok sample_code.short\n  reach stop",
+                              'a reach belongs to a command'],
     'a length whose bytes exceed 64 bits' => ['length status.length', 'length status.length unit 281474976710656',
                                               'status.length times 281474976710656 can exceed 64 bits'],
     'a signed field' => ['field buffer u64 0 device_address', 'field buffer i64 0', 'a marked layout holds unsigned integer fields only'],
@@ -317,6 +321,11 @@ class AbiMarksTest < Minitest::Test
     	right = right && erx_structure_needs_binding(ERX_STRUCTURE_XHCI_TRANSFER_RING) &&
     	    !erx_structure_needs_binding(ERX_STRUCTURE_XHCI_COMMAND_RING) &&
     	    !erx_structure_needs_binding(ERX_STRUCTURE_XHCI_EVENT_RING) && !erx_structure_needs_binding(0);
+    	right = right && erx_meaning_reach(ERX_MEANING_XHCI_TRB_CONFIGURE_ENDPOINT_COMMAND) == ERX_REACH_CONFIGURE &&
+    	    erx_meaning_reach(ERX_MEANING_XHCI_TRB_ADDRESS_DEVICE_COMMAND) == ERX_REACH_ADDRESS &&
+    	    erx_meaning_reach(ERX_MEANING_XHCI_TRB_SET_DEQUEUE_COMMAND) == ERX_REACH_RESTART &&
+    	    erx_meaning_reach(ERX_MEANING_XHCI_TRB_NOOP_COMMAND) == ERX_REACH_NONE &&
+    	    erx_meaning_reach(ERX_MEANING_XHCI_TRB_NORMAL) == ERX_REACH_NONE && erx_meaning_reach(0) == ERX_REACH_NONE;
     	printf("%s\\n", right ? "described" : "wrong");
     	return (right ? 0 : 1);
     }
@@ -426,15 +435,16 @@ class AbiMarksTest < Minitest::Test
   end
 
   # The meanings each structure offers, as the header lists them: the event ring's three
-  # events, and the No Op command alone for the command ring, whose other commands have no
-  # marks.
+  # events, and the command ring's nine commands.
   def test_each_structure_lists_its_meanings
     header = Erx::ABI::CEmitter.header(tree_schema(Dir.mktmpdir('erx-abi-marks-')))
     event_ring = header[/^erx_meanings_of_xhci_event_ring\(size_t \*count\)\n\{\n(.*?)^\}/m, 1]
     assert_equal %w[ERX_MEANING_XHCI_TRB_COMMAND_EVENT ERX_MEANING_XHCI_TRB_PORT_EVENT ERX_MEANING_XHCI_TRB_TRANSFER_EVENT],
                  event_ring.scan(/ERX_MEANING_\w+/)
     command_ring = header[/^erx_meanings_of_xhci_command_ring\(size_t \*count\)\n\{\n(.*?)^\}/m, 1]
-    assert_equal %w[ERX_MEANING_XHCI_TRB_NOOP_COMMAND], command_ring.scan(/ERX_MEANING_\w+/)
+    assert_equal %w[ADDRESS_DEVICE CONFIGURE_ENDPOINT DISABLE_SLOT ENABLE_SLOT EVALUATE_CONTEXT NOOP RESET_ENDPOINT
+                    SET_DEQUEUE STOP_ENDPOINT].map { |name| "ERX_MEANING_XHCI_TRB_#{name}_COMMAND" },
+                 command_ring.scan(/ERX_MEANING_\w+/)
     refute header.include?('ERX_MEANING_XHCI_TRB_LINK'), 'the link TRB, no meaning, has a number'
   end
 
