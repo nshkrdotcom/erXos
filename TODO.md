@@ -10044,6 +10044,11 @@ document's "residual risks accepted" paragraph.
   [design-board-sensors.md](docs/design-board-sensors.md#the-requests)): no `erx_firmware_request` in the machine
   family, and no firmware request record (name, belonging, tag, argument) in the system manifest from the platform
   record's `firmware_requests`. Add the two.
+* [Low] firmware mailbox cores, `kernel/core/vc_property.c` and `kernel/core/vc_mailbox.c`
+  ([design-kernel.md](docs/design-kernel.md#firmware-requests)): `CoreArchive` puts them in Fiasco's kernel archive,
+  `erx_cores.a`, which never calls them, while the root task, which runs them on Fiasco, links `kernel/core` sources
+  only as `NativeRoot` names them, and names neither. The root backend's `erx_firmware_request` adds both to
+  `NativeRoot`; whether Fiasco's archive and its stack proof should leave them out is decided with it.
 * [Medium] domain library, `include/erx/device_kinds.h` ([design-usb.md](docs/design-usb.md#who-holds-a-controller),
   [design-pcie.md](docs/design-pcie.md#the-bridge-seam)): the host bridges' kinds drive a bridge row, but neither
   platform record (`config/platforms/`) has a `configuration` row and no manifest a PCIe domain, so no bridge is

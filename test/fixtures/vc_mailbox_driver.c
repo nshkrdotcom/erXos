@@ -11,15 +11,16 @@
  * after it, which the test compares with its own model of the design.
  *
  * The model mailbox: with no input lines left, the driver runs one request against every
- * firmware a small grid describes (polls the mailbox stays full, polls before the answer,
- * other messages ahead of it, whether it answers this buffer, another or never, and the
- * clock's step per poll), following the steps as a caller does. Around each step it checks
- * that a second caller's begin is refused ERX_EBUSY without changing anything, that the
- * one message posted is the buffer's, that nothing is posted twice or after a timeout, and
- * that the request ends ERX_OK exactly when the answer is read before the deadline. After
- * each request, a further begin must meet ERX_ETIMEDOUT at once if it timed out and start
- * afresh if not. It prints the counts of runs, answers and timeouts; any broken check
- * aborts.
+ * firmware a small grid describes (words left in mailbox 0 before the post, each naming
+ * this very buffer; polls before the answer; other messages ahead of it; whether it answers
+ * this buffer, another or never; the clock's step per poll), following the steps as a
+ * caller does. Around each step it checks that a second caller's begin is refused
+ * ERX_EBUSY without changing anything; it checks that the one message posted is the
+ * buffer's, posted once and only after mailbox 0 is drained, so no word left from before
+ * is taken for the answer, and that the request ends ERX_OK exactly when the answer is
+ * read before the deadline. After each request, a further begin must meet ERX_ETIMEDOUT at
+ * once if it timed out and start afresh if not. It prints the counts of runs, answers and
+ * timeouts; any broken check aborts.
  */
 
 #include <inttypes.h>
@@ -44,7 +45,7 @@ check(bool condition)
 }
 
 static const char *const STATES[] = { "idle", "posting", "posted", "answered", "lost" };
-static const char *const OPS[] = { "done", "read_status", "write", "read", "check" };
+static const char *const OPS[] = { "done", "fill", "read_status", "write", "read", "check" };
 
 static erx_vc_mailbox_t
 state_named(const char *name)
@@ -62,7 +63,21 @@ state_named(const char *name)
 	abort();
 }
 
-/* One event of the table on mailbox, by name; finish has no step and prints "-". */
+/* The buffer of NOTIFY_XHCI_RESET for the VL805 as the firmware answers it: performed. */
+static erx_vc_answer_t
+answer_notification(erx_vc_mailbox_t *mailbox)
+{
+	const uint32_t argument = UINT32_C(0x00100000);
+	uint32_t words[ERX_VC_BUFFER_WORDS] = { 0 };
+	uint8_t out[ERX_VC_WINDOW_MAX];
+
+	(void)erx_vc_request(&erx_vc_notify_xhci_reset, &argument, words);
+	words[1] = ERX_VC_CODE_SUCCESS;
+	words[ERX_VC_VALUE_WORD - 1] = UINT32_C(0x80000000);
+	return (erx_vc_mailbox_answer(mailbox, &erx_vc_notify_xhci_reset, words, out));
+}
+
+/* One event of the table on mailbox, by name. */
 static void
 apply(erx_vc_mailbox_t *mailbox, const char *event)
 {
@@ -88,35 +103,84 @@ apply(erx_vc_mailbox_t *mailbox, const char *event)
 	else if (strcmp(event, "status_late") == 0)
 		step = erx_vc_mailbox_status(mailbox, STATUS_EMPTY, late);
 	else if (strcmp(event, "read_match") == 0)
-		step = erx_vc_mailbox_read(mailbox, MESSAGE);
+		step = erx_vc_mailbox_read(mailbox, MESSAGE, before);
 	else if (strcmp(event, "read_other") == 0)
-		step = erx_vc_mailbox_read(mailbox, MESSAGE + 0x1000);
+		step = erx_vc_mailbox_read(mailbox, MESSAGE + 0x1000, before);
 	else if (strcmp(event, "read_channel") == 0)
-		step = erx_vc_mailbox_read(mailbox, MESSAGE + 1);
-	else if (strcmp(event, "finish") == 0) {
-		erx_vc_mailbox_finish(mailbox);
-		printf("- ");
+		step = erx_vc_mailbox_read(mailbox, MESSAGE + 1, before);
+	else if (strcmp(event, "read_late") == 0)
+		step = erx_vc_mailbox_read(mailbox, MESSAGE, late);
+	else if (strcmp(event, "answer") == 0) {
+		printf("answer %" PRId32 " ", answer_notification(mailbox).status);
 		return;
 	} else
 		abort();
-	printf("%s %08" PRIx32 " %" PRId32 " ", OPS[step.op], step.word, step.status);
+	printf("%s %08" PRIx32 " %" PRId32 " ", OPS[step.op], step.message, step.status);
 }
 
 /* A firmware of the grid: the mailbox's side of one request. */
 typedef enum { ANSWER_NONE, ANSWER_THIS, ANSWER_OTHER } answer_t;
 typedef struct firmware {
-	unsigned	full_polls;	/* status reads that show FULL before room */
-	unsigned	delay;		/* status reads after the post that show EMPTY */
+	unsigned	stale;		/* words in mailbox 0 before the post, each this buffer's */
+	unsigned	delay;		/* status reads after the post that show it empty */
 	unsigned	noise;		/* other messages ahead of the answer */
 	answer_t	answer;
-	uint64_t	step_ns;	/* the clock's advance per status read */
+	uint64_t	step_ns;	/* the clock's advance per poll */
 } firmware_t;
 
-/* The status read whose message is the answer, counted from 0: room, the wait, the noise. */
+/* What mailbox 0 holds over one request, and what has been read from it. */
+typedef struct model {
+	const firmware_t *fw;
+	bool		posted;
+	unsigned	stale_left, delay_left, delivered;
+} model_t;
+
+/* The poll whose read is the answer, counted from 0: the drain, the post's, the wait, the noise. */
 static unsigned
 answer_poll(const firmware_t *fw)
 {
-	return (fw->full_polls + 1 + fw->delay + fw->noise);
+	return (fw->stale + 1 + fw->delay + fw->noise);
+}
+
+static bool
+in_time(const firmware_t *fw, unsigned poll)
+{
+	return (poll * fw->step_ns < ERX_VC_DEADLINE_NS);
+}
+
+static unsigned
+waiting(const model_t *model)
+{
+	if (!model->posted)
+		return (model->stale_left);
+	if (model->delay_left > 0)
+		return (0);
+	return (model->fw->noise + (model->fw->answer != ANSWER_NONE) - model->delivered);
+}
+
+/* STATUS as the model shows it; each read of it during the wait uses one poll of the wait. */
+static uint32_t
+model_status(model_t *model)
+{
+	if (model->posted && model->delay_left > 0) {
+		model->delay_left--;
+		return (STATUS_EMPTY);
+	}
+	return (waiting(model) > 0 ? 0 : STATUS_EMPTY);
+}
+
+/* READ as the model gives it: a stale word, then the noise, then the answer. */
+static uint32_t
+model_read(model_t *model)
+{
+	check(waiting(model) > 0);
+	if (!model->posted) {
+		model->stale_left--;
+		return (MESSAGE);
+	}
+	if (model->delivered++ < model->fw->noise)
+		return (UINT32_C(0x2001));
+	return (model->fw->answer == ANSWER_THIS ? MESSAGE : MESSAGE + 0x10);
 }
 
 /* A second caller's begin, between any two steps, changes nothing and is refused. */
@@ -130,54 +194,46 @@ check_refused(erx_vc_mailbox_t *mailbox, uint64_t now)
 	check(memcmp(&before, mailbox, sizeof(before)) == 0);
 }
 
-/* One request against fw, as a caller runs it; returns its status. */
+/* One request against fw, as a caller runs it: one clock reading per poll; returns its status. */
 static erx_status_t
 run(erx_vc_mailbox_t *mailbox, const firmware_t *fw)
 {
+	model_t model = { .fw = fw, .stale_left = fw->stale, .delay_left = fw->delay };
+	unsigned polls = 0;
 	uint64_t now = START;
-	unsigned polls = 0, writes = 0, delivered = 0, delay = fw->delay, full = fw->full_polls;
 	erx_vc_mailbox_step_t step = erx_vc_mailbox_begin(mailbox, BUFFER, now);
 
-	check(step.op == ERX_VC_MAILBOX_READ_STATUS);
+	check(step.op == ERX_VC_MAILBOX_FILL);
 	for (;;) {
-		uint32_t status;
-
 		if (step.op != ERX_VC_MAILBOX_DONE)
 			check_refused(mailbox, now);
 		switch (step.op) {
 		case ERX_VC_MAILBOX_DONE:
 			check(step.status == ERX_ETIMEDOUT && mailbox->state == ERX_VC_MAILBOX_LOST);
-			check(fw->answer != ANSWER_THIS || START + answer_poll(fw) * fw->step_ns >= START + ERX_VC_DEADLINE_NS);
-			check(writes == (START + fw->full_polls * fw->step_ns < START + ERX_VC_DEADLINE_NS));
+			check(fw->answer != ANSWER_THIS || !in_time(fw, answer_poll(fw)));
+			check(model.posted == in_time(fw, fw->stale));
 			return (step.status);
 		case ERX_VC_MAILBOX_CHECK:
-			check(fw->answer == ANSWER_THIS && polls == answer_poll(fw) + 1 && writes == 1);
-			check(START + answer_poll(fw) * fw->step_ns < START + ERX_VC_DEADLINE_NS);
-			erx_vc_mailbox_finish(mailbox);
+			check(fw->answer == ANSWER_THIS && polls == answer_poll(fw) + 1 && model.posted);
+			check(model.stale_left == 0 && in_time(fw, answer_poll(fw)));
+			check(answer_notification(mailbox).status == ERX_OK);
 			check(mailbox->state == ERX_VC_MAILBOX_IDLE);
 			return (ERX_OK);
+		case ERX_VC_MAILBOX_FILL:
+			step = (erx_vc_mailbox_step_t){ .op = ERX_VC_MAILBOX_READ_STATUS };
+			break;
 		case ERX_VC_MAILBOX_WRITE:
-			check(step.word == MESSAGE && writes++ == 0);
+			check(step.message == MESSAGE && !model.posted && model.stale_left == 0);
+			model.posted = true;
 			step = (erx_vc_mailbox_step_t){ .op = ERX_VC_MAILBOX_READ_STATUS };
 			break;
 		case ERX_VC_MAILBOX_READ_STATUS:
 			check(polls <= answer_poll(fw) + ERX_VC_DEADLINE_NS / fw->step_ns + 1);
-			if (writes == 0)
-				status = full > 0 ? (full--, STATUS_FULL) : 0;
-			else if (delay > 0)
-				status = (delay--, STATUS_EMPTY);
-			else
-				status = delivered < fw->noise + (fw->answer != ANSWER_NONE) ? 0 : STATUS_EMPTY;
-			step = erx_vc_mailbox_status(mailbox, status, now);
-			polls++;
-			now += fw->step_ns;
+			now = START + polls++ * fw->step_ns;
+			step = erx_vc_mailbox_status(mailbox, model_status(&model), now);
 			break;
 		case ERX_VC_MAILBOX_READ:
-			/* Reading an empty mailbox is a step the routine must never ask for. */
-			check(writes == 1 && delay == 0 && delivered < fw->noise + (fw->answer != ANSWER_NONE));
-			step = erx_vc_mailbox_read(mailbox,
-			    delivered++ < fw->noise ? UINT32_C(0x2001) :
-			    fw->answer == ANSWER_THIS ? MESSAGE : MESSAGE + 0x10);
+			step = erx_vc_mailbox_read(mailbox, model_read(&model), now);
 			break;
 		}
 	}
@@ -189,12 +245,12 @@ model_mailbox(void)
 	static const uint64_t steps[] = { 1000000, 100000000, 250000000, 333333334, 1000000000 };
 	unsigned runs = 0, answered = 0, timed_out = 0;
 
-	for (unsigned full = 0; full < 4; full++)
+	for (unsigned stale = 0; stale < 3; stale++)
 		for (unsigned delay = 0; delay < 4; delay++)
 			for (unsigned noise = 0; noise < 4; noise++)
 				for (unsigned answer = ANSWER_NONE; answer <= ANSWER_OTHER; answer++)
 					for (size_t at = 0; at < sizeof(steps) / sizeof(steps[0]); at++) {
-						const firmware_t fw = { full, delay, noise, (answer_t)answer, steps[at] };
+						const firmware_t fw = { stale, delay, noise, (answer_t)answer, steps[at] };
 						erx_vc_mailbox_t mailbox = { 0 };
 						const erx_status_t status = run(&mailbox, &fw);
 						const erx_vc_mailbox_step_t again = erx_vc_mailbox_begin(&mailbox, BUFFER, START);
@@ -202,7 +258,7 @@ model_mailbox(void)
 						runs++;
 						if (status == ERX_OK) {
 							answered++;
-							check(again.op == ERX_VC_MAILBOX_READ_STATUS);
+							check(again.op == ERX_VC_MAILBOX_FILL);
 						} else {
 							timed_out++;
 							check(again.op == ERX_VC_MAILBOX_DONE && again.status == ERX_ETIMEDOUT);

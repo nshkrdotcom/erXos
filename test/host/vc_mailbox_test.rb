@@ -19,10 +19,11 @@ class VcMailboxTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
   CORE = 'kernel/core/vc_mailbox.c'
   DRIVER = 'test/fixtures/vc_mailbox_driver.c'
+  PROPERTY = 'kernel/core/vc_property.c'
 
   STATES = %w[idle posting posted answered lost].freeze
   EVENTS = %w[begin begin_misaligned begin_high begin_top status_room status_full status_empty status_both
-              status_late read_match read_other read_channel finish].freeze
+              status_late read_match read_other read_channel read_late answer].freeze
   OUTSTANDING = %w[posting posted answered].freeze
   DEADLINE = 1_000_000_000
   START = 5000
@@ -33,17 +34,20 @@ class VcMailboxTest < Minitest::Test
 
   # name => [original, replacement]; each must change the driver's answers.
   MUTANTS = {
-    'the deadline off by one' => ['now >= mailbox->deadline', 'now > mailbox->deadline'],
+    'the deadline off by one' => ['now < mailbox->deadline', 'now <= mailbox->deadline'],
     'the deadline wraps' => ['now > UINT64_MAX - ERX_VC_DEADLINE_NS ? UINT64_MAX : now + ERX_VC_DEADLINE_NS',
                              'now + ERX_VC_DEADLINE_NS'],
     'a timeout forgotten' => ['*mailbox = (erx_vc_mailbox_t){ .state = ERX_VC_MAILBOX_LOST };',
                               '*mailbox = (erx_vc_mailbox_t){ .state = ERX_VC_MAILBOX_IDLE };'],
-    'a lost mailbox revived' => ['if (mailbox->state == ERX_VC_MAILBOX_ANSWERED)',
-                                 'if (mailbox->state != ERX_VC_MAILBOX_IDLE)'],
-    'any word taken as the answer' => ['word != mailbox->message', 'word == 0'],
+    'a lost mailbox revived' => ['if (mailbox->state != ERX_VC_MAILBOX_ANSWERED) {',
+                                 'if (mailbox->state == ERX_VC_MAILBOX_IDLE) {'],
+    'any word taken as the answer' => ['read_reg != mailbox->message', 'read_reg == 0'],
+    'a word from before the post taken' => ['mailbox->state == ERX_VC_MAILBOX_POSTING || ', ''],
+    'posted before mailbox 0 is drained' => ["\tif (erx_vc_mbox_status_empty_get(status_reg) == 0)\n\t\treturn (next(ERX_VC_MAILBOX_READ, 0));\n\tif (mailbox->state == ERX_VC_MAILBOX_POSTED)\n\t\treturn (next(ERX_VC_MAILBOX_READ_STATUS, 0));\n",
+                                             "\tif (mailbox->state == ERX_VC_MAILBOX_POSTED)\n\t\treturn (next(erx_vc_mbox_status_empty_get(status_reg) == 0 ? ERX_VC_MAILBOX_READ : ERX_VC_MAILBOX_READ_STATUS, 0));\n"],
+    'a late read taken' => ["\tif (expired(mailbox, now))\n\t\treturn (done(ERX_ETIMEDOUT));\n\tif (mailbox->state == ERX_VC_MAILBOX_POSTING ||",
+                            "\t(void)now;\n\tif (mailbox->state == ERX_VC_MAILBOX_POSTING ||"],
     'a misaligned buffer posted' => ['(address & CHANNEL_MASK) == 0 && ', ''],
-    'posted while full' => ['erx_vc_mbox_status_full_get(status) != 0', 'false'],
-    'an empty mailbox read' => ['erx_vc_mbox_status_empty_get(status) != 0', 'false'],
     'a second request beside an answer' => ["\tcase ERX_VC_MAILBOX_ANSWERED:\n\t\treturn (done(ERX_EBUSY));\n",
                                             "\t\treturn (done(ERX_EBUSY));\n\tcase ERX_VC_MAILBOX_ANSWERED:\n"]
   }.freeze
@@ -87,29 +91,29 @@ class VcMailboxTest < Minitest::Test
   # The design's answer to event in state: the step, then the state after it.
   def expect(state, event)
     case [state, event]
-    in [_, 'finish'] then "- #{state == 'answered' ? held('idle') : held(state)}"
+    in ['answered', 'answer'] then "answer 0 #{held('idle')}"
+    in [_, 'answer'] then "answer #{EINVAL} #{held(state)}"
     in ['lost', /\Abegin/] then line('done', 0, ETIMEDOUT, held(state))
     in [_, /\Abegin/] if OUTSTANDING.include?(state) then line('done', 0, EBUSY, held(state))
-    in ['idle', 'begin'] then line('read_status', 0, 0, held('posting'))
-    in ['idle', 'begin_top'] then line('read_status', 0, 0, "posting fffffff8 #{2**64 - 1}")
-    in ['idle', _] if event.start_with?('begin') then line('done', 0, EINVAL, held(state))
-    in ['posting' | 'posted', 'status_late'] then line('done', 0, ETIMEDOUT, held('lost'))
-    in ['posting', 'status_room' | 'status_empty'] then line('write', MESSAGE, 0, held('posted'))
-    in ['posting', 'status_full' | 'status_both'] then line('read_status', 0, 0, held(state))
-    in ['posted', 'status_room' | 'status_full'] then line('read', 0, 0, held(state))
+    in ['idle', 'begin'] then line('fill', 0, 0, held('posting'))
+    in ['idle', 'begin_top'] then line('fill', 0, 0, "posting fffffff8 #{2**64 - 1}")
+    in ['idle', /\Abegin/] then line('done', 0, EINVAL, held(state))
+    in ['posting' | 'posted', 'status_late' | 'read_late'] then line('done', 0, ETIMEDOUT, held('lost'))
+    in ['posting' | 'posted', 'status_room' | 'status_full'] then line('read', 0, 0, held(state))
+    in ['posting', 'status_empty' | 'status_both'] then line('write', MESSAGE, 0, held('posted'))
     in ['posted', 'status_empty' | 'status_both'] then line('read_status', 0, 0, held(state))
     in ['posted', 'read_match'] then line('check', 0, 0, held('answered'))
-    in ['posted', 'read_other' | 'read_channel'] then line('read_status', 0, 0, held(state))
+    in ['posting' | 'posted', /\Aread_/] then line('read_status', 0, 0, held(state))
     else line('done', 0, EINVAL, held(state))
     end
   end
 
   # The driver's grid: runs, then those whose answer, this buffer's, is read before the
-  # deadline, at the status read after the full ones, the post's, the wait and the noise.
+  # deadline, at the poll after the drain, the post's, the wait and the noise.
   def model_counts
     steps = [1_000_000, 100_000_000, 250_000_000, 333_333_334, 1_000_000_000]
-    grid = [0, 1, 2, 3].product([0, 1, 2, 3], [0, 1, 2, 3], %i[none this other], steps)
-    answered = grid.count { |full, delay, noise, answer, step| answer == :this && (full + 1 + delay + noise) * step < DEADLINE }
+    grid = [0, 1, 2].product([0, 1, 2, 3], [0, 1, 2, 3], %i[none this other], steps)
+    answered = grid.count { |stale, delay, noise, answer, step| answer == :this && (stale + 1 + delay + noise) * step < DEADLINE }
     "model #{grid.size} #{answered} #{grid.size - answered}"
   end
 
@@ -117,7 +121,7 @@ class VcMailboxTest < Minitest::Test
     output = File.join(@directory, name.tr(" '", '--'))
     log, status = Open3.capture2e(ENV.fetch('ERX_CLANG', 'clang'), '-std=c17', '-Wall', '-Wextra', '-Werror', '-pedantic', '-O1', '-g',
                                   *@flags, *Erx::Generated.include_flags(root: ROOT), '-I', File.join(ROOT, 'include'), '-I', ROOT,
-                                  core, File.join(ROOT, DRIVER), '-o', output, stdin_data: '')
+                                  core, File.join(ROOT, PROPERTY), File.join(ROOT, DRIVER), '-o', output, stdin_data: '')
     assert status.success?, log
     output
   end

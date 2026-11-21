@@ -89,6 +89,11 @@ module Erx
                                         permits: %r{\A(?:#\s*include\s*"erx/hw/pm_wdt\.h"|erx_pm_wdt_\w+)\z})
     PM_WDT_CORE = Chokepoints::Site.new(glob: 'kernel/core/pm_wdt.c',
                                         permits: %r{\A(?:#\s*include\s*"erx/hw/pm_wdt\.h"|erx_pm_wdt_\w+_set|ERX_PM_WDT_\w+)\z})
+    # The firmware mailbox's pure routine (docs/design-kernel.md, "Firmware requests") builds
+    # its message and reads the status it is fed through the header's field functions and
+    # values alone; the caller that owns the mailbox page reads and writes the registers.
+    VC_MAILBOX_CORE = Chokepoints::Site.new(glob: 'kernel/core/vc_mailbox.c',
+                                            permits: %r{\A(?:#\s*include\s*"erx/hw/vc_mbox\.h"|erx_vc_mbox_\w+_(?:get|set)|ERX_VC_MBOX_\w+)\z})
 # The xHCI harness's stand-in controller answers the device NIF's register accesses and
 # reads the registers it wrote through the generated xHCI header, as GENET's harness does
 # for its engines; it is a host test and reaches no device.
@@ -153,7 +158,7 @@ XHCI_HARNESS = Chokepoints::Site.new(glob: 'test/fixtures/erx_device_xhci_harnes
           design: DEVICE_DESIGN,
           scope: DEVICE_SCOPE,
           pattern: PERIPHERAL_INCLUDE,
-          sites: [PLATFORM_LAYER, PROBE_HEADERS, RNG200_SHIM, PM_WDT_SHIM, PM_WDT_CORE, XHCI_HARNESS],
+          sites: [PLATFORM_LAYER, PROBE_HEADERS, RNG200_SHIM, PM_WDT_SHIM, PM_WDT_CORE, VC_MAILBOX_CORE, XHCI_HARNESS],
           seed: { 'otp/erts/emulator/beam/seeded.c' => "#include <erx/hw/pl011.h>\n" }
         ),
         Chokepoints::Forbidden.new(
@@ -163,10 +168,11 @@ XHCI_HARNESS = Chokepoints::Site.new(glob: 'test/fixtures/erx_device_xhci_harnes
           scope: DEVICE_SCOPE,
           pattern: /\b(?:#{PERIPHERAL_SYMBOLS.map { |symbol| Regexp.escape(symbol) }.join('|')})\b/,
           sites: PERIPHERAL_HEADERS.map { |header| Chokepoints::Site.new(glob: header) } +
-                 [PLATFORM_LAYER, PROBE_ACCESSORS, RNG200_SHIM, PM_WDT_SHIM, PM_WDT_CORE, XHCI_HARNESS],
+                 [PLATFORM_LAYER, PROBE_ACCESSORS, RNG200_SHIM, PM_WDT_SHIM, PM_WDT_CORE, VC_MAILBOX_CORE, XHCI_HARNESS],
           seed: { 'otp/erts/emulator/nifs/erxos/seeded.c' => "void f(erx_mmio_t d) { erx_pl011_dr_write(d, 65); }\n",
                   # The watchdog's core may name its setters, never a register access.
-                  'kernel/core/pm_wdt.c' => "void f(erx_mmio_t d) { erx_pm_wdt_rstc_write(d, 0); }\n" }
+                  'kernel/core/pm_wdt.c' => "void f(erx_mmio_t d) { erx_pm_wdt_rstc_write(d, 0); }\n",
+                  'kernel/core/vc_mailbox.c' => "void f(erx_mmio_t d) { erx_vc_mbox_write_write(d, 8); }\n" }
         ),
         Chokepoints::Forbidden.new(
           name: 'device-register-callers',
