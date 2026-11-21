@@ -19,6 +19,14 @@
 %% abort did not stop would, and is recorded as a violation; so is any access that
 %% selects bus 0 through the index register, which locks up the memory controller,
 %% and any access below the root port less than 100 ms after PERST#'s release.
+%%
+%% A bridge in reset answers only at its reset register, RGR1_SW_INIT_1, and one out
+%% of reset whose SerDes is powered down only there and at HARD_DEBUG, which powers
+%% it: the vendor's order touches nothing else in those states (facts record, section
+%% 1, steps 2, 3a to 3e; section 6). What any other access does then the record does
+%% not establish; on the board, a read of MISC_PCIE_STATUS made with the bridge as
+%% the boot firmware left it never completed and the watchdog reset the board. The
+%% model raises such an access as {bus_hang, Op}, ending the case.
 -module(erx_pcie_bcm2711_model).
 
 -export([new/1, run/2, log/1, violations/1, firmware_register/1, link/1]).
@@ -30,7 +38,10 @@
 -define(SETTLE_US, 100000).
 
 %% Options: boot (up: the boot firmware left the link up and PERST# released,
-%% long ago; down: PERST# asserted), firmware (the VL805's version register at the
+%% long ago; down: PERST# asserted; reset: the bridge turned off as section 6 leaves
+%% it, PERST# asserted, the SerDes powered down and the bridge in reset; serdes_off:
+%% that bridge with its reset released, as the probe's first step leaves it, section
+%% 1, step 2), firmware (the VL805's version register at the
 %% start, 0 for none), trains (whether the link comes up after a release), train_us,
 %% endpoint (the block in endpoint mode), l23 (whether the link enters L23 when
 %% asked), fall_at (the operation before which the link falls, or never), notify
@@ -38,10 +49,9 @@
 %% answers A and loads nothing).
 new(Options) ->
     Boot = maps:get(boot, Options, down),
-    Perst = case Boot of up -> 0; down -> ?ERX_HW_BCM2711_PCIE_RGR1_SW_INIT_1_PERST_MASK end,
-    #{regs => #{rgr1_sw_init_1 => Perst},
+    #{regs => boot_registers(Boot),
       time => 0,
-      release => case Boot of up -> -1000000; down -> none end,
+      release => case Boot of up -> -1000000; _PerstAsserted -> none end,
       fallen => false,
       firmware => maps:get(firmware, Options, 0),
       trains => maps:get(trains, Options, true),
@@ -54,6 +64,16 @@ new(Options) ->
       index => none,
       log => [],
       violations => []}.
+
+%% RGR1_SW_INIT_1 and HARD_DEBUG as the boot firmware left them.
+boot_registers(up) -> #{rgr1_sw_init_1 => 0};
+boot_registers(down) -> #{rgr1_sw_init_1 => ?ERX_HW_BCM2711_PCIE_RGR1_SW_INIT_1_PERST_MASK};
+boot_registers(reset) ->
+    #{rgr1_sw_init_1 => ?ERX_HW_BCM2711_PCIE_RGR1_SW_INIT_1_PERST_MASK bor ?ERX_HW_BCM2711_PCIE_RGR1_SW_INIT_1_INIT_MASK,
+      hard_debug => ?ERX_HW_BCM2711_PCIE_HARD_DEBUG_SERDES_IDDQ_MASK};
+boot_registers(serdes_off) ->
+    #{rgr1_sw_init_1 => ?ERX_HW_BCM2711_PCIE_RGR1_SW_INIT_1_PERST_MASK,
+      hard_debug => ?ERX_HW_BCM2711_PCIE_HARD_DEBUG_SERDES_IDDQ_MASK}.
 
 %% Every operation the model executed, oldest first, as {Time, Op}.
 log(#{log := Log}) -> lists:reverse(Log).
@@ -100,6 +120,7 @@ run(Model, {Core, Op}) ->
 %% One operation executed, counted and logged: its answer and the model after it.
 op(Op, Model) ->
     true = in_space(Op),
+    true = reachable(Op, Model),
     Counted = fall(Model#{count := maps:get(count, Model) + 1}),
     {Answer, Next} = apply_op(Op, Counted),
     {Answer, Next#{log := [{maps:get(time, Counted), Op} | maps:get(log, Next)]}}.
@@ -112,6 +133,27 @@ in_space(_Op) -> true.
 
 in_block(Offset, Width) when Offset >= 0, Offset rem Width =:= 0, Offset + Width =< 256 -> true;
 in_block(_Offset, _Width) -> error(badarg).
+
+%% The bridge's reset and SerDes power decide which registers answer; any other access
+%% hangs the bus (the module's comment).
+reachable(Op, #{regs := Regs}) ->
+    InReset = ?ERX_HW_BCM2711_PCIE_RGR1_SW_INIT_1_INIT_GET(maps:get(rgr1_sw_init_1, Regs, 0)) =:= 1,
+    PoweredDown = ?ERX_HW_BCM2711_PCIE_HARD_DEBUG_SERDES_IDDQ_GET(maps:get(hard_debug, Regs, 0)) =:= 1,
+    case {target(Op), InReset, PoweredDown} of
+        {none, _, _} -> true;
+        {rgr1_sw_init_1, _, _} -> true;
+        {hard_debug, false, _} -> true;
+        {_, false, false} -> true;
+        _ -> error({bus_hang, Op})
+    end.
+
+%% The register or configuration space an operation reaches; none for a wait or the
+%% firmware notification, which reach no register.
+target({read, Register}) -> Register;
+target({write, Register, _Word}) -> Register;
+target({cfg_read, Space, _Offset, _Width}) -> Space;
+target({cfg_write, Space, _Offset, _Width, _Value}) -> Space;
+target(_Op) -> none.
 
 fall(#{count := Count, fall_at := Count} = Model) -> Model#{fallen := true};
 fall(Model) -> Model.

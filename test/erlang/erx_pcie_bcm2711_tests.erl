@@ -80,17 +80,35 @@ the_keep_or_reset_table_test_() ->
             {up, 0, reset, l23, present, true},
             {up, 16#ffffffff, reset, l23, present, true},
             {down, 0, reset, not_run, present, true},
-            {down, 16#000138c1, reset, not_run, present, true}],
-    [{lists:flatten(io_lib:format("link ~p, firmware ~.16#", [Link, Firmware])),
+            {down, 16#000138c1, reset, not_run, present, true},
+            {reset, 16#000138c1, reset, not_run, present, true},
+            {serdes_off, 16#000138c1, reset, not_run, present, true}],
+    [{lists:flatten(io_lib:format("boot ~p, firmware ~.16#", [Boot, Firmware])),
       fun() ->
-              {{up, Up}, FirmwareResult, Model} = start_and_firmware(#{boot => Link, firmware => Firmware}),
+              {{up, Up}, FirmwareResult, Model} = start_and_firmware(#{boot => Boot, firmware => Firmware}),
               ?assertEqual(#{path => Path, turn_off => TurnOff}, Up),
               ?assertEqual({firmware, Present}, FirmwareResult),
               ?assertEqual(Notified, notified(Model)),
               ?assertEqual(Notified, perst_asserted(Model) =/= []),
               ?assertEqual([], ?MODEL:violations(Model))
       end}
-     || {Link, Firmware, Path, TurnOff, Present, Notified} <- Rows].
+     || {Boot, Firmware, Path, TurnOff, Present, Notified} <- Rows].
+
+%% A bridge the boot firmware left turned off (facts record, section 6: PERST#
+%% asserted, the SerDes powered down, the bridge in reset) is reached only at its reset
+%% register until bring-up releases the reset and powers the SerDes (section 1, steps
+%% 2 and 3a to 3e); the model raises any other access as a hung bus.
+a_bridge_left_in_reset_is_reached_only_at_its_reset_register_test() ->
+    {{up, #{path := reset, turn_off := not_run}}, _, Model} = start(#{boot => reset}),
+    ?assertMatch([{read, rgr1_sw_init_1}, {read, rgr1_sw_init_1} | _], ops(Model)),
+    ?assertEqual([], ?MODEL:violations(Model)).
+
+%% A bridge out of reset whose SerDes is powered down is read at HARD_DEBUG, never at
+%% MISC_PCIE_STATUS, before bring-up powers it.
+a_bridge_whose_serdes_is_off_is_brought_up_before_its_status_is_read_test() ->
+    {{up, #{path := reset, turn_off := not_run}}, _, Model} = start(#{boot => serdes_off}),
+    ?assertMatch([{read, rgr1_sw_init_1}, {read, hard_debug}, {read, rgr1_sw_init_1} | _], ops(Model)),
+    ?assertEqual([], ?MODEL:violations(Model)).
 
 a_kept_link_sees_no_perst_write_test() ->
     {{up, #{path := kept}}, Core, Model} = start(#{boot => up, firmware => 16#000138c1}),
@@ -113,7 +131,7 @@ bring_up_runs_in_the_vendors_order_test() ->
                     {read, misc_pcie_status} -> status;
                     {read, _} -> read
                 end || Op <- ops(Model)],
-    Expected = [status,
+    Expected = [read, read, status,
                 read, rgr1_sw_init_1, read, rgr1_sw_init_1, {wait, 100}, read, rgr1_sw_init_1,
                 read, hard_debug, {wait, 100},
                 read, misc_ctrl, bar2_config_lo, bar2_config_hi, bar1_config_lo, bar3_config_lo,
@@ -318,7 +336,8 @@ a_refused_notification_is_not_loaded_and_reads_nothing_more_test() ->
 %% the link down is never taken, a kept bridge sees no PERST#, and a bridge that comes
 %% up after a PERST# cycle is notified.
 a_link_that_falls_at_any_step_is_never_misread_test_() ->
-    Paths = [#{boot => up, firmware => 16#000138c1}, #{boot => up, firmware => 0}, #{boot => down}],
+    Paths = [#{boot => up, firmware => 16#000138c1}, #{boot => up, firmware => 0}, #{boot => down},
+             #{boot => reset}, #{boot => serdes_off}],
     [fun() -> falls_at_every_step(Options) end || Options <- Paths].
 
 falls_at_every_step(Options) ->

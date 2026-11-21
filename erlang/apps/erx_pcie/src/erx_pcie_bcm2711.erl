@@ -11,7 +11,8 @@ runs a core machine to its result, making each operation the core asks
 for, and keeps what the start decided for `ready`.
 
 * **The start** runs the core's start machine: the keep-or-reset
-  decision from the link and the VL805's firmware register, then the
+  decision from the bridge's reset and SerDes power, the link and the
+  VL805's firmware register, then the
   keep or the clean turn-off and bring-up. The decision is logged at
   each start; a start that fails answers the core's reason
   (`link_down`, `endpoint_mode`, `dma_ranges`, `ranges`), which the

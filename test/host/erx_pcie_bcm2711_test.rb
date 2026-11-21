@@ -16,11 +16,12 @@ require_relative '../fixtures/erlang_build'
 # (docs/design-usb.md, "Verification"): the bus-0 rule removed; the link read after the
 # access removed, so a value read across a fall is reported; the reset run on a link up
 # with firmware present; the notification skipped after a reset; the 100 ms wait
-# dropped. The driver's are one for each of its failure paths: a failed start not
-# matched, so a link that never comes up crashes the start; the port's state after an
-# operation dropped; the VL805 given while its firmware reads absent; the notification
-# asked for again at a later `ready`; a link that falls under the firmware read not
-# matched.
+# dropped; a bridge in reset taken as out of it, and a SerDes powered down taken as
+# powered, so a register they gate is read and the model's bus hangs. The driver's
+# are one for each of its failure paths: a failed start not matched, so a link that
+# never comes up crashes the start; the port's state after an operation dropped; the
+# VL805 given while its firmware reads absent; the notification asked for again at a
+# later `ready`; a link that falls under the firmware read not matched.
 class ErxPcieBcm2711Test < Minitest::Test
   APPLICATIONS = %w[erx_pcie].freeze
   TESTS = %w[test/erlang/erx_pcie_log_capture.erl test/erlang/erx_pcie_bcm2711_model.erl
@@ -37,6 +38,14 @@ class ErxPcieBcm2711Test < Minitest::Test
   Seed = Data.define(:source, :fault, :anchor, :replacement, :catching_case)
 
   SEEDS = [
+    Seed.new(source: CORE, fault: 'the bridge reset bit not checked',
+             anchor: "                      1 -> bring_up(Plan, not_run);\n                      0 -> powered(Plan)",
+             replacement: '                      _ -> powered(Plan)',
+             catching_case: 'a_bridge_left_in_reset_is_reached_only_at_its_reset_register_test'),
+    Seed.new(source: CORE, fault: 'the SerDes power not checked',
+             anchor: "                      1 -> bring_up(Plan, not_run);\n                      0 -> by_link(Plan)",
+             replacement: '                      _ -> by_link(Plan)',
+             catching_case: 'a_bridge_whose_serdes_is_off_is_brought_up_before_its_status_is_read_test'),
     Seed.new(source: CORE, fault: 'the bus-0 rule removed',
              anchor: '        {{0, _, _}, _} -> Then({error, absent});',
              replacement: '        {{0, _, _}, never} -> Then({error, absent});',

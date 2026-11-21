@@ -936,15 +936,40 @@ bridge reset. Then bring-up runs from its step 1.
 
 **Keep or reset, decided from what the bridge reads.** At each start of
 the PCIe domain, the boot's first and every restart alike, the bridge
-driver reads the link state and, when the link is up, the VL805's
-firmware register through the link check above, and decides by those
-two facts alone:
+driver reads, in this order and each only when the one before allows:
+the bridge's reset, bit 1 of `RGR1_SW_INIT_1` (`0x9210`); with the
+reset clear, `SERDES_IDDQ`, bit 27 of `HARD_DEBUG` (`0x4204`); with the
+SerDes powered, the link state; and, when the link is up, the VL805's
+firmware register through the link check above. It decides by what it
+read:
 
-| Link | Firmware register `0x50` | Decision |
-| --- | --- | --- |
-| up | neither 0 nor all ones | **keep**: nothing is reset; the windows and `MISC_CTRL` are written again with the values derived from the tree, which a running VL805 already uses, and the enumerator re-reads configuration space, as [design-system.md](design-system.md#devices) requires of every enumerator restart |
-| up | 0 or all ones | **reset**: turn-off, bring-up, then the firmware notification |
-| down | not read | **reset**: bring-up, then the firmware notification |
+| Bridge | Link | Firmware register `0x50` | Decision |
+| --- | --- | --- | --- |
+| in reset, or its SerDes powered down | not read | not read | **reset**: bring-up, then the firmware notification |
+| out of reset, SerDes powered | up | neither 0 nor all ones | **keep**: nothing is reset; the windows and `MISC_CTRL` are written again with the values derived from the tree, which a running VL805 already uses, and the enumerator re-reads configuration space, as [design-system.md](design-system.md#devices) requires of every enumerator restart |
+| out of reset, SerDes powered | up | 0 or all ones | **reset**: turn-off, bring-up, then the firmware notification |
+| out of reset, SerDes powered | down | not read | **reset**: bring-up, then the firmware notification |
+
+A bridge in reset is touched only at `0x9210`, and one whose SerDes is
+powered down only there and at `0x4204`, until bring-up has released
+the one and powered the other. The vendor's order makes no other access
+in those states: its probe releases the bridge reset before it touches
+any other register, and its setup releases the reset and clears
+`SERDES_IDDQ` before its first access to the rest of the block (facts
+record, section 1, steps 2 and 3a to 3e). A turn-off leaves the bridge
+in exactly those states, in reset with the SerDes powered down (section
+6), and what the boot firmware leaves at handover the record does not
+establish (its unknowns 8 and 9). On the Raspberry Pi 4 a read of
+`MISC_PCIE_STATUS` made first, with the bridge as the boot firmware
+leaves it, does not complete, and the board's watchdog resets the board
+([TODO.md](../TODO.md), the bridge's start on the board). Such a
+bridge goes to bring-up without the turn-off, whose L23 handshake reads
+`MISC_PCIE_STATUS`, since bring-up's first steps read and write only
+`0x9210` and `0x4204`, with waits between. The keep, which must read
+the link and the firmware register before any reset, is the one
+departure from the vendor's order, which reads nothing before it resets
+the bridge; a state the record does not name that also gates the block
+(the reference clock, its unknown 9) would meet that read.
 
 PERST# is asserted nowhere else, and the notification is the last step
 of the one sequence that releases it, so the VL805's firmware is asked
@@ -1007,8 +1032,11 @@ reads the handover on the card's boot order alone.
 **Probe B3 reads what the firmware leaves.** At the PCIe domain's first
 start in a test build, before the bridge driver writes anything, with a
 USB keyboard and a USB drive attached, B3 reads the bridge's reset and
-PERST# bits (bits 1 and 0 of `0x9210`), its link state (`PHYLINKUP` and
-`DL_ACTIVE` in `0x4068`) and, when the link is up, the VL805's command
+PERST# bits (bits 1 and 0 of `0x9210`), with the reset clear
+`SERDES_IDDQ` (bit 27 of `0x4204`), with the SerDes powered too its
+link state (`PHYLINKUP` and `DL_ACTIVE` in `0x4068`), in the order and
+under the conditions of the keep-or-reset reads above, and, when the
+link is up, the VL805's command
 register through the bridge's configuration window and its `USBCMD` and
 `USBSTS`. A VL805 found running, bus mastering set, `USBCMD.R/S` set or
 `USBSTS.HCH` clear, shows that the window of that residual is open on that
@@ -3387,7 +3415,7 @@ targeted traces carry the longer sequences.
 | `erx_blk_write`'s BOT functions on a trial boot value | the trial check removed |
 | the HID function, `erx_usb_hid` with `erx_hid_core`'s plan, from a model device behind a stand-in of `erx_usb_pipe` through the places to the records a reader of the input tree decodes: a keyboard's attach and its requests, typing, removal with a key held, a stop mid-typing and the next instance, a refused descriptor on a boot keyboard, a report storm with no reader, and no free number | a transfer not posted again; one posted again before the stream took its records; SET_IDLE(0) not sent; a failed transfer posted again instead of ending; a refused descriptor kept in the report protocol |
 | the places, a property test over attach, detach, crash, a halted interrupt pipe and restart sequences | `release` skipped on a crash; the window process kept across media |
-| the BCM2711 bridge driver, against a model of its registers whose link can fall at any step and whose VL805 loses its firmware at every PERST# | the bus-0 rule removed; the link read after the access removed, so a value read across a fall is reported; the reset run on a link up with firmware present; the notification skipped after a reset; the 100 ms wait dropped |
+| the BCM2711 bridge driver, against a model of its registers whose link can fall at any step and whose VL805 loses its firmware at every PERST# | the bus-0 rule removed; the link read after the access removed, so a value read across a fall is reported; the reset run on a link up with firmware present; the notification skipped after a reset; the 100 ms wait dropped; a bridge in reset taken as out of it, and a SerDes powered down taken as powered, so the model, which hangs on any other register of a bridge in those states, hangs |
 | the stack's own bounds, on the host, and in the QEMU suite on both phases for the cases QEMU can drive | the enumeration throttle removed, so the storm's attempts exceed 3 in 60 s |
 | the FAT server's mount over a raw window whose flush answers in turn `ok`, `enotsup`, `eio`, and nothing before the window ends, landing with the FAT server | the mount's flush skipped, so the first write is accepted on the `enotsup` window and the dirty flag is written on the `eio` one; every answer but `ok` taken as `enotsup`, so the `eio` window mounts read-only |
 | the mailbox core behind `erx_firmware_request`, C17 built for the host, which Fiasco's root and erXos's kernel both use, against a model mailbox that answers a request at once, late or never, and can hold an answer to another buffer | the buffer's address match removed, so a late answer to a timed-out request completes the next one; the rule after a timeout removed, so a second call rewrites the buffer the firmware may still answer into |

@@ -15,9 +15,10 @@ facts record docs/research-brcmstb-pcie.md and FreeBSD's bcm2838_pci.c.
 Three machines share step/2:
 
 * start/1, at each start of the PCIe domain: the keep-or-reset decision
-  from the link and the endpoint's firmware register, then either the
-  keep (the windows and MISC_CTRL written again) or the clean turn-off,
-  when the link is up, and bring-up in the vendor's order. It ends
+  from the bridge's reset and SerDes power, read before anything else of
+  the bridge, then the link and the endpoint's firmware register, then
+  either the keep (the windows and MISC_CTRL written again) or the clean
+  turn-off, when the link is up, and bring-up in the vendor's order. It ends
   `{up, Up}` or `{error, Reason}`.
 * firmware/1, after the enumerator has numbered the root port and the
   endpoint reads present: on a bridge whose bring-up cycled PERST#, the
@@ -239,8 +240,32 @@ poll(Register, Met, Tries, Interval, Then) ->
                    end).
 
 %% Keep or reset (docs/design-usb.md, "Keep or reset, decided from what the
-%% bridge reads"): with the link up, the firmware register decides.
-decide(#plan{bridge = Bridge, endpoint = Endpoint} = Plan) ->
+%% bridge reads"). A bridge in reset, or out of it with its SerDes powered
+%% down, as a turn-off leaves it (record, section 6), is touched by the core
+%% only at RGR1_SW_INIT_1 and HARD_DEBUG until bring-up has released the one and
+%% powered the other, as in the vendor's order (record, section 1, steps 2 and
+%% 3a to 3e); HARD_DEBUG is read only with the reset released. Such a bridge
+%% goes straight to bring-up. Otherwise the link decides, and with the link up
+%% the firmware register.
+decide(Plan) ->
+    [read(rgr1_sw_init_1,
+          fun(Reset) ->
+                  case ?ERX_HW_BCM2711_PCIE_RGR1_SW_INIT_1_INIT_GET(Reset) of
+                      1 -> bring_up(Plan, not_run);
+                      0 -> powered(Plan)
+                  end
+          end)].
+
+powered(Plan) ->
+    [read(hard_debug,
+          fun(Debug) ->
+                  case ?ERX_HW_BCM2711_PCIE_HARD_DEBUG_SERDES_IDDQ_GET(Debug) of
+                      1 -> bring_up(Plan, not_run);
+                      0 -> by_link(Plan)
+                  end
+          end)].
+
+by_link(#plan{bridge = Bridge, endpoint = Endpoint} = Plan) ->
     [read(misc_pcie_status,
           fun(Status) ->
                   case link_up(Status) of

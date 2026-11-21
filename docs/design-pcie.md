@@ -597,9 +597,19 @@ register values are the facts record's:
   keeps. A bridge reset clears the windows and `MISC_CTRL` (facts
   record, section 6), so bring-up always runs whole.
 * **Keep or reset.** At each `start`, the boot's first and every
-  restart's, the driver reads the link and, with the link up, the
-  VL805's firmware register (`0x50`) through the link check, and decides
-  by those two facts alone: link up and firmware present (neither 0 nor
+  restart's, the driver first reads the bridge's reset (bit 1 of
+  `RGR1_SW_INIT_1`, `0x9210`) and, with it clear, `SERDES_IDDQ` (bit 27
+  of `HARD_DEBUG`, `0x4204`). A bridge in reset, or with its SerDes
+  powered down, as a turn-off leaves it, is touched nowhere else before
+  bring-up, which it runs at once: the vendor releases the reset and
+  powers the SerDes before any other access (facts record, section 1,
+  steps 2 and 3a to 3e, and section 6), and on the Pi 4 a status read
+  made first, with the bridge as the boot firmware leaves it, does not
+  complete
+  ([design-usb.md](design-usb.md#the-bcm2711-bridge)). Otherwise the
+  driver reads the link and, with the link up, the VL805's firmware
+  register (`0x50`) through the link check, and decides by those two
+  facts: link up and firmware present (neither 0 nor
   all ones) keeps the bridge, writing only the windows and `MISC_CTRL`
   again with the values the tree gives; any other reading turns the
   bridge off cleanly, if its link is up, and runs bring-up. PERST# is
