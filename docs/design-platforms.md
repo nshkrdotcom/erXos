@@ -468,7 +468,7 @@ tree too, so a file that passes the root's place needs RAM for its archive
 twice, and is bounded by about half of RAM above the root's place; on a
 board whose loader puts the tree at a fixed address, the tree bounds the
 file. The development
-machine, 512 MiB, links the root 64 MiB into RAM, below the device tree at
+machine links the root 64 MiB into RAM, below the device tree at
 128 MiB, which keeps it inside small machines; a single file longer than
 about 62 MiB has its archive moved. Below 256 MiB
 the device tree sits at half of RAM, or right behind a file that ends

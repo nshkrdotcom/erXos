@@ -58,7 +58,7 @@ class BootManifestTest < Minitest::Test
     Erx::Manifest.admit(source: source, codec: @codec, context: context, planner: ManifestContextFixture.accepting_planner).bytes
   end
 
-  def platform_record(platform) = ManifestContextFixture.board_platform(ROOT, name: platform)
+  def platform_record(platform) = Erx::Platform.load(root: ROOT, name: platform).record
 
   # hostlink: whether the boot carries erx.hostlink=1, which the driver passes on as its third argument.
   def read(bytes, stdout_path: '/pl011@9000000', hostlink: true)

@@ -1421,8 +1421,7 @@ not offer the root: 32 MiB of kernel memory, the kernel's image, the device
 tree's 1 MiB and `sigma0` itself; at 160 MiB the kernel memory is 10 MiB, and
 at 224 MiB it is 6% rounded up, as Fiasco rounds it, to 14 MiB (a boot log's
 "Reserved 14 MiB as kernel memory"), and at 256 MiB
-the same rule gives 16 MiB, and at QEMU `virt`'s development machine, 512 MiB, its
-`fiasco_reserve`, 32 MiB. The rule leaves the
+the same rule gives 16 MiB. The rule leaves the
 archive out: `bootstrap` reserves it whole and it is never released, so a
 manifest's `root_memory` must leave it room below RAM less the reserve. The root's place
 does not bound it: an archive the root lands on moves behind the root at boot

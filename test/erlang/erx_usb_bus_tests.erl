@@ -3,7 +3,7 @@
 
 %% The bus process, its supervision tree and the hub function (docs/design-usb.md,
 %% "The process tree", "Ports, hubs and devices: the bus core", "Hubs"), run whole
-%% under erx_usb_sup against erx_usb_fake_xhci, a controller that speaks the design's
+%% under erx_usb's top supervisor against erx_usb_fake_xhci, a controller that speaks the design's
 %% controller-to-bus protocol over a world each case changes, with a stand-in HID
 %% function the case can end at will. Each case reads what the controller was asked,
 %% in order, from the fake's log, and which function instances run from the stand-in's
@@ -195,12 +195,13 @@ a_report_from_an_ended_hub_instance_is_dropped_test() ->
 a_controller_failing_at_every_reset_is_given_up_test() ->
     register(erx_usb_bus_tests, self()),
     process_flag(trap_exit, true),
-    {ok, Sup} = erx_usb_sup:start_link({erx_usb_fake_xhci, start_link, [{?FAKE, 1, fails_at_start}]}),
+    {ok, Sup} = erx_usb:start_link(),
     try
+        ok = erx_usb:start_controllers([{erx_usb_fake_xhci, start_link, [{?FAKE, 1, fails_at_start}]}]),
         {places, Places, _, _} = lists:keyfind(places, 1, supervisor:which_children(Sup)),
         Starts = fake_starts(0),
         ?assertEqual(?ERX_USB_BUS_RESTARTS_MAX + 1, Starts),
-        ?assertMatch({bus, undefined, _, _}, lists:keyfind(bus, 1, supervisor:which_children(Sup))),
+        ?assertMatch({{controller, 0}, undefined, _, _}, lists:keyfind({controller, 0}, 1, supervisor:which_children(Sup))),
         ?assertMatch({places, Places, _, _}, lists:keyfind(places, 1, supervisor:which_children(Sup))),
         ?assert(is_process_alive(Places))
     after
@@ -212,7 +213,7 @@ a_controller_failing_at_every_reset_is_given_up_test() ->
 %% names a device within one bus process's life, so the new bus may reuse old ones.
 a_controller_failure_restarts_the_bus_not_the_places_test() ->
     with_bus(#{[1] => keyboard}, fun() ->
-        Sup = whereis(erx_usb_bus_tests_sup),
+        Sup = whereis(erx_usb),
         {places, Places, _, _} = lists:keyfind(places, 1, supervisor:which_children(Sup)),
         _ = configured([1]),
         {hid_started, HidPid, _} = next_hid(),
@@ -223,19 +224,21 @@ a_controller_failure_restarts_the_bus_not_the_places_test() ->
         ?assertMatch({places, Places, _, _}, lists:keyfind(places, 1, supervisor:which_children(Sup)))
     end).
 
-%% The application's top supervisor runs one controller's supervisor for each
-%% controller start, here one fake's, whose keyboard's function starts below it; and
-%% a controller's supervisor that ends ends the top supervisor, intensity 0, and so
-%% the application and the domain (docs/design-usb.md, "Failure handling").
-the_application_runs_one_controller_supervisor_each_test() ->
+%% The application's top supervisor runs the places, and one bus group for each
+%% controller start, here one fake's, whose keyboard's function starts below it; and a
+%% bus group that ends abnormally ends the top supervisor, intensity 0, and so the
+%% application and the domain (docs/design-usb.md, "Failure handling").
+the_application_runs_one_bus_group_per_controller_test() ->
     register(erx_usb_bus_tests, self()),
     process_flag(trap_exit, true),
-    {ok, Top} = erx_usb:start_link([{erx_usb_fake_xhci, start_link, [{?FAKE, 2, #{[1] => keyboard}}]}]),
+    {ok, Top} = erx_usb:start_link(),
     try
-        [{{controller, 0}, Controller, supervisor, _}] = supervisor:which_children(Top),
+        ok = erx_usb:start_controllers([{erx_usb_fake_xhci, start_link, [{?FAKE, 2, #{[1] => keyboard}}]}]),
+        [places, {controller, 0}] = lists:sort([Id || {Id, _, supervisor, _} <- supervisor:which_children(Top)]),
+        {{controller, 0}, Group, _, _} = lists:keyfind({controller, 0}, 1, supervisor:which_children(Top)),
         _ = configured([1]),
         ?assertMatch({hid_started, _, #{run := 1}}, next_hid()),
-        exit(Controller, kill),
+        exit(Group, kill),
         receive {'EXIT', Top, Reason} -> ?assertEqual(shutdown, Reason)
         after ?WAIT_MS -> error(top_supervisor_lives)
         end
@@ -244,17 +247,39 @@ the_application_runs_one_controller_supervisor_each_test() ->
         flush()
     end.
 
+%% The places start with the application, from the boot script, and their mint names
+%% itself usb_input's mint before init's ready report; the row's -eval starts the
+%% controllers after it, when erx_facet:provide/2 answers {error, reported}.
+the_mint_provides_before_the_report_and_the_controllers_start_after_test() ->
+    register(erx_usb_bus_tests, self()),
+    process_flag(trap_exit, true),
+    persistent_term:erase({erx, provides}),
+    {ok, Top} = erx_usb:start_link(),
+    try
+        {places, Places, _, _} = lists:keyfind(places, 1, supervisor:which_children(Top)),
+        [Mint] = [Pid || {mint, Pid, _, _} <- supervisor:which_children(Places)],
+        ?assertEqual(#{usb_input => Mint}, persistent_term:get({erx, provides})),
+        persistent_term:put({erx, provides}, reported),
+        ok = erx_usb:start_controllers([{erx_usb_fake_xhci, start_link, [{?FAKE, 2, #{[1] => keyboard}}]}]),
+        _ = configured([1]),
+        ?assertMatch({hid_started, _, #{run := 1}}, next_hid())
+    after
+        persistent_term:erase({erx, provides}),
+        stop(Top)
+    end.
+
 %% ---------------------------------------------------------------------------
 %% The fixture
 %% ---------------------------------------------------------------------------
 
-%% Runs Case against a bus of two root ports holding World, under erx_usb_sup.
+%% Runs Case against a bus of two root ports holding World, under erx_usb's top
+%% supervisor.
 with_bus(World, Case) ->
     register(erx_usb_bus_tests, self()),
     process_flag(trap_exit, true),
-    {ok, Sup} = erx_usb_sup:start_link({erx_usb_fake_xhci, start_link, [{?FAKE, 2, World}]}),
-    register(erx_usb_bus_tests_sup, Sup),
+    {ok, Sup} = erx_usb:start_link(),
     try
+        ok = erx_usb:start_controllers([{erx_usb_fake_xhci, start_link, [{?FAKE, 2, World}]}]),
         Case()
     after
         stop(Sup)

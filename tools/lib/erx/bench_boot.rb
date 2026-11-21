@@ -276,7 +276,7 @@ module Erx
       image_sha256 = Digest::SHA256.file(image).hexdigest
       line = ProductionImage::Run::COMMAND_LINES[plan.accel]
       argv = QemuPlan.argv(platform: platform, accel: plan.accel, cpus: 1, image: image,
-                           serial: QemuPlan::STDIO, memory_mib: ProductionImage::Machine.board(platform).memory_mib,
+                           serial: QemuPlan::STDIO, memory_mib: ProductionImage::Machine.development(platform).memory_mib,
                            command_line: line)
       bench = Bench.new(root: root, runner: runner)
       qemu_version = version_line(runner, argv.first)

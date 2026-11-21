@@ -8,7 +8,7 @@ require 'tmpdir'
 require_relative '../fixtures/erlang_build'
 
 # Runs test/erlang/erx_usb_places_prop.erl, the places row of docs/design-usb.md's host
-# tests: a controller's places, erx_usb_places_sup, its input numbers' streams read
+# tests: the USB domain's places, erx_usb_places_sup, its input numbers' streams read
 # through a real erx_fs grant of its input tree, against a model over attach, detach,
 # crash, halted pipe and restart sequences, on stock's emulator (ERX_ERL and ERX_ERLC,
 # which make check supplies), against the sources as they are and against each seeded

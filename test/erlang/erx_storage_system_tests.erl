@@ -214,7 +214,7 @@ changed_partition_under_the_original_root_answers_eio_test() ->
 
 %% The service's mint over the mounted tree names itself the mint of `system`.
 the_mint_names_itself_system_s_mint_test() ->
-    {ok, Mint} = erx_storage_mint:start_link(system, erx_storage_system, fun() -> open("good") end),
+    {ok, Mint} = erx_fs_mint:start_link(system, erx_storage_system, fun() -> open("good") end),
     unlink(Mint),
     ?assertMatch(#{system := Mint}, persistent_term:get({erx, provides})),
     exit(Mint, kill).
@@ -226,7 +226,7 @@ the_mint_names_itself_system_s_mint_test() ->
 the_mint_starts_before_it_mounts_its_tree_test() ->
     Self = self(),
     Mount = fun() -> Self ! {mounting, self()}, receive go -> open("good") end end,
-    Starter = spawn(fun() -> Self ! {started, erx_storage_mint:start_link(system, erx_storage_system, Mount)},
+    Starter = spawn(fun() -> Self ! {started, erx_fs_mint:start_link(system, erx_storage_system, Mount)},
                              receive after infinity -> ok end end),
     Started = receive {started, Answer} -> Answer after 2000 -> no_answer end,
     ?assertMatch({ok, _}, Started),
@@ -266,7 +266,7 @@ minted_grants_of_no_tree_answer_eio_test() ->
 minted(Tree, Rights) ->
     {ok, Grants} = erx_fs_grants:start_link(erx_storage_system, Tree),
     unlink(Grants),
-    {ok, Grant} = erx_storage_mint:grant(Grants, ?SYSTEM, ?SYSTEM, <<"system">>, #{rights => Rights}, ?MODULE),
+    {ok, Grant} = erx_fs_mint:grant(Grants, ?SYSTEM, ?SYSTEM, <<"system">>, #{rights => Rights}, ?MODULE),
     Grant.
 
 %% The stand-in of the export table, which exports every grant.
@@ -279,7 +279,7 @@ export(_Name, _Rights, _Peer) -> ok.
 %% sent first, the frames reach the grant before it. Each request has an alias of that
 %% node of its own, which stock cannot reach, so its answer, which may come after a later
 %% request's when a file process gives it, is read from a trace of the grant's calls of
-%% erlang:send/2, as erx_storage_mint_tests reads them.
+%% erlang:send/2, as erx_fs_mint_tests reads them.
 exchange(Grant, Requests) ->
     Owner = binary_to_term(<<131, 88, 119, 9, "d@erxos11", 1:32, 0:32, ?SYSTEM:32>>),
     Aliased = [{binary_to_term(<<131, 90, 3:16, 119, 9, "d@erxos11", ?SYSTEM:32, Id:32, 2:32, 3:32>>), Request}

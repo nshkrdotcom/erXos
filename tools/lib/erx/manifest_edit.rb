@@ -107,12 +107,14 @@ module Erx
       # configured domain); and when root's template, the system principal's, is granted
       # one of its services, two of max_connections, its session's one connection to the
       # domain and the one a replacement session makes beside it, as the manifest reckons
-      # root's display_root.
+      # root's display_root; and for each other configured domain joined to it by a facet,
+      # one of its services granted to that domain or one of that domain's granted to it,
+      # as usb_input joins the USB and display domains, one of max_connections and one of
+      # the other domain's limits' connections: their one connection, however many facets
+      # it carries.
       #
-      # Refused: a domain that is not there; one whose service another domain or another
-      # principal's template is granted, or that is granted a service another domain
-      # serves, since what such a grant takes of max_connections and its server's
-      # connections is the manifest's own reckoning, in its comments; a removal that
+      # Refused: a domain that is not there; one whose service another principal's
+      # template is granted; a removal that
       # leaves a record naming a record it took out (an introduction, a start row on its
       # display); and a unit placed on no unit of units.
       def without_domain(text, name, units:)
@@ -125,12 +127,13 @@ module Erx
         services = held.select { |record| record.kind == 'service' }
         facets = all.select { |record| record.kind == 'facet' && services.any? { |service| names?(record, reference_of(service)) } }
         displays = all.select { |record| record.kind == 'display' && services.any? { |service| service.name == record.name } }
-        foreign = facets.find { |facet| !%w[system @session.system].include?(facet.reference('grantee')) }
+        peers = facets.select { |facet| facet.reference('grantee').start_with?('@domain.') }
+        foreign = (facets - peers).find { |facet| !%w[system @session.system].include?(facet.reference('grantee')) }
         raise Error, "domain #{name}'s service is granted by facet #{foreign.name}, not to the system domain or root" if foreign
 
         held_facets = all.select { |record| record.kind == 'facet' && record.reference('grantee') == reference_of(domain) }
-        peer_facet = held_facets.find { |facet| defined_by(all, facet.reference('service')).reference('server') != 'system' }
-        raise Error, "domain #{name} is granted facet #{peer_facet.name}, of a service another domain serves" if peer_facet
+        servers = held_facets.map { |facet| defined_by(all, facet.reference('service')).reference('server') } - ['system']
+        others = (peers.map { |facet| facet.reference('grantee') } + servers).uniq.reject { |other| other == reference_of(domain) }
 
         root = facets.any? { |facet| facet.reference('grantee') == '@session.system' } ? 1 : 0
 
@@ -139,9 +142,11 @@ module Erx
 
         budget = %w[memory outer].sum { |field| limits.decimal(field) }
         dma = held.select { |record| record.kind == 'unit' }.sum { |unit| unit_dma(unit, units) }
+        connections = others.map { |other| [defined_by(all, defined_by(all, other).reference('limits')).header, 'connections'] }
+                            .tally.transform_values(&:-@)
         changes = { [principal.header, 'memory'] => -budget, [principal.header, 'domains'] => -1,
                     %w[machine root_memory] => -(budget + dma), %w[machine max_domains] => -1,
-                    %w[machine max_connections] => -1 - (2 * root) }
+                    %w[machine max_connections] => -1 - (2 * root) - others.size }.merge(connections)
         Frontend.render(grown(remaining, changes))
       end
 

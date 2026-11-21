@@ -5,22 +5,12 @@
 # Unit tests supply the checked-boundary facts below explicitly. Real pack
 # integration obtains its image facts from erx_elf_plan and provenance receipts.
 require 'digest'
-require 'json'
 require_relative '../../tools/lib/erx/device_kinds'
 require_relative '../../tools/lib/erx/domain_startup'
 require_relative '../../tools/lib/erx/production_image'
 
 module ManifestContextFixture
   module_function
-
-  # The board's platform record as its board machine has it (ProductionImage::Machine.board),
-  # the machine the board's manifest is packed for and boots on, as a fresh Hash: on QEMU
-  # virt the development manifest's root_memory does not fit the record's own 512 MiB
-  # (TODO.md, "QEMU `virt`'s record RAM").
-  def board_platform(root, name: 'qemu-virt')
-    record = Erx::ProductionImage::Machine.board(Erx::Platform.load(root: root, name: name)).record
-    JSON.parse(JSON.generate(record))
-  end
 
   # The release image the development manifest names, as ReleaseMedium.image describes
   # a built one: two blocks at the slot's images start, and their one tree block after
@@ -158,7 +148,7 @@ module ManifestContextFixture
   # window tree with its display record, and the PCIe domain's pcie) and the system domain's facets of them, the
   # PCIe domain's pci_bus facet, the display unit, which only a display domain holds (docs/design-fiasco.md, "Device
   # records"), so a manifest without one places none, the ECAM bridge's unit, which only the PCIe domain holds, and the
-  # USB domain's xhci unit and its pci facet.
+  # USB domain's xhci unit, its pci facet and its input tree, usb_input, with the display's facet of it.
   DOMAIN_ROWS = [/^runtime_limits storage\n(?:  .*\n)*/, /^limits storage\n(?:  .*\n)*/, /^domain storage\n(?:  .*\n)*/,
                  /^service storage_ctl\n(?:  .*\n)*/, /^facet storage_ctl\n(?:  .*\n)*/,
                  /^service data\n(?:  .*\n)*/, /^service home\n(?:  .*\n)*/, /^facet data\n(?:  .*\n)*/, /^service packages\n(?:  .*\n)*/,
@@ -174,7 +164,8 @@ module ManifestContextFixture
                  /^unit pcie\n(?:  .*\n)*/, /^service pcie\n(?:  .*\n)*/, /^facet pcie\n(?:  .*\n)*/,
                  /^facet pci_bus\n(?:  .*\n)*/,
                  /^runtime_limits usb\n(?:  .*\n)*/, /^limits usb\n(?:  .*\n)*/,
-                 /^domain usb\n(?:  .*\n)*/, /^unit xhci\n(?:  .*\n)*/, /^facet pci\n(?:  .*\n)*/].freeze
+                 /^domain usb\n(?:  .*\n)*/, /^unit xhci\n(?:  .*\n)*/, /^facet pci\n(?:  .*\n)*/,
+                 /^service usb_input\n(?:  .*\n)*/, /^facet usb_input\n(?:  .*\n)*/].freeze
   # Root's session template's facets, of data, net, inspect, start, machine, the clock and
   # login_keys, which a sessionless source (ProductionImage.without_sessions) does not hold.
   SESSION_FACETS = [/^facet data_session\n(?:  .*\n)*/, /^facet net\n(?:  .*\n)*/, /^facet inspect\n(?:  .*\n)*/,

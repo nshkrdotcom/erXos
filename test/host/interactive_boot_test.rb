@@ -128,7 +128,7 @@ class InteractiveBootTest < Minitest::Test
     # The website's image is packed for, and boots on, the RAM the website gives it.
     assert_equal 256, Erx::InteractiveBoot.machine(platform: PLATFORM, without_web: true).memory_mib
     # Any other is packed for, and boots on, the machine of the board's own manifest.
-    assert_equal Erx::ProductionImage::Machine.board(PLATFORM), Erx::InteractiveBoot.machine(platform: PLATFORM, without_web: false)
+    assert_equal Erx::ProductionImage::Machine.development(PLATFORM), Erx::InteractiveBoot.machine(platform: PLATFORM, without_web: false)
   end
 
   # With a link, the second serial line listens on its socket without waiting

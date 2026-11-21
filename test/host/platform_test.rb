@@ -28,7 +28,7 @@ class PlatformTest < Minitest::Test
   def test_the_development_record_states_virts_ram
     assert_equal 'qemu-virt', VIRT.name
     assert_equal 0x4000_0000, VIRT.ram_first
-    assert_equal [512, 32 << 20], [VIRT.memory_mib, VIRT.record.fetch('fiasco_reserve')]
+    assert_equal [640, 40 << 20], [VIRT.memory_mib, VIRT.record.fetch('fiasco_reserve')]
     assert_equal 'config/manifest/qemu-virt-development.txt', VIRT.manifest_path
     assert File.file?(File.join(ROOT, VIRT.manifest_path))
     assert_equal %w[web display usb pcie], VIRT.record.fetch('site_leaves_out')
@@ -86,19 +86,19 @@ class PlatformTest < Minitest::Test
   end
 
   # Fiasco keeps 6% of RAM, at most 3328 MiB, rounded up to its 2 MiB superpage: on
-  # virt's 512 MiB 30.72 MiB rounds up to 32, on the smallest Pi 4's 948 MiB 56.88 to 58,
+  # virt's 640 MiB 38.4 MiB rounds up to 40, on the smallest Pi 4's 948 MiB 56.88 to 58,
   # on 2 GiB 122.88 to 124, and past about 55 GiB the cap holds.
   def test_fiasco_keeps_six_per_cent_of_ram_on_superpages
-    { 112 => 8, 256 => 16, 512 => 32, 896 => 54, 948 => 58, 2048 => 124, 65_536 => 3328 }.each do |ram_mib, reserve_mib|
+    { 112 => 8, 256 => 16, 512 => 32, 640 => 40, 896 => 54, 948 => 58, 2048 => 124, 65_536 => 3328 }.each do |ram_mib, reserve_mib|
       assert_equal reserve_mib << 20, Erx::Platform.fiasco_reserve(ram_mib << 20), "#{ram_mib} MiB"
     end
   end
 
   # A record whose fiasco_reserve is not Fiasco's rule on its RAM is refused, by name.
   def test_a_reserve_other_than_fiascos_rule_is_refused
-    [30, 34].each do |mib|
+    [38, 42].each do |mib|
       error = assert_raises(Erx::Error) { Erx::Platform.new(name: 'qemu-virt', record: record(fiasco_reserve: mib << 20)) }
-      assert_equal "config/platforms/qemu-virt.json: fiasco_reserve must be Fiasco's kernel memory on ram_bytes, 32 MiB",
+      assert_equal "config/platforms/qemu-virt.json: fiasco_reserve must be Fiasco's kernel memory on ram_bytes, 40 MiB",
                    error.message
     end
   end

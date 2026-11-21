@@ -132,7 +132,7 @@ class ProductionImageTest < Minitest::Test
   # What each kind carries, as build_medium hands it to the one build (MediumProbe): a
   # development medium its builder's apps alone; a test medium those and its test code,
   # marked as test code; a published medium its own apps (published_apps) and the Doom
-  # example, each on Machine.board, as pack_platform packs it. A card carries its own
+  # example, each on Machine.development, as pack_platform packs it. A card carries its own
   # apps whatever its kind, and Doom only when published.
   def test_each_medium_kind_carries_what_its_rule_gives
     pi = Erx::Platform.load(root: ROOT, name: 'raspi4b')
@@ -147,7 +147,7 @@ class ProductionImageTest < Minitest::Test
       [pi, KIND.development, none] => { apps: :own, **plain },
       [pi, KIND.published, none] => { apps: :own, **plain, doom: true }
     }.each do |(platform, kind, apps), carried|
-      machine = Erx::ProductionImage::Machine.board(platform)
+      machine = Erx::ProductionImage::Machine.development(platform)
       image = MediumProbe.new(root: ROOT, runner: nil, compiler: '', linker: '', machine: machine, fiasco: Object.new,
                               runtime: nil, jit_runtime: nil)
       assert_equal carried, image.carried(kind: kind, apps: apps), "#{platform.name}'s #{kind.name} medium"
@@ -177,8 +177,8 @@ class ProductionImageTest < Minitest::Test
 
   # What a medium's kind does not carry is refused before anything is built, by
   # build_medium and by `tools/erx pack` (pack_platform, which packs every medium on the
-  # board machine, so its refusal is the apps one): a published medium on another
-  # machine than Machine.board, or with an app, signer or --local of its builder's; a
+  # record's own machine, so its refusal is the apps one): a published medium on another
+  # machine than Machine.development, or with an app, signer or --local of its builder's; a
   # card, which is the website's whatever its kind, with either, or with test code. The
   # card's manifest keeps the board's apps row, as QEMU's medium's does.
   def test_a_medium_refuses_what_its_kind_does_not_carry
@@ -187,15 +187,14 @@ class ProductionImageTest < Minitest::Test
     local = Erx::ImageApps.plan([], enable: [], local: true)
     builders = Erx::ImageApps.plan([CLOCK], enable: [])
     card = 'the raspi4b card is the one the website offers: it carries the kiosk alone and takes no app, signer or --local'
-    published = Erx::ProductionImage::Machine.board(PLATFORM)
     {
-      [KIND.published, DEVELOPMENT, Erx::ImageApps.none] =>
-        "the published qemu-virt medium is packed for its board's machine (ProductionImage::Machine.board)",
-      [KIND.published, published, local] =>
+      [KIND.published, Erx::ProductionImage::Machine.site(PLATFORM), Erx::ImageApps.none] =>
+        "the published qemu-virt medium is packed for its board's machine (ProductionImage::Machine.development)",
+      [KIND.published, DEVELOPMENT, local] =>
         'the published qemu-virt medium is the one the website offers: it carries the kiosk alone and takes no app, signer or --local',
       [KIND.development, Erx::ProductionImage::Machine.development(pi), local] => card,
       [KIND.development, Erx::ProductionImage::Machine.development(pi), builders] => card,
-      [KIND.published, Erx::ProductionImage::Machine.board(pi), builders] => card,
+      [KIND.published, Erx::ProductionImage::Machine.development(pi), builders] => card,
       [KIND.test(test_programs: TEST_PROGRAM), Erx::ProductionImage::Machine.development(pi), Erx::ImageApps.none] =>
         'the raspi4b card is the one the website offers: it carries no test code'
     }.each do |(kind, machine, apps), message|
@@ -213,7 +212,7 @@ class ProductionImageTest < Minitest::Test
       assert_match(/is the one the website offers: it carries the kiosk alone/, error.message)
     end
     Erx::ProductionImage.check_medium(KIND.development, machine: DEVELOPMENT, apps: builders)
-    Erx::ProductionImage.check_medium(KIND.published, machine: published, apps: Erx::ImageApps.none)
+    Erx::ProductionImage.check_medium(KIND.published, machine: DEVELOPMENT, apps: Erx::ImageApps.none)
   end
 
   # An image builder for platform's development machine that refuses before it builds.
@@ -247,7 +246,7 @@ class ProductionImageTest < Minitest::Test
     { 'raspi4b' => KIND.development, 'qemu-virt' => KIND.published }.each do |name, kind|
       platform = Erx::Platform.load(root: ROOT, name: name)
       image = PublishedTrustProbe.new(root: ROOT, runner: nil, compiler: '', linker: '',
-                                 machine: Erx::ProductionImage::Machine.board(platform), fiasco: Object.new,
+                                 machine: Erx::ProductionImage::Machine.development(platform), fiasco: Object.new,
                                  runtime: nil, jit_runtime: nil)
       error = assert_raises(Erx::Error) { image.build_medium(directory: '/nonexistent', kind: kind) }
       assert_equal "the published #{name} medium trusts no package key, but its manifest trusts signer deployer", error.message
@@ -763,7 +762,7 @@ class ProductionImageTest < Minitest::Test
       arguments = ManifestContextFixture.archive_arguments(codec, boots: boots.map(&:name))
       paths = arguments.fetch(:catalog).map { |row| row.fetch('path') }
       artifacts = Erx::ProductionImage.artifacts(paths, images: ManifestContextFixture.images, boots: boots)
-      context = Erx::Manifest::Context.new(**arguments, platform: Erx::ProductionImage::Machine.board(PLATFORM).record,
+      context = Erx::Manifest::Context.new(**arguments, platform: Erx::ProductionImage::Machine.development(PLATFORM).record,
                                            artifacts: artifacts)
       Erx::Manifest.admit(source: source, codec: codec, context: context, planner: ManifestContextFixture.accepting_planner)
     end
@@ -1000,20 +999,8 @@ class ProductionImageTest < Minitest::Test
     source = PLATFORM.site_manifest_source(ROOT)
     stated = Erx::ProductionImage::Machine.site(PLATFORM).with_boot_timeout(source)
     assert_equal 600, Erx::Manifest::Edit.value(stated, record: 'machine', field: 'boot_timeout_s')
-    [DEVELOPMENT, Erx::ProductionImage::Machine.board(PLATFORM)].each do |machine|
-      assert_nil machine.boot_timeout_s
-      assert_same source, machine.with_boot_timeout(source)
-    end
-  end
-
-  # QEMU virt's board machine, which every image of the board's manifest but the
-  # website's is packed for, has 640 MiB beside the record's 512; a card's is its record's.
-  def test_qemu_virts_board_machine_has_640_mib_and_a_cards_its_records_ram
-    board = Erx::ProductionImage::Machine.board(PLATFORM)
-    assert_equal [640, DEVELOPMENT.root_mib], [board.memory_mib, board.root_mib]
-    assert_equal 512, PLATFORM.memory_mib
-    pi = Erx::Platform.load(root: ROOT, name: 'raspi4b')
-    assert_equal Erx::ProductionImage::Machine.development(pi), Erx::ProductionImage::Machine.board(pi)
+    assert_nil DEVELOPMENT.boot_timeout_s
+    assert_same source, DEVELOPMENT.with_boot_timeout(source)
   end
 
   # The room line prints the room root_memory leaves the archive.
@@ -1027,13 +1014,12 @@ class ProductionImageTest < Minitest::Test
 
   # The refusal boot means something only on a machine that cannot give root_memory:
   # one no larger than root_memory, of which Fiasco and the archive take a part first.
-  # The board machine, which the board's manifest boots on, leaves room for both below RAM
-  # less fiasco_reserve.
+  # The record's own machine, which the board's manifest boots on, leaves room for both
+  # below RAM less fiasco_reserve.
   def test_the_refusal_machine_cannot_hold_root_memory_and_the_default_can
     root_memory = manifest_number(PLATFORM.manifest_source(ROOT), 'root_memory')
     assert_operator refusal_machine.memory_mib << 20, :<=, root_memory
-    machine = Erx::ProductionImage::Machine.board(PLATFORM)
-    assert_operator root_memory, :<, (machine.memory_mib - machine.fiasco_reserve_mib) << 20
+    assert_operator root_memory, :<, (DEVELOPMENT.memory_mib - DEVELOPMENT.fiasco_reserve_mib) << 20
   end
 
   # The refusal boot proves root_memory_fits, which the root reaches only once it holds the

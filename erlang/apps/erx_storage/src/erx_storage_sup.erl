@@ -59,11 +59,11 @@ init([]) ->
                restart => permanent,
                shutdown => brutal_kill,
                type => worker,
-               modules => [erx_storage_mint, erx_storage_system]},
+               modules => [erx_fs_mint, erx_storage_system]},
     LoginKeys = #{id => login_keys,
                   start => {erx_storage_login_keys, start_mint, []},
                   restart => permanent,
                   shutdown => brutal_kill,
                   type => worker,
-                  modules => [erx_storage_mint, erx_storage_login_keys]},
+                  modules => [erx_fs_mint, erx_storage_login_keys]},
     {ok, {#{strategy => one_for_one, intensity => 0, period => 1}, [Control, Data, System, LoginKeys]}}.

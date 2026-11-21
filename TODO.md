@@ -2382,22 +2382,10 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   never overlaps its source. On `raspi4b`, whose tree is fixed 126 MiB past the file's start, a single file whose
   archive ends within the root's length past the root's place (64 MiB) moves onto its own tail. Add a `raspi4b`
   cell with an archive sized into that window of about 2 MiB.
-* [Medium] platforms, QEMU `virt`'s record RAM (`config/platforms/qemu-virt.json`,
-  `ProductionImage::BOARD_QEMU_MIB`): the record's 512 MiB, 480 MiB less `fiasco_reserve`, no longer
-  hold the development manifest's `root_memory` (499.42 MiB) at all, let alone the production image's
-  archive of about 67 MiB beside it, so the host tests check QEMU virt's manifests against the board
-  machine's record (`ManifestContextFixture.board_platform`), and every pack of the board's manifest, the hosted runtime's release
-  (41 MiB) included, `tools/erx boot`, the benches and every QEMU suite that boots it run on the
-  board machine (`Machine.board`, 640 MiB). The record's RAM is still what `Platform#memory_mib`
-  and `QemuPlan.memory_of` (QEMU's default `-m`) give; docs/design-fiasco.md ("The root startup rule"),
-  design-packaging.md and design-build.md say the production image is packed on the record's own
-  machine. Raise the record's `ram_bytes` and `fiasco_reserve` to the board machine's, which
-  makes `Machine.board` the record's own on every board and deletes `BOARD_QEMU_MIB`, or shrink
-  the manifest's budgets.
 * [Medium] image build, the single file's bound on QEMU `virt` (`ProductionImage::Machine#check_single_file`): the
   check accepts a file up to the end of RAM, but a moved archive goes behind the device tree QEMU puts right behind
-  the file, so a boot needs RAM for the archive twice and, on a 512 MiB machine, one with an archive
-  over about 250 MiB passes the build and stops at boot with `archive_no_room`. Model the move in the check: when
+  the file, so a boot needs RAM for the archive twice, and one with an archive over about half of RAM
+  passes the build and stops at boot with `archive_no_room`. Model the move in the check: when
   the file passes the root's place on a loader that puts the tree behind the file, require the file, the tree's
   slack, the archive again, the kernel and `sigma0`, and the tree's copy and the handoff page, which the plan keeps
   clear of the loaded archive too, to fit in RAM.
@@ -2748,8 +2736,7 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
 * [Medium] runtime, `test/integration/runtime_hosted_smoke_test.rb` fails twice on the hosted
   runtime: `gen_tcp:listen(0, [])` raises `undefined function erx_gen_tcp:listen/2` where the
   test expects `{error,enotsup}`, and `erx_device.o` imports `aligned_alloc`, which the seam's
-  import list lacks. Neither touches code loading; both were hidden while `tools/erx build
-  runtime` could not pack its release on the record's 512 MiB.
+  import list lacks. Neither touches code loading.
 * [Low] docs, `docs/design-runtime.md` "The edits outside `sys/erxos`": edits 66, 67 and 68 each
   name two changes, so a citation of one of them is ambiguous. Renumber the later of each pair.
 * [Medium] build, the manifest checker's release artifacts (`tools/lib/erx/release_files.rb`
@@ -3309,7 +3296,7 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
 * [Medium] Fiasco build on a FreeBSD host, `tools/lib/erx/fiasco.rb`: the Kconfig step now builds with `cc`
   (`HostOs::HOST_CC`) and the users build is given `HOST_CC`/`HOST_CXX`, but `tools/erx build fiasco` has not been
   run through to an image there; run it on the FreeBSD test host and fix what stops it, then delete this item.
-* [Medium] domains, mints (`erx_net_erxos` mint, `erx_driver_ctl` mint, `erx_storage_mint`; design-system,
+* [Medium] domains, mints (`erx_net_erxos` mint, `erx_driver_ctl` mint, `erx_fs_mint`; design-system,
   "Facets a configured domain serves"): a mint answers its request only after the grant or
   facet is started and exported, and the domain service drops a reply that comes after the
   request's deadline or after it cancelled the request (`erx_domain_mints`). The grant or
@@ -3325,11 +3312,11 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   waiting on, or have each grant end unless the grantee claims it within the deadline.
 * [Low] storage, docs (`docs/design-stopgap.md`, the paragraph on a restart: "answers its start only once the volume
   has mounted, so ... the domain reports ready, only over a mounted volume, and a mount that fails fails the domain's
-  boot"): `erx_storage_mint` runs its mount after the ready report, in its own process, and holds a mint request
+  boot"): `erx_fs_mint` runs its mount after the ready report, in its own process, and holds a mint request
   until the mount is done, so the domain reports ready before the volume mounts and a failed mount ends the domain
   after its boot; design-system.md's "Providers" says so. Restate the paragraph from the mint's order.
-* [Medium] storage, `erx_storage_mint` loop (`mint/3`): no host test drives the loop itself.
-  `test/erlang/erx_storage_mint_tests.erl` covers `mint_request/3`, `erx_fs_grants:grant_options/1` and the
+* [Medium] storage, `erx_fs_mint` loop (`mint/3`): no host test drives the loop itself.
+  `test/erlang/erx_fs_mint_tests.erl` covers `mint_request/3`, `erx_fs_grants:grant_options/1` and the
   answers `grant/5` gives, refusals included, but not that the loop (`mint/3`,
   `mint_one/3`) sends each through `erx_facet:minted/2`; drive it with a stand-in of
   `erx_facet`, as the network mint's item below asks.
@@ -8081,8 +8068,8 @@ to the corpus and follow rc
   (`ProductionImage::MediumKind.published`): only `tools/erx pack
   --published` (`make pack`) builds the published QEMU medium and the Pi 4
   card with `/bin/doom`; the raspi4b suite and `make check-reproducible`
-  build the development kind of those media, on the same board machines
-  (`ProductionImage::Machine.board`, 640 MiB for QEMU) but without Doom, so no gate proves that the media as published
+  build the development kind of those media, on the same machines, the platform records' own
+  (`ProductionImage::Machine.development`), but without Doom, so no gate proves that the media as published
   still pack, fit their machine and build reproducibly. Give one gate cell a
   fetched Doom fork and have it pack both published media with Doom.
 * [Low] examples, Doom on QEMU by hand (`/bin/doom`, `examples/doom/doom`; [design-packaging.md](docs/design-packaging.md#examples)):
@@ -8108,25 +8095,32 @@ to the corpus and follow rc
   Device, xHCI 4.6.11) or a wider drop mask would let the CPU zero a context the controller holds. Make it a
   ledger fact: a host test over the reach rules with a seed that widens a drop mask, or a ledger predicate the
   sequencer asks.
-* [High] USB, no DCBAA entry names a slot's device context (`erx_device_sequencer.c`, the TRB form;
-  [design-usb.md](docs/design-usb.md#the-trb-ring-form)): the design has the sequencer write DCBAA entry *k* when
-  slot *k*'s holding begins at its first Address Device and clear it when Disable Slot's success ends it, but
-  nothing writes entries 1 and up, so the controller writes the output context through a zero entry and
-  qemu-xhci stops with USBSTS.HCE at the first Address Device. The publication path sees only the generic DMA
-  layout, which has no DCBAA or device-context places. Either plumb them in for the design's per-holding
-  stores, or write every slot's entry at install, since each slot's context is fixed by the layout (a
-  change to the design). The xHCI harness's `test_runs` writes the output context straight into slot 1's
-  region; it should follow DCBAA entry 1 as the controller does.
 * [Medium] USB, the USB domain's figures (`config/manifest/qemu-virt-development.txt`, `limits usb`, `share usb`):
   its memory, 32 MiB with outer 1 MiB, and its grant, 100 mcpu on CPU 0, are not measured. Measure the domain
   with `Footprint` as the PCIe row was (its largest pool use at rest and with a keyboard typing, rounded up
   with 2 MiB of headroom), and its CPU while a keyboard types, then set the row and move the totals it
   counts (the system principal's memory, `root_memory`).
-* [High] USB, the keyboard's records reach no reader (`erx_usb_places_sup`, [design-usb.md](docs/design-usb.md#the-rows)):
-  the places start the input tree's grants supervisor, but nothing mints a grant of it: the manifest has no
-  `usb_input` service or facet to the display domain, and no mint installs one, so a key typed on a USB
-  keyboard is written to its input file and read by no one. The decision is one tree and one mint per USB
-  domain, the storage domain's mint moved into `erx_files` and reused, as the last child of the places.
+* [High] USB, the usb suite's typed stage (`tools/lib/erx/usb_boot.rb`, the display domain): the USB domain
+  enumerates qemu-xhci's keyboard and the display's follower reads all eight files of `usb_input`, but once
+  the key is typed the display domain faults (`{fault,1}`, cause 0x1, a data abort at a page-aligned address)
+  and its restart fails with `no_memory`, so the second line's call gets `noconnection`. The stage call-traces
+  `erx_winfs:input/2` in the display (`erlang:trace/3` with a tracer process), whose first hit is the key's
+  record, so either call tracing or the display's input path faults. Settle it with one run that reads the
+  records some other way (the follower's or `erx_winfs`'s state), then fix what faults.
+* [Low] USB, the review's open points on the input tree's hand-out: the USB domain's `connections 2` has no
+  room for a display incarnation minted before the old connection is unmapped (design-system A3); the places'
+  host fixture finds the grants supervisor through the mint's links (`erx_usb_places_prop:mint_grants/1`)
+  rather than starting `erx_fs_grants` itself; the regression case
+  `the_mint_provides_before_the_report_and_the_controllers_start_after_test` has no seeded fault;
+  `Manifest::Edit.without_domain` would lower a limits record two peers share twice; `erx_fs_mint`'s
+  moduledoc lists its callers (and misses `login_keys`); and `erx_driver_ctl` and `erx_winfs` each repeat
+  `erx_fs_mint:mint_request/3`'s envelope check.
+* [Low] USB, the input tree's service name (`erx_usb_places_sup:start_mint/1`,
+  [design-usb.md](docs/design-usb.md#hid-reaches-the-display)): every USB domain's mint names its service
+  `usb_input`, written at the mint's start, so a manifest with two USB domains that feed one display cannot
+  give each its own service row. Name the service from the manifest, as the display's own service name
+  reaches the display domain. A domain with two controllers is not affected: it runs one set of places and
+  one mint, and its controllers share the eight input numbers.
 * [Medium] USB, the boot mouse's transfer length (`erx_hid_core:plan/2`, `erx_usb_hid`;
   [design-usb.md](docs/design-usb.md#from-reports-to-records)): in the boot protocol the transfer is the boot
   layout's 3 bytes; a boot mouse that sends longer boot reports (unverified: whether HID 1.11, Appendix B.2,
@@ -10012,9 +10006,6 @@ document's "residual risks accepted" paragraph.
   reports (the schema's `service` and `runtime` do not fit as declared), the key types of `Controller` and
   `Route`, and the shape of a device's functions, each a kind with an input number or a drive, which the schema's
   types have no alternative for.
-* [Medium] USB, the input tree's service side (`erx_usb_places_sup`, [design-usb.md](docs/design-usb.md#hid-reaches-the-display)):
-  the places start the tree's grants (`input_tree/1`), but nothing yet hands one to the display domain the
-  manifest names, and no `erx_usb_sup` starts the places before the bus. Both come with the USB domain's start.
 * [Medium] USB and PCIe, `hw/svd/` ([design-usb.md](docs/design-usb.md#registers-at-offsets-the-controller-reports),
   [design-generation.md](docs/design-generation.md#register-inputs)): no configuration-space view for the BCM2711
   bridge. Write its `<configurationSpace>` rows (the root port at 0 and the endpoint data window at `0x8000`, each one
@@ -10568,7 +10559,7 @@ document's "residual risks accepted" paragraph.
   kiosk and no `/bin/doom`, is served. A published tree is QEMU's own dump for one machine (its RAM, CPU count and,
   unverified, the accelerator and QEMU version it was dumped under), so the command must pin those, and the pack
   would run QEMU, which it does not yet. The published medium carries Doom and is packed for 640 MiB
-  (`ProductionImage::Machine.board`), so its command takes `-m 640`, a display and the virtio keyboard,
+  (`ProductionImage::Machine.development`), so its command takes `-m 640`, a display and the virtio keyboard,
   as `tools/erx boot --medium --print` gives them.
 * [Medium] `tools/lib/erx/raspi4b_shell.rb` (`located_inputs`): the raspi4b suite boots the card it packed in
   `build/production-image/raspi4b/` in place, so a card taken from there after the suite ran may hold what its guest

@@ -524,10 +524,14 @@ file system. Its release script, `usb`, holds the base every domain boots and
 
 A development build's manifest may put the controller in another domain,
 the display domain for instance, as it may merge other driver domains
-([design-system.md](design-system.md#devices)); nothing in the stack
-changes, since a place's reader then reads a local process. The display's
-own USB function then feeds `erx_winfs:input/2` directly, as a virtio-input
-driver does, and serves no input tree.
+([design-system.md](design-system.md#devices)). The places and the input
+tree's mint start only with `erx_usb`'s application, which only the `usb`
+release script boots ([The rows](#the-rows)), so a domain that holds a
+controller under another script serves no input tree and never names
+itself `usb_input`'s mint; such a domain runs no USB stack, since
+`erx_usb_hid` writes only to the places, until a design names how a USB
+function there feeds `erx_winfs:input/2` directly, as a virtio-input
+driver does.
 
 ### HID reaches the display
 
@@ -569,6 +573,24 @@ holds and the stream has, and a read of at least one byte whose count
 holds no record is refused with `EINVAL`. So no read ends inside a record, and a reader that
 ends, with the display's restart or a flush, never leaves the next one
 reading from the middle of a record.
+
+A USB domain has one set of places, which its application starts once,
+so it serves one input tree, the files service `usb_input` of the
+`input` interface, whatever controllers it holds. Its mint is
+`erx_fs_mint`, the mint of every files service a configured domain
+serves ([design-system.md](design-system.md#facets-a-configured-domain-serves)),
+and the places' last child: the boot script starts it, so it names
+itself the service's mint before the domain reports ready, which no
+process started after the report can do; only then, in its own process,
+it mounts the tree on the places' streams;
+for each mint request it starts one read-only grant of the tree whose
+client is the display domain, which ends with the USB domain's
+connection to the display. On QEMU `virt` the facet row `usb_input`
+grants it to the display domain with `max_request` 131072, the floor
+property 16 sets for a files interface, which the USB domain's
+`max_frame` meets, and `in_flight` 16, above the eight reads the
+display's follower keeps outstanding, one for each file
+(`input_tree_files_max`).
 
 The input tree is the USB domain's only grant to the display, and it has
 the reach the display design gives any input source: that of a person at
@@ -700,14 +722,26 @@ platform's `xhci` unit and nothing else, with the `pci` facet
 [design-pcie.md](design-pcie.md#facets) gives every holder of a `pci`
 device, for its one function. The domain service starts it only once
 the device service has answered the PCIe domain's report
-([design-pcie.md](design-pcie.md#the-hold-at-boot)). `erx_usb`'s start
-reads the domain's function records once, `erx_device_record:find(usb,
-xhci)`, and runs one `erx_usb_sup` for each, under a supervisor of
-intensity 0, so a controller's supervisor that ends past its own bound
-ends the domain and the domain service's restart is the recovery
-([Failure handling](#failure-handling)); a domain started after a failed
-hold, or on a machine with no controller attached, holds no record and
-runs no controller.
+([design-pcie.md](design-pcie.md#the-hold-at-boot)). The domain starts
+in two steps, as the PCIe domain does
+([design-pcie.md](design-pcie.md#processes)). The `usb` release script
+starts `erx_usb`, whose top supervisor, registered `erx_usb`, starts the
+places with the input tree's mint as their last child, before init's
+ready report, so the mint names itself `usb_input`'s mint while it still
+can. The row's `-eval ok=erx_usb:start_controllers()` runs once init
+holds the ready answer's facets, `pci` among them, which a controller
+needs to open its function: it reads the domain's function records once,
+`erx_device_record:find(usb, xhci)`, and adds one bus group,
+`erx_usb_bus_sup`, for each under the top supervisor; a record the
+reader refuses fails the eval and so the domain's boot. The top
+supervisor has intensity 0, so the end of the places or the mint ends
+the domain and the domain service's restart is the recovery ([Failure
+handling](#failure-handling)); a domain started after a failed hold, or
+on a machine with no controller attached, holds no record and runs no
+controller, and its input tree serves eight numbers no function
+occupies. Its row `usb_input`
+and the display's facet of it are those of [HID reaches the
+display](#hid-reaches-the-display).
 
 Its memory, 32 MiB and outer 1 MiB, is not measured yet; its grant is a
 share of its own, 100 mcpu on CPU 0, out of what the system share's
@@ -1249,29 +1283,42 @@ operation's board test checks against those readings.
 
 ### The process tree
 
-Each USB domain runs, for each controller it holds, one supervisor,
-`erx_usb_sup`, with the `rest_for_one` strategy over two children in
-order:
+Each USB domain runs one top supervisor, `erx_usb`, registered under
+that name, `one_for_one` with intensity 0, over two kinds of children,
+started in two steps ([The rows](#the-rows)):
 
-1. **The places**, `erx_usb_places_sup`: the input tree's server, one
-   stream process per input number, and one drive grant per window row
-   the manifest names. They hold no device state, so they survive every
-   failure below them, and a reader outside the domain never sees its
-   file end or its drive grant's pid die while the domain lives.
-2. **The bus**, `erx_usb_bus_sup`, `one_for_all` over the controller
-   process, the bus process and the function supervisor, whose children,
-   one per function, are `temporary`. These three share the controller's
+1. **The places**, `erx_usb_places_sup`, one per domain, which the boot
+   script's start of `erx_usb` starts before init's ready report: one
+   stream process per input number, one drive grant per window row the
+   manifest names, and last the input tree's mint, `erx_fs_mint` of `usb_input`, whose mount
+   reads the streams from the places once they have all started. They
+   hold no device state, so they survive every failure beside them, and a
+   reader outside the domain never sees its file end or its drive
+   grant's pid die while the domain lives.
+2. **A bus group**, `erx_usb_bus_sup`, for each controller the domain
+   holds, which `erx_usb:start_controllers/0` adds once the ready answer
+   brings the `pci` facet, given the places' pid; `one_for_all` over the
+   controller process, the bus process and the function supervisor, whose
+   children, one per function, are `temporary`. These three share the controller's
    state: a controller reset ends every device, so the controller's
    restart restarts the bus, which enumerates every port again, and every
    function, whose places it frees first.
 
-Each of the two supervisors restarts at most `usb_bus_restarts_max`
-times in any `usb_bus_restart_window_ms` (`abi/formats/usb.txt`). The bus
-group is `transient` under `erx_usb_sup`: past its bound it ends with
+The places never restart. `erx_usb_places_sup` and `erx_usb` both have
+intensity 0 and every child of theirs is permanent but the bus groups,
+so the end of a stream, of the mint or of the places ends the top
+supervisor, the permanent application and the domain, whose restart is
+the fresh try, as `erx_lfs_sup`'s end is the
+storage domain's ([design-stopgap.md](design-stopgap.md#littlefs-in-the-storage-domain)).
+The domain service mints a service's grants only for a new incarnation
+of its domain ([design-system.md](design-system.md#facets-a-configured-domain-serves)),
+so places made again within one incarnation would serve no reader. The
+bus group restarts within itself at most `usb_bus_restarts_max` times
+in any `usb_bus_restart_window_ms` (`abi/formats/usb.txt`), and is
+`transient` under `erx_usb`: past its bound it ends with
 `shutdown`, which is not restarted, so a controller that fails again
 after every reset, a host controller error that returns, is given up
-while its places stay; a later failure of the places restarts the
-bus group with them, a fresh try within `erx_usb_sup`'s own bound. A
+while the places stay, until the domain restarts. A
 function instance is killed when it is stopped. Every driver starts
 with `start_link/1` on one map: its claimed `function`, its device's EP0
 as `control`, its own claimed `pipes` and the `places`, with the bus
@@ -3233,8 +3280,8 @@ medium had gone after the request.
 | a medium removed or changed | TEST UNIT READY, UNIT ATTENTION, the detach | the medium; its windows end | the FAT server unmounts and remounts on the next walk |
 | a medium that cannot flush | the readiness SYNCHRONIZE CACHE | nothing: its flushes answer `no_flush` | none; the FAT server mounts it read-only, with `no flush: read-only` in the mount's record |
 | a control transfer not answered in 5 s | the controller process's deadline | the transfer, answered `timeout` after Stop Endpoint and Set TR Dequeue Pointer past it | the caller's; EP0 is open again |
-| a command not answered in 5 s, an event that fails the form's checks, the controller's host system error, host controller error or halt while it runs, read from `USBSTS` on an interrupt or once a second, an all-ones read from a function that left the bus among them, a wait of the install past its deadline | the controller process | the controller process | the bus group restarts; `negotiate/2` resets the controller and returns every buffer; every device is enumerated again; places survive, so each input number carries `release` and each medium's windows end; past `usb_bus_restarts_max` restarts in `usb_bus_restart_window_ms` the controller is given up, its places still served ([The process tree](#the-process-tree)) |
-| a controller's supervisor ends past its own bound: its places fail more than `usb_bus_restarts_max` times in `usb_bus_restart_window_ms` | `erx_usb`'s top supervisor, of intensity 0 | the controller's supervisor, then the top supervisor, the permanent application and the domain | the domain service restarts the domain, which holds its units again and runs every controller afresh. The domain ends rather than restart the controller's supervisor within itself because the places serve its input files, whose grants the domain service mints only for a new incarnation of the domain ([design-system.md](design-system.md#facets-a-configured-domain-serves)): places made again in the same incarnation would serve no reader |
+| a command not answered in 5 s, an event that fails the form's checks, the controller's host system error, host controller error or halt while it runs, read from `USBSTS` on an interrupt or once a second, an all-ones read from a function that left the bus among them, a wait of the install past its deadline | the controller process | the controller process | the bus group restarts; `negotiate/2` resets the controller and returns every buffer; every device is enumerated again; places survive, so each input number carries `release` and each medium's windows end; past `usb_bus_restarts_max` restarts in `usb_bus_restart_window_ms` the controller is given up, the places still served ([The process tree](#the-process-tree)) |
+| a stream, the input tree's mint or the places end | `erx_usb_places_sup`, then `erx_usb`'s top supervisor, each of intensity 0 | the places, the top supervisor, the permanent application and the domain | the domain service restarts the domain, which holds its units again and runs every controller afresh. The domain ends rather than restart its places within itself because the places serve its input files, whose grants the domain service mints only for a new incarnation of the domain ([design-system.md](design-system.md#facets-a-configured-domain-serves)): places made again in the same incarnation would serve no reader |
 | a register access that aborts (the controller fell off its bus) | the kernel, on erXos's kernel; on Fiasco an SError ends the task of the next thread to enter user mode on its CPU, which need not be the USB domain's, and the controller's next deadline fails it | the USB domain, by the fault, on erXos's kernel; the controller process on Fiasco | the domain service restarts the domain, which gets its unit again; the display's readers see their files end and start again when the tree is granted again, and each drive's holder is introduced again, as for a block driver's domain |
 | a configuration access below the root port with the link down | the bridge driver's link reads, before and after | the access, answered `link_down`; the function's position is reported gone | none of its own; an abort that does arrive ends the PCIe domain on erXos's kernel, as the next row |
 | the PCIe domain ends | the domain service | the enumerator and the bridge driver | the domain restarts; with the link up and the VL805's firmware present the bridge driver resets nothing and running functions are unchanged; otherwise it turns the link off cleanly, brings the bridge up again and asks for the firmware |
@@ -3304,7 +3351,7 @@ targeted traces carry the longer sequences.
 | --- | --- |
 | `erx_usb_bus_core`, explored to a fixed point over a root hub of two ports, one external hub of two ports and devices of one and two functions, with references and slots drawn from small sets; then traces of 1,000 attach and detach cycles on one port, a connection storm, a hub detached during its child's enumeration, a chain of six hubs, four connects on one port within a minute, four ends of one function within a minute and a hub function's restart with a device behind it, a device unplugged and plugged in again between the read of its connection change and that change's clear; over-current changes read on a root port; and, at every quiet node of the exploration, every port agreeing with the world on whether something is connected; at every node, the end and the hub reports of every instance not running, the earlier ones and an ended one whose pipes are still being reset, changing nothing, and a restart starting the claimed function unchanged under a run number no earlier instance had; and every end as unusable, of either function of a two-function device, resetting, starting and detaching nothing, keeping its reason and leaving the device's other function as it was | a connection change with the port still connected not detaching the occupant; the address-zero turn released at the reset's end instead of the address; a port's new state dropping its occupant without detaching it; a port given up after its address keeping the turn; the turn released at a detach before the address answer, so a second device is reset while the first's Address Device is outstanding; an Address Device answer for a detached device dropped as stale, so the turn is never given back; a hub given up handing on the turn a port below it held; a hub six tiers below the root powering its ports; a full-speed device's EP0 left at 8 bytes when its descriptor says otherwise; a hub configured without its hub descriptor; a device's first request sent at its address answer, without the 10 ms settle; the step an answer echoes ignored, so a stale answer is taken at the step awaiting its kind; an unusable end taken as a failure, so the function is restarted and its device given up past the bound; a function restarted before its pipes' resets answer, so the new instance meets a transfer its predecessor posted; an end from a function's earlier instance taken, so a late end resets the running instance's pipes; a report from a hub function's ended instance taken, after its restart or while its pipe is still being reset; the report an ended hub instance was handling kept, so `handled` goes to it; a pipe's failed reset keeping the device; the restart bound removed; a port's failure logged at every move into a failure state; the attempt throttle removed; a port's attempts never leaving the window; an over-current change logged on every change; the over-current log not rearmed by an attempt; a read that saw changes taking its port off the queue, so a change latched before their clear is lost |
 | `erx_usb_hub_core`, its machine explored to a fixed point for hubs of 1, 2, 7, 8 and 15 ports over every report of the port count's length with each port bit and the bits around it, a short report and a failed transfer; its decoders on written cases | a change report sent with the next transfer already posted; `handled` taken without posting the next transfer; the bits above the port count kept; a report shorter than the port count taken as naming nothing |
-| the bus process, its supervision tree and the hub function, run whole under `erx_usb_sup` on the host against a fake controller speaking `erx_usb_bus_link` and `erx_usb_pipe`: a root port's device, a hub with a device plugged in behind it, a hub's removal, a device replaced before its port is read, a function's end and restart within its bounds, a start that fails, a hub function's restart, a report from an ended instance, a controller's failure, and a controller that fails at every reset | a start that fails sending no end; a detach leaving its device's functions running; a report passed on with the running instance's number whoever sent it; a hub port's connection change cleared by the wrong feature; a connection change on a port still connected not detaching its occupant; a bus group that gave up started again |
+| the bus process, its supervision tree and the hub function, run whole under `erx_usb`'s top supervisor on the host against a fake controller speaking `erx_usb_bus_link` and `erx_usb_pipe`: a root port's device, a hub with a device plugged in behind it, a hub's removal, a device replaced before its port is read, a function's end and restart within its bounds, a start that fails, a hub function's restart, a report from an ended instance, a controller's failure, a controller that fails at every reset, a bus group's abnormal end ending the top supervisor, and the controllers started after the mint has named itself and init has reported | a start that fails sending no end; a detach leaving its device's functions running; a report passed on with the running instance's number whoever sent it; a hub port's connection change cleared by the wrong feature; a connection change on a port still connected not detaching its occupant; a bus group that gave up started again |
 | `erx_xhci_core`'s pipe machine, teardown, control abort and failed address, explored to a fixed point over every queue state the NIF reports and every answer of each step, EP0 and other endpoints, behind a translator and not | `reset_pipe` issuing Reset Endpoint on a stopped queue; a stopped EP0 dropped and added; the abort answered after Stop Endpoint alone, so the next request finds EP0 stopped; the translator's clear skipped; Disable Slot issued before the stops answer; an Address Device whose device detached while it was posted left unanswered; a detached reference left bound, so a request reaches its slot's next device; a reset step's answer taken by a later reset of a pipe of the same name on a slot enabled again |
 | `erx_xhci_core`'s start, explored to a fixed point with and without a legacy support capability over every answer of the BIOS's semaphore and of the install and an interrupt at any time, the clock moving to each deadline; a run that has not ended always has a next step | the install called while the BIOS still owns the controller; the BIOS's semaphore never polled again; an interrupt before the controller runs acknowledged at once, or with a failure |
 | `erx_xhci_core`'s root ports and interrupt pass: every PORTSC write over many words, every change bit cleared by the name it shows as, a host system error, a pass bounded at two wraps of the event ring, `USBSTS` read once a second while running, each of those, a host controller error, a halt and an all-ones read failing the controller on an interrupt and on that read | a PORTSC write keeping the change and enable bits it read; the configuration error change behind no clear; a host system error ignored; a host controller error ignored; a halt ignored; a running controller's status never read between interrupts; an interrupt pass not bounded |

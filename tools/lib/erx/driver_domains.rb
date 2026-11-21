@@ -325,7 +325,7 @@ module Erx
       def initialize(root:, runner: Runner.new(owner_root: root, log_dir: File.join(root, 'build/logs')),
                      compiler: ENV.fetch('ERX_CLANG', ''), linker: ENV.fetch('ERX_LLD', ''), platform: Platform.development(root))
         @root = File.expand_path(root)
-        @machine = ProductionImage::Machine.board(platform)
+        @machine = ProductionImage::Machine.development(platform)
         @runner = runner
         @compiler = compiler
         @linker = linker

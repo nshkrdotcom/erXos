@@ -95,7 +95,7 @@ module Erx
       steps << BenchGuest::Exchange.new('measure', line, MEASUREMENT, PLAN.wait_seconds)
       Qemu.new(root: @root, runner: @runner)
           .run(platform: @platform, accel: 'hvf', cpus: 1, image: image,
-               memory_mib: ProductionImage::Machine.board(@platform).memory_mib,
+               memory_mib: ProductionImage::Machine.development(@platform).memory_mib,
                checkpoints: BenchGuest.transcript(steps, platform: @platform), directory: directory)
       nil
     rescue Error => error

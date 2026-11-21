@@ -7,7 +7,7 @@ The data partition's littlefs volume (docs/design-stopgap.md#littlefs-in-the-sto
 the volume's owner, `erx_lfs`, on the block service's data window; the grant
 that mounts its `data` tree at `/data` in this domain; and, for each tree of
 the volume (erx_lfs:trees/0), the mint of the files service of the tree's
-name, which hands other domains grants of that tree alone (erx_storage_mint):
+name, which hands other domains grants of that tree alone (erx_fs_mint):
 `data`, and `packages`, the installed app packages
 (docs/design-packaging.md, "Where a package lies"). The owner starts once
 the volume has mounted, so a mount that fails fails the domain's boot before
@@ -44,7 +44,7 @@ init([]) ->
               modules => [erx_fs]},
     Mints = [#{id => {mint, Tree}, start => {?MODULE, start_mint, [Tree, ?NAME]},
                restart => permanent, shutdown => brutal_kill, type => worker,
-               modules => [erx_storage_mint]}
+               modules => [erx_fs_mint]}
              || Tree <- erx_lfs:trees()],
     {ok, {Flags, [Owner, Grant | Mints]}}.
 
@@ -65,5 +65,5 @@ start_mint(Tree, Name) ->
     case whereis(Name) of
         undefined -> ignore;
         %% The owner has mounted the volume, so the mint's mount answers its arguments.
-        _Owner -> erx_storage_mint:start_link(Tree, erx_lfs, fun() -> {Name, Tree} end)
+        _Owner -> erx_fs_mint:start_link(Tree, erx_lfs, fun() -> {Name, Tree} end)
     end.

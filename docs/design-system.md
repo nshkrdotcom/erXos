@@ -2397,7 +2397,7 @@ report provides again. A server reports ready
 once its mints are named, and each of its services serves from the
 moment its protocol says: a storage mint runs its mount after the
 report and holds a mint request that comes first in its queue until
-the mount is done (`erx_storage_mint`), and for the PCIe protocol
+the mount is done (`erx_fs_mint`), and for the PCIe protocol
 serving starts at the answer to the PCIe domain's report: its mint
 grants `pcie` at once, and its enumerator takes a request only once the
 device service has answered that report

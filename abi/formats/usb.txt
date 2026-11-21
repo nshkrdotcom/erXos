@@ -37,7 +37,7 @@ limit usb_port_attempt_window_ms u32 60000
 # (design-usb.md, "Failure handling").
 limit usb_function_restarts_max u32 3
 limit usb_function_restart_window_ms u32 60000
-# The restarts a controller's supervisors, erx_usb_sup and erx_usb_bus_sup, each make in
+# The restarts a controller's bus group, erx_usb_bus_sup, makes in
 # any usb_bus_restart_window_ms; past them the bus group ends and is not started again,
 # so a controller that fails at every reset stops being reset (design-usb.md, "The
 # process tree").

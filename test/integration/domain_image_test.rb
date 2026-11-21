@@ -20,7 +20,7 @@ require_relative '../../tools/lib/erx/runner'
 # does not.
 class DomainImageTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
-  MACHINE = Erx::ProductionImage::Machine.board(Erx::Platform.development(ROOT))
+  MACHINE = Erx::ProductionImage::Machine.development(Erx::Platform.development(ROOT))
   DIRECTORY = File.join(ROOT, 'build/domain-image')
   BASE = Erx::ReleaseFiles.domain_boot('base', applications: Erx::ReleaseFiles::DOMAIN_BASE)
 

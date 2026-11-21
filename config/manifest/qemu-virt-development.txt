@@ -48,10 +48,7 @@
 # qemu-xhci by place behind the PCIe domain, and nothing else, and runs the USB stack,
 # erx_usb (docs/design-usb.md, "Who holds a controller"); it takes pci, the device
 # service's facet for its function (docs/design-pcie.md, "Facets"). Fixed
-# medium roles carry partition 0, as docs/design-abi.md says. The machine is
-# QEMU virt with more RAM than the platform record's (config/platforms/qemu-virt.json),
-# whose 512 MiB leave beside this root_memory too little room for the production
-# image's archive (ProductionImage::Machine.board).
+# medium roles carry partition 0, as docs/design-abi.md says.
 # root_memory holds what the budgets below promise and an 8 MiB margin no one is
 # promised; what RAM less fiasco_reserve leaves beside it is bootstrap's and the boot
 # archive's, and the packer prints both figures for each image it builds. The system
@@ -245,14 +242,15 @@ limits web
 # The display domain's limits, whose figures this part's opening comment explains (its
 # display domain paragraph): 24 MiB, outer 1 MiB and the apps row's four
 # pixel areas with their lanes and root's template's seven, and one connection for each
-# of the four apps and two for root's session and its replacement.
+# of the four apps, two for root's session and its replacement, and one for the USB
+# domain's input tree.
 limits display
   memory 25165824
   outer 93368320
   grant @share.display
   spaces none
   lane 4096
-  connections 6
+  connections 7
   crash 0
   flags none
   runtime_limits @runtime_limits.display
@@ -274,10 +272,12 @@ apps
   memory 137363456
   max 4
   services display net
-# The web, PCIe and USB domains each hold their system connection alone, which a quota of one
-# never meets. max_connections, 32, holds the sixteen of the four apps' sessions (each its system
-# connection, packages, the display and net) and the ten rows at rest (the system connections of root's
-# session and of the six configured domains, and the session's data, net and display), the four
+# The web and PCIe domains each hold their system connection alone, which a quota of one
+# never meets, and the USB domain its system connection and the display's to its input tree.
+# max_connections, 33, holds the sixteen of the four apps' sessions (each its system
+# connection, packages, the display and net) and the eleven rows at rest (the system connections of root's
+# session and of the six configured domains, the session's data, net and display, and the
+# display's usb_input), the four
 # a replacement session makes beside its predecessor's closing rows, and the two a
 # restarted configured domain makes beside its own.
 machine
@@ -292,7 +292,7 @@ machine
   users_share @share.users
   system_principal @principal.system
   max_domains 11
-  max_connections 32
+  max_connections 33
   system_lane 4096
   system_queue 16384
   peer_held 4096
@@ -509,9 +509,10 @@ facet pcie
   period_ns 1000000000
   max_heap_size 8192
 # The USB domain's rows (docs/design-usb.md, "Who holds a controller", "The rows"). Its
-# release, usb, loads erx_usb, which its -eval starts once init holds the ready answer's
-# facets, pci among them; its start reads the domain's xhci function record and
-# starts the controller's supervisor (erx_usb); the domain service starts the domain
+# release, usb, boots erx_usb, whose supervisor starts the places and the mint of the
+# input tree before init's ready report; its -eval, once init holds the ready answer's
+# facets, pci among them, reads the domain's xhci function record and starts the
+# controller's bus group (erx_usb:start_controllers/0); the domain service starts the domain
 # only once it has answered the PCIe domain's report, which raises the function
 # (docs/design-pcie.md, "The hold at boot"). Its memory, 32 MiB, is not measured yet: the
 # bare release takes 18.3 MiB loaded (the Footprint table above), the stack's modules
@@ -522,6 +523,13 @@ facet pcie
 # The grant (docs/design-pcie.md, "Facets"): pci, the system domain's device service
 # for the domain's one pci device, every operation, max_request 1,024 over the widest
 # request, in_flight 1 for its one function.
+#
+# The service (docs/design-usb.md, "HID reaches the display"): usb_input, the domain's
+# input tree, granted to the display domain read-only, as the input interface makes every
+# grant of it, with max_request 131,072, property 16's floor for a files interface, which
+# the domain's max_frame meets, and in_flight 16, above the eight reads the display's
+# follower keeps outstanding, one for each file (input_tree_files_max). The grant takes a
+# connection from each domain's quota and one from max_connections.
 runtime_limits usb
   max_frame 131072
   max_message_heap 131072
@@ -549,7 +557,7 @@ limits usb
   grant @share.usb
   spaces none
   lane 4096
-  connections 1
+  connections 2
   crash 0
   flags none
   runtime_limits @runtime_limits.usb
@@ -564,7 +572,7 @@ domain usb
   release @artifact.usb
   restarts 5
   restart_period_s 600
-  args "-- -root / -bindir /bin -progname erl -home / -nouser -nocookie -no_epmd -proto_dist erx -eval ok=application:start(erx_usb,permanent)"
+  args "-- -root / -bindir /bin -progname erl -home / -nouser -nocookie -no_epmd -proto_dist erx -eval ok=erx_usb:start_controllers()"
 unit xhci
   placement "xhci"
   holder @domain.usb
@@ -577,3 +585,15 @@ facet pci
   reductions 100000
   period_ns 1000000000
   max_heap_size 8192
+service usb_input
+  server @domain.usb
+  interface input
+facet usb_input
+  grantee @domain.display
+  service @service.usb_input
+  operations none
+  max_request 131072
+  in_flight 16
+  reductions 100000
+  period_ns 1000000000
+  max_heap_size 262144

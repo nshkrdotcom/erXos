@@ -281,7 +281,7 @@ callbacks_as_mints_are_refused_test() ->
     lists:foreach(fun(Mint) ->
                           {[Actions], _} = run([ready(?S, 5, #{data => Mint})], new()),
                           ?assertEqual([{refused, not_a_pid, {?S, 5, data}}], Actions)
-                  end, [Fun, {erx_storage, mint, []}, erx_storage_mint, "data"]).
+                  end, [Fun, {erx_storage, mint, []}, erx_fs_mint, "data"]).
 
 malformed_provides_are_refused_whole_test() ->
     {[NotMap], _} = run([ready(?S, 5, [{data, mint(5)}])], new()),

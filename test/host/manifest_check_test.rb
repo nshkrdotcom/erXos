@@ -21,7 +21,7 @@ class ManifestCheckTest < Minitest::Test
   def setup
     @codec = Erx::ABI::Codec.new(Erx::ABI::Model.validate(Erx::ABI::Sources.read(root: ROOT)))
     @source = Erx::Platform.load(root: ROOT, name: 'qemu-virt').manifest_source(ROOT)
-    @platform = ManifestContextFixture.board_platform(ROOT)
+    @platform = Erx::Platform.load(root: ROOT, name: 'qemu-virt').record
     @context = context
   end
 
@@ -233,8 +233,8 @@ class ManifestCheckTest < Minitest::Test
     view = @codec.open('manifest', admit(@source + SERVICE).bytes)
     # The development manifest's own, clock, code_objects, data, display, home, inspect, log,
     # login_keys, machine, net, network_ctl, packages, pci, pci_bus, pcie, start, storage_ctl,
-    # system and web, and this one.
-    assert_equal %w[clock code_objects data display home inspect log login_keys machine net network_ctl packages pci pci_bus pcie probe start storage_ctl system web], view.count('services').times.map { |index| view.string(view.fetch('services', index).fetch('name')) }
+    # system, usb_input and web, and this one.
+    assert_equal %w[clock code_objects data display home inspect log login_keys machine net network_ctl packages pci pci_bus pcie probe start storage_ctl system usb_input web], view.count('services').times.map { |index| view.string(view.fetch('services', index).fetch('name')) }
     assert_equal 0, view.count('liveness')
   end
 

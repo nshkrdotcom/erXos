@@ -78,7 +78,7 @@ class DomPlannerTest < Minitest::Test
 
   def setup
     @codec = Erx::ABI::Codec.new(Erx::ABI::Model.validate(Erx::ABI::Sources.read(root: ROOT)))
-    platform = ManifestContextFixture.board_platform(ROOT)
+    platform = Erx::Platform.load(root: ROOT, name: 'qemu-virt').record
     @context = Erx::Manifest::Context.new(**ManifestContextFixture.arguments(@codec).merge(platform: platform))
     @plain = ManifestContextFixture.sessionless(Erx::Platform.load(root: ROOT, name: 'qemu-virt').manifest_source(ROOT))
     @source = with_domains('alpha')
@@ -630,8 +630,7 @@ class DomPlannerTest < Minitest::Test
     assert_operator boards.size, :>=, 2
     boards.each do |board|
       platform = Erx::Platform.load(root: ROOT, name: board)
-      record = ManifestContextFixture.board_platform(ROOT, name: board)
-      context = Erx::Manifest::Context.new(**ManifestContextFixture.arguments(@codec).merge(platform: record))
+      context = Erx::Manifest::Context.new(**ManifestContextFixture.arguments(@codec).merge(platform: platform.record))
       admitted = Erx::Manifest.admit(source: platform.manifest_source(ROOT), codec: @codec, context: context, planner: @planner)
       refute_empty admitted.bytes, board
     end
@@ -926,7 +925,7 @@ class DomPlannerTest < Minitest::Test
                 %w[network_ctl 1 driver_control],
                 %w[packages 3 files], %w[pci none pci], %w[pci_bus none pci_bus], %w[pcie 2 pcie],
                 %w[start none files], %w[storage_ctl 3 driver_control],
-                %w[system 3 files], %w[web 5 web]]
+                %w[system 3 files], %w[usb_input 4 input], %w[web 5 web]]
     assert_equal services.each_with_index.map { |(name, server, kind), index|
                    "service #{index} name=#{name} server=#{server} interface=#{interface.call(kind)}"
                  },

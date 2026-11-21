@@ -1,14 +1,16 @@
 %% Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
 %% SPDX-License-Identifier: BSD-2-Clause
 
--module(erx_storage_mint).
+-module(erx_fs_mint).
 -moduledoc """
-The mint of one files service of the storage domain: of a tree of the data volume
+The mint of one files service of a configured domain (docs/design-system.md, "Facets a
+configured domain serves"): in the storage domain, of a tree of the data volume
 (docs/design-stopgap.md, "littlefs in the storage domain"; erx_lfs, "Trees"), `data`, the
 storage domain's `/data` for the system domain and root's session, or `packages`, the
-installed app packages (docs/design-packaging.md, "Where a package lies"); or of the
+installed app packages (docs/design-packaging.md, "Where a package lies"), or of the
 `system` tree, the booted slot's system partition (docs/design-storage.md, "The `system`
-tree"). Each mint serves one tree, which an erx_fs callback module serves from the
+tree"); in a USB domain, of its input tree (docs/design-usb.md, "HID reaches the
+display"; erx_usb_places_sup). Each mint serves one tree, which an erx_fs callback module serves from the
 arguments the mint's mount answers, so a mint hands out grants of its own tree alone.
 It names itself the service's mint (erx_facet:provide/2) and acknowledges its start, both
 before the domain's ready report; only then does it run the mount, in its own process,

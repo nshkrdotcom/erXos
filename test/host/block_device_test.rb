@@ -12,7 +12,7 @@ class BlockDeviceTest < Minitest::Test
   Device = Erx::BlockDevice
   Image = Erx::BlockImage
   # The RAM of the machine the suite boots on, which its banner reports.
-  MEMORY_MIB = Erx::ProductionImage::Machine.board(Erx::Platform.development(File.expand_path('../..', __dir__))).memory_mib
+  MEMORY_MIB = Erx::Platform.development(File.expand_path('../..', __dir__)).memory_mib
 
   def good_log(lines = Device.expected_lines)
     "Hello\r\nerXos\r\n#{lines.map { |line| "#{line}\r\n" }.join}shell>\r\n"

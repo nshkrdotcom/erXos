@@ -10,8 +10,8 @@ actions it answers, in order; it decides nothing the core can.
 
 **Its siblings.** It runs under erx_usb_bus_sup beside the controller
 process and the function supervisor, and finds both among its
-supervisor's children once it has started, and the places among those
-of the controller's erx_usb_sup. It attaches to the controller
+supervisor's children once it has started; its group's start hands it the
+domain's places (erx_usb). It attaches to the controller
 (erx_usb_bus_link) and holds no core until the controller answers its
 root hub's port count; then the core's first step powers the root ports.
 
@@ -59,7 +59,7 @@ lose their functions before it does.
 -doc """
 What every function driver's start_link/1 takes: the claimed function,
 its device's EP0 as `control`, its own claimed pipes, in the order of the
-function's `pipes`, and the controller's places; beside them the bus
+function's `pipes`, and the domain's places; beside them the bus
 process, the device's reference and the instance's run number, and for a
 hub its port count.
 """.
@@ -72,33 +72,31 @@ hub its port count.
 -type instance() :: {erx_usb_bus_core:ref(), Interface :: byte(), erx_usb_bus_core:run_no(), reference()}.
 
 -record(bus, {sup :: pid(),
-              usb :: pid(),
-              places = none :: none | pid(),
+              places :: pid(),
               controller = none :: none | pid(),
               functions = none :: none | pid(),
               core = none :: none | erx_usb_bus_core:state(),
               timer = none :: none | reference(),
               instances = #{} :: #{pid() => instance()}}).
 
--doc "Starts the bus process of the bus group Sup under the controller's supervisor Usb, linked to the caller.".
+-doc "Starts the bus process of the bus group Sup, serving the domain's places Places, linked to the caller.".
 -spec start_link(pid(), pid()) -> {ok, pid()}.
-start_link(Sup, Usb) ->
-    gen_server:start_link(?MODULE, {Sup, Usb}, []).
+start_link(Sup, Places) ->
+    gen_server:start_link(?MODULE, {Sup, Places}, []).
 
 -doc false.
-init({Sup, Usb}) ->
-    {ok, #bus{sup = Sup, usb = Usb}, {continue, siblings}}.
+init({Sup, Places}) ->
+    {ok, #bus{sup = Sup, places = Places}, {continue, siblings}}.
 
 %% A supervisor answers only once it has started every child, so the children are
 %% read after init/1 has returned, never from inside it.
 -doc false.
-handle_continue(siblings, Bus = #bus{sup = Sup, usb = Usb}) ->
+handle_continue(siblings, Bus = #bus{sup = Sup}) ->
     Children = supervisor:which_children(Sup),
-    {places, Places, _, _} = lists:keyfind(places, 1, supervisor:which_children(Usb)),
     {controller, Controller, _, _} = lists:keyfind(controller, 1, Children),
     {functions, Functions, _, _} = lists:keyfind(functions, 1, Children),
     ok = erx_usb_bus_link:attach(Controller),
-    {noreply, Bus#bus{controller = Controller, functions = Functions, places = Places}}.
+    {noreply, Bus#bus{controller = Controller, functions = Functions}}.
 
 -doc false.
 handle_call(_Request, _From, Bus) ->

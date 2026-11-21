@@ -4,8 +4,8 @@
 -module(erx_usb_input_tree).
 -moduledoc """
 The input tree (docs/design-usb.md, "HID reaches the display"): the
-`erx_fs` callback module of one controller's input numbers, whose grant's
-argument is the controller's places, erx_usb_places_sup. The tree is an
+`erx_fs` callback module of the USB domain's input numbers, whose grant's
+argument is the streams of the places, erx_usb_places_sup. The tree is an
 instance of the input interface (abi/services/input.txt), named by its
 `input_tree`, `input`, and holds the `usb_input_max` files `hid0` to `hid7` beside nothing
 else, the same set for as long as the places live, so a display that
@@ -21,10 +21,10 @@ erx_usb_input_stream, its keeper, as `{wait, Stream, {read, Count}}`
 (docs/design-files.md, "Waiting requests"), and the grant goes on with its
 other requests meanwhile. Offsets are ignored: a file is a stream.
 
-A grant's argument is the streams' pids, which erx_usb_places_sup's
-input_tree/1 answers with the supervisor of the grants. The places restart
-as one, the tree's grants with the streams, so a grant never holds a
-stream that has ended without ending itself.
+A grant's argument is the streams' pids, which the tree's mint, the last
+child of erx_usb_places_sup, mounts the tree on (erx_fs_mint). The places
+never restart, so a grant never holds a stream that has ended without
+ending itself.
 """.
 -behaviour(erx_fs).
 

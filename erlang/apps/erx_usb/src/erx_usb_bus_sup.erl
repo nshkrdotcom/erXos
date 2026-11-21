@@ -18,7 +18,7 @@ held lives in the controller and the places, which see it end.
 
 The group restarts at most `usb_bus_restarts_max` times in any
 `usb_bus_restart_window_ms`; past that it ends with `shutdown`, which
-erx_usb_sup does not restart, so a controller that fails at every reset,
+erx_usb does not restart, so a controller that fails at every reset,
 a host controller error that comes back after each, is given up rather
 than reset forever.
 """.
@@ -30,14 +30,14 @@ than reset forever.
 -export([init/1]).
 
 -doc """
-Starts the bus group, under the controller's erx_usb_sup Usb, of the
+Starts the bus group, serving the domain's places Places, of the
 controller process that Controller, a `{Module, Function, Args}` start,
 starts linked; the bus process attaches
 to it (erx_usb_bus_link).
 """.
 -spec start_link(pid(), {module(), atom(), [term()]}) -> {ok, pid()}.
-start_link(Usb, Controller) ->
-    supervisor:start_link(?MODULE, {group, Usb, Controller}).
+start_link(Places, Controller) ->
+    supervisor:start_link(?MODULE, {group, Places, Controller}).
 
 -doc "Starts one function instance: its driver's start_link/1 with Args.".
 -spec start_function(erx_usb_claim:driver(), erx_usb_bus:start()) -> {ok, pid()} | {error, term()}.
@@ -45,11 +45,11 @@ start_function(Driver, Args) ->
     Driver:start_link(Args).
 
 -doc false.
-init({group, Usb, Controller}) ->
+init({group, Places, Controller}) ->
     Flags = #{strategy => one_for_all, intensity => ?ERX_USB_BUS_RESTARTS_MAX,
               period => ?ERX_USB_BUS_RESTART_WINDOW_MS div 1000},
     {ok, {Flags, [#{id => controller, start => Controller},
-                  #{id => bus, start => {erx_usb_bus, start_link, [self(), Usb]}},
+                  #{id => bus, start => {erx_usb_bus, start_link, [self(), Places]}},
                   #{id => functions, start => {supervisor, start_link, [?MODULE, functions]},
                     type => supervisor}]}};
 init(functions) ->

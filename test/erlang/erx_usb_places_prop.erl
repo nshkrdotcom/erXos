@@ -1,7 +1,7 @@
 %% Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
 %% SPDX-License-Identifier: BSD-2-Clause
 
-%% A controller's places (docs/design-usb.md, "HID reaches the display", and the places
+%% The USB domain's places (docs/design-usb.md, "HID reaches the display", and the places
 %% row of "Host tests of the cores"): erx_usb_places_sup with its eight streams, read
 %% through a real erx_fs grant of its input tree, against a model. Functions are model
 %% processes the test drives: each takes a number, writes records, and ends by detach, by
@@ -15,7 +15,7 @@
 -include_lib("eunit/include/eunit.hrl").
 -include("generated/erx_abi.hrl").
 
--export([export/3]).
+-export([export/3, mint_grants/1]).
 
 -define(NOFID, 16#ffffffff).
 -define(O_RDONLY, 0).
@@ -27,13 +27,13 @@
 
 %% Fixtures --------------------------------------------------------------
 
-%% A controller's places and an own grant of their input tree, with every number's file
+%% The domain's places and an own grant of their input tree, with every number's file
 %% open for reading.
 places() ->
     {ok, Places} = erx_usb_places_sup:start_link(),
     unlink(Places),
-    {Grants, Streams} = erx_usb_places_sup:input_tree(Places),
-    {ok, {Grant, _}} = erx_fs_grants:own(Grants, Streams),
+    Streams = streams(Places),
+    {ok, {Grant, _}} = erx_fs_grants:own(mint_grants(Places)),
     {ok, _} = call(Grant, {attach, 1, ?NOFID, <<"user">>, ?ERX_INPUT_TREE_BYTES, 0}),
     {ok, _} = call(Grant, {walk, 1, 2, []}),
     {ok, _, _} = call(Grant, {lopen, 2, ?O_RDONLY}),
@@ -42,6 +42,23 @@ places() ->
          {ok, _, _} = call(Grant, {lopen, ?FID0 + N, ?O_RDONLY})
      end || N <- numbers()],
     #{places => Places, grant => Grant, streams => Streams}.
+
+%% The supervisor of the input tree's grants, which the places' mint starts linked to
+%% itself once it has mounted the tree, in its own process after its start; the HID
+%% function's cases take it too (erx_usb_hid_tests).
+mint_grants(Places) -> mint_grants(Places, 1000).
+
+mint_grants(Places, Wait) ->
+    [Mint] = [Pid || {mint, Pid, _, _} <- supervisor:which_children(Places)],
+    {links, Links} = process_info(Mint, links),
+    case Links -- [Places] of
+        [Grants] -> Grants;
+        [] when Wait > 0 -> timer:sleep(10), mint_grants(Places, Wait - 10)
+    end.
+
+%% The streams of the places' input numbers, number 0 first, the tree's arguments.
+streams(Places) ->
+    list_to_tuple(erx_usb_places_sup:streams(Places)).
 
 stop(#{places := Places}) ->
     exit(Places, shutdown).
@@ -112,8 +129,8 @@ the_tree_holds_the_eight_numbers_test() ->
 a_grant_with_the_mint_limits_is_accepted_and_serves_the_tree_test() ->
     {ok, Places} = erx_usb_places_sup:start_link(),
     unlink(Places),
-    {Grants, Streams} = erx_usb_places_sup:input_tree(Places),
-    {ok, Grant} = erx_fs_grants:grant(Grants, Streams, #{rights => ro, session => true},
+    {ok, Grants} = erx_fs_grants:start_link(erx_usb_input_tree),
+    {ok, Grant} = erx_fs_grants:grant(Grants, streams(Places), #{rights => ro, session => true},
                                       #{client => own, ends_with => none, exports => ?MODULE}),
     {ok, _} = call(Grant, {attach, 1, ?NOFID, <<"user">>, ?ERX_INPUT_TREE_BYTES, 0}),
     {ok, _} = call(Grant, {walk, 1, 3, [name(0)]}),

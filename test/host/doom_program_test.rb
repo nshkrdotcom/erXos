@@ -178,7 +178,7 @@ class DoomProgramTest < Minitest::Test
     kind = Erx::ProductionImage::MediumKind
     added = Erx::ProductionImage::Added.new(entries: [{ 'path' => 'bin/probe' }].freeze, inputs: [].freeze, imports: {}.freeze)
     asked = [kind.development, kind.test(test_programs: added), kind.published].to_h do |medium|
-      image = builder(Erx::ProductionImage::Machine.board(PLATFORM))
+      image = builder(Erx::ProductionImage::Machine.development(PLATFORM))
       image.define_singleton_method(:domain_boots) { |_source, given: []| given }
       image.define_singleton_method(:published_apps) { Erx::ImageApps.none }
       image.define_singleton_method(:assemble) { |doom:, **| throw :assembled, doom }
@@ -196,7 +196,7 @@ class DoomProgramTest < Minitest::Test
 
     # The one build refuses too, whatever asked for Doom. An image builder reads the ABI
     # from its tree when made, so the tree with no fork is put in its place afterwards.
-    unfetched = builder(Erx::ProductionImage::Machine.board(PLATFORM))
+    unfetched = builder(Erx::ProductionImage::Machine.development(PLATFORM))
     unfetched.instance_variable_set(:@root, @root)
     unfetched.define_singleton_method(:domain_boots) { |_source, given: []| given }
     unfetched.define_singleton_method(:published_apps) { Erx::ImageApps.none }

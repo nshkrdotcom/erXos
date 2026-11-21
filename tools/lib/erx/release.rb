@@ -30,7 +30,7 @@ require_relative '../../../test/fixtures/pack_root'
 module Erx
   # The system release as an archive of its own: ReleaseFiles through Pack#build with the
   # development manifest of its board (platform, a Platform), so hosted and native run the same files; only the root differs.
-  # It is packed for the board machine (ProductionImage::Machine.board), as every pack of that manifest is.
+  # It is packed for the record's own machine (ProductionImage::Machine.development), as every pack of that manifest is.
   # Hosted, the root is a minimal static executable that never runs, since erx_pack_open
   # and the packer require one (docs/design-fiasco.md, "The archive has a root that
   # never runs").
@@ -102,7 +102,7 @@ module Erx
         catalog = root_task.fetch('catalog').merge(BuildInputs.pack(root: @root, paths: ReleaseFiles.inputs_of([*files, *domains], root: @root, otp: @otp)))
         pack_with(tools, catalog).build(
           entries: entries, root_path: 'system/root', build_kind: BuildKind::DEVELOPMENT,
-          platform: ProductionImage::Machine.board(@platform).record,
+          platform: ProductionImage::Machine.development(@platform).record,
           artifacts: ProductionImage.artifacts(archive_paths(entries), images: images, boots: boots),
           manifest_source: manifest_source, output: output
         )

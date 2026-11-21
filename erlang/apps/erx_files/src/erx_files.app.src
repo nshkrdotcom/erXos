@@ -13,6 +13,7 @@
              erx_fs_node,
              erx_fs_grants,
              erx_fs_grant,
+             erx_fs_mint,
              erx_fs_version,
              erx_procfs,
              erx_procfs_core,

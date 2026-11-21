@@ -146,19 +146,21 @@ class ManifestEditTest < Minitest::Test
   # share and runtime limits other records still name, and gives back its room: its
   # budgets from the principal and root_memory, its unit's DMA memory (4 and 3) from
   # root_memory, one domain, and one connection with the two of root's display_root,
-  # its session's and a replacement session's.
+  # its session's and a replacement session's, and the one usb_input takes, of the USB
+  # domain's limits too.
   def test_without_domain_takes_its_records_and_gives_back_its_room
     gone = Edit.without_domain(SOURCE, 'display', units: UNITS)
     taken = records(SOURCE).keys - records(gone).keys
-    assert_equal [%w[display display], %w[domain display], %w[facet display_root], %w[limits display], %w[runtime_limits display],
+    assert_equal [%w[display display], %w[domain display], %w[facet display_root], %w[facet usb_input], %w[limits display], %w[runtime_limits display],
                   %w[service display], %w[share display], %w[unit display]], taken.sort
     budget = value(SOURCE, 'limits display', 'memory') + value(SOURCE, 'limits display', 'outer')
     { ['principal system', 'memory'] => -budget, ['principal system', 'domains'] => -1,
-      %w[machine root_memory] => -budget - 7, %w[machine max_domains] => -1, %w[machine max_connections] => -3 }
+      %w[machine root_memory] => -budget - 7, %w[machine max_domains] => -1, %w[machine max_connections] => -4,
+      ['limits usb', 'connections'] => -1 }
       .each do |(record, field), change|
         assert_equal value(SOURCE, record, field) + change, value(gone, record, field), "#{record} #{field}"
       end
-    kept = records(gone).reject { |key, _held| [%w[machine], %w[principal system]].include?(key.compact) }
+    kept = records(gone).reject { |key, _held| [%w[machine], %w[principal system], %w[limits usb]].include?(key.compact) }
     assert_equal records(SOURCE).slice(*kept.keys), kept
   end
 
@@ -189,13 +191,11 @@ class ManifestEditTest < Minitest::Test
     assert_includes records(Edit.without_domain(source, 'display', units: UNITS)).keys, %w[share system]
   end
 
-  # A domain that is not there, whose service is granted to another domain or another
-  # principal's template,
+  # A domain that is not there, whose service is granted to another principal's template,
   # which leaves a record naming one it took, or whose unit is on no platform unit, is
   # refused.
   def test_without_domain_refuses_what_it_cannot_take_whole
     [['absent', SOURCE, /no record "@domain.absent"/],
-     ['web', SOURCE.sub("facet web\n  grantee system\n", "facet web\n  grantee @domain.storage\n"), /granted by facet web/],
      ['web', SOURCE.sub("facet web\n  grantee system\n", "facet web\n  grantee @session.other\n"), /granted by facet web/],
      ['display', "#{SOURCE}start system\n  display @service.display\n", /start system names a record/],
      ['display', "#{SOURCE}introduce @domain.storage @domain.display\n",
@@ -217,10 +217,21 @@ class ManifestEditTest < Minitest::Test
     refute_match(/^facet web$/, taken)
   end
 
+  # A facet granting the domain's service to another configured domain, as usb_input is
+  # the display's, goes with the domain and gives back that domain's connection to it,
+  # from its limits and from max_connections, beside the domain's own system connection.
+  def test_without_domain_takes_a_grant_to_another_domain_with_its_connections
+    granted = SOURCE.sub("facet web\n  grantee system\n", "facet web\n  grantee @domain.storage\n")
+    taken = Edit.without_domain(granted, 'web', units: UNITS)
+    refute_match(/^facet web$/, taken)
+    assert_equal value(granted, 'machine', 'max_connections') - 2, value(taken, 'machine', 'max_connections')
+    assert_equal value(granted, 'limits storage', 'connections') - 1, value(taken, 'limits storage', 'connections')
+  end
+
   # A facet granting the domain a service of the system domain, as pci_bus is the PCIe
   # domain's, goes with the domain and gives back nothing beside the domain's own system
-  # connection, which carries it; one granting it a service another domain serves is
-  # refused, since that grant is the server's reckoning.
+  # connection, which carries it; one granting it a service another domain serves goes too, and gives back
+  # one connection of the server's limits and one of max_connections.
   def test_without_domain_takes_the_system_services_granted_to_it
     units = VIRT.record.fetch('units')
     connections = ->(text) { Erx::Manifest::Frontend.read(text).machine.decimal('max_connections') }
@@ -229,7 +240,9 @@ class ManifestEditTest < Minitest::Test
     assert_equal connections.(SOURCE) - 1, connections.(taken)
     peer = "#{SOURCE}facet peer\n  grantee @domain.pcie\n  service @service.storage_ctl\n  operations none\n" \
            "  max_request 1024\n  in_flight 1\n  reductions 100000\n  period_ns 1000000000\n  max_heap_size 8192\n"
-    error = assert_raises(Erx::Error) { Edit.without_domain(peer, 'pcie', units: units) }
-    assert_match(/granted facet peer, of a service another domain serves/, error.message)
+    taken_peer = Edit.without_domain(peer, 'pcie', units: units)
+    refute_match(/^facet peer$/, taken_peer)
+    assert_equal connections.(peer) - 2, connections.(taken_peer)
+    assert_equal value(peer, 'limits storage', 'connections') - 1, value(taken_peer, 'limits storage', 'connections')
   end
 end

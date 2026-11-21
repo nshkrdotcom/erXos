@@ -8,7 +8,7 @@ require 'tmpdir'
 require_relative '../fixtures/erlang_build'
 
 # Runs test/erlang/erx_usb_bus_tests.erl, the bus process row of docs/design-usb.md's
-# host tests: a controller's supervisor, erx_usb_sup, with its places and its bus group,
+# host tests: the domain's top supervisor, erx_usb, with its places and a bus group,
 # the bus process over erx_usb_bus_core and the hub function over erx_usb_hub_core,
 # against erx_usb_fake_xhci, a controller speaking the design's controller-to-bus
 # protocol, on stock's emulator (ERX_ERL and ERX_ERLC, which make check supplies),
@@ -31,7 +31,7 @@ class ErxUsbBusTest < Minitest::Test
   DEADLINE_SECONDS = '300'
   BUS = 'erlang/apps/erx_usb/src/erx_usb_bus.erl'
   CORE = 'erlang/apps/erx_usb/src/erx_usb_bus_core.erl'
-  SUP = 'erlang/apps/erx_usb/src/erx_usb_sup.erl'
+  SUP = 'erlang/apps/erx_usb/src/erx_usb.erl'
 
   Seed = Data.define(:fault, :module_path, :anchor, :replacement, :catching_case)
 

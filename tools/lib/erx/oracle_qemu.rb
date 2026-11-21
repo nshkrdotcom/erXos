@@ -53,9 +53,9 @@ module Erx
     # 98 MiB heap, which the 78 MiB baseline cannot give, and ERTS then ends the
     # whole run; stdlib's suites fill about 97 MiB of /tmp, past its 4 MiB cap. The
     # archive, which carries a group's suites, their data and stock's applications,
-    # is 55 MB for the compiler group, past the 48 MiB the development layout leaves
+    # is 55 MB for the compiler group, past the room the development layout leaves
     # bootstrap for it. A 2 GiB machine, whose Fiasco keeps 124 MiB for kernel
-    # memory where the development machine's keeps 32 MiB (Platform.fiasco_reserve), gives the system domain
+    # memory (Platform.fiasco_reserve), gives the system domain
     # 1 GiB more and /tmp a 160 MiB cap; nothing else of the manifest changes, and
     # that 1 GiB also holds the 256 MiB cap of Common Test's log tree
     # (OracleSuites::ERXOS_LOG_CAP) beside /tmp's. The manifest's arithmetic would

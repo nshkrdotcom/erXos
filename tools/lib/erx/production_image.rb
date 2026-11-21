@@ -71,8 +71,6 @@ module Erx
     NOTICES_PATH = 'system/NOTICES'
     # What a machine keeps for the root's image past its place: the image is about 5 MiB.
     ROOT_ROOM_MIB = 8
-    # The RAM of QEMU virt's board machine (Machine.board).
-    BOARD_QEMU_MIB = 640
     LICENSE = 'LICENSE'
     # The trees imported into the source tree that the image builds from: BLAKE3 for the
     # root's reader of the archive and the entropy generator's mixing, ChaCha20 for that
@@ -123,7 +121,7 @@ module Erx
     #   the harnesses pack it.
     # * published, the medium the website offers (`tools/erx pack --published`, `make
     #   pack`): its own apps (published_apps) and none of its builder's, trusting no
-    #   package key (check_published_trust), on Machine.board, and the one kind that
+    #   package key (check_published_trust), on Machine.development, and the one kind that
     #   carries the Doom example (example_parts; docs/design.md's dependency table, status
     #   example), which must be fetched first.
     # * test, a QEMU cell's development medium with test code added and marked as test
@@ -270,9 +268,9 @@ module Erx
     # holds it; an archive the root lands on moves behind it at boot
     # (kernel/core/boot_place.c, erx_boot_place_archive).
     # What the system growth leaves of the added RAM widens the room bootstrap keeps
-    # for the archive. An image of the board's own manifest boots on the board machine
-    # (Machine.board), the platform record's own (Machine.development) on a card and a
-    # larger one on QEMU virt; a test image whose suites need more memory or carry a
+    # for the archive. An image of the board's own manifest boots on the platform
+    # record's own machine (Machine.development); a test image whose suites need more
+    # memory or carry a
     # larger archive (OracleQemu) names a larger one, and Pack's manifest check proves
     # the grown manifest against the platform record of that machine as it proves the
     # development one. boot_timeout_s is the machine's boot timeout where its manifest's
@@ -281,7 +279,9 @@ module Erx
     Machine = Data.define(:platform, :memory_mib, :system_growth_mib, :tmp_growth_mib, :root_mib,
                           :boot_timeout_s) do
       # The record's own machine: its RAM, the root at NativeRoot's
-      # development place.
+      # development place. The board's own manifest (Platform#manifest_source) is packed
+      # for and boots on it, every medium kind's (MediumKind) and every image's of that
+      # manifest, the website's alone aside (Machine.site).
       def self.development(platform)
         new(platform: platform, memory_mib: platform.memory_mib,
             system_growth_mib: 0, tmp_growth_mib: 0, root_mib: NativeRoot::DEVELOPMENT_ROOT_MIB)
@@ -297,18 +297,6 @@ module Erx
       # hangs on the page is stopped only after 10 minutes, which the visitor sees on the
       # console.
       def self.site(platform) = development(platform).with(memory_mib: 256, boot_timeout_s: 600)
-
-      # The board machine: the one the board's own manifest (Platform#manifest_source) is
-      # packed for and boots on, every medium kind's (MediumKind) and every image's of that
-      # manifest, the website's alone aside (Machine.site). A card's is the record's own
-      # (Machine.development). On QEMU virt the manifest's root_memory leaves an archive of
-      # the production image's size too little room in the record's 512 MiB, so the board
-      # machine has BOARD_QEMU_MIB (TODO.md, "QEMU `virt`'s record RAM").
-      def self.board(platform)
-        return development(platform) if BootPartition.boot_partition_medium?(platform)
-
-        development(platform).with(memory_mib: BOARD_QEMU_MIB)
-      end
 
       def initialize(platform:, boot_timeout_s: nil, **numbers)
         raise Error, 'a machine is on a Platform' unless platform.is_a?(Platform)
@@ -500,7 +488,7 @@ module Erx
     PUBLISHED_APPS_DIRECTORY = 'build/published-apps'
 
     # `tools/erx pack`'s one build: Fiasco for platform (Fiasco#build_for), then the
-    # production image into packed_directory, cleared first, on Machine.board, since
+    # production image into packed_directory, cleared first, on Machine.development, since
     # it carries the board's manifest, with the packages of apps (ImageApps::Plan,
     # `tools/erx pack --app`), and with its medium when medium, a MediumKind, is given:
     # the published kind is the website's (`tools/erx pack --published`). What the
@@ -510,7 +498,7 @@ module Erx
     # builder's yet (TODO.md, "site, the QEMU virt download"). Returns build's or
     # build_medium's result. The raspi4b suite boots the development card this leaves.
     def self.pack_platform(root:, runner:, compiler:, linker:, platform:, medium:, jobs: 4, apps: ImageApps.none)
-      machine = Machine.board(platform)
+      machine = Machine.development(platform)
       check_medium(medium, machine: machine, apps: apps) if medium
       DoomProgram.check_fetched(root: root, runner: runner) if medium&.published?
       fiasco = Fiasco.new(root: root, runner: runner, compiler: compiler)
@@ -564,15 +552,15 @@ module Erx
 
     # Refuses a medium of kind (MediumKind) on machine with apps (ImageApps::Plan) its
     # kind does not take, before anything is built: the published kind on any machine but
-    # Machine.board, a medium that carries its own apps (own_apps?) with any package,
+    # Machine.development, a medium that carries its own apps (own_apps?) with any package,
     # signer or --local of its builder's, since it carries the kiosk alone, and a card with
     # test code, since the website offers it.
     def self.check_medium(kind, machine:, apps:)
       platform = machine.platform
       card = BootPartition.boot_partition_medium?(platform)
       offered = card ? "the #{platform.name} card" : "the published #{platform.name} medium"
-      if kind.published? && machine != Machine.board(platform)
-        raise Error, "#{offered} is packed for its board's machine (ProductionImage::Machine.board)"
+      if kind.published? && machine != Machine.development(platform)
+        raise Error, "#{offered} is packed for its board's machine (ProductionImage::Machine.development)"
       end
       raise Error, "#{offered} is the one the website offers: it carries no test code" if card && kind.test_code?
       return if apps.empty? || !own_apps?(kind, platform)
@@ -1156,7 +1144,7 @@ module Erx
                      compiler: ENV.fetch('ERX_CLANG', ''), linker: ENV.fetch('ERX_LLD', ''), qemu: 'qemu-system-aarch64',
                      platform: Platform.development(root))
         @root = File.expand_path(root)
-        @machine = Machine.board(platform)
+        @machine = Machine.development(platform)
         @runner = runner
         @compiler = compiler
         @linker = linker

@@ -12,7 +12,7 @@ require_relative 'source_revision'
 
 module Erx
   # The offline kiosk as an image package (docs/design-packaging.md, Verification): the
-  # production image of the board machine (ProductionImage::Machine.board), with the board's own manifest, carries
+  # production image of the record's own machine (ProductionImage::Machine.development), with the board's own manifest, carries
   # examples/dashboard packed as the Raspberry Pi 4's card packs it
   # (ImageApps.packed_kiosk), enabled, so the package lies at apps/dashboard.app of the
   # slot's system partition and its `package` row binds its header's SHA-256. The harness
@@ -276,8 +276,8 @@ module Erx
         @compiler = compiler
         @linker = linker
         @qemu = qemu
-        # The kiosk boots the board's own manifest, so its machine is the board machine.
-        @machine = ProductionImage::Machine.board(platform)
+        # The kiosk boots the board's own manifest, so its machine is the record's own.
+        @machine = ProductionImage::Machine.development(platform)
         @manifest = platform.manifest_source(@root)
         @notes = []
       end

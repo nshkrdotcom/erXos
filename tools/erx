@@ -292,7 +292,7 @@ module Erx
       parent = File.join(ROOT, 'build/reproducible')
       OutputDirectory.prepare(root: ROOT, path: parent)
       report = ProductionImage.new(root: ROOT, runner: runner, compiler: compiler, linker: environment.fetch('ERX_LLD'),
-                                   machine: ProductionImage::Machine.board(platform), fiasco: fiasco)
+                                   machine: ProductionImage::Machine.development(platform), fiasco: fiasco)
                               .check_reproducible(directory: Dir.mktmpdir('production-', parent))
       Terminal.puts("production image: byte-identical; #{report.fetch('report')}")
       Terminal.puts("child_plan_instances: #{report.fetch('manifest').fetch('child_plan_instances')}")
@@ -633,7 +633,7 @@ module Erx
     # the board's card (ProductionImage::MediumKind.published): it carries the kiosk alone
     # and the Doom example as /bin/doom, so it needs `tools/erx fetch --example doom`
     # first, and takes no app, signer or --local of its builder's. Every image is packed for
-    # ProductionImage::Machine.board. With --probe header, instead the Raspberry Pi
+    # ProductionImage::Machine.development. With --probe header, instead the Raspberry Pi
     # 4's header probe card (HeaderProbe), a card of its own that needs no Fiasco and no
     # image; it is a medium already, so it takes neither. Each --app adds an app to the
     # image (image_apps, docs/design-packaging.md, "Adding an app to an image"), into its
@@ -1168,14 +1168,14 @@ module Erx
 
     # `tools/erx boot --medium PATH`: the release medium at PATH in QEMU as a person boots
     # it (InteractiveBoot.medium_argv), on the machine of the board's manifest
-    # (ProductionImage::Machine.board), which every medium
+    # (ProductionImage::Machine.development), which every medium
     # `tools/erx pack --medium` or `--published` writes is packed for; with --print, the plain
     # qemu-system-aarch64 command instead, whose
     # kernel, device tree and disk lie in the tree until the next --medium. The guest
     # boots a copy of the medium (InteractiveBoot.medium_copy), where it keeps its /data
     # and SSH host key from boot to boot, so the medium at PATH stays as written.
     def self.boot_medium(request, platform:, accel:, runner:)
-      machine = ProductionImage::Machine.board(platform)
+      machine = ProductionImage::Machine.development(platform)
       files = InteractiveBoot.medium_boot(root: ROOT, runner: runner, medium: request.medium, machine: machine,
                                           cpus: request.cpus)
       argv = InteractiveBoot.medium_argv(platform: platform, accel: accel, cpus: request.cpus, kernel: files.kernel,

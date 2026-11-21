@@ -99,7 +99,7 @@ class FacetNamesTest < Minitest::Test
       h(U) -> {erx_driver_ctl, start_mint, [rogue, U]}.
       i(S, M) -> erx_driver_ctl:mint_request(S, rogue, M).
       j() -> erx_ns:mount({facet, rogue}, <<"/r">>, []).
-      k(T) -> erx_storage_mint:start_link(rogue, erx_storage_system, T).
+      k(T) -> erx_fs_mint:start_link(rogue, erx_storage_system, T).
       l() -> erx_facets:find(rogue).
       m() -> erx_facets:file_grant(rogue, ro).
     ERL

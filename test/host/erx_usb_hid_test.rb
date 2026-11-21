@@ -9,18 +9,20 @@ require_relative '../fixtures/erlang_build'
 
 # Runs test/erlang/erx_usb_hid_tests.erl, the HID function of docs/design-usb.md: the
 # protocol choice of erx_hid_core:plan/2, and erx_usb_hid end to end from a model
-# device's reports, through a controller's places and a real erx_fs grant of their input
+# device's reports, through the domain's places and a real erx_fs grant of their input
 # tree, to the records a reader decodes; on stock's emulator (ERX_ERL and ERX_ERLC, which
 # make check supplies), against the sources as they are and against each seeded fault,
 # where the named case must fail.
 class ErxUsbHidTest < Minitest::Test
   APPLICATIONS = %w[erx_usb].freeze
   # The grammar is generated into OTP's preloaded sources, outside the applications, so it
-  # is compiled with the cases; the stand-ins replace the erx modules the grant calls and
+  # is compiled with the cases, as is the places' property test, whose fixture the cases
+  # share; the stand-ins replace the erx modules the grant calls and
   # erx_usb_pipe, which carries the function's transfers to the model device.
   TESTS = %w[
     build/gen/otp/erts/preloaded/src/erx_9p_grammar.erl
     test/erlang/erx_usb_hid_tests.erl
+    test/erlang/erx_usb_places_prop.erl
     test/erlang/stand_in/erx_dist.erl
     test/erlang/stand_in/erx_connections.erl
     test/erlang/stand_in/erx_usb_pipe.erl

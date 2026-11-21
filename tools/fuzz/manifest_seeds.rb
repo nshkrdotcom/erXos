@@ -145,9 +145,8 @@ module Erx
       Manifest.admit(source: source, codec: codec, context: context, planner: ManifestContextFixture.accepting_planner).bytes
     end
 
-    # The platform record of the board NAME's board machine, which its manifest is packed for
-    # (ManifestContextFixture.board_platform).
-    def platform_of(repository, name) = ManifestContextFixture.board_platform(repository, name: name)
+    # The platform record of the board NAME, whose machine its manifest is packed for.
+    def platform_of(repository, name) = Platform.load(root: repository, name: name).record
 
     # The manifest bytes with the machine's boot_timeout_s, in their header, set to seconds.
     def boot_timeout(codec, bytes, seconds)

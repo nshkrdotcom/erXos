@@ -8,7 +8,7 @@ docs/design-storage.md, "The record volume's one reader"): root's login keys
 read from the record volume's `authorized_keys`, served read-only as one file,
 `root`, of 51-byte key blobs one after the other.
 
-* **The holder.** start_mint/0 starts the service's mint, erx_storage_mint,
+* **The holder.** start_mint/0 starts the service's mint, erx_fs_mint,
   whose mount starts the holder, a process of this module linked to the mint,
   and answers its pid as the tree, so the mount waits for no read and the mint
   answers mint requests at once. The holder is the one owner of the result. It
@@ -73,7 +73,7 @@ start_mint() ->
     case erx_blk_service:window(record_volume) of
         {ok, Window} ->
             Read = fun(Sector) -> erx_blk_window:read(Window, Sector, 1) end,
-            erx_storage_mint:start_link(login_keys, ?MODULE, fun() -> holder(Read) end);
+            erx_fs_mint:start_link(login_keys, ?MODULE, fun() -> holder(Read) end);
         {error, _} ->
             ignore
     end.

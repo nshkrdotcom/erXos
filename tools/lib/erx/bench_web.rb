@@ -66,7 +66,7 @@ module Erx
       @runner = runner
       @compiler = compiler
       @linker = linker
-      @machine = ProductionImage::Machine.board(platform)
+      @machine = ProductionImage::Machine.development(platform)
     end
 
     # Builds the production image and the web client, boots the image and writes the

@@ -1367,7 +1367,7 @@ The tree is served as the data volume's trees are
 serves `system`, and its server holds the manifest's `system` window,
 which property 19 checks. One child of `erx_storage_sup`,
 `erx_storage_system:start_mint/0`, starts the service's mint,
-`erx_storage_mint`, the one mint of every files service the storage
+`erx_fs_mint`, the one mint of every files service the storage
 domain serves. The mint names itself and reports its start, and only
 then, in its own process and before it takes a request, mounts the tree
 once with `erx_storage_system:mount/1` on the block service's `system`

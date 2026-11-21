@@ -13,7 +13,7 @@ is their effects: control requests and interrupt transfers through
 
 **Start.** The bus process starts one per claimed HID interface, with the
 claim's function, the device's control pipe, the function's pipes in the
-claim's order (the interrupt-IN pipe alone) and the controller's places.
+claim's order (the interrupt-IN pipe alone) and the domain's places.
 The function first takes the lowest free input number
 (`erx_usb_places_sup:occupy_input/2`); when every number is taken it is not
 started, and its start answers `{error, {shutdown, {unusable, no_input_number}}}`,
@@ -66,7 +66,6 @@ display. Its end reasons are atoms and the pipe's own error terms.
 -export([start_link/1]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2]).
 
-
 %% The interrupt-IN transfers kept posted (docs/design-usb.md, "From reports to records").
 -define(POSTED, 4).
 
@@ -75,7 +74,6 @@ A handle of one pipe, as the bus process gets it from `erx_usb_pipe`; this
 module only passes it back to `erx_usb_pipe` and matches it in completions.
 """.
 -type pipe() :: term().
-
 
 -record(hid, {interface :: byte(),
               setting :: erx_usb_desc:setting(),

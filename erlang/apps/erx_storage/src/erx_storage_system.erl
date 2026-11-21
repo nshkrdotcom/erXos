@@ -25,7 +25,7 @@ domain that serves `system` serves the booted slot's system partition.
   tree`, so a boot shows it served one. A record that is absent or refused, an image the reader refuses,
   and an image whose `apps/` is not a directory leave the tree `none`; the
   reason goes to the log once.
-* **Serving.** start_mint/0 starts the service's mint, erx_storage_mint, which
+* **Serving.** start_mint/0 starts the service's mint, erx_fs_mint, which
   mounts the tree once, in its own process, and starts each grant,
   `erx_fs:start_link(?MODULE, Tree, Rights)` with its facet row's rights, on
   the one tree mount/1 answers, which never changes, so a grant reads the
@@ -72,13 +72,13 @@ open `eio`, so it reaches no file.
 Starts the mint of `system_service`, `system`, linked to the caller
 (erx_storage_sup). The mint mounts the tree once on the block service's
 `system` window, in its own process once it has started, and hands each grantee an
-erx_fs grant of that tree with its facet row's rights (erx_storage_mint). A
+erx_fs grant of that tree with its facet row's rights (erx_fs_mint). A
 boot whose block service names no `system` window starts no mint.
 """.
 -spec start_mint() -> {ok, pid()} | ignore.
 start_mint() ->
     case erx_blk_service:window(system) of
-        {ok, Window} -> erx_storage_mint:start_link(system, ?MODULE, fun() -> mount(Window) end);
+        {ok, Window} -> erx_fs_mint:start_link(system, ?MODULE, fun() -> mount(Window) end);
         {error, _} -> ignore
     end.
 
