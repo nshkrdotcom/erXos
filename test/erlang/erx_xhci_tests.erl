@@ -87,6 +87,19 @@ pci_facet(Player) ->
             pci_facet(Player)
     end.
 
+%% A pci facet that has ended refuses the open as an {error, _} answer would, so the start
+%% fails with its step named instead of the process exiting from inside its init.
+a_pci_facet_that_has_ended_fails_the_start_test() ->
+    Self = self(),
+    {Facet, Ref} = spawn_monitor(fun() -> ok end),
+    receive {'DOWN', Ref, process, Facet, _} -> ok end,
+    persistent_term:put({erx, pci}, Facet),
+    spawn(fun() -> process_flag(trap_exit, true),
+                   Self ! {started, erx_xhci:start_link(#{stand_in => Self, place => {0, 0, 2, 0}})} end),
+    Started = receive {started, S} -> S after 2000 -> timeout end,
+    persistent_term:erase({erx, pci}),
+    ?assertEqual({error, {pci_open, {pci, noproc}}}, Started).
+
 %% A root port's event goes to the bus process from an interrupt's pass, which clears the
 %% event interrupt and interrupt pending, reads the events until an empty batch and then
 %% acknowledges the line; the bus's root-port operation reads that port's PORTSC, the

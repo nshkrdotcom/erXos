@@ -205,8 +205,17 @@ pci_call(none, _Request) ->
     ok;
 pci_call(Place, Request) ->
     case erx:cap(pci) of
-        Facet when is_pid(Facet) -> gen_server:call(Facet, {Request, Place}, ?PCI_TIMEOUT_MS);
+        Facet when is_pid(Facet) -> facet_call(Facet, {Request, Place});
         undefined -> {error, no_pci_facet}
+    end.
+
+%% A facet that does not answer in time, or has ended, refuses the call as one that
+%% answers {error, _} does, so the controller fails through its one path.
+facet_call(Facet, Call) ->
+    try
+        gen_server:call(Facet, Call, ?PCI_TIMEOUT_MS)
+    catch
+        exit:{Reason, {gen_server, call, _}} -> {error, {pci, Reason}}
     end.
 
 read(#controller{dev = Dev}, Register) -> erx_device:read(Dev, nif_register(Register)).
