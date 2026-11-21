@@ -32,16 +32,11 @@ a request, carry it across the wall, check it and bring the bytes
 back, without becoming a second way to get authority beside the four
 forms of chapter 11.
 
-UNIX has one tree of files for the whole machine. Every process
-resolves `/data/notes.txt` the same way, through the same mounts, and
-the kernel decides at `open` by the file's owner and permission bits
-whether this process, running as this user, may have it. A jail or
-`chroot` gives a group of processes a smaller tree, cut from the one
-tree ([chapter 1](01-operating-systems.md#164-file-systems-and-mounting)).
-
 In erXos, after Plan 9, each domain sees files through its own
 namespace, a private table from path prefixes to the file servers it
-was given, and there is no machine-wide tree to cut from.
+was given. Where UNIX has one tree for the whole machine
+([chapter 1](01-operating-systems.md#164-file-systems-and-mounting)),
+erXos has one table per domain.
 An entry that leads to another domain holds the pid of a
 [file grant](11-security.md#1171-a-namespace-of-grants) at that
 domain's server. A pid alone grants nothing
@@ -584,11 +579,9 @@ not, and each record has one gate for both forms. `/proc` and the
 records README lists, such as each CPU at `/proc/cpus/N` and the
 clock at `/proc/time/status`, are built.
 
-There is no `sysctl`. FreeBSD splits its system values between
-`sysctl` names and `procfs` files, each with its own permission model.
-In erXos every system value is an attribute of the inspector's one
-tree, and `erx:i/1`, `/proc` and the host tool's `erx inspect` are
-views of it
+Where FreeBSD has `sysctl`, erXos has the inspector's tree: every
+system value is an attribute of it, and `erx:i/1`, `/proc` and the
+host tool's `erx inspect` are views of it
 ([design-live.md, System values](../design-live.md#system-values-one-tree-many-views)).
 The tree is read-only: configuration lives in the system manifest,
 whose security properties a build check proves, and a writable value
@@ -722,7 +715,7 @@ Each of these lost, for a stated reason
 ([design-files.md, Alternatives considered](../design-files.md#alternatives-considered)).
 
 **One machine-wide tree with permission bits.** Owner and mode bits
-would decide, as in UNIX. Authority would then live in a second
+would decide. Authority would then live in a second
 system beside exports and facets, which every service would have to
 check; a namespace built from grants needs no check beyond the
 funnel's.

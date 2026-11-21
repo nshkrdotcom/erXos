@@ -347,11 +347,10 @@ the scheduler
 * **No share.** Fiasco charges each thread for its own slices and keeps
   no account per domain
   ([section 5.6.5](05-overview.md#565-shared-services-and-shared-cpu)).
-* **No grace period.** Some kernels let a thread that holds a lock run
-  a little past the end of its slice, so others do not wait on a
-  preempted holder. Fiasco does not: a slice ends where it ends, even
-  inside a run-queue lock, and an executor that wants the lock sleeps
-  in its umtx wait until the holder runs again.
+* **No grace period.** A slice ends where it ends, even inside a
+  run-queue lock: a thread that holds a lock gets no time past its
+  slice, and an executor that wants the lock sleeps in its umtx wait
+  until the holder runs again.
 
 Each absence buys simplicity: a runtime never entered unexpectedly
 needs no code to recover, and a kernel that takes no hints cannot be
@@ -389,10 +388,9 @@ spends time that another domain at the same priority could have used.
 
 ### 9.4.2 The inside of ERTS on erXos
 
-Stock ERTS keeps what it needs from UNIX in one directory, `sys/unix`.
-On erXos, ERTS's scheduler, garbage collector, loader and distribution
-sit instead on an **adapter**, the directory
-`otp/erts/emulator/sys/erxos/`, the only part of ERTS that includes a
+ERTS's scheduler, garbage collector, loader and distribution sit on an
+**adapter**, the directory `otp/erts/emulator/sys/erxos/`, which holds
+what ERTS needs from the system beneath it and is the only part of ERTS that includes a
 `liberx` header
 ([design-runtime.md, The adapter](../design-runtime.md#the-adapter)).
 Figure 9.3 shows the layers.
@@ -736,10 +734,9 @@ Bands give an order between domains for one number each; the cost is
 that a busy domain in a high band can starve every lower one on its
 processors.
 
-**Lending time to a service.** Some kernels let a client donate its
-processor time to the server working for it, as seL4's passive servers
-run on their callers' time and some L4 kernels donate a time slice
-with a call
+**Lending time to a service.** A client could donate its processor
+time to the server working for it, so that a server with no time of
+its own runs on its callers' time
 ([research-hierarchical-scheduling.md](../research-hierarchical-scheduling.md)).
 erXos does not: a service runs on its own threads, and nothing must
 work out who pays. The price is that a saturated service slows all its
