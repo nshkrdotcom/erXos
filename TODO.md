@@ -8148,6 +8148,16 @@ model harness drive `erx_device.c` itself. `erx_device_dma_check` and `erx_devic
 * [Low] DMA, the TRB form's shape (`shape_valid` in `erx_device_trb.c`): a shape must leave three positions of each
   ring free beside its posted TRBs, a reserve sized for a stop span the form does not keep; the check's room rule
   may make one or two enough.
+* [Medium] DMA, the TRB form's model harness (`test/fixtures/erx_device_trb_form_model_harness.c`,
+  `erx_device_trb_model.c`): the model's Stopped event inside a TD never runs, since the form publishes a whole TD
+  at once and the model takes it in one go (a per-call TRB budget would let a run end mid-TD), and the trace checks
+  none of its failure, short and stopped counts; its effect layer (`maintain`, `activate_run`, the zeros, fills,
+  stores and cleans of `apply_sequence`) copies `erx_device_dma_model_harness.c`'s, which one fixture header could
+  hold, settle and activation passed in; the transaction-error check trusts a count `start_ring`, drops and Disable
+  Slot leave stale, where the model could record the TD it failed; the seed tests match any FAILED line rather than
+  each seed's check; the model refuses ERDP's low bits, where the form's header has the effect layer write the busy
+  bit; `report` writes Command Completion events through the Transfer Event's offsets, equal in abi/formats/xhci.txt
+  but unasserted; and the harness sets the model's `fail` and `short_packet` fields directly.
 * [Low] DMA, the TRB form's stop events (`stop_event` in `erx_device_trb_form.c`): a stop's transfer event is accepted when it names any record of the ring bound to the stopping endpoint, not only one inside the stop span design-usb.md's "Completing" gives. It completes nothing, so the gap fails safe, but an event the controller could not have written passes.
 * [Low] DMA, a failed Address Device (`reach_address` in `erx_device_ledger.c`): its failure keeps EP0's binding, EP0 disabled, until Disable Slot succeeds, as xHCI 1.2, 4.6.5, p. 114 leaves the slot in the Default state; for a slot no Enable Slot enabled (Slot Not Enabled Error, which changes nothing) no Disable Slot can succeed, so the ring stays held until the controller's reset. Fails safe; ending the binding on the codes 4.6.5 says change nothing (Parameter Error, Context State Error, Slot Not Enabled Error) would need the ledger to take the completion code, not a success flag.
 * [Low] DMA, the ledger's reach rules (`reach_rule_t` in `erx_device_ledger.c`): the endpoints a reach acts on are two flags (`names_one`, `whole_group`) and a mask (`holds`) beside the implicit binds-and-drops case, so a row can set several, where an enum would make that unwritable; the state preconditions in `erx_dma_ledger_reach_allows` (named means enabled, a drop neither disabled nor halted, a removal not busy, a held endpoint running or stopped and idle) are code, not columns; and no test keeps the attempt to build a reach without its row (`ERX_REACHES`), which fails by construction (`&reach_##name` names an undeclared identifier).

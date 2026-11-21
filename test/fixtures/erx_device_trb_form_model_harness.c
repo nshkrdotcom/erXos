@@ -291,7 +291,7 @@ install(harness_t *h)
 	maintain(h, (erx_dma_range_t){ 0, h->cache.size }, false);
 	/*
 	 * The install's one record, written field by field through the generated setters: only the
-	 * sequencer calls a record's encoder, and the form has no install of its own yet (TODO.md).
+	 * sequencer calls a record's encoder, and the form has no install of its own (TODO.md).
 	 */
 	CHECK(erx_xhci_segment_table_entry_base_address_set(&base, DEVICE_BASE + event_ring->offset) &&
 	    erx_xhci_segment_table_entry_size_trbs_set(&size, LAP));

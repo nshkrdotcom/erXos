@@ -137,10 +137,9 @@ erx_device_trb_model_dequeue(erx_device_trb_model_t *model, uint64_t dequeue)
 static bool
 report(erx_device_trb_model_t *model, uint64_t pointer, uint32_t status, uint32_t control)
 {
-	const uint32_t next = (model->event_enqueue + 1u) % model->event_trbs;
 	uint8_t bytes[TRB_SIZE];
 
-	if (model->event_trbs == 0 || next == model->event_dequeue ||
+	if (model->event_trbs == 0 || (model->event_enqueue + 1u) % model->event_trbs == model->event_dequeue ||
 	    !erx_xhci_trb_transfer_event_control_cycle_set(&control, model->event_cycle))
 		return (false);
 	store_le(bytes + ERX_XHCI_TRB_TRANSFER_EVENT_OFF_POINTER, pointer, 8);
@@ -149,9 +148,9 @@ report(erx_device_trb_model_t *model, uint64_t pointer, uint32_t status, uint32_
 	if (!model->memory.write(model->memory.context, model->event_base + (uint64_t)model->event_enqueue * TRB_SIZE,
 	    bytes, TRB_SIZE))
 		return (false);
-	if (next == 0)
+	model->event_enqueue = (model->event_enqueue + 1u) % model->event_trbs;
+	if (model->event_enqueue == 0)
 		model->event_cycle ^= 1u;
-	model->event_enqueue = next;
 	return (true);
 }
 
