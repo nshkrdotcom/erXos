@@ -4,13 +4,16 @@
 %% The cases of the link process, erx_bt_link (docs/design-bluetooth.md, "The link's
 %% messages"), over stand-ins: the case's own process is the controller process, and three
 %% processes registered as the window (erx_bt_fs), the registry (erx_gatt_srv) and the
-%% store (erx_bt_store) pass on what the link sends them; the store's also answers the
-%% identity address. A Just Works pairing to the store's ok; a reconnection that encrypts
-%% with a kept bond's key; a crash mid-pairing that shows no secret; the handler's
-%% deadline on the wake-up timer; a disconnection mid-pairing that reaches the window; and
-%% format_status/1 hiding the window's fresh values in a message and the sys log.
-%% PDUs are written from the Core Specification 6.3's numbers (Vol 3 Parts A, F and H;
-%% Vol 4 Part E, 7.7.8 and 7.7.65.5).
+%% store (erx_bt_store) pass on what the link sends them; the store's answers `resolve`
+%% with the case's bond and the registry's `join` with the table, at once or when the case
+%% releases them. The start, which waits for neither call; a call that fails ending the
+%% link; a Just Works pairing whose one ordering point sends `keep` and `keeping`; a
+%% withdrawal before it failing the pairing and after it changing nothing; a killed link
+%% seen by its owners through 'DOWN'; a reconnection that takes on the bond at encryption;
+%% notifications as requests; a crash mid-pairing that shows no secret; the handler's
+%% deadline on the wake-up timer; and format_status/1 hiding the window's fresh values in a
+%% message and the sys log. PDUs are written from the Core Specification 6.3's numbers
+%% (Vol 3 Parts A, F and H; Vol 4 Part E, 7.7.8 and 7.7.65.5).
 
 -module(erx_bt_link_proc_tests).
 
@@ -23,20 +26,50 @@
 -define(CENTRAL, {random, ?CENTRAL_ADDRESS}).
 -define(PERIPHERAL, {random, ?OWN_ADDRESS}).
 -define(BOND_LTK, <<16#B0:128>>).
+-define(BOND, #{ltk => ?BOND_LTK, level => authenticated, identity => ?CENTRAL, hash => <<0:256>>,
+                subscriptions => #{{svc, n} => notify}}).
 -define(NAME, {16#40, 1}).
 -define(PASSKEY, 123456).
 -define(WAIT_MS, 2000).
 
 %% ---- the cases ----
 
+%% start_link/1 returns while the store and the registry hold the link's calls; what the
+%% controller process sends meanwhile is stepped in order once they answer, and the phone's
+%% address resolved to a bond gets its key.
+start_waits_for_neither_call_test() ->
+    with_owners(#{bond => ?BOND, hold => true}, fun() ->
+        Test = self(),
+        spawn_link(fun() -> Test ! {started, start(Test)} end),
+        Link = receive {started, L} -> L after 1000 -> error(start_waited) end,
+        hci(Link, {le_long_term_key_request, 16#40, <<0:64>>, 0}),
+        phone_att(Link, <<16#12, (handle(open_w)):16/little, "hi">>),
+        [gen_server:reply(From, Answer) || Owner <- [erx_bt_store, erx_gatt_srv],
+                                           {held, _, From, Answer} <- [held(Owner)]],
+        ?assertEqual({ltk_reply, ?BOND_LTK}, from_link()),
+        ?assertMatch({write, _Ref, {svc, open_w}, <<"hi">>}, told(erx_gatt_srv)),
+        exit(Link, kill)
+    end).
+
+%% A link whose registry is not running ends at its start, before any step.
+failed_join_ends_the_link_test() ->
+    with_owners(#{absent => [erx_gatt_srv]}, fun() ->
+        Link = start(self()),
+        ?assertEqual({shutdown, {start, registry}},
+                     receive {'EXIT', Link, R} -> R after 7000 -> error(link_not_ended) end)
+    end).
+
 %% A Just Works pairing through the link process: the window admits it, the controller is
-%% answered with the pairing's LTK, the registry hears the link encrypted and then bonded,
-%% the store is asked to keep the bond and its ok reaches the window as `bonded`.
+%% answered with the pairing's LTK and the registry hears the link encrypted. The step that
+%% ends the third phase sends `keep`, with the pairing's tag, to the store and `keeping` to
+%% the window; a withdrawal after it changes nothing. The store's ok makes the key a kept
+%% bond's, which the registry hears as `bonded`; the outcome is the store's to tell the
+%% window, so the link tells the window nothing more.
 just_works_pairing_to_the_store_test() ->
-    with_owners(fun() ->
-        Link = start(#{pairing => true}),
+    with_owners(#{}, fun() ->
+        Link = start(self()),
         {PhonePdus, Ltk} = just_works(),
-        {Alias, Tag} = admitted(Link),
+        Tag = admitted(Link),
         [phone(Link, Pdu) || Pdu <- PhonePdus],
         hci(Link, {le_long_term_key_request, 16#40, <<0:64>>, 0}),
         ?assertEqual({ltk_reply, Ltk}, from_link()),
@@ -44,46 +77,80 @@ just_works_pairing_to_the_store_test() ->
         hci(Link, {encryption_change, 0, 16#40, 1}),
         ?assertEqual({security, #{level => encrypted, bonded => false}}, told(erx_gatt_srv)),
         [phone(Link, Pdu) || Pdu <- identity()],
-        ?assertMatch({keep, #{ltk := Ltk, level := unauthenticated}, #{}}, told(erx_bt_store)),
-        Alias ! {erx_bt_store, {kept, ok}},
-        ?assertEqual({outcome, Tag, {bonded, {random, <<16#C1, 16#C2, 16#C3, 16#C4, 16#C5, 16#C6>>}, unauthenticated}},
-                     told(erx_bt_fs)),
+        ?assertMatch({Link, {keep, Tag, #{ltk := Ltk, level := unauthenticated}, #{}}}, addressed(erx_bt_store)),
+        ?assertEqual({Link, {keeping, Tag}}, addressed(erx_bt_fs)),
+        Link ! {window, {withdraw, Tag}},
+        Link ! {store, {kept, ok}},
         ?assertEqual({security, #{level => encrypted, bonded => true}}, told(erx_gatt_srv)),
-        ?assertEqual([], [Code || <<_:16, 6:16/little, 16#05, Code>> <- sent()])
+        ?assertEqual([], [Code || <<_:16, 6:16/little, 16#05, Code>> <- sent()]),
+        ?assertEqual(nothing, next(erx_bt_fs))
+    end).
+
+%% A window that closes before the link's `keeping` fails the pairing `withdrawn`: the
+%% phone hears Pairing Failed, Unspecified Reason, and the store is asked nothing.
+withdrawn_before_keeping_test() ->
+    with_owners(#{}, fun() ->
+        Link = start(self()),
+        Tag = admitted(Link),
+        Link ! {window, {withdraw, Tag}},
+        ?assertEqual({outcome, Tag, {failed, withdrawn}}, told(erx_bt_fs)),
+        ?assertEqual([16#08], [Code || <<_:16, 6:16/little, 16#05, Code>> <- sent()]),
+        ?assertEqual(nothing, next(erx_bt_store))
+    end).
+
+%% A link killed mid-pairing is seen by each owner that monitors its pid, the pid its
+%% messages came from, as a 'DOWN'; the link itself tells nobody of its end.
+killed_link_is_seen_through_down_test() ->
+    with_owners(#{}, fun() ->
+        Link = start(self()),
+        phone(Link, pairing_request()),
+        {From, {admit, _Tag, ?CENTRAL}} = addressed(erx_bt_fs),
+        Monitor = monitor(process, From),
+        exit(Link, kill),
+        ?assertEqual(killed, receive {'DOWN', Monitor, process, Link, R} -> R after ?WAIT_MS -> error(no_down) end),
+        ?assertEqual(nothing, next(erx_bt_fs))
     end).
 
 %% A link whose address resolved to a kept bond answers the Long Term Key Request with the
-%% bond's key and is encrypted at the controller's report; the registry hears it bonded.
+%% bond's key. Before its encryption the bond's subscription is not the link's, so a
+%% notification is refused; at the controller's report the registry hears it bonded and the
+%% subscription restored, and the notification, a request the registry sends, goes out.
 %% sys:get_status/1 shows no key.
 reconnection_with_a_kept_bond_test() ->
-    with_owners(fun() ->
-        Link = start(#{bond => #{ltk => ?BOND_LTK, level => authenticated}}),
+    with_owners(#{bond => ?BOND}, fun() ->
+        Link = start(self()),
+        Notify = fun() -> gen_server:receive_response(gen_server:send_request(Link, {notify, notify, {svc, n}, <<"x">>}),
+                                                      ?WAIT_MS) end,
+        ?assertEqual({reply, {error, not_subscribed}}, Notify()),
         hci(Link, {le_long_term_key_request, 16#40, <<0:64>>, 0}),
         ?assertEqual({ltk_reply, ?BOND_LTK}, from_link()),
         hci(Link, {ltk_reply_complete, ok}),
         hci(Link, {encryption_change, 0, 16#40, 1}),
         ?assertEqual({security, #{level => authenticated, bonded => true}}, told(erx_gatt_srv)),
-        ?assertNot(holds(sys:get_status(Link), [?BOND_LTK]))
+        ?assertEqual({subscribed, {svc, n}, notify}, told(erx_gatt_srv)),
+        ?assertEqual({reply, ok}, Notify()),
+        ?assertMatch([<<_:16, 4:16/little, 16#1B, _:16, "x">>], sent()),
+        ?assertNot(holds(sys:get_status(Link), [?BOND_LTK])),
+        exit(Link, kill),
+        ?assertMatch({error, {_, Link}}, Notify())
     end).
 
 %% A raise in the core mid-pairing, once the link holds the pairing's LTK and the Security
 %% Manager its private key, passkey and DHKey: neither sys:get_status/1 before it, nor
-%% the link's exit reason, nor any report logged shows a secret, and the window hears the
-%% pairing failed `disconnected`.
+%% the link's exit reason, nor any report logged shows a secret.
 crash_mid_pairing_leaks_nothing_test() ->
-    with_owners(fun() ->
+    with_owners(#{}, fun() ->
         ok = logger:add_handler(?MODULE, ?MODULE, #{config => #{test => self()}}),
         try
-            Link = start(#{pairing => true}),
+            Link = start(self()),
             {PhonePdus, Ltk} = just_works(),
-            {Alias, Tag} = admitted(Link),
+            Tag = admitted(Link),
             [phone(Link, Pdu) || Pdu <- PhonePdus],
             Secrets = [Ltk, own_private(), dhkey(), ?PASSKEY],
             ?assertNot(holds(sys:get_status(Link), Secrets)),
-            Alias ! {erx_bt_fs, {admission, Tag}},        % no clause of the core takes it
+            Link ! {window, {admission, Tag}},        % no clause of the core takes it
             Reason = receive {'EXIT', Link, R} -> R after ?WAIT_MS -> error(link_not_ended) end,
             ?assertMatch({step_raised, error, #{key := unauthenticated}}, Reason),
-            ?assertEqual({outcome, Tag, {failed, disconnected}}, told(erx_bt_fs)),
             timer:sleep(100),
             Logged = logged(),
             ?assertNotEqual([], Logged),
@@ -98,12 +165,12 @@ crash_mid_pairing_leaks_nothing_test() ->
 %% log that holds it, without them: the case erXos's report filter and OTP's own crash
 %% reports both rely on when the verdict itself is the last message.
 format_status_hides_the_verdict_test() ->
-    with_owners(fun() ->
-        Link = start(#{pairing => true}),
-        Verdict = {erx_bt_fs, {admission, 1, {open, nodisplay, fresh()}}},
+    with_owners(#{}, fun() ->
+        Link = start(self()),
+        Verdict = {window, {admission, 1, {open, nodisplay, fresh()}}},
         Status = erx_bt_link:format_status(#{state => sys:get_state(Link), message => Verdict,
                                              log => [{in, Verdict}], reason => normal}),
-        ?assertMatch(#{message := {erx_bt_fs, admission}, log := []}, Status),
+        ?assertMatch(#{message := {window, admission}, log := []}, Status),
         ?assertNot(holds(Status, [own_private(), ?PASSKEY]))
     end).
 
@@ -111,8 +178,8 @@ format_status_hides_the_verdict_test() ->
 %% answered Unlikely Error (0x0E) 5 s after it arrived, and not before.
 handler_deadline_on_the_timer_test_() ->
     {timeout, 20, fun() ->
-        with_owners(fun() ->
-            Link = start(#{}),
+        with_owners(#{}, fun() ->
+            Link = start(self()),
             Handle = handle(open_w),
             phone_att(Link, <<16#12, Handle:16/little, "hi">>),
             ?assertMatch({write, _Ref, {svc, open_w}, <<"hi">>}, told(erx_gatt_srv)),
@@ -122,29 +189,18 @@ handler_deadline_on_the_timer_test_() ->
         end)
     end}.
 
-%% A link that ends while the window awaits its pairing, as at the supervisor's shutdown
-%% at link_down, tells the window the pairing failed `disconnected`.
-disconnection_mid_pairing_reaches_the_window_test() ->
-    with_owners(fun() ->
-        Link = start(#{pairing => true}),
-        {_Alias, Tag} = admitted(Link),
-        exit(Link, shutdown),
-        receive {'EXIT', Link, shutdown} -> ok after ?WAIT_MS -> error(link_not_ended) end,
-        ?assertEqual({outcome, Tag, {failed, disconnected}}, told(erx_bt_fs))
-    end).
-
 %% ---- the stand-ins ----
 
-%% Runs Case with the three owners registered, then ends them and any link still running,
-%% waiting for each end so the names are free for the next case.
-with_owners(Case) ->
+%% Runs Case with the owners registered but those `absent` names, then ends them and any
+%% link still running, waiting for each end so the names are free for the next case.
+with_owners(Options, Case) ->
     process_flag(trap_exit, true),
     Test = self(),
     Owners = [begin
-                  Pid = spawn_link(fun() -> stand_in(Name, Test) end),
+                  Pid = spawn_link(fun() -> stand_in(Name, Test, Options) end),
                   true = register(Name, Pid),
                   Pid
-              end || Name <- [erx_bt_fs, erx_gatt_srv, erx_bt_store]],
+              end || Name <- [erx_bt_fs, erx_gatt_srv, erx_bt_store] -- maps:get(absent, Options, [])],
     try Case()
     after
         {links, Linked} = process_info(self(), links),
@@ -158,42 +214,61 @@ end_process(Pid) ->
     exit(Pid, kill),
     receive {'DOWN', Monitor, process, Pid, _} -> ok end.
 
-stand_in(Name, Test) ->
+%% The store answers `resolve` with the case's bond, the registry `join` with the table;
+%% with `hold`, each hands the call to the case to answer instead.
+stand_in(Name, Test, Options) ->
     receive
-        {'$gen_call', From, address} when Name =:= erx_bt_store -> gen_server:reply(From, ?OWN_ADDRESS);
-        {erx_bt_link, Alias, Message} -> Test ! {owner, Name, Alias, Message}
+        {'$gen_call', From, {resolve, _Address}} when Name =:= erx_bt_store ->
+            answer(Name, From, maps:get(bond, Options, none), Test, Options);
+        {'$gen_call', From, {join, _Conn, #{address := ?CENTRAL}}} when Name =:= erx_gatt_srv ->
+            answer(Name, From, #{table => table(), values => #{}}, Test, Options);
+        {erx_bt_link, Link, Message} ->
+            Test ! {owner, Name, Link, Message}
     end,
-    stand_in(Name, Test).
+    stand_in(Name, Test, Options).
 
-%% A link started by the case as its controller process, with the table of services/0.
-start(Domain) ->
+answer(Name, From, Answer, Test, #{hold := true}) -> Test ! {held, Name, From, Answer};
+answer(_Name, From, Answer, _Test, _Options) -> gen_server:reply(From, Answer).
+
+held(Name) ->
+    receive {held, Name, _, _} = Held -> Held after ?WAIT_MS -> error({not_called, Name}) end.
+
+%% A link started by `Hci` as its controller process.
+start(Hci) ->
     {ok, Link} = erx_bt_link:start_link(
-                   #{name => ?NAME, conn => make_ref(), hci => self(),
-                     info => #{peer_type => 1, peer => ?CENTRAL_ADDRESS, share => 16, acl_tx_max => 251},
-                     domain => maps:merge(#{table => table(), values => #{}, pairing => false, bond => none}, Domain)}),
+                   #{name => ?NAME, conn => make_ref(), hci => Hci,
+                     info => #{peer_type => 1, peer => ?CENTRAL_ADDRESS, identity => ?OWN_ADDRESS, share => 16,
+                               acl_tx_max => 251}}),
     Link.
 
-hci(Link, Input) -> Link ! {erx_bt_hci, Input}.
+hci(Link, Input) -> Link ! {hci, Input}.
 
 %% A basic frame (Part A, 3.1) in one ACL packet, flagged first_flushable (Vol 4 Part E, 5.4.2).
 frame(Cid, Payload) -> <<(byte_size(Payload)):16/little, Cid:16/little, Payload/binary>>.
 phone(Link, SmpPdu) -> hci(Link, {acl, 2, frame(6, SmpPdu)}).
 phone_att(Link, AttPdu) -> hci(Link, {acl, 2, frame(4, AttPdu)}).
 
-%% The phone's Pairing Request and the window's `open` verdict for it.
+%% The phone's Pairing Request and the window's `open` verdict for it, sent to the pid the
+%% link's `admit` came from.
 admitted(Link) ->
     phone(Link, pairing_request()),
-    {Alias, {admit, Tag, ?CENTRAL}} = addressed(erx_bt_fs),
-    Alias ! {erx_bt_fs, {admission, Tag, {open, nodisplay, fresh()}}},
-    {Alias, Tag}.
+    {Link, {admit, Tag, ?CENTRAL}} = addressed(erx_bt_fs),
+    Link ! {window, {admission, Tag, {open, nodisplay, fresh()}}},
+    Tag.
 
-%% The next message the link sent the owner `Name`, with the alias it sent it from.
+%% The next message the link sent the owner `Name`, with the pid it came from.
 addressed(Name) ->
-    receive {owner, Name, Alias, Message} -> {Alias, Message}
+    receive {owner, Name, Link, Message} -> {Link, Message}
     after ?WAIT_MS -> error({nothing_to, Name})
     end.
 
 told(Name) -> element(2, addressed(Name)).
+
+%% Whether the link sent the owner `Name` anything more, within a short wait.
+next(Name) ->
+    receive {owner, Name, _Link, Message} -> Message
+    after 200 -> nothing
+    end.
 
 %% The next request to the controller process that is not a packet.
 from_link() ->
@@ -241,7 +316,8 @@ occurs(_Secret, _Term) -> false.
 
 services() ->
     [#{name => svc, uuid => <<16#00, 16#FF>>,
-       characteristics => [#{name => open_w, uuid => <<16#01, 16#FF>>, max => 20, access => #{write => open}}]}].
+       characteristics => [#{name => open_w, uuid => <<16#01, 16#FF>>, max => 20, access => #{write => open}},
+                           #{name => n, uuid => <<16#02, 16#FF>>, max => 20, access => #{notify => open}}]}].
 
 table() -> erx_gatt_db:build(services()).
 

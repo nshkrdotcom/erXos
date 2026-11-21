@@ -34,7 +34,11 @@ module ErxBtLinkFuzz
     Fault.new(fault: "the hand-over past the link's share of the controller's buffers",
               anchor: 'when Outstanding >= Share ->',
               replacement: 'when Outstanding >= Share + 1 ->',
-              verdict: '{over_share,')
+              verdict: '{over_share,'),
+    Fault.new(fault: "a controller message's step without its `taken`",
+              anchor: '    {[{hci, taken} | Actions], Next};',
+              replacement: '    {Actions, Next};',
+              verdict: '{not_taken,')
   ].freeze
 
   module_function

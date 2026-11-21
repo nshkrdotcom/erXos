@@ -219,6 +219,23 @@ configuration_write_is_gated_at_notify_level_test() ->
                  ask(write(21, <<2, 0>>), server(?JUST_WORKS), erx_gatt_server:new())),
     ?assertEqual(<<16#0B, 0, 0>>, answer(read(21), server(?OPEN), erx_gatt_server:new())).
 
+%% On a link that holds a key and is not yet encrypted, a configuration write is
+%% Insufficient Encryption (0x0F) at every level the characteristic declares, tx's open
+%% notify included, so the configuration stays the link's default until the key encrypts
+%% the link (docs/design-bluetooth.md, "A link is its bond's only from its encryption").
+%% Without a key, tx's configuration is written open.
+keyed_configuration_write_waits_for_encryption_test() ->
+    [begin
+         {ok, #{configuration := Handle}} = erx_gatt_db:characteristic(Char, table()),
+         [?assertEqual(error_rsp(16#12, Handle, 16#0F),
+                       answer(write(Handle, <<Bits, 0>>), server(#{key => Key, encrypted => false}),
+                              erx_gatt_server:new()))
+          || Key <- [encrypted, authenticated]]
+     end || {Char, Bits} <- [{{nus, tx}, 1}, {{sec, ind}, 2}]],
+    {ok, #{configuration := Tx}} = erx_gatt_db:characteristic({nus, tx}, table()),
+    ?assertMatch({[<<16#13>>], [{subscribed, {nus, tx}, notify}], _},
+                 ask(write(Tx, <<1, 0>>), server(?OPEN), erx_gatt_server:new())).
+
 %% ---- erx_gatt_server ----
 
 exchange_mtu_takes_the_smaller_and_never_below_23_test() ->

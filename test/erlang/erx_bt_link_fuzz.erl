@@ -6,13 +6,16 @@
 %% every fixed channel and on others (Core 6.3 Vol 3 Part A, 3.1), with random boundary
 %% flags, lengths and bytes, interleaved with what the link's other parties send: the
 %% controller's encryption reports and completions, the window's verdicts, handlers'
-%% answers, notifications and the store's answer, at random times. Whatever arrives, the
-%% core neither makes an atom nor raises, and:
+%% answers, notifications and the store's answer to the `keep` it was sent, at random times,
+%% each under its role. Whatever arrives, the core neither makes an atom nor raises, and:
 %%
 %% * the packets outstanding never pass the link's share, and the queue never holds more
 %%   than bt_notify_queue frames and the two ATT may add;
 %% * no packet handed over passes the controller's length;
-%% * the link is encrypted only with a key.
+%% * the link is encrypted only with a key;
+%% * every step of a controller message answers `{hci, taken}` first;
+%% * a link that holds a key tells the registry of no subscription before it is encrypted,
+%%   so a resolved bond's subscriptions and a configuration write wait for the key.
 %%
 %% A step that ends the link starts a new one. The seed comes from make check-fuzz.
 
@@ -44,28 +47,34 @@ services() ->
                            #{name => enc_n, uuid => <<16#03, 16#FF>>, max => 20, access => #{notify => encrypted}},
                            #{name => ind, uuid => <<16#04, 16#FF>>, max => 20, access => #{indicate => open}}]}].
 
-%% A new link and the controller's length it was given.
+%% A new link, the controller's length it was given, and whether the store owes it an
+%% answer to `keep`.
 core(Table) ->
     AclTxMax = 26 + rand:uniform(226),
-    Bond = case rand:uniform(2) of 1 -> none; 2 -> #{ltk => rand:bytes(16), level => unauthenticated} end,
-    {erx_bt_link_core:new(#{table => Table, values => #{}, pairing => rand:uniform(2) =:= 1, bond => Bond,
+    Bond = case rand:uniform(2) of
+               1 -> none;
+               2 -> #{ltk => rand:bytes(16), level => unauthenticated, identity => {random, <<1:48>>},
+                      hash => rand:bytes(32), subscriptions => #{{svc, enc_n} => notify, {svc, ind} => indicate}}
+           end,
+    {erx_bt_link_core:new(#{table => Table, values => #{}, bond => Bond,
                            addresses => #{central => {random, <<1:48>>}, peripheral => {public, <<2:48>>}},
-                           share => ?SHARE, acl_tx_max => AclTxMax}), AclTxMax}.
+                           share => ?SHARE, acl_tx_max => AclTxMax}), AclTxMax, false}.
 
-round({Core, _} = Link, Now, Table) ->
+round({Core, _, Keeping} = Link, Now, Table) ->
     At = Now + rand:uniform(3000) - 1,
     Input = case rand:uniform(16) of
-                N when N =< 10 -> {acl, boundary(), packet()};
-                11 -> lists:nth(rand:uniform(4), [{le_long_term_key_request, 1, <<0:64>>, 0},
-                                                 {le_long_term_key_request, 1, rand:bytes(8), rand:uniform(65536) - 1},
-                                                 {encryption_change, status(), 1, rand:uniform(4) - 1},
-                                                 {encryption_key_refresh_complete, status(), 1}]);
-                12 -> lists:nth(rand:uniform(3), [{admission, rand:uniform(3), closed}, {admission, rand:uniform(3), waiting},
-                                                 {withdraw, rand:uniform(3)}]);
-                13 -> {answer, rand:uniform(4), lists:nth(rand:uniform(3), [ok, {error, 16#80}, junk])};
-                14 -> {notify, caller, lists:nth(rand:uniform(2), [notify, indicate]),
-                       lists:nth(rand:uniform(length(?KEYS)), ?KEYS), rand:bytes(rand:uniform(30) - 1)};
-                15 -> lists:nth(rand:uniform(4), [{kept, ok}, {kept, {error, unavailable}}, busy, completed]);
+                N when N =< 10 -> {hci, {acl, boundary(), packet()}};
+                11 -> {hci, lists:nth(rand:uniform(4), [{le_long_term_key_request, 1, <<0:64>>, 0},
+                                                       {le_long_term_key_request, 1, rand:bytes(8), rand:uniform(65536) - 1},
+                                                       {encryption_change, status(), 1, rand:uniform(4) - 1},
+                                                       {encryption_key_refresh_complete, status(), 1}])};
+                12 -> {window, lists:nth(rand:uniform(3), [{admission, rand:uniform(3), closed},
+                                                          {admission, rand:uniform(3), waiting}, {withdraw, rand:uniform(3)}])};
+                13 -> {registry, {answer, rand:uniform(4), lists:nth(rand:uniform(3), [ok, {error, 16#80}, junk])}};
+                14 -> {registry, {notify, caller, lists:nth(rand:uniform(2), [notify, indicate]),
+                                  lists:nth(rand:uniform(length(?KEYS)), ?KEYS), rand:bytes(rand:uniform(30) - 1)}};
+                15 when Keeping -> {store, lists:nth(rand:uniform(2), [{kept, ok}, {kept, {error, unavailable}}])};
+                15 -> lists:nth(rand:uniform(2), [{hci, busy}, completed]);
                 16 -> expired
             end,
     step(completed(Input, Core), At, Link, Table).
@@ -74,12 +83,12 @@ round({Core, _} = Link, Now, Table) ->
 completed(completed, Core) ->
     case erx_bt_link_core:facts(Core) of
         #{outstanding := 0} -> expired;
-        #{outstanding := Outstanding} -> {completed, rand:uniform(Outstanding)}
+        #{outstanding := Outstanding} -> {hci, {completed, rand:uniform(Outstanding)}}
     end;
 completed(Input, _Core) ->
     Input.
 
-step(Input, Now, {Core, AclTxMax}, Table) ->
+step(Input, Now, {Core, AclTxMax, Keeping}, Table) ->
     {Actions, Next} = try erx_bt_link_core:step(Input, Now, Core)
                       catch Class:Reason -> verdict({core_raised, Input, Class, Reason})
                       end,
@@ -87,9 +96,15 @@ step(Input, Now, {Core, AclTxMax}, Table) ->
     Outstanding =< ?SHARE orelse verdict({over_share, Input, Outstanding}),
     Queued =< ?QUEUE + 2 orelse verdict({over_queue, Input, Queued}),
     [verdict({encrypted_without_key, Input}) || Encrypted, Key =:= none],
-    [verdict({packet_too_long, Input, byte_size(Data)}) || {acl, _, Data} <- Actions, byte_size(Data) > AclTxMax],
+    [verdict({packet_too_long, Input, byte_size(Data)}) || {hci, {send, _, Data}} <- Actions, byte_size(Data) > AclTxMax],
+    [verdict({not_taken, Input}) || is_tuple(Input), element(1, Input) =:= hci, not lists:prefix([{hci, taken}], Actions)],
+    [verdict({subscribed_before_encryption, Input}) || {registry, {subscribed, _, _}} <- Actions, Key =/= none, not Encrypted],
+    Owed = case Input of
+               {store, {kept, _}} -> false;
+               _ -> Keeping orelse lists:any(fun(A) -> element(1, A) =:= store end, Actions)
+           end,
     case [R || {close, R} <- Actions] of
-        [] -> {{Next, AclTxMax}, Now};
+        [] -> {{Next, AclTxMax, Owed}, Now};
         _ -> {core(Table), Now}
     end.
 

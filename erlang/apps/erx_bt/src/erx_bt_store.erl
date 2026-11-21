@@ -12,7 +12,7 @@ keeping the address with them, come with pairing (stage 4).
 """.
 -behaviour(gen_server).
 
--export([start_link/0, address/0, static_address/1]).
+-export([start_link/0, address/0, resolve/1, static_address/1]).
 -export([init/1, handle_call/3, handle_cast/2]).
 
 -doc "Starts the store, registered as `erx_bt_store`, with a new identity address.".
@@ -24,6 +24,15 @@ start_link() ->
 -spec address() -> <<_:48>>.
 address() ->
     gen_server:call(?MODULE, address).
+
+-doc """
+The bond a link's phone address names (docs/design-bluetooth.md, "The link's start"),
+without its IRK, or `none`. This store keeps no bonds (TODO.md, Bluetooth), so it
+answers `none`, as a store without bonds does.
+""".
+-spec resolve(erx_smp_crypto:address()) -> none | erx_bt_link_core:resolved().
+resolve(Address) ->
+    gen_server:call(?MODULE, {resolve, Address}).
 
 -doc """
 The static random address of six random octets, most significant first, or `retry` when
@@ -46,7 +55,9 @@ make_address() ->
     end.
 
 handle_call(address, _From, Address) ->
-    {reply, Address, Address}.
+    {reply, Address, Address};
+handle_call({resolve, _Peer}, _From, Address) ->
+    {reply, none, Address}.
 
 handle_cast(_Message, Address) ->
     {noreply, Address}.

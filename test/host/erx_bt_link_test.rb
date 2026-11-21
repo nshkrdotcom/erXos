@@ -20,7 +20,12 @@ class ErxBtLinkTest < Minitest::Test
   CORE = 'erlang/apps/erx_bt/src/erx_bt_link_core.erl'
   EXPLORED = 'erx_bt_link_tests: explore...'
 
-  Seed = Data.define(:fault, :anchor, :replacement, :catching_case)
+  SMP_CORE = 'erlang/apps/erx_bt/src/erx_smp_core.erl'
+
+  # A seeded fault in the link's core, or in the module `path` names.
+  Seed = Data.define(:fault, :anchor, :replacement, :catching_case, :path) do
+    def initialize(path: CORE, **fields) = super
+  end
 
   SEEDS = [
     Seed.new(fault: 'a frame on an unknown channel dropped without being counted',
@@ -28,20 +33,20 @@ class ErxBtLinkTest < Minitest::Test
              replacement: '    {[], Core}.',
              catching_case: 'unknown_channel_counted_test'),
     Seed.new(fault: "a link with a key pairing again, so its pairing would give it a second key",
-             anchor: 'input({admission, Tag, {open, _Mode, _Fresh}}, Now, #core{key = {_, _}} = Core) ->',
-             replacement: 'input({admission, Tag, {open, _Mode, _Fresh}}, Now, #core{key = never} = Core) ->',
+             anchor: 'input({window, {admission, Tag, {open, _Mode, _Fresh}}}, Now, #core{key = {_, _}} = Core) ->',
+             replacement: 'input({window, {admission, Tag, {open, _Mode, _Fresh}}}, Now, #core{key = never} = Core) ->',
              catching_case: 'bonded_link_never_pairs_test'),
     Seed.new(fault: 'the gate shown a keyed link as encrypted before the controller reports it',
              anchor: 'security => #{key => gate_key(Key), encrypted => Encrypted}}.',
              replacement: 'security => #{key => gate_key(Key), encrypted => Key =/= none}}.',
              catching_case: 'write_waits_for_encryption_test'),
     Seed.new(fault: 'an Encryption Change accepted after a Negative Reply',
-             anchor: "?ENCRYPTION_ON_LE}, Now,\n      #core{ltk_answer = replied} = Core) ->",
-             replacement: "?ENCRYPTION_ON_LE}, Now,\n      #core{} = Core) ->",
+             anchor: "?ENCRYPTION_ON_LE}, Now,\n    #core{ltk_answer = replied} = Core) ->",
+             replacement: "?ENCRYPTION_ON_LE}, Now,\n    #core{} = Core) ->",
              catching_case: 'negative_reply_then_change_ends_link_test'),
     Seed.new(fault: 'encryption accepted only for kept bonds',
-             anchor: 'input({le_long_term_key_request, _Handle, <<0:64>>, 0}, _Now, #core{key = {Ltk, _}} = Core) ->',
-             replacement: 'input({le_long_term_key_request, _Handle, <<0:64>>, 0}, _Now, ' \
+             anchor: 'hci({le_long_term_key_request, _Handle, <<0:64>>, 0}, _Now, #core{key = {Ltk, _}} = Core) ->',
+             replacement: 'hci({le_long_term_key_request, _Handle, <<0:64>>, 0}, _Now, ' \
                           '#core{key = {Ltk, _}, kept = true} = Core) ->',
              catching_case: 'first_pairing_reaches_level_before_store_test'),
     Seed.new(fault: 'the notification queue unbounded',
@@ -65,13 +70,32 @@ class ErxBtLinkTest < Minitest::Test
              replacement: '{reply, Reply} -> queue(?ERX_L2CAP_CID_LE_SIGNALING, Reply, always, Core);',
              catching_case: 'signaling_answers_dropped_at_full_queue_test'),
     Seed.new(fault: "the refusal after the bond told to the window as the pairing's outcome",
-             anchor: 'smp_action({failed, Reason}, _Now, #core{awaiting = Tag, keeping = none} = Core) when Tag =/= none ->',
-             replacement: 'smp_action({failed, Reason}, _Now, #core{awaiting = Tag} = Core) ->',
+             anchor: '     Core#core{awaiting = none, keeping = true}};',
+             replacement: '     Core#core{keeping = true}};',
              catching_case: 'done_refusal_not_an_outcome_test'),
     Seed.new(fault: 'a Reply the controller failed still taken as a Reply',
-             anchor: 'input({ltk_reply_complete, {failed, _Status}}, _Now, #core{ltk_answer = replied} = Core) ->',
-             replacement: 'input({ltk_reply_complete, {failed, _Status}}, _Now, #core{ltk_answer = never} = Core) ->',
-             catching_case: 'failed_reply_counts_as_none_test')
+             anchor: 'hci({ltk_reply_complete, {failed, _Status}}, _Now, #core{ltk_answer = replied} = Core) ->',
+             replacement: 'hci({ltk_reply_complete, {failed, _Status}}, _Now, #core{ltk_answer = never} = Core) ->',
+             catching_case: 'failed_reply_counts_as_none_test'),
+    Seed.new(fault: "a controller message's step without its `taken`, so the backlog grows without bound",
+             anchor: '    {[{hci, taken} | Actions], Next};',
+             replacement: '    {Actions, Next};',
+             catching_case: 'roles_test'),
+    Seed.new(fault: "the bond's subscriptions taken at new/1, so a resolved link's configuration reads as the bond's",
+             anchor: 'bearer = erx_gatt_server:new(),',
+             replacement: 'bearer = element(2, erx_gatt_server:restore(case Candidate of none -> #{}; ' \
+                          '#{subscriptions := S} -> S end, Table, erx_gatt_server:new())),',
+             catching_case: 'resolved_bond_is_taken_on_at_encryption_test'),
+    Seed.new(fault: "`keep` sent without `keeping`, so the window would count a kept bond's link end as failed",
+             anchor: '    {[{store, {keep, Tag, Bond, erx_gatt_server:subscriptions(Bearer)}}, {window, {keeping, Tag}}],',
+             replacement: '    {[{store, {keep, Tag, Bond, erx_gatt_server:subscriptions(Bearer)}}],',
+             catching_case: 'first_pairing_reaches_level_before_store_test'),
+    Seed.new(fault: "a `withdraw` taken in the Security Manager's `done`, withdrawn while the store keeps the bond",
+             path: SMP_CORE,
+             anchor: 'phase(_Input, done, _State) -> {[], done};',
+             replacement: "phase({withdraw, _}, done, _State) -> fail(?ERX_SMP_REASON_UNSPECIFIED_REASON, withdrawn);\n" \
+                          'phase(_Input, done, _State) -> {[], done};',
+             catching_case: 'first_pairing_reaches_level_before_store_test')
   ].freeze
 
   def test_link_core_cases_pass_under_eunit
@@ -81,10 +105,10 @@ class ErxBtLinkTest < Minitest::Test
   end
 
   def test_each_seeded_fault_fails_its_case
-    source = File.binread(File.join(ErlangBuild::ROOT, CORE))
     SEEDS.each do |seed|
+      source = File.binread(File.join(ErlangBuild::ROOT, seed.path))
       assert_equal 1, source.scan(seed.anchor).size, "seed anchor for #{seed.fault} is not unique"
-      output, status = run_cases({ CORE => source.sub(seed.anchor) { seed.replacement } })
+      output, status = run_cases({ seed.path => source.sub(seed.anchor) { seed.replacement } })
       refute status.success?, "#{seed.fault}: the cases passed"
       assert_match(/#{Regexp.escape(seed.catching_case)}[^\n]*\*failed\*/, output, seed.fault)
     end

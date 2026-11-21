@@ -39,10 +39,15 @@ core() -> core(#{}).
 core(Options) ->
     erx_bt_link_core:new(maps:merge(#{table => table(), values => #{{gap, device_name} => <<"erxos">>},
                                       addresses => #{central => ?CENTRAL, peripheral => ?PERIPHERAL},
-                                      pairing => false, bond => none, share => ?SHARE, acl_tx_max => ?ACL_TX_MAX},
+                                      bond => none, share => ?SHARE, acl_tx_max => ?ACL_TX_MAX},
                                     Options)).
 
-bonded(Level) -> core(#{bond => #{ltk => ?BOND_LTK, level => Level}}).
+bonded(Level) -> core(#{bond => resolved(Level, #{})}).
+
+%% A bond the store resolved the phone's address to, with its kept subscriptions.
+resolved(Level, Subscriptions) ->
+    #{ltk => ?BOND_LTK, level => Level, identity => {random, <<16#C1, 16#C2, 16#C3, 16#C4, 16#C5, 16#C6>>},
+      hash => <<0:256>>, subscriptions => Subscriptions}.
 
 %% A basic frame (Part A, 3.1) in one ACL packet, flagged first_flushable (Vol 4 Part E, 5.4.2).
 frame(Cid, Payload) -> <<(byte_size(Payload)):16/little, Cid:16/little, Payload/binary>>.
@@ -76,8 +81,36 @@ run(Inputs, Core) ->
                 end, {[], Core}, Inputs).
 
 step(Input, Now, Actions, Core) ->
-    {More, Next} = erx_bt_link_core:step(Input, Now, Core),
+    {More, Next} = core_step(Input, Now, Core),
     {Actions ++ More, Next}.
+
+%% The core's step as the cases write it: an input given without its role is sent by the
+%% owner whose clauses take it; a controller message's step must answer `{hci, taken}`
+%% first, which is checked and dropped here; and the controller's packets and Long Term
+%% Key answers are read without their `hci` tag. roles_test/0 holds the shapes themselves.
+core_step(Input, Now, Core) ->
+    Tagged = tagged(Input),
+    {Actions, Next} = erx_bt_link_core:step(Tagged, Now, Core),
+    {untagged(Tagged, Actions), Next}.
+
+tagged(expired) -> expired;
+tagged({Role, _} = Input) when Role =:= hci; Role =:= window; Role =:= registry; Role =:= store -> Input;
+tagged(Input) when is_atom(Input) -> {role(Input), Input};
+tagged(Input) -> {role(element(1, Input)), Input}.
+
+role(Kind) when Kind =:= admission; Kind =:= withdraw -> window;
+role(Kind) when Kind =:= answer; Kind =:= set; Kind =:= notify -> registry;
+role(Kind) when Kind =:= kept; Kind =:= forgotten -> store;
+role(_Kind) -> hci.
+
+untagged({hci, _}, [{hci, taken} | Actions]) -> untagged(none, Actions);
+untagged({hci, _}, Actions) -> error({taken_not_first, Actions});
+untagged(_Input, Actions) -> [untag(Action) || Action <- Actions].
+
+untag({hci, taken}) -> error(taken_for_another_role);
+untag({hci, {send, Boundary, Data}}) -> {acl, Boundary, Data};
+untag({hci, {ltk_reply, _} = Reply}) -> Reply;
+untag(Action) -> Action.
 
 %% The frames the link sent, joined from its ACL packets: first_non_flushable starts one.
 sent(Actions) ->
@@ -128,12 +161,6 @@ signaling_rejects_commands_test() ->
     {Actions, _} = run([acl(5, <<16#12, 7, 8:16/little, 0:64>>)]),
     ?assertEqual([<<16#01, 7, 2:16/little, 0:16/little>>], on(5, Actions)).
 
-%% Before pairing is enabled every SMP command is answered Pairing Not Supported, and the
-%% phone's Pairing Failed is not answered (Part H, 3.5.5).
-pairing_not_supported_test() ->
-    {Actions, _} = run([smp(pairing_request()), smp(pairing_failed(16#08)), smp(<<16#0B, 16#2D>>)]),
-    ?assertEqual([pairing_failed(16#05), pairing_failed(16#05)], on(6, Actions)).
-
 %% With the share used and never completed, signaling's answers past bt_notify_queue are
 %% dropped and counted.
 signaling_answers_dropped_at_full_queue_test() ->
@@ -145,7 +172,7 @@ signaling_answers_dropped_at_full_queue_test() ->
 %% change nothing.
 connection_update_ignored_test() ->
     Core = core(),
-    ?assertEqual({[], Core}, erx_bt_link_core:step({le_connection_update_complete, 0, 1}, 0, Core)).
+    ?assertEqual({[], Core}, core_step({le_connection_update_complete, 0, 1}, 0, Core)).
 
 %% ---- the ATT bearer through the link ----
 
@@ -183,7 +210,7 @@ write_waits_for_encryption_test() ->
 handler_deadline_test() ->
     {Actions, Core} = run([att(write(handle(open_w), <<"w">>))]),
     ?assertEqual(5000, erx_bt_link_core:next_deadline(Core)),
-    {Early, Core1} = erx_bt_link_core:step(expired, 4999, Core),
+    {Early, Core1} = core_step(expired, 4999, Core),
     ?assertEqual([], Early),
     {Late, Core2} = run([{at, 5000, expired}, {at, 5001, {answer, 1, ok}}], Core1),
     ?assertEqual([], registry(Actions) -- [{write, 1, {svc, open_w}, <<"w">>}]),
@@ -220,7 +247,7 @@ notification_queue_bound_test() ->
     Replies = [Reply || {reply, _, Reply} <- Actions],
     ?assertEqual(lists:duplicate(?SHARE - 1 + ?QUEUE, ok) ++ [{error, busy}, {error, busy}], Replies),
     ?assertMatch(#{queued := ?QUEUE, outstanding := ?SHARE}, facts(Core)),
-    {More, _} = erx_bt_link_core:step({completed, ?SHARE}, 0, Core),
+    {More, _} = core_step({completed, ?SHARE}, 0, Core),
     ?assertEqual(?SHARE, length([A || {acl, _, _} = A <- More])).
 
 %% An indication is answered at the phone's confirmation; unconfirmed in 30 s, the
@@ -283,7 +310,7 @@ key_refresh_encrypts_test() ->
 %% A link with a bond's key never pairs: the window's `open` verdict reaches the Security
 %% Manager as `bonded`, which fails the request, Unspecified Reason, and keeps the key.
 bonded_link_never_pairs_test() ->
-    Core = core(#{bond => #{ltk => ?BOND_LTK, level => unauthenticated}, pairing => true}),
+    Core = bonded(unauthenticated),
     {Actions, After} = run([smp(pairing_request()), {admission, 1, {open, nodisplay, fresh()}},
                             ltk_request()], Core),
     ?assertEqual([{admit, 1, ?CENTRAL}, {outcome, 1, {failed, already_bonded}}], window(Actions)),
@@ -323,23 +350,58 @@ just_works() ->
 rev(Bytes) -> list_to_binary(lists:reverse(binary_to_list(Bytes))).
 
 %% A first pairing reaches its level at the controller's encryption, before the store
-%% answers; the store's `ok` makes the key a kept bond's and the window hears `bonded`.
+%% answers. The step that ends its third phase is its one ordering point: it sends `keep`
+%% to the store and `keeping` to the window together, and a withdrawal after it changes
+%% nothing. The outcome is then the store's to tell the window: the store's `ok` makes the
+%% key a kept bond's, and its error ends the link.
 first_pairing_reaches_level_before_store_test() ->
     {[PublicKey, Random, Check], Ltk} = just_works(),
-    Identity = [smp(<<16#08, 7:128>>), smp(<<16#09, 1, 16#C6, 16#C5, 16#C4, 16#C3, 16#C2, 16#C1>>)],
-    {Paired, Core} = run([smp(pairing_request()), {admission, 1, {open, nodisplay, fresh()}}, smp(PublicKey),
-                          smp(Random), smp(Check), ltk_request(), encryption_on()] ++ Identity,
-                         core(#{pairing => true, share => 16})),
+    {Paired, Encrypted} = run([smp(pairing_request()), {admission, 1, {open, nodisplay, fresh()}}, smp(PublicKey),
+                               smp(Random), smp(Check), ltk_request(), encryption_on(), smp(<<16#08, 7:128>>)],
+                              core(#{share => 16})),
     ?assertEqual([], [Code || <<16#05, Code>> <- on(6, Paired)]),
     ?assertEqual([{ltk_reply, Ltk}], [A || {ltk_reply, _} = A <- Paired]),
     ?assertEqual([{security, #{level => encrypted, bonded => false}}], registry(Paired)),
-    ?assertMatch([{store, {keep, #{ltk := Ltk, level := unauthenticated}, #{}}}], [A || {store, _} = A <- Paired]),
-    {Kept, _} = erx_bt_link_core:step({kept, ok}, 0, Core),
-    ?assertEqual([{window, {outcome, 1, {bonded, {random, <<16#C1, 16#C2, 16#C3, 16#C4, 16#C5, 16#C6>>},
-                                         unauthenticated}}},
-                  {registry, {security, #{level => encrypted, bonded => true}}}], Kept),
-    {Failed, _} = erx_bt_link_core:step({kept, {error, unavailable}}, 0, Core),
-    ?assertEqual([{window, {outcome, 1, {failed, unavailable}}}, {close, {store, unavailable}}], Failed).
+    ?assertEqual([], [A || {store, _} = A <- Paired]),
+    {Ended, Core} = core_step(smp(<<16#09, 1, 16#C6, 16#C5, 16#C4, 16#C3, 16#C2, 16#C1>>), 0, Encrypted),
+    ?assertMatch([{store, {keep, 1, #{ltk := Ltk, level := unauthenticated}, #{}}}, {window, {keeping, 1}}],
+                 [A || {Role, _} = A <- Ended, Role =:= store orelse Role =:= window]),
+    ?assertMatch({[], _}, core_step({withdraw, 1}, 0, Core)),
+    {Kept, _} = core_step({kept, ok}, 0, Core),
+    ?assertEqual([{registry, {security, #{level => encrypted, bonded => true}}}], Kept),
+    {Failed, _} = core_step({kept, {error, unavailable}}, 0, Core),
+    ?assertEqual([{close, {store, unavailable}}], Failed).
+
+%% Every message is keyed by its role: a controller message's step answers `taken` first,
+%% packets and the Long Term Key answer go to the controller as `hci`, the store's
+%% `forgotten` ends the link, and an input without its role, or under another's, raises.
+roles_test() ->
+    {Reply, _} = erx_bt_link_core:step({hci, ltk_request()}, 0, bonded(authenticated)),
+    ?assertEqual([{hci, taken}, {hci, {ltk_reply, ?BOND_LTK}}], Reply),
+    {Rejected, _} = erx_bt_link_core:step({hci, acl(5, <<16#12, 7, 8:16/little, 0:64>>)}, 0, core()),
+    ?assertMatch([{hci, taken}, {hci, {send, 0, _}}], Rejected),
+    ?assertMatch({[], _}, erx_bt_link_core:step({registry, {set, {svc, open_w}, <<"v">>}}, 0, core())),
+    ?assertMatch({[{close, forgotten}], _}, erx_bt_link_core:step({store, forgotten}, 0, bonded(authenticated))),
+    ?assertError(function_clause, erx_bt_link_core:step(ltk_request(), 0, core())),
+    ?assertError(function_clause, erx_bt_link_core:step({window, {set, {svc, open_w}, <<"v">>}}, 0, core())),
+    ?assertError(function_clause, erx_bt_link_core:step({store, {kept, ok}}, 0, core())).
+
+%% A resolved bond is a candidate until the link is encrypted with its key: before that the
+%% link has the default configuration and answers a configuration write Insufficient
+%% Encryption (0x0F); at encryption it takes on the bond's subscriptions the table still
+%% declares, which the registry hears, and a notification goes out.
+resolved_bond_is_taken_on_at_encryption_test() ->
+    Core = core(#{bond => resolved(unauthenticated, #{{svc, enc_n} => notify, {svc, gone} => notify})}),
+    Config = configuration(enc_n),
+    Notify = {notify, caller, notify, {svc, enc_n}, <<"n">>},
+    {Before, _} = run([att(read(Config)), att(write(Config, <<1, 0>>))], Core),
+    ?assertEqual([<<16#0B, 0, 0>>, error_rsp(16#12, Config, 16#0F)], on(4, Before)),
+    ?assertEqual([], registry(Before)),
+    {At, _} = run([ltk_request(), encryption_on(), att(read(Config)), Notify], Core),
+    ?assertEqual([{security, #{level => encrypted, bonded => true}}, {subscribed, {svc, enc_n}, notify}],
+                 registry(At)),
+    ?assertEqual([{reply, caller, ok}], [A || {reply, _, _} = A <- At]),
+    ?assertMatch([<<16#0B, 1, 0>>, <<16#1B, _:16, "n">>], on(4, At)).
 
 %% A failure that ends a keyed link sends its Pairing Failed before the close: a pairing
 %% withdrawn after its second phase gave the link its key (docs/design-bluetooth.md, "The
@@ -347,8 +409,8 @@ first_pairing_reaches_level_before_store_test() ->
 withdrawn_after_key_sends_failure_before_close_test() ->
     {[PublicKey, Random, Check], _Ltk} = just_works(),
     {_, Keyed} = run([smp(pairing_request()), {admission, 1, {open, nodisplay, fresh()}}, smp(PublicKey),
-                      smp(Random), smp(Check)], core(#{pairing => true, share => 16})),
-    {Actions, _} = erx_bt_link_core:step({withdraw, 1}, 0, Keyed),
+                      smp(Random), smp(Check)], core(#{share => 16})),
+    {Actions, _} = core_step({withdraw, 1}, 0, Keyed),
     ?assertEqual([pairing_failed(16#08)], on(6, Actions)),
     ?assertEqual([{outcome, 1, {failed, withdrawn}}], window(Actions)),
     ?assertEqual({close, pairing}, lists:last(Actions)).
@@ -360,7 +422,7 @@ done_refusal_not_an_outcome_test() ->
     Identity = [smp(<<16#08, 7:128>>), smp(<<16#09, 1, 16#C6, 16#C5, 16#C4, 16#C3, 16#C2, 16#C1>>)],
     {_, Bonded} = run([smp(pairing_request()), {admission, 1, {open, nodisplay, fresh()}}, smp(PublicKey),
                        smp(Random), smp(Check), ltk_request(), encryption_on()] ++ Identity ++ [{kept, ok}],
-                      core(#{pairing => true, share => 16})),
+                      core(#{share => 16})),
     {Actions, _} = run([smp(pairing_request())], Bonded),
     ?assertEqual([pairing_failed(16#08)], on(6, Actions)),
     ?assertEqual([], window(Actions)).
@@ -368,28 +430,29 @@ done_refusal_not_an_outcome_test() ->
 %% The Security Manager Timer is a deadline: 30 s without a step fails the pairing and
 %% ends the link (Part H, 3.4).
 pairing_deadline_test() ->
-    {_, Core} = run([smp(pairing_request())], core(#{pairing => true})),
+    {_, Core} = run([smp(pairing_request())], core()),
     ?assertEqual(30000, erx_bt_link_core:next_deadline(Core)),
-    {Actions, _} = erx_bt_link_core:step(expired, 30000, Core),
+    {Actions, _} = core_step(expired, 30000, Core),
     ?assertEqual([{outcome, 1, {failed, timeout}}], window(Actions)),
     ?assertEqual([pairing], closed(Actions)).
 
 %% ---- the core, explored ----
 
 %% Every state a small alphabet reaches within ?DEPTH steps, from a link with no key and
-%% from a bonded one, each with pairing off and on. Each step keeps the invariants:
+%% from a resolved one subscribed to enc_n. Each step keeps the invariants:
 %% the queue and the outstanding packets within their bounds, no packet past the
 %% controller's length, a key never changing once set, `encrypted` set only by a success
 %% report after a Reply and only on a link with a key, no write to an `encrypted`
 %% characteristic reaching the registry on a link not encrypted, a Reply only with a key,
-%% and every whole frame on an unknown channel counted. A step that ends the link ends its
-%% path.
+%% every whole frame on an unknown channel counted, no subscription to enc_n heard before
+%% the link is encrypted, and every controller message's step answering `taken` first
+%% (core_step/3). A step that ends the link ends its path.
 explored_core_keeps_its_invariants_test_() ->
     {timeout, 300, fun explore/0}.
 
 explore() ->
-    Starts = [{C, 0, 0} || Bond <- [none, #{ltk => ?BOND_LTK, level => unauthenticated}], Pairing <- [false, true],
-                           C <- [core(#{bond => Bond, pairing => Pairing})]],
+    Starts = [{C, 0, 0} || Bond <- [none, resolved(unauthenticated, #{{svc, enc_n} => notify})],
+                           C <- [core(#{bond => Bond})]],
     Visited = explore(Starts, maps:from_keys(Starts, true), ?DEPTH),
     io:format("~b states~n", [map_size(Visited)]),
     ?assert(map_size(Visited) > 1000).
@@ -414,7 +477,7 @@ alphabet({Core, Now, Ref}) ->
 explore_step({at, Now, Input}, {Core, _, Ref}) -> explore_step(Input, {Core, Now, Ref});
 explore_step(Input, {Core, Now, Ref}) ->
     Before = facts(Core),
-    {Actions, Next} = erx_bt_link_core:step(Input, Now, Core),
+    {Actions, Next} = core_step(Input, Now, Core),
     After = facts(Next),
     #{outstanding := Outstanding, queued := Queued} = After,
     ?assert(Outstanding =< ?SHARE),
@@ -427,6 +490,7 @@ explore_step(Input, {Core, Now, Ref}) ->
     end,
     [?assertNotEqual(none, maps:get(key, After)) || maps:get(encrypted, After)],
     [?assert(maps:get(encrypted, After)) || {registry, {write, _, {svc, enc_w}, _}} <- Actions],
+    [?assert(maps:get(encrypted, After)) || {registry, {subscribed, {svc, enc_n}, notify}} <- Actions],
     [?assertNotEqual(none, maps:get(key, Before)) || {ltk_reply, Ltk} <- Actions, Ltk =/= none],
     case closed(Actions) of
         [] ->

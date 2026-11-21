@@ -8554,24 +8554,26 @@ model harness drive `erx_device.c` itself. `erx_device_dma_check` and `erx_devic
   termination already in progress, so a remote peer leaving as the host disconnects it may reset every link.
   Check Core 6.3 Vol 4 Part E 7.1.6 and 7.7.5 for the statuses a controller sends in that race, and accept the
   ones that mean the handle is going.
-* [Medium] bluetooth, the link's conversations (`erx_bt_link`, `erx_bt_link_core`, `erx_hci`, `erx_bt_hci_core`;
-  docs/design-bluetooth.md "The link's messages"): the code predates that section. Owners still answer an alias,
-  so the window cannot see a link's end and a killed link mid-pairing is not counted; the link traps exits and
-  tells the window from `terminate/2`, keeps its own copy of the core's `awaiting` and an owner table
-  (`accepts/2`) beside the core's `input()`; `init/1` calls `erx_bt_store:address/0` inside the controller's
-  synchronous `start_child`; the table, values, pairing flag and bond come from an optional `domain` key the
-  controller does not pass; a reserved Peer_Address_Type fails the link's start and so resets the controller
-  group; `erx_hci` checks a failed LE Connection Complete's handle, which HCI 4.5.1's Table 4.1 leaves
-  invalid, so a failure carrying a reserved handle restarts the controller group; LE Connection Update
-  Complete is forwarded to a link that ignores it; the controller forwards to a link without bound, so a link
-  held up fills its mailbox; the link reports `bonded` from its start for a resolved bond; and `erx_smp_core`
-  ignores a withdrawal in `done` without the link telling the window it handed the bond on. Build the section:
-  the link's pid as its address with owners' monitors, role-tagged inputs and actions, the identity address in
-  `link_up`'s `Info`, `resolve` and `join` (without `bonded`) after `init/1`, no pairing flag, LE Connection
-  Complete's Status read first and Peer_Address_Type decoded or malformed in `erx_hci`, the link's backlog
-  (`taken` and `bt_link_backlog` in `abi/formats/bluetooth.txt`), a resolved bond's subscriptions and hash
-  taken only at encryption, `keep` with its tag beside `keeping`, and the host tests the Verification table
-  lists for them.
+* [Medium] bluetooth, the link's conversations, the rest (`erx_hci`, `erx_bt_hci_core`, `erx_bt_hci`,
+  `erx_bt_link_core`; docs/design-bluetooth.md "The link's messages", "Reconnection"): the link side is built
+  (the pid as its address, role-tagged inputs and actions, `resolve` and `join` after `init/1`, no pairing flag,
+  `taken`, a resolved bond as a candidate, `keep` with its tag beside `keeping`). Left: `erx_hci` reads LE
+  Connection Complete's Status first and decodes Peer_Address_Type as `{public | random, Address}` or
+  malformed, so a reserved one still fails the link's start (a `function_clause` in `erx_bt_link`'s start) rather
+  than ending the controller process; the identity address enters `link_up`'s `Info` in the controller process
+  (`erx_bt_hci`), not in the core's `link_up` as the design has it; LE Connection Update Complete is still
+  forwarded, and `erx_bt_link_core` keeps a clause that ignores it until it is not; the controller core's
+  backlog, which counts `taken`, is not on this branch, so the controller process stops at a link's first
+  `taken` (`unexpected_request`) and `erx_bt_group_tests`' completions case fails until it lands. Reconnection's
+  Security Request (`wait`, `{wait, Ms}`), Service Changed with `served`, and the bonded configuration write
+  (`subscriptions`, its Write Response held for the store's `kept`) are not built; the core holds the bond's
+  table hash as `served` for them.
+* [High] bluetooth, the registry, the window and the store's bonds (`erx_gatt_srv`, `erx_bt_fs`,
+  `erx_bt_store`; docs/design-bluetooth.md "The `ble` facet", "The pairing window", "Bonds and the store"):
+  `erx_gatt_srv` has only its `join/2` call and no process, so every link ends at its start
+  (`{shutdown, {start, registry}}`) and no phone stays connected; with no window registered, a Pairing Request
+  is never admitted and fails at the Security Manager Timer, 30 s, ending the link; and `erx_bt_store:resolve/1`
+  answers `none` because the store keeps no bonds. Build the three processes.
 * [Low] bluetooth, the link core's deadlines and Encryption_Enabled (`erlang/apps/erx_bt/src/erx_bt_link_core.erl`,
   its `HANDLER_TIMEOUT_MS`, `ATT_TRANSACTION_MS`, `SMP_TIMEOUT_MS` and `ENCRYPTION_ON_LE`): "What a radio peer can
   make the domain spend" makes every bound a constant of `abi/formats/bluetooth.txt`, but these four are module

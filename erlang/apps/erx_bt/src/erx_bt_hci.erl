@@ -44,7 +44,8 @@ ends it, and the group's restart resets the line and the controller.
     links = #{} :: #{erx_bt_hci_core:link() => pid()},
     monitors = #{} :: #{reference() => erx_bt_hci_core:link()},
     timer = none :: none | {reference(), erx_bt_hci_core:time()},
-    ready = none :: none | map()               % the bring-up's facts, for /proc/bt
+    ready = none :: none | map(),              % the bring-up's facts, for /proc/bt
+    identity :: <<_:48>>                       % the identity address the controller advertises with
 }).
 
 -doc "Starts the controller process, last in the controller group.".
@@ -58,8 +59,8 @@ facts() ->
     gen_server:call(?MODULE, facts).
 
 init([]) ->
-    Core = erx_bt_hci_core:new(config()),
-    steps([start], #hci{core = Core}).
+    #{address := Identity} = Config = config(),
+    steps([start], #hci{core = erx_bt_hci_core:new(Config), identity = Identity}).
 
 %% The core's configuration (docs/design-bluetooth.md, "The controller process's effects",
 %% "Configuration"). No GATT table exists yet, so no UUID is advertised.
@@ -178,8 +179,9 @@ perform({write, Bytes}, State) ->
     State;
 perform({ready, Facts}, State) ->
     State#hci{ready = Facts};
-perform({link_up, Name, Info}, #hci{links = Links, monitors = Monitors} = State) ->
-    {ok, Pid} = erx_bt_link_sup:start_child(#{name => Name, conn => make_ref(), info => Info, hci => self()}),
+perform({link_up, Name, Info}, #hci{links = Links, monitors = Monitors, identity = Identity} = State) ->
+    {ok, Pid} = erx_bt_link_sup:start_child(#{name => Name, conn => make_ref(), info => Info#{identity => Identity},
+                                              hci => self()}),
     State#hci{links = Links#{Name => Pid}, monitors = Monitors#{monitor(process, Pid) => Name}};
 perform({to_link, Name, Event}, State) ->
     to_link(Name, Event, State);

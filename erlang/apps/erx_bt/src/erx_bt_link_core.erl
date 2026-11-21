@@ -11,27 +11,46 @@ share of the controller's buffers, and the deadlines of a handler's answer, an i
 and a pairing step. `step/3` takes one input and the time and returns the actions the
 link performs and the next core; it reads no clock and keeps no timer.
 
+**Roles.** Every input is `{Role, Message}`, but `expired`, and every action that goes to
+an owner is `{Role, Message}`, where `Role` is `hci` (the controller process), `window`,
+`registry` or `store`: the clauses of `input/3` are the one list of what each owner may
+send the link. A message no clause takes is a defect of the domain's own code, and raises.
+Each step of an `hci` input returns `{hci, taken}` first, the acknowledgement the
+controller counts the link's backlog by ("Commands and data credits").
+
 **Channels** (Core 6.3 Vol 3 Part A, 2.1): `erx_l2cap:reassemble/3` joins the ACL packets
 into frames, and a malformed one ends the link. ATT's channel goes to `erx_gatt_server`;
-SMP's to `erx_smp_core` once pairing is enabled, and before that every SMP command but
-Pairing Failed, a reserved code and an empty PDU is answered Pairing Failed, Pairing Not
-Supported (Part H, 3.5.5); LE signaling to `erx_l2cap:signal/1`; a frame on any other
-channel is dropped and counted.
+SMP's to `erx_smp_core`, whose admission the window decides; LE signaling to
+`erx_l2cap:signal/1`; a frame on any other channel is dropped and counted.
 
-**The one key** (docs/design-bluetooth.md, "One table, one gate"): a link starts with a
-kept bond's key or none, and takes its own pairing's key from `erx_smp_core` only while it
-has none (`set_key/3` matches only a link without one, so a second key ends the link by
-the crash of its process). A link with a key never pairs: the window's `open` verdict
-reaches the Security Manager as `bonded`, which refuses the pairing. At LE Long Term Key
-Request the link answers Reply with its key, `{ltk_reply, Key}`, when the request carries
-zero EDIV and Rand, as Secure Connections has it, and Negative Reply, `{ltk_reply, none}`,
-otherwise (HCI 7.7.65.5, 7.8.25, 7.8.26); a Reply the controller answers with a failure
-counts as no Reply.
-`encrypted` becomes true at the controller's next report of encryption started, Encryption
-Change on with AES-CCM (HCI 7.7.8) or Encryption Key Refresh Complete (7.7.39), each with
-status success, after a Reply; any other report about encryption ends the link. The gate
-reads `#{key, encrypted}` derived from these two facts alone, so no field a peer sends
-raises a link's level.
+**The one key** (docs/design-bluetooth.md, "One table, one gate"): a link starts with the
+key of the bond its address resolved to, or none, and takes its own pairing's key from
+`erx_smp_core` only while it has none (`set_key/3` matches only a link without one, so a
+second key raises). A link with a key never pairs: the window's `open` verdict reaches
+the Security Manager as `bonded`, which refuses the pairing. At LE Long Term Key Request
+the link answers Reply with its key when the request carries zero EDIV and Rand, as
+Secure Connections has it, and Negative Reply otherwise (HCI 7.7.65.5, 7.8.25, 7.8.26); a
+Reply the controller answers with a failure counts as no Reply. `encrypted` becomes true
+at the controller's next report of encryption started, Encryption Change on with AES-CCM
+(HCI 7.7.8) or Encryption Key Refresh Complete (7.7.39), each with status success, after a
+Reply; any other report about encryption ends the link. The gate reads `#{key,
+encrypted}` derived from these two facts alone, so no field a peer sends raises a link's
+level.
+
+**A resolved bond is a candidate** ("A link is its bond's only from its encryption"): an
+address is whatever the peer sends, and only the key proves the bond. So the core holds
+the bond's key from its start, and its kept subscriptions and table hash aside, taking
+them on at the first encryption with the key: the subscriptions restored into the bearer
+and told to the registry, the hash as the one the bond was last served. Before that the
+link has the default configuration, and the ATT server answers a configuration write on
+a keyed link Insufficient Encryption. `bonded` is true only on an encrypted link whose key
+is a kept bond's.
+
+**A pairing's outcome has one ordering point**: the step in which the Security Manager
+ends its third phase sends `{keep, Tag, Bond, Subscriptions}` to the store and `{keeping,
+Tag}` to the window. Before it, a failure is the link's to report (`{outcome, Tag,
+{failed, Reason}}`); from it, the store tells the window the outcome, and the store's
+`kept` tells the link whether its key is a kept bond's.
 
 **Sending**: frames wait in the link's queue and are cut into ACL packets of at most the
 controller's length, handed over only while the packets outstanding are below the link's
@@ -54,16 +73,16 @@ link ends; and the Security Manager Timer's 30 s (Part H, 3.4). `next_deadline/1
 the earliest, and `expired` runs each that has passed.
 
 **Secrets**: the `key` and `smp` fields of the core hold the LTK and the pairing's private
-key, passkey and DHKey, and the `bond` the store is asked to keep carries the LTK. The
-link process shows `facts/1`, never the core, in crash reports and status output, and
-since a crash's stack trace carries `step/3`'s arguments, it runs `step/3` so that a
-raise ends the link with a reason built from `facts/1` alone.
+key, passkey and DHKey, and the bond `new/1` takes and the one the store is asked to keep
+carry an LTK. The link process shows `facts/1`, never the core, in crash reports and
+status output, and since a crash's stack trace carries `step/3`'s arguments, it runs
+`step/3` so that a raise ends the link with a reason built from `facts/1` alone.
 """.
 
 -include("generated/erx_abi.hrl").
 
 -export([new/1, step/3, next_deadline/1, facts/1]).
--export_type([core/0, config/0, input/0, action/0, outcome/0, time/0]).
+-export_type([core/0, config/0, resolved/0, input/0, action/0, time/0]).
 
 %% The handler's answer to a write (docs/design-bluetooth.md, "The `ble` facet"), ATT's
 %% transaction timeout (Part F, 3.3.3) and the Security Manager Timer (Part H, 3.4).
@@ -79,50 +98,53 @@ raise ends the link with a reason built from `facts/1` alone.
 -type tag() :: erx_smp_core:tag().
 -type subscription() :: erx_gatt_server:subscription().
 -type key_level() :: authenticated | unauthenticated.
--doc "A kept bond's key, which the link holds from its start when the phone's address resolved to the bond.".
--type bond() :: #{ltk := erx_smp_crypto:value(), level := key_level()}.
+-doc """
+The bond the store resolved the phone's address to (`erx_bt_store:resolve/1`), without
+its IRK: a candidate, whose key the link holds from its start and whose subscriptions and
+table hash it takes on at its encryption with that key.
+""".
+-type resolved() :: #{ltk := erx_smp_crypto:value(), level := key_level(), identity := erx_smp_crypto:address(),
+                      hash := binary(), subscriptions := #{key() => subscription()}}.
 -type config() :: #{table := erx_gatt_db:table(), values := #{key() => binary()},
                     addresses := #{central := erx_smp_crypto:address(), peripheral := erx_smp_crypto:address()},
-                    pairing := boolean(), bond := none | bond(),
-                    share := pos_integer(), acl_tx_max := pos_integer()}.
+                    bond := none | resolved(), share := pos_integer(), acl_tx_max := pos_integer()}.
 -doc """
-What reaches the link: from the controller process, an ACL packet, completed packets, its
-`busy`, the controller's reports about encryption as `erx_hci` decodes them, and its
-report of new connection parameters, which changes nothing here, and the controller's
-answer to the link's `{ltk_reply, _}`; from the
-window, its verdict on a Pairing Request and its withdrawal; from the registry, a handler's
-answer to a write, a value a handler set and a notification or indication with the
-caller's `From`; from the store, its answer to `keep`; and `expired`, when the earliest
-deadline is due.
+What reaches the link, keyed by the owner that sends it: from the controller process, an
+ACL packet, completed packets, its `busy`, the controller's reports about encryption as
+`erx_hci` decodes them, its report of new connection parameters, which changes nothing
+here, and the controller's answer to the link's `ltk_reply`; from the window, its verdict
+on a Pairing Request and its withdrawal; from the registry, a handler's answer to a
+write, a value a handler set and a notification or indication with the caller's `From`;
+from the store, its answer to `keep` and the bond's forgetting; and `expired`, when the
+earliest deadline is due.
 """.
--type input() :: {acl, 0..3, binary()} | {completed, pos_integer()} | busy
-               | {le_long_term_key_request, erx_hci:handle(), <<_:64>>, 0..16#FFFF}
-               | {encryption_change, byte(), erx_hci:handle(), byte()}
-               | {encryption_key_refresh_complete, byte(), erx_hci:handle()}
-               | {le_connection_update_complete, byte(), erx_hci:handle()}
-               | {ltk_reply_complete, ok | {failed, byte()}}
-               | {admission, tag(), erx_smp_core:verdict()} | {withdraw, tag()}
-               | {answer, ref(), term()} | {set, key(), binary()}
-               | {notify, From :: term(), notify | indicate, key(), binary()}
-               | {kept, ok | {error, unavailable | bonds_full | already_bonded}}
+-type input() :: {hci, {acl, 0..3, binary()} | {completed, pos_integer()} | busy
+                       | {le_long_term_key_request, erx_hci:handle(), <<_:64>>, 0..16#FFFF}
+                       | {encryption_change, byte(), erx_hci:handle(), byte()}
+                       | {encryption_key_refresh_complete, byte(), erx_hci:handle()}
+                       | {le_connection_update_complete, byte(), erx_hci:handle()}
+                       | {ltk_reply_complete, ok | {failed, byte()}}}
+               | {window, {admission, tag(), erx_smp_core:verdict()} | {withdraw, tag()}}
+               | {registry, {answer, ref(), term()} | {set, key(), binary()}
+                            | {notify, From :: term(), notify | indicate, key(), binary()}}
+               | {store, {kept, ok | {error, atom()}} | forgotten}
                | expired.
--doc "What a pairing the window admitted came to, as the window writes it on `pair`.".
--type outcome() :: {bonded, erx_smp_crypto:address(), key_level()}
-                 | {failed, erx_smp_core:reason() | unavailable | bonds_full}.
 -doc """
-What the link does, in order: hands an ACL packet to the controller process; answers the
-controller's Long Term Key Request; tells the registry of a write for its handler, a
-subscription, a new MTU or the link's security; answers a notification's caller; asks the
-window to admit a pairing, shows it the passkey or tells it the outcome; asks the store to
-keep a bond with the link's subscriptions; or ends, its end disconnecting it.
+What the link does, in order, each but a notification's answer and the end sent to an
+owner: to the controller process, an ACL packet, the answer to its Long Term Key Request
+and `taken`; to the registry, a write for its handler, a subscription, a new MTU or the
+link's security; to the window, a Pairing Request to admit, the passkey, a failure of the
+pairing it admitted, or `keeping` when the bond goes to the store; to the store, the bond
+to keep with the link's subscriptions; a notification's answer to its caller; or the
+link's end, which disconnects it.
 """.
--type action() :: {acl, 0..3, binary()} | {ltk_reply, erx_smp_crypto:value() | none}
+-type action() :: {hci, {send, 0..3, binary()} | {ltk_reply, erx_smp_crypto:value() | none} | taken}
                 | {registry, {write, ref(), key(), binary()} | {subscribed, key(), subscription()}
                              | {mtu, pos_integer()} | {security, #{level := erx_gatt_gate:level(), bonded := boolean()}}}
-                | {reply, From :: term(), ok | {error, atom()}}
                 | {window, {admit, tag(), erx_smp_crypto:address()} | {passkey, tag(), 0..?ERX_SMP_PASSKEY_MAX}
-                           | {outcome, tag(), outcome()}}
-                | {store, {keep, erx_smp_core:bond(), #{key() => subscription()}}}
+                           | {outcome, tag(), {failed, erx_smp_core:reason()}} | {keeping, tag()}}
+                | {store, {keep, tag(), erx_smp_core:bond(), #{key() => subscription()}}}
+                | {reply, From :: term(), ok | {error, atom()}}
                 | {close, term()}.
 
 -record(core, {
@@ -131,14 +153,17 @@ keep a bond with the link's subscriptions; or ends, its end disconnecting it.
     central :: erx_smp_crypto:address(),                  % the phone's address, for the window
     partial = none :: erx_l2cap:partial(),
     bearer :: erx_gatt_server:bearer(),
-    subscriptions = #{} :: #{key() => subscription()},
     key :: none | {erx_smp_crypto:value(), key_level()},  % secret: the LTK
     kept :: boolean(),                                    % the key is a kept bond's
+    %% A resolved bond's subscriptions and table hash, held aside until the link is
+    %% encrypted with its key; then the hash the bond was last served.
+    candidate = none :: none | #{hash := binary(), subscriptions := #{key() => subscription()}},
+    served = none :: none | binary(),
     encrypted = false :: boolean(),
     ltk_answer = none :: none | replied | refused,        % the answer to the last request, until a report
-    smp :: disabled | erx_smp_core:state(),               % secret: the pairing's private key, passkey, DHKey
-    awaiting = none :: none | tag(),                      % the admitted pairing whose outcome the window awaits
-    keeping = none :: none | {tag(), erx_smp_crypto:address(), key_level()},  % a bond the store is asked to keep
+    smp :: erx_smp_core:state(),                          % secret: the pairing's private key, passkey, DHKey
+    awaiting = none :: none | tag(),                      % the admitted pairing, until its failure or `keeping`
+    keeping = false :: boolean(),                         % the store is asked to keep the pairing's bond
     smp_deadline = none :: none | time(),
     write = none :: none | {ref(), time()},              % the write a handler answers
     indication = none :: none | {From :: term(), time()},
@@ -153,14 +178,17 @@ keep a bond with the link's subscriptions; or ends, its end disconnecting it.
 }).
 -opaque core() :: #core{}.
 
--doc "A link at LE Connection Complete, with a kept bond's key when its address resolved to one.".
+-doc "A link at its start, holding the key of the bond its address resolved to, if any.".
 -spec new(config()) -> core().
-new(#{table := Table, values := Values, addresses := #{central := Central} = Addresses, pairing := Pairing,
-      bond := Bond, share := Share, acl_tx_max := AclTxMax}) ->
+new(#{table := Table, values := Values, addresses := #{central := Central} = Addresses, bond := Bond,
+      share := Share, acl_tx_max := AclTxMax}) ->
+    {Key, Candidate} = case Bond of
+                           none -> {none, none};
+                           #{ltk := Ltk, level := Level, hash := Hash, subscriptions := Subscriptions} ->
+                               {{Ltk, Level}, #{hash => Hash, subscriptions => Subscriptions}}
+                       end,
     #core{table = Table, values = Values, central = Central, bearer = erx_gatt_server:new(),
-          key = case Bond of none -> none; #{ltk := Ltk, level := Level} -> {Ltk, Level} end,
-          kept = Bond =/= none,
-          smp = case Pairing of true -> erx_smp_core:new(Addresses); false -> disabled end,
+          key = Key, kept = Bond =/= none, candidate = Candidate, smp = erx_smp_core:new(Addresses),
           share = Share, acl_tx_max = AclTxMax}.
 
 -doc "Takes one input at time `Now`; returns the link's actions and the next core.".
@@ -187,81 +215,98 @@ counters. Nothing here is secret, so a crash report or `/proc` may print it whol
 """.
 -spec facts(core()) -> map().
 facts(#core{} = Core) ->
-    #{key => key_level(Core#core.key), encrypted => Core#core.encrypted, bonded => Core#core.kept,
+    #{key => key_level(Core#core.key), encrypted => Core#core.encrypted, bonded => bonded(Core),
       ltk_answer => Core#core.ltk_answer, pairing => Core#core.smp_deadline =/= none,
       mtu => erx_gatt_server:mtu(Core#core.bearer), queued => queue:len(Core#core.queue),
       outstanding => Core#core.outstanding, dropped => Core#core.dropped, refused => Core#core.refused,
       discarded => Core#core.discarded}.
 
-%% ---- the inputs ----
+%% ---- the inputs, by role ----
 
-input({acl, Boundary, Data}, Now, #core{partial = Partial} = Core) ->
+input({hci, Event}, Now, Core) ->
+    {Actions, Next} = hci(Event, Now, Core),
+    {[{hci, taken} | Actions], Next};
+input({window, {admission, Tag, {open, _Mode, _Fresh}}}, Now, #core{key = {_, _}} = Core) ->
+    smp({admission, Tag, bonded}, Now, Core);
+input({window, {admission, _Tag, _Verdict} = Admission}, Now, Core) ->
+    smp(Admission, Now, Core);
+input({window, {withdraw, _Tag} = Withdraw}, Now, Core) ->
+    smp(Withdraw, Now, Core);
+input({registry, {answer, Ref, Answer}}, Now, #core{write = {Ref, _}} = Core) ->
+    att(erx_gatt_server:reply(Ref, Answer, server(Core), Core#core.bearer), Now, Core#core{write = none});
+input({registry, {answer, _Ref, _Answer}}, _Now, Core) ->
+    {[], Core};
+input({registry, {set, Key, Value}}, _Now, #core{values = Values} = Core) ->
+    {[], Core#core{values = Values#{Key => Value}}};
+input({registry, {notify, From, Kind, Key, Value}}, Now, Core) ->
+    notify(From, Kind, erx_gatt_server:notify(Kind, Key, Value, server(Core), Core#core.bearer), Now, Core);
+input({store, {kept, ok}}, _Now, #core{keeping = true} = Core) ->
+    Kept = Core#core{kept = true, keeping = false},
+    {security(Kept), Kept};
+input({store, {kept, {error, Reason}}}, _Now, #core{keeping = true} = Core) ->
+    {[{close, {store, Reason}}], Core#core{keeping = false}};
+input({store, forgotten}, _Now, Core) ->
+    {[{close, forgotten}], Core};
+input(expired, Now, Core) ->
+    expire(Now, Core).
+
+%% What the controller process sends.
+hci({acl, Boundary, Data}, Now, #core{partial = Partial} = Core) ->
     case erx_l2cap:reassemble(Boundary, Data, Partial) of
         {more, More} -> {[], Core#core{partial = More}};
         {frame, Cid, Payload} -> channel(Cid, Payload, Now, Core#core{partial = none});
         {error, Reason} -> {[{close, {l2cap, Reason}}], Core}
     end;
-input({completed, Count}, _Now, #core{outstanding = Outstanding} = Core) ->
+hci({completed, Count}, _Now, #core{outstanding = Outstanding} = Core) ->
     {[], Core#core{outstanding = Outstanding - Count}};
-input(busy, _Now, Core) ->
+hci(busy, _Now, Core) ->
     {[{close, busy}], Core};
-input({le_long_term_key_request, _Handle, <<0:64>>, 0}, _Now, #core{key = {Ltk, _}} = Core) ->
-    {[{ltk_reply, Ltk}], Core#core{ltk_answer = replied}};
-input({le_long_term_key_request, _Handle, _Random, _Ediv}, _Now, Core) ->
-    {[{ltk_reply, none}], Core#core{ltk_answer = refused}};
+hci({le_long_term_key_request, _Handle, <<0:64>>, 0}, _Now, #core{key = {Ltk, _}} = Core) ->
+    {[{hci, {ltk_reply, Ltk}}], Core#core{ltk_answer = replied}};
+hci({le_long_term_key_request, _Handle, _Random, _Ediv}, _Now, Core) ->
+    {[{hci, {ltk_reply, none}}], Core#core{ltk_answer = refused}};
 %% A Reply the controller answers with a failure counts as none, so the next report about
 %% encryption ends the link: HCI 7.8.25's Status says only that the command failed, not
 %% whether the controller kept the key, and ending the link is the safe reading.
-input({ltk_reply_complete, {failed, _Status}}, _Now, #core{ltk_answer = replied} = Core) ->
+hci({ltk_reply_complete, {failed, _Status}}, _Now, #core{ltk_answer = replied} = Core) ->
     {[], Core#core{ltk_answer = refused}};
-input({ltk_reply_complete, _Answer}, _Now, Core) ->
+hci({ltk_reply_complete, _Answer}, _Now, Core) ->
     {[], Core};
-input({encryption_change, ?ERX_HCI_STATUS_SUCCESS, _Handle, ?ENCRYPTION_ON_LE}, Now,
-      #core{ltk_answer = replied} = Core) ->
+hci({encryption_change, ?ERX_HCI_STATUS_SUCCESS, _Handle, ?ENCRYPTION_ON_LE}, Now,
+    #core{ltk_answer = replied} = Core) ->
     encrypted(Now, Core);
-input({encryption_key_refresh_complete, ?ERX_HCI_STATUS_SUCCESS, _Handle}, Now, #core{ltk_answer = replied} = Core) ->
+hci({encryption_key_refresh_complete, ?ERX_HCI_STATUS_SUCCESS, _Handle}, Now, #core{ltk_answer = replied} = Core) ->
     encrypted(Now, Core);
-input({encryption_change, _Status, _Handle, _Enabled}, _Now, Core) ->
+hci({encryption_change, _Status, _Handle, _Enabled}, _Now, Core) ->
     {[{close, {encryption, encryption_change}}], Core};
-input({encryption_key_refresh_complete, _Status, _Handle}, _Now, Core) ->
+hci({encryption_key_refresh_complete, _Status, _Handle}, _Now, Core) ->
     {[{close, {encryption, encryption_key_refresh_complete}}], Core};
-input({le_connection_update_complete, _Status, _Handle}, _Now, Core) ->
-    {[], Core};
-input({admission, Tag, {open, _Mode, _Fresh}}, Now, #core{key = {_, _}} = Core) ->
-    smp({admission, Tag, bonded}, Now, Core);
-input({admission, _Tag, _Verdict} = Admission, Now, Core) ->
-    smp(Admission, Now, Core);
-input({withdraw, _Tag} = Withdraw, Now, Core) ->
-    smp(Withdraw, Now, Core);
-input({answer, Ref, Answer}, Now, #core{write = {Ref, _}} = Core) ->
-    att(erx_gatt_server:reply(Ref, Answer, server(Core), Core#core.bearer), Now, Core#core{write = none});
-input({answer, _Ref, _Answer}, _Now, Core) ->
-    {[], Core};
-input({set, Key, Value}, _Now, #core{values = Values} = Core) ->
-    {[], Core#core{values = Values#{Key => Value}}};
-input({notify, From, Kind, Key, Value}, Now, Core) ->
-    notify(From, Kind, erx_gatt_server:notify(Kind, Key, Value, server(Core), Core#core.bearer), Now, Core);
-input({kept, ok}, _Now, #core{keeping = {Tag, Identity, Level}} = Core) ->
-    Kept = Core#core{kept = true, keeping = none, awaiting = none},
-    {[{window, {outcome, Tag, {bonded, Identity, Level}}} | security(Kept)], Kept};
-input({kept, {error, Reason}}, _Now, #core{keeping = {Tag, _, _}} = Core) ->
-    {[{window, {outcome, Tag, {failed, Reason}}}, {close, {store, Reason}}],
-     Core#core{keeping = none, awaiting = none}};
-input({kept, _Answer}, _Now, Core) ->
-    {[], Core};
-input(expired, Now, Core) ->
-    expire(Now, Core).
+%% The design has the controller process take this report and forward nothing; until
+%% erx_bt_hci_core stops forwarding it, the link takes it and changes nothing.
+hci({le_connection_update_complete, _Status, _Handle}, _Now, Core) ->
+    {[], Core}.
 
-%% The controller encrypted with the link's key: the level the registry tells the
-%% handlers, and the Security Manager's third phase.
+%% The controller encrypted with the link's key: a resolved bond's candidate becomes the
+%% link's, the registry tells the handlers the level, and the Security Manager runs its
+%% third phase.
 encrypted(Now, #core{encrypted = Was} = Core) ->
-    Encrypted = Core#core{encrypted = true, ltk_answer = none},
-    {Smp, Next} = smp(encrypted, Now, Encrypted),
+    {Restored, Proven} = proven(Core#core{encrypted = true, ltk_answer = none}),
+    {Smp, Next} = smp(encrypted, Now, Proven),
     Told = case Was of
                true -> [];
-               false -> security(Encrypted)
+               false -> security(Proven)
            end,
-    {Told ++ Smp, Next}.
+    {Told ++ Restored ++ Smp, Next}.
+
+%% A resolved bond's subscriptions and table hash, taken on at the first encryption with
+%% its key: the subscriptions the table still declares go into the bearer, and the
+%% registry hears each.
+proven(#core{candidate = none} = Core) ->
+    {[], Core};
+proven(#core{candidate = #{hash := Hash, subscriptions := Kept}, table = Table, bearer = Bearer} = Core) ->
+    {Restored, Next} = erx_gatt_server:restore(Kept, Table, Bearer),
+    {[{registry, {subscribed, Key, Kind}} || Key := Kind <- maps:iterator(Restored, ordered)],
+     Core#core{candidate = none, served = Hash, bearer = Next}}.
 
 %% The deadlines that have passed at `Now`, the Security Manager's first.
 expire(Now, Core0) ->
@@ -292,8 +337,6 @@ deadline({_, Deadline}) -> Deadline.
 
 channel(?ERX_L2CAP_CID_ATT, Pdu, Now, Core) ->
     att(erx_gatt_server:request(Pdu, server(Core), Core#core.bearer), Now, Core);
-channel(?ERX_L2CAP_CID_SMP, Pdu, _Now, #core{smp = disabled} = Core) ->
-    not_supported(erx_smp:decode(Pdu), Core);
 channel(?ERX_L2CAP_CID_SMP, Pdu, Now, Core) ->
     smp({pdu, erx_smp:decode(Pdu)}, Now, Core);
 channel(?ERX_L2CAP_CID_LE_SIGNALING, Frame, _Now, Core) ->
@@ -303,15 +346,6 @@ channel(?ERX_L2CAP_CID_LE_SIGNALING, Frame, _Now, Core) ->
     end;
 channel(_Cid, _Payload, _Now, #core{dropped = Dropped} = Core) ->
     {[], Core#core{dropped = Dropped + 1}}.
-
-%% Before pairing is enabled: Pairing Not Supported to every command but the phone's own
-%% Pairing Failed, which is never answered, and what the Security Manager ignores too.
-not_supported({pairing_failed, _Reason}, Core) -> {[], Core};
-not_supported(empty, Core) -> {[], Core};
-not_supported({reserved, _Code}, Core) -> {[], Core};
-not_supported({pairing_keypress_notification, _Type}, Core) -> {[], Core};
-not_supported(_Pdu, Core) ->
-    queue(?ERX_L2CAP_CID_SMP, erx_smp:encode({pairing_failed, ?ERX_SMP_REASON_PAIRING_NOT_SUPPORTED}), droppable, Core).
 
 %% ---- the ATT bearer ----
 
@@ -326,8 +360,8 @@ att_action({send, Pdu}, _Now, Core) ->
     queue(?ERX_L2CAP_CID_ATT, Pdu, always, Core);
 att_action({write, Ref, Key, Value}, Now, Core) ->
     {[{registry, {write, Ref, Key, Value}}], Core#core{write = {Ref, Now + ?HANDLER_TIMEOUT_MS}}};
-att_action({subscribed, Key, Subscription}, _Now, #core{subscriptions = Subscriptions} = Core) ->
-    {[{registry, {subscribed, Key, Subscription}}], Core#core{subscriptions = Subscriptions#{Key => Subscription}}};
+att_action({subscribed, Key, Subscription}, _Now, Core) ->
+    {[{registry, {subscribed, Key, Subscription}}], Core};
 att_action({mtu, Mtu}, _Now, Core) ->
     {[{registry, {mtu, Mtu}}], Core};
 att_action({confirmed, _Key}, _Now, #core{indication = {From, _}} = Core) ->
@@ -355,8 +389,6 @@ notify(From, indicate, {ok, Pdu, Bearer}, Now, Core) ->
 
 %% ---- the Security Manager ----
 
-smp(_Input, _Now, #core{smp = disabled} = Core) ->
-    {[], Core};
 smp(Input, Now, #core{smp = Smp} = Core) ->
     {Actions, Next} = erx_smp_core:step(Input, Smp),
     each(fun smp_action/3, Actions, Now, Core#core{smp = Next}).
@@ -373,13 +405,15 @@ smp_action({passkey, Passkey}, _Now, #core{awaiting = Tag} = Core) ->
     {[{window, {passkey, Tag, Passkey}}], Core};
 smp_action({key, Ltk, Level}, _Now, Core) ->
     {[], set_key(Ltk, Level, Core)};
-smp_action({bonded, #{identity := Identity, level := Level} = Bond}, _Now,
-           #core{subscriptions = Subscriptions, awaiting = Tag} = Core) ->
-    {[{store, {keep, Bond, Subscriptions}}], Core#core{keeping = {Tag, Identity, Level}}};
-%% A failure reaches the window only for the pairing it admitted and still awaits; the
+%% The ordering point: from this step the pairing is the store's, so the window hears
+%% `keeping` and no failure of the link's after it.
+smp_action({bonded, Bond}, _Now, #core{awaiting = Tag, bearer = Bearer} = Core) when Tag =/= none ->
+    {[{store, {keep, Tag, Bond, erx_gatt_server:subscriptions(Bearer)}}, {window, {keeping, Tag}}],
+     Core#core{awaiting = none, keeping = true}};
+%% A failure reaches the window only for the pairing it admitted, before `keeping`; the
 %% refusal of a Pairing Request after the bond, in the Security Manager's `done`, is not
 %% that pairing's outcome.
-smp_action({failed, Reason}, _Now, #core{awaiting = Tag, keeping = none} = Core) when Tag =/= none ->
+smp_action({failed, Reason}, _Now, #core{awaiting = Tag} = Core) when Tag =/= none ->
     {[{window, {outcome, Tag, {failed, Reason}}}], Core#core{awaiting = none}};
 smp_action({failed, _Reason}, _Now, Core) ->
     {[], Core};
@@ -399,11 +433,14 @@ gate_key({_Ltk, authenticated}) -> authenticated.
 key_level(none) -> none;
 key_level({_Ltk, Level}) -> Level.
 
+%% A link is its bond's once it is encrypted with a kept bond's key.
+bonded(#core{kept = Kept, encrypted = Encrypted}) -> Kept andalso Encrypted.
+
 %% The level the link reaches, `open` until it is encrypted and then its key's.
-security(#core{encrypted = false, kept = Kept}) ->
-    [{registry, {security, #{level => open, bonded => Kept}}}];
-security(#core{key = Key, kept = Kept}) ->
-    [{registry, {security, #{level => gate_key(Key), bonded => Kept}}}].
+security(#core{encrypted = false} = Core) ->
+    [{registry, {security, #{level => open, bonded => bonded(Core)}}}];
+security(#core{key = Key} = Core) ->
+    [{registry, {security, #{level => gate_key(Key), bonded => bonded(Core)}}}].
 
 %% ---- sending ----
 
@@ -431,7 +468,7 @@ full(Queue) -> queue:len(Queue) >= ?ERX_BT_NOTIFY_QUEUE.
 hand_over(Acc, #core{outstanding = Outstanding, share = Share} = Core) when Outstanding >= Share ->
     {lists:reverse(Acc), Core};
 hand_over(Acc, #core{current = [{Boundary, Data} | Rest], outstanding = Outstanding} = Core) ->
-    hand_over([{acl, Boundary, Data} | Acc], Core#core{current = Rest, outstanding = Outstanding + 1});
+    hand_over([{hci, {send, Boundary, Data}} | Acc], Core#core{current = Rest, outstanding = Outstanding + 1});
 hand_over(Acc, #core{current = [], queue = Queue, acl_tx_max = AclTxMax} = Core) ->
     case queue:out(Queue) of
         {{value, {Cid, Payload}}, Rest} ->

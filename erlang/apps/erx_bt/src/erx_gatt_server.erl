@@ -34,7 +34,7 @@ is in flight at a time (3.4.7.2).
 
 -include("generated/erx_abi.hrl").
 
--export([new/0, request/3, reply/4, notify/5, mtu/1]).
+-export([new/0, request/3, reply/4, notify/5, mtu/1, subscriptions/1, restore/3]).
 -export_type([bearer/0, server/0, action/0, subscription/0, ref/0]).
 
 -type key() :: erx_gatt_db:key().
@@ -79,6 +79,30 @@ new() -> #bearer{}.
 -doc "The bearer's ATT_MTU.".
 -spec mtu(bearer()) -> pos_integer().
 mtu(#bearer{mtu = Mtu}) -> Mtu.
+
+-doc "The link's configuration of each characteristic the phone has written, which a bond keeps.".
+-spec subscriptions(bearer()) -> #{key() => subscription()}.
+subscriptions(#bearer{subscriptions = Subscriptions}) -> Subscriptions.
+
+-doc """
+Takes on a bond's kept configuration when the link is encrypted with the bond's key
+(docs/design-bluetooth.md, "A link is its bond's only from its encryption"): each
+subscription whose characteristic `Table` still declares with that kind, the others left
+out, since the table may have changed since the bond kept them. Answers what it took.
+""".
+-spec restore(#{key() => subscription()}, erx_gatt_db:table(), bearer()) ->
+          {#{key() => subscription()}, bearer()}.
+restore(Kept, Table, Bearer) ->
+    Restored = maps:filter(fun(Key, Kind) -> declared(Key, Kind, Table) end, Kept),
+    {Restored, Bearer#bearer{subscriptions = Restored}}.
+
+declared(Key, Kind, Table) when Kind =:= notify; Kind =:= indicate ->
+    case erx_gatt_db:characteristic(Key, Table) of
+        {ok, #{configuration := Handle} = Info} when Handle =/= none -> maps:get(Kind, Info) =/= none;
+        _ -> false
+    end;
+declared(_Key, _Kind, _Table) ->
+    false.
 
 -doc "Takes one PDU from the phone.".
 -spec request(binary(), server(), bearer()) -> {[action()], bearer()}.
@@ -348,12 +372,20 @@ writable(Opcode, Handle, #{table := Table, security := Security}) ->
     case erx_gatt_db:lookup(Handle, Table) of
         error -> ?ERROR(Opcode, Handle, invalid_handle);
         {ok, #{write := none}} -> ?ERROR(Opcode, Handle, write_not_permitted);
-        {ok, #{write := Level} = Attribute} ->
-            case erx_gatt_gate:check(Level, Security) of
+        {ok, #{write := Level, source := Source} = Attribute} ->
+            case erx_gatt_gate:check(write_level(Source, Level, Security), Security) of
                 ok -> Attribute;
                 {error, Error} -> ?ERROR(Opcode, Handle, Error)
             end
     end.
+
+%% A configuration write is a write of the state a bond keeps, which the server may guard
+%% (Part G, 3.3.3.3): on a link that holds a key it requires at least `encrypted`, so until
+%% the link is encrypted with that key it is Insufficient Encryption and the configuration
+%% stays the link's default (docs/design-bluetooth.md, "A link is its bond's only from its
+%% encryption").
+write_level({configuration, _Key}, open, #{key := Key}) when Key =/= none -> encrypted;
+write_level(_Source, Level, _Security) -> Level.
 
 value(#{source := {constant, Value}}, _Server, _Bearer) ->
     Value;

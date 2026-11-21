@@ -121,11 +121,28 @@ with_group(Options, Case) ->
         end
     end).
 
+%% The store, and a stand-in for the registry, which answers each link's `join` with the
+%% GAP and GATT services alone and takes what the links send it.
 with_store(Case) ->
     application:set_env(erx_bt, name, "erxos-test"),
     {ok, Store} = erx_bt_store:start_link(),
     unlink(Store),
-    try Case() after exit(Store, kill), wait_unregistered(erx_bt_store) end.
+    Registry = spawn(fun registry/0),
+    true = register(erx_gatt_srv, Registry),
+    try Case()
+    after
+        exit(Registry, kill),
+        exit(Store, kill),
+        wait_unregistered(erx_gatt_srv),
+        wait_unregistered(erx_bt_store)
+    end.
+
+registry() ->
+    receive
+        {'$gen_call', From, {join, _Conn, _Info}} -> gen_server:reply(From, #{table => erx_gatt_db:build([]), values => #{}});
+        _ -> ok
+    end,
+    registry().
 
 wait_unregistered(Name) -> await(fun() -> whereis(Name) =:= undefined end).
 
