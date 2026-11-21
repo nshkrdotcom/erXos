@@ -8017,7 +8017,7 @@ to the corpus and follow rc
   by its reports, which it acquires itself (the validity, then the records it covers), against one ledger. The TRB form's tables, bindings and releases are in
   [design-usb.md](docs/design-usb.md#what-the-dma-check-judges). Until then the TRB form's plans cannot run through
   `run_call`. The formats' marks are in `abi/formats` (virtio, xHCI, and SDHCI's ADMA2 entry), and the encoders and
-  each structure's meaning list generated from them in `include/erx/abi.h`, which nothing uses yet; the command TRBs (one layout per
+  each structure's meaning list generated from them in `include/erx/abi.h`, which nothing uses yet; the command TRBs but the No Op (one layout per
   command, Set TR Dequeue Pointer's among them) and the input context's composed encoder have no marks yet, and the packages that move those forms add them. Every
   device address in `abi/formats` carries `device_address`, and a marked layout refuses one a description would
   state or the format fix; a device address in an unmarked layout is not refused yet: that rule turns on when the
@@ -8057,6 +8057,11 @@ to the corpus and follow rc
   bindings; the TRB form's releases from acquired events, each command's reach and the endpoints' states; the
   stand-ins' ledger check. Before a non-coherent device relies on the acquisition, its unverified AArch64 premise is settled by the Arm
   ARM passage, the litmus test or the VL805 probe [Releases](docs/design-device-dma.md#releases) names.
+* [Medium] DMA, the TRB form, for the command and reach package: a Configure Endpoint that drops and adds one endpoint ([design-usb.md](docs/design-usb.md) lines 2141-2144) needs two rings bound to it while in flight, which `erx_dma_ledger_may_bind` refuses.
+* [Medium] DMA, the TRB form, for the command and reach package: a publication carries one binding, so bulk IN and OUT cannot be added in one Configure Endpoint (design-usb.md lines 2115 and 2222); binds become an array bounded by a named maximum.
+* [Medium] DMA, the TRB form, for the command and reach package: a transfer may run on a newly bound ring before its binding command completes, so the command's failure meets a held record; the reach rule closes it.
+* [Medium] DMA, the TRB form, for the command and reach package: any command's publication may carry a binding (`judge_bindings` in `erx_device_rules.c` asks only `erx_dma_ledger_may_bind`), so a No Op binds in the harnesses; once live, a binding the controller does not make would point the ledger at a ring the device does not serve. A mark on the commands that bind, and the reach rule tying the binding to the ring the command names, close it.
+* [Low] DMA, `erx_device_sequencer.c` (`encode`): the switch from meaning to encoder is written by hand, a case per meaning (the No Op command added one); the generator could emit one encoder entry per meaning from the marks.
 * [Medium] USB, the TRB ring form's commands (`erx_device_trb.c`): one command's behaviour is spread over `accept`,
   the context builders in `erx_device_trb_command`, `command_words` and `erx_device_trb_command_done`; one entry per
   command kind holding its acceptance, its build and its completion would keep each together.

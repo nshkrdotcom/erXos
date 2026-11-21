@@ -6,8 +6,10 @@ module Erx
   module ABI
     # The DMA marks of a descriptor format (docs/design-device-dma.md, "What
     # the formats say"): each format file declares the structures its regions
-    # hold (`target NAME cpu|device`), and each layout a device reads or
-    # writes as a record marks what its fields mean to the DMA check.
+    # hold (`target NAME cpu|device [needs_binding]`), and each layout a
+    # device reads or writes as a record marks what its fields mean to the
+    # DMA check. A cpu structure marked needs_binding, a transfer ring, takes
+    # runs only while a binding command has bound its table to an endpoint.
     #
     # A layout's meaning line names the one structure whose tables offer it,
     # and that structure's writer is the layout's: a meaning of a `device`
@@ -42,6 +44,7 @@ module Erx
       }.freeze
       KEYWORDS = SYNTAX.keys.freeze
       WRITERS = %w[cpu device].freeze
+      NEEDS_BINDING = 'needs_binding'
       DATA = 'data'
       # The roles a mark gives a place. A free place is one a description
       # states, or, on a report, the device; a placed one the sequencer
@@ -51,9 +54,11 @@ module Erx
       # device reports it.
       ADDRESS_ROLES = %i[placed reported].freeze
 
-      # A structure a region may hold, and its writer.
-      Target = Struct.new(:name, :writer, :line, keyword_init: true) do
+      # A structure a region may hold, its writer, and whether its tables
+      # need a binding.
+      Target = Struct.new(:name, :writer, :needs_binding, :line, keyword_init: true) do
         def device? = writer == 'device'
+        def needs_binding? = needs_binding
       end
 
       # One place of a marked layout, with the field or bits line that declares
@@ -134,13 +139,19 @@ module Erx
 
       def validate_targets(declarations)
         declarations.each_with_object({}) do |declaration, targets|
-          declaration.fail!('target requires NAME cpu|device') unless declaration.args.size == 2
+          name, writer, *rest = declaration.args
+          declaration.fail!("target requires NAME cpu|device [#{NEEDS_BINDING}]") unless writer && rest.size <= 1
           declaration.fail!('a target has no members') unless declaration.members.empty?
-          name, writer = declaration.args
           Names.local(name, line: declaration.line)
           declaration.fail!("target #{DATA} is the buffers' own name") if name == DATA
           declaration.fail!("unknown target writer #{writer}") unless WRITERS.include?(writer)
-          targets[name] = Target.new(name: name, writer: writer, line: declaration.line).freeze
+          mark = rest.first
+          declaration.fail!("unknown target mark #{mark}") unless mark.nil? || mark == NEEDS_BINDING
+          needs_binding = mark == NEEDS_BINDING
+          # A binding gives the CPU's runs a ring; the device writes its reports in order.
+          declaration.fail!('a structure the device writes needs no binding') if needs_binding && writer == 'device'
+          targets[name] = Target.new(name: name, writer: writer, needs_binding: needs_binding,
+                                     line: declaration.line).freeze
         end
       end
 

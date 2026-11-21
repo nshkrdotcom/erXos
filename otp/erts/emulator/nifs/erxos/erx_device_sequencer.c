@@ -208,6 +208,16 @@ encode(const erx_dma_layout_t *layout, const erx_dma_description_t *description,
 		memcpy(store->bytes, &record, sizeof(record));
 		return (true);
 	}
+	case ERX_MEANING_XHCI_TRB_NOOP_COMMAND: {
+		const erx_xhci_trb_noop_command_placed_t placed = { .control_cycle = cycle };
+		erx_xhci_trb_noop_command_t record;
+
+		if (!erx_xhci_trb_noop_command_encode(&record, &placed))
+			return (false);
+		store->length = sizeof(record);
+		memcpy(store->bytes, &record, sizeof(record));
+		return (true);
+	}
 	default:
 		return (false);
 	}

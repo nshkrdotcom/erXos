@@ -98,6 +98,9 @@ class AbiMarksTest < Minitest::Test
                             'a layout has one selects mark'],
     'a mark outside a wire_le layout' => ['erx_sample_trb wire_le', 'erx_sample_trb native', 'marks belong to a wire_le layout'],
     'an unknown writer' => ['target sample_ring cpu', 'target sample_ring host', 'unknown target writer host'],
+    'a binding on a structure the device writes' => ['target sample_events device', 'target sample_events device needs_binding',
+                                                    'a structure the device writes needs no binding'],
+    'an unknown target mark' => ['target sample_ring cpu', 'target sample_ring cpu bound', 'unknown target mark bound'],
     'a malformed reference' => ['refers buffer data length status.length', 'refers buffer data length', 'refers requires'],
     'a release under no code' => ['when status.code sample_code.ok sample_code.short', 'when status.code', 'releases requires'],
     'a release code outside its enum' => ['sample_code.short', 'sample_code.long', 'long is not a member of sample_code'],
@@ -311,6 +314,9 @@ class AbiMarksTest < Minitest::Test
     	    erx_meaning_structure(0) == 0;
     	right = right && erx_structure_device_writes(ERX_STRUCTURE_VIRTQ_USED) &&
     	    !erx_structure_device_writes(ERX_STRUCTURE_VIRTQ_AVAIL);
+    	right = right && erx_structure_needs_binding(ERX_STRUCTURE_XHCI_TRANSFER_RING) &&
+    	    !erx_structure_needs_binding(ERX_STRUCTURE_XHCI_COMMAND_RING) &&
+    	    !erx_structure_needs_binding(ERX_STRUCTURE_XHCI_EVENT_RING) && !erx_structure_needs_binding(0);
     	printf("%s\\n", right ? "described" : "wrong");
     	return (right ? 0 : 1);
     }
@@ -420,30 +426,32 @@ class AbiMarksTest < Minitest::Test
   end
 
   # The meanings each structure offers, as the header lists them: the event ring's three
-  # events, and none for the command ring, whose commands have no marks.
+  # events, and the No Op command alone for the command ring, whose other commands have no
+  # marks.
   def test_each_structure_lists_its_meanings
     header = Erx::ABI::CEmitter.header(tree_schema(Dir.mktmpdir('erx-abi-marks-')))
     event_ring = header[/^erx_meanings_of_xhci_event_ring\(size_t \*count\)\n\{\n(.*?)^\}/m, 1]
     assert_equal %w[ERX_MEANING_XHCI_TRB_COMMAND_EVENT ERX_MEANING_XHCI_TRB_PORT_EVENT ERX_MEANING_XHCI_TRB_TRANSFER_EVENT],
                  event_ring.scan(/ERX_MEANING_\w+/)
-    assert_match(/^erx_meanings_of_xhci_command_ring\(size_t \*count\)\n\{\n\t\*count = 0;\n\treturn \(NULL\);\n\}/, header)
+    command_ring = header[/^erx_meanings_of_xhci_command_ring\(size_t \*count\)\n\{\n(.*?)^\}/m, 1]
+    assert_equal %w[ERX_MEANING_XHCI_TRB_NOOP_COMMAND], command_ring.scan(/ERX_MEANING_\w+/)
     refute header.include?('ERX_MEANING_XHCI_TRB_LINK'), 'the link TRB, no meaning, has a number'
   end
 
   # The size of each structure's records, which the ledger asks a table's stride to be: a TRB's
-  # 16 bytes for a transfer ring and the event ring, a used element's 8, and none for the
-  # command ring, whose commands have no marks, or the available ring, the sequencer's own.
+  # 16 bytes for a transfer ring, the command ring and the event ring, a used element's 8,
+  # and none for the available ring, the sequencer's own.
   def test_each_structure_gives_its_record_size
     header = Erx::ABI::CEmitter.header(tree_schema(Dir.mktmpdir('erx-abi-marks-')))
     body = header[/^erx_structure_record_size\(uint32_t structure\)\n\{\n(.*?)^\}/m, 1]
     sizes = body.scan(/((?:\tcase \w+:\n)+)\t\treturn \(UINT32_C\((\d+)\)\);/).flat_map do |cases, size|
       cases.scan(/ERX_STRUCTURE_\w+/).map { |structure| [structure, size.to_i] }
     end.to_h
-    assert_equal({ 'ERX_STRUCTURE_XHCI_TRANSFER_RING' => 16, 'ERX_STRUCTURE_XHCI_EVENT_RING' => 16,
-                   'ERX_STRUCTURE_VIRTQ_USED' => 8, 'ERX_STRUCTURE_VIRTQ_DESC' => 16 },
-                 sizes.slice('ERX_STRUCTURE_XHCI_TRANSFER_RING', 'ERX_STRUCTURE_XHCI_EVENT_RING',
-                             'ERX_STRUCTURE_VIRTQ_USED', 'ERX_STRUCTURE_VIRTQ_DESC'))
-    refute sizes.key?('ERX_STRUCTURE_XHCI_COMMAND_RING'), 'the command ring, with no meaning, has a size'
+    assert_equal({ 'ERX_STRUCTURE_XHCI_TRANSFER_RING' => 16, 'ERX_STRUCTURE_XHCI_COMMAND_RING' => 16,
+                   'ERX_STRUCTURE_XHCI_EVENT_RING' => 16, 'ERX_STRUCTURE_VIRTQ_USED' => 8,
+                   'ERX_STRUCTURE_VIRTQ_DESC' => 16 },
+                 sizes.slice('ERX_STRUCTURE_XHCI_TRANSFER_RING', 'ERX_STRUCTURE_XHCI_COMMAND_RING',
+                             'ERX_STRUCTURE_XHCI_EVENT_RING', 'ERX_STRUCTURE_VIRTQ_USED', 'ERX_STRUCTURE_VIRTQ_DESC'))
     refute sizes.key?('ERX_STRUCTURE_VIRTQ_AVAIL'), 'the available ring, with no meaning, has a size'
   end
 

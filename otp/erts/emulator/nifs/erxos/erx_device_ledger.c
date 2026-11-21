@@ -14,6 +14,11 @@
 #include "erx_device_ledger.h"
 #include "erx_device_rules.h"
 
+#ifdef ERX_DMA_SEED_FIND_BOUND_RING
+#define SEED_FIND_BOUND_RING	true
+#else
+#define SEED_FIND_BOUND_RING	false
+#endif
 #ifdef ERX_DMA_SEED_NO_GRANULE_TEST
 #define SEED_NO_GRANULE_TEST	true
 #else
@@ -130,6 +135,31 @@ device_writes(const erx_dma_layout_t *layout, uint32_t table)
 }
 
 /*
+ * Whether the table's structure needs a binding, as abi/formats declares (a transfer ring): its
+ * runs take the ring bound to their endpoint, and no run finds it by structure.
+ */
+static bool
+needs_binding(const erx_dma_layout_t *layout, uint32_t table)
+{
+	return (erx_structure_needs_binding(layout->tables[table].structure));
+}
+
+/*
+ * The table a run of endpoint 0 finds for `structure`: the first of it, or -1 for none or for a
+ * structure that needs a binding. The layout's check asks it to find every table of a structure
+ * that needs none, so such a structure lies in one table.
+ */
+static int
+structure_table(const erx_dma_layout_t *layout, uint32_t structure)
+{
+	for (uint32_t index = 0; index < layout->table_count; index++) {
+		if (layout->tables[index].structure == structure)
+			return (needs_binding(layout, index) && !SEED_FIND_BOUND_RING ? -1 : (int)index);
+	}
+	return (-1);
+}
+
+/*
  * One region of the install's check: `length` bytes from `offset`, whole granules, not before
  * `*end`, and inside the memory. Moves `*end` past it; disjoint() judges the regions together.
  */
@@ -148,10 +178,25 @@ region_valid(const erx_dma_layout_t *layout, uint64_t offset, uint64_t length, u
 	return (true);
 }
 
+/*
+ * Whether a run of endpoint 0 finds table `index` by its structure, one that needs no binding: so
+ * asked of every such table, it says each such structure lies in one table.
+ */
+static bool
+found_by_its_structure(const erx_dma_layout_t *layout, uint32_t index)
+{
+	return (structure_table(layout, layout->tables[index].structure) == (int)index);
+}
+
+/*
+ * A table that needs a binding is a ring, which runs take only as their endpoint's binding
+ * places them; one that needs none is the one table of its structure.
+ */
 static bool
 table_valid(const erx_dma_layout_t *layout, uint32_t index, uint64_t *end)
 {
 	const erx_dma_table_t *table = &layout->tables[index];
+	const bool binds = needs_binding(layout, index);
 
 	const bool described = table->placing != ERX_DMA_PLACED_IN_ORDER && !device_writes(layout, index);
 	const uint32_t record_size = erx_structure_record_size(table->structure);
@@ -170,29 +215,7 @@ table_valid(const erx_dma_layout_t *layout, uint32_t index, uint64_t *end)
 	    erx_dma_inside(table->first - table->region, (uint64_t)table->count * table->stride, table->region_length) &&
 	    (table->placing != ERX_DMA_PLACED_RING || table->count >= 2) &&
 	    (!described || table->pool < layout->pool_count) &&
-	    (!table->needs_binding || (described && table->placing == ERX_DMA_PLACED_RING)));
-}
-
-/* A table a run finds by its structure: one descriptions fill that needs no binding. */
-static bool
-found_by_structure(const erx_dma_layout_t *layout, uint32_t table)
-{
-	return (!layout->tables[table].needs_binding && layout->tables[table].placing != ERX_DMA_PLACED_IN_ORDER &&
-	    !device_writes(layout, table));
-}
-
-/* Whether two tables a run finds by structure share one, so a run of it could not find its table. */
-static bool
-structure_shared(const erx_dma_layout_t *layout)
-{
-	for (uint32_t one = 0; one < layout->table_count; one++) {
-		for (uint32_t other = 0; other < one; other++) {
-			if (found_by_structure(layout, one) && found_by_structure(layout, other) &&
-			    layout->tables[one].structure == layout->tables[other].structure)
-				return (true);
-		}
-	}
-	return (false);
+	    (binds ? table->placing == ERX_DMA_PLACED_RING : found_by_its_structure(layout, index)));
 }
 
 /* Whether the `count` regions of `starts` and `ends` share no byte, in whatever order they lie. */
@@ -224,8 +247,7 @@ layout_valid(const erx_dma_layout_t *layout)
 	uint32_t regions = 0;
 
 	if (!power_of_two(layout->granule) || layout->address_bits == 0 || layout->address_bits > 64 ||
-	    layout->table_count > ERX_DMA_TABLES_MAX || layout->pool_count == 0 || layout->pool_count > ERX_DMA_POOLS_MAX ||
-	    structure_shared(layout))
+	    layout->table_count > ERX_DMA_TABLES_MAX || layout->pool_count == 0 || layout->pool_count > ERX_DMA_POOLS_MAX)
 		return (false);
 	for (uint32_t index = 0; index < layout->table_count; index++, regions++) {
 		if (!table_valid(layout, index, &ends[regions]))
@@ -345,7 +367,7 @@ bool
 erx_dma_ledger_may_bind(const erx_dma_ledger_t *ledger, erx_dma_binding_t binding)
 {
 	return (binding.endpoint != 0 && binding.table < ledger->layout.table_count &&
-	    ledger->layout.tables[binding.table].needs_binding && ledger->bound[binding.table] == 0 &&
+	    needs_binding(&ledger->layout, binding.table) && ledger->bound[binding.table] == 0 &&
 	    (SEED_BIND_BOUND_ENDPOINT || erx_dma_ledger_bound_table(ledger, binding.endpoint) < 0));
 }
 
@@ -450,12 +472,7 @@ erx_dma_ledger_layout(const erx_dma_ledger_t *ledger)
 int
 erx_dma_ledger_table(const erx_dma_ledger_t *ledger, uint32_t structure)
 {
-	/* The layout's check let at most one such table of a structure through. */
-	for (uint32_t index = 0; index < ledger->layout.table_count; index++) {
-		if (ledger->layout.tables[index].structure == structure && !ledger->layout.tables[index].needs_binding)
-			return ((int)index);
-	}
-	return (-1);
+	return (structure_table(&ledger->layout, structure));
 }
 
 erx_dma_position_t

@@ -55,14 +55,15 @@
 
 #include "erx_device.h"
 #include "erx_device_dma.h"
+#include "erx_device_trb.h"
 
 /*
- * Bounds of a record's ledger: its tables, virtio's three or the TRB form's 36 transfer rings,
- * command ring and event ring; its pools, virtio's one or a pool per queue block; and one chain's
- * records and buffers.
+ * Bounds of a record's ledger, the TRB form's, the largest: its tables, a transfer ring per queue
+ * block, the command ring and the event ring (virtio's are three); its pools, a pool per block and
+ * the command ring's (virtio's is one); and one chain's records and buffers.
  */
-#define ERX_DMA_TABLES_MAX		40u
-#define ERX_DMA_POOLS_MAX		36u
+#define ERX_DMA_TABLES_MAX		(ERX_DEVICE_TRB_BLOCKS_MAX + 2u)
+#define ERX_DMA_POOLS_MAX		(ERX_DEVICE_TRB_BLOCKS_MAX + 1u)
 #define ERX_DMA_HELD_RECORDS_MAX	(ERX_DEVICE_CHAIN_MAX + 1u)
 #define ERX_DMA_HELD_BUFFERS_MAX	ERX_DEVICE_CHAIN_MAX
 #define ERX_DMA_HOLDINGS_MAX		ERX_DEVICE_QUEUE_SIZE_MAX
@@ -79,15 +80,15 @@ typedef enum erx_dma_placing {
 } erx_dma_placing_t;
 
 /*
- * A table of the layout. A ring that needs a binding, a transfer ring, takes runs only while a
- * binding command's publication has bound it to an endpoint; a table that needs none, the command
- * ring or a split ring's table, is the one of its structure, which a run of it finds by structure.
- * The stride of a structure's table is the size its meanings' records share (erx/abi.h).
+ * A table of the layout. Whether it needs a binding is its structure's, as abi/formats marks it
+ * (erx_structure_needs_binding): a transfer ring needs one and is placed as a ring, taking runs
+ * only while a binding command's publication has bound it to an endpoint; a structure that needs
+ * none, the command ring's or a split ring table's, lies in one table, which a run of it finds by
+ * structure. The stride of a structure's table is the size its meanings' records share (erx/abi.h).
  */
 typedef struct erx_dma_table {
 	uint32_t		structure;	/* ERX_STRUCTURE_* of erx/abi.h */
 	erx_dma_placing_t	placing;
-	bool			needs_binding;	/* a ring descriptions fill, never one the device writes */
 	uint32_t		pool;		/* a table descriptions fill: the pool its names reach */
 	uint64_t		region;		/* the offset of the table's region */
 	uint64_t		region_length;	/* whole granules */

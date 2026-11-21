@@ -476,11 +476,15 @@ transfer ring per queue block, and the regions of its tables and pools
 may lie in any order, disjoint. Its buffers lie in **pools**, each of
 one size and stride, numbered across the layout; a table that
 descriptions fill names its pool, the buffers of its binding: virtio's
-descriptor table the one pool, a transfer ring its block's. A name of a
+descriptor table the one pool, a transfer ring its block's, and the
+command ring a pool that holds just the input context, so a command's
+input-context name is a buffer of the command ring's pool, held while
+the command is in flight. A name of a
 buffer outside its record's table's pool breaks the bindings rule.
-Whether a table **needs a binding** is the layout's to say, table by
-table: a transfer ring needs one, the command ring and virtio's tables
-do not, and no two tables of one structure need none. A run describes
+Whether a table **needs a binding** is its structure's, as the formats
+mark it (`needs_binding`): a transfer ring needs one and is placed as a
+ring, the command ring and virtio's tables do not, and a structure that
+needs none lies in one table. A run describes
 records of one table: the ring the ledger binds to the endpoint the
 publication names, or, for none, the one table of its structure that
 needs no binding. A table's stride is the size its structure's records
@@ -972,8 +976,10 @@ release marks; the slot context's address and slot state and the
 endpoint context's state are fixed at 0, the controller's to write,
 which software sets to 0 in an input context (xHCI 1.2, Table 6-7,
 p. 447; Table 6-8, p. 450); it declares the transfer rings and the
-command ring as `cpu` structures and the event ring as a `device` one,
-and the event TRBs as its meanings. The virtio file holds the
+command ring as `cpu` structures, the transfer ring marked
+`needs_binding`, and the event ring as a `device` one, the No Op command
+as the command ring's meaning (xHCI 1.2, 6.4.3.1), and the event TRBs as
+the event ring's. The virtio file holds the
 descriptor's flag bits, the used element's release mark, the
 descriptor table as a `cpu` structure and the used ring as a `device`
 one, and the region entry `erx_virtio_gpu_mem_entry`, its address and

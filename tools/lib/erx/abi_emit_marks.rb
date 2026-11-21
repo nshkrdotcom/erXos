@@ -126,10 +126,11 @@ module Erx
       end
 
       # The structures, numbered in name order from 1, so 0 is free to name a
-      # buffer's data; which of them the device writes; the size of a record
-      # of each, the size its meanings share (check_meanings), which a table's
-      # stride must be; and the structure each meaning belongs to. The check
-      # reads these, never a copy of the formats.
+      # buffer's data; which of them the device writes, and which need a binding;
+      # the size of a record of each, the size its meanings share
+      # (check_meanings), which a table's stride must be; and the structure
+      # each meaning belongs to. The check reads these, never a copy of the
+      # formats.
       def structures(targets, meanings)
         return [] if targets.empty?
 
@@ -145,6 +146,11 @@ module Erx
          *switch_function('Whether the device writes structure, as its format declares; false for one the CPU writes or none.',
                           'bool', 'erx_structure_device_writes(uint32_t structure)', 'structure',
                           targets.select(&:device?).map { |target| [structure_constant(target.name), 'true'] }, 'false'),
+         *switch_function('Whether a table of structure takes runs only while a binding command has bound it to an ' \
+                          'endpoint, as its format declares: a transfer ring.',
+                          'bool', 'erx_structure_needs_binding(uint32_t structure)', 'structure',
+                          targets.select(&:needs_binding?).map { |target| [structure_constant(target.name), 'true'] },
+                          'false'),
          *switch_function('The size of a record of structure, which its meanings share; 0 for one no meaning belongs to, or none.',
                           'uint32_t', 'erx_structure_record_size(uint32_t structure)', 'structure', sizes, '0'),
          *switch_function('The structure whose tables offer meaning, or 0 for a number that is no meaning.',
