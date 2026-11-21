@@ -166,4 +166,6 @@ export interface RenderOptions {
   interactive?: boolean
   /** erXos: measure every label as characters x font size x this advance in ems, + 0.15 em. Default: the width table */
   charWidth?: number
+  /** erXos: node and edge labels at this size in px. Default: 13 for nodes, 11 for edges */
+  labelSize?: number
 }

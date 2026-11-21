@@ -115,7 +115,7 @@ export function renderMermaidSVG(
 
   const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0 && !l.startsWith('%%'))
 
-  return withLabelMetrics({ charWidth: options.charWidth }, () => {
+  return withLabelMetrics({ charWidth: options.charWidth, labelSize: options.labelSize }, () => {
   switch (diagramType) {
     case 'sequence': {
       const diagram = parseSequenceDiagram(lines)

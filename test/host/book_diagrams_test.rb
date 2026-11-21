@@ -101,6 +101,17 @@ class BookDiagramsTest < Minitest::Test
     assert_operator table.first, :<, table.last
   end
 
+  # Seeded fault: leave the edge label at the library's 11 px.
+  def test_label_size_sets_node_and_edge_labels
+    source = "graph TD\n  A[abcdefghijklmnopqrst] -->|go| B\n"
+    svg = draw([source], options: UPSTREAM_OPTIONS.merge('charWidth' => 0.6, 'labelSize' => 12)).last.first.fetch('svg')
+    # The node labelled with 20 characters: 144 px of text, plus 0.15 em, plus 20 px of padding each side.
+    widths = svg.scan(/<rect [^>]*? width="([0-9.]+)"/).flatten.map { |width| Float(width) }
+    assert(widths.any? { |width| (width - (144 + (0.15 * 12) + 40)).abs < 0.01 }, widths.inspect)
+    sizes = svg.scan(/<text [^>]*?font-size="([0-9.]+)"[^>]*>(?:abcdefghijklmnopqrst|go)</).flatten
+    assert_equal %w[12 12], sizes
+  end
+
   def test_the_driver_refuses_a_malformed_request
     bundle, = installed { Diagrams.bundle(root: ROOT, runner: runner) }
     Dir.mktmpdir('erx-book-request') do |directory|

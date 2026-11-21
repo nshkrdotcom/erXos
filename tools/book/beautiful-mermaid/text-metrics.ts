@@ -1,5 +1,6 @@
 // Modified by erXos: the charWidth render option measures every label at a
-// fixed advance (docs/design-book-site.md, "The import").
+// fixed advance, and labelSize sets the size of node and edge labels
+// (docs/design-book-site.md, "The import").
 //
 // ============================================================================
 // Text Metrics — Variable-width character measurement for SVG layout
@@ -167,10 +168,16 @@ export function getCharWidth(char: string): number {
 /**
  * The label metrics of the render in progress, from its options (erXos):
  * charWidth, when set, is the advance of every character in ems, as in a
- * monospace face. Absent, the width table below measures.
+ * monospace face. Absent, the width table below measures. labelSize, when
+ * set, is the size of node and edge labels in px (styles.ts, FONT_SIZES).
  */
-export type LabelMetrics = { charWidth?: number }
+export type LabelMetrics = { charWidth?: number; labelSize?: number }
 let labelMetrics: LabelMetrics = {}
+
+/** The node and edge label size the render in progress sets, if any. */
+export function labelSize(): number | undefined {
+  return labelMetrics.labelSize
+}
 
 /** Run draw with metrics as the label metrics, and restore the earlier ones after it. */
 export function withLabelMetrics<T>(metrics: LabelMetrics, draw: () => T): T {

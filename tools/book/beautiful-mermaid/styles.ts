@@ -1,3 +1,6 @@
+// Modified by erXos: node and edge labels take the labelSize render option
+// (docs/design-book-site.md, "The import").
+//
 // ============================================================================
 // Font metrics — character width estimates for Inter at different sizes.
 // Used to approximate text bounding boxes without DOM measurement.
@@ -7,7 +10,7 @@
 // contains font metrics, spacing constants, and stroke widths.
 // ============================================================================
 
-import { measureTextWidth } from './text-metrics'
+import { labelSize, measureTextWidth } from './text-metrics'
 
 /** Average character width in px at the given font size and weight (proportional font) */
 export function estimateTextWidth(text: string, fontSize: number, fontWeight: number): number {
@@ -33,10 +36,10 @@ export const MONO_FONT_STACK = `${MONO_FONT}, 'SF Mono', 'Fira Code', ui-monospa
 
 /** Fixed font sizes used in the renderer (in px) */
 export const FONT_SIZES = {
-  /** Node label text */
-  nodeLabel: 13,
-  /** Edge label text */
-  edgeLabel: 11,
+  /** Node label text; the labelSize render option, when set */
+  get nodeLabel(): number { return labelSize() ?? 13 },
+  /** Edge label text; the labelSize render option, when set */
+  get edgeLabel(): number { return labelSize() ?? 11 },
   /** Subgraph header text */
   groupHeader: 12,
 } as const
