@@ -10046,8 +10046,7 @@ document's "residual risks accepted" paragraph.
   record's `firmware_requests`. Add the two.
 * [Medium] firmware mailbox core, `kernel/core/vc_property.c` ([design-kernel.md](docs/design-kernel.md#firmware-requests),
   [design-board-sensors.md](docs/design-board-sensors.md#verification)): the request writer and the answer check are
-  built and host-tested, but the answer check, a parser of device-written memory, has no fuzz target yet (its seeded
-  fault an unclamped length), and the one-request-at-a-time state (the buffer's address match, `ERX_EBUSY`, the
+  built, host-tested and fuzzed (`tools/fuzz/vc_property_fuzz.c`), but the one-request-at-a-time state (the buffer's address match, `ERX_EBUSY`, the
   deadline and every call after `ERX_ETIMEDOUT`) against a model mailbox is not built. The core sits in
   `kernel/core/`, so `CoreArchive` links it into Fiasco's `erx_cores.a` too, where the design runs it in the root
   task: the root backend's commit places it.
