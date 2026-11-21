@@ -297,9 +297,11 @@ board's source does not hold and the build record lists:
   ([design-programs.md](design-programs.md#the-command-server)), the
   client side of the display,
   `erx_memdraw`, `erx_win` and `erx_ui`, the network client
-  `erx_net_client`, OTP's `asn1`, `crypto`, `public_key`, `ssl` and
-  `inets`, which it only loads, for an app's HTTPS requests
-  ([design-crypto.md](design-crypto.md#https-clients)), and `erx_app`),
+  `erx_net_client`, `erx_app`, and OTP applications it only loads:
+  `compiler`, which an application an app ships may name, as Elixir's
+  `elixir` does, and `asn1`, `crypto`, `public_key`, `ssl` and `inets`,
+  for an app's HTTPS requests
+  ([design-crypto.md](design-crypto.md#https-clients))),
   and whose limits are the manifest's `limits session` record, the
   defaults every session template takes, which enables `SPACES`
   (property 14), the template's sessions drawing their memory from the

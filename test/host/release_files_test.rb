@@ -287,14 +287,15 @@ class ReleaseFilesTest < Minitest::Test
 
   # The app script, which the app template boots (docs/design-packaging.md, "The apps
   # row"), boots what every session boots, as the session script does, starts the client
-  # side of the display and the network client, only loads asn1, crypto and public_key,
+  # side of the display and the network client, only loads compiler, which an app's own
+  # application may name, as Elixir's elixir does, and asn1, crypto and public_key,
   # holds no ssh, and only loads erx_session and erx_app, which the template's -eval
   # starts, and which asks for the app's record (erx:app/0), so an app's session has its
   # command server and pipe server (docs/design-programs.md, "The command server").
   def test_the_app_script_boots_the_client_side_and_only_loads_erx_session_and_erx_app
     domain_entries(Erx::ReleaseFiles.domain([Erx::ProductionImage.domain_boot('app')]))
     release = boot_release_file('app')
-    %w[asn1 crypto public_key].each { |name| assert_match(/\{#{name},"[^"]+",load\}/, release, "app only loads #{name}") }
+    %w[compiler asn1 crypto public_key].each { |name| assert_match(/\{#{name},"[^"]+",load\}/, release, "app only loads #{name}") }
     refute_match(/\{ssh,/, release, 'an app runs no ssh daemon')
     assert_match(/\{erx_ui,"#{VERSION}"\},\{erx_net_client,"#{VERSION}"\},\{erx_shell,"#{VERSION}"\},
                   \{erx_session,"#{VERSION}",load\},\{erx_app,"#{VERSION}",load\}\]\}\.\n\z/x,

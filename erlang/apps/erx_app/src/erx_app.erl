@@ -66,14 +66,19 @@ stop(_State) ->
 init(Parent) ->
     proc_lib:init_ack(Parent, {ok, self()}),
     {ok, Record} = erx:app(),
-    case run(Record, effects()) of
+    try run(Record, effects()) of
         ok -> receive after infinity -> ok end;
         {error, Reason} -> exit(Reason)
+    after
+        erx_log_h:sync()
     end.
 
 -doc """
 Mounts the package of `Record` at `/app` and starts what it declares, through
-`Effects`. The first step that fails is the answer. An Erlang app's answer is
+`Effects`. The first step that fails is the answer; a step that raises
+raises again. Either way the domain's log has the end's line (log_end/2),
+which init/1 waits to reach the kernel log before the session ends. An
+Erlang app's answer is
 `ok` once its applications have started; a native app's comes once its
 program has ended, as `{error, {program_exit, Status}}`, or once its handler
 has ended for another reason, as `{error, Reason}`.
@@ -83,8 +88,61 @@ run(Record, Effects) ->
     try
         start_app(Record, Effects)
     catch
-        throw:{erx_app, Reason} -> {error, Reason}
+        throw:{erx_app, Reason} ->
+            log_end(Record, why(Reason)),
+            {error, Reason};
+        Class:Reason:Stack ->
+            log_end(Record, {error, io_lib:format("crashed: ~ts ~ts", [Class, name(Reason)])}),
+            erlang:raise(Class, Reason, Stack)
     end.
+
+%% The line that says why the app's session ends, since the session's halt shows the
+%% operator only its exit status: the package's name and the names in the reason
+%% alone. The reason holds what the app's own code returned or crashed with, so, as
+%% the report filter does for OTP's reports, the line keeps only names and drops every
+%% other term (docs/design-log.md, "Reports carry no term"). The kernel log, where the
+%% domain's log sink writes the line, escapes it.
+log_end(Record, {Level, Why}) ->
+    logger:log(Level, "erx_app: ~ts: ~ts", [package_name(Record), Why]).
+
+%% The package's name, which the domain service admitted: its place names the
+%% package's one file, NAME.app (erx_principal:place/2).
+package_name(#{place := {_Where, [File]}}) ->
+    filename:rootname(File).
+
+%% Each of erx_app's own reasons as its level and its names: a program's end is a
+%% native app's ordinary end, every other reason a failure.
+why({program_exit, {How, What}}) when is_atom(How), is_integer(What) orelse is_atom(What) ->
+    {notice, io_lib:format("program ended: ~ts ~w", [How, What])};
+why({start, App, {App, Reason}}) ->
+    {error, io_lib:format("application ~ts did not start: ~ts", [App, failure(App, Reason)])};
+why({start, App, {Failed, Reason}}) when is_atom(Failed) ->
+    {error, io_lib:format("application ~ts did not start: ~ts failed: ~ts", [App, Failed, failure(Failed, Reason)])};
+why({Step, Reason}) when Step =:= mount; Step =:= program; Step =:= window ->
+    {error, io_lib:format("~ts failed: ~ts", [Step, name(Reason)])};
+why({path, _Ebin, Reason}) ->
+    {error, io_lib:format("code path refused: ~ts", [name(Reason)])};
+why(Reason) ->
+    {error, io_lib:format("ended: ~ts", [name(Reason)])}.
+
+%% Why an application did not start. The application controller's answer for one
+%% whose .app file it cannot read is the file's error text and its name
+%% (otp/lib/kernel/src/application_controller.erl:1520-1530, make_appl/1); the line
+%% rebuilds the name from the application's, says "no" for a file the code path does
+%% not hold, as application:ensure_all_started/2 reads that answer, and "bad" for one
+%% it could not read or parse, so none of the reason's own bytes reach it. Any other
+%% reason shows its leading atom.
+failure(Failed, Reason) ->
+    File = atom_to_list(Failed) ++ ".app",
+    case Reason of
+        {"no such file or directory", File} -> ["no ", File];
+        {_Error, File} -> ["bad ", File];
+        _ -> name(Reason)
+    end.
+
+%% A foreign term's leading atom, as the report filter shows a reason, or none.
+name(Reason) ->
+    erx_report:reason_name(Reason).
 
 %% The session's own effects: the package's image mounted read and execute at /app,
 %% and the app's paths under it. The mount names the session's own package, `app`:
