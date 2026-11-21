@@ -190,6 +190,21 @@ table_ignores_manifest_order_test() ->
     ?assertEqual(erx_gatt_db:build([Sec, Nus]), erx_gatt_db:build([Nus, Sec])),
     {ok, #{type := <<16#00, 16#28>>, group_end := 15}} = erx_gatt_db:lookup(10, table()).
 
+%% erx_gatt_decl, generated from abi/gatt/, declares nus as the design's example does, so
+%% its term is the hand-written one, whose UUIDs uuid/1 spells independently of the
+%% generator, and every declared service builds into one table.
+declared_services_build_the_table_test() ->
+    [Sec, Nus] = services(),
+    Declared = [erx_gatt_decl:service(Name) || Name <- erx_gatt_decl:names()],
+    ?assertEqual(Nus, erx_gatt_decl:service(nus)),
+    ?assert(lists:member(nus, erx_gatt_decl:advertised())),
+    ?assertEqual(table(), erx_gatt_db:build([Sec, erx_gatt_decl:service(nus)])),
+    Table = erx_gatt_db:build(Declared),
+    lists:foreach(fun(#{name := Service, characteristics := Chars}) ->
+                          [{ok, _} = erx_gatt_db:characteristic({Service, Char}, Table)
+                           || #{name := Char} <- Chars]
+                  end, Declared).
+
 hash_changes_with_a_characteristic_test() ->
     [#{characteristics := [Key, Ind]} = Sec, Nus] = services(),
     Wider = Sec#{characteristics := [Key#{max := 511}, Ind]},

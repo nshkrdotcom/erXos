@@ -1,0 +1,13 @@
+# Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
+# SPDX-License-Identifier: BSD-2-Clause
+# nus: a serial line in the style of Nordic's UART service (docs/design-bluetooth.md,
+# "Declarations: `abi/gatt`" and "Stage 3: the serial service"). The UUIDs are the ones
+# Apache NimBLE's bleuart service declares (nimble/host/services/bleuart/src/bleuart.c,
+# lines 51-65, at 648fc0213fb7; its SHA-256 is in docs/design-bluetooth.md, "Sources"):
+# rx is the characteristic a phone writes, with and without a response, and tx the one
+# the machine notifies. 244 is the longest value one notification carries at the ATT_MTU
+# of 247 the server answers Exchange MTU with (ATT 3.4.7.1: ATT_MTU - 3).
+service nus 6e400001-b5a3-f393-e0a9-e50e24dcca9e advertise
+#              name uuid                                 max  accesses
+characteristic rx   6e400002-b5a3-f393-e0a9-e50e24dcca9e 244  write open write_without_response open
+characteristic tx   6e400003-b5a3-f393-e0a9-e50e24dcca9e 244  notify open

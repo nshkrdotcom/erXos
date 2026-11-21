@@ -1076,16 +1076,20 @@ readable characteristic may end with `value` and its initial value in
 hexadecimal, so a constant needs no handler.
 
 `tools/gen_gatt.rb` reads every file and generates `erx_gatt_decl`, one
-term per service, and the list of names the manifest check holds a row
-to. It refuses a missing or repeated `service` line, a name that differs
+term per service, the list of names the manifest check holds a row
+to, and the names of those that say `advertise`. UUIDs are compared as
+128-bit UUIDs, as ATT compares attribute types (ATT 3.4.4.1), so a
+16-bit UUID equals its form in the Base UUID. It refuses a missing or
+repeated `service` line, a name that differs
 from its file's, a UUID that is malformed or is one of the GATT and GAP
-declarations' own, a service named `gap` or `gatt`, the names the table
+declarations' own (the enum `gatt_uuid` of `abi/formats/bluetooth.txt`),
+a service named `gap` or `gatt`, the names the table
 gives GAP's and GATT's own services, two characteristics of one name or UUID, a maximum
 over 512, an access without a level or repeated, a `notify` and an
 `indicate` with different levels, a characteristic with no access, an
 initial value longer than its maximum or on a characteristic that is not
-readable, and a byte above 0x7f. Nothing reads a declaration at run time,
-so it is not an input to fuzz.
+readable, and a byte above 0x7f or a control byte. Nothing reads a
+declaration at run time, so it is not an input to fuzz.
 
 Which services a machine serves is the manifest's: each `ble` facet row
 names, in its `services` parameter, the services its grantee handles, and
