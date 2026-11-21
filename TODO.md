@@ -9175,8 +9175,15 @@ document's "residual risks accepted" paragraph.
   design documents and the tree; built and unbuilt parts marked. Each chapter is written for a reader
   without Erlang, operating-system or microkernel background: Part I teaches the three subjects, and
   each chapter states the background it needs and explains in a Background box what only it uses.
-  design documents and the tree; built and unbuilt parts marked. Chapters follow the prose guide,
-  [docs/book/style.md](docs/book/style.md).
+  Chapters follow the prose guide, [docs/book/style.md](docs/book/style.md).
+* [Low] book site, the diagram step (`tools/book/diagrams.ts`,
+  [design-book-site.md](docs/design-book-site.md#the-parse-check)): no diagram is checked against
+  official Mermaid, so the repository host's renderer may reject a diagram the site draws
+  (beautiful-mermaid accepts more than Mermaid does: two book diagrams with `;` in a sequence
+  message were). `mermaid.parse` needs a DOM under Node, failing in DOMPurify on 40 of the book's 61
+  diagrams. Options: a DOM shim such as jsdom for DOMPurify under the driver (a new pinned
+  dependency, mermaid pinned with it), or a narrower check of the constructs Mermaid refuses and
+  beautiful-mermaid draws. Until then GitHub's preview and the review of rendered pages catch them.
 * [Low] display, `erx_ui:open/1` falls back to the session's only display
   ([design-display.md](docs/design-display.md#choosing-a-display)): when `Options` and the
   `display` variable name none, open on the one display the session holds where it holds exactly

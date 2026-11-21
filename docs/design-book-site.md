@@ -995,8 +995,10 @@ pages, not by a test.
    parse check"), so no diagram is checked against official Mermaid,
    and a diagram GitHub would show as an error can reach the site
    when beautiful-mermaid draws it. Should the check come back, and
-   how: with a DOM emulation under Node (a new dependency), in the
-   publishing workflow by another tool, or not at all, leaving
-   GitHub's preview and the review of rendered pages to catch such a
-   diagram? Recommendation: not at all for now; the two diagrams the
-   probe found rejected are fixed in their source.
+   how: with a DOM shim such as jsdom for DOMPurify under Node (a new
+   pinned dependency, with mermaid pinned beside it), with a narrower
+   check of the constructs Mermaid refuses and beautiful-mermaid draws,
+   or not at all, leaving GitHub's preview and the review of rendered
+   pages to catch such a diagram? Recommendation: not now, with the gap
+   kept as a low-severity item of `TODO.md`; the two diagrams the probe
+   found rejected are fixed in their source.
