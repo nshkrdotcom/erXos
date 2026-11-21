@@ -1096,8 +1096,8 @@ erx_dom_plan_unit_give(const erx_dom_view_t *view,
 	for (uint32_t l = 0; l < nlines; l++)
 		life_unit_make(&draft, ERX_DOM_STEP_IRQ, ERX_DOM_OBJ_DEV_IRQ + l,
 		    sources[l], at[l]);
-	/* A PCIe function's one message, an object of the give's lines after
-	 * the wired ones (docs/design-pcie.md, "One message per function"). */
+	/* A PCIe function's assigned message, an object of the give's lines
+	 * after the wired ones (docs/design-pcie.md, "The choice"). */
 	for (uint32_t d = 0; d < draft.ndevices; d++) {
 		if (!draft.devices[d].driven || (draft.devices[d].route != ERX_PCIE_ROUTE_MSI &&
 		    draft.devices[d].route != ERX_PCIE_ROUTE_MSIX))
