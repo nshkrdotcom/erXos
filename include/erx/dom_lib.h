@@ -412,8 +412,9 @@ bool		erx_dom_view_framebuffer(erx_dom_device_entry_t *entry, const erx_dt_frame
 /*
  * Joins the tree's facts of a host bridge, tree as erx_dt_bridge filled it
  * with status, to its catalogue (erx/dom.h, docs/design-pcie.md, "Records"):
- * its buses and windows; its index, flags and places stay the manifest's,
- * which the view wrote. A bridge the reader refused gets no windows and an
+ * its buses, windows and inbound windows; its index, flags and places stay
+ * the manifest's, which the view wrote. A bridge the reader refused gets no
+ * windows of either kind and an
  * empty bus range, first 1 and last 0, so every report on it is refused at
  * its first record's bus and its functions are given nothing. Pure.
  */

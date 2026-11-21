@@ -197,19 +197,25 @@ void		 erx_dt_device(const erx_dt_t *tree, const char *path, erx_dt_row_t row, u
 /*
  * The facts the tree holds of the PCI host bridge at path
  * (docs/design-device-tree.md, "A PCI host bridge"): fills bridge's
- * bus_first, bus_last and windows from its bus-range and ranges, the
- * windows in the order of their entries, the unused ones zero, and leaves
- * the rest of the record, which the manifest and the platform record give.
- * On any status but ERX_DT_BRIDGE_OK the buses and windows are zero.
+ * bus_first, bus_last, windows and inbound from its bus-range, ranges and
+ * dma-ranges, the windows in the order of their entries, the unused ones
+ * zero, and leaves the rest of the record, which the manifest and the
+ * platform record give. On any status but ERX_DT_BRIDGE_OK the buses and
+ * both kinds of window are zero.
  * ERX_DT_BRIDGE_NO_NODE: no node at path.
- * ERX_DT_BRIDGE_CELLS: a bridge with ranges whose #address-cells is not 3,
- * or whose #size-cells or parent's #address-cells is not 1 or 2.
- * ERX_DT_BRIDGE_MALFORMED: the root; an empty ranges or one not a whole
- * number of entries; an entry of configuration space, or whose PCI or
- * parent range wraps, is not translated to the CPU's whole and in one
- * piece, or meets the tree's RAM or an earlier window; a bus-range not two cells of at most
- * 255, the first not above the last.
- * ERX_DT_BRIDGE_RANGES: more than ERX_PCIE_WINDOWS_MAX memory windows.
+ * ERX_DT_BRIDGE_CELLS: a bridge with ranges or a non-empty dma-ranges whose
+ * #address-cells is not 3, or whose #size-cells or parent's #address-cells
+ * is not 1 or 2.
+ * ERX_DT_BRIDGE_MALFORMED: the root; an empty ranges, or either property not
+ * a whole number of entries; a ranges entry of configuration space, or whose
+ * PCI or parent range wraps, is not translated to the CPU's whole and in one
+ * piece, or meets the tree's RAM or an earlier window; a dma-ranges entry
+ * whose PCI or parent range wraps, is not translated to the CPU's whole and
+ * in one piece through the dma-ranges above, or meets an earlier one in PCI
+ * space; a bus-range not two cells of at most 255, the first not above the
+ * last.
+ * ERX_DT_BRIDGE_RANGES: more than ERX_PCIE_WINDOWS_MAX memory windows or
+ * inbound windows.
  */
 erx_dt_bridge_status_t erx_dt_bridge(const erx_dt_t *tree, const char *path, struct erx_pcie_bridge *bridge);
 

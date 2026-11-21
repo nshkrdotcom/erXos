@@ -2334,9 +2334,7 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   `abi/formats/pcie.txt`, `hw/svd/bcm2711_pcie/bcm2711_pcie.svd`, [design-pcie.md](docs/design-pcie.md#the-bridge-seam)):
   the driver runs its core over any port and is host-tested over the register model, but its start on the target
   refuses with `enotsup`, so the enumerator logs that reason and reports none of the bridge's functions.
-  Three things the design uses have no carrier. Bring-up's inbound window comes from the tree's `dma-ranges`, which
-  `erx_pcie_bridge` does not carry ("Records" lists `windows` from `ranges` alone) and `erx_dt_bridge` does not
-  read. And the core's configuration accesses, the root port's space at offset 0 of the window and the endpoint's
+  Two things the design uses have no carrier. The core's configuration accesses, the root port's space at offset 0 of the window and the endpoint's
   data window at `0x8000`, have no view in the device NIF: the SVD declares no `<configurationSpace>`, and one for
   the root port at 0 would meet `RC_CFG_LINK_CONTROL_STATUS` at `0xbc`, which design-generation.md forbids, while
   that document calls the BCM2711's configuration space "a peripheral of its own" that no device record names.

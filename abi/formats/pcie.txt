@@ -248,8 +248,8 @@ layout erx_pcie_setting wire_le 8 24
   padding 2 6
   field message erx_msi_message 8
 
-# One window of a host bridge, from the tree's ranges: its PCI and CPU addresses and
-# its size.
+# One window of a host bridge, from the tree's ranges, or an inbound one, from its
+# dma-ranges: its PCI and CPU addresses and its size.
 flags pcie_window_flags u8
   bit addr64 0
   bit prefetchable 1
@@ -269,16 +269,17 @@ layout erx_pcie_place wire_le 1 4
   field pin u8 3
 
 # A host bridge the device service hands the PCIe domain: its manifest device row, its
-# buses, whether it is closed, its windows and, for a closed bridge, its places. A
-# window of size 0 is unused, and so is a place on bus 0, which lies above every root
-# port.
+# buses, whether it is closed, its windows, its inbound windows and, for a closed bridge,
+# its places. A window of size 0 is unused, and so is a place on bus 0, which lies above
+# every root port.
 flags pcie_bridge_flags u8
   bit closed 0
-layout erx_pcie_bridge wire_le 8 152
+layout erx_pcie_bridge wire_le 8 280
   field index u32 0
   field bus_first u8 4
   field bus_last u8 5
   field flags pcie_bridge_flags 6
   padding 7 1
   field windows erx_pcie_window 8 count @pcie_windows_max
-  field places erx_pcie_place 136 count @pcie_closed_max
+  field inbound erx_pcie_window 136 count @pcie_windows_max
+  field places erx_pcie_place 264 count @pcie_closed_max

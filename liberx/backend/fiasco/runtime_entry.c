@@ -478,7 +478,7 @@ tree_facts(const erx_dt_t *tree)
 		erx_dom_view_bridge(bridge, &facts, status);
 		if (status != ERX_DT_BRIDGE_OK) {
 			static const char before[] = "erx: PCIe bridge ";
-			static const char after[] = ": the device tree's bus-range or ranges are refused; it gives no function\n";
+			static const char after[] = ": the device tree's bus-range, ranges or dma-ranges are refused; it gives no function\n";
 
 			erx_fiasco_console_write(before, sizeof(before) - 1);
 			erx_fiasco_console_write(node->path, node->path_len);

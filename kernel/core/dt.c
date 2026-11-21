@@ -380,37 +380,31 @@ windows_translate(const uint8_t *ranges, int len, int ac, int pac, int sc, bool 
 }
 
 /*
- * The walk of erx_dma_ranges (docs/design-kernel.md, "DMA and the IOMMU"),
- * from the bus at path[bus_level] up to the root, then the RAM filter. A level's
- * dma-ranges maps its own addresses, in its own #address-cells and
- * #size-cells, to its parent's, in the parent's #address-cells. A level
- * without the property passes the windows only while no level above it
- * has a non-empty one; the root, which has no parent to map into, passes
- * them only through no dma-ranges or an empty one. Each level translates
- * one of the two window arrays into the other. When the bus is a PCIe
- * function's host bridge, its own level, and no other, may take the PCI bus
- * binding's three address cells. A dma_limit other than 0 then cuts each
- * window's bus addresses below it, before the RAM filter, so a window the
- * device cannot reach drops out.
+ * Translates count windows, at path[level]'s bus addresses, up to the root
+ * through each level's dma-ranges (docs/design-kernel.md, "DMA and the
+ * IOMMU"), in place. A level's dma-ranges maps its own addresses, in its own
+ * #address-cells and #size-cells, to its parent's, in the parent's
+ * #address-cells. A level without the property passes the windows only
+ * while no level above it has a non-empty one; the root, which has no
+ * parent to map into, passes them only through no dma-ranges or an empty
+ * one. With pci, path[level]'s own dma-ranges, and no other, may take the
+ * PCI bus binding's three address cells, as a PCIe function's host bridge's
+ * does.
  */
 static erx_dt_dma_status_t
-range_read(const erx_dt_t *tree, const int path[ERX_DT_DEPTH_MAX + 1], int bus_level, erx_dt_row_t row,
-    uint64_t dma_limit, erx_dt_device_t *facts)
+dma_walk(const erx_dt_t *tree, const int path[ERX_DT_DEPTH_MAX + 1], int level, bool pci,
+    dt_window_t windows[ERX_DT_WINDOWS_MAX], uint32_t *count)
 {
-	dt_window_t windows[2][ERX_DT_WINDOWS_MAX];
-	const dt_window_t *found;
+	dt_window_t next[ERX_DT_WINDOWS_MAX];
 	const uint8_t *ranges;
 	erx_dt_dma_status_t status;
-	uint32_t count, translated, kept, i;
-	bool missing, pci;
-	int level, len, ac, sc, pac, side;
+	uint32_t translated;
+	bool missing, three;
+	int at, len, ac, sc, pac;
 
-	windows[0][0] = (dt_window_t){ .bus = 0, .last = UINT64_MAX, .at = 0 };
-	count = 1;
-	side = 0;
 	missing = false;
-	for (level = bus_level; level >= 0; level--) {
-		ranges = fdt_getprop(tree->bytes, path[level], "dma-ranges", &len);
+	for (at = level; at >= 0; at--) {
+		ranges = fdt_getprop(tree->bytes, path[at], "dma-ranges", &len);
 		if (ranges == NULL) {
 			if (len != -FDT_ERR_NOTFOUND)
 				return (ERX_DT_DMA_MALFORMED);
@@ -419,31 +413,55 @@ range_read(const erx_dt_t *tree, const int path[ERX_DT_DEPTH_MAX + 1], int bus_l
 		}
 		if (len == 0)
 			continue;
-		if (missing || level == 0)
+		if (missing || at == 0)
 			return (ERX_DT_DMA_MALFORMED);
-		ac = fdt_address_cells(tree->bytes, path[level]);
-		sc = fdt_size_cells(tree->bytes, path[level]);
-		pac = fdt_address_cells(tree->bytes, path[level - 1]);
-		pci = row == ERX_DT_ROW_PCIE && level == bus_level && ac == PCI_ADDRESS_CELLS;
-		if ((!pci && !cells_valid(ac)) || !cells_valid(sc) || !cells_valid(pac))
+		ac = fdt_address_cells(tree->bytes, path[at]);
+		sc = fdt_size_cells(tree->bytes, path[at]);
+		pac = fdt_address_cells(tree->bytes, path[at - 1]);
+		three = pci && at == level && ac == PCI_ADDRESS_CELLS;
+		if ((!three && !cells_valid(ac)) || !cells_valid(sc) || !cells_valid(pac))
 			return (ERX_DT_DMA_CELLS);
-		status = windows_translate(ranges, len, ac, pac, sc, pci, windows[side], count, windows[!side],
-		    &translated);
+		status = windows_translate(ranges, len, ac, pac, sc, three, windows, *count, next, &translated);
 		if (status != ERX_DT_DMA_OK)
 			return (status);
-		count = translated;
-		side = !side;
+		memcpy(windows, next, translated * sizeof(next[0]));
+		*count = translated;
 	}
+	return (ERX_DT_DMA_OK);
+}
+
+/*
+ * The walk of erx_dma_ranges (docs/design-kernel.md, "DMA and the IOMMU"):
+ * every bus address of the bus at path[bus_level], through dma_walk up to the
+ * root, then the RAM filter. When the bus is a PCIe function's host bridge,
+ * its own level may take the PCI bus binding's three address cells. A
+ * dma_limit other than 0 cuts each window's bus addresses below it, before
+ * the RAM filter, so a window the device cannot reach drops out.
+ */
+static erx_dt_dma_status_t
+range_read(const erx_dt_t *tree, const int path[ERX_DT_DEPTH_MAX + 1], int bus_level, erx_dt_row_t row,
+    uint64_t dma_limit, erx_dt_device_t *facts)
+{
+	dt_window_t windows[ERX_DT_WINDOWS_MAX];
+	const dt_window_t *found;
+	erx_dt_dma_status_t status;
+	uint32_t count, kept, i;
+
+	windows[0] = (dt_window_t){ .bus = 0, .last = UINT64_MAX, .at = 0 };
+	count = 1;
+	status = dma_walk(tree, path, bus_level, row == ERX_DT_ROW_PCIE, windows, &count);
+	if (status != ERX_DT_DMA_OK)
+		return (status);
 
 	found = NULL;
 	kept = 0;
 	for (i = 0; i < count; i++) {
-		if (dma_limit != 0 && windows[side][i].bus >= dma_limit)
+		if (dma_limit != 0 && windows[i].bus >= dma_limit)
 			continue;
-		if (dma_limit != 0 && windows[side][i].last >= dma_limit)
-			windows[side][i].last = dma_limit - 1;
-		if (memory_meets(tree, windows[side][i].at, window_at_last(&windows[side][i]))) {
-			found = &windows[side][i];
+		if (dma_limit != 0 && windows[i].last >= dma_limit)
+			windows[i].last = dma_limit - 1;
+		if (memory_meets(tree, windows[i].at, window_at_last(&windows[i]))) {
+			found = &windows[i];
 			kept++;
 		}
 	}
@@ -917,16 +935,42 @@ window_meets(const erx_pcie_window_t *window, bool pci, uint64_t first, uint64_t
 }
 
 /*
- * A host bridge's memory windows from its ranges, at path[depth], in entry
- * order: each entry the PCI bus binding's three cells, the parent's address
- * in its #address-cells and the size in the bridge's #size-cells
+ * The CPU address of the range first through last of path[depth]'s parent's
+ * addresses, a host bridge's inbound window: false unless dma_walk takes it
+ * to the root whole and in one piece. There is no RAM filter, since an
+ * inbound window may reach device registers.
+ */
+static bool
+dma_to_cpu(const erx_dt_t *tree, const int path[ERX_DT_DEPTH_MAX + 1], int depth, uint64_t first, uint64_t last,
+    uint64_t *cpu)
+{
+	dt_window_t pieces[ERX_DT_WINDOWS_MAX];
+	uint32_t count;
+
+	pieces[0] = (dt_window_t){ .bus = first, .last = last, .at = first };
+	count = 1;
+	if (dma_walk(tree, path, depth - 1, false, pieces, &count) != ERX_DT_DMA_OK || count != 1 ||
+	    pieces[0].bus != first || pieces[0].last != last)
+		return (false);
+	*cpu = pieces[0].at;
+	return (true);
+}
+
+/*
+ * A host bridge's memory windows from its ranges, or with inbound its
+ * inbound windows from its dma-ranges, at path[depth], in entry order: each
+ * entry the PCI bus binding's three cells, the parent's address in its
+ * #address-cells and the size in the bridge's #size-cells
  * (pci_host_generic_fdt.c:179-230), the parent's range taken to the CPU's by
- * range_to_cpu. An entry of I/O space or of size 0 is skipped; one that
- * meets an earlier window in PCI or CPU space is malformed, so a BAR's PCI
- * range has one CPU range.
+ * range_to_cpu, or for an inbound window by dma_to_cpu. An entry of I/O space
+ * or of size 0 is skipped; one that meets an earlier window in PCI space is
+ * malformed, and so is a window that meets an earlier one in CPU space, so a
+ * BAR's PCI range has one CPU range. An empty dma-ranges maps every bus
+ * address to the same CPU address, as none does, so it gives no inbound
+ * window; an empty ranges maps nothing a three-cell address can name.
  */
 static erx_dt_bridge_status_t
-windows_read(const erx_dt_t *tree, const int path[ERX_DT_DEPTH_MAX + 1], int depth,
+windows_read(const erx_dt_t *tree, const int path[ERX_DT_DEPTH_MAX + 1], int depth, bool inbound,
     erx_pcie_window_t windows[ERX_PCIE_WINDOWS_MAX])
 {
 	const void *fdt = tree->bytes;
@@ -934,17 +978,20 @@ windows_read(const erx_dt_t *tree, const int path[ERX_DT_DEPTH_MAX + 1], int dep
 	uint64_t pci, parent, size, pci_last, parent_last, cpu;
 	uint32_t hi, space, count, i;
 	int ac, sc, pac, entry, len, offset;
+	bool translated;
 
-	ranges = fdt_getprop(fdt, path[depth], "ranges", &len);
+	ranges = fdt_getprop(fdt, path[depth], inbound ? "dma-ranges" : "ranges", &len);
 	if (ranges == NULL)
 		return (len == -FDT_ERR_NOTFOUND ? ERX_DT_BRIDGE_OK : ERX_DT_BRIDGE_MALFORMED);
+	if (len == 0)
+		return (inbound ? ERX_DT_BRIDGE_OK : ERX_DT_BRIDGE_MALFORMED);
 	ac = fdt_address_cells(fdt, path[depth]);
 	sc = fdt_size_cells(fdt, path[depth]);
 	pac = fdt_address_cells(fdt, path[depth - 1]);
 	if (ac != PCI_ADDRESS_CELLS || !cells_valid(sc) || !cells_valid(pac))
 		return (ERX_DT_BRIDGE_CELLS);
 	entry = (ac + pac + sc) * DT_CELL;
-	if (len == 0 || len % entry != 0)
+	if (len % entry != 0)
 		return (ERX_DT_BRIDGE_MALFORMED);
 	count = 0;
 	for (offset = 0; offset < len; offset += entry) {
@@ -954,7 +1001,7 @@ windows_read(const erx_dt_t *tree, const int path[ERX_DT_DEPTH_MAX + 1], int dep
 		pci = cells_read(at + DT_CELL, PCI_ADDRESS_CELLS - 1);
 		parent = cells_read(at + PCI_ADDRESS_CELLS * DT_CELL, pac);
 		size = cells_read(at + (PCI_ADDRESS_CELLS + pac) * DT_CELL, sc);
-		if (space == PCI_SPACE_CONFIGURATION)
+		if (space == PCI_SPACE_CONFIGURATION && !inbound)
 			return (ERX_DT_BRIDGE_MALFORMED);
 		if (space == PCI_SPACE_IO || size == 0)
 			continue;
@@ -963,11 +1010,13 @@ windows_read(const erx_dt_t *tree, const int path[ERX_DT_DEPTH_MAX + 1], int dep
 			return (ERX_DT_BRIDGE_MALFORMED);
 		if (count == ERX_PCIE_WINDOWS_MAX)
 			return (ERX_DT_BRIDGE_RANGES);
-		if (!range_to_cpu(tree, path, depth, parent, parent_last, &cpu))
+		translated = inbound ? dma_to_cpu(tree, path, depth, parent, parent_last, &cpu) :
+		    range_to_cpu(tree, path, depth, parent, parent_last, &cpu);
+		if (!translated)
 			return (ERX_DT_BRIDGE_MALFORMED);
 		for (i = 0; i < count; i++)
 			if (window_meets(&windows[i], true, pci, pci_last) ||
-			    window_meets(&windows[i], false, cpu, cpu + (size - 1)))
+			    (!inbound && window_meets(&windows[i], false, cpu, cpu + (size - 1))))
 				return (ERX_DT_BRIDGE_MALFORMED);
 		windows[count++] = (erx_pcie_window_t){ .pci = pci, .cpu = cpu, .size = size, .flags = window_flags(hi) };
 	}
@@ -977,13 +1026,14 @@ windows_read(const erx_dt_t *tree, const int path[ERX_DT_DEPTH_MAX + 1], int dep
 erx_dt_bridge_status_t
 erx_dt_bridge(const erx_dt_t *tree, const char *path, erx_pcie_bridge_t *bridge)
 {
-	erx_pcie_window_t windows[ERX_PCIE_WINDOWS_MAX];
+	erx_pcie_window_t windows[ERX_PCIE_WINDOWS_MAX], inbound[ERX_PCIE_WINDOWS_MAX];
 	int nodes[ERX_DT_DEPTH_MAX + 1];
 	erx_dt_bridge_status_t status;
 	uint8_t first, last;
 	int node, depth;
 
 	memset(windows, 0, sizeof(windows));
+	memset(inbound, 0, sizeof(inbound));
 	first = last = 0;
 	depth = -1;
 	node = node_find(tree, path);
@@ -996,14 +1046,18 @@ erx_dt_bridge(const erx_dt_t *tree, const char *path, erx_pcie_bridge_t *bridge)
 	else
 		status = buses_read(tree->bytes, node, &first, &last);
 	if (status == ERX_DT_BRIDGE_OK)
-		status = windows_read(tree, nodes, depth, windows);
+		status = windows_read(tree, nodes, depth, false, windows);
+	if (status == ERX_DT_BRIDGE_OK)
+		status = windows_read(tree, nodes, depth, true, inbound);
 	if (status != ERX_DT_BRIDGE_OK) {
 		memset(windows, 0, sizeof(windows));
+		memset(inbound, 0, sizeof(inbound));
 		first = last = 0;
 	}
 	bridge->bus_first = first;
 	bridge->bus_last = last;
 	memcpy(bridge->windows, windows, sizeof(windows));
+	memcpy(bridge->inbound, inbound, sizeof(inbound));
 	return (status);
 }
 

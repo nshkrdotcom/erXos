@@ -120,6 +120,10 @@ bridge_print(const erx_dt_t *tree, const char *path)
 		if (bridge.windows[i].size != 0)
 			printf(" window 0x%" PRIx64 " 0x%" PRIx64 " 0x%" PRIx64 " %u", bridge.windows[i].pci,
 			    bridge.windows[i].cpu, bridge.windows[i].size, bridge.windows[i].flags);
+	for (i = 0; i < ERX_PCIE_WINDOWS_MAX; i++)
+		if (bridge.inbound[i].size != 0)
+			printf(" inbound 0x%" PRIx64 " 0x%" PRIx64 " 0x%" PRIx64 " %u", bridge.inbound[i].pci,
+			    bridge.inbound[i].cpu, bridge.inbound[i].size, bridge.inbound[i].flags);
 	printf("\n");
 }
 

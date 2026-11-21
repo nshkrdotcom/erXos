@@ -907,8 +907,8 @@ each bridge it holds: `index` u32, its manifest device row; `bus_first`
 and `bus_last` u8; `flags` u8 (closed); `windows`, at most
 `pcie_windows_max` (4) of `pci` u64, `cpu` u64, `size` u64 and `flags`
 (64-bit, prefetchable, I/O), from the tree's `ranges`; `inbound`, at
-most `pcie_windows_max` of `pci` u64, `cpu` u64 and `size` u64, from the
-tree's `dma-ranges`
+most `pcie_windows_max` windows of the same layout, from the tree's
+`dma-ranges`, their flags read from each entry as a window's are
 ([design-device-tree.md](design-device-tree.md#the-reader)); and, for a
 closed bridge, `places`, every place below its root port that its
 platform record lists, each a bus, device, function and pin, at most

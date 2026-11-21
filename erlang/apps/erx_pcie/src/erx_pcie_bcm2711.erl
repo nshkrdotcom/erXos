@@ -39,10 +39,9 @@ A **port** makes the core's operations: `Module:op(Op, Handle)` answers
 one `erx_pcie_bcm2711_core:op()` and the handle after it, a register
 read or write, a wait of at least that many microseconds, a
 configuration access at an offset of the bridge's window, or the
-firmware notification. open/3 takes any port, as the host tests' model
+firmware notification. open/2 takes any port, as the host tests' model
 of the bridge's registers. start/2, the target's, refuses with
-`enotsup`: the bridge's record does not carry the tree's `dma-ranges`,
-which bring-up's inbound window needs, the device NIF has no view of
+`enotsup`: the device NIF has no view of
 the root port's space or the endpoint's data window, and the driver has
 no route to the firmware notification, pci_bus:firmware/1 (TODO.md,
 "the BCM2711 bridge's start").
@@ -50,7 +49,7 @@ no route to the firmware notification, pci_bus:firmware/1 (TODO.md,
 
 -behaviour(erx_pcie_bridge).
 
--export([start/2, open/3, access/2, ready/2]).
+-export([start/2, open/2, access/2, ready/2]).
 -export([up/1, effects/1]).
 -export_type([effects/0, state/0]).
 
@@ -74,8 +73,8 @@ no route to the firmware notification, pci_bus:firmware/1 (TODO.md,
 
 -doc """
 The target's start: refused with `enotsup` until the PCIe domain is
-given the tree's inbound range, a view of the bridge's configuration
-window and a route to the firmware notification (see the module's
+given a view of the bridge's configuration window and a route to the
+firmware notification (see the module's
 documentation).
 """.
 -spec start(erx_abi_layout:erx_pcie_bridge(), erx_device:device()) -> {error, enotsup}.
@@ -83,14 +82,13 @@ start(_Bridge, _Device) ->
     {error, enotsup}.
 
 -doc """
-The start over a port: the keep-or-reset decision and what it decides,
-with Inbound the tree's `dma-ranges` window. Logs how the bridge came
-up; answers the core's reason when it did not.
+The start over a port: the keep-or-reset decision and what it decides.
+Logs how the bridge came up; answers the core's reason when it did not.
 """.
--spec open(erx_abi_layout:erx_pcie_bridge(), erx_abi_layout:erx_pcie_window(), effects()) ->
+-spec open(erx_abi_layout:erx_pcie_bridge(), effects()) ->
           {ok, state()} | {error, erx_pcie_bcm2711_core:reason()}.
-open(#{index := Index} = Bridge, Inbound, Port) ->
-    case run(erx_pcie_bcm2711_core:start(Bridge, Inbound), Port) of
+open(#{index := Index} = Bridge, Port) ->
+    case run(erx_pcie_bcm2711_core:start(Bridge), Port) of
         {{up, Up}, Started, Next} ->
             logger:notice("pcie: bridge ~b: ~ts", [Index, describe(Up)]),
             {ok, #bridge{record = Bridge, started = Started, up = Up, port = Next}};

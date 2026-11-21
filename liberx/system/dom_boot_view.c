@@ -618,8 +618,11 @@ erx_dom_view_bridge(erx_dom_pci_bridge_t *bridge, const erx_pcie_bridge_t *tree,
 	bridge->facts.bus_first = known ? tree->bus_first : 1;
 	bridge->facts.bus_last = known ? tree->bus_last : 0;
 	memcpy(bridge->facts.windows, tree->windows, sizeof(bridge->facts.windows));
-	if (!known)
+	memcpy(bridge->facts.inbound, tree->inbound, sizeof(bridge->facts.inbound));
+	if (!known) {
 		memset(bridge->facts.windows, 0, sizeof(bridge->facts.windows));
+		memset(bridge->facts.inbound, 0, sizeof(bridge->facts.inbound));
+	}
 }
 
 /* The catalogue of the host bridge of device row bridge, or NULL for a row with none. */

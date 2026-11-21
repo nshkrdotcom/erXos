@@ -14,7 +14,7 @@ facts record docs/research-brcmstb-pcie.md and FreeBSD's bcm2838_pci.c.
 
 Three machines share step/2:
 
-* start/2, at each start of the PCIe domain: the keep-or-reset decision
+* start/1, at each start of the PCIe domain: the keep-or-reset decision
   from the link and the endpoint's firmware register, then either the
   keep (the windows and MISC_CTRL written again) or the clean turn-off,
   when the link is up, and bring-up in the vendor's order. It ends
@@ -41,7 +41,7 @@ does. The bridge's root bus is bus 0, which the index register numbers
 absolutely; the root port is at device 0, function 0 there.
 """.
 
--export([start/2, firmware/1, access/2, step/2]).
+-export([start/1, firmware/1, access/2, step/2]).
 -export([link_up/1, firmware_present/1]).
 -export_type([core/0, register/0, op/0, answer/0, action/0, up/0, reason/0, result/0]).
 
@@ -84,7 +84,7 @@ link's speed and width from the root port's link status.
                 width := 0..63}.
 
 -doc """
-Why start/2 failed: the tree's `dma-ranges` or `ranges` break the
+Why start/1 failed: the tree's `dma-ranges` or `ranges` break the
 windows' rules, the block is in endpoint mode, or the link did not come
 up within 100 ms after the PCIe rule's 100 ms.
 """.
@@ -101,15 +101,16 @@ up within 100 ms after the PCIe rule's 100 ms.
 
 %% What every item of a machine may read, fixed when the machine starts: the
 %% bridge, its endpoint (the closed bus's listed place, `none` for an access, which
-%% does not need it), and the tree's window writes and memory controller size.
+%% does not need it), and the window writes and memory controller size from the
+%% bridge's windows and inbound window.
 -record(plan, {bridge :: erx_abi_layout:erx_pcie_bridge(),
                endpoint = none :: erx_pcie:place() | none,
                inbound = [] :: [{register(), 0..16#ffffffff}],
                outbound = [] :: [{register(), 0..16#ffffffff}],
                scb0_size = 0 :: 0..31}).
 
-%% A machine: its plan, the items still to run, and whether start/2 kept the
-%% bridge or cycled PERST#, which run/1 takes from start/2's result.
+%% A machine: its plan, the items still to run, and whether start/1 kept the
+%% bridge or cycled PERST#, which run/1 takes from start/1's result.
 -record(core, {plan :: #plan{},
                path = none :: none | kept | reset,
                agenda = [] :: [item()]}).
@@ -139,14 +140,16 @@ up within 100 ms after the PCIe rule's 100 ms.
 %% Public entries
 
 -doc """
-The start of the PCIe domain over a bridge and the tree's inbound range,
-its `dma-ranges` (one window, `erx_abi_layout:erx_pcie_window()`): the keep-or-reset
-decision and what it decides. The bridge's first listed place is its
-endpoint, the VL805; a bridge that lists none fails with `ranges`.
+The start of the PCIe domain over a bridge: the keep-or-reset decision
+and what it decides. The bridge's first listed place is its endpoint, the
+VL805; a bridge that lists none fails with `ranges`. Its windows and its
+inbound windows, the tree's `ranges` and `dma-ranges` as the record
+carries them, give the window writes; a record the registers cannot carry
+fails with `ranges` or `dma_ranges` before any operation.
 """.
--spec start(erx_abi_layout:erx_pcie_bridge(), erx_abi_layout:erx_pcie_window()) -> {core(), action()}.
-start(#{bus_first := 0} = Bridge, Inbound) ->
-    case {erx_pcie:places(Bridge), inbound(Inbound), outbound(erx_pcie:windows(Bridge))} of
+-spec start(erx_abi_layout:erx_pcie_bridge()) -> {core(), action()}.
+start(#{bus_first := 0} = Bridge) ->
+    case {erx_pcie:places(Bridge), inbound(erx_pcie:inbound(Bridge)), outbound(erx_pcie:windows(Bridge))} of
         {[], _, _} -> refused(Bridge, {error, ranges});
         {_, {error, _} = Error, _} -> refused(Bridge, Error);
         {_, _, {error, _} = Error} -> refused(Bridge, Error);
@@ -157,7 +160,7 @@ start(#{bus_first := 0} = Bridge, Inbound) ->
     end.
 
 -doc """
-The endpoint's firmware after start/2 ended `{up, _}`: notified and read
+The endpoint's firmware after start/1 ended `{up, _}`: notified and read
 again when PERST# was cycled, present without an operation when kept.
 """.
 -spec firmware(core()) -> {core(), action()}.
@@ -424,7 +427,8 @@ endian_little(Word) ->
 
 %% The windows from the tree
 
-%% The inbound window from the tree's dma-ranges (record, section 2): BAR2 maps
+%% The inbound window from the tree's dma-ranges (record, section 2), the one window
+%% the bridge's record carries; none, or more than one, cannot be mapped. BAR2 maps
 %% CPU address 0 at the range's PCI address, its size the range's rounded up to
 %% a power of two, which must divide the PCI address, which must not lie
 %% strictly between 2 and 4 GiB; BAR1, which maps the SoC's own registers on
@@ -433,7 +437,7 @@ endian_little(Word) ->
 %% The window's size code and SCB0_SIZE are both log2(size) - 15, the code's
 %% form from 64 KiB to 64 GiB; SCB0_SIZE has no form below 64 KiB, so a
 %% smaller window is refused too.
-inbound(#{pci := Pci, cpu := 0, size := Size}) ->
+inbound([#{pci := Pci, cpu := 0, size := Size}]) ->
     Log2 = ceil_log2(Size),
     Aligned = Pci rem (1 bsl Log2) =:= 0,
     Hole = 2 * ?GIB < Pci andalso Pci < 4 * ?GIB,
@@ -448,7 +452,7 @@ inbound(#{pci := Pci, cpu := 0, size := Size}) ->
              Code};
         false -> {error, dma_ranges}
     end;
-inbound(_Window) ->
+inbound(_Windows) ->
     {error, dma_ranges}.
 
 %% The outbound windows from the tree's memory ranges (record, section 2), at

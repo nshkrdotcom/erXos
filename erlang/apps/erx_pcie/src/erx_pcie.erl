@@ -13,7 +13,7 @@ this module reads what a bridge's mean. A place is a function's bus,
 device and function; its requester id is derived, never stored.
 """.
 
--export([closed/1, windows/1, places/1]).
+-export([closed/1, windows/1, inbound/1, places/1]).
 -export_type([place/0]).
 
 -doc "A function's bus, device and function.".
@@ -27,7 +27,15 @@ closed(#{flags := Flags}) ->
 -doc "A host bridge's windows in use; a slot of size 0 is unused.".
 -spec windows(erx_abi_layout:erx_pcie_bridge()) -> [erx_abi_layout:erx_pcie_window()].
 windows(#{windows := Windows}) ->
-    [Window || #{size := Size} = Window <- Windows, Size > 0].
+    used(Windows).
+
+-doc """
+A host bridge's inbound windows in use, from the tree's `dma-ranges`: how
+its functions' bus addresses reach memory. A slot of size 0 is unused.
+""".
+-spec inbound(erx_abi_layout:erx_pcie_bridge()) -> [erx_abi_layout:erx_pcie_window()].
+inbound(#{inbound := Inbound}) ->
+    used(Inbound).
 
 -doc """
 The places below a closed bridge's root port that its record lists; a
@@ -36,3 +44,6 @@ slot on bus 0, which lies above every root port, is unused.
 -spec places(erx_abi_layout:erx_pcie_bridge()) -> [place()].
 places(#{places := Places}) ->
     [{Bus, Device, Function} || #{bus := Bus, device := Device, function := Function} <- Places, Bus =/= 0].
+
+used(Windows) ->
+    [Window || #{size := Size} = Window <- Windows, Size > 0].

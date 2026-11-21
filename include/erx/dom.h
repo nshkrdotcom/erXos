@@ -349,7 +349,7 @@ typedef struct erx_dom_device_entry {
 /*
  * A host bridge's catalogue of PCIe functions (docs/design-pcie.md,
  * "Records", "The catalogue and gives"). facts is the bridge's record: its
- * buses and windows the tree's (erx_dt_bridge), its index, flags and
+ * buses, windows and inbound windows the tree's (erx_dt_bridge), its index, flags and
  * places the manifest's. A layout is a function as the bridge's placing
  * report gave it, its record's state that report's, with the latest report's state
  * (0 when the latest report did not list it) and whether that report

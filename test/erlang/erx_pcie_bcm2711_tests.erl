@@ -25,15 +25,17 @@ range(Pci, Cpu, Size) ->
 
 bridge() -> bridge([range(16#c0000000, 16#600000000, 16#40000000)]).
 
-%% The record as the tree decodes it: window and place slots padded to their limits
-%% (pcie_windows_max, pcie_closed_max), the unused ones zeroed, and the VL805 in the
-%% second place slot, so erx_pcie:windows/1 and erx_pcie:places/1 do their filtering.
+%% The record as the tree decodes it: window, inbound and place slots padded to their
+%% limits (pcie_windows_max, pcie_closed_max), the unused ones zeroed, the tree's one
+%% inbound window, and the VL805 in the second place slot, so erx_pcie:windows/1,
+%% erx_pcie:inbound/1 and erx_pcie:places/1 do their filtering.
 bridge(Windows) ->
     bridge(Windows, [unused_place(), #{bus => 1, device => 0, function => 0, pin => 1}]).
 
 bridge(Windows, Places) ->
     #{index => 0, bus_first => 0, bus_last => 1, flags => [closed],
-      windows => pad(Windows, range(0, 0, 0), 4), places => pad(Places, unused_place(), 4)}.
+      windows => pad(Windows, range(0, 0, 0), 4), inbound => pad([inbound()], range(0, 0, 0), 4),
+      places => pad(Places, unused_place(), 4)}.
 
 unused_place() -> #{bus => 0, device => 0, function => 0, pin => 0}.
 
@@ -42,10 +44,13 @@ pad(Slots, Unused, Count) -> Slots ++ lists:duplicate(max(0, Count - length(Slot
 %% The tree's dma-ranges: PCI 0 at CPU 0, 3 GiB.
 inbound() -> range(0, 0, 16#c0000000).
 
-start(Options) -> start(Options, bridge(), inbound()).
+%% The bridge with the inbound windows Inbound in place of the tree's one.
+inbound(Inbound) -> (bridge())#{inbound := pad(Inbound, range(0, 0, 0), 4)}.
 
-start(Options, Bridge, Inbound) ->
-    ?MODEL:run(?MODEL:new(Options), ?CORE:start(Bridge, Inbound)).
+start(Options) -> start(Options, bridge()).
+
+start(Options, Bridge) ->
+    ?MODEL:run(?MODEL:new(Options), ?CORE:start(Bridge)).
 
 %% start/2, then firmware/1 when it came up.
 start_and_firmware(Options) ->
@@ -154,7 +159,7 @@ bring_up_writes_the_records_values_test() ->
 %% (bcm2838_pci.c:591-596); the facts record's worked value for it, 0x00300000 in
 %% section 2, drops the low bits of that MiB.
 an_outbound_window_takes_the_mainline_trees_values_test() ->
-    {{up, _}, _, Model} = start(#{boot => down}, bridge([range(16#f8000000, 16#600000000, 16#4000000)]), inbound()),
+    {{up, _}, _, Model} = start(#{boot => down}, bridge([range(16#f8000000, 16#600000000, 16#4000000)])),
     ?assertEqual([16#f8000000, 0, 16#03f00000, 6, 6],
                  [last_write(Model, {Register, 0}) || Register <- [win_lo, win_hi, win_base_limit, win_base_hi, win_limit_hi]]).
 
@@ -163,7 +168,7 @@ a_read_modify_write_keeps_the_unnamed_bits_test() ->
     Model0 = ?MODEL:new(#{boot => down}),
     #{regs := Regs} = Model0,
     Seeded = Model0#{regs := Regs#{misc_ctrl => 16#000fc000, hard_debug => 16#10000000}},
-    {{up, _}, _, Model} = ?MODEL:run(Seeded, ?CORE:start(bridge(), inbound())),
+    {{up, _}, _, Model} = ?MODEL:run(Seeded, ?CORE:start(bridge())),
     ?assertEqual(16#000fc000, last_write(Model, misc_ctrl) band 16#000fc000),
     ?assertEqual(16#10000000, last_write(Model, hard_debug) band 16#10000000).
 
@@ -202,27 +207,29 @@ a_turn_off_whose_l23_never_comes_goes_on_after_15_polls_test() ->
 
 %% A tree whose windows break the rules touches no register.
 the_trees_windows_are_refused_before_any_operation_test_() ->
-    Ranges = [{dma_ranges, bridge(), range(16#40000000, 0, 16#80000000)},   % not a multiple of its size
-              {dma_ranges, bridge(), range(16#c0000000, 0, 16#40000000)},   % between 2 and 4 GiB
-              {dma_ranges, bridge(), range(0, 16#1000, 16#c0000000)},       % CPU side not at 0
-              {dma_ranges, bridge(), range(0, 0, 16#8000)},                 % below 64 KiB
-              {dma_ranges, bridge(), range(0, 0, 16#2000000000)},           % above 64 GiB
-              {ranges, bridge([]), inbound()},
-              {ranges, bridge([(range(0, 0, 16#10000))#{flags := [io]}]), inbound()},
-              {ranges, bridge(lists:duplicate(5, range(16#c0000000, 16#600000000, 16#100000))), inbound()},
-              {ranges, bridge([range(16#c0000000, 16#600080000, 16#100000)]), inbound()},
-              {ranges, bridge([range(16#c0000000, 16#600000000, 16#180000)]), inbound()},
-              {ranges, bridge([range(16#c0000000, 16#10000000000, 16#100000)]), inbound()}],
+    Ranges = [{dma_ranges, inbound([range(16#40000000, 0, 16#80000000)])},   % not a multiple of its size
+              {dma_ranges, inbound([range(16#c0000000, 0, 16#40000000)])},   % between 2 and 4 GiB
+              {dma_ranges, inbound([range(0, 16#1000, 16#c0000000)])},       % CPU side not at 0
+              {dma_ranges, inbound([range(0, 0, 16#8000)])},                 % below 64 KiB
+              {dma_ranges, inbound([range(0, 0, 16#2000000000)])},           % above 64 GiB
+              {dma_ranges, inbound([])},                                     % no inbound window
+              {dma_ranges, inbound([inbound(), range(16#100000000, 16#100000000, 16#10000)])},  % two
+              {ranges, bridge([])},
+              {ranges, bridge([(range(0, 0, 16#10000))#{flags := [io]}])},
+              {ranges, bridge(lists:duplicate(5, range(16#c0000000, 16#600000000, 16#100000)))},
+              {ranges, bridge([range(16#c0000000, 16#600080000, 16#100000)])},
+              {ranges, bridge([range(16#c0000000, 16#600000000, 16#180000)])},
+              {ranges, bridge([range(16#c0000000, 16#10000000000, 16#100000)])}],
     [fun() ->
-             {{error, Reason}, _, Model} = start(#{boot => up, firmware => 16#000138c1}, Bridge, Inbound),
+             {{error, Reason}, _, Model} = start(#{boot => up, firmware => 16#000138c1}, Bridge),
              ?assertEqual(Expected, Reason),
              ?assertEqual([], ops(Model))
-     end || {Expected, Bridge, Inbound} <- Ranges].
+     end || {Expected, Bridge} <- Ranges].
 
 %% A bridge whose every place slot is unused has no endpoint: start refuses it as a
 %% bad record, touching no register.
 a_bridge_with_no_endpoint_is_refused_before_any_operation_test() ->
-    {{error, Reason}, _, Model} = start(#{boot => up, firmware => 16#000138c1}, bridge([range(16#c0000000, 16#600000000, 16#40000000)], []), inbound()),
+    {{error, Reason}, _, Model} = start(#{boot => up, firmware => 16#000138c1}, bridge([range(16#c0000000, 16#600000000, 16#40000000)], [])),
     ?assertEqual(ranges, Reason),
     ?assertEqual([], ops(Model)).
 

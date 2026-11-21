@@ -86,6 +86,14 @@ class DtTest < Minitest::Test
   # The Pi 4's bridge under a two-cell bus whose ranges, entries, map its addresses to the CPU's.
   def self.bridge_below(entries) = "scb { #address-cells = <2>; #size-cells = <1>; ranges = <#{entries}>; " \
                                    "#{BRIDGE.call(ranges: window('0x6 0x0'))} };"
+  # The Pi 4's bridge with the dma-ranges entries bridge_dma (pcie_windows_max at most), under
+  # a two-cell bus whose own dma-ranges, scb_dma (nil for none), maps its addresses to the CPU's.
+  def self.inbound_below(bridge_dma, scb_dma: nil) =
+    "scb { #address-cells = <2>; #size-cells = <1>; ranges = <0x6 0x0 0x0 0x80000000 0x10000000>; " \
+    "#{scb_dma && "dma-ranges = <#{scb_dma}>;"} pcie { device_type = \"pci\"; #address-cells = <3>; " \
+    "#size-cells = <2>; ranges = <#{window('0x6 0x0')}>; dma-ranges = <#{bridge_dma}>; }; };"
+  # The Pi 4's one inbound entry: PCI 0 at the parent's 0, 3 GiB of 32-bit memory.
+  PI_INBOUND = '0x2000000 0x0 0x0 0x0 0x0 0x0 0xc0000000'
   # Device 0's INTA to INTD on SPIs 143 to 146, level-triggered and active high.
   PIN_ENTRIES = (1..4).map { |pin| format('0x0 0x0 0x0 0x%x &gic 0x0 0x%x 0x4', pin, 142 + pin) }.join(' ')
   # The Pi 4's closed bus's one place, bus 1, device 0, function 0 (docs/design-usb.md,
@@ -216,7 +224,13 @@ class DtTest < Minitest::Test
     'bridge-five' => tree(BRIDGE.call(ranges: (1..5).map { |i| format('0x2000000 0x%x 0x0 0x%x 0x0 0x0 0x4000000', i, i) }.join(' '))),
     'bridge-translated' => tree(bridge_below('0x6 0x0 0x0 0x80000000 0x10000000')),
     'bridge-half-translated' => tree(bridge_below('0x6 0x0 0x0 0x80000000 0x1000000')),
-    # One size cell, a 32-bit prefetchable window and an entry of size 0.
+    # Inbound windows: through a bus without dma-ranges, through one that moves them up 4 GiB,
+    # through one that covers only 2 GiB of the 3, and two entries that meet in PCI space.
+    'bridge-inbound' => tree(inbound_below(PI_INBOUND)),
+    'bridge-inbound-moved' => tree(inbound_below(PI_INBOUND, scb_dma: '0x0 0x0 0x1 0x0 0xfc000000')),
+    'bridge-inbound-split' => tree(inbound_below(PI_INBOUND, scb_dma: '0x0 0x0 0x0 0x0 0x80000000')),
+    'bridge-inbound-overlap' => tree(inbound_below("#{PI_INBOUND} 0x2000000 0x0 0x80000000 0x1 0x0 0x0 0x1000000")),
+# One size cell, a 32-bit prefetchable window and an entry of size 0.
     'bridge-one-size-cell' => tree(BRIDGE.call(ranges: '0x42000000 0x0 0xf8000000 0x0 0x80000000 0x4000000 ' \
                                                        '0x2000000 0x0 0x0 0x0 0x90000000 0x0',
                                                cells: '#address-cells = <3>; #size-cells = <1>;')),
@@ -255,8 +269,8 @@ class DtTest < Minitest::Test
     'the depth bound removed' =>
       ['walk->depth < 0 || walk->depth > ERX_DT_DEPTH_MAX', 'walk->depth < 0', 'deep-17', nil, 'accept depth memory 0'],
     "a dma-ranges entry read with the parent's cell counts" =>
-      ["ac = fdt_address_cells(tree->bytes, path[level]);\n\t\tsc = fdt_size_cells(tree->bytes, path[level]);",
-       "ac = fdt_address_cells(tree->bytes, path[level - 1]);\n\t\tsc = fdt_size_cells(tree->bytes, path[level - 1]);",
+      ["ac = fdt_address_cells(tree->bytes, path[at]);\n\t\tsc = fdt_size_cells(tree->bytes, path[at]);",
+       "ac = fdt_address_cells(tree->bytes, path[at - 1]);\n\t\tsc = fdt_size_cells(tree->bytes, path[at - 1]);",
        'nested', 'device /outer/inner/dev node', 'device ok coherent 0 range 0x0 0x80000000 0xffffff mac none'],
     'the marks above the node passed over' =>
       ['for (i = 0; i < depth; i++)', 'for (i = depth; i < depth; i++)', 'parent-coherent', 'device /bus/dev node',
@@ -265,7 +279,7 @@ class DtTest < Minitest::Test
       ['if ((on != NULL && on_len != 0) || (off != NULL && off_len != 0))', 'if (false)', 'mark-with-value',
        'device /dev node', 'device malformed coherent 0 range 0x0 0x0 0x0 mac none'],
     'the level above the first non-empty one dropped' =>
-      ['for (level = bus_level; level >= 0; level--)', 'for (level = bus_level; level >= bus_level; level--)', 'nested',
+      ['for (at = level; at >= 0; at--)', 'for (at = level; at >= level; at--)', 'nested',
        'device /outer/inner/dev node', 'device ok coherent 0 range 0x0 0x80000000 0xffffff mac none'],
     "the windows' bound removed" =>
       ["\t\t\tif (count == ERX_DT_WINDOWS_MAX)\n\t\t\t\treturn (ERX_DT_DMA_RANGES);\n", '', 'splitting',
@@ -277,7 +291,7 @@ class DtTest < Minitest::Test
       ["\t\t\tif ((cells_read(at, 1) >> PCI_SPACE_SHIFT & PCI_SPACE_MASK) == PCI_SPACE_IO)\n\t\t\t\tcontinue;\n", '',
        'pci-memory-and-io', 'device /pcie pcie', 'device ok coherent 0 range 0x0 0x0 0x3fffffff mac none'],
     'three cells taken above the host bridge' =>
-      ['pci = row == ERX_DT_ROW_PCIE && level == bus_level && ac == PCI_ADDRESS_CELLS;', 'pci = row == ERX_DT_ROW_PCIE && ac == PCI_ADDRESS_CELLS;',
+      ['three = pci && at == level && ac == PCI_ADDRESS_CELLS;', 'three = pci && ac == PCI_ADDRESS_CELLS;',
        'pci-three-cells-above', 'device /outer/pcie pcie', 'device cells coherent 0 range 0x0 0x0 0x0 mac none'],
     "the map's pin match dropped" =>
       ["for (i = 0; i < PCI_INTX_CELLS; i++)\n\t\tif (cells_read(entry", "for (i = 0; i < PCI_ADDRESS_CELLS; i++)\n\t\tif (cells_read(entry",
@@ -288,7 +302,7 @@ class DtTest < Minitest::Test
       ['(cells[2] & GIC_TRIGGER_MASK) != GIC_LEVEL_HIGH)', 'false)', 'intx-edge', "intx /pcie #{PI_PLACE} 1",
        'intx unsupported 0', BINDING],
     'the RAM filter removed' =>
-      ['if (memory_meets(tree, windows[side][i].at,', 'if (true || memory_meets(tree, windows[side][i].at,', 'over-no-ram',
+      ['if (memory_meets(tree, windows[i].at,', 'if (true || memory_meets(tree, windows[i].at,', 'over-no-ram',
        'device /bus/dev node', 'device ranges coherent 0 range 0x0 0x0 0x0 mac none'],
     'the group-bit test removed' =>
       ['(value[0] & 1) != 0)', 'false)', 'macs', 'device /multicast node', 'device ok coherent 0 range 0x0 0x0 0xffffffffffffffff mac none'],
@@ -324,11 +338,14 @@ class DtTest < Minitest::Test
       ["__builtin_add_overflow(parent, size - 1, &parent_last))\n\t\t\treturn (ERX_DT_BRIDGE_MALFORMED);",
        "(parent_last = parent + (size - 1), false))\n\t\t\treturn (ERX_DT_BRIDGE_MALFORMED);",
        'bridge-cpu-wrap', 'bridge /pcie', 'bridge malformed buses 0 0'],
+    "an inbound window's one-piece check removed" =>
+      ["count != 1 ||\n\t    pieces[0].bus != first || pieces[0].last != last)", 'false)', 'bridge-inbound-split',
+       'bridge /scb/pcie', 'bridge malformed buses 0 0'],
     'the bus-range bound removed' =>
       ['if (first > last || last > UINT8_MAX)', 'if (first > last)', 'bridge-bus-past', 'bridge /pcie',
        'bridge malformed buses 0 0'],
     "the DMA limit's cut removed" =>
-      ['if (dma_limit != 0 && windows[side][i].last >= dma_limit)', 'if (false)', 'pci-three-cells',
+      ['if (dma_limit != 0 && windows[i].last >= dma_limit)', 'if (false)', 'pci-three-cells',
        'device /pcie pcie 0x3c000000', 'device ok coherent 0 range 0x0 0x0 0x3bffffff mac none']
   }.freeze
 
@@ -413,9 +430,10 @@ class DtTest < Minitest::Test
                                  compiler: ENV.fetch('ERX_CLANG', 'clang'), revision: nil)
     queries = ['device /emmc2bus/mmc@7e340000 node', 'device /scb/ethernet@7d580000 node', 'device /scb/pcie@7d500000 pcie',
                'device /scb/pcie@7d500000 pcie 0x3c000000', 'bridge /scb/pcie@7d500000']
-    # The bridge's one 64 MiB window, PCI 0xf8000000 at CPU 0x600000000, and buses 0 to 255,
-    # the tree having no bus-range (bcm2711.dtsi, pcie@7d500000).
-    bridge = 'bridge ok buses 0 255 window 0xf8000000 0x600000000 0x4000000 0'
+    # The bridge's one 64 MiB window, PCI 0xf8000000 at CPU 0x600000000, its one inbound window,
+    # PCI 0 at CPU 0 for 3 GiB, and buses 0 to 255, the tree having no bus-range (bcm2711.dtsi,
+    # pcie@7d500000).
+    bridge = 'bridge ok buses 0 255 window 0xf8000000 0x600000000 0x4000000 0 inbound 0x0 0x0 0xc0000000 0'
     # The model's tree has the memory node the firmware fills. The PCIe bridge's one dma-ranges
     # entry maps PCI address 0 to physical 0 for 3 GiB (docs/design-device-tree.md, "The reader").
     assert_equal ['accept ok memory 1',
@@ -619,7 +637,13 @@ class DtTest < Minitest::Test
       ['bridge-overlap-cpu', 'bridge /pcie'] => 'bridge malformed buses 0 0',
       ['bridge-bus-past', 'bridge /pcie'] => 'bridge malformed buses 0 0',
       ['bridge-bus-reversed', 'bridge /pcie'] => 'bridge malformed buses 0 0',
-      ['bridge-bus-short', 'bridge /pcie'] => 'bridge malformed buses 0 0'
+      ['bridge-bus-short', 'bridge /pcie'] => 'bridge malformed buses 0 0',
+      ['bridge-inbound', 'bridge /scb/pcie'] =>
+        'bridge ok buses 0 255 window 0xf8000000 0x80000000 0x4000000 0 inbound 0x0 0x0 0xc0000000 0',
+      ['bridge-inbound-moved', 'bridge /scb/pcie'] =>
+        'bridge ok buses 0 255 window 0xf8000000 0x80000000 0x4000000 0 inbound 0x0 0x100000000 0xc0000000 0',
+      ['bridge-inbound-split', 'bridge /scb/pcie'] => 'bridge malformed buses 0 0',
+      ['bridge-inbound-overlap', 'bridge /scb/pcie'] => 'bridge malformed buses 0 0'
     }.each { |(name, query), expected| assert_equal expected, fixture_answers(name, [query])[1], "#{name}: #{query}" }
   end
 

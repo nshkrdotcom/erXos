@@ -63,6 +63,7 @@ unused_place() -> #{bus => 0, device => 0, function => 0, pin => 0}.
 bridge() ->
     #{index => 3, bus_first => 0, bus_last => 1, flags => [closed],
       windows => [range(16#c0000000, 16#600000000, 16#40000000) | lists:duplicate(3, range(0, 0, 0))],
+      inbound => [inbound() | lists:duplicate(3, range(0, 0, 0))],
       places => [#{bus => 1, device => 0, function => 0, pin => 1} | lists:duplicate(3, unused_place())]}.
 
 %% The tree's dma-ranges: PCI 0 at CPU 0, 3 GiB.
@@ -74,7 +75,7 @@ open(Options) -> open(Options, ?MODEL).
 
 open(Options, PortModule) ->
     Model = (?MODEL:new(Options))#{notify => maps:get(notify, Options, {error, enotsup})},
-    ?DRIVER:open(bridge(), inbound(), {PortModule, Model}).
+    ?DRIVER:open(bridge(), {PortModule, Model}).
 
 model(State) -> element(2, ?DRIVER:effects(State)).
 
@@ -123,11 +124,11 @@ the_turn_off_runs_before_bring_up_test() ->
 a_link_that_never_comes_up_fails_the_start_test() ->
     ?assertEqual({error, link_down}, open(#{boot => down, trains => false})).
 
-%% A tree whose inbound range the window cannot carry is refused before any register
-%% is touched.
+%% A tree whose inbound window BAR2 cannot carry is refused before any register is
+%% touched.
 a_refused_tree_fails_the_start_test() ->
     ?assertEqual({error, dma_ranges},
-                 ?DRIVER:open(bridge(), range(0, 16#1000, 16#c0000000), {?MODEL, ?MODEL:new(#{})})).
+                 ?DRIVER:open((bridge())#{inbound := [range(0, 16#1000, 16#c0000000)]}, {?MODEL, ?MODEL:new(#{})})).
 
 %% A notification that fails holds the VL805 back, logged, and its firmware register is
 %% not read again (docs/design-pcie.md, "The bridge seam", the endpoint's firmware).
