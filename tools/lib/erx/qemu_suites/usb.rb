@@ -1,0 +1,21 @@
+# Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
+# SPDX-License-Identifier: BSD-2-Clause
+# frozen_string_literal: true
+
+require_relative '../usb_boot'
+require_relative '../qemu_gate'
+
+# The usb suite on QEMU virt under HVF (tools/lib/erx/usb_boot.rb): qemu-xhci with a usb-kbd
+# behind the PCIe domain, the test holder playing the USB domain. Its cases are cells of the
+# boot, one per enumeration stage. Its boot carries a QMP socket, which no remote host
+# serves, so it does not declare offload. check_qemu builds the kernel before any suite runs,
+# so this suite does not.
+cpus = [1]
+Erx::QemuGate.declare_suite(
+  cells: Erx::QemuGate.suite_cells(cpus).flat_map { |cell| [cell, *Erx::UsbBoot::SIDE_CELLS.map { |side| "#{cell}#{side}" }] },
+  run: lambda do |context|
+    run = Erx::UsbBoot::Run.new(root: context.root)
+    ran = run.call(cpus: cpus, jobs: context.jobs, build: false, placement: context.placement)
+    Erx::QemuGate.result(ran, notes: run.notes)
+  end
+)

@@ -91,20 +91,25 @@ module Erx
     # The suite's manifest, from manifest_source's text: MediumBoot's medium manifest with
     # room for the holder alone (MediumBoot.manifest), the PCIe row without restarts, so
     # its stop at the end leaves it ended, and the holder's unit and facet.
-    def self.manifest(source)
-      held = MediumBoot.manifest(source, row: HOLDER_ROW, domains: 1)
+    def self.manifest(source, row: HOLDER_ROW)
+      held = MediumBoot.manifest(source, row: row, domains: 1)
       Manifest::Edit.set(held, { ["domain #{PCIE}", 'restarts'] => 0 }) + HOLDER_UNIT + HOLDER_FACET
     end
 
-    # The line typed at the Erlang shell for xhci, an Xhci, one expression per element. Every
-    # variable starts with Pc, which nothing else the shell runs binds.
-    def self.line(xhci) = [
+    # The wait for a domain at the Erlang shell, two expressions, the usb suite's too (UsbBoot).
+    WAIT = [
       # PcFind(Node): the ready domains of Node in the domain service's state, or none while
       # the service is too busy to answer, so the waits poll on.
       'PcFind=fun(PcN)->try [PcD||#{node:=PcM,state:=ready}=PcD<-erx_domain_core:domains(' \
       'maps:get(core,sys:get_state(erx_domain_srv))),PcM=:=PcN] catch _:_->[] end end',
       # PcWait(Node, K): polls every 100 ms at most K times until Node has one ready domain.
-      'PcWait=fun PcW(_,0)->timeout;PcW(PcN,PcK)->case PcFind(PcN) of [PcD]->PcD;_->timer:sleep(100),PcW(PcN,PcK-1) end end',
+      'PcWait=fun PcW(_,0)->timeout;PcW(PcN,PcK)->case PcFind(PcN) of [PcD]->PcD;_->timer:sleep(100),PcW(PcN,PcK-1) end end'
+    ].freeze
+
+    # The line typed at the Erlang shell for xhci, an Xhci, one expression per element. Every
+    # variable starts with Pc, which nothing else the shell runs binds.
+    def self.line(xhci) = [
+      *WAIT,
       "PcHolder=PcWait(#{HOLDER_NODE},1200)",
       # PcAsk(Fun): Fun run at the holder's node, or the class and reason of its failure.
       "PcAsk=fun(PcF)->try erpc:call(#{HOLDER_NODE},PcF,10000) catch PcC:PcR->{PcC,PcR} end end",

@@ -42,8 +42,8 @@ class PcieDomainTest < Minitest::Test
   # The plan attaches each function at its slot of the host bridge's bus, with QMP.
   def test_pcie_functions_are_attached_at_their_slots_with_qmp
     argv = plan(pcie: PCIE.new(qmp_socket: @socket, functions: { 2 => 'qemu-xhci' }))
-    assert_equal plan, argv - ['-device', 'qemu-xhci,addr=2', '-qmp', "unix:#{@socket},server=on,wait=off"]
-    assert_includes argv.each_cons(2).to_a, ['-device', 'qemu-xhci,addr=2']
+    assert_equal plan, argv - ['-device', 'qemu-xhci,addr=2,id=pcie2', '-qmp', "unix:#{@socket},server=on,wait=off"]
+    assert_includes argv.each_cons(2).to_a, ['-device', 'qemu-xhci,addr=2,id=pcie2']
   end
 
   def test_a_slot_or_device_outside_the_allowed_and_a_display_beside_them_are_refused

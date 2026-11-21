@@ -224,8 +224,8 @@ module Erx
     # each function (Qmp#pci_functions).
     # The socket's directory is checked as a Display's is. A plan takes a display or PCIe
     # functions, not both, so QEMU has one QMP socket.
-    Pcie = Data.define(:qmp_socket, :functions) do
-      def initialize(qmp_socket:, functions:)
+    Pcie = Data.define(:qmp_socket, :functions, :usb) do
+      def initialize(qmp_socket:, functions:, usb: [])
         unless qmp_socket.is_a?(String) && qmp_socket.start_with?('/') && qmp_socket.bytesize <= SOCKET_PATH_MAX &&
                !qmp_socket.match?(/[\0,]/)
           raise Error, 'invalid QMP socket path'
@@ -233,15 +233,25 @@ module Erx
         valid = functions.is_a?(Hash) && !functions.empty? &&
                 functions.all? { |slot, device| slot.is_a?(Integer) && slot.between?(1, 31) && PCIE_DEVICES.include?(device) }
         raise Error, "PCIe functions are slots 1 to 31, each one of #{PCIE_DEVICES.join(', ')}" unless valid
+        unless usb.is_a?(Array) && usb.all? { |device| USB_DEVICES.include?(device) } && (usb.empty? || functions.size == 1)
+          raise Error, "USB devices are each one of #{USB_DEVICES.join(', ')}, on a plan's one controller"
+        end
 
-        super(qmp_socket: qmp_socket.dup.freeze, functions: functions.dup.freeze)
+        super(qmp_socket: qmp_socket.dup.freeze, functions: functions.dup.freeze, usb: usb.dup.freeze)
       end
 
-      # One -device for each function, at its slot of the host bridge's bus.
-      def arguments = functions.sort.flat_map { |slot, device| ['-device', "#{device},addr=#{slot}"] }
+      # One -device for each function, at its slot of the host bridge's bus, named by its slot,
+      # then one for each USB device on the controller's bus, `<id>.0` in QEMU's naming
+      # (docs/system/devices/usb.rst).
+      def arguments
+        controllers = functions.sort.flat_map { |slot, device| ['-device', "#{device},addr=#{slot},id=pcie#{slot}"] }
+        controllers + usb.flat_map { |device| ['-device', "#{device},bus=pcie#{functions.keys.first}.0"] }
+      end
     end
     # The PCIe devices a plan may attach.
     PCIE_DEVICES = %w[qemu-xhci].freeze
+    # The USB devices a plan may attach to its controller.
+    USB_DEVICES = %w[usb-kbd].freeze
     # As hostlink, no host link at all: one serial line, the console's, as on a machine
     # with one UART, such as the website's emulator (docs/design-fiasco.md, "Device paths").
     NO_HOSTLINK = :none
