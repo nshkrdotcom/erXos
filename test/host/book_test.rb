@@ -20,6 +20,10 @@ class BookTest < Minitest::Test
     REXML::Document.new("<?xml version='1.0'?><document xmlns='http://commonmark.org/xml/1.0'>#{body}</document>")
   end
 
+  # A link target with a fragment, joined at run time so the tree's document-link
+  # check does not read a fixture's target as a citation of a real document.
+  def target(path, fragment) = [path, fragment].join('#')
+
   def text(value, line = 1) = "<text sourcepos='#{line}:1-#{line}:9'>#{value.encode(xml: :text)}</text>"
 
   def resolver(anchors: {})
@@ -57,9 +61,9 @@ class BookTest < Minitest::Test
     from = 'docs/book/16-storage.md'
     links = resolver
     assert_equal '02-microkernels.html#25-the-l4-family-and-fiasco',
-                 links.link('02-microkernels.md#25-the-l4-family-and-fiasco', from:, line: 3).to_s
+                 links.link(target('02-microkernels.md', '25-the-l4-family-and-fiasco'), from:, line: 3).to_s
     assert_equal "#{REPO}/blob/#{COMMIT}/docs/design-kernel.md#the-boot-image",
-                 links.link('../design-kernel.md#the-boot-image', from:, line: 3).to_s
+                 links.link(target('../design-kernel.md', 'the-boot-image'), from:, line: 3).to_s
     assert_equal "#{REPO}/tree/#{COMMIT}/kernel", links.link('../../kernel', from:, line: 3).to_s
     assert_equal 'https://example.org/a?b=c#d', links.link('https://EXAMPLE.org/a?b=c#d', from:, line: 3).to_s
     assert_equal '#chapter-16-storage-and-updates', links.link('#chapter-16-storage-and-updates', from:, line: 3).to_s
@@ -67,8 +71,9 @@ class BookTest < Minitest::Test
 
   def test_links_refuse_with_file_and_line
     from = 'docs/book/16-storage.md'
-    ['../design-kernel.md#nonesuch', 'missing.md', '../../../etc/passwd', 'http://example.org/', 'javascript:alert(1)',
-     '//example.org/x', 'https://user@example.org/', 'mailto:a@example.org', '#nonesuch'].each do |target|
+    [target('../design-kernel.md', 'nonesuch'), 'missing.md', '../../../etc/passwd', 'http://example.org/', 'javascript:alert(1)',
+     '//example.org/x', 'https://user@example.org/', 'mailto:a@example.org', '#nonesuch', '', '../../.github/x',
+     'a+b.md'].each do |target|
       error = assert_raises(Erx::Error, target) { resolver.link(target, from:, line: 7) }
       assert_includes error.message, "#{from}:7: link #{target.inspect}"
     end
@@ -143,7 +148,7 @@ class BookTest < Minitest::Test
 
   # Seeded faults: drop the escape in attribute values; write non-ASCII characters as they are.
   def test_escaping_and_ascii
-    body = "#{TITLE}<paragraph sourcepos='3:1-3:9'>#{text('pid <4.0.0> and ’quote’ ')}<code>a &amp;&amp; b</code>" \
+    body = "#{TITLE}<paragraph sourcepos='3:1-3:9'>#{text("pid <4.0.0> and \u2019quote\u2019 ")}<code>a &amp;&amp; b</code>" \
            "<link destination='https://example.org/a#x&quot;onmouseover'>#{text('x')}</link></paragraph>"
     assert_includes assert_raises(Erx::Error) { render(body) }.message, 'not a well-formed URL'
     html = render(body.sub('#x&quot;onmouseover', '?q=a&amp;b')).body.to_s
@@ -152,6 +157,7 @@ class BookTest < Minitest::Test
     assert html.ascii_only?
     assert_equal '<p title="&quot;&gt;&lt;script&gt;"></p>', Erx::Book::Html.tag('p', { title: '"><script>' }).to_s
     assert_raises(Erx::Error) { Erx::Book::Html.tag('a', { href: 'javascript:x' }) }
+    assert_raises(Erx::Error) { Erx::Book::Html.document('<script>') }
   end
 
   def test_section_numbers_follow_the_heading_tree

@@ -70,6 +70,10 @@ end
 begin
   runner = Erx::Runner.new(owner_root: root, log_dir: File.join(root, 'build/logs'))
   head = Erx::Site.head(root:, runner:)
+  status = File.read(runner.run(%W[git -C #{root} status --porcelain], name: 'site-status', deadline: 30).fetch('log'))
+  # The book's links into the repository cite HEAD, so the pages must be rendered from HEAD's files.
+  raise Erx::Error, "the tree has uncommitted changes; publish the site from a clean tree" unless status.empty?
+
   ref = options[:source] || head
   source = Erx::Site.source(ref)
   v64 = options[:v64] || Erx::SiteV64.build(root:, runner:)

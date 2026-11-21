@@ -55,7 +55,11 @@ module Erx
         end
 
         # A whole page: the doctype and the html element.
-        def document(html) = new("#{DOCTYPE}#{html}\n")
+        def document(html)
+          raise Error, 'a document wraps only markup' unless html.is_a?(Html)
+
+          new("#{DOCTYPE}#{html}\n")
+        end
 
         private
 

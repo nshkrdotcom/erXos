@@ -677,7 +677,9 @@ pass or fail.
     intensifiers, a second example where one was enough. Count again.
 12. **Read aloud.** Read the chapter aloud, or at the pace of speech.
     Mark every place you stumble or run out of breath. Rewrite those.
-13. **Links.** Every relative link and anchor resolves.
+13. **Links.** Every relative link and anchor resolves: `ruby
+    tools/build_book.rb` builds the book and refuses any that does not,
+    naming the file and line.
 14. **Status box.** Does it agree with the sentences below it?
 
 ## The newcomer review

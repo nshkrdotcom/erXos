@@ -5,6 +5,7 @@
 require 'digest'
 require 'fileutils'
 require 'json'
+require 'pathname'
 require 'set'
 require 'tmpdir'
 require_relative 'book/cmark'
@@ -95,7 +96,7 @@ module Erx
       anchors = Hash.new do |memo, path|
         memo[path] = Links.slugs(parse.(path, false).root.get_elements('//heading').map { |node| heading_text(node) })
       end
-      tracked = tracked_paths(root, runner)
+      tracked = tracked_paths(root, runner, commit, scratch)
       resolver = Links::Resolver.new(repository:, commit:, pages: paths, kind_of: tracked.method(:[]),
                                      anchors_of: ->(path) { anchors[path].to_set },
                                      digest_of: ->(path) { Digest::SHA256.file(File.join(root, path)).hexdigest })
@@ -134,12 +135,13 @@ module Erx
       record
     end
 
-    # Every path git tracks in the tree, and every directory above one, each
+    # Every path of the commit's tree, and every directory above one, each
     # with its kind: the files a book link may name, as the repository host
-    # holds them at the commit.
-    def tracked_paths(root, runner)
-      log = runner.run(['git', '-C', root, 'ls-files', '-z'], name: 'book-ls-files', deadline: 60).fetch('log')
-      files = File.binread(log).force_encoding('UTF-8').split("\0")
+    # holds them at the commit the links cite.
+    def tracked_paths(root, runner, commit, scratch)
+      listing = File.join(scratch, 'ls-tree')
+      runner.run(['git', '-C', root, 'ls-tree', '-r', '-z', '--name-only', commit], name: 'book-ls-tree', deadline: 60, stdout: listing)
+      files = File.binread(listing).force_encoding('UTF-8').split("\0")
       directories = files.flat_map { |path| Pathname.new(path).dirname.descend.map(&:to_s) }.reject { |path| path == '.' }
       directories.to_h { |path| [path, :directory] }.merge(files.to_h { |path| [path, :file] }).freeze
     end

@@ -5,6 +5,7 @@
 require 'pathname'
 require 'set'
 require 'uri'
+require_relative '../doc_links'
 require_relative '../error'
 require_relative 'html'
 
@@ -14,14 +15,13 @@ module Erx
     # ids" and "Links"): the one way a target a writer typed becomes an
     # address on a page.
     module Links
-      # The ids GitHub gives a file's headings, in order: the heading's text
-      # lower-cased, every character but a letter, a digit, a mark, a space,
-      # '-' or '_' dropped, each space made '-', and a repeated slug given
-      # -1, -2 and so on, as github-slugger numbers them.
+      # The ids GitHub gives a file's headings, in order: each heading's
+      # anchor as the tree's document-link check forms it (DocLinks.anchor),
+      # a repeated one given -1, -2 and so on, as GitHub numbers them.
       def self.slugs(texts)
         occurrences = {}
         texts.map do |text|
-          base = text.downcase.gsub(/[^\p{L}\p{N}\p{M} _-]/, '').tr(' ', '-')
+          base = DocLinks.anchor(text)
           slug = base
           slug = "#{base}-#{occurrences[base] += 1}" while occurrences.key?(slug)
           occurrences[slug] = 0
@@ -39,7 +39,9 @@ module Erx
       class Resolver
         IMAGE_TYPES = %w[.png .jpg .jpeg .svg].freeze
         SCHEME = /\A[A-Za-z][A-Za-z0-9+.-]*:/
-        PATH = %r{\A[A-Za-z0-9_./+-]+\z}
+        # A path a link may name: the characters Address takes, no step
+        # beginning with '.' but '.' and '..' themselves.
+        PATH = %r{\A(?:(?:\.\.?|[A-Za-z0-9_][A-Za-z0-9._-]*)/)*(?:\.\.?|[A-Za-z0-9_][A-Za-z0-9._-]*)/?\z}
 
         def initialize(repository:, commit:, pages:, kind_of:, anchors_of:, digest_of:)
           @repository = repository
@@ -79,8 +81,11 @@ module Erx
         private
 
         def split(target, refuse)
+          refuse.('an empty target') if target.empty?
           path, fragment = target.split('#', 2)
-          refuse.('the path holds a character outside letters, digits and ._/+-') unless path.empty? || PATH.match?(path)
+          unless path.empty? || PATH.match?(path)
+            refuse.('the path holds a character outside letters, digits and ._-, or a step beginning with .')
+          end
           refuse.('an empty fragment') if fragment && fragment.empty?
           [path, fragment]
         end

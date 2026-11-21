@@ -9,6 +9,7 @@ require 'tmpdir'
 require_relative '../bounded_file'
 require_relative '../dependencies'
 require_relative '../error'
+require_relative '../json_input'
 require_relative '../output_directory'
 
 module Erx
@@ -74,9 +75,11 @@ module Erx
         def built?(output, record)
           path = File.join(output, RECORD)
           File.file?(File.join(output, 'cmark-gfm')) && File.file?(path) &&
-            JSON.parse(BoundedFile.read(path, maximum: 65_536)) == record
-        rescue JSON::ParserError
-          false
+            JsonInput.parse(BoundedFile.read(path, maximum: 65_536), max_bytes: 65_536, label: 'cmark-gfm build record') == record
+        rescue JsonInput::Unsupported
+          raise
+        rescue Error
+          false # an unreadable record is a stale build, which is rebuilt
         end
 
         # Configures and builds out of tree in a fresh sibling of the
