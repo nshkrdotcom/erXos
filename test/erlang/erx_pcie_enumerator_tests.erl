@@ -7,6 +7,9 @@
 %% report, and answers it with the case's settings.
 -module(erx_pcie_enumerator_tests).
 
+%% A bridge driver of the cases (a_held_function_whose_start_failed_is_not_ready_test).
+-export([access/2, ready/2]).
+
 -include_lib("eunit/include/eunit.hrl").
 -include("generated/erx_abi.hrl").
 
@@ -164,3 +167,33 @@ a_changed_function_starts_off_whatever_its_setting_test() ->
     ?assertEqual({error, unknown}, erx_pcie_enumerator:set(Pid, ?KEY, setting(decoding))),
     ?assertEqual(0, command(Table) band 16#7),
     stop(Pid).
+
+%% A bridge driver that holds every function back and drops every write of the command
+%% register, so the function keeps the fixture's decoding command, the start's readback
+%% differs and its apply answers an error (`stuck`): a held function is reported
+%% not_ready on that path too, since `ready` is the one funnel to a ready report
+%% (docs/design-pcie.md, "The bridge seam").
+
+access({write, _Place, 16#04, 2, _Value}, State) ->
+    {ok, State};
+access(Access, State) ->
+    erx_pcie_ecam:access(Access, State).
+
+ready(_Function, State) -> {not_ready, State}.
+
+a_held_function_whose_start_failed_is_not_ready_test() ->
+    Table = erx_pcie_model:new([endpoint_at(?PLACE, endpoint())]),
+    Reports = ets:new(reports, [public]),
+    Bus = fun(targets) -> {ok, [bridge()], [], #{}};
+             ({report, Reported}) -> ets:insert(Reports, {report, Reported}), {ok, #{}}
+          end,
+    Open = fun(Bridge) ->
+                   {ok, State} = erx_pcie_ecam:open(Bridge, {erx_pcie_model, {Table, 0}}),
+                   {ok, {?MODULE, State}}
+           end,
+    {ok, Pid} = erx_pcie_enumerator:start_link(#{bus => Bus, open => Open, sleep => fun(_) -> ok end}),
+    _ = sys:get_state(Pid),
+    [{report, [#{record := Record, kept := Kept}]}] = ets:lookup(Reports, report),
+    stop(Pid),
+    ?assertEqual(not_ready, maps:get(state, Record)),
+    ?assertNot(Kept).

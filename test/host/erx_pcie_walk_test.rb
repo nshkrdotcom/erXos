@@ -31,7 +31,9 @@ require_relative '../fixtures/erlang_build'
 # so it keeps mastering; one readback after the
 # last stage, so with a disable ignored a BAR is written while the model decodes; and
 # the descent to quiet taken as done without its readback, so with the command register
-# ignoring writes the answer is gone while the model is not quiet.
+# ignoring writes the answer is gone while the model is not quiet; and a start whose
+# apply answered an error reported without its bridge's `ready`, so a function its
+# bridge holds back is reported ready.
 class ErxPcieWalkTest < Minitest::Test
   APPLICATIONS = %w[erx_pcie].freeze
   TESTS = %w[test/erlang/erx_pcie_cfg_tests.erl test/erlang/erx_pcie_model.erl
@@ -108,7 +110,12 @@ class ErxPcieWalkTest < Minitest::Test
              anchor: '    {ok, Stages} = erx_pcie_plan:quiet(Read),',
              replacement: '    {ok, Stages} = {ok, [S#{state := maps:with([identity], St)} || ' \
                           '#{state := St} = S <- element(2, erx_pcie_plan:quiet(Read))]},',
-             catching_case: 'apply endpoint msi64_mask msix true', property: 'answer')
+             catching_case: 'apply endpoint msi64_mask msix true', property: 'answer'),
+    Seed.new(fault: "a failed start reported without its bridge's ready",
+             module_path: 'erlang/apps/erx_pcie/src/erx_pcie_enumerator.erl',
+             anchor: '            held(#{record => Record, kept => false}, Next)',
+             replacement: '            {#{record => Record, kept => false}, Next}',
+             catching_case: 'a_held_function_whose_start_failed_is_not_ready_test')
   ].freeze
 
   def test_walk_place_and_ecam_cases_pass_under_eunit
@@ -130,13 +137,15 @@ class ErxPcieWalkTest < Minitest::Test
 
   private
 
-  # The modules' text, any replaced, compiled with the cases, then the cases run.
+  # The modules' text, any replaced, compiled with the cases, then the cases run, the
+  # logger silenced first, so no log line of the enumerator splits a case from its verdict.
   def run_cases(replaced)
     Dir.mktmpdir('erx-pcie-walk-test') do |work|
       ErlangBuild.compile(work, applications: APPLICATIONS, tests: TESTS, replaced: replaced)
       modules = CASES.join(', ')
       Open3.capture2e('gtimeout', '-k', '10', DEADLINE_SECONDS, ENV.fetch('ERX_ERL'), '-noshell', '-pa', work,
-                      '-eval', "halt(case eunit:test([#{modules}], [verbose]) of ok -> 0; _ -> 1 end)",
+                      '-eval', "logger:set_primary_config(level, none), " \
+                      "halt(case eunit:test([#{modules}], [verbose]) of ok -> 0; _ -> 1 end)",
                       chdir: work, stdin_data: '')
     end
   end

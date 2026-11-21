@@ -228,30 +228,35 @@ later_start(Index, #{place := Place, outcome := Outcome} = Found, ByPlace) ->
 %% its layout's identity is lowered to quiet and reported unplaced from
 %% what the walk read, so the intake does not confirm its layout.
 start_function(#{record := #{state := ready} = Record, target := Layout, found := Found, changed := Changed},
-               Settings, {Module, _} = Driver) ->
+               Settings, Driver) ->
     Setting = case Changed of
                   false -> maps:get(key(Record), Settings, off());
                   true -> off()
               end,
     case erx_pcie_apply:start(place(Record), {function, Layout, Setting}, Driver) of
-        {{ok, AtSetting}, {_, Started}} ->
-            Kept = AtSetting andalso not Changed,
-            case Module:ready(Record, Started) of
-                {ok, Ready} -> {#{record => Record, kept => Kept}, {Module, Ready}};
-                {not_ready, Held} -> {#{record => Record#{state := not_ready}, kept => false}, {Module, Held}}
-            end;
+        {{ok, AtSetting}, Started} ->
+            held(#{record => Record, kept => AtSetting andalso not Changed}, Started);
         {{error, gone}, Next} ->
             {_, Quiet} = erx_pcie_apply:quiet(place(Record), Next),
             {#{record => erx_pcie_report:read(maps:get(bridge, Record), Found, unplaced), kept => false}, Quiet};
         {{error, Reason}, Next} ->
             logger:warning("pcie: ~p: start: ~p", [key(Record), Reason]),
-            {#{record => Record, kept => false}, Next}
+            held(#{record => Record, kept => false}, Next)
     end;
 start_function(#{record := #{state := unplaced} = Record}, _Settings, Driver) ->
     {_, Next} = erx_pcie_apply:quiet(place(Record), Driver),
     {#{record => Record, kept => false}, Next};
 start_function(#{record := Record}, _Settings, Driver) ->
     {#{record => Record, kept => false}, Driver}.
+
+%% A ready function's report passes its bridge's `ready` on every path of its
+%% start, whether or not the start reached its setting, so a function its bridge
+%% holds back is reported not_ready and not kept.
+held(#{record := Record} = Start, {Module, State}) ->
+    case Module:ready(Record, State) of
+        {ok, Ready} -> {Start, {Module, Ready}};
+        {not_ready, Held} -> {Start#{record := Record#{state := not_ready}, kept := false}, {Module, Held}}
+    end.
 
 %% An answered setting that differs from the target the start applied.
 answered(Key, Setting, #{settings := Settings} = State) ->
