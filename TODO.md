@@ -8554,34 +8554,17 @@ model harness drive `erx_device.c` itself. `erx_device_dma_check` and `erx_devic
   termination already in progress, so a remote peer leaving as the host disconnects it may reset every link.
   Check Core 6.3 Vol 4 Part E 7.1.6 and 7.7.5 for the statuses a controller sends in that race, and accept the
   ones that mean the handle is going.
-* [Medium] bluetooth, the link's messages the design does not name (`erx_bt_link`; docs/design-bluetooth.md
-  "The link's messages"): the table names each message's payload but not (1) how the window, the registry and
-  the store address the link and how the link addresses them (`erx_bt_link` sends `{erx_bt_link, Alias,
-  Message}` to each owner's registered name and steps `{Owner, Input}` sent to its alias, after the controller
-  process's `{erx_bt_link, Name, Request}` and `{erx_bt_hci, Event}`); (2) how the link gets the table and the
-  handlers' values from the registry, and registers its `Conn`, address and pid there for `connected`,
-  `disconnected` and the registry's monitor; (3) how it gets the bonds (or the store's resolution of the
-  phone's address, SMP 2.2.2's `ah` over each bond's IRK) and whether pairing is enabled (the store `read`, the
-  window built). Until those are designed the link takes them from its start's optional `domain` key, which the
-  controller process does not pass, and runs with the GAP and GATT services alone, no values, no pairing and no
-  bond. Name the shapes in the design, then build them with `erx_gatt_srv`, `erx_bt_fs` and the store's bonds.
-  Decide there whether owners get the link's pid, which they can monitor, rather than its alias, which they
-  cannot; and whether the link's own address comes in the controller's `Info` rather than from a call to
-  `erx_bt_store` inside the controller's synchronous `start_child`.
-* [Medium] bluetooth, two copies in the link process (`erx_bt_link`'s `awaiting` and `accepts/2`): the process
-  rebuilds the core's `awaiting` from the actions it performs, to tell the window `{failed, disconnected}` at
-  its end, and keeps a table of which owner sends which input beside the core's `input()` type. Both agree
-  today and must change with the core. Give the core an `ended/1` that returns the window's outcome while it
-  awaits one (adding `disconnected` to its `outcome()`), and either tag the core's inputs by owner or hand each
-  owner its own reference to answer under, so the core's clause heads are the allow-list.
-* [Low] bluetooth, a reserved Peer_Address_Type (`erx_hci`'s LE Connection Complete decoder,
-  `erx_bt_link`'s `address_type/1`): a type other than 0x00 or 0x01 fails the link's start, and the controller
-  process's `{ok, Pid} = erx_bt_link_sup:start_child(...)` then ends the controller group. Decode the type in
-  `erx_hci` and have the controller core refuse a reserved one with a stated reason.
-* [Low] bluetooth, a link killed mid-pairing (`erx_bt_link`'s `terminate/2`): a link that ends while the window
-  awaits its pairing tells the window `{outcome, Tag, {failed, disconnected}}` from `terminate/2`, which a
-  `kill` skips, so that disconnection does not count toward the pairing wait. If the window monitors the link
-  it admitted instead, every end counts; decide with the window's design (`erx_bt_window`).
+* [Medium] bluetooth, the link's conversations (`erx_bt_link`, `erx_bt_link_core`, `erx_hci`, `erx_bt_hci_core`;
+  docs/design-bluetooth.md "The link's messages"): the code predates that section. Owners still answer an alias,
+  so the window cannot see a link's end and a killed link mid-pairing is not counted; the link traps exits and
+  tells the window from `terminate/2`, keeps its own copy of the core's `awaiting` and an owner table
+  (`accepts/2`) beside the core's `input()`; `init/1` calls `erx_bt_store:address/0` inside the controller's
+  synchronous `start_child`; the table, values, pairing flag and bond come from an optional `domain` key the
+  controller does not pass; a reserved Peer_Address_Type fails the link's start and so resets the controller
+  group; and LE Connection Update Complete is forwarded to a link that ignores it. Build the section: the
+  link's pid as its address with owners' monitors, role-tagged inputs and actions, the identity address in
+  `link_up`'s `Info`, `resolve` and `join` after `init/1`, no pairing flag, Peer_Address_Type decoded or
+  malformed in `erx_hci`, and the host tests the Verification table lists for them.
 * [Low] bluetooth, the link core's deadlines and Encryption_Enabled (`erlang/apps/erx_bt/src/erx_bt_link_core.erl`,
   its `HANDLER_TIMEOUT_MS`, `ATT_TRANSACTION_MS`, `SMP_TIMEOUT_MS` and `ENCRYPTION_ON_LE`): "What a radio peer can
   make the domain spend" makes every bound a constant of `abi/formats/bluetooth.txt`, but these four are module
@@ -8590,8 +8573,8 @@ model harness drive `erx_device.c` itself. `erx_device_dma_check` and `erx_devic
   `bonded` and `input/3` for `{kept, ok}`; docs/design-bluetooth.md "Bonds and the store"): `keep` carries the
   subscriptions the link had when the pairing completed, and a configuration write between that and the store's
   `ok` is answered at once and never kept, so a power cut loses a subscription the phone saw acknowledged (GATT
-  3.3.3.3). Hold such writes until the store answers, or keep the difference at `ok`, with the bonded
-  configuration write.
+  3.3.3.3). The design holds such a write until the store answers and then keeps it as a bonded link's
+  ("Bonds and the store", "The link's messages"); build it with the bonded configuration write.
 * [Medium] bluetooth, Passkey Entry's bit order (`erx_smp_core`'s `z/2`): the test's honest phone takes the
   passkey's bits least significant first, as the core does, citing Bumble v0.0.237's bumble/smp.py; the
   specification's Figure 2.4 does not settle it. Pin it with the Bumble test peer before the board run.

@@ -307,10 +307,10 @@ stack's owners do
 | Owner | Its state | Its pure core | Effects |
 | --- | --- | --- | --- |
 | the **controller process**, `erx_bt_hci` | the bring-up, the command slot, ACL credits, the map from handles to links, advertising | `erx_bt_hci_core` | items for its writer, which writes `data` and `ctl`; acknowledgements to its reader; starting and ending link processes ([The controller process's effects](#the-controller-processs-effects)) |
-| a **link process**, `erx_bt_link`, one per connection | L2CAP reassembly, the ATT bearer (MTU, the request in progress, queued commands, the prepared write, the indication in flight), the notifications waiting for credits, subscriptions, its one key and whether it is encrypted, the pairing in progress | `erx_bt_link_core`, over `erx_gatt_server`, `erx_gatt_gate` and `erx_smp_core` | ACL fragments to the controller process, events to handlers, store requests |
-| the **registry**, `erx_gatt_srv` | the table, each service's handler, the live `Conn` map, the `ble` facets | `erx_gatt_registry` | monitors, events to handlers |
-| the **store**, `erx_bt_store` | the identity address, from stage 1; the bonds, from stage 4 | `erx_bt_state` (stage 4) | reads and writes through the store's backend (stage 4) |
-| the **window**, in `erx_bt_fs` (stage 4) | whether a pairing window is open, its mode and its opener's fid; the pairing wait | `erx_bt_window` | lines on the opener's `pair` file |
+| a **link process**, `erx_bt_link`, one per connection | L2CAP reassembly, the ATT bearer (MTU, the request in progress, queued commands, the prepared write, the indication in flight), the notifications waiting for credits, subscriptions, its one key and whether it is encrypted, the pairing in progress | `erx_bt_link_core`, over `erx_gatt_server`, `erx_gatt_gate` and `erx_smp_core` | messages to the controller process, the registry, the window and the store, and its two calls at its start ([The link's messages](#the-links-messages)) |
+| the **registry**, `erx_gatt_srv` | the table, each service's handler, the live `Conn` map, the `ble` facets | `erx_gatt_registry` | a monitor of each link, events to handlers, requests to links |
+| the **store**, `erx_bt_store` | the identity address, from stage 1; the bonds, from stage 4 | `erx_bt_state` (stage 4) | reads and writes through the store's backend; a monitor of each link holding a bond, and `forgotten` to it (stage 4) |
+| the **window**, in `erx_bt_fs` (stage 4) | whether a pairing window is open, its mode and its opener's fid; the pairing wait | `erx_bt_window` | lines on the opener's `pair` file; a monitor of each link that owes it a pairing's outcome |
 
 Every timer is a deadline in its owner's state, and `next_deadline/1`
 answers the earliest ([design.md](design.md#drivers-and-dma), "Deadlines in state"). No caller strings operations together:
@@ -974,10 +974,10 @@ link the core has named:
 * `{link_up, Name, Info}`: the controller process makes the link's
   `Conn`, a fresh reference, starts `erx_bt_link` as a temporary child of
   `erx_bt_link_sup` with `Name`, `Conn`, `Info` (the peer's address,
-  `acl_tx_max` and the link's share) and its own pid, monitors it, and
-  maps `Name` to it;
-* `{to_link, Name, Event}` and `{busy, Name}`: sent to the process
-  `Name` maps to; an action for a name that maps to none is dropped, since
+  the identity address, `acl_tx_max` and the link's share) and its own
+  pid, monitors it, and maps `Name` to it;
+* `{to_link, Name, Event}` and `{busy, Name}`: sent as `{hci, Event}`
+  and `{hci, busy}` to the process `Name` maps to; an action for a name that maps to none is dropped, since
   its link has already ended;
 * `{link_down, Name}`: the controller process removes `Name` and ends its
   process through `erx_bt_link_sup`;
@@ -998,7 +998,7 @@ later run gives can reach it. What leaves the group is `Conn`, which is
 unique for the runtime's life, so no app meets a name that a later run
 reuses ([A name dies at once](#a-name-dies-at-once)). From stage 2 a link
 registers its `Conn` with the registry when it starts, and the registry
-monitors it.
+monitors it ([The link's messages](#the-links-messages)).
 
 Before stage 2 a link process has no channels: it hands over no packet,
 drops and counts every ACL packet it is given, and ends at `link_down`;
@@ -1235,33 +1235,135 @@ dropped. A frame on any other channel is dropped and counted.
 `erx_bt_link_core:step(Input, Now, Core) -> {Actions, Core}` is the
 link's pure core, and `next_deadline/1` its earliest deadline: a
 handler's answer, 5 s; an indication's confirmation, 30 s (ATT 3.3.3);
-a pairing's step, 30 s (SMP 3.4). The link process reads the clock,
-keeps one wake-up at that deadline and steps `expired` when it fires.
-These are the link's side of the messages between the link and the
-other owners:
+a pairing's step, 30 s (SMP 3.4); the next look at the pairing wait
+before a Security Request ([Reconnection](#reconnection)). The link
+process reads the clock, keeps one wake-up at that deadline and steps
+`expired` when it fires.
 
-| From | Input | Meaning |
-| --- | --- | --- |
-| the controller process | `{acl, Boundary, Data}`, `{completed, Count}`, `busy` | an ACL packet; packets the controller has sent; the link miscounted |
-| | `{le_long_term_key_request, Handle, Rand, Ediv}`, `{encryption_change, Status, Handle, Enabled}`, `{encryption_key_refresh_complete, Status, Handle}`, `{le_connection_update_complete, Status, Handle}` | the controller's reports, as `erx_hci` decodes them (HCI 7.7.65.5, 7.7.8, 7.7.39, 7.7.65.3); new connection parameters change nothing |
-| | `{ltk_reply_complete, ok \| {failed, Status}}` | the controller's answer to the link's `ltk_reply` |
-| the window | `{admission, Tag, Verdict}`, `{withdraw, Tag}` | its verdict on the Pairing Request `Tag`; its opener closed it ([The pairing window](#the-pairing-window)) |
-| the registry | `{answer, Ref, Answer}` | a handler's answer to the write `Ref`, which the facet maps back from its `Req` |
-| | `{set, Key, Value}` | a handler set a value; reads return it |
-| | `{notify, From, notify \| indicate, Key, Value}` | a handler's `notify` or `indicate`, answered to `From` |
-| the store | `{kept, ok \| {error, Reason}}` | its answer to `keep`: `unavailable`, `bonds_full` or `already_bonded` fail the pairing ([Bonds and the store](#bonds-and-the-store)) |
+**A link's pid is its address, and the runtime reports its end.** Every
+message to a link is `{Role, Input}`, sent to its pid, but for the
+registry's notifications, which are requests (below); every message
+from it is `{erx_bt_link, Link, Message}`, sent to the owner's
+registered name, where `Link` is the link's pid, and for the controller
+process, which maps its core's names to links, the link's name
+([The controller process's effects](#the-controller-processs-effects)).
+An owner that keeps a link's pid past one answer monitors the link from
+the moment it takes the pid, and acts on the link's end at the
+monitor's `'DOWN'`:
 
-| To | Action | Meaning |
+| Owner | Monitors a link | At the link's end |
 | --- | --- | --- |
-| the controller process | `{acl, Boundary, Data}`, while the link's packets outstanding are below its share | a packet of a frame the link sends |
-| | `{ltk_reply, Ltk \| none}` | the answer to a Long Term Key Request, Reply or, for `none`, Negative Reply (HCI 7.8.25, 7.8.26), which the link process sends as `{request, Link, {ltk_reply, _}}` |
-| the registry | `{write, Ref, Key, Value}` | a write the gate allowed, for the service's handler, which the facet hands it under a fresh `Req` |
-| | `{subscribed, Key, none \| notify \| indicate}`, `{mtu, Mtu}` | the phone wrote a configuration; the bearer's MTU changed |
-| | `{security, #{level := L, bonded := B}}` | the link's security changed, which the registry tells the handlers with `connected` |
-| `From` | `{reply, From, ok \| {error, Reason}}` | a notification queued or refused, an indication confirmed, or its timeout |
-| the window | `{admit, Tag, Address}`, `{passkey, Tag, N}`, `{outcome, Tag, {bonded, Identity, Level} \| {failed, Reason}}` | ask to admit the phone at `Address`; the passkey to show; how the pairing ended |
-| the store | `{keep, Bond, Subscriptions}` | keep a completed pairing's bond with the subscriptions the link has made |
-| the link process | `{close, Reason}` | end the link, which its end disconnects |
+| the controller process | from `link_up` | disconnects the handle |
+| the registry | from the link's `join` | tells the handlers `disconnected`; `Conn` answers `{error, gone}` from then on |
+| the window | from its `open` verdict until the pairing's `outcome` | counts the pairing failed, `disconnected`, for the pairing wait, and writes `failed ADDR disconnected` if the window is still open |
+| the store | from a `resolve` it answers with a bond, or a `keep` it answers `ok` | drops the link |
+
+So no owner learns of a link's end from the link. A kill, the shutdown
+that `link_down` gives, a raise in `step/3` and the controller group's
+restart all reach every owner that holds the pid, and the link traps no
+exits and has no `terminate/2`. An alias would not do: no process can
+monitor one, and the pid already dies with the link. A link monitors no
+owner: the store, the registry and `erx_bt_fs` start before the
+controller group under `erx_bt_sup`, `rest_for_one`, so each outlives
+every link, and the end of one ends the group after it
+([Concurrency](#concurrency)).
+
+**The core is the one table of who sends what.** `Role` is `hci`,
+`window`, `registry` or `store`. The core's `input()` is keyed by it, and
+so is its `action()`, the controller process's included (`{hci, {send,
+Boundary, Data}}`): the link process steps each message as it arrives
+and sends each action `{Role, Message}` to that role's owner, so the
+core's clauses are the only list of what each owner may send, and the
+process keeps no copy of it, nor of any core state. A message no clause
+takes is a defect of the domain's own code and ends the link through
+`step/3`'s raise. The role is a label, not a proof: only the domain's
+own processes reach a link, and a peer's bytes reach it only as the
+controller process's `acl`.
+
+**The link's start.** `erx_bt_link_sup:start_child/1` is a synchronous
+call of the controller process, so `init/1` reads only its argument and
+nothing in it can fail: the link's name and `Conn`, the controller
+process's pid and, from `link_up`'s `Info`, the phone's address, which
+`erx_hci` decodes as `{public | random, Address}`, the identity address
+the controller advertises with, `acl_tx_max` and the share. A
+Peer_Address_Type other than `0x00` and `0x01` is reserved (HCI
+7.7.65.1), so `erx_hci` decodes LE Connection Complete carrying one as
+malformed, as it does a reserved handle, and the controller process
+ends as for any malformed event: a controller's breach of HCI, not a
+start that fails. The controller process's `{ok, Pid} =
+start_child(...)` therefore holds. Then, before its first step, the link
+makes its only two calls, each to an owner that never waits on a link:
+
+1. `erx_bt_store:resolve(Address) -> none | Bond`. The store resolves
+   the address against the bonds ([Reconnection](#reconnection)) and
+   answers the one bond it names, with its LTK, level, identity, table
+   hash and subscriptions and without its IRK, so no other bond's key
+   leaves the store. A store that is `unknown` answers `none`.
+2. `erx_gatt_srv:join(Conn, #{address := Address, bonded := boolean()})
+   -> #{table := Table, values := Values}`. The registry maps `Conn` to
+   the link, tells the services' handlers `connected` at level `open`,
+   and answers the table and the values the handlers last set. It takes
+   `join` and `set` in one order, so every `set` after the values it
+   answered reaches the link.
+
+`erx_bt_link_core:new/1` builds the core from these. What the controller
+process sends meanwhile waits in the mailbox and is stepped in order
+after. A call that fails, or is not answered within OTP's 5 s default,
+ends the link, and the phone reconnects.
+
+No setting says whether a link may pair. Every link runs its Security
+Manager, and the window decides: its verdict is `closed` while no window
+is open, and no window opens while the start's read has left the store
+`unknown` ([Refusals](#refusals-and-error-results)), so a domain running
+without bonds refuses every Pairing Request with Pairing Not Supported
+through the verdict, and a pairing whose store fails it later fails
+`unavailable` ([Bonds and the store](#bonds-and-the-store)). Before
+stage 4, which brings the window, the link's Security Manager is
+disabled and answers so itself.
+
+**The messages.** Each row names the consumer that needs the message.
+LE Connection Update Complete goes to no link: erXos asks no parameter
+update and new parameters change nothing, so the controller process
+takes it and forwards nothing.
+
+| From, to | Message | When | Consumer, and what breaks without it |
+| --- | --- | --- | --- |
+| controller process, link | `{acl, Boundary, Data}` | an ACL packet of the link's handle | reassembly; no channel works |
+| | `{completed, Count}` | the controller sent `Count` of the link's packets | the link's share; once used up, nothing more is sent |
+| | `busy` | the controller's core counted the link past its share | the link ends, since its count of packets outstanding is wrong |
+| | `{le_long_term_key_request, Handle, Rand, Ediv}`, `{encryption_change, Status, Handle, Enabled}`, `{encryption_key_refresh_complete, Status, Handle}` | the controller's reports for the handle, as `erx_hci` decodes them (HCI 7.7.65.5, 7.7.8, 7.7.39) | the one key's transition ([One table, one gate](#one-table-one-gate)); nothing encrypts |
+| | `{ltk_reply_complete, ok \| {failed, Status}}` | the controller answered the link's `ltk_reply` | a Reply that failed counts as none |
+| link, controller process | `{send, Boundary, Data}` | while the link's packets outstanding are below its share | the writer; nothing reaches the phone |
+| | `{ltk_reply, Ltk \| none}` | at each Long Term Key Request | Reply, or for `none` Negative Reply (HCI 7.8.25, 7.8.26); the phone's encryption never completes |
+| link, window | `{admit, Tag, Address}` | a Pairing Request | the window's verdict; at `open` the window monitors the link |
+| | `{passkey, Tag, N}` | Passkey Entry made its passkey | the `passkey` line; nobody can type it |
+| | `{outcome, Tag, {bonded, Identity, Level} \| {failed, Reason}}` | the admitted pairing ended and the link lives | the `bonded` or `failed` line and the pairing wait; the window then drops its monitor, and ignores an outcome for a pairing it does not await. Without it every pairing would end as `disconnected` |
+| | `wait` | a link holding a kept bond's key, at its start and at the deadline the last answer set | the Security Request ([Reconnection](#reconnection)), which SMP 2.3.6 holds to the pairing wait |
+| window, link | `{admission, Tag, Verdict}` | at once, for each `admit` | the Security Manager |
+| | `{withdraw, Tag}` | the window closes while its pairing runs | Pairing Failed, Unspecified Reason, and the outcome `withdrawn` ([The pairing window](#the-pairing-window)) |
+| | `{wait, Ms}` | at once, for each `wait` | at `0` the link sends the Security Request unless the phone has begun encryption; otherwise it asks again `Ms` later |
+| link, registry | `{write, Ref, Key, Value}` | a write the gate allowed | the service's handler, which the facet hands it under a fresh `Req` |
+| | `{subscribed, Key, none \| notify \| indicate}`, `{mtu, Mtu}` | the phone wrote a configuration; the bearer's MTU changed | the handlers' `subscribed` and `mtu` |
+| | `{security, #{level := L, bonded := B}}` | the link's level or `bonded` changed | the handlers' `connected` |
+| registry, link | `{answer, Ref, Answer}` | the handler answered the write `Ref` | the write's response; an answer to a write no longer awaited changes nothing |
+| | `{set, Key, Value}` | a handler set a value | reads return it |
+| | `{notify, notify \| indicate, Key, Value}`, a request of `gen_server:send_request/2`, answered `ok \| {error, Reason}` | a handler's `notify` or `indicate` | the registry answers its own caller from the answer, and the request's monitor makes a link that ends first answer `{error, gone}`; a caller's `From` passed to the link would wait for nothing when the link ends |
+| link, store | `{keep, Bond, Subscriptions}` | the pairing's third phase ended | the store keeps the bond and, at `ok`, monitors the link ([Bonds and the store](#bonds-and-the-store)) |
+| | `{subscriptions, Subscriptions}` | a link with a kept bond's key changed a configuration | GATT 3.3.3.3: the Write Response waits for the store's answer |
+| | `{served, Hash}` | the phone confirmed Service Changed | the bond's table hash; not answered, since a hash not kept costs one more Service Changed |
+| store, link | `{kept, ok \| {error, Reason}}` | the store's answer to `keep` or `subscriptions` | the pairing's outcome; the configuration write's response or Unlikely Error |
+| | `forgotten` | the link's bond is forgotten, or missing from the state read after a `put` left unconfirmed | the link ends ([Bonds and the store](#bonds-and-the-store)) |
+
+The store finds the bond of `subscriptions` and `served` by the link it
+monitors, and `kept` carries no tag because a link asks the store one
+thing at a time: a pairing's `keep` comes only from a link without a
+kept bond's key and `subscriptions` only from one with it, and a
+configuration write, request or command, waits for the store's last
+answer as a write request waits for its handler. The link process takes
+the registry's request in `handle_call/3` and steps it as `{registry,
+{notify, From, Kind, Key, Value}}`; the core answers `{reply, From,
+Answer}` when the notification is queued or refused, or the indication
+confirmed or timed out.
 
 The link answers a Long Term Key Request with Reply only when it holds
 a key and the request carries zero EDIV and Rand. A Reply the
@@ -1269,15 +1371,15 @@ controller answers with a failure counts as no Reply, so the link's
 next report about encryption ends it: HCI 7.8.25's Status says only
 that the command failed, not whether the controller kept the key, and
 ending the link is the reading that never takes an unconfirmed key as
-the link's. A step's actions end at its first `close`, after the
-packets it hands over, and what is still queued is dropped with the
-link. A link with a key
+the link's. A step's actions end at its first `{close, Reason}`, after
+the packets it hands over, and what is still queued is dropped with the
+link, whose end disconnects it. A link with a key
 passes the window's `open` verdict to the Security Manager as `bonded`,
 so its pairing fails. The core's `key` and Security Manager state, and
-the bond in `keep`, hold secrets; the link process shows
-`erx_bt_link_core:facts/1`, which holds none, in crash reports and
-`/proc`, and ends with a reason built from it alone when `step/3`
-raises, since a stack trace carries the core.
+the bond in `resolve`'s answer and in `keep`, hold secrets; the link
+process shows `erx_bt_link_core:facts/1`, which holds none, in crash
+reports and `/proc`, and ends with a reason built from it alone when
+`step/3` raises, since a stack trace carries the core.
 
 ## Stage 3: the serial service
 
@@ -1433,14 +1535,17 @@ its request failed and the phone asked again, changes nothing
 
 **The pairing wait** is SMP 2.3.6's, kept by the window process and not
 by any window, so whoever opens windows, and however fast, does not
-shorten it. After a pairing fails, whatever the reason, the phone's
-disconnection and the timeout included, so that leaving halfway through
-Passkey Entry's rounds is a failure too, no Pairing Request is answered
-for the wait, which starts at
+shorten it. After a pairing fails, whatever the reason, the timeout and
+the end of its link included, so that leaving halfway through Passkey
+Entry's rounds is a failure too, no Pairing Request is answered for the
+wait, which starts at
 `bt_pair_wait_min_s`, 2 s, doubles at each further failure up to
 `bt_pair_wait_max_s`, 64 s, and halves for each `bt_pair_wait_decay_s`,
 600 s, without a failure, down to the minimum; a success leaves it as
-it is. A request during the wait is answered Pairing Failed, Repeated
+it is. The window process monitors a link from its `open` verdict until
+the link reports the pairing's outcome, so a link that ends first,
+however it ends, is a failure, `disconnected`
+([The link's messages](#the-links-messages)). A request during the wait is answered Pairing Failed, Repeated
 Attempts (`0x09`), which is not a pairing and changes neither the wait
 nor the window. SMP asks the wait of a device claiming the failed one's
 identity; before its third phase a pairing has no identity but an
@@ -1569,7 +1674,9 @@ its key distribution, to have the identity of a bond already kept fails
 with `already_bonded`, its keys discarded; the operator ends a bond with
 `forget AA:BB:CC:DD:EE:FF` written to the control tree's `ctl`, or
 `forget all`, and pairs again. A ninth bond fails with `bonds_full`.
-Forgetting a bond ends its connected link. SMP 2.4.3.2 holds a
+Forgetting a bond ends its connected link: the store sends `forgotten`
+to each link it monitors for that bond
+([The link's messages](#the-links-messages)). SMP 2.4.3.2 holds a
 distributed identity address valid only once a reconnection has used it
 with the pairing's key; the same caution keeps a claimed identity from
 ever overwriting a kept one.
@@ -1582,15 +1689,19 @@ is `unknown` or does not answer `ok` answers Unlikely Error and leaves
 the configuration as it was. So a phone that saw its write answered may rely on it after a
 power cut, Service Changed's configuration included, which a change of
 the table at a later start needs. A write that changes nothing, and
-every write on a link whose key is not yet kept, is answered at once; a
+every write on a link whose key is not yet kept and not being kept, is
+answered at once; one that comes while the store keeps the link's
+pairing waits for the store's answer, and is then kept as a bonded
+link's write is, so `keep` never leaves out a subscription the phone
+saw answered; a
 Write Command to the descriptor, which has no answer, changes the
 configuration and is kept as a request's would be. ATT's one request at
 a time and a bonded peer bound the store's writes.
 
 ### Reconnection
 
-At LE Connection Complete the link resolves the phone's address against
-the bonds: an identity address by equality, a resolvable private address
+At its start the link asks the store to resolve the phone's address
+against the bonds ([The link's messages](#the-links-messages)): an identity address by equality, a resolvable private address
 by `ah` with each bond's IRK (SMP 2.2.2), whose form, top two bits `01`,
 is Vol 6 Part B 1.3.2.2's, unverified until read. A resolved link holds
 the bond's key from then on, and the transition of [One table, one
@@ -1762,21 +1873,27 @@ its line at the system domain's `/proc`: bytes each way, breaks, resets.
   handler's write answer is a message back to the link, which takes the
   next request only after it, so a link never waits on a handler while
   events arrive: confirmations, commands and the controller's reports
-  still reach it.
+  still reach it. A link waits on another process only at its start,
+  on the store's `resolve` and the registry's `join`, and no owner waits
+  on a link, so no two processes wait on each other.
 * **The registry outlives links and the controller.** It sits before the
   controller group in the domain's `rest_for_one` supervisor, so a
   controller restart ends every link, every handler hears `disconnected`
   for each, and handlers stay attached.
 * **A disconnection during a handler's answer** drops the answer: the
-  reply goes to an alias of the link, which no longer exists; the handler
+  reply goes to the link's pid, whose process no longer exists; the handler
   has already heard `disconnected` from the registry or hears it next.
 * **A notification and a disconnection** race only at the registry, which
-  answers `{error, gone}` for a dead `Conn`; a notification queued before
+  answers `{error, gone}` for a dead `Conn`, and for a notification whose
+  link ended before answering it; a notification queued before
   the end is dropped with the link's queue, as the controller drops what
   it had.
 * **One window** exists at a time; its state and the pairing wait are
   the window process's, and the link asks it at a Pairing Request and
-  before a Security Request, and tells it the outcome. The window process
+  before a Security Request, and tells it the outcome; the window
+  process monitors a link from its `open` verdict until the outcome, so
+  a link that ends mid-pairing, however it ends, counts as a failure.
+  The window process
   sits before the controller group, so a controller restart, the only
   restart a radio peer's traffic can cause beyond its own link, keeps the
   wait.
@@ -1819,7 +1936,7 @@ and stops in the reverse order, the controller process first.
 
 | Failure | Detected by | What ends | Recovery |
 | --- | --- | --- | --- |
-| a framing error, a Hardware Error event, a command not answered in 5 s, an answer to another command, a completion for a handle not live or beyond its outstanding packets, a failed bring-up step, a line reset not answered in 5 s; a failed open, read or write of `data` or `ctl` | the controller process; for the line's files, the reader or the writer, whose end ends the group | the controller group: the controller process, the line's reader and writer, every link | the group restarts: `reset`, then the bring-up; past 5 restarts in 60 s the domain ends and the domain service restarts it within its intensity |
+| a framing error, a malformed event (a reserved handle or Peer_Address_Type included), a Hardware Error event, a command not answered in 5 s, an answer to another command, a completion for a handle not live or beyond its outstanding packets, a failed bring-up step, a line reset not answered in 5 s; a failed open, read or write of `data` or `ctl` | the controller process; for the line's files, the reader or the writer, whose end ends the group | the controller group: the controller process, the line's reader and writer, every link | the group restarts: `reset`, then the bring-up; past 5 restarts in 60 s the domain ends and the domain service restarts it within its intensity |
 | a malformed L2CAP frame, a second outstanding ATT request, an SMP timeout, an encryption change the link did not key, a packet the core answered `busy`, a link process's crash | the link | the link: its end makes the controller process send Disconnect | the phone reconnects |
 | a malformed ATT request | the ATT server | nothing: Invalid PDU | none needed |
 | a handler that does not answer in 5 s | the link's deadline | nothing: Unlikely Error | none |
@@ -1895,6 +2012,11 @@ Each core's test is paired with the seeded faults it must catch.
 | flushes of begun and buffered requests, with power notifications held by the test | a `reset` flushed at any step is answered once its last step is done, then the flush; a write flushed after the driver took its bytes answers its count; a read flushed with bytes buffered answers with them, and before bytes arrive `eintr`, the next read getting them whole | a flushed `reset` answered `eintr` while its steps run; a read held while bytes are buffered |
 | the identity address | 10,000 addresses have the static form and parse in Bumble's `Address` as static | the top bits cleared |
 | the controller group, over a model line, store and registry (the group's start takes the open function, since on stock's emulator no namespace reaches a mounted tree; the model `ctl` answers after a set delay, and a `data` read waiting at a reset answers `eio`) | `ready` from start and again after the controller process is killed; the first `data` read after `ctl`'s answer; the identity address unchanged across the restart; a killed link process leads to one `HCI_Disconnect` with reason `0x13`; after `link_down` a `to_link` for the name reaches no process; completions reach their links; a `ctl` answering `eio` ends the group | the reader reading at its start, so the group never reaches `ready`; the controller process making the address itself; a link process's end ignored; completions not passed to the link |
+| `erx_hci`'s LE Connection Complete | Peer_Address_Type `0x00` and `0x01` decode as `public` and `random`; `0x02` and `0xFF` make the event malformed | the type passed through as its octet |
+| the link's start, against a store and a registry that hold its calls until the test releases them | `start_child` returns while both calls wait; what the controller process sends meanwhile is stepped in order once the core is built; a phone whose address resolves gets its bond's key | the store's `resolve` called from `init/1`, so `start_child` does not return within the test's deadline |
+| a link's end, with the window process and the registry running | a link killed by `exit(Link, kill)` after an `open` verdict writes `failed ADDR disconnected` and doubles the wait; a link that reports its outcome and then ends counts once; the handlers hear `disconnected` once | the window's monitor not taken (nothing written, the wait unchanged); the monitor kept after the outcome (counted twice) |
+| a notification to a link that ends before answering it | the registry's caller gets `{error, gone}` | the caller's `From` handed to the link in a plain message (the caller waits until its own timeout) |
+| `forget` with bonded links connected | the link whose address resolved to the forgotten bond at its start ends; a link of another bond stays | the store taking a link's pid only at `keep` |
 
 ### Fuzz targets
 
