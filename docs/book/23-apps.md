@@ -159,7 +159,7 @@ that asks the domain service for a session and links to it
 keeper; it is unrelated to chapter 14's keepers of stream files). When the session ends, the supervisor starts the
 session keeper again, and one row's failure touches no other row. The
 table and `service` are built; chapter
-[20](20-shell.md#205-services-as-freebsd-starts-them)
+[20](20-shell.md#205-starting-services)
 covers `service` as a command. The built `enable` also starts the row,
 where the design, as FreeBSD's, has it start nothing until the next
 boot or the row's own `start`.
