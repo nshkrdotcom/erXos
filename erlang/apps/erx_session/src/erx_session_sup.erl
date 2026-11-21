@@ -53,11 +53,11 @@ init([]) ->
                  type => worker,
                  modules => [erx_fs, erx_session_export]} || Rights <- [rx, rw]],
     {ok, {#{strategy => one_for_one, intensity => 5, period => 10, auto_shutdown => any_significant},
-          [Pipes, Commands, line(erx:cap(console)) | Exports]}}.
+          [Pipes, Commands, line(erx_session_tty:master()) | Exports]}}.
 
 -doc """
 The child that holds the session's line, from Console, its console facet as
-erx:cap/1 finds it: the session's console tty, whose console holds `user`, for a
+erx_session_tty:master/0 finds it: the session's console tty, whose console holds `user`, for a
 session that holds one, and for a session with none, which has no terminal,
 erx_log_user, which holds `user` and sends what is written to it to the log.
 """.

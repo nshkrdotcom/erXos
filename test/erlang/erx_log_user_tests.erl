@@ -90,12 +90,6 @@ a_piece_never_splits_a_character_test() ->
     {Pieces, <<>>} = erx_log_user:lines(<<>>, <<Head/binary, "\x{e9}tail\n"/utf8>>),
     ?assertEqual([Head, <<"\x{e9}tail"/utf8>>], Pieces).
 
-%% Bytes that are no UTF-8, a run of continuation bytes, are cut at ?MAX itself, so
-%% the split ends.
-a_run_of_continuation_bytes_is_cut_at_the_bound_test() ->
-    {Pieces, <<>>} = erx_log_user:lines(<<>>, <<(binary:copy(<<16#80>>, ?MAX + 1))/binary, "\n">>),
-    ?assertEqual([?MAX, 1], [byte_size(Piece) || Piece <- Pieces]).
-
 %% Reading is refused at once with an error, never left waiting: the session has no
 %% input.
 a_read_is_refused_with_an_error_test() ->
@@ -122,4 +116,28 @@ a_held_line_is_sent_at_the_stop_test() ->
         ok = io:put_chars(user, "no newline"),
         ok = gen_server:stop(User),
         ?assertEqual([{notice, <<"no newline">>}], records())
+    end).
+
+%% A `requests` list is written whole or not at all: an improper list or a failing
+%% request in it is answered with an error, sends none of its text, and leaves the
+%% server serving.
+a_failing_requests_list_sends_nothing_test() ->
+    with_user(fun(User) ->
+        ?assertEqual({error, request}, io:request(user, {requests, [{put_chars, unicode, "x\n"} | foo]})),
+        ?assertEqual({error, enotsup},
+                     io:request(user, {requests, [{put_chars, unicode, "y\n"}, {get_chars, unicode, "", 1}]})),
+        ?assertEqual([], records()),
+        ?assertEqual(ok, io:request(user, {requests, [{put_chars, unicode, "a"}, {put_chars, latin1, "b\n"}]})),
+        ?assertEqual([{notice, <<"ab">>}], records()),
+        ?assert(is_process_alive(User))
+    end).
+
+%% A put_chars whose text is no chardata, or whose MFA fails, is an error to its
+%% caller and writes nothing.
+a_put_chars_that_fails_writes_nothing_test() ->
+    with_user(fun(_User) ->
+        ?assertEqual({error, put_chars}, io:request(user, {put_chars, unicode, [-1]})),
+        ?assertEqual({error, put_chars}, io:request(user, {put_chars, unicode, erlang, error, [boom]})),
+        ?assertEqual(ok, io:request(user, {put_chars, unicode, io_lib, format, ["~p~n", [ok]]})),
+        ?assertEqual([{notice, <<"ok">>}], records())
     end).

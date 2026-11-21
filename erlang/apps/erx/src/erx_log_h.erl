@@ -34,7 +34,7 @@
 -behaviour(logger_handler).
 
 -export([adding_handler/1, removing_handler/1, log/2]).
--export([sync/0, record/2, write/1]).
+-export([sync/0, record/2, write/1, character_end/2]).
 
 -include("generated/erx_abi.hrl").
 
@@ -165,8 +165,12 @@ cut(Text) ->
     Head = binary:part(Text, 0, character_end(Text, ?TEXT_MAX - byte_size(?CUT_MARK))),
     <<Head/binary, (?CUT_MARK)/binary>>.
 
-%% The largest length =< Limit at which no UTF-8 sequence of Text is split: a
-%% continuation byte (2#10xxxxxx) at Limit belongs to the character before it.
+-doc """
+The largest length =< Limit at which no UTF-8 sequence of Text, longer than Limit,
+is split: a continuation byte (2#10xxxxxx) at Limit belongs to the character before
+it. erx_log_user ends its pieces of a long line here.
+""".
+-spec character_end(binary(), non_neg_integer()) -> non_neg_integer().
 character_end(_Text, 0) ->
     0;
 character_end(Text, Limit) ->

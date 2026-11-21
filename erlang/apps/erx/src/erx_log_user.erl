@@ -8,8 +8,8 @@ session"; docs/design-runtime.md, "The console and standard I/O"): an io server,
 registered as `user`, that turns what is written to it into log records under the
 session's name, as a UNIX daemon's output with no terminal goes to a log under its
 name. erx_session_sup starts it in place of the session's console tty when the
-session holds no console facet, so an app's io:format/2, logger_std_h on
-`standard_io` and a native program's standard output all end here.
+session holds no console facet, so an app's io:format/2 and logger_std_h on
+`standard_io` end here.
 
 What is written becomes records by lines (lines/2): each newline ends a line, and
 each line that is not empty is one record of level notice, its text the line
@@ -62,26 +62,15 @@ held([]) -> {[], <<>>};
 held(Pieces) -> {lists:droplast(Pieces), lists:last(Pieces)}.
 
 %% Line in pieces of at most ?TEXT_MAX bytes, none empty, so an empty line has none.
+%% Line is UTF-8, since text/2 made it, so a piece ends at a character's end.
 pieces(<<>>) ->
     [];
 pieces(Line) when byte_size(Line) =< ?TEXT_MAX ->
     [Line];
 pieces(Line) ->
-    End = piece_end(Line, ?TEXT_MAX, 4),
+    End = erx_log_h:character_end(Line, ?TEXT_MAX),
     <<Piece:End/binary, Rest/binary>> = Line,
     [Piece | pieces(Rest)].
-
-%% Where the first piece of Line, longer than ?TEXT_MAX bytes, ends: at the last
-%% character's start at or before ?TEXT_MAX, so no UTF-8 sequence is split. A
-%% sequence is at most four bytes, so after four continuation bytes (2#10xxxxxx) the
-%% bytes are no UTF-8, and the piece ends at ?TEXT_MAX itself.
-piece_end(_Line, _At, 0) ->
-    ?TEXT_MAX;
-piece_end(Line, At, Left) ->
-    case binary:at(Line, At) of
-        Byte when Byte band 16#C0 =:= 16#80 -> piece_end(Line, At - 1, Left - 1);
-        _ -> At
-    end.
 
 %%% The server
 
@@ -98,9 +87,13 @@ handle_call(_Request, _From, Held) ->
 handle_cast(_Message, Held) ->
     {noreply, Held}.
 
+%% A request that fails throws its reason from wherever it fails, and is answered
+%% here with the line held before it: a request writes all of its text or none.
 -doc false.
 handle_info({io_request, From, ReplyAs, Request}, Held) when is_pid(From) ->
-    {Reply, Next} = request(Request, Held),
+    {Reply, Next} = try request(Request, Held)
+                    catch throw:{?MODULE, Reason} -> {{error, Reason}, Held}
+                    end,
     From ! {io_reply, ReplyAs, Reply},
     {noreply, Next};
 handle_info(_Other, Held) ->
@@ -110,24 +103,40 @@ handle_info(_Other, Held) ->
 terminate(_Reason, Held) ->
     send(pieces(Held)).
 
-%% One io request: its reply and the line held after it. A failing request of a
-%% `requests` list ends the list, as stock's io servers do.
-request({put_chars, Encoding, Chars}, Held) ->
-    write(text(Encoding, Chars), Held);
-request({put_chars, Encoding, Module, Function, Args}, Held) ->
-    write(text(Encoding, apply_put(Module, Function, Args)), Held);
-request({put_chars, Chars}, Held) ->
-    request({put_chars, latin1, Chars}, Held);
-request({put_chars, Module, Function, Args}, Held) ->
-    request({put_chars, latin1, Module, Function, Args}, Held);
-request({requests, Requests}, Held) when is_list(Requests) ->
-    requests(Requests, Held);
-request({setopts, _Options}, Held) ->
-    {ok, Held};
-request(getopts, Held) ->
-    {[{binary, false}, {encoding, unicode}], Held};
+%% One io request: its reply and the line held after it. The records of a `requests`
+%% list are sent once the whole list has been read, so a failing request in it
+%% leaves none of the list's text sent.
 request(Request, Held) ->
-    {{error, refusal(Request)}, Held}.
+    {Reply, Records, Next} = read(Request, [], Held),
+    send(lists:reverse(Records)),
+    {Reply, Next}.
+
+%% Request read on top of Records, the texts made so far, newest first: its reply,
+%% the texts after it and the line held after it.
+read({put_chars, Encoding, Chars}, Records, Held) ->
+    put(text(Encoding, Chars), Records, Held);
+read({put_chars, Encoding, Module, Function, Args}, Records, Held) ->
+    put(text(Encoding, apply_put(Module, Function, Args)), Records, Held);
+read({put_chars, Chars}, Records, Held) ->
+    read({put_chars, latin1, Chars}, Records, Held);
+read({put_chars, Module, Function, Args}, Records, Held) ->
+    read({put_chars, latin1, Module, Function, Args}, Records, Held);
+read({requests, Requests}, Records, Held) ->
+    reads(Requests, Records, Held);
+read({setopts, _Options}, Records, Held) ->
+    {ok, Records, Held};
+read(getopts, Records, Held) ->
+    {[{binary, false}, {encoding, unicode}], Records, Held};
+read(Request, _Records, _Held) ->
+    fail(refusal(Request)).
+
+reads([], Records, Held) ->
+    {ok, Records, Held};
+reads([Request | Rest], Records, Held) ->
+    {_Reply, More, Next} = read(Request, Records, Held),
+    reads(Rest, More, Next);
+reads(_NoList, _Records, _Held) ->
+    fail(request).
 
 %% Why a request this server does not serve fails: enotsup for one that reads, since
 %% there is no input, and request for any other.
@@ -139,40 +148,39 @@ refusal(Name) ->
         false -> request
     end.
 
-requests([], Held) ->
-    {ok, Held};
-requests([Request | Rest], Held) ->
-    case request(Request, Held) of
-        {{error, _}, _} = Failed -> Failed;
-        {_Reply, Next} -> requests(Rest, Next)
-    end.
-
 %% What a put_chars request's MFA form makes, run in this process as stock's io
-%% servers run it; a failure is `error`, which is no chardata, so text/2 refuses it.
+%% servers run it.
 apply_put(Module, Function, Args) when is_atom(Module), is_atom(Function), is_list(Args) ->
     try apply(Module, Function, Args)
-    catch _:_ -> error
+    catch _:_ -> fail(put_chars)
     end;
 apply_put(_Module, _Function, _Args) ->
-    error.
+    fail(put_chars).
 
-%% Chars in Encoding as UTF-8, or error for what is no chardata of Encoding.
+%% Chars in Encoding as UTF-8.
 text(Encoding, Chars) when Encoding =:= unicode; Encoding =:= latin1 ->
     try unicode:characters_to_binary(Chars, Encoding, unicode) of
         Text when is_binary(Text) -> Text;
-        _Incomplete -> error
+        _Incomplete -> fail(put_chars)
     catch
-        error:_ -> error
+        error:_ -> fail(put_chars)
     end;
 text(_Encoding, _Chars) ->
-    error.
+    fail(put_chars).
 
-write(error, Held) ->
-    {{error, put_chars}, Held};
-write(Text, Held) ->
-    {Records, Next} = lines(Held, Text),
-    send(Records),
-    {ok, Next}.
+put(Text, Records, Held) ->
+    {Lines, Next} = lines(Held, Text),
+    {ok, lists:reverse(Lines, Records), Next}.
 
+-spec fail(atom()) -> no_return().
+fail(Reason) ->
+    throw({?MODULE, Reason}).
+
+%% Sends each text as a record, then waits until the domain's logger proxy has
+%% written them, so a writer waits on the log as stock's `user` makes it wait on its
+%% port, and what was written is in the log before the session ends.
+send([]) ->
+    ok;
 send(Texts) ->
-    lists:foreach(fun(Text) -> erx_log_h:write({log, ?LEVEL, Text}) end, Texts).
+    lists:foreach(fun(Text) -> erx_log_h:write({log, ?LEVEL, Text}) end, Texts),
+    erx_log_h:sync().

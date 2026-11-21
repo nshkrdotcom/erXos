@@ -44,7 +44,7 @@ its end is the tty's hangup, as a pseudo-terminal master's close is
 then itself, its relay with it, and the session's other ttys run on.
 """.
 
--export([start_link/0, start_link/1, open/1, open_channel/3, start_channel/3, shell_of/3]).
+-export([start_link/0, start_link/1, open/1, open_channel/3, start_channel/3, shell_of/3, master/0]).
 
 -export_type([run/0, channel/0]).
 
@@ -61,7 +61,16 @@ registered. Returns its console.
 """.
 -spec start_link() -> {ok, pid()} | {error, term()}.
 start_link() ->
-    start_console(erx:cap(console), #{domain_line => true}).
+    start_console(master(), #{domain_line => true}).
+
+-doc """
+The master of the session's console tty: the session's console facet, or
+undefined for a session that holds none, which has no terminal and so no console
+tty (erx_session_sup:line/1).
+""".
+-spec master() -> pid() | undefined.
+master() ->
+    erx:cap(console).
 
 -doc """
 Starts a tty whose master is Master, a process of this domain, linked to the
