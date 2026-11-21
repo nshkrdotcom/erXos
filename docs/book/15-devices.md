@@ -25,11 +25,10 @@ make the card overwrite any page of memory, and on most machines
 nothing in the processor notices. Drivers are also the largest and
 least tested part of most kernels.
 
-A UNIX kernel such as FreeBSD's runs its drivers in kernel mode. A
-driver programs descriptor rings with addresses it computes, places
-each cache flush and barrier by hand, and parses whatever the device
-wrote. A wrong pointer anywhere in this is a kernel panic, or silent
-corruption.
+A driver that runs in kernel mode programs descriptor rings with
+addresses it computes, places each cache flush and barrier by hand,
+and parses whatever the device wrote. A wrong pointer anywhere in this
+is a kernel panic, or silent corruption.
 
 erXos runs each driver as a supervised Erlang process, in a domain
 that holds its device. Under the process sits one small piece of C,
