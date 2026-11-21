@@ -177,8 +177,7 @@ Each requirement names who needs it.
    reader of the repository host sees is never an error where the site
    shows a picture. The writer: the bake-off found a sequence label
    with `;` that beautiful-mermaid drew and official Mermaid 12.3.0
-   rejected. This requirement depends on the change to CLAUDE.md that
-   lets Node run in the build (open question 1).
+   rejected.
 5. **Every link resolves**: within the book to a page and an anchor that
    exist, into the repository to the file at the commit the book was
    built from, and outward to a well-formed `https:` address. The
@@ -375,7 +374,7 @@ The rule for outward links is a closed set of one scheme. The book's
 outward links are citations, every one `https:` today, to papers,
 manuals and standards on 23 hosts; a host list would refuse the next
 citation for no gain, since the book is reviewed text. Whether to
-narrow outward links further is open question 3.
+narrow outward links further is open question 2.
 
 The repository's address is `Erx::Site::REPOSITORY`, the constant the
 landing page's source link already uses, so the site has one place
@@ -539,7 +538,7 @@ esbuild version match the record beside it.
 
 `Erx::Book::Diagrams` collects every `mermaid` block of the book, in
 page order and then in source order, and hands them all to one Node
-process, `tools/book/diagrams.mjs`, run by `Erx::Runner` with an
+process, `tools/book/diagrams.ts`, a short TypeScript driver that esbuild bundles with the library, run by `Erx::Runner` with an
 argument vector and a deadline:
 
 ```
@@ -605,8 +604,6 @@ package directory as an argument rather than gaining a copy), and the
 book step refuses modules installed for other package files.
 
 ### The parse check
-
-This section depends on the CLAUDE.md change of open question 1.
 
 Before drawing a diagram, the driver passes its source to official
 Mermaid's `mermaid.parse(text)` (`dist/mermaid.d.ts`, which documents
@@ -979,25 +976,16 @@ pages, not by a test.
 
 ## Open questions for the user
 
-1. **Node and a JavaScript driver in host tooling.** The diagram step
-   runs Node as a subprocess of the Ruby build, with a driver of about
-   50 lines of JavaScript (`tools/book/diagrams.mjs`) and the parse
-   check inside it; CLAUDE.md's language rules name TypeScript only for
-   the web client and say it never runs in host tooling, and name no
-   JavaScript at all. Change the rule to allow Node and one JavaScript
-   driver for this step only, never on the target? Recommendation: yes,
-   in the same change that allows the parse check; the step and the
-   parse check wait on it.
-2. **elkjs (EPL-2.0) as a website build tool**, run unmodified out of
+1. **elkjs (EPL-2.0) as a website build tool**, run unmodified out of
    tree inside beautiful-mermaid, nothing of it shipped (the pages hold
    only numbers it computed)? Recommendation: yes, on the same footing
    as QEMU.
-3. **Outward links: any well-formed `https:` address, or only the
+2. **Outward links: any well-formed `https:` address, or only the
    repository?** Allowing only the repository off the site would
    refuse the book's 32 citations to 23 other hosts.
    Recommendation: any well-formed `https:` address, refusing every
    other scheme, as designed.
-4. **An offer upstream (optional).** Should the options erXos adds
+3. **An offer upstream (optional).** Should the options erXos adds
    to beautiful-mermaid also be offered upstream, as a pull request
    to `https://github.com/lukilabs/beautiful-mermaid`, so that a later
    version carries them and a later import needs fewer changes? The
@@ -1006,7 +994,7 @@ pages, not by a test.
    title's minimum width, which are general (any monospace face, and
    the clipped title is the library's fault), and keep `groupTitle`
    as erXos's change unless upstream wants it.
-5. **The diagram face.** The bake-off drew the style in DejaVu Sans
+4. **The diagram face.** The bake-off drew the style in DejaVu Sans
    Mono 2.35, whose license is Bitstream Vera's (permissive, with a
    renaming condition on modified fonts; the DejaVu changes are public
    domain). CLAUDE.md allows OFL-1.1 for font data and names no other
