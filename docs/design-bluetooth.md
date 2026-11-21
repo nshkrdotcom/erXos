@@ -308,7 +308,7 @@ stack's owners do
 | --- | --- | --- | --- |
 | the **controller process**, `erx_bt_hci` | the bring-up, the command slot, ACL credits, the map from handles to links, advertising | `erx_bt_hci_core` | items for its writer, which writes `data` and `ctl`; acknowledgements to its reader; starting and ending link processes ([The controller process's effects](#the-controller-processs-effects)) |
 | a **link process**, `erx_bt_link`, one per connection | L2CAP reassembly, the ATT bearer (MTU, the request in progress, queued commands, the prepared write, the indication in flight), the notifications waiting for credits, subscriptions, its one key and whether it is encrypted, the pairing in progress | `erx_bt_link_core`, over `erx_gatt_server`, `erx_gatt_gate` and `erx_smp_core` | messages to the controller process, the registry, the window and the store, and its two calls at its start ([The link's messages](#the-links-messages)) |
-| the **registry**, `erx_gatt_srv` | the table, each service's handler, the live `Conn` map, the `ble` facets | `erx_gatt_registry` | a monitor of each link, events to handlers, requests to links |
+| the **registry**, `erx_gatt_srv` | the table, each service's handler, the live `Conn` map, the writes handed to handlers, the `ble` facets | `erx_gatt_registry` | a monitor of each link and each handler, events to handlers, requests to links |
 | the **store**, `erx_bt_store` | the identity address, from stage 1; the bonds, from stage 4 | `erx_bt_state` (stage 4) | reads and writes through the store's backend; a monitor of each link holding a bond, and `forgotten` to it (stage 4) |
 | the **window**, in `erx_bt_fs` (stage 4) | whether a pairing window is open, its mode and its opener's fid; the pairing wait | `erx_bt_window` | lines on the opener's `pair` file; a monitor of each link that owes it a pairing's outcome |
 
@@ -1174,7 +1174,7 @@ Key, Value, Server, Bearer)` makes a notification or an indication the
 gate allows. The actions are the PDUs to send, the write for the
 handler, numbered by the bearer, and the events for the handlers. A
 `Ref` is the link's own, from 1 on every bearer, so it never leaves
-the domain as it is: the facet hands its handler a `Req` it makes
+the domain as it is: the registry hands the handler a `Req` it makes
 unique, and maps it back to the link and its `Ref`, accepting an
 answer only for a `Req` it delivered to that handler and not yet
 answered ([The `ble` facet](#the-ble-facet)). It
@@ -1212,7 +1212,7 @@ makes its grants
 
 | Operation | Answer |
 | --- | --- |
-| `attach(Service)` | `{ok, #{Char => Limits}}`: the caller becomes the service's handler; the facet monitors it, and its end detaches it |
+| `attach(Service)` | `{ok, #{Char => #{max := Max, access := Accesses}}}`, each characteristic's maximum and its accesses with their levels: the caller becomes the service's handler, and hears `connected` for each live link once, when it handles no other service yet; the registry monitors it, and its end detaches it |
 | `set(Service, Char, Value)` | `ok`: reads return `Value` from now on |
 | `notify(Conn, Service, Char, Value)` | `ok` once queued for the link, or `{error, busy}` when its queue holds `bt_notify_queue` |
 | `indicate(Conn, Service, Char, Value)` | `ok` once the phone confirms |
@@ -1226,7 +1226,7 @@ handler receives, through the envelope rule, which the client module
 | `{connected, Conn, #{address := A, bonded := boolean(), level := L}}` | a phone connected, or its link's security changed: `level` is what the link reaches now, `open` until it is encrypted and then its key's, and `bonded` is true once the link is encrypted with a kept bond's key, a resolved bond's or its own pairing's once kept |
 | `{mtu, Conn, Mtu}` | the bearer's MTU changed; a notification carries at most `Mtu - 3` octets |
 | `{subscribed, Conn, Char, none \| notify \| indicate}` | the phone wrote the characteristic's configuration |
-| `{write, Req, Conn, Char, Value}` | a write the gate allowed; the handler answers `erx_gatt:reply(Req, ok \| {error, Code})`, where `Req` is a reference the facet made for this write, which names it to no other handler, link or write |
+| `{write, Req, Conn, Char, Value}` | a write the gate allowed; the handler answers `erx_gatt:reply(Req, ok \| {error, Code})`, where `Req` is a reference the registry made for this write, which names it to no other handler, link or write |
 | `{disconnected, Conn}` | the phone left; `Conn` is dead |
 
 The link takes the next request of its phone only after the handler
@@ -2132,7 +2132,7 @@ and stops in the reverse order, the controller process first.
 | a link whose backlog of the controller's messages reaches `bt_link_backlog` | the controller process | the link: its handle is disconnected with `0x14` and it ends at `link_down` | the phone reconnects |
 | a malformed ATT request | the ATT server | nothing: Invalid PDU | none needed |
 | a handler that does not answer in 5 s | the link's deadline | nothing: Unlikely Error | none |
-| a handler that ends | the facet's monitor | the handler's attachment | the app attaches again |
+| a handler that ends | the registry's monitor | the handler's attachment | the app attaches again |
 | the store answers `unavailable`, returns a blob that does not decode, or leaves a `put` unconfirmed, a backend call past `bt_store_timeout_ms` included | the store | the pairing; at start, the bonds: the domain runs without them and refuses pairing; the configuration write; `forget` | `/proc/bt` and the log say `store_unavailable` or `store_unreadable`; the store is `unknown`; after an unconfirmed `put` a change reads first and fails unless the read succeeds; after the start's read the next start reads again; `forget all` alone replaces a blob that does not decode ([Bonds and the store](#bonds-and-the-store)) |
 | a broken line | the line service | reads of `data` | the controller group's restart writes `reset` |
 | a line tree or the host link ends, or line 153's owner | its line group's supervisor | the group after it: on the Pi 4, the tree's fids and, for the owner, the host link's sessions | the group restarts, its owner first; the console, in no group, is untouched. The Bluetooth domain's `line` grant ended with the tree, and a grant of a system domain's service comes only in a ready answer, so `/line` answers `eio` to the controller group's restarts until the domain ends at its intensity; the domain service restarts it, and its ready answer brings a grant of the new tree |
@@ -2154,6 +2154,8 @@ and stops in the reverse order, the controller process first.
 | | `enoent` | no bond has that identity |
 | `ble` facet | `{error, not_granted}` | a service the grant does not name |
 | | `{error, attached}` | the service already has a handler |
+| | `{error, no_such_service}` | a granted service the domain does not serve |
+| | `{error, badarg}` | an operation of another shape |
 | | `{error, no_such_characteristic}`, `{error, not_allowed}` | an unknown name; an access the declaration does not allow |
 | | `{error, too_long}` | a value over the characteristic's maximum, or a notification over the bearer's `Mtu - 3` |
 | | `{error, busy}` | the link's notification queue holds `bt_notify_queue` |

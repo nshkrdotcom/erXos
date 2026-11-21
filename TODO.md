@@ -8610,11 +8610,9 @@ model harness drive `erx_device.c` itself. `erx_device_dma_check` and `erx_devic
   `awaiting` at a verdict other than `open`, or state in "The pairing window" that the window ignores an
   outcome for a tag it did not open. Also add a link-core case writing `ind`'s open configuration on a
   resolved link before encryption, which only `erx_bt_gatt_tests` and the fuzz invariant cover now.
-* [High] bluetooth, the registry and the control tree's `ctl` (`erx_gatt_srv`, `erx_bt_fs`;
-  docs/design-bluetooth.md "The `ble` facet", "The pairing window", "Bonds and the store"): `erx_gatt_srv` has
-  only its `join/2` call and no process, so every link ends at its start (`{shutdown, {start, registry}}`) and no
-  phone stays connected; build it, between the store and `erx_bt_fs` under `erx_bt_sup`. `erx_bt_fs` serves
-  `pair` alone: `ctl`'s `forget ADDRESS` and `forget all` are unbuilt, so a store `unknown` since its start stays
+* [High] bluetooth, the control tree's `ctl` (`erx_bt_fs`; docs/design-bluetooth.md "The pairing window",
+  "Bonds and the store"): `erx_bt_fs` serves `pair` alone:
+  `ctl`'s `forget ADDRESS` and `forget all` are unbuilt, so a store `unknown` since its start stays
   so until the next start. When `ctl` calls `erx_bt_store:forget(all)`, its `ok` must step the window's core off
   `unknown` since its start, which `erx_bt_window` takes only at `new/1` and has no input for yet.
 * [Medium] bluetooth, the store's development file has no grant (`erx_bt_store:start_link/0`,
@@ -9819,6 +9817,30 @@ document's "residual risks accepted" paragraph.
   one restart in 5 s applies; a controller group that exhausts its own 5 restarts in 60 s about every 30 s is
   restarted by `erx_bt_sup` each time, and the domain never ends as the failure table says. Making the group
   `significant` with `auto_shutdown => any_significant`, or a chosen intensity, settles it in the design first.
+* [High] bluetooth, the `ble` facet's side in other domains (docs/design-bluetooth.md "The `ble` facet",
+  "Declarations: `abi/gatt`"; `erlang/apps/erx_bt/src/erx_gatt_srv.erl`'s `facet/4`): the registry takes a
+  facet's operations through `facet/4`, with the grant's services and the caller, but no app reaches it.
+  Missing: `abi/services/ble.txt`, whose `services` parameter needs a manifest checker (`ble_grant` in
+  `tools/lib/erx/manifest.rb`) refusing a service no file declares, one two rows name, two served services of
+  one UUID, more than `gatt_services_max`, and advertising data that do not fit; the facet process the
+  registry makes when the domain service introduces a grantee, with its mint and an admission module that
+  alone takes `{erx_origin, D, Msg}` off and bounds each operation, as `erx_net_admit` does, with its fuzz
+  target; the client `erx_gatt`, which takes the events' envelope off, and the `erx_gatt_service` behaviour;
+  and the served services read from the manifest's rows, where `erx_bt_sup` serves every declared service.
+  `facet/4` trusts the grant and the caller it is passed on every call; the facet should instead be made by
+  the registry, which records its grant, so an operation names the facet and the grant check holds by
+  construction. Whether a handler in another domain can be monitored from here, or the facet is the party
+  the registry monitors, is unverified.
+* [Medium] bluetooth, what a handler hears (`erx_gatt_registry`; docs/design-bluetooth.md "The `ble` facet"):
+  `write` and `subscribed` name the characteristic without its service, though a handler may handle several
+  services whose characteristics share a name; and a handler that attaches while a phone is connected hears
+  `connected` but not the link's MTU or its subscriptions, which the registry does not keep, so an app
+  restarted mid-connection answers `not_subscribed` until the phone reconnects. Settle both in the design:
+  the key in the events, or one service a handler; and what `attach` replays.
+* [Medium] bluetooth, a store restart detaches every handler (`erx_bt_sup`; docs/design-bluetooth.md
+  "Concurrency"): the tree's order is store, registry, group under `rest_for_one`, so a store crash restarts
+  the registry, which loses every attachment, and no handler hears of it. The registry depends on the store
+  for nothing; put it first, or tell handlers of a registry restart, in the design's tree.
 * [Medium] bluetooth, advertised UUIDs (`erx_bt_hci`'s `config/0`; docs/design-bluetooth.md "Advertising"):
   no GATT table (`erx_gatt_srv:advertised/0`) exists, so no service UUID is advertised; stage 1's advertising
   needs the table's declarations brought forward from stage 2.

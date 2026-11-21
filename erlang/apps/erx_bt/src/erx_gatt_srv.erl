@@ -3,14 +3,38 @@
 
 -module(erx_gatt_srv).
 -moduledoc """
-The registry's calls (docs/design-bluetooth.md, "The `ble` facet" and "The link's
-start"). The registry is the process registered as `erx_gatt_srv`, which maps each
-`Conn` to its link, monitors the link and tells the services' handlers of it. Only the
-call a link makes at its start is here; the registry's process is in TODO.md (Bluetooth),
-and until it runs a link's `join` fails and the link ends.
-""".
+The registry (docs/design-bluetooth.md, "One owner, one step", "The `ble` facet" and "The
+link's messages"): the process registered as `erx_gatt_srv`, the effects around
+`erx_gatt_registry`. It sits before the controller group in `erx_bt_sup`, so it outlives
+every link, and handlers stay attached across the group's restarts.
 
--export([join/2]).
+- **Inputs.** A link's `join/2` call; a link's messages, `{erx_bt_link, Link, Message}`,
+  each a write for a handler, a subscription, a new MTU or the link's security; a facet's
+  operation, `facet/4`; and the `'DOWN'` of a link or a handler it monitors. For each of a
+  link's writes it makes the fresh reference `Req` the handler receives.
+- **Actions.** Answers, monitors, events to handlers, `{registry, Message}` to a link, and
+  notification requests: `gen_server:send_request/4` to the link, labelled with the
+  caller's `From`, so the link answers the request and the request's monitor answers for a
+  link that ends first, with `{error, gone}` to the caller. Its collection of request ids
+  holds one per notification pending.
+- **Facets.** `facet/4` is the one entry of a `ble` facet's operations, with the services
+  its grant names and its caller; the facet that takes them from another domain is in
+  TODO.md (Bluetooth).
+""".
+-behaviour(gen_server).
+
+-export([start_link/1, join/2, facet/4]).
+-export([init/1, handle_call/3, handle_cast/2, handle_info/2]).
+
+-record(srv, {
+    core :: erx_gatt_registry:core(),
+    requests :: gen_server:request_id_collection()
+}).
+
+-doc "Starts the registry, registered as `erx_gatt_srv`, serving `Services`.".
+-spec start_link([erx_gatt_db:service()]) -> gen_server:start_ret().
+start_link(Services) ->
+    gen_server:start_link({local, ?MODULE}, ?MODULE, Services, []).
 
 -doc """
 A link joins the registry at its start: the registry maps `Conn` to the calling link,
@@ -22,3 +46,67 @@ after the values it answered reaches the link.
           #{table := erx_gatt_db:table(), values := #{erx_gatt_db:key() => binary()}}.
 join(Conn, Info) ->
     gen_server:call(?MODULE, {join, Conn, Info}).
+
+-doc """
+A `ble` facet's operation `Op` for `Caller`, whose grant names the services `Grant`:
+`{attach, Service}`, `{set, Service, Char, Value}`, `{notify | indicate, Conn, Service,
+Char, Value}` or `{reply, Req, Answer}`. The answers and refusals are the facet's
+(docs/design-bluetooth.md, "Refusals and error results"). An indication answers once the
+phone confirms it or the link's 30 s transaction timeout fails it, so `Timeout` must
+outlast that.
+""".
+-spec facet(erx_gatt_registry:grant(), pid(), term(), timeout()) -> term().
+facet(Grant, Caller, Op, Timeout) ->
+    gen_server:call(?MODULE, {facet, Grant, Caller, Op}, Timeout).
+
+init(Services) ->
+    {ok, #srv{core = erx_gatt_registry:new(Services), requests = gen_server:reqids_new()}}.
+
+handle_call({join, Conn, Info}, {Link, _Tag} = From, Srv) ->
+    step({join, Link, Conn, Info, From}, Srv);
+handle_call({facet, Grant, Caller, Op}, From, Srv) ->
+    step({facet, Grant, Caller, Op, From}, Srv).
+
+handle_cast(_Message, Srv) ->
+    {noreply, Srv}.
+
+handle_info({erx_bt_link, Link, {write, Ref, Key, Value}}, Srv) ->
+    step({write, Link, Ref, Key, Value, make_ref()}, Srv);
+handle_info({erx_bt_link, Link, Message}, Srv) ->
+    step({link, Link, Message}, Srv);
+handle_info(Message, #srv{requests = Requests} = Srv) ->
+    case gen_server:check_response(Message, Requests, true) of
+        {{reply, Answer}, From, Rest} ->
+            gen_server:reply(From, Answer),
+            {noreply, Srv#srv{requests = Rest}};
+        {{error, {_Reason, _Link}}, From, Rest} ->
+            gen_server:reply(From, {error, gone}),
+            {noreply, Srv#srv{requests = Rest}};
+        _NotAResponse ->
+            monitored(Message, Srv)
+    end.
+
+%% The end of a link or a handler the registry monitors; any other message is dropped.
+monitored({'DOWN', _Monitor, process, Pid, _Reason}, Srv) ->
+    step({down, Pid}, Srv);
+monitored(_Stray, Srv) ->
+    {noreply, Srv}.
+
+step(Input, #srv{core = Core} = Srv) ->
+    {Actions, Next} = erx_gatt_registry:step(Input, Core),
+    {noreply, lists:foldl(fun perform/2, Srv#srv{core = Next}, Actions)}.
+
+perform({reply, From, Answer}, Srv) ->
+    gen_server:reply(From, Answer),
+    Srv;
+perform({monitor, Pid}, Srv) ->
+    erlang:monitor(process, Pid),
+    Srv;
+perform({event, Handler, Event}, Srv) ->
+    Handler ! Event,
+    Srv;
+perform({to_link, Link, Message}, Srv) ->
+    Link ! {registry, Message},
+    Srv;
+perform({request, Link, Request, From}, #srv{requests = Requests} = Srv) ->
+    Srv#srv{requests = gen_server:send_request(Link, Request, From, Requests)}.
