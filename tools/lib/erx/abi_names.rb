@@ -116,11 +116,11 @@ module Erx
           end
         end
         marks.written.each do |marked|
-          layout = marked.layout.name
-          reserve.call(encoder(layout), "marks encoder #{layout}")
+          layout_name = marked.layout.name
+          reserve.call(encoder(layout_name), "marks encoder #{layout_name}")
           marked.inputs.each_key do |kind|
-            input = encoder_input(layout, kind)
-            [input, "#{input}_t"].each { |symbol| reserve.call(symbol, "marks encoder input #{layout} #{kind}") }
+            input = encoder_input(layout_name, kind)
+            [input, "#{input}_t"].each { |symbol| reserve.call(symbol, "marks encoder input #{layout_name} #{kind}") }
           end
         end
         reserve.call('ERX_DECLARE_ABI_NOTE', 'ABI note declaration') if types.key?('erx_abi_note')

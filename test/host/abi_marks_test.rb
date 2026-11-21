@@ -532,7 +532,7 @@ class AbiMarksTest < Minitest::Test
     every_fixed = ->(layout, _marks) { layout.storage == 'wire_le' && !layout.tail }
     with_fault(Erx::ABI::Names.singleton_class, :reader_encodes?, every_fixed) do
       error = assert_raises(Erx::ABI::SchemaError) { tree_schema(Dir.mktmpdir('erx-abi-marks-')) }
-      assert_match(/generated symbol (erx_\w+_encode) collides: reader encoder (erx_\w+) and marks encoder \2\z/,
+      assert_match(/generated symbol (erx_\w+)_encode collides: reader encoder \1 and marks encoder \1\z/,
                    error.message)
     end
   end

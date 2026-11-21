@@ -105,6 +105,18 @@ it; git history is the record of completed work.
   `apps` row only because it declares no quantity, so adding them would let apps administer the network.
   Make grantability an explicit fact (a mark on the interface the check reads, or a refusal by interface
   beside inspect and files) and require quantities only of grantable interfaces.
+* [Medium] ABI, generated names are reserved by a second list (`Names.validate` in
+  `tools/lib/erx/abi_names.rb`): the emitters (`abi_emit_c.rb`, `abi_emit_marks.rb`) and `validate` share
+  which layouts get a decoder, encoder or encoder input, but which names each gets is written in both, so
+  a name an emitter adds collides only at the C compiler. Have each emitter return its declarations as
+  (symbol, origin) pairs from the code that renders them, and reserve that list.
+* [Low] ABI, the marks emitter's fixed and per-structure names (`erx_meaning_free`, `erx_report_record`,
+  `erx_meanings_of_TARGET`, `ERX_STRUCTURE_TARGET` and the rest in `tools/lib/erx/abi_emit_marks.rb`)
+  are not reserved, so a marked layout named `erx_meaning` with free places declares `erx_meaning_free_t`
+  twice and only clang refuses it. Reserve them, best through the item above.
+* [Low] ABI, `Names.reader_encodes?` is not closed under nesting: a layout the reader encodes that embeds
+  a device record or a layout with a tail makes `CEmitter.encode_field` call an encoder the reader does
+  not write (none in the tree). Refuse such a layout in the model, or make the rule recursive.
 * [Low] ABI, which of `erx_mf_facet`'s fields are quantities is stated in Ruby, not in
   `abi/manifest.txt`: `FACET_QUANTITIES` (`tools/lib/erx/abi_contracts.rb`) names the five fields, whose
   widths come from the layout. Mark them in the layout (a quantities sub-layout, or a field mark the

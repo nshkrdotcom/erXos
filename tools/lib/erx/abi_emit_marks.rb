@@ -312,7 +312,7 @@ module Erx
         order = Marks.layout_places(marked.layout).values.map(&:name)
         parameters = ["#{layout}_t *record",
                       *inputs.keys.map { |kind| "const #{input.call(kind)}_t *#{PARAMETERS.fetch(kind)}" }]
-        [*inputs.flat_map { |kind, places| input_struct(input.call(kind), layout, kind, places) },
+        [*inputs.flat_map { |kind, places| input_struct(input.call(kind), summary: "#{SUMMARIES.fetch(kind)} #{layout}", places: places) },
          '/*',
          " * Writes all of *record as #{marked.meaning? ? CEmitter.constant(marked.constant) : layout}. Returns false, with",
          ' * *record untouched, when a value is wider than its place or has bits',
@@ -330,8 +330,8 @@ module Erx
          '}', '']
       end
 
-      def input_struct(name, layout, kind, places)
-        ["/* #{SUMMARIES.fetch(kind)} #{layout}. */",
+      def input_struct(name, summary:, places:)
+        ["/* #{summary}. */",
          "typedef struct #{name} {",
          *places.map { |place| "\tuint64_t\t#{place.name};" },
          "} #{name}_t;", '']

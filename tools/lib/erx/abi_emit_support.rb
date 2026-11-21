@@ -67,11 +67,9 @@ module Erx
         out << '#include "kernel/generated/abi_calls.h"' unless schema.calls.empty?
         out.concat(['', 'int LLVMFuzzerTestOneInput(const uint8_t *, size_t);', '',
                     'int', 'LLVMFuzzerTestOneInput(const uint8_t *bytes, size_t length)', '{'])
-        schema.type_order.each do |name|
-          type = schema.types.fetch(name)
-          next unless type.is_a?(Layout) && type.storage == 'wire_le'
-          out.concat(["\t{", "\t\t#{CEmitter.c_type(type)} value;",
-                      "\t\t(void)#{Names.c(name)}_decode(bytes, length, &value);", "\t}"])
+        CEmitter.wire_layouts(schema).each do |layout|
+          out.concat(["\t{", "\t\t#{CEmitter.c_type(layout)} value;",
+                      "\t\t(void)#{Names.decoder(layout.name)}(bytes, length, &value);", "\t}"])
         end
         schema.readers.each do |reader|
           prefix = Names.c(reader.name)

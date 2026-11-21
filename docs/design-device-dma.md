@@ -921,7 +921,9 @@ request header. A layout is a device record because of the file it is
 declared in, not by a declaration of its own: the unmarked records of
 a format need no marks, and a per-layout declaration would be one more
 line each new record must remember, while the file rule covers a
-record as it is declared. The C reader gives a device record no
+record as it is declared. The converse is the rule's limit: a file of
+device-followed records that holds no marked layout yet is no format,
+and its records are not device records until its first mark. The C reader gives a device record no
 encoder ([design-abi.md](design-abi.md#structural-readers)), so its
 only C encoder is the one its marks give it in `erx/abi.h`, a report
 has none, and the device-record-encoders build check keeps every caller
