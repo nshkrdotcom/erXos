@@ -245,3 +245,98 @@ facet ntpd_clock
   max_heap_size 8192
 start ntpd
   enable YES
+# The USB domain's rows, held back. The Pi 4's USB domain holds the VL805, the one function
+# at bus 1, device 0 behind the BCM2711's closed bridge, with the INTx line its pin routes,
+# SPI 143, as one unit (docs/design-usb.md, "Who holds a controller", "Interrupts" and "The
+# VL805 on the Raspberry Pi 4"), and serves the display its input tree. Its rows are QEMU
+# virt's (config/manifest/qemu-virt-development.txt gives their reasons and figures), and
+# nothing in them differs on the Pi 4: the controller's driver takes its line as it takes
+# an MSI, clearing USBSTS's event interrupt and IMAN's interrupt pending before it reads
+# the event ring and acknowledging the line only after, so the line is deasserted when it
+# is unmasked unless an event came after the last read, which then interrupts again
+# (erx_xhci_core, "Events"). What differs lies outside these rows: the platform record's
+# xhci unit is the VL805's function row, placement key xhci, selector pci, role usb,
+# bridge /scb/pcie@7d500000, bus 1, device 0, function 0, compatible pci1106,3483, line
+# 175 (SPI 143, which its place's pin routes), flags hostile, as every USB host
+# controller's (docs/design-system.md, "Devices"), dma unconfined, and dma_memory 1 MiB,
+# contiguous memory below the bridge row's dma_limit; and the domain is in the trusted
+# base, as every unconfined device's domain is. The manifest check refuses a unit behind a
+# bridge no unit places, so these rows go in with the PCIe domain's Pi 4 rows and the
+# bridge's closed row in the platform record (TODO.md, "USB on the Raspberry Pi 4"), and
+# with them: the display's connections one more, for usb_input; the system principal's
+# domains one more, and so the display's outer budget 8 MiB and 4 KiB more, one more
+# session's pixel area and lane; the principal's memory 41 MiB and 4 KiB more, the
+# domain's 32 MiB and outer 1 MiB and the display's added outer budget; max_domains one
+# more; max_connections two more, the domain's system connection and usb_input; and
+# root_memory 42 MiB and 4 KiB more, the principal's added memory and the VL805's 1 MiB
+# of contiguous memory. Added to this part's figures alone, before the PCIe domain's own,
+# they make the display's connections 4 and outer 59797504, the principal's domains 6 and
+# memory 247492608, max_domains 8, max_connections 20 and root_memory 413167616. Each row
+# below is QEMU virt's with "# " in front.
+# runtime_limits usb
+#   max_frame 131072
+#   max_message_heap 131072
+#   funnel_depth 64
+#   exports 256
+#   tmp 0
+#   overlay 0
+#   atoms 16384
+#   foreign_atoms 1024
+#   processes 1024
+# share usb
+#   quota_ns 1000000
+#   period_ns 10000000
+#   cpuset 1
+#   capacity_mcpu 100
+#   capacity_first 0
+#   slice_us 1000
+#   grace_us 5
+#   base 16
+#   ceiling 31
+#   flags none
+# limits usb
+#   memory 33554432
+#   outer 1048576
+#   grant @share.usb
+#   spaces none
+#   lane 4096
+#   connections 2
+#   crash 0
+#   flags none
+#   runtime_limits @runtime_limits.usb
+#   peer_held 4096
+#   peer_held_total 4096
+# domain usb
+#   principal @principal.system
+#   limits @limits.usb
+#   kind service
+#   flags none
+#   runtime @artifact.emu
+#   release @artifact.usb
+#   restarts 5
+#   restart_period_s 600
+#   args "-- -root / -bindir /bin -progname erl -home / -nouser -nocookie -no_epmd -proto_dist erx -eval ok=erx_usb:start_controllers()"
+# unit xhci
+#   placement "xhci"
+#   holder @domain.usb
+# facet pci
+#   grantee @domain.usb
+#   service @service.pci
+#   operations open,master,reset
+#   max_request 1024
+#   in_flight 1
+#   reductions 100000
+#   period_ns 1000000000
+#   max_heap_size 8192
+# service usb_input
+#   server @domain.usb
+#   interface input
+# facet usb_input
+#   grantee @domain.display
+#   service @service.usb_input
+#   operations none
+#   max_request 131072
+#   in_flight 16
+#   reductions 100000
+#   period_ns 1000000000
+#   max_heap_size 262144

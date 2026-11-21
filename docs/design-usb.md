@@ -3464,7 +3464,19 @@ windows, leaves its slot's teardown finished in the controller's record
 and is served again when plugged back; a keyboard unplugged with a key
 held releases it; and the PCIe domain killed while a keyboard types
 comes back with the keyboard still typing and the bridge's record
-showing the link kept. When the first start after a cold boot takes the
+showing the link kept. The device NIF's DMA for a device that is not
+coherent ([design-device-dma.md](design-device-dma.md)) is verified on
+the VL805 too: its given record is not coherent and its contiguous
+memory lies below the bridge's `dma_limit`; the stick's pattern above
+is read back with every block checked, so both the clean before the
+controller reads a buffer and the invalidation after it writes one are
+exercised; and, unless the
+Arm passage or the litmus test of
+[Releases](design-device-dma.md#releases) has settled the acquisition's
+premise first, that section's VL805 probe runs a stress of short
+transfers, finds every second-phase event pointer naming the TRB the
+ledger expects, and records how many events' two snapshots differed.
+When the first start after a cold boot takes the
 reset row, the bridge's record shows the firmware version read after
 the notification, and a keyboard typing afterwards shows the
 notification took effect; its seeded fault, a test build that skips the
