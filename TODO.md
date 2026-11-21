@@ -8100,37 +8100,14 @@ to the corpus and follow rc
   with `Footprint` as the PCIe row was (its largest pool use at rest and with a keyboard typing, rounded up
   with 2 MiB of headroom), and its CPU while a keyboard types, then set the row and move the totals it
   counts (the system principal's memory, `root_memory`).
-* [High] Runtime, call tracing faults a domain's emulator (`otp/erts/emulator`, the usb suite's typed
-  stage in `tools/lib/erx/usb_boot.rb`): the stage arms global call tracing of `erx_winfs:input/2` in the
-  display domain (`erlang:trace_pattern/3` and `erlang:trace(all, true, [call, {tracer, Pid}])`), and when the
-  first hit is a USB input reader's call (`erx_input_reader`, records read from the USB domain's `usb_input`
-  tree) the display faults inside musl's `memcpy` main loop, `{fault,1}` at `addr 0x4042b3f000` in two boots:
-  once a load from the source (`ldp x12, x13, [x1, #0x40]!`, cause 0x1), once a store to the destination
-  (`stp x8, x9, [x3, #0x20]`, cause 0x3), so a copy longer than 128 bytes runs off the end of a mapped
-  region. The same boot with no trace delivers the key (`erx_winfs` monitors the first reader, its source);
-  two boots that first logged process state or made four traced calls from fresh local processes
-  (`erx_input_codec:size/0`, `decode/1`, `erx_winfs:input/2` with a fake device) passed the stage with
-  `[{key,down,30},{key,up,30}]`. That pattern fits an overrun that faults only when it crosses an unmapped
-  end, the readers' heaps being just below that address (0x4042a8b000 to 0x4042ade000), and corrupts memory
-  silently otherwise. The copy is not an overrun of its own: with each `sys_memcpy` and `sys_memmove`
-  touching both ends inline, the fault moves into `erts_copy_one_frag` (`erl_gc.c`), called from
-  `move_msg_to_heap` (`erl_proc_sig_queue.c`) when a collection moves a queued message's fragment onto the
-  heap, at a header whose arity runs past the fragment. A check there of every header against the
-  fragment's `used_size` caught it: the message is the call trace's `{trace, Reader, call, {erx_winfs,
-  input, [Device, Record]}}` (25 words, used and allocated), and its fragment already holds a copying
-  collection's leftovers: the 4-tuple's and the MFA tuple's headers are boxed pointers to a heap about
-  32 KiB above the fragment, and the args list cell's car is 0 (the non-value a moved cons leaves) with
-  its cdr pointing there too. So a collection moved this message's terms out of its fragment while the
-  message stayed queued with the fragment, and the next collection that moves the queue copies the
-  forwarding words, whose garbage header sends `memcpy` off a mapped end. The same check at
-  `erts_queue_message`, `erts_queue_proc_message` and `erts_queue_proc_messages` found the fragment whole
-  when queued. Next: find which collection forwards a queued message's fragment, with the trace's
-  fragment linked to a process's `mbuf` while still attached to its message (the tracer NIF's `enif_send`
-  from a traced process, `erts_call_trace` under `HEAVY_SWAPOUT`, the trace message queue's flush), or a
-  fragment that overlaps a live heap (the fragment and the forwarding target both lie inside the range
-  the reader's heap had in a passing boot); then fix it with a regression test. Until then the typed
-  stage is flaky. A trace-free check of the exact key needs a reader of the router's records (a window,
-  or an inspection path the design names), which the display does not offer without a screen.
+* [Medium] Runtime, an interpreted receive whose match runs a receive of its own (`otp/erts/preloaded/src/prim_eval.S`,
+  `erl_eval:receive_clauses/8`): the match fun runs inside `loop_rec`, and a nested receive (erl_eval loading
+  `eval_bits` through the code server on its first binary pattern) moves the queue's save pointer to the first
+  message, so when the match then succeeds, `remove_message` removes the queue's first message, not the one
+  matched, whenever earlier messages did not match: one message is lost and the matched one is matched again.
+  Upstream OTP 29.1.2 behaves the same. The message the match sees is a heap copy, so memory stays sound; a fix
+  needs `prim_eval` to remove the message it handed out (a marker or a removal by position), not whatever the save
+  pointer names.
 * [Low] USB, the review's open points on the input tree's hand-out: the USB domain's `connections 2` has no
   room for a display incarnation minted before the old connection is unmapped (design-system A3); the places'
   host fixture finds the grants supervisor through the mint's links (`erx_usb_places_prop:mint_grants/1`)

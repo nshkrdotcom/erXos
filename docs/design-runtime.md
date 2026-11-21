@@ -582,6 +582,18 @@ as a dirty call does: edit 68 charges it its elapsed time in reductions,
 where stock charges one, and a trace of running processes sees the caller
 scheduled out and in around it.
 `test/integration/runtime_prepare_loading_test.rb` pins it.
+77\. `prim_eval:'receive'/2`, which runs erl_eval's match of an interpreted
+receive on each queued message, hands the match a copy of the message on the
+heap, made by `erts_internal:heap_copy/1`. Stock hands it the message where it
+lies, often a fragment still attached to the queue, and relies on `loop_rec`'s
+delay of collection; but the match is Erlang code, and its first binary
+pattern loads `eval_bits` through the code server, whose receive ends the
+delay, after which `code:ensure_loaded/1` collects the heap and moves the
+queued message's terms out of its fragment, an upstream bug that corrupts the
+message and faults the emulator. The interpreter's `loop_rec_end` also delays
+collection again before the next message, as the JIT's `loop_rec` does on
+every message, where stock's leaves the delay ended for the rest of the scan.
+`test/integration/runtime_eval_receive_test.rb` pins it.
 
 **Ports, NIFs and drivers** ([Programs as ports](#programs-as-ports),
 [The event table](#the-event-table)). 22. `enif_select` is removed; the

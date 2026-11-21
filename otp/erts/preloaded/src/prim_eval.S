@@ -17,6 +17,9 @@
 %% See the License for the specific language governing permissions and
 %% limitations under the License.
 %%
+%% Modified by erXos: 'receive'/2 hands its match fun a copy of the message
+%% on the heap, made by erts_internal:heap_copy/1 (edit 77).
+%%
 %% %CopyrightEnd%
 %%
 {module, prim_eval}.
@@ -43,11 +46,16 @@
     {call,0,{f,7}}.
   {label,3}.
     {loop_rec,{f,5},{x,0}}.
-    {move,{y,1},{x,1}}.
-    %% Tell the validator that it's safe to pass the message as an argument,
-    %% as the match fun is "known" not to build a term with it, and the
-    %% loop_rec instruction has disabled the GC.
+    %% The message may live in a fragment still attached to the queue, and
+    %% the garbage collector moves whatever a root reaches outside the old
+    %% heap and the literals. The match fun is ordinary Erlang code, which
+    %% can end the GC delay loop_rec set (erl_eval loading a module through
+    %% the code server runs a receive of its own) and then collect, so it
+    %% matches a copy the process owns, and the queued message is reached only
+    %% while collection is delayed.
     {'%', {remove_fragility, {x,0}}}.
+    {call_ext,1,{extfunc,erts_internal,heap_copy,1}}.
+    {move,{y,1},{x,1}}.
     {call_fun,1}.
     {test,is_ne_exact,{f,4},[{x,0},{atom,nomatch}]}.
     remove_message.

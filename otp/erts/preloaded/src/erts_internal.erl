@@ -18,7 +18,8 @@
 %% limitations under the License.
 %%
 %% Modified by erXos: dist_spawn_init/1 takes the argument list out of the envelope
-%% {erx_origin, D, Args} of a message from another domain (edit 16).
+%% {erx_origin, D, Args} of a message from another domain (edit 16). Adds
+%% heap_copy/1, with which prim_eval:'receive'/2 hands its match fun a copy (edit 77).
 %%
 %% %CopyrightEnd%
 %%
@@ -48,6 +49,7 @@
 
 -export([request_system_task/3, request_system_task/4]).
 -export([garbage_collect/1]).
+-export([heap_copy/1]).
 
 -export([check_process_code/3]).
 -export([check_dirty_process_code/2]).
@@ -304,6 +306,12 @@ request_system_task(_RequesterPid, _TargetPid, _Prio, _Request) ->
 -spec garbage_collect(Mode) -> 'true' when Mode :: 'major' | 'minor'.
 
 garbage_collect(_Mode) ->
+    erlang:nif_error(undefined).
+
+%% A copy of Term on the caller's own heap, for prim_eval:'receive'/2.
+-spec heap_copy(Term) -> Term when Term :: term().
+
+heap_copy(_Term) ->
     erlang:nif_error(undefined).
 
 -spec check_process_code(Module) -> boolean() when

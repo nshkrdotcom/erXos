@@ -18,6 +18,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //
+// Modified by erXos: loop_rec_end delays collection again, as the JIT's
+// does (edit 77).
+//
 // %CopyrightEnd%
 //
 
@@ -251,9 +254,12 @@ loop_rec_end(Dest) {
     /*
      * Advance the save pointer to the next message (the current
      * message didn't match), then jump to the loop_rec instruction.
+     * Collection is delayed again, as the JIT's loop_rec does on every
+     * message: prim_eval's match fun may have run a receive of its own,
+     * whose remove_message ended the delay.
      */
 
-    ASSERT(c_p->flags & F_DELAY_GC);
+    c_p->flags |= F_DELAY_GC;
 
     $SET_I_REL($Dest);
     erts_msgq_set_save_next(c_p);

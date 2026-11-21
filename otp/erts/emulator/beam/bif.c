@@ -17,7 +17,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * Modified by erXos: display_string/2 has no standard-input branch, and its write loop adds only what a write wrote; process_flag(sensitive, _) keeps the erx_untraced trace flag; monitor/2,3 answers a monitor of another domain's registered name itself; link/1,2 and monitor/2,3 answer a link or monitor of a pid of another run of a connected domain's node themselves (edit 66); list_to_pid, list_to_port and list_to_ref read a node's creation and refuse a number past its width. List_to_ref takes four words for this node, and unalias/1 ends the alias in the alias registry (edit 17 of docs/design-runtime.md).
+ * Modified by erXos: display_string/2 has no standard-input branch, and its write loop adds only what a write wrote; process_flag(sensitive, _) keeps the erx_untraced trace flag; monitor/2,3 answers a monitor of another domain's registered name itself; link/1,2 and monitor/2,3 answer a link or monitor of a pid of another run of a connected domain's node themselves (edit 66); list_to_pid, list_to_port and list_to_ref read a node's creation and refuse a number past its width. List_to_ref takes four words for this node, and unalias/1 ends the alias in the alias registry (edit 17 of docs/design-runtime.md). Adds erts_internal:heap_copy/1 (edit 77).
  *
  * %CopyrightEnd%
  */
@@ -4175,6 +4175,34 @@ erts_internal_garbage_collect_1(BIF_ALIST_1)
         return THE_NON_VALUE;
     }
     return am_true;
+}
+
+/*
+ * erts_internal:heap_copy/1: a copy of the term in memory the process owns
+ * (its heap or one of its heap fragments), never the queue's.
+ * prim_eval:'receive'/2 hands its match fun a copy of the message it
+ * peeked, since that message may live in a fragment still attached to
+ * the queue, and the garbage collector moves whatever a root reaches
+ * outside the old heap and the literals: a collection while the fun
+ * holds the original would leave forwarding words in the queued message.
+ */
+BIF_RETTYPE
+erts_internal_heap_copy_1(BIF_ALIST_1)
+{
+    erts_literal_area_t litarea;
+    Eterm *hp;
+    Uint sz;
+
+    if (is_immed(BIF_ARG_1))
+        BIF_RET(BIF_ARG_1);
+    /* Literals stay where they are, as a send leaves them: the collector
+     * never moves them. One area serves the size and the copy alike. */
+    INITIALIZE_LITERAL_PURGE_AREA(litarea);
+    sz = size_object_litopt(BIF_ARG_1, &litarea);
+    if (sz > ERTS_MSG_COPY_WORDS_PER_REDUCTION)
+        BUMP_REDS(BIF_P, MIN(sz / ERTS_MSG_COPY_WORDS_PER_REDUCTION, CONTEXT_REDS));
+    hp = HAlloc(BIF_P, sz);
+    BIF_RET(copy_struct_litopt(BIF_ARG_1, sz, &hp, &MSO(BIF_P), &litarea));
 }
 
 /**********************************************************************/
