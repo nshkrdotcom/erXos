@@ -127,13 +127,6 @@ function virtio_slots(disk_count) {
              net: at(VIRTIO_MMIO.count - 1 - disk_count) };
 }
 
-// xterm.js from a CDN, pinned to exact versions and checked by Subresource
-// Integrity.
-const XTERM_CSS = { src: "https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.css",
-    integrity: "sha384-8Xk9wy/gzEDUKrXtrmCFa2bBuK3BpjpDuL/p0SeKQX19Khl/M+lHOgD/CyYf7efP" };
-const XTERM_JS = { src: "https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.js",
-    integrity: "sha384-M169f14mRZOXm3hD/v2Ti0ThIT/RnAQagXA9nlE15yHAtrW19gdePJh/HaTzUOe/" };
-
 // Serial output that marks a boot stage, in boot order, with what the
 // status line says once it appears.
 const MILESTONES = [
@@ -589,23 +582,23 @@ function build_fault_menu() {
     render_faults(null);
 }
 
-function load_script({ src, integrity }) {
+function load_script(src) {
     return new Promise((resolve, reject) => {
         const script = Object.assign(document.createElement("script"),
-            { src, integrity, crossOrigin: "anonymous", onload: resolve,
-              onerror: () => reject(new Error("could not load the terminal")) });
+            { src, onload: resolve, onerror: () => reject(new Error("could not load the terminal")) });
         document.head.append(script);
     });
 }
 
-// Loads once; a retry after a failed boot reuses the same promise unless
-// the load itself failed.
+// Loads xterm.js, the copy of it boot.json names (terminal), once;
+// a retry after a failed boot reuses the same promise unless the load
+// itself failed.
 let xterm_loaded = null;
-function load_xterm() {
+function load_xterm({ script, stylesheet }) {
     xterm_loaded ??= (async () => {
         document.head.append(Object.assign(document.createElement("link"),
-            { rel: "stylesheet", href: XTERM_CSS.src, integrity: XTERM_CSS.integrity, crossOrigin: "anonymous" }));
-        await load_script(XTERM_JS);
+            { rel: "stylesheet", href: site_url(stylesheet) }));
+        await load_script(site_url(script));
         await document.fonts.load(`${TERMINAL_FONT_PX}px "IBM Plex Mono"`).catch(() => undefined);
     })().catch(error => { xterm_loaded = null; throw error; });
     return xterm_loaded;
@@ -931,8 +924,8 @@ const machine = {
         const { signal } = downloads;
         try {
             show_status("Loading", 0);
-            const xterm = load_xterm();
             const manifest = this.manifest = await fetch_manifest();
+            const xterm = load_xterm(manifest.terminal);
             const v64 = import(site_url(manifest.emulator.module));
             const on_progress = received => signal.aborted ||
                 show_status(`Downloading ${mib(Math.min(received, manifest.compressed_bytes))} of ` +

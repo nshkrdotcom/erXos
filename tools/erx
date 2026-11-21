@@ -1280,18 +1280,22 @@ module Erx
       # LVGL is a git submodule, cloned from its recorded URL at its recorded
       # commit; a cache holds only deps.lock's archives, so a fetch from one
       # leaves the submodule to `git submodule update --init`. The web client's
-      # packages and the book site's diagram packages come from the npm registry
-      # by their lockfiles (WebBuild.fetch), which a cache does not hold either.
+      # packages, the book site's diagram packages and the website console's
+      # come from the npm registry by their lockfiles (WebBuild.fetch), which a
+      # cache does not hold either.
       require_relative 'lib/erx/lvgl'
       require_relative 'lib/erx/book_diagrams'
+      require_relative 'lib/erx/site'
       if cache.nil? && source_id.nil?
         Terminal.puts(Lvgl.init(root: ROOT, runner: runner))
         Terminal.puts("web client packages: #{WebBuild.fetch(root: ROOT, runner: runner)}")
         Terminal.puts("book diagram packages: #{WebBuild.fetch(root: ROOT, runner: runner, packages: Book::Diagrams::PACKAGES)}")
+        Terminal.puts("website console packages: #{WebBuild.fetch(root: ROOT, runner: runner, packages: Site::PACKAGES)}")
       else
         Terminal.puts("LVGL: not fetched with --cache or --source; run `#{Lvgl::INIT_COMMAND}`")
         Terminal.puts('web client packages: not fetched with --cache or --source; run `tools/erx fetch`')
         Terminal.puts('book diagram packages: not fetched with --cache or --source; run `tools/erx fetch`')
+        Terminal.puts('website console packages: not fetched with --cache or --source; run `tools/erx fetch`')
       end
       Terminal.puts('sources verified and extracted')
       0
