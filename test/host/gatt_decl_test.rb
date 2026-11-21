@@ -128,7 +128,7 @@ class GattDeclTest < Minitest::Test
   end
 
   def test_a_byte_above_0x7f_or_a_control_byte_is_refused
-    assert_refused(/svc.txt:2: a byte above 0x7f, 0xc3/, "#{CHAR} 20 read open # café")
+    assert_refused(/svc.txt:2: a byte above 0x7f, 0xc3/, "#{CHAR} 20 read open # caf\u00e9")
     assert_refused(/svc.txt:2: a control byte, 0x09/, "#{CHAR}\t20 read open")
   end
 
