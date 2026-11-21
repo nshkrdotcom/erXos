@@ -16,9 +16,8 @@
 # enumerator once init holds the ready answer's facets, pci_bus among them
 # (docs/design-pcie.md, "Processes"). max_frame holds the widest answer it takes,
 # targets' 69,957 bytes, and max_message_heap that answer's 14,580 decoded words
-# several times over; memory 24 MiB is not measured: the bare release takes 18.3 MiB
-# (the web row's figure), erx_pcie and one walk's state well under 1 MiB, and the page
-# tables of the 256 MiB configuration window at most 512 KiB. Its grant, 50 mcpu on
+# several times over; memory 24 MiB, the web row's figure, holds what the pcie suite
+# measures at rest (docs/design-pcie.md, "The rows and the facets' limits"). Its grant, 50 mcpu on
 # CPU 0, is a share of its own, sized for the start's walk and one set or reset per
 # holder's change.
 #

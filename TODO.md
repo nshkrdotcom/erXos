@@ -2305,6 +2305,11 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   over `Erx::PcieDomain`'s manifest (`config/manifest/qemu-virt-pcie.txt`), with its test holder and its
   walk-and-report and hold cases. Until then the process and its facets have host tests only. The BCM2711's bridge has its core (`erx_pcie_bcm2711_core`) and no driver module with `start` over a
   device, so the enumerator refuses its record (`no_driver_module`).
+* [Medium] PCIe domain, its `memory` row (`config/manifest/qemu-virt-pcie.txt`,
+  [design-pcie.md](docs/design-pcie.md#the-rows-and-the-facets-limits)): the `pcie` suite measures 22.5 MiB at
+  rest against the row's 24 MiB, the web row's figure, which leaves 1.5 MiB where the network row's rounding
+  (a whole MiB and 2 MiB of headroom) gives 25 MiB; settle the figure before the rows join the development
+  manifest, remeasuring after a `set`, a `reset` and a restart's walk.
 * [Medium] PCIe and the drivers' control, one mint for system-domain-only grants (`erlang/apps/erx_pcie/src/erx_pcie_facet.erl`
   `start_link/0`, `mint_init/1`, `mint/1`; `erlang/apps/erx/src/erx_driver_ctl.erl` `start_mint`, `mint_init`, `mint`): the pcie
   mint repeats the driver-control mint line for line but for its callback module and the grant's extra keys, so a fix
@@ -5106,7 +5111,8 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   catalogue, so the PCIe path of the give is not fuzzed.
 * [Medium] runtime, `erlang/apps/erx/src/erx_device_record.erl` and the device NIF: the domain library writes a
   given PCIe function's `-erx_record function` record ([design-pcie.md](docs/design-pcie.md#the-catalogue-and-gives)),
-  but no reader takes it, so a holder finds no record of its function; read it with a window per placed BAR,
+  but no reader takes it, so a holder finds no record of its function (the `pcie` QEMU suite's hold line matches its
+  words by position meanwhile, `tools/lib/erx/pcie_domain.rb`); read it with a window per placed BAR,
   and have the NIF write an MSI-X route's table from it. A confined function's DMA window by its requester id
   waits for erXos's kernel, as every DMA window does.
 * [Medium] drivers, `erlang/apps/erx_blk` (and `erx_net`, `erx_fb`): no

@@ -24,9 +24,9 @@ module Erx
   # The `pcie` QEMU suite (docs/design-pcie.md, "The `pcie` QEMU suite") boots that
   # manifest on MediumBoot's machine with a test holder added (manifest): MediumBoot's
   # configured ERTS domain erts, staying up as a node, holding the platform's xhci unit,
-  # qemu-xhci at slot 2 of the ECAM bridge's bus 0, which QEMU attaches (QemuPlan::Pcie),
+  # qemu-xhci at the slot of the ECAM bridge's bus 0 that unit names, which QEMU attaches (QemuPlan::Pcie),
   # and a pci facet. From the system's Erlang shell, as a person would type it, one line
-  # (LINE) waits for the holder to be ready, prints the holder's usb device records, has the
+  # (line) waits for the holder to be ready, prints the holder's usb device records, has the
   # holder open its function through its pci facet, prints the library's PCIe catalogue
   # with that open's answer, and then measures the PCIe domain's memory at rest. The
   # harness reads QEMU's own view of the bus through QMP (Qmp#pci_functions) and checks
@@ -40,7 +40,7 @@ module Erx
   #   unanswered; either fails the cell.
   # * hold: the holder, which the domain service starts only after it has answered the
   #   PCIe domain's report (docs/design-pcie.md, "The hold at boot"), finds exactly one usb
-  #   record, whose window is the size of the function's BAR 0 in QMP (check_hold). With
+  #   function record, whose BAR 0's hardware size is that BAR's size in QMP (check_hold). With
   #   the hold removed the holder starts before the report, its give finds no layout, and
   #   it has no record.
   #
@@ -71,8 +71,21 @@ module Erx
     HOLDER_UNIT = "unit xhci\n  placement \"xhci\"\n  holder @domain.#{HOLDER}\n".freeze
     HOLDER_FACET = "facet pci\n  grantee @domain.#{HOLDER}\n  service @service.pci\n  operations open,master,reset\n" \
                    "  max_request 1024\n  in_flight 1\n  reductions 100000\n  period_ns 1000000000\n  max_heap_size 8192\n"
-    # The slot QEMU attaches qemu-xhci at, the place the platform's xhci unit names.
-    XHCI_SLOT = 2
+    # The function QEMU attaches, qemu-xhci, as the platform's xhci unit (HOLDER_UNIT) names
+    # it: its slot on the ECAM bridge's bus 0, and its identity, which the unit's compatible
+    # spells pciVVVV,DDDD (docs/design-pcie.md, "The catalogue and gives").
+    Xhci = Data.define(:slot, :vendor, :device)
+    XHCI_IDENTITY = /\Apci([0-9a-f]{4}),([0-9a-f]{4})\z/
+    def self.xhci(platform)
+      units = platform.record.fetch('units').select { |unit| unit.fetch('key') == 'xhci' }
+      devices = units.flat_map { |unit| unit.fetch('devices') }
+      identity = devices.size == 1 ? XHCI_IDENTITY.match(devices.first.fetch('compatible')) : nil
+      unless identity && devices.first.values_at('bus', 'function') == [0, 0]
+        raise Error, "the platform's xhci unit is not one function 0 of bus 0 with a pci identity"
+      end
+
+      Xhci.new(slot: Integer(devices.first.fetch('device')), vendor: identity[1].hex, device: identity[2].hex)
+    end
 
     # The manifest's text for platform, a Platform of QEMU virt, from root's sources.
     def self.manifest_source(root, platform:)
@@ -89,9 +102,9 @@ module Erx
       Manifest::Edit.set(held, { ["domain #{PCIE}", 'restarts'] => 0 }) + HOLDER_UNIT + HOLDER_FACET
     end
 
-    # The line typed at the Erlang shell, one expression per element. Every variable starts
-    # with Pc, which nothing else the shell runs binds.
-    LINE = [
+    # The line typed at the Erlang shell for xhci, an Xhci, one expression per element. Every
+    # variable starts with Pc, which nothing else the shell runs binds.
+    def self.line(xhci) = [
       # PcFind(Node): the ready domains of Node in the domain service's state, or none while
       # the service is too busy to answer, so the waits poll on.
       'PcFind=fun(PcN)->try [PcD||#{node:=PcM,state:=ready}=PcD<-erx_domain_core:domains(' \
@@ -101,15 +114,21 @@ module Erx
       "PcHolder=PcWait(#{HOLDER_NODE},1200)",
       # PcAsk(Fun): Fun run at the holder's node, or the class and reason of its failure.
       "PcAsk=fun(PcF)->try erpc:call(#{HOLDER_NODE},PcF,10000) catch PcC:PcR->{PcC,PcR} end end",
-      # The hold case: the holder's usb records, each its role, peripheral and window size.
-      'io:format("~0kp~n",[{pcie_hold,PcAsk(fun()->[{PcRo,PcPe,PcSz}||' \
-      '["given",PcRo,PcPe,_,_,_,PcSz|_]<-erx_device_record:records(),PcRo=:="usb"] end)}])',
+      # The hold case: the holder's usb function records (docs/design-pcie.md, "The catalogue
+      # and gives"), each its role, peripheral and BAR 0's size, 2 to its SIZE_LOG2, the
+      # record's 21st word: the form, ROLE, PERIPHERAL, the place's four words, LINE_H,
+      # MARK, MEM_H, MEM_SIZE, COHERENT, ROUTE, ADDRESS, DATA, the table's three words,
+      # then BAR 0's WINDOW_H, OFFSET and SIZE_LOG2. No Erlang reader of the form exists
+      # before the xHCI driver's (TODO.md, erx_device_record), so the line matches it here.
+      'io:format("~0kp~n",[{pcie_hold,PcAsk(fun()->[{PcRo,PcPe,1 bsl list_to_integer(PcLg)}||' \
+      '["function",PcRo,PcPe,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,PcLg|_]<-erx_device_record:records(),' \
+      'PcRo=:="usb"] end)}])',
       # The catalogue's records, and whether each bridge's report was answered.
       'PcCats=case erx_domain_lib:pci_bridges() of {ok,PcCs}->PcCs;PcCe->[PcCe] end',
       'PcRecs=[PcRec||#{layouts:=PcLs}<-PcCats,#{record:=PcRec}<-PcLs]',
       # The holder's open of each qemu-xhci function through its pci facet.
       'PcOpen=PcAsk(fun()->[gen_server:call(erx:cap(pci),{open,{PcOb,PcObu,PcOd,PcOf}},5000)||' \
-      '#{bridge:=PcOb,bus:=PcObu,device:=PcOd,function:=PcOf,vendor:=16#1b36,device_id:=16#d}<-PcRecs] end)',
+      "\#{bridge:=PcOb,bus:=PcObu,device:=PcOd,function:=PcOf,vendor:=#{xhci.vendor},device_id:=#{xhci.device}}<-PcRecs] end)",
       # The walk case: each function's place, identity, state and placed memory BARs, each
       # BAR its index, address and size, in place order.
       'io:format("~0kp~n",[{pcie_walk,[is_integer(PcA)||#{answered:=PcA}<-PcCats],PcOpen,' \
@@ -166,15 +185,14 @@ module Erx
       raise Error, "the walk answered #{line.inspect}, QMP's functions give #{wanted.inspect}" unless line == wanted
     end
 
-    # The hold case: the holder's records are one usb record whose window size is the size
-    # of BAR 0 of the one qemu-xhci function QMP lists, or Error naming them.
-    HOLD_LINE = /\A\{pcie_hold,\[\{"usb","[a-z0-9_]*","([0-9]+)"\}\]\}\z/n
-    XHCI = { vendor: 0x1b36, device: 0x000d }.freeze
-    def check_hold(text, functions:)
+    # The hold case: the holder's records are one usb function record whose BAR 0's hardware
+    # size is the size of BAR 0 of the one qemu-xhci function QMP lists, or Error naming them.
+    HOLD_LINE = /\A\{pcie_hold,\[\{"usb","[a-z0-9_]*",([0-9]+)\}\]\}\z/n
+    def check_hold(text, functions:, xhci:)
       line = text.b.sub(/\A#{PROMPT}/n, '').strip
-      xhci = functions.select { |function| function.vendor == XHCI[:vendor] && function.device == XHCI[:device] }
-      bar = xhci.size == 1 ? xhci.first.regions.find { |region| region.bar.zero? } : nil
-      raise Error, "QMP lists #{xhci.size} qemu-xhci functions with BAR 0 #{bar.inspect}" unless bar
+      found = functions.select { |function| function.vendor == xhci.vendor && function.device == xhci.device }
+      bar = found.size == 1 ? found.first.regions.find { |region| region.bar.zero? } : nil
+      raise Error, "QMP lists #{found.size} qemu-xhci functions with BAR 0 #{bar.inspect}" unless bar
 
       size = HOLD_LINE.match(line)&.[](1)
       raise Error, "the holder's records are #{line.inspect}, not one usb record of #{bar.size} bytes" unless size && Integer(size, 10) == bar.size
@@ -191,17 +209,17 @@ module Erx
       format("the PCIe domain's memory at rest: %<pages>d pool pages, %<mib>.1f MiB", pages: pages, mib: pages * 4096.0 / (1 << 20))
     end
 
-    # The production checkpoints to the command shell, then the Erlang shell, LINE and its
-    # three answers: the hold's, checked as the hold cell through side, the walk's, checked
-    # as the walk cell, and the memory's, a note. Each case's check reads QMP's functions
-    # through functions, a callable. points must end at the command shell.
-    def checkpoints(points, functions:, side:, note:)
+    # The production checkpoints to the command shell, then the Erlang shell, xhci's line and
+    # its three answers: the hold's, checked as the hold cell through side, the walk's,
+    # checked as the walk cell, and the memory's, a note. Each case's check reads QMP's
+    # functions through functions, a callable. points must end at the command shell.
+    def checkpoints(points, xhci:, functions:, side:, note:)
       raise Error, 'the production checkpoints do not end at the shell' unless points.last.fetch(:name) == 'release-shell'
 
       [*points[0...-1], points.last.merge(type: ProductionImage::Run::ERL_LINE).freeze,
-       ProductionImage::Run::ERLANG_SHELL.merge(type: LINE).freeze,
+       ProductionImage::Run::ERLANG_SHELL.merge(type: PcieDomain.line(xhci)).freeze,
        { name: 'pcie-hold', pattern: answer('pcie_hold'), seconds: HOLD_SECONDS,
-         verify: ->(text) { side.call(HOLD_CELL) { check_hold(text, functions: functions.call) } } }.freeze,
+         verify: ->(text) { side.call(HOLD_CELL) { check_hold(text, functions: functions.call, xhci: xhci) } } }.freeze,
        { name: 'pcie-walk', pattern: answer('pcie_walk'), seconds: WALK_SECONDS,
          verify: ->(text) { side.call(WALK_CELL) { check_walk(text, functions: functions.call) } } }.freeze,
        { name: 'pcie-memory', pattern: answer('pcie_memory'), seconds: MEMORY_SECONDS,
@@ -221,6 +239,7 @@ module Erx
         @linker = linker
         @qemu = qemu
         @machine = MediumBoot.machine(platform)
+        @xhci = PcieDomain.xhci(platform)
         @manifest = PcieDomain.manifest(PcieDomain.manifest_source(@root, platform: platform))
         @notes = []
       end
@@ -244,14 +263,14 @@ module Erx
 
       private
 
-      # One boot to the command shell, then LINE's answers; returns each case's status, by
+      # One boot to the command shell, then the line's answers; returns each case's status, by
       # its suffix. The run's directory is made afresh and owner-only, so the QMP socket
       # QEMU creates in it is the harness's alone.
       def boot(accel, count, remote, built)
         cell = "#{accel}-#{count}cpu"
         path = ProductionImage.clear_directory(root: @root, path: File.join(@root, 'build/pcie', cell))
         boot = OutputDirectory.prepare(root: @root, path: path, mode: 0o700)
-        pcie = QemuPlan::Pcie.new(qmp_socket: File.join(boot, 'qmp.sock'), functions: { XHCI_SLOT => 'qemu-xhci' })
+        pcie = QemuPlan::Pcie.new(qmp_socket: File.join(boot, 'qmp.sock'), functions: { @xhci.slot => 'qemu-xhci' })
         sides = SIDE_CELLS.to_h { |side| [side, 'failed'] }
         side = lambda do |suffix, &check|
           check.call
@@ -270,7 +289,7 @@ module Erx
         Qemu.new(root: @root, runner: @runner, program: @qemu)
             .run(platform: @machine.platform, accel: accel, cpus: count, remote: remote, image: built.single,
                  memory_mib: @machine.memory_mib, directory: boot, pcie: pcie,
-                 checkpoints: PcieDomain.checkpoints(points, functions: functions, side: side,
+                 checkpoints: PcieDomain.checkpoints(points, xhci: @xhci, functions: functions, side: side,
                                                      note: ->(text) { @notes << "#{cell}: #{text}" }))
         sides
       end

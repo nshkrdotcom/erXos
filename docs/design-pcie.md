@@ -1382,18 +1382,21 @@ domain pcie
   and its application come nowhere near their process count, atom
   table or export table, and the domain has no RAM file system and no
   overlay.
-* **`memory`** 24 MiB is not measured. The bare release, loaded, on the
-  interpreter, takes 18.3 MiB (the web row's figure, in
-  `config/manifest/qemu-virt-development.txt`); `erx_pcie`'s modules
-  and one walk's state, 64 records and their plans, are well under
-  1 MiB; mapping a 256 MiB configuration window, QEMU `virt`'s, with
-  4 KiB pages takes at most 512 KiB of page tables. That leaves about
-  4 MiB of headroom. The measurement that settles it is the domain's
-  pool pages at rest after its report, measured as the storage row's
-  figure is (the root's pool pages in use with the domain up minus
-  those once it has ended), on the `pcie` suite's walk-and-report cell;
-  the figure is then that use rounded up to a whole MiB with 2 MiB of
-  headroom, as the network row's is. **`outer`** 1 MiB and the
+* **`memory`** 24 MiB, the web row's figure (in
+  `config/manifest/qemu-virt-development.txt`), against a measured use
+  of 5,750 pool pages, 22.5 MiB, at rest after its report: the root's
+  pool pages in use with the domain up minus those once it has ended,
+  as the storage row's figure is measured, on the `pcie` suite's
+  walk-and-report cell (an Apple Silicon Mac, M3 Max, macOS 27.0.1;
+  HVF, 1 CPU, a 768 MiB machine; QEMU 11.1.3; the development image
+  built with Homebrew clang 23.1.3; the workload the boot's walk, its
+  report and answer, and the test holder's one `open`; the baseline
+  the root's pool pages once the domain has ended). The figure is the
+  web row's because the `pcie` suite's PCIe rows take the room the web
+  domain's rows give back, so every machine-wide figure stays the
+  development manifest's. It leaves 1.5 MiB of headroom, where the
+  network row's rule, the use rounded up to a whole MiB with 2 MiB of
+  headroom, gives 25 MiB. **`outer`** 1 MiB and the
   **`peer_held`** figures are every configured domain's.
 * **`connections`** 1: its system connection carries its `pci_bus`
   calls and the system domain's `pcie` calls, and it reaches no other

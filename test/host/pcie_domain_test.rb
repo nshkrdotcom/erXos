@@ -106,10 +106,11 @@ class PcieDomainTest < Minitest::Test
 
   def test_the_hold_case_wants_one_usb_record_of_bar_0_s_size
     qmp = functions
-    Erx::PcieDomain.check_hold('4> {pcie_hold,[{"usb","xhci","16384"}]}', functions: qmp)
-    ['{pcie_hold,[]}', '{pcie_hold,[{"usb","xhci","4096"}]}', '{pcie_hold,{error,{erpc,noconnection}}}',
-     '{pcie_hold,[{"usb","xhci","16384"},{"usb","xhci","16384"}]}'].each do |line|
-      assert_raises(Erx::Error) { Erx::PcieDomain.check_hold(line, functions: qmp) }
+    xhci = Erx::PcieDomain.xhci(PLATFORM)
+    Erx::PcieDomain.check_hold('4> {pcie_hold,[{"usb","xhci",16384}]}', functions: qmp, xhci: xhci)
+    ['{pcie_hold,[]}', '{pcie_hold,[{"usb","xhci",4096}]}', '{pcie_hold,{error,{erpc,noconnection}}}',
+     '{pcie_hold,[{"usb","xhci",16384},{"usb","xhci",16384}]}'].each do |line|
+      assert_raises(Erx::Error) { Erx::PcieDomain.check_hold(line, functions: qmp, xhci: xhci) }
     end
   end
 
