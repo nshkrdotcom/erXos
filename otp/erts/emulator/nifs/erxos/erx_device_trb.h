@@ -329,14 +329,16 @@ typedef struct erx_device_trb_contexts {
  *                   multi-TT only with them; the hub fields 0.
  *   configure slot  Configure Endpoint's: the hub fields alone, 0 for a function, or a hub of
  *                   1..ERX_USB_HUB_PORTS_MAX ports, think time 0 to 3 and its multi-TT flag; the
- *                   device fields 0, since the controller reads only these (6.2.2.2, p. 448).
+ *                   device fields 0 (design-usb.md's command table; 6.2.2.2, p. 448, wants the
+ *                   speed with a high-speed hub's fields, which TODO.md records).
  *   EP0             a control context of no burst, interval or payload, its packet 8, 64 or 512 for
  *                   Address Device (`exact`) and 8 to 512 for Evaluate Context.
  *   endpoint        an endpoint Configure Endpoint adds on a block of `kind` whose buffers hold
  *                   `buffer_size` bytes, of a slot addressed at `speed`: an index of 2..31; the type
  *                   of its kind in its index's direction, a control endpoint taking the IN index as
  *                   EP0 does (4.5.1, p. 96); a packet of 1 to 1024, a burst of 0 to 15; an interval
- *                   exponent of 0 to 15, 0 for a bulk or control endpoint (Table 6-12, p. 456); a
+ *                   exponent of 0 to 15, 0 for a bulk or control endpoint, as FreeBSD sets it
+ *                   (abi/formats/xhci.txt, the interval); a
  *                   service-interval payload of at least 1, at most the packet times the burst plus
  *                   one and the buffer, and equal to that product unless the endpoint is an interrupt
  *                   endpoint of a SuperSpeed slot.

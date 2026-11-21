@@ -201,6 +201,7 @@ check_contexts(const erx_trb_command_t *made, const erx_dma_sequence_t *sequence
 		else
 			check((word[0] >> 16 & 0xffu) <= 15u && (word[1] >> 1 & 3u) == 3u && (word[1] >> 8 & 0xffu) <= 15u &&
 			    (word[1] >> 16) >= 1u && (word[1] >> 16) <= 1024u && (word[1] >> 3 & 7u) != 0 &&
+			    (word[1] >> 3 & 7u) != ERX_XHCI_ENDPOINT_TYPE_ISOCH_OUT &&
 			    (word[1] >> 3 & 7u) != ERX_XHCI_ENDPOINT_TYPE_ISOCH_IN);
 	}
 }

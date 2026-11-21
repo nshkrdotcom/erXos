@@ -75,7 +75,7 @@ _Static_assert(SPLIT_RING_TABLES <= ERX_DMA_ZEROS_MAX && SPLIT_RING_TABLES <= ER
 
 /* A binding starts its ring at its first record on lap 0, whose cycle state is 1 (xHCI 1.2, 4.3.3, pp. 88-89; 4.9.2, p. 174). */
 #define BINDING_START_CYCLE	1u
-/* The average TRB length of a control endpoint's context (xHCI 1.2, 4.14.1.1, p. 258). */
+/* The average TRB length of a control endpoint's context (xHCI 1.2, 6.2.3, the note on p. 454). */
 #define CONTROL_AVERAGE_TRB_LENGTH	8u
 _Static_assert(ERX_XHCI_SLOT_CONTEXT_SIZE <= ERX_DMA_STORE_BYTES_MAX &&
     ERX_XHCI_ENDPOINT_CONTEXT_SIZE == ERX_XHCI_SLOT_CONTEXT_SIZE &&
@@ -561,8 +561,9 @@ erx_dma_input_context(const erx_device_trb_contexts_t *stated, const erx_dma_con
 		control.add |= 1u << 1;
 	if (!erx_xhci_input_control_context_encode(&flags, &control))
 		return (0);
-	/* The input control context is context 0, the first part, whose place count began past. */
-	add_part(parts, &(uint32_t){ 0 }, size, 0, 0, &flags);
+	/* The input control context, context 0, takes the first part, which the count began past. */
+	parts[0] = (erx_dma_context_part_t){ .offset = 0, .dci = 0 };
+	memcpy(parts[0].bytes, &flags, sizeof(parts[0].bytes));
 	return (count);
 }
 
@@ -596,7 +597,8 @@ carried_dequeue(const erx_dma_ledger_t *ledger, const erx_dma_publication_t *pub
 			return (true);
 		}
 	}
-	if (publication->records[0].meaning != ERX_MEANING_XHCI_TRB_EVALUATE_CONTEXT_COMMAND || endpoint == 0 ||
+	/* Evaluate Context evaluates EP0's context alone (6.2.3.3, p. 454). */
+	if (publication->records[0].meaning != ERX_MEANING_XHCI_TRB_EVALUATE_CONTEXT_COMMAND || dci != 1 || endpoint == 0 ||
 	    (ring = erx_dma_ledger_bound_table(ledger, endpoint)) < 0)
 		return (false);
 	*word = ring_position_address(ledger, (uint32_t)ring) | erx_dma_ledger_cycle(ledger, (uint32_t)ring);

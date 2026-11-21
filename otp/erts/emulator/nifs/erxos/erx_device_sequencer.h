@@ -232,10 +232,10 @@ typedef struct erx_dma_context_part {
  * the contexts written, A0 with the slot context and A(dci) with each endpoint context, so a flag
  * never names a context left zero (Table 6-16, p. 461); the drop flags, Context Entries and each
  * dequeue word are `derived`'s; the average TRB length 8 for a control endpoint and otherwise the
- * packet times the burst plus one (Table 6-11, p. 453; 4.14.1.1, p. 258). Refused: a context size
+ * packet times the burst plus one (6.2.3, the note on p. 454). Refused: a context size
  * other than 32 or 64, more endpoints than ERX_DEVICE_TRB_DCI_MAX, an index outside 1..31 or
  * written twice, drop flags on indexes 0 and 1 (Table 6-15, p. 461), and a value its encoder
- * refuses. An index both dropped and added is Configure Endpoint's drop-and-add (4.6.6, p. 120).
+ * refuses. An index both dropped and added is Configure Endpoint's drop-and-add (4.6.6, p. 119).
  */
 uint32_t	erx_dma_input_context(const erx_device_trb_contexts_t *stated, const erx_dma_context_derivation_t *derived,
 		    erx_dma_context_part_t parts[ERX_DMA_CONTEXT_PARTS_MAX]);
