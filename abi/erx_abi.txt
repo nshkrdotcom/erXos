@@ -279,7 +279,9 @@ limit program_lane u32 16384
 # program's own; erx_program_drv.c fails to build unless the install fits.
 # The image's table also takes every copy of the pipe hand-offs the program
 # is given, at its start and while it runs, so the driver makes it with
-# caps_max, which the backend grows only as it fills.
+# the largest table the backend takes, erx_space_cap_limit_max(), which the
+# backend grows only as it fills: caps_max on erXos's kernel, less on Fiasco,
+# whose backend fails to build unless it is at least this limit.
 limit program_cap_limit u32 16
 # The program port's control commands, from erx_program.erl to
 # erx_program_drv.c (docs/design-runtime.md#programs-as-ports): how the

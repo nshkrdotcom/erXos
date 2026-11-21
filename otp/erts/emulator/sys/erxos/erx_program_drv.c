@@ -117,15 +117,15 @@
  */
 #define CLOSED_MAX		(2u * ERX_PROG_FDS_MAX)
 /*
- * The capabilities the program's anchor may hold, ERX_PROGRAM_CAP_LIMIT, and its image's: the
- * image's table takes the install's ERX_PROGRAM_INSTALLS, every copy of the hand-offs the start
- * takes and of those INSTALL passes while the program runs, and the program's own, so it is
- * made with the kernel's largest table, ERX_CAPS_MAX, which the backend grows only as it fills
- * (abi/erx_abi.txt, program_cap_limit).
+ * The program's anchor holds at most ERX_PROGRAM_CAP_LIMIT capabilities, and the install,
+ * ERX_PROGRAM_INSTALLS of them, must fit there. The image's table takes the install, every
+ * copy of the hand-offs the start takes and of those INSTALL passes while the program runs,
+ * and the program's own, so it is made with the largest table the backend takes,
+ * erx_space_cap_limit_max(), which the backend grows only as it fills; liberx's interface
+ * promises that is never below ERX_PROGRAM_CAP_LIMIT, so the install fits the image too
+ * (liberx/backend/api.h; abi/erx_abi.txt, program_cap_limit).
  */
-#define PROGRAM_IMAGE_CAP_LIMIT	ERX_CAPS_MAX
 _Static_assert(ERX_PROGRAM_INSTALLS <= ERX_PROGRAM_CAP_LIMIT, "the install fits the anchor's table");
-_Static_assert(ERX_PROGRAM_INSTALLS <= PROGRAM_IMAGE_CAP_LIMIT, "the install fits the image's table");
 /*
  * The session's pool for programs, which a spec's cap must not exceed. The Fiasco backend keeps
  * budgets as records and reports no budget's cap, so the session has no pool to read yet;
@@ -823,7 +823,7 @@ apply(program_t *program, erx_program_action_t action)
 		    program->anchor_label, 0, ERX_PROGRAM_CAP_LIMIT, &program->anchor));
 	case ERX_PROGRAM_IMAGE_CREATE:
 		return (erx_space_create(program->budget, program->anchor, erx_gate_worker_handle(),
-		    program->image_label, 0, PROGRAM_IMAGE_CAP_LIMIT, &program->image));
+		    program->image_label, 0, erx_space_cap_limit_max(), &program->image));
 	case ERX_PROGRAM_LEASE_MAP:
 		return (program->lease == NULL ? ERX_OK : erx_area_lease_map(program->lease, program->image));
 	case ERX_PROGRAM_IMAGE_MAP:
