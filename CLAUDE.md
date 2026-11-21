@@ -1049,6 +1049,12 @@ within about 20 percent of the length, write plain code.
 ## Committing
 
 * Each solid progress should be committed in the git repository.
+* **Linear history: rebase, then fast-forward.** No merge commits. A branch
+  takes master's changes by `git rebase master`, never by merging master
+  in, and lands on master by `git merge --ff-only`. Branches built on
+  other unlanded branches rebase onto them the same way. Resolve rebase
+  conflicts by hunk, as for merges, and run the branch's gate on the
+  rebased tip.
 * Before committing code, test that what you produced is high quality and that
   it works:
   - Launch a code-review subagent **FIRST**, before running tests. Ask it to
