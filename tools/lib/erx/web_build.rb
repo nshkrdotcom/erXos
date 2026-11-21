@@ -46,6 +46,12 @@ module Erx
     # settings that say no package may run a build script.
     PACKAGE_FILES = ['package.json', LOCKFILE, 'pnpm-workspace.yaml'].freeze
     # pnpm's own network use beyond the registry: its check for a newer pnpm.
+    # A directory of the tree whose packages pnpm installs from PACKAGE_FILES:
+    # the web client's, and the book site's diagram step's (Book::Diagrams).
+    # name labels its logs, title its refusals, source holds the package files
+    # and modules is where they are installed. Both share STORE.
+    Packages = Data.define(:name, :title, :source, :modules)
+    WEB = Packages.new(name: 'web', title: 'the web client', source: 'web', modules: MODULES)
     PNPM_OPTIONS = ['--config.update-notifier=false'].freeze
     # pnpm run through corepack does not reach for a newer pnpm in any step.
     PNPM_ENV = { 'COREPACK_DEFAULT_TO_LATEST' => '0' }.freeze
@@ -68,15 +74,15 @@ module Erx
     # The minimum version of each tool package.json's engines names, as
     # { 'node' => [24, 2, 0], 'pnpm' => [12, 18, 0] }. engines states each as
     # ">=X.Y.Z" and nothing else, so every host reads the same requirement.
-    def engines(package_json)
-      package = JsonInput.parse(package_json, max_bytes: 64 * 1024, label: 'web/package.json')
+    def engines(package_json, label: 'web/package.json')
+      package = JsonInput.parse(package_json, max_bytes: 64 * 1024, label: label)
       engines = package.is_a?(Hash) ? package['engines'] : nil
-      raise Error, 'web/package.json names no engines for node and pnpm' unless
+      raise Error, "#{label} names no engines for node and pnpm" unless
         engines.is_a?(Hash) && engines.keys.sort == %w[node pnpm]
 
       engines.to_h do |tool, range|
         numbers = range.is_a?(String) && range.match(MINIMUM)&.captures
-        raise Error, "web/package.json: engines.#{tool} is not >=X.Y.Z" unless numbers
+        raise Error, "#{label}: engines.#{tool} is not >=X.Y.Z" unless numbers
 
         [tool, numbers.map(&:to_i)]
       end
@@ -84,14 +90,14 @@ module Erx
 
     # Each tool of found (tool => what its --version printed) that is older than
     # required, or printed no version, as a sentence; empty when all are new enough.
-    def refusals(required, found)
+    def refusals(required, found, label = 'web/package.json')
       required.filter_map do |tool, minimum|
         printed = found.fetch(tool)
         version = printed.match(VERSION)&.captures&.map(&:to_i)
         next "#{tool} printed no version" unless version
         next if (version <=> minimum) >= 0
 
-        "#{tool} #{version.join('.')} is older than the #{minimum.join('.')} web/package.json requires"
+        "#{tool} #{version.join('.')} is older than the #{minimum.join('.')} #{label} requires"
       end
     end
 
@@ -145,9 +151,9 @@ module Erx
       end
     end
 
-    def verify_lockfile(root)
-      bad = unverified(File.read(File.join(root, 'web', LOCKFILE)))
-      raise Error, "web/#{LOCKFILE} pins without an integrity hash: #{bad.join(', ')}" unless bad.empty?
+    def verify_lockfile(root, packages = WEB)
+      bad = unverified(File.read(File.join(root, packages.source, LOCKFILE)))
+      raise Error, "#{packages.source}/#{LOCKFILE} pins without an integrity hash: #{bad.join(', ')}" unless bad.empty?
     end
 
     # inventory.txt for files (path => bytes): sha256sum's format, sorted by path.
@@ -161,25 +167,25 @@ module Erx
       Digest::SHA256.hexdigest(inventory(PACKAGE_FILES.to_h { |name| [name, File.binread(File.join(directory, name))] }))
     end
 
-    def fetched?(root:)
-      record = File.join(root, MODULES, FETCHED)
-      File.file?(record) && File.directory?(File.join(root, MODULES, 'node_modules')) &&
-        File.read(record).strip == package_digest(File.join(root, 'web'))
+    def fetched?(root:, packages: WEB)
+      record = File.join(root, packages.modules, FETCHED)
+      File.file?(record) && File.directory?(File.join(root, packages.modules, 'node_modules')) &&
+        File.read(record).strip == package_digest(File.join(root, packages.source))
     end
 
-    # `tools/erx fetch`: install web/'s packages from the registry into
-    # build/web-modules, from a copy of its package files so nothing is written
-    # under web/. The install is made beside it, with a record of the copies it
-    # read, and renamed over it when it is done, so a failed fetch leaves the
-    # earlier install as it was.
-    def fetch(root:, runner:)
-      verify_lockfile(root)
-      check_versions(root: root, runner: runner, tools: %w[node pnpm])
-      next_modules = fresh(File.join(root, "#{MODULES}.next"))
-      PACKAGE_FILES.each { |name| FileUtils.cp(File.join(root, 'web', name), next_modules) }
-      install(runner: runner, dir: next_modules, store: File.join(root, STORE))
+    # `tools/erx fetch`: install the packages of packages.source from the
+    # registry into packages.modules, from a copy of its package files so
+    # nothing is written under the source. The install is made beside it, with
+    # a record of the copies it read, and renamed over it when it is done, so a
+    # failed fetch leaves the earlier install as it was.
+    def fetch(root:, runner:, packages: WEB)
+      verify_lockfile(root, packages)
+      check_versions(root: root, runner: runner, tools: %w[node pnpm], packages: packages)
+      next_modules = fresh(File.join(root, "#{packages.modules}.next"))
+      PACKAGE_FILES.each { |name| FileUtils.cp(File.join(root, packages.source, name), next_modules) }
+      install(runner: runner, dir: next_modules, store: File.join(root, STORE), name: "#{packages.name}-install")
       File.write(File.join(next_modules, FETCHED), "#{package_digest(next_modules)}\n")
-      modules = File.join(root, MODULES)
+      modules = File.join(root, packages.modules)
       FileUtils.rm_rf(modules)
       File.rename(next_modules, modules)
       modules
@@ -207,9 +213,9 @@ module Erx
     # The packages dir/pnpm-lock.yaml pins, into dir/node_modules: none the
     # lockfile lacks, each checked against its integrity hash, and no install
     # script. extra holds options for a caller that must not reach the network.
-    def install(runner:, dir:, store:, extra: [])
+    def install(runner:, dir:, store:, extra: [], name: 'web-install')
       runner.run(['pnpm', 'install', '--frozen-lockfile', '--ignore-scripts', '--store-dir', store, *extra, *PNPM_OPTIONS],
-                 name: 'web-install', deadline: DEADLINE, chdir: dir, env: PNPM_ENV)
+                 name: name, deadline: DEADLINE, chdir: dir, env: PNPM_ENV)
     end
 
     # web/ with build/gen/web over it, in a stage made afresh.
@@ -231,13 +237,14 @@ module Erx
       output
     end
 
-    # Refuse a tool of tools older than web/package.json's engines require: fetch
-    # runs node and pnpm, build only node.
-    def check_versions(root:, runner:, tools:)
-      required = engines(File.read(File.join(root, 'web/package.json'))).slice(*tools)
+    # Refuse a tool of tools older than the engines of packages' package.json
+    # require: fetch runs node and pnpm, build only node.
+    def check_versions(root:, runner:, tools:, packages: WEB)
+      label = "#{packages.source}/package.json"
+      required = engines(File.read(File.join(root, label)), label: label).slice(*tools)
       found = required.keys.to_h { |tool| [tool, version_of(tool, root: root, runner: runner)] }
-      refused = refusals(required, found)
-      raise Error, "the web client's tools: #{refused.join('; ')}" unless refused.empty?
+      refused = refusals(required, found, label)
+      raise Error, "#{packages.title}'s tools: #{refused.join('; ')}" unless refused.empty?
     end
 
     # What `tool --version` prints, run from the build tree so no package.json

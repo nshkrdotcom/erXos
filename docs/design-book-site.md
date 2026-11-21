@@ -142,7 +142,7 @@ compared.
 | esbuild | bundles the imported TypeScript source of beautiful-mermaid, with elkjs and entities, into one JavaScript module | MIT | 0.28.2, the version `web/package.json` pins |
 | elkjs | the layered graph layout beautiful-mermaid calls | EPL-2.0 | 0.11.1, as beautiful-mermaid 1.1.3's lockfile resolves it |
 | entities | HTML entity encoding, used by beautiful-mermaid | BSD-2-Clause | 7.0.1, likewise |
-| mermaid | the official Mermaid library, for its parser (see "The parse check") | MIT | 12.3.0; its dependency closure, and the licenses there, are listed when its lockfile is made (unverified here) |
+| mermaid | the official Mermaid library, whose parser needs a DOM under Node and is therefore not used (see "The parse check") | MIT | not pinned |
 | Node.js | runs the two libraries, as a subprocess of the Ruby build | MIT (unverified in this task) | any at least the `engines` minimum; the publishing workflow pins one |
 | Source Serif 4 | a text serif | OFL-1.1 (`LICENSE.md`, `75784a29...`) | tag `4.005R` |
 | IBM Plex Mono | the site's mono face, and the one face of every diagram | OFL-1.1 (`license.txt`, `91c25c35...`) | tag `v6.4.2` |
@@ -525,13 +525,15 @@ unmodified, pinned by `tools/book/pnpm-lock.yaml` at the versions
 beautiful-mermaid 1.1.3's own lockfile resolves (elkjs 0.11.1,
 entities 7.0.1) and installed with the book's other packages. The step
 runs the pinned esbuild, by argument vector under a deadline, to bundle
-`tools/book/beautiful-mermaid/index.ts` with those two packages into
-one ES module, `build/book-tools/beautiful-mermaid.mjs`, resolving the
-two bare imports from `build/book-modules/node_modules` through esbuild's
-node-paths setting (whether the command line reaches it by `NODE_PATH`
-is unverified and probed first). It reuses an earlier bundle only when
-the SHA-256 of the import's files, taken in sorted path order, and the
-esbuild version match the record beside it.
+the driver of "The diagram step", `tools/book/diagrams.ts`, with the
+library and those two packages into one ES module,
+`build/book-tools/diagrams.mjs`, resolving the two bare imports from
+`build/book-modules/node_modules` through esbuild's node-paths setting,
+which its command line reads from `NODE_PATH` (probed with esbuild
+0.28.2: without it, `entities` does not resolve). It reuses an earlier
+bundle only when the record beside it names the same sources (the
+SHA-256 of the import's files in sorted path order, the driver and the
+package files) and the same versions of elkjs, entities and esbuild.
 
 ### The diagram step
 
@@ -541,15 +543,19 @@ process, `tools/book/diagrams.ts`, a short TypeScript driver that esbuild bundle
 argument vector and a deadline:
 
 ```
-node --permission --allow-fs-read=<driver>,<bundle>,<modules> <driver>
+node --permission --allow-fs-read=<bundle> <bundle>
 ```
 
-Node's permission model (`--permission`) lets the process read only the
-driver, the library's bundle and the installed packages (official
-Mermaid, for the parse check) and refuses file writes, child
-processes, worker threads and native add-ons; whether the pinned Node
-also refuses network access under it is unverified and read from that
-Node's documentation during implementation. Neither library makes a
+The bundle is the driver with the library, elkjs and entities in one
+module, so Node's permission model (`--permission`) lets the process
+read only that file, and refuses file writes, network access, child
+processes, worker threads and native add-ons (Node 26.13.0's
+`doc/api/permissions.md`, "Permission Model", SHA-256 `32b6ad04...`).
+Network access is refused under the model only from Node 25.0.0, which
+added `--allow-net` (`doc/api/cli.md`, `c32c9c59...`), so
+`tools/book/package.json`'s `engines` names Node 25.0.0. The step
+removes `NODE_OPTIONS` from Node's environment, so the caller's
+environment cannot widen the grant. Neither library makes a
 request: beautiful-mermaid 1.1.3's built `dist/index.js` holds no
 `fetch`, `XMLHttpRequest` or `http` import, and erXos's changes add
 none.
@@ -558,15 +564,14 @@ The request goes to the driver's standard input as one JSON document
 and the reply comes back on its standard output as another:
 
 * request: `{"options": {...}, "diagrams": ["<source>", ...]}`;
-* reply: `{"versions": {"node": "...", "mermaid": "..."},
-  "results": [...]}`, one result per diagram in the
+* reply: `{"versions": {"node": "..."}, "results": [...]}`, one result per diagram in the
   same order, either `{"svg": "..."}` or `{"error": {"stage": "parse"
   | "render", "message": "...", "line": N | null}}`.
 
-The driver reads Node's version from the process and mermaid's from
-the `package.json` it actually loaded, and the build record names the
-imported library by the digest of its files, so the record names what
-ran. It reports a diagram's
+The driver reads Node's version from the process; the step reads the
+versions of elkjs, entities and esbuild from the `package.json` files
+esbuild resolved, and the build record names the imported library by
+the digest of its files, so the record names what ran. It reports a diagram's
 failure as a result and goes on, and exits non-zero only for its own
 failure (a missing package, a malformed request); Ruby turns the first
 failed result, in book order, into the step's refusal. One process for
@@ -593,7 +598,7 @@ and a label fills its box as the layout measured it.
 
 The packages enter as the web client's do. `tools/book/package.json`,
 `tools/book/pnpm-lock.yaml` and `tools/book/pnpm-workspace.yaml` pin
-elkjs 0.11.1, entities 7.0.1, mermaid 12.3.0 and esbuild 0.28.2 with
+elkjs 0.11.1, entities 7.0.1 and esbuild 0.28.2 with
 every package of their closure and its integrity hash, and allow no
 build script;
 `package.json`'s `engines` names the oldest Node and pnpm.
@@ -612,12 +617,14 @@ sees it, so a diagram the repository host would show as an error never
 reaches the site. The pinned parser stands in for the repository
 host's, whose version is not published (unverified).
 
-That `mermaid.parse` runs under Node with no DOM is unverified:
-mermaid 12.3.0 depends on `dompurify` and `d3`, which expect a
-browser's `window`. The implementation probes it first, on the 56
-diagrams. If it runs, the check is built as described; if it needs a
-DOM, the check is not built, no DOM emulation is added, and the
-question returns to the user with what the probe found.
+`mermaid.parse` needs a DOM. A probe on 2026-11-20 ran mermaid 12.3.0
+under Node 26.13.0 with no DOM on the book's 61 diagrams: 19 sequence
+diagrams parsed, 2 were rejected with parse errors, and the other 40,
+every flowchart with a label and every state diagram, failed with
+`DOMPurify.addHook is not a function`, since `dompurify` expects a
+browser's `window`. The check is therefore not built, mermaid is not
+among the pinned packages, and no DOM emulation is added; whether to
+check diagrams another way is an open question below.
 
 ### From SVG to page
 
@@ -984,3 +991,12 @@ pages, not by a test.
    title's minimum width, which are general (any monospace face, and
    the clipped title is the library's fault), and keep `groupTitle`
    as erXos's change unless upstream wants it.
+2. **The parse check.** `mermaid.parse` needs a DOM under Node ("The
+   parse check"), so no diagram is checked against official Mermaid,
+   and a diagram GitHub would show as an error can reach the site
+   when beautiful-mermaid draws it. Should the check come back, and
+   how: with a DOM emulation under Node (a new dependency), in the
+   publishing workflow by another tool, or not at all, leaving
+   GitHub's preview and the review of rendered pages to catch such a
+   diagram? Recommendation: not at all for now; the two diagrams the
+   probe found rejected are fixed in their source.

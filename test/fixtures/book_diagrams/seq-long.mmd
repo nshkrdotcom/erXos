@@ -1,0 +1,22 @@
+sequenceDiagram
+  participant E as echo stage
+  participant F as feed pump
+  participant P as pipe server
+  participant H as rcio's handler
+  participant R as rcio
+  participant D as drain pump
+  participant S as starter
+  participant T as terminal
+  E->>F: "piped text" via shell pipe
+  F->>R: record in stdin ring
+  R->>D: record in stdout ring
+  D->>T: "PIPED TEXT"
+  E-->>F: end of file
+  F-->>P: write end gone
+  P-->>H: writer gone
+  H-->>R: report: read returns 0
+  R->>H: exit 0
+  Note over P: anchor released, pipe NIF tells pipe server
+  P-->>D: writer gone
+  D-->>S: drained, pump ends
+  S->>S: $status empty, after the drain
