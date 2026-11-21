@@ -15,7 +15,7 @@
  [{description, "erXos Bluetooth Low Energy"},
   {vsn, "1"},
   {modules, [erx_att, erx_bt_adv, erx_bt_app, erx_bt_hci, erx_bt_hci_core, erx_bt_host_sup, erx_bt_line_rx, erx_bt_line_tx,
-             erx_bt_link, erx_bt_link_sup, erx_bt_patch, erx_bt_store, erx_bt_sup, erx_gatt_db, erx_gatt_decl,
+             erx_bt_link, erx_bt_link_core, erx_bt_link_sup, erx_bt_patch, erx_bt_store, erx_bt_sup, erx_gatt_db, erx_gatt_decl,
              erx_gatt_gate, erx_gatt_server, erx_h4, erx_hci, erx_l2cap, erx_smp, erx_smp_core, erx_smp_crypto]},
   {registered, [erx_bt_hci, erx_bt_host_sup, erx_bt_line_rx, erx_bt_line_tx, erx_bt_link_sup,
                 erx_bt_store, erx_bt_sup]},

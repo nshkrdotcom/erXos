@@ -8550,7 +8550,19 @@ model harness drive `erx_device.c` itself. `erx_device_dma_check` and `erx_devic
   only"; the core's moduledoc): the link process, when it runs the core, must keep the core's state, the
   verdict's fresh values and the `key` and `bonded` actions out of crash reports and `sys` status
   (`format_status/1`), since they hold the private key, passkey, DHKey and LTK, with a test that a crash report
-  and `sys:get_status/1` show none of them. Lands with the link's wiring of the Security Manager.
+  and `sys:get_status/1` show none of them. A raise in `erx_bt_link_core:step/3` carries the core in its stack
+  trace, so the process catches it and exits with a reason built from `erx_bt_link_core:facts/1` alone. Lands
+  with the link's wiring of the Security Manager.
+* [Low] bluetooth, the link core's deadlines and Encryption_Enabled (`erlang/apps/erx_bt/src/erx_bt_link_core.erl`,
+  its `HANDLER_TIMEOUT_MS`, `ATT_TRANSACTION_MS`, `SMP_TIMEOUT_MS` and `ENCRYPTION_ON_LE`): "What a radio peer can
+  make the domain spend" makes every bound a constant of `abi/formats/bluetooth.txt`, but these four are module
+  macros. Move them there as limits (5000, 30000, 30000 and HCI 7.7.8's 0x01) and use the generated names.
+* [Medium] bluetooth, subscriptions made while the store keeps a bond (`erx_bt_link_core`'s `smp_action/3` for
+  `bonded` and `input/3` for `{kept, ok}`; docs/design-bluetooth.md "Bonds and the store"): `keep` carries the
+  subscriptions the link had when the pairing completed, and a configuration write between that and the store's
+  `ok` is answered at once and never kept, so a power cut loses a subscription the phone saw acknowledged (GATT
+  3.3.3.3). Hold such writes until the store answers, or keep the difference at `ok`, with the bonded
+  configuration write.
 * [Medium] bluetooth, Passkey Entry's bit order (`erx_smp_core`'s `z/2`): the test's honest phone takes the
   passkey's bits least significant first, as the core does, citing Bumble v0.0.237's bumble/smp.py; the
   specification's Figure 2.4 does not settle it. Pin it with the Bumble test peer before the board run.

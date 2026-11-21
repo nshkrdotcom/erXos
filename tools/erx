@@ -448,6 +448,8 @@ module Erx
                    name: 'fuzz-erx-bt-att', deadline: 300, chdir: ROOT, env: environment)
         runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_bt_smp.rb'), '--seed', options.fetch(:seed).to_s],
                    name: 'fuzz-erx-bt-smp', deadline: 300, chdir: ROOT, env: environment)
+        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_bt_link.rb'), '--seed', options.fetch(:seed).to_s],
+                   name: 'fuzz-erx-bt-link', deadline: 300, chdir: ROOT, env: environment)
         runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_machine_ctl.rb'), '--seed', options.fetch(:seed).to_s],
                    name: 'fuzz-erx-machine-ctl', deadline: 300, chdir: ROOT, env: environment)
         runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_line_ctl.rb'), '--seed', options.fetch(:seed).to_s],

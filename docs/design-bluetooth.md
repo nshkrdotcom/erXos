@@ -688,7 +688,7 @@ table, fixed before any peer arrives:
 | connections | the row's limit, at most `bt_connections_max`, 4; advertising stops at the limit | the controller process |
 | ACL packets in flight to the controller | the controller's LE buffer count, at most `bt_acl_credits_max`, 8, split evenly among the configured connections, so no link holds another's | the controller process |
 | packets and commands waiting to be written | one: the writer takes the next only after its last write returned | the controller process and the writer |
-| notifications waiting for a link's credits | `bt_notify_queue`, 16, per link; past it `notify` answers `{error, busy}` | the link |
+| notifications waiting for a link's credits | `bt_notify_queue`, 16 frames, per link; past it `notify` answers `{error, busy}`, and an SMP or signaling answer is dropped and counted, a dropped SMP answer failing its pairing at SMP's timeout; ATT's responses and its one indication queue past it, and one that would make the queue hold more than 18 frames ends the link, since an honest phone sends a request only after it received the last response (ATT 3.3.2) | the link |
 | an ACL packet from the controller | `bt_acl_rx_max`, 251 octets of data, which the bring-up states with Host Buffer Size; a longer one is a loss of synchronization | `erx_h4` |
 | an L2CAP frame being reassembled | 4 bytes of header and the channel's MTU: 65 for SMP, and ATT's 247 for ATT and every other channel; a longer frame ends the link, and a signaling frame past MTUsig, 23, is answered Command Reject (L2CAP 4) | `erx_bt_link_core` |
 | ATT requests | one outstanding (ATT 3.3.2); a second before the response ends the link | the link |
@@ -1230,6 +1230,55 @@ rather than ending the link; one too short to carry a command, or whose
 Data Length disagrees with it, is not correctly formed (L2CAP 4) and is
 dropped. A frame on any other channel is dropped and counted.
 
+### The link's messages
+
+`erx_bt_link_core:step(Input, Now, Core) -> {Actions, Core}` is the
+link's pure core, and `next_deadline/1` its earliest deadline: a
+handler's answer, 5 s; an indication's confirmation, 30 s (ATT 3.3.3);
+a pairing's step, 30 s (SMP 3.4). The link process reads the clock,
+keeps one wake-up at that deadline and steps `expired` when it fires.
+These are the link's side of the messages between the link and the
+other owners:
+
+| From | Input | Meaning |
+| --- | --- | --- |
+| the controller process | `{acl, Boundary, Data}`, `{completed, Count}`, `busy` | an ACL packet; packets the controller has sent; the link miscounted |
+| | `{le_long_term_key_request, Handle, Rand, Ediv}`, `{encryption_change, Status, Handle, Enabled}`, `{encryption_key_refresh_complete, Status, Handle}`, `{le_connection_update_complete, Status, Handle}` | the controller's reports, as `erx_hci` decodes them (HCI 7.7.65.5, 7.7.8, 7.7.39, 7.7.65.3); new connection parameters change nothing |
+| | `{ltk_reply_complete, ok \| {failed, Status}}` | the controller's answer to the link's `ltk_reply` |
+| the window | `{admission, Tag, Verdict}`, `{withdraw, Tag}` | its verdict on the Pairing Request `Tag`; its opener closed it ([The pairing window](#the-pairing-window)) |
+| the registry | `{answer, Ref, Answer}` | a handler's answer to the write `Ref`, which the facet maps back from its `Req` |
+| | `{set, Key, Value}` | a handler set a value; reads return it |
+| | `{notify, From, notify \| indicate, Key, Value}` | a handler's `notify` or `indicate`, answered to `From` |
+| the store | `{kept, ok \| {error, Reason}}` | its answer to `keep`: `unavailable`, `bonds_full` or `already_bonded` fail the pairing ([Bonds and the store](#bonds-and-the-store)) |
+
+| To | Action | Meaning |
+| --- | --- | --- |
+| the controller process | `{acl, Boundary, Data}`, while the link's packets outstanding are below its share | a packet of a frame the link sends |
+| | `{ltk_reply, Ltk \| none}` | the answer to a Long Term Key Request, Reply or, for `none`, Negative Reply (HCI 7.8.25, 7.8.26), which the link process sends as `{request, Link, {ltk_reply, _}}` |
+| the registry | `{write, Ref, Key, Value}` | a write the gate allowed, for the service's handler, which the facet hands it under a fresh `Req` |
+| | `{subscribed, Key, none \| notify \| indicate}`, `{mtu, Mtu}` | the phone wrote a configuration; the bearer's MTU changed |
+| | `{security, #{level := L, bonded := B}}` | the link's security changed, which the registry tells the handlers with `connected` |
+| `From` | `{reply, From, ok \| {error, Reason}}` | a notification queued or refused, an indication confirmed, or its timeout |
+| the window | `{admit, Tag, Address}`, `{passkey, Tag, N}`, `{outcome, Tag, {bonded, Identity, Level} \| {failed, Reason}}` | ask to admit the phone at `Address`; the passkey to show; how the pairing ended |
+| the store | `{keep, Bond, Subscriptions}` | keep a completed pairing's bond with the subscriptions the link has made |
+| the link process | `{close, Reason}` | end the link, which its end disconnects |
+
+The link answers a Long Term Key Request with Reply only when it holds
+a key and the request carries zero EDIV and Rand. A Reply the
+controller answers with a failure counts as no Reply, so the link's
+next report about encryption ends it: HCI 7.8.25's Status says only
+that the command failed, not whether the controller kept the key, and
+ending the link is the reading that never takes an unconfirmed key as
+the link's. A step's actions end at its first `close`, after the
+packets it hands over, and what is still queued is dropped with the
+link. A link with a key
+passes the window's `open` verdict to the Security Manager as `bonded`,
+so its pairing fails. The core's `key` and Security Manager state, and
+the bond in `keep`, hold secrets; the link process shows
+`erx_bt_link_core:facts/1`, which holds none, in crash reports and
+`/proc`, and ends with a reason built from it alone when `step/3`
+raises, since a stack trace carries the core.
+
 ## Stage 3: the serial service
 
 ### For apps
@@ -1326,8 +1375,10 @@ sample data of SMP Appendix D as its tests. The responder:
   identity in the third phase over the encrypted link;
 * ends a pairing at 30 s without a step (SMP 3.4), and the link with it.
 
-Before stage 4, the link answers every SMP PDU with Pairing Not
-Supported.
+Before stage 4, the link answers every SMP command with Pairing Failed,
+Pairing Not Supported, but the phone's own Pairing Failed, which is
+never answered, and the reserved codes and empty PDUs the Security
+Manager ignores in every phase.
 
 ### The pairing window
 

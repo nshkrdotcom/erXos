@@ -1,0 +1,440 @@
+%% Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
+%% SPDX-License-Identifier: BSD-2-Clause
+
+%% The cases of the link's core, erx_bt_link_core (docs/design-bluetooth.md, "Host tests of
+%% the cores"): the fixed channels, the one key and its encryption, the handler's and the
+%% indication's deadlines, the queue, a pairing through the link to the store's answer,
+%% and an exploration of every state a small alphabet reaches within a few steps. Frames
+%% and PDUs are written from the numbers of the Core Specification 6.3 (Vol 3 Parts A, F
+%% and H; Vol 4 Part E, 7.7.8, 7.7.39 and 7.7.65.5), not from the modules' codes.
+
+-module(erx_bt_link_tests).
+
+-include_lib("eunit/include/eunit.hrl").
+
+-define(CENTRAL, {random, <<16#C0, 16#FF, 16#EE, 16#12, 16#34, 16#56>>}).
+-define(PERIPHERAL, {random, <<16#D1, 16#E2, 16#F3, 16#A4, 16#B5, 16#C6>>}).
+-define(BOND_LTK, <<16#B0:128>>).
+-define(SHARE, 2).
+-define(ACL_TX_MAX, 27).
+-define(QUEUE, 16).                       % bt_notify_queue
+-define(DEPTH, 6).
+
+%% ---- fixtures ----
+
+services() ->
+    [#{name => svc, uuid => <<16#00, 16#FF>>,
+       characteristics => [#{name => open_w, uuid => <<16#01, 16#FF>>, max => 20,
+                             access => #{write => open, write_without_response => open}},
+                           #{name => enc_w, uuid => <<16#02, 16#FF>>, max => 20, access => #{write => encrypted}},
+                           #{name => enc_n, uuid => <<16#03, 16#FF>>, max => 20, access => #{notify => encrypted}},
+                           #{name => ind, uuid => <<16#04, 16#FF>>, max => 20, access => #{indicate => open}}]}].
+
+table() -> erx_gatt_db:build(services()).
+
+handle(Char) -> {ok, #{value := Handle}} = erx_gatt_db:characteristic({svc, Char}, table()), Handle.
+configuration(Char) -> {ok, #{configuration := Handle}} = erx_gatt_db:characteristic({svc, Char}, table()), Handle.
+
+core() -> core(#{}).
+core(Options) ->
+    erx_bt_link_core:new(maps:merge(#{table => table(), values => #{{gap, device_name} => <<"erxos">>},
+                                      addresses => #{central => ?CENTRAL, peripheral => ?PERIPHERAL},
+                                      pairing => false, bond => none, share => ?SHARE, acl_tx_max => ?ACL_TX_MAX},
+                                    Options)).
+
+bonded(Level) -> core(#{bond => #{ltk => ?BOND_LTK, level => Level}}).
+
+%% A basic frame (Part A, 3.1) in one ACL packet, flagged first_flushable (Vol 4 Part E, 5.4.2).
+frame(Cid, Payload) -> <<(byte_size(Payload)):16/little, Cid:16/little, Payload/binary>>.
+acl(Cid, Payload) -> {acl, 2, frame(Cid, Payload)}.
+att(Pdu) -> acl(4, Pdu).
+smp(Pdu) -> acl(6, Pdu).
+
+%% ATT PDUs (Part F, 3.4).
+read(H) -> <<16#0A, H:16/little>>.
+write(H, V) -> <<16#12, H:16/little, V/binary>>.
+write_cmd(H, V) -> <<16#52, H:16/little, V/binary>>.
+write_rsp() -> <<16#13>>.
+confirm() -> <<16#1E>>.
+error_rsp(Op, H, Code) -> <<16#01, Op, H:16/little, Code>>.
+
+%% SMP's Pairing Request (Part H, 3.5.1): NoInputNoOutput, no OOB, bonding, MITM, Secure
+%% Connections and CT2, a 16-octet key, every key offered.
+pairing_request() -> <<16#01, 16#03, 0, 16#2D, 16, 16#0B, 16#0B>>.
+pairing_failed(Reason) -> <<16#05, Reason>>.
+
+%% The controller's reports: LE Long Term Key Request with Rand and EDIV (7.7.65.5),
+%% Encryption Change with status and Encryption_Enabled (7.7.8), Key Refresh (7.7.39).
+ltk_request() -> {le_long_term_key_request, 1, <<0:64>>, 0}.
+encryption_on() -> {encryption_change, 0, 1, 1}.
+
+%% Feeds inputs in order at time 0, or `{at, Time, Input}`; returns every action and the core.
+run(Inputs) -> run(Inputs, core()).
+run(Inputs, Core) ->
+    lists:foldl(fun({at, Now, Input}, {Actions, C}) -> step(Input, Now, Actions, C);
+                   (Input, {Actions, C}) -> step(Input, 0, Actions, C)
+                end, {[], Core}, Inputs).
+
+step(Input, Now, Actions, Core) ->
+    {More, Next} = erx_bt_link_core:step(Input, Now, Core),
+    {Actions ++ More, Next}.
+
+%% The frames the link sent, joined from its ACL packets: first_non_flushable starts one.
+sent(Actions) ->
+    Joined = lists:foldl(fun({acl, 0, Data}, Frames) -> [Data | Frames];
+                            ({acl, 1, Data}, [Last | Frames]) -> [<<Last/binary, Data/binary>> | Frames];
+                            (_, Frames) -> Frames
+                         end, [], Actions),
+    [{Cid, Payload} || <<_:16, Cid:16/little, Payload/binary>> <- lists:reverse(Joined)].
+
+on(Cid, Actions) -> [Payload || {C, Payload} <- sent(Actions), C =:= Cid].
+registry(Actions) -> [Event || {registry, Event} <- Actions].
+window(Actions) -> [Message || {window, Message} <- Actions].
+closed(Actions) -> [Reason || {close, Reason} <- Actions].
+facts(Core) -> erx_bt_link_core:facts(Core).
+
+%% ---- the channels ----
+
+%% A frame on a channel the link does not serve is dropped and counted, and the link stays.
+unknown_channel_counted_test() ->
+    {Actions, Core} = run([acl(16#0040, <<1, 2, 3>>), acl(16#0003, <<>>)]),
+    ?assertEqual([], Actions),
+    ?assertMatch(#{dropped := 2}, facts(Core)).
+
+%% Every split of a frame into ACL packets reassembles to the same frame (Part A, 3.1).
+reassembly_at_every_fragment_size_test() ->
+    Frame = frame(4, write(handle(open_w), binary:copy(<<"v">>, 20))),
+    [begin
+         {Actions, _} = run(pieces(Frame, Size)),
+         ?assertEqual([{write, 1, {svc, open_w}, binary:copy(<<"v">>, 20)}], registry(Actions))
+     end || Size <- lists:seq(1, byte_size(Frame))].
+
+pieces(Frame, Size) when byte_size(Frame) =< Size -> [{acl, 2, Frame}];
+pieces(Frame, Size) ->
+    <<First:Size/binary, Rest/binary>> = Frame,
+    [{acl, 2, First} | [{acl, 1, Piece} || Piece <- chunks(Rest, Size)]].
+
+chunks(<<>>, _Size) -> [];
+chunks(Bytes, Size) when byte_size(Bytes) =< Size -> [Bytes];
+chunks(Bytes, Size) -> <<Piece:Size/binary, Rest/binary>> = Bytes, [Piece | chunks(Rest, Size)].
+
+%% A continuation without a start, and a frame past its channel's bound, end the link.
+malformed_frame_ends_link_test() ->
+    ?assertMatch([{l2cap, continuation_without_start}], closed(element(1, run([{acl, 1, <<1, 2>>}])))),
+    ?assertMatch([{l2cap, {too_long, 6, 66}}], closed(element(1, run([{acl, 2, <<66:16/little, 6:16/little>>}])))).
+
+%% LE signaling: a command is rejected, "Command not understood" (Part A, 4.1).
+signaling_rejects_commands_test() ->
+    {Actions, _} = run([acl(5, <<16#12, 7, 8:16/little, 0:64>>)]),
+    ?assertEqual([<<16#01, 7, 2:16/little, 0:16/little>>], on(5, Actions)).
+
+%% Before pairing is enabled every SMP command is answered Pairing Not Supported, and the
+%% phone's Pairing Failed is not answered (Part H, 3.5.5).
+pairing_not_supported_test() ->
+    {Actions, _} = run([smp(pairing_request()), smp(pairing_failed(16#08)), smp(<<16#0B, 16#2D>>)]),
+    ?assertEqual([pairing_failed(16#05), pairing_failed(16#05)], on(6, Actions)).
+
+%% With the share used and never completed, signaling's answers past bt_notify_queue are
+%% dropped and counted.
+signaling_answers_dropped_at_full_queue_test() ->
+    {Actions, Core} = run([acl(5, <<16#12, I, 8:16/little, 0:64>>) || I <- lists:seq(1, ?SHARE + ?QUEUE + 2)]),
+    ?assertEqual([], closed(Actions)),
+    ?assertMatch(#{queued := ?QUEUE, refused := 2}, facts(Core)).
+
+%% New connection parameters, which a phone asks for after connecting (HCI 7.7.65.3),
+%% change nothing.
+connection_update_ignored_test() ->
+    Core = core(),
+    ?assertEqual({[], Core}, erx_bt_link_core:step({le_connection_update_complete, 0, 1}, 0, Core)).
+
+%% ---- the ATT bearer through the link ----
+
+%% A phone that sends requests without waiting for the responses, while the controller
+%% sends nothing, ends its link once the queue would pass bt_notify_queue and two.
+att_request_flood_ends_link_test() ->
+    Reads = [att(read(3)) || _ <- lists:seq(1, ?SHARE + ?QUEUE + 3)],
+    {Actions, _} = run(lists:droplast(Reads)),
+    ?assertEqual([], closed(Actions)),
+    {Flooded, _} = run(Reads),
+    ?assertEqual([queue_overflow], closed(Flooded)),
+    ?assertMatch({close, _}, lists:last(Flooded)).
+
+%% A write the gate allows reaches the registry; the handler's answer is the Write Response.
+write_round_trip_test() ->
+    {Actions, _} = run([att(write(handle(open_w), <<"w">>)), {answer, 1, ok}]),
+    ?assertEqual([{write, 1, {svc, open_w}, <<"w">>}], registry(Actions)),
+    ?assertEqual([write_rsp()], on(4, Actions)).
+
+%% A write to an `encrypted` characteristic on a link with no key is Insufficient
+%% Authentication; on a bonded link not yet encrypted, Insufficient Encryption; once the
+%% controller reports encryption, it reaches the handler.
+write_waits_for_encryption_test() ->
+    Write = att(write(handle(enc_w), <<"e">>)),
+    {NoKey, _} = run([Write]),
+    ?assertEqual([error_rsp(16#12, handle(enc_w), 16#05)], on(4, NoKey)),
+    {Keyed, _} = run([Write], bonded(unauthenticated)),
+    ?assertEqual([error_rsp(16#12, handle(enc_w), 16#0F)], on(4, Keyed)),
+    ?assertEqual([], registry(Keyed)),
+    {Encrypted, _} = run([ltk_request(), encryption_on(), Write], bonded(unauthenticated)),
+    ?assertEqual([{security, #{level => encrypted, bonded => true}}, {write, 1, {svc, enc_w}, <<"e">>}],
+                 registry(Encrypted)).
+
+%% No answer within 5 s is Unlikely Error, and the late answer changes nothing.
+handler_deadline_test() ->
+    {Actions, Core} = run([att(write(handle(open_w), <<"w">>))]),
+    ?assertEqual(5000, erx_bt_link_core:next_deadline(Core)),
+    {Early, Core1} = erx_bt_link_core:step(expired, 4999, Core),
+    ?assertEqual([], Early),
+    {Late, Core2} = run([{at, 5000, expired}, {at, 5001, {answer, 1, ok}}], Core1),
+    ?assertEqual([], registry(Actions) -- [{write, 1, {svc, open_w}, <<"w">>}]),
+    ?assertEqual([error_rsp(16#12, handle(open_w), 16#0E)], on(4, Late)),
+    ?assertEqual(infinity, erx_bt_link_core:next_deadline(Core2)).
+
+%% A second request before the first's response ends the link (Part F, 3.3.2); write
+%% commands past bt_write_queue behind a handler's answer are discarded and counted.
+one_request_and_command_queue_test() ->
+    {Two, _} = run([att(write(handle(open_w), <<"a">>)), att(read(3))]),
+    ?assertMatch([{att, request_outstanding}], closed(Two)),
+    Commands = [att(write_cmd(handle(open_w), <<I>>)) || I <- lists:seq(0, 17)],
+    {_, Core} = run(Commands),
+    ?assertMatch(#{discarded := 1}, facts(Core)).
+
+%% ---- notifications ----
+
+%% The gate decides before a notification leaves; the caller hears why.
+notification_through_gate_test() ->
+    Subscribe = att(write(configuration(enc_n), <<1, 0>>)),
+    Notify = {notify, caller, notify, {svc, enc_n}, <<"n">>},
+    {Refused, _} = run([Notify]),
+    ?assertEqual([{reply, caller, {error, insufficient_security}}], [A || {reply, _, _} = A <- Refused]),
+    {Sent, _} = run([ltk_request(), encryption_on(), Subscribe, Notify], bonded(unauthenticated)),
+    ?assertEqual([{reply, caller, ok}], [A || {reply, _, _} = A <- Sent]),
+    ?assertEqual([write_rsp(), <<16#1B, (handle(enc_n)):16/little, "n">>], on(4, Sent)).
+
+%% With the share used and never completed, the queue fills to bt_notify_queue and the
+%% next notification is `busy`; completions hand the queue over.
+notification_queue_bound_test() ->
+    Inputs = [ltk_request(), encryption_on(), att(write(configuration(enc_n), <<1, 0>>))]
+             ++ [{notify, I, notify, {svc, enc_n}, <<"n">>} || I <- lists:seq(1, ?SHARE + ?QUEUE + 1)],
+    {Actions, Core} = run(Inputs, bonded(unauthenticated)),
+    Replies = [Reply || {reply, _, Reply} <- Actions],
+    ?assertEqual(lists:duplicate(?SHARE - 1 + ?QUEUE, ok) ++ [{error, busy}, {error, busy}], Replies),
+    ?assertMatch(#{queued := ?QUEUE, outstanding := ?SHARE}, facts(Core)),
+    {More, _} = erx_bt_link_core:step({completed, ?SHARE}, 0, Core),
+    ?assertEqual(?SHARE, length([A || {acl, _, _} = A <- More])).
+
+%% An indication is answered at the phone's confirmation; unconfirmed in 30 s, the
+%% caller hears `timeout` and the link ends (Part F, 3.3.3).
+indication_test() ->
+    Subscribe = att(write(configuration(ind), <<2, 0>>)),
+    Indicate = {notify, caller, indicate, {svc, ind}, <<"i">>},
+    {Confirmed, _} = run([Subscribe, Indicate, att(confirm())]),
+    ?assertEqual([{reply, caller, ok}], [A || {reply, _, _} = A <- Confirmed]),
+    {Timed, _} = run([Subscribe, Indicate, {at, 30000, expired}]),
+    ?assertEqual([{reply, caller, {error, timeout}}], [A || {reply, _, _} = A <- Timed]),
+    ?assertEqual([att_timeout], closed(Timed)).
+
+%% ---- the one key and encryption ----
+
+%% A reconnection: the bond's key answers the request and the level is the bond's.
+reconnection_reaches_bond_level_test() ->
+    {Actions, Core} = run([ltk_request(), encryption_on()], bonded(authenticated)),
+    ?assertEqual([{ltk_reply, ?BOND_LTK}], [A || {ltk_reply, _} = A <- Actions]),
+    ?assertEqual([{security, #{level => authenticated, bonded => true}}], registry(Actions)),
+    ?assertMatch(#{encrypted := true, key := authenticated}, facts(Core)).
+
+%% Secure Connections' request carries zero Rand and EDIV; any other, and every request on
+%% a link with no key, is answered Negative Reply.
+negative_reply_test() ->
+    {Other, _} = run([{le_long_term_key_request, 1, <<1:64>>, 7}], bonded(authenticated)),
+    ?assertEqual([{ltk_reply, none}], Other),
+    {NoKey, _} = run([ltk_request()]),
+    ?assertEqual([{ltk_reply, none}], NoKey).
+
+%% A Reply the controller answered with a failure counts as no Reply: the next report
+%% about encryption ends the link; one answered `ok` encrypts.
+failed_reply_counts_as_none_test() ->
+    {Failed, Core} = run([ltk_request(), {ltk_reply_complete, {failed, 16#0C}}, encryption_on()],
+                         bonded(authenticated)),
+    ?assertEqual([{encryption, encryption_change}], closed(Failed)),
+    ?assertMatch(#{encrypted := false}, facts(Core)),
+    {_, Ok} = run([ltk_request(), {ltk_reply_complete, ok}, encryption_on()], bonded(authenticated)),
+    ?assertMatch(#{encrypted := true}, facts(Ok)).
+
+%% A report after a Negative Reply, without a request, with an error or turning
+%% encryption off ends the link and encrypts nothing.
+negative_reply_then_change_ends_link_test() ->
+    Bonded = bonded(authenticated),
+    [begin
+         {Actions, Core} = run(Inputs, Bonded),
+         ?assertMatch([{encryption, _}], closed(Actions)),
+         ?assertMatch(#{encrypted := false}, facts(Core))
+     end || Inputs <- [[{le_long_term_key_request, 1, <<1:64>>, 7}, encryption_on()],
+                       [encryption_on()],
+                       [{encryption_key_refresh_complete, 0, 1}],
+                       [ltk_request(), {encryption_change, 16#06, 1, 1}],
+                       [ltk_request(), {encryption_change, 0, 1, 0}]]].
+
+%% Key Refresh after a Reply encrypts too (7.7.39).
+key_refresh_encrypts_test() ->
+    {_, Core} = run([ltk_request(), {encryption_key_refresh_complete, 0, 1}], bonded(unauthenticated)),
+    ?assertMatch(#{encrypted := true}, facts(Core)).
+
+%% A link with a bond's key never pairs: the window's `open` verdict reaches the Security
+%% Manager as `bonded`, which fails the request, Unspecified Reason, and keeps the key.
+bonded_link_never_pairs_test() ->
+    Core = core(#{bond => #{ltk => ?BOND_LTK, level => unauthenticated}, pairing => true}),
+    {Actions, After} = run([smp(pairing_request()), {admission, 1, {open, nodisplay, fresh()}},
+                            ltk_request()], Core),
+    ?assertEqual([{admit, 1, ?CENTRAL}, {outcome, 1, {failed, already_bonded}}], window(Actions)),
+    ?assertEqual([pairing_failed(16#08)], on(6, Actions)),
+    ?assertEqual([{ltk_reply, ?BOND_LTK}], [A || {ltk_reply, _} = A <- Actions]),
+    ?assertMatch(#{key := unauthenticated}, facts(After)).
+
+%% Nothing the link shows holds a secret.
+facts_hold_no_secret_test() ->
+    {_, Core} = run([ltk_request(), encryption_on()], bonded(authenticated)),
+    ?assertEqual(nomatch, binary:match(term_to_binary(facts(Core)), ?BOND_LTK)).
+
+%% ---- a pairing through the link ----
+
+key(Seed) ->
+    {<<4, X:32/binary, Y:32/binary>>, Private} = crypto:generate_key(ecdh, secp256r1, crypto:hash(sha256, <<Seed>>)),
+    {Private, {X, Y}}.
+
+nonces(Seed) -> [crypto:hash(md5, <<Seed, I>>) || I <- lists:seq(1, 20)].
+
+fresh() ->
+    {Private, Public} = key(1),
+    #{private => Private, public => Public, nonces => nonces(1), passkey => 123456}.
+
+%% The honest phone's Just Works pairing as SMP PDUs (Part H, 2.3.5.6.2 and 2.3.5.6.5,
+%% 3.5 and 3.6), computed independently with erx_smp_crypto, and the LTK it agrees.
+just_works() ->
+    {PhonePrivate, {X, Y} = PhonePublic} = key(2),
+    {_, Own} = key(1),
+    [Na | _] = nonces(2),
+    [Nb | _] = nonces(1),
+    {MacKey, Ltk} = erx_smp_crypto:f5(erx_smp_crypto:dhkey(PhonePrivate, Own), Na, Nb, ?CENTRAL, ?PERIPHERAL),
+    Ea = erx_smp_crypto:f6(MacKey, Na, Nb, <<0:128>>, <<16#2D, 0, 16#03>>, ?CENTRAL, ?PERIPHERAL),
+    _ = PhonePublic,
+    {[<<16#0C, (rev(X))/binary, (rev(Y))/binary>>, <<16#04, (rev(Na))/binary>>, <<16#0D, (rev(Ea))/binary>>], Ltk}.
+
+rev(Bytes) -> list_to_binary(lists:reverse(binary_to_list(Bytes))).
+
+%% A first pairing reaches its level at the controller's encryption, before the store
+%% answers; the store's `ok` makes the key a kept bond's and the window hears `bonded`.
+first_pairing_reaches_level_before_store_test() ->
+    {[PublicKey, Random, Check], Ltk} = just_works(),
+    Identity = [smp(<<16#08, 7:128>>), smp(<<16#09, 1, 16#C6, 16#C5, 16#C4, 16#C3, 16#C2, 16#C1>>)],
+    {Paired, Core} = run([smp(pairing_request()), {admission, 1, {open, nodisplay, fresh()}}, smp(PublicKey),
+                          smp(Random), smp(Check), ltk_request(), encryption_on()] ++ Identity,
+                         core(#{pairing => true, share => 16})),
+    ?assertEqual([], [Code || <<16#05, Code>> <- on(6, Paired)]),
+    ?assertEqual([{ltk_reply, Ltk}], [A || {ltk_reply, _} = A <- Paired]),
+    ?assertEqual([{security, #{level => encrypted, bonded => false}}], registry(Paired)),
+    ?assertMatch([{store, {keep, #{ltk := Ltk, level := unauthenticated}, #{}}}], [A || {store, _} = A <- Paired]),
+    {Kept, _} = erx_bt_link_core:step({kept, ok}, 0, Core),
+    ?assertEqual([{window, {outcome, 1, {bonded, {random, <<16#C1, 16#C2, 16#C3, 16#C4, 16#C5, 16#C6>>},
+                                         unauthenticated}}},
+                  {registry, {security, #{level => encrypted, bonded => true}}}], Kept),
+    {Failed, _} = erx_bt_link_core:step({kept, {error, unavailable}}, 0, Core),
+    ?assertEqual([{window, {outcome, 1, {failed, unavailable}}}, {close, {store, unavailable}}], Failed).
+
+%% A failure that ends a keyed link sends its Pairing Failed before the close: a pairing
+%% withdrawn after its second phase gave the link its key (docs/design-bluetooth.md, "The
+%% pairing window").
+withdrawn_after_key_sends_failure_before_close_test() ->
+    {[PublicKey, Random, Check], _Ltk} = just_works(),
+    {_, Keyed} = run([smp(pairing_request()), {admission, 1, {open, nodisplay, fresh()}}, smp(PublicKey),
+                      smp(Random), smp(Check)], core(#{pairing => true, share => 16})),
+    {Actions, _} = erx_bt_link_core:step({withdraw, 1}, 0, Keyed),
+    ?assertEqual([pairing_failed(16#08)], on(6, Actions)),
+    ?assertEqual([{outcome, 1, {failed, withdrawn}}], window(Actions)),
+    ?assertEqual({close, pairing}, lists:last(Actions)).
+
+%% A Pairing Request after the bond is refused, but that is no outcome for the window,
+%% which heard the pairing's own already.
+done_refusal_not_an_outcome_test() ->
+    {[PublicKey, Random, Check], _Ltk} = just_works(),
+    Identity = [smp(<<16#08, 7:128>>), smp(<<16#09, 1, 16#C6, 16#C5, 16#C4, 16#C3, 16#C2, 16#C1>>)],
+    {_, Bonded} = run([smp(pairing_request()), {admission, 1, {open, nodisplay, fresh()}}, smp(PublicKey),
+                       smp(Random), smp(Check), ltk_request(), encryption_on()] ++ Identity ++ [{kept, ok}],
+                      core(#{pairing => true, share => 16})),
+    {Actions, _} = run([smp(pairing_request())], Bonded),
+    ?assertEqual([pairing_failed(16#08)], on(6, Actions)),
+    ?assertEqual([], window(Actions)).
+
+%% The Security Manager Timer is a deadline: 30 s without a step fails the pairing and
+%% ends the link (Part H, 3.4).
+pairing_deadline_test() ->
+    {_, Core} = run([smp(pairing_request())], core(#{pairing => true})),
+    ?assertEqual(30000, erx_bt_link_core:next_deadline(Core)),
+    {Actions, _} = erx_bt_link_core:step(expired, 30000, Core),
+    ?assertEqual([{outcome, 1, {failed, timeout}}], window(Actions)),
+    ?assertEqual([pairing], closed(Actions)).
+
+%% ---- the core, explored ----
+
+%% Every state a small alphabet reaches within ?DEPTH steps, from a link with no key and
+%% from a bonded one, each with pairing off and on. Each step keeps the invariants:
+%% the queue and the outstanding packets within their bounds, no packet past the
+%% controller's length, a key never changing once set, `encrypted` set only by a success
+%% report after a Reply and only on a link with a key, no write to an `encrypted`
+%% characteristic reaching the registry on a link not encrypted, a Reply only with a key,
+%% and every whole frame on an unknown channel counted. A step that ends the link ends its
+%% path.
+explored_core_keeps_its_invariants_test_() ->
+    {timeout, 300, fun explore/0}.
+
+explore() ->
+    Starts = [{C, 0, 0} || Bond <- [none, #{ltk => ?BOND_LTK, level => unauthenticated}], Pairing <- [false, true],
+                           C <- [core(#{bond => Bond, pairing => Pairing})]],
+    Visited = explore(Starts, maps:from_keys(Starts, true), ?DEPTH),
+    io:format("~b states~n", [map_size(Visited)]),
+    ?assert(map_size(Visited) > 1000).
+
+explore(_Frontier, Visited, 0) ->
+    Visited;
+explore(Frontier, Visited, Depth) ->
+    Next = lists:usort([N || State <- Frontier, Input <- alphabet(State), N <- [explore_step(Input, State)],
+                             N =/= closed, not maps:is_key(N, Visited)]),
+    explore(Next, lists:foldl(fun(N, V) -> V#{N => true} end, Visited, Next), Depth - 1).
+
+alphabet({Core, Now, Ref}) ->
+    [att(write(handle(open_w), <<"w">>)), att(write(handle(enc_w), <<"e">>)), att(write_cmd(handle(open_w), <<"c">>)),
+     att(write(configuration(enc_n), <<1, 0>>)), acl(16#0040, <<1>>), acl(5, <<16#12, 1, 0:16>>),
+     smp(pairing_request()), {admission, 1, closed}, {acl, 2, <<3:16/little>>}, {acl, 1, <<4, 0, 16#0A, 3, 0>>},
+     ltk_request(), {le_long_term_key_request, 1, <<1:64>>, 1}, encryption_on(), {encryption_change, 5, 1, 1},
+     {encryption_key_refresh_complete, 0, 1}, {le_connection_update_complete, 0, 1}, {answer, Ref, ok},
+     {ltk_reply_complete, ok}, {ltk_reply_complete, {failed, 16#0C}}, {notify, n, notify, {svc, enc_n}, <<"n">>}]
+    ++ [{completed, 1} || maps:get(outstanding, facts(Core)) > 0]
+    ++ [{at, D, expired} || D <- [erx_bt_link_core:next_deadline(Core)], D =/= infinity, D >= Now].
+
+explore_step({at, Now, Input}, {Core, _, Ref}) -> explore_step(Input, {Core, Now, Ref});
+explore_step(Input, {Core, Now, Ref}) ->
+    Before = facts(Core),
+    {Actions, Next} = erx_bt_link_core:step(Input, Now, Core),
+    After = facts(Next),
+    #{outstanding := Outstanding, queued := Queued} = After,
+    ?assert(Outstanding =< ?SHARE),
+    ?assert(Queued =< ?QUEUE + 2),
+    [?assert(byte_size(Data) =< ?ACL_TX_MAX) || {acl, _, Data} <- Actions],
+    [?assertEqual(maps:get(key, Before), maps:get(key, After)) || maps:get(key, Before) =/= none],
+    case {maps:get(encrypted, Before), maps:get(encrypted, After)} of
+        {false, true} -> ?assert(success_report(Input) andalso maps:get(ltk_answer, Before) =:= replied);
+        _ -> ok
+    end,
+    [?assertNotEqual(none, maps:get(key, After)) || maps:get(encrypted, After)],
+    [?assert(maps:get(encrypted, After)) || {registry, {write, _, {svc, enc_w}, _}} <- Actions],
+    [?assertNotEqual(none, maps:get(key, Before)) || {ltk_reply, Ltk} <- Actions, Ltk =/= none],
+    case closed(Actions) of
+        [] ->
+            [?assertEqual(maps:get(dropped, Before) + 1, maps:get(dropped, After)) || Input =:= acl(16#0040, <<1>>)],
+            {Next, Now, lists:max([Ref | [R || {registry, {write, R, _, _}} <- Actions]])};
+        _ -> closed
+    end.
+
+success_report({encryption_change, 0, _, 1}) -> true;
+success_report({encryption_key_refresh_complete, 0, _}) -> true;
+success_report(_) -> false.
