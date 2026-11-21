@@ -6974,13 +6974,6 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   whether the per-device-domain rule extends to devices that can abort
   ([design-system.md](docs/design-system.md#drivers),
   [design-runtime.md](docs/design-runtime.md#the-device-nif)).
-* [Low] devices, docs: the device NIF's documents still name the deleted queue core
-  `erx_device_queue` (its round function, `erx_device_queue.c`, `erx_device_queue_create`) where
-  the split ring (`erx_device_virtio_core`) over the DMA ledger and sequencer now stands:
-  [design-device-dma.md](docs/design-device-dma.md) (the round function, the split ring's row of
-  the forms table, the forms beside it), [design-runtime.md](docs/design-runtime.md#the-device-nif)
-  (the NIF's pure decisions, head bookkeeping, descriptor placement, the failure table's
-  out-of-range row) and the book's [devices chapter](docs/book/15-devices.md).
 * [Medium] storage, the default configuration: the block driver and the
   data partition's file system share the storage domain, so a storage
   domain's restart drops every window on the medium and a logic bug in the
