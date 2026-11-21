@@ -9946,9 +9946,7 @@ document's "residual risks accepted" paragraph.
   reads `0x00300000`; FreeBSD's encoder (`bcm2838_pci.c:591-596`) gives `0x03f00000`, the limit being MiB `0x603f`.
   Re-check the section's worked values in a new dated record.
 * [Medium] USB, `tools/lib/erx/chokepoint_rules/device.rb` ([design-usb.md](docs/design-usb.md#the-block-transport)):
-  `device-posters` names neither `erx_xhci` as a poster of `erx_device:post/4` nor `erx_blk_write` as the one caller
-  of `erx_usb_pipe:bulk_out/3`, and nothing holds `erx_device` to `erx_xhci` within `erlang/apps/erx_usb/`. Add the
-  three, each with a seeded violation.
+  nothing names `erx_blk_write` as the one caller of `erx_usb_pipe:bulk_out/3`. Add it, with a seeded violation.
 * [Low] USB, `abi/formats/evdev.txt` ([design-usb.md](docs/design-usb.md#the-usage-table)): the key codes FreeBSD's
   `evdev_usb_scancodes` maps that the file lacks (keypad keys, F13 to F24, `KEY_102ND`, `KEY_COMPOSE` and the others).
   Add them, since the file holds every code erXos reads.

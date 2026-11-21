@@ -26,6 +26,7 @@ module Erx
     # "Processes" and "The bridge seam").
     DRIVER_APPLICATIONS = %w[erx_blk erx_fb erx_pcie erx_rtc].freeze
     UART_DRIVERS = %w[erx_pl011 erx_mini_uart].freeze
+    XHCI = 'erlang/apps/erx_usb/src/erx_xhci.erl'
 
     # A call of erx_device's issuing function name: erx_device followed by
     # the name after a colon (a remote call or fun) or a comma (an apply),
@@ -256,22 +257,25 @@ module Erx
         # erx_irq_line, which binds and acknowledges lines for drivers
         # (docs/design-shared-devices.md, "Lines inside a domain"), and the
         # driver applications, one per device class, name it, and of erx_uart only
-        # its UART drivers: as a call, an apply's module literal, a quoted atom or
+        # its UART drivers, and of erx_usb only its controller process, erx_xhci
+        # (docs/design-usb.md, "The controller process"): as a call, an apply's
+        # module literal, a quoted atom or
         # a string. What keeps a device
         # from other domains is that its capability is installed only in its
         # driver's domain.
         Chokepoints::ErlangForbidden.new(
-          name: 'device-callers', rule: 'only erx_device, erx_irq_line, the driver applications and the UART drivers ' \
-                                        'name erx_device, whose NIF and BIFs reach a device',
+          name: 'device-callers', rule: 'only erx_device, erx_irq_line, the driver applications, the UART drivers and ' \
+                                        'the xHCI controller process name erx_device, whose NIF and BIFs reach a device',
           design: DEVICE_DESIGN, pattern: /(?<![A-Za-z0-9_@])erx_device(?![A-Za-z0-9_@])/,
           sites: [ERX_DEVICE, ERX_IRQ_LINE, *DRIVER_APPLICATIONS.map { |application| "erlang/apps/#{application}/**/*" },
-                  *UART_DRIVERS.map { |driver| "erlang/apps/erx_uart/src/#{driver}.erl" },
+                  *UART_DRIVERS.map { |driver| "erlang/apps/erx_uart/src/#{driver}.erl" }, XHCI,
                   # erXos's own directory of the network stack, whose other modules name nothing of erXos's
                   # (docs/design-network-stack.md, "Two places, four seams").
                   'erlang/apps/erx_net/erxos/**/*'],
           seed: { 'otp/lib/stdlib/src/seeded.erl' => "f(D) -> erx_device:read(D, dr).\n",
                   'erlang/apps/erx_files/src/seeded.erl' => "f() -> \"erx_device\".\n",
-                  'erlang/apps/erx_uart/src/erx_hostlink_seeded.erl' => "f(D) -> erx_device:read(D, dr).\n" }
+                  'erlang/apps/erx_uart/src/erx_hostlink_seeded.erl' => "f(D) -> erx_device:read(D, dr).\n",
+                  'erlang/apps/erx_usb/src/erx_usb_bus_seeded.erl' => "f(D) -> erx_device:read(D, usbsts).\n" }
         ),
         # No driver binds a shared line and takes its deliveries from the drivers
         # joined to its owner, nor binds or acknowledges a line past erx_irq_line
@@ -289,16 +293,18 @@ module Erx
         # every request, and only its write/6 one whose type writes
         # (docs/design-storage.md, U4). The network transports post frames and
         # the virtio-gpu driver requests its pure core built and the virtio-input
-        # driver its empty event buffers, to devices handed no medium (docs/design-display.md, "The display device"). Refused
+        # driver its empty event buffers, to devices handed no medium (docs/design-display.md, "The display device"),
+        # and the xHCI controller process the commands and transfers its pure core built
+        # (docs/design-usb.md, "The controller process"). Refused
         # outside them: erx_device:post as a remote call or fun, erx_device with
         # post as an apply's next argument, and any import from erx_device.
         Chokepoints::ErlangForbidden.new(
           name: 'device-posters', rule: "only the block driver's one write path, erx_blk_write, the network transports and the " \
-                                        'virtio-gpu and virtio-input drivers call erx_device:post/4, and each builds ' \
-                                        'every request it posts',
+                                        'virtio-gpu and virtio-input drivers and the xHCI controller process call erx_device:post/4, ' \
+                                        'and each builds every request it posts',
           design: 'docs/design-storage.md#data-model', pattern: DEVICE_ISSUE.call('post'),
           sites: [BLK_WRITE, 'erlang/apps/erx_net/erxos/erx_virtio_net.erl', 'erlang/apps/erx_net/erxos/erx_genet.erl',
-                  'erlang/apps/erx_fb/src/erx_virtio_gpu.erl', 'erlang/apps/erx_fb/src/erx_virtio_input.erl'],
+                  'erlang/apps/erx_fb/src/erx_virtio_gpu.erl', 'erlang/apps/erx_fb/src/erx_virtio_input.erl', XHCI],
           seed: { 'erlang/apps/erx_blk/src/seeded.erl' => "f(D) -> erx_device:post(D, 0, <<>>, 0).\n",
                   'erlang/apps/erx_blk/src/seeded_import.erl' => "-import(erx_device, [post/4]).\n" }
         ),
