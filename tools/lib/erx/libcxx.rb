@@ -2,7 +2,9 @@
 # SPDX-License-Identifier: BSD-2-Clause
 # frozen_string_literal: true
 
+require 'digest'
 require 'fileutils'
+require_relative 'build_memo'
 require_relative 'dependencies'
 require_relative 'error'
 
@@ -19,8 +21,9 @@ module Erx
     # What the build installs: the headers a C++ compile puts first in its search order,
     # and the two archives a link takes; and the configuration they were built with,
     # which a build compiling against the headers records, since its make does not
-    # track system headers.
-    Built = Data.define(:include, :archives, :configuration)
+    # track system headers; and the identity of the installed headers, which such a build
+    # records beside it (Libcxx.identity).
+    Built = Data.define(:include, :archives, :configuration, :identity)
     # The runtimes' cache entries. Each property the design names is one switch here:
     # no exceptions in either library, no RTTI, no localisation. The rest fit a static
     # runtime that BeamAsm alone uses on a target with no file system, no entropy device
@@ -78,6 +81,14 @@ module Erx
       ).map { |name, value| "-D#{name}=#{value}" }
     end
 
+    # What a compile against the headers of include depends on: each file's name and
+    # content. Clang refuses a precompiled header (BeamAsm's asmjit/core.h.gch) when a
+    # header it read changed bytes, and OTP's make, which does not track system headers,
+    # does not make it again; a different identity therefore starts the copy again. A
+    # change of time alone does not: the build validates a header whose time differs by its
+    # content (otp/xcomp/erl-xcomp-aarch64-unknown-erxos.conf, CXXFLAGS).
+    def self.identity(include) = BuildMemo.tree_digest(include)
+
     # target_flags are the C compiler's target, header and source-name flags of ERTS's
     # native build (NativeJitRuntime), so libc++ is compiled against the musl ERTS is and
     # names its sources as ERTS does.
@@ -122,7 +133,8 @@ module Erx
       missing = [*archives, include].reject { |path| File.exist?(path) }
       raise Error, "the libc++ build left no #{missing.join(', ')}" unless missing.empty?
 
-      Built.new(include: include, archives: archives.freeze, configuration: configuration)
+      Built.new(include: include, archives: archives.freeze, configuration: configuration,
+                  identity: self.class.identity(include))
     end
   end
 end

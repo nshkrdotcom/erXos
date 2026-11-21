@@ -12,8 +12,8 @@ links back to it.
 > create a domain and see a link report its end. Memory and threads are
 > held as records, and ending a domain ends everything charged to it.
 > **Designed** and not built: memory limits that refuse a domain more,
-> CPU limits per domain, rights on handles and handles that stay stale
-> after their own close, a login that gives each person a domain of
+> CPU limits per domain, rights on handles narrowed per creation kind
+> and checked on every use, a login that gives each person a domain of
 > their own, and toybox's UNIX programs in the session's `/bin`.
 
 A FreeBSD machine that runs a web shop has two worlds in it. One is
@@ -213,15 +213,16 @@ address space, a thread or a device's interrupt, and records the
 object's **generation**, a count that grows each time the root
 service frees an object's record. So when an object is destroyed,
 every handle to it answers `ERX_ESTALE` until it is closed, and never
-names whatever object comes next. A closed number answers `ERX_EINVAL`
-until it is reused, lowest first, as UNIX reuses descriptors, so a
-program that uses a number after its own close reaches whatever object
-took it next. Unlike chapter 2's
-capabilities, handles carry no rights: whoever holds one may use its object, and only the object's creator
-may destroy it (`liberx/backend/core/handles.h`). The design gives
-handles rights that only shrink as a handle is passed, and a value
-that carries the generation, so a use after the holder's own close
-answers `ERX_ESTALE` too; that is designed and not built.
+names whatever object comes next. The handle's value also carries
+its entry's own generation, which a close advances, so a program that
+uses a number after its own close gets `ERX_ESTALE` too, even once the
+entry, reused first in, first out, names another object. Each entry
+records its rights, but unlike chapter 2's capabilities no call except
+destroy checks them yet: whoever holds a handle may use its object, and
+only the object's creator may destroy it
+(`liberx/backend/core/handles.h`). The design gives handles rights that
+start from each creation kind's defaults, only shrink as a handle is
+passed, and are checked on every use; that is designed and not built.
 
 The second is an **export**, which does the same job for Erlang
 processes. A domain reaches only the processes another domain exported
@@ -262,11 +263,12 @@ machine as a **package**, one `.app` file. The file holds an
 authenticated header, a read-only image of the app's files, and a hash
 tree over the image's blocks, so a changed byte fails the read
 ([design-packaging.md, Where a package lies](../design-packaging.md#where-a-package-lies);
-[chapter 23](README.md#chapter-23-apps-and-packages)). The packer is
-**Built**. In the design a package lies in the system partition the
-machine booted from, or, once a user installs it, in the data
-partition's `packages/` directory. That is **Designed** and not built:
-packages ride in the boot image.
+[chapter 23](23-apps.md#232-one-file-per-app)). A package lies in the
+`apps/` directory of the system partition the machine booted from, or,
+once a user installs it, in the data partition's `packages/` directory.
+The packer and packages on the system partition, checked, admitted and
+started at boot, are **Built**; installing a package at run time is
+**Designed**.
 
 ### 5.1.8 Why each concept has exactly one owner
 
@@ -500,7 +502,7 @@ ERTS through the start path of musl, the C library ERTS is built on
 (`liberx/backend/fiasco/root.c`). ERTS boots OTP's `kernel` and
 `stdlib`, then the system release, and a development build prints
 `development build: trusted code only`. All of this is **Built**
-([chapter 24](README.md#chapter-24-startup-configuration-and-shutdown)).
+([chapter 24](24-startup.md)).
 
 ### 5.3.2 The system domain starts the configured domains
 
@@ -527,7 +529,7 @@ The device service gives each device to the domain the manifest names,
 such as the SD card to the storage domain, and each domain's ERTS
 boots its own small release as a node. Domain creation from the manifest is **Built**
 ([chapter 10](10-domains.md#1082-creating-a-domain);
-[chapter 15](README.md#chapter-15-devices-and-drivers)).
+[chapter 15](15-devices.md)).
 
 ### 5.3.3 A session starts
 
@@ -642,7 +644,7 @@ starts, so it knows who holds each, and the end of the stream follows
 Erlang commands are **Built**
 ([README.md, Current status](../../README.md#current-status);
 [chapter 13](13-native-programs.md#135-a-pipeline-end-to-end);
-[chapter 20](README.md#chapter-20-the-command-shell-and-the-unix-surface)).
+[chapter 20](20-shell.md#2025-pipelines-of-text)).
 
 ### 5.3.7 The day as one diagram
 

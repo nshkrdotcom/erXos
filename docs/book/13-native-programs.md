@@ -214,7 +214,7 @@ host. The Built requests are the file calls, making a pipe, and
 `kill`. A path is
 resolved over the program's narrowed namespace alone, so a file the
 starter could not reach is not found
-([chapter 14](README.md#chapter-14-files-namespaces-and-service-trees)).
+([chapter 14](14-files.md)).
 
 ### 13.2.3 The command server
 
@@ -264,7 +264,7 @@ message, and only then runs its first instruction.
 ### 13.3.1 From the shell's line to `main`
 
 The command shell (an rc-language shell written in Erlang; [chapter
-20](README.md#chapter-20-the-command-shell-and-the-unix-surface))
+20](20-shell.md#202-rc-in-erlang))
 runs a name that is not an Erlang command from `/bin`, as section
 13.2.4 describes. These steps are Built.
 

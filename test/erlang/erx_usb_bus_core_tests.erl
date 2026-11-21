@@ -41,6 +41,9 @@
 %% * a function starts again as it was claimed, under a run number no earlier instance
 %%   had, and every earlier instance's end, and a hub function's earlier instances'
 %%   reports, delivered at any node, change nothing;
+%% * a HID function's end as unusable is final: nothing is reset, started or detached,
+%%   its run keeps the reason, the device's other functions are as they were, and any
+%%   later end of it changes nothing, so a composite device keeps its other functions;
 %% * a quiet bus, nothing in flight and no deadline pending, keeps every port empty
 %%   exactly where nothing is connected, so no change, one latched between a status
 %%   read and its clear included, is lost.
@@ -61,7 +64,7 @@
 %% waiting for the turn; two and an end carry a hub function's restart with a device
 %% behind it, or a function ending before its device is unplugged; one, a failure and
 %% an end a failed reset; one and two ends a function ending twice, or two functions of
-%% one device ending together.
+%% one device ending together, either of them unusable.
 -define(DEPTHS, [{3, 0, 0}, {2, 1, 0}, {2, 0, 1}, {1, 1, 1}, {1, 0, 2}]).
 %% Power-good times: the root's 10 units, the simulated hub's 50, each times 2 ms plus 20.
 -define(ROOT_POWER_GOOD, 40).
@@ -72,6 +75,10 @@
 %% A function's restarts: at most 3 in any 60 s.
 -define(RESTARTS_MAX, 3).
 -define(RESTART_WINDOW, 60000).
+%% A function's ends as the bus process passes them on: a failed transfer, which counts
+%% toward the restarts, and an interface the function cannot drive, which is final.
+-define(FAILED, {shutdown, {transfer, stall}}).
+-define(UNUSABLE, {shutdown, {unusable, no_usable_report}}).
 %% wPortStatus's and wPortChange's connection and over-current bits.
 -define(CONNECTION, 1).
 -define(OVER_CURRENT, 8).
@@ -249,9 +256,21 @@ resets(#{resets := Resets, things := Things, errors := Errors}) ->
                   ++ [{core_error, {pipe_reset, Ref, I, A, {error, stall}}} || Errors > 0]
                   || {Ref, I, A} <- Resets]).
 
-%% Every running function's end, while the environment has ends to spend.
+%% Every running function's end, while the environment has ends to spend: failed, or,
+%% for a HID function, unusable; the hub function, whose hub descriptor the core read
+%% before starting it, ends only failed.
 finishes(#{ends := 0}) -> [];
-finishes(#{fns := Fns}) -> [{finish, Ref, I} || {Ref, I} := #{state := running} <- Fns].
+finishes(#{fns := Fns}) ->
+    [{finish, Ref, I, How} || {Ref, I} := #{state := running, driver := Driver} <- Fns, How <- ends_of(Driver)].
+
+ends_of(erx_usb_hub) -> [failed];
+ends_of(_Driver) -> [failed, unusable].
+
+%% Every reason an end may carry, for the ends delivered as stale.
+end_reasons() -> [?FAILED, ?UNUSABLE].
+
+runs(Ref, Core) ->
+    maps:get(runs, maps:get(Ref, erx_usb_bus_core:devices(Core))).
 
 command_answer(Kind, _Ref, none, #{slots := Slots}) when Kind =:= slot; Kind =:= addressed ->
     {ok, free_slot(Slots)};
@@ -411,9 +430,20 @@ follow({signal, Event = {port_event, N}}, {M = #{world := World}, Core}) ->
 follow({report, Event = {changed, Ref, _, _, _}}, {M = #{hubs := Hubs}, Core}) ->
     Fn = maps:get(Ref, Hubs),
     deliver(Event, M#{hubs := Hubs#{Ref := Fn#{first := false, outstanding := true}}}, Core);
-%% A function's end: its pipes' resets follow, or its device's detach past its restarts.
-%% A hub function stops reporting until its next instance starts.
-follow({finish, Ref, I}, {M = #{ends := E, fns := Fns, hubs := Hubs, now := Now}, Core}) ->
+%% A function's end as unusable: final, so nothing follows, neither a reset, a start nor
+%% a detach; its run keeps the reason, and the device's other functions are as they were.
+follow({finish, Ref, I, unusable}, {M = #{ends := E, fns := Fns}, Core}) ->
+    Fn = #{run := Run} = maps:get({Ref, I}, Fns),
+    Ending = M#{ends := E - 1, fns := Fns#{{Ref, I} := Fn#{state := unusable}}},
+    Node = {#{last := Last}, After} = deliver({function_ended, Ref, I, Run, ?UNUSABLE}, Ending, Core),
+    [] =:= [A || A <- Last, element(1, A) =/= deadline] orelse error({unusable_end_acted, Ref, I, Last}),
+    #{I := Ended} = Runs = runs(Ref, After),
+    maps:remove(I, Runs) =:= maps:remove(I, runs(Ref, Core)) orelse error({unusable_end_moved_another_function, Ref, I}),
+    maps:get(state, Ended) =:= {unusable, no_usable_report} orelse error({unusable_reason_not_kept, Ref, I, Ended}),
+    Node;
+%% A function's failed end: its pipes' resets follow, or its device's detach past its
+%% restarts. A hub function stops reporting until its next instance starts.
+follow({finish, Ref, I, failed}, {M = #{ends := E, fns := Fns, hubs := Hubs, now := Now}, Core}) ->
     Fn = #{pipes := Pipes, ended := Ended, driver := Driver, run := Run} = maps:get({Ref, I}, Fns),
     Recent = [T || T <- Ended, Now - T < ?RESTART_WINDOW] ++ [Now],
     Stopped = case Driver of
@@ -421,7 +451,7 @@ follow({finish, Ref, I}, {M = #{ends := E, fns := Fns, hubs := Hubs, now := Now}
                   _ -> Hubs
               end,
     Ending = M#{ends := E - 1, hubs := Stopped, fns := Fns#{{Ref, I} := Fn#{state := {ended, Pipes}, ended := Recent}}},
-    Node = {#{last := Last}, _} = deliver({function_ended, Ref, I, Run}, Ending, Core),
+    Node = {#{last := Last}, _} = deliver({function_ended, Ref, I, Run, ?FAILED}, Ending, Core),
     Answered = case length(Recent) > ?RESTARTS_MAX of
                    true -> lists:member({detach, Ref}, Last);
                    false -> [A || {reset_pipe, R, J, A} <- Last, {R, J} =:= {Ref, I}] =/= []
@@ -511,8 +541,8 @@ observe(Event, Actions, M0, Before, After) ->
     check_turn(After, Event),
     check_connection_detach(Event, Actions, Before),
     check_failure_logs(Event, Actions, Before, After),
-    [stale({function_ended, Ref, I, Run}, maps:get(now, M0), After)
-     || {detach, Ref} <- Actions, {R, I} := #{run := Run} <- maps:get(fns, M0), R =:= Ref],
+    [stale({function_ended, Ref, I, Run, Reason}, maps:get(now, M0), After)
+     || {detach, Ref} <- Actions, {R, I} := #{run := Run} <- maps:get(fns, M0), R =:= Ref, Reason <- end_reasons()],
     M1 = close_window(Event, M0, Before, After),
     M2 = lists:foldl(fun(Action, M) -> action(Action, M, Before, After) end,
                      M1#{deadline := none, last => Actions}, Actions),
@@ -538,7 +568,7 @@ check_stale(Event, M = #{answered := Answered, now := Now}, Core) ->
 
 %% A function's end or a pipe reset's answer delivered again: the function is no
 %% longer running, or the reset no longer in flight, so it changes nothing.
-repeated(Event = {function_ended, _Ref, _I, _Run}, Now, Core) -> stale(Event, Now, Core);
+repeated(Event = {function_ended, _Ref, _I, _Run, _Reason}, Now, Core) -> stale(Event, Now, Core);
 repeated(Event = {pipe_reset, _Ref, _I, _A, _Result}, Now, Core) -> stale(Event, Now, Core);
 repeated(_Event, _Now, _Core) -> ok.
 
@@ -556,9 +586,9 @@ last_not_running(Run, running) -> Run - 1;
 last_not_running(Run, _Ended) -> Run.
 
 instance_events(Ref, I, Run, erx_usb_hub) ->
-    [{function_ended, Ref, I, Run}, {changed, Ref, [1, 2, hub], Run, {fn, Ref, Run}}];
+    [{changed, Ref, [1, 2, hub], Run, {fn, Ref, Run}} | [{function_ended, Ref, I, Run, R} || R <- end_reasons()]];
 instance_events(Ref, I, Run, _Driver) ->
-    [{function_ended, Ref, I, Run}].
+    [{function_ended, Ref, I, Run, R} || R <- end_reasons()].
 
 stale(Stale, Now, Core) ->
     case erx_usb_bus_core:step(Stale, Now, Core) of
@@ -1054,7 +1084,7 @@ a_function_restarts_at_most_three_times_a_minute_test() ->
     {#{now := Now}, Core0} = Running = settle(follow({stimulus, [1], dev1}, trace_start())),
     {running, Ref} = port_of(Running, {root, 1}),
     Three = lists:foldl(fun(At, Core) -> restarted(Ref, At, Core) end, Core0, [Now, Now + 1, Now + 2]),
-    {Refused, Actions} = erx_usb_bus_core:step({function_ended, Ref, 0, 4}, Now + 3, Three),
+    {Refused, Actions} = erx_usb_bus_core:step({function_ended, Ref, 0, 4, ?FAILED}, Now + 3, Three),
     Failure = {function, 0, restarts},
     ?assertEqual([{detach, Ref}, {log, root, 1, {failed, Failure}}, {port, root, 1, disable}],
                  [A || A <- Actions, element(1, A) =/= deadline]),
@@ -1063,28 +1093,56 @@ a_function_restarts_at_most_three_times_a_minute_test() ->
     ?assertEqual({disabled, Failure}, maps:get({root, 1}, erx_usb_bus_core:ports(Disabled))),
     Later = restarted(Ref, Now + ?RESTART_WINDOW, Three),
     ?assertMatch({_, [{detach, Ref} | _]},
-                 erx_usb_bus_core:step({function_ended, Ref, 0, 5}, Now + ?RESTART_WINDOW, Later)).
+                 erx_usb_bus_core:step({function_ended, Ref, 0, 5, ?FAILED}, Now + ?RESTART_WINDOW, Later)).
 
 %% A late end from the run before, delivered once the function has started again,
 %% changes nothing: the running instance's pipes are not reset under it.
 a_late_end_from_an_earlier_run_changes_nothing_test() ->
     {#{now := Now}, Core0} = Running = settle(follow({stimulus, [1], dev1}, trace_start())),
     {running, Ref} = port_of(Running, {root, 1}),
-    stale({function_ended, Ref, 0, 1}, Now + 1, restarted(Ref, Now, Core0)).
+    stale({function_ended, Ref, 0, 1, ?FAILED}, Now + 1, restarted(Ref, Now, Core0)).
+
+%% A composite keyboard whose second interface no function can drive: each of that
+%% function's ends is unusable, the first final, so neither the four ends within a minute
+%% nor any later one gives the device up; the keyboard's function runs on as its first
+%% instance, its record keeps the reason, and its own ends still restart it.
+a_composite_keeps_its_keyboard_past_unusable_ends_test() ->
+    {#{now := Now}, Core0} = Running = settle(follow({stimulus, [1], dev2}, trace_start())),
+    {running, Ref} = port_of(Running, {root, 1}),
+    Core = lists:foldl(fun(At, C) -> ended_as(Ref, 1, ?UNUSABLE, At, C) end, Core0, [Now, Now + 1, Now + 2, Now + 3]),
+    ?assertEqual({running, Ref}, maps:get({root, 1}, erx_usb_bus_core:ports(Core))),
+    ?assertMatch(#{runs := #{0 := #{state := running, number := 1}, 1 := #{state := {unusable, no_usable_report}}}},
+                 maps:get(Ref, erx_usb_bus_core:devices(Core))),
+    {Restarting, Actions} = erx_usb_bus_core:step({function_ended, Ref, 0, 1, ?FAILED}, Now + 4, Core),
+    ?assertEqual([{reset_pipe, Ref, 0, 16#81}], [A || A <- Actions, element(1, A) =/= deadline]),
+    ?assertMatch(#{runs := #{1 := #{state := {unusable, no_usable_report}}}},
+                 maps:get(Ref, erx_usb_bus_core:devices(Restarting))).
+
+%% The bus process's part in function I's end at At as Reason: the end of its running
+%% instance, then every pipe reset the core asks for answered `ok`.
+ended_as(Ref, I, Reason, At, Core0) ->
+    #{runs := #{I := #{number := Run}}} = maps:get(Ref, erx_usb_bus_core:devices(Core0)),
+    answer_resets(erx_usb_bus_core:step({function_ended, Ref, I, Run, Reason}, At, Core0), At).
+
+answer_resets({Core, Actions}, At) ->
+    case [R || R = {reset_pipe, _, _, _} <- Actions] of
+        [] -> Core;
+        [{reset_pipe, Ref, I, A}] -> answer_resets(erx_usb_bus_core:step({pipe_reset, Ref, I, A, ok}, At, Core), At)
+    end.
 
 %% A report from a hub function's ended instance, arriving once its next instance runs,
 %% changes nothing: it neither queues a read nor takes `handled` from its successor.
 a_report_from_an_ended_hub_instance_changes_nothing_test() ->
     Hub = settle(follow({stimulus, [1], hub}, trace_start())),
     {running, HubRef} = port_of(Hub, {root, 1}),
-    {#{now := Now}, Core} = settle(follow({finish, HubRef, 0}, Hub)),
+    {#{now := Now}, Core} = settle(follow({finish, HubRef, 0, failed}, Hub)),
     stale({changed, HubRef, [1, 2, hub], 1, {fn, HubRef, 1}}, Now, Core).
 
 %% dev1's one function, interface 0, running as instance Run, ends at Now and starts
 %% again as instance Run + 1 once its one pipe, 81h, has answered its reset.
 restarted(Ref, Now, Core0) ->
     #{runs := #{0 := #{number := Run}}} = maps:get(Ref, erx_usb_bus_core:devices(Core0)),
-    {Core1, A1} = erx_usb_bus_core:step({function_ended, Ref, 0, Run}, Now, Core0),
+    {Core1, A1} = erx_usb_bus_core:step({function_ended, Ref, 0, Run, ?FAILED}, Now, Core0),
     ?assertEqual([{reset_pipe, Ref, 0, 16#81}], [A || A <- A1, element(1, A) =/= deadline]),
     {Core2, A2} = erx_usb_bus_core:step({pipe_reset, Ref, 0, 16#81, ok}, Now, Core1),
     Next = Run + 1,
@@ -1100,7 +1158,7 @@ a_hub_functions_restart_leaves_agreeing_ports_test() ->
     {running, HubRef} = port_of(Hub, {root, 1}),
     {_, Before} = Behind = settle(follow({stimulus, [1, 2], dev2}, Hub)),
     {running, Child} = port_of(Behind, {HubRef, 2}),
-    {#{hubs := Fns, last := Last}, Core} = Restarted = settle(follow({finish, HubRef, 0}, Behind)),
+    {#{hubs := Fns, last := Last}, Core} = Restarted = settle(follow({finish, HubRef, 0, failed}, Behind)),
     ?assertMatch(#{HubRef := #{instance := 2, first := false, outstanding := false}}, Fns),
     ?assertEqual([{handled, HubRef, {fn, HubRef, 2}}], [A || A = {handled, _, _} <- Last]),
     ?assertEqual({running, Child}, port_of(Restarted, {HubRef, 2})),

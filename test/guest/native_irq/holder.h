@@ -18,8 +18,9 @@
 #define HOLDER_RUN	2u	/* a contiguous run, its first word the DMA address the root got for it */
 #define HOLDER_ROOT_GROUP	3u	/* the root's own group, which the holder does not home */
 #define HOLDER_ROOT_SOFT	4u	/* a software object the root bound to its own group */
-#define HOLDER_HANDLES	5u
-#define HOLDER_HANDLE_BITS	12u
+#define HOLDER_INSPECT	5u	/* a software object passed with neither ERX_HR_TRIGGER nor ERX_HR_ACK */
+#define HOLDER_HANDLES	6u
+#define HOLDER_HANDLE_BITS	10u
 #define HOLDER_HANDLE_MASK	((UINT64_C(1) << HOLDER_HANDLE_BITS) - 1)
 _Static_assert(HOLDER_HANDLES * HOLDER_HANDLE_BITS <= 64, "the handles fit the argument");
 

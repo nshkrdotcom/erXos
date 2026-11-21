@@ -244,9 +244,9 @@ the others.
 | System | Idea | What erXos took |
 | --- | --- | --- |
 | QNX | a UNIX look over a microkernel | a UNIX surface over services in user mode |
-| Genera | one live machine: any object examined, code patched while it runs | the live machine of chapter 21, with walls Genera lacked |
+| Genera | one live machine: any object examined, code patched while it runs | the live machine of [chapter 21](21-live-machine.md), with walls Genera lacked |
 | Inferno | a virtual machine at the center, with no memory protection | the runtime at the center, plus hardware walls |
-| Singularity | type-safe processes in one address space | evidence that language safety makes crossings cheap |
+| Singularity | type-safe processes in one address space | evidence that the cost lies in privilege crossings, not in safety checks |
 | SPIN | kernel extensions in a safe language | a warning: a crashed extension could leave the system inconsistent |
 | Midori | Erlang's supervisors as a model for a whole system | the same failure model, found outside Erlang |
 | Genode | each session paid from a quota its client donates | memory shares for users |
@@ -281,7 +281,7 @@ commands that print FreeBSD's output, and the network stack,
 
 erXos leaves UNIX's inside. Its kernel is not monolithic, POSIX is not
 its base, and a user id grants nothing by itself
-([chapter 20](README.md#chapter-20-the-command-shell-and-the-unix-surface)).
+([chapter 20](20-shell.md#201-unix-look-and-feel-honestly)).
 QNX showed that a system can look like UNIX over a microkernel. For
 erXos, UNIX is how the system looks wherever that is also how it
 works.
@@ -330,8 +330,8 @@ capability: a domain with no grant for the storage service has no
 `/data`, and no name it can write reaches that server. File servers
 speak 9P2000.L, a version of 9P. A display serves each window as a
 directory of files, and the command shell speaks rc's language
-([chapter 14](README.md#chapter-14-files-namespaces-and-service-trees),
-[chapter 22](README.md#chapter-22-displays-windows-and-the-web)).
+([chapter 14](14-files.md),
+[chapter 22](22-display.md#221-windows-are-files)).
 
 ### 4.3.4 EROS, Safe Erlang and Zircon: authority and payment
 
@@ -451,7 +451,7 @@ disk's driver in the middle of a transfer, then finds each kept file
 cut at a sync, the last moment its data was forced to disk
 ([README.md, Current status](../../README.md#current-status)).
 The kernel, the device shims and per-byte work such as checksums stay
-in C ([chapter 15](README.md#chapter-15-devices-and-drivers)).
+in C ([chapter 15](15-devices.md)).
 
 ### 4.5.2 erXos owns OTP
 
@@ -465,7 +465,7 @@ Owning OTP does not mean drifting from it. OTP's own test suites run
 on erXos and on stock OTP, and the results are compared case by case.
 Every difference is a bug in erXos, a documented difference with a
 test, or an upstream bug recorded as such
-([chapter 25](README.md#chapter-25-checking-the-system)).
+([chapter 25](25-checking.md)).
 
 ### 4.5.3 Beauty and simplicity
 

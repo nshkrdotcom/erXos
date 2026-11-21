@@ -14,6 +14,7 @@
 #include <stdint.h>
 
 #include <l4/sys/ipc.h>
+#include <l4/sys/irq.h>
 #include <l4/sys/utcb.h>
 
 #include "erx/abi.h"
@@ -22,6 +23,8 @@
 #include "liberx/backend/core/device_check.h"
 #include "liberx/backend/core/entropy_read.h"
 #include "liberx/backend/core/gate.h"
+#include "liberx/backend/core/handles.h"
+#include "liberx/backend/fiasco/root_layout.h"
 #include "liberx/backend/fiasco/service.h"
 #include "liberx/backend/fiasco/thread.h"
 #include "liberx/backend/fiasco/vm.h"
@@ -325,6 +328,12 @@ erx_space_create(uint64_t budget, uint64_t parent, uint64_t fault, uint64_t labe
 	return (status);
 }
 
+uint32_t
+erx_space_cap_limit_max(void)
+{
+	return (ERX_FIASCO_CAP_LIMIT_MAX);
+}
+
 int
 erx_image_map(uint64_t space, uint64_t image, uint64_t entry, uint64_t *start)
 {
@@ -597,23 +606,35 @@ erx_irq_bind(uint64_t irq, uint64_t group, uint64_t label)
 	return (erx_fiasco_service_call(ERX_FIASCO_CALL_IRQ_BIND, &request, sizeof(request), &reply));
 }
 
-/* A doorbell from any task holding the object: one service round trip (irq.c). */
+/*
+ * A trigger and an ack are the holder's own, on the capability the root placed at the IRQ
+ * slot the handle's number fixes, and make no request (docs/design-fiasco.md, "Handles").
+ * Number 0 names no entry, and an empty slot is a closed, destroyed or never-placed entry's,
+ * which Fiasco refuses: both are ERX_ESTALE. The generation is not checked here, so a value
+ * whose entry was closed and taken again reaches the new entry's object (FD1).
+ */
+static l4_cap_idx_t
+irq_slot(uint64_t irq)
+{
+	const uint32_t number = ERX_BACKEND_HANDLE_NUMBER(irq);
+
+	return (number != 0 ? (l4_cap_idx_t)erx_fiasco_irq_slot_cap(number - 1) : L4_INVALID_CAP);
+}
+
 int
 erx_irq_trigger(uint64_t irq)
 {
-	const erx_fiasco_irq_request_t request = { .caller = erx_fiasco_thread_self()->index, .irq = irq };
-	erx_fiasco_reply_t reply;
+	const l4_cap_idx_t slot = irq_slot(irq);
 
-	return (erx_fiasco_service_call(ERX_FIASCO_CALL_IRQ_TRIGGER, &request, sizeof(request), &reply));
+	return (l4_is_valid_cap(slot) && !l4_msgtag_has_error(l4_irq_trigger(slot)) ? ERX_OK : ERX_ESTALE);
 }
 
 int
 erx_irq_ack(uint64_t irq)
 {
-	const erx_fiasco_irq_request_t request = { .caller = erx_fiasco_thread_self()->index, .irq = irq };
-	erx_fiasco_reply_t reply;
+	const l4_cap_idx_t slot = irq_slot(irq);
 
-	return (erx_fiasco_service_call(ERX_FIASCO_CALL_IRQ_ACK, &request, sizeof(request), &reply));
+	return (l4_is_valid_cap(slot) && !l4_msgtag_has_error(l4_irq_unmask(slot)) ? ERX_OK : ERX_ESTALE);
 }
 
 int

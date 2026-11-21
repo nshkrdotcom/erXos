@@ -522,7 +522,9 @@ the packages are well formed**, beside those of
    can run at once, with the configured domains' shares reserved: for
    each table [design-fiasco.md](design-fiasco.md#table-sizes) names as
    shared out among domains (the page index's 4,096 labels for tasks and
-   memory objects) and for the root's own
+   memory objects, the task table's 1,024 rows, shared by object limits,
+   and the threads' share of the root's slot pool, by thread limits) and
+   for the root's own
    kernel memory, the configured domains' shares, which their limits
    records' thread, object and mapping limits fix, plus `max` times the
    app template's share, plus every other session template's share times
@@ -555,7 +557,9 @@ principal other than the system principal; one granted to a configured
 domain; one granted to root's template in a release manifest; an `apps`
 row
 whose `max` times the app template's object limit, beside the configured
-domains' object limits, passes the page index's 4,096 labels.
+domains' object limits, passes the page index's 4,096 labels; and
+configured domains whose thread limits together pass the threads' share
+of the root's slot pool.
 
 ### The declaration
 

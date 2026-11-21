@@ -20,11 +20,13 @@
 
 #include "erx/pack.h"
 #include "liberx/backend/api.h"
+#include "liberx/backend/core/handles.h"
 #include "liberx/backend/fiasco/console.h"
 #include "liberx/backend/fiasco/group.h"
 #include "liberx/backend/fiasco/launcher.h"
 #include "liberx/backend/fiasco/log.h"
 #include "liberx/backend/fiasco/park.h"
+#include "liberx/backend/fiasco/root_layout.h"
 #include "liberx/backend/fiasco/root_open.h"
 #include "liberx/backend/fiasco/service.h"
 #include "liberx/backend/fiasco/service_task.h"
@@ -51,6 +53,8 @@
 #define LABEL_MOVED	UINT64_C(0x55d3)
 
 #define NS_PER_MS	UINT64_C(1000000)
+/* More entries than the root's free list holds here, so a freed entry would come up among them. */
+#define DESTROYED_DUPS	1024u
 /* How long a park waits before the case says the wake was lost. */
 #define PATIENCE_NS	(UINT64_C(30000) * NS_PER_MS)
 #define TIMED_PARK_NS	(UINT64_C(20) * NS_PER_MS)
@@ -237,7 +241,7 @@ static void
 trigger(uint64_t irq)
 {
 	if (erx_irq_trigger(irq) != ERX_OK)
-		fail("erx: irq: the service refused a trigger FAILED\n");
+		fail("erx: irq: a trigger was refused FAILED\n");
 }
 
 /* Fires an object and waits for the dispatcher to run its trigger, seen as the epoch moving. */
@@ -417,6 +421,112 @@ case_pending_bind(void)
 	uart_take();
 }
 
+/*
+ * The direct doorbell (docs/design-fiasco.md, "The release's cases"): a ring and its wake
+ * make no request to the root, so the service's count of messages is unchanged across
+ * them. Number 0 names no entry, whatever the generation bits hold, so its ring and its
+ * ack are ERX_ESTALE.
+ */
+static void
+case_direct_doorbell(void)
+{
+	uint64_t received;
+
+	if (erx_irq_trigger(ERX_CAP_NULL) != ERX_ESTALE || erx_irq_ack(UINT64_C(1) << 40) != ERX_ESTALE)
+		fail("erx: irq: a handle of number 0 reached a slot FAILED\n");
+	expect_empty();
+	received = erx_fiasco_test_received();
+	trigger(irq_soft);
+	if (wait_label(false) != LABEL_SOFT)
+		fail("erx: irq: a direct ring woke to the wrong label FAILED\n");
+	if (erx_fiasco_test_received() != received)
+		fail("erx: irq: a ring or its wake made a request to the root FAILED\n");
+	say("erx: irq: a ring and its wake made no request to the root\n");
+}
+
+/* A copy rings the same object; once closed, its slot is empty, so it rings and acks nothing. */
+static void
+case_closed_handle(void)
+{
+	uint64_t copy;
+
+	if (erx_cap_dup(irq_soft, &copy) != ERX_OK)
+		fail("erx: irq: the doorbell was not duplicated FAILED\n");
+	trigger(copy);
+	if (wait_label(false) != LABEL_SOFT)
+		fail("erx: irq: a copy rang another object FAILED\n");
+	if (erx_cap_close((erx_cap_t){ .raw = copy }) != ERX_OK)
+		fail("erx: irq: the copy was not closed FAILED\n");
+	if (erx_irq_trigger(copy) != ERX_ESTALE || erx_irq_ack(copy) != ERX_ESTALE)
+		fail("erx: irq: a ring after close reached the object FAILED\n");
+	expect_empty();
+	say("erx: irq: a closed handle rings nothing\n");
+}
+
+/*
+ * The destroyed handle (docs/design-fiasco.md, "The release's cases"): after the creator's
+ * destroy, a holder's ring and its service call both answer ERX_ESTALE. Its entry stays
+ * taken until its own close, so no new entry takes its number and its slot stays empty
+ * however many entries are made after.
+ */
+static void
+case_destroyed_handle(void)
+{
+	static uint64_t dups[DESTROYED_DUPS];
+	uint64_t made, copy, other;
+
+	if (erx_irq_create(0, 0, ERX_IRQ_SOFT, 0, &made, NULL) != ERX_OK || erx_cap_dup(made, &copy) != ERX_OK)
+		fail("erx: irq: the doorbell and its copy were not made FAILED\n");
+	if (erx_object_destroy(made) != ERX_OK)
+		fail("erx: irq: the doorbell was not destroyed FAILED\n");
+	if (erx_irq_trigger(copy) != ERX_ESTALE || erx_irq_bind(copy, ERX_CAP_SELF, LABEL_OTHER) != ERX_ESTALE)
+		fail("erx: irq: a destroyed doorbell's holder reached it FAILED\n");
+	if (erx_irq_create(0, 0, ERX_IRQ_SOFT, 0, &other, NULL) != ERX_OK)
+		fail("erx: irq: no doorbell after the destroy FAILED\n");
+	for (uint32_t at = 0; at < DESTROYED_DUPS; at++) {
+		if (erx_cap_dup(other, &dups[at]) != ERX_OK)
+			fail("erx: irq: the new doorbell was not duplicated FAILED\n");
+		if (ERX_BACKEND_HANDLE_NUMBER(dups[at]) == ERX_BACKEND_HANDLE_NUMBER(copy))
+			fail("erx: irq: a destroyed doorbell's entry was taken again FAILED\n");
+	}
+	if (erx_irq_trigger(copy) != ERX_ESTALE)
+		fail("erx: irq: a destroyed doorbell's slot holds an object FAILED\n");
+	for (uint32_t at = 0; at < DESTROYED_DUPS; at++)
+		if (erx_cap_close((erx_cap_t){ .raw = dups[at] }) != ERX_OK)
+			fail("erx: irq: a copy of the new doorbell was not closed FAILED\n");
+	if (erx_object_destroy(other) != ERX_OK || erx_cap_close((erx_cap_t){ .raw = other }) != ERX_OK ||
+	    erx_cap_close((erx_cap_t){ .raw = made }) != ERX_OK || erx_cap_close((erx_cap_t){ .raw = copy }) != ERX_OK)
+		fail("erx: irq: the destroyed doorbells' entries were not closed FAILED\n");
+	say("erx: irq: a destroyed handle answers stale\n");
+}
+
+/*
+ * Fiasco's object space under the release's configuration (docs/design-fiasco.md, "Handles"):
+ * a cap_limit whose window passes the object space's last slot is ERX_EINVAL, the largest
+ * that fits is what erx_space_cap_limit_max answers and makes a space, and the backend's
+ * probe places a capability at that last slot and none past it.
+ */
+static void
+check_object_space(void)
+{
+	uint64_t space;
+	int64_t ignored;
+	const char *reason;
+
+	if (erx_space_cap_limit_max() != ERX_FIASCO_CAP_LIMIT_MAX)
+		fail("erx: irq: the largest cap_limit answered is not the object space's FAILED\n");
+	if (erx_space_create(0, ERX_CAP_SELF, 0, 0, 0, erx_space_cap_limit_max() + 1, &space) != ERX_EINVAL)
+		fail("erx: irq: a window past the object space was admitted FAILED\n");
+	if (erx_space_create(0, ERX_CAP_SELF, ERX_CAP_NULL, 0, 0, erx_space_cap_limit_max(), &space) != ERX_OK)
+		fail("erx: irq: the largest window that fits was refused FAILED\n");
+	(void)erx_space_stop(space, 0);
+	(void)erx_fiasco_task_join(space, &ignored);
+	reason = erx_fiasco_test_object_space_probe(irq_soft);
+	if (reason != NULL)
+		fail(reason);
+	say("erx: irq: the object space ends at slot 65535\n");
+}
+
 /* One item of the caller's UTCB for erx_cap_pass: a copy of cap with mask's rights. */
 static void
 item_put(uint32_t item, uint64_t cap, uint32_t mask)
@@ -483,13 +593,37 @@ holder_objects_make(uint64_t objects[HOLDER_HANDLES])
 	*(volatile uint64_t *)(uintptr_t)addr = dma;
 	objects[HOLDER_ROOT_GROUP] = root_group;
 	objects[HOLDER_ROOT_SOFT] = irq_soft;
+	if (erx_irq_create(0, 0, ERX_IRQ_SOFT, 0, &objects[HOLDER_INSPECT], NULL) != ERX_OK)
+		fail("erx: irq: the holder's inspection-only object was not made FAILED\n");
+}
+
+/*
+ * A move is a copy and then the close of the caller's entry, so the moved doorbell's slot
+ * in the caller empties as at any close, and a ring through the old value reaches nothing.
+ */
+static void
+moved_check(uint64_t task)
+{
+	uint64_t copy, desc = 0;
+
+	if (erx_cap_dup(irq_soft, &copy) != ERX_OK)
+		fail("erx: irq: the doorbell to move was not duplicated FAILED\n");
+	(void)erx_msg_item_desc_rights_set(&desc, ERX_HR_TRIGGER);
+	(void)erx_msg_item_desc_move_set(&desc, 1);
+	(void)erx_utcb_mr_store(erx_utcb_self(), 0, desc);
+	(void)erx_utcb_mr_store(erx_utcb_self(), 1, copy);
+	if (erx_cap_pass(ERX_CAP_SELF, task, 1) != ERX_OK)
+		fail("erx: irq: the doorbell was not moved FAILED\n");
+	if (erx_irq_trigger(copy) != ERX_ESTALE)
+		fail("erx: irq: a ring after a move reached the object FAILED\n");
 }
 
 /*
  * Makes the holder task, passes it the objects and starts its first thread in a new group,
  * which makes the holder that group's home, then waits for its end and gives its status.
- * The masks are the rights the target design gives each handle; this backend records none
- * (docs/design-fiasco.md, "Capabilities in Fiasco's object space"), so they limit nothing here.
+ * The masks are the rights the target design gives each handle, which each new entry records;
+ * the IRQ entries holding ERX_HR_TRIGGER or ERX_HR_ACK get a capability, and the
+ * inspection-only one gets none (docs/design-fiasco.md, "Handles").
  */
 static int64_t
 holder_run(const uint64_t objects[HOLDER_HANDLES])
@@ -497,15 +631,18 @@ holder_run(const uint64_t objects[HOLDER_HANDLES])
 	static const uint32_t masks[HOLDER_HANDLES] = {
 		[HOLDER_LINE] = ERX_HR_BIND | ERX_HR_ACK, [HOLDER_WINDOW] = ERX_HR_READ | ERX_HR_WRITE | ERX_HR_MAP,
 		[HOLDER_RUN] = ERX_HR_READ | ERX_HR_WRITE | ERX_HR_MAP | ERX_HR_PHYS, [HOLDER_ROOT_GROUP] = ERX_HR_ATTACH,
-		[HOLDER_ROOT_SOFT] = ERX_HR_TRIGGER };
-	uint64_t group, task, pc, thread;
+		[HOLDER_ROOT_SOFT] = ERX_HR_TRIGGER, [HOLDER_INSPECT] = ERX_HR_INSPECT | ERX_HR_DUP };
+	uint64_t group, task, pc, thread, argument;
 	int64_t status = INT64_MIN;
 
 	if (erx_group_create(0, 0, &group) != ERX_OK)
 		fail("erx: irq: no group for the holder FAILED\n");
 	if (erx_fiasco_launch_make(holder_entry, 0, &task, &pc) != ERX_OK)
 		fail("erx: irq: no holder task FAILED\n");
-	erx_fiasco_launch_set_registers(pc, holder_pass(task, objects, masks));
+	argument = holder_pass(task, objects, masks);
+	/* Before the registers, which erx_thread_create takes from the same UTCB words. */
+	moved_check(task);
+	erx_fiasco_launch_set_registers(pc, argument);
 	if (erx_thread_create(0, task, group, ERX_THREAD_CLASS_WORKER, &thread) != ERX_OK || erx_thread_start(thread) != ERX_OK)
 		fail("erx: irq: the holder's first thread did not start FAILED\n");
 	if (erx_fiasco_task_join(task, &status) != ERX_OK)
@@ -552,6 +689,9 @@ executor_main(uint64_t unused)
 	case_move_and_unbind();
 	case_timed_park();
 	case_rounds();
+	case_direct_doorbell();
+	case_closed_handle();
+	case_destroyed_handle();
 	atomic_store_explicit(&cases_done, 1, memory_order_release);
 	/* The second character can arrive only through the first's last ack. */
 	case_pending_bind();
@@ -636,7 +776,7 @@ bind_objects(void)
 		fail("erx: irq: no group FAILED\n");
 	root_group = group;
 	/* A second group has no home, so nothing holds it but its handle, which its destroy leaves stale. */
-	if (erx_group_create(0, 0, &gone) != ERX_OK || erx_irq_bind(0, gone, 1) != ERX_EINVAL ||
+	if (erx_group_create(0, 0, &gone) != ERX_OK || erx_irq_bind(0, gone, 1) != ERX_ESTALE ||
 	    erx_object_destroy(gone) != ERX_OK)
 		fail("erx: irq: a second group was not a homeless record FAILED\n");
 	if (pl011 == NULL)
@@ -662,9 +802,9 @@ bind_objects(void)
 	if (erx_irq_bind(irq_uart, group, LABEL_UART) != ERX_OK || erx_irq_bind(irq_soft, group, LABEL_SOFT) != ERX_OK ||
 	    erx_irq_bind(irq_other, group, LABEL_OTHER) != ERX_OK)
 		fail("erx: irq: the service refused a bind FAILED\n");
-	if (erx_irq_bind(77, group, 0) != ERX_EINVAL ||
-	    erx_irq_bind(irq_soft, gone, 0) != ERX_ESTALE || erx_irq_ack(77) != ERX_EINVAL ||
-	    erx_irq_trigger(77) != ERX_EINVAL)
+	if (erx_irq_bind(UINT64_C(1) << 40, group, 0) != ERX_ESTALE ||
+	    erx_irq_bind(irq_soft, gone, 0) != ERX_ESTALE || erx_irq_ack(UINT64_C(1) << 40) != ERX_ESTALE ||
+	    erx_irq_trigger(UINT64_C(1) << 40) != ERX_ESTALE)
 		fail("erx: irq: a malformed call was not refused FAILED\n");
 	if (erx_group_take_ready(1) != ERX_ETYPE)
 		fail("erx: irq: a worker's take_ready was not refused FAILED\n");
@@ -732,6 +872,7 @@ erx_fiasco_root_main(void)
 	check_time();
 	bind_objects();
 	check_msi();
+	check_object_space();
 	start_executor();
 	ring_when_parked();
 	/* The executor ends the machine: this thread leaves its CPU to it. */

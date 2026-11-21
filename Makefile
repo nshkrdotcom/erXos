@@ -68,7 +68,8 @@ check-sources:
 
 # Every kernel-touching change runs this: all QEMU suites, discovered from
 # tools/lib/erx/qemu_suites/, under HVF; TCG runs only the production image's
-# deterministic transcript and a one-CPU boot smoke. A host whose QEMU lacks
+# deterministic transcript and a one-CPU boot smoke, and the raspi4b suite,
+# whose board model HVF cannot run. A host whose QEMU lacks
 # HVF or TCG fails the gate. It runs every boot fresh and every cell on this
 # host, one after another; `tools/erx check-qemu` without --fresh reuses boots that passed on the
 # same inputs, and with --remote may move cells to a second host
@@ -85,7 +86,7 @@ check-qemu-mutant:
 check-openssl:
 	$(RUBY) test/integration/libcrypto_build_test.rb
 
-# Each seeded failure of the threads and watchdog suites, seen to fail.
+# Each seeded failure of the threads, watchdog, task and interrupt suites, seen to fail.
 check-native-seeds:
 	$(RUBY) test/integration/native_seeds_test.rb
 

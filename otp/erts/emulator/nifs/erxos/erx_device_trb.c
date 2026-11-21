@@ -7,8 +7,6 @@
 
 #include "erx_device_trb.h"
 
-#include <string.h>
-
 #include "erx/abi.h"
 #include "erx_device_sequencer.h"
 #include "liberx/backend/core/mem.h"
@@ -1051,12 +1049,12 @@ add_input_context(plan_t *plan, const erx_device_trb_layout_t *layout, const erx
 			uint64_t dequeue;
 
 			if (parts[part].dci != 0 && offset == ERX_XHCI_ENDPOINT_CONTEXT_OFF_DEQUEUE) {
-				memcpy(&dequeue, parts[part].bytes + offset, sizeof(dequeue));
+				bcopy(parts[part].bytes + offset, &dequeue, sizeof(dequeue));
 				add_address(plan, at + parts[part].offset + offset, dequeue, reach[parts[part].dci]);
 				offset += sizeof(uint32_t);
 				continue;
 			}
-			memcpy(&word, parts[part].bytes + offset, sizeof(word));
+			bcopy(parts[part].bytes + offset, &word, sizeof(word));
 			if (word != 0)
 				add_value(plan, at + parts[part].offset + offset, sizeof(word), word);
 		}

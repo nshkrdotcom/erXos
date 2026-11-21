@@ -13,9 +13,9 @@
  * before the zeroing reaches memory.
  */
 
-#include <string.h>
-
 #include "erx_device_sequencer.h"
+
+#include "liberx/backend/core/mem.h"
 
 _Static_assert(sizeof(erx_virtq_desc_t) <= ERX_DMA_STORE_BYTES_MAX &&
     sizeof(erx_virtio_gpu_mem_entry_t) <= ERX_DMA_STORE_BYTES_MAX, "every record the sequencer encodes fits a store");
@@ -171,7 +171,7 @@ static bool
 command_store(erx_dma_store_t *store, const void *record)
 {
 	store->length = ERX_XHCI_TRB_ALIGN;
-	memcpy(store->bytes, record, ERX_XHCI_TRB_ALIGN);
+	bcopy(record, store->bytes, ERX_XHCI_TRB_ALIGN);
 	return (true);
 }
 
@@ -214,7 +214,7 @@ encode(const erx_dma_ledger_t *ledger, const erx_dma_publication_t *publication,
 		if (!erx_virtq_desc_encode(&record, &description->described.virtq_desc, &placed))
 			return (false);
 		store->length = sizeof(record);
-		memcpy(store->bytes, &record, sizeof(record));
+		bcopy(&record, store->bytes, sizeof(record));
 		return (true);
 	}
 	case ERX_MEANING_XHCI_TRB_NORMAL: {
@@ -224,7 +224,7 @@ encode(const erx_dma_ledger_t *ledger, const erx_dma_publication_t *publication,
 		if (!erx_xhci_trb_normal_encode(&record, &description->described.xhci_trb_normal, &placed))
 			return (false);
 		store->length = sizeof(record);
-		memcpy(store->bytes, &record, sizeof(record));
+		bcopy(&record, store->bytes, sizeof(record));
 		return (true);
 	}
 	case ERX_MEANING_XHCI_TRB_DATA: {
@@ -234,7 +234,7 @@ encode(const erx_dma_ledger_t *ledger, const erx_dma_publication_t *publication,
 		if (!erx_xhci_trb_data_encode(&record, &description->described.xhci_trb_data, &placed))
 			return (false);
 		store->length = sizeof(record);
-		memcpy(store->bytes, &record, sizeof(record));
+		bcopy(&record, store->bytes, sizeof(record));
 		return (true);
 	}
 	case ERX_MEANING_XHCI_TRB_SETUP: {
@@ -244,7 +244,7 @@ encode(const erx_dma_ledger_t *ledger, const erx_dma_publication_t *publication,
 		if (!erx_xhci_trb_setup_encode(&record, &description->described.xhci_trb_setup, &placed))
 			return (false);
 		store->length = sizeof(record);
-		memcpy(store->bytes, &record, sizeof(record));
+		bcopy(&record, store->bytes, sizeof(record));
 		return (true);
 	}
 	case ERX_MEANING_XHCI_TRB_STATUS: {
@@ -254,7 +254,7 @@ encode(const erx_dma_ledger_t *ledger, const erx_dma_publication_t *publication,
 		if (!erx_xhci_trb_status_encode(&record, &description->described.xhci_trb_status, &placed))
 			return (false);
 		store->length = sizeof(record);
-		memcpy(store->bytes, &record, sizeof(record));
+		bcopy(&record, store->bytes, sizeof(record));
 		return (true);
 	}
 	case ERX_MEANING_XHCI_TRB_NOOP_COMMAND: {
@@ -343,7 +343,7 @@ encode_link(const erx_dma_layout_t *layout, erx_dma_ring_step_t step, erx_dma_st
 	if (!erx_xhci_trb_link_encode(&record, &placed))
 		return (false);
 	*store = (erx_dma_store_t){ .offset = record_offset(layout, step.place), .length = sizeof(record) };
-	memcpy(store->bytes, &record, sizeof(record));
+	bcopy(&record, store->bytes, sizeof(record));
 	return (true);
 }
 
@@ -390,7 +390,7 @@ place_ring(const erx_dma_ledger_t *ledger, const erx_dma_publication_t *publicat
 			out->activation.kind = ERX_DMA_ACTIVATE_STORE;
 			out->activation.store = (erx_dma_store_t){ .offset = live.offset + ERX_XHCI_TRB_NORMAL_OFF_CONTROL,
 			    .length = sizeof(uint32_t) };
-			memcpy(out->activation.store.bytes, live.bytes + ERX_XHCI_TRB_NORMAL_OFF_CONTROL, sizeof(uint32_t));
+			bcopy(live.bytes + ERX_XHCI_TRB_NORMAL_OFF_CONTROL, out->activation.store.bytes, sizeof(uint32_t));
 		}
 		add_range(out->cleans, &out->clean_count, store->offset, store->length);
 		out->store_count++;
@@ -412,7 +412,7 @@ encode_region_entry(const erx_dma_persistent_region_t *region, uint64_t at, erx_
 	if (!erx_virtio_gpu_mem_entry_encode(&record, &placed))
 		return (false);
 	*store = (erx_dma_store_t){ .offset = at, .length = sizeof(record) };
-	memcpy(store->bytes, &record, sizeof(record));
+	bcopy(&record, store->bytes, sizeof(record));
 	return (true);
 }
 
@@ -434,11 +434,11 @@ place_in_order(const erx_dma_ledger_t *ledger, uint32_t table, erx_dma_place_t h
 	value = (uint16_t)head.index;
 	*entry = (erx_dma_store_t){ .offset = record_offset(layout, (erx_dma_place_t){ table, position.index }),
 	    .length = sizeof(value) };
-	memcpy(entry->bytes, &value, sizeof(value));
+	bcopy(&value, entry->bytes, sizeof(value));
 	value = (uint16_t)(running_index(ledger, table) + 1u);
 	*activation = (erx_dma_store_t){ .offset = layout->tables[table].region + ERX_VIRTQ_RING_HEAD_OFF_IDX,
 	    .length = sizeof(value) };
-	memcpy(activation->bytes, &value, sizeof(value));
+	bcopy(&value, activation->bytes, sizeof(value));
 	return (true);
 }
 
@@ -513,7 +513,7 @@ add_part(erx_dma_context_part_t *parts, uint32_t *count, uint32_t context_size, 
     const void *record)
 {
 	parts[*count] = (erx_dma_context_part_t){ .offset = index * context_size, .dci = dci };
-	memcpy(parts[*count].bytes, record, sizeof(parts[*count].bytes));
+	bcopy(record, parts[*count].bytes, sizeof(parts[*count].bytes));
 	(*count)++;
 }
 
@@ -563,7 +563,7 @@ erx_dma_input_context(const erx_device_trb_contexts_t *stated, const erx_dma_con
 		return (0);
 	/* The input control context, context 0, takes the first part, which the count began past. */
 	parts[0] = (erx_dma_context_part_t){ .offset = 0, .dci = 0 };
-	memcpy(parts[0].bytes, &flags, sizeof(parts[0].bytes));
+	bcopy(&flags, parts[0].bytes, sizeof(parts[0].bytes));
 	return (count);
 }
 
@@ -677,7 +677,7 @@ place_input_context(const erx_dma_ledger_t *ledger, const erx_dma_publication_t 
 
 		*store = (erx_dma_store_t){ .offset = buffer_offset(layout, name.buffer,
 		    name.offset + parts[part].offset), .length = sizeof(parts[part].bytes) };
-		memcpy(store->bytes, parts[part].bytes, sizeof(parts[part].bytes));
+		bcopy(parts[part].bytes, store->bytes, sizeof(parts[part].bytes));
 	}
 	return (ERX_DMA_PASSES);
 }

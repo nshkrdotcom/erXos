@@ -4,14 +4,17 @@
 -module(erx_domain_sup).
 -moduledoc """
 The domain service's supervisor (docs/design-system.md, "System services").
-The service is its one child, temporary and significant, so it is never
-restarted: its end, however it comes, kill included, shuts the supervisor
+It has four children. The service is one, temporary and significant, so it
+is never restarted: its end, however it comes, kill included, shuts the supervisor
 down, which ends the permanent application and the system domain with it,
 outside an ordered end, as any fault of the system domain does. The
 service's records of every domain live in its own heap, and no successor
-needs them, since no domain outlives the system domain.
+needs them, since no domain outlives the system domain. The coordinator
+of the machine's end, erx_machine, is temporary and significant too, and
+ends the supervisor the same way. The machine tree's grants, erx_machine_fs,
+are a permanent child supervisor.
 
-Beside it runs `/dev`'s control tree, erx_devfs, a permanent child that
+Beside them runs `/dev`'s control tree, erx_devfs, a permanent child that
 mounts itself at `/dev` in the system domain's namespace; it keeps no
 state, so a restarted one serves the same tree.
 """.

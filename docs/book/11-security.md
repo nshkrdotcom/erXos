@@ -198,7 +198,7 @@ domain decodes with ERTS's ordinary decoder (section 11.5.1).
 
 No device is confined in the system as built, so every domain that
 holds a DMA-capable device is in the trusted base
-([chapter 15](README.md#chapter-15-devices-and-drivers)). DMA behind
+([chapter 15](15-devices.md)). DMA behind
 an IOMMU is designed and not built. So is the **PCIe domain**, which
 alone reaches PCIe configuration space and so can turn on any
 device's DMA.
@@ -391,6 +391,8 @@ grantee is introduced to the facet and never to the service behind
 it. The facet admits only the operations and arguments the grant
 allows, within its limits, and forwards them to the service. Most
 facets are processes of the system domain.
+A domain that holds no facet for a service has no way to reach it: a
+call that needs one fails with `no_facet` before it reaches anything.
 
 A grant is a row of the system manifest. Here is one from
 `config/manifest/development.txt`, abridged (the full row also sets
@@ -484,7 +486,7 @@ only a way to find a grant, and the grant decides.
 
 Each domain has a private **namespace**, a table from path prefixes to
 the file servers that serve them
-([chapter 14](README.md#chapter-14-files-namespaces-and-service-trees)).
+([chapter 14](14-files.md)).
 An entry that leads to another domain's server holds the pid of a
 **file grant**: a process at the server that stands for one client
 domain's right to one tree, with a root and rights the server fixed

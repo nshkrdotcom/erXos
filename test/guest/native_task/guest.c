@@ -22,10 +22,13 @@
 #include "erx/pack.h"
 #include "liberx/backend/fiasco/service_task.h"
 #include "liberx/backend/fiasco/vm.h"
+#include "liberx/backend/fiasco/thread.h"
 #include "test/guest/native_task/modes.h"
 
 #define PROGRAM		"boot/native-task"
 #define RACE_ROUNDS	1000u
+/* How many yields the root waits for a task's threads to be live before it stops the task. */
+#define ROOT_STOPS_WAITS	100000u
 
 void erx_fiasco_root_main(void);
 
@@ -102,49 +105,60 @@ task_run(uint32_t flags, uint64_t mode, uint64_t *space)
 	return (result == ERX_OK ? status : INT64_MIN);
 }
 
-/* A case that ends by itself: its status, its capabilities gone, and the pool's count back. */
+/* A case that ends by itself: its status, its capabilities gone, and both pools' counts back. */
 static void
 case_ends(const char *name, uint32_t flags, uint64_t mode, int64_t expected)
 {
 	const uint64_t before = erx_fiasco_vm_free_pages();
+	const uint32_t pairs = erx_fiasco_test_pool_free();
 	uint64_t space = 0;
 	const int64_t status = task_run(flags, mode, &space);
 
 	say_status(status);
-	say_case(name, status == expected && erx_fiasco_test_task_caps_gone() &&
-	    erx_fiasco_vm_free_pages() == before);
+	say_case(name, status == expected && erx_fiasco_test_pool_slots_gone() &&
+	    erx_fiasco_vm_free_pages() == before && erx_fiasco_test_pool_free() == pairs);
 }
 
 /*
  * A task cannot make a line, and reaches no IRQ object through a handle it was not given:
- * the root holds an object, within the handles the task probes, while the task runs, and
- * still holds it afterwards. The doorbell the task makes last goes with the task.
+ * the root holds an object while the task runs, the task's probes of its own handles 1 to
+ * IRQ_SCAN reach nothing, and the root still holds the object afterwards. The doorbell the
+ * task makes last goes with the task.
  */
 static void
 case_irq_refused(void)
 {
 	const uint64_t before = erx_fiasco_vm_free_pages();
 	uint64_t bell = 0, space = 0;
-	const bool made = erx_irq_create(0, 0, ERX_IRQ_SOFT, 0, &bell, NULL) == ERX_OK && bell >= 1 && bell <= IRQ_SCAN;
+	const bool made = erx_irq_create(0, 0, ERX_IRQ_SOFT, 0, &bell, NULL) == ERX_OK;
 	const int64_t status = made ? task_run(0, MODE_IRQ_REFUSED, &space) : INT64_MIN;
 	const bool kept = made && erx_object_destroy(bell) == ERX_OK;
 
 	say_status(status);
-	say_case("irq_refused", made && status == 0 && kept && erx_fiasco_test_task_caps_gone() &&
+	say_case("irq_refused", made && status == 0 && kept && erx_fiasco_test_pool_slots_gone() &&
 	    erx_fiasco_vm_free_pages() == before);
 }
 
-/* The root stops a task that has not stopped itself, with the root's own status. */
+/*
+ * The root stops a task that has not stopped itself, with the root's own status, once its
+ * threads are live: the task's two pairs of the slot pool and one for each thread are
+ * taken, and all of them are free again after the join.
+ */
 static void
 case_root_stops(void)
 {
 	const uint64_t before = erx_fiasco_vm_free_pages();
+	const uint32_t pairs = erx_fiasco_test_pool_free();
+	const uint32_t live = pairs - 2 - (TASK_OWN_THREADS + WAIT_THREADS);
 	uint64_t space;
 	int64_t status = 0;
-	bool passed = erx_fiasco_launch(program_entry, 0, MODE_WAIT, &space) == ERX_OK &&
-	    erx_space_stop(space, 33) == ERX_OK && erx_fiasco_task_join(space, &status) == ERX_OK && status == 33;
+	bool passed = erx_fiasco_launch(program_entry, 0, MODE_WAIT, &space) == ERX_OK;
 
-	say_case("root_stops", passed && erx_fiasco_vm_free_pages() == before);
+	for (uint32_t wait = 0; passed && wait < ROOT_STOPS_WAITS && erx_fiasco_test_pool_free() != live; wait++)
+		erx_yield();
+	passed = passed && erx_fiasco_test_pool_free() == live && erx_space_stop(space, 33) == ERX_OK &&
+	    erx_fiasco_task_join(space, &status) == ERX_OK && status == 33;
+	say_case("root_stops", passed && erx_fiasco_vm_free_pages() == before && erx_fiasco_test_pool_free() == pairs);
 }
 
 /* A thread requesting while another faults, and the label reused at once each time. */
@@ -192,6 +206,7 @@ erx_fiasco_root_main(void)
 	case_irq_refused();
 	case_ends("device_refused", 0, MODE_DEVICE_REFUSED, 0);
 	case_ends("machine_end_refused", 0, MODE_MACHINE_END, 0);
+	case_ends("pool_rounds", 0, MODE_POOL_ROUNDS, 0);
 	case_ends("log", 0, MODE_LOG, 0);
 	case_ends("write", 0, MODE_WRITE, 0);
 	case_ends("spin_stop", 0, MODE_SPIN_STOP, STATUS_SPIN_STOP);

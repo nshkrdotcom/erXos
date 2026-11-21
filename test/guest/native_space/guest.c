@@ -267,7 +267,7 @@ case_bounds(void)
 	    erx_vm_map(space, SHARED_ADDR + 2 * PAGE, PAGE, mem, past, ERX_PROT_R) == ERX_ERANGE &&
 	    erx_vm_map(space, SHARED_ADDR + 2 * PAGE, PAGE, mem, 2 * PAGE, ERX_PROT_R) == ERX_ERANGE &&
 	    erx_vm_map(space, past, PAGE, mem, 0, ERX_PROT_R) == ERX_ERANGE &&
-	    erx_vm_map(space + 1000, SHARED_ADDR + 2 * PAGE, PAGE, mem, 0, ERX_PROT_R) == ERX_EINVAL &&
+	    erx_vm_map(space + 1000, SHARED_ADDR + 2 * PAGE, PAGE, mem, 0, ERX_PROT_R) == ERX_ESTALE &&
 	    erx_fiasco_vm_free_pages() == committed &&
 	    erx_vm_release(space, SHARED_ADDR, 2 * PAGE) == ERX_OK;
 	task_drop(space);
@@ -357,7 +357,7 @@ case_gate_refusals(void)
 	passed = passed && erx_ipc_call(gate, 0, 0, 0) == ERX_ENOTSUP && erx_ipc_send(gate, 0, 0) == ERX_ENOTSUP &&
 	    erx_ipc_reply(0) == ERX_ENOTSUP && erx_ipc_reply_wait(0, 0) == ERX_ENOTSUP &&
 	    erx_gate_bind(mem, ERX_CAP_SELF_THREAD, 0) == ERX_ETYPE &&
-	    erx_gate_bind(gate + 1000, ERX_CAP_SELF_THREAD, 0) == ERX_EINVAL &&
+	    erx_gate_bind(gate + 1000, ERX_CAP_SELF_THREAD, 0) == ERX_ESTALE &&
 	    erx_gate_bind(gate, thread, 0) == ERX_ENOTSUP &&
 	    erx_gate_bind(gate, ERX_FIASCO_THREADS_MAX - 1, 0) == ERX_EINVAL &&
 	    erx_space_create(0, ERX_CAP_SELF, mem, 0, 0, TASK_CAP_LIMIT, &refused) == ERX_ETYPE &&
@@ -771,7 +771,7 @@ case_passing(void)
 	item_put(0, mem, ERX_HR_READ | ERX_HR_MAP, false);
 	item_put(1, moved, write | ERX_HR_DESTROY, true);
 	passed = passed && erx_cap_pass(ERX_CAP_SELF, task, 2) == ERX_OK && item_passed(0, ERX_HR_READ | ERX_HR_MAP) &&
-	    item_passed(1, write) && item_word(0, 1) != item_word(1, 1) && handle_close(moved) == ERX_EINVAL;
+	    item_passed(1, write) && item_word(0, 1) != item_word(1, 1) && handle_close(moved) == ERX_ESTALE;
 	held = item_word(0, 1);
 
 	for (size_t item = 0; item < ERX_MSG_CAPS; item++)
@@ -919,8 +919,8 @@ case_budget_held(void)
 	item_put(0, budget, ERX_HR_ALLOC | ERX_HR_DESTROY, true);
 	item_put(1, group, ERX_HR_ATTACH | ERX_HR_SIGNAL, true);
 	passed = passed && erx_cap_pass(ERX_CAP_SELF, space, 2) == ERX_OK && item_typed(0, ERX_K_BUDGET, ERX_HR_ALLOC) &&
-	    item_typed(1, ERX_K_GROUP, ERX_HR_ATTACH | ERX_HR_SIGNAL) && handle_close(budget) == ERX_EINVAL &&
-	    handle_close(group) == ERX_EINVAL;
+	    item_typed(1, ERX_K_GROUP, ERX_HR_ATTACH | ERX_HR_SIGNAL) && handle_close(budget) == ERX_ESTALE &&
+	    handle_close(group) == ERX_ESTALE;
 	erx_fiasco_launch_set_registers(program_pc, FIRST_TAG << SLOT_SHIFT | MODE_FIRST);
 	passed = passed && erx_thread_create(0, space, 0, ERX_THREAD_CLASS_WORKER, &thread) == ERX_OK &&
 	    erx_thread_start(thread) == ERX_OK;

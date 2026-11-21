@@ -8,9 +8,9 @@
  * harness catches (docs/design-device-dma.md, Verification).
  */
 
-#include <strings.h>
-
 #include "erx_device_trb_form.h"
+
+#include "liberx/backend/core/mem.h"
 
 #ifdef ERX_TRB_FORM_SEED_ANY_STOP
 #define SEED_ANY_STOP	true

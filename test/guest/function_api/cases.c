@@ -547,7 +547,10 @@ case_double_start_refused(void)
 	return (erx_thread_start(thread) == ERX_EINVAL);
 }
 
-/* Handles nothing could have issued, and a class that is none. */
+/*
+ * Handles nothing could have issued, and a class that is none. A thread handle is no entry of
+ * the handle table, so a forged one is ERX_EINVAL; a space goes to the lookup, ERX_ESTALE.
+ */
 static bool
 case_bad_handle_refused(void)
 {
@@ -557,7 +560,8 @@ case_bad_handle_refused(void)
 	    erx_thread_set_clear_word(UINT64_C(1) << 40, 0) == ERX_EINVAL &&
 	    erx_thread_set_affinity(UINT64_C(1) << 40, 1) == ERX_EINVAL &&
 	    erx_thread_create(0, 0, 0, 2, &thread) == ERX_EINVAL &&
-	    erx_thread_create(0, UINT64_C(1) << 40, 0, ERX_THREAD_CLASS_WORKER, &thread) == ERX_EINVAL);
+	    erx_thread_create(0, ERX_CAP_SELF, 0, ERX_THREAD_CLASS_WORKER, &thread) == ERX_EINVAL &&
+	    erx_thread_create(0, UINT64_C(1) << 40, 0, ERX_THREAD_CLASS_WORKER, &thread) == ERX_ESTALE);
 }
 
 /* The calls this table refuses, whatever they are handed. */
@@ -582,8 +586,9 @@ case_group_info_and_configure(void)
 	const erx_share_t grant = { .cpuset = UINT64_C(0x5) };
 	const erx_share_t empty = { .cpuset = 0 };
 	erx_info_group_t report;
+	/* Info is a local body that names only the caller's group; configure looks a handle up. */
 	bool ok = erx_group_info(ERX_CAP_NULL) == ERX_EINVAL && erx_group_configure(ERX_CAP_NULL) == ERX_EINVAL &&
-	    erx_group_info(UINT64_C(42)) == ERX_EINVAL && erx_group_configure(UINT64_C(42)) == ERX_EINVAL;
+	    erx_group_info(UINT64_C(1) << 40) == ERX_EINVAL && erx_group_configure(UINT64_C(1) << 40) == ERX_ESTALE;
 
 	ok = ok && erx_group_info(group) == ERX_OK;
 	report = erx_info_group_load(utcb);
@@ -1257,7 +1262,7 @@ case_mem_device_refusals(void)
 	    erx_mem_create_contiguous(0, 0, 0, 0, &mem) == ERX_EINVAL &&
 	    erx_mem_create_contiguous(0, 0, page + 1, 0, &mem) == ERX_EINVAL &&
 	    erx_mem_create_contiguous(0, 0, ERX_MEM_CONTIGUOUS_MAX + page, 0, &mem) == ERX_EINVAL &&
-	    erx_mem_dma_addr(UINT64_C(1) << 40, 0, &addr) == ERX_EINVAL);
+	    erx_mem_dma_addr(UINT64_C(1) << 40, 0, &addr) == ERX_ESTALE);
 }
 
 static const function_api_case_t shared_cases[] = {

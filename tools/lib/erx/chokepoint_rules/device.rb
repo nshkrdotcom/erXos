@@ -225,7 +225,7 @@ module Erx
           # The generated ABI header defines them and calls none.
           sites: [Chokepoints::Site.new(glob: "#{DEVICE_NIFS}/erx_device_sequencer.c"),
                   Chokepoints::Site.new(glob: 'include/erx/abi.h')],
-          seed: { 'otp/erts/emulator/nifs/erxos/erx_device_queue.c' =>
+          seed: { 'otp/erts/emulator/nifs/erxos/erx_device_virtio_core.c' =>
                     "void f(void) { erx_virtq_desc_encode(0, 0, 0); }\n",
                   'otp/erts/emulator/nifs/erxos/erx_device.c' =>
                     "void f(void) { erx_virtio_gpu_mem_entry_encode(0, 0); }\n" }

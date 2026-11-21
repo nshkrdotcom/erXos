@@ -3,6 +3,7 @@
 # frozen_string_literal: true
 
 require_relative 'boot_image'
+require_relative 'device_nif'
 require_relative 'error'
 require_relative 'fiasco'
 require_relative 'native_root'
@@ -21,15 +22,12 @@ module Erx
     MEMORY_MIB = 512
     PROGRAM_PATH = 'boot/native-irq-holder'
     PROGRAM_SOURCES = [*NativeRoot::TASK, 'test/guest/native_irq/program.c'].freeze
-    # The device NIF's C below ERTS's glue (erx_device_bif.c, erx_device_nif.c): the records,
-    # the queues, the DMA sequencer, the GENET ring's core and the architecture's cache
-    # maintenance. ERTS's build lists the same objects (otp/erts/emulator/Makefile.in). It
-    # reads no C library header: mem.h's primitives come from root_mem.c here. The
-    # architecture's file finds the NIF's headers as ERTS's build lets it, by directory.
-    DEVICE_NIF_DIRECTORY = 'otp/erts/emulator/nifs/erxos'
-    DEVICE_NIF = %w[erx_device.c erx_device_core.c erx_device_queue.c erx_device_dma.c erx_device_genet.c
-                    arch/aarch64/erx_dma_arch.c].map { |name| File.join(DEVICE_NIF_DIRECTORY, name) }.freeze
-    DEVICE_NIF_FLAGS = ['-I', DEVICE_NIF_DIRECTORY].freeze
+    # The device NIF's C below ERTS's glue, from its one list (erx_device.mk, read by device_nif.rb), with
+    # AArch64's cache maintenance. It reads no C library header: mem.h's primitives come from
+    # root_mem.c here. The architecture's file finds the NIF's headers as ERTS's build lets
+    # it, by directory.
+    DEVICE_NIF = DeviceNif.sources(root: File.expand_path('../../..', __dir__), arch: 'aarch64').freeze
+    DEVICE_NIF_FLAGS = ['-I', DeviceNif::DIRECTORY].freeze
     SOURCES = [*NativeRoot::RUNTIME, *NativeRoot::VM, *NativeRoot::SERVICE, *NativeRoot::LAUNCH, *DEVICE_NIF,
                'test/guest/native_irq/guest.c'].freeze
     LABEL_UART = 0x55a0
@@ -53,12 +51,16 @@ module Erx
        point('irq-uart-registers', /\Aerx: irq: sigma0 gave the UART/n, 30),
        point('irq-line-free', /\Aerx: irq: the UART's receive line is free/n, 30),
        point('irq-msi-lines', /\Aerx: irq: MSI lines come from the frame's lowest free one/n, 30),
+       point('irq-object-space', /\Aerx: irq: the object space ends at slot 65535/n, 30),
        point('irq-parked-wake', /\Aerx: irq: a parked executor woke/n, 60),
        point('irq-before-park', /\Aerx: irq: a trigger before the park returned/n, 60),
        point('irq-once-and-order', /\Aerx: irq: each label once, oldest first/n, 60),
        point('irq-move-unbind', /\Aerx: irq: a bind moves, an unbind stops/n, 60),
        point('irq-timed-park', /\Aerx: irq: a timed park ended/n, 60),
        point('irq-rounds', /\Aerx: irq: rounds of ring and park/n, 120),
+       point('irq-direct-doorbell', /\Aerx: irq: a ring and its wake made no request to the root/n, 60),
+       point('irq-closed-handle', /\Aerx: irq: a closed handle rings nothing/n, 60),
+       point('irq-destroyed-handle', /\Aerx: irq: a destroyed handle answers stale/n, 60),
        point('irq-prompt-first', /\Aerx: irq: type a character/n, 30, type: FIRST),
        point('irq-pending-masked', /\Aerx: irq: a pending line stayed masked until its first ack/n, 30),
        point('irq-first-character', uart_line(FIRST), 60),
