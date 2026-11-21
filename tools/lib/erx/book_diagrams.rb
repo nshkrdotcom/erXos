@@ -6,6 +6,7 @@ require 'digest'
 require 'fileutils'
 require 'json'
 require 'tmpdir'
+require_relative 'build_memo'
 require_relative 'error'
 require_relative 'json_input'
 require_relative 'web_build'
@@ -36,8 +37,7 @@ module Erx
       DRIVER = 'tools/book/diagrams.ts'
       TOOLS = 'build/book-tools'
       BUNDLE = 'diagrams.mjs'
-      # Beside the bundle: what it was built from, read to reuse it.
-      BUNDLE_RECORD = 'diagrams.json'
+      MEMO_STEP = 'book-diagrams'
       # The installed packages whose code the bundle holds or that make it.
       BUNDLED = %w[elkjs entities esbuild].freeze
       ESBUILD_OPTIONS = %w[--bundle --format=esm --platform=node --target=node25 --charset=ascii
@@ -145,25 +145,26 @@ module Erx
         end
       end
 
-      # The bundle's path and the versions of what it was built from, building
-      # it unless the record beside it names the same sources.
+      # The bundle's path and the versions of what it was built from. The
+      # bundle is a build memo step (BuildMemo#in_place), built unless it is
+      # unchanged since a build with the same versions and esbuild options.
       def bundle(root:, runner:)
         WebBuild.verify_lockfile(root, PACKAGES)
         WebBuild.check_versions(root: root, runner: runner, tools: %w[node], packages: PACKAGES)
         raise Error, "#{PACKAGES.title}'s packages are not installed for #{PACKAGES.source}'s package files; " \
                      'run `tools/erx fetch`' unless WebBuild.fetched?(root: root, packages: PACKAGES)
 
-        tools = File.join(root, TOOLS)
-        path = File.join(tools, BUNDLE)
-        record = File.join(tools, BUNDLE_RECORD)
+        path = File.join(root, TOOLS, BUNDLE)
         versions = bundled_versions(root).merge('sources' => sources_digest(root))
-        return [path, versions] if File.file?(path) && File.file?(record) &&
-                                   JsonInput.parse(File.binread(record), max_bytes: 4096, label: record) == versions
-
-        build_bundle(root: root, runner: runner, path: path)
-        File.write(record, JSON.generate(versions))
+        BuildMemo.new(root: root).in_place(MEMO_STEP, key: bundle_key(versions:, options: ESBUILD_OPTIONS), outputs: [path]) do
+          build_bundle(root: root, runner: runner, path: path)
+        end
         [path, versions]
       end
+
+      # The bundle's memo key: the versions bundle reports, which name its
+      # sources and the bundled packages, and esbuild's options.
+      def bundle_key(versions:, options:) = BuildMemo.key('versions' => versions, 'options' => options)
 
       # esbuild bundles the driver from the tree's top, so the paths its
       # output names are the same in every checkout, and resolves the
@@ -171,11 +172,13 @@ module Erx
       def build_bundle(root:, runner:, path:)
         modules = File.join(root, PACKAGES.modules, 'node_modules')
         FileUtils.mkdir_p(File.dirname(path))
-        built = "#{path}.next"
-        runner.run(['node', File.join(modules, 'esbuild/bin/esbuild'), DRIVER, *ESBUILD_OPTIONS, "--outfile=#{built}"],
-                   name: 'book-esbuild', deadline: DEADLINE, chdir: root,
-                   env: WebBuild::OFFLINE_ENV.merge('NODE_PATH' => modules))
-        File.rename(built, path)
+        Dir.mktmpdir('.bundle-', File.dirname(path)) do |work|
+          built = File.join(work, BUNDLE)
+          runner.run(['node', File.join(modules, 'esbuild/bin/esbuild'), DRIVER, *ESBUILD_OPTIONS, "--outfile=#{built}"],
+                     name: 'book-esbuild', deadline: DEADLINE, chdir: root,
+                     env: WebBuild::OFFLINE_ENV.merge('NODE_PATH' => modules))
+          File.rename(built, path)
+        end
       end
 
       # The version of each package of BUNDLED, from the package.json esbuild resolved.

@@ -540,10 +540,14 @@ library and those two packages into one ES module,
 `build/book-tools/diagrams.mjs`, resolving the two bare imports from
 `build/book-modules/node_modules` through esbuild's node-paths setting,
 which its command line reads from `NODE_PATH` (probed with esbuild
-0.28.2: without it, `entities` does not resolve). It reuses an earlier
-bundle only when the record beside it names the same sources (the
-SHA-256 of the import's files in sorted path order, the driver and the
-package files) and the same versions of elkjs, entities and esbuild.
+0.28.2: without it, `entities` does not resolve). The bundle is a step
+of the build memo (`build/memo`, `Erx::BuildMemo`), as the other build
+steps are: an earlier bundle is reused only while its bytes are the
+ones recorded and the step's key is the same, and the key names the
+sources (the SHA-256 of the import's files in sorted path order, the
+driver and the package files), the versions of elkjs, entities and
+esbuild, and esbuild's options. The memo reuses records only on macOS
+(`BuildMemo::REUSE`); elsewhere the step runs every time.
 
 ### The diagram step
 
@@ -910,9 +914,11 @@ writing the output.
 **cmark-gfm enters as other host tools do**: `deps.lock` pins its
 source archive by URL and SHA-256; the fetch step fetches it; the book
 step builds it out of tree with CMake into `build/book-tools/`, under a
-deadline with its log in `build/logs/`, and reuses an earlier build
-only when the archive's SHA-256, the step's fixed CMake options and the
-C compiler's version string all match the record beside it.
+deadline with its log in `build/logs/`. The build is a step of the
+build memo, whose key names the archive's SHA-256, the step's fixed
+CMake options, the C compiler and CMake by identity and the compiler's
+version string, and the build's recipe; an earlier build is reused,
+on macOS only, while it is unchanged and the key is the same.
 
 **Dependencies.** The dependency table of
 [design.md](design.md#dependencies) has the diagram step's rows:

@@ -20,6 +20,12 @@ class BookTest < Minitest::Test
     REXML::Document.new("<?xml version='1.0'?><document xmlns='http://commonmark.org/xml/1.0'>#{body}</document>")
   end
 
+  # Asserts that the block's value changes when any one of inputs changes.
+  def assert_changes_with_each(inputs)
+    base = yield inputs
+    inputs.each_key { |name| refute_equal base, yield(inputs.merge(name => ['changed'])), name }
+  end
+
   # A link target with a fragment, joined at run time so the tree's document-link
   # check does not read a fixture's target as a citation of a real document.
   def target(path, fragment) = [path, fragment].join('#')
@@ -48,6 +54,21 @@ class BookTest < Minitest::Test
   DRAWING = ->(line:, caption:) { Erx::Book::Html.tag('svg', { 'data-line' => line.to_s, 'aria-labelledby' => caption }) }
 
   TITLE = "<heading level='1' sourcepos='1:1-1:9'><text>Chapter 16. Storage and Updates</text></heading>"
+
+  # Each argument of the cmark-gfm build's and the diagram bundle's build
+  # memo key functions changes the key.
+  def test_build_memo_keys_name_every_input
+    cmark = { sha256: 'a' * 64, options: Erx::Book::Cmark::CMAKE_OPTIONS, compiler: '/usr/bin/cc x',
+              compiler_version: 'clang 1', cmake: '/b/cmake y', recipe: 'c' * 64 }
+    assert_changes_with_each(cmark) { |inputs| Erx::Book::Cmark.build_key(**inputs) }
+    versions = { 'elkjs' => '1', 'entities' => '2', 'esbuild' => '3', 'sources' => 'b' * 64 }
+    bundle = { versions:, options: Erx::Book::Diagrams::ESBUILD_OPTIONS }
+    assert_changes_with_each(bundle) { |inputs| Erx::Book::Diagrams.bundle_key(**inputs) }
+    versions.each_key do |name|
+      refute_equal Erx::Book::Diagrams.bundle_key(**bundle),
+                   Erx::Book::Diagrams.bundle_key(**bundle, versions: versions.merge(name => 'changed')), name
+    end
+  end
 
   # Seeded faults: keep the dots (2.5-the-l4...); number repeats from 2 instead of 1.
   def test_slugs_follow_github
