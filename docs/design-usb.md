@@ -722,7 +722,7 @@ platform's `xhci` unit and nothing else, with the `pci` facet
 [design-pcie.md](design-pcie.md#facets) gives every holder of a `pci`
 device, for its one function. The domain service starts it only once
 the device service has answered the PCIe domain's report
-([design-pcie.md](design-pcie.md#the-hold-at-boot)). The domain starts
+([design-pcie.md](design-pcie.md#the-catalogue-and-gives), "The hold at boot"). The domain starts
 in two steps, as the PCIe domain does
 ([design-pcie.md](design-pcie.md#processes)). The `usb` release script
 starts `erx_usb`, whose top supervisor, registered `erx_usb`, starts the
