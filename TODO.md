@@ -2329,8 +2329,21 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   `{error, enotsup}` until `erx_domain_lib:pci_firmware/1` exists, and
   that waits for `erx_firmware_request`, which no ABI file or backend declares yet; the identity check
   of a reported function against its row's compatible string ("The catalogue and gives"); and the `pcie` QEMU
-  suite's cases beyond walk-and-report and hold (design-pcie.md, "The `pcie` QEMU suite"). The BCM2711's bridge has its core (`erx_pcie_bcm2711_core`) and no driver module with `start` over a
-  device, so the enumerator refuses its record (`no_driver_module`).
+  suite's cases beyond walk-and-report and hold (design-pcie.md, "The `pcie` QEMU suite").
+* [Medium] PCIe, the BCM2711 bridge's start (`erlang/apps/erx_pcie/src/erx_pcie_bcm2711.erl` `start/2`,
+  `abi/formats/pcie.txt`, `hw/svd/bcm2711_pcie/bcm2711_pcie.svd`, [design-pcie.md](docs/design-pcie.md#the-bridge-seam)):
+  the driver runs its core over any port and is host-tested over the register model, but its start on the target
+  refuses with `enotsup`, so the enumerator logs that reason and reports none of the bridge's functions.
+  Three things the design uses have no carrier. Bring-up's inbound window comes from the tree's `dma-ranges`, which
+  `erx_pcie_bridge` does not carry ("Records" lists `windows` from `ranges` alone) and `erx_dt_bridge` does not
+  read. And the core's configuration accesses, the root port's space at offset 0 of the window and the endpoint's
+  data window at `0x8000`, have no view in the device NIF: the SVD declares no `<configurationSpace>`, and one for
+  the root port at 0 would meet `RC_CFG_LINK_CONTROL_STATUS` at `0xbc`, which design-generation.md forbids, while
+  that document calls the BCM2711's configuration space "a peripheral of its own" that no device record names.
+  And the VL805's firmware notification, which the device service makes for `pci_bus:firmware/1`
+  ([design-usb.md](docs/design-usb.md#the-vl805s-firmware)), has no route from the driver: `start/2` would hand
+  the core a port that reaches the bridge's registers but not that call.
+  The Pi 4's platform record has no bridge unit and its manifest no PCIe domain yet, which the board needs too.
 * [Medium] PCIe and the drivers' control, one mint for system-domain-only grants (`erlang/apps/erx_pcie/src/erx_pcie_facet.erl`
   `start_link/0`, `mint_init/1`, `mint/1`; `erlang/apps/erx/src/erx_driver_ctl.erl` `start_mint`, `mint_init`, `mint`): the pcie
   mint repeats the driver-control mint line for line but for its callback module and the grant's extra keys, so a fix
