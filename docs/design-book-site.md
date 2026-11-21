@@ -138,13 +138,14 @@ compared.
 | Tool | What it does | License | Version |
 | --- | --- | --- | --- |
 | cmark-gfm | GitHub's CommonMark parser with GFM extensions, a C program; `-t xml` writes the parse tree, `--sourcepos` adds line numbers, `--smart` makes curly quotes, `-e NAME` turns on an extension (`man/man1/cmark-gfm.1`) | BSD-2-Clause, with MIT-licensed parts listed in the same file (`COPYING`, `c22e885f...`) | 0.29.0.gfm.14, the latest GitHub release |
-| beautiful-mermaid | renders Mermaid text to SVG in JavaScript with no browser and no DOM; `renderMermaidSVG(text, options)` returns an SVG string; options set colors (as any CSS value, `var(--name)` included), the font family, spacing and a transparent background (`dist/index.d.ts`, `RenderOptions`) | MIT | 1.1.3 |
+| beautiful-mermaid | renders Mermaid text to SVG in TypeScript with no browser and no DOM; `renderMermaidSVG(text, options)` returns an SVG string; options set colors (as any CSS value, `var(--name)` included), the font family, spacing and a transparent background (`dist/index.d.ts`, `RenderOptions`) | MIT | 1.1.3, as erXos's fork (see "The fork") |
+| esbuild | bundles the fork's TypeScript source into one JavaScript module | MIT | 0.28.2, the version `web/package.json` pins |
 | elkjs | the layered graph layout beautiful-mermaid calls | EPL-2.0 | 0.11.1, as beautiful-mermaid 1.1.3's lockfile resolves it |
 | entities | HTML entity encoding, used by beautiful-mermaid | BSD-2-Clause | 7.0.1, likewise |
 | mermaid | the official Mermaid library, for its parser (see "The parse check") | MIT | 12.3.0; its dependency closure, and the licenses there, are listed when its lockfile is made (unverified here) |
 | Node.js | runs the two libraries, as a subprocess of the Ruby build | MIT (unverified in this task) | any at least the `engines` minimum; the publishing workflow pins one |
 | Source Serif 4 | a text serif | OFL-1.1 (`LICENSE.md`, `75784a29...`) | tag `4.005R` |
-| IBM Plex Mono | the site's mono face | OFL-1.1 (`license.txt`, `91c25c35...`) | tag `v6.4.2` |
+| IBM Plex Mono | the site's mono face, and the one face of every diagram | OFL-1.1 (`license.txt`, `91c25c35...`) | tag `v6.4.2` |
 | Archivo | the site's sans | OFL-1.1 (`OFL.txt`, `108b4e57...`) | `google/fonts` commit `95f4904fc8bc` |
 
 Rejected in the bake-off, with the six diagrams it drew from the book
@@ -169,8 +170,9 @@ Each requirement names who needs it.
    book.
 3. **Diagrams are drawn from the Mermaid the chapters hold**, so writers
    keep one source that GitHub also renders, and they look better than
-   GitHub's rendering: the site's faces and palette, light and dark,
-   crisp at any size. The request.
+   GitHub's rendering: drawn in the diagram style of "The diagram
+   style", in the site's ink and paper, light and dark, crisp at any
+   size. The request; the style is the one chosen from the bake-off.
 4. **Every diagram also parses as official Mermaid**, so the drawing a
    reader of the repository host sees is never an error where the site
    shows a picture. The writer: the bake-off found a sequence label
@@ -214,9 +216,12 @@ a contents entry, goes through one resolver that knows the set of
 pages and their heading anchors. Diagrams are drawn by beautiful-mermaid
 in one Node process per build, and its SVG comes back as data: Ruby
 parses it as XML and writes it into the page through the same writer,
-keeping only the elements and attributes it knows, renaming every id
-into the diagram's own name space and refusing any reference that
-leaves the drawing.
+keeping only the elements and attributes it knows, replacing the
+library's style text with its own, restyling the tree into the diagram
+style, renaming every id into the diagram's own name space and refusing
+any reference that leaves the drawing. The look of a diagram is
+therefore decided in two places only, both ours: the layout's text
+metrics in the fork of the library, and the restyle in Ruby.
 
 The requirements follow:
 
@@ -224,9 +229,10 @@ The requirements follow:
   parser; the site's look comes from the renderer, which is ours.
 * No script (2): the renderer's output is complete HTML and inline SVG.
 * Diagrams from the Mermaid source (3): the source stays as it is; the
-  library's colors are CSS custom properties that name the site's
-  tokens, so one drawing follows the page into dark mode, and its text
-  is set in the site's sans by family name, from the page's own fonts.
+  style text the writer puts in every drawing resolves each of the
+  library's colors to `var(--ink)` or `var(--paper)`, so one drawing
+  follows the page into dark mode, and its text is set in IBM Plex Mono
+  by family name, from the page's own fonts.
 * Official parse (4): the same Node process runs official Mermaid's
   parser over each diagram before drawing it.
 * Links (5) resolve or fail the build, because the resolver is the only
@@ -234,8 +240,9 @@ The requirements follow:
 * No draft (6): the renderer meets every HTML comment, so it sees every
   marker.
 * Nothing from another host (7): the renderer writes no reference to
-  another host but an `<a href>`; the SVG writer drops the library's
-  font `@import` and refuses any other address; and the hand-written
+  another host but an `<a href>`; the SVG writer replaces the library's
+  style text, font `@import` included, and refuses any other address
+  outside the drawing; and the hand-written
   pages move to the self-hosted fonts.
 * Same bytes (8): the inputs are files, one pinned C tool and pinned
   packages; the step reads no clock and iterates in sorted order; the
@@ -399,14 +406,105 @@ the repository, of type PNG, JPEG or SVG, and is copied to
 **Decision: (e).** It keeps one source that GitHub renders, draws in
 the site's palette and faces in both themes from one render, needs no
 browser, and leaves layout to a maintained library instead of 800 lines
-of our own geometry. Its faults seen in the bake-off are cosmetic: a
+of our own geometry. Its own look is not used: the bake-off restyled
+its output into the diagram style below, and that style is the one
+chosen (`~/erxos-scratch/bakeoff/RECORD.md`, "Manual style", with
+`render/manual.rb` and the screenshots in `scratch/manual/final/`).
+The restyle also removes two of the library's faults seen there: a
 long cluster title clipped in the dense flowchart
-(`02-microkernels.md`'s first diagram), the state diagram's start dot
-far from its target, and edge labels drawn small and in the secondary
-text color by design. They are accepted as the library draws them; a
-figure whose drawing a review of rendered pages finds unreadable is
-fixed in its source (a shorter title), and a fault worth fixing in the
-library is fixed there, upstream or as a patch the lockfile carries.
+(`02-microkernels.md`'s first diagram), because a group is laid out at
+least as wide as its title; and edge labels drawn small in the
+secondary text color, because every label is 12 px ink. The state
+diagram's start dot far from its target remains, as the library lays
+it out. A figure whose drawing a review of rendered pages finds
+unreadable is fixed in its source (a shorter title), and a layout
+fault worth fixing is fixed in the fork (see "The fork").
+
+### The diagram style
+
+This is the contract every drawing on the site meets. It is the look
+of a figure in a printed technical manual: one face, ink only, thin
+square lines, and a dithered shadow that sets the outer groups off the
+page.
+
+| Property | Rule |
+| --- | --- |
+| Face | IBM Plex Mono, regular, 12 px, for every label: nodes, edges, group titles, actors, messages, notes, states |
+| Color | ink and paper only: every stroke, arrowhead, text and dot is `var(--ink)`; every fill that is not ink, and every mask, is `var(--paper)`; no other color, no tint, no fill on a box. Light is `--ink` on `--paper` of `site/tokens.css`, dark the same tokens' dark values, from one drawing |
+| Lines | 1 px; square corners (no `rx`); dashed lines in long dashes, `stroke-dasharray: 10 6`; arrowheads solid ink, without an outline |
+| Groups | no header bar; the title at the lower left, inside the box, in a row the layout reserves at the bottom; a group at least as wide as its title |
+| Labels | edge labels plain text on a paper mask without a border; sequence message labels on a paper mask drawn above the lifelines they cross; notes plain rectangles, without the folded corner |
+| Shadow | behind each outer group only (a group inside no other group): an L-shaped band 3 px off the box, 12 px wide on the right and 15 px deep below, set in from the box's top by 16 px and its left by 14 px, filled with a 2x2 pattern of two ink dots on the diagonal, which is a 50 percent dither; the drawing's canvas grows to hold it |
+| Crossings | a line that crosses a shadow (an edge, a lifeline, a message) has a 6 px paper-colored underlay clipped to the shadows, so the dots stop short of the line on both sides |
+
+The text of the site keeps its own faces: Source Serif 4 for prose,
+Archivo for headings, navigation and captions, IBM Plex Mono for code
+(see "Typography and look"). A diagram's face is the code face, so the
+style adds no font file.
+
+What the style cannot do, accepted as limits of drawing from a layout
+engine rather than by hand:
+
+* **No character grid.** ELK places boxes at fractional positions, so
+  boxes, dash phases and shadow dots do not line up on character cells
+  as a hand-drawn manual figure would.
+* **No shadows in sequence and state diagrams.** Their layout leaves no
+  room under an actor or a state, and they have no groups.
+* **Routes are ELK's.** Edges are its orthogonal routes, with jogs a
+  hand-drawn figure would not have, and it may order sibling groups
+  differently from the source (the dense flowchart puts "Microkernel"
+  first).
+* **The dither greys at page scale.** On a screen whose pixels do not
+  fall on the pattern's cells, the dots read as a grey band; the SVG
+  opened at 1:1 shows them.
+* **A character the face lacks** is drawn by the browser's fallback
+  face, wider or narrower than the layout measured; the review of
+  rendered pages judges such a label.
+
+### The fork
+
+The layout must know the style's text widths, because a box is sized
+before anything is drawn: the library measures a label from a table of
+proportional character widths (`getCharWidth` and `measureTextWidth`,
+`src/text-metrics.ts` lines 126 and 175 in 1.1.3), sets node labels at
+13 px and edge labels at 11 px (`src/styles.ts` lines 37 and 39), and
+reserves a group's title row at the top
+(`'elk.padding': '[top=44,left=16,bottom=16,right=16]'`,
+`src/layout-engine.ts` line 349). No option changes these. The change
+is made in the library's source, never by substituting text in its
+built `dist/index.js` at build time, which breaks silently when the
+built file changes.
+
+beautiful-mermaid enters as a fork, as CLAUDE.md's "Forks as
+submodules" provides and as LVGL does at `display/lvgl/lvgl`: a git
+submodule at `tools/book/beautiful-mermaid`, pinned by its gitlink, of
+erXos's fork of `https://github.com/lukilabs/beautiful-mermaid`, with
+`tools/book/ORIGIN.md` beside it naming the upstream repository, the
+1.1.3 commit the fork's `erxos` branch starts from and the SHA-256 of
+what was imported. The change is one commit on that branch, which adds
+three render options and leaves the library's default output unchanged
+when they are absent:
+
+| Option | Effect | The style sets |
+| --- | --- | --- |
+| `charWidth` | every label is measured as its number of characters times the font size times this advance, in ems, plus 0.15 of the font size; absent, the width table is used | `0.6`, IBM Plex Mono's advance (600 of 1,000 units for every glyph, read from the font's `hmtx` table) |
+| `labelSize` | node and edge labels at this size in px | `12` |
+| `groupTitle` | `"bottom"` reserves the title row below a group's contents (24 px above them, 40 px below); either way a group is laid out at least as wide as its title plus 24 px | `"bottom"` |
+
+The book step builds the fork: `tools/book/package.json` names the
+submodule as a local directory dependency (`file:beautiful-mermaid`),
+so its own `package.json` states elkjs and entities and the lockfile
+pins them with their integrity hashes; it also pins esbuild at the
+version the web client uses. The step runs that esbuild, by argument
+vector under a deadline, to bundle the installed fork's
+`src/index.ts` with its dependencies into one ES module,
+`build/book-tools/beautiful-mermaid.mjs`, and reuses an earlier bundle
+only when the fork's gitlink commit and the esbuild version match the
+record beside it. Whether pnpm installs a `file:` dependency under
+`--frozen-lockfile --ignore-scripts` as this needs is unverified and
+probed first. The library's own build (`tsup`, with Bun for its
+tests) is not used, so its development packages stay out of the
+lockfile.
 
 ### The diagram step
 
@@ -416,16 +514,18 @@ process, `tools/book/diagrams.mjs`, run by `Erx::Runner` with an
 argument vector and a deadline:
 
 ```
-node --permission --allow-fs-read=<driver>,<modules> <driver>
+node --permission --allow-fs-read=<driver>,<bundle>,<modules> <driver>
 ```
 
 Node's permission model (`--permission`) lets the process read only the
-driver and the installed packages and refuses file writes, child
+driver, the fork's bundle and the installed packages (official
+Mermaid, for the parse check) and refuses file writes, child
 processes, worker threads and native add-ons; whether the pinned Node
 also refuses network access under it is unverified and read from that
 Node's documentation during implementation. Neither library makes a
-request: beautiful-mermaid 1.1.3's `dist/index.js` holds no `fetch`,
-`XMLHttpRequest` or `http` import.
+request: beautiful-mermaid 1.1.3's built `dist/index.js` holds no
+`fetch`, `XMLHttpRequest` or `http` import, and the fork's commit adds
+none.
 
 The request goes to the driver's standard input as one JSON document
 and the reply comes back on its standard output as another:
@@ -447,27 +547,26 @@ The options are one frozen Ruby constant, the same for every diagram:
 
 | Option | Value |
 | --- | --- |
-| `bg`, `fg`, `line`, `accent`, `muted`, `surface`, `border` | `var(--paper)`, `var(--ink)`, `var(--muted)`, `var(--signal)`, `var(--muted)`, `var(--panel)`, `var(--ink)` |
-| `font` | `Archivo` |
+| `charWidth`, `labelSize`, `groupTitle` | `0.6`, `12`, `"bottom"` (the fork's options, "The fork") |
+| `font` | `IBM Plex Mono` |
 | `transparent` | `true` |
 
-Each color is the name of a site token, not a color, so the SVG's root
-carries `--bg: var(--paper)` and the rest, and the page's tokens, light
-or dark, color the drawing; the step refuses a token name that
-`site/tokens.css` does not declare, since an undefined token would
+No color is passed: the writer replaces the library's style text with
+its own, which resolves every color the drawing names to `var(--ink)`
+or `var(--paper)` ("From SVG to page"), and the page's tokens, light or
+dark, color the drawing; the step refuses a token its style text names
+that `site/tokens.css` does not declare, since an undefined token would
 draw ink on ink. The font reaches the drawing only as a family name in
-the SVG's `text` rule; the page's `@font-face` for Archivo supplies the
-face, and no font file reaches Node. beautiful-mermaid sizes every box
-from a table of character widths (`getCharWidth` and
-`measureTextWidth`, `dist/index.js` lines 222 to 245 in 1.1.3), so
-layout depends on no font and no host; a label set in Archivo may run a
-little short or long of its box, which the review of rendered pages
-judges.
+that style text; the page's `@font-face` for IBM Plex Mono supplies the
+face, and no font file reaches Node. Every label is measured from the
+face's fixed advance, so layout depends on no font file and no host,
+and a label fills its box as the layout measured it.
 
 The packages enter as the web client's do. `tools/book/package.json`,
 `tools/book/pnpm-lock.yaml` and `tools/book/pnpm-workspace.yaml` pin
-beautiful-mermaid 1.1.3 and mermaid 12.3.0 with every package of their
-closure and its integrity hash, and allow no build script;
+the fork (as a directory), mermaid 12.3.0 and esbuild 0.28.2 with
+every package of their closure and its integrity hash, and allow no
+build script;
 `package.json`'s `engines` names the oldest Node and pnpm.
 `tools/erx fetch` installs them into `build/book-modules/` by the same
 code that installs `web/`'s (`Erx::WebBuild`'s install, taking the
@@ -496,7 +595,7 @@ question returns to the user with what the probe found.
 ### From SVG to page
 
 `Erx::Book::Svg` takes each SVG string the driver returns and writes it
-into the page in four steps, each over the parsed tree:
+into the page in five steps, each over the parsed tree:
 
 1. **Parse.** REXML parses the string as XML; a string that does not
    parse is refused.
@@ -512,14 +611,41 @@ into the page in four steps, each over the parsed tree:
    looked at it.
 3. **Keep the drawing self-contained.** The library's `<style>` begins
    with `@import url('https://fonts.googleapis.com/...')` for its font
-   (`buildStyleBlock`, `dist/index.js` line 148); the writer drops every
-   `@import` rule from the style text. After that, every `url(...)` in
-   the style text or in an attribute, and every `href`, must be a
-   fragment, `#name`, naming an id in the same drawing; anything else
-   is refused, not stripped.
-4. **Rename ids.** The library's ids are fixed marker names
-   (`arrowhead`, `arrowhead-start`, `seq-arrow`, `seq-arrow-open`) and
-   the Mermaid node ids (`S`, `idle`, `kern`), so two diagrams on one
+   (`buildStyleBlock`, `dist/index.js` line 148) and defines its color
+   variables. The writer discards that style text whole and writes its
+   own, two fixed rules: `text` names the face, and `svg` sets each of
+   the library's color variables (`--_text`, `--_line`, `--_arrow`,
+   `--_node-fill`, `--_group-hdr` and the rest, a closed list read off
+   the library's output, as the bake-off's `render/manual.rb` lists
+   them) to `var(--ink)` or `var(--paper)`. A `var(--name)` in the
+   drawing that the list does not hold is refused, since it would draw
+   in the browser's fallback color. Every `url(...)` in an attribute,
+   and every `href`, must be a fragment, `#name`, naming an id in the
+   same drawing; anything else is refused, not stripped.
+4. **Restyle.** `Erx::Book::Style`, a pure function from the filtered
+   tree to the restyled tree, applies "The diagram style": it removes
+   each group's header bar and moves its title to the lower left of the
+   row the layout reserved; replaces each note's folded polygon by a
+   rectangle; gives edge labels a borderless paper mask and message
+   labels a paper mask placed after the lifelines in drawing order;
+   sets every corner square, every stroke 1 px, every dash `10 6`,
+   every literal color ink (a `classDef` color carries no meaning, as
+   the writing guide asks), every arrowhead solid, every text 12 px
+   regular in ink; then adds, for each outer group, the shadow path
+   filled from one dither `pattern`, one `clipPath` holding the same
+   paths, and the paper underlay of every line, clipped to it; and
+   grows the `viewBox` to hold the shadows. It works only on shapes the
+   filter has already admitted, and writes only `path`, `pattern`,
+   `clipPath`, `rect` and `g` with attributes it sets itself, so the
+   allow-list of step 2 stays the library's output and the restyle's
+   own elements are not filtered again. A drawing whose groups or notes
+   lack the parts the restyle moves (a group without its box or its
+   title) is refused with the diagram's file and line, so a new library
+   version cannot draw half-restyled.
+5. **Rename ids.** The library's ids are fixed marker names
+   (`arrowhead`, `arrowhead-start`, `seq-arrow`, `seq-arrow-open`),
+   the restyle's (`dither`, `shadows`) and the Mermaid node ids (`S`,
+   `idle`, `kern`), so two diagrams on one
    page would collide, and a node id could meet a heading id. Every id
    becomes `dK.name`, where K is the diagram's place on the page, and
    every fragment reference is rewritten to match. A heading slug never
@@ -532,9 +658,11 @@ naming the figure's caption where there is one, and places the drawing
 in `<figure class="diagram">`. The `width` and `height` the library
 gives stay, and the stylesheet caps the drawing at the column's width.
 
-The library's `<style>` keeps its `text` and `svg` rules, which in an
-HTML page apply to every SVG element of the page. That reaches only
-diagrams, because the renderer writes no other SVG.
+The writer's `text` and `svg` rules, in an HTML page, apply to every
+SVG element of the page. That reaches only diagrams, because the
+renderer writes no other SVG. Numbers the restyle computes are written
+with at most two decimals and no trailing zeros, so its output is the
+same bytes on every host.
 
 ### Text diagrams
 
@@ -558,8 +686,8 @@ signal-orange palette and its faces, and sets it for long reading.
 | Role | Face | Why |
 | --- | --- | --- |
 | text | Source Serif 4, roman and italic | a serif made for long text on screens, with optical sizes; OFL-1.1 |
-| headings, navigation, captions, diagram labels | Archivo, the site's sans | the landing page's face, so the book reads as the same site |
-| code, paths | IBM Plex Mono | the landing page's mono |
+| headings, navigation, captions | Archivo, the site's sans | the landing page's face, so the book reads as the same site |
+| code, paths, diagram labels | IBM Plex Mono | the landing page's mono, and the diagram style's one face |
 
 * **Fonts are self-hosted**, for the whole site. The fetch step fetches
   the upstream files at the pins above, each checked against its
@@ -591,10 +719,11 @@ signal-orange palette and its faces, and sets it for long reading.
   size, so a reader who knows the topic can skip them.
 * **Code**: preformatted, mono at about 0.85 of the text size, on the
   code ground, never wrapped, scrolling sideways when wide. See "Code".
-* **Diagrams**: as beautiful-mermaid draws them, in the site's tokens:
-  boxes on the panel color with ink borders, lines and secondary text
-  in the muted token, arrowheads in the signal color, labels in
-  Archivo; no color carries meaning, as the writing guide asks.
+* **Diagrams**: in "The diagram style": IBM Plex Mono at 12 px, ink
+  on paper from the site's tokens, 1 px square lines, long dashes,
+  titles at the lower left of their groups and a dithered shadow
+  behind each outer group; no color carries meaning, as the writing
+  guide asks.
 * **Print**: `@media print` drops the navigation, sets text in the
   serif on white, keeps figures and tables whole across pages, and
   starts each chapter on a new page.
@@ -632,10 +761,10 @@ lexers.
 ## Where it fits
 
 `Erx::Book` (`tools/lib/erx/book.rb`, with `book/page.rb`,
-`book/links.rb`, `book/diagrams.rb`, `book/svg.rb`, `book/code.rb`) is
+`book/links.rb`, `book/diagrams.rb`, `book/svg.rb`, `book/style.rb`, `book/code.rb`) is
 a functional core around its effects. The core: the resolver, the slug
 function, the contents derivation, the page renderer, the request the
-diagram step sends, the SVG writer and the tokenizer, each a pure
+diagram step sends, the SVG writer, the restyle and the tokenizer, each a pure
 function of its input. The effects: running cmark-gfm and Node, reading
 the tree's files, the font files and the installed packages, and
 writing the output.
@@ -688,9 +817,12 @@ C compiler's version string all match the record beside it.
 
 **Dependencies.** The implementation adds rows to the dependency table
 of [design.md](design.md#dependencies): cmark-gfm (BSD-2-Clause),
-beautiful-mermaid (MIT), elkjs (EPL-2.0), mermaid (MIT), each a website
-build tool run unmodified out of tree with nothing of it shipped, and
-the three faces (OFL-1.1, font data, shipped on the website).
+elkjs (EPL-2.0), mermaid (MIT) and esbuild (MIT), each a website build
+tool run unmodified out of tree with nothing of it shipped;
+beautiful-mermaid (MIT), a website build tool erXos modifies, as the
+fork submodule `tools/book/beautiful-mermaid` with its `ORIGIN.md`,
+nothing of it shipped; and the three faces (OFL-1.1, font data,
+shipped on the website).
 
 ## Trust and escaping
 
@@ -743,8 +875,9 @@ has one, the line:
 | a chapter or appendix file the contents do not name | the file |
 | a diagram official Mermaid rejects | the file, the line (the fence's line from cmark-gfm's `--sourcepos` plus the line Mermaid's error names, or the fence's line when it names none) and Mermaid's message, quoted with escaping |
 | a diagram beautiful-mermaid fails to draw | the same, with its message |
+| a drawing the restyle cannot apply the style to: a group without its box or title, a note without its outline, a color variable outside the writer's list | the diagram's file and line, and the part that is missing or unknown |
 | SVG that does not parse, or holds an element, attribute or reference outside the writer's rules | the diagram's file and line, and the element, attribute or address |
-| a diagram color option naming a token `site/tokens.css` does not declare | the token |
+| a token the writer's style text names that `site/tokens.css` does not declare | the token |
 | a page of the site that loads a resource from another host | the page and the address |
 
 ## Determinism
@@ -759,7 +892,8 @@ order.
 
 `book/record.json` is the build record: the commit, cmark-gfm's
 version, the Node version and package versions the driver reported,
-the SHA-256 of each font file, and the SHA-256 of every other file the
+the fork's gitlink commit and esbuild's version, the SHA-256 of each
+font file, and the SHA-256 of every other file the
 step wrote, in sorted order. It holds no time and no host name.
 
 The supported hosts are the primary development host, Apple Silicon
@@ -794,10 +928,12 @@ make it fail, planted once by hand when the test is written.
 | Raw HTML | a fixture with a block `<div>` and an inline `<span>` is refused at each line; a comment is dropped | handle only `html_block`, so the inline tag passes |
 | Figures | a diagram, a text block and an image each followed by a `*Figure N.M. ...*` paragraph become `<figure>` with that caption and id `figure-N-M`; a figure without a caption stays a bare block | match the caption against the preceding paragraph |
 | Escaping and ASCII | a fixture with `<4.0.0>`, `a && b` in code, a link whose fragment holds `"` and a curly quote in prose renders them as text and numeric references; every output byte is ASCII | drop the escape in attribute values; write non-ASCII characters as they are |
-| SVG writer | given SVG strings in the shape the library returns: the `@import` is gone; ids become `d1.arrowhead` and `d2.arrowhead` on one page, and each `url(#arrowhead)` names its own diagram's marker; `<script>`, `onload=`, `<image href="https://x">` and `url(https://x)` in the style are each refused; a `<` in a label is escaped | rename ids but not the `url()` references; strip an external `url()` instead of refusing it |
+| SVG writer | given SVG strings in the shape the library returns: the library's style text, its `@import` with it, is replaced by the writer's; ids become `d1.arrowhead` and `d2.arrowhead` on one page, and each `url(#arrowhead)` and `url(#dither)` names its own diagram's; `<script>`, `onload=`, `<image href="https://x">`, `fill="url(https://x)"` and `stroke="var(--_nonesuch)"` are each refused; a `<` in a label is escaped | rename ids but not the `url()` references; strip an external `url()` instead of refusing it; restyle after renaming, so the dither's id stays bare |
+| Style | a fixture flowchart with an outer group holding an inner group, a dashed edge crossing the outer group's shadow and a labelled edge, and a sequence diagram with a note: the header bars are gone and each title sits at the lower left; corners are square, strokes 1 px, dashes `10 6`; exactly one shadow path, for the outer group; the dashed edge has an underlay clipped to the shadows; the note is a rectangle; the sequence diagram has no shadow and the `viewBox` grows only for the flowchart; the restyle of a group without its title is refused | count a group as inside itself, so no group casts a shadow; drop the clip from the underlay |
+| The fork's options | the fork's own tests, run with the book's tool tests: with `charWidth: 0.6` and `labelSize: 12` a node labelled with 20 characters is laid out 144 px plus margins wide and its label is 12 px; with `groupTitle: "bottom"` a group's padding is 24 above and 40 below and a group whose title is wider than its contents is as wide as the title plus 24; without the options the output equals 1.1.3's for the bake-off's six diagrams (tool test) | measure with the width table when `charWidth` is set; apply the title's minimum width only when `groupTitle` is `"bottom"` |
 | Diagram step | the driver, given three diagrams of which the second is invalid, returns a drawing, an error with its stage and line, and a drawing, in order, and the step's refusal names the second diagram's chapter file and line (tool test) | let the driver stop at the first error, so the third result is missing; report the fence's line without the error's own line |
 | Parse check | a sequence diagram with `;` in a label, which beautiful-mermaid draws, is refused at the parse stage with Mermaid's message (tool test; built only if the probe shows `mermaid.parse` runs under Node) | skip the parse call |
-| Color tokens | a color option naming `--nonesuch` is refused; the real options pass against `site/tokens.css` | read the tokens from `site/style.css`, which no longer declares them |
+| Color tokens | a writer style naming `--nonesuch` is refused; the real style, naming `--ink` and `--paper`, passes against `site/tokens.css` | read the tokens from `site/style.css`, which no longer declares them |
 | Drafts | a page with `<!-- check: x -->` is refused without `--drafts` and shows the note with it | let the comment rule drop comments before the draft check |
 | Nothing from another host | `Erx::Site.inventory` refuses a fixture page with a Google Fonts stylesheet link, and one with `@import url(https://x)` in its CSS, and accepts a page with an outward `<a href>` | check only `link` elements |
 | Directory routes | the route table answers `/book/` and `/` with their `index.html` | keep the special case for `/` only |
@@ -828,3 +964,29 @@ pages, not by a test.
    refuse the book's 32 citations to 23 other hosts.
    Recommendation: any well-formed `https:` address, refusing every
    other scheme, as designed.
+4. **The fork's repository, and an offer upstream.** "The fork" needs
+   erXos's fork of `https://github.com/lukilabs/beautiful-mermaid`
+   with an `erxos` branch, beside `stass/lvgl`; creating a repository
+   and pushing to it are the user's. Create it? And should the three
+   options also be offered upstream as a pull request, so that a later
+   version carries them and the fork's commit could go? Recommendation:
+   create the fork; offer `charWidth` and the title's minimum width
+   upstream, which are general (any monospace face, and the clipped
+   title is the library's fault), and keep `groupTitle` on the fork
+   unless upstream wants it. The fork and everything that draws in the
+   style wait on the repository; the rest of the step does not.
+5. **The diagram face.** The bake-off drew the style in DejaVu Sans
+   Mono 2.35, whose license is Bitstream Vera's (permissive, with a
+   renaming condition on modified fonts; the DejaVu changes are public
+   domain). CLAUDE.md allows OFL-1.1 for font data and names no other
+   font license, so DejaVu would need the user's approval. This design
+   uses IBM Plex Mono instead: OFL-1.1, already the site's code face,
+   and its advance of 0.600 em against DejaVu's 0.602 (1,233 of 2,048
+   units, both read from the fonts' `hmtx` tables) gives the same
+   layout. Rendered side by side at 2x
+   (`~/erxos-scratch/bakeoff/scratch/manual/final/` against the same
+   SVGs with the family swapped), the drawings match box for box; Plex
+   Mono's letters are a little more rounded, with slab serifs on `i`,
+   `l` and `r`. Keep IBM Plex Mono, or approve the Bitstream Vera
+   license for DejaVu Sans Mono? Recommendation: IBM Plex Mono, which
+   adds no font file and no license.
