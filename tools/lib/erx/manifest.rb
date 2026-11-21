@@ -290,25 +290,22 @@ module Erx
       end
 
       # A page and the contiguous pool's smallest and largest sizes, from the ABI
-      # (page_size, fiasco_contig_order_min and fiasco_contig_order_max). The other two
-      # are liberx's own and copied: sizeof(erx_backend_vm_page_t)
-      # (liberx/backend/core/vm_table.h, which vm_table.c asserts) and VM_DEVICE_PAGES
-      # (liberx/backend/fiasco/vm.c).
+      # (page_size, fiasco_contig_order_min and fiasco_contig_order_max). The other is
+      # liberx's own and copied: sizeof(erx_backend_vm_page_t)
+      # (liberx/backend/core/vm_table.h, which vm_table.c asserts).
       PAGE_BYTES = ABI::Generated.constant('page_size')
       PAGE_INDEX_SLOT_BYTES = 16
-      DEVICE_PAGES = 4096
       CONTIGUOUS_POOL_MIN_BYTES = 1 << ABI::Generated.constant('fiasco_contig_order_min')
       CONTIGUOUS_POOL_MAX_BYTES = 1 << ABI::Generated.constant('fiasco_contig_order_max')
 
       # erx_backend_vm_layout (liberx/backend/core/vm_table.c) sizes the index over the
-      # pool's window, its contiguous pool and the device pages. The window and the
-      # contiguous pool lie in RAM less fiasco_reserve and the archive, so sizing it over
-      # all of those pages never comes out smaller. Its loop doubles from one page of
+      # pool's window alone: a table over a run, device registers, the contiguous pool or
+      # the archive, takes no entry. The window lies in RAM less fiasco_reserve and the
+      # archive, so sizing it over all of those pages never comes out smaller. Its loop doubles from one page of
       # slots to the smallest power of two at least twice the pages covered; the shift
       # finds that power directly.
       def page_index_bytes(pages_free)
-        covered = pages_free + DEVICE_PAGES
-        slots = 1 << ((2 * covered) - 1).bit_length
+        slots = 1 << ((2 * pages_free) - 1).bit_length
         [slots, PAGE_BYTES / PAGE_INDEX_SLOT_BYTES].max * PAGE_INDEX_SLOT_BYTES
       end
 
