@@ -120,7 +120,8 @@ perform({transfer, Pipe, Tag, Transfer}, C) -> posted(Tag, post_transfer(C, Pipe
 perform({queue_state, Pipe}, C) -> [{queue_state, Pipe, queue_state(C, Pipe)}];
 perform({read, Registers}, C) -> [{read, maps:from_list([{Register, read(C, Register)} || Register <- Registers])}];
 perform({write, Register, Word}, C) -> ok = write(C, Register, Word), [];
-perform(negotiate, C) -> [{negotiated, negotiate(C)}];
+perform(negotiate, C) -> [{negotiated, negotiate(C, 0)}];
+perform({negotiate, continue}, C) -> [{negotiated, negotiate(C, continue)}];
 perform(complete, C) -> [{completed, complete(C)}];
 perform(ack, #controller{irq = Irq}) -> ok = erx_irq_line:ack(Irq), [];
 perform({bus, Answer}, #controller{bus = Bus}) -> ok = erx_usb_bus_link:answer(Bus, Answer), [];
@@ -153,8 +154,9 @@ cancel({Ref, _At}) -> erlang:cancel_timer(Ref, [{async, true}, {info, false}]).
 %% "Registers at offsets the controller reports"): every call the process makes on
 %% the device. The design states post/4, complete/2, negotiate/2 and elements/2;
 %% it names neither complete/2's second argument, here the event ring, nor the
-%% query of a queue's state, here queue_state/2; negotiate/2 takes the wanted
-%% features, none here, and its `{ok, Features}` is the core's `ok`.
+%% query of a queue's state, here queue_state/2; negotiate/2 begins a negotiation
+%% with the wanted features, none here, or carries one on with `continue`, as the
+%% core says, and its `{ok, Features}` is the core's `ok`.
 
 %% The extended capabilities the NIF bound at open.
 bound(#controller{dev = Dev}) ->
@@ -168,8 +170,8 @@ complete(#controller{dev = Dev}) -> erx_device:complete(Dev, events).
 
 queue_state(#controller{dev = Dev}, Pipe) -> erx_device:queue_state(Dev, Pipe).
 
-negotiate(#controller{dev = Dev}) ->
-    case erx_device:negotiate(Dev, 0) of
+negotiate(#controller{dev = Dev}, Wanted) ->
+    case erx_device:negotiate(Dev, Wanted) of
         {ok, _Features} -> ok;
         Refused -> Refused
     end.

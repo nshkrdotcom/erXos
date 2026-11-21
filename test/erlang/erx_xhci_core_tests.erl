@@ -1060,7 +1060,7 @@ the_start_reads_hands_off_and_installs_test() ->
     %% The install answers ebusy: called again 10 ms later, then ok starts the bus.
     {S4, []} = erx_xhci_core:step({negotiated, {error, ebusy}}, 12, S3),
     ?assertEqual(22, erx_xhci_core:next_deadline(S4)),
-    {S5, [negotiate]} = erx_xhci_core:step(expired, 22, S4),
+    {S5, [{negotiate, continue}]} = erx_xhci_core:step(expired, 22, S4),
     ?assertMatch({_, [{bus, {root_ports, 4}}]}, erx_xhci_core:step({negotiated, ok}, 23, S5)),
     ?assertMatch({_, [{fail, {install, eio}}]}, erx_xhci_core:step({negotiated, {error, eio}}, 23, S5)),
     %% Without a legacy support capability the install follows the capabilities.
@@ -1068,6 +1068,22 @@ the_start_reads_hands_off_and_installs_test() ->
     ?assertMatch({_, [negotiate]},
                  erx_xhci_core:step({read, maps:with([hcsparams1, hcsparams2, hccparams1, pagesize],
                                                      capability_words())}, 0, N1)).
+
+%% The first negotiate after new/0 begins a negotiation and only the retries after ebusy
+%% continue it, so a restarted controller process, which starts from new/0, begins
+%% afresh whatever step the device record kept (docs/design-usb.md, "Install").
+only_the_retry_continues_a_negotiation_test() ->
+    Install = fun() ->
+                      {N1, _} = erx_xhci_core:step({start, #{legacy => false, protocols => 0}}, 0,
+                                                   erx_xhci_core:new()),
+                      erx_xhci_core:step({read, maps:with([hcsparams1, hcsparams2, hccparams1, pagesize],
+                                                          capability_words())}, 0, N1)
+              end,
+    {S1, [negotiate]} = Install(),
+    {S2, []} = erx_xhci_core:step({negotiated, {error, ebusy}}, 1, S1),
+    {S3, [{negotiate, continue}]} = erx_xhci_core:step(expired, erx_xhci_core:next_deadline(S2), S2),
+    {S4, []} = erx_xhci_core:step({negotiated, {error, ebusy}}, 30, S3),
+    ?assertMatch({_, [{negotiate, continue}]}, erx_xhci_core:step(expired, erx_xhci_core:next_deadline(S4), S4)).
 
 the_start_gives_up_on_the_bios_and_on_the_install_test() ->
     Polled = lists:foldl(fun(At, S) ->
@@ -1082,7 +1098,7 @@ the_start_gives_up_on_the_bios_and_on_the_install_test() ->
         erx_xhci_core:step({read, #{{legacy, bios_owned} => 1}}, 5000, S1),
     Busy = lists:foldl(fun(At, S) ->
                                {Sb, []} = erx_xhci_core:step({negotiated, {error, ebusy}}, At, S),
-                               {Sc, [negotiate]} = erx_xhci_core:step(expired, At + 10, Sb),
+                               {Sc, [{negotiate, continue}]} = erx_xhci_core:step(expired, At + 10, Sb),
                                Sc
                        end, S2, lists:seq(5000, 7980, 10)),
     ?assertMatch({_, [{fail, install_timeout}]}, erx_xhci_core:step({negotiated, {error, ebusy}}, 8000, Busy)),
@@ -1422,9 +1438,11 @@ check_start([{read, [{legacy, bios_owned}]} | Rest], Now, W) -> check_start(Rest
 check_start([{log, bios_handoff_timeout} | Rest], Now, W) ->
     ?assert(Now >= 5000),
     check_start(Rest, Now, W#{released := true});
-check_start([negotiate | Rest], Now, W = #{legacy := Legacy, released := Released, installing := Since}) ->
+check_start([negotiate | Rest], Now, W = #{legacy := Legacy, released := Released, installing := none}) ->
     ?assert(Released orelse not Legacy),
-    check_start(Rest, Now, W#{awaits := install, installing := case Since of none -> Now; _ -> Since end});
+    check_start(Rest, Now, W#{awaits := install, installing := Now});
+check_start([{negotiate, continue} | Rest], Now, W = #{installing := Since}) when Since =/= none ->
+    check_start(Rest, Now, W#{awaits := install});
 check_start(Actions = [{bus, {root_ports, 4}} | _], _Now, #{last := {negotiated, ok}, held := Held}) ->
     ?assertEqual([{bus, {root_ports, 4}} | [ack || Held]], Actions),
     {ended, running};

@@ -38,7 +38,8 @@ the_controller_starts_and_answers_its_bus_test() ->
     [?assertEqual({read, Register}, play(Word)) || {Register, Word} <- ?CAPABILITIES],
     ?assertEqual({negotiate, 0}, play({error, ebusy})),
     Controller ! {erx_irq, device(), ?IRQ_LINE},
-    ?assertEqual({negotiate, 0}, play({ok, 0})),
+    %% The retry after ebusy carries the negotiation on; only the first call begins one.
+    ?assertEqual({negotiate, continue}, play({ok, 0})),
     ?assertEqual({ack, ?IRQ_LINE}, play(ok)),
     ok = erx_usb_bus_link:attach(Controller),
     ?assertEqual({root_ports, 4}, bus_answer()),

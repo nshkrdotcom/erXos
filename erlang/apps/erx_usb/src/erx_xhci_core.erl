@@ -100,7 +100,10 @@ core then writes its OS-owned semaphore and polls the BIOS-owned one every
 `xhci_poll_ms` until it reads clear, going on after `xhci_bios_handoff_ms`
 as FreeBSD does (xhci_pci.c:529-557), with `{log, bios_handoff_timeout}`.
 Then `negotiate`, which the process answers with `{negotiated, Result}`;
-`{error, ebusy}` calls it again `xhci_poll_ms` later, and an install still
+`{error, ebusy}` calls it again `xhci_poll_ms` later as `{negotiate, continue}`, the
+one action that carries a negotiation on: every other call begins one, so a
+restarted process, which starts from new/0, resets the controller afresh
+(docs/design-usb.md, "Install"). An install still
 busy `xhci_install_deadline_ms` after its first call fails the controller
 without being called again. Its `ok` runs the controller, and the bus
 process is answered `{root_ports, Ports}`, the root hub's port count, once
@@ -310,6 +313,7 @@ names.
                | {read, [register()]}
                | {write, register(), non_neg_integer()}
                | negotiate
+               | {negotiate, continue}
                | complete
                | ack
                | {log, bios_handoff_timeout}
@@ -575,7 +579,7 @@ phase_expired(Now, Acc = {#{phase := {bios_handoff, GiveUp, {poll, At}}}, _}) wh
 phase_expired(Now, Acc = {#{phase := {installing, Deadline, {retry, _}}}, _}) when Deadline =< Now ->
     emit({fail, install_timeout}, Acc);
 phase_expired(Now, Acc = {#{phase := {installing, Deadline, {retry, At}}}, _}) when At =< Now ->
-    emit(negotiate, set_phase({installing, Deadline, calling}, Acc));
+    emit({negotiate, continue}, set_phase({installing, Deadline, calling}, Acc));
 phase_expired(Now, Acc = {#{phase := {running, At}}, _}) when At =< Now ->
     emit({read, [usbsts]}, set_phase({running, Now + ?ERX_XHCI_STATUS_INTERVAL_MS}, Acc));
 phase_expired(_Now, Acc) ->

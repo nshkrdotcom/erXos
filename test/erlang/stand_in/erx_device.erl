@@ -38,7 +38,8 @@ open(#{stand_in := Player}) -> {ok, {stand_in, Player}};
 open(_Spec) -> {ok, dev}.
 
 elements({stand_in, Player}, Register) -> play(Player, {elements, Register}).
-negotiate({stand_in, Player}, Wanted) -> play(Player, {negotiate, Wanted}).
+negotiate({stand_in, Player}, Wanted) when is_integer(Wanted); Wanted =:= continue ->
+    play(Player, {negotiate, Wanted}).
 post({stand_in, Player}, Queue, Tag, Item) -> play(Player, {post, Queue, Tag, Item}).
 complete({stand_in, Player}, Ring) -> play(Player, {complete, Ring}).
 queue_state({stand_in, Player}, Queue) -> play(Player, {queue_state, Queue}).
