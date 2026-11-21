@@ -5483,6 +5483,14 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   message queue switches to off-heap between `handle_cla` answering `need_gc` and the literal collection, an on-heap
   message whose term refers to the literal area may be copied off heap with its literal pointers kept
   (`copy_struct_litopt`), and so outlive the area. Probe it as `test/fixtures/literal_token_probe.erl` probes the token.
+* [Low] `test/integration/runtime_literal_token_test.rb`, intermittent: one run failed with
+  `area_never_collected_in_time` and the next passed. The probe (`test/fixtures/literal_token_probe.erl`,
+  `checked_round/1`) raises it when, in each of a round's five attempts, the receiver still found its message a
+  shared literal, so the area's collection had not reached it and the round tested nothing. Each attempt waits only
+  until the literal area collector reports idle (`wait_until_idle/1`); unverified: the collector may report idle
+  before `persistent_term:erase/1`'s release of the area reaches it, which a slow or loaded host makes likelier.
+  The probe has no way to see the area's own collection finish; one option is to retry an attempt until the
+  message's `erts_debug:size_shared/1` is non-zero, under a deadline, instead of a fixed five times.
 * [Medium] `otp/erts/emulator/beam/erl_process.c`, hosted runtime: `statistics_SUITE:scheduler_wall_time_all` fails
   where stock passes: under the case's full load one of 42 schedulers reports 0% wall time
   (`{badmatch, {true, [100,100,100,100,0,...]}}`), so one scheduler never ran the load or its wall-time counter

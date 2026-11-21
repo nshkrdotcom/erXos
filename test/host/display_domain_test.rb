@@ -19,16 +19,42 @@ class DisplayDomainTest < Minitest::Test
   def figure(text, key) = Integer(text[/^  #{key} ([0-9]+)$/, 1], 10)
   def field(text, record, key) = Erx::Manifest::Edit.value(text, record: record, field: key)
   def record(text, header) = text[/^#{header}\n(?:  .*\n)*/]
+  def without_connections(record) = record.sub(/^  connections [0-9]+\n/, '')
+
+  # The configured domains a facet joins to the display, either way round, as usb_input
+  # joins the USB domain's input tree to it, each by its reference (@domain.usb). Read
+  # from the manifest's records, not from Manifest::Edit.without_domain.
+  def display_peers(text)
+    records = Erx::Manifest::Frontend.read(text).records
+    servers = records.fetch('service', []).to_h { |service| ["@service.#{service.name}", service.reference('server')] }
+    records.fetch('facet', []).filter_map do |facet|
+      grantee = facet.reference('grantee')
+      server = servers.fetch(facet.reference('service'))
+      case [grantee, server]
+      in ['@domain.display', /\A@domain\./ => peer] then peer
+      in [/\A@domain\./ => peer, '@domain.display'] then peer
+      else nil
+      end
+    end.uniq
+  end
 
   # The suite boots the development manifest's own display records: the site manifest with
-  # the display domain kept holds them line for line, and the suite's manifest changes
-  # only what the client needs (the display's outer budget, by the client's pixel areas
-  # and lanes, its connections and its restarts) and the room the client takes, before
-  # the client itself.
+  # the display domain kept holds them line for line, but for the display's connections.
+  # Those lose one for each domain the site leaves out that a facet joins to the display,
+  # since Manifest::Edit.without_domain gives back their one connection: leaving out the
+  # USB domain gives back the display's connection to usb_input. The suite's manifest then
+  # changes only what the client needs (the display's outer budget, by the client's pixel
+  # areas and lanes, its connections and its restarts) and the room the client takes,
+  # before the client itself.
   def test_the_suite_boots_the_development_manifests_display_records
-    %w[share runtime_limits limits domain service display unit].each do |kind|
+    %w[share runtime_limits domain service display unit].each do |kind|
       assert_equal record(DEVELOPMENT, "#{kind} display"), record(KEPT, "#{kind} display"), kind
     end
+    assert_equal without_connections(record(DEVELOPMENT, 'limits display')), without_connections(record(KEPT, 'limits display')),
+                 'limits display without connections'
+    left_out = display_peers(DEVELOPMENT) - display_peers(KEPT)
+    assert_equal field(DEVELOPMENT, 'limits display', 'connections') - left_out.size, field(KEPT, 'limits display', 'connections'),
+                 "connections given back for #{left_out}"
     refute_match(/^domain display$/, PLATFORM.site_manifest_source(ROOT))
     ours = Suite.manifest(KEPT)
     assert ours.end_with?(Suite::CLIENT)
