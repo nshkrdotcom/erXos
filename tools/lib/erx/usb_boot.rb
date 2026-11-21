@@ -48,6 +48,13 @@ module Erx
       'UbM0<-tuple_to_list(sys:get_state(element(2,UbP0))),is_map(UbM0),is_map_key(phase,UbM0)]))} end,' \
       'case UbP0 of {ok,UbPp}->unlink(UbPp),exit(UbPp,kill);_->ok end,UbSelf!{ub_probe,{UbP0,UbP1}} end)',
       'UbProbe=receive {ub_probe,UbPr}->UbPr after 15000->probe_timeout end',
+      # UbCol: collects each supervisor report's child and reason, which the holder's logger
+      # prints where no test reads it, through a primary filter that passes every event on.
+      'UbCol=spawn(fun()->(fun UbCl(UbA)->receive {ub_log,UbE}->UbCl([UbE|UbA]);' \
+      '{ub_get,UbP}->UbP!{ub_logs,lists:reverse(UbA)} end end)([]) end)',
+      'logger:add_primary_filter(ub,{fun(UbEv,UbTo)->case UbEv of #{msg:={report,#{report:=UbRp}}} ' \
+      'when is_list(UbRp)->UbTo!{ub_log,{proplists:get_value(id,proplists:get_value(offender,UbRp,[])),' \
+      'proplists:get_value(reason,UbRp)}};_->ok end,UbEv end,UbCol})',
       # The supervisor, owned by a process of its own so the erpc call's end leaves it running.
       'spawn(fun()->UbSelf!{ub_started,erx_usb_sup:start_link({erx_xhci,start_link,[UbSpec]})},' \
       'receive after infinity->ok end end)',
@@ -70,10 +77,11 @@ module Erx
       # UbPoll(K): looks every 200 ms at most K times until the descriptor is read.
       'UbPoll=fun UbPo(0)->UbLook();UbPo(UbK)->case UbLook() of {[_,_,_,{described,true}],_}=UbL->UbL;' \
       '_->timer:sleep(200),UbPo(UbK-1) end end',
-      '{UbStages,UbSeen}=UbPoll(150)',
+      '{UbStages,UbSeen}=UbPoll(150)', 'logger:remove_primary_filter(ub)',
+      'UbCol!{ub_get,self()}', 'UbLogs=receive {ub_logs,UbLg}->lists:sublist(UbLg,3) after 1000->none end',
       # The answer as text: an exit reason the system domain decodes holds no atom it lacks.
-      'UbText=iolist_to_binary(io_lib:format("~0kp",[{UbStages,UbPe,UbProbe,UbSeen}]))',
-      'binary:part(UbText,0,min(byte_size(UbText),1500))'
+      'UbText=iolist_to_binary(io_lib:format("~0kP",[{UbStages,UbPe,UbProbe,UbSeen,UbLogs},40]))',
+      'binary:part(UbText,0,min(byte_size(UbText),3000))'
     ].join(',').freeze
 
     # The line typed at the Erlang shell. Every variable starts with Ub or Pc (PcieDomain::WAIT).
