@@ -10032,14 +10032,25 @@ document's "residual risks accepted" paragraph.
   `erx_devices` hands on the domain library's catalogue and keeps no state. Both come with whichever of the
   VL805's notification, the Bluetooth power line and the sensor driver lands first; probes S1 and S2 come first.
 * [Medium] board sensors, `abi/formats/vc_property.txt` and `abi/inspection.txt`
-  ([design-board-sensors.md](docs/design-board-sensors.md#the-requests)): `vc_property.txt` does not exist and the
-  schema has no `sensors` kind. Add the property buffer's layout, the closed tag set, `fw_reading`, `fw_throttle` with
+  ([design-board-sensors.md](docs/design-board-sensors.md#the-requests)): `vc_property.txt` declares the property
+  buffer's layouts and NOTIFY_XHCI_RESET alone, as four loose limits that `kernel/core/vc_property.c` assembles into
+  its `erx_vc_tag_t` and bounds with a `_Static_assert`, and the schema has no `sensors` kind. Make the tags one
+  generated table (tag, belonging, request, window, least answer, a response word of 0 taken as performed) whose
+  generator checks each row's bounds, derives `vc_request_max` and the buffer's size from the rows and emits the
+  core's table, so no caller builds a declaration and the hand-kept assert goes; add `fw_reading`, `fw_throttle` with
   its span and `board_sensor_period`; add the kind `sensors` at `[sensors]`, the units `mdegC`, `uV` and `Hz`, and
   `@fw_throttle`.
 * [Medium] ABI, `abi/erx_abi.txt` and `abi/manifest.txt` ([design-kernel.md](docs/design-kernel.md#firmware-requests),
-  [design-board-sensors.md](docs/design-board-sensors.md#the-requests)): no status `proto` (`ERX_EPROTO`), no
-  `erx_firmware_request` in the machine family, and no firmware request record (name, belonging, tag, argument) in
-  the system manifest from the platform record's `firmware_requests`. Add the three.
+  [design-board-sensors.md](docs/design-board-sensors.md#the-requests)): no `erx_firmware_request` in the machine
+  family, and no firmware request record (name, belonging, tag, argument) in the system manifest from the platform
+  record's `firmware_requests`. Add the two.
+* [Medium] firmware mailbox core, `kernel/core/vc_property.c` ([design-kernel.md](docs/design-kernel.md#firmware-requests),
+  [design-board-sensors.md](docs/design-board-sensors.md#verification)): the request writer and the answer check are
+  built and host-tested, but the answer check, a parser of device-written memory, has no fuzz target yet (its seeded
+  fault an unclamped length), and the one-request-at-a-time state (the buffer's address match, `ERX_EBUSY`, the
+  deadline and every call after `ERX_ETIMEDOUT`) against a model mailbox is not built. The core sits in
+  `kernel/core/`, so `CoreArchive` links it into Fiasco's `erx_cores.a` too, where the design runs it in the root
+  task: the root backend's commit places it.
 * [Medium] domain library, `include/erx/device_kinds.h` ([design-usb.md](docs/design-usb.md#who-holds-a-controller),
   [design-pcie.md](docs/design-pcie.md#the-bridge-seam)): the host bridges' kinds drive a bridge row, but neither
   platform record (`config/platforms/`) has a `configuration` row and no manifest a PCIe domain, so no bridge is

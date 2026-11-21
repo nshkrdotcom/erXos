@@ -31,6 +31,7 @@ include formats/usb.txt
 include formats/xhci.txt
 include formats/sdhci.txt
 include formats/pcie.txt
+include formats/vc_property.txt
 include medium.txt
 include formats/erofs.txt
 include formats/f2fs.txt
@@ -175,6 +176,7 @@ status wouldblock -14 "executor made a call that would wait"
 status dead -15 "peer or owning space ended"
 status intr -16 "wait was interrupted"
 status corrupt -17 "file failed its integrity check"
+status proto -18 "answer outside its interface"
 
 scalar cap u64
 scalar uaddr u64

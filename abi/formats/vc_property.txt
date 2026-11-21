@@ -1,0 +1,55 @@
+# Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
+# SPDX-License-Identifier: BSD-2-Clause
+# The Raspberry Pi firmware's mailbox property buffer (docs/design-board-sensors.md, "The
+# requests" and "The kernel call"; docs/design-kernel.md, "Firmware requests"), as the
+# mailbox core of erx_firmware_request writes a request and checks its answer.
+#
+# The buffer's facts are the firmware wiki's page "Mailbox property interface"
+# (https://raw.githubusercontent.com/wiki/raspberrypi/firmware/Mailbox-property-interface.md,
+# fetched 2026-11-14, SHA-256
+# 1197d7f52ae2ce6b731bb1ea8e1fce93df4395983629994069e71d498160dd8b), at the line cited, as
+# docs/design-board-sensors.md, "What the firmware offers", reads it. Every word is
+# little-endian, and the buffer is 16-byte aligned (line 3).
+
+# The buffer's header (lines 22-34): its size in bytes, the whole buffer from this word to
+# the end tag, and the request or response code.
+layout erx_vc_header wire_le 4 8
+  field size u32 0
+  field code u32 4
+
+# A request's code, and the response code of a buffer the firmware answered (lines 29-30).
+# Any other response code, its error parsing the buffer 0x80000001 among them, is an
+# answer outside the interface.
+limit vc_code_request u32 0
+limit vc_code_success u32 0x80000000
+
+# One tag's header (lines 36-47): its identifier, the size of its value buffer in bytes,
+# and the request or response word, 0 in a request. In a response, bit 31 is set and bits
+# 30-0 give the value's length; a tag the firmware ignores keeps bit 31 clear (line 5). A
+# length above the value buffer's size is the truncation the interface defines (lines
+# 7-10). The value buffer follows, a whole number of words.
+layout erx_vc_tag_header wire_le 4 12
+  field tag u32 0
+  field value_size u32 4
+  field indicator u32 8
+    bits length 0 30
+    bits response 31 31
+
+# The end tag closes the tag sequence (lines 22-34).
+limit vc_end_tag u32 0
+
+# The largest answer window a tag declares, erXos's choice (docs/design-kernel.md,
+# "Firmware requests"), and the largest request, which is the gencmd tag's 64 bytes
+# (docs/design-board-sensors.md, "The requests").
+limit vc_window_max u32 64
+limit vc_request_max u32 64
+
+# The tags erXos sends. NOTIFY_XHCI_RESET has the USB controller behind a PCIe bridge load
+# its firmware: its request is one word, the function's address bus << 20 | device << 15
+# | function << 12, and its answer is empty (docs/research-brcmstb-pcie.md, section 5;
+# docs/design-usb.md, "The VL805's firmware"). The address of a row is the platform
+# record's, never the caller's.
+limit vc_tag_notify_xhci_reset u32 0x00030058
+limit vc_notify_xhci_reset_request u32 4
+limit vc_notify_xhci_reset_window u32 0
+limit vc_notify_xhci_reset_least u32 0
