@@ -38,6 +38,13 @@
  *           window holds (erx_backend_vm_layout), so committing never finds it
  *           full and every probe ends at an empty slot.
  *
+ * A table over a run (erx_backend_vm_run_init) has none of the three: it is an
+ * object's view of pages that lie in order outside the window, a device's
+ * registers, a contiguous run or archive pages, and each address of its area is
+ * the run's page at the same offset. It holds no index entry and no label, so no
+ * run, however large or however many, takes room in the index, and a request on
+ * it is refused.
+ *
  * A call is one plan, then one apply. erx_backend_vm_plan validates the whole
  * request and counts the pages it needs, changing nothing; erx_backend_vm_call
  * refuses a plan the pool cannot cover and only then applies it, so a refused
@@ -88,6 +95,8 @@ typedef struct erx_backend_vm_table {
 	uint64_t		 area_start;	/* where reservations may lie */
 	uint64_t		 area_end;
 	uint64_t		 placement;	/* a reserve's search starts on this power of two */
+	uintptr_t		 run;		/* a table over a run: area_start's page */
+	bool			 over_run;	/* set by erx_backend_vm_run_init alone */
 } erx_backend_vm_table_t;
 
 /* What the window's first pages must hold for an index covering the whole window. */
@@ -187,9 +196,18 @@ void	erx_backend_vm_table_init(erx_backend_vm_table_t *, uint32_t, erx_backend_v
 erx_backend_vm_steps_t	erx_backend_vm_steps(erx_backend_vm_state_t, erx_backend_vm_state_t);
 
 /*
+ * A table over a run: size bytes of pages from run on, run page-aligned and nonzero and
+ * size a nonzero multiple of a page, shown at [area_start, area_start + size), which
+ * the caller keeps from wrapping. It takes no label and no index, and holds nothing
+ * to clear.
+ */
+void	erx_backend_vm_run_init(erx_backend_vm_table_t *, uintptr_t run, uint64_t area_start, uint64_t size,
+	    const erx_backend_grow_pages_t *records);
+
+/*
  * Plans a request, changing nothing. Refuses:
  *
- *   ERX_EINVAL  an address or size not page-aligned, a size of zero, unknown
+ *   ERX_EINVAL  any request on a table over a run; an address or size not page-aligned, a size of zero, unknown
  *               flags, ERX_VM_NOREPLACE without ERX_VM_FIXED, or a protection
  *               other than none, R, RW and RX, write with execute among them;
  *               a commit or decommit that meets a mapping, or a release or a
@@ -216,7 +234,10 @@ int	erx_backend_vm_call(erx_backend_vm_table_t *,
 	    const erx_backend_vm_effects_t *, const erx_backend_vm_request_t *,
 	    uint64_t *) ERX_WARN_UNUSED_RESULT;
 
-/* The window page behind a committed address of the table, or 0 for any other. */
+/*
+ * The window page behind a committed address of the table, or for a table over a run
+ * the run's page at the address's offset into the area; 0 for any other address.
+ */
 uintptr_t	erx_backend_vm_window(const erx_backend_vm_table_t *, uint64_t);
 
 /*

@@ -369,20 +369,22 @@ test_holder_records(void)
 {
 	static const char record[] = ERX_BOOT_RECORD_FLAG
 	    "\0given\0block\0virtio_mmio\0/virtio_mmio@a003e00\0" "7\0" "3584\0" "512\0" "8\0"
-	    "direct\0" "9\0" "65536\0" "24000000\0" "1\0" "90520731923542\0" ERX_BOOT_RECORD_FLAG "\0boot\0trial\0b\0";
+	    "direct\0" "9\0" "65536\0" "24000000\0" "1\0" "90520731923542\0" "5\0" ERX_BOOT_RECORD_FLAG "\0boot\0trial\0b\0";
 	const erx_boot_given_t given = { .role = "block", .peripheral = "virtio_mmio",
 	    .path = PATH_WORDS("/virtio_mmio@a003e00"), .window = 7, .offset = 3584,
 	    .size = 512, .line = 8, .memory = 9, .memory_size = 65536, .clock = 24000000,
-	    .coherent = true, .mac = 0x525400123456 };
+	    .coherent = true, .mac = 0x525400123456, .index = 5 };
 	erx_boot_given_t longest = { .role = "ROLEROLEROLEROL", .peripheral = "PERIPHERALPERIP",
 	    .path = PATH_WORDS(LONGEST_PATH), .window = UINT64_MAX,
 	    .offset = UINT64_MAX, .size = UINT64_MAX, .line = UINT64_MAX, .line_shared = true, .memory = UINT64_MAX,
-	    .memory_size = UINT64_MAX, .clock = UINT64_MAX, .coherent = true, .mac = UINT64_MAX };
+	    .memory_size = UINT64_MAX, .clock = UINT64_MAX, .coherent = true, .mac = UINT64_MAX,
+	    .index = UINT64_MAX };
 	static const char shared[] = ERX_BOOT_RECORD_FLAG
 	    "\0given\0net\0virtio_mmio\0/virtio_mmio@a003c00\0" "1\0" "0\0" "512\0" "2\0"
-	    "shared\0" "0\0" "0\0" "0\0" "0\0" "0\0";
+	    "shared\0" "0\0" "0\0" "0\0" "0\0" "0\0" "3\0";
 	const erx_boot_given_t shared_given = { .role = "net", .peripheral = "virtio_mmio",
-	    .path = PATH_WORDS("/virtio_mmio@a003c00"), .window = 1, .size = 512, .line = 2, .line_shared = true };
+	    .path = PATH_WORDS("/virtio_mmio@a003c00"), .window = 1, .size = 512, .line = 2, .line_shared = true,
+	    .index = 3 };
 	const erx_boot_words_t refused[] = { PATH_WORDS(LONG_PATH), PATH_WORDS(""), PATH_WORDS("virtio_mmio@a003e00"),
 	    PATH_WORDS("/virtio_mmio@a003e00\033[2J"), PATH_WORDS("/virtio\0mmio"), { NULL, 0 } };
 	char words[ERX_BOOT_GIVEN_WORDS_MAX + ERX_BOOT_PAIR_WORDS_MAX];

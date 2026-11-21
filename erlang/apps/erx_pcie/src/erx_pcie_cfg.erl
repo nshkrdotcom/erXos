@@ -165,11 +165,9 @@ walk reads it before parse/1, which takes only types 0 and 1.
 
 -doc """
 Why a sizing answer was refused: `bar_mask`, base bits not contiguous
-from the top, for which the function is reported `malformed`; `bar_size`,
-a size the 32-bit windows cannot place, for which it is reported
-`unplaced`.
+from the top, for which the function is reported `malformed`.
 """.
--type size_reason() :: {bar_mask | bar_size, 0..5}.
+-type size_reason() :: {bar_mask, 0..5}.
 
 -doc "The read value of a 256-byte snapshot, or the field it was refused for.".
 -spec parse(binary()) -> {ok, read()} | {error, reason()}.
@@ -187,12 +185,13 @@ identity(Snapshot) when is_binary(Snapshot) ->
 -doc """
 The hardware size, as a power of two, of a BAR of the read value from its
 sizing answer: what the BAR register reads after all ones were written,
-with a 64-bit BAR's upper register in bits 63 to 32. `absent` for an
-absent BAR, and for an answer with no base bit set, a BAR the function
-does not implement.
+with a 64-bit BAR's upper register in bits 63 to 32: its true size, up
+to `pcie_bar_size_log2_wide`, which may lie past what a window places
+(`pcie_bar_size_log2_max`). `absent` for an absent BAR, and for an
+answer with no base bit set, a BAR the function does not implement.
 """.
 -spec size(bar(), 0..16#ffffffffffffffff) ->
-          {ok, 2..?ERX_PCIE_BAR_SIZE_LOG2_MAX} | absent | {error, size_reason()}.
+          {ok, 2..?ERX_PCIE_BAR_SIZE_LOG2_WIDE} | absent | {error, size_reason()}.
 size(#{kind := absent}, _Answer) ->
     absent;
 size(#{index := Index, kind := Kind, addr64 := Wide}, Answer) ->
@@ -212,7 +211,6 @@ sized(Index, Bits, Width) ->
     Log2 = log2(Lowest),
     case contiguous(Bits, Lowest, Width) of
         false -> {error, {bar_mask, Index}};
-        true when Log2 > ?ERX_PCIE_BAR_SIZE_LOG2_MAX -> {error, {bar_size, Index}};
         true -> {ok, Log2}
     end.
 

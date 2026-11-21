@@ -36,7 +36,10 @@
  * the manifest check proves. A PCIe function's compatible string is its identity,
  * pci and its vendor and device id in four lowercase hexadecimal digits each
  * (docs/design-pcie.md, "The catalogue and gives"): qemu-xhci's pci1b36,000d and
- * the VL805's pci1106,3483, each an xHCI controller (docs/design-usb.md).
+ * the VL805's pci1106,3483, each an xHCI controller (docs/design-usb.md). A
+ * PCIe host bridge is a kind of role configuration, QEMU virt's ECAM bridge's and
+ * the BCM2711's, whose record its holder, the PCIe domain, opens its
+ * configuration window by (docs/design-pcie.md, "The bridge seam").
  */
 typedef struct erx_device_kind {
 	uint32_t	 role;		/* ERX_MF_DEVICE_ROLE_* */
@@ -58,6 +61,8 @@ static const erx_device_kind_t erx_device_kinds[] = {
 	{ ERX_MF_DEVICE_ROLE_RTC, "arm,pl031", "rtc", "pl031", false },
 	{ ERX_MF_DEVICE_ROLE_USB, "pci1b36,000d", "usb", "xhci", false },
 	{ ERX_MF_DEVICE_ROLE_USB, "pci1106,3483", "usb", "xhci", false },
+	{ ERX_MF_DEVICE_ROLE_CONFIGURATION, "pci-host-ecam-generic", "configuration", "pci_ecam", false },
+	{ ERX_MF_DEVICE_ROLE_CONFIGURATION, "brcm,bcm2711-pcie", "configuration", "bcm2711_pcie", false },
 };
 
 /*

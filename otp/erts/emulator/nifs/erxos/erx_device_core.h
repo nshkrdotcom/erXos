@@ -61,7 +61,8 @@ erx_device_base_aligned(const erx_device_peripheral_t *peripheral, uint64_t base
 		if (bytes > 1 && (base & (bytes - 1)) != 0)
 			return (false);
 	}
-	return (true);
+	/* A configuration space takes 32-bit accesses at every multiple of 4 of a block. */
+	return (peripheral->space_count == 0 || (base & 3u) == 0);
 }
 
 /* Whether two windows' mappings would share a page. */
@@ -159,6 +160,9 @@ bool	erx_device_peripheral_is(const erx_device_peripheral_t *peripheral, const c
 uint32_t	erx_device_register_named(const erx_device_peripheral_t *peripheral, const char *name);
 uint32_t	erx_device_field_named(const erx_device_peripheral_t *peripheral, const erx_device_register_t *reg,
 		    const char *name);
+/* The configuration space with this name, of `length` bytes, or NULL. */
+const erx_device_space_t *erx_device_space_named(const erx_device_peripheral_t *peripheral, const char *name,
+		    size_t length);
 
 /* The first index in `keys` holding `key`, or `count`. Keys are what the caller interned the names as. */
 static inline uint32_t
@@ -260,6 +264,22 @@ erx_device_layout_offset(const erx_device_peripheral_t *peripheral, const erx_de
 	}
 	return (!__builtin_add_overflow(*offset, base, offset));
 }
+
+/*
+ * How many blocks of a configuration space lie wholly inside a window of `size` bytes: its
+ * count, or fewer for a window that ends before the last, as an ECAM window covering fewer
+ * buses than 256 does.
+ */
+uint32_t	erx_device_space_blocks(const erx_device_space_t *space, uint64_t size);
+/*
+ * The byte offset in a window of `size` bytes of a configuration access of `width` bytes at
+ * `offset` of one block of a space (docs/design-generation.md, "Register inputs"). An array
+ * takes an index and nothing else does; the width is 1, 2 or 4 and the offset a multiple of it
+ * inside the block; and the block lies wholly inside the window. Anything else is false, so no
+ * access reaches past a function's configuration space or past the window.
+ */
+bool	erx_device_space_offset(const erx_device_space_t *space, uint64_t size, bool indexed, uint64_t index,
+	    uint64_t offset, uint64_t width, uint64_t *at);
 
 static inline bool
 erx_device_read_allowed(const erx_device_register_t *reg)

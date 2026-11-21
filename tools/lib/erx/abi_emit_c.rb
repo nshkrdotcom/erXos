@@ -629,15 +629,37 @@ module Erx
           "(#{c_type(base)})(#{unsigned_literal((1 << base.bits) - 1, base.bits)} - (#{unsigned})#{raw}))"
       end
 
+      # Every wire_le layout, each of which the reader decodes.
+      def wire_layouts(schema)
+        schema.type_order.map { |key| schema.types.fetch(key) }
+              .select { |type| type.is_a?(Layout) && type.storage == 'wire_le' }
+      end
+
+      # The wire_le layouts the reader encodes: each fixed one but the device
+      # records, the layouts of a descriptor format (Marks::Schema#device_record?).
+      # A marked one has the encoder its marks give it in abi.h (MarksEmitter), a
+      # report none, and only the sequencer calls a C encoder of one.
+      def wire_encoded_layouts(schema)
+        wire_layouts(schema).reject { |layout| layout.tail || schema.marks.device_record?(layout) }
+      end
+
       def reader_header(schema)
-        layouts = schema.type_order.map { |key| schema.types.fetch(key) }
-                        .select { |type| type.is_a?(Layout) && type.storage == 'wire_le' }
+        layouts = wire_layouts(schema)
         out = [NOTICE, '#ifndef ERX_ABI_READER_H', '#define ERX_ABI_READER_H', '',
                '#include "erx/abi.h"', '',
                '/* Prefix decoders borrow immutable bytes; references remain untrusted. */']
         layouts.each do |layout|
           out << "bool #{name(layout.name)}_decode(const uint8_t *bytes, size_t length,"
           out << "    #{c_type(layout)} *result);"
+        end
+        out.concat(['', '/*', ' * Encoders write a layout whole, its padding zero, into the first SIZE',
+                    ' * of length bytes, as the decoder reads them; false, writing nothing, when',
+                    ' * length is shorter. A layout with a tail has none, and neither has a',
+                    ' * device record, a layout of a descriptor format, whose only C',
+                    ' * encoders are the ones its marks give it in erx/abi.h.', ' */'])
+        wire_encoded_layouts(schema).each do |layout|
+          out << "bool #{name(layout.name)}_encode(const #{c_type(layout)} *value,"
+          out << '    uint8_t *bytes, size_t length);'
         end
         out.concat(['', 'typedef struct erx_abi_error erx_abi_error_t;',
                     'struct erx_abi_error {', "\tconst char\t*reason;",
@@ -672,12 +694,61 @@ module Erx
                       "\t\tvalue |= (uint#{width}_t)bytes[index] << (index * 8);",
                       "\treturn (value);", '}', ''])
         end
-        schema.type_order.each do |type_name|
-          layout = schema.types.fetch(type_name)
-          next unless layout.is_a?(Layout) && layout.storage == 'wire_le'
+        [16, 32, 64].each do |width|
+          out << "static void erx_abi_store_u#{width}(uint8_t *, uint#{width}_t) ERX_UNUSED;"
+        end
+        out << ''
+        [16, 32, 64].each do |width|
+          out.concat(['static void', "erx_abi_store_u#{width}(uint8_t *bytes, uint#{width}_t value)", '{',
+                      "\tfor (size_t index = 0; index < #{width / 8}; index++)",
+                      "\t\tbytes[index] = (uint8_t)(value >> (index * 8));", '}', ''])
+        end
+        encoded = wire_encoded_layouts(schema).to_set(&:name)
+        wire_layouts(schema).each do |layout|
           out.concat(prefix_decoder(layout))
+          out.concat(encoder(layout)) if encoded.include?(layout.name)
         end
         out.join("\n")
+      end
+
+      # The decoder's mirror: every field stored at its offset, every other
+      # byte of the layout zero.
+      def encoder(layout)
+        out = ['bool', "#{name(layout.name)}_encode(const #{c_type(layout)} *value,",
+               '    uint8_t *bytes, size_t length)', '{',
+               "\tif (value == NULL || bytes == NULL || length < #{constant(layout.name)}_SIZE)",
+               "\t\treturn (false);", "\tfor (size_t index = 0; index < #{constant(layout.name)}_SIZE; index++)",
+               "\t\tbytes[index] = 0;"]
+        layout.fields.each do |field|
+          if field.array?
+            out << "\tfor (size_t index = 0; index < #{field.count}; index++) {"
+            out.concat(encode_field(field.type, "value->#{field.name}[index]",
+                                    "#{field.offset} + index * #{field.type.size}", indent: "\t\t"))
+            out << "\t}"
+          else
+            out.concat(encode_field(field.type, "value->#{field.name}", field.offset.to_s, indent: "\t"))
+          end
+        end
+        out.concat(["\treturn (true);", '}', ''])
+        out
+      end
+
+      def encode_field(type, source, offset, indent:)
+        if type.is_a?(Layout)
+          ["#{indent}(void)#{name(type.name)}_encode(&#{source}, bytes + #{offset},",
+           "#{indent}    #{constant(type.name)}_SIZE);"]
+        elsif type.is_a?(BytesType)
+          ["#{indent}for (size_t byte = 0; byte < #{type.size}; byte++)",
+           "#{indent}\tbytes[#{offset} + byte] = #{source}[byte];"]
+        else
+          bits = type.integer.bits
+          raw = "(uint#{bits}_t)#{type.strong? ? "#{source}.raw" : source}"
+          if bits == 8
+            ["#{indent}bytes[#{offset}] = #{raw};"]
+          else
+            ["#{indent}erx_abi_store_u#{bits}(bytes + #{offset}, #{raw});"]
+          end
+        end
       end
 
       def prefix_decoder(layout)

@@ -38,7 +38,7 @@ BAR's read-only type bits as the read value gives them.
 """.
 
 -export([plan/2, quiet/1, start_target/2, differs/2]).
--export_type([target/0, root_port/0, stage/0, state/0, write/0, field/0, reason/0]).
+-export_type([target/0, function_target/0, root_port/0, stage/0, state/0, write/0, field/0, reason/0]).
 
 -include("generated/erx_abi.hrl").
 

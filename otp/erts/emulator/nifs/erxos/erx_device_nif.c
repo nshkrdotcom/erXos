@@ -392,19 +392,95 @@ device_of(ErlNifEnv *env, ERL_NIF_TERM term)
 	return (enif_get_uint(env, term, &index) ? erx_device_get(index) : NULL);
 }
 
-/* elements(Dev, Register): how many elements of the register the device's open resolved. */
+/* The device's configuration space named by the atom, or NULL. */
+static const erx_device_space_t *
+space_of(ErlNifEnv *env, const erx_device_t *device, ERL_NIF_TERM name)
+{
+	char text[ATOM_TEXT_MAX];
+	const int written = enif_get_atom(env, name, text, sizeof(text), ERL_NIF_LATIN1);
+
+	return (written > 0 ? erx_device_space_named(erx_device_peripheral(device), text, (size_t)written - 1) : NULL);
+}
+
+/*
+ * elements(Dev, Name): how many elements of the register the device's open resolved, or how
+ * many blocks of the configuration space lie inside its window.
+ */
 static ERL_NIF_TERM
 elements_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
 {
 	const erx_device_t *const device = device_of(env, argv[0]);
 	const erx_device_register_t *reg;
+	const erx_device_space_t *space;
 
 	(void)argc;
-	/* The record's keys are the atoms open/1 made of the table's names. */
-	if (device == NULL || !enif_is_atom(env, argv[1]) ||
-	    (reg = erx_device_register_by_key(device, (uintptr_t)argv[1])) == NULL)
+	if (device == NULL || !enif_is_atom(env, argv[1]))
 		return (enif_make_badarg(env));
-	return (enif_make_uint(env, erx_device_elements(device, reg)));
+	/* The record's keys are the atoms open/1 made of the table's names. */
+	if ((reg = erx_device_register_by_key(device, (uintptr_t)argv[1])) != NULL)
+		return (enif_make_uint(env, erx_device_elements(device, reg)));
+	if ((space = space_of(env, device, argv[1])) != NULL)
+		return (enif_make_uint(env, erx_device_space_elements(device, space)));
+	return (enif_make_badarg(env));
+}
+
+/* A configuration access's terms: Dev, Space (an atom, or {Atom, Index} for a block of an array), Offset and Width. */
+typedef struct config_access {
+	const erx_device_t		*device;
+	const erx_device_space_t	*space;
+	erx_device_element_t		 element;
+	uint64_t			 offset;
+	uint64_t			 width;
+} config_access_t;
+
+static bool
+decode_config(ErlNifEnv *env, const ERL_NIF_TERM argv[], config_access_t *access)
+{
+	ERL_NIF_TERM name = argv[1];
+	const ERL_NIF_TERM *pair;
+	int arity;
+
+	access->device = device_of(env, argv[0]);
+	access->element = (erx_device_element_t){ .indexed = false, .index = 0 };
+	if (access->device == NULL || !enif_get_uint64(env, argv[2], &access->offset) ||
+	    !enif_get_uint64(env, argv[3], &access->width))
+		return (false);
+	if (enif_get_tuple(env, argv[1], &arity, &pair)) {
+		if (arity != 2 || !enif_get_uint64(env, pair[1], &access->element.index))
+			return (false);
+		name = pair[0];
+		access->element.indexed = true;
+	}
+	access->space = space_of(env, access->device, name);
+	return (access->space != NULL);
+}
+
+/* config_read(Dev, Space, Offset, Width): Width bytes at Offset of the space's block. */
+static ERL_NIF_TERM
+config_read_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
+{
+	config_access_t access;
+	uint64_t value;
+
+	(void)argc;
+	if (!decode_config(env, argv, &access) ||
+	    !erx_device_config_read(access.device, access.space, access.element, access.offset, access.width, &value))
+		return (enif_make_badarg(env));
+	return (enif_make_uint64(env, value));
+}
+
+/* config_write(Dev, Space, Offset, Width, Value) */
+static ERL_NIF_TERM
+config_write_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
+{
+	config_access_t access;
+	uint64_t value;
+
+	(void)argc;
+	if (!decode_config(env, argv, &access) || !enif_get_uint64(env, argv[4], &value) ||
+	    !erx_device_config_write(access.device, access.space, access.element, access.offset, access.width, value))
+		return (enif_make_badarg(env));
+	return (enif_make_atom(env, "ok"));
 }
 
 /* queue_create(Dev, Queue, Size, BufferSize) */
@@ -782,6 +858,8 @@ load(ErlNifEnv *env, void **priv, ERL_NIF_TERM info)
 static ErlNifFunc nif_funcs[] = {
 	{ "open", 1, open_nif, 0 },
 	{ "elements", 2, elements_nif, 0 },
+	{ "config_read", 4, config_read_nif, 0 },
+	{ "config_write", 5, config_write_nif, 0 },
 	{ "irq_bind", 2, irq_bind_nif, 0 },
 	{ "irq_bind_owner", 2, irq_bind_owner_nif, 0 },
 	{ "irq_holder", 2, irq_holder_nif, 0 },

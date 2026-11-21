@@ -18,6 +18,10 @@
 
 -import(erx_pcie_cfg_tests, [blank/0, put/4]).
 
+%% The inputs and the oracle erx_pcie_apply_tests runs the effect layer over.
+-export([endpoint/4, layout/2, message/0, switch_states/2, data_fields/1, root_port/2, root_target/1,
+         parsed/1, made/2, levels/1, data_view/1, data_ok/2, reads_as/2]).
+
 -define(MESSAGE, #{address => 16#fee00000, data => 16#41}).
 -define(BAR0, 16#fe000000).
 -define(BAR2, 16#fe100000).
@@ -33,6 +37,8 @@ parsed(Snapshot) ->
     Read.
 
 made(Snapshot, {Offset, Width, Value}) -> put(Snapshot, Offset, Width, Value).
+
+message() -> ?MESSAGE.
 
 %% --- The endpoint ----------------------------------------------------------------
 

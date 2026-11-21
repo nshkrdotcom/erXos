@@ -622,17 +622,64 @@ erx_dom_view_bridge(erx_dom_pci_bridge_t *bridge, const erx_pcie_bridge_t *tree,
 		memset(bridge->facts.windows, 0, sizeof(bridge->facts.windows));
 }
 
-erx_status_t
-erx_dom_lib_pci_report(erx_dom_lib_t *lib, uint32_t bridge, const erx_pcie_function_t *report, uint32_t count,
-    erx_dom_pci_refusal_t *refusal)
+/* The catalogue of the host bridge of device row bridge, or NULL for a row with none. */
+static erx_dom_pci_bridge_t *
+lib_pci_bridge(erx_dom_lib_t *lib, uint32_t bridge)
 {
 	for (uint32_t at = 0; at < lib->view.npci_bridges; at++) {
 		if (lib->pci_bridges[at].facts.index == bridge)
-			return (erx_dom_pci_report(&lib->pci_bridges[at], lib->view.devices, lib->view.ndevices, report,
-			    count, refusal));
+			return (&lib->pci_bridges[at]);
 	}
-	*refusal = (erx_dom_pci_refusal_t){ .record = count, .field = "bridge" };
-	return (ERX_EINVAL);
+	return (NULL);
+}
+
+erx_status_t
+erx_dom_lib_pci_report(erx_dom_lib_t *lib, uint32_t bridge, const erx_dom_pci_record_t *records, uint32_t count,
+    erx_dom_pci_refusal_t *refusal)
+{
+	erx_dom_pci_bridge_t *const held = lib_pci_bridge(lib, bridge);
+
+	if (held == NULL) {
+		*refusal = (erx_dom_pci_refusal_t){ .record = count, .field = "bridge" };
+		return (ERX_EINVAL);
+	}
+	return (erx_dom_pci_report(held, lib->view.devices, lib->view.ndevices, records, count, refusal));
+}
+
+erx_status_t
+erx_dom_lib_pci_mode(erx_dom_lib_t *lib, uint32_t index, uint32_t mode)
+{
+	const erx_pcie_bridge_t *facts;
+	erx_dom_device_t *record;
+
+	if (index >= lib->view.ndevices || lib->view.devices[index].selector != ERX_MF_SELECTOR_PCI ||
+	    mode > ERX_PCIE_MODE_MASTERING)
+		return (ERX_EINVAL);
+	record = &lib->device_records[index];
+	/* A raise only for a function a living domain holds and its catalogue gives. */
+	if (mode != ERX_PCIE_MODE_OFF && (record->holder == 0 ||
+	    erx_dom_pci_given(lib->pci_bridges, lib->view.npci_bridges, &lib->view.devices[index], &facts) == NULL))
+		return (ERX_EINVAL);
+	record->setting.mode = (uint8_t)mode;
+	return (ERX_OK);
+}
+
+erx_status_t
+erx_dom_lib_pci_answered(erx_dom_lib_t *lib, uint32_t domain)
+{
+	erx_status_t status = ERX_EINVAL;
+
+	if (domain == 0)
+		return (ERX_EINVAL);
+	for (uint32_t at = 0; at < lib->view.npci_bridges; at++) {
+		erx_dom_pci_bridge_t *const bridge = &lib->pci_bridges[at];
+
+		if (lib->device_records[bridge->facts.index].holder == domain) {
+			bridge->answered = domain;
+			status = ERX_OK;
+		}
+	}
+	return (status);
 }
 
 /* A framebuffer record takes no more room than the given record the reserve counts for it. */

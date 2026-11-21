@@ -24,10 +24,13 @@
  * A mapping is a record in the task's table (vm_table.c) naming the object's record
  * index; object.c counts them, so an object without a handle lives while one remains.
  *
- * A physical or contiguous object is the same table over pages that lie outside
- * the pool: a device's registers in the device window, or a run of the contiguous
- * pool. vm_give tells them apart by address and keeps them, so no way of ending an
- * object can put them on the free list.
+ * A physical, contiguous or slice object is a table over a run (vm_table.h): pages that
+ * lie in order outside the pool, a device's registers in the device window, a run of the
+ * contiguous pool or the archive's pages, each at the run's start plus its offset. Such a
+ * table holds no index entry and no label, and never takes or gives a page, so no way of
+ * ending an object can put a run's page on the free list. Each physical object maps its
+ * registers at a fresh range of the device window, which goes back when the object ends,
+ * once the root has unmapped it from every space.
  */
 
 #include <stdbool.h>
@@ -46,6 +49,7 @@
 #include "liberx/backend/fiasco/console.h"
 #include "liberx/backend/fiasco/object.h"
 #include "liberx/backend/fiasco/service.h"
+#include "liberx/backend/fiasco/thread.h"
 #include "liberx/backend/fiasco/page_pool.h"
 #include "liberx/backend/fiasco/vm.h"
 #include "liberx/backend/fiasco/vm_rules.h"
@@ -55,16 +59,19 @@
 #define VM_WINDOW_BASE	UINT64_C(0x1000000000)
 #define VM_AREA_END	UINT64_C(0x8000000000)
 /*
- * Below the window and above all RAM: the device window, where each physical
- * object's registers stay mapped in the root, as does the page the root reads the
- * board's random generator through (erx_fiasco_vm_device_page), and the contiguous pool, one flexpage
- * of the order the manifest's devices ask for (erx_fiasco_contig_order). The pool
- * starts at a place aligned to the largest order, so a flexpage of any smaller one
- * is naturally aligned there too.
+ * Below the window and above all RAM: the device window, where the root maps device
+ * registers, and above it the contiguous pool, one flexpage of the order the manifest's
+ * devices ask for (erx_fiasco_contig_order). The pool starts at a place aligned to the
+ * largest order, so a flexpage of any smaller one is naturally aligned there too. The
+ * device window's first pages are the root's own, which it maps once and keeps for its
+ * life (erx_fiasco_vm_device_page), some before the pool exists; the rest, up to the
+ * root's UTCB area (ERX_FIASCO_UTCB_AREA), is where each physical object's registers are
+ * mapped (erx_fiasco_device_window_t). The UTCB area lies below the contiguous pool.
  */
-#define VM_DEVICE_BASE	UINT64_C(0xE00000000)
-#define VM_DEVICE_PAGES	4096u
-#define VM_CONTIG_BASE	(VM_WINDOW_BASE - (UINT64_C(1) << ERX_FIASCO_CONTIG_ORDER_MAX))
+#define VM_DEVICE_BASE		UINT64_C(0xE00000000)
+#define VM_ROOT_DEVICE_PAGES	16u
+#define VM_DEVICE_OBJECTS_BASE	(VM_DEVICE_BASE + ((uint64_t)VM_ROOT_DEVICE_PAGES << L4_PAGESHIFT))
+#define VM_CONTIG_BASE		(VM_WINDOW_BASE - (UINT64_C(1) << ERX_FIASCO_CONTIG_ORDER_MAX))
 /*
  * A teardown piece's pages: 2 MiB, one flexpage where it is aligned, whose walk of the
  * page index and of the task's page tables is the longest any other call waits behind.
@@ -87,7 +94,8 @@ _Static_assert(ERX_FIASCO_CONTIG_PAGES == UINT64_C(1) << (ERX_FIASCO_CONTIG_ORDE
     ERX_FIASCO_CONTIG_ORDER_MIN >= L4_PAGESHIFT && ERX_FIASCO_CONTIG_ORDER_MIN <= ERX_FIASCO_CONTIG_ORDER_MAX,
     "the largest contiguous pool is one flexpage of whole pages");
 _Static_assert(VM_CONTIG_BASE % (UINT64_C(1) << ERX_FIASCO_CONTIG_ORDER_MAX) == 0 &&
-    VM_DEVICE_BASE + ((uint64_t)VM_DEVICE_PAGES << L4_PAGESHIFT) <= VM_CONTIG_BASE,
+    VM_DEVICE_OBJECTS_BASE < ERX_FIASCO_UTCB_AREA &&
+    ERX_FIASCO_UTCB_AREA + (UINT64_C(1) << ERX_FIASCO_UTCB_AREA_ORDER) <= VM_CONTIG_BASE,
     "the largest contiguous pool is aligned to its size, between the device window and the window");
 _Static_assert(ERX_MEM_CONTIGUOUS_MAX <= (uint64_t)ERX_FIASCO_CONTIG_PAGES << L4_PAGESHIFT,
     "the largest contiguous object fits the pool");
@@ -113,14 +121,12 @@ _Static_assert(sizeof(vm_object_t) <= ERX_PAGE_SIZE, "an object's record fits a 
 static unsigned	fpage_rights(uint32_t);
 static void	vm_map(uint32_t, uintptr_t, uint64_t, uint32_t);
 static void	vm_unmap(uint32_t, uint64_t, uint32_t);
-static void	vm_unmap_range(uint32_t, uint64_t, uint64_t);
+static void	vm_unmap_range(l4_cap_idx_t, uint64_t, uint64_t);
 static void	vm_no_map(uint32_t, uintptr_t, uint64_t, uint32_t);
 static void	vm_no_unmap(uint32_t, uint64_t, uint32_t);
 static uintptr_t vm_take(uint64_t);
 static void	vm_give(uintptr_t, uint64_t);
 static void	vm_unmapped(uint32_t);
-static uintptr_t vm_run_take(uint64_t);
-static uint64_t	vm_run_free_pages(void);
 static uint64_t	window_grow(uint64_t, unsigned);
 static uintptr_t vm_record_take(void);
 static void	vm_record_give(uintptr_t);
@@ -130,6 +136,7 @@ static vm_task_t *vm_task(uint32_t);
 static vm_object_t *vm_object(uint32_t);
 static uint32_t	vm_label_task(uint32_t);
 static _Noreturn void vm_refused(const char *);
+static int	device_map(uint64_t, uint64_t, uint64_t);
 static int	object_map(uint32_t, uint32_t, uint64_t, uint64_t, uint64_t, uint32_t);
 static int	object_copy(uint32_t, uint64_t, uint32_t, uint64_t, uint64_t, uint64_t *);
 
@@ -140,13 +147,11 @@ static const erx_backend_vm_effects_t vm_effects = { .map = vm_map, .unmap = vm_
 /* For a table no space sees: an object's, a task's whose mappings went with it, or a piece a shed has unmapped. */
 static const erx_backend_vm_effects_t vm_no_effects = { .map = vm_no_map, .unmap = vm_no_unmap, .take = vm_take,
     .give = vm_give, .free_pages = erx_fiasco_vm_free_pages, .unmapped = vm_unmapped };
-/* For an object over a run: its pages are the run's, in order, from vm_run_window. */
-static const erx_backend_vm_effects_t vm_run_effects = { .map = vm_no_map, .unmap = vm_no_unmap, .take = vm_run_take,
-    .give = vm_give, .free_pages = vm_run_free_pages, .unmapped = vm_unmapped };
-static uintptr_t vm_run_window;
 static erx_fiasco_contig_t vm_contig;
 static uint64_t vm_contig_physical;
-static uint32_t vm_device_pages_used;
+/* The root's own device pages mapped, from the device window's first. */
+static uint32_t vm_root_device_pages;
+static erx_fiasco_device_window_t vm_device_window;
 /* Each task's record, by its index. */
 static erx_backend_grow_table_t vm_tasks;
 /* Each memory object's pages, by its object record's index. */
@@ -168,9 +173,7 @@ static void
 vm_give(uintptr_t window, uint64_t addr)
 {
 	(void)addr;
-	/* Below the window: a run of an object, which never joins the pool. */
-	if (window >= VM_WINDOW_BASE)
-		erx_fiasco_pool_put(&vm_pool, window);
+	erx_fiasco_pool_put(&vm_pool, window);
 }
 
 /* A mapping's record went by a release or its task's end: the object counts one fewer. */
@@ -250,8 +253,8 @@ erx_fiasco_vm_init(uint64_t dma_bytes)
 	cursor = window_grow(cursor, VM_SUPERPAGE_ORDER);
 	cursor = window_grow(cursor, L4_PAGESHIFT);
 	window_pages = (cursor - VM_WINDOW_BASE) >> L4_PAGESHIFT;
-	/* The index also holds the runs' pages: each is one distinct page, as a window page is. */
-	layout = erx_backend_vm_layout(window_pages + vm_contig.pages + VM_DEVICE_PAGES);
+	/* Only a committed pool page takes an entry: a table over a run takes none. */
+	layout = erx_backend_vm_layout(window_pages);
 	if (layout.index_pages >= window_pages)
 		return ("memory: sigma0 gave too little to hold the page index");
 
@@ -262,6 +265,7 @@ erx_fiasco_vm_init(uint64_t dma_bytes)
 		erx_fiasco_pool_add(&vm_pool, (uintptr_t)(VM_WINDOW_BASE + (page << L4_PAGESHIFT)));
 	erx_backend_grow_table_init(&vm_tasks, sizeof(vm_task_t), &erx_fiasco_vm_records);
 	erx_backend_grow_table_init(&vm_objects, sizeof(vm_object_t), &erx_fiasco_vm_records);
+	erx_fiasco_device_window_init(&vm_device_window, VM_DEVICE_OBJECTS_BASE, ERX_FIASCO_UTCB_AREA, &erx_fiasco_vm_records);
 	/* The first page now, as object.c takes its records', so a first object's page count is its own pages. */
 	if (erx_backend_grow_table_room(&vm_objects, 1) != ERX_OK)
 		return ("memory: the pool cannot hold the object table");
@@ -325,16 +329,38 @@ erx_fiasco_vm_task_shed(uint32_t task)
 	if (!erx_backend_vm_shed_piece(table, VM_SHED_PAGES, &piece))
 		return (false);
 	/* Out of the task's space first, so no page goes back to the pool while the task maps it. */
-	vm_unmap_range(task, piece.start, piece.end);
+	vm_unmap_range(erx_fiasco_task_cap(task), piece.start, piece.end);
 	erx_backend_vm_shed(table, &vm_no_effects, &piece);
 	return (true);
 }
 
+/* Every kind has its case, so a new one is a build warning here. */
 void
-erx_fiasco_vm_object_free(uint32_t object)
+erx_fiasco_vm_object_free(uint32_t index)
 {
-	erx_backend_vm_table_clear(&vm_object(object)->table, &vm_no_effects);
-	vm_label_put(vm_object(object)->table.label);
+	vm_object_t *const object = vm_object(index);
+
+	erx_backend_vm_table_clear(&object->table, &vm_no_effects);
+	switch (object->traits.kind) {
+	case ERX_FIASCO_VM_PHYSICAL:
+		/*
+		 * Out of every space now, so no mapping made from this range outlives the object, and
+		 * then back, so the range taken again holds nothing of it.
+		 */
+		vm_unmap_range(L4_BASE_TASK_CAP, object->table.run, object->table.run + object->size);
+		erx_fiasco_device_window_give(&vm_device_window, object->table.run);
+		break;
+	case ERX_FIASCO_VM_CONTIGUOUS:
+	case ERX_FIASCO_VM_SLICE:
+		/* A device may still write a contiguous run, and the archive's pages are no one's to give. */
+		break;
+	case ERX_FIASCO_VM_PAGES:
+	case ERX_FIASCO_VM_JIT:
+	case ERX_FIASCO_VM_PAGED:
+	case ERX_FIASCO_VM_CHILD:
+		vm_label_put(object->table.label);
+		break;
+	}
 }
 
 uintptr_t
@@ -349,14 +375,9 @@ erx_fiasco_vm_object_window(uint32_t object, uint64_t offset)
 	return (erx_backend_vm_window(&vm_object(object)->table, VM_OBJECT_AREA_START + offset));
 }
 
-/*
- * Fills a new object's table with size bytes through these effects. An object over a
- * run names the run's first page, which vm_run_take reads; a pool object names 0. A
- * refused fill holds no label or page.
- */
+/* A new object over size bytes of pool pages, committed now. A refused fill holds no label or page. */
 static int
-object_fill(uint32_t index, uint64_t size, const erx_backend_vm_effects_t *effects, erx_fiasco_vm_kind_t kind,
-    uintptr_t run)
+object_fill(uint32_t index, uint64_t size, erx_fiasco_vm_kind_t kind)
 {
 	const erx_backend_vm_request_t reserve = { .op = ERX_BACKEND_VM_RESERVE, .addr = VM_OBJECT_AREA_START,
 	    .size = size, .flags = ERX_VM_FIXED };
@@ -371,12 +392,11 @@ object_fill(uint32_t index, uint64_t size, const erx_backend_vm_effects_t *effec
 	label = vm_label_take(VM_LABEL_OBJECT);
 	if (label == VM_LABELS)
 		return (ERX_ENOMEM);
-	vm_run_window = run;
 	erx_backend_vm_table_init(&object->table, label, vm_index, vm_index_slots, VM_OBJECT_AREA_START, VM_OBJECT_AREA_END,
 	    &erx_fiasco_vm_records);
-	status = erx_backend_vm_call(&object->table, effects, &reserve, NULL);
+	status = erx_backend_vm_call(&object->table, &vm_no_effects, &reserve, NULL);
 	if (status == ERX_OK)
-		status = erx_backend_vm_call(&object->table, effects, &commit, NULL);
+		status = erx_backend_vm_call(&object->table, &vm_no_effects, &commit, NULL);
 	if (status != ERX_OK) {
 		erx_backend_vm_table_clear(&object->table, &vm_no_effects);
 		vm_label_put(label);
@@ -387,16 +407,35 @@ object_fill(uint32_t index, uint64_t size, const erx_backend_vm_effects_t *effec
 	return (ERX_OK);
 }
 
+/*
+ * A new object over size bytes of pages from run on, outside the pool: its table takes
+ * no label and no page, only the object record's room. size is at most the device
+ * window's, the contiguous pool's or the archive's, so the table's area does not wrap.
+ */
+static int
+object_over_run(uint32_t index, uint64_t size, erx_fiasco_vm_kind_t kind, uintptr_t run)
+{
+	vm_object_t *object;
+
+	if (erx_backend_grow_table_room(&vm_objects, index + 1) != ERX_OK)
+		return (ERX_ENOMEM);
+	object = vm_object(index);
+	erx_backend_vm_run_init(&object->table, run, VM_OBJECT_AREA_START, size, &erx_fiasco_vm_records);
+	object->traits = (erx_fiasco_vm_traits_t){ .kind = kind };
+	object->size = size;
+	return (ERX_OK);
+}
+
 int
 erx_fiasco_vm_object_create(uint32_t object, uint64_t size, bool jit)
 {
-	return (object_fill(object, size, &vm_no_effects, jit ? ERX_FIASCO_VM_JIT : ERX_FIASCO_VM_PAGES, 0));
+	return (object_fill(object, size, jit ? ERX_FIASCO_VM_JIT : ERX_FIASCO_VM_PAGES));
 }
 
 int
 erx_fiasco_vm_paged_create(uint32_t object, uint64_t size, bool code)
 {
-	const int status = object_fill(object, size, &vm_no_effects, ERX_FIASCO_VM_PAGED, 0);
+	const int status = object_fill(object, size, ERX_FIASCO_VM_PAGED);
 
 	if (status == ERX_OK)
 		vm_object(object)->traits.code = code;
@@ -411,7 +450,7 @@ erx_fiasco_vm_child_create(uint32_t object, uint32_t parent, uint64_t offset, ui
 	const uint64_t parent_size = vm_object(parent)->size;
 	const int status = erx_fiasco_vm_child_rule(traits, parent_size, offset, size);
 
-	return (status != ERX_OK ? status : object_fill(object, size, &vm_no_effects, ERX_FIASCO_VM_CHILD, 0));
+	return (status != ERX_OK ? status : object_fill(object, size, ERX_FIASCO_VM_CHILD));
 }
 
 /*
@@ -435,54 +474,54 @@ erx_fiasco_vm_object_seal(uint32_t index)
 	return (ERX_OK);
 }
 
-/*
- * Maps size bytes of device memory at base, both page-aligned, at the device window's
- * next free pages. The pages stay taken only once the caller calls device_take.
- */
+/* Maps size bytes of device memory at base into the root at window, all page-aligned. */
 static int
-device_map(uint64_t base, uint64_t size, uintptr_t *window)
+device_map(uint64_t base, uint64_t size, uint64_t window)
 {
-	int status;
+	const int status = l4sigma0_map_iomem(L4_BASE_PAGER_CAP, (l4_addr_t)base, (l4_addr_t)window, (l4_addr_t)size, 0);
 
-	if ((size >> L4_PAGESHIFT) > VM_DEVICE_PAGES - vm_device_pages_used)
-		return (ERX_ENOMEM);
-	*window = (uintptr_t)(VM_DEVICE_BASE + ((uint64_t)vm_device_pages_used << L4_PAGESHIFT));
-	status = l4sigma0_map_iomem(L4_BASE_PAGER_CAP, (l4_addr_t)base, (l4_addr_t)*window, (l4_addr_t)size, 0);
 	/* sigma0's library leaves a receive window armed, and no request may map anything here. */
 	l4_utcb_br()->br[0] = 0;
 	return (status == 0 ? ERX_OK : ERX_ERANGE);
 }
 
-static void
-device_take(uint64_t size)
-{
-	vm_device_pages_used += (uint32_t)(size >> L4_PAGESHIFT);
-}
-
+/*
+ * The object's own range of the device window: taken here, and on a refusal unmapped,
+ * whatever sigma0 mapped of it, and given back before anything else sees it.
+ */
 int
 erx_fiasco_vm_physical_create(uint32_t object, uint64_t base, uint64_t size)
 {
-	uintptr_t window;
+	uint64_t window;
 	int status;
 
-	status = device_map(base, size, &window);
-	if (status == ERX_OK)
-		status = object_fill(object, size, &vm_run_effects, ERX_FIASCO_VM_PHYSICAL, window);
+	status = erx_fiasco_device_window_take(&vm_device_window, size, &window);
 	if (status != ERX_OK)
 		return (status);
-	device_take(size);
-	return (ERX_OK);
+	status = device_map(base, size, window);
+	if (status == ERX_OK)
+		status = object_over_run(object, size, ERX_FIASCO_VM_PHYSICAL, (uintptr_t)window);
+	if (status != ERX_OK) {
+		vm_unmap_range(L4_BASE_TASK_CAP, window, window + size);
+		erx_fiasco_device_window_give(&vm_device_window, window);
+	}
+	return (status);
 }
 
 int
 erx_fiasco_vm_device_page(uint64_t page, uintptr_t *window)
 {
+	const uint64_t at = VM_DEVICE_BASE + ((uint64_t)vm_root_device_pages << L4_PAGESHIFT);
 	int status;
 
-	status = device_map(page, L4_PAGESIZE, window);
-	if (status == ERX_OK)
-		device_take(L4_PAGESIZE);
-	return (status);
+	if (vm_root_device_pages == VM_ROOT_DEVICE_PAGES)
+		return (ERX_ENOMEM);
+	status = device_map(page, L4_PAGESIZE, at);
+	if (status != ERX_OK)
+		return (status);
+	vm_root_device_pages++;
+	*window = (uintptr_t)at;
+	return (ERX_OK);
 }
 
 int
@@ -501,7 +540,7 @@ erx_fiasco_vm_contiguous_create(uint32_t object, uint64_t size, uint64_t cpu, ui
 		return (ERX_ENOMEM);
 	window = (uintptr_t)(VM_CONTIG_BASE + ((uint64_t)first << L4_PAGESHIFT));
 	bzero((void *)window, (size_t)size);
-	status = object_fill(object, size, &vm_run_effects, ERX_FIASCO_VM_CONTIGUOUS, window);
+	status = object_over_run(object, size, ERX_FIASCO_VM_CONTIGUOUS, window);
 	if (status != ERX_OK)
 		return (status);
 	/*
@@ -529,10 +568,7 @@ erx_fiasco_vm_object_dma_addr(uint32_t index, uint64_t offset, uint64_t *addr)
 int
 erx_fiasco_vm_slice_create(uint32_t object, uintptr_t window, uint64_t size, uint32_t first, uint32_t count)
 {
-	/* vm_give keeps a page below the window out of the pool, so the archive's must lie there. */
-	if (window >= VM_WINDOW_BASE || size > VM_WINDOW_BASE - window)
-		return (ERX_ENOTSUP);
-	const int status = object_fill(object, size, &vm_run_effects, ERX_FIASCO_VM_SLICE, window);
+	const int status = object_over_run(object, size, ERX_FIASCO_VM_SLICE, window);
 
 	if (status != ERX_OK)
 		return (status);
@@ -699,19 +735,6 @@ window_grow(uint64_t cursor, unsigned order)
 	return (cursor);
 }
 
-static uintptr_t
-vm_run_take(uint64_t addr)
-{
-	return (vm_run_window + (uintptr_t)(addr - VM_OBJECT_AREA_START));
-}
-
-/* A commit asks for exactly the run's pages, so the check for enough free pages always passes. */
-static uint64_t
-vm_run_free_pages(void)
-{
-	return (UINT64_MAX);
-}
-
 static void
 vm_no_map(uint32_t label, uintptr_t window, uint64_t addr, uint32_t prot)
 {
@@ -749,9 +772,12 @@ vm_unmap(uint32_t label, uint64_t addr, uint32_t rights)
 		vm_refused("erx: memory: the kernel refused an unmap\n");
 }
 
-/* Every right of [start, end) of a task, page-aligned, by the largest aligned flexpages that tile it. */
+/*
+ * Every right of [start, end) of a space, page-aligned and above zero, by the largest aligned
+ * flexpages that tile it, from that space and every mapping made from it.
+ */
 static void
-vm_unmap_range(uint32_t task, uint64_t start, uint64_t end)
+vm_unmap_range(l4_cap_idx_t space, uint64_t start, uint64_t end)
 {
 	for (uint64_t addr = start; addr < end;) {
 		/* An address above zero: its lowest set bit is its alignment. */
@@ -760,7 +786,7 @@ vm_unmap_range(uint32_t task, uint64_t start, uint64_t end)
 
 		while (end - addr < UINT64_C(1) << order)
 			order--;
-		tag = l4_task_unmap(erx_fiasco_task_cap(task), l4_fpage(addr, order, L4_FPAGE_RWX), L4_FP_ALL_SPACES);
+		tag = l4_task_unmap(space, l4_fpage(addr, order, L4_FPAGE_RWX), L4_FP_ALL_SPACES);
 		if (l4_error(tag) < 0)
 			vm_refused("erx: memory: the kernel refused an unmap\n");
 		addr += UINT64_C(1) << order;

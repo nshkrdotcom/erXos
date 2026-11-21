@@ -9,6 +9,8 @@
 #include <stdint.h>
 
 #include "erx/abi.h"
+#include "liberx/backend/core/grow_table.h"
+#include "liberx/backend/core/vm_table.h"
 
 /*
  * The pool of free pages (docs/design-fiasco.md, "The pool"). A page's identity
@@ -83,5 +85,34 @@ uint32_t	erx_fiasco_contig_reach(uint64_t physical, uint32_t pages, uint64_t fir
 
 /* The first page of a run of this length wholly below page limit, or ERX_FIASCO_CONTIG_NONE. */
 uint32_t	erx_fiasco_contig_take(erx_fiasco_contig_t *, uint32_t pages, uint32_t limit);
+
+/*
+ * The device window (docs/design-fiasco.md, "The pool"): the root's addresses where each
+ * physical object's registers are mapped, a fresh range for each object. A take places a
+ * range first fit, in the lowest gap between the taken ranges that holds it; a give takes
+ * it back once its object has ended and the root has unmapped its pages from every space,
+ * so a range taken again holds nothing of the object before. The taken ranges are records
+ * sorted by address and disjoint, one for each live range: a take adds one, so it alone
+ * needs room, and a give removes one, so it cannot fail.
+ */
+typedef struct erx_fiasco_device_window {
+	erx_backend_grow_table_t taken;		/* erx_backend_vm_range_t, sorted and disjoint */
+	uint32_t		 ntaken;	/* records in use, from the first */
+	uint64_t		 start;		/* the window's addresses, page-aligned; end is exclusive */
+	uint64_t		 end;
+} erx_fiasco_device_window_t;
+
+/* An empty window over [start, end), whose records come from records, which outlives it. */
+void	erx_fiasco_device_window_init(erx_fiasco_device_window_t *, uint64_t start, uint64_t end,
+	    const erx_backend_grow_pages_t *records);
+
+/*
+ * Takes a range of size bytes, a nonzero multiple of a page, and gives its start.
+ * ERX_ENOMEM when no gap holds it or the records have no room for one more.
+ */
+int	erx_fiasco_device_window_take(erx_fiasco_device_window_t *, uint64_t size, uint64_t *start) ERX_WARN_UNUSED_RESULT;
+
+/* Gives back the range a take placed at start and nothing has given back since. */
+void	erx_fiasco_device_window_give(erx_fiasco_device_window_t *, uint64_t start);
 
 #endif /* ERX_FIASCO_PAGE_POOL_H */

@@ -422,15 +422,40 @@ void		erx_dom_view_bridge(erx_dom_pci_bridge_t *bridge, const erx_pcie_bridge_t 
 
 /*
  * The PCIe domain's report on the bridge of device row index bridge, count
- * records as erx_pcie_function_decode gave them, into that bridge's
+ * records as the device service handed them, into that bridge's
  * catalogue through erx_dom_pci_report (erx/dom.h), against every entry of
  * the view's catalogue (docs/design-pcie.md, "The catalogue and gives").
  * The caller holds the library's lock. ERX_EINVAL with *refusal naming
  * field bridge and record count for a row with no catalogue; otherwise
  * erx_dom_pci_report's status and refusal.
  */
-erx_status_t	erx_dom_lib_pci_report(erx_dom_lib_t *, uint32_t bridge, const erx_pcie_function_t *report,
+erx_status_t	erx_dom_lib_pci_report(erx_dom_lib_t *, uint32_t bridge, const erx_dom_pci_record_t *records,
 		    uint32_t count, erx_dom_pci_refusal_t *refusal) ERX_WARN_UNUSED_RESULT;
+
+/*
+ * Writes mode, an ERX_PCIE_MODE_*, into the setting of device row index, a
+ * pci row (docs/design-pcie.md, "The catalogue and gives", "Concurrency"): off,
+ * a lowering, which the device service writes before it sends it, or
+ * decoding or mastering, a raise, which it writes after the PCIe domain's
+ * ok. The route and message stay what the give wrote. The caller holds the
+ * library's lock. ERX_EINVAL, writing nothing, for a row that is not a pci
+ * row, a mode outside the set, or a raise of a function no living domain
+ * holds or its catalogue does not give (erx_dom_pci_given), so the library
+ * says a raise only of a function a holder holds and could be given now
+ * (TODO.md, the start's leftovers); a holder's end lowers its
+ * functions itself.
+ */
+erx_status_t	erx_dom_lib_pci_mode(erx_dom_lib_t *, uint32_t index, uint32_t mode) ERX_WARN_UNUSED_RESULT;
+
+/*
+ * Records domain as answered in the catalogue of every host bridge whose
+ * device record names it as its holder (docs/design-pcie.md, "Facets",
+ * "Concurrency"): the device service writes it before it sends the answer
+ * to that PCIe incarnation's report, and a restarted device service reads
+ * it back. The caller holds the library's lock. ERX_EINVAL when domain
+ * holds no bridge, 0 included, and nothing is written.
+ */
+erx_status_t	erx_dom_lib_pci_answered(erx_dom_lib_t *, uint32_t domain) ERX_WARN_UNUSED_RESULT;
 
 /*
  * The root's view: erx_dom_view_build over every entry of the opened boot

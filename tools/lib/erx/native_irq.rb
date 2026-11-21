@@ -50,6 +50,7 @@ module Erx
        point('irq-time-page', /\Aerx: irq: the time page agrees/n, 30),
        point('irq-uart-registers', /\Aerx: irq: sigma0 gave the UART/n, 30),
        point('irq-line-free', /\Aerx: irq: the UART's receive line is free/n, 30),
+       point('irq-device-window', /\Aerx: irq: a window made again spends no device window/n, 60),
        point('irq-msi-lines', /\Aerx: irq: MSI lines come from the frame's lowest free one/n, 30),
        point('irq-object-space', /\Aerx: irq: the object space ends at slot 65535/n, 30),
        point('irq-parked-wake', /\Aerx: irq: a parked executor woke/n, 60),

@@ -541,7 +541,7 @@ class HardwareTest < Minitest::Test
     assert_match(/\.name = "usbcmd", .*\.owned_by_nif = false, .*\.owned = UINT32_C\(0x38f\), \.base = 1,/, table)
     assert_match(/\.name = "revision", .*\.count = 8, \.stride = 0, .*\.base = 5,/, table)
     assert_match(/\{ \.name = "protocol", \.reg = 0, \.field = 0, \.capability = 2, \.instances = 8, \.first = 4 \}/, table)
-    assert_match(/\.base_count = 5, \.listed = true, \.list_reg = 5, \.list_field = 25 \}/, table)
+    assert_match(/\.base_count = 5, \.listed = true, \.list_reg = 5, \.list_field = 25, \.spaces = NULL, \.space_count = 0 \}/, table)
     assert_includes Erx::Hardware.device_types_header([device]), '#define ERX_DEVICE_SLOTS_MAX 12u'
     assert_match(/\.name = "portsc", .*\.base = 1, \.counted = true, \.count_register = 2, \.count_field = 4 \}/, table)
     assert_match(/\{ \.name = "runtime", \.reg = 7, \.field = 27, \.capability = 0, \.instances = 1, \.first = 1 \}/, table)
@@ -587,6 +587,45 @@ class HardwareTest < Minitest::Test
                  '<name>REVISION[%s]</name><ownedByNif>false</ownedByNif><addressOffset>0x00</addressOffset><access>read-only</access><dim>2</dim><dimIncrement>4</dimIncrement>') => /cluster array is not an array/,
       source.sub('<name>USBCMD</name><addressOffset>0x00</addressOffset><access>read-write</access>',
                  '<name>USBCMD</name><addressOffset>0x00</addressOffset><access>read-write</access><readAction>clear</readAction>') => /read without side effects/
+    }.each_with_index do |(bytes, reason), index|
+      refute_equal source, bytes, "case #{index} changed nothing"
+      error = assert_raises(Erx::Error, "case #{index}") { Erx::Hardware.parse_svd(bytes) }
+      assert_match reason, error.message, "case #{index}"
+    end
+  end
+
+  ECAM_SVD = 'hw/svd/pci_ecam/pci_ecam.svd'
+
+  def ecam_source = File.binread(File.join(@repository, ECAM_SVD))
+
+  # The ECAM window is one configuration space of a block per routing ID, 4 KiB each, and no
+  # register; its table row names the space and no register array.
+  def test_the_ecam_window_is_a_configuration_space_of_a_block_per_function
+    device = Erx::Hardware.parse_svd(ecam_source)
+    assert_equal [Erx::Hardware::Space.new(name: 'FUNCTION', offset: 0, size: 4096, count: 65_536)], device.spaces
+    assert_empty device.registers
+    assert_equal 0x100000, device.size
+    table = Erx::Hardware.device_table_header([device])
+    assert_includes table, '{ .name = "function", .offset = 0, .size = 4096, .count = 65536 },'
+    assert_match(/\.name = "pci_ecam", \.registers = NULL, \.fields = NULL, .*\.spaces = erx_device_pci_ecam_spaces, \.space_count = 1 \}/, table)
+  end
+
+  def test_a_configuration_space_outside_the_profile_is_refused
+    source = ecam_source
+    space = "<configurationSpace>\n        <name>FUNCTION[%s]</name>"
+    {
+      source.sub('<size>0x1000</size>', '<size>0x2000</size>') => /at most|maximum|exceeds/,
+      source.sub('<size>0x1000</size>', '<size>0xffe</size>') => /4 to 4096 bytes/,
+      source.sub('<size>0x1000</size>', '<size>0</size>') => /4 to 4096 bytes/,
+      source.sub("<addressOffset>0x0</addressOffset>\n        <size>", "<addressOffset>0x2</addressOffset>\n        <size>") => /offset of 4/,
+      source.sub('<dim>65536</dim>', '<dim>65537</dim>') => /at most|maximum|exceeds/,
+      source.sub('<dim>65536</dim>', '<dim>1</dim>') => /NAME\[%s\] of dim 2/,
+      source.sub('<name>FUNCTION[%s]</name>', '<name>FUNCTION</name>') => /NAME\[%s\] of dim 2/,
+      source.sub('<dim>65536</dim>', '<dim>65536</dim><dimIncrement>0x1000</dimIncrement>') => /unknown|unsupported|not allowed/,
+      source.sub('</configurationSpace>', "</configurationSpace>\n#{space.sub('FUNCTION', 'OTHER')}<addressOffset>0x0</addressOffset><size>0x4</size><dim>2</dim></configurationSpace>") => /overlap/,
+      source.sub('</configurationSpace>', "</configurationSpace>\n<configurationSpace><name>function</name><addressOffset>0x0</addressOffset><size>0x4</size></configurationSpace>") => /names collide/,
+      source.sub('<baseAddress>0x0</baseAddress>', '<baseAddress>0x0</baseAddress><capabilitiesFrom>X.Y</capabilitiesFrom>') => /no capabilitiesFrom/,
+      source.sub(%r{<configurationSpace>.*</configurationSpace>}m, '') => /registers/
     }.each_with_index do |(bytes, reason), index|
       refute_equal source, bytes, "case #{index} changed nothing"
       error = assert_raises(Erx::Error, "case #{index}") { Erx::Hardware.parse_svd(bytes) }

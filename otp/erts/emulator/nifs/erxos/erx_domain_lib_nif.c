@@ -33,8 +33,9 @@
  * it. crash, which reads an ended domain's crash area, asks the same, since
  * the dump holds that domain's data. info reads a living domain's group
  * or budget report for any caller, since a report holds none of the
- * domain's data. pci_report, the PCIe catalogue's intake, answers any
- * caller, since its caller is the device service (pci_report_nif). Which
+ * domain's data. pci_report, the PCIe catalogue's intake, pci_bridges, its
+ * read, and pci_mode, the write of a PCIe function's mode, answer any
+ * caller, since their caller is the device service (pci_report_nif). Which
  * process registers is the domain service's to win:
  * it registers
  * at its start, and a registration while it lives is refused (TODO.md, the
@@ -481,16 +482,45 @@ binary_term(ErlNifEnv *env, const char *bytes, size_t len, ERL_NIF_TERM *term)
 }
 
 /*
+ * A record's bytes as its generated encoder writes them, which
+ * erx_abi_layout:decode/2 reads in Erlang, the records' one form there; false
+ * where no binary can be made.
+ */
+static bool
+setting_term(ErlNifEnv *env, const erx_pcie_setting_t *setting, ERL_NIF_TERM *term)
+{
+	unsigned char *bytes = enif_make_new_binary(env, ERX_PCIE_SETTING_SIZE, term);
+
+	return (bytes != NULL && erx_pcie_setting_encode(setting, bytes, ERX_PCIE_SETTING_SIZE));
+}
+
+static bool
+function_term(ErlNifEnv *env, const erx_pcie_function_t *function, ERL_NIF_TERM *term)
+{
+	unsigned char *bytes = enif_make_new_binary(env, ERX_PCIE_FUNCTION_SIZE, term);
+
+	return (bytes != NULL && erx_pcie_function_encode(function, bytes, ERX_PCIE_FUNCTION_SIZE));
+}
+
+static bool
+bridge_term(ErlNifEnv *env, const erx_pcie_bridge_t *bridge, ERL_NIF_TERM *term)
+{
+	unsigned char *bytes = enif_make_new_binary(env, ERX_PCIE_BRIDGE_SIZE, term);
+
+	return (bytes != NULL && erx_pcie_bridge_encode(bridge, bytes, ERX_PCIE_BRIDGE_SIZE));
+}
+
+/*
  * One catalogue entry as devices_nif shows it, or false for an entry the
  * view could not have built (a unit name out of bounds, more ranges or
  * lines than an entry holds, a compatible string without a role word), so
  * a broken view fails closed rather than reading past an entry.
  */
 static bool
-device_term(ErlNifEnv *env, uint32_t index, const erx_dom_device_entry_t *entry, uint32_t holder,
+device_term(ErlNifEnv *env, uint32_t index, const erx_dom_device_entry_t *entry, const erx_dom_device_t *record,
     ERL_NIF_TERM *row)
 {
-	ERL_NIF_TERM keys[11], values[11], name, compatible, registers, owner;
+	ERL_NIF_TERM keys[13], values[13], name, compatible, registers, owner, place, setting;
 
 	if (entry->unit_name == NULL || entry->unit_name_len == 0 || entry->unit_name_len > ERX_DOM_NAME_MAX ||
 	    (entry->role_word == NULL) != (entry->compatible == NULL) ||
@@ -510,10 +540,19 @@ device_term(ErlNifEnv *env, uint32_t index, const erx_dom_device_entry_t *entry,
 		    enif_make_uint64(env, entry->size));
 	if (entry->row == ERX_MF_NONE)
 		owner = atom(env, "system");
-	else if (holder == 0)
+	else if (record->holder == 0)
 		owner = atom(env, "none");
 	else
-		owner = enif_make_uint(env, holder);
+		owner = enif_make_uint(env, record->holder);
+	/* A PCIe function's place, by which the device service finds its row, and its setting. */
+	if (entry->selector != ERX_MF_SELECTOR_PCI) {
+		place = setting = atom(env, "none");
+	} else {
+		place = enif_make_tuple4(env, enif_make_uint(env, entry->bridge), enif_make_uint(env, entry->bus),
+		    enif_make_uint(env, entry->device), enif_make_uint(env, entry->function));
+		if (!setting_term(env, &record->setting, &setting))
+			return (false);
+	}
 	keys[0] = atom(env, "index"), values[0] = enif_make_uint(env, index);
 	keys[1] = atom(env, "unit"), values[1] = enif_make_uint(env, entry->unit);
 	keys[2] = atom(env, "unit_name"), values[2] = name;
@@ -526,6 +565,8 @@ device_term(ErlNifEnv *env, uint32_t index, const erx_dom_device_entry_t *entry,
 	keys[8] = atom(env, "lines"), values[8] = lines_term(env, entry);
 	keys[9] = atom(env, "confined"), values[9] = atom(env, entry->confined ? "true" : "false");
 	keys[10] = atom(env, "holder"), values[10] = owner;
+	keys[11] = atom(env, "place"), values[11] = place;
+	keys[12] = atom(env, "setting"), values[12] = setting;
 	return (enif_make_map_from_arrays(env, keys, values, sizeof(keys) / sizeof(keys[0]), row) != 0);
 }
 
@@ -533,7 +574,7 @@ device_term(ErlNifEnv *env, uint32_t index, const erx_dom_device_entry_t *entry,
  * The device catalogue with its holders (docs/design-system.md,
  * "Devices"): {ok, Devices} in catalogue order, each #{index, unit,
  * unit_name, row, role, compatible, registers, ranges, lines, confined,
- * holder}. index is the entry's manifest device row; unit its unit row and
+ * holder, place, setting}. index is the entry's manifest device row; unit its unit row and
  * unit_name that unit's manifest name, a binary; row the configured row
  * its unit is placed on, or system; role its record's role word and
  * compatible its kind's compatible string, a binary, each none for a kind
@@ -542,7 +583,10 @@ device_term(ErlNifEnv *env, uint32_t index, const erx_dom_device_entry_t *entry,
  * the whole pages the window touches, [{Base, Bytes}]; lines its interrupt
  * lines as the platform's controller numbers them, none listed for a PCIe
  * function; confined whether it has an IOMMU stream; holder the living domain
- * a creation gave it to, system for the system domain's devices, or none.
+ * a creation gave it to, system for the system domain's devices, or none;
+ * for a PCIe function, place its {Bridge, Bus, Device, Function}, Bridge its
+ * host bridge's device row, and setting its erx_pcie_setting's bytes, each
+ * none for every other device.
  * Role words and compatible strings come from erx/device_kinds.h, never
  * from a caller. A creation and an end change the holders, so this reads
  * them under the lock; an entry the view could not have built is badarg.
@@ -562,7 +606,7 @@ devices_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
 	enif_mutex_lock(lib_lock);
 	/* Built from the last entry back, so the list's head is entry 0. */
 	for (index = lib->view.ndevices; index-- > 0;) {
-		if (!device_term(env, index, &lib->view.devices[index], lib->device_records[index].holder, &row)) {
+		if (!device_term(env, index, &lib->view.devices[index], &lib->device_records[index], &row)) {
 			enif_mutex_unlock(lib_lock);
 			return (enif_make_badarg(env));
 		}
@@ -1232,40 +1276,159 @@ fault_thread_start(void)
  * of an erx_pcie_function (erx_abi_layout:encode/2). The device service,
  * the design's caller, is not the registered process, so any caller is
  * answered: the system domain runs only trusted code, and the intake judges
- * a report against the catalogue but not who sent it. A list longer
- * than a bridge's functions or a record not of the layout's size is
- * badarg. ok, {error, {einval, Record, Field}} naming the refused record by
- * its place in the list and the field the intake names, or {error, Name}.
+ * a report against the catalogue but not who sent it. The records go to the
+ * intake as they are, an element that is not a binary as no bytes, so the
+ * intake alone refuses a report too long or with a record that is not one
+ * record's bytes, whole, as it refuses any other. A bridge that is not an
+ * integer or records that are not a list are badarg. ok, {error, {einval,
+ * Record, Field}} naming the refused record by its place in the list and
+ * the field the intake names, or {error, Name}.
  */
 static ERL_NIF_TERM
 pci_report_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
 {
-	erx_pcie_function_t report[ERX_PCIE_FUNCTIONS_MAX];
+	erx_dom_pci_record_t records[ERX_PCIE_FUNCTIONS_MAX];
 	erx_dom_pci_refusal_t refusal = { 0, NULL };
 	ERL_NIF_TERM list, head;
 	ErlNifBinary record;
 	unsigned int bridge, count;
 	erx_status_t status;
 
-	if (argc != 2 || !enif_get_uint(env, argv[0], &bridge) || !enif_get_list_length(env, argv[1], &count) ||
-	    count > ERX_PCIE_FUNCTIONS_MAX)
+	if (argc != 2 || !enif_get_uint(env, argv[0], &bridge) || !enif_get_list_length(env, argv[1], &count))
 		return (enif_make_badarg(env));
+	/* The intake reads no record of a report past its bound. */
 	list = argv[1];
-	for (unsigned int at = 0; at < count; at++) {
-		/* The decoder reads a prefix of a longer binary, so the size is checked here. */
-		if (!enif_get_list_cell(env, list, &head, &list) || !enif_inspect_binary(env, head, &record) ||
-		    record.size != ERX_PCIE_FUNCTION_SIZE || !erx_pcie_function_decode(record.data, record.size, &report[at]))
-			return (enif_make_badarg(env));
+	for (unsigned int at = 0; at < count && at < ERX_PCIE_FUNCTIONS_MAX; at++) {
+		/* A list of count cells, as enif_get_list_length found, has this one. */
+		(void)enif_get_list_cell(env, list, &head, &list);
+		records[at] = enif_inspect_binary(env, head, &record) ?
+		    (erx_dom_pci_record_t){ record.data, record.size } : (erx_dom_pci_record_t){ NULL, 0 };
 	}
 	if (lib == NULL)
 		return (status_error(env, ERX_ENOTSUP));
 	enif_mutex_lock(lib_lock);
-	status = erx_dom_lib_pci_report(lib, bridge, report, count, &refusal);
+	status = erx_dom_lib_pci_report(lib, bridge, records, count, &refusal);
 	enif_mutex_unlock(lib_lock);
 	/* The field is one of the intake's own names, never the caller's bytes. */
 	if (status == ERX_EINVAL && refusal.field != NULL)
 		return (enif_make_tuple2(env, atom(env, "error"), enif_make_tuple3(env, atom(env, "einval"),
 		    enif_make_uint(env, refusal.record), atom(env, refusal.field))));
+	return (status_term(env, status));
+}
+
+/* One layout of a catalogue as pci_bridges_nif shows it, or false where no term can be made. */
+static bool
+layout_term(ErlNifEnv *env, const erx_dom_pci_layout_t *layout, ERL_NIF_TERM *term)
+{
+	ERL_NIF_TERM record;
+
+	if (!function_term(env, &layout->record, &record))
+		return (false);
+	*term = enif_make_tuple3(env, record, enif_make_uint(env, layout->state),
+	    atom(env, layout->confirmed ? "true" : "false"));
+	return (true);
+}
+
+/* One host bridge's catalogue, or false for one the library could not have built. */
+static bool
+catalogue_term(ErlNifEnv *env, const erx_dom_pci_bridge_t *bridge, ERL_NIF_TERM *term)
+{
+	ERL_NIF_TERM facts, layouts, layout;
+
+	if (bridge->nlayouts > ERX_PCIE_FUNCTIONS_MAX || !bridge_term(env, &bridge->facts, &facts))
+		return (false);
+	layouts = enif_make_list(env, 0);
+	for (uint32_t at = bridge->nlayouts; at-- > 0;) {
+		if (!layout_term(env, &bridge->layouts[at], &layout))
+			return (false);
+		layouts = enif_make_list_cell(env, layout, layouts);
+	}
+	*term = enif_make_tuple4(env, facts, atom(env, bridge->firmware_lost ? "true" : "false"),
+	    enif_make_uint(env, bridge->answered), layouts);
+	return (true);
+}
+
+/*
+ * pci_bridges(): every host bridge's catalogue (docs/design-pcie.md, "The
+ * catalogue and gives"), in device row order, for the device service's
+ * targets: {ok, [{Bridge, FirmwareLost, Answered, Layouts}]}, Bridge its
+ * record's bytes as an erx_pcie_bridge, FirmwareLost true or false,
+ * Answered the domain id the device service last answered or 0, and Layouts
+ * [{Record, State, Confirmed}] in its placing report's order, Record the
+ * bytes of an erx_pcie_function with that report's state, State the latest
+ * report's, 0 when it did not list the function, and Confirmed true or
+ * false. Reports change the catalogues, so this reads them under the lock;
+ * any caller is answered, as pci_report is, since a catalogue holds what
+ * the PCIe domain reported and the device service's answered, a domain id,
+ * and no domain's data.
+ */
+static ERL_NIF_TERM
+pci_bridges_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
+{
+	ERL_NIF_TERM list, catalogue;
+
+	(void)argv;
+	if (argc != 0)
+		return (enif_make_badarg(env));
+	if (lib == NULL)
+		return (status_error(env, ERX_ENOTSUP));
+	list = enif_make_list(env, 0);
+	enif_mutex_lock(lib_lock);
+	for (uint32_t at = lib->view.npci_bridges; at-- > 0;) {
+		if (!catalogue_term(env, &lib->pci_bridges[at], &catalogue)) {
+			enif_mutex_unlock(lib_lock);
+			return (enif_make_badarg(env));
+		}
+		list = enif_make_list_cell(env, catalogue, list);
+	}
+	enif_mutex_unlock(lib_lock);
+	return (enif_make_tuple2(env, atom(env, "ok"), list));
+}
+
+/*
+ * pci_mode(Index, Mode): the mode of device row Index's setting, Mode an
+ * ERX_PCIE_MODE_* (erx_dom_lib_pci_mode), which the device service writes
+ * for a lowering before it sends it and for a raise after the PCIe
+ * domain's ok (docs/design-pcie.md, "Concurrency"). It answers any caller,
+ * as pci_report does, its caller being the device service. ok or {error,
+ * einval}.
+ */
+static ERL_NIF_TERM
+pci_mode_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
+{
+	unsigned int index, mode;
+	erx_status_t status;
+
+	if (argc != 2 || !enif_get_uint(env, argv[0], &index) || !enif_get_uint(env, argv[1], &mode))
+		return (enif_make_badarg(env));
+	if (lib == NULL)
+		return (status_error(env, ERX_ENOTSUP));
+	enif_mutex_lock(lib_lock);
+	status = erx_dom_lib_pci_mode(lib, index, mode);
+	enif_mutex_unlock(lib_lock);
+	return (status_term(env, status));
+}
+
+/*
+ * pci_answered(D): records PCIe incarnation D as answered in every bridge it
+ * holds (erx_dom_lib_pci_answered), which the device service writes before
+ * it sends the answer to D's report (docs/design-pcie.md, "Facets"). It
+ * answers any caller, as pci_report does, its caller being the device
+ * service. ok or {error, einval}.
+ */
+static ERL_NIF_TERM
+pci_answered_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
+{
+	unsigned int domain;
+	erx_status_t status;
+
+	if (argc != 1 || !enif_get_uint(env, argv[0], &domain))
+		return (enif_make_badarg(env));
+	if (lib == NULL)
+		return (status_error(env, ERX_ENOTSUP));
+	enif_mutex_lock(lib_lock);
+	status = erx_dom_lib_pci_answered(lib, domain);
+	enif_mutex_unlock(lib_lock);
 	return (status_term(env, status));
 }
 
@@ -1317,6 +1480,9 @@ static ErlNifFunc nif_funcs[] = {
 	{ "session_create_nif", 5, session_create_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND },
 	{ "app_session_create_nif", 6, app_session_create_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND },
 	{ "pci_report_nif", 2, pci_report_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND },
+	{ "pci_bridges_nif", 0, pci_bridges_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND },
+	{ "pci_mode_nif", 2, pci_mode_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND },
+	{ "pci_answered_nif", 1, pci_answered_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND },
 };
 
 ERL_NIF_INIT(erx_domain_lib, nif_funcs, load, NULL, NULL, NULL)
