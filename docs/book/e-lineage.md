@@ -42,7 +42,7 @@ behavior kept and an inside replaced.
 | FreeBSD's `netinet` | The TCP/IP stack's behavior, redesigned as Erlang processes and pure functions | [Chapter 17](17-network.md#171-why-freebsds-stack) |
 | FreeBSD's signal and error numbers | The numbers musl and `liberx` give native programs | [Chapter 13](13-native-programs.md#136-signals-job-control-and-freebsds-numbers) |
 | FreeBSD's `syscalls.master` | The precedent for generating system-call tables from one file | [Chapter 7](07-one-source.md#72-the-abi-file) |
-| FreeBSD's `rc.conf`, `rc.subr` and `service(8)` | How services are configured and started, kept where it fits | [Chapter 20](20-shell.md#205-services-as-freebsd-starts-them), [chapter 23](23-apps.md) |
+| FreeBSD's `rc.conf`, `rc.subr` and `service(8)` | How services are configured and started, kept where it fits | [Chapter 20](20-shell.md#205-starting-services), [chapter 23](23-apps.md) |
 | FreeBSD's `pkg` | The baseline that erXos's one file per app departs from | [Chapter 23](23-apps.md#232-one-file-per-app) |
 | Capsicum, FreeBSD's capability mode | The contrast: FreeBSD narrows a process's authority after the fact, and erXos starts a program with none | [Chapter 2](02-microkernels.md#236-capability-systems-in-practice), [chapter 11](11-security.md) |
 | FreeBSD's `namei` and `tmpfs` | The path lookup and RAM file system that erXos's resolver and `/tmp` follow | [Chapter 14](14-files.md) |
