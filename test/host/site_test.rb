@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
 # frozen_string_literal: true
 
+require 'json'
 require 'minitest/autorun'
 require 'open3'
 require 'rbconfig'
@@ -270,6 +271,21 @@ def test_the_workflow_writes_only_under_build
   written = workflow.scan(/--output (\S+)/).flatten + workflow.scan(/> (\S+)\s*\|\|/).flatten
   refute_empty written
   written.each { |path| assert path.start_with?('build/'), "the workflow writes #{path} outside build/" }
+end
+
+# The runner installs one Node for every package the site builds, read from one
+# package.json; that file must ask for the newest Node any of them needs.
+def test_the_workflow_installs_the_newest_node_its_packages_need
+  workflow = File.read(File.join(REPO, '.github/workflows/site.yml'))
+  named = workflow[/node-version-file: (\S+)/, 1]
+  refute_nil named, 'the workflow names no node-version-file'
+  least = lambda do |path|
+    JSON.parse(File.read(File.join(REPO, path))).dig('engines', 'node')[/\d+(\.\d+)*/].split('.').map(&:to_i)
+  end
+  %w[web/package.json site/package.json tools/book/package.json].each do |path|
+    assert_operator(least.call(named) <=> least.call(path), :>=, 0,
+                    "#{path} needs a newer Node than #{named} asks for")
+  end
 end
 
   # The publishing workflow always passes a card and never --no-card.

@@ -100,7 +100,9 @@ jobs:
           echo "IMAGE_COMMIT=$commit" >> "$GITHUB_ENV"
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 22
+          # The book's diagram tools need the newest Node of the three package.json
+          # files the site builds; setup-node reads that file's engines.node.
+          node-version-file: tools/book/package.json
       # The tools use current Ruby (the `it` block parameter, 3.4 and later);
       # the runner's packaged Ruby is older.
       - uses: ruby/setup-ruby@20eb24b0d509e2b9ed9b6d42ddfeb992915e0564 # v1.341.0
