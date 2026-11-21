@@ -131,12 +131,13 @@ jobs:
           IMAGE_RECORD_URL: ${{ inputs.image_record_url }}
           IMAGE_RECORD_SHA256: ${{ inputs.image_record_sha256 }}
         run: |
+          mkdir -p build/release
           curl --fail --location --proto '=https' --proto-redir '=https' --max-time 300 --max-filesize 1073741824 \
-            --output image.boot --url "$IMAGE_URL"
-          echo "$IMAGE_SHA256  image.boot" | sha256sum --check --strict
+            --output build/release/image.boot --url "$IMAGE_URL"
+          echo "$IMAGE_SHA256  build/release/image.boot" | sha256sum --check --strict
           curl --fail --location --proto '=https' --proto-redir '=https' --max-time 60 --max-filesize 65536 \
-            --output image.boot.receipt.json --url "$IMAGE_RECORD_URL"
-          echo "$IMAGE_RECORD_SHA256  image.boot.receipt.json" | sha256sum --check --strict
+            --output build/release/image.boot.receipt.json --url "$IMAGE_RECORD_URL"
+          echo "$IMAGE_RECORD_SHA256  build/release/image.boot.receipt.json" | sha256sum --check --strict
       - name: Download the Raspberry Pi 4's card
         env:
           CARD_XZ_URL: ${{ inputs.card_xz_url }}
@@ -145,11 +146,11 @@ jobs:
           CARD_RECORD_SHA256: ${{ inputs.card_record_sha256 }}
         run: |
           curl --fail --location --proto '=https' --proto-redir '=https' --max-time 600 --max-filesize 1073741824 \
-            --output sdcard.img.xz --url "$CARD_XZ_URL"
-          echo "$CARD_XZ_SHA256  sdcard.img.xz" | sha256sum --check --strict
+            --output build/release/sdcard.img.xz --url "$CARD_XZ_URL"
+          echo "$CARD_XZ_SHA256  build/release/sdcard.img.xz" | sha256sum --check --strict
           curl --fail --location --proto '=https' --proto-redir '=https' --max-time 60 --max-filesize 1048576 \
-            --output sdcard.img.receipt.json --url "$CARD_RECORD_URL"
-          echo "$CARD_RECORD_SHA256  sdcard.img.receipt.json" | sha256sum --check --strict
+            --output build/release/sdcard.img.receipt.json --url "$CARD_RECORD_URL"
+          echo "$CARD_RECORD_SHA256  build/release/sdcard.img.receipt.json" | sha256sum --check --strict
       # The hash above pins the download, not the size of what is inside it.
       # The size check on the unpacked file is the bound; head only stops the
       # unpacking from running on past it, and pipefail makes xz's own errors
@@ -161,13 +162,13 @@ jobs:
           CARD_MAX_BYTES: "4294967296"
         run: |
           set -o pipefail
-          xz --decompress --stdout --format=xz --memlimit-decompress=256MiB sdcard.img.xz |
-            head -c $((CARD_MAX_BYTES + 1)) > sdcard.img ||
+          xz --decompress --stdout --format=xz --memlimit-decompress=256MiB build/release/sdcard.img.xz |
+            head -c $((CARD_MAX_BYTES + 1)) > build/release/sdcard.img ||
             { echo "sdcard.img.xz could not be unpacked within $CARD_MAX_BYTES bytes" >&2; exit 1; }
-          [[ "$(wc -c < sdcard.img)" -le "$CARD_MAX_BYTES" ]] ||
+          [[ "$(wc -c < build/release/sdcard.img)" -le "$CARD_MAX_BYTES" ]] ||
             { echo "sdcard.img.xz unpacks to more than $CARD_MAX_BYTES bytes" >&2; exit 1; }
       - name: Build v64 and assemble the site
-        run: ruby tools/build_site.rb --image image.boot --image-record image.boot.receipt.json --card sdcard.img --card-record sdcard.img.receipt.json --source "$IMAGE_COMMIT"
+        run: ruby tools/build_site.rb --image build/release/image.boot --image-record build/release/image.boot.receipt.json --card build/release/sdcard.img --card-record build/release/sdcard.img.receipt.json --source "$IMAGE_COMMIT"
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
           path: build/site

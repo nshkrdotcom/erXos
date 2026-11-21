@@ -263,13 +263,22 @@ class SiteTest < Minitest::Test
     assert_match(/--no-card/, err)
   end
 
+# build_site.rb refuses a tree with any change, untracked files included, so every file
+# the workflow downloads or unpacks lands under build/, which git ignores.
+def test_the_workflow_writes_only_under_build
+  workflow = File.read(File.join(REPO, '.github/workflows/site.yml'))
+  written = workflow.scan(/--output (\S+)/).flatten + workflow.scan(/> (\S+)\s*\|\|/).flatten
+  refute_empty written
+  written.each { |path| assert path.start_with?('build/'), "the workflow writes #{path} outside build/" }
+end
+
   # The publishing workflow always passes a card and never --no-card.
   def test_the_workflow_never_builds_without_a_card
     workflow = File.read(File.join(REPO, '.github/workflows/site.yml'))
     refute_match(/no-card|no_card/, workflow)
     commands = workflow.lines.grep(/^\s*run: ruby tools\/build_site\.rb/)
     assert_equal 1, commands.size
-    assert_match(/--image image\.boot --image-record image\.boot\.receipt\.json --card sdcard\.img --card-record sdcard\.img\.receipt\.json/,
+    assert_match(%r{--image build/release/image\.boot --image-record build/release/image\.boot\.receipt\.json --card build/release/sdcard\.img --card-record build/release/sdcard\.img\.receipt\.json},
                  commands.first)
   end
 
@@ -619,7 +628,7 @@ class SiteTest < Minitest::Test
   end
 
   # The release holds the card as sdcard.img.xz, as make pack writes it, and the workflow
-  # unpacks it by its own step, run here as the workflow runs it with a small bound. An xz that is
+  # downloads it under build/release (git ignores it, so build_site.rb sees a clean tree) and unpacks it by its own step, run here as the workflow runs it with a small bound. An xz that is
   # damaged, cut short, not xz at all or unpacks past the bound fails the step.
   def test_the_workflow_unpacks_the_card_within_a_bound
     workflow = YAML.safe_load(File.read(File.join(REPO, '.github/workflows/site.yml')))
@@ -637,11 +646,12 @@ class SiteTest < Minitest::Test
               'not xz' => ["\x1f\x8b#{'gzip' * 100}".b, false] }
     cases.each do |name, (bytes, accepted)|
       Dir.mktmpdir do |dir|
-        File.binwrite(File.join(dir, 'sdcard.img.xz'), bytes)
+        FileUtils.mkdir_p(File.join(dir, 'build/release'))
+        File.binwrite(File.join(dir, 'build/release/sdcard.img.xz'), bytes)
         ok = system({ 'CARD_MAX_BYTES' => '1000' }, 'bash', '-e', '-c', step.fetch('run'), chdir: dir,
                     out: File::NULL, err: File::NULL)
         assert_equal accepted, ok, name
-        assert_equal 'card' * 250, File.binread(File.join(dir, 'sdcard.img')) if accepted
+        assert_equal 'card' * 250, File.binread(File.join(dir, 'build/release/sdcard.img')) if accepted
       end
     end
   end
