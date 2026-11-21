@@ -251,6 +251,16 @@ device_register(harness_t *h, erx_dma_register_write_t write)
 		d->ready = write.value != 0;
 		d->last_avail = d->used_idx = 0;
 		break;
+	case ERX_DMA_XHCI_SLOTS:
+	case ERX_DMA_XHCI_DCBAA:
+	case ERX_DMA_XHCI_EVENT_RING_SIZE:
+	case ERX_DMA_XHCI_EVENT_DEQUEUE:
+	case ERX_DMA_XHCI_SEGMENT_TABLE:
+	case ERX_DMA_XHCI_INTERRUPTER_ENABLE:
+	case ERX_DMA_XHCI_COMMAND_RING:
+	case ERX_DMA_XHCI_RUN:
+		CHECK(!"a split ring's install writes no xHCI register");
+		break;
 	}
 }
 

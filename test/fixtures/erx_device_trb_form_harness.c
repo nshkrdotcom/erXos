@@ -1188,6 +1188,128 @@ test_layout(void)
 	    "a ring longer than the tags keep is refused");
 }
 
+/* The little-endian bytes the sequence stores at `offset`, inside any one store, `length` of them at most 8. */
+static uint64_t
+stored_word(const erx_dma_sequence_t *sequence, uint64_t offset, uint32_t length)
+{
+	uint64_t value = 0;
+
+	for (uint32_t index = 0; index < sequence->store_count; index++) {
+		const erx_dma_store_t *const store = &sequence->stores[index];
+
+		if (offset >= store->offset && offset + length <= store->offset + store->length) {
+			memcpy(&value, store->bytes + (offset - store->offset), length);
+			return (value);
+		}
+	}
+	EXPECT(false, "the install stores the word");
+	return (0);
+}
+
+static bool
+covers(const erx_dma_range_t *ranges, uint32_t count, uint64_t offset, uint64_t length)
+{
+	for (uint32_t index = 0; index < count; index++) {
+		if (ranges[index].offset <= offset && offset + length <= ranges[index].offset + ranges[index].length)
+			return (true);
+	}
+	return (false);
+}
+
+/*
+ * The install (docs/design-usb.md, "Install"): every region zeroed and cleaned; DCBAA entry 0, the
+ * scratchpad array, the segment table's entry and the command ring's link written; the registers
+ * in FreeBSD's order from the layout, and USBCMD's run as the activation. Refused while anything is
+ * held, and over memory past 32 bits on a controller without AC64.
+ */
+static void
+test_install(void)
+{
+	static erx_trb_form_t form;
+	static erx_dma_sequence_t sequence;
+	const erx_device_trb_controller_t three = { .slots = 2, .ports = 1, .scratchpads = 3, .context_size = 32 };
+	const erx_trb_command_t enable = { .kind = ERX_TRB_COMMAND_ENABLE_SLOT };
+	const erx_dma_register_write_t registers[] = {
+		{ ERX_DMA_XHCI_SLOTS, 2 },
+		{ ERX_DMA_XHCI_DCBAA, 0 },
+		{ ERX_DMA_XHCI_EVENT_RING_SIZE, 1 },
+		{ ERX_DMA_XHCI_EVENT_DEQUEUE, 0 },
+		{ ERX_DMA_XHCI_SEGMENT_TABLE, 0 },
+		{ ERX_DMA_XHCI_INTERRUPTER_ENABLE, 1 },
+		{ ERX_DMA_XHCI_COMMAND_RING, 0 },
+	};
+	uint64_t pages, array, values[sizeof(registers) / sizeof(registers[0])];
+
+	EXPECT(erx_device_trb_layout(&trb, &small_shape, &three, BASE, 64, UINT64_C(1) << 20), "the small layout");
+	EXPECT(erx_trb_form_make(&form, &trb, &no_regions), "a form over it");
+	EXPECT(erx_trb_form_install(&form, false, &sequence) == ERX_OK, "an idle form installs");
+	EXPECT(covers(sequence.zeros, sequence.zero_count, 0, trb.bytes) &&
+	    covers(sequence.cleans, sequence.clean_count, 0, trb.bytes), "every region is zeroed and cleaned");
+	pages = trb.regions[trb.scratchpad].offset;
+	array = pages + 3u * ERX_XHCI_PAGE_SIZE;
+	EXPECT(stored_word(&sequence, trb.regions[trb.dcbaa].offset, 8) == BASE + array,
+	    "DCBAA entry 0 names the scratchpad array");
+	for (uint32_t page = 0; page < 3; page++)
+		EXPECT(stored_word(&sequence, array + 8u * page, 8) == BASE + pages + (uint64_t)page * ERX_XHCI_PAGE_SIZE,
+		    "the scratchpad array names each page");
+	EXPECT(stored_word(&sequence, trb.regions[trb.segment_table].offset + ERX_XHCI_SEGMENT_TABLE_ENTRY_OFF_BASE, 8) ==
+	    BASE + trb.regions[trb.event_ring].offset &&
+	    stored_word(&sequence, trb.regions[trb.segment_table].offset + ERX_XHCI_SEGMENT_TABLE_ENTRY_OFF_SIZE, 4) ==
+	    ERX_DEVICE_TRB_EVENT_TRBS, "the segment table's entry is the event ring");
+	EXPECT(stored_at(&sequence, command_offset(RING - 1u)) != NULL &&
+	    parameter(stored_at(&sequence, command_offset(RING - 1u))) == BASE + command_offset(0) &&
+	    control_cycle(stored_at(&sequence, command_offset(RING - 1u))->bytes + ERX_XHCI_TRB_LINK_OFF_CONTROL) == 1u,
+	    "the command ring's link leads back to its first TRB on lap 0");
+	values[0] = 2;
+	values[1] = BASE + trb.regions[trb.dcbaa].offset;
+	values[2] = 1;
+	values[3] = BASE + event_offset(0);
+	values[4] = BASE + trb.regions[trb.segment_table].offset;
+	values[5] = 1;
+	values[6] = BASE + command_offset(0) + 1u;	/* the ring's cycle state, 1, in bit 0 */
+	EXPECT(sequence.register_count == sizeof(registers) / sizeof(registers[0]), "seven registers");
+	for (uint32_t at = 0; at < sequence.register_count; at++)
+		EXPECT(sequence.registers[at].reg == registers[at].reg && sequence.registers[at].value == values[at],
+		    "each register, in FreeBSD's order, from the layout");
+	EXPECT(sequence.activation.kind == ERX_DMA_ACTIVATE_REGISTER && sequence.activation.reg.reg == ERX_DMA_XHCI_RUN &&
+	    sequence.activation.reg.value == 1, "USBCMD's run is the activation");
+
+	EXPECT(erx_trb_form_command(&form, &enable, 7, &sequence) == ERX_DEVICE_TRB_ACCEPTED, "a command is posted");
+	EXPECT(erx_trb_form_install(&form, true, &sequence) == ERX_EBUSY, "nothing installs while a command is held");
+	erx_trb_form_reset(&form);
+	EXPECT(erx_trb_form_install(&form, true, &sequence) == ERX_OK, "the reset's idle report lets it install again");
+
+	EXPECT(erx_device_trb_layout(&trb, &small_shape, &three, UINT64_C(1) << 32, 64, UINT64_C(1) << 20) &&
+	    erx_trb_form_make(&form, &trb, &no_regions), "a layout above 4 GiB");
+	EXPECT(erx_trb_form_install(&form, false, &sequence) == ERX_ERANGE, "a controller without AC64 does not reach it");
+	EXPECT(erx_trb_form_install(&form, true, &sequence) == ERX_OK, "one with AC64 does");
+	EXPECT(erx_device_trb_layout(&trb, &small_shape, &three, (UINT64_C(1) << 32) - (UINT64_C(1) << 20), 64,
+	    UINT64_C(1) << 20) && erx_trb_form_make(&form, &trb, &no_regions), "a layout just below 4 GiB");
+	EXPECT(erx_trb_form_install(&form, false, &sequence) == ERX_OK, "memory ending below 4 GiB needs no AC64");
+	EXPECT(erx_device_trb_layout(&trb, &small_shape, &three, (UINT64_C(1) << 32) - (trb.bytes & ~UINT64_C(63)), 64,
+	    UINT64_C(1) << 20) && erx_trb_form_make(&form, &trb, &no_regions), "a layout crossing 4 GiB");
+	EXPECT(trb.device_base + trb.bytes > (UINT64_C(1) << 32) && erx_trb_form_install(&form, false, &sequence) == ERX_ERANGE,
+	    "memory crossing 4 GiB needs AC64");
+
+	for (uint32_t pages = 0; pages <= ERX_DEVICE_TRB_SCRATCHPADS_MAX; pages++) {
+		const erx_device_trb_controller_t asking = { .slots = 2, .ports = 1, .scratchpads = pages, .context_size = 32 };
+
+		EXPECT(erx_device_trb_layout(&trb, &small_shape, &asking, BASE, 64, UINT64_C(1) << 20) &&
+		    erx_trb_form_make(&form, &trb, &no_regions) && erx_trb_form_install(&form, true, &sequence) == ERX_OK,
+		    "an install over every count of pages");
+		if (pages == 0) {
+			EXPECT(stored_at(&sequence, trb.regions[trb.dcbaa].offset) == NULL, "with no page DCBAA entry 0 stays zero");
+			continue;
+		}
+		array = trb.regions[trb.scratchpad].offset + (uint64_t)pages * ERX_XHCI_PAGE_SIZE;
+		EXPECT(stored_word(&sequence, trb.regions[trb.dcbaa].offset, 8) == BASE + array, "DCBAA entry 0 names the array");
+		for (uint32_t page = 0; page < pages; page++)
+			EXPECT(stored_word(&sequence, array + 8u * page, 8) ==
+			    BASE + trb.regions[trb.scratchpad].offset + (uint64_t)page * ERX_XHCI_PAGE_SIZE,
+			    "the array names each page, in whole groups of four and a partial last one");
+	}
+}
+
 static void
 test_endpoints_and_requests(void)
 {
@@ -1588,6 +1710,7 @@ main(void)
 	static state_t start;
 
 	test_layout();
+	test_install();
 	test_endpoints_and_requests();
 	test_refusals();
 	test_commands();

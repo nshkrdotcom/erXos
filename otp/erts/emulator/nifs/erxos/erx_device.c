@@ -1837,6 +1837,16 @@ put_ring_register(const queue_record_t *record, erx_dma_register_write_t write)
 	case ERX_DMA_VIRTQ_DEVICE:
 		address = regs->device;
 		break;
+	/* The TRB form's, which a split ring's install never writes (erx_dma_install_controller). */
+	case ERX_DMA_XHCI_SLOTS:
+	case ERX_DMA_XHCI_DCBAA:
+	case ERX_DMA_XHCI_EVENT_RING_SIZE:
+	case ERX_DMA_XHCI_EVENT_DEQUEUE:
+	case ERX_DMA_XHCI_SEGMENT_TABLE:
+	case ERX_DMA_XHCI_INTERRUPTER_ENABLE:
+	case ERX_DMA_XHCI_COMMAND_RING:
+	case ERX_DMA_XHCI_RUN:
+		return;
 	}
 	put(device, address[0], write.value & UINT32_MAX);
 	put(device, address[1], write.value >> 32);
