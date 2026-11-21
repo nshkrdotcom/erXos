@@ -50,7 +50,7 @@ static erx_dma_layout_t
 layout(void)
 {
 	return ((erx_dma_layout_t){
-		.memory_size = 2048, .device_base = BASE, .address_bits = 64, .granule = 64, .table_count = 4,
+		.memory_size = 2048, .device_base = BASE, .address_bits = 64, .granule = 64, .context_size = 32, .table_count = 4,
 		.tables = {
 			{ .structure = ERX_STRUCTURE_XHCI_TRANSFER_RING, .placing = ERX_DMA_PLACED_RING,
 			  .pool = 0, .region = 0, .region_length = 128, .first = 0, .count = RING, .stride = 16 },
@@ -90,7 +90,7 @@ carried(uint32_t endpoint)
 {
 	static erx_device_trb_contexts_t contexts;
 
-	contexts = (erx_device_trb_contexts_t){ .context_size = 32, .endpoint_count = 1, .endpoints = { {
+	contexts = (erx_device_trb_contexts_t){ .endpoint_count = 1, .endpoints = { {
 	    .dci = endpoint % ERX_DMA_GROUP_ENDPOINTS, .context = { .config_endpoint_type = ERX_XHCI_ENDPOINT_TYPE_BULK_OUT,
 	    .config_max_packet = 64, .payload_max_esit_payload = 64 } } } };
 	return (&contexts);

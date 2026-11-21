@@ -992,12 +992,16 @@ bytes (xHCI 6.2.5), the encoder places each at its offset: the
 sequencer's one composition of the input context (`erx_dma_input_context`)
 encodes the input control, slot and endpoint contexts through their
 layouts' encoders, context k at k times the controller's context size
-(`HCCPARAMS1.CSZ`), the upper half of a 64-byte context left zero, and
+(`HCCPARAMS1.CSZ`), which the layout holds from where it is made, so no
+publication states it, the upper half of a 64-byte context left zero, and
 refuses a size other than 32 or 64 and a composition past the buffer
 the command names. A command's caller states only the free places, the
 slot context's route, speed, root port, TT and hub fields and each
 endpoint's type, packet size, burst, interval and service-interval
-payload, which the form checks once where the command enters it; the
+payload, which the form checks once where the command enters it
+(Configure Endpoint states only the hub fields: the form carries the
+slot's addressed route, speed, root port and TT fields itself, xHCI
+6.2.2.2, p. 448); the
 sequencer derives every other place from the publication: the add
 flags from the contexts it writes, so a flag never names a context left
 zero, the drop flags from its drops, Context Entries from the slot's

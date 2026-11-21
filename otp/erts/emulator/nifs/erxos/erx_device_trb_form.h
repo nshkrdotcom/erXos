@@ -135,10 +135,10 @@ typedef struct erx_trb_command {
 typedef struct erx_trb_form {
 	erx_dma_ledger_t	ledger;
 	erx_device_trb_shape_t	shape;
-	uint32_t		context_size;	/* the layout's, the controller's context size */
 	uint32_t		ports;
 	uint32_t		slots;
-	uint32_t		speeds[ERX_DEVICE_TRB_SLOTS_MAX + 1];	/* each slot's, from its last Address Device posted */
+	/* each slot's Address Device slot context, from its last Address Device posted, failed ones too */
+	erx_xhci_slot_context_free_t	addressed[ERX_DEVICE_TRB_SLOTS_MAX + 1];
 	erx_trb_transfer_t	transfers[ERX_DEVICE_TRB_BLOCKS_MAX][ERX_DEVICE_TRB_RING_TRBS];	/* by head */
 	erx_trb_command_t	command;	/* the command in flight, while the command ring holds one */
 	uint64_t		command_tag;
@@ -213,7 +213,8 @@ erx_device_trb_verdict_t	erx_trb_form_post(erx_trb_form_t *form, uint32_t slot, 
  *                                 block; Configure Endpoint adds indexes 2 and up, each on a block of
  *                                 its type, for the slot's speed; Evaluate Context adds none), a slot
  *                                 outside the layout's for these three, more adds than
- *                                 ERX_DMA_BINDS_MAX, an add of a bound
+ *                                 ERX_DMA_BINDS_MAX, an Evaluate Context while EP0 has a transfer
+ *                                 posted, whose position it carries, an add of a bound
  *                                 block or endpoint, drops on a command whose reach drops none
  *                                 (only Configure Endpoint drops), a kind out of range.
  * Anything but ERX_DEVICE_TRB_ACCEPTED changes nothing.

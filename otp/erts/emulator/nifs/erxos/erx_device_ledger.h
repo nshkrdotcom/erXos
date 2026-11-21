@@ -116,6 +116,7 @@ typedef struct erx_dma_layout {
 	uint64_t		device_base;	/* the device address of offset 0 */
 	uint32_t		address_bits;	/* the widest device address the form can hold, 1..64 */
 	uint32_t		granule;	/* G: a power of two */
+	uint32_t		context_size;	/* an xHCI input context's, from HCCPARAMS1.CSZ: 32 or 64; 0 for no xHCI */
 	uint32_t		table_count;
 	erx_dma_table_t		tables[ERX_DMA_TABLES_MAX];
 	uint32_t		pool_count;

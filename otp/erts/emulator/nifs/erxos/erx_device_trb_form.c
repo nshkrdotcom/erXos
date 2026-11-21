@@ -67,6 +67,11 @@
 #else
 #define SEED_OTHER_POOL		false
 #endif
+#ifdef ERX_TRB_FORM_SEED_CONFIGURE_SPEED_ZEROED
+#define SEED_CONFIGURE_SPEED_ZEROED	true
+#else
+#define SEED_CONFIGURE_SPEED_ZEROED	false
+#endif
 
 /* The form's device addresses: every address place of its TRBs and contexts is 64 bits wide. */
 #define ADDRESS_BITS	64u
@@ -97,8 +102,8 @@ erx_trb_form_layout(const erx_device_trb_layout_t *trb, erx_dma_layout_t *layout
 	if (trb->shape.ring_trbs > ERX_DEVICE_TRB_RING_TRBS)
 		return (false);
 	*layout = (erx_dma_layout_t){ .memory_size = trb->bytes, .device_base = trb->device_base,
-	    .address_bits = ADDRESS_BITS, .granule = trb->granule, .table_count = blocks + 2u,
-	    .pool_count = blocks + 1u };
+	    .address_bits = ADDRESS_BITS, .granule = trb->granule, .context_size = trb->context_size,
+	    .table_count = blocks + 2u, .pool_count = blocks + 1u };
 	/*
 	 * A block's buffers lie one after another, each its region's length from the last, since
 	 * erx_device_trb_layout places them in order at one size and alignment.
@@ -130,7 +135,6 @@ erx_trb_form_make(erx_trb_form_t *form, const erx_device_trb_layout_t *trb, cons
 
 	bzero(form, sizeof(*form));
 	form->shape = trb->shape;
-	form->context_size = trb->context_size;
 	form->ports = trb->ports;
 	form->slots = trb->slots;
 	return (erx_trb_form_layout(trb, &layout) && erx_dma_ledger_make(&form->ledger, &layout, regions));
@@ -318,7 +322,8 @@ adds_valid(const erx_trb_form_t *form, const erx_trb_command_t *command)
 		kind = erx_device_trb_block_kind(&form->shape, add->block);
 		if (command->kind == ERX_TRB_COMMAND_ADDRESS_DEVICE ? add->dci != 1 || kind != ERX_DEVICE_TRB_CONTROL ||
 		    !erx_device_trb_ep0_valid(&add->context, true) :
-		    !erx_device_trb_endpoint_valid(&endpoint, kind, form->shape.buffer_size[kind], form->speeds[command->slot]))
+		    !erx_device_trb_endpoint_valid(&endpoint, kind, form->shape.buffer_size[kind],
+		    form->addressed[command->slot].route_speed))
 			return (false);
 	}
 	return (true);
@@ -351,28 +356,69 @@ parameters_valid(const erx_trb_form_t *form, const erx_trb_command_t *command)
 }
 
 /*
+ * Configure Endpoint's slot context: the fields its slot was addressed with (route string, speed,
+ * root port, TT hub slot and port, and that hub's multi-TT flag) and the stated hub fields. Think
+ * time and multi-TT are a high-speed hub's own (6.2.2.2, p. 448): a slot at another speed keeps
+ * the addressed multi-TT flag and think time 0.
+ */
+static erx_xhci_slot_context_free_t
+configure_slot(const erx_trb_form_t *form, const erx_trb_command_t *command)
+{
+	const erx_xhci_slot_context_free_t *const hub = &command->slot_context;
+	erx_xhci_slot_context_free_t slot = form->addressed[command->slot];
+	const bool high_speed = slot.route_speed == ERX_XHCI_SPEED_HIGH;
+
+	slot.route_hub = hub->route_hub;
+	slot.ports_port_count = hub->ports_port_count;
+	if (high_speed) {
+		slot.route_multi_tt = hub->route_multi_tt;
+		slot.tt_tt_think_time = hub->tt_tt_think_time;
+	}
+	if (SEED_CONFIGURE_SPEED_ZEROED)
+		slot.route_speed = 0;
+	return (slot);
+}
+
+/*
  * The input context's stated parameters of a command that carries it, for the sequencer: the slot
- * context and each add's endpoint context, or, for Evaluate Context, EP0's with its new packet.
+ * context, Configure Endpoint's with its slot's addressed fields, and each add's endpoint context,
+ * or, for Evaluate Context, EP0's with its new packet.
  */
 static void
 contexts_of(const erx_trb_form_t *form, const erx_trb_command_t *command, erx_device_trb_contexts_t *contexts)
 {
-	*contexts = (erx_device_trb_contexts_t){ .context_size = form->context_size,
-	    .slot_context = command->slot_context, .endpoint_count = command->add_count };
+	switch (command->kind) {
+	case ERX_TRB_COMMAND_EVALUATE_CONTEXT:
+		*contexts = (erx_device_trb_contexts_t){ .endpoint_count = 1, .endpoints = { { .dci = 1, .context = {
+		    .config_endpoint_type = ERX_XHCI_ENDPOINT_TYPE_CONTROL, .config_max_packet = command->ep0_packet } } } };
+		return;
+	case ERX_TRB_COMMAND_CONFIGURE_ENDPOINT:
+		*contexts = (erx_device_trb_contexts_t){ .slot_context = configure_slot(form, command) };
+		break;
+	default:
+		*contexts = (erx_device_trb_contexts_t){ .slot_context = command->slot_context };
+		break;
+	}
+	contexts->endpoint_count = command->add_count;
 	for (uint32_t k = 0; k < command->add_count; k++)
 		contexts->endpoints[k] = (erx_device_trb_context_endpoint_t){ .dci = command->adds[k].dci,
 		    .context = command->adds[k].context };
-	if (command->kind == ERX_TRB_COMMAND_EVALUATE_CONTEXT) {
-		contexts->slot_context = (erx_xhci_slot_context_free_t){ 0 };
-		contexts->endpoint_count = 1;
-		contexts->endpoints[0] = (erx_device_trb_context_endpoint_t){ .dci = 1, .context = {
-		    .config_endpoint_type = ERX_XHCI_ENDPOINT_TYPE_CONTROL, .config_max_packet = command->ep0_packet } };
-	}
+}
+
+/*
+ * Whether EP0 of `slot` has a transfer posted, which moves the ring position Evaluate Context's
+ * EP0 context carries (6.2.3.3, p. 454).
+ */
+static bool
+ep0_busy(const erx_trb_form_t *form, uint32_t slot)
+{
+	const int ring = erx_dma_ledger_bound_table(&form->ledger, erx_trb_form_endpoint(slot, 1));
+
+	return (ring >= 0 && erx_dma_ledger_holdings_on(&form->ledger, (uint32_t)ring) != 0);
 }
 
 erx_device_trb_verdict_t
-erx_trb_form_command(
-erx_trb_form_t *form, const erx_trb_command_t *command, uint64_t tag, erx_dma_sequence_t *sequence)
+erx_trb_form_command(erx_trb_form_t *form, const erx_trb_command_t *command, uint64_t tag, erx_dma_sequence_t *sequence)
 {
 	const erx_dma_layout_t *const layout = erx_dma_ledger_layout(&form->ledger);
 	const uint32_t command_pool = block_count(&form->shape);
@@ -382,7 +428,8 @@ erx_trb_form_t *form, const erx_trb_command_t *command, uint64_t tag, erx_dma_se
 	erx_device_trb_contexts_t contexts;
 
 	if ((uint32_t)command->kind >= ERX_TRB_COMMAND_KINDS || command->add_count > ERX_DMA_BINDS_MAX ||
-	    !parameters_valid(form, command))
+	    !parameters_valid(form, command) ||
+	    (command->kind == ERX_TRB_COMMAND_EVALUATE_CONTEXT && ep0_busy(form, command->slot)))
 		return (ERX_DEVICE_TRB_REFUSE_BADARG);
 	record.meaning = command_meanings[command->kind];
 	if (carries_input_context(command->kind)) {
@@ -399,7 +446,7 @@ erx_trb_form_t *form, const erx_trb_command_t *command, uint64_t tag, erx_dma_se
 	switch (erx_dma_publish(&form->ledger, &publication, sequence)) {
 	case ERX_DMA_PASSES:
 		if (command->kind == ERX_TRB_COMMAND_ADDRESS_DEVICE)
-			form->speeds[command->slot] = (uint32_t)command->slot_context.route_speed;
+			form->addressed[command->slot] = command->slot_context;
 		form->command = *command;
 		form->command_tag = tag;
 		form->stop_event = false;

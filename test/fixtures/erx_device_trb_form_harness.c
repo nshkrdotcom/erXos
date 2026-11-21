@@ -1388,9 +1388,11 @@ check_configure_contexts(void)
 	route = le32(&image, 1, 0);
 	ports = le32(&image, 1, 4);
 	tt = le32(&image, 1, 8);
-	EXPECT((route & 0xffffffu) == 0 && (route >> 25 & 1u) == 1 && (route >> 26 & 1u) == 1 && route >> 27 == 3,
-	    "a multi-TT hub whose last valid index is EP1 IN's (Table 6-4)");
-	EXPECT(ports == 4u << 24 && tt == 2u << 16, "four ports, think time 2 (Tables 6-5 and 6-6)");
+	EXPECT((route & 0xfffffu) == 0 && (route >> 20 & 0xfu) == ERX_XHCI_SPEED_HIGH && (route >> 24 & 1u) == 0 &&
+	    (route >> 25 & 1u) == 1 && (route >> 26 & 1u) == 1 && route >> 27 == 3,
+	    "the addressed route and high speed, a multi-TT hub whose last valid index is EP1 IN's (Table 6-4; 6.2.2.2)");
+	EXPECT(ports == (4u << 24 | 1u << 16) && tt == 2u << 16,
+	    "the addressed root port, four ports, think time 2 (Tables 6-5 and 6-6)");
 	EXPECT(zero_from(&image, 2, 0), "EP0's context is not written");
 	expect_endpoint(&image, 3, ERX_XHCI_ENDPOINT_TYPE_BULK_IN, 64, 64, 64, IN_BLOCK);
 	expect_endpoint(&image, 2, ERX_XHCI_ENDPOINT_TYPE_BULK_OUT, 64, 64, 64, OUT_BLOCK);
@@ -1403,6 +1405,58 @@ check_configure_contexts(void)
 	EXPECT(le32(&image, 0, 0) == 0 && le32(&image, 0, 4) == 1u << 1 && zero_from(&image, 1, 0),
 	    "Evaluate Context adds EP0 alone, no slot context");
 	expect_endpoint(&image, 1, ERX_XHCI_ENDPOINT_TYPE_CONTROL, 512, 8, 0, CONTROL_BLOCK);
+}
+
+/*
+ * A full-speed hub behind a high-speed hub's TT: Configure Endpoint's slot context keeps the
+ * addressed route, speed, root port, TT hub and that hub's multi-TT flag; think time and multi-TT
+ * are a high-speed hub's own (6.2.2.2, p. 448), so the stated ones do not reach a full-speed slot.
+ */
+static void
+check_configure_full_speed_hub(void)
+{
+	static state_t state;
+	static image_t image;
+	erx_trb_command_t address = binding(SLOT, 1, CONTROL_BLOCK);
+	erx_trb_command_t configure = binding(SLOT, 3, IN_BLOCK);
+	uint32_t route, ports, tt;
+
+	make_unbound(&state, 64);
+	address.slot_context = (erx_xhci_slot_context_free_t){ .route_route_string = 0x2, .route_speed = ERX_XHCI_SPEED_FULL,
+	    .route_multi_tt = 1, .ports_root_port = 1, .tt_tt_slot = 2, .tt_tt_port = 4 };
+	EXPECT(publish_contexts(&state, &address, &image), "a full-speed Address Device behind a TT");
+	complete_command(&state, 0);
+	configure.slot_context = (erx_xhci_slot_context_free_t){ .route_hub = 1, .ports_port_count = 3,
+	    .tt_tt_think_time = 2 };
+	EXPECT(publish_contexts(&state, &configure, &image), "a full-speed hub's Configure Endpoint");
+	route = le32(&image, 1, 0);
+	ports = le32(&image, 1, 4);
+	tt = le32(&image, 1, 8);
+	EXPECT((route & 0xfffffu) == 0x2 && (route >> 20 & 0xfu) == ERX_XHCI_SPEED_FULL && (route >> 25 & 1u) == 1 &&
+	    (route >> 26 & 1u) == 1 && route >> 27 == 3, "the addressed route, full speed and parent multi-TT, a hub");
+	EXPECT(ports == (3u << 24 | 1u << 16) && tt == (4u << 8 | 2u), "root port 1, three ports, the TT hub, no think time");
+}
+
+/* Evaluate Context while EP0 has a transfer posted is refused, as erx_device_trb.c refuses it. */
+static void
+check_evaluate_while_posted(void)
+{
+	static state_t state;
+	static image_t image;
+	const erx_trb_command_t address = binding(SLOT, 1, CONTROL_BLOCK);
+	const erx_trb_command_t evaluate = { .kind = ERX_TRB_COMMAND_EVALUATE_CONTEXT, .slot = SLOT, .ep0_packet = 512 };
+	const erx_device_trb_request_t request = { .control = true, .setup = { 0x00, 0x09, 1, 0, 0, 0, 0, 0 } };
+	erx_dma_sequence_t sequence;
+	uint32_t live;
+
+	make_unbound(&state, 32);
+	EXPECT(publish_contexts(&state, &address, &image), "an Address Device");
+	complete_command(&state, 0);
+	EXPECT(erx_trb_form_post(&state.form, SLOT, 1, &request, 9, &sequence) == ERX_DEVICE_TRB_ACCEPTED,
+	    "a SET_CONFIGURATION on EP0");
+	live = erx_dma_ledger_live(&state.form.ledger);
+	EXPECT(erx_trb_form_command(&state.form, &evaluate, 1, &sequence) == ERX_DEVICE_TRB_REFUSE_BADARG &&
+	    erx_dma_ledger_live(&state.form.ledger) == live, "an Evaluate Context while EP0 has a transfer posted");
 }
 
 /* Each stated parameter out of its range is refused at the form's entry, changing nothing. */
@@ -1464,6 +1518,8 @@ check_input_contexts(void)
 	check_address_contexts(32);
 	check_address_contexts(64);
 	check_configure_contexts();
+	check_configure_full_speed_hub();
+	check_evaluate_while_posted();
 	check_parameters_refused();
 }
 

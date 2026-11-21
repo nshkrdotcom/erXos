@@ -306,7 +306,9 @@ bool	erx_device_trb_request_valid(const erx_device_trb_request_t *request, erx_d
  * add and drop flags, Context Entries, each TR Dequeue Pointer with its cycle state and the
  * average TRB length, is not here: the sequencer's erx_dma_input_context writes it. Address
  * Device states the slot context's device fields and EP0's context, Configure Endpoint the hub
- * fields and each endpoint it adds, Evaluate Context EP0's context alone.
+ * fields and each endpoint it adds (the TRB form adds the slot's addressed fields to the slot context
+ * it hands the sequencer), Evaluate Context EP0's context alone. The context size is the
+ * layout's, from the controller's HCCPARAMS1.CSZ, never stated.
  */
 typedef struct erx_device_trb_context_endpoint {
 	uint32_t				dci;		/* 1..ERX_DEVICE_TRB_DCI_MAX */
@@ -314,7 +316,6 @@ typedef struct erx_device_trb_context_endpoint {
 } erx_device_trb_context_endpoint_t;
 
 typedef struct erx_device_trb_contexts {
-	uint32_t				context_size;	/* the controller's: 32 or 64 bytes (HCCPARAMS1.CSZ) */
 	erx_xhci_slot_context_free_t		slot_context;	/* with the slot context: Address Device, Configure Endpoint */
 	uint32_t				endpoint_count;
 	erx_device_trb_context_endpoint_t	endpoints[ERX_DEVICE_TRB_DCI_MAX];
@@ -329,8 +330,8 @@ typedef struct erx_device_trb_contexts {
  *                   multi-TT only with them; the hub fields 0.
  *   configure slot  Configure Endpoint's: the hub fields alone, 0 for a function, or a hub of
  *                   1..ERX_USB_HUB_PORTS_MAX ports, think time 0 to 3 and its multi-TT flag; the
- *                   device fields 0 (design-usb.md's command table; 6.2.2.2, p. 448, wants the
- *                   speed with a high-speed hub's fields, which TODO.md records).
+ *                   device fields 0, since the core carries the slot's addressed ones itself
+ *                   (6.2.2.2, p. 448: a high-speed hub's think time and multi-TT need its speed).
  *   EP0             a control context of no burst, interval or payload, its packet 8, 64 or 512 for
  *                   Address Device (`exact`) and 8 to 512 for Evaluate Context.
  *   endpoint        an endpoint Configure Endpoint adds on a block of `kind` whose buffers hold

@@ -521,7 +521,7 @@ uint32_t
 erx_dma_input_context(const erx_device_trb_contexts_t *stated, const erx_dma_context_derivation_t *derived,
     erx_dma_context_part_t parts[ERX_DMA_CONTEXT_PARTS_MAX])
 {
-	const uint32_t size = stated->context_size;
+	const uint32_t size = derived->context_size;
 	erx_xhci_input_control_context_placed_t control = { .drop = derived->drop };
 	erx_xhci_input_control_context_t flags;
 	uint32_t count = 1;
@@ -621,7 +621,8 @@ derive_input_context(const erx_dma_ledger_t *ledger, const erx_dma_publication_t
 	uint32_t valid = 1u << 1, bound = 0;
 
 	*derived = (erx_dma_context_derivation_t){ .slot = publication->records[0].meaning !=
-	    ERX_MEANING_XHCI_TRB_EVALUATE_CONTEXT_COMMAND, .drop = publication->reach.drops };
+	    ERX_MEANING_XHCI_TRB_EVALUATE_CONTEXT_COMMAND, .drop = publication->reach.drops,
+	    .context_size = erx_dma_ledger_layout(ledger)->context_size };
 	if (SEED_DROP_MISSING)
 		derived->drop &= derived->drop - 1u;
 	for (uint32_t dci = 2; dci <= ERX_DEVICE_TRB_DCI_MAX; dci++) {
@@ -669,7 +670,7 @@ place_input_context(const erx_dma_ledger_t *ledger, const erx_dma_publication_t 
 	count = erx_dma_input_context(publication->contexts, &derived, parts);
 	size = erx_dma_layout_buffer_pool(layout, name.buffer, &pool)->size;
 	if (count == 0 || count > ERX_DMA_INPUT_PARTS_MAX || name.offset > size ||
-	    (uint64_t)ERX_DMA_CONTEXT_PARTS_MAX * publication->contexts->context_size > size - name.offset)
+	    (uint64_t)ERX_DMA_CONTEXT_PARTS_MAX * layout->context_size > size - name.offset)
 		return (ERX_DMA_BREAKS_MEANINGS);
 	for (uint32_t part = 0; part < count; part++) {
 		erx_dma_store_t *const store = &out->stores[out->store_count++];

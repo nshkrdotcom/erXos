@@ -202,14 +202,16 @@ uint64_t	erx_dma_dequeue_address(const erx_dma_ledger_t *ledger, uint32_t report
  * What the core posting a command derives for its input context, never its caller: whether the
  * slot context is carried (Address Device, Configure Endpoint) with its Context Entries, the drop
  * flags, and, by device context index, each carried endpoint's TR Dequeue Pointer with its cycle
- * state in bit 0, the endpoint context's dequeue word. A publication's are the sequencer's own,
- * from the publication's meaning, bindings and drops and the ledger's rings.
+ * state in bit 0, the endpoint context's dequeue word; and the context size, the controller's. A
+ * publication's are the sequencer's own, from the publication's meaning, bindings and drops and the
+ * ledger's rings, and the size from its layout.
  */
 typedef struct erx_dma_context_derivation {
 	bool		slot;
 	uint32_t	entries;
 	uint32_t	drop;
 	uint64_t	dequeue[ERX_XHCI_DEVICE_CONTEXTS];
+	uint32_t	context_size;	/* 32 or 64 bytes (HCCPARAMS1.CSZ) */
 } erx_dma_context_derivation_t;
 
 /* One context of an input context: its offset from the input context's start, its endpoint's index or 0, its bytes. */

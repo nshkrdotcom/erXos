@@ -1068,9 +1068,9 @@ static void
 add_address_contexts(plan_t *plan, const erx_device_trb_layout_t *layout, const erx_device_trb_t *trb,
     const erx_device_trb_command_t *command, uint32_t ep0)
 {
-	erx_device_trb_contexts_t contexts = { .context_size = layout->context_size, .slot_context = address_slot(command),
+	erx_device_trb_contexts_t contexts = { .slot_context = address_slot(command),
 	    .endpoint_count = 1 };
-	erx_dma_context_derivation_t derived = { .slot = true, .entries = 1 };
+	erx_dma_context_derivation_t derived = { .slot = true, .entries = 1, .context_size = layout->context_size };
 	uint64_t reach[ERX_XHCI_DEVICE_CONTEXTS] = { 0 };
 
 	contexts.endpoints[0] = ep0_context(command->ep0_packet);
@@ -1084,8 +1084,8 @@ static void
 add_evaluate_contexts(plan_t *plan, const erx_device_trb_layout_t *layout, const erx_device_trb_t *trb,
     const erx_device_trb_command_t *command, uint32_t ep0)
 {
-	erx_device_trb_contexts_t contexts = { .context_size = layout->context_size, .endpoint_count = 1 };
-	erx_dma_context_derivation_t derived = { .slot = false };
+	erx_device_trb_contexts_t contexts = { .endpoint_count = 1 };
+	erx_dma_context_derivation_t derived = { .slot = false, .context_size = layout->context_size };
 	uint64_t reach[ERX_XHCI_DEVICE_CONTEXTS] = { 0 };
 
 	contexts.endpoints[0] = ep0_context(command->ep0_packet);
@@ -1099,11 +1099,12 @@ static void
 add_configure_contexts(plan_t *plan, const erx_device_trb_layout_t *layout, const erx_device_trb_t *trb,
     const erx_device_trb_command_t *command, const acceptance_t *accepted)
 {
-	erx_device_trb_contexts_t contexts = { .context_size = layout->context_size, .slot_context = {
+	erx_device_trb_contexts_t contexts = { .slot_context = {
 	    .route_hub = command->hub, .route_multi_tt = command->hub && command->hub_multi_tt,
 	    .ports_port_count = command->hub ? command->hub_ports : 0u,
 	    .tt_tt_think_time = command->hub ? command->hub_think_time : 0u } };
-	erx_dma_context_derivation_t derived = { .slot = true, .drop = accepted->held, .entries = accepted->entries };
+	erx_dma_context_derivation_t derived = { .slot = true, .drop = accepted->held, .entries = accepted->entries,
+	    .context_size = layout->context_size };
 	uint64_t reach[ERX_XHCI_DEVICE_CONTEXTS] = { 0 };
 
 	for (uint32_t block = 0; block < ERX_DEVICE_TRB_BLOCKS_MAX; block++) {
