@@ -375,7 +375,8 @@ without it.
 | No mapping is writable and executable at once. | No mapping is writable and executable at once. Without that rule, a bug that lets an attacker write into a program's memory would also let them run what they wrote. |
 
 **Show the alternative and why it lost.** For each major choice, name
-the first other way a reader would think of, give it its due, and say what it costs. The
+the first other design a reader would think of, as a design rather
+than as another system's feature, give it its due, and say what it costs. The
 reader learns more from the comparison than from the choice.
 
 > The kernel could schedule every Erlang process as a kernel thread.
@@ -396,9 +397,11 @@ changed, do not keep comparing with the source, and leave out what
 only an implementer needs: the pinned version a behaviour matches, the
 oracle a test checks against, which upstream file a piece came from,
 what was ported when. The book is not an implementation chronology.
-A comparison earns its place only where the difference is what the
-reader must take away, such as a familiar command erXos refuses and
-why. The story of each idea's origin, what erXos kept and what it
+Do not explain how erXos differs from FreeBSD, Linux or any other
+system, either: the book's goal is to explain how erXos works, not
+how it compares. Say what erXos has (state is a file under `/proc`),
+not what it lacks next to another system ("there is no `sysctl`").
+The story of each idea's origin, what erXos kept and what it
 changed, belongs to the lineage appendix
 ([e-lineage.md](e-lineage.md)), and the background chapters may use
 other systems to teach a concept.
