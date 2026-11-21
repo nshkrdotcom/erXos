@@ -574,9 +574,12 @@ The Raspberry Pi 4's
 devices that erXos drives use wired interrupts, the VL805 its closed
 bus's INTx line, so it needs no frame. Each platform record with a
 frame names its peripheral, base and line range, which Fiasco, which may
-not read the frame's `MSI_TYPER`, needs; the packer derives from them
-the doorbell's bus address, the first line's data and the frame's start
-writes, and the backend binds each line edge-triggered
+not read the frame's `MSI_TYPER`, needs, and the bridge whose functions
+write it; the packer derives from the frame's SVD file its doorbell
+register, the first line's data and the frame's start writes, the root
+carries the register to a bus address at boot through the bridge's
+inbound windows from the tree the firmware handed over, and the backend
+binds each line edge-triggered
 ([design-pcie.md](design-pcie.md#the-msi-frame-on-fiasco)).
 
 The GICv2m frame's registers, from FreeBSD's driver at releng/15.1:
@@ -836,7 +839,7 @@ Raspberry Pi has one.
 
 | | QEMU `virt` | Raspberry Pi 4 | Raspberry Pi 5 |
 | --- | --- | --- | --- |
-| Bus masters | PCIe functions behind the ECAM bridge; virtio-mmio devices, whose DMA QEMU performs for them | the SD controller, the legacy and large-address DMA engines, Ethernet, the VL805 USB controller behind the PCIe bridge, which the USB domain drives through the PCIe domain's `open` and `master` ([design-pcie.md](design-pcie.md#the-plan)); masters erXos does not drive, the DWC2 and the VideoCore's blocks among them ([The handover at entry](#dma)); and the firmware, which stays resident with access to all memory ([Firmware](#firmware)) | RP1's devices behind PCIe, Ethernet and two USB hosts among them; the SD controllers; a function on the external PCIe connector; the media blocks behind the BCM2712 IOMMUs; the firmware, which stays resident with access to all memory ([research](research-boards-storage.md#raspberry-pi-5-bcm2712-and-rp1), [Firmware](#firmware)) |
+| Bus masters | PCIe functions behind the ECAM bridge; virtio-mmio devices, whose DMA QEMU performs for them | the SD controller, the legacy and large-address DMA engines, Ethernet, the VL805 USB controller behind the PCIe bridge, which the USB domain drives through the PCIe domain's `open` and `master` ([design-pcie.md](design-pcie.md#the-plan)); masters erXos does not drive, the DWC2 and the VideoCore's blocks among them ([The handover at entry](#dma)); and the firmware, which stays resident with access to all memory ([Firmware](#firmware)) | RP1's devices behind PCIe, Ethernet and two USB hosts among them, which master only once their parts' drivers have reset them, and RP1's other masters, its DMA controller among them, which erXos does not drive and which RP1's mastering lets go on ([design-rp1.md](design-rp1.md#mastering)); the SD controllers; a function on the external PCIe connector; the media blocks behind the BCM2712 IOMMUs; the firmware, which stays resident with access to all memory ([research](research-boards-storage.md#raspberry-pi-5-bcm2712-and-rp1), [Firmware](#firmware)) |
 | Translation | the SMMUv3, stage 1, for functions on the root bus, which the harness creates with `iommu=smmuv3`; nothing for virtio-mmio | none described ([research](research-boards-storage.md#raspberry-pi-4-model-b-bcm2711)) | none for Ethernet, USB, the SD controllers or the external connector; each BCM2712 IOMMU serves media blocks or RP1's camera and display paths, with one address space for all its devices |
 | Bypass | none: the driver sets the global bypass to abort before anything else, and a stream without a window aborts | every master | the BCM2712 IOMMUs pass addresses below their windows through untranslated |
 | Requester identity | fixed on the ECAM root bus: `smmu_get_sid` builds the id from the model's bus and `devfn`; `pcibus_num` fixes the root bus at zero, whereas a subordinate bus takes its number from writable bridge configuration. Each root-bus function is its own isolation group. This is source-checked in QEMU v11.1.2; the supported binary must pass the same contract tests before its confined profile is admitted ([audit](research-hardware-contracts.md)) | none used | none per device |
@@ -2095,8 +2098,9 @@ record is `config/platforms/raspi5.json`, its manifest
   `kernel_address=0x200000`, where `bootstrap` is linked, whose honouring
   on the Pi 5 is unverified until the probe
   ([research](research-pi5-board-tree.md#raspberry-pi-documentation-boot-files-and-loading));
-  `os_check=0`, without which the firmware refuses a partition that
-  holds no kernel it recognises; `pciex4_reset=0`, so the bootloader
+  `os_check=0`, without which the firmware boots a partition only if it
+  holds a compatible device-tree file, a check whose meaning of
+  compatible no source read gives; `pciex4_reset=0`, so the bootloader
   leaves `pcie2`'s link to RP1 up for erXos to inherit
   ([PCIe bridges](#pcie-bridges)); `enable_uart=1` and, on development
   cards, `uart_2ndstage=1`. Not `enable_rp1_uart`: the console is the
@@ -2122,9 +2126,8 @@ record is `config/platforms/raspi5.json`, its manifest
   ([research](research-pi5-board-tree.md#f6-the-microsd-slot)); `pcie2`
   and the MIP ([PCIe bridges](#pcie-bridges), [MSI frames](#msi-frames));
   RP1, one unit in the `rp1` domain ([design-rp1.md](design-rp1.md)). The
-  SD controller's driver on the Pi 5 needs a section of
-  [design-storage.md](design-storage.md#the-sd-host-controller) of its
-  own, which this document does not give.
+  SD controller runs the Pi 4's driver
+  ([design-storage.md](design-storage.md#the-raspberry-pi-5s-controller)).
 
 **Signs of life before a serial cable.** The first boot of a Pi 5 can
 come before its debug UART is wired, and no mechanism is added for it;
@@ -2142,9 +2145,12 @@ the signs that exist already are read in this order:
    waits for its own design.
 3. The watchdog: the root arms it at every boot, so a boot that hangs
    after the root starts resets the board within 4 s, and the firmware's
-   screen and LED repeat; a boot that reaches the shell stays up.
+   screen and LED repeat. A boot that hangs before the root arms it stays
+   up as quietly as one that reaches the shell (FD29), so a quiet board
+   proves only that the firmware loaded the file.
 
-The serial console settles everything else once the cable is there.
+Only the splash or the serial console's banner proves that the kernel
+ran; the serial console settles everything else once the cable is there.
 
 **The board probe**, by hand on the first boot, records: the load
 address and the CPU's state at entry; the console's divisor; the

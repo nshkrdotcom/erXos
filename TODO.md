@@ -7640,8 +7640,9 @@ to the corpus and follow rc
   [design-platforms.md](docs/design-platforms.md#msi-frames)).
 * [Low] Fiasco backend, `liberx/backend/fiasco/irq.c` (`IRQ_MSI_DOORBELL`): the MSI frame's doorbell offset, `0x40`,
   and the message data equal to the line are hand-copied facts of one frame type, which the Raspberry Pi 5's MIP
-  breaks. Implement the frame's `doorbell`, `data` and start writes that the packer derives from the frame's SVD file and
-  the bridge's inbound translation ([design-pcie.md](docs/design-pcie.md#the-msi-frame-on-fiasco)), so the root holds no
+  breaks. Implement the frame's doorbell register, `data` and start writes that the packer derives from the frame's SVD
+  file, and the doorbell's bus address that the root derives at boot from the frame's bridge's inbound windows in the
+  tree the firmware handed over ([design-pcie.md](docs/design-pcie.md#the-msi-frame-on-fiasco)), so the root holds no
   frame-type fact; the `native_irq` guest's `MSI_DOORBELL` goes with it.
 * [Low] kernel, `ERX_MEM_INHERIT`: the flag is the remembered creator mark
   that the copy table of `erx_space_copy` says it avoids. Reconcile the
@@ -9370,7 +9371,13 @@ model harness drive `erx_device.c` itself. `erx_device_dma_check` and `erx_devic
   mastering, and for each driven device at its driver's `negotiate/2`.
   A master no driver of erXos resets, the DWC2 on the USB-C connector,
   each DMA channel the manifest gives no driver and the VideoCore's
-  blocks among them, stays the loader's for the whole boot. On QEMU
+  blocks among them, stays the loader's for the whole boot. On the
+  Raspberry Pi 5 RP1 is one PCIe function, so the PCIe domain's first
+  start stops all of its masters, and its mastering is raised again once
+  the GEM's and the named USB hosts' drivers have reset them
+  ([design-rp1.md](docs/design-rp1.md#mastering)); RP1's other masters,
+  its DMA controller among them, which erXos does not drive, go on from
+  then as the loader left them. On QEMU
   `virt` the window is all memory for a virtio-mmio device, and for a
   confined function ends at the kernel's IOMMU abort. The board's
   installation sets the EEPROM's boot order to the microSD card alone, so

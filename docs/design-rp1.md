@@ -61,9 +61,9 @@ The structure is designed afresh.
 What no source gives, which the board probes of
 [the plan's stage 1b-J](plan.md#1b-j-the-raspberry-pi-5-on-fiasco)
 settle: the sizes of RP1's BARs and the place of its MSI-X table, whether
-the firmware leaves RP1's clocks running, the polarity of the system
-PLL's power bits and its VCO rate (1 GHz in Linux, 2 GHz in RP1's
-documentation), any per-block reset of the GEM or the USB hosts (Linux
+the firmware leaves RP1's clocks running and at which rates (Linux sets
+the system PLL's VCO to 1 GHz, RP1's documentation says 2 GHz), any
+per-block reset of the GEM or the USB hosts (Linux
 resets the whole chip through a firmware call), what the USB hosts need
 of `usbhostN_cfg` or their clocks, the PHY reset line's level at entry,
 whether RP1's writes through `pcie2` are coherent with the CPUs' caches,
@@ -111,12 +111,19 @@ domain, `rp1`, in every build. The rest follows from that:
 * **No shared register written twice.** The registers that serve several
   parts (the chip id, the clocks, the GPIO banks, the MSI-X configuration
   block and the USB hosts' DWC3 globals) are the function's record's,
-  written only by the function's driver, `erx_rp1`; a part's driver that
+  written only by the function's driver, `erx_rp1`, but for the
+  acknowledge the NIF makes for a level part ([Interrupts](#interrupts));
+  a part's driver that
   needs one changed asks `erx_rp1` by message, as the unit rule has it.
 * **One reset boundary.** RP1 has no per-block reset that any source
   gives, so the unit is the smallest thing that restarts as a whole, and
   the function is never reset: its link and BARs are the bootloader's
   ([design-pcie.md](design-pcie.md#the-bridge-seam)).
+* **Mastering follows every part's reset.** The function masters only
+  once each part's driver has reset its device, the order a single
+  function's driver keeps between `open` and `master`, with the parts'
+  drivers asking `erx_rp1` where a single driver asks the PCIe domain
+  ([Mastering](#mastering)).
 * **Isolation by the manifest's existing rules.** RP1 masters DMA with no
   IOMMU between it and memory, and its unit carries a network controller
   and USB hosts, so its holder holds that unit and nothing else and runs
@@ -136,13 +143,18 @@ map, the MSI-X entry of its interrupt and that entry's trigger:
 | Part | Peripheral | Block, BAR 1 offset and size | Entry | Trigger | Record role |
 | --- | --- | --- | --- | --- | --- |
 | `eth` | `cgem` | `eth`, `0x100000`, `0x4000` | 6 | level | `ordinary` |
-| `usb0` | `xhci` | `usbhost0`, `0x200000`, `0x100000` | 31 | edge | `usb` |
-| `usb1` | `xhci` | `usbhost1`, `0x300000`, `0x100000` | 36 | edge | `usb` |
+| `usb0` | `xhci` | `usbhost0_xhci`, `0x200000`, `0xc100` | 31 | edge | `usb` |
+| `usb1` | `xhci` | `usbhost1_xhci`, `0x300000`, `0xc100` | 36 | edge | `usb` |
 
 The offsets and sizes are not written in the platform record: RP1's
 address map is `hw/svd/rp1/rp1.svd`, from RP1's documentation
 ([BAR layout](research-rp1.md#bar-layout)), and the record names each
-part's block by name, so the generator derives the offset and size. The
+part's block by name, so the generator derives the offset and size. A
+host's 1 MiB window holds its xHCI registers and, from `0xc100`, its
+DWC3 globals ([F5](research-rp1.md#the-controllers)); the SVD gives the
+xHCI registers a block of their own that ends where the globals begin,
+so a USB part's window holds no DWC3 register
+([The USB hosts](#the-usb-hosts)). The
 entries are Linux's vector header and the triggers the Pi 5 tree's
 ([vector map](research-rp1.md#vector-map-hardware-interrupt-numbers--msi-x-vector-indices)).
 RP1's UARTs, I2C, SPI and the rest are not listed: nothing needs them
@@ -158,7 +170,9 @@ row as its `parent`, the BAR, the block's offset and size in `base` and
 `size`, the entry (`mf_none` for none) and the trigger, with the role and
 peripheral from the kinds table. A part cannot be placed apart from its
 function, since no manifest names one: the unit rule holds by
-construction ([Units](design-system.md#devices)).
+construction ([Units](design-system.md#devices)). The packer refuses a
+platform record whose parts name one entry twice, or name more entries
+than `abi/erx_abi.txt`'s `msi_max`, so every part's message is its own.
 
 **What the boot checks.** The function's BARs are reported by the PCIe
 domain, so when the function's layout arrives the device service checks
@@ -172,10 +186,11 @@ without RP1's Ethernet and USB, and boots.
 
 **The give.** The unit's give makes the window object over each placed
 BAR's span, the function's record over BAR 1 whole, and for each part
-its record at its block's offset in BAR 1's object, an `ERX_IRQ_MSI`
-object for its entry, whose message the give writes into the part's
-record, and the contiguous memory its peripheral's kind asks for. The
-function's route is `msix`
+its record at its block's offset in BAR 1's object, carrying its entry
+and trigger, an `ERX_IRQ_MSI` object for its entry, whose message the
+give writes into the part's record, and the contiguous memory its
+peripheral's kind asks for. The function's route is `msix`, its
+assigned messages the parts' entries
 ([design-pcie.md](design-pcie.md#the-choice)).
 
 ### The function's record and `erx_rp1`
@@ -191,15 +206,15 @@ names only the registers its driver writes, each from
 | `clocks_main` (`0x18000`) | the system PLL's `CS`, `PWR`, `FBDIV_INT`, `FBDIV_FRAC`, `PRIM` and `SEC`; the `CTRL`, `DIV_INT` and `SEL` of `clk_sys`, `clk_eth` and `clk_eth_tsu` |
 | `io_bank1` (`0xd4000`), `pads_bank1` (`0xf4000`) | GPIO 32's `STATUS`, `CTRL` and pad |
 | `io_bank2` (`0xd8000`) | GPIO 42's and 43's `CTRL` |
-| `pcie_apbs` (`0x108000`) | `MSIX_CFG_0` to `MSIX_CFG_63`, with the set alias at `+0x800` and the clear alias at `+0xc00`; `INTSTATL`, `INTSTATH` |
-| `usbhost0`, `usbhost1` (`0xc100` in each) | the DWC3 globals `GSNPSID`, `GCTL`, `GUCTL`, `GUSB2PHYCFG0`, `GUSB3PIPECTL0`, `GHWPARAMS0` |
+| `pcie_apbs` (`0x108000`) | `MSIX_CFG_0` to `MSIX_CFG_63`, with the set alias at `+0x800` and the clear alias at `+0xc00` |
+| `usbhost0`, `usbhost1` (`0xc100` in each) | the DWC3 globals `GCTL`, `GUCTL`, `GUSB2PHYCFG0`, `GUSB3PIPECTL0` |
 
 The parts' registers lie inside that window and outside every name the
 `rp1` table has, so the function's driver cannot reach the GEM's or a
 host's operational registers by a wrong name
 ([confinement by name](design-shared-devices.md#pages-inside-a-domain)).
-The DWC3 globals lie inside each host's window too, and the `xhci`
-table names none of them.
+The DWC3 globals lie outside each USB part's window
+([The parts](#the-parts)).
 
 `erx_rp1` is an Erlang process over a pure core, `erx_rp1_core`, which
 takes register readings and returns the next writes. Its start:
@@ -208,27 +223,53 @@ takes register readings and returns the next writes. Its start:
    domain's `pci` facet: the function decodes and masters nothing.
 2. Read `CHIP_ID`. Any value but `0x20001927` ends the start with
    `{error, {chip, Id}}`: the facts describe revision C0 alone.
-3. Clocks and pins, read first ([below](#clocks-and-pins-read-first)).
-4. The MSI-X configuration: clear `ENABLE` of every vector no part names,
+3. The hosts: the DWC3 step on each host a part names
+   ([The USB hosts](#the-usb-hosts)), and on every other host `GCTL`'s
+   core soft reset set and left set, so a host no part names stays
+   stopped.
+4. Clocks and pins, read first ([below](#clocks-and-pins-read-first)).
+5. The MSI-X configuration: clear `ENABLE` of every vector no part names,
    through the clear alias, so a peripheral the firmware left enabled
    raises nothing; for each part's entry set or clear `IACK_EN` by its
    trigger, then set `ENABLE`, each through an alias, so no write is a
    read-modify-write.
-5. The DWC3 step for each `usb` part ([The USB hosts](#the-usb-hosts)).
-6. The NIF writes the function's MSI-X table, as at every MSI-X route's
-   reset ([design-pcie.md](design-pcie.md#who-programs-what-and-when)):
-   each part's entry from that part's record, every other entry masked.
-7. Send `master`: the route is live and the function masters.
-8. Answer the unit supervisor, which starts the parts' drivers.
+6. The NIF writes the function's MSI-X table from its assigned messages
+   ([design-pcie.md](design-pcie.md#the-choice)).
+7. Answer the unit supervisor, which starts the parts' drivers.
 
-Mastering comes before the parts reset their devices, unlike a single
-function, whose driver resets its device between `open` and `master`.
-That is the same state a part's driver restart is in, with the function
-mastering while one part resets, which the PCIe design already accepts
-for an xHCI reset. What the bootloader left running inside RP1 before
-the parts' resets is the loader's-bus-master residual of
-[design-platforms.md](design-platforms.md#dma), and the board probe reads
-whether the GEM and the hosts are running at entry.
+### Mastering
+
+Each part's driver resets its device and then calls
+`erx_rp1:master(Part)`, as a single function's driver sends `master`
+after its reset. `erx_rp1` sends the function's `master` once every part
+the platform record lists for the unit has called, and answers each call
+then; a call after that is answered at once. The GEM's driver calls
+after its reset's first step ([The driver](#the-driver)), and a host's
+controller process after its controller's reset, where a PCIe
+function's controller sends `master` ([The USB hosts](#the-usb-hosts)).
+
+So the function masters only after every device a part names has
+forgotten what the bootloader aimed it at, and DMA the bootloader left
+running in the GEM or a host stays stopped until then, as the PCIe
+domain's first start stopped it (rule 3 of
+[design-platforms.md](design-platforms.md#dma)). A host no part names
+stays in the reset of step 3.
+
+A part's driver that restarts later finds the function mastering. Its
+device has been aimed only at the part's own memory since the first
+reset, memory that is the device's for the boot
+([What a device keeps](design-system.md#devices)), so what the device
+does before the new driver's reset lands there alone, and the driver
+reads none of it before its install. A restart of `erx_rp1` sends `open`
+first, which turns mastering off, so the unit starts again as at boot.
+
+RP1's other bus masters, its DMA controller and the blocks no part
+names, are masters erXos never drives
+([design-platforms.md](design-platforms.md#dma)): raising the function's
+mastering lets any that the bootloader left running go on, the residual
+that section records. No source read says whether the bootloader starts
+any of them; the board probe reads whether the GEM and the hosts run at
+entry.
 
 **Supervision.** The holder's unit supervisor
 ([design-system.md](design-system.md#the-holders-driver-control-facet))
@@ -236,7 +277,9 @@ is `rest_for_one`: `erx_rp1` first, then a `one_for_one` supervisor of
 the parts' drivers, the GEM's lender and one USB tree per host. The end
 of a part's driver restarts that driver alone, and the function stays
 mastering. The end of `erx_rp1` ends every part's driver and starts the
-unit again from step 1. The unit supervisor's own end ends the domain,
+unit again from step 1. A part's driver that keeps failing before its
+call ends its supervisor within that supervisor's intensity, and with it
+the unit. The unit supervisor's own end ends the domain,
 whose restart the domain service runs within the row's intensity; the
 holder's end sets the function `off`.
 
@@ -247,16 +290,26 @@ line, bound and acknowledged by that part's driver as any direct line
 ([lines inside a domain](design-shared-devices.md#lines-inside-a-domain)).
 The one thing RP1 adds is the acknowledge of a level vector.
 
-**The acknowledge word.** RP1's protocol has the acknowledge after the
-peripheral's service, which is exactly where every driver already
-acknowledges its line: `erx_device:irq_ack/2`. So a part with a level
-entry carries an **acknowledge word** in its record, the offset in the
-unit's BAR 1 run of its vector's `MSIX_CFG` set alias and the `IACK`
-bit, and `irq_ack/2` writes it before it acknowledges the IRQ object. The
-packer derives the word from the part's entry and the `rp1` peripheral's
-generated table; the device service copies it into the record. An edge
-entry carries none.
+**The vector's acknowledge.** RP1's protocol has the acknowledge after
+the peripheral's service, which is exactly where every driver already
+acknowledges its line. So for a part whose entry is level, the line's
+acknowledge has two steps, which the NIF makes in this order: `IACK` of
+the entry's `MSIX_CFG`, written through its set alias in the function's
+record at the place the `rp1` peripheral's generated table gives, then
+the IRQ object's acknowledge. The NIF derives the write from the part's
+entry and trigger, which its record carries from its row and the boot
+checked against the function's table; no driver passes an offset or a
+bit, and no record carries one. An edge entry's acknowledge is the IRQ
+object's alone.
 
+* The NIF makes that one acknowledge wherever it acknowledges a line: at
+  each `irq_ack/2`, and at the acknowledgement `irq_bind/2` makes so that
+  a line a former driver left masked is unmasked for the new one
+  ([design-runtime.md](design-runtime.md#the-device-nif)). A driver
+  that ends between a delivery and its acknowledge leaves its vector
+  masked in RP1 only until its successor binds the line: the bind's
+  acknowledge re-arms it, and RP1 sends again if the source is still
+  high.
 * A driver on a level vector runs its code unchanged: the GEM driver, or
   a PL011 driver on one of RP1's UARTs once a part names one, acknowledges
   as it does on any line.
@@ -270,7 +323,7 @@ entry carries none.
 
 On Fiasco the root binds each line of the MSI receiver as an edge line
 ([design-pcie.md](design-pcie.md#the-msi-frame-on-fiasco)), whose
-acknowledge comes after the word's write.
+acknowledge comes after the `IACK` write.
 
 ### Clocks and pins, read first
 
@@ -279,22 +332,34 @@ from the reset state
 ([section 7](research-rp1-clocks.md#7-resets-not-found)). erXos cannot
 reset RP1, since only the kernel reaches the firmware's mailbox
 (PL2 of [design-platforms.md](design-platforms.md#invariants)),
-so `erx_rp1` reads what the firmware left and programs only what is off,
-to Linux's values, and only from facts that are settled. Its core is a
-pure function of the readings, tested over every combination:
+so `erx_rp1` reads what the firmware left, derives each clock's rate
+from those readings alone, keeps a clock whose rate serves its consumer,
+and programs only a clock whose new source and rate the readings settle.
+It never programs the system PLL, whose power bits' polarity no source
+settles and which `clk_sys`, the clock of RP1's fabric, may run from.
+Its core is a pure function of the readings, tested over every
+combination.
 
-| Reading | Decision |
+**Rates** ([sections 2 and 3](research-rp1-clocks.md#2-the-clock-tree-rp1-gives-ethernet-and-usb-found)).
+The system PLL's VCO is the 50 MHz crystal times `FBDIV_INT` plus
+`FBDIV_FRAC` as a 24-bit fraction, over `CS`'s `REFDIV`, and has a rate
+only while `CS`'s `LOCK` (bit 31) is set; `pll_sys` is the VCO over
+`PRIM`'s `DIV1` times `DIV2`, and `pll_sys_sec` the VCO over `SEC`'s
+divider. A clock enabled by `CTRL`'s `ENABLE` (bit 11) runs at its
+selected source over its `DIV_INT`, 0 meaning 2^16, and `SEL` reading 0
+means its source is not running. A source the core does not follow, the
+audio and video PLLs or a GPIO clock input, gives no rate.
+
+| Clock | Decision |
 | --- | --- |
-| the system PLL's `CS` `LOCK` (bit 31) set | keep the PLL and its dividers |
-| `LOCK` clear | until the board probe records the polarity of the PLL's power bits and its VCO rate, end the start with `{error, pll_sys}`; once they are recorded, program the PLL as Linux does (power down, `FBDIV_INT` 20, `REFDIV` 1, power up, wait for `LOCK` at most 100 ms) |
-| `clk_sys` `SEL` nonzero | keep it; Linux marks it always enabled in hardware |
-| `clk_sys` `SEL` 0 | end the start with `{error, clk_sys}` |
-| `clk_eth` `CTRL` `ENABLE` (bit 11) set and `SEL` nonzero | keep it |
-| `clk_eth` off | select `pll_sys_sec`, divider 1, enable: 125 MHz, provided the probe has recorded the secondary output at 125 MHz; otherwise `{error, clk_eth}` |
+| `clk_sys` | never written: Linux marks it always enabled in hardware. Without a rate the start ends with `{error, clk_sys}`; its rate goes to the GEM's driver for the MDC divider |
+| `clk_eth` at 125 MHz, the RGMII transmit clock | keep it |
+| `clk_eth` otherwise | the first of `pll_sys_sec` and `pll_sys` whose rate is 125 MHz times a divider from 1 to 255, its 8-bit range: write that divider, select that source, enable, the order in which Linux sets a rate; neither gives one: `{error, clk_eth}` |
+| `clk_eth_tsu` enabled | keep it: erXos uses no timestamps |
 | `clk_eth_tsu` off | select the crystal, divider 1, enable: 50 MHz, Linux's assignment |
 | the USB hosts' clocks | untouched: no source says what the hosts need of them, and Linux gives the hosts none |
 
-A start that ends with an error leaves RP1 as it found it; the unit
+A start that ends with an error writes no clock; the unit
 supervisor restarts it within its intensity, and then the domain ends
 and the board runs without RP1, with the reading logged.
 
@@ -347,9 +412,12 @@ record's.
 **Reset and configuration**, in FreeBSD's order (`cgem_reset`,
 `if_cgem.c:1032-1067`), with RP1's writes:
 
-1. `NET_CTRL` 0; `NET_CFG` with the data bus width that `DESIGN_CFG1`
-   reports; statistics cleared; `TX_STAT` and `RX_STAT` cleared; every
-   interrupt disabled; the hash filter 0; both queue base addresses 0.
+1. `NET_CTRL` 0, which stops transmit and receive; `NET_CFG` with the
+   data bus width that `DESIGN_CFG1` reports; statistics cleared;
+   `TX_STAT` and `RX_STAT` cleared; every interrupt disabled; the hash
+   filter 0; both queue base addresses 0. Then the driver binds its line
+   and calls `erx_rp1:master/1` ([Mastering](#mastering)); what follows
+   runs with the function mastering.
 2. The MDC divider: the smallest of `NET_CFG`'s dividers that keeps MDC
    at or below 2.5 MHz from `clk_sys`'s rate, which `erx_rp1` reports: 96
    at 200 MHz. The 2.5 MHz limit is clause 22's, unverified against
@@ -367,12 +435,13 @@ record's.
    reports, and Linux writes none of it
    ([what Linux writes](research-rp1.md#what-linux-writes-for-rp1s-ethernet)).
 5. `DMA_CFG`: the receive buffer size, burst length 16, and 64-bit
-   addressing (bit 30) when `DCFG6` (`0x294`) bit 23 reads set. The
-   board's RAM lies at bus address `0x10_0000_0000` and above on
-   `pcie2`
-   ([F1.2](research-bcm2712-pcie-mip.md)), so no 32-bit descriptor can
-   name a buffer: with the bit clear the driver refuses with
-   `{error, dma_width}`.
+   addressing (bit 30) when `DCFG6` (`0x294`) bit 23 reads set; with the
+   bit clear the driver refuses with `{error, dma_width}`. RP1 maps a
+   32-bit master's addresses onto the first 4 GiB of RAM
+   ([BAR layout](research-rp1.md#bar-layout)), so 32-bit descriptors
+   could name buffers there; the driver uses the 64-bit form alone, the
+   one Linux uses for RP1, so the ring form has one descriptor layout and
+   the part's memory may lie anywhere in RAM.
 6. `AMP` (`0x054`): 8 outstanding reads, 8 outstanding writes, and the
    write limit counted from AW to B, Linux's values for RP1. An AXI burst
    over 16 beats is fatal to the GEM until a reset no source gives, which
@@ -399,9 +468,8 @@ network domain is posted within the credit the driver granted; a
 received frame goes out within the credit the network domain granted,
 and the driver returns credit as frames leave for the controller.
 
-**Interrupts.** Entry 6 is a level vector, so the driver's
-`irq_ack/2` carries RP1's acknowledge
-([Interrupts](#interrupts)). On a delivery the driver reads and clears
+**Interrupts.** Entry 6 is a level vector, so the line's acknowledge
+carries RP1's ([Interrupts](#interrupts)). On a delivery the driver reads and clears
 the GEM's interrupt status, completes both queues, and acknowledges.
 
 ### The GEM ring form
@@ -412,13 +480,26 @@ keeping that design's rules. The GEM's descriptors in 64-bit mode are
 four words, 16 bytes: address low, control, address high, unused
 (`if_cgem_hw.h:378-441`). The controller writes status back into the
 descriptors the CPU wrote, so a ring is written by both sides, which
-the one-writer rule allows only by handing it over in granules:
+the one-writer rule allows only by handing it over in granules. Three
+things make the handover safe on any bus. The word that hands a
+descriptor over carries everything the CPU changes in it, so a handover
+is one store. The CPU never stores into a word the controller writes
+back. And the CPU stores a group's handover words in reverse ring
+order, the group's first descriptor last: a dirty line can reach memory
+by eviction before the clean, but the controller takes descriptors in
+ring order and stops at the first it does not own, so it takes none of
+a group before the last store, after which the CPU stores nothing into
+the group.
 
 * **Groups.** Each ring is a sequence of **groups**, each one granule
-  `G` of `G / 16` descriptors, 4 where `G` is 64 bytes. A group is the
-  unit of handover: the CPU writes a whole group, cleans it and hands it
-  to the controller with one publication, and takes it back only when
-  every descriptor in it that it handed has reported done. Each ring's
+  `G` of `G / 16` descriptors, 4 where `G` is 64 bytes. A group is a
+  region whose writer moves as a buffer's does: the device's from its
+  handover until every descriptor in it that the CPU handed has
+  reported done, and the CPU's otherwise. The common design's handing
+  over, taking back and three barriers apply to it as to a buffer
+  ([The three rules](design-device-dma.md#the-construction-handoffs-of-granules)),
+  and while the device holds it the CPU stores nothing into it and only
+  observes it, by acquisition, as it observes a used ring. Each ring's
   size is a whole number of groups. Each pool buffer is a region of its
   own, as in every form.
 * **A standing table.** Buffer *i* is descriptor *i*'s for the life of
@@ -427,25 +508,37 @@ the one-writer rule allows only by handing it over in granules:
   transmit).
 * **Receive.** Install hands every group with each descriptor's `OWN`
   (word 0 bit 0) clear and writes the ring's device address to
-  `RX_QBAR` and `RX_QBAR_HI` (`0x4d4`). `complete/2` reads each handed
-  descriptor from the ledger's position, after cleaning and invalidating
-  its line, as a used ring is observed while the device holds it; a
-  descriptor with `OWN` set reports a frame of the length in control
-  bits 12 to 0, at most the buffer, with start and end of frame (bits 14
-  and 15) and bad FCS (bit 13). Its buffer is taken back and copied at
-  once, so no frame waits for its group. When every descriptor of a
-  group reads `OWN` set, the group is the CPU's again: the sequencer
-  rewrites each descriptor's word 0 with `OWN` clear and its control word
-  0, and hands the group back. The driver drops a frame without both
-  start and end of frame, or with bad FCS, since every frame fits one
-  buffer.
+  `RX_QBAR` and `RX_QBAR_HI` (`0x4d4`). A descriptor's handover is one
+  store of its word 0, which holds its address's low word, the wrap bit
+  and `OWN` clear; the control word is the controller's alone, written
+  with a frame's status when it sets `OWN`, and the CPU never writes it.
+  `complete/2` acquires in the common design's two phases
+  ([A report is a snapshot](design-device-dma.md#releases)): first each
+  handed descriptor's word 0 from the ledger's position, stopping at the
+  first whose `OWN` reads clear, then the report barrier; then, with the
+  lines those descriptors lie in cleaned and invalidated again and the
+  completion barrier passed, those descriptors whole. A descriptor so
+  acquired reports a frame of the length in control bits 12 to 0, at
+  most the buffer, with start and end of frame (bits 14 and 15) and bad
+  FCS (bit 13). Its buffer is taken back and copied at once, so no frame
+  waits for its group. When every descriptor of a group has reported,
+  the group is the CPU's again: the sequencer stores each descriptor's
+  word 0 with `OWN` clear, the group's first descriptor last, cleans the
+  group and hands it back. A descriptor the controller reads before its
+  store lands reads `OWN` set and is not taken, and is read again for a
+  later frame. The driver drops a frame without both start
+  and end of frame, or with bad FCS, since every frame fits one buffer.
 * **Transmit.** Install writes every descriptor with `USED` (control
   bit 31) set, all the CPU's, and the ring's device address to `TX_QBAR`
   and `TX_QBAR_HI` (`0x4c8`). `post_frame/5` copies the frame into the
   buffer at the ledger's next position and describes its control word:
-  the length, last buffer (bit 15), `USED` clear. The sequencer hands
-  the groups that hold new posts, then writes `NET_CTRL` with start
-  transmit (bit 9). The controller sets `USED` in a frame's descriptor
+  the length, last buffer (bit 15), the wrap bit where it stands, `USED`
+  clear, one store that hands the descriptor over. The sequencer stores
+  the control words of each group's new posts, the first in ring order
+  last, cleans and hands the groups, then writes `NET_CTRL` with start
+  transmit (bit 9). A transmit report is that same word, `USED`
+  and the AXI error bit 27 together, so one load of it is the report's
+  snapshot. The controller sets `USED` in a frame's descriptor
   when it has sent it and stops at the first descriptor it finds with
   `USED` set. A post that falls in a group still handed waits in the
   driver until that group comes back, every frame in it sent; the
@@ -469,21 +562,38 @@ On a coherent bus the cleans and invalidates are empty and the groups
 still hold; whether `pcie2` is coherent is a board probe, and the form
 is correct either way.
 
+Two premises of the form rest on no source read, since the GEM's own
+manual was not read: that the controller stores a receive descriptor's
+`OWN` after its status, which the second phase relies on as it relies
+on an xHCI event's cycle bit; and that receive takes a descriptor it
+once found not free when a later frame arrives. The board pass checks
+both under a stress of short frames
+([plan](plan.md#1b-j-the-raspberry-pi-5-on-fiasco)), and the form is
+not enabled on a board before it has.
+
 ## The USB hosts
 
 The two hosts are `usb` parts, so each is a controller of the USB stack
 that is not a PCIe function: its record names no place, and the xHCI
-controller process runs as written, sending neither `open` nor `master`
+controller process sends no `open`, and sends its `master` to
+`erx_rp1:master/1` rather than through `pci`
 ([design-usb.md](design-usb.md#the-controller-process)). Its window is
-its part's 1 MiB in BAR 1, its interrupt is its own entry, edge, with no
-acknowledge word, and its DMA memory is the part's. The `rp1` domain
+its xHCI registers, the host's first `0xc100` bytes, which end where the
+DWC3 globals begin; the controller process places its runtime
+registers, doorbells and extended capabilities from `RTSOFF`, `DBOFF`
+and the capability pointers the controller reports, and the NIF refuses
+any access past the window, so a malformed offset cannot reach a DWC3
+register. Its interrupt is its own entry, edge, and its DMA memory is
+the part's. The `rp1` domain
 runs one `erx_usb_sup` tree per host, as a USB domain does per
 controller, so each host has its own drives and its own input tree, each
 named by its own part's row ([design-usb.md](design-usb.md#who-holds-a-controller)).
 
-**The DWC3 step.** Before a host's tree starts, `erx_rp1` runs FreeBSD's
-DWC3 sequence on that host's globals, as it applies on RP1's tree
-properties:
+**The DWC3 step.** In its start, before any part's driver runs,
+`erx_rp1` runs FreeBSD's DWC3 sequence on the globals of each host a
+part names, as it applies on RP1's tree properties; the controller
+process's own reset of the xHCI follows, before its `master/1`
+([Mastering](#mastering)):
 
 1. Set `GCTL`'s core soft reset, then `GUSB2PHYCFG0`'s and
    `GUSB3PIPECTL0`'s PHY soft resets; wait 1 ms; clear both PHY resets,
@@ -504,23 +614,26 @@ FreeBSD writes none of them, and no source says which failure each
 prevents, so erXos writes none until a board test shows the failure it
 prevents; each then joins the step with that test
 ([Open decisions](#open-decisions)). `usbhostN_cfg` is not written: its
-registers are documented nowhere read, and Linux writes none.
-
-`GSNPSID` is read first, and a host that does not report a DWC3 core
-is not started, with a diagnostic; the other host and the GEM go on.
+registers are documented nowhere read, and Linux writes none. The chip
+id check of `erx_rp1`'s start stands for the hosts' identity: revision
+C0's hosts are DWC3 v3.30b ([F5](research-rp1.md#the-controllers)).
 
 ## Concurrency
 
 Everything of the unit runs in one runtime, so the only concurrency is
 between processes and between the CPU and RP1's devices.
 
-* `erx_rp1` alone writes the function's registers. Part drivers reach
-  them only by message (`phy_reset/1`), answered in order.
-* The acknowledge word and `erx_rp1`'s vector setup write the same
+* `erx_rp1` alone writes the function's registers, but for the NIF's
+  `IACK` writes. Part drivers reach them only by message (`phy_reset/1`,
+  `master/1`), answered in order.
+* The NIF's `IACK` writes and `erx_rp1`'s vector setup write the same
   registers only through the set and clear aliases, each write touching
   only its own bits, so their order does not matter.
 * The parts' drivers start after `erx_rp1` answers, so no part runs
-  before its vector, its clocks and its host's DWC3 step are set.
+  before its vector, its clocks and its host's DWC3 step are set, and
+  the function masters
+  only after every listed part's `master/1`, so no device of a part
+  masters before its reset ([Mastering](#mastering)).
 * Each part's driver and its device share memory only through its own
   form's ledger; the GEM ring form's groups keep one writer per granule
   at every moment.
@@ -531,7 +644,8 @@ between processes and between the CPU and RP1's devices.
 | --- | --- |
 | `pcie2`'s link is down at entry, or RP1 is not at its place | the PCIe domain reports no function; the device service gives the unit to no domain; the board boots without Ethernet and USB, with the reason logged |
 | a part does not fit the reported BAR, or its entry is past the table | the unit is given to no domain, the part and BAR named |
-| an unknown chip id, an unlocked PLL whose facts are unsettled, `clk_sys` stopped | `erx_rp1`'s start fails with the reason; after the unit's intensity the domain ends, and after the row's the board runs without RP1 |
+| an unknown chip id, `clk_sys` without a rate, a `clk_eth` that no followed source can make 125 MHz | `erx_rp1`'s start fails with the reason; after the unit's intensity the domain ends, and after the row's the board runs without RP1 |
+| a part's driver that ends before its `master/1` | the function stays decoding; the driver's restart resets its device and calls again; past its supervisor's intensity the unit ends |
 | a GEM bus error, a broken queue, a PHY that does not answer | `erx_cgem` ends; its restart resets the GEM; its `ether` link ends and a new offer starts it |
 | a GEM whose AXI burst state persists after its reset | the restarted driver fails again; the unit's intensity ends the domain; the residual is RP1's missing block reset |
 | an xHCI host fault | as [design-usb.md](design-usb.md#failure-handling) states for any controller; the other host and the GEM go on |
@@ -545,8 +659,8 @@ else has a reset path for it.
 | Call or input | Result |
 | --- | --- |
 | `erx_rp1` start, chip id other than `0x20001927` | `{error, {chip, Id}}` |
-| `erx_rp1` start, PLL unlocked before its facts are recorded | `{error, pll_sys}` |
-| `erx_rp1` start, `clk_sys` stopped, or `clk_eth` off without its rate settled | `{error, clk_sys}`, `{error, clk_eth}` |
+| `erx_rp1` start, `clk_sys` without a rate, or a `clk_eth` that no followed source can make 125 MHz | `{error, clk_sys}`, `{error, clk_eth}` |
+| a platform record whose parts name one entry twice, or more entries than `msi_max` | the packer fails the build, naming the parts |
 | `erx_cgem` with `DCFG6` reporting 32-bit addressing | `{error, dma_width}` |
 | a GEM ring index past the ring, a length past a buffer | the queue breaks, `{error, broken}` until `negotiate/2` |
 | a part row in a manifest that does not place its function | impossible to write: the packer makes part rows only after their function's row |
@@ -557,13 +671,15 @@ Each test names the seeded fault that proves it ran.
 
 | Test | Passing case | Seeded failure |
 | --- | --- | --- |
-| `erx_rp1_core`'s clocks table, exhaustive over the readings | every reading gives the table's decision | a core that programs the PLL when `LOCK` reads set; the test sees a `PWR` write |
-| `erx_rp1_core`'s vector setup | every unnamed vector is cleared, each part's `IACK_EN` follows its trigger, `ENABLE` comes last, every write is to an alias | a level entry given edge; the test sees `IACK_EN` clear for entry 6 |
-| the acknowledge word, packer and NIF | a level part's record carries the set alias of its own `MSIX_CFG` and the `IACK` bit; `irq_ack/2` writes it before the IRQ object's acknowledge | the word computed from the next entry; the packer's test reads entry 7's offset and fails |
-| part rows, packer | a manifest that places RP1 gets its three parts after the function's row, offsets from `rp1.svd` | a part dropped from the output; the unit test counts two parts |
+| `erx_rp1_core`'s clocks table, exhaustive over the readings | every reading gives the table's decision, with each rate derived from the dividers read; an enabled `clk_eth` at 100 MHz is moved to 125 MHz, an unlocked PLL gives its outputs no rate, and no reading produces a PLL write | a core that keeps any enabled `clk_eth` without deriving its rate; the 100 MHz case sees no write and fails |
+| `erx_rp1_core`'s vector setup | every unnamed vector is cleared, each part's `IACK_EN` follows its trigger, `ENABLE` comes last, every write is to an alias; a host no part names is left with its core soft reset set, and a named host gets the DWC3 step | a level entry given edge; the test sees `IACK_EN` clear for entry 6 |
+| mastering, `erx_rp1` over a model function and model parts | `master` is sent only after every listed part's `master/1`, each answered then; a later call is answered at once; a restart of `erx_rp1` sends `open` before anything else | a start that sends `master` when it answers the supervisor; the model GEM, left running on the loader's ring, writes memory while the function masters before its reset and the test fails |
+| the vector's acknowledge, NIF | a level part's `irq_bind/2` and each `irq_ack/2` write `IACK` of its own entry's set alias before the IRQ object's acknowledge; an edge part's write none; a driver killed between a delivery and its acknowledge leaves a held-high source that its successor's bind delivers again | the bind's acknowledge made without `IACK`; the successor never receives the held-high source |
+| part rows, packer | a manifest that places RP1 gets its three parts after the function's row, offsets from `rp1.svd`; a record naming entry 6 twice fails the build | a part dropped from the output; the unit test counts two parts |
+| a USB part's window | an `RTSOFF` that places the runtime registers at `0xc100` makes the controller process's access refused as outside the window | the part's block given the host's whole 1 MiB; the access reaches the model's `GCTL` and the test fails |
 | the boot's part check | a part past the BAR's span gives the unit to no domain with the diagnostic | a check that compares the offset alone; a part whose end crosses the span passes and the test fails |
 | `erx_cgem_core`'s reset | the writes in FreeBSD's order with `USRIO`, `DMA_CFG` bit 30 and `AMP` | `DCFG6` reading 32-bit; the core must refuse, and a core that sets bit 30 anyway fails |
-| the GEM ring form, host-built | receive and transmit over a model controller that writes `OWN` and `USED`; no CPU store lands in a handed group | a sequencer that rewrites a receive descriptor before its group completes; the model's writer check fails |
+| the GEM ring form, host-built | receive and transmit over a model controller that may act between any two of the sequencer's stores, taking a handed descriptor and writing its status, `OWN` or `USED` and, for transmit, partly sent groups, behind a model cache that may write a dirty line back at any store; every completion the model writes is the one the driver reports, and no CPU store lands in a handed group | a sequencer that also stores a receive descriptor's control word after its word 0; the model, acting between the two stores, has its completion overwritten and the test sees the frame lost; a sequencer that stores a group's words in ring order: the model cache writes the first descriptor back early, the model takes it while the CPU still stores the second, and the clean overwrites its completion; and a sequencer that rewrites a receive descriptor before its group completes, which the model's writer check catches |
 | `erx_cgem_mdio` | read and write words, polls to completion and the timeout | an off-by-one in the PHY address shift; the decode test fails |
 | the GEM ring form's fuzz target | arbitrary descriptor words and lengths never produce a frame past its buffer | the length bound removed; the fuzzer finds an over-long frame |
 | DWC3 step | the writes in FreeBSD's order, the PHY resets cleared before the core reset | the core reset cleared first; the order test fails |
@@ -584,8 +700,14 @@ parser of device-written memory does.
 * **The parent acknowledges.** Part drivers could ask `erx_rp1` for each
   level acknowledge by message, as the unit rule allows for shared
   registers. That costs a message per interrupt and makes every driver
-  on an RP1 level vector RP1-specific; the acknowledge word costs one
-  field and one write, and drivers stay unchanged.
+  on an RP1 level vector RP1-specific; the NIF's derived `IACK` costs
+  one write, and drivers stay unchanged.
+* **`erx_rp1` stops each engine before mastering.** `erx_rp1` could
+  write the GEM's `NET_CTRL` and each host's `USBCMD` itself before
+  `master`, with no call from the parts. The GEM's registers would
+  then have two writers, against the unit's one-writer rule, and each
+  part's reset would be split between two drivers; the call keeps each
+  device's reset with its driver.
 * **A line owner per level vector.** The shared-line owner could run the
   acknowledge at the end of each round. A level vector has one driver,
   so the owner would be a process with nothing to share.

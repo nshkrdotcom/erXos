@@ -3089,8 +3089,9 @@ which it comes up. What differs from the Pi 4 is data and two platform items:
 * **Entropy.** The root reads the RNG200 at `0x10_7d208000` as on the Pi 4; the tree's node keeps the Pi 4's
   compatible.
 * **The MSI frame.** The platform record names the MIP as the board's `msi_frame`: peripheral `bcm2712_mip`, base
-  `0x10_0013_0000`, first line 160 (SPI 128), 64 lines. The backend's `ERX_IRQ_MSI` is QEMU's, with the doorbell and
-  data the packer derived, `0xff_ffff_f000` and 0; before it binds any line, the root makes the frame's six start
+  `0x10_0013_0000`, first line 160 (SPI 128), 64 lines, serving `pcie2`. The backend's `ERX_IRQ_MSI` is QEMU's: data
+  0, which the packer derives, and the doorbell `0xff_ffff_f000`, which the root derives at boot from `pcie2`'s inbound
+  windows in the tree the firmware handed over; before it binds any line, the root makes the frame's six start
   writes through the frame's page, which only it maps, as it maps the watchdog's block
   ([design-pcie.md](design-pcie.md#the-msi-frame-on-fiasco)).
 * **Devices.** The BCM2712 bridge `pcie2` in the PCIe domain, RP1's unit in the `rp1` domain, the SD controller in the

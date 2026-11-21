@@ -1192,6 +1192,56 @@ the card, which this one never does. The probe's results go into the
 board pass's research record, and a result that contradicts this
 section is a change to it before the board pass counts.
 
+#### The Raspberry Pi 5's controller
+
+The Pi 5's microSD slot is on `sdio1`, an SDHCI controller of
+Broadcom's set-top family (`brcm,bcm2712-sdhci`), and `erx_blk_sd`
+drives it as it drives EMMC2, with everything above unchanged: 3.3 V
+signalling, a 4-bit bus at default speed, one card present for the
+machine's life, programmed I/O first and ADMA2 when the tree the
+firmware hands over gives the controller a DMA range. What differs is
+data in the platform record
+([facts record F6](research-pi5-board-tree.md#f6-the-microsd-slot)):
+
+* **Registers.** The record's window is the standard register block,
+  `0x260` bytes at `0x10_00fff000`, which `hw/svd/sdhci/sdhci.svd`
+  describes. Broadcom's own configuration block at `0x10_00fff400` is
+  not in the record: Linux writes it for modes that need tuning, for
+  eMMC and for command queueing, none of which this driver uses, and to
+  select the SD pin set, which the firmware leaves selected when it
+  boots from this card; the board probe reads that selection, and a
+  board that shows otherwise adds the write with its test. The 32-bit
+  access rule and the 6 us spacing above are kept, since no source read
+  says the BCM2712's controller lifts them.
+* **Clock.** A fixed 200 MHz clock, which the tree gives the controller.
+  The platform record's SD entry carries it as its `clock`, which the
+  device process takes in place of the capabilities field, and the board
+  probe's timed slow read checks it, as on the Pi 4.
+* **Line.** SPI 273, level, the controller's own, so the device process
+  binds it directly and no line owner starts.
+* **Card power, signalling and detect.** The card's 3.3 V supply is
+  enabled by line 4 of the always-on GPIO bank `gio_aon` (high on), its
+  I/O level is 1.8 V while line 3 is high and 3.3 V while it is low, and
+  its card detect is line 5 (low when a card is in). Unlike the Pi 4's
+  expander lines, these are registers a domain can reach, but this
+  driver needs none of them: it never power-cycles the card, never
+  changes its signalling and never reads card detect, setting the
+  card-detect test bits as on the Pi 4. So the bank is given to no
+  domain, and the start's refusal of a card left at 1.8 V stays.
+* **When the bank is needed.** A power cycle is the one way back from
+  1.8 V signalling (Physical Layer Figure 3-16, p.22), so if the board
+  probe finds that the firmware leaves the card at 1.8 V, or when UHS-I
+  modes or removable cards are wanted, the start gains a power cycle and
+  the bank a holder: `gio_aon`, one 64-byte block, becomes a device row
+  given to the storage domain whole, its register layout taken into a
+  facts record with that change. Its line 9, the ACT LED, then belongs
+  to the storage domain too, which is where Linux's default trigger for
+  that LED, the SD card's activity, already puts it.
+
+The Pi 5's board probe runs the Pi 4's above on `sdio1` and also
+records the levels of lines 3, 4 and 5 and the SD pin selection as the
+firmware leaves them.
+
 ### Reading EROFS images
 
 The EROFS reader, `erx_erofs`, is Erlang, preloaded in the runtime image

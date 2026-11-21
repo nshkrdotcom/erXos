@@ -2763,10 +2763,12 @@ coherent, and which descriptor forms of the ABI file it uses
 ([design-device-dma.md](design-device-dma.md#device-addresses-and-reach)).
 A PCIe function's record carries a register window for each placed
 memory BAR, each with its BAR's hardware size, and, for an MSI-X route,
-its doorbell, data and the table's BAR, offset and size; at open the NIF
-writes every entry of the table from the record, entry 0 live and the
-rest masked, and reads entry 0 back
-([design-pcie.md](design-pcie.md#interrupts)).
+the table's BAR, offset and size and entry 0's doorbell and data where
+entry 0 is its assigned message; a part of a function carries its own
+entry, trigger and message instead. The NIF writes every entry of the
+table, each of the function's assigned messages live and every other
+entry masked, and reads the last assigned entry back
+([design-pcie.md](design-pcie.md#the-choice), the assigned messages).
 
 **What the NIF keeps.** The NIF keeps one record for each device the
 domain holds, a small integer its driver names it by, for the boot, since the manifest gives each device one
@@ -3134,7 +3136,8 @@ the lines of the device's record, binds the line's IRQ
 object, which the domain holds with `BIND` and `ACK`, to the domain's
 group under a label the event table registers to the calling
 process, the lowest free one, so a hint already taken under a label just given up can reach this sink, records the label as the line's binding in the device's record,
-and acknowledges the line once, so a line that a former driver left
+and acknowledges the line once, with the same acknowledge
+`irq_ack/2` makes, so a line that a former driver left
 masked is unmasked for the new one, and a level still asserted fires at
 once. The NIF keeps one entry per line of the domain, its IRQ object and
 its one binding, and records that name the same line, by its object's
@@ -3154,7 +3157,10 @@ driver joined to it of each firing
 after the line fires; it services the device and calls
 `erx_device:irq_ack(Dev, Line)`, which unmasks the line as its kind
 requires
-([design-kernel.md](design-kernel.md#messages-gates-and-irq-objects)). A
+([design-kernel.md](design-kernel.md#messages-gates-and-irq-objects));
+for a part of RP1 whose entry is level it first writes that entry's
+`IACK` in the function's MSI-X configuration, which the NIF derives from
+the part's entry ([design-rp1.md](design-rp1.md#interrupts)). A
 level-sensitive line stays masked until the acknowledgement, so no device
 can storm the runtime. A process's exit unbinds each line still bound
 under its own label and no other, so the late exit of a driver that

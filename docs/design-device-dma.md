@@ -1522,6 +1522,24 @@ its address width is read from the controller's `AC64`; and its
 `negotiate/2` takes one step a call, answers `{error, ebusy}` until its
 last, and opens both of the controller's interrupt gates.
 
+**The GEM ring form (Cadence GEM).** A fifth form, which the Raspberry
+Pi 5's Ethernet controller uses, is defined with its driver in
+[design-rp1.md](design-rp1.md#the-gem-ring-form) and keeps this design's
+rules. The controller writes status back into the descriptors the CPU
+wrote, so its rings are not one region each: each ring is a sequence
+of granule-sized groups, and each group is a region whose writer moves
+as a buffer's does, the device's from its handover until every
+descriptor the CPU handed in it has reported and the CPU's otherwise,
+with the handing over, taking back and barriers of a buffer. A
+descriptor is handed over by one store of the word that carries
+everything the CPU changes in it, and the CPU never stores into a word
+the controller writes back, so no CPU store lands after a handover; a
+group's handover words are stored with its first descriptor in ring
+order last, so a controller that takes descriptors in order takes none
+of a group whose line an eviction wrote back early;
+receive reports are acquired in the two phases above, and a transmit
+report is one word.
+
 ## The architecture layer
 
 Generic code names cache maintenance and barriers only: `erx_dma_clean`

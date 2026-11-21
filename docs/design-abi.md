@@ -1729,10 +1729,13 @@ bridge's bus range is the tree's fact, which the boot reads. A
 device's `dma_limit` is a device address, exclusive, 0 for none, which
 the packer copies from a bridge's unit into each `pci` row behind it, and
 the function's DMA facts are cut at it
-([design-pcie.md](design-pcie.md#dma)). On QEMU `virt` the manifest's
-platform part carries `msi_frame`, the MSI frame's base, the interrupt
-id of its first line and the count, for the backend that may not read
-the frame's own registers
+([design-pcie.md](design-pcie.md#dma)). On a platform with an MSI frame,
+QEMU `virt` and the Raspberry Pi 5, the manifest's platform part
+carries `msi_frame`: the frame's base, the interrupt id of its first
+line, the count, the row of the bridge it serves, its doorbell
+register's CPU address, the first line's data and its start writes, for
+the backend that may not read the frame's own registers; the doorbell's
+bus address is the tree's fact, which the root derives at boot
 ([design-pcie.md](design-pcie.md#the-msi-frame-on-fiasco)).
 
 A platform's firmware requests reach the system domain in the manifest

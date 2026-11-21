@@ -399,10 +399,11 @@ device never has a range without its coherence.
 **A PCI host bridge.** For a host bridge's row the reader also takes the
 bridge's `ranges`, whose child addresses take the same three cells as
 its `dma-ranges`, an entry of I/O space skipped; its `bus-range`; and its
-`interrupt-map`. `erx_dt_bridge(tree, path, &bridge)` fills the two
+`interrupt-map`. `erx_dt_bridge(tree, path, &bridge)` fills the three
 facts of the tree in the bridge's record, `erx_pcie_bridge` of
-`abi/formats/pcie.txt`, its buses and its windows; the record's row,
-flags and places are the manifest's and the platform record's.
+`abi/formats/pcie.txt`, its buses, its windows and its inbound windows;
+the record's row, flags and places are the manifest's and the platform
+record's.
 
 * **Windows.** Each `ranges` entry is the PCI bus binding's three child
   cells (phys.hi, then the 64-bit PCI address), the parent's address in
@@ -427,12 +428,24 @@ flags and places are the manifest's and the platform record's.
   earlier one in PCI or in CPU space is `malformed` too, so a BAR's PCI
   range translates to one CPU range. More than `pcie_windows_max`
   windows give `ranges`. A bridge without `ranges` has no windows.
-* **Buses.** `bus-range` is two cells, the first bus and the last, each
+* **Inbound windows.** Each `dma-ranges` entry of the bridge, read as
+  the DMA facts read it (the three child cells, an entry of I/O space
+  skipped), its parent range translated to CPU addresses through the
+  levels above by the same walk as the DMA facts, but with no RAM
+  filter, since a bridge's inbound windows may reach device registers,
+  as the Raspberry Pi 5's `pcie2` reaches its MSI receiver
+  ([design-pcie.md](design-pcie.md#the-msi-frame-on-fiasco)). An entry
+  that does not come out whole and in one piece, or that meets an
+  earlier one in PCI space, is `malformed`; more than `pcie_windows_max`
+  give `ranges`. A bridge without `dma-ranges` has no inbound windows,
+  and maps every bus address to the same CPU address. A PCIe function's
+  DMA range is the window of these that RAM backs, cut at its
+  `dma_limit`, which the DMA facts' walk computes over the same bytes.
   at most 255 and the first not above the last (PCI bus binding, section
   3.1.2); anything else is `malformed`. A bridge without it spans buses
   0 to 255, as FreeBSD's host takes them (`pci_host_generic_fdt.c:136-138`).
 
-Any status but `ok` leaves the buses and windows zero, so a record never
+Any status but `ok` leaves the buses and both kinds of window zero, so a record never
 carries part of a bridge's facts; a path that names no node is
 `no_node`, and the root, which has no parent, is `malformed`. The reader cannot tell an ECAM bridge's
 configuration window from another bridge's registers, so a `bus-range`
@@ -648,8 +661,11 @@ ran.
   three-cell `dma-ranges`, a level split 1,024 ways, a host bridge's
   three-cell `ranges` with a memory and an I/O entry, an `interrupt-map`
   with and without an entry for a place's pin, a PCIe function's range
-  cut at its `dma_limit`, and a host bridge's windows and buses in every
-  state `erx_dt_bridge` names). The card's tree
+  cut at its `dma_limit`, a host bridge's windows, inbound windows and
+  buses in every state `erx_dt_bridge` names, and a bridge with the Pi
+  5's `pcie2` windows of [F1.2](research-bcm2712-pcie-mip.md#f12-inbound-windows-many-bars-plus-a-ubus-remap),
+  whose three inbound windows, the MSI receiver's page among them, all
+  reach its record while its functions' DMA range is the RAM one). The card's tree
   leaves the memory node as zeros, so every DMA device there reads
   `ranges` until the firmware fills it. A test fails on any manifest DMA
   device whose facts are absent in its platform's tree, so a board tree
@@ -665,7 +681,9 @@ ran.
   overruns the walk's array under ASan;
   the cut at the DMA limit removed; the wrap check on a bridge window's
   parent range removed, so a window past `2^64 - 1` is taken; the
-  `bus-range` bound removed, so a last bus of 256 reads as 0.
+  `bus-range` bound removed, so a last bus of 256 reads as 0; the RAM
+  filter applied to inbound windows, so `pcie2`'s record loses the MSI
+  receiver's window.
 * **The firmware's edits**, over fixtures made from the card's tree (a
   different `emmc2bus` range, `local-mac-address`, a zero placeholder
   beside a valid `mac-address`, framebuffer nodes in each state). Seeds:

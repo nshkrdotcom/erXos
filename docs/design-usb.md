@@ -521,15 +521,16 @@ file system. Its release script, `usb`, holds the base every domain boots and
 | --- | --- | --- | --- | --- | --- |
 | QEMU `virt` | `qemu-xhci`, PCI `1b36:000d` on the root bus | a PCIe function by place, through the PCIe domain | one message on the MSI frame, by MSI-X | confined by the IOMMU on erXos's kernel, which covers the root bus; unconfined on Fiasco, whose harness starts no IOMMU | outside the trusted base on erXos's kernel; in it on Fiasco |
 | Raspberry Pi 4 | the VL805, PCI `1106:3483` at bus 1, device 0, function 0 behind the `brcm,bcm2711-pcie` bridge | a PCIe function by place, with its INTx line as one unit | the bridge's INTx line for that position | unconfined; the board has no IOMMU | in the trusted base, as every Pi 4 DMA device's domain is ([design.md](design.md#trust-placement)) |
-| Raspberry Pi 5 | RP1's two DWC3 hosts, parts `usb0` and `usb1` of RP1's function behind the BCM2712's `pcie2` | a part of RP1's unit: a 1 MiB window in RP1's BAR 1, no PCIe place of its own ([design-rp1.md](design-rp1.md#the-usb-hosts)) | its own entry of RP1's MSI-X table, 31 and 36, edge | unconfined; the board has no IOMMU on RP1's path | the `rp1` domain, which holds RP1's unit and lends its Ethernet; in the trusted base |
+| Raspberry Pi 5 | RP1's two DWC3 hosts, parts `usb0` and `usb1` of RP1's function behind the BCM2712's `pcie2` | a part of RP1's unit: the xHCI registers of a host's 1 MiB in RP1's BAR 1, up to its DWC3 globals at `0xc100`, no PCIe place of its own ([design-rp1.md](design-rp1.md#the-usb-hosts)) | its own entry of RP1's MSI-X table, 31 and 36, edge | unconfined; the board has no IOMMU on RP1's path | the `rp1` domain, which holds RP1's unit and lends its Ethernet; in the trusted base |
 
 On the Raspberry Pi 5 one domain runs two controllers: one `erx_usb_sup`
 tree for each, each with its own drives and input tree, named by its own
 part's row. RP1's function driver, not the controller process, opens
-and masters the function and runs each host's DWC3 step before its
-tree starts, so the controller process runs as for any controller that
-is not a PCIe function
-([design-rp1.md](design-rp1.md#the-usb-hosts)).
+the function and runs each host's DWC3 step before its tree starts; the
+controller process sends no `open`, and at step 4 sends its `master`
+to RP1's function driver, `erx_rp1:master/1`, which answers once every
+part of RP1 has reset its device and the function masters
+([design-rp1.md](design-rp1.md#mastering)).
 
 A development build's manifest may put the controller in another domain,
 the display domain for instance, as it may merge other driver domains
@@ -1858,7 +1859,9 @@ nonblocking:
    ([Install](#install)); the call that ends the reset writes a PCIe
    function's MSI-X table and answers `reset`, on which a PCIe
    function's controller sends `master` through the facet, which makes
-   the route live and turns bus mastering on, and goes on at once with
+   the route live and turns bus mastering on, and a part's controller
+   calls its function's driver instead
+   ([design-rp1.md](design-rp1.md#mastering)), and goes on at once with
    the call that installs, whose registers make the controller read and
    write memory; a refusal of `master` fails the controller as a refused
    install does;

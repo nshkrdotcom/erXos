@@ -2543,7 +2543,8 @@ first boot comes before a serial cable is wired, so it is judged by the
 signs that exist already, with no new mechanism: the firmware's LED
 codes and HDMI diagnostics, the display's splash only where the firmware
 hands over a framebuffer, and the watchdog's reset loop
-([design-platforms.md](design-platforms.md#the-raspberry-pi-5-on-fiasco)).
+([design-platforms.md](design-platforms.md#the-raspberry-pi-5-on-fiasco));
+only the splash or the serial banner proves that the kernel ran.
 The watchdog is the Pi 4's driver. RP1 is one unit in the `rp1` domain,
 which lends Ethernet to the network domain through `ether` and is the
 USB domain of both hosts. Which device tree ships is open
@@ -2557,37 +2558,43 @@ comes first and (b) as soon as the cable is there; (c), (d) and (g) need
 
 * **(a) The card and a headless first boot.** `config/platforms/raspi5.json`
   and `config/manifest/raspi5-development.txt`; the boot partition writer's
-  Pi 5 lines; the Pi 4's card layout. The first boot passes when the
-  firmware's screen shows the kernel loaded and the board then neither
-  resets nor shows a firmware error for five minutes, and fails when the
-  watchdog's loop repeats.
+  Pi 5 lines; the Pi 4's card layout. The firmware's screen showing the
+  kernel file loaded is recorded as "loaded, execution unverified": a
+  kernel that hangs before the root arms the watchdog leaves the board
+  as quiet as one that runs (FD29), so (a) proves the card, not the
+  boot.
 * **(b) The serial console and the boot probe.** The shell on `uart10`,
-  and the boot probe's research record,
-  `research-rpi5-board-pass.md`, with every probe item below.
+  the first proof that the kernel runs, and the boot probe's research
+  record, `research-rpi5-board-pass.md`, with (b)'s probe items below;
+  each later part adds its own items to the record.
 * **(c) Storage on the SD controller.** `sdio1` as the block driver's
-  device process, after a Pi 5 section of
-  [design-storage.md](design-storage.md#the-sd-host-controller) gives
-  its card power, card detect and 1.8 V lines on the always-on GPIO bank.
+  device process, as
+  [design-storage.md](design-storage.md#the-raspberry-pi-5s-controller)
+  gives it: the Pi 4's driver with the Pi 5's record.
 * **(d) The bridge and the MIP.** `erx_pcie_bcm2712` with its keep-only
   start, kept layouts, the walk's device-0 rule, the MSI frame's doorbell,
   data and start writes, and several messages per function
   ([design-pcie.md](design-pcie.md#the-bridge-seam)); RP1 is enumerated
   and each part's entry raises its line.
 * **(e) RP1's unit.** Part rows, `erx_rp1` with its clocks read first, the
-  MSI-X configuration and the acknowledge word
+  MSI-X configuration, the vector's acknowledge in the NIF, mastering
+  after every part's reset, and the hosts' cores held in reset while no
+  part names them
   ([design-rp1.md](design-rp1.md#the-construction-a-function-and-its-parts)).
+  The platform record lists `eth` from (f) on and the USB parts from
+  (h) on, each with its driver, so Ethernet needs nothing of USB.
 * **(f) Ethernet.** `erx_cgem`, the GEM ring form, `cgem0` lent through
   `ether` ([design-rp1.md](design-rp1.md#the-ethernet-controller)); then
   SSH's stage 1 over it as on the Pi 4.
 * **(g) The display.** The kiosk on the firmware's framebuffer, as on
   the Pi 4, if the probe finds one in the tree the firmware passes; if it
   does not, this part waits for a display design for the Pi 5.
-* **(h) USB.** The DWC3 step and both hosts under the unchanged xHCI
-  stack ([design-rp1.md](design-rp1.md#the-usb-hosts)).
+* **(h) USB.** The parts `usb0` and `usb1`, the DWC3 step and both hosts
+  under the xHCI stack ([design-rp1.md](design-rp1.md#the-usb-hosts)).
 
 **Dependencies.** (a) and (b) on 1b-I's part (a) and the platform's
-record format; (c) on 1b-I's part (b) and the storage design's Pi 5
-section; (d) on the PCIe design's implementation in 1b-E; (f) on 1b-G
+record format; (c) on 1b-I's part (b); (d) on the PCIe design's
+implementation in 1b-E; (f) on 1b-G
 and WiFi's `ether` interface; (g) on 1b-C's part 3; (h) on Track U's part
 (a). Nothing in 1b-I waits on this stage.
 
@@ -2595,58 +2602,70 @@ and WiFi's `ether` interface; (g) on 1b-C's part 3; (h) on Track U's part
 seeded fault, as [design-rp1.md](design-rp1.md#verification) and
 [design-pcie.md](design-pcie.md#verification) list them: the BCM2712
 start's decision, kept layouts, the walk's rule, several messages, the
-packer's MSI frame, `erx_rp1_core`'s clocks and vectors, the acknowledge
-word, `erx_cgem_core`, `erx_cgem_mdio`, the GEM ring form and its fuzz
-target, the DWC3 step. The board passes are by hand, with a checklist
-per part, as the Pi 4's.
+packer's MSI frame, the doorbell's bus address, `erx_rp1_core`'s clocks
+and vectors, mastering, the vector's acknowledge, a USB part's window,
+`erx_cgem_core`, `erx_cgem_mdio`, the GEM ring form and its fuzz target,
+the DWC3 step. The board passes are by hand, with a checklist per part,
+as the Pi 4's.
 
-**Board probes.** Recorded in (b)'s research record:
+**Board probes.** Recorded in (b)'s research record, each result beside
+the firmware's version, the `config.txt` it booted with and the tree it
+passed, and each with the part that consumes it:
 
-* the load address, the CPU's state at entry, the device tree's place,
-  whether `os_check=0` suffices, and whether the firmware's BL31 prints
-  once the kernel runs;
-* the console's divisor and from it the UART's clock;
-* the watchdog: a hang resets the board within the timeout;
-* the tree the firmware passes: `/chosen`, the memory node, any
-  framebuffer node and where it lies, the `ethernet0` alias's address;
-* `pcie2` as the bootloader leaves it with `pciex4_reset=0` and with the
-  default: the status bits, the inbound windows and UBUS remaps, the
-  outbound windows, PERST#; whether a write across a dropped link raises
-  an error;
-* the MIP's twelve registers before the root writes them; that SPI 128
-  plus the data fires for each part's entry; which lines `mip1` raises,
-  for the record;
-* RP1's snapshot: its BARs' addresses and sizes, its MSI-X table's BAR
-  and offset;
-* RP1's clocks: the system PLL's lock, power bits and dividers, and the
-  `SEL` and `CTRL` of `clk_sys`, `clk_eth` and `clk_eth_tsu`, from which
-  the PLL's power-bit polarity and VCO rate are settled;
-* whether the GEM and the USB hosts are running at entry, and GPIO 32's
-  level;
-* the GEM's `DCFG6` (64-bit addressing, priority queues) and
-  `DESIGN_CFG1`; whether its transmit resumes at the stopped descriptor;
-  how long its receive takes to stop;
-* whether RP1's writes through `pcie2` are coherent with the CPUs'
-  caches.
+* (b): the load address, the CPU's state at entry, the device tree's
+  place, whether `os_check=0` suffices, and whether the firmware's BL31
+  prints once the kernel runs; the console's divisor and from it the
+  UART's clock; the watchdog: a hang injected after the root arms it
+  resets the board within the timeout; the tree the firmware passes:
+  `/chosen`, the memory node, any framebuffer node and where it lies,
+  the `ethernet0` alias's address;
+* (c): the SD controller's items
+  ([design-storage.md](design-storage.md#the-raspberry-pi-5s-controller));
+* (d): `pcie2` as the bootloader leaves it with `pciex4_reset=0` and with
+  the default: the status bits, the inbound windows and UBUS remaps, the
+  outbound windows, PERST#; with the link dropped, a configuration read
+  and write and a BAR read and write, each bounded and reported; the
+  MIP's twelve registers before the root writes them; RP1's snapshot:
+  its BARs' addresses and sizes, its MSI-X table's BAR and offset;
+* (e): RP1's clocks: the system PLL's lock and dividers, and the `SEL`,
+  `CTRL` and `DIV_INT` of `clk_sys`, `clk_eth` and `clk_eth_tsu`; whether
+  the GEM and the USB hosts are running at entry; GPIO 32's level; each
+  part's entry raised by RP1 through `MSIX_CFG`'s test bit, delivered on
+  its line with the data its message carries;
+* (f): the GEM's `DCFG6` (64-bit addressing, priority queues) and
+  `DESIGN_CFG1`; the PHY's identity, its RGMII delays and the speeds it
+  links at; whether transmit resumes at the stopped descriptor; how long
+  receive takes to stop, and whether a frame can land after it; under a
+  stress of short frames, that each frame's length and status match its
+  bytes (the controller's `OWN` after its status) and that receive goes
+  on after running out of descriptors; whether RP1's writes through
+  `pcie2` are coherent with the CPUs' caches;
+* (h): GPIO 42's and 43's function and pads, the ports' VBUS power and
+  over-current input.
 
 **Exit criteria.**
 
-* (a): the headless boot passes its five minutes, and a card whose
-  kernel file is renamed fails it, the firmware showing its error.
+* (a): the firmware reports the kernel file loaded, recorded as loaded
+  with execution unverified, and a card whose kernel file is renamed
+  shows the firmware's error.
 * (b): the Pi 5 boots to the shell on `uart10` with the development
-  banner, and the boot probe's research record is written.
+  banner, and (b)'s probe items are recorded.
 * (c): the Pi 4's power-cut checklist passes on the Pi 5's card.
 * (d): the PCIe domain lists RP1 with its kept BARs; a test write of each
   part's message to the MIP's doorbell raises that part's line; the host
   tests pass, each failing on its seeded fault.
-* (e): `erx_rp1` starts and logs its readings; a level vector held
-  high through `MSIX_CFG`'s test bit across the acknowledge is delivered
-  again, and is not when the acknowledge word is left out of the record;
-  the host tests pass.
-* (f): UDP echo and a TCP bulk transfer to a peer over `cgem0`; the
-  `rp1` domain killed under load restarts and `cgem0` comes back; a
-  cable pulled and replaced brings the link down and up; the GEM ring
-  form's fuzz budget runs clean; `ssh root@` the board reaches `rc`.
+* (e): `erx_rp1` starts and logs its readings; the function masters only
+  after the GEM's reset, which the log's order shows; a level vector
+  held high through `MSIX_CFG`'s test bit across the acknowledge is
+  delivered again, and is not when the NIF's `IACK` is left out; a GEM
+  driver killed between a delivery and its acknowledge has its
+  successor delivered the held-high vector; the host tests pass.
+* (f): UDP echo and a TCP bulk transfer to a peer over `cgem0`; under
+  traffic, the GEM's driver, `erx_rp1` and the PCIe domain each killed in
+  turn, and `cgem0` comes back each time; the `rp1` domain killed under
+  load restarts and `cgem0` comes back; a cable pulled and replaced
+  brings the link down and up; the GEM ring form's fuzz budget runs
+  clean; `ssh root@` the board reaches `rc`.
 * (g): the kiosk's frame read back from the framebuffer equals QEMU's,
   where the part can be built.
 * (h): a keyboard on each host types into the shell; a USB stick on
