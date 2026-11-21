@@ -15,14 +15,12 @@
 
 #include "liberx/backend/core/handles.h"
 
-/* A handle's number bits: the entry's index plus one. */
-#define HANDLE_NUMBER_MASK	((UINT64_C(1) << ERX_CAP_SLOT_BITS) - 1)
 
 _Static_assert(ERX_CAP_SLOT_BITS + ERX_CAP_GENERATION_BITS == 64, "a handle is an entry's number and its generation");
 /* The grow table's limit bounds every table, the root's included, whatever limit it was opened with. */
 _Static_assert((uint64_t)ERX_BACKEND_GROW_PAGES_MAX * (ERX_PAGE_SIZE / sizeof(erx_backend_handle_entry_t)) <= ERX_CAPS_MAX,
     "every entry's number is at most caps_max");
-_Static_assert(ERX_CAPS_MAX < (ERX_CAP_SELF_THREAD & HANDLE_NUMBER_MASK) && ERX_CAPS_MAX < (ERX_CAP_SELF & HANDLE_NUMBER_MASK),
+_Static_assert(ERX_CAPS_MAX < (ERX_CAP_SELF_THREAD & ERX_BACKEND_HANDLE_NUMBER_MASK) && ERX_CAPS_MAX < (ERX_CAP_SELF & ERX_BACKEND_HANDLE_NUMBER_MASK),
     "no entry's number is a reserved value's");
 
 static int	handle_lookup(const erx_backend_grow_table_t *, const erx_backend_handles_t *, uint64_t, uint32_t, uint32_t,
@@ -169,14 +167,17 @@ erx_backend_handle_find(const erx_backend_grow_table_t *objects, const erx_backe
 
 int
 erx_backend_handle_dup(erx_backend_grow_table_t *objects, erx_backend_handles_t *handles, uint64_t handle,
-    uint64_t *copy)
+    uint64_t *copy, uint32_t *index, uint32_t *rights)
 {
 	const erx_backend_handle_entry_t *entry;
 	const int status = handle_lookup(objects, handles, handle, ERX_BACKEND_OBJECT_ANY, 0, &entry);
 
 	if (status != ERX_OK)
 		return (status);
-	return (erx_backend_handle_add(objects, handles, entry->object - 1, entry->rights, copy));
+	/* The add may grow the table, so the entry is read before it. */
+	*index = entry->object - 1;
+	*rights = entry->rights;
+	return (erx_backend_handle_add(objects, handles, *index, *rights, copy));
 }
 
 int
@@ -187,7 +188,7 @@ erx_backend_handle_close(erx_backend_grow_table_t *objects, erx_backend_handles_
 
 	if (entry == NULL)
 		return (ERX_ESTALE);
-	entry_close(objects, handles, (uint32_t)(handle & HANDLE_NUMBER_MASK), freed, index);
+	entry_close(objects, handles, (uint32_t)(handle & ERX_BACKEND_HANDLE_NUMBER_MASK), freed, index);
 	return (ERX_OK);
 }
 
@@ -276,7 +277,7 @@ entry_slot(const erx_backend_handles_t *handles, uint32_t slot)
 static erx_backend_handle_entry_t *
 entry_in_use(const erx_backend_handles_t *handles, uint64_t handle)
 {
-	const uint64_t number = handle & HANDLE_NUMBER_MASK;
+	const uint64_t number = handle & ERX_BACKEND_HANDLE_NUMBER_MASK;
 	erx_backend_handle_entry_t *entry;
 
 	if (number == 0 || number > entries_usable(handles))

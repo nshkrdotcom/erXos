@@ -36,6 +36,7 @@
 #include "liberx/backend/fiasco/budget.h"
 #include "liberx/backend/fiasco/fault_gate.h"
 #include "liberx/backend/fiasco/object.h"
+#include "liberx/backend/fiasco/root_layout.h"
 #include "liberx/backend/fiasco/service_task.h"
 #include "liberx/backend/fiasco/slice.h"
 #include "liberx/backend/fiasco/thread.h"
@@ -48,7 +49,7 @@
 #define TASK_SLOT_GATE		(2 * ERX_FIASCO_THREADS_MAX)
 #define TASK_SLOT_SPACE		(TASK_SLOT_GATE + 1)
 #define TASK_SLOT_ENDED		(TASK_SLOT_GATE + 2)
-#define TASK_SLOTS		(TASK_SLOT_GATE + 3)
+_Static_assert(TASK_SLOT_ENDED + 1 == ERX_FIASCO_TASK_SLOTS, "the run holds the three slots past the threads");
 
 /* What erx_space_create hands the fill of its space record. */
 typedef struct task_create {
@@ -216,7 +217,7 @@ erx_fiasco_task_created_by(uint32_t task, uint32_t caller)
 static uint64_t
 task_slot(uint32_t task, uint32_t slot)
 {
-	return (erx_fiasco_root_slot_cap(ERX_FIASCO_SLOT_TASK_RUNS + (task - 1) * TASK_SLOTS + slot));
+	return (erx_fiasco_root_slot_cap(ERX_FIASCO_SLOT_TASK_RUNS + (task - 1) * ERX_FIASCO_TASK_SLOTS + slot));
 }
 
 /* The first thread's capability is the one the kernel gave it. */
@@ -326,7 +327,8 @@ erx_fiasco_task_create_body(uint32_t caller, const erx_fiasco_space_create_reque
 	task_create_t create = { .request = request };
 	int status;
 
-	if ((flags & ~(uint64_t)ERX_SPACE_JIT) != 0 || cap_limit < 2 || cap_limit > ERX_CAPS_MAX)
+	if ((flags & ~(uint64_t)ERX_SPACE_JIT) != 0 || cap_limit < 2 ||
+	    cap_limit > ERX_FIASCO_CAP_LIMIT_MAX)
 		return (ERX_EINVAL);
 	status = task_space_named(caller, request->parent, &create.parent);
 	if (status == ERX_OK)
@@ -357,8 +359,11 @@ task_fill_space(uint32_t record, const void *argument)
 
 	while (task < erx_backend_grow_table_capacity(&task_rows) && erx_fiasco_task(task)->state != ERX_FIASCO_TASK_ABSENT)
 		task++;
-	/* A row past the capacity takes a page that stays the table's if the range table cannot open. */
-	if (erx_backend_grow_table_room(&task_rows, task + 1) != ERX_OK ||
+	/*
+	 * A row past the capacity takes a page that stays the table's if the range table cannot
+	 * open; a task past the root's runs would place past its object space.
+	 */
+	if (task > ERX_FIASCO_TASK_RUNS_MAX || erx_backend_grow_table_room(&task_rows, task + 1) != ERX_OK ||
 	    erx_backend_grow_table_room(&task_spaces, record + 1) != ERX_OK)
 		return (ERX_ENOMEM);
 	/* As on erXos's kernel, the limit counts slot 0, ERX_CAP_NULL, which no entry is. */

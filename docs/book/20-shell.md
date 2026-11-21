@@ -601,8 +601,9 @@ boot or at `service NAME start`; that is designed and not built.
 > (`pty-req`), then for a shell (`shell`) or one command (`exec`), and
 > carries the bytes both ways.
 >
-> <!-- check: RFC 4252 publickey; RFC 4254 channels, pty-req, shell,
-> exec, window-change -->
+> (RFC 4252, section 7, defines the `publickey` method; RFC 4254 defines
+> channels and the `pty-req`, `shell`, `exec` and `window-change`
+> requests.)
 
 The design fits in one sentence: an SSH connection is a login line, and
 each of its channels is a tty master ([design-ssh.md, An SSH connection

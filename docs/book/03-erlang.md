@@ -553,7 +553,7 @@ sequenceDiagram
     participant W2 as new driver worker
     W->>W: meets an unexpected case
     W-->>S: exit signal, reason {badmatch, ...}
-    S->>S: one_for_one; within restart limit
+    S->>S: one_for_one, within restart limit
     S->>W2: start from the child specification
     W2-->>S: started, registers its name
     Note over T: sees nothing
@@ -1102,7 +1102,7 @@ section 3.3 describes. **Built**: the display and input drivers are
 Erlang processes ([the top-level README, Current status](../../README.md#current-status)). A test under QEMU, the
 machine emulator erXos's tests run on, kills the disk's driver in the
 middle of a transfer. It finds each kept file cut at a sync (**Built**).
-[Chapter 15](README.md#chapter-15-devices-and-drivers) treats drivers.
+[Chapter 15](15-devices.md) treats drivers.
 
 ### 3.9.4 A functional core, with a behaviour at the edge
 

@@ -726,8 +726,6 @@ enum fiasco_call u32
   value gate_wait 31
   value irq_create 32
   value irq_bind 33
-  value irq_ack 34
-  value irq_trigger 35
   value time_set_offset 36
   value irq_unbind 37
   value gate_cancel 38

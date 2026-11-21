@@ -24,8 +24,8 @@
 devices, file systems, journals), [chapter 10](10-domains.md)
 (domains and how one ends), [chapter 11](11-security.md) (facets and
 file grants), and the outlines of chapters
-[14](README.md#chapter-14-files-namespaces-and-service-trees) and
-[15](README.md#chapter-15-devices-and-drivers) (file servers and
+[14](14-files.md) and
+[15](15-devices.md) (file servers and
 drivers).
 
 A Raspberry Pi in a kiosk loses power whenever someone trips over the
@@ -40,8 +40,8 @@ ZFS, keeps a file system consistent across a crash. `freebsd-update`
 replaces system files in place, and ZFS boot environments let an
 administrator keep the old system as a snapshot to boot if the new one
 fails. `nextboot` boots a different kernel once and falls back on the
-next reboot. <!-- check: ZFS boot environments as described (bectl(8)
-not read) --> These file systems run in the kernel, so a bug in a file
+next reboot (FreeBSD Project, bectl(8), nextboot(8)). These file
+systems run in the kernel, so a bug in a file
 system's parser is a kernel bug, and a crafted disk image is an attack
 on the kernel.
 
@@ -742,5 +742,5 @@ record's layout is built, and the trial and commit are designed.
   <https://www.raspberrypi.com/documentation/computers/config_txt.html>:
   the firmware's A/B boot.
 * Ralph Merkle, "A Digital Signature Based on a Conventional Encryption
-  Function", CRYPTO, 1987: the hash tree.
-  <!-- check: citation -->
+  Function", in *Advances in Cryptology - CRYPTO '87*, Lecture Notes in
+  Computer Science 293, Springer, 1988, pp. 369-378: the hash tree.

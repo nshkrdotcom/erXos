@@ -694,13 +694,13 @@ The record is **Built**; the system-domain QEMU suite crashes the
 system domain's runtime and reads the record from the serial log
 (`tools/lib/erx/qemu_suites/system_domain.rb`).
 
-On Fiasco no memory region survives the reset. The design keeps the
-record in such a region where the platform has one, for the system
-shell to read at `[kernel, crash]`, and gives release builds a **brief
-form** with no registers, stack or log
+No memory region survives the reset, so the record lives only in the
+console's output: the harness's log on QEMU, and whatever is wired to
+the Pi's UART. The record's layout also has a **brief form**, with no
+registers, stack or log, for release builds
 ([design-system.md, The crash record](../design-system.md#the-crash-record)).
-Both are designed and not built; the root always writes the full
-form.
+The brief form is designed and not built; the root always writes the
+full form.
 
 A crash of any other domain ends only that domain, whose runtime
 writes its dump into the domain's crash area
@@ -786,8 +786,8 @@ system domain carry no term.
   root service reports on Fiasco, and why the rest is unsupported.
 * `abi/inspection.txt`: every path, kind, attribute and reporter.
 * David A. Moon, "Symbolics Architecture", *IEEE Computer* 20(1),
-  1987: the Lisp machine whose live, inspectable environment this
-  chapter follows. <!-- check: citation details. -->
+  January 1987, pp. 43-52: the Lisp machine whose live, inspectable
+  environment this chapter follows.
 * Stuart Cheshire and Mary Baker, "Consistent Overhead Byte Stuffing",
-  *IEEE/ACM Transactions on Networking* 7(2), 1999: the framing of the
-  host link. <!-- check: citation details. -->
+  *IEEE/ACM Transactions on Networking* 7(2):159-172, 1999: the framing of the
+  host link.

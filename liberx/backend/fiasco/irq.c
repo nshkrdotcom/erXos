@@ -7,8 +7,9 @@
  * The IRQ calls' bodies, on the service, which alone touches this table
  * (docs/design-fiasco.md, "Interrupts and readiness"). An IRQ object is an object
  * record of kind IRQ, any task's to make as a doorbell and the root's alone as a line or an MSI,
- * and any holder's to trigger, ack and bind; its kernel object sits in one of the root's
- * slots, kept here with its bind. The root binds
+ * and any holder's to bind; its kernel object sits in one of the root's slots, kept here
+ * with its bind. A holder triggers and acks it itself, on the capability erx_fiasco_irq_place
+ * put at its entry's IRQ slot, with no request (docs/design-fiasco.md, "Handles"). The root binds
  * into any group it holds, as the domain library binds a domain's bell, and the root's own
  * drivers their lines; another holder binds only within the group it is the home of or
  * a group it created (irq_group_allowed).
@@ -22,7 +23,8 @@
  * detached object. A bind goes with its group, whose end detaches the object. A bound
  * line stays masked until the holder's first ack after the bind (docs/design-kernel.md,
  * "IRQ objects"), and from each delivery until its ack, which is Fiasco's own behaviour
- * for a level interrupt; an ack while the bind waits opens the line once it is made.
+ * for a level interrupt. The ack is the holder's own unmask, so one made while the bind
+ * waits reaches an object with no receiver and opens nothing the make keeps.
  *
  * An MSI object is a line of the manifest's MSI frame, the lowest that no object holds
  * (msi_lines.c), set edge-triggered and bound as a line is; its create answers the
@@ -47,6 +49,8 @@
 #include "liberx/backend/fiasco/group.h"
 #include "liberx/backend/fiasco/msi_lines.h"
 #include "liberx/backend/fiasco/object.h"
+#include "liberx/backend/fiasco/root_layout.h"
+#include "liberx/backend/fiasco/service.h"
 #include "liberx/backend/fiasco/service_task.h"
 #include "liberx/backend/fiasco/service_wire.h"
 #include "liberx/backend/fiasco/thread.h"
@@ -68,7 +72,6 @@ typedef struct irq_object {
 	uint32_t	group;	/* the group record's index plus one, or IRQ_UNBOUND */
 	uint32_t	entry;	/* its entry in the group, while bound */
 	bool		made;	/* bound to the home's dispatcher, not waiting */
-	bool		opened;	/* acknowledged since the bind, so a line may deliver once made */
 	uint64_t	label;	/* the caller's, which the home's label page holds once made */
 } irq_object_t;
 
@@ -138,8 +141,8 @@ irq_free_entry(uint32_t group)
 
 /*
  * Tries to make a waiting bind: once its group has a home with a dispatcher, stores
- * the label, binds the object to the dispatcher, setting made, and lets a line deliver
- * if the holder has acknowledged it since the bind.
+ * the label and binds the object to the dispatcher, setting made; a line stays masked
+ * until the holder's ack.
  * Before then the bind keeps waiting, made stays false, and the result is ERX_OK; a
  * refusal of the label page or of the kernel's bind is ERX_EINVAL.
  */
@@ -157,8 +160,6 @@ irq_try_make(irq_object_t *object)
 	    object->entry)) < 0)
 		return (ERX_EINVAL);
 	object->made = true;
-	if (object->opened)
-		(void)l4_irq_unmask(irq_cap(object));
 	return (ERX_OK);
 }
 
@@ -179,7 +180,6 @@ irq_unbind(irq_object_t *object)
 	}
 	object->group = IRQ_UNBOUND;
 	object->made = false;
-	object->opened = false;
 }
 
 /*
@@ -376,32 +376,24 @@ erx_fiasco_irq_unbind_body(uint32_t task, uint64_t irq)
 }
 
 int
-erx_fiasco_irq_ack_body(uint32_t task, uint64_t irq)
+erx_fiasco_irq_place(uint32_t task, uint32_t record, uint64_t handle, uint32_t rights)
 {
-	irq_object_t *object;
-	const int status = irq_named(task, irq, &object);
+	const uint32_t index = ERX_BACKEND_HANDLE_NUMBER(handle) - 1;
 
-	/*
-	 * An object not bound has no receiver, so its ack opens nothing; a bound one's first
-	 * ack opens it, now or, while the bind waits, when it is made.
-	 */
-	if (status != ERX_OK || object->group == IRQ_UNBOUND)
-		return (status);
-	object->opened = true;
-	if (object->made)
-		(void)l4_irq_unmask(irq_cap(object));
-	return (ERX_OK);
+	if ((rights & (ERX_HR_TRIGGER | ERX_HR_ACK)) == 0)
+		return (ERX_OK);
+	return (l4_error(l4_task_map(erx_fiasco_task_cap(task), L4_BASE_TASK_CAP,
+	    l4_obj_fpage(irq_cap(irq_of(record)), 0, L4_CAP_FPAGE_RO),
+	    l4_map_obj_control(erx_fiasco_irq_slot_cap(index), L4_MAP_ITEM_MAP))) < 0 ? ERX_ENOMEM : ERX_OK);
 }
 
-int
-erx_fiasco_irq_trigger_body(uint32_t task, uint64_t irq)
+void
+erx_fiasco_irq_unplace(uint32_t task, uint64_t handle)
 {
-	irq_object_t *object;
-	const int status = irq_named(task, irq, &object);
+	const uint32_t index = ERX_BACKEND_HANDLE_NUMBER(handle) - 1;
 
-	if (status == ERX_OK)
-		(void)l4_irq_trigger(irq_cap(object));
-	return (status);
+	(void)l4_task_unmap(erx_fiasco_task_cap(task), l4_obj_fpage(erx_fiasco_irq_slot_cap(index), 0, L4_CAP_FPAGE_RWSD),
+	    L4_FP_ALL_SPACES);
 }
 
 void
@@ -435,3 +427,56 @@ erx_fiasco_irq_group_end(uint32_t record)
 		if (irq_objects[slot].group == record + 1)
 			irq_unbind(&irq_objects[slot]);
 }
+
+#ifdef ERX_FIASCO_TEST_HOOKS
+static bool
+irq_slot_empty(l4_cap_idx_t slot)
+{
+	return (l4_msgtag_label(l4_task_cap_valid(L4_BASE_TASK_CAP, slot)) == 0);
+}
+
+static void
+irq_probe_place(l4_cap_idx_t from, l4_cap_idx_t to)
+{
+	(void)l4_task_map(L4_BASE_TASK_CAP, L4_BASE_TASK_CAP, l4_obj_fpage(from, 0, L4_CAP_FPAGE_RO),
+	    l4_map_obj_control(to, L4_MAP_ITEM_MAP));
+}
+
+/*
+ * The boot probe of docs/design-fiasco.md, "Handles": in the root's own space, a capability
+ * placed at slot 65,535, the last slot of the last window erx_space_create admits, holds,
+ * one at 65,536 is refused, and the slot before them stays empty; a selector 2^39 above
+ * that empty slot does not reach it either. The root's slot 65,535 is its last task run's,
+ * which a test machine never makes. The capability is the one placed for the root's
+ * handle irq; the result is NULL, or the failure line.
+ */
+const char *
+erx_fiasco_test_object_space_probe(uint64_t irq)
+{
+	const l4_cap_idx_t placed = (l4_cap_idx_t)erx_fiasco_irq_slot_cap(ERX_BACKEND_HANDLE_NUMBER(irq) - 1);
+	const l4_cap_idx_t last = (l4_cap_idx_t)(ERX_FIASCO_OBJ_SPACE_SLOTS - 1) << L4_CAP_SHIFT;
+	const l4_cap_idx_t before = last - L4_CAP_OFFSET, past = last + L4_CAP_OFFSET;
+	const l4_cap_idx_t alias = before + ((l4_cap_idx_t)1 << (39 + L4_CAP_SHIFT));
+	const char *reason = NULL;
+
+	_Static_assert(ERX_FIASCO_IRQ_SLOT_BASE + ERX_FIASCO_CAP_LIMIT_MAX - 2 == ERX_FIASCO_OBJ_SPACE_SLOTS - 1,
+	    "the last window's last slot is the object space's");
+	_Static_assert(ERX_FIASCO_SLOT_FIRST + ERX_FIASCO_THREADS_MAX + ERX_FIASCO_SLOT_END == ERX_FIASCO_OBJ_SPACE_SLOTS,
+	    "the root's last task run ends at the object space's last slot");
+	if (irq_slot_empty(placed) || !irq_slot_empty(before) || !irq_slot_empty(last))
+		return ("erx: irq: the probe's slots are not as the layout says FAILED\n");
+	irq_probe_place(placed, last);
+	if (irq_slot_empty(last) || l4_msgtag_label(l4_task_cap_equal(L4_BASE_TASK_CAP, placed, last)) != 1)
+		reason = "erx: irq: no capability at the object space's last slot FAILED\n";
+	irq_probe_place(placed, past);
+	if (reason == NULL && !irq_slot_empty(past))
+		reason = "erx: irq: a capability past the object space's last slot FAILED\n";
+	irq_probe_place(placed, alias);
+	if (reason == NULL && (!irq_slot_empty(before) || irq_slot_empty(last)))
+		reason = "erx: irq: a selector 2^39 above a slot reached it FAILED\n";
+	(void)l4_task_unmap(L4_BASE_TASK_CAP, l4_obj_fpage(last, 0, L4_CAP_FPAGE_RWSD), L4_FP_ALL_SPACES);
+	if (reason == NULL && !irq_slot_empty(last))
+		reason = "erx: irq: the probe's capability stayed FAILED\n";
+	return (reason);
+}
+#endif

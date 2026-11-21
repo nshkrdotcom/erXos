@@ -625,7 +625,7 @@ for what counts as evidence.
   whose sites are not written yet is marked pending and fails the moment a
   file it awaits appears.
 * **Seeds** (`make check-native-seeds`, `make check-qemu-mutant`). Each
-  seeded failure of the native threads, watchdog and interrupt suites must
+  seeded failure of the native threads, watchdog, task and interrupt suites must
   make its suite fail. A failure seeded into a copy of the Fiasco backend
   must make the QEMU gate fail, while an unmutated copy passes.
 * **Stack proof** (`make check-stack-proof`, part of `make check`). The
@@ -804,9 +804,10 @@ make check-cbmc
 make check-litmus
 ```
 
-* **Reproducibility** keeps both full `ERXPACK` structural test fixtures
-  and a report under `build/reproducible/`, and checks their structure,
-  executable and provenance.
+* **Reproducibility** builds the production image and its medium twice
+  from clean, for QEMU `virt` and for the Raspberry Pi 4, compares the
+  two builds byte for byte, and keeps both and a `result.json` naming
+  any part that differs under `build/reproducible/`.
 * **Sanitizers** run the host C readers, the `ERXPACK` validator and the
   ELF planner under ASan and UBSan, and the generated atomic accessor
   test and the concurrency tests of the budget, capability, lane and log

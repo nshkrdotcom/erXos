@@ -27,6 +27,7 @@
 #include "liberx/backend/fiasco/lock.h"
 #include "liberx/backend/fiasco/log.h"
 #include "liberx/backend/fiasco/park.h"
+#include "liberx/backend/fiasco/root_layout.h"
 #include "liberx/backend/fiasco/service.h"
 #include "liberx/backend/fiasco/thread.h"
 #include "liberx/backend/fiasco/thread_claim.h"
@@ -43,7 +44,7 @@
 #define THREAD_TABLE		ERX_FIASCO_AREA_START
 #define THREAD_UTCB_AREA	UINT64_C(0xf00000000)
 /* A capability slot past the fixed ones: semaphores, then threads. */
-#define THREAD_SLOT(n)		(L4_BASE_CAPS_LAST + (((uint64_t)(n) + 1) << L4_CAP_SHIFT))
+#define THREAD_SLOT(n)		((ERX_FIASCO_SLOT_FIRST + (uint64_t)(n)) << L4_CAP_SHIFT)
 #define REAPER_STACK_BYTES	16384u
 
 _Static_assert(sizeof(erx_fiasco_start_t) <= sizeof(((erx_utcb_t *)0)->mr), "the starting registers fit the public UTCB");
@@ -139,6 +140,12 @@ uint64_t
 erx_fiasco_root_slot_cap(uint32_t slot)
 {
 	return (erx_fiasco_thread_cap(slot));
+}
+
+uint64_t
+erx_fiasco_irq_slot_cap(uint32_t index)
+{
+	return ((ERX_FIASCO_IRQ_SLOT_BASE + (uint64_t)index) << L4_CAP_SHIFT);
 }
 
 void

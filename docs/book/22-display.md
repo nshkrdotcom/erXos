@@ -339,7 +339,7 @@ SSH.
 
 ### 22.2.4 Output that remembers its value
 
-Genera, the operating system of the MIT Lisp Machines, kept output
+Genera, the operating system of the Symbolics Lisp machines, kept output
 bound to the object it showed. A command that wanted a process could
 take any process on the screen with a click. erXos takes the idea in a
 form that grants nothing. When the shell or the inspector writes a

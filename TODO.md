@@ -479,24 +479,47 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   pixel area, the present's answer releases it, and an accepted job keeps its ranges and the area alive
   until its device can no longer reach them, whoever ends first.
 
-* [High] 0.2 on Fiasco, `liberx/backend/fiasco`: IRQ objects are not placed in their holders, so every ring and
-  acknowledgement is a round trip through the root's one service thread (`irq.c`, `erx_fiasco_irq_trigger_body`,
-  `_ack_body`; `service_stubs.c`, `erx_irq_trigger`, `erx_irq_ack`), and `erx_space_create` does not bound
-  `cap_limit` by the IRQ window. The work is the second part of the design's
-  [Implementation](docs/design-fiasco.md#handles) note: the IRQ window, placement at create, duplicate and pass
-  with `L4_CAP_FPAGE_RO`, the unmap at close, the direct `l4_irq_trigger` and `l4_irq_unmask` stubs, and the
-  root's other slots moved past its own window; the *direct doorbell* and *destroyed handle* cases, with the size
-  of Fiasco's object space checked by a boot test at the window's last slot. Two pieces of the first part are open
-  too: the *A stale handle* case of the function API suite, and the test that drives the space-create, image-map
-  and pass wrappers with a stale handle, expecting `ERX_ESTALE`, with a wrapper mapping a lookup failure to
-  `ERX_ETYPE` as its seeded fault. The design puts that test in `test/host/handles_test.rb`, but the wrappers
-  (`service_task.c`, `erx_fiasco_task_create_body`, `erx_fiasco_task_image_map_body`; `object.c`,
-  `erx_fiasco_cap_pass_body`) include Fiasco's headers and build only for the target, so it belongs in a guest
-  suite, or the design's note changes.
+* [High] 0.2 on Fiasco, `liberx/backend/fiasco`: two pieces of the first part of the design's
+  [Implementation](docs/design-fiasco.md#handles) note are open: the *A stale handle* case of the function API
+  suite, and the test that drives the space-create, image-map and pass wrappers with a stale handle, expecting
+  `ERX_ESTALE`, with a wrapper mapping a lookup failure to `ERX_ETYPE` as its seeded fault. The design puts that
+  test in `test/host/handles_test.rb`, but the wrappers (`service_task.c`, `erx_fiasco_task_create_body`,
+  `erx_fiasco_task_image_map_body`; `object.c`, `erx_fiasco_cap_pass_body`) include Fiasco's headers and build
+  only for the target, so it belongs in a guest suite, or the design's note changes.
+* [Medium] 0.2 on Fiasco, `liberx/backend/fiasco/root_layout.h`: the root's layout plan lays out
+  `ERX_FIASCO_TASK_RUNS_MAX` (192) task runs, and `task_fill_space` refuses a task past them, where the design's
+  [Handles](docs/design-fiasco.md#handles) section lays out the runs of the most tasks the task table admits
+  (1,024, [Table sizes](docs/design-fiasco.md#table-sizes)). A run is 259 slots, so 1,024 runs take 265,216 slots
+  of an object space of 65,536: no more than about 250 fit beside the root's own slots, and every run the plan
+  holds takes 259 handles from the root's window (15,281 at 192). The figure, and the design's text, wait on a
+  decision: a smaller run (threads and semaphores for fewer than 128 threads a task), a run count, or a fixed
+  root window.
+* [Medium] 0.2 on Fiasco, `liberx/backend/fiasco/irq.c`: an ack is the holder's own `l4_irq_unmask`, so the
+  root no longer sees it, and an ack of a level line that is not bound, or whose bind waits for the group's
+  dispatcher, reaches an object with no receiver: Fiasco unmasks the line (`irq.cpp:1172-1177`), its next
+  assertion masks it again with nothing pending (`Irq_sender::_hit_level_irq`, `irq.cpp:1013-1035`), and the
+  make that follows leaves it masked until an ack the holder will not make before a delivery, so the driver
+  hangs silently. A line's holder binds into its own home group, which has a dispatcher, so the case needs a
+  line bound into a group without one. The fix by construction: refuse a waiting bind of a line or an MSI
+  (`ERX_IRQ_LINE`, `ERX_IRQ_MSI`), and say so in the design's "Interrupts and readiness".
+* [Medium] 0.2 on Fiasco, `liberx/backend/fiasco/service_stubs.c`: in the root, `erx_irq_trigger` and
+  `erx_irq_ack` with a handle number past the root's window (`ERX_FIASCO_ROOT_HANDLES`) reach the root's own
+  slots past it: its service gate and thread, the watchdog's slot, every IRQ object's master capability and
+  the tasks' runs, whose semaphores a trigger counts up (`semaphore.cpp:321-322`). Only root code with a stray
+  number reaches it, never a domain, whose slots past its window are empty. The stub could refuse a number past
+  the caller's own table limit, or the design could state that the root's direct uses are checked only by its
+  callers. The direct uses also answer only `ERX_OK` or `ERX_ESTALE`, never `ERX_ETYPE` or `ERX_ERIGHTS`, which
+  the call table should say.
+* [Low] `docs/design-fiasco.md`, Handles, Implementation note: the second part's "a create of an IRQ entry whose
+  rights hold neither `TRIGGER` nor `ACK`" cannot be made, since every IRQ kind's default set holds `trigger`
+  (`abi/kernel.txt:566-571`); the pass and the duplicate cases cover the placement's refusal. The note should
+  drop it.
 * [High] 0.2 on Fiasco, `liberx/backend/fiasco`: a Fiasco factory per domain budget, carved from its parent's
   at the budget's creation with the manifest row's kernel-memory figure, and every object of the domain
   created through it, so a domain that spends its kernel memory fails alone with `ERX_ENOMEM`
-  ([design-fiasco.md](docs/design-fiasco.md#memory-and-budgets)).
+  ([design-fiasco.md](docs/design-fiasco.md#memory-and-budgets)). IRQ placement is one more such spend: each
+  capability-table page of 128 slots a placement first touches in a task comes from the root's factory, so a
+  task duplicating one doorbell up to its `cap_limit` makes Fiasco take up to about 510 pages for it.
 * [High] 0.2 on Fiasco, `liberx/backend/fiasco`: budgets are not walls over user pages. `budget.c` records a
   budget's guarantee and cap (`budget.c:37-38`, `:116-117`) but refuses no charge, and the pool takes pages for
   no budget (`vm.c:161-165`'s `vm_take`), so one domain's commits can drain the pool that every domain and the
@@ -2541,6 +2564,12 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
 
 ## Bugs by subsystem
 
+* [Medium] tests, `test/host/erx_net_effect_test.rb:250` (`test_seeded_fault_fails_credit_counts_segments`)
+  is timing-dependent: on a loaded host (a 610 s run) `erx_net_driver_tests` failed
+  `dhcp_starts_when_the_link_comes_up_test` (line 383, `dhcp_sent(300)` saw `discover`) and timed out in
+  `far_end_end_restarts_the_link` (`wait_gone/1`, line 427) before the seed's own failure, so the seed's
+  expected name never appeared. The same tree passed in 456 s. The driver tests' fixed waits want to wait
+  on the event, not a time.
 * [Medium] docs, `docs/design-shared-devices.md` (lines ~102 and ~456, invariant SD1): the design says a
   give makes a unit's objects in the holder's budget; the code charges a device's DMA memory to the
   system domain's budget and keeps it across the holder's restarts (`liberx/system/dom_life.c`
@@ -3964,10 +3993,14 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   every end a session process holds, so a session runs about 30 programs with writers; or a program holding
   64 or more pipe ends and its channel bell. The 65-writer case therefore waits for erXos's kernel. Not worked around
   on Fiasco.
-* [Low] Fiasco backend, `liberx/backend/fiasco/thread.h` (`ERX_FIASCO_IRQS_MAX`, 256): the machine holds at most
+* [Low] Fiasco backend, `liberx/backend/fiasco/root_layout.h` (`ERX_FIASCO_IRQS_MAX`, 256): the machine holds at most
   256 IRQ objects, one per program channel doorbell, one per pipe end and so on; an object past it fails
   with `ERX_ENOMEM`. Busy sessions with many programs and pipes can reach it. erXos's kernel has no such
   table.
+* [Low] Fiasco backend, musl's seam (`musl/src/internal/erxos/syscall.c`, `musl/src/thread/erxos/clone.c`): it
+  includes the backend's own headers (`thread.h`, `service.h`, `vm.h` and others), which
+  `fiasco-backend-headers-private` allows for it alone, so a backend header that grows an l4 include breaks
+  libc.a. A neutral liberx header carrying only what the seam calls would take musl off that allow-list.
 * [Low] hosted backend, `liberx/backend/hosted/group.c` (`irq_objects`): the hosted backend holds 64 IRQ
   objects in total (`ERX_BACKEND_PARK_OBJECTS_MAX`), so a hosted run with many programs and pipe ends
   fails earlier than the QEMU runs do.
@@ -4784,6 +4817,7 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   domain service that stops answering) has it pet only after every listed service answers
   within the period, and kill a domain service that does not, whose end then ends the
   machine. A deadlocked domain service therefore leaves the machine up. Make the calls.
+  Until then `Manifest::Check` refuses a manifest's `liveness` row (`tools/lib/erx/manifest.rb`).
 * [Medium] domain service, `test/erlang/erx_domain_tests.erl`: nothing tests the `ebusy`
   and `erights` answers, which the stand-in library never gives. Add a stand-in that
   refuses.
@@ -8748,9 +8782,10 @@ to the corpus and follow rc
   from the wire can take CPU from other domains (M5's kernel part, M8); no wall around any domain, the browser-facing
   web domain included (M5's kernel part); and nothing stopping a domain or
   program that bypasses `liberx` (M5's kernel part, M7); and, on the
-  Raspberry Pi 4 (1b-I), the boards' platform items: no hardware watchdog
-  backs a hang of Fiasco, even on a board that runs unattended (its `config.txt` leaves
-  `kernel_watchdog_timeout` unset, since nothing under Fiasco reloads the watchdog), no crash region, no trial request and no device
+  Raspberry Pi 4 (1b-I), the boards' platform items: the hardware watchdog is
+  armed and reloaded by the root's watchdog thread on every boot, so only a hang
+  before that thread starts (in the firmware or in Fiasco's boot) stays hung until
+  the power is cycled; no crash region, no trial request and no device
   secret (M12). Development
   builds run trusted code only until M11.
 * [Medium] Fiasco backend, a device's input and a fault's reach on Fiasco (R1's published downsides; erXos's
@@ -8780,8 +8815,9 @@ to the corpus and follow rc
     `Irq_chip::detach` requires;
   * a wedged bus, which stalls the CPU that touches it with no fault to end anything;
   * DMA of unconfined devices (the item above, FD12);
-  * on the Raspberry Pi 4, no hardware watchdog behind a hang of Fiasco (the item above, FD29); Q15
-    accepts the root reloading the PM watchdog during a trial.
+  * on the Raspberry Pi 4, a hang before the root's watchdog thread starts (in the firmware or in
+    Fiasco's boot) stays hung until the power is cycled, since the PM watchdog is armed only by that
+    thread (the item above, FD29).
 * [Low] liberx Fiasco backend, `erx_fiasco_exception_kind`
   (`liberx/backend/fiasco/arch/aarch64/exception.c`): the exception class's position and the SError
   class are written by hand, since `tools/erx sysreg refresh` refuses ESR_EL1, whose ISS layout
