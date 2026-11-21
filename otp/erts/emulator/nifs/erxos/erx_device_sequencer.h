@@ -24,7 +24,7 @@
  *      fill is empty here, since its entry is a store;
  *   3. the stores, each record whole, region entries included;
  *   4. the cleans, every range passing to the device, then the publish barrier;
- *   5. an install's registers, in order, after the queue's select, which the effect layer writes
+ *   5. an install's registers, in order: virtio-mmio's after the queue's select, which the effect layer writes
  *      first from the record, since it banks them (Virtio 1.2, section 4.2.2);
  *   6. the activation: a run's one store, the clean of its line, then the doorbell; an install's
  *      ready bit.
@@ -64,8 +64,8 @@
 #define ERX_DMA_ZEROS_MAX		(ERX_DMA_HELD_BUFFERS_MAX + ERX_DMA_FILLS_MAX + ERX_DMA_BINDS_MAX)
 /* Each buffer passing to the device, each record and the available entry, and each binding's ring. */
 #define ERX_DMA_CLEANS_MAX		(ERX_DMA_HELD_BUFFERS_MAX + ERX_DMA_HELD_RECORDS_MAX + ERX_DMA_BINDS_MAX)
-/* An install's queue size and three ring addresses. */
-#define ERX_DMA_REGISTERS_MAX		4u
+/* An install's registers before its activation: virtio's four, or xHCI's seven. */
+#define ERX_DMA_REGISTERS_MAX		7u
 
 /* `length` bytes from `offset` of the record's memory. */
 typedef struct erx_dma_range {
@@ -81,9 +81,10 @@ typedef struct erx_dma_store {
 } erx_dma_store_t;
 
 /*
- * A register an install writes, by what it says, virtio-mmio's (Virtio 1.2, section 4.2.2). The
- * effect layer maps each to the register of its device it owns (erx_device.c), and writes an
- * address as its low word's register, then its high word's.
+ * A register an install writes, by what it says: virtio-mmio's (Virtio 1.2, section 4.2.2), or an
+ * xHCI controller's (docs/design-usb.md, "Install"). The effect layer maps each to the register or
+ * field of its device it owns (erx_device.c), and writes an address as its low word's register,
+ * then its high word's.
  */
 typedef enum erx_dma_register {
 	ERX_DMA_VIRTQ_NUM,	/* the queue's size, its tables' count */
@@ -91,6 +92,14 @@ typedef enum erx_dma_register {
 	ERX_DMA_VIRTQ_DRIVER,	/* the available ring's */
 	ERX_DMA_VIRTQ_DEVICE,	/* the used ring's */
 	ERX_DMA_VIRTQ_READY,	/* 1: an install's activation */
+	ERX_DMA_XHCI_SLOTS,		/* CONFIG.MaxSlotsEn: the slots the layout has */
+	ERX_DMA_XHCI_DCBAA,		/* DCBAAP: the DCBAA's device address */
+	ERX_DMA_XHCI_EVENT_RING_SIZE,	/* ERSTSZ: the segment table's entries, 1 */
+	ERX_DMA_XHCI_EVENT_DEQUEUE,	/* ERDP: the event ring's consumer position, its busy bit clear */
+	ERX_DMA_XHCI_SEGMENT_TABLE,	/* ERSTBA: the segment table's device address */
+	ERX_DMA_XHCI_INTERRUPTER_ENABLE,	/* IMAN.IE: 1 */
+	ERX_DMA_XHCI_COMMAND_RING,	/* CRCR: the command ring's position, its cycle state in bit 0 */
+	ERX_DMA_XHCI_RUN,		/* USBCMD's run and interrupt enable: 1, an install's activation */
 } erx_dma_register_t;
 
 typedef struct erx_dma_register_write {
@@ -131,6 +140,23 @@ typedef struct erx_dma_sequence {
  * is badarg with nothing applied.
  */
 erx_dma_verdict_t	erx_dma_publish(erx_dma_ledger_t *ledger, const erx_dma_publication_t *publication,
+			    erx_dma_sequence_t *sequence);
+
+/*
+ * The install of an xHCI controller's memory, laid out as `controller` and as the ledger's layout
+ * was derived from it (erx_trb_form_layout), into `sequence` (docs/design-usb.md, "Install"): the
+ * check finds the ledger idle, as the controller's halted and reset report leaves it; every byte
+ * of the layout is zeroed and cleaned; DCBAA entry 0 names the scratchpad array, or stays 0 with
+ * no page asked for; the array names each scratchpad page; the segment table's one entry names
+ * the event ring and its TRBs; the command ring's link leads back to its first TRB on lap 0; then
+ * the registers, in FreeBSD's order (xhci.c:329-428): the slot count, DCBAAP, the segment table's
+ * size, the event ring's dequeue pointer at the ledger's consumer position, the segment table's
+ * base, IMAN.IE, the command ring's position with its cycle state; and USBCMD's run with its
+ * interrupt enable, the activation. It places nothing and begins no holding. BREAKS_CALLS for a
+ * ledger that holds anything or has no command or event ring; BREAKS_MEANINGS for an address an
+ * encoder refuses, which a layout erx_device_trb_layout made cannot have.
+ */
+erx_dma_verdict_t	erx_dma_install_controller(const erx_dma_ledger_t *ledger, const erx_device_trb_layout_t *controller,
 			    erx_dma_sequence_t *sequence);
 
 /*

@@ -275,34 +275,34 @@ apply_sequence(harness_t *h, const erx_dma_sequence_t *s, const uint8_t *out, ui
 }
 
 /*
- * The install: every region zeroed and cleaned, the event ring among them, so no event is live
- * before the controller writes it; the segment table's one entry written and cleaned; then the
- * segment table's base register, and the dequeue register at the ring's first TRB.
+ * The form's install (erx_trb_form_install), applied in erx_device_sequencer.h's order: the zeros,
+ * the stores and the cleans, then the registers the model keeps, the segment table's base and the
+ * event ring's dequeue pointer, which the model checks against the segment table it read, so it
+ * takes it after the base, though the install writes it before; it has no command ring, slots or
+ * interrupter, so it takes the rest and the run as given.
  */
 static void
 install(harness_t *h)
 {
-	const erx_device_trb_region_t *const event_ring = &h->layout.regions[h->layout.event_ring];
-	const erx_device_trb_region_t *const table = &h->layout.regions[h->layout.segment_table];
-	uint64_t base = 0;
-	uint32_t size = 0;
+	static erx_dma_sequence_t s;
 
-	CHECK(erx_dma_model_cpu_zero(&h->cache, 0, h->cache.size));
-	maintain(h, (erx_dma_range_t){ 0, h->cache.size }, false);
-	/*
-	 * The install's one record, written field by field through the generated setters: only the
-	 * sequencer calls a record's encoder, and the form has no install of its own (TODO.md).
-	 */
-	CHECK(erx_xhci_segment_table_entry_base_address_set(&base, DEVICE_BASE + event_ring->offset) &&
-	    erx_xhci_segment_table_entry_size_trbs_set(&size, LAP));
-	CHECK(erx_dma_model_cpu_store(&h->cache, table->offset + ERX_XHCI_SEGMENT_TABLE_ENTRY_OFF_BASE, &base,
-	    sizeof(base)));
-	CHECK(erx_dma_model_cpu_store(&h->cache, table->offset + ERX_XHCI_SEGMENT_TABLE_ENTRY_OFF_SIZE, &size,
-	    sizeof(size)));
-	maintain(h, (erx_dma_range_t){ table->offset, ERX_XHCI_SEGMENT_TABLE_ENTRY_SIZE }, false);
-	CHECK(erx_device_trb_model_segment_table(&h->device, DEVICE_BASE + table->offset));
-	h->dequeue = DEVICE_BASE + event_ring->offset;
+	CHECK(erx_trb_form_install(&h->form, true, &s) == ERX_OK);
+	for (uint32_t at = 0; at < s.zero_count; at++)
+		CHECK(erx_dma_model_cpu_zero(&h->cache, s.zeros[at].offset, s.zeros[at].length));
+	for (uint32_t at = 0; at < s.store_count; at++)
+		CHECK(erx_dma_model_cpu_store(&h->cache, s.stores[at].offset, s.stores[at].bytes, s.stores[at].length));
+	for (uint32_t at = 0; at < s.clean_count; at++)
+		maintain(h, s.cleans[at], false);
+	for (uint32_t at = 0; at < s.register_count; at++) {
+		const erx_dma_register_write_t write = s.registers[at];
+
+		if (write.reg == ERX_DMA_XHCI_SEGMENT_TABLE)
+			CHECK(erx_device_trb_model_segment_table(&h->device, write.value));
+		if (write.reg == ERX_DMA_XHCI_EVENT_DEQUEUE)
+			h->dequeue = write.value;
+	}
 	CHECK(erx_device_trb_model_dequeue(&h->device, h->dequeue));
+	CHECK(s.activation.kind == ERX_DMA_ACTIVATE_REGISTER && s.activation.reg.reg == ERX_DMA_XHCI_RUN);
 }
 
 /* -------------------------------------------------------------------------------------------

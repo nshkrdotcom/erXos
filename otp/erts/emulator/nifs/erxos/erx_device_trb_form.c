@@ -132,6 +132,7 @@ erx_trb_form_make(erx_trb_form_t *form, const erx_device_trb_layout_t *trb, cons
 	erx_dma_layout_t layout;
 
 	bzero(form, sizeof(*form));
+	form->layout = *trb;
 	form->shape = trb->shape;
 	form->ports = trb->ports;
 	form->slots = trb->slots;
@@ -758,6 +759,23 @@ erx_trb_form_complete(erx_trb_form_t *form, const erx_report_record_t *events, u
 	if (!SEED_DEQUEUE_STALE)
 		*dequeue = erx_dma_dequeue_address(&form->ledger, ring);
 	return (*answered == 0 && form->broken ? ERX_ECORRUPT : ERX_OK);
+}
+
+int
+erx_trb_form_install(const erx_trb_form_t *form, bool reaches_64_bits, erx_dma_sequence_t *sequence)
+{
+	const erx_device_trb_layout_t *const layout = &form->layout;
+
+	if (!reaches_64_bits && (layout->device_base > UINT32_MAX || layout->bytes > (UINT64_C(1) << 32) - layout->device_base))
+		return (ERX_ERANGE);
+	switch (erx_dma_install_controller(&form->ledger, layout, sequence)) {
+	case ERX_DMA_PASSES:
+		return (ERX_OK);
+	case ERX_DMA_BREAKS_CALLS:
+		return (ERX_EBUSY);
+	default:
+		return (ERX_EINVAL);
+	}
 }
 
 void
