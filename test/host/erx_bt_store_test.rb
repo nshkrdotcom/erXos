@@ -19,6 +19,7 @@ class ErxBtStoreTest < Minitest::Test
   DEADLINE_SECONDS = '300'
   STATE = 'erlang/apps/erx_bt/src/erx_bt_state.erl'
   STORE = 'erlang/apps/erx_bt/src/erx_bt_store.erl'
+  STATE_FILE = 'erlang/apps/erx_bt/src/erx_bt_state_file.erl'
 
   Seed = Data.define(:fault, :module_path, :anchor, :replacement, :catching_case)
 
@@ -30,8 +31,8 @@ class ErxBtStoreTest < Minitest::Test
              catching_case: 'state_refuses_oversized_count_test'),
     Seed.new(fault: 'unavailable read as none, so a pairing overwrites the stored bonds',
              module_path: STORE,
-             anchor: '_Unavailable -> {error, store_unavailable}',
-             replacement: '_Unavailable -> {ok, none}',
+             anchor: "_Unavailable ->\n            {{error, store_unavailable}, Store}",
+             replacement: "_Unavailable ->\n            {{ok, none}, Store}",
              catching_case: 'start_unreadable_refuses_changes_until_forget_all_test_'),
     Seed.new(fault: 'the pre-put state kept after an unconfirmed put, so the failed pairing\'s bond is lost',
              module_path: STORE,
@@ -76,14 +77,34 @@ class ErxBtStoreTest < Minitest::Test
              catching_case: 'explored_store_table_test_'),
     Seed.new(fault: 'a failed forget all after the start leaving the store to read the old bonds under a new address',
              module_path: STORE,
-             anchor: 'unconfirmed when Known =:= {unknown, start} -> {{error, eio}, Store};',
+             anchor: '{unconfirmed, Unconfirmed} when Known =:= {unknown, start} -> {{error, eio}, Unconfirmed};',
              replacement: '',
              catching_case: 'failed_forget_all_after_an_unread_start_changes_nothing_test'),
     Seed.new(fault: 'resolve refused while a put is unconfirmed, so kept bonds stop working on a trial boot',
              module_path: STORE,
              anchor: 'call({resolve, Address}, {Link, _}, #store{bonds = Bonds} = Store) ->',
              replacement: 'call({resolve, Address}, {Link, _}, #store{known = read, bonds = Bonds} = Store) ->',
-             catching_case: 'kept_bonds_resolve_after_an_unconfirmed_put_test')
+             catching_case: 'kept_bonds_resolve_after_an_unconfirmed_put_test'),
+    Seed.new(fault: 'the development file read at its lowest generation, so a late put wins',
+             module_path: STATE_FILE,
+             anchor: 'newest(filename:join(Dir, name(state, lists:max(Kept))), Highest)',
+             replacement: 'newest(filename:join(Dir, name(state, lists:min(Kept))), Highest)',
+             catching_case: 'late_put_never_brings_back_a_forgotten_bond_test_'),
+    Seed.new(fault: 'an unconfirmed put not counted, so the next put reuses its generation',
+             module_path: STORE,
+             anchor: '{Answer, Store#store{generation = Generation}}.',
+             replacement: '{Answer, case Answer of ok -> Store#store{generation = Generation}; _ -> Store end}.',
+             catching_case: 'late_put_never_brings_back_a_forgotten_bond_test_'),
+    Seed.new(fault: 'a .new name not counted, so a put may still land above the generation read',
+             module_path: STATE_FILE,
+             anchor: 'Highest = lists:max([0 | [N || {_, N} <- Named]]),',
+             replacement: 'Highest = lists:max([0 | [N || {state, N} <- Named]]),',
+             catching_case: 'state_file_test'),
+    Seed.new(fault: 'forget all put without reading, below a generation the start could not read',
+             module_path: STORE,
+             anchor: "    case read(Store) of\n        {{error, store_unavailable}, _} ->",
+             replacement: "    case {ok, Store} of\n        {{error, store_unavailable}, _} ->",
+             catching_case: 'start_unreadable_refuses_changes_until_forget_all_test_')
   ].freeze
 
   def test_store_cases_pass_under_eunit

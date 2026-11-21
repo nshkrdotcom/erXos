@@ -13,6 +13,12 @@
 %%   byte, so every octet is read, none past its layout, and nothing decode/1 accepts
 %%   is a state encode/1 refuses.
 %%
+%% Each round also reads a directory entry's name through erx_bt_state_file:generation/1,
+%% the development store's reader of the names its medium lists: a generation's own name,
+%% or one made of the store's prefix, random digits, dots and characters. It neither
+%% makes an atom nor raises, and a name it reads as a generation is that generation's
+%% one name, so no two names are one generation.
+%%
 %% The seed comes from make check-fuzz.
 
 -module(erx_bt_state_fuzz).
@@ -22,7 +28,7 @@
 
 run([Seed]) ->
     rand:seed(exsss, {20, 26, list_to_integer(Seed)}),
-    [{module, _} = code:ensure_loaded(M) || M <- [erx_bt_state, lists, binary, maps]],
+    [{module, _} = code:ensure_loaded(M) || M <- [erx_bt_state, erx_bt_state_file, lists, binary, maps]],
     Atoms = erlang:system_info(atom_count),
     lists:foreach(fun(_) -> round() end, lists:seq(1, ?ROUNDS)),
     Atoms =:= erlang:system_info(atom_count) orelse verdict({atoms_made, erlang:system_info(atom_count) - Atoms}),
@@ -33,7 +39,8 @@ round() ->
     {ok, Blob} = erx_bt_state:encode(State),
     decode(Blob) =:= {ok, State} orelse verdict({decoded_wrongly, State}),
     decode(mutate(Blob)),
-    decode(nine()).
+    decode(nine()),
+    generation(file_name()).
 
 %% Nine bonds, each written as a state of one writes it, under a count of nine.
 nine() ->
@@ -57,6 +64,22 @@ decode(Blob) ->
             ok
     end,
     Result.
+
+generation(Name) ->
+    case try erx_bt_state_file:generation(Name) catch Class:Reason -> verdict({raised, Class, Reason, Name}) end of
+        {state, N} when is_integer(N), N > 0 -> "bonds." ++ integer_to_list(N) =:= Name orelse verdict({renamed, Name});
+        {new, N} when is_integer(N), N > 0 -> "bonds." ++ integer_to_list(N) ++ ".new" =:= Name orelse verdict({renamed, Name});
+        other -> ok;
+        Other -> verdict({read_as, Other, Name})
+    end.
+
+%% A name as a directory lists it: a generation's own, or the prefix and random parts.
+file_name() ->
+    Digits = [pick(lists:seq($0, $9)) || _ <- lists:seq(1, rand:uniform(25))],
+    Suffix = pick(["", ".new", ".new.new", ".old", "."]),
+    Parts = [pick(["bonds.", "bonds", ".", "new", "0", Digits, [rand:uniform(16#10FFFF div 2)], [255]]) || _ <- lists:seq(1, rand:uniform(4))],
+    pick(["bonds." ++ integer_to_list(rand:uniform(1 bsl 59)) ++ pick(["", ".new"]), "bonds." ++ Digits ++ Suffix,
+          lists:append(Parts)]).
 
 mutate(Blob) ->
     case rand:uniform(5) of

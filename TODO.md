@@ -8586,17 +8586,30 @@ model harness drive `erx_device.c` itself. `erx_device_dma_check` and `erx_devic
   when `/data` exists, so an unmounted volume presented as an empty `/data` would read as no bonds. Name the service in the
   design and `abi/manifest.txt` (a `bt_state` files service of the storage domain rooted at the data volume's
   `bt/`, granted read-write to the Bluetooth domain alone).
-* [Medium] bluetooth, security residual: a put that completes after its deadline (`erx_bt_store`'s `backend/2`;
-  docs/design-bluetooth.md "Bonds and the store"): the store kills a backend call at `bt_store_timeout_ms` and its
-  worker is linked, so it ends with the store, but a request already handed to the storage domain or the vault may
-  still complete later. Reading before the next change does not order the next put after that late completion, so
-  a late put can bring back a bond a confirmed `forget` removed. A generation in the blob, with a put refused
-  unless it follows the generation it read, would close it.
-* [Medium] bluetooth, the development store's rename is not synced (`erx_bt_state_file:put/2`): the new file is
+* [Medium] bluetooth, the development store's rename is not synced (`erx_bt_state_file:put/3`): `bonds.N.new` is
   synced before its rename, but the directory is not synced after it, so on a file system that needs that, an `ok`
   may come back as the old state after a power cut, against "Bonds and the store"'s promise for configuration
-  writes. Erlang's `file` cannot open a directory to sync it; give `prim_file` a directory sync rather than work
-  around it. The development store also leaves a `state.new.N` file behind when its worker is killed mid-write.
+  writes; and the deletion of the lower generations that follows the rename could reach the medium before the
+  rename does, leaving no `bonds.N` and so `none`, every bond lost (littlefs commits its operations in order; F2FS
+  promises nothing without the sync). Erlang's `file` cannot open a directory to sync it; give `prim_file` a
+  directory sync, called between the rename and the deletions, rather than work around it. This blocks running the
+  store on any data file system but littlefs, F2FS included. Until the next successful put, a late put that landed
+  below the newest, or a lower file a deletion missed, also keeps a forgotten bond's keys on the medium (0600, in a
+  0700 directory).
+* [High] bluetooth, security residual that blocks the release store: the vault's state slot takes no generation
+  (docs/design-system.md "State slots"; docs/design-bluetooth.md "Bonds and the store"): the store's seam is
+  `put(Generation, Blob)` and `get() -> {ok, Generation, Blob | none}`, so a put cut off by its deadline that
+  completes after a later one never wins, but the state slot's `put(Blob)` replaces the blob whatever arrives last,
+  which brings a forgotten bond back. Give the slot a generation in design-system.md: a put not strictly above the
+  kept generation is refused, and a get reflects every put the domain sent before it.
+* [Low] bluetooth, the development store's guarantee rests on file-service properties no design states
+  (`erx_bt_state_file`; docs/design-storage.md): that a late put never wins over a later store start relies on
+  rename replacing a name atomically, on exclusive create, and on a listing showing every name an answered request
+  made, which littlefs gives by running one operation at a time, and, across a store restart, on a dying
+  store's worker sending at most one more request once the store's exit signal is in its queue (the BEAM handles
+  the kill at the worker's next receive, so this holds by the file calls' blocking, not by construction; an old
+  worker's create and rename both after the new store's listing would land above it). State them in the storage domain's file service
+  contract, or say where they fail.
 * [Low] bluetooth, the store's tests' gaps (`test/erlang/erx_bt_store_tests.erl`): the development file is not run
   under the store with a step failing (write, sync, rename) nor checked for its 0700 and 0600 modes, and a bonded
   configuration write against a backend that never answers is not run (only `keep` is); both need the link's side

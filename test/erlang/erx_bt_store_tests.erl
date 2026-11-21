@@ -4,11 +4,12 @@
 %% The cases of the Bluetooth store (docs/design-bluetooth.md, "Bonds and the store" and
 %% "Host tests of the cores"): erx_bt_state's layout, erx_bt_state_file over a directory
 %% of its own, and erx_bt_store against a scripted backend, a process that holds the
-%% medium's blob and answers each get and put as the case scripts it (read or write,
+%% medium's newest blob and its generation and answers each get and put as the case scripts it (read or write,
 %% unavailable, a blob that does not decode, a put that reaches the medium and answers
 %% unavailable, no answer at all). Processes registered as the window (erx_bt_fs) and
 %% spawned as links forward what the store sends them. The store's table is explored
-%% over every start state, request, put answer and read answer.
+%% over every start state, request, put answer and read answer, and run over the
+%% development file with a put the storage completes after the store's deadline.
 
 -module(erx_bt_store_tests).
 -include_lib("eunit/include/eunit.hrl").
@@ -81,51 +82,81 @@ state_file_test() ->
     Root = string:trim(os:cmd("mktemp -d")),
     Dir = filename:join(Root, "bt"),
     ?assertEqual({error, unavailable}, erx_bt_state_file:get(filename:join([Root, "absent", "bt"]))),
-    ?assertEqual(none, erx_bt_state_file:get(Dir)),
-    ?assertEqual(ok, erx_bt_state_file:put(Dir, <<"one">>)),
-    ?assertEqual({ok, <<"one">>}, erx_bt_state_file:get(Dir)),
-    ?assertEqual(ok, erx_bt_state_file:put(Dir, <<"two">>)),
-    ?assertEqual({ok, <<"two">>}, erx_bt_state_file:get(Dir)),
-    ok = file:write_file(filename:join(Dir, "state"), binary:copy(<<0>>, 2 * ?ERX_BT_STATE_MAX)),
-    {ok, Big} = erx_bt_state_file:get(Dir),
-    ?assertEqual(?ERX_BT_STATE_MAX + 1, byte_size(Big)),
-    ?assertEqual({error, unavailable}, erx_bt_state_file:put(filename:join([Root, "absent", "bt"]), <<"x">>)),
+    ?assertEqual({ok, 0, none}, erx_bt_state_file:get(Dir)),
+    ?assertEqual(ok, erx_bt_state_file:put(Dir, 1, <<"one">>)),
+    ?assertEqual({ok, 1, <<"one">>}, erx_bt_state_file:get(Dir)),
+    %% A put of a lower generation that lands after a higher one is never read.
+    ?assertEqual(ok, erx_bt_state_file:put(Dir, 3, <<"three">>)),
+    ?assertEqual(ok, erx_bt_state_file:put(Dir, 2, <<"two">>)),
+    ?assertEqual({ok, 3, <<"three">>}, erx_bt_state_file:get(Dir)),
+    %% A put's .new name counts in the generation get answers; no other name is read.
+    ok = file:write_file(filename:join(Dir, "bonds.7.new"), <<"half">>),
+    [ok = file:write_file(filename:join(Dir, Name), <<"x">>) || Name <- ["bonds.09", "bonds.9.old", "bonds.", "notes"]],
+    ?assertEqual({ok, 7, <<"three">>}, erx_bt_state_file:get(Dir)),
+    %% Once its own file is in place a put deletes every lower name, and no other.
+    ?assertEqual(ok, erx_bt_state_file:put(Dir, 8, <<"eight">>)),
     {ok, Left} = file:list_dir(Dir),
-    ?assertEqual(["state"], Left),
+    ?assertEqual(["bonds.", "bonds.09", "bonds.8", "bonds.9.old", "notes"], lists:sort(Left)),
+    %% A put whose .new name another put holds fails, and leaves the newest.
+    ok = file:write_file(filename:join(Dir, "bonds.9.new"), <<"other">>),
+    ?assertEqual({error, unavailable}, erx_bt_state_file:put(Dir, 9, <<"nine">>)),
+    ?assertEqual({ok, <<"other">>}, file:read_file(filename:join(Dir, "bonds.9.new"))),
+    ?assertEqual({ok, 9, <<"eight">>}, erx_bt_state_file:get(Dir)),
+    %% A newest file that cannot be read answers as a blob that does not decode.
+    ok = file:make_dir(filename:join(Dir, "bonds.11")),
+    ?assertEqual({ok, 11, <<>>}, erx_bt_state_file:get(Dir)),
+    ok = file:del_dir(filename:join(Dir, "bonds.11")),
+    ok = file:write_file(filename:join(Dir, "bonds.10"), binary:copy(<<0>>, 2 * ?ERX_BT_STATE_MAX)),
+    {ok, 10, Big} = erx_bt_state_file:get(Dir),
+    ?assertEqual(?ERX_BT_STATE_MAX + 1, byte_size(Big)),
+    ?assertEqual({error, unavailable}, erx_bt_state_file:put(filename:join([Root, "absent", "bt"]), 1, <<"x">>)),
     os:cmd("rm -rf " ++ Root).
+
+state_file_names_test() ->
+    ?assertEqual({state, 12}, erx_bt_state_file:generation("bonds.12")),
+    ?assertEqual({new, 1}, erx_bt_state_file:generation("bonds.1.new")),
+    [?assertEqual(other, erx_bt_state_file:generation(Name))
+     || Name <- ["bonds.0", "bonds.012", "bonds.1000000000000000000", "bonds.", "bonds.1.old", "bonds.1.new.new", "bonds.-1", "bonds.1x",
+                 "bonds." ++ [16#661], "state", <<"bonds.1">>, [$b | improper]]].
 
 %% ---------------------------------------------------------------- the store
 
-%% The scripted backend: Gets and Puts are the answers in order, then `read` and `ok`.
+%% The scripted backend: Gets and Puts are the answers in order, then `read` and `ok`. Its
+%% medium keeps the blob of the highest generation put, as the seam promises; a scripted
+%% blob is generation 1.
 script(Medium, Gets, Puts) ->
-    spawn(fun() -> script_loop(Medium, Gets, Puts) end).
+    Generation = case Medium of none -> 0; _ -> 1 end,
+    spawn(fun() -> script_loop({Generation, Medium}, Gets, Puts) end).
 
-script_loop(Medium, Gets, Puts) ->
+script_loop({Generation, Medium} = Kept, Gets, Puts) ->
     receive
         {get, From} ->
             {Step, Rest} = next(Gets, read),
             case Step of
-                read when Medium =:= none -> From ! {script, none};
-                read -> From ! {script, {ok, Medium}};
+                read -> From ! {script, {ok, Generation, Medium}};
                 unavailable -> From ! {script, {error, unavailable}};
-                garbage -> From ! {script, {ok, <<"not a state">>}};
+                garbage -> From ! {script, {ok, Generation, <<"not a state">>}};
                 hang -> ok
             end,
-            script_loop(Medium, Rest, Puts);
-        {put, Blob, From} ->
+            script_loop(Kept, Rest, Puts);
+        {put, Put, Blob, From} ->
             {Step, Rest} = next(Puts, ok),
-            {Answer, Kept} = case Step of
-                                 ok -> {ok, Blob};
-                                 lost -> {{error, unavailable}, Medium};
-                                 landed -> {{error, unavailable}, Blob};
-                                 too_large -> {{error, too_large}, Medium};
-                                 hang -> {hang, Medium}
+            Landed = case Put > Generation of
+                         true -> {Put, Blob};
+                         false -> Kept
+                     end,
+            {Answer, Next} = case Step of
+                                 ok -> {ok, Landed};
+                                 lost -> {{error, unavailable}, Kept};
+                                 landed -> {{error, unavailable}, Landed};
+                                 too_large -> {{error, too_large}, Kept};
+                                 hang -> {hang, Kept}
                              end,
             Answer =:= hang orelse (From ! {script, Answer}),
-            script_loop(Kept, Gets, Rest);
+            script_loop(Next, Gets, Rest);
         {medium, From} ->
             From ! {script, Medium},
-            script_loop(Medium, Gets, Puts)
+            script_loop(Kept, Gets, Puts)
     end.
 
 next([Step | Rest], _Default) -> {Step, Rest};
@@ -145,14 +176,18 @@ start(Medium, Gets, Puts) -> start(Medium, Gets, Puts, 500).
 
 start(Medium, Gets, Puts, Timeout) ->
     Script = script(Medium, Gets, Puts),
-    Backend = #{get => fun() -> ask(Script, {get, self()}) end, put => fun(Blob) -> ask(Script, {put, Blob, self()}) end},
+    Backend = #{get => fun() -> ask(Script, {get, self()}) end,
+                put => fun(Generation, Blob) -> ask(Script, {put, Generation, Blob, self()}) end},
+    {start_backend(Backend, Timeout), Script}.
+
+start_backend(Backend, Timeout) ->
     Test = self(),
     is_pid(whereis(erx_bt_fs)) andalso exit(whereis(erx_bt_fs), kill),
     wait_unregistered(erx_bt_fs),
     register(erx_bt_fs, spawn(fun() -> forward(Test, window) end)),
     {ok, Store} = erx_bt_store:start_link(#{backend => Backend, timeout => Timeout}),
     unlink(Store),
-    {Store, Script}.
+    Store.
 
 stop(Store) ->
     Monitor = monitor(process, Store),
@@ -394,9 +429,11 @@ request(forget_missing) -> erx_bt_store:forget(<<0, 0, 0, 0, 0, 5>>);
 request(forget_all) -> erx_bt_store:forget(all).
 
 %% The model of "Bonds and the store": whether the change may start, its edit, then its put.
+%% `forget all` starts whenever the get it makes for the generation answers, the
+%% request's first read after an unconfirmed put.
 model(Known, Request, Put, Reread) ->
     Starts = case Known of
-                 _ when Request =:= forget_all -> true;
+                 _ when Request =:= forget_all -> Known =/= unknown_put orelse Reread =/= unavailable;
                  read -> true;
                  unknown_start -> false;
                  unknown_put -> Reread =:= read
@@ -450,3 +487,52 @@ kept_bonds_resolve_after_an_unconfirmed_put_test() ->
     ?assertMatch(#{store := unknown}, erx_bt_store:facts()),
     ?assertMatch(#{identity := {public, <<0, 0, 0, 0, 0, 1>>}}, erx_bt_store:resolve(identity(1))),
     stop(Store).
+
+%% A put the storage domain completes after the store's deadline, a pairing's holding bond
+%% 1, lands after a confirmed forget of bond 1; the bond does not come back at the next
+%% start, since the late put's generation is below the forget's.
+late_put_never_brings_back_a_forgotten_bond_test_() ->
+    {timeout, 30, fun() ->
+        Root = string:trim(os:cmd("mktemp -d")),
+        Dir = filename:join(Root, "bt"),
+        ok = erx_bt_state_file:put(Dir, 1, blob([bond(1)])),
+        Storage = slow_storage(Dir, [held]),
+        Backend = #{get => fun() -> erx_bt_state_file:get(Dir) end,
+                    put => fun(Generation, Blob) ->
+                                   Storage ! {put, Generation, Blob, self()},
+                                   receive {stored, Answer} -> Answer end
+                           end},
+        Store = start_backend(Backend, 300),
+        Link = fake_link(),
+        keep(Link, 2),
+        ?assertEqual({error, unavailable}, kept(Link)),
+        ?assertEqual(ok, erx_bt_store:forget(<<0, 0, 0, 0, 0, 1>>)),
+        Storage ! release,
+        ?assertEqual(ok, receive {landed, Late} -> Late after 5000 -> not_landed end),
+        exit(Storage, kill),
+        stop(Store),
+        Again = start_backend(Backend, 300),
+        ?assertMatch(#{store := read, bonds := []}, erx_bt_store:facts()),
+        stop(Again),
+        os:cmd("rm -rf " ++ Root)
+    end}.
+
+%% A storage domain that completes each put in a process of its own, whether or not its
+%% caller still waits: a `held` one only once the test sends `release`, which it then
+%% tells the test has landed, and any other at once.
+slow_storage(Dir, Steps) ->
+    Test = self(),
+    spawn(fun() -> slow_storage(Dir, Test, Steps, []) end).
+
+slow_storage(Dir, Test, Steps, Held) ->
+    receive
+        {put, Generation, Blob, From} ->
+            Put = fun() -> Answer = erx_bt_state_file:put(Dir, Generation, Blob), From ! {stored, Answer}, Answer end,
+            case next(Steps, at_once) of
+                {held, Rest} -> slow_storage(Dir, Test, Rest, [Put | Held]);
+                {at_once, Rest} -> spawn(Put), slow_storage(Dir, Test, Rest, Held)
+            end;
+        release ->
+            [spawn(fun() -> Test ! {landed, Put()} end) || Put <- Held],
+            slow_storage(Dir, Test, Steps, [])
+    end.

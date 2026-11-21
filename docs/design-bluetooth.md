@@ -1695,21 +1695,44 @@ identity address and at most `bt_bonds_max` bonds, encoded by `erx_bt_state`
 in a form with a version, which refuses any other version and any
 malformed or oversized input with a fuzz target, since what a store
 returns is untrusted wherever a medium can be written. The store keeps
-the whole state through one seam, the vault's state slot
-([design-system.md](design-system.md#state-slots)), taken with all its
-results: `get() -> {ok, Blob} | none | {error, unavailable}` and
-`put(Blob) -> ok | {error, too_large | unavailable}`, the blob replaced
-whole. Both stores behind it answer with exactly these results:
+the whole state through one seam, taken with all its results:
+`get() -> {ok, Generation, Blob | none} | {error, unavailable}` and
+`put(Generation, Blob) -> ok | {error, too_large | unavailable}`, the
+blob replaced whole. Every put names a **generation**, one above the
+highest the store has read or put; `get` answers the blob of the
+highest generation put, whatever order the puts completed in, or `none`
+before the first, and the highest generation the store names, counting
+every put that may still complete. So a put that completes after a
+later one, as a put cut off by its deadline may (below), lands beneath
+it and is never read, and no forgotten bond comes back that way. The
+stores behind the seam answer with exactly these results:
 
-* **in a development build**, a file in the Bluetooth domain's directory
-  on the data partition, replaced whole by write, sync and rename, as the
-  SSH domain keeps its host key before the vault
-  ([design-ssh.md](design-ssh.md#host-keys)); `get` answers `none` when
-  the file does not exist and `unavailable` when it cannot be read, and
-  `put` answers `unavailable` when any step of the replacement fails;
-* **in a release build**, the vault's state slot `{state, "bt"}`,
-  whose `get` and `put` are the seam's
-  ([design-system.md](design-system.md#state-slots)); the release
+* **in a development build**, files in the Bluetooth domain's
+  directory on the data partition, one per generation, as the SSH
+  domain keeps its host key before the vault
+  ([design-ssh.md](design-ssh.md#host-keys)): a put of generation `N`
+  writes `bonds.N.new`, created exclusively, syncs it and renames it to
+  `bonds.N`, then deletes every name of a lower generation; `get`
+  answers `bonds.N` of the highest `N` and the highest `N` any name
+  carries, `.new` included, `none` when no `bonds.N` exists and the
+  directory or the volume it lies in does, an empty blob, which does not
+  decode, when the newest file cannot be read, so `forget all` still
+  learns the generation, and `unavailable` when the directory cannot be
+  listed; a put answers
+  `unavailable` when any step fails. A put renames only once its
+  `.new` name has answered, so every put that may still land is
+  counted by every listing made after its process ended. That rests on
+  the storage domain's rename replacing a name atomically, on its
+  exclusive create, and on a listing showing every name an answered
+  request made, which littlefs, one operation at a time, gives, and
+  which [design-storage.md](design-storage.md) does not yet state;
+* **in a release build**, the vault's state slot `{state, "bt"}`
+  ([design-system.md](design-system.md#state-slots)), which must take
+  the seam's generation: its `put` refuses a generation not strictly
+  above the one it keeps, and its `get` answers the kept blob and
+  generation, reflecting every put the domain sent before it. The slot
+  as [design-system.md](design-system.md#state-slots) defines it takes
+  no generation yet, a gap that blocks the release store; the release
   manifest check refuses a `bt` row whose store is the development one.
 
 What `get` returns is untrusted wherever the medium can be written:
@@ -1724,8 +1747,11 @@ process at `bt_store_timeout_ms`, 5 s. A `get` not answered by then is
 `{error, unavailable}`, and a `put` not answered by then is
 unconfirmed, as any `put` that does not answer `ok` is (below): it may
 yet complete, so the store becomes `unknown` and the next change reads
-first. Those are results the store already takes, so the deadline adds
-no state. The store waits on nothing else, so it answers every request
+first. A put cut off may still complete inside the storage domain or
+the vault after a later put; its generation, counted when it was made,
+is below the later one's, so it never wins. Those are results the store
+already takes, so the deadline adds no state. The store waits on
+nothing else, so it answers every request
 it takes, a pairing's `keep` and a link's `subscriptions` included,
 within two backend calls, a read and a put, of reaching it; no link,
 window or configuration write waits on the store without end, and none
@@ -1734,9 +1760,10 @@ waits on its backend may meet its own call's 5 s and end, and the
 phone reconnects.
 
 **The domain changes only a state it has read.** The store process
-holds the store as one of two values: `read`, the state last read or
-confirmed, or `unknown`. At the start of the Bluetooth domain it starts
-`unknown` and calls `get`:
+holds the store in one of three states: `read`, the state last read or
+confirmed; `unknown` since its start, whose read gave no state; or
+`unknown` since a put it could not confirm. At the start of the
+Bluetooth domain it starts `unknown` and calls `get`:
 
 | `get` answers | The store | The bonds | The identity address | Reason at `/proc/bt` and in the log |
 | --- | --- | --- | --- | --- |
@@ -1759,7 +1786,10 @@ could not read. The one write that does not start from a read state is
 `forget all`: it puts an empty state with the identity address in use,
 whatever the store holds, the explicit way past a blob that does not
 decode, and a confirmed answer makes the store `read` and the address
-kept.
+kept. It calls `get` first, for the highest generation, which a start
+whose read was unavailable never learned, and fails `eio` when that
+`get` is unavailable; a blob that does not decode still names its
+generation.
 
 **Publication.** A `put` that answers `ok` is confirmed: the store holds
 the new state and the domain's `read` value is it. Any other answer
@@ -2151,7 +2181,7 @@ Each core's test is paired with the seeded faults it must catch.
 | `erx_pl011:program/1` | `fresh` writes `CR` 0 first, clears `FEN` before the divisors, drains the receive side within 33 reads, writes the divisors before `LCR_H` and `CR` whole last with the flow enables; `keep` clears no FIFO and programs the divisors only of an unprogrammed UART | `LCR_H` before the divisors, so the rate never latches; `fresh` keeping the boot's divisors |
 | `erx_smp_crypto` | SMP Appendix D's sample data for `f4`, `f5`, `f6` and `ah` | the AES-CMAC key byte order reversed |
 | `erx_bt_state` | a state round-trips; another version, a truncation and an oversized count are refused; the largest state encodes in at most 4 KiB | the bond count read without its bound |
-| the store's table, against a scripted fake store and a development file over a fake data tree that fails a chosen step | a start reading `unavailable` or an undecodable blob runs with no bonds and refuses pairing, configuration writes and `forget ADDRESS`, and `forget all` replaces the bad blob; a start reading `none` makes the identity address; a `put` that reached the medium but answered `unavailable` fails the pairing, and the next pairing reads first and keeps its bond; after every confirmed change and read the domain's bonds are the store's | `unavailable` read as `none` (a pairing overwrites the stored bonds); the pre-put state kept after an unconfirmed `put` (the failed pairing's bond lost) |
+| the store's table, against a scripted fake store and a development file over a fake data tree that fails a chosen step | a start reading `unavailable` or an undecodable blob runs with no bonds and refuses pairing, configuration writes and `forget ADDRESS`, and `forget all` replaces the bad blob; a start reading `none` makes the identity address; a `put` that reached the medium but answered `unavailable` fails the pairing, and the next pairing reads first and keeps its bond; after every confirmed change and read the domain's bonds are the store's; over the development file, a pairing's `put` that the storage completes after its deadline and after a confirmed `forget` of a bond it holds does not bring the bond back at the next start; a lower generation landing late, a `.new` name and names not the store's leave `get`'s blob the highest generation's | `unavailable` read as `none` (a pairing overwrites the stored bonds); the pre-put state kept after an unconfirmed `put` (the failed pairing's bond lost); the development file read at its lowest generation, and an unconfirmed `put` not counted in the next generation (each brings the forgotten bond back); a `.new` name not counted; `forget all` put without reading the generation |
 | the line's `ctl` grammar | `reset`, with or without newline; everything else `einval` | a prefix match accepting `resetx` |
 | the line service's reset, over a model driver and device service | the four steps in order; the driver's input during the on time discarded; a power `{error, _}` answers `eio` before the next step | the driver started before the off notification, so the old FIFO drains into the new controller |
 | the line service through a real `erx_fs` grant, reader and writer on one `data` file | a write is answered within 1 s while a read waits, and the driver's answer reaches the read once; a `reset` answers a waiting read `eio`; a clunk during a waiting read is answered within 1 s and the next reader gets the next bytes whole | a `read` that waits inside its callback; a dropped flush of a waiting read |
@@ -2172,7 +2202,8 @@ Each core's test is paired with the seeded faults it must catch.
 
 `erx_h4`, the HCI event decoder and its Command Complete returns
 (`erx_hci:event/2`, `return/2`), the L2CAP reassembly and frame decoder,
-the LE signaling decoder, `erx_att`, `erx_smp`, `erx_bt_state`, the line
+the LE signaling decoder, `erx_att`, `erx_smp`, `erx_bt_state` and the
+development store's file names (`erx_bt_state_file:generation/1`), the line
 service's `ctl` grammar, the control tree's `pair` and `ctl` grammars,
 and the `ble` facet's request decoder; in the HID stage, the advertising
 report decoder, the GATT client's response decoder and the Report

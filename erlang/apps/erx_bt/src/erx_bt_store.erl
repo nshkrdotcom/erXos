@@ -9,20 +9,28 @@ It sits first in `erx_bt_sup`, so it outlives every link, the window and the con
 group.
 
 **One seam, every call under a deadline.** It keeps the whole state, encoded by
-`erx_bt_state`, through a backend of two calls, `get() -> {ok, Blob} | none | {error,
-unavailable}` and `put(Blob) -> ok | {error, too_large | unavailable}`: in development
-builds `erx_bt_state_file` over the directory the application's `state_dir` names. Each
-call runs in a short-lived process the store monitors and kills at
-`bt_store_timeout_ms`; a `get` not answered by then is `unavailable` and a `put`
-unconfirmed. The store waits on nothing else, so it answers every request it takes within
-a read and a put.
+`erx_bt_state`, through a backend of two calls, `get() -> {ok, Generation, Blob | none}
+| {error, unavailable}` and `put(Generation, Blob) -> ok | {error, too_large |
+unavailable}`: in development builds `erx_bt_state_file` over the directory the
+application's `state_dir` names. Each call runs in a short-lived process the store
+monitors and kills at `bt_store_timeout_ms`; a `get` not answered by then is
+`unavailable` and a `put` unconfirmed. The store waits on nothing else, so it answers
+every request it takes within a read and a put.
 
-**It changes only a state it has read.** The store is `read`, or `unknown` since its start
-or since a `put` it could not confirm. At its start it reads: `none` is an empty state
-under an address made now; a blob that decodes is the state; anything else leaves it
-`unknown` with an address made for this start only, and then every change is refused
-until `forget all` or the next start. After an unconfirmed `put` it keeps what it had and
-reads before the next change, which goes on only if that read gives a state. Every change
+**A late put never wins.** A put killed at its deadline may still complete inside the
+storage domain, after a later put. So every put names a generation one above the highest
+the store has read or put (`generation`), the backend's `get` answers the blob of the
+highest generation put and the highest generation it has seen, and a put of an older
+generation that lands late lands below the newer state and is never read. `forget all`
+reads that generation first, since it may follow a start that could not.
+
+**It changes only a state it has read.** The store is in one of three states: `read`;
+`unknown` since its start; or `unknown` since a `put` it could not confirm. At its start
+it reads: `none` is an empty state under an address made now; a blob that decodes is the
+state; anything else leaves it `unknown` with an address made for this start only, and
+then every change is refused until `forget all` or the next start. After an unconfirmed
+`put` it keeps what it had and reads before the next change, which goes on only if that
+read gives a state. Every change
 but `forget all`, a pairing's `keep`, a bonded link's `subscriptions` and `served`, and
 `forget ADDRESS`, goes through `change/2`: the state last read, the edit, one `put` of the
 whole result, and the new bonds only at `ok`. After every confirmed change and every
@@ -48,8 +56,9 @@ alone, so neither the raise's terms nor a queued `keep` reach a crash report.
 -export_type([backend/0]).
 
 -doc "The two calls of the store's seam, each run under the store's deadline.".
--type backend() :: #{get := fun(() -> {ok, binary()} | none | {error, unavailable}),
-                     put := fun((binary()) -> ok | {error, too_large | unavailable})}.
+-type backend() :: #{get := fun(() -> {ok, generation(), binary() | none} | {error, unavailable}),
+                     put := fun((pos_integer(), binary()) -> ok | {error, too_large | unavailable})}.
+-type generation() :: erx_bt_state_file:generation().
 -type bond() :: erx_bt_state:bond().
 -type identity() :: erx_smp_crypto:address().
 
@@ -59,6 +68,7 @@ alone, so neither the raise's terms nor a queued `keep` reach a crash report.
     reason = none :: none | store_unavailable | store_unreadable,
     bonds = [] :: [bond()],                                % secret: never shown, see format_status/1
     links = #{} :: #{reference() => {pid(), identity()}},  % the links it monitors, by monitor
+    generation = 0 :: generation(),                        % the highest read or put, confirmed or not
     backend :: backend(),
     timeout :: pos_integer()
 }).
@@ -71,7 +81,7 @@ application's `state_dir` (default `/data/bt`), and reads it.
 start_link() ->
     Dir = application:get_env(erx_bt, state_dir, "/data/bt"),
     start_link(#{backend => #{get => fun() -> erx_bt_state_file:get(Dir) end,
-                              put => fun(Blob) -> erx_bt_state_file:put(Dir, Blob) end}}).
+                              put => fun(Generation, Blob) -> erx_bt_state_file:put(Dir, Generation, Blob) end}}).
 
 -doc "Starts the store over `backend`; `timeout` is `bt_store_timeout_ms` unless given.".
 -spec start_link(#{backend := backend(), timeout => pos_integer()}) -> gen_server:start_ret().
@@ -124,9 +134,9 @@ init(#{backend := Backend} = Options) ->
     Store = #store{address = make_address(), known = {unknown, start}, backend = Backend,
                    timeout = maps:get(timeout, Options, ?ERX_BT_STORE_TIMEOUT_MS)},
     {ok, case read(Store) of
-             {ok, none} -> Store#store{known = read};
-             {ok, #{address := Address, bonds := Bonds}} -> Store#store{known = read, address = Address, bonds = Bonds};
-             {error, Reason} -> Store#store{reason = Reason}
+             {{ok, none}, Read} -> Read#store{known = read};
+             {{ok, #{address := Address, bonds := Bonds}}, Read} -> Read#store{known = read, address = Address, bonds = Bonds};
+             {{error, Reason}, Read} -> Read#store{reason = Reason}
          end}.
 
 make_address() ->
@@ -244,8 +254,8 @@ change(Edit, Store) ->
         {ok, Edited} ?= edit(Edit(Bonds), Current),
         {ok, Blob} ?= encoded(erx_bt_state:encode(#{address => Address, bonds => Edited}), Current),
         case write(Blob, Current) of
-            ok -> {ok, adopt(Edited, Current)};
-            unconfirmed -> {error, unavailable, unconfirmed(Current)}
+            {ok, Written} -> {ok, adopt(Edited, Written)};
+            {unconfirmed, Written} -> {error, unavailable, unconfirmed(Written)}
         end
     end.
 
@@ -255,11 +265,15 @@ edit({error, Reason}, Store) -> {error, Reason, Store}.
 encoded({ok, Blob}, _Store) -> {ok, Blob};
 encoded({error, too_large}, Store) -> {error, unavailable, Store}.
 
-write(Blob, #store{backend = #{put := Put}} = Store) ->
-    case backend(fun() -> Put(Blob) end, Store) of
-        ok -> ok;
-        _Unconfirmed -> unconfirmed
-    end.
+%% One put under the next generation, which the store counts as put whatever the answer,
+%% since an unconfirmed put may yet land.
+write(Blob, #store{backend = #{put := Put}, generation = Previous} = Store) ->
+    Generation = Previous + 1,
+    Answer = case backend(fun() -> Put(Generation, Blob) end, Store) of
+                 ok -> ok;
+                 _Unconfirmed -> unconfirmed
+             end,
+    {Answer, Store#store{generation = Generation}}.
 
 %% After a put it could not confirm the store keeps what it had and reads before its
 %% next change.
@@ -273,20 +287,27 @@ current(#store{known = {unknown, start}} = Store) ->
     {error, unavailable, Store};
 current(#store{known = {unknown, put}} = Store) ->
     case read(Store) of
-        {ok, none} -> {ok, adopt([], Store#store{known = read, reason = none})};
-        {ok, #{bonds := Bonds}} -> {ok, adopt(Bonds, Store#store{known = read, reason = none})};
-        {error, Reason} -> {error, unavailable, Store#store{reason = Reason}}
+        {{ok, none}, Read} -> {ok, adopt([], Read#store{known = read, reason = none})};
+        {{ok, #{bonds := Bonds}}, Read} -> {ok, adopt(Bonds, Read#store{known = read, reason = none})};
+        {{error, Reason}, Read} -> {error, unavailable, Read#store{reason = Reason}}
     end.
 
 %% `forget all`, the one write that does not start from a read state: an empty state
-%% under the address in use, whatever the store holds. Unconfirmed after the start's
-%% read, the store stays as the start left it.
+%% under the address in use, whatever the store holds, under a generation above the
+%% medium's, which it reads first, since a start that could not read never learned it.
+%% Unconfirmed after the start's read, the store stays as the start left it but for the
+%% generation it put.
 forget_all(#store{address = Address, known = Known} = Store) ->
     {ok, Blob} = erx_bt_state:encode(#{address => Address, bonds => []}),
-    case write(Blob, Store) of
-        ok -> {ok, adopt([], Store#store{known = read, reason = none})};
-        unconfirmed when Known =:= {unknown, start} -> {{error, eio}, Store};
-        unconfirmed -> {{error, eio}, unconfirmed(Store)}
+    case read(Store) of
+        {{error, store_unavailable}, _} ->
+            {{error, eio}, Store};
+        {_Read, Counted} ->
+            case write(Blob, Counted) of
+                {ok, Written} -> {ok, adopt([], Written#store{known = read, reason = none})};
+                {unconfirmed, Unconfirmed} when Known =:= {unknown, start} -> {{error, eio}, Unconfirmed};
+                {unconfirmed, Unconfirmed} -> {{error, eio}, unconfirmed(Unconfirmed)}
+            end
     end.
 
 %% The bonds become `Bonds`, and each monitored link whose bond is gone is sent
@@ -305,16 +326,21 @@ adopt(Bonds, #store{links = Links} = Store) ->
 watch(Link, Identity, #store{links = Links} = Store) ->
     Store#store{links = Links#{erlang:monitor(process, Link) => {Link, Identity}}}.
 
-%% The backend's state: `{ok, none}`, `{ok, State}`, or the reason /proc/bt shows.
-read(#store{backend = #{get := Get}} = Store) ->
+%% The backend's state, `{ok, none}`, `{ok, State}` or the reason /proc/bt shows, and the
+%% store with the generation the backend named, when it answered, counted.
+read(#store{backend = #{get := Get}, generation = Generation} = Store) ->
     case backend(Get, Store) of
-        none -> {ok, none};
-        {ok, Blob} when is_binary(Blob) ->
-            case erx_bt_state:decode(Blob) of
-                {ok, State} -> {ok, State};
-                {error, _} -> {error, store_unreadable}
-            end;
-        _Unavailable -> {error, store_unavailable}
+        {ok, Seen, Kept} when is_integer(Seen), Seen >= 0, Kept =:= none orelse is_binary(Kept) ->
+            {decoded(Kept), Store#store{generation = max(Seen, Generation)}};
+        _Unavailable ->
+            {{error, store_unavailable}, Store}
+    end.
+
+decoded(none) -> {ok, none};
+decoded(Blob) ->
+    case erx_bt_state:decode(Blob) of
+        {ok, State} -> {ok, State};
+        {error, _} -> {error, store_unreadable}
     end.
 
 %% One call of the backend, in a process of its own, linked so that it ends with the
