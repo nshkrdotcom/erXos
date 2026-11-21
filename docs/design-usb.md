@@ -2013,7 +2013,7 @@ parameters, from which the NIF writes every context and TRB:
 | `enable_slot` | | the TRB |
 | `{address_device, Slot, Device}` | `route` (20 bits, four a tier, each tier 1 to 15), `root_port` (1 to the port count), `speed` (the port's speed number), `tt` (`none`, or the hub's slot, its port and whether it runs one TT per port), `ep0_packet` (8, 64 or 512) | the input control context adding the slot and EP0; the slot context with one context entry and interrupter 0; EP0's context: control type, the packet size, error count 3, interval 0, no streams, multiplier 0, average TRB length 8 (6.2.3, p. 454), its ring's base and cycle state 1 (4.3.3, pp. 88-89); the TRB with the block-set-address flag clear |
 | `{evaluate_context, Slot, #{ep0_packet := P}}` | `P` 8 to 512 | the input control context adding EP0; EP0's whole context as Address Device builds it, with the new size and its bound ring's position and cycle state, since the sequencer writes every context the add flags name whole; accepted only while EP0 has nothing posted |
-| `{configure_endpoints, Slot, Config}` | `add`: a list of endpoints, each with its number and direction, its type (control, bulk or interrupt; isochronous is `badarg`), its packet size, burst (0 to 15), interval exponent (0 to 15) and service-interval payload (1 to packet size times burst plus one, at most its queue block's buffer, and equal to that product unless the endpoint is an interrupt endpoint of a slot addressed at SuperSpeed); `drop`: a list of device context indexes; `hub`: `none` or its port count (1 to 15), think time (0 to 3) and multi-TT flag | the input control context's add and drop flags; the slot context with the last valid index and the hub fields; each added endpoint's context with error count 3, no streams (`MaxPStreams`, `LSA` and `HID` 0), multiplier 0, its ring's base and cycle state 1, the average TRB length, 8 for a control endpoint (6.2.3, p. 454) and otherwise an initial estimate of its packet size times its burst plus one, and the maximum service-interval payload from its payload parameter |
+| `{configure_endpoints, Slot, Config}` | `add`: a list of endpoints, each with its number and direction, its type (control, bulk or interrupt; isochronous is `badarg`), its packet size, burst (0 to 15), interval exponent (0 to 15) and service-interval payload (1 to packet size times burst plus one, at most its queue block's buffer, and equal to that product unless the endpoint is an interrupt endpoint of a slot addressed at SuperSpeed); `drop`: a list of device context indexes; `hub`: `none` or its port count (1 to 15), think time (0 to 3) and multi-TT flag | the input control context's add and drop flags; the slot context with the fields Address Device addressed the slot with (route string, speed, root port, TT hub slot and port), the last valid index and the hub fields, a hub's think time and multi-TT flag only at high speed, where a slot at another speed keeps its addressed multi-TT flag and think time 0 (xHCI 6.2.2.2, p. 448); each added endpoint's context with error count 3, no streams (`MaxPStreams`, `LSA` and `HID` 0), multiplier 0, its ring's base and cycle state 1, the average TRB length, 8 for a control endpoint (6.2.3, p. 454) and otherwise an initial estimate of its packet size times its burst plus one, and the maximum service-interval payload from its payload parameter |
 | `{stop_endpoint, Slot, Dci}`, `{reset_endpoint, Slot, Dci}` | | the TRB; Reset Endpoint with transfer-state-preserve clear |
 | `{set_tr_dequeue, Slot, Dci}` | | the TRB, with the queue's own enqueue position and cycle state |
 | `{disable_slot, Slot}` | | the TRB |
@@ -2152,7 +2152,11 @@ never fills, by counting what can be outstanding at once:
 
 The ring's 512 entries hold 511 events (Figure 4-12, p. 182), so no
 controller's port count can fill it and install refuses none for its
-ports. The NIF enables no other event: no microframe-index wrap, no
+ports. The transfer rows hold by construction: the check's room rule
+keeps a ring's TDs in flight below its block's buffers, though a
+control transfer without a data stage names none, and the ledger takes
+one command at a time
+([design-device-dma.md](design-device-dma.md#the-ledger)). The NIF enables no other event: no microframe-index wrap, no
 device notification, no event data. A controller that still reports a
 full ring breaks the form, and its restart resets it.
 
@@ -2171,8 +2175,8 @@ meaning; a meaning the table does not offer is refused.
 | Table | Meanings | Names and lengths | Fixed or derived |
 | --- | --- | --- | --- |
 | each queue block's ring | normal, data stage, setup stage, status stage | normal and data stage: a buffer of the ring's own block and an offset, reaching the TRB's transfer length (6.4.1.1, p. 467; 6.4.1.2.2, p. 471); setup and status stage: none, the setup's parameter being its eight bytes (6.4.1.2.1, p. 469) | immediate data clear on normal and data stage, set on setup stage, and the setup stage's length 8 (FreeBSD's `xhci.c:1853`); chain clear; the interrupter target 0; the cycle bit, and the link at the segment's end, the sequencer's |
-| the command ring | Enable Slot, Disable Slot, Stop Endpoint, Reset Endpoint, Address Device, Configure Endpoint, Evaluate Context, Set TR Dequeue Pointer | Address Device, Configure Endpoint and Evaluate Context: the input context, described in the same plan (6.4.3.4 to 6.4.3.6, pp. 490-492); Set TR Dequeue Pointer: its endpoint, whose bound ring's position and cycle state the sequencer writes as the pointer (6.4.3.9, pp. 494-495); the others: a slot and an endpoint, no address | block set address clear; Reset Endpoint's transfer state preserve clear; the stream ID 0 |
-| the input context | Address Device: the slot context and EP0's; Evaluate Context: EP0's; Configure Endpoint: the slot context, each endpoint it adds and the indexes it drops | each added endpoint context names a free queue block, whose ring the command binds to the endpoint; Evaluate Context's EP0 context points at EP0's bound ring | the add and drop flags, derived from the contexts carried: A0 and A1 alone for Address Device (4.6.5, p. 112), A1 for Evaluate Context, A0 and each added index for Configure Endpoint, with its drops (6.2.5.1, Tables 6-15 and 6-16, p. 461); each dequeue pointer the bound ring's position and cycle state (Table 6-10, p. 453); `MaxPStreams` 0, which otherwise makes the pointer a stream context array's (Table 6-8, p. 451), and `LSA`, `HID` and `Mult` 0; the interrupter target 0 |
+| the command ring | No Op, Enable Slot, Disable Slot, Stop Endpoint, Reset Endpoint, Address Device, Configure Endpoint, Evaluate Context, Set TR Dequeue Pointer | Address Device, Configure Endpoint and Evaluate Context: the input context, described in the same plan (6.4.3.4 to 6.4.3.6, pp. 490-492); Set TR Dequeue Pointer: its endpoint, whose bound ring's position and cycle state the sequencer writes as the pointer (6.4.3.9, pp. 494-495); No Op: nothing; the others: a slot and an endpoint, no address | block set address clear; Configure Endpoint's deconfigure, Reset Endpoint's transfer state preserve and Stop Endpoint's suspend clear; the stream ID 0; the slot and endpoint fields the sequencer's, from the command's reach |
+| the input context | Address Device: the slot context and EP0's; Evaluate Context: EP0's; Configure Endpoint: the slot context, each endpoint it adds and the indexes it drops | each added endpoint context names a free queue block, whose ring the command binds to the endpoint; Evaluate Context's EP0 context points at EP0's bound ring | the add and drop flags, derived from the contexts carried: A0 and A1 alone for Address Device (4.6.5, p. 112), A1 for Evaluate Context, A0 and each added index for Configure Endpoint, with its drops (6.2.5.1, Tables 6-15 and 6-16, p. 461); each dequeue pointer the bound ring's position and cycle state (Table 6-10, p. 453); `MaxPStreams` 0, which otherwise makes the pointer a stream context array's (Table 6-8, p. 451), and `LSA`, `HID` and `Mult` 0; Configure Endpoint's slot context the fields the slot's last successful Address Device addressed it with, beside the stated hub fields, so it is refused on a slot with no such Address Device since its Disable Slot (6.2.2.2, p. 448); the interrupter target 0; Context Entries, the last index the slot's bindings leave valid (Table 6-4, p. 445); the average TRB length, 8 for a control endpoint (4.14.1.1, p. 258) and otherwise the packet times the burst plus one; each context at the controller's context size, 32 or 64 bytes (6.2.5, p. 460), which the layout holds from `HCCPARAMS1.CSZ`, written by the sequencer's one composition ([design-device-dma.md](design-device-dma.md#descriptions)) |
 
 The interrupter target is 0 wherever it appears, since interrupter 0 is
 the only one given an event ring, and events aimed at an interrupter
@@ -2195,59 +2199,115 @@ that consumes events.
 
 **Bindings and holdings.**
 
-* A transfer ring is bound to at most one endpoint, `{Slot, Dci}`. The
-  command whose input context adds the endpoint binds the named block's
-  ring at the command's publication, and the sequencer initialises the
-  ring then; the ring must be bound to no endpoint. While a command that
-  drops and adds one endpoint is in flight, the endpoint has its old
-  ring and its new one bound, and the command's completion releases one
-  of them. Every record that points an endpoint at a ring, Set TR
+* A transfer ring is bound to at most one endpoint, `{Slot, Dci}`.
+  Only a command whose reach binds carries bindings, and Address Device
+  and Configure Endpoint are separate reaches: Address Device binds EP0,
+  index 1, and drops nothing (4.6.5, p. 112); Configure Endpoint adds
+  and drops indexes 2 and up, since it ignores EP0's flags (4.6.6,
+  p. 117). One command carries at most `ERX_DMA_BINDS_MAX` (4)
+  bindings, enough for a mass-storage interface's bulk IN and OUT or a
+  composite device's interrupt endpoints; a configuration that adds
+  more is added by several commands. Each binds the named block's ring,
+  which must be bound to nothing; no two bind one endpoint or one ring;
+  and an endpoint already bound is bound again only by a command that
+  drops it. A binding begins at the command's publication, and the
+  sequencer initialises the ring then. A drop-and-add binds the new ring
+  beside the old one, with the endpoint closed: success ends the old
+  binding and retires its ring's transfers, and failure ends the new
+  one. A failing command ends only its own bindings, but for a failed
+  Address Device, which leaves its slot in the Default state (4.6.5,
+  p. 114) with EP0 enabled on the ring the command named, so the
+  controller may still hold it: that binding stays, EP0 `disabled`,
+  until the Disable Slot that 4.6.5 recovers with (p. 114) succeeds and
+  ends it. Until then EP0 takes no transfer, and no command that names
+  it but Disable Slot: no stop, restart or drop, and no other Address
+  Device binds it a ring. Every record that
+  points an endpoint at a ring, Set TR
   Dequeue Pointer's and Evaluate Context's EP0 context, points it at a
   ring bound to it, so no endpoint is given another endpoint's ring, and
   with it another device's buffers.
 * A transfer's TRBs name only buffers of their own ring's block. Its
   holding holds its TRBs, a link they reached, and its buffer.
-* A command's holding holds its TRB and the input context it carries, so
-  no command that carries one is published while another's is held.
+* A command's holding holds its TRB and the input context it carries.
+  One command is in flight at a time, the ledger's own fact: a table
+  whose structure takes commands, one whose meanings have reaches in
+  `abi/formats`, the command ring, takes a command only while no
+  command's holding lives, and the hold sets it. The closure, a
+  drop-and-add's two bindings and the answers below rest on it: one
+  completion retires the transfers of one command.
 * A slot's holding holds its DCBAA entry and its device context. It
   begins at the publication of the slot's first Address Device, which
   zeroes the context as it passes; an Address Device for a slot that
   holds one already adds nothing to it.
-* A command's **reach** is fixed at its publication and kept in the
-  ledger with its holding: the endpoints it closes, which take no new
-  transfer until its completion is consumed, and the transfer holdings
-  its success retires, those live on its rings then. Set TR Dequeue
-  Pointer closes its endpoint and retires every transfer on the
-  endpoint's ring; Configure Endpoint closes each endpoint it drops and
-  retires every transfer on the rings it unbinds; Disable Slot closes
-  every endpoint of the slot and retires every transfer on their rings;
-  Stop Endpoint and Reset Endpoint close their endpoint and retire
-  nothing. Closing is what makes the retired set exact: Set TR Dequeue
-  Pointer moves the controller to the pointer it was given, the ring's
+* A command's **reach** is its meaning's `reach` mark in
+  `abi/formats/xhci.txt`, never a field a caller or the device supplies:
+  `address` (Address Device), `configure` (Configure Endpoint), `stop`
+  (Stop Endpoint and Reset Endpoint), `restart` (Set TR Dequeue
+  Pointer), `disable` (Disable Slot), `evaluate` (Evaluate Context,
+  which changes EP0's packet size and binds nothing, and holds EP0:
+  running or stopped with nothing on its ring when it is published,
+  as xHCI 1.2, 6.2.3.3 (p. 454) needs it running idle or stopped), or
+  none (No Op and Enable Slot).
+  The publication names the endpoints the reach acts on: the slot, the
+  index a stop or a restart names, and the indexes a binding command
+  drops, a mask of index bits. The ledger keeps them with the command's
+  holding, and the sequencer writes the TRB's slot and endpoint fields
+  from them, so the TRB names exactly the endpoints the ledger closes.
+  Each reach's meaning (the endpoints it acts on, what it may bind and
+  drop, what its success does to their rings and what its failure does
+  to its own bindings) is one row of the ledger's reach rules, which
+  the check, the closure and the completion all read; the generated list
+  of reaches names a row for each, so a reach added to the marks does
+  not build until it has one.
+  While the command is in flight it **closes** the endpoints it acts on:
+  those it binds or drops, the one it stops or restarts, EP0 for an
+  evaluate, or every endpoint of its slot for a disable; a command with no reach closes
+  nothing. A closed endpoint takes no transfer. The transfers a
+  command's success retires are computed at its completion, every live
+  holding on the rings it restarts or unbinds; since the closure admits
+  no post in between, they are the ones live there at its publication.
+  That is what makes the retired set exact: Set TR Dequeue Pointer moves
+  the ring's dequeue to the pointer it was given, the ring's producer
   position at the publication (4.6.10, pp. 141-142), and a transfer
   published there afterwards, with its doorbell, would run although the
-  completion said the ring had been moved past it.
-* An endpoint's **state** in the ledger is `running`, `stopped` or
-  `halted`, the controller's states the form reaches (Figure 4-5,
-  4.8.3, p. 163), and changes only on what the trusted side did itself or
-  consumed. The consumed success of the command that binds the endpoint,
-  Address Device for EP0 or a Configure Endpoint adding it, alone or with
-  a drop, sets `running` (Figure 4-5, items 1, 2 and 6, p. 163), and so
-  does the publication of a transfer on it, whose doorbell starts a
-  stopped endpoint (4.8.3, p. 165); a consumed Stop Endpoint or Reset
-  Endpoint success sets `stopped` (4.6.9, p. 140; 4.6.8, p. 129); a
-  consumed transfer
-  event with an error code naming it sets `halted` (4.10.2, p. 195). A
-  failed command changes no state: a Stop Endpoint that fails because
+  completion said the ring had been moved past it. Stop Endpoint and
+  Reset Endpoint retire nothing.
+* An endpoint's **state** in the ledger is `disabled`, `running`,
+  `stopped` or `halted`, the controller's states the form reaches
+  (Figure 4-5, 4.8.3, p. 163), and changes only on what the trusted side
+  did itself or consumed. An endpoint no ring is bound to is `disabled`.
+  A binding's endpoint runs from its command's publication, closed
+  until the command's success opens it (Figure 4-5, items 1, 2 and 6,
+  p. 163), and is `disabled` again if the command fails, its binding
+  ended, or for a failed Address Device kept as above. `running` is the
+  queue table's `open`, the one state that takes a transfer; a consumed
+  Stop Endpoint or Reset Endpoint success sets `stopped` (4.6.9, p. 140;
+  4.6.8, p. 129), which takes none, so the controller never resumes a
+  TD the form has answered, as it would resume the halted transfer a
+  Reset Endpoint leaves on the ring; a consumed
+  Disable Slot success sets every endpoint of its slot `disabled`, its
+  bindings ended; a consumed transfer event with an error code sets
+  `halted` (4.10.2, p. 195) and answers the ring's oldest live transfer
+  with the code and no bytes, its holding kept until a command restarts
+  or removes the ring. A Set TR Dequeue Pointer's success sets
+  `running`, the queue open again: the controller's endpoint stays
+  Stopped with its ring empty past the pointer until the next doorbell
+  starts it (4.8.3, p. 165). Beyond its own bindings, a failed command
+  changes no state: a
+  Stop Endpoint that fails because
   the endpoint halted (4.8.3, p. 164) leaves it `halted` if the halting
   error event was consumed first, and otherwise `running` with the
   halting transfer live until that event is consumed. A transfer's
   holding ends only when its last event is consumed, so `running` with
   no live transfer is the specification's Running but idle: no transfer
   in progress, the ring empty and every event received (4.6.6, p. 117).
-  The check holds three rules on it:
-  * no transfer is published on a `halted` endpoint, whose doorbell the
-    controller has disabled (4.6.8, p. 128);
+  The check's reach rule holds four rules on it:
+  * no transfer is published on a closed endpoint, or on one that is not
+    `running`: a `halted` one, whose doorbell the controller has
+    disabled (4.6.8, p. 128), a `stopped` one, as the queue table
+    refuses, or EP0 after a failed Address Device;
+  * a Stop Endpoint, Reset Endpoint or Set TR Dequeue Pointer names an
+    endpoint that is not `disabled`;
   * a Configure Endpoint that drops an endpoint, alone or with an add, is
     published only when that endpoint is `stopped`, or `running` with no
     live transfer, the only states in which a drop is defined (4.6.6,
@@ -2262,8 +2322,9 @@ that consumes events.
     pp. 109-110).
 
   The core reads each endpoint's state and closure from the ledger to
-  choose its commands, and the check refuses a plan that breaks any rule.
-  A Stop Endpoint on a halted endpoint, a Reset Endpoint on one that is
+  choose its commands, and the check refuses a plan that breaks any rule
+  with `ERX_DMA_BREAKS_REACH`, which the core answers as the refusal
+  `ERX_DEVICE_TRB_REFUSE_HALTED`. A Stop Endpoint on a halted endpoint, a Reset Endpoint on one that is
   not halted and a Set TR Dequeue Pointer on one that is not stopped are
   rejected with Context State Error, a defined answer that changes
   nothing (4.8.3, p. 164; 4.6.8, p. 129; 4.6.10, p. 141), so the check
@@ -2276,10 +2337,10 @@ consumed in order; the completion codes are Table 6-90's (p. 507).
 
 | Event | Release |
 | --- | --- |
-| Transfer Event, Success or Short Packet, naming the last TRB of a live transfer on a ring bound to its slot and endpoint | that transfer's holding |
-| any other Transfer Event: a short packet on a data stage, an error, a stop's | nothing: a transfer's holding ends only when the controller can no longer fetch it, its last TRB done or its ring moved past or removed |
+| Transfer Event, Success or Short Packet, naming the last TRB of its ring's oldest live transfer, the ring bound to its slot and endpoint, since the controller runs a ring's TDs in order | that transfer's holding |
+| any other Transfer Event: a short packet on a data stage, an error, a stop's, the last accepted only while a Stop Endpoint naming its endpoint is in flight and once for each stop | nothing: a transfer's holding ends only when the controller can no longer fetch it, its last TRB done or its ring moved past or removed |
 | Command Completion naming the live command | the command's holding, on every code, and by the command and its code what the rows below add |
-| Address Device or Configure Endpoint, failing | the bindings the command made |
+| Address Device or Configure Endpoint, failing | the bindings the command made, but a failed Address Device's, kept with EP0 `disabled` until Disable Slot succeeds (Bindings and holdings) |
 | Configure Endpoint, succeeding | each binding of an endpoint it drops that was made before it, with the transfers its reach retires |
 | Set TR Dequeue Pointer, succeeding | the transfers its reach retires, those live on the endpoint's ring at its publication |
 | Disable Slot, succeeding | the slot's holding, its DCBAA entry cleared, every binding of the slot, and the transfers its reach retires |
@@ -2288,7 +2349,12 @@ consumed in order; the completion codes are Table 6-90's (p. 507).
 
 Stop Endpoint, Reset Endpoint and Evaluate Context release only their
 own holding: the ring stays the endpoint's, and its transfers can be
-fetched again. The core's reading of the same events gives each answer
+fetched again. Each transfer a command's success retires is answered
+`stopped` with no bytes under its own tag, after the command's own
+answer, unless an error event answered it already, so one completion
+can give more answers than it has events: at most every holding but the
+command's, which the ledger caps at `ERX_DMA_HOLDINGS_MAX` live holdings
+across every ring, a Disable Slot's included. The core's reading of the same events gives each answer
 and each queue's state, as [Completing](#the-trb-ring-form) says; where
 the two meet, a transfer the core answers with bytes is one the event's
 release returned, or the copy is refused.

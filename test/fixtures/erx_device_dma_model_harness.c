@@ -159,7 +159,7 @@ device_store(harness_t *h, uint64_t addr, uint32_t width, uint64_t value)
 static request_t *
 request_at(harness_t *h, uint64_t addr)
 {
-	const erx_dma_pool_t *const pool = &layout_of(h)->pool;
+	const erx_dma_pool_t *const pool = &layout_of(h)->pools[0];
 	uint64_t from;
 
 	CHECK(addr >= DEVICE_BASE + pool->first);
@@ -421,7 +421,7 @@ static uint32_t
 complete(harness_t *h)
 {
 	const erx_dma_range_t index_at = { used_table(h)->region + ERX_VIRTQ_RING_HEAD_OFF_IDX, sizeof(uint16_t) };
-	const erx_dma_pool_t *const pool = &layout_of(h)->pool;
+	const erx_dma_pool_t *const pool = &layout_of(h)->pools[0];
 	erx_report_record_t elements[SIZE];
 	erx_split_ring_answer_t answers[SIZE];
 	uint8_t index_bytes[2];
@@ -468,7 +468,7 @@ memory_size(void)
 	erx_dma_layout_t layout;
 
 	CHECK(erx_dma_layout_split_ring(SIZE, BUFFER, GRANULE, 0, DEVICE_BASE, ADDRESS_BITS, &layout));
-	return (layout.pool.first + (uint64_t)layout.pool.count * layout.pool.stride);
+	return (layout.pools[0].first + (uint64_t)layout.pools[0].count * layout.pools[0].stride);
 }
 
 /* One schedule: a former record's dirty used ring, an install, then posts, completions and a reset. */
