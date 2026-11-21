@@ -346,8 +346,9 @@ A task other than the root takes two pairs, for its gate and its task object in 
 semaphore its end ups in the second, the fourth slot unused, and its row records both indices. The
 pool's one unit is the pair, so a count of free pairs is also a count of what can be placed: a
 take never fails for want of adjacent slots while enough are free, which is what lets the manifest
-check share the pool out by counting. Indices fit 16 bits, because the pool holds fewer than 65,536
-pairs, and a static assertion says so: the row gains 128 thread pair indices and two task pair
+check share the pool out by counting. A record names a pair by its index plus one, so the zero of
+a cleared record names no pair and reaches no slot, and a stale use is Fiasco's refusal; the
+numbers fit 16 bits, because the pool holds fewer than 65,535 pairs, and a static assertion says so: the row gains 128 thread pair indices and two task pair
 indices, 260 bytes, and stays under half a page, so the task table keeps its two rows a page. The
 root's own threads keep their fixed runs, because the root's index 0 is the thread the kernel gave
 it and the root's stubs reach its own thread capabilities by index. IRQ objects keep their fixed
@@ -374,8 +375,10 @@ it, and a take never meets an occupied slot.
 **The pool is shared out.** The task table holds at most 1,024 rows, and the plan derives that
 figure from the row's size and the table's one directory page ([Table sizes](#table-sizes)), so
 the pool's spaces never need more than 2,048 pairs, and a static assertion fails the build when
-the pool holds fewer than two pairs for every row the task table can hold. The remaining 22,264
-pairs are the threads', and a domain's share of them is its thread limit. Both the threads' share
+the pool holds fewer than two pairs for every row the task table can hold. Those 2,048 pairs are
+held back whole: they are the pool's first, a run of their own, from which only a space's create
+takes. The remaining 22,264 pairs are the threads' run, and a domain's share of them is its thread
+limit. Both the threads' share
 and the task table are machine-wide tables that the manifest check shares out among domains
 ([Table sizes](#table-sizes)), so a configured domain within its limits never meets the pool's
 `ERX_ENOMEM`.
@@ -435,10 +438,11 @@ seeded fault that test must catch:
   lowest first and then a refusal, frees one and expects it taken next, and frees the last pair and
   expects it taken again. Seeded faults: a take that does not mark its pair, under which two takes
   answer the same pair; and a scan that stops one pair short, under which the exhausting run ends a
-  pair early. A guest case of the backend's function suite runs, in a test
-  task, more thread creates, starts and exits than the pool holds pairs, each expecting `ERX_OK`, and
-  creates spaces with live threads, stops and joins them, expecting through the test hooks the
-  pool's free count back where it started. Seeded faults: the reap not freeing the thread's pair,
+  pair early (`test/host/slot_pool_test.rb`). The `native_task` suite's `pool_rounds` case runs, in a
+  test task, more thread creates, starts and exits than the pool holds pairs, each expecting `ERX_OK`;
+  its `root_stops` case stops a space whose threads are live and joins it, and every case of the
+  suite expects through the test hooks the pool's free count back where it started and every free
+  pair's slots empty. Seeded faults: the reap not freeing the thread's pair,
   under which a create in the loop answers `ERX_ENOMEM`; and a row's deletion not freeing the task's
   pairs, under which the free count ends two pairs a space short. The manifest check's clause 9
   case refuses a manifest whose thread limits pass the threads' share of the pool; seeded fault: the
@@ -3522,28 +3526,18 @@ hooks.
   Fiasco's interrupt and exception code, such as an interrupt storm on a line, rests on Fiasco's own
   code with no erXos test driving it.
 
-* **What shares out the task table.** A domain's row names a thread, an object and a mapping
-  limit, and no limit on spaces, so [Table sizes](#table-sizes) shares the task table's 1,024 rows
-  out by object limits, counting every object a domain may make as a space. That is safe and adds
-  nothing, but it binds the configured domains' and templates' object limits to sum within 1,024,
-  where the page index's labels allow 4,096, and so may refuse a manifest whose domains make many
-  memory objects and few spaces. The alternatives are a space limit in the row, which is a field
-  of the manifest with no meaning on erXos's kernel, where spaces are charged to budgets and no
-  table of the root exists (FD30); or a task table with a row for every label, which then never
-  fills before the labels and needs no share of its own, but needs a row of at most 512 bytes, so
-  each thread's state and affinity move from the row into a record of its pair, the root's own
-  threads taking pairs too. Recommendation: object limits, until clause 9 refuses a real
-  manifest; then the row for every label, which keeps the cost inside the backend.
-* **Where the figures clause 9 reads have one source.** The check needs the task table's rows and
-  the threads' share of the slot pool, which the backend derives from the root's window, the
-  object space, the IRQ objects and the row's size. Recommendation: the window, the object space
-  and the IRQ objects as facts of the ABI's Fiasco constants, generated into the backend's header
-  and the check alike, and the task table's 1,024 rows written there too and checked by a static
-  assertion against the row's size, as a spec writes down a layout's offsets and its generator
-  checks them.
-
 Decided, and applied above:
 
+* **What shares out the task table**: the domains' object limits, counting every object a domain
+  may make as a space, so the configured domains' and templates' object limits sum within the
+  table's 1,024 rows ([Table sizes](#table-sizes)). If clause 9 comes to refuse a real manifest, the
+  task table gains a row for every label instead, which keeps the cost inside the backend.
+* **Where the figures clause 9 reads have one source**: `abi/erx_abi.txt`. The object space's
+  slots, the root's window and the IRQ objects are its `fiasco_obj_space_slots`,
+  `fiasco_root_handles` and `fiasco_irqs_max`, from which `root_layout.h` lays the root's slots out
+  and derives the pool; the task table's rows are its `fiasco_task_rows`, which `service_task.c`
+  checks by a static assertion against the row's size, as a spec writes down a layout's offsets and
+  its generator checks them.
 * **0.2's features** are Phase 1b and track A, and M9's devices, the rest of track P, M10, M12, track D's
   parts 5 and 9, and the security closure in its Fiasco form; track Q follows 0.2 (FD9).
 * **Bands**: the six of [Bands](#bands), fixed in the manifest's schema, with no per-domain choice

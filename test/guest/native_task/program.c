@@ -19,6 +19,7 @@
 #include "liberx/backend/api.h"
 #include "liberx/backend/fiasco/cache.h"
 #include "liberx/backend/fiasco/console.h"
+#include "liberx/backend/fiasco/root_layout.h"
 #include "liberx/backend/fiasco/service.h"
 #include "liberx/backend/fiasco/task_start.h"
 #include "liberx/backend/fiasco/thread.h"
@@ -80,20 +81,29 @@ aliases_map(void)
 	return (0);
 }
 
+/* A committed stack of STACK_BYTES, or 0. */
+static uint64_t
+stack_make(void)
+{
+	uint64_t stack;
+
+	if (erx_vm_reserve(ERX_CAP_SELF, 0, STACK_BYTES, 0, &stack) != ERX_OK || erx_vm_commit(ERX_CAP_SELF, stack, STACK_BYTES) != ERX_OK)
+		return (0);
+	return (stack);
+}
+
 /*
- * A thread on its own committed stack, on the CPU of mask if that CPU exists. Its word to
+ * A thread on the committed stack, on the CPU of mask if that CPU exists. Its word to
  * clear is set before it can run, or its exit could pass the word by.
  */
 static int64_t
-thread_spawn(void (*entry)(uint64_t), uint64_t argument, uint64_t mask, _Atomic uint32_t *clear, uint64_t *thread)
+thread_spawn_on(uint64_t stack, void (*entry)(uint64_t), uint64_t argument, uint64_t mask, _Atomic uint32_t *clear,
+    uint64_t *thread)
 {
 	erx_fiasco_start_t start = { 0 };
 	const uint64_t *const words = (const uint64_t *)(const void *)&start;
 	erx_utcb_t *const utcb = erx_utcb_self();
-	uint64_t stack;
 
-	if (erx_vm_reserve(ERX_CAP_SELF, 0, STACK_BYTES, 0, &stack) != ERX_OK || erx_vm_commit(ERX_CAP_SELF, stack, STACK_BYTES) != ERX_OK)
-		return (30);
 	start.regs.gpr[0] = argument;
 	start.regs.sp = stack + STACK_BYTES;
 	start.regs.pc = (uint64_t)(uintptr_t)entry;
@@ -108,6 +118,15 @@ thread_spawn(void (*entry)(uint64_t), uint64_t argument, uint64_t mask, _Atomic 
 	if (erx_thread_start(*thread) != ERX_OK)
 		return (32);
 	return (0);
+}
+
+/* A thread on a committed stack of its own, which it keeps until the task ends. */
+static int64_t
+thread_spawn(void (*entry)(uint64_t), uint64_t argument, uint64_t mask, _Atomic uint32_t *clear, uint64_t *thread)
+{
+	const uint64_t stack = stack_make();
+
+	return (stack != 0 ? thread_spawn_on(stack, entry, argument, mask, clear, thread) : 30);
 }
 
 /* The handshake is the order: each round's code is complete before its post. */
@@ -130,6 +149,13 @@ said_helper(uint64_t value)
 {
 	atomic_store_explicit(&thread_said, (uint32_t)value, memory_order_release);
 	erx_thread_exit();
+}
+
+static void
+sleep_helper(uint64_t value)
+{
+	(void)value;
+	erx_fiasco_sleep_forever();
 }
 
 /* Waits for the reaper to clear the word: the thread is gone, and its index on its way back. */
@@ -427,6 +453,32 @@ mode_write(void)
 	return (erx_fiasco_service_call(ERX_FIASCO_CALL_TASK_WRITE, &past_table, sizeof(past_table), &reply) == ERX_EINVAL ? 0 : 92);
 }
 
+/*
+ * More thread creates, starts and exits than the threads' share of the root's slot pool
+ * holds pairs, one thread at a time on one stack, which the next reuses once the reaper has
+ * cleared the word: each exit's reap gives the thread's pair back, or a create runs the
+ * share dry and answers ERX_ENOMEM.
+ */
+static int64_t
+mode_pool_rounds(void)
+{
+	const uint64_t stack = stack_make();
+	uint64_t thread;
+
+	if (stack == 0)
+		return (140);
+	for (uint32_t round = 0; round < ERX_FIASCO_POOL_THREAD_PAIRS + 1; round++) {
+		int64_t step;
+
+		atomic_store_explicit(&clear_word, 1, memory_order_relaxed);
+		step = thread_spawn_on(stack, said_helper, round, 0, &clear_word, &thread);
+		if (step != 0)
+			return (step);
+		thread_join_word();
+	}
+	return (0);
+}
+
 int64_t
 erx_task_main(const uint64_t args[ERX_FIASCO_START_ARGS])
 {
@@ -462,6 +514,13 @@ erx_task_main(const uint64_t args[ERX_FIASCO_START_ARGS])
 	case MODE_WRITE:
 		return (mode_write());
 	case MODE_WAIT:
+		for (uint32_t index = 0; index < WAIT_THREADS; index++) {
+			uint64_t thread;
+
+			step = thread_spawn(sleep_helper, 0, 0, NULL, &thread);
+			if (step != 0)
+				return (step);
+		}
 		erx_fiasco_sleep_forever();
 	case MODE_IRQ_REFUSED:
 		return (mode_irq_refused());
@@ -469,6 +528,8 @@ erx_task_main(const uint64_t args[ERX_FIASCO_START_ARGS])
 		return (mode_device_refused());
 	case MODE_YIELD:
 		return (mode_yield());
+	case MODE_POOL_ROUNDS:
+		return (mode_pool_rounds());
 	case MODE_MACHINE_END:
 		return (erx_machine_end(0, ERX_END_RESET) == ERX_ENOTSUP ? 0 : 130);
 	default:

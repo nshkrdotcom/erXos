@@ -21,15 +21,16 @@
  * which musl's seam includes, stays free of Fiasco's headers.
  */
 
-/* The most IRQ objects the machine holds at once: each has a slot of the root's. */
-#define ERX_FIASCO_IRQS_MAX	256u
-
 /*
- * The capability slots of Fiasco's object space under config/fiasco/kernel.defconfig: a
- * two-level table of 512 directory entries of 128 slots each (docs/design-fiasco.md,
- * "Handles"). Slot ERX_FIASCO_OBJ_SPACE_SLOTS is the first a lookup refuses.
+ * The facts the plan starts from are the ABI's (abi/erx_abi.txt): ERX_FIASCO_OBJ_SPACE_SLOTS,
+ * the slots of Fiasco's object space under config/fiasco/kernel.defconfig, a two-level
+ * table of 512 directory entries of 128 slots each, whose slot ERX_FIASCO_OBJ_SPACE_SLOTS
+ * is the first a lookup refuses (docs/design-fiasco.md, "Handles"); ERX_FIASCO_ROOT_HANDLES,
+ * the root's handle limit, a declared figure, since what the system domain holds at once
+ * is its policy's; and ERX_FIASCO_IRQS_MAX, the IRQ objects the machine holds at once,
+ * each with a slot of the root's.
  */
-#define ERX_FIASCO_OBJ_SPACE_SLOTS	65536u
+
 /* The slot of erx_fiasco_thread_semaphore_cap(0), the first past Fiasco's base capabilities. */
 #define ERX_FIASCO_SLOT_FIRST	((uint32_t)(L4_BASE_CAPS_LAST >> L4_CAP_SHIFT) + 1u)
 /*
@@ -45,31 +46,12 @@
 #define ERX_FIASCO_CAP_LIMIT_MAX	(ERX_FIASCO_OBJ_SPACE_SLOTS - ERX_FIASCO_IRQ_SLOT_BASE + 1u)
 
 /*
- * A task's run of the root's slots: its semaphores, its threads, then its gate, its
- * space and its end semaphore, which service_task.c names.
- */
-#define ERX_FIASCO_TASK_SLOTS	(2u * ERX_FIASCO_THREADS_MAX + 3u)
-/*
- * The most tasks besides the root, each with its run. The object space holds no more
- * than about 250 runs beside the root's own slots, so this, and not the task table,
- * bounds the tasks; the figure is open (TODO.md, the root's layout plan).
- */
-#define ERX_FIASCO_TASK_RUNS_MAX	192u
-/*
- * The root's handle limit: what the object space leaves once every other part of the
- * root's layout is laid out, the three fixed slots below, the IRQ objects' and the
- * tasks' runs. No figure of its own, so the root's window cannot reach its other slots.
- */
-#define ERX_FIASCO_ROOT_HANDLES	(ERX_FIASCO_OBJ_SPACE_SLOTS - ERX_FIASCO_IRQ_SLOT_BASE - 3u - ERX_FIASCO_IRQS_MAX - \
-	    ERX_FIASCO_TASK_RUNS_MAX * ERX_FIASCO_TASK_SLOTS)
-
-/*
  * The root's layout past both per-thread runs, as erx_fiasco_root_slot_cap numbers its
  * slots: its numbering continues the thread capabilities', so the first is the IRQ slot
  * base. The root's window of IRQ slots, one for each entry of its handle table, then its
  * service gate and thread, the watchdog's slot, one slot for each IRQ object of the
- * machine's, which irq.c keeps, and each task's run, which service_task.c divides. One
- * list, so that no two users can pick the same slot.
+ * machine's, which irq.c keeps, and the slot pool, which service_task.c takes pairs of.
+ * One list, so that no two users can pick the same slot.
  */
 enum {
 	ERX_FIASCO_SLOT_ROOT_WINDOW = ERX_FIASCO_THREADS_MAX,
@@ -77,14 +59,29 @@ enum {
 	ERX_FIASCO_SLOT_SERVICE_THREAD,
 	ERX_FIASCO_SLOT_WATCHDOG,
 	ERX_FIASCO_SLOT_IRQS,
-	ERX_FIASCO_SLOT_TASK_RUNS = ERX_FIASCO_SLOT_IRQS + ERX_FIASCO_IRQS_MAX,
-	ERX_FIASCO_SLOT_END = ERX_FIASCO_SLOT_TASK_RUNS + ERX_FIASCO_TASK_RUNS_MAX * ERX_FIASCO_TASK_SLOTS
+	ERX_FIASCO_SLOT_POOL = ERX_FIASCO_SLOT_IRQS + ERX_FIASCO_IRQS_MAX
 };
 
-_Static_assert(ERX_FIASCO_ROOT_HANDLES > 0 && ERX_FIASCO_ROOT_HANDLES < ERX_FIASCO_OBJ_SPACE_SLOTS,
-    "the root's layout leaves the root handles");
-_Static_assert(ERX_FIASCO_SLOT_FIRST + ERX_FIASCO_THREADS_MAX + ERX_FIASCO_SLOT_END <= ERX_FIASCO_OBJ_SPACE_SLOTS,
-    "the root's layout lies within Fiasco's object space");
+/*
+ * The slot pool's pairs: every slot from the pool's first to the end of the object
+ * space, two a pair, an odd last slot unused. Derived, never written down, so no part of
+ * the plan can overlap another.
+ */
+#define ERX_FIASCO_POOL_PAIRS	((ERX_FIASCO_OBJ_SPACE_SLOTS - (ERX_FIASCO_SLOT_FIRST + ERX_FIASCO_THREADS_MAX + \
+	    ERX_FIASCO_SLOT_POOL)) / 2u)
+
+/*
+ * The pool's shares: two pairs for each row the task table can hold, held back whole, the
+ * first of the pool's pairs; the rest the threads', one pair each.
+ */
+#define ERX_FIASCO_POOL_TASK_PAIRS	(2u * ERX_FIASCO_TASK_ROWS)
+#define ERX_FIASCO_POOL_THREAD_PAIRS	(ERX_FIASCO_POOL_PAIRS - ERX_FIASCO_POOL_TASK_PAIRS)
+
+_Static_assert(ERX_FIASCO_SLOT_FIRST + ERX_FIASCO_THREADS_MAX + ERX_FIASCO_SLOT_POOL < ERX_FIASCO_OBJ_SPACE_SLOTS,
+    "the root's fixed slots lie within Fiasco's object space");
+_Static_assert(ERX_FIASCO_POOL_PAIRS <= UINT16_MAX, "a pair's number, its index plus one, fits the 16 bits of erx_slot_pair_t");
+_Static_assert(ERX_FIASCO_POOL_PAIRS > ERX_FIASCO_POOL_TASK_PAIRS,
+    "the pool holds two pairs for every row the task table can hold");
 _Static_assert(ERX_FIASCO_CAP_LIMIT_MAX <= ERX_CAPS_MAX, "a window's bound is within erXos's own");
 
 uint64_t	erx_fiasco_root_slot_cap(uint32_t);
