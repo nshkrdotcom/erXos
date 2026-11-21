@@ -35,8 +35,10 @@ class ErxDeviceTrbFormTest < Minitest::Test
   # Dequeue Pointer retiring nothing; a drop of a halted endpoint let through; a stop's event
   # taken with no Stop Endpoint in flight; a second command let in while one is in flight; a
   # failed Address Device ending EP0's binding; a post let through on a stopped endpoint; a retired
-  # transfer an error answered answered again.
-  SEEDS = %w[TRB_FORM_SEED_HIGHEST_BUFFER TRB_FORM_SEED_NO_OUT_FILL TRB_FORM_SEED_TAG_AT_FIRST
+  # transfer an error answered answered again; an input context's dequeue pointer from another
+  # binding's ring; a drop's flag left out; A1 set on Configure Endpoint; a burst past 15 accepted.
+  SEEDS = %w[DMA_SEED_DEQUEUE_OTHER_RING DMA_SEED_DROP_MISSING DMA_SEED_CONFIGURE_ADDS_EP0
+             DEVICE_TRB_SEED_BURST_UNCHECKED TRB_FORM_SEED_HIGHEST_BUFFER TRB_FORM_SEED_NO_OUT_FILL TRB_FORM_SEED_TAG_AT_FIRST
              TRB_FORM_SEED_NO_REQUEST_CHECK TRB_FORM_SEED_OTHER_POOL TRB_FORM_SEED_ANY_ENDPOINT
              TRB_FORM_SEED_DEQUEUE_STALE DMA_SEED_NO_RING_BOUND DMA_SEED_CYCLE_INVERTED
              DMA_SEED_PLACE_ONE_OFF TRB_FORM_SEED_ANY_TRANSFER TRB_FORM_SEED_HALT_HEAD_OF_NEWEST

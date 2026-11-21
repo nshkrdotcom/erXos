@@ -57,6 +57,30 @@ _Static_assert(SPLIT_RING_TABLES <= ERX_DMA_ZEROS_MAX && SPLIT_RING_TABLES <= ER
 #define SEED_NO_ZEROS		false
 #endif
 
+#ifdef ERX_DMA_SEED_CONFIGURE_ADDS_EP0
+#define SEED_CONFIGURE_ADDS_EP0	true
+#else
+#define SEED_CONFIGURE_ADDS_EP0	false
+#endif
+#ifdef ERX_DMA_SEED_DEQUEUE_OTHER_RING
+#define SEED_DEQUEUE_OTHER_RING	true
+#else
+#define SEED_DEQUEUE_OTHER_RING	false
+#endif
+#ifdef ERX_DMA_SEED_DROP_MISSING
+#define SEED_DROP_MISSING	true
+#else
+#define SEED_DROP_MISSING	false
+#endif
+
+/* A binding starts its ring at its first record on lap 0, whose cycle state is 1 (xHCI 1.2, 4.3.3, pp. 88-89; 4.9.2, p. 174). */
+#define BINDING_START_CYCLE	1u
+/* The average TRB length of a control endpoint's context (xHCI 1.2, 4.14.1.1, p. 258). */
+#define CONTROL_AVERAGE_TRB_LENGTH	8u
+_Static_assert(ERX_XHCI_SLOT_CONTEXT_SIZE <= ERX_DMA_STORE_BYTES_MAX &&
+    ERX_XHCI_ENDPOINT_CONTEXT_SIZE == ERX_XHCI_SLOT_CONTEXT_SIZE &&
+    ERX_XHCI_INPUT_CONTROL_CONTEXT_SIZE == ERX_XHCI_SLOT_CONTEXT_SIZE, "each context is one store of one size");
+
 /* The offset of byte `offset` of buffer `buffer` in the record's memory. */
 static uint64_t
 buffer_offset(const erx_dma_layout_t *layout, uint32_t buffer, uint64_t offset)
@@ -149,6 +173,15 @@ command_store(erx_dma_store_t *store, const void *record)
 	store->length = ERX_XHCI_TRB_ALIGN;
 	memcpy(store->bytes, record, ERX_XHCI_TRB_ALIGN);
 	return (true);
+}
+
+/* The device address of ring `ring`'s position, where the controller resumes it. */
+static uint64_t
+ring_position_address(const erx_dma_ledger_t *ledger, uint32_t ring)
+{
+	const erx_dma_layout_t *const layout = erx_dma_ledger_layout(ledger);
+
+	return (layout->device_base + record_offset(layout, (erx_dma_place_t){ ring, erx_dma_ledger_position(ledger, ring).index }));
 }
 
 /*
@@ -288,8 +321,7 @@ encode(const erx_dma_ledger_t *ledger, const erx_dma_publication_t *publication,
 
 		if (ring < 0)
 			return (false);
-		placed.parameter_pointer = layout->device_base + record_offset(layout, (erx_dma_place_t){ (uint32_t)ring,
-		    erx_dma_ledger_position(ledger, (uint32_t)ring).index });
+		placed.parameter_pointer = ring_position_address(ledger, (uint32_t)ring);
 		placed.parameter_dequeue_cycle = erx_dma_ledger_cycle(ledger, (uint32_t)ring);
 		return (erx_xhci_trb_set_dequeue_command_encode(&record, &placed) && command_store(store, &record));
 	}
@@ -421,7 +453,7 @@ static bool
 bind_ring(const erx_dma_layout_t *layout, uint32_t table, erx_dma_sequence_t *out)
 {
 	const erx_dma_ring_step_t link = { .place = { .table = table, .index = layout->tables[table].count - 1 },
-	    .cycle = 1, .link = true };
+	    .cycle = BINDING_START_CYCLE, .link = true };
 
 	if (!encode_link(layout, link, &out->stores[out->store_count]))
 		return (false);
@@ -475,10 +507,183 @@ install(const erx_dma_ledger_t *ledger, erx_dma_sequence_t *sequence)
 	return (ERX_DMA_PASSES);
 }
 
+/* One context's 32 bytes at context `index` of the input context, through its encoder's output. */
+static void
+add_part(erx_dma_context_part_t *parts, uint32_t *count, uint32_t context_size, uint32_t index, uint32_t dci,
+    const void *record)
+{
+	parts[*count] = (erx_dma_context_part_t){ .offset = index * context_size, .dci = dci };
+	memcpy(parts[*count].bytes, record, sizeof(parts[*count].bytes));
+	(*count)++;
+}
+
+uint32_t
+erx_dma_input_context(const erx_device_trb_contexts_t *stated, const erx_dma_context_derivation_t *derived,
+    erx_dma_context_part_t parts[ERX_DMA_CONTEXT_PARTS_MAX])
+{
+	const uint32_t size = stated->context_size;
+	erx_xhci_input_control_context_placed_t control = { .drop = derived->drop };
+	erx_xhci_input_control_context_t flags;
+	uint32_t count = 1;
+
+	if ((size != ERX_XHCI_SLOT_CONTEXT_SIZE && size != 2u * ERX_XHCI_SLOT_CONTEXT_SIZE) ||
+	    stated->endpoint_count > ERX_DEVICE_TRB_DCI_MAX || (derived->drop & 0x3u) != 0)
+		return (0);
+	if (derived->slot) {
+		const erx_xhci_slot_context_placed_t placed = { .route_context_entries = derived->entries };
+		erx_xhci_slot_context_t record;
+
+		if (!erx_xhci_slot_context_encode(&record, &stated->slot_context, &placed))
+			return (0);
+		add_part(parts, &count, size, 1, 0, &record);
+		control.add |= 1u << 0;
+	}
+	for (uint32_t k = 0; k < stated->endpoint_count; k++) {
+		const erx_device_trb_context_endpoint_t *const endpoint = &stated->endpoints[k];
+		const erx_xhci_endpoint_context_free_t *const context = &endpoint->context;
+		erx_xhci_endpoint_context_placed_t placed;
+		erx_xhci_endpoint_context_t record;
+
+		if (endpoint->dci < 1 || endpoint->dci > ERX_DEVICE_TRB_DCI_MAX || (control.add >> endpoint->dci & 1u) != 0)
+			return (0);
+		placed = (erx_xhci_endpoint_context_placed_t){
+			.dequeue_dequeue_cycle = derived->dequeue[endpoint->dci] & 1u,
+			.dequeue_dequeue_pointer = derived->dequeue[endpoint->dci] & ~UINT64_C(1),
+			.payload_average_trb_length = context->config_endpoint_type == ERX_XHCI_ENDPOINT_TYPE_CONTROL ?
+			    CONTROL_AVERAGE_TRB_LENGTH : context->config_max_packet * (context->config_max_burst + 1u),
+		};
+		if (!erx_xhci_endpoint_context_encode(&record, context, &placed))
+			return (0);
+		add_part(parts, &count, size, endpoint->dci + 1u, endpoint->dci, &record);
+		control.add |= UINT64_C(1) << endpoint->dci;
+	}
+	if (SEED_CONFIGURE_ADDS_EP0 && derived->slot)
+		control.add |= 1u << 1;
+	if (!erx_xhci_input_control_context_encode(&flags, &control))
+		return (0);
+	/* The input control context is context 0, the first part, whose place count began past. */
+	add_part(parts, &(uint32_t){ 0 }, size, 0, 0, &flags);
+	return (count);
+}
+
+/* Whether `meaning` is a command whose TRB names the input context (xHCI 1.2, 6.4.3.4 to 6.4.3.6, pp. 490-492). */
+static bool
+carries_input_context(uint32_t meaning)
+{
+	return (meaning == ERX_MEANING_XHCI_TRB_ADDRESS_DEVICE_COMMAND ||
+	    meaning == ERX_MEANING_XHCI_TRB_CONFIGURE_ENDPOINT_COMMAND ||
+	    meaning == ERX_MEANING_XHCI_TRB_EVALUATE_CONTEXT_COMMAND);
+}
+
+/*
+ * The dequeue word of the context a publication carries for its endpoint `dci`: the ring the
+ * publication binds to it, at the binding's start, its first record on lap 0 with cycle state 1
+ * (bind_ring); for Evaluate Context, which binds none, the ring bound to it, at its position with
+ * its cycle state, as Set TR Dequeue Pointer writes it. False for an endpoint with no such ring.
+ */
+static bool
+carried_dequeue(const erx_dma_ledger_t *ledger, const erx_dma_publication_t *publication, uint32_t dci, uint64_t *word)
+{
+	const erx_dma_layout_t *const layout = erx_dma_ledger_layout(ledger);
+	const uint32_t endpoint = erx_dma_endpoint(publication->reach.group, dci);
+	int ring;
+
+	for (uint32_t k = 0; k < publication->bind_count; k++) {
+		const uint32_t table = publication->binds[SEED_DEQUEUE_OTHER_RING ? (k + 1u) % publication->bind_count : k].table;
+
+		if (publication->binds[k].endpoint == endpoint && endpoint != 0) {
+			*word = (layout->device_base + layout->tables[table].first) | BINDING_START_CYCLE;
+			return (true);
+		}
+	}
+	if (publication->records[0].meaning != ERX_MEANING_XHCI_TRB_EVALUATE_CONTEXT_COMMAND || endpoint == 0 ||
+	    (ring = erx_dma_ledger_bound_table(ledger, endpoint)) < 0)
+		return (false);
+	*word = ring_position_address(ledger, (uint32_t)ring) | erx_dma_ledger_cycle(ledger, (uint32_t)ring);
+	return (true);
+}
+
+/*
+ * The derivation of a command's input context (erx_dma_context_derivation_t): the slot context
+ * with Address Device and Configure Endpoint; the drop flags the publication's drops; each carried
+ * endpoint's dequeue word from its ring (carried_dequeue); Context Entries the last index valid
+ * once the command succeeds: EP0's, each endpoint the slot keeps bound and does not drop, and each
+ * carried (Table 6-4, p. 445). False when a carried endpoint has no ring, or a binding has no
+ * carried context, which would bind a ring the controller is never told of.
+ */
+static bool
+derive_input_context(const erx_dma_ledger_t *ledger, const erx_dma_publication_t *publication,
+    erx_dma_context_derivation_t *derived)
+{
+	const erx_device_trb_contexts_t *const stated = publication->contexts;
+	uint32_t valid = 1u << 1, bound = 0;
+
+	*derived = (erx_dma_context_derivation_t){ .slot = publication->records[0].meaning !=
+	    ERX_MEANING_XHCI_TRB_EVALUATE_CONTEXT_COMMAND, .drop = publication->reach.drops };
+	if (SEED_DROP_MISSING)
+		derived->drop &= derived->drop - 1u;
+	for (uint32_t dci = 2; dci <= ERX_DEVICE_TRB_DCI_MAX; dci++) {
+		if ((publication->reach.drops >> dci & 1u) == 0 &&
+		    erx_dma_ledger_bound_table(ledger, erx_dma_endpoint(publication->reach.group, dci)) >= 0)
+			valid |= 1u << dci;
+	}
+	for (uint32_t k = 0; k < stated->endpoint_count && k < ERX_DEVICE_TRB_DCI_MAX; k++) {
+		const uint32_t dci = stated->endpoints[k].dci;
+
+		if (dci < 1 || dci > ERX_DEVICE_TRB_DCI_MAX || !carried_dequeue(ledger, publication, dci, &derived->dequeue[dci]))
+			return (false);
+		valid |= 1u << dci;
+		for (uint32_t b = 0; b < publication->bind_count; b++)
+			bound += publication->binds[b].endpoint == erx_dma_endpoint(publication->reach.group, dci);
+	}
+	derived->entries = 31u - (uint32_t)__builtin_clz(valid);
+	return (bound == publication->bind_count);
+}
+
+/*
+ * The input context a command carries, written whole into the buffer its TRB names: rule 1 zeroes
+ * the buffer, and each context of the one composition is a store at its offset, inside the
+ * buffer's size. BREAKS_MEANINGS for a command that carries it without its parameters, or that
+ * does not and has them, and for contexts the composition refuses or the buffer cannot hold;
+ * BREAKS_BINDINGS for a derivation derive_input_context refuses.
+ */
+static erx_dma_verdict_t
+place_input_context(const erx_dma_ledger_t *ledger, const erx_dma_publication_t *publication, erx_dma_sequence_t *out)
+{
+	const erx_dma_layout_t *const layout = erx_dma_ledger_layout(ledger);
+	const erx_dma_description_t *const command = &publication->records[0];
+	erx_dma_context_part_t parts[ERX_DMA_CONTEXT_PARTS_MAX];
+	erx_dma_context_derivation_t derived;
+	const erx_dma_name_t name = command->names[0];
+	uint64_t size;
+	uint32_t count, pool;
+
+	if (publication->record_count != 1 || !carries_input_context(command->meaning))
+		return (publication->contexts == NULL ? ERX_DMA_PASSES : ERX_DMA_BREAKS_MEANINGS);
+	if (publication->contexts == NULL || command->name_count != 1)
+		return (ERX_DMA_BREAKS_MEANINGS);
+	if (!derive_input_context(ledger, publication, &derived))
+		return (ERX_DMA_BREAKS_BINDINGS);
+	count = erx_dma_input_context(publication->contexts, &derived, parts);
+	size = erx_dma_layout_buffer_pool(layout, name.buffer, &pool)->size;
+	if (count == 0 || count > ERX_DMA_INPUT_PARTS_MAX || name.offset > size ||
+	    (uint64_t)ERX_DMA_CONTEXT_PARTS_MAX * publication->contexts->context_size > size - name.offset)
+		return (ERX_DMA_BREAKS_MEANINGS);
+	for (uint32_t part = 0; part < count; part++) {
+		erx_dma_store_t *const store = &out->stores[out->store_count++];
+
+		*store = (erx_dma_store_t){ .offset = buffer_offset(layout, name.buffer,
+		    name.offset + parts[part].offset), .length = sizeof(parts[part].bytes) };
+		memcpy(store->bytes, parts[part].bytes, sizeof(parts[part].bytes));
+	}
+	return (ERX_DMA_PASSES);
+}
+
 erx_dma_verdict_t
 erx_dma_publish(erx_dma_ledger_t *ledger, const erx_dma_publication_t *publication, erx_dma_sequence_t *sequence)
 {
 	const erx_dma_verdict_t verdict = erx_dma_publication_check(ledger, publication);
+	erx_dma_verdict_t contexts;
 	const erx_dma_layout_t *layout = erx_dma_ledger_layout(ledger);
 	erx_dma_place_t places[ERX_DMA_HELD_RECORDS_MAX];
 	uint32_t buffers[ERX_DMA_HELD_BUFFERS_MAX], buffer_count, count = 0;
@@ -499,6 +704,9 @@ erx_dma_publish(erx_dma_ledger_t *ledger, const erx_dma_publication_t *publicati
 			return (placed);
 		activated = on_ring = true;
 	}
+	contexts = place_input_context(ledger, publication, &out);
+	if (contexts != ERX_DMA_PASSES)
+		return (contexts);
 	for (uint32_t k = 0; k < publication->bind_count; k++) {
 		if (!bind_ring(layout, publication->binds[k].table, &out))
 			return (ERX_DMA_BREAKS_BINDINGS);

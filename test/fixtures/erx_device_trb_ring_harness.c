@@ -43,11 +43,14 @@ static const erx_dma_regions_t no_regions;
 static erx_dma_place_t retired[ERX_DMA_HOLDINGS_MAX];
 static uint32_t retired_count;
 
+/* The input context at 32-byte contexts, granule-rounded: its pool's one buffer. */
+#define INPUT_CONTEXT_BYTES	1088u
+
 static erx_dma_layout_t
 layout(void)
 {
 	return ((erx_dma_layout_t){
-		.memory_size = 1024, .device_base = BASE, .address_bits = 64, .granule = 64, .table_count = 4,
+		.memory_size = 2048, .device_base = BASE, .address_bits = 64, .granule = 64, .table_count = 4,
 		.tables = {
 			{ .structure = ERX_STRUCTURE_XHCI_TRANSFER_RING, .placing = ERX_DMA_PLACED_RING,
 			  .pool = 0, .region = 0, .region_length = 128, .first = 0, .count = RING, .stride = 16 },
@@ -61,7 +64,7 @@ layout(void)
 		.pool_count = 3,
 		.pools = { { .first = 512, .count = BUFFERS, .size = 64, .stride = 64 },
 			   { .first = 384, .count = BUFFERS, .size = 64, .stride = 64 },
-			   { .first = 768, .count = 1, .size = 64, .stride = 64 } },
+			   { .first = 768, .count = 1, .size = INPUT_CONTEXT_BYTES, .stride = INPUT_CONTEXT_BYTES } },
 	});
 }
 
@@ -79,6 +82,18 @@ noop(void)
 {
 	return ((erx_dma_description_t){ .structure = ERX_STRUCTURE_XHCI_COMMAND_RING,
 	    .meaning = ERX_MEANING_XHCI_TRB_NOOP_COMMAND });
+}
+
+/* The input context a binding command adding `endpoint` carries: a bulk OUT endpoint of 64-byte packets. */
+static const erx_device_trb_contexts_t *
+carried(uint32_t endpoint)
+{
+	static erx_device_trb_contexts_t contexts;
+
+	contexts = (erx_device_trb_contexts_t){ .context_size = 32, .endpoint_count = 1, .endpoints = { {
+	    .dci = endpoint % ERX_DMA_GROUP_ENDPOINTS, .context = { .config_endpoint_type = ERX_XHCI_ENDPOINT_TYPE_BULK_OUT,
+	    .config_max_packet = 64, .payload_max_esit_payload = 64 } } } };
+	return (&contexts);
 }
 
 /* A Configure Endpoint, naming the command ring's one buffer, the input context. */
@@ -147,7 +162,8 @@ bind(erx_dma_ledger_t *ledger, uint32_t ring, uint32_t endpoint, erx_dma_descrip
     erx_dma_sequence_t *sequence)
 {
 	const erx_dma_publication_t publication = { .record_count = 1, .records = &command, .call = ERX_DMA_PUBLISH_RUN,
-	    .bind_count = 1, .binds = { { endpoint, ring } }, .reach = { .group = endpoint / ERX_DMA_GROUP_ENDPOINTS } };
+	    .bind_count = 1, .binds = { { endpoint, ring } }, .reach = { .group = endpoint / ERX_DMA_GROUP_ENDPOINTS },
+	    .contexts = carried(endpoint) };
 
 	return (erx_dma_publish(ledger, &publication, sequence));
 }
@@ -382,10 +398,13 @@ test_binding_command(void)
 	EXPECT(ring_link != NULL, "the bound ring's link is stored");
 	memcpy(&link, ring_link->bytes, sizeof(link));
 	EXPECT(sequence.zero_count == 2 && sequence.zeros[0].offset == 0 && sequence.zeros[0].length == 128 &&
-	    sequence.store_count == 2 && stored_at(&sequence, 640) != NULL && sequence.clean_count == 3 &&
+	    sequence.store_count == 2 + 3 && stored_at(&sequence, 640) != NULL && stored_at(&sequence, 768) != NULL &&
+	    stored_at(&sequence, 768 + 32) != NULL && stored_at(&sequence, 768 + (ENDPOINT0 % ERX_DMA_GROUP_ENDPOINTS + 1u) * 32u) != NULL &&
+	    sequence.clean_count == 3 &&
 	    erx_xhci_trb_link_control_cycle_get(link.control) == 1 &&
 	    sequence.activation.store.offset == 640 + ERX_XHCI_TRB_NORMAL_OFF_CONTROL,
-	    "the command zeroes the ring, writes its link with cycle 1 and cleans it and the input context it names, and activates its own TRB");
+	    "the command zeroes the ring, writes its link with cycle 1, writes the input context it names (its control, slot and "
+	    "endpoint contexts) and cleans both, and activates its own TRB");
 	found = erx_dma_ledger_holding(&ledger, (erx_dma_place_t){ COMMANDS, 0 });
 	EXPECT(erx_dma_ledger_binding(&ledger, RING0) == ENDPOINT0 && erx_dma_ledger_bound_table(&ledger, ENDPOINT0) == RING0 &&
 	    found.holding != NULL && found.holding->bind_count == 1 && found.holding->binds[0].table == RING0 &&
@@ -502,7 +521,8 @@ test_bindings(void)
 		const erx_dma_description_t command = configure();
 		erx_dma_publication_t drop_add = { .record_count = 1, .records = &command, .call = ERX_DMA_PUBLISH_RUN,
 		    .bind_count = 1, .binds = { { ENDPOINT0, RING1 } },
-		    .reach = { .group = ENDPOINT0 / ERX_DMA_GROUP_ENDPOINTS, .drops = 1u << (ENDPOINT0 % ERX_DMA_GROUP_ENDPOINTS) } };
+		    .reach = { .group = ENDPOINT0 / ERX_DMA_GROUP_ENDPOINTS, .drops = 1u << (ENDPOINT0 % ERX_DMA_GROUP_ENDPOINTS) },
+		    .contexts = carried(ENDPOINT0) };
 
 		drop_add.reach.drops = 0;
 		EXPECT(erx_dma_publish(&ledger, &drop_add, &sequence) == ERX_DMA_BREAKS_BINDINGS,

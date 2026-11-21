@@ -130,6 +130,9 @@ erx_trb_form_make(erx_trb_form_t *form, const erx_device_trb_layout_t *trb, cons
 
 	bzero(form, sizeof(*form));
 	form->shape = trb->shape;
+	form->context_size = trb->context_size;
+	form->ports = trb->ports;
+	form->slots = trb->slots;
 	return (erx_trb_form_layout(trb, &layout) && erx_dma_ledger_make(&form->ledger, &layout, regions));
 }
 
@@ -297,19 +300,94 @@ carries_input_context(erx_trb_command_kind_t kind)
 	    kind == ERX_TRB_COMMAND_EVALUATE_CONTEXT);
 }
 
+/*
+ * Whether each added endpoint's stated context passes its check (erx_device_trb.h) for a block of
+ * the form, of the kind its type needs: EP0 alone for Address Device, indexes 2 and up for
+ * Configure Endpoint, at the slot's speed.
+ */
+static bool
+adds_valid(const erx_trb_form_t *form, const erx_trb_command_t *command)
+{
+	for (uint32_t k = 0; k < command->add_count; k++) {
+		const erx_trb_add_t *const add = &command->adds[k];
+		const erx_device_trb_context_endpoint_t endpoint = { .dci = add->dci, .context = add->context };
+		erx_device_trb_kind_t kind;
+
+		if (add->block >= block_count(&form->shape))
+			return (false);
+		kind = erx_device_trb_block_kind(&form->shape, add->block);
+		if (command->kind == ERX_TRB_COMMAND_ADDRESS_DEVICE ? add->dci != 1 || kind != ERX_DEVICE_TRB_CONTROL ||
+		    !erx_device_trb_ep0_valid(&add->context, true) :
+		    !erx_device_trb_endpoint_valid(&endpoint, kind, form->shape.buffer_size[kind], form->speeds[command->slot]))
+			return (false);
+	}
+	return (true);
+}
+
+/*
+ * The stated parameters' one test, at the command's entry, before anything changes: those of the
+ * three commands that carry the input context, each for a slot of the layout's. A command that
+ * carries none states none.
+ */
+static bool
+parameters_valid(const erx_trb_form_t *form, const erx_trb_command_t *command)
+{
+	const bool slot = command->slot >= 1 && command->slot <= form->slots;
+
+	switch (command->kind) {
+	case ERX_TRB_COMMAND_ADDRESS_DEVICE:
+		return (slot && command->add_count == 1 &&
+		    erx_device_trb_address_slot_valid(&command->slot_context, form->ports, form->slots) &&
+		    adds_valid(form, command));
+	case ERX_TRB_COMMAND_CONFIGURE_ENDPOINT:
+		return (slot && command->add_count <= ERX_DMA_BINDS_MAX &&
+		    erx_device_trb_configure_slot_valid(&command->slot_context) && adds_valid(form, command));
+	case ERX_TRB_COMMAND_EVALUATE_CONTEXT:
+		return (slot && command->add_count == 0 && erx_device_trb_ep0_valid(&(erx_xhci_endpoint_context_free_t){
+		    .config_endpoint_type = ERX_XHCI_ENDPOINT_TYPE_CONTROL, .config_max_packet = command->ep0_packet }, false));
+	default:
+		return (true);
+	}
+}
+
+/*
+ * The input context's stated parameters of a command that carries it, for the sequencer: the slot
+ * context and each add's endpoint context, or, for Evaluate Context, EP0's with its new packet.
+ */
+static void
+contexts_of(const erx_trb_form_t *form, const erx_trb_command_t *command, erx_device_trb_contexts_t *contexts)
+{
+	*contexts = (erx_device_trb_contexts_t){ .context_size = form->context_size,
+	    .slot_context = command->slot_context, .endpoint_count = command->add_count };
+	for (uint32_t k = 0; k < command->add_count; k++)
+		contexts->endpoints[k] = (erx_device_trb_context_endpoint_t){ .dci = command->adds[k].dci,
+		    .context = command->adds[k].context };
+	if (command->kind == ERX_TRB_COMMAND_EVALUATE_CONTEXT) {
+		contexts->slot_context = (erx_xhci_slot_context_free_t){ 0 };
+		contexts->endpoint_count = 1;
+		contexts->endpoints[0] = (erx_device_trb_context_endpoint_t){ .dci = 1, .context = {
+		    .config_endpoint_type = ERX_XHCI_ENDPOINT_TYPE_CONTROL, .config_max_packet = command->ep0_packet } };
+	}
+}
+
 erx_device_trb_verdict_t
-erx_trb_form_command(erx_trb_form_t *form, const erx_trb_command_t *command, uint64_t tag, erx_dma_sequence_t *sequence)
+erx_trb_form_command(
+erx_trb_form_t *form, const erx_trb_command_t *command, uint64_t tag, erx_dma_sequence_t *sequence)
 {
 	const erx_dma_layout_t *const layout = erx_dma_ledger_layout(&form->ledger);
 	const uint32_t command_pool = block_count(&form->shape);
 	erx_dma_description_t record = { .structure = ERX_STRUCTURE_XHCI_COMMAND_RING };
 	erx_dma_publication_t publication = { .records = &record, .record_count = 1, .call = ERX_DMA_PUBLISH_RUN,
 	    .reach = { .group = command->slot, .index = command->dci, .drops = command->drops } };
+	erx_device_trb_contexts_t contexts;
 
-	if ((uint32_t)command->kind >= ERX_TRB_COMMAND_KINDS || command->add_count > ERX_DMA_BINDS_MAX)
+	if ((uint32_t)command->kind >= ERX_TRB_COMMAND_KINDS || command->add_count > ERX_DMA_BINDS_MAX ||
+	    !parameters_valid(form, command))
 		return (ERX_DEVICE_TRB_REFUSE_BADARG);
 	record.meaning = command_meanings[command->kind];
 	if (carries_input_context(command->kind)) {
+		contexts_of(form, command, &contexts);
+		publication.contexts = &contexts;
 		record.name_count = 1;
 		record.names[0] = (erx_dma_name_t){ .buffer = pool_first_buffer(layout, command_pool), .offset = 0 };
 	}
@@ -320,6 +398,8 @@ erx_trb_form_command(erx_trb_form_t *form, const erx_trb_command_t *command, uin
 	}
 	switch (erx_dma_publish(&form->ledger, &publication, sequence)) {
 	case ERX_DMA_PASSES:
+		if (command->kind == ERX_TRB_COMMAND_ADDRESS_DEVICE)
+			form->speeds[command->slot] = (uint32_t)command->slot_context.route_speed;
 		form->command = *command;
 		form->command_tag = tag;
 		form->stop_event = false;

@@ -243,13 +243,35 @@ deliver(state_t *state, erx_report_record_t *events, uint32_t count, uint32_t co
  * The command that binds ring `table` to `endpoint`, Address Device for EP0 and Configure Endpoint
  * for the others, then its completion with `code`.
  */
+/*
+ * A binding command adding endpoint `dci` of `slot` on `block`, its parameters in range: an
+ * Address Device of a high-speed device at root port 1 with EP0 of 64 bytes, or a Configure
+ * Endpoint adding a bulk endpoint of 64-byte packets, IN at an odd index.
+ */
+static erx_trb_command_t
+binding(uint32_t slot, uint32_t dci, uint32_t block)
+{
+	erx_trb_command_t command = { .slot = slot, .add_count = 1 };
+
+	if (dci == 1) {
+		command.kind = ERX_TRB_COMMAND_ADDRESS_DEVICE;
+		command.slot_context = (erx_xhci_slot_context_free_t){ .route_speed = ERX_XHCI_SPEED_HIGH, .ports_root_port = 1 };
+		command.adds[0] = (erx_trb_add_t){ .dci = 1, .block = block,
+		    .context = { .config_endpoint_type = ERX_XHCI_ENDPOINT_TYPE_CONTROL, .config_max_packet = 64 } };
+		return (command);
+	}
+	command.kind = ERX_TRB_COMMAND_CONFIGURE_ENDPOINT;
+	command.adds[0] = (erx_trb_add_t){ .dci = dci, .block = block, .context = {
+	    .config_endpoint_type = (dci & 1u) != 0 ? ERX_XHCI_ENDPOINT_TYPE_BULK_IN : ERX_XHCI_ENDPOINT_TYPE_BULK_OUT,
+	    .config_max_packet = 64, .payload_max_esit_payload = 64 } };
+	return (command);
+}
+
 static void
 bind(state_t *state, uint32_t table, uint32_t endpoint, uint32_t code)
 {
 	const uint32_t dci = endpoint % ERX_DMA_GROUP_ENDPOINTS;
-	const erx_trb_command_t command = { .kind = dci == 1 ? ERX_TRB_COMMAND_ADDRESS_DEVICE :
-	    ERX_TRB_COMMAND_CONFIGURE_ENDPOINT, .slot = endpoint / ERX_DMA_GROUP_ENDPOINTS, .add_count = 1,
-	    .adds = { { dci, table } } };
+	const erx_trb_command_t command = binding(endpoint / ERX_DMA_GROUP_ENDPOINTS, dci, table);
 	const uint32_t head = erx_dma_ledger_position(&state->form.ledger, COMMANDS).index;
 	erx_report_record_t event = event_trb(ERX_XHCI_TRB_TYPE_COMMAND_COMPLETION_EVENT, BASE + command_offset(head),
 	    code, 0x2a, 0);
@@ -977,8 +999,7 @@ test_commands(void)
 	bind(&state, CONTROL_BLOCK, erx_trb_form_endpoint(SLOT, 1), ERX_XHCI_COMPLETION_TRANSACTION_ERROR);
 	{
 		const erx_device_trb_request_t control = request(POST_CONTROL);
-		const erx_trb_command_t again = { .kind = ERX_TRB_COMMAND_ADDRESS_DEVICE, .slot = SLOT, .add_count = 1,
-		    .adds = { { 1, OUT_BLOCK } } };
+		const erx_trb_command_t again = binding(SLOT, 1, CONTROL_BLOCK);
 
 		EXPECT(erx_trb_form_post(&state.form, SLOT, 1, &control, 1, &sequence) == ERX_DEVICE_TRB_REFUSE_HALTED,
 		    "EP0 after a failed Address Device takes no transfer");
@@ -1108,8 +1129,7 @@ test_refusals(void)
 	bind(&state, IN_BLOCK, erx_trb_form_endpoint(SLOT, block_dci[IN_BLOCK]), ERX_XHCI_COMPLETION_TRB_ERROR);
 	{
 		/* The reach: a ring a binding command binds takes no transfer until its completion is consumed. */
-		const erx_trb_command_t command = { .kind = ERX_TRB_COMMAND_CONFIGURE_ENDPOINT, .slot = SLOT, .add_count = 1,
-		    .adds = { { block_dci[IN_BLOCK], IN_BLOCK } } };
+		const erx_trb_command_t command = binding(SLOT, block_dci[IN_BLOCK], IN_BLOCK);
 		const erx_device_trb_request_t in = request(POST_IN);
 		const uint32_t head = erx_dma_ledger_position(&state.form.ledger, COMMANDS).index;
 		erx_report_record_t failed = event_trb(ERX_XHCI_TRB_TYPE_COMMAND_COMPLETION_EVENT, BASE + command_offset(head),
@@ -1195,6 +1215,258 @@ test_endpoints_and_requests(void)
 	EXPECT(erx_dma_ledger_live(&state.form.ledger) == 0, "a refused post holds nothing");
 }
 
+/*
+ * The input context's contents (docs/design-usb.md, "What the DMA check judges"), decoded here by
+ * the bit positions of xHCI 1.2, 6.2.2, 6.2.3 and 6.2.5 (Tables 6-4 to 6-6, pp. 444-446; 6-8 to
+ * 6-11, pp. 450-453; 6-15 and 6-16, p. 461), never through the generated accessors whose
+ * encoders wrote them.
+ */
+#define CONTEXTS	(1u + ERX_XHCI_DEVICE_CONTEXTS)
+
+typedef struct image {
+	uint32_t	size;			/* the context size */
+	uint8_t		bytes[CONTEXTS * 64u];
+} image_t;
+
+static uint32_t
+le32(const image_t *image, uint32_t context, uint32_t offset)
+{
+	const uint8_t *const at = image->bytes + context * image->size + offset;
+
+	return ((uint32_t)at[0] | (uint32_t)at[1] << 8 | (uint32_t)at[2] << 16 | (uint32_t)at[3] << 24);
+}
+
+static uint64_t
+le64(const image_t *image, uint32_t context, uint32_t offset)
+{
+	return ((uint64_t)le32(image, context, offset) | (uint64_t)le32(image, context, offset + 4u) << 32);
+}
+
+/* A form over the small shape at contexts of `size` bytes, nothing bound. */
+static void
+make_unbound(state_t *state, uint32_t size)
+{
+	erx_device_trb_controller_t sized = controller;
+
+	sized.context_size = size;
+	memset(state, 0, sizeof(*state));
+	EXPECT(erx_device_trb_layout(&trb, &small_shape, &sized, BASE, 64, UINT64_C(1) << 20), "the small layout");
+	EXPECT(erx_trb_form_make(&state->form, &trb, &no_regions), "a form over the small layout");
+	model_idle(&state->model);
+}
+
+/*
+ * The input context `command` publishes, whole: the zeros over its buffer, then its stores, each
+ * inside it. False for a command the form refuses.
+ */
+static bool
+publish_contexts(state_t *state, const erx_trb_command_t *command, image_t *image)
+{
+	const erx_device_trb_region_t *const region = &trb.regions[trb.input_context];
+	erx_dma_sequence_t sequence;
+	bool zeroed = false;
+
+	if (erx_trb_form_command(&state->form, command, 5, &sequence) != ERX_DEVICE_TRB_ACCEPTED)
+		return (false);
+	memset(image->bytes, 0xa5, sizeof(image->bytes));
+	image->size = trb.context_size;
+	for (uint32_t k = 0; k < sequence.zero_count; k++)
+		zeroed |= sequence.zeros[k].offset == region->offset && sequence.zeros[k].length >= CONTEXTS * image->size;
+	EXPECT(zeroed, "rule 1 zeroes the whole input context");
+	memset(image->bytes, 0, CONTEXTS * image->size);
+	for (uint32_t k = 0; k < sequence.store_count; k++) {
+		const erx_dma_store_t *const store = &sequence.stores[k];
+
+		if (store->offset < region->offset || store->offset >= region->offset + region->length)
+			continue;
+		EXPECT(store->offset + store->length <= region->offset + CONTEXTS * image->size,
+		    "each context's store lies inside the input context");
+		memcpy(image->bytes + (store->offset - region->offset), store->bytes, store->length);
+	}
+	return (true);
+}
+
+/* The command in flight's success, consumed. */
+static void
+complete_command(state_t *state, uint32_t head)
+{
+	erx_report_record_t event = event_trb(ERX_XHCI_TRB_TYPE_COMMAND_COMPLETION_EVENT, BASE + command_offset(head),
+	    ERX_XHCI_COMPLETION_SUCCESS, 0, 0);
+	erx_trb_answer_t answers[ERX_TRB_FORM_ANSWERS_MAX(1)];
+	uint32_t answered;
+
+	EXPECT(deliver(state, &event, 1, 1, answers, &answered) == ERX_OK && answered == 1 &&
+	    answers[0].kind == ERX_TRB_ANSWER_COMMAND, "the command's success");
+}
+
+/* Whether every byte of context `context` from `from` on is 0, the reserved half of a 64-byte one included. */
+static bool
+zero_from(const image_t *image, uint32_t context, uint32_t from)
+{
+	for (uint32_t offset = from; offset < image->size; offset++) {
+		if (image->bytes[context * image->size + offset] != 0)
+			return (false);
+	}
+	return (true);
+}
+
+/* Endpoint context dci: its type, packet, burst, interval, payload and ring, error count 3, no streams. */
+static void
+expect_endpoint(const image_t *image, uint32_t dci, uint32_t type, uint32_t packet, uint32_t average,
+    uint32_t payload, uint32_t block)
+{
+	const uint32_t info = le32(image, dci + 1u, 0), config = le32(image, dci + 1u, 4);
+	const uint64_t dequeue = le64(image, dci + 1u, 8);
+	const uint32_t rates = le32(image, dci + 1u, 16);
+
+	EXPECT((info & 0x7u) == 0 && (info >> 8 & 0x3u) == 0 && (info >> 10 & 0x1fu) == 0 && (info >> 15 & 1u) == 0 &&
+	    (info >> 16 & 0xffu) == 0 && info >> 24 == 0, "state, Mult, MaxPStreams, LSA and interval 0 (Table 6-8)");
+	EXPECT((config & 1u) == 0 && (config >> 1 & 0x3u) == 3 && (config >> 3 & 0x7u) == type && (config >> 7 & 1u) == 0 &&
+	    (config >> 8 & 0xffu) == 0 && config >> 16 == packet, "error count 3, the type, HID 0, burst 0, the packet (Table 6-9)");
+	EXPECT((dequeue & 1u) == 1 && (dequeue >> 1 & 0x7u) == 0 && (dequeue & ~UINT64_C(0xf)) == BASE + position_offset(block, 0),
+	    "the dequeue pointer is its bound ring's first TRB, cycle state 1 (Table 6-10)");
+	EXPECT((rates & 0xffffu) == average && rates >> 16 == payload, "the average TRB length and payload (Table 6-11)");
+	EXPECT(zero_from(image, dci + 1u, 20), "the rest of the endpoint context is 0");
+}
+
+/* Address Device's input context: A0 and A1 alone (4.6.5, p. 112), the slot context's device fields, EP0's. */
+static void
+check_address_contexts(uint32_t size)
+{
+	static state_t state;
+	static image_t image;
+	erx_trb_command_t command = binding(SLOT, 1, CONTROL_BLOCK);
+	uint32_t route, ports, tt;
+
+	make_unbound(&state, size);
+	command.slot_context = (erx_xhci_slot_context_free_t){ .route_route_string = 0x31, .route_speed = ERX_XHCI_SPEED_FULL,
+	    .route_multi_tt = 1, .ports_root_port = 1, .tt_tt_slot = 2, .tt_tt_port = 4 };
+	EXPECT(publish_contexts(&state, &command, &image), "an Address Device");
+	EXPECT(le32(&image, 0, 0) == 0 && le32(&image, 0, 4) == 0x3u && zero_from(&image, 0, 8),
+	    "Address Device adds the slot and EP0 and drops nothing");
+	route = le32(&image, 1, 0);
+	ports = le32(&image, 1, 4);
+	tt = le32(&image, 1, 8);
+	EXPECT((route & 0xfffffu) == 0x31 && (route >> 20 & 0xfu) == ERX_XHCI_SPEED_FULL && (route >> 24 & 1u) == 0 &&
+	    (route >> 25 & 1u) == 1 && (route >> 26 & 1u) == 0 && route >> 27 == 1,
+	    "route string, speed, MTT, not a hub, one context entry (Table 6-4)");
+	EXPECT((ports & 0xffffu) == 0 && (ports >> 16 & 0xffu) == 1 && ports >> 24 == 0,
+	    "exit latency 0, root port 1, no ports (Table 6-5)");
+	EXPECT((tt & 0xffu) == 2 && (tt >> 8 & 0xffu) == 4 && (tt >> 16 & 0x3u) == 0 && tt >> 22 == 0,
+	    "TT hub slot and port, think time 0, interrupter 0 (Table 6-6)");
+	EXPECT(le32(&image, 1, 12) == 0 && zero_from(&image, 1, 12), "the address and slot state are 0 (Table 6-7)");
+	expect_endpoint(&image, 1, ERX_XHCI_ENDPOINT_TYPE_CONTROL, 64, 8, 0, CONTROL_BLOCK);
+	for (uint32_t context = 3; context < CONTEXTS; context++)
+		EXPECT(zero_from(&image, context, 0), "no other context is written");
+}
+
+/*
+ * Configure Endpoint adding bulk IN and OUT after an Address Device: A0 and each added index, never
+ * A1 (4.6.6, p. 116); the hub fields and Context Entries; a drop's flag; Evaluate Context's EP0.
+ */
+static void
+check_configure_contexts(void)
+{
+	static state_t state;
+	static image_t image;
+	const erx_trb_command_t address = binding(SLOT, 1, CONTROL_BLOCK);
+	erx_trb_command_t configure = binding(SLOT, 3, IN_BLOCK);
+	erx_trb_command_t drop = { .kind = ERX_TRB_COMMAND_CONFIGURE_ENDPOINT, .slot = SLOT, .drops = 1u << 2 };
+	erx_trb_command_t evaluate = { .kind = ERX_TRB_COMMAND_EVALUATE_CONTEXT, .slot = SLOT, .ep0_packet = 512 };
+	uint32_t route, ports, tt;
+
+	make_unbound(&state, 32);
+	EXPECT(publish_contexts(&state, &address, &image), "an Address Device");
+	complete_command(&state, 0);
+	configure.add_count = 2;
+	configure.adds[1] = binding(SLOT, 2, OUT_BLOCK).adds[0];
+	configure.slot_context = (erx_xhci_slot_context_free_t){ .route_hub = 1, .route_multi_tt = 1, .ports_port_count = 4,
+	    .tt_tt_think_time = 2 };
+	EXPECT(publish_contexts(&state, &configure, &image), "a Configure Endpoint adding bulk IN and OUT");
+	EXPECT(le32(&image, 0, 0) == 0 && le32(&image, 0, 4) == (1u << 0 | 1u << 2 | 1u << 3),
+	    "Configure Endpoint adds the slot and its endpoints, not EP0, and drops nothing");
+	route = le32(&image, 1, 0);
+	ports = le32(&image, 1, 4);
+	tt = le32(&image, 1, 8);
+	EXPECT((route & 0xffffffu) == 0 && (route >> 25 & 1u) == 1 && (route >> 26 & 1u) == 1 && route >> 27 == 3,
+	    "a multi-TT hub whose last valid index is EP1 IN's (Table 6-4)");
+	EXPECT(ports == 4u << 24 && tt == 2u << 16, "four ports, think time 2 (Tables 6-5 and 6-6)");
+	EXPECT(zero_from(&image, 2, 0), "EP0's context is not written");
+	expect_endpoint(&image, 3, ERX_XHCI_ENDPOINT_TYPE_BULK_IN, 64, 64, 64, IN_BLOCK);
+	expect_endpoint(&image, 2, ERX_XHCI_ENDPOINT_TYPE_BULK_OUT, 64, 64, 64, OUT_BLOCK);
+	complete_command(&state, 1);
+	EXPECT(publish_contexts(&state, &drop, &image), "a Configure Endpoint dropping EP1 OUT");
+	EXPECT(le32(&image, 0, 0) == 1u << 2 && le32(&image, 0, 4) == 1u << 0 && le32(&image, 1, 0) >> 27 == 3,
+	    "a drop's flag, A0, and EP1 IN still the last valid index");
+	complete_command(&state, 2);
+	EXPECT(publish_contexts(&state, &evaluate, &image), "an Evaluate Context");
+	EXPECT(le32(&image, 0, 0) == 0 && le32(&image, 0, 4) == 1u << 1 && zero_from(&image, 1, 0),
+	    "Evaluate Context adds EP0 alone, no slot context");
+	expect_endpoint(&image, 1, ERX_XHCI_ENDPOINT_TYPE_CONTROL, 512, 8, 0, CONTROL_BLOCK);
+}
+
+/* Each stated parameter out of its range is refused at the form's entry, changing nothing. */
+static void
+check_parameters_refused(void)
+{
+	static state_t state;
+	erx_dma_sequence_t sequence;
+	const erx_trb_command_t address = binding(SLOT, 1, CONTROL_BLOCK);
+	erx_trb_command_t bad[16];
+	uint32_t count = 0;
+
+	make_unbound(&state, 32);
+	for (uint32_t k = 0; k < 9; k++)
+		bad[k] = address;
+	bad[0].slot_context.route_route_string = 0x101;		/* a port after a tier of none */
+	bad[1].slot_context.route_speed = 0;
+	bad[2].slot_context.ports_root_port = 2;			/* past the controller's one port */
+	bad[3].slot_context.tt_tt_slot = 1;			/* a TT hub's slot without its port */
+	bad[4].slot_context.tt_tt_port = ERX_USB_HUB_PORTS_MAX + 1u;
+	bad[4].slot_context.tt_tt_slot = 1;
+	bad[5].adds[0].context.config_max_packet = 32;		/* not 8, 64 or 512 */
+	bad[6].adds[0].block = OUT_BLOCK;			/* EP0 on a bulk block */
+	bad[7].slot_context.route_hub = 1;
+	bad[8] = (erx_trb_command_t){ .kind = ERX_TRB_COMMAND_EVALUATE_CONTEXT, .slot = SLOT, .ep0_packet = 513 };
+	count = 9;
+	for (uint32_t k = 0; k < count; k++)
+		EXPECT(erx_trb_form_command(&state.form, &bad[k], 1, &sequence) == ERX_DEVICE_TRB_REFUSE_BADARG &&
+		    erx_dma_ledger_live(&state.form.ledger) == 0, "an Address Device or Evaluate Context out of range");
+	EXPECT(erx_trb_form_command(&state.form, &address, 1, &sequence) == ERX_DEVICE_TRB_ACCEPTED, "the Address Device in range");
+	complete_command(&state, 0);
+	count = 0;
+	bad[count] = binding(SLOT, 3, IN_BLOCK);
+	bad[count].adds[0].context.config_max_packet = 2;	/* a burst past 15 alone out of range */
+	bad[count].adds[0].context.config_max_burst = 16;
+	bad[count++].adds[0].context.payload_max_esit_payload = 34;
+	bad[count] = binding(SLOT, 3, IN_BLOCK);
+	bad[count++].adds[0].context.info_interval = 1;		/* a bulk endpoint's interval is 0 */
+	bad[count] = binding(SLOT, 3, IN_BLOCK);
+	bad[count++].adds[0].context.config_endpoint_type = ERX_XHCI_ENDPOINT_TYPE_BULK_OUT;	/* against its index */
+	bad[count] = binding(SLOT, 3, IN_BLOCK);
+	bad[count++].adds[0].context.payload_max_esit_payload = 32;	/* not the packet times the burst plus one */
+	bad[count] = binding(SLOT, 3, IN_BLOCK);
+	bad[count++].adds[0].dci = 1;				/* EP0 on Configure Endpoint */
+	bad[count] = binding(SLOT, 3, IN_BLOCK);
+	bad[count++].adds[0].block = BLOCKS;			/* a block the form does not have */
+	bad[count] = binding(SLOT, 3, IN_BLOCK);
+	bad[count++].slot_context.route_speed = ERX_XHCI_SPEED_HIGH;	/* a device field on Configure */
+	bad[count] = binding(SLOT, 3, IN_BLOCK);
+	bad[count++].slot_context = (erx_xhci_slot_context_free_t){ .route_hub = 1, .ports_port_count = 16 };
+	for (uint32_t k = 0; k < count; k++)
+		EXPECT(erx_trb_form_command(&state.form, &bad[k], 1, &sequence) == ERX_DEVICE_TRB_REFUSE_BADARG &&
+		    erx_dma_ledger_live(&state.form.ledger) == 0, "a Configure Endpoint out of range");
+}
+
+static void
+check_input_contexts(void)
+{
+	check_address_contexts(32);
+	check_address_contexts(64);
+	check_configure_contexts();
+	check_parameters_refused();
+}
+
 int
 main(void)
 {
@@ -1204,6 +1476,7 @@ main(void)
 	test_endpoints_and_requests();
 	test_refusals();
 	test_commands();
+	check_input_contexts();
 	make_small(&start);
 	explore(&start, 0);
 	explore_commands(&start, 0);

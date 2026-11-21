@@ -96,18 +96,24 @@ typedef enum erx_trb_command_kind {
 	ERX_TRB_COMMAND_KINDS
 } erx_trb_command_kind_t;
 
-/* An endpoint a binding command adds: its device context index and the queue block whose ring it takes. */
+/*
+ * An endpoint a binding command adds: its device context index, the queue block whose ring it
+ * takes, and its endpoint context's stated fields (erx_device_trb.h).
+ */
 typedef struct erx_trb_add {
-	uint32_t	dci;
-	uint32_t	block;
+	uint32_t				dci;
+	uint32_t				block;
+	erx_xhci_endpoint_context_free_t	context;
 } erx_trb_add_t;
 
 /*
  * A command: its slot, but for Enable Slot and No Op; the endpoint Reset Endpoint, Stop Endpoint
  * and Set TR Dequeue Pointer name; and the endpoints Address Device adds, EP0 alone, and
- * Configure Endpoint adds and drops (a mask of bit dci). The input context's contents are the
- * install's and Erlang's parameters' (docs/design-usb.md), not this core's yet: a command that
- * carries it names its buffer.
+ * Configure Endpoint adds and drops (a mask of bit dci); and the input context's stated parameters
+ * (docs/design-usb.md, "What Erlang names and what the NIF builds"): Address Device's slot context
+ * device fields and EP0 as its one add, Configure Endpoint's hub fields and its adds, Evaluate
+ * Context's EP0 packet size. The sequencer writes the whole input context from these and from what
+ * the publication derives (erx_dma_input_context).
  */
 typedef struct erx_trb_command {
 	erx_trb_command_kind_t	kind;
@@ -116,6 +122,8 @@ typedef struct erx_trb_command {
 	uint32_t		drops;
 	uint32_t		add_count;
 	erx_trb_add_t		adds[ERX_DMA_BINDS_MAX];
+	erx_xhci_slot_context_free_t	slot_context;	/* Address Device, Configure Endpoint */
+	uint32_t		ep0_packet;	/* Evaluate Context */
 } erx_trb_command_t;
 
 /*
@@ -127,6 +135,10 @@ typedef struct erx_trb_command {
 typedef struct erx_trb_form {
 	erx_dma_ledger_t	ledger;
 	erx_device_trb_shape_t	shape;
+	uint32_t		context_size;	/* the layout's, the controller's context size */
+	uint32_t		ports;
+	uint32_t		slots;
+	uint32_t		speeds[ERX_DEVICE_TRB_SLOTS_MAX + 1];	/* each slot's, from its last Address Device posted */
 	erx_trb_transfer_t	transfers[ERX_DEVICE_TRB_BLOCKS_MAX][ERX_DEVICE_TRB_RING_TRBS];	/* by head */
 	erx_trb_command_t	command;	/* the command in flight, while the command ring holds one */
 	uint64_t		command_tag;
@@ -196,7 +208,12 @@ erx_device_trb_verdict_t	erx_trb_form_post(erx_trb_form_t *form, uint32_t slot, 
  *   ERX_DEVICE_TRB_REFUSE_HALTED  an endpoint whose state its reach does not allow (the check's
  *                                 reach rule): a stop or restart of a disabled endpoint, a drop of
  *                                 a halted, disabled or busy one, a disable of a slot with a busy one;
- *   ERX_DEVICE_TRB_REFUSE_BADARG  any other: more adds than ERX_DMA_BINDS_MAX, an add of a bound
+ *   ERX_DEVICE_TRB_REFUSE_BADARG  any other: a stated parameter its check in erx_device_trb.h
+ *                                 refuses, judged first (Address Device adds EP0 alone, on a control
+ *                                 block; Configure Endpoint adds indexes 2 and up, each on a block of
+ *                                 its type, for the slot's speed; Evaluate Context adds none), a slot
+ *                                 outside the layout's for these three, more adds than
+ *                                 ERX_DMA_BINDS_MAX, an add of a bound
  *                                 block or endpoint, drops on a command whose reach drops none
  *                                 (only Configure Endpoint drops), a kind out of range.
  * Anything but ERX_DEVICE_TRB_ACCEPTED changes nothing.

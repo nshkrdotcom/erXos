@@ -25,9 +25,11 @@ class ErxDeviceTrbTest < Minitest::Test
 
   Harness = Data.define(:fixture, :sources, :done)
   EXPLORER = Harness.new(fixture: 'test/fixtures/erx_device_trb_harness.c',
-                         sources: %w[erx_device_trb.c], done: 'erx_device_trb done')
+                         sources: %w[erx_device_trb.c erx_device_ledger.c erx_device_rules.c erx_device_sequencer.c],
+                         done: 'erx_device_trb done')
   MODEL = Harness.new(fixture: 'test/fixtures/erx_device_trb_model_harness.c',
-                      sources: %w[erx_device_trb.c erx_device_trb_model.c erx_device_dma.c erx_dma_model.c],
+                      sources: %w[erx_device_trb.c erx_device_trb_model.c erx_device_dma.c erx_dma_model.c
+                                  erx_device_ledger.c erx_device_rules.c erx_device_sequencer.c],
                       done: 'erx_device_trb_model done')
 
   # Each seeded fault the design names for this core, the harness that must catch it and the

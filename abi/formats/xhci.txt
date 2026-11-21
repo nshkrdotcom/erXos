@@ -37,8 +37,6 @@ limit xhci_event_ring_align u32 64
 limit xhci_segment_table_align u32 64
 limit xhci_scratchpad_array_align u32 64
 
-# The error count every endpoint context the NIF builds takes (xhci.c:2495-2501).
-limit xhci_endpoint_error_count u32 3
 
 # A command the controller has not answered within this many milliseconds fails the
 # controller, whose restart resets it (design-usb.md, "The controller process"), an erXos
@@ -91,7 +89,9 @@ limit xhci_interval_binterval_max u8 16
 # last valid context index, the root hub port it is reached through, its
 # transaction translator, its interrupter, and the address and state the
 # controller writes, which software sets to 0 in an input context (xHCI 1.2, Table 6-7,
-# p. 447; section 4.5.3, p. 98).
+# p. 447; section 4.5.3, p. 98). Context Entries is derived, the last index the slot's
+# bindings leave valid (Table 6-4, p. 445); the exit latency is 0, since no command sets
+# link power management's (Table 6-5, p. 445).
 layout erx_xhci_slot_context wire_le 4 32
   field route u32 0
     bits route_string 0 19
@@ -116,8 +116,8 @@ layout erx_xhci_slot_context wire_le 4 32
   states route.speed
   states route.multi_tt
   states route.hub
-  states route.context_entries
-  states ports.exit_latency
+  derived route.context_entries
+  fixed ports.exit_latency 0
   states ports.root_port
   states ports.port_count
   states tt.tt_slot
@@ -132,7 +132,9 @@ layout erx_xhci_slot_context wire_le 4 32
 # ring. The endpoint state is the controller's, 0 in an input context (xHCI 1.2, Table
 # 6-8, p. 450). Mult, MaxPStreams, LSA and HID (xhci.h:130-135, 143-144) are fixed at 0, since
 # MaxPStreams above 0 makes the dequeue pointer a stream context array's address (xHCI
-# 1.2, 6.2.3).
+# 1.2, 6.2.3). The error count is 3, FreeBSD's (xhci.c:2495-2501); the average TRB length
+# is derived, 8 for a control endpoint and otherwise the packet times the burst plus one
+# (6.2.3, Table 6-11, p. 453; 8 is the initial value 4.14.1.1, p. 258, gives a control endpoint).
 layout erx_xhci_endpoint_context wire_le 8 32
   field info u32 0
     bits endpoint_state 0 2
@@ -158,15 +160,15 @@ layout erx_xhci_endpoint_context wire_le 8 32
   fixed info.max_pstreams 0
   fixed info.lsa 0
   states info.interval
-  states config.error_count
+  fixed config.error_count 3
   states config.endpoint_type
   fixed config.hid 0
   states config.max_burst
   states config.max_packet
-  states payload.average_trb_length
   states payload.max_esit_payload
   derived dequeue.dequeue_pointer
   derived dequeue.dequeue_cycle
+  derived payload.average_trb_length
 
 # The input control context (xhci.h:168-180): bit n of each flag word drops or adds
 # the context of device context index n, bit 0 the slot's in the add word.

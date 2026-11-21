@@ -7,7 +7,10 @@
 
 #include "erx_device_trb.h"
 
+#include <string.h>
+
 #include "erx/abi.h"
+#include "erx_device_sequencer.h"
 #include "liberx/backend/core/mem.h"
 
 const erx_device_trb_shape_t erx_device_trb_shape = {
@@ -32,6 +35,12 @@ const erx_device_trb_shape_t erx_device_trb_shape = {
 /* The most hub tiers a route string names (abi/formats/xhci.txt, the slot context). */
 #define ROUTE_TIERS		(20u / ERX_XHCI_ROUTE_TIER_BITS)
 #define ROUTE_TIER_MASK		((1u << ERX_XHCI_ROUTE_TIER_BITS) - 1u)
+/* An endpoint context's largest Max Burst Size (xHCI 1.2, Table 6-9, p. 452); the seed lets the field's whole width through. */
+#ifdef ERX_DEVICE_TRB_SEED_BURST_UNCHECKED
+#define BURST_MAX		255u
+#else
+#define BURST_MAX		15u
+#endif
 
 _Static_assert(ERX_XHCI_TRB_LINK_SIZE == TRB_SIZE && ERX_XHCI_TRB_SETUP_SIZE == TRB_SIZE &&
     ERX_XHCI_TRB_COMMAND_SIZE == TRB_SIZE && ERX_XHCI_TRB_SET_DEQUEUE_COMMAND_OFF_PARAMETER == TRB_PARAMETER &&
@@ -711,14 +720,14 @@ release(erx_device_trb_block_t *block)
 
 /* A route string names a port of 1 to 15 at each tier below the root, then nothing (abi/formats/xhci.txt). */
 static bool
-route_valid(uint32_t route)
+route_valid(uint64_t route)
 {
 	bool ended = false;
 
 	if (route >> (ROUTE_TIERS * ERX_XHCI_ROUTE_TIER_BITS) != 0)
 		return (false);
 	for (uint32_t tier = 0; tier < ROUTE_TIERS; tier++) {
-		const uint32_t port = route >> (tier * ERX_XHCI_ROUTE_TIER_BITS) & ROUTE_TIER_MASK;
+		const uint64_t port = route >> (tier * ERX_XHCI_ROUTE_TIER_BITS) & ROUTE_TIER_MASK;
 
 		if (ended && port != 0)
 			return (false);
@@ -727,49 +736,38 @@ route_valid(uint32_t route)
 	return (true);
 }
 
-static bool
-address_valid(const erx_device_trb_layout_t *layout, const erx_device_trb_command_t *command)
+bool
+erx_device_trb_address_slot_valid(const erx_xhci_slot_context_free_t *slot, uint32_t ports, uint32_t slots)
 {
-	return (route_valid(command->route) && command->root_port >= 1 && command->root_port <= layout->ports &&
-	    command->speed >= ERX_XHCI_SPEED_FULL && command->speed <= ERX_XHCI_SPEED_SUPER &&
-	    (command->ep0_packet == 8u || command->ep0_packet == 64u || command->ep0_packet == 512u) &&
-	    (!command->tt || (command->tt_slot >= 1 && command->tt_slot <= layout->slots && command->tt_port >= 1 &&
-	    command->tt_port <= ERX_USB_HUB_PORTS_MAX)));
+	const bool tt = slot->tt_tt_slot != 0 || slot->tt_tt_port != 0;
+
+	return (route_valid(slot->route_route_string) && slot->route_speed >= ERX_XHCI_SPEED_FULL &&
+	    slot->route_speed <= ERX_XHCI_SPEED_SUPER && slot->ports_root_port >= 1 && slot->ports_root_port <= ports &&
+	    (!tt || (slot->tt_tt_slot >= 1 && slot->tt_tt_slot <= slots && slot->tt_tt_port >= 1 &&
+	    slot->tt_tt_port <= ERX_USB_HUB_PORTS_MAX)) && slot->route_multi_tt <= (tt ? 1u : 0u) &&
+	    slot->route_hub == 0 && slot->ports_port_count == 0 && slot->tt_tt_think_time == 0);
 }
 
-/* A queue a Configure Endpoint may drop, or drop and add again: open with nothing posted, or stopped. */
-static bool
-droppable(const erx_device_trb_block_t *block)
+bool
+erx_device_trb_configure_slot_valid(const erx_xhci_slot_context_free_t *slot)
 {
-	return ((block->state == ERX_DEVICE_TRB_OPEN && block->posted == 0) || block->state == ERX_DEVICE_TRB_STOPPED);
+	const bool hub_fields = slot->route_hub == 1 && slot->ports_port_count >= 1 &&
+	    slot->ports_port_count <= ERX_USB_HUB_PORTS_MAX && slot->tt_tt_think_time <= 3 && slot->route_multi_tt <= 1;
+	const bool function = slot->route_hub == 0 && slot->ports_port_count == 0 && slot->tt_tt_think_time == 0 &&
+	    slot->route_multi_tt == 0;
+
+	return ((hub_fields || function) && slot->route_route_string == 0 && slot->route_speed == 0 &&
+	    slot->ports_root_port == 0 && slot->tt_tt_slot == 0 && slot->tt_tt_port == 0);
 }
 
-/* The endpoint number times two plus the direction, a control endpoint's that of IN as EP0's (4.5.1, p. 96). */
-static uint32_t
-endpoint_dci(const erx_device_trb_endpoint_t *endpoint)
+bool
+erx_device_trb_ep0_valid(const erx_xhci_endpoint_context_free_t *context, bool exact)
 {
-	return (2u * endpoint->number + (endpoint->in || endpoint->kind == ERX_DEVICE_TRB_CONTROL ? 1u : 0u));
-}
+	const uint64_t packet = context->config_max_packet;
 
-/*
- * An added endpoint's parameters: its number and direction (a control endpoint names none),
- * its kind, packet, burst and interval, and a payload of one service interval of at least 1, at
- * most the packet times the burst plus one and the kind's buffer, and equal to that product
- * unless the endpoint is an interrupt endpoint of a SuperSpeed slot.
- */
-static bool
-endpoint_valid(const erx_device_trb_layout_t *layout, const erx_device_trb_endpoint_t *endpoint, uint32_t speed)
-{
-	const uint32_t most = (uint32_t)endpoint->packet * (endpoint->burst + 1u);
-
-	if (endpoint->number < 1 || endpoint->number > 15 || endpoint->kind >= ERX_DEVICE_TRB_KINDS ||
-	    (endpoint->kind == ERX_DEVICE_TRB_CONTROL && endpoint->in) || endpoint->packet < 1 ||
-	    endpoint->packet > 1024 || endpoint->burst > 15 || endpoint->interval > 15)
-		return (false);
-	if (endpoint->kind == ERX_DEVICE_TRB_INTERRUPT && speed == ERX_XHCI_SPEED_SUPER)
-		return (endpoint->payload >= 1 && endpoint->payload <= most &&
-		    endpoint->payload <= layout->shape.buffer_size[endpoint->kind]);
-	return (endpoint->payload == most && most <= layout->shape.buffer_size[endpoint->kind]);
+	return (context->config_endpoint_type == ERX_XHCI_ENDPOINT_TYPE_CONTROL && context->config_max_burst == 0 &&
+	    context->info_interval == 0 && context->payload_max_esit_payload == 0 &&
+	    (exact ? packet == 8u || packet == 64u || packet == 512u : packet >= 8u && packet <= 512u));
 }
 
 /* The xHCI endpoint type of a kind and direction (abi/formats/xhci.txt). */
@@ -786,6 +784,88 @@ endpoint_type(erx_device_trb_kind_t kind, bool in)
 		break;
 	}
 	return (in ? ERX_XHCI_ENDPOINT_TYPE_BULK_IN : ERX_XHCI_ENDPOINT_TYPE_BULK_OUT);
+}
+
+bool
+erx_device_trb_endpoint_valid(const erx_device_trb_context_endpoint_t *endpoint, erx_device_trb_kind_t kind,
+    uint32_t buffer_size, uint32_t speed)
+{
+	const erx_xhci_endpoint_context_free_t *const context = &endpoint->context;
+	/* An odd index is IN's, or a control endpoint's, which takes the IN index as EP0 does (4.5.1, p. 96). */
+	const bool in = (endpoint->dci & 1u) != 0;
+	const uint64_t most = context->config_max_packet * (context->config_max_burst + 1u);
+
+	if (endpoint->dci < 2 || endpoint->dci > ERX_DEVICE_TRB_DCI_MAX || kind >= ERX_DEVICE_TRB_KINDS ||
+	    (kind == ERX_DEVICE_TRB_CONTROL && !in) || context->config_endpoint_type != endpoint_type(kind, in) ||
+	    context->config_max_packet < 1 || context->config_max_packet > 1024 || context->config_max_burst > BURST_MAX ||
+	    context->info_interval > (kind == ERX_DEVICE_TRB_INTERRUPT ? 15u : 0u))
+		return (false);
+	if (kind == ERX_DEVICE_TRB_INTERRUPT && speed == ERX_XHCI_SPEED_SUPER)
+		return (context->payload_max_esit_payload >= 1 && context->payload_max_esit_payload <= most &&
+		    context->payload_max_esit_payload <= buffer_size);
+	return (context->payload_max_esit_payload == most && most <= buffer_size);
+}
+
+/* An Address Device's slot context, as erx_device_trb_address_slot_valid judges it. */
+static erx_xhci_slot_context_free_t
+address_slot(const erx_device_trb_command_t *command)
+{
+	return ((erx_xhci_slot_context_free_t){ .route_route_string = command->route, .route_speed = command->speed,
+	    .route_multi_tt = command->tt && command->tt_multi, .ports_root_port = command->root_port,
+	    .tt_tt_slot = command->tt ? command->tt_slot : 0u, .tt_tt_port = command->tt ? command->tt_port : 0u });
+}
+
+/* EP0's context of packet `packet`. */
+static erx_device_trb_context_endpoint_t
+ep0_context(uint32_t packet)
+{
+	return ((erx_device_trb_context_endpoint_t){ .dci = 1,
+	    .context = { .config_endpoint_type = ERX_XHCI_ENDPOINT_TYPE_CONTROL, .config_max_packet = packet } });
+}
+
+static bool
+address_valid(const erx_device_trb_layout_t *layout, const erx_device_trb_command_t *command)
+{
+	const erx_xhci_slot_context_free_t slot = address_slot(command);
+	const erx_device_trb_context_endpoint_t ep0 = ep0_context(command->ep0_packet);
+
+	return (erx_device_trb_address_slot_valid(&slot, layout->ports, layout->slots) &&
+	    erx_device_trb_ep0_valid(&ep0.context, true));
+}
+
+/* A queue a Configure Endpoint may drop, or drop and add again: open with nothing posted, or stopped. */
+static bool
+droppable(const erx_device_trb_block_t *block)
+{
+	return ((block->state == ERX_DEVICE_TRB_OPEN && block->posted == 0) || block->state == ERX_DEVICE_TRB_STOPPED);
+}
+
+/* The endpoint number times two plus the direction, a control endpoint's that of IN as EP0's (4.5.1, p. 96). */
+static uint32_t
+endpoint_dci(const erx_device_trb_endpoint_t *endpoint)
+{
+	return (2u * endpoint->number + (endpoint->in || endpoint->kind == ERX_DEVICE_TRB_CONTROL ? 1u : 0u));
+}
+
+/* An added endpoint's context: its index from its number and direction, its type from its kind. */
+static erx_device_trb_context_endpoint_t
+endpoint_context(const erx_device_trb_endpoint_t *endpoint)
+{
+	return ((erx_device_trb_context_endpoint_t){ .dci = endpoint_dci(endpoint), .context = {
+	    .info_interval = endpoint->interval, .config_endpoint_type = endpoint_type(endpoint->kind, endpoint->in),
+	    .config_max_burst = endpoint->burst, .config_max_packet = endpoint->packet,
+	    .payload_max_esit_payload = endpoint->payload } });
+}
+
+/* An added endpoint: a number of 1 to 15, a kind, a control endpoint naming no direction, and its context. */
+static bool
+endpoint_valid(const erx_device_trb_layout_t *layout, const erx_device_trb_endpoint_t *endpoint, uint32_t speed)
+{
+	const erx_device_trb_context_endpoint_t context = endpoint_context(endpoint);
+
+	return (endpoint->number >= 1 && endpoint->number <= 15 && endpoint->kind < ERX_DEVICE_TRB_KINDS &&
+	    !(endpoint->kind == ERX_DEVICE_TRB_CONTROL && endpoint->in) &&
+	    erx_device_trb_endpoint_valid(&context, endpoint->kind, layout->shape.buffer_size[endpoint->kind], speed));
 }
 
 /* A free block of `kind` not yet in `reserved`, or ERX_DEVICE_TRB_BLOCKS_MAX. */
@@ -890,6 +970,7 @@ accept(const erx_device_trb_t *trb, const erx_device_trb_layout_t *layout, const
 	const bool enabled = command->slot >= 1 && command->slot <= layout->slots && trb->slots[command->slot].enabled;
 	const uint32_t queue = enabled ? find_queue(trb, command->slot, command->dci) : ERX_DEVICE_TRB_BLOCKS_MAX;
 	const erx_device_trb_block_t *const block = queue == ERX_DEVICE_TRB_BLOCKS_MAX ? NULL : &trb->blocks[queue];
+	erx_device_trb_context_endpoint_t packet;
 	uint32_t ep0;
 
 	accepted->queue = queue;
@@ -906,10 +987,12 @@ accept(const erx_device_trb_t *trb, const erx_device_trb_layout_t *layout, const
 		accepted->dci[ep0] = 1;
 		return (ERX_DEVICE_TRB_ACCEPTED);
 	case ERX_DEVICE_TRB_EVALUATE_CONTEXT:
+		packet = ep0_context(command->ep0_packet);
 		accepted->held = 1u << 1;
 		ep0 = enabled ? find_queue(trb, command->slot, 1) : ERX_DEVICE_TRB_BLOCKS_MAX;
-		return (ep0 != ERX_DEVICE_TRB_BLOCKS_MAX && trb->blocks[ep0].posted == 0 && command->ep0_packet >= 8 &&
-		    command->ep0_packet <= 512 ? ERX_DEVICE_TRB_ACCEPTED : ERX_DEVICE_TRB_REFUSE_BADARG);
+		return (ep0 != ERX_DEVICE_TRB_BLOCKS_MAX && trb->blocks[ep0].posted == 0 &&
+		    erx_device_trb_ep0_valid(&packet.context, false) ? ERX_DEVICE_TRB_ACCEPTED :
+		    ERX_DEVICE_TRB_REFUSE_BADARG);
 	case ERX_DEVICE_TRB_CONFIGURE_ENDPOINTS:
 		return (enabled && find_queue(trb, command->slot, 1) != ERX_DEVICE_TRB_BLOCKS_MAX ?
 		    accept_configure(trb, layout, command, accepted) : ERX_DEVICE_TRB_REFUSE_BADARG);
@@ -949,101 +1032,92 @@ dequeue_reach(const erx_device_trb_layout_t *layout, const erx_device_trb_ring_t
 }
 
 /*
- * An endpoint context in the input context: its type, packet, burst and interval, error count 3,
- * no streams and multiplier 0 (left 0), its ring's enqueue position and cycle state, the average
- * TRB length derived from its packet and burst, and its service-interval payload.
+ * The input context's plan: the region zeroed, then each context the sequencer's one composition
+ * (erx_dma_input_context) gives, a step per word that is not 0 and the endpoint contexts' dequeue
+ * words as addresses the controller follows to its link, `reach[dci]` bytes.
  */
 static void
-add_endpoint_context(plan_t *plan, const erx_device_trb_layout_t *layout, const erx_device_trb_t *trb, uint32_t block,
-    uint32_t dci, uint32_t type, const erx_device_trb_endpoint_t *endpoint)
-{
-	const uint64_t at = region_offset(layout, layout->input_context) + (uint64_t)(dci + 1u) * layout->context_size;
-	const uint32_t frame = (uint32_t)endpoint->packet * (endpoint->burst + 1u);
-	uint32_t info = 0, config = 0, payload = 0;
-
-	(void)erx_xhci_endpoint_context_info_interval_set(&info, endpoint->interval);
-	(void)erx_xhci_endpoint_context_config_error_count_set(&config, ERX_XHCI_ENDPOINT_ERROR_COUNT);
-	(void)erx_xhci_endpoint_context_config_endpoint_type_set(&config, type);
-	(void)erx_xhci_endpoint_context_config_max_burst_set(&config, endpoint->burst);
-	(void)erx_xhci_endpoint_context_config_max_packet_set(&config, endpoint->packet);
-	(void)erx_xhci_endpoint_context_payload_average_trb_length_set(&payload, frame);
-	(void)erx_xhci_endpoint_context_payload_max_esit_payload_set(&payload, endpoint->payload);
-	add_value(plan, at + ERX_XHCI_ENDPOINT_CONTEXT_OFF_INFO, 4u, info);
-	add_value(plan, at + ERX_XHCI_ENDPOINT_CONTEXT_OFF_CONFIG, 4u, config);
-	add_address(plan, at + ERX_XHCI_ENDPOINT_CONTEXT_OFF_DEQUEUE, dequeue_of(layout, block, &trb->blocks[block].ring),
-	    dequeue_reach(layout, &trb->blocks[block].ring));
-	add_value(plan, at + ERX_XHCI_ENDPOINT_CONTEXT_OFF_PAYLOAD, 4u, payload);
-}
-
-static void
-add_input_control(plan_t *plan, const erx_device_trb_layout_t *layout, uint32_t drop, uint32_t adds)
+add_input_context(plan_t *plan, const erx_device_trb_layout_t *layout, const erx_device_trb_contexts_t *contexts,
+    const erx_dma_context_derivation_t *derived, const uint64_t reach[ERX_XHCI_DEVICE_CONTEXTS])
 {
 	const uint64_t at = region_offset(layout, layout->input_context);
+	erx_dma_context_part_t parts[ERX_DMA_CONTEXT_PARTS_MAX];
+	const uint32_t count = erx_dma_input_context(contexts, derived, parts);
 
 	add_zeros(plan, at, layout->regions[layout->input_context].length);
-	add_value(plan, at + ERX_XHCI_INPUT_CONTROL_CONTEXT_OFF_DROP, 4u, drop);
-	add_value(plan, at + ERX_XHCI_INPUT_CONTROL_CONTEXT_OFF_ADD, 4u, adds);
+	for (uint32_t part = 0; part < count; part++) {
+		for (uint32_t offset = 0; offset < sizeof(parts[part].bytes); offset += sizeof(uint32_t)) {
+			uint32_t word;
+			uint64_t dequeue;
+
+			if (parts[part].dci != 0 && offset == ERX_XHCI_ENDPOINT_CONTEXT_OFF_DEQUEUE) {
+				memcpy(&dequeue, parts[part].bytes + offset, sizeof(dequeue));
+				add_address(plan, at + parts[part].offset + offset, dequeue, reach[parts[part].dci]);
+				offset += sizeof(uint32_t);
+				continue;
+			}
+			memcpy(&word, parts[part].bytes + offset, sizeof(word));
+			if (word != 0)
+				add_value(plan, at + parts[part].offset + offset, sizeof(word), word);
+		}
+	}
 }
 
-static uint64_t
-slot_context_offset(const erx_device_trb_layout_t *layout)
-{
-	return (region_offset(layout, layout->input_context) + layout->context_size);
-}
-
+/* Address Device's contexts: the slot context with one entry, and EP0's, at its block's ring. */
 static void
 add_address_contexts(plan_t *plan, const erx_device_trb_layout_t *layout, const erx_device_trb_t *trb,
     const erx_device_trb_command_t *command, uint32_t ep0)
 {
-	const uint64_t slot_at = slot_context_offset(layout);
-	const erx_device_trb_endpoint_t endpoint = { .packet = command->ep0_packet, .payload = 0 };
-	uint32_t route = 0, ports = 0, tt = 0;
+	erx_device_trb_contexts_t contexts = { .context_size = layout->context_size, .slot_context = address_slot(command),
+	    .endpoint_count = 1 };
+	erx_dma_context_derivation_t derived = { .slot = true, .entries = 1 };
+	uint64_t reach[ERX_XHCI_DEVICE_CONTEXTS] = { 0 };
 
-	add_input_control(plan, layout, 0, 1u << 0 | 1u << 1);
-	(void)erx_xhci_slot_context_route_route_string_set(&route, command->route);
-	(void)erx_xhci_slot_context_route_speed_set(&route, command->speed);
-	(void)erx_xhci_slot_context_route_multi_tt_set(&route, command->tt && command->tt_multi);
-	(void)erx_xhci_slot_context_route_context_entries_set(&route, 1);
-	(void)erx_xhci_slot_context_ports_root_port_set(&ports, command->root_port);
-	if (command->tt) {
-		(void)erx_xhci_slot_context_tt_tt_slot_set(&tt, command->tt_slot);
-		(void)erx_xhci_slot_context_tt_tt_port_set(&tt, command->tt_port);
-	}
-	add_value(plan, slot_at + ERX_XHCI_SLOT_CONTEXT_OFF_ROUTE, 4u, route);
-	add_value(plan, slot_at + ERX_XHCI_SLOT_CONTEXT_OFF_PORTS, 4u, ports);
-	add_value(plan, slot_at + ERX_XHCI_SLOT_CONTEXT_OFF_TT, 4u, tt);
-	add_endpoint_context(plan, layout, trb, ep0, 1, ERX_XHCI_ENDPOINT_TYPE_CONTROL, &endpoint);
+	contexts.endpoints[0] = ep0_context(command->ep0_packet);
+	derived.dequeue[1] = dequeue_of(layout, ep0, &trb->blocks[ep0].ring);
+	reach[1] = dequeue_reach(layout, &trb->blocks[ep0].ring);
+	add_input_context(plan, layout, &contexts, &derived, reach);
 }
 
+/* Evaluate Context's: EP0's context whole, with the new packet, at its bound ring's position. */
+static void
+add_evaluate_contexts(plan_t *plan, const erx_device_trb_layout_t *layout, const erx_device_trb_t *trb,
+    const erx_device_trb_command_t *command, uint32_t ep0)
+{
+	erx_device_trb_contexts_t contexts = { .context_size = layout->context_size, .endpoint_count = 1 };
+	erx_dma_context_derivation_t derived = { .slot = false };
+	uint64_t reach[ERX_XHCI_DEVICE_CONTEXTS] = { 0 };
+
+	contexts.endpoints[0] = ep0_context(command->ep0_packet);
+	derived.dequeue[1] = dequeue_of(layout, ep0, &trb->blocks[ep0].ring);
+	reach[1] = dequeue_reach(layout, &trb->blocks[ep0].ring);
+	add_input_context(plan, layout, &contexts, &derived, reach);
+}
+
+/* Configure Endpoint's: the slot context's hub fields and last valid index, and each added endpoint's at its block's ring. */
 static void
 add_configure_contexts(plan_t *plan, const erx_device_trb_layout_t *layout, const erx_device_trb_t *trb,
     const erx_device_trb_command_t *command, const acceptance_t *accepted)
 {
-	const uint64_t slot_at = slot_context_offset(layout);
-	uint32_t adds = 1u << 0, route = 0, ports = 0, tt = 0;
+	erx_device_trb_contexts_t contexts = { .context_size = layout->context_size, .slot_context = {
+	    .route_hub = command->hub, .route_multi_tt = command->hub && command->hub_multi_tt,
+	    .ports_port_count = command->hub ? command->hub_ports : 0u,
+	    .tt_tt_think_time = command->hub ? command->hub_think_time : 0u } };
+	erx_dma_context_derivation_t derived = { .slot = true, .drop = accepted->held, .entries = accepted->entries };
+	uint64_t reach[ERX_XHCI_DEVICE_CONTEXTS] = { 0 };
 
-	for (uint32_t index = 0; index < command->add_count; index++)
-		adds |= 1u << endpoint_dci(&command->add[index]);
-	add_input_control(plan, layout, accepted->held, adds);
-	(void)erx_xhci_slot_context_route_context_entries_set(&route, accepted->entries);
-	(void)erx_xhci_slot_context_route_hub_set(&route, command->hub);
-	(void)erx_xhci_slot_context_route_multi_tt_set(&route, command->hub && command->hub_multi_tt);
-	if (command->hub) {
-		(void)erx_xhci_slot_context_ports_port_count_set(&ports, command->hub_ports);
-		(void)erx_xhci_slot_context_tt_tt_think_time_set(&tt, command->hub_think_time);
-	}
-	add_value(plan, slot_at + ERX_XHCI_SLOT_CONTEXT_OFF_ROUTE, 4u, route);
-	add_value(plan, slot_at + ERX_XHCI_SLOT_CONTEXT_OFF_PORTS, 4u, ports);
-	add_value(plan, slot_at + ERX_XHCI_SLOT_CONTEXT_OFF_TT, 4u, tt);
 	for (uint32_t block = 0; block < ERX_DEVICE_TRB_BLOCKS_MAX; block++) {
 		for (uint32_t index = 0; (accepted->reserved >> block & 1u) != 0 && index < command->add_count; index++) {
-			const erx_device_trb_endpoint_t *const endpoint = &command->add[index];
+			const erx_device_trb_context_endpoint_t endpoint = endpoint_context(&command->add[index]);
 
-			if (endpoint_dci(endpoint) == accepted->dci[block])
-				add_endpoint_context(plan, layout, trb, block, accepted->dci[block],
-				    endpoint_type(endpoint->kind, endpoint->in), endpoint);
+			if (endpoint.dci != accepted->dci[block])
+				continue;
+			contexts.endpoints[contexts.endpoint_count++] = endpoint;
+			derived.dequeue[endpoint.dci] = dequeue_of(layout, block, &trb->blocks[block].ring);
+			reach[endpoint.dci] = dequeue_reach(layout, &trb->blocks[block].ring);
 		}
 	}
+	add_input_context(plan, layout, &contexts, &derived, reach);
 }
 
 /* The command TRB's words: the input context's address for the commands that read it, the slot and the endpoint. */
@@ -1122,12 +1196,7 @@ erx_device_trb_command(erx_device_trb_t *trb, const erx_device_trb_layout_t *lay
 		}
 		add_address_contexts(&plan, layout, trb, command, ep0);
 	} else if (command->kind == ERX_DEVICE_TRB_EVALUATE_CONTEXT) {
-		uint32_t config = 0;
-
-		add_input_control(&plan, layout, 0, 1u << 1);
-		(void)erx_xhci_endpoint_context_config_max_packet_set(&config, command->ep0_packet);
-		add_value(&plan, region_offset(layout, layout->input_context) + 2u * layout->context_size +
-		    ERX_XHCI_ENDPOINT_CONTEXT_OFF_CONFIG, 4u, config);
+		add_evaluate_contexts(&plan, layout, trb, command, find_queue(trb, command->slot, 1));
 	} else if (command->kind == ERX_DEVICE_TRB_CONFIGURE_ENDPOINTS) {
 		add_configure_contexts(&plan, layout, trb, command, &accepted);
 	}

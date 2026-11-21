@@ -114,8 +114,13 @@ bind_all(void)
 	erx_dma_sequence_t sequence;
 
 	for (uint32_t block = 0; block < 3; block++) {
-		const erx_trb_command_t bind = { .kind = block_dci[block] == 1 ? ERX_TRB_COMMAND_ADDRESS_DEVICE :
-		    ERX_TRB_COMMAND_CONFIGURE_ENDPOINT, .slot = SLOT, .add_count = 1, .adds = { { block_dci[block], block } } };
+		const bool ep0 = block_dci[block] == 1;
+		/* EP0 of 64 bytes on a high-speed device at port 1, or a bulk endpoint of 64-byte packets. */
+		const erx_trb_command_t bind = { .kind = ep0 ? ERX_TRB_COMMAND_ADDRESS_DEVICE : ERX_TRB_COMMAND_CONFIGURE_ENDPOINT,
+		    .slot = SLOT, .add_count = 1, .adds = { { block_dci[block], block, { .config_max_packet = 64,
+		    .config_endpoint_type = ep0 ? ERX_XHCI_ENDPOINT_TYPE_CONTROL : (block_dci[block] & 1u) != 0 ?
+		    ERX_XHCI_ENDPOINT_TYPE_BULK_IN : ERX_XHCI_ENDPOINT_TYPE_BULK_OUT, .payload_max_esit_payload = ep0 ? 0u : 64u } } },
+		    .slot_context = { .route_speed = ep0 ? ERX_XHCI_SPEED_HIGH : 0u, .ports_root_port = ep0 ? 1u : 0u } };
 		const uint32_t command = erx_dma_ledger_position(&form.ledger, 3).index;
 		erx_report_record_t event = { .xhci_trb_transfer_event = {
 		    .pointer = FUZZ_BASE + trb.regions[trb.command_ring].offset + 16u * command,
@@ -134,7 +139,73 @@ bind_all(void)
 	command_live = false;
 }
 
-/* A command from the script, posted when the form accepts it. */
+/* A packet size from the script: the edges of the endpoint context's ranges, or any 16 bits. */
+static uint64_t
+packet_of(script_t *script)
+{
+	static const uint64_t edges[] = { 0, 1, 2, 8, 32, 64, 512, 1024, 1025, 0xffff };
+	const uint64_t pick = take(script, 1);
+
+	return (pick < 160 ? edges[pick % (sizeof(edges) / sizeof(edges[0]))] : take(script, 2));
+}
+
+/* The stated parameters of a command from the script, each a little past its range at most, so most are refused. */
+static void
+parameters(script_t *script, erx_trb_command_t *made)
+{
+	made->slot_context = (erx_xhci_slot_context_free_t){ .route_route_string = take(script, 1) % 4u == 0 ?
+	    take(script, 3) : take(script, 1) % 16u, .route_speed = take(script, 1) % 6u,
+	    .route_multi_tt = take(script, 1) % 3u, .route_hub = take(script, 1) % 3u,
+	    .ports_root_port = take(script, 1) % 3u, .ports_port_count = take(script, 1) % 17u,
+	    .tt_tt_slot = take(script, 1) % 4u, .tt_tt_port = take(script, 1) % 17u, .tt_tt_think_time = take(script, 1) % 5u };
+	made->ep0_packet = (uint32_t)packet_of(script);
+	for (uint32_t k = 0; k < made->add_count; k++) {
+		erx_xhci_endpoint_context_free_t *const context = &made->adds[k].context;
+
+		context->config_endpoint_type = take(script, 1) % 8u;
+		context->config_max_packet = packet_of(script);
+		context->config_max_burst = take(script, 1) % 17u;
+		context->info_interval = take(script, 1) % 17u;
+		context->payload_max_esit_payload = take(script, 1) % 2u == 0 ?
+		    context->config_max_packet * (context->config_max_burst + 1u) : take(script, 2);
+	}
+}
+
+/*
+ * What an accepted command carrying the input context wrote there, decoded by xHCI 1.2's bit
+ * positions (6.2.2, 6.2.3, 6.2.5.1): every store inside the input context, no add flag past the
+ * contexts written nor A1 on Configure Endpoint, and each field within its parameter's range.
+ */
+static void
+check_contexts(const erx_trb_command_t *made, const erx_dma_sequence_t *sequence)
+{
+	const erx_device_trb_region_t *const region = &trb.regions[trb.input_context];
+	const uint64_t bytes = (1u + ERX_XHCI_DEVICE_CONTEXTS) * trb.context_size;
+
+	for (uint32_t k = 0; k < sequence->store_count; k++) {
+		const erx_dma_store_t *const store = &sequence->stores[k];
+		uint32_t word[4];
+		uint64_t context;
+
+		if (store->offset < region->offset || store->offset >= region->offset + region->length)
+			continue;
+		check(store->offset + store->length <= region->offset + bytes && store->length >= sizeof(word));
+		context = (store->offset - region->offset) / trb.context_size;
+		memcpy(word, store->bytes, sizeof(word));
+		if (context == 0)
+			check((word[0] & 3u) == 0 && (made->kind != ERX_TRB_COMMAND_CONFIGURE_ENDPOINT || (word[1] & 2u) == 0));
+		else if (context == 1)
+			check(word[0] >> 27 >= 1 && (word[0] >> 20 & 0xfu) <= ERX_XHCI_SPEED_SUPER &&
+			    (word[1] >> 16 & 0xffu) <= trb.ports && (word[1] >> 24) <= ERX_USB_HUB_PORTS_MAX &&
+			    (word[2] & 0xffu) <= trb.slots && (word[2] >> 8 & 0xffu) <= ERX_USB_HUB_PORTS_MAX);
+		else
+			check((word[0] >> 16 & 0xffu) <= 15u && (word[1] >> 1 & 3u) == 3u && (word[1] >> 8 & 0xffu) <= 15u &&
+			    (word[1] >> 16) >= 1u && (word[1] >> 16) <= 1024u && (word[1] >> 3 & 7u) != 0 &&
+			    (word[1] >> 3 & 7u) != ERX_XHCI_ENDPOINT_TYPE_ISOCH_IN);
+	}
+}
+
+/* A command from the script, with stated parameters near their ranges, posted when the form accepts it. */
 static void
 command(script_t *script)
 {
@@ -153,10 +224,12 @@ command(script_t *script)
 		made.adds[k].dci = (uint32_t)(take(script, 1) % 32u);
 		made.adds[k].block = (uint32_t)(take(script, 1) % 4u);
 	}
+	parameters(script, &made);
 	head = erx_dma_ledger_position(&form.ledger, 3).index;
 	if (erx_trb_form_command(&form, &made, next_tag, &sequence) != ERX_DEVICE_TRB_ACCEPTED)
 		return;
 	check(!command_live);
+	check_contexts(&made, &sequence);
 	command_live = true;
 	command_tag = next_tag++;
 	command_head = head;

@@ -111,7 +111,9 @@ typedef enum erx_dma_publication_call {
 /*
  * What a decision that hands over describes: its records, in the order of the run, its fills and
  * its call; for a transfer, the endpoint whose ring it runs on; for a command, the endpoints it
- * acts on, and, for one whose meaning binds, the bindings its holding makes (erx_dma_ledger_hold).
+ * acts on, and, for one whose meaning binds, the bindings its holding makes (erx_dma_ledger_hold);
+ * for a command whose TRB names the input context, the parameters its caller states, from which
+ * the sequencer writes it (erx_dma_input_context), and NULL for any other publication.
  */
 typedef struct erx_dma_publication {
 	uint32_t			record_count;
@@ -123,6 +125,7 @@ typedef struct erx_dma_publication {
 	uint32_t			bind_count;
 	erx_dma_binding_t		binds[ERX_DMA_BINDS_MAX];
 	erx_dma_reach_t			reach;
+	const erx_device_trb_contexts_t	*contexts;
 } erx_dma_publication_t;
 
 /* The rule a publication breaks first, or ERX_DMA_PASSES. */

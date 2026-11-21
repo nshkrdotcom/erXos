@@ -50,14 +50,20 @@
 #include "erx_device_ledger.h"
 #include "erx_device_rules.h"
 
-/* The widest record the sequencer writes: a descriptor or a region entry. */
-#define ERX_DMA_STORE_BYTES_MAX		16u
-/* Each record of a run, its available entry, a region entry for each fill, and a binding's link. */
-#define ERX_DMA_STORES_MAX		(ERX_DMA_HELD_RECORDS_MAX + ERX_DMA_FILLS_MAX + 1u)
-/* Rule 1 leaves at most one gap before each fill of a buffer and one after the last; a binding's ring. */
-#define ERX_DMA_ZEROS_MAX		(ERX_DMA_HELD_BUFFERS_MAX + ERX_DMA_FILLS_MAX + 1u)
-/* Each buffer passing to the device, each record and the available entry, and a binding's ring. */
-#define ERX_DMA_CLEANS_MAX		(ERX_DMA_HELD_BUFFERS_MAX + ERX_DMA_HELD_RECORDS_MAX + 1u)
+/* The widest record the sequencer writes: an input context's context (xHCI 1.2, 6.2.5, p. 460). */
+#define ERX_DMA_STORE_BYTES_MAX		32u
+/*
+ * The contexts of an input context a publication carries: the input control context, the slot
+ * context, and an endpoint context for each binding, or EP0's for Evaluate Context, which binds
+ * none (erx_dma_input_context).
+ */
+#define ERX_DMA_INPUT_PARTS_MAX		(2u + ERX_DMA_BINDS_MAX)
+/* Each record of a run, its available entry, a region entry for each fill, each binding's link and the input context. */
+#define ERX_DMA_STORES_MAX		(ERX_DMA_HELD_RECORDS_MAX + ERX_DMA_FILLS_MAX + ERX_DMA_BINDS_MAX + ERX_DMA_INPUT_PARTS_MAX)
+/* Rule 1 leaves at most one gap before each fill of a buffer and one after the last; each binding's ring. */
+#define ERX_DMA_ZEROS_MAX		(ERX_DMA_HELD_BUFFERS_MAX + ERX_DMA_FILLS_MAX + ERX_DMA_BINDS_MAX)
+/* Each buffer passing to the device, each record and the available entry, and each binding's ring. */
+#define ERX_DMA_CLEANS_MAX		(ERX_DMA_HELD_BUFFERS_MAX + ERX_DMA_HELD_RECORDS_MAX + ERX_DMA_BINDS_MAX)
 /* An install's queue size and three ring addresses. */
 #define ERX_DMA_REGISTERS_MAX		4u
 
@@ -191,5 +197,47 @@ bool	erx_dma_pass(erx_dma_ledger_t *ledger, uint32_t reports, const erx_report_r
  * layout lacks.
  */
 uint64_t	erx_dma_dequeue_address(const erx_dma_ledger_t *ledger, uint32_t reports);
+
+/*
+ * What the core posting a command derives for its input context, never its caller: whether the
+ * slot context is carried (Address Device, Configure Endpoint) with its Context Entries, the drop
+ * flags, and, by device context index, each carried endpoint's TR Dequeue Pointer with its cycle
+ * state in bit 0, the endpoint context's dequeue word. A publication's are the sequencer's own,
+ * from the publication's meaning, bindings and drops and the ledger's rings.
+ */
+typedef struct erx_dma_context_derivation {
+	bool		slot;
+	uint32_t	entries;
+	uint32_t	drop;
+	uint64_t	dequeue[ERX_XHCI_DEVICE_CONTEXTS];
+} erx_dma_context_derivation_t;
+
+/* One context of an input context: its offset from the input context's start, its endpoint's index or 0, its bytes. */
+typedef struct erx_dma_context_part {
+	uint32_t	offset;
+	uint32_t	dci;
+	uint8_t		bytes[ERX_XHCI_SLOT_CONTEXT_SIZE];
+} erx_dma_context_part_t;
+
+/* The input control context, the slot context and an endpoint context for each index (xHCI 1.2, 6.2.5, p. 460). */
+#define ERX_DMA_CONTEXT_PARTS_MAX	(1u + ERX_XHCI_DEVICE_CONTEXTS)
+
+/*
+ * The one composition of the input context (xHCI 1.2, 6.2.5, Figure 6-5, p. 460), every context
+ * through its layout's generated encoder, into `parts`; their count, or 0 for a refusal. Context k
+ * lies at k times the context size, the input control context first and the slot context next, so
+ * endpoint context dci at dci + 1 (6.2.5, p. 460, with 64-byte contexts at 40h apart); each part
+ * is the context's first 32 bytes, the rest of a 64-byte context reserved and zero (6.2.2,
+ * p. 447; 6.2.3, p. 453; 6.2.5.1, p. 461), as is every byte no part covers. The add flags are
+ * the contexts written, A0 with the slot context and A(dci) with each endpoint context, so a flag
+ * never names a context left zero (Table 6-16, p. 461); the drop flags, Context Entries and each
+ * dequeue word are `derived`'s; the average TRB length 8 for a control endpoint and otherwise the
+ * packet times the burst plus one (Table 6-11, p. 453; 4.14.1.1, p. 258). Refused: a context size
+ * other than 32 or 64, more endpoints than ERX_DEVICE_TRB_DCI_MAX, an index outside 1..31 or
+ * written twice, drop flags on indexes 0 and 1 (Table 6-15, p. 461), and a value its encoder
+ * refuses. An index both dropped and added is Configure Endpoint's drop-and-add (4.6.6, p. 120).
+ */
+uint32_t	erx_dma_input_context(const erx_device_trb_contexts_t *stated, const erx_dma_context_derivation_t *derived,
+		    erx_dma_context_part_t parts[ERX_DMA_CONTEXT_PARTS_MAX]);
 
 #endif /* ERX_DEVICE_SEQUENCER_H */
