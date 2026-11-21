@@ -591,11 +591,14 @@ Each fixed `wire_le` layout also has a C encoder, its decoder's inverse,
 which stores every field the same way and zeroes the padding, so a
 record C holds reaches Erlang as the bytes `erx_abi_layout` decodes, as
 the domain library hands the PCIe catalogue to the device service
-([design-pcie.md](design-pcie.md#the-catalogue-and-gives)). A layout
-with DMA marks is the exception: it is written only by the encoder its
-marks give it in `erx/abi.h`, and a report, which the device writes, by
-none ([design-device-dma.md](design-device-dma.md#what-the-formats-say));
-the reader gives such a layout no encoder.
+([design-pcie.md](design-pcie.md#the-catalogue-and-gives)). The device
+records are the exception: every layout of a descriptor format, a
+format file that holds a layout with DMA marks, is a record a device
+reads or writes, and only the sequencer writes one, through the encoder
+its marks give it in `erx/abi.h` or, for a report, none
+([design-device-dma.md](design-device-dma.md#descriptions)); the reader
+gives a device record no encoder, and a build check keeps every other
+caller off those encoders.
 
 A reader whose input is the front of a larger file, such as a package's
 header ([design-packaging.md](design-packaging.md#the-package)), declares

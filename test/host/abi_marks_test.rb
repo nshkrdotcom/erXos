@@ -7,6 +7,7 @@ require 'fileutils'
 require 'open3'
 require 'tmpdir'
 require_relative '../../tools/lib/erx/abi'
+require_relative '../../tools/lib/erx/chokepoint_rules'
 
 # The DMA marks of abi/formats (docs/design-device-dma.md, "What the formats say") and
 # the encoders generated from them. On a sample format, the layouts with a meaning line
@@ -465,14 +466,24 @@ class AbiMarksTest < Minitest::Test
     assert_equal "trb_normal wide: encoded 1, bytes differ 1\n", output
   end
 
-  # A layout has at most one encoder: a marked one only the one its marks give it in
-  # abi.h, which alone writes such a record, and a report none, so abi_reader.h
-  # declares no encoder of that name.
+  # A layout has at most one encoder: abi_reader.h encodes no device record, so a
+  # marked layout has only the one its marks give it in abi.h, and a report none.
   def test_no_encoder_name_is_declared_in_both_headers
     marks, reader = encoder_names(tree_schema(Dir.mktmpdir('erx-abi-marks-')))
     refute_empty marks
     refute_empty reader
     assert_empty marks & reader
+  end
+
+  # The reader encodes no device record, unmarked ones included, so the generated reader
+  # declares and defines none of the encoders the device-record-encoders chokepoint keeps
+  # to the sequencer (a virtio-gpu command header, an xHCI command TRB).
+  def test_the_reader_encodes_no_device_record
+    schema = tree_schema(Dir.mktmpdir('erx-abi-marks-'))
+    encoders = Erx::ChokepointRules::DEVICE_RECORD_ENCODERS
+    assert_includes encoders, 'erx_virtio_gpu_ctrl_hdr_encode'
+    reader = Erx::ABI::CEmitter.reader_header(schema) + Erx::ABI::CReaderEmitter.source(schema)
+    assert_empty encoders.select { |name| reader.include?(name) }
   end
 
   # A seeded fault in the generator: the reader encoding every fixed wire_le layout,
