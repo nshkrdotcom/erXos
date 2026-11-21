@@ -1,7 +1,8 @@
 %% Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
 %% SPDX-License-Identifier: BSD-2-Clause
 
-%% The USB stack (docs/design-usb.md). Its pure cores build and are tested on the host:
+%% The USB stack (docs/design-usb.md), which the application module, erx_usb, starts: one
+%% controller supervisor for each xHCI function record the domain holds. Its pure cores build and are tested on the host:
 %% erx_hid_desc, the HID report descriptor's parser; erx_hid_core, the fold of reports into input
 %% records; erx_usb_desc, the descriptor decoder; erx_usb_claim, the claim table; erx_usb_hub_core,
 %% a hub function's status pipe and the hub status decoders; erx_usb_bot_core, the Bulk-Only
@@ -17,10 +18,11 @@
 {application, erx_usb,
  [{description, "erXos USB stack"},
   {vsn, "1"},
-  {modules, [erx_hid_core, erx_hid_desc, erx_usb_bot_core, erx_usb_bus, erx_usb_bus_core, erx_usb_bus_link,
+  {modules, [erx_hid_core, erx_hid_desc, erx_usb, erx_usb_bot_core, erx_usb_bus, erx_usb_bus_core, erx_usb_bus_link,
              erx_usb_bus_sup, erx_usb_claim, erx_usb_desc, erx_usb_hid, erx_usb_hub, erx_usb_hub_core,
              erx_usb_input_stream, erx_usb_input_tree, erx_usb_pipe, erx_usb_places_sup, erx_usb_setup,
              erx_usb_sup, erx_xhci, erx_xhci_core]},
-  {registered, []},
+  {registered, [erx_usb]},
   {applications, [kernel, stdlib, erx, erx_files]},
+  {mod, {erx_usb, []}},
   {env, []}]}.

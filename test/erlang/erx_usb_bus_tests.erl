@@ -223,6 +223,27 @@ a_controller_failure_restarts_the_bus_not_the_places_test() ->
         ?assertMatch({places, Places, _, _}, lists:keyfind(places, 1, supervisor:which_children(Sup)))
     end).
 
+%% The application's top supervisor runs one controller's supervisor for each
+%% controller start, here one fake's, whose keyboard's function starts below it; and
+%% a controller's supervisor that ends ends the top supervisor, intensity 0, and so
+%% the application and the domain (docs/design-usb.md, "Failure handling").
+the_application_runs_one_controller_supervisor_each_test() ->
+    register(erx_usb_bus_tests, self()),
+    process_flag(trap_exit, true),
+    {ok, Top} = erx_usb:start_link([{erx_usb_fake_xhci, start_link, [{?FAKE, 2, #{[1] => keyboard}}]}]),
+    try
+        [{{controller, 0}, Controller, supervisor, _}] = supervisor:which_children(Top),
+        _ = configured([1]),
+        ?assertMatch({hid_started, _, #{run := 1}}, next_hid()),
+        exit(Controller, kill),
+        receive {'EXIT', Top, Reason} -> ?assertEqual(shutdown, Reason)
+        after ?WAIT_MS -> error(top_supervisor_lives)
+        end
+    after
+        true = unregister(erx_usb_bus_tests),
+        flush()
+    end.
+
 %% ---------------------------------------------------------------------------
 %% The fixture
 %% ---------------------------------------------------------------------------
