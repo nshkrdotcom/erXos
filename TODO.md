@@ -8100,13 +8100,24 @@ to the corpus and follow rc
   with `Footprint` as the PCIe row was (its largest pool use at rest and with a keyboard typing, rounded up
   with 2 MiB of headroom), and its CPU while a keyboard types, then set the row and move the totals it
   counts (the system principal's memory, `root_memory`).
-* [High] USB, the usb suite's typed stage (`tools/lib/erx/usb_boot.rb`, the display domain): the USB domain
-  enumerates qemu-xhci's keyboard and the display's follower reads all eight files of `usb_input`, but once
-  the key is typed the display domain faults (`{fault,1}`, cause 0x1, a data abort at a page-aligned address)
-  and its restart fails with `no_memory`, so the second line's call gets `noconnection`. The stage call-traces
-  `erx_winfs:input/2` in the display (`erlang:trace/3` with a tracer process), whose first hit is the key's
-  record, so either call tracing or the display's input path faults. Settle it with one run that reads the
-  records some other way (the follower's or `erx_winfs`'s state), then fix what faults.
+* [High] Runtime, call tracing faults a domain's emulator (`otp/erts/emulator`, the usb suite's typed
+  stage in `tools/lib/erx/usb_boot.rb`): the stage arms global call tracing of `erx_winfs:input/2` in the
+  display domain (`erlang:trace_pattern/3` and `erlang:trace(all, true, [call, {tracer, Pid}])`), and when the
+  first hit is a USB input reader's call (`erx_input_reader`, records read from the USB domain's `usb_input`
+  tree) the display faults inside musl's `memcpy` main loop, `{fault,1}` at `addr 0x4042b3f000` in two boots:
+  once a load from the source (`ldp x12, x13, [x1, #0x40]!`, cause 0x1), once a store to the destination
+  (`stp x8, x9, [x3, #0x20]`, cause 0x3), so a copy longer than 128 bytes runs off the end of a mapped
+  region. The same boot with no trace delivers the key (`erx_winfs` monitors the first reader, its source);
+  two boots that first logged process state or made four traced calls from fresh local processes
+  (`erx_input_codec:size/0`, `decode/1`, `erx_winfs:input/2` with a fake device) passed the stage with
+  `[{key,down,30},{key,up,30}]`. That pattern fits an overrun that faults only when it crosses an unmapped
+  end, the readers' heaps being just below that address (0x4042a8b000 to 0x4042ade000), and corrupts memory
+  silently otherwise. The call-trace path itself is stock (`i_generic_breakpoint` with `HEAVY_SWAPOUT`,
+  `erts_call_trace`'s `HAlloc`, `erts_nif_call_function`). Next: reproduce with the reader under hosted mode
+  or `check-asan` (a traced call from a process blocked in `erx_file_remote:arrived/1`), or catch the fault's
+  link register; then fix it with a regression test. Until then the typed stage is flaky. A trace-free
+  check of the exact key needs a reader of the router's records (a window, or an inspection path the
+  design names), which the display does not offer without a screen.
 * [Low] USB, the review's open points on the input tree's hand-out: the USB domain's `connections 2` has no
   room for a display incarnation minted before the old connection is unmapped (design-system A3); the places'
   host fixture finds the grants supervisor through the mint's links (`erx_usb_places_prop:mint_grants/1`)
@@ -8941,10 +8952,12 @@ model harness drive `erx_device.c` itself. `erx_device_dma_check` and `erx_devic
 * [Medium] Domain service, a display domain's end keeps its outer budget: root's session holds a
   connection to the display domain on every development board (display_root), so its end keeps
   the domain's whole outer budget as remains (`erx_dom_retire_record`, `liberx/system/dom_life.c`),
-  81 MiB on QEMU virt and 49 MiB on the Raspberry Pi 4, until root's session answers, and the
-  system principal's 1 MiB for an ended domain's outer budget does not hold the restart: the display
-  stays down until reboot. Keep only what the survivor maps (the lanes) as remains, or size the
-  reserve from the largest outer budget a session connects to.
+  89 MiB on QEMU virt (`limits display`'s `outer 93368320`) and 49 MiB on the Raspberry Pi 4, until
+  root's session answers, and the system principal's 1 MiB for an ended domain's outer budget does
+  not hold the restart: the display stays down until reboot. The usb suite shows it: the display's
+  fault under call tracing (the USB typed-stage item) is followed 1 ms later by `configured domain
+  display did not start: no_memory`. Keep only what the survivor maps (the lanes) as remains, or
+  size the reserve from the largest outer budget a session connects to.
 * [Low] Domain service, a refused restart is not retried (`erx_domain_srv.erl`
   `start_configured/2`): a configured domain's restart that the library refuses, such as
   `no_memory` while more than one ended domain's outer budget still waits for its peer's
