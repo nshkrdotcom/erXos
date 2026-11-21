@@ -138,8 +138,8 @@ compared.
 | Tool | What it does | License | Version |
 | --- | --- | --- | --- |
 | cmark-gfm | GitHub's CommonMark parser with GFM extensions, a C program; `-t xml` writes the parse tree, `--sourcepos` adds line numbers, `--smart` makes curly quotes, `-e NAME` turns on an extension (`man/man1/cmark-gfm.1`) | BSD-2-Clause, with MIT-licensed parts listed in the same file (`COPYING`, `c22e885f...`) | 0.29.0.gfm.14, the latest GitHub release |
-| beautiful-mermaid | renders Mermaid text to SVG in TypeScript with no browser and no DOM; `renderMermaidSVG(text, options)` returns an SVG string; options set colors (as any CSS value, `var(--name)` included), the font family, spacing and a transparent background (`dist/index.d.ts`, `RenderOptions`) | MIT | 1.1.3, as erXos's fork (see "The fork") |
-| esbuild | bundles the fork's TypeScript source into one JavaScript module | MIT | 0.28.2, the version `web/package.json` pins |
+| beautiful-mermaid | renders Mermaid text to SVG in TypeScript with no browser and no DOM; `renderMermaidSVG(text, options)` returns an SVG string; options set colors (as any CSS value, `var(--name)` included), the font family, spacing and a transparent background (`dist/index.d.ts`, `RenderOptions`) | MIT | 1.1.3, imported into the tree (see "The import") |
+| esbuild | bundles the imported TypeScript source of beautiful-mermaid, with elkjs and entities, into one JavaScript module | MIT | 0.28.2, the version `web/package.json` pins |
 | elkjs | the layered graph layout beautiful-mermaid calls | EPL-2.0 | 0.11.1, as beautiful-mermaid 1.1.3's lockfile resolves it |
 | entities | HTML entity encoding, used by beautiful-mermaid | BSD-2-Clause | 7.0.1, likewise |
 | mermaid | the official Mermaid library, for its parser (see "The parse check") | MIT | 12.3.0; its dependency closure, and the licenses there, are listed when its lockfile is made (unverified here) |
@@ -221,7 +221,7 @@ library's style text with its own, restyling the tree into the diagram
 style, renaming every id into the diagram's own name space and refusing
 any reference that leaves the drawing. The look of a diagram is
 therefore decided in two places only, both ours: the layout's text
-metrics in the fork of the library, and the restyle in Ruby.
+metrics in the imported library, and the restyle in Ruby.
 
 The requirements follow:
 
@@ -418,7 +418,7 @@ secondary text color, because every label is 12 px ink. The state
 diagram's start dot far from its target remains, as the library lays
 it out. A figure whose drawing a review of rendered pages finds
 unreadable is fixed in its source (a shorter title), and a layout
-fault worth fixing is fixed in the fork (see "The fork").
+fault worth fixing is fixed in the imported library (see "The import").
 
 ### The diagram style
 
@@ -461,7 +461,7 @@ engine rather than by hand:
   face, wider or narrower than the layout measured; the review of
   rendered pages judges such a label.
 
-### The fork
+### The import
 
 The layout must know the style's text widths, because a box is sized
 before anything is drawn: the library measures a label from a table of
@@ -475,15 +475,45 @@ is made in the library's source, never by substituting text in its
 built `dist/index.js` at build time, which breaks silently when the
 built file changes.
 
-beautiful-mermaid enters as a fork, as CLAUDE.md's "Forks as
-submodules" provides and as LVGL does at `display/lvgl/lvgl`: a git
-submodule at `tools/book/beautiful-mermaid`, pinned by its gitlink, of
-erXos's fork of `https://github.com/lukilabs/beautiful-mermaid`, with
-`tools/book/ORIGIN.md` beside it naming the upstream repository, the
-1.1.3 commit the fork's `erxos` branch starts from and the SHA-256 of
-what was imported. The change is one commit on that branch, which adds
-three render options and leaves the library's default output unchanged
-when they are absent:
+beautiful-mermaid enters the tree as erXos's code, as CLAUDE.md's
+"Code erXos modifies or ships enters the tree as erXos's code"
+provides: the `src/` directory of the npm package
+`beautiful-mermaid@1.1.3`
+(`https://registry.npmjs.org/beautiful-mermaid/-/beautiful-mermaid-1.1.3.tgz`,
+from `https://github.com/lukilabs/beautiful-mermaid`) lives at
+`tools/book/beautiful-mermaid/`, with the package's `LICENSE` (MIT)
+and an `ORIGIN.md` beside it. The `ORIGIN.md` is the import record of
+[design-build.md](design-build.md)'s import check, written by the same
+import code as every other import's: it names the repository, the
+version, the SHA-256 of the tarball imported and the inventory of the
+files kept, and `Erx::Checks::IMPORTS` lists the directory, so `make
+check` refuses a file that arrives without a record and a changed file
+without its change notice. The library's own `package.json`, its build
+(`tsup`) and its built `dist/` are not imported; its dependencies are
+pinned by the book's own package files below.
+
+The package's `src/` is 1.3 MB: about 16,800 lines of TypeScript
+without its tests, and 7,500 more of tests, which run under Bun. The
+book uses three of its renderers, and the import keeps only those:
+
+| Kept | Lines | Left out | Lines |
+| --- | --- | --- | --- |
+| the flowchart parser, layout and renderer, which also draw state diagrams (`parser.ts` reads the `stateDiagram-v2` header), the sequence renderer (`sequence/`), and the shared text metrics, styles, theme and ELK instance | 5,284 | the ASCII renderer (`ascii/`) | 8,205 |
+| | | the class, ER and XY-chart renderers (`class/`, `er/`, `xychart/`) | 3,266 |
+| | | the browser entry (`browser.ts`) and the tests (`__tests__/`, Bun) | 24; 7,482 |
+
+Only `index.ts` and `browser.ts` import from the left-out directories
+(counted in the 1.1.3 package), so leaving them out is one edit of
+`index.ts`, which drops their exports and their arms of the dispatch
+on the diagram's header and refuses those headers with an error the
+driver reports at the render stage of "The diagram step". The left-out paths are the import
+record's exclusions, so the inventory lists only what is in the tree
+and the tarball's digest still names the whole package. A renderer the
+book later needs is imported from the same tarball by the same code.
+
+erXos's changes are ordinary commits to those files, each changed file
+carrying its change notice. They add three render options and leave the
+library's default output unchanged when the options are absent:
 
 | Option | Effect | The style sets |
 | --- | --- | --- |
@@ -491,20 +521,19 @@ when they are absent:
 | `labelSize` | node and edge labels at this size in px | `12` |
 | `groupTitle` | `"bottom"` reserves the title row below a group's contents (24 px above them, 40 px below); either way a group is laid out at least as wide as its title plus 24 px | `"bottom"` |
 
-The book step builds the fork: `tools/book/package.json` names the
-submodule as a local directory dependency (`file:beautiful-mermaid`),
-so its own `package.json` states elkjs and entities and the lockfile
-pins them with their integrity hashes; it also pins esbuild at the
-version the web client uses. The step runs that esbuild, by argument
-vector under a deadline, to bundle the installed fork's
-`src/index.ts` with its dependencies into one ES module,
-`build/book-tools/beautiful-mermaid.mjs`, and reuses an earlier bundle
-only when the fork's gitlink commit and the esbuild version match the
-record beside it. Whether pnpm installs a `file:` dependency under
-`--frozen-lockfile --ignore-scripts` as this needs is unverified and
-probed first. The library's own build (`tsup`, with Bun for its
-tests) is not used, so its development packages stay out of the
-lockfile.
+The library imports two packages, `elkjs` (`elk-instance.ts` loads
+`elkjs/lib/elk.bundled.js`) and `entities`. Both stay out of the tree,
+unmodified, pinned by `tools/book/pnpm-lock.yaml` at the versions
+beautiful-mermaid 1.1.3's own lockfile resolves (elkjs 0.11.1,
+entities 7.0.1) and installed with the book's other packages. The step
+runs the pinned esbuild, by argument vector under a deadline, to bundle
+`tools/book/beautiful-mermaid/index.ts` with those two packages into
+one ES module, `build/book-tools/beautiful-mermaid.mjs`, resolving the
+two bare imports from `build/book-modules/node_modules` through esbuild's
+node-paths setting (whether the command line reaches it by `NODE_PATH`
+is unverified and probed first). It reuses an earlier bundle only when
+the SHA-256 of the import's files, taken in sorted path order, and the
+esbuild version match the record beside it.
 
 ### The diagram step
 
@@ -518,26 +547,28 @@ node --permission --allow-fs-read=<driver>,<bundle>,<modules> <driver>
 ```
 
 Node's permission model (`--permission`) lets the process read only the
-driver, the fork's bundle and the installed packages (official
+driver, the library's bundle and the installed packages (official
 Mermaid, for the parse check) and refuses file writes, child
 processes, worker threads and native add-ons; whether the pinned Node
 also refuses network access under it is unverified and read from that
 Node's documentation during implementation. Neither library makes a
 request: beautiful-mermaid 1.1.3's built `dist/index.js` holds no
-`fetch`, `XMLHttpRequest` or `http` import, and the fork's commit adds
+`fetch`, `XMLHttpRequest` or `http` import, and erXos's changes add
 none.
 
 The request goes to the driver's standard input as one JSON document
 and the reply comes back on its standard output as another:
 
 * request: `{"options": {...}, "diagrams": ["<source>", ...]}`;
-* reply: `{"versions": {"node": "...", "beautiful-mermaid": "...",
-  "mermaid": "..."}, "results": [...]}`, one result per diagram in the
+* reply: `{"versions": {"node": "...", "mermaid": "..."},
+  "results": [...]}`, one result per diagram in the
   same order, either `{"svg": "..."}` or `{"error": {"stage": "parse"
   | "render", "message": "...", "line": N | null}}`.
 
-The driver reads each package's version from the `package.json` it
-actually loaded, so the record names what ran. It reports a diagram's
+The driver reads Node's version from the process and mermaid's from
+the `package.json` it actually loaded, and the build record names the
+imported library by the digest of its files, so the record names what
+ran. It reports a diagram's
 failure as a result and goes on, and exits non-zero only for its own
 failure (a missing package, a malformed request); Ruby turns the first
 failed result, in book order, into the step's refusal. One process for
@@ -547,7 +578,7 @@ The options are one frozen Ruby constant, the same for every diagram:
 
 | Option | Value |
 | --- | --- |
-| `charWidth`, `labelSize`, `groupTitle` | `0.6`, `12`, `"bottom"` (the fork's options, "The fork") |
+| `charWidth`, `labelSize`, `groupTitle` | `0.6`, `12`, `"bottom"` (the options erXos adds, "The import") |
 | `font` | `IBM Plex Mono` |
 | `transparent` | `true` |
 
@@ -564,7 +595,7 @@ and a label fills its box as the layout measured it.
 
 The packages enter as the web client's do. `tools/book/package.json`,
 `tools/book/pnpm-lock.yaml` and `tools/book/pnpm-workspace.yaml` pin
-the fork (as a directory), mermaid 12.3.0 and esbuild 0.28.2 with
+elkjs 0.11.1, entities 7.0.1, mermaid 12.3.0 and esbuild 0.28.2 with
 every package of their closure and its integrity hash, and allow no
 build script;
 `package.json`'s `engines` names the oldest Node and pnpm.
@@ -815,14 +846,16 @@ deadline with its log in `build/logs/`, and reuses an earlier build
 only when the archive's SHA-256, the step's fixed CMake options and the
 C compiler's version string all match the record beside it.
 
-**Dependencies.** The implementation adds rows to the dependency table
-of [design.md](design.md#dependencies): cmark-gfm (BSD-2-Clause),
-elkjs (EPL-2.0), mermaid (MIT) and esbuild (MIT), each a website build
-tool run unmodified out of tree with nothing of it shipped;
-beautiful-mermaid (MIT), a website build tool erXos modifies, as the
-fork submodule `tools/book/beautiful-mermaid` with its `ORIGIN.md`,
-nothing of it shipped; and the three faces (OFL-1.1, font data,
-shipped on the website).
+**Dependencies.** The dependency table of
+[design.md](design.md#dependencies) has the diagram step's rows:
+beautiful-mermaid (MIT), a website build tool erXos modifies, imported
+into `tools/book/beautiful-mermaid` with its `ORIGIN.md`; elkjs
+(EPL-2.0), entities (BSD-2-Clause), mermaid (MIT) and esbuild (MIT),
+each run unmodified out of tree from `tools/book/pnpm-lock.yaml`.
+Nothing of any of them is shipped: the pages hold only the SVG the
+writer built from the numbers they computed. The implementation adds
+the rows of cmark-gfm (BSD-2-Clause) and the three faces (OFL-1.1,
+font data, shipped on the website).
 
 ## Trust and escaping
 
@@ -884,7 +917,7 @@ has one, the line:
 
 The pages depend only on the files of `docs/book/`, the Markdown files
 the links name, the images, the font files, the commit, the version of
-cmark-gfm, the versions of the packages the lockfile pins, and the
+cmark-gfm, the files of the imported library, the versions of the packages the lockfile pins, and the
 version of Node. The step reads no clock, writes no date, numbers
 diagrams by their place in the page, walks directories in sorted order,
 sends the diagrams in book order, and writes JSON and CSS in a fixed
@@ -892,7 +925,7 @@ order.
 
 `book/record.json` is the build record: the commit, cmark-gfm's
 version, the Node version and package versions the driver reported,
-the fork's gitlink commit and esbuild's version, the SHA-256 of each
+the SHA-256 of the imported library's files and esbuild's version, the SHA-256 of each
 font file, and the SHA-256 of every other file the
 step wrote, in sorted order. It holds no time and no host name.
 
@@ -907,7 +940,7 @@ every file whose digest differs from a build record's, and is run
 against the published `book/record.json` at the same commit, with the
 same Node version, whenever the step, its lockfile, cmark-gfm or the
 pinned Node version changes. A difference is fixed in what the step
-gives the tools, or in the library by a patch, never by rewriting the
+gives the tools, or in the imported library by an edit, never by rewriting the
 output after the fact.
 
 ## Tests
@@ -930,7 +963,7 @@ make it fail, planted once by hand when the test is written.
 | Escaping and ASCII | a fixture with `<4.0.0>`, `a && b` in code, a link whose fragment holds `"` and a curly quote in prose renders them as text and numeric references; every output byte is ASCII | drop the escape in attribute values; write non-ASCII characters as they are |
 | SVG writer | given SVG strings in the shape the library returns: the library's style text, its `@import` with it, is replaced by the writer's; ids become `d1.arrowhead` and `d2.arrowhead` on one page, and each `url(#arrowhead)` and `url(#dither)` names its own diagram's; `<script>`, `onload=`, `<image href="https://x">`, `fill="url(https://x)"` and `stroke="var(--_nonesuch)"` are each refused; a `<` in a label is escaped | rename ids but not the `url()` references; strip an external `url()` instead of refusing it; restyle after renaming, so the dither's id stays bare |
 | Style | a fixture flowchart with an outer group holding an inner group, a dashed edge crossing the outer group's shadow and a labelled edge, and a sequence diagram with a note: the header bars are gone and each title sits at the lower left; corners are square, strokes 1 px, dashes `10 6`; exactly one shadow path, for the outer group; the dashed edge has an underlay clipped to the shadows; the note is a rectangle; the sequence diagram has no shadow and the `viewBox` grows only for the flowchart; the restyle of a group without its title is refused | count a group as inside itself, so no group casts a shadow; drop the clip from the underlay |
-| The fork's options | the fork's own tests, run with the book's tool tests: with `charWidth: 0.6` and `labelSize: 12` a node labelled with 20 characters is laid out 144 px plus margins wide and its label is 12 px; with `groupTitle: "bottom"` a group's padding is 24 above and 40 below and a group whose title is wider than its contents is as wide as the title plus 24; without the options the output equals 1.1.3's for the bake-off's six diagrams (tool test) | measure with the width table when `charWidth` is set; apply the title's minimum width only when `groupTitle` is `"bottom"` |
+| The library's options | a tool test that runs the driver with the bake-off's dense flowchart and a one-node fixture: with `charWidth: 0.6` and `labelSize: 12` the node labelled with 20 characters is a `rect` 144 px plus margins wide and its label's `font-size` is 12; with `groupTitle: "bottom"` a group's contents sit 24 px below its top and 40 px above its bottom, and a group whose title is wider than its contents is as wide as the title plus 24; without the three options the six bake-off diagrams give the same SVG as the unmodified 1.1.3 bundle, kept as goldens | measure with the width table when `charWidth` is set; apply the title's minimum width only when `groupTitle` is `"bottom"` |
 | Diagram step | the driver, given three diagrams of which the second is invalid, returns a drawing, an error with its stage and line, and a drawing, in order, and the step's refusal names the second diagram's chapter file and line (tool test) | let the driver stop at the first error, so the third result is missing; report the fence's line without the error's own line |
 | Parse check | a sequence diagram with `;` in a label, which beautiful-mermaid draws, is refused at the parse stage with Mermaid's message (tool test; built only if the probe shows `mermaid.parse` runs under Node) | skip the parse call |
 | Color tokens | a writer style naming `--nonesuch` is refused; the real style, naming `--ink` and `--paper`, passes against `site/tokens.css` | read the tokens from `site/style.css`, which no longer declares them |
@@ -964,17 +997,15 @@ pages, not by a test.
    refuse the book's 32 citations to 23 other hosts.
    Recommendation: any well-formed `https:` address, refusing every
    other scheme, as designed.
-4. **The fork's repository, and an offer upstream.** "The fork" needs
-   erXos's fork of `https://github.com/lukilabs/beautiful-mermaid`
-   with an `erxos` branch, beside `stass/lvgl`; creating a repository
-   and pushing to it are the user's. Create it? And should the three
-   options also be offered upstream as a pull request, so that a later
-   version carries them and the fork's commit could go? Recommendation:
-   create the fork; offer `charWidth` and the title's minimum width
-   upstream, which are general (any monospace face, and the clipped
-   title is the library's fault), and keep `groupTitle` on the fork
-   unless upstream wants it. The fork and everything that draws in the
-   style wait on the repository; the rest of the step does not.
+4. **An offer upstream (optional).** Should the options erXos adds
+   to beautiful-mermaid also be offered upstream, as a pull request
+   to `https://github.com/lukilabs/beautiful-mermaid`, so that a later
+   version carries them and a later import needs fewer changes? The
+   import does not depend on the answer, and sending it is a push
+   outside the project. Recommendation: offer `charWidth` and the
+   title's minimum width, which are general (any monospace face, and
+   the clipped title is the library's fault), and keep `groupTitle`
+   as erXos's change unless upstream wants it.
 5. **The diagram face.** The bake-off drew the style in DejaVu Sans
    Mono 2.35, whose license is Bitstream Vera's (permissive, with a
    renaming condition on modified fonts; the DejaVu changes are public
