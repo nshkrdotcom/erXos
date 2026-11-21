@@ -8658,6 +8658,12 @@ model harness drive `erx_device.c` itself. `erx_device_dma_check` and `erx_devic
   or configuration write `unavailable`. Eight bonds with three subscriptions of the longest names fit
   (`state_largest_fits_test`). Derive the bound in `Erx::GattDecl`: fail the build when eight bonds subscribed to
   every such characteristic of the table would pass 4 KiB.
+  is never admitted and fails at the Security Manager Timer, 30 s, ending the link; and `erx_bt_store:resolve/1`
+  answers `none` because the store keeps no bonds. The window is built (`erx_bt_fs` over `erx_bt_window`, the
+  control tree `erx_bt_fs_tree` with `pair` alone) but `erx_bt_sup` does not start it: `erx_bt_fs:start_link/1`
+  takes whether the start's read left the store `read` or `unknown`, which the store must answer once it reads
+  its state, and the design names no call for it yet; `forget all` through the tree's `ctl`, also unbuilt, is
+  the one other change of it. Build the registry and the store, the store's answer, `ctl`, and the wiring.
 * [Low] bluetooth, the link core's deadlines and Encryption_Enabled (`erlang/apps/erx_bt/src/erx_bt_link_core.erl`,
   its `HANDLER_TIMEOUT_MS`, `ATT_TRANSACTION_MS`, `SMP_TIMEOUT_MS` and `ENCRYPTION_ON_LE`): "What a radio peer can
   make the domain spend" makes every bound a constant of `abi/formats/bluetooth.txt`, but these four are module

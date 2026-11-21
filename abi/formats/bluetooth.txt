@@ -161,6 +161,15 @@ limit bt_link_backlog u8 32
 limit bt_bonds_max u8 8
 limit bt_state_max u16 4096
 limit bt_store_timeout_ms u32 5000
+# The pairing window (docs/design-bluetooth.md, "The pairing window"): the time a window
+# admits a pairing; the longest first write of its `pair` file, `display` or `nodisplay`;
+# and SMP's pairing wait (Vol 3 Part H, 2.3.6), which starts at the minimum, doubles at
+# each further failure up to the maximum and halves for each decay interval without one.
+limit bt_pair_window_s u32 120
+limit bt_pair_write_max u32 16
+limit bt_pair_wait_min_s u32 2
+limit bt_pair_wait_max_s u32 64
+limit bt_pair_wait_decay_s u32 600
 
 # erXos's deadlines (docs/design-bluetooth.md, "The bring-up"): every command's answer,
 # and the patch's two waits, NetBSD's (usr.sbin/btattach/init_bcm43xx.c, lines 123-125

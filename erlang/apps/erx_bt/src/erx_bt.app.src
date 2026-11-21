@@ -10,15 +10,16 @@
 %% codec, erx_smp_core, its responder, and erx_smp_crypto, its toolbox. Its processes,
 %% under erx_bt_sup, which erx_bt_app starts once it has mounted the line at /line: the
 %% store, erx_bt_store, over erx_bt_state_file in development builds, and the controller group, erx_bt_host_sup, of the link supervisor,
-%% the line's reader and writer and the controller process, erx_bt_hci.
+%% the line's reader and writer and the controller process, erx_bt_hci. The window: erx_bt_window,
+%% its core, run by the file service erx_bt_fs, which serves the control tree, erx_bt_fs_tree.
 {application, erx_bt,
  [{description, "erXos Bluetooth Low Energy"},
   {vsn, "1"},
-  {modules, [erx_att, erx_bt_adv, erx_bt_app, erx_bt_hci, erx_bt_hci_core, erx_bt_host_sup, erx_bt_line_rx, erx_bt_line_tx,
-             erx_bt_link, erx_bt_link_core, erx_bt_link_sup, erx_bt_patch, erx_bt_state, erx_bt_state_file, erx_bt_store, erx_bt_sup, erx_gatt_db, erx_gatt_decl,
+  {modules, [erx_att, erx_bt_adv, erx_bt_app, erx_bt_fs, erx_bt_fs_tree, erx_bt_hci, erx_bt_hci_core, erx_bt_host_sup, erx_bt_line_rx, erx_bt_line_tx,
+             erx_bt_link, erx_bt_link_core, erx_bt_link_sup, erx_bt_patch, erx_bt_state, erx_bt_state_file, erx_bt_store, erx_bt_sup, erx_bt_window, erx_gatt_db, erx_gatt_decl,
              erx_gatt_gate, erx_gatt_server, erx_gatt_srv, erx_h4, erx_hci, erx_l2cap, erx_smp, erx_smp_core, erx_smp_crypto]},
-  {registered, [erx_bt_hci, erx_bt_host_sup, erx_bt_line_rx, erx_bt_line_tx, erx_bt_link_sup,
+  {registered, [erx_bt_fs, erx_bt_hci, erx_bt_host_sup, erx_bt_line_rx, erx_bt_line_tx, erx_bt_link_sup,
                 erx_bt_store, erx_bt_sup]},
-  {applications, [kernel, stdlib, crypto, erx]},
+  {applications, [kernel, stdlib, crypto, erx, erx_files]},
   {mod, {erx_bt_app, []}},
   {env, []}]}.
