@@ -1007,11 +1007,10 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   write answering ebadf, close, a directory answering eisdir), `set_cwd` into an image, links on an image, or the
   order of erofs against eexist and enoent. A hosted case needs the app record and a packages grant standing in, as
   `erx_ns_tests:app_package/1` does on the host.
-* [Medium] `make check-runtime-hosted`, failures that earlier aborts hid: `runtime_release_test`'s shipped list lacks
-  erx_rtc and erx_ssh_login, and its erx_files module check finds `erx_ramfs_serving.beam` it does not expect;
-  `runtime_prim_file_test`'s changed-byte case counts the second run's timed log lines (erx_syslog's start,
-  erx_clock's build-facts warning, a supervisor report) as refusals, and `test_tmp_serves_the_domain` answers
-  `tmpx old owners counted` false. Each wants its cause found before its expectation moves.
+* [Medium] `test/integration/runtime_prim_file_test.rb` `test_tmp_serves_the_domain`: `tmpx old owners counted`
+  answers false, so `tmp_processes/1` in `prim_file_compare.erl` finds fewer than three processes (the tree, the
+  grant and what links to the grant) before it kills /tmp's tree. Find which owner is no longer linked to the
+  grant before the expectation moves.
 * [Low] `otp/erts/emulator/test/binary_SUITE.erl`: `make_port/0` is `hd(erlang:ports())`, and `ports()` is empty by design,
   so its term-ordering cases fail with `hd([])`. Opening `{spawn_driver, "ram_file_drv"}` there gives a real port (checked on
   hosted), and is the route when the suite is next run for its results.

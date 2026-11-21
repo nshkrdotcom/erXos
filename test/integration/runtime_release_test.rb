@@ -60,13 +60,13 @@ class RuntimeReleaseTest < Minitest::Test
       assert(paths.any? { |path| path.match?(%r{\Asystem/lib/#{application}-[0-9.]+/#{Regexp.escape(rest)}\z}) }, file)
     end
     shipped = paths.filter_map { |path| path[%r{\Asystem/lib/([a-z_]+)-[^/]+/}, 1] }.uniq
-    assert_equal %w[compiler erx erx_code erx_domain erx_files erx_session erx_shell
-                    erx_starter erx_uart kernel runtime_tools stdlib], shipped.sort,
-                 'the release holds its applications and no more'
+    assert_equal Erx::ReleaseFiles::SYSTEM_APPLICATIONS.sort, shipped.sort,
+                 'the release holds its applications (ReleaseFiles::SYSTEM_APPLICATIONS) and no more'
   end
 
   # Each of erXos's applications the system release ships (ReleaseFiles::SYSTEM_APPLICATIONS)
-  # holds the modules of its sources and no other, and
+  # holds the modules of its sources and those the build derives for it (ErlangApps.derived,
+  # erx_files' serving set) and no other, and
   # OTP's applications hold none of erXos's: kernel's hooks, net_kernel and logger name
   # erx's modules, which the boot script's code path finds (docs/design-runtime.md,
   # "Everything else").
@@ -75,7 +75,9 @@ class RuntimeReleaseTest < Minitest::Test
     (Erx::ErlangApps::APPLICATIONS & Erx::ReleaseFiles::SYSTEM_APPLICATIONS).each do |application|
       sources = Erx::ErlangApps.modules(root: ROOT, application: application)
       beams = paths.filter_map { |path| path[%r{\Asystem/lib/#{application}-[^/]+/ebin/([^/]+\.beam)\z}, 1] }
-      assert_equal sources.map { |source| "#{File.basename(source, '.erl')}.beam" }.sort, beams.sort, application
+      modules = sources.map { |source| File.basename(source, '.erl') } +
+                Erx::ErlangApps.derived(application).map { |derived| derived::MODULE }
+      assert_equal modules.map { |mod| "#{mod}.beam" }.sort, beams.sort, application
     end
     otp_held = paths.filter_map do |path|
       application, file = path.match(%r{\Asystem/lib/([a-z_]+)-[^/]+/ebin/(erx_[^/]+)\z})&.captures

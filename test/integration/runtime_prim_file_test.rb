@@ -105,10 +105,10 @@ class RuntimePrimFileTest < Minitest::Test
     refute_includes lines.join("\n"), Digest::MD5.digest(changed).bytes.join(',')
     refute_includes lines.join("\n"), 'torts before'
     # Two runs' memory figures differ by nature, and test_results_agree_with_stock... exempts them too.
-    # The restart case's supervisor report reaches the console as a log line that carries the
-    # time of each run.
+    # Log records (erx_syslog's start, erx_clock's warning, the restart case's supervisor
+    # report) reach the console carrying the time of each run.
     other = (lines - @fixture.release).reject do |line|
-      line.start_with?('resources') || line.match?(SUPERVISOR_LOG)
+      line.start_with?('resources') || line.match?(LOG_RECORD)
     end
     diagnostics, refused = other.partition { |line| line.start_with?('prim_file: ') }
     assert_includes diagnostics.first.to_s, 'file_hash'
@@ -394,7 +394,9 @@ class RuntimePrimFileTest < Minitest::Test
     end
   end
 
-  SUPERVISOR_LOG = /error domain \d+ principal \d+ system: Supervisor: \{<[0-9.]+>,erx_ramfs_sup\}\. Context: child_terminated\./
+  # A log record as the console shows it: the kernel log's, which opens with the monotonic
+  # time and the level, or logger's own, which opens with the time of day.
+  LOG_RECORD = /\A(?:\d+\.\d+ [a-z]+ domain \d+ principal |\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)/
 
   DIRECTORY = "{ok,directory,read_write,#{0o40755}}"
   FILE = "{ok,regular,0,read_write,#{0o100644}}"
