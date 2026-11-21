@@ -2412,7 +2412,8 @@ build check proves (SH1), so in a session without the facet, the
 system shell among them, the command fails with `ifconfig: no_facet`
 before it starts. The check is a guard
 against a slip, not the boundary: what a session reaches rests on its
-domain, whose release ships no service's modules. `ps` lists the
+domain, whose release ships no service's own modules and whose network
+client answers `eacces` without the `net` facet. `ps` lists the
 session's own table and `dmesg` reads its namespace's `/proc`, so
 neither declares a facet.
 `erx_cmd:write/2` writes bytes to standard output, waiting while 64 KiB

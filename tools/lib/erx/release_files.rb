@@ -96,9 +96,13 @@ module Erx
     # The applications the system release ships, in release order: an allow-list, so an
     # application reaches the system domain only by being named here: OTP's, the base
     # every domain boots, the applications the system domain runs, and erx_session, which
-    # it ships and never starts (DOMAIN_ONLY). Every other application is a domain boot
-    # script's alone (RELEASE_SCRIPTS), and one in neither fails the load (check_released).
-    SYSTEM_APPLICATIONS = %w[kernel stdlib compiler runtime_tools erx erx_files erx_code erx_uart erx_rtc
+    # it ships and never starts (DOMAIN_ONLY). erx_net_client is the socket backends that
+    # inet's default backend names (docs/design-network-stack.md, "Modules"), not the
+    # stack: the system domain holds no `net` facet and its startup sets no `grant` key,
+    # so every socket call there answers {error, eacces} and no resolver loader runs.
+    # Every other application is a domain boot script's alone (RELEASE_SCRIPTS), and one
+    # in neither fails the load (check_released).
+    SYSTEM_APPLICATIONS = %w[kernel stdlib compiler runtime_tools erx erx_files erx_net_client erx_code erx_uart erx_rtc
                              erx_domain erx_starter erx_ssh_login erx_shell erx_session].freeze
     raise Error, "SYSTEM_APPLICATIONS names what the runtime does not build: #{SYSTEM_APPLICATIONS - APPLICATIONS}" unless
       (SYSTEM_APPLICATIONS - APPLICATIONS).empty?

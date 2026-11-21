@@ -2,7 +2,8 @@
 %% SPDX-License-Identifier: BSD-2-Clause
 
 %% The socket backends' supervisor: erx_inet's resolver loader, restarted after a crash.
-%% A restarted loader finds the grant again and reloads inet_db from its answer.
+%% A restarted loader finds the grant again and reloads inet_db from its answer. Without a
+%% `grant` key the loader does not start, and the supervisor holds no process.
 -module(erx_net_client_sup).
 -behaviour(supervisor).
 

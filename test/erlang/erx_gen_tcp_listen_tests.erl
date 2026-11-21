@@ -267,10 +267,13 @@ address(Error) ->
     Error.
 
 %% The stack with lo0 alone, unlinked so that its end fails the case rather than ending it.
+%% The node runs its own stack, so the client finds the grant erx_net minted for it.
 start_stack() ->
+    ok = application:set_env(erx_net_client, grant, {erx_net, local_grant, []}),
     {ok, Stack} = erx_net_sup:start_link(#{interfaces => []}),
     unlink(Stack),
     Stack.
 
 stop_stack(Stack) ->
-    proc_lib:stop(Stack, shutdown, infinity).
+    proc_lib:stop(Stack, shutdown, infinity),
+    ok = application:unset_env(erx_net_client, grant).

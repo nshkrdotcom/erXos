@@ -43,6 +43,8 @@ run() ->
     Record = #{peripheral => genet, window => stand_in, lines => [0]},
     Genet0 = #{name => genet0, ip4 => #{addr => ip(?ME), plen => 24},
                transport => {erx_genet, #{record => Record}}},
+    %% The node runs its own stack, so the client finds the grant erx_net minted for it.
+    ok = application:set_env(erx_net_client, grant, {erx_net, local_grant, []}),
     {ok, Stack} = erx_net_sup:start_link(#{interfaces => [Genet0]}),
     unlink(Stack),
     Dev = until(fun device/0),

@@ -18,6 +18,8 @@
 main([QemuPort, StackPort, EchoPort, TcpPort, ClosedPort]) ->
     Loopback = {127, 0, 0, 1},
     Far = {udp, {Loopback, list_to_integer(StackPort)}, {Loopback, list_to_integer(QemuPort)}},
+    %% The node runs its own stack, so the client finds the grant erx_net minted for it.
+    ok = application:set_env(erx_net_client, grant, {erx_net, local_grant, []}),
     {ok, _} = erx_net_sup:start_link(#{interfaces => [#{name => en0, ip4 => dhcp,
         transport => {erx_net_pipe, #{far => Far, lladdr => <<16#52, 16#54, 0, 16#12, 16#34, 16#56>>}}}]}),
     Steps = [{lease, fun lease/1}, {arp, fun arp/1}, {ping, fun ping/1},

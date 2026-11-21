@@ -14,13 +14,14 @@ that calls into erXos, so the modules in src/ stay portable.
 The grant of a domain whose network service runs in another domain, for the `grant` key
 as `{erx_net_client_erxos, grant, []}`: the `net` facet the domain holds (erx:cap/1),
 with its owner, the network domain, as the origin whose envelope its messages arrive in
-(erx:owner/1); `{error, enotconn}` while the domain holds no `net` facet, as
-erx_net:local_grant/0 answers without a stack. Only erx_inet calls it, through the key.
+(erx:owner/1); `{error, eacces}` while the domain holds no `net` facet, as for a domain
+whose grant does not allow the call (docs/design-network-stack.md, "The grant"). Only
+erx_inet calls it, through the key.
 """.
--spec grant() -> {ok, pid(), pos_integer()} | {error, enotconn}.
+-spec grant() -> {ok, pid(), pos_integer()} | {error, eacces}.
 grant() ->
     case erx:cap(net) of
-        undefined -> {error, enotconn};
+        undefined -> {error, eacces};
         Grant -> {ok, Grant, erx:owner(Grant)}
     end.
 

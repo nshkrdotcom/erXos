@@ -199,10 +199,19 @@ class NetChecksTest < Minitest::Test
   end
 
   def test_grant_key_reads_pass_in_erx_inet_comments_and_the_stack
-    body = 'application:get_env(erx_net_client, grant, {erx_net, local_grant, []})'
+    body = 'application:get_env(erx_net_client, grant)'
     assert_empty source_rules("#{CLIENT}/erx_inet.erl", body)
     assert_empty source_rules("#{CLIENT}/erx_gen_udp.erl", "%% application:get_env is erx_inet's\nmy_application:get_env(k)")
     assert_empty source_rules("#{SRC}/erx_net_app.erl", 'application:get_env(erx_net, interfaces)')
+  end
+
+  # The fallback that failed open: erx_inet finding the node's own grant when no key
+  # names one. Only a startup's key names it, so erx_inet naming it fails too.
+  def test_a_default_grant_in_erx_inet_fails
+    { 'application:get_env(erx_net_client, grant, {erx_net, local_grant, []})' => 2,
+      'whereis(erx_net_grant)' => 2 }.each do |body, line|
+      assert_equal [['grant-key', line]], source_rules("#{CLIENT}/erx_inet.erl", body), body
+    end
   end
 
   # The facets are erx_net_client_erxos's to read, and the key erx_inet's: neither

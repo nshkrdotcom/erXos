@@ -499,7 +499,7 @@ dropped(Grant, Left) ->
 client_grant_test() ->
     Grant = pid_of(?OTHER),
     with_erx(#{net => Grant}, fun() -> ?assertEqual({ok, Grant, ?OTHER}, erx_net_client_erxos:grant()) end),
-    with_erx(#{echo => Grant}, fun() -> ?assertEqual({error, enotconn}, erx_net_client_erxos:grant()) end).
+    with_erx(#{echo => Grant}, fun() -> ?assertEqual({error, eacces}, erx_net_client_erxos:grant()) end).
 
 %% Runs Fun with a stand-in of erx loaded: the facets this domain holds, read from the
 %% registry's persistent term as erx:cap/1 reads it, and owner/1, the domain id a name's

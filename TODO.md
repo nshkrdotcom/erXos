@@ -992,18 +992,14 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   as `ENOSYS` tracing shows it;
 * [Low] `test/fixtures/runtime_event_harness.c`: the sleep step's model copies the park core by hand and has no waker; driving
   `erx_backend_park_step` and a waker would pin the reason the epochs come before the flag.
-* [Medium] network, a domain without a net grant (`erlang/apps/erx_net_client/src/erx_inet.erl` `find/0`,
-  `tools/lib/erx/release_files.rb` `SYSTEM_APPLICATIONS`): `docs/design-runtime.md` and design-network-stack's
-  "The grant" say every open answers `{error, eacces}` there, but no domain without the grant does. A release that
-  ships no `erx_net_client` (the system release, an app template's) has no `erx_gen_tcp` or `erx_gen_udp`, which the
-  default `erx` backend names (`otp/lib/kernel/src/inet.erl`), so `gen_tcp:listen/2` and `gen_udp:open/2` raise
-  `undef`; and where `erx_net_client` ships without a grant key, `find/0` falls back to `erx_net:local_grant/0` and
-  answers `{error, enotconn}`, or `undef` where `erx_net` is absent too. `runtime_hosted_smoke_test`'s
-  `test_init_runs_from_the_archive_alone` expects `eacces` from the system domain and fails until this lands. Either
-  ship `erx_net_client` in every release and answer `eacces` from `find/0` when no grant key is set (the node that
-  runs the stack sets the key to `local_grant`), or have `inet`'s backend choice answer `eacces` when the backend's
-  application is absent; the first keeps one path to the grant but undoes the network domain's removal of the client
-  from the system release, so it wants a decision.
+* [Medium] network, the domain boot scripts without the client (`tools/lib/erx/release_files.rb`
+  `RELEASE_SCRIPTS`): design-network-stack's "Modules" says every erXos domain runs `erx_net_client`, and the
+  system, session, app and ntpd releases do, so a socket call there without a grant answers `{error, eacces}`
+  from `erx_inet:find/0`. The other scripts (erts, storage, network, web, display, client, ssh, usb, bt, pcie,
+  wifi) ship no `erx_net_client`, so the default `erx` backend's `erx_gen_tcp` and `erx_gen_udp`
+  (`otp/lib/kernel/src/inet.erl`) are absent and `gen_tcp:listen/2` and `gen_udp:open/2` raise `undef` there.
+  Adding the client to `DOMAIN_BASE` would make it hold in every domain by construction; it wants each
+  domain's memory checked against its fixed budget, since a release loads every module it ships.
 * [Medium] `test/integration/runtime_prim_file_test.rb`: no hosted test reads through an EROFS entry with prim_file
   since erx_ns's only EROFS mount became `{erofs, app}`, which takes the session's app record and a file grant; the
   system domain the test boots holds neither. `erx_ns_tests` reads the mount with erx_erofs directly, never through
@@ -3906,16 +3902,10 @@ handing call's socket process exit and its connection's, is not yet looked for. 
 * [Low] shell, usage errors: an Erlang command's `{error, usage}` gives the status `usage`, while ping's
   out-of-range values give 64, FreeBSD's `EX_USAGE`, which FreeBSD's `usage()` gives too
   (`erlang/apps/erx_shell/src/erx_shell_runner.erl`). Give `{error, usage}` status 64.
-* [Medium] shell, the network commands in a session (`erlang/apps/erx_shell/src/erx_cmd_ifconfig.erl`,
-  `erx_cmd_ping.erl`, `erx_cmd_host.erl`): each declares `-erx_needs([net])`, so a session without the net
-  facet refuses it with `no_facet`, but one that holds the facet still runs code that works only where the
-  stack runs: `ifconfig` and `ping` call erx_net and erx_icmp_sock, which a session's release does not ship,
-  and `host` opens its sockets through erx_net_client, which it does not ship either, so each ends with
-  `undef`. Reach the stack through the facet's value (`erx_cmd:facet(Ctx, net)`, the facet's pid; the
-  system shell never holds `net`, docs/design-shell.md, "Interfaces"), with erx_net_client and its erXos grant module in the session's
-  release (docs/design-network-stack.md, "Two places, four seams"), and report a missing stack as
-  `ping: socket: ...` and `ifconfig: network stack: ...` do. Then have `erx_shell_runner:command/4` hand
-  each command only the facets it declares (`maps:with(Needs, Facets)`; `top` reads `inspect` without
+* [Medium] shell, the facets a command holds (`erlang/apps/erx_shell/src/erx_shell_runner.erl`): the network
+  commands (`erx_cmd_ifconfig`, `erx_cmd_ping`, `erx_cmd_host`) declare `-erx_needs([net])` and reach the
+  stack through erx_net_client, but every command is handed every facet of its session. Have
+  `erx_shell_runner:command/4` hand each command only the facets it declares (`maps:with(Needs, Facets)`; `top` reads `inspect` without
   declaring it, so it needs a way to name a facet it uses when present), so a command that forgets its
   declaration holds no facet by construction, and shrink the command-needs build check
   (`tools/lib/erx/command_needs.rb`) to "no erx_shell module names a stack module": its list of OTP's
@@ -10439,9 +10429,10 @@ document's "residual risks accepted" paragraph.
   knows the port can fill the socket's 64 units between queries; drop reports on arrival, since the socket
   never delivers them.
 * [Low] network, name resolution (`erlang/apps/erx_net_client/src/erx_inet.erl`): `erx_net_client` starts the
-  resolver loader on every node that runs it, a node outside erXos beside erx_net included, where it empties
-  `resolv_conf` and replaces the host's name servers with the stack's leases'. Start the loader only where
-  the grant is the node's resolver: on erXos, or where an `erx_net_client` key asks for it.
+  resolver loader on every node whose `grant` key is set, a node outside erXos that sets it to
+  `{erx_net, local_grant, []}` beside erx_net included, where it empties `resolv_conf` and replaces the host's
+  name servers with the stack's leases'. Start the loader only where the grant is the node's resolver: on
+  erXos, or where an `erx_net_client` key asks for it.
 * [Low] shell, `host` (`erlang/apps/erx_shell/src/erx_cmd_host.erl`, `search/4`): a candidate whose A query
   answers no records (NODATA) ends the search, where `res_search(3)` notes it and tries the rest of the
   search list, answering NODATA only when no candidate has the name. Go on past NODATA as `res_search`

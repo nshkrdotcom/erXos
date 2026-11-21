@@ -19,6 +19,8 @@
 main([Device, Addr, Peer, Seconds]) ->
     {ok, Own} = inet:parse_ipv4strict_address(Addr),
     {ok, PeerIp} = inet:parse_ipv4strict_address(Peer),
+    %% The node runs its own stack, so the client finds the grant erx_net minted for it.
+    ok = application:set_env(erx_net_client, grant, {erx_net, local_grant, []}),
     {ok, _} = erx_net_sup:start_link(#{interfaces => [#{name => en0,
         ip4 => #{addr => ip4(Own), plen => 24},
         transport => {erx_tap, #{device => Device, lladdr => ?LLADDR}}}]}),

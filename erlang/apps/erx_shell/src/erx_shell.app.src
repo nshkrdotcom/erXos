@@ -10,9 +10,9 @@
 %% layer, which runs the shell on the console. It starts nothing of its own:
 %% erx_shell_script:run/2 runs a source in a process of the caller's.
 %%
-%% Its applications are those its modules call. Three are optional, since a
-%% release ships them only where the shell may reach them: erx_net_client,
-%% whose sockets ifconfig, ping, host and ntpctl open, in a session's release; and
+%% Its applications are those its modules call. Three are optional: erx_net_client,
+%% whose sockets ifconfig, ping, host and ntpctl open, ships in every release that
+%% runs a shell but answers eacces where the domain holds no `net` facet; and
 %% erx_domain and erx_starter, whose trees reboot, halt and service reach
 %% directly in the system shell (docs/design-shell.md, "Interfaces"). Only
 %% application:start/1 starts it: ensure_all_started would start each optional

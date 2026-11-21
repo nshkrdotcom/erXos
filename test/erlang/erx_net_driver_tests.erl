@@ -490,11 +490,13 @@ loopback_address_off_lo0_is_dropped() ->
     end).
 
 %% The stack over en0's pipe, with the lo0 it starts itself, once en0 answers ARP; Fun gets
-%% the far end and en0's driver.
+%% the far end and en0's driver. The node runs its own stack, so the client finds the grant
+%% erx_net minted for it.
 with_lo0(Fun) ->
     wait_gone(erx_net_tables),
     flush(),
     Far = far_end(),
+    ok = application:set_env(erx_net_client, grant, {erx_net, local_grant, []}),
     {ok, Stack} = erx_net_sup:start_link(#{interfaces => [static_pipe()]}),
     unlink(Stack),
     try
@@ -505,6 +507,7 @@ with_lo0(Fun) ->
         Fun(Far, Driver)
     after
         ok = proc_lib:stop(Stack, shutdown, infinity),
+        ok = application:unset_env(erx_net_client, grant),
         stop_far()
     end.
 

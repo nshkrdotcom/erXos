@@ -2438,9 +2438,13 @@ which answers `{ok, Grant, Origin}` or `{error, Reason}`. `Origin` is
 `local` when the grant's domain is the caller's own, so its messages
 arrive bare, and otherwise the domain id their envelope carries. On erXos
 the key names `erx_net_client_erxos`, which answers from `erx:cap(net)`
-and `erx:owner/1` ([design-domains.md](design-domains.md#erlang-interface));
+and `erx:owner/1` ([design-domains.md](design-domains.md#erlang-interface)),
+`{error, eacces}` while the domain holds no `net` facet;
 outside erXos it names `{erx_net, local_grant, []}`, the grant `erx_net`
-minted for its own node, with `Origin` `local`. A socket process whose
+minted for its own node, with `Origin` `local`. The key has no default:
+where a domain's startup sets none, as the system domain's does, every
+open answers `{error, eacces}` without asking anything, so no grant is
+found by any route but the one the startup names. A socket process whose
 `Origin` is a domain id sets `trap_exit` and then exports itself to that
 domain with `erx:export(SockProc, [send, link], Origin)`, naming both
 rights, since `erx:export/3` sets a holder's rights to exactly the list
@@ -5763,10 +5767,10 @@ advertisements (RFC 8106), within resolv.conf's limits of three name
 servers and six domains, and only reads them; `watch_resolver` returns
 the same answer and makes its caller the grant's one subscriber, which
 `{erx_net_resolver, Grant, Answer}` reaches after each change, so a
-reader never displaces the subscriber. In each domain,
-`erx_net_client`'s resolver loader, `erx_inet`, watches at start and
-again after the grant ends, checks each answer as input from another
-domain, and loads it into `inet_db`: the name servers and search list
+reader never displaces the subscriber. In each domain whose startup
+sets the `grant` key, `erx_net_client`'s resolver loader, `erx_inet`,
+watches at start and again after the grant ends, checks each answer as
+input from another domain, and loads it into `inet_db`: the name servers and search list
 replace inet_db's, `dns` joins the lookup methods after the hosts file,
 and the answer takes the place of resolv.conf, which a domain does not
 have. A search domain is checked by the DHCP client's rules: labels of

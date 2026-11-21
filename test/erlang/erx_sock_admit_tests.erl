@@ -154,6 +154,26 @@ call_grant_ends() ->
     with_grant(fun(_) -> exit(gone) end,
                fun() -> ?assertEqual({error, closed}, erx_inet:call({udp_open, inet, any, 0, []})) end).
 
+%% --- A domain without a grant key ------------------------------------------------------
+
+%% Without a `grant` key the client has no grant, whatever runs on its node: a process
+%% registered as the stack's own grant, which answers every call, is never asked.
+no_grant_key_test_() ->
+    [{"every call and open answers eacces", fun no_key_eacces/0},
+     {"the loader does not start", fun no_key_loader_ignored/0}].
+
+no_key_eacces() ->
+    with_registered_grant(
+      fun() ->
+              ?assertEqual({error, eacces}, erx_inet:call(interfaces)),
+              ?assertEqual({error, eacces}, erx_inet:open({udp_open, inet, any, 0, []})),
+              ?assertEqual({error, eacces}, erx_gen_udp:open(0, [])),
+              ?assertEqual({error, eacces}, erx_gen_tcp:connect({192, 0, 2, 1}, 80, [], 1000))
+      end).
+
+no_key_loader_ignored() ->
+    with_registered_grant(fun() -> ?assertEqual(ignore, gen_server:start(erx_inet, [], [])) end).
+
 %% --- The resolver loader -----------------------------------------------------------
 
 loader_test_() ->
@@ -211,6 +231,20 @@ with_grant(Answer, Case) ->
     after
         exit(Grant, kill),
         ok = application:unset_env(erx_net_client, grant)
+    end.
+
+%% Runs Case with no `grant` key set and a stand-in registered as the node's own grant,
+%% erx_net_grant, that answers every call as it would admit it.
+with_registered_grant(Case) ->
+    ok = application:unset_env(erx_net_client, grant),
+    Grant = spawn(fun() -> grant(fun(interfaces) -> {ok, []}; (_) -> {ok, self()} end) end),
+    true = register(erx_net_grant, Grant),
+    try Case()
+    after
+        %% The name is free again only once the stand-in is gone.
+        Ref = erlang:monitor(process, Grant),
+        exit(Grant, kill),
+        receive {'DOWN', Ref, process, Grant, _} -> ok end
     end.
 
 %% Runs Case(Grant, Loader) once a loader has asked a stand-in grant for its resolver.

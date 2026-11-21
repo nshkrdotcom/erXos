@@ -194,6 +194,8 @@ print_window(_, _) ->
 %% The stack, started on a tap device as the host runs it, with the peer resolved by
 %% ARP before the clock starts.
 start_stack(Device, Peer) ->
+    %% The node runs its own stack, so the client finds the grant erx_net minted for it.
+    ok = application:set_env(erx_net_client, grant, {erx_net, local_grant, []}),
     {ok, _} = erx_net_sup:start_link(#{interfaces => [#{name => en0,
         ip4 => #{addr => tuple_to_binary(?LOCAL_IP), plen => 24},
         transport => {erx_tap, #{device => Device, lladdr => ?LLADDR}}}]}),

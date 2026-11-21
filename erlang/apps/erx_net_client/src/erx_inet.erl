@@ -9,8 +9,11 @@ The client side's one path to the grant, and the domain's resolver loader
 **The path to the grant.** call/1 finds the grant through the `erx_net_client`
 application's `grant` key, an `{M, F, A}` that answers `{ok, Grant, Origin}` or
 `{error, Reason}`, calls it, and answers what erx_sock_admit:answer/3 rebuilt from the
-grant's reply. This module alone reads the key and exports no grant pid, so every
-answer of the grant passes the check before program code sees it; both are build
+grant's reply. The key has no default: a domain whose startup sets none, one granted no
+network, has no grant, and every call answers `{error, eacces}` without asking anything
+(docs/design-network-stack.md, "The grant"). This module alone reads the key and exports
+no grant pid, so every answer of the grant passes the check before program code sees it;
+both are build
 checks. The call waits with the timeout `infinity`, as every call of the stack does:
 its monitor ends the wait when the grant ends, which answers `{error, closed}`, and an
 open's own timeout is the socket's to enforce. An answer that fails the check is
@@ -34,7 +37,7 @@ found with. Every answer, the first and each change, is loaded by load/1 once it
 one that fails is dropped and the previous one stays. The loader watches the grant it
 found, whatever its first answer, and looks for a grant again only when it finds none
 or the grant ends: after a second, doubling the wait up to thirty seconds. A domain
-without a grant keeps inet_db as it is.
+without a grant keeps inet_db as it is, and one without a `grant` key starts no loader.
 
 load/1 puts the answer in place of resolv.conf: it empties inet_db's `resolv_conf`, so
 inet_db stops checking a file that erXos does not have and would clear the name servers
@@ -131,12 +134,26 @@ expose(Origin) ->
 expose_opener({tcp_listen, _Family, _Local, _Port, _Opts}, Origin) -> expose(Origin);
 expose_opener(_Request, _Origin) -> ok.
 
-%% The grant and its origin, from the one reader of the `grant` key.
+%% The `grant` key, read here alone: the {M, F, A} that finds the domain's grant, or
+%% `none` where it is unset, as in a domain granted no network. No default stands in for
+%% it, so a grant is found only where the domain's startup names how to find it.
+key() ->
+    case application:get_env(erx_net_client, grant) of
+        {ok, {M, F, A}} -> {M, F, A};
+        undefined -> none
+    end.
+
+%% The grant and its origin, through the `grant` key; without one, every call is
+%% `{error, eacces}`, as for a domain whose grant does not allow it.
 find() ->
-    {M, F, A} = application:get_env(erx_net_client, grant, {erx_net, local_grant, []}),
-    case apply(M, F, A) of
-        {ok, Grant, Origin} when is_pid(Grant) -> {ok, Grant, Origin};
-        {error, _} = Error -> Error
+    case key() of
+        none ->
+            {error, eacces};
+        {M, F, A} ->
+            case apply(M, F, A) of
+                {ok, Grant, Origin} when is_pid(Grant) -> {ok, Grant, Origin};
+                {error, _} = Error -> Error
+            end
     end.
 
 %% The one call of the grant: the request, then the reply through its admission. Only
@@ -162,8 +179,8 @@ admitted(Operation, Grant, Answer) ->
             {error, badarg}
     end.
 
--doc "Starts the resolver loader, registered as `erx_inet`.".
--spec start_link() -> {ok, pid()} | {error, term()}.
+-doc "Starts the resolver loader, registered as `erx_inet`, or answers `ignore` without a `grant` key.".
+-spec start_link() -> {ok, pid()} | ignore | {error, term()}.
 start_link() ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
@@ -220,10 +237,16 @@ load(#{nameservers := Servers, search := Search}) ->
 
 %% --- The loader ------------------------------------------------------------------
 
+%% Without a `grant` key the domain has no grant to look for, so no loader runs.
 -doc false.
 init([]) ->
-    self() ! find,
-    {ok, #{grant => none, retry => ?RETRY_FIRST}}.
+    case key() of
+        none ->
+            ignore;
+        {_, _, _} ->
+            self() ! find,
+            {ok, #{grant => none, retry => ?RETRY_FIRST}}
+    end.
 
 -doc false.
 handle_call(_Request, _From, S) ->

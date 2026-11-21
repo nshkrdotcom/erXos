@@ -70,6 +70,8 @@ setup() ->
     _ = ets:update_counter(erx_net_gen, gen, 1),
     {ok, Grant} = erx_net_grant:start_link(local, #{}),
     unlink(Grant),
+    %% The node's own grant, which the client finds as a node running its stack does.
+    ok = application:set_env(erx_net_client, grant, {erx_net, local_grant, []}),
     put(tx, Tx),
     {Tables, Grant}.
 
@@ -101,6 +103,7 @@ interface_loop(Status) ->
 cleanup({Tables, Grant}) ->
     [begin Ref = monitor(process, P), exit(P, kill), receive {'DOWN', Ref, _, _, _} -> ok end end
      || P <- [Grant, Tables | [Pid || {_, Pid, _} <- ets:tab2list(erx_net_ifs)]]],
+    ok = application:unset_env(erx_net_client, grant),
     flush().
 
 flush() ->
