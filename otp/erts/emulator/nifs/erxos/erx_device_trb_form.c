@@ -81,13 +81,6 @@
 /* The form's device addresses: every address place of its TRBs and contexts is 64 bits wide. */
 #define ADDRESS_BITS	64u
 
-static uint32_t
-block_count(const erx_device_trb_shape_t *shape)
-{
-	return (shape->blocks[ERX_DEVICE_TRB_CONTROL] + shape->blocks[ERX_DEVICE_TRB_INTERRUPT] +
-	    shape->blocks[ERX_DEVICE_TRB_BULK]);
-}
-
 /* A table over region `region` of `trb`, its records from the region's start. */
 static erx_dma_table_t
 table(const erx_device_trb_layout_t *trb, uint16_t region, uint32_t structure, erx_dma_placing_t placing,
@@ -101,7 +94,7 @@ table(const erx_device_trb_layout_t *trb, uint16_t region, uint32_t structure, e
 bool
 erx_trb_form_layout(const erx_device_trb_layout_t *trb, erx_dma_layout_t *layout)
 {
-	const uint32_t blocks = block_count(&trb->shape);
+	const uint32_t blocks = erx_device_trb_block_count(&trb->shape);
 	const uint32_t command_pool = blocks;
 
 	if (trb->shape.ring_trbs > ERX_DEVICE_TRB_RING_TRBS)
@@ -196,8 +189,8 @@ names_buffer(const erx_device_trb_request_t *request)
 }
 
 /*
- * The TRBs of `request` over `buffer`, as erx_device_trb_post's transfer_words writes them, into
- * `records`, zeroed so the check sees no stale free value; their count.
+ * The TRBs of `request` over `buffer` (docs/design-usb.md, "What Erlang names and what the NIF
+ * builds"), into `records`, zeroed so the check sees no stale free value; their count.
  */
 static uint32_t
 describe(const erx_device_trb_request_t *request, uint32_t buffer, erx_dma_description_t records[ERX_DEVICE_TRB_TRANSFER_TRBS])
@@ -262,7 +255,7 @@ erx_trb_form_post(erx_trb_form_t *form, uint32_t slot, uint32_t dci, const erx_d
 		return (ERX_DEVICE_TRB_REFUSE_BADARG);
 	pool = layout->tables[ring].pool;
 	if (SEED_OTHER_POOL)
-		pool = (pool + 1u) % block_count(&form->shape);
+		pool = (pool + 1u) % erx_device_trb_block_count(&form->shape);
 	if (names_buffer(request) && !free_buffer(&form->ledger, pool, &buffer))
 		return (ERX_DEVICE_TRB_REFUSE_FULL);
 
@@ -301,14 +294,6 @@ static const uint32_t command_meanings[ERX_TRB_COMMAND_KINDS] = {
 	[ERX_TRB_COMMAND_SET_TR_DEQUEUE] = ERX_MEANING_XHCI_TRB_SET_DEQUEUE_COMMAND,
 };
 
-/* Whether a command of `kind` carries the input context: those whose TRB refers to it. */
-static bool
-carries_input_context(erx_trb_command_kind_t kind)
-{
-	return (kind == ERX_TRB_COMMAND_ADDRESS_DEVICE || kind == ERX_TRB_COMMAND_CONFIGURE_ENDPOINT ||
-	    kind == ERX_TRB_COMMAND_EVALUATE_CONTEXT);
-}
-
 /*
  * Whether each added endpoint's stated context passes its check (erx_device_trb.h) for a block of
  * the form, of the kind its type needs: EP0 alone for Address Device, indexes 2 and up for
@@ -322,7 +307,7 @@ adds_valid(const erx_trb_form_t *form, const erx_trb_command_t *command)
 		const erx_device_trb_context_endpoint_t endpoint = { .dci = add->dci, .context = add->context };
 		erx_device_trb_kind_t kind;
 
-		if (add->block >= block_count(&form->shape))
+		if (add->block >= erx_device_trb_block_count(&form->shape))
 			return (false);
 		kind = erx_device_trb_block_kind(&form->shape, add->block);
 		if (command->kind == ERX_TRB_COMMAND_ADDRESS_DEVICE ? add->dci != 1 || kind != ERX_DEVICE_TRB_CONTROL ||
@@ -429,7 +414,7 @@ erx_device_trb_verdict_t
 erx_trb_form_command(erx_trb_form_t *form, const erx_trb_command_t *command, uint64_t tag, erx_dma_sequence_t *sequence)
 {
 	const erx_dma_layout_t *const layout = erx_dma_ledger_layout(&form->ledger);
-	const uint32_t command_pool = block_count(&form->shape);
+	const uint32_t command_pool = erx_device_trb_block_count(&form->shape);
 	erx_dma_description_t record = { .structure = ERX_STRUCTURE_XHCI_COMMAND_RING };
 	erx_dma_publication_t publication = { .records = &record, .record_count = 1, .call = ERX_DMA_PUBLISH_RUN,
 	    .reach = { .group = command->slot, .index = command->dci, .drops = command->drops } };
@@ -439,7 +424,7 @@ erx_trb_form_command(erx_trb_form_t *form, const erx_trb_command_t *command, uin
 	    !parameters_valid(form, command))
 		return (ERX_DEVICE_TRB_REFUSE_BADARG);
 	record.meaning = command_meanings[command->kind];
-	if (carries_input_context(command->kind)) {
+	if (erx_dma_carries_input_context(record.meaning)) {
 		contexts_of(form, command, &contexts);
 		publication.contexts = &contexts;
 		record.name_count = 1;

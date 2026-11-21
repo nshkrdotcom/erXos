@@ -371,7 +371,7 @@ every virtio driver on QEMU `virt`, and GENET's register ring on the
 Pi 4. GENET's descriptors are device registers, and the NIF writes
 their addresses once, when the queue is installed. A third form, the
 TRB ring of a USB host controller, is built as pure code with host
-tests (`erx_device_trb.c`), drives no device and is not part of the
+tests (`erx_device_trb_form.c`), drives no device and is not part of the
 NIF. The SD controller's ADMA2 form is designed and not built, which
 is why the SD driver uses programmed I/O.
 

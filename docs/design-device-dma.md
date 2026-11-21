@@ -989,7 +989,7 @@ a layout has one selector, each command the
 command ring offers is a layout of its own. Where a record is composed of several layouts at a size
 the controller reports, as the input context is of contexts of 32 or 64
 bytes (xHCI 6.2.5), the encoder places each at its offset: the
-sequencer's one composition of the input context (`erx_dma_input_context`)
+sequencer's one composition of the input context (`input_context` in `erx_device_sequencer.c`)
 encodes the input control, slot and endpoint contexts through their
 layouts' encoders, context k at k times the controller's context size
 (`HCCPARAMS1.CSZ`), which the layout holds from where it is made, so no

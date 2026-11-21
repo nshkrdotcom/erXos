@@ -113,7 +113,7 @@ typedef struct erx_trb_add {
  * (docs/design-usb.md, "What Erlang names and what the NIF builds"): Address Device's slot context
  * device fields and EP0 as its one add, Configure Endpoint's hub fields and its adds, Evaluate
  * Context's EP0 packet size. The sequencer writes the whole input context from these and from what
- * the publication derives (erx_dma_input_context).
+ * the publication derives (the composition in erx_device_sequencer.c).
  */
 typedef struct erx_trb_command {
 	erx_trb_command_kind_t	kind;
@@ -187,8 +187,8 @@ uint32_t	erx_trb_form_endpoint(uint32_t slot, uint32_t dci);
 
 /*
  * Posts `request` under `tag` on queue {slot, dci} into `sequence`, which the effect layer applies
- * as erx_device_sequencer.h says; an out transfer's bytes go to sequence->fills[0]. The TRBs mirror
- * erx_device_trb_post's: a normal TRB, or a setup stage, a data stage when the request has one, and
+ * as erx_device_sequencer.h says; an out transfer's bytes go to sequence->fills[0]. The TRBs are
+ * design-usb.md's: a normal TRB, or a setup stage, a data stage when the request has one, and
  * a status stage. The refusals, in order:
  *   ERX_DEVICE_TRB_REFUSE_BADARG  no ring bound to the queue's endpoint, or a request
  *                                 erx_device_trb_request_valid refuses for the ring's block;
