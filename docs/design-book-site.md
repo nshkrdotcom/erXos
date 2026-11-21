@@ -373,8 +373,7 @@ writer typed reaches an attribute unparsed.
 The rule for outward links is a closed set of one scheme. The book's
 outward links are citations, every one `https:` today, to papers,
 manuals and standards on 23 hosts; a host list would refuse the next
-citation for no gain, since the book is reviewed text. Whether to
-narrow outward links further is open question 2.
+citation for no gain, since the book is reviewed text.
 
 The repository's address is `Erx::Site::REPOSITORY`, the constant the
 landing page's source link already uses, so the site has one place
@@ -976,16 +975,7 @@ pages, not by a test.
 
 ## Open questions for the user
 
-1. **elkjs (EPL-2.0) as a website build tool**, run unmodified out of
-   tree inside beautiful-mermaid, nothing of it shipped (the pages hold
-   only numbers it computed)? Recommendation: yes, on the same footing
-   as QEMU.
-2. **Outward links: any well-formed `https:` address, or only the
-   repository?** Allowing only the repository off the site would
-   refuse the book's 32 citations to 23 other hosts.
-   Recommendation: any well-formed `https:` address, refusing every
-   other scheme, as designed.
-3. **An offer upstream (optional).** Should the options erXos adds
+1. **An offer upstream (optional).** Should the options erXos adds
    to beautiful-mermaid also be offered upstream, as a pull request
    to `https://github.com/lukilabs/beautiful-mermaid`, so that a later
    version carries them and a later import needs fewer changes? The
@@ -994,18 +984,3 @@ pages, not by a test.
    title's minimum width, which are general (any monospace face, and
    the clipped title is the library's fault), and keep `groupTitle`
    as erXos's change unless upstream wants it.
-4. **The diagram face.** The bake-off drew the style in DejaVu Sans
-   Mono 2.35, whose license is Bitstream Vera's (permissive, with a
-   renaming condition on modified fonts; the DejaVu changes are public
-   domain). CLAUDE.md allows OFL-1.1 for font data and names no other
-   font license, so DejaVu would need the user's approval. This design
-   uses IBM Plex Mono instead: OFL-1.1, already the site's code face,
-   and its advance of 0.600 em against DejaVu's 0.602 (1,233 of 2,048
-   units, both read from the fonts' `hmtx` tables) gives the same
-   layout. Rendered side by side at 2x
-   (`~/erxos-scratch/bakeoff/scratch/manual/final/` against the same
-   SVGs with the family swapped), the drawings match box for box; Plex
-   Mono's letters are a little more rounded, with slab serifs on `i`,
-   `l` and `r`. Keep IBM Plex Mono, or approve the Bitstream Vera
-   license for DejaVu Sans Mono? Recommendation: IBM Plex Mono, which
-   adds no font file and no license.
