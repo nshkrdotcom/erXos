@@ -299,7 +299,7 @@ sequenceDiagram
   C->>G: clunk 0
   G->>T: root, walk, open callbacks
   T-->>G: node, node, handle
-  G-->>C: qid; qids; qid and iounit; ok
+  G-->>C: qid, then qids, then qid and iounit, then ok
   C->>G: getattr 1, size
   G-->>C: attributes
   C->>G: read 1, offset 0
