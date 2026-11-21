@@ -170,22 +170,23 @@ map_uint(ErlNifEnv *env, ERL_NIF_TERM map, const char *name, uint64_t max, uint6
 
 /*
  * A given PCIe function's `msix => #{address, data, bar, offset, entries}`, its MSI-X route as
- * erx_device_record reads it, which no other form has. The table must lie in the device's
- * window, BAR 0, the one BAR of every function erXos drives; a table in another BAR is refused.
+ * erx_device_record reads it, which no other form has. The reader refuses a table outside the
+ * window's BAR, so the window is the table's BAR and `bar` is not read here. A table of no
+ * entries is refused: erx_device.c takes 0 entries for no MSI-X route at all.
  */
 static bool
 decode_msix(ErlNifEnv *env, ERL_NIF_TERM map, erx_device_spec_t *spec)
 {
 	ERL_NIF_TERM value;
-	uint64_t data, bar, entries;
+	uint64_t data, entries;
 
 	if (!enif_get_map_value(env, map, enif_make_atom(env, "msix"), &value))
 		return (true);
 	if (spec->form != ERX_DEVICE_FORM_GIVEN || !enif_is_map(env, value) ||
 	    !map_uint(env, value, "address", UINT64_MAX, &spec->msix.address) ||
-	    !map_uint(env, value, "data", UINT32_MAX, &data) || !map_uint(env, value, "bar", 0, &bar) ||
+	    !map_uint(env, value, "data", UINT32_MAX, &data) ||
 	    !map_uint(env, value, "offset", UINT32_MAX, &spec->msix.offset) ||
-	    !map_uint(env, value, "entries", UINT32_MAX, &entries))
+	    !map_uint(env, value, "entries", UINT32_MAX, &entries) || entries == 0)
 		return (false);
 	spec->msix.data = (uint32_t)data;
 	spec->msix.entries = (uint32_t)entries;
