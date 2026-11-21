@@ -1022,8 +1022,8 @@ p. 447; Table 6-8, p. 450); it declares the transfer rings and the
 command ring as `cpu` structures, the transfer ring marked
 `needs_binding`, and the event ring as a `device` one, the nine commands
 as the command ring's meanings (xHCI 1.2, 6.4.3), each with its `reach`
-mark (`address`, `configure`, `stop`, `restart`, `disable`, or none for
-No Op, Enable Slot and Evaluate Context) and its slot and endpoint
+mark (`address`, `configure`, `stop`, `restart`, `disable`, `evaluate`,
+or none for No Op and Enable Slot) and its slot and endpoint
 fields derived, the sequencer's from the publication's reach, and the
 event TRBs as the event ring's. The virtio file holds the
 descriptor's flag bits, the used element's release mark, the

@@ -14,6 +14,11 @@
 #include "erx_device_ledger.h"
 #include "erx_device_rules.h"
 
+#ifdef ERX_DMA_SEED_NO_REACH_HOLDS
+#define SEED_NO_REACH_HOLDS	true
+#else
+#define SEED_NO_REACH_HOLDS	false
+#endif
 #ifdef ERX_DMA_SEED_KEEP_DROPPED_BINDING
 #define SEED_KEEP_DROPPED_BINDING	true
 #else
@@ -443,8 +448,9 @@ typedef enum reach_effect {
 
 /*
  * A reach's meaning, written once: which endpoints of its group a command acts on (those its
- * publication binds and drops, the one it names, or every one), which it closes while live; what
- * its publication may bind and drop; what its success does to the rings of those endpoints; and
+ * publication binds and drops, the one it names, those it holds, or every one), which it closes
+ * while live; what its publication may bind and drop, and what it holds must be running or stopped
+ * and idle when it is published; what its success does to the rings of those endpoints; and
  * what its failure does to its own bindings. ERX_REACHES names a row for every reach the marks
  * declare, so a new reach fails to build until it has one here.
  */
@@ -452,6 +458,7 @@ typedef struct reach_rule {
 	uint32_t	bindable;	/* the indexes its bindings may bind, a mask of bit index */
 	uint32_t	must_bind;	/* the indexes it always binds */
 	uint32_t	droppable;	/* the indexes it may drop */
+	uint32_t	holds;		/* the indexes it acts on, running or stopped and idle at its publication */
 	bool		names_one;	/* it acts on the endpoint target.index names */
 	bool		whole_group;	/* it acts on every endpoint of its group */
 	reach_effect_t	success;
@@ -475,6 +482,13 @@ static const reach_rule_t reach_stop = { .names_one = true, .success = EFFECT_ST
 static const reach_rule_t reach_restart = { .names_one = true, .success = EFFECT_RESTART };
 /* Disable Slot disables every endpoint of its slot (4.6.4). */
 static const reach_rule_t reach_disable = { .whole_group = true, .success = EFFECT_REMOVE };
+/*
+ * Evaluate Context changes EP0's packet size, which xHCI 1.2, 6.2.3.3 (p. 454) defines only on an
+ * EP0 running idle or stopped, software keeping its transfers off it meanwhile: it holds EP0,
+ * running or stopped with nothing on its ring when it is published, and closed while it runs. It
+ * binds nothing.
+ */
+static const reach_rule_t reach_evaluate = { .holds = 1u << 1, .success = EFFECT_NONE };
 
 static const reach_rule_t *const reach_rules[] = {
 	[ERX_REACH_NONE] = &reach_none,
@@ -499,6 +513,7 @@ acts_on(const erx_dma_holding_t *command, uint32_t endpoint)
 	if (!in_group(endpoint, command->target.group))
 		return (false);
 	if (rule->whole_group || drops(&command->target, endpoint) ||
+	    (rule->holds >> endpoint % ERX_DMA_GROUP_ENDPOINTS & 1u) != 0 ||
 	    (rule->names_one && endpoint == erx_dma_endpoint(command->target.group, command->target.index)))
 		return (true);
 	for (uint32_t k = 0; k < command->bind_count; k++) {
@@ -621,6 +636,15 @@ erx_dma_ledger_endpoint_state(const erx_dma_ledger_t *ledger, uint32_t endpoint)
 	return (table < 0 ? ERX_DMA_ENDPOINT_DISABLED : ledger->states[table]);
 }
 
+/* Whether `endpoint`'s ring holds no transfer, in any state. */
+static bool
+idle(const erx_dma_ledger_t *ledger, uint32_t endpoint)
+{
+	const int ring = erx_dma_ledger_bound_table(ledger, endpoint);
+
+	return (ring < 0 || erx_dma_ledger_holdings_on(ledger, (uint32_t)ring) == 0);
+}
+
 /* Whether `endpoint` runs with a transfer live on its ring: one in progress, which no removal may meet. */
 static bool
 busy(const erx_dma_ledger_t *ledger, uint32_t endpoint)
@@ -652,6 +676,10 @@ erx_dma_ledger_reach_allows(const erx_dma_ledger_t *ledger, const erx_dma_public
 		const erx_dma_endpoint_state_t state = erx_dma_ledger_endpoint_state(ledger, endpoint);
 		const bool dropped = (target->drops >> index & 1u) != 0;
 
+		/* What the command holds: running or stopped, with nothing on its ring (6.2.3.3, p. 454). */
+		if ((rule->holds >> index & 1u) != 0 && !SEED_NO_REACH_HOLDS &&
+		    ((state != ERX_DMA_ENDPOINT_RUNNING && state != ERX_DMA_ENDPOINT_STOPPED) || !idle(ledger, endpoint)))
+			return (false);
 		/* A drop is defined only on a stopped endpoint or a running idle one (4.6.6; 4.6.8). */
 		if (dropped && (state == ERX_DMA_ENDPOINT_DISABLED || (state == ERX_DMA_ENDPOINT_HALTED && !SEED_DROP_HALTED)))
 			return (false);

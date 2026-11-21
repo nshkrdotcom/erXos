@@ -2116,7 +2116,7 @@ meaning; a meaning the table does not offer is refused.
 | --- | --- | --- | --- |
 | each queue block's ring | normal, data stage, setup stage, status stage | normal and data stage: a buffer of the ring's own block and an offset, reaching the TRB's transfer length (6.4.1.1, p. 467; 6.4.1.2.2, p. 471); setup and status stage: none, the setup's parameter being its eight bytes (6.4.1.2.1, p. 469) | immediate data clear on normal and data stage, set on setup stage, and the setup stage's length 8 (FreeBSD's `xhci.c:1853`); chain clear; the interrupter target 0; the cycle bit, and the link at the segment's end, the sequencer's |
 | the command ring | No Op, Enable Slot, Disable Slot, Stop Endpoint, Reset Endpoint, Address Device, Configure Endpoint, Evaluate Context, Set TR Dequeue Pointer | Address Device, Configure Endpoint and Evaluate Context: the input context, described in the same plan (6.4.3.4 to 6.4.3.6, pp. 490-492); Set TR Dequeue Pointer: its endpoint, whose bound ring's position and cycle state the sequencer writes as the pointer (6.4.3.9, pp. 494-495); No Op: nothing; the others: a slot and an endpoint, no address | block set address clear; Configure Endpoint's deconfigure, Reset Endpoint's transfer state preserve and Stop Endpoint's suspend clear; the stream ID 0; the slot and endpoint fields the sequencer's, from the command's reach |
-| the input context | Address Device: the slot context and EP0's; Evaluate Context: EP0's; Configure Endpoint: the slot context, each endpoint it adds and the indexes it drops | each added endpoint context names a free queue block, whose ring the command binds to the endpoint; Evaluate Context's EP0 context points at EP0's bound ring | the add and drop flags, derived from the contexts carried: A0 and A1 alone for Address Device (4.6.5, p. 112), A1 for Evaluate Context, A0 and each added index for Configure Endpoint, with its drops (6.2.5.1, Tables 6-15 and 6-16, p. 461); each dequeue pointer the bound ring's position and cycle state (Table 6-10, p. 453); `MaxPStreams` 0, which otherwise makes the pointer a stream context array's (Table 6-8, p. 451), and `LSA`, `HID` and `Mult` 0; Configure Endpoint's slot context the fields the slot's Address Device addressed it with, beside the stated hub fields (6.2.2.2, p. 448); the interrupter target 0; Context Entries, the last index the slot's bindings leave valid (Table 6-4, p. 445); the average TRB length, 8 for a control endpoint (4.14.1.1, p. 258) and otherwise the packet times the burst plus one; each context at the controller's context size, 32 or 64 bytes (6.2.5, p. 460), which the layout holds from `HCCPARAMS1.CSZ`, written by the sequencer's one composition ([design-device-dma.md](design-device-dma.md#descriptions)) |
+| the input context | Address Device: the slot context and EP0's; Evaluate Context: EP0's; Configure Endpoint: the slot context, each endpoint it adds and the indexes it drops | each added endpoint context names a free queue block, whose ring the command binds to the endpoint; Evaluate Context's EP0 context points at EP0's bound ring | the add and drop flags, derived from the contexts carried: A0 and A1 alone for Address Device (4.6.5, p. 112), A1 for Evaluate Context, A0 and each added index for Configure Endpoint, with its drops (6.2.5.1, Tables 6-15 and 6-16, p. 461); each dequeue pointer the bound ring's position and cycle state (Table 6-10, p. 453); `MaxPStreams` 0, which otherwise makes the pointer a stream context array's (Table 6-8, p. 451), and `LSA`, `HID` and `Mult` 0; Configure Endpoint's slot context the fields the slot's last successful Address Device addressed it with, beside the stated hub fields, so it is refused on a slot with no such Address Device since its Disable Slot (6.2.2.2, p. 448); the interrupter target 0; Context Entries, the last index the slot's bindings leave valid (Table 6-4, p. 445); the average TRB length, 8 for a control endpoint (4.14.1.1, p. 258) and otherwise the packet times the burst plus one; each context at the controller's context size, 32 or 64 bytes (6.2.5, p. 460), which the layout holds from `HCCPARAMS1.CSZ`, written by the sequencer's one composition ([design-device-dma.md](design-device-dma.md#descriptions)) |
 
 The interrupter target is 0 wherever it appears, since interrupter 0 is
 the only one given an event ring, and events aimed at an interrupter
@@ -2183,8 +2183,11 @@ that consumes events.
   `abi/formats/xhci.txt`, never a field a caller or the device supplies:
   `address` (Address Device), `configure` (Configure Endpoint), `stop`
   (Stop Endpoint and Reset Endpoint), `restart` (Set TR Dequeue
-  Pointer), `disable` (Disable Slot), or none (No Op, Enable Slot, and
-  Evaluate Context, which changes EP0's packet size and binds nothing).
+  Pointer), `disable` (Disable Slot), `evaluate` (Evaluate Context,
+  which changes EP0's packet size and binds nothing, and holds EP0:
+  running or stopped with nothing on its ring when it is published,
+  as xHCI 1.2, 6.2.3.3 (p. 454) needs it running idle or stopped), or
+  none (No Op and Enable Slot).
   The publication names the endpoints the reach acts on: the slot, the
   index a stop or a restart names, and the indexes a binding command
   drops, a mask of index bits. The ledger keeps them with the command's
@@ -2197,8 +2200,8 @@ that consumes events.
   of reaches names a row for each, so a reach added to the marks does
   not build until it has one.
   While the command is in flight it **closes** the endpoints it acts on:
-  those it binds or drops, the one it stops or restarts, or every
-  endpoint of its slot for a disable; a command with no reach closes
+  those it binds or drops, the one it stops or restarts, EP0 for an
+  evaluate, or every endpoint of its slot for a disable; a command with no reach closes
   nothing. A closed endpoint takes no transfer. The transfers a
   command's success retires are computed at its completion, every live
   holding on the rings it restarts or unbinds; since the closure admits

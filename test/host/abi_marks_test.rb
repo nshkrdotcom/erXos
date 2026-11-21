@@ -109,7 +109,7 @@ class AbiMarksTest < Minitest::Test
                                         'fixed value 8 does not fit status.aligned'],
     'a length unit of zero' => ['length status.length', 'length status.length unit 0', 'a length unit is a positive byte count'],
     'an unknown reach' => ['activates control.live', "activates control.live\n  reach park",
-                           'reach is one of address, configure, stop, restart, disable, not park'],
+                           'reach is one of address, configure, stop, restart, disable, evaluate, not park'],
     'a reach on a report' => ['sample_code.ok sample_code.short', "sample_code.ok sample_code.short\n  reach stop",
                               'a reach belongs to a command'],
     'a length whose bytes exceed 64 bits' => ['length status.length', 'length status.length unit 281474976710656',

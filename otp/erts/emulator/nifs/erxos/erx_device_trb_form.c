@@ -67,6 +67,11 @@
 #else
 #define SEED_OTHER_POOL		false
 #endif
+#ifdef ERX_TRB_FORM_SEED_CONFIGURE_UNADDRESSED
+#define SEED_CONFIGURE_UNADDRESSED	true
+#else
+#define SEED_CONFIGURE_UNADDRESSED	false
+#endif
 #ifdef ERX_TRB_FORM_SEED_CONFIGURE_SPEED_ZEROED
 #define SEED_CONFIGURE_SPEED_ZEROED	true
 #else
@@ -330,25 +335,40 @@ adds_valid(const erx_trb_form_t *form, const erx_trb_command_t *command)
 }
 
 /*
- * The stated parameters' one test, at the command's entry, before anything changes: those of the
- * three commands that carry the input context, each for a slot of the layout's. A command that
- * carries none states none.
+ * Whether `slot` of the layout's has an Address Device that succeeded since its Disable Slot or a
+ * reset, whose fields `addressed` holds: a valid Address Device states a speed (erx_device_trb.h),
+ * and the slot's entry is zero until one succeeds.
+ */
+static bool
+slot_addressed(const erx_trb_form_t *form, uint32_t slot)
+{
+	return (form->addressed[slot].route_speed != 0);
+}
+
+/*
+ * The stated parameters' one test, at the command's entry, before anything changes: the slot of
+ * every command that names one, a slot of the layout's; and those of the three commands that carry
+ * the input context, Configure Endpoint's for an addressed slot (6.2.2.2's Addressed or Configured
+ * precondition, p. 448), whose fields its slot context composes from. A command that carries none
+ * states none.
  */
 static bool
 parameters_valid(const erx_trb_form_t *form, const erx_trb_command_t *command)
 {
-	const bool slot = command->slot >= 1 && command->slot <= form->slots;
-
+	if (command->kind != ERX_TRB_COMMAND_NOOP && command->kind != ERX_TRB_COMMAND_ENABLE_SLOT &&
+	    (command->slot < 1 || command->slot > form->slots))
+		return (false);
 	switch (command->kind) {
 	case ERX_TRB_COMMAND_ADDRESS_DEVICE:
-		return (slot && command->add_count == 1 &&
+		return (command->add_count == 1 &&
 		    erx_device_trb_address_slot_valid(&command->slot_context, form->ports, form->slots) &&
 		    adds_valid(form, command));
 	case ERX_TRB_COMMAND_CONFIGURE_ENDPOINT:
-		return (slot && command->add_count <= ERX_DMA_BINDS_MAX &&
+		return ((slot_addressed(form, command->slot) || SEED_CONFIGURE_UNADDRESSED) &&
+		    command->add_count <= ERX_DMA_BINDS_MAX &&
 		    erx_device_trb_configure_slot_valid(&command->slot_context) && adds_valid(form, command));
 	case ERX_TRB_COMMAND_EVALUATE_CONTEXT:
-		return (slot && command->add_count == 0 && erx_device_trb_ep0_valid(&(erx_xhci_endpoint_context_free_t){
+		return (command->add_count == 0 && erx_device_trb_ep0_valid(&(erx_xhci_endpoint_context_free_t){
 		    .config_endpoint_type = ERX_XHCI_ENDPOINT_TYPE_CONTROL, .config_max_packet = command->ep0_packet }, false));
 	default:
 		return (true);
@@ -405,18 +425,6 @@ contexts_of(const erx_trb_form_t *form, const erx_trb_command_t *command, erx_de
 		    .context = command->adds[k].context };
 }
 
-/*
- * Whether EP0 of `slot` has a transfer posted, which moves the ring position Evaluate Context's
- * EP0 context carries (6.2.3.3, p. 454).
- */
-static bool
-ep0_busy(const erx_trb_form_t *form, uint32_t slot)
-{
-	const int ring = erx_dma_ledger_bound_table(&form->ledger, erx_trb_form_endpoint(slot, 1));
-
-	return (ring >= 0 && erx_dma_ledger_holdings_on(&form->ledger, (uint32_t)ring) != 0);
-}
-
 erx_device_trb_verdict_t
 erx_trb_form_command(erx_trb_form_t *form, const erx_trb_command_t *command, uint64_t tag, erx_dma_sequence_t *sequence)
 {
@@ -428,8 +436,7 @@ erx_trb_form_command(erx_trb_form_t *form, const erx_trb_command_t *command, uin
 	erx_device_trb_contexts_t contexts;
 
 	if ((uint32_t)command->kind >= ERX_TRB_COMMAND_KINDS || command->add_count > ERX_DMA_BINDS_MAX ||
-	    !parameters_valid(form, command) ||
-	    (command->kind == ERX_TRB_COMMAND_EVALUATE_CONTEXT && ep0_busy(form, command->slot)))
+	    !parameters_valid(form, command))
 		return (ERX_DEVICE_TRB_REFUSE_BADARG);
 	record.meaning = command_meanings[command->kind];
 	if (carries_input_context(command->kind)) {
@@ -445,8 +452,6 @@ erx_trb_form_command(erx_trb_form_t *form, const erx_trb_command_t *command, uin
 	}
 	switch (erx_dma_publish(&form->ledger, &publication, sequence)) {
 	case ERX_DMA_PASSES:
-		if (command->kind == ERX_TRB_COMMAND_ADDRESS_DEVICE)
-			form->addressed[command->slot] = command->slot_context;
 		form->command = *command;
 		form->command_tag = tag;
 		form->stop_event = false;
@@ -697,6 +702,11 @@ command_event(erx_trb_form_t *form, const erx_report_record_t *event, erx_trb_an
 	if (found.holding == NULL || !erx_dma_ledger_complete_command(&form->ledger, event_ring(form), found,
 	    code == ERX_XHCI_COMPLETION_SUCCESS, retired, &retired_count))
 		return (false);
+	/* The slot's addressed fields: an Address Device's success writes them, Disable Slot's clears them. */
+	if (code == ERX_XHCI_COMPLETION_SUCCESS && form->command.kind == ERX_TRB_COMMAND_ADDRESS_DEVICE)
+		form->addressed[form->command.slot] = form->command.slot_context;
+	else if (code == ERX_XHCI_COMPLETION_SUCCESS && form->command.kind == ERX_TRB_COMMAND_DISABLE_SLOT)
+		bzero(&form->addressed[form->command.slot], sizeof(form->addressed[form->command.slot]));
 	answers[0] = (erx_trb_answer_t){ .kind = ERX_TRB_ANSWER_COMMAND, .code = code, .tag = form->command_tag,
 	    .parameter = erx_xhci_trb_command_event_status_parameter_get(record->status),
 	    .slot = erx_xhci_trb_command_event_control_slot_get(record->control) };
@@ -770,6 +780,7 @@ void
 erx_trb_form_reset(erx_trb_form_t *form)
 {
 	erx_dma_ledger_reset(&form->ledger);
+	bzero(form->addressed, sizeof(form->addressed));
 	bzero(form->transfers, sizeof(form->transfers));
 	bzero(&form->command, sizeof(form->command));
 	form->command_tag = 0;

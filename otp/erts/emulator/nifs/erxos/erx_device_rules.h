@@ -35,7 +35,8 @@
  *             the live command; a command's endpoints exist where its reach acts: the endpoint a
  *             stop or a restart names is bound and enabled, each a bind drops is bound and
  *             stopped, or running with no live transfer, and no endpoint of a disable's group is
- *             running with a live transfer (erx_dma_ledger_reach_allows);
+ *             running with a live transfer, and an endpoint an evaluate holds is running or
+ *             stopped with no live transfer (erx_dma_ledger_reach_allows);
  *   held      no name is of a buffer a live holding holds;
  *   lengths   each reference's length lies inside its buffer from its offset;
  *   room      the run fits: as many unheld records of each table placed free as it describes,

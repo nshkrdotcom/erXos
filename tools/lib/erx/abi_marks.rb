@@ -41,7 +41,7 @@ module Erx
         'derived' => 'FIELD.BITS',
         'states' => 'FIELD.BITS',
         'releases' => 'FIELD.BITS TARGET [when FIELD.BITS ENUM.MEMBER...]',
-        'reach' => 'address|configure|stop|restart|disable'
+        'reach' => 'address|configure|stop|restart|disable|evaluate'
       }.freeze
       KEYWORDS = SYNTAX.keys.freeze
       WRITERS = %w[cpu device].freeze
@@ -51,8 +51,9 @@ module Erx
       # (docs/design-usb.md, "What the DMA check judges"), the reach the ledger
       # derives from its meaning: address binds EP0's ring; configure adds
       # endpoints, binding their rings, and may drop others; stop leaves its endpoint stopped; restart moves its
-      # endpoint's ring past every transfer on it; disable ends its slot.
-      REACHES = %w[address configure stop restart disable].freeze
+      # endpoint's ring past every transfer on it; disable ends its slot; evaluate holds EP0 idle while it
+      # rewrites EP0's context.
+      REACHES = %w[address configure stop restart disable evaluate].freeze
       # The roles a mark gives a place. A free place is one a description
       # states, or, on a report, the device; a placed one the sequencer
       # supplies; a written one the encoder takes from the mark.

@@ -360,11 +360,12 @@ layout erx_xhci_trb_command wire_le 8 16
 # The commands (xHCI 1.2, 6.4.3), each a meaning of the command ring. A command's slot and
 # endpoint are the sequencer's, written from its publication's reach, so the TRB names the
 # endpoints the ledger closes and no other (docs/design-usb.md, "What the DMA check judges").
-# Its reach mark says what its success or failure does to them: address binds EP0 a ring at
-# the publication; configure binds a ring to each endpoint it adds and drops others; stop leaves its endpoint stopped;
-# restart moves its endpoint's ring past its transfers; disable ends its slot. A command with
-# no reach closes nothing. The flags a command may set, Address Device's block-set-address
-# (Table 6-62), Configure Endpoint's deconfigure (Table 6-64), Reset Endpoint's
+# Its reach mark says what it needs and what its success or failure does to them: address binds
+# EP0 a ring at the publication; configure binds a ring to each endpoint it adds and drops others;
+# stop leaves its endpoint stopped; restart moves its endpoint's ring past its transfers; disable
+# ends its slot; evaluate holds EP0, which must be running or stopped with nothing on its ring when
+# it is posted and takes no transfer while it runs. A command with no reach closes nothing. The flags a command may set,
+# Address Device's block-set-address (Table 6-62), Configure Endpoint's deconfigure (Table 6-64), Reset Endpoint's
 # transfer-state-preserve (Table 6-65) and Stop Endpoint's suspend (Table 6-66), are bits no
 # layout names, so they stay clear. Every bit a table makes RsvdZ stays clear the same way.
 
@@ -440,7 +441,8 @@ layout erx_xhci_trb_configure_endpoint_command wire_le 8 16
   reach configure
 
 # Evaluate Context (6.4.3.6, Figure 6-27): Address Device's format, its flag unused. It changes
-# EP0's packet size and binds nothing, so it closes nothing.
+# EP0's packet size and binds nothing; it holds EP0, which 6.2.3.3 (p. 454) needs running idle or
+# stopped.
 layout erx_xhci_trb_evaluate_context_command wire_le 8 16
   field parameter u64 0
     bits pointer 4 63 shift 4 device_address
@@ -454,6 +456,7 @@ layout erx_xhci_trb_evaluate_context_command wire_le 8 16
   refers parameter.pointer data
   derived control.slot
   activates control.cycle
+  reach evaluate
 
 # Reset Endpoint (6.4.3.7, Table 6-65): the endpoint's device context index at 20:16 and the
 # slot. Its success leaves the halted endpoint stopped (4.6.8).

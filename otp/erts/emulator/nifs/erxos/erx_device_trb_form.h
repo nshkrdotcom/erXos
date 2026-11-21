@@ -137,7 +137,7 @@ typedef struct erx_trb_form {
 	erx_device_trb_shape_t	shape;
 	uint32_t		ports;
 	uint32_t		slots;
-	/* each slot's Address Device slot context, from its last Address Device posted, failed ones too */
+	/* each slot's Address Device slot context, from its last success since Disable Slot or a reset */
 	erx_xhci_slot_context_free_t	addressed[ERX_DEVICE_TRB_SLOTS_MAX + 1];
 	erx_trb_transfer_t	transfers[ERX_DEVICE_TRB_BLOCKS_MAX][ERX_DEVICE_TRB_RING_TRBS];	/* by head */
 	erx_trb_command_t	command;	/* the command in flight, while the command ring holds one */
@@ -207,14 +207,16 @@ erx_device_trb_verdict_t	erx_trb_form_post(erx_trb_form_t *form, uint32_t slot, 
  *   ERX_DEVICE_TRB_REFUSE_FULL    a command in flight: the ledger takes one at a time;
  *   ERX_DEVICE_TRB_REFUSE_HALTED  an endpoint whose state its reach does not allow (the check's
  *                                 reach rule): a stop or restart of a disabled endpoint, a drop of
- *                                 a halted, disabled or busy one, a disable of a slot with a busy one;
+ *                                 a halted, disabled or busy one, a disable of a slot with a busy one,
+ *                                 an Evaluate Context while EP0 is not running or stopped, or has a
+ *                                 transfer posted;
  *   ERX_DEVICE_TRB_REFUSE_BADARG  any other: a stated parameter its check in erx_device_trb.h
  *                                 refuses, judged first (Address Device adds EP0 alone, on a control
  *                                 block; Configure Endpoint adds indexes 2 and up, each on a block of
  *                                 its type, for the slot's speed; Evaluate Context adds none), a slot
- *                                 outside the layout's for these three, more adds than
- *                                 ERX_DMA_BINDS_MAX, an Evaluate Context while EP0 has a transfer
- *                                 posted, whose position it carries, an add of a bound
+ *                                 outside the layout's, a Configure Endpoint on a slot with no
+ *                                 successful Address Device since its Disable Slot or a reset, more
+ *                                 adds than ERX_DMA_BINDS_MAX, an add of a bound
  *                                 block or endpoint, drops on a command whose reach drops none
  *                                 (only Configure Endpoint drops), a kind out of range.
  * Anything but ERX_DEVICE_TRB_ACCEPTED changes nothing.
