@@ -7,8 +7,8 @@ require_relative 'manifest'
 
 module Erx
   module Manifest
-    # How a harness changes a manifest: a number of a named record read, grown or set, a
-    # reference pointed elsewhere, named records taken out (without), a facet's parameter
+    # How a harness changes a manifest: a number of a named record read, grown or set, the
+    # record a reference names read (referenced), a reference pointed elsewhere, named records taken out (without), a facet's parameter
     # taken out (without_parameter), the session templates taken out (without_sessions), the apps row taken out with the room it took
     # (without_apps), or a configured domain taken out with the records only it uses
     # (without_domain). Each reads the text with the manifest's own
@@ -39,6 +39,13 @@ module Erx
 
       # The number of field in the record named record.
       def value(text, record:, field:) = named(Frontend.read(text), record).decimal(field)
+
+      # The record that field of the record named record refers to, such as the share
+      # that "principal system"'s grant names.
+      def referenced(text, record:, field:)
+        source = Frontend.read(text)
+        defined_by(source.records.values.flatten, named(source, record).reference(field))
+      end
 
       # text with field of the record named record, which must be the one reference
       # from, made the reference to: an edit of a row that no longer reads from is

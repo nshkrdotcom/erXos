@@ -95,7 +95,7 @@ module Erx
     # The shell line: wait for the configured domain's end, then create the plan's domains
     # in turn, each awaited before the next and killed if it outlives the wait, and print
     # G5DONE with each domain's end. A refused create stands in for its end.
-    def self.shell_line(plan, domain)
+    def self.shell_line(plan, domain, grant:)
       names = runs(plan).map do |flavour, round|
         "{<<\"g5#{flavour}#{round}\">>,#{flavour == 'jit' ? domain.jit : domain.runtime}}"
       end
@@ -103,7 +103,7 @@ module Erx
       spec = MediumBoot.erlang_map(release: domain.release, release_files: domain.release_files,
                                    boot: "<<\"#{MediumBoot::DOMAIN_BOOT.name}\">>",
                                    memory: MediumBoot::DOMAIN_MEMORY, outer: MediumBoot::DOMAIN_OUTER,
-                                   grant: MediumBoot.erlang_map(quota_ns: (1 << 64) - 1, cpuset: 1, capacity_mcpu: 1000),
+                                   grant: grant,
                                    lane: 4096, args: "<<#{args}>>", env: '<<>>')
       run = "G5Run=fun({Name,Runtime})->case erx_domain:create(#{spec}\#{name=>Name,runtime=>Runtime}) of " \
             "{ok,D}->M=monitor(process,erx_domain:pid(D)),receive {'DOWN',M,process,_,R}->R " \
@@ -144,11 +144,11 @@ module Erx
 
     # The checkpoints: the production boot to the command shell, the Erlang shell, the
     # line, one domain's line per run and the G5DONE line.
-    def self.checkpoints(points:, plan:, domain:)
+    def self.checkpoints(points:, plan:, domain:, grant:)
       raise Error, 'the production checkpoints do not end at the shell' unless points.last.fetch(:name) == 'release-shell'
 
       [*points[0...-1], points.last.merge(type: ProductionImage::Run::ERL_LINE).freeze,
-       ProductionImage::Run::ERLANG_SHELL.merge(type: shell_line(plan, domain)).freeze,
+       ProductionImage::Run::ERLANG_SHELL.merge(type: shell_line(plan, domain, grant: grant)).freeze,
        *runs(plan).each_index.map { |index| { name: "g5-domain-#{index + 1}", pattern: /\A#{NativeRoot::DOMAIN_RECORD}\{g5,/n, seconds: plan.wait_seconds }.freeze },
        { name: 'g5-done', pattern: /\AG5DONE /n, seconds: 600 + plan.wait_seconds }.freeze]
     end
@@ -231,7 +231,8 @@ module Erx
       Qemu.new(root: @root, runner: @runner, program: @qemu)
           .run(platform: @machine.platform, accel: plan.accel, cpus: 1, image: built.single,
                memory_mib: @machine.memory_mib,
-               checkpoints: self.class.checkpoints(points: points, plan: plan, domain: domain),
+               checkpoints: self.class.checkpoints(points: points, plan: plan, domain: domain,
+                                                           grant: MediumBoot.created_grant(manifest)),
                command_line: ProductionImage::Run::COMMAND_LINES[plan.accel], directory: directory)
       nil
     rescue Error => error

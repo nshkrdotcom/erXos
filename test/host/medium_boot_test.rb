@@ -6,7 +6,9 @@ require 'digest/md5'
 require 'minitest/autorun'
 require 'open3'
 require 'tmpdir'
+require_relative '../../tools/lib/erx/bench_g5'
 require_relative '../../tools/lib/erx/medium_boot'
+require_relative '../../tools/lib/erx/system_domain'
 
 # What the harness adds to a boot from a release medium (tools/lib/erx/medium_boot.rb):
 # the firmware's /chosen properties, merged into a tree by dtc, and the kernel's boot
@@ -15,6 +17,9 @@ class MediumBootTest < Minitest::Test
   Boot = Erx::MediumBoot
   Choice = Erx::BootRecord::Choice
   DOMAIN = Erx::MediumBoot::Domain.new(runtime: 41, jit: 42, release: 7, release_files: 30)
+  ROOT = File.expand_path('../..', __dir__)
+  # The create grant of the website's medium manifest.
+  GRANT = Erx::MediumBoot.created_grant(Erx::MediumBoot.manifest(Erx::Platform.development(ROOT).site_manifest_source(ROOT)))
 
   def dtc(*arguments, input: nil)
     output, status = Open3.capture2e('dtc', '-q', *arguments, stdin_data: input.to_s)
@@ -40,13 +45,13 @@ class MediumBootTest < Minitest::Test
 
   def test_the_boot_value_line_follows_the_image_line_and_must_name_the_slot
     points = [{ name: 'banner' }, { name: 'image-identity' }, { name: 'root-identity' }, { name: 'release-shell' }]
-    merged = Boot.checkpoints(points, Choice.new(slot: :b, offset: 0, length: 64), release: release, domain: DOMAIN)
+    merged = Boot.checkpoints(points, Choice.new(slot: :b, offset: 0, length: 64), release: release, domain: DOMAIN, grant: GRANT)
     assert_equal %w[banner image-identity boot-value root-identity release-shell erlang-shell image-md5 crc32c domain-lib] +
                  Boot::COMMAND_SHELL.map { |point| point.fetch(:name) }, merged.map { |point| point.fetch(:name) }
     typed = merged.to_h { |point| [point.fetch(:name), point[:type]] }
     assert_equal "erl\r", typed.fetch('release-shell')
     assert_match(/\AImWait=fun /, typed.fetch('erlang-shell'))
-    assert_equal "#{Boot.domain_lib_expression(DOMAIN)}\r", typed.fetch('crc32c')
+    assert_equal "#{Boot.domain_lib_expression(DOMAIN, grant: GRANT)}\r", typed.fetch('crc32c')
     assert_equal "erx_shell:start().\r", typed.fetch('domain-lib')
     assert_match merged.find { |point| point.fetch(:name) == 'erlang-shell' }.fetch(:pattern),
                  "Eshell V16.0 (type help(). for help)\r\n"
@@ -56,8 +61,8 @@ class MediumBootTest < Minitest::Test
     ["erx: boot value normal slot a\n", "erx: boot value unknown slot none\n", "erx: boot value trial slot b\n"].each do |line|
       assert_raises(Erx::Error, line) { verify.call(line) }
     end
-    assert_raises(Erx::Error) { Boot.checkpoints([{ name: 'banner' }], Choice.new(slot: :a, offset: 0, length: 64), release: release, domain: DOMAIN) }
-    assert_raises(Erx::Error) { Boot.checkpoints(points[0..2], Choice.new(slot: :a, offset: 0, length: 64), release: release, domain: DOMAIN) }
+    assert_raises(Erx::Error) { Boot.checkpoints([{ name: 'banner' }], Choice.new(slot: :a, offset: 0, length: 64), release: release, domain: DOMAIN, grant: GRANT) }
+    assert_raises(Erx::Error) { Boot.checkpoints(points[0..2], Choice.new(slot: :a, offset: 0, length: 64), release: release, domain: DOMAIN, grant: GRANT) }
   end
 
   # The shell reads stdlib's lists module from the system partition's image at the storage
@@ -91,7 +96,7 @@ class MediumBootTest < Minitest::Test
   # refusal of one call over 65536 bytes.
   def test_the_shell_runs_the_crc32c_primitive_and_must_print_the_models_values
     merged = Boot.checkpoints([{ name: 'image-identity' }, Erx::ProductionImage::Run::RELEASE_SHELL],
-                              Choice.new(slot: :a, offset: 0, length: 64), release: release, domain: DOMAIN)
+                              Choice.new(slot: :a, offset: 0, length: 64), release: release, domain: DOMAIN, grant: GRANT)
     image_answer, crc = %w[image-md5 crc32c].map { |name| merged.find { |point| point.fetch(:name) == name } }
     assert_equal "#{Boot::CRC32C_EXPRESSION}\r", image_answer.fetch(:type)
     assert_equal '{crc32c,"%X","%X",badarg}' % [crc32c('123456789'), crc32c('erXos' * 20_000)], Boot::CRC32C_ANSWER
@@ -153,7 +158,7 @@ class MediumBootTest < Minitest::Test
     without_tmp = site.sub(/^(runtime_limits system\n(?:  .*\n)*?)  tmp [0-9]+\n/, '\1')
     assert_raises(Erx::Error) { cell.manifest(without_tmp, system_tmp: 0) }
     runs = cell::RELEASES.keys.to_h { |name| [name, { 'entry' => name.size, 'files' => 7 }] }
-    expression = cell.expression(runs: runs, runtime: 41)
+    expression = cell.expression(runs: runs, runtime: 41, grant: GRANT)
     assert_equal cell::STEPS.size, expression.scan(/\{<<"[a-z0-9-]+">>,<<"[a-z]+">>,[0-9]+,7,[0-9]+\}/).size
     assert_match(/<<"bare-tmp4">>,<<"bare">>,4,7,4194304\}/, expression)
     assert_match(/\.\z/, expression)
@@ -163,7 +168,7 @@ class MediumBootTest < Minitest::Test
   # domain's halt and the cell's halt, stop, kill, BeamAsm halt and faceted halt give; a line with another
   # end, a restarted configured domain or a refused create does not pass.
   def test_the_domain_cell_names_the_archives_indexes_and_must_see_every_end
-    expression = Boot.domain_lib_expression(DOMAIN)
+    expression = Boot.domain_lib_expression(DOMAIN, grant: GRANT)
     assert_match(/id=>17,name=><<"cell">>,principal=>1,runtime=>41,release=>7,release_files=>30,memory=>167772160,outer=>1048576,/, expression)
     # The library refuses an id at or below the system domain's, so the service's ids
     # start above it; the shell's own calls of the library are refused.
@@ -184,7 +189,7 @@ class MediumBootTest < Minitest::Test
                  expression)
     refute_match(/[^\x20-\x7e]/, expression)
     merged = Boot.checkpoints([{ name: 'image-identity' }, Erx::ProductionImage::Run::RELEASE_SHELL],
-                              Choice.new(slot: :a, offset: 0, length: 64), release: release, domain: DOMAIN)
+                              Choice.new(slot: :a, offset: 0, length: 64), release: release, domain: DOMAIN, grant: GRANT)
     point = merged.find { |each| each.fetch(:name) == 'domain-lib' }
     refute_match point.fetch(:pattern), "4> #{expression}\r\n"
     point.fetch(:verify).call("4> #{Boot::DOMAIN_LIB_ANSWER}\r\n")
@@ -197,7 +202,49 @@ class MediumBootTest < Minitest::Test
     end
   end
 
+  # erx_domain:create charges every domain a harness creates to the system principal, so
+  # the grant each create map asks must fit that principal's share as the domain
+  # library's rule has it (liberx/system/dom_core.c, dom_grant_fits): its CPUs among the
+  # share's, its period the share's, which the manifest check bounds as the library
+  # does, and its rate, quota over period in thousandths of a CPU rounded up, no more
+  # than the share's. The rate is restated here: the library has no host binding that
+  # judges a create map against a manifest.
+  def test_every_created_grant_fits_the_system_principals_share
+    manifest = Boot.manifest(site_manifest)
+    records = Erx::Manifest::Frontend.read(manifest).records
+    reference = records.fetch('principal').find { |record| record.name == 'system' }.reference('grant')
+    share = records.fetch('share').find { |record| "@share.#{record.name}" == reference }
+    share_rate = rate(share.decimal('quota_ns'), share.decimal('period_ns'), share.decimal('cpuset'))
+    runs = Boot::Footprint::RELEASES.keys.to_h { |name| [name, { 'entry' => 1, 'files' => 7 }] }
+    plan = Erx::BenchG5::Plan.new(accel: 'tcg', length: 10, samples: 3, rounds: 1, wait_seconds: 1)
+    grant = Boot.created_grant(manifest)
+    expressions = { 'domain cell' => Boot.domain_lib_expression(DOMAIN, grant: grant),
+                    'footprint' => Boot::Footprint.expression(runs: runs, runtime: 41, grant: grant),
+                    'later peer' => Erx::SystemDomain.later_spec(DOMAIN, grant: grant),
+                    'bench g5' => Erx::BenchG5.shell_line(plan, DOMAIN, grant: grant) }
+    expressions.each do |name, expression|
+      asked = grant_in(expression)
+      assert_equal 0, asked.fetch('cpuset') & ~share.decimal('cpuset'), "#{name}: CPUs outside the share"
+      assert_equal share.decimal('period_ns'), asked['period_ns'], "#{name}: a period other than the share's"
+      assert_operator rate(asked.fetch('quota_ns'), asked.fetch('period_ns'), asked.fetch('cpuset')), :<=, share_rate,
+                      "#{name}: #{asked} asks more than the share's #{share_rate} mcpu"
+    end
+  end
+
   private
+
+  # The grant map an expression's create asks, its keys to their integers.
+  def grant_in(expression)
+    pairs = expression[/grant=>\#\{([^}]*)\}/, 1].split(',').map { |pair| pair.split('=>') }
+    pairs.to_h { |key, value| [key, Integer(value)] }
+  end
+
+  # A capped grant's rate in thousandths of a CPU, as dom_grant_rate states it.
+  def rate(quota, period, cpuset)
+    assert_operator period, :>, 0, 'a capped grant without a period'
+    assert_operator quota, :<=, period * cpuset.digits(2).sum, 'a quota past what its CPUs could spend'
+    (quota * 1000 + period - 1) / period
+  end
 
   # CRC-32C bit by bit, seeded with all ones and inverted at the end (RFC 3720).
   def crc32c(bytes)

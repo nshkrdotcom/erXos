@@ -633,25 +633,25 @@ module Erx
     # The request erx_domain:create/1 takes for SERVICE_KILL_LATER's later domain of peer:
     # the configured rows' runtime image and release, at domain's indexes in the image's
     # archive (MediumBoot.domain_in), and their boot script, budgets, lane and arguments,
-    # MediumBoot's grant for the domains its shell creates, and one connection, so it can
+    # grant (MediumBoot.created_grant), and one connection, so it can
     # be introduced. Its runtime limits are the system principal's defaults, the same profile as the rows'.
-    def later_spec(domain)
+    def later_spec(domain, grant:)
       MediumBoot.erlang_map(name: '<<"peer">>', runtime: domain.runtime, release: domain.release,
                             release_files: domain.release_files, boot: "<<\"#{MediumBoot::DOMAIN_BOOT.name}\">>",
                             memory: MediumBoot::DOMAIN_MEMORY,
                             outer: MediumBoot::DOMAIN_OUTER,
-                            grant: MediumBoot.erlang_map(quota_ns: (1 << 64) - 1, cpuset: 1, capacity_mcpu: 1000),
+                            grant: grant,
                             lane: 4096, args: MediumBoot.binary_args(DOMAIN_ARGS), env: '<<>>', connections: 1)
     end
 
     # The line typed at the Erlang shell: SdSpec bound to later_spec(domain), then
     # ECHO_EXPRESSION, FOREIGN_ATOM_EXPRESSION and SERVICE_KILL_EXPRESSION.
-    def service_kill_line(domain) = "SdSpec=#{later_spec(domain)},#{ECHO_EXPRESSION},#{FOREIGN_ATOM_EXPRESSION},#{SERVICE_KILL_EXPRESSION}"
+    def service_kill_line(domain, grant:) = "SdSpec=#{later_spec(domain, grant: grant)},#{ECHO_EXPRESSION},#{FOREIGN_ATOM_EXPRESSION},#{SERVICE_KILL_EXPRESSION}"
 
     # The production checkpoints to the command shell, then the Erlang shell, the kill and
     # the runtime's end. points must end at the command shell; domain is where the image's
     # archive carries the configured rows' runtime and release.
-    def service_kill_checkpoints(points, domain:)
+    def service_kill_checkpoints(points, domain:, grant:)
       raise Error, 'the production checkpoints do not end at the shell' unless points.last.fetch(:name) == 'release-shell'
 
       echo = /\A(?:(?:\([a-z0-9_]+@[a-z0-9_.-]+\))?[0-9]+> )?#{Regexp.escape(ECHO_ANSWER)}\r*\n\z/n
@@ -665,7 +665,7 @@ module Erx
       ignored = /\A#{Regexp.escape(IGNORED_DOWN_ANSWER)}\r*\n\z/n
       later = /\A#{Regexp.escape(LATER_DOMAIN_ANSWER)}\r*\n\z/n
       [*points[0...-1], points.last.merge(type: ProductionImage::Run::ERL_LINE).freeze,
-       ProductionImage::Run::ERLANG_SHELL.merge(type: "#{service_kill_line(domain)}\r").freeze,
+       ProductionImage::Run::ERLANG_SHELL.merge(type: "#{service_kill_line(domain, grant: grant)}\r").freeze,
        { name: 'echo-facet', pattern: ECHO_START, seconds: 180,
          verify: ->(text) { raise Error, "the echo facet gave #{text.inspect}" unless echo.match?(text) } }.freeze,
        { name: 'foreign-atom', pattern: FOREIGN_ATOM_START, seconds: 180,
@@ -755,7 +755,8 @@ module Erx
         Qemu.new(root: @root, runner: @runner, program: @qemu)
             .run(platform: @machine.platform, accel: accel, cpus: count, remote: remote, image: built.single,
                  memory_mib: @machine.memory_mib, machine_end: true,
-                 checkpoints: SystemDomain.service_kill_checkpoints(points, domain: domain))
+                 checkpoints: SystemDomain.service_kill_checkpoints(points, domain: domain,
+                                                                            grant: MediumBoot.created_grant(@manifest)))
         'passed'
       end
     end

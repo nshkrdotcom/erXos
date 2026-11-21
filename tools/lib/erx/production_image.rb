@@ -1865,20 +1865,25 @@ module Erx
       NARROW_DROPPED = ['runtime_limits network', 'limits network', 'domain network', 'unit net', 'service net',
                         'service network_ctl', 'facet network_ctl'].freeze
 
-      # What the narrow manifest sets in share, one of its share records
-      # (Manifest::Edit.set): its cpuset keeps only NARROW_CPUSET's CPUs, its quota_ns is
-      # capped at period_ns per remaining CPU and its capacity_mcpu at 1000 per remaining
-      # CPU, since the library gives a share whose quota its cpuset cannot spend no rate,
-      # and plans no domain under it. A share with none of those CPUs is refused: cpuset 0
-      # would mean every CPU.
-      def self.narrow_share(share)
-        cpuset = share.decimal('cpuset') & NARROW_CPUSET
-        raise Error, "the narrow manifest leaves #{share.header} no CPU" if cpuset.zero?
+      # share, a capped share record, narrowed to those of its CPUs cpuset names: its
+      # period, its quota_ns capped at period_ns per CPU kept and its capacity_mcpu at 1000
+      # per CPU kept, since the library gives a grant whose quota its cpuset cannot spend
+      # no rate, and admits nothing under it. A share left no CPU is refused: cpuset 0
+      # would mean every CPU. An uncapped share's quota is no number, and is refused.
+      def self.narrowed(share, cpuset:)
+        kept = share.decimal('cpuset') & cpuset
+        raise Error, "#{share.header} keeps none of the CPUs #{cpuset}" if kept.zero?
 
-        cpus = cpuset.to_s(2).count('1')
-        { [share.header, 'cpuset'] => cpuset,
-          [share.header, 'quota_ns'] => [share.decimal('quota_ns'), share.decimal('period_ns') * cpus].min,
-          [share.header, 'capacity_mcpu'] => [share.decimal('capacity_mcpu'), cpus * 1000].min }
+        cpus = kept.to_s(2).count('1')
+        period = share.decimal('period_ns')
+        { quota_ns: [share.decimal('quota_ns'), period * cpus].min, period_ns: period, cpuset: kept,
+          capacity_mcpu: [share.decimal('capacity_mcpu'), cpus * 1000].min }
+      end
+
+      # What the narrow manifest sets in share, one of its share records
+      # (Manifest::Edit.set): share narrowed to NARROW_CPUSET's CPUs.
+      def self.narrow_share(share)
+        narrowed(share, cpuset: NARROW_CPUSET).except(:period_ns).to_h { |field, value| [[share.header, field.to_s], value] }
       end
 
       def boot_narrow(accel, count, built)

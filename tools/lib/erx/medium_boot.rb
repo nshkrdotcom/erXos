@@ -274,10 +274,10 @@ module Erx
     # order, and the shell's own ok follows on the next. The expression starts with
     # io:format, so the shell's echo of it does not start {domain_lib, and only the printed
     # answer matches DOMAIN_LIB_START.
-    def domain_lib_expression(domain)
+    def domain_lib_expression(domain, grant:)
       spec = erlang_map(id: FREE_ID, name: '<<"cell">>', principal: 1, runtime: domain.runtime, release: domain.release,
                         release_files: domain.release_files, memory: DOMAIN_MEMORY, outer: DOMAIN_OUTER,
-                        grant: erlang_map(quota_ns: (1 << 64) - 1, cpuset: 1, capacity_mcpu: 1000),
+                        grant: grant,
                         lane: 4096, args: binary_args(DOMAIN_ARGS), env: '<<>>', domain_pid: 'self()')
       jit = erlang_map(runtime: domain.jit, args: binary_args(JIT_ARGS))
       facet = erlang_map(args: binary_args(FACET_ARGS), facets: erlang_map(console: FACET_ECHO))
@@ -296,6 +296,16 @@ module Erx
 
     # An Erlang map expression of pairs, each value an expression already.
     def erlang_map(pairs) = "\#{#{pairs.map { |key, value| "#{key}=>#{value}" }.join(',')}}"
+
+    # The grant map of a domain a harness creates with erx_domain:create: the domain
+    # service charges it to the system principal, whose grant, a share of manifest, must
+    # hold it (liberx/system/dom_core.c, dom_check_grants), so it is that share narrowed
+    # to its lowest CPU (ProductionImage::Run.narrowed).
+    def created_grant(manifest)
+      share = Manifest::Edit.referenced(manifest, record: 'principal system', field: 'grant')
+      cpuset = share.decimal('cpuset')
+      erlang_map(**ProductionImage::Run.narrowed(share, cpuset: cpuset & -cpuset))
+    end
 
     # The board's site manifest (Platform#site_manifest_source), the development manifest
     # without the domains the website leaves out, with a domain row and room for two domains (a medium machine's manifest,
@@ -365,14 +375,14 @@ module Erx
     # then starts a nested command shell and types at it (command_shell_checkpoints),
     # whose lines read the mounts. Each list takes the line before it and sets what the
     # person types there.
-    def checkpoints(points, choice, release:, domain:)
+    def checkpoints(points, choice, release:, domain:, grant:)
       at = points.index { |point| point.fetch(:name) == 'image-identity' }
       raise Error, 'the production checkpoints name no image-identity' unless at
       raise Error, 'the production checkpoints do not end at the shell' unless points.last.fetch(:name) == 'release-shell'
 
       erlang, image_answer = image_checkpoints(ProductionImage::Run::ERLANG_SHELL, release)
       *crc32c, crc32c_answer = crc32c_checkpoints(image_answer)
-      *domain_lib, domain_lib_answer = domain_lib_checkpoints(crc32c_answer, domain)
+      *domain_lib, domain_lib_answer = domain_lib_checkpoints(crc32c_answer, domain, grant: grant)
       [*points[0..at], boot_value_checkpoint(choice), *points[(at + 1)...-1],
        points.last.merge(type: ProductionImage::Run::ERL_LINE).freeze, erlang,
        *crc32c, *domain_lib, *command_shell_checkpoints(domain_lib_answer)].freeze
@@ -391,9 +401,9 @@ module Erx
     # archive's domain, and its answer must be DOMAIN_LIB_ANSWER whole. Three ERTS domains
     # boot and end before it, the configured one first, so it has more time than the other
     # answers.
-    def domain_lib_checkpoints(previous, domain)
+    def domain_lib_checkpoints(previous, domain, grant:)
       whole = /\A(?:(?:\([a-z0-9_]+@[a-z0-9_.-]+\))?[0-9]+> )?#{Regexp.escape(DOMAIN_LIB_ANSWER)}\r*\n\z/n
-      [previous.merge(type: "#{domain_lib_expression(domain)}\r").freeze,
+      [previous.merge(type: "#{domain_lib_expression(domain, grant: grant)}\r").freeze,
        { name: 'domain-lib', pattern: DOMAIN_LIB_START, seconds: 300,
          verify: ->(text) { raise Error, "the shell answered #{text.inspect} to the domain library expression" unless whole.match?(text) } }.freeze]
     end
@@ -554,7 +564,8 @@ module Erx
                                                   memory_mib: @machine.memory_mib)
         Qemu.new(root: @root, runner: @runner, program: @qemu)
             .run(platform: @machine.platform, accel: 'hvf', cpus: count, image: image, memory_mib: @machine.memory_mib, directory: File.join(directory, 'boot'),
-                 checkpoints: MediumBoot.checkpoints(points, choice, release: built.release, domain: domain), dtb: firmware_tree(count, image, disks, choice, directory),
+                 checkpoints: MediumBoot.checkpoints(points, choice, release: built.release, domain: domain,
+                                                       grant: MediumBoot.created_grant(@manifest)), dtb: firmware_tree(count, image, disks, choice, directory),
                  disks: disks)
         'passed'
       end
@@ -697,9 +708,9 @@ module Erx
       # runtime takes the same allocator flags. A figure whose call fails is its
       # {Class, Reason}, except in Carriers, where a failed call leaves its allocator out.
       # runs: ReleaseFiles.domain_runs(paths).
-      def expression(runs:, runtime:)
+      def expression(runs:, runtime:, grant:)
         spec = MediumBoot.erlang_map(runtime: runtime, memory: MEMORY, outer: DOMAIN_OUTER, lane: 4096,
-                                     grant: MediumBoot.erlang_map(quota_ns: (1 << 64) - 1, cpuset: 1, capacity_mcpu: 1000),
+                                     grant: grant,
                                      args: MediumBoot.binary_args(UP_ARGS), env: '<<>>', connections: 1)
         calls = STEPS.map do |name, release, tmp|
           run = runs.fetch(release)
@@ -812,7 +823,8 @@ module Erx
           raise Error, 'the production checkpoints do not end at the release shell' unless shell.last.fetch(:name) == 'release-shell'
 
           expression = Footprint.expression(runs: ReleaseFiles.domain_runs(paths),
-                                            runtime: paths.index(ProductionImage::DOMAIN_RUNTIME_PATH.b))
+                                            runtime: paths.index(ProductionImage::DOMAIN_RUNTIME_PATH.b),
+                                            grant: MediumBoot.created_grant(manifest))
           checkpoints = [*shell[0...-1], shell.last.merge(type: ProductionImage::Run::ERL_LINE).freeze,
                          ProductionImage::Run::ERLANG_SHELL.merge(type: "#{expression}\r").freeze,
                          { name: 'fp-report', pattern: REPORT_START, seconds: 900,

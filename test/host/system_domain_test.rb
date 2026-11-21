@@ -11,6 +11,8 @@ class SystemDomainTest < Minitest::Test
   Suite = Erx::SystemDomain
   ROOT = File.expand_path('../..', __dir__)
   SITE = Erx::Platform.development(ROOT).site_manifest_source(ROOT)
+  # The create grant of the suite's manifest.
+  GRANT = Erx::MediumBoot.created_grant(Suite.manifest(SITE))
 
   # The rows are MediumBoot's with the halt dropped, so each configured domain stays up,
   # over the erx carrier, as MediumBoot's, so each is a node, behind the flag that lets the
@@ -51,8 +53,8 @@ class SystemDomainTest < Minitest::Test
   def test_the_kill_waits_for_the_running_domains_and_must_see_the_applications_end
     shell = { name: 'release-shell', pattern: /x/n, seconds: 60 }.freeze
     domain = Erx::MediumBoot::Domain.new(runtime: 11, jit: 12, release: 13, release_files: 14)
-    points = Suite.service_kill_checkpoints([{ name: 'image-identity', pattern: /y/n, seconds: 30 }, shell], domain: domain)
-    line = Suite.service_kill_line(domain)
+    points = Suite.service_kill_checkpoints([{ name: 'image-identity', pattern: /y/n, seconds: 30 }, shell], domain: domain, grant: GRANT)
+    line = Suite.service_kill_line(domain, grant: GRANT)
     assert_equal %w[image-identity release-shell erlang-shell echo-facet foreign-atom domain-running control-table introduced hostile connection-down
                     ignored-down later-domain domain-ends system-domain-ended],
                  points.map { |point| point.fetch(:name) }
@@ -182,7 +184,7 @@ class SystemDomainTest < Minitest::Test
     ['("{application_terminated,erx_net,shutdown}")', '({application_terminated,erx_domain,shutdown})'].each do |reason|
       assert_raises(Erx::Error) { ended.fetch(:verify).call("Kernel pid terminated (application_controller) #{reason}\r\n") }
     end
-    assert_raises(Erx::Error) { Suite.service_kill_checkpoints([shell, points[0]], domain: domain) }
+    assert_raises(Erx::Error) { Suite.service_kill_checkpoints([shell, points[0]], domain: domain, grant: GRANT) }
   end
 
   # The re-grant boot: the service-kill boot's rows, each restarted once, with echo
