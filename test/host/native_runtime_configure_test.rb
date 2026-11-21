@@ -35,9 +35,9 @@ class NativeRuntimeConfigureTest < Minitest::Test
     refute_equal before, stamp(jit_headers, kind: Erx::NativeJitRuntime)
   end
 
-  # asmjit's precompiled header refuses to load when a libc++ header's time moved, which
-  # a re-extracted llvm-project source gives the installed headers with no change to
-  # configuration or bytes; the JIT's copy, which holds that header, starts again.
+  # asmjit's precompiled header refuses to load when a libc++ header's bytes changed, with
+  # no change to configuration (a new llvm-project source at the same path); the JIT's copy,
+  # which holds that header, starts again.
   def test_a_changed_libcxx_install_changes_the_jit_configure_stamp
     merge('#define EAGAIN 11')
     before = stamp(jit_headers, kind: Erx::NativeJitRuntime)

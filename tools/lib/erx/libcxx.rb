@@ -81,13 +81,13 @@ module Erx
       ).map { |name, value| "-D#{name}=#{value}" }
     end
 
-    # What a compile against the headers of include depends on: each file's name,
-    # content and modification time. The time is part of it because a precompiled header
-    # (BeamAsm's asmjit/core.h.gch) refuses to load when a system header it read has a
-    # different time, and make does not track system headers. CMake's install copies a
-    # header again, with the source's time, when its time differs from the source's, so a
-    # re-extracted source tree replaces the installed headers with the same bytes.
-    def self.identity(include) = BuildMemo.tree_digest(include, times: true)
+    # What a compile against the headers of include depends on: each file's name and
+    # content. Clang refuses a precompiled header (BeamAsm's asmjit/core.h.gch) when a
+    # header it read changed bytes, and OTP's make, which does not track system headers,
+    # does not make it again; a different identity therefore starts the copy again. A
+    # change of time alone does not: the build validates a header whose time differs by its
+    # content (otp/xcomp/erl-xcomp-aarch64-unknown-erxos.conf, CXXFLAGS).
+    def self.identity(include) = BuildMemo.tree_digest(include)
 
     # target_flags are the C compiler's target, header and source-name flags of ERTS's
     # native build (NativeJitRuntime), so libc++ is compiled against the musl ERTS is and

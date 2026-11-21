@@ -43,22 +43,20 @@ end
     assert_equal '/out/install', arguments.fetch('CMAKE_INSTALL_PREFIX')
   end
 
-  # The identity names what a compile against the installed headers depends on: the bytes
-  # and the time of each file (a precompiled header checks the time).
-  def test_the_header_identity_follows_each_files_bytes_and_time
+  # The identity names what a compile against the installed headers depends on: their
+  # bytes. A time change alone leaves it, since the build validates the precompiled
+  # header by content.
+  def test_the_header_identity_follows_each_files_bytes_not_its_time
     Dir.mktmpdir('libcxx-identity-') do |include|
       header = File.join(include, '__config')
       File.write(header, '#define A 1')
       File.utime(Time.at(100), Time.at(100), header)
       before = Erx::Libcxx.identity(include)
 
-      File.utime(Time.at(100), Time.at(100), header)
-      assert_equal before, Erx::Libcxx.identity(include), 'the same bytes and time are the same headers'
       File.utime(Time.at(200), Time.at(200), header)
-      refute_equal before, Erx::Libcxx.identity(include), 'the same bytes at another time'
+      assert_equal before, Erx::Libcxx.identity(include), 'the same bytes at another time'
       File.write(header, '#define A 2')
-      File.utime(Time.at(100), Time.at(100), header)
-      refute_equal before, Erx::Libcxx.identity(include), 'other bytes at the same time'
+      refute_equal before, Erx::Libcxx.identity(include), 'other bytes'
     end
   end
 end
