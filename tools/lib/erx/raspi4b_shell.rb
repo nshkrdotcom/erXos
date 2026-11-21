@@ -166,6 +166,14 @@ module Erx
     # as a Regexp into an /x pattern, it keeps its own flags, so its spaces stay literal.
     def self.end_line_head(name) = /erx_domain: configured domain #{Regexp.escape(name)} \(domain \d+\) ended, /n
 
+    # The system domain's line for configured domain NAME ended by a memory fault and
+    # restarted.
+    def self.memory_fault_restart(name)
+      /\d+\.\d{6}\ notice\ domain\ \d+\ principal\ \S+(?:\ dropped\ \d+)?\ system:\ #{end_line_head(name)}
+       \{fault,#{ABI::Generated::CODEC.member('fault_kind', 'memory')}\}
+       \ at\ pc\ 0x\h+,\ cause\ 0x\h+,\ addr\ 0x\h+;\ restarting\ it\r*$/nx
+    end
+
     # Whether image shows the splash: FB's size, at least BACKGROUND_SHARE of its pixels the
     # background colour, and the mark drawn. The mark's fully covered pixels are drawn in the
     # text colour, so the pixels of that colour number at least half of them and lie within
@@ -192,19 +200,24 @@ module Erx
     # no Ethernet (docs/design-platforms.md, "What the model never checks"), so the network
     # domain's first read of GENET's registers takes a memory fault, which ends only that
     # domain, and the domain service logs its end as a line of the system domain's own and
-    # restarts it within its intensity (docs/design-system.md, "Boot failure"). Any other
-    # fault kind is a bug and fails the run. The line is not anchored at its start: a
-    # restart's line can follow other output on the same serial line. A memory fault's line
-    # names where it struck (erx_domain_core:fault_where/2), its address always a number.
+    # restarts it within its intensity (docs/design-system.md, "Boot failure"). The model has
+    # no PCIe root complex either, so the PCIe domain's first read of the bridge's registers
+    # ends it the same way. Any other fault kind is a bug and fails the run. The line is not
+    # anchored at its start: a restart's line can follow other output on the same serial
+    # line. A memory fault's line names where it struck (erx_domain_core:fault_where/2), its
+    # address always a number.
     CONFIGURED_LINES = {
       'storage' => /#{NativeRoot::DOMAIN_RECORD.source}erx_blk: the SD card is not driven: /n,
-      'network' => /\d+\.\d{6}\ notice\ domain\ \d+\ principal\ \S+(?:\ dropped\ \d+)?\ system:\ #{end_line_head('network')}
-                    \{fault,#{ABI::Generated::CODEC.member('fault_kind', 'memory')}\}
-                    \ at\ pc\ 0x\h+,\ cause\ 0x\h+,\ addr\ 0x\h+;\ restarting\ it\r*$/nx,
+      'network' => memory_fault_restart('network'),
+      'pcie' => memory_fault_restart('pcie'),
       'display' => /#{NativeRoot::DOMAIN_RECORD.source}#{Regexp.escape(DRIVER_LINE)}\r*$/n
     }.freeze
     # The configured domains whose line a boot logs once, since they start once and never end.
     STARTED_ONCE = %w[display].freeze
+    # The configured domains that log nothing on the model and must never end: the USB
+    # domain waits for the host controller the PCIe domain gives it, which the model, having
+    # no PCIe, never gives (docs/design-usb.md).
+    IDLE = %w[usb].freeze
 
     def initialize(root:, runner: Runner.new(owner_root: root, log_dir: File.join(root, 'build/logs')),
                    compiler: ENV.fetch('ERX_CLANG', ''), linker: ENV.fetch('ERX_LLD', ''), qemu: 'qemu-system-aarch64')
@@ -281,10 +294,20 @@ module Erx
 
     # Raises unless the serial log holds CONFIGURED_LINES' line for each configured domain
     # the Pi's manifest names, so a domain that never started, or a manifest row without
-    # its expected line here, fails the run; and unless each domain of STARTED_ONCE logged
-    # its line once and never ended, so one that restarts fails it too.
+    # its expected line here, fails the run; unless each domain of STARTED_ONCE logged its
+    # line once and never ended, so one that restarts fails it too; and unless no domain of
+    # IDLE ended. The domain service logs a start only when it fails (erx_domain_srv's
+    # "did not start"), so a domain of IDLE is known to have started only by that line's
+    # absence.
     def check_configured(serial)
       configured_domains.each do |name|
+        raise Error, "raspi4b: configured domain #{name} did not start" if
+          serial.match?(/erx_domain: configured domain #{Regexp.escape(name)} did not start: /n)
+        if IDLE.include?(name)
+          raise Error, "raspi4b: configured domain #{name} ended" if serial.match?(self.class.end_line_head(name))
+
+          next
+        end
         pattern = CONFIGURED_LINES.fetch(name) { raise Error, "raspi4b: configured domain #{name} has no expected line" }
         raise Error, "raspi4b: configured domain #{name} left no line matching #{pattern.source}" unless serial.match?(pattern)
         next unless STARTED_ONCE.include?(name)
