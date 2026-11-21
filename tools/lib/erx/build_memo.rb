@@ -160,7 +160,9 @@ module Erx
     # step reads whole, such as a system header directory. A link to a file counts as the
     # content it reaches, which is what a compile reads through it; a link to a directory
     # is refused rather than followed, so the digest never misses a subtree or loops.
-    def self.tree_digest(directory)
+    # With times: true each file's modification time counts too, for a tree a precompiled
+    # header read, which clang refuses when a file's time differs.
+    def self.tree_digest(directory, times: false)
       return 'absent' unless File.directory?(directory)
 
       lines = Dir.glob('**/*', File::FNM_DOTMATCH, base: directory).sort.filter_map do |relative|
@@ -169,7 +171,7 @@ module Erx
         path = File.join(directory, relative)
         raise Error, "build memo cannot key #{path}, a link to a directory" if File.symlink?(path) && File.directory?(path)
 
-        if File.file?(path) then "#{relative} #{Digest::SHA256.file(path).hexdigest}"
+        if File.file?(path) then "#{relative} #{times ? "#{File.mtime(path).to_r} " : ''}#{Digest::SHA256.file(path).hexdigest}"
         elsif File.symlink?(path) then "#{relative} absent"
         end
       end

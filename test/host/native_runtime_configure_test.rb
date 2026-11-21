@@ -35,6 +35,16 @@ class NativeRuntimeConfigureTest < Minitest::Test
     refute_equal before, stamp(jit_headers, kind: Erx::NativeJitRuntime)
   end
 
+  # asmjit's precompiled header refuses to load when a libc++ header's time moved, which
+  # a re-extracted llvm-project source gives the installed headers with no change to
+  # configuration or bytes; the JIT's copy, which holds that header, starts again.
+  def test_a_changed_libcxx_install_changes_the_jit_configure_stamp
+    merge('#define EAGAIN 11')
+    before = stamp(jit_headers, kind: Erx::NativeJitRuntime)
+
+    refute_equal before, stamp(jit_headers, kind: Erx::NativeJitRuntime, identity: 'headers-b')
+  end
+
   # Musl#merge_headers copies every header again on each build; only the bytes count.
   def test_rewritten_identical_headers_keep_the_configure_stamp
     before = stamp(merge('#define EAGAIN 35'))
@@ -62,11 +72,12 @@ class NativeRuntimeConfigureTest < Minitest::Test
   # The stamp copy_sources records for a runtime of kind over this root, whose build
   # took headers as the sysroot's tree. A JIT runtime's libc++ is set by its build; a
   # stand-in configuration takes its place.
-  def stamp(headers, kind: Erx::NativeRuntime)
+  def stamp(headers, kind: Erx::NativeRuntime, identity: 'headers-a')
     runtime = kind.new(root: @root, runner: nil, compiler: '/nonexistent/clang', linker: '/nonexistent/ld.lld',
                        fiasco: nil, platform: PLATFORM, oracle: nil)
     runtime.instance_variable_set(:@headers, headers)
-    runtime.instance_variable_set(:@libcxx, Erx::Libcxx::Built.new(include: '', archives: [], configuration: 'libc++'))
+    runtime.instance_variable_set(:@libcxx, Erx::Libcxx::Built.new(include: '', archives: [], configuration: 'libc++',
+                                                                   identity: identity))
     Erx::Runtime.configure_stamp(otp: @root, inputs: [], sdk_root: runtime.send(:sdk_root))
   end
 end
