@@ -15,11 +15,9 @@ require_relative 'qmp'
 require_relative 'runner'
 
 module Erx
-  # The PCIe domain's manifest on QEMU virt before its rows join the development manifest
-  # (docs/design-pcie.md, "The rows and the facets' limits", "Where the rows live"): the
-  # development manifest without its web domain, which gives back the room the web domain
-  # took (Manifest::Edit.without_domain), with config/manifest/qemu-virt-pcie.txt
-  # appended, whose rows take no more than that room.
+  # The PCIe domain's suite manifest on QEMU virt (docs/design-pcie.md, "Where the rows
+  # live"): the development manifest, which holds the PCIe domain's rows, without its web
+  # domain, which gives back the grant the test holder needs (Manifest::Edit.without_domain).
   #
   # The `pcie` QEMU suite (docs/design-pcie.md, "The `pcie` QEMU suite") boots that
   # manifest on MediumBoot's machine with a test holder added (manifest): MediumBoot's
@@ -48,7 +46,6 @@ module Erx
   # pages in use with it up and once it has ended give its memory at rest, as MediumBoot's
   # Footprint measures a domain, which the run's notes report (memory_note).
   module PcieDomain
-    PART = 'config/manifest/qemu-virt-pcie.txt'
     LEFT_OUT = 'web'
     PCIE = 'pcie'
 
@@ -58,9 +55,9 @@ module Erx
     # rows and the facets' limits"): every operation, the widest request rounded up to
     # 1,024 bytes, one call in flight for its one function, and the share and heap of a
     # small message facet. The configured domains' grants together may come to at most
-    # the system share's reserve, 2,250 mcpu (MediumBoot::EIGHTH_SHARE): storage and
-    # network take 1,000 each, display 100 and the PCIe domain 50, which leaves 100, less
-    # than MediumBoot's eighth.
+    # the system share's reserve, 2,325 mcpu (MediumBoot::EIGHTH_SHARE): storage and
+    # network take 900 each, display 100 and the PCIe domain 50, which leaves 375 without
+    # the web domain's 150, room for this 100.
     HOLDER = 'erts'
     HOLDER_NODE = "#{HOLDER}@erxos".freeze
     HOLDER_SHARE = MediumBoot::EIGHTH_SHARE.sub("share eighth\n", "share holder\n").sub('quota_ns 1250000', 'quota_ns 1000000')
@@ -88,11 +85,8 @@ module Erx
     end
 
     # The manifest's text for platform, a Platform of QEMU virt, from root's sources.
-    def self.manifest_source(root, platform:)
-      without_web = Manifest::Edit.without_domain(platform.manifest_source(root), LEFT_OUT,
-                                                  units: platform.record.fetch('units'))
-      without_web + File.binread(File.join(root, PART))
-    end
+    def self.manifest_source(root, platform:) =
+      Manifest::Edit.without_domain(platform.manifest_source(root), LEFT_OUT, units: platform.record.fetch('units'))
 
     # The suite's manifest, from manifest_source's text: MediumBoot's medium manifest with
     # room for the holder alone (MediumBoot.manifest), the PCIe row without restarts, so

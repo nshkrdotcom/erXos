@@ -173,7 +173,7 @@ system_image
 # Its 36 MiB is QEMU virt's measurement of the stack over erx_virtio_net; the stack over
 # erx_genet is not measured on the Pi (docs/todo-performance.md).
 #
-# Its grant is the users share, one CPU of the 2,250 mcpu the system share's reserve
+# Its grant is the users share, 900 mcpu of the 2,325 mcpu the system share's reserve
 # leaves the configured domains (dom_system_reserve, liberx/system/dom_core.c).
 #
 # Its quota of two connections holds root's session and one more while a session is

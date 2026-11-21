@@ -1594,9 +1594,9 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   the `web` interface (`erx_hostlink_web:open/1`), but Phase 1's check refuses every release manifest, so the
   build-time rule has no site yet; with the release check (M11), refuse a release manifest that grants a facet of
   the `web` interface, with a seeded violation.
-* [Medium] `config/manifest/qemu-virt-development.txt`, the web domain's row: its 24 MiB and its grant, a quarter
-  of one CPU, are estimates, and so are the development manifest's `root_memory` and the system
-  principal's 131 MiB that make room for it; no boot-time or memory figure has been recorded for a boot with the
+* [Medium] `config/manifest/qemu-virt-development.txt`, the web domain's row: its 24 MiB and its grant, 150
+  mcpu, are estimates, and so are the development manifest's `root_memory` and the system
+  principal's memory that make room for it; no boot-time or memory figure has been recorded for a boot with the
   web domain. Measure the domain with `Footprint` at rest and with the host tool's four connections open, the
   boot's time to the shell before and after the web domain (`tools/erx bench`), and size the row and
   `root_memory` from the figures.
@@ -2309,15 +2309,9 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   interfaces' servers and grantees to design-pcie.md's "The manifest". Still to build: `firmware`, which answers
   `{error, enotsup}` until `erx_domain_lib:pci_firmware/1` exists, and
   that waits for `erx_firmware_request`, which no ABI file or backend declares yet; the identity check
-  of a reported function against its row's compatible string ("The catalogue and gives"); the `pcie` QEMU suite
-  over `Erx::PcieDomain`'s manifest (`config/manifest/qemu-virt-pcie.txt`), with its test holder and its
-  walk-and-report and hold cases. Until then the process and its facets have host tests only. The BCM2711's bridge has its core (`erx_pcie_bcm2711_core`) and no driver module with `start` over a
+  of a reported function against its row's compatible string ("The catalogue and gives"); and the `pcie` QEMU
+  suite's cases beyond walk-and-report and hold (design-pcie.md, "The `pcie` QEMU suite"). The BCM2711's bridge has its core (`erx_pcie_bcm2711_core`) and no driver module with `start` over a
   device, so the enumerator refuses its record (`no_driver_module`).
-* [Medium] PCIe domain, its `memory` row (`config/manifest/qemu-virt-pcie.txt`,
-  [design-pcie.md](docs/design-pcie.md#the-rows-and-the-facets-limits)): the `pcie` suite measures 22.5 MiB at
-  rest against the row's 24 MiB, the web row's figure, which leaves 1.5 MiB where the network row's rounding
-  (a whole MiB and 2 MiB of headroom) gives 25 MiB; settle the figure before the rows join the development
-  manifest, remeasuring after a `set`, a `reset` and a restart's walk.
 * [Medium] PCIe and the drivers' control, one mint for system-domain-only grants (`erlang/apps/erx_pcie/src/erx_pcie_facet.erl`
   `start_link/0`, `mint_init/1`, `mint/1`; `erlang/apps/erx/src/erx_driver_ctl.erl` `start_mint`, `mint_init`, `mint`): the pcie
   mint repeats the driver-control mint line for line but for its callback module and the grant's extra keys, so a fix
@@ -2378,7 +2372,7 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   cell with an archive sized into that window of about 2 MiB.
 * [Medium] platforms, QEMU `virt`'s record RAM (`config/platforms/qemu-virt.json`,
   `ProductionImage::BOARD_QEMU_MIB`): the record's 512 MiB leave beside the development
-  manifest's `root_memory` (423.41 MiB) room for an archive of about 34 MiB, and the production
+  manifest's `root_memory` (457.41 MiB) almost no room for an archive, and the production
   image's is about 67 MiB, so every pack of the board's manifest, the hosted runtime's release
   (41 MiB) included, `tools/erx boot`, the benches and every QEMU suite that boots it run on the
   board machine (`Machine.board`, 640 MiB). The record's RAM is still what `Platform#memory_mib`
@@ -5971,7 +5965,15 @@ handing call's socket process exit and its connection's, is not yet looked for. 
 * [Low] tests, `test/integration/runtime_console_test.rb` (`make check-runtime-hosted`): the cases that start the Erlang shell wait for `1> ` at the start of a line, but the hosted system domain is a named node and its shell prompts `(system@erxos)1> `, so every `with_erxos` case times out before it begins. Match the prompt with its node name, or make the patterns node-agnostic as the `Ctrl-G` case is.
 * [Medium] domain service, `erlang/apps/erx_domain/src/erx_domain_core.erl`: the names quota is the constant `NAMES_QUOTA`, 64, for every principal; the manifest's per-principal `names` is read by no one. Take each principal's from its row, as the domain quota is.
 * [Low] session memory, `config/manifest/development.txt`: re-measure one session at its command shell under the lane driver's frame-sized funnel scratch (at most about 132 KiB a connection) and lower the session's 36 MiB budget, the principal's memory and its `max_message_heap` of 131,072 words if the numbers allow; they were sized for a scratch of 16 bytes a word of `max_message_heap`.
-* [Medium] CPU grants, `config/manifest/development.txt`: the storage and network domains each take a whole CPU of the users share, 2,000 of the 2,250 mcpu that the system share's reserve leaves configured domains (`dom_system_reserve`, `liberx/system/dom_core.c`), and the web and display domains the other 250, 150 and 100, none of them measured, so no further configured domain has room. Size each service domain's grant from its measured use, or grow the reserve's bound, before another configured domain is added.
+* [Medium] CPU grants, `config/manifest/development.txt`: the storage and network domains each take the users share, 900 mcpu, 1,800 of the 2,325 mcpu that the system share's reserve leaves configured domains (`dom_system_reserve`, `liberx/system/dom_core.c`), and the web, display and PCIe domains 300 more, 150, 100 and 50, none of them measured, so 225 mcpu remain for a further configured domain. Size each service domain's grant from its measured use, or grow the reserve's bound, before a configured domain is added that needs more.
+* [Medium] manifest check, display grants (`check_display_grants`, `tools/lib/erx/manifest.rb`;
+  `config/manifest/qemu-virt-development.txt`, `limits display`): a session template's grant is priced once
+  for each slot of its principal's domains quota, though the system principal's configured domains hold five
+  of its six slots and the display domain's six connections bound the live grants, so the display's outer
+  budget, the system principal's memory and `root_memory` carry about 32 MiB for grants that cannot exist at
+  once, 8 MiB and 4 KiB more for each configured domain the system principal gains. Count a template's
+  sessions as the quota less the principal's configured domains, or cap the grants by the display's
+  connections.
 * [Medium] tooling, configured-domain ids in the QEMU harnesses: `MediumBoot` (`NETWORK_ID`, `STORAGE_ID`, `DOMAIN_IDS`, `FREE_ID` and the catalogue rows of `DlControl` and `DlDevices`), `SystemDomain`, `SessionDomain::FIRST_SESSION`, `Regrant` and `DeviceGive::RESTART_ID` each re-derive by hand that configured domains boot in name order and that each later create spends an id, so adding a configured domain edits six files. Derive every id and row from one helper that sorts the manifest's configured domain names with the cell's added rows.
 * [Medium] domain service, `erlang/apps/erx_domain/src/erx_domain_srv.erl`: a domain whose pid died and whose stop the library refused never ends, so `ending/2` counts it for good and every later create and session start of its principal waits the full `release_wait` (10 s); record the refused stop and leave such a domain out of the hold.
 * [Medium] runtime, `erlang/apps/erx/src/erx_console.erl`: a login's session that has had the line and keeps ending (a shell that dies at its first input) is started again without limit, a domain build each round; throttle it as FreeBSD's init throttles a getty that keeps failing, and say so on the line.
@@ -8785,7 +8787,7 @@ model harness drive `erx_device.c` itself. `erx_device_dma_check` and `erx_devic
 * [Medium] Domain service, a display domain's end keeps its outer budget: root's session holds a
   connection to the display domain on every development board (display_root), so its end keeps
   the domain's whole outer budget as remains (`erx_dom_retire_record`, `liberx/system/dom_life.c`),
-  73 MiB on QEMU virt and 49 MiB on the Raspberry Pi 4, until root's session answers, and the
+  81 MiB on QEMU virt and 49 MiB on the Raspberry Pi 4, until root's session answers, and the
   system principal's 1 MiB for an ended domain's outer budget does not hold the restart: the display
   stays down until reboot. Keep only what the survivor maps (the lanes) as remains, or size the
   reserve from the largest outer budget a session connects to.

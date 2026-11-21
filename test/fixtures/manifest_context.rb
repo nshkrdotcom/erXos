@@ -141,12 +141,12 @@ module ManifestContextFixture
   SYSTEM_QUOTA = /^(principal system\n(?:  .*\n)*?  domains )\d+$/
   MAX_DOMAINS = /^(  max_domains )\d+$/
 
-  # The development manifest's own configured domains, storage, network, web and display,
+  # The development manifest's own configured domains, storage, network, web, display and pcie,
   # with the profiles and runtime limits only they name, their services (storage's
   # driver-control, data, packages, system and login_keys, network's driver-control and net, web's relay, the display's
-  # window tree with its display record) and the system domain's facets of them, and the
-  # display unit, which only a display domain holds (docs/design-fiasco.md, "Device
-  # records"), so a manifest without one places none.
+  # window tree with its display record, and the PCIe domain's pcie) and the system domain's facets of them, the
+  # PCIe domain's pci_bus facet, the display unit, which only a display domain holds (docs/design-fiasco.md, "Device
+  # records"), so a manifest without one places none, and the ECAM bridge's unit, which only the PCIe domain holds.
   DOMAIN_ROWS = [/^runtime_limits storage\n(?:  .*\n)*/, /^limits storage\n(?:  .*\n)*/, /^domain storage\n(?:  .*\n)*/,
                  /^service storage_ctl\n(?:  .*\n)*/, /^facet storage_ctl\n(?:  .*\n)*/,
                  /^service data\n(?:  .*\n)*/, /^service home\n(?:  .*\n)*/, /^facet data\n(?:  .*\n)*/, /^service packages\n(?:  .*\n)*/,
@@ -157,7 +157,10 @@ module ManifestContextFixture
                  /^runtime_limits web\n(?:  .*\n)*/, /^limits web\n(?:  .*\n)*/, /^domain web\n(?:  .*\n)*/,
                  /^service web\n(?:  .*\n)*/, /^facet web\n(?:  .*\n)*/,
                  /^runtime_limits display\n(?:  .*\n)*/, /^limits display\n(?:  .*\n)*/, /^domain display\n(?:  .*\n)*/,
-                 /^service display\n(?:  .*\n)*/, /^display display\n(?:  .*\n)*/, /^unit display\n(?:  .*\n)*/].freeze
+                 /^service display\n(?:  .*\n)*/, /^display display\n(?:  .*\n)*/, /^unit display\n(?:  .*\n)*/,
+                 /^runtime_limits pcie\n(?:  .*\n)*/, /^limits pcie\n(?:  .*\n)*/, /^domain pcie\n(?:  .*\n)*/,
+                 /^unit pcie\n(?:  .*\n)*/, /^service pcie\n(?:  .*\n)*/, /^facet pcie\n(?:  .*\n)*/,
+                 /^facet pci_bus\n(?:  .*\n)*/].freeze
   # Root's session template's facets, of data, net, inspect, start, machine, the clock and
   # login_keys, which a sessionless source (ProductionImage.without_sessions) does not hold.
   SESSION_FACETS = [/^facet data_session\n(?:  .*\n)*/, /^facet net\n(?:  .*\n)*/, /^facet inspect\n(?:  .*\n)*/,

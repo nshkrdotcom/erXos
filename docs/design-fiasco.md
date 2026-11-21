@@ -1372,20 +1372,24 @@ of the website's machine, 600 s (`ProductionImage::Machine.site`), since
 the emulator boots its domains several times slower than the 60 s default allows
 ([design-system.md](design-system.md#the-manifest)). On QEMU `virt` those domains are
 the web domain, since the website's page has no host link and the web facet is
-all that domain serves, and the display domain, since the page has no gpu for it
-to drive; each would only cost boot time on the emulator's one core.
+all that domain serves, the display domain, since the page has no gpu for it
+to drive, and the PCIe domain, since nothing on the page uses a PCIe function;
+each would only cost boot time on the emulator's one core.
 `Manifest::Edit.without_domain` takes a domain out as if it had never been written
 in: its record, the units it holds, the services it serves with their display
-records and the system domain's facets of them, and the limits, share and
+records and the system domain's facets of them, the facets that grant it a
+service the system domain serves, and the limits, share and
 runtime limits only it names; it gives the room back where the manifest reckons
 it (the principal's memory and domain quota, and the machine's `root_memory`,
 including the domain's units' DMA memory, `max_domains` and `max_connections`), so
 the result keeps the development manifest's margin and gains no record, grant or
-authority it lacks. A domain whose service a session or another domain is
-granted, or whose removal would leave a record naming one it took, is refused,
-since what such a grant takes is reckoned only in the manifest's comments. The
-room given up stays outside the root's memory; no domain gains it, and the 250
-mcpu the two shares took is what the system share's reserve leaves free for the
+authority it lacks. A domain whose service another domain or another principal's
+template is granted, that is granted a service another domain serves, or whose
+removal would leave a record naming one it took, is refused, since what such a
+grant takes is reckoned only in the manifest's comments. The room given up stays
+outside the root's memory; no domain gains it, and the 300 mcpu the three shares
+took, with what the reserve leaves beside the configured domains' grants, is what
+the system share's reserve leaves free for the
 medium boots' test rows (`MediumBoot::EIGHTH_SHARE`).
 Its scope, against
 [design-system.md](design-system.md)'s properties, each kept property with a

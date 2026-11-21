@@ -1382,21 +1382,19 @@ domain pcie
   and its application come nowhere near their process count, atom
   table or export table, and the domain has no RAM file system and no
   overlay.
-* **`memory`** 24 MiB, the web row's figure (in
-  `config/manifest/qemu-virt-development.txt`), against a measured use
-  of 5,750 pool pages, 22.5 MiB, at rest after its report: the root's
+* **`memory`** 25 MiB, the largest measured use rounded up to a whole
+  MiB with 2 MiB of headroom, as the network row's figure is reckoned:
+  5,750 pool pages, 22.5 MiB, at rest after its report: the root's
   pool pages in use with the domain up minus those once it has ended,
   as the storage row's figure is measured, on the `pcie` suite's
   walk-and-report cell (an Apple Silicon Mac, M3 Max, macOS 27.0.1;
   HVF, 1 CPU, a 768 MiB machine; QEMU 11.1.3; the development image
   built with Homebrew clang 23.1.3; the workload the boot's walk, its
   report and answer, and the test holder's one `open`; the baseline
-  the root's pool pages once the domain has ended). The figure is the
-  web row's because the `pcie` suite's PCIe rows take the room the web
-  domain's rows give back, so every machine-wide figure stays the
-  development manifest's. It leaves 1.5 MiB of headroom, where the
-  network row's rule, the use rounded up to a whole MiB with 2 MiB of
-  headroom, gives 25 MiB. **`outer`** 1 MiB and the
+  the root's pool pages once the domain has ended). The holder's
+  `reset`, a restart's walk, report and answer, and a second `reset`
+  leave less at rest on the same cell, 5,133 pool pages, 20.1 MiB.
+  **`outer`** 1 MiB and the
   **`peer_held`** figures are every configured domain's.
 * **`connections`** 1: its system connection carries its `pci_bus`
   calls and the system domain's `pcie` calls, and it reaches no other
@@ -1415,28 +1413,39 @@ domain pcie
 * **The release** `pcie` is a bare release with `erx_pcie`
   ([Processes](#processes)), built as the web row's release is.
 
-**Where the rows live.** `config/manifest/qemu-virt-pcie.txt` holds the
-rows above, the unit, the `pcie` service and the `pci_bus` and `pcie`
-facets, spelled as above. It is not a board part: the `pcie` QEMU
-suite's manifest is the development manifest without the web domain
-(`Manifest::Edit.without_domain`), with this file appended and the test
-holder's rows, its unit and its `pci` facet added by the suite, as the
-display suite adds its client's (`tools/lib/erx/display_domain.rb`).
-The PCIe rows take exactly the web domain's memory, outer budget,
-connection and place in the system principal's domains quota, and less
-of `system` than the web share's 150 mcpu, so leaving out the web
-domain keeps every machine-wide figure (the system principal's memory
-and domains, `max_domains`, `max_connections`, `root_memory`, and
-property 13 of [design-system.md](design-system.md#the-manifest)) as
-the development manifest has it, and the suite tests nothing of the
-web domain. Should the PCIe rows outgrow the web domain's, the manifest
-check refuses the suite's manifest at build time. When USB input lands,
-the file's rows move into `config/manifest/qemu-virt-development.txt`,
-the board part, which then grows the system principal's memory by the
-domain's 25 MiB, its domains quota, `max_domains` and `max_connections`
-by one and `root_memory` by 25 MiB, and gives the grant its room in
-`system`, which grows to 3.1 CPUs in QEMU `virt`'s development manifest
-([Open decisions](#open-decisions)); the file is then deleted.
+**Where the rows live.** The rows above, the unit, the `pcie` service and
+the `pci_bus` and `pcie` facets, spelled as above, are rows of
+`config/manifest/qemu-virt-development.txt`, QEMU `virt`'s board part,
+which holds the system principal's memory, its domains quota,
+`max_domains`, `max_connections` and `root_memory` with the PCIe
+domain's 25 MiB and outer 1 MiB, its place in the quota and its system
+connection counted. Its grant's room in `system` comes from the
+development manifest's shared part, `config/manifest/development.txt`:
+`system` is 31 ms per 10 ms, 3.1 CPUs, and `users` 9 ms per 10 ms, 0.9
+CPUs, so the two together keep to the root's four CPUs, which the
+manifest check requires of every board's four-CPU cpuset; `session`, the
+share of root's session template, is 0.9 CPUs too, since the domain
+library holds a session's grant to its principal's, `users`. Property 13
+of [design-system.md](design-system.md#the-manifest) holds the
+configured service domains' grants to `system`'s rate less
+`system_reserve` of it, 2.325 CPUs after the reserve's 250 thousandths,
+of which the storage and network domains, on `users`, take 0.9 each,
+the web share 0.15, the display share 0.1 and the PCIe share 0.05, 2.1
+in all. Growing `system` keeps the reserve's headroom and takes nothing
+from the web and display shares; the 0.1 CPU `users` gives up is a tenth
+of the storage and network domains' grants, none of them measured, which
+nothing enforces on Fiasco ([design-fiasco.md](design-fiasco.md#downsides-against-erxoss-kernel),
+FD15). The website's manifest leaves the
+PCIe domain out, as it leaves out the web and display domains
+([design-fiasco.md](design-fiasco.md), "The Phase 1 manifest check"),
+so neither the browser demo nor the medium boots made from that
+manifest run it. The `pcie` QEMU suite's manifest is the development
+manifest without the web domain (`Manifest::Edit.without_domain`),
+which gives back the 150 mcpu its test holder's grant needs, with the
+test holder's rows, its unit and its `pci` facet added by the suite, as
+the display suite adds its client's
+(`tools/lib/erx/display_domain.rb`); the suite tests nothing of the web
+domain.
 
 ## The catalogue and gives
 
@@ -1903,22 +1912,7 @@ the line, the DMA limit and the abort's kind.
 
 ## Open decisions
 
-* **Where the PCIe domain's grant finds room in `system`.** Property 13
-  of [design-system.md](design-system.md#the-manifest) holds the
-  configured service domains' grants to `system`'s rate less
-  `system_reserve` of it. QEMU `virt`'s development manifest has no room
-  left: `system` is 30 ms per 10 ms, 3.0 CPUs, less the reserve's 250
-  thousandths, 2.25; the storage and network domains take 1.0 each, the
-  web share 0.15 and the display share 0.1, 2.25 in all. The `pcie` suite
-  needs no answer, since it leaves out the web domain ([The rows and the
-  facets' limits](#the-rows-and-the-facets-limits)), but the PCIe rows'
-  move into the board part does. The choices: grow `system` to 31 ms per
-  10 ms (3.1 CPUs, 2.325 after the reserve) in the development
-  manifest's shared part, which every board's four-CPU cpuset holds;
-  take the 50 mcpu from the web or display share, both still to be sized
-  from measurement; or lower `system_reserve`. Recommendation: grow
-  `system`, which keeps the reserve's headroom and takes from no domain
-  whose share is not yet measured; on the Pi 4 it only adds headroom.
+None.
 
 ## References
 

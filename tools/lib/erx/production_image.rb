@@ -1843,8 +1843,9 @@ module Erx
       # on a larger machine tells a scheduler count taken from the share and the online CPUs
       # together from one taken from the online CPUs alone, which the manifest's own cpuset,
       # every CPU the runs have, cannot. Every share is narrowed (Run.narrow_share), so the
-      # configured domains' grants, the storage domain's of users, the web domain's of web
-      # and the display domain's of display, still fit the system share, as the domain
+      # configured domains' grants, the storage domain's of users, the web domain's of web,
+      # the display domain's of display and the PCIe domain's of pcie, still fit the system
+      # share, as the domain
       # library requires
       # (docs/design-system.md, "The domain library").
       # Two CPUs' system share less its reserve holds one grant of users, not two, so the

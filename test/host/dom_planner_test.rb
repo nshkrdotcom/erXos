@@ -132,12 +132,13 @@ class DomPlannerTest < Minitest::Test
 
   # The development manifest as it ships, with its session template and its own
   # configured domains, storage, which holds the block unit, network, which holds the net
-  # unit, web, and display, which holds the display unit: the library plans all four, and
+  # unit, web, display, which holds the display unit, and pcie, which holds the ECAM
+  # bridge's unit: the library plans all five, and
   # the system domain's arguments start no stack.
   def test_the_library_plans_the_development_manifests_domains
     source = Erx::Platform.load(root: ROOT, name: 'qemu-virt').manifest_source(ROOT)
     context = Erx::Manifest::Context.new(**ManifestContextFixture.arguments(@codec).merge(platform: @context.platform))
-    assert_equal 4, Erx::Manifest.admit(source: source, codec: @codec, context: context, planner: @planner)
+    assert_equal 5, Erx::Manifest.admit(source: source, codec: @codec, context: context, planner: @planner)
                                  .report.fetch('child_plan_instances')
     refute_includes source[/^  system_args .*$/], '-erx_net'
     assert_includes source, "unit net\n  placement \"net\"\n  holder @domain.network\n"
@@ -145,13 +146,13 @@ class DomPlannerTest < Minitest::Test
   end
 
   # The production image's narrow manifest (ProductionImage::Run.narrow_manifest), which
-  # its 4-CPU cells boot: the system share on two CPUs, and the storage, web and display
-  # domains' grants, which must fit the system share, on them too, so the library plans
-  # them.
+  # its 4-CPU cells boot: the system share on two CPUs, and the storage, web, display and
+  # PCIe domains' grants, which must fit the system share, on them too, so the library
+  # plans them.
   def test_the_library_plans_the_narrow_images_domain
     source = Erx::ProductionImage::Run.narrow_manifest(ROOT, platform: PLATFORM)
     context = Erx::Manifest::Context.new(**ManifestContextFixture.arguments(@codec).merge(platform: @context.platform))
-    assert_equal 3, Erx::Manifest.admit(source: source, codec: @codec, context: context, planner: @planner)
+    assert_equal 4, Erx::Manifest.admit(source: source, codec: @codec, context: context, planner: @planner)
                                  .report.fetch('child_plan_instances')
   end
 
@@ -190,7 +191,7 @@ class DomPlannerTest < Minitest::Test
                                                                 .merge(platform: Erx::MediumBoot.machine(PLATFORM).record))
     admitted = Erx::Manifest.admit(source: Erx::NetworkDomain.manifest(source), codec: @codec, context: context,
                                    planner: @planner)
-    assert_equal 4, admitted.report.fetch('child_plan_instances')
+    assert_equal 5, admitted.report.fetch('child_plan_instances')
   end
 
   # The net_device suite's manifest (NetDevice.manifest), the development manifest with
@@ -214,7 +215,7 @@ class DomPlannerTest < Minitest::Test
     context = Erx::Manifest::Context.new(**ManifestContextFixture.arguments(@codec)
                                                                 .merge(platform: Erx::NetDevice.machine(PLATFORM).record))
     admitted = Erx::Manifest.admit(source: edited, codec: @codec, context: context, planner: @planner)
-    assert_equal 4, admitted.report.fetch('child_plan_instances')
+    assert_equal 5, admitted.report.fetch('child_plan_instances')
   end
 
   # ntpd's net grant holds two sockets (docs/design-time.md, "Who does what") on the
@@ -480,11 +481,11 @@ class DomPlannerTest < Minitest::Test
     assert_match(/the domain library refuses configured domain alpha with inval/, error.message)
   end
 
-  # Two grants whose exact rates sum to 2.25 CPUs, what system's 3 CPUs keep past the
+  # Two grants whose exact rates sum to 2.325 CPUs, what system's 3.1 CPUs keep past the
   # reserve, which the library's thousandths, each rounded up, put one over: planned in
   # boot order against the first's record, the second is refused.
   def test_grants_within_the_reserve_only_in_exact_arithmetic_fail_the_build
-    shares = { 'up' => 11_250_001, 'down' => 11_249_999 }.map do |name, quota|
+    shares = { 'up' => 11_625_001, 'down' => 11_624_999 }.map do |name, quota|
       "share #{name}\n  quota_ns #{quota}\n  period_ns 10000000\n  cpuset 15\n  capacity_mcpu 1000\n" \
         "  capacity_first 0\n  slice_us 1000\n  grace_us 5\n  base 16\n  ceiling 31\n  flags none\n"
     end
@@ -917,14 +918,14 @@ class DomPlannerTest < Minitest::Test
       end
     interface = ->(name) { @codec.schema.services.find { |service| service.fetch(:name) == name }.fetch(:number) }
     # The services, in name order, each with its server's index in boot order (display 0,
-    # network 1, storage 2, web 3) or none for the system domain, and its interface.
-    services = [%w[clock none clock], %w[code_objects none code_objects], %w[data 2 files],
-                %w[display 0 windows], %w[home 2 files], %w[inspect none inspect],
-                %w[log none log], %w[login_keys 2 files], %w[machine none files], %w[net 1 net],
+    # network 1, pcie 2, storage 3, web 4) or none for the system domain, and its interface.
+    services = [%w[clock none clock], %w[code_objects none code_objects], %w[data 3 files],
+                %w[display 0 windows], %w[home 3 files], %w[inspect none inspect],
+                %w[log none log], %w[login_keys 3 files], %w[machine none files], %w[net 1 net],
                 %w[network_ctl 1 driver_control],
-                %w[packages 2 files], %w[pci none pci], %w[pci_bus none pci_bus], %w[start none files],
-                %w[storage_ctl 2 driver_control],
-                %w[system 2 files], %w[web 3 web]]
+                %w[packages 3 files], %w[pci none pci], %w[pci_bus none pci_bus], %w[pcie 2 pcie],
+                %w[start none files], %w[storage_ctl 3 driver_control],
+                %w[system 3 files], %w[web 4 web]]
     assert_equal services.each_with_index.map { |(name, server, kind), index|
                    "service #{index} name=#{name} server=#{server} interface=#{interface.call(kind)}"
                  },

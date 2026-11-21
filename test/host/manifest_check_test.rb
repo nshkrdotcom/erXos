@@ -138,16 +138,15 @@ class ManifestCheckTest < Minitest::Test
     assert_instance_of Erx::Manifest::Admitted, result
     assert result.bytes.frozen?
     view = @codec.open('manifest', result.bytes)
-    assert_equal 4, view.count('domains')
-    assert_equal 13, view.count('devices')
+    assert_equal 5, view.count('domains')
+    assert_equal 14, view.count('devices')
     assert_equal 10, view.count('windows')
     assert_equal 1, view.count('images')
   end
 
-  # The PCIe domain's manifest, the development manifest without the web domain and with
-  # config/manifest/qemu-virt-pcie.txt (PcieDomain), passes the check: the PCIe domain
-  # stands in the web domain's place, holds the ECAM bridge's unit, and its grants keep
-  # the root's margin as the development manifest does.
+  # The pcie suite's base manifest, the development manifest without the web domain
+  # (PcieDomain), passes the check and keeps the root's margin, since the web domain
+  # gives back the room it took.
   def test_the_pcie_domain_s_manifest_is_accepted
     platform = Erx::Platform.load(root: ROOT, name: 'qemu-virt')
     result = admit(Erx::PcieDomain.manifest_source(ROOT, platform: platform))
@@ -200,7 +199,7 @@ class ManifestCheckTest < Minitest::Test
 
   def test_the_report_carries_the_checked_numbers
     report = admit.report
-    assert_equal 4, report.fetch('child_plan_instances')
+    assert_equal 5, report.fetch('child_plan_instances')
     assert_equal @platform.fetch('fiasco_reserve'), report.fetch('fiasco_reserve')
     assert_equal @platform.fetch('ram_bytes'), report.fetch('ram_bytes')
     assert_equal 4096, report.fetch('root_image_loadable_bytes')
@@ -233,9 +232,9 @@ class ManifestCheckTest < Minitest::Test
   def test_accepted_services_reach_the_encoded_manifest
     view = @codec.open('manifest', admit(@source + SERVICE).bytes)
     # The development manifest's own, clock, code_objects, data, display, home, inspect, log,
-    # login_keys, machine, net, network_ctl, packages, pci, pci_bus, start, storage_ctl, system
-    # and web, and this one.
-    assert_equal %w[clock code_objects data display home inspect log login_keys machine net network_ctl packages pci pci_bus probe start storage_ctl system web], view.count('services').times.map { |index| view.string(view.fetch('services', index).fetch('name')) }
+    # login_keys, machine, net, network_ctl, packages, pci, pci_bus, pcie, start, storage_ctl,
+    # system and web, and this one.
+    assert_equal %w[clock code_objects data display home inspect log login_keys machine net network_ctl packages pci pci_bus pcie probe start storage_ctl system web], view.count('services').times.map { |index| view.string(view.fetch('services', index).fetch('name')) }
     assert_equal 0, view.count('liveness')
   end
 
@@ -271,8 +270,7 @@ class ManifestCheckTest < Minitest::Test
   # docs/design-usb.md, "The Phase 1 part"). usb_platform adds three units to the real
   # platform: the ECAM bridge, whose node raises no line; qemu-xhci at its place on the
   # bridge's root bus; and a device-tree USB controller, the one a window can name by
-  # path. usb_source places them, the bridge on the PCIe domain, which here is the
-  # development manifest's web domain renamed pcie, without the web service it serves.
+  # path. usb_source places them, the bridge on the development manifest's PCIe domain.
   BRIDGE = '/pcie@10000000'
   STICK = '/usb@a004000'
   USB_HOLDERS = { 'pcie' => '@domain.pcie', 'xhci' => '@domain.network', 'stick' => '@domain.network' }.freeze
@@ -307,14 +305,14 @@ class ManifestCheckTest < Minitest::Test
     end
   end
 
-  # The development manifest with a domain pcie in place of the web domain, serving web
-  # only when serving, the units of holders, and the pci facet of the function's holder
-  # when a configured domain holds it.
+  # The development manifest with the units of holders in place of its bridge's unit, the
+  # pci facet of the function's holder when a configured domain holds it, and the web
+  # service served by the PCIe domain when serving.
   def usb_source(holders = USB_HOLDERS, serving: false)
-    renamed = changed(@source.sub("domain web\n", "domain pcie\n").gsub('@domain.web', '@domain.pcie'))
-    renamed = renamed.sub(/^service web\n(?:  .*\n)*/, '').sub(/^facet web\n(?:  .*\n)*/, '') unless serving
+    bridgeless = changed(@source.sub(/^unit pcie\n(?:  .*\n)*/, ''))
+    bridgeless = changed(bridgeless.sub("service web\n  server @domain.web\n", "service web\n  server @domain.pcie\n")) if serving
     holder = holders['xhci']
-    renamed + units_of(holders) + (holder&.start_with?('@domain.') ? pcie_facet('pci', holder) : '')
+    bridgeless + units_of(holders) + (holder&.start_with?('@domain.') ? pcie_facet('pci', holder) : '')
   end
 
   # A facet row of the PCIe interface service, granted to grantee.
@@ -322,9 +320,6 @@ class ManifestCheckTest < Minitest::Test
     "facet #{name}\n  name \"#{service}\"\n  grantee #{grantee}\n  service @service.#{service}\n  operations none\n  max_request 4096\n" \
       "  in_flight 1\n  reductions 100000\n  period_ns 1000000000\n  max_heap_size 65536\n"
   end
-
-  # The domain pcie's pcie service, which only the system domain holds.
-  PCIE_SERVICE = "service pcie\n  server @domain.pcie\n  interface pcie\n"
 
   def units_of(holders) = holders.map { |key, holder| "unit #{key}\n  placement \"#{key}\"\n  holder #{holder}\n" }.join
 
@@ -346,7 +341,7 @@ class ManifestCheckTest < Minitest::Test
       usb_refused('unit.holder', /only the domain pcie holds a PCIe bridge's unit/, usb_source(USB_HOLDERS.merge('pcie' => holder)))
     end
     usb_refused('unit.holder', /only the domain pcie holds a PCIe bridge's unit/,
-                @source + units_of(USB_HOLDERS.merge('pcie' => '@domain.network')))
+                changed(@source.sub(/^unit pcie\n(?:  .*\n)*/, '')) + units_of(USB_HOLDERS.merge('pcie' => '@domain.network')))
   end
 
   # A function, even one the platform marks as of the configuration role, is no bridge.
@@ -367,23 +362,30 @@ class ManifestCheckTest < Minitest::Test
   # The PCIe interfaces' parties (docs/design-pcie.md, "Facets" and "The manifest"): the
   # domain pcie serves pcie to the system domain and holds pci_bus, the system domain's.
   def test_the_pcie_domain_serves_pcie_and_holds_pci_bus
-    usb_admit(usb_source + PCIE_SERVICE + pcie_facet('pcie', 'system') + pcie_facet('pci_bus', '@domain.pcie'))
+    usb_admit
   end
+
+  # usb_source without the PCIe domain's pci_bus facet, so a pci_bus service moved off the
+  # system domain or onto another interface meets the service check, not first the facet
+  # check of operations on a configured domain's service or of undeclared operations.
+  def without_pci_bus_facet = changed(usb_source.sub(/^facet pci_bus\n(?:  .*\n)*/, ''))
 
   def test_a_pcie_interface_of_another_server_is_refused
     usb_refused('service.server', /a pci service is named pci, is of interface pci and is served by the system domain alone/,
                 usb_source.sub("service pci\n  server system\n", "service pci\n  server @domain.storage\n"))
     usb_refused('service.server', /a pci_bus service .* served by the system domain alone/,
-                usb_source.sub("service pci_bus\n  server system\n", "service pci_bus\n  server @domain.network\n"))
+                without_pci_bus_facet.sub("service pci_bus\n  server system\n", "service pci_bus\n  server @domain.network\n"))
+    # The system domain takes no facet of its own service, so the pcie facet goes with the move.
     usb_refused('service.server', /a pcie service .* served by the domain pcie alone/,
-                usb_source + "service pcie\n  server system\n  interface pcie\n")
+                changed(usb_source.sub("service pcie\n  server @domain.pcie\n", "service pcie\n  server system\n")
+                                .sub(/^facet pcie\n(?:  .*\n)*/, '')))
   end
 
   # The system domain finds a facet's callback by its service's name, so the name and the
   # interface go together both ways.
   def test_a_pcie_service_name_apart_from_its_interface_is_refused
     message = /a pci_bus service is named pci_bus, is of interface pci_bus/
-    usb_refused('service.server', message, usb_source.sub("  interface pci_bus\n", "  interface log\n"))
+    usb_refused('service.server', message, without_pci_bus_facet.sub("  interface pci_bus\n", "  interface log\n"))
     usb_refused('service.server', message, usb_source + "service pci_bus_too\n  server system\n  interface pci_bus\n")
   end
 
@@ -393,12 +395,12 @@ class ManifestCheckTest < Minitest::Test
   end
 
   def test_a_pci_bus_facet_of_another_grantee_is_refused
-    usb_refused('facet.grantee', /only the domain pcie holds a pci_bus facet/, usb_source + pcie_facet('pci_bus', '@domain.network'))
+    usb_refused('facet.grantee', /only the domain pcie holds a pci_bus facet/, usb_source + pcie_facet('pci_bus', '@domain.network', name: 'pci_bus_network'))
   end
 
   def test_a_pcie_facet_of_another_grantee_is_refused
     usb_refused('facet.grantee', /only the system domain holds a pcie facet/,
-                usb_source + PCIE_SERVICE + pcie_facet('pcie', '@domain.network'))
+                usb_source + pcie_facet('pcie', '@domain.network', name: 'pcie_network'))
   end
 
   def test_a_pci_facet_is_held_exactly_by_the_holders_of_pci_devices
@@ -630,7 +632,7 @@ class ManifestCheckTest < Minitest::Test
   end
 
   def test_shares_over_the_root_rate_are_refused
-    refused(Erx::Manifest::Invalid, 'machine.shares', @source.sub('quota_ns 30000000', 'quota_ns 40000000'),
+    refused(Erx::Manifest::Invalid, 'machine.shares', changed(@source.sub('quota_ns 31000000', 'quota_ns 40000000')),
             message: /system and users exceed the root CPU rate/)
   end
 

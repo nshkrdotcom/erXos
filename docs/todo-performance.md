@@ -156,6 +156,11 @@ of its run) are in the full list as it stood before it was grouped,
 
 ## Domains, cross-domain messaging and inspection
 
+* [Low] Boot, the PCIe domain (`config/manifest/qemu-virt-development.txt`, `domain pcie`): every boot of
+  QEMU virt's development manifest starts one more interpreter domain, 22.5 MiB at rest, which walks the
+  ECAM bridge and reports before its holders start. Settle it with `tools/erx bench boot --accel hvf` on
+  the development image with and without the domain's rows.
+
 * **[Medium] lanes, a bell's hop to the lane port's input task** (`otp/erts/emulator/sys/erxos/erx_lane_drv.c`): a bell schedules the port's input task instead of draining at the dispatching executor, the hop stock ERTS pays from the poll thread to a TCP distribution port. Settled by the time from the peer's bell to `erts_net_message` on HVF, with one scheduler and with every `+S` scheduler busy.
 * **[Low] lanes, the control table's scan on every run** ([design-runtime.md](design-runtime.md#connections-in-erts)): each run of a domain's input task on its system connection loads every control slot's `seq`, 256 words at the default `connections`, though a record arrives a few times per connection's life. Settled by bell to `erts_net_message` for small frames on HVF at `connections` 1 and 4,096; fix: a table-wide count of records written, loaded once per run.
 * [Low] `otp/erts/emulator/sys/erxos/erx_exports.c`, `erx_dist_exports_1`: each holder of a name is checked against its peer's connection, a distribution-table read and a walk of its entries, uncharged, so a widely handed name costs holders times connections per call. Settled by `erx_dist:exports/1` on a name with 1,000 holders across 64 connections.
