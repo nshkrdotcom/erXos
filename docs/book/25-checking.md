@@ -34,11 +34,8 @@ what its author expected.
 
 FreeBSD checks itself with a test suite installed under `/usr/tests`
 and run by Kyua, with continuous builds of every architecture, and
-with outside fuzzers such as syzkaller driving its system calls.
-<!-- check: syzkaller fuzzes FreeBSD's system calls (syzkaller's
-docs/freebsd); FreeBSD runs continuous builds of every architecture.
-Neither read from a source. /usr/tests and Kyua are confirmed by
-tests(7). -->
+with outside fuzzers such as syzkaller, which can fuzz a FreeBSD
+kernel running in a virtual machine (syzkaller's `docs/freebsd`).
 Most of those tests, like most tests anywhere, state their expected
 answers by hand.
 
@@ -751,10 +748,9 @@ stale-row rule keeps them from becoming a place to hide bugs.
 
 **Bounded tools over a full proof.** seL4's proof of 2009 shows that
 a microkernel's C code can be proved correct against its
-specification, at a cost of many person-years (Klein et al., 2009).
-<!-- check: the person-years cost is not read from a source in the
-tree; check it against Klein et al., SOSP 2009. --> erXos runs on Fiasco and checks its own code
-with tools whose cost grows with what they check: models of the
+specification, at a cost its authors put at about 20 person-years in all, of which
+about 11 went into the seL4-specific proof (Klein et al., 2009). erXos
+runs on Fiasco and checks its own code with tools whose cost grows with what they check. They are models of the
 protocols that are hard to get right, bounded proofs of small C cores,
 and exhaustive exploration of pure cores. Each says exactly what it
 covers.
@@ -802,20 +798,18 @@ every commit; slow ones run on what has landed.
   the alphabet, abstraction and properties of the TCP exploration.
 * [README.md, Correctness and testing](../../README.md#correctness-and-testing):
   each check's command, in one list.
-* Leslie Lamport, *Specifying Systems* (2002): TLA+ and TLC, from the
-  language's author.
-  <!-- check: Lamport, Specifying Systems, 2002; not verified. -->
+* Leslie Lamport, *Specifying Systems: The TLA+ Language and Tools for
+  Hardware and Software Engineers*, Addison-Wesley, 2002: TLA+ and TLC,
+  from the language's author.
 * Jade Alglave, Luc Maranget and Michael Tautschnig, "Herding Cats:
-  Modelling, Simulation, Testing, and Data Mining for Weak Memory"
-  (2014): the method behind herd7 and its litmus tests.
-  <!-- check: Alglave, Maranget and Tautschnig, Herding Cats, 2014;
-  not verified. -->
+  Modelling, Simulation, Testing, and Data Mining for Weak Memory",
+  *ACM Transactions on Programming Languages and Systems* 36(2),
+  article 7, 2014: the method behind herd7 and its litmus tests.
 * Daniel Kroening and Michael Tautschnig, "CBMC: C Bounded Model
   Checker", TACAS 2014, LNCS 8413, pp. 389-391: the tool behind the C
   harnesses.
-* Gerwin Klein et al., "seL4: Formal Verification of an OS Kernel"
-  (2009): what a full proof of a microkernel costs and gives.
-* William M. McKeeman, "Differential Testing for Software" (1998):
-  the method of section 25.1.
-  <!-- check: McKeeman, Differential Testing for Software, 1998; not
-  verified. -->
+* Gerwin Klein et al., "seL4: Formal Verification of an OS Kernel",
+  *22nd ACM Symposium on Operating Systems Principles (SOSP)*, 2009:
+  what a full proof of a microkernel costs and gives.
+* William M. McKeeman, "Differential Testing for Software",
+  *Digital Technical Journal* 10(1), 1998: the method of section 25.1.
