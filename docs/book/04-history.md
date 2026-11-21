@@ -239,9 +239,9 @@ Almost every mechanism in erXos comes from an earlier system. What is
 erXos's own is the way they meet: an Erlang process as the system's
 process, across address spaces, with Erlang's semantics intact. Four
 sources shaped erXos most (sections 4.3.1 to 4.3.4); table 4.1 lists
-the others.
+the others, and [appendix E](e-lineage.md) tells each idea's story.
 
-| System | Idea | What erXos took |
+| System | Idea | Where it shows in erXos |
 | --- | --- | --- |
 | QNX | a UNIX look over a microkernel | a UNIX surface over services in user mode |
 | Genera | one live machine: any object examined, code patched while it runs | the live machine of [chapter 21](21-live-machine.md), with walls Genera lacked |
@@ -252,7 +252,7 @@ the others.
 | Genode | each session paid from a quota its client donates | memory shares for users |
 | Barrelfish | hardware facts as data; a plan kept apart from the register writes | a checked manifest and one ABI file (section 4.5.4) |
 
-*Table 4.1. Systems that each gave erXos one idea
+*Table 4.1. Other systems behind one idea each in erXos
 ([research-prior-art.md](../research-prior-art.md),
 [research-os-ideas.md](../research-os-ideas.md)).*
 
@@ -271,39 +271,34 @@ other.
 
 ### 4.3.1 UNIX and FreeBSD: the surface
 
-UNIX gives erXos its surface: files, processes, pipes of text, a shell
-and small tools. Where UNIX systems differ, erXos follows FreeBSD.
-musl, the C library under erXos's runtimes, uses FreeBSD's error and
-signal numbers. The command shell's `ps`, `ls` and `grep` are Erlang
-commands that print FreeBSD's output, and the network stack,
-`erx_net`, is an Erlang redesign of FreeBSD's
+erXos's surface is UNIX's: files, processes, pipes of text, a shell
+and small tools. Where UNIX systems differ it follows FreeBSD, so the
+C library under its runtimes, musl, uses FreeBSD's error and signal
+numbers, the command shell's `ps`, `ls` and `grep` print FreeBSD's
+output, and the network stack, `erx_net`, is modelled on FreeBSD's
 ([README.md, Current status](../../README.md#current-status)).
 
-erXos leaves UNIX's inside. Its kernel is not monolithic, POSIX is not
-its base, and a user id grants nothing by itself
-([chapter 20](20-shell.md#201-unix-look-and-feel-honestly)).
-QNX showed that a system can look like UNIX over a microkernel. For
-erXos, UNIX is how the system looks wherever that is also how it
-works.
+Underneath, erXos is not UNIX. Its kernel is not monolithic, POSIX is
+not its base, and a user id grants nothing by itself
+([chapter 20](20-shell.md#201-unix-look-and-feel-honestly)). UNIX is
+how the system looks wherever that is also how it works.
 
 ### 4.3.2 L4 and Fiasco: the kernel
 
-Jochen Liedtke's L4, from 1993, showed that a microkernel can be fast
-by keeping only address spaces, threads and fast message passing
-([chapter 2](02-microkernels.md#251-from-l3-to-sel4)). Fiasco, a C++
-implementation of L4 begun at TU Dresden in 1998, is erXos's kernel
-(Elphinstone and Heiser 2013). erXos patches it only where it needs a
-property Fiasco lacks and the patch is small
+erXos's kernel is Fiasco, a C++ microkernel of Jochen Liedtke's L4
+family begun at TU Dresden in 1998, which keeps only address spaces,
+threads and fast message passing
+([chapter 2](02-microkernels.md#251-from-l3-to-sel4); Elphinstone and
+Heiser 2013). erXos patches it only where it needs a property Fiasco
+lacks and the patch is small
 ([design-fiasco.md](../design-fiasco.md)).
 
-erXos also takes the shape of L4Re, the user-mode system that usually
-runs on Fiasco. In L4Re a root task, the first program the kernel
-starts, creates the other programs and hands each its capabilities
-([chapter 2](02-microkernels.md#253-the-root-task)). In erXos the root
-service of the system domain plays that part: it alone creates kernel
-objects and writes any address space's capabilities or page tables.
-Even the domain limits of section 4.2.3 follow L4Re: its loader gives
-each program a CPU set and a range of priorities
+Above the kernel, the root service of the system domain is the root
+task, in the shape of L4Re's
+([chapter 2](02-microkernels.md#253-the-root-task)): it alone creates
+kernel objects and writes any address space's capabilities or page
+tables, and it gives each domain a CPU set and a range of priorities,
+the domain limits of section 4.2.3
 ([design-fiasco.md, Threads, bands and stops](../design-fiasco.md#threads-bands-and-stops)).
 
 erXos's own code never calls Fiasco directly. It reaches the kernel
@@ -316,20 +311,15 @@ Fiasco type or number reaches Erlang code or users
 
 ### 4.3.3 Plan 9: names and files
 
-Plan 9, built at Bell Labs from the late 1980s, reached every resource
-through files. Servers present resources as file trees, and one
-protocol, 9P, carries every request. Each group of processes assembles
-its own view of the tree, its namespace, from the servers it mounts
-(Pike and others 1995). Its window system served each window as files, and
-its shell was rc.
-
-erXos takes most of this. Each domain resolves paths through its own
-namespace, a table from paths to the file servers it was granted, with
-no machine-wide root. A path is therefore the visible face of a
+erXos names every resource by a path, after Plan 9 (Pike and others
+1995). Each domain resolves paths through its own **namespace**, a
+table from paths to the file servers it was granted, with no
+machine-wide root. A path is therefore the visible face of a
 capability: a domain with no grant for the storage service has no
 `/data`, and no name it can write reaches that server. File servers
-speak 9P2000.L, a version of 9P. A display serves each window as a
-directory of files, and the command shell speaks rc's language
+speak 9P2000.L, a version of Plan 9's file protocol 9P. A display
+serves each window as a directory of files, and the command shell
+speaks the language of rc, Plan 9's shell
 ([chapter 14](14-files.md),
 [chapter 22](22-display.md#221-windows-are-files)).
 
@@ -339,28 +329,23 @@ A process in erXos acts only on what it was handed, and everything it
 creates is paid for by someone. Both ideas come from capability
 systems.
 
-In stock Erlang a pid is both a name and an authority: anyone who
-knows or forges a pid can send to it, link to it or kill it. Safe
-Erlang, a 1999 proposal for running mobile code, called pids "both
-forgeable and too powerful" and replaced them with capabilities (Brown
-and Sahlin 1999). Zircon, Fuchsia's kernel, gives programs no ambient
-authority ([chapter 2](02-microkernels.md#231-authority-in-unix)).
-erXos takes both ideas. In its design, a domain reaches another
-domain's process only if that process's own runtime exported it, so a
-forged pid reaches nothing. Inside a domain, pids keep their stock meaning, because the
-domain is the unit of trust
+Knowing a pid grants nothing across a wall, as Safe Erlang proposed
+for pids that were "both forgeable and too powerful" (Brown and Sahlin
+1999), and as Zircon, Fuchsia's kernel, gives programs no ambient
+authority ([chapter 2](02-microkernels.md#231-authority-in-unix)). A
+domain reaches another domain's process only if that process's own
+runtime exported it, so a forged pid reaches nothing. Inside a domain
+any process that knows a pid may send to it, link to it or kill it,
+because the domain is the unit of trust
 ([chapter 11](11-security.md#115-exports-and-the-funnel-authority-over-processes)).
 
-Payment comes from EROS
-([chapter 2](02-microkernels.md#236-capability-systems-in-practice)).
-EROS allocated every object from a **space bank**. Banks formed a
-hierarchy, and destroying one destroyed, or handed to its parent,
-everything allocated from it and the banks below it (Shapiro, Smith
-and Farber 1999). erXos's **budgets** follow that model. The root
-service keeps a record of each budget, carved from its parent's, and
-charges each object it creates to one. Ending a budget ends everything
-charged to it and every budget carved below it, so ending a domain
-leaves nothing to chase (`liberx/backend/fiasco/budget.c`).
+Payment follows EROS's space banks (Shapiro, Smith and Farber 1999;
+[chapter 2](02-microkernels.md#236-capability-systems-in-practice)).
+The root service keeps a record of each **budget**, carved from its
+parent's, and charges each object it creates to one. Ending a budget
+ends everything charged to it and every budget carved below it, so
+ending a domain leaves nothing to chase
+(`liberx/backend/fiasco/budget.c`).
 
 In the design, each domain's budget is also a wall at its guarantee,
 in three parts. Its kernel memory is a Fiasco factory, a kernel object
@@ -389,7 +374,7 @@ budget, CPU share and quotas
 
 | Requirement | What it means |
 | --- | --- |
-| Run Erlang applications | applications run on OTP 29.1.2 unmodified, with Erlang's semantics, checked against stock OTP |
+| Run Erlang applications | applications run unmodified, with Erlang's semantics |
 | Protection | untrusted code cannot read, write, crash or exhaust anything beyond its grant |
 | One system | one pid space, message system and view of identity, supervision and inspection across domains; one CPU authority |
 | Generic runtimes | the kernel knows no runtime; ERTS runs on a contract another runtime could use |
@@ -455,17 +440,15 @@ in C ([chapter 15](15-devices.md)).
 
 ### 4.5.2 erXos owns OTP
 
-OTP 29.1.2's source lives in erXos's tree and changes by ordinary
-edits; erXos does not track upstream. ERTS is a parts bin, taken apart
+OTP's source lives in erXos's tree and changes by ordinary edits.
+ERTS is a parts bin, taken apart
 and recombined wherever that makes the system simpler or faster, and
 so is musl. In erXos, ERTS runs in user mode over `liberx`, and its
 pids name the domain that owns them.
 
-Owning OTP does not mean drifting from it. OTP's own test suites run
-on erXos and on stock OTP, and the results are compared case by case.
-Every difference is a bug in erXos, a documented difference with a
-test, or an upstream bug recorded as such
-([chapter 25](25-checking.md)).
+Owning OTP does not mean drifting from it: an Erlang program behaves
+on erXos as Erlang's semantics say, and a difference is either a bug
+or documented ([chapter 25](25-checking.md)).
 
 ### 4.5.3 Beauty and simplicity
 

@@ -2,7 +2,8 @@
 
 > **Status.** Background: the chapter describes microkernels and
 > capabilities in general, so its sections carry no mark. What it says
-> about erXos is **Built**: erXos runs on the Fiasco microkernel behind
+> about erXos is **Built**, except rights on handles checked on every
+> use, which are **Designed**: erXos runs on the Fiasco microkernel behind
 > its own kernel interface, `liberx`, and its system domain, the root
 > task, starts and ends the other domains. How erXos uses Fiasco is
 > told in
@@ -731,28 +732,16 @@ Fiasco's own names and data structures never reach Erlang code or
 users, and a call Fiasco cannot carry out fails with a plain error,
 `ERX_ENOTSUP`.
 
-A program does not name its kernel objects by Fiasco's slots. It
-names them by **handles**, entries in a table the root task keeps for
-each program; a handle's low 24 bits are the entry's index plus one.
-Each entry records the generation of the object it names, the counter
-of section 2.3.5, kept with the root task's record of the object rather
-than in the number. So when an object is destroyed, every handle to it
-answers the error `ERX_ESTALE` until its holder closes it, and never
-names whatever object comes next. The record's generation does not cover a
-holder's own close; the entry's own generation does, carried in the
-handle's value, so a closed handle answers `ERX_ESTALE` too, even once
-its entry, taken first in, first out, names another object. A doorbell
-or an interrupt line is the one exception: its holder rings and
-acknowledges it straight through Fiasco, on a capability the root
-places at the Fiasco slot the handle's index fixes, so those two uses
-make no request to the root and are checked by Fiasco at the slot
-alone, while every other use of its handle still goes through the
-root. Each entry
-records its rights, but no call except destroy checks them yet: any
-holder may use an object as its type allows, and only destroying it is
-kept to the object's creator. The design adds rights that start from
-each creation kind's defaults, only shrink as a handle is duplicated or
-passed, and are checked on every use; that is designed and not built
+A program names its kernel objects by **handles**, entries in a table
+the root task keeps for each program, never by Fiasco's slots. Each
+entry records the generation of the object it names, the counter of
+section 2.3.5, so a handle whose object was destroyed, or which its
+holder closed, answers the error `ERX_ESTALE` and never names whatever
+object comes next. Each entry also records its rights, but only
+destroying an object checks them, and only its creator may destroy it.
+The design adds rights that start from each creation kind's defaults,
+only shrink as a handle is duplicated or passed, and are checked on
+every use; that is designed and not built
 ([chapter 8, section 8.4](08-kernel-interface.md#84-handles-and-destroying-an-object)).
 [Chapter 8](08-kernel-interface.md) describes the interface and how it
 sits on Fiasco.
