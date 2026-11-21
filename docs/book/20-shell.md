@@ -74,7 +74,7 @@ The table shows the rule deciding cases from this chapter.
 | --- | --- | --- |
 | `sh` | The shell is `rc`, and says so in its banner | Its language is rc's, not POSIX's; calling it `sh` would invite scripts it cannot run |
 | `ps` columns | The familiar columns and keywords; `-` for a value not measured | A script's `awk '{print $3}'` finds the same field in every row |
-| `rc.conf` | Designed: `/etc/start.conf`, rc.conf's assignment syntax only. Built: `/data/etc/rc.conf` | The file sets fields of declared rows and runs no code, so it is not the shell script the name `rc.conf` promises |
+| `rc.conf` | Designed: `/etc/start.conf`, rc.conf's assignment syntax only. Built: `/data/etc/rc.conf` | The file sets fields of declared rows and runs no code |
 | `exec`, `rfork` (a finer-grained `fork`) | Fail with a diagnostic | The shell has no process image to replace and nothing to fork |
 | `/dev/tty` | A name the program's handler opens, not the file server; reads and writes go to the tty | A terminal's reads, modes and signals are not file-protocol requests |
 
