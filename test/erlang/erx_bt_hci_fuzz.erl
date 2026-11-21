@@ -20,7 +20,8 @@
 %%   layout's length and handles from 0x000 to 0xEFF; malformed only for a code it
 %%   decodes, unknown only for one it does not.
 %% * return/2 answers a failed status as failed, and a success as decoded exactly when
-%%   it has its command's layout's length, the values read back as written.
+%%   it has its command's layout's length, the values read back as written, but for a
+%%   Long Term Key reply's return naming a reserved handle, which is malformed.
 %% * parse/1 gives records whose encodings are the file byte for byte, each of Write
 %%   RAM or Launch RAM; a written patch back as written; a patch whose last record is
 %%   cut refused as truncated at that record; and a refusal's offset and opcode as the
@@ -44,14 +45,17 @@
                   le_long_term_key_request]).
 -define(UNHANDLED, [command_complete, command_status, hardware_error, no_completed_packets, other_le_meta]).
 %% Each command named to return/2 and the length of its Command Complete's return
-%% parameters, status included (7.4.1, 7.4.2, 7.8.3, 7.4.6, 7.8.2, 7.4.5; the rest
-%% return their status alone).
+%% parameters, status included (7.4.1, 7.4.2, 7.8.3, 7.4.6, 7.8.2, 7.4.5, 7.8.25, 7.8.26;
+%% the rest return their status alone).
 -define(RETURNS, [{read_local_version, 9}, {read_local_commands, 65}, {le_read_features, 9}, {read_bd_addr, 7},
                   {le_read_buffer_size, 4}, {read_buffer_size, 8}, {reset, 1}, {set_event_mask, 1},
                   {host_buffer_size, 1}, {le_set_event_mask, 1}, {le_set_random_address, 1},
                   {le_set_advertising_parameters, 1}, {le_set_advertising_data, 1},
                   {le_set_scan_response_data, 1}, {le_set_advertising_enable, 1}, {disconnect, 1},
-                  {vendor, 1}]).
+                  {vendor, 1}, {le_long_term_key_request_reply, 3}, {le_long_term_key_request_negative_reply, 3}]).
+%% The returns that carry a Connection_Handle (7.8.25, 7.8.26).
+-define(IS_HANDLE_RETURN(Name), (Name =:= le_long_term_key_request_reply orelse
+                                 Name =:= le_long_term_key_request_negative_reply)).
 
 run([Seed]) ->
     rand:seed(exsss, {20, 26, list_to_integer(Seed)}),
@@ -331,10 +335,20 @@ handles(_) -> [].
 return_case() ->
     {Name, Length} = pick(?RETURNS),
     case rand:uniform(3) of
-        1 -> Fields = bytes(Length - 1), {Name, <<0, Fields/binary>>, {ok, value(Name, Fields)}};
+        1 -> Fields = bytes(Length - 1), {Name, <<0, Fields/binary>>, success(Name, Fields)};
         2 -> Status = rand:uniform(255), {Name, <<Status, (bytes(rand:uniform(70) - 1))/binary>>, {failed, Status}};
         3 -> {Name, success_of_length(rand:uniform(72) - 1), none}
     end.
+
+%% A success's answer: the handle of a reply's return, malformed when it is reserved (its
+%% word's upper four bits are flags), else the values its fields give.
+success(Name, <<Word:16/little>>) when ?IS_HANDLE_RETURN(Name) ->
+    case Word band 16#FFF of
+        Handle when Handle =< ?HANDLE_MAX -> {ok, Handle};
+        _Reserved -> malformed
+    end;
+success(Name, Fields) ->
+    {ok, value(Name, Fields)}.
 
 %% The values a success returns, read from its fields as the sections lay them out.
 value(read_local_version, <<HciVersion, HciSubversion:16/little, LmpVersion, Company:16/little, LmpSubversion:16/little>>) ->
@@ -355,6 +369,8 @@ check_return(_Name, <<>>, malformed) ->
     ok;
 check_return(_Name, <<Status, _/binary>>, {failed, Status}) when Status =/= 0 ->
     ok;
+check_return(Name, <<0, Fields:2/binary>>, Said) when ?IS_HANDLE_RETURN(Name) ->
+    Said =:= success(Name, Fields) orelse error({return_handle_disagrees, Name, Fields, Said});
 check_return(Name, <<0, _/binary>> = Return, Said) ->
     {Name, Length} = lists:keyfind(Name, 1, ?RETURNS),
     case Said of

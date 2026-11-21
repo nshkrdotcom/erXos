@@ -44,6 +44,20 @@ since the controller may carry that disconnect out on the new peer. A disconnect
 answered with a status other than success or Unknown Connection Identifier (the handle
 has gone, which Disconnection Complete reports or has reported) stops.
 
+**Long Term Key replies**: a link answers the LE Long Term Key Request the core passed
+it with `{ltk_reply, Key}`, its key, or `{ltk_reply, none}` when it has none, which the
+core sends as LE Long Term Key Request Reply or Negative Reply (Part E, 7.8.25, 7.8.26)
+for the link's own handle, the one its name carries: no request names a handle. A reply
+waits with its handle until it is taken, and a second one asked before then is ignored,
+so a link answers each request once;
+Disconnection Complete drops it, so it never reaches the handle's next peer. Its
+Command Complete goes to the handle's link as `{ltk_reply_complete, ok}` or
+`{ltk_reply_complete, {failed, Status}}`, a failed Command Status as the latter; a
+success naming another handle, a malformed return or a Command Status of success stops,
+and so does a connection on a handle whose reply is handed to the writer and unanswered,
+as for a disconnect. The key is a secret: it stays in the reply and the
+command, which `facts/1` does not show, and no stop reason carries a request.
+
 **Links** are named by their handle and the connection that gave it, `{Handle, Serial}`,
 the serial counting the core's connections: `link_up` gives a link its name, every
 action for a link carries it, and every request comes in one envelope that carries it,
@@ -99,7 +113,7 @@ slice): this core sends what it is given.
                | {event, erx_hci:event()}
                | {acl, handle(), 0..3, 0..3, binary()}
                | {request, link(), request()}.
--type request() :: {send, 0..3, binary()} | {disconnect, byte()}.
+-type request() :: {send, 0..3, binary()} | {disconnect, byte()} | {ltk_reply, erx_hci:key() | none}.
 -type action() :: line_reset | {write, binary()} | {ready, map()} | {link_up, link(), map()} | {link_down, link()}
                 | {to_link, link(), term()} | {busy, link()} | {stop, term()}.
 
@@ -122,6 +136,7 @@ slice): this core sends what it is given.
     links = #{} :: #{handle() => {Serial :: pos_integer(), InFlight :: non_neg_integer()}},  % per live handle
     advertising = false :: boolean(),
     disconnects = [] :: [{handle(), {asked, Reason :: byte()} | taken}],  % live handles only
+    replies = [] :: [{handle(), erx_hci:key() | none}],  % asked and not taken, live handles only
     facts = #{} :: map(),
     dropped = 0 :: non_neg_integer()
 }).
@@ -264,8 +279,15 @@ request({disconnect, Reason}, {Handle, _Serial}, _InFlight,
         false -> {[], Core#core{disconnects = Pending ++ [{Handle, {asked, Reason}}]}};
         true -> {[], Core}
     end;
-request(Request, Link, _InFlight, _Core) ->
-    stop({unexpected_input, {request, Link, Request}}).
+request({ltk_reply, Key}, {Handle, _Serial}, _InFlight, #core{replies = Replies} = Core)
+  when Key =:= none; bit_size(Key) =:= 128 ->
+    case lists:keymember(Handle, 1, Replies) of
+        false -> {[], Core#core{replies = Replies ++ [{Handle, Key}]}};
+        true -> {[], Core}
+    end;
+%% The request is left out of the reason: a malformed reply may hold a key.
+request(_Request, Link, _InFlight, _Core) ->
+    stop({unexpected_request, Link}).
 
 %% The credits no live handle holds, and a link's share of all of them.
 free(#core{credits = Credits, links = Links}) ->
@@ -299,7 +321,8 @@ event({disconnection_complete, ?ERX_HCI_STATUS_SUCCESS, Handle, _Reason}, #core{
             {[{link_down, {Handle, Serial}}],
              Core#core{links = maps:remove(Handle, Links),
                        out = [Item || {Owner, _} = Item <- Core#core.out, Owner =/= Handle],
-                       disconnects = lists:keydelete(Handle, 1, Core#core.disconnects)}};
+                       disconnects = lists:keydelete(Handle, 1, Core#core.disconnects),
+                       replies = lists:keydelete(Handle, 1, Core#core.replies)}};
         #{} ->
             {[], dropped(Core)}
     end;
@@ -346,6 +369,8 @@ connected(Handle, _Info, #core{links = Links}) when is_map_key(Handle, Links) ->
     stop({duplicate_handle, Handle});
 connected(Handle, _Info, #core{slot = {sent, {disconnect, Handle}, _, _, _}}) ->
     stop({connection_while_disconnecting, Handle});
+connected(Handle, _Info, #core{slot = {sent, {ltk_reply, Handle}, _, _, _}}) ->
+    stop({connection_while_replying, Handle});
 connected(Handle, _Info, #core{links = Links, limit = Limit}) when map_size(Links) >= Limit ->
     stop({connection_beyond_limit, Handle});
 connected(Handle, Info, #core{links = Links, serial = Last, acl_tx_max = TxMax, slot = Slot} = Core) ->
@@ -377,6 +402,14 @@ answered({disconnect, Handle}, Command, Answer, Core) ->
         {ok, _} -> {[], Core};
         {failed, ?ERX_HCI_STATUS_UNKNOWN_CONNECTION} -> {[], Core};
         Failed -> stop({disconnect_failed, Handle, Failed})
+    end;
+%% A Long Term Key reply is answered by Command Complete naming its handle (7.8.25,
+%% 7.8.26); its outcome goes to the handle's link.
+answered({ltk_reply, Handle}, Command, Answer, Core) ->
+    case outcome(Command, Answer) of
+        {ok, Handle} -> to_link(Handle, {ltk_reply_complete, ok}, Core);
+        {failed, Status} -> to_link(Handle, {ltk_reply_complete, {failed, Status}}, Core);
+        Other -> stop({ltk_reply_answer, Handle, Other})
     end;
 answered(advertise, _Command, {complete, <<?ERX_HCI_STATUS_SUCCESS>>}, Core) ->
     {[], Core#core{advertising = true}};
@@ -446,10 +479,10 @@ next_step(_Now, Core) ->
     {[], Core}.
 
 %% The command due now, if any: its label, the command, and the state once it is taken
-%% (the plan's step popped, or the disconnect marked taken). Only feed/1 keeps that
+%% (the plan's step popped, the disconnect marked taken, or the reply removed). Only feed/1 keeps that
 %% state; the other callers ask only whether a command is due. In the bring-up, its
-%% next step; once ready, the first disconnect asked for and not yet taken, else
-%% advertising while connections are below the limit.
+%% next step; once ready, the first disconnect asked for and not yet taken, else the first
+%% Long Term Key reply, else advertising while connections are below the limit.
 due(#core{stage = bringup, plan = [{command, Label, Command} | Plan]} = Core) ->
     {Label, Command, Core#core{plan = Plan}};
 due(#core{stage = ready, disconnects = Disconnects} = Core) ->
@@ -458,10 +491,21 @@ due(#core{stage = ready, disconnects = Disconnects} = Core) ->
             {{disconnect, Handle}, {disconnect, Handle, Reason},
              Core#core{disconnects = lists:keyreplace(Handle, 1, Disconnects, {Handle, taken})}};
         [] ->
-            advertise(Core)
+            case reply(Core) of
+                none -> advertise(Core);
+                Reply -> Reply
+            end
     end;
 due(_Core) ->
     none.
+
+reply(#core{replies = [{Handle, Key} | Replies]} = Core) ->
+    {{ltk_reply, Handle}, ltk_command(Handle, Key), Core#core{replies = Replies}};
+reply(_Core) ->
+    none.
+
+ltk_command(Handle, none) -> {le_long_term_key_request_negative_reply, Handle};
+ltk_command(Handle, Key) -> {le_long_term_key_request_reply, Handle, Key}.
 
 advertise(#core{advertising = false, links = Links, limit = Limit} = Core) when map_size(Links) < Limit ->
     {advertise, {le_set_advertising_enable, true}, Core};

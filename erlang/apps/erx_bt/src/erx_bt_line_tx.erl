@@ -20,7 +20,7 @@ group's shutdown ends it while it waits on the line.
 -behaviour(gen_server).
 
 -export([start_link/1]).
--export([init/1, handle_call/3, handle_cast/2, handle_info/2]).
+-export([init/1, handle_call/3, handle_cast/2, handle_info/2, format_status/1]).
 
 -include("generated/erx_abi.hrl").
 
@@ -62,3 +62,10 @@ handle_call(_Request, _From, Files) ->
 
 handle_cast(_Message, Files) ->
     {noreply, Files}.
+
+%% A crash report shows a write's size, never its bytes: a command may carry a Long Term
+%% Key, and a packet a peer's data or, from pairing on, a key.
+format_status(#{message := {write, From, Bytes}} = Status) when is_binary(Bytes) ->
+    Status#{message := {write, From, {bytes, byte_size(Bytes)}}};
+format_status(Status) ->
+    Status.

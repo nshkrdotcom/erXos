@@ -11,6 +11,8 @@
 -include_lib("eunit/include/eunit.hrl").
 
 -define(READY_CONFIG(Limit), config(Limit)).
+%% LE Long Term Key Request Reply and Negative Reply.
+-define(IS_LTK(Opcode), (Opcode =:= 16#201A orelse Opcode =:= 16#201B)).
 
 %% erx_h4.
 
@@ -96,6 +98,26 @@ returns_decode_test() ->
     ?assertEqual(malformed, erx_hci:return(reset, <<>>)),
     ?assertEqual(malformed, erx_hci:return(le_read_buffer_size, <<0>>)),
     ?assertEqual(malformed, erx_hci:return(read_local_version, <<0>>)).
+
+%% LE Long Term Key Request Reply and Negative Reply (Part E, 7.8.25, 7.8.26): OCFs 0x001A
+%% and 0x001B of the LE group; the handle, then the key least significant octet first
+%% (5.2); each answered by its status and the handle.
+ltk_commands_test() ->
+    ?assertEqual([16#201A, 16#201B], [erx_hci:opcode(le_long_term_key_request_reply),
+                                      erx_hci:opcode(le_long_term_key_request_negative_reply)]),
+    Key = list_to_binary(lists:seq(1, 16)),
+    ?assertEqual({16#201A, <<16#FF, 16#0E, (list_to_binary(lists:seq(16, 1, -1)))/binary>>},
+                 erx_hci:command({le_long_term_key_request_reply, 16#0EFF, Key})),
+    ?assertEqual({16#201B, <<16#41, 0>>}, erx_hci:command({le_long_term_key_request_negative_reply, 16#41})),
+    [begin
+         ?assertEqual({ok, 16#41}, erx_hci:return(Name, <<0, 16#41, 0>>)),
+         ?assertEqual({ok, 16#41}, erx_hci:return(Name, <<0, 16#41, 16#30>>)),   % the flag bits are not the handle's
+         ?assertEqual({failed, 16#0C}, erx_hci:return(Name, <<16#0C, 16#41, 0>>)),
+         ?assertEqual(malformed, erx_hci:return(Name, <<0, 16#00, 16#0F>>)),      % reserved handle 0xF00
+         ?assertEqual(malformed, erx_hci:return(Name, <<0, 16#41>>)),
+         ?assertEqual(malformed, erx_hci:return(Name, <<0, 16#41, 0, 0>>)),
+         ?assertEqual(malformed, erx_hci:return(Name, <<0>>))
+     end || Name <- [le_long_term_key_request_reply, le_long_term_key_request_negative_reply]].
 
 %% erx_bt_hci_core, case by case. A controller answers through answer/2.
 
@@ -333,6 +355,64 @@ shared_buffers_take_any_length_from_one_test() ->
     ?assertMatch({_, [{stop, {step_failed, shared_buffers, {buffers, 0, 3}}}]},
                  answer(Shared, complete(16#1005, <<0, 0, 0, 0, 3, 0, 0, 0>>))).
 
+%% The LE Long Term Key Request reaches the handle's link; the link's reply is sent for
+%% its own handle with its key, least significant octet first, and the Command Complete
+%% goes back to it.
+a_long_term_key_reply_reaches_the_controller_and_its_answer_the_link_test() ->
+    {Link, Core} = linked(1, 16#41),
+    Request = {le_long_term_key_request, 16#41, <<0:64>>, 0},
+    ?assertEqual({Core, [{to_link, Link, Request}]}, answer(Core, Request)),
+    Key = list_to_binary(lists:seq(1, 16)),
+    {Asked, [{write, Written}]} = going(step({request, Link, {ltk_reply, Key}}, Core)),
+    ?assertEqual(<<1, 16#1A, 16#20, 18, 16#41, 0, (list_to_binary(lists:seq(16, 1, -1)))/binary>>, Written),
+    {Sent, []} = step(written, Asked),
+    ?assertMatch({_, [{to_link, Link, {ltk_reply_complete, ok}}]}, answer(Sent, complete(16#201A, <<0, 16#41, 0>>))),
+    ?assertMatch({_, [{to_link, Link, {ltk_reply_complete, {failed, 16#0C}}}]},
+                 answer(Sent, complete(16#201A, <<16#0C, 16#41, 0>>))),
+    ?assertMatch({_, [{to_link, Link, {ltk_reply_complete, {failed, 16#0C}}}]},
+                 answer(Sent, {command_status, 16#0C, 1, 16#201A})),
+    ?assertMatch({_, [{stop, {ltk_reply_answer, 16#41, {ok, 16#42}}}]}, answer(Sent, complete(16#201A, <<0, 16#42, 0>>))),
+    ?assertMatch({_, [{stop, {ltk_reply_answer, 16#41, malformed}}]}, answer(Sent, complete(16#201A, <<0, 16#41>>))),
+    ?assertMatch({_, [{stop, {ltk_reply_answer, 16#41, {ok, none}}}]}, answer(Sent, {command_status, 0, 1, 16#201A})).
+
+a_link_with_no_key_sends_a_negative_reply_test() ->
+    {Link, Core} = linked(1, 16#41),
+    ?assertMatch({_, [{write, <<1, 16#1B, 16#20, 2, 16#41, 0>>}]}, step({request, Link, {ltk_reply, none}}, Core)).
+
+%% A second reply asked before the first is taken is ignored; one asked after it is
+%% taken is sent after the first is answered.
+a_reply_waits_once_with_its_handle_test() ->
+    {Link, Core} = linked(1, 16#41),
+    {Busy, [{write, <<1, 16#1B, 16#20, 2, 16#41, 0>>}]} = step({request, Link, {ltk_reply, none}}, Core),
+    {Asked, []} = going(step({request, Link, {ltk_reply, <<7:128>>}}, Busy)),
+    ?assertEqual({Asked, []}, step({request, Link, {ltk_reply, <<8:128>>}}, Asked)),
+    {Written, []} = step(written, Asked),
+    {Answered, Actions} = answer(Written, complete(16#201B, <<0, 16#41, 0>>)),
+    ?assertMatch([{to_link, Link, {ltk_reply_complete, ok}}, {write, <<1, 16#1A, 16#20, 18, 16#41, 0, 7, 0:120>>}],
+                 Actions),
+    ?assertMatch({_, []}, step(written, Answered)).
+
+%% A reply asked and not yet taken goes with its handle at Disconnection Complete; one
+%% handed to the writer and unanswered stops a connection on its handle.
+a_reply_never_reaches_a_reused_handle_test() ->
+    {Link, Core} = linked(1, 16#41),
+    {Busy, [{write, <<1, 16#06, 16#04, _/binary>>}]} = step({request, Link, {disconnect, 16#13}}, Core),
+    {Asked, []} = going(step({request, Link, {ltk_reply, <<7:128>>}}, Busy)),
+    {Gone, [{link_down, Link}]} = answer(Asked, {disconnection_complete, 0, 16#41, 16#13}),
+    {Free, []} = step(written, Gone),
+    ?assertMatch({_, [{write, <<1, 16#0A, 16#20, 1, 1>>}]}, answer(Free, {command_status, 0, 1, 16#0406})),
+    {Link2, Core2} = linked(1, 16#41),
+    {Sending, [{write, <<1, 16#1A, 16#20, _/binary>>}]} = step({request, Link2, {ltk_reply, <<9:128>>}}, Core2),
+    {Down, [{link_down, Link2}]} = answer(Sending, {disconnection_complete, 0, 16#41, 16#13}),
+    ?assertEqual({Down, [{stop, {connection_while_replying, 16#41}}]},
+                 answer(Down, {le_connection_complete, 0, 16#41, #{}})).
+
+%% A request the core does not know stops without the request in the reason, since a
+%% malformed reply may hold a key.
+a_malformed_reply_stops_without_its_key_test() ->
+    {Link, Core} = linked(1, 16#41),
+    ?assertEqual({Core, [{stop, {unexpected_request, Link}}]}, step({request, Link, {ltk_reply, <<7:120>>}}, Core)).
+
 %% The explored case: every state reachable from start, breadth first, until none is
 %% left; running out of the budget first fails. The world is the core and what the
 %% process and the controller hold: whether the line is being reset, the writer's item,
@@ -353,30 +433,36 @@ shared_buffers_take_any_length_from_one_test() ->
 %% report a hardware error or a malformed event; identify a controller of another
 %% company; once, an event or ACL packet the core drops; connect, in any state, on a
 %% handle not live or past the limit; and for each live handle, disconnect it from
-%% either side, take or deliver a packet, and complete packets truly or falsely. The
+%% either side, take or deliver a packet, ask a Long Term Key reply (on handle 1 with a
+%% key, on handle 2 without one; in the configuration without a patch, and while no
+%% other reply waits or is in flight, so queued replies are the cases'), report a Long Term Key Request, and complete packets truly or falsely. The
 %% invariants hold on every transition; a request naming a gone link, its handle given a
 %% new peer or not, is refused and changes nothing, and some state has a gone link's
 %% handle live again; every state before ready has a deadline, so every path ends in
 %% ready or a stop; a path patches at most once; a written disconnect names a handle
-%% whose disconnect was asked for since it last connected; advertising is never on at
+%% whose disconnect was asked for since it last connected; a written Long Term Key reply
+%% is the one its handle's link asked since it was last taken, for that handle, with that
+%% link's key or none; its answer reaches only that link; advertising is never on at
 %% the limit in force, and at quiescence it is on exactly while connections are below
 %% it.
 -record(world, {core, line = none, writer = idle, command = none, now = 0, asked = #{}, patches = 0,
-                ready = false, names = #{}, gone = [], connections = 0}).
+                ready = false, names = #{}, gone = [], connections = 0, replied = #{}, replies = false}).
 
 %% The connections on a handle not live that one path makes.
 -define(EXPLORE_CONNECTIONS, 3).
 
-%% About 160,000 states for each configuration explored.
--define(EXPLORE_BUDGET, 400000).
+%% About 800,000 states for the configuration without a patch, where links ask Long Term
+%% Key replies, and 160,000 for the patched one, whose states once ready are the same.
+-define(EXPLORE_BUDGET, 1000000).
 
 explored_core_keeps_its_invariants_test_() ->
-    {timeout, 60, fun() ->
+    {timeout, 120, fun() ->
         Patched = (?READY_CONFIG(2))#{patch => #{manufacturer => 15, records => [{16#FC4C, <<1, 2>>}, {16#FC4E, <<>>}]}},
         Stops = lists:usort(lists:append([explore(Config) || Config <- [?READY_CONFIG(2), Patched]])),
         ?assertEqual([answer_to_other_command, command_timeout, completion_beyond_in_flight, completion_for_dead_handle,
                       connection_beyond_limit, connection_during_bringup, connection_while_disconnecting,
-                      disconnect_failed, duplicate_handle, hardware_error, line_reset_timeout, malformed_event,
+                      connection_while_replying, disconnect_failed, duplicate_handle, hardware_error,
+                      line_reset_timeout, ltk_reply_answer, malformed_event,
                       patch_for_other_controller, step_failed],
                      Stops)
     end}.
@@ -384,7 +470,7 @@ explored_core_keeps_its_invariants_test_() ->
 %% Walks every state of one configuration and returns the reasons it stopped for.
 explore(Config) ->
     {Core, Actions} = step(start, erx_bt_hci_core:new(Config)),
-    Start = observe(Actions, #world{core = Core}),
+    Start = observe(Actions, #world{core = Core, replies = maps:get(patch, Config) =:= none}),
     {exhausted, Stats} = walk(queue:from_list([Start]), sets:from_list([key(Start)], [{version, 2}]),
                               #{ready => 0, stops => #{}, clocks => #{}, reused => 0}, ?EXPLORE_BUDGET),
     ?assert(maps:get(ready, Stats) > 0),
@@ -418,12 +504,14 @@ visit(#world{core = Before, now = Now} = World, Input, {Queue, Seen, Stats}) ->
     case Stepped of
         {_, [{stop, Reason}]} ->
             ?assertNotMatch({unexpected_input, _}, Reason),
+            ?assertNotMatch({unexpected_request, _}, Reason),
             {Queue, Seen, Stats#{stops := maps:update_with(element(1, tuple(Reason)), fun(N) -> N + 1 end, 1,
                                                           maps:get(stops, Stats))}};
         {Core, Actions} ->
             check_deadline_kept(Input, World),
             check_expiry_acts(Input, Before, Core),
             check_completions_passed(Input, World, Actions),
+            check_replies_answered(Input, World, Actions),
             Next = observe(Actions, (consume(Input, World))#world{core = Core}),
             check(Next),
             Key = key(Next),
@@ -437,8 +525,8 @@ tuple(Reason) when is_tuple(Reason) -> Reason;
 tuple(Reason) -> {Reason}.
 
 key(#world{core = Core, line = Line, writer = Writer, command = Command, now = Now, asked = Asked,
-           patches = Patches, gone = Gone}) ->
-    {Core, Line, Writer, Command, Now, Asked, Patches, Gone}.
+           patches = Patches, gone = Gone, replied = Replied}) ->
+    {Core, Line, Writer, Command, Now, Asked, Patches, Gone, Replied}.
 
 count_ready(#world{ready = true}, #{ready := N} = Stats) -> Stats#{ready := N + 1};
 count_ready(_, Stats) -> Stats.
@@ -456,7 +544,7 @@ count_reused(#world{names = Ids, gone = Gone}, #{reused := N} = Stats) ->
 %% other than Encryption Change, and completions of several handles or of no packet,
 %% none of which the core reads beyond passing it on or ignoring it.
 inputs(#world{core = Core, line = Line, writer = Writer, command = Command, ready = Ready, names = Ids,
-              connections = Connections}) ->
+              connections = Connections, replied = Replied, replies = Replies}) ->
     #{links := Links, dropped := Dropped, limit := Limit} = erx_bt_hci_core:facts(Core),
     Deadline = erx_bt_hci_core:next_deadline(Core),
     [line_ready || Line =:= resetting] ++
@@ -474,12 +562,19 @@ inputs(#world{core = Core, line = Line, writer = Writer, command = Command, read
                        {event, {disconnection_complete, 0, Handle, 16#13}},
                        {request, map_get(Handle, Ids), {disconnect, 16#13}},
                        {request, map_get(Handle, Ids), {send, 0, <<Handle>>}},
+                       {event, {le_long_term_key_request, Handle, <<0:64>>, 0}},
                        {acl, Handle, 2, 0, <<Handle>>},
                        {event, {encryption_change, 0, Handle, 1}},
                        {event, {number_of_completed_packets, [{Handle, InFlight + 1}]}}] ++
-                      [{event, {number_of_completed_packets, [{Handle, 1}]}} || InFlight > 0]
+                      [{event, {number_of_completed_packets, [{Handle, 1}]}} || InFlight > 0] ++
+                      [{request, map_get(Handle, Ids), {ltk_reply, key_of(Handle)}}
+                       || Replies, map_size(Replied) =:= 0, not is_ltk(Command)]
                       || Handle := InFlight <- Links]) ++
         [{event, {number_of_completed_packets, [{3, 1}]}}].
+
+%% Whether the command in flight is a Long Term Key reply.
+is_ltk({Opcode, _}) -> ?IS_LTK(Opcode);
+is_ltk(none) -> false.
 
 answers(none) -> [];
 answers({Opcode, _}) when Opcode =:= 16#0406 ->
@@ -491,7 +586,14 @@ answers({Opcode, _} = Command) ->
         [{event, complete(Opcode, <<1>>)}, {event, complete(Opcode, bad_layout(Command))},
          {event, complete(Opcode bxor 1, <<0>>)}, {event, {command_status, 0, 1, Opcode}}] ++
         [{event, complete(Opcode, Return)} || Return <- buffers(Opcode)] ++
-        [{event, complete(Opcode, version(305))} || Opcode =:= 16#1001].
+        [{event, complete(Opcode, version(305))} || Opcode =:= 16#1001] ++
+        ltk_answers(Command).
+
+%% A Long Term Key reply answered for another handle, or by a failed Command Status.
+ltk_answers({Opcode, <<1, Opcode:16/little, _, Handle:16/little, _/binary>>}) when ?IS_LTK(Opcode) ->
+    [{event, complete(Opcode, <<0, (Handle bxor 3):16/little>>)}, {event, {command_status, 16#0C, 1, Opcode}}];
+ltk_answers(_Command) ->
+    [].
 
 good({16#1001, _}) -> version(15);
 good({16#1002, _}) -> <<0, 0:512>>;
@@ -499,6 +601,7 @@ good({16#2003, _}) -> <<0, 0:64>>;
 good({16#1009, _}) -> <<0, 1, 2, 3, 4, 5, 6>>;
 good({16#2002, _}) -> <<0, 27, 0, 4>>;
 good({16#1005, _}) -> <<0, 27, 0, 0, 3, 0, 0, 0>>;
+good({Opcode, <<1, Opcode:16/little, _, Handle:16/little, _/binary>>}) when ?IS_LTK(Opcode) -> <<0, Handle:16/little>>;
 good(_) -> <<0>>.
 
 %% A success whose return parameters are one octet too long.
@@ -521,8 +624,10 @@ consume(line_ready, World) -> World#world{line = none};
 consume(written, World) -> World#world{writer = idle};
 consume({request, {Handle, _}, {disconnect, _}}, #world{asked = Asked} = World) ->
     World#world{asked = Asked#{Handle => true}};
-consume({event, {disconnection_complete, 0, Handle, _}}, #world{asked = Asked} = World) ->
-    World#world{asked = maps:remove(Handle, Asked)};
+consume({request, {Handle, _}, {ltk_reply, Key}}, #world{replied = Replied} = World) ->
+    World#world{replied = maps:merge(#{Handle => Key}, Replied)};
+consume({event, {disconnection_complete, 0, Handle, _}}, #world{asked = Asked, replied = Replied} = World) ->
+    World#world{asked = maps:remove(Handle, Asked), replied = maps:remove(Handle, Replied)};
 consume({expired, Deadline}, World) -> World#world{now = Deadline};
 consume({event, {command_complete, _, Opcode, _}}, #world{command = {Opcode, _}} = World) -> World#world{command = none};
 consume({event, {command_status, _, _, Opcode}}, #world{command = {Opcode, _}} = World) -> World#world{command = none};
@@ -539,6 +644,10 @@ observe_action({write, _}, #world{writer = busy}) ->
 observe_action({write, <<1, 16#0406:16/little, 3, Handle:16/little, _>>}, #world{command = none, asked = Asked})
   when not is_map_key(Handle, Asked) ->
     erlang:error({disconnect_not_asked_since_connected, Handle});
+observe_action({write, <<1, Opcode:16/little, _, Handle:16/little, Key/binary>> = Bytes},
+               #world{command = none, replied = Replied} = World) when ?IS_LTK(Opcode) ->
+    ?assertEqual({ok, asked_key(Opcode, Key)}, maps:find(Handle, Replied)),
+    World#world{writer = busy, command = {Opcode, Bytes}, replied = maps:remove(Handle, Replied)};
 observe_action({write, <<1, Opcode:16/little, _/binary>> = Bytes}, #world{command = none, patches = P} = World) ->
     World#world{writer = busy, command = {Opcode, Bytes}, patches = P + patch_start(Opcode)};
 observe_action({write, <<1, _/binary>>}, _World) ->
@@ -559,6 +668,15 @@ observe_action(_, World) ->
 
 patch_start(16#FC2E) -> 1;
 patch_start(_) -> 0.
+
+%% A written reply's key as the link asked it: most significant octet first, or none.
+asked_key(16#201A, <<Key:128/little>>) -> <<Key:128>>;
+asked_key(16#201B, <<>>) -> none.
+
+%% What each handle's link replies: on handle 1 a key, on handle 2 none, so a reply sent for
+%% the other handle is one its link did not ask.
+key_of(1) -> <<16#AA, 1:120>>;
+key_of(2) -> none.
 
 check(#world{core = Core, patches = Patches}) ->
     #{links := Links, free := Free, limit := Limit, advertising := Advertising} = erx_bt_hci_core:facts(Core),
@@ -606,7 +724,7 @@ check_early_wake_up(#world{core = Core, now = Now}) ->
 %% changes, so its packet and its disconnect never reach the handle's next peer.
 check_gone_refused(#world{core = Core, now = Now, gone = Gone}) ->
     [?assertEqual({Core, []}, erx_bt_hci_core:step({request, Link, Request}, Now, Core))
-     || Link <- Gone, Request <- [{send, 0, <<0>>}, {disconnect, 16#13}]],
+     || Link <- Gone, Request <- [{send, 0, <<0>>}, {disconnect, 16#13}, {ltk_reply, <<0:128>>}, {ltk_reply, none}]],
     ok.
 
 %% Before ready, the core always has a deadline, which passes into the next step or a
@@ -634,6 +752,23 @@ check_completions_passed({event, {number_of_completed_packets, Pairs}}, #world{n
                  [Action || {to_link, _, {completed, _}} = Action <- Actions]);
 check_completions_passed(_Input, _World, _Actions) ->
     ok.
+
+%% The answer to the Long Term Key reply in flight reaches its handle's current link, if
+%% any, with the outcome the controller gave, and nothing else does.
+check_replies_answered(Input, #world{command = Command, names = Ids}, Actions) ->
+    Expected = case {Input, Command} of
+                   {{event, {command_complete, _, Opcode, <<Status, _/binary>>}},
+                    {Opcode, <<1, Opcode:16/little, _, Handle:16/little, _/binary>>}} when ?IS_LTK(Opcode) ->
+                       [{Link, outcome(Status)} || Link <- maps:values(maps:with([Handle], Ids))];
+                   {{event, {command_status, Status, _, Opcode}},
+                    {Opcode, <<1, Opcode:16/little, _, Handle:16/little, _/binary>>}} when ?IS_LTK(Opcode), Status =/= 0 ->
+                       [{Link, outcome(Status)} || Link <- maps:values(maps:with([Handle], Ids))];
+                   _ -> []
+               end,
+    ?assertEqual(Expected, [{Link, Outcome} || {to_link, Link, {ltk_reply_complete, Outcome}} <- Actions]).
+
+outcome(0) -> ok;
+outcome(Status) -> {failed, Status}.
 
 %% Helpers: a core driven by a controller that answers every command well, at time 0.
 

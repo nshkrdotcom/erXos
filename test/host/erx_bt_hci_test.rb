@@ -98,8 +98,8 @@ class ErxBtHciTest < Minitest::Test
              catching_case: 'shared_buffers_take_any_length_from_one_test'),
     Seed.new(fault: "a handle's disconnect kept after its Disconnection Complete, so it reaches the next peer",
              module_path: CORE,
-             anchor: 'disconnects = lists:keydelete(Handle, 1, Core#core.disconnects)}};',
-             replacement: 'disconnects = Core#core.disconnects}};',
+             anchor: 'disconnects = lists:keydelete(Handle, 1, Core#core.disconnects),',
+             replacement: 'disconnects = Core#core.disconnects,',
              catching_case: 'explored_core_keeps_its_invariants_test_'),
     Seed.new(fault: "a connection before the advertising enable's answer leaving advertising on",
              module_path: CORE,
@@ -151,7 +151,17 @@ class ErxBtHciTest < Minitest::Test
                      "        \#{Handle := {Serial, InFlight}} -> {current, InFlight};",
              replacement: "current({Handle, _Serial}, #core{links = Links}) ->\n    case Links of\n" \
                           "        \#{Handle := {_, InFlight}} -> {current, InFlight};",
-             catching_case: 'explored_core_keeps_its_invariants_test_')
+             catching_case: 'explored_core_keeps_its_invariants_test_'),
+    Seed.new(fault: "a Long Term Key reply kept past its handle's Disconnection Complete",
+             module_path: CORE,
+             anchor: 'replies = lists:keydelete(Handle, 1, Core#core.replies)}};',
+             replacement: 'replies = Core#core.replies}};',
+             catching_case: 'a_reply_never_reaches_a_reused_handle_test'),
+    Seed.new(fault: "a Long Term Key reply's answer naming another handle passed to the link",
+             module_path: CORE,
+             anchor: '        {ok, Handle} -> to_link(Handle, {ltk_reply_complete, ok}, Core);',
+             replacement: '        {ok, _} -> to_link(Handle, {ltk_reply_complete, ok}, Core);',
+             catching_case: 'a_long_term_key_reply_reaches_the_controller_and_its_answer_the_link_test')
   ].freeze
 
   def test_bluetooth_cases_pass_under_eunit

@@ -840,11 +840,19 @@ gone, which Disconnection Complete reports or has reported; any other
 failure ends the controller process. The controller reuses handles, so a
 link is named by its handle and the connection that gave it the handle: the
 controller process gives a link its name when it starts it, names the link in
-everything it sends it, and every request of a link, a packet or a disconnect,
-carries the name, in one envelope whose name the core checks before it reads the
+everything it sends it, and every request of a link, a packet, a disconnect or a
+Long Term Key reply, carries the name, in one envelope whose name the core checks before it reads the
 request. A request whose name is not its handle's current link is refused and
 changes nothing, so a link that has gone can never send a packet
-to, or disconnect, the peer the controller gave its handle next. A command is in
+to, or disconnect, the peer the controller gave its handle next. A link
+answers LE Long Term Key Request with `{ltk_reply, Key}`, or
+`{ltk_reply, none}` when it has no key, which the controller process
+sends as Reply or Negative Reply for the link's own handle (HCI 7.8.25,
+7.8.26) and whose Command Complete it passes back as
+`{ltk_reply_complete, ok | {failed, Status}}`; the reply waits with its
+handle as a disconnect does, goes with it at Disconnection Complete, and
+once handed to the writer and unanswered ends the controller process at a
+connection on its handle. A command is in
 flight once the writer has it, and the writer takes the command before
 any queued packet: an answer to a command still waiting for the writer
 is a controller fault and ends the controller process. The line's reset,

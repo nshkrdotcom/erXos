@@ -54,7 +54,12 @@ module ErxBtHciFuzz
               module_path: HCI,
               anchor: 'Packets:16/little, _SyncPackets:16>>) ->',
               replacement: 'Packets:16/little, _SyncPackets:16, _/binary>>) ->',
-              verdict: '{return_length_disagrees,')
+              verdict: '{return_length_disagrees,'),
+    Fault.new(fault: "a Long Term Key reply's return taken with a reserved handle",
+              module_path: HCI,
+              anchor: 'try {ok, handle(Word)} catch throw:malformed -> malformed end;',
+              replacement: '{ok, Word band 16#FFF};',
+              verdict: '{return_handle_disagrees,')
   ].freeze
 
   module_function

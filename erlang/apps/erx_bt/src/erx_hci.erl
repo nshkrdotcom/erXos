@@ -18,7 +18,7 @@ is checked whole against its section's layout, so a length that does not match i
 -include("generated/erx_abi.hrl").
 
 -export([command/1, opcode/1, event/2, return/2]).
--export_type([command/0, command_name/0, event/0, return/0, handle/0]).
+-export_type([command/0, command_name/0, event/0, return/0, handle/0, key/0]).
 
 %% A Connection_Handle's bits, the low ones of its word.
 -define(HANDLE_MASK, ((1 bsl ?ERX_HCI_HANDLE_BITS) - 1)).
@@ -26,6 +26,8 @@ is checked whole against its section's layout, so a length that does not match i
 -doc "A Connection_Handle's 12 bits, as a handle word carries them (Part E, section 5.4.2).".
 -type handle() :: 0..?HANDLE_MASK.
 -type address() :: <<_:48>>.
+-doc "A Long_Term_Key, most significant octet first, as the host keeps it (7.8.25).".
+-type key() :: <<_:128>>.
 
 -doc "The commands the host sends, by the names of abi/formats/bluetooth.txt's OCF enums.".
 -type command() :: reset | read_local_version | read_local_commands | read_buffer_size | read_bd_addr
@@ -39,6 +41,8 @@ is checked whole against its section's layout, so a length that does not match i
                  | {le_set_scan_response_data, binary()}
                  | {le_set_advertising_enable, boolean()}
                  | {disconnect, handle(), Reason :: byte()}
+                 | {le_long_term_key_request_reply, handle(), key()}
+                 | {le_long_term_key_request_negative_reply, handle()}
                  | {vendor, Opcode :: 0..16#FFFF, binary()}.
 -type command_name() :: atom().
 
@@ -78,7 +82,13 @@ parameters({le_set_advertising_parameters, Interval}) ->
 parameters({le_set_advertising_data, Data}) -> advertising_data(Data);
 parameters({le_set_scan_response_data, Data}) -> advertising_data(Data);
 parameters({le_set_advertising_enable, Enable}) -> <<(enable(Enable))>>;
-parameters({disconnect, Handle, Reason}) when Handle =< ?ERX_HCI_HANDLE_MAX -> <<Handle:16/little, Reason>>.
+parameters({disconnect, Handle, Reason}) when Handle =< ?ERX_HCI_HANDLE_MAX -> <<Handle:16/little, Reason>>;
+%% LE Long Term Key Request Reply (7.8.25): the handle, then the key least significant
+%% octet first (5.2); Negative Reply (7.8.26): the handle alone.
+parameters({le_long_term_key_request_reply, Handle, <<Key:128>>}) when Handle =< ?ERX_HCI_HANDLE_MAX ->
+    <<Handle:16/little, Key:128/little>>;
+parameters({le_long_term_key_request_negative_reply, Handle}) when Handle =< ?ERX_HCI_HANDLE_MAX ->
+    <<Handle:16/little>>.
 
 %% A BD_ADDR is sent and received least significant octet first (Vol 4 Part E, 5.2);
 %% the host keeps it most significant first, as it is written.
@@ -115,7 +125,9 @@ group(le_set_random_address) -> {?ERX_HCI_OGF_LE, ?ERX_HCI_LE_OCF_LE_SET_RANDOM_
 group(le_set_advertising_parameters) -> {?ERX_HCI_OGF_LE, ?ERX_HCI_LE_OCF_LE_SET_ADVERTISING_PARAMETERS};
 group(le_set_advertising_data) -> {?ERX_HCI_OGF_LE, ?ERX_HCI_LE_OCF_LE_SET_ADVERTISING_DATA};
 group(le_set_scan_response_data) -> {?ERX_HCI_OGF_LE, ?ERX_HCI_LE_OCF_LE_SET_SCAN_RESPONSE_DATA};
-group(le_set_advertising_enable) -> {?ERX_HCI_OGF_LE, ?ERX_HCI_LE_OCF_LE_SET_ADVERTISING_ENABLE}.
+group(le_set_advertising_enable) -> {?ERX_HCI_OGF_LE, ?ERX_HCI_LE_OCF_LE_SET_ADVERTISING_ENABLE};
+group(le_long_term_key_request_reply) -> {?ERX_HCI_OGF_LE, ?ERX_HCI_LE_OCF_LE_LONG_TERM_KEY_REQUEST_REPLY};
+group(le_long_term_key_request_negative_reply) -> {?ERX_HCI_OGF_LE, ?ERX_HCI_LE_OCF_LE_LONG_TERM_KEY_REQUEST_NEGATIVE_REPLY}.
 
 -doc "An event packet's code and parameters as a term (Part E, section 7.7).".
 -spec event(byte(), binary()) -> event().
@@ -196,6 +208,11 @@ return(read_bd_addr, <<_, Address:6/binary>>) -> {ok, reverse(Address)};
 return(le_read_buffer_size, <<_, Length:16/little, Packets>>) -> {ok, {Length, Packets}};
 return(read_buffer_size, <<_, Length:16/little, _SyncLength, Packets:16/little, _SyncPackets:16>>) ->
     {ok, {Length, Packets}};
+%% LE Long Term Key Request Reply and Negative Reply (7.8.25, 7.8.26): the handle the
+%% command named, which a reserved handle makes malformed.
+return(Name, <<_, Word:16/little>>) when Name =:= le_long_term_key_request_reply;
+                                         Name =:= le_long_term_key_request_negative_reply ->
+    try {ok, handle(Word)} catch throw:malformed -> malformed end;
 %% The commands that return their status alone.
 return(Name, <<_>>) when Name =:= reset; Name =:= set_event_mask; Name =:= host_buffer_size;
                          Name =:= le_set_event_mask; Name =:= le_set_random_address;

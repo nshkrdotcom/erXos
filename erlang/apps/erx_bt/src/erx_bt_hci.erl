@@ -121,16 +121,22 @@ handle_cast(_Message, State) ->
     {noreply, State}.
 
 %% A crash report shows sizes, never a packet's or a peer's bytes: the last read and
-%% the incomplete packet are untrusted, and from pairing on they may carry keys. The core
-%% shows as its facts, since its plan holds the patch's records, the vendor's firmware.
+%% the incomplete packet are untrusted, and from pairing on they may carry keys. A link's
+%% request shows as its kind alone: a packet carries a peer's data, and a Long Term Key
+%% reply the key. The core shows as its facts, since its plan holds the patch's records,
+%% the vendor's firmware, and its replies and command slot a key.
 format_status(#{state := #hci{core = Core, rest = Rest} = State} = Status) ->
     Shown = Status#{state := State#hci{core = {facts, erx_bt_hci_core:facts(Core)}, rest = {bytes, byte_size(Rest)}}},
     case Shown of
         #{message := {erx_bt_line_rx, Bytes}} -> Shown#{message := {erx_bt_line_rx, {bytes, byte_size(Bytes)}}};
+        #{message := {erx_bt_link, Name, Request}} -> Shown#{message := {erx_bt_link, Name, kind(Request)}};
         #{} -> Shown
     end;
 format_status(Status) ->
     Status.
+
+kind(Request) when is_tuple(Request), tuple_size(Request) > 0 -> element(1, Request);
+kind(_Request) -> request.
 
 %% A packet from the controller as the core's input.
 input({event, Code, Parameters}) -> {event, erx_hci:event(Code, Parameters)};
