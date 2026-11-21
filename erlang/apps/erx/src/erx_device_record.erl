@@ -65,7 +65,13 @@
                   index := non_neg_integer()}
               | #{peripheral := atom(), path := binary(), window := {physical, non_neg_integer(), non_neg_integer()},
                   lines := [non_neg_integer() | {shared, non_neg_integer()}], clock := non_neg_integer(),
-                  index := non_neg_integer()}.
+                  index := non_neg_integer()}
+              | #{peripheral := atom(), place := {non_neg_integer(), byte(), 0..31, 0..7},
+                  window := {object, non_neg_integer(), non_neg_integer(), pos_integer()},
+                  lines := [{object, non_neg_integer()} | {shared, {object, non_neg_integer()}}],
+                  memory => {object, non_neg_integer(), pos_integer()}, coherent := boolean(),
+                  msix => #{address := non_neg_integer(), data := non_neg_integer(), bar := 0..5,
+                            offset := non_neg_integer(), entries := 0..2048}}.
 
 %% A framebuffer record as its display driver takes it: the window object and the
 %% framebuffer's offset and bytes in it, as a given record's window, and its geometry.
@@ -181,7 +187,8 @@ records() ->
 find(Role, Peripheral, Arguments) ->
     RoleWord = atom_to_list(Role),
     PeripheralWord = atom_to_list(Peripheral),
-    Records = [{Form, Words} || [Form, R, P | Words] <- Arguments, Form =:= "device" orelse Form =:= "given",
+    Records = [{Form, Words} || [Form, R, P | Words] <- Arguments,
+                                Form =:= "device" orelse Form =:= "given" orelse Form =:= "function",
                                 R =:= RoleWord, P =:= PeripheralWord],
     collect(fun(Record) -> spec(Peripheral, Record) end, Records, []).
 
@@ -263,7 +270,64 @@ spec(Peripheral, {"device", [Path, Base, Size, Line, Mark, Clock, Index | _]}) -
             bad("a device record's base, size, line, clock or index is not a decimal number of its field's width")
     end;
 spec(_Peripheral, {"device", _}) ->
-    bad("a device record has fewer than a path, five numbers and a line mark").
+    bad("a device record has fewer than a path, five numbers and a line mark");
+%% A given PCIe function's record (docs/design-pcie.md, "The catalogue and gives"), written by
+%% erx_boot_function_words: its place, its line, its memory, its coherence, its route with an
+%% MSI-X route's message and table, then each of the six BARs' WINDOW_H OFFSET SIZE_LOG2, a BAR
+%% not placed with the null handle. Its window is its first placed BAR's, BAR 0 for every
+%% function erXos drives; `place` is what the device service's `pci` facet names it by, and
+%% `msix` the message and table the NIF writes after the driver's reset.
+spec(Peripheral, {"function", [Bridge, Bus, Device, Function, Line, Mark, Memory, MemorySize, Coherent, Route,
+                               Address, Data, TableBar, TableOffset, TableSize | Bars]}) when length(Bars) >= 18 ->
+    case {numbers([Bridge, Bus, Device, Function, Line, Memory, MemorySize, Address, Data, TableBar, TableOffset,
+                   TableSize]), mark(Mark), coherent(Coherent), route(Route), function_window(lists:sublist(Bars, 18))} of
+        {{ok, [B, Bu, D, F, L, M, MS, A, Da, TB, TO, TS]}, {ok, Sharing}, {ok, Co}, {ok, R}, {ok, Window}}
+          when B =< 16#ffffffff, Bu =< 255, D =< 31, F =< 7, Da =< 16#ffffffff, TB =< 5, TO =< 16#ffffffff,
+               TS =< 2048 ->
+            Spec = #{peripheral => Peripheral, place => {B, Bu, D, F}, window => Window,
+                     lines => given_lines(Sharing, L), coherent => Co},
+            Table = #{address => A, data => Da, bar => TB, offset => TO, entries => TS},
+            {ok, with_msix(with_memory(Spec, M, MS), R, Table)};
+        {{ok, _}, {ok, _}, {ok, _}, {ok, _}, error} ->
+            bad("a function record places no memory BAR");
+        {{ok, _}, {ok, _}, {ok, _}, error, _} ->
+            bad("a function record's route is not none, msi, msix or intx");
+        {{ok, _}, error, _, _, _} ->
+            bad("a function record's line mark is neither direct nor shared");
+        {{ok, _}, {ok, _}, error, _, _} ->
+            bad("a function record's coherence is neither 0 nor 1");
+        _ ->
+            bad("a function record's place, handle, size, message or table is not a decimal number "
+                "of its field's width")
+    end;
+spec(_Peripheral, {"function", _}) ->
+    bad("a function record has fewer than its place, a line mark, a route and six BARs").
+
+route("none") -> {ok, none};
+route("msi") -> {ok, msi};
+route("msix") -> {ok, msix};
+route("intx") -> {ok, intx};
+route(_Word) -> error.
+
+%% The first placed BAR's window over its hardware size, 2 to its SIZE_LOG2, from the six
+%% BARs' words, or error when a word is not a number or the record places no BAR. Every word
+%% is read before a window is chosen.
+function_window(Words) ->
+    case numbers(Words) of
+        {ok, Numbers} ->
+            case [{object, W, O, 1 bsl S} || {W, O, S} <- triples(Numbers), W =/= ?ERX_CAP_NULL, S >= 4, S =< 63] of
+                [Window | _] -> {ok, Window};
+                [] -> error
+            end;
+        error ->
+            error
+    end.
+
+triples([W, O, S | Rest]) -> [{W, O, S} | triples(Rest)];
+triples([]) -> [].
+
+with_msix(Spec, msix, Table) -> Spec#{msix => Table};
+with_msix(Spec, _Route, _Table) -> Spec.
 
 %% A device record's PATH as erx_boot_device_path_valid admits it: `/` and the characters a
 %% device tree allows in names, at most ERX_DEVICE_PATH_MAX bytes, so with its NUL it fits

@@ -307,3 +307,30 @@ another_sixth_system_image_word_refuses_test() ->
     [?assertMatch({error, {bad_device_record, [_ | _]}}, erx_device_record:system_image([Words]))
      || Words <- [system_image_words() ++ ["system"], system_image_words() ++ ["record_volume", "record_volume"],
                   system_image_words() ++ ["Record_volume"], system_image_words() ++ [""]]].
+
+%% A given PCIe function's record (docs/design-pcie.md, "The catalogue and gives"): role usb,
+%% peripheral xhci, place 0/0/2/0, line 9 direct, 64 KiB of memory at 10, not coherent, an
+%% MSI-X route with its message and table in BAR 0 at 0x3000, 16 entries, and BAR 0 placed in
+%% window 11 at offset 0, 16 KiB; the other five BARs not placed.
+function_words(Route, Bar0Window) ->
+    ["function", "usb", "xhci", "0", "0", "2", "0", "9", "direct", "10", "65536", "0", Route,
+     "134283264", "17", "0", "12288", "16", Bar0Window, "0", "14"
+     | lists:append(lists:duplicate(5, [integer_to_list(?ERX_CAP_NULL), "0", "0"]))].
+
+function_record_reads_place_window_and_table_test() ->
+    ?assertEqual({ok, [#{peripheral => xhci, place => {0, 0, 2, 0}, window => {object, 11, 0, 16384},
+                         lines => [{object, 9}], memory => {object, 10, 65536}, coherent => false,
+                         msix => #{address => 134283264, data => 17, bar => 0, offset => 12288, entries => 16}}]},
+                 erx_device_record:find(usb, xhci, [function_words("msix", "11")])).
+
+%% A route other than MSI-X carries no table; a record placing no BAR, or with a route the
+%% writer never spells, is refused.
+function_record_route_and_bars_test() ->
+    ?assertMatch({ok, [Spec]} when not is_map_key(msix, Spec),
+                 erx_device_record:find(usb, xhci, [function_words("intx", "11")])),
+    ?assertMatch({error, {bad_device_record, "a function record places no memory BAR"}},
+                 erx_device_record:find(usb, xhci, [function_words("msix", integer_to_list(?ERX_CAP_NULL))])),
+    ?assertMatch({error, {bad_device_record, [_ | _]}},
+                 erx_device_record:find(usb, xhci, [function_words("msiX", "11")])),
+    ?assertMatch({error, {bad_device_record, [_ | _]}},
+                 erx_device_record:find(usb, xhci, [lists:sublist(function_words("msix", "11"), 20)])).
