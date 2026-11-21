@@ -197,7 +197,7 @@ perform({link_down, Name}, #hci{links = Links, monitors = Monitors} = State) ->
 %% An action for a name that maps to no process is dropped: its link has already ended.
 to_link(Name, Event, #hci{links = Links} = State) ->
     case Links of
-        #{Name := Pid} -> Pid ! {erx_bt_hci, Event};
+        #{Name := Pid} -> erx_bt_link:hci(Pid, Event);
         #{} -> ok
     end,
     State.

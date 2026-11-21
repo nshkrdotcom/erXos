@@ -240,7 +240,7 @@ start(Hci) ->
                      info => #{peer => ?CENTRAL, identity => ?OWN_ADDRESS, share => 16, acl_tx_max => 251}}),
     Link.
 
-hci(Link, Input) -> Link ! {hci, Input}.
+hci(Link, Input) -> erx_bt_link:hci(Link, Input).
 
 %% A basic frame (Part A, 3.1) in one ACL packet, flagged first_flushable (Vol 4 Part E, 5.4.2).
 frame(Cid, Payload) -> <<(byte_size(Payload)):16/little, Cid:16/little, Payload/binary>>.

@@ -40,7 +40,7 @@ of the controller's buffers) and the controller process's pid; it ends at `link_
 """.
 -behaviour(gen_server).
 
--export([start_link/1]).
+-export([start_link/1, hci/2]).
 -export([init/1, handle_continue/2, handle_call/3, handle_cast/2, handle_info/2, format_status/1]).
 
 -record(link, {
@@ -56,6 +56,16 @@ of the controller's buffers) and the controller process's pid; it ends at `link_
           gen_server:start_ret().
 start_link(Start) ->
     gen_server:start_link(?MODULE, Start, []).
+
+-doc """
+Sends `Event`, one of the controller's messages for a link, to the link process `Link`;
+the controller process's one way to reach a link, so the envelope the core's `{hci, _}`
+clauses take is written here alone.
+""".
+-spec hci(pid(), term()) -> ok.
+hci(Link, Event) ->
+    Link ! {hci, Event},
+    ok.
 
 init(#{name := Name, conn := Conn, info := Info, hci := Hci}) ->
     {ok, #link{name = Name, conn = Conn, hci = Hci}, {continue, {start, Info}}}.

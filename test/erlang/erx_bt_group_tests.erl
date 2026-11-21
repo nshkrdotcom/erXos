@@ -2,12 +2,13 @@
 %% SPDX-License-Identifier: BSD-2-Clause
 
 %% The cases of the controller group (docs/design-bluetooth.md, "Verification": the
-%% controller group's row and the identity address's), over erx_bt_line_model, the real
-%% store and no GATT table, and of erx_bt_adv. test/host/erx_bt_group_test.rb runs them on
-%% stock's emulator, with erx_bytes's host stand-in, and seeds the row's four faults.
+%% controller group's row, the link's backlog through the group and the identity
+%% address's), over erx_bt_line_model, the real store and no GATT table, and of erx_bt_adv. test/host/erx_bt_group_test.rb runs them on
+%% stock's emulator, with erx_bytes's host stand-in, and seeds the rows' faults.
 -module(erx_bt_group_tests).
 
 -include_lib("eunit/include/eunit.hrl").
+-include("generated/erx_abi.hrl").
 
 -define(WAIT_MS, 3000).
 
@@ -32,7 +33,7 @@ a_killed_link_is_disconnected_test() ->
     with_group(#{}, fun(Model) ->
         Link = connect(Model, 16#40),
         exit(Link, kill),
-        Disconnect = <<1, 16#0406:16/little, 3, 16#40, 0, 16#13>>,
+        Disconnect = disconnect(16#40, 16#13),
         await(fun() -> lists:member({write, Disconnect}, erx_bt_line_model:log(Model)) end),
         timer:sleep(50),
         ?assertEqual(1, length([W || {write, W} <- erx_bt_line_model:log(Model), W =:= Disconnect]))
@@ -58,14 +59,33 @@ link_down_ends_the_link_test() ->
 completions_reach_the_link_test() ->
     with_group(#{credits => 1}, fun(Model) ->
         _Link = connect(Model, 16#40),
-        Request = <<6:16/little, 5:16/little, 16#0A, 1, 2:16/little, 1:16/little>>,
-        Acl = <<2, 16#40, 16#20, (byte_size(Request)):16/little, Request/binary>>,
-        erx_bt_line_model:inject(Model, <<Acl/binary, Acl/binary>>),
+        erx_bt_line_model:inject(Model, binary:copy(information_request(16#40), 2)),
         await(fun() -> acl_writes(Model) =:= 1 end),
         timer:sleep(50),
         ?assertEqual(1, acl_writes(Model)),
         erx_bt_line_model:inject(Model, <<4, 16#13, 5, 1, 16#40, 0, 1, 0>>),
         await(fun() -> acl_writes(Model) =:= 2 end)
+    end).
+
+%% A link held at its start, inside its resolve call to a store that never answers, is
+%% sent its backlog, bt_link_backlog (32) of the controller's messages, and no more: the
+%% next of 8 ACL packets beyond it cuts it off, HCI_Disconnect with 0x14 (Low Resources) is written once, and
+%% the model's Disconnection Complete ends the link at link_down. Tracing what enters
+%% the link's mailbox counts the messages whether or not the link takes them.
+a_link_held_at_its_start_is_cut_at_its_backlog_test() ->
+    with_store(fun holding_store/0, fun() ->
+        with_controller_group(#{}, fun(Model) ->
+            Link = connect(Model, 16#40),
+            Monitor = monitor(process, Link),
+            1 = erlang:trace(Link, true, ['receive']),
+            erx_bt_line_model:inject(Model, binary:copy(information_request(16#40), ?ERX_BT_LINK_BACKLOG + 8)),
+            receive {'DOWN', Monitor, process, Link, Reason} -> ?assertEqual(shutdown, Reason)
+            after ?WAIT_MS -> error(link_not_ended)
+            end,
+            ?assertEqual([disconnect(16#40, 16#14)],
+                         [W || {write, <<1, 16#0406:16/little, _/binary>> = W} <- erx_bt_line_model:log(Model)]),
+            ?assertEqual(?ERX_BT_LINK_BACKLOG, received_from_controller(Link))
+        end)
     end).
 
 %% A ctl that answers eio ends the writer at every start, so the group ends at its
@@ -108,24 +128,31 @@ advertising_data_test() ->
 
 %% Runs Case with the store, the group over a fresh model, ready, then ends them.
 with_group(Options, Case) ->
-    with_store(fun() ->
-        Model = erx_bt_line_model:start(Options),
-        {ok, Group} = erx_bt_host_sup:start_link(erx_bt_line_model:open(Model)),
-        unlink(Group),
-        try
-            await(fun is_ready/0),
-            Case(Model)
-        after
-            exit(Group, kill),
-            erx_bt_line_model:stop(Model)
-        end
-    end).
+    with_store(fun() -> with_controller_group(Options, Case) end).
+
+%% Runs Case with the controller group (erx_bt_host_sup) over a fresh model, ready, then
+%% ends both.
+with_controller_group(Options, Case) ->
+    Model = erx_bt_line_model:start(Options),
+    {ok, Group} = erx_bt_host_sup:start_link(erx_bt_line_model:open(Model)),
+    unlink(Group),
+    try
+        await(fun is_ready/0),
+        Case(Model)
+    after
+        exit(Group, kill),
+        erx_bt_line_model:stop(Model)
+    end.
 
 %% The store, and a stand-in for the registry, which answers each link's `join` with the
 %% GAP and GATT services alone and takes what the links send it.
-with_store(Case) ->
+with_store(Case) -> with_store(fun erx_bt_store:start_link/0, Case).
+
+%% The same with the store StartStore starts, which registers it as erx_bt_store and
+%% answers {ok, Pid}.
+with_store(StartStore, Case) ->
     application:set_env(erx_bt, name, "erxos-test"),
-    {ok, Store} = erx_bt_store:start_link(),
+    {ok, Store} = StartStore(),
     unlink(Store),
     Registry = spawn(fun registry/0),
     true = register(erx_gatt_srv, Registry),
@@ -143,6 +170,34 @@ registry() ->
         _ -> ok
     end,
     registry().
+
+%% A stand-in for the store that answers the identity address and holds every link's
+%% resolve call unanswered.
+holding_store() ->
+    {ok, Address} = erx_bt_store:static_address(<<16#C1, 2, 3, 4, 5, 6>>),
+    Store = spawn(fun() -> holding_store(Address) end),
+    true = register(erx_bt_store, Store),
+    {ok, Store}.
+
+holding_store(Address) ->
+    receive
+        {'$gen_call', From, address} -> gen_server:reply(From, Address);
+        _ -> ok
+    end,
+    holding_store(Address).
+
+%% The controller's messages traced entering Link's mailbox, once every trace message of
+%% Link's has been delivered; the case has traced Link's 'receive' before the first.
+received_from_controller(Link) ->
+    Ref = erlang:trace_delivered(Link),
+    receive {trace_delivered, Link, Ref} -> received_from_controller(Link, 0) end.
+
+received_from_controller(Link, Count) ->
+    receive
+        {trace, Link, 'receive', {hci, _}} -> received_from_controller(Link, Count + 1);
+        {trace, Link, 'receive', _} -> received_from_controller(Link, Count)
+    after 0 -> Count
+    end.
 
 wait_unregistered(Name) -> await(fun() -> whereis(Name) =:= undefined end).
 
@@ -174,6 +229,15 @@ connect(Model, Handle) ->
     await(fun() -> length(supervisor:which_children(erx_bt_link_sup)) =:= 1 end),
     [{_, Link, _, _}] = supervisor:which_children(erx_bt_link_sup),
     Link.
+
+%% An ACL packet for Handle holding one LE signaling Information Request (L2CAP 4.10),
+%% which the link answers with one packet, its Command Reject (4.1).
+information_request(Handle) ->
+    Request = <<6:16/little, 5:16/little, 16#0A, 1, 2:16/little, 1:16/little>>,
+    <<2, (Handle bor 16#2000):16/little, (byte_size(Request)):16/little, Request/binary>>.
+
+%% HCI_Disconnect of Handle with Reason as the controller process writes it.
+disconnect(Handle, Reason) -> <<1, 16#0406:16/little, 3, Handle:16/little, Reason>>.
 
 acl_writes(Model) -> length([W || {write, <<2, _/binary>> = W} <- erx_bt_line_model:log(Model)]).
 

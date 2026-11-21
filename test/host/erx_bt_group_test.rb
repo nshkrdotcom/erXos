@@ -11,8 +11,8 @@ require_relative '../fixtures/erlang_build'
 # (erx_bt_host_sup and its children) over the model line of test/erlang/erx_bt_line_model.erl,
 # the store and the advertising data, compiled from source on stock's emulator (ERX_ERL and
 # ERX_ERLC) with erx_bytes's host stand-in in place of erXos's BIFs. Then each seeded fault
-# of docs/design-bluetooth.md, "Host tests of the cores", the controller group's row,
-# applied to a copy of its module, must fail the case named for it.
+# of docs/design-bluetooth.md, "Verification", the controller group's row and the link's
+# backlog through the group, applied to a copy of its module, must fail the case named for it.
 class ErxBtGroupTest < Minitest::Test
   APPLICATIONS = %w[erx_bt].freeze
   TESTS = %w[test/erlang/erx_bt_group_tests.erl test/erlang/erx_bt_line_model.erl].freeze
@@ -37,14 +37,19 @@ class ErxBtGroupTest < Minitest::Test
              catching_case: 'group_reaches_ready_and_keeps_the_address_test'),
     Seed.new(fault: "a link process's end ignored, so no Disconnect is written",
              module_path: HCI,
-             anchor: 'step_noreply({request, Name, {disconnect, ?LINK_ENDED}}, Ended);',
+             anchor: 'step_noreply({request, Name, {disconnect, ?ERX_HCI_DISCONNECT_REASON_REMOTE_USER_TERMINATED}}, Ended);',
              replacement: '{noreply, Ended};',
              catching_case: 'a_killed_link_is_disconnected_test'),
     Seed.new(fault: 'the completion not passed to the link, so it never hands over its second packet',
              module_path: CORE,
-             anchor: '{[{to_link, {Handle, Serial}, {completed, Count}} || Count > 0],',
-             replacement: '{[],',
+             anchor: 'completed(Handle, Count, Core) -> to_link(Handle, {completed, Count}, Core).',
+             replacement: 'completed(_Handle, _Count, Core) -> {[], Core}.',
              catching_case: 'completions_reach_the_link_test'),
+    Seed.new(fault: "the link's backlog bound removed, so a link that has not stepped is sent all 40 packets",
+             module_path: CORE,
+             anchor: '#{Handle := #live{backlog = ?ERX_BT_LINK_BACKLOG} = Live} ->',
+             replacement: '#{Handle := #live{backlog = unbounded} = Live} ->',
+             catching_case: 'a_link_held_at_its_start_is_cut_at_its_backlog_test'),
     Seed.new(fault: "the identity address's top bits cleared",
              module_path: 'erlang/apps/erx_bt/src/erx_bt_store.erl',
              anchor: '{ok, <<2#11:2, Random:46>>}.',
@@ -64,7 +69,7 @@ class ErxBtGroupTest < Minitest::Test
       assert_equal 1, source.scan(seed.anchor).size, "seed anchor for #{seed.fault} is not unique"
       output, status = run_cases({ seed.module_path => source.sub(seed.anchor) { seed.replacement } })
       refute status.success?, "#{seed.fault}: the cases passed"
-      assert_match(/#{Regexp.escape(seed.catching_case)}[^\n]*\*failed\*/, output, seed.fault)
+      assert_match(/#{Regexp.escape(seed.catching_case)}[^\n]*\*(failed|timed out)\*/, output, seed.fault)
     end
   end
 
