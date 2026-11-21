@@ -147,3 +147,59 @@ limit bt_line_reset_timeout_ms u32 5000
 limit bt_patch_minidriver_ms u32 1000
 limit bt_patch_launch_ms u32 4000
 limit bt_patch_download_minidriver u16 0xfc2e
+
+# The Security Manager Protocol over its fixed channel (Core 6.3 Vol 3 Part H), as
+# erx_smp and erx_smp_core use it: a responder that pairs by LE Secure Connections
+# only (docs/design-bluetooth.md, "Secure Connections only"). The command codes (3.3,
+# Table 3.3); a code reserved for future use is ignored, 0x0a ("previously used")
+# among them.
+enum smp_code u8
+  value pairing_request 0x01
+  value pairing_response 0x02
+  value pairing_confirm 0x03
+  value pairing_random 0x04
+  value pairing_failed 0x05
+  value encryption_information 0x06
+  value central_identification 0x07
+  value identity_information 0x08
+  value identity_address_information 0x09
+  value security_request 0x0b
+  value pairing_public_key 0x0c
+  value pairing_dhkey_check 0x0d
+  value pairing_keypress_notification 0x0e
+# The Pairing Failed reasons erXos sends (3.5.5, Table 3.7); a peer's reason is kept as
+# its number.
+enum smp_reason u8
+  value authentication_requirements 0x03
+  value confirm_value_failed 0x04
+  value pairing_not_supported 0x05
+  value encryption_key_size 0x06
+  value command_not_supported 0x07
+  value unspecified_reason 0x08
+  value repeated_attempts 0x09
+  value invalid_parameters 0x0a
+  value dhkey_check_failed 0x0b
+# IO Capability (3.5.1, Table 3.4) and the OOB data flag (Table 3.5).
+enum smp_io_capability u8
+  value display_only 0x00
+  value display_yes_no 0x01
+  value keyboard_only 0x02
+  value no_input_no_output 0x03
+  value keyboard_display 0x04
+limit smp_oob_present u8 0x01
+# Bonding_Flags' value for Bonding (Table 3.6), in AuthReq's low two bits (Figure 3.3).
+limit smp_bonding u8 0x01
+# The P-256 public key's coordinates and the confirm, random and check values, in
+# octets (3.5.3, 3.5.4, 3.5.6, 3.5.7).
+limit smp_coordinate_octets u8 32
+limit smp_value_octets u8 16
+# The longest and shortest encryption key a device may state (2.3.4), and erXos's own
+# minimum and maximum, 16, so every key is 16 octets (docs/design-bluetooth.md).
+limit smp_key_size_min u8 7
+limit smp_key_size_max u8 16
+# Passkey Entry's rounds, one per bit of a six-digit passkey (2.3.5.6.3), and the
+# passkey's bound, 999999.
+limit smp_passkey_rounds u8 20
+limit smp_passkey_max u32 999999
+# The Security Manager Timer (3.4).
+limit smp_timeout_ms u32 30000

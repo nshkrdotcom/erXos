@@ -3,7 +3,8 @@
 
 %% The Bluetooth stack (docs/design-bluetooth.md). Its pure cores: erx_h4, H4 framing over
 %% the controller's line; erx_hci, the HCI codec; erx_bt_hci_core, the controller process's
-%% core; erx_bt_adv, the advertising data; erx_bt_patch, the patch reader. Its processes,
+%% core; erx_bt_adv, the advertising data; erx_bt_patch, the patch reader; erx_smp, the Security
+%% Manager codec, erx_smp_core, its responder, and erx_smp_crypto, its toolbox. Its processes,
 %% under erx_bt_sup, which erx_bt_app starts once it has mounted the line at /line: the
 %% store, erx_bt_store, and the controller group, erx_bt_host_sup, of the link supervisor,
 %% the line's reader and writer and the controller process, erx_bt_hci.
@@ -11,9 +12,10 @@
  [{description, "erXos Bluetooth Low Energy"},
   {vsn, "1"},
   {modules, [erx_bt_adv, erx_bt_app, erx_bt_hci, erx_bt_hci_core, erx_bt_host_sup, erx_bt_line_rx, erx_bt_line_tx,
-             erx_bt_link, erx_bt_link_sup, erx_bt_patch, erx_bt_store, erx_bt_sup, erx_h4, erx_hci]},
+             erx_bt_link, erx_bt_link_sup, erx_bt_patch, erx_bt_store, erx_bt_sup, erx_h4, erx_hci,
+             erx_smp, erx_smp_core, erx_smp_crypto]},
   {registered, [erx_bt_hci, erx_bt_host_sup, erx_bt_line_rx, erx_bt_line_tx, erx_bt_link_sup,
                 erx_bt_store, erx_bt_sup]},
-  {applications, [kernel, stdlib, erx]},
+  {applications, [kernel, stdlib, crypto, erx]},
   {mod, {erx_bt_app, []}},
   {env, []}]}.
