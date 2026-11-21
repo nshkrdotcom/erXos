@@ -557,4 +557,64 @@ end
     end
     assert_equal [[:c, 1234, 19], [:ruby, 7, 19]], observed
   end
+
+  # A Dependencies that only records the sources each fetch names.
+  class RecordingDependencies
+    def self.fetched = (@fetched ||= [])
+    def self.new(**) = super()
+    def fetch(cache:, source_ids:) = self.class.fetched << [cache, source_ids]
+    def elsewhere = []
+  end
+
+  # A Dependencies no fetch may build.
+  class NoDependencies
+    def self.new(**) = raise 'a fetch of package sets alone built Dependencies'
+  end
+
+  def recording_package_fetch(installed)
+    lambda do |root:, runner:, packages:|
+      installed << [root, runner.class, packages.name]
+      "/modules/#{packages.name}"
+    end
+  end
+
+  # `fetch --packages NAME` installs only the package sets it names and fetches no
+  # source; an unknown name, in either spelling, is refused before anything is installed,
+  # with the names there are; and --cache, which fetches sources, is refused with it.
+  def test_fetch_installs_only_the_named_package_sets
+    installed = []
+    package_fetch = recording_package_fetch(installed)
+    status, output = run_cli('fetch', '--packages', 'book', '--packages', 'site',
+                             package_fetch: package_fetch, dependencies_class: NoDependencies)
+    assert_equal 0, status, output
+    assert_equal [[Erx::ROOT, Erx::Runner, 'book'], [Erx::ROOT, Erx::Runner, 'site']], installed
+    assert_includes output, "the book's diagram step's packages: /modules/book"
+    assert_includes output, "the website's console's packages: /modules/site"
+    assert_includes output, "the web client's packages: not fetched; run `tools/erx fetch --packages web`"
+
+    installed.clear
+    [%w[--packages book --packages nope], %w[--packages=nope]].each do |arguments|
+      status, output = run_cli('fetch', *arguments, package_fetch: package_fetch, dependencies_class: NoDependencies)
+      assert_equal 2, status
+      assert_equal "invalid argument: no package set nope; the sets are web, book, site\n", output
+    end
+    status, output = run_cli('fetch', '--cache', @directory, '--packages', 'book', package_fetch: package_fetch,
+                                                                                    dependencies_class: NoDependencies)
+    assert_equal 2, status
+    assert_includes output, '--cache and --docker-context fetch sources, and --packages names none'
+    assert_empty installed
+  end
+
+  # Repeated --source names its sources to one fetch, and with --packages both are fetched.
+  def test_fetch_fetches_every_named_source_at_once
+    RecordingDependencies.fetched.clear
+    installed = []
+    status, output = run_cli('fetch', '--source', 'v64', '--source', 'cmark-gfm', '--packages', 'site',
+                             package_fetch: recording_package_fetch(installed),
+                             dependencies_class: RecordingDependencies)
+    assert_equal 0, status, output
+    assert_equal [[nil, %w[v64 cmark-gfm]]], RecordingDependencies.fetched
+    assert_equal [[Erx::ROOT, Erx::Runner, 'site']], installed
+    assert_includes output, 'sources verified and extracted'
+  end
 end

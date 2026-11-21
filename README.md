@@ -756,7 +756,10 @@ It never downloads. `ERX_SOURCE_CACHE` names another checkout's
 `tools/erx fetch --cache DIR` does the same for every source at once, with DIR the other checkout's
 `build/downloads`: it fills each source the cache holds, names each it does
 not, and leaves an OCI image (the Docker cache holds those) to
-`tools/erx fetch --source ID`. Setup does not fetch
+`tools/erx fetch --source ID`. `--source ID` and `--packages NAME` (the
+npm package sets `web`, `book` and `site`) each repeat, and a fetch given
+either fetches only the sources and package sets it names, as the site
+workflow does. Setup does not fetch
 `arm-registers`, `tla-tools`, `herdtools7` or the oracle image
 (`Erx::Setup::SKIPPED_SOURCES`): only `tools/erx sysreg refresh` reads
 the first, only `make check-tla` uses the second, only

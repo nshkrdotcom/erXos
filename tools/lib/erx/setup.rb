@@ -227,7 +227,7 @@ module Erx
         raise Error, "source #{id} is not downloaded; run `make fetch` or set ERX_SOURCE_CACHE " \
                      "to another checkout's build/downloads"
       end
-      @dependencies.fetch(cache: @cache, source_id: id)
+      @dependencies.fetch(cache: @cache, source_ids: [id])
     end
 
     # The LLVM tools the native builds need, for each of ERX_CLANG and ERX_LLD

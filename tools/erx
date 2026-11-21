@@ -1257,58 +1257,84 @@ module Erx
       0
     end
 
-    def self.fetch(input_arguments)
+    # Every pinned source, LVGL and every package set; with --cache, every
+    # source the cache holds and nothing else. Given --source ID or --packages
+    # NAME (each repeatable), only the sources and package sets named. A
+    # package set (package_sets) comes from the npm registry by its lockfile
+    # (WebBuild.fetch), which a source cache does not hold.
+    def self.fetch(input_arguments, package_fetch: WebBuild.method(:fetch), dependencies_class: Dependencies)
       arguments = input_arguments.dup
       cache = nil
-      source_id = nil
+      source_ids = []
+      package_names = []
       docker_context = nil
       example = nil
+      sets = package_sets
       parser = OptionParser.new do |options|
         options.on('--cache DIRECTORY', "Use only another checkout's build/downloads as the source cache") { |value| cache = value }
-        options.on('--source ID', 'Fetch only this pinned source') { |value| source_id = value }
+        options.on('--source ID', 'Fetch this pinned source; repeatable') { |value| source_ids << value }
+        options.on('--packages NAME', "Install this package set (#{sets.keys.join(', ')}); repeatable") { |value| package_names << value }
         options.on('--docker-context NAME', 'Use this local Docker context for image fetch') { |value| docker_context = value }
         options.on('--example NAME', 'Fetch only this example and its downloads (doom), which no other fetch obtains') { |value| example = value }
       end
       parser.parse!(arguments)
       raise OptionParser::InvalidArgument, 'unexpected arguments' unless arguments.empty?
-      raise OptionParser::InvalidArgument, '--example takes no --source or --docker-context' if example && (source_id || docker_context)
+      unknown = package_names - sets.keys
+      raise OptionParser::InvalidArgument, "no package set #{unknown.join(', ')}; the sets are #{sets.keys.join(', ')}" unless
+        unknown.empty?
+      if example && !(source_ids.empty? && package_names.empty? && docker_context.nil?)
+        raise OptionParser::InvalidArgument, '--example takes no --source, --packages or --docker-context'
+      end
 
       runner = Runner.new(owner_root: ROOT, log_dir: File.join(ROOT, 'build/logs'))
       return fetch_example(example, cache: cache, runner: runner) if example
 
-      dependencies = Dependencies.new(root: ROOT, runner: runner, docker_context: docker_context)
+      everything = source_ids.empty? && package_names.empty?
+      if everything || !source_ids.empty?
+        fetch_sources(everything ? nil : source_ids, cache:,
+                      dependencies: dependencies_class.new(root: ROOT, runner: runner, docker_context: docker_context))
+      elsif cache || docker_context
+        raise OptionParser::InvalidArgument, '--cache and --docker-context fetch sources, and --packages names none'
+      end
+      # LVGL is a git submodule, cloned from its recorded URL at its recorded
+      # commit; a cache holds only deps.lock's archives, so a fetch from one
+      # leaves the submodule to `git submodule update --init`.
+      require_relative 'lib/erx/lvgl'
+      complete = everything && cache.nil?
+      Terminal.puts(complete ? Lvgl.init(root: ROOT, runner: runner) : "LVGL: not fetched; run `#{Lvgl::INIT_COMMAND}`")
+      installing = complete ? sets.keys : package_names
+      sets.each_value do |packages|
+        status = if installing.include?(packages.name)
+                   package_fetch.call(root: ROOT, runner: runner, packages: packages)
+                 else
+                   "not fetched; run `tools/erx fetch --packages #{packages.name}`"
+                 end
+        Terminal.puts("#{packages.title}'s packages: #{status}")
+      end
+      0
+    end
+
+    # The package sets `tools/erx fetch` installs, by name: the web client's,
+    # the book site's diagram step's and the website console's.
+    def self.package_sets
+      require_relative 'lib/erx/book_diagrams'
+      require_relative 'lib/erx/site'
+      [WebBuild::WEB, Book::Diagrams::PACKAGES, Site::PACKAGES].to_h { |packages| [packages.name, packages] }
+    end
+
+    # The pinned sources source_ids names, or every one when it is nil (Dependencies#fetch).
+    def self.fetch_sources(source_ids, cache:, dependencies:)
       # A source cache holds no OCI image; say so before fetch, which may stop at a source the cache lacks.
-      if cache && source_id.nil?
+      if cache && source_ids.nil?
         dependencies.images.each do |image|
           Terminal.puts("#{image.fetch('id')}: an OCI image, not in a source cache; run `tools/erx fetch --source #{image.fetch('id')}`")
         end
       end
-      dependencies.fetch(cache: cache, source_id: source_id)
+      dependencies.fetch(cache: cache, source_ids: source_ids)
       dependencies.elsewhere.each do |source|
         Terminal.puts("#{source.fetch('id')}: a program for #{source.fetch('host')}; not fetched on this host")
       end
-      # LVGL is a git submodule, cloned from its recorded URL at its recorded
-      # commit; a cache holds only deps.lock's archives, so a fetch from one
-      # leaves the submodule to `git submodule update --init`. The web client's
-      # packages, the book site's diagram packages and the website console's
-      # come from the npm registry by their lockfiles (WebBuild.fetch), which a
-      # cache does not hold either.
-      require_relative 'lib/erx/lvgl'
-      require_relative 'lib/erx/book_diagrams'
-      require_relative 'lib/erx/site'
-      if cache.nil? && source_id.nil?
-        Terminal.puts(Lvgl.init(root: ROOT, runner: runner))
-        Terminal.puts("web client packages: #{WebBuild.fetch(root: ROOT, runner: runner)}")
-        Terminal.puts("book diagram packages: #{WebBuild.fetch(root: ROOT, runner: runner, packages: Book::Diagrams::PACKAGES)}")
-        Terminal.puts("website console packages: #{WebBuild.fetch(root: ROOT, runner: runner, packages: Site::PACKAGES)}")
-      else
-        Terminal.puts("LVGL: not fetched with --cache or --source; run `#{Lvgl::INIT_COMMAND}`")
-        Terminal.puts('web client packages: not fetched with --cache or --source; run `tools/erx fetch`')
-        Terminal.puts('book diagram packages: not fetched with --cache or --source; run `tools/erx fetch`')
-        Terminal.puts('website console packages: not fetched with --cache or --source; run `tools/erx fetch`')
-      end
       Terminal.puts('sources verified and extracted')
-      0
     end
 
     # An example is a git submodule a clone does not check out, and the downloads its
@@ -1775,7 +1801,8 @@ module Erx
     end
 
     private_class_method :host_environment, :with_test_runtime,
-                         :run_tests, :fuzz_c, :fuzz_ruby, :no_arguments, :status_record
+                         :run_tests, :fuzz_c, :fuzz_ruby, :no_arguments, :status_record,
+                         :package_sets, :fetch_sources
   end
 end
 

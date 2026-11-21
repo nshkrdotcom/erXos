@@ -265,12 +265,15 @@ class SiteTest < Minitest::Test
   end
 
 # build_site.rb refuses a tree with any change, untracked files included, so every file
-# the workflow downloads or unpacks lands under build/, which git ignores.
+# the workflow downloads or unpacks lands under build/, which git ignores, or outside the
+# checkout in the runner's temporary directory.
 def test_the_workflow_writes_only_under_build
   workflow = File.read(File.join(REPO, '.github/workflows/site.yml'))
   written = workflow.scan(/--output (\S+)/).flatten + workflow.scan(/> (\S+)\s*\|\|/).flatten
   refute_empty written
-  written.each { |path| assert path.start_with?('build/'), "the workflow writes #{path} outside build/" }
+  written.each do |path|
+    assert path.start_with?('build/', '"$RUNNER_TEMP/'), "the workflow writes #{path} inside the checkout, outside build/"
+  end
 end
 
 # The runner installs one Node for every package the site builds, read from one
@@ -287,6 +290,54 @@ def test_the_workflow_installs_the_newest_node_its_packages_need
                     "#{path} needs a newer Node than #{named} asks for")
   end
 end
+
+  # What tools/build_site.rb reads that `tools/erx fetch` provides, by the lists the build
+  # reads it by: the pinned sources by deps.lock id, and the package sets.
+  SITE_SOURCES = [*Erx::SiteV64::SOURCES, Erx::Book::Cmark::SOURCE_ID, *Erx::Book::FONT_FILES,
+                  *Erx::Book::FONT_LICENSES.keys].freeze
+  SITE_PACKAGES = [Erx::Book::Diagrams::PACKAGES, Erx::Site::PACKAGES].freeze
+
+  def workflow_steps
+    YAML.safe_load(File.read(File.join(REPO, '.github/workflows/site.yml'))).dig('jobs', 'build', 'steps')
+  end
+
+  # The build stops at the first input the workflow did not fetch, so the workflow's one
+  # fetch names every source and package set the build reads, and nothing more.
+  def test_the_workflow_fetches_what_the_site_build_reads
+    fetches = workflow_steps.filter_map { |step| step['run'] if step['run'].to_s.include?('tools/erx fetch') }
+    assert_equal 1, fetches.size, 'the workflow fetches in one step'
+    fetch = fetches.first.gsub("\\\n", ' ')
+    assert_equal SITE_SOURCES.sort, fetch.scan(/--source (\S+)/).flatten.sort
+    assert_equal SITE_PACKAGES.map(&:name).sort, fetch.scan(/--packages (\S+)/).flatten.sort
+    pinned = Erx::DependencySchema.parse(File.binread(File.join(REPO, 'deps.lock'))).map { |source| source.fetch('id') }
+    assert_empty SITE_SOURCES - pinned, 'a source deps.lock does not pin'
+  end
+
+  # pnpm installs those package sets, so the workflow installs it first, at a version every
+  # set's engines.pnpm accepts, and unpacks only the executable, after its digest is checked.
+  def test_the_workflow_installs_a_pnpm_its_packages_accept
+    steps = workflow_steps
+    install = steps.index { |step| step['name'] == 'Install pnpm' }
+    refute_nil install, 'the workflow installs no pnpm'
+    assert_operator install, :<, steps.index { |step| step['run'].to_s.include?('tools/erx fetch') }
+    env = steps[install].fetch('env')
+    version = env.fetch('PNPM_URL')[%r{\Ahttps://registry\.npmjs\.org/@pnpm/exe\.linux-x64/-/exe\.linux-x64-(\d+\.\d+\.\d+)\.tgz\z}, 1]
+    refute_nil version, "PNPM_URL names no exact version of pnpm's Linux x86-64 executable"
+    assert_match(/\A[0-9a-f]{64}\z/, env.fetch('PNPM_SHA256'))
+    run = steps[install].fetch('run').lines
+    order = ['curl ', 'sha256sum --check --strict', 'tar ', 'GITHUB_PATH'].map do |word|
+      found = run.each_index.select { |index| run[index].include?(word) }
+      assert_equal 1, found.size, word
+      found.first
+    end
+    assert_equal order.sort, order, 'the step downloads, checks, unpacks and only then puts pnpm on PATH'
+    assert_match(%r{ package/pnpm$}, run[order[2]], 'the step unpacks the executable alone')
+    SITE_PACKAGES.each do |packages|
+      label = File.join(packages.source, 'package.json')
+      required = Erx::WebBuild.engines(File.read(File.join(REPO, label)), label:).slice('pnpm')
+      assert_empty Erx::WebBuild.refusals(required, { 'pnpm' => version }, label)
+    end
+  end
 
   # The publishing workflow always passes a card and never --no-card.
   def test_the_workflow_never_builds_without_a_card
@@ -475,7 +526,7 @@ end
     with_inputs do |root, image|
       File.write(File.join(root, 'site/pnpm-lock.yaml'), 'another lockfile')
       error = assert_raises(Erx::Error) { inventory(root, image) }
-      assert_match(%r{the website's console's packages are not installed for site/'s package files; run `tools/erx fetch`},
+      assert_match(%r{the website's console's packages are not installed for site/'s package files; run `tools/erx fetch --packages site`},
                    error.message)
     end
   end

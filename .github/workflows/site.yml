@@ -117,15 +117,34 @@ jobs:
           rustup target add wasm32-unknown-unknown
           # erXos's tools run each subprocess under GNU timeout by its Homebrew name.
           sudo ln -sf /usr/bin/timeout /usr/local/bin/gtimeout
-      - name: Fetch the pinned v64, Closure Compiler, cmark-gfm and the fonts
+      # pnpm installs the book's and the console's packages. pnpm is one native
+      # executable, and the npm registry's @pnpm/exe.linux-x64 package holds it
+      # with no install script. The step takes that package at an exact version
+      # that every engines.pnpm of those package files accepts, checks it
+      # against its SHA-256 and only then unpacks the executable alone, outside
+      # the checkout, where no later step writes.
+      - name: Install pnpm
+        env:
+          PNPM_URL: https://registry.npmjs.org/@pnpm/exe.linux-x64/-/exe.linux-x64-12.18.0.tgz
+          PNPM_SHA256: 679df2eedf158f639db6d1f00e713d766d0d7afc6a931bc51497a625d1e1bdf7
         run: |
-          tools/erx fetch --source v64
-          tools/erx fetch --source closure-compiler
-          # The book's parser and the site's self-hosted faces (docs/design-book-site.md).
-          for id in cmark-gfm font-source-serif-roman font-source-serif-italic font-source-serif-license \
-                    font-plex-mono-regular font-plex-mono-medium font-plex-mono-license font-archivo font-archivo-license; do
-            tools/erx fetch --source "$id"
-          done
+          mkdir -p "$RUNNER_TEMP/pnpm"
+          curl --fail --location --proto '=https' --proto-redir '=https' --max-time 300 --max-filesize 134217728 \
+            --output "$RUNNER_TEMP/pnpm/pnpm.tgz" --url "$PNPM_URL"
+          echo "$PNPM_SHA256  $RUNNER_TEMP/pnpm/pnpm.tgz" | sha256sum --check --strict
+          tar -xzf "$RUNNER_TEMP/pnpm/pnpm.tgz" -C "$RUNNER_TEMP/pnpm" package/pnpm
+          echo "$RUNNER_TEMP/pnpm/package" >> "$GITHUB_PATH"
+      # What tools/build_site.rb reads that `tools/erx fetch` provides: v64 and
+      # Closure Compiler (Erx::SiteV64::SOURCES), the book's parser and the
+      # site's self-hosted faces (docs/design-book-site.md), and the package
+      # sets of the book's diagram step and the website's console.
+      - name: Fetch the pinned sources and packages the site is built from
+        run: |
+          tools/erx fetch --source v64 --source closure-compiler --source cmark-gfm \
+            --source font-source-serif-roman --source font-source-serif-italic --source font-source-serif-license \
+            --source font-plex-mono-regular --source font-plex-mono-medium --source font-plex-mono-license \
+            --source font-archivo --source font-archivo-license \
+            --packages book --packages site
       - name: Download the erXos image
         env:
           IMAGE_URL: ${{ inputs.image_url }}

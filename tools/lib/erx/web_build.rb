@@ -197,7 +197,8 @@ module Erx
     def build(root:, runner:, stage: File.join(root, STAGE), output: File.join(root, OUTPUT))
       verify_lockfile(root)
       check_versions(root: root, runner: runner, tools: %w[node])
-      raise Error, "the web client's packages are not installed for web/'s package files; run `tools/erx fetch`" unless
+      raise Error, "the web client's packages are not installed for web/'s package files; " \
+                   "run `tools/erx fetch --packages #{WEB.name}`" unless
         fetched?(root: root)
 
       stage_sources(root: root, stage: stage)

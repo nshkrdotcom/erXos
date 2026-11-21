@@ -152,7 +152,7 @@ module Erx
         WebBuild.verify_lockfile(root, PACKAGES)
         WebBuild.check_versions(root: root, runner: runner, tools: %w[node], packages: PACKAGES)
         raise Error, "#{PACKAGES.title}'s packages are not installed for #{PACKAGES.source}'s package files; " \
-                     'run `tools/erx fetch`' unless WebBuild.fetched?(root: root, packages: PACKAGES)
+                     "run `tools/erx fetch --packages #{PACKAGES.name}`" unless WebBuild.fetched?(root: root, packages: PACKAGES)
 
         path = File.join(root, TOOLS, BUNDLE)
         versions = bundled_versions(root).merge('sources' => sources_digest(root))

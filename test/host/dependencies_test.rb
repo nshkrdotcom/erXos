@@ -87,7 +87,7 @@ class DependenciesTest < Minitest::Test
     assert_equal [zip], elsewhere.elsewhere
     elsewhere.fetch(cache: @cache)
     refute File.exist?(File.join(@directory, 'build')), 'a program for another host is not fetched'
-    error = assert_raises(Erx::Error) { elsewhere.fetch(cache: @cache, source_id: 'fixture') }
+    error = assert_raises(Erx::Error) { elsewhere.fetch(cache: @cache, source_ids: ['fixture']) }
     assert_includes error.message, 'darwin-arm64'
   end
 
@@ -153,16 +153,16 @@ class DependenciesTest < Minitest::Test
     dependencies = Erx::Dependencies.new(root: @directory, runner: runner)
     definition = dependencies.image_for('image')
     assert_equal "docker.io/library/ruby@sha256:#{'a' * 64}", definition.fetch('reference')
-    dependencies.fetch(source_id: 'image')
+    dependencies.fetch(source_ids: ['image'])
     pull = runner.calls.find { |call| call.fetch(:argv).include?('pull') }
     assert_equal ['docker', '--host', "unix://#{File.realpath(socket_path)}"], pull.fetch(:argv).take(3)
     assert_equal definition.fetch('reference'), pull.fetch(:argv).last
     assert_nil pull.fetch(:options).fetch(:env).fetch('DOCKER_API_VERSION')
     runner.identity['Id'] = "sha256:#{'a' * 64}"
     runner.identity['Descriptor'] = { 'digest' => "sha256:#{'a' * 64}" }
-    dependencies.fetch(source_id: 'image')
+    dependencies.fetch(source_ids: ['image'])
     runner.identity['Id'] = "sha256:#{'c' * 64}"
-    assert_raises(Erx::Error) { dependencies.fetch(source_id: 'image') }
+    assert_raises(Erx::Error) { dependencies.fetch(source_ids: ['image']) }
   ensure
     socket&.close
   end
@@ -173,7 +173,7 @@ class DependenciesTest < Minitest::Test
     ['tcp://example.org:2375', 'unix:relative.sock', 'unix://user:secret@/socket'].each do |endpoint|
       runner = DockerFetchFixture.new(directory: @directory, endpoint: endpoint, identity: {})
       dependencies = Erx::Dependencies.new(root: @directory, runner: runner)
-      assert_raises(Erx::Error) { dependencies.fetch(source_id: 'image') }
+      assert_raises(Erx::Error) { dependencies.fetch(source_ids: ['image']) }
       refute runner.calls.any? { |call| call.fetch(:argv).include?('pull') }
     end
   end
@@ -355,7 +355,7 @@ class DependenciesTest < Minitest::Test
     dependencies, = two_sources
     error = assert_raises(Erx::Error) { dependencies.fetched_tree('other') }
     assert_equal 'source other is not fetched; run `ruby tools/erx fetch --source other`', error.message
-    dependencies.fetch(cache: @cache, source_id: 'other')
+    dependencies.fetch(cache: @cache, source_ids: ['other'])
     assert_equal File.join(@directory, 'build/third_party/other/source-1'), dependencies.fetched_tree('other')
     assert_raises(Erx::Error) { dependencies.fetched_tree('unpinned') }
   end
@@ -408,7 +408,7 @@ class DependenciesTest < Minitest::Test
     dependencies.fetch(cache: @cache)
     assert_equal 'safe', File.read(extracted_file)
     assert_equal [image_source], dependencies.images
-    error = assert_raises(Erx::Error) { dependencies.fetch(cache: @cache, source_id: 'image') }
+    error = assert_raises(Erx::Error) { dependencies.fetch(cache: @cache, source_ids: ['image']) }
     assert_includes error.message, 'without --cache'
   end
 

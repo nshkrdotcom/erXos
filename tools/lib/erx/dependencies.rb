@@ -134,19 +134,20 @@ module Erx
                                              .map(&:freeze)
     end
 
-    # Fetches every source this host uses, or source_id alone. A cache is
+    # Fetches every source this host uses, or the sources source_ids names. A cache is
     # another checkout's build/downloads: the archives come from it, never
     # from the network, and each is verified against its pin. With a cache an
     # OCI image is not fetched: the Docker cache holds it, and only its own
     # fetch contacts a registry; naming one with a cache is refused.
-    def fetch(cache: nil, source_id: nil)
+    def fetch(cache: nil, source_ids: nil)
       if cache && !File.directory?(cache)
         raise Error, "source cache is not a directory (it is another checkout's build/downloads): #{cache}"
       end
 
-      selected = source_id ? [pinned(source_id)] : sources
+      # Every id is resolved before anything is fetched, so an unknown one fetches nothing.
+      selected = source_ids ? source_ids.map { |id| pinned(id) } : sources
       images = cache ? selected.select { |source| oci?(source) } : []
-      raise Error, 'OCI images use the Docker cache; fetch them explicitly without --cache' if source_id && !images.empty?
+      raise Error, 'OCI images use the Docker cache; fetch them explicitly without --cache' if source_ids && !images.empty?
 
       # Each source is fetched on its own, so one that fails leaves the others
       # fetched; the failures are reported together at the end, each after its id.

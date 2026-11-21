@@ -208,7 +208,8 @@ module Erx
       end
 
       unless WebBuild.fetched?(root:, packages: PACKAGES)
-        raise Error, "#{PACKAGES.title}'s packages are not installed for site/'s package files; run `tools/erx fetch`"
+        raise Error, "#{PACKAGES.title}'s packages are not installed for site/'s package files; " \
+                     "run `tools/erx fetch --packages #{PACKAGES.name}`"
       end
 
       page = PAGE_FILES.to_h { |name| [name, File.join(root, 'site', name)] }

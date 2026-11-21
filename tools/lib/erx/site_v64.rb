@@ -23,6 +23,10 @@ module Erx
   # fetched.
   module SiteV64
     STAGING = 'build/site-v64'
+    # The pinned sources the build reads, by deps.lock id.
+    V64 = 'v64'
+    CLOSURE_COMPILER = 'closure-compiler'
+    SOURCES = [V64, CLOSURE_COMPILER].freeze
     # The files the site ships, as v64's Makefile writes them.
     TARGETS = { 'libv86.mjs' => 'build/libv86.mjs', 'v86-arm64.wasm' => 'build/v86-arm64.wasm' }.freeze
     # The notices shipped beside them: v64's own license texts, and the two
@@ -66,8 +70,8 @@ module Erx
     # because CLOSURE names the pinned jar. Returns the staged tree.
     def build(root:, runner:)
       sources = DependencySchema.parse(File.binread(File.join(root, 'deps.lock')))
-      tree = fetched(root:, sources:, id: 'v64')
-      closure = fetched(root:, sources:, id: 'closure-compiler')
+      tree = fetched(root:, sources:, id: V64)
+      closure = fetched(root:, sources:, id: CLOSURE_COMPILER)
       staging = OutputDirectory.check(root:, path: File.join(root, STAGING))
       FileUtils.rm_rf(staging)
       OutputDirectory.prepare(root:, path: staging)
