@@ -111,10 +111,9 @@ table hash it takes on at its encryption with that key.
 -doc """
 What reaches the link, keyed by the owner that sends it: from the controller process, an
 ACL packet, completed packets, its `busy`, the controller's reports about encryption as
-`erx_hci` decodes them, its report of new connection parameters, which changes nothing
-here, and the controller's answer to the link's `ltk_reply`; from the window, its verdict
-on a Pairing Request and its withdrawal; from the registry, a handler's answer to a
-write, a value a handler set and a notification or indication with the caller's `From`;
+`erx_hci` decodes them, and its answer to the link's `ltk_reply`; from the window, its
+verdict on a Pairing Request and its withdrawal; from the registry, a handler's answer to
+a write, a value a handler set and a notification or indication with the caller's `From`;
 from the store, its answer to `keep` and the bond's forgetting; and `expired`, when the
 earliest deadline is due.
 """.
@@ -122,7 +121,6 @@ earliest deadline is due.
                        | {le_long_term_key_request, erx_hci:handle(), <<_:64>>, 0..16#FFFF}
                        | {encryption_change, byte(), erx_hci:handle(), byte()}
                        | {encryption_key_refresh_complete, byte(), erx_hci:handle()}
-                       | {le_connection_update_complete, byte(), erx_hci:handle()}
                        | {ltk_reply_complete, ok | {failed, byte()}}}
                | {window, {admission, tag(), erx_smp_core:verdict()} | {withdraw, tag()}}
                | {registry, {answer, ref(), term()} | {set, key(), binary()}
@@ -162,7 +160,7 @@ link's end, which disconnects it.
     encrypted = false :: boolean(),
     ltk_answer = none :: none | replied | refused,        % the answer to the last request, until a report
     smp :: erx_smp_core:state(),                          % secret: the pairing's private key, passkey, DHKey
-    awaiting = none :: none | tag(),                      % the admitted pairing, until its failure or `keeping`
+    awaiting = none :: none | tag(),                      % the pairing sent to the window, until its failure or `keeping`
     keeping = false :: boolean(),                         % the store is asked to keep the pairing's bond
     smp_deadline = none :: none | time(),
     write = none :: none | {ref(), time()},              % the write a handler answers
@@ -280,11 +278,7 @@ hci({encryption_key_refresh_complete, ?ERX_HCI_STATUS_SUCCESS, _Handle}, Now, #c
 hci({encryption_change, _Status, _Handle, _Enabled}, _Now, Core) ->
     {[{close, {encryption, encryption_change}}], Core};
 hci({encryption_key_refresh_complete, _Status, _Handle}, _Now, Core) ->
-    {[{close, {encryption, encryption_key_refresh_complete}}], Core};
-%% The design has the controller process take this report and forward nothing; until
-%% erx_bt_hci_core stops forwarding it, the link takes it and changes nothing.
-hci({le_connection_update_complete, _Status, _Handle}, _Now, Core) ->
-    {[], Core}.
+    {[{close, {encryption, encryption_key_refresh_complete}}], Core}.
 
 %% The controller encrypted with the link's key: a resolved bond's candidate becomes the
 %% link's, the registry tells the handlers the level, and the Security Manager runs its

@@ -168,12 +168,6 @@ signaling_answers_dropped_at_full_queue_test() ->
     ?assertEqual([], closed(Actions)),
     ?assertMatch(#{queued := ?QUEUE, refused := 2}, facts(Core)).
 
-%% New connection parameters, which a phone asks for after connecting (HCI 7.7.65.3),
-%% change nothing.
-connection_update_ignored_test() ->
-    Core = core(),
-    ?assertEqual({[], Core}, core_step({le_connection_update_complete, 0, 1}, 0, Core)).
-
 %% ---- the ATT bearer through the link ----
 
 %% A phone that sends requests without waiting for the responses, while the controller
@@ -469,7 +463,7 @@ alphabet({Core, Now, Ref}) ->
      att(write(configuration(enc_n), <<1, 0>>)), acl(16#0040, <<1>>), acl(5, <<16#12, 1, 0:16>>),
      smp(pairing_request()), {admission, 1, closed}, {acl, 2, <<3:16/little>>}, {acl, 1, <<4, 0, 16#0A, 3, 0>>},
      ltk_request(), {le_long_term_key_request, 1, <<1:64>>, 1}, encryption_on(), {encryption_change, 5, 1, 1},
-     {encryption_key_refresh_complete, 0, 1}, {le_connection_update_complete, 0, 1}, {answer, Ref, ok},
+     {encryption_key_refresh_complete, 0, 1}, {answer, Ref, ok},
      {ltk_reply_complete, ok}, {ltk_reply_complete, {failed, 16#0C}}, {notify, n, notify, {svc, enc_n}, <<"n">>}]
     ++ [{completed, 1} || maps:get(outstanding, facts(Core)) > 0]
     ++ [{at, D, expired} || D <- [erx_bt_link_core:next_deadline(Core)], D =/= infinity, D >= Now].

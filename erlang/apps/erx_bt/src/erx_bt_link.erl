@@ -60,11 +60,11 @@ start_link(Start) ->
 init(#{name := Name, conn := Conn, info := Info, hci := Hci}) ->
     {ok, #link{name = Name, conn = Conn, hci = Hci}, {continue, {start, Info}}}.
 
-%% The link's two calls, then its core. The phone's address is a public or a random device
-%% address (HCI 7.7.65.1): the controller resolves no address for erXos.
+%% The link's two calls, then its core. `Info` holds the phone's address as `erx_hci`
+%% decodes it, `{public | random, Address}`, and the identity address the controller
+%% advertises with.
 handle_continue({start, Info}, #link{conn = Conn} = Link) ->
-    #{peer_type := PeerType, peer := Peer, identity := Identity, share := Share, acl_tx_max := AclTxMax} = Info,
-    Address = {address_type(PeerType), Peer},
+    #{peer := Address, identity := Identity, share := Share, acl_tx_max := AclTxMax} = Info,
     try
         Bond = called(store, fun() -> erx_bt_store:resolve(Address) end),
         #{table := Table, values := Values} = called(registry, fun() -> erx_gatt_srv:join(Conn, #{address => Address}) end),
@@ -73,11 +73,11 @@ handle_continue({start, Info}, #link{conn = Conn} = Link) ->
                                       addresses => #{central => Address, peripheral => {random, Identity}}}),
         {noreply, wake_up(Link#link{core = Core})}
     catch
-        throw:{start, Owner} -> {stop, {shutdown, {start, Owner}}, Link}
+        throw:{start, Owner} -> {stop, {shutdown, {start, Owner}}, Link};
+        %% An answer new/1 does not take is a defect of the owner's, and its terms carry the
+        %% bond's LTK: the reason names the class alone.
+        Class:_Raised -> {stop, {start_raised, Class}, Link}
     end.
-
-address_type(16#00) -> public;
-address_type(16#01) -> random.
 
 %% A call of the start, whose failure or timeout, an exit of gen_server:call/3, is thrown
 %% as the owner's alone: its reason may carry the answer's terms.
@@ -95,6 +95,9 @@ handle_info(Message, Link) ->
 
 handle_call({notify, Kind, Key, Value}, From, Link) ->
     step({registry, {notify, From, Kind, Key, Value}}, Link);
+%% Any other call or cast is wrapped in a label no clause of the core takes, so it ends the
+%% link through step/2's raise; unwrapped, a call shaped `{hci, _}` would be stepped as a
+%% controller message and its caller never answered.
 handle_call(Request, _From, Link) ->
     step({call, Request}, Link).
 

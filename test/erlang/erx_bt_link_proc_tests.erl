@@ -237,8 +237,7 @@ held(Name) ->
 start(Hci) ->
     {ok, Link} = erx_bt_link:start_link(
                    #{name => ?NAME, conn => make_ref(), hci => Hci,
-                     info => #{peer_type => 1, peer => ?CENTRAL_ADDRESS, identity => ?OWN_ADDRESS, share => 16,
-                               acl_tx_max => 251}}),
+                     info => #{peer => ?CENTRAL, identity => ?OWN_ADDRESS, share => 16, acl_tx_max => 251}}),
     Link.
 
 hci(Link, Input) -> Link ! {hci, Input}.

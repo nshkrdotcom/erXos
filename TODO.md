@@ -8554,20 +8554,24 @@ model harness drive `erx_device.c` itself. `erx_device_dma_check` and `erx_devic
   termination already in progress, so a remote peer leaving as the host disconnects it may reset every link.
   Check Core 6.3 Vol 4 Part E 7.1.6 and 7.7.5 for the statuses a controller sends in that race, and accept the
   ones that mean the handle is going.
-* [Medium] bluetooth, the link's conversations, the rest (`erx_hci`, `erx_bt_hci_core`, `erx_bt_hci`,
-  `erx_bt_link_core`; docs/design-bluetooth.md "The link's messages", "Reconnection"): the link side is built
-  (the pid as its address, role-tagged inputs and actions, `resolve` and `join` after `init/1`, no pairing flag,
-  `taken`, a resolved bond as a candidate, `keep` with its tag beside `keeping`). Left: `erx_hci` reads LE
-  Connection Complete's Status first and decodes Peer_Address_Type as `{public | random, Address}` or
-  malformed, so a reserved one still fails the link's start (a `function_clause` in `erx_bt_link`'s start) rather
-  than ending the controller process; the identity address enters `link_up`'s `Info` in the controller process
-  (`erx_bt_hci`), not in the core's `link_up` as the design has it; LE Connection Update Complete is still
-  forwarded, and `erx_bt_link_core` keeps a clause that ignores it until it is not; the controller core's
-  backlog, which counts `taken`, is not on this branch, so the controller process stops at a link's first
-  `taken` (`unexpected_request`) and `erx_bt_group_tests`' completions case fails until it lands. Reconnection's
-  Security Request (`wait`, `{wait, Ms}`), Service Changed with `served`, and the bonded configuration write
-  (`subscriptions`, its Write Response held for the store's `kept`) are not built; the core holds the bond's
-  table hash as `served` for them.
+* [Medium] bluetooth, Reconnection's link side (`erx_bt_link_core`; docs/design-bluetooth.md "Reconnection",
+  "The link's messages"): a resolved link sends no Security Request (`wait` to the window, `{wait, Ms}` back,
+  SMP 3.6.7 after the pairing wait and never during encryption), indicates no Service Changed when the bond's
+  table hash differs and so sends no `served`, and a configuration write on a bonded link is answered at once
+  instead of after the store's `kept` for its `subscriptions`. The core holds the bond's hash as `served` for
+  them. Build them with the host tests the Verification table lists ("one Security Request, never during
+  encryption", "a bonded configuration write answered only after the store's `ok`").
+* [Medium] bluetooth, the link core's bond state (`erx_bt_link_core`'s `kept`, `keeping`, `candidate` and
+  `served`): four fields hold one lifecycle (none, a resolved candidate, proven, keeping, kept), so meaningless
+  combinations are representable and `bonded/1` must be checked against every clause that writes them. Fold
+  them into one sum-typed field when Reconnection's rest lands, and drop `served` if Service Changed does not
+  need it.
+* [Low] bluetooth, an outcome for a pairing the window did not open (`erx_bt_link_core`'s `smp_action/3`):
+  `awaiting` is set at `admit`, so a peer's Pairing Failed or the Security Manager Timer between `admit` and
+  a `closed` or `waiting` verdict sends `{outcome, Tag, {failed, _}}` for a pairing the window refused. Clear
+  `awaiting` at a verdict other than `open`, or state in "The pairing window" that the window ignores an
+  outcome for a tag it did not open. Also add a link-core case writing `ind`'s open configuration on a
+  resolved link before encryption, which only `erx_bt_gatt_tests` and the fuzz invariant cover now.
 * [High] bluetooth, the registry, the window and the store's bonds (`erx_gatt_srv`, `erx_bt_fs`,
   `erx_bt_store`; docs/design-bluetooth.md "The `ble` facet", "The pairing window", "Bonds and the store"):
   `erx_gatt_srv` has only its `join/2` call and no process, so every link ends at its start
