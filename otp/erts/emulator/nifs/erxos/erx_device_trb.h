@@ -290,6 +290,67 @@ typedef struct erx_device_trb_request {
 } erx_device_trb_request_t;
 
 /*
+ * Whether `request` is a transfer the form may post on queue `dci` of a block of `kind` whose
+ * buffers hold `buffer_size` bytes: a control transfer only on a control queue and a normal one
+ * only on another, so never on EP0; within the buffer; a normal transfer in its endpoint's
+ * direction (4.5.1); a control transfer's data stage in its setup's direction (4.11.2.2) and as
+ * long as the setup says, and no SET_ADDRESS. The DMA check carries no direction: it is the form's.
+ */
+bool	erx_device_trb_request_valid(const erx_device_trb_request_t *request, erx_device_trb_kind_t kind,
+	    uint32_t dci, uint32_t buffer_size);
+
+/*
+ * The input context's stated parameters (docs/design-usb.md, "What Erlang names and what the NIF
+ * builds"): the slot context's and each carried endpoint context's fields a command's caller
+ * states, the generated free structs of abi/formats/xhci.txt. What the posting core derives, the
+ * add and drop flags, Context Entries, each TR Dequeue Pointer with its cycle state and the
+ * average TRB length, is not here: the sequencer's erx_dma_input_context writes it. Address
+ * Device states the slot context's device fields and EP0's context, Configure Endpoint the hub
+ * fields and each endpoint it adds (the TRB form adds the slot's addressed fields to the slot context
+ * it hands the sequencer), Evaluate Context EP0's context alone. The context size is the
+ * layout's, from the controller's HCCPARAMS1.CSZ, never stated.
+ */
+typedef struct erx_device_trb_context_endpoint {
+	uint32_t				dci;		/* 1..ERX_DEVICE_TRB_DCI_MAX */
+	erx_xhci_endpoint_context_free_t	context;
+} erx_device_trb_context_endpoint_t;
+
+typedef struct erx_device_trb_contexts {
+	erx_xhci_slot_context_free_t		slot_context;	/* with the slot context: Address Device, Configure Endpoint */
+	uint32_t				endpoint_count;
+	erx_device_trb_context_endpoint_t	endpoints[ERX_DEVICE_TRB_DCI_MAX];
+} erx_device_trb_contexts_t;
+
+/*
+ * The checks of the stated parameters, the one test of each, which a core applies where a command
+ * enters it, before anything changes (xHCI 1.2, 6.2.2 and 6.2.3, pp. 444-456):
+ *   address slot    Address Device's slot context: a route string of a port of 1 to 15 at each tier,
+ *                   then nothing; a speed of full to SuperSpeed; a root port of 1..`ports`; a TT hub's
+ *                   slot of 1..`slots` and its port of 1..ERX_USB_HUB_PORTS_MAX together, or neither,
+ *                   multi-TT only with them; the hub fields 0.
+ *   configure slot  Configure Endpoint's: the hub fields alone, 0 for a function, or a hub of
+ *                   1..ERX_USB_HUB_PORTS_MAX ports, think time 0 to 3 and its multi-TT flag; the
+ *                   device fields 0, since the core carries the slot's addressed ones itself
+ *                   (6.2.2.2, p. 448: a high-speed hub's think time and multi-TT need its speed).
+ *   EP0             a control context of no burst, interval or payload, its packet 8, 64 or 512 for
+ *                   Address Device (`exact`) and 8 to 512 for Evaluate Context.
+ *   endpoint        an endpoint Configure Endpoint adds on a block of `kind` whose buffers hold
+ *                   `buffer_size` bytes, of a slot addressed at `speed`: an index of 2..31; the type
+ *                   of its kind in its index's direction, a control endpoint taking the IN index as
+ *                   EP0 does (4.5.1, p. 96); a packet of 1 to 1024, a burst of 0 to 15; an interval
+ *                   exponent of 0 to 15, 0 for a bulk or control endpoint, as FreeBSD sets it
+ *                   (abi/formats/xhci.txt, the interval); a
+ *                   service-interval payload of at least 1, at most the packet times the burst plus
+ *                   one and the buffer, and equal to that product unless the endpoint is an interrupt
+ *                   endpoint of a SuperSpeed slot.
+ */
+bool	erx_device_trb_address_slot_valid(const erx_xhci_slot_context_free_t *slot, uint32_t ports, uint32_t slots);
+bool	erx_device_trb_configure_slot_valid(const erx_xhci_slot_context_free_t *slot);
+bool	erx_device_trb_ep0_valid(const erx_xhci_endpoint_context_free_t *context, bool exact);
+bool	erx_device_trb_endpoint_valid(const erx_device_trb_context_endpoint_t *endpoint, erx_device_trb_kind_t kind,
+	    uint32_t buffer_size, uint32_t speed);
+
+/*
  * The post of `request` under `tag` on the queue {slot, dci}: its TRBs into the ring and an out
  * transfer's bytes into a free buffer, then the first TRB's control word with the new cycle and
  * the slot's doorbell with the queue's index. REFUSE_BADARG for a queue that does not exist, a

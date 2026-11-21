@@ -111,14 +111,19 @@ jobs:
         timeout-minutes: 10
         run: |
           sudo apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
-          sudo apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends clang lld default-jre-headless make xz-utils
+          sudo apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends clang lld cmake default-jre-headless make xz-utils
           rustup target add wasm32-unknown-unknown
           # erXos's tools run each subprocess under GNU timeout by its Homebrew name.
           sudo ln -sf /usr/bin/timeout /usr/local/bin/gtimeout
-      - name: Fetch the pinned v64 and Closure Compiler
+      - name: Fetch the pinned v64, Closure Compiler, cmark-gfm and the fonts
         run: |
           tools/erx fetch --source v64
           tools/erx fetch --source closure-compiler
+          # The book's parser and the site's self-hosted faces (docs/design-book-site.md).
+          for id in cmark-gfm font-source-serif-roman font-source-serif-italic font-source-serif-license \
+                    font-plex-mono-regular font-plex-mono-medium font-plex-mono-license font-archivo font-archivo-license; do
+            tools/erx fetch --source "$id"
+          done
       - name: Download the erXos image
         env:
           IMAGE_URL: ${{ inputs.image_url }}

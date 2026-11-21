@@ -142,7 +142,7 @@ compared.
 | esbuild | bundles the imported TypeScript source of beautiful-mermaid, with elkjs and entities, into one JavaScript module | MIT | 0.28.2, the version `web/package.json` pins |
 | elkjs | the layered graph layout beautiful-mermaid calls | EPL-2.0 | 0.11.1, as beautiful-mermaid 1.1.3's lockfile resolves it |
 | entities | HTML entity encoding, used by beautiful-mermaid | BSD-2-Clause | 7.0.1, likewise |
-| mermaid | the official Mermaid library, for its parser (see "The parse check") | MIT | 12.3.0; its dependency closure, and the licenses there, are listed when its lockfile is made (unverified here) |
+| mermaid | the official Mermaid library, whose parser needs a DOM under Node and is therefore not used (see "The parse check") | MIT | not pinned |
 | Node.js | runs the two libraries, as a subprocess of the Ruby build | MIT (unverified in this task) | any at least the `engines` minimum; the publishing workflow pins one |
 | Source Serif 4 | a text serif | OFL-1.1 (`LICENSE.md`, `75784a29...`) | tag `4.005R` |
 | IBM Plex Mono | the site's mono face, and the one face of every diagram | OFL-1.1 (`license.txt`, `91c25c35...`) | tag `v6.4.2` |
@@ -347,12 +347,16 @@ either, and escapes a `String`.
 ### Heading ids
 
 One slug function gives every heading its id, following GitHub's rule
-as `github-slugger` implements it (unverified in detail; not read from
-source in this task): lower-case the text of the heading, drop every
+as the tree's document-link check forms it (`DocLinks.anchor`,
+`tools/lib/erx/doc_links.rb`, after html-pipeline's `TableOfContentsFilter`): lower-case the text of the heading, drop every
 character that is not a letter, a digit, a space, `-` or `_`, turn each
 space into `-`, and add `-1`, `-2` and so on to repeated slugs in a
 page. The same function gives the anchors of every Markdown file a link
 names, design documents included, which it reads through cmark-gfm too.
+The ids come from a parse without `--smart`, so a heading's `--` or
+straight quote reaches the slug as GitHub sees it; the page itself is
+rendered from the `--smart` parse, whose headings are the same nodes in
+the same order.
 Any disagreement with the links the writers wrote against GitHub shows
 as a missing anchor, which fails the build.
 
@@ -384,6 +388,12 @@ hash of the tree's `HEAD`; the publishing build runs on a tree without
 changes, so that commit holds exactly what the pages cite. The design
 documents are not published as pages: they are the contracts, large
 and edited daily, and the repository host renders them already.
+
+"Inside the repository" means a path git tracks in the tree being
+built, or a directory above one, so a link to a build product that
+exists only on the writer's host is refused. A fragment into a file that
+is not Markdown must name lines (`#L10`, `#L10-L20`), the only
+fragments the repository host gives such a file.
 
 Images go through the same resolver: an image path must be a file in
 the repository, of type PNG, JPEG or SVG, and is copied to
@@ -517,7 +527,7 @@ library's default output unchanged when the options are absent:
 | --- | --- | --- |
 | `charWidth` | every label is measured as its number of characters times the font size times this advance, in ems, plus 0.15 of the font size; absent, the width table is used | `0.6`, IBM Plex Mono's advance (600 of 1,000 units for every glyph, read from the font's `hmtx` table) |
 | `labelSize` | node and edge labels at this size in px | `12` |
-| `groupTitle` | `"bottom"` reserves the title row below a group's contents (24 px above them, 40 px below); either way a group is laid out at least as wide as its title plus 24 px | `"bottom"` |
+| `groupTitle` | `"bottom"` reserves the title row below a group's contents (24 px above them, 40 px below) and `"top"` above them, as the library does; with either value set, a group is laid out at least as wide as its title plus 24 px, and without the option it is as wide as its contents, as upstream lays it out, so a long title may be clipped | `"bottom"` |
 
 The library imports two packages, `elkjs` (`elk-instance.ts` loads
 `elkjs/lib/elk.bundled.js`) and `entities`. Both stay out of the tree,
@@ -525,13 +535,15 @@ unmodified, pinned by `tools/book/pnpm-lock.yaml` at the versions
 beautiful-mermaid 1.1.3's own lockfile resolves (elkjs 0.11.1,
 entities 7.0.1) and installed with the book's other packages. The step
 runs the pinned esbuild, by argument vector under a deadline, to bundle
-`tools/book/beautiful-mermaid/index.ts` with those two packages into
-one ES module, `build/book-tools/beautiful-mermaid.mjs`, resolving the
-two bare imports from `build/book-modules/node_modules` through esbuild's
-node-paths setting (whether the command line reaches it by `NODE_PATH`
-is unverified and probed first). It reuses an earlier bundle only when
-the SHA-256 of the import's files, taken in sorted path order, and the
-esbuild version match the record beside it.
+the driver of "The diagram step", `tools/book/diagrams.ts`, with the
+library and those two packages into one ES module,
+`build/book-tools/diagrams.mjs`, resolving the two bare imports from
+`build/book-modules/node_modules` through esbuild's node-paths setting,
+which its command line reads from `NODE_PATH` (probed with esbuild
+0.28.2: without it, `entities` does not resolve). It reuses an earlier
+bundle only when the record beside it names the same sources (the
+SHA-256 of the import's files in sorted path order, the driver and the
+package files) and the same versions of elkjs, entities and esbuild.
 
 ### The diagram step
 
@@ -541,15 +553,20 @@ process, `tools/book/diagrams.ts`, a short TypeScript driver that esbuild bundle
 argument vector and a deadline:
 
 ```
-node --permission --allow-fs-read=<driver>,<bundle>,<modules> <driver>
+node --permission --allow-fs-read=<bundle> <bundle>
 ```
 
-Node's permission model (`--permission`) lets the process read only the
-driver, the library's bundle and the installed packages (official
-Mermaid, for the parse check) and refuses file writes, child
-processes, worker threads and native add-ons; whether the pinned Node
-also refuses network access under it is unverified and read from that
-Node's documentation during implementation. Neither library makes a
+The bundle is the driver with the library, elkjs and entities in one
+module, so Node's permission model (`--permission`) lets the process
+read only that file, and refuses file writes, network access, child
+processes, worker threads and native add-ons (the "Permission Model"
+section of Node 26.13.0's `doc/api/permissions.md`, SHA-256 `32b6ad04...`).
+Network access is refused under the model only from Node 25.0.0, which
+added `--allow-net` (`doc/api/cli.md`, `c32c9c59...`), so
+`tools/book/package.json`'s `engines` names Node 25.0.0. Node gets
+none of the caller's environment but `PATH`, with `LANG=C` and
+`TZ=UTC`, so no `NODE_*` variable can widen the grant and the bundled
+code reads no token or setting the caller holds. Neither library makes a
 request: beautiful-mermaid 1.1.3's built `dist/index.js` holds no
 `fetch`, `XMLHttpRequest` or `http` import, and erXos's changes add
 none.
@@ -558,15 +575,14 @@ The request goes to the driver's standard input as one JSON document
 and the reply comes back on its standard output as another:
 
 * request: `{"options": {...}, "diagrams": ["<source>", ...]}`;
-* reply: `{"versions": {"node": "...", "mermaid": "..."},
-  "results": [...]}`, one result per diagram in the
+* reply: `{"versions": {"node": "..."}, "results": [...]}`, one result per diagram in the
   same order, either `{"svg": "..."}` or `{"error": {"stage": "parse"
   | "render", "message": "...", "line": N | null}}`.
 
-The driver reads Node's version from the process and mermaid's from
-the `package.json` it actually loaded, and the build record names the
-imported library by the digest of its files, so the record names what
-ran. It reports a diagram's
+The driver reads Node's version from the process; the step reads the
+versions of elkjs, entities and esbuild from the `package.json` files
+esbuild resolved, and the build record names the imported library by
+the digest of its files, so the record names what ran. It reports a diagram's
 failure as a result and goes on, and exits non-zero only for its own
 failure (a missing package, a malformed request); Ruby turns the first
 failed result, in book order, into the step's refusal. One process for
@@ -593,7 +609,7 @@ and a label fills its box as the layout measured it.
 
 The packages enter as the web client's do. `tools/book/package.json`,
 `tools/book/pnpm-lock.yaml` and `tools/book/pnpm-workspace.yaml` pin
-elkjs 0.11.1, entities 7.0.1, mermaid 12.3.0 and esbuild 0.28.2 with
+elkjs 0.11.1, entities 7.0.1 and esbuild 0.28.2 with
 every package of their closure and its integrity hash, and allow no
 build script;
 `package.json`'s `engines` names the oldest Node and pnpm.
@@ -612,12 +628,14 @@ sees it, so a diagram the repository host would show as an error never
 reaches the site. The pinned parser stands in for the repository
 host's, whose version is not published (unverified).
 
-That `mermaid.parse` runs under Node with no DOM is unverified:
-mermaid 12.3.0 depends on `dompurify` and `d3`, which expect a
-browser's `window`. The implementation probes it first, on the 56
-diagrams. If it runs, the check is built as described; if it needs a
-DOM, the check is not built, no DOM emulation is added, and the
-question returns to the user with what the probe found.
+`mermaid.parse` needs a DOM. A probe ran mermaid 12.3.0
+under Node 26.13.0 with no DOM on the book's 61 diagrams: 19 sequence
+diagrams parsed, 2 were rejected with parse errors, and the other 40,
+every flowchart with a label and every state diagram, failed with
+`DOMPurify.addHook is not a function`, since `dompurify` expects a
+browser's `window`. The check is therefore not built, mermaid is not
+among the pinned packages, and no DOM emulation is added; whether to
+check diagrams another way is an open question below.
 
 ### From SVG to page
 
@@ -707,45 +725,78 @@ then.
 
 ## Typography and look
 
-The book shares the landing page's identity, its warm paper, ink and
-signal-orange palette and its faces, and sets it for long reading.
+The book shares the landing page's identity, its warm paper and
+near-black ink (`--ink` #121211 on `--paper` #efede6, and #ece9e1 on
+#0f0f0e in dark mode, the same tokens the diagrams use), and sets it
+as a technical manual of the 1970s and 1980s was set, kept readable
+for long text: the manual feel comes from the structure and the
+furniture of the page, not from the face of the text. It borrows the
+typographic era only: no logo, name, seal or document-number format
+of any real document or agency.
 
 | Role | Face | Why |
 | --- | --- | --- |
 | text | Source Serif 4, roman and italic | a serif made for long text on screens, with optical sizes; OFL-1.1 |
-| headings, navigation, captions | Archivo, the site's sans | the landing page's face, so the book reads as the same site |
-| code, paths, diagram labels | IBM Plex Mono | the landing page's mono, and the diagram style's one face |
+| headings, numbers, captions, the running header, the contents | IBM Plex Mono | the diagram style's one face, so a page and its drawings read as one document; the landing page's mono |
+| the landing page's headings and navigation | Archivo | the landing page's face; the book does not use it |
 
 * **Fonts are self-hosted**, for the whole site. The fetch step fetches
   the upstream files at the pins above, each checked against its
-  SHA-256 in `deps.lock` (`file` entries): WOFF2 where the release
-  publishes it, otherwise the TTF as published (which of the three
-  releases publish WOFF2 is unverified; the bake-off fetched TTFs).
-  They are served under digest names with `font-display: swap`, each
-  beside its OFL-1.1 text, as the license asks. `site/fonts.css` holds
-  the `@font-face` rules once; `index.html`, `release-notes.html` and
-  every book page link it, and the Google Fonts `preconnect` and
-  stylesheet links leave both hand-written pages. The files are served
-  whole; subsetting needs another tool and is added only if the fonts'
-  size is reported as a problem.
+  SHA-256 in `deps.lock` (`file` entries): WOFF2 for Source Serif 4
+  (the release's `WOFF2/VAR` files) and IBM Plex Mono (`woff2/`, the
+  regular and medium weights), and the TTF for Archivo, which
+  `google/fonts` publishes only as TTF. They are served under digest
+  names with `font-display: swap`, each beside its OFL-1.1 text, as
+  the license asks. `site/fonts.css` holds the `@font-face` rules once,
+  naming each file by its `deps.lock` id in double braces, which the
+  build replaces with the published name; `index.html`,
+  `release-notes.html` and every book page link it, and the Google
+  Fonts `preconnect` and stylesheet links leave both hand-written
+  pages. The files are served whole; subsetting needs another tool and
+  is added only if the fonts' size is reported as a problem.
 * **Measure and rhythm**: text at about 19 px on wide screens and 17 px
   on narrow ones, line height about 1.6, a measure of about 68
   characters; figures and wide tables may extend past the measure up to
   the content column's width. Hyphenation by the browser (`hyphens:
-  auto`, `lang="en"`). Headings in Archivo's wide cut, with the section
-  number hung in the left margin in the signal color on wide screens.
+  auto`, `lang="en"`).
+* **Headings**: IBM Plex Mono at its regular weight, with generous
+  space above; chapter and section heads in capitals under a thin rule
+  across the column, the chapter title under a heavier one with its
+  label ("Chapter 16") set small above it. Every numbered heading's
+  decimal number (`16.2`, `16.2.1`) is set in its own element, hung in
+  the left margin on wide screens. The numbers are the ones the
+  headings carry, because GitHub's anchors, which the book's links
+  name, are made from them; the renderer derives each number from the
+  heading tree (the chapter's number, then one counter per level) and
+  refuses a heading whose written number differs, so the two cannot
+  drift. A heading without a number (a chapter's "Summary") takes none
+  and moves no counter.
+* **Running header**: a line of small capitals in the mono face at the
+  top of every page, the book's title on the left and the chapter's
+  label and title on the right, over a thin rule.
+* **Figures**: the caption beneath the figure, in the mono face, its
+  label ("Figure 16.2.") set in capitals. The label keeps the number as
+  the chapter writes it, since the prose cites figures that way.
+  Tables get no number or caption of their own: the book's tables have
+  no captions and its prose cites none by number, so a derived number
+  would name nothing.
 * **Color**: the site's tokens (`--paper`, `--ink`, `--muted`,
-  `--hair`, `--signal`, `--code-bg`, ...) for text, rules, links,
-  code and diagrams; dark mode from `prefers-color-scheme`, as the
-  landing page does, with no toggle (a toggle would need a script). The
-  tokens move from `site/style.css` into `site/tokens.css`, which every
-  page links, so the palette has one source.
-* **Status and background boxes**: the status box as a panel under the
-  chapter title, with "Built" and "Designed" set as small labels; the
-  background boxes as asides with a hairline rule and a quieter face
-  size, so a reader who knows the topic can skip them.
-* **Code**: preformatted, mono at about 0.85 of the text size, on the
-  code ground, never wrapped, scrolling sideways when wide. See "Code".
+  `--hair`, `--rule`, `--signal`, ...) for text, rules and links; dark
+  mode from `prefers-color-scheme`, as the landing page does, with no
+  toggle (a toggle would need a script). The tokens live in
+  `site/tokens.css`, which every page links, so the palette has one
+  source. The one accent, `--signal`, marks only the reader's place:
+  the current chapter in the contents rail, a hovered link, focus.
+* **Rules, not fills**: tables have a heavier rule above and below,
+  a thin rule under the header row and hairlines between rows, with no
+  fills; code blocks sit in a thin-ruled box on the paper.
+* **Status and background boxes**: the status box as a thin-ruled
+  panel under the chapter title, with "Status", "Built" and "Designed"
+  set as small mono labels; the background boxes between two
+  hairlines in a quieter tone and size, so a reader who knows the
+  topic can skip them.
+* **Code**: preformatted, mono at about 0.85 of the text size, never
+  wrapped, scrolling sideways when wide. See "Code".
 * **Diagrams**: in "The diagram style": IBM Plex Mono at 12 px, ink
   on paper from the site's tokens, 1 px square lines, long dashes,
   titles at the lower left of their groups and a dithered shadow
@@ -772,9 +823,11 @@ lexers.
 
 ### Navigation, glossary and search
 
-* **Contents rail**: on wide screens a left column lists the parts and
-  chapters, the current chapter opened to its sections (its `##`
-  headings). On narrow screens the same list sits in a `<details>`
+* **Contents rail**: on wide screens a left column lists the chapters
+  as a manual's table of contents does, each number in its own column,
+  the current chapter opened to its numbered sections (its `##`
+  headings). The contents page lists the parts, each chapter with a dot
+  leader to its number. On narrow screens the same list sits in a `<details>`
   element at the top of the page. No script.
 * **Previous and next** links at the foot of each page, in contents
   order.
@@ -959,7 +1012,7 @@ make it fail, planted once by hand when the test is written.
 | Escaping and ASCII | a fixture with `<4.0.0>`, `a && b` in code, a link whose fragment holds `"` and a curly quote in prose renders them as text and numeric references; every output byte is ASCII | drop the escape in attribute values; write non-ASCII characters as they are |
 | SVG writer | given SVG strings in the shape the library returns: the library's style text, its `@import` with it, is replaced by the writer's; ids become `d1.arrowhead` and `d2.arrowhead` on one page, and each `url(#arrowhead)` and `url(#dither)` names its own diagram's; `<script>`, `onload=`, `<image href="https://x">`, `fill="url(https://x)"` and `stroke="var(--_nonesuch)"` are each refused; a `<` in a label is escaped | rename ids but not the `url()` references; strip an external `url()` instead of refusing it; restyle after renaming, so the dither's id stays bare |
 | Style | a fixture flowchart with an outer group holding an inner group, a dashed edge crossing the outer group's shadow and a labelled edge, and a sequence diagram with a note: the header bars are gone and each title sits at the lower left; corners are square, strokes 1 px, dashes `10 6`; exactly one shadow path, for the outer group; the dashed edge has an underlay clipped to the shadows; the note is a rectangle; the sequence diagram has no shadow and the `viewBox` grows only for the flowchart; the restyle of a group without its title is refused | count a group as inside itself, so no group casts a shadow; drop the clip from the underlay |
-| The library's options | a tool test that runs the driver with the bake-off's dense flowchart and a one-node fixture: with `charWidth: 0.6` and `labelSize: 12` the node labelled with 20 characters is a `rect` 144 px plus margins wide and its label's `font-size` is 12; with `groupTitle: "bottom"` a group's contents sit 24 px below its top and 40 px above its bottom, and a group whose title is wider than its contents is as wide as the title plus 24; without the three options the six bake-off diagrams give the same SVG as the unmodified 1.1.3 bundle, kept as goldens | measure with the width table when `charWidth` is set; apply the title's minimum width only when `groupTitle` is `"bottom"` |
+| The library's options | a tool test that runs the driver with the bake-off's dense flowchart and a one-node fixture: with `charWidth: 0.6` and `labelSize: 12` the node labelled with 20 characters is a `rect` 144 px plus margins wide and its label's `font-size` is 12; with `groupTitle: "bottom"` a group's contents sit 24 px below its top and 40 px above its bottom, and a group whose title is wider than its contents is as wide as the title plus 24, in a top-down and a left-to-right flowchart alike; without the three options the six bake-off diagrams give the same SVG as the unmodified 1.1.3 bundle, kept as goldens | measure with the width table when `charWidth` is set; drop the title's minimum width; give it with its axes unswapped in a top-down flowchart; draw the title row at the top |
 | Diagram step | the driver, given three diagrams of which the second is invalid, returns a drawing, an error with its stage and line, and a drawing, in order, and the step's refusal names the second diagram's chapter file and line (tool test) | let the driver stop at the first error, so the third result is missing; report the fence's line without the error's own line |
 | Parse check | a sequence diagram with `;` in a label, which beautiful-mermaid draws, is refused at the parse stage with Mermaid's message (tool test; built only if the probe shows `mermaid.parse` runs under Node) | skip the parse call |
 | Color tokens | a writer style naming `--nonesuch` is refused; the real style, naming `--ink` and `--paper`, passes against `site/tokens.css` | read the tokens from `site/style.css`, which no longer declares them |
@@ -984,3 +1037,14 @@ pages, not by a test.
    title's minimum width, which are general (any monospace face, and
    the clipped title is the library's fault), and keep `groupTitle`
    as erXos's change unless upstream wants it.
+2. **The parse check.** `mermaid.parse` needs a DOM under Node ("The
+   parse check"), so no diagram is checked against official Mermaid,
+   and a diagram GitHub would show as an error can reach the site
+   when beautiful-mermaid draws it. Should the check come back, and
+   how: with a DOM shim such as jsdom for DOMPurify under Node (a new
+   pinned dependency, with mermaid pinned beside it), with a narrower
+   check of the constructs Mermaid refuses and beautiful-mermaid draws,
+   or not at all, leaving GitHub's preview and the review of rendered
+   pages to catch such a diagram? Recommendation: not now, with the gap
+   kept as a low-severity item of `TODO.md`; the two diagrams the probe
+   found rejected are fixed in their source.

@@ -34,8 +34,10 @@ module Erx
     #   erx_report_meaning   the meaning a record of a structure the device
     #                        writes selects; false for a selector that names
     #                        none of the structure's meanings;
-    #   erx_report_releases  the cpu structure whose record a report names and
-    #                        its release place's value; false for a meaning
+    #   erx_report_releases  the cpu structure whose record a report names, its
+    #                        release place's value, and whether that value is a
+    #                        device address (a place marked device_address) or a
+    #                        record's index; false for a meaning
     #                        that releases nothing, or a code its release's
     #                        `when` does not list.
     module MarksEmitter
@@ -78,6 +80,16 @@ module Erx
          "\tuint8_t\tbytes[#{reported.map { |meaning| meaning.layout.size }.max}];",
          '} erx_report_record_t;', '',
          '/*',
+         ' * What a report releases: the cpu structure whose record it names, and its',
+         " * release place's value, which names the record by its device address when",
+         ' * the place is marked device_address and by its index in the table otherwise.',
+         ' */',
+         'typedef struct erx_report_release {',
+         "\tuint32_t\tstructure;",
+         "\tuint64_t\tvalue;",
+         "\tbool\t\taddress;",
+         '} erx_report_release_t;', '',
+         '/*',
          ' * The meaning a record of structure, which the device writes, selects, into',
          ' * *meaning; false for a selector that names no meaning of the structure, or a',
          ' * structure the device does not write.',
@@ -86,14 +98,13 @@ module Erx
          'erx_report_meaning(uint32_t structure, const erx_report_record_t *record, uint32_t *meaning)',
          '{', "\t(void)record;", "\tswitch (structure) {", *arms, "\tdefault:", "\t\treturn (false);", "\t}", '}', '',
          '/*',
-         ' * The cpu structure whose record a report of meaning names, into *structure,',
-         " * and its release place's value, into *value; false for a meaning that",
+         ' * What a report of meaning releases, into *release; false for a meaning that',
          ' * releases nothing, or a code its release does not list.',
          ' */',
          'static inline bool',
-         'erx_report_releases(uint32_t meaning, const erx_report_record_t *record, uint32_t *structure, uint64_t *value)',
+         'erx_report_releases(uint32_t meaning, const erx_report_record_t *record, erx_report_release_t *release)',
          '{', "\tswitch (meaning) {", *releasing.flat_map { |meaning| release_arm(meaning) },
-         "\tdefault:", "\t\t(void)record;", "\t\t(void)structure;", "\t\t(void)value;", "\t\treturn (false);", "\t}", '}', '']
+         "\tdefault:", "\t\t(void)record;", "\t\t(void)release;", "\t\treturn (false);", "\t}", '}', '']
       end
 
       # One meaning's test in erx_report_meaning: its selector's value, or none
@@ -111,8 +122,9 @@ module Erx
         codes = (release.codes || []).map { |code| "#{place_value(meaning, release.condition, raw: false)} == #{hex(code)}" }
         ["\tcase #{CEmitter.constant(meaning.constant)}:",
          *(codes.empty? ? [] : ["\t\tif (!(#{codes.join(" ||\n\t\t    ")}))", "\t\t\treturn (false);"]),
-         "\t\t*structure = #{structure_constant(release.target)};",
-         "\t\t*value = #{place_value(meaning, release.place, raw: false)};",
+         "\t\t*release = (erx_report_release_t){ .structure = #{structure_constant(release.target)},",
+         "\t\t    .value = #{place_value(meaning, release.place, raw: false)},",
+         "\t\t    .address = #{release.place.device_address ? 'true' : 'false'} };",
          "\t\treturn (true);"]
       end
 
@@ -126,26 +138,56 @@ module Erx
       end
 
       # The structures, numbered in name order from 1, so 0 is free to name a
-      # buffer's data; which of them the device writes; and the structure each
-      # meaning belongs to. The check reads these, never a copy of the formats.
+      # buffer's data; which of them the device writes, and which need a binding;
+      # the size of a record of each, the size its meanings share
+      # (check_meanings), which a table's stride must be; and the structure
+      # each meaning belongs to. The check reads these, never a copy of the
+      # formats.
       def structures(targets, meanings)
         return [] if targets.empty?
 
         numbers = targets.each_with_index.map do |target, index|
           "#define #{structure_constant(target.name)} UINT32_C(#{index + 1})"
         end
+        sizes = targets.filter_map do |target|
+          offered = meanings.find { |meaning| meaning.structure.name == target.name }
+          offered && [structure_constant(target.name), "UINT32_C(#{offered.layout.size})"]
+        end
         ['/* The structures the formats declare; 0 names a buffer\'s data, which no structure is. */',
          '#define ERX_REFERS_DATA UINT32_C(0)', *numbers, '',
          *switch_function('Whether the device writes structure, as its format declares; false for one the CPU writes or none.',
                           'bool', 'erx_structure_device_writes(uint32_t structure)', 'structure',
                           targets.select(&:device?).map { |target| [structure_constant(target.name), 'true'] }, 'false'),
+         *switch_function('Whether a table of structure takes runs only while a binding command has bound it to an ' \
+                          'endpoint, as its format declares: a transfer ring.',
+                          'bool', 'erx_structure_needs_binding(uint32_t structure)', 'structure',
+                          targets.select(&:needs_binding?).map { |target| [structure_constant(target.name), 'true'] },
+                          'false'),
+         *switch_function('The size of a record of structure, which its meanings share; 0 for one no meaning belongs to, or none.',
+                          'uint32_t', 'erx_structure_record_size(uint32_t structure)', 'structure', sizes, '0'),
          *switch_function('The structure whose tables offer meaning, or 0 for a number that is no meaning.',
                           'uint32_t', 'erx_meaning_structure(uint32_t meaning)', 'meaning',
                           meanings.map { |meaning| [CEmitter.constant(meaning.constant), structure_constant(meaning.structure.name)] },
-                          '0')]
+                          '0'),
+         '/* The reaches a command meaning has (abi_marks.rb, REACHES); 0 is none. */',
+         '#define ERX_REACH_NONE UINT32_C(0)',
+         *Marks::REACHES.each_with_index.map { |kind, index| "#define #{reach_constant(kind)} UINT32_C(#{index + 1})" },
+         '/* Every reach as X(constant, name), so a table over the reaches names a row for each or fails to build. */',
+         "#define ERX_REACHES(X) #{Marks::REACHES.map { |kind| "X(#{reach_constant(kind)}, #{kind})" }.join(' ')}", '',
+         *switch_function('What the success or failure of meaning does to the endpoints its command names, as its ' \
+                          'reach mark says; ERX_REACH_NONE for a meaning with none, or a number that is no meaning.',
+                          'uint32_t', 'erx_meaning_reach(uint32_t meaning)', 'meaning',
+                          meanings.select(&:reach).map { |meaning| [CEmitter.constant(meaning.constant), reach_constant(meaning.reach)] },
+                          'ERX_REACH_NONE'),
+         *switch_function('Whether a table of structure holds commands, one at a time: a structure one of whose meanings ' \
+                          'has a reach, the command ring.',
+                          'bool', 'erx_structure_takes_commands(uint32_t structure)', 'structure',
+                          meanings.select(&:reach).map { |meaning| structure_constant(meaning.structure.name) }.uniq
+                                  .map { |structure| [structure, 'true'] }, 'false')]
       end
 
       def structure_constant(name) = CEmitter.constant("structure_#{name}")
+      def reach_constant(kind) = CEmitter.constant("reach_#{kind}")
 
       # One switch from value to result, the cases with one result sharing it.
       def switch_function(summary, type, signature, value, cases, otherwise)

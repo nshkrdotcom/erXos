@@ -2635,6 +2635,13 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
 
 ## Bugs by subsystem
 
+* [Medium] `site/terminal.js`: the console loads xterm's stylesheet and script from `cdn.jsdelivr.net` when the reader presses Boot, against requirement 7 of [design-book-site.md](docs/design-book-site.md#requirements) (no request to another host); `Site.inventory`'s check reads only `.html` and `.css`. Self-host xterm as v64's packages are, then extend the check to the site's scripts.
+* [Medium] `tools/lib/erx/site.rb` `REMOTE_LOAD`: a regex over HTML enumerates load forms and misses `srcset`, an entity-encoded scheme, `iframe`, `object`, `poster`, SVG `<image href>`, CSS `image-set()` and meta refresh. Replace it with a check of every element's address-valued attributes, so a new form is refused by construction.
+* [Medium] `tools/lib/erx/book.rb`, `book/page.rb`, `book/contents.rb`: readability of the book step. Three "plain text of a node" functions (`Book.heading_text`, `Page#text_of`, `Contents.text`) and two sourcepos readers should be one; three placeholder fillers (`Book.fill`, `Site.fill_shared`, `Site.render_index`) with three grammars should be one template function; positional tuples (`shared_files`'s three values, `Result.sections`, `media`, `Contents.neighbours`) should be `Data` values; the heading-anchor table runs cmark-gfm lazily from inside `Page.render` through the resolver, so the render is not pure; `Site.publish` should derive `shared_names` from the book plan instead of taking both.
+* [Medium] `test/host/book_test.rb`: the design's tool tests "The whole book builds" and "Same bytes" are missing; no test runs cmark-gfm (two builds of the whole book were compared by hand and were identical).
+* [Low] `tools/lib/erx/book/page.rb` `html`: a draft marker or raw HTML after a comment in the same HTML block (`<!-- a --> <!-- check: x -->`) is dropped with the comment; check every comment and tag in the block.
+* [Low] `tools/lib/erx/book`: a repeated title slug overwrites another page's contents entry silently; `docs/book/index.md` would be replaced by the contents page; `Book::TITLE` copies the outline's title instead of deriving it; table column alignment is dropped; `Address.https` trusts its caller (`Links::Resolver#outward`) to have parsed the URL.
+* [Low] `tools/build_book.rb`: `--out build/site` replaces a built site with a book-only tree (both write the site's marker); two concurrent builds into one directory can fail with a bare `Errno` rather than `Erx::Error`.
 * [Low] build, the native-jit copy's stamp (`tools/lib/erx/native_jit_runtime.rb`, `otp/erts/emulator/Makefile.in`
   `$(ASMJIT_PCH_OBJ)`): the stamp has no compiler version or clang resource-header identity, so after an LLVM
   upgrade moves the resource directory clang may refuse the old asmjit PCH and nothing restarts the copy
@@ -8149,8 +8156,7 @@ to the corpus and follow rc
   by its reports, which it acquires itself (the validity, then the records it covers), against one ledger. The TRB form's tables, bindings and releases are in
   [design-usb.md](docs/design-usb.md#what-the-dma-check-judges). Until then the TRB form's plans cannot run through
   `run_call`. The formats' marks are in `abi/formats` (virtio, xHCI, and SDHCI's ADMA2 entry), and the encoders and
-  each structure's meaning list generated from them in `include/erx/abi.h`, which nothing uses yet; the command TRBs (one layout per
-  command, Set TR Dequeue Pointer's among them) and the input context's composed encoder have no marks yet, and the packages that move those forms add them. Every
+  each structure's meaning list generated from them in `include/erx/abi.h`, which nothing uses yet. Every
   device address in `abi/formats` carries `device_address`, and a marked layout refuses one a description would
   state or the format fix; a device address in an unmarked layout is not refused yet: that rule turns on when the
   last form moves onto the encoders. The sequencer encodes virtio-gpu's region entry, `erx_virtio_gpu_mem_entry`, from a fill that
@@ -8188,7 +8194,7 @@ model harness drive `erx_device.c` itself. `erx_device_dma_check` and `erx_devic
   exhaustive harness does not explore its acquire transition (each release there follows an acquisition of every
   live holding), and `erx_dma_ledger_acquire` takes a bare count, so no chokepoint yet keeps the ledger's
   transitions to the sequencer;
-  `ERX_DMA_STORE_BYTES_MAX` is hand-kept, checked only by a static assertion against the two layouts the sequencer
+  `ERX_DMA_STORE_BYTES_MAX` is hand-kept, checked only by static assertions against the layouts the sequencer
   encodes, and should be derived from the widest encoded layout; `erx_dma_ledger_make` takes any layout that passes the
   install's check, so the sequencer's `install()` relies on its one caller, the split ring, deriving its layout
   through `erx_dma_layout_split_ring` (three tables of one count); the
@@ -8196,13 +8202,20 @@ model harness drive `erx_device.c` itself. `erx_device_dma_check` and `erx_devic
   call until the old check goes; `free_record`'s loop
   is bounded only by the room rule; `erx_dma_publish` returns check verdicts for refusals that mean the check and the
   sequencer disagree; rule 1 zeroes a buffer's named size while the handover cleans its stride; and the generated
-  `erx_report_meaning` carries an unreachable return and casts for a structure with one meaning. A layout holds one table of each structure, and a table cores describe is placed at any free record, which the
-  TRB form's many transfer rings, each placed in order, change when it moves on. Packages, in order: the
+  `erx_report_meaning` carries an unreachable return and casts for a structure with one meaning. Packages, in order: the
   sequencer's publication and its acquisition, with the releases rule and the split ring moved onto them; GENET,
   and ADMA2 with its transfer split into entries by the sequencer, moved onto them; the TRB form's publication and
-  bindings; the TRB form's releases from acquired events, each command's reach and the endpoints' states; the
+  bindings; the TRB form's releases from acquired events; the
   stand-ins' ledger check. Before a non-coherent device relies on the acquisition, its unverified AArch64 premise is settled by the Arm
   ARM passage, the litmus test or the VL805 probe [Releases](docs/design-device-dma.md#releases) names.
+* [Medium] DMA, the TRB form's core (`erx_device_trb_form.c`): its layout, posts and commands are host-tested and used by nothing yet: `erx_device.c` calls neither `erx_trb_form_post` nor `erx_trb_form_command`. Before `erx_device.c`'s TRB post and commands move onto it, its releases from the event ring are host-tested too (`erx_trb_form_acquire`, `erx_trb_form_complete`). It still needs the form's 64-bit address width checked against the controller's AC64; and a generated way to write `ERDP` with its busy bit, whose `oneToClear` field in a register with other fields gets no setter from the SVD generator (`erx_trb_form_complete` gives the dequeue pointer alone); and the install that zeroes and cleans the event ring at a reset, which `erx_trb_form_reset` requires (an event left from before it carries the first lap's cycle bit). Also open there: `describe` repeats `transfer_words`' setup type and status direction, and `block_count` repeats erx_device_trb.c's, until `erx_device_trb_post` moves over and they go; `pool_first_buffer` repeats the ledger's numbering of buffers across pools; the ledger's bounds come from `erx_device_trb.h`, which a neutral bounds header would hold instead; the input context's pool size is its region's granule-rounded length. Neither TRB core is in `erx_device.mk` yet, so `libc_free_entries_test.rb` does not hold them to `liberx/backend/core/mem.h` until they join it.
+* [Medium] DMA, the TRB form's commands (`erx_device_trb.c` beside `erx_device_trb_form.c`): until `erx_device_trb.c`'s commands move onto the form, it derives the add flags' inputs (drops, Context Entries, dequeue words) itself and passes them to the public `erx_dma_input_context`, ignores the composition's refusal, checks the hub fields in `accept_configure` beside `erx_device_trb_configure_slot_valid`, and gives Configure Endpoint a slot context of the hub fields alone, speed 0, where design-usb.md's table and the form carry the slot's addressed fields (xHCI 1.2, 6.2.2.2, p. 448: a high-speed hub's think time and multi-TT need its speed), since its slots keep only the speed; the commands that carry the input context are listed twice (by kind in the form, by meaning in the sequencer), where a mark in abi/formats could give one list. `place_input_context` composes into 33 parts though a publication carries at most `ERX_DMA_INPUT_PARTS_MAX`. Nor is a slot's holding, its DCBAA entry and device context from its first Address Device, in the ledger, as design-usb.md's "Bindings and holdings" gives it.
+* [Medium] DMA, the TRB form's command refusals (`erx_trb_form_command` in `erx_device_trb_form.c`): a command the ledger's reach rule refuses (a stop or restart of a disabled endpoint, a drop of a halted, disabled or busy one, Disable Slot with a busy endpoint, Evaluate Context on an EP0 not running or stopped, or not idle) is answered `ERX_DEVICE_TRB_REFUSE_HALTED`, as `erx_device_trb_form.h` states and the harness pins, while design-usb.md's refusal table and `erx_device_trb.c` answer `badarg` for a command the queue's state does not accept and keep `{error, halted}` for transfers. Settle one contract before `erx_device.c`'s commands move onto the form; mapping `ERX_DMA_BREAKS_REACH` to BADARG for commands matches the table and the code the form replaces.
+* [Low] DMA, the TRB form's stop events (`stop_event` in `erx_device_trb_form.c`): a stop's transfer event is accepted when it names any record of the ring bound to the stopping endpoint, not only one inside the stop span design-usb.md's "Completing" gives. It completes nothing, so the gap fails safe, but an event the controller could not have written passes.
+* [Low] DMA, a failed Address Device (`reach_address` in `erx_device_ledger.c`): its failure keeps EP0's binding, EP0 disabled, until Disable Slot succeeds, as xHCI 1.2, 4.6.5, p. 114 leaves the slot in the Default state; for a slot no Enable Slot enabled (Slot Not Enabled Error, which changes nothing) no Disable Slot can succeed, so the ring stays held until the controller's reset. Fails safe; ending the binding on the codes 4.6.5 says change nothing (Parameter Error, Context State Error, Slot Not Enabled Error) would need the ledger to take the completion code, not a success flag.
+* [Low] DMA, the ledger's reach rules (`reach_rule_t` in `erx_device_ledger.c`): the endpoints a reach acts on are two flags (`names_one`, `whole_group`) and a mask (`holds`) beside the implicit binds-and-drops case, so a row can set several, where an enum would make that unwritable; the state preconditions in `erx_dma_ledger_reach_allows` (named means enabled, a drop neither disabled nor halted, a removal not busy, a held endpoint running or stopped and idle) are code, not columns; and no test keeps the attempt to build a reach without its row (`ERX_REACHES`), which fails by construction (`&reach_##name` names an undeclared identifier).
+* [Low] DMA, the TRB form's commands, small findings: `holding_of` reads `records[0]` under the places count rather than `record_count`; a second binding command adding the in-flight one's block is refused as BADARG, not FULL; a stop's success sets stopped over halted; `erx_trb_form_endpoint` and `erx_dma_endpoint` number endpoints twice; the fuzz target never adds 3 or 4 endpoints, and a drop-and-add's failure has no directed test; `refuse_misplaced_reach` in `abi_marks.rb` sits between `refuse_writer_marks` and its comment.
+* [Low] DMA, `erx_device_sequencer.c` (`encode`): the switch from meaning to encoder is written by hand, a case per meaning (each command TRB adds one); the generator could emit one encoder entry per meaning from the marks.
 * [Medium] devices, a piece's kind (`erx_device.h`'s `erx_device_piece_t`, `erx_device_dma.h`'s
   `erx_dma_piece_t`): two booleans, `device_writes` and `names_region`, say what a piece is, so a region the
   device writes is representable and refused at run time (`erx_device_virtio_core.c`'s chain check). One closed
@@ -9293,8 +9306,41 @@ document's "residual risks accepted" paragraph.
   design documents and the tree; built and unbuilt parts marked. Each chapter is written for a reader
   without Erlang, operating-system or microkernel background: Part I teaches the three subjects, and
   each chapter states the background it needs and explains in a Background box what only it uses.
-  design documents and the tree; built and unbuilt parts marked. Chapters follow the prose guide,
-  [docs/book/style.md](docs/book/style.md).
+  Chapters follow the prose guide, [docs/book/style.md](docs/book/style.md).
+* [Low] book site, the diagram step (`tools/book/diagrams.ts`,
+  [design-book-site.md](docs/design-book-site.md#the-parse-check)): no diagram is checked against
+  official Mermaid, so the repository host's renderer may reject a diagram the site draws
+  (beautiful-mermaid accepts more than Mermaid does: two book diagrams with `;` in a sequence
+  message were). `mermaid.parse` needs a DOM under Node, failing in DOMPurify on 40 of the book's 61
+  diagrams. Options: a DOM shim such as jsdom for DOMPurify under the driver (a new pinned
+  dependency, mermaid pinned with it), or a narrower check of the constructs Mermaid refuses and
+  beautiful-mermaid draws. Until then GitHub's preview and the review of rendered pages catch them.
+* [Medium] book site, the diagram bundle (`tools/lib/erx/book_diagrams.rb`, `build_bundle` and
+  `bundled_versions`): esbuild resolves `elkjs` and `entities` through every `node_modules`
+  directory above the importing file (`tools/book/node_modules`, the checkout's parents, `~`)
+  before `NODE_PATH`, so a stray install there is bundled unpinned while the build record names
+  the pinned versions read from `build/book-modules`. Pass `--metafile`, refuse any input outside
+  the import, the driver and `build/book-modules/node_modules`, and take the versions from the
+  packages esbuild resolved; or bundle from a staged copy under `build/`, as `WebBuild` does.
+* [Medium] book site, the bundle's reuse record (`book_diagrams.rb`, `sources_digest`): it names
+  the library, the driver, the package files and the versions but not `ESBUILD_OPTIONS` or the
+  bundle's own SHA-256, so a change to esbuild's target or charset reuses an old bundle. Add the
+  argument vector and the bundle's digest to the record and check the digest before reuse.
+* [Medium] book site, the diagram tool tests (`test/host/book_diagrams_test.rb`): they run Node
+  and esbuild in `make check` whenever `tools/erx fetch` installed the book's packages, while
+  docs/design-book-site.md's "Tests" puts them in `test/host/book_test.rb`, run with the site
+  tests on demand. Move them behind the site-test entry, or change the design.
+* [Low] book site, the diagram step's smaller gaps (`book_diagrams.rb`, `tools/book/diagrams.ts`):
+  the `--allow-fs-read` guard refuses a comma, but Node 26.13 treats `*` as a wildcard and loads
+  the entry script without any grant, so probe Node 25.0 and 26.13 and either drop the grant or
+  refuse `*` too, with a test; concurrent bundle builds share `diagrams.mjs.next` and write the
+  record after the rename; a diagram that hangs past the deadline is not named (the driver could
+  write `diagram N` to standard error before each); Node's output has no `output_limit`; the reply
+  check accepts a negative `line` and the unproduced `parse` stage; `Drawn.svgs` is raw
+  third-party SVG with nothing in its name or type to keep it out of a page until the SVG writer
+  lands; and the module's internals (`request`, `result?`, `build_bundle`, `bundled_versions`) are
+  public, `draw`'s local `bundle` shadows the method, and `reply` checks its shape with chained
+  conditionals where a `case ... in` pattern reads better.
 * [Low] display, `erx_ui:open/1` falls back to the session's only display
   ([design-display.md](docs/design-display.md#choosing-a-display)): when `Options` and the
   `display` variable name none, open on the one display the session holds where it holds exactly

@@ -6,8 +6,10 @@ module Erx
   module ABI
     # The DMA marks of a descriptor format (docs/design-device-dma.md, "What
     # the formats say"): each format file declares the structures its regions
-    # hold (`target NAME cpu|device`), and each layout a device reads or
-    # writes as a record marks what its fields mean to the DMA check.
+    # hold (`target NAME cpu|device [needs_binding]`), and each layout a
+    # device reads or writes as a record marks what its fields mean to the
+    # DMA check. A cpu structure marked needs_binding, a transfer ring, takes
+    # runs only while a binding command has bound its table to an endpoint.
     #
     # A layout's meaning line names the one structure whose tables offer it,
     # and that structure's writer is the layout's: a meaning of a `device`
@@ -38,11 +40,20 @@ module Erx
         'activates' => 'FIELD.BITS',
         'derived' => 'FIELD.BITS',
         'states' => 'FIELD.BITS',
-        'releases' => 'FIELD.BITS TARGET [when FIELD.BITS ENUM.MEMBER...]'
+        'releases' => 'FIELD.BITS TARGET [when FIELD.BITS ENUM.MEMBER...]',
+        'reach' => 'address|configure|stop|restart|disable|evaluate'
       }.freeze
       KEYWORDS = SYNTAX.keys.freeze
       WRITERS = %w[cpu device].freeze
+      NEEDS_BINDING = 'needs_binding'
       DATA = 'data'
+      # What a command's success or failure does to the endpoints it names
+      # (docs/design-usb.md, "What the DMA check judges"), the reach the ledger
+      # derives from its meaning: address binds EP0's ring; configure adds
+      # endpoints, binding their rings, and may drop others; stop leaves its endpoint stopped; restart moves its
+      # endpoint's ring past every transfer on it; disable ends its slot; evaluate holds EP0 idle while it
+      # rewrites EP0's context.
+      REACHES = %w[address configure stop restart disable evaluate].freeze
       # The roles a mark gives a place. A free place is one a description
       # states, or, on a report, the device; a placed one the sequencer
       # supplies; a written one the encoder takes from the mark.
@@ -51,9 +62,11 @@ module Erx
       # device reports it.
       ADDRESS_ROLES = %i[placed reported].freeze
 
-      # A structure a region may hold, and its writer.
-      Target = Struct.new(:name, :writer, :line, keyword_init: true) do
+      # A structure a region may hold, its writer, and whether its tables
+      # need a binding.
+      Target = Struct.new(:name, :writer, :needs_binding, :line, keyword_init: true) do
         def device? = writer == 'device'
+        def needs_binding? = needs_binding
       end
 
       # One place of a marked layout, with the field or bits line that declares
@@ -87,6 +100,7 @@ module Erx
       # cpu structure that holding is of, and the codes it ends it under, nil
       # for every code.
       Release = Struct.new(:place, :target, :condition, :codes, keyword_init: true)
+      Reach = Struct.new(:kind, :line, keyword_init: true)
 
       # One marked layout. structure is the target its meaning line names and
       # meaning_line that line, both nil for a layout that is no meaning (the
@@ -97,7 +111,7 @@ module Erx
       # reference's address, the activation and each derived field). A report
       # has no encoder, and its free places are what the device states.
       MarkedLayout = Data.define(:layout, :structure, :meaning_line, :number, :selector, :fixed,
-                                 :references, :activation, :derived, :release, :free, :placed) do
+                                 :references, :activation, :derived, :release, :reach, :free, :placed) do
         def meaning? = !structure.nil?
         def report? = meaning? && structure.device?
         def constant = "meaning_#{Names.stem(layout.name)}"
@@ -141,13 +155,19 @@ module Erx
 
       def validate_targets(declarations)
         declarations.each_with_object({}) do |declaration, targets|
-          declaration.fail!('target requires NAME cpu|device') unless declaration.args.size == 2
+          name, writer, *rest = declaration.args
+          declaration.fail!("target requires NAME cpu|device [#{NEEDS_BINDING}]") unless writer && rest.size <= 1
           declaration.fail!('a target has no members') unless declaration.members.empty?
-          name, writer = declaration.args
           Names.local(name, line: declaration.line)
           declaration.fail!("target #{DATA} is the buffers' own name") if name == DATA
           declaration.fail!("unknown target writer #{writer}") unless WRITERS.include?(writer)
-          targets[name] = Target.new(name: name, writer: writer, line: declaration.line).freeze
+          mark = rest.first
+          declaration.fail!("unknown target mark #{mark}") unless mark.nil? || mark == NEEDS_BINDING
+          needs_binding = mark == NEEDS_BINDING
+          # A binding gives the CPU's runs a ring; the device writes its reports in order.
+          declaration.fail!('a structure the device writes needs no binding') if needs_binding && writer == 'device'
+          targets[name] = Target.new(name: name, writer: writer, needs_binding: needs_binding,
+                                     line: declaration.line).freeze
         end
       end
 
@@ -166,11 +186,13 @@ module Erx
           marks.select { |mark| mark.keyword == keyword }.map(&:value).freeze
         end
         refuse_writer_marks(declaration, marks, report: structure&.device?)
+        reach = one(marks, 'reach')
+        refuse_misplaced_reach(reach, structure)
         roles = claim_once(marks, places)
         MarkedLayout.new(layout: layout, structure: structure, number: nil,
                          meaning_line: marks.find { |mark| mark.keyword == 'meaning' }&.line,
                          selector: selector, fixed: fixed, references: references, activation: activation,
-                         derived: derived, release: release,
+                         derived: derived, release: release, reach: reach&.kind,
                          free: places.values.select { |place| FREE.include?(roles[place.spelling]) }.freeze,
                          placed: places.values.select { |place| roles[place.spelling] == :placed }.freeze)
       end
@@ -183,6 +205,15 @@ module Erx
 
       # A report is written by the device, so it has no reference or derived
       # place for the sequencer to supply; and only a report ends a holding.
+      # A reach belongs to a command: a meaning of a structure the CPU writes
+      # that needs no binding, the command ring. On a transfer ring or a report
+      # it would let a run that is no command close or bind an endpoint.
+      def refuse_misplaced_reach(reach, structure)
+        return if reach.nil? || (structure && !structure.device? && !structure.needs_binding?)
+
+        reach.line.fail!('a reach belongs to a command: a meaning of a cpu structure that needs no binding')
+      end
+
       def refuse_writer_marks(declaration, marks, report:)
         keywords = marks.map(&:keyword)
         if report && (keywords & %w[refers derived]).any?
@@ -270,6 +301,9 @@ module Erx
           place
         in ['derived' | 'states', 1] then fetch_place(places, words[0], line)
         in ['releases', _] then parse_release(words, places, targets, types, line)
+        in ['reach', 1]
+          line.fail!("reach is one of #{REACHES.join(', ')}, not #{words[0]}") unless REACHES.include?(words[0])
+          Reach.new(kind: words[0], line: line).freeze
         else line.fail!("#{keyword} requires #{SYNTAX.fetch(keyword)}")
         end
       end
@@ -284,6 +318,7 @@ module Erx
         in Target then []
         in Reference => reference then [[reference.place, :placed], [reference.length, :stated]].select(&:first)
         in Release => release then [[release.place, :reported], [release.condition, :code]].select(&:first)
+        in Reach then []
         in Value => value then [[value.place, :written]]
         in Place => place then [[place, mark.keyword == 'states' ? :stated : :placed]]
         end

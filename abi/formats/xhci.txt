@@ -37,8 +37,6 @@ limit xhci_event_ring_align u32 64
 limit xhci_segment_table_align u32 64
 limit xhci_scratchpad_array_align u32 64
 
-# The error count every endpoint context the NIF builds takes (xhci.c:2495-2501).
-limit xhci_endpoint_error_count u32 3
 
 # A command the controller has not answered within this many milliseconds fails the
 # controller, whose restart resets it (design-usb.md, "The controller process"), an erXos
@@ -91,7 +89,9 @@ limit xhci_interval_binterval_max u8 16
 # last valid context index, the root hub port it is reached through, its
 # transaction translator, its interrupter, and the address and state the
 # controller writes, which software sets to 0 in an input context (xHCI 1.2, Table 6-7,
-# p. 447; section 4.5.3, p. 98).
+# p. 447; section 4.5.3, p. 98). Context Entries is derived, the last index the slot's
+# bindings leave valid (Table 6-4, p. 445); the exit latency is 0, since no command sets
+# link power management's (Table 6-5, p. 445).
 layout erx_xhci_slot_context wire_le 4 32
   field route u32 0
     bits route_string 0 19
@@ -116,8 +116,8 @@ layout erx_xhci_slot_context wire_le 4 32
   states route.speed
   states route.multi_tt
   states route.hub
-  states route.context_entries
-  states ports.exit_latency
+  derived route.context_entries
+  fixed ports.exit_latency 0
   states ports.root_port
   states ports.port_count
   states tt.tt_slot
@@ -132,7 +132,9 @@ layout erx_xhci_slot_context wire_le 4 32
 # ring. The endpoint state is the controller's, 0 in an input context (xHCI 1.2, Table
 # 6-8, p. 450). Mult, MaxPStreams, LSA and HID (xhci.h:130-135, 143-144) are fixed at 0, since
 # MaxPStreams above 0 makes the dequeue pointer a stream context array's address (xHCI
-# 1.2, 6.2.3).
+# 1.2, 6.2.3). The error count is 3, FreeBSD's (xhci.c:2495-2501); the average TRB length
+# is derived, 8 for a control endpoint and otherwise the packet times the burst plus one
+# (6.2.3, Table 6-11, p. 453; 8 is the initial value 4.14.1.1, p. 258, gives a control endpoint).
 layout erx_xhci_endpoint_context wire_le 8 32
   field info u32 0
     bits endpoint_state 0 2
@@ -158,15 +160,15 @@ layout erx_xhci_endpoint_context wire_le 8 32
   fixed info.max_pstreams 0
   fixed info.lsa 0
   states info.interval
-  states config.error_count
+  fixed config.error_count 3
   states config.endpoint_type
   fixed config.hid 0
   states config.max_burst
   states config.max_packet
-  states payload.average_trb_length
   states payload.max_esit_payload
   derived dequeue.dequeue_pointer
   derived dequeue.dequeue_cycle
+  derived payload.average_trb_length
 
 # The input control context (xhci.h:168-180): bit n of each flag word drops or adds
 # the context of device context index n, bit 0 the slot's in the add word.
@@ -214,8 +216,9 @@ layout erx_xhci_scratchpad_entry wire_le 8 8
 # The structures TRBs lie in (docs/design-device-dma.md, "What the formats say"): a
 # transfer ring and the command ring, both written by the CPU, and the event ring, which
 # the controller writes. The link TRB lies in every ring the CPU writes and is no
-# meaning: the sequencer writes it from the layout alone.
-target xhci_transfer_ring cpu
+# meaning: the sequencer writes it from the layout alone. A transfer ring needs a
+# binding: it takes runs only while a binding command has bound it to an endpoint.
+target xhci_transfer_ring cpu needs_binding
 target xhci_command_ring cpu
 target xhci_event_ring device
 
@@ -354,19 +357,161 @@ layout erx_xhci_trb_command wire_le 8 16
     bits endpoint 16 20
     bits slot 24 31
 
-# Set TR Dequeue Pointer: the ring position, 16-byte aligned, with the cycle state the
-# endpoint resumes with (xhci.h:150-152; xHCI 1.2, 6.4.3.9); the stream type and stream
-# ID stay 0.
-layout erx_xhci_trb_set_dequeue wire_le 8 16
+# The commands (xHCI 1.2, 6.4.3), each a meaning of the command ring. A command's slot and
+# endpoint are the sequencer's, written from its publication's reach, so the TRB names the
+# endpoints the ledger closes and no other (docs/design-usb.md, "What the DMA check judges").
+# Its reach mark says what it needs and what its success or failure does to them: address binds
+# EP0 a ring at the publication; configure binds a ring to each endpoint it adds and drops others;
+# stop leaves its endpoint stopped; restart moves its endpoint's ring past its transfers; disable
+# ends its slot; evaluate holds EP0, which must be running or stopped with nothing on its ring when
+# it is posted and takes no transfer while it runs. A command with no reach closes nothing. The flags a command may set,
+# Address Device's block-set-address (Table 6-62), Configure Endpoint's deconfigure (Table 6-64), Reset Endpoint's
+# transfer-state-preserve (Table 6-65) and Stop Endpoint's suspend (Table 6-66), are bits no
+# layout names, so they stay clear. Every bit a table makes RsvdZ stays clear the same way.
+
+# No Op (6.4.3.1, Table 6-58): the cycle bit and the type alone. It verifies the command ring
+# (4.6.2). Figure 6-22 shows Enable Slot's slot type at 20:16, which the table makes RsvdZ.
+layout erx_xhci_trb_noop_command wire_le 8 16
+  padding 0 12
+  field control u32 12
+    bits cycle 0 0
+    bits type 10 15
+  meaning xhci_command_ring
+  selects control.type xhci_trb_type.noop_command
+  activates control.cycle
+
+# Enable Slot (6.4.3.2, Table 6-59): the slot type at 20:16, 0, the type of a USB device's slot
+# (Table 7-9 of the body text). It names no slot; its completion reports the one enabled.
+layout erx_xhci_trb_enable_slot_command wire_le 8 16
+  padding 0 12
+  field control u32 12
+    bits cycle 0 0
+    bits type 10 15
+    bits slot_type 16 20
+  meaning xhci_command_ring
+  selects control.type xhci_trb_type.enable_slot
+  fixed control.slot_type 0
+  activates control.cycle
+
+# Disable Slot (6.4.3.3, Table 6-60): the slot at 31:24.
+layout erx_xhci_trb_disable_slot_command wire_le 8 16
+  padding 0 12
+  field control u32 12
+    bits cycle 0 0
+    bits type 10 15
+    bits slot 24 31
+  meaning xhci_command_ring
+  selects control.type xhci_trb_type.disable_slot
+  derived control.slot
+  activates control.cycle
+  reach disable
+
+# Address Device (6.4.3.4, Tables 6-61 and 6-62): the input context's address, 16-byte aligned,
+# and the slot. It binds EP0's ring.
+layout erx_xhci_trb_address_device_command wire_le 8 16
   field parameter u64 0
-    bits dequeue_cycle 0 0
     bits pointer 4 63 shift 4 device_address
-  field status u32 8
+  padding 8 4
+  field control u32 12
+    bits cycle 0 0
+    bits type 10 15
+    bits slot 24 31
+  meaning xhci_command_ring
+  selects control.type xhci_trb_type.address_device
+  refers parameter.pointer data
+  derived control.slot
+  activates control.cycle
+  reach address
+
+# Configure Endpoint (6.4.3.5, Tables 6-63 and 6-64): as Address Device. It binds a ring to each
+# endpoint its input context adds and drops the others it names.
+layout erx_xhci_trb_configure_endpoint_command wire_le 8 16
+  field parameter u64 0
+    bits pointer 4 63 shift 4 device_address
+  padding 8 4
+  field control u32 12
+    bits cycle 0 0
+    bits type 10 15
+    bits slot 24 31
+  meaning xhci_command_ring
+  selects control.type xhci_trb_type.configure_endpoint
+  refers parameter.pointer data
+  derived control.slot
+  activates control.cycle
+  reach configure
+
+# Evaluate Context (6.4.3.6, Figure 6-27): Address Device's format, its flag unused. It changes
+# EP0's packet size and binds nothing; it holds EP0, which 6.2.3.3 (p. 454) needs running idle or
+# stopped.
+layout erx_xhci_trb_evaluate_context_command wire_le 8 16
+  field parameter u64 0
+    bits pointer 4 63 shift 4 device_address
+  padding 8 4
+  field control u32 12
+    bits cycle 0 0
+    bits type 10 15
+    bits slot 24 31
+  meaning xhci_command_ring
+  selects control.type xhci_trb_type.evaluate_context
+  refers parameter.pointer data
+  derived control.slot
+  activates control.cycle
+  reach evaluate
+
+# Reset Endpoint (6.4.3.7, Table 6-65): the endpoint's device context index at 20:16 and the
+# slot. Its success leaves the halted endpoint stopped (4.6.8).
+layout erx_xhci_trb_reset_endpoint_command wire_le 8 16
+  padding 0 12
   field control u32 12
     bits cycle 0 0
     bits type 10 15
     bits endpoint 16 20
     bits slot 24 31
+  meaning xhci_command_ring
+  selects control.type xhci_trb_type.reset_endpoint
+  derived control.endpoint
+  derived control.slot
+  activates control.cycle
+  reach stop
+
+# Stop Endpoint (6.4.3.8, Table 6-66): as Reset Endpoint. Its success leaves the endpoint
+# stopped (4.6.9).
+layout erx_xhci_trb_stop_endpoint_command wire_le 8 16
+  padding 0 12
+  field control u32 12
+    bits cycle 0 0
+    bits type 10 15
+    bits endpoint 16 20
+    bits slot 24 31
+  meaning xhci_command_ring
+  selects control.type xhci_trb_type.stop_endpoint
+  derived control.endpoint
+  derived control.slot
+  activates control.cycle
+  reach stop
+
+# Set TR Dequeue Pointer (xhci.h:150-152; 6.4.3.9, Tables 6-67 to 6-69): the ring position,
+# 16-byte aligned, with the cycle state the endpoint resumes with, both the sequencer's from the
+# endpoint's bound ring; the stream context type (3:1) and the stream ID (31:16 of the status)
+# stay 0, as no endpoint has streams.
+layout erx_xhci_trb_set_dequeue_command wire_le 8 16
+  field parameter u64 0
+    bits dequeue_cycle 0 0
+    bits pointer 4 63 shift 4 device_address
+  padding 8 4
+  field control u32 12
+    bits cycle 0 0
+    bits type 10 15
+    bits endpoint 16 20
+    bits slot 24 31
+  meaning xhci_command_ring
+  selects control.type xhci_trb_type.set_tr_dequeue
+  derived parameter.dequeue_cycle
+  derived parameter.pointer
+  derived control.endpoint
+  derived control.slot
+  activates control.cycle
+  reach restart
 
 # A transfer event (xhci.h:233-277, xhci.c:951-960; the event-data flag from xHCI 1.2,
 # 6.4.2.1, Table 6-39 of the body text): the TRB it reports on, the residue, the

@@ -99,6 +99,9 @@ class AbiMarksTest < Minitest::Test
                             'a layout has one selects mark'],
     'a mark outside a wire_le layout' => ['erx_sample_trb wire_le', 'erx_sample_trb native', 'marks belong to a wire_le layout'],
     'an unknown writer' => ['target sample_ring cpu', 'target sample_ring host', 'unknown target writer host'],
+    'a binding on a structure the device writes' => ['target sample_events device', 'target sample_events device needs_binding',
+                                                    'a structure the device writes needs no binding'],
+    'an unknown target mark' => ['target sample_ring cpu', 'target sample_ring cpu bound', 'unknown target mark bound'],
     'a malformed reference' => ['refers buffer data length status.length', 'refers buffer data length', 'refers requires'],
     'a release under no code' => ['when status.code sample_code.ok sample_code.short', 'when status.code', 'releases requires'],
     'a release code outside its enum' => ['sample_code.short', 'sample_code.long', 'long is not a member of sample_code'],
@@ -106,6 +109,10 @@ class AbiMarksTest < Minitest::Test
     'a fixed value below its shift' => ['fixed control.toggle 0', "fixed control.toggle 0\n  fixed status.aligned 8",
                                         'fixed value 8 does not fit status.aligned'],
     'a length unit of zero' => ['length status.length', 'length status.length unit 0', 'a length unit is a positive byte count'],
+    'an unknown reach' => ['activates control.live', "activates control.live\n  reach park",
+                           'reach is one of address, configure, stop, restart, disable, evaluate, not park'],
+    'a reach on a report' => ['sample_code.ok sample_code.short', "sample_code.ok sample_code.short\n  reach stop",
+                              'a reach belongs to a command'],
     'a length whose bytes exceed 64 bits' => ['length status.length', 'length status.length unit 281474976710656',
                                               'status.length times 281474976710656 can exceed 64 bits'],
     'a signed field' => ['field buffer u64 0 device_address', 'field buffer i64 0', 'a marked layout holds unsigned integer fields only'],
@@ -312,6 +319,16 @@ class AbiMarksTest < Minitest::Test
     	    erx_meaning_structure(0) == 0;
     	right = right && erx_structure_device_writes(ERX_STRUCTURE_VIRTQ_USED) &&
     	    !erx_structure_device_writes(ERX_STRUCTURE_VIRTQ_AVAIL);
+    	right = right && erx_structure_needs_binding(ERX_STRUCTURE_XHCI_TRANSFER_RING) &&
+    	    !erx_structure_needs_binding(ERX_STRUCTURE_XHCI_COMMAND_RING) &&
+    	    !erx_structure_needs_binding(ERX_STRUCTURE_XHCI_EVENT_RING) && !erx_structure_needs_binding(0);
+    	right = right && erx_meaning_reach(ERX_MEANING_XHCI_TRB_CONFIGURE_ENDPOINT_COMMAND) == ERX_REACH_CONFIGURE &&
+    	    erx_meaning_reach(ERX_MEANING_XHCI_TRB_ADDRESS_DEVICE_COMMAND) == ERX_REACH_ADDRESS &&
+    	    erx_meaning_reach(ERX_MEANING_XHCI_TRB_SET_DEQUEUE_COMMAND) == ERX_REACH_RESTART &&
+    	    erx_meaning_reach(ERX_MEANING_XHCI_TRB_NOOP_COMMAND) == ERX_REACH_NONE &&
+    	    erx_meaning_reach(ERX_MEANING_XHCI_TRB_NORMAL) == ERX_REACH_NONE && erx_meaning_reach(0) == ERX_REACH_NONE &&
+    	    erx_structure_takes_commands(ERX_STRUCTURE_XHCI_COMMAND_RING) &&
+    	    !erx_structure_takes_commands(ERX_STRUCTURE_XHCI_TRANSFER_RING) && !erx_structure_takes_commands(ERX_STRUCTURE_VIRTQ_DESC);
     	printf("%s\\n", right ? "described" : "wrong");
     	return (right ? 0 : 1);
     }
@@ -421,14 +438,34 @@ class AbiMarksTest < Minitest::Test
   end
 
   # The meanings each structure offers, as the header lists them: the event ring's three
-  # events, and none for the command ring, whose commands have no marks.
+  # events, and the command ring's nine commands.
   def test_each_structure_lists_its_meanings
     header = Erx::ABI::CEmitter.header(tree_schema(Dir.mktmpdir('erx-abi-marks-')))
     event_ring = header[/^erx_meanings_of_xhci_event_ring\(size_t \*count\)\n\{\n(.*?)^\}/m, 1]
     assert_equal %w[ERX_MEANING_XHCI_TRB_COMMAND_EVENT ERX_MEANING_XHCI_TRB_PORT_EVENT ERX_MEANING_XHCI_TRB_TRANSFER_EVENT],
                  event_ring.scan(/ERX_MEANING_\w+/)
-    assert_match(/^erx_meanings_of_xhci_command_ring\(size_t \*count\)\n\{\n\t\*count = 0;\n\treturn \(NULL\);\n\}/, header)
+    command_ring = header[/^erx_meanings_of_xhci_command_ring\(size_t \*count\)\n\{\n(.*?)^\}/m, 1]
+    assert_equal %w[ADDRESS_DEVICE CONFIGURE_ENDPOINT DISABLE_SLOT ENABLE_SLOT EVALUATE_CONTEXT NOOP RESET_ENDPOINT
+                    SET_DEQUEUE STOP_ENDPOINT].map { |name| "ERX_MEANING_XHCI_TRB_#{name}_COMMAND" },
+                 command_ring.scan(/ERX_MEANING_\w+/)
     refute header.include?('ERX_MEANING_XHCI_TRB_LINK'), 'the link TRB, no meaning, has a number'
+  end
+
+  # The size of each structure's records, which the ledger asks a table's stride to be: a TRB's
+  # 16 bytes for a transfer ring, the command ring and the event ring, a used element's 8,
+  # and none for the available ring, the sequencer's own.
+  def test_each_structure_gives_its_record_size
+    header = Erx::ABI::CEmitter.header(tree_schema(Dir.mktmpdir('erx-abi-marks-')))
+    body = header[/^erx_structure_record_size\(uint32_t structure\)\n\{\n(.*?)^\}/m, 1]
+    sizes = body.scan(/((?:\tcase \w+:\n)+)\t\treturn \(UINT32_C\((\d+)\)\);/).flat_map do |cases, size|
+      cases.scan(/ERX_STRUCTURE_\w+/).map { |structure| [structure, size.to_i] }
+    end.to_h
+    assert_equal({ 'ERX_STRUCTURE_XHCI_TRANSFER_RING' => 16, 'ERX_STRUCTURE_XHCI_COMMAND_RING' => 16,
+                   'ERX_STRUCTURE_XHCI_EVENT_RING' => 16, 'ERX_STRUCTURE_VIRTQ_USED' => 8,
+                   'ERX_STRUCTURE_VIRTQ_DESC' => 16 },
+                 sizes.slice('ERX_STRUCTURE_XHCI_TRANSFER_RING', 'ERX_STRUCTURE_XHCI_COMMAND_RING',
+                             'ERX_STRUCTURE_XHCI_EVENT_RING', 'ERX_STRUCTURE_VIRTQ_USED', 'ERX_STRUCTURE_VIRTQ_DESC'))
+    refute sizes.key?('ERX_STRUCTURE_VIRTQ_AVAIL'), 'the available ring, with no meaning, has a size'
   end
 
   # Encoding a report does not build: nothing the device states is an encoder input.
@@ -518,8 +555,9 @@ class AbiMarksTest < Minitest::Test
   end
 
   # What the sequencer reads of a report, generated from the marks: a used element's
-  # meaning and the descriptor its id releases; an event TRB's meaning from its type,
-  # none for a Host Controller Event; a transfer event releasing its TRB only on a code
+  # meaning and the descriptor its id releases, by index; an event TRB's meaning from its
+  # type, none for a Host Controller Event; a transfer event releasing its TRB, by its
+  # device address, only on a code
   # its release lists; a port event releasing nothing.
   REPORTS = <<~C
     #include <stdio.h>
@@ -529,11 +567,11 @@ class AbiMarksTest < Minitest::Test
     main(void)
     {
     	erx_report_record_t record = { .virtq_used_elem = { .id = 3, .len = 9 } };
-    	uint32_t meaning = 0, structure = 0;
-    	uint64_t value = 0;
+    	uint32_t meaning = 0;
+    	erx_report_release_t release = { 0 };
     	int right = erx_report_meaning(ERX_STRUCTURE_VIRTQ_USED, &record, &meaning) &&
-    	    meaning == ERX_MEANING_VIRTQ_USED_ELEM && erx_report_releases(meaning, &record, &structure, &value) &&
-    	    structure == ERX_STRUCTURE_VIRTQ_DESC && value == 3 &&
+    	    meaning == ERX_MEANING_VIRTQ_USED_ELEM && erx_report_releases(meaning, &record, &release) &&
+    	    release.structure == ERX_STRUCTURE_VIRTQ_DESC && release.value == 3 && !release.address &&
     	    !erx_report_meaning(ERX_STRUCTURE_VIRTQ_DESC, &record, &meaning);
 
     	record = (erx_report_record_t){ .xhci_trb_transfer_event = {
@@ -543,11 +581,11 @@ class AbiMarksTest < Minitest::Test
     	    .status = (uint32_t)ERX_XHCI_COMPLETION_SHORT_PACKET << 24,
     	    .control = (uint32_t)ERX_XHCI_TRB_TYPE_TRANSFER_EVENT << 10 | 1 } };
     	right = right && erx_report_meaning(ERX_STRUCTURE_XHCI_EVENT_RING, &record, &meaning) &&
-    	    meaning == ERX_MEANING_XHCI_TRB_TRANSFER_EVENT && erx_report_releases(meaning, &record, &structure, &value) &&
-    	    structure == ERX_STRUCTURE_XHCI_TRANSFER_RING && value == 0x1230;
+    	    meaning == ERX_MEANING_XHCI_TRB_TRANSFER_EVENT && erx_report_releases(meaning, &record, &release) &&
+    	    release.structure == ERX_STRUCTURE_XHCI_TRANSFER_RING && release.value == 0x1230 && release.address;
     	record.xhci_trb_transfer_event.status = (uint32_t)ERX_XHCI_COMPLETION_STALL << 24;
-    	right = right && !erx_report_releases(meaning, &record, &structure, &value) &&
-    	    !erx_report_releases(ERX_MEANING_XHCI_TRB_PORT_EVENT, &record, &structure, &value);
+    	right = right && !erx_report_releases(meaning, &record, &release) &&
+    	    !erx_report_releases(ERX_MEANING_XHCI_TRB_PORT_EVENT, &record, &release);
     	printf("%s\\n", right ? "reported" : "wrong");
     	return (right ? 0 : 1);
     }

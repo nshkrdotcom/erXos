@@ -1036,10 +1036,11 @@ static uint64_t
 split_ring_bytes(uint32_t size, uint32_t buffer_size, uint32_t granule)
 {
 	erx_dma_layout_t layout;
+	const erx_dma_pool_t *const pool = &layout.pools[0];	/* the split ring's one pool, past its tables */
 
 	if (!erx_dma_layout_split_ring(size, buffer_size, granule, UINT64_MAX, 0, 64, &layout))
 		return (0);
-	return (layout.pool.first + (uint64_t)layout.pool.count * layout.pool.stride);
+	return (pool->first + (uint64_t)pool->count * pool->stride);
 }
 
 /*
@@ -1213,13 +1214,13 @@ register_ring_create(queue_record_t *record, uint32_t size, uint32_t buffer_size
 static uint32_t
 queue_size(const queue_record_t *record)
 {
-	return (record->form == QUEUE_SPLIT_RING ? split_layout(record)->pool.count : ERX_GENET_RING_SIZE);
+	return (record->form == QUEUE_SPLIT_RING ? split_layout(record)->pools[0].count : ERX_GENET_RING_SIZE);
 }
 
 static uint32_t
 queue_buffer_size(const queue_record_t *record)
 {
-	return (record->form == QUEUE_SPLIT_RING ? split_layout(record)->pool.size : record->genet.core.buffer_size);
+	return (record->form == QUEUE_SPLIT_RING ? split_layout(record)->pools[0].size : record->genet.core.buffer_size);
 }
 
 /* Whether GENET's core has broken the queue, which then refuses every call until the reset. */
@@ -1463,7 +1464,7 @@ install_check(const queue_record_t *record)
 	put(device, regs->sel, record->index);
 	if (get(device, regs->ready) != 0)
 		return (ERX_EBUSY);
-	if (get(device, regs->num_max) < split_layout(record)->pool.count)
+	if (get(device, regs->num_max) < split_layout(record)->pools[0].count)
 		return (ERX_ERANGE);
 	return (ERX_OK);
 }
@@ -2229,7 +2230,7 @@ erx_device_stand_in_used(const erx_device_t *device, uint32_t queue, const erx_d
 	uint16_t idx;
 
 	if (record == NULL || device->form != ERX_DEVICE_FORM_STAND_IN || record->form != QUEUE_SPLIT_RING ||
-	    !record->ready || count > split_layout(record)->pool.count)
+	    !record->ready || count > split_layout(record)->pools[0].count)
 		return (ERX_EINVAL);
 	/* The device finds its rings where the install's registers put them: the core's layout. */
 	ledger = erx_split_ring_ledger(&record->split.ring);

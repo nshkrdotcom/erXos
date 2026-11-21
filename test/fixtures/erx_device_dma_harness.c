@@ -344,7 +344,7 @@ ring_layout(uint32_t size)
 
 	CHECK(erx_dma_layout_split_ring(size, ERX_DEVICE_BUFFER_MAX, erx_dma_granule(), UINT64_MAX, 0, 64, &layout));
 	return ((ring_layout_t){ .avail = layout.tables[AVAIL].region, .used = layout.tables[USED].region,
-	    .pool = layout.pool.first });
+	    .pool = layout.pools[0].first });
 }
 
 /* What the sink collected. */

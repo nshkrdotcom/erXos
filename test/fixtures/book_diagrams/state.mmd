@@ -1,0 +1,12 @@
+stateDiagram-v2
+    [*] --> idle
+    idle --> joining: join
+    joining --> sae: auth_request
+    joining --> keys: connect_confirm
+    joining --> open: connect_confirm, open network
+    sae --> keys: connect_confirm
+    keys --> open: set_keys_confirm
+    open --> rekey: eapol message 1
+    rekey --> open: set_keys_confirm or deadline
+    open --> idle: disconnected or leave
+    keys --> idle: failure, deadline

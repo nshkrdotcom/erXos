@@ -13,6 +13,61 @@
 #include "erx_device_ledger.h"
 #include "erx_device_rules.h"
 
+#ifdef ERX_DMA_SEED_NO_REACH_HOLDS
+#define SEED_NO_REACH_HOLDS	true
+#else
+#define SEED_NO_REACH_HOLDS	false
+#endif
+#ifdef ERX_DMA_SEED_KEEP_DROPPED_BINDING
+#define SEED_KEEP_DROPPED_BINDING	true
+#else
+#define SEED_KEEP_DROPPED_BINDING	false
+#endif
+#ifdef ERX_DMA_SEED_ANY_COMMAND_BINDS
+#define SEED_ANY_COMMAND_BINDS	true
+#else
+#define SEED_ANY_COMMAND_BINDS	false
+#endif
+#ifdef ERX_DMA_SEED_NO_CLOSURE
+#define SEED_NO_CLOSURE	true
+#else
+#define SEED_NO_CLOSURE	false
+#endif
+#ifdef ERX_DMA_SEED_RETIRE_NOTHING
+#define SEED_RETIRE_NOTHING	true
+#else
+#define SEED_RETIRE_NOTHING	false
+#endif
+#ifdef ERX_DMA_SEED_KEEP_FAILED_BINDING
+#define SEED_KEEP_FAILED_BINDING	true
+#else
+#define SEED_KEEP_FAILED_BINDING	false
+#endif
+#ifdef ERX_DMA_SEED_DROP_HALTED
+#define SEED_DROP_HALTED	true
+#else
+#define SEED_DROP_HALTED	false
+#endif
+#ifdef ERX_DMA_SEED_TWO_COMMANDS
+#define SEED_TWO_COMMANDS	true
+#else
+#define SEED_TWO_COMMANDS	false
+#endif
+#ifdef ERX_DMA_SEED_FAILED_ADDRESS_UNBINDS
+#define SEED_FAILED_ADDRESS_UNBINDS	true
+#else
+#define SEED_FAILED_ADDRESS_UNBINDS	false
+#endif
+#ifdef ERX_DMA_SEED_POST_ON_STOPPED
+#define SEED_POST_ON_STOPPED	true
+#else
+#define SEED_POST_ON_STOPPED	false
+#endif
+#ifdef ERX_DMA_SEED_FIND_BOUND_RING
+#define SEED_FIND_BOUND_RING	true
+#else
+#define SEED_FIND_BOUND_RING	false
+#endif
 #ifdef ERX_DMA_SEED_NO_GRANULE_TEST
 #define SEED_NO_GRANULE_TEST	true
 #else
@@ -28,10 +83,30 @@
 #else
 #define SEED_RELEASE_TWICE	false
 #endif
+#ifdef ERX_DMA_SEED_BIND_BOUND_ENDPOINT
+#define SEED_BIND_BOUND_ENDPOINT	true
+#else
+#define SEED_BIND_BOUND_ENDPOINT	false
+#endif
+#ifdef ERX_DMA_SEED_NO_STRIDE_TEST
+#define SEED_NO_STRIDE_TEST	true
+#else
+#define SEED_NO_STRIDE_TEST	false
+#endif
+#ifdef ERX_DMA_SEED_RING_NO_LINK
+#define SEED_RING_NO_LINK	true
+#else
+#define SEED_RING_NO_LINK	false
+#endif
 #ifdef ERX_DMA_SEED_ANY_REGION
 #define SEED_ANY_REGION		true
 #else
 #define SEED_ANY_REGION		false
+#endif
+#ifdef ERX_DMA_SEED_PLACE_ONE_OFF
+#define SEED_PLACE_ONE_OFF	true
+#else
+#define SEED_PLACE_ONE_OFF	false
 #endif
 #ifdef ERX_DMA_SEED_REGION_MEETS_QUEUE
 #define SEED_REGION_MEETS_QUEUE	true
@@ -99,8 +174,9 @@ erx_dma_layout_split_ring(uint32_t size, uint32_t buffer_size, uint32_t granule,
 			  .region = used_offset, .region_length = pool_offset - used_offset,
 			  .first = used_offset + ERX_VIRTQ_RING_HEAD_SIZE, .count = size, .stride = ERX_VIRTQ_USED_ELEM_SIZE },
 		},
-		.pool = { .first = pool_offset, .count = size, .size = buffer_size,
-			  .stride = (uint32_t)round_up(buffer_size, granule) },
+		.pool_count = 1,
+		.pools = { { .first = pool_offset, .count = size, .size = buffer_size,
+			  .stride = (uint32_t)round_up(buffer_size, granule) } },
 	};
 	return (true);
 }
@@ -113,8 +189,33 @@ device_writes(const erx_dma_layout_t *layout, uint32_t table)
 }
 
 /*
+ * Whether the table's structure needs a binding, as abi/formats declares (a transfer ring): its
+ * runs take the ring bound to their endpoint, and no run finds it by structure.
+ */
+static bool
+needs_binding(const erx_dma_layout_t *layout, uint32_t table)
+{
+	return (erx_structure_needs_binding(layout->tables[table].structure));
+}
+
+/*
+ * The table a run of endpoint 0 finds for `structure`: the first of it, or -1 for none or for a
+ * structure that needs a binding. The layout's check asks it to find every table of a structure
+ * that needs none, so such a structure lies in one table.
+ */
+static int
+structure_table(const erx_dma_layout_t *layout, uint32_t structure)
+{
+	for (uint32_t index = 0; index < layout->table_count; index++) {
+		if (layout->tables[index].structure == structure)
+			return (needs_binding(layout, index) && !SEED_FIND_BOUND_RING ? -1 : (int)index);
+	}
+	return (-1);
+}
+
+/*
  * One region of the install's check: `length` bytes from `offset`, whole granules, not before
- * `*end`, the end of the region before it, and inside the memory. Moves `*end` past it.
+ * `*end`, and inside the memory. Moves `*end` past it; disjoint() judges the regions together.
  */
 static bool
 region_valid(const erx_dma_layout_t *layout, uint64_t offset, uint64_t length, uint64_t *end)
@@ -131,18 +232,55 @@ region_valid(const erx_dma_layout_t *layout, uint64_t offset, uint64_t length, u
 	return (true);
 }
 
+/*
+ * Whether a run of endpoint 0 finds table `index` by its structure, one that needs no binding: so
+ * asked of every such table, it says each such structure lies in one table.
+ */
+static bool
+found_by_its_structure(const erx_dma_layout_t *layout, uint32_t index)
+{
+	return (structure_table(layout, layout->tables[index].structure) == (int)index);
+}
+
+/*
+ * A table that needs a binding is a ring, which runs take only as their endpoint's binding
+ * places them; one that needs none is the one table of its structure.
+ */
 static bool
 table_valid(const erx_dma_layout_t *layout, uint32_t index, uint64_t *end)
 {
 	const erx_dma_table_t *table = &layout->tables[index];
+	const bool binds = needs_binding(layout, index);
 
-	if (!region_valid(layout, table->region, table->region_length, end) || table->structure == ERX_REFERS_DATA ||
-	    table->count == 0 || table->stride == 0 || table->first < table->region ||
-	    !erx_dma_inside(table->first - table->region, (uint64_t)table->count * table->stride, table->region_length))
+	const bool described = table->placing != ERX_DMA_PLACED_IN_ORDER && !device_writes(layout, index);
+	const uint32_t record_size = erx_structure_record_size(table->structure);
+
+	*end = 0;
+	if (!region_valid(layout, table->region, table->region_length, end))
 		return (false);
-	for (uint32_t other = 0; other < index; other++) {
-		if (layout->tables[other].structure == table->structure)
-			return (false);
+	/*
+	 * A ring holds its link and at least one description, at the link's stride, since the
+	 * sequencer writes a link into every ring, whether its structure has meanings or not.
+	 */
+	return (table->structure != ERX_REFERS_DATA && table->count != 0 && table->stride != 0 &&
+	    (SEED_NO_STRIDE_TEST || ((record_size == 0 || table->stride == record_size) &&
+	    (table->placing != ERX_DMA_PLACED_RING || table->stride == ERX_XHCI_TRB_LINK_SIZE))) &&
+	    table->first >= table->region &&
+	    erx_dma_inside(table->first - table->region, (uint64_t)table->count * table->stride, table->region_length) &&
+	    (table->placing != ERX_DMA_PLACED_RING || table->count >= 2) &&
+	    (!described || table->pool < layout->pool_count) &&
+	    (binds ? table->placing == ERX_DMA_PLACED_RING : found_by_its_structure(layout, index)));
+}
+
+/* Whether the `count` regions of `starts` and `ends` share no byte, in whatever order they lie. */
+static bool
+disjoint(const uint64_t *starts, const uint64_t *ends, uint32_t count)
+{
+	for (uint32_t one = 0; one < count; one++) {
+		for (uint32_t other = 0; other < one; other++) {
+			if (starts[one] < ends[other] && starts[other] < ends[one])
+				return (false);
+		}
 	}
 	return (true);
 }
@@ -157,22 +295,34 @@ widest_address(const erx_dma_layout_t *layout)
 static bool
 layout_valid(const erx_dma_layout_t *layout)
 {
-	const erx_dma_pool_t *pool = &layout->pool;
 	const uint64_t widest = widest_address(layout);
+	uint64_t starts[ERX_DMA_TABLES_MAX + ERX_DMA_POOLS_MAX], ends[ERX_DMA_TABLES_MAX + ERX_DMA_POOLS_MAX];
 	uint64_t end = 0, last;
+	uint32_t regions = 0;
 
 	if (!power_of_two(layout->granule) || layout->address_bits == 0 || layout->address_bits > 64 ||
-	    layout->table_count > ERX_DMA_TABLES_MAX)
+	    layout->table_count > ERX_DMA_TABLES_MAX || layout->pool_count == 0 || layout->pool_count > ERX_DMA_POOLS_MAX)
 		return (false);
-	for (uint32_t index = 0; index < layout->table_count; index++) {
-		if (!table_valid(layout, index, &end))
+	for (uint32_t index = 0; index < layout->table_count; index++, regions++) {
+		if (!table_valid(layout, index, &ends[regions]))
 			return (false);
+		starts[regions] = layout->tables[index].region;
 	}
 	/* Each buffer is a region of its own, one stride long, so whole granules make them disjoint. */
-	if (pool->count == 0 || pool->size == 0 || pool->size > pool->stride ||
-	    (!SEED_NO_GRANULE_TEST && (pool->stride & (layout->granule - 1)) != 0) ||
-	    !region_valid(layout, pool->first, (uint64_t)pool->count * pool->stride, &end))
+	for (uint32_t index = 0; index < layout->pool_count; index++, regions++) {
+		const erx_dma_pool_t *pool = &layout->pools[index];
+
+		ends[regions] = 0;
+		if (pool->count == 0 || pool->size == 0 || pool->size > pool->stride ||
+		    (!SEED_NO_GRANULE_TEST && (pool->stride & (layout->granule - 1)) != 0) ||
+		    !region_valid(layout, pool->first, (uint64_t)pool->count * pool->stride, &ends[regions]))
+			return (false);
+		starts[regions] = pool->first;
+	}
+	if (!disjoint(starts, ends, regions))
 		return (false);
+	for (uint32_t index = 0; index < regions; index++)
+		end = ends[index] > end ? ends[index] : end;
 	return (!__builtin_add_overflow(layout->device_base, end - 1, &last) && last <= widest);
 }
 
@@ -223,6 +373,376 @@ erx_dma_ledger_reset(erx_dma_ledger_t *ledger)
 	ledger->live = 0;
 	bzero(ledger->positions, sizeof(ledger->positions));
 	bzero(ledger->acquired, sizeof(ledger->acquired));
+	bzero(ledger->bound, sizeof(ledger->bound));
+	bzero(ledger->states, sizeof(ledger->states));
+}
+
+uint32_t
+erx_dma_layout_buffers(const erx_dma_layout_t *layout)
+{
+	uint32_t count = 0;
+
+	for (uint32_t pool = 0; pool < layout->pool_count; pool++)
+		count += layout->pools[pool].count;
+	return (count);
+}
+
+const erx_dma_pool_t *
+erx_dma_layout_buffer_pool(const erx_dma_layout_t *layout, uint32_t buffer, uint32_t *pool)
+{
+	for (uint32_t index = 0; index < layout->pool_count; index++) {
+		if (buffer < layout->pools[index].count) {
+			*pool = index;
+			return (&layout->pools[index]);
+		}
+		buffer -= layout->pools[index].count;
+	}
+	return (NULL);
+}
+
+/* A buffer of the layout's: its pool and its place there exist. */
+uint64_t
+erx_dma_layout_buffer_offset(const erx_dma_layout_t *layout, uint32_t buffer, uint64_t offset)
+{
+	uint32_t index = 0;
+
+	for (; index + 1 < layout->pool_count && buffer >= layout->pools[index].count; index++)
+		buffer -= layout->pools[index].count;
+	return (layout->pools[index].first + (uint64_t)buffer * layout->pools[index].stride + offset);
+}
+
+static bool
+in_group(uint32_t endpoint, uint32_t group)
+{
+	return (endpoint != 0 && endpoint / ERX_DMA_GROUP_ENDPOINTS == group);
+}
+
+static bool
+drops(const erx_dma_reach_t *target, uint32_t endpoint)
+{
+	return ((target->drops >> (endpoint % ERX_DMA_GROUP_ENDPOINTS) & 1u) != 0);
+}
+
+/* Whether binding `binding` is one of the bindings `holding`'s publication made. */
+static bool
+made_by(const erx_dma_holding_t *holding, erx_dma_binding_t binding)
+{
+	for (uint32_t k = 0; k < holding->bind_count; k++) {
+		if (holding->binds[k].endpoint == binding.endpoint && holding->binds[k].table == binding.table)
+			return (true);
+	}
+	return (false);
+}
+
+/*
+ * What a command's success does to each ring bound to an endpoint it acts on, but the rings its
+ * own publication bound (docs/design-usb.md, "What the DMA check judges" and the queue table).
+ */
+typedef enum reach_effect {
+	EFFECT_NONE,
+	EFFECT_STOP,		/* the endpoint stops, its transfers kept */
+	EFFECT_RESTART,		/* the ring's transfers retire and its queue opens again: running */
+	EFFECT_REMOVE,		/* the ring's transfers retire and its binding ends */
+} reach_effect_t;
+
+/*
+ * A reach's meaning, written once: which endpoints of its group a command acts on (those its
+ * publication binds and drops, the one it names, those it holds, or every one), which it closes
+ * while live; what its publication may bind and drop, and what it holds must be running or stopped
+ * and idle when it is published; what its success does to the rings of those endpoints; and
+ * what its failure does to its own bindings. ERX_REACHES names a row for every reach the marks
+ * declare, so a new reach fails to build until it has one here.
+ */
+typedef struct reach_rule {
+	uint32_t	bindable;	/* the indexes its bindings may bind, a mask of bit index */
+	uint32_t	must_bind;	/* the indexes it always binds */
+	uint32_t	droppable;	/* the indexes it may drop */
+	uint32_t	holds;		/* the indexes it acts on, running or stopped and idle at its publication */
+	bool		names_one;	/* it acts on the endpoint target.index names */
+	bool		whole_group;	/* it acts on every endpoint of its group */
+	reach_effect_t	success;
+	bool		failure_keeps;	/* its failure keeps its bindings, their endpoints disabled */
+} reach_rule_t;
+
+/* No Op and Enable Slot act on no endpoint, and a transfer has no reach. */
+static const reach_rule_t reach_none = { .success = EFFECT_NONE };
+/*
+ * Address Device binds EP0, index 1, and drops nothing (xHCI 1.2, 4.6.5). A failed one leaves its
+ * slot in the Default state (4.6.5, p. 114), where the controller may still hold EP0's ring, so
+ * the binding stays, EP0 disabled, until Disable Slot ends it, as 4.6.5 recovers.
+ */
+static const reach_rule_t reach_address = { .bindable = 1u << 1, .must_bind = 1u << 1, .success = EFFECT_NONE,
+    .failure_keeps = true };
+/* Configure Endpoint adds and drops indexes 2 and up, as it ignores EP0's flags (4.6.6). */
+static const reach_rule_t reach_configure = { .bindable = ~3u, .droppable = ~3u, .success = EFFECT_REMOVE };
+/* Stop Endpoint and Reset Endpoint leave their endpoint stopped (4.6.9; 4.6.8). */
+static const reach_rule_t reach_stop = { .names_one = true, .success = EFFECT_STOP };
+/* Set TR Dequeue Pointer moves its endpoint's ring past every transfer on it (4.6.10). */
+static const reach_rule_t reach_restart = { .names_one = true, .success = EFFECT_RESTART };
+/* Disable Slot disables every endpoint of its slot (4.6.4). */
+static const reach_rule_t reach_disable = { .whole_group = true, .success = EFFECT_REMOVE };
+/*
+ * Evaluate Context changes EP0's packet size, which xHCI 1.2, 6.2.3.3 (p. 454) defines only on an
+ * EP0 running idle or stopped, software keeping its transfers off it meanwhile: it holds EP0,
+ * running or stopped with nothing on its ring when it is published, and closed while it runs. It
+ * binds nothing.
+ */
+static const reach_rule_t reach_evaluate = { .holds = 1u << 1, .success = EFFECT_NONE };
+
+static const reach_rule_t *const reach_rules[] = {
+	[ERX_REACH_NONE] = &reach_none,
+#define REACH_RULE(constant, name)	[constant] = &reach_##name,
+	ERX_REACHES(REACH_RULE)
+#undef REACH_RULE
+};
+
+/* The rule of the reach `meaning`'s mark gives it, reach_none for a meaning with none. */
+static const reach_rule_t *
+reach_rule(uint32_t meaning)
+{
+	return (reach_rules[erx_meaning_reach(meaning)]);
+}
+
+/* Whether live command `command` acts on `endpoint`: what it closes while live. */
+static bool
+acts_on(const erx_dma_holding_t *command, uint32_t endpoint)
+{
+	const reach_rule_t *const rule = reach_rules[command->reach];
+
+	if (!in_group(endpoint, command->target.group))
+		return (false);
+	if (rule->whole_group || drops(&command->target, endpoint) ||
+	    (rule->holds >> endpoint % ERX_DMA_GROUP_ENDPOINTS & 1u) != 0 ||
+	    (rule->names_one && endpoint == erx_dma_endpoint(command->target.group, command->target.index)))
+		return (true);
+	for (uint32_t k = 0; k < command->bind_count; k++) {
+		if (command->binds[k].endpoint == endpoint)
+			return (true);
+	}
+	return (false);
+}
+
+erx_dma_found_t
+erx_dma_ledger_command(const erx_dma_ledger_t *ledger)
+{
+	for (uint32_t live = 0; live < ledger->live; live++) {
+		if (ledger->holdings[live].serial == ledger->command_serial)
+			return ((erx_dma_found_t){ &ledger->holdings[live], ledger->command_serial });
+	}
+	return ((erx_dma_found_t){ NULL, 0 });
+}
+
+/* Whether table `table` holds commands: its structure's meanings have reaches (abi/formats). */
+static bool
+takes_commands(const erx_dma_layout_t *layout, uint32_t table)
+{
+	return (erx_structure_takes_commands(layout->tables[table].structure));
+}
+
+bool
+erx_dma_ledger_command_room(const erx_dma_ledger_t *ledger, uint32_t table)
+{
+	return (table < ledger->layout.table_count && (SEED_TWO_COMMANDS || !takes_commands(&ledger->layout, table) ||
+	    erx_dma_ledger_command(ledger).holding == NULL));
+}
+
+/* Whether ring `table`'s binding is one the live command made, which its failure ends. */
+static bool
+pending(const erx_dma_ledger_t *ledger, uint32_t table)
+{
+	const erx_dma_found_t command = erx_dma_ledger_command(ledger);
+
+	return (command.holding != NULL && made_by(command.holding, (erx_dma_binding_t){ ledger->bound[table], table }));
+}
+
+/*
+ * A binding the rule of the command's reach does not allow, or no command makes, would point the
+ * ledger at a ring the controller does not serve.
+ */
+bool
+erx_dma_ledger_may_bind(const erx_dma_ledger_t *ledger, const erx_dma_publication_t *publication)
+{
+	const erx_dma_reach_t *const target = &publication->reach;
+	const reach_rule_t *rule;
+	uint32_t bound_indexes = 0;
+
+	if (publication->record_count == 0)
+		return (publication->bind_count == 0);
+	if (publication->bind_count > ERX_DMA_BINDS_MAX)
+		return (false);
+	rule = SEED_ANY_COMMAND_BINDS ? &reach_configure : reach_rule(publication->records[0].meaning);
+	for (uint32_t k = 0; k < publication->bind_count; k++) {
+		const erx_dma_binding_t binding = publication->binds[k];
+		const uint32_t index = binding.endpoint % ERX_DMA_GROUP_ENDPOINTS;
+		const int old = erx_dma_ledger_bound_table(ledger, binding.endpoint);
+
+		if (!in_group(binding.endpoint, target->group) || (rule->bindable >> index & 1u) == 0 ||
+		    (bound_indexes >> index & 1u) != 0 || binding.table >= ledger->layout.table_count ||
+		    !needs_binding(&ledger->layout, binding.table) || ledger->bound[binding.table] != 0 ||
+		    (old >= 0 && !SEED_BIND_BOUND_ENDPOINT && !drops(target, binding.endpoint)))
+			return (false);
+		for (uint32_t earlier = 0; earlier < k; earlier++) {
+			if (publication->binds[earlier].table == binding.table)
+				return (false);
+		}
+		bound_indexes |= 1u << index;
+	}
+	return ((target->drops & ~rule->droppable) == 0 && (bound_indexes & rule->must_bind) == rule->must_bind);
+}
+
+/* Ends ring `table`'s binding, which holds no record by then. */
+static void
+unbind(erx_dma_ledger_t *ledger, uint32_t table)
+{
+	ledger->bound[table] = 0;
+	ledger->states[table] = ERX_DMA_ENDPOINT_DISABLED;
+}
+
+uint32_t
+erx_dma_ledger_binding(const erx_dma_ledger_t *ledger, uint32_t table)
+{
+	return (table < ledger->layout.table_count ? ledger->bound[table] : 0);
+}
+
+int
+erx_dma_ledger_bound_table(const erx_dma_ledger_t *ledger, uint32_t endpoint)
+{
+	int found = -1;
+
+	for (uint32_t table = 0; table < ledger->layout.table_count && endpoint != 0; table++) {
+		if (ledger->bound[table] != endpoint)
+			continue;
+		if (!pending(ledger, table))
+			return ((int)table);
+		found = (int)table;
+	}
+	return (found);
+}
+
+bool
+erx_dma_ledger_closed(const erx_dma_ledger_t *ledger, uint32_t endpoint)
+{
+	const erx_dma_found_t command = erx_dma_ledger_command(ledger);
+
+	return (!SEED_NO_CLOSURE && command.holding != NULL && acts_on(command.holding, endpoint));
+}
+
+erx_dma_endpoint_state_t
+erx_dma_ledger_endpoint_state(const erx_dma_ledger_t *ledger, uint32_t endpoint)
+{
+	const int table = erx_dma_ledger_bound_table(ledger, endpoint);
+
+	return (table < 0 ? ERX_DMA_ENDPOINT_DISABLED : ledger->states[table]);
+}
+
+/* Whether `endpoint`'s ring holds no transfer, in any state. */
+static bool
+idle(const erx_dma_ledger_t *ledger, uint32_t endpoint)
+{
+	const int ring = erx_dma_ledger_bound_table(ledger, endpoint);
+
+	return (ring < 0 || erx_dma_ledger_holdings_on(ledger, (uint32_t)ring) == 0);
+}
+
+/* Whether `endpoint` runs with a transfer live on its ring: one in progress, which no removal may meet. */
+static bool
+busy(const erx_dma_ledger_t *ledger, uint32_t endpoint)
+{
+	const int ring = erx_dma_ledger_bound_table(ledger, endpoint);
+
+	return (ring >= 0 && ledger->states[ring] == ERX_DMA_ENDPOINT_RUNNING &&
+	    erx_dma_ledger_holdings_on(ledger, (uint32_t)ring) != 0);
+}
+
+bool
+erx_dma_ledger_reach_allows(const erx_dma_ledger_t *ledger, const erx_dma_publication_t *publication)
+{
+	const erx_dma_reach_t *const target = &publication->reach;
+	const reach_rule_t *const rule = reach_rule(publication->records[0].meaning);
+
+	/* A transfer: its queue open, as design-usb.md's queue table has it, running and not closed. */
+	if (publication->endpoint != 0) {
+		const erx_dma_endpoint_state_t state = erx_dma_ledger_endpoint_state(ledger, publication->endpoint);
+
+		return (!erx_dma_ledger_closed(ledger, publication->endpoint) &&
+		    (state == ERX_DMA_ENDPOINT_RUNNING || (SEED_POST_ON_STOPPED && state == ERX_DMA_ENDPOINT_STOPPED)));
+	}
+	if (rule->names_one && erx_dma_ledger_endpoint_state(ledger, erx_dma_endpoint(target->group, target->index)) ==
+	    ERX_DMA_ENDPOINT_DISABLED)
+		return (false);
+	for (uint32_t index = 1; index < ERX_DMA_GROUP_ENDPOINTS; index++) {
+		const uint32_t endpoint = erx_dma_endpoint(target->group, index);
+		const erx_dma_endpoint_state_t state = erx_dma_ledger_endpoint_state(ledger, endpoint);
+		const bool dropped = (target->drops >> index & 1u) != 0;
+
+		/* What the command holds: running or stopped, with nothing on its ring (6.2.3.3, p. 454). */
+		if ((rule->holds >> index & 1u) != 0 && !SEED_NO_REACH_HOLDS &&
+		    ((state != ERX_DMA_ENDPOINT_RUNNING && state != ERX_DMA_ENDPOINT_STOPPED) || !idle(ledger, endpoint)))
+			return (false);
+		/* A drop is defined only on a stopped endpoint or a running idle one (4.6.6; 4.6.8). */
+		if (dropped && (state == ERX_DMA_ENDPOINT_DISABLED || (state == ERX_DMA_ENDPOINT_HALTED && !SEED_DROP_HALTED)))
+			return (false);
+		/* Nor a removal of an endpoint with a transfer in progress, Disable Slot's included (4.6.4). */
+		if (rule->success == EFFECT_REMOVE && (dropped || rule->whole_group) && busy(ledger, endpoint))
+			return (false);
+	}
+	return (true);
+}
+
+erx_dma_found_t
+erx_dma_ledger_oldest_on(const erx_dma_ledger_t *ledger, uint32_t table)
+{
+	const erx_dma_holding_t *oldest = NULL;
+
+	for (uint32_t live = 0; live < ledger->live; live++) {
+		const erx_dma_holding_t *const holding = &ledger->holdings[live];
+
+		if (holding->records[0].table == table && (oldest == NULL || holding->serial < oldest->serial))
+			oldest = holding;
+	}
+	return ((erx_dma_found_t){ oldest, oldest == NULL ? 0 : oldest->serial });
+}
+
+/*
+ * The cycle state on lap `lap` of a ring: 1 on lap 0, where a binding starts it, toggled by each
+ * link; and of the event ring, whose consumer cycle state starts at 1 and toggles at each wrap.
+ */
+static uint32_t
+ring_cycle(uint32_t lap)
+{
+	return (~lap & 1u);
+}
+
+uint32_t
+erx_dma_ledger_cycle(const erx_dma_ledger_t *ledger, uint32_t table)
+{
+	return (ring_cycle(erx_dma_ledger_position(ledger, table).lap));
+}
+
+uint32_t
+erx_dma_ledger_ring_run(const erx_dma_ledger_t *ledger, uint32_t table, uint32_t descriptions,
+    erx_dma_ring_step_t steps[ERX_DMA_RING_STEPS_MAX])
+{
+	uint32_t index, lap, link, count = 0;
+
+	if (table >= ledger->layout.table_count || ledger->layout.tables[table].placing != ERX_DMA_PLACED_RING ||
+	    descriptions == 0 || descriptions > ERX_DMA_HELD_RECORDS_MAX ||
+	    descriptions >= ledger->layout.tables[table].count)
+		return (0);
+	index = ledger->positions[table].index;
+	lap = ledger->positions[table].lap;
+	link = ledger->layout.tables[table].count - 1;
+	for (uint32_t description = 0; description <= descriptions; description++) {
+		/* The link where a description would land on it, and where the run ends just before it. */
+		if (index == link && !(SEED_RING_NO_LINK && description == descriptions)) {
+			steps[count++] = (erx_dma_ring_step_t){ { table, index }, ring_cycle(lap), true };
+			index = 0;
+			lap++;
+		}
+		if (description < descriptions)
+			steps[count++] = (erx_dma_ring_step_t){ { table, index++ }, ring_cycle(lap), false };
+	}
+	return (count);
 }
 
 /* The region of `regions` named `name`, or NULL. */
@@ -268,11 +788,7 @@ erx_dma_ledger_layout(const erx_dma_ledger_t *ledger)
 int
 erx_dma_ledger_table(const erx_dma_ledger_t *ledger, uint32_t structure)
 {
-	for (uint32_t index = 0; index < ledger->layout.table_count; index++) {
-		if (ledger->layout.tables[index].structure == structure)
-			return ((int)index);
-	}
-	return (-1);
+	return (structure_table(&ledger->layout, structure));
 }
 
 erx_dma_position_t
@@ -331,6 +847,40 @@ erx_dma_ledger_free_records(const erx_dma_ledger_t *ledger, uint32_t table)
 	return (ledger->layout.tables[table].count - held);
 }
 
+/* A run's records lie in one table, its head's, whatever records of tables placed in order it adds. */
+uint32_t
+erx_dma_ledger_holdings_on(const erx_dma_ledger_t *ledger, uint32_t table)
+{
+	uint32_t holdings = 0;
+
+	for (uint32_t live = 0; live < ledger->live; live++)
+		holdings += ledger->holdings[live].records[0].table == table;
+	return (holdings);
+}
+
+bool
+erx_dma_layout_place(const erx_dma_layout_t *layout, uint32_t structure, uint64_t address, erx_dma_place_t *place)
+{
+	uint64_t offset, from_first;
+
+	if (address < layout->device_base)
+		return (false);
+	offset = address - layout->device_base;
+	for (uint32_t index = 0; index < layout->table_count; index++) {
+		const erx_dma_table_t *const table = &layout->tables[index];
+
+		if (table->structure != structure || offset < table->first)
+			continue;
+		from_first = offset - table->first;
+		/* The record's start alone names it: an address inside a record names none. */
+		if (from_first % table->stride != 0 || from_first / table->stride >= table->count)
+			continue;
+		*place = (erx_dma_place_t){ index, (uint32_t)(from_first / table->stride) + (SEED_PLACE_ONE_OFF ? 1u : 0u) };
+		return (true);
+	}
+	return (false);
+}
+
 uint32_t
 erx_dma_ledger_live(const erx_dma_ledger_t *ledger)
 {
@@ -361,9 +911,11 @@ advance(erx_dma_ledger_t *ledger, uint32_t table, uint32_t records)
 }
 
 /*
- * Whether `holding` may begin, and how many records it takes of each table placed in order:
- * every record a table's that no holding holds, named once, not the device's, and, in a table
- * placed in order, the next one from its position; every buffer the pool's and unheld.
+ * Whether `holding` may begin, and how many records it takes of each table placed in order or as
+ * a ring: every record a table's that no holding holds, named once, not the device's, and, in a
+ * table placed in order or as a ring, one of the next `taken` from its position, so, named once,
+ * they are those next ones in whatever order the holding lists them (its head first); every
+ * buffer one of the layout's and unheld.
  */
 static bool
 holding_valid(const erx_dma_ledger_t *ledger, const erx_dma_holding_t *holding, uint32_t taken[ERX_DMA_TABLES_MAX])
@@ -372,10 +924,15 @@ holding_valid(const erx_dma_ledger_t *ledger, const erx_dma_holding_t *holding, 
 		return (false);
 	for (uint32_t record = 0; record < holding->record_count; record++) {
 		const erx_dma_place_t place = holding->records[record];
-		const erx_dma_table_t *table;
 
 		if (place.table >= ledger->layout.table_count)
 			return (false);
+		taken[place.table] += ledger->layout.tables[place.table].placing != ERX_DMA_PLACED_FREE;
+	}
+	for (uint32_t record = 0; record < holding->record_count; record++) {
+		const erx_dma_place_t place = holding->records[record];
+		const erx_dma_table_t *table;
+
 		table = &ledger->layout.tables[place.table];
 		if (place.index >= table->count || device_writes(&ledger->layout, place.table) ||
 		    (!SEED_HOLD_WHILE_HELD && erx_dma_ledger_record_held(ledger, place)))
@@ -384,17 +941,15 @@ holding_valid(const erx_dma_ledger_t *ledger, const erx_dma_holding_t *holding, 
 			if (same_place(holding->records[earlier], place))
 				return (false);
 		}
-		if (table->placing == ERX_DMA_PLACED_IN_ORDER) {
-			/* Records named once and at most count of them, so the sum stays below 2 * count. */
-			if (place.index != (ledger->positions[place.table].index + taken[place.table]) % table->count)
-				return (false);
-			taken[place.table]++;
-		}
+		/* Named once, so at most count of a table: its distance from the position is below count. */
+		if (table->placing != ERX_DMA_PLACED_FREE &&
+		    (place.index + table->count - ledger->positions[place.table].index) % table->count >= taken[place.table])
+			return (false);
 	}
 	for (uint32_t index = 0; index < holding->buffer_count; index++) {
 		const uint32_t buffer = holding->buffers[index];
 
-		if (buffer >= ledger->layout.pool.count ||
+		if (buffer >= erx_dma_layout_buffers(&ledger->layout) ||
 		    (!SEED_HOLD_WHILE_HELD && erx_dma_ledger_buffer_held(ledger, buffer)))
 			return (false);
 	}
@@ -402,16 +957,21 @@ holding_valid(const erx_dma_ledger_t *ledger, const erx_dma_holding_t *holding, 
 }
 
 /*
- * The holding of `publication` at `records`, with the buffers its names reach. False when there
- * are more records or buffers than a holding holds.
+ * The holding of `publication` at `records`, with the buffers its names reach, the bindings it
+ * carries and its reach. False when there are more records or buffers than a holding holds.
  */
 static bool
 holding_of(const erx_dma_publication_t *publication, const erx_dma_place_t *records, uint32_t record_count,
     erx_dma_holding_t *holding)
 {
-	*holding = (erx_dma_holding_t){ .record_count = record_count };
-	if (record_count == 0 || record_count > ERX_DMA_HELD_RECORDS_MAX)
+	*holding = (erx_dma_holding_t){ .record_count = record_count, .target = publication->reach };
+	if (record_count == 0 || record_count > ERX_DMA_HELD_RECORDS_MAX || publication->bind_count > ERX_DMA_BINDS_MAX)
 		return (false);
+	/* A transfer has no reach: the meanings of a ring that needs a binding have none. */
+	holding->reach = erx_meaning_reach(publication->records[0].meaning);
+	holding->bind_count = publication->bind_count;
+	for (uint32_t k = 0; k < publication->bind_count; k++)
+		holding->binds[k] = publication->binds[k];
 	for (uint32_t record = 0; record < record_count; record++)
 		holding->records[record] = records[record];
 	return (erx_dma_publication_buffers(publication, holding->buffers, &holding->buffer_count));
@@ -424,21 +984,48 @@ erx_dma_ledger_hold(erx_dma_ledger_t *ledger, const erx_dma_publication_t *publi
 	uint32_t taken[ERX_DMA_TABLES_MAX] = { 0 };
 	erx_dma_holding_t holding;
 
-	if (!holding_of(publication, records, record_count, &holding) || !holding_valid(ledger, &holding, taken))
+	if (!holding_of(publication, records, record_count, &holding) || !holding_valid(ledger, &holding, taken) ||
+	    !erx_dma_ledger_may_bind(ledger, publication) || !erx_dma_ledger_command_room(ledger, records[0].table))
 		return (false);
+	/* A binding's ring, bound to no endpoint, takes none of the run: it holds no record before or after. */
+	for (uint32_t k = 0; k < holding.bind_count; k++) {
+		if (taken[holding.binds[k].table] != 0)
+			return (false);
+	}
 	holding.serial = ++ledger->begun;
 	ledger->holdings[ledger->live++] = holding;
+	if (takes_commands(&ledger->layout, records[0].table))
+		ledger->command_serial = holding.serial;
 	for (uint32_t table = 0; table < ledger->layout.table_count; table++)
 		advance(ledger, table, taken[table]);
+	for (uint32_t k = 0; k < holding.bind_count; k++) {
+		ledger->bound[holding.binds[k].table] = holding.binds[k].endpoint;
+		/* Closed until its command's success, when it runs (Figure 4-5, items 1, 2 and 6). */
+		ledger->states[holding.binds[k].table] = ERX_DMA_ENDPOINT_RUNNING;
+		/* The first record, on lap 0, of cycle state 1, where the sequencer's zeroed ring starts. */
+		ledger->positions[holding.binds[k].table] = (erx_dma_position_t){ .index = 0, .lap = 0 };
+	}
 	return (true);
 }
 
 bool
 erx_dma_ledger_acquire(erx_dma_ledger_t *ledger, uint32_t reports, uint32_t count)
 {
-	if (reports >= ledger->layout.table_count || !device_writes(&ledger->layout, reports) || count > ledger->live)
+	if (reports >= ledger->layout.table_count || !device_writes(&ledger->layout, reports) ||
+	    count > ledger->layout.tables[reports].count)
 		return (false);
 	ledger->acquired[reports] = count;
+	return (true);
+}
+
+bool
+erx_dma_ledger_pass(erx_dma_ledger_t *ledger, uint32_t reports)
+{
+	if (reports >= ledger->layout.table_count || !device_writes(&ledger->layout, reports) ||
+	    ledger->acquired[reports] == 0)
+		return (false);
+	ledger->acquired[reports]--;
+	advance(ledger, reports, 1);
 	return (true);
 }
 
@@ -446,6 +1033,33 @@ uint32_t
 erx_dma_ledger_acquired(const erx_dma_ledger_t *ledger, uint32_t table)
 {
 	return (table < ledger->layout.table_count ? ledger->acquired[table] : 0);
+}
+
+erx_dma_found_t
+erx_dma_ledger_newest(const erx_dma_ledger_t *ledger)
+{
+	const erx_dma_holding_t *holding;
+
+	for (uint32_t live = 0; live < ledger->live; live++) {
+		holding = &ledger->holdings[live];
+		if (holding->serial == ledger->begun)
+			return ((erx_dma_found_t){ holding, holding->serial });
+	}
+	return ((erx_dma_found_t){ NULL, 0 });
+}
+
+/*
+ * By equality: a pointer the ledger did not give compares equal to none of its holdings, and a
+ * holding begun since has another serial.
+ */
+bool
+erx_dma_ledger_found_live(const erx_dma_ledger_t *ledger, erx_dma_found_t found)
+{
+	for (uint32_t live = 0; live < ledger->live; live++) {
+		if (&ledger->holdings[live] == found.holding && found.holding->serial == found.serial)
+			return (true);
+	}
+	return (false);
 }
 
 erx_dma_found_t
@@ -458,18 +1072,17 @@ erx_dma_ledger_holding(const erx_dma_ledger_t *ledger, erx_dma_place_t head)
 	return ((erx_dma_found_t){ NULL, 0 });
 }
 
-bool
-erx_dma_ledger_release_holding(erx_dma_ledger_t *ledger, uint32_t reports, erx_dma_found_t found)
+/* Ends the holding `found` names, as erx_dma_ledger_release_holding says, the live command's included. */
+static bool
+release(erx_dma_ledger_t *ledger, uint32_t reports, erx_dma_found_t found)
 {
 	if (reports >= ledger->layout.table_count || !device_writes(&ledger->layout, reports) ||
 	    ledger->acquired[reports] == 0)
 		return (false);
-	/*
-	 * By equality: a pointer the ledger did not give compares equal to none of its holdings, and
-	 * a holding begun since has another serial.
-	 */
+	if (!SEED_RELEASE_TWICE && !erx_dma_ledger_found_live(ledger, found))
+		return (false);
 	for (uint32_t live = 0; live < ledger->live; live++) {
-		if (&ledger->holdings[live] == found.holding && found.holding->serial == found.serial) {
+		if (&ledger->holdings[live] == found.holding) {
 			ledger->holdings[live] = ledger->holdings[--ledger->live];
 			ledger->acquired[reports]--;
 			advance(ledger, reports, 1);
@@ -481,4 +1094,87 @@ erx_dma_ledger_release_holding(erx_dma_ledger_t *ledger, uint32_t reports, erx_d
 		return (true);
 	}
 	return (false);
+}
+
+/* A command ends only at its completion, which applies its reach (erx_dma_ledger_complete_command). */
+bool
+erx_dma_ledger_release_holding(erx_dma_ledger_t *ledger, uint32_t reports, erx_dma_found_t found)
+{
+	return (found.holding != NULL && found.serial != ledger->command_serial && release(ledger, reports, found));
+}
+
+/*
+ * Ends every live holding on ring `table`, the transfers a command's success retires, adding each
+ * one's head to `retired`: no more than the holdings that were live.
+ */
+static void
+retire(erx_dma_ledger_t *ledger, uint32_t table, erx_dma_place_t retired[ERX_DMA_HOLDINGS_MAX], uint32_t *count)
+{
+	for (uint32_t live = 0; live < ledger->live;) {
+		if (ledger->holdings[live].records[0].table == table) {
+			retired[(*count)++] = ledger->holdings[live].records[0];
+			ledger->holdings[live] = ledger->holdings[--ledger->live];
+		} else {
+			live++;
+		}
+	}
+}
+
+bool
+erx_dma_ledger_complete_command(erx_dma_ledger_t *ledger, uint32_t reports, erx_dma_found_t found, bool success,
+    erx_dma_place_t retired[ERX_DMA_HOLDINGS_MAX], uint32_t *retired_count)
+{
+	const erx_dma_found_t live = erx_dma_ledger_command(ledger);
+	erx_dma_holding_t command;
+	const reach_rule_t *rule;
+
+	*retired_count = 0;
+	if (live.holding == NULL || live.holding != found.holding || live.serial != found.serial)
+		return (false);
+	command = *found.holding;
+	rule = reach_rules[command.reach];
+	if (!release(ledger, reports, found))
+		return (false);
+	for (uint32_t table = 0; table < ledger->layout.table_count; table++) {
+		const uint32_t endpoint = ledger->bound[table];
+		const bool own = made_by(&command, (erx_dma_binding_t){ endpoint, table });
+
+		/* Its endpoints were closed since its publication, so its own rings hold nothing. */
+		if (!success) {
+			if (own && rule->failure_keeps && !SEED_FAILED_ADDRESS_UNBINDS)
+				ledger->states[table] = ERX_DMA_ENDPOINT_DISABLED;
+			else if (own && !SEED_KEEP_FAILED_BINDING)
+				unbind(ledger, table);
+			continue;
+		}
+		if (endpoint == 0 || own || !acts_on(&command, endpoint))
+			continue;
+		switch (rule->success) {
+		case EFFECT_NONE:
+			break;
+		case EFFECT_STOP:
+			ledger->states[table] = ERX_DMA_ENDPOINT_STOPPED;
+			break;
+		case EFFECT_RESTART:
+			if (!SEED_RETIRE_NOTHING)
+				retire(ledger, table, retired, retired_count);
+			ledger->states[table] = ERX_DMA_ENDPOINT_RUNNING;
+			break;
+		case EFFECT_REMOVE:
+			retire(ledger, table, retired, retired_count);
+			if (!SEED_KEEP_DROPPED_BINDING)
+				unbind(ledger, table);
+			break;
+		}
+	}
+	return (true);
+}
+
+bool
+erx_dma_ledger_halt(erx_dma_ledger_t *ledger, uint32_t table)
+{
+	if (table >= ledger->layout.table_count || ledger->bound[table] == 0)
+		return (false);
+	ledger->states[table] = ERX_DMA_ENDPOINT_HALTED;
+	return (true);
 }

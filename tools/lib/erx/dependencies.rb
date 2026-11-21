@@ -178,6 +178,21 @@ module Erx
       tree
     end
 
+    # The file of a file source as fetch published it, for a build that reads
+    # it. Raises with the command that fetches it when the source is absent
+    # or holds another pin.
+    def fetched_file(id)
+      source = pinned(id)
+      raise Error, "#{id} is a #{source.fetch('kind')} source, not a file" unless source.fetch('kind') == 'file'
+      raise Error, "source #{id} is not fetched; #{fetch_command(id)}" unless File.exist?(destination_of(source))
+      raise Error, stale(id) unless recorded?(source)
+
+      file = File.join(destination_of(source), source.fetch('filename'))
+      raise Error, stale(id) unless File.file?(file) && !File.symlink?(file)
+
+      file
+    end
+
     # Where fetch keeps source id's verified download, by its kind's file name.
     def archive_path_of(id) = archive_path(pinned(id))
 
@@ -324,7 +339,7 @@ module Erx
       end
     end
 
-    def pinned(id)
+    public def pinned(id)
       found = sources.find { |source| source.fetch('id') == id }
       return found if found
 

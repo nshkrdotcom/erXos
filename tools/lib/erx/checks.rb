@@ -62,6 +62,7 @@ module Erx
       otp
       test/oracle/common_test
       test/shell/rc/plan9port
+      tools/book/beautiful-mermaid
     ].freeze
     LISTING_BYTES = 64 * 1024 * 1024
     LISTING_DEADLINE = 120
