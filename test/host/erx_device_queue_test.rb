@@ -7,6 +7,7 @@ require 'minitest/autorun'
 require 'open3'
 require 'tmpdir'
 require_relative '../../tools/lib/erx/sanitizer_environment'
+require_relative '../../tools/lib/erx/device_nif'
 require_relative '../fixtures/generated_tree'
 
 # The pure core of a device's queue (test/fixtures/erx_device_queue_harness.c), and the
@@ -16,11 +17,11 @@ class ErxDeviceQueueTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
   NIFS = File.join(ROOT, 'otp/erts/emulator/nifs/erxos')
   CORE = File.join(NIFS, 'erx_device_queue.c')
-  # The check, the split ring's core over the sequencer, GENET's core and a host DMA architecture layer that
-  # counts its maintenance, which erx_device.c's queues run through.
-  DMA = [*%w[erx_device_dma.c erx_device_genet.c erx_device_ledger.c erx_device_rules.c erx_device_sequencer.c
-            erx_device_virtio_core.c].map { |source| File.join(NIFS, source) },
-         File.join(ROOT, 'test/fixtures/erx_dma_arch_counting.c')].freeze
+  # erx_device.c's cores from their one list (tools/lib/erx/device_nif.rb), over a host DMA
+  # architecture layer that counts its maintenance.
+  DEVICE = File.join(NIFS, 'erx_device.c')
+  CORES = Erx::DeviceNif.core_sources(root: ROOT).map { |path| File.join(ROOT, path) }.freeze
+  COUNTING = File.join(ROOT, 'test/fixtures/erx_dma_arch_counting.c')
   FLAGS = ['-std=c17', '-D_DARWIN_C_SOURCE', '-Wall', '-Wextra', '-Werror', '-O1', '-g',
            '-fsanitize=address,undefined', '-fno-sanitize-recover=undefined'].freeze
   COMPILER = ENV.fetch('ERX_CLANG', 'clang')
@@ -31,8 +32,7 @@ class ErxDeviceQueueTest < Minitest::Test
   end
 
   def test_queues_on_a_device
-    output = run_harness(File.join(ROOT, 'test/fixtures/erx_device_dma_harness.c'), CORE,
-                         File.join(NIFS, 'erx_device.c'), File.join(NIFS, 'erx_device_core.c'), *DMA,
+    output = run_harness(File.join(ROOT, 'test/fixtures/erx_device_dma_harness.c'), *device_sources,
                          includes: [File.join(ROOT, 'test/fixtures/device_model')])
     assert_match(/^erx_device_dma done$/, output)
   end
@@ -128,7 +128,7 @@ class ErxDeviceQueueTest < Minitest::Test
         source = File.join(directory, 'erx_device.c')
         File.write(source, text.sub(*seed))
       end
-      output, status = harness_output(GENET_HARNESS, CORE, source, File.join(NIFS, 'erx_device_core.c'), *DMA,
+      output, status = harness_output(GENET_HARNESS, *device_sources(source),
                                       includes: [File.join(ROOT, 'test/fixtures/device_model')])
       assert_equal seed.nil?, status.success?, output
       output
@@ -142,11 +142,14 @@ class ErxDeviceQueueTest < Minitest::Test
     Dir.mktmpdir('erx-device-region-seed-') do |directory|
       seeded = File.join(directory, 'erx_device.c')
       File.write(seeded, source.sub(*seed))
-      output, = harness_output(File.join(ROOT, 'test/fixtures/erx_device_dma_harness.c'), CORE, seeded,
-                               File.join(NIFS, 'erx_device_core.c'), *DMA, includes: [File.join(ROOT, 'test/fixtures/device_model')])
+      output, = harness_output(File.join(ROOT, 'test/fixtures/erx_device_dma_harness.c'), *device_sources(seeded),
+                               includes: [File.join(ROOT, 'test/fixtures/device_model')])
       output
     end
   end
+
+  # The cores with `device` in erx_device.c's place, and the counting architecture layer.
+  def device_sources(device = DEVICE) = [*CORES.map { |path| path == DEVICE ? device : path }, COUNTING]
 
   def run_harness(*sources, includes: [])
     output, status = harness_output(*sources, includes: includes)

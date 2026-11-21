@@ -8,9 +8,8 @@
  * harness catches (docs/design-device-dma.md, Verification, The check).
  */
 
-#include <strings.h>
-
 #include "erx/abi.h"
+#include "liberx/backend/core/mem.h"
 #include "erx_device_ledger.h"
 #include "erx_device_rules.h"
 

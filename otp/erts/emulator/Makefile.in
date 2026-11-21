@@ -1080,6 +1080,9 @@ ERX_NET_C_OBJS = $(OBJDIR)/erx_inet_csum.o $(OBJDIR)/erx_siphash.o $(OBJDIR)/erx
 $(ERX_NET_C_OBJS): $(OBJDIR)/%.o: $(ERX_TREE)/erlang/apps/erx_net/c_src/%.c
 	$(V_CC) $(CFLAGS) $(INCLUDES) -c $< -o $@
 
+# The device NIF's sources below ERTS's glue, their one list (nifs/erxos/erx_device.mk).
+include nifs/erxos/erx_device.mk
+
 $(OBJDIR)/%.o: nifs/erxos/%.c
 	$(V_CC) $(CFLAGS) -I$(ERX_GEN) -I$(ERX_GEN)/include -I$(ERX_TREE) -I$(ERX_TREE)/include $(INCLUDES) -Inifs/common -Inifs/$(STOCK_OSTYPE) -c $< -o $@
 
@@ -1356,17 +1359,9 @@ OS_OBJS = \
 	$(OBJDIR)/erx_exports.o \
 	$(OBJDIR)/erx_ref.o \
 	$(OBJDIR)/ctaes.o \
-	$(OBJDIR)/erx_device.o \
-	$(OBJDIR)/erx_device_core.o \
+	$(ERX_DEVICE_CORES:%=$(OBJDIR)/%.o) \
 	$(OBJDIR)/erx_area_lease_core.o \
 	$(OBJDIR)/erx_domain_terms.o \
-	$(OBJDIR)/erx_device_queue.o \
-	$(OBJDIR)/erx_device_dma.o \
-	$(OBJDIR)/erx_device_genet.o \
-	$(OBJDIR)/erx_device_ledger.o \
-	$(OBJDIR)/erx_device_rules.o \
-	$(OBJDIR)/erx_device_sequencer.o \
-	$(OBJDIR)/erx_device_virtio_core.o \
 	$(if $(findstring hosted,$(TARGET)),$(OBJDIR)/erx_device_genet_model.o) \
 	$(OBJDIR)/erx_dma_arch.o \
 	$(OBJDIR)/erx_crc32c.o \

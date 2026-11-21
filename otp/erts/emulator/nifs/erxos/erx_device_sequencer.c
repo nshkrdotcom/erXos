@@ -13,9 +13,9 @@
  * before the zeroing reaches memory.
  */
 
-#include <string.h>
-
 #include "erx_device_sequencer.h"
+
+#include "liberx/backend/core/mem.h"
 
 _Static_assert(sizeof(erx_virtq_desc_t) <= ERX_DMA_STORE_BYTES_MAX &&
     sizeof(erx_virtio_gpu_mem_entry_t) <= ERX_DMA_STORE_BYTES_MAX, "every record the sequencer encodes fits a store");
@@ -148,7 +148,7 @@ encode(const erx_dma_layout_t *layout, const erx_dma_description_t *description,
 		if (!erx_virtq_desc_encode(&record, &description->described.virtq_desc, &placed))
 			return (false);
 		store->length = sizeof(record);
-		memcpy(store->bytes, &record, sizeof(record));
+		bcopy(&record, store->bytes, sizeof(record));
 		return (true);
 	}
 	default:
@@ -170,7 +170,7 @@ encode_region_entry(const erx_dma_persistent_region_t *region, uint64_t at, erx_
 	if (!erx_virtio_gpu_mem_entry_encode(&record, &placed))
 		return (false);
 	*store = (erx_dma_store_t){ .offset = at, .length = sizeof(record) };
-	memcpy(store->bytes, &record, sizeof(record));
+	bcopy(&record, store->bytes, sizeof(record));
 	return (true);
 }
 
@@ -192,11 +192,11 @@ place_in_order(const erx_dma_ledger_t *ledger, uint32_t table, erx_dma_place_t h
 	value = (uint16_t)head.index;
 	*entry = (erx_dma_store_t){ .offset = record_offset(layout, (erx_dma_place_t){ table, position.index }),
 	    .length = sizeof(value) };
-	memcpy(entry->bytes, &value, sizeof(value));
+	bcopy(&value, entry->bytes, sizeof(value));
 	value = (uint16_t)(running_index(ledger, table) + 1u);
 	*activation = (erx_dma_store_t){ .offset = layout->tables[table].region + ERX_VIRTQ_RING_HEAD_OFF_IDX,
 	    .length = sizeof(value) };
-	memcpy(activation->bytes, &value, sizeof(value));
+	bcopy(&value, activation->bytes, sizeof(value));
 	return (true);
 }
 
