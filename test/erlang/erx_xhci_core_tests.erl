@@ -67,8 +67,10 @@ devices() ->
 %% the buffer cleared; and that from every state the callers are all answered, and a
 %% detached device's slot disabled, when every later answer succeeds.
 the_pipe_machine_is_explored_to_a_fixed_point_test_() ->
-    {timeout, 600, [?_assertMatch({ok, _}, explore(Device, Features))
-                    || Device <- devices(), Features <- [#{}, #{detach => true, tick => true}]]}.
+    %% Each case gets its own limit: a group's {timeout, ...} leaves every test
+    %% in it at EUnit's 5 s default.
+    [{timeout, 600, ?_assertMatch({ok, _}, explore(Device, Features))}
+     || Device <- devices(), Features <- [#{}, #{detach => true, tick => true}]].
 
 %% The rows of the table, each as the commands and requests it posts, every one answered
 %% with success. A halted bulk endpoint behind a single translator clears the
@@ -381,7 +383,8 @@ a_failed_address_is_cleaned_up_before_it_is_answered_test() ->
 
 %% The failed Address Device explored, behind a single-TT hub and with no translator.
 the_failed_address_is_explored_to_a_fixed_point_test_() ->
-    {timeout, 300, [?_assertMatch({ok, _}, explore_address(Device)) || Device <- [hd(devices()), lists:last(devices())]]}.
+    [{timeout, 300, ?_assertMatch({ok, _}, explore_address(Device))}
+     || Device <- [hd(devices()), lists:last(devices())]].
 
 %% Aborting a control request
 
