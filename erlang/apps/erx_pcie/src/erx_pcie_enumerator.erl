@@ -64,10 +64,8 @@ milliseconds. An access that answers `link_down` exits the process.
                   sleep := fun((non_neg_integer()) -> ok)}.
 
 %% Each peripheral of role configuration (include/erx/device_kinds.h) and
-%% the bridge driver module that starts over its record; `none` for the
-%% BCM2711's bridge, which has its core (erx_pcie_bcm2711_core) and no
-%% driver module (TODO.md, "the start's leftovers").
--define(BRIDGE_DRIVERS, #{pci_ecam => erx_pcie_ecam, bcm2711_pcie => none}).
+%% the bridge driver module that starts over its record.
+-define(BRIDGE_DRIVERS, #{pci_ecam => erx_pcie_ecam, bcm2711_pcie => erx_pcie_bcm2711}).
 
 -define(FLR_POLL_MS, 100).
 -define(FLR_POLLS, 10).
@@ -380,8 +378,8 @@ bus(Request) ->
 %% A bridge's driver on the target ("The bridge seam"): the device record of
 %% role `configuration` whose INDEX is the bridge's manifest device row,
 %% opened, and the driver module its peripheral names started over it. A
-%% bridge with no such record, or whose peripheral has no driver module,
-%% opens nothing, and the start, which logs the reason, reports none of
+%% bridge with no such record, or whose driver's start refuses, opens
+%% nothing, and the start, which logs the reason, reports none of
 %% its functions.
 open(#{index := Index} = Bridge) ->
     case configuration(Index, maps:keys(?BRIDGE_DRIVERS), []) of
@@ -403,8 +401,6 @@ configuration(_Index, [], []) ->
 configuration(_Index, [], [_, _ | _]) ->
     {error, two_configuration_records}.
 
-start_driver(none, _Bridge, _Spec) ->
-    {error, no_driver_module};
 start_driver(Module, Bridge, Spec) ->
     case erx_device:open(Spec) of
         {ok, Device} -> started(Module, Module:start(Bridge, Device));

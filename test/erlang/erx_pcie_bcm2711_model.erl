@@ -19,7 +19,7 @@
 %% and any access below the root port less than 100 ms after PERST#'s release.
 -module(erx_pcie_bcm2711_model).
 
--export([new/1, run/2, log/1, violations/1, firmware/1, link/1]).
+-export([new/1, run/2, op/2, log/1, violations/1, firmware_register/1, link/1]).
 
 -include("generated/erx_hw_bcm2711_pcie.hrl").
 
@@ -54,7 +54,7 @@ log(#{log := Log}) -> lists:reverse(Log).
 
 violations(#{violations := Violations}) -> lists:reverse(Violations).
 
-firmware(#{firmware := Firmware}) -> Firmware.
+firmware_register(#{firmware := Firmware}) -> Firmware.
 
 link(Model) -> link_up(Model).
 
@@ -62,10 +62,15 @@ link(Model) -> link_up(Model).
 run(Model, {Core, {done, Result}}) ->
     {Result, Core, Model};
 run(Model, {Core, Op}) ->
+    {Answer, Next} = op(Op, Model),
+    run(Next, erx_pcie_bcm2711_core:step(Answer, Core)).
+
+%% One operation executed, counted and logged: its answer and the model after it,
+%% the shape of the port the bridge driver takes (erx_pcie_bcm2711:open/3).
+op(Op, Model) ->
     Counted = fall(Model#{count := maps:get(count, Model) + 1}),
     {Answer, Next} = apply_op(Op, Counted),
-    Logged = Next#{log := [{maps:get(time, Counted), Op} | maps:get(log, Next)]},
-    run(Logged, erx_pcie_bcm2711_core:step(Answer, Core)).
+    {Answer, Next#{log := [{maps:get(time, Counted), Op} | maps:get(log, Next)]}}.
 
 fall(#{count := Count, fall_at := Count} = Model) -> Model#{fallen := true};
 fall(Model) -> Model.

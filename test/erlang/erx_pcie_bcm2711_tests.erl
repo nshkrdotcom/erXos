@@ -295,7 +295,7 @@ all_ones_at_offset_0_is_absent_test() ->
 %% firmware).
 bring_up_ends_with_the_notification_test() ->
     {{up, #{path := reset}}, Core, Model} = start(#{boot => down}),
-    ?assertEqual(0, ?MODEL:firmware(Model)),
+    ?assertEqual(0, ?MODEL:firmware_register(Model)),
     {Result, _, After} = ?MODEL:run(Model, ?CORE:firmware(Core)),
     ?assertEqual({firmware, present}, Result),
     Firmware = lists:nthtail(length(ops(Model)), ops(After)),
@@ -306,7 +306,7 @@ a_refused_notification_is_not_loaded_and_reads_nothing_more_test() ->
     {{up, #{path := reset}}, Core, Model} = start(#{boot => down}),
     {Core1, notify_firmware} = ?CORE:firmware(Core),
     ?assertEqual({done, {firmware, not_loaded}}, element(2, ?CORE:step({error, timed_out}, Core1))),
-    ?assertEqual(0, ?MODEL:firmware(Model)).
+    ?assertEqual(0, ?MODEL:firmware_register(Model)).
 
 %% The link falls before each operation in turn of the three paths: kept, reset from
 %% a link up, and bring-up from a link down. Whatever the step, no access locks up the
