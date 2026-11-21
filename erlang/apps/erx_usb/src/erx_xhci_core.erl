@@ -48,8 +48,14 @@ Op}` reads the port's PORTSC and answers from it: `get_status` with the
 USB 2 status and change words and the PORTSC speed ID; `power_on`, `reset`,
 `disable` and `{clear, Change}` by writing PORTSC's port power, port reset,
 port enable (whose 1 disables) or the change bits behind Change, each with
-modify/4. Every PORTSC change bit stands behind one USB 2 change name, so a
-port's changes can all be cleared and it raises its next event (xHCI
+modify/4. A clear writes only those of Change's bits that the port's last
+`get_status` reported, so a change that set after that read, which the bus
+core has not seen, stays set for its next read. A port outside the
+controller's port count is answered `{error, badarg}`, and a port event
+that names one fails the controller as a malformed event, since the
+controller wrote it. Every PORTSC change bit stands behind one USB 2
+change name, so a port's changes can all be cleared and it raises its next
+event (xHCI
 4.19.2, p. 322): the link state change behind `suspend`, as FreeBSD's
 C_PORT_SUSPEND clears it (xhci.c:3461-3463); the warm reset change behind
 `reset`, both a reset's end (FreeBSD's usb_hub.c:1091-1103); and the
@@ -134,7 +140,7 @@ answers the step's error.
 """.
 
 -export([new/0, step/3, next_deadline/1, capabilities/1]).
--export([completion/1, command_answer/3, transfer_result/2, decode_capabilities/2, port_operation/2, modify/4]).
+-export([completion/1, command_answer/3, transfer_result/2, decode_capabilities/2, port_operation/3, modify/4]).
 
 -export_type([state/0, event/0, action/0, pipe/0, command/0, completion/0, register/0, capabilities/0]).
 
@@ -272,12 +278,15 @@ waiting its turn.
 commands waiting, oldest first; `port_ops` the root-port operations whose
 PORTSC read is awaited, oldest first; `line` the interrupt line: `idle`,
 `held` by an interrupt before the controller runs and owed its `ack`, or
-`{draining, Events}` while a pass reads the event ring.
+`{draining, Events}` while a pass reads the event ring; `reported` the
+PORTSC change bits each root port's last `get_status` reported and no
+clear has written since.
 """.
 -opaque state() :: #{phase := phase(),
                      line := idle | held | {draining, Events :: non_neg_integer()},
                      capabilities := none | capabilities(),
                      port_ops := [{port_no(), port_op(), From :: term()}],
+                     reported := #{port_no() => non_neg_integer()},
                      slots := #{slot() => slot_record()},
                      pipes := #{pipe() => pipe_record()},
                      inflight := #{tag() => {pipe(), requester()}},
@@ -291,7 +300,7 @@ PORTSC read is awaited, oldest first; `line` the interrupt line: `idle`,
 -doc "A controller not yet started, with no slots and nothing in flight.".
 -spec new() -> state().
 new() ->
-    #{phase => stopped, line => idle, capabilities => none, port_ops => [],
+    #{phase => stopped, line => idle, capabilities => none, port_ops => [], reported => #{},
       slots => #{}, pipes => #{}, inflight => #{}, command => none, commands => []}.
 
 -doc "What the controller's capability registers said, for its inspection record, or `none` before they are read.".
@@ -373,8 +382,14 @@ event({completed, {error, Reason}}, _Now, Acc) ->
     emit({fail, {complete, Reason}}, Acc);
 event({completed, _Batch}, _Now, Acc) ->
     emit({fail, {unexpected, completed}}, Acc);
-event({port, From, Port, Op}, _Now, {S = #{phase := {running, _}, port_ops := Ops}, A}) ->
-    emit({read, [{portsc, Port}]}, {S#{port_ops := Ops ++ [{Port, Op, From}]}, A});
+event({port, From, Port, Op}, _Now, Acc = {#{phase := {running, _}}, _}) ->
+    case root_port(Port, Acc) of
+        true ->
+            {S = #{port_ops := Ops}, A} = Acc,
+            emit({read, [{portsc, Port}]}, {S#{port_ops := Ops ++ [{Port, Op, From}]}, A});
+        false ->
+            answer({reply, From}, {error, badarg}, Acc)
+    end;
 event({port, From, _Port, _Op}, _Now, Acc) ->
     answer({reply, From}, {error, halted}, Acc);
 event(expired, Now, Acc) ->
@@ -447,12 +462,12 @@ set_line(Line, {S, A}) -> {S#{line := Line}, A}.
 
 read([{{legacy, bios_owned}, Byte}], Now, Acc = {#{phase := {bios_handoff, _, reading}}, _}) ->
     bios_owned(Byte, Now, Acc);
-read([{{portsc, Port}, Word}], _Now, {S = #{port_ops := Ops}, A}) ->
+read([{{portsc, Port}, Word}], _Now, {S = #{port_ops := Ops, reported := Reported}, A}) when is_integer(Word) ->
     case lists:keytake(Port, 1, Ops) of
         {value, {Port, Op, From}, Rest} ->
-            {Writes, Answer} = port_operation(Op, Word),
-            Written = lists:foldl(fun(Write, In) -> emit({write, {portsc, Port}, Write}, In) end,
-                                  {S#{port_ops := Rest}, A}, Writes),
+            {Writes, Answer, StillReported} = port_operation(Op, Word, maps:get(Port, Reported, 0)),
+            Next = {S#{port_ops := Rest, reported := Reported#{Port => StillReported}}, A},
+            Written = lists:foldl(fun(Write, In) -> emit({write, {portsc, Port}, Write}, In) end, Next, Writes),
             answer({reply, From}, Answer, Written);
         false ->
             emit({fail, {unexpected_read, {portsc, Port}}}, {S, A})
@@ -508,35 +523,56 @@ drained(Count, Acc = {#{line := {draining, Before}}, _}) ->
     end.
 
 nif_event({port, Port}, _Now, Acc) ->
-    emit({port_event, Port}, Acc);
+    case root_port(Port, Acc) of
+        true -> emit({port_event, Port}, Acc);
+        false -> emit({fail, {malformed_event, {port, Port}}}, Acc)
+    end;
 nif_event({Tag, Code, Extra}, Now, Acc) ->
-    event({complete, Tag, Code, Extra}, Now, Acc).
+    event({complete, Tag, Code, Extra}, Now, Acc);
+nif_event(Event, _Now, Acc) ->
+    emit({fail, {malformed_event, Event}}, Acc).
+
+%% A port of the root hub: 1 to the port count the capability registers read.
+root_port(Port, {#{capabilities := #{ports := Ports}}, _}) ->
+    is_integer(Port) andalso Port >= 1 andalso Port =< Ports.
 
 %% Root ports
 
 -doc """
-A root-port operation on the port whose PORTSC reads Word: the PORTSC words to
-write, each modify/4 of Word, and the answer to the bus process. get_status
-writes nothing and answers the USB 2 hub words, wPortStatus and wPortChange,
-with the PORTSC speed ID; a `{clear, Change}` for a name no change bit stands
-behind answers `{error, badarg}`.
+A root-port operation on the port whose PORTSC reads Word and whose last
+get_status reported the change bits Reported: the PORTSC words to write,
+each modify/4 of Word, the answer to the bus process, and the change bits
+reported and not yet cleared after it. get_status writes nothing, answers
+the USB 2 hub words, wPortStatus and wPortChange, with the PORTSC speed ID,
+and reports every change bit Word has set. `{clear, Change}` writes those
+of Change's bits that were reported, or nothing when none was, so a bit set
+since the read stays set; a name no change bit stands behind answers
+`{error, badarg}`.
 """.
--spec port_operation(port_op(), non_neg_integer()) ->
-          {[non_neg_integer()], ok | {ok, <<_:32>>, byte()} | {error, badarg}}.
-port_operation(get_status, Word) ->
+-spec port_operation(port_op(), non_neg_integer(), non_neg_integer()) ->
+          {[non_neg_integer()], ok | {ok, <<_:32>>, byte()} | {error, badarg}, non_neg_integer()}.
+port_operation(get_status, Word, _Reported) ->
     {[], {ok, <<(port_status(Word)):16/little, (port_changes(Word)):16/little>>,
-          ?ERX_HW_XHCI_PORTSC_SPEED_GET(Word)}};
-port_operation(power_on, Word) ->
-    {[set_portsc(Word, ?ERX_HW_XHCI_PORTSC_PP_MASK)], ok};
-port_operation(reset, Word) ->
-    {[set_portsc(Word, ?ERX_HW_XHCI_PORTSC_PR_MASK)], ok};
-port_operation(disable, Word) ->
-    {[set_portsc(Word, ?ERX_HW_XHCI_PORTSC_PED_MASK)], ok};
-port_operation({clear, Change}, Word) ->
+          ?ERX_HW_XHCI_PORTSC_SPEED_GET(Word)},
+     Word band change_bits()};
+port_operation(power_on, Word, Reported) ->
+    {[set_portsc(Word, ?ERX_HW_XHCI_PORTSC_PP_MASK)], ok, Reported};
+port_operation(reset, Word, Reported) ->
+    {[set_portsc(Word, ?ERX_HW_XHCI_PORTSC_PR_MASK)], ok, Reported};
+port_operation(disable, Word, Reported) ->
+    {[set_portsc(Word, ?ERX_HW_XHCI_PORTSC_PED_MASK)], ok, Reported};
+port_operation({clear, Change}, Word, Reported) ->
     case lists:keyfind(Change, 1, port_changes()) of
-        {Change, Bits, _UsbBit} -> {[set_portsc(Word, Bits)], ok};
-        false -> {[], {error, badarg}}
+        {Change, Bits, _UsbBit} ->
+            Clear = Bits band Reported,
+            {[set_portsc(Word, Clear) || Clear =/= 0], ok, Reported band bnot Bits};
+        false ->
+            {[], {error, badarg}, Reported}
     end.
+
+%% Every PORTSC change bit, from the one table.
+change_bits() ->
+    lists:foldl(fun({_Name, Bits, _UsbBit}, All) -> All bor Bits end, 0, port_changes()).
 
 set_portsc(Word, Bits) -> modify(Word, ?ERX_HW_XHCI_PORTSC_PRESERVE, Bits, Bits).
 

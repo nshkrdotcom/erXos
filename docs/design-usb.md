@@ -1776,8 +1776,14 @@ clear, and never writes the port-enable bit, whose 1 disables the port,
 except to disable; FreeBSD writes back the value it read with the bits
 of `XHCI_PS_CLEAR` removed (`xhcireg.h:146`; `xhci.c:3633`), and erXos
 derives the same mask from the access type of each field of the SVD
-source, so no constant is copied by hand. The controller writes no `PORTSC` while it
-is halted (xHCI 5.4.8, p. 405). The bus core reads a root port's changes
+source, so no constant is copied by hand. A clear writes only those of
+its change's bits that the port's last status read reported, so a bit
+that set after that read, which the bus core has not seen, stays set for
+the core's next read. The controller writes no `PORTSC` while it
+is halted (xHCI 5.4.8, p. 405). A running controller answers an
+operation on a port outside its port count `{error, badarg}`, and a
+port event naming one is malformed and fails the controller, as any
+malformed event does. The bus core reads a root port's changes
 in the USB 2 hub words and clears each one it reads, and a root port
 raises no further event until all of its change bits are clear (4.19.2,
 p. 322), so every `PORTSC` change bit stands behind one USB 2 change: the
