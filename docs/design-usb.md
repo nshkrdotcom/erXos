@@ -2094,8 +2094,8 @@ The ring's 512 entries hold 511 events (Figure 4-12, p. 182), so no
 controller's port count can fill it and install refuses none for its
 ports. The transfer rows hold by construction: the check's room rule
 keeps a ring's TDs in flight below its block's buffers, though a
-control transfer without a data stage names none, and the command
-ring's pool, just the input context, keeps one command in flight
+control transfer without a data stage names none, and the ledger takes
+one command at a time
 ([design-device-dma.md](design-device-dma.md#the-ledger)). The NIF enables no other event: no microframe-index wrap, no
 device notification, no event data. A controller that still reports a
 full ring breaks the form, and its restart resets it.
@@ -2154,15 +2154,27 @@ that consumes events.
   sequencer initialises the ring then. A drop-and-add binds the new ring
   beside the old one, with the endpoint closed: success ends the old
   binding and retires its ring's transfers, and failure ends the new
-  one. A failing command ends only its own bindings. Every record that
+  one. A failing command ends only its own bindings, but for a failed
+  Address Device, which leaves its slot in the Default state (4.6.5,
+  p. 114) with EP0 enabled on the ring the command named, so the
+  controller may still hold it: that binding stays, EP0 `disabled`,
+  until the Disable Slot that 4.6.5 recovers with (p. 114) succeeds and
+  ends it. Until then EP0 takes no transfer, and no command that names
+  it but Disable Slot: no stop, restart or drop, and no other Address
+  Device binds it a ring. Every record that
   points an endpoint at a ring, Set TR
   Dequeue Pointer's and Evaluate Context's EP0 context, points it at a
   ring bound to it, so no endpoint is given another endpoint's ring, and
   with it another device's buffers.
 * A transfer's TRBs name only buffers of their own ring's block. Its
   holding holds its TRBs, a link they reached, and its buffer.
-* A command's holding holds its TRB and the input context it carries, so
-  no command that carries one is published while another's is held.
+* A command's holding holds its TRB and the input context it carries.
+  One command is in flight at a time, the ledger's own fact: a table
+  whose structure takes commands, one whose meanings have reaches in
+  `abi/formats`, the command ring, takes a command only while no
+  command's holding lives, and the hold sets it. The closure, a
+  drop-and-add's two bindings and the answers below rest on it: one
+  completion retires the transfers of one command.
 * A slot's holding holds its DCBAA entry and its device context. It
   begins at the publication of the slot's first Address Device, which
   zeroes the context as it passes; an Address Device for a slot that
@@ -2178,6 +2190,12 @@ that consumes events.
   drops, a mask of index bits. The ledger keeps them with the command's
   holding, and the sequencer writes the TRB's slot and endpoint fields
   from them, so the TRB names exactly the endpoints the ledger closes.
+  Each reach's meaning (the endpoints it acts on, what it may bind and
+  drop, what its success does to their rings and what its failure does
+  to its own bindings) is one row of the ledger's reach rules, which
+  the check, the closure and the completion all read; the generated list
+  of reaches names a row for each, so a reach added to the marks does
+  not build until it has one.
   While the command is in flight it **closes** the endpoints it acts on:
   those it binds or drops, the one it stops or restarts, or every
   endpoint of its slot for a disable; a command with no reach closes
@@ -2197,16 +2215,22 @@ that consumes events.
   did itself or consumed. An endpoint no ring is bound to is `disabled`.
   A binding's endpoint runs from its command's publication, closed
   until the command's success opens it (Figure 4-5, items 1, 2 and 6,
-  p. 163), and is `disabled` again if the command fails. The publication
-  of a transfer sets `running`, since its doorbell starts a stopped
-  endpoint (4.8.3, p. 165); a consumed Stop Endpoint or Reset Endpoint
-  success sets `stopped` (4.6.9, p. 140; 4.6.8, p. 129); a consumed
+  p. 163), and is `disabled` again if the command fails, its binding
+  ended, or for a failed Address Device kept as above. `running` is the
+  queue table's `open`, the one state that takes a transfer; a consumed
+  Stop Endpoint or Reset Endpoint success sets `stopped` (4.6.9, p. 140;
+  4.6.8, p. 129), which takes none, so the controller never resumes a
+  TD the form has answered, as it would resume the halted transfer a
+  Reset Endpoint leaves on the ring; a consumed
   Disable Slot success sets every endpoint of its slot `disabled`, its
   bindings ended; a consumed transfer event with an error code sets
   `halted` (4.10.2, p. 195) and answers the ring's oldest live transfer
   with the code and no bytes, its holding kept until a command restarts
-  or removes the ring. A Set TR Dequeue Pointer's success changes no
-  state. Beyond its own bindings, a failed command changes no state: a
+  or removes the ring. A Set TR Dequeue Pointer's success sets
+  `running`, the queue open again: the controller's endpoint stays
+  Stopped with its ring empty past the pointer until the next doorbell
+  starts it (4.8.3, p. 165). Beyond its own bindings, a failed command
+  changes no state: a
   Stop Endpoint that fails because
   the endpoint halted (4.8.3, p. 164) leaves it `halted` if the halting
   error event was consumed first, and otherwise `running` with the
@@ -2215,8 +2239,10 @@ that consumes events.
   no live transfer is the specification's Running but idle: no transfer
   in progress, the ring empty and every event received (4.6.6, p. 117).
   The check's reach rule holds four rules on it:
-  * no transfer is published on a closed endpoint, or on a `halted` one,
-    whose doorbell the controller has disabled (4.6.8, p. 128);
+  * no transfer is published on a closed endpoint, or on one that is not
+    `running`: a `halted` one, whose doorbell the controller has
+    disabled (4.6.8, p. 128), a `stopped` one, as the queue table
+    refuses, or EP0 after a failed Address Device;
   * a Stop Endpoint, Reset Endpoint or Set TR Dequeue Pointer names an
     endpoint that is not `disabled`;
   * a Configure Endpoint that drops an endpoint, alone or with an add, is
@@ -2251,7 +2277,7 @@ consumed in order; the completion codes are Table 6-90's (p. 507).
 | Transfer Event, Success or Short Packet, naming the last TRB of its ring's oldest live transfer, the ring bound to its slot and endpoint, since the controller runs a ring's TDs in order | that transfer's holding |
 | any other Transfer Event: a short packet on a data stage, an error, a stop's, the last accepted only while a Stop Endpoint naming its endpoint is in flight and once for each stop | nothing: a transfer's holding ends only when the controller can no longer fetch it, its last TRB done or its ring moved past or removed |
 | Command Completion naming the live command | the command's holding, on every code, and by the command and its code what the rows below add |
-| Address Device or Configure Endpoint, failing | the bindings the command made |
+| Address Device or Configure Endpoint, failing | the bindings the command made, but a failed Address Device's, kept with EP0 `disabled` until Disable Slot succeeds (Bindings and holdings) |
 | Configure Endpoint, succeeding | each binding of an endpoint it drops that was made before it, with the transfers its reach retires |
 | Set TR Dequeue Pointer, succeeding | the transfers its reach retires, those live on the endpoint's ring at its publication |
 | Disable Slot, succeeding | the slot's holding, its DCBAA entry cleared, every binding of the slot, and the transfers its reach retires |
@@ -2260,7 +2286,12 @@ consumed in order; the completion codes are Table 6-90's (p. 507).
 
 Stop Endpoint, Reset Endpoint and Evaluate Context release only their
 own holding: the ring stays the endpoint's, and its transfers can be
-fetched again. The core's reading of the same events gives each answer
+fetched again. Each transfer a command's success retires is answered
+`stopped` with no bytes under its own tag, after the command's own
+answer, unless an error event answered it already, so one completion
+can give more answers than it has events: at most every holding but the
+command's, which the ledger caps at `ERX_DMA_HOLDINGS_MAX` live holdings
+across every ring, a Disable Slot's included. The core's reading of the same events gives each answer
 and each queue's state, as [Completing](#the-trb-ring-form) says; where
 the two meet, a transfer the core answers with bytes is one the event's
 release returned, or the copy is refused.

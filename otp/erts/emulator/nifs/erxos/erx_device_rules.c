@@ -16,11 +16,6 @@
 #else
 #define SEED_NO_REACH_TEST	false
 #endif
-#ifdef ERX_DMA_SEED_DROP_HALTED
-#define SEED_DROP_HALTED	true
-#else
-#define SEED_DROP_HALTED	false
-#endif
 #ifdef ERX_DMA_SEED_NO_MEANING_TEST
 #define SEED_NO_MEANING_TEST	true
 #else
@@ -174,10 +169,11 @@ erx_dma_publication_buffers(const erx_dma_publication_t *publication, uint32_t b
 /*
  * The room rule: a publication describes at least one record, and the holding it makes, its
  * records and one record of each table placed in order, fits a holding; each table has as many
- * unheld records as it describes; the next record of each table placed in order is unheld; and a
- * ring holds fewer holdings than its pool has buffers before the run, so a run that names no
- * buffer, a control transfer without a data stage or a command without an input context, still
- * counts against its pool: a ring's TDs or commands in flight never outnumber its buffers.
+ * unheld records as it describes; the next record of each table placed in order is unheld; a
+ * ring that takes commands holds none live before the run (erx_dma_ledger_command_room); and any
+ * other ring holds fewer holdings than its pool has buffers before the run, so a run that names no
+ * buffer, a control transfer without a data stage, still counts against its pool: a ring's TDs in
+ * flight never outnumber its buffers.
  */
 static bool
 room(const erx_dma_ledger_t *ledger, const erx_dma_publication_t *publication, const judged_t *judged)
@@ -200,7 +196,10 @@ room(const erx_dma_ledger_t *ledger, const erx_dma_publication_t *publication, c
 			const uint32_t taken = erx_dma_ledger_ring_run(ledger, table, described[table], steps);
 			const uint32_t buffers = layout->pools[layout->tables[table].pool].count;
 
-			if (taken == 0 || (!SEED_NO_RING_BOUND && erx_dma_ledger_holdings_on(ledger, table) >= buffers))
+			/* A command table holds one command at a time, the ledger's fact, and its pool bounds none. */
+			if (taken == 0 || (erx_structure_takes_commands(layout->tables[table].structure) ?
+			    !erx_dma_ledger_command_room(ledger, table) :
+			    !SEED_NO_RING_BOUND && erx_dma_ledger_holdings_on(ledger, table) >= buffers))
 				return (false);
 			/* The links it takes count with its records; a ring's run has no record placed in order. */
 			in_order += taken - described[table];
@@ -290,59 +289,11 @@ judge_bindings(const erx_dma_ledger_t *ledger, const erx_dma_publication_t *publ
 	return (ERX_DMA_PASSES);
 }
 
-/* Whether `endpoint` is running with a live transfer on its ring: in progress, not idle (xHCI 1.2, 4.6.6). */
-static bool
-busy(const erx_dma_ledger_t *ledger, uint32_t endpoint)
-{
-	const int ring = erx_dma_ledger_bound_table(ledger, endpoint);
-
-	return (ring >= 0 && erx_dma_ledger_endpoint_state(ledger, endpoint) == ERX_DMA_ENDPOINT_RUNNING &&
-	    erx_dma_ledger_holdings_on(ledger, (uint32_t)ring) != 0);
-}
-
-/*
- * The reach rule, as the header gives it, over a run the bindings rule placed: a transfer, a run
- * of an endpoint, or a command, whose meaning's reach says what its endpoints must be.
- */
+/* The reach rule, as the header gives it: the ledger, which keeps each reach's rule, judges it. */
 static erx_dma_verdict_t
 judge_reach(const erx_dma_ledger_t *ledger, const erx_dma_publication_t *publication)
 {
-	const erx_dma_reach_t *const target = &publication->reach;
-	const uint32_t reach = erx_meaning_reach(publication->records[0].meaning);
-	const uint32_t named = erx_dma_endpoint(target->group, target->index);
-
-	if (publication->endpoint != 0) {
-		return (!erx_dma_ledger_closed(ledger, publication->endpoint) &&
-		    erx_dma_ledger_endpoint_state(ledger, publication->endpoint) != ERX_DMA_ENDPOINT_HALTED ?
-		    ERX_DMA_PASSES : ERX_DMA_BREAKS_REACH);
-	}
-	switch (reach) {
-	case ERX_REACH_STOP:
-	case ERX_REACH_RESTART:
-		return (erx_dma_ledger_endpoint_state(ledger, named) != ERX_DMA_ENDPOINT_DISABLED ? ERX_DMA_PASSES :
-		    ERX_DMA_BREAKS_REACH);
-	case ERX_REACH_CONFIGURE:
-		/* A drop is defined only on a stopped endpoint or a running idle one (4.6.6; 4.6.8). */
-		for (uint32_t index = 1; index < ERX_DMA_GROUP_ENDPOINTS; index++) {
-			const uint32_t endpoint = erx_dma_endpoint(target->group, index);
-			const erx_dma_endpoint_state_t state = erx_dma_ledger_endpoint_state(ledger, endpoint);
-
-			if ((target->drops >> index & 1u) != 0 &&
-			    (state == ERX_DMA_ENDPOINT_DISABLED || (state == ERX_DMA_ENDPOINT_HALTED && !SEED_DROP_HALTED) ||
-			    busy(ledger, endpoint)))
-				return (ERX_DMA_BREAKS_REACH);
-		}
-		return (ERX_DMA_PASSES);
-	case ERX_REACH_DISABLE:
-		/* Disable Slot disables halted endpoints too, but not one with a transfer in progress (4.6.4). */
-		for (uint32_t index = 1; index < ERX_DMA_GROUP_ENDPOINTS; index++) {
-			if (busy(ledger, erx_dma_endpoint(target->group, index)))
-				return (ERX_DMA_BREAKS_REACH);
-		}
-		return (ERX_DMA_PASSES);
-	default:
-		return (ERX_DMA_PASSES);
-	}
+	return (erx_dma_ledger_reach_allows(ledger, publication) ? ERX_DMA_PASSES : ERX_DMA_BREAKS_REACH);
 }
 
 erx_dma_verdict_t

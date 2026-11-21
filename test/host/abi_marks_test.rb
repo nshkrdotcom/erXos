@@ -325,7 +325,9 @@ class AbiMarksTest < Minitest::Test
     	    erx_meaning_reach(ERX_MEANING_XHCI_TRB_ADDRESS_DEVICE_COMMAND) == ERX_REACH_ADDRESS &&
     	    erx_meaning_reach(ERX_MEANING_XHCI_TRB_SET_DEQUEUE_COMMAND) == ERX_REACH_RESTART &&
     	    erx_meaning_reach(ERX_MEANING_XHCI_TRB_NOOP_COMMAND) == ERX_REACH_NONE &&
-    	    erx_meaning_reach(ERX_MEANING_XHCI_TRB_NORMAL) == ERX_REACH_NONE && erx_meaning_reach(0) == ERX_REACH_NONE;
+    	    erx_meaning_reach(ERX_MEANING_XHCI_TRB_NORMAL) == ERX_REACH_NONE && erx_meaning_reach(0) == ERX_REACH_NONE &&
+    	    erx_structure_takes_commands(ERX_STRUCTURE_XHCI_COMMAND_RING) &&
+    	    !erx_structure_takes_commands(ERX_STRUCTURE_XHCI_TRANSFER_RING) && !erx_structure_takes_commands(ERX_STRUCTURE_VIRTQ_DESC);
     	printf("%s\\n", right ? "described" : "wrong");
     	return (right ? 0 : 1);
     }

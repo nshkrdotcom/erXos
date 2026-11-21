@@ -33,13 +33,16 @@ class ErxDeviceTrbFormTest < Minitest::Test
   # after the one it names; any transfer event taken, not only its ring's oldest; an error halting
   # the newest transfer; no reach rule; no endpoint closed by the command in flight; a Set TR
   # Dequeue Pointer retiring nothing; a drop of a halted endpoint let through; a stop's event
-  # taken with no Stop Endpoint in flight.
+  # taken with no Stop Endpoint in flight; a second command let in while one is in flight; a
+  # failed Address Device ending EP0's binding; a post let through on a stopped endpoint; a retired
+  # transfer an error answered answered again.
   SEEDS = %w[TRB_FORM_SEED_HIGHEST_BUFFER TRB_FORM_SEED_NO_OUT_FILL TRB_FORM_SEED_TAG_AT_FIRST
              TRB_FORM_SEED_NO_REQUEST_CHECK TRB_FORM_SEED_OTHER_POOL TRB_FORM_SEED_ANY_ENDPOINT
              TRB_FORM_SEED_DEQUEUE_STALE DMA_SEED_NO_RING_BOUND DMA_SEED_CYCLE_INVERTED
              DMA_SEED_PLACE_ONE_OFF TRB_FORM_SEED_ANY_TRANSFER TRB_FORM_SEED_HALT_HEAD_OF_NEWEST
              DMA_SEED_NO_REACH_TEST DMA_SEED_NO_CLOSURE DMA_SEED_RETIRE_NOTHING DMA_SEED_DROP_HALTED
-             TRB_FORM_SEED_ANY_STOP].freeze
+             TRB_FORM_SEED_ANY_STOP DMA_SEED_TWO_COMMANDS DMA_SEED_FAILED_ADDRESS_UNBINDS
+             DMA_SEED_POST_ON_STOPPED TRB_FORM_SEED_ANSWER_HALTED].freeze
 
   def test_layout_endpoints_posts_and_releases
     output, status = run_harness

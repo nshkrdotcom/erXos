@@ -253,18 +253,22 @@ bind(state_t *state, uint32_t table, uint32_t endpoint, uint32_t code)
 	const uint32_t head = erx_dma_ledger_position(&state->form.ledger, COMMANDS).index;
 	erx_report_record_t event = event_trb(ERX_XHCI_TRB_TYPE_COMMAND_COMPLETION_EVENT, BASE + command_offset(head),
 	    code, 0x2a, 0);
-	erx_trb_answer_t answer;
+	erx_trb_answer_t answers[ERX_TRB_FORM_ANSWERS_MAX(1)];
 	erx_dma_sequence_t sequence;
 	uint32_t answered;
 
 	EXPECT(erx_trb_form_command(&state->form, &command, 7, &sequence) == ERX_DEVICE_TRB_ACCEPTED, "a binding command");
 	EXPECT(erx_dma_ledger_binding(&state->form.ledger, table) == endpoint, "its publication binds the ring");
-	EXPECT(deliver(state, &event, 1, 1, &answer, &answered) == ERX_OK && answered == 1 &&
-	    answer.kind == ERX_TRB_ANSWER_COMMAND && answer.code == code && answer.parameter == 0x2a &&
+	EXPECT(deliver(state, &event, 1, 1, answers, &answered) == ERX_OK && answered == 1 &&
+	    answers[0].kind == ERX_TRB_ANSWER_COMMAND && answers[0].code == code && answers[0].parameter == 0x2a &&
 	    erx_dma_ledger_live(&state->form.ledger) == 0, "the command's completion ends its holding on any code");
-	EXPECT(erx_dma_ledger_binding(&state->form.ledger, table) == (code == ERX_XHCI_COMPLETION_SUCCESS ? endpoint : 0),
-	    "a success keeps the binding, and a failure ends it");
+	EXPECT(erx_dma_ledger_binding(&state->form.ledger, table) ==
+	    (code == ERX_XHCI_COMPLETION_SUCCESS || dci == 1 ? endpoint : 0),
+	    "a success keeps the binding; a failed Address Device keeps EP0's until Disable Slot (xHCI 1.2, 4.6.5, "
+	    "p. 114), and any other failure ends it");
 	state->model.state[table] = code == ERX_XHCI_COMPLETION_SUCCESS ? ERX_DMA_ENDPOINT_RUNNING : ERX_DMA_ENDPOINT_DISABLED;
+	EXPECT(erx_dma_ledger_endpoint_state(&state->form.ledger, endpoint) == state->model.state[table],
+	    "a binding command's success runs its endpoint; its failure leaves it disabled");
 }
 
 /* Port events, in batches, until the event ring's consumer position is `index`. */
@@ -411,9 +415,10 @@ check_post(state_t *state, uint32_t post)
 		    "a post with no free buffer, as many TDs as buffers or too few free positions is full and holds nothing");
 		return;
 	}
-	if (model->state[block] == ERX_DMA_ENDPOINT_HALTED || model_closed(model, block)) {
+	if (model->state[block] != ERX_DMA_ENDPOINT_RUNNING || model_closed(model, block)) {
 		EXPECT(verdict == ERX_DEVICE_TRB_REFUSE_HALTED && erx_dma_ledger_live(&state->form.ledger) == live,
-		    "a post on a halted endpoint, or one the command in flight closes, is refused and holds nothing");
+		    "a post on an endpoint that is not running, or one the command in flight closes, is refused and "
+		    "holds nothing (design-usb.md's queue table)");
 		return;
 	}
 	EXPECT(verdict == ERX_DEVICE_TRB_ACCEPTED, "a post the model has room for is accepted");
@@ -680,11 +685,13 @@ check_command_end(state_t *state, bool success)
 	const model_command_t command = model->command;
 	erx_report_record_t event = event_trb(ERX_XHCI_TRB_TYPE_COMMAND_COMPLETION_EVENT, BASE + command_offset(command.head),
 	    success ? ERX_XHCI_COMPLETION_SUCCESS : ERX_XHCI_COMPLETION_CONTEXT_STATE_ERROR, 0, 0);
-	erx_trb_answer_t answer;
-	uint32_t answered;
+	erx_trb_answer_t answers[ERX_TRB_FORM_ANSWERS_MAX(1)];
+	uint64_t stopped[LIVE_MAX];
+	uint32_t answered, stopped_count = 0;
 
-	EXPECT(deliver(state, &event, 1, 1, &answer, &answered) == ERX_OK && answered == 1 &&
-	    answer.kind == ERX_TRB_ANSWER_COMMAND && answer.tag == command.tag, "a command's completion answers its tag");
+	EXPECT(deliver(state, &event, 1, 1, answers, &answered) == ERX_OK && answered >= 1 &&
+	    answers[0].kind == ERX_TRB_ANSWER_COMMAND && answers[0].tag == command.tag,
+	    "a command's completion answers its tag first");
 	model->command = (model_command_t){ 0 };
 	for (uint32_t block = 0; block < BLOCKS && success; block++) {
 		const bool named = command.command.dci == block_dci[block];
@@ -700,11 +707,15 @@ check_command_end(state_t *state, bool success)
 			if (!named && command.command.kind == ERX_TRB_COMMAND_SET_TR_DEQUEUE)
 				break;
 			for (uint32_t live = model->live; live-- > 0;) {
-				if (model->transfers[live].block == block)
-					model_end(model, live);
+				if (model->transfers[live].block != block)
+					continue;
+				if (!model->transfers[live].halted)
+					stopped[stopped_count++] = model->transfers[live].tag;
+				model_end(model, live);
 			}
-			if (command.command.kind == ERX_TRB_COMMAND_DISABLE_SLOT)
-				model->state[block] = ERX_DMA_ENDPOINT_DISABLED;
+			/* Set TR Dequeue Pointer opens its queue again (design-usb.md's queue table). */
+			model->state[block] = command.command.kind == ERX_TRB_COMMAND_DISABLE_SLOT ? ERX_DMA_ENDPOINT_DISABLED :
+			    ERX_DMA_ENDPOINT_RUNNING;
 			break;
 		default:
 			break;
@@ -714,6 +725,17 @@ check_command_end(state_t *state, bool success)
 	for (uint32_t block = 0; block < BLOCKS; block++)
 		EXPECT(erx_dma_ledger_endpoint_state(&state->form.ledger, erx_trb_form_endpoint(SLOT, block_dci[block])) ==
 		    model->state[block], "each endpoint's state is the model's");
+	/* Each transfer the success retires is answered `stopped` once, with its own tag; a halted one was answered already. */
+	EXPECT(answered == 1u + stopped_count, "a command's success answers each transfer it retires that no error answered");
+	for (uint32_t k = 0; k < stopped_count; k++) {
+		uint32_t found = 0;
+
+		for (uint32_t answer = 1; answer < answered; answer++) {
+			found += answers[answer].tag == stopped[k] && answers[answer].kind == ERX_TRB_ANSWER_TRANSFER &&
+			    answers[answer].code == ERX_XHCI_COMPLETION_STOPPED && answers[answer].data.length == 0;
+		}
+		EXPECT(found == 1, "a retired transfer is answered stopped, with no bytes, under its own tag, once");
+	}
 }
 
 /*
@@ -900,6 +922,10 @@ test_commands(void)
 	check_command_end(&state, true);
 	EXPECT(erx_dma_ledger_endpoint_state(&state.form.ledger, in_endpoint) == ERX_DMA_ENDPOINT_STOPPED,
 	    "a stop leaves its endpoint stopped");
+	EXPECT(erx_trb_form_post(&state.form, SLOT, block_dci[IN_BLOCK], &in, 1, &sequence) == ERX_DEVICE_TRB_REFUSE_HALTED,
+	    "a stopped endpoint takes no post (design-usb.md's queue table)");
+	check_command(&state, naming(ERX_TRB_COMMAND_SET_TR_DEQUEUE, IN_BLOCK));
+	check_command_end(&state, true);
 	check_post(&state, POST_IN);
 
 	make_posted(&state);
@@ -918,6 +944,9 @@ test_commands(void)
 		    "a drop of a halted endpoint is refused");
 		check_command(&state, naming(ERX_TRB_COMMAND_RESET_ENDPOINT, IN_BLOCK));
 		check_command_end(&state, true);
+		EXPECT(erx_trb_form_post(&state.form, SLOT, block_dci[IN_BLOCK], &in, 1, &sequence) ==
+		    ERX_DEVICE_TRB_REFUSE_HALTED && erx_dma_ledger_live(&state.form.ledger) == model_holdings(&state.model),
+		    "a post on an endpoint Reset Endpoint stopped, its halted transfer still held, is refused");
 		check_command(&state, naming(ERX_TRB_COMMAND_SET_TR_DEQUEUE, IN_BLOCK));
 		check_command_end(&state, true);
 		EXPECT(erx_dma_ledger_holding(&state.form.ledger, (erx_dma_place_t){ IN_BLOCK, head }).holding == NULL &&
@@ -937,6 +966,36 @@ test_commands(void)
 	check_command_end(&state, true);
 	for (uint32_t block = 0; block < BLOCKS; block++)
 		EXPECT(erx_dma_ledger_binding(&state.form.ledger, block) == 0, "a Disable Slot ends each binding of its slot");
+
+	/*
+	 * A failed Address Device leaves the slot in the Default state, EP0 enabled on its ring (xHCI 1.2,
+	 * 4.6.5, p. 114): the ring stays bound, EP0 disabled, taking no transfer and no command but
+	 * Disable Slot, whose success ends the binding.
+	 */
+	erx_trb_form_reset(&state.form);
+	model_idle(&state.model);
+	bind(&state, CONTROL_BLOCK, erx_trb_form_endpoint(SLOT, 1), ERX_XHCI_COMPLETION_TRANSACTION_ERROR);
+	{
+		const erx_device_trb_request_t control = request(POST_CONTROL);
+		const erx_trb_command_t again = { .kind = ERX_TRB_COMMAND_ADDRESS_DEVICE, .slot = SLOT, .add_count = 1,
+		    .adds = { { 1, OUT_BLOCK } } };
+
+		EXPECT(erx_trb_form_post(&state.form, SLOT, 1, &control, 1, &sequence) == ERX_DEVICE_TRB_REFUSE_HALTED,
+		    "EP0 after a failed Address Device takes no transfer");
+		EXPECT(erx_trb_form_command(&state.form, &(erx_trb_command_t){ .kind = ERX_TRB_COMMAND_SET_TR_DEQUEUE,
+		    .slot = SLOT, .dci = 1 }, 1, &sequence) == ERX_DEVICE_TRB_REFUSE_HALTED &&
+		    erx_trb_form_command(&state.form, &(erx_trb_command_t){ .kind = ERX_TRB_COMMAND_STOP_ENDPOINT,
+		    .slot = SLOT, .dci = 1 }, 1, &sequence) == ERX_DEVICE_TRB_REFUSE_HALTED,
+		    "nor a stop or a restart of it");
+		EXPECT(erx_trb_form_command(&state.form, &again, 1, &sequence) == ERX_DEVICE_TRB_REFUSE_BADARG,
+		    "nor another Address Device binding it a ring");
+		EXPECT(erx_trb_form_command(&state.form, &(erx_trb_command_t){ .kind = ERX_TRB_COMMAND_DISABLE_SLOT,
+		    .slot = SLOT, .drops = 1u << 3 }, 1, &sequence) == ERX_DEVICE_TRB_REFUSE_BADARG,
+		    "a command whose reach drops nothing carries no drops");
+		check_command(&state, (erx_trb_command_t){ .kind = ERX_TRB_COMMAND_DISABLE_SLOT, .slot = SLOT });
+		check_command_end(&state, true);
+		EXPECT(erx_dma_ledger_binding(&state.form.ledger, CONTROL_BLOCK) == 0, "Disable Slot ends EP0's kept binding");
+	}
 }
 
 static void

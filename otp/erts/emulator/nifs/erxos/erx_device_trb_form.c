@@ -17,6 +17,11 @@
 #else
 #define SEED_ANY_STOP	false
 #endif
+#ifdef ERX_TRB_FORM_SEED_ANSWER_HALTED
+#define SEED_ANSWER_HALTED	true
+#else
+#define SEED_ANSWER_HALTED	false
+#endif
 #ifdef ERX_TRB_FORM_SEED_ANY_TRANSFER
 #define SEED_ANY_TRANSFER	true
 #else
@@ -470,14 +475,6 @@ error_event(erx_trb_form_t *form, const erx_report_record_t *event, uint32_t cod
 	return (true);
 }
 
-/* Whether the command ring holds a command: form->command is the one in flight. */
-static bool
-command_in_flight(const erx_trb_form_t *form)
-{
-	return (erx_dma_ledger_holdings_on(&form->ledger,
-	    (uint32_t)erx_dma_ledger_table(&form->ledger, ERX_STRUCTURE_XHCI_COMMAND_RING)) != 0);
-}
-
 /*
  * A stop's event: a record of the ring bound to the endpoint the Stop Endpoint in flight names,
  * the first for that stop. Passed; it completes nothing and its length is not read.
@@ -487,7 +484,9 @@ stop_event(erx_trb_form_t *form, const erx_report_record_t *event)
 {
 	const erx_dma_layout_t *const layout = erx_dma_ledger_layout(&form->ledger);
 	const uint32_t endpoint = event_endpoint(event);
-	const bool stopping = command_in_flight(form) && form->command.kind == ERX_TRB_COMMAND_STOP_ENDPOINT &&
+	/* While the ledger has a live command, form->command is that command. */
+	const bool stopping = erx_dma_ledger_command(&form->ledger).holding != NULL &&
+	    form->command.kind == ERX_TRB_COMMAND_STOP_ENDPOINT &&
 	    !form->stop_event && endpoint == erx_trb_form_endpoint(form->command.slot, form->command.dci);
 	erx_dma_place_t place;
 
@@ -556,44 +555,62 @@ transfer_event(erx_trb_form_t *form, const erx_report_record_t *event, erx_trb_a
 /*
  * A command completion naming the live command: its holding ends on every code, and its reach
  * acts on success, or its own bindings end on failure, as erx_dma_ledger_complete_command says.
+ * Its answers: the command's, then each transfer its success retires that no error answered
+ * already, `stopped` with no bytes under its own tag; their count goes to *answered.
  */
 static bool
-command_event(erx_trb_form_t *form, const erx_report_record_t *event, erx_trb_answer_t *answer)
+command_event(erx_trb_form_t *form, const erx_report_record_t *event, erx_trb_answer_t *answers, uint32_t *answered)
 {
 	const erx_xhci_trb_command_event_t *const record = &event->xhci_trb_command_event;
 	const uint32_t code = erx_xhci_trb_command_event_status_code_get(record->status);
 	const erx_dma_found_t found = erx_dma_report_holding(&form->ledger, event_ring(form), event);
+	erx_dma_place_t retired[ERX_DMA_HOLDINGS_MAX];
+	uint32_t retired_count;
 
-	if (found.holding == NULL ||
-	    !erx_dma_ledger_complete_command(&form->ledger, event_ring(form), found, code == ERX_XHCI_COMPLETION_SUCCESS))
+	if (found.holding == NULL || !erx_dma_ledger_complete_command(&form->ledger, event_ring(form), found,
+	    code == ERX_XHCI_COMPLETION_SUCCESS, retired, &retired_count))
 		return (false);
-	*answer = (erx_trb_answer_t){ .kind = ERX_TRB_ANSWER_COMMAND, .code = code, .tag = form->command_tag,
+	answers[0] = (erx_trb_answer_t){ .kind = ERX_TRB_ANSWER_COMMAND, .code = code, .tag = form->command_tag,
 	    .parameter = erx_xhci_trb_command_event_status_parameter_get(record->status),
 	    .slot = erx_xhci_trb_command_event_control_slot_get(record->control) };
+	*answered = 1;
+	/* A retired holding is a transfer's, its head on a transfer ring, table b of block b. */
+	for (uint32_t k = 0; k < retired_count; k++) {
+		const erx_trb_transfer_t *const transfer = &form->transfers[retired[k].table][retired[k].index];
+
+		if (!transfer->halted || SEED_ANSWER_HALTED)
+			answers[(*answered)++] = (erx_trb_answer_t){ .kind = ERX_TRB_ANSWER_TRANSFER,
+			    .code = ERX_XHCI_COMPLETION_STOPPED, .tag = transfer->tag };
+	}
 	return (true);
 }
 
-/* One acquired event, as the header says; *answered whether it answers. False breaks the form. */
+/* One acquired event, as the header says, its answers into `answers`, their count into *answered. False breaks the form. */
 static bool
-consume_event(erx_trb_form_t *form, const erx_report_record_t *event, erx_trb_answer_t *answer, bool *answered)
+consume_event(erx_trb_form_t *form, const erx_report_record_t *event, erx_trb_answer_t *answers, uint32_t *answered)
 {
 	uint32_t meaning;
+	bool answers_it;
 
-	*answered = false;
+	*answered = 0;
 	if (!erx_report_meaning(ERX_STRUCTURE_XHCI_EVENT_RING, event, &meaning))
 		return (false);
 	switch (meaning) {
 	case ERX_MEANING_XHCI_TRB_TRANSFER_EVENT:
-		return (transfer_event(form, event, answer, answered));
+		if (!transfer_event(form, event, &answers[0], &answers_it))
+			return (false);
+		*answered = answers_it;
+		return (true);
 	case ERX_MEANING_XHCI_TRB_COMMAND_EVENT:
-		return (*answered = command_event(form, event, answer));
+		return (command_event(form, event, answers, answered));
 	case ERX_MEANING_XHCI_TRB_PORT_EVENT:
 		if (!erx_dma_pass(&form->ledger, event_ring(form), event))
 			return (false);
-		*answer = (erx_trb_answer_t){ .kind = ERX_TRB_ANSWER_PORT,
+		answers[0] = (erx_trb_answer_t){ .kind = ERX_TRB_ANSWER_PORT,
 		    .code = erx_xhci_trb_port_event_status_code_get(event->xhci_trb_port_event.status),
 		    .port = erx_xhci_trb_port_event_parameter_port_get(event->xhci_trb_port_event.parameter) };
-		return (*answered = true);
+		*answered = 1;
+		return (true);
 	default:
 		return (false);
 	}
@@ -604,18 +621,18 @@ erx_trb_form_complete(erx_trb_form_t *form, const erx_report_record_t *events, u
     erx_trb_answer_t *answers, uint32_t *answered, uint64_t *dequeue)
 {
 	const uint32_t ring = event_ring(form);
-	bool answers_it;
+	uint32_t answer_count;
 
 	*answered = 0;
 	*dequeue = erx_dma_dequeue_address(&form->ledger, ring);
 	if (form->broken)
 		return (ERX_ECORRUPT);
 	for (uint32_t k = 0; k < count && erx_dma_ledger_acquired(&form->ledger, ring) > 0; k++) {
-		if (!consume_event(form, &events[k], &answers[*answered], &answers_it)) {
+		if (!consume_event(form, &events[k], &answers[*answered], &answer_count)) {
 			form->broken = true;
 			break;
 		}
-		*answered += answers_it;
+		*answered += answer_count;
 	}
 	if (!SEED_DEQUEUE_STALE)
 		*dequeue = erx_dma_dequeue_address(&form->ledger, ring);

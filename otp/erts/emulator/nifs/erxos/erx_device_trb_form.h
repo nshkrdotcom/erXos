@@ -44,6 +44,8 @@
  *            Endpoint in flight names, the first for that stop: nothing ends, nothing is answered;
  *   Command Completion naming the live command: its holding ends, on every code, and its reach
  *            acts on success, or its own bindings end on failure (erx_dma_ledger_complete_command);
+ *            answered with the command's tag, and then each transfer its success retires that no
+ *            error answered, `stopped` with no bytes under its own tag;
  *   Port Status Change: nothing ends.
  * A transfer event names its ring's oldest live transfer, since the controller runs a ring's TDs in
  * order. Any other event breaks the form, changing no holding, as a malformed used element breaks
@@ -190,12 +192,13 @@ erx_device_trb_verdict_t	erx_trb_form_post(erx_trb_form_t *form, uint32_t slot, 
  * Posts `command` under `tag` on the command ring into `sequence`: its meaning's one TRB, naming
  * the input context when it carries it, with the bindings of the endpoints it adds and its reach
  * (erx_device_ledger.h), which the check judges. The refusals:
- *   ERX_DEVICE_TRB_REFUSE_FULL    a command in flight, which holds the command ring's one buffer;
+ *   ERX_DEVICE_TRB_REFUSE_FULL    a command in flight: the ledger takes one at a time;
  *   ERX_DEVICE_TRB_REFUSE_HALTED  an endpoint whose state its reach does not allow (the check's
  *                                 reach rule): a stop or restart of a disabled endpoint, a drop of
  *                                 a halted, disabled or busy one, a disable of a slot with a busy one;
  *   ERX_DEVICE_TRB_REFUSE_BADARG  any other: more adds than ERX_DMA_BINDS_MAX, an add of a bound
- *                                 block or endpoint, a kind out of range.
+ *                                 block or endpoint, drops on a command whose reach drops none
+ *                                 (only Configure Endpoint drops), a kind out of range.
  * Anything but ERX_DEVICE_TRB_ACCEPTED changes nothing.
  */
 erx_device_trb_verdict_t	erx_trb_form_command(erx_trb_form_t *form, const erx_trb_command_t *command, uint64_t tag,
@@ -223,8 +226,16 @@ int	erx_trb_form_acquire(erx_trb_form_t *form, const uint32_t *words, uint32_t w
 /* Where the `k`th acquired event not yet consumed lies, to read whole; empty past them. */
 erx_dma_range_t	erx_trb_form_event(const erx_trb_form_t *form, uint32_t k);
 /*
+ * The answers erx_trb_form_complete may give for `count` events: one for each event, and the
+ * transfers one command's success retires, at most every holding but the command's, which the
+ * ledger caps at ERX_DMA_HOLDINGS_MAX across every ring a Disable Slot may retire; one call
+ * completes at most one command,
+ * since the ledger takes one at a time.
+ */
+#define ERX_TRB_FORM_ANSWERS_MAX(count)	((count) + ERX_DMA_HOLDINGS_MAX - 1u)
+/*
  * Consumes the acquired events `events`, each read whole, in order, while one is acquired, as the
- * header says, into `answers`, which holds `count`; `*answered` is how many, and `*dequeue` the
+ * header says, into `answers`, which holds ERX_TRB_FORM_ANSWERS_MAX(count); `*answered` is how many, and `*dequeue` the
  * device address of the event ring's consumer position after them, which the effect layer writes
  * to ERDP with the busy bit. An event the header refuses breaks the form and ends the call: the
  * answers before it stand. ERX_OK with the answers, or ERX_ECORRUPT, with none, for a broken form.

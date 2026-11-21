@@ -174,7 +174,11 @@ typedef struct erx_dma_reach {
 /*
  * An endpoint's state (docs/design-usb.md, "What the DMA check judges"): the controller's states
  * the form reaches, Figure 4-5 of xHCI 1.2, each changed only on what the trusted side did or
- * consumed. An endpoint no ring is bound to is disabled.
+ * consumed. An endpoint no ring is bound to is disabled, and so is EP0 after a failed Address
+ * Device, whose ring stays bound until Disable Slot (xHCI 1.2, 4.6.5, p. 114). Running is
+ * design-usb.md's open queue: the only state that takes a transfer, entered when a binding
+ * command or Set TR Dequeue Pointer succeeds, which leaves the controller's endpoint stopped
+ * with nothing to resume until the next doorbell runs it (4.6.10).
  */
 typedef enum erx_dma_endpoint_state {
 	ERX_DMA_ENDPOINT_DISABLED,
@@ -190,7 +194,7 @@ typedef struct erx_dma_holding {
 	uint32_t		buffers[ERX_DMA_HELD_BUFFERS_MAX];
 	uint32_t		bind_count;
 	erx_dma_binding_t	binds[ERX_DMA_BINDS_MAX];	/* the bindings its publication made: those its failure ends */
-	uint32_t		reach;		/* ERX_REACH_* of its head's meaning; ERX_REACH_NONE for a transfer */
+	uint32_t		reach;		/* ERX_REACH_* of its head's meaning; ERX_REACH_NONE for a transfer and some commands */
 	erx_dma_reach_t		target;		/* the endpoints its reach acts on */
 	uint64_t		serial;		/* the ledger's count of holdings begun when it began, from 1 */
 } erx_dma_holding_t;
@@ -256,6 +260,7 @@ typedef struct erx_dma_ledger {
 	erx_dma_endpoint_state_t	states[ERX_DMA_TABLES_MAX];	/* a bound ring's endpoint's state */
 	const erx_dma_regions_t	*regions;	/* the device record's, never NULL */
 	uint64_t		begun;		/* holdings begun, kept across resets: the last serial */
+	uint64_t		command_serial;	/* the serial of the last command held, the live command while a live holding has it */
 } erx_dma_ledger_t;
 
 /*
@@ -311,7 +316,8 @@ bool	erx_dma_ledger_acquire(erx_dma_ledger_t *ledger, uint32_t reports, uint32_t
  * Ends the holding `found` names, as erx_dma_ledger_holding found it, on a report of table
  * `reports`, the table the device writes, at its consumer position. False, changing nothing, for
  * a table the device does not write, an acquisition with no report left, or a found holding that
- * is not one of the ledger's live ones (NULL, a copy) or has ended since it was found.
+ * is not one of the ledger's live ones (NULL, a copy) or has ended since it was found, and for the
+ * live command, which ends only through erx_dma_ledger_complete_command, its reach applied.
  * A caller reads what it needs of the holding first: the pointer is the ledger's, and no longer
  * names it after.
  */
@@ -406,6 +412,16 @@ bool	erx_dma_layout_place(const erx_dma_layout_t *layout, uint32_t structure, ui
  * reach has kept its endpoint closed.
  */
 bool		erx_dma_ledger_may_bind(const erx_dma_ledger_t *ledger, const struct erx_dma_publication *publication);
+/*
+ * One command in flight (docs/design-usb.md, "Bindings and holdings"): a table whose structure
+ * takes commands, one whose meanings have reaches in abi/formats, the command ring, holds one
+ * command at a time, the ledger's own fact, set at the hold, which refuses a second while one is
+ * live. erx_dma_ledger_command is the live command's holding, NULL for none, and
+ * erx_dma_ledger_command_room whether table `table` may take a run: it takes no commands, or none
+ * is live. The closure and a drop-and-add's two bindings rest on it.
+ */
+erx_dma_found_t	erx_dma_ledger_command(const erx_dma_ledger_t *ledger);
+bool		erx_dma_ledger_command_room(const erx_dma_ledger_t *ledger, uint32_t table);
 /* The endpoint ring `table` is bound to, or 0. */
 uint32_t	erx_dma_ledger_binding(const erx_dma_ledger_t *ledger, uint32_t table);
 /*
@@ -424,15 +440,27 @@ int		erx_dma_ledger_bound_table(const erx_dma_ledger_t *ledger, uint32_t endpoin
 bool				erx_dma_ledger_closed(const erx_dma_ledger_t *ledger, uint32_t endpoint);
 erx_dma_endpoint_state_t	erx_dma_ledger_endpoint_state(const erx_dma_ledger_t *ledger, uint32_t endpoint);
 /*
+ * The check's reach rule (erx_device_rules.h) for a publication of one record or more: a
+ * transfer's endpoint is running and not closed; the endpoint a stop or a restart names is not
+ * disabled; each a command drops is neither disabled nor halted; and none it removes, by a drop
+ * or a disable, runs with a live transfer.
+ */
+bool				erx_dma_ledger_reach_allows(const erx_dma_ledger_t *ledger,
+				    const struct erx_dma_publication *publication);
+/*
  * Ends the live command holding `found` on its completion, a report of table `reports` at its
  * consumer position, judged whole before anything changes. On success its reach acts: a stop
- * leaves its endpoint stopped; a restart retires every transfer on its endpoint's ring; a bind
- * ends each binding of an endpoint it drops made before it, retiring its ring's transfers, and its
- * own bindings' endpoints run; a disable retires every transfer on its group's rings and ends their
- * bindings. On failure only its own bindings end. False, changing nothing, as
- * erx_dma_ledger_release_holding refuses, or for a holding that is no command's.
+ * leaves its endpoint stopped; a restart retires every transfer on its endpoint's ring and runs
+ * it; a bind ends each binding of an endpoint it drops made before it, retiring its ring's
+ * transfers, and its own bindings' endpoints run; a disable retires every transfer on its group's
+ * rings and ends their bindings. The head of each transfer retired goes to `retired`, their count
+ * to `*retired_count`. On failure its own bindings end, but a failed Address Device's, which stays
+ * with EP0 disabled. False, changing nothing, as erx_dma_ledger_release_holding refuses but for the
+ * live command, or for a
+ * holding that is not the live command.
  */
-bool	erx_dma_ledger_complete_command(erx_dma_ledger_t *ledger, uint32_t reports, erx_dma_found_t found, bool success);
+bool	erx_dma_ledger_complete_command(erx_dma_ledger_t *ledger, uint32_t reports, erx_dma_found_t found, bool success,
+	    erx_dma_place_t retired[ERX_DMA_HOLDINGS_MAX], uint32_t *retired_count);
 /*
  * Halts the endpoint ring `table` is bound to, on a consumed transfer event with an error code
  * (xHCI 1.2, 4.10.2): it takes no transfer until a Reset Endpoint succeeds. False, changing

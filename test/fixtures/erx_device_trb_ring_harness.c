@@ -39,6 +39,9 @@ enum { RING = 5, RING0 = 0, RING1 = 1, EVENTS = 2, COMMANDS = 3, BUFFERS = 2, DE
 #define NO_BUFFER	UINT32_MAX
 
 static const erx_dma_regions_t no_regions;
+/* The heads of the transfers a command retires, which these tests do not read. */
+static erx_dma_place_t retired[ERX_DMA_HOLDINGS_MAX];
+static uint32_t retired_count;
 
 static erx_dma_layout_t
 layout(void)
@@ -155,7 +158,7 @@ complete_command(erx_dma_ledger_t *ledger, uint32_t index)
 {
 	EXPECT(erx_dma_ledger_acquire(ledger, EVENTS, 1) &&
 	    erx_dma_ledger_complete_command(ledger, EVENTS, erx_dma_ledger_holding(ledger, (erx_dma_place_t){ COMMANDS, index }),
-	    true),
+	    true, retired, &retired_count),
 	    "the command's report ends it");
 }
 
@@ -481,10 +484,19 @@ test_bindings(void)
 	    "the reset's idle report ends every binding");
 	EXPECT(bind(&ledger, RING1, ENDPOINT0, configure(), &sequence) == ERX_DMA_PASSES && erx_dma_ledger_acquire(&ledger, EVENTS, 1) &&
 	    erx_dma_ledger_complete_command(&ledger, EVENTS, erx_dma_ledger_holding(&ledger, (erx_dma_place_t){ COMMANDS, 0 }),
-	    false) && erx_dma_ledger_binding(&ledger, RING1) == 0, "a failed binding command's binding ends");
+	    false, retired, &retired_count) && erx_dma_ledger_binding(&ledger, RING1) == 0, "a failed binding command's binding ends");
 
 	/* A drop-and-add: the new ring is bound beside the old while the endpoint is closed. */
 	EXPECT(bind(&ledger, RING0, ENDPOINT0, configure(), &sequence) == ERX_DMA_PASSES, "ring 0 bound again");
+	{
+		/* One command at a time is the ledger's own fact, not only the check's. */
+		const erx_dma_description_t command = noop();
+		const erx_dma_publication_t second = { .record_count = 1, .records = &command, .call = ERX_DMA_PUBLISH_RUN };
+		const erx_dma_place_t place = { COMMANDS, erx_dma_ledger_position(&ledger, COMMANDS).index };
+
+		EXPECT(!erx_dma_ledger_hold(&ledger, &second, &place, 1) && erx_dma_ledger_live(&ledger) == 1,
+		    "the ledger holds no second command while one is live");
+	}
 	complete_command(&ledger, 1);
 	{
 		const erx_dma_description_t command = configure();

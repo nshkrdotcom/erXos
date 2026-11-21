@@ -123,12 +123,12 @@ bind_all(void)
 		    .control = (uint32_t)ERX_XHCI_TRB_TYPE_COMMAND_COMPLETION_EVENT << 10 |
 		    erx_dma_ledger_cycle(&form.ledger, 4) } };
 		uint32_t word = event.xhci_trb_transfer_event.control, count, answered;
-		erx_trb_answer_t answer;
+		erx_trb_answer_t answers[ERX_TRB_FORM_ANSWERS_MAX(1)];
 		uint64_t dequeue;
 
 		check(erx_trb_form_command(&form, &bind, 0, &sequence) == ERX_DEVICE_TRB_ACCEPTED);
 		check(erx_trb_form_acquire(&form, &word, 1, &count) == ERX_OK && count == 1 &&
-		    erx_trb_form_complete(&form, &event, 1, &answer, &answered, &dequeue) == ERX_OK && answered == 1);
+		    erx_trb_form_complete(&form, &event, 1, answers, &answered, &dequeue) == ERX_OK && answered == 1);
 	}
 	memset(shadow, 0, sizeof(shadow));
 	command_live = false;
@@ -145,7 +145,9 @@ command(script_t *script)
 
 	made.slot = (slot & 1u) == 0 ? SLOT : slot;
 	made.dci = (uint32_t)(take(script, 1) % 32u);
-	made.drops = (uint32_t)take(script, 4);
+	/* Configure Endpoint drops; on another kind one script byte in eight plants drops, a refusal. */
+	made.drops = made.kind == ERX_TRB_COMMAND_CONFIGURE_ENDPOINT || take(script, 1) % 8u == 0 ?
+	    (uint32_t)take(script, 4) : 0;
 	made.add_count = (uint32_t)(take(script, 1) % 3u);
 	for (uint32_t k = 0; k < made.add_count; k++) {
 		made.adds[k].dci = (uint32_t)(take(script, 1) % 32u);
@@ -224,7 +226,11 @@ event(script_t *script, uint32_t *word, uint32_t index)
 	return (made);
 }
 
-/* One answer, against the record; whether it is a command's success. */
+/*
+ * One answer, against the record; whether it is a command's success. A transfer answered `stopped`
+ * was retired by the command answered before it, and its holding is gone; one an error answered is
+ * never answered again.
+ */
 static bool
 check_answer(const erx_trb_answer_t *answer)
 {
@@ -242,6 +248,12 @@ check_answer(const erx_trb_answer_t *answer)
 
 		if (!transfer->live || transfer->halted || transfer->tag != answer->tag)
 			continue;
+		if (answer->code == ERX_XHCI_COMPLETION_STOPPED) {
+			check(answer->data.length == 0 && erx_dma_ledger_holding(&form.ledger,
+			    (erx_dma_place_t){ transfer->block, transfer->head }).holding == NULL);
+			transfer->live = false;
+			return (false);
+		}
 		check(error || transfer->buffer_offset == UINT64_MAX ? answer->data.length == 0 :
 		    answer->data.offset == transfer->buffer_offset && answer->data.length <= transfer->buffer_size);
 		transfer->halted = error;
@@ -259,7 +271,7 @@ events(script_t *script)
 	const uint32_t ring = (uint32_t)erx_dma_ledger_table(&form.ledger, ERX_STRUCTURE_XHCI_EVENT_RING);
 	const erx_dma_table_t *const table = &form.ledger.layout.tables[ring];
 	erx_report_record_t made[EVENTS_MAX];
-	erx_trb_answer_t answers[EVENTS_MAX];
+	erx_trb_answer_t answers[ERX_TRB_FORM_ANSWERS_MAX(EVENTS_MAX)];
 	uint32_t words[EVENTS_MAX], acquired = 0, answered = 0;
 	const bool broken = form.broken;
 	bool succeeded = false;
@@ -272,19 +284,22 @@ events(script_t *script)
 	check(broken ? status == ERX_ECORRUPT : status == ERX_OK && acquired <= count);
 	status = erx_trb_form_complete(&form, made, acquired, answers, &answered, &dequeue);
 	check(!broken || (status == ERX_ECORRUPT && answered == 0));
-	check(answered <= acquired && dequeue >= FUZZ_BASE + table->first &&
+	check(answered <= ERX_TRB_FORM_ANSWERS_MAX(acquired) && dequeue >= FUZZ_BASE + table->first &&
 	    dequeue < FUZZ_BASE + table->first + (uint64_t)table->count * table->stride &&
 	    (dequeue - FUZZ_BASE - table->first) % table->stride == 0);
 	for (uint32_t k = 0; k < answered; k++)
 		succeeded = check_answer(&answers[k]) || succeeded;
-	/* A holding gone with no answer of its own was retired by a command's success; none lies on an unbound ring. */
+	/*
+	 * A holding gone with no answer in this call was retired by a command's success after an error
+	 * answered it; none lies on an unbound ring.
+	 */
 	for (uint32_t index = 0; index < SHADOW_MAX; index++) {
 		shadow_t *const transfer = &shadow[index];
 
 		if (!transfer->live)
 			continue;
 		if (erx_dma_ledger_holding(&form.ledger, (erx_dma_place_t){ transfer->block, transfer->head }).holding == NULL) {
-			check(succeeded);
+			check(succeeded && transfer->halted);
 			transfer->live = false;
 			continue;
 		}

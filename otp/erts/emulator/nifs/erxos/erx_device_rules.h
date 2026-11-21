@@ -31,17 +31,18 @@
  *             queue's buffers; the bindings it carries are ones erx_dma_ledger_may_bind allows, so
  *             only a command whose meaning binds carries any, and its run is on a table that needs
  *             none, as a binding command is on the command ring;
- *   reach     a transfer's endpoint is neither closed by the live command nor halted, and it
- *             names no command's endpoints; a command's endpoints exist where its reach acts:
- *             the endpoint a stop or a restart names is bound, each a bind drops is bound and
+ *   reach     a transfer's endpoint is running, design-usb.md's open queue, and not closed by
+ *             the live command; a command's endpoints exist where its reach acts: the endpoint a
+ *             stop or a restart names is bound and enabled, each a bind drops is bound and
  *             stopped, or running with no live transfer, and no endpoint of a disable's group is
- *             running with a live transfer;
+ *             running with a live transfer (erx_dma_ledger_reach_allows);
  *   held      no name is of a buffer a live holding holds;
  *   lengths   each reference's length lies inside its buffer from its offset;
  *   room      the run fits: as many unheld records of each table placed free as it describes,
  *             the next record of each table placed in order unheld, every position a ring's run
- *             takes, its links included, unheld, a ring's holdings fewer than its pool's
- *             buffers, and the holding it makes no larger than a holding holds;
+ *             takes, its links included, unheld, no live command on a ring that takes commands
+ *             and fewer holdings than its pool's buffers on any other, and the holding it makes no
+ *             larger than a holding holds;
  *   fills     at most ERX_DMA_FILLS_MAX fills, an out segment's bytes go only inside a range a
  *             record of the publication names, and no two fills share a byte; a region entry's
  *             fill is one entry long and names a persistent region the ledger holds, so a

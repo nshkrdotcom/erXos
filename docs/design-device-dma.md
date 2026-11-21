@@ -497,12 +497,14 @@ takes where it reaches it, and where it ends just before it, so the
 position never rests there; the cycle state at a position is 1 on the
 lap a binding started and toggles with each lap. The room rule asks
 every position a run takes, its links included, to be unheld, so a wrap
-never reuses a held TRB, and a ring to hold fewer holdings than its pool
-has buffers before a run, so a run that names no buffer, a control
-transfer without a data stage or a command without an input context,
-still counts against its pool: a transfer ring's TDs in flight never
-outnumber its block's buffers, and the command ring, whose pool holds
-just the input context, has one command in flight. A binding begins only with the holding of the
+never reuses a held TRB, and a ring that takes no commands to hold fewer
+holdings than its pool has buffers before a run, so a run that names no
+buffer, a control transfer without a data stage, still counts against
+its pool: a transfer ring's TDs in flight never outnumber its block's
+buffers. A ring that takes commands, one whose structure's meanings
+have reaches in `abi/formats`, the command ring, holds one command at a
+time: the ledger's own fact, set when a command's holding begins and
+refused while that holding lives, which no pool's size stands in for. A binding begins only with the holding of the
 binding command's publication, which carries at most `ERX_DMA_BINDS_MAX`
 bindings, only if its meaning's reach binds. Each is refused unless the
 ring needs a binding and is bound to no endpoint, no two of them name
@@ -652,7 +654,9 @@ live. The sequencer:
    command that binds, the bindings its publication carries, each a ring
    and an endpoint the check judged with the rest of it, which the
    holding makes as it begins, so a refused publication binds nothing,
-   and keeps as the bindings the command's failure ends.
+   and keeps as the bindings the command's failure ends, but a failed
+   Address Device's, which stays until Disable Slot
+   ([design-usb.md](design-usb.md#what-the-dma-check-judges)).
 
 **Nothing of a run is reachable before its activation.** A device
 reaches a ring's records only from its own position, and stops at the

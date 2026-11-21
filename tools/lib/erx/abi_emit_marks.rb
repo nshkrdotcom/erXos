@@ -171,12 +171,19 @@ module Erx
                           '0'),
          '/* The reaches a command meaning has (abi_marks.rb, REACHES); 0 is none. */',
          '#define ERX_REACH_NONE UINT32_C(0)',
-         *Marks::REACHES.each_with_index.map { |kind, index| "#define #{reach_constant(kind)} UINT32_C(#{index + 1})" }, '',
+         *Marks::REACHES.each_with_index.map { |kind, index| "#define #{reach_constant(kind)} UINT32_C(#{index + 1})" },
+         '/* Every reach as X(constant, name), so a table over the reaches names a row for each or fails to build. */',
+         "#define ERX_REACHES(X) #{Marks::REACHES.map { |kind| "X(#{reach_constant(kind)}, #{kind})" }.join(' ')}", '',
          *switch_function('What the success or failure of meaning does to the endpoints its command names, as its ' \
                           'reach mark says; ERX_REACH_NONE for a meaning with none, or a number that is no meaning.',
                           'uint32_t', 'erx_meaning_reach(uint32_t meaning)', 'meaning',
                           meanings.select(&:reach).map { |meaning| [CEmitter.constant(meaning.constant), reach_constant(meaning.reach)] },
-                          'ERX_REACH_NONE')]
+                          'ERX_REACH_NONE'),
+         *switch_function('Whether a table of structure holds commands, one at a time: a structure one of whose meanings ' \
+                          'has a reach, the command ring.',
+                          'bool', 'erx_structure_takes_commands(uint32_t structure)', 'structure',
+                          meanings.select(&:reach).map { |meaning| structure_constant(meaning.structure.name) }.uniq
+                                  .map { |structure| [structure, 'true'] }, 'false')]
       end
 
       def structure_constant(name) = CEmitter.constant("structure_#{name}")
