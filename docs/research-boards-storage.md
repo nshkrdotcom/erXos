@@ -505,6 +505,9 @@ Checked over HTTP on 2026-10-30, with refs read from each repository:
 
 ## PCIe on the Raspberry Pi 5
 
+The BCM2712 root complex and the MIP are in
+[research-bcm2712-pcie-mip.md](research-bcm2712-pcie-mip.md).
+
 * **`pciex4_reset`** (`config_txt/boot.adoc`, SHA-256 above, l.177-184),
   Raspberry Pi 5 only: "By default, the PCIe x4 controller used by `RP1`
   is reset before starting the operating system. If this parameter is set
