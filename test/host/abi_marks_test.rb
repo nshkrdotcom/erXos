@@ -511,8 +511,9 @@ class AbiMarksTest < Minitest::Test
   end
 
   # What the sequencer reads of a report, generated from the marks: a used element's
-  # meaning and the descriptor its id releases; an event TRB's meaning from its type,
-  # none for a Host Controller Event; a transfer event releasing its TRB only on a code
+  # meaning and the descriptor its id releases, by index; an event TRB's meaning from its
+  # type, none for a Host Controller Event; a transfer event releasing its TRB, by its
+  # device address, only on a code
   # its release lists; a port event releasing nothing.
   REPORTS = <<~C
     #include <stdio.h>
@@ -522,11 +523,11 @@ class AbiMarksTest < Minitest::Test
     main(void)
     {
     	erx_report_record_t record = { .virtq_used_elem = { .id = 3, .len = 9 } };
-    	uint32_t meaning = 0, structure = 0;
-    	uint64_t value = 0;
+    	uint32_t meaning = 0;
+    	erx_report_release_t release = { 0 };
     	int right = erx_report_meaning(ERX_STRUCTURE_VIRTQ_USED, &record, &meaning) &&
-    	    meaning == ERX_MEANING_VIRTQ_USED_ELEM && erx_report_releases(meaning, &record, &structure, &value) &&
-    	    structure == ERX_STRUCTURE_VIRTQ_DESC && value == 3 &&
+    	    meaning == ERX_MEANING_VIRTQ_USED_ELEM && erx_report_releases(meaning, &record, &release) &&
+    	    release.structure == ERX_STRUCTURE_VIRTQ_DESC && release.value == 3 && !release.address &&
     	    !erx_report_meaning(ERX_STRUCTURE_VIRTQ_DESC, &record, &meaning);
 
     	record = (erx_report_record_t){ .xhci_trb_transfer_event = {
@@ -536,11 +537,11 @@ class AbiMarksTest < Minitest::Test
     	    .status = (uint32_t)ERX_XHCI_COMPLETION_SHORT_PACKET << 24,
     	    .control = (uint32_t)ERX_XHCI_TRB_TYPE_TRANSFER_EVENT << 10 | 1 } };
     	right = right && erx_report_meaning(ERX_STRUCTURE_XHCI_EVENT_RING, &record, &meaning) &&
-    	    meaning == ERX_MEANING_XHCI_TRB_TRANSFER_EVENT && erx_report_releases(meaning, &record, &structure, &value) &&
-    	    structure == ERX_STRUCTURE_XHCI_TRANSFER_RING && value == 0x1230;
+    	    meaning == ERX_MEANING_XHCI_TRB_TRANSFER_EVENT && erx_report_releases(meaning, &record, &release) &&
+    	    release.structure == ERX_STRUCTURE_XHCI_TRANSFER_RING && release.value == 0x1230 && release.address;
     	record.xhci_trb_transfer_event.status = (uint32_t)ERX_XHCI_COMPLETION_STALL << 24;
-    	right = right && !erx_report_releases(meaning, &record, &structure, &value) &&
-    	    !erx_report_releases(ERX_MEANING_XHCI_TRB_PORT_EVENT, &record, &structure, &value);
+    	right = right && !erx_report_releases(meaning, &record, &release) &&
+    	    !erx_report_releases(ERX_MEANING_XHCI_TRB_PORT_EVENT, &record, &release);
     	printf("%s\\n", right ? "reported" : "wrong");
     	return (right ? 0 : 1);
     }

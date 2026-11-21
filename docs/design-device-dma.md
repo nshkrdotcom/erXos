@@ -497,7 +497,12 @@ takes where it reaches it, and where it ends just before it, so the
 position never rests there; the cycle state at a position is 1 on the
 lap a binding started and toggles with each lap. The room rule asks
 every position a run takes, its links included, to be unheld, so a wrap
-never reuses a held TRB. A binding begins only with the holding of the
+never reuses a held TRB, and a ring to hold fewer holdings than its pool
+has buffers before a run, so a run that names no buffer, a control
+transfer without a data stage or a command without an input context,
+still counts against its pool: a transfer ring's TDs in flight never
+outnumber its block's buffers, and the command ring, whose pool holds
+just the input context, has one command in flight. A binding begins only with the holding of the
 binding command's publication, refused unless the ring needs a binding
 and is bound to no endpoint and the endpoint is bound to no ring; such a
 ring holds no record, since it takes no run unbound and a binding ends
@@ -691,8 +696,13 @@ malformed used entry breaks it. So is a record whose selector names no
 meaning of its structure, such as an xHCI Host Controller Event (TRB
 type 37), which no meaning of the event ring selects: the sequencer
 cannot tell what such a record releases, so it releases nothing and
-every holding stays held until the reset's idle report returns it. The
-queue breaks rather than skipping the record, because a skip would
+every holding stays held until the reset's idle report returns it. A
+record whose meaning releases nothing, a port event, or whose release
+[design-usb.md](design-usb.md#what-the-dma-check-judges) lists as
+nothing, a short packet on a data stage, is **passed**: consumed, its
+consumer position advanced, ending no holding; a pass is refused for a
+record that names a live holding's head, so it never keeps a holding its
+report ends. The queue breaks rather than skipping the record, because a skip would
 consume a report the design gives no meaning, here the controller's own
 error report, an event ring full among them, which
 [design-usb.md](design-usb.md#the-trb-ring-form) already treats as

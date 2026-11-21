@@ -17,7 +17,7 @@
  * buffers it handed to the device. Its first record, its head, is what the report that ends it
  * names. The ledger keeps the live holdings and, for each table placed in order and each the
  * device writes, its position and how many of its records the last acquisition covered that
- * are not consumed yet. Its state machine has three transitions, and each refuses,
+ * are not consumed yet. Its state machine has four transitions, and each refuses,
  * changing nothing, what the design's order forbids:
  *   hold     begins the holding of a publication from the records the sequencer placed it in
  *            and the buffers its names reach, each once, taken from the publication itself so
@@ -27,11 +27,17 @@
  *            makes the binding a binding command's publication carries, which the check judged
  *            with the rest of it, so a refused publication binds nothing;
  *   acquire  records how many reports of a table the device writes its validity covers from
- *            the consumer position, at most the live holdings;
+ *            the consumer position, at most the table's records: whether they may outnumber
+ *            the live holdings is the form's, as a used ring's may not and an event ring's port
+ *            events release nothing;
  *   release  ends the live holding a report names, from the report table's consumer position,
  *            which moves past it, spending one report the acquisition covered; a report naming
  *            no live holding's head, or past what the acquisition covered, ends nothing, so a
- *            stale report past the validity never releases a live holding.
+ *            stale report past the validity never releases a live holding;
+ *   pass     consumes the report at a table's consumer position, which moves past it, ending
+ *            nothing: a report whose meaning releases nothing, or one the design says releases
+ *            nothing, as a short data stage's event; it spends one report the acquisition
+ *            covered, and can end no holding.
  * The idle report after a reset ends every holding (erx_dma_ledger_reset). A region's writer
  * is derived from the holdings, never stated: a buffer is the device's while a holding holds
  * it, and a table is its structure's writer, as abi/formats declares it.
@@ -248,7 +254,7 @@ bool	erx_dma_ledger_hold(erx_dma_ledger_t *ledger, const struct erx_dma_publicat
 /*
  * Records that the validity of table `reports`, one the device writes, covers `count` reports
  * from its consumer position, replacing what an earlier acquisition covered. False, changing
- * nothing, for a table the device does not write or a count past the live holdings.
+ * nothing, for a table the device does not write or a count past the table's records.
  */
 bool	erx_dma_ledger_acquire(erx_dma_ledger_t *ledger, uint32_t reports, uint32_t count);
 /*
@@ -260,6 +266,12 @@ bool	erx_dma_ledger_acquire(erx_dma_ledger_t *ledger, uint32_t reports, uint32_t
  * names it after.
  */
 bool	erx_dma_ledger_release_holding(erx_dma_ledger_t *ledger, uint32_t reports, erx_dma_found_t found);
+/*
+ * Consumes the report at the consumer position of table `reports`, the table the device writes,
+ * ending no holding. False, changing nothing, for a table the device does not write or an
+ * acquisition with no report left.
+ */
+bool	erx_dma_ledger_pass(erx_dma_ledger_t *ledger, uint32_t reports);
 /*
  * The device's idle report after a reset: every holding and acquisition ends and every position
  * returns to 0. The persistent regions stay.
@@ -297,6 +309,13 @@ bool			 erx_dma_ledger_found_live(const erx_dma_ledger_t *ledger, erx_dma_found_
 /* The records of a table no holding holds. */
 uint32_t		 erx_dma_ledger_free_records(const erx_dma_ledger_t *ledger, uint32_t table);
 uint32_t		 erx_dma_ledger_live(const erx_dma_ledger_t *ledger);
+/* The live holdings whose records lie in table `table`: a ring's TDs or commands in flight. */
+uint32_t		 erx_dma_ledger_holdings_on(const erx_dma_ledger_t *ledger, uint32_t table);
+/*
+ * The cycle state at table `table`'s position: a ring's producer cycle state, or the event ring's
+ * consumer cycle state, 1 on lap 0 and toggled with each lap.
+ */
+uint32_t		 erx_dma_ledger_cycle(const erx_dma_ledger_t *ledger, uint32_t table);
 /* Whether the ledger is as the idle report left it: no holding, no acquisition, every position at 0. */
 bool			 erx_dma_ledger_idle(const erx_dma_ledger_t *ledger);
 /* The reports of table `table` the last acquisition covered that are not consumed yet. */
@@ -314,6 +333,14 @@ const erx_dma_persistent_region_t	*erx_dma_ledger_region(const erx_dma_ledger_t 
 uint32_t		 erx_dma_layout_buffers(const erx_dma_layout_t *layout);
 const erx_dma_pool_t	*erx_dma_layout_buffer_pool(const erx_dma_layout_t *layout, uint32_t buffer, uint32_t *pool);
 uint64_t		 erx_dma_layout_buffer_offset(const erx_dma_layout_t *layout, uint32_t buffer, uint64_t offset);
+
+/*
+ * The layout's one map from device address to record (docs/design-device-dma.md, "The ledger"):
+ * the record of a table of `structure` that starts at `address`, into `*place`. False for an
+ * address inside a record rather than at its start, or outside every table of the structure, so
+ * a report's device address names a record only at the start of one.
+ */
+bool	erx_dma_layout_place(const erx_dma_layout_t *layout, uint32_t structure, uint64_t address, erx_dma_place_t *place);
 
 /*
  * The bindings (docs/design-device-dma.md, "The ledger"). A binding begins only with the holding

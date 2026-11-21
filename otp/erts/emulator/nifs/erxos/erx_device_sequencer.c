@@ -25,6 +25,11 @@ _Static_assert(sizeof(erx_xhci_trb_normal_t) <= ERX_DMA_STORE_BYTES_MAX, "a TRB 
 _Static_assert(SPLIT_RING_TABLES <= ERX_DMA_ZEROS_MAX && SPLIT_RING_TABLES <= ERX_DMA_CLEANS_MAX,
     "an install zeroes and cleans every table");
 
+#ifdef ERX_DMA_SEED_CYCLE_INVERTED
+#define SEED_CYCLE_INVERTED	true
+#else
+#define SEED_CYCLE_INVERTED	false
+#endif
 #ifdef ERX_DMA_SEED_INSTALL_NOT_ZEROED
 #define SEED_INSTALL_NOT_ZEROED	true
 #else
@@ -513,29 +518,32 @@ erx_dma_acquire_record(const erx_dma_ledger_t *ledger, uint32_t reports, uint32_
 
 /*
  * The head of the holding the record at the consumer position of `reports` names, through its
- * meaning's `releases` mark. False for a record past what the acquisition covered, one whose
- * selector names no meaning, or one naming no record of a table the ledger has.
+ * meaning's `releases` mark: a record's index in its structure's one table, or a device address,
+ * through the layout's one map from address to record. False for a record past what the
+ * acquisition covered, one whose selector names no meaning or releases nothing, or one naming no
+ * record of a table the ledger has.
  */
 static bool
 report_head(const erx_dma_ledger_t *ledger, uint32_t reports, const erx_report_record_t *record,
     erx_dma_place_t *head)
 {
 	const erx_dma_layout_t *layout = erx_dma_ledger_layout(ledger);
-	uint32_t meaning, structure;
-	uint64_t value;
+	erx_report_release_t release;
+	uint32_t meaning;
 	int target;
 
 	if (erx_dma_ledger_acquired(ledger, reports) == 0)
 		return (false);
 	if (!erx_report_meaning(layout->tables[reports].structure, record, &meaning))
 		return (false);
-	/* A report naming a record by its address, as an event TRB does, comes with the TRB form. */
-	if (!erx_report_releases(meaning, record, &structure, &value))
+	if (!erx_report_releases(meaning, record, &release))
 		return (false);
-	target = erx_dma_ledger_table(ledger, structure);
-	if (target < 0 || value >= layout->tables[target].count)
+	if (release.address)
+		return (erx_dma_layout_place(layout, release.structure, release.value, head));
+	target = erx_dma_ledger_table(ledger, release.structure);
+	if (target < 0 || release.value >= layout->tables[target].count)
 		return (false);
-	*head = (erx_dma_place_t){ (uint32_t)target, (uint32_t)value };
+	*head = (erx_dma_place_t){ (uint32_t)target, (uint32_t)release.value };
 	return (true);
 }
 
@@ -552,4 +560,75 @@ bool
 erx_dma_consume(erx_dma_ledger_t *ledger, uint32_t reports, erx_dma_found_t found)
 {
 	return (erx_dma_ledger_release_holding(ledger, reports, found));
+}
+
+erx_dma_range_t
+erx_dma_validity_word(const erx_dma_ledger_t *ledger, uint32_t reports, uint32_t k)
+{
+	const erx_dma_layout_t *layout = erx_dma_ledger_layout(ledger);
+	const erx_dma_table_t *table;
+
+	if (reports >= layout->table_count || layout->tables[reports].structure != ERX_STRUCTURE_XHCI_EVENT_RING ||
+	    k >= layout->tables[reports].count)
+		return ((erx_dma_range_t){ 0, 0 });
+	table = &layout->tables[reports];
+	return ((erx_dma_range_t){ record_offset(layout, (erx_dma_place_t){ reports,
+	    (erx_dma_ledger_position(ledger, reports).index + k) % table->count }) + ERX_XHCI_TRB_TRANSFER_EVENT_OFF_CONTROL,
+	    sizeof(uint32_t) });
+}
+
+/*
+ * Every meaning of the event ring activates on the one bit of its control word, which the
+ * generator holds for a structure's meanings; the cycle state toggles where the position wraps.
+ */
+bool
+erx_dma_acquire_cycles(erx_dma_ledger_t *ledger, uint32_t reports, const uint32_t *words, uint32_t word_count,
+    uint32_t *count)
+{
+	const erx_dma_layout_t *layout = erx_dma_ledger_layout(ledger);
+	uint32_t index, cycle, covered = 0;
+
+	if (reports >= layout->table_count || layout->tables[reports].structure != ERX_STRUCTURE_XHCI_EVENT_RING ||
+	    word_count > layout->tables[reports].count)
+		return (false);
+	index = erx_dma_ledger_position(ledger, reports).index;
+	cycle = erx_dma_ledger_cycle(ledger, reports) ^ (SEED_CYCLE_INVERTED ? 1u : 0u);
+	while (covered < word_count && erx_xhci_trb_transfer_event_control_cycle_get(words[covered]) == cycle) {
+		covered++;
+		if (++index == layout->tables[reports].count) {
+			index = 0;
+			cycle ^= 1u;
+		}
+	}
+	*count = covered;
+	return (erx_dma_ledger_acquire(ledger, reports, covered));
+}
+
+bool
+erx_dma_pass(erx_dma_ledger_t *ledger, uint32_t reports, const erx_report_record_t *record)
+{
+	const erx_dma_layout_t *layout = erx_dma_ledger_layout(ledger);
+	erx_report_release_t release;
+	erx_dma_place_t place;
+	uint32_t meaning;
+
+	if (reports >= layout->table_count || !erx_report_meaning(layout->tables[reports].structure, record, &meaning))
+		return (false);
+	/* A releasing record passes only naming a live holding's record other than its head. */
+	if (erx_report_releases(meaning, record, &release) &&
+	    (!report_head(ledger, reports, record, &place) || !erx_dma_ledger_record_held(ledger, place) ||
+	    erx_dma_ledger_holding(ledger, place).holding != NULL))
+		return (false);
+	return (erx_dma_ledger_pass(ledger, reports));
+}
+
+uint64_t
+erx_dma_dequeue_address(const erx_dma_ledger_t *ledger, uint32_t reports)
+{
+	const erx_dma_layout_t *layout = erx_dma_ledger_layout(ledger);
+
+	if (reports >= layout->table_count)
+		return (0);
+	return (layout->device_base + record_offset(layout, (erx_dma_place_t){ reports,
+	    erx_dma_ledger_position(ledger, reports).index }));
 }

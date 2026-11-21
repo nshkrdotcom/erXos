@@ -21,9 +21,29 @@
  * A transfer reaches a ring only through the binding of its endpoint {slot, dci}, which the
  * ledger makes with its binding command's holding; a pair out of range names endpoint 0, which no
  * binding binds, so it reaches no ring. Its TRBs name only a buffer of that ring's pool, which the
- * check asks of every name, and the form takes the lowest no holding holds. Its tag is kept by the holding's head, the
- * TD's last TRB, which its completion names, since a control transfer without a data stage names
- * no buffer.
+ * check asks of every name, and the form takes the lowest no holding holds. Its transfer record, its
+ * tag and length, is kept by the holding's head, the TD's last TRB, which its completion names,
+ * since a control transfer without a data stage names no buffer. A ring takes no more TDs or
+ * commands than its pool has buffers (the check's room rule), so a control block's transfers in
+ * flight, and the commands in flight, are as many as design-usb.md's count of events allows.
+ *
+ * The releases come from the event ring, the structure the controller writes
+ * (docs/design-usb.md, "Completing", "What the DMA check judges"): the sequencer acquires its
+ * events by their cycle bits, and each is consumed in order, judged whole before anything ends:
+ *   Transfer Event, Success or Short Packet, naming the head of a live transfer on a ring bound
+ *            to the event's slot and endpoint: the transfer's holding ends, answered with its tag
+ *            and the bytes moved, its length less the residue, or what its short data stage moved;
+ *   Transfer Event, Short Packet, naming the data stage of a live control transfer on a ring bound
+ *            to its endpoint, the first such for it: nothing ends, and the bytes the stage moved
+ *            are kept for the status stage's event;
+ *   Command Completion naming the live command: its holding ends, on every code, and a failing
+ *            command's binding with it;
+ *   Port Status Change: nothing ends.
+ * Any other event breaks the form, changing no holding, as a malformed used element breaks a
+ * split ring: one naming no live holding or a record of no ring, an unknown type, a residue past
+ * its TRB's length, a second short data stage, the event-data flag, and, until the endpoints'
+ * states come with the reach rule, an error or a stop's code. A record whose cycle bit is not the
+ * consumer cycle state is not yet written: the acquisition stops before it, so it is never read.
  */
 
 #ifndef ERX_DEVICE_TRB_FORM_H
@@ -37,16 +57,46 @@
 #include "erx_device_sequencer.h"
 #include "erx_device_trb.h"
 
+/* A transfer in flight, kept by its head: what its completion answers. */
+typedef struct erx_trb_transfer {
+	uint64_t	tag;
+	uint32_t	length;		/* the bytes it asks to move */
+	uint32_t	buffer;		/* the buffer its normal or data TRB names, when names_buffer */
+	bool		names_buffer;
+	bool		data_stage;	/* a control transfer with a data stage */
+	bool		short_data;	/* its data stage's short packet came */
+	uint32_t	moved;		/* the bytes that stage moved, when short_data */
+} erx_trb_transfer_t;
+
 /*
  * One controller's rings. Its fields are the module's: callers read the ledger through
- * erx_trb_form_ledger and change the form only through the calls below. A tag is live while a
- * holding has its position as its head.
+ * erx_trb_form_ledger and change the form only through the calls below. A transfer is live while
+ * a holding has its position as its head. A broken form answers every acquisition and completion
+ * ERX_ECORRUPT until its reset.
  */
 typedef struct erx_trb_form {
 	erx_dma_ledger_t	ledger;
 	erx_device_trb_shape_t	shape;
-	uint64_t		tags[ERX_DEVICE_TRB_BLOCKS_MAX][ERX_DEVICE_TRB_RING_TRBS];	/* by head */
+	erx_trb_transfer_t	transfers[ERX_DEVICE_TRB_BLOCKS_MAX][ERX_DEVICE_TRB_RING_TRBS];	/* by head */
+	bool			broken;
 } erx_trb_form_t;
+
+/* What a consumed event answers. */
+typedef enum erx_trb_answer_kind {
+	ERX_TRB_ANSWER_TRANSFER,	/* a transfer's holding ended */
+	ERX_TRB_ANSWER_COMMAND,		/* the command's holding ended */
+	ERX_TRB_ANSWER_PORT,		/* a root hub port changed */
+} erx_trb_answer_kind_t;
+
+typedef struct erx_trb_answer {
+	erx_trb_answer_kind_t	kind;
+	uint32_t		code;		/* the completion code */
+	uint64_t		tag;		/* a transfer's */
+	erx_dma_range_t		data;		/* a transfer's bytes moved in its buffer, from its first; empty for none */
+	uint32_t		parameter;	/* a command's completion parameter */
+	uint32_t		slot;		/* a command's slot */
+	uint32_t		port;		/* a port event's port */
+} erx_trb_answer_t;
 
 /*
  * The ledger's layout of `trb`, into `layout`: tables and pools as the header says, each table's
@@ -91,5 +141,36 @@ erx_device_trb_verdict_t	erx_trb_form_post(erx_trb_form_t *form, uint32_t slot, 
  * whose head is no transfer's.
  */
 bool	erx_trb_form_tag(const erx_trb_form_t *form, erx_dma_found_t found, uint64_t *tag);
+
+/*
+ * Where the cycle word of the event `k` places past the event ring's consumer position lies, for
+ * the acquisition's first phase; empty past one lap.
+ */
+erx_dma_range_t	erx_trb_form_validity_word(const erx_trb_form_t *form, uint32_t k);
+/*
+ * The events the cycle words `words`, read in order at the places erx_trb_form_validity_word gave,
+ * show written, into `*count`: the leading ones whose cycle bit is the consumer cycle state there
+ * (erx_dma_acquire_cycles). ERX_ECORRUPT for a broken form, or more words than the event ring's,
+ * which breaks it.
+ */
+int	erx_trb_form_acquire(erx_trb_form_t *form, const uint32_t *words, uint32_t word_count, uint32_t *count);
+/* Where the `k`th acquired event not yet consumed lies, to read whole; empty past them. */
+erx_dma_range_t	erx_trb_form_event(const erx_trb_form_t *form, uint32_t k);
+/*
+ * Consumes the acquired events `events`, each read whole, in order, while one is acquired, as the
+ * header says, into `answers`, which holds `count`; `*answered` is how many, and `*dequeue` the
+ * device address of the event ring's consumer position after them, which the effect layer writes
+ * to ERDP with the busy bit. An event the header refuses breaks the form and ends the call: the
+ * answers before it stand. ERX_OK with the answers, or ERX_ECORRUPT, with none, for a broken form.
+ */
+int	erx_trb_form_complete(erx_trb_form_t *form, const erx_report_record_t *events, uint32_t count,
+	    erx_trb_answer_t *answers, uint32_t *answered, uint64_t *dequeue);
+/*
+ * The controller's idle report after its reset: every holding, binding and transfer ends, and the
+ * form is whole again. The event ring's positions return to their first, so the effect layer
+ * zeroes and cleans the event ring before the controller runs again, as an install does: an event
+ * left from before the reset carries the first lap's cycle bit and would be acquired.
+ */
+void	erx_trb_form_reset(erx_trb_form_t *form);
 
 #endif /* ERX_DEVICE_TRB_FORM_H */

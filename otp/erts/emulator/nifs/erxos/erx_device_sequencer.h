@@ -30,12 +30,14 @@
  *      ready bit.
  *
  * An acquisition reads a structure the device writes in two phases: the validity (a used ring's
- * index) gives how many records it covers, then each record is read whole and consumed in order.
+ * index, or each event TRB's cycle bit from the consumer position on) gives how many records it
+ * covers, then each record is read whole and consumed in order.
  * A record's meaning comes from its selector through the generated erx_report_meaning, and what
  * it ends from its meaning's `releases` mark through erx_report_releases. A record whose selector
  * names no meaning, or that releases no live holding, is refused, and the queue breaks: the
  * sequencer cannot tell what it would release, and a skip would consume a report the design
- * gives no meaning.
+ * gives no meaning. A record whose meaning releases nothing, or one the form judges the design
+ * gives no release, such as a short data stage's event, is passed: consumed, ending nothing.
  */
 
 #ifndef ERX_DEVICE_SEQUENCER_H
@@ -158,5 +160,36 @@ erx_dma_found_t		erx_dma_report_holding(const erx_dma_ledger_t *ledger, uint32_t
  * ended since it was found (erx_dma_ledger_release_holding).
  */
 bool	erx_dma_consume(erx_dma_ledger_t *ledger, uint32_t reports, erx_dma_found_t found);
+/*
+ * Where the cycle word of the record `k` places past the consumer position of table `reports`, an
+ * event ring, lies, for the validity's one load of each; empty past one lap or for a table the
+ * device does not write as an event ring.
+ */
+erx_dma_range_t	erx_dma_validity_word(const erx_dma_ledger_t *ledger, uint32_t reports, uint32_t k);
+/*
+ * The validity of table `reports`, an event ring, from `word_count` cycle words read at the places
+ * erx_dma_validity_word gave, in order: the leading records whose cycle bit is the ledger's consumer
+ * cycle state there, which toggles where the position wraps, stopping at the first that is not,
+ * into `*count`, kept in the ledger as what may be consumed. A record not yet written is never
+ * covered. False, changing nothing, for a table that is not an event ring or more words than its
+ * records.
+ */
+bool	erx_dma_acquire_cycles(erx_dma_ledger_t *ledger, uint32_t reports, const uint32_t *words, uint32_t word_count,
+	    uint32_t *count);
+/*
+ * Consumes the record at the consumer position of table `reports`, as the acquisition read it,
+ * ending nothing (erx_dma_ledger_pass): one whose meaning releases nothing, or one whose release
+ * names a record a live holding holds but not its head, as a short data stage's event names its
+ * data stage. False, changing nothing, which breaks the queue, for a record past what the
+ * acquisition covered, one whose selector names no meaning, or a release naming a live holding's
+ * head, which only erx_dma_consume consumes, or a record no live holding holds.
+ */
+bool	erx_dma_pass(erx_dma_ledger_t *ledger, uint32_t reports, const erx_report_record_t *record);
+/*
+ * The device address of the record at the consumer position of table `reports`: what the event
+ * ring's dequeue register names once a decision has consumed its reports; 0 for a table the
+ * layout lacks.
+ */
+uint64_t	erx_dma_dequeue_address(const erx_dma_ledger_t *ledger, uint32_t reports);
 
 #endif /* ERX_DEVICE_SEQUENCER_H */

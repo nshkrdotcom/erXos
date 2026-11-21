@@ -34,8 +34,10 @@ module Erx
     #   erx_report_meaning   the meaning a record of a structure the device
     #                        writes selects; false for a selector that names
     #                        none of the structure's meanings;
-    #   erx_report_releases  the cpu structure whose record a report names and
-    #                        its release place's value; false for a meaning
+    #   erx_report_releases  the cpu structure whose record a report names, its
+    #                        release place's value, and whether that value is a
+    #                        device address (a place marked device_address) or a
+    #                        record's index; false for a meaning
     #                        that releases nothing, or a code its release's
     #                        `when` does not list.
     module MarksEmitter
@@ -78,6 +80,16 @@ module Erx
          "\tuint8_t\tbytes[#{reported.map { |meaning| meaning.layout.size }.max}];",
          '} erx_report_record_t;', '',
          '/*',
+         ' * What a report releases: the cpu structure whose record it names, and its',
+         " * release place's value, which names the record by its device address when",
+         ' * the place is marked device_address and by its index in the table otherwise.',
+         ' */',
+         'typedef struct erx_report_release {',
+         "\tuint32_t\tstructure;",
+         "\tuint64_t\tvalue;",
+         "\tbool\t\taddress;",
+         '} erx_report_release_t;', '',
+         '/*',
          ' * The meaning a record of structure, which the device writes, selects, into',
          ' * *meaning; false for a selector that names no meaning of the structure, or a',
          ' * structure the device does not write.',
@@ -86,14 +98,13 @@ module Erx
          'erx_report_meaning(uint32_t structure, const erx_report_record_t *record, uint32_t *meaning)',
          '{', "\t(void)record;", "\tswitch (structure) {", *arms, "\tdefault:", "\t\treturn (false);", "\t}", '}', '',
          '/*',
-         ' * The cpu structure whose record a report of meaning names, into *structure,',
-         " * and its release place's value, into *value; false for a meaning that",
+         ' * What a report of meaning releases, into *release; false for a meaning that',
          ' * releases nothing, or a code its release does not list.',
          ' */',
          'static inline bool',
-         'erx_report_releases(uint32_t meaning, const erx_report_record_t *record, uint32_t *structure, uint64_t *value)',
+         'erx_report_releases(uint32_t meaning, const erx_report_record_t *record, erx_report_release_t *release)',
          '{', "\tswitch (meaning) {", *releasing.flat_map { |meaning| release_arm(meaning) },
-         "\tdefault:", "\t\t(void)record;", "\t\t(void)structure;", "\t\t(void)value;", "\t\treturn (false);", "\t}", '}', '']
+         "\tdefault:", "\t\t(void)record;", "\t\t(void)release;", "\t\treturn (false);", "\t}", '}', '']
       end
 
       # One meaning's test in erx_report_meaning: its selector's value, or none
@@ -111,8 +122,9 @@ module Erx
         codes = (release.codes || []).map { |code| "#{place_value(meaning, release.condition, raw: false)} == #{hex(code)}" }
         ["\tcase #{CEmitter.constant(meaning.constant)}:",
          *(codes.empty? ? [] : ["\t\tif (!(#{codes.join(" ||\n\t\t    ")}))", "\t\t\treturn (false);"]),
-         "\t\t*structure = #{structure_constant(release.target)};",
-         "\t\t*value = #{place_value(meaning, release.place, raw: false)};",
+         "\t\t*release = (erx_report_release_t){ .structure = #{structure_constant(release.target)},",
+         "\t\t    .value = #{place_value(meaning, release.place, raw: false)},",
+         "\t\t    .address = #{release.place.device_address ? 'true' : 'false'} };",
          "\t\treturn (true);"]
       end
 

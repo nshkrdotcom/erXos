@@ -34,8 +34,8 @@
  *   lengths   each reference's length lies inside its buffer from its offset;
  *   room      the run fits: as many unheld records of each table placed free as it describes,
  *             the next record of each table placed in order unheld, every position a ring's run
- *             takes, its links included, unheld, and the holding it makes no larger than a
- *             holding holds;
+ *             takes, its links included, unheld, a ring's holdings fewer than its pool's
+ *             buffers, and the holding it makes no larger than a holding holds;
  *   fills     at most ERX_DMA_FILLS_MAX fills, an out segment's bytes go only inside a range a
  *             record of the publication names, and no two fills share a byte; a region entry's
  *             fill is one entry long and names a persistent region the ledger holds, so a

@@ -346,8 +346,13 @@ test_transitions(void)
 	EXPECT(!erx_dma_ledger_release_holding(&ledger, USED, stale) && erx_dma_ledger_live(&ledger) == 1,
 	    "a holding kept past its release ends nothing, though a new one has its place and its head");
 	EXPECT(erx_dma_ledger_acquire(&ledger, USED, 0), "the acquisition taken back");
-	EXPECT(!erx_dma_ledger_acquire(&ledger, USED, 2) && !erx_dma_ledger_acquire(&ledger, DESC, 1),
-	    "an acquisition past the live holdings, or of a table the CPU writes");
+	EXPECT(!erx_dma_ledger_acquire(&ledger, USED, SIZE + 1) && !erx_dma_ledger_acquire(&ledger, DESC, 1),
+	    "an acquisition past the table's records, or of a table the CPU writes");
+	EXPECT(!erx_dma_ledger_pass(&ledger, USED) && !erx_dma_ledger_pass(&ledger, DESC), "no pass past the acquisition");
+	EXPECT(erx_dma_ledger_acquire(&ledger, USED, 2) && erx_dma_ledger_pass(&ledger, USED) &&
+	    erx_dma_ledger_live(&ledger) == 1 && erx_dma_ledger_acquired(&ledger, USED) == 1 &&
+	    erx_dma_ledger_acquire(&ledger, USED, 0),
+	    "a pass consumes one report the acquisition covered and ends no holding");
 	EXPECT(erx_dma_ledger_free_records(&ledger, DESC) == SIZE - 1, "three free descriptors");
 	erx_dma_ledger_reset(&ledger);
 	EXPECT(erx_dma_ledger_live(&ledger) == 0 && !erx_dma_ledger_buffer_held(&ledger, 0) &&

@@ -52,6 +52,11 @@
 #else
 #define SEED_RING_REUSE_HELD	false
 #endif
+#ifdef ERX_DMA_SEED_NO_RING_BOUND
+#define SEED_NO_RING_BOUND	true
+#else
+#define SEED_NO_RING_BOUND	false
+#endif
 #ifdef ERX_DMA_SEED_NO_ROOM_TEST
 #define SEED_NO_ROOM_TEST	true
 #else
@@ -159,7 +164,10 @@ erx_dma_publication_buffers(const erx_dma_publication_t *publication, uint32_t b
 /*
  * The room rule: a publication describes at least one record, and the holding it makes, its
  * records and one record of each table placed in order, fits a holding; each table has as many
- * unheld records as it describes; the next record of each table placed in order is unheld.
+ * unheld records as it describes; the next record of each table placed in order is unheld; and a
+ * ring holds fewer holdings than its pool has buffers before the run, so a run that names no
+ * buffer, a control transfer without a data stage or a command without an input context, still
+ * counts against its pool: a ring's TDs or commands in flight never outnumber its buffers.
  */
 static bool
 room(const erx_dma_ledger_t *ledger, const erx_dma_publication_t *publication, const judged_t *judged)
@@ -180,8 +188,9 @@ room(const erx_dma_ledger_t *ledger, const erx_dma_publication_t *publication, c
 		}
 		if (layout->tables[table].placing == ERX_DMA_PLACED_RING && described[table] != 0) {
 			const uint32_t taken = erx_dma_ledger_ring_run(ledger, table, described[table], steps);
+			const uint32_t buffers = layout->pools[layout->tables[table].pool].count;
 
-			if (taken == 0)
+			if (taken == 0 || (!SEED_NO_RING_BOUND && erx_dma_ledger_holdings_on(ledger, table) >= buffers))
 				return (false);
 			/* The links it takes count with its records; a ring's run has no record placed in order. */
 			in_order += taken - described[table];

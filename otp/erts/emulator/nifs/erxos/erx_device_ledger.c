@@ -54,6 +54,11 @@
 #else
 #define SEED_ANY_REGION		false
 #endif
+#ifdef ERX_DMA_SEED_PLACE_ONE_OFF
+#define SEED_PLACE_ONE_OFF	true
+#else
+#define SEED_PLACE_ONE_OFF	false
+#endif
 #ifdef ERX_DMA_SEED_REGION_MEETS_QUEUE
 #define SEED_REGION_MEETS_QUEUE	true
 #else
@@ -396,11 +401,20 @@ erx_dma_ledger_bound_table(const erx_dma_ledger_t *ledger, uint32_t endpoint)
 	return (-1);
 }
 
-/* The cycle state on lap `lap` of a ring: 1 on lap 0, where a binding starts it, toggled by each link. */
+/*
+ * The cycle state on lap `lap` of a ring: 1 on lap 0, where a binding starts it, toggled by each
+ * link; and of the event ring, whose consumer cycle state starts at 1 and toggles at each wrap.
+ */
 static uint32_t
 ring_cycle(uint32_t lap)
 {
 	return (~lap & 1u);
+}
+
+uint32_t
+erx_dma_ledger_cycle(const erx_dma_ledger_t *ledger, uint32_t table)
+{
+	return (ring_cycle(erx_dma_ledger_position(ledger, table).lap));
 }
 
 uint32_t
@@ -531,6 +545,40 @@ erx_dma_ledger_free_records(const erx_dma_ledger_t *ledger, uint32_t table)
 	return (ledger->layout.tables[table].count - held);
 }
 
+/* A run's records lie in one table, its head's, whatever records of tables placed in order it adds. */
+uint32_t
+erx_dma_ledger_holdings_on(const erx_dma_ledger_t *ledger, uint32_t table)
+{
+	uint32_t holdings = 0;
+
+	for (uint32_t live = 0; live < ledger->live; live++)
+		holdings += ledger->holdings[live].records[0].table == table;
+	return (holdings);
+}
+
+bool
+erx_dma_layout_place(const erx_dma_layout_t *layout, uint32_t structure, uint64_t address, erx_dma_place_t *place)
+{
+	uint64_t offset, from_first;
+
+	if (address < layout->device_base)
+		return (false);
+	offset = address - layout->device_base;
+	for (uint32_t index = 0; index < layout->table_count; index++) {
+		const erx_dma_table_t *const table = &layout->tables[index];
+
+		if (table->structure != structure || offset < table->first)
+			continue;
+		from_first = offset - table->first;
+		/* The record's start alone names it: an address inside a record names none. */
+		if (from_first % table->stride != 0 || from_first / table->stride >= table->count)
+			continue;
+		*place = (erx_dma_place_t){ index, (uint32_t)(from_first / table->stride) + (SEED_PLACE_ONE_OFF ? 1u : 0u) };
+		return (true);
+	}
+	return (false);
+}
+
 uint32_t
 erx_dma_ledger_live(const erx_dma_ledger_t *ledger)
 {
@@ -653,9 +701,21 @@ erx_dma_ledger_hold(erx_dma_ledger_t *ledger, const erx_dma_publication_t *publi
 bool
 erx_dma_ledger_acquire(erx_dma_ledger_t *ledger, uint32_t reports, uint32_t count)
 {
-	if (reports >= ledger->layout.table_count || !device_writes(&ledger->layout, reports) || count > ledger->live)
+	if (reports >= ledger->layout.table_count || !device_writes(&ledger->layout, reports) ||
+	    count > ledger->layout.tables[reports].count)
 		return (false);
 	ledger->acquired[reports] = count;
+	return (true);
+}
+
+bool
+erx_dma_ledger_pass(erx_dma_ledger_t *ledger, uint32_t reports)
+{
+	if (reports >= ledger->layout.table_count || !device_writes(&ledger->layout, reports) ||
+	    ledger->acquired[reports] == 0)
+		return (false);
+	ledger->acquired[reports]--;
+	advance(ledger, reports, 1);
 	return (true);
 }
 

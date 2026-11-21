@@ -32,6 +32,16 @@
 #else
 #define SEED_NO_REQUEST_CHECK	false
 #endif
+#ifdef ERX_TRB_FORM_SEED_ANY_ENDPOINT
+#define SEED_ANY_ENDPOINT	true
+#else
+#define SEED_ANY_ENDPOINT	false
+#endif
+#ifdef ERX_TRB_FORM_SEED_DEQUEUE_STALE
+#define SEED_DEQUEUE_STALE	true
+#else
+#define SEED_DEQUEUE_STALE	false
+#endif
 #ifdef ERX_TRB_FORM_SEED_OTHER_POOL
 #define SEED_OTHER_POOL		true
 #else
@@ -234,7 +244,8 @@ erx_trb_form_post(erx_trb_form_t *form, uint32_t slot, uint32_t dci, const erx_d
 		/* The holding's head, the TD's last TRB, which its completion names: records[0]. */
 		found = erx_dma_ledger_newest(&form->ledger);
 		head = found.holding->records[SEED_TAG_AT_FIRST && found.holding->record_count > 1 ? 1 : 0];
-		form->tags[head.table][head.index] = tag;
+		form->transfers[head.table][head.index] = (erx_trb_transfer_t){ .tag = tag, .length = request->length,
+		    .buffer = buffer, .names_buffer = names_buffer(request), .data_stage = request->control && request->data };
 		return (ERX_DEVICE_TRB_ACCEPTED);
 	case ERX_DMA_BREAKS_ROOM:
 		return (ERX_DEVICE_TRB_REFUSE_FULL);
@@ -255,6 +266,201 @@ erx_trb_form_tag(const erx_trb_form_t *form, erx_dma_found_t found, uint64_t *ta
 	head = found.holding->records[0];
 	if (!erx_structure_needs_binding(layout->tables[head.table].structure))
 		return (false);
-	*tag = form->tags[head.table][head.index];
+	*tag = form->transfers[head.table][head.index].tag;
 	return (true);
+}
+
+/* The event ring: the layout's one table of its structure, which needs no binding. */
+static uint32_t
+event_ring(const erx_trb_form_t *form)
+{
+	return ((uint32_t)erx_dma_ledger_table(&form->ledger, ERX_STRUCTURE_XHCI_EVENT_RING));
+}
+
+erx_dma_range_t
+erx_trb_form_validity_word(const erx_trb_form_t *form, uint32_t k)
+{
+	return (erx_dma_validity_word(&form->ledger, event_ring(form), k));
+}
+
+int
+erx_trb_form_acquire(erx_trb_form_t *form, const uint32_t *words, uint32_t word_count, uint32_t *count)
+{
+	if (form->broken)
+		return (ERX_ECORRUPT);
+	if (!erx_dma_acquire_cycles(&form->ledger, event_ring(form), words, word_count, count)) {
+		form->broken = true;
+		return (ERX_ECORRUPT);
+	}
+	return (ERX_OK);
+}
+
+erx_dma_range_t
+erx_trb_form_event(const erx_trb_form_t *form, uint32_t k)
+{
+	return (erx_dma_acquire_record(&form->ledger, event_ring(form), k));
+}
+
+/* Whether ring `table` is bound to the endpoint a transfer event names by its slot and dci. */
+static bool
+bound_to_event(const erx_trb_form_t *form, uint32_t table, uint32_t control)
+{
+	const uint32_t endpoint = erx_trb_form_endpoint(erx_xhci_trb_transfer_event_control_slot_get(control),
+	    erx_xhci_trb_transfer_event_control_endpoint_get(control));
+
+	return (SEED_ANY_ENDPOINT || (endpoint != 0 && erx_dma_ledger_binding(&form->ledger, table) == endpoint));
+}
+
+/*
+ * A short packet on a control transfer's data stage, at `place`: the TRB just before the head of
+ * a live transfer with a data stage on its ring, skipping no link, since a link is never the data
+ * stage; the first such event for it, its residue inside the stage's length. Passed, ending
+ * nothing; the bytes the stage moved are kept for the status stage's event.
+ */
+static bool
+short_data_stage(erx_trb_form_t *form, const erx_report_record_t *event, erx_dma_place_t place)
+{
+	const erx_dma_layout_t *const layout = erx_dma_ledger_layout(&form->ledger);
+	const uint32_t link = layout->tables[place.table].count - 1u;
+	const uint32_t residue = erx_xhci_trb_transfer_event_status_residue_get(event->xhci_trb_transfer_event.status);
+	erx_dma_place_t head = { place.table, place.index + 1u == link ? 0 : place.index + 1u };
+	erx_trb_transfer_t *transfer;
+
+	if (place.index == link || erx_dma_ledger_holding(&form->ledger, head).holding == NULL)
+		return (false);
+	transfer = &form->transfers[head.table][head.index];
+	if (!transfer->data_stage || transfer->short_data || residue > transfer->length ||
+	    !bound_to_event(form, place.table, event->xhci_trb_transfer_event.control) ||
+	    !erx_dma_pass(&form->ledger, event_ring(form), event))
+		return (false);
+	transfer->short_data = true;
+	transfer->moved = transfer->length - residue;
+	return (true);
+}
+
+/*
+ * A transfer event: the end of the transfer whose head it names, or a short data stage, as the
+ * header says; *answered whether it answers. False for any other.
+ */
+static bool
+transfer_event(erx_trb_form_t *form, const erx_report_record_t *event, erx_trb_answer_t *answer, bool *answered)
+{
+	const erx_xhci_trb_transfer_event_t *const record = &event->xhci_trb_transfer_event;
+	const uint32_t code = erx_xhci_trb_transfer_event_status_code_get(record->status);
+	const uint32_t residue = erx_xhci_trb_transfer_event_status_residue_get(record->status);
+	const erx_dma_found_t found = erx_dma_report_holding(&form->ledger, event_ring(form), event);
+	const erx_dma_layout_t *const layout = erx_dma_ledger_layout(&form->ledger);
+	erx_trb_transfer_t transfer;
+	erx_dma_place_t place;
+	uint32_t moved;
+
+	*answered = false;
+	if (erx_xhci_trb_transfer_event_control_event_data_get(record->control) != 0 ||
+	    (code != ERX_XHCI_COMPLETION_SUCCESS && code != ERX_XHCI_COMPLETION_SHORT_PACKET))
+		return (false);
+	if (found.holding == NULL) {
+		return (code == ERX_XHCI_COMPLETION_SHORT_PACKET &&
+		    erx_dma_layout_place(layout, ERX_STRUCTURE_XHCI_TRANSFER_RING, record->pointer, &place) &&
+		    short_data_stage(form, event, place));
+	}
+	place = found.holding->records[0];
+	transfer = form->transfers[place.table][place.index];
+	/* A control transfer's last TRB is its status stage, which moves nothing: its residue is 0. */
+	if (!bound_to_event(form, place.table, record->control) ||
+	    residue > (transfer.data_stage || !transfer.names_buffer ? 0 : transfer.length))
+		return (false);
+	moved = transfer.short_data ? transfer.moved : transfer.length - residue;
+	if (!erx_dma_consume(&form->ledger, event_ring(form), found))
+		return (false);
+	*answer = (erx_trb_answer_t){ .kind = ERX_TRB_ANSWER_TRANSFER, .code = code, .tag = transfer.tag };
+	if (transfer.names_buffer)
+		answer->data = (erx_dma_range_t){ erx_dma_layout_buffer_offset(layout, transfer.buffer, 0), moved };
+	*answered = true;
+	return (true);
+}
+
+/*
+ * A command completion naming the live command: its holding ends on every code, and a failing
+ * command's binding with it. A failing binding command whose ring a transfer holds is refused
+ * before anything ends: the reach rule keeps such a transfer from being posted.
+ */
+static bool
+command_event(erx_trb_form_t *form, const erx_report_record_t *event, erx_trb_answer_t *answer)
+{
+	const erx_xhci_trb_command_event_t *const record = &event->xhci_trb_command_event;
+	const uint32_t code = erx_xhci_trb_command_event_status_code_get(record->status);
+	const erx_dma_found_t found = erx_dma_report_holding(&form->ledger, event_ring(form), event);
+	const erx_dma_layout_t *const layout = erx_dma_ledger_layout(&form->ledger);
+	erx_dma_binding_t ends = { 0 };
+
+	if (found.holding == NULL)
+		return (false);
+	if (code != ERX_XHCI_COMPLETION_SUCCESS)
+		ends = found.holding->binding;
+	if ((ends.endpoint != 0 &&
+	    erx_dma_ledger_free_records(&form->ledger, ends.table) != layout->tables[ends.table].count) ||
+	    !erx_dma_consume(&form->ledger, event_ring(form), found) ||
+	    (ends.endpoint != 0 && !erx_dma_ledger_unbind(&form->ledger, ends.table)))
+		return (false);
+	*answer = (erx_trb_answer_t){ .kind = ERX_TRB_ANSWER_COMMAND, .code = code,
+	    .parameter = erx_xhci_trb_command_event_status_parameter_get(record->status),
+	    .slot = erx_xhci_trb_command_event_control_slot_get(record->control) };
+	return (true);
+}
+
+/* One acquired event, as the header says; *answered whether it answers. False breaks the form. */
+static bool
+consume_event(erx_trb_form_t *form, const erx_report_record_t *event, erx_trb_answer_t *answer, bool *answered)
+{
+	uint32_t meaning;
+
+	*answered = false;
+	if (!erx_report_meaning(ERX_STRUCTURE_XHCI_EVENT_RING, event, &meaning))
+		return (false);
+	switch (meaning) {
+	case ERX_MEANING_XHCI_TRB_TRANSFER_EVENT:
+		return (transfer_event(form, event, answer, answered));
+	case ERX_MEANING_XHCI_TRB_COMMAND_EVENT:
+		return (*answered = command_event(form, event, answer));
+	case ERX_MEANING_XHCI_TRB_PORT_EVENT:
+		if (!erx_dma_pass(&form->ledger, event_ring(form), event))
+			return (false);
+		*answer = (erx_trb_answer_t){ .kind = ERX_TRB_ANSWER_PORT,
+		    .code = erx_xhci_trb_port_event_status_code_get(event->xhci_trb_port_event.status),
+		    .port = erx_xhci_trb_port_event_parameter_port_get(event->xhci_trb_port_event.parameter) };
+		return (*answered = true);
+	default:
+		return (false);
+	}
+}
+
+int
+erx_trb_form_complete(erx_trb_form_t *form, const erx_report_record_t *events, uint32_t count,
+    erx_trb_answer_t *answers, uint32_t *answered, uint64_t *dequeue)
+{
+	const uint32_t ring = event_ring(form);
+	bool answers_it;
+
+	*answered = 0;
+	*dequeue = erx_dma_dequeue_address(&form->ledger, ring);
+	if (form->broken)
+		return (ERX_ECORRUPT);
+	for (uint32_t k = 0; k < count && erx_dma_ledger_acquired(&form->ledger, ring) > 0; k++) {
+		if (!consume_event(form, &events[k], &answers[*answered], &answers_it)) {
+			form->broken = true;
+			break;
+		}
+		*answered += answers_it;
+	}
+	if (!SEED_DEQUEUE_STALE)
+		*dequeue = erx_dma_dequeue_address(&form->ledger, ring);
+	return (*answered == 0 && form->broken ? ERX_ECORRUPT : ERX_OK);
+}
+
+void
+erx_trb_form_reset(erx_trb_form_t *form)
+{
+	erx_dma_ledger_reset(&form->ledger);
+	bzero(form->transfers, sizeof(form->transfers));
+	form->broken = false;
 }

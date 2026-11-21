@@ -302,11 +302,13 @@ explore(const erx_dma_ledger_t *ledger, const model_t *model, uint32_t depth)
 		count = model_walk(model, n, steps, &index, &lap);
 		for (uint32_t step = 0; step < count; step++)
 			fits = fits && !model_held(model, steps[step].position);
+		/* A ring holds no more TDs than its pool has buffers, though a run of setup and status names none. */
+		fits = fits && model->live < BUFFERS;
 		checked = erx_dma_publication_check(&next, &publication);
 		verdict = erx_dma_publish(&next, &publication, &sequence);
 		EXPECT(checked == verdict, "the check's verdict is the publication's");
 		if (!fits) {
-			EXPECT(checked == ERX_DMA_BREAKS_ROOM, "a run over a held TRB breaks the room rule");
+			EXPECT(checked == ERX_DMA_BREAKS_ROOM, "a run over a held TRB, or past the pool's buffers, breaks the room rule");
 			continue;
 		}
 		EXPECT(verdict == ERX_DMA_PASSES, "a run with room passes");
@@ -422,6 +424,9 @@ test_bindings(void)
 	EXPECT(erx_dma_publish(&ledger, &publication, &sequence) == ERX_DMA_BREAKS_BINDINGS &&
 	    erx_dma_ledger_binding(&ledger, RING1) == 0, "a transfer carries no binding");
 
+	EXPECT(bind(&ledger, RING1, ENDPOINT1, noop(), &sequence) == ERX_DMA_BREAKS_ROOM,
+	    "a second command while one is in flight: the command ring's pool holds one buffer");
+	complete_command(&ledger, 0);
 	EXPECT(bind(&ledger, RING1, ENDPOINT1, noop(), &sequence) == ERX_DMA_PASSES, "ring 1 bound to endpoint 1");
 	publication = on(ENDPOINT0, records, run(1, 0, records));
 	EXPECT(erx_dma_publish(&ledger, &publication, &sequence) == ERX_DMA_PASSES, "a run on the bound ring");

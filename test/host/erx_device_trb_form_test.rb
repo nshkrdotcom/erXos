@@ -10,8 +10,8 @@ require_relative '../../tools/lib/erx/sanitizer_environment'
 require_relative '../fixtures/generated_tree'
 
 # The TRB form's core on the DMA ledger (erx_device_trb_form.h): its layout, its endpoints, and
-# every sequence of posts and releases up to a fixed depth against a reference model
-# (test/fixtures/erx_device_trb_form_harness.c), clean under the address and undefined
+# every sequence of posts and of releases through the event ring up to a fixed depth against a
+# reference model (test/fixtures/erx_device_trb_form_harness.c), clean under the address and undefined
 # sanitizers. Each seed plants one fault and is shown caught.
 class ErxDeviceTrbFormTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
@@ -27,8 +27,14 @@ class ErxDeviceTrbFormTest < Minitest::Test
   # The highest free buffer taken instead of the lowest; an out transfer's bytes left out of its
   # buffer; the tag kept at the TD's first TRB, which no completion names; a request the form's
   # test would refuse let through to the ledger, which knows no direction or kind; a buffer of
-  # another endpoint's pool named.
-  SEEDS = %w[HIGHEST_BUFFER NO_OUT_FILL TAG_AT_FIRST NO_REQUEST_CHECK OTHER_POOL].freeze
+  # another endpoint's pool named; an event of another endpoint releasing this one's holding; the
+  # dequeue pointer left before the consumed events; a ring taking more TDs than its pool has
+  # buffers; the event ring's cycle state compared inverted; a device address mapped to the record
+  # after the one it names.
+  SEEDS = %w[TRB_FORM_SEED_HIGHEST_BUFFER TRB_FORM_SEED_NO_OUT_FILL TRB_FORM_SEED_TAG_AT_FIRST
+             TRB_FORM_SEED_NO_REQUEST_CHECK TRB_FORM_SEED_OTHER_POOL TRB_FORM_SEED_ANY_ENDPOINT
+             TRB_FORM_SEED_DEQUEUE_STALE DMA_SEED_NO_RING_BOUND DMA_SEED_CYCLE_INVERTED
+             DMA_SEED_PLACE_ONE_OFF].freeze
 
   def test_layout_endpoints_posts_and_releases
     output, status = run_harness
@@ -38,7 +44,7 @@ class ErxDeviceTrbFormTest < Minitest::Test
 
   SEEDS.each do |seed|
     define_method("test_seed_#{seed.downcase}") do
-      output, status = run_harness("-DERX_TRB_FORM_SEED_#{seed}")
+      output, status = run_harness("-DERX_#{seed}")
       refute status.success?, "#{seed} went unnoticed:\n#{output}"
       assert_match(/^FAILED /, output)
     end

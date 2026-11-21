@@ -2092,7 +2092,11 @@ never fills, by counting what can be outstanding at once:
 
 The ring's 512 entries hold 511 events (Figure 4-12, p. 182), so no
 controller's port count can fill it and install refuses none for its
-ports. The NIF enables no other event: no microframe-index wrap, no
+ports. The transfer rows hold by construction: the check's room rule
+keeps a ring's TDs in flight below its block's buffers, though a
+control transfer without a data stage names none, and the command
+ring's pool, just the input context, keeps one command in flight
+([design-device-dma.md](design-device-dma.md#the-ledger)). The NIF enables no other event: no microframe-index wrap, no
 device notification, no event data. A controller that still reports a
 full ring breaks the form, and its restart resets it.
 
