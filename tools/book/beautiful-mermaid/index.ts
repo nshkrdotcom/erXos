@@ -1,3 +1,6 @@
+// Modified by erXos: only the flowchart, state and sequence renderers are
+// imported; the other diagram kinds are refused (docs/design-book-site.md).
+//
 // ============================================================================
 // beautiful-mermaid — public API
 //
@@ -8,8 +11,6 @@
 //   - Flowcharts (graph TD / flowchart LR)
 //   - State diagrams (stateDiagram-v2)
 //   - Sequence diagrams (sequenceDiagram)
-//   - Class diagrams (classDiagram)
-//   - ER diagrams (erDiagram)
 //
 // Theming uses CSS custom properties (--bg, --fg, + optional enrichment).
 // See src/theme.ts for the full variable system.
@@ -23,8 +24,6 @@ export type { RenderOptions, MermaidGraph, PositionedGraph } from './types.ts'
 export type { DiagramColors, ThemeName } from './theme.ts'
 export { fromShikiTheme, THEMES, DEFAULTS } from './theme.ts'
 export { parseMermaid } from './parser.ts'
-export { renderMermaidASCII, renderMermaidAscii } from './ascii/index.ts'
-export type { AsciiRenderOptions } from './ascii/index.ts'
 
 import { decodeXML } from 'entities'
 import { parseMermaid } from './parser.ts'
@@ -37,27 +36,18 @@ import { DEFAULTS } from './theme.ts'
 import { parseSequenceDiagram } from './sequence/parser.ts'
 import { layoutSequenceDiagram } from './sequence/layout.ts'
 import { renderSequenceSvg } from './sequence/renderer.ts'
-import { parseClassDiagram } from './class/parser.ts'
-import { layoutClassDiagramSync } from './class/layout.ts'
-import { renderClassSvg } from './class/renderer.ts'
-import { parseErDiagram } from './er/parser.ts'
-import { layoutErDiagramSync } from './er/layout.ts'
-import { renderErSvg } from './er/renderer.ts'
-import { parseXYChart } from './xychart/parser.ts'
-import { layoutXYChart } from './xychart/layout.ts'
-import { renderXYChartSvg } from './xychart/renderer.ts'
 
 /**
  * Detect the diagram type from the mermaid source text.
  * Returns the type keyword used for routing to the correct pipeline.
  */
-function detectDiagramType(text: string): 'flowchart' | 'sequence' | 'class' | 'er' | 'xychart' {
+function detectDiagramType(text: string): 'flowchart' | 'sequence' {
   const firstLine = text.trim().split(/[\n;]/)[0]?.trim().toLowerCase() ?? ''
 
-  if (/^xychart(-beta)?\b/.test(firstLine)) return 'xychart'
+  if (/^xychart(-beta)?\b/.test(firstLine)) throw new Error('xychart diagrams are not supported')
   if (/^sequencediagram\s*$/.test(firstLine)) return 'sequence'
-  if (/^classdiagram\s*$/.test(firstLine)) return 'class'
-  if (/^erdiagram\s*$/.test(firstLine)) return 'er'
+  if (/^classdiagram\s*$/.test(firstLine)) throw new Error('classDiagram diagrams are not supported')
+  if (/^erdiagram\s*$/.test(firstLine)) throw new Error('erDiagram diagrams are not supported')
 
   // Default: flowchart/state (handled by parseMermaid internally)
   return 'flowchart'
@@ -128,21 +118,6 @@ export function renderMermaidSVG(
       const diagram = parseSequenceDiagram(lines)
       const positioned = layoutSequenceDiagram(diagram, options)
       return renderSequenceSvg(positioned, colors, font, transparent)
-    }
-    case 'class': {
-      const diagram = parseClassDiagram(lines)
-      const positioned = layoutClassDiagramSync(diagram, options)
-      return renderClassSvg(positioned, colors, font, transparent)
-    }
-    case 'er': {
-      const diagram = parseErDiagram(lines)
-      const positioned = layoutErDiagramSync(diagram, options)
-      return renderErSvg(positioned, colors, font, transparent)
-    }
-    case 'xychart': {
-      const chart = parseXYChart(lines)
-      const positioned = layoutXYChart(chart, options)
-      return renderXYChartSvg(positioned, colors, font, transparent, options.interactive ?? false)
     }
     case 'flowchart':
     default: {
