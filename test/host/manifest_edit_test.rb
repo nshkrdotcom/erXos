@@ -216,4 +216,20 @@ class ManifestEditTest < Minitest::Test
     assert_equal connections.(Edit.without_domain(SOURCE, 'web', units: UNITS)) - 2, connections.(taken)
     refute_match(/^facet web$/, taken)
   end
+
+  # A facet granting the domain a service of the system domain, as pci_bus is the PCIe
+  # domain's, goes with the domain and gives back nothing beside the domain's own system
+  # connection, which carries it; one granting it a service another domain serves is
+  # refused, since that grant is the server's reckoning.
+  def test_without_domain_takes_the_system_services_granted_to_it
+    units = VIRT.record.fetch('units')
+    connections = ->(text) { Erx::Manifest::Frontend.read(text).machine.decimal('max_connections') }
+    taken = Edit.without_domain(SOURCE, 'pcie', units: units)
+    refute_match(/^facet pci_bus$/, taken)
+    assert_equal connections.(SOURCE) - 1, connections.(taken)
+    peer = "#{SOURCE}facet peer\n  grantee @domain.pcie\n  service @service.storage_ctl\n  operations none\n" \
+           "  max_request 1024\n  in_flight 1\n  reductions 100000\n  period_ns 1000000000\n  max_heap_size 8192\n"
+    error = assert_raises(Erx::Error) { Edit.without_domain(peer, 'pcie', units: units) }
+    assert_match(/granted facet peer, of a service another domain serves/, error.message)
+  end
 end
