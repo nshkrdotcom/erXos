@@ -7994,6 +7994,11 @@ to the corpus and follow rc
   lets bytes from 3 on be device-specific) babbles on the shorter transfer, halts its pipe and ends the
   function. Check B.2 and, if so, size boot transfers to the endpoint's packet size, at most
   `hid_input_report_max`.
+* [Low] USB, a HID interface whose report-descriptor read always times out (`erx_usb_hid`,
+  `erx_usb_bus_core`): a timeout counts toward `usb_function_restarts_max`, so a non-boot interface that times
+  out every time is restarted to the limit and then the whole device is given up, a composite keyboard's
+  working interface with it. Fails safe (replugging recovers it). If it shows up, end such an interface
+  unusable once past the limit instead of detaching the device.
 * [Medium] USB, a BOT function that cannot drive its interface (`erx_usb_bot_core`, the BOT function;
   [design-usb.md](docs/design-usb.md#ports-hubs-and-devices-the-bus-core)): the bus core takes
   `{shutdown, {unusable, Reason}}` as a final end, but the BOT engine stops on a Get Max LUN answer above 15
