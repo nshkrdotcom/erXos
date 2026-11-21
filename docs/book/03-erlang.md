@@ -553,7 +553,7 @@ sequenceDiagram
     participant W2 as new driver worker
     W->>W: meets an unexpected case
     W-->>S: exit signal, reason {badmatch, ...}
-    S->>S: one_for_one; within restart limit
+    S->>S: one_for_one, within restart limit
     S->>W2: start from the child specification
     W2-->>S: started, registers its name
     Note over T: sees nothing
