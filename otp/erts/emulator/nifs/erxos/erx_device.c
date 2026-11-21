@@ -2859,7 +2859,10 @@ erx_device_trb_complete(const erx_device_t *device, erx_device_trb_sink_t *sink,
 		bcopy((const void *)(uintptr_t)(record->memory + event.offset), &ring_elements[k], event.length);
 	}
 	erx_dma_report_barrier();
-	status = erx_trb_form_complete(form, ring_elements, count, trb_answers, &done, &dequeue);
+	status = erx_trb_form_complete(form, ring_elements, count, trb_answers, &done, &dequeue, &ring_sequence);
+	/* What the consumed events left to apply, a disabled slot's DCBAA entry cleared, before any answer is given. */
+	if (ring_sequence.clean_count != 0)
+		apply_memory(record, &ring_sequence, NULL);
 	/* ERDP moves past what the core consumed even when an event broke the form, so the controller is never left behind it. */
 	if (trb_ring_dequeue(record, dequeue) != ERX_OK)
 		return (ERX_EINVAL);

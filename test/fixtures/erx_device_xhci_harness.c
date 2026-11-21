@@ -771,8 +771,14 @@ test_runs(void)
 	    answers[0].slot == 1);
 	CHECK(complete(device, 0, 0) == ERX_OK);	/* nothing new: ERDP stays */
 	CHECK(command(device, address, 8, 1) == ERX_DEVICE_TRB_ACCEPTED);
-	/* Its success carries the slot's output slot context, where the controller wrote the address it assigned. */
-	slot_context = memory_at(layout.device_base + layout.regions[layout.device_context[1]].offset, ERX_XHCI_SLOT_CONTEXT_SIZE);
+	/*
+	 * Its success carries the slot's output slot context, where the controller wrote the address it
+	 * assigned: the context DCBAA entry 1 names (4.3.3, 6.1), which must name slot 1's by then.
+	 */
+	slot_context = memory_at(word64(memory_at(layout.device_base + layout.regions[layout.dcbaa].offset + 8u, 8)),
+	    ERX_XHCI_SLOT_CONTEXT_SIZE);
+	CHECK(slot_context == memory_at(layout.device_base + layout.regions[layout.device_context[1]].offset,
+	    ERX_XHCI_SLOT_CONTEXT_SIZE));
 	memset(slot_context, 0, ERX_XHCI_SLOT_CONTEXT_SIZE);
 	slot_context[ERX_XHCI_SLOT_CONTEXT_OFF_STATE] = 5;
 	put_command_event(1, ERX_XHCI_COMPLETION_SUCCESS, 1);
@@ -842,9 +848,57 @@ test_runs(void)
 	}
 }
 
+/* DCBAA entry `slot` as the controller reads it. */
+static uint64_t
+slot_entry(uint32_t slot)
+{
+	return (word64(memory_at(layout.device_base + layout.regions[layout.dcbaa].offset + 8u * (uint64_t)slot, 8)));
+}
+
+/*
+ * A slot reused by another device: DCBAA entry 1 is 0 until the slot's first Address Device, which
+ * names its device context, zeroed (xHCI 1.2, 4.3.3 step 6, p. 89; 6.2.1, p. 443), and stays while
+ * Disable Slot runs; its success clears the entry (6.1, p. 441; 4.6.4, p. 110), and the next
+ * device's Address Device finds none of what the controller wrote for the first. Two rounds, at
+ * command ring positions 0 to 5.
+ */
+static void
+reuse_slot(const erx_device_t *device)
+{
+	const erx_trb_command_t enable = { .kind = ERX_TRB_COMMAND_ENABLE_SLOT };
+	const erx_trb_command_t address = { .kind = ERX_TRB_COMMAND_ADDRESS_DEVICE, .slot = 1, .add_count = 1,
+	    .slot_context = { .route_speed = ERX_XHCI_SPEED_HIGH, .ports_root_port = 1 },
+	    .adds = { { .dci = 1, .block = 0, .context = { .config_endpoint_type = ERX_XHCI_ENDPOINT_TYPE_CONTROL,
+	    .config_max_packet = 64 } } } };
+	const erx_trb_command_t disable = { .kind = ERX_TRB_COMMAND_DISABLE_SLOT, .slot = 1 };
+	const uint64_t context = layout.device_base + layout.regions[layout.device_context[1]].offset;
+	const uint64_t length = layout.regions[layout.device_context[1]].length;
+	static const uint8_t zeros[ERX_XHCI_DEVICE_CONTEXTS * 64];
+
+	CHECK(length <= sizeof(zeros));
+	for (uint32_t round = 0; round < 2; round++) {
+		const uint32_t at = 3u * round;
+
+		CHECK(command(device, enable, 1, at) == ERX_DEVICE_TRB_ACCEPTED);
+		put_command_event(at, ERX_XHCI_COMPLETION_SUCCESS, 1);
+		CHECK(complete(device, 1, 0) == ERX_OK && slot_entry(1) == 0);
+		/* What the controller wrote for the slot's former device, or what a former driver left. */
+		memset(memory_at(context, length), 0xa5, length);
+		CHECK(command(device, address, 2, at + 1u) == ERX_DEVICE_TRB_ACCEPTED);
+		CHECK(slot_entry(1) == context && memcmp(memory_at(context, length), zeros, length) == 0);
+		put_command_event(at + 1u, ERX_XHCI_COMPLETION_SUCCESS, 1);
+		CHECK(complete(device, 1, 0) == ERX_OK && slot_entry(1) == context);
+		memset(memory_at(context, length), 0x5a, length);
+		CHECK(command(device, disable, 3, at + 2u) == ERX_DEVICE_TRB_ACCEPTED && slot_entry(1) == context);
+		put_command_event(at + 2u, ERX_XHCI_COMPLETION_SUCCESS, 1);
+		CHECK(complete(device, 1, 0) == ERX_OK && slot_entry(1) == 0);
+	}
+}
+
 /*
  * An out transfer's bytes in its buffer before its doorbell rings, a slot past the doorbells
- * refused with nothing written, and ERDP written after a lone event that breaks the form.
+ * refused with nothing written, and ERDP written after a lone event that breaks the form, on a slot
+ * reused first.
  */
 static void
 test_out_transfer(void)
@@ -860,11 +914,12 @@ test_out_transfer(void)
 	    .setup = { 0x00, 7, 0, 2, 0, 0, 8, 0 } };
 	erx_device_trb_verdict_t verdict = ERX_DEVICE_TRB_ACCEPTED;
 
-	CHECK(command(device, enable, 1, 0) == ERX_DEVICE_TRB_ACCEPTED);
-	put_command_event(0, ERX_XHCI_COMPLETION_SUCCESS, 1);
+	reuse_slot(device);
+	CHECK(command(device, enable, 1, 6) == ERX_DEVICE_TRB_ACCEPTED);
+	put_command_event(6, ERX_XHCI_COMPLETION_SUCCESS, 1);
 	CHECK(complete(device, 1, 0) == ERX_OK);
-	CHECK(command(device, address, 2, 1) == ERX_DEVICE_TRB_ACCEPTED);
-	put_command_event(1, ERX_XHCI_COMPLETION_SUCCESS, 1);
+	CHECK(command(device, address, 2, 7) == ERX_DEVICE_TRB_ACCEPTED);
+	put_command_event(7, ERX_XHCI_COMPLETION_SUCCESS, 1);
 	CHECK(complete(device, 1, 0) == ERX_OK);
 	writes = 0;
 	CHECK(erx_device_trb_post(device, 1u << 16, 1, 3, &write, &verdict) == ERX_OK &&
@@ -872,7 +927,7 @@ test_out_transfer(void)
 	CHECK(control(device, &write, 3, 0) == ERX_DEVICE_TRB_ACCEPTED);
 	CHECK(memcmp(memory_at(layout.device_base + layout.regions[layout.buffer[0][0]].offset, 8), descriptor, 8) == 0);
 	/* A lone event that breaks the form answers nothing, and ERDP still moves to it. */
-	put_command_event(2, ERX_XHCI_COMPLETION_SUCCESS, 1);
+	put_command_event(8, ERX_XHCI_COMPLETION_SUCCESS, 1);
 	CHECK(complete(device, 0, 1) == ERX_ECORRUPT);
 }
 

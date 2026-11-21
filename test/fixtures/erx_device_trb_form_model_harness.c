@@ -274,6 +274,23 @@ apply_sequence(harness_t *h, const erx_dma_sequence_t *s, const uint8_t *out, ui
 	settle(h);
 }
 
+/* What a completion left to apply, its memory alone (erx_trb_form_complete): the zeros and stores, then their cleans. */
+static void
+apply_completion(harness_t *h, const erx_dma_sequence_t *s)
+{
+	CHECK(s->fill_count == 0 && s->register_count == 0);
+	for (uint32_t at = 0; at < s->zero_count; at++) {
+		CHECK(erx_dma_model_cpu_zero(&h->cache, s->zeros[at].offset, s->zeros[at].length));
+		settle(h);
+	}
+	for (uint32_t at = 0; at < s->store_count; at++) {
+		CHECK(erx_dma_model_cpu_store(&h->cache, s->stores[at].offset, s->stores[at].bytes, s->stores[at].length));
+		settle(h);
+	}
+	for (uint32_t at = 0; at < s->clean_count; at++)
+		maintain(h, s->cleans[at], false);
+}
+
 /*
  * The form's install (erx_trb_form_install), applied in erx_device_sequencer.h's order: the zeros,
  * the stores and the cleans, then the registers the model keeps, the segment table's base and the
@@ -430,7 +447,8 @@ drain(harness_t *h)
 		maintain(h, event, true);
 		CHECK(erx_dma_model_cpu_load(&h->cache, event.offset, events[k].bytes, event.length));
 	}
-	CHECK(erx_trb_form_complete(&h->form, events, count, answers, &answered, &h->dequeue) == ERX_OK);
+	CHECK(erx_trb_form_complete(&h->form, events, count, answers, &answered, &h->dequeue, &sequence) == ERX_OK);
+	apply_completion(h, &sequence);
 	CHECK(erx_device_trb_model_dequeue(&h->device, h->dequeue));
 	for (uint32_t at = 0; at < answered; at++) {
 		CHECK(answers[at].kind != ERX_TRB_ANSWER_PORT);

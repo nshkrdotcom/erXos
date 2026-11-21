@@ -10,7 +10,9 @@
  * test/host/erx_device_virtio_core_test.rb shows its harness catches, plant faults in the install:
  * the used ring left unzeroed; the used ring's register given the available ring's address, a
  * value not from the layout's used table; the rings' cleans left out, so the ready bit comes
- * before the zeroing reaches memory.
+ * before the zeroing reaches memory. SLOT_CONTEXT_UNZEROED, which
+ * test/host/erx_device_trb_form_test.rb shows its harness catches, hands a slot's device context
+ * to the controller at its first Address Device with what the slot's former device left in it.
  */
 
 #include "erx_device_sequencer.h"
@@ -71,6 +73,11 @@ _Static_assert(SPLIT_RING_TABLES <= ERX_DMA_ZEROS_MAX && SPLIT_RING_TABLES <= ER
 #define SEED_DROP_MISSING	true
 #else
 #define SEED_DROP_MISSING	false
+#endif
+#ifdef ERX_DMA_SEED_SLOT_CONTEXT_UNZEROED
+#define SEED_SLOT_CONTEXT_UNZEROED	true
+#else
+#define SEED_SLOT_CONTEXT_UNZEROED	false
 #endif
 
 /* A binding starts its ring at its first record on lap 0, whose cycle state is 1 (xHCI 1.2, 4.3.3, pp. 88-89; 4.9.2, p. 174). */
@@ -618,6 +625,60 @@ erx_dma_install_controller(const erx_dma_ledger_t *ledger, const erx_device_trb_
 	out.activation = (erx_dma_activation_t){ .kind = ERX_DMA_ACTIVATE_REGISTER, .reg = { ERX_DMA_XHCI_RUN, 1 } };
 	*sequence = out;
 	return (ERX_DMA_PASSES);
+}
+
+/* The offset of DCBAA entry `slot` in the record's memory. */
+static uint64_t
+slot_entry_offset(const erx_device_trb_layout_t *controller, uint32_t slot)
+{
+	return (controller->regions[controller->dcbaa].offset + (uint64_t)slot * sizeof(erx_xhci_dcbaa_entry_t));
+}
+
+erx_dma_verdict_t
+erx_dma_publish_controller(erx_dma_ledger_t *ledger, const erx_device_trb_layout_t *controller,
+    const erx_dma_publication_t *publication, erx_dma_sequence_t *sequence)
+{
+	erx_xhci_dcbaa_entry_placed_t placed;
+	erx_xhci_dcbaa_entry_t entry;
+	erx_device_trb_region_t context;
+	erx_dma_verdict_t verdict;
+	uint32_t slot = 0;
+
+	/* The one binding of EP0 a publication may carry (the check's reach rule) names the slot. */
+	for (uint32_t k = 0; k < publication->bind_count; k++) {
+		if (publication->binds[k].endpoint % ERX_DMA_GROUP_ENDPOINTS == 1u)
+			slot = publication->binds[k].endpoint / ERX_DMA_GROUP_ENDPOINTS;
+	}
+	if (slot == 0)
+		return (erx_dma_publish(ledger, publication, sequence));
+	/* The entry is encoded before the ledger changes, so a refusal changes nothing. */
+	if (slot > controller->slots)
+		return (ERX_DMA_BREAKS_MEANINGS);
+	context = controller->regions[controller->device_context[slot]];
+	placed = (erx_xhci_dcbaa_entry_placed_t){ .entry_address = controller->device_base + context.offset };
+	if (!erx_xhci_dcbaa_entry_encode(&entry, &placed))
+		return (ERX_DMA_BREAKS_MEANINGS);
+	verdict = erx_dma_publish(ledger, publication, sequence);
+	if (verdict != ERX_DMA_PASSES)
+		return (verdict);
+	if (!SEED_SLOT_CONTEXT_UNZEROED)
+		add_range(sequence->zeros, &sequence->zero_count, context.offset, context.length);
+	add_range(sequence->cleans, &sequence->clean_count, context.offset, context.length);
+	store_record(sequence, slot_entry_offset(controller, slot), &entry, sizeof(entry));
+	add_range(sequence->cleans, &sequence->clean_count, slot_entry_offset(controller, slot), sizeof(entry));
+	return (ERX_DMA_PASSES);
+}
+
+bool
+erx_dma_clear_slot_entry(const erx_device_trb_layout_t *controller, uint32_t slot, erx_dma_sequence_t *sequence)
+{
+	if (slot < 1 || slot > controller->slots || sequence->zero_count == ERX_DMA_ZEROS_MAX ||
+	    sequence->clean_count == ERX_DMA_CLEANS_MAX)
+		return (false);
+	add_range(sequence->zeros, &sequence->zero_count, slot_entry_offset(controller, slot), sizeof(erx_xhci_dcbaa_entry_t));
+	add_range(sequence->cleans, &sequence->clean_count, slot_entry_offset(controller, slot),
+	    sizeof(erx_xhci_dcbaa_entry_t));
+	return (true);
 }
 
 /*

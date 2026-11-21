@@ -8100,15 +8100,13 @@ to the corpus and follow rc
 * [Medium] SSH stage 2, the login facet ([design-ssh.md](docs/design-ssh.md)): the cookie table is keyed by the connection process, but a service behind `erx_facet` sees the facet's forward (a fresh alias, `erx_facet.erl`'s request handling), not the grantee's pid. The stage-2 design must say how the facet learns the connection: carried in the request, or keyed by the facet's forward and its `'DOWN'`.
 * [Medium] SSH, a job's messages through the session's line (`erlang/apps/erx/src/erx_session_line.erl`, `line/4`; [design-ssh.md](docs/design-ssh.md#sessions-ttys-and-shells)): `open_job`'s channel sends the line `{job_input, Bytes}`, `job_eof`, `job_sent` and `job_hangup` in the SSH domain's envelope, none a call, but the line hands its callback only the peer's admitted calls and drops every other message in an envelope, so a job would wait for a `job_written` that never comes. Building `open_job` needs a callback beside `request/4` that gets the peer's other messages, and never a third domain's.
 * [Low] cross-domain call admission, written twice (`erx:call_from/3` in `erlang/apps/erx/src/erx.erl`, which erx_facet and erx_session_line ask; `erx_net_admit:request/2` in `erlang/apps/erx_net/src/erx_net_admit.erl`, over its own `domain/1`): N12 of [design-network-stack.md](docs/design-network-stack.md#requirements) keeps `erx_net/src` from naming erx, so the network grant cannot ask `erx:call_from/3`, and a change to the rule is two edits. One source needs a choice: the runtime seam (`erx_net_runtime`) answering the check, the operation schema's generator emitting both, or N12 relaxed for this one function.
-* [High] USB, no DCBAA entry names a slot's device context (`erx_device_sequencer.c`, the TRB form;
-  [design-usb.md](docs/design-usb.md#the-trb-ring-form)): the design has the sequencer write DCBAA entry *k* when
-  slot *k*'s holding begins at its first Address Device and clear it when Disable Slot's success ends it, but
-  nothing writes entries 1 and up, so the controller writes the output context through a zero entry and
-  qemu-xhci stops with USBSTS.HCE at the first Address Device. The publication path sees only the generic DMA
-  layout, which has no DCBAA or device-context places. Either plumb them in for the design's per-holding
-  stores, or write every slot's entry at install, since each slot's context is fixed by the layout (a
-  change to the design). The xHCI harness's `test_runs` writes the output context straight into slot 1's
-  region; it should follow DCBAA entry 1 as the controller does.
+* [Medium] DMA, the slot device context's ownership rests on the reach rules (`erx_device_sequencer.c`,
+  `erx_dma_publish_controller`; `erx_device_ledger.c`): the sequencer zeroes slot k's device context at any
+  publication that binds EP0, which is safe because Address Device alone binds index 1, no reach drops it, and
+  only Disable Slot or the reset unbinds it. Nothing checks that as one property, so a reach added later (Reset
+  Device, xHCI 4.6.11) or a wider drop mask would let the CPU zero a context the controller holds. Make it a
+  ledger fact: a host test over the reach rules with a seed that widens a drop mask, or a ledger predicate the
+  sequencer asks.
 * [Medium] USB, the boot mouse's transfer length (`erx_hid_core:plan/2`, `erx_usb_hid`;
   [design-usb.md](docs/design-usb.md#from-reports-to-records)): in the boot protocol the transfer is the boot
   layout's 3 bytes; a boot mouse that sends longer boot reports (unverified: whether HID 1.11, Appendix B.2,

@@ -27,9 +27,14 @@ class ErxDeviceTrbFormModelTest < Minitest::Test
 
   # A run's first TRB stored with its live cycle bit before the run's cleans, so the controller
   # may take it while the bytes it names are still dirty in the cache; Configure Endpoint's input
-  # context pointing each added ring at the other's TRBs; and, in this effect layer, a run's
-  # activation stored before the cleans of what it publishes.
-  SEEDS = %w[ERX_DMA_SEED_FIRST_CYCLE_LIVE ERX_DMA_SEED_DEQUEUE_OTHER_RING HARNESS_SEED_PUBLISH_BEFORE_CLEAN].freeze
+  # context pointing each added ring at the other's TRBs; a slot's device context handed over
+  # unzeroed, which the controller model finds holding what it wrote for the slot's former device;
+  # a disabled slot's DCBAA entry left naming its context, which the model's next Enable Slot finds;
+  # the entry cleared at Disable Slot's publication, which the model finds as it takes the command;
+  # and, in this effect layer, a run's activation stored before the cleans of what it publishes.
+  SEEDS = %w[ERX_DMA_SEED_FIRST_CYCLE_LIVE ERX_DMA_SEED_DEQUEUE_OTHER_RING ERX_DMA_SEED_SLOT_CONTEXT_UNZEROED
+             ERX_TRB_FORM_SEED_SLOT_ENTRY_KEPT ERX_TRB_FORM_SEED_SLOT_ENTRY_CLEARED_AT_PUBLICATION
+             HARNESS_SEED_PUBLISH_BEFORE_CLEAN].freeze
 
   def test_long_traces_over_the_cache_model
     output, status = run_harness

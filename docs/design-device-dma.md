@@ -378,10 +378,10 @@ lines of the structure's validity and a completion barrier, the
 validity's reads, the report barrier; then the clean and invalidate of
 the lines of every record the validity covers, a completion barrier,
 those records' reads, and the report barrier again. For a decision
-that takes back: the clean and invalidate of every region coming back;
-the completion barrier; each `copy`; then the records a release derives,
-xHCI's `ERDP` at the new consumer position and a disabled slot's cleared
-DCBAA entry, each written and cleaned. A call that takes a buffer back
+that takes back: the records a release derives, a disabled slot's
+cleared DCBAA entry, written and cleaned; xHCI's `ERDP` at the new
+consumer position; then the clean and invalidate of every region coming
+back, the completion barrier, and each `copy`. A call that takes a buffer back
 and hands it out again, as the register ring's receive queue does, is a
 decision that takes back followed by one that hands over, each against
 its own ledger, and so is `negotiate/2` after its idle report: one
@@ -1512,8 +1512,10 @@ endpoint at a ring names the ring bound to it; each queue has
 states and accepts in each only the commands its table lists; its device
 and endpoint contexts are built from bounded parameters alone; a post
 is made live by its first TRB's cycle word, then the doorbell; its device
-contexts are buffers, handed over at the slot's first Address Device and
-back when Disable Slot succeeds; its transfer rings are padded, and the
+contexts are no buffers of the ledger: each is the controller's exactly
+while EP0 of its slot is bound, zeroed and named in the DCBAA by the
+publication that binds EP0 and released when Disable Slot succeeds
+([design-usb.md](design-usb.md#the-trb-ring-form)); its transfer rings are padded, and the
 ring's position never rests on a link TRB; its completion knows a
 transfer's stages and each queue's stop span; its event ring is bounded;
 its address width is read from the controller's `AC64`; and its

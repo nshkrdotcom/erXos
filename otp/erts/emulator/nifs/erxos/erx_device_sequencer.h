@@ -58,12 +58,23 @@
  * none (the composition in erx_device_sequencer.c).
  */
 #define ERX_DMA_INPUT_PARTS_MAX		(2u + ERX_DMA_BINDS_MAX)
-/* Each record of a run, its available entry, a region entry for each fill, each binding's link and the input context. */
-#define ERX_DMA_STORES_MAX		(ERX_DMA_HELD_RECORDS_MAX + ERX_DMA_FILLS_MAX + ERX_DMA_BINDS_MAX + ERX_DMA_INPUT_PARTS_MAX)
-/* Rule 1 leaves at most one gap before each fill of a buffer and one after the last; each binding's ring. */
-#define ERX_DMA_ZEROS_MAX		(ERX_DMA_HELD_BUFFERS_MAX + ERX_DMA_FILLS_MAX + ERX_DMA_BINDS_MAX)
-/* Each buffer passing to the device, each record and the available entry, and each binding's ring. */
-#define ERX_DMA_CLEANS_MAX		(ERX_DMA_HELD_BUFFERS_MAX + ERX_DMA_HELD_RECORDS_MAX + ERX_DMA_BINDS_MAX)
+/*
+ * Each record of a run, its available entry, a region entry for each fill, each binding's link,
+ * the input context, and the DCBAA entry of a slot whose device context EP0's binding hands over
+ * (erx_dma_publish_controller).
+ */
+#define ERX_DMA_STORES_MAX		(ERX_DMA_HELD_RECORDS_MAX + ERX_DMA_FILLS_MAX + ERX_DMA_BINDS_MAX + \
+					    ERX_DMA_INPUT_PARTS_MAX + 1u)
+/*
+ * Rule 1 leaves at most one gap before each fill of a buffer and one after the last; each binding's
+ * ring; the device context EP0's binding hands over.
+ */
+#define ERX_DMA_ZEROS_MAX		(ERX_DMA_HELD_BUFFERS_MAX + ERX_DMA_FILLS_MAX + ERX_DMA_BINDS_MAX + 1u)
+/*
+ * Each buffer passing to the device, each record and the available entry, each binding's ring, and
+ * the device context EP0's binding hands over with its DCBAA entry.
+ */
+#define ERX_DMA_CLEANS_MAX		(ERX_DMA_HELD_BUFFERS_MAX + ERX_DMA_HELD_RECORDS_MAX + ERX_DMA_BINDS_MAX + 2u)
 /* An install's registers before its activation: virtio's four, or xHCI's seven. */
 #define ERX_DMA_REGISTERS_MAX		7u
 
@@ -158,6 +169,28 @@ erx_dma_verdict_t	erx_dma_publish(erx_dma_ledger_t *ledger, const erx_dma_public
  */
 erx_dma_verdict_t	erx_dma_install_controller(const erx_dma_ledger_t *ledger, const erx_device_trb_layout_t *controller,
 			    erx_dma_sequence_t *sequence);
+
+/*
+ * erx_dma_publish for an xHCI controller laid out as `controller`, with the slot's device context
+ * (docs/design-usb.md, "Bindings and holdings"). The controller owns slot k's device context
+ * exactly while EP0 of slot k is bound: Address Device must bind EP0, the check binds no endpoint
+ * already bound unless the command drops it, no command drops EP0, and only Disable Slot's
+ * success ends that binding. So a publication that binds EP0 is the slot's first Address Device
+ * since its Disable Slot or the controller's reset, and its sequence also zeroes the slot's device
+ * context, stores DCBAA entry k naming it, and cleans both, before the activation (xHCI 1.2,
+ * 4.3.3 step 6, p. 89; 6.2.1, p. 443). BREAKS_MEANINGS, changing nothing, for an EP0 binding of a
+ * slot outside the layout or a context address the entry's encoder refuses.
+ */
+erx_dma_verdict_t	erx_dma_publish_controller(erx_dma_ledger_t *ledger, const erx_device_trb_layout_t *controller,
+			    const erx_dma_publication_t *publication, erx_dma_sequence_t *sequence);
+
+/*
+ * Adds to `sequence` the clear of DCBAA entry `slot`, zeroed and cleaned, for the form to call when
+ * it consumes a Disable Slot's success, never at its publication: the entry of a slot the
+ * controller no longer holds is 0 (xHCI 1.2, 6.1, p. 441; the note of 4.6.4, p. 110). False for a
+ * slot outside the layout, or a sequence with no room for the zero or its clean.
+ */
+bool	erx_dma_clear_slot_entry(const erx_device_trb_layout_t *controller, uint32_t slot, erx_dma_sequence_t *sequence);
 
 /*
  * The validity of table `reports`, a used ring: the records its device-written index `index`

@@ -221,7 +221,9 @@ erx_device_trb_verdict_t	erx_trb_form_choose_blocks(const erx_trb_form_t *form, 
 /*
  * Posts `command` under `tag` on the command ring into `sequence`: its meaning's one TRB, naming
  * the input context when it carries it, with the bindings of the endpoints it adds and its reach
- * (erx_device_ledger.h), which the check judges. The refusals:
+ * (erx_device_ledger.h), which the check judges; an Address Device, which binds EP0, also hands
+ * the slot's zeroed device context to the controller through its DCBAA entry
+ * (erx_dma_publish_controller). The refusals:
  *   ERX_DEVICE_TRB_REFUSE_FULL    a command in flight: the ledger takes one at a time;
  *   ERX_DEVICE_TRB_REFUSE_BADARG  an endpoint whose state its reach does not allow (the check's
  *                                 reach rule), a command the queue's state does not accept as
@@ -309,11 +311,14 @@ erx_dma_range_t	erx_trb_form_event(const erx_trb_form_t *form, uint32_t k);
  * Consumes the acquired events `events`, each read whole, in order, while one is acquired, as the
  * header says, into `answers`, which holds ERX_TRB_FORM_ANSWERS_MAX(count); `*answered` is how many, and `*dequeue` the
  * device address of the event ring's consumer position after them, which the effect layer writes
- * to ERDP with the busy bit. An event the header refuses breaks the form and ends the call: the
- * answers before it stand. ERX_OK with the answers, or ERX_ECORRUPT, with none, for a broken form.
+ * to ERDP with the busy bit. `memory` is what the consumed events leave the effect layer to apply
+ * as erx_device_sequencer.h says, its memory only: the clear of a slot's DCBAA entry when a
+ * Disable Slot's success is consumed (erx_dma_clear_slot_entry), and otherwise nothing. An event
+ * the header refuses breaks the form and ends the call: the answers and the memory before it
+ * stand. ERX_OK with the answers, or ERX_ECORRUPT, with none, for a broken form.
  */
 int	erx_trb_form_complete(erx_trb_form_t *form, const erx_report_record_t *events, uint32_t count,
-	    erx_trb_answer_t *answers, uint32_t *answered, uint64_t *dequeue);
+	    erx_trb_answer_t *answers, uint32_t *answered, uint64_t *dequeue, erx_dma_sequence_t *memory);
 /*
  * The controller's idle report after its reset: every holding, binding and transfer ends, and the
  * form is whole again. The event ring's positions return to their first, so the effect layer

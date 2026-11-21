@@ -60,6 +60,7 @@ typedef struct erx_device_trb_model {
 	erx_device_trb_model_sink_t	*sink;
 	void				*sink_context;
 	bool				enabled[ERX_DEVICE_TRB_SLOTS_MAX + 1];
+	bool				addressed[ERX_DEVICE_TRB_SLOTS_MAX + 1];	/* its device context taken */
 	erx_device_trb_model_ring_t	command;
 	erx_device_trb_model_ring_t	rings[ERX_DEVICE_TRB_SLOTS_MAX + 1][ERX_XHCI_DEVICE_CONTEXTS];
 	uint32_t			patterns;	/* the next in pattern */

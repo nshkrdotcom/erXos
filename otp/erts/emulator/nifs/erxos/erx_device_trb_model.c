@@ -213,6 +213,47 @@ read_input_context(erx_device_trb_model_t *model, uint32_t slot, uint64_t input)
 	return (true);
 }
 
+/* Whether DCBAA entry `slot` holds `address`, as the controller reads it from memory. */
+static bool
+slot_entry_is(const erx_device_trb_model_t *model, uint32_t slot, uint64_t address)
+{
+	uint64_t entry;
+
+	return (read_u64(model, model->layout->device_base + model->layout->regions[model->layout->dcbaa].offset +
+	    (uint64_t)slot * sizeof(entry), &entry) && entry == address);
+}
+
+/*
+ * Slot `slot`'s output device context taken at its first Address Device since its Enable Slot, as
+ * the model takes no second one: DCBAA entry `slot` names the slot's context region, and every byte
+ * of the context is 0 (xHCI 1.2, 4.3.3 step 6, p. 89; 6.2.1, p. 443). The model then writes the
+ * slot context's address and state, Addressed (Table 6-7, p. 449), as a controller does, so a
+ * context handed over again without its zeroing is seen. False otherwise.
+ */
+static bool
+take_device_context(erx_device_trb_model_t *model, uint32_t slot)
+{
+	const erx_device_trb_region_t context = model->layout->regions[model->layout->device_context[slot]];
+	const uint64_t address = model->layout->device_base + context.offset;
+	uint32_t state = 0;
+	uint8_t bytes[sizeof(state)];
+
+	if (!erx_xhci_slot_context_state_address_set(&state, slot) || !erx_xhci_slot_context_state_slot_state_set(&state, 2))
+		return (false);
+	for (uint32_t k = 0; k < sizeof(bytes); k++)
+		bytes[k] = (uint8_t)(state >> (8u * k));
+	if (model->addressed[slot] || !slot_entry_is(model, slot, address))
+		return (false);
+	model->addressed[slot] = true;
+	for (uint64_t at = 0; at < context.length; at += sizeof(uint64_t)) {
+		uint64_t word;
+
+		if (!read_u64(model, address + at, &word) || word != 0)
+			return (false);
+	}
+	return (model->memory.write(model->memory.context, address + ERX_XHCI_SLOT_CONTEXT_OFF_STATE, bytes, sizeof(bytes)));
+}
+
 static uint32_t
 lowest_free_slot(const erx_device_trb_model_t *model)
 {
@@ -236,12 +277,19 @@ take_command(erx_device_trb_model_t *model, const trb_t *trb, uint64_t at)
 	switch (type) {
 	case ERX_XHCI_TRB_TYPE_ENABLE_SLOT:
 		slot = lowest_free_slot(model);
+		/* The entry of a slot no device holds is 0 (6.1, p. 441), so a disabled slot's was cleared. */
+		if (slot != 0 && !slot_entry_is(model, slot, 0))
+			return (ERX_ECORRUPT);
 		if (slot == 0)
 			code = ERX_XHCI_COMPLETION_NO_SLOTS;
 		else
 			model->enabled[slot] = true;
 		break;
 	case ERX_XHCI_TRB_TYPE_ADDRESS_DEVICE:
+		if (!take_device_context(model, slot) ||
+		    !read_input_context(model, slot, erx_xhci_trb_command_parameter_pointer_get(trb->parameter)))
+			return (ERX_ECORRUPT);
+		break;
 	case ERX_XHCI_TRB_TYPE_CONFIGURE_ENDPOINT:
 		if (!read_input_context(model, slot, erx_xhci_trb_command_parameter_pointer_get(trb->parameter)))
 			return (ERX_ECORRUPT);
@@ -262,7 +310,11 @@ take_command(erx_device_trb_model_t *model, const trb_t *trb, uint64_t at)
 		start_ring(&model->rings[slot][dci], trb->parameter);
 		break;
 	case ERX_XHCI_TRB_TYPE_DISABLE_SLOT:
-		model->enabled[slot] = false;
+		/* The controller holds the slot's context until the command completes (4.6.4, p. 110). */
+		if (model->addressed[slot] && !slot_entry_is(model, slot, model->layout->device_base +
+		    model->layout->regions[model->layout->device_context[slot]].offset))
+			return (ERX_ECORRUPT);
+		model->enabled[slot] = model->addressed[slot] = false;
 		bzero(model->rings[slot], sizeof(model->rings[slot]));
 		break;
 	default:

@@ -112,6 +112,18 @@
 #else
 #define SEED_BEGIN_WRITES_RESETTING	false
 #endif
+/* A disabled slot's DCBAA entry left naming its device context. */
+#ifdef ERX_TRB_FORM_SEED_SLOT_ENTRY_KEPT
+#define SEED_SLOT_ENTRY_KEPT	true
+#else
+#define SEED_SLOT_ENTRY_KEPT	false
+#endif
+/* The entry cleared at Disable Slot's publication, while the controller still holds the slot, not at its success. */
+#ifdef ERX_TRB_FORM_SEED_SLOT_ENTRY_CLEARED_AT_PUBLICATION
+#define SEED_SLOT_ENTRY_CLEARED_AT_PUBLICATION	true
+#else
+#define SEED_SLOT_ENTRY_CLEARED_AT_PUBLICATION	false
+#endif
 
 /* The form's device addresses: every address place of its TRBs and contexts is 64 bits wide. */
 #define ADDRESS_BITS	64u
@@ -521,8 +533,10 @@ erx_trb_form_command(erx_trb_form_t *form, const erx_trb_command_t *command, uin
 		publication.binds[k] = (erx_dma_binding_t){ .endpoint = erx_trb_form_endpoint(command->slot,
 		    command->adds[k].dci), .table = command->adds[k].block };
 	}
-	switch (erx_dma_publish(&form->ledger, &publication, sequence)) {
+	switch (erx_dma_publish_controller(&form->ledger, &form->layout, &publication, sequence)) {
 	case ERX_DMA_PASSES:
+		if (SEED_SLOT_ENTRY_CLEARED_AT_PUBLICATION && command->kind == ERX_TRB_COMMAND_DISABLE_SLOT)
+			(void)erx_dma_clear_slot_entry(&form->layout, command->slot, sequence);
 		form->command = *command;
 		form->command_tag = tag;
 		form->stop_event = false;
@@ -788,10 +802,12 @@ transfer_event(erx_trb_form_t *form, const erx_report_record_t *event, erx_trb_a
  * acts on success, or its own bindings end on failure, as erx_dma_ledger_complete_command says.
  * Its answers: each transfer its success retires that no error answered already, `stopped` with
  * no bytes under its own tag, then the command's, so a caller waiting on the command sees every
- * transfer of the ring it restarts or removes answered first; their count goes to *answered.
+ * transfer of the ring it restarts or removes answered first; their count goes to *answered. A
+ * Disable Slot's success adds the clear of the slot's DCBAA entry to `memory`.
  */
 static bool
-command_event(erx_trb_form_t *form, const erx_report_record_t *event, erx_trb_answer_t *answers, uint32_t *answered)
+command_event(erx_trb_form_t *form, const erx_report_record_t *event, erx_trb_answer_t *answers, uint32_t *answered,
+    erx_dma_sequence_t *memory)
 {
 	const erx_xhci_trb_command_event_t *const record = &event->xhci_trb_command_event;
 	const uint32_t code = erx_xhci_trb_command_event_status_code_get(record->status);
@@ -806,7 +822,7 @@ command_event(erx_trb_form_t *form, const erx_report_record_t *event, erx_trb_an
 	/*
 	 * The slot's state: an Enable Slot's success enables the slot its completion names, one of the
 	 * layout's (4.6.3, p. 108); an Address Device's writes its addressed fields; a Disable Slot's
-	 * clears both.
+	 * clears both, and its DCBAA entry, which the controller no longer reads (4.6.4, p. 110).
 	 */
 	if (code == ERX_XHCI_COMPLETION_SUCCESS && form->command.kind == ERX_TRB_COMMAND_ENABLE_SLOT && slot >= 1 &&
 	    slot <= form->slots)
@@ -814,6 +830,10 @@ command_event(erx_trb_form_t *form, const erx_report_record_t *event, erx_trb_an
 	else if (code == ERX_XHCI_COMPLETION_SUCCESS && form->command.kind == ERX_TRB_COMMAND_ADDRESS_DEVICE)
 		form->addressed[form->command.slot] = form->command.slot_context;
 	else if (code == ERX_XHCI_COMPLETION_SUCCESS && form->command.kind == ERX_TRB_COMMAND_DISABLE_SLOT) {
+		const bool clears = !SEED_SLOT_ENTRY_KEPT && !SEED_SLOT_ENTRY_CLEARED_AT_PUBLICATION;
+
+		if (clears && !erx_dma_clear_slot_entry(&form->layout, form->command.slot, memory))
+			return (false);
 		form->enabled[form->command.slot] = false;
 		bzero(&form->addressed[form->command.slot], sizeof(form->addressed[form->command.slot]));
 	}
@@ -842,7 +862,8 @@ command_event(erx_trb_form_t *form, const erx_report_record_t *event, erx_trb_an
 
 /* One acquired event, as the header says, its answers into `answers`, their count into *answered. False breaks the form. */
 static bool
-consume_event(erx_trb_form_t *form, const erx_report_record_t *event, erx_trb_answer_t *answers, uint32_t *answered)
+consume_event(erx_trb_form_t *form, const erx_report_record_t *event, erx_trb_answer_t *answers, uint32_t *answered,
+    erx_dma_sequence_t *memory)
 {
 	uint32_t meaning;
 	bool answers_it;
@@ -857,7 +878,7 @@ consume_event(erx_trb_form_t *form, const erx_report_record_t *event, erx_trb_an
 		*answered = answers_it;
 		return (true);
 	case ERX_MEANING_XHCI_TRB_COMMAND_EVENT:
-		return (command_event(form, event, answers, answered));
+		return (command_event(form, event, answers, answered, memory));
 	case ERX_MEANING_XHCI_TRB_PORT_EVENT:
 		if (!erx_dma_pass(&form->ledger, event_ring(form), event))
 			return (false);
@@ -873,17 +894,18 @@ consume_event(erx_trb_form_t *form, const erx_report_record_t *event, erx_trb_an
 
 int
 erx_trb_form_complete(erx_trb_form_t *form, const erx_report_record_t *events, uint32_t count,
-    erx_trb_answer_t *answers, uint32_t *answered, uint64_t *dequeue)
+    erx_trb_answer_t *answers, uint32_t *answered, uint64_t *dequeue, erx_dma_sequence_t *memory)
 {
 	const uint32_t ring = event_ring(form);
 	uint32_t answer_count;
 
 	*answered = 0;
+	*memory = (erx_dma_sequence_t){ 0 };
 	*dequeue = erx_dma_dequeue_address(&form->ledger, ring);
 	if (form->broken)
 		return (ERX_ECORRUPT);
 	for (uint32_t k = 0; k < count && erx_dma_ledger_acquired(&form->ledger, ring) > 0; k++) {
-		if (!consume_event(form, &events[k], &answers[*answered], &answer_count)) {
+		if (!consume_event(form, &events[k], &answers[*answered], &answer_count, memory)) {
 			form->broken = true;
 			break;
 		}

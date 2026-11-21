@@ -154,6 +154,81 @@ stored_at(const erx_dma_sequence_t *sequence, uint64_t offset)
 	return (NULL);
 }
 
+/* What the last completion left the effect layer to apply (erx_trb_form_complete). */
+static erx_dma_sequence_t delivered;
+
+/* Whether `range` overlaps the DCBAA of the form's layout. */
+static bool
+in_dcbaa(const erx_device_trb_layout_t *layout, erx_dma_range_t range)
+{
+	const erx_device_trb_region_t dcbaa = layout->regions[layout->dcbaa];
+
+	return (range.offset < dcbaa.offset + dcbaa.length && dcbaa.offset < range.offset + range.length);
+}
+
+/* Whether `sequence` zeroes or stores into the DCBAA, which only a slot's hand-over and its clear write. */
+static bool
+writes_dcbaa(const erx_device_trb_layout_t *layout, const erx_dma_sequence_t *sequence)
+{
+	bool writes = false;
+
+	for (uint32_t k = 0; k < sequence->zero_count; k++)
+		writes = writes || in_dcbaa(layout, sequence->zeros[k]);
+	for (uint32_t k = 0; k < sequence->store_count; k++)
+		writes = writes || in_dcbaa(layout, (erx_dma_range_t){ sequence->stores[k].offset, sequence->stores[k].length });
+	return (writes);
+}
+
+/* Whether `ranges` holds exactly [offset, offset + length). */
+static bool
+has_range(const erx_dma_range_t *ranges, uint32_t count, uint64_t offset, uint64_t length)
+{
+	bool found = false;
+
+	for (uint32_t k = 0; k < count; k++)
+		found = found || (ranges[k].offset == offset && ranges[k].length == length);
+	return (found);
+}
+
+/* The offset of DCBAA entry `slot`. */
+static uint64_t
+slot_entry(const erx_device_trb_layout_t *layout, uint32_t slot)
+{
+	return (layout->regions[layout->dcbaa].offset + 8u * (uint64_t)slot);
+}
+
+/*
+ * Whether `sequence` hands slot `slot`'s device context to the controller (xHCI 1.2, 4.3.3 step 6,
+ * p. 89; 6.2.1, p. 443): the context zeroed and cleaned, and DCBAA entry `slot` stored, naming
+ * it, and cleaned, the only DCBAA write.
+ */
+static bool
+hands_over(const erx_device_trb_layout_t *layout, const erx_dma_sequence_t *sequence, uint32_t slot)
+{
+	const erx_device_trb_region_t context = layout->regions[layout->device_context[slot]];
+	const erx_dma_store_t *const entry = stored_at(sequence, slot_entry(layout, slot));
+	uint64_t named = 0;
+	uint32_t dcbaa_stores = 0;
+
+	for (uint32_t k = 0; entry != NULL && k < 8; k++)
+		named |= (uint64_t)entry->bytes[k] << (8u * k);
+	for (uint32_t k = 0; k < sequence->store_count; k++)
+		dcbaa_stores += in_dcbaa(layout, (erx_dma_range_t){ sequence->stores[k].offset, sequence->stores[k].length });
+	return (has_range(sequence->zeros, sequence->zero_count, context.offset, context.length) &&
+	    has_range(sequence->cleans, sequence->clean_count, context.offset, context.length) &&
+	    entry != NULL && entry->length == 8 && named == layout->device_base + context.offset &&
+	    has_range(sequence->cleans, sequence->clean_count, slot_entry(layout, slot), 8) && dcbaa_stores == 1);
+}
+
+/* Whether `sequence` clears DCBAA entry `slot` and nothing else: one zero of its 8 bytes, cleaned. */
+static bool
+clears_entry(const erx_device_trb_layout_t *layout, const erx_dma_sequence_t *sequence, uint32_t slot)
+{
+	return (sequence->zero_count == 1 && sequence->zeros[0].offset == slot_entry(layout, slot) &&
+	    sequence->zeros[0].length == 8 && sequence->store_count == 0 && sequence->clean_count == 1 &&
+	    sequence->cleans[0].offset == slot_entry(layout, slot) && sequence->cleans[0].length == 8);
+}
+
 /* A TRB's 64-bit parameter and control word as stored, little-endian. */
 static uint64_t
 parameter(const erx_dma_store_t *store)
@@ -228,7 +303,7 @@ deliver(state_t *state, erx_report_record_t *events, uint32_t count, uint32_t co
 	for (uint32_t k = 0; k < count; k++)
 		EXPECT(erx_trb_form_event(&state->form, k).offset ==
 		    event_offset((model->event_index + k) % ERX_DEVICE_TRB_EVENT_TRBS), "each acquired event is read whole where it lies");
-	status = erx_trb_form_complete(&state->form, events, count, answers, answered, &dequeue);
+	status = erx_trb_form_complete(&state->form, events, count, answers, answered, &dequeue, &delivered);
 	for (uint32_t k = 0; k < consumed; k++) {
 		if (++model->event_index == ERX_DEVICE_TRB_EVENT_TRBS) {
 			model->event_index = 0;
@@ -281,6 +356,9 @@ bind(state_t *state, uint32_t table, uint32_t endpoint, uint32_t code)
 
 	EXPECT(erx_trb_form_command(&state->form, &command, 7, &sequence) == ERX_DEVICE_TRB_ACCEPTED, "a binding command");
 	EXPECT(erx_dma_ledger_binding(&state->form.ledger, table) == endpoint, "its publication binds the ring");
+	EXPECT(dci == 1 ? hands_over(&state->form.layout, &sequence, endpoint / ERX_DMA_GROUP_ENDPOINTS) :
+	    !writes_dcbaa(&state->form.layout, &sequence), "an Address Device, binding EP0, hands over its slot's zeroed "
+	    "device context through its DCBAA entry; no other binding writes the DCBAA");
 	EXPECT(deliver(state, &event, 1, 1, answers, &answered) == ERX_OK && answered == 1 &&
 	    answers[0].kind == ERX_TRB_ANSWER_COMMAND && answers[0].code == code && answers[0].parameter == 0x2a &&
 	    erx_dma_ledger_live(&state->form.ledger) == 0, "the command's completion ends its holding on any code");
@@ -747,6 +825,8 @@ check_command(state_t *state, erx_trb_command_t command)
 	}
 	EXPECT(verdict == ERX_DEVICE_TRB_ACCEPTED && erx_dma_ledger_live(&state->form.ledger) == live + 1u,
 	    "a command its endpoint's state accepts is posted");
+	EXPECT(!writes_dcbaa(&state->form.layout, &sequence), "no publication but an Address Device's writes the DCBAA: a "
+	    "Disable Slot's entry stays until its success, since the controller holds the slot until then");
 	model->command = (model_command_t){ .live = true, .command = command, .head = head, .tag = model->next_tag++ };
 	return (true);
 }
@@ -770,6 +850,9 @@ check_command_end(state_t *state, bool success)
 	EXPECT(deliver(state, &event, 1, 1, answers, &answered) == ERX_OK && answered >= 1 &&
 	    answers[answered - 1].kind == ERX_TRB_ANSWER_COMMAND && answers[answered - 1].tag == command.tag,
 	    "a command's completion answers its tag last, after the transfers it retires");
+	EXPECT(success && command.command.kind == ERX_TRB_COMMAND_DISABLE_SLOT ?
+	    clears_entry(&state->form.layout, &delivered, command.command.slot) : delivered.clean_count == 0,
+	    "a Disable Slot's consumed success clears the slot's DCBAA entry; no other completion writes memory");
 	model->command = (model_command_t){ 0 };
 	for (uint32_t block = 0; block < BLOCKS && success; block++) {
 		const bool named = command.command.dci == block_dci[block];
@@ -1173,11 +1256,11 @@ test_refusals(void)
 	words[0] = events[0].xhci_trb_transfer_event.control;
 	words[1] = events[1].xhci_trb_transfer_event.control;
 	EXPECT(erx_trb_form_acquire(&state.form, words + 1, 1, &count) == ERX_OK && count == 0 &&
-	    erx_trb_form_complete(&state.form, events + 1, 1, answers, &answered, &dequeue) == ERX_OK && answered == 0 &&
+	    erx_trb_form_complete(&state.form, events + 1, 1, answers, &answered, &dequeue, &delivered) == ERX_OK && answered == 0 &&
 	    dequeue == BASE + event_offset(state.model.event_index) && erx_dma_ledger_live(&state.form.ledger) == 3,
 	    "an event with a stale cycle bit is not acquired, consumed or answered");
 	EXPECT(erx_trb_form_acquire(&state.form, words, 2, &count) == ERX_OK && count == 1 &&
-	    erx_trb_form_complete(&state.form, events, 2, answers, &answered, &dequeue) == ERX_OK && answered == 1 &&
+	    erx_trb_form_complete(&state.form, events, 2, answers, &answered, &dequeue, &delivered) == ERX_OK && answered == 1 &&
 	    erx_dma_ledger_live(&state.form.ledger) == 2, "the acquisition stops at the first stale cycle bit");
 	EXPECT(erx_trb_form_acquire(&state.form, words, ERX_DEVICE_TRB_EVENT_TRBS + 1u, &count) == ERX_ECORRUPT,
 	    "more cycle words than the event ring has breaks the form");

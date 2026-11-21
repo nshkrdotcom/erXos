@@ -1967,14 +1967,14 @@ counts read from the controller:
 
 | Region | Size | Writer | Notes |
 | --- | --- | --- | --- |
-| DCBAA | `usb_devices_max + 1` entries | the CPU | written only by the sequencer: entry 0 at install, entry *k* when slot *k*'s holding begins at its first Address Device, and cleared when Disable Slot's success ends it (xHCI 4.6.4, p. 110); the controller reads no entry of a slot before its first Address Device or of a disabled one (6.1, p. 442) |
+| DCBAA | `usb_devices_max + 1` entries | the CPU | written only by the sequencer: entry 0 at install; entry *k* at the publication of the Address Device that binds slot *k*'s EP0; and cleared when the core consumes Disable Slot's success (xHCI 6.1, p. 441; the note of 4.6.4, p. 110), never at its publication, while the controller still holds the slot; the controller reads no entry of a slot before its first Address Device or of a disabled one (6.1, p. 442); the DMA check never sees the DCBAA |
 | scratchpad array | one entry for each page | the CPU | written at install, read only by the controller |
 | scratchpad pages | the count the controller asks for, at most 64 pages of 4 KiB | the controller, from install to reset | never read by the CPU; install refuses a controller asking for more, or whose page size excludes 4 KiB (5.4.3, p. 400), with `{error, enotsup}` |
 | event ring segment table | one entry | the CPU | written at install |
 | event ring | one segment of 512 TRBs | the controller | read by observation, dequeue published through `ERDP` |
 | command ring | 16 TRBs, the last a link back | the CPU | one command in flight |
 | input context | one, 33 contexts of the controller's context size | the CPU, handed to the controller with each command that reads it | the command queue's one buffer |
-| device contexts | one per slot, 32 contexts | the controller, while the slot is enabled | a buffer to the DMA check, handed over with the slot's holding at its first Address Device, which the sequencer zeroes as it passes, and taken back when Disable Slot succeeds; the CPU reads one field, the slot's address after Address Device, and never an endpoint context's dequeue pointer or cycle state, which the VL805 writes back wrongly (facts record, section 5), since the NIF keeps both of its own |
+| device contexts | one per slot, 32 contexts | the controller, while the slot is enabled | the controller's exactly while EP0 of the slot is bound in the ledger: zeroed and cleaned by the sequencer in the publication that binds EP0, before its doorbell (4.3.3 step 6, p. 89; 6.2.1, p. 443), and the CPU's again once Disable Slot's success ends that binding; the CPU reads one field, the slot's address after Address Device, and never an endpoint context's dequeue pointer or cycle state, which the VL805 writes back wrongly (facts record, section 5), since the NIF keeps both of its own |
 | queue blocks | 16 control, 16 interrupt and 4 bulk | per block: its ring the CPU's, each buffer the device's while posted | below |
 
 A **queue block** is a transfer ring of 16 TRBs, the last a link TRB back
@@ -2243,9 +2243,10 @@ count, the DCBAA's declared slot count (5.4.7, p. 404); `ERSTSZ` 1, since
 the segment table (5.5.2.3.2, p. 428); `ERDP`, the event ring's first
 TRB; `CRCR`, the command ring's first TRB with cycle state 1 (5.4.5,
 p. 401); and every ring's link, its segment pointer its own ring's first
-TRB, with toggle cycle set (6.4.4.1, pp. 504-505). Afterwards: DCBAA
-entry *k* when slot *k*'s holding begins, cleared when it ends (6.1,
-p. 441); every doorbell, with stream ID 0; `ERDP` after each decision
+TRB, with toggle cycle set (6.4.4.1, pp. 504-505). Afterwards: slot *k*'s
+device context zeroed and DCBAA entry *k* naming it, in the publication
+that binds EP0 of slot *k*, and the entry cleared when the core consumes
+Disable Slot's success (6.1, p. 441); every doorbell, with stream ID 0; `ERDP` after each decision
 that consumes events.
 
 **Bindings and holdings.**
@@ -2289,10 +2290,21 @@ that consumes events.
   command's holding lives, and the hold sets it. The closure, a
   drop-and-add's two bindings and the answers below rest on it: one
   completion retires the transfers of one command.
-* A slot's holding holds its DCBAA entry and its device context. It
-  begins at the publication of the slot's first Address Device, which
-  zeroes the context as it passes; an Address Device for a slot that
-  holds one already adds nothing to it.
+* EP0's binding of slot *k* covers exactly the time the controller owns
+  slot *k*'s device context, so the context needs no holding of its
+  own. Address Device must bind EP0, an endpoint already bound is bound
+  again only by a command that drops it, no command drops EP0, and only
+  Disable Slot's success, or the controller's reset, ends that binding:
+  every Address Device the check passes is the slot's first since its
+  Disable Slot or the reset. Its publication zeroes and cleans the
+  slot's device context and stores DCBAA entry *k*, naming the context,
+  before the doorbell (xHCI 4.3.3 step 6, p. 89; 6.2.1, p. 443); when
+  the core consumes Disable Slot's success, the completion's sequence
+  zeroes entry *k* (6.1, p. 441; the note of 4.6.4, p. 110). A Disable
+  Slot's publication writes no entry, since the controller holds the
+  slot until the command completes. The DCBAA never enters the ledger:
+  its places are the layout's, and the sequencer writes them
+  (`erx_dma_publish_controller`, `erx_dma_clear_slot_entry`).
 * A command's **reach** is its meaning's `reach` mark in
   `abi/formats/xhci.txt`, never a field a caller or the device supplies:
   `address` (Address Device), `configure` (Configure Endpoint), `stop`
@@ -2403,7 +2415,7 @@ consumed in order; the completion codes are Table 6-90's (p. 507).
 | Address Device or Configure Endpoint, failing | the bindings the command made, but a failed Address Device's, kept with EP0 `disabled` until Disable Slot succeeds (Bindings and holdings) |
 | Configure Endpoint, succeeding | each binding of an endpoint it drops that was made before it, with the transfers its reach retires |
 | Set TR Dequeue Pointer, succeeding | the transfers its reach retires, those live on the endpoint's ring at its publication |
-| Disable Slot, succeeding | the slot's holding, its DCBAA entry cleared, every binding of the slot, and the transfers its reach retires |
+| Disable Slot, succeeding | every binding of the slot, EP0's with it, so the slot's device context is the CPU's again and its DCBAA entry is cleared, and the transfers its reach retires |
 | Port Status Change | nothing |
 | the controller halted with its reset done, after the reset | every holding |
 
