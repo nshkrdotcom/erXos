@@ -58,7 +58,12 @@ class ErxUsbHidTest < Minitest::Test
              module_path: CORE,
              anchor: '            {ok, planned(Layout, boot)};',
              replacement: '            {ok, planned(Layout, report)};',
-             catching_case: 'a_refused_descriptor_types_in_the_boot_protocol_test')
+             catching_case: 'a_refused_descriptor_types_in_the_boot_protocol_test'),
+    Seed.new(fault: 'a report descriptor read that timed out taken as unusable',
+             module_path: HID,
+             anchor: "unplanned({report_descriptor, timeout}) ->\n    {shutdown, {report_descriptor, timeout}};",
+             replacement: "unplanned({report_descriptor, timeout}) ->\n    unusable({report_descriptor, timeout});",
+             catching_case: 'a_failed_report_descriptor_read_counts_and_a_refused_one_is_final_test')
   ].freeze
 
   def test_the_cases_pass

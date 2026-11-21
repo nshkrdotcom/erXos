@@ -47,8 +47,6 @@ an_unusable_interface_leaves_the_others_running_test() ->
                    after ?WAIT_MS -> error(no_unusable_start)
                    end,
             settled(),
-            Gone ! unusable,
-            settled(),
             ?assertNot(is_process_alive(Gone)),
             ?assert(is_process_alive(Running)),
             ?assertEqual(0, count({reset_pipe, Ref, 1, 16#82})),
@@ -88,6 +86,25 @@ a_function_whose_start_fails_ends_test() ->
             wait(fun() -> lists:member({detach, Ref}, log()) end),
             ?assertEqual(?ERX_USB_FUNCTION_RESTARTS_MAX, count({reset_pipe, Ref, 0, 16#81})),
             ?assert(lists:member({port, root, 1, disable}, log()))
+        end)
+    after
+        persistent_term:erase(erx_usb_hid_stand_in)
+    end.
+
+%% A start that fails as unusable, as a HID function's with no free input number, is
+%% final too: its pipes are not reset, it is not started again, and the device's other
+%% function keeps running.
+an_unusable_start_is_final_test() ->
+    persistent_term:put(erx_usb_hid_stand_in, {unusable_start, 1}),
+    try
+        with_bus(#{[1] => composite}, fun() ->
+            Ref = configured([1]),
+            {hid_started, Running, #{function := #{interface := 0}}} = next_hid(),
+            settled(),
+            ?assert(is_process_alive(Running)),
+            ?assertEqual(0, count({reset_pipe, Ref, 1, 16#82})),
+            ?assertEqual([], [D || D = {detach, _} <- log()]),
+            ?assertEqual(1, refusals(0))
         end)
     after
         persistent_term:erase(erx_usb_hid_stand_in)
@@ -235,6 +252,10 @@ flush() ->
 
 fake_starts(Count) ->
     receive {fake_started, _} -> fake_starts(Count + 1) after 1000 -> Count end.
+
+%% The stand-in's refused starts, counted from its reports.
+refusals(Count) ->
+    receive {hid_refused, _} -> refusals(Count + 1) after 0 -> Count end.
 
 next_hid() ->
     case next_hid(?WAIT_MS) of

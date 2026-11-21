@@ -164,7 +164,7 @@ class's GET_STATUS, SET_FEATURE and CLEAR_FEATURE (usb.h:229-264), and the
 request's answer comes back as the operation's by hub_answer/2.
 """.
 
--export([new/1, step/3, ports/1, histories/1, devices/1, hub_request/2, hub_answer/2]).
+-export([new/1, step/3, ports/1, histories/1, devices/1, hub_request/2, hub_answer/2, unusable/1]).
 
 -export_type([state/0, event/0, action/0, hub_id/0, ref/0, target/0, op/0, port_state/0, port_history/0, step/0, run/0,
               run_no/0]).
@@ -368,6 +368,14 @@ port_change_feature(enabled) -> ?ERX_USB_PORT_FEATURE_C_ENABLE;
 port_change_feature(suspend) -> ?ERX_USB_PORT_FEATURE_C_SUSPEND;
 port_change_feature(over_current) -> ?ERX_USB_PORT_FEATURE_C_OVER_CURRENT;
 port_change_feature(reset) -> ?ERX_USB_PORT_FEATURE_C_RESET.
+
+-doc """
+The end of a function that cannot drive its interface, for the reason Why:
+the one exit reason the core takes as final (ended/6), which a function
+builds here alone.
+""".
+-spec unusable(term()) -> {shutdown, {unusable, term()}}.
+unusable(Why) -> {shutdown, {unusable, Why}}.
 
 -doc "Every device the bus holds, by its reference, for inspection.".
 -spec devices(state()) -> #{ref() => device()}.

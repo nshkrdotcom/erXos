@@ -43,6 +43,8 @@
 
 %% The plan -------------------------------------------------------------------------
 
+setting(Subclass, Protocol, {failing, _Reason, Announced}) ->
+    (setting(Subclass, Protocol, <<>>))#{hid := #{report_length => Announced}};
 setting(Subclass, Protocol, Descriptor) ->
     #{class => ?ERX_USB_CLASS_HID, subclass => Subclass, protocol => Protocol, endpoints => [],
       hid => #{report_length => byte_size(Descriptor)}}.
@@ -119,7 +121,8 @@ records_until(P, N, Last) ->
     end.
 
 %% A HID function on a model device of Subclass and Protocol whose report descriptor
-%% read answers Descriptor, started as the bus process starts one.
+%% read answers Descriptor, started as the bus process starts one: monitored, then
+%% told to go.
 function(#{places := Places}, Subclass, Protocol, Descriptor) ->
     Device = spawn(fun() -> device(Descriptor) end),
     Function = #{driver => erx_usb_hid, interface => ?INTERFACE, alternate => 0,
@@ -128,6 +131,7 @@ function(#{places := Places}, Subclass, Protocol, Descriptor) ->
                                          pipes => [{stand_in_pipe, Device, 16#81}], places => Places}),
     unlink(Pid),
     _ = erlang:monitor(process, Pid),
+    ok = erx_usb_bus:go(Pid),
     #{device => Device, pid => Pid}.
 
 keyboard(P) ->
@@ -187,6 +191,8 @@ serve(D = #{descriptor := Descriptor, setups := Setups}) ->
             serve(D)
     end.
 
+answer(<<_, ?ERX_USB_REQUEST_GET_DESCRIPTOR, _/binary>>, {in, _Length}, {failing, Reason, _Announced}) ->
+    {error, Reason};
 answer(<<_, ?ERX_USB_REQUEST_GET_DESCRIPTOR, _/binary>>, {in, Length}, Descriptor) ->
     {ok, binary:part(Descriptor, 0, min(Length, byte_size(Descriptor)))};
 answer(_Setup, none, _Descriptor) ->
@@ -274,6 +280,19 @@ an_interface_with_no_usable_report_ends_test() ->
     ?assertEqual({shutdown, {unusable, no_usable_report}}, ended(F)),
     ?assertEqual([release], records(P, 0, 1)),
     _ = keyboard(P),
+    stop(P).
+
+%% A report descriptor whose read times out or meets a controller error may read
+%% next time, so on an interface with no boot fallback that end counts toward the
+%% restart bound; a read the device refuses with a stall is final.
+a_failed_report_descriptor_read_counts_and_a_refused_one_is_final_test() ->
+    P = places(),
+    Timeout = function(P, 0, 0, {failing, timeout, byte_size(?KEYBOARD)}),
+    ?assertEqual({shutdown, {report_descriptor, timeout}}, ended(Timeout)),
+    Controller = function(P, 0, 0, {failing, {controller, 4}, byte_size(?KEYBOARD)}),
+    ?assertEqual({shutdown, {report_descriptor, {controller, 4}}}, ended(Controller)),
+    Stall = function(P, 0, 0, {failing, stall, byte_size(?KEYBOARD)}),
+    ?assertEqual({shutdown, {unusable, {report_descriptor, stall}}}, ended(Stall)),
     stop(P).
 
 %% Reports the fold cannot read, short or empty, give nothing; one cut to the transfer's

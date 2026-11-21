@@ -40,7 +40,7 @@ start_link(Usb, Controller) ->
     supervisor:start_link(?MODULE, {group, Usb, Controller}).
 
 -doc "Starts one function instance: its driver's start_link/1 with Args.".
--spec start_function(erx_usb_claim:driver(), map()) -> {ok, pid()} | {error, term()}.
+-spec start_function(erx_usb_claim:driver(), erx_usb_bus:start()) -> {ok, pid()} | {error, term()}.
 start_function(Driver, Args) ->
     Driver:start_link(Args).
 

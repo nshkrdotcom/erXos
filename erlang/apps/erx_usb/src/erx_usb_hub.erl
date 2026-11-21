@@ -11,8 +11,10 @@ It performs what the core decides: a report goes to the bus process as
 transfer on the hub's one pipe, tagged afresh, so only the completion of
 the transfer it posted last is taken; and the core's stop ends the
 process with the failed transfer as its reason, which the bus process sees
-as the function's end. The bus process answers a report with `{handled,
-Hub}`. Only the bus process knows the state of the hub's ports: this
+as the function's end; the core ends it only on a failed transfer, and a
+crash ends it too. It begins, with its first report, only when the bus
+process tells it to go (erx_usb_bus:go/1). The bus process answers a
+report with `{handled, Hub}`. Only the bus process knows the state of the hub's ports: this
 process holds nothing but the core's phase and its one posted transfer.
 """.
 -behaviour(gen_server).
@@ -20,24 +22,17 @@ process holds nothing but the core's phase and its one posted transfer.
 -export([start_link/1]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2]).
 
--type args() :: #{bus := pid(), device := erx_usb_bus_core:ref(), ports := pos_integer(),
-                  pipes := [erx_usb_pipe:pipe(), ...]}.
-
 -record(hub, {bus :: pid(), device :: erx_usb_bus_core:ref(), pipe :: erx_usb_pipe:pipe(),
               core :: erx_usb_hub_core:state(), posted = none :: none | reference()}).
 
 -doc "Starts the hub function of the hub Args names, linked to the caller.".
--spec start_link(args()) -> {ok, pid()}.
+-spec start_link(erx_usb_bus:start()) -> {ok, pid()}.
 start_link(Args) ->
     gen_server:start_link(?MODULE, Args, []).
 
 -doc false.
 init(#{bus := Bus, device := Device, ports := Ports, pipes := [Pipe | _]}) ->
-    Core = erx_usb_hub_core:new(Ports),
-    case perform(erx_usb_hub_core:step(start, Core), #hub{bus = Bus, device = Device, pipe = Pipe, core = Core}) of
-        {ok, Hub} -> {ok, Hub};
-        {stop, Reason, _Hub} -> {stop, Reason}
-    end.
+    {ok, #hub{bus = Bus, device = Device, pipe = Pipe, core = erx_usb_hub_core:new(Ports)}}.
 
 -doc false.
 handle_call(_Request, _From, Hub) ->
@@ -48,6 +43,8 @@ handle_cast(_Request, Hub) ->
     {noreply, Hub}.
 
 -doc false.
+handle_info({erx_usb_bus, go}, Hub = #hub{core = Core}) ->
+    noreply(perform(erx_usb_hub_core:step(start, Core), Hub));
 handle_info({handled, Device}, Hub = #hub{device = Device, core = Core}) ->
     noreply(perform(erx_usb_hub_core:step(handled, Core), Hub));
 handle_info({usb, Pipe, Tag, Result}, Hub = #hub{pipe = Pipe, posted = Tag, core = Core}) when Tag =/= none ->

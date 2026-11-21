@@ -1246,7 +1246,13 @@ with `start_link/1` on one map: its claimed `function`, its device's EP0
 as `control`, its own claimed `pipes` and the `places`, with the bus
 process, the device's reference and the run number beside them and, for
 a hub, its port count; it returns before any transfer and never calls
-the bus process, which starts it in its own loop. A device's reference names it within one bus
+the bus process, which starts it in its own loop. Then it waits: the bus
+process monitors the new instance and only then tells it to begin,
+`{erx_usb_bus, go}`, and the driver's descriptor reads, its first
+report and its first transfer all follow that message, so an instance
+that ends at once still ends with its reason, never as a monitor's
+`noproc`. A HID function may take its input number in its start, since
+that touches no device. A device's reference names it within one bus
 process's life; a restarted bus starts its references afresh, since
 everything that held the old ones ended with it.
 
@@ -2452,7 +2458,8 @@ descriptor's parser, and `erx_hid_core`, the protocol's plan and the fold.
 The bus process starts it with the claimed function, the device's
 control pipe, the function's interrupt-IN pipe and the controller's
 places; it takes its input number first, so a start that finds none
-fails, as unusable, and does the rest after its start has answered. It
+fails, as unusable, and does the rest once the bus process tells it to
+go. It
 ends by its own decision with `{shutdown, {transfer, Reason}}` on a
 failed transfer, which the bus restarts, or `{shutdown, {unusable,
 Reason}}` on a plan that cannot drive the interface, which the bus
@@ -2520,7 +2527,10 @@ reads the report descriptor and parses it, then:
   descriptors (`hidrdesc.h:307-368`), so every layout comes from the one
   parser;
 * on any other interface, uses the parsed layout or ends unusable with
-  the parser's reason, `no_usable_report`, or the failed read's;
+  the parser's reason, `no_usable_report`, or the failed read's, except
+  that a read that timed out or met a controller error ends the function
+  with `{shutdown, {report_descriptor, Reason}}`, a counted failure the
+  bus restarts within its bound, since the next read may succeed;
 * on a keyboard, a layout with the keys role, sends SET_IDLE(0), so it
   reports only on change.
 
@@ -3008,8 +3018,8 @@ medium had gone after the request.
 | a malformed or oversized descriptor, a STALL or a timeout during enumeration | `erx_usb_desc`, the pipe's answer | the enumeration; the device is detached | the port is disabled until its connection changes, within its attempts; the reason is in the port's inspection record |
 | a device of no claimed class, or past a bound | the claim table, the bounds | nothing: configured with no function, or refused | the inspection record names the reason |
 | a malformed HID report | the fold | nothing: the report is dropped and counted | none needed |
-| a function process crashes, or ends on a failed transfer of its HID or hub pipes | its supervisor link, seen by the bus | the function; its place is freed, an input number with `release` | the bus resets the function's pipes, which answers what its predecessor left posted `stopped`, then restarts it, at most 3 times in 60 s; past that, or when a pipe's reset fails, the device is detached and its port disabled until its connection changes |
-| an interface its function cannot drive; for HID, no usable report, a failed descriptor read with no boot fallback, or no free input number | the function, which ends or fails its start with `{shutdown, {unusable, Reason}}` | that function, for good while its device stays; nothing else | none: it is not restarted and counts toward no restart bound, the device's other functions run on, and the reason is in the device's inspection record |
+| a function process crashes, ends on a failed transfer of its HID or hub pipes, or, for HID, on a report descriptor read that timed out or met a controller error | its supervisor link, seen by the bus | the function; its place is freed, an input number with `release` | the bus resets the function's pipes, which answers what its predecessor left posted `stopped`, then restarts it, at most 3 times in 60 s; past that, or when a pipe's reset fails, the device is detached and its port disabled until its connection changes |
+| an interface its function cannot drive; for HID, no usable report, a descriptor read refused with a stall or otherwise failed than by a timeout or a controller error, with no boot fallback, or no free input number | the function, which ends or fails its start with `{shutdown, {unusable, Reason}}` | that function, for good while its device stays; nothing else | none: it is not restarted and counts toward no restart bound, the device's other functions run on, and the reason is in the device's inspection record |
 | a halted endpoint | the completion's code | the transfer; EP0 is reset by the controller, any other pipe stays halted | HID and hubs end the function, as above; BOT's own recovery through `reset_pipe` (its status flow or reset recovery) |
 | a step of `reset_pipe` fails | the command's or request's answer | the reset; the pipe is `halted` | the class's recovery; for BOT a failed reset recovery ends the function, which the bus restarts as above |
 | an Address Device that fails | the command's completion | the enumeration; the slot is disabled, and behind a transaction translator after a USB Transaction Error, the translator's buffer cleared before the answer | the port is disabled as for any failed enumeration; a CLEAR_TT_BUFFER that fails detaches the translator's hub and every device behind it |
