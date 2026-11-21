@@ -1780,9 +1780,10 @@ source, so no constant is copied by hand. A clear writes only those of
 its change's bits that the port's last status read reported, so a bit
 that set after that read, which the bus core has not seen, stays set for
 the core's next read. The controller writes no `PORTSC` while it
-is halted (xHCI 5.4.8, p. 405), and answers a port outside its port
-count `{error, badarg}`; a port event naming one is malformed and fails
-the controller, as any malformed event does. The bus core reads a root port's changes
+is halted (xHCI 5.4.8, p. 405). A running controller answers an
+operation on a port outside its port count `{error, badarg}`, and a
+port event naming one is malformed and fails the controller, as any
+malformed event does. The bus core reads a root port's changes
 in the USB 2 hub words and clears each one it reads, and a root port
 raises no further event until all of its change bits are clear (4.19.2,
 p. 322), so every `PORTSC` change bit stands behind one USB 2 change: the

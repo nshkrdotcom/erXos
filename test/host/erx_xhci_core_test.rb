@@ -32,7 +32,8 @@ class ErxXhciCoreTest < Minitest::Test
   EXPLORED = 'the_pipe_machine_is_explored_to_a_fixed_point_test_'
   START_EXPLORED = 'the_start_is_explored_to_a_fixed_point_test_'
   STATUS = 'the_status_of_a_running_controller_is_read_each_second_test'
-  PORTS_EXPLORED = 'the_root_port_machine_is_explored_to_a_fixed_point_test_'
+  PORTS_EXPLORED = 'the_root_port_machine_is_explored_to_a_fixed_point_test'
+  OWN_PORT = 'a_port_keeps_its_own_reported_changes_test'
 
   Seed = Data.define(:fault, :anchor, :replacement, :catching_case)
 
@@ -114,9 +115,9 @@ class ErxXhciCoreTest < Minitest::Test
              replacement: 'Clear = Bits,',
              catching_case: PORTS_EXPLORED),
     Seed.new(fault: "a port's reset change taken as another port's",
-             anchor: 'reported := Reported#{Port => Left}',
-             replacement: 'reported := Reported#{1 => Left}',
-             catching_case: PORTS_EXPLORED)
+             anchor: 'reported := Reported#{Port => StillReported}',
+             replacement: 'reported := Reported#{1 => StillReported}',
+             catching_case: OWN_PORT)
   ].freeze
 
   def test_xhci_core_cases_pass_under_eunit

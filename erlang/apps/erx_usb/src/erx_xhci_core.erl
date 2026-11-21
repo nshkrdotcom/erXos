@@ -53,8 +53,9 @@ modify/4. A clear writes only those of Change's bits that the port's last
 core has not seen, stays set for its next read. A port outside the
 controller's port count is answered `{error, badarg}`, and a port event
 that names one fails the controller as a malformed event, since the
-controller wrote it. Every PORTSC change bit stands behind one USB 2 change name, so a
-port's changes can all be cleared and it raises its next event (xHCI
+controller wrote it. Every PORTSC change bit stands behind one USB 2
+change name, so a port's changes can all be cleared and it raises its next
+event (xHCI
 4.19.2, p. 322): the link state change behind `suspend`, as FreeBSD's
 C_PORT_SUSPEND clears it (xhci.c:3461-3463); the warm reset change behind
 `reset`, both a reset's end (FreeBSD's usb_hub.c:1091-1103); and the
@@ -285,7 +286,7 @@ clear has written since.
                      line := idle | held | {draining, Events :: non_neg_integer()},
                      capabilities := none | capabilities(),
                      port_ops := [{port_no(), port_op(), From :: term()}],
-reported := #{port_no() => non_neg_integer()},
+                     reported := #{port_no() => non_neg_integer()},
                      slots := #{slot() => slot_record()},
                      pipes := #{pipe() => pipe_record()},
                      inflight := #{tag() => {pipe(), requester()}},
@@ -461,12 +462,12 @@ set_line(Line, {S, A}) -> {S#{line := Line}, A}.
 
 read([{{legacy, bios_owned}, Byte}], Now, Acc = {#{phase := {bios_handoff, _, reading}}, _}) ->
     bios_owned(Byte, Now, Acc);
-read([{{portsc, Port}, Word}], _Now, {S = #{port_ops := Ops, reported := Reported}, A}) ->
+read([{{portsc, Port}, Word}], _Now, {S = #{port_ops := Ops, reported := Reported}, A}) when is_integer(Word) ->
     case lists:keytake(Port, 1, Ops) of
         {value, {Port, Op, From}, Rest} ->
-            {Writes, Answer, Left} = port_operation(Op, Word, maps:get(Port, Reported, 0)),
-            Written = lists:foldl(fun(Write, In) -> emit({write, {portsc, Port}, Write}, In) end,
-                                  {S#{port_ops := Rest, reported := Reported#{Port => Left}}, A}, Writes),
+            {Writes, Answer, StillReported} = port_operation(Op, Word, maps:get(Port, Reported, 0)),
+            Next = {S#{port_ops := Rest, reported := Reported#{Port => StillReported}}, A},
+            Written = lists:foldl(fun(Write, In) -> emit({write, {portsc, Port}, Write}, In) end, Next, Writes),
             answer({reply, From}, Answer, Written);
         false ->
             emit({fail, {unexpected_read, {portsc, Port}}}, {S, A})
