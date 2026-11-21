@@ -441,6 +441,7 @@ record's.
   and maps every bus address to the same CPU address. A PCIe function's
   DMA range is the window of these that RAM backs, cut at its
   `dma_limit`, which the DMA facts' walk computes over the same bytes.
+* **Buses.** `bus-range` is two cells, the first bus and the last, each
   at most 255 and the first not above the last (PCI bus binding, section
   3.1.2); anything else is `malformed`. A bridge without it spans buses
   0 to 255, as FreeBSD's host takes them (`pci_host_generic_fdt.c:136-138`).
