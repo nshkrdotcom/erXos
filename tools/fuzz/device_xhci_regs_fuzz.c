@@ -90,7 +90,7 @@ LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
 	window = xhci->window_size + (data[0] | (uint64_t)data[1] << 8) % (WINDOW_MAX - xhci->window_size + 1);
 	memset(file, 0, sizeof(file));
 	memcpy(file, data + 2, size - 2 < window ? size - 2 : window);
-	erx_device_resolve_begin(xhci, window, &layout, &step);
+	erx_device_resolve_begin(xhci, window, 0, 0, &layout, &step);
 	while (step.op == ERX_DEVICE_RESOLVE_READ) {
 		check(++reads <= xhci->register_count + ERX_DEVICE_LIST_ENTRIES_MAX);
 		check(step.offset % (step.width / 8u) == 0 && step.offset + step.width / 8u <= window);

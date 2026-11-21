@@ -877,7 +877,8 @@ cannot write could leave its vector masked under a live route.
 MSI-X's table lies in a BAR, which is the holder's window, so the
 holder's device NIF writes it from the doorbell and data its given
 record carries, as it writes every address-bearing register itself and
-never from Erlang ([design-system.md](design-system.md#drivers)): entry
+never from Erlang ([design-system.md](design-system.md#drivers)), by
+the table `hw/svd/pci_msix` declares: entry
 0's address, data and vector control unmasked, and every other entry of
 the table's size masked, as FreeBSD masks every entry before it enables
 MSI-X (`pci.c:1941-1947`). That adds nothing to the MSI frame's
@@ -903,8 +904,8 @@ whose MSI capability takes only 32-bit addresses needs a doorbell below
 | --- | --- | --- |
 | the give, in the holder's creation | the domain library | the function's register windows over its placed BARs' spans, its IRQ object (`ERX_IRQ_MSI`, or `ERX_IRQ_LINE` for the closed bus's line), its DMA window or contiguous memory, its given record; it writes the setting's route and the `erx_msi_message` the IRQ object's creation returned; the mode stays `off`, and nothing is sent to the PCIe domain |
 | the driver's start | the driver, by `pci:open` | the device service sets `decoding`; the enumerator's plan writes the BARs and the MSI address, data and mask if they differ, with the function quiet, then memory space and MSI-X masked |
-| the driver's reset of its device | the driver, by its registers | xHCI's `HCRST`, virtio's status 0; nothing of PCIe; for an MSI-X route the NIF writes the whole table now and reads entry 0's data back, so the table's writes are made before the driver goes on |
-| the driver ready | the driver, by `pci:master` | `mastering`, planned only from `decoding`: MSI live, or MSI-X live, or INTx live; then bus master |
+| the driver's reset of its device | the driver, by its registers | xHCI's `HCRST`, virtio's status 0; nothing of PCIe; for an MSI-X route the NIF writes the whole table now and reads entry 0's data back, so the table's writes are made before the driver goes on; nothing that makes the device read or write memory is written yet |
+| the driver ready | the driver, by `pci:master` | `mastering`, planned only from `decoding`: MSI live, or MSI-X live, or INTx live; then bus master; only then does the driver start its device, as xHCI's install does |
 | a reset the registers cannot do | the driver, by `pci:reset` | `off`; a function-level reset when the function offers one; then `decoding` again; the driver resets its device, writes its MSI-X table again and sends `master` |
 | the holder's end | the device service | `off` |
 

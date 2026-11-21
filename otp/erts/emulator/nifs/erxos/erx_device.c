@@ -51,6 +51,8 @@ struct erx_device {
 	uintptr_t			register_keys[ERX_DEVICE_REGISTERS_MAX];
 	uintptr_t			field_keys[ERX_DEVICE_FIELDS_MAX];
 	erx_device_layout_t		layout;		/* where its registers are, decided at open */
+	const erx_device_peripheral_t	*msix_table;	/* pci_msix, bound at open, or NULL for no MSI-X route */
+	erx_device_msix_t		msix;		/* the spec's route, which msix_table is bound for */
 };
 
 static erx_device_t devices[ERX_DEVICE_MAX];
@@ -330,7 +332,9 @@ static bool
 same_spec(const erx_device_t *record, const erx_device_spec_t *spec, const erx_device_peripheral_t *peripheral)
 {
 	if (record->peripheral != peripheral || record->size != spec->size || record->line_count != spec->line_count ||
-	    record->memory != spec->memory || record->memory_size != spec->memory_size || record->coherent != spec->coherent)
+	    record->memory != spec->memory || record->memory_size != spec->memory_size || record->coherent != spec->coherent ||
+	    record->msix.address != spec->msix.address || record->msix.data != spec->msix.data ||
+	    record->msix.offset != spec->msix.offset || record->msix.entries != spec->msix.entries)
 		return (false);
 	for (uint32_t line = 0; line < spec->line_count; line++) {
 		if (record->lines[line] != spec->lines[line] ||
@@ -388,16 +392,57 @@ load_word(volatile uint8_t *window, uint8_t width, uint64_t offset)
 }
 
 /*
- * The record's layout, erx_device_resolve run over its window of `size` bytes: each read it
- * asks for is one load, and it asks for no more than its sources and ERX_DEVICE_LIST_ENTRIES_MAX
- * list entries, each inside the window.
+ * The function's MSI-X table bound at open (docs/design-pcie.md, "The choice"): the pci_msix
+ * table at the route's offset of the window, every element of every register of each of the
+ * route's entries wholly inside the window of `size` bytes at an offset aligned to its width,
+ * the table at an offset aligned to 8, as the capability's table offset is, whose low 3 bits are
+ * the BIR (pcireg.h:971-973). `table_end` is the end of its last byte, which the resolve keeps
+ * every register apart from (resolve_layout); the route's offset itself for none. A route of
+ * more entries than the table declares binds nothing and is refused.
  */
 static bool
-resolve_layout(erx_device_t *record, uint64_t size)
+bind_msix(erx_device_t *record, const erx_device_msix_t *msix, uint64_t size, uint64_t *table_end)
+{
+	const erx_device_peripheral_t *const table = erx_device_peripheral_find("pci_msix", sizeof("pci_msix") - 1);
+
+	record->msix_table = NULL;
+	record->msix = *msix;
+	*table_end = msix->offset;
+	if (msix->entries == 0)
+		return (true);
+	if (table == NULL || msix->offset % 8u != 0)
+		return (false);
+	for (uint32_t index = 0; index < table->register_count; index++) {
+		const erx_device_register_t *const reg = &table->registers[index];
+		uint64_t last, end;
+
+		if (msix->entries > reg->count || !erx_device_element_offset(reg, true, msix->entries - 1, &last) ||
+		    __builtin_add_overflow(last, msix->offset, &last) || last % (reg->width / 8u) != 0 ||
+		    __builtin_add_overflow(last, reg->width / 8u, &end) || end > size)
+			return (false);
+		if (end > *table_end)
+			*table_end = end;
+	}
+	record->msix_table = table;
+	return (true);
+}
+
+/*
+ * The record's layout, erx_device_resolve run over its window of `size` bytes, every register
+ * kept apart from its MSI-X table (bind_msix), so no register a driver may write is a table
+ * word the NIF writes: each read it asks for is one load, and it asks for no more than its
+ * sources and ERX_DEVICE_LIST_ENTRIES_MAX list entries, each inside the window.
+ */
+static bool
+resolve_layout(erx_device_t *record, const erx_device_msix_t *msix, uint64_t size)
 {
 	erx_device_resolve_t resolve;
+	uint64_t table_end;
 
-	erx_device_resolve_begin(record->peripheral, size, &record->layout, &resolve);
+	if (!bind_msix(record, msix, size, &table_end))
+		return (false);
+	erx_device_resolve_begin(record->peripheral, size, msix->offset, table_end - msix->offset, &record->layout,
+	    &resolve);
 	while (resolve.op == ERX_DEVICE_RESOLVE_READ)
 		erx_device_resolve_step(record->peripheral, &record->layout, &resolve,
 		    load_word(record->windows[0], resolve.width, resolve.offset));
@@ -410,6 +455,8 @@ erx_device_open(const erx_device_spec_t *spec, const uintptr_t *register_keys, c
 {
 	const erx_device_peripheral_t *const peripheral = erx_device_peripheral_find(spec->peripheral, spec->peripheral_length);
 	const uint32_t open = atomic_load_explicit(&devices_open, memory_order_relaxed);
+	/* A stand-in's window is the table's size; any other's the spec's, which spec_fits held to at least that. */
+	const uint64_t size = spec->form == ERX_DEVICE_FORM_STAND_IN && peripheral != NULL ? peripheral->window_size : spec->size;
 	erx_device_pages_t pages;
 	erx_device_t *record;
 	int status;
@@ -425,9 +472,7 @@ erx_device_open(const erx_device_spec_t *spec, const uintptr_t *register_keys, c
 	record = &devices[open];
 	record->peripheral = peripheral;
 	status = take_window(spec, &pages, peripheral->window_size, &record->windows[0]);
-	/* A stand-in's window is the table's size; any other's the spec's, which spec_fits held to at least that. */
-	if (status == ERX_OK &&
-	    !resolve_layout(record, spec->form == ERX_DEVICE_FORM_STAND_IN ? peripheral->window_size : spec->size))
+	if (status == ERX_OK && !resolve_layout(record, &spec->msix, size))
 		status = ERX_EINVAL;
 	if (status == ERX_OK)
 		status = take_lines(spec, record->entries);
@@ -2442,6 +2487,71 @@ trb_ring_create(const erx_device_t *device, queue_record_t **made)
 	return (ERX_OK);
 }
 
+/* Entry `entry`'s register `name` of the device's MSI-X table, and its byte offset in the window. */
+static bool
+msix_element(const erx_device_t *device, const char *name, uint32_t entry, xhci_reg_t *out)
+{
+	const erx_device_peripheral_t *const table = device->msix_table;
+	const uint32_t found = erx_device_register_named(table, name);
+
+	if (found == table->register_count)
+		return (false);
+	out->reg = &table->registers[found];
+	return (erx_device_element_offset(out->reg, true, entry, &out->offset) &&
+	    !__builtin_add_overflow(out->offset, device->msix.offset, &out->offset));
+}
+
+/* Entry `entry`'s field `field` of register `name`, written as `value` (field_word). */
+static bool
+msix_put(const erx_device_t *device, const char *name, const char *field, uint32_t entry, uint64_t value)
+{
+	xhci_reg_t r;
+	xhci_word_t word;
+	uint32_t found;
+
+	if (!msix_element(device, name, entry, &r))
+		return (false);
+	found = erx_device_field_named(device->msix_table, r.reg, field);
+	if (found == r.reg->field_count ||
+	    !field_word(device, r, &device->msix_table->fields[r.reg->first_field + found], value, &word))
+		return (false);
+	store(device, word.r.reg, word.r.offset, word.word);
+	return (true);
+}
+
+/*
+ * The function's MSI-X table written whole, after the driver's reset (docs/design-pcie.md, "Who
+ * programs what, and when"): entry 0 the route's message, unmasked, and every other entry of
+ * the route's masked, as FreeBSD masks every entry before it enables MSI-X (pci.c:1941-1947);
+ * then entry 0's data read back, which returns only once the writes before it have reached
+ * the function (the PCIe ordering rule, unverified), and must be what was written. ERX_OK for
+ * a device with no MSI-X route; ERX_EINVAL for a read that differs.
+ */
+static int
+msix_install(const erx_device_t *device)
+{
+	xhci_reg_t data;
+	uint64_t word, value;
+
+	if (device->msix_table == NULL)
+		return (ERX_OK);
+	if (!msix_put(device, "address_lo", "address", 0, device->msix.address & UINT32_MAX) ||
+	    !msix_put(device, "address_hi", "address", 0, device->msix.address >> 32) ||
+	    !msix_put(device, "data", "data", 0, device->msix.data) ||
+	    !msix_put(device, "vector_control", "mask", 0, 0))
+		return (ERX_EINVAL);
+	for (uint32_t entry = 1; entry < device->msix.entries; entry++) {
+		if (!msix_put(device, "vector_control", "mask", entry, 1))
+			return (ERX_EINVAL);
+	}
+	if (!msix_element(device, "data", 0, &data))
+		return (ERX_EINVAL);
+	word = load(device, data.reg, data.offset);
+	return (erx_device_field_of(data.reg, (erx_device_element_t){ .indexed = true, .index = 0 },
+	    &device->msix_table->fields[data.reg->first_field], word, &value) && value == device->msix.data ?
+	    ERX_OK : ERX_EINVAL);
+}
+
 /*
  * The install, once the reset has ended: the reset's idle report ends every holding, then the
  * form's sequence (erx_device_sequencer.h), its registers composed whole first, so a write the
@@ -2510,8 +2620,9 @@ command_put(const erx_device_t *device, const xhci_registers_t *regs, const erx_
  * negotiate/2 on an xHCI device (docs/design-usb.md, "Install"): its record made by the first
  * call, then one step of the controller's reset and start a call, as erx_trb_form_start_next
  * decides from the call's one reading and whether the call `continues` the negotiation or
- * begins one. ERX_EBUSY until the controller has started; ERX_OK, with no feature accepted, once
- * it has, and the record is ready. A refused install ends the negotiation with its error and the
+ * begins one. ERX_EBUSY until the controller has started, but ERX_DEVICE_RESET_DONE from the call
+ * that ends its reset and writes its MSI-X table; ERX_OK, with no feature accepted, once it has
+ * started, and the record is ready. A refused install ends the negotiation with its error and the
  * record goes back to the first step.
  */
 static int
@@ -2541,6 +2652,9 @@ trb_ring_negotiate(const erx_device_t *device, bool continues, uint64_t *accepte
 	case ERX_TRB_START_RESET:
 		status = command_put(device, &ring->regs, ring->regs.hcrst, 1) ? ERX_OK : ERX_EINVAL;
 		break;
+	case ERX_TRB_START_ROUTE:
+		status = msix_install(device);
+		break;
 	case ERX_TRB_START_INSTALL:
 		status = trb_ring_install(record);
 		break;
@@ -2548,8 +2662,10 @@ trb_ring_negotiate(const erx_device_t *device, bool continues, uint64_t *accepte
 	ring->step = status == ERX_OK ? next.step : ERX_TRB_START_BEGIN;
 	if (status != ERX_OK)
 		return (status);
-	if (!next.started)
+	if (next.answer == ERX_TRB_START_BUSY)
 		return (ERX_EBUSY);
+	if (next.answer == ERX_TRB_START_RESET_DONE)
+		return (ERX_DEVICE_RESET_DONE);
 	record->ready = true;
 	*accepted = 0;
 	return (ERX_OK);

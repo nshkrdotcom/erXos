@@ -38,13 +38,54 @@ the_controller_starts_and_answers_its_bus_test() ->
     [?assertEqual({read, Register}, play(Word)) || {Register, Word} <- ?CAPABILITIES],
     ?assertEqual({negotiate, 0}, play({error, ebusy})),
     Controller ! {erx_irq, device(), ?IRQ_LINE},
-    %% The retry after ebusy carries the negotiation on; only the first call begins one.
+    %% The retry after ebusy carries the negotiation on; only the first call begins one. The
+    %% reset's end, a controller that is no PCIe function goes on from at once.
+    ?assertEqual({negotiate, continue}, play(reset)),
     ?assertEqual({negotiate, continue}, play({ok, 0})),
     ?assertEqual({ack, ?IRQ_LINE}, play(ok)),
     ok = erx_usb_bus_link:attach(Controller),
     ?assertEqual({root_ports, 4}, bus_answer()),
     ?assertEqual({read, usbsts}, play(0)),
     stop(Controller).
+
+%% A controller that is a PCIe function opens it through the pci facet before it opens its
+%% device, and masters it once the negotiation answers that the reset has ended, before the
+%% call that installs, so the controller reads and writes memory only once it may
+%% (docs/design-pcie.md, "Who programs what, and when").
+a_pci_function_is_opened_first_and_mastered_before_the_install_test() ->
+    flush(),
+    Self = self(),
+    Place = {0, 0, 2, 0},
+    Facet = spawn(fun() -> pci_facet(Self) end),
+    persistent_term:put({erx, pci}, Facet),
+    Owner = spawn(fun() -> Self ! {started, erx_xhci:start_link(#{stand_in => Self, place => Place})},
+                           receive stop -> ok end end),
+    ?assertEqual({pci, {open, Place}}, play(ok)),
+    Controller = receive {started, {ok, Pid}} -> Pid after 2000 -> error(not_started) end,
+    ?assertEqual({elements, bios_owned}, play(0)),
+    ?assertEqual({elements, revision}, play(2)),
+    [?assertEqual({read, Register}, play(Word)) || {Register, Word} <- ?CAPABILITIES],
+    ?assertEqual({negotiate, 0}, play({error, ebusy})),
+    Controller ! {erx_irq, device(), ?IRQ_LINE},
+    ?assertEqual({negotiate, continue}, play(reset)),
+    ?assertEqual({pci, {master, Place}}, play(ok)),
+    ?assertEqual({negotiate, continue}, play({error, ebusy})),
+    ?assertEqual({negotiate, continue}, play({ok, 0})),
+    ?assertEqual({ack, ?IRQ_LINE}, play(ok)),
+    ok = erx_usb_bus_link:attach(Controller),
+    ?assertEqual({root_ports, 4}, bus_answer()),
+    stop(Controller),
+    Owner ! stop,
+    persistent_term:erase({erx, pci}),
+    exit(Facet, kill).
+
+%% A pci facet that plays each request to the test, as the device stand-in plays a call.
+pci_facet(Player) ->
+    receive
+        {'$gen_call', From, Request} ->
+            gen_server:reply(From, erx_device:play(Player, {pci, Request})),
+            pci_facet(Player)
+    end.
 
 %% A root port's event goes to the bus process from an interrupt's pass, which clears the
 %% event interrupt and interrupt pending, reads the events until an empty batch and then

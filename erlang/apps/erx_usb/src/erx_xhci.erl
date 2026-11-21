@@ -45,7 +45,11 @@ I-th supported-protocol capability's REVISION `{revision, I - 1}`.
 
 -define(IRQ_LINE, 0).
 
--record(controller, {dev :: erx_device:device(),
+%% How long a `pci` facet call may take: the PCIe domain plans and writes one function.
+-define(PCI_TIMEOUT_MS, 5000).
+
+-record(controller, {place :: none | {non_neg_integer(), byte(), 0..31, 0..7},
+                     dev :: erx_device:device(),
                      irq :: erx_irq_line:handle(),
                      bus = none :: none | pid(),
                      core :: erx_xhci_core:state(),
@@ -59,12 +63,15 @@ start_link(Spec) ->
 -doc false.
 init(Spec) ->
     maybe
+        ok ?= tagged(pci_open, pci(Spec, open)),
         {ok, Dev} ?= tagged(open, erx_device:open(Spec)),
         {ok, Irq} ?= tagged(attach, erx_irq_line:attach(Dev, ?IRQ_LINE)),
-        {ok, #controller{dev = Dev, irq = Irq, core = erx_xhci_core:new()}, {continue, start}}
+        {ok, #controller{place = place(Spec), dev = Dev, irq = Irq, core = erx_xhci_core:new()}, {continue, start}}
     else
         {error, Reason} -> {stop, Reason}
     end.
+
+tagged(_Step, ok) -> ok;
 
 tagged(_Step, {ok, Value}) -> {ok, Value};
 tagged(Step, {error, Reason}) -> {error, {Step, Reason}}.
@@ -170,10 +177,36 @@ complete(#controller{dev = Dev}) -> erx_device:complete(Dev, events).
 
 queue_state(#controller{dev = Dev}, Pipe) -> erx_device:queue_state(Dev, Pipe).
 
-negotiate(#controller{dev = Dev}, Wanted) ->
+negotiate(C = #controller{dev = Dev}, Wanted) ->
     case erx_device:negotiate(Dev, Wanted) of
         {ok, _Features} -> ok;
+        reset -> master(C);
         Refused -> Refused
+    end.
+
+%% The function's PCIe side (docs/design-pcie.md, "Who programs what, and when"), for a
+%% controller that is a PCIe function, whose record names its place: `open` before the
+%% device is opened, so its window decodes and it masters nothing while the driver resets
+%% it, and `master` once the negotiation answers `reset`, its reset ended and its MSI-X
+%% table written, through the domain's `pci` facet; the negotiation then goes on at once to
+%% the install, whose registers make the controller read and write memory. A controller
+%% that is no PCIe function has neither, and goes on as well.
+place(Spec) -> maps:get(place, Spec, none).
+
+pci(Spec, Request) -> pci_call(place(Spec), Request).
+
+master(C = #controller{place = Place}) ->
+    case pci_call(Place, master) of
+        ok -> negotiate(C, continue);
+        {error, Reason} -> {error, {pci_master, Reason}}
+    end.
+
+pci_call(none, _Request) ->
+    ok;
+pci_call(Place, Request) ->
+    case erx:cap(pci) of
+        Facet when is_pid(Facet) -> gen_server:call(Facet, {Request, Place}, ?PCI_TIMEOUT_MS);
+        undefined -> {error, no_pci_facet}
     end.
 
 read(#controller{dev = Dev}, Register) -> erx_device:read(Dev, nif_register(Register)).

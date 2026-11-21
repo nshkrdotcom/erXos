@@ -64,7 +64,8 @@ module Erx
     SPACES_MAX = 4
     IDENTIFIER = /\A[A-Za-z][A-Za-z0-9_]*\z/
     ARRAY_NAME = /\A(.*)\[%s\]\z/
-    ELEMENTS_MAX = 256
+    # The most elements of one register array or cluster: an MSI-X table's 2048 entries.
+    ELEMENTS_MAX = 2048
     # An extended capability's ID is the byte its entry's first word begins with; 0 is reserved
     # (xHCI 1.2, Table 7-2, p. 517).
     CAPABILITY_IDS = (1..255)

@@ -92,6 +92,11 @@
 #else
 #define SEED_INSTALL_NOT_READY	false
 #endif
+#ifdef ERX_TRB_FORM_SEED_INSTALL_UNMASTERED
+#define SEED_INSTALL_UNMASTERED	true
+#else
+#define SEED_INSTALL_UNMASTERED	false
+#endif
 #ifdef ERX_TRB_FORM_SEED_STARTED_HALTED
 #define SEED_STARTED_HALTED	true
 #else
@@ -937,11 +942,17 @@ erx_trb_form_start_next(erx_trb_start_step_t step, bool continues, erx_trb_start
 	case ERX_TRB_START_RESETTING:
 		if (seen.resetting || (seen.not_ready && !SEED_INSTALL_NOT_READY))
 			return (wait);
+		if (SEED_INSTALL_UNMASTERED)
+			return ((erx_trb_start_next_t){ .effect = ERX_TRB_START_INSTALL, .step = ERX_TRB_START_STARTING });
+		return ((erx_trb_start_next_t){ .effect = ERX_TRB_START_ROUTE, .step = ERX_TRB_START_RESET_ENDED,
+		    .answer = ERX_TRB_START_RESET_DONE });
+	case ERX_TRB_START_RESET_ENDED:
 		return ((erx_trb_start_next_t){ .effect = ERX_TRB_START_INSTALL, .step = ERX_TRB_START_STARTING });
 	case ERX_TRB_START_STARTING:
 		if (seen.halted && !SEED_STARTED_HALTED)
 			return (wait);
-		return ((erx_trb_start_next_t){ .effect = ERX_TRB_START_NOTHING, .step = ERX_TRB_START_BEGIN, .started = true });
+		return ((erx_trb_start_next_t){ .effect = ERX_TRB_START_NOTHING, .step = ERX_TRB_START_BEGIN,
+		    .answer = ERX_TRB_START_STARTED });
 	}
 	return ((erx_trb_start_next_t){ .effect = ERX_TRB_START_NOTHING, .step = ERX_TRB_START_BEGIN });
 }

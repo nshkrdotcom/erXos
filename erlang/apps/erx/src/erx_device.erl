@@ -227,12 +227,15 @@ queue_create(_Dev, _Index, _Size, _BufferSize) ->
 %% failure after the reset leaves the device FAILED, and any failure every queue's post/4 and complete/2
 %% `{error, broken}` until a later negotiate/2 succeeds.
 %% An xHCI controller's negotiation is its reset and start, one step a call
-%% (docs/design-usb.md, "Install"): `{error, ebusy}` until it has started, then `{ok, 0}`.
+%% (docs/design-usb.md, "Install"): `{error, ebusy}` until it has started, then `{ok, 0}`,
+%% except `reset` from the call that ends the controller's reset and writes a PCIe function's
+%% MSI-X table, after which the driver masters its function and continues, which installs
+%% (docs/design-pcie.md, "Who programs what, and when").
 %% A call with a number begins the negotiation; only the controller core's retry after
 %% `{error, ebusy}` passes `continue`, which carries it on. Virtio's and GENET's take no
 %% steps and answer `continue` with `{error, einval}`.
 -spec negotiate(device(), non_neg_integer() | continue) ->
-          {ok, non_neg_integer()} | {error, atom() | {status, integer()}}.
+          {ok, non_neg_integer()} | reset | {error, atom() | {status, integer()}}.
 negotiate(_Dev, _Wanted) ->
     erlang:nif_error(undef).
 

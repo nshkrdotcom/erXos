@@ -215,7 +215,8 @@ typedef struct erx_device_layout {
  * outside the window, a list longer than that, more entries of a capability than its cluster has
  * instances, and, at its end, any element of any register that does not lie wholly inside the
  * window at an offset aligned to its width, and any two cluster instances, or an instance and
- * the registers at fixed offsets, whose bytes overlap.
+ * the registers at fixed offsets, whose bytes overlap, or any of them and the span the open keeps
+ * apart, a PCIe function's MSI-X table, which the NIF alone writes.
  */
 typedef enum erx_device_resolve_op {
 	ERX_DEVICE_RESOLVE_READ,	/* read the `width`-bit word at `offset`, then step with it */
@@ -229,6 +230,8 @@ typedef struct erx_device_resolve {
 	uint8_t			width;
 	/* The machine's own: */
 	uint64_t		size;		/* the window's bytes */
+	uint64_t		kept_first;	/* the span no register may share, first byte and end; */
+	uint64_t		kept_end;	/* kept_first UINT64_MAX for none */
 	uint32_t		next;		/* the next register to consider, while reading sources */
 	uint64_t		entry;		/* the list entry being read, 0 for none */
 	uint32_t		entries;	/* the entries read */
@@ -236,9 +239,12 @@ typedef struct erx_device_resolve {
 	uint32_t		found[ERX_DEVICE_SLOTS_MAX];
 } erx_device_resolve_t;
 
-/* The first step, over a window of `size` bytes; `layout` is the machine's to fill. */
-void	erx_device_resolve_begin(const erx_device_peripheral_t *peripheral, uint64_t size, erx_device_layout_t *layout,
-	    erx_device_resolve_t *resolve);
+/*
+ * The first step, over a window of `size` bytes, keeping registers off the `kept_bytes` bytes at
+ * `kept` (none for 0); `layout` is the machine's to fill.
+ */
+void	erx_device_resolve_begin(const erx_device_peripheral_t *peripheral, uint64_t size, uint64_t kept, uint64_t kept_bytes,
+	    erx_device_layout_t *layout, erx_device_resolve_t *resolve);
 /* The next step, given the word the last READ asked for. */
 void	erx_device_resolve_step(const erx_device_peripheral_t *peripheral, erx_device_layout_t *layout,
 	    erx_device_resolve_t *resolve, uint64_t word);

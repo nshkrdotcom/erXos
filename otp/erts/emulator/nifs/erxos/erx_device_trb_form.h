@@ -326,9 +326,11 @@ void	erx_trb_form_reset(erx_trb_form_t *form);
  * The controller's reset and start, which erx_device:negotiate/2 takes one step a call
  * (docs/design-usb.md, "Install"; xHCI 1.2, 4.2 and 5.4.1, pp. 80-82 and 393-394): run cleared
  * until the controller reads halted with run clear; then HCRST, which it allows only then; once HCRST and the
- * controller-not-ready bit read clear, before which no register is written, the reset's idle
- * report (erx_trb_form_reset) and the install (erx_trb_form_install), whose last write is run;
- * once the controller leaves halted, started. Each call reads USBCMD and USBSTS once, at its
+ * controller-not-ready bit read clear, before which no register is written, the function's
+ * MSI-X table, answered `reset`, so the driver masters its function before the controller reads
+ * or writes memory (docs/design-pcie.md, "Who programs what, and when"); on the next call, the
+ * reset's idle report (erx_trb_form_reset) and the install (erx_trb_form_install), whose last
+ * write is run; once the controller leaves halted, started. Each call reads USBCMD and USBSTS once, at its
  * start, and the decision is a pure function of that reading, of the step the last call left
  * and of whether the call continues the negotiation, so no call waits: a wait is one reading a
  * call, answered `{error, ebusy}` until it ends, and the controller core holds the install's one
@@ -349,6 +351,7 @@ typedef enum erx_trb_start_step {
 	 */
 	ERX_TRB_START_BEGIN,
 	ERX_TRB_START_RESETTING,	/* HCRST written: waits for it and USBSTS.CNR to read clear */
+	ERX_TRB_START_RESET_ENDED,	/* the table written and `reset` answered: the next call installs */
 	ERX_TRB_START_STARTING,		/* installed and run: waits for HCH to read clear */
 } erx_trb_start_step_t;
 
@@ -365,13 +368,21 @@ typedef enum erx_trb_start_effect {
 	ERX_TRB_START_NOTHING,
 	ERX_TRB_START_CLEAR_RUN,	/* USBCMD.RS 0 */
 	ERX_TRB_START_RESET,		/* USBCMD.HCRST 1 */
+	ERX_TRB_START_ROUTE,		/* the function's MSI-X table written, for a device with an MSI-X route */
 	ERX_TRB_START_INSTALL,		/* erx_trb_form_reset, then erx_trb_form_install's sequence applied */
 } erx_trb_start_effect_t;
+
+/* What the call answers once its effect is applied. */
+typedef enum erx_trb_start_answer {
+	ERX_TRB_START_BUSY,		/* `{error, ebusy}`: call again, continuing */
+	ERX_TRB_START_RESET_DONE,	/* `reset`: the driver masters its function, then continues */
+	ERX_TRB_START_STARTED,		/* `{ok, 0}` */
+} erx_trb_start_answer_t;
 
 typedef struct erx_trb_start_next {
 	erx_trb_start_effect_t	effect;
 	erx_trb_start_step_t	step;		/* what the next call takes up, if it continues */
-	bool			started;	/* the call answers ok; otherwise `{error, ebusy}` */
+	erx_trb_start_answer_t	answer;
 } erx_trb_start_next_t;
 
 /*

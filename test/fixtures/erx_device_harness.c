@@ -828,7 +828,7 @@ resolve(const erx_device_peripheral_t *xhci, const uint8_t *file, uint64_t size,
 	erx_device_resolve_t step;
 	uint32_t reads = 0;
 
-	erx_device_resolve_begin(xhci, size, layout, &step);
+	erx_device_resolve_begin(xhci, size, 0, 0, layout, &step);
 	while (step.op == ERX_DEVICE_RESOLVE_READ) {
 		uint64_t word = 0;
 

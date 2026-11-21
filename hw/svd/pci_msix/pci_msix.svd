@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
+     SPDX-License-Identifier: BSD-2-Clause
+
+     A PCIe function's MSI-X table (docs/design-pcie.md, "The choice"), which lies in one of
+     the function's memory BARs at the offset its MSI-X capability gives. The holder's device
+     NIF binds it at open at its function record's table offset inside the record's window and
+     writes it at the install, after the driver's reset; nothing else writes it.
+     Written by erXos from FreeBSD's PCI code at releng/15.1, commit
+     95719d8a895bf8170851e9844d9b4092b1d2b6fe: sys/dev/pci/pci.c (SHA-256
+     f9cb7ceb56747315984fa5485ba503eeda638a9bde2c4253f20d197a8bda022a), lines 1694-1706,
+     pci_write_msix_entry, which writes an entry's address low at +0, address high at +4 and
+     data at +8, each entry 16 bytes, and lines 1737-1753, pci_mask_msix, which sets the mask
+     bit in the vector control word at +12; and sys/dev/pci/pcireg.h (SHA-256
+     e807eb05747d6c47a5722ff7b2be385d09053b1d2a3acfc16af4a5ab08bd6507), line 980,
+     PCIM_MSIX_VCTRL_MASK, bit 0. The PCI Express Base Specification's MSI-X table section
+     was not read: the layout is FreeBSD's, unverified against the specification.
+
+     A table holds at most 2048 entries (the capability's table size field is 11 bits,
+     PCIM_MSIXCTRL_TABLE_SIZE); the record's entry count bounds the elements an open binds.
+     Each word is written 32 bits at a time, as FreeBSD writes them. Every register is owned
+     by the NIF: the address and data are the doorbell and value the given record carries,
+     which no Erlang code writes.
+-->
+<device schemaVersion="1.3">
+  <name>pci_msix</name>
+  <version>1</version>
+  <description>PCIe MSI-X table</description>
+  <addressUnitBits>8</addressUnitBits>
+  <width>32</width>
+  <peripherals>
+    <peripheral>
+      <name>pci_msix</name>
+      <description>The MSI-X table entries of one function</description>
+      <baseAddress>0x0</baseAddress>
+      <addressBlock>
+        <offset>0x0</offset>
+        <size>0x8000</size>
+        <usage>registers</usage>
+      </addressBlock>
+      <registers>
+        <register>
+          <name>ADDRESS_LO[%s]</name><ownedByNif>true</ownedByNif><addressOffset>0x00</addressOffset><access>read-write</access>
+          <dim>2048</dim><dimIncrement>0x10</dimIncrement>
+          <fields>
+            <field><name>ADDRESS</name><bitOffset>0</bitOffset><bitWidth>32</bitWidth></field>
+          </fields>
+        </register>
+        <register>
+          <name>ADDRESS_HI[%s]</name><ownedByNif>true</ownedByNif><addressOffset>0x04</addressOffset><access>read-write</access>
+          <dim>2048</dim><dimIncrement>0x10</dimIncrement>
+          <fields>
+            <field><name>ADDRESS</name><bitOffset>0</bitOffset><bitWidth>32</bitWidth></field>
+          </fields>
+        </register>
+        <register>
+          <name>DATA[%s]</name><ownedByNif>true</ownedByNif><addressOffset>0x08</addressOffset><access>read-write</access>
+          <dim>2048</dim><dimIncrement>0x10</dimIncrement>
+          <fields>
+            <field><name>DATA</name><bitOffset>0</bitOffset><bitWidth>32</bitWidth></field>
+          </fields>
+        </register>
+        <register>
+          <name>VECTOR_CONTROL[%s]</name><ownedByNif>true</ownedByNif><addressOffset>0x0c</addressOffset><access>read-write</access>
+          <dim>2048</dim><dimIncrement>0x10</dimIncrement>
+          <fields>
+            <field><name>MASK</name><bitOffset>0</bitOffset><bitWidth>1</bitWidth></field>
+          </fields>
+        </register>
+      </registers>
+    </peripheral>
+  </peripherals>
+</device>

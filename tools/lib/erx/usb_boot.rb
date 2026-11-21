@@ -10,10 +10,10 @@ module Erx
   # suite's manifest (PcieDomain.manifest) with the test holder on the `usb` release
   # script, which carries erx_usb, so the holder plays the USB domain of design-usb.md's
   # "Who holds a controller". From the system's Erlang shell one line (line) waits for the
-  # holder, then at the holder reads its function's record (erx_device_record), opens and
-  # masters the function through its pci facet, starts the controller's supervisor,
-  # erx_usb_sup, on erx_xhci, and polls the controller's and the bus's states until the
-  # keyboard's device descriptor is read or the wait runs out. Its answer names four
+  # holder, then at the holder reads its function's record (erx_device_record), starts one
+  # controller process alone as a probe, then the controller's supervisor, erx_usb_sup, on
+  # erx_xhci, whose start opens and masters the function, and polls the controller's and
+  # the bus's states until the keyboard's device descriptor is read or the wait runs out. Its answer names four
   # stages, each a cell of its own (STAGES): the controller running, a root port seeing the
   # keyboard, the keyboard addressed, and its device descriptor read.
   module UsbBoot
@@ -29,20 +29,26 @@ module Erx
     SIDE_CELLS = STAGES.map { |stage| "-#{stage}" }.freeze
 
     # How long the line may take to print its answer: the holder's wait (PcieDomain::HOLD_SECONDS
-    # covers it), the open and master, and the enumeration poll's 150 rounds of 200 ms.
+    # covers it), the probe's 10 s, and the enumeration poll's 150 rounds of 200 ms.
     ANSWER_SECONDS = PcieDomain::HOLD_SECONDS + 60
 
     # The body of the fun the holder runs, one expression per element: it returns the stages,
-    # the function's peripheral word, the open's and the master's answers, and what the
-    # stages were read from.
+    # the function's peripheral word, how a controller
+    # process started alone ended, and what the stages were read from, as text.
     HOLDER_BODY = [
-      # The function's record: its peripheral word, then its spec and place.
+      # The function's record: its peripheral word, then its spec.
       'UbPe=hd([list_to_atom(UbP)||["function","usb",UbP|_]<-erx_device_record:records()])',
-      '{ok,[UbSpec]}=erx_device_record:find(usb,UbPe)', 'UbPlace=maps:get(place,UbSpec)',
-      'UbOpen=gen_server:call(erx:cap(pci),{open,UbPlace},5000)',
-      'UbMaster=gen_server:call(erx:cap(pci),{master,UbPlace},5000)',
-      # The supervisor, owned by a process of its own so the erpc call's end leaves it running.
+      '{ok,[UbSpec]}=erx_device_record:find(usb,UbPe)',
       'UbSelf=self()',
+      # UbProbe: one controller process started alone by a process that traps its exit, and
+      # how it ended within 10 s (or its core's phase then), so a failure the supervisors would
+      # only log is seen in the answer.
+      'spawn(fun()->process_flag(trap_exit,true),UbP0=(catch erx_xhci:start_link(UbSpec)),' \
+      'UbP1=receive {\'EXIT\',_,UbX0}->UbX0 after 10000->{running,catch maps:get(phase,hd([UbM0||' \
+      'UbM0<-tuple_to_list(sys:get_state(element(2,UbP0))),is_map(UbM0),is_map_key(phase,UbM0)]))} end,' \
+      'case UbP0 of {ok,UbPp}->unlink(UbPp),exit(UbPp,kill);_->ok end,UbSelf!{ub_probe,{UbP0,UbP1}} end)',
+      'UbProbe=receive {ub_probe,UbPr}->UbPr after 15000->probe_timeout end',
+      # The supervisor, owned by a process of its own so the erpc call's end leaves it running.
       'spawn(fun()->UbSelf!{ub_started,erx_usb_sup:start_link({erx_xhci,start_link,[UbSpec]})},' \
       'receive after infinity->ok end end)',
       'UbSup=receive {ub_started,{ok,UbS}}->UbS;{ub_started,UbE}->exit({usb_sup,UbE}) after 10000->exit(usb_sup_timeout) end',
@@ -64,7 +70,10 @@ module Erx
       # UbPoll(K): looks every 200 ms at most K times until the descriptor is read.
       'UbPoll=fun UbPo(0)->UbLook();UbPo(UbK)->case UbLook() of {[_,_,_,{described,true}],_}=UbL->UbL;' \
       '_->timer:sleep(200),UbPo(UbK-1) end end',
-      '{UbStages,UbSeen}=UbPoll(150)', '{UbStages,UbPe,UbOpen,UbMaster,UbSeen}'
+      '{UbStages,UbSeen}=UbPoll(150)',
+      # The answer as text: an exit reason the system domain decodes holds no atom it lacks.
+      'UbText=iolist_to_binary(io_lib:format("~0kp",[{UbStages,UbPe,UbProbe,UbSeen}]))',
+      'binary:part(UbText,0,min(byte_size(UbText),1500))'
     ].join(',').freeze
 
     # The line typed at the Erlang shell. Every variable starts with Ub or Pc (PcieDomain::WAIT).
@@ -82,7 +91,7 @@ module Erx
     # The stages an answer's text shows passed.
     def self.passed(text)
       line = text.b.sub(/\A#{PcieDomain::PROMPT}/n, '')
-      stages = line[/\A\{usb_enum,\{\[([^\]]*)\]/n, 1].to_s
+      stages = line[/\A\{usb_enum,<<"\{\[([^\]]*)\]/n, 1].to_s
       stages.scan(STAGE).filter_map { |stage, value| stage if value == 'true' }
     end
 

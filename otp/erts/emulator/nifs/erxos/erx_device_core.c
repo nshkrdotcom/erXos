@@ -173,11 +173,15 @@ take_entry(const erx_device_peripheral_t *peripheral, erx_device_layout_t *layou
 /*
  * The bytes each place of a layout's registers covers, from its first element's first byte to
  * its last element's last: place 0 is the registers at fixed offsets, and place 1 + n slot n's
- * cluster instance. A place with no element has first UINT64_MAX.
+ * cluster instance, and the last, KEPT_PLACE, the span the open keeps apart. A place with no
+ * element has first UINT64_MAX.
  */
+#define PLACES		(2 + ERX_DEVICE_SLOTS_MAX)
+#define KEPT_PLACE	(PLACES - 1)
+
 typedef struct places {
-	uint64_t	first[1 + ERX_DEVICE_SLOTS_MAX];
-	uint64_t	end[1 + ERX_DEVICE_SLOTS_MAX];
+	uint64_t	first[PLACES];
+	uint64_t	end[PLACES];
 } places_t;
 
 static uint32_t
@@ -224,8 +228,8 @@ elements_inside(const erx_device_peripheral_t *peripheral, const erx_device_layo
 static bool
 places_apart(const places_t *places)
 {
-	for (uint32_t a = 0; a < 1 + ERX_DEVICE_SLOTS_MAX; a++) {
-		for (uint32_t b = a + 1; b < 1 + ERX_DEVICE_SLOTS_MAX; b++) {
+	for (uint32_t a = 0; a < PLACES; a++) {
+		for (uint32_t b = a + 1; b < PLACES; b++) {
 			if (places->first[a] < places->end[b] && places->first[b] < places->end[a])
 				return (false);
 		}
@@ -235,7 +239,8 @@ places_apart(const places_t *places)
 
 /*
  * The walk's end: each capability cluster's registers have the instances found, every element
- * must fit the window, and no cluster instance may overlap another or the fixed registers.
+ * must fit the window, and no cluster instance may overlap another, the fixed registers or the
+ * kept span.
  */
 static void
 finish(const erx_device_peripheral_t *peripheral, erx_device_layout_t *layout, erx_device_resolve_t *resolve)
@@ -243,10 +248,12 @@ finish(const erx_device_peripheral_t *peripheral, erx_device_layout_t *layout, e
 	places_t places;
 	bool fits = true;
 
-	for (uint32_t place = 0; place < 1 + ERX_DEVICE_SLOTS_MAX; place++) {
+	for (uint32_t place = 0; place < PLACES; place++) {
 		places.first[place] = UINT64_MAX;
 		places.end[place] = 0;
 	}
+	places.first[KEPT_PLACE] = resolve->kept_first;
+	places.end[KEPT_PLACE] = resolve->kept_end;
 	for (uint32_t index = 0; index < peripheral->register_count; index++) {
 		const erx_device_register_t *const reg = &peripheral->registers[index];
 		const erx_device_base_t *const base = reg->base != 0 ? &peripheral->bases[reg->base - 1] : NULL;
@@ -296,11 +303,12 @@ advance(const erx_device_peripheral_t *peripheral, erx_device_layout_t *layout, 
 }
 
 void
-erx_device_resolve_begin(const erx_device_peripheral_t *peripheral, uint64_t size, erx_device_layout_t *layout,
-    erx_device_resolve_t *resolve)
+erx_device_resolve_begin(const erx_device_peripheral_t *peripheral, uint64_t size, uint64_t kept, uint64_t kept_bytes,
+    erx_device_layout_t *layout, erx_device_resolve_t *resolve)
 {
 	*layout = (erx_device_layout_t){ 0 };
-	*resolve = (erx_device_resolve_t){ .size = size };
+	*resolve = (erx_device_resolve_t){ .size = size, .kept_first = kept_bytes == 0 ? UINT64_MAX : kept,
+	    .kept_end = kept_bytes == 0 ? 0 : kept + kept_bytes };
 	for (uint32_t index = 0; index < peripheral->register_count; index++)
 		layout->elements[index] = peripheral->registers[index].count;
 	advance(peripheral, layout, resolve);

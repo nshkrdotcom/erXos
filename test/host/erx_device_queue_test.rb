@@ -37,6 +37,18 @@ class ErxDeviceQueueTest < Minitest::Test
     assert_match(/^erx_device_xhci done$/, xhci_output)
   end
 
+  # A PCIe function's MSI-X table, a run of its own: the call that ends the reset writes it and
+  # answers reset before the install, and an open refuses a table that is misaligned, too long,
+  # past the window or over the controller's registers.
+  def test_the_msix_table_on_an_xhci_controller
+    assert_match(/^erx_device_xhci msix done$/, xhci_output(args: ['msix']))
+  end
+
+  # The open that does not keep the controller's registers off the MSI-X table fails the MSI-X run.
+  def test_an_msix_table_over_the_registers_fails_the_harness
+    xhci_output(['msix->offset, table_end - msix->offset,', 'msix->offset, 0,'], args: ['msix'])
+  end
+
   # The install writing IMAN with its pending bit as read, which clears an interrupt the reset
   # left pending, fails the xHCI harness.
   def test_a_register_word_keeping_a_one_to_clear_bit_fails_the_harness
@@ -150,8 +162,8 @@ class ErxDeviceQueueTest < Minitest::Test
 
   XHCI_HARNESS = File.join(ROOT, 'test/fixtures/erx_device_xhci_harness.c')
 
-  # The xHCI harness's output over erx_device.c, with `seed` applied, which must fail it.
-  def xhci_output(seed = nil)
+  # The xHCI harness's output over erx_device.c, run with `args`, with `seed` applied, which must fail it.
+  def xhci_output(seed = nil, args: [])
     Dir.mktmpdir('erx-device-xhci-') do |directory|
       source = File.join(NIFS, 'erx_device.c')
       if seed
@@ -161,7 +173,7 @@ class ErxDeviceQueueTest < Minitest::Test
         File.write(source, text.sub(*seed))
       end
       output, status = harness_output(XHCI_HARNESS, *device_sources(source),
-                                      includes: [File.join(ROOT, 'test/fixtures/device_model')])
+                                      includes: [File.join(ROOT, 'test/fixtures/device_model')], args: args)
       assert_equal seed.nil?, status.success?, output
       output
     end
@@ -192,7 +204,7 @@ class ErxDeviceQueueTest < Minitest::Test
   # The harness built from `sources` and run, with its output and exit status. Directories in
   # includes come first, so the DMA harness's device model replaces the generated register
   # accesses. A build failure fails the test.
-  def harness_output(*sources, includes: [])
+  def harness_output(*sources, includes: [], args: [])
     Dir.mktmpdir('erx-device-queue-') do |directory|
       binary = File.join(directory, 'harness')
       output, status = Open3.capture2e(COMPILER, *FLAGS, *includes.flat_map { |dir| ['-I', dir] },
@@ -200,7 +212,7 @@ class ErxDeviceQueueTest < Minitest::Test
                                        '-I', File.join(ROOT, 'include'), '-I', NIFS,
                                        *sources, '-o', binary, stdin_data: '')
       assert status.success?, output
-      Open3.capture2e(Erx::SanitizerEnvironment.call(compiler: COMPILER), binary, stdin_data: '')
+      Open3.capture2e(Erx::SanitizerEnvironment.call(compiler: COMPILER), binary, *args, stdin_data: '')
     end
   end
 end

@@ -1260,7 +1260,7 @@ The bus process meets its controller through one module,
 `erx_usb_bus_link`, which spells every message between the two. Once
 started it finds the controller among its supervisor's children and
 attaches to it; the controller answers with its root hub's port count
-when its start reaches the bus (step 4 of [The controller
+when its start reaches the bus (step 5 of [The controller
 process](#the-controller-process)), and the bus core's first step powers
 the root ports. From then on the bus process sends the core's requests as
 the core makes them, and the controller sends root-port events and the
@@ -1753,17 +1753,29 @@ process performs.
 (`xhci.c:304-454`), every wait a deadline of the core and every NIF call
 nonblocking:
 
-1. read the capability registers: the slot, interrupter and port counts,
+1. for a controller that is a PCIe function, whose device record names
+   its place, send `open` for that place through the domain's `pci`
+   facet before the device is opened, so its window decodes and the
+   function masters nothing while the driver resets it
+   ([design-pcie.md](design-pcie.md#who-programs-what-and-when)); a
+   refusal ends the start; a restarted controller sends it again;
+2. read the capability registers: the slot, interrupter and port counts,
    the scratchpad count, the page size, `AC64`, the context size;
-2. in the USB legacy support capability, set the OS-owned semaphore and
+3. in the USB legacy support capability, set the OS-owned semaphore and
    wait for the BIOS-owned one to clear, at most 5 s, after which the
    driver goes on, as FreeBSD does (`xhci_pci.c:540-560`); read the
    supported-protocol capabilities, which say which ports are USB 2 and
    which USB 3;
-3. `erx_device:negotiate/2`, the form's reset and install, called again
+4. `erx_device:negotiate/2`, the form's reset and install, called again
    with `continue` on a timer while it answers `{error, ebusy}`
-   ([Install](#install));
-4. answer its bus process, which attaches once its supervisor has
+   ([Install](#install)); the call that ends the reset writes a PCIe
+   function's MSI-X table and answers `reset`, on which a PCIe
+   function's controller sends `master` through the facet, which makes
+   the route live and turns bus mastering on, and goes on at once with
+   the call that installs, whose registers make the controller read and
+   write memory; a refusal of `master` fails the controller as a refused
+   install does;
+5. answer its bus process, which attaches once its supervisor has
    started it ([The process tree](#the-process-tree)), with the root
    hub's port count, as soon as both the attach and this step have
    come, whichever comes last; the bus core
@@ -2433,7 +2445,14 @@ clear (run set could take it out of halted before the reset lands),
 write the reset bit, allowed only once halted (p. 394); then wait for
 the reset bit and the
 controller-not-ready bit to clear before writing any other register
-(p. 394; 4.2, p. 80); then, once the halted and
+(p. 394; 4.2, p. 80); then, for a PCIe function's MSI-X route, write
+its table from `hw/svd/pci_msix`, entry 0 the route's message unmasked
+and every other entry masked, read entry 0's data back, and answer
+`reset`, so the driver masters its function before any register lets
+the controller read or write memory, as setting the segment table's
+base does ([design-pcie.md](design-pcie.md#who-programs-what-and-when));
+a controller with no route answers `reset` as well and its driver goes
+on at once; then, on the next call, once the halted and
 reset-done report has released every holding and every block is free,
 the sequencer, in one decision, lays out and zeroes every region,
 writes DCBAA entry 0, the scratchpad array, the segment table and the

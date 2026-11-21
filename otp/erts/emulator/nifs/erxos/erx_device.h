@@ -52,6 +52,19 @@ typedef enum erx_device_form {
  * the page, that every queue of the device is carved from; `memory_size` is 0 for none and for
  * every other form.
  */
+/*
+ * A PCIe function's MSI-X route, as its given record carries it (docs/design-pcie.md, "The
+ * choice"): the message, the doorbell `address` and value `data`, and the table of `entries`
+ * entries at byte `offset` of the device's window, which the NIF writes at the install
+ * (docs/design-usb.md, "Install"). `entries` is 0 for a device with no MSI-X route.
+ */
+typedef struct erx_device_msix {
+	uint64_t	address;
+	uint32_t	data;
+	uint64_t	offset;
+	uint32_t	entries;
+} erx_device_msix_t;
+
 typedef struct erx_device_spec {
 	const char		*peripheral;
 	size_t			peripheral_length;
@@ -65,6 +78,7 @@ typedef struct erx_device_spec {
 	uint64_t		memory;
 	uint64_t		memory_size;
 	bool			coherent;	/* the device's DMA is cache-coherent, as the record says */
+	erx_device_msix_t	msix;
 } erx_device_spec_t;
 
 /* Which element of a register: a plain register takes none, an array one below its count. */
@@ -315,11 +329,15 @@ bool	erx_device_framebuffer_memory(uint32_t framebuffer, volatile uint8_t **base
  * xHCI's negotiation is the controller's reset and start, one step a call, as
  * erx_trb_form_start_next decides from the call's one reading (docs/design-usb.md, "Install"):
  * the first call makes the record; ERX_EBUSY until the controller has started, then ERX_OK with
- * no feature accepted. A call begins the negotiation, whatever step the record keeps, unless it
+ * no feature accepted, except that the call which ends the controller's reset writes the
+ * function's MSI-X table and answers ERX_DEVICE_RESET_DONE, after which the driver masters its
+ * function and continues (docs/design-pcie.md, "Who programs what, and when"). A call begins the negotiation, whatever step the record keeps, unless it
  * `continues` it, which only the controller core's retry after ERX_EBUSY does; `wanted` is
  * unused. Virtio's and GENET's negotiations take no steps, each call beginning one, and refuse
  * `continues` with ERX_EINVAL before anything is touched.
  */
+#define ERX_DEVICE_RESET_DONE	1	/* not an error: xHCI's reset has ended, master, then continue */
+
 int	erx_device_negotiate(const erx_device_t *device, uint64_t wanted, bool continues, uint64_t *accepted);
 
 /*

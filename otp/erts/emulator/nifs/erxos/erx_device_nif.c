@@ -154,9 +154,48 @@ decode_memory(ErlNifEnv *env, ERL_NIF_TERM map, erx_device_spec_t *spec)
 	return (true);
 }
 
+/* One unsigned field `name` of a map, at most `max`. */
+static bool
+map_uint(ErlNifEnv *env, ERL_NIF_TERM map, const char *name, uint64_t max, uint64_t *out)
+{
+	ERL_NIF_TERM value;
+	ErlNifUInt64 number;
+
+	if (!enif_get_map_value(env, map, enif_make_atom(env, name), &value) || !enif_get_uint64(env, value, &number) ||
+	    number > max)
+		return (false);
+	*out = number;
+	return (true);
+}
+
+/*
+ * A given PCIe function's `msix => #{address, data, bar, offset, entries}`, its MSI-X route as
+ * erx_device_record reads it, which no other form has. The table must lie in the device's
+ * window, BAR 0, the one BAR of every function erXos drives; a table in another BAR is refused.
+ */
+static bool
+decode_msix(ErlNifEnv *env, ERL_NIF_TERM map, erx_device_spec_t *spec)
+{
+	ERL_NIF_TERM value;
+	uint64_t data, bar, entries;
+
+	if (!enif_get_map_value(env, map, enif_make_atom(env, "msix"), &value))
+		return (true);
+	if (spec->form != ERX_DEVICE_FORM_GIVEN || !enif_is_map(env, value) ||
+	    !map_uint(env, value, "address", UINT64_MAX, &spec->msix.address) ||
+	    !map_uint(env, value, "data", UINT32_MAX, &data) || !map_uint(env, value, "bar", 0, &bar) ||
+	    !map_uint(env, value, "offset", UINT32_MAX, &spec->msix.offset) ||
+	    !map_uint(env, value, "entries", UINT32_MAX, &entries))
+		return (false);
+	spec->msix.data = (uint32_t)data;
+	spec->msix.entries = (uint32_t)entries;
+	return (true);
+}
+
 /*
  * #{peripheral := atom(), window := window(), lines := [line() | {shared, line()}], memory => memory(),
- * coherent => boolean()}. A device the spec does not mark coherent is taken as not coherent.
+ * coherent => boolean(), msix => msix()}. A device the spec does not mark coherent is taken as not
+ * coherent.
  */
 static bool
 decode_spec(ErlNifEnv *env, ERL_NIF_TERM term, char *peripheral, erx_device_spec_t *spec)
@@ -187,7 +226,7 @@ decode_spec(ErlNifEnv *env, ERL_NIF_TERM term, char *peripheral, erx_device_spec
 		if (!spec->coherent && !enif_is_identical(value, enif_make_atom(env, "false")))
 			return (false);
 	}
-	return (decode_memory(env, term, spec));
+	return (decode_memory(env, term, spec) && decode_msix(env, term, spec));
 }
 
 static ERL_NIF_TERM
@@ -507,7 +546,10 @@ queue_create_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
 	return (enif_make_tuple2(env, enif_make_atom(env, "ok"), enif_make_uint(env, queue)));
 }
 
-/* negotiate(Dev, Wanted | continue): `continue` carries on the TRB form's negotiation, a number begins one. */
+/*
+ * negotiate(Dev, Wanted | continue): `continue` carries on the TRB form's negotiation, a number begins
+ * one; `reset` from the TRB form's call that ends the controller's reset.
+ */
 static ERL_NIF_TERM
 negotiate_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
 {
@@ -523,6 +565,8 @@ negotiate_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
 	enif_mutex_lock(device_lock);
 	status = erx_device_negotiate(device, wanted, continues, &accepted);
 	enif_mutex_unlock(device_lock);
+	if (status == ERX_DEVICE_RESET_DONE)
+		return (enif_make_atom(env, "reset"));
 	if (status != ERX_OK)
 		return (status_error(env, status));
 	return (enif_make_tuple2(env, enif_make_atom(env, "ok"), enif_make_uint64(env, accepted)));

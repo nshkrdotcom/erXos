@@ -34,7 +34,7 @@
 		}								\
 	} while (0)
 
-#define MEMORIES_MAX	16u
+#define MEMORIES_MAX	24u
 #define WINDOW_BYTES	0x4000u
 #define DEVICE_MEMORY	(UINT64_C(1) << 20)
 #define SLOT_SHIFT	28u
@@ -279,15 +279,20 @@ preset(uint32_t scratchpads, bool four_kib, bool ac64)
 	set_field("iman", "ip", 1);
 }
 
-static const erx_device_t *
-open_xhci(uint32_t scratchpads, bool four_kib, bool ac64)
+/* The spec of the last open_routed, for opening its window again. */
+static erx_device_spec_t routed_spec;
+
+/* A controller as preset gives it, with the MSI-X route `msix`, and erx_device_open's answer. */
+static int
+open_routed(uint32_t scratchpads, bool four_kib, bool ac64, erx_device_msix_t msix, const erx_device_t **opened)
 {
 	const uint64_t window_object = make_memory(WINDOW_BYTES);
 	const uint64_t memory = make_memory(DEVICE_MEMORY);
 	const erx_device_spec_t spec = { .peripheral = "xhci", .peripheral_length = 4, .form = ERX_DEVICE_FORM_GIVEN,
 	    .window = window_object, .base = 0, .size = WINDOW_BYTES, .memory = memory,
-	    .memory_size = memory_sizes[memory] };
+	    .memory_size = memory_sizes[memory], .msix = msix };
 	uint32_t device;
+	int status;
 
 	window = memories[window_object];
 	preset(scratchpads, four_kib, ac64);
@@ -295,8 +300,30 @@ open_xhci(uint32_t scratchpads, bool four_kib, bool ac64)
 	maps[1] = memory;
 	maps_pushed = 2;
 	maps_done = 0;
-	CHECK(erx_device_open(&spec, NULL, NULL, &device) == ERX_OK && maps_done == 2);
-	return (erx_device_get(device));
+	routed_spec = spec;
+	status = erx_device_open(&spec, NULL, NULL, &device);
+	*opened = status == ERX_OK ? erx_device_get(device) : NULL;
+	return (status);
+}
+
+/* The last open_routed's window opened again with the route `msix`, and erx_device_open's answer. */
+static int
+open_reused(erx_device_msix_t msix)
+{
+	erx_device_spec_t spec = routed_spec;
+	uint32_t device;
+
+	spec.msix = msix;
+	return (erx_device_open(&spec, NULL, NULL, &device));
+}
+
+static const erx_device_t *
+open_xhci(uint32_t scratchpads, bool four_kib, bool ac64)
+{
+	const erx_device_t *device;
+
+	CHECK(open_routed(scratchpads, four_kib, ac64, (erx_device_msix_t){ 0 }, &device) == ERX_OK && maps_done == 2);
+	return (device);
 }
 
 /* One negotiate call, beginning a negotiation or continuing one, its answer and the stores it made. */
@@ -380,6 +407,7 @@ test_start(void)
 	set_field("usbcmd", "inte", 0);			/* a reset closes INTE (5.4.1, p. 394) */
 	CHECK(negotiate(device, true, 0) == ERX_EBUSY);	/* CNR still set */
 	set_field("usbsts", "cnr", 0);
+	CHECK(negotiate(device, true, 0) == ERX_DEVICE_RESET_DONE);
 	CHECK(negotiate(device, true, 12) == ERX_EBUSY);
 	check_install();
 	CHECK(negotiate(device, true, 0) == ERX_EBUSY);	/* still halted */
@@ -409,16 +437,86 @@ test_restart(void)
 	/* Halted and ready: a begin resets again where the old negotiation would have installed. */
 	CHECK(negotiate(device, false, 1) == ERX_EBUSY && erx_xhci_usbcmd_hcrst_get(*reg("usbcmd")) == 1);
 	set_field("usbcmd", "hcrst", 0);
+	CHECK(negotiate(device, true, 0) == ERX_DEVICE_RESET_DONE);
 	CHECK(negotiate(device, true, 12) == ERX_EBUSY);	/* left installed, waiting for HCH to clear */
 	/* Halted with run set, as the install leaves it: run cleared before any reset. */
 	CHECK(negotiate(device, false, 1) == ERX_EBUSY && erx_xhci_usbcmd_rs_get(*reg("usbcmd")) == 0 &&
 	    erx_xhci_usbcmd_hcrst_get(*reg("usbcmd")) == 0);
 	CHECK(negotiate(device, true, 1) == ERX_EBUSY && erx_xhci_usbcmd_hcrst_get(*reg("usbcmd")) == 1);
 	set_field("usbcmd", "hcrst", 0);
+	CHECK(negotiate(device, true, 0) == ERX_DEVICE_RESET_DONE);
 	CHECK(negotiate(device, true, 12) == ERX_EBUSY);
 	set_field("usbsts", "hch", 0);
 	/* The controller runs, but this negotiation did not install it: run cleared, not answered started. */
 	CHECK(negotiate(device, false, 1) == ERX_EBUSY && erx_xhci_usbcmd_rs_get(*reg("usbcmd")) == 0);
+}
+
+/*
+ * A function's MSI-X table, written by the call that ends the reset, which answers
+ * ERX_DEVICE_RESET_DONE so the driver masters its function before the install's registers
+ * (docs/design-pcie.md, "Who programs what, and when"): entry 0 the route's message unmasked,
+ * every other entry of the route masked; the next call installs.
+ */
+#define MSIX_TABLE	0x3000u
+#define MSIX_ENTRIES	16u
+
+static const erx_device_msix_t msix_route = { .address = UINT64_C(0x1080000040), .data = 0x2a, .offset = MSIX_TABLE,
+    .entries = MSIX_ENTRIES };
+
+/* The 32-bit word at byte `offset` of the window. */
+static uint32_t *
+table_word(uint32_t offset)
+{
+	return ((uint32_t *)(void *)(window + offset));
+}
+
+static void
+test_msix(void)
+{
+	const erx_device_t *device;
+
+	CHECK(open_routed(2, true, true, msix_route, &device) == ERX_OK);
+	for (uint32_t entry = 0; entry < MSIX_ENTRIES; entry++)
+		*table_word((MSIX_TABLE + 16u * entry + 12u)) = 0;	/* every entry unmasked before the reset */
+	CHECK(negotiate(device, false, 1) == ERX_EBUSY);
+	set_field("usbsts", "hch", 1);
+	CHECK(negotiate(device, true, 1) == ERX_EBUSY);
+	set_field("usbcmd", "hcrst", 0);
+	CHECK(negotiate(device, true, 4 + (MSIX_ENTRIES - 1)) == ERX_DEVICE_RESET_DONE);
+	CHECK(write_offsets[0] == MSIX_TABLE && write_offsets[1] == MSIX_TABLE + 4u && write_offsets[2] == MSIX_TABLE + 8u &&
+	    write_offsets[3] == MSIX_TABLE + 12u && write_offsets[4] == MSIX_TABLE + 16u + 12u);
+	CHECK(*table_word(MSIX_TABLE) == 0x80000040u && *table_word(MSIX_TABLE + 4u * 1u) == 0x10u &&
+	    *table_word(MSIX_TABLE + 4u * 2u) == 0x2au && *table_word(MSIX_TABLE + 4u * 3u) == 0);
+	for (uint32_t entry = 1; entry < MSIX_ENTRIES; entry++)
+		CHECK(*table_word((MSIX_TABLE + 16u * entry + 12u)) == 1);
+	CHECK(erx_xhci_usbcmd_rs_get(*reg("usbcmd")) == 0);	/* nothing of the install before the driver masters */
+	CHECK(negotiate(device, true, 12) == ERX_EBUSY);
+	CHECK(write_offsets[0] == offset_of("config") && write_offsets[11] == offset_of("usbcmd") &&
+	    erx_xhci_usbcmd_rs_get(*reg("usbcmd")) == 1);
+	/* The same window again with another route is refused: an open answers only for the spec it made. */
+	CHECK(open_reused((erx_device_msix_t){ .address = msix_route.address, .data = 0x2b, .offset = MSIX_TABLE,
+	    .entries = MSIX_ENTRIES }) == ERX_EBUSY);
+}
+
+/*
+ * The routes an open refuses, with no record taken: a table off the 8-byte alignment its BIR
+ * leaves, more entries than the table declares, a table past the window's end, and one over the
+ * controller's registers, whose words a driver may write.
+ */
+static void
+test_msix_refusals(void)
+{
+	const erx_device_t *device;
+	const erx_device_msix_t refused[] = {
+		{ .address = msix_route.address, .data = 1, .offset = MSIX_TABLE + 4u, .entries = 1 },
+		{ .address = msix_route.address, .data = 1, .offset = 0, .entries = 2049 },
+		{ .address = msix_route.address, .data = 1, .offset = WINDOW_BYTES - 16u, .entries = 2 },
+		{ .address = msix_route.address, .data = 1, .offset = 0, .entries = 1 },
+	};
+
+	for (uint32_t at = 0; at < sizeof(refused) / sizeof(refused[0]); at++)
+		CHECK(open_routed(2, true, true, refused[at], &device) == ERX_EINVAL);
+	CHECK(open_routed(2, true, true, msix_route, &device) == ERX_OK);
 }
 
 /* What a negotiation refuses before it writes anything. */
@@ -457,6 +555,7 @@ started(void)
 	set_field("usbsts", "hch", 1);
 	CHECK(negotiate(device, true, 1) == ERX_EBUSY);
 	set_field("usbcmd", "hcrst", 0);
+	CHECK(negotiate(device, true, 0) == ERX_DEVICE_RESET_DONE);
 	CHECK(negotiate(device, true, 12) == ERX_EBUSY);
 	set_field("usbsts", "hch", 0);
 	CHECK(negotiate(device, true, 0) == ERX_OK);
@@ -777,11 +876,21 @@ test_out_transfer(void)
 	CHECK(complete(device, 0, 1) == ERX_ECORRUPT);
 }
 
+/*
+ * The cases, or with `msix` the MSI-X cases, a run of their own, since each open takes one of the
+ * NIF's few records for the run.
+ */
 int
-main(void)
+main(int argc, char **argv)
 {
 	xhci = erx_device_peripheral_find("xhci", 4);
 	CHECK(xhci != NULL);
+	if (argc > 1 && strcmp(argv[1], "msix") == 0) {
+		test_msix_refusals();
+		test_msix();
+		printf("erx_device_xhci msix done\n");
+		return (0);
+	}
 	test_refusals();
 	test_start();
 	test_runs();

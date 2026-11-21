@@ -16,6 +16,7 @@ class ErxXhciTest < Minitest::Test
   TESTS = %w[
     test/erlang/stand_in/erx_device.erl
     test/erlang/stand_in/erx_irq_line.erl
+    test/erlang/stand_in/erx.erl
     test/erlang/erx_xhci_tests.erl
   ].freeze
   DEADLINE_SECONDS = '120'

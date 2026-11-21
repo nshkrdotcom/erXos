@@ -1788,9 +1788,10 @@ typedef struct controller {
 	bool	resetting;
 	bool	not_ready;
 	bool	installed;
+	bool	mastered;	/* the driver mastered its function since the last reset */
 } controller_t;
 
-enum { START_DEPTH = 8, START_CALLS_EAGER = 4 };
+enum { START_DEPTH = 8, START_CALLS_EAGER = 5 };
 static uint64_t start_traces;
 
 /* What the controller may have done between two calls: each pending change taken or not, by `choice`'s bits. */
@@ -1809,7 +1810,8 @@ controller_moves(controller_t c, uint32_t choice)
 }
 
 /* The steps a negotiation takes, each of which a call may find it at. */
-static const erx_trb_start_step_t start_steps[] = { ERX_TRB_START_BEGIN, ERX_TRB_START_RESETTING, ERX_TRB_START_STARTING };
+static const erx_trb_start_step_t start_steps[] = { ERX_TRB_START_BEGIN, ERX_TRB_START_RESETTING, ERX_TRB_START_RESET_ENDED,
+    ERX_TRB_START_STARTING };
 
 /*
  * One call of negotiate/2 on `c`, beginning a negotiation or continuing it, its effect checked
@@ -1836,14 +1838,23 @@ start_call(controller_t *c, erx_trb_start_step_t step, bool continues)
 		EXPECT(c->halted && !c->run, "HCRST written to a controller not halted");
 		*c = (controller_t){ .halted = c->halted, .resetting = true, .not_ready = true };
 		break;
+	case ERX_TRB_START_ROUTE:
+		/* The function's table written after the reset (docs/design-pcie.md, "Who programs what, and when"). */
+		EXPECT(!c->resetting && !c->not_ready && c->halted && !c->run, "the MSI-X table written before the reset ended");
+		break;
 	case ERX_TRB_START_INSTALL:
 		/* No register but USBCMD before HCRST and CNR clear (5.4.1, p. 394; 4.2, p. 80), and halted. */
+		EXPECT(c->mastered, "installed before the driver mastered its function, so the controller cannot reach memory");
 		EXPECT(!c->resetting && !c->not_ready, "installed before the reset and CNR cleared");
 		EXPECT(c->halted && !c->run, "installed on a controller not halted");
 		c->installed = c->run = true;
 		break;
 	}
-	if (next.started)
+	if (next.answer == ERX_TRB_START_RESET_DONE) {
+		EXPECT(next.effect == ERX_TRB_START_ROUTE, "`reset` answered without the MSI-X table");
+		c->mastered = true;	/* the driver's pci:master before it continues */
+	}
+	if (next.answer == ERX_TRB_START_STARTED)
 		EXPECT(c->installed && c->run && !c->halted, "started before the installed controller left halted");
 	return (next);
 }
@@ -1875,7 +1886,7 @@ explore_start(controller_t c, erx_trb_start_step_t step, bool continues, uint32_
 		seen[seen_count++] = moved;
 		next = start_call(&moved, step, continues);
 
-		if (next.started) {
+		if (next.answer == ERX_TRB_START_STARTED) {
 			start_traces++;
 			continue;
 		}
@@ -1901,7 +1912,7 @@ test_start_answers(void)
 			const erx_trb_start_next_t continued = erx_trb_form_start_next(start_steps[at], true, seen);
 			const bool ready = !seen.resetting && !seen.not_ready;
 
-			EXPECT(begun.effect == first.effect && begun.step == first.step && begun.started == first.started,
+			EXPECT(begun.effect == first.effect && begun.step == first.step && begun.answer == first.answer,
 			    "a begin that answers by the step the record keeps");
 			EXPECT((first.effect == ERX_TRB_START_NOTHING) == !ready, "the first step idle other than mid-reset");
 			EXPECT(first.effect != ERX_TRB_START_RESET || (seen.halted && !seen.running),
@@ -1909,11 +1920,13 @@ test_start_answers(void)
 			EXPECT(first.effect != ERX_TRB_START_CLEAR_RUN || seen.running || !seen.halted,
 			    "the first step clearing run on a stopped controller");
 			EXPECT(first.step == (first.effect == ERX_TRB_START_RESET ? ERX_TRB_START_RESETTING : ERX_TRB_START_BEGIN) &&
-			    !first.started, "the first step left other than by its reset");
+			    first.answer == ERX_TRB_START_BUSY, "the first step left other than by its reset");
 			if (start_steps[at] != ERX_TRB_START_BEGIN)
 				EXPECT(continued.effect != ERX_TRB_START_CLEAR_RUN && continued.effect != ERX_TRB_START_RESET,
 				    "a later step writing the first step's registers");
-			EXPECT(!continued.started || (start_steps[at] == ERX_TRB_START_STARTING && !seen.halted),
+			EXPECT(continued.answer != ERX_TRB_START_RESET_DONE || (start_steps[at] == ERX_TRB_START_RESETTING && ready),
+			    "`reset` answered other than as the reset ends");
+			EXPECT(continued.answer != ERX_TRB_START_STARTED || (start_steps[at] == ERX_TRB_START_STARTING && !seen.halted),
 			    "started other than by the installed controller leaving halted");
 		}
 	}
@@ -1951,7 +1964,7 @@ test_start(void)
 					if (missed == 1u && calls == 0 && next.effect == ERX_TRB_START_CLEAR_RUN)
 						c.run = kept_run;	/* the controller missed the write */
 					calls++;
-					started = next.started;
+					started = next.answer == ERX_TRB_START_STARTED;
 					step = next.step;
 					c = controller_moves(c, 15u);
 					c = controller_moves(c, 15u);
