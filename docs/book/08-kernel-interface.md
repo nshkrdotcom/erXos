@@ -22,7 +22,7 @@ for capabilities, IPC gates, labels, the UTCB and the root task
 required.
 
 ERTS, the Erlang runtime, needs memory for every process heap it
-allocates. On FreeBSD it calls `mmap`, and the kernel finds free
+allocates. On a UNIX system it calls `mmap`, and the kernel finds free
 addresses, creates a VM object to hold the pages, and fills page-table
 entries as the runtime touches them. On erXos the same runtime is an ordinary program in user mode,
 on a kernel that knows nothing of `mmap`, files or Erlang. Somebody has
@@ -34,10 +34,10 @@ The answer cannot be "each runtime talks to Fiasco directly". A
 runtime that calls Fiasco by name is tied to Fiasco's data structures,
 capability numbers and error codes. Worse, if every domain could write
 its own page tables, nothing would keep one domain out of another's
-memory. FreeBSD gives programs libc's `mmap`, so no program names
-kernel structures. Its kernel then does all the work itself. erXos
-wants the first of those, and it needs a second thing FreeBSD never
-did: a trusted party in user mode that decides what each program may
+memory. A UNIX libc's `mmap` keeps programs from naming kernel
+structures, and the kernel then does all the work itself. erXos
+wants the first of those, and it needs a second thing a monolithic
+kernel never has: a trusted party in user mode that decides what each program may
 have.
 
 erXos gets both from one library and one thread. Every kernel call
@@ -295,8 +295,7 @@ That shape removes a class of problem. One thread touches the tables
 of objects, handles, mappings and threads, so they need no lock, and
 no request sees another half done. A request from a task cannot
 overlap that task's exit, because the exit is work the same thread
-does between requests. L4Re's Moe has the same shape: one server
-thread for memory and faults
+does between requests
 ([design-fiasco.md, Helper threads](../design-fiasco.md#helper-threads)).
 
 The cost is that every domain's setup queues on one thread. A domain
@@ -664,13 +663,11 @@ the starting registers the caller left in its UTCB.
 Inside a domain, musl's `pthread_create` and ERTS's scheduler threads
 both end in these two calls. A thread that exits is deleted by a
 **reaper**, one helper thread per task that asks the root to delete
-exited threads, so `pthread_join` works as on FreeBSD.
+exited threads, so `pthread_join` works as POSIX describes.
 
 Fiasco schedules threads by fixed priority, from 1 to 255, and runs
 threads of equal priority round robin. Every thread but the root's
-watchdog runs at priority 1 (`SERVICE_THREAD_PRIORITY` in
-`service.c`), and the watchdog at 255 (`WATCHDOG_PRIORITY` in
-`watchdog_thread.c`). Fiasco has no load balancer, so a thread stays on
+watchdog runs at priority 1, and the watchdog at 255. Fiasco has no load balancer, so a thread stays on
 the CPU where it was started until `erx_thread_set_affinity` moves it.
 In the design, each domain has a priority **band**, the priority all
 its threads run at, and a **CPU set**, the CPUs its threads may use;
@@ -678,13 +675,10 @@ chapter 9 treats both
 ([design-fiasco.md, Threads, bands and stops](../design-fiasco.md#threads-bands-and-stops)).
 Bands and CPU sets are designed and not built.
 
-One change to Fiasco makes equal priorities work. In upstream Fiasco,
-a thread that yields keeps its CPU to the end of its time slice. A
-spinner waiting for a lock holder on the same CPU then waits a whole
-slice each turn. erXos's copy of Fiasco changes one function,
-`Thread::do_ipc_receive`, so that a yield puts the thread behind the
-other ready threads of its priority. The native task suite's `yield`
-case tests it
+Equal priorities work because a thread that yields goes behind the
+other ready threads of its priority. Were it to keep its CPU to the
+end of its time slice, a spinner waiting for a lock holder on the same
+CPU would wait a whole slice each turn
 ([design-fiasco.md, Scheduling](../design-fiasco.md#scheduling)).
 
 ### 8.5.2 Waiting: one semaphore per thread
@@ -699,8 +693,8 @@ The first is the **umtx wait**, a wait on a memory address, from which
 musl builds its mutexes and condition variables. A thread that finds a
 mutex taken asks to sleep "while this word still holds the value I
 saw"; the thread that releases the mutex changes the word and asks to
-wake the sleepers on it. FreeBSD's `_umtx_op(2)` defines this contract
-with `UMTX_OP_WAIT` and `UMTX_OP_WAKE`. `liberx` keeps it with a table
+wake the sleepers on it. The contract is FreeBSD's `_umtx_op(2)`.
+`liberx` keeps it with a table
 per task, in the task's own memory, that queues waiting threads by
 address. A wait adds itself and downs its semaphore; a wake ups the
 semaphore of each thread it takes off
@@ -862,8 +856,8 @@ Because every committed page is mapped at once, a task never takes a
 page fault that the root must fill. A fault is always a bug, and is
 reported as one (section 8.5.4). The cost is that memory a program
 commits is taken whole, even the parts it never touches; only reserved
-addresses are free. Chapter 12 weighs that against FreeBSD's demand
-paging ([chapter 12](12-memory.md#1211-design-choices)).
+addresses are free. Chapter 12 weighs that against demand paging
+([chapter 12](12-memory.md#1211-design-choices)).
 
 ### 8.6.3 Kinds of memory object
 
@@ -927,7 +921,7 @@ it needs no memory. A group holds at most 64 bound objects, and the
 next is refused with `ERX_ELIMIT`.
 
 A device line stays masked after each delivery until its driver calls
-`erx_irq_ack`, as Fiasco does for a level-triggered interrupt. So a
+`erx_irq_ack`. So a
 device that keeps its line raised cannot flood the dispatcher while
 the driver works. A doorbell has no line to mask, and its ack does
 nothing.
@@ -998,13 +992,10 @@ guesses so that another leaks data through timing, a domain may read
 memory it cannot map ([chapter 11](11-security.md#1113-what-the-threat-model-leaves-out)).
 
 That nothing a domain does can make the kernel panic rests on Fiasco's
-own code. Fiasco is the kernel its developers wrote, with a few small
-erXos patches. They include a clean-room replacement of one
-interface header, eager saving of floating-point state on every
-switch, and the yield change of section 8.5.1
+own code, with a few small erXos changes such as the yield rule of
+section 8.5.1
 ([design-fiasco.md, The release's Fiasco build](../design-fiasco.md#the-releases-fiasco-build)).
-erXos does not check Fiasco's code beyond what Fiasco's own tests and
-use have shown. The design adds a system-call fuzz campaign, which
+The design adds a system-call fuzz campaign, which
 invokes every slot of a task's table with random arguments and watches
 the kernel. The campaign is designed and not built.
 
@@ -1074,8 +1065,7 @@ one round trip per setup step.
 serve many domains' setup in parallel. It would also need locks on
 every table, and each lock is a place where a request could see
 another half done, or a task's exit race a request from that task. One
-thread makes those races impossible to write. Moe makes the same
-choice for L4Re.
+thread makes those races impossible to write.
 
 **The interface could have been Fiasco's own.** Exposing Fiasco's
 calls to runtimes would have saved writing `liberx`'s backend. It

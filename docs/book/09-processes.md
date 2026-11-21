@@ -27,11 +27,9 @@ cycle and wake when the next packet arrives. A wakeup that comes while
 a thread is deciding to sleep must not be lost; a lost one leaves a
 packet unread until something else wakes the domain.
 
-FreeBSD meets the first half of this problem with its kernel scheduler,
-ULE. ULE keeps a run queue per processor and picks by priority, and a
-thread's priority falls the more it has run lately and rises the more
-it sleeps. An Erlang system on FreeBSD is one UNIX process, `beam.smp`,
-with one scheduler thread per processor. ULE sees those few threads and
+On a UNIX system the kernel's scheduler meets the first half of this
+problem. An Erlang system there is one process, `beam.smp`, with one
+scheduler thread per processor. The kernel sees those few threads and
 nothing of the thousands of Erlang processes inside them; ERTS shares
 each thread among its processes by its own rules. The second half,
 sleeping without losing a wakeup, ERTS solves for itself with a spin,
@@ -62,7 +60,7 @@ helper that runs long C calls
 
 ## 9.1 The Erlang process is the system's process
 
-Ask a FreeBSD machine what is running, and `ps` lists UNIX processes.
+Ask a UNIX machine what is running, and `ps` lists UNIX processes.
 Ask erXos, and `ps` lists Erlang processes, because those are the
 system's processes. A pid, a mailbox, links and monitors make the unit
 of execution and of failure for the whole machine
@@ -88,10 +86,7 @@ The same processes appear in the Erlang shell's `erx:i()`, under
 ([chapter 21](21-live-machine.md#211-the-machine-is-an-object)). No second,
 hidden kind of process lies beneath them.
 
-An Erlang programmer writes the code they would write on FreeBSD.
-erXos checks this by running OTP's test suites for ERTS, `kernel`,
-`stdlib` and the compiler on its runtime and on stock OTP 29.1.2, and
-comparing the results case by case (`tools/lib/erx/oracle.rb`).
+An Erlang programmer writes the same code as for OTP anywhere else.
 
 ### 9.1.2 Two levels in one picture
 
@@ -147,8 +142,8 @@ exception is the root service's watchdog, at 255
 (`watchdog_thread.c`), which takes no lock. This is **Built**.
 
 A spinning domain cannot shut the others out, but nothing gives the
-display domain precedence either. A patch to erXos's copy of Fiasco
-puts a thread that yields behind the others of its priority
+display domain precedence either. A thread that yields goes behind
+the others of its priority
 ([section 8.5.1](08-kernel-interface.md#851-threads)).
 
 Fiasco has no load balancer. A thread stays on the processor where it
@@ -204,9 +199,7 @@ mask through one call. In the design, one function first narrows the
 mask to the domain's CPU set and the processors online. Its result has
 a type of its own that only that call takes, so a mask that skipped
 the narrowing does not build. A thread past the limit gets
-`ERX_ELIMIT`. L4Re's loader, ned, confines its programs to a CPU set
-the same way ([ned documentation](https://l4re.org/doc/l4re_servers_ned.html),
-"Control scheduling"). CPU sets and thread limits are **Designed** and
+`ERX_ELIMIT`. CPU sets and thread limits are **Designed** and
 not built.
 
 ## 9.3 The runtime contract
@@ -237,8 +230,8 @@ asks for the class through one option of its thread library that only
 The design also refuses the other direction
 ([design-scheduler.md, The runtime contract](../design-scheduler.md#the-runtime-contract)).
 An executor may make two kinds of blocking call: a park, and a **umtx
-wait**, a wait on a word of its domain's private memory, like FreeBSD's
-`_umtx_op` ([section 8.5](08-kernel-interface.md#85-threads-waits-gates-and-faults)).
+wait**, a wait on a word of its domain's private memory
+([section 8.5](08-kernel-interface.md#85-threads-waits-gates-and-faults)).
 Every other blocking call answers `ERX_EWOULDBLOCK`. That refusal is
 **Designed** and not built. It is a rule of `liberx`, not of Fiasco: a
 runtime that bypassed `liberx` could block its own executors, which
@@ -366,27 +359,27 @@ misled by a runtime that lies.
 
 ## 9.4 ERTS as a parts bin
 
-Why does erXos carry its own ERTS instead of running the stock one on a
-compatibility layer? Much of ERTS only adapts it to UNIX, such as its
+Why does erXos carry its own ERTS instead of running an unmodified one
+on a compatibility layer? Much of ERTS only adapts it to UNIX, such as its
 poll set over file descriptors, and where erXos already has a mechanism
 for a job, keeping both would give a reader two models to learn
 ([section 3.9.5](03-erlang.md#395-erts-as-a-parts-bin)).
 
 ### 9.4.1 One mechanism per job
 
-For each job, erXos keeps the better of ERTS's mechanism and its own,
-or redesigns it. Table 9.2 shows the scheduling rows.
+Each job has one mechanism, ERTS's or erXos's. Table 9.2 shows the
+scheduling rows.
 
-| Job | Stock ERTS | ERTS on erXos |
-| --- | --- | --- |
-| choosing which process runs | run queues, priorities, reductions, stealing | kept |
-| choosing which thread runs | the host kernel | Fiasco |
-| waiting for work | spin, then a thread event or `poll` | `erx_park` with epochs |
-| readiness | the poll set over file descriptors | doorbells on the ready list, through the event table |
-| timeouts | a timer wheel per scheduler, which files each Erlang timer by when it expires | kept; a park's deadline is the wheel's next expiry |
-| long C calls | dirty schedulers | kept: dirty CPU schedulers are executors, dirty I/O ones workers |
+| Job | Mechanism |
+| --- | --- |
+| choosing which process runs | ERTS's run queues, priorities, reductions and stealing |
+| choosing which thread runs | Fiasco |
+| waiting for work | `erx_park` with epochs |
+| readiness | doorbells on the ready list, through the event table |
+| timeouts | ERTS's timer wheel per scheduler, which files each Erlang timer by when it expires; a park's deadline is the wheel's next expiry |
+| long C calls | dirty schedulers: dirty CPU schedulers are executors, dirty I/O ones workers |
 
-*Table 9.2. Scheduling in ERTS, stock and on erXos
+*Table 9.2. Scheduling in ERTS on erXos
 ([design-runtime.md, One mechanism per job](../design-runtime.md#one-mechanism-per-job)).*
 
 ERTS's scheduler stays whole, because it has run production Erlang
@@ -465,7 +458,7 @@ wait on erXos.
 
 ### 9.4.4 The event table: readiness without file descriptors
 
-On FreeBSD, ERTS learns that a socket has data from `kqueue` or `poll`,
+On UNIX, ERTS learns that a socket has data from `kqueue` or `poll`,
 which report file descriptors. A domain has none. It has doorbells:
 each connection's lane, each device line and each native program's
 channel (the pipe between ERTS and the program, chapter 13) has one,
@@ -524,8 +517,7 @@ interpreter and BeamAsm are **Built**; the manifests in
 
 The system domain interprets because it is the trusted base, and its
 image holds no JIT and no C++. OTP's own notes put BeamAsm at "anything from no difference to up to four times as
-fast" as the interpreter (OTP 29.1.2,
-`erts/emulator/internal_doc/BeamAsm.md`). The system domain gives that
+fast" as the interpreter. The system domain gives that
 up for a trusted base with no code generator to attack.
 
 In a BeamAsm domain, each block of JIT code is a memory object mapped
@@ -577,8 +569,7 @@ C library.
 
 ### 9.6.1 One seam
 
-musl 1.2.6 lives in erXos's tree as erXos's code and is the C library
-of every runtime and native program. No trap instruction is left in
+musl is the C library of every runtime and native program. No trap instruction is left in
 it. Every place where musl would make a system call lands in one
 function, `__erx_syscall`, a switch on musl's Linux system-call names
 (`SYS_futex`, `SYS_mmap` and the rest) that carries each call onto
@@ -602,9 +593,9 @@ pipes and signals from a POSIX layer over `liberx`
 ([chapter 13](13-native-programs.md#137-the-posix-lite-personality)).
 
 The errno and signal numbers musl returns are FreeBSD's, generated from
-one table in the ABI and checked against FreeBSD's own
+one table in the ABI
 ([section 7.3.1](07-one-source.md#731-tables-that-must-match-someone-elses)),
-so a program ported from FreeBSD prints the `errno` a FreeBSD user
+so a program written for FreeBSD prints the `errno` a FreeBSD user
 expects. This is **Built**.
 
 `pthread_cancel` acts at the target thread's next cancellation point,
@@ -628,7 +619,7 @@ file of `sys/erxos` that names `__APPLE__`, Linux or a backend.
 
 ## 9.7 Two schedulers you can watch as one
 
-When a domain is slow, which scheduler is to blame? On FreeBSD, `top`
+When a domain is slow, which scheduler is to blame? On UNIX, `top`
 shows the kernel's view and a program's own tools show its view, rarely
 both at once. erXos merges them.
 
@@ -697,7 +688,7 @@ not counted in reductions, and a NIF that waits on a server blocks its
 executor. Either way that executor runs no Erlang process until the
 call returns, and the domain's other executors steal its queued
 processes. Only its own domain is affected. A long C call belongs on a
-dirty scheduler, as on stock ERTS
+dirty scheduler
 ([section 3.5.4](03-erlang.md#354-bifs-nifs-and-ports)).
 
 **A domain spins.** Its threads take turns with every other thread on
@@ -737,8 +728,7 @@ need it, because an Erlang process never blocks its thread: a
 another.
 
 **Shares instead of priorities.** Fiasco could give each domain a
-share of processor time, as FreeBSD's `rctl` can cap a jail's CPU use
-at a percentage of one core (`rctl(8)`, the `pcpu` resource). That
+share of processor time, a percentage of a core. That
 needs a scheduling class Fiasco does not have, a large change to its
 scheduler, accounting and switch path
 ([design-fiasco.md, The scheduler on Fiasco](../design-fiasco.md#the-scheduler-on-fiasco)).
@@ -793,5 +783,5 @@ where those threads live, the domain, and the wall around it.
   "Scheduler Activations: Effective Kernel Support for the User-Level
   Management of Parallelism", SOSP 1991: the design whose failure the
   runtime contract answers.
-* OTP 29.1.2, `erts/emulator/internal_doc/BeamAsm.md`: BeamAsm and its
+* OTP, `erts/emulator/internal_doc/BeamAsm.md`: BeamAsm and its
   speed against the interpreter.
