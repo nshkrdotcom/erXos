@@ -1,0 +1,100 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
+     SPDX-License-Identifier: BSD-2-Clause
+
+     The BCM2711's mailbox to the VideoCore firmware, the window the root task posts a
+     property buffer through (docs/design-kernel.md, "Firmware requests"; docs/design-usb.md,
+     "The VL805's firmware"). It holds the facts at least two of these give:
+
+     * Raspberry Pi's firmware wiki, https://github.com/raspberrypi/firmware.wiki.git at
+       c9e615a74d377a7e94ac2140336d1352941ef9a2: Mailboxes.md (SHA-256
+       cfbc3960714a070e488ad2d6d458e70182a85e01e597efb94e28df6966ea785a), mailbox 0 for
+       the firmware's answers and mailbox 1 for the ARM's messages, line 2; channel 8 for
+       property tags from the ARM, line 17; the offsets, lines 23-25. Accessing-mailboxes.md
+       (SHA-256 bdbd0a5535e67103a82bc5f65c058180aa93672ff26f9e09b30c235d8af629ac): the
+       channel in the low four bits and the data in the upper 28, lines 14, 16 and 22; the
+       full and empty bits, lines 56-59; the block at 0xb880 into the peripherals, line 54.
+       Mailbox-property-interface.md (SHA-256
+       1197d7f52ae2ce6b731bb1ea8e1fce93df4395983629994069e71d498160dd8b): the property
+       buffer is 16-byte aligned because only an address's upper 28 bits pass, line 3.
+     * FreeBSD's sys/arm/broadcom/bcm2835/bcm2835_mbox.c at release/15.1.0-p6, commit
+       95719d8a895bf8170851e9844d9b4092b1d2b6fe (SHA-256
+       5155a952be0086a45df81895cd4fd99244ce48a322347108a756d43731cdca73, BSD-2-Clause): the
+       offsets and bits, lines 50-58; the message's channel and data, lines 60-62; the
+       property buffer's 16-byte alignment, line 313. bcm2835_mbox.h (SHA-256
+       0a25b87fdf953c1c7a6d5bc6434a446bff83c2b076127b1d3f10450dab7b1630): the property
+       channel 8, line 39.
+     * The tree's Fiasco, fiasco/bootstrap/server/src/platform/rpi.cc (MIT,
+       fiasco/bootstrap/LICENSE.spdx): the offsets and the empty bit, lines 30-36; a
+       request posted as its buffer's address with channel 8 and its answer known by the
+       same word read back, lines 75-91; the block at 0xb880 into the peripherals, line 75,
+       which lie at 0xfe000000 on the Raspberry Pi 4, line 314.
+
+     The window is the mailbox block's, which the platform record states; this file gives
+     offsets within it. Every access is an aligned 32-bit word. Mailbox 0 carries the
+     firmware's answers, read at READ while STATUS shows it not EMPTY; the ARM's messages go
+     to mailbox 1 at WRITE. FreeBSD tests STATUS's FULL before it writes; with one request
+     outstanding at a time the mailbox never fills. The peek and sender registers at 0x10
+     and 0x14 are never read; CONFIG at 0x1c is left as the firmware sets it, since the
+     root polls and the one bit a source names for it (FreeBSD, line 57) enables an
+     interrupt; mailbox 1's own status at 0x38 rests on the wiki alone. -->
+<device schemaVersion="1.3">
+  <name>VC_MBOX</name><version>1</version>
+  <description>BCM2711 VideoCore mailbox</description>
+  <addressUnitBits>8</addressUnitBits><width>32</width>
+  <peripherals>
+    <peripheral>
+      <name>VC_MBOX</name><baseAddress>0</baseAddress>
+      <addressBlock><offset>0</offset><size>0x24</size><usage>registers</usage></addressBlock>
+      <registers>
+        <register>
+          <name>READ</name><ownedByNif>false</ownedByNif>
+          <description>Mailbox 0's read register: each read takes the next message from the firmware</description>
+          <addressOffset>0x00</addressOffset><access>read-only</access><readAction>modify</readAction>
+          <fields>
+            <field>
+              <name>CHANNEL</name><description>The channel the message answers on</description>
+              <bitOffset>0</bitOffset><bitWidth>4</bitWidth>
+              <enumeratedValues><name>CHANNEL</name><enumeratedValue><name>PROPERTY</name><value>8</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field>
+              <name>DATA</name><description>The message's upper 28 bits; on the property channel, bits 31:4 of the address of the buffer answered</description>
+              <bitOffset>4</bitOffset><bitWidth>28</bitWidth>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>STATUS</name><ownedByNif>false</ownedByNif>
+          <description>Mailbox 0's status</description>
+          <addressOffset>0x18</addressOffset><access>read-only</access>
+          <fields>
+            <field>
+              <name>EMPTY</name><description>No message waits at READ</description>
+              <bitOffset>30</bitOffset><bitWidth>1</bitWidth>
+            </field>
+            <field>
+              <name>FULL</name><description>The mailbox has no room for another message</description>
+              <bitOffset>31</bitOffset><bitWidth>1</bitWidth>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>WRITE</name><ownedByNif>false</ownedByNif>
+          <description>Mailbox 1's write register: each write sends one message to the firmware</description>
+          <addressOffset>0x20</addressOffset><access>write-only</access>
+          <fields>
+            <field>
+              <name>CHANNEL</name><description>The channel the message goes to</description>
+              <bitOffset>0</bitOffset><bitWidth>4</bitWidth>
+              <enumeratedValues derivedFrom="CHANNEL"/>
+            </field>
+            <field>
+              <name>DATA</name><description>The message's upper 28 bits; on the property channel, bits 31:4 of the property buffer's address, which is 16-byte aligned</description>
+              <bitOffset>4</bitOffset><bitWidth>28</bitWidth>
+            </field>
+          </fields>
+        </register>
+      </registers>
+    </peripheral>
+  </peripherals>
+</device>
