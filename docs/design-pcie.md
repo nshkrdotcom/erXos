@@ -1812,7 +1812,7 @@ confirmed against the pinned QEMU's documentation.
 
 | Case | Checks | Seeded failure |
 | --- | --- | --- |
-| walk and report | the report's places, identities and BAR addresses equal QMP's `query-pci` answer, which the harness's QMP reader parses (its fields are to be confirmed against the pinned QEMU) | placement's alignment off by a page: QMP's region differs and the case fails |
+| walk and report | the report's places, identities and BAR addresses equal QMP's `query-pci` answer, which the harness's QMP reader parses (its fields are to be confirmed against the pinned QEMU) | placement's candidates put a page off: the function is left unplaced (a misaligned BAR is refused by the library's intake before the bridge writes it), its open answers `{error, gone}` and the case fails |
 | a test holder | a test domain holding `qemu-xhci` sends `open`, reads the capability length register through its window, sends `master`; the PCIe domain's inspection record shows the command register and MSI state | `open` not setting memory space: the register read returns all ones |
 | a device-generated MSI | the test holder has the function raise its interrupt, by a command whose completion posts an event, and its IRQ object is delivered within the deadline | the MSI enable left out of the ascent: no delivery |
 | restart | the PCIe domain killed while the test holder masters: after its restart the enumerator's count of writes to that function is zero and the holder's next register read succeeds | the planner taking every field as differing: the count is nonzero |
