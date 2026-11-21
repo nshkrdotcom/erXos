@@ -6,8 +6,8 @@ require_relative '../usb_boot'
 require_relative '../qemu_gate'
 
 # The usb suite on QEMU virt under HVF (tools/lib/erx/usb_boot.rb): qemu-xhci with a usb-kbd
-# behind the PCIe domain, the test holder playing the USB domain. Its cases are cells of the
-# boot, one per enumeration stage. Its boot carries a QMP socket, which no remote host
+# behind the PCIe domain, held by the development manifest's USB domain. Its cases are cells
+# of the boot, one per enumeration stage and one for the key typed through QMP. Its boot carries a QMP socket, which no remote host
 # serves, so it does not declare offload. check_qemu builds the kernel before any suite runs,
 # so this suite does not.
 cpus = [1]
