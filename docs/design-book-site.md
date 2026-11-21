@@ -553,9 +553,10 @@ processes, worker threads and native add-ons (Node 26.13.0's
 `doc/api/permissions.md`, "Permission Model", SHA-256 `32b6ad04...`).
 Network access is refused under the model only from Node 25.0.0, which
 added `--allow-net` (`doc/api/cli.md`, `c32c9c59...`), so
-`tools/book/package.json`'s `engines` names Node 25.0.0. The step
-removes `NODE_OPTIONS` from Node's environment, so the caller's
-environment cannot widen the grant. Neither library makes a
+`tools/book/package.json`'s `engines` names Node 25.0.0. Node gets
+none of the caller's environment but `PATH`, with `LANG=C` and
+`TZ=UTC`, so no `NODE_*` variable can widen the grant and the bundled
+code reads no token or setting the caller holds. Neither library makes a
 request: beautiful-mermaid 1.1.3's built `dist/index.js` holds no
 `fetch`, `XMLHttpRequest` or `http` import, and erXos's changes add
 none.
@@ -617,7 +618,7 @@ sees it, so a diagram the repository host would show as an error never
 reaches the site. The pinned parser stands in for the repository
 host's, whose version is not published (unverified).
 
-`mermaid.parse` needs a DOM. A probe on 2026-11-20 ran mermaid 12.3.0
+`mermaid.parse` needs a DOM. A probe ran mermaid 12.3.0
 under Node 26.13.0 with no DOM on the book's 61 diagrams: 19 sequence
 diagrams parsed, 2 were rejected with parse errors, and the other 40,
 every flowchart with a label and every state diagram, failed with

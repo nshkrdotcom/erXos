@@ -20,8 +20,9 @@ module Erx
     # the library and the two packages it imports into one module under
     # build/book-tools. Node runs that module under its permission model with
     # read access to the module alone, so it can write no file, reach no
-    # network, start no process or worker and load no add-on; the caller's
-    # NODE_OPTIONS, which could widen that, is removed. The request goes to
+    # network, start no process or worker and load no add-on. It gets none of
+    # the caller's environment beyond PATH, so no NODE_* variable widens that
+    # and the bundled code reads no token or setting from it. The request goes to
     # its standard input and the reply comes back on its standard output, one
     # JSON document each.
     #
@@ -46,6 +47,8 @@ module Erx
       OPTIONS = { 'charWidth' => 0.6, 'labelSize' => 12, 'groupTitle' => 'bottom',
                   'font' => 'IBM Plex Mono', 'transparent' => true }.freeze
       DEADLINE = 300
+      # Node's whole environment, with the caller's PATH added to find it.
+      NODE_ENV = { 'LANG' => 'C', 'TZ' => 'UTC' }.freeze
       REPLY_BYTES = 64 * 1024 * 1024
       STAGES = %w[parse render].freeze
 
@@ -135,7 +138,8 @@ module Erx
           output = File.join(directory, 'reply.json')
           File.write(input, request(sources, options: options))
           runner.run(['node', '--permission', "--allow-fs-read=#{bundle}", bundle], name: 'book-diagrams',
-                     deadline: DEADLINE, chdir: directory, env: WebBuild::OFFLINE_ENV, stdin: input, stdout: output)
+                     deadline: DEADLINE, chdir: directory, env: NODE_ENV.merge('PATH' => ENV.fetch('PATH')),
+                     clear_env: true, stdin: input, stdout: output)
           reported, results = reply(File.binread(output), count: sources.size)
           [versions.merge(reported), results]
         end

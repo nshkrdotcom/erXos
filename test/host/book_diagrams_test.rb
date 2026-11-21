@@ -116,10 +116,13 @@ class BookDiagramsTest < Minitest::Test
 
   # Seeded faults: drop the title's minimum width; give it with unswapped axes
   # in a top-down hierarchy ELK lays out whole, so the group comes out as tall
-  # as the title is wide; draw the title row at the top.
+  # as the title is wide, or swapped in one whose group sets its own direction
+  # and is laid out on its own; draw the title row at the top.
   def test_a_group_is_as_wide_as_its_title_and_its_title_row_is_below
     title = 'A title much wider than the nodes it holds'
-    sources = %w[TD LR].map { |direction| "graph #{direction}\n  subgraph G [#{title}]\n    A --> B\n  end\n" }
+    sources = [['TD', ''], ['LR', ''], ['TD', "    direction TB\n"]].map do |direction, inner|
+      "graph #{direction}\n  subgraph G [#{title}]\n#{inner}    A --> B\n  end\n"
+    end
     # The title's characters at 12 px and 0.6 em, plus 0.15 em, plus 12 px each side.
     min_width = (title.length * 12 * 0.6) + (0.15 * 12) + 24
     draw(sources).last.zip(sources).each do |result, source|
