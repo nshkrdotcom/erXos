@@ -126,8 +126,10 @@ class BootManifestTest < Minitest::Test
     assert status.success?, output
     assert_includes output, "console_uart pl011 150994944 4096 33 direct 24000000\n"
     assert_includes output, "devices 2\n"
+    # The given record's last number is the device's manifest row: units pack sorted by name,
+    # so the pcie unit's host bridge row comes before the rtc unit's.
     assert_includes output, "device rtc pl031 151060480 4096 34 direct 0 0 window 151060480 4096 0 " \
-                            "words-erx_record given rtc pl031 /pl031@9010000 11 0 4096 12 direct 0 0 0 0 0 12 exact 1 short 0\n"
+                            "words-erx_record given rtc pl031 /pl031@9010000 11 0 4096 12 direct 0 0 0 0 0 13 exact 1 short 0\n"
     assert_includes output, "device hostlink pl011 151257088 4096 40 direct 0 24000000 " \
                             "words-erx_record device hostlink pl011 /pl011@9040000 151257088 4096 40 direct 24000000 10 exact 1 short 0\n"
     refute_match(/^device (?:block|net) /, output)
