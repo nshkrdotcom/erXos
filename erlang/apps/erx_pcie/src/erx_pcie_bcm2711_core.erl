@@ -318,14 +318,16 @@ root_complex(#plan{outbound = Outbound} = Plan, TurnOff, Status) ->
 writes(Words) -> [write(Register, Word) || {Register, Word} <- Words].
 
 %% The notification's answer: on `ok`, 1 ms, then the firmware register read
-%% again; an error is `not_loaded`, and the register is not read
+%% again, a VL805 that does not answer it absent and a link that fell link_down;
+%% an error is `not_loaded`, and the register is not read
 %% (docs/design-pcie.md, "The bridge seam", the endpoint's firmware).
 notified(#plan{bridge = Bridge, endpoint = Endpoint}, ok) ->
     [wait(?FIRMWARE_SETTLE_US)
      | config(Bridge, {read, Endpoint, ?FIRMWARE_REGISTER, 4},
               fun({ok, Version}) ->
                       [{done, {firmware, case firmware_present(Version) of true -> present; false -> absent end}}];
-                 ({error, _}) -> [{done, {error, link_down}}]
+                 ({error, absent}) -> [{done, {firmware, absent}}];
+                 ({error, link_down}) -> [{done, {error, link_down}}]
               end)];
 notified(_Core, {error, _}) ->
     [{done, {firmware, not_loaded}}].

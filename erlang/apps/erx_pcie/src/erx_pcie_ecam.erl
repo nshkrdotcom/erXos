@@ -24,7 +24,7 @@ access inside its block. A place whose block lies past the window, a
 bus the tree's `bus-range` names but its `reg` does not cover, answers
 `{error, absent}` too, before the device NIF is asked.
 
-start/2 reaches the window through erx_device; open/2 takes any module
+start/3 reaches the window through erx_device; open/2 takes any module
 of that shape (elements/2, config_read/4 and config_write/5), as the
 model of configuration space the host tests use, which cannot load the
 device NIF.
@@ -32,7 +32,7 @@ device NIF.
 
 -behaviour(erx_pcie_bridge).
 
--export([start/2, open/2, access/2, ready/2]).
+-export([start/3, open/2, access/2, ready/2]).
 -export_type([space/0, state/0]).
 
 -doc """
@@ -48,9 +48,9 @@ stores them, each one access of that width.
 %% The bridge's record, its window, and how many blocks of the window's space it holds.
 -opaque state() :: {ecam, erx_abi_layout:erx_pcie_bridge(), space(), Blocks :: non_neg_integer()}.
 
--doc "The bridge's state over its device's configuration window. Bring-up does nothing.".
--spec start(erx_abi_layout:erx_pcie_bridge(), erx_device:device()) -> {ok, state()}.
-start(Bridge, Device) ->
+-doc "The bridge's state over its device's configuration window. Bring-up does nothing and asks for no effect.".
+-spec start(erx_abi_layout:erx_pcie_bridge(), erx_device:device(), erx_pcie_bridge:effects()) -> {ok, state()}.
+start(Bridge, Device, _Effects) ->
     open(Bridge, {erx_device, Device}).
 
 -doc "The bridge's state over a configuration window reached as a `space()`.".

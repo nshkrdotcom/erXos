@@ -169,20 +169,25 @@ a_changed_function_starts_off_whatever_its_setting_test() ->
     ?assertEqual(0, command(Table) band 16#7),
     stop(Pid).
 
-%% A bridge driver that holds every function back and drops every write of the command
-%% register, so the function keeps the fixture's decoding command, the start's readback
-%% differs and its apply answers an error (`stuck`): a held function is reported
-%% not_ready on that path too, since `ready` is the one funnel to a ready report
+%% A bridge driver that drops every write of the command register, so the function
+%% keeps the fixture's decoding command, the start's readback differs and its apply
+%% answers an error (`stuck`), and whose `ready` answers as its state says: holding
+%% every function back, so a held function is reported not_ready on that path too,
+%% since `ready` is the one funnel to a ready report, or a link that fell under it
 %% (docs/design-pcie.md, "The bridge seam").
 
 access({write, _Place, 16#04, 2, _Value}, State) ->
     {ok, State};
-access(Access, State) ->
-    erx_pcie_ecam:access(Access, State).
+access(Access, {Ready, Ecam}) ->
+    {Result, Next} = erx_pcie_ecam:access(Access, Ecam),
+    {Result, {Ready, Next}}.
 
-ready(_Function, State) -> {not_ready, State}.
+ready(_Function, {not_ready, _} = State) -> {not_ready, State};
+ready(_Function, {link_down, _}) -> {error, link_down}.
 
-a_held_function_whose_start_failed_is_not_ready_test() ->
+%% The enumerator started over the holding driver whose `ready` answers Ready, and the
+%% table its report is kept in.
+held_start(Ready) ->
     Table = erx_pcie_model:new([endpoint_at(?PLACE, endpoint())]),
     Reports = ets:new(reports, [public]),
     Bus = fun(targets) -> {ok, [bridge()], [], #{}};
@@ -190,14 +195,35 @@ a_held_function_whose_start_failed_is_not_ready_test() ->
           end,
     Open = fun(Bridge) ->
                    {ok, State} = erx_pcie_ecam:open(Bridge, {erx_pcie_model, {Table, 0}}),
-                   {ok, {?MODULE, State}}
+                   {ok, {?MODULE, {Ready, State}}}
            end,
     {ok, Pid} = erx_pcie_enumerator:start_link(#{bus => Bus, open => Open, sleep => fun(_) -> ok end}),
+    {Pid, Reports}.
+
+a_held_function_whose_start_failed_is_not_ready_test() ->
+    {Pid, Reports} = held_start(not_ready),
     _ = sys:get_state(Pid),
     [{report, [#{record := Record, kept := Kept}]}] = ets:lookup(Reports, report),
     stop(Pid),
     ?assertEqual(not_ready, maps:get(state, Record)),
     ?assertNot(Kept).
+
+%% A `ready` that answers link_down ends the enumerator with link_down, as an access
+%% that answers it does, before anything is reported.
+a_link_down_from_ready_ends_the_enumerator_test() ->
+    Trapping = process_flag(trap_exit, true),
+    {Pid, Reports} = held_start(link_down),
+    %% A call after the start's continue: one that fails finds the process ended, one
+    %% that answers finds it still running, which is stopped.
+    Reason = try sys:get_state(Pid) of
+                 _ -> stop(Pid), running
+             catch
+                 exit:_ -> receive {'EXIT', Pid, Exit} -> Exit after 1000 -> no_exit end
+             end,
+    receive {'EXIT', Pid, _} -> ok after 0 -> ok end,
+    process_flag(trap_exit, Trapping),
+    ?assertEqual(link_down, Reason),
+    ?assertEqual([], ets:lookup(Reports, report)).
 
 %% A root port the walk numbers, with its BAR registers implementing none.
 root_port_at(Snapshot) -> {{0, 0, 0}, Snapshot, #{16#10 => 0, 16#14 => 0}}.

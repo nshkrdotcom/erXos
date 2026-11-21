@@ -121,7 +121,12 @@ class ErxPcieWalkTest < Minitest::Test
              module_path: 'erlang/apps/erx_pcie/src/erx_pcie_enumerator.erl',
              anchor: '    link(Index, Place, Read),',
              replacement: '    _ = {Index, Read},',
-             catching_case: 'a_root_ports_link_is_logged_from_its_express_capability_test')
+             catching_case: 'a_root_ports_link_is_logged_from_its_express_capability_test'),
+    Seed.new(fault: "a link_down from a bridge's ready not ended",
+             module_path: 'erlang/apps/erx_pcie/src/erx_pcie_enumerator.erl',
+             anchor: '        {error, link_down} -> exit(link_down)' + "\n    end.\n\n%% An answered setting",
+             replacement: '        {error, link_down} -> {Start, {Module, State}}' + "\n    end.\n\n%% An answered setting",
+             catching_case: 'a_link_down_from_ready_ends_the_enumerator_test')
   ].freeze
 
   def test_walk_place_and_ecam_cases_pass_under_eunit

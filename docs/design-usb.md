@@ -866,9 +866,10 @@ the link falls under it ([Failure handling](#failure-handling)).
 and 6), each wait a deadline of the core:
 
 1. Assert the bridge reset (bit 1 of `0x9210`) and PERST# (bit 0), since
-   the boot firmware may have left PERST# released; wait 100 to 200 us;
-   release the bridge reset; clear `SERDES_IDDQ` (bit 27 of `0x4204`)
-   and wait 100 to 200 us for the SerDes to settle.
+   the boot firmware may have left PERST# released; wait at least
+   100 us, which the driver sleeps as 1 ms, since its waits are whole
+   milliseconds; release the bridge reset; clear `SERDES_IDDQ` (bit 27
+   of `0x4204`) and wait as long again for the SerDes to settle.
 2. Set `MISC_CTRL` (`0x4008`), read-modify-write: `SCB_ACCESS_EN`,
    `CFG_READ_UR_MODE`, `MAX_BURST_SIZE` 0, the 128 bytes the vendor
    chooses for the BCM2711, `RCB_MPS_MODE` and `RCB_64B_MODE`. FreeBSD
@@ -1196,10 +1197,10 @@ installed (`:138-150`; facts record, section 8, item 16). erXos's rule
 covers both: the notification is the last step of bring-up, so it
 follows every PERST# cycle, the only time firmware is lost, and is sent
 at no other time, so a kept link never asks a board's firmware to
-reload what is present. The enumerator then waits 1 ms, as FreeBSD does
+reload what is present. The driver then waits 1 ms, as FreeBSD does
 (Linux waits 200 to 1000 us), and reads `0x50` again (`:157-173`); a
-value still 0 or all ones reports the function `not_ready`, with
-`vl805 firmware not loaded` in the bridge's inspection record. Probe B1
+value still 0 or all ones reports the function `not_ready`, and the
+driver logs `vl805 firmware not loaded`. Probe B1
 reads the register at erXos's start and again after a bring-up of
 erXos's own, and records the firmware version, which the controller's
 inspection record shows too.
@@ -3341,8 +3342,8 @@ sink shows it.
 | the transport | `{error, {device, {sense, Key, Asc, Ascq}}}`, `{error, {device, no_sense}}`, `{error, {device, reset}}`, `{error, {device, short}}`, `{error, {device, gone}}`, `{error, {device, deadline}}`, `{error, no_flush}` | a failed command; a failed command whose REQUEST SENSE failed too; a reset recovery; a transfer that moved less than asked; a request of an ended medium; the wait bound passed; a flush of a medium that cannot flush |
 | a device at enumeration | refused, with `descriptor too long`, `malformed descriptor`, `duplicate interface`, `missing setting`, `endpoint zero`, `duplicate endpoint`, `missing companion`, `unsupported speed`, `too deep`, `too many ports`, `too many devices`, `too many endpoints`, `endpoint too large` or `zero interval payload` | the decoder or a bound |
 | an access of the bridge driver below the root port | `{error, link_down}` | the link was down before the access or after it |
-| the bridge's bring-up | fails, with `link down`, `endpoint mode` or `dma-ranges` in the bridge's inspection record, and no function reported | no link 200 ms after PERST#'s release; the block is not a root complex; the tree's inbound range breaks the window's rules |
-| the VL805's report | `not_ready`, never given, with `vl805 firmware not loaded` | `0x50` reads 0 or all ones after the notification, or the notification's kernel call failed; for the rest of the boot after a timed-out notification, whatever `0x50` reads |
+| the bridge's bring-up | fails, with `link_down`, `endpoint_mode`, `dma_ranges` or `ranges` logged, and no function reported | no link 200 ms after PERST#'s release; the block is not a root complex; the tree's inbound range breaks the window's rules |
+| the VL805's report | `not_ready`, never given, with `vl805 firmware not loaded` logged, and the bridge's `firmware lost` in `/dev`'s `status` after a timed-out notification | `0x50` reads 0 or all ones after the notification, or the notification's kernel call failed; for the rest of the boot after a timed-out notification, whatever `0x50` reads |
 | a write to a FAT volume on a medium that cannot flush | `erofs` | the FAT server mounted it read-only, its window having answered the mount's flush `enotsup` |
 | a walk of a drive's tree whose mount the server refused | `eio`, the mount's inspection record naming the failure | the mount's flush answered other than `ok` or `enotsup`, or the window ended before it answered; the next walk mounts again |
 | `erx_firmware_request` | `ERX_ENOTSUP`; `ERX_EPROTO`; `ERX_ERIGHTS`; `ERX_ETIMEDOUT`; `ERX_EBUSY`; `ERX_EWOULDBLOCK` | a resource of a device without notifications or a platform without one, an index past the device's list, or a tag the firmware ignored; an answer outside the interface; a resource without `CARVE`; no answer within 1 s, and every call after one in the boot; another mailbox request in flight; a call from an executor |

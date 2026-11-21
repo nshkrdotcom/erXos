@@ -263,7 +263,8 @@ start_function(#{record := Record}, _Settings, Driver) ->
 held(#{record := Record} = Start, {Module, State}) ->
     case Module:ready(Record, State) of
         {ok, Ready} -> {Start, {Module, Ready}};
-        {not_ready, Held} -> {Start#{record := Record#{state := not_ready}, kept := false}, {Module, Held}}
+        {not_ready, Held} -> {Start#{record := Record#{state := not_ready}, kept := false}, {Module, Held}};
+        {error, link_down} -> exit(link_down)
     end.
 
 %% An answered setting that differs from the target the start applied.
@@ -414,11 +415,17 @@ configuration(_Index, [], []) ->
 configuration(_Index, [], [_, _ | _]) ->
     {error, two_configuration_records}.
 
-start_driver(Module, Bridge, Spec) ->
+start_driver(Module, #{index := Index} = Bridge, Spec) ->
     case erx_device:open(Spec) of
-        {ok, Device} -> started(Module, Module:start(Bridge, Device));
+        {ok, Device} -> started(Module, Module:start(Bridge, Device, effects(Index)));
         {error, Reason} -> {error, {open, Reason}}
     end.
+
+%% What a bridge driver's start may ask of the domain beyond its device: a wait in
+%% milliseconds, and its bridge's firmware notification, pci_bus:firmware/1, which
+%% names no other bridge.
+effects(Index) ->
+    #{sleep => fun timer:sleep/1, firmware => fun() -> bus({firmware, Index}) end}.
 
 started(Module, {ok, State}) -> {ok, {Module, State}};
 started(_Module, {error, _} = Error) -> Error.

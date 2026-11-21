@@ -6,7 +6,9 @@
 The bridge seam (docs/design-pcie.md, "The bridge seam"): what a host
 bridge driver gives the enumerator. `start` brings the bridge up;
 `access` is one configuration access at a place; `ready` lets a bridge
-hold back a function its board must start first. The walk, sizing,
+hold back a function its board must start first, and answers
+`{error, link_down}` when the link falls under what it reads, which ends
+the enumerator as an access's `link_down` does. The walk, sizing,
 placement and the planner reach configuration space through `access`
 alone, so a third bridge is one more module.
 
@@ -22,7 +24,7 @@ reaches a place whose device is past 31 or function past 7.
 """.
 
 -export([reaches/2, read_answer/3]).
--export_type([access/0, result/0]).
+-export_type([access/0, result/0, effects/0]).
 
 -doc """
 One configuration access at a place: a read or a write of Width bytes at
@@ -39,11 +41,20 @@ bridge's link was down around the access, whose answer is then not taken.
 """.
 -type result() :: {ok, 0..16#ffffffff} | ok | {error, absent | link_down}.
 
--callback start(Facts :: erx_abi_layout:erx_pcie_bridge(), Device :: erx_device:device()) ->
+-doc """
+What a driver may ask of the PCIe domain beyond its device, which the
+enumerator builds for each bridge: `sleep`, a wait of at least that many
+milliseconds, and `firmware`, the bridge's firmware notification through
+pci_bus:firmware/1, which names that bridge and answers `ok` or an
+error. A driver that needs neither ignores them.
+""".
+-type effects() :: #{sleep := fun((pos_integer()) -> ok), firmware := fun(() -> ok | {error, atom()})}.
+
+-callback start(Facts :: erx_abi_layout:erx_pcie_bridge(), Device :: erx_device:device(), Effects :: effects()) ->
     {ok, State :: term()} | {error, Reason :: atom()}.
 -callback access(Access :: access(), State :: term()) -> {result(), State :: term()}.
 -callback ready(Function :: erx_abi_layout:erx_pcie_function(), State :: term()) ->
-    {ok | not_ready, State :: term()}.
+    {ok | not_ready, State :: term()} | {error, link_down}.
 
 -doc """
 Whether a driver of the bridge may make an access at the place: for an

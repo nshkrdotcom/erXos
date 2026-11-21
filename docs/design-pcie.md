@@ -510,7 +510,9 @@ calls `pcie` only after answering the enumerator's report.
 A **bridge driver** implements the `erx_pcie_bridge` behaviour:
 
 ```erlang
--callback start(Facts :: erx_abi_layout:erx_pcie_bridge(), Device :: erx_device:device()) ->
+-callback start(Facts :: erx_abi_layout:erx_pcie_bridge(), Device :: erx_device:device(),
+                Effects :: #{sleep := fun((Ms :: pos_integer()) -> ok),
+                             firmware := fun(() -> ok | {error, atom()})}) ->
     {ok, State :: term()} | {error, Reason :: atom()}.
 -callback access(Access, State :: term()) -> {Result, State :: term()}
     when Access :: {read, Place, Offset, Width}
@@ -519,7 +521,7 @@ A **bridge driver** implements the `erx_pcie_bridge` behaviour:
          Offset :: 0..255, Width :: 1 | 2 | 4,
          Result :: {ok, non_neg_integer()} | ok | {error, absent | link_down}.
 -callback ready(Function :: erx_abi_layout:erx_pcie_function(), State :: term()) ->
-    {ok | not_ready, State :: term()}.
+    {ok | not_ready, State :: term()} | {error, link_down}.
 -callback layout() -> packed | kept.
 ```
 
@@ -531,7 +533,15 @@ a place its bridge must not be asked about, or whose device is past 31
 or function past 7, which would name another function's routing ID, as
 FreeBSD reads all ones there ([What is matched](#what-is-matched),
 ECAM); `ready` lets a bridge hold
-back a function its board must start first. The walk, sizing, placement
+back a function its board must start first, and answers `{error,
+link_down}` when the link falls under what it reads, which the
+enumerator turns into its exit as it does an access's. `Effects` is what
+a driver may ask of the domain beyond its device, which the enumerator
+builds for each bridge: `sleep`, `timer:sleep/1`, and `firmware`, a
+`pci_bus:firmware/1` call that names that bridge, so the `pci_bus`
+protocol stays the enumerator's; what keeps a domain from naming a
+bridge it does not hold is the device service's check
+([Facets](#facets)). The walk, sizing, placement
 and planner call nothing else, so a third bridge is one more module. The
 enumerator chooses the module by the bridge's given record's
 peripheral, `pci_ecam`, `bcm2711_pcie` or `bcm2712_pcie`, rows of
@@ -540,7 +550,7 @@ record by its INDEX, the bridge's manifest device row, which is the
 `erx_pcie_bridge`'s `index`
 ([design-fiasco.md](design-fiasco.md#device-records)).
 
-**ECAM** (`erx_pcie_ecam`). `start` does nothing. An access at a place
+**ECAM** (`erx_pcie_ecam`). `start` does nothing and ignores `Effects`. An access at a place
 whose bus lies outside the bridge's bus range, from the tree's
 `bus-range` or 0 to 255 without one, answers `{error, absent}`; otherwise
 it reads or writes at `(bus - first) << 20 | device << 15 | function << 12
@@ -604,7 +614,10 @@ register values are the facts record's:
   the root port's bus numbers are written and the endpoint's place reads
   present, asks the device service for the firmware notification with
   `pci_bus:firmware/1` ([Facets](#facets)), then waits 1 ms and reads
-  `0x50`. The device service makes the narrow kernel call through the
+  `0x50`. The driver sends the notification from `ready`, through its
+  `firmware` effect, when the enumerator starts the VL805, before that
+  function is reported, so the enumerator keeps one `pci_bus` call in
+  flight. The device service makes the narrow kernel call through the
   domain library, `erx_domain_lib:pci_firmware(Bridge)`, over
   `erx_dom_pci_firmware` in C, with the resource the bridge's device
   record holds for its give; no capability for it reaches the PCIe

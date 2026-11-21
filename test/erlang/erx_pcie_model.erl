@@ -19,7 +19,7 @@
 
 -export([new/1, open_bus/2, set_link/2, ignore/2, hardware/1, register/3, snapshot/2]).
 -export([elements/2, config_read/4, config_write/5]).
--export([start/2, access/2, ready/2, closed/2]).
+-export([start/3, access/2, ready/2, closed/2]).
 
 %% Functions: [{Place, Snapshot, #{BarOffset => WritableMask}}]. Bus 0 and the bus
 %% first given are open from the start; a root port's bus opens when its target is
@@ -73,7 +73,7 @@ window(Handle, Routing) ->
 place(First, Routing) -> {First + (Routing bsr 8), (Routing bsr 3) band 31, Routing band 7}.
 
 %% The closed bridge driver.
-start(_Bridge, _Device) -> {error, unsupported}.
+start(_Bridge, _Device, _Effects) -> {error, unsupported}.
 
 closed(Bridge, Table) -> {ok, {Bridge, Table}}.
 

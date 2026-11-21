@@ -2330,14 +2330,11 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   that waits for `erx_firmware_request`, which no ABI file or backend declares yet; the identity check
   of a reported function against its row's compatible string ("The catalogue and gives"); and the `pcie` QEMU
   suite's cases beyond walk-and-report and hold (design-pcie.md, "The `pcie` QEMU suite").
-* [Medium] PCIe, the BCM2711 bridge's start (`erlang/apps/erx_pcie/src/erx_pcie_bcm2711.erl` `start/2`,
-  [design-pcie.md](docs/design-pcie.md#the-bridge-seam)):
-  the driver runs its core over any port and is host-tested over the register model, but its start on the target
-  refuses with `enotsup`, so the enumerator logs that reason and reports none of the bridge's functions.
-  The VL805's firmware notification, which the device service makes for `pci_bus:firmware/1`
-  ([design-usb.md](docs/design-usb.md#the-vl805s-firmware)), has no route from the driver: `start/2` would hand
-  the core a port that reaches the bridge's registers but not that call.
-  The Pi 4's platform record has no bridge unit and its manifest no PCIe domain yet, which the board needs too.
+* [Medium] PCIe, the BCM2711 bridge on the Pi 4 (`config/platforms/raspi4b.json`, `config/manifest/`,
+  [design-pcie.md](docs/design-pcie.md#the-bridge-seam)): the driver starts on the target over the bridge's device
+  record, but the Pi 4's platform record has no bridge unit or VL805 unit and its manifest no PCIe domain, so the
+  enumerator finds no configuration record there and the driver has run only over the host tests' register model.
+  Until `pci_bus:firmware/1` is made (the item above), a bring-up that cycles PERST# reports the VL805 `not_ready`.
 * [Medium] PCIe and the drivers' control, one mint for system-domain-only grants (`erlang/apps/erx_pcie/src/erx_pcie_facet.erl`
   `start_link/0`, `mint_init/1`, `mint/1`; `erlang/apps/erx/src/erx_driver_ctl.erl` `start_mint`, `mint_init`, `mint`): the pcie
   mint repeats the driver-control mint line for line but for its callback module and the grant's extra keys, so a fix

@@ -5,7 +5,9 @@
 %% cases of erx_pcie_bcm2711_core (docs/design-pcie.md, "Host tests of the pure
 %% cores"; docs/research-brcmstb-pcie.md, sections 1, 3 and 6). It is a map,
 %% advanced one operation at a time by run/2, which drives a core machine to its
-%% result.
+%% result. For the driver's cases the map is kept in an ets table, reached as the
+%% driver reaches its device, in erx_device's shape (read/2, write/3, config_read/4,
+%% config_write/5), with the seam's sleep and firmware notification from effects/1.
 %%
 %% The link trains once PERST# and the bridge reset are released and the SerDes is
 %% powered, `train_us` microseconds after PERST#'s release, unless the model is made
@@ -19,7 +21,8 @@
 %% and any access below the root port less than 100 ms after PERST#'s release.
 -module(erx_pcie_bcm2711_model).
 
--export([new/1, run/2, op/2, log/1, violations/1, firmware_register/1, link/1]).
+-export([new/1, run/2, log/1, violations/1, firmware_register/1, link/1]).
+-export([table/1, stored/1, effects/1, read/2, write/3, config_read/4, config_write/5]).
 
 -include("generated/erx_hw_bcm2711_pcie.hrl").
 
@@ -30,7 +33,9 @@
 %% long ago; down: PERST# asserted), firmware (the VL805's version register at the
 %% start, 0 for none), trains (whether the link comes up after a release), train_us,
 %% endpoint (the block in endpoint mode), l23 (whether the link enters L23 when
-%% asked), fall_at (the operation before which the link falls, or never).
+%% asked), fall_at (the operation before which the link falls, or never), notify
+%% (loads: the notification loads the firmware with the link up; {answer, A}: it
+%% answers A and loads nothing).
 new(Options) ->
     Boot = maps:get(boot, Options, down),
     Perst = case Boot of up -> 0; down -> ?ERX_HW_BCM2711_PCIE_RGR1_SW_INIT_1_PERST_MASK end,
@@ -44,6 +49,7 @@ new(Options) ->
       endpoint => maps:get(endpoint, Options, false),
       l23 => maps:get(l23, Options, true),
       fall_at => maps:get(fall_at, Options, never),
+      notify => maps:get(notify, Options, loads),
       count => 0,
       index => none,
       log => [],
@@ -58,6 +64,32 @@ firmware_register(#{firmware := Firmware}) -> Firmware.
 
 link(Model) -> link_up(Model).
 
+%% A model made with Options and kept in a new ets table, the device's handle.
+table(Options) ->
+    Table = ets:new(bcm2711, [public]),
+    true = ets:insert(Table, {model, new(Options)}),
+    Table.
+
+%% The model the table holds now.
+stored(Table) -> ets:lookup_element(Table, model, 2).
+
+%% The seam's effects over the table: a sleep advances the model's clock and is logged
+%% as a wait of that many milliseconds in microseconds; the notification is the model's.
+effects(Table) ->
+    #{sleep => fun(Milliseconds) -> through(Table, {wait, Milliseconds * 1000}) end,
+      firmware => fun() -> through(Table, notify_firmware) end}.
+
+read(Table, Register) -> through(Table, {read, Register}).
+write(Table, Register, Word) -> through(Table, {write, Register, Word}).
+config_read(Table, Space, Offset, Width) -> through(Table, {cfg_read, Space, Offset, Width}).
+config_write(Table, Space, Offset, Width, Value) -> through(Table, {cfg_write, Space, Offset, Width, Value}).
+
+%% One operation on the table's model, and its answer.
+through(Table, Op) ->
+    {Answer, Next} = op(Op, stored(Table)),
+    true = ets:insert(Table, {model, Next}),
+    Answer.
+
 %% Drives a core from its first action to its result.
 run(Model, {Core, {done, Result}}) ->
     {Result, Core, Model};
@@ -65,8 +97,7 @@ run(Model, {Core, Op}) ->
     {Answer, Next} = op(Op, Model),
     run(Next, erx_pcie_bcm2711_core:step(Answer, Core)).
 
-%% One operation executed, counted and logged: its answer and the model after it,
-%% the shape of the port the bridge driver takes (erx_pcie_bcm2711:open/3).
+%% One operation executed, counted and logged: its answer and the model after it.
 op(Op, Model) ->
     true = in_space(Op),
     Counted = fall(Model#{count := maps:get(count, Model) + 1}),
@@ -99,6 +130,8 @@ apply_op({cfg_write, root_port, Offset, Width, _Value}, Model) ->
     {ok, root_port(Offset, Width, Model)};
 apply_op({cfg_write, ext_cfg_data, Offset, _Width, _Value}, Model) ->
     {ok, endpoint_checked(Offset, Model)};
+apply_op(notify_firmware, #{notify := {answer, Answer}} = Model) ->
+    {Answer, Model};
 apply_op(notify_firmware, Model) ->
     case link_up(Model) of
         true -> {ok, Model#{firmware := ?VERSION}};
