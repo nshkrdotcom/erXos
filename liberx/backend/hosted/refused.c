@@ -91,6 +91,12 @@ erx_space_create(uint64_t budget, uint64_t parent, uint64_t fault, uint64_t labe
 	return (ERX_ENOTSUP);
 }
 
+uint32_t
+erx_space_cap_limit_max(void)
+{
+	return (ERX_CAPS_MAX);
+}
+
 int
 erx_image_map(uint64_t space, uint64_t image, uint64_t entry, uint64_t *start)
 {

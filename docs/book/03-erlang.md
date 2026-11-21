@@ -8,8 +8,9 @@
 > Erlang processes (section 3.9). Domains message each other as Erlang
 > nodes do (section 3.6). Device drivers are supervised Erlang
 > processes, and modules are reloaded from the development host.
-> **Designed**: each domain's priority band, and the refusal, by erXos's
-> most trusted domain, of code that is not installed.
+> **Designed**: each domain's priority band, the refusal, by erXos's
+> most trusted domain, of code that is not installed, and its decoding
+> of other domains' messages without creating atoms.
 
 **Background needed.** [Chapter
 1](01-operating-systems.md) (processes,
@@ -552,7 +553,7 @@ sequenceDiagram
     participant W2 as new driver worker
     W->>W: meets an unexpected case
     W-->>S: exit signal, reason {badmatch, ...}
-    S->>S: one_for_one; within restart limit
+    S->>S: one_for_one, within restart limit
     S->>W2: start from the child specification
     W2-->>S: started, registers its name
     Note over T: sees nothing
@@ -943,7 +944,7 @@ with no recompilation and no restart.
 
 These tools see one node, and nothing beneath it: threads, memory,
 devices, other programs. [Chapter
-21](README.md#chapter-21-the-live-machine) shows how erXos extends this
+21](21-live-machine.md) shows how erXos extends this
 view to the whole machine.
 
 ## 3.8 Where the model stops
@@ -1003,13 +1004,13 @@ signals and supervises is an Erlang process: a pid, a mailbox, links and
 monitors ([design.md, The model](../design.md#the-model)). No second
 kind of process lies beneath it. Native programs written in C do run,
 each in an address space of its own, as [chapter
-13](README.md#chapter-13-native-programs-pipes-and-posix-lite) tells.
+13](13-native-programs.md#131-a-program-is-a-port) tells.
 
 Erlang processes are grouped into **domains**. A domain is a group of
 processes that share one address space, one ERTS and one memory budget.
 Each domain's ERTS runs in user mode, as an Erlang node with a name of
 its own ([chapter
-10](README.md#chapter-10-domains-a-wall-around-some-processes)). One
+10](10-domains.md#101-a-domain-is-a-node)). One
 domain is special: the **system domain**, erXos's root task in the sense
 of [section 2.5.3](02-microkernels.md#253-the-root-task). It holds the
 authority over all memory and devices, builds every other domain, and
@@ -1036,7 +1037,7 @@ built: today every thread but the watchdog's runs at one priority
 Scheduling has two levels: ERTS switches between Erlang processes as
 section 3.5.2 describes, and the kernel schedules ERTS's threads by
 priority. [Chapter
-9](README.md#chapter-9-processes-runtimes-and-two-level-scheduling)
+9](09-processes.md#912-two-levels-in-one-picture)
 treats both.
 
 ### 3.9.2 Distribution across a domain's wall
@@ -1054,8 +1055,12 @@ end.
 
 Each frame that arrives is decoded by the receiving domain's **funnel**,
 the one function that decodes messages from another domain. The funnel
-refuses any malformed frame and creates no atoms, so the atom-table
-attack of section 3.5.5 does not cross the wall.
+refuses any malformed frame and creates no atoms itself. The message
+inside stays encoded until the receiving process takes it, and ERTS's
+ordinary decoder then adds the atoms it names, so the atom-table
+attack of section 3.5.5 can reach a domain that receives from another.
+In the design, the system domain decodes other domains' messages in a
+safe mode that creates no atom; that is designed and not built.
 
 A domain reaches only the processes another domain has **exported** to
 it. A domain exports one of its processes to a peer when it sends the
@@ -1097,7 +1102,7 @@ section 3.3 describes. **Built**: the display and input drivers are
 Erlang processes ([the top-level README, Current status](../../README.md#current-status)). A test under QEMU, the
 machine emulator erXos's tests run on, kills the disk's driver in the
 middle of a transfer. It finds each kept file cut at a sync (**Built**).
-[Chapter 15](README.md#chapter-15-devices-and-drivers) treats drivers.
+[Chapter 15](15-devices.md) treats drivers.
 
 ### 3.9.4 A functional core, with a behaviour at the edge
 
@@ -1145,7 +1150,7 @@ each action to its network interface, which frames and sends the
 packets, and arms the timer. The core touches nothing, so
 `test/erlang/erx_dhcp4_tests.erl` tests it on the development host by
 stepping it through its states, with no network. [Chapter
-6](README.md#chapter-6-correct-by-construction) explains the method.
+6](06-construction.md#63-functional-core-effects-at-the-edge) explains the method.
 
 ### 3.9.5 ERTS as a parts bin
 
@@ -1184,7 +1189,7 @@ from installed storage, never a binary a service merely received
 domain](../design-runtime.md#code-in-the-system-domain)). This is
 **Designed** and not built: the boot information carries the flag that
 asks for it, and ERTS ignores it. [Chapter
-21](README.md#chapter-21-the-live-machine) covers code from the host,
+21](21-live-machine.md#214-code-from-the-host-named-by-its-hash) covers code from the host,
 and the tools of section 3.7 extended to the machine.
 
 ### 3.9.7 The chapter's ideas at a glance

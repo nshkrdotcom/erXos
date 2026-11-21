@@ -320,19 +320,68 @@ semaphores and its threads; a task uses only the first of those runs. The stub o
 and `erx_irq_ack` computes the slot from the value's number alone and invokes it, so a ring or an
 acknowledgement makes no request to the root. In the root, the window of IRQ slots starts at the
 same base, and the root's other slots lie past the end of its window: its service gate and
-thread, the watchdog's slot, its slot for each IRQ object, and each task's run. Every other kind of
+thread, the watchdog's slot, its slot for each IRQ object, and the slot pool. Every other kind of
 object is the entry alone, with no capability in the holder.
 
 A window ends at its base plus the space's `cap_limit`, and it must lie within Fiasco's object
-space. **The root's layout is one derived plan.** The backend computes, from its constants alone,
-the base, then the root's window, then its service gate and thread and the watchdog's slot, its run
-of one slot for each IRQ object the machine admits (`ERX_FIASCO_IRQS_MAX`), and the runs of the most
-tasks the task table admits ([Table sizes](#table-sizes)), each run at its fixed size. The root's
-handle limit is not a separate figure: it is what is left of the object space once every other part
-of the plan is laid out, so the root's window cannot overlap its other slots, and a static assertion
-fails the build when that leaves the root no handles. The root's table opens with that limit, and a
-handle past it is `ERX_ELIMIT`, as in any task. A task's run is placed only inside the plan's run
-area, at its task index, so an admitted task cannot place past the plan either.
+space. **The root's layout is one plan: fixed slots, then a pool.** The root holds a capability with
+Fiasco's delete right to every object it creates ([Who holds what](#who-holds-what)), so every
+thread, semaphore, gate and task of every domain has a slot in the root's object space, which holds
+65,536. The plan lays out, from the backend's constants alone: Fiasco's base capabilities; the
+per-thread runs, the same in every task, which in the root hold its own threads and semaphores; the
+root's window of 16,384 IRQ slots, the root's handle limit, a declared figure, since what the system
+domain holds at once is its policy's and no table determines it; the service gate and thread and
+the watchdog's slot; one slot for each IRQ object the machine admits (`ERX_FIASCO_IRQS_MAX`, 256);
+and the **slot pool**, every slot left to the end of the object space, in pairs. Under the figures
+of this section the pool starts at slot 16,911 and holds 24,312 pairs, its odd last
+slot unused. The pool's size is derived, never written down, so no part of the plan can overlap
+another. The root's table opens with its limit, and a handle past it is `ERX_ELIMIT`, as in any task.
+
+**What takes pairs.** A thread of a task other than the root takes one pair, for its thread and its
+semaphore, and the task's row records the pair's index beside the thread's state, as L4Re's thread
+manager takes a thread's capability and its semaphore's from its slot allocator and keeps both in
+the thread's descriptor (`l4re-core`, `libpthread/src/manager.cc`, and the allocator,
+`l4re/util/include/counting_cap_alloc`; read by the advisor, not in this task, so unverified here).
+A task other than the root takes two pairs, for its gate and its task object in the first and the
+semaphore its end ups in the second, the fourth slot unused, and its row records both indices. The
+pool's one unit is the pair, so a count of free pairs is also a count of what can be placed: a
+take never fails for want of adjacent slots while enough are free, which is what lets the manifest
+check share the pool out by counting. A record names a pair by its index plus one, so the zero of
+a cleared record names no pair and reaches no slot, and a stale use is Fiasco's refusal; the
+numbers fit 16 bits, because the pool holds fewer than 65,535 pairs, and a static assertion says so: the row gains 128 thread pair indices and two task pair
+indices, 260 bytes, and stays under half a page, so the task table keeps its two rows a page. The
+root's own threads keep their fixed runs, because the root's index 0 is the thread the kernel gave
+it and the root's stubs reach its own thread capabilities by index. IRQ objects keep their fixed
+slots too: `irq.c`'s table of 256 objects is already the record of each and bounds their number, and
+its index names the slot, so a slot from the pool would add a recorded index and a free step and
+remove no bound. The direct stubs are not affected either way, since they invoke the holder's IRQ
+slot, the base plus the entry's index in the holder's own space, never the root's slot for the
+object. Any other object the root comes to hold a capability to takes whole pairs from the pool,
+recorded in its own record, and joins the pool's sharing.
+
+**Taking and freeing.** A take scans for the lowest free pair, as the object records are taken
+([The one lookup](#handles), `handles.c`). Only the service takes and frees pairs, in the bodies
+that create and delete what they hold, and a body runs to its end before the next receive, so the
+pool needs no lock, as the task table needs none ([Locks](#locks)). A thread's create takes its
+pair before any Fiasco call, so a pool with no free pair is `ERX_ENOMEM` with nothing created, and
+its own undo frees the pair. A space's create takes its two pairs with its row, before it makes
+any object, and frees them on the same undo. A thread's pair is freed by the deletion of the
+thread, in the reaper's request or in step 1 of its task's teardown ([Task exit](#task-exit)),
+after Fiasco has deleted both its thread and its semaphore. A task's two pairs are freed when its
+row is deleted, after the deletion of the last object in them. A refused deletion ends the machine
+([Who holds what](#who-holds-what)), so no pair is ever free while Fiasco still holds an object in
+it, and a take never meets an occupied slot.
+
+**The pool is shared out.** The task table holds at most 1,024 rows, and the plan derives that
+figure from the row's size and the table's one directory page ([Table sizes](#table-sizes)), so
+the pool's spaces never need more than 2,048 pairs, and a static assertion fails the build when
+the pool holds fewer than two pairs for every row the task table can hold. Those 2,048 pairs are
+held back whole: they are the pool's first, a run of their own, from which only a space's create
+takes. The remaining 22,264 pairs are the threads' run, and a domain's share of them is its thread
+limit. Both the threads' share
+and the task table are machine-wide tables that the manifest check shares out among domains
+([Table sizes](#table-sizes)), so a configured domain within its limits never meets the pool's
+`ERX_ENOMEM`.
 
 Under `config/fiasco/kernel.defconfig`, which leaves `PHYS_OBJ_SPACE_AVL` off (the option has no
 default, `Kconfig:399-407`), Fiasco's object space is a two-level table of `Slots_per_dir *
@@ -351,9 +400,12 @@ aliased selector names only its own slots. The figures are read from the in-tree
 unverified on a running kernel until a boot probe places a capability at slot 65,535 and is refused
 at 65,536, and checks that a selector 2^39 above a placed slot and the slots beside each probed one
 are unchanged. `erx_space_create` refuses with `ERX_EINVAL` a `cap_limit` whose window would pass
-the object space, where erXos's kernel takes any value up to `caps_max` (FD1).
+the object space, where erXos's kernel takes any value up to `caps_max` (FD1). A caller that
+wants the largest table asks `erx_space_cap_limit_max()`, which answers the largest `cap_limit`
+whose window fits, so no code above `liberx` names Fiasco's figure; a session's port driver
+makes each program's image with it.
 
-**Implementation.** The design is built in three parts, each with the test that proves it and a
+**Implementation.** The design is built in four parts, each with the test that proves it and a
 seeded fault that test must catch:
 
 * The handle value and the lookup, in `handles.c`, built for the host: the entry's generation, its
@@ -375,13 +427,29 @@ seeded fault that test must catch:
   a build of the root's layout plan. Seeded faults: the trigger stub sending a request, under which
   the root's request count moves; the close leaving the holder's slot mapped, under which a ring
   after close reaches the object; the placement function placing unconditionally, under which the
-  inspection-only holder rings the object; and the root's handle limit set one past what the plan
-  leaves, under which the static assertion fails.
+  inspection-only holder rings the object; and the root's window declared so large that the pool
+  holds fewer than two pairs for every task row, under which the static assertion fails.
 * Rights through create, carve, duplicate and pass, in `object.c`: the creation kind's set, the
   intersection with the mask and the right each call needs. The *rights shrink* and *a creator's
   pass* cases prove it, with a budget carved through an entry that lacks `SPACES`, expecting the new
   entry without `SPACES`. Seeded faults: the pass recording the source's rights unmasked, the map
   body not asking the lookup for `WRITE`, and a carve recording its creation kind's whole set.
+* The slot pool: its take and free, built for the host in `liberx/backend/core`, and the root's
+  uses of it, in `service.c` and `service_task.c`: the pair a thread's create takes and its reap and
+  its task's teardown free, the two pairs a space's create takes and its row's deletion frees, and
+  each create's undo. A host test takes pairs until the pool is exhausted, expecting distinct pairs
+  lowest first and then a refusal, frees one and expects it taken next, and frees the last pair and
+  expects it taken again. Seeded faults: a take that does not mark its pair, under which two takes
+  answer the same pair; and a scan that stops one pair short, under which the exhausting run ends a
+  pair early (`test/host/slot_pool_test.rb`). The `native_task` suite's `pool_rounds` case runs, in a
+  test task, more thread creates, starts and exits than the pool holds pairs, each expecting `ERX_OK`;
+  its `root_stops` case stops a space whose threads are live and joins it, and every case of the
+  suite expects through the test hooks the pool's free count back where it started and every free
+  pair's slots empty. Seeded faults: the reap not freeing the thread's pair,
+  under which a create in the loop answers `ERX_ENOMEM`; and a row's deletion not freeing the task's
+  pairs, under which the free count ends two pairs a space short. The manifest check's clause 9
+  case refuses a manifest whose thread limits pass the threads' share of the pool; seeded fault: the
+  clause leaving the pool out, under which that manifest passes.
 
 ### Rights
 
@@ -717,7 +785,7 @@ app sees. Release notes and the user documentation carry it.
 
 | Row | Weakens | erXos's kernel | On Fiasco instead | What it means | Closed by |
 | --- | --- | --- | --- | --- | --- |
-| FD1 | K1, K26 | a stale capability never names another object, whatever the use (K1); a table holds up to `caps_max` capabilities; a deleted object's queued threads wake with `ERX_ESTALE` or `ERX_EDEAD` (K26) | every service use of a handle checks the entry's generation, so a closed or stale handle answers `ERX_ESTALE` ([Handles](#handles)); but a ring or an acknowledgement of an IRQ object is the holder's own Fiasco invocation of the slot its handle's number fixes, and Fiasco checks no generation; a space's `cap_limit` is bounded by the IRQ slots Fiasco's object space holds; no queued thread is woken | a ring or an acknowledgement through an IRQ handle its holder has closed reaches whatever IRQ object the holder's entry holds next, and entries are taken first in, first out. That can be a spurious ring of another doorbell the holder holds (for a server, another client's), which costs that object's owner one wake, as any ring does. It can be an early unmask of a line the holder holds. Nothing is mapped, passed, bound or destroyed through such a handle. A space asks for at most the `cap_limit` that fits. A domain keeps for its life the entries of a connect or a give that failed, whose values it never learned | erXos's kernel |
+| FD1 | K1, K26 | a stale capability never names another object, whatever the use (K1); a table holds up to `caps_max` capabilities; a deleted object's queued threads wake with `ERX_ESTALE` or `ERX_EDEAD` (K26) | every service use of a handle checks the entry's generation, so a closed or stale handle answers `ERX_ESTALE` ([Handles](#handles)); but a ring or an acknowledgement of an IRQ object is the holder's own Fiasco invocation of the slot its handle's number fixes, and Fiasco checks no generation; a space's `cap_limit` is bounded by the IRQ slots Fiasco's object space holds; no queued thread is woken | a ring or an acknowledgement through an IRQ handle its holder has closed reaches whatever IRQ object the holder's entry holds next, and entries are taken first in, first out. That can be a spurious ring of another doorbell the holder holds (for a server, another client's), which costs that object's owner one wake, as any ring does. It can be an early unmask of a line the holder holds. Nothing is mapped, passed, bound or destroyed through such a handle. A space asks for at most the `cap_limit` that fits, which `erx_space_cap_limit_max()` answers. A domain keeps for its life the entries of a connect or a give that failed, whose values it never learned | erXos's kernel |
 | FD2 | K1 | every thread and space has an object id of its own, and a thread's handle names it until it is reaped | a thread is an index of its task's table, carried with no generation by its handles, by `erx_object_info`'s thread ids, by the trace ring's `thread`, `space` and `target` and by an exit or fault record's `space`, and kept past its space's deletion (by a join, a release or the deletion of a space above it) it can name a thread of a space that reuses the index; a fault record's thread is `unknown` | a thread handle, a listed id or a record's `space` is good only while what it names lives; a receiver tells which space a record is for by its label | erXos's kernel (thread handles in the capability table) |
 | FD3 | K17, K24 | gates carry messages and capabilities, with `ERX_EDEAD`, labels and deadlines, and capabilities pass at a rendezvous (K17, K24) | gates carry fault and exit records only, and capabilities move only by the root's `erx_cap_pass` | native servers in other domains are reached through connections only | erXos's kernel |
 | FD4 | SH1, P2, CLAUDE.md "Functional core, effects at the edge" | a pass is planned whole, so a refused pass moves nothing | a pass moves its items in order and stops at its first refused one | the caller undoes a partial pass, the domain library by its budget's destroy | erXos's kernel |
@@ -913,8 +981,9 @@ kind and the holder's rights on every request. So a handle to an object that has
 used after its own close and a forged value each answer `ERX_ESTALE`, as on erXos's kernel. Thread
 handles are the exception that [Thread creation](#thread-creation) describes.
 
-Each task has a run of slots in the root, past the root's own: its threads, its semaphores, its
-gate, its space and the semaphore its end ups. Of these, the task itself holds its gate and its
+Each thread of a task has a pair of the root's slots, for itself and its semaphore, and each task two
+pairs, for its gate, its space and the semaphore its end ups, all from the root's slot pool
+([Handles](#handles)). Of these, the task itself holds its gate and its
 semaphores, at the rights [Who holds what](#who-holds-what) gives them. It also holds the IRQ
 objects its handles name, at their IRQ slots, with `L4_CAP_FPAGE_RO` alone. The root maps each of
 these into the task with `l4_task_map`:
@@ -1745,7 +1814,7 @@ of the root's budget only `used`, partial ([Reporting a budget](#reporting-a-bud
 ### Table sizes
 
 The service's tables are pool memory, so the only limits are the pool's, a domain's row's and the ones erXos's interface
-itself has.
+itself has, and the root's slot pool, which Fiasco's object space bounds.
 Each table is a directory page of window addresses of its pages, and a table that fills takes one more page from the
 pool: the task table, the object, budget, group and gate records, each task's handle table, runs and mapping records.
 A table never moves, since its pages stay where they were taken, and every reference between records is an index,
@@ -1753,13 +1822,15 @@ since the service keeps no pointer across a receive. A table that cannot grow is
 
 | Table | Limit |
 | --- | --- |
-| a task's handles | the `cap_limit` its creator gave `erx_space_create`, which the domain library takes from the domain's runtime limits; past it `ERX_ELIMIT`, as on erXos's kernel; the root's, what its slot layout leaves of Fiasco's object space ([Handles](#handles)) |
+| a task's handles | the `cap_limit` its creator gave `erx_space_create`, which the domain library takes from the domain's runtime limits; past it `ERX_ELIMIT`, as on erXos's kernel; the root's, 16,384, its window in the root's layout ([Handles](#handles)) |
 | a task's threads | 128, the most one Fiasco UTCB area holds ([Thread creation](#thread-creation)) |
 | a task's home groups | 1, a park record made with the task |
 | a group's bound IRQ objects | 64, the ready list's length |
 | a domain's threads, objects and mappings | its row's limits, its sub-spaces' included; past them `ERX_ELIMIT` ([Memory and budgets](#memory-and-budgets)) |
-| tasks and memory objects together | 4,096, the page index's labels, shared out among domains by their object limits at admission, the configured domains' shares reserved so that no session takes what a configured domain's restart needs, which the manifest check proves ([design-packaging.md](design-packaging.md#the-builds-check), property 19's clause 8) |
-| any one table | 512 pages, its one directory page; the task table's two rows a page make 1,024 tasks, and a task's runs 131,072 |
+| tasks and memory objects together | 4,096, the page index's labels, shared out among domains by their object limits at admission, the configured domains' shares reserved so that no session takes what a configured domain's restart needs, which the manifest check proves ([design-packaging.md](design-packaging.md#the-builds-check), property 19's clause 9) |
+| tasks | 1,024, the task table's two rows a page in its one directory page, derived from the row's size; a space is an object, so the table is shared out among domains by their object limits at admission, the configured domains' shares reserved, which the manifest check proves ([design-packaging.md](design-packaging.md#the-builds-check), property 19's clause 9) |
+| the root's slot pool | 24,312 pairs, what Fiasco's object space leaves past the root's fixed slots ([Handles](#handles)): two pairs for each task row, held back whole, and the remaining 22,264 for threads, one pair each, shared out among domains by their thread limits at admission, the configured domains' shares reserved, which the manifest check proves (clause 9); past it `ERX_ENOMEM` |
+| any one table | 512 pages, its one directory page; a task's runs 131,072 |
 | everything else | the pool |
 
 The page index stays sized at boot from the window ([The range table](#the-range-table)), which bounds it by
@@ -1830,9 +1901,9 @@ with the handle and the slot, which in the root is the root's own capability. Th
 `erx_fiasco_start_t`: the ABI's `erx_regs` and, beside them, the thread pointer, which `erx_regs` does not hold.
 **Thread handles.** A handle to a thread of the caller's own task, in the root and in every other task alike, names the
 thread's index, since the stubs of `erx_thread_start` and the exit path work on the record it names locally; it
-carries no generation and is no entry of the handle table. The two kinds of handle are told apart by value. An entry of
-the handle table is its index plus one, so 0 stays `ERX_CAP_NULL` and every entry lies at or below `cap_limit`, within
-`caps_max` (`abi/kernel.txt`). An own-task thread handle is `ERX_FIASCO_THREAD_HANDLE_BASE` (`0x800000`) plus the index:
+carries no generation and is no entry of the handle table. The two kinds of handle are told apart by the slot bits,
+bits 0-23 of the value ([Handles](#handles)). An entry's number there is its index plus one, so 0 stays `ERX_CAP_NULL` and
+every entry number lies at or below `cap_limit`, within `caps_max` (`abi/kernel.txt`). An own-task thread handle is `ERX_FIASCO_THREAD_HANDLE_BASE` (`0x800000`) plus the index:
 like `cap_self` and `cap_self_thread`, it lies above `caps_max` in the slot bits, where no entry can be, and below both
 of those values, since an index is less than 128. Every call that takes a thread handle checks for the base first. Once the thread is reaped the handle names no thread and is
 refused, until the index's next create, from which on it names that thread, a recorded difference; nothing keeps such a
@@ -2517,7 +2588,7 @@ a clean-room facts record of the power-management watchdog, as the RNG200's do.
 
 Its numbers and mode come from [the command line](#the-command-line), with the design's defaults of 1, 5 and 60 seconds. **The pet is the design's
 own**: `erx_watchdog`, a process at priority `max` of the release's `kernel`, started among `kernel`'s first children, right after `on_load` lets a module with a NIF load, calling the watchdog NIF from a
-normal scheduler every half second, shorter than any `P` or `D` the command line can set, since those count in seconds. It pets unconditionally and reads no `liveness` record, which `Manifest::Check` refuses until it does, so a pet says only
+normal scheduler every half second, shorter than any `P` or `D` the command line can set, since those count in seconds. It pets unconditionally and reads no `liveness` record, so a pet says only
 that schedulers run and timers fire, and a release with no services is no special case: the first pet follows the first period. A call that
 never yields holds the pet for as long as it holds its normal scheduler, so ERTS prepares a module for loading, the longest such call seen at
 boot, on a dirty CPU scheduler (edit 76 of [design-runtime.md](design-runtime.md#the-edits-outside-syserxos)). Until the first pet the boot races `B` alone, from the watchdog thread's start, which covers ERTS's start,
@@ -3315,7 +3386,7 @@ These differ from the native backend, and a caller must not depend on either sid
 * **A thread's stack switches at its start.** The pthread starts on its own stack and moves to the one the start record names, and back to end, in the host architecture's `arch/<arch>/switch_stack.S` (each file assembles to nothing for another target), and `thread.c` tells the address sanitizer of each move. The thread pointer is a field read through `erx_thread_pointer`, since the host owns the register. The first thread is a worker with no thread pointer, and its `erx_thread_exit_release` releases nothing.
 * **Affinity is checked, not applied.** macOS cannot hold a thread to a CPU.
 * **The wake order is the host's.** Natively the oldest waiter wakes first; `os_sync_wake_by_address_any` promises no order, so that case stays with the native guest. A wake's count is of the host's wakes, so a waiter that waits again at once on the same word may count twice.
-* **No devices.** A well-formed `erx_mem_create_physical` or `erx_mem_create_contiguous` is `ERX_ENOTSUP`, since a device's address here would be made up, and `erx_mem_dma_addr` and `erx_vm_map` are `ERX_EINVAL`, since no handle names such an object. `erx_device:open/1` reports that refusal for a real window. Its `stand_in` window, in a hosted build alone, is plain memory with software objects for lines: a `virtio_mmio` stand-in plays a version 2 transport and its device writing the used ring, honest or hostile, and a `genet` stand-in plays a GENET v5 and its PHY; `erx_device:stand_in_fire/2`, `stand_in_used/3` (an index ahead of what is in flight, a foreign head, an over-length entry), `stand_in_transmitted/1` and `stand_in_receive/2` play the device's side, each reading descriptors and buffers through the window as the controller does, never through the NIF's bookkeeping. Both backends refuse a malformed request from one source, `liberx/backend/core/device_check.h`. Entropy is the host's `getentropy`, and an add takes nothing; with `ERX_HOSTED_ENTROPY_FAIL=N` the first N reads go through and every later one is `ERX_ENOTSUP`, the failure the native backend gives when it cannot reach its generator service.
+* **No devices.** A well-formed `erx_mem_create_physical` or `erx_mem_create_contiguous` is `ERX_ENOTSUP`, since a device's address here would be made up, and `erx_mem_dma_addr` and `erx_vm_map` are `ERX_ESTALE`, since no handle names such an object. `erx_device:open/1` reports that refusal for a real window. Its `stand_in` window, in a hosted build alone, is plain memory with software objects for lines: a `virtio_mmio` stand-in plays a version 2 transport and its device writing the used ring, honest or hostile, and a `genet` stand-in plays a GENET v5 and its PHY; `erx_device:stand_in_fire/2`, `stand_in_used/3` (an index ahead of what is in flight, a foreign head, an over-length entry), `stand_in_transmitted/1` and `stand_in_receive/2` play the device's side, each reading descriptors and buffers through the window as the controller does, never through the NIF's bookkeeping. Both backends refuse a malformed request from one source, `liberx/backend/core/device_check.h`. Entropy is the host's `getentropy`, and an add takes nothing; with `ERX_HOSTED_ENTROPY_FAIL=N` the first N reads go through and every later one is `ERX_ENOTSUP`, the failure the native backend gives when it cannot reach its generator service.
 * **No lines.** `ERX_IRQ_LINE` and `ERX_IRQ_MSI` are `ERX_ENOTSUP` hosted; natively the root makes both, an MSI as a line of the platform's MSI frame ([The call table](#the-call-table)). A trigger of an object not bound delivers nothing, and a bind takes any nonzero group, since there is one.
 * **An object fires in the caller's thread.** A trigger has listed its object and advanced the epoch by the time it returns, each fire counted, and a bound object rebinds under a new label or unbinds. Natively a trigger reaches the dispatcher later, the kernel keeps two fires not yet received as one, and a second bind, an unbind and a rebind are `ERX_ENOTSUP`; a caller must wait on the epoch, as an executor does. So `irq_ready_once` and `irq_line_refused` run hosted only, and the rest of the IRQ row on both.
 * **A reset is exit status 75**, an end `exit(0)`.
@@ -3478,6 +3549,16 @@ hooks.
 
 Decided, and applied above:
 
+* **What shares out the task table**: the domains' object limits, counting every object a domain
+  may make as a space, so the configured domains' and templates' object limits sum within the
+  table's 1,024 rows ([Table sizes](#table-sizes)). If clause 9 comes to refuse a real manifest, the
+  task table gains a row for every label instead, which keeps the cost inside the backend.
+* **Where the figures clause 9 reads have one source**: `abi/erx_abi.txt`. The object space's
+  slots, the root's window and the IRQ objects are its `fiasco_obj_space_slots`,
+  `fiasco_root_handles` and `fiasco_irqs_max`, from which `root_layout.h` lays the root's slots out
+  and derives the pool; the task table's rows are its `fiasco_task_rows`, which `service_task.c`
+  checks by a static assertion against the row's size, as a spec writes down a layout's offsets and
+  its generator checks them.
 * **0.2's features** are Phase 1b and track A, and M9's devices, the rest of track P, M10, M12, track D's
   parts 5 and 9, and the security closure in its Fiasco form; track Q follows 0.2 (FD9).
 * **Bands**: the six of [Bands](#bands), fixed in the manifest's schema, with no per-domain choice

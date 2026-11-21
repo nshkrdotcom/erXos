@@ -58,6 +58,7 @@ status_error(ErlNifEnv *env, int status)
 
 	switch (status) {
 	case ERX_EINVAL:	name = "einval"; break;
+	case ERX_ESTALE:	name = "estale"; break;
 	case ERX_ENOTSUP:	name = "enotsup"; break;
 	case ERX_ENOMEM:	name = "enomem"; break;
 	case ERX_EBUSY:		name = "ebusy"; break;

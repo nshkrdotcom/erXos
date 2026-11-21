@@ -143,7 +143,7 @@ the L4 family ([chapter
 call Fiasco directly. They call erXos's own **kernel interface**, the
 set of requests programs may make of the kernel, which a small library
 called `liberx` carries out over Fiasco ([chapter
-8](README.md#chapter-8-the-kernel-interface-and-fiasco)).
+8](08-kernel-interface.md#82-liberx-the-one-issuer-of-kernel-calls)).
 
 **Where erXos uses this.** erXos draws the line of figure 1.1 in a
 different place. Only the kernel runs with the processor's full power,
@@ -476,7 +476,7 @@ job can keep running after its shell exits, unless the terminal's
 hangup signal ends it.
 
 **Where erXos uses this.** erXos schedules in two levels ([chapter
-9](README.md#chapter-9-processes-runtimes-and-two-level-scheduling)).
+9](09-processes.md#912-two-levels-in-one-picture)).
 Fiasco decides which kernel thread runs on each core, and inside each
 domain the Erlang runtime picks which Erlang process runs on its
 threads; that is built. Today every domain's threads run at one Fiasco
@@ -490,7 +490,7 @@ erXos also gives UNIX's process two
 parts. The Erlang process runs and fails. A **domain**, a set of Erlang
 processes sharing one address space, is what the hardware walls off;
 domains are built ([chapter
-10](README.md#chapter-10-domains-a-wall-around-some-processes)).
+10](10-domains.md#101-a-domain-is-a-node)).
 
 ## 1.4 Virtual memory
 
@@ -704,7 +704,7 @@ process can still crowd out the rest.
 
 **Where erXos uses this.** Each domain has a **budget**, an account for
 the memory it uses ([chapter
-12](README.md#chapter-12-memory-and-budgets)). Today a budget is only a
+12](12-memory.md#121-budgets-as-space-banks)). Today a budget is only a
 record: nothing is charged to it, so one domain can still crowd out the
 rest, and the inspector reports another domain's budget as unsupported;
 that is built. The design makes each budget a wall: a Fiasco
@@ -715,7 +715,7 @@ Erlang's just-in-time compiler keeps W^X by writing code through one
 mapping and running it through another; that is built. The system does
 not stop a page from being writable through one mapping and executable
 through another, so a domain can run code it wrote into its own memory
-([chapter 11](README.md#chapter-11-authority-and-security)).
+([chapter 11](11-security.md#11101-no-writable-and-executable-mapping)).
 
 ## 1.5 Devices, interrupts, DMA and caches
 
@@ -884,7 +884,7 @@ the kernel takes the board's word for it.
 driver is an Erlang process. It reaches its device through a small C
 part of the runtime, the only code that touches the device's
 registers, and another Erlang process restarts it when it crashes; that
-is built ([chapter 15](README.md#chapter-15-devices-and-drivers)). The
+is built ([chapter 15](15-devices.md)). The
 Raspberry Pi 4's Ethernet and SD controllers are not cache-coherent.
 erXos derives every clean, invalidate and barrier from one event, a
 buffer passing between processor and device, so no driver can forget
@@ -962,7 +962,7 @@ system replays the notes. A copy-on-write file system never overwrites
 live data:
 it writes the new blocks elsewhere, then switches to them with one final
 write, so a crash leaves either the old version or the new one. [Chapter
-16](README.md#chapter-16-storage-and-updates) returns to both.
+16](16-storage.md) returns to both.
 
 The kernel keeps recently used blocks in a cache in memory, so reading
 a file twice reads the disk once, and writes reach the disk later. A
@@ -1006,7 +1006,7 @@ Each domain has its own **namespace**, a private table from paths to the
 file servers, programs that serve files, it was given. A path can
 therefore never reach a server the domain was not given. Domains reach
 file servers through one file protocol, taken from Plan 9 ([chapter
-14](README.md#chapter-14-files-namespaces-and-service-trees)). The
+14](14-files.md)). The
 service that keeps files on the SD card or disk runs in a domain of its
 own. All of this is built ([design-files.md](../design-files.md#overview)).
 
@@ -1113,7 +1113,7 @@ system's code; that is built ([chapter 3](03-erlang.md)). Between
 domains, erXos carries messages over a **lane**: a ring buffer in shared
 memory that only the sender writes, plus a small signal that wakes the
 receiver ([chapter
-10](README.md#chapter-10-domains-a-wall-around-some-processes)). The
+10](10-domains.md#1021-a-lane)). The
 receiver checks every message through one function that refuses
 malformed ones. Both are built
 ([design-domains.md](../design-domains.md#on-fiasco)).
@@ -1161,11 +1161,11 @@ first program; that is built
 ([design-platforms.md](../design-platforms.md#overview)). That program
 is the **system domain**, which runs the trusted system services and
 creates every other domain ([chapter
-10](README.md#chapter-10-domains-a-wall-around-some-processes)). It
+10](10-domains.md#108-the-system-domain-and-the-domain-library)). It
 plays the part of `init` and more: like the root task of an L4 system
 ([chapter 2](02-microkernels.md#253-the-root-task)), it creates every
 kernel object the others use. [Chapter
-24](README.md#chapter-24-startup-configuration-and-shutdown) follows the
+24](24-startup.md) follows the
 whole boot.
 
 ## 1.9 When a part fails

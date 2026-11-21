@@ -73,8 +73,8 @@ module Erx
       end
     end
 
-    # Doom, the example, in 0.1's images with its source offered: the archive the image
-    # build writes, which only a development build, as every image of 0.1 is, takes.
+    # Doom, the example, in the images that offer its source: the archive the image
+    # build writes, which only a development build takes.
     EXAMPLE = Row.new(status: DependencyStatus::EXAMPLE, label: EXAMPLE_LABEL, licenses: EXAMPLE_LICENSES,
                       path: EXAMPLE_ARCHIVE, build_kinds: DEVELOPMENT_ONLY)
 

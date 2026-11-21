@@ -112,10 +112,16 @@ class ErxUsbBusCoreTest < Minitest::Test
              anchor: 'admit(Ends, Now, ?ERX_USB_FUNCTION_RESTARTS_MAX, ?ERX_USB_FUNCTION_RESTART_WINDOW_MS)',
              replacement: 'admit(Ends, Now, 1 bsl 30, ?ERX_USB_FUNCTION_RESTART_WINDOW_MS)',
              catching: 'a_function_restarts_at_most_three_times_a_minute_test'),
+    Seed.new(fault: 'an unusable end taken as a failure, so the function is restarted and its device given ' \
+                    'up past the bound',
+             anchor: "ended(Ref, Interface, {shutdown, {unusable, Why}}, Current, _Now, State) ->\n" \
+                     "    {[], put_run(Ref, Interface, Current\#{state := {unusable, Why}}, State)};\n",
+             replacement: '',
+             catching: [1, 0, 1]),
     Seed.new(fault: "an end from a function's earlier instance taken, so a late end resets the running " \
                     "instance's pipes and starts it again",
-             anchor: 'Current = #{state := running, number := Run, ends := Ends} ->',
-             replacement: 'Current = #{state := running, ends := Ends} when is_integer(Run) ->',
+             anchor: 'Current = #{state := running, number := Run} ->',
+             replacement: 'Current = #{state := running} when is_integer(Run) ->',
              catching: [1, 0, 1]),
     Seed.new(fault: "a report from a hub function's ended instance taken, so it queues reads and takes " \
                     "`handled` from its successor",

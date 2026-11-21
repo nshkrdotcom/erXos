@@ -1145,7 +1145,7 @@ holds is not counted, a residual ([Residuals](#residuals)).
 | Path | Local messages | Lane crossings | Copies in the network domain |
 | --- | --- | --- | --- |
 | receive, TCP segment | driver to interface (per batch), interface to connection (per batch); in the owner's domain, socket process to owner (per delivery) | one per push of up to a piece, and one credit message per half of the socket process's target, in every active mode | one, `erx_device:complete/3`, which also sums the frame |
-| transmit, TCP segment | in the owner's domain, caller to socket process and back (per `send` call); connection to driver (per step) | one per piece of a `send`, with no reply, and one send credit message per half of the send buffer acknowledged | one, `post_frame/5`, which cuts runs and finishes checksums as it copies |
+| transmit, TCP segment | in the owner's domain, caller to socket process and back (per `send` call); connection to driver (per step) | one per piece of a `send`, each sent after the reply to the one before, and one send credit message per half of the send buffer acknowledged | one, `post_frame/5`, which cuts runs and finishes checksums as it copies |
 | receive, UDP datagram | driver to interface, interface to socket; in the owner's domain, socket process to owner | one per datagram, and one credit message per half of the socket process's target | one |
 | ARP, neighbour discovery, ICMP echo, SYN | driver to interface; replies interface to driver | none | one each way |
 

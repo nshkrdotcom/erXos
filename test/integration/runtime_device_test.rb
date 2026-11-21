@@ -92,12 +92,12 @@ class RuntimeDeviceTest < Minitest::Test
     ERLANG
   end
 
-  # A given spec decodes on a hosted runtime, which has no objects to map, so its open fails
-  # at the window's map; one that mixes the forms is badarg before anything is mapped.
+  # A given spec decodes on a hosted runtime, where no handle names an object, so its open fails
+  # at the window's map with estale; one that mixes the forms is badarg before anything is mapped.
   def test_a_given_device_decodes_and_a_mixed_spec_is_badarg
     assert_equal 'ok', evaluate(<<~'ERLANG')
-      {error, einval} = erx_device:open(#{peripheral => pl011, window => {object, 1, 0, 4096}, lines => [{object, 2}]}),
-      {error, einval} = erx_device:open(#{peripheral => pl011, window => {object, 1, 0, 4096}, lines => [],
+      {error, estale} = erx_device:open(#{peripheral => pl011, window => {object, 1, 0, 4096}, lines => [{object, 2}]}),
+      {error, estale} = erx_device:open(#{peripheral => pl011, window => {object, 1, 0, 4096}, lines => [],
                                           memory => {object, 3, 8192}}),
       io:format("~s~n", [ok]), halt().
     ERLANG

@@ -1921,7 +1921,7 @@ records](#inspection-records)):
 
 | Row | Reporter | On erXos's kernel | On Fiasco |
 | --- | --- | --- | --- |
-| `erts` | `runtime`, the system domain's included | OTP's trace events of the selection, its frames, and the adapter's events | OTP's `in` and `out` events of the selection; no frames, since Fiasco offers no lanes |
+| `erts` | `runtime`, the system domain's included | OTP's trace events of the selection, its frames, and the adapter's events | OTP's `in` and `out` events of the selection, and its frames, which its funnel sees on Fiasco's lanes as on erXos's kernel; none of the adapter's events |
 | `backend` | `{backend, liberx_trace}`, labelled `liberx trace` | none: `erx_backend_trace_read` answers `ERX_ENOTSUP` and the row is left out | the root's ring ([design-fiasco.md](design-fiasco.md#the-trace-ring)) |
 | `kernel` | `kernel` | each CPU's ring, read with `erx_trace_read` | one `unsupported` line, from `erx_trace_read`'s `ERX_ENOTSUP` |
 

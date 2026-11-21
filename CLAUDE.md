@@ -318,7 +318,13 @@ Third-party components are allowed when they pay for themselves.
   * TypeScript for the web client of [design-web.md](docs/design-web.md),
     because the browser runs only JavaScript. Its own tests and fuzz
     harness run under Node and Playwright. TypeScript never runs on the
-    target or in host tooling.
+    target or in host tooling, except the book site's diagram step below.
+  * TypeScript under Node for the book site's diagram step only:
+    beautiful-mermaid, inherited code in the tree, renders the book's
+    Mermaid diagrams to SVG through a short driver, and official
+    Mermaid's parser, a pinned tool out of the tree, checks them. Both
+    run as one subprocess of the Ruby build. Node never runs on the
+    target or elsewhere in host tooling.
   * Python only for the Bumble Bluetooth test peer; never on the target,
     and in build tooling only as Mesa's own generators.
   * POSIX shell wherever it is the simpler tool: build glue, and short

@@ -113,9 +113,15 @@ answer, or descriptor erx_usb_desc or the claim refuses, gives the port up
 with the step and the reason, through one throw caught in
 device_answered/6.
 
-**A function's end.** `{function_ended, Ref, Interface, Run}`, which the
-bus process sends when instance Run of a running function ends while its
-device stays, resets the function's pipes other than EP0 one at a time,
+**A function's end.** `{function_ended, Ref, Interface, Run, Reason}`,
+which the bus process sends when instance Run of a running function ends
+while its device stays, with the reason its process ended or the Reason
+of the `{error, Reason}` its start answered. An end as `{shutdown, {unusable, Why}}`, a function that cannot
+drive its interface, is final, as a FreeBSD probe that answers ENXIO: the
+run keeps Why for the device's inspection record, nothing is reset or
+started again, and the end counts toward no bound, so the device's other
+functions run on. Any other end resets the function's pipes other than
+EP0 one at a time,
 `{reset_pipe, Ref, Interface, Address}` each, the next sent only on the
 last one's `ok`, and `{start, Ref, [{Function, Run + 1}]}` starts the
 function again once every one has answered, so its new instance never
@@ -125,8 +131,9 @@ again at most `usb_function_restarts_max` times in any
 admit/4; an end past them, or a reset that fails, gives its device's port
 up.
 
-A function's run is `running` or the pipes it has still to reset, the first
-of them in flight, with the number of the instance last started. Every
+A function's run is in one of three states: `running`; ended, with the
+pipes it has still to reset, the first of them in flight; or
+`{unusable, Why}`. It keeps the number of the instance last started. Every
 start carries its instance's number and the bus process echoes it in that
 instance's end and, for a hub function, in its reports, `{changed, Ref,
 Set, Run, From}`. An end or a report is taken only while its function is
@@ -151,12 +158,15 @@ port's failure is logged once per connection.
 Every status word comes from a device and is decoded by erx_usb_hub_core,
 which refuses a malformed one; a malformed status or answer, like a failed
 port operation, detaches an external hub. The root hub's operations are the
-controller process's register accesses and do not fail.
+controller process's register accesses and do not fail. An external hub's
+go out as control requests on its EP0, spelled by hub_request/2, the hub
+class's GET_STATUS, SET_FEATURE and CLEAR_FEATURE (usb.h:229-264), and the
+request's answer comes back as the operation's by hub_answer/2.
 """.
 
--export([new/1, step/3, ports/1, histories/1, devices/1]).
+-export([new/1, step/3, ports/1, histories/1, devices/1, hub_request/2, hub_answer/2, unusable/1]).
 
--export_type([state/0, event/0, action/0, hub_id/0, ref/0, port_state/0, port_history/0, step/0, run/0,
+-export_type([state/0, event/0, action/0, hub_id/0, ref/0, target/0, op/0, port_state/0, port_history/0, step/0, run/0,
               run_no/0]).
 
 -include("generated/erx_abi.hrl").
@@ -220,7 +230,7 @@ hub's.
                | {addressed, ref(), step(), {ok, pos_integer()} | {error, term()}}
                | {control_done, ref(), step(), {ok, binary()} | {error, term()}}
                | {evaluated | endpoints_configured, ref(), step(), ok | {error, term()}}
-               | {function_ended, ref(), Interface :: byte(), run_no()}
+               | {function_ended, ref(), Interface :: byte(), run_no(), Reason :: term()}
                | {pipe_reset, ref(), Interface :: byte(), Address :: byte(), ok | {error, term()}}
                | expired.
 
@@ -274,13 +284,15 @@ interface.
                     hub := none | erx_usb_desc:hub()}.
 
 -doc """
-A claimed function's run: `running`, or ended and with the addresses of its
-pipes still to reset, in order, the first of them in flight; the number of the
-instance last started; and the times of its ends within the last
+A claimed function's run: `running`; ended and with the addresses of its
+pipes still to reset, in order, the first of them in flight; or ended unusable
+for good, with the function's reason; the number of the instance last started;
+and the times of its counted ends within the last
 `usb_function_restart_window_ms`, oldest first, at most
 `usb_function_restarts_max` of them.
 """.
--type run() :: #{state := running | {resetting, [byte(), ...]}, number := run_no(), ends := [ms()]}.
+-type run() :: #{state := running | {resetting, [byte(), ...]} | {unusable, term()}, number := run_no(),
+                 ends := [ms()]}.
 
 -doc "A function instance's number: 1 for the function's first start, one more for each start again.".
 -type run_no() :: pos_integer().
@@ -309,6 +321,61 @@ ports(#{hubs := Hubs}) ->
 -spec histories(state()) -> #{{hub_id(), port_no()} => port_history()}.
 histories(#{hubs := Hubs}) ->
     maps:from_list([{{Id, N}, History} || Id := #{histories := Histories} <- Hubs, N := History <- Histories]).
+
+-doc "An external hub's port operation on Target as the control request on its EP0: the setup packet and its data stage.".
+-spec hub_request(target(), op()) -> {<<_:64>>, none | {in, pos_integer()}}.
+hub_request(hub, get_status) ->
+    get_status(?ERX_USB_RECIPIENT_DEVICE, 0);
+hub_request(hub, {clear, Change}) ->
+    hub_feature(?ERX_USB_REQUEST_CLEAR_FEATURE, ?ERX_USB_RECIPIENT_DEVICE, hub_change_feature(Change), 0);
+hub_request(N, get_status) ->
+    get_status(?ERX_USB_RECIPIENT_OTHER, N);
+hub_request(N, power_on) ->
+    hub_feature(?ERX_USB_REQUEST_SET_FEATURE, ?ERX_USB_RECIPIENT_OTHER, ?ERX_USB_PORT_FEATURE_POWER, N);
+hub_request(N, reset) ->
+    hub_feature(?ERX_USB_REQUEST_SET_FEATURE, ?ERX_USB_RECIPIENT_OTHER, ?ERX_USB_PORT_FEATURE_RESET, N);
+hub_request(N, disable) ->
+    hub_feature(?ERX_USB_REQUEST_CLEAR_FEATURE, ?ERX_USB_RECIPIENT_OTHER, ?ERX_USB_PORT_FEATURE_ENABLE, N);
+hub_request(N, {clear, Change}) ->
+    hub_feature(?ERX_USB_REQUEST_CLEAR_FEATURE, ?ERX_USB_RECIPIENT_OTHER, port_change_feature(Change), N).
+
+-doc """
+The answer to an external hub's port operation Op, from its control
+request's: GET_STATUS answers its bytes, which the status decoders check;
+any other operation answers `ok` once its request completes.
+""".
+-spec hub_answer(op(), {ok, binary()} | {error, term()}) -> ok | {ok, binary()} | {error, term()}.
+hub_answer(get_status, Result) -> Result;
+hub_answer(_Op, {ok, _Bytes}) -> ok;
+hub_answer(_Op, {error, Reason}) -> {error, Reason}.
+
+%% GET_STATUS answers a status word and a change word, 16 bits each.
+get_status(Recipient, Index) ->
+    {erx_usb_setup:packet(?ERX_USB_REQUEST_DIR_IN bor ?ERX_USB_REQUEST_TYPE_CLASS bor Recipient,
+                          ?ERX_USB_REQUEST_GET_STATUS, 0, Index, 4),
+     {in, 4}}.
+
+hub_feature(Request, Recipient, Feature, Index) ->
+    {control, Setup, none} = control(?ERX_USB_REQUEST_TYPE_CLASS, Recipient, Request, Feature, Index),
+    {Setup, none}.
+
+%% The feature that clears each change erx_usb_hub_core names.
+hub_change_feature(local_power) -> ?ERX_USB_HUB_FEATURE_C_LOCAL_POWER;
+hub_change_feature(over_current) -> ?ERX_USB_HUB_FEATURE_C_OVER_CURRENT.
+
+port_change_feature(connection) -> ?ERX_USB_PORT_FEATURE_C_CONNECTION;
+port_change_feature(enabled) -> ?ERX_USB_PORT_FEATURE_C_ENABLE;
+port_change_feature(suspend) -> ?ERX_USB_PORT_FEATURE_C_SUSPEND;
+port_change_feature(over_current) -> ?ERX_USB_PORT_FEATURE_C_OVER_CURRENT;
+port_change_feature(reset) -> ?ERX_USB_PORT_FEATURE_C_RESET.
+
+-doc """
+The end of a function that cannot drive its interface, for the reason Why:
+the one exit reason the core takes as final (ended/6), which a function
+builds here alone.
+""".
+-spec unusable(term()) -> {shutdown, {unusable, term()}}.
+unusable(Why) -> {shutdown, {unusable, Why}}.
 
 -doc "Every device the bus holds, by its reference, for inspection.".
 -spec devices(state()) -> #{ref() => device()}.
@@ -343,8 +410,8 @@ event({Kind, Ref, Step, Result}, Now, State)
   when Kind =:= slot; Kind =:= addressed; Kind =:= control_done; Kind =:= evaluated;
        Kind =:= endpoints_configured ->
     device_answered(Ref, Step, Kind, Result, Now, State);
-event({function_ended, Ref, Interface, Run}, Now, State) ->
-    function_ended(Ref, Interface, Run, Now, State);
+event({function_ended, Ref, Interface, Run, Reason}, Now, State) ->
+    function_ended(Ref, Interface, Run, Reason, Now, State);
 event({pipe_reset, Ref, Interface, Address, Result}, _Now, State) ->
     pipe_reset(Ref, Interface, Address, Result, State);
 event(expired, Now, State = #{hubs := Hubs}) ->
@@ -489,9 +556,9 @@ read_device(Ref, State) ->
 %% so its port bitmaps are not read (erx_usb_desc:hub/1).
 read_hub_descriptor(Ref, State) ->
     request(Ref, hub_descriptor,
-            {control, setup(?ERX_USB_REQUEST_DIR_IN bor ?ERX_USB_REQUEST_TYPE_CLASS bor ?ERX_USB_RECIPIENT_DEVICE,
-                            ?ERX_USB_REQUEST_GET_DESCRIPTOR, ?ERX_USB_DESCRIPTOR_TYPE_HUB bsl 8, 0,
-                            ?ERX_USB_HUB_DESCRIPTOR_HEAD),
+            {control, erx_usb_setup:packet(?ERX_USB_REQUEST_DIR_IN bor ?ERX_USB_REQUEST_TYPE_CLASS bor ?ERX_USB_RECIPIENT_DEVICE,
+                                           ?ERX_USB_REQUEST_GET_DESCRIPTOR, ?ERX_USB_DESCRIPTOR_TYPE_HUB bsl 8, 0,
+                                           ?ERX_USB_HUB_DESCRIPTOR_HEAD),
              {in, ?ERX_USB_HUB_DESCRIPTOR_HEAD}},
             State).
 
@@ -534,24 +601,33 @@ configured(Ref, Device = #{port := {Id, N}, speed := Speed, route := Route, func
 
 %% A function's end (docs/design-usb.md, "A function's end" and "Failure handling").
 
-%% Function Interface of device Ref ended while the device stays: its pipes are
-%% reset, then it starts again, when fewer than usb_function_restarts_max of its
-%% ends fell in the last usb_function_restart_window_ms; past them its device's
-%% port is given up. An end named for a device gone, for a function not running or
-%% for an instance other than the one running is stale.
-function_ended(Ref, Interface, Run, Now, State) ->
+%% Function Interface of device Ref ended as Reason while the device stays. An end
+%% named for a device gone, for a function not running or for an instance other
+%% than the one running is stale.
+function_ended(Ref, Interface, Run, Reason, Now, State) ->
     case find_run(Ref, Interface, State) of
-        Current = #{state := running, number := Run, ends := Ends} ->
-            case admit(Ends, Now, ?ERX_USB_FUNCTION_RESTARTS_MAX, ?ERX_USB_FUNCTION_RESTART_WINDOW_MS) of
-                {admitted, Admitted} ->
-                    #{pipes := Pipes} = claimed(Ref, Interface, State),
-                    reset_next_or_start(Ref, Interface, [Address || #{address := Address} <- Pipes],
-                                        Current#{ends := Admitted}, drop_reporter(Ref, Interface, State));
-                {refused, _Until} ->
-                    fail_device(Ref, {function, Interface, restarts}, State)
-            end;
+        Current = #{state := running, number := Run} ->
+            ended(Ref, Interface, Reason, Current, Now, drop_reporter(Ref, Interface, State));
         _Stale ->
             {[], State}
+    end.
+
+%% A function that cannot drive its interface ends unusable, which is final: the
+%% run keeps the reason, nothing is reset or started, and the end counts toward no
+%% bound, as a FreeBSD probe that answers ENXIO leaves its interface unattached.
+%% Any other end, a crash or a failed transfer, resets the function's pipes and
+%% starts it again, when fewer than usb_function_restarts_max of its ends fell in
+%% the last usb_function_restart_window_ms; past them its device's port is given up.
+ended(Ref, Interface, {shutdown, {unusable, Why}}, Current, _Now, State) ->
+    {[], put_run(Ref, Interface, Current#{state := {unusable, Why}}, State)};
+ended(Ref, Interface, _Failed, Current = #{ends := Ends}, Now, State) ->
+    case admit(Ends, Now, ?ERX_USB_FUNCTION_RESTARTS_MAX, ?ERX_USB_FUNCTION_RESTART_WINDOW_MS) of
+        {admitted, Admitted} ->
+            #{pipes := Pipes} = claimed(Ref, Interface, State),
+            reset_next_or_start(Ref, Interface, [Address || #{address := Address} <- Pipes],
+                                Current#{ends := Admitted}, State);
+        {refused, _Until} ->
+            fail_device(Ref, {function, Interface, restarts}, State)
     end.
 
 %% The answer to the reset of pipe Address of ended function Interface, taken only
@@ -625,17 +701,13 @@ sent(Ref, Step, {evaluate_context, Context}) -> {evaluate_context, Ref, Step, Co
 sent(Ref, Step, {configure_endpoints, Endpoints}) -> {configure_endpoints, Ref, Step, Endpoints}.
 
 get_descriptor(Type, Length) ->
-    {control, setup(?ERX_USB_REQUEST_DIR_IN bor ?ERX_USB_REQUEST_TYPE_STANDARD bor ?ERX_USB_RECIPIENT_DEVICE,
-                    ?ERX_USB_REQUEST_GET_DESCRIPTOR, Type bsl 8, 0, Length),
+    {control, erx_usb_setup:packet(?ERX_USB_REQUEST_DIR_IN bor ?ERX_USB_REQUEST_TYPE_STANDARD bor ?ERX_USB_RECIPIENT_DEVICE,
+                                   ?ERX_USB_REQUEST_GET_DESCRIPTOR, Type bsl 8, 0, Length),
      {in, Length}}.
 
 %% A request with no data stage.
 control(Kind, Recipient, Request, Value, Index) ->
-    {control, setup(Kind bor Recipient, Request, Value, Index, 0), none}.
-
-%% A setup packet: bmRequestType, bRequest, wValue, wIndex and wLength.
-setup(RequestType, Request, Value, Index, Length) ->
-    <<RequestType, Request, Value:16/little, Index:16/little, Length:16/little>>.
+    {control, erx_usb_setup:packet(Kind bor Recipient, Request, Value, Index, 0), none}.
 
 put_device(Ref, Device, State = #{devices := Devices}) ->
     State#{devices := Devices#{Ref := Device}}.

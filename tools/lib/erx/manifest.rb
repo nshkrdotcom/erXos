@@ -1594,7 +1594,7 @@ module Erx
       # well-known services the build derives the app template a row of, which every app
       # holds already, and those that
       # would let an app command the start table, install packages, rewrite
-      # /etc/rc.conf or end the machine.
+      # the start table's settings or end the machine.
       def app_services_refused
         held = WELL_KNOWN.select { |known| known.derived.any? { |grant| grant.grantee == :app_template } }
         held.to_h { |known| [@codec.fixed_bytes(known.constant), 'every app holds its grant already, which the build derives'] }.merge(

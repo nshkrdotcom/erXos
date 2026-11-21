@@ -47,8 +47,8 @@ case_irq_refusals(void)
 
 	return (erx_irq_create(0, 0, ERX_IRQ_MSI, 0, &irq, NULL) == ERX_ENOTSUP &&
 	    erx_irq_create(0, 0, 77, 0, &irq, NULL) == ERX_EINVAL &&
-	    erx_irq_bind(0, function_api_group(), LABEL_A) == ERX_EINVAL && erx_irq_trigger(0) == ERX_EINVAL &&
-	    erx_irq_ack(UINT64_C(1) << 40) == ERX_EINVAL && erx_group_take_ready(1) == ERX_ETYPE);
+	    erx_irq_bind(0, function_api_group(), LABEL_A) == ERX_ESTALE && erx_irq_trigger(0) == ERX_ESTALE &&
+	    erx_irq_ack(UINT64_C(1) << 40) == ERX_ESTALE && erx_group_take_ready(1) == ERX_ETYPE);
 }
 
 static bool

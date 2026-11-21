@@ -11,7 +11,8 @@ supervisors and ERTS. A reader who knows all three starts here.
 > runtime each, the park protocol between executors and Fiasco, and
 > budgets as records that end everything charged to them are
 > **Built**. Priority bands, per-domain CPU sets and thread limits,
-> and budgets that refuse a charge past their limit are **Designed**.
+> budgets that refuse a charge past their limit, and `liberx`'s refusal
+> to arm an upcall on an executor or to let one block are **Designed**.
 
 An Erlang program on FreeBSD can run hundreds of thousands of
 processes, and `ps` lists one of them. That one line is `beam.smp`,
@@ -34,7 +35,7 @@ system's process. A small microkernel sits underneath and knows
 nothing of Erlang. That kernel is Fiasco, a microkernel of the L4
 family, changed by a few patches. Above it, the machine is divided
 into domains, each an address space with its own Erlang runtime
-([chapter 10](README.md#chapter-10-domains-a-wall-around-some-processes)).
+([chapter 10](10-domains.md#101-a-domain-is-a-node)).
 The machine stays one Erlang system, whose processes link and message
 one another across domains, and drivers and file systems are Erlang
 processes under supervisors.
@@ -188,16 +189,21 @@ runtime along rules that each remove a failure of an earlier system
    them like any other thread.
 2. **No upcall reaches an executor.** Fiasco has one upcall, its vCPU
    interface, and erXos uses it only to deliver POSIX signals to a
-   native program's worker threads. Arming it refuses an executor, so
-   the runtime is never entered at an unsafe point
-   ([design.md, Invariants](../design.md#invariants)).
+   native program's worker threads, so the runtime is never entered
+   at an unsafe point
+   ([design.md, Invariants](../design.md#invariants)). In the design,
+   arming it on an executor is refused; that refusal is designed and
+   not built.
 3. **No wakeup is lost.** A wakeup is a queued event: it advances a
    counter that an executor about to park compares under the same
    lock, so a park that would miss it returns at once, and a running
    executor finds the work at its next safe point
    ([design-fiasco.md, The park protocol](../design-fiasco.md#the-park-protocol)).
 4. **Executors never block except to park.** `liberx`, the library
-   under every runtime, refuses an executor every other kind of wait.
+   under every runtime, refuses a thread that is not an executor the
+   executors' own calls, parking and taking ready work. In the design
+   it also refuses an executor every other kind of wait, with
+   `ERX_EWOULDBLOCK`; that refusal is designed and not built.
 5. **The kernel decides who runs.** Fiasco's fixed-priority scheduler
    picks the thread; what the runtime says about its own load is
    advice that nothing in the kernel acts on.
@@ -238,9 +244,9 @@ the others.
 | System | Idea | What erXos took |
 | --- | --- | --- |
 | QNX | a UNIX look over a microkernel | a UNIX surface over services in user mode |
-| Genera | one live machine: any object examined, code patched while it runs | the live machine of chapter 21, with walls Genera lacked |
+| Genera | one live machine: any object examined, code patched while it runs | the live machine of [chapter 21](21-live-machine.md), with walls Genera lacked |
 | Inferno | a virtual machine at the center, with no memory protection | the runtime at the center, plus hardware walls |
-| Singularity | type-safe processes in one address space | evidence that language safety makes crossings cheap |
+| Singularity | type-safe processes in one address space | evidence that the cost lies in privilege crossings, not in safety checks |
 | SPIN | kernel extensions in a safe language | a warning: a crashed extension could leave the system inconsistent |
 | Midori | Erlang's supervisors as a model for a whole system | the same failure model, found outside Erlang |
 | Genode | each session paid from a quota its client donates | memory shares for users |
@@ -275,7 +281,7 @@ commands that print FreeBSD's output, and the network stack,
 
 erXos leaves UNIX's inside. Its kernel is not monolithic, POSIX is not
 its base, and a user id grants nothing by itself
-([chapter 20](README.md#chapter-20-the-command-shell-and-the-unix-surface)).
+([chapter 20](20-shell.md#201-unix-look-and-feel-honestly)).
 QNX showed that a system can look like UNIX over a microkernel. For
 erXos, UNIX is how the system looks wherever that is also how it
 works.
@@ -324,8 +330,8 @@ capability: a domain with no grant for the storage service has no
 `/data`, and no name it can write reaches that server. File servers
 speak 9P2000.L, a version of 9P. A display serves each window as a
 directory of files, and the command shell speaks rc's language
-([chapter 14](README.md#chapter-14-files-namespaces-and-service-trees),
-[chapter 22](README.md#chapter-22-displays-windows-and-the-web)).
+([chapter 14](14-files.md),
+[chapter 22](22-display.md#221-windows-are-files)).
 
 ### 4.3.4 EROS, Safe Erlang and Zircon: authority and payment
 
@@ -343,7 +349,7 @@ erXos takes both ideas. In its design, a domain reaches another
 domain's process only if that process's own runtime exported it, so a
 forged pid reaches nothing. Inside a domain, pids keep their stock meaning, because the
 domain is the unit of trust
-([chapter 11](README.md#chapter-11-authority-and-security)).
+([chapter 11](11-security.md#115-exports-and-the-funnel-authority-over-processes)).
 
 Payment comes from EROS
 ([chapter 2](02-microkernels.md#236-capability-systems-in-practice)).
@@ -363,7 +369,7 @@ its user pages are charged to the budget's record, which refuses a
 charge past its limit; and what the root service holds on the domain's
 behalf is bounded by limits on the domain's threads, objects and
 mappings ([design-fiasco.md, Memory and budgets](../design-fiasco.md#memory-and-budgets),
-[chapter 12](README.md#chapter-12-memory-and-budgets)). That wall is
+[chapter 12](12-memory.md#124-walls-what-is-built-what-is-designed)). That wall is
 designed and not built: a budget records its limit but refuses no
 charge, and the inspector reports a domain's budget as unsupported
 ([README.md, Current status](../../README.md#current-status)).
@@ -379,7 +385,7 @@ those three, and the non-goals mark where erXos stops
 
 A **principal** is a user in erXos's sense, an identity with its own
 budget, CPU share and quotas
-([chapter 11](README.md#chapter-11-authority-and-security)).
+([chapter 11](11-security.md#119-principals-sessions-and-quotas)).
 
 | Requirement | What it means |
 | --- | --- |
@@ -445,7 +451,7 @@ disk's driver in the middle of a transfer, then finds each kept file
 cut at a sync, the last moment its data was forced to disk
 ([README.md, Current status](../../README.md#current-status)).
 The kernel, the device shims and per-byte work such as checksums stay
-in C ([chapter 15](README.md#chapter-15-devices-and-drivers)).
+in C ([chapter 15](15-devices.md)).
 
 ### 4.5.2 erXos owns OTP
 
@@ -459,7 +465,7 @@ Owning OTP does not mean drifting from it. OTP's own test suites run
 on erXos and on stock OTP, and the results are compared case by case.
 Every difference is a bug in erXos, a documented difference with a
 test, or an upstream bug recorded as such
-([chapter 25](README.md#chapter-25-checking-the-system)).
+([chapter 25](25-checking.md)).
 
 ### 4.5.3 Beauty and simplicity
 
@@ -484,7 +490,7 @@ no constant is copied by hand. The system's configuration is one
 **system manifest**, a file that names every domain the machine runs,
 with its budget, its devices and the services it may reach; the build
 checks it before making the image
-([chapter 7](README.md#chapter-7-one-source-for-every-fact)).
+([chapter 7](07-one-source.md#77-the-system-manifest-the-machines-configuration-checked)).
 
 ### 4.5.5 UNIX look and feel, honestly
 

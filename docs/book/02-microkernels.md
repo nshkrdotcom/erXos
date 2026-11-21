@@ -6,7 +6,7 @@
 > its own kernel interface, `liberx`, and its system domain, the root
 > task, starts and ends the other domains. How erXos uses Fiasco is
 > told in
-> [chapter 8](README.md#chapter-8-the-kernel-interface-and-fiasco).
+> [chapter 8](08-kernel-interface.md).
 
 **Background needed.** [Chapter 1](01-operating-systems.md):
 kernel mode and user mode, address spaces, system calls.
@@ -501,7 +501,7 @@ Linux, which answered the belief that capability systems must be slow.
 EROS pays for every object a program creates from a **space bank**, an
 account of memory: deleting the bank frees every object paid from it.
 Space banks are the model for erXos's budgets
-([chapter 12](README.md#chapter-12-memory-and-budgets)).
+([chapter 12](12-memory.md#121-budgets-as-space-banks)).
 
 **seL4**, from NICTA and UNSW, is the L4 kernel built for proof. It was
 the first operating system kernel with a complete formal verification:
@@ -590,14 +590,13 @@ no code can be written that breaks it.
 This is what the book means by **by construction**: a property holds
 because the wrong state cannot be expressed, not because every
 participant remembered a rule.
-[Chapter 6](README.md#chapter-6-correct-by-construction) makes it the
+[Chapter 6](06-construction.md) makes it the
 method of the whole design. erXos has some of its capability
-properties in this form. A program reaches an object only through a
-handle, an entry of its own table that the root task checks on every request. Rights only
-shrink: copying or passing a capability intersects its rights with a
-mask, and no call adds a right
-([design-fiasco.md, Rights](../design-fiasco.md#rights)). Section
-2.5.4 shows one property that holds only as a likelihood.
+properties in this form. A program names a kernel object only through
+a handle in a table kept for it, and every call that names a handle
+passes one lookup that checks the object's generation, so a destroyed
+object is gone for every holder at once. Section 2.5.4 says what the
+handles do not give yet: no call but destroy checks their rights.
 
 ## 2.5 The L4 family and Fiasco
 
@@ -702,7 +701,7 @@ bug in it can give any program anything.
 
 In erXos the root task is the **system domain**. A domain is erXos's
 unit of isolation, a group of Erlang processes behind one wall
-([chapter 10](README.md#chapter-10-domains-a-wall-around-some-processes)).
+([chapter 10](10-domains.md#101-a-domain-is-a-node)).
 The system domain's Erlang services decide who gets what, and its C
 library builds and ends every other domain
 ([design.md, The model](../design.md#the-model)). It is the only
@@ -732,23 +731,31 @@ Fiasco's own names and data structures never reach Erlang code or
 users, and a call Fiasco cannot carry out fails with a plain error,
 `ERX_ENOTSUP`.
 
-Some properties of a capability kernel hold on erXos only as far as
-Fiasco gives them. One is the reused slot of section 2.3.5. On Fiasco
-a handle is an entry of a table the root task keeps for each program,
-and its number carries the entry's generation, as section 2.3.5
-describes. So every request that names a closed handle fails with an
-error, as it would on erXos's own kernel. The exception is a doorbell
-or an interrupt line, which a program rings or acknowledges itself
-through a Fiasco slot that the handle's number picks, with no request
-to the root task. Fiasco checks no generation there. erXos reuses a
-freed entry as late as it can, oldest first, so a program that rings a
-doorbell through a closed handle rarely meets a new one. This is not a
-guarantee: if it does meet one, it rings that one
-([design-fiasco.md, Handles](../design-fiasco.md#handles)).
-A handle whose object was deleted is a different case, and is safe:
-its entry stays reserved, and every later use fails with an error.
-[Chapter 8](README.md#chapter-8-the-kernel-interface-and-fiasco)
-describes the interface and how it sits on Fiasco.
+A program does not name its kernel objects by Fiasco's slots. It
+names them by **handles**, entries in a table the root task keeps for
+each program; a handle's low 24 bits are the entry's index plus one.
+Each entry records the generation of the object it names, the counter
+of section 2.3.5, kept with the root task's record of the object rather
+than in the number. So when an object is destroyed, every handle to it
+answers the error `ERX_ESTALE` until its holder closes it, and never
+names whatever object comes next. The record's generation does not cover a
+holder's own close; the entry's own generation does, carried in the
+handle's value, so a closed handle answers `ERX_ESTALE` too, even once
+its entry, taken first in, first out, names another object. A doorbell
+or an interrupt line is the one exception: its holder rings and
+acknowledges it straight through Fiasco, on a capability the root
+places at the Fiasco slot the handle's index fixes, so those two uses
+make no request to the root and are checked by Fiasco at the slot
+alone, while every other use of its handle still goes through the
+root. Each entry
+records its rights, but no call except destroy checks them yet: any
+holder may use an object as its type allows, and only destroying it is
+kept to the object's creator. The design adds rights that start from
+each creation kind's defaults, only shrink as a handle is duplicated or
+passed, and are checked on every use; that is designed and not built
+([chapter 8, section 8.4](08-kernel-interface.md#84-handles-and-destroying-an-object)).
+[Chapter 8](08-kernel-interface.md) describes the interface and how it
+sits on Fiasco.
 
 ## 2.6 What fails, and what a failure reaches
 

@@ -104,8 +104,20 @@ int	erx_fiasco_irq_create_body(uint32_t task, const erx_fiasco_irq_create_reques
 	    erx_fiasco_reply_t *reply);
 int	erx_fiasco_irq_bind_body(uint32_t task, const erx_fiasco_irq_bind_request_t *request);
 int	erx_fiasco_irq_unbind_body(uint32_t task, uint64_t irq);
-int	erx_fiasco_irq_ack_body(uint32_t task, uint64_t irq);
-int	erx_fiasco_irq_trigger_body(uint32_t task, uint64_t irq);
+/*
+ * The one placement of an IRQ capability in a holder (docs/design-fiasco.md, "Handles"),
+ * which every create, duplicate and pass of an IRQ entry ends in: the record's object goes
+ * to the IRQ slot of the new entry, handle, in task's object space, with Fiasco's read right
+ * alone, when the entry's rights hold ERX_HR_TRIGGER or ERX_HR_ACK, and nothing goes there
+ * otherwise. ERX_ENOMEM when Fiasco does not map it.
+ */
+int	erx_fiasco_irq_place(uint32_t task, uint32_t record, uint64_t handle, uint32_t rights) ERX_WARN_UNUSED_RESULT;
+/* Empties the IRQ slot of task's entry handle, at its close. */
+void	erx_fiasco_irq_unplace(uint32_t task, uint64_t handle);
+#ifdef ERX_FIASCO_TEST_HOOKS
+/* Places at Fiasco's last object-space slot and past it (irq.c); NULL, or the failure line. */
+const char	*erx_fiasco_test_object_space_probe(uint64_t irq);
+#endif
 /*
  * Takes the manifest's MSI frame for ERX_IRQ_MSI's lines, at the root's boot before any
  * create; false for a frame of lines but no base, lines past msi_frame_lines_max or a

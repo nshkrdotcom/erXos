@@ -12,6 +12,7 @@
 #include "erx/abi.h"
 #include "erx/log.h"
 #include "erx/core/crash.h"
+#include "liberx/backend/core/slot_pool.h"
 #include "liberx/backend/fiasco/service_wire.h"
 
 /* include/erx/pack.h's; that header's erx_boot_inputs_t is the first stage's, which boot_info.h's readers of this one must not meet. */
@@ -57,18 +58,32 @@ typedef struct erx_fiasco_task_tree {
 	uint32_t	space;
 } erx_fiasco_task_tree_t;
 
+/*
+ * A task's pairs of the root's slot pool (docs/design-fiasco.md, "Handles"), taken with
+ * its row and freed at its row's deletion, after the last object in them: its gate and
+ * its task object in the first, the semaphore its end ups in the second, whose other
+ * slot is unused. Kept from its create until its deletion, as its place in the tree is.
+ */
+typedef struct erx_fiasco_task_pairs {
+	erx_slot_pair_t	objects;
+	erx_slot_pair_t	ended;
+} erx_fiasco_task_pairs_t;
+
 typedef struct erx_fiasco_task {
 	erx_fiasco_task_state_t	 state;
 	uint32_t		 flags;		/* ERX_SPACE_* */
 	uint32_t		 group;		/* its home group's record index plus one, 0 for none */
 	uint32_t		 dispatcher;	/* its dispatcher's thread index plus one, 0 until it is named */
 	erx_fiasco_task_tree_t	 tree;
+	erx_fiasco_task_pairs_t	 pairs;		/* none in the root's row */
 	bool			 first_made;	/* its creator made index 0, so another create there is ERX_ENOTSUP */
 	int64_t			 status;
 	uint32_t		 stopper;	/* while stopping: the task that stopped it, whom its exit record names */
 	uint64_t		 stop_order;	/* while stopping: the count of stops when it stopped, which orders the teardowns */
 	erx_fiasco_task_thread_t threads[ERX_FIASCO_THREADS_MAX];
 	uint64_t		 affinity[ERX_FIASCO_THREADS_MAX];	/* as last set, 0 for wherever it was created */
+	/* Thread n's pair, its thread and its semaphore, from its create's take until its deletion; none in the root's row. */
+	erx_slot_pair_t		 thread_pairs[ERX_FIASCO_THREADS_MAX];
 	erx_log_rate_t		 log_rate;	/* what its erx_debug_log lines have cost, zero at its start */
 } erx_fiasco_task_t;
 
@@ -87,6 +102,16 @@ bool		erx_fiasco_task_group_home(uint32_t record, uint32_t *task);
 bool		erx_fiasco_task_live(uint32_t task);
 /* Marks the root live, once its window is up; NULL, or why the boot cannot go on. */
 const char	*erx_fiasco_task_table_init(void);
+
+/*
+ * A thread's pair of the slot pool, which its capabilities in the root name (docs/design-fiasco.md,
+ * "Handles"): the take, before any Fiasco call of the thread's create, ERX_ENOMEM with nothing
+ * taken when the pool has no free pair; the free, once Fiasco has deleted the thread and its
+ * semaphore, by every path that deletes them. The root's own threads keep their fixed slots,
+ * so both do nothing for the root.
+ */
+int		erx_fiasco_task_thread_pair_take(uint32_t task, uint32_t index) ERX_WARN_UNUSED_RESULT;
+void		erx_fiasco_task_thread_pair_free(uint32_t task, uint32_t index);
 
 /* A task's capabilities in the root. */
 uint64_t	erx_fiasco_task_thread_cap(uint32_t task, uint32_t index);
@@ -128,7 +153,7 @@ int	erx_fiasco_task_stop_body(uint32_t caller, uint64_t space, int64_t status);
  * the space runs, for the stub to wait on its ended semaphore; once it has stopped, its
  * status, its deletion with every space below it, and the handle's close.
  */
-int	erx_fiasco_task_join_body(uint32_t caller, uint64_t space, int64_t *status, uint64_t *task);
+int	erx_fiasco_task_join_body(uint32_t caller, uint64_t space, int64_t *status, uint64_t *ended);
 /*
  * The task a call naming space acts on: the caller's for ERX_CAP_SELF, else the live
  * task a space handle in the caller's table names; a handle's refusals as

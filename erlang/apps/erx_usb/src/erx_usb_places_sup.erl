@@ -40,10 +40,11 @@ start_link() ->
 
 -doc """
 Makes Pid the occupant of the lowest input number of Places that is free,
-and answers the number, or `{error, no_input_number}` when every number is
+and answers the number and its stream, which takes Pid's records
+(erx_usb_input_stream:write/2), or `{error, no_input_number}` when every number is
 taken.
 """.
--spec occupy_input(pid(), pid()) -> {ok, non_neg_integer()} | {error, no_input_number}.
+-spec occupy_input(pid(), pid()) -> {ok, non_neg_integer(), pid()} | {error, no_input_number}.
 occupy_input(Places, Pid) when is_pid(Pid) ->
     lowest(streams(supervisor:which_children(Places)), 0, Pid).
 
@@ -83,6 +84,6 @@ lowest([], _N, _Pid) ->
     {error, no_input_number};
 lowest([Stream | Rest], N, Pid) ->
     case erx_usb_input_stream:occupy(Stream, Pid) of
-        ok -> {ok, N};
+        ok -> {ok, N, Stream};
         taken -> lowest(Rest, N + 1, Pid)
     end.

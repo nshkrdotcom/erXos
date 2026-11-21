@@ -118,13 +118,13 @@ than mirroring pixels. The [overview](docs/overview.md) tells the longer story.
   speaks 9P2000.L. ([files](docs/design-files.md),
   [`/tmp`](docs/design-tmp.md))
 * **Drivers are Erlang processes.** A driver is a supervised process over
-  a thin device shim. Kill the block driver mid-transfer. Its
-  supervisor restarts it, and the storage domain carries on. *HydrOS* and *Midori* took the same view.
+  a thin device shim. Kill the network driver mid-transfer. Its
+  supervisor restarts it and resets the device, and the rest of the
+  network domain carries on. *HydrOS* and *Midori* took the same view.
   ([drivers](docs/design-system.md#drivers),
   [device shim](docs/design-runtime.md#the-device-nif))
 * **Storage in Erlang.** Release images are read-only EROFS, checked block
-  by block: the build writes them and a reader checks them, though
-  packages still ride in the boot image. The design keeps data in F2FS
+  by block: the build writes them and a reader checks them. The design keeps data in F2FS
   and removable media in FAT; until F2FS is built, a littlefs stopgap
   serves `/data`. An update will go to a spare slot and commit only after
   a healthy trial boot; none is built yet. A bug in a file system crashes
@@ -158,8 +158,9 @@ than mirroring pixels. The [overview](docs/overview.md) tells the longer story.
   ([web](docs/design-web.md))
 * **UNIX on the surface.** As on *QNX* and *Plan 9*, UNIX is how the system
   looks wherever that is also how it works, not what it is built on. The command shell speaks rc's language
-  and pipes text between commands, as UNIX does. Toybox supplies the
-  familiar tools. Native programs run over musl, each holding only what
+  and pipes text between commands, as UNIX does. The file commands, `cat`, `ls`, `cp` and the
+  rest, are Erlang commands; toybox is to supply the other familiar
+  tools, and is designed and not built. Native programs run over musl, each holding only what
   its starter handed it; the POSIX-lite layer that completes them is
   designed and not built.
   ([shell](docs/design-shell.md), [programs](docs/design-programs.md),
@@ -246,9 +247,10 @@ Eshell V17.1.1 (type help(). for help)
   show processes and kernel objects; a value Fiasco cannot measure
   reads as unsupported or partial.
 * `erx:inspect(Path, Options)` reads an inspection path with a wait of the
-  caller's own. Every session sees the machine's load (each CPU's idle
-  time and ready threads) and the clock's state at `/proc/time/status`:
-  unset, boot, approximate or set, and `/proc/time` shows who set it.
+  caller's own. Every session sees each CPU's record at `/proc/cpus/N`,
+  whose idle time and ready threads read unsupported on Fiasco, and the
+  clock's state at `/proc/time/status`: unset, boot, approximate or set,
+  and `/proc/time` shows who set it.
   On QEMU `virt` the clock reads the
   PL031 real-time clock at boot. A machine with no real-time clock
   starts at the build's date, approximate, so HTTPS works from boot
@@ -276,8 +278,9 @@ Eshell V17.1.1 (type help(). for help)
   commands (`ls`, `cat`, `grep`, `ps`, `top`, `mount`, `dmesg`, `uname`,
   `ping`, `host` and others) are Erlang commands that follow FreeBSD's
   output, and pipes carry text.
-* The start table runs services; `service` enables and stops them as
-  FreeBSD's does.
+* The start table runs services; `service` enables, starts and stops
+  them with FreeBSD's verbs and messages, and its `enable` also starts
+  the row, which FreeBSD's does not.
 * Root's session can end the machine: `reboot` resets it and `halt`
   powers it off, at root's console session and at the system domain's
   shell.
@@ -285,13 +288,11 @@ Eshell V17.1.1 (type help(). for help)
   passes a change of its line's size to the foreground jobs that asked
   for it.
 * Each terminal master in a session has a tty of its own, and its close
-  hangs up that tty's shells. The line discipline that will serve them,
-  `erx_tty` (cooked editing, signals for the foreground group, `termios`
-  modes and timers, after FreeBSD's), is a pure core with host tests, and
-  no tty runs it yet. The terminal relay (`erx_session_relay`, with its pure cores
-  `erx_session_relay_core` and `erx_tty_link`) is a server with host
-  tests, one relay per tty; `erx_output` and a tty that runs the line
-  discipline are not built.
+  hangs up that tty's shells. Each tty's terminal relay
+  (`erx_session_relay`, with its pure cores `erx_session_relay_core` and
+  `erx_tty_link`) runs the line discipline `erx_tty` (cooked editing,
+  signals for the foreground group, `termios` modes and timers, after
+  FreeBSD's), a pure core with host tests; `erx_output` is not built.
 * Programs have pipes and a session process can start one. A program's
   `kill` and `kill(pid, 0)` are answered by its handler, and a program
   reaches only itself. The command shell runs a program of the session's
@@ -307,10 +308,11 @@ Eshell V17.1.1 (type help(). for help)
   cover it over stand-ins of the window and draw connection (the window and
   the draw connection each have a keeper of their `kbd` and `mouse` reads),
   and the kiosk suite's front cell runs a program that draws, on root's
-  `front` display grant, over the dashboard. The file tree a program will see (`/bin`, `/dev`
-  with `null`, `zero`, `urandom` and `tty`, a name that answers `ENXIO` as
-  a file, and `/etc/passwd` and
-  `/etc/group`) is written as a file server that nothing starts yet.
+  `front` display grant, over the dashboard. Every session starts its export, a file server
+  of `/bin`, `/dev` (with `null`, `zero`, `urandom` and `tty`, a name that
+  answers `ENXIO` as a file) and `/etc` (`passwd` and `group`), as an `rx`
+  grant for `/bin` and an `rw` grant for `/dev` and `/etc`; a program's
+  handler does not join it into the program's table.
 * musl's errno and signal numbers are FreeBSD's, generated from the ABI's
   tables, and `strerror`'s texts are checked against FreeBSD's.
 
@@ -327,19 +329,19 @@ Eshell V17.1.1 (type help(). for help)
 * A storage domain serves `/data` from littlefs over a virtio block driver
   on QEMU and an SD driver on the Pi 4, and restarts cleanly after a
   failure. A QEMU suite kills the block driver in the middle of a transfer
-  and finds each kept file cut at a sync. An EROFS reader mounts read-only
+  and finds every closed file intact and the file being written cut at a
+  sync. An EROFS reader mounts read-only
   images.
 * The build writes a slot's system partition, an EROFS image of the system
   release's files with its dm-verity hash tree after it, and the manifest's
   `system_image` row records the tree. On a guest, the `medium_boot` QEMU
   suite reads a release file from the partition through the hash-checking
-  reader. `erx_storage_system`, the read-only backend that will serve the
+  reader. `erx_storage_system`, the read-only backend that serves the
   partition's `apps/` as the `system` tree, is tested on the host: every
   block the EROFS reader parses, directories included, is checked against
   the tree's root hash first, and a block that does not match answers
-  `eio`. The partition holds no `apps/` yet, so a booted system serves an
-  empty `system` tree to no one. Packages still ride in the boot image,
-  and no slot writer or update is built to write the partition.
+  `eio`. Image packages lie in the partition's `apps/`; no slot writer or
+  update is built to write the partition.
 * An F2FS codec reads a volume's superblock and checkpoint pack, its node
   and segment tables, journals, inodes and directory entries, and a mount
   core picks the superblock copy and checkpoint pack and decides the mount
@@ -358,7 +360,7 @@ Eshell V17.1.1 (type help(). for help)
   GENET driver on the Pi 4. `ifconfig`, `ping`, `host`, and `gen_tcp`
   connections out and in work in root's session.
 * In a development build, root logs in over SSH with the clone's
-  development key to an Erlang shell in root's session, served by OTP's
+  development key to `rc` in root's session, served by OTP's
   `ssh` daemon, whose version banner names erXos and the release. The
   first boot imports the `authorized_keys` of the card's FAT volume into
   root's home. The network suite logs in through a host port forward,
@@ -623,7 +625,7 @@ for what counts as evidence.
   whose sites are not written yet is marked pending and fails the moment a
   file it awaits appears.
 * **Seeds** (`make check-native-seeds`, `make check-qemu-mutant`). Each
-  seeded failure of the native threads, watchdog and interrupt suites must
+  seeded failure of the native threads, watchdog, task and interrupt suites must
   make its suite fail. A failure seeded into a copy of the Fiasco backend
   must make the QEMU gate fail, while an unmutated copy passes.
 * **Stack proof** (`make check-stack-proof`, part of `make check`). The
@@ -802,9 +804,10 @@ make check-cbmc
 make check-litmus
 ```
 
-* **Reproducibility** keeps both full `ERXPACK` structural test fixtures
-  and a report under `build/reproducible/`, and checks their structure,
-  executable and provenance.
+* **Reproducibility** builds the production image and its medium twice
+  from clean, for QEMU `virt` and for the Raspberry Pi 4, compares the
+  two builds byte for byte, and keeps both and a `result.json` naming
+  any part that differs under `build/reproducible/`.
 * **Sanitizers** run the host C readers, the `ERXPACK` validator and the
   ELF planner under ASan and UBSan, and the generated atomic accessor
   test and the concurrency tests of the budget, capability, lane and log
