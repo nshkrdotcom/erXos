@@ -592,10 +592,10 @@ which stores every field the same way and zeroes the padding, so a
 record C holds reaches Erlang as the bytes `erx_abi_layout` decodes, as
 the domain library hands the PCIe catalogue to the device service
 ([design-pcie.md](design-pcie.md#the-catalogue-and-gives)). A layout
-with DMA marks is the exception: its one C encoder is its meaning's,
-because only that encoder writes such a record
-([design-device-dma.md](design-device-dma.md#what-the-formats-say)), so
-the reader gives it no second one.
+with DMA marks is the exception: it is written only by the encoder its
+marks give it in `erx/abi.h`, and a report, which the device writes, by
+none ([design-device-dma.md](design-device-dma.md#what-the-formats-say));
+the reader gives such a layout no encoder.
 
 A reader whose input is the front of a larger file, such as a package's
 header ([design-packaging.md](design-packaging.md#the-package)), declares

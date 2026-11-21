@@ -465,8 +465,9 @@ class AbiMarksTest < Minitest::Test
     assert_equal "trb_normal wide: encoded 1, bytes differ 1\n", output
   end
 
-  # A layout has one encoder: a marked one only its meaning's in abi.h, which alone
-  # writes such a record, so abi_reader.h declares no encoder of that name.
+  # A layout has at most one encoder: a marked one only the one its marks give it in
+  # abi.h, which alone writes such a record, and a report none, so abi_reader.h
+  # declares no encoder of that name.
   def test_no_encoder_name_is_declared_in_both_headers
     marks, reader = encoder_names(tree_schema(Dir.mktmpdir('erx-abi-marks-')))
     refute_empty marks

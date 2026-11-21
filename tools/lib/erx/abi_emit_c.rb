@@ -636,11 +636,11 @@ module Erx
       end
 
       # The wire_le layouts the reader encodes: each fixed one but those with
-      # DMA marks, whose one encoder is their meaning's in abi.h
-      # (MarksEmitter), since only that encoder writes such a record
-      # (docs/design-device-dma.md).
+      # DMA marks, meaning or not. Such a record is written only by the
+      # encoder its marks give it in abi.h (MarksEmitter), and a report,
+      # which the device writes, has none (docs/design-device-dma.md).
       def wire_encoded_layouts(schema)
-        marked = schema.marks.meanings.to_set { |meaning| meaning.layout.name }
+        marked = schema.marks.layouts.to_set { |item| item.layout.name }
         wire_layouts(schema).reject { |layout| layout.tail || marked.include?(layout.name) }
       end
 
@@ -656,7 +656,7 @@ module Erx
         out.concat(['', '/*', ' * Encoders write a layout whole, its padding zero, into the first SIZE',
                     ' * of length bytes, as the decoder reads them; false, writing nothing, when',
                     ' * length is shorter. A layout with a tail has none, and one with DMA',
-                    " * marks has only its meaning's encoder, in erx/abi.h.", ' */'])
+                    ' * marks has only the encoder its marks give it in erx/abi.h.', ' */'])
         wire_encoded_layouts(schema).each do |layout|
           out << "bool #{name(layout.name)}_encode(const #{c_type(layout)} *value,"
           out << '    uint8_t *bytes, size_t length);'
