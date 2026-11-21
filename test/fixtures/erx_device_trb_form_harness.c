@@ -1776,6 +1776,132 @@ check_input_contexts(void)
 	check_parameters_refused();
 }
 
+/*
+ * A controller as xHCI 1.2 has it for the start (4.2, pp. 80-82; 5.4.1-5.4.2, pp. 393-397):
+ * clearing run halts it, HCRST resets it, the reset clears run and leaves it halted, and the
+ * controller-not-ready bit may clear after HCRST; each change comes after some calls, which the
+ * exploration chooses. `installed` is the install of this negotiation, which a reset forgets.
+ */
+typedef struct controller {
+	bool	run;
+	bool	halted;
+	bool	resetting;
+	bool	not_ready;
+	bool	installed;
+} controller_t;
+
+enum { START_DEPTH = 8, START_CALLS_EAGER = 4 };
+static uint64_t start_traces;
+
+/* What the controller may have done between two calls: each pending change taken or not, by `choice`'s bits. */
+static controller_t
+controller_moves(controller_t c, uint32_t choice)
+{
+	if ((choice & 1u) != 0 && !c.run && !c.halted && !c.resetting)
+		c.halted = true;
+	if ((choice & 2u) != 0 && c.resetting)
+		c = (controller_t){ .halted = true, .not_ready = c.not_ready };
+	if ((choice & 4u) != 0 && !c.resetting && c.not_ready)
+		c.not_ready = false;
+	if ((choice & 8u) != 0 && c.run && c.halted && !c.resetting)
+		c.halted = false;
+	return (c);
+}
+
+/* One call of negotiate/2 on `c`, its effect checked against what the specification allows. */
+static erx_trb_start_next_t
+start_call(controller_t *c, erx_trb_start_step_t step)
+{
+	const erx_trb_start_seen_t seen = { .halted = c->halted, .resetting = c->resetting, .not_ready = c->not_ready };
+	const erx_trb_start_next_t next = erx_trb_form_start_next(step, seen);
+
+	switch (next.effect) {
+	case ERX_TRB_START_NOTHING:
+		break;
+	case ERX_TRB_START_CLEAR_RUN:
+		c->run = false;
+		break;
+	case ERX_TRB_START_RESET:
+		/* HCRST only once halted (5.4.1, p. 394). */
+		EXPECT(c->halted && !c->run, "HCRST written to a controller not halted");
+		*c = (controller_t){ .halted = c->halted, .resetting = true, .not_ready = true };
+		break;
+	case ERX_TRB_START_INSTALL:
+		/* No register but USBCMD before HCRST and CNR clear (5.4.1, p. 394; 4.2, p. 80), and halted. */
+		EXPECT(!c->resetting && !c->not_ready, "installed before the reset and CNR cleared");
+		EXPECT(c->halted && !c->run, "installed on a controller not halted");
+		c->installed = c->run = true;
+		break;
+	}
+	if (next.started)
+		EXPECT(c->installed && c->run && !c->halted, "started before the installed controller left halted");
+	return (next);
+}
+
+/* Every interleaving of the controller's changes with calls, up to START_DEPTH calls from `step`. */
+static void
+explore_start(controller_t c, erx_trb_start_step_t step, uint32_t depth)
+{
+	if (depth == START_DEPTH) {
+		start_traces++;
+		return;
+	}
+	controller_t seen[16];
+	uint32_t seen_count = 0;
+
+	for (uint32_t choice = 0; choice < 16u; choice++) {
+		controller_t moved = controller_moves(c, choice);
+		erx_trb_start_next_t next;
+		bool again = false;
+
+		/* Choices that change the same things are one interleaving. */
+		for (uint32_t k = 0; k < seen_count; k++)
+			again = again || memcmp(&seen[k], &moved, sizeof(moved)) == 0;
+		if (again)
+			continue;
+		seen[seen_count++] = moved;
+		next = start_call(&moved, step);
+
+		if (next.started) {
+			start_traces++;
+			continue;
+		}
+		explore_start(moved, next.step, depth + 1);
+	}
+}
+
+/*
+ * The start's core over a controller in every state a negotiation may find it in, every
+ * interleaving explored; and a controller that answers each write before the next call is
+ * started in START_CALLS_EAGER calls from any of them, the bound the controller core's deadline
+ * counts on.
+ */
+static void
+test_start(void)
+{
+	for (uint32_t bits = 0; bits < 32u; bits++) {
+		const controller_t initial = { .run = (bits & 1u) != 0, .halted = (bits & 2u) != 0,
+		    .resetting = (bits & 4u) != 0, .not_ready = (bits & 8u) != 0, .installed = (bits & 16u) != 0 };
+		controller_t c = initial;
+		erx_trb_start_step_t step = ERX_TRB_START_BEGIN;
+		uint32_t calls = 0;
+		bool started = false;
+
+		explore_start(initial, ERX_TRB_START_BEGIN, 0);
+		while (!started && calls < START_CALLS_EAGER + 1) {
+			const erx_trb_start_next_t next = start_call(&c, step);
+
+			calls++;
+			started = next.started;
+			step = next.step;
+			c = controller_moves(c, 15u);
+			c = controller_moves(c, 15u);
+		}
+		EXPECT(started && calls <= START_CALLS_EAGER, "an answering controller not started in four calls");
+		EXPECT(step == ERX_TRB_START_BEGIN, "a started negotiation not begun again by the next call");
+	}
+}
+
 int
 main(void)
 {
@@ -1783,6 +1909,7 @@ main(void)
 
 	test_layout();
 	test_install();
+	test_start();
 	test_endpoints_and_requests();
 	test_refusals();
 	test_commands();
@@ -1790,6 +1917,7 @@ main(void)
 	make_small(&start);
 	explore(&start, 0);
 	explore_commands(&start, 0);
-	printf("erx_device_trb_form done (%llu states)\n", (unsigned long long)states);
+	printf("erx_device_trb_form done (%llu states, %llu start traces)\n", (unsigned long long)states,
+	    (unsigned long long)start_traces);
 	return (0);
 }

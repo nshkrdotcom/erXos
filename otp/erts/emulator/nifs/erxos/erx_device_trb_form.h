@@ -290,4 +290,50 @@ int	erx_trb_form_complete(erx_trb_form_t *form, const erx_report_record_t *event
  */
 void	erx_trb_form_reset(erx_trb_form_t *form);
 
+/*
+ * The controller's reset and start, which erx_device:negotiate/2 takes one step a call
+ * (docs/design-usb.md, "Install"; xHCI 1.2, 4.2 and 5.4.1, pp. 80-82 and 393-394): run cleared;
+ * once the controller reads halted, HCRST, which it allows only then; once HCRST and the
+ * controller-not-ready bit read clear, before which no other register may be written, the
+ * reset's idle report (erx_trb_form_reset) and the install (erx_trb_form_install), whose last
+ * write is run; once the controller leaves halted, started. Each call reads USBCMD and USBSTS
+ * once, at its start, and the decision is a pure function of that reading and of the step the
+ * last call left, so no call waits: a wait is one reading a call, answered `{error, ebusy}`
+ * until it ends, and the controller core holds the install's one deadline, past which it fails
+ * the controller (erx_xhci_core).
+ */
+typedef enum erx_trb_start_step {
+	ERX_TRB_START_BEGIN,		/* the next call begins a negotiation: a new record's, or a started one's */
+	ERX_TRB_START_HALTING,		/* run cleared: waits for USBSTS.HCH */
+	ERX_TRB_START_RESETTING,	/* HCRST written: waits for it and USBSTS.CNR to read clear */
+	ERX_TRB_START_STARTING,		/* installed and run: waits for HCH to read clear */
+} erx_trb_start_step_t;
+
+/* The call's one reading of the controller, taken before it writes anything. */
+typedef struct erx_trb_start_seen {
+	bool	halted;		/* USBSTS.HCH */
+	bool	resetting;	/* USBCMD.HCRST */
+	bool	not_ready;	/* USBSTS.CNR */
+} erx_trb_start_seen_t;
+
+/* The one write a call makes, or the install's sequence. */
+typedef enum erx_trb_start_effect {
+	ERX_TRB_START_NOTHING,
+	ERX_TRB_START_CLEAR_RUN,	/* USBCMD.RS 0 */
+	ERX_TRB_START_RESET,		/* USBCMD.HCRST 1 */
+	ERX_TRB_START_INSTALL,		/* erx_trb_form_reset, then erx_trb_form_install's sequence applied */
+} erx_trb_start_effect_t;
+
+typedef struct erx_trb_start_next {
+	erx_trb_start_effect_t	effect;
+	erx_trb_start_step_t	step;		/* what the next call takes up */
+	bool			started;	/* the call answers ok; otherwise `{error, ebusy}` */
+} erx_trb_start_next_t;
+
+/*
+ * The call that finds the start at `step`, reading `seen`. An install the effect layer cannot
+ * apply ends the negotiation with its error, and the next call begins again (ERX_TRB_START_BEGIN).
+ */
+erx_trb_start_next_t	erx_trb_form_start_next(erx_trb_start_step_t step, erx_trb_start_seen_t seen);
+
 #endif /* ERX_DEVICE_TRB_FORM_H */

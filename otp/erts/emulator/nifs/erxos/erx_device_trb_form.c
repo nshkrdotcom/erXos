@@ -82,6 +82,21 @@
 #else
 #define SEED_CONFIGURE_SPEED_ZEROED	false
 #endif
+#ifdef ERX_TRB_FORM_SEED_RESET_RUNNING
+#define SEED_RESET_RUNNING	true
+#else
+#define SEED_RESET_RUNNING	false
+#endif
+#ifdef ERX_TRB_FORM_SEED_INSTALL_NOT_READY
+#define SEED_INSTALL_NOT_READY	true
+#else
+#define SEED_INSTALL_NOT_READY	false
+#endif
+#ifdef ERX_TRB_FORM_SEED_STARTED_HALTED
+#define SEED_STARTED_HALTED	true
+#else
+#define SEED_STARTED_HALTED	false
+#endif
 
 /* The form's device addresses: every address place of its TRBs and contexts is 64 bits wide. */
 #define ADDRESS_BITS	64u
@@ -808,4 +823,28 @@ erx_trb_form_reset(erx_trb_form_t *form)
 	form->command_tag = 0;
 	form->stop_event = false;
 	form->broken = false;
+}
+
+erx_trb_start_next_t
+erx_trb_form_start_next(erx_trb_start_step_t step, erx_trb_start_seen_t seen)
+{
+	const erx_trb_start_next_t wait = { .effect = ERX_TRB_START_NOTHING, .step = step };
+
+	switch (step) {
+	case ERX_TRB_START_BEGIN:
+		return ((erx_trb_start_next_t){ .effect = ERX_TRB_START_CLEAR_RUN, .step = ERX_TRB_START_HALTING });
+	case ERX_TRB_START_HALTING:
+		if (!seen.halted && !SEED_RESET_RUNNING)
+			return (wait);
+		return ((erx_trb_start_next_t){ .effect = ERX_TRB_START_RESET, .step = ERX_TRB_START_RESETTING });
+	case ERX_TRB_START_RESETTING:
+		if (seen.resetting || (seen.not_ready && !SEED_INSTALL_NOT_READY))
+			return (wait);
+		return ((erx_trb_start_next_t){ .effect = ERX_TRB_START_INSTALL, .step = ERX_TRB_START_STARTING });
+	case ERX_TRB_START_STARTING:
+		if (seen.halted && !SEED_STARTED_HALTED)
+			return (wait);
+		return ((erx_trb_start_next_t){ .effect = ERX_TRB_START_NOTHING, .step = ERX_TRB_START_BEGIN, .started = true });
+	}
+	return ((erx_trb_start_next_t){ .effect = ERX_TRB_START_CLEAR_RUN, .step = ERX_TRB_START_HALTING });
 }
