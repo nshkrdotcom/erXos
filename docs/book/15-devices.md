@@ -105,8 +105,8 @@ loop costs too much in Erlang. Any other native driver code would need
 a row of the **driver table**
 ([design-system.md, The driver
 table](../design-system.md#the-driver-table)), naming the device and
-the measurement that showed Erlang too slow for it. On the kernel
-erXos runs on now, a measurement admits none, because it would time
+the measurement that showed Erlang too slow for it. On
+Fiasco, a measurement admits none, because it would time
 the kernel's interrupt path rather than the driver, and the table has
 no rows. Every driver erXos
 runs is Erlang.
