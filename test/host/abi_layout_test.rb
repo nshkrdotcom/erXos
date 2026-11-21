@@ -148,13 +148,12 @@ class AbiLayoutTest < Minitest::Test
     end
   end
 
-  # The C reader's encoder is its decoder's inverse: every fixed wire_le layout's sample,
-  # decoded, encodes to the same bytes and no byte past them, and an encode into too
-  # short a buffer is refused.
+  # The C reader's encoder is its decoder's inverse: every sample of a layout it encodes
+  # (each fixed wire_le layout without DMA marks), decoded, encodes to the same bytes and
+  # no byte past them, and an encode into too short a buffer is refused.
   def test_every_wire_layout_of_the_abi_encodes_in_c_what_it_decodes
     model = Erx::ABI::Model.validate(Erx::ABI::Sources.read(root: ROOT, architecture: 'aarch64'))
-    layouts = model.type_order.map { |name| model.types.fetch(name) }
-                   .select { |type| type.is_a?(Erx::ABI::Layout) && type.storage == 'wire_le' && !type.tail }
+    layouts = Erx::ABI::CEmitter.wire_encoded_layouts(model)
     program = "#include <stdio.h>\n#include <string.h>\n#include \"erx/abi_reader.h\"\n\nint\nmain(void)\n{\n" \
               "\tint wrong = 0;\n\n#{layouts.map { |layout| encode_check(layout) }.join}" \
               "\tprintf(\"%d layouts, %d wrong\\n\", #{layouts.size}, wrong);\n\treturn (wrong != 0);\n}\n"

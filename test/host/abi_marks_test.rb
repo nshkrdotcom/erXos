@@ -291,7 +291,33 @@ class AbiMarksTest < Minitest::Test
     assert_equal "trb_normal wide: encoded 1, bytes differ 1\n", output
   end
 
+  # A layout has one encoder: a marked one only its meaning's in abi.h, which alone
+  # writes such a record, so abi_reader.h declares no encoder of that name.
+  def test_no_encoder_name_is_declared_in_both_headers
+    marks, reader = encoder_names(tree_schema(Dir.mktmpdir('erx-abi-marks-')))
+    refute_empty marks
+    refute_empty reader
+    assert_empty marks & reader
+  end
+
+  # A seeded fault in the generator: the reader encoding every fixed wire_le layout,
+  # marked ones included, declares the marked layouts' encoder names a second time.
+  def test_a_reader_encoder_for_a_marked_layout_is_caught
+    schema = tree_schema(Dir.mktmpdir('erx-abi-marks-'))
+    every_fixed = ->(model) { Erx::ABI::CEmitter.wire_layouts(model).reject(&:tail) }
+    with_fault(Erx::ABI::CEmitter.singleton_class, :wire_encoded_layouts, every_fixed) do
+      marks, reader = encoder_names(schema)
+      refute_empty marks & reader
+    end
+  end
+
   private
+
+  # The encoder names abi.h and abi_reader.h each declare at the start of a line.
+  def encoder_names(schema)
+    [Erx::ABI::CEmitter.header(schema), Erx::ABI::CEmitter.reader_header(schema)]
+      .map { |text| text.scan(/^(?:bool )?(erx_\w+_encode)\(/).flatten }
+  end
 
   def sample(text = SAMPLE, other: nil)
     body = "abi 1\n#{text}"

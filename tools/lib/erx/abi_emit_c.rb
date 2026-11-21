@@ -629,9 +629,23 @@ module Erx
           "(#{c_type(base)})(#{unsigned_literal((1 << base.bits) - 1, base.bits)} - (#{unsigned})#{raw}))"
       end
 
+      # Every wire_le layout, each of which the reader decodes.
+      def wire_layouts(schema)
+        schema.type_order.map { |key| schema.types.fetch(key) }
+              .select { |type| type.is_a?(Layout) && type.storage == 'wire_le' }
+      end
+
+      # The wire_le layouts the reader encodes: each fixed one but those with
+      # DMA marks, whose one encoder is their meaning's in abi.h
+      # (MarksEmitter), since only that encoder writes such a record
+      # (docs/design-device-dma.md).
+      def wire_encoded_layouts(schema)
+        marked = schema.marks.meanings.to_set { |meaning| meaning.layout.name }
+        wire_layouts(schema).reject { |layout| layout.tail || marked.include?(layout.name) }
+      end
+
       def reader_header(schema)
-        layouts = schema.type_order.map { |key| schema.types.fetch(key) }
-                        .select { |type| type.is_a?(Layout) && type.storage == 'wire_le' }
+        layouts = wire_layouts(schema)
         out = [NOTICE, '#ifndef ERX_ABI_READER_H', '#define ERX_ABI_READER_H', '',
                '#include "erx/abi.h"', '',
                '/* Prefix decoders borrow immutable bytes; references remain untrusted. */']
@@ -641,8 +655,9 @@ module Erx
         end
         out.concat(['', '/*', ' * Encoders write a layout whole, its padding zero, into the first SIZE',
                     ' * of length bytes, as the decoder reads them; false, writing nothing, when',
-                    ' * length is shorter. A layout with a tail has none.', ' */'])
-        layouts.reject(&:tail).each do |layout|
+                    ' * length is shorter. A layout with a tail has none, and one with DMA',
+                    " * marks has only its meaning's encoder, in erx/abi.h.", ' */'])
+        wire_encoded_layouts(schema).each do |layout|
           out << "bool #{name(layout.name)}_encode(const #{c_type(layout)} *value,"
           out << '    uint8_t *bytes, size_t length);'
         end
@@ -688,11 +703,10 @@ module Erx
                       "\tfor (size_t index = 0; index < #{width / 8}; index++)",
                       "\t\tbytes[index] = (uint8_t)(value >> (index * 8));", '}', ''])
         end
-        schema.type_order.each do |type_name|
-          layout = schema.types.fetch(type_name)
-          next unless layout.is_a?(Layout) && layout.storage == 'wire_le'
+        encoded = wire_encoded_layouts(schema).to_set(&:name)
+        wire_layouts(schema).each do |layout|
           out.concat(prefix_decoder(layout))
-          out.concat(encoder(layout)) unless layout.tail
+          out.concat(encoder(layout)) if encoded.include?(layout.name)
         end
         out.join("\n")
       end
