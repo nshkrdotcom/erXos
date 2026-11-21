@@ -414,8 +414,6 @@ session and say so.
 
 ## Open items
 
-* The footer links (Source, Architecture, Roadmap) point at `#` until the
-  source repository has a public address; a TODO comment marks them.
 * The fault menu is checked under Node against a stand-in for v64, not
   yet in a browser (`TODO.md`, "Planned features").
 * The network's placement is checked under Node against v64's rule, and

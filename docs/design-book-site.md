@@ -188,7 +188,7 @@ Each requirement names who needs it.
    (`Erx::Site::UNVERIFIED`), from CLAUDE.md's "Never fabricate"; the
    `<!-- check: ... -->` markers block publishing too.
 7. **The pages request nothing from another host.** Every font,
-   stylesheet and image a page of the site loads is a file of the site.
+   stylesheet, script and image a page of the site loads is a file of the site.
    The reader's privacy: a page that loads a font from Google Fonts
    tells Google who reads it.
 8. **The output is a function of its inputs**: the same tree, tool

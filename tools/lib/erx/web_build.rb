@@ -45,13 +45,14 @@ module Erx
     # What pnpm reads to install: the lockfile, the package it locks and the
     # settings that say no package may run a build script.
     PACKAGE_FILES = ['package.json', LOCKFILE, 'pnpm-workspace.yaml'].freeze
-    # pnpm's own network use beyond the registry: its check for a newer pnpm.
     # A directory of the tree whose packages pnpm installs from PACKAGE_FILES:
-    # the web client's, and the book site's diagram step's (Book::Diagrams).
+    # the web client's, the book site's diagram step's (Book::Diagrams) and
+    # the website console's (Site::PACKAGES).
     # name labels its logs, title its refusals, source holds the package files
-    # and modules is where they are installed. Both share STORE.
+    # and modules is where they are installed. All share STORE.
     Packages = Data.define(:name, :title, :source, :modules)
     WEB = Packages.new(name: 'web', title: 'the web client', source: 'web', modules: MODULES)
+    # pnpm's own network use beyond the registry: its check for a newer pnpm.
     PNPM_OPTIONS = ['--config.update-notifier=false'].freeze
     # pnpm run through corepack does not reach for a newer pnpm in any step.
     PNPM_ENV = { 'COREPACK_DEFAULT_TO_LATEST' => '0' }.freeze

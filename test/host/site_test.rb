@@ -409,8 +409,8 @@ class SiteTest < Minitest::Test
   end
 
   # The console's terminal is the site's own copy of xterm.js, so a script of the
-  # site that names another host's address, as terminal.js once named jsDelivr's
-  # copy, is refused, and the tree's scripts name none. Seeded fault: check only
+  # site that names another host's address, such as a CDN's copy of xterm.js, is
+  # refused, and the tree's scripts name none. Seeded fault: check only
   # .html and .css.
   def test_a_script_that_loads_from_another_host_is_refused
     with_inputs do |root, image|
@@ -419,7 +419,13 @@ class SiteTest < Minitest::Test
       error = assert_raises(Erx::Error) { inventory(root, image) }
       assert_match %r{site/terminal\.js loads a resource from another host: "https://cdn\.jsdelivr\.net/}, error.message
     end
+    with_inputs do |root, image|
+      File.write(File.join(root, Erx::Site::PACKAGES.modules, Erx::Site::XTERM_PACKAGE, 'css/xterm.css'),
+                 '.xterm { font: url(https://x/f.woff2); }')
+      assert_match %r{xterm/xterm\.css loads a resource from another host}, assert_raises(Erx::Error) { inventory(root, image) }.message
+    end
     assert_raises(Erx::Error) { Erx::Site.remote_load('a.js', 'new WebSocket(`wss://x/${path}`);') }
+    assert_match(/no rule says what a \.mjs file may load/, assert_raises(Erx::Error) { Erx::Site.remote_load('a.mjs', '') }.message)
     assert_raises(Erx::Error) { Erx::Site.remote_load('a.js', "import('//x/y.mjs');") }
     assert_nil Erx::Site.remote_load('a.js', 'if(!["http:", "https:"].includes(url.protocol)) fail(); // https://x')
     Erx::Site::PAGE_FILES.select { |name| name.end_with?('.js') }.each do |name|
