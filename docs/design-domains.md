@@ -2061,8 +2061,8 @@ domain's init process, and before it reads its first frame it exports
 init with `send` and the domain's name with `spawn` to the system domain
 and to its spawner, both named in its boot information, so no frame
 either sends from the start is dropped as one to a name never exported. Init then runs the domain's boot
-script: a small release with `kernel`, `stdlib`, `erx` and `erx_files`
-at the least, with `erx`'s `erx_connections` as the connection agent and
+script: a small release with the base every domain boots
+(`ReleaseFiles::DOMAIN_BASE`) at the least, with `erx`'s `erx_connections` as the connection agent and
 `erx_inspect_agent` as the inspection agent
 ([design-live.md](design-live.md#the-runtime-agent)); its code server
 loads modules as [Atoms, code, ETS and names](#atoms-code-ets-and-names)

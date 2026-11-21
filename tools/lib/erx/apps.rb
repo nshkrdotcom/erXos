@@ -68,9 +68,9 @@ module Erx
   module Apps
     # The app's principal, its sessions' name prefix, and the boot script of its
     # template's release: what every session boots (ReleaseFiles::SESSION_BASE), whose
-    # erx_session the template's -eval starts, and the test-only app. It holds neither
-    # erx_net_client nor the line to the web domain (ReleaseFiles::RELEASE_SCRIPTS), since
-    # the template is granted neither net nor web.
+    # erx_session the template's -eval starts, and the test-only app. It holds no line to
+    # the web domain (ReleaseFiles::RELEASE_SCRIPTS), and its template's arguments set no
+    # network client `grant` key, since the template is granted neither net nor web.
     PRINCIPAL = 'clock'
     BOOT = ReleaseFiles.domain_boot(PRINCIPAL, applications: [*ReleaseFiles::SESSION_BASE, 'erx_clock_test'],
                                                test: true)

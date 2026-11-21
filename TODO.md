@@ -992,14 +992,6 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   as `ENOSYS` tracing shows it;
 * [Low] `test/fixtures/runtime_event_harness.c`: the sleep step's model copies the park core by hand and has no waker; driving
   `erx_backend_park_step` and a waker would pin the reason the epochs come before the flag.
-* [Medium] network, the domain boot scripts without the client (`tools/lib/erx/release_files.rb`
-  `RELEASE_SCRIPTS`): design-network-stack's "Modules" says every erXos domain runs `erx_net_client`, and the
-  system, session, app and ntpd releases do, so a socket call there without a grant answers `{error, eacces}`
-  from `erx_inet:find/0`. The other scripts (erts, storage, network, web, display, client, ssh, usb, bt, pcie,
-  wifi) ship no `erx_net_client`, so the default `erx` backend's `erx_gen_tcp` and `erx_gen_udp`
-  (`otp/lib/kernel/src/inet.erl`) are absent and `gen_tcp:listen/2` and `gen_udp:open/2` raise `undef` there.
-  Adding the client to `DOMAIN_BASE` would make it hold in every domain by construction; it wants each
-  domain's memory checked against its fixed budget, since a release loads every module it ships.
 * [Medium] `test/integration/runtime_prim_file_test.rb`: no hosted test reads through an EROFS entry with prim_file
   since erx_ns's only EROFS mount became `{erofs, app}`, which takes the session's app record and a file grant; the
   system domain the test boots holds neither. `erx_ns_tests` reads the mount with erx_erofs directly, never through

@@ -24,8 +24,8 @@ Decisions every reader needs:
   read-only at the same addresses. Nothing is relocated, so every page of
   it stays shared.
 * **The image holds the preloaded modules and the applications every
-  domain boots**: `kernel`, `stdlib`, `erx` and `erx_files`
-  (`ReleaseFiles::DOMAIN_BASE`, `tools/lib/erx/release_files.rb`).
+  domain boots** (`ReleaseFiles::DOMAIN_BASE`,
+  `tools/lib/erx/release_files.rb`).
   A module whose literals name an identity or hold a reference-counted
   binary, or that has an `on_load` function, is left out and loads
   privately.
@@ -105,7 +105,7 @@ modules) reports `code` 11,938,778 bytes under the interpreter
 ([research-g5-beamasm.md](research-g5-beamasm.md#footprint)).
 
 **Literal binaries.** Of the 275 beam files of the preloaded modules and
-those four applications, 14 hold literal binaries over 64 bytes, which
+`kernel`, `stdlib`, `erx` and `erx_files`, 14 hold literal binaries over 64 bytes, which
 ERTS makes reference-counted (`ERL_ONHEAP_BINARY_LIMIT`,
 `otp/erts/emulator/beam/erl_bits.h`): 49 binaries, about 10 KB in all
 (from the beam files' `LitT` chunks). The modules are `init`, `prim_tty`, `erl_erts_errors`, `erl_kernel_errors`,

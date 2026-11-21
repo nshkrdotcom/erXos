@@ -146,6 +146,15 @@ class ReleaseFilesTest < Minitest::Test
     end
   end
 
+  # Every domain boot script starts the network client (docs/design-network-stack.md,
+  # "Modules"), so a socket call in a domain without a grant answers {error, eacces}
+  # rather than raising undef on erx_gen_tcp or erx_gen_udp.
+  def test_every_domain_script_holds_the_network_client
+    Erx::ReleaseFiles::RELEASE_SCRIPTS.each do |name, applications|
+      assert_includes applications, 'erx_net_client', "the #{name} script"
+    end
+  end
+
   def test_the_release_ships_no_appup
     assert_empty(entries.map { |entry| entry.fetch('path') }.grep(/\.appup\z/))
   end
@@ -192,7 +201,7 @@ class ReleaseFilesTest < Minitest::Test
                           codec: Codec.new, oracle: FakeOracle.new, release: release).entries
   end
 
-  def base_boot(name = 'base') = Erx::ReleaseFiles.domain_boot(name, applications: %w[erx_files stdlib erx kernel])
+  def base_boot(name = 'base') = Erx::ReleaseFiles.domain_boot(name, applications: %w[erx_net_client erx_files stdlib erx kernel])
 
   # The release file a boot script of the domain release was made from.
   def boot_release_file(name) = File.read(File.join(@scratch, "domain/boot/#{name}/start.rel"))
@@ -257,7 +266,7 @@ class ReleaseFilesTest < Minitest::Test
     assert_equal %w[domains/erxos/bin/erts.boot domains/erxos/bin/session.boot], paths.grep(%r{/bin/})
     erts = boot_release_file('erts')
     assert_equal "{release,{\"erts\",\"1\"},{erts,\"#{VERSION}\"},[{kernel,\"#{VERSION}\"},{stdlib,\"#{VERSION}\"}," \
-                 "{erx,\"#{VERSION}\"},{erx_files,\"#{VERSION}\"}]}.\n", erts
+                 "{erx,\"#{VERSION}\"},{erx_files,\"#{VERSION}\"},{erx_net_client,\"#{VERSION}\"}]}.\n", erts
     assert_includes boot_release_file('session'), "{erx_shell,\"#{VERSION}\"}"
   end
 
@@ -288,7 +297,7 @@ class ReleaseFilesTest < Minitest::Test
 
   # The app script, which the app template boots (docs/design-packaging.md, "The apps
   # row"), boots what every session boots, as the session script does, starts the client
-  # side of the display and the network client, only loads compiler, which an app's own
+  # side of the display, only loads compiler, which an app's own
   # application may name, as Elixir's elixir does, and asn1, crypto and public_key,
   # holds no ssh, and only loads erx_session and erx_app, which the template's -eval
   # starts, and which asks for the app's record (erx:app/0), so an app's session has its
@@ -298,9 +307,9 @@ class ReleaseFilesTest < Minitest::Test
     release = boot_release_file('app')
     %w[compiler asn1 crypto public_key].each { |name| assert_match(/\{#{name},"[^"]+",load\}/, release, "app only loads #{name}") }
     refute_match(/\{ssh,/, release, 'an app runs no ssh daemon')
-    assert_match(/\{erx_ui,"#{VERSION}"\},\{erx_net_client,"#{VERSION}"\},\{erx_shell,"#{VERSION}"\},
+    assert_match(/\{erx_ui,"#{VERSION}"\},\{erx_shell,"#{VERSION}"\},
                   \{erx_session,"#{VERSION}",load\},\{erx_app,"#{VERSION}",load\}\]\}\.\n\z/x,
-                 release, 'the app script starts the client side and the network client and only loads erx_session and erx_app')
+                 release, 'the app script starts the client side and only loads erx_session and erx_app')
   end
 
   # A principal can run OTP's ssh daemon in its own session (docs/design-ssh.md, "Stages",
@@ -341,7 +350,7 @@ class ReleaseFilesTest < Minitest::Test
   # domain (docs/design-network-stack.md, "The process tree").
   def test_the_network_script_starts_the_network_stack_permanent
     domain_entries(Erx::ReleaseFiles.domain([Erx::ProductionImage.domain_boot('network')]))
-    assert_match(/,\{erx_files,"#{VERSION}"\},\{erx_net,"#{VERSION}"\}\]\}\.\n\z/, boot_release_file('network'))
+    assert_match(/,\{erx_net_client,"#{VERSION}"\},\{erx_net,"#{VERSION}"\}\]\}\.\n\z/, boot_release_file('network'))
   end
 
   # The display script takes the display side whole, the pixel primitives, the screen
@@ -388,7 +397,8 @@ class ReleaseFilesTest < Minitest::Test
   # system release's order whatever order they were asked in.
   def test_a_boot_script_takes_the_system_release_order
     domain_entries(Erx::ReleaseFiles.domain([base_boot]))
-    assert_equal "{release,{\"base\",\"1\"},{erts,\"#{VERSION}\"},[{kernel,\"#{VERSION}\"},{stdlib,\"#{VERSION}\"},{erx,\"#{VERSION}\"},{erx_files,\"#{VERSION}\"}]}.\n",
+    assert_equal "{release,{\"base\",\"1\"},{erts,\"#{VERSION}\"},[{kernel,\"#{VERSION}\"},{stdlib,\"#{VERSION}\"},{erx,\"#{VERSION}\"},{erx_files,\"#{VERSION}\"}," \
+                 "{erx_net_client,\"#{VERSION}\"}]}.\n",
                  boot_release_file('base')
   end
 

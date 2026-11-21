@@ -82,10 +82,14 @@ module Erx
     # (docs/design-kernel.md, "The boot image"), and its boot scripts: for each name,
     # bin/<name>.boot, whose release file names the applications given, in that order.
     Release = Data.define(:name, :prefix, :applications, :system, :boots)
-    # What every domain boots: kernel and stdlib, which a release boots through, and erx
+    # What every domain boots: kernel and stdlib, which a release boots through, erx
     # and erx_files, whose processes erXos's kernel_sup and kernel_safe_sup start in every
-    # domain (its watchdog's child, its namespace table, /tmp and /proc).
-    DOMAIN_BASE = %w[kernel stdlib erx erx_files].freeze
+    # domain (its watchdog's child, its namespace table, /tmp and /proc), and
+    # erx_net_client, the socket backends inet's default backend names, which every erXos
+    # domain runs (docs/design-network-stack.md, "Modules"). Its `grant` key has no
+    # default: a domain whose startup arguments set none answers every socket call with
+    # {error, eacces} and runs no resolver loader.
+    DOMAIN_BASE = %w[kernel stdlib erx erx_files erx_net_client].freeze
     # What every session boots (docs/design-programs.md, "The command server"): the base
     # every domain boots and erx_session, the session's supervisor, with the command
     # shell it depends on. erx_session_sup starts the session's pipe server and terminal
@@ -96,10 +100,9 @@ module Erx
     # The applications the system release ships, in release order: an allow-list, so an
     # application reaches the system domain only by being named here: OTP's, the base
     # every domain boots, the applications the system domain runs, and erx_session, which
-    # it ships and never starts (DOMAIN_ONLY). erx_net_client is the socket backends that
-    # inet's default backend names (docs/design-network-stack.md, "Modules"), not the
-    # stack: the system domain holds no `net` facet and its startup sets no `grant` key,
-    # so every socket call there answers {error, eacces} and no resolver loader runs.
+    # it ships and never starts (DOMAIN_ONLY). The base's erx_net_client is the socket
+    # backends, not the stack: the system domain holds no `net` facet and its startup sets
+    # no `grant` key, so every socket call there answers {error, eacces}.
     # Every other application is a domain boot script's alone (RELEASE_SCRIPTS), and one
     # in neither fails the load (check_released).
     SYSTEM_APPLICATIONS = %w[kernel stdlib compiler runtime_tools erx erx_files erx_net_client erx_code erx_uart erx_rtc
@@ -123,14 +126,14 @@ module Erx
     #   every domain boots, as the medium boot's configured domain and the native domain
     #   tests' domains do (MediumBoot, NativeDomain);
     # * session, a principal's session domain (docs/design-domains.md, "Principals,
-    #   sessions and quotas"): the network client, whose `grant` key the session
-    #   template's arguments set; the session's line to the web domain (docs/design-web.md,
+    #   sessions and quotas"): the session's line to the web domain (docs/design-web.md,
     #   "Views on the line"), which must be up before init's ready report names it, so the
     #   script starts it; and asn1, crypto, public_key, ssh, ssl and inets
     #   (DOMAIN_IMAGE_ONLY), which it only loads, so that a principal can run OTP's ssh
     #   daemon in its own session (docs/design-ssh.md, "Stages", stage 1) and fetch over
     #   HTTPS (docs/design-crypto.md, "Releases"), and no session runs ssh's supervisors
-    #   unasked. It also starts the client side of the display
+    #   unasked. A session template's arguments set the base's network client's `grant`
+    #   key when it is granted the network. It also starts the client side of the display
     #   (DomainStartup::DISPLAY_CLIENT): a session template may hold a display's grant
     #   (root's display_root), and its programs' window buffers come from erx_win's
     #   allocator, erx_pixels, which runs in every release that holds one
@@ -163,7 +166,7 @@ module Erx
     #   it; the native domain tests boot it (NativeDomain).
     # * app, an app's session, which the app template boots (docs/design-packaging.md,
     #   "The apps row"): the client side of the display as client's without the desktop's
-    #   programs (erx_desk), the network client, compiler (LOAD_ONLY), which an
+    #   programs (erx_desk), compiler (LOAD_ONLY), which an
     #   application an app ships may name, as Elixir's elixir does, so the app's start
     #   (application:ensure_all_started/2) finds it, asn1, crypto, public_key, ssl and inets,
     #   which it only loads, for an app's HTTPS requests (docs/design-crypto.md,
@@ -192,13 +195,14 @@ module Erx
     #   loaded. No manifest names it; it exists because check_released requires a
     #   release for erx_wifi.
     # * ntpd, the network time client's session (docs/design-time.md, "Who does what"):
-    #   the network client, for its sockets and resolver, and erx_ntpd, which the ntpd
-    #   template's -eval starts. It takes no shell and no erx_session: the session has no
+    #   erx_ntpd, which the ntpd template's -eval starts; its sockets and resolver are the
+    #   base's network client, whose `grant` key the template's arguments set. It takes no
+    #   shell and no erx_session: the session has no
     #   console and reaches its facets through erx:cap/1.
     # session and app each take SESSION_BASE, whose erx_session (DOMAIN_ONLY) they only
     # load, as every session template's -eval starts it once the domain holds its facets.
     RELEASE_SCRIPTS = { 'erts' => DOMAIN_BASE,
-                        'session' => [*SESSION_BASE, *DOMAIN_IMAGE_ONLY, *DomainStartup::DISPLAY_CLIENT, 'erx_net_client',
+                        'session' => [*SESSION_BASE, *DOMAIN_IMAGE_ONLY, *DomainStartup::DISPLAY_CLIENT,
                                       'erx_web_line', 'erx_ssh_line'].freeze,
                         'storage' => [*DOMAIN_BASE, 'erx_blk', 'erx_storage', 'erx_f2fs'].freeze,
                         'network' => [*DOMAIN_BASE, 'erx_net'].freeze,
@@ -208,11 +212,11 @@ module Erx
                         'ssh' => [*DOMAIN_BASE, 'asn1', 'crypto', 'public_key', 'ssh'].freeze,
                         DomainStartup::APP_TEMPLATE.release =>
                           [*SESSION_BASE, 'compiler', 'asn1', 'crypto', 'public_key', 'ssl', 'inets', *DomainStartup::DISPLAY_CLIENT,
-                           'erx_ui', 'erx_net_client', 'erx_app'].freeze,
+                           'erx_ui', 'erx_app'].freeze,
                         'usb' => [*DOMAIN_BASE, 'erx_usb'].freeze,
                         'bt' => [*DOMAIN_BASE, 'erx_bt'].freeze,
                         'pcie' => [*DOMAIN_BASE, 'erx_pcie'].freeze,
-                        'ntpd' => [*DOMAIN_BASE, 'erx_net_client', 'erx_ntpd'].freeze,
+                        'ntpd' => [*DOMAIN_BASE, 'erx_ntpd'].freeze,
                         'wifi' => [*DOMAIN_BASE, 'crypto', 'erx_wifi'].freeze }.freeze
 
     # Refuses applications of which no release holds one: an application the runtime

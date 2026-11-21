@@ -580,9 +580,9 @@ module Erx
     # product code). It boots a medium machine's image (MediumBoot.machine) with three
     # configured domains that halt at
     # once, so the archive's domain release carries their boot scripts: bare (the domain
-    # base), blk (base and erx_blk, named apart from the manifest's own storage domain)
-    # and net (base, erx_net and erx_net_client, named apart from the manifest's own
-    # network domain), each in a small runtime_limits
+    # base, the network client among it), blk (base and erx_blk, named apart from the
+    # manifest's own storage domain) and net (base and erx_net, named apart from the
+    # manifest's own network domain), each in a small runtime_limits
     # profile. At the system domain's shell it creates a
     # domain booting each script, reads the root's pool pages in use (the system
     # domain's budget record) with the domain up and again once it has stopped, and asks
@@ -597,7 +597,7 @@ module Erx
       RELEASES = {
         'bare' => ReleaseFiles::DOMAIN_BASE,
         'blk' => [*ReleaseFiles::DOMAIN_BASE, 'erx_blk'].freeze,
-        'net' => [*ReleaseFiles::DOMAIN_BASE, 'erx_net', 'erx_net_client'].freeze
+        'net' => [*ReleaseFiles::DOMAIN_BASE, 'erx_net'].freeze
       }.freeze
       # Applications a release only loads: erx_net's needs the stack's arguments and a device, and
       # erx_blk's a device. The cell loads the modules of these and of erx_net_client by hand.

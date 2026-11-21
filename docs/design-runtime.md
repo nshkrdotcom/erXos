@@ -282,8 +282,8 @@ code service; `erx_net`, the TCP/IP stack;
 `erx_net_client`, its socket backends; `erx_web_line`, a session's line to
 the web domain, which only the domain release ships; `erx_desk`, the
 desktop programs, which the client script boots; and `erx_session`,
-a session's domain. Every domain release ships `kernel`, `stdlib`, `erx` and
-`erx_files` at the least.
+a session's domain. Every domain release ships at the least the base every
+domain boots (`ReleaseFiles::DOMAIN_BASE`, `tools/lib/erx/release_files.rb`).
 
 `erx`, `erx_files`, `erx_uart` and `erx_shell` have no application
 callback. What of theirs must run, `kernel` starts. Its hooks start the
