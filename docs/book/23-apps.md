@@ -296,7 +296,7 @@ beneath `/app` leads out of the package. Every entry carries a fixed
 owner, mode and time, so the same inputs give the same bytes and
 nothing of the developer's host leaks into the file.
 
-Why one file and not a directory, as macOS's app bundles are? A file
+Why one file and not a directory of files? A file
 is copied, checked and replaced in one step, and its integrity rests
 on one header. A directory's would rest on every file in it, and on
 the storage domain's honesty about all of them.
@@ -558,9 +558,8 @@ rm /apps/clock.app           remove it; its data stays
 service clock purge          remove its data as well
 ```
 
-There is no `pkg add`, `pkg delete` or `pkg info`: each would be a
-command, a grammar and a table of errors for what a copy, a removal
-and a listing already say. An install starts no service. The image's
+Where FreeBSD has `pkg add`, `pkg delete` and `pkg info`, erXos has
+`cp`, `rm` and `ls` on `/apps`. An install starts no service. The image's
 packages appear in `/apps` too, read-only: a copy over one answers
 `EROFS`, so an installed app never takes an image app's name. A
 package stays one file, so `ls /apps` is the list of installed
@@ -706,7 +705,7 @@ packer makes its own Ed25519 key the first time it signs without
 `--key`, one per user and host, in `~/.erxos/package-key/`, and a
 development image trusts the public half of its builder's key, so a
 third party's packages are trusted only by images that party builds.
-There is no unsigned mode: signing costs a developer nothing, and one
+Every package is signed: signing costs a developer nothing, and one
 mode keeps the header and the file check simple.
 
 **The examples.** `examples/` holds app directories that are not part

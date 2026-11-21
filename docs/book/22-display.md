@@ -119,10 +119,9 @@ records of a byte naming the kind, the key's characters in UTF-8 and a
 NUL. A read of `mouse` or `kbd` that finds
 nothing waits for the next record. These are stream files, and the
 window process is their keeper
-([chapter 14](14-files.md#1425-stream-files-and-keepers)). Names the
-model has no use for,
-such as `cons` and `wsys`, do not exist, because a terminal is a
-program's choice (section 22.2.3).
+([chapter 14](14-files.md#1425-stream-files-and-keepers)). A window
+serves no terminal file, because a terminal is a program's choice
+(section 22.2.3).
 
 A window ends when the process that made it ends, when its directory
 is removed, or when the grant ends. The window server records each
@@ -773,16 +772,15 @@ between other domains.
 
 ## 22.10 Design choices
 
-**Rendering in the client.** Plan 9 executed every draw message in the
-display. That keeps the display parsing every client's bytes. A
+**Rendering in the client.** The display could execute every client's
+draw messages, but it would then parse every client's bytes. A
 picture a client rendered itself, LVGL's or a GPU's, would have to be
 sent as draw messages that load an image. Its bytes would then be
 copied five times: into a lane, out of it, through the file server
 into the image, into the screen image, and to the device. A buffer is
 copied once. Doing both would
 give two kinds of window content, two quotas and two sets of failures.
-QNX Screen, Wayland and Fuchsia's Flatland also render in the client;
-on erXos a `ctl` file and the answer to a write carry the same rules
+A `ctl` file and the answer to a write carry the buffer's rules
 without a protocol of their own.
 
 **One pixel area, not an object per buffer.** An object per window
@@ -798,9 +796,9 @@ and on its budget. A kiosk would become a different system from a
 desktop, with its own failures and tests. In the session, a kiosk is a
 policy.
 
-**A tree, not widget commands.** Imperative widgets, as OTP's old `gs`
-had, put an ordering protocol on every application. Inferno's Tk took
-commands as strings, with Tk's quoting problems. A term checked by a
+**A tree, not widget commands.** Imperative widget commands would put
+an ordering protocol on every application, and commands sent as
+strings bring quoting problems. A term checked by a
 generated schema needs no parser and has no order.
 
 **The terminal in the session.** In the display it would make the
@@ -809,9 +807,9 @@ window serves. A C emulator such as libvterm, as a NIF, would be a
 native parser of untrusted output whose fault ends the session's whole
 runtime. In Erlang a fault ends one terminal.
 
-**Not X11, GTK or Qt.** Each brings a large native stack with its own
-authority model or event loop, against erXos's rules on languages and
-simplicity. A rootless X server over the draw protocol stays possible
+**No imported native window system.** An imported window system or
+toolkit (X11, GTK, Qt) would bring a large native stack with its own
+authority model or event loop into every session. A rootless X server over the draw protocol stays possible
 as a compatibility layer for ported programs and changes nothing here.
 
 ## Summary
