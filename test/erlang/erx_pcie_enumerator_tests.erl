@@ -33,6 +33,7 @@ bridge() ->
     Record = #{index => ?BRIDGE, bus_first => 0, bus_last => 255, flags => [],
                windows => [#{pci => ?WINDOW, cpu => ?WINDOW, size => 16#10000000, flags => []}
                            | lists:duplicate(?ERX_PCIE_WINDOWS_MAX - 1, Window)],
+               inbound => lists:duplicate(?ERX_PCIE_WINDOWS_MAX, Window),
                places => lists:duplicate(?ERX_PCIE_CLOSED_MAX, Place)},
     {ok, Bridge} = erx_abi_layout:decode(erx_pcie_bridge, erx_abi_layout:encode(erx_pcie_bridge, Record)),
     Bridge.

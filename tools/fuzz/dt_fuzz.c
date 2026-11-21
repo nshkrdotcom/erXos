@@ -171,6 +171,21 @@ bridge_check(const erx_dt_t *tree, const char *path)
 			if (tree->memory[m].first <= last && bridge.windows[i].cpu <= tree->memory[m].last)
 				abort();
 	}
+	/* Inbound windows the same, but for the RAM test: an inbound window may reach RAM. */
+	unused = false;
+	for (i = 0; i < ERX_PCIE_WINDOWS_MAX; i++) {
+		if (bridge.inbound[i].size == 0) {
+			if (bridge.inbound[i].pci != 0 || bridge.inbound[i].cpu != 0 || bridge.inbound[i].flags != 0)
+				abort();
+			unused = true;
+			continue;
+		}
+		if (status != ERX_DT_BRIDGE_OK || unused || (bridge.inbound[i].flags & ~ERX_PCIE_WINDOW_FLAGS_KNOWN) != 0 ||
+		    (bridge.inbound[i].flags & ERX_PCIE_WINDOW_IO) != 0 ||
+		    __builtin_add_overflow(bridge.inbound[i].pci, bridge.inbound[i].size - 1, &last) ||
+		    __builtin_add_overflow(bridge.inbound[i].cpu, bridge.inbound[i].size - 1, &last))
+			abort();
+	}
 }
 
 int

@@ -964,10 +964,11 @@ dma_to_cpu(const erx_dt_t *tree, const int path[ERX_DT_DEPTH_MAX + 1], int depth
  * (pci_host_generic_fdt.c:179-230), the parent's range taken to the CPU's by
  * range_to_cpu, or for an inbound window by dma_to_cpu. An entry of I/O space
  * or of size 0 is skipped; one that meets an earlier window in PCI space is
- * malformed, and so is a window that meets an earlier one in CPU space, so a
- * BAR's PCI range has one CPU range. An empty dma-ranges maps every bus
- * address to the same CPU address, as none does, so it gives no inbound
- * window; an empty ranges maps nothing a three-cell address can name.
+ * malformed, and so is a memory window, not an inbound one, that meets an
+ * earlier one in CPU space, so a BAR's PCI range has one CPU range. An empty
+ * dma-ranges maps every bus address to the same CPU address, as none does,
+ * so it gives no inbound window, and a non-empty one that gives none is
+ * malformed; an empty ranges maps nothing a three-cell address can name.
  */
 static erx_dt_bridge_status_t
 windows_read(const erx_dt_t *tree, const int path[ERX_DT_DEPTH_MAX + 1], int depth, bool inbound,
@@ -1020,6 +1021,9 @@ windows_read(const erx_dt_t *tree, const int path[ERX_DT_DEPTH_MAX + 1], int dep
 				return (ERX_DT_BRIDGE_MALFORMED);
 		windows[count++] = (erx_pcie_window_t){ .pci = pci, .cpu = cpu, .size = size, .flags = window_flags(hi) };
 	}
+	/* No inbound window means every bus address maps to itself, which a dma-ranges that maps nothing does not say. */
+	if (inbound && count == 0)
+		return (ERX_DT_BRIDGE_MALFORMED);
 	return (ERX_DT_BRIDGE_OK);
 }
 

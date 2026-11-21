@@ -230,7 +230,9 @@ class DtTest < Minitest::Test
     'bridge-inbound-moved' => tree(inbound_below(PI_INBOUND, scb_dma: '0x0 0x0 0x1 0x0 0xfc000000')),
     'bridge-inbound-split' => tree(inbound_below(PI_INBOUND, scb_dma: '0x0 0x0 0x0 0x0 0x80000000')),
     'bridge-inbound-overlap' => tree(inbound_below("#{PI_INBOUND} 0x2000000 0x0 0x80000000 0x1 0x0 0x0 0x1000000")),
-# One size cell, a 32-bit prefetchable window and an entry of size 0.
+    # A dma-ranges of I/O space alone maps no memory, which no inbound window would say.
+    'bridge-inbound-io' => tree(inbound_below('0x1000000 0x0 0x0 0x0 0x0 0x0 0x10000')),
+    # One size cell, a 32-bit prefetchable window and an entry of size 0.
     'bridge-one-size-cell' => tree(BRIDGE.call(ranges: '0x42000000 0x0 0xf8000000 0x0 0x80000000 0x4000000 ' \
                                                        '0x2000000 0x0 0x0 0x0 0x90000000 0x0',
                                                cells: '#address-cells = <3>; #size-cells = <1>;')),
@@ -643,7 +645,8 @@ class DtTest < Minitest::Test
       ['bridge-inbound-moved', 'bridge /scb/pcie'] =>
         'bridge ok buses 0 255 window 0xf8000000 0x80000000 0x4000000 0 inbound 0x0 0x100000000 0xc0000000 0',
       ['bridge-inbound-split', 'bridge /scb/pcie'] => 'bridge malformed buses 0 0',
-      ['bridge-inbound-overlap', 'bridge /scb/pcie'] => 'bridge malformed buses 0 0'
+      ['bridge-inbound-overlap', 'bridge /scb/pcie'] => 'bridge malformed buses 0 0',
+      ['bridge-inbound-io', 'bridge /scb/pcie'] => 'bridge malformed buses 0 0'
     }.each { |(name, query), expected| assert_equal expected, fixture_answers(name, [query])[1], "#{name}: #{query}" }
   end
 

@@ -37,13 +37,14 @@ closed_bridge(Listed) ->
     bridge(#{index => 8, bus_first => 0, bus_last => 1, flags => [closed]}, Listed).
 
 %% A host bridge record as the device service hands it: its bytes decoded, so its
-%% windows and places are the record's slots, the unused ones zero.
+%% windows, inbound windows and places are the record's slots, the unused ones zero.
 bridge(Fields, Listed) ->
     Places = [#{bus => Bus, device => Device, function => Function, pin => 1}
               || {Bus, Device, Function} <- Listed],
     Unused = #{bus => 0, device => 0, function => 0, pin => 0},
     Window = #{pci => 0, cpu => 0, size => 0, flags => []},
     Record = Fields#{windows => lists:duplicate(?ERX_PCIE_WINDOWS_MAX, Window),
+                     inbound => lists:duplicate(?ERX_PCIE_WINDOWS_MAX, Window),
                      places => Places ++ lists:duplicate(?ERX_PCIE_CLOSED_MAX - length(Places), Unused)},
     {ok, Bridge} = erx_abi_layout:decode(erx_pcie_bridge, erx_abi_layout:encode(erx_pcie_bridge, Record)),
     Bridge.

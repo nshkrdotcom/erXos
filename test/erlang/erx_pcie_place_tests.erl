@@ -19,7 +19,8 @@ window() ->
 
 %% Placement in a host bridge whose windows are Windows.
 placed(Windows, Found) ->
-    Bridge = #{index => 0, bus_first => 0, bus_last => 255, flags => [], windows => Windows, places => []},
+    Bridge = #{index => 0, bus_first => 0, bus_last => 255, flags => [], windows => Windows, inbound => [],
+               places => []},
     erx_pcie_place:layout(Bridge, Found).
 
 %% A function the walk read, with the hardware size of each memory BAR by index.
