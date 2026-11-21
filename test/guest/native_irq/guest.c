@@ -502,17 +502,25 @@ case_destroyed_handle(void)
 
 /*
  * Fiasco's object space under the release's configuration (docs/design-fiasco.md, "Handles"):
- * a cap_limit whose window passes the object space's last slot is ERX_EINVAL, and the
- * backend's probe places a capability at that last slot and none past it.
+ * a cap_limit whose window passes the object space's last slot is ERX_EINVAL, the largest
+ * that fits is what erx_space_cap_limit_max answers and makes a space, and the backend's
+ * probe places a capability at that last slot and none past it.
  */
 static void
 check_object_space(void)
 {
 	uint64_t space;
+	int64_t ignored;
 	const char *reason;
 
-	if (erx_space_create(0, ERX_CAP_SELF, 0, 0, 0, ERX_FIASCO_CAP_LIMIT_MAX + 1, &space) != ERX_EINVAL)
+	if (erx_space_cap_limit_max() != ERX_FIASCO_CAP_LIMIT_MAX)
+		fail("erx: irq: the largest cap_limit answered is not the object space's FAILED\n");
+	if (erx_space_create(0, ERX_CAP_SELF, 0, 0, 0, erx_space_cap_limit_max() + 1, &space) != ERX_EINVAL)
 		fail("erx: irq: a window past the object space was admitted FAILED\n");
+	if (erx_space_create(0, ERX_CAP_SELF, ERX_CAP_NULL, 0, 0, erx_space_cap_limit_max(), &space) != ERX_OK)
+		fail("erx: irq: the largest window that fits was refused FAILED\n");
+	(void)erx_space_stop(space, 0);
+	(void)erx_fiasco_task_join(space, &ignored);
 	reason = erx_fiasco_test_object_space_probe(irq_soft);
 	if (reason != NULL)
 		fail(reason);

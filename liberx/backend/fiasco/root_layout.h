@@ -83,6 +83,8 @@ _Static_assert(ERX_FIASCO_POOL_PAIRS <= UINT16_MAX, "a pair's number, its index 
 _Static_assert(ERX_FIASCO_POOL_PAIRS > ERX_FIASCO_POOL_TASK_PAIRS,
     "the pool holds two pairs for every row the task table can hold");
 _Static_assert(ERX_FIASCO_CAP_LIMIT_MAX <= ERX_CAPS_MAX, "a window's bound is within erXos's own");
+_Static_assert(ERX_FIASCO_CAP_LIMIT_MAX >= ERX_PROGRAM_CAP_LIMIT,
+    "a program's image table, made with erx_space_cap_limit_max, holds at least program_cap_limit");
 
 uint64_t	erx_fiasco_root_slot_cap(uint32_t);
 /*

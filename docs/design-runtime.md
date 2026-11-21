@@ -1757,8 +1757,9 @@ applied in this order, each step undoing the ones before it on failure:
    once no image of it runs, and after which no take for the program
    succeeds. A start whose take fails after an earlier one succeeded
    fails whole with `einval` and lets go every hand-off it took. The
-   image's capability table may hold `caps_max` capabilities, the
-   kernel's largest table, so it takes the fixed installs, every copy the
+   image's capability table is the largest the backend takes
+   (`erx_space_cap_limit_max()`: `caps_max` on erXos's kernel, less on
+   Fiasco), so it takes the fixed installs, every copy the
    hand-offs hold and those `erx_program:install/2` passes while the
    program runs; the anchor's holds `program_cap_limit`
    (`abi/erx_abi.txt`).
