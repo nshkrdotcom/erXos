@@ -523,7 +523,7 @@ session, a window or an SSH connection, carries the system shell. The
 development build anyone at the UART reaches the system shell through
 the `Ctrl-G` menu.
 
-## 20.5 Services as FreeBSD starts them
+## 20.5 Starting services
 
 An administrator types `service ntpd enable` and `service ntpd
 start`, and reads `/etc/rc.conf` to see what this machine changed. erXos
