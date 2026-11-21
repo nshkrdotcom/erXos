@@ -52,9 +52,21 @@ module Erx
       # prints where no test reads it, through a primary filter that passes every event on.
       'UbCol=spawn(fun()->(fun UbCl(UbA)->receive {ub_log,UbE}->UbCl([UbE|UbA]);' \
       '{ub_get,UbP}->UbP!{ub_logs,lists:reverse(UbA)} end end)([]) end)',
-      'logger:add_primary_filter(ub,{fun(UbEv,UbTo)->case UbEv of #{msg:={report,#{report:=UbRp}}} ' \
-      'when is_list(UbRp)->UbTo!{ub_log,{proplists:get_value(id,proplists:get_value(offender,UbRp,[])),' \
+      'logger:add_primary_filter(ub,{fun(UbEv,UbTo)->case UbEv of #{msg:={report,#{label:={supervisor,_},' \
+      'report:=UbRp}}} when is_list(UbRp)->UbTo!{ub_log,{proplists:get_value(id,proplists:get_value(offender,UbRp,[])),' \
       'proplists:get_value(reason,UbRp)}};_->ok end,UbEv end,UbCol})',
+      # UbTr: keeps 800 trace messages of the controller core, a call and a return per step, in
+      # each process started from here on: the process, the event in or the actions out, as text
+      # of at most 300 bytes, until asked for them, when it turns the tracing off.
+      'UbCut=fun(UbIo)->UbBn=iolist_to_binary(UbIo),binary:part(UbBn,0,min(byte_size(UbBn),300)) end',
+      'UbTr=spawn(fun()->(fun UbTloop(UbA)->receive {trace,UbPi,call,{_,_,[UbEv|_]}} when length(UbA)<800->' \
+      'UbTloop([UbCut(io_lib:format("~p < ~0kP",[UbPi,UbEv,14]))|UbA]);' \
+      '{trace,UbPi,return_from,_,{_,UbAc}} when length(UbA)<800->' \
+      'UbTloop([UbCut(io_lib:format("~p > ~0kP",[UbPi,UbAc,16]))|UbA]);' \
+      '{ub_get,UbP}->erlang:trace(all,false,[call]),erlang:trace_pattern({erx_xhci_core,step,3},false,[local]),' \
+      'UbP!{ub_trace,lists:reverse(UbA)};_->UbTloop(UbA) end end)([]) end)',
+      'erlang:trace_pattern({erx_xhci_core,step,3},[{\'_\',[],[{return_trace}]}],[local])',
+      'erlang:trace(new_processes,true,[call,{tracer,UbTr}])',
       # The supervisor, owned by a process of its own so the erpc call's end leaves it running.
       'spawn(fun()->UbSelf!{ub_started,erx_usb_sup:start_link({erx_xhci,start_link,[UbSpec]})},' \
       'receive after infinity->ok end end)',
@@ -81,7 +93,8 @@ module Erx
       'UbCol!{ub_get,self()}', 'UbLogs=receive {ub_logs,UbLg}->lists:sublist(UbLg,3) after 1000->none end',
       # The answer as text: an exit reason the system domain decodes holds no atom it lacks.
       'UbText=iolist_to_binary(io_lib:format("~0kP",[{UbStages,UbPe,UbProbe,UbSeen,UbLogs},40]))',
-      'binary:part(UbText,0,min(byte_size(UbText),3000))'
+      'UbTr!{ub_get,self()}', 'UbTrace=receive {ub_trace,UbTs}->UbTs after 1000->[] end',
+      '{ub_traced,UbTrace,binary:part(UbText,0,min(byte_size(UbText),3000))}'
     ].join(',').freeze
 
     # The line typed at the Erlang shell. Every variable starts with Ub or Pc (PcieDomain::WAIT).
@@ -90,7 +103,9 @@ module Erx
       "PcHolder=PcWait(#{PcieDomain::HOLDER_NODE},1200)",
       # UbAt(Fun): Fun run at the holder's node, or the class and reason of its failure.
       "UbAt=fun(UbF)->try erpc:call(#{PcieDomain::HOLDER_NODE},UbF,60000) catch UbC:UbR->{UbC,UbR} end end",
-      "io:format(\"~0kp~n\",[{usb_enum,UbAt(fun()->#{HOLDER_BODY} end)}])"
+      "UbOut=UbAt(fun()->#{HOLDER_BODY} end)",
+      'UbAnswer=case UbOut of {ub_traced,UbTlines,UbTx}->[io:format("ubt ~ts~n",[UbL])||UbL<-UbTlines],UbTx;_->UbOut end',
+      "io:format(\"~0kp~n\",[{usb_enum,UbAnswer}])"
     ].join(',').concat(".\r").freeze
 
     # A stage of the answer's line, true or false, as the holder printed it.
