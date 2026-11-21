@@ -153,8 +153,8 @@ erx_dma_verdict_t	erx_dma_publish(erx_dma_ledger_t *ledger, const erx_dma_public
  * size, the event ring's dequeue pointer at the ledger's consumer position, the segment table's
  * base, IMAN.IE, the command ring's position with its cycle state; and USBCMD's run with its
  * interrupt enable, the activation. It places nothing and begins no holding. BREAKS_CALLS for a
- * ledger that holds anything or has no command or event ring; BREAKS_MEANINGS for an address an
- * encoder refuses, which a layout erx_device_trb_layout made cannot have.
+ * ledger that holds anything; BREAKS_MEANINGS for one with no command or event ring, or an address
+ * an encoder refuses, neither of which a form's own layout can have.
  */
 erx_dma_verdict_t	erx_dma_install_controller(const erx_dma_ledger_t *ledger, const erx_device_trb_layout_t *controller,
 			    erx_dma_sequence_t *sequence);

@@ -513,7 +513,12 @@ install(const erx_dma_ledger_t *ledger, erx_dma_sequence_t *sequence)
  */
 #define CONTROLLER_ARRAY_STORES	\
 	((ERX_DEVICE_TRB_SCRATCHPADS_MAX * ERX_XHCI_SCRATCHPAD_ENTRY_SIZE + ERX_DMA_STORE_BYTES_MAX - 1u) / ERX_DMA_STORE_BYTES_MAX)
-_Static_assert(3u + CONTROLLER_ARRAY_STORES <= ERX_DMA_STORES_MAX, "an xHCI install's stores fit a sequence");
+/* The stores besides the array's: DCBAA entry 0, the segment table's entry and the command ring's link. */
+#define CONTROLLER_FIXED_STORES	3u
+_Static_assert(CONTROLLER_FIXED_STORES + CONTROLLER_ARRAY_STORES <= ERX_DMA_STORES_MAX, "an xHCI install's stores fit a sequence");
+_Static_assert(sizeof(erx_xhci_scratchpad_entry_t) == ERX_XHCI_SCRATCHPAD_ENTRY_SIZE &&
+    sizeof(erx_xhci_dcbaa_entry_t) <= ERX_DMA_STORE_BYTES_MAX &&
+    sizeof(erx_xhci_segment_table_entry_t) <= ERX_DMA_STORE_BYTES_MAX, "each install record fits a store");
 _Static_assert(ERX_DMA_STORE_BYTES_MAX % ERX_XHCI_SCRATCHPAD_ENTRY_SIZE == 0, "a store holds whole array entries");
 
 /* `length` bytes of `record` stored at `offset` of the record's memory. */
@@ -541,14 +546,16 @@ region_address(const erx_device_trb_layout_t *controller, uint16_t region)
 static bool
 store_scratchpad(const erx_device_trb_layout_t *controller, erx_dma_sequence_t *out)
 {
-	const uint64_t pages = controller->scratchpads == 0 ? 0 : controller->regions[controller->scratchpad].offset;
-	const uint64_t array = pages + (uint64_t)controller->scratchpads * ERX_XHCI_PAGE_SIZE;
-	const erx_xhci_dcbaa_entry_placed_t entry = { .entry_address = controller->device_base + array };
+	erx_xhci_dcbaa_entry_placed_t entry;
 	erx_xhci_dcbaa_entry_t dcbaa;
 	uint8_t packed[ERX_DMA_STORE_BYTES_MAX];
+	uint64_t pages, array;
 
 	if (controller->scratchpads == 0)
 		return (true);
+	pages = controller->regions[controller->scratchpad].offset;
+	array = pages + (uint64_t)controller->scratchpads * ERX_XHCI_PAGE_SIZE;
+	entry = (erx_xhci_dcbaa_entry_placed_t){ .entry_address = controller->device_base + array };
 	for (uint32_t page = 0; page < controller->scratchpads; page++) {
 		const erx_xhci_scratchpad_entry_placed_t placed = {
 			.entry_page = controller->device_base + pages + (uint64_t)page * ERX_XHCI_PAGE_SIZE };
@@ -585,8 +592,8 @@ erx_dma_install_controller(const erx_dma_ledger_t *ledger, const erx_device_trb_
 	if (verdict != ERX_DMA_PASSES)
 		return (verdict);
 	if (command < 0 || events < 0)
-		return (ERX_DMA_BREAKS_CALLS);
-	segment = (erx_xhci_segment_table_entry_placed_t){ .base_address = table_address(layout, events),
+		return (ERX_DMA_BREAKS_MEANINGS);
+	segment = (erx_xhci_segment_table_entry_placed_t){ .base_address = region_address(controller, controller->event_ring),
 	    .size_trbs = layout->tables[events].count };
 	link = (erx_dma_ring_step_t){ .place = { .table = (uint32_t)command, .index = layout->tables[command].count - 1u },
 	    .cycle = BINDING_START_CYCLE, .link = true };

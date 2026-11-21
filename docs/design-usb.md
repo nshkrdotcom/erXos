@@ -2373,8 +2373,9 @@ the reset bit and the controller-not-ready bit to clear before writing
 any other register (p. 394; 4.2, p. 80); then, once the halted and
 reset-done report has released every holding and every block is free,
 the sequencer, in one decision, lays out and zeroes every region,
-writes DCBAA entry 0, the scratchpad array, the segment table and every
-ring's link, cleans them, and writes, each from the layout, the slot
+writes DCBAA entry 0, the scratchpad array, the segment table and the
+command ring's link (a queue block's ring gets its link when a command
+binds it), cleans them, and writes, each from the layout, the slot
 count, `DCBAAP`, the event
 ring's size and dequeue pointer, the segment table's base, the
 interrupter's `IMAN.IE`, the command ring's base with its cycle state,

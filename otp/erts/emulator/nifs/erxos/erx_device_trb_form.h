@@ -234,7 +234,8 @@ erx_device_trb_verdict_t	erx_trb_form_command(erx_trb_form_t *form, const erx_tr
  * the effect layer applies as erx_device_sequencer.h says (erx_dma_install_controller): every region
  * zeroed and cleaned, DCBAA entry 0, the scratchpad array, the segment table and the command ring's
  * link written, then the controller's registers and its run. `reaches_64_bits` is HCCPARAMS1.AC64.
- *   ERX_ERANGE  a controller without AC64 under memory reaching past 4 GiB, checked first;
+ *   ERX_ECORRUPT  a broken form, which only erx_trb_form_reset mends;
+ *   ERX_ERANGE  a controller without AC64 under memory reaching past 4 GiB;
  *   ERX_EBUSY   anything held: a holding the reset's idle report (erx_trb_form_reset) has not ended;
  *   ERX_EINVAL  any other verdict, a bug of this core.
  * Anything but ERX_OK changes nothing; ERX_OK changes nothing of the form either.

@@ -1283,6 +1283,31 @@ test_install(void)
 	    erx_trb_form_make(&form, &trb, &no_regions), "a layout above 4 GiB");
 	EXPECT(erx_trb_form_install(&form, false, &sequence) == ERX_ERANGE, "a controller without AC64 does not reach it");
 	EXPECT(erx_trb_form_install(&form, true, &sequence) == ERX_OK, "one with AC64 does");
+	EXPECT(erx_device_trb_layout(&trb, &small_shape, &three, (UINT64_C(1) << 32) - (UINT64_C(1) << 20), 64,
+	    UINT64_C(1) << 20) && erx_trb_form_make(&form, &trb, &no_regions), "a layout just below 4 GiB");
+	EXPECT(erx_trb_form_install(&form, false, &sequence) == ERX_OK, "memory ending below 4 GiB needs no AC64");
+	EXPECT(erx_device_trb_layout(&trb, &small_shape, &three, (UINT64_C(1) << 32) - (trb.bytes & ~UINT64_C(63)), 64,
+	    UINT64_C(1) << 20) && erx_trb_form_make(&form, &trb, &no_regions), "a layout crossing 4 GiB");
+	EXPECT(trb.device_base + trb.bytes > (UINT64_C(1) << 32) && erx_trb_form_install(&form, false, &sequence) == ERX_ERANGE,
+	    "memory crossing 4 GiB needs AC64");
+
+	for (uint32_t pages = 0; pages <= ERX_DEVICE_TRB_SCRATCHPADS_MAX; pages++) {
+		const erx_device_trb_controller_t asking = { .slots = 2, .ports = 1, .scratchpads = pages, .context_size = 32 };
+
+		EXPECT(erx_device_trb_layout(&trb, &small_shape, &asking, BASE, 64, UINT64_C(1) << 20) &&
+		    erx_trb_form_make(&form, &trb, &no_regions) && erx_trb_form_install(&form, true, &sequence) == ERX_OK,
+		    "an install over every count of pages");
+		if (pages == 0) {
+			EXPECT(stored_at(&sequence, trb.regions[trb.dcbaa].offset) == NULL, "with no page DCBAA entry 0 stays zero");
+			continue;
+		}
+		array = trb.regions[trb.scratchpad].offset + (uint64_t)pages * ERX_XHCI_PAGE_SIZE;
+		EXPECT(stored_word(&sequence, trb.regions[trb.dcbaa].offset, 8) == BASE + array, "DCBAA entry 0 names the array");
+		for (uint32_t page = 0; page < pages; page++)
+			EXPECT(stored_word(&sequence, array + 8u * page, 8) ==
+			    BASE + trb.regions[trb.scratchpad].offset + (uint64_t)page * ERX_XHCI_PAGE_SIZE,
+			    "the array names each page, in whole groups of four and a partial last one");
+	}
 }
 
 static void

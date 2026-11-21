@@ -766,6 +766,8 @@ erx_trb_form_install(const erx_trb_form_t *form, bool reaches_64_bits, erx_dma_s
 {
 	const erx_device_trb_layout_t *const layout = &form->layout;
 
+	if (form->broken)
+		return (ERX_ECORRUPT);
 	if (!reaches_64_bits && (layout->device_base > UINT32_MAX || layout->bytes > (UINT64_C(1) << 32) - layout->device_base))
 		return (ERX_ERANGE);
 	switch (erx_dma_install_controller(&form->ledger, layout, sequence)) {
