@@ -8065,6 +8065,12 @@ core as its elements are; the activation store copied into a `uint64_t` while it
   bindings; the TRB form's releases from acquired events, each command's reach and the endpoints' states; the
   stand-ins' ledger check. Before a non-coherent device relies on the acquisition, its unverified AArch64 premise is settled by the Arm
   ARM passage, the litmus test or the VL805 probe [Releases](docs/design-device-dma.md#releases) names.
+* [Medium] devices, a piece's kind (`erx_device.h`'s `erx_device_piece_t`, `erx_device_dma.h`'s
+  `erx_dma_piece_t`): two booleans, `device_writes` and `names_region`, say what a piece is, so a region the
+  device writes is representable and refused at run time (`erx_device_virtio_core.c`'s chain check). One closed
+  enum (the device reads, the device writes, a region) makes it unrepresentable. About sixty sites in eighteen
+  files use the booleans, most in the old virtio core, its harness and fuzz target and the TRB form; done after
+  the old core goes, and with the TRB form's branch landed, it is a mechanical change.
 * [Medium] USB, the TRB ring form's commands (`erx_device_trb.c`): one command's behaviour is spread over `accept`,
   the context builders in `erx_device_trb_command`, `command_words` and `erx_device_trb_command_done`; one entry per
   command kind holding its acceptance, its build and its completion would keep each together.
