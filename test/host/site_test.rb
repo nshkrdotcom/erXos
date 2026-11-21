@@ -222,6 +222,17 @@ class SiteTest < Minitest::Test
     refute_includes page, '<!--card'
   end
 
+  # Placeholder values reach the page only through its one HTML escaper,
+  # Book::Html.escape: markup characters and every non-ASCII character
+  # become references, in text and in attribute values alike.
+  def test_placeholder_values_are_escaped
+    page = Erx::Site.render_index('<a title="{{image_file}}">{{tokens_css}}</a>', terminal: 't.js',
+                                  shared: SHARED.merge(tokens_css: %(<b>"x"&'\u00e9)), source: Erx::Site.source(COMMIT),
+                                  image: IMAGE.merge(image: '"><script>'), card: nil)
+    assert_equal '<a title="&quot;&gt;&lt;script&gt;">&lt;b&gt;&quot;x&quot;&amp;&#39;&#xe9;</a>', page
+    assert_equal '&#xe9;&lt;', Erx::Site.fill_shared('{{fonts_css}}', SHARED.merge(fonts_css: "\u00e9<"), 'notes.html')
+  end
+
   # A card placeholder outside the card block is a bug in the page, not a gap in the output.
   def test_a_card_placeholder_outside_the_card_block_is_refused_without_a_card
     error = assert_raises(Erx::Error) do

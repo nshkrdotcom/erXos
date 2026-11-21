@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: BSD-2-Clause
 # frozen_string_literal: true
 
-require 'cgi'
 require 'digest'
 require 'fileutils'
 require 'json'
@@ -315,7 +314,8 @@ module Erx
     # boot.json's image fields: image, the published file, and its
     # compressed_bytes and compressed_sha256, which the QEMU virt download shows. card is
     # boot.json's card entry, or nil for a build without a card, which has
-    # no card placeholder to fill. Every value is HTML-escaped; an unknown
+    # no card placeholder to fill. Every value goes through the site's one
+    # HTML escaper, Book::Html.escape, which the book's pages use too; an unknown
     # placeholder raises, so a card placeholder outside the card section
     # fails a build without a card instead of reaching the page.
     def render_index(template, terminal:, source:, image:, card:, shared:)
@@ -331,7 +331,7 @@ module Erx
         key = Regexp.last_match(1)
         raise Error, "index.html: unknown placeholder {{#{key}}}" unless values.key?(key)
 
-        CGI.escapeHTML(values.fetch(key))
+        Book::Html.escape(values.fetch(key))
       end
     end
 
@@ -342,7 +342,7 @@ module Erx
         key = Regexp.last_match(1).to_sym
         raise Error, "#{label}: unknown placeholder {{#{key}}}" unless shared.key?(key)
 
-        CGI.escapeHTML(shared.fetch(key))
+        Book::Html.escape(shared.fetch(key))
       end
     end
 
