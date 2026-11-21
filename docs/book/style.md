@@ -399,6 +399,17 @@ sources are L4 and Fiasco, EROS, Plan 9, FreeBSD and Erlang/OTP;
 Never call an idea new without checking the prior art. "erXos's take
 on X" is safer than "erXos invents X".
 
+**Credit once, then describe.** Name a subsystem's model once, where
+the subsystem is introduced ("the network stack is modelled on
+FreeBSD's"), and then describe how erXos's subsystem works in its own
+terms. Do not keep comparing it with its model paragraph after
+paragraph, and leave out what only an implementer needs: the pinned
+version a behaviour matches, the oracle or test it was checked
+against, which upstream file a piece came from, what was ported when.
+The book is not an implementation chronology. A comparison earns its
+place only where the difference is the point a reader must take away,
+such as a FreeBSD command that erXos refuses and why.
+
 **State the cost.** Every design trades something. Say what, in
 plain words, next to the choice. A reader trusts a book that names its
 costs.
