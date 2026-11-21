@@ -44,6 +44,29 @@ class ErxDeviceQueueTest < Minitest::Test
                  "out->word = load(device, r.reg, r.offset);"])
   end
 
+  # The seeds of the TRB form's posts and completions, each of which fails the xHCI harness: the
+  # doorbell rung before the activation, so a controller fetching on the doorbell finds the TRB not
+  # yet its own; a transfer's doorbell on slot 0's, the command ring's; ERDP written with its busy
+  # bit 0, which leaves the interrupter's handler busy; ERDP skipped after a completion that broke
+  # the form; and a broken form's post let through to the core, which does not judge breakage.
+  XHCI_SEEDS = {
+    doorbell_first: ["\tapply_activation(record, &ring_sequence.activation);\n" \
+                     "\tstore(record->device, doorbell.r.reg, doorbell.r.offset, doorbell.word);\n",
+                     "\tstore(record->device, doorbell.r.reg, doorbell.r.offset, doorbell.word);\n" \
+                     "\tapply_activation(record, &ring_sequence.activation);\n"],
+    doorbell_slot: ['if (!doorbell_word(record, slot, dci, &doorbell))', 'if (!doorbell_word(record, 0, dci, &doorbell))'],
+    busy_bit_kept: ['!with_field(regs->ehb, 1, &words[0].word)', '!with_field(regs->ehb, 0, &words[0].word)'],
+    dequeue_only_whole: ["\tif (trb_ring_dequeue(record, dequeue) != ERX_OK)\n\t\treturn (ERX_EINVAL);\n" \
+                         "\tif (status != ERX_OK)\n\t\treturn (status);\n",
+                         "\tif (status != ERX_OK)\n\t\treturn (status);\n" \
+                         "\tif (trb_ring_dequeue(record, dequeue) != ERX_OK)\n\t\treturn (ERX_EINVAL);\n"],
+    broken_posts: ['if (!record->ready || erx_trb_form_broken(&record->trb.form))', 'if (!record->ready)']
+  }.freeze
+
+  XHCI_SEEDS.each do |name, seed|
+    define_method(:"test_a_trb_ring_seeded_with_#{name}_fails_the_harness") { xhci_output(seed) }
+  end
+
   def test_the_register_ring_on_a_device
     assert_match(/^erx_device_genet done$/, genet_output)
   end

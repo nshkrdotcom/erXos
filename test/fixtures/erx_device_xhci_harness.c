@@ -23,6 +23,8 @@
 #include "liberx/backend/api.h"
 #include "otp/erts/emulator/nifs/erxos/erx_device.h"
 #include "otp/erts/emulator/nifs/erxos/erx_device_trb_form.h"
+#include "otp/erts/emulator/nifs/erxos/erx_device_xhci.h"
+#include "otp/erts/emulator/nifs/erxos/erx_dma_arch.h"
 
 #define CHECK(condition)							\
 	do {									\
@@ -52,6 +54,8 @@ static uint8_t *window;
 /* Every 32-bit store to the window, in order. */
 static uint32_t write_offsets[WRITES_MAX], write_values[WRITES_MAX];
 static uint32_t writes;
+static const uint8_t *doorbell_watch;	/* the control word a doorbell must find activated */
+static bool doorbell_saw_cycle;
 
 static uint64_t
 make_memory(uint64_t size)
@@ -188,6 +192,8 @@ erx_device_access_store32(volatile uint8_t *at, uint64_t offset, uint32_t value)
 	*(volatile uint32_t *)(void *)(at + offset) = value;
 	write_offsets[writes] = (uint32_t)offset;
 	write_values[writes++] = value;
+	if (doorbell_watch != NULL && offset >= DOORBELLS && offset < DOORBELLS + 1024u)
+		doorbell_saw_cycle = (doorbell_watch[0] & 1u) != 0;
 }
 
 /* xHCI's registers the NIF reaches are 32 bits wide or narrower. */
@@ -393,6 +399,344 @@ test_refusals(void)
 	high_addresses = false;
 }
 
+/* -------------------------------------------------------------------------------------------
+ * Posts, completions and queue states on a started controller
+ */
+
+static erx_device_trb_layout_t layout;		/* the record's, derived again from what the controller reports */
+static uint32_t event_index;			/* the next event the harness's controller writes */
+
+/* A controller started by negotiate's steps, its record's layout, and the event ring at its first entry. */
+static const erx_device_t *
+started(void)
+{
+	const erx_device_t *const device = open_xhci(2, true, true);
+	const uint64_t memory = memory_count - 1;
+	const erx_device_trb_controller_t controller = { .slots = 8, .ports = 4, .scratchpads = 2,
+	    .context_size = ERX_XHCI_SLOT_CONTEXT_SIZE, .doorbells = DOORBELLS };
+	erx_device_trb_verdict_t verdict;
+	const erx_trb_command_t enable = { .kind = ERX_TRB_COMMAND_ENABLE_SLOT };
+	uint64_t base;
+
+	CHECK(erx_device_trb_command(device, &enable, 1, &verdict) == ERX_EINVAL);	/* no record yet */
+	CHECK(negotiate(device, 1) == ERX_EBUSY);
+	CHECK(erx_device_trb_command(device, &enable, 1, &verdict) == ERX_ECORRUPT);	/* not started */
+	set_field("usbsts", "hch", 1);
+	CHECK(negotiate(device, 1) == ERX_EBUSY);
+	set_field("usbcmd", "hcrst", 0);
+	CHECK(negotiate(device, 12) == ERX_EBUSY);
+	set_field("usbsts", "hch", 0);
+	CHECK(negotiate(device, 0) == ERX_OK);
+	CHECK(erx_mem_dma_addr(memory, 0, &base) == ERX_OK &&
+	    erx_device_trb_layout(&layout, &erx_device_trb_shape, &controller, base, erx_dma_granule(), DEVICE_MEMORY));
+	event_index = 0;
+	return (device);
+}
+
+/* The device address of TRB `index` of region `region`. */
+static uint64_t
+trb_at(uint16_t region, uint32_t index)
+{
+	return (layout.device_base + layout.regions[region].offset + 16u * (uint64_t)index);
+}
+
+/* Whether TRB `index` of region `region` carries the first lap's cycle bit, bit 0 of its control word. */
+static bool
+trb_cycle(uint16_t region, uint32_t index)
+{
+	uint32_t control;
+
+	memcpy(&control, memory_at(trb_at(region, index) + 12u, 4), 4);
+	return ((control & 1u) != 0);
+}
+
+/*
+ * The controller writing its next event, of `type`, with the first lap's cycle bit: a transfer
+ * or command event's TRB pointer, code, residue, slot and endpoint, or a port event's port.
+ */
+static void
+put_event(uint32_t type, uint64_t pointer, uint32_t code, uint32_t residue, uint32_t slot, uint32_t dci)
+{
+	erx_report_record_t event;
+	erx_xhci_trb_transfer_event_t *const record = &event.xhci_trb_transfer_event;
+
+	bzero(&event, sizeof(event));
+	record->pointer = pointer;
+	CHECK(erx_xhci_trb_transfer_event_status_code_set(&record->status, code) &&
+	    erx_xhci_trb_transfer_event_status_residue_set(&record->status, residue) &&
+	    erx_xhci_trb_transfer_event_control_type_set(&record->control, type) &&
+	    erx_xhci_trb_transfer_event_control_slot_set(&record->control, slot) &&
+	    erx_xhci_trb_transfer_event_control_endpoint_set(&record->control, dci) &&
+	    erx_xhci_trb_transfer_event_control_cycle_set(&record->control, 1));
+	memcpy(memory_at(trb_at(layout.event_ring, event_index++), sizeof(event)), &event, sizeof(event));
+}
+
+static void
+put_port_event(uint32_t port)
+{
+	erx_report_record_t event;
+
+	bzero(&event, sizeof(event));
+	CHECK(erx_xhci_trb_port_event_parameter_port_set(&event.xhci_trb_port_event.parameter, port) &&
+	    erx_xhci_trb_port_event_status_code_set(&event.xhci_trb_port_event.status, ERX_XHCI_COMPLETION_SUCCESS) &&
+	    erx_xhci_trb_port_event_control_type_set(&event.xhci_trb_port_event.control,
+	    ERX_XHCI_TRB_TYPE_PORT_STATUS_CHANGE_EVENT) &&
+	    erx_xhci_trb_port_event_control_cycle_set(&event.xhci_trb_port_event.control, 1));
+	memcpy(memory_at(trb_at(layout.event_ring, event_index++), sizeof(event)), &event, sizeof(event));
+}
+
+/* What a completion gave its sink, in order, each transfer's bytes copied whole. */
+#define ANSWERS_MAX	8u
+static erx_trb_answer_t answers[ANSWERS_MAX];
+static uint8_t answer_bytes[ANSWERS_MAX][64];
+static uint32_t answer_count;
+
+static uint8_t *
+sink(void *context, const erx_trb_answer_t *answer)
+{
+	CHECK(context == &answer_count && answer_count < ANSWERS_MAX && answer->data.length <= sizeof(answer_bytes[0]));
+	answers[answer_count] = *answer;
+	return (answer_bytes[answer_count++]);
+}
+
+/*
+ * One completion, `expected` answers, and its stores: ERDP alone, low word then high, at the event
+ * ring's entry past every event written but the last `unconsumed`, its busy bit written 1, which
+ * clears it.
+ */
+static int
+complete(const erx_device_t *device, uint32_t expected, uint32_t unconsumed)
+{
+	uint32_t answered = UINT32_MAX;
+	uint64_t dequeue;
+	int status;
+
+	writes = 0;
+	answer_count = 0;
+	status = erx_device_trb_complete(device, sink, &answer_count, &answered);
+	CHECK(answered == answer_count && answer_count == expected);
+	CHECK(writes == 2 && write_offsets[0] == offset_of("erdp_lo") && write_offsets[1] == offset_of("erdp_hi"));
+	CHECK(get_field("erdp_lo", "ehb") == 1 && get_field("erdp_lo", "desi") == 0);
+	dequeue = (uint64_t)*reg("erdp_hi") << 32 | (*reg("erdp_lo") & ~UINT32_C(15));
+	CHECK(dequeue == trb_at(layout.event_ring, event_index - unconsumed));
+	return (status);
+}
+
+/* The TRB the next post activates, whose cycle bit must be written before its doorbell. */
+static void
+watch_doorbell(uint16_t region, uint32_t index)
+{
+	doorbell_watch = memory_at(trb_at(region, index) + 12u, 4);
+	doorbell_saw_cycle = false;
+}
+
+/* A post's verdict and its stores: none on a refusal; one doorbell, `doorbell` with `target`, after its activation. */
+static void
+check_rung(erx_device_trb_verdict_t verdict, uint32_t doorbell, uint32_t target)
+{
+	if (verdict != ERX_DEVICE_TRB_ACCEPTED) {
+		CHECK(writes == 0);
+		return;
+	}
+	CHECK(writes == 1 && write_offsets[0] == DOORBELLS + 4u * doorbell && write_values[0] == target);
+	CHECK(doorbell_saw_cycle);
+}
+
+static erx_device_trb_verdict_t
+command(const erx_device_t *device, erx_trb_command_t command, uint64_t tag, uint32_t position)
+{
+	erx_device_trb_verdict_t verdict = ERX_DEVICE_TRB_REFUSE_BADARG;
+
+	writes = 0;
+	watch_doorbell(layout.command_ring, position);
+	CHECK(erx_device_trb_command(device, &command, tag, &verdict) == ERX_OK);
+	check_rung(verdict, 0, 0);
+	return (verdict);
+}
+
+/* A control transfer on EP0 of slot 1, block 0, its setup stage at ring position `position`. */
+static erx_device_trb_verdict_t
+control(const erx_device_t *device, const erx_device_trb_request_t *request, uint64_t tag, uint32_t position)
+{
+	erx_device_trb_verdict_t verdict = ERX_DEVICE_TRB_REFUSE_BADARG;
+
+	writes = 0;
+	watch_doorbell(layout.block_ring[0], position);
+	CHECK(erx_device_trb_post(device, 1, 1, tag, request, &verdict) == ERX_OK);
+	check_rung(verdict, 1, 1);
+	return (verdict);
+}
+
+/* GET_DESCRIPTOR reading 8 bytes into the block's one buffer: a setup, a data and a status stage. */
+static erx_device_trb_verdict_t
+read_descriptor(const erx_device_t *device, uint64_t tag, uint32_t position)
+{
+	const erx_device_trb_request_t request = { .control = true, .data = true, .device_writes = true, .length = 8,
+	    .setup = { 0x80, 6, 0, 1, 0, 0, 8, 0 } };
+
+	return (control(device, &request, tag, position));
+}
+
+/* SET_CONFIGURATION 1, which names no buffer: a setup and a status stage. */
+static erx_device_trb_verdict_t
+set_configuration(const erx_device_t *device, uint64_t tag, uint32_t position)
+{
+	const erx_device_trb_request_t request = { .control = true, .setup = { 0x00, 9, 1, 0, 0, 0, 0, 0 } };
+
+	return (control(device, &request, tag, position));
+}
+
+static erx_trb_queue_state_t
+queue_state(const erx_device_t *device, uint32_t slot, uint32_t dci)
+{
+	erx_trb_queue_state_t state = ERX_TRB_QUEUE_NONE;
+
+	CHECK(erx_device_trb_queue_state(device, slot, dci, &state) == ERX_OK);
+	return (state);
+}
+
+/* The command completion of command ring position `position`, with `code`. */
+static void
+put_command_event(uint32_t position, uint32_t code, uint32_t slot)
+{
+	put_event(ERX_XHCI_TRB_TYPE_COMMAND_COMPLETION_EVENT, trb_at(layout.command_ring, position), code, 0, slot, 0);
+}
+
+static bool
+answered(uint32_t at, erx_trb_answer_kind_t kind, uint64_t tag, uint32_t code, uint64_t length)
+{
+	return (answers[at].kind == kind && answers[at].tag == tag && answers[at].code == code &&
+	    answers[at].data.length == length);
+}
+
+/*
+ * Commands and transfers through their effects: a doorbell per post, after its activation, slot
+ * 1's with target 1 for EP0 and doorbell 0 with target 0 for a command; nothing stored on a
+ * refusal; each completion's answers in the core's order, a transfer's bytes copied from its
+ * buffer, a restarted ring's `stopped` answer before its command's, and ERDP after; each queue's
+ * state from the record; and a broken form refusing every later call.
+ */
+static void
+test_runs(void)
+{
+	const erx_device_t *const device = started();
+	const erx_trb_command_t enable = { .kind = ERX_TRB_COMMAND_ENABLE_SLOT };
+	const erx_trb_command_t address = { .kind = ERX_TRB_COMMAND_ADDRESS_DEVICE, .slot = 1, .add_count = 1,
+	    .slot_context = { .route_speed = ERX_XHCI_SPEED_HIGH, .ports_root_port = 1 },
+	    .adds = { { .dci = 1, .block = 0, .context = { .config_endpoint_type = ERX_XHCI_ENDPOINT_TYPE_CONTROL,
+	    .config_max_packet = 64 } } } };
+	const erx_trb_command_t stop = { .kind = ERX_TRB_COMMAND_STOP_ENDPOINT, .slot = 1, .dci = 1 };
+	const erx_trb_command_t restart = { .kind = ERX_TRB_COMMAND_SET_TR_DEQUEUE, .slot = 1, .dci = 1 };
+	static const uint8_t descriptor[8] = { 18, 1, 0, 2, 0, 0, 0, 64 };
+
+	/* Enable Slot, then Address Device binding EP0 to block 0; one command at a time. */
+	CHECK(command(device, enable, 5, 0) == ERX_DEVICE_TRB_ACCEPTED && trb_cycle(layout.command_ring, 0));
+	CHECK(command(device, enable, 6, 1) == ERX_DEVICE_TRB_REFUSE_FULL);
+	CHECK(read_descriptor(device, 7, 0) == ERX_DEVICE_TRB_REFUSE_BADARG);	/* no ring bound */
+	put_command_event(0, ERX_XHCI_COMPLETION_SUCCESS, 1);
+	CHECK(complete(device, 1, 0) == ERX_OK && answered(0, ERX_TRB_ANSWER_COMMAND, 5, ERX_XHCI_COMPLETION_SUCCESS, 0) &&
+	    answers[0].slot == 1);
+	CHECK(complete(device, 0, 0) == ERX_OK);	/* nothing new: ERDP stays */
+	CHECK(command(device, address, 8, 1) == ERX_DEVICE_TRB_ACCEPTED);
+	put_command_event(1, ERX_XHCI_COMPLETION_SUCCESS, 1);
+	CHECK(complete(device, 1, 0) == ERX_OK && answered(0, ERX_TRB_ANSWER_COMMAND, 8, ERX_XHCI_COMPLETION_SUCCESS, 0));
+	CHECK(queue_state(device, 1, 1) == ERX_TRB_QUEUE_IDLE && queue_state(device, 1, 2) == ERX_TRB_QUEUE_NONE &&
+	    queue_state(device, 0, 1) == ERX_TRB_QUEUE_NONE);
+
+	/* A control read: setup, data and status stages at 0..2, its status stage's event completing it with the buffer's bytes. */
+	CHECK(read_descriptor(device, 9, 0) == ERX_DEVICE_TRB_ACCEPTED && queue_state(device, 1, 1) == ERX_TRB_QUEUE_BUSY);
+	memcpy(memory_at(layout.device_base + layout.regions[layout.buffer[0][0]].offset, 8), descriptor, 8);
+	put_event(ERX_XHCI_TRB_TYPE_TRANSFER_EVENT, trb_at(layout.block_ring[0], 2), ERX_XHCI_COMPLETION_SUCCESS, 0, 1, 1);
+	put_port_event(2);
+	CHECK(complete(device, 2, 0) == ERX_OK && answered(0, ERX_TRB_ANSWER_TRANSFER, 9, ERX_XHCI_COMPLETION_SUCCESS, 8) &&
+	    memcmp(answer_bytes[0], descriptor, 8) == 0 && answers[1].kind == ERX_TRB_ANSWER_PORT && answers[1].port == 2);
+	CHECK(queue_state(device, 1, 1) == ERX_TRB_QUEUE_IDLE);
+
+	/* Stop Endpoint over a posted transfer, then Set TR Dequeue: the transfer answers stopped before the command. */
+	CHECK(read_descriptor(device, 10, 3) == ERX_DEVICE_TRB_ACCEPTED);
+	CHECK(command(device, stop, 11, 2) == ERX_DEVICE_TRB_ACCEPTED);
+	CHECK(queue_state(device, 1, 1) == ERX_TRB_QUEUE_BUSY);	/* running until the stop completes */
+	CHECK(read_descriptor(device, 12, 6) == ERX_DEVICE_TRB_REFUSE_FULL);	/* its one buffer is taken, judged first */
+	put_command_event(2, ERX_XHCI_COMPLETION_SUCCESS, 1);
+	CHECK(complete(device, 1, 0) == ERX_OK && answered(0, ERX_TRB_ANSWER_COMMAND, 11, ERX_XHCI_COMPLETION_SUCCESS, 0));
+	CHECK(queue_state(device, 1, 1) == ERX_TRB_QUEUE_STOPPED);
+	CHECK(command(device, restart, 13, 3) == ERX_DEVICE_TRB_ACCEPTED);
+	put_command_event(3, ERX_XHCI_COMPLETION_SUCCESS, 1);
+	CHECK(complete(device, 2, 0) == ERX_OK && answered(0, ERX_TRB_ANSWER_TRANSFER, 10, ERX_XHCI_COMPLETION_STOPPED, 0) &&
+	    answered(1, ERX_TRB_ANSWER_COMMAND, 13, ERX_XHCI_COMPLETION_SUCCESS, 0));
+	CHECK(queue_state(device, 1, 1) == ERX_TRB_QUEUE_IDLE);
+
+	/* A stop with nothing posted: the queue refuses posts as halted while the stop runs and once it has stopped. */
+	CHECK(command(device, stop, 14, 4) == ERX_DEVICE_TRB_ACCEPTED && queue_state(device, 1, 1) == ERX_TRB_QUEUE_IDLE);
+	CHECK(set_configuration(device, 15, 6) == ERX_DEVICE_TRB_REFUSE_HALTED);
+	put_command_event(4, ERX_XHCI_COMPLETION_SUCCESS, 1);
+	CHECK(complete(device, 1, 0) == ERX_OK && queue_state(device, 1, 1) == ERX_TRB_QUEUE_STOPPED &&
+	    set_configuration(device, 15, 6) == ERX_DEVICE_TRB_REFUSE_HALTED);
+	CHECK(command(device, restart, 16, 5) == ERX_DEVICE_TRB_ACCEPTED);
+	put_command_event(5, ERX_XHCI_COMPLETION_SUCCESS, 1);
+	CHECK(complete(device, 1, 0) == ERX_OK && answered(0, ERX_TRB_ANSWER_COMMAND, 16, ERX_XHCI_COMPLETION_SUCCESS, 0));
+
+	/* A stall halts the queue; its transfer keeps the buffer until a restart, so the next read is full. */
+	CHECK(read_descriptor(device, 17, 6) == ERX_DEVICE_TRB_ACCEPTED);
+	put_event(ERX_XHCI_TRB_TYPE_TRANSFER_EVENT, trb_at(layout.block_ring[0], 8), ERX_XHCI_COMPLETION_STALL, 0, 1, 1);
+	CHECK(complete(device, 1, 0) == ERX_OK && answered(0, ERX_TRB_ANSWER_TRANSFER, 17, ERX_XHCI_COMPLETION_STALL, 0));
+	CHECK(queue_state(device, 1, 1) == ERX_TRB_QUEUE_HALTED && read_descriptor(device, 18, 9) == ERX_DEVICE_TRB_REFUSE_FULL &&
+	    set_configuration(device, 18, 9) == ERX_DEVICE_TRB_REFUSE_FULL);
+
+	/*
+	 * A command completion naming no command breaks the form: the port event before it is answered,
+	 * ERDP moves to it, and every later call refuses.
+	 */
+	put_port_event(3);
+	put_command_event(6, ERX_XHCI_COMPLETION_SUCCESS, 1);
+	CHECK(complete(device, 1, 1) == ERX_OK && answers[0].kind == ERX_TRB_ANSWER_PORT && answers[0].port == 3);
+	writes = 0;
+	{
+		erx_device_trb_verdict_t verdict;
+		erx_trb_queue_state_t state;
+		uint32_t count;
+
+		CHECK(erx_device_trb_command(device, &enable, 19, &verdict) == ERX_ECORRUPT);
+		CHECK(erx_device_trb_queue_state(device, 1, 1, &state) == ERX_ECORRUPT);
+		CHECK(erx_device_trb_complete(device, sink, &answer_count, &count) == ERX_ECORRUPT && count == 0);
+		CHECK(writes == 0);
+	}
+}
+
+/*
+ * An out transfer's bytes in its buffer before its doorbell rings, a slot past the doorbells
+ * refused with nothing written, and ERDP written after a lone event that breaks the form.
+ */
+static void
+test_out_transfer(void)
+{
+	const erx_device_t *const device = started();
+	const erx_trb_command_t enable = { .kind = ERX_TRB_COMMAND_ENABLE_SLOT };
+	const erx_trb_command_t address = { .kind = ERX_TRB_COMMAND_ADDRESS_DEVICE, .slot = 1, .add_count = 1,
+	    .slot_context = { .route_speed = ERX_XHCI_SPEED_HIGH, .ports_root_port = 1 },
+	    .adds = { { .dci = 1, .block = 0, .context = { .config_endpoint_type = ERX_XHCI_ENDPOINT_TYPE_CONTROL,
+	    .config_max_packet = 64 } } } };
+	static const uint8_t descriptor[8] = { 9, 2, 32, 0, 1, 1, 0, 0x80 };
+	const erx_device_trb_request_t write = { .control = true, .data = true, .length = 8, .bytes = descriptor,
+	    .setup = { 0x00, 7, 0, 2, 0, 0, 8, 0 } };
+	erx_device_trb_verdict_t verdict = ERX_DEVICE_TRB_ACCEPTED;
+
+	CHECK(command(device, enable, 1, 0) == ERX_DEVICE_TRB_ACCEPTED);
+	put_command_event(0, ERX_XHCI_COMPLETION_SUCCESS, 1);
+	CHECK(complete(device, 1, 0) == ERX_OK);
+	CHECK(command(device, address, 2, 1) == ERX_DEVICE_TRB_ACCEPTED);
+	put_command_event(1, ERX_XHCI_COMPLETION_SUCCESS, 1);
+	CHECK(complete(device, 1, 0) == ERX_OK);
+	writes = 0;
+	CHECK(erx_device_trb_post(device, 1u << 16, 1, 3, &write, &verdict) == ERX_OK &&
+	    verdict == ERX_DEVICE_TRB_REFUSE_BADARG && writes == 0);
+	CHECK(control(device, &write, 3, 0) == ERX_DEVICE_TRB_ACCEPTED);
+	CHECK(memcmp(memory_at(layout.device_base + layout.regions[layout.buffer[0][0]].offset, 8), descriptor, 8) == 0);
+	/* A lone event that breaks the form answers nothing, and ERDP still moves to it. */
+	put_command_event(2, ERX_XHCI_COMPLETION_SUCCESS, 1);
+	CHECK(complete(device, 0, 1) == ERX_ECORRUPT);
+}
+
 int
 main(void)
 {
@@ -400,6 +744,8 @@ main(void)
 	CHECK(xhci != NULL);
 	test_refusals();
 	test_start();
+	test_runs();
+	test_out_transfer();
 	printf("erx_device_xhci done\n");
 	return (0);
 }

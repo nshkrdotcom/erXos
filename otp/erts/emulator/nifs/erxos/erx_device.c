@@ -23,6 +23,7 @@
 #include "erx_device_genet_model.h"
 #include "erx_device_trb_form.h"
 #include "erx_device_virtio_core.h"
+#include "erx_device_xhci.h"
 #include "erx_dma_arch.h"
 
 /* The rings are virtio's little-endian layouts, written and read through their own types. */
@@ -899,6 +900,9 @@ typedef struct xhci_registers {
 	xhci_reg_t			usbcmd, config, erstsz, iman, dcbaap[2], erstba[2], erdp[2], crcr[2];
 	const erx_device_field_t	*rs, *hcrst, *inte, *max_slots_en, *erst_size, *ie, *rcs;
 	const erx_device_field_t	*dcbaap_field[2], *erstba_field[2], *erdp_field[2], *crcr_field[2];
+	/* Written by each post (a doorbell, element n slot n's, 0 the command ring's) and each completion (ERDP's busy bit). */
+	const erx_device_register_t	*db;
+	const erx_device_field_t	*db_target, *ehb;
 } xhci_registers_t;
 
 /*
@@ -1932,14 +1936,27 @@ apply_memory(const queue_record_t *record, const erx_dma_sequence_t *sequence, c
 	erx_dma_publish_barrier(!record->device->coherent);
 }
 
+/*
+ * A run's activation: its one store, little-endian as the device reads it, the clean of its line
+ * and a publish barrier, after which the caller rings the doorbell.
+ */
+static void
+apply_activation(const queue_record_t *record, const erx_dma_activation_t *activation)
+{
+	uint64_t value = 0;
+
+	bcopy(activation->store.bytes, &value, activation->store.length);
+	store_field(record->memory + activation->store.offset, activation->store.length, value);
+	maintain(record, (erx_dma_range_t){ activation->store.offset, activation->store.length }, false);
+	erx_dma_publish_barrier(!record->device->coherent);
+}
+
 /* A split ring's sequence whole: its memory (apply_memory), then an install's registers or a run's activation. */
 static void
 apply_sequence(const queue_record_t *record, const erx_dma_sequence_t *sequence, const erx_dma_piece_t *pieces)
 {
 	const erx_device_t *const device = record->device;
 	const erx_dma_activation_t *const activation = &sequence->activation;
-	volatile uint8_t *const memory = record->memory;
-	uint64_t value = 0;
 
 	apply_memory(record, sequence, pieces);
 	if (activation->kind == ERX_DMA_ACTIVATE_REGISTER) {
@@ -1949,11 +1966,7 @@ apply_sequence(const queue_record_t *record, const erx_dma_sequence_t *sequence,
 		put_ring_register(record, activation->reg);
 		return;
 	}
-	/* Little-endian, as the device reads it: the store's bytes are the index's. */
-	bcopy(activation->store.bytes, &value, activation->store.length);
-	store_field(memory + activation->store.offset, activation->store.length, value);
-	maintain(record, (erx_dma_range_t){ activation->store.offset, activation->store.length }, false);
-	erx_dma_publish_barrier(!device->coherent);
+	apply_activation(record, activation);
 	put(device, record->split.regs.notify, record->index);
 }
 
@@ -2190,7 +2203,7 @@ static bool
 xhci_registers(const erx_device_t *device, xhci_registers_t *regs)
 {
 	const uint32_t doorbell = erx_device_register_named(device->peripheral, "db");
-	const erx_device_field_t *fields[16];
+	const erx_device_field_t *fields[18];
 	uint32_t count = 0;
 
 	if (!xhci_register(device, "hcsparams1", &regs->hcsparams1) || !xhci_register(device, "hcsparams2", &regs->hcsparams2) ||
@@ -2221,6 +2234,9 @@ xhci_registers(const erx_device_t *device, xhci_registers_t *regs)
 	fields[count++] = regs->erst_size = xhci_field(device, regs->erstsz, "size");
 	fields[count++] = regs->ie = xhci_field(device, regs->iman, "ie");
 	fields[count++] = regs->rcs = xhci_field(device, regs->crcr[0], "rcs");
+	fields[count++] = regs->ehb = xhci_field(device, regs->erdp[0], "ehb");
+	regs->db = &device->peripheral->registers[doorbell];
+	fields[count++] = regs->db_target = xhci_field(device, (xhci_reg_t){ .reg = regs->db }, "target");
 	for (uint32_t at = 0; at < count; at++) {
 		if (fields[at] == NULL)
 			return (false);
@@ -2545,6 +2561,210 @@ erx_device_negotiate(const erx_device_t *device, uint64_t wanted, uint64_t *acce
 	if (register_ring_device(device))
 		return (register_ring_negotiate(device, accepted));
 	return (split_ring_negotiate(device, wanted, accepted));
+}
+
+/*
+ * The TRB form's posts, completions and queue states (docs/design-usb.md, "The TRB ring form"):
+ * the form's core decides every TRB, every answer and every state; what follows applies its
+ * sequences, rings the doorbells and reads the event ring for it.
+ */
+
+/* The answers of one completion, too large for a scheduler's stack; used only under the caller's lock. */
+static erx_trb_answer_t trb_answers[ERX_TRB_FORM_ANSWERS_MAX(ERX_DEVICE_COMPLETE_ENTRIES)];
+
+/*
+ * The device's xHCI record, started and whole, into `*made`: ERX_EINVAL for a device that is not
+ * an xHCI controller or has no record yet; ERX_ECORRUPT for one whose negotiation has not
+ * succeeded since its open or its last negotiation began, or whose form an event broke.
+ */
+static int
+trb_record(const erx_device_t *device, queue_record_t **made)
+{
+	queue_record_t *const record = trb_ring_device(device) ? queue_numbered(device, 0) : NULL;
+
+	if (record == NULL)
+		return (ERX_EINVAL);
+	if (!record->ready || erx_trb_form_broken(&record->trb.form))
+		return (ERX_ECORRUPT);
+	*made = record;
+	return (ERX_OK);
+}
+
+/*
+ * Doorbell `doorbell`'s place and the word that rings it for `target` (xHCI 1.2, 5.6, Table 5-43,
+ * pp. 430-431): the target in its field, stream ID 0. False for a doorbell the controller lacks.
+ */
+static bool
+doorbell_word(const queue_record_t *record, uint32_t doorbell, uint32_t target, xhci_word_t *out)
+{
+	const xhci_registers_t *const regs = &record->trb.regs;
+
+	out->r.reg = regs->db;
+	out->word = 0;
+	return (element_at(record->device, regs->db, (erx_device_element_t){ .indexed = true, .index = doorbell },
+	    &out->r.offset) && with_field(regs->db_target, target, &out->word));
+}
+
+/*
+ * A run the form's core accepted, in erx_device_sequencer.h's order: its memory, an out transfer's
+ * bytes from `piece` into its fill, then its activation, the first TRB's cycle bit, then the
+ * doorbell, the one store the controller's fetch waits for on an idle ring.
+ */
+static void
+trb_ring_run(const queue_record_t *record, const erx_dma_piece_t *piece, xhci_word_t doorbell)
+{
+	apply_memory(record, &ring_sequence, piece);
+	apply_activation(record, &ring_sequence.activation);
+	store(record->device, doorbell.r.reg, doorbell.r.offset, doorbell.word);
+}
+
+int
+erx_device_trb_post(const erx_device_t *device, uint32_t slot, uint32_t dci, uint64_t tag,
+    const erx_device_trb_request_t *request, erx_device_trb_verdict_t *verdict)
+{
+	const erx_dma_piece_t piece = { .bytes = request->bytes, .length = request->length };
+	queue_record_t *record;
+	xhci_word_t doorbell;
+	const int status = trb_record(device, &record);
+
+	if (status != ERX_OK)
+		return (status);
+	/* Slot n's doorbell rings endpoint `dci`; a slot past the doorbells names no queue. */
+	if (!doorbell_word(record, slot, dci, &doorbell))
+		*verdict = ERX_DEVICE_TRB_REFUSE_BADARG;
+	else
+		*verdict = erx_trb_form_post(&record->trb.form, slot, dci, request, tag, &ring_sequence);
+	if (*verdict == ERX_DEVICE_TRB_ACCEPTED)
+		trb_ring_run(record, &piece, doorbell);
+	return (ERX_OK);
+}
+
+int
+erx_device_trb_command(const erx_device_t *device, const erx_trb_command_t *command, uint64_t tag,
+    erx_device_trb_verdict_t *verdict)
+{
+	queue_record_t *record;
+	xhci_word_t doorbell;
+	const int status = trb_record(device, &record);
+
+	if (status != ERX_OK)
+		return (status);
+	/* Doorbell 0, target 0: the command ring's (5.6, Table 5-44, p. 431). */
+	if (!doorbell_word(record, 0, 0, &doorbell))
+		return (ERX_EINVAL);
+	*verdict = erx_trb_form_command(&record->trb.form, command, tag, &ring_sequence);
+	if (*verdict == ERX_DEVICE_TRB_ACCEPTED)
+		trb_ring_run(record, NULL, doorbell);
+	return (ERX_OK);
+}
+
+/*
+ * The acquisition's first phase: the cycle word of each of the next ERX_DEVICE_COMPLETE_ENTRIES
+ * events, each line invalidated first on a device that is not coherent, read before any event is
+ * (the report barrier); the core counts the leading ones the controller has written.
+ */
+static int
+trb_ring_acquire(queue_record_t *record, uint32_t *count)
+{
+	erx_trb_form_t *const form = &record->trb.form;
+	erx_dma_range_t places[ERX_DEVICE_COMPLETE_ENTRIES];
+	uint32_t words[ERX_DEVICE_COMPLETE_ENTRIES], seen = 0;
+	bool maintained = false;
+
+	for (; seen < ERX_DEVICE_COMPLETE_ENTRIES; seen++) {
+		places[seen] = erx_trb_form_validity_word(form, seen);
+		if (places[seen].length == 0)
+			break;
+		maintained |= maintain(record, places[seen], true);
+	}
+	if (maintained)
+		erx_dma_completion_barrier();
+	for (uint32_t k = 0; k < seen; k++)
+		words[k] = (uint32_t)load_field(record->memory + places[k].offset, (uint32_t)places[k].length);
+	erx_dma_report_barrier();
+	return (erx_trb_form_acquire(form, words, seen, count));
+}
+
+/*
+ * ERDP at the event ring's consumer position `dequeue`, low word then high, with its busy bit
+ * written 1, which clears it (xHCI 1.2, 5.5.2.3.3, p. 429): the controller then raises the next
+ * interrupt. ERX_EINVAL for a position the table cannot state, a bug of the form's core.
+ */
+static int
+trb_ring_dequeue(const queue_record_t *record, uint64_t dequeue)
+{
+	const xhci_registers_t *const regs = &record->trb.regs;
+	xhci_word_t words[2];
+
+	if (!address_words(record->device, regs->erdp, regs->erdp_field, dequeue, 0, words) ||
+	    !with_field(regs->ehb, 1, &words[0].word))
+		return (ERX_EINVAL);
+	for (uint32_t at = 0; at < 2; at++)
+		store(record->device, words[at].r.reg, words[at].r.offset, words[at].word);
+	return (ERX_OK);
+}
+
+int
+erx_device_trb_complete(const erx_device_t *device, erx_device_trb_sink_t *sink, void *context, uint32_t *answered)
+{
+	queue_record_t *record;
+	erx_trb_form_t *form;
+	uint32_t count, done;
+	uint64_t dequeue;
+	bool maintained = false;
+	int status = trb_record(device, &record);
+
+	*answered = 0;
+	if (status != ERX_OK)
+		return (status);
+	form = &record->trb.form;
+	status = trb_ring_acquire(record, &count);
+	if (status != ERX_OK)
+		return (status);
+	/* The second phase: each acquired event invalidated again and read whole, before the core reads any. */
+	for (uint32_t k = 0; k < count; k++)
+		maintained |= maintain(record, erx_trb_form_event(form, k), true);
+	if (maintained)
+		erx_dma_completion_barrier();
+	for (uint32_t k = 0; k < count; k++) {
+		const erx_dma_range_t event = erx_trb_form_event(form, k);
+
+		bcopy((const void *)(uintptr_t)(record->memory + event.offset), &ring_elements[k], event.length);
+	}
+	erx_dma_report_barrier();
+	status = erx_trb_form_complete(form, ring_elements, count, trb_answers, &done, &dequeue);
+	/* ERDP moves past what the core consumed even when an event broke the form, so the controller is never left behind it. */
+	if (trb_ring_dequeue(record, dequeue) != ERX_OK)
+		return (ERX_EINVAL);
+	if (status != ERX_OK)
+		return (status);
+	/* Each answer in the core's order, a transfer's bytes from its buffer, which its release returned. */
+	maintained = false;
+	for (uint32_t at = 0; at < done; at++)
+		maintained |= maintain(record, trb_answers[at].data, true);
+	if (maintained)
+		erx_dma_completion_barrier();
+	for (uint32_t at = 0; at < done; at++) {
+		const erx_dma_range_t data = trb_answers[at].data;
+		uint8_t *const into = sink(context, &trb_answers[at]);
+
+		if (data.length != 0)
+			bcopy((const void *)(uintptr_t)(record->memory + data.offset), into, data.length);
+	}
+	*answered = done;
+	return (ERX_OK);
+}
+
+int
+erx_device_trb_queue_state(const erx_device_t *device, uint32_t slot, uint32_t dci, erx_trb_queue_state_t *state)
+{
+	queue_record_t *record;
+	const int status = trb_record(device, &record);
+
+	if (status != ERX_OK)
+		return (status);
+	*state = erx_trb_form_queue_state(&record->trb.form, slot, dci);
+	return (ERX_OK);
 }
 
 static queue_record_t *
