@@ -158,7 +158,9 @@ module Erx
     #   it; the native domain tests boot it (NativeDomain).
     # * app, an app's session, which the app template boots (docs/design-packaging.md,
     #   "The apps row"): the client side of the display as client's without the desktop's
-    #   programs (erx_desk), the network client, asn1, crypto, public_key, ssl and inets,
+    #   programs (erx_desk), the network client, compiler (LOAD_ONLY), which an
+    #   application an app ships may name, as Elixir's elixir does, so the app's start
+    #   (application:ensure_all_started/2) finds it, asn1, crypto, public_key, ssl and inets,
     #   which it only loads, for an app's HTTPS requests (docs/design-crypto.md,
     #   "Releases"), and erx_app (DOMAIN_ONLY), which the template's -eval starts and
     #   which mounts the app's package at /app and starts what it declares. Its .app
@@ -196,7 +198,7 @@ module Erx
                         'client' => [*DOMAIN_BASE, *DomainStartup::DISPLAY_CLIENT, 'erx_ui', 'erx_desk'].freeze,
                         'ssh' => [*DOMAIN_BASE, 'asn1', 'crypto', 'public_key', 'ssh'].freeze,
                         DomainStartup::APP_TEMPLATE.release =>
-                          [*SESSION_BASE, 'asn1', 'crypto', 'public_key', 'ssl', 'inets', *DomainStartup::DISPLAY_CLIENT,
+                          [*SESSION_BASE, 'compiler', 'asn1', 'crypto', 'public_key', 'ssl', 'inets', *DomainStartup::DISPLAY_CLIENT,
                            'erx_ui', 'erx_net_client', 'erx_app'].freeze,
                         'usb' => [*DOMAIN_BASE, 'erx_usb'].freeze,
                         'bt' => [*DOMAIN_BASE, 'erx_bt'].freeze,
