@@ -633,6 +633,26 @@ class HardwareTest < Minitest::Test
     end
   end
 
+  # The BCM2711 bridge's peripheral holds its registers and two configuration spaces, the
+  # root port's at 0 and the endpoint's data window at 0x8000; the root port's link status,
+  # put back as a register inside the root port's space, meets that space and is refused, so
+  # a standard register has one description, the PCI Express capability's.
+  def test_the_bcm2711_bridge_holds_registers_beside_its_two_configuration_spaces
+    source = File.binread(File.join(@repository, 'hw/svd/bcm2711_pcie/bcm2711_pcie.svd'))
+    device = Erx::Hardware.parse_svd(source)
+    assert_equal [Erx::Hardware::Space.new(name: 'ROOT_PORT', offset: 0, size: 256, count: 1),
+                  Erx::Hardware::Space.new(name: 'EXT_CFG_DATA', offset: 0x8000, size: 256, count: 1)], device.spaces
+    assert_includes device.registers.map(&:name), 'EXT_CFG_INDEX'
+    link = '<register><name>RC_CFG_LINK_CONTROL_STATUS</name><ownedByNif>false</ownedByNif>' \
+           '<description>The root port link</description><addressOffset>0xbc</addressOffset>' \
+           '<access>read-only</access><fields><field><name>SPEED</name><description>The speed</description>' \
+           '<bitOffset>16</bitOffset><bitWidth>4</bitWidth></field></fields></register>'
+    planted = source.sub('<registers>', "<registers>#{link}")
+    refute_equal source, planted
+    error = assert_raises(Erx::Error) { Erx::Hardware.parse_svd(planted) }
+    assert_match(/configuration spaces overlap/, error.message)
+  end
+
   # A one-to-clear field beside bits a write keeps gets no accessor that writes it alone,
   # which would write zero to the kept bits, as PORTSC's port power.
   def test_a_one_to_clear_field_beside_kept_bits_has_no_lone_write

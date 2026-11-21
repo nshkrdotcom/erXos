@@ -23,7 +23,8 @@ require_relative '../fixtures/erlang_build'
 # matched.
 class ErxPcieBcm2711Test < Minitest::Test
   APPLICATIONS = %w[erx_pcie].freeze
-  TESTS = %w[test/erlang/erx_pcie_bcm2711_model.erl test/erlang/erx_pcie_bcm2711_tests.erl
+  TESTS = %w[test/erlang/erx_pcie_log_capture.erl test/erlang/erx_pcie_bcm2711_model.erl
+             test/erlang/erx_pcie_bcm2711_tests.erl
              test/erlang/erx_pcie_bcm2711_driver_tests.erl].freeze
   CORE = 'erlang/apps/erx_pcie/src/erx_pcie_bcm2711_core.erl'
   DRIVER = 'erlang/apps/erx_pcie/src/erx_pcie_bcm2711.erl'

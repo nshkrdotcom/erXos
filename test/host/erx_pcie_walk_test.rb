@@ -39,7 +39,8 @@ class ErxPcieWalkTest < Minitest::Test
   TESTS = %w[test/erlang/erx_pcie_cfg_tests.erl test/erlang/erx_pcie_model.erl
              test/erlang/erx_pcie_walk_tests.erl test/erlang/erx_pcie_place_tests.erl
              test/erlang/erx_pcie_enumerator_tests.erl test/erlang/erx_pcie_plan_tests.erl
-             test/erlang/erx_pcie_apply_tests.erl test/erlang/erx_pcie_facet_tests.erl].freeze
+             test/erlang/erx_pcie_apply_tests.erl test/erlang/erx_pcie_facet_tests.erl
+             test/erlang/erx_pcie_log_capture.erl].freeze
   CASES = %w[erx_pcie_walk_tests erx_pcie_place_tests erx_pcie_enumerator_tests erx_pcie_apply_tests
              erx_pcie_facet_tests].freeze
   DEADLINE_SECONDS = '120'
@@ -115,7 +116,12 @@ class ErxPcieWalkTest < Minitest::Test
              module_path: 'erlang/apps/erx_pcie/src/erx_pcie_enumerator.erl',
              anchor: '            held(#{record => Record, kept => false}, Next)',
              replacement: '            {#{record => Record, kept => false}, Next}',
-             catching_case: 'a_held_function_whose_start_failed_is_not_ready_test')
+             catching_case: 'a_held_function_whose_start_failed_is_not_ready_test'),
+    Seed.new(fault: "a root port's link left unlogged",
+             module_path: 'erlang/apps/erx_pcie/src/erx_pcie_enumerator.erl',
+             anchor: '    link(Index, Place, Read),',
+             replacement: '    _ = {Index, Read},',
+             catching_case: 'a_root_ports_link_is_logged_from_its_express_capability_test')
   ].freeze
 
   def test_walk_place_and_ecam_cases_pass_under_eunit

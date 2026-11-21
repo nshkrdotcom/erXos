@@ -100,10 +100,13 @@ function-mask bits.
                   function_mask := boolean()}.
 
 -doc """
-A PCI Express capability: its offset, device type and whether the
-function has function-level reset.
+A PCI Express capability: its offset, device type, whether the function
+has function-level reset, and its link's current speed, as PCI Express
+numbers it (0 with no link), and negotiated width in lanes, from the link
+status register.
 """.
--type express() :: #{offset := byte(), type := 0..15, flr := boolean()}.
+-type express() :: #{offset := byte(), type := 0..15, flr := boolean(),
+                     link_speed := 0..15, link_width := 0..63}.
 
 -doc "A type-1 header's bus numbers, windows and bridge control, each as its register reads.".
 -type bridge() :: #{primary_bus := byte(),
@@ -386,12 +389,14 @@ msix(Snapshot, At, Bars) ->
 express(_Snapshot, none) ->
     none;
 express(Snapshot, At) ->
-    fits(At, ?ERX_PCIE_EXPRESS_DEVICE_STATUS + 2, express),
     Flags = read(Snapshot, At + ?ERX_PCIE_EXPRESS_FLAGS_WORD, 2, express),
     Capabilities = read(Snapshot, At + ?ERX_PCIE_EXPRESS_DEVICE_CAP, 4, express),
+    Link = read(Snapshot, At + ?ERX_PCIE_EXPRESS_LINK_STATUS, 2, express),
     #{offset => At,
       type => bits(Flags, ?ERX_PCIE_EXPRESS_FLAGS_TYPE),
-      flr => set(Capabilities, ?ERX_PCIE_EXPRESS_DEVICE_CAP_FLR)}.
+      flr => set(Capabilities, ?ERX_PCIE_EXPRESS_DEVICE_CAP_FLR),
+      link_speed => bits(Link, ?ERX_PCIE_EXPRESS_LINK_STATUS_SPEED),
+      link_width => bits(Link, ?ERX_PCIE_EXPRESS_LINK_STATUS_WIDTH)}.
 
 bridge(_Snapshot, normal) ->
     none;

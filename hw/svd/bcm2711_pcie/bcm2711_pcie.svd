@@ -14,15 +14,18 @@
      * FreeBSD's sys/arm/broadcom/bcm2835/bcm2838_pci.c at releng/15.1, commit
        95719d8a895bf8170851e9844d9b4092b1d2b6fe (SHA-256
        10a983496e957f3cf01039f5076e189a817bdfc5da53e582f42dad525d1ac6a9, ISC), at the
-       lines cited, the second witness; and sys/dev/pci/pcireg.h at the same commit
-       (SHA-256 e807eb05747d6c47a5722ff7b2be385d09053b1d2a3acfc16af4a5ab08bd6507,
-       BSD-2-Clause) for the link status bits, lines 847 and 861-863.
+       lines cited, the second witness.
 
      The window is the bridge's one register range, 0x9310 bytes (record, section 0).
      The root port's own configuration space at 0x0000 and the endpoint's data window
-     at 0x8000 are reached at computed offsets, which are not registers of this
-     peripheral; the three registers of the root port's space the driver uses (two of
-     the vendor's and the link status) are. Every access is an aligned 32-bit word.
+     at 0x8000 are configuration spaces of this peripheral, ROOT_PORT and EXT_CFG_DATA,
+     256 bytes each (docs/design-generation.md, "Register inputs"), which take 8-, 16-
+     and 32-bit accesses. The root port's standard registers, its link status
+     among them, are read through ROOT_PORT as any function's are; the two vendor
+     registers of its space that the driver writes, above its first 256 bytes, are
+     registers here, so ROOT_PORT cannot grow past 0x188 without the generator
+     refusing the overlap; 256 bytes is all the walk reads. Every register access is
+     an aligned 32-bit word.
 
      Where the vendor's driver changes some bits of a register by read-modify-write,
      the bits no source names are fields kept as read (KEPT_*), so a write changes
@@ -68,19 +71,6 @@
               <enumeratedValues><enumeratedValue><name>PCI_TO_PCI_BRIDGE</name><value>0x060400</value></enumeratedValue></enumeratedValues>
             </field>
             <field><name>KEPT</name><description>Bits no source names, kept as read</description><bitOffset>24</bitOffset><bitWidth>8</bitWidth></field>
-          </fields>
-        </register>
-        <!-- The root port's PCI Express capability sits at 0xac (record, register
-             map); its link control and status word is at 0xac + 0x10, its status the
-             upper half (pcireg.h:847, 861-863). FreeBSD reads it as this one word,
-             lines 70 and 689. Only the status is read; nothing writes the word. -->
-        <register>
-          <name>RC_CFG_LINK_CONTROL_STATUS</name><ownedByNif>false</ownedByNif>
-          <description>The root port's link control and status: the negotiated speed and width</description>
-          <addressOffset>0xbc</addressOffset><access>read-only</access>
-          <fields>
-            <field><name>SPEED</name><description>The link's current speed, as PCI Express numbers it; 0 with no link</description><bitOffset>16</bitOffset><bitWidth>4</bitWidth></field>
-            <field><name>WIDTH</name><description>The link's negotiated width in lanes</description><bitOffset>20</bitOffset><bitWidth>6</bitWidth></field>
           </fields>
         </register>
         <!-- Record, register map, section 1, steps 3f and 3i, section 2 and section 8,
@@ -257,7 +247,7 @@
              ECAM layout, its register bits zero. -->
         <register>
           <name>EXT_CFG_INDEX</name><ownedByNif>false</ownedByNif>
-          <description>EXT_CFG_INDEX: which function the data window at 0x8000 shows</description>
+          <description>EXT_CFG_INDEX: which function EXT_CFG_DATA shows</description>
           <addressOffset>0x9000</addressOffset><access>write-only</access>
           <fields>
             <field><name>FUNCTION</name><description>The function</description><bitOffset>12</bitOffset><bitWidth>3</bitWidth></field>
@@ -278,6 +268,22 @@
           </fields>
         </register>
       </registers>
+      <!-- Record, register map and section 3: the root port's own configuration
+           space at the window's start, and the data window at 0x8000 through which
+           EXT_CFG_INDEX shows one function below it. Only their first 256 bytes,
+           the conventional space, are declared, all the walk reads. -->
+      <configurationSpace>
+        <name>ROOT_PORT</name>
+        <description>The root port's configuration space</description>
+        <addressOffset>0x0</addressOffset>
+        <size>0x100</size>
+      </configurationSpace>
+      <configurationSpace>
+        <name>EXT_CFG_DATA</name>
+        <description>The configuration space of the function EXT_CFG_INDEX names</description>
+        <addressOffset>0x8000</addressOffset>
+        <size>0x100</size>
+      </configurationSpace>
     </peripheral>
   </peripherals>
 </device>

@@ -252,10 +252,8 @@ indices, and the table records the peripheral a kind derives from, so the device
 treats every kind as its transport. The virtio-mmio transport is such a cluster, and
 each device kind a peripheral that copies it and adds its configuration fields
 (`hw/svd/virtio_mmio/virtio_mmio.svd`). Other inheritance fails.
-A PCIe bridge's configuration space is a peripheral of its own, for the
-ECAM window and for the BCM2711 bridge's index and data registers alike,
-whose view takes 8-, 16- and 32-bit accesses at an offset computed from
-a function's place and the register, each access bounded by the window
+A PCIe bridge's configuration space is a view that takes 8-, 16- and
+32-bit accesses at an offset of a block, each access bounded by the window
 ([design-pcie.md](design-pcie.md#the-bridge-seam)). The window is an erXos
 extension of the peripheral, `<configurationSpace>`, with a `name`, its first
 block's `addressOffset`, one block's `size`, 4 to 4096 bytes, and for
@@ -264,6 +262,12 @@ are multiples of 4, and a space meets neither another space nor a register. ECAM
 (`hw/svd/pci_ecam/pci_ecam.svd`) is `FUNCTION[%s]`, 65536 blocks of 4 KiB from
 offset 0, one per routing ID, so a block's offset is `(bus - first) << 20 |
 device << 15 | function << 12`; a peripheral of spaces alone has no registers.
+The BCM2711 bridge's spaces sit beside its registers in its one peripheral
+(`hw/svd/bcm2711_pcie/bcm2711_pcie.svd`): `ROOT_PORT`, the root port's
+own 256 bytes at offset 0, and `EXT_CFG_DATA`, the 256 bytes at `0x8000`
+that show the function `EXT_CFG_INDEX` names. A standard register inside a
+space, as the root port's link status, is read through the space as any
+function's is, never declared again as a register, which would meet it.
 The device NIF reaches a block only while it lies wholly inside the window it
 opened ([design-runtime.md](design-runtime.md#the-device-nif)). A cluster whose base
 the controller reports, as xHCI's are, names in an extension,

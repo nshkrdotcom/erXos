@@ -910,8 +910,10 @@ and 6), each wait a deadline of the core:
    100 ms more, past which bring-up fails with `link down` (section 1,
    step 6). FreeBSD polls from the release with no fixed wait (section 8,
    item 2); erXos follows the PCIe rule.
-8. Read the root port's `LNKSTA` for the speed and width, shown in the
-   bridge's inspection record. Spread-spectrum clocking, which Linux
+8. The walk reads the root port's link status from its PCI Express
+   capability, through the bridge's `ROOT_PORT` configuration space as
+   any function's, and the enumerator logs the speed and width.
+   Spread-spectrum clocking, which Linux
    enables after link-up through the MDIO port, is an emission measure
    FreeBSD runs without (section 8, item 9), and is not enabled.
 9. The enumerator programs the root port's bus numbers and its memory

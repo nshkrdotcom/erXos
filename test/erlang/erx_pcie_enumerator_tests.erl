@@ -198,3 +198,23 @@ a_held_function_whose_start_failed_is_not_ready_test() ->
     stop(Pid),
     ?assertEqual(not_ready, maps:get(state, Record)),
     ?assertNot(Kept).
+
+%% A root port the walk numbers, with its BAR registers implementing none.
+root_port_at(Snapshot) -> {{0, 0, 0}, Snapshot, #{16#10 => 0, 16#14 => 0}}.
+
+%% What the start logged about the root port's link.
+link_logged(Snapshot) ->
+    Table = erx_pcie_model:new([root_port_at(Snapshot)]),
+    {{Pid, _Reported}, Logged} = erx_pcie_log_capture:logged(fun() -> started(Table, [], #{}, #{}) end),
+    stop(Pid),
+    [Line || Line <- Logged, string:find(Line, "link speed") =/= nomatch].
+
+%% The root port's link speed and width, from its PCI Express capability's link
+%% status, are logged once at the start.
+a_root_ports_link_is_logged_from_its_express_capability_test() ->
+    ?assertEqual(["pcie: bridge 3: root port {0,0,0}: link speed 2, width x1"],
+                 link_logged(erx_pcie_cfg_tests:root_port())).
+
+%% A root port without a capability list has no link status to log.
+a_root_port_without_express_logs_no_link_test() ->
+    ?assertEqual([], link_logged(put(erx_pcie_cfg_tests:root_port(), 16#06, 2, 0))).

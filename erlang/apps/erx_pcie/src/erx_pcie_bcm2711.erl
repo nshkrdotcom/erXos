@@ -12,8 +12,9 @@ for through its port, and keeps what the start decided for `ready`.
 
 * **The start** runs the core's start machine: the keep-or-reset
   decision from the link and the VL805's firmware register, then the
-  keep or the clean turn-off and bring-up. The decision and the link's
-  speed and width are logged at each start; a start that fails answers
+  keep or the clean turn-off and bring-up. The decision is logged at
+  each start, and the link's speed and width when the walk reads the
+  root port; a start that fails answers
   the core's reason (`link_down`, `endpoint_mode`, `dma_ranges`,
   `ranges`), which the enumerator logs, reporting none of the bridge's
   functions.
@@ -117,7 +118,7 @@ ready(#{vendor := ?VL805_VENDOR, device_id := ?VL805_DEVICE}, State) ->
 ready(_Function, State) ->
     {ok, State}.
 
--doc "How the start came up: kept or reset, the turn-off's L23 request, the link's speed and width.".
+-doc "How the start came up: kept or reset, and the turn-off's L23 request.".
 -spec up(state()) -> erx_pcie_bcm2711_core:up().
 up(#bridge{up = Up}) -> Up.
 
@@ -150,5 +151,5 @@ run({Core, Op}, {Module, Handle}) ->
     {Answer, Next} = Module:op(Op, Handle),
     run(erx_pcie_bcm2711_core:step(Answer, Core), {Module, Next}).
 
-describe(#{path := Path, turn_off := TurnOff, speed := Speed, width := Width}) ->
-    io_lib:format("~p, turn-off ~p, link speed ~b, width x~b", [Path, TurnOff, Speed, Width]).
+describe(#{path := Path, turn_off := TurnOff}) ->
+    io_lib:format("~p, turn-off ~p", [Path, TurnOff]).

@@ -52,7 +52,7 @@ start(Options) -> start(Options, bridge()).
 start(Options, Bridge) ->
     ?MODEL:run(?MODEL:new(Options), ?CORE:start(Bridge)).
 
-%% start/2, then firmware/1 when it came up.
+%% start/1, then firmware/1 when it came up.
 start_and_firmware(Options) ->
     case start(Options) of
         {{up, _} = Up, Core, Model} ->
@@ -84,7 +84,7 @@ the_keep_or_reset_table_test_() ->
     [{lists:flatten(io_lib:format("link ~p, firmware ~.16#", [Link, Firmware])),
       fun() ->
               {{up, Up}, FirmwareResult, Model} = start_and_firmware(#{boot => Link, firmware => Firmware}),
-              ?assertMatch(#{path := Path, turn_off := TurnOff, speed := 2, width := 1}, Up),
+              ?assertEqual(#{path => Path, turn_off => TurnOff}, Up),
               ?assertEqual({firmware, Present}, FirmwareResult),
               ?assertEqual(Notified, notified(Model)),
               ?assertEqual(Notified, perst_asserted(Model) =/= []),
@@ -122,11 +122,8 @@ bring_up_runs_in_the_vendors_order_test() ->
                 {win_lo, 0}, {win_hi, 0}, {win_base_limit, 0}, {win_base_hi, 0}, {win_limit_hi, 0},
                 read, rc_cfg_vendor_specific_reg1, read, hard_debug,
                 read, rgr1_sw_init_1, {wait, 100000}, status],
-    ?assertEqual(Expected, lists:sublist(Sequence, length(Expected))),
-    %% The link poll ends at the reading that finds it up; then the link status.
-    Rest = lists:nthtail(length(Expected), Sequence),
-    ?assertEqual(read, lists:last(Rest)),
-    ?assert(lists:all(fun(Step) -> lists:member(Step, [{wait, 5000}, status, read]) end, Rest)).
+    %% The model's link is up at the first poll, the start's last operation.
+    ?assertEqual(Expected, Sequence).
 
 %% The words bring-up leaves, against the facts record's worked values for the Pi 4
 %% (section 2: BAR2_CONFIG_LO 0x11, SCB0_SIZE 17; the downstream tree's window).
@@ -179,7 +176,7 @@ the_first_endpoint_access_is_100_ms_after_perst_release_test() ->
     [Release] = [Time || {Time, {write, rgr1_sw_init_1, Word}} <- Log,
                          ?ERX_HW_BCM2711_PCIE_RGR1_SW_INIT_1_PERST_GET(Word) =:= 0,
                          ?ERX_HW_BCM2711_PCIE_RGR1_SW_INIT_1_INIT_GET(Word) =:= 0],
-    [First | _] = [Time || {Time, {cfg_read, Offset, _}} <- Log, Offset >= 16#8000],
+    [First | _] = [Time || {Time, {cfg_read, ext_cfg_data, _, _}} <- Log],
     ?assert(First - Release >= 100000).
 
 a_link_that_never_trains_fails_after_200_ms_test() ->
@@ -254,10 +251,10 @@ places_the_bridge_does_not_reach_answer_absent_without_an_operation_test() ->
               ?assertEqual({{error, absent}, []}, {Result, ops(Model)})
       end, Places).
 
-the_root_ports_space_is_at_its_window_offset_test() ->
+the_root_port_is_read_in_its_own_space_test() ->
     {Result, _, Model} = ?MODEL:run(?MODEL:new(#{boot => down}), ?CORE:access({read, {0, 0, 0}, 16#3c, 2}, bridge())),
     ?assertEqual({ok, 0}, Result),
-    ?assertEqual([{cfg_read, 16#3c, 2}], ops(Model)).
+    ?assertEqual([{cfg_read, root_port, 16#3c, 2}], ops(Model)).
 
 %% A record that called the bridge open would let reaches/2 grant every bus-0 place;
 %% the bus-0 rule is the hardware's, so the core refuses them all the same.
@@ -274,7 +271,7 @@ an_access_below_the_root_port_sits_between_two_link_reads_test() ->
     {Result, _, Model} = ?MODEL:run(?MODEL:new(#{boot => up}), ?CORE:access({read, ?VL805, 0, 4}, bridge())),
     ?assertEqual({ok, 16#34831106}, Result),
     Index = ?ERX_HW_BCM2711_PCIE_EXT_CFG_INDEX_BUS_PUT(1),
-    ?assertEqual([{read, misc_pcie_status}, {write, ext_cfg_index, Index}, {cfg_read, 16#8000, 4},
+    ?assertEqual([{read, misc_pcie_status}, {write, ext_cfg_index, Index}, {cfg_read, ext_cfg_data, 0, 4},
                   {read, misc_pcie_status}], ops(Model)).
 
 a_link_down_before_the_access_makes_none_test() ->
@@ -307,7 +304,7 @@ bring_up_ends_with_the_notification_test() ->
     ?assertEqual({firmware, present}, Result),
     Firmware = lists:nthtail(length(ops(Model)), ops(After)),
     ?assertMatch([notify_firmware, {wait, 1000}, {read, misc_pcie_status}, {write, ext_cfg_index, _},
-                  {cfg_read, 16#8050, 4}, {read, misc_pcie_status}], Firmware).
+                  {cfg_read, ext_cfg_data, 16#50, 4}, {read, misc_pcie_status}], Firmware).
 
 a_refused_notification_is_not_loaded_and_reads_nothing_more_test() ->
     {{up, #{path := reset}}, Core, Model} = start(#{boot => down}),

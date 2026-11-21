@@ -2331,14 +2331,10 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   of a reported function against its row's compatible string ("The catalogue and gives"); and the `pcie` QEMU
   suite's cases beyond walk-and-report and hold (design-pcie.md, "The `pcie` QEMU suite").
 * [Medium] PCIe, the BCM2711 bridge's start (`erlang/apps/erx_pcie/src/erx_pcie_bcm2711.erl` `start/2`,
-  `abi/formats/pcie.txt`, `hw/svd/bcm2711_pcie/bcm2711_pcie.svd`, [design-pcie.md](docs/design-pcie.md#the-bridge-seam)):
+  [design-pcie.md](docs/design-pcie.md#the-bridge-seam)):
   the driver runs its core over any port and is host-tested over the register model, but its start on the target
   refuses with `enotsup`, so the enumerator logs that reason and reports none of the bridge's functions.
-  Two things the design uses have no carrier. The core's configuration accesses, the root port's space at offset 0 of the window and the endpoint's
-  data window at `0x8000`, have no view in the device NIF: the SVD declares no `<configurationSpace>`, and one for
-  the root port at 0 would meet `RC_CFG_LINK_CONTROL_STATUS` at `0xbc`, which design-generation.md forbids, while
-  that document calls the BCM2711's configuration space "a peripheral of its own" that no device record names.
-  And the VL805's firmware notification, which the device service makes for `pci_bus:firmware/1`
+  The VL805's firmware notification, which the device service makes for `pci_bus:firmware/1`
   ([design-usb.md](docs/design-usb.md#the-vl805s-firmware)), has no route from the driver: `start/2` would hand
   the core a port that reaches the bridge's registers but not that call.
   The Pi 4's platform record has no bridge unit and its manifest no PCIe domain yet, which the board needs too.
@@ -10073,13 +10069,6 @@ document's "residual risks accepted" paragraph.
   reports (the schema's `service` and `runtime` do not fit as declared), the key types of `Controller` and
   `Route`, and the shape of a device's functions, each a kind with an input number or a drive, which the schema's
   types have no alternative for.
-* [Medium] USB and PCIe, `hw/svd/` ([design-usb.md](docs/design-usb.md#registers-at-offsets-the-controller-reports),
-  [design-generation.md](docs/design-generation.md#register-inputs)): no configuration-space view for the BCM2711
-  bridge. Write its `<configurationSpace>` rows (the root port at 0 and the endpoint data window at `0x8000`, each one
-  block, as `pci_ecam.svd` does ECAM's) beside its registers;
-  `erx_pcie_bcm2711_core`'s `cfg_read` and `cfg_write` operations reach configuration space through that view.
-  `check_spaces` (`tools/lib/erx/hardware.rb`) refuses a space over a register, and the root port's block at 0 holds
-  the SVD's `RC_CFG_*` registers, so the design must first say whether a space may cover named registers.
 * [Medium] device NIF, `erx_device.c` `erx_device_config_read`/`_write` and `erx_device_nif.c` `decode_config`: no test
   reaches them (the harness checks the core only): open a `pci_ecam` stand-in and check a round trip at each width,
   a value wider than its width refused, block 256 refused and `elements/2` 256, with a seed on the value bound.

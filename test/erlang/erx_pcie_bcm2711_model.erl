@@ -68,9 +68,19 @@ run(Model, {Core, Op}) ->
 %% One operation executed, counted and logged: its answer and the model after it,
 %% the shape of the port the bridge driver takes (erx_pcie_bcm2711:open/3).
 op(Op, Model) ->
+    true = in_space(Op),
     Counted = fall(Model#{count := maps:get(count, Model) + 1}),
     {Answer, Next} = apply_op(Op, Counted),
     {Answer, Next#{log := [{maps:get(time, Counted), Op} | maps:get(log, Next)]}}.
+
+%% A configuration access stays aligned inside its space's 256 bytes, as the device
+%% NIF refuses any other with badarg (erx_device_space_offset).
+in_space({cfg_read, _Space, Offset, Width}) -> in_block(Offset, Width);
+in_space({cfg_write, _Space, Offset, Width, _Value}) -> in_block(Offset, Width);
+in_space(_Op) -> true.
+
+in_block(Offset, Width) when Offset >= 0, Offset rem Width =:= 0, Offset + Width =< 256 -> true;
+in_block(_Offset, _Width) -> error(badarg).
 
 fall(#{count := Count, fall_at := Count} = Model) -> Model#{fallen := true};
 fall(Model) -> Model.
@@ -81,14 +91,14 @@ apply_op({write, Register, Word}, Model) ->
     {ok, write_register(Register, Word, Model)};
 apply_op({wait, Microseconds}, #{time := Time} = Model) ->
     {ok, Model#{time := Time + Microseconds}};
-apply_op({cfg_read, Offset, Width}, Model) when Offset < 16#1000 ->
+apply_op({cfg_read, root_port, Offset, Width}, Model) ->
     {0, root_port(Offset, Width, Model)};
-apply_op({cfg_read, Offset, Width}, Model) ->
-    endpoint_read(Offset - 16#8000, Width, Model);
-apply_op({cfg_write, Offset, Width, _Value}, Model) when Offset < 16#1000 ->
+apply_op({cfg_read, ext_cfg_data, Offset, Width}, Model) ->
+    endpoint_read(Offset, Width, Model);
+apply_op({cfg_write, root_port, Offset, Width, _Value}, Model) ->
     {ok, root_port(Offset, Width, Model)};
-apply_op({cfg_write, Offset, _Width, _Value}, Model) ->
-    {ok, endpoint_checked(Offset - 16#8000, Model)};
+apply_op({cfg_write, ext_cfg_data, Offset, _Width, _Value}, Model) ->
+    {ok, endpoint_checked(Offset, Model)};
 apply_op(notify_firmware, Model) ->
     case link_up(Model) of
         true -> {ok, Model#{firmware := ?VERSION}};
@@ -130,12 +140,6 @@ read_register(misc_pcie_status, Model) ->
     ?ERX_HW_BCM2711_PCIE_MISC_PCIE_STATUS_PHYLINKUP_PUT(Up) bor ?ERX_HW_BCM2711_PCIE_MISC_PCIE_STATUS_DL_ACTIVE_PUT(Up)
         bor ?ERX_HW_BCM2711_PCIE_MISC_PCIE_STATUS_LINK_IN_L23_PUT(L23)
         bor ?ERX_HW_BCM2711_PCIE_MISC_PCIE_STATUS_PORT_PUT(Port);
-read_register(rc_cfg_link_control_status, Model) ->
-    case link_up(Model) of
-        true -> ?ERX_HW_BCM2711_PCIE_RC_CFG_LINK_CONTROL_STATUS_SPEED_PUT(2)
-                    bor ?ERX_HW_BCM2711_PCIE_RC_CFG_LINK_CONTROL_STATUS_WIDTH_PUT(1);
-        false -> 0
-    end;
 read_register(Register, #{regs := Regs}) ->
     maps:get(Register, Regs, 0).
 

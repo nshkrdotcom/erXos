@@ -25,9 +25,10 @@ Three machines share step/2:
   a kept bridge nothing, since its firmware was read present. It ends
   `{firmware, State}` or `{error, link_down}`.
 * access/2, one configuration access: absent, with no operation, at a
-  place erx_pcie_bridge:reaches/2 refuses; the root port's own space at
-  its window offset; any other place between two reads of the link, the
-  value kept only when the link was up before and after.
+  place erx_pcie_bridge:reaches/2 refuses; the root port in its own
+  configuration space, `root_port`; any other place through the
+  endpoint's data window, `ext_cfg_data`, between two reads of the link,
+  the value kept only when the link was up before and after.
 
 Every tree value the windows take is checked before the first operation,
 so a refused tree touches no register. PERST# is asserted only on the
@@ -51,17 +52,24 @@ absolutely; the root port is at device 0, function 0 there.
 -type register() :: atom() | {atom(), 0..3}.
 
 -doc """
+A configuration space of the bridge's SVD peripheral: the root port's own,
+or the data window that shows the function EXT_CFG_INDEX names.
+""".
+-type space() :: root_port | ext_cfg_data.
+
+-doc """
 One operation for the driver: a register read or a write of a whole
 word; a wait of at least that many microseconds, a deadline the driver
-keeps; a configuration access at an offset of the bridge's window (the
-root port's space at 0, the endpoint's data window at 16#8000); or the
-VL805's firmware notification (docs/design-pcie.md, "The bridge seam").
+keeps; a configuration access at an offset of one of the bridge's
+configuration spaces, in erx_device:config_read/4's and config_write/5's
+shape; or the VL805's firmware notification (docs/design-pcie.md, "The
+bridge seam").
 """.
 -type op() :: {read, register()}
             | {write, register(), 0..16#ffffffff}
             | {wait, Microseconds :: pos_integer()}
-            | {cfg_read, WindowOffset :: 0..16#8fff, Width :: 1 | 2 | 4}
-            | {cfg_write, WindowOffset :: 0..16#8fff, Width :: 1 | 2 | 4, Value :: 0..16#ffffffff}
+            | {cfg_read, space(), Offset :: 0..255, Width :: 1 | 2 | 4}
+            | {cfg_write, space(), Offset :: 0..255, Width :: 1 | 2 | 4, Value :: 0..16#ffffffff}
             | notify_firmware.
 
 -doc """
@@ -74,14 +82,13 @@ write or a wait; the notification's answer.
 -type action() :: op() | {done, result()}.
 
 -doc """
-A bridge that is up: whether it was kept or reset, how the turn-off's L23
-request went (`not_run` on a kept bridge or a link found down), and the
-link's speed and width from the root port's link status.
+A bridge that is up: whether it was kept or reset and how the turn-off's L23
+request went (`not_run` on a kept bridge or a link found down). The link's
+speed and width are the walk's to read, from the root port's PCI Express
+capability, as any root port's are.
 """.
 -type up() :: #{path := kept | reset,
-                turn_off := not_run | l23 | l23_timed_out,
-                speed := 0..15,
-                width := 0..63}.
+                turn_off := not_run | l23 | l23_timed_out}.
 
 -doc """
 Why start/1 failed: the tree's `dma-ranges` or `ranges` break the
@@ -132,8 +139,7 @@ up within 100 ms after the PCIe rule's 100 ms.
 -define(FIRMWARE_SETTLE_US, 1000).
 %% The VL805's firmware version register in its configuration space (record, section 5).
 -define(FIRMWARE_REGISTER, 16#50).
-%% The endpoint's configuration window, behind EXT_CFG_INDEX (record, section 3).
--define(EXT_CFG_DATA, 16#8000).
+
 -define(MIB, 16#100000).
 -define(GIB, 16#40000000).
 
@@ -257,7 +263,7 @@ kept_or_reset(Plan, {error, _}) ->
 keep(#plan{inbound = Inbound, outbound = Outbound} = Plan) ->
     [update(misc_ctrl, fun(Word) -> scb0(Plan, misc_ctrl(Word)) end)
      | writes(Inbound ++ Outbound)]
-        ++ [link_status(kept, not_run)].
+        ++ [{done, {up, #{path => kept, turn_off => not_run}}}].
 
 %% The clean shutdown before a reset of a bridge whose link is up (record,
 %% section 6): L23 requested and polled, PERST# asserted, the request cleared,
@@ -304,20 +310,10 @@ root_complex(#plan{outbound = Outbound} = Plan, TurnOff, Status) ->
                     update(rgr1_sw_init_1, fun(Word) -> perst(Word, 0) end),
                     wait(?PERST_SETTLE_US),
                     poll(misc_pcie_status, fun link_up/1, ?LINK_POLLS, ?LINK_POLL_US,
-                         fun(met) -> [link_status(reset, TurnOff)];
+                         fun(met) -> [{done, {up, #{path => reset, turn_off => TurnOff}}}];
                             (timed_out) -> [{done, {error, link_down}}]
                          end)]
     end.
-
-%% The root port's negotiated speed and width, with how the bridge came up: the
-%% machine's result.
-link_status(Path, TurnOff) ->
-    read(rc_cfg_link_control_status,
-         fun(Word) ->
-                 [{done, {up, #{path => Path, turn_off => TurnOff,
-                                speed => ?ERX_HW_BCM2711_PCIE_RC_CFG_LINK_CONTROL_STATUS_SPEED_GET(Word),
-                                width => ?ERX_HW_BCM2711_PCIE_RC_CFG_LINK_CONTROL_STATUS_WIDTH_GET(Word)}}}]
-         end).
 
 writes(Words) -> [write(Register, Word) || {Register, Word} <- Words].
 
@@ -336,13 +332,13 @@ notified(_Core, {error, _}) ->
 
 %% One configuration access (docs/design-pcie.md, "The bridge seam"): a place
 %% the bridge does not reach answers absent before any operation; the root
-%% port's space is at its window offset; any other place is reached through
-%% EXT_CFG_INDEX between two reads of the link, and its answer is kept only when
-%% the link was up at both.
+%% port's is its own space; any other place is reached through EXT_CFG_INDEX and
+%% the data window between two reads of the link, and its answer is kept only
+%% when the link was up at both.
 config(Bridge, Access, Then) ->
     Place = element(2, Access),
     case {Place, erx_pcie_bridge:reaches(Bridge, Place)} of
-        {{0, 0, 0}, _} -> [window_access(Access, 0, Then)];
+        {{0, 0, 0}, _} -> [space_access(Access, root_port, Then)];
         %% Any other place on bus 0 locks up the memory controller, whatever the
         %% record says (bcm2838_pci.c:300-307).
         {{0, _, _}, _} -> Then({error, absent});
@@ -358,7 +354,7 @@ linked(Before, {Bus, Device, Function}, Access, Then) ->
                 bor ?ERX_HW_BCM2711_PCIE_EXT_CFG_INDEX_DEVICE_PUT(Device)
                 bor ?ERX_HW_BCM2711_PCIE_EXT_CFG_INDEX_FUNCTION_PUT(Function),
             [write(ext_cfg_index, Index),
-             window_access(Access, ?EXT_CFG_DATA,
+             space_access(Access, ext_cfg_data,
                            fun(Answer) ->
                                    [read(misc_pcie_status,
                                          fun(After) ->
@@ -370,13 +366,13 @@ linked(Before, {Bus, Device, Function}, Access, Then) ->
                            end)]
     end.
 
-%% The access itself at Base in the window; a read's value as the bridge seam
-%% answers it.
-window_access({read, _Place, Offset, Width}, Base, Then) when Offset rem Width =:= 0 ->
-    op({cfg_read, Base + Offset, Width},
+%% The access itself in one of the bridge's configuration spaces; a read's value
+%% as the bridge seam answers it.
+space_access({read, _Place, Offset, Width}, Space, Then) when Offset rem Width =:= 0 ->
+    op({cfg_read, Space, Offset, Width},
        fun(Value) -> Then(erx_pcie_bridge:read_answer(Offset, Width, Value)) end);
-window_access({write, _Place, Offset, Width, Value}, Base, Then) when Offset rem Width =:= 0 ->
-    op({cfg_write, Base + Offset, Width, Value}, fun(ok) -> Then(ok) end).
+space_access({write, _Place, Offset, Width, Value}, Space, Then) when Offset rem Width =:= 0 ->
+    op({cfg_write, Space, Offset, Width, Value}, fun(ok) -> Then(ok) end).
 
 %% Register words
 

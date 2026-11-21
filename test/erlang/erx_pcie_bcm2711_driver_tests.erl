@@ -19,41 +19,12 @@
 %% `notify`: `{error, enotsup}`, as pci_bus:firmware/1 answers while the device
 %% service cannot make the call, or `ok`, a notification that did not take.
 -export([op/2]).
-%% A logger handler that sends each message logged to the process in its config.
--export([log/2]).
 
 op(notify_firmware, #{notify := Answer} = Model) ->
     %% Logged as made, the VL805 left without firmware.
     {ok, Logged} = ?MODEL:op(notify_firmware, Model),
     {Answer, Logged#{firmware := ?MODEL:firmware_register(Model)}};
 op(Op, Model) -> ?MODEL:op(Op, Model).
-
-log(#{msg := {Format, Args}, meta := #{pid := Pid}}, #{config := #{pid := Pid}}) ->
-    Pid ! {logged, lists:flatten(io_lib:format(Format, Args))};
-log(_Event, _Config) ->
-    ok.
-
-%% Fun's result and the messages the driver logged from this process while it ran, this
-%% module their handler, with every level let through and the default handler silenced
-%% meanwhile, as the runner silences it.
-logged(Fun) ->
-    ok = logger:add_handler(?MODULE, ?MODULE, #{config => #{pid => self()}}),
-    {ok, #{level := Level}} = logger:get_handler_config(default),
-    ok = logger:update_handler_config(default, level, none),
-    #{level := Primary} = logger:get_primary_config(),
-    ok = logger:set_primary_config(level, all),
-    Result = try Fun() catch exit:Reason -> {exit, Reason}
-             after
-                 logger:set_primary_config(level, Primary),
-                 logger:remove_handler(?MODULE),
-                 logger:update_handler_config(default, level, Level)
-             end,
-    {Result, drain()}.
-
-drain() ->
-    receive {logged, Message} -> [Message | drain()]
-    after 0 -> []
-    end.
 
 range(Pci, Cpu, Size) ->
     #{pci => Pci, cpu => Cpu, size => Size, flags => []}.
@@ -101,7 +72,7 @@ the_keep_path_resets_nothing_test() ->
 %% before `ready` gives it.
 the_reset_path_brings_the_link_up_and_notifies_test() ->
     {ok, State} = open(#{boot => down}),
-    ?assertMatch(#{path := reset, turn_off := not_run, speed := 2, width := 1}, ?DRIVER:up(State)),
+    ?assertEqual(#{path => reset, turn_off => not_run}, ?DRIVER:up(State)),
     ?assertNot(notified(model(State))),
     {ok, Ready} = ?DRIVER:ready(vl805(), State),
     ?assert(notified(model(Ready))),
@@ -134,9 +105,9 @@ a_refused_tree_fails_the_start_test() ->
 %% not read again (docs/design-pcie.md, "The bridge seam", the endpoint's firmware).
 a_vl805_whose_notification_fails_is_not_ready_test() ->
     {ok, State} = open(#{boot => down}, ?MODULE),
-    {{not_ready, Held}, Logged} = logged(fun() -> ?DRIVER:ready(vl805(), State) end),
+    {{not_ready, Held}, Logged} = erx_pcie_log_capture:logged(fun() -> ?DRIVER:ready(vl805(), State) end),
     ?assertEqual(["pcie: bridge 3: vl805 firmware not loaded"], Logged),
-    Reads = [Op || {cfg_read, 16#8050, 4} = Op <- ops(model(Held))],
+    Reads = [Op || {cfg_read, ext_cfg_data, 16#50, 4} = Op <- ops(model(Held))],
     ?assertEqual([], Reads),
     %% Asked again, it stays held without another notification.
     {not_ready, Again} = ?DRIVER:ready(vl805(), Held),
@@ -179,10 +150,11 @@ the_start_refuses_until_its_facts_are_carried_test() ->
 %% VL805 back, logged, its register read once after the notification.
 a_vl805_whose_firmware_stays_absent_is_not_ready_test() ->
     {ok, State} = open(#{boot => down, notify => ok}, ?MODULE),
-    {{not_ready, Held}, Logged} = logged(fun() -> ?DRIVER:ready(vl805(), State) end),
+    {{not_ready, Held}, Logged} = erx_pcie_log_capture:logged(fun() -> ?DRIVER:ready(vl805(), State) end),
     ?assertEqual(["pcie: bridge 3: vl805 firmware not loaded"], Logged),
     ?assert(notified(model(Held))),
-    ?assertEqual([{cfg_read, 16#8050, 4}], [Op || {cfg_read, 16#8050, 4} = Op <- ops(model(Held))]).
+    ?assertEqual([{cfg_read, ext_cfg_data, 16#50, 4}],
+                 [Op || {cfg_read, ext_cfg_data, 16#50, 4} = Op <- ops(model(Held))]).
 
 %% A link that falls under the firmware read ends the enumerator with link_down, as
 %% an access that answers link_down does, logged, so the domain's restart recovers.
@@ -190,6 +162,6 @@ a_link_that_falls_under_the_firmware_read_ends_the_enumerator_test() ->
     {ok, State} = open(#{boot => down}),
     Count = length(ops(model(State))),
     {ok, Fell} = open(#{boot => down, fall_at => Count + 1}),
-    {Result, Logged} = logged(fun() -> ?DRIVER:ready(vl805(), Fell) end),
+    {Result, Logged} = erx_pcie_log_capture:logged(fun() -> ?DRIVER:ready(vl805(), Fell) end),
     ?assertEqual({exit, link_down}, Result),
     ?assertEqual(["pcie: bridge 3: link down under the vl805 firmware read"], Logged).

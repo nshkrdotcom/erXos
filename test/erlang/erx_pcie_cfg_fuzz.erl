@@ -67,7 +67,7 @@ sound(#{bars := Bars, msi := Msi, msix := Msix, express := Express, pin := Pin,
                                                     lists:nthtail(2, Bars)))
         andalso inside(Msi, msi_extent(Msi))
         andalso inside(Msix, 16#0c)
-        andalso inside(Express, 16#0c)
+        andalso inside(Express, 16#14)
         andalso table_sound(Msix, Bars).
 
 wide_bars_sound([#{kind := memory, addr64 := true}, #{kind := absent} | Rest]) ->
@@ -80,7 +80,7 @@ wide_bars_sound([]) ->
     true.
 
 %% Each capability's structure through its last register in pcireg.h: MSI's pending
-%% bits or data, MSI-X's pending-bit array register, PCI Express's device status.
+%% bits or data, MSI-X's pending-bit array register, PCI Express's link status.
 msi_extent(#{addr64 := true, vector_mask := true}) -> 16#18;
 msi_extent(#{addr64 := true}) -> 16#0e;
 msi_extent(_) -> 16#0a.

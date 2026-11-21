@@ -51,7 +51,9 @@ root_port() ->
           {16#18, 1, 0}, {16#19, 1, 1}, {16#1a, 1, 1}, {16#1c, 1, 16#f0}, {16#1d, 1, 16#00},
           {16#20, 2, 16#f800}, {16#22, 2, 16#f810}, {16#24, 2, 16#fff1}, {16#26, 2, 16#0001},
           {16#28, 4, 16#ffffffff}, {16#2c, 4, 0}, {16#34, 1, 16#4b}, {16#3e, 2, 16#0010},
-          {16#48, 1, 16#10}, {16#49, 1, 0}, {16#4a, 2, 16#0042}, {16#4c, 4, 0}]).
+          {16#48, 1, 16#10}, {16#49, 1, 0}, {16#4a, 2, 16#0042}, {16#4c, 4, 0},
+          %% Its link at 5 GT/s, speed 2, one lane wide (pcireg.h:861-863).
+          {16#5a, 2, 16#0012}]).
 
 %% A BAR of the read value, for sizing.
 bar(Index, Kind, Wide) ->
@@ -94,7 +96,8 @@ an_endpoint_decodes_its_capabilities_test() ->
                    enabled => false, mme => 0, address => 16#fee00000, data => 16#4021,
                    mask => 1},
                  maps:get(msi, Read)),
-    ?assertEqual(#{offset => 16#70, type => 0, flr => true}, maps:get(express, Read)).
+    ?assertEqual(#{offset => 16#70, type => 0, flr => true, link_speed => 0, link_width => 0},
+                 maps:get(express, Read)).
 
 a_32_bit_msi_reads_its_data_after_the_low_address_test() ->
     S = puts(endpoint(), [{16#52, 2, 16#0001}, {16#58, 2, 16#0031}, {16#5c, 2, 16#ffff}]),
@@ -108,7 +111,8 @@ a_root_port_decodes_its_bridge_registers_test() ->
     ?assertMatch(#{vendor := 16#14e4, device_id := 16#2711, class_code := 16#060400,
                    header := bridge, multifunction := false, subsystem_vendor := 0,
                    subsystem := 0, pin := 0, msi := none, msix := none,
-                   express := #{offset := 16#48, type := 4, flr := false}}, Read),
+                   express := #{offset := 16#48, type := 4, flr := false,
+                                link_speed := 2, link_width := 1}}, Read),
     ?assertEqual(#{primary_bus => 0, secondary_bus => 1, subordinate_bus => 1,
                    io_base => 16#f0, io_limit => 0, memory_base => 16#f800,
                    memory_limit => 16#f810, prefetch_base => 16#fff1,
@@ -161,7 +165,7 @@ a_capability_past_offset_255_is_refused_test() ->
     ?assertEqual(msi, refused(Msi(16#0180))),
     %% Its pending bits at +0x14 end the 64-bit layout with masking, though the parser
     %% reads only up to the mask; MSI-X ends with its pending-bit array register at +8,
-    %% PCI Express with its device status at +0x0a.
+    %% PCI Express with its link status at +0x12.
     At = fun(Offset, Id, Control) ->
                  puts(blank(), [{16#06, 2, 16#0010}, {16#34, 1, Offset}, {Offset, 1, Id},
                                 {Offset + 2, 2, Control}])
@@ -170,8 +174,8 @@ a_capability_past_offset_255_is_refused_test() ->
     ?assertMatch(#{msi := #{offset := 16#e8, mask := 0}}, parsed(At(16#e8, 16#05, 16#0180))),
     ?assertEqual(msix, refused(At(16#f8, 16#11, 0))),
     ?assertMatch(#{msix := #{offset := 16#f4, table_bar := 0}}, parsed(At(16#f4, 16#11, 0))),
-    ?assertEqual(express, refused(At(16#f8, 16#10, 0))),
-    ?assertMatch(#{express := #{offset := 16#f4}}, parsed(At(16#f4, 16#10, 0))),
+    ?assertEqual(express, refused(At(16#f0, 16#10, 0))),
+    ?assertMatch(#{express := #{offset := 16#ec}}, parsed(At(16#ec, 16#10, 0))),
     ?assertMatch(#{msi := #{offset := 16#f0, mask := none}}, parsed(Msi(16#0100))),
     ?assertMatch(#{msi := #{offset := 16#f0, addr64 := true}}, parsed(Msi(16#0080))).
 

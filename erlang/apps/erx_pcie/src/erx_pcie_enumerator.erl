@@ -167,20 +167,28 @@ starts(#{index := Index} = Bridge, Own, Driver) ->
     {Starts, [L || L <- Own, drivable(L), not lists:member(place(L), Changed)], Walked}.
 
 %% The walk run to its end; each root port it numbers gets its target from
-%% the layouts the walk starts with, closed at a placing walk.
-walk(Bridge, Kind, Layouts, Driver) ->
-    drive(erx_pcie_walk:start(Bridge, Kind), Layouts, Driver).
+%% the layouts the walk starts with, closed at a placing walk, and its link's
+%% speed and width are logged.
+walk(#{index := Index} = Bridge, Kind, Layouts, Driver) ->
+    drive(erx_pcie_walk:start(Bridge, Kind), {Index, Layouts}, Driver).
 
-drive({_Walk, [{stop, {done, Result}}]}, _Layouts, Driver) ->
+drive({_Walk, [{stop, {done, Result}}]}, _Context, Driver) ->
     {Result, Driver};
-drive({_Walk, [{stop, link_down}]}, _Layouts, _Driver) ->
+drive({_Walk, [{stop, link_down}]}, _Context, _Driver) ->
     exit(link_down);
-drive({Walk, [{access, Access}]}, Layouts, {Module, State}) ->
+drive({Walk, [{access, Access}]}, Context, {Module, State}) ->
     {Answer, Next} = Module:access(Access, State),
-    drive(erx_pcie_walk:step(Answer, Walk), Layouts, {Module, Next});
-drive({Walk, [{root_port, Place, _Read, Buses}]}, Layouts, Driver) ->
+    drive(erx_pcie_walk:step(Answer, Walk), Context, {Module, Next});
+drive({Walk, [{root_port, Place, Read, Buses}]}, {Index, Layouts} = Context, Driver) ->
+    link(Index, Place, Read),
     {Answer, Next} = root_port(Place, Buses, Layouts, Driver),
-    drive(erx_pcie_walk:step(Answer, Walk), Layouts, Next).
+    drive(erx_pcie_walk:step(Answer, Walk), Context, Next).
+
+%% A root port's link as its PCI Express capability's link status reads it.
+link(Index, Place, #{express := #{link_speed := Speed, link_width := Width}}) ->
+    logger:notice("pcie: bridge ~b: root port ~p: link speed ~b, width x~b", [Index, Place, Speed, Width]);
+link(_Index, _Place, #{express := none}) ->
+    ok.
 
 root_port(Place, #{secondary_bus := Secondary} = Buses, Layouts, Driver) ->
     Window = erx_pcie_place:root_port_window(Secondary, Layouts),
