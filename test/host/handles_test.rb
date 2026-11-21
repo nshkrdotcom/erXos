@@ -10,25 +10,67 @@ require_relative '../../tools/lib/erx/runner'
 require_relative '../fixtures/generated_tree'
 
 # The object records and handle tables on the host: the driver test/fixtures/handles_driver.c
-# replays every sequence of creates, dups, closes, destroys and the generation hook up to a
-# fixed depth against a model of serials, then the limit, the pool running dry and the
-# refusals. Each mutant below seeds a bug the core could have, and the driver must name it.
-# liberx/backend/core/handles.c is the core under test.
+# runs the fixed cases (a value used after its entry is taken again, an entry's retirement,
+# the reuse order, the limit and the pool, every refusal of the lookup, a close after the
+# object's destroy), then replays every sequence of creates, dups, closes, destroys and the
+# aging hook up to a fixed depth against a model. Each mutant below seeds a bug the core could
+# have, and the driver must name it. liberx/backend/core/handles.c is the core under test.
 class HandlesTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
   CORE = %w[liberx/backend/core/handles.c liberx/backend/core/grow_table.c].freeze
   DRIVER = 'test/fixtures/handles_driver.c'
 
+  # The lookup with the entry's generation compared after the kind (the design's seeded fault).
+  LOOKUP = <<~C
+    \tconst erx_backend_handle_entry_t *const entry = entry_step(handles, handle);
+
+    \tif (entry == NULL || !entry_live(objects, entry))
+    \t\treturn (ERX_ESTALE);
+    \tif (kind != ERX_BACKEND_OBJECT_ANY && erx_backend_object_at(objects, entry->object - 1)->kind != kind)
+    \t\treturn (ERX_ETYPE);
+  C
+  LOOKUP_GENERATION_LAST = <<~C
+    \tconst erx_backend_handle_entry_t *const entry = entry_in_use(handles, handle);
+
+    \tif (entry == NULL || !entry_live(objects, entry))
+    \t\treturn (ERX_ESTALE);
+    \tif (kind != ERX_BACKEND_OBJECT_ANY && erx_backend_object_at(objects, entry->object - 1)->kind != kind)
+    \t\treturn (ERX_ETYPE);
+    \tif (entry->generation != handle >> ERX_CAP_SLOT_BITS)
+    \t\treturn (ERX_ESTALE);
+  C
+  APPEND = <<~C
+    \tentry_slot(handles, number - 1)->next_free = 0;
+    \tif (handles->free_last == 0)
+    \t\thandles->free_first = number;
+    \telse
+    \t\tentry_slot(handles, handles->free_last - 1)->next_free = number;
+    \thandles->free_last = number;
+  C
+  PUSH_FRONT = <<~C
+    \tentry_slot(handles, number - 1)->next_free = handles->free_first;
+    \tif (handles->free_first == 0)
+    \t\thandles->free_last = number;
+    \thandles->free_first = number;
+  C
+
   # name => [original, replacement, the driver's diagnostic]; each edits one place in handles.c.
   MUTANTS = {
-    'the generation compare removed' => ['record->generation == entry->generation', 'true',
-                                       'a handle answers otherwise than the model'],
-    'the retire removed' => ["\tif (record->generation == UINT32_MAX) {\n", "\tif (0) {\n",
-                           'a handle answers otherwise than the model'],
-    'the limit not checked' => ["\t\tif (usable >= handles->limit)\n\t\t\treturn (ERX_ELIMIT);\n", '',
-                              'past the limit was given'],
-    'a stale close counted' => ["\tif (entry_live(objects, entry)) {\n", "\tif (entry->object != 0) {\n",
-                              "a close's last reference misjudged"],
+    'the close not advancing the generation' => ["\tentry->generation++;\n", '', 'the old value names the new object'],
+    'the generation compared after the kind' => [LOOKUP, LOOKUP_GENERATION_LAST,
+                                                 'a value whose entry another kind took answers otherwise'],
+    'a retired entry put back on the list' => ["\tif (entry->generation == ERX_BACKEND_HANDLE_GENERATION_LAST)\n\t\treturn;\n",
+                                               '', 'a retired entry was taken again'],
+    'a stale close counted' => ["\tif (entry_live(objects, entry)) {\n",
+                                "\tif (erx_backend_object_live(erx_backend_object_at(objects, entry->object - 1))) {\n",
+                                'the new object lost a holder'],
+    'free entries taken newest first' => [APPEND, PUSH_FRONT, 'never-used entries were taken out of index order'],
+    'the record generation compare removed' => ['record->generation == entry->object_generation', 'true',
+                                                'a destroyed object\'s entry names the new one'],
+    'the record retire removed' => ["\tif (record->generation == UINT32_MAX) {\n", "\tif (0) {\n",
+                                    'a handle answers otherwise than the model'],
+    'the limit not applied' => ["\treturn (capacity < handles->limit ? capacity : handles->limit);\n",
+                                "\treturn (capacity);\n", 'a table of one entry gave another'],
     'a mapping ignored' => ["\treturn (record->handles == 0 && record->mappings == 0 && record->kept == 0);\n",
                           "\treturn (record->handles == 0 && record->kept == 0);\n", 'a mapped object went with its last handle'],
     'a keep ignored' => ["\treturn (record->handles == 0 && record->mappings == 0 && record->kept == 0);\n",

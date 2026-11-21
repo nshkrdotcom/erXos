@@ -36,6 +36,7 @@
 #include "liberx/backend/fiasco/budget.h"
 #include "liberx/backend/fiasco/fault_gate.h"
 #include "liberx/backend/fiasco/object.h"
+#include "liberx/backend/fiasco/root_layout.h"
 #include "liberx/backend/fiasco/service_task.h"
 #include "liberx/backend/fiasco/slice.h"
 #include "liberx/backend/fiasco/thread.h"
@@ -44,11 +45,11 @@
 #include "liberx/backend/fiasco/vm.h"
 #include "liberx/backend/fiasco/vm_rules.h"
 
-/* A task's run of slots: its threads, its semaphores, then the three below. */
-#define TASK_SLOT_GATE		(2 * ERX_FIASCO_THREADS_MAX)
-#define TASK_SLOT_SPACE		(TASK_SLOT_GATE + 1)
-#define TASK_SLOT_ENDED		(TASK_SLOT_GATE + 2)
-#define TASK_SLOTS		(TASK_SLOT_GATE + 3)
+/* The two slots of a pair of the root's slot pool. */
+typedef enum pair_slot {
+	PAIR_FIRST = 0,
+	PAIR_SECOND = 1
+} pair_slot_t;
 
 /* What erx_space_create hands the fill of its space record. */
 typedef struct task_create {
@@ -57,7 +58,11 @@ typedef struct task_create {
 	uint32_t	gate;		/* as erx_fiasco_gate_named gave it */
 } task_create_t;
 
-static uint64_t	task_slot(uint32_t, uint32_t);
+static uint64_t	pair_cap(erx_slot_pair_t, pair_slot_t);
+static bool	task_pairs_take(erx_fiasco_task_pairs_t *);
+static void	pair_free(erx_slot_pool_t *, erx_slot_pair_t *);
+static uint64_t	task_ended_cap(uint32_t);
+static bool	task_tables_open(uint32_t, const task_create_t *);
 static uint32_t	*task_space_of(uint32_t);
 static int	task_space_named(uint32_t, uint64_t, uint32_t *);
 static bool	task_failed(l4_msgtag_t);
@@ -85,7 +90,9 @@ static int	task_fill_child(uint32_t, const void *);
 static int	task_fill_physical(uint32_t, const void *);
 static int	task_fill_contiguous(uint32_t, const void *);
 
-_Static_assert(sizeof(erx_fiasco_task_t) <= ERX_PAGE_SIZE, "a task's row fits a page of its table");
+/* The task table's rows, which the ABI writes down for the figures that share it out, are what its one directory page holds. */
+_Static_assert(ERX_FIASCO_TASK_ROWS == ERX_BACKEND_GROW_PAGES_MAX * (ERX_PAGE_SIZE / sizeof(erx_fiasco_task_t)),
+    "ERX_FIASCO_TASK_ROWS is two rows a page in the task table's one directory page");
 
 /* erx_fiasco_task_t by index, the root's first. */
 static erx_backend_grow_table_t task_rows;
@@ -100,6 +107,14 @@ static const erx_pack_view_t *task_archive;
 static erx_backend_grow_table_t task_image_slices;
 /* One plan at a time, as the service runs one body: too large for its stack to spare. */
 static erx_elf_plan_t task_plan;
+/*
+ * The root's slot pool (docs/design-fiasco.md, "Handles"), in its two shares, the task
+ * rows' first and then the threads': taken and freed only by the service's bodies.
+ */
+static erx_slot_pool_t task_pairs;
+static uint64_t task_pairs_taken[ERX_SLOT_POOL_WORDS(ERX_FIASCO_POOL_TASK_PAIRS)];
+static erx_slot_pool_t thread_pairs;
+static uint64_t thread_pairs_taken[ERX_SLOT_POOL_WORDS(ERX_FIASCO_POOL_THREAD_PAIRS)];
 /* How many stops the service has made: a stopping row keeps the count its own made, which orders the teardowns. */
 static uint64_t task_stops;
 
@@ -136,6 +151,8 @@ erx_fiasco_task_table_init(void)
 {
 	const char *reason;
 
+	erx_slot_pool_init(&task_pairs, task_pairs_taken, 0, ERX_FIASCO_POOL_TASK_PAIRS);
+	erx_slot_pool_init(&thread_pairs, thread_pairs_taken, ERX_FIASCO_POOL_TASK_PAIRS, ERX_FIASCO_POOL_THREAD_PAIRS);
 	erx_backend_grow_table_init(&task_rows, sizeof(erx_fiasco_task_t), &erx_fiasco_vm_records);
 	erx_backend_grow_table_init(&task_spaces, sizeof(uint32_t), &erx_fiasco_vm_records);
 	erx_backend_grow_table_init(&task_image_slices, sizeof(uint32_t), &erx_fiasco_vm_records);
@@ -213,10 +230,56 @@ erx_fiasco_task_created_by(uint32_t task, uint32_t caller)
 	return (space != 0 && erx_fiasco_object_at(space - 1)->creator == caller);
 }
 
+/* A record that names no pair names no slot either, so a stale use is Fiasco's refusal. */
 static uint64_t
-task_slot(uint32_t task, uint32_t slot)
+pair_cap(erx_slot_pair_t pair, pair_slot_t slot)
 {
-	return (erx_fiasco_root_slot_cap(ERX_FIASCO_SLOT_TASK_RUNS + (task - 1) * TASK_SLOTS + slot));
+	if (pair.number == 0)
+		return (L4_INVALID_CAP);
+	return (erx_fiasco_root_slot_cap(ERX_FIASCO_SLOT_POOL + 2u * ((uint32_t)pair.number - 1u) + slot));
+}
+
+/*
+ * Gives the record's pair back and leaves the record naming none. A pair the share does
+ * not hold as taken is a service that lost track of its slots: the machine ends.
+ */
+static void
+pair_free(erx_slot_pool_t *share, erx_slot_pair_t *pair)
+{
+	static const char line[] = "erx: service: a free of a slot pair its share holds free\n";
+
+	if (!erx_slot_pool_free(share, pair)) {
+		erx_fiasco_console_write(line, sizeof(line) - 1);
+		erx_fiasco_end(ERX_FIASCO_END_REFUSED, NULL);
+	}
+}
+
+/* Both of a new task's pairs, or neither. */
+static bool
+task_pairs_take(erx_fiasco_task_pairs_t *pairs)
+{
+	if (!erx_slot_pool_take(&task_pairs, &pairs->objects))
+		return (false);
+	if (!erx_slot_pool_take(&task_pairs, &pairs->ended)) {
+		pair_free(&task_pairs, &pairs->objects);
+		return (false);
+	}
+	return (true);
+}
+
+int
+erx_fiasco_task_thread_pair_take(uint32_t task, uint32_t index)
+{
+	if (task == ERX_FIASCO_TASK_ROOT)
+		return (ERX_OK);
+	return (erx_slot_pool_take(&thread_pairs, &erx_fiasco_task(task)->thread_pairs[index]) ? ERX_OK : ERX_ENOMEM);
+}
+
+void
+erx_fiasco_task_thread_pair_free(uint32_t task, uint32_t index)
+{
+	if (task != ERX_FIASCO_TASK_ROOT)
+		pair_free(&thread_pairs, &erx_fiasco_task(task)->thread_pairs[index]);
 }
 
 /* The first thread's capability is the one the kernel gave it. */
@@ -224,7 +287,7 @@ uint64_t
 erx_fiasco_task_thread_cap(uint32_t task, uint32_t index)
 {
 	if (task != ERX_FIASCO_TASK_ROOT)
-		return (task_slot(task, index));
+		return (pair_cap(erx_fiasco_task(task)->thread_pairs[index], PAIR_FIRST));
 	return (index == 0 ? L4_BASE_THREAD_CAP : erx_fiasco_thread_cap(index));
 }
 
@@ -232,14 +295,15 @@ uint64_t
 erx_fiasco_task_semaphore_cap(uint32_t task, uint32_t index)
 {
 	if (task != ERX_FIASCO_TASK_ROOT)
-		return (task_slot(task, ERX_FIASCO_THREADS_MAX + index));
+		return (pair_cap(erx_fiasco_task(task)->thread_pairs[index], PAIR_SECOND));
 	return (erx_fiasco_thread_semaphore_cap(index));
 }
 
 uint64_t
 erx_fiasco_task_gate_cap(uint32_t task)
 {
-	return (task != ERX_FIASCO_TASK_ROOT ? task_slot(task, TASK_SLOT_GATE) : erx_fiasco_service_gate());
+	return (task != ERX_FIASCO_TASK_ROOT ? pair_cap(erx_fiasco_task(task)->pairs.objects, PAIR_FIRST) :
+	    erx_fiasco_service_gate());
 }
 
 void
@@ -263,13 +327,13 @@ erx_fiasco_task_gate_slot(uint32_t task)
 uint64_t
 erx_fiasco_task_cap(uint32_t task)
 {
-	return (task != ERX_FIASCO_TASK_ROOT ? task_slot(task, TASK_SLOT_SPACE) : L4_BASE_TASK_CAP);
+	return (task != ERX_FIASCO_TASK_ROOT ? pair_cap(erx_fiasco_task(task)->pairs.objects, PAIR_SECOND) : L4_BASE_TASK_CAP);
 }
 
-uint64_t
-erx_fiasco_task_ended_cap(uint64_t task)
+static uint64_t
+task_ended_cap(uint32_t task)
 {
-	return (task_slot((uint32_t)task, TASK_SLOT_ENDED));
+	return (pair_cap(erx_fiasco_task(task)->pairs.ended, PAIR_FIRST));
 }
 
 void *
@@ -300,7 +364,7 @@ task_objects_make(uint32_t task)
 	uint64_t reserved;
 
 	if (task_failed(l4_factory_create_task(L4_BASE_FACTORY_CAP, erx_fiasco_task_cap(task), &area)) ||
-	    task_failed(l4_factory_create(L4_BASE_FACTORY_CAP, L4_PROTO_SEMAPHORE, erx_fiasco_task_ended_cap(task))) ||
+	    task_failed(l4_factory_create(L4_BASE_FACTORY_CAP, L4_PROTO_SEMAPHORE, task_ended_cap(task))) ||
 	    task_failed(l4_factory_create_gate(L4_BASE_FACTORY_CAP, erx_fiasco_task_gate_cap(task),
 	    erx_fiasco_service_thread(), task << ERX_FIASCO_WIRE_LABEL_SHIFT)) ||
 	    task_failed(l4_task_map(erx_fiasco_task_cap(task), L4_BASE_TASK_CAP,
@@ -324,12 +388,16 @@ erx_fiasco_task_create_body(uint32_t caller, const erx_fiasco_space_create_reque
 {
 	const uint64_t flags = request->flags, cap_limit = request->cap_limit;
 	task_create_t create = { .request = request };
+	int status;
 
-	if ((flags & ~(uint64_t)ERX_SPACE_JIT) != 0 || cap_limit < 2 || cap_limit > ERX_CAPS_MAX)
+	if ((flags & ~(uint64_t)ERX_SPACE_JIT) != 0 || cap_limit < 2 ||
+	    cap_limit > ERX_FIASCO_CAP_LIMIT_MAX)
 		return (ERX_EINVAL);
-	if (task_space_named(caller, request->parent, &create.parent) != ERX_OK ||
-	    erx_fiasco_gate_named(caller, request->fault, &create.gate) != ERX_OK)
-		return (ERX_ETYPE);
+	status = task_space_named(caller, request->parent, &create.parent);
+	if (status == ERX_OK)
+		status = erx_fiasco_gate_named(caller, request->fault, &create.gate);
+	if (status != ERX_OK)
+		return (status);
 	/* A stopped space takes no child, so a stop's walk of the tree below it is final. */
 	if (erx_fiasco_task(create.parent)->state != ERX_FIASCO_TASK_LIVE)
 		return (ERX_EINVAL);
@@ -349,6 +417,7 @@ static int
 task_fill_space(uint32_t record, const void *argument)
 {
 	const task_create_t *const create = argument;
+	erx_fiasco_task_pairs_t pairs;
 	erx_fiasco_task_t *parent;
 	uint32_t task = 1;
 
@@ -358,26 +427,24 @@ task_fill_space(uint32_t record, const void *argument)
 	if (erx_backend_grow_table_room(&task_rows, task + 1) != ERX_OK ||
 	    erx_backend_grow_table_room(&task_spaces, record + 1) != ERX_OK)
 		return (ERX_ENOMEM);
-	/* As on erXos's kernel, the limit counts slot 0, ERX_CAP_NULL, which no entry is. */
-	if (erx_fiasco_object_task_open(task, (uint32_t)create->request->cap_limit - 1) != ERX_OK)
+	if (!task_pairs_take(&pairs))
 		return (ERX_ENOMEM);
-	if (erx_fiasco_vm_task_open(task) != ERX_OK) {
-		erx_fiasco_object_task_close(task);
-		return (ERX_ENOMEM);
-	}
-	if (erx_fiasco_gate_space_open(task, create->gate, create->request->label) != ERX_OK) {
-		erx_fiasco_vm_task_close(task);
-		erx_fiasco_object_task_close(task);
+	if (!task_tables_open(task, create)) {
+		pair_free(&task_pairs, &pairs.ended);
+		pair_free(&task_pairs, &pairs.objects);
 		return (ERX_ENOMEM);
 	}
 
-	*erx_fiasco_task(task) = (erx_fiasco_task_t){ .state = ERX_FIASCO_TASK_LIVE, .flags = (uint32_t)create->request->flags };
+	*erx_fiasco_task(task) = (erx_fiasco_task_t){ .state = ERX_FIASCO_TASK_LIVE, .flags = (uint32_t)create->request->flags,
+	    .pairs = pairs };
 	if (!task_objects_make(task)) {
 		/* No thread ever ran, so nobody waits on the ended semaphore, no status is owed, and its memory is a few pages. */
 		task_unrun(task);
 		task_unmake(task);
 		erx_fiasco_gate_space_close(task);
-		task_delete(erx_fiasco_task_ended_cap(task));
+		task_delete(task_ended_cap(task));
+		pair_free(&task_pairs, &erx_fiasco_task(task)->pairs.ended);
+		pair_free(&task_pairs, &erx_fiasco_task(task)->pairs.objects);
 		*erx_fiasco_task(task) = (erx_fiasco_task_t){ .state = ERX_FIASCO_TASK_ABSENT };
 		return (ERX_ENOMEM);
 	}
@@ -388,6 +455,25 @@ task_fill_space(uint32_t record, const void *argument)
 	*task_space_of(record) = task + 1;
 	erx_fiasco_trace_service(ERX_TRACE_EVENT_SPACE_START, (uint64_t)task + 1, 0, 0);
 	return (ERX_OK);
+}
+
+/* A new task's handle table, range table and gate space, or none of them. */
+static bool
+task_tables_open(uint32_t task, const task_create_t *create)
+{
+	/* As on erXos's kernel, the limit counts slot 0, ERX_CAP_NULL, which no entry is. */
+	if (erx_fiasco_object_task_open(task, (uint32_t)create->request->cap_limit - 1) != ERX_OK)
+		return (false);
+	if (erx_fiasco_vm_task_open(task) != ERX_OK) {
+		erx_fiasco_object_task_close(task);
+		return (false);
+	}
+	if (erx_fiasco_gate_space_open(task, create->gate, create->request->label) != ERX_OK) {
+		erx_fiasco_vm_task_close(task);
+		erx_fiasco_object_task_close(task);
+		return (false);
+	}
+	return (true);
 }
 
 /*
@@ -463,7 +549,8 @@ task_image_slice(uint32_t entry, uint32_t *slice)
  * and entry counts from the run's first, ERX_ERANGE past its last; a handle that names
  * no slice is the lookup's refusal, ERX_ETYPE for another kind. The root alone may name
  * ERX_CAP_NULL, the whole archive, and then entry is the archive's own index: how the
- * domain library maps a runtime's image entry, which no slice may hold.
+ * domain library maps a runtime's image entry, which no slice may hold. ERX_CAP_NULL
+ * from any other task is ERX_EINVAL, before the lookup.
  */
 static int
 task_image_entry(uint32_t caller, uint64_t image, uint64_t entry, uint32_t *index)
@@ -471,8 +558,8 @@ task_image_entry(uint32_t caller, uint64_t image, uint64_t entry, uint32_t *inde
 	uint32_t object, first, count;
 	int status;
 
-	if (caller == ERX_FIASCO_TASK_ROOT && image == ERX_CAP_NULL) {
-		if (entry > UINT32_MAX)
+	if (image == ERX_CAP_NULL) {
+		if (caller != ERX_FIASCO_TASK_ROOT || entry > UINT32_MAX)
 			return (ERX_EINVAL);
 		*index = (uint32_t)entry;
 		return (ERX_OK);
@@ -570,8 +657,10 @@ task_unrun(uint32_t task)
 		if (row->threads[index] != ERX_FIASCO_TASK_THREAD_ABSENT)
 			task_delete(erx_fiasco_task_thread_cap(task, index));
 	for (uint32_t index = ERX_FIASCO_THREADS_MAX; index-- > 0;)
-		if (row->threads[index] != ERX_FIASCO_TASK_THREAD_ABSENT)
+		if (row->threads[index] != ERX_FIASCO_TASK_THREAD_ABSENT) {
 			task_delete(erx_fiasco_task_semaphore_cap(task, index));
+			erx_fiasco_task_thread_pair_free(task, index);
+		}
 	task_delete(erx_fiasco_task_gate_cap(task));
 	erx_fiasco_gate_task_gone(task);
 	if (row->group != 0)
@@ -600,13 +689,15 @@ static void
 task_stop(uint32_t task, uint32_t stopper, int64_t status)
 {
 	erx_fiasco_task_t *const row = erx_fiasco_task(task);
+	erx_fiasco_task_pairs_t pairs;
 	erx_fiasco_task_tree_t tree;
 
 	task_unrun(task);
 	tree = row->tree;
+	pairs = row->pairs;
 	task_stops++;
-	*row = (erx_fiasco_task_t){ .state = ERX_FIASCO_TASK_STOPPING, .tree = tree, .status = status, .stopper = stopper,
-	    .stop_order = task_stops };
+	*row = (erx_fiasco_task_t){ .state = ERX_FIASCO_TASK_STOPPING, .tree = tree, .pairs = pairs, .status = status,
+	    .stopper = stopper, .stop_order = task_stops };
 }
 
 /*
@@ -619,14 +710,15 @@ task_finish(uint32_t task)
 {
 	erx_fiasco_task_t *const row = erx_fiasco_task(task);
 	const erx_fiasco_task_tree_t tree = row->tree;
+	const erx_fiasco_task_pairs_t pairs = row->pairs;
 	const uint32_t stopper = row->stopper;
 	const int64_t status = row->status;
 
 	task_unmake(task);
-	*row = (erx_fiasco_task_t){ .state = ERX_FIASCO_TASK_ENDED, .tree = tree, .status = status };
+	*row = (erx_fiasco_task_t){ .state = ERX_FIASCO_TASK_ENDED, .tree = tree, .pairs = pairs, .status = status };
 	erx_fiasco_gate_exit(task, stopper, status);
 	erx_fiasco_trace_service(ERX_TRACE_EVENT_SPACE_END, (uint64_t)task + 1, (uint64_t)status, 0);
-	(void)l4_semaphore_up(erx_fiasco_task_ended_cap(task));
+	(void)l4_semaphore_up(task_ended_cap(task));
 }
 
 /* Whether the task is top or lies below it in the tree. The root is every task's ancestor. */
@@ -757,7 +849,10 @@ task_remove(uint32_t task)
 		link = &erx_fiasco_task(*link)->tree.sibling;
 	*link = row->tree.sibling;
 	erx_fiasco_gate_space_close(task);
-	task_delete(erx_fiasco_task_ended_cap(task));
+	task_delete(task_ended_cap(task));
+	/* The ended semaphore was the last object in the task's pairs. */
+	pair_free(&task_pairs, &row->pairs.ended);
+	pair_free(&task_pairs, &row->pairs.objects);
 	*row = (erx_fiasco_task_t){ .state = ERX_FIASCO_TASK_ABSENT };
 	if (record != 0) {
 		/* Cleared first, so the record's end finds no space left to release. */
@@ -832,7 +927,7 @@ erx_fiasco_task_stop_body(uint32_t caller, uint64_t space, int64_t status)
 }
 
 int
-erx_fiasco_task_join_body(uint32_t caller, uint64_t space, int64_t *status, uint64_t *task)
+erx_fiasco_task_join_body(uint32_t caller, uint64_t space, int64_t *status, uint64_t *ended)
 {
 	uint32_t named;
 	int result;
@@ -845,7 +940,7 @@ erx_fiasco_task_join_body(uint32_t caller, uint64_t space, int64_t *status, uint
 	if (named == caller)
 		return (ERX_EINVAL);
 	if (erx_fiasco_task(named)->state != ERX_FIASCO_TASK_ENDED) {
-		*task = named;
+		*ended = task_ended_cap(named);
 		return (ERX_EBUSY);
 	}
 	*status = erx_fiasco_task(named)->status;
@@ -1041,33 +1136,32 @@ erx_fiasco_task_fault(uint32_t task, const erx_crash_fault_t *fault)
 #ifdef ERX_FIASCO_TEST_HOOKS
 #include <stdbool.h>
 
-static bool	task_caps_gone(uint32_t);
-
 /*
- * Whether every capability the root held for each task index not in use reads as gone.
- * Call it only while no request runs: it reads the service's rows.
+ * Whether both slots of every pair the pool holds free read as gone: no pair is free
+ * while Fiasco still holds an object in it. Call it only while no request runs: it reads
+ * the service's pool.
  */
 bool
-erx_fiasco_test_task_caps_gone(void)
+erx_fiasco_test_pool_slots_gone(void)
 {
-	for (uint32_t task = 1; task < erx_backend_grow_table_capacity(&task_rows); task++)
-		if (erx_fiasco_task(task)->state == ERX_FIASCO_TASK_ABSENT && !task_caps_gone(task))
+	for (uint32_t index = 0; index < ERX_FIASCO_POOL_PAIRS; index++) {
+		const erx_slot_pair_t pair = { .number = (uint16_t)(index + 1) };
+
+		if (!erx_slot_pool_taken(&task_pairs, pair) && !erx_slot_pool_taken(&thread_pairs, pair) &&
+		    (l4_msgtag_label(l4_task_cap_valid(L4_BASE_TASK_CAP, pair_cap(pair, PAIR_FIRST))) != 0 ||
+		    l4_msgtag_label(l4_task_cap_valid(L4_BASE_TASK_CAP, pair_cap(pair, PAIR_SECOND))) != 0))
 			return (false);
+	}
 	return (true);
 }
 
-static bool
-task_caps_gone(uint32_t task)
+/*
+ * The free pairs of both shares. A read while a request runs sees a count some body left,
+ * so a case waiting for a count to settle reads it again.
+ */
+uint32_t
+erx_fiasco_test_pool_free(void)
 {
-	const uint64_t caps[] = { erx_fiasco_task_gate_cap(task), erx_fiasco_task_cap(task) };
-
-	for (size_t cap = 0; cap < sizeof(caps) / sizeof(caps[0]); cap++)
-		if (l4_msgtag_label(l4_task_cap_valid(L4_BASE_TASK_CAP, caps[cap])) != 0)
-			return (false);
-	for (uint32_t index = 0; index < ERX_FIASCO_THREADS_MAX; index++)
-		if (l4_msgtag_label(l4_task_cap_valid(L4_BASE_TASK_CAP, erx_fiasco_task_thread_cap(task, index))) != 0 ||
-		    l4_msgtag_label(l4_task_cap_valid(L4_BASE_TASK_CAP, erx_fiasco_task_semaphore_cap(task, index))) != 0)
-			return (false);
-	return (true);
+	return (erx_slot_pool_free_count(&task_pairs) + erx_slot_pool_free_count(&thread_pairs));
 }
 #endif

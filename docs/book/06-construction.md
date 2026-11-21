@@ -7,8 +7,8 @@
 > checks, each with a seeded violation; and the stack proof of the C17
 > code that Fiasco links. Of the properties in section 6.2, three are
 > Designed: the memory wall of a domain's budget, Fiasco's refusal of
-> a mapping that is writable and executable at once, and handles with
-> rights and a generation in their value. The rest are Built, with the
+> a mapping that is writable and executable at once, and rights on
+> handles checked on every use. The rest are Built, with the
 > limits the section states.
 
 **Background needed.** [Chapter 1](01-operating-systems.md): caches,
@@ -179,20 +179,19 @@ can be missed. A record whose generation reaches its largest value is
 retired and never used again, so a stale handle never names a
 successor object. **Built.**
 
-Handles carry no rights. Any holder may use an object as its type
-allows; only destroying it is kept to the task that created it.
+A holder's own close is covered by a second generation, the entry's,
+which the handle's value carries in its upper 40 bits and every close
+advances. A program that closes a handle and goes on using its value
+gets `ERX_ESTALE`, even after the entry is taken again: free entries
+are reused first in, first out, and an entry whose generation reaches
+its largest value retires too. **Built.**
 
-The generation does not cover a holder's own close. A closed handle's
-number answers `ERX_EINVAL` until the root service reuses it, and it
-reuses numbers lowest first, as UNIX reuses descriptors. A program that closes handle 5 and goes on
-using 5 reaches whatever object is given that number next. This is a
-limitation of the system.
-
-The design closes both gaps; it is designed and not built. Each
-handle records its rights, which shrink when the handle is
-duplicated or passed and are checked on every use, and a handle's
-value carries its entry's generation, so a use after the holder's
-own close answers `ERX_ESTALE` too and never reaches another object.
+Each entry records its rights, but no call except destroy checks them:
+any holder may use an object as its type allows, and only destroying
+it is kept to the task that created it. The design closes that gap; it
+is designed and not built. A create records its creation kind's
+default rights, which shrink when the handle is duplicated or passed,
+and every call checks the right it needs.
 
 ### 6.2.3 Budgets
 
@@ -425,7 +424,7 @@ and its edge sets one timer to it.
 ## 6.4 A worked example: the device DMA plan
 
 The device DMA path shows the chapter's ideas in one place.
-[Chapter 15](README.md#chapter-15-devices-and-drivers) explains the
+[Chapter 15](15-devices.md) explains the
 device NIF in full; this section follows one call.
 
 > **Background: a device that does not see the cache.** A device that

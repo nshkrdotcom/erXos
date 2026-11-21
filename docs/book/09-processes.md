@@ -85,7 +85,7 @@ the same table, as rows of their own; that is not built.
 
 The same processes appear in the Erlang shell's `erx:i()`, under
 `/proc`, and in the inspector
-([chapter 21](README.md#chapter-21-the-live-machine)). No second,
+([chapter 21](21-live-machine.md#211-the-machine-is-an-object)). No second,
 hidden kind of process lies beneath them.
 
 An Erlang programmer writes the code they would write on FreeBSD.

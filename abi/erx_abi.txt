@@ -688,6 +688,18 @@ enum end u32
 limit fiasco_contig_order_min u32 21
 limit fiasco_contig_order_max u32 24
 
+# The Fiasco root's layout of its object space (docs/design-fiasco.md, "Handles"):
+# the slots of Fiasco's object space under config/fiasco/kernel.defconfig, the
+# root's handle limit, a declared figure, and the IRQ objects the machine admits,
+# each with a slot of the root's; liberx/backend/fiasco/root_layout.h lays the
+# root's fixed slots out from them and leaves the rest to the slot pool. The task
+# table's rows, its two rows a page in its one directory page, which
+# liberx/backend/fiasco/service_task.c fails to build unless its row's size gives.
+limit fiasco_obj_space_slots u32 65536
+limit fiasco_root_handles u32 16384
+limit fiasco_irqs_max u32 256
+limit fiasco_task_rows u32 1024
+
 # The Phase 1 root service's wire, in a native UTCB's message registers
 # (docs/design-fiasco.md, "The root service"). A request's tag label is its
 # fiasco_call number and its first word names the calling thread; a layout's
@@ -726,8 +738,6 @@ enum fiasco_call u32
   value gate_wait 31
   value irq_create 32
   value irq_bind 33
-  value irq_ack 34
-  value irq_trigger 35
   value time_set_offset 36
   value irq_unbind 37
   value gate_cancel 38

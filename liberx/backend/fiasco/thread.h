@@ -103,26 +103,6 @@ uint64_t	erx_fiasco_thread_native_slot(uint32_t);
 uint64_t	erx_fiasco_thread_semaphore_cap(uint32_t);
 uint64_t	erx_fiasco_thread_cap(uint32_t);
 
-/* The most IRQ objects the machine holds at once: each has a slot of the root's. */
-#define ERX_FIASCO_IRQS_MAX	256u
-
-/*
- * The root's capability slots past both per-thread runs, as erx_fiasco_root_slot_cap
- * takes them: its numbering continues the thread capabilities'. One list, so that no
- * two users can pick the same slot.
- */
-enum {
-	ERX_FIASCO_SLOT_SERVICE_GATE = ERX_FIASCO_THREADS_MAX,
-	ERX_FIASCO_SLOT_SERVICE_THREAD,
-	ERX_FIASCO_SLOT_WATCHDOG,
-	/* One slot for each IRQ object of the machine's, which irq.c keeps. */
-	ERX_FIASCO_SLOT_IRQS,
-	/* Each task's run of slots: service_task.c divides them. */
-	ERX_FIASCO_SLOT_TASK_RUNS = ERX_FIASCO_SLOT_IRQS + ERX_FIASCO_IRQS_MAX
-};
-
-uint64_t	erx_fiasco_root_slot_cap(uint32_t);
-
 /* The first thread's kernel-given UTCB: its page holds the service's and the watchdog's too. */
 void		*erx_fiasco_thread_first_utcb(void);
 

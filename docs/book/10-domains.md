@@ -211,7 +211,7 @@ its own side, which section 10.3 shows the reader surviving.
 
 In the system as built, each party's `liberx` asks the root to map its
 peer's side read-only, and that request is what keeps one writer per
-page. Handles carry no rights
+page. No call checks a handle's rights yet
 ([section 8.4.4](08-kernel-interface.md#844-rights)), so a domain that
 sent the root its own request could map its peer's side writable. This
 is one reason every build runs trusted code only. The design gives each
@@ -971,8 +971,8 @@ subject of [chapter 11](11-security.md).
   the plans the library computes and applies.
 * [design-fiasco.md](../design-fiasco.md): what the root service does
   for connections, doorbells and stops.
-* Lawrie Brown and Dan Sahlin, "Extending Erlang for Safety and
-  Reliability", ICICS 1999: Safe Erlang, section 2 for the problem
+* Lawrie Brown and Dan Sahlin, "Extending Erlang for Safe Mobile
+  Code Execution", ICICS 1999, LNCS 1726: Safe Erlang, section 2 for the problem
   with pids and section 3.1 for its capabilities.
 * The Erlang distribution protocol, `erts/doc/guides/erl_dist_protocol.md`
   in OTP's source: the control tuples a frame carries.

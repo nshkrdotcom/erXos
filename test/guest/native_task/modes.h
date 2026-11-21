@@ -22,6 +22,12 @@
 #define MODE_DEVICE_REFUSED	11	/* device memory from a task: a physical or contiguous create refused */
 #define MODE_YIELD	12	/* two threads on one CPU hand a count back and forth by yielding: ends with 0 */
 #define MODE_MACHINE_END	13	/* erx_machine_end from a task, refused with ERX_ENOTSUP: ends with 0 */
+#define MODE_POOL_ROUNDS	14	/* more thread creates, starts and exits than the root's slot pool holds pairs: ends with 0 */
+
+/* The threads MODE_WAIT starts before it sleeps, each asleep for good. */
+#define WAIT_THREADS	2u
+/* The threads every task runs before its main: its first, its reaper and its dispatcher (task_start.c). */
+#define TASK_OWN_THREADS	3u
 
 /* The line the log case tries to forge, which must appear only inside a record. */
 #define LOG_FORGED_LINE	"erx: task: forged ok"

@@ -564,8 +564,7 @@ Erlang commands; the system's state under `/proc`; inspecting any
 process; creating a domain and seeing a link report its end; memory and
 threads held as records, and ending a domain ends everything charged to
 it. Designed: memory limits that refuse a domain more, CPU limits per
-domain, rights on handles and handles that stay stale after their own
-close, a login that gives each person a domain of their own, and
+domain, rights on handles checked on every use, a login that gives each person a domain of their own, and
 toybox's UNIX programs in the session's `/bin`.
 
 1. **Seven concepts, each with one owner.** Process, domain, runtime,
@@ -640,8 +639,8 @@ plan and the one effect loop; the funnel; the chokepoint build checks,
 each with a seeded violation; and the stack proof of the C17 code that
 Fiasco links. Of the properties in section 6.2, three are Designed: the
 memory wall of a domain's budget, Fiasco's refusal of a mapping that is
-writable and executable at once, and handles with rights and a
-generation in their value. The rest are Built, with the limits the
+writable and executable at once, and rights on handles checked on
+every use. The rest are Built, with the limits the
 chapter states.
 
 1. **Open-ended enumeration is the smell.** A correctness argument that
@@ -655,9 +654,8 @@ chapter states.
    [design.md, Correct by construction in code](../design.md#correct-by-construction-in-code).
 2. **The properties erXos holds by construction.** A tour of the list
    as it holds on Fiasco: only the root service creates kernel objects;
-   a destroyed object's handles answer `ERX_ESTALE` and never name a
-   successor, while a number used after its own close can reach another
-   object; a domain's memory is charged to its own budget, and the wall
+   a destroyed object's handles, and a handle used after its own
+   close, answer `ERX_ESTALE` and never name a successor; a domain's memory is charged to its own budget, and the wall
    that refuses a charge past it is Designed; a pid is a name, not an
    authority; no process acts on a message from another domain that its
    protocol's owner did not admit; every layer agrees on the ABI because
@@ -839,7 +837,7 @@ creation, umtx waits and parking; fault gates and exit records; the
 machine's end on a fault of the root task; budgets as records that end
 what is charged to them. Designed: priority bands and per-domain CPU
 sets; signals through vCPU upcalls; DMA spaces behind an IOMMU; rights
-on handles and the generation in a handle's value; and the system-call
+on handles checked on every use; and the system-call
 fuzz campaign.
 
 1. **What the kernel knows, and what it does not.** Spaces, threads,
@@ -865,13 +863,14 @@ fuzz campaign.
    [design-fiasco.md, Who holds what](../design-fiasco.md#who-holds-what),
    [design-fiasco.md, The call table](../design-fiasco.md#the-call-table).
 4. **Handles and destroying an object.** A handle is an entry in the
-   caller's table in the root service, one plus its index; the entry
-   records its object's generation, so a destroyed object's handles
-   answer `ERX_ESTALE` and never name a successor. A closed number is
-   reused lowest first, so a use after one's own close can reach another
-   object; the section says what that means for an app and for a
-   server. Handles carry no rights, and only the creator may destroy;
-   rights per handle and a generation in the value are Designed.
+   caller's table in the root service; the entry records its object's
+   generation, and the handle's value carries the entry's own, so a
+   destroyed object's handles and a handle used after its own close
+   both answer `ERX_ESTALE` and never name a successor. Free entries
+   are reused first in, first out. Entries record rights, and only the
+   creator may destroy; rights narrowed per creation kind and checked on
+   every use, and interrupt objects rung straight through Fiasco, are
+   Designed.
    Handles flow only down, from a space's creator into it.
    *Draws on:* [design-fiasco.md, Destroying an object](../design-fiasco.md#destroying-an-object),
    [design-fiasco.md, Passing a handle](../design-fiasco.md#passing-a-handle).
@@ -1524,10 +1523,14 @@ and congestion control. DHCP and NTP.
 
 **Status.** Built: `erx_net` in a network domain (Ethernet, ARP, IPv4,
 IPv6 neighbour discovery, ICMP, UDP, TCP, DHCP) over virtio-net and the
-Pi 4's GENET, `ifconfig`, `ping`, `host`, `gen_tcp` in and out, NTP.
-Designed: sockets for native programs, the fast path, and the stack's
-full verification against FreeBSD (the chapter's writer checks which
-parts of each are built).
+Pi 4's GENET, `ifconfig`, `ping`, `host`, `gen_tcp` and `gen_udp` in any
+domain that holds the `net` facet, bounded queues and per-domain
+limits, merged receives, an exhaustive test of the TCP core, fuzz tests
+of the decoders, and NTP. Designed: two speed-ups that work only in host
+tests (checksums in the copy, many segments as one unit), a leaner
+per-segment step, sockets for native programs, FreeBSD's TCP test
+scripts run against the stack, generated admission code, `ntpd` enabled
+from `/etc/start.conf`, and WiFi as an interface.
 
 1. **Why FreeBSD's stack, and why not a translation.** What the stack
    matches, why FreeBSD's default stack and not another, and what a naive
@@ -1574,8 +1577,13 @@ a study in pure protocol cores.
 **Background needed.** Chapters 3 and 6 (state machines as pure cores),
 chapter 15 (drivers and devices), chapter 17 (the network stack).
 
-**Status.** Built as pure cores with host tests: WiFi's join machine, SAE exchange and
-EAPOL-Key codec. No radio driver runs on a board.
+**Status.** Built as pure Erlang cores with host tests, driving no
+radio: the station's choice of a network, the join machine, the failure
+memory, `erx_wifi_keys`, the public half of SAE, the EAPOL-Key codec
+and the WPA key arithmetic. Designed: the SDIO host, the chip process
+and its firmware, the station's process, the key holder, SAE's three
+functions in `crypto`, the Transition Disable report, the `wlan0`
+medium and its tools. No WiFi driver runs on a board.
 
 1. **WiFi on the CYW43455.** What the chip offers, where its firmware is
    trusted and where it is not, and the driver's place beside the network
@@ -1609,8 +1617,13 @@ Erlang, with Low Energy and the peripheral role first.
 **Background needed.** Chapters 3 and 6 (supervised processes, pure
 cores), chapter 15 (drivers and devices).
 
-**Status.** Built as pure cores with host tests: Bluetooth's HCI codec and controller process
-with its line, links and patch reader. No radio driver runs on a board.
+**Status.** Built, with host tests, but run on no board: the H4 framing
+and HCI codec, the controller process with its supervision, the patch
+reader, advertising data and the identity address, and the line tree
+with its keeper. Designed: running the domain on the Pi 4, the
+controller's power cycle, serving the line to a file grant, the GATT
+server and its gate, the `ble` facet, the serial service, pairing and
+bonding, and tests against a Bumble peer.
 
 1. **Bluetooth Low Energy, peripheral first.** What the role is, what
    erXos offers a phone that connects to it, and what it does not offer.
@@ -1649,12 +1662,22 @@ wherever that is also how it works.
 with pipes. Terminals, ttys and the line discipline. SSH in a page: keys
 and channels. The rc shell of Plan 9.
 
-**Status.** Built: rc written in Erlang with job control, Erlang commands
-that follow FreeBSD's output, text pipes, the start table and `service`,
-SSH login for root in development builds, ttys per terminal master.
-Built as a pure core with host tests: the line discipline `erx_tty`.
-Designed: the SSH domain with logins and keys, consoles with a login,
-evi, the screen editor run as `vi`.
+**Status.** Built: the command shell, rc's language in Erlang with a
+bounded parser and job control of Erlang jobs; Erlang commands that
+follow FreeBSD's output (`ls`, `cat`, `grep`, `sort`, `ps`, `top` and
+others); text pipes between Erlang commands and native programs; the
+line discipline `erx_tty`, a pure core with host tests, run by each
+session tty's terminal relay; the console's lines and `Ctrl-G` menu,
+which connects to a session or starts one; the start table with its
+settings in `/data/etc/rc.conf`, and `service`; root's SSH login to `rc`
+in development builds; the session's side of the SSH domain's line and
+the login facet's decoder. Designed: `/etc/start.conf` and start flags;
+interrupting and killing a session from the menu; terminal input to
+native programs through `/dev/tty`; stopping a native program with
+`Ctrl-Z`, the `Ctrl-T` status line, `within`, `rc` as a program for
+`system` and `popen`, toybox, the `secure` attribute and password logins
+at the console, the SSH domain itself with its host key in the vault,
+and evi, the screen editor run as `vi`.
 
 1. **UNIX look and feel, honestly.** What a UNIX user already knows is
    kept wherever it fits; where UNIX systems differ, erXos follows
@@ -1709,12 +1732,19 @@ marked with who reported it, and code loads into the running machine.
 **Background boxes.** How the BEAM traces a process. Module identity and
 what a code hash names. Logging and crash dumps.
 
-**Status.** Built: `erx:i()`, `erx:source/1`, `erx:trace/1`,
-`erx:inspect/2`, `/proc`, the host link with `tools/erx load`, `watch`
-and `files`, `tools/erx web`, the system log, crash records, unsupported
-and partial values on Fiasco. Designed: one timeline of the kernel's and
-the runtimes' scheduling decisions (the chapter's writer checks what
-Fiasco reports of it).
+**Status.** Built: `erx:i/0,1` and `erx:inspect/2`, with a reporter and
+a status on every value, unsupported and partial ones on Fiasco
+included; inspection agents and inspect facets; `/proc`, `dmesg`, `ps`
+and `top`; `erx:source/1` within the caller's runtime; `erx:trace/1`
+over the system domain's processes and the root service's trace ring;
+the host link with `tools/erx load`, `watch`, `files` and `web`; the
+code store, loading into the system domain; the log service to the
+console; the report filter; the crash record on the console. Designed:
+tracing other domains and the frames between them; the host link's
+inspect, trace, source and console commands; loading code into other
+domains, with overlays; refusing code outside installed storage; log
+files under `/var/log`; a crash record that survives the reset; domain
+crash dumps under `/proc`; the host's tree mounted in the machine.
 
 1. **The machine is an object.** `erx:i()` shows CPUs, threads, groups,
    domains, budgets and processes; `erx:source(Pid)` opens the line a
@@ -1763,14 +1793,20 @@ or a browser, renders the same stream of changes in its own idiom.
 command streams, shaders and their page tables. Event-driven GUI
 toolkits and widget trees. A browser as a display: WebSocket and canvas.
 
-**Status.** Built: the window server serving windows as files, Plan 9's
-draw protocol, virtio-gpu, virtio-input and the Pi's framebuffer drivers
-in Erlang, the kiosk dashboard on QEMU and the Pi 4, `erx-lvgl`, the
-theme, Doom as an example program; the website's browser demo running
-erXos in an AArch64 emulator compiled to WebAssembly. Built as a pure
-core with host tests: the rio-style window manager. Designed: the rest
-of the browser client, the desktop session, find and act, graphics
-hardware.
+**Status.** Built: the display domain, whose window server serves each
+window as a directory of files; the pixel area and `present`, by the
+copy path; Plan 9's draw protocol, executed in the client's session, and
+`/dev/draw` for a program started with a window; the virtio-gpu,
+virtio-input and Raspberry Pi framebuffer drivers in Erlang; the input
+router; the single window policy; the widget server with its LVGL
+renderer; the theme; the kiosk dashboard on QEMU and the Raspberry Pi 4;
+Doom as an example program; the terminal emulator's pure core; the
+browser demo; and `tools/erx web`. Built as pure cores with host tests,
+run by no guest: the overlapping window policy and the desktop programs'
+cores. Built and run in a window: `erx_desk` with its `clock` command.
+Designed: the terminal window and presentations in it, the Erlang and
+browser renderers, the web's network front end, the desktop session,
+find and act, the direct path to the device, and graphics hardware.
 
 1. **Windows are files.** A display serves each window as a directory of
    files; a program finds its window at `/dev/draw` and draws with Plan
@@ -1829,10 +1865,18 @@ installed at run time as one file with its needs declared and checked.
 **Background boxes.** Package managers and manifests. Declared
 permissions in app systems, as on a phone.
 
-**Status.** Built: the start table, `erx-app pack` producing a signed
-`.app` file with an EROFS image and a dm-verity tree, packages added to
-an image (the kiosk and Doom). Designed: installing, updating and
-removing at run time, an app's own session and tree.
+**Status.** Built: the start table and `service`, with the settings in
+`/data/etc/rc.conf`. `erx-app pack`, which makes one signed `.app` file
+of a header, an EROFS image and its hash tree. The SDK and its
+public-function check. The image builder's packages: placed in the
+system partition, then checked, admitted and started at boot, as the
+kiosk QEMU suite shows. The decoder, file check, admission and recovery,
+with host tests. An app's session holding only the `packages` and
+`system` grants and the services its app names. `erx_ui_host`. Designed:
+installing, updating and removing through `/apps`, `mount` of a package,
+`service NAME purge`, `/proc/packages`, the app's budget as a wall
+carved at each session's start, the `flags` field, the SDK's host tools,
+`erx-app test`, and `/svc/NAME`.
 
 1. **An app is a principal.** It gets a session from a template, its
    own budget and its own grants; a user adds apps without editing the
@@ -1873,11 +1917,22 @@ one system manifest, and back down to a reset.
 **Background boxes.** Booting an AArch64 machine: firmware, boot loader,
 exception levels. Initial images and boot archives. Watchdog timers.
 
-**Status.** Built: boot on QEMU `virt` (1 to 8 CPUs, HVF and TCG) and the
-Raspberry Pi 4 (QEMU `raspi4b` and a real board), the boot image and
-bootable file, the root task starting the manifest's domains, the
-watchdog, crash records, `reboot` and `halt`, reproducible images.
-Designed: consoles with a login, trial boots of an update.
+**Status.** Built: booting on QEMU `virt` (1 to 8 CPUs, under HVF and
+TCG) and on the Raspberry Pi 4 (QEMU's `raspi4b` model and a real 4 GB
+board); the bootable file in both forms, with every check on the boot
+image made before a byte moves; the root task's first steps and ERTS
+booting the system release; the domain service starting the manifest's
+domains in boot order and restarting them within their intensity;
+root's automatic session at the console in a development build; the
+root service's watchdog, petted by `erx_watchdog`, and on the Pi 4 the
+code that arms the board's hardware watchdog; one end path with a
+crash record on the console; `reboot` and `halt`; seeding from the Pi
+4's hardware random generator; reproducible images. Designed: a typed
+login at the console; the manifest's partial boot; a watchdog pet that
+waits on the services' answers; the ordered end's deadline, the
+vault's quiesce and the storage freeze; the reset count and the rescue
+configuration; the trial request; a release that refuses to boot on a
+weak seed; signed slots; the Raspberry Pi 5.
 
 1. **The bootable file and the boot image.** The one file a loader boots
    (Fiasco's `bootstrap`) with the boot image
@@ -1933,18 +1988,29 @@ outside its own code.
 Coverage-guided fuzzing and sanitizers. Model checking (TLA+) and
 bounded proofs (CBMC). Reproducible builds.
 
-**Status.** Built: `make check-oracle` against stock OTP 29.1.2 and
-musl's `libc-test`; TLA+ models of the lane, connections and links;
-herd7 litmus tests; CBMC harnesses of C17 code; fuzz targets;
-sanitizers; chokepoint checks with seeded violations; the stack proof;
-reproducible images and deterministic boots; QEMU suites. Designed: the
-TLA+ models of the host link's sessions and the update protocol; the
-kernel interface's conformance suite.
+**Status.** Built: the oracles: `make check-oracle`, which runs OTP
+29.1.2's emulator, kernel, stdlib and compiler suites on erXos and on
+stock OTP and compares them case by case, then runs musl's
+`libc-test`; the funnel's differential test against
+`binary_to_term/1`; and the command shell against plan9port's `rc` and
+the terminal emulator against libvterm. Also built are the fuzz
+targets and their budgets, the sanitizer runs, the chokepoint checks
+and the stack proof. The models and bounded proofs are built: the TLA+
+models of the lane, connections and links, the herd7 litmus tests and
+the CBMC harnesses. So are the exhaustive explorations of the TCP
+core, the USB hub machine, the pipe server and the host link's 9P
+bridge; reproducible boot images and the deterministic-mode
+transcript; the QEMU suites; and the seeded faults of each of these.
+Designed: the TLA+ models of the update protocol and of the host
+link's sessions; the kernel interface's conformance cases (the harness
+is built, its roster holds one pending case); the full suites of
+hostile programs; the fuzz campaign against Fiasco's system calls; and
+the further oracles section 25.1.4 lists.
 
 1. **Agreement with ground truth.** Behaviour that disagrees with an
    independent oracle is a bug until it is explained and pinned by a
-   test. OTP's own suites run on erXos and on stock OTP in an isolated
-   Linux container, compared case by case; musl's tests run against
+   test. OTP's own suites run on erXos and on stock OTP on the
+   development host, compared case by case; musl's tests run against
    erXos's C library.
    *Draws on:* [design.md, Testing and the oracle](../design.md#testing-and-the-oracle),
    [design-host-oracle.md](../design-host-oracle.md).
@@ -1998,8 +2064,8 @@ chapter's Background box (TCP window, GATT, ELF, 9P), and erXos's own
 [design.md, The model](../design.md#the-model) and the terms each chapter
 introduces. A reader who meets a term before its chapter finds it here,
 in alphabetical order, with the chapter to turn to. The first version,
-[a-glossary.md](a-glossary.md), lists the terms of chapters 1 to 4; each
-later chapter adds its own.
+[a-glossary.md](a-glossary.md), lists the terms of chapters 1 to 25
+and the appendices.
 
 ## Appendix B. Reading the Design Documents
 
@@ -2014,6 +2080,14 @@ chapter leads into which documents.
 *About 8 pages.* Host setup, fetching pinned sources, the oracle
 bootstrap, `make check`, booting in QEMU and making a Raspberry Pi 4
 card, and hosted mode.
+
+**Status.** Built: everything this appendix tells you to run. The host
+setup on macOS and FreeBSD, `make fetch` against the pins of
+`deps.lock`, `make setup` and the oracle bootstrap, `make check` and
+the slower gates, `tools/erx boot` on QEMU, the QEMU medium and the
+Raspberry Pi 4 card from `make pack`, netbooting a board from a Mac,
+and hosted mode on macOS.
+
 *Draws on:* [README.md, Getting started](../../README.md#getting-started),
 [guide/README.md](../guide/README.md), [design-build.md](../design-build.md).
 
@@ -2021,6 +2095,15 @@ card, and hosted mode.
 
 *About 6 pages.* The dependency table, why each third-party component
 pays for itself, and how licenses and notices travel with every image.
+
+**Status.** Built: the pins of `deps.lock` and their check at fetch; an
+`ORIGIN.md` beside every import, with the change-notice check that
+`make check` runs; the packer's refusal of any file of unknown
+provenance; the license rule `LicenseCheck` and its closed table; and
+the `NOTICES` file that every packed system image carries as
+`system/NOTICES`. Designed: a copy of `NOTICES` beside the boot image
+in each slot's boot partition, and the rows marked as designed.
+
 *Draws on:* [design.md, Dependencies](../design.md#dependencies),
 [design.md, Licenses and notices](../design.md#licenses-and-notices).
 

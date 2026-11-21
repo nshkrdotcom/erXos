@@ -383,7 +383,7 @@ does (section 14.4). Besides `/tmp` and `/proc`, the storage domain's
 littlefs server, the device service's `/dev` and the display's window
 trees are `erx_fs` modules
 ([chapter 16](16-storage.md#163-littlefs-in-the-storage-domain),
-[chapter 22](README.md#chapter-22-displays-windows-and-the-web)).
+[chapter 22](22-display.md#2211-a-windows-directory)).
 
 ### 14.2.5 Stream files and keepers
 
@@ -679,7 +679,7 @@ besides. What it does not do is accept writes. `erx_procfs` has no write
 callback, so its grants refuse every writing operation before the tree
 sees it, and no file of `/proc` is a way to change a process. Debugging and
 tracing are separate tools with their own authority
-([chapter 21](README.md#chapter-21-the-live-machine)).
+([chapter 21](21-live-machine.md#213-tracing)).
 
 **`/dev`.** A program finds `null`, `zero` and `urandom` where it
 expects them, and they behave as on FreeBSD. `tty` is a name and not a

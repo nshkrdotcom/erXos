@@ -179,8 +179,13 @@ erx_thread_create(uint64_t budget, uint64_t space, uint64_t group, uint64_t thre
 
 	(void)budget;
 	(void)group;
-	if (space != 0 || (thread_class != ERX_THREAD_CLASS_WORKER && thread_class != ERX_THREAD_CLASS_EXECUTOR))
+	if (thread_class != ERX_THREAD_CLASS_WORKER && thread_class != ERX_THREAD_CLASS_EXECUTOR)
 		return (ERX_EINVAL);
+	/* ERX_CAP_SELF is accepted and refused as natively; any other space names no object here. */
+	if (space == ERX_CAP_SELF)
+		return (ERX_EINVAL);
+	if (space != 0)
+		return (ERX_ESTALE);
 	for (size_t word = 0; word < sizeof(start) / sizeof(uint64_t); word++)
 		words[word] = atomic_load_explicit(&utcb->mr[word], memory_order_relaxed);
 	(void)pthread_mutex_lock(&thread_lock);

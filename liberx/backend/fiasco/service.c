@@ -40,6 +40,7 @@
 #include "liberx/backend/fiasco/group.h"
 #include "liberx/backend/fiasco/log.h"
 #include "liberx/backend/fiasco/object.h"
+#include "liberx/backend/fiasco/root_layout.h"
 #include "liberx/backend/fiasco/service.h"
 #include "liberx/backend/fiasco/service_task.h"
 #include "liberx/backend/fiasco/slice.h"
@@ -117,8 +118,10 @@ _Static_assert(sizeof(service_build) == sizeof(((erx_boot_handoff_view_t *)0)->b
     "the machine report's build identifier is the handoff's");
 /* Counted, never printed: a label naming no live task. */
 static _Atomic uint64_t service_dropped;
+/* Counted, never printed: every message the service received, a request, a fault or a drop. */
+static _Atomic uint64_t service_received;
 
-/* The gate and the service thread sit past both per-thread runs of slots. */
+/* The gate and the service thread sit past the root's window of IRQ slots (thread.h). */
 uint64_t
 erx_fiasco_service_gate(void)
 {
@@ -302,6 +305,7 @@ service_message(l4_msgtag_t tag, l4_umword_t label, const l4_msg_regs_t *mr, erx
 	const erx_fiasco_wire_decoded_t decoded = erx_fiasco_wire_decode(&input);
 	int status;
 
+	atomic_fetch_add_explicit(&service_received, 1, memory_order_relaxed);
 	switch (decoded.kind) {
 	case ERX_FIASCO_WIRE_DROP:
 		atomic_fetch_add_explicit(&service_dropped, 1, memory_order_relaxed);
@@ -344,10 +348,6 @@ service_irq(const erx_fiasco_wire_decoded_t *decoded, erx_fiasco_reply_t *reply)
 		return (erx_fiasco_irq_bind_body(decoded->task, words));
 	case ERX_FIASCO_CALL_IRQ_UNBIND:
 		return (erx_fiasco_irq_unbind_body(decoded->task, irq_request->irq));
-	case ERX_FIASCO_CALL_IRQ_ACK:
-		return (erx_fiasco_irq_ack_body(decoded->task, irq_request->irq));
-	case ERX_FIASCO_CALL_IRQ_TRIGGER:
-		return (erx_fiasco_irq_trigger_body(decoded->task, irq_request->irq));
 	default:
 		return (ERX_ENOTSUP);
 	}
@@ -410,8 +410,6 @@ service_run(const erx_fiasco_wire_decoded_t *decoded, erx_fiasco_reply_t *reply)
 	case ERX_FIASCO_CALL_IRQ_CREATE:
 	case ERX_FIASCO_CALL_IRQ_BIND:
 	case ERX_FIASCO_CALL_IRQ_UNBIND:
-	case ERX_FIASCO_CALL_IRQ_ACK:
-	case ERX_FIASCO_CALL_IRQ_TRIGGER:
 		return (service_irq(decoded, reply));
 	case ERX_FIASCO_CALL_TIME_SET_OFFSET:
 		return (erx_fiasco_time_set_offset_body(((const erx_fiasco_time_set_offset_request_t *)words)->offset_ns));
@@ -725,9 +723,11 @@ service_thread_create(uint32_t caller, const erx_fiasco_thread_create_request_t 
 	/* A task's thread may fault, and its fault takes an entry it has before it runs. */
 	if (task != ERX_FIASCO_TASK_ROOT && erx_fiasco_gate_thread_room(task, index) != ERX_OK)
 		return (ERX_ENOMEM);
-	if (service_failed(l4_factory_create_thread(L4_BASE_FACTORY_CAP, erx_fiasco_task_thread_cap(task, index))))
+	/* The pair before any Fiasco call, so a full pool is ERX_ENOMEM with nothing created. */
+	if (erx_fiasco_task_thread_pair_take(task, index) != ERX_OK)
 		return (ERX_ENOMEM);
-	if (service_failed(l4_factory_create(L4_BASE_FACTORY_CAP, L4_PROTO_SEMAPHORE,
+	if (service_failed(l4_factory_create_thread(L4_BASE_FACTORY_CAP, erx_fiasco_task_thread_cap(task, index))) ||
+	    service_failed(l4_factory_create(L4_BASE_FACTORY_CAP, L4_PROTO_SEMAPHORE,
 	    erx_fiasco_task_semaphore_cap(task, index))) ||
 	    (task != ERX_FIASCO_TASK_ROOT && service_failed(l4_task_map(erx_fiasco_task_cap(task), L4_BASE_TASK_CAP,
 	    l4_obj_fpage(erx_fiasco_task_semaphore_cap(task, index), 0, L4_CAP_FPAGE_RWS),
@@ -861,7 +861,10 @@ service_thread_reap(uint32_t caller, uint64_t thread)
 	return (ERX_OK);
 }
 
-/* A deletion the root cannot perform leaves a thread it cannot account for: the machine ends. */
+/*
+ * A deletion the root cannot perform leaves a thread it cannot account for: the machine
+ * ends. Once Fiasco has deleted the thread and its semaphore, their pair is free again.
+ */
 static void
 service_thread_delete(uint32_t task, uint32_t index)
 {
@@ -878,6 +881,7 @@ service_thread_delete(uint32_t task, uint32_t index)
 		erx_fiasco_console_write(line, sizeof(line) - 1);
 		erx_fiasco_end(ERX_FIASCO_END_REFUSED, NULL);
 	}
+	erx_fiasco_task_thread_pair_free(task, index);
 }
 
 uint64_t
@@ -898,6 +902,12 @@ uint64_t
 erx_fiasco_test_dropped(void)
 {
 	return (atomic_load_explicit(&service_dropped, memory_order_relaxed));
+}
+
+uint64_t
+erx_fiasco_test_received(void)
+{
+	return (atomic_load_explicit(&service_received, memory_order_relaxed));
 }
 
 uint32_t

@@ -553,7 +553,7 @@ sequenceDiagram
     participant W2 as new driver worker
     W->>W: meets an unexpected case
     W-->>S: exit signal, reason {badmatch, ...}
-    S->>S: one_for_one; within restart limit
+    S->>S: one_for_one, within restart limit
     S->>W2: start from the child specification
     W2-->>S: started, registers its name
     Note over T: sees nothing
@@ -944,7 +944,7 @@ with no recompilation and no restart.
 
 These tools see one node, and nothing beneath it: threads, memory,
 devices, other programs. [Chapter
-21](README.md#chapter-21-the-live-machine) shows how erXos extends this
+21](21-live-machine.md) shows how erXos extends this
 view to the whole machine.
 
 ## 3.8 Where the model stops
@@ -1102,7 +1102,7 @@ section 3.3 describes. **Built**: the display and input drivers are
 Erlang processes ([the top-level README, Current status](../../README.md#current-status)). A test under QEMU, the
 machine emulator erXos's tests run on, kills the disk's driver in the
 middle of a transfer. It finds each kept file cut at a sync (**Built**).
-[Chapter 15](README.md#chapter-15-devices-and-drivers) treats drivers.
+[Chapter 15](15-devices.md) treats drivers.
 
 ### 3.9.4 A functional core, with a behaviour at the edge
 
@@ -1189,7 +1189,7 @@ from installed storage, never a binary a service merely received
 domain](../design-runtime.md#code-in-the-system-domain)). This is
 **Designed** and not built: the boot information carries the flag that
 asks for it, and ERTS ignores it. [Chapter
-21](README.md#chapter-21-the-live-machine) covers code from the host,
+21](21-live-machine.md#214-code-from-the-host-named-by-its-hash) covers code from the host,
 and the tools of section 3.7 extended to the machine.
 
 ### 3.9.7 The chapter's ideas at a glance

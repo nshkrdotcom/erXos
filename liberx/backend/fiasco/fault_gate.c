@@ -69,12 +69,16 @@ int
 erx_fiasco_gate_named(uint32_t caller, uint64_t fault, uint32_t *gate)
 {
 	uint32_t index;
+	int status;
 
 	if (fault == ERX_CAP_NULL) {
 		*gate = GATE_NONE;
 		return (ERX_OK);
 	}
-	if (erx_fiasco_object_find(caller, fault, ERX_BACKEND_OBJECT_GATE, &index) != ERX_OK || index >= GATE_GONE - 1)
+	status = erx_fiasco_object_find(caller, fault, ERX_BACKEND_OBJECT_GATE, &index);
+	if (status != ERX_OK)
+		return (status);
+	if (index >= GATE_GONE - 1)
 		return (ERX_ETYPE);
 	*gate = index + 1;
 	return (ERX_OK);
