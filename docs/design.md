@@ -1947,7 +1947,7 @@ built out of tree, its own build scripts not run unless the row says so.
 | elkjs; entities | the layered layout and the entity decoding beautiful-mermaid calls | EPL-2.0, run unmodified in the build, nothing of it shipped; BSD-2-Clause | permanent build tools of the website | `tools/book/pnpm-lock.yaml`, install scripts off |
 | v64, built with Closure Compiler | the website's in-browser console ([site/README.md](../site/README.md)) | BSD-2-Clause and MIT; Apache-2.0 | website only | `deps.lock`; built by `tools/build_site.rb` |
 | doomgeneric (Doom), with Freedoom 0.13.0's `freedoom1.wad` | the Doom demo, `/bin/doom` of 0.1's published QEMU virt and Raspberry Pi 4 images | GPL-2.0-or-later; the WAD BSD-3-Clause; the image's NOTICES carries both texts, the GPL-2.0 text from the fork | example, 0.1's images only | the submodule `examples/doom/doom` of erXos's fork, fetched by `tools/erx fetch --example doom` with the WAD against its `deps.lock` hash ([ORIGIN.md](../examples/doom/ORIGIN.md)); no file of it enters erXos's tree |
-| xterm.js | the website console's terminal | MIT | website only | loaded from jsDelivr with Subresource Integrity |
+| xterm.js 5.5.0 (`@xterm/xterm`) | the website console's terminal | MIT | website only | `site/pnpm-lock.yaml`; served from the site ([site/README.md](../site/README.md)) |
 
 ### Licenses and notices
 

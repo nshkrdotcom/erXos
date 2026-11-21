@@ -2635,8 +2635,8 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
 
 ## Bugs by subsystem
 
-* [Medium] `site/terminal.js`: the console loads xterm's stylesheet and script from `cdn.jsdelivr.net` when the reader presses Boot, against requirement 7 of [design-book-site.md](docs/design-book-site.md#requirements) (no request to another host); `Site.inventory`'s check reads only `.html` and `.css`. Self-host xterm as v64's packages are, then extend the check to the site's scripts.
-* [Medium] `tools/lib/erx/site.rb` `REMOTE_LOAD`: a regex over HTML enumerates load forms and misses `srcset`, an entity-encoded scheme, `iframe`, `object`, `poster`, SVG `<image href>`, CSS `image-set()` and meta refresh. Replace it with a check of every element's address-valued attributes, so a new form is refused by construction.
+* [Medium] website, `.github/workflows/site.yml`: the workflow installs no pnpm and fetches none of the npm package sets, and its Node 22 is older than the engines `site/package.json` names, so `Site.inventory` refuses its build until the console's xterm.js is installed (`tools/erx fetch` installs it with the other package sets, but also fetches every `deps.lock` source). Install a pinned pnpm and Node 24.2 or later, and give the fetch a way to install one package set alone.
+* [Medium] `tools/lib/erx/site.rb` `MARKUP_LOAD`: a regex over HTML enumerates load forms and misses `srcset`, an entity-encoded scheme, `iframe`, `object`, `poster`, SVG `<image href>`, CSS `image-set()` and meta refresh. Replace it with a check of every element's address-valued attributes, so a new form is refused by construction.
 * [Medium] `tools/lib/erx/book.rb`, `book/page.rb`, `book/contents.rb`: readability of the book step. Three "plain text of a node" functions (`Book.heading_text`, `Page#text_of`, `Contents.text`) and two sourcepos readers should be one; three placeholder fillers (`Book.fill`, `Site.fill_shared`, `Site.render_index`) with three grammars should be one template function; positional tuples (`shared_files`'s three values, `Result.sections`, `media`, `Contents.neighbours`) should be `Data` values; the heading-anchor table runs cmark-gfm lazily from inside `Page.render` through the resolver, so the render is not pure; `Site.publish` should derive `shared_names` from the book plan instead of taking both.
 * [Medium] `test/host/book_test.rb`: the design's tool tests "The whole book builds" and "Same bytes" are missing; no test runs cmark-gfm (two builds of the whole book were compared by hand and were identical).
 * [Low] `tools/lib/erx/book/page.rb` `html`: a draft marker or raw HTML after a comment in the same HTML block (`<!-- a --> <!-- check: x -->`) is dropped with the comment; check every comment and tag in the block.
@@ -9216,16 +9216,9 @@ model harness drive `erx_device.c` itself. `erx_device_dma_check` and `erx_devic
   manifest gives it to no domain
   ([design-platforms.md](docs/design-platforms.md#dma)).
 * [Medium] website, `site/index.html`: the page has no Content Security
-  Policy. It loads scripts only from itself and jsDelivr (with
-  Subresource Integrity) and styles and fonts from Google Fonts, so a
-  `<meta http-equiv="Content-Security-Policy">` naming exactly those
-  origins, `'wasm-unsafe-eval'` for v64's core and `worker-src` for its
+  Policy. It loads scripts, styles and fonts only from itself, so a
+  `<meta http-equiv="Content-Security-Policy">` naming only `'self'`, `'wasm-unsafe-eval'` for v64's core and `worker-src` for its
   workers would bound what an injected script could load.
-* [Low] website, `site/index.html` and `site/style.css`: the fonts load
-  from Google Fonts, so every visit hands the visitor's address and the
-  page's address to Google before any consent. Self-host Archivo and IBM
-  Plex Mono (both SIL Open Font License 1.1) beside the page, fetched at a
-  pinned version and hash like any other dependency.
 
 Every other risk the design accepts is stated in its
 [threat model](docs/design.md#threat-model) and in each subsystem
@@ -10103,7 +10096,7 @@ document's "residual risks accepted" paragraph.
   language question settled first (CLAUDE.md lists TypeScript for the web client only).
 
 * [Low] website, `site/index.html`: a `Content-Security-Policy` meta tag (`connect-src 'self'`, `script-src
-  'self' https://cdn.jsdelivr.net 'wasm-unsafe-eval'`, styles and fonts likewise) would make "the machine's
+  'self' 'wasm-unsafe-eval'`, styles and fonts likewise) would make "the machine's
   files come only from the page's origin" hold for v64's own fetches too, not only for the names `site_url`
   checks. GitHub Pages sets no headers, so it has to be the meta tag. `connect-src` also bounds the guest's
   HTTP, which v64's fake router turns into the page's own `fetch()` calls

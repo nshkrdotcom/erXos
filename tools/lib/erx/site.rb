@@ -17,11 +17,14 @@ require_relative 'image_record'
 require_relative 'json_input'
 require_relative 'medium_image'
 require_relative 'site_v64'
+require_relative 'web_build'
 
 module Erx
-  # Assembles the static website in build/site from five inputs: the page
+  # Assembles the static website in build/site from six inputs: the page
   # sources in site/, a v64 tree SiteV64 built (the emulator the page runs
-  # erXos on, with its license notices), an erXos boot image with its build
+  # erXos on, with its license notices), xterm.js as `tools/erx fetch`
+  # installed it from site/pnpm-lock.yaml (the console's terminal, with its
+  # license), an erXos boot image with its build
   # record (ImageRecord), the Raspberry Pi 4's card with its own
   # (BootPartition), and the source both were built from. None of the built
   # files is checked in.
@@ -34,8 +37,8 @@ module Erx
   # first blocks hold bytes, so it is published as those bytes and the
   # extents they fill, and the page keeps it sparse.
   #
-  # The image, the disk, terminal.js and v64's two files are stored under
-  # names that carry their digests, and boot.json (fetched without the
+  # The image, the disk, terminal.js, v64's two files and xterm.js's two are
+  # stored under names that carry their digests, and boot.json (fetched without the
   # cache's copy) and index.html name them, so a cache never serves a stale
   # file and files of two deployments never mix. The image is gzip-compressed; the
   # page decompresses it with DecompressionStream, so the static host needs
@@ -65,10 +68,25 @@ module Erx
     TAG = /\A[A-Za-z0-9][A-Za-z0-9._-]{0,99}\z/
     COMMIT = /\A[0-9a-f]{40}\z/
     SECTOR_BYTES = MediumImage::SECTOR_BYTES
+    # The console's packages, which `tools/erx fetch` installs from site/'s
+    # package files (WebBuild.fetch): xterm.js alone.
+    PACKAGES = WebBuild::Packages.new(name: 'site', title: "the website's console", source: 'site',
+                                      modules: 'build/site-modules')
+    XTERM_PACKAGE = 'node_modules/@xterm/xterm'
+    # The files of the package the page loads, published under xterm/ by
+    # their digests, and its license, published beside them as it is.
+    XTERM = { 'xterm.js' => 'lib/xterm.js', 'xterm.css' => 'css/xterm.css' }.freeze
+    XTERM_NOTICES = { 'LICENSE.txt' => 'LICENSE' }.freeze
 
     # One output file: where it goes under the site directory, where it comes
     # from, and how it is stored: as it is (nil), :gzip or :xz.
     Entry = Data.define(:path, :source, :compression)
+    # Third-party files published under directory/: each of files (its
+    # name => its source) by its digest name, and each of notices (the name
+    # it is published as => its source) as it is.
+    Bundle = Data.define(:directory, :files, :notices) do
+      def sources = [*files.values, *notices.values]
+    end
     # A disk of capacity bytes that holds content at extents, [offset, length]
     # pairs in bytes, sorted, apart and whole sectors, whose lengths sum to
     # content's; every other byte is zero.
@@ -190,16 +208,23 @@ module Erx
         raise Error, "the image's source must be given as its 40-hex commit, which its build records name, not #{source.ref}"
       end
 
+      unless WebBuild.fetched?(root:, packages: PACKAGES)
+        raise Error, "#{PACKAGES.title}'s packages are not installed for site/'s package files; run `tools/erx fetch`"
+      end
+
       page = PAGE_FILES.to_h { |name| [name, File.join(root, 'site', name)] }
-      emulator = SiteV64::TARGETS.transform_values { |path| File.join(v64, path) }
-      notices = SiteV64::NOTICES.transform_values { |path| File.join(v64, path) }
-      missing = [*page.values, *emulator.values, *notices.values, image, image_record, card, card_record].compact.reject { |path| File.file?(path) }
+      xterm_package = File.join(root, PACKAGES.modules, XTERM_PACKAGE)
+      bundles = { v64: bundle('v64', SiteV64::TARGETS, SiteV64::NOTICES, under: v64),
+                  xterm: bundle('xterm', XTERM, XTERM_NOTICES, under: xterm_package) }
+      missing = [*page.values, *bundles.values.flat_map(&:sources), image, image_record, card, card_record]
+                .compact.reject { |path| File.file?(path) }
       raise Error, "site input missing: #{missing.first}" unless missing.empty?
 
       draft = page.keys.find { |name| File.read(page.fetch(name)).include?(UNVERIFIED) }
       raise Error, "site/#{draft} holds a statement marked #{UNVERIFIED}; settle it before publishing" if draft
 
-      page.each { |name, path| remote_load(name, File.read(path)) if %w[.html .css].include?(File.extname(name)) }
+      page.each { |name, path| remote_load("site/#{name}", File.read(path)) }
+      bundles.fetch(:xterm).files.each { |name, path| remote_load("xterm/#{name}", File.read(path)) }
       digest = ->(path) { Digest::SHA256.file(path).hexdigest }
       image_sha256 = digest.(image)
       ImageRecord.check(BoundedFile.read(image_record, maximum: ImageRecord::MAX_BYTES), sha256: image_sha256, commit: source.ref)
@@ -210,18 +235,18 @@ module Erx
                 'image' => "image-#{image_sha256[0, 16]}.boot.gz", 'disk' => "disk-#{disk_sha256[0, 16]}.bin" }
               .merge(card ? { 'card' => "sdcard-#{card_sha256[0, 16]}.img.xz",
                               'card_record' => "sdcard-#{card_sha256[0, 16]}.img.receipt.json" } : {})
-              .merge(emulator.to_h { |name, path| [name, "v64/#{digest_name(name, digest.(path))}"] })
+              .merge(*bundles.values.map { |bundle| bundle.files.to_h { |name, path| [name, "#{bundle.directory}/#{digest_name(name, digest.(path))}"] } })
       entries = [Entry.new(path: 'style.css', source: page.fetch('style.css'), compression: nil),
                  Entry.new(path: 'favicon.svg', source: page.fetch('favicon.svg'), compression: nil),
                  *%w[kiosk.png doom.png].map { |name| Entry.new(path: name, source: page.fetch(name), compression: nil) },
                  Entry.new(path: names.fetch('terminal.js'), source: page.fetch('terminal.js'), compression: nil),
-                 *emulator.map { |name, path| Entry.new(path: names.fetch(name), source: path, compression: nil) },
-                 *notices.map { |name, path| Entry.new(path: "v64/#{name}", source: path, compression: nil) },
+                 *bundles.values.flat_map { |bundle| bundle_entries(bundle, names) },
                  Entry.new(path: names.fetch('image'), source: image, compression: :gzip),
                  *(Entry.new(path: names.fetch('card'), source: card, compression: :xz) if card)]
       manifest = { image: names.fetch('image'), bytes: File.size(image), sha256: image_sha256,
                    emulator: { module: names.fetch('libv86.mjs'), wasm: names.fetch('v86-arm64.wasm'),
-                               bytes: emulator.values.sum { |path| File.size(path) } },
+                               bytes: bundles.fetch(:v64).files.values.sum { |path| File.size(path) } },
+                   terminal: { script: names.fetch('xterm.js'), stylesheet: names.fetch('xterm.css') },
                    disk: { file: names.fetch('disk'), bytes: disk.content.bytesize, sha256: disk_sha256,
                            capacity: disk.capacity, extents: disk.extents },
                    source: { ref: source.ref, url: source.url } }
@@ -233,19 +258,50 @@ module Erx
                shared_names:, disk:, manifest:, card_record: record)
     end
 
-    # A load from another host: a link, script or img element whose address
-    # has a scheme or begins with //, or a CSS url() or @import that does.
-    # A link a reader follows (<a href>) is not a load.
-    REMOTE_LOAD = %r{<(?:link|script|img)\b[^>]*\s(?:href|src)\s*=\s*["']?(?:[A-Za-z][A-Za-z0-9+.-]*:|//)[^"'\s>]*|
+    # The Bundle of files and notices (published name => path under
+    # directory under) published under directory/.
+    def bundle(directory, files, notices, under:)
+      Bundle.new(directory:, files: files.transform_values { |path| File.join(under, path) },
+                 notices: notices.transform_values { |path| File.join(under, path) })
+    end
+    private_class_method :bundle
+
+    # bundle's entries: its files under the names names gives them, its notices as they are.
+    def bundle_entries(bundle, names)
+      [*bundle.files.map { |name, path| Entry.new(path: names.fetch(name), source: path, compression: nil) },
+       *bundle.notices.map { |name, path| Entry.new(path: "#{bundle.directory}/#{name}", source: path, compression: nil) }]
+    end
+    private_class_method :bundle_entries
+
+    # A load from another host in a page or a stylesheet: a link, script or
+    # img element whose address has a scheme or begins with //, or a CSS
+    # url() or @import that does. A link a reader follows (<a href>) is not
+    # a load.
+    MARKUP_LOAD = %r{<(?:link|script|img)\b[^>]*\s(?:href|src)\s*=\s*["']?(?:[A-Za-z][A-Za-z0-9+.-]*:|//)[^"'\s>]*|
                      url\(\s*["']?(?:[A-Za-z][A-Za-z0-9+.-]*:|//)[^)"']*|
                      @import\s+["'](?:[A-Za-z][A-Za-z0-9+.-]*:|//)[^"']*}xi
+    # A script names no address of another host at all: a string or template
+    # literal that begins with scheme:// or //. Whatever a script does with
+    # such an address (a script or link element, fetch, import, a WebSocket),
+    # it is the start of a load, and the links a reader follows are the
+    # pages'. An address the script assembles from pieces is not seen; the
+    # rule catches the address written out, as a pinned CDN copy is.
+    SCRIPT_LOAD = %r{["'`](?:[A-Za-z][A-Za-z0-9+.-]*:)?//[^"'`\s]*}
+    # The rule each kind of file the site publishes from a source is read
+    # by, nil for a raster image, which loads nothing. A file of another
+    # kind is refused until a rule for it is added here.
+    REMOTE_LOADS = { '.html' => MARKUP_LOAD, '.css' => MARKUP_LOAD, '.svg' => MARKUP_LOAD, '.js' => SCRIPT_LOAD,
+                     '.png' => nil }.freeze
 
-    # Refuses a page or stylesheet that loads a resource from another host,
-    # which would tell that host who reads the site
-    # (docs/design-book-site.md, "Where it fits").
-    def remote_load(name, text)
-      found = text[REMOTE_LOAD]
-      raise Error, "site/#{name} loads a resource from another host: #{found}" if found
+    # Refuses a page, stylesheet, script or drawing (label names it) that
+    # loads a resource from another host, which would tell that host who
+    # reads the site (docs/design-book-site.md, requirement 7).
+    def remote_load(label, text)
+      kind = File.extname(label)
+      raise Error, "#{label}: no rule says what a #{kind} file may load" unless REMOTE_LOADS.key?(kind)
+
+      found = REMOTE_LOADS.fetch(kind)&.then { |rule| text[rule] }
+      raise Error, "#{label} loads a resource from another host: #{found}" if found
     end
 
     # What index.html wraps its card section in: kept, without the markers,
