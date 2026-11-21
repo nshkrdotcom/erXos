@@ -93,3 +93,55 @@ erx_fiasco_contig_take(erx_fiasco_contig_t *pool, uint32_t pages, uint32_t limit
 	}
 	return (ERX_FIASCO_CONTIG_NONE);
 }
+
+void
+erx_fiasco_device_window_init(erx_fiasco_device_window_t *window, uint64_t start, uint64_t end,
+    const erx_backend_grow_pages_t *records)
+{
+	*window = (erx_fiasco_device_window_t){ .start = start, .end = end };
+	erx_backend_grow_table_init(&window->taken, sizeof(erx_backend_vm_range_t), records);
+}
+
+static erx_backend_vm_range_t *
+device_taken(const erx_fiasco_device_window_t *window, uint32_t index)
+{
+	return (erx_backend_grow_table_at(&window->taken, index));
+}
+
+/*
+ * The gaps, lowest first, are the one below each taken range and the one above the last.
+ * Each lies at or above the window's start and below its end, so no subtraction wraps, and
+ * a range placed in one ends at or below the gap's end, so its end does not wrap either.
+ */
+int
+erx_fiasco_device_window_take(erx_fiasco_device_window_t *window, uint64_t size, uint64_t *start)
+{
+	uint64_t gap = window->start;
+	uint32_t at;
+
+	for (at = 0; at < window->ntaken; at++) {
+		if (device_taken(window, at)->start - gap >= size)
+			break;
+		gap = device_taken(window, at)->end;
+	}
+	if (at == window->ntaken && window->end - gap < size)
+		return (ERX_ENOMEM);
+	if (erx_backend_grow_table_room(&window->taken, window->ntaken + 1) != ERX_OK)
+		return (ERX_ENOMEM);
+	erx_backend_grow_table_move(&window->taken, at + 1, at, window->ntaken - at);
+	*device_taken(window, at) = (erx_backend_vm_range_t){ .start = gap, .end = gap + size };
+	window->ntaken++;
+	*start = gap;
+	return (ERX_OK);
+}
+
+void
+erx_fiasco_device_window_give(erx_fiasco_device_window_t *window, uint64_t start)
+{
+	uint32_t at = 0;
+
+	while (device_taken(window, at)->start != start)
+		at++;
+	erx_backend_grow_table_move(&window->taken, at, at + 1, window->ntaken - at - 1);
+	window->ntaken--;
+}

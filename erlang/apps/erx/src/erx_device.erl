@@ -8,7 +8,7 @@
 %% read_field/3, write_field/4, field/4, irq_ack/2 and command/2 are BIFs in ERTS (beam/bif.tab), since a
 %% driver makes them one at a time; the clauses below stand for them only in xref and
 %% documentation. open/1, elements/2, irq_bind/2, irq_bind_owner/2, irq_holder/2, the queue calls, region/3 and
-%% framebuffer/0 are NIFs.
+%% framebuffer/0, config_read/4 and config_write/5 are NIFs.
 %%
 %% A read or a write is one volatile access and never waits. write_field/4 on an ordinary
 %% field reads the word and writes it back, so a field's update is not atomic against
@@ -28,6 +28,16 @@
 %% capability that may occur more than once, as each supported protocol, is `{Name, Index}`
 %% in list order. elements/2 says how many there are, and an element past them is badarg.
 %%
+%% A PCIe bridge's configuration window is a configuration space of its peripheral, not registers
+%% (docs/design-generation.md, "Register inputs"): blocks of one function's configuration space
+%% each, as pci_ecam's `function`, one block of 4 KiB for each routing ID relative to the bridge's
+%% first bus. config_read/4 and config_write/5 make one access of Width bytes, 1, 2 or 4, at
+%% Offset, a multiple of Width, of the block `{Space, Index}` (or `Space` for a space of one
+%% block), and are badarg, before any access, for an offset or width outside the block and for a
+%% block that does not lie wholly inside the device's window, so a bus the window does not cover
+%% is never reached; elements/2 says how many blocks do. What a read answers is the device's,
+%% untrusted, for its reader to parse. These are NIFs.
+%%
 %% command/2 issues one SD command: the one 32-bit write of Word to an SD host
 %% controller's command register, cmdtm (docs/design-runtime.md, "Issuing an SD command").
 %% It is badarg for a record whose peripheral is not sdhci and for a word that sets a bit
@@ -44,7 +54,7 @@
 
 -module(erx_device).
 
--export([open/1, elements/2]).
+-export([open/1, elements/2, config_read/4, config_write/5]).
 -export([read/2, write/3, read_field/3, write_field/4, field/4, command/2]).
 -export([irq_bind/2, irq_bind_owner/2, irq_holder/2, irq_ack/2]).
 -export([queue_create/4, negotiate/2, post/4, complete/2, region/3, framebuffer/0]).
@@ -98,9 +108,19 @@ open(_Spec) ->
 %% How many elements of Register, a register's or an array's name, the device has, as its
 %% open resolved them: an array's length, or its live length where the device reports one;
 %% the instances of a capability's registers that the open found; 1 for any other register,
-%% and 0 for one of a capability the device does not have. badarg for a name the table lacks.
+%% and 0 for one of a capability the device does not have; for a configuration space, the blocks
+%% that lie wholly inside the device's window. badarg for a name the table lacks.
 -spec elements(device(), atom()) -> non_neg_integer().
 elements(_Dev, _Register) ->
+    erlang:nif_error(undef).
+
+%% One configuration access (above): the value of Width bytes, or ok for a write.
+-spec config_read(device(), register_name(), non_neg_integer(), 1 | 2 | 4) -> non_neg_integer().
+config_read(_Dev, _Space, _Offset, _Width) ->
+    erlang:nif_error(undef).
+
+-spec config_write(device(), register_name(), non_neg_integer(), 1 | 2 | 4, non_neg_integer()) -> ok.
+config_write(_Dev, _Space, _Offset, _Width, _Value) ->
     erlang:nif_error(undef).
 
 -spec read(device(), register_name()) -> non_neg_integer().

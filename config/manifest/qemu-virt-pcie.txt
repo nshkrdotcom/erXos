@@ -1,0 +1,96 @@
+# Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# The PCIe domain's rows on QEMU virt (docs/design-pcie.md, "The rows and the facets'
+# limits"). Not a board part: the pcie QEMU suite's manifest is QEMU virt's development
+# manifest without its web domain (Manifest::Edit.without_domain), with this file
+# appended and the suite's test holder's rows, its unit and its pci facet added. The
+# PCIe rows take exactly the web domain's memory, outer budget, connection and place in
+# the system principal's domains quota, and a share of their own smaller than the web
+# share, so every machine-wide figure stays the development manifest's.
+#
+# The PCIe domain, pcie, is an interpreter service domain of the system principal. It
+# holds the ECAM bridge's unit, pcie, and with it every function's configuration space,
+# and holds nothing else (docs/design-pcie.md, "The PCIe domain"). Its release, pcie,
+# boots erx_pcie's supervisor and the mint of its pcie facet, and its -eval starts the
+# enumerator once init holds the ready answer's facets, pci_bus among them
+# (docs/design-pcie.md, "Processes"). max_frame holds the widest answer it takes,
+# targets' 69,957 bytes, and max_message_heap that answer's 14,580 decoded words
+# several times over; memory 24 MiB, the web row's figure, holds what the pcie suite
+# measures at rest (docs/design-pcie.md, "The rows and the facets' limits"). Its grant, 50 mcpu on
+# CPU 0, is a share of its own, sized for the start's walk and one set or reset per
+# holder's change.
+#
+# The grants (docs/design-pcie.md, "Facets"): pci_bus, the system domain's device
+# service, to the PCIe domain alone, its max_request the floor pci_bus_max_request_min,
+# 65,536, which the widest report of 64 functions needs, in_flight 1, the enumerator's
+# one call, and the share of one firmware request at its 1 s deadline per 10 s; pcie,
+# the PCIe domain's, to the system domain alone, max_request 1,024 over the widest set
+# of 678 bytes, in_flight 1, the device service's one call at a time.
+runtime_limits pcie
+  max_frame 131072
+  max_message_heap 131072
+  funnel_depth 64
+  exports 256
+  tmp 0
+  overlay 0
+  atoms 16384
+  foreign_atoms 1024
+  processes 1024
+share pcie
+  quota_ns 500000
+  period_ns 10000000
+  cpuset 1
+  capacity_mcpu 50
+  capacity_first 0
+  slice_us 1000
+  grace_us 5
+  base 16
+  ceiling 31
+  flags none
+limits pcie
+  memory 25165824
+  outer 1048576
+  grant @share.pcie
+  spaces none
+  lane 4096
+  connections 1
+  crash 0
+  flags none
+  runtime_limits @runtime_limits.pcie
+  peer_held 4096
+  peer_held_total 4096
+domain pcie
+  principal @principal.system
+  limits @limits.pcie
+  kind service
+  flags none
+  runtime @artifact.emu
+  release @artifact.pcie
+  restarts 5
+  restart_period_s 600
+  args "-- -root / -bindir /bin -progname erl -home / -nouser -nocookie -no_epmd -proto_dist erx -eval ok=erx_pcie_sup:start_enumerator()"
+unit pcie
+  placement "pcie"
+  holder @domain.pcie
+service pcie
+  server @domain.pcie
+  interface pcie
+facet pci_bus
+  grantee @domain.pcie
+  service @service.pci_bus
+  operations targets,report,firmware
+  max_request 65536
+  in_flight 1
+  reductions 5000000
+  period_ns 10000000000
+  max_heap_size 65536
+facet pcie
+  grantee system
+  service @service.pcie
+  operations none
+  max_request 1024
+  in_flight 1
+  reductions 100000
+  period_ns 1000000000
+  max_heap_size 8192

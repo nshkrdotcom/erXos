@@ -5,13 +5,18 @@
 %% the host: erx_pcie_cfg, the configuration-space parser and BAR sizing; erx_pcie_plan,
 %% the planner of the writes that take a function to its target; erx_pcie_walk, the walk;
 %% erx_pcie_place, placement; erx_pcie_bcm2711_core, the BCM2711 bridge's keep-or-reset
-%% decision, bring-up and configuration access. erx_pcie_bridge is the bridge seam,
-%% erx_pcie_ecam its ECAM driver.
+%% decision, bring-up and configuration access; erx_pcie_report, the record of each function
+%% reported. erx_pcie_bridge is the bridge seam, erx_pcie_ecam its ECAM driver,
+%% erx_pcie_apply the planner's effect layer, erx_pcie_enumerator the enumerator,
+%% erx_pcie_facet the pcie facet and its mint, and erx_pcie_sup the application and the
+%% supervisor of those two processes.
 {application, erx_pcie,
  [{description, "erXos PCIe enumerator"},
   {vsn, "1"},
-  {modules, [erx_pcie, erx_pcie_bcm2711_core, erx_pcie_bridge, erx_pcie_cfg, erx_pcie_ecam,
-             erx_pcie_place, erx_pcie_plan, erx_pcie_walk]},
-  {registered, []},
+  {modules, [erx_pcie, erx_pcie_apply, erx_pcie_bcm2711_core, erx_pcie_bridge, erx_pcie_cfg, erx_pcie_ecam,
+             erx_pcie_enumerator, erx_pcie_facet, erx_pcie_place, erx_pcie_plan, erx_pcie_report, erx_pcie_sup,
+             erx_pcie_walk]},
+  {registered, [erx_pcie_sup, erx_pcie_enumerator]},
   {applications, [kernel, stdlib, erx]},
+  {mod, {erx_pcie_sup, []}},
   {env, []}]}.

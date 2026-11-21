@@ -563,10 +563,10 @@ so its host tests reach every absence without a boot.
 **The `given` record.** Its `COHERENT` is the entry's `coherent` when the
 entry admits DMA memory, and 0 for a row that gets none, so no record calls
 a device coherent that has no range to use; and it
-gains a last number, `MAC`, the hardware address as a 48-bit decimal, 0
+gains a number, `MAC`, the hardware address as a 48-bit decimal, 0
 when absent or when the row asks for none:
 `-erx_record given ROLE PERIPHERAL PATH WINDOW_H OFFSET SIZE LINE_H MARK MEM_H
-MEM_SIZE CLOCK COHERENT MAC`, PATH the row's device-tree path
+MEM_SIZE CLOCK COHERENT MAC INDEX`, PATH the row's device-tree path
 ([design-fiasco.md](design-fiasco.md#device-records)). `erx_device_record:find/3` reads it, refusing a `MAC`
 above `2^48 - 1`, and returns it as `mac => Address` for a nonzero value;
 the record sizes of `include/erx/boot_words.h` grow by its longest form.

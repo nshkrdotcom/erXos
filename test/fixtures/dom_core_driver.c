@@ -27,6 +27,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "erx/abi_reader.h"
 #include "erx/dom.h"
 
 #define MIB		(UINT64_C(1) << 20)
@@ -1099,12 +1100,30 @@ pci_function(uint8_t device, uint64_t at)
 	    .address = at } } });
 }
 
+/* A report's records as their sender hands them, read whole by the intake (erx_dom_pci_report). */
+static void
+pci_raw_case(const char *name, const erx_dom_pci_record_t *records, uint32_t count)
+{
+	erx_dom_pci_refusal_t refusal = { .record = 0, .field = "none" };
+	const erx_status_t status = erx_dom_pci_report(&pci_bridge, pci_entries, 1, records, count, &refusal);
+
+	printf("pci %s %d %u %s givable=%d\n", name, (int)status, refusal.record, refusal.field,
+	    erx_dom_pci_givable(&pci_bridge, 1, 0, 0) != NULL ? 1 : 0);
+}
+
 static void
 pci_case(const char *name, const erx_pcie_function_t *report, uint32_t count)
 {
 	erx_dom_pci_refusal_t refusal = { .field = "none" };
-	const erx_status_t status = erx_dom_pci_report(&pci_bridge, pci_entries, 1, report, count, &refusal);
+	uint8_t bytes[ERX_PCIE_FUNCTIONS_MAX][ERX_PCIE_FUNCTION_SIZE];
+	erx_dom_pci_record_t records[ERX_PCIE_FUNCTIONS_MAX];
+	erx_status_t status;
 
+	for (uint32_t at = 0; at < count; at++) {
+		(void)erx_pcie_function_encode(&report[at], bytes[at], sizeof(bytes[at]));
+		records[at] = (erx_dom_pci_record_t){ bytes[at], sizeof(bytes[at]) };
+	}
+	status = erx_dom_pci_report(&pci_bridge, pci_entries, 1, records, count, &refusal);
 	printf("pci %s %d %s givable=%d\n", name, (int)status, refusal.field,
 	    erx_dom_pci_givable(&pci_bridge, 1, 0, 0) != NULL ? 1 : 0);
 }
@@ -1142,6 +1161,26 @@ pcis(void)
 	pci_case("laid", report, 1);
 	report[1] = report[0];
 	pci_case("refused_later", report, 2);
+	/*
+	 * A record that is not one record's bytes, and a report past the bound,
+	 * whose records the intake does not read, are refused whole as well.
+	 */
+	pci_fresh();
+	pci_case("read", report, 1);
+	{
+		uint8_t bytes[ERX_PCIE_FUNCTION_SIZE];
+		erx_dom_pci_record_t unread[2];
+
+		(void)erx_pcie_function_encode(&report[0], bytes, sizeof(bytes));
+		unread[0] = (erx_dom_pci_record_t){ bytes, sizeof(bytes) };
+		unread[1] = (erx_dom_pci_record_t){ bytes, sizeof(bytes) - 1 };
+		pci_raw_case("unread", unread, 2);
+		pci_case("reread", report, 1);
+		unread[1] = (erx_dom_pci_record_t){ NULL, 0 };
+		pci_raw_case("no_bytes", unread, 2);
+		pci_case("reread", report, 1);
+		pci_raw_case("too_many", NULL, ERX_PCIE_FUNCTIONS_MAX + 1);
+	}
 	pci_fresh();
 	pci_case("empty", report, 0);
 	pci_case("after_empty", report, 1);

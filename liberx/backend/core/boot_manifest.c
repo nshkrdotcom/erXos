@@ -523,7 +523,7 @@ erx_boot_device_given(const erx_boot_device_t *device, const erx_boot_window_t *
 	    .offset = window->offset, .size = device->size, .line = line_handle, .line_shared = device->line_shared,
 	    .memory = memory ? memory_handle : ERX_CAP_NULL, .memory_size = memory ? device->dma_memory : 0,
 	    .clock = device->clock, .coherent = erx_boot_coherent(facts, device->dma_memory),
-	    .mac = facts != NULL && device->network ? erx_boot_mac_number(facts) : 0 });
+	    .mac = facts != NULL && device->network ? erx_boot_mac_number(facts) : 0, .index = device->index });
 }
 
 const char *
@@ -636,7 +636,7 @@ erx_boot_given_words(const erx_boot_given_t *given, char *words, size_t capacity
 	    number_put(words, capacity, &used, given->memory) && number_put(words, capacity, &used, given->memory_size) &&
 	    number_put(words, capacity, &used, given->clock) &&
 	    number_put(words, capacity, &used, given->coherent ? 1 : 0) &&
-	    number_put(words, capacity, &used, given->mac))
+	    number_put(words, capacity, &used, given->mac) && number_put(words, capacity, &used, given->index))
 		return (used);
 	return (0);
 }

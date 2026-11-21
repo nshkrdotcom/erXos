@@ -28,14 +28,9 @@ the counters that keep encryption safe. The bug was not in the
 cryptography. It was in the order of events a supplicant, the program
 that runs a station's handshakes, accepted.
 
-FreeBSD splits WiFi in two. Its 802.11 layer, `net80211`, and the chip
-drivers run in the kernel; `wpa_supplicant`, a program in user space,
-runs the key handshakes and installs keys through `ioctl` calls. A
-user types `ifconfig wlan0 scan`, lists networks in
-`wpa_supplicant.conf`, and runs DHCP on `wlan0`.
-
-erXos keeps that surface and moves everything else into one domain of
-Erlang, the WiFi domain, which turns the Raspberry Pi 4's WiFi chip
+A user sees FreeBSD's surface: `ifconfig wlan0 scan`, networks listed
+in `wpa_supplicant.conf`, and DHCP on `wlan0`. Behind it, WiFi is one
+domain of Erlang, the WiFi domain, which turns the Raspberry Pi 4's WiFi chip
 into an Ethernet **medium**, the network stack's word for a link it
 sends frames through ([chapter 17](17-network.md#1731-the-process-tree)). Its station is
 three pure functions, one of them a state machine whose every legal
@@ -418,11 +413,10 @@ scalar and a point on an elliptic curve. Of what lets a password
 guess be tested, only the commit, which goes on the air anyway, and
 one exchange's KCK leave the holder.*
 
-`erx_sae`, the public half, follows wpa_supplicant's
-implementation, using the method in which PT is computed once from
-the password rather than per exchange. Its states are
-wpa_supplicant's four, `nothing`, `committed`, `confirmed` and
-`accepted`, with two more while the holder works. While the holder
+`erx_sae`, the public half, uses the method in which PT is computed
+once from the password rather than per exchange. Its states are
+`nothing`, `committed`, `confirmed` and `accepted`, with two more
+while the holder works. While the holder
 computes the keys of one peer commit, any other commit is dropped, so
 the station confirms only over the commit whose key it asked for.
 `erx_sae` is built, and runs in its tests against a test-only holder
@@ -483,9 +477,8 @@ No host test can tell how the chip and board behave. The design
 lists such facts
 ([design-wifi.md, Facts this design does not
 have](../design-wifi.md#facts-this-design-does-not-have)), such as
-whether the pinned firmware offers external SAE at all. Some board
-facts appear only in Linux, whose GPL source erXos's designers do not
-read; a separate writer recorded them in their own words
+whether the firmware offers external SAE at all. What is known of the
+board is gathered in a clean-room facts record
 ([research-wifi-pi4.md](../research-wifi-pi4.md)).
 
 ## 18.5 What fails, and what it reaches
@@ -508,10 +501,10 @@ outlives a restart.
 
 ## 18.6 Design choices
 
-**WiFi in the network domain.** FreeBSD's 802.11 layer sits beside its
-IP stack. In erXos that would put a firmware parser, keys and
-`crypto` into the domain every socket depends on; a separate domain
-costs one facet.
+**WiFi in the network domain.** The 802.11 layer could sit beside the
+IP stack. That would put a firmware parser, keys and `crypto` into
+the domain every socket depends on; a separate domain costs one
+facet.
 
 **The firmware's supplicant, or its own SAE.** The firmware can run
 WPA2's handshake, which would hide the checks of section 18.3.2 inside

@@ -149,7 +149,7 @@ limit pcie_msix_pba u8 0x8
 limit pcie_msix_bir_mask u32 0x00000007
 limit pcie_msix_entry_size u32 16
 
-# PCI Express (pcireg.h:790-828): the flags word with the device type, the device
+# PCI Express (pcireg.h:790-834): the flags word with the device type, the device
 # capabilities with function-level reset, the device control the reset is started
 # through and the device status whose pending transactions it waits on.
 limit pcie_express_flags_word u8 0x2
@@ -158,6 +158,8 @@ limit pcie_express_device_cap u8 0x4
 limit pcie_express_device_cap_flr u32 0x10000000
 limit pcie_express_device_control u8 0x8
 limit pcie_express_device_status u8 0xa
+limit pcie_express_device_control_flr u16 0x8000
+limit pcie_express_device_status_pending u16 0x0020
 
 # A function's state in the PCIe domain's report (docs/design-pcie.md, "Records").
 enum pcie_state u8

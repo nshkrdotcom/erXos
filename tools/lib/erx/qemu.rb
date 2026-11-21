@@ -217,6 +217,31 @@ module Erx
           .map { |device, bus| Placement.new(unit: :display, bus: bus, device: device) }
       end
     end
+    # PCIe functions on QEMU virt's host bridge, for the pcie suite (docs/design-pcie.md, "The
+    # `pcie` QEMU suite"): functions maps a slot of bus 0, 1 to 31 (slot 0 is the host
+    # bridge's own function), to the device of PCIE_DEVICES QEMU attaches there; and QMP on a
+    # UNIX socket at qmp_socket, through which the harness reads what QEMU itself holds of
+    # each function (Qmp#pci_functions).
+    # The socket's directory is checked as a Display's is. A plan takes a display or PCIe
+    # functions, not both, so QEMU has one QMP socket.
+    Pcie = Data.define(:qmp_socket, :functions) do
+      def initialize(qmp_socket:, functions:)
+        unless qmp_socket.is_a?(String) && qmp_socket.start_with?('/') && qmp_socket.bytesize <= SOCKET_PATH_MAX &&
+               !qmp_socket.match?(/[\0,]/)
+          raise Error, 'invalid QMP socket path'
+        end
+        valid = functions.is_a?(Hash) && !functions.empty? &&
+                functions.all? { |slot, device| slot.is_a?(Integer) && slot.between?(1, 31) && PCIE_DEVICES.include?(device) }
+        raise Error, "PCIe functions are slots 1 to 31, each one of #{PCIE_DEVICES.join(', ')}" unless valid
+
+        super(qmp_socket: qmp_socket.dup.freeze, functions: functions.dup.freeze)
+      end
+
+      # One -device for each function, at its slot of the host bridge's bus.
+      def arguments = functions.sort.flat_map { |slot, device| ['-device', "#{device},addr=#{slot}"] }
+    end
+    # The PCIe devices a plan may attach.
+    PCIE_DEVICES = %w[qemu-xhci].freeze
     # As hostlink, no host link at all: one serial line, the console's, as on a machine
     # with one UART, such as the website's emulator (docs/design-fiasco.md, "Device paths").
     NO_HOSTLINK = :none
@@ -281,10 +306,14 @@ module Erx
 
     def argv(platform:, accel:, image:, serial:, cpus: 1, memory_mib: memory_of(platform),
              program: 'qemu-system-aarch64', initrd: nil, serial_input: nil, command_line: nil, dtb: nil,
-             disks: [], hostlink: nil, nic: nil, stub: nil, firmware: nil, display: nil)
+             disks: [], hostlink: nil, nic: nil, stub: nil, firmware: nil, display: nil, pcie: nil)
       raise Error, 'accelerator must be tcg or hvf' unless %w[tcg hvf].include?(accel)
       board = machine_of(platform)
+      raise Error, 'PCIe functions are a QemuPlan::Pcie' unless pcie.nil? || pcie.is_a?(Pcie)
+      raise Error, 'a plan takes a display or PCIe functions, not both' if display && pcie
       if board.loads
+        raise Error, "#{board.base} takes no PCIe functions" if pcie
+
         return loaded_argv(board, accel: accel, image: image, serial: serial, serial_input: serial_input, cpus: cpus, program: program,
                                   stub: stub, firmware: firmware, dtb: dtb, disks: disks, display: display, refused: { initrd: initrd, command_line: command_line, nic: nic,
                                                                                  hostlink: hostlink == NO_HOSTLINK ? nil : :hostlink })
@@ -305,6 +334,7 @@ module Erx
       check_pages(devices)
       # QEMU listens on the socket as soon as it starts, so its directory is checked before.
       Qmp.check_directory(display.qmp_socket) if display && !display.window?
+      Qmp.check_directory(pcie.qmp_socket) if pcie
       words = command_line.to_s.split(/ /)
       raise Error, "the plan adds #{HOSTLINK_WORD} with the host link's serial line" if words.include?(HOSTLINK_WORD)
 
@@ -325,7 +355,8 @@ module Erx
        '-smp', cpus.to_s, *(deterministic ? DETERMINISTIC_ARGUMENTS : []), '-m', memory_mib.to_s,
        '-display', display&.window? ? 'default' : 'none', '-monitor', 'none', '-nic', 'none',
        *(devices.empty? ? [] : DISK_TRANSPORT_ARGUMENTS), *disk_arguments(disks), *nic_arguments(nic),
-       *device_arguments(devices), *qmp_arguments(display),
+       *device_arguments(devices), *qmp_arguments(qmp_socket(display) || pcie&.qmp_socket),
+       *pcie&.arguments,
        '-no-reboot', *serial_arguments(serial, serial_input), *hostlink_arguments(hostlink),
        '-kernel', image,
        *(initrd ? ['-initrd', initrd] : []), *(line ? ['-append', line] : []),
@@ -380,7 +411,7 @@ module Erx
        '-display', 'none', '-monitor', 'none', '-no-reboot',
        '-serial', 'null', *serial_arguments(serial, serial_input, id: 'console'),
        *loads.flat_map { |file, address, options| ['-device', "loader,file=#{file}#{address && format(',addr=0x%x', address)}#{options}"] },
-       *card_arguments(disks.first, bus: board.card_bus), *qmp_arguments(display)].freeze
+       *card_arguments(disks.first, bus: board.card_bus), *qmp_arguments(qmp_socket(display))].freeze
     end
 
     # A disk as the card on the board's SD bus, its drive with no front end of its own, or
@@ -435,9 +466,12 @@ module Erx
     # The backend the guest's network device joins: Nic's hub port, or UserNet's user network itself.
     def nic_guest_netdev(nic) = nic.is_a?(UserNet) ? 'nic_user' : 'nic_hub_guest'
 
-    # QMP on the display's socket, or nothing (no display, or one in a window).
-    def qmp_arguments(display)
-      display && !display.window? ? ['-qmp', "unix:#{display.qmp_socket},server=on,wait=off"] : []
+    # The display's QMP socket: nil with no display, or one in a window.
+    def qmp_socket(display) = display && !display.window? ? display.qmp_socket : nil
+
+    # QMP on socket, or nothing when it is nil.
+    def qmp_arguments(socket)
+      socket ? ['-qmp', "unix:#{socket},server=on,wait=off"] : []
     end
 
     # Every virtio device of a plan on its transport: the disks from bus .31 down, the
@@ -698,11 +732,12 @@ module Erx
     # session. A host that cannot be reached, refuses the boot's setup, or is lost for good
     # during the boot raises QemuRemote::Unreachable.
     def run(platform:, accel:, image:, cpus: 1, memory_mib: QemuPlan.memory_of(platform), checkpoints: nil, initrd: nil, machine_end: false, directory: nil, command_line: nil,
-            dtb: nil, disks: [], link: nil, link_seconds: 0, hostlink: nil, nic: nil, remote: nil, stub: nil, firmware: nil, display: nil)
+            dtb: nil, disks: [], link: nil, link_seconds: 0, hostlink: nil, nic: nil, remote: nil, stub: nil, firmware: nil, display: nil,
+            pcie: nil)
       raise Error, 'a run with a host link session ends when the session does, not with machine_end' if link && machine_end
       raise Error, 'a run with a host link session takes no other host link plan' if link && hostlink
-      if remote && !reusable?(link: link, nic: nic, disks: disks, hostlink: hostlink, display: display, firmware: firmware)
-        raise Error, 'a remote boot takes no disk, network device, display or host link'
+      if remote && !reusable?(link: link, nic: nic, disks: disks, hostlink: hostlink, display: display, firmware: firmware, pcie: pcie)
+        raise Error, 'a remote boot takes no disk, network device, display, PCIe function or host link'
       end
       raise Error, 'a remote boot takes no boot stub' if remote && stub
 
@@ -729,14 +764,15 @@ module Erx
                                      initrd: initrd && remote_boot.path('initrd'), dtb: dtb && remote_boot.path('dtb'), hostlink: hostlink)
              else
                QemuPlan.argv(**plan, image: image, serial: serial, serial_input: keyboard, initrd: initrd, dtb: dtb,
-                                     disks: disks, hostlink: socket || hostlink, nic: nic, stub: stub, firmware: firmware, display: display)
+                                     disks: disks, hostlink: socket || hostlink, nic: nic, stub: stub, firmware: firmware, display: display,
+                                     pcie: pcie)
              end
       report = { 'state' => 'running', 'image_sha256' => Digest::SHA256.file(image).hexdigest,
                  'argv' => argv, 'checkpoints' => matcher.observed, 'serial_log' => serial }
       report['remote'] = remote.destination if remote
       reuse = QemuReuse.active
       key = nil
-      if reuse && reusable?(link: link, nic: nic, disks: disks, hostlink: hostlink, display: display, firmware: firmware)
+      if reuse && reusable?(link: link, nic: nic, disks: disks, hostlink: hostlink, display: display, firmware: firmware, pcie: pcie)
         key = boot_key(reuse, plan: plan, remote_run: remote_run, image_sha256: report.fetch('image_sha256'), typed: matcher.types?, initrd: initrd,
                               dtb: dtb, stub: stub, hostlink: hostlink, checkpoints: checkpoints, machine_end: machine_end)
         stored = stored_boot(reuse, key, report: report, checkpoints: checkpoints, directory: directory) if key
@@ -805,8 +841,8 @@ module Erx
     # Whether QEMU's inputs alone determine this boot (QemuReuse): no disk the
     # guest may write, no network device, no display a checkpoint reads, and no host link
     # a host side serves.
-    def reusable?(link:, nic:, disks:, hostlink:, display:, firmware:)
-      link.nil? && nic.nil? && display.nil? && firmware.nil? && disks.empty? && (hostlink.nil? || hostlink == QemuPlan::NO_HOSTLINK)
+    def reusable?(link:, nic:, disks:, hostlink:, display:, firmware:, pcie:)
+      link.nil? && nic.nil? && display.nil? && firmware.nil? && pcie.nil? && disks.empty? && (hostlink.nil? || hostlink == QemuPlan::NO_HOSTLINK)
     end
 
     # The boot's key. The keyed plan is the boot's own (plan, as run passes it

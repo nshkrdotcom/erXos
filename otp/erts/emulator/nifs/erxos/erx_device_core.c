@@ -75,6 +75,36 @@ erx_device_field_named(const erx_device_peripheral_t *peripheral, const erx_devi
 	return (index);
 }
 
+const erx_device_space_t *
+erx_device_space_named(const erx_device_peripheral_t *peripheral, const char *name, size_t length)
+{
+	for (uint32_t index = 0; index < peripheral->space_count; index++) {
+		if (same_text(peripheral->spaces[index].name, name, length))
+			return (&peripheral->spaces[index]);
+	}
+	return (NULL);
+}
+
+uint32_t
+erx_device_space_blocks(const erx_device_space_t *space, uint64_t size)
+{
+	const uint64_t whole = space->offset > size ? 0 : (size - space->offset) / space->size;
+
+	return (whole < space->count ? (uint32_t)whole : space->count);
+}
+
+bool
+erx_device_space_offset(const erx_device_space_t *space, uint64_t size, bool indexed, uint64_t index,
+    uint64_t offset, uint64_t width, uint64_t *at)
+{
+	if (indexed != (space->count > 1) || index >= erx_device_space_blocks(space, size) ||
+	    (width != 1 && width != 2 && width != 4) || offset % width != 0 || offset >= space->size ||
+	    width > space->size - offset)
+		return (false);
+	*at = space->offset + index * space->size + offset;
+	return (true);
+}
+
 /* An extended-capability list entry's first word: its ID, and the next entry's offset in 32-bit words. */
 #define LIST_ID_MASK	UINT64_C(0xff)
 #define LIST_NEXT_SHIFT	8u

@@ -680,7 +680,7 @@ callers as it says.
 | `erx_mem_child` | `erx_exec`'s writable segments of a loaded executable ([design-programs.md](design-programs.md#what-a-program-can-start), "An executable file") | service, an eager copy: call 52 of `fiasco_call`, taking `erx_fiasco_mem_child_request`, makes the child, a new memory object of the range's size charged to the budget named, which maps read and write and never to run; the stub then fills it with `erx_mem_copy` of the parent's range, 64 pages a request, and closes it if the copy fails, so the child holds the parent's bytes as they were and every write stays its own | a parent that is not immutable, a slice or a sealed paged object, `ERX_ETYPE`, a child included; a size of 0, or a size or offset off a page, `ERX_EINVAL`; a range past the parent's end, by checked arithmetic, `ERX_ERANGE`; a map of the child to run `ERX_ERIGHTS`; the copy's refusals | pages copied at first touch and shared until then; a child dies with its parent and carries no `CHILD` |
 | `erx_mem_copy` | the domain service reading a crash area; a server reading a client's memory | service: copies between the two objects' window pages, at most 64 pages a request, so the stub loops | either object gone `ERX_ESTALE`, never a fault; an offset plus length past either object, computed with checked arithmetic, `ERX_ERANGE`, before any byte moves; physical memory or a JIT object `ERX_ETYPE`; a sealed destination, or a slice, whose pages are the archive's, `ERX_ERIGHTS` | FD11 |
 | cache maintenance, the code barrier | BeamAsm | local: asmjit's and ERTS's sequences unchanged ([design-arch-aarch64.md](design-arch-aarch64.md)) | correct | none |
-| `erx_mem_create_physical` | `erx_device`: the console UART (M3) and the host link's; through a give in its holder's creation, each device's register window for its holder, and the root's own give at boot for each such device the system domain holds ([Device records](#device-records)) | service, from the root only: `l4sigma0_map_iomem` into the root's device window, over the base and size its caller reads from the manifest's device entry; each map is then `l4_task_map` from there into the space named, as for a shared object; for the console UART also [the handoff](#the-console) | RAM, which `sigma0` keeps, `ERX_ERANGE`; execute `ERX_ERIGHTS`; a full window `ERX_ENOMEM`; a create from a task other than the root `ERX_ENOTSUP`, since the domain library makes every device's objects and passes them | FD13 |
+| `erx_mem_create_physical` | `erx_device`: the console UART (M3) and the host link's; through a give in its holder's creation, each device's register window for its holder, and the root's own give at boot for each such device the system domain holds ([Device records](#device-records)) | service, from the root only: `l4sigma0_map_iomem` into a fresh range of the root's device window, over the base and size its caller reads from the manifest's device entry; each map is then `l4_task_map` from there into the space named, as for a shared object; for the console UART also [the handoff](#the-console) | RAM, which `sigma0` keeps, `ERX_ERANGE`; execute `ERX_ERIGHTS`; no free range of the device window that holds it `ERX_ENOMEM`, asked before `sigma0`; a create from a task other than the root `ERX_ENOTSUP`, since the domain library makes every device's objects and passes them | FD13 |
 | `erx_mem_create_contiguous`, `erx_mem_create_contiguous_in`, `erx_mem_dma_addr` | a device's one memory for the boot, which the device NIF carves its rings and buffers from, in whichever domain holds the device | service: a create from the root only, first fit from the [contiguous pool](#the-pool), aligned to a page, which no cache-writeback granule exceeds, at most `ERX_MEM_CONTIGUOUS_MAX` (16 MiB), wholly inside the DMA range the device tree gives the device it is made for ([design-device-tree.md](design-device-tree.md#facts-into-records)), cached, zeroed, and never given back; the domain library passes it to the device's holder, and the root makes one at boot for each device of a kind the system domain holds ([Device records](#device-records)). `dma_addr`, from any task holding the object, is physical address plus offset plus that device's `dma_bus - dma_cpu`, or, for a device the root confines ([Devices](#devices)), the address its DMA space maps the object at; no device on QEMU `virt` as the harness starts it or on the Pi 4 is behind an IOMMU ([design-device-dma.md](design-device-dma.md#device-addresses-and-reach)) | no such run `ERX_ENOMEM`; `dma_addr` of another kind of object `ERX_ETYPE`, past the object `ERX_ERANGE`; execute `ERX_ERIGHTS`; a create from a task other than the root `ERX_ENOTSUP`; unconfined unless the root confines the device; `erx_dma_map`, windows `ERX_ENOTSUP` | FD12, FD13 |
 | `erx_irq_create`, `erx_irq_bind`, `erx_irq_ack`, `erx_irq_trigger` | device lines, in whichever domain holds the device; a connection's bells; a channel's and a pipe end's doorbells; ERTS's wakes | service: `l4_factory_create_irq`, from any task for a doorbell (`ERX_IRQ_SOFT`); for a line, from the root only, `l4_icu_bind`; for an MSI (`ERX_IRQ_MSI`), from the root only, a free line of the range the platform's MSI frame serves, bound the same way, answering, beside the object, its `erx_msi_message`: the doorbell address, the frame's base plus `0x40`, and the data, the line's interrupt id ([design-pcie.md](design-pcie.md#the-msi-frame-on-fiasco)); a bind to a group, from the root into any group it holds and from another task holding the object only into the group that task is the home of or a group it created, as a session binds a program's doorbell into the program's group ([design-programs.md](design-programs.md#the-channel)), gives the object a free entry of the group, records the label and runs `l4_rcv_ep_bind_thread(irq, dispatcher, entry)` on the group's home task's dispatcher once both exist, a bind again to the same group moves the label, and an unbind runs `l4_irq_detach` ([Interrupts and readiness](#interrupts-and-readiness)); the object's destroy runs `l4_irq_detach`; an ack and a trigger are the holder's own `l4_irq_unmask` and `l4_irq_trigger` on the capability the root placed at the IRQ slot the handle's number fixes, without Fiasco's special right, so only the root binds or detaches, and they make no request ([Handles](#handles)); a bind checks `BIND` in the caller's entry; a delivery goes from Fiasco to the dispatcher directly | each label once, the line masked until acked; `erx_irq_route` `ERX_ENOTSUP`; a target that is not a group the caller holds `ERX_ETYPE`, or a thread, `ERX_ENOTSUP` unless [vCPU upcalls](#vcpu-upcalls-on-fiasco) are carried; a bind of a bound object to another group `ERX_ENOTSUP`; from a task other than the root, a bind to a group it neither created nor is the home of, or a bind or an unbind of an object bound to such a group, `ERX_ETYPE`; a group's 65th bound object `ERX_ELIMIT`; a create past the domain's object limit `ERX_ELIMIT`; a line's second object `ERX_EBUSY`; a line or an MSI created from a task other than the root `ERX_ENOTSUP`; an MSI with no free line of the frame `ERX_ELIMIT`; the resource ignored | FD13, FD14, FD23 |
 | `erx_group_create`, `_configure`, `_info`, `_take_ready` | the adapter's five changes (M3); the domain library's group and sub-space group for each domain; a session's group for each program | service for `create`, from any task under a budget it holds or its own, and for `configure`, local for `info` in the root, on the root's own group only (`ERX_EINVAL` on another group there, `ERX_ENOTSUP` in a task), and local for `take_ready` in the group's home task: [Budgets and groups as records](#budgets-and-groups-as-records), [Interrupts and readiness](#interrupts-and-readiness). `configure` keeps only the CPU set of the grant in the caller's UTCB, narrowed to the group's domain's CPU set ([Threads, bands and stops](#threads-bands-and-stops)), a set with no CPU of it `ERX_EINVAL`, and `info` writes an `erx_info_group` there, with that set as `cpuset` and the root's status page's `parked` and `ready`, and only their bits of `reported` set, `cpuset`'s only once a set was configured ([Reporting kernel objects](#reporting-kernel-objects)) | correct readiness; everything else `unsupported`; no guarantee, quota or throttling; budget and parent recorded, and a group goes with its budget; every thread of a group runs in one task, its home, so a thread created in another task `ERX_ENOTSUP`; a task's second home group `ERX_ENOTSUP` | FD6, FD14, FD15 |
@@ -1613,8 +1613,22 @@ pages are a list threaded through the pages, and a page is zeroed when taken. An
 `ERX_ENOMEM`.
 
 **Device pages lie below the window.** A contiguous pool and the device window sit at constants of the address layout below the window,
-and neither joins the free list: giving back a page below the window does nothing, so no way of ending an object can free a page a device
-may still write. A physical or contiguous object is the table a shared object is, over those pages, and the index is sized to hold them too.
+and neither joins the free list. A physical, contiguous or slice object is a table over a run: its pages lie in order outside the pool (a
+device's registers, a run of the contiguous pool, or the archive's pages, wherever the root holds them), and each offset's page is the run's start plus the offset. Such a
+table holds no page index entry and no label and never takes or gives a page, so no run takes room in the index and no way of ending an
+object can free a page a device may still write.
+
+**The device window** is the root's address space from the device base up to the root's UTCB area, which lies below the contiguous
+pool, 4 GiB less the root's own pages; one header (`liberx/backend/fiasco/vm.h`) places the UTCB area and `vm.c` asserts the order. Its first pages are the
+root's own, which it maps once for its life (the board's random generator and watchdog pages), some before the pool exists. The rest is
+handed out as fresh ranges, one for each physical object, the lowest gap that holds it first (`erx_fiasco_device_window_t` in
+`liberx/backend/fiasco/page_pool.c`); `sigma0` maps I/O memory to whoever asks, as often as asked (`memmap.cc`: "there is no first-come,
+first-serve for IO memory"), so two objects over one device's registers each map them at a range of their own. When the object ends,
+after its revoke, the root unmaps its range from its own space and so from every space a mapping was made into from it, and only then
+gives the range back: a range taken again holds nothing of the object before, and an object's revoke and unmap reach only the mappings
+made from its own range, never another object's over the same registers. A physical object no free range holds is refused with
+`ERX_ENOMEM` at its create. It holds QEMU `virt`'s 256 MiB configuration window with room to spare for the registers and BARs the PCIe
+domain maps beside it; a board whose windows did not fit would see its domain's creates refused, never a mapping misplaced.
 
 ### The range table
 
@@ -1622,14 +1636,10 @@ A pure core that builds for the host and returns plans (`liberx/backend/core/vm_
 facts: runs and mappings per task, and one index for the machine. The **runs** are the task's reserved addresses, sorted and disjoint, in pool pages the task's record takes as they fill ([Table sizes](#table-sizes)); adjacent runs merge, so a range is
 wholly reserved exactly when one run covers it. The **mappings** are the task's mapping records, sorted and disjoint, each an address range inside one run, the object, the offset and the rights it was mapped with; a mapped page is never in the page index. The **page index** is a hash from a committed page's address and its table's label (a task's or an object's) to its
 window address and protection. A page absent from it is uncommitted, and has no protection to remember, since giving it access
-commits it. The index has two slots for each page the window holds, contiguous and device pages included, and two for each of a fixed
-number of slice entries, `ERX_FIASCO_SLICE_ENTRIES_MAX`. A committed page's entry owns a distinct window page, so commits
-never fill their half and need no pages for it. A slice's entries own no window page: a slice adds one entry for each
-archive page it holds, and two slices over one page add two. So slice entries are admitted against their own count: a
-slice, the service's slice of an image entry included, adds its entries only when the live slice entries stay within
-`ERX_FIASCO_SLICE_ENTRIES_MAX`, refused with `ERX_ENOMEM` before any entry is added, and a slice's end gives its entries
-back. The index so never holds more than half its slots, every probe ends at an empty slot, and a probe visits each slot at
-most once.
+commits it. The index has two slots for each page the window holds. Only a committed pool page takes an entry, and each owns a
+distinct window page, so commits never fill more than half the slots and need no pages for it; a table over a run takes none
+([Device pages lie below the window](#the-pool)), however many such objects live. The index so never holds more than half its
+slots, every probe ends at an empty slot, and a probe visits each slot at most once.
 
 A call computes a whole plan (its range, the state each reserved page in it becomes, and the pages needed), refuses it if the pool
 cannot cover it, and only then applies it, so a refused call changes nothing. Each page's steps come from one table of state against
@@ -1710,7 +1720,7 @@ The last row is erXos's release by the last reference, which a pipe's memory rel
 ([design-pipes.md](design-pipes.md)); the first three can find an object still mapped, and the revoke makes every task's
 mapping of it go at once, as a deletion does on erXos's kernel. The third row has no counterpart there, and can find no
 holder: [handles flow down](#erxos-on-fiasco), so every task that holds or maps an object a task created is that task
-or one below it, and those end first. A physical object's pages stay the device window's and a contiguous object's are
+or one below it, and those end first. A physical object's range of the device window goes back once its pages are unmapped from every space, and a contiguous object's run is
 never given back ([The pool](#the-pool)); a slice's pages are the archive's, which no event frees. The image slices `erx_image_map` keeps, one per image entry it has mapped, are the root's, charged to its budget and named by no handle, so none of the four events reaches them.
 
 ### Reporting a budget
@@ -2653,7 +2663,7 @@ distinct line its devices name, so the records of devices that share a page or a
 ([design-shared-devices.md](design-shared-devices.md#the-unit-rule)), and, for a device with DMA memory, the
 device's one contiguous object of that size with `erx_mem_create_contiguous_in` inside its DMA range, each in its own
 table, and adds the same `-erx_record given ROLE PERIPHERAL PATH WINDOW_H OFFSET SIZE LINE_H MARK MEM_H
-MEM_SIZE CLOCK COHERENT MAC` record a holder's page carries, below (`liberx/backend/fiasco/runtime_entry.c`, `device_give`;
+MEM_SIZE CLOCK COHERENT MAC INDEX` record a holder's page carries, below (`liberx/backend/fiasco/runtime_entry.c`, `device_give`;
 `erx_boot_device_window` computes the pages and OFFSET). ROLE and PERIPHERAL are the row's names,
 PERIPHERAL the peripheral's name in the CMSIS-SVD source that `erx_device` opens it as, PATH
 the device-tree path of the row, which names the device to its driver; the
@@ -2779,7 +2789,7 @@ device is behind it. A manifest with no such unit has no record, and a machine w
 device boots the same, with nothing for its driver to drive.
 
 A given record, a holder domain's or the root's own, has a word of its own, `-erx_record given ROLE
-PERIPHERAL PATH WINDOW_H OFFSET SIZE LINE_H MARK MEM_H MEM_SIZE CLOCK COHERENT MAC`. ROLE and
+PERIPHERAL PATH WINDOW_H OFFSET SIZE LINE_H MARK MEM_H MEM_SIZE CLOCK COHERENT MAC INDEX`. ROLE and
 PERIPHERAL come from `include/erx/device_kinds.h`. PATH is the device-tree path of the device's
 manifest row, the name its driver gives it, a node path of at most `device_path_max` bytes
 (`abi/erx_abi.txt`), which the manifest grammar holds `devices[].path` to; the record writers, the
@@ -2788,12 +2798,18 @@ and `erx_device_record` any other PATH word, so a name a driver shows holds no c
 and reaches a display only through that sink's escaping function. WINDOW_H, LINE_H and MEM_H are
 the values, in the holder's own handle table, of the window, line and memory objects the domain
 library installed when it created the domain, or the root made for itself; OFFSET and SIZE place
-the registers in the window; MEM_H and MEM_SIZE are 0 for a device that does no DMA; CLOCK is the
+the registers in the window; in a holder's record LINE_H is 0, the null handle, for a device whose
+node raises no line, as QEMU virt's ECAM bridge's does not, which only the PCIe domain holds, and
+`erx_device_record` reads it as no line, refusing it marked `shared`; MEM_H and
+MEM_SIZE are 0 for a device that does no DMA; CLOCK is the
 device's clock in hertz from its manifest row, 0 for a device whose driver reads none, so a given
 PL011 has its clock as the host link's does; COHERENT is 1 when the device tree the firmware handed
-over marks the device coherent, else 0; and MAC is the hardware address that tree gives a network
+over marks the device coherent, else 0; MAC is the hardware address that tree gives a network
 device, as a 48-bit number, 0 for none
-([design-device-tree.md](design-device-tree.md#facts-into-records)). Since each form has its own
+([design-device-tree.md](design-device-tree.md#facts-into-records)); and INDEX is the device's row
+in the manifest's device table, as a physical record's, by which the PCIe domain finds a host
+bridge's record for the `erx_pcie_bridge` whose `index` is that row
+([design-pcie.md](design-pcie.md#the-bridge-seam)). Since each form has its own
 word, the reader never tells one from the other by counting numbers, and a plain word of the
 command line after a record cannot make one form look like the other.
 
@@ -3445,6 +3461,8 @@ Apple cores an HVF guest runs on are unverified.
   root's stores into the task's memory before the bind visible to the thread after the delivery.
 * `l4_task_map` into a task of the archive's pages, which `sigma0` mapped into the root read and execute, at read-only rights, and an image entry's code at read-execute rights.
 * `L4_FP_OTHER_SPACES` over a page of the device window, removing every task's mapping of a register window.
+* `L4_FP_ALL_SPACES` by the root over one physical object's range of the device window, removing the root's mapping and every
+  mapping made from it and no other mapping of the same registers, which another object's range holds from `sigma0` apart.
 * `l4_semaphore_up` by the service on a semaphore of a thread of another task, which the root holds at its own slot.
 * `l4_irq_detach` by the root of an object bound to a thread of another task, and `l4_icu_bind` of a line whose earlier
   IRQ object was deleted, so a restarted device holder gets its line again.

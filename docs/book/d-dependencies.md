@@ -18,12 +18,11 @@ this notice, mark that change, offer the source. A system that ships
 images has to answer those requests for every file, every time,
 without anyone keeping a list.
 
-A FreeBSD user knows the usual answer: `/usr/src/contrib` holds the
-outside code, each directory keeps its `LICENSE` or `COPYING`, and the
-copyright notices travel in the source tree. erXos keeps that layout
-for code it changes and adds two things: a record of every imported
-file's hash, so a changed file cannot hide, and a packer that refuses
-to put into an image any file whose origin and license it cannot name.
+Code erXos changes lives in its tree, each directory keeping its
+license and copyright notices. Two things make the answer mechanical:
+a record of every imported file's hash, so a changed file cannot hide,
+and a packer that refuses to put into an image any file whose origin
+and license it cannot name.
 
 This appendix covers the rules a dependency must meet (D.1), the two
 ways outside code enters the build (D.2), the components and why each
@@ -48,7 +47,7 @@ Tools and test data never enter an image the system ships.
 Outside code enters the build in one of two ways, and which one
 depends on whether erXos changes it.
 
-**Code erXos changes lives in the tree.** OTP 29.1.2's source in
+**Code erXos changes lives in the tree.** OTP's source in
 `otp/`, musl in `musl/`, the Fiasco parts in `fiasco/`, OpenSSL,
 littlefs, Monocypher, ctaes, the BLAKE3, ChaCha20 and SHA-256 cores and
 `libmemdraw`, among others, are ordinary directories of the
@@ -81,7 +80,7 @@ The table has about sixty rows, in a few groups.
 
 | Component | License | Why it pays |
 | --- | --- | --- |
-| Erlang/OTP 29.1.2: ERTS and the shipped applications, with asmjit, PCRE2, zlib, zstd and Ryu inside | Apache-2.0; the parts inside under Zlib, BSD-3-Clause (PCRE2's with its exception) and Apache-2.0 | The language, its runtime and decades of supervision, distribution and libraries; erXos is built around it ([chapter 3](03-erlang.md)). asmjit, the JIT's assembler, is never in the system domain's image. |
+| Erlang/OTP: ERTS and the shipped applications, with asmjit, PCRE2, zlib, zstd and Ryu inside | Apache-2.0; the parts inside under Zlib, BSD-3-Clause (PCRE2's with its exception) and Apache-2.0 | The language, its runtime and decades of supervision, distribution and libraries; erXos is built around it ([chapter 3](03-erlang.md)). asmjit, the JIT's assembler, is never in the system domain's image. |
 | musl | MIT | A small, readable C library for every runtime and native program, whose seam under ERTS erXos owns ([chapter 9](09-processes.md#96-the-c-library-seam-and-hosted-mode)). |
 | OpenSSL 3.5 | Apache-2.0 | OTP's `crypto`, `ssl` and `ssh`, and the vault's key derivation and encryption; a long-term-support series. It never enters the system domain's image. |
 | LLVM libc++, libc++abi and compiler-rt builtins | Apache-2.0 with the LLVM exception | BeamAsm's C++ runtime, and the compiler's helper routines. |
@@ -172,13 +171,13 @@ license at all.
 Most rows never reach an image. They build the system or check it:
 
 * **Host tools**: LLVM, GNU make, QEMU, `dtc`, Ruby, Perl, Node.js and
-  pnpm, host OTP 29.1.2, fsimg (which writes the EROFS images), the
+  pnpm, a host OTP of the same release, fsimg (which writes the EROFS images), the
   TLA+ tools, CBMC and herdtools7's `herd7`.
 * **Oracles**: stock OTP in an offline Linux container, musl's
   `libc-test`, plan9port's `rc`, libvterm and `vttest` for the
-  terminal, 9front's `libdraw` for the display, a FreeBSD 15.1 guest
-  for the commands named like FreeBSD's, and the FreeBSD x86-64 test
-  host for the network stack. Some are GPL, such as the Linux guests
+  terminal, 9front's `libdraw` for the display, a FreeBSD guest for the commands
+  that share FreeBSD's names, and a FreeBSD test host for the network
+  stack. Some are GPL, such as the Linux guests
   that test erXos's F2FS; they run only as black boxes in a guest and
   are never linked.
 * **A demo program**, never part of the system: doomgeneric under GPL-2.0-or-later with Freedoom's
@@ -227,8 +226,7 @@ It fails on any file it cannot place.
 
 From that closure it writes **`NOTICES`**, the file of every license
 and copyright notice an image holds, as `system/NOTICES` in the system
-image. It is laid out as FreeBSD's and Debian's copyright files are:
-each distinct header comment once, under the files that carry it,
+image. Each distinct header comment once, under the files that carry it,
 with their license; then each license text once. A license that
 thousands of files share costs one copy. The design also puts the same
 `NOTICES`, with the firmware's and device trees' licenses, beside the

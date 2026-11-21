@@ -492,13 +492,11 @@ load(const erx_device_t *device, const erx_device_register_t *reg, uint64_t offs
 	return (load_word(device->windows[reg->window], reg->width, offset));
 }
 
-/* One volatile store of the register's declared width at `offset` of its window. */
+/* One volatile store of `width` bits at `offset` of a window, which the table holds as 8, 16, 32 or 64. */
 static void
-store_width(const erx_device_t *device, const erx_device_register_t *reg, uint64_t offset, uint64_t value)
+store_word(volatile uint8_t *window, uint8_t width, uint64_t offset, uint64_t value)
 {
-	volatile uint8_t *const window = device->windows[reg->window];
-
-	switch (reg->width) {
+	switch (width) {
 	case 8:
 		erx_device_access_store8(window, offset, (uint8_t)value);
 		break;
@@ -512,6 +510,13 @@ store_width(const erx_device_t *device, const erx_device_register_t *reg, uint64
 		erx_device_access_store32(window, offset, (uint32_t)value);
 		break;
 	}
+}
+
+/* One volatile store of the register's declared width at `offset` of its window. */
+static void
+store_width(const erx_device_t *device, const erx_device_register_t *reg, uint64_t offset, uint64_t value)
+{
+	store_word(device->windows[reg->window], reg->width, offset, value);
 }
 
 /*
@@ -729,6 +734,46 @@ erx_device_write_field(const erx_device_t *device, const erx_device_register_t *
 	if (!element_at(device, reg, element, &offset) || plan.op == ERX_DEVICE_FIELD_REFUSED)
 		return (false);
 	store(device, reg, offset, erx_device_field_apply(&plan, plan.op == ERX_DEVICE_FIELD_UPDATE ? load(device, reg, offset) : 0));
+	return (true);
+}
+
+/* The bytes of the device's window: a stand-in's is its table's size, any other's its spec's. */
+static uint64_t
+window_bytes(const erx_device_t *device)
+{
+	return (device->form == ERX_DEVICE_FORM_STAND_IN ? device->peripheral->window_size : device->size);
+}
+
+uint32_t
+erx_device_space_elements(const erx_device_t *device, const erx_device_space_t *space)
+{
+	return (erx_device_space_blocks(space, window_bytes(device)));
+}
+
+bool
+erx_device_config_read(const erx_device_t *device, const erx_device_space_t *space, erx_device_element_t element,
+    uint64_t offset, uint64_t width, uint64_t *value)
+{
+	uint64_t at;
+
+	if (!erx_device_space_offset(space, window_bytes(device), element.indexed, element.index, offset, width, &at))
+		return (false);
+	*value = load_word(device->windows[0], (uint8_t)(width * 8u), at);
+	return (true);
+}
+
+/* A configuration store is waited for, as store() waits for a register's. */
+bool
+erx_device_config_write(const erx_device_t *device, const erx_device_space_t *space, erx_device_element_t element,
+    uint64_t offset, uint64_t width, uint64_t value)
+{
+	uint64_t at;
+
+	if (!erx_device_space_offset(space, window_bytes(device), element.indexed, element.index, offset, width, &at) ||
+	    value >> (width * 8u) != 0)
+		return (false);
+	store_word(device->windows[0], (uint8_t)(width * 8u), at, value);
+	erx_dma_store_wait();
 	return (true);
 }
 

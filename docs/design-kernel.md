@@ -4412,6 +4412,17 @@ erx_status_t	erx_space_create(erx_cap_t budget,	/* ALLOC, SPACES: pays for it */
 		    erx_cap_t *space);			/* out: the space, every right */
 ```
 
+`uint32_t erx_space_cap_limit_max(void)` answers the largest `cap_limit`
+this backend's `erx_space_create` takes: `ERX_CAPS_MAX` on erXos's kernel,
+less on Fiasco, whose object space bounds a table's window
+([design-fiasco.md](design-fiasco.md#handles), FD1). It is never below
+`ERX_PROGRAM_CAP_LIMIT`, the least a program's image may hold, which each
+backend that makes spaces asserts. It bounds the argument and does not
+promise that a create succeeds. A caller that wants the largest table
+asks for it, so no code above `liberx` names a backend's figure and
+erXos's own kernel answers its own limit; a session's port driver makes
+each program's image with it.
+
 The new space starts empty: no mapping, no thread, an empty table, a fresh
 ASID drawn when it first runs, its own pointer-signing keys and a random
 placement base. Its record, its root translation table and its capability

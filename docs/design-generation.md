@@ -256,7 +256,16 @@ A PCIe bridge's configuration space is a peripheral of its own, for the
 ECAM window and for the BCM2711 bridge's index and data registers alike,
 whose view takes 8-, 16- and 32-bit accesses at an offset computed from
 a function's place and the register, each access bounded by the window
-([design-pcie.md](design-pcie.md#the-bridge-seam)). A cluster whose base
+([design-pcie.md](design-pcie.md#the-bridge-seam)). The window is an erXos
+extension of the peripheral, `<configurationSpace>`, with a `name`, its first
+block's `addressOffset`, one block's `size`, 4 to 4096 bytes, and for
+`NAME[%s]` a `dim` of blocks one after another, at most 65536; offset and size
+are multiples of 4, and a space meets neither another space nor a register. ECAM's
+(`hw/svd/pci_ecam/pci_ecam.svd`) is `FUNCTION[%s]`, 65536 blocks of 4 KiB from
+offset 0, one per routing ID, so a block's offset is `(bus - first) << 20 |
+device << 15 | function << 12`; a peripheral of spaces alone has no registers.
+The device NIF reaches a block only while it lies wholly inside the window it
+opened ([design-runtime.md](design-runtime.md#the-device-nif)). A cluster whose base
 the controller reports, as xHCI's are, names in an extension,
 `<baseFrom>REGISTER.FIELD</baseFrom>`, the capability register and field its
 base comes from, the field's bits in place being the offset; the cluster sits

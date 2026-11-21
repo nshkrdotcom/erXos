@@ -593,6 +593,10 @@ module Erx
       LOAD_ONLY = %w[erx_net erx_blk].freeze
       LOADED = %w[erx_blk erx_net erx_net_client].freeze
       MEMORY = 64 << 20
+      # The root's pool pages in use, the figure a domain's cost is read from: an Erlang fun of no
+      # arguments, whose one variable is named bound, answering the system domain's budget's used pages.
+      def self.pool_used(bound) = "fun()->\#{attrs:=\#{used:={_,{_,#{bound}}}}}=erx_kernel_records:budget(" \
+                                  "erx_kernel_records:system_domain()),#{bound} end"
       # The small profile of the session domain, in the configured rows and in every create.
       PROCESSES = 1024
       ATOMS = 16_384
@@ -704,7 +708,7 @@ module Erx
         [
           'FpEnded=fun FpE(0)->timeout;FpE(FpK)->case length(erx_domain_core:deaths(1,maps:get(core,sys:get_state(erx_domain_srv)))) >= ' \
           "#{RELEASES.size} of true->ok;false->timer:sleep(200),FpE(FpK-1) end end",
-          'FpUsed=fun()->#{attrs:=#{used:={_,{_,FpU}}}}=erx_kernel_records:budget(erx_kernel_records:system_domain()),FpU end',
+          "FpUsed=#{Footprint.pool_used(%q(FpU))}",
           'FpAsk=fun(FpN,FpM,FpF,FpA)->try erpc:call(FpN,FpM,FpF,FpA,20000) catch FpC:FpR->{FpC,FpR} end end',
           'FpList=fun(FpV)->case is_list(FpV) of true->FpV;false->[] end end',
           # The bytes each allocator holds from the system: every mbcs and sbcs carrier of every instance.

@@ -17,6 +17,8 @@ require_relative '../../tools/lib/erx/abi'
 # padding runs, an enum value no member holds, a flags bit its type does not declare, a
 # combination its allow line does not list, a scalar past its range, bytes that differ
 # from their fixed value, a padding byte that is not zero, and bytes of the wrong size.
+# The C reader's encoder writes back, byte for byte, every such layout's sample its
+# decoder read.
 # Seeded faults in the generated code (the padding check, the enum check, the flags
 # mask, the scalar's range and the fixed value's comparison dropped) must each fail the
 # sample's expression.
@@ -144,6 +146,55 @@ class AbiLayoutTest < Minitest::Test
       assert status.success?, output
       assert_match(/#{cases.size} cases, wrong: \[\]/, output)
     end
+  end
+
+  # The C reader's encoder is its decoder's inverse: every sample of a layout it encodes
+  # (each fixed wire_le layout but the device records), decoded, encodes to the same bytes and
+  # no byte past them, and an encode into too short a buffer is refused.
+  def test_every_wire_layout_of_the_abi_encodes_in_c_what_it_decodes
+    model = Erx::ABI::Model.validate(Erx::ABI::Sources.read(root: ROOT, architecture: 'aarch64'))
+    layouts = Erx::ABI::CEmitter.wire_encoded_layouts(model)
+    program = "#include <stdio.h>\n#include <string.h>\n#include \"erx/abi_reader.h\"\n\nint\nmain(void)\n{\n" \
+              "\tint wrong = 0;\n\n#{layouts.map { |layout| encode_check(layout) }.join}" \
+              "\tprintf(\"%d layouts, %d wrong\\n\", #{layouts.size}, wrong);\n\treturn (wrong != 0);\n}\n"
+    Dir.mktmpdir('erx-abi-encode-') do |work|
+      include_dir = File.join(work, 'include/erx')
+      FileUtils.mkdir_p(include_dir)
+      File.write(File.join(include_dir, 'abi.h'), Erx::ABI::CEmitter.header(model))
+      File.write(File.join(include_dir, 'abi_reader.h'), Erx::ABI::CEmitter.reader_header(model))
+      File.write(File.join(work, 'reader.c'),
+                 Erx::ABI::CEmitter.prefix_source(model) + Erx::ABI::CReaderEmitter.source(model))
+      File.write(File.join(work, 'main.c'), program)
+      output, status = Open3.capture2e('gtimeout', '-k', '10', '120', 'clang', '-std=c17', '-Wall', '-Wextra',
+                                       '-Werror', '-I', File.join(work, 'include'), '-I', File.join(ROOT, 'include'),
+                                       '-o', File.join(work, 'encode'), File.join(work, 'reader.c'),
+                                       File.join(work, 'main.c'), stdin_data: '')
+      assert status.success?, output
+      output, status = Open3.capture2e(File.join(work, 'encode'), stdin_data: '')
+      assert status.success?, output
+      assert_match(/#{layouts.size} layouts, 0 wrong/, output)
+    end
+  end
+
+  # One layout's check in the encoder's program: its sample decoded, then encoded into
+  # a buffer one byte longer, which must hold the sample and leave the last byte alone.
+  def encode_check(layout)
+    prefix = Erx::ABI::CEmitter.name(layout.name)
+    <<~C
+      	{
+      		static const uint8_t in[] = { #{Samples.sample(layout).bytes.join(', ')} };
+      		uint8_t out[sizeof(in) + 1];
+      		#{Erx::ABI::CEmitter.c_type(layout)} value;
+
+      		memset(out, 0xa5, sizeof(out));
+      		if (!#{prefix}_decode(in, sizeof(in), &value) || !#{prefix}_encode(&value, out, sizeof(in)) ||
+      		    memcmp(in, out, sizeof(in)) != 0 || out[sizeof(in)] != 0xa5 ||
+      		    #{prefix}_encode(&value, out, sizeof(in) - 1)) {
+      			printf("wrong: %s\\n", "#{layout.name}");
+      			wrong++;
+      		}
+      	}
+    C
   end
 
   # Bytes for one layout built from its declaration: its sample, every field at a value

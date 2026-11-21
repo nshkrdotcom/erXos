@@ -123,6 +123,16 @@ erx_backend_vm_table_init(erx_backend_vm_table_t *table, uint32_t label, erx_bac
 	erx_backend_grow_table_init(&table->mappings, sizeof(erx_backend_vm_mapping_t), records);
 }
 
+void
+erx_backend_vm_run_init(erx_backend_vm_table_t *table, uintptr_t run, uint64_t area_start, uint64_t size,
+    const erx_backend_grow_pages_t *records)
+{
+	*table = (erx_backend_vm_table_t){ .area_start = area_start, .area_end = area_start + size,
+	    .placement = ERX_PAGE_SIZE, .run = run, .over_run = true };
+	erx_backend_grow_table_init(&table->runs, sizeof(erx_backend_vm_range_t), records);
+	erx_backend_grow_table_init(&table->mappings, sizeof(erx_backend_vm_mapping_t), records);
+}
+
 erx_backend_vm_steps_t
 erx_backend_vm_steps(erx_backend_vm_state_t from, erx_backend_vm_state_t to)
 {
@@ -137,6 +147,9 @@ erx_backend_vm_plan(const erx_backend_vm_table_t *table, const erx_backend_vm_re
 	int error;
 
 	*plan = (erx_backend_vm_plan_t){ .op = request->op, .start = request->addr };
+	/* A run's pages are fixed by its place: nothing may reserve or commit over them, nor key the index. */
+	if (table->over_run)
+		return (ERX_EINVAL);
 	switch (request->op) {
 	case ERX_BACKEND_VM_RESERVE:
 		return (plan_reserve(table, request, plan));
@@ -413,8 +426,12 @@ count_takes(const erx_backend_vm_table_t *table, uint64_t start, uint64_t end,
 uintptr_t
 erx_backend_vm_window(const erx_backend_vm_table_t *table, uint64_t addr)
 {
-	const erx_backend_vm_page_t *const page = &table->pages[page_find(table, addr)];
+	const erx_backend_vm_page_t *page;
 
+	if (table->over_run)
+		return (addr >= table->area_start && addr < table->area_end ?
+		    table->run + (uintptr_t)(addr - table->area_start) : 0);
+	page = &table->pages[page_find(table, addr)];
 	if (page->key == 0)
 		return (0);
 	return ((uintptr_t)(page->window_and_state & ~ERX_BACKEND_VM_PAGE_MASK));

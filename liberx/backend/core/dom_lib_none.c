@@ -148,9 +148,23 @@ erx_dom_lib_record(erx_dom_lib_t *lib, uint64_t label, const erx_fault_t *record
 }
 
 erx_status_t
-erx_dom_lib_pci_report(erx_dom_lib_t *lib, uint32_t bridge, const erx_pcie_function_t *report, uint32_t count,
+erx_dom_lib_pci_report(erx_dom_lib_t *lib, uint32_t bridge, const erx_dom_pci_record_t *records, uint32_t count,
     erx_dom_pci_refusal_t *refusal)
 {
-	(void)lib, (void)bridge, (void)report, (void)count, (void)refusal;
+	(void)lib, (void)bridge, (void)records, (void)count, (void)refusal;
+	return (ERX_ENOTSUP);
+}
+
+erx_status_t
+erx_dom_lib_pci_mode(erx_dom_lib_t *lib, uint32_t index, uint32_t mode)
+{
+	(void)lib, (void)index, (void)mode;
+	return (ERX_ENOTSUP);
+}
+
+erx_status_t
+erx_dom_lib_pci_answered(erx_dom_lib_t *lib, uint32_t domain)
+{
+	(void)lib, (void)domain;
 	return (ERX_ENOTSUP);
 }

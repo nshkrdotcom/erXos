@@ -32,16 +32,16 @@ a request, carry it across the wall, check it and bring the bytes
 back, without becoming a second way to get authority beside the four
 forms of chapter 11.
 
-FreeBSD has one tree of files for the whole machine. Every process
+UNIX has one tree of files for the whole machine. Every process
 resolves `/data/notes.txt` the same way, through the same mounts, and
 the kernel decides at `open` by the file's owner and permission bits
 whether this process, running as this user, may have it. A jail or
 `chroot` gives a group of processes a smaller tree, cut from the one
 tree ([chapter 1](01-operating-systems.md#164-file-systems-and-mounting)).
 
-erXos takes Plan 9's answer whole. Each domain sees files through its
-own namespace, a private table from path prefixes to the file
-servers it was given, and there is no machine-wide tree to cut from.
+In erXos, after Plan 9, each domain sees files through its own
+namespace, a private table from path prefixes to the file servers it
+was given, and there is no machine-wide tree to cut from.
 An entry that leads to another domain holds the pid of a
 [file grant](11-security.md#1171-a-namespace-of-grants) at that
 domain's server. A pid alone grants nothing
@@ -109,11 +109,11 @@ value for write and execute together.
 
 A runtime keeps one namespace for all of its processes, held as one
 `persistent_term` ([chapter 3](03-erlang.md#353-memory-and-garbage-collection))
-that only `erx_ns`'s process writes (`erlang/apps/erx/src/erx_ns.erl`).
+that only `erx_ns`'s process writes.
 Every resolution reads it in place, without a copy or a lock. It is
-per domain, not per process as in Plan 9, because every process of a
-domain holds the same exports: a per-process table would hide paths
-without protecting anything.
+per domain, not per process, because every process of a domain holds
+the same exports: a per-process table would hide paths without
+protecting anything.
 
 Root's session's table, abridged, has entries of this shape (the
 pids are illustrative):
@@ -193,17 +193,16 @@ the domain service hands the session a new grant, the next lookup of
 other way. `erx_ns`'s process monitors every pid its table holds, and
 when one ends it rewrites that pid's entries to `ended`. A pid later
 reused for another process never receives a mounted path's requests.
-Both behaviors are built (`erlang/apps/erx/src/erx_ns.erl`).
+Both behaviors are built.
 
 ### 14.1.4 Resolving a path
 
 How does `../notes.txt` find a file when the server that holds it is
-behind a wall? One name at a time, on the client's side, as FreeBSD's
-`namei` resolves a path inside its kernel
+behind a wall? One name at a time, on the client's side
 ([design-files.md, Resolving a path](../design-files.md#resolving-a-path)).
 
 The resolver is `erx_path`, a pure Erlang module preloaded with
-`prim_file` (`otp/erts/preloaded/src/erx_path.erl`). It takes a path,
+`prim_file`. It takes a path,
 a table and a working directory as terms, and reaches a tree only
 through two callbacks: one walks names on an entry, one reads a
 symbolic link. Every runtime and every program's handler uses it, so
@@ -213,13 +212,12 @@ The resolver keeps a **place**: the path of the directory it has
 reached so far, every name of which is a directory a walk answered.
 A name joins the place only when a walk says it is a directory.
 `..` removes the place's last name, and `.` leaves the place as it is.
-Three of FreeBSD's rules follow:
+Three rules follow:
 
 * `..` is physical. After following a link, `..` names the parent of
   the link's target, the directory the walk came down through.
 * `..` at the top of an entry steps out to the parent of the entry's
-  mount point, as FreeBSD's `..` crosses back out of a mounted file
-  system. At `/` it stays at `/`.
+  mount point. At `/` it stays at `/`.
 * `missing/..` answers `enoent` and `file/.` answers `enotdir`, because
   neither `missing` nor `file` was ever walked as a directory.
 
@@ -228,7 +226,7 @@ carries only plain names; a server that meets a link stops and hands
 back its text, and the client resolves that text through its own
 namespace. So a link to `/etc` on the storage domain's disk leads to the
 client's `/etc`, and no server decides whether a link escapes a
-grant's root. The resolver has a fuzz target (`tools/fuzz/erx_path.rb`).
+grant's root. The resolver has a fuzz target.
 
 ## 14.2 One file protocol
 
@@ -259,12 +257,11 @@ a number.
 
 The terms already pass the funnel's grammar, so a server needs no
 binary parser. 9P2000.L's bytes exist only at the machine's edges, where a codec turns
-terms into wire messages and back. One edge is built: the host link's 9P bridge
-(`erlang/apps/erx_uart/src/erx_hostlink_9p.erl`), through which
-`tools/erx files` reads the machine's files. The codec has a fuzz
-target. erXos adds no operation to 9P2000.L, and departs from it in
-two small places: `version` resets nothing, and a `write` reply also
-names the offset the bytes landed at, which an append needs.
+terms into wire messages and back. One edge is built: the host link's
+9P bridge, through which `tools/erx files` reads the machine's files. The codec has a fuzz
+target. Two details matter to a server's author: `version` resets
+nothing, and a `write` reply also names the offset the bytes landed
+at, which an append needs.
 
 ### 14.2.2 A read, end to end
 
@@ -343,8 +340,7 @@ a process of another domain included, can send it any term. A
 it or replace its state with `sys:replace_state/2`. The grant is a
 plain process with one receive. Everything except its monitors'
 `DOWN`s and its keepers' answers goes through the funnel's grammar
-for the protocol and is refused if malformed
-(`erlang/apps/erx_files/src/erx_fs.erl`).
+for the protocol and is refused if malformed.
 
 ### 14.2.4 Serving: the `erx_fs` behaviour
 
@@ -352,7 +348,7 @@ What does it take to write a file server? A callback module of the
 `erx_fs` behaviour. The behaviour owns the protocol, the fids, the
 locks and every check; the module answers questions about its tree
 ([design-files.md, Serving: the `erx_fs` behaviour](../design-files.md#serving-the-erx_fs-behaviour)).
-The core of the interface, from `erlang/apps/erx_files/src/erx_fs.erl`:
+The core of the interface:
 
 ```erlang
 -callback root(Fs) -> {ok, Tree :: binary(), Node, qid()}.
@@ -403,9 +399,8 @@ them. A file whose reads wait like this is a **stream file**. Stream
 files and keepers are built; the window's `kbd` and `mouse` reads
 have keepers, tested on the host.
 
-9front's keyboard server, kbdfs, takes the same form, handing a
-waiting read to the thread that owns the keys. The alternative, a
-helper process per waiting read that a flush kills, loses input: the
+The alternative, a helper process per waiting read that a flush
+kills, loses input: the
 helper cannot say whether it took the bytes before it died.
 
 ### 14.2.6 Clients
@@ -413,12 +408,10 @@ helper cannot say whether it took the bytes before it died.
 Erlang code reaches files through `prim_file`, ERTS's file layer, as
 it does on any host. `prim_file` resolves the path with `erx_path`. A
 local provider, the release slice or an EROFS image, answers in the
-calling process. A grant goes through `erx_file_remote`
-(`otp/erts/preloaded/src/erx_file_remote.erl`), which sends the
-requests and turns the server's Linux error atoms into the answers
-stock `prim_file` gives on a UNIX host. So `file:read_file/1` behaves
-like stock OTP whatever server holds the file, and OTP's own tests can
-be the judge
+calling process. A grant goes through `erx_file_remote`, which sends
+the requests and turns the server's error atoms into the answers
+`prim_file` gives on a UNIX host, so `file:read_file/1` behaves the
+same whatever server holds the file
 ([design-files.md, Erlang clients](../design-files.md#erlang-clients-prim_file-and-erx_file_remote)).
 
 A native program has no grant and speaks no 9P. It sends its `open`,
@@ -446,8 +439,7 @@ Suppose root's shell starts a program with only `/data/projects`
 visible, read-only. The handler records one entry, on the session's
 `data` grant, with root `projects` and rights `ro`. The program can
 open `/data/projects/a.c`; `/data/notes.txt` answers `ENOENT`, and a
-write anywhere answers `EROFS`. Narrowing is built
-(`erlang/apps/erx/src/erx_prog_handler_core.erl`).
+write anywhere answers `EROFS`. Narrowing is built.
 
 The table is a value, not a fid: the handler walks from the grant's
 root each time, so nothing needs cleaning up when the program ends.
@@ -461,14 +453,11 @@ grant, so a program cannot reach them through the session's grants.
 The session therefore runs a file server of its own, its **export**.
 This is a second sense of the word: a file server, not the export of
 a pid of [chapter 10](10-domains.md#104-exports-a-pid-is-a-name-not-an-authority).
-The export is an `erx_fs` module in the session's own domain
-(`erlang/apps/erx_session/src/erx_session_export.erl`), with a fixed
+The export is an `erx_fs` module in the session's own domain, with a fixed
 tree of `/bin` (the session's commands), `/dev` (`null`, `zero`,
 `urandom` and `tty`) and `/etc` (`passwd` and `group`). Every session
 starts it as two grants of its own domain: an `rx` grant for `/bin`
-and an `rw` grant for `/dev` and `/etc`
-(`erlang/apps/erx_session/src/erx_session_sup.erl`). That much is
-built. Two parts are designed and not built: entries on the export in
+and an `rw` grant for `/dev` and `/etc`. That much is built. Two parts are designed and not built: entries on the export in
 a program's table, and the export serving the session's local
 providers as well.
 
@@ -492,7 +481,7 @@ and no page fault ever waits on another domain
 
 Shared mappings of files are designed and not built. A program can
 map with `MAP_SHARED` only a memory object its session already
-mapped for it (`liberx/program/fd.c`, `mem_map_check`).
+mapped for it.
 
 ## 14.4 `/tmp`: a file system in Erlang
 
@@ -502,15 +491,13 @@ smallest one erXos has, and it is built
 
 > **Background: RAM file systems.** A RAM file system gives fast
 > scratch space that needs no disk. It keeps its files in memory, so
-> they vanish when their owner stops. FreeBSD's tmpfs is one: it keeps
-> each file's data as pages of memory, which the system may move to
-> swap, within a size limit set when it is mounted. It needs no
-> journal, since its files are not meant to outlive a crash.
+> they vanish when their owner stops. It needs no journal, since its
+> files are not meant to outlive a crash.
 
 Every domain that runs ERTS has its own `/tmp`, served by `erx_ramfs`
 in that domain, charged to the domain's budget and lost when the domain
-ends. OTP's test suites keep their `priv_dir` there. It is a file
-server like any other: the runtime mounts its grant at `/tmp`, and
+ends. It is a file server like any other: the runtime mounts its
+grant at `/tmp`, and
 `prim_file` reaches it through `erx_file_remote`, as it reaches the
 storage domain.
 
@@ -519,11 +506,9 @@ One process owns the tree. The tree is one Erlang value held by the
 process, which answers it by one step of a pure function,
 `erx_ramfs_core:step/4`. Nothing else reads or writes the tree, so
 each request is atomic against every other without a lock, and the
-step function can be tested and fuzzed on its own
-(`erlang/apps/erx_files/src/erx_ramfs_core.erl`;
-`tools/fuzz/erx_ramfs_core.rb`).
+step function can be tested and fuzzed on its own.
 
-Three choices come from FreeBSD's tmpfs.
+Three choices, after FreeBSD's tmpfs, shape the tree.
 
 * **A walked fid keeps its node.** A node lives while a name names it,
   an open holds it or a grant's fid names it. A `stat` that races a
@@ -547,8 +532,8 @@ and grant that serve other domains.
 ## 14.5 State is a file to read, control is a file to write
 
 How does a user see a domain's run queue, or tell an app to reload?
-In Plan 9's way: state is a file to read, control a file to write.
-Each kind of fact has one of three homes.
+State is a file to read, control a file to write. Each kind of fact
+has one of three homes.
 
 * **What the system sees**, such as a domain's processes or a CPU's
   load, is a path of the inspector, declared in `abi/inspection.txt`
@@ -597,8 +582,7 @@ inspect facet. A path the facet's scope does not reach reads as
 `enoent`. So `/proc` grants nothing `erx:i/1` in the same domain does
 not, and each record has one gate for both forms. `/proc` and the
 records README lists, such as each CPU at `/proc/cpus/N` and the
-clock at `/proc/time/status`, are built
-(`erlang/apps/erx_files/src/erx_procfs.erl`).
+clock at `/proc/time/status`, are built.
 
 There is no `sysctl`. FreeBSD splits its system values between
 `sysctl` names and `procfs` files, each with its own permission model.
@@ -662,18 +646,17 @@ reached through a facet, never stored in the inspector.*
 The `/svc` directory is a namespace entry whose names are the `svc`
 facets the session holds; the domain service mints one for each
 session whose template holds the `start` facet. No link under `/svc`
-is followed, as under FreeBSD's `nosymfollow` mount option, so an app
-cannot point its tree at another app's. When ntpd's session ends, its facets end and
+is followed, so an app cannot point its tree at another app's. When ntpd's session ends, its facets end and
 `/svc/ntpd` disappears. The whole of `/svc` is designed and not built.
 
 ## 14.6 Familiar only where true
 
 Every familiar name in erXos faces one review question: what does
-this promise that it does not do? A FreeBSD user must get what they
+this promise that it does not do? A UNIX user must get what they
 expect, or a clear refusal
 ([design-app-trees.md, What FreeBSD does](../design-app-trees.md#what-freebsd-does)).
 
-**`/proc`.** A FreeBSD user expects to read live process state with
+**`/proc`.** A UNIX user expects to read live process state with
 `cat` and `grep`, and gets it, with domains, CPUs and the clock
 besides. What it does not do is accept writes. `erx_procfs` has no write
 callback, so its grants refuse every writing operation before the tree
@@ -682,7 +665,7 @@ tracing are separate tools with their own authority
 ([chapter 21](21-live-machine.md#213-tracing)).
 
 **`/dev`.** A program finds `null`, `zero` and `urandom` where it
-expects them, and they behave as on FreeBSD. `tty` is a name and not a
+expects them, and they behave as on UNIX. `tty` is a name and not a
 file: a walk and a `stat` reach it, and an open answers `ENXIO`,
 because a terminal in erXos is not a file of the protocol. Its
 reads, modes and readiness belong to the program protocol and the
@@ -717,7 +700,7 @@ What does the user see when a part dies?
   clunk every fid and end.
 * **`/tmp`'s tree process or grant crashes.** They are linked under a
   one-for-all supervisor that restarts them, at most once in five
-  seconds (`erlang/apps/erx_files/src/erx_ramfs_sup.erl`). `/tmp`
+  seconds. `/tmp`
   comes back empty and is mounted again, files open before answer
   `eio`, and a crash report goes to the log.
 * **`erx_ns`'s process crashes.** The table lives in the persistent
@@ -731,7 +714,7 @@ What does the user see when a part dies?
 A domain that floods a server fills its own lane and waits in its own
 runtime ([chapter 10](10-domains.md#1024-when-a-lane-is-full)). A
 grant holds at most the requests in flight its facet row sets, 16 for
-`data` in `config/manifest/development.txt`.
+`data` in the development build's manifest.
 
 ## 14.8 Design choices
 
@@ -768,7 +751,7 @@ Each domain's namespace is its own. An entry that leaves the domain
 holds a file grant's pid or a facet's name, so a path reaches only
 servers the domain was given, and
 mounting or binding never adds authority. One pure resolver,
-`erx_path`, gives every path FreeBSD's meaning on the client's side;
+`erx_path`, gives every path one meaning on the client's side;
 servers see only plain names and never follow links. Every file server
 speaks 9P2000.L, carried as checked Erlang terms inside the machine and
 as bytes at its edges. A server is an `erx_fs` callback module; its
@@ -779,7 +762,7 @@ narrowed from its starter's. `/tmp`'s tree is one process and one pure
 step function. `/proc` shows what the
 system observes, read-only, and an app's own words and commands belong
 in its tree at `/svc/NAME`, which is designed. Familiar names stay
-only where they behave as a FreeBSD user expects, or refuse with a clear error.
+only where they behave as a UNIX user expects, or refuse with a clear error.
 
 ## Where to read next
 
@@ -798,5 +781,5 @@ only where they behave as a FreeBSD user expects, or refuse with a clear error.
 * Rob Pike, Dave Presotto, Ken Thompson, Howard Trickey and Phil
   Winterbottom, "The Use of Name Spaces in Plan 9", *Operating Systems
   Review* 27(2), 1993: why a private namespace replaces a global tree.
-* FreeBSD's `sys/kern/vfs_lookup.c` (`namei`) and `tmpfs(4)`: the
-  lookup and the RAM file system erXos's resolver and `/tmp` follow.
+* FreeBSD's `tmpfs(4)` manual page: the RAM file system behind `/tmp`'s
+  choices.
