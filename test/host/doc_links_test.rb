@@ -65,6 +65,33 @@ class DocLinksTest < Minitest::Test
     assert_equal [['seeded.erl', 2]], found({ 'seeded.erl' => "%% x\n%% (docs/design-seeded.md, \"A row\")\n" })
   end
 
+  # A lead-in whose closing marks fall on a later line of its paragraph is one
+  # name, the lines joined with single spaces; a span that opens no paragraph,
+  # or whose paragraph ends before it closes, is not.
+  def test_a_wrapped_lead_in_is_a_section
+    document = "# Wrapped\n\n**An outcome has one point: the step that ends\nits third phase.** Then more.\n\n" \
+               "- **A wrapped item names\n  the second.** Text.\n\n**Unclosed lead-in\n\nA paragraph.** Not it.\n\n" \
+               "Text with **a bold span that wraps\nacross lines.**\n\n**Lead starts here\nand then **another bold** text.\n\n" \
+               "**Above a row\n|a|**b**|\n\n**Above a quote\n> quoted.** x\n\n**Above a rule\n___\nmore.** x\n\n" \
+               "___\n**After a rule.** x\n\n**Above an item\n- **An item.** x\n"
+    cite = ->(name) { { 'tools/seeded.rb' => "# (design-wrapped.md, \"#{name}\")\n", 'docs/design-wrapped.md' => document } }
+    check = lambda do |sources|
+      Erx::DocLinks.violations(sources, documents: sources.select { |path, _| Erx::DocLinks.document?(path) },
+                                        listed: sources.keys).map(&:line)
+    end
+    assert_empty check.call(cite.call('An outcome has one point: the step that ends its third phase.'))
+    assert_empty check.call(cite.call('A wrapped item names the second.'))
+    assert_equal [1], check.call(cite.call('Unclosed lead-in A paragraph.'))
+    assert_equal [1], check.call(cite.call('a bold span that wraps across lines.'))
+    assert_equal [1], check.call(cite.call('Above a row |a|'))
+    assert_equal [1], check.call(cite.call('Above a quote > quoted.'))
+    assert_equal [1], check.call(cite.call('Above a rule ___ more.'))
+    assert_empty check.call(cite.call('After a rule.'))
+    assert_empty check.call(cite.call('An item.'))
+    # An inner bold span is no closer, and a closer follows a non-space character.
+    assert_empty Erx::DocLinks.sections(document).names.grep(/\Alead-starts/)
+  end
+
   # A path in a code span, a name in parentheses and a name wrapped across a
   # Ruby comment are each read.
   def test_each_form_of_a_citation_is_read

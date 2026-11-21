@@ -8,7 +8,8 @@ require 'set'
 module Erx
   # Every link to a document section and every citation of one by name reaches
   # a section that exists. A section is a heading or a bold paragraph lead-in
-  # (`**Name.**` opening a paragraph or a list item); a table row is not one,
+  # (`**Name.**` opening a paragraph or a list item, its closing marks on the
+  # same line or on a later line of that paragraph); a table row is not one,
   # so a citation of a table names the section that holds it. Three forms are
   # read:
   #
@@ -63,7 +64,14 @@ module Erx
     EXTERNAL = /\A[a-z][a-z0-9+.-]*:/i
     FENCE = /\A {0,3}(?:```|~~~)/
     HEADING = /\A {0,3}\#{1,6}[ \t]+(?<text>.*?)(?:[ \t]+\#+)?[ \t]*\z/
-    LEAD = /\A[ \t]*(?<item>(?:[*+-]|\d+\.)[ \t]+)?\*\*(?<lead>[^*]+)\*\*/
+    ITEM_MARK = /(?:[*+-]|\d+\.)[ \t]+/
+    THEMATIC_BREAK = /\A[ \t]*(?:[-*_][ \t]*){3,}\z/
+    # What starts a block of its own, besides a blank line: a list item, a
+    # block quote, a table row, a thematic break or a heading.
+    BLOCK_START = /\A(?:[ \t]*#{ITEM_MARK}| {0,3}[>|])/
+    # The lead-in a block opens with, its lines joined and stripped: bold text
+    # that opens and closes on a non-space character, as Markdown requires.
+    LEAD = /\A(?:#{ITEM_MARK})?\*\*(?<lead>[^*\s](?:[^*]*[^*\s])?)\*\*/
     LINK_TEXT = /\[([^\]]*)\]\([^)]*\)/
     PUNCTUATION = /[^\p{Word}\- ]/u
 
@@ -102,25 +110,41 @@ module Erx
       repeats = Hash.new(0)
       anchors = Set.new
       names = Set.new
-      fenced = false
-      previous = ''
-      text.each_line(chomp: true) do |line|
-        if FENCE.match?(line)
-          fenced = !fenced
-        elsif !fenced
-          if (heading = HEADING.match(line))
-            base = anchor(heading[:text].gsub(LINK_TEXT, '\1').strip)
-            anchors << (repeats[base].zero? ? base : "#{base}-#{repeats[base]}")
-            repeats[base] += 1
-            names << base
-          elsif (lead = LEAD.match(line)) && (lead[:item] || previous.strip.empty?)
-            names << anchor(lead[:lead].strip)
-          end
+      blocks(text).each do |block|
+        if (heading = HEADING.match(block.first))
+          base = anchor(heading[:text].gsub(LINK_TEXT, '\1').strip)
+          anchors << (repeats[base].zero? ? base : "#{base}-#{repeats[base]}")
+          repeats[base] += 1
+          names << base
+        elsif (lead = LEAD.match(block.map(&:strip).join(' ')))
+          names << anchor(lead[:lead])
         end
-        previous = line
       end
       Sections.new(anchors: anchors.freeze, names: names.freeze)
     end
+
+    # The blocks of a document outside its fences, each the lines of one
+    # heading, list item, table row, paragraph and so on. A fence line reaches
+    # the grouping as a blank one, and the lines between a fence's marks are
+    # dropped. A heading and a thematic break are blocks of one line.
+    def blocks(text)
+      fenced = false
+      lines = text.each_line(chomp: true).filter_map do |line|
+        if FENCE.match?(line)
+          fenced = !fenced
+          ''
+        elsif !fenced
+          line
+        end
+      end
+      lines.chunk_while { |line, following| !(starts_block?(following) || one_line_block?(line)) }
+           .map { |block| block.reject { |line| line.strip.empty? } }
+           .reject(&:empty?)
+    end
+
+    def starts_block?(line) = line.strip.empty? || BLOCK_START.match?(line) || one_line_block?(line)
+
+    def one_line_block?(line) = HEADING.match?(line) || THEMATIC_BREAK.match?(line)
 
     # The listing, and each document's sections, read once.
     class Tree
@@ -234,7 +258,7 @@ module Erx
 
     def matches(text, pattern) = text.to_enum(:scan, pattern).map { Regexp.last_match }
 
-    private_class_method :file_violations, :design_violation, :link_problems, :anchored_problems,
+    private_class_method :blocks, :starts_block?, :one_line_block?, :file_violations, :design_violation, :link_problems, :anchored_problems,
                          :named_problems, :anchor_problem, :matches
   end
 end
