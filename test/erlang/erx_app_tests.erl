@@ -17,6 +17,8 @@ the code server's interactive mode, which a session's runtime runs.
 
 -include_lib("eunit/include/eunit.hrl").
 
+-export([log/2]).
+
 cases() -> os:getenv("ERX_APP_CASES").
 
 record(Start) ->
@@ -118,3 +120,54 @@ window_without_a_display_starts_nothing_test() ->
 refused_mount_starts_no_program_test() ->
     Effects = (effects("good"))#{mount := fun() -> {error, eio} end},
     ?assertEqual({{error, {mount, eio}}, []}, native(record({program, <<"bin/tiny">>, []}, true), Effects)).
+
+%% A failed start reaches the operator: erx_app logs one error line naming the app's
+%% package and why it ended before the session halts, since the halt alone shows only
+%% its status. An application with no .app file, as a release without one that an
+%% app's application names leaves it, is said in the application's name alone.
+missing_application_is_logged_test() ->
+    Run = fun() -> erx_app:run(record({applications, [<<"missing_app">>]}), effects("good")) end,
+    {Answer, Lines} = logged(Run),
+    ?assertMatch({error, {start, missing_app, _}}, Answer),
+    ?assertEqual(["erx_app: x: application missing_app did not start: no missing_app.app"], Lines).
+
+%% A step that raises still has its line, with the class and the reason's leading
+%% atom alone, and raises again.
+crash_is_logged_test() ->
+    Effects = (effects("good"))#{mount := fun() -> error({badmatch, "secret"}) end},
+    Run = fun() ->
+                  try erx_app:run(record({applications, [<<"good_app">>]}), Effects)
+                  catch Class:Reason -> {raised, Class, Reason}
+                  end
+          end,
+    {Answer, Lines} = logged(Run),
+    ?assertEqual({raised, error, {badmatch, "secret"}}, Answer),
+    ?assertEqual(["erx_app: x: crashed: error badmatch"], Lines).
+
+%% The line keeps only the names in a reason, never another term of it: a refused
+%% mount's reason shows its leading atom.
+reason_terms_stay_out_of_the_log_test() ->
+    Effects = (effects("good"))#{mount := fun() -> {error, {eio, "secret"}} end},
+    {Answer, Lines} = logged(fun() -> erx_app:run(record({applications, [<<"good_app">>]}), Effects) end),
+    ?assertEqual({error, {mount, {eio, "secret"}}}, Answer),
+    ?assertEqual(["erx_app: x: mount failed: eio"], Lines).
+
+%% Run's answer and the error lines logged during it, which the case's logger
+%% handler hears.
+logged(Run) ->
+    _ = heard(),
+    ok = logger:add_handler(?MODULE, ?MODULE, #{config => #{listener => self()}}),
+    try
+        Answer = Run(),
+        {Answer, [Line || {logged, error, Line} <- heard()]}
+    after
+        logger:remove_handler(?MODULE)
+    end.
+
+-doc false.
+log(#{level := Level, msg := Msg}, #{config := #{listener := Listener}}) ->
+    Listener ! {logged, Level, unicode:characters_to_list(text(Msg))}.
+
+text({string, String}) -> String;
+text({report, Report}) -> io_lib:format("~0tp", [Report]);
+text({Format, Args}) -> io_lib:format(Format, Args).

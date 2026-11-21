@@ -17,11 +17,14 @@ require_relative '../../tools/lib/erx/generated'
 # its copy has, so it starts only if its copy is the one the code server finds.
 #
 # The seeded faults are a native app's: its program started without its window, and the
-# program's end taken as a start, so the session would outlive its program.
+# program's end taken as a start, so the session would outlive its program; and a failed
+# start's whole reason written to the log, where only its names may go.
 class ErxAppTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
   Erx::Generated.ensure(root: ROOT)
   MODULE = File.join(ROOT, 'erlang/apps/erx_app/src/erx_app.erl')
+  # The report filter, whose reason_name/1 is all erx_app shows of a reason it does not own.
+  REPORT = File.join(ROOT, 'erlang/apps/erx/src/erx_report.erl')
   TESTS = File.join(ROOT, 'test/erlang/erx_app_tests.erl')
   INCLUDE = File.join(ROOT, 'build/gen/erlang/apps/erx/include')
 
@@ -29,7 +32,11 @@ class ErxAppTest < Minitest::Test
   FAULTS = {
     'window dropped' => ['window(true, Spec, #{display := Display}) -> Spec#{window => Display}.',
                          'window(true, Spec, #{display := _Display}) -> Spec.'],
-    'program end ignored' => ['fail({program_exit, Status});', '_ = Status, ok;']
+    'program end ignored' => ['fail({program_exit, Status});', '_ = Status, ok;'],
+    'whole reason logged' => ['    {error, io_lib:format("~ts failed: ~ts", [Step, name(Reason)])};',
+                              '    {error, io_lib:format("~ts failed: ~0tp", [Step, Reason])};'],
+    'error text logged' => ['        {"no such file or directory", File} -> ["no ", File];',
+                            '        {Error, File} -> [Error, " ", File];']
   }.freeze
 
   # Each fixture directory's modules and the application resource file of its app.
@@ -49,7 +56,7 @@ class ErxAppTest < Minitest::Test
   def test_erx_app_cases_pass_under_eunit
     output, status = eunit
     assert status.success?, output
-    assert_match(/All 9 tests passed/, output)
+    assert_match(/All 12 tests passed/, output)
   end
 
   def test_each_seeded_fault_fails_a_case
@@ -66,7 +73,7 @@ class ErxAppTest < Minitest::Test
   def eunit(fault = {})
     Dir.mktmpdir('erx-app-test') do |work|
       FIXTURES.each { |directory, fixture| build(File.join(work, directory), **fixture) }
-      erlc(work, faulted(work, fault), TESTS)
+      erlc(work, faulted(work, fault), REPORT, TESTS)
       Open3.capture2e({ 'ERX_APP_CASES' => work }, 'gtimeout', '-k', '10', '120', ENV.fetch('ERX_ERL'),
                       '-noshell', '-pa', work, '-eval',
                       'case eunit:test(erx_app_tests, [verbose]) of ok -> halt(0); _ -> halt(1) end.',
