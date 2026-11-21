@@ -168,4 +168,6 @@ export interface RenderOptions {
   charWidth?: number
   /** erXos: node and edge labels at this size in px. Default: 13 for nodes, 11 for edges */
   labelSize?: number
+  /** erXos: 'bottom' reserves a group's title row below its contents. Default: 'top' */
+  groupTitle?: 'top' | 'bottom'
 }

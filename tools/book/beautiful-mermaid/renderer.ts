@@ -1,4 +1,7 @@
-import type { PositionedGraph, PositionedNode, PositionedEdge, PositionedGroup, Point } from './types.ts'
+// Modified by erXos: the groupTitle render option draws a group's title row
+// below its contents (docs/design-book-site.md, "The import").
+
+import type { RenderOptions, PositionedGraph, PositionedNode, PositionedEdge, PositionedGroup, Point } from './types.ts'
 import type { DiagramColors } from './theme.ts'
 import { svgOpenTag, buildStyleBlock } from './theme.ts'
 import { FONT_SIZES, FONT_WEIGHTS, STROKE_WIDTHS, ARROW_HEAD, estimateTextWidth, TEXT_BASELINE_SHIFT } from './styles.ts'
@@ -31,12 +34,14 @@ import { renderMultilineText, renderMultilineTextWithBackground, escapeXml } fro
  *                 These are set as CSS custom properties on the <svg> tag.
  *                 All element colors reference derived --_xxx variables.
  * @param transparent - If true, renders with transparent background.
+ * @param groupTitle - erXos: where each group's title row is drawn.
  */
 export function renderSvg(
   graph: PositionedGraph,
   colors: DiagramColors,
   font: string = 'Inter',
-  transparent: boolean = false
+  transparent: boolean = false,
+  groupTitle: NonNullable<RenderOptions['groupTitle']> = 'top'
 ): string {
   const parts: string[] = []
 
@@ -59,7 +64,7 @@ export function renderSvg(
 
   // 1. Subgraph backgrounds (group rectangles with header bands)
   for (const group of graph.groups) {
-    parts.push(renderGroup(group, font))
+    parts.push(renderGroup(group, font, groupTitle))
   }
 
   // 2. Edges (polylines — rendered behind nodes)
@@ -146,8 +151,10 @@ function markerSuffix(color: string): string {
 // Group rendering (subgraph backgrounds)
 // ============================================================================
 
-function renderGroup(group: PositionedGroup, font: string): string {
+function renderGroup(group: PositionedGroup, font: string, groupTitle: NonNullable<RenderOptions['groupTitle']>): string {
   const headerHeight = FONT_SIZES.groupHeader + 16
+  // erXos: the title row's top edge, at the group's top or bottom
+  const headerY = groupTitle === 'bottom' ? group.y + group.height - headerHeight : group.y
   const parts: string[] = []
 
   // Opening <g> with semantic attributes for subgraph identification
@@ -165,7 +172,7 @@ function renderGroup(group: PositionedGroup, font: string): string {
 
   // Header band
   parts.push(
-    `  <rect x="${group.x}" y="${group.y}" width="${group.width}" height="${headerHeight}" ` +
+    `  <rect x="${group.x}" y="${headerY}" width="${group.width}" height="${headerHeight}" ` +
     `rx="0" ry="0" fill="var(--_group-hdr)" stroke="var(--_node-stroke)" stroke-width="${STROKE_WIDTHS.outerBox}" />`
   )
 
@@ -174,7 +181,7 @@ function renderGroup(group: PositionedGroup, font: string): string {
     '  ' + renderMultilineText(
       group.label,
       group.x + 12,
-      group.y + headerHeight / 2,
+      headerY + headerHeight / 2,
       FONT_SIZES.groupHeader,
       `font-size="${FONT_SIZES.groupHeader}" font-weight="${FONT_WEIGHTS.groupHeader}" fill="var(--_text-sec)"`
     )
@@ -182,7 +189,7 @@ function renderGroup(group: PositionedGroup, font: string): string {
 
   // Render nested groups recursively (inside this group)
   for (const child of group.children) {
-    parts.push(renderGroup(child, font))
+    parts.push(renderGroup(child, font, groupTitle))
   }
 
   parts.push('</g>')

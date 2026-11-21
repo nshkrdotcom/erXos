@@ -1,6 +1,7 @@
 // Modified by erXos: only the flowchart, state and sequence renderers are
 // imported, the other diagram kinds are refused, and a render sets the label
-// metrics of its options (docs/design-book-site.md, "The import").
+// metrics of its options and hands the renderer its groupTitle
+// (docs/design-book-site.md, "The import").
 //
 // ============================================================================
 // beautiful-mermaid — public API
@@ -126,7 +127,7 @@ export function renderMermaidSVG(
     default: {
       const graph = parseMermaid(text)
       const positioned = layoutGraphSync(graph, options)
-      return renderSvg(positioned, colors, font, transparent)
+      return renderSvg(positioned, colors, font, transparent, options.groupTitle)
     }
   }
   })

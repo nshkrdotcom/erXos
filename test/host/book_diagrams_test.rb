@@ -22,6 +22,8 @@ class BookDiagramsTest < Minitest::Test
   # The options without the three erXos adds, so the library draws as upstream does.
   UPSTREAM_OPTIONS = Diagrams::OPTIONS.except('charWidth', 'labelSize', 'groupTitle').freeze
   DRAWING = { 'svg' => '<svg/>' }.freeze
+  # An SVG rect's position and size.
+  RECT = /<rect x="([-0-9.]+)" y="([-0-9.]+)" width="([0-9.]+)" height="([0-9.]+)"/
 
   def failure(line) = { 'error' => { 'stage' => 'render', 'message' => 'no', 'line' => line } }
 
@@ -112,6 +114,26 @@ class BookDiagramsTest < Minitest::Test
     assert_equal %w[12 12], sizes
   end
 
+  # Seeded faults: drop the title's minimum width; give it with unswapped axes
+  # in a top-down hierarchy ELK lays out whole, so the group comes out as tall
+  # as the title is wide; draw the title row at the top.
+  def test_a_group_is_as_wide_as_its_title_and_its_title_row_is_below
+    title = 'A title much wider than the nodes it holds'
+    sources = %w[TD LR].map { |direction| "graph #{direction}\n  subgraph G [#{title}]\n    A --> B\n  end\n" }
+    # The title's characters at 12 px and 0.6 em, plus 0.15 em, plus 12 px each side.
+    min_width = (title.length * 12 * 0.6) + (0.15 * 12) + 24
+    draw(sources).last.zip(sources).each do |result, source|
+      svg = result.fetch('svg')
+      group, band = group_rects(svg)
+      top, bottom = content_extent(svg)
+      assert_in_delta min_width, group.fetch(:width), 0.01, source
+      # 24 px above the contents, 40 px below them, the 28 px title row at the bottom.
+      assert_in_delta group.fetch(:y) + 24, top, 0.01, source
+      assert_in_delta group.fetch(:y) + group.fetch(:height) - 40, bottom, 0.01, source
+      assert_in_delta group.fetch(:y) + group.fetch(:height) - 28, band.fetch(:y), 0.01, source
+    end
+  end
+
   def test_the_driver_refuses_a_malformed_request
     bundle, = installed { Diagrams.bundle(root: ROOT, runner: runner) }
     Dir.mktmpdir('erx-book-request') do |directory|
@@ -131,6 +153,17 @@ class BookDiagramsTest < Minitest::Test
 
   # The width of the first rect of a drawing, which for a one-node flowchart is the node.
   def node_width(result) = Float(result.fetch('svg')[/<rect [^>]*? width="([0-9.]+)"/, 1])
+
+  def rects(svg) = svg.scan(RECT).map { |values| %i[x y width height].zip(values.map { Float(_1) }).to_h }
+
+  # The first group's outline and its title row.
+  def group_rects(svg) = rects(svg[/<g class="subgraph".*?<\/g>/m]).first(2)
+
+  # The top of the highest node and the bottom of the lowest.
+  def content_extent(svg)
+    nodes = svg.scan(/<g class="node".*?<\/g>/m).flat_map { |node| rects(node).first(1) }
+    [nodes.map { _1.fetch(:y) }.min, nodes.map { _1.fetch(:y) + _1.fetch(:height) }.max]
+  end
 
   def draw(sources, options: Diagrams::OPTIONS)
     installed { Diagrams.draw(sources, root: ROOT, runner: runner, options: options) }

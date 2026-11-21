@@ -1,4 +1,7 @@
 /**
+ * Modified by erXos: the groupTitle render option, and a group laid out at
+ * least as wide as its title (docs/design-book-site.md, "The import").
+ *
  * Layout engine for beautiful-mermaid (ELK.js based).
  *
  * Converts MermaidGraph to ELK's JSON format, runs layout, and converts
@@ -58,6 +61,29 @@ function directionToElk(dir: MermaidGraph['direction']): string {
     case 'TB':
     default: return 'DOWN'
   }
+}
+
+/**
+ * erXos: whether ELK lays the whole hierarchy out in one pass
+ * (INCLUDE_CHILDREN), which it does when no subgraph overrides the direction.
+ * Otherwise each subgraph is laid out on its own (SEPARATE).
+ */
+function laysOutHierarchyWhole(graph: MermaidGraph): boolean {
+  return graph.subgraphs.every(sg => sg.direction === undefined)
+}
+
+/**
+ * erXos: whether a subgraph's elk.nodeSize.minimum must be given with its
+ * axes swapped. When ELK 0.11 lays a top-to-bottom or bottom-to-top
+ * hierarchy out in one pass, it applies a subgraph's minimum size
+ * (HierarchicalNodeResizingProcessor) while the subgraph's coordinates are
+ * still transposed into its left-to-right frame, and its GraphTransformer
+ * transposes the subgraph's size and padding but not that minimum. A
+ * subgraph laid out on its own is resized after the coordinates are turned
+ * back, so there the minimum is given as it is meant.
+ */
+function minimumSizeTransposed(graph: MermaidGraph): boolean {
+  return laysOutHierarchyWhole(graph) && graph.direction !== 'LR' && graph.direction !== 'RL'
 }
 
 // ============================================================================
@@ -137,7 +163,7 @@ interface HierarchicalEdgeInfo {
  */
 function mermaidToElk(
   graph: MermaidGraph,
-  opts: Required<Pick<RenderOptions, 'font' | 'padding' | 'nodeSpacing' | 'layerSpacing'>>
+  opts: Required<Pick<RenderOptions, 'font' | 'padding' | 'nodeSpacing' | 'layerSpacing'>> & Pick<RenderOptions, 'groupTitle'>
 ): ElkGraphNode {
   // Collect all node IDs that belong to subgraphs
   const subgraphNodeIds = new Set<string>()
@@ -185,9 +211,7 @@ function mermaidToElk(
     }
   }
 
-  // Determine if we need SEPARATE hierarchy handling
-  // We use SEPARATE when any subgraph has a direction override
-  const hasDirectionOverride = graph.subgraphs.some(sg => sg.direction !== undefined)
+  const hasDirectionOverride = !laysOutHierarchyWhole(graph)
 
   // Build the root ELK graph
   const elkGraph: ElkGraphNode = {
@@ -335,7 +359,7 @@ function mermaidToElk(
 function subgraphToElk(
   sg: MermaidSubgraph,
   graph: MermaidGraph,
-  opts: Required<Pick<RenderOptions, 'font' | 'padding' | 'nodeSpacing' | 'layerSpacing'>>,
+  opts: Required<Pick<RenderOptions, 'font' | 'padding' | 'nodeSpacing' | 'layerSpacing'>> & Pick<RenderOptions, 'groupTitle'>,
   edgesBySubgraph: Map<string | null, Array<{ index: number; edge: MermaidEdge }>>,
   subgraphPorts: Map<string, Array<{
     portId: string
@@ -344,9 +368,15 @@ function subgraphToElk(
     internalNodeId: string
   }>>
 ): ElkGraphNode {
+  // erXos: groupTitle 'bottom' reserves the title row below the contents
+  // instead of above them, and with groupTitle set either way the group is
+  // at least as wide as its title plus 24 px, so a long title is never
+  // clipped. Without the option the layout is upstream's.
   const layoutOptions: LayoutOptions = {
     'elk.algorithm': 'layered',
-    'elk.padding': '[top=44,left=16,bottom=16,right=16]', // Top = headerHeight(28) + gap(16) to match bottom padding
+    'elk.padding': opts.groupTitle === 'bottom'
+      ? '[top=24,left=16,bottom=40,right=16]'
+      : '[top=44,left=16,bottom=16,right=16]', // Top = headerHeight(28) + gap(16) to match bottom padding
     'elk.edgeRouting': 'ORTHOGONAL',
     'elk.contentAlignment': 'H_CENTER V_CENTER',
     'elk.spacing.edgeEdge': '12',
@@ -355,6 +385,12 @@ function subgraphToElk(
     'elk.layered.nodePlacement.bk.fixedAlignment': 'BALANCED',
     'elk.layered.spacing.nodeNodeBetweenLayers': String(opts.layerSpacing),
     'elk.spacing.nodeNode': String(opts.nodeSpacing),
+  }
+
+  if (opts.groupTitle !== undefined) {
+    const minWidth = measureMultilineText(sg.label, FONT_SIZES.groupHeader, FONT_WEIGHTS.groupHeader).width + 24
+    layoutOptions['elk.nodeSize.constraints'] = 'MINIMUM_SIZE'
+    layoutOptions['elk.nodeSize.minimum'] = minimumSizeTransposed(graph) ? `(0, ${minWidth})` : `(${minWidth}, 0)`
   }
 
   // Apply direction override if specified
