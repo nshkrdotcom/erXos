@@ -287,6 +287,13 @@ bool			 erx_dma_ledger_buffer_held(const erx_dma_ledger_t *ledger, uint32_t buff
 erx_dma_writer_t	 erx_dma_ledger_buffer_writer(const erx_dma_ledger_t *ledger, uint32_t buffer);
 /* The live holding whose head is `head`, its pointer NULL for none, which the pointer names until the ledger changes. */
 erx_dma_found_t		 erx_dma_ledger_holding(const erx_dma_ledger_t *ledger, erx_dma_place_t head);
+/* The holding the latest hold began, while it is live; its pointer NULL for none. */
+erx_dma_found_t		 erx_dma_ledger_newest(const erx_dma_ledger_t *ledger);
+/*
+ * Whether `found` is still the live holding a query found: one of this ledger's, with the serial
+ * it had, so a value kept past its holding's end, or another ledger's, is none.
+ */
+bool			 erx_dma_ledger_found_live(const erx_dma_ledger_t *ledger, erx_dma_found_t found);
 /* The records of a table no holding holds. */
 uint32_t		 erx_dma_ledger_free_records(const erx_dma_ledger_t *ledger, uint32_t table);
 uint32_t		 erx_dma_ledger_live(const erx_dma_ledger_t *ledger);
