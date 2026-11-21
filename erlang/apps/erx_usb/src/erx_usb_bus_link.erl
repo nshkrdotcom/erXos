@@ -26,7 +26,7 @@ Every message carries the module's tag, so the bus process takes from its
 mailbox only what came this way.
 """.
 
--export([attach/1, request/2, answer/2, reply/2, from_controller/1]).
+-export([attach/1, request/2, answer/2, reply/2, from_controller/1, from_bus/1]).
 
 -export_type([request/0, answer/0]).
 
@@ -79,3 +79,11 @@ answer(Bus, Answer) ->
 -spec from_controller(term()) -> {ok, answer()} | none.
 from_controller({?MODULE, Answer}) -> {ok, Answer};
 from_controller(_Other) -> none.
+
+-doc """
+The bus process and the request a message to the controller carries, or `none` for a
+message that did not come this way.
+""".
+-spec from_bus(term()) -> {ok, pid(), request()} | none.
+from_bus({?MODULE, Bus, Request}) -> {ok, Bus, Request};
+from_bus(_Other) -> none.

@@ -6,11 +6,20 @@
 %% the calling process makes is recorded with its monotonic time in microseconds, and each
 %% read answers from a script the test sets, the last value of a register's script repeating.
 %% Everything lives in the calling process's dictionary, so tests do not share state.
+%%
+%% A device the test process plays instead, for host tests of a process that calls the NIF
+%% from its own process (test/erlang/erx_xhci_tests.erl): open(#{stand_in => Player})
+%% answers {stand_in, Player}, and every call on that device, the TRB ring form's post/4,
+%% complete/2, negotiate/2 and queue_state/2 among them, is sent to Player as
+%% {erx_device, Caller, Call}, the call returning the Answer Player sends back as
+%% {erx_device, Answer}. queue_state/2 is the shape the controller process assumes until
+%% the NIF states its own.
 
 -module(erx_device).
 
 -export([open/1, read/2, write/3, read_field/3, write_field/4, command/2]).
--export([script/1, calls/0]).
+-export([elements/2, negotiate/2, post/4, complete/2, queue_state/2]).
+-export([script/1, calls/0, play/2]).
 
 %% Sets the reads' answers, Register => [Value, ...], and clears the record.
 script(Reads) ->
@@ -23,9 +32,24 @@ script(Reads) ->
 calls() ->
     lists:reverse(get(erx_device_calls)).
 
-%% Any record opens, as the device the script answers for.
+%% A played record opens as its player's device; any other, as the device the script
+%% answers for.
+open(#{stand_in := Player}) -> {ok, {stand_in, Player}};
 open(_Spec) -> {ok, dev}.
 
+elements({stand_in, Player}, Register) -> play(Player, {elements, Register}).
+negotiate({stand_in, Player}, Wanted) -> play(Player, {negotiate, Wanted}).
+post({stand_in, Player}, Queue, Tag, Item) -> play(Player, {post, Queue, Tag, Item}).
+complete({stand_in, Player}, Ring) -> play(Player, {complete, Ring}).
+queue_state({stand_in, Player}, Queue) -> play(Player, {queue_state, Queue}).
+
+%% Sends Call to Player and answers what Player answers.
+play(Player, Call) ->
+    Player ! {erx_device, self(), Call},
+    receive {erx_device, Answer} -> Answer end.
+
+read({stand_in, Player}, Register) ->
+    play(Player, {read, Register});
 read(_Dev, Register) ->
     record({read, Register}),
     answer(Register).
@@ -34,6 +58,8 @@ read_field(_Dev, Register, Field) ->
     record({read_field, Register, Field}),
     answer({Register, Field}).
 
+write({stand_in, Player}, Register, Value) ->
+    play(Player, {write, Register, Value});
 write(_Dev, Register, Value) ->
     record({write, Register, Value}).
 

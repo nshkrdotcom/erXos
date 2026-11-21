@@ -22,7 +22,7 @@ and reply/2 builds the message that answers it; this module is the one
 that spells both.
 """.
 
--export([new/3, endpoint/1, control/3, interrupt_in/3, reply/2]).
+-export([new/3, endpoint/1, control/3, interrupt_in/3, reply/2, from_function/1]).
 
 -export_type([pipe/0, request/0]).
 
@@ -63,6 +63,14 @@ interrupt-IN transfer's completion as `{usb, Pipe, Tag, Result}`.
 -spec reply(request(), term()) -> term().
 reply({control, _Pipe, _Setup, _Data, Monitor}, Result) -> {Monitor, Result};
 reply({interrupt_in, Pipe, Tag, _Length}, Result) -> {usb, Pipe, Tag, Result}.
+
+-doc """
+The sender and the request a message to the controller carries, or `none` for a message
+that did not come this way.
+""".
+-spec from_function(term()) -> {ok, pid(), request()} | none.
+from_function({?MODULE, From, Request}) -> {ok, From, Request};
+from_function(_Other) -> none.
 
 -doc "Posts one interrupt-IN transfer of up to Length bytes on Pipe; its completion is `{usb, Pipe, Tag, Result}`.".
 -spec interrupt_in(pipe(), term(), pos_integer()) -> ok.
