@@ -446,13 +446,39 @@ class ProductionImageTest < Minitest::Test
     assert_match(/base, size or line .* differ/, problems.fetch(0))
   end
 
-  # A device tree path's unit address is its node's first reg address, so the checked-in
-  # record's base must agree with its own path without QEMU to ask.
-  def test_each_recorded_base_is_its_paths_unit_address
-    record = PLATFORM.record
-    windows = record.fetch('units').flat_map { |unit| unit.fetch('devices') }.select { |device| device.fetch('selector') == 'dt' }
-    refute_empty windows
-    windows.each { |device| assert_equal device.fetch('path')[/@(\h+)\z/, 1].to_i(16), device.fetch('base'), device.fetch('path') }
+  # A row's base is its node's first reg address, not its path's unit address: QEMU names
+  # the PCIe host bridge pcie@10000000, its 32-bit memory window, while its reg, the
+  # ECAM, is at 0x4010000000. So the checked-in record is held to QEMU's own tree, dumped
+  # as the production suite dumps it, without booting anything.
+  def test_the_record_agrees_with_qemus_own_tree
+    Dir.mktmpdir('erx-virt-tree-') do |directory|
+      tree = File.join(directory, 'virt.dtb')
+      argv = DEVELOPMENT.device_tree_argv('qemu-system-aarch64', tree: tree)
+      log, status = Open3.capture2e('gtimeout', '-k', '10', '30', *argv, stdin_data: '')
+      assert status.success?, log
+      dts, status = Open3.capture2e('dtc', '-q', '-I', 'dtb', '-O', 'dts', tree)
+      assert status.success?, dts
+      assert_empty Erx::ProductionImage.device_path_problems(PLATFORM.record, dts)
+    end
+  end
+
+  # A node with no interrupts property raises no interrupt, so its row's line is 0.
+  def test_a_node_without_interrupts_has_line_zero
+    tree = TREE.sub("\t\tinterrupts = <0x00 0x01 0x04>;\n", '')
+    refute_equal TREE, tree
+    assert_empty Erx::ProductionImage.device_path_problems(platform(path: '/pl011@9000000', **UART_WINDOW.merge(line: 0)), tree)
+    problems = Erx::ProductionImage.device_path_problems(platform(path: '/pl011@9000000', **UART_WINDOW), tree)
+    assert_match(/base, size or line .* differ/, problems.fetch(0))
+  end
+
+  # An interrupt the reader does not decode is not line 0: the row is refused.
+  def test_an_undecoded_interrupt_is_not_line_zero
+    ["\t\tinterrupts;\n", "\t\tinterrupts-extended = <0x8001 0x00 0x01 0x04>;\n"].each do |property|
+      tree = TREE.sub("\t\tinterrupts = <0x00 0x01 0x04>;\n", property)
+      refute_equal TREE, tree
+      problems = Erx::ProductionImage.device_path_problems(platform(path: '/pl011@9000000', **UART_WINDOW.merge(line: 0)), tree)
+      assert_match(/unreadable reg or interrupts/, problems.fetch(0), property)
+    end
   end
 
   # The production path must not reach the structural recipe under test/fixtures, directly

@@ -391,6 +391,17 @@ module Erx
       # The platform record as Pack's manifest check proves this machine's manifest against it.
       def record = platform.record.merge('ram_bytes' => memory_mib << 20, 'fiasco_reserve' => fiasco_reserve_mib << 20)
 
+      # qemu's argument vector that writes this machine's own device tree to tree and exits:
+      # the -machine value a TCG boot of it gives (QemuPlan.machine_line), its memory, and two
+      # serial ports, since the second UART exists only when a second port is given. The CPU
+      # model and count, which the boot's own argv sets, shape only the CPU, PMU and GIC
+      # nodes, which no device row names.
+      def device_tree_argv(qemu, tree:)
+        machine = QemuPlan.machine_line(platform, accel: 'tcg', deterministic: false)
+        [qemu, '-machine', "#{machine},dumpdtb=#{tree}", '-cpu', 'cortex-a72', '-m', memory_mib.to_s, '-display', 'none',
+         '-serial', 'null', '-serial', 'null', '-no-reboot']
+      end
+
       # The board's development manifest, as this machine boots it (manifest).
       def test_manifest(root) = manifest(platform.manifest_source(root))
 
@@ -904,22 +915,42 @@ module Erx
     def self.cells(body, property) = body[/^\t\t#{property} = <(.*?)>;/, 1].to_s.split.map { |cell| Integer(cell) }
     private_class_method :cells
 
+    # Whether a node's own body, as dtc prints it, has the property, with a value
+    # (`name = ...;`, which cells reads) or without one (`name;`).
+    def self.property?(body, property) = body.match?(/^\t\t#{property}( = |;)/)
+    private_class_method :property?
+
     # How virt's interrupt controller numbers a line by the type in an interrupt's first cell:
     # shared lines from 32, lines private to a CPU from 16.
     INTERRUPT_FIRST = { 0 => 32, 1 => 16 }.freeze
 
-    # A node's window and line: virt's tree gives each reg entry two address and two size
-    # cells, and each interrupt three cells, its type, its number within the type and its
-    # flags. nil when the node has no whole reg entry or interrupt of a known type.
+    # A node's window, its first reg entry, and its line (node_line): virt's tree gives each
+    # reg entry two address and two size cells. nil when the node has no whole reg entry or
+    # no readable line.
     def self.node_window(body)
       reg = cells(body, 'reg')
-      type, number = cells(body, 'interrupts')
-      return nil unless reg.size >= 4 && INTERRUPT_FIRST.key?(type) && number
+      line = node_line(body)
+      return nil unless reg.size >= 4 && line
 
       high_base, low_base, high_size, low_size = reg
-      { base: (high_base << 32) | low_base, size: (high_size << 32) | low_size, line: INTERRUPT_FIRST.fetch(type) + number }
+      { base: (high_base << 32) | low_base, size: (high_size << 32) | low_size, line: line }
     end
     private_class_method :node_window
+
+    # A node's first interrupt, as the record numbers it: virt's tree gives each interrupt
+    # three cells, its type, its number within the type and its flags. A node with no
+    # interrupts property, such as the PCIe host bridge, whose functions' interrupts its
+    # interrupt-map routes, raises none and has line 0, no line (docs/design-abi.md);
+    # nil when its first interrupt is not of a known type, or is given through
+    # interrupts-extended, which this reader does not decode.
+    def self.node_line(body)
+      return nil if property?(body, 'interrupts-extended')
+      return 0 unless property?(body, 'interrupts')
+
+      type, number = cells(body, 'interrupts')
+      INTERRUPT_FIRST.fetch(type) + number if INTERRUPT_FIRST.key?(type) && number
+    end
+    private_class_method :node_line
 
     # Boots the production image under each accelerator and CPU count, after checking
     # the platform record's device paths against QEMU's own device tree. Any disagreement raises.
@@ -1856,16 +1887,13 @@ module Erx
         boot(accel, count, built, memory_mib: @machine.memory_mib, points: points, machine_end: false, command_line: COMMAND_LINES[accel])
       end
 
-      # QEMU writes its own device tree for the suite's machine and exits; two serial ports,
-      # since the second UART exists only when a second port is given.
+      # QEMU writes its own device tree for the suite's machine (Machine#device_tree_argv).
       def check_device_paths
         directory = File.join(@root, 'build/production-image/device-tree')
         FileUtils.mkdir_p(directory)
         platform = @machine.platform
         tree = File.join(directory, "#{platform.name}.dtb")
-        machine = QemuPlan.machine_line(platform, accel: 'tcg', deterministic: false)
-        @runner.run([@qemu, '-machine', "#{machine},dumpdtb=#{tree}", '-cpu', 'cortex-a72', '-m', @machine.memory_mib.to_s, '-display', 'none',
-                     '-serial', 'null', '-serial', 'null', '-no-reboot'], name: 'qemu-dumpdtb', deadline: 30)
+        @runner.run(@machine.device_tree_argv(@qemu, tree: tree), name: 'qemu-dumpdtb', deadline: 30)
         listing = @runner.run(['dtc', '-q', '-I', 'dtb', '-O', 'dts', tree], name: "dtc-#{platform.name}", deadline: 30)
         problems = ProductionImage.device_path_problems(platform.record, File.read(listing.fetch('log')))
         raise Error, "#{platform.record_path} disagrees with QEMU's device tree: #{problems.join('; ')}" unless problems.empty?
