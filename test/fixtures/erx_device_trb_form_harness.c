@@ -293,6 +293,28 @@ bind(state_t *state, uint32_t table, uint32_t endpoint, uint32_t code)
 	    "a binding command's success runs its endpoint; its failure leaves it disabled");
 }
 
+/*
+ * An Enable Slot whose completion, with `code`, names slot `slot` (xHCI 1.2, 4.6.3, p. 108): an
+ * Address Device is accepted only on a slot such a success gave since the slot's Disable Slot or
+ * the form's reset.
+ */
+static void
+enable_slot(state_t *state, uint32_t slot, uint32_t code)
+{
+	const erx_trb_command_t command = { .kind = ERX_TRB_COMMAND_ENABLE_SLOT };
+	const uint32_t head = erx_dma_ledger_position(&state->form.ledger, COMMANDS).index;
+	erx_report_record_t event = event_trb(ERX_XHCI_TRB_TYPE_COMMAND_COMPLETION_EVENT, BASE + command_offset(head),
+	    code, 0, 0);
+	erx_trb_answer_t answers[ERX_TRB_FORM_ANSWERS_MAX(1)];
+	erx_dma_sequence_t sequence;
+	uint32_t answered;
+
+	event.xhci_trb_transfer_event.control |= slot << 24;
+	EXPECT(erx_trb_form_command(&state->form, &command, 3, &sequence) == ERX_DEVICE_TRB_ACCEPTED, "an Enable Slot");
+	EXPECT(deliver(state, &event, 1, 1, answers, &answered) == ERX_OK && answered == 1 &&
+	    answers[0].kind == ERX_TRB_ANSWER_COMMAND && answers[0].slot == slot, "an Enable Slot's completion names its slot");
+}
+
 /* Port events, in batches, until the event ring's consumer position is `index`. */
 static void
 pass_ports(state_t *state, uint32_t index)
@@ -336,6 +358,7 @@ make_small(state_t *state)
 	EXPECT(erx_device_trb_layout(&trb, &small_shape, &controller, BASE, 64, UINT64_C(1) << 20), "the small layout");
 	EXPECT(erx_trb_form_make(&state->form, &trb, &no_regions), "a form over the small layout");
 	model_idle(&state->model);
+	enable_slot(state, SLOT, ERX_XHCI_COMPLETION_SUCCESS);
 	for (uint32_t block = 0; block < BLOCKS; block++)
 		bind(state, block, erx_trb_form_endpoint(SLOT, block_dci[block]), ERX_XHCI_COMPLETION_SUCCESS);
 	pass_ports(state, ERX_DEVICE_TRB_EVENT_TRBS - 3u);
@@ -672,11 +695,37 @@ model_oldest_on(const model_t *model, uint32_t block)
 }
 
 /*
- * Posts `command`, which names an endpoint of the model's blocks or none: refused while a command
- * is in flight, since it holds the command ring's one buffer; accepted otherwise, closing the
- * endpoints it acts on until its completion.
+ * Whether design-usb.md's queue table accepts `command` in its endpoint's state: Stop Endpoint on
+ * a running endpoint, Reset Endpoint on a halted one and Set TR Dequeue Pointer on a stopped one
+ * (xHCI 1.2, 4.6.9, p. 140; 4.6.8, p. 129; 4.6.10, p. 141). A Disable Slot names no endpoint.
  */
-static void
+static bool
+model_accepts(const model_t *model, const erx_trb_command_t *command)
+{
+	for (uint32_t block = 0; block < BLOCKS; block++) {
+		if (block_dci[block] != command->dci)
+			continue;
+		switch (command->kind) {
+		case ERX_TRB_COMMAND_STOP_ENDPOINT:
+			return (model->state[block] == ERX_DMA_ENDPOINT_RUNNING);
+		case ERX_TRB_COMMAND_RESET_ENDPOINT:
+			return (model->state[block] == ERX_DMA_ENDPOINT_HALTED);
+		case ERX_TRB_COMMAND_SET_TR_DEQUEUE:
+			return (model->state[block] == ERX_DMA_ENDPOINT_STOPPED);
+		default:
+			break;
+		}
+	}
+	return (true);
+}
+
+/*
+ * Posts `command`, which names an endpoint of the model's blocks or none: refused full while a
+ * command is in flight, since it holds the command ring's one buffer; badarg in a state the queue
+ * table refuses it; accepted otherwise, closing the endpoints it acts on until its completion.
+ * True when it is accepted.
+ */
+static bool
 check_command(state_t *state, erx_trb_command_t command)
 {
 	model_t *const model = &state->model;
@@ -688,11 +737,18 @@ check_command(state_t *state, erx_trb_command_t command)
 	if (model->command.live) {
 		EXPECT(verdict == ERX_DEVICE_TRB_REFUSE_FULL && erx_dma_ledger_live(&state->form.ledger) == live,
 		    "a second command while one is in flight is full and holds nothing");
-		return;
+		return (false);
+	}
+	if (!model_accepts(model, &command)) {
+		EXPECT(verdict == ERX_DEVICE_TRB_REFUSE_BADARG && erx_dma_ledger_live(&state->form.ledger) == live &&
+		    erx_dma_ledger_position(&state->form.ledger, COMMANDS).index == head,
+		    "a command its endpoint's state does not accept is badarg and holds nothing");
+		return (false);
 	}
 	EXPECT(verdict == ERX_DEVICE_TRB_ACCEPTED && erx_dma_ledger_live(&state->form.ledger) == live + 1u,
-	    "a command on a bound endpoint is accepted in any of its states");
+	    "a command its endpoint's state accepts is posted");
 	model->command = (model_command_t){ .live = true, .command = command, .head = head, .tag = model->next_tag++ };
+	return (true);
 }
 
 /*
@@ -829,7 +885,8 @@ enum {
  * on the IN and OUT rings, the completion or a Stall of the IN ring's oldest transfer, the OUT
  * ring's oldest completing, a stop's event on the IN ring, a Stop Endpoint, Reset Endpoint or Set
  * TR Dequeue Pointer naming the IN endpoint, a Disable Slot, and the success or failure of the
- * command in flight. A completion of a halted transfer is refused.
+ * command in flight. A completion of a halted transfer is refused, and so is a command while one
+ * is in flight or in a state the queue table refuses it, and the walk goes no deeper from either.
  */
 static void
 explore_commands(const state_t *state, uint32_t depth)
@@ -879,8 +936,9 @@ explore_commands(const state_t *state, uint32_t depth)
 		case STEP_DEQUEUE_IN:
 			if (next.model.state[IN_BLOCK] == ERX_DMA_ENDPOINT_DISABLED)
 				continue;
-			check_command(&next, naming(step == STEP_STOP_IN ? ERX_TRB_COMMAND_STOP_ENDPOINT : step == STEP_RESET_IN ?
-			    ERX_TRB_COMMAND_RESET_ENDPOINT : ERX_TRB_COMMAND_SET_TR_DEQUEUE, IN_BLOCK));
+			if (!check_command(&next, naming(step == STEP_STOP_IN ? ERX_TRB_COMMAND_STOP_ENDPOINT :
+			    step == STEP_RESET_IN ? ERX_TRB_COMMAND_RESET_ENDPOINT : ERX_TRB_COMMAND_SET_TR_DEQUEUE, IN_BLOCK)))
+				continue;
 			break;
 		case STEP_DISABLE:
 			if (next.model.state[IN_BLOCK] == ERX_DMA_ENDPOINT_DISABLED || check_disable(&next))
@@ -996,6 +1054,7 @@ test_commands(void)
 	 */
 	erx_trb_form_reset(&state.form);
 	model_idle(&state.model);
+	enable_slot(&state, SLOT, ERX_XHCI_COMPLETION_SUCCESS);
 	bind(&state, CONTROL_BLOCK, erx_trb_form_endpoint(SLOT, 1), ERX_XHCI_COMPLETION_TRANSACTION_ERROR);
 	{
 		const erx_device_trb_request_t control = request(POST_CONTROL);
@@ -1126,6 +1185,7 @@ test_refusals(void)
 	/* A failing binding command ends its binding, unless a transfer holds the ring (the reach rule's). */
 	erx_trb_form_reset(&state.form);
 	model_idle(&state.model);
+	enable_slot(&state, SLOT, ERX_XHCI_COMPLETION_SUCCESS);
 	bind(&state, CONTROL_BLOCK, erx_trb_form_endpoint(SLOT, 1), ERX_XHCI_COMPLETION_SUCCESS);
 	bind(&state, IN_BLOCK, erx_trb_form_endpoint(SLOT, block_dci[IN_BLOCK]), ERX_XHCI_COMPLETION_TRB_ERROR);
 	{
@@ -1186,6 +1246,128 @@ test_layout(void)
 	longer.ring_trbs = ERX_DEVICE_TRB_RING_TRBS + 1u;
 	EXPECT(erx_device_trb_layout(&full, &longer, &four, BASE, 64, UINT64_C(1) << 26) && !erx_trb_form_layout(&full, &layout),
 	    "a ring longer than the tags keep is refused");
+}
+
+/* The little-endian bytes the sequence stores at `offset`, inside any one store, `length` of them at most 8. */
+static uint64_t
+stored_word(const erx_dma_sequence_t *sequence, uint64_t offset, uint32_t length)
+{
+	uint64_t value = 0;
+
+	for (uint32_t index = 0; index < sequence->store_count; index++) {
+		const erx_dma_store_t *const store = &sequence->stores[index];
+
+		if (offset >= store->offset && offset + length <= store->offset + store->length) {
+			memcpy(&value, store->bytes + (offset - store->offset), length);
+			return (value);
+		}
+	}
+	EXPECT(false, "the install stores the word");
+	return (0);
+}
+
+static bool
+covers(const erx_dma_range_t *ranges, uint32_t count, uint64_t offset, uint64_t length)
+{
+	for (uint32_t index = 0; index < count; index++) {
+		if (ranges[index].offset <= offset && offset + length <= ranges[index].offset + ranges[index].length)
+			return (true);
+	}
+	return (false);
+}
+
+/*
+ * The install (docs/design-usb.md, "Install"): every region zeroed and cleaned; DCBAA entry 0, the
+ * scratchpad array, the segment table's entry and the command ring's link written; the registers
+ * in FreeBSD's order from the layout, and USBCMD's run as the activation. Refused while anything is
+ * held, and over memory past 32 bits on a controller without AC64.
+ */
+static void
+test_install(void)
+{
+	static erx_trb_form_t form;
+	static erx_dma_sequence_t sequence;
+	const erx_device_trb_controller_t three = { .slots = 2, .ports = 1, .scratchpads = 3, .context_size = 32 };
+	const erx_trb_command_t enable = { .kind = ERX_TRB_COMMAND_ENABLE_SLOT };
+	const erx_dma_register_write_t registers[] = {
+		{ ERX_DMA_XHCI_SLOTS, 2 },
+		{ ERX_DMA_XHCI_DCBAA, 0 },
+		{ ERX_DMA_XHCI_EVENT_RING_SIZE, 1 },
+		{ ERX_DMA_XHCI_EVENT_DEQUEUE, 0 },
+		{ ERX_DMA_XHCI_SEGMENT_TABLE, 0 },
+		{ ERX_DMA_XHCI_INTERRUPTER_ENABLE, 1 },
+		{ ERX_DMA_XHCI_COMMAND_RING, 0 },
+	};
+	uint64_t pages, array, values[sizeof(registers) / sizeof(registers[0])];
+
+	EXPECT(erx_device_trb_layout(&trb, &small_shape, &three, BASE, 64, UINT64_C(1) << 20), "the small layout");
+	EXPECT(erx_trb_form_make(&form, &trb, &no_regions), "a form over it");
+	EXPECT(erx_trb_form_install(&form, false, &sequence) == ERX_OK, "an idle form installs");
+	EXPECT(covers(sequence.zeros, sequence.zero_count, 0, trb.bytes) &&
+	    covers(sequence.cleans, sequence.clean_count, 0, trb.bytes), "every region is zeroed and cleaned");
+	pages = trb.regions[trb.scratchpad].offset;
+	array = pages + 3u * ERX_XHCI_PAGE_SIZE;
+	EXPECT(stored_word(&sequence, trb.regions[trb.dcbaa].offset, 8) == BASE + array,
+	    "DCBAA entry 0 names the scratchpad array");
+	for (uint32_t page = 0; page < 3; page++)
+		EXPECT(stored_word(&sequence, array + 8u * page, 8) == BASE + pages + (uint64_t)page * ERX_XHCI_PAGE_SIZE,
+		    "the scratchpad array names each page");
+	EXPECT(stored_word(&sequence, trb.regions[trb.segment_table].offset + ERX_XHCI_SEGMENT_TABLE_ENTRY_OFF_BASE, 8) ==
+	    BASE + trb.regions[trb.event_ring].offset &&
+	    stored_word(&sequence, trb.regions[trb.segment_table].offset + ERX_XHCI_SEGMENT_TABLE_ENTRY_OFF_SIZE, 4) ==
+	    ERX_DEVICE_TRB_EVENT_TRBS, "the segment table's entry is the event ring");
+	EXPECT(stored_at(&sequence, command_offset(RING - 1u)) != NULL &&
+	    parameter(stored_at(&sequence, command_offset(RING - 1u))) == BASE + command_offset(0) &&
+	    control_cycle(stored_at(&sequence, command_offset(RING - 1u))->bytes + ERX_XHCI_TRB_LINK_OFF_CONTROL) == 1u,
+	    "the command ring's link leads back to its first TRB on lap 0");
+	values[0] = 2;
+	values[1] = BASE + trb.regions[trb.dcbaa].offset;
+	values[2] = 1;
+	values[3] = BASE + event_offset(0);
+	values[4] = BASE + trb.regions[trb.segment_table].offset;
+	values[5] = 1;
+	values[6] = BASE + command_offset(0) + 1u;	/* the ring's cycle state, 1, in bit 0 */
+	EXPECT(sequence.register_count == sizeof(registers) / sizeof(registers[0]), "seven registers");
+	for (uint32_t at = 0; at < sequence.register_count; at++)
+		EXPECT(sequence.registers[at].reg == registers[at].reg && sequence.registers[at].value == values[at],
+		    "each register, in FreeBSD's order, from the layout");
+	EXPECT(sequence.activation.kind == ERX_DMA_ACTIVATE_REGISTER && sequence.activation.reg.reg == ERX_DMA_XHCI_RUN &&
+	    sequence.activation.reg.value == 1, "USBCMD's run is the activation");
+
+	EXPECT(erx_trb_form_command(&form, &enable, 7, &sequence) == ERX_DEVICE_TRB_ACCEPTED, "a command is posted");
+	EXPECT(erx_trb_form_install(&form, true, &sequence) == ERX_EBUSY, "nothing installs while a command is held");
+	erx_trb_form_reset(&form);
+	EXPECT(erx_trb_form_install(&form, true, &sequence) == ERX_OK, "the reset's idle report lets it install again");
+
+	EXPECT(erx_device_trb_layout(&trb, &small_shape, &three, UINT64_C(1) << 32, 64, UINT64_C(1) << 20) &&
+	    erx_trb_form_make(&form, &trb, &no_regions), "a layout above 4 GiB");
+	EXPECT(erx_trb_form_install(&form, false, &sequence) == ERX_ERANGE, "a controller without AC64 does not reach it");
+	EXPECT(erx_trb_form_install(&form, true, &sequence) == ERX_OK, "one with AC64 does");
+	EXPECT(erx_device_trb_layout(&trb, &small_shape, &three, (UINT64_C(1) << 32) - (UINT64_C(1) << 20), 64,
+	    UINT64_C(1) << 20) && erx_trb_form_make(&form, &trb, &no_regions), "a layout just below 4 GiB");
+	EXPECT(erx_trb_form_install(&form, false, &sequence) == ERX_OK, "memory ending below 4 GiB needs no AC64");
+	EXPECT(erx_device_trb_layout(&trb, &small_shape, &three, (UINT64_C(1) << 32) - (trb.bytes & ~UINT64_C(63)), 64,
+	    UINT64_C(1) << 20) && erx_trb_form_make(&form, &trb, &no_regions), "a layout crossing 4 GiB");
+	EXPECT(trb.device_base + trb.bytes > (UINT64_C(1) << 32) && erx_trb_form_install(&form, false, &sequence) == ERX_ERANGE,
+	    "memory crossing 4 GiB needs AC64");
+
+	for (uint32_t pages = 0; pages <= ERX_DEVICE_TRB_SCRATCHPADS_MAX; pages++) {
+		const erx_device_trb_controller_t asking = { .slots = 2, .ports = 1, .scratchpads = pages, .context_size = 32 };
+
+		EXPECT(erx_device_trb_layout(&trb, &small_shape, &asking, BASE, 64, UINT64_C(1) << 20) &&
+		    erx_trb_form_make(&form, &trb, &no_regions) && erx_trb_form_install(&form, true, &sequence) == ERX_OK,
+		    "an install over every count of pages");
+		if (pages == 0) {
+			EXPECT(stored_at(&sequence, trb.regions[trb.dcbaa].offset) == NULL, "with no page DCBAA entry 0 stays zero");
+			continue;
+		}
+		array = trb.regions[trb.scratchpad].offset + (uint64_t)pages * ERX_XHCI_PAGE_SIZE;
+		EXPECT(stored_word(&sequence, trb.regions[trb.dcbaa].offset, 8) == BASE + array, "DCBAA entry 0 names the array");
+		for (uint32_t page = 0; page < pages; page++)
+			EXPECT(stored_word(&sequence, array + 8u * page, 8) ==
+			    BASE + trb.regions[trb.scratchpad].offset + (uint64_t)page * ERX_XHCI_PAGE_SIZE,
+			    "the array names each page, in whole groups of four and a partial last one");
+	}
 }
 
 static void
@@ -1254,6 +1436,7 @@ make_unbound(state_t *state, uint32_t size)
 	EXPECT(erx_device_trb_layout(&trb, &small_shape, &sized, BASE, 64, UINT64_C(1) << 20), "the small layout");
 	EXPECT(erx_trb_form_make(&state->form, &trb, &no_regions), "a form over the small layout");
 	model_idle(&state->model);
+	enable_slot(state, SLOT, ERX_XHCI_COMPLETION_SUCCESS);
 }
 
 /*
@@ -1378,7 +1561,7 @@ check_configure_contexts(void)
 
 	make_unbound(&state, 32);
 	EXPECT(publish_contexts(&state, &address, &image), "an Address Device");
-	complete_command(&state, 0);
+	complete_command(&state, 1);
 	configure.add_count = 2;
 	configure.adds[1] = binding(SLOT, 2, OUT_BLOCK).adds[0];
 	configure.slot_context = (erx_xhci_slot_context_free_t){ .route_hub = 1, .route_multi_tt = 1, .ports_port_count = 4,
@@ -1397,11 +1580,11 @@ check_configure_contexts(void)
 	EXPECT(zero_from(&image, 2, 0), "EP0's context is not written");
 	expect_endpoint(&image, 3, ERX_XHCI_ENDPOINT_TYPE_BULK_IN, 64, 64, 64, IN_BLOCK);
 	expect_endpoint(&image, 2, ERX_XHCI_ENDPOINT_TYPE_BULK_OUT, 64, 64, 64, OUT_BLOCK);
-	complete_command(&state, 1);
+	complete_command(&state, 2);
 	EXPECT(publish_contexts(&state, &drop, &image), "a Configure Endpoint dropping EP1 OUT");
 	EXPECT(le32(&image, 0, 0) == 1u << 2 && le32(&image, 0, 4) == 1u << 0 && le32(&image, 1, 0) >> 27 == 3,
 	    "a drop's flag, A0, and EP1 IN still the last valid index");
-	complete_command(&state, 2);
+	complete_command(&state, 3);
 	EXPECT(publish_contexts(&state, &evaluate, &image), "an Evaluate Context");
 	EXPECT(le32(&image, 0, 0) == 0 && le32(&image, 0, 4) == 1u << 1 && zero_from(&image, 1, 0),
 	    "Evaluate Context adds EP0 alone, no slot context");
@@ -1426,7 +1609,7 @@ check_configure_full_speed_hub(void)
 	address.slot_context = (erx_xhci_slot_context_free_t){ .route_route_string = 0x2, .route_speed = ERX_XHCI_SPEED_FULL,
 	    .route_multi_tt = 1, .ports_root_port = 1, .tt_tt_slot = 2, .tt_tt_port = 4 };
 	EXPECT(publish_contexts(&state, &address, &image), "a full-speed Address Device behind a TT");
-	complete_command(&state, 0);
+	complete_command(&state, 1);
 	configure.slot_context = (erx_xhci_slot_context_free_t){ .route_hub = 1, .ports_port_count = 3,
 	    .tt_tt_think_time = 2 };
 	EXPECT(publish_contexts(&state, &configure, &image), "a full-speed hub's Configure Endpoint");
@@ -1452,7 +1635,7 @@ check_evaluate_while_posted(void)
 
 	make_unbound(&state, 32);
 	EXPECT(publish_contexts(&state, &address, &image), "an Address Device");
-	complete_command(&state, 0);
+	complete_command(&state, 1);
 	EXPECT(erx_trb_form_post(&state.form, SLOT, 1, &request, 9, &sequence) == ERX_DEVICE_TRB_ACCEPTED,
 	    "a SET_CONFIGURATION on EP0");
 	live = erx_dma_ledger_live(&state.form.ledger);
@@ -1496,6 +1679,9 @@ check_command_preconditions(void)
 	complete_command(&state, head);
 	EXPECT(erx_trb_form_command(&state.form, &configure, 1, &sequence) == ERX_DEVICE_TRB_REFUSE_BADARG,
 	    "a Configure Endpoint after Disable Slot");
+	EXPECT(erx_trb_form_command(&state.form, &address, 1, &sequence) == ERX_DEVICE_TRB_REFUSE_BADARG &&
+	    erx_dma_ledger_live(&state.form.ledger) == 0, "an Address Device after Disable Slot, before an Enable Slot");
+	enable_slot(&state, SLOT, ERX_XHCI_COMPLETION_SUCCESS);
 	head = erx_dma_ledger_position(&state.form.ledger, COMMANDS).index;
 	EXPECT(publish_contexts(&state, &address, &image), "the slot addressed again");
 	complete_command(&state, head);
@@ -1512,6 +1698,14 @@ check_command_preconditions(void)
 	model_idle(&state.model);
 	EXPECT(erx_trb_form_command(&state.form, &configure, 1, &sequence) == ERX_DEVICE_TRB_REFUSE_BADARG,
 	    "a Configure Endpoint after a reset");
+	EXPECT(erx_trb_form_command(&state.form, &address, 1, &sequence) == ERX_DEVICE_TRB_REFUSE_BADARG,
+	    "an Address Device after a reset, before an Enable Slot");
+	enable_slot(&state, SLOT, ERX_XHCI_COMPLETION_TRB_ERROR);
+	enable_slot(&state, state.form.slots + 1u, ERX_XHCI_COMPLETION_SUCCESS);
+	enable_slot(&state, 255, ERX_XHCI_COMPLETION_SUCCESS);
+	EXPECT(erx_trb_form_command(&state.form, &address, 1, &sequence) == ERX_DEVICE_TRB_REFUSE_BADARG,
+	    "an Address Device after a failed Enable Slot, or one naming a slot outside the layout's");
+	enable_slot(&state, SLOT, ERX_XHCI_COMPLETION_SUCCESS);
 	bind(&state, CONTROL_BLOCK, erx_trb_form_endpoint(SLOT, 1), ERX_XHCI_COMPLETION_TRANSACTION_ERROR);
 	EXPECT(erx_trb_form_command(&state.form, &configure, 1, &sequence) == ERX_DEVICE_TRB_REFUSE_BADARG,
 	    "a Configure Endpoint after a failed Address Device");
@@ -1545,7 +1739,7 @@ check_parameters_refused(void)
 		EXPECT(erx_trb_form_command(&state.form, &bad[k], 1, &sequence) == ERX_DEVICE_TRB_REFUSE_BADARG &&
 		    erx_dma_ledger_live(&state.form.ledger) == 0, "an Address Device or Evaluate Context out of range");
 	EXPECT(erx_trb_form_command(&state.form, &address, 1, &sequence) == ERX_DEVICE_TRB_ACCEPTED, "the Address Device in range");
-	complete_command(&state, 0);
+	complete_command(&state, 1);
 	count = 0;
 	bad[count] = binding(SLOT, 3, IN_BLOCK);
 	bad[count].adds[0].context.config_max_packet = 2;	/* a burst past 15 alone out of range */
@@ -1588,6 +1782,7 @@ main(void)
 	static state_t start;
 
 	test_layout();
+	test_install();
 	test_endpoints_and_requests();
 	test_refusals();
 	test_commands();

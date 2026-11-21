@@ -508,6 +508,119 @@ install(const erx_dma_ledger_t *ledger, erx_dma_sequence_t *sequence)
 }
 
 /*
+ * An xHCI install's stores: DCBAA entry 0, the scratchpad array packed four entries to a store, the
+ * segment table's entry and the command ring's link.
+ */
+#define CONTROLLER_ARRAY_STORES	\
+	((ERX_DEVICE_TRB_SCRATCHPADS_MAX * ERX_XHCI_SCRATCHPAD_ENTRY_SIZE + ERX_DMA_STORE_BYTES_MAX - 1u) / ERX_DMA_STORE_BYTES_MAX)
+/* The stores besides the array's: DCBAA entry 0, the segment table's entry and the command ring's link. */
+#define CONTROLLER_FIXED_STORES	3u
+_Static_assert(CONTROLLER_FIXED_STORES + CONTROLLER_ARRAY_STORES <= ERX_DMA_STORES_MAX, "an xHCI install's stores fit a sequence");
+_Static_assert(sizeof(erx_xhci_scratchpad_entry_t) == ERX_XHCI_SCRATCHPAD_ENTRY_SIZE &&
+    sizeof(erx_xhci_dcbaa_entry_t) <= ERX_DMA_STORE_BYTES_MAX &&
+    sizeof(erx_xhci_segment_table_entry_t) <= ERX_DMA_STORE_BYTES_MAX, "each install record fits a store");
+_Static_assert(ERX_DMA_STORE_BYTES_MAX % ERX_XHCI_SCRATCHPAD_ENTRY_SIZE == 0, "a store holds whole array entries");
+
+/* `length` bytes of `record` stored at `offset` of the record's memory. */
+static void
+store_record(erx_dma_sequence_t *out, uint64_t offset, const void *record, uint32_t length)
+{
+	erx_dma_store_t *const store = &out->stores[out->store_count++];
+
+	*store = (erx_dma_store_t){ .offset = offset, .length = length };
+	bcopy(record, store->bytes, length);
+}
+
+/* The device address of the controller's region `region`. */
+static uint64_t
+region_address(const erx_device_trb_layout_t *controller, uint16_t region)
+{
+	return (controller->device_base + controller->regions[region].offset);
+}
+
+/*
+ * The scratchpad array, after the pages in their region (erx_device_trb.h), each entry naming its
+ * page, and DCBAA entry 0 naming the array. With no page asked for, entry 0 stays the zero the
+ * install wrote. False where an encoder refuses an address.
+ */
+static bool
+store_scratchpad(const erx_device_trb_layout_t *controller, erx_dma_sequence_t *out)
+{
+	erx_xhci_dcbaa_entry_placed_t entry;
+	erx_xhci_dcbaa_entry_t dcbaa;
+	uint8_t packed[ERX_DMA_STORE_BYTES_MAX];
+	uint64_t pages, array;
+
+	if (controller->scratchpads == 0)
+		return (true);
+	pages = controller->regions[controller->scratchpad].offset;
+	array = pages + (uint64_t)controller->scratchpads * ERX_XHCI_PAGE_SIZE;
+	entry = (erx_xhci_dcbaa_entry_placed_t){ .entry_address = controller->device_base + array };
+	for (uint32_t page = 0; page < controller->scratchpads; page++) {
+		const erx_xhci_scratchpad_entry_placed_t placed = {
+			.entry_page = controller->device_base + pages + (uint64_t)page * ERX_XHCI_PAGE_SIZE };
+		const uint32_t at = page * ERX_XHCI_SCRATCHPAD_ENTRY_SIZE % ERX_DMA_STORE_BYTES_MAX;
+		erx_xhci_scratchpad_entry_t record;
+
+		if (!erx_xhci_scratchpad_entry_encode(&record, &placed))
+			return (false);
+		bcopy(&record, packed + at, sizeof(record));
+		if (at + sizeof(record) == ERX_DMA_STORE_BYTES_MAX || page + 1u == controller->scratchpads)
+			store_record(out, array + (uint64_t)page * ERX_XHCI_SCRATCHPAD_ENTRY_SIZE - at, packed,
+			    at + (uint32_t)sizeof(record));
+	}
+	if (!erx_xhci_dcbaa_entry_encode(&dcbaa, &entry))
+		return (false);
+	store_record(out, controller->regions[controller->dcbaa].offset, &dcbaa, sizeof(dcbaa));
+	return (true);
+}
+
+erx_dma_verdict_t
+erx_dma_install_controller(const erx_dma_ledger_t *ledger, const erx_device_trb_layout_t *controller,
+    erx_dma_sequence_t *sequence)
+{
+	const erx_dma_publication_t publication = { .call = ERX_DMA_PUBLISH_INSTALL };
+	const erx_dma_verdict_t verdict = erx_dma_publication_check(ledger, &publication);
+	const erx_dma_layout_t *layout = erx_dma_ledger_layout(ledger);
+	const int command = erx_dma_ledger_table(ledger, ERX_STRUCTURE_XHCI_COMMAND_RING);
+	const int events = erx_dma_ledger_table(ledger, ERX_STRUCTURE_XHCI_EVENT_RING);
+	erx_xhci_segment_table_entry_placed_t segment;
+	erx_xhci_segment_table_entry_t entry;
+	erx_dma_ring_step_t link;
+	erx_dma_sequence_t out = { 0 };
+
+	if (verdict != ERX_DMA_PASSES)
+		return (verdict);
+	if (command < 0 || events < 0)
+		return (ERX_DMA_BREAKS_MEANINGS);
+	segment = (erx_xhci_segment_table_entry_placed_t){ .base_address = region_address(controller, controller->event_ring),
+	    .size_trbs = layout->tables[events].count };
+	link = (erx_dma_ring_step_t){ .place = { .table = (uint32_t)command, .index = layout->tables[command].count - 1u },
+	    .cycle = BINDING_START_CYCLE, .link = true };
+	add_range(out.zeros, &out.zero_count, 0, controller->bytes);
+	if (!store_scratchpad(controller, &out) || !erx_xhci_segment_table_entry_encode(&entry, &segment) ||
+	    !encode_link(layout, link, &out.stores[out.store_count]))
+		return (ERX_DMA_BREAKS_MEANINGS);
+	out.store_count++;
+	store_record(&out, controller->regions[controller->segment_table].offset, &entry, sizeof(entry));
+	add_range(out.cleans, &out.clean_count, 0, controller->bytes);
+	out.registers[out.register_count++] = (erx_dma_register_write_t){ ERX_DMA_XHCI_SLOTS, controller->slots };
+	out.registers[out.register_count++] = (erx_dma_register_write_t){ ERX_DMA_XHCI_DCBAA,
+	    region_address(controller, controller->dcbaa) };
+	out.registers[out.register_count++] = (erx_dma_register_write_t){ ERX_DMA_XHCI_EVENT_RING_SIZE, 1 };
+	out.registers[out.register_count++] = (erx_dma_register_write_t){ ERX_DMA_XHCI_EVENT_DEQUEUE,
+	    erx_dma_dequeue_address(ledger, (uint32_t)events) };
+	out.registers[out.register_count++] = (erx_dma_register_write_t){ ERX_DMA_XHCI_SEGMENT_TABLE,
+	    region_address(controller, controller->segment_table) };
+	out.registers[out.register_count++] = (erx_dma_register_write_t){ ERX_DMA_XHCI_INTERRUPTER_ENABLE, 1 };
+	out.registers[out.register_count++] = (erx_dma_register_write_t){ ERX_DMA_XHCI_COMMAND_RING,
+	    ring_position_address(ledger, (uint32_t)command) | erx_dma_ledger_cycle(ledger, (uint32_t)command) };
+	out.activation = (erx_dma_activation_t){ .kind = ERX_DMA_ACTIVATE_REGISTER, .reg = { ERX_DMA_XHCI_RUN, 1 } };
+	*sequence = out;
+	return (ERX_DMA_PASSES);
+}
+
+/*
  * What the sequencer derives for a publication's input context, never its poster: whether the
  * slot context is carried (Address Device, Configure Endpoint) with its Context Entries, the drop
  * flags, and, by device context index, each carried endpoint's TR Dequeue Pointer with its cycle

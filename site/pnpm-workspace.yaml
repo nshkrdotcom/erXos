@@ -1,0 +1,4 @@
+# pnpm settings of the website's console (site/README.md, "The console
+# window"). xterm.js, its one package, has no install script, and no
+# package may run one.
+allowBuilds: {}

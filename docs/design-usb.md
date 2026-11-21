@@ -1776,8 +1776,14 @@ clear, and never writes the port-enable bit, whose 1 disables the port,
 except to disable; FreeBSD writes back the value it read with the bits
 of `XHCI_PS_CLEAR` removed (`xhcireg.h:146`; `xhci.c:3633`), and erXos
 derives the same mask from the access type of each field of the SVD
-source, so no constant is copied by hand. The controller writes no `PORTSC` while it
-is halted (xHCI 5.4.8, p. 405). The bus core reads a root port's changes
+source, so no constant is copied by hand. A clear writes only those of
+its change's bits that the port's last status read reported, so a bit
+that set after that read, which the bus core has not seen, stays set for
+the core's next read. The controller writes no `PORTSC` while it
+is halted (xHCI 5.4.8, p. 405). A running controller answers an
+operation on a port outside its port count `{error, badarg}`, and a
+port event naming one is malformed and fails the controller, as any
+malformed event does. The bus core reads a root port's changes
 in the USB 2 hub words and clears each one it reads, and a root port
 raises no further event until all of its change bits are clear (4.19.2,
 p. 322), so every `PORTSC` change bit stands behind one USB 2 change: the
@@ -1993,7 +1999,7 @@ it holds nothing of the ring:
 | `open` | the adding command succeeds; Set TR Dequeue or a drop-and-add succeeds | accepted | Stop Endpoint; drop-and-add or a drop only when nothing is posted |
 | `stopping` | Stop Endpoint is posted | `{error, halted}` | none |
 | `stopped` | Stop Endpoint or Reset Endpoint succeeds | `{error, halted}` | Set TR Dequeue; drop-and-add; drop |
-| `halted` | a transfer event with an error code (every one halts, 4.10.2, p. 195); Stop Endpoint fails with a context state error (4.6.9, p. 137) | `{error, halted}` | Reset Endpoint |
+| `halted` | a transfer event with an error code (every one halts, 4.10.2, p. 195) | `{error, halted}` | Reset Endpoint |
 
 Disable Slot is accepted when every queue of the slot is `stopped`,
 `halted` or `open` with nothing posted, and no command for the slot is
@@ -2018,8 +2024,10 @@ parameters, from which the NIF writes every context and TRB:
 | `{set_tr_dequeue, Slot, Dci}` | | the TRB, with the queue's own enqueue position and cycle state |
 | `{disable_slot, Slot}` | | the TRB |
 
-A parameter out of its range, a drop of a queue in a state that does not
-allow it, or an add of a queue that exists is `badarg`. No field that
+A parameter out of its range, a command on a queue in a state that does
+not allow it, an add of a queue that exists, or an Address Device of a
+slot no Enable Slot's success gave since its Disable Slot (4.6.5, p. 114)
+is `badarg`. No field that
 says where the controller reads or writes, how it interprets an address
 or how many bytes it moves there comes from Erlang: `MaxPStreams` above
 0 would turn the dequeue pointer into the address of a stream context
@@ -2306,8 +2314,17 @@ that consumes events.
     `running`: a `halted` one, whose doorbell the controller has
     disabled (4.6.8, p. 128), a `stopped` one, as the queue table
     refuses, or EP0 after a failed Address Device;
-  * a Stop Endpoint, Reset Endpoint or Set TR Dequeue Pointer names an
-    endpoint that is not `disabled`;
+  * a Stop Endpoint names a `running` endpoint, a Reset Endpoint a
+    `halted` one and a Set TR Dequeue Pointer a `stopped` one, the queue
+    table's states (4.6.9, p. 140; 4.6.8, p. 129; 4.6.10, p. 141); the
+    specification also defines Set TR Dequeue Pointer in the Error state
+    a TRB Error enters (4.8.3, p. 164), which the ledger does not keep,
+    since 4.10.2 (p. 195) halts the endpoint on every error. The controller
+    answers any other with Context State Error, which changes nothing,
+    but one that wrongly answered success, to a Set TR Dequeue Pointer on
+    a running ring above all, would have the ledger retire transfers the
+    device may still run and their buffers posted again, so the check
+    refuses them itself;
   * a Configure Endpoint that drops an endpoint, alone or with an add, is
     published only when that endpoint is `stopped`, or `running` with no
     live transfer, the only states in which a drop is defined (4.6.6,
@@ -2325,11 +2342,7 @@ that consumes events.
   choose its commands, and the check refuses a plan that breaks any rule
   with `ERX_DMA_BREAKS_REACH`, which the core answers as `{error, halted}`
   for a transfer and `badarg` for a command, as the queue table's
-  refusals are. A Stop Endpoint on a halted endpoint, a Reset Endpoint on one that is
-  not halted and a Set TR Dequeue Pointer on one that is not stopped are
-  rejected with Context State Error, a defined answer that changes
-  nothing (4.8.3, p. 164; 4.6.8, p. 129; 4.6.10, p. 141), so the check
-  leaves those to the queue table above.
+  refusals are.
 
 **Releases.** Each event is a snapshot the acquisition took at the event
 ring's consumer position, after its cycle bit read as the ledger's
@@ -2373,8 +2386,9 @@ the reset bit and the controller-not-ready bit to clear before writing
 any other register (p. 394; 4.2, p. 80); then, once the halted and
 reset-done report has released every holding and every block is free,
 the sequencer, in one decision, lays out and zeroes every region,
-writes DCBAA entry 0, the scratchpad array, the segment table and every
-ring's link, cleans them, and writes, each from the layout, the slot
+writes DCBAA entry 0, the scratchpad array, the segment table and the
+command ring's link (a queue block's ring gets its link when a command
+binds it), cleans them, and writes, each from the layout, the slot
 count, `DCBAAP`, the event
 ring's size and dequeue pointer, the segment table's base, the
 interrupter's `IMAN.IE`, the command ring's base with its cycle state,

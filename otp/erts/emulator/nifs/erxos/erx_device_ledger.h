@@ -442,9 +442,10 @@ bool				erx_dma_ledger_closed(const erx_dma_ledger_t *ledger, uint32_t endpoint)
 erx_dma_endpoint_state_t	erx_dma_ledger_endpoint_state(const erx_dma_ledger_t *ledger, uint32_t endpoint);
 /*
  * The check's reach rule (erx_device_rules.h) for a publication of one record or more: a
- * transfer's endpoint is running and not closed; the endpoint a stop or a restart names is not
- * disabled; each a command drops is neither disabled nor halted; and none it removes, by a drop
- * or a disable, runs with a live transfer.
+ * transfer's endpoint is running and not closed; the endpoint a stop names is running, the one a
+ * reset names halted and the one a restart names stopped; what a command holds is running or
+ * stopped and idle; each a command drops is neither disabled nor halted; and none it removes, by
+ * a drop or a disable, runs with a live transfer.
  */
 bool				erx_dma_ledger_reach_allows(const erx_dma_ledger_t *ledger,
 				    const struct erx_dma_publication *publication);

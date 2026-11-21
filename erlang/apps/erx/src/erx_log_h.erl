@@ -34,7 +34,7 @@
 -behaviour(logger_handler).
 
 -export([adding_handler/1, removing_handler/1, log/2]).
--export([sync/0, record/2]).
+-export([sync/0, record/2, write/1, character_end/2]).
 
 -include("generated/erx_abi.hrl").
 
@@ -81,12 +81,19 @@ removing_handler(_Config) ->
 
 -spec log(logger:log_event(), logger_handler:config()) -> ok.
 log(Event, Config) ->
-    Record = record(Event, Config),
+    write(record(Event, Config)).
+
+-doc """
+Sends Record where the domain's records go: the system log's service where it runs,
+the proxy elsewhere, and the kernel log while neither is running. log/2 sends each
+event's record this way, and erx_log_user each line of a session's output.
+""".
+-spec write(log_record()) -> ok.
+write(Record) ->
     case sink() of
         none -> write_kernel_log(Record);
-        Sink -> Sink ! Record
-    end,
-    ok.
+        Sink -> Sink ! Record, ok
+    end.
 
 -doc """
 Returns once the proxy has handled every record the caller sent it before, so a
@@ -158,8 +165,12 @@ cut(Text) ->
     Head = binary:part(Text, 0, character_end(Text, ?TEXT_MAX - byte_size(?CUT_MARK))),
     <<Head/binary, (?CUT_MARK)/binary>>.
 
-%% The largest length =< Limit at which no UTF-8 sequence of Text is split: a
-%% continuation byte (2#10xxxxxx) at Limit belongs to the character before it.
+-doc """
+The largest length =< Limit at which no UTF-8 sequence of Text, longer than Limit,
+is split: a continuation byte (2#10xxxxxx) at Limit belongs to the character before
+it. erx_log_user ends its pieces of a long line here.
+""".
+-spec character_end(binary(), non_neg_integer()) -> non_neg_integer().
 character_end(_Text, 0) ->
     0;
 character_end(Text, Limit) ->

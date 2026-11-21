@@ -31,18 +31,23 @@ class SiteTest < Minitest::Test
   # boot.json's image entry as render_index reads it.
   IMAGE = { image: 'i.boot.gz', compressed_bytes: 17_482_936, compressed_sha256: 'y' }.freeze
 
-  # A fake tree: site/ sources, a built v64 tree with its notices, an image
-  # with its build record, and a card with its own.
+  # A fake tree: site/ sources, a built v64 tree with its notices, xterm.js
+  # installed for site/'s package files, an image with its build record, and
+  # a card with its own.
   def with_inputs
     Dir.mktmpdir('erx-site-') do |root|
+      xterm = File.join(Erx::Site::PACKAGES.modules, Erx::Site::XTERM_PACKAGE)
       files = Erx::Site::PAGE_FILES.to_h { |name| ["site/#{name}", name] }
               .merge('site/index.html' => INDEX)
+              .merge(Erx::WebBuild::PACKAGE_FILES.to_h { |name| ["site/#{name}", name] })
               .merge(Erx::SiteV64::TARGETS.values.to_h { |path| ["v64/#{path}", path] })
               .merge(Erx::SiteV64::NOTICES.values.to_h { |path| ["v64/#{path}", path] })
+              .merge([*Erx::Site::XTERM.values, *Erx::Site::XTERM_NOTICES.values].to_h { |path| ["#{xterm}/#{path}", path] })
       files.each do |path, content|
         FileUtils.mkdir_p(File.dirname(File.join(root, path)))
         File.write(File.join(root, path), content)
       end
+      record_site_packages(root)
       image = File.join(root, 'image.boot')
       File.binwrite(image, "erXos image\0" * 1000)
       write_image_record(image)
@@ -50,6 +55,13 @@ class SiteTest < Minitest::Test
       write_card_record(root)
       yield root, image
     end
+  end
+
+  # The record WebBuild.fetch leaves beside the console's packages it installed
+  # from root's site/ package files.
+  def record_site_packages(root)
+    record = File.join(root, Erx::Site::PACKAGES.modules, Erx::WebBuild::FETCHED)
+    File.write(record, "#{Erx::WebBuild.package_digest(File.join(root, 'site'))}\n")
   end
 
   # A stand-in for the data partition's fresh volume (DataVolume.format): whole sectors.
@@ -132,6 +144,10 @@ class SiteTest < Minitest::Test
       assert_match %r{\Av64/libv86-[0-9a-f]{16}\.mjs\z}, module_name
       assert_equal 'build/libv86.mjs', File.read(File.join(out, module_name))
       assert_match %r{\Av64/v86-arm64-[0-9a-f]{16}\.wasm\z}, manifest.dig(:emulator, :wasm)
+      assert_match %r{\Axterm/xterm-[0-9a-f]{16}\.js\z}, manifest.dig(:terminal, :script)
+      assert_equal 'lib/xterm.js', File.read(File.join(out, manifest.dig(:terminal, :script)))
+      assert_equal 'css/xterm.css', File.read(File.join(out, manifest.dig(:terminal, :stylesheet)))
+      assert_equal 'LICENSE', File.read(File.join(out, 'xterm/LICENSE.txt'))
       assert_equal 'build/NOTICES', File.read(File.join(out, 'v64/NOTICES.txt'))
       assert_equal 'LICENSE.MIT', File.read(File.join(out, 'v64/LICENSE.MIT.txt'))
       assert File.file?(File.join(out, 'v64/COPYRIGHT-rust-library.html'))
@@ -378,7 +394,8 @@ class SiteTest < Minitest::Test
       refute_equal first.fetch(:image), second.fetch(:image)
       refute File.exist?(File.join(out, first.fetch(:image)))
       assert_equal 'another image', Zlib.gunzip(File.binread(File.join(out, second.fetch(:image))))
-      assert_equal [], Dir.children(File.join(root, 'build')) - ['site'], 'no staging directory is left behind'
+      assert_equal [], Dir.children(File.join(root, 'build')) - ['site', File.basename(Erx::Site::PACKAGES.modules)],
+                   'no staging directory is left behind'
     end
   end
 
@@ -388,6 +405,42 @@ class SiteTest < Minitest::Test
       File.write(File.join(root, 'site/release-notes.html'), "<p>It soaked a day. <!-- unverified: no record --></p>\n")
       error = assert_raises(Erx::Error) { inventory(root, image) }
       assert_match %r{site/release-notes\.html holds a statement marked <!-- unverified}, error.message
+    end
+  end
+
+  # The console's terminal is the site's own copy of xterm.js, so a script of the
+  # site that names another host's address, such as a CDN's copy of xterm.js, is
+  # refused, and the tree's scripts name none. Seeded fault: check only
+  # .html and .css.
+  def test_a_script_that_loads_from_another_host_is_refused
+    with_inputs do |root, image|
+      File.write(File.join(root, 'site/terminal.js'),
+                 "const XTERM_JS = { src: \"https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.js\" };\n")
+      error = assert_raises(Erx::Error) { inventory(root, image) }
+      assert_match %r{site/terminal\.js loads a resource from another host: "https://cdn\.jsdelivr\.net/}, error.message
+    end
+    with_inputs do |root, image|
+      File.write(File.join(root, Erx::Site::PACKAGES.modules, Erx::Site::XTERM_PACKAGE, 'css/xterm.css'),
+                 '.xterm { font: url(https://x/f.woff2); }')
+      assert_match %r{xterm/xterm\.css loads a resource from another host}, assert_raises(Erx::Error) { inventory(root, image) }.message
+    end
+    assert_raises(Erx::Error) { Erx::Site.remote_load('a.js', 'new WebSocket(`wss://x/${path}`);') }
+    assert_match(/no rule says what a \.mjs file may load/, assert_raises(Erx::Error) { Erx::Site.remote_load('a.mjs', '') }.message)
+    assert_raises(Erx::Error) { Erx::Site.remote_load('a.js', "import('//x/y.mjs');") }
+    assert_nil Erx::Site.remote_load('a.js', 'if(!["http:", "https:"].includes(url.protocol)) fail(); // https://x')
+    Erx::Site::PAGE_FILES.select { |name| name.end_with?('.js') }.each do |name|
+      assert_nil Erx::Site.remote_load(name, File.read(File.join(REPO, 'site', name))), name
+    end
+  end
+
+  # The console's packages are published only as `tools/erx fetch` installed them
+  # for site/'s package files: a changed lockfile without a fetch is refused.
+  def test_the_console_packages_must_be_installed_for_the_package_files
+    with_inputs do |root, image|
+      File.write(File.join(root, 'site/pnpm-lock.yaml'), 'another lockfile')
+      error = assert_raises(Erx::Error) { inventory(root, image) }
+      assert_match(%r{the website's console's packages are not installed for site/'s package files; run `tools/erx fetch`},
+                   error.message)
     end
   end
 

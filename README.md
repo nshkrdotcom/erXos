@@ -263,6 +263,8 @@ Eshell V17.1.1 (type help(). for help)
   the running system and read its files; `tools/erx web` shows the
   machine's records in a browser.
 * Hosted mode runs the runtime as a macOS process for fast iteration.
+* The book, `docs/book`, renders to HTML with diagrams drawn in the manual's
+  style: `ruby tools/build_book.rb`. The website serves xterm.js itself.
 * In every domain but the system domain, `erx_report` filters OTP's crash
   and logger reports at boot: a report names the process, its registered
   name, the error's class, the reason's leading atom and the stack's
@@ -351,6 +353,11 @@ Eshell V17.1.1 (type help(). for help)
   signed by default with a development key the packer makes on the host,
   never shipped in the SDK, an EROFS image of the
   app's files and a dm-verity tree, judged by the machine's file check.
+* An app's release carries OTP's compiler, so an Elixir 1.20 app built for
+  OTP 29 starts with its supervisors, `GenServer`, `Logger` and `Task`.
+  When an app fails to start, the kernel log names the reason.
+* In a session with no terminal, such as an app's, what the program
+  writes to standard output becomes log records under the session's name.
 
 **Networking**
 

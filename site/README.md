@@ -18,8 +18,7 @@ git does not ignore), and `--source` that card's commit when `HEAD` has
 moved since. A local preview that needs no card is built with `--no-card`:
 
 ```
-tools/erx fetch --source v64
-tools/erx fetch --source closure-compiler
+tools/erx fetch
 ruby tools/build_site.rb [--image IMAGE] [--card CARD] [--serve 8000]
 ruby tools/build_site.rb --no-card [--image IMAGE] [--serve 8000]
 ```
@@ -37,6 +36,12 @@ ruby tools/build_site.rb --no-card [--image IMAGE] [--serve 8000]
   tools with its own lockfile and nothing it fetches reaches an erXos
   image. `--v64 DIR` instead takes a tree an earlier run built, such as
   `build/site-v64`, and builds nothing.
+* xterm.js, the console's terminal, is the npm package `@xterm/xterm`,
+  pinned with its integrity hash in `site/pnpm-lock.yaml`; `tools/erx fetch`
+  installs it into `build/site-modules/`, and the build refuses one installed
+  for other package files. Its `lib/xterm.js` and `css/xterm.css` are
+  published under `xterm/` by their digests, with its MIT `LICENSE` beside
+  them as `xterm/LICENSE.txt`.
 * The license notices of what the two files contain ship beside them in
   `v64/`: v64's `LICENSE` (BSD-2-Clause) and `LICENSE.MIT`, published with a
   `.txt` suffix so a static host serves them as text; `NOTICES.txt`,
@@ -137,10 +142,10 @@ ruby tools/build_site.rb --no-card [--image IMAGE] [--serve 8000]
   are the images CLAUDE.md lets leave the project, each with its source
   offered. The card's device tree ships with its source, Linux's GPL-2.0
   text and a notice of erXos's one edit, dated by the commit's date.
-* `terminal.js`, `libv86.mjs` and `v86-arm64.wasm` are published under
+* `terminal.js`, `libv86.mjs`, `v86-arm64.wasm`, `xterm.js` and `xterm.css` are published under
   names that carry their digests. `index.html` names the script and
   `boot.json`, which the page fetches past the browser's cache, names
-  the image, the disk and v64's two files, so after a redeploy a browser never
+  the image, the disk, v64's two files and xterm.js's two, so after a redeploy a browser never
   pairs one deployment's module with another's core. A browser holding
   a stale `index.html` (GitHub Pages lets it be cached for ten minutes)
   asks for a `terminal.js` the new deployment no longer has, so its Boot
@@ -248,8 +253,7 @@ booting. The hint and the source line are page text below the case.
 
 With JavaScript, `terminal.js` shows a "Boot erXos" key, the download
 size and the simulated machine, `ARMv8-A · 1 core · 256 MiB RAM`. On a
-click it loads xterm.js (from jsDelivr, pinned to an exact version and
-checked by Subresource Integrity), v64, the image and the disk, showing a
+click it loads xterm.js (the site's own copy), v64, the image and the disk, showing a
 progress bar on the case; checks the image and the disk against
 `boot.json`; and boots the image with 256 MiB of guest memory and one
 core (`RAM_MIB` and `CPU_CORES`, the one place to change each, from which
@@ -410,8 +414,6 @@ session and say so.
 
 ## Open items
 
-* The footer links (Source, Architecture, Roadmap) point at `#` until the
-  source repository has a public address; a TODO comment marks them.
 * The fault menu is checked under Node against a stand-in for v64, not
   yet in a browser (`TODO.md`, "Planned features").
 * The network's placement is checked under Node against v64's rule, and

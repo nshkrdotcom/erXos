@@ -2635,8 +2635,9 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
 
 ## Bugs by subsystem
 
-* [Medium] `site/terminal.js`: the console loads xterm's stylesheet and script from `cdn.jsdelivr.net` when the reader presses Boot, against requirement 7 of [design-book-site.md](docs/design-book-site.md#requirements) (no request to another host); `Site.inventory`'s check reads only `.html` and `.css`. Self-host xterm as v64's packages are, then extend the check to the site's scripts.
-* [Medium] `tools/lib/erx/site.rb` `REMOTE_LOAD`: a regex over HTML enumerates load forms and misses `srcset`, an entity-encoded scheme, `iframe`, `object`, `poster`, SVG `<image href>`, CSS `image-set()` and meta refresh. Replace it with a check of every element's address-valued attributes, so a new form is refused by construction.
+* [Medium] manifest check, `tools/lib/erx/manifest.rb` against `liberx/system/dom_core.c` `dom_grant_fits` (:219, used at :489): the domain library holds a session's CPU grant within its principal's, but the Ruby manifest check does not, so a manifest whose session share exceeds the users share passes the build and is refused at boot (only the C planner in `dom_planner_test.rb` caught it when the users share dropped to 0.9). Two implementations of one rule; fix by construction: one source the C planner and the Ruby check both take, or the check runs the planner.
+* [Medium] website, `.github/workflows/site.yml`: the workflow installs no pnpm and fetches none of the npm package sets, and its Node 22 is older than the engines `site/package.json` names, so `Site.inventory` refuses its build until the console's xterm.js is installed (`tools/erx fetch` installs it with the other package sets, but also fetches every `deps.lock` source). Install a pinned pnpm and Node 24.2 or later, and give the fetch a way to install one package set alone.
+* [Medium] `tools/lib/erx/site.rb` `MARKUP_LOAD`: a regex over HTML enumerates load forms and misses `srcset`, an entity-encoded scheme, `iframe`, `object`, `poster`, SVG `<image href>`, CSS `image-set()` and meta refresh. Replace it with a check of every element's address-valued attributes, so a new form is refused by construction.
 * [Medium] `tools/lib/erx/book.rb`, `book/page.rb`, `book/contents.rb`: readability of the book step. Three "plain text of a node" functions (`Book.heading_text`, `Page#text_of`, `Contents.text`) and two sourcepos readers should be one; three placeholder fillers (`Book.fill`, `Site.fill_shared`, `Site.render_index`) with three grammars should be one template function; positional tuples (`shared_files`'s three values, `Result.sections`, `media`, `Contents.neighbours`) should be `Data` values; the heading-anchor table runs cmark-gfm lazily from inside `Page.render` through the resolver, so the render is not pure; `Site.publish` should derive `shared_names` from the book plan instead of taking both.
 * [Medium] `test/host/book_test.rb`: the design's tool tests "The whole book builds" and "Same bytes" are missing; no test runs cmark-gfm (two builds of the whole book were compared by hand and were identical).
 * [Low] `tools/lib/erx/book/page.rb` `html`: a draft marker or raw HTML after a comment in the same HTML block (`<!-- a --> <!-- check: x -->`) is dropped with the comment; check every comment and tag in the block.
@@ -5913,7 +5914,16 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   not in the tree, so nothing sends `tty_write`, and `tty_drain` comes only from a console that exits with
   its shell (`erx_console`'s `on_shell_end`), nor are edit 35's trap and edit 42
   (`beam/bif.c`), which reach it; and `erx_tty_owner` is missing from `erx_session.app.src`'s
-  `registered` list.
+  `registered` list. In a session with no console facet nothing holds `erx_tty_owner`, against
+  design-runtime.md's table, which names the logger proxy, a process already registered as `erx_log_h`:
+  when `erx_output` lands, that row's owner is built, splitting lines with `erx_log_user:lines/2` rather
+  than a second splitter, and the table's first row says "a session with a console tty".
+* [Medium] session, the masterless console tty (`erlang/apps/erx_session/src/erx_session_sup.erl`,
+  `erx_session_tty.erl`, `erx_session_relay_core.erl`, `erx_tty_link.erl`): `erx_session_sup:line/1` starts
+  the console tty only for a session with a console facet, but `erx_session_tty:start_link/0` reads the
+  facet again, and the relay core's `master => none`, `erx_tty_link`'s path for no master and
+  `test/erlang/erx_session_tty_tests.erl`'s `in_session/1` keep a tty with no master that no session now
+  builds. Pass the facet `line/1` holds to the start and delete the masterless path and its cases.
 * [Medium] session, terminal relay requests (`erlang/apps/erx_session/src/erx_session_relay.erl`): the
   chokepoints keep `erx_tty_owner` and the request for an open made for reading to `erx_session_relay`, and
   an open is opaque, but a module that holds a relay's pid can still build any other request by hand
@@ -8210,23 +8220,10 @@ model harness drive `erx_device.c` itself. `erx_device_dma_check` and `erx_devic
   bindings; the TRB form's releases from acquired events; the
   stand-ins' ledger check. Before a non-coherent device relies on the acquisition, its unverified AArch64 premise is settled by the Arm
   ARM passage, the litmus test or the VL805 probe [Releases](docs/design-device-dma.md#releases) names.
-* [Medium] DMA, the TRB form's core (`erx_device_trb_form.c`): it is the one xHCI path, host-tested, and the NIF does not run it yet: `erx_device.c` has no xHCI queue, so design-usb.md's `erx_device:post(Dev, command, Tag, Command)` and `erx_device:post(Dev, {Slot, Dci}, Tag, Transfer)` are not built, and the NIF answers neither. It still needs the form's 64-bit address width checked against the controller's AC64; and a generated way to write `ERDP` with its busy bit, whose `oneToClear` field in a register with other fields gets no setter from the SVD generator (`erx_trb_form_complete` gives the dequeue pointer alone); and the install that zeroes and cleans the event ring at a reset, which `erx_trb_form_reset` requires (an event left from before it carries the first lap's cycle bit). Also open there: `pool_first_buffer` repeats the ledger's numbering of buffers across pools; the ledger's bounds come from `erx_device_trb.h`, which a neutral bounds header would hold instead; the input context's pool size is its region's granule-rounded length. Neither `erx_device_trb.c` nor `erx_device_trb_form.c` is in `erx_device.mk` yet, since the NIF links neither, so `libc_free_entries_test.rb` does not hold them to `liberx/backend/core/mem.h` until they join it.
+* [Medium] DMA, the TRB form's core (`erx_device_trb_form.c`): it is the one xHCI path, host-tested, and the NIF does not run it yet: `erx_device.c` has no xHCI queue, so design-usb.md's `erx_device:post(Dev, command, Tag, Command)` and `erx_device:post(Dev, {Slot, Dci}, Tag, Transfer)` are not built, and the NIF answers neither. Its install (`erx_trb_form_install` over `erx_dma_install_controller`, AC64 checked) is host-tested and the model harness runs it, but nothing on the target applies it: the effect layer's mapping of its xHCI registers onto the SVD's fields, and `negotiate/2`'s steps before it (run cleared, halted, `HCRST`, the controller-not-ready wait) are not built. It still needs a generated way to write `ERDP` with its busy bit, whose `oneToClear` field in a register with other fields gets no setter from the SVD generator (`erx_trb_form_complete` gives the dequeue pointer alone). `erx_trb_form_t` keeps its `shape`, `ports` and `slots` beside the `layout` that holds them, so that the queue-state branch's edits of the command checks merge cleanly; they fold into `layout` once both have landed. From the install's review (Medium): `erx_dma_register_t` holds virtio's and xHCI's registers in one enum, so each effect layer lists the other form's values and `put_ring_register` drops an xHCI write silently; give each form its own register type, or tag the sequence's writes by form. `erx_dma_install_controller` takes the ledger and the controller's layout on trust that one was derived from the other (the link and `CRCR` come from the ledger, the rest from the layout), and `store_scratchpad` repeats the layout's placement of the scratchpad array after its pages; the layout should record the array's offset, or the DCBAA, scratchpad and segment table become regions of `erx_dma_layout_t`, so one `install` serves both forms. The xHCI install has no seeded faults, and the top of `erx_device_sequencer.h` still describes only virtio's install. Also open there: `pool_first_buffer` repeats the ledger's numbering of buffers across pools; the ledger's bounds come from `erx_device_trb.h`, which a neutral bounds header would hold instead; the input context's pool size is its region's granule-rounded length.
 * [Medium] DMA, the TRB form's input context and slots (`erx_device_sequencer.c`, `erx_device_ledger.c`): `place_input_context` composes into 33 parts though a publication carries at most `ERX_DMA_INPUT_PARTS_MAX`; the commands that carry the input context are one list (`erx_dma_carries_input_context`), where a mark in abi/formats could make it generated; nor is a slot's holding, its DCBAA entry and device context from its first Address Device, in the ledger, as design-usb.md's "Bindings and holdings" gives it.
-* [Medium] DMA, the TRB form's commands against the queue state (`erx_device_ledger.c`, `reach_stop`, `reach_restart`;
-  design-usb.md, "Queues and their states" and "What the DMA check judges"): the queue table's last column accepts
-  Stop Endpoint only on `open`, Reset Endpoint only on `halted` and Set TR Dequeue Pointer only on `stopped`, while
-  the reach rules refuse only a disabled endpoint and design-usb.md's check section leaves the rest to the
-  controller's Context State Error, which changes nothing (4.8.3, 4.6.8, 4.6.10); the form harness pins "accepted in
-  any of its states". A controller answering success to a Set TR Dequeue Pointer on a running ring would have the
-  ledger retire transfers it still runs, their buffers posted again while the device may write them. Settle one
-  contract: state columns in `reach_rule_t` (stop from running, reset from halted, restart from stopped, which needs
-  a `reset` reach mark in abi/formats/xhci.txt apart from `stop`), or the table's column restated as what the
-  controller accepts. Recommended: the columns, as the table says.
-* [Low] DMA, the TRB form's slots (`parameters_valid` in `erx_device_trb_form.c`): an Address Device is accepted on
-  any slot of the layout's, not only one an Enable Slot gave; the controller answers Slot Not Enabled, and
-  `reach_address`'s `failure_keeps` leaves the control block bound until a Disable Slot, so sixteen such posts leave
-  no block for an Address Device until a reset. A slot's enabled bit, set from Enable Slot's success and cleared by
-  Disable Slot's, would refuse it as badarg.
+* [Medium] DMA, the TRB form's Error state (`reach_restart` in `erx_device_ledger.c`, `error_event` in `erx_device_trb_form.c`): the ledger halts an endpoint on every error code, as xHCI 1.2, 4.10.2 (p. 195) says, but 4.8.3 (p. 164) has a TRB Error enter the Error state, which only Set TR Dequeue Pointer leaves (4.6.10, p. 141). On a controller that follows 4.8.3 the ledger holds `halted`, Reset Endpoint answers Context State Error, Set TR Dequeue Pointer is badarg (accepted only on `stopped`) and a drop is refused, so only Disable Slot recovers the endpoint. Fails safe; a TRB Error should come only from a form bug or a quirky controller. Fix: an Error state entered on the TRB Error code, with `reach_restart` taking it beside `stopped`, and erx_xhci_core.erl planning Set TR Dequeue Pointer from it.
+* [Low] DMA, the TRB form's slots (`command_event` in `erx_device_trb_form.c`): an Enable Slot success naming slot 0, a slot past the layout's or one already enabled enables nothing and is answered as a plain success, where a value the controller cannot rightly write should fail the event with ECORRUPT (checked before `erx_dma_ledger_complete_command` changes the ledger); the slot's state is two parallel arrays (`enabled`, and `addressed` whose nonzero `route_speed` means addressed) that one per-slot record would join; and the fuzz target's honest command completion leaves the slot field 0, so a script's Enable Slot never enables a slot and Disable Slot then Enable Slot then Address Device goes unfuzzed.
 * [Low] DMA, the TRB form's shape (`shape_valid` in `erx_device_trb.c`): a shape must leave three positions of each
   ring free beside its posted TRBs, a reserve sized for a stop span the form does not keep; the check's room rule
   may make one or two enough.
@@ -8241,8 +8238,7 @@ model harness drive `erx_device.c` itself. `erx_device_dma_check` and `erx_devic
   bit; `report` writes Command Completion events through the Transfer Event's offsets, equal in abi/formats/xhci.txt
   but unasserted; and the harness sets the model's `fail` and `short_packet` fields directly.
 * [Low] DMA, the TRB form's stop events (`stop_event` in `erx_device_trb_form.c`): a stop's transfer event is accepted when it names any record of the ring bound to the stopping endpoint, not only one inside the stop span design-usb.md's "Completing" gives. It completes nothing, so the gap fails safe, but an event the controller could not have written passes.
-* [Low] DMA, a failed Address Device (`reach_address` in `erx_device_ledger.c`): its failure keeps EP0's binding, EP0 disabled, until Disable Slot succeeds, as xHCI 1.2, 4.6.5, p. 114 leaves the slot in the Default state; for a slot no Enable Slot enabled (Slot Not Enabled Error, which changes nothing) no Disable Slot can succeed, so the ring stays held until the controller's reset. Fails safe; ending the binding on the codes 4.6.5 says change nothing (Parameter Error, Context State Error, Slot Not Enabled Error) would need the ledger to take the completion code, not a success flag.
-* [Low] DMA, the ledger's reach rules (`reach_rule_t` in `erx_device_ledger.c`): the endpoints a reach acts on are two flags (`names_one`, `whole_group`) and a mask (`holds`) beside the implicit binds-and-drops case, so a row can set several, where an enum would make that unwritable; the state preconditions in `erx_dma_ledger_reach_allows` (named means enabled, a drop neither disabled nor halted, a removal not busy, a held endpoint running or stopped and idle) are code, not columns; and no test keeps the attempt to build a reach without its row (`ERX_REACHES`), which fails by construction (`&reach_##name` names an undeclared identifier).
+* [Low] DMA, the ledger's reach rules (`reach_rule_t` in `erx_device_ledger.c`): the endpoints a reach acts on are a flag (`whole_group`) and two masks (`named_states`, whose being nonzero means the named endpoint, and `holds`) beside the implicit binds-and-drops case, so a row can set several, where an enum would make that unwritable; the state preconditions in `erx_dma_ledger_reach_allows` (a drop neither disabled nor halted, a removal not busy, a held endpoint running or stopped and idle) are code, not columns, but the named endpoint's, which is `named_states`; and no test keeps the attempt to build a reach without its row (`ERX_REACHES`), which fails by construction (`&reach_##name` names an undeclared identifier).
 * [Low] DMA, the TRB form's commands, small findings: `holding_of` reads `records[0]` under the places count rather than `record_count`; a second binding command adding the in-flight one's block is refused as BADARG, not FULL; a stop's success sets stopped over halted; `erx_trb_form_endpoint` and `erx_dma_endpoint` number endpoints twice; the fuzz target never adds 3 or 4 endpoints, and a drop-and-add's failure has no directed test; `refuse_misplaced_reach` in `abi_marks.rb` sits between `refuse_writer_marks` and its comment.
 * [Low] DMA, `erx_device_sequencer.c` (`encode`): the switch from meaning to encoder is written by hand, a case per meaning (each command TRB adds one); the generator could emit one encoder entry per meaning from the marks.
 * [Medium] devices, a piece's kind (`erx_device.h`'s `erx_device_piece_t`, `erx_device_dma.h`'s
@@ -9224,16 +9220,9 @@ model harness drive `erx_device.c` itself. `erx_device_dma_check` and `erx_devic
   manifest gives it to no domain
   ([design-platforms.md](docs/design-platforms.md#dma)).
 * [Medium] website, `site/index.html`: the page has no Content Security
-  Policy. It loads scripts only from itself and jsDelivr (with
-  Subresource Integrity) and styles and fonts from Google Fonts, so a
-  `<meta http-equiv="Content-Security-Policy">` naming exactly those
-  origins, `'wasm-unsafe-eval'` for v64's core and `worker-src` for its
+  Policy. It loads scripts, styles and fonts only from itself, so a
+  `<meta http-equiv="Content-Security-Policy">` naming only `'self'`, `'wasm-unsafe-eval'` for v64's core and `worker-src` for its
   workers would bound what an injected script could load.
-* [Low] website, `site/index.html` and `site/style.css`: the fonts load
-  from Google Fonts, so every visit hands the visitor's address and the
-  page's address to Google before any consent. Self-host Archivo and IBM
-  Plex Mono (both SIL Open Font License 1.1) beside the page, fetched at a
-  pinned version and hash like any other dependency.
 
 Every other risk the design accepts is stated in its
 [threat model](docs/design.md#threat-model) and in each subsystem
@@ -10111,7 +10100,7 @@ document's "residual risks accepted" paragraph.
   language question settled first (CLAUDE.md lists TypeScript for the web client only).
 
 * [Low] website, `site/index.html`: a `Content-Security-Policy` meta tag (`connect-src 'self'`, `script-src
-  'self' https://cdn.jsdelivr.net 'wasm-unsafe-eval'`, styles and fonts likewise) would make "the machine's
+  'self' 'wasm-unsafe-eval'`, styles and fonts likewise) would make "the machine's
   files come only from the page's origin" hold for v64's own fetches too, not only for the names `site_url`
   checks. GitHub Pages sets no headers, so it has to be the meta tag. `connect-src` also bounds the guest's
   HTTP, which v64's fake router turns into the page's own `fetch()` calls

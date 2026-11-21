@@ -107,12 +107,31 @@ live_transfers(void)
 	return (live);
 }
 
-/* Binds each block's ring with a No Op command and its completion, through the form. */
+/* Posts `command` and consumes its success, its completion naming the slot, through the form. */
+static void
+run_command(const erx_trb_command_t *command)
+{
+	const uint32_t head = erx_dma_ledger_position(&form.ledger, 3).index;
+	erx_report_record_t event = { .xhci_trb_transfer_event = {
+	    .pointer = FUZZ_BASE + trb.regions[trb.command_ring].offset + 16u * head,
+	    .status = (uint32_t)ERX_XHCI_COMPLETION_SUCCESS << 24,
+	    .control = SLOT << 24 | (uint32_t)ERX_XHCI_TRB_TYPE_COMMAND_COMPLETION_EVENT << 10 |
+	    erx_dma_ledger_cycle(&form.ledger, 4) } };
+	uint32_t word = event.xhci_trb_transfer_event.control, count, answered;
+	erx_trb_answer_t answers[ERX_TRB_FORM_ANSWERS_MAX(1)];
+	erx_dma_sequence_t sequence;
+	uint64_t dequeue;
+
+	check(erx_trb_form_command(&form, command, 0, &sequence) == ERX_DEVICE_TRB_ACCEPTED);
+	check(erx_trb_form_acquire(&form, &word, 1, &count) == ERX_OK && count == 1 &&
+	    erx_trb_form_complete(&form, &event, 1, answers, &answered, &dequeue) == ERX_OK && answered == 1);
+}
+
+/* Enables the slot, then binds each block's ring. */
 static void
 bind_all(void)
 {
-	erx_dma_sequence_t sequence;
-
+	run_command(&(erx_trb_command_t){ .kind = ERX_TRB_COMMAND_ENABLE_SLOT });
 	for (uint32_t block = 0; block < 3; block++) {
 		const bool ep0 = block_dci[block] == 1;
 		/* EP0 of 64 bytes on a high-speed device at port 1, or a bulk endpoint of 64-byte packets. */
@@ -121,19 +140,8 @@ bind_all(void)
 		    .config_endpoint_type = ep0 ? ERX_XHCI_ENDPOINT_TYPE_CONTROL : (block_dci[block] & 1u) != 0 ?
 		    ERX_XHCI_ENDPOINT_TYPE_BULK_IN : ERX_XHCI_ENDPOINT_TYPE_BULK_OUT, .payload_max_esit_payload = ep0 ? 0u : 64u } } },
 		    .slot_context = { .route_speed = ep0 ? ERX_XHCI_SPEED_HIGH : 0u, .ports_root_port = ep0 ? 1u : 0u } };
-		const uint32_t command = erx_dma_ledger_position(&form.ledger, 3).index;
-		erx_report_record_t event = { .xhci_trb_transfer_event = {
-		    .pointer = FUZZ_BASE + trb.regions[trb.command_ring].offset + 16u * command,
-		    .status = (uint32_t)ERX_XHCI_COMPLETION_SUCCESS << 24,
-		    .control = (uint32_t)ERX_XHCI_TRB_TYPE_COMMAND_COMPLETION_EVENT << 10 |
-		    erx_dma_ledger_cycle(&form.ledger, 4) } };
-		uint32_t word = event.xhci_trb_transfer_event.control, count, answered;
-		erx_trb_answer_t answers[ERX_TRB_FORM_ANSWERS_MAX(1)];
-		uint64_t dequeue;
 
-		check(erx_trb_form_command(&form, &bind, 0, &sequence) == ERX_DEVICE_TRB_ACCEPTED);
-		check(erx_trb_form_acquire(&form, &word, 1, &count) == ERX_OK && count == 1 &&
-		    erx_trb_form_complete(&form, &event, 1, answers, &answered, &dequeue) == ERX_OK && answered == 1);
+		run_command(&bind);
 	}
 	memset(shadow, 0, sizeof(shadow));
 	command_live = false;
