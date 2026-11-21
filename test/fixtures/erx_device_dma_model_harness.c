@@ -5,32 +5,37 @@
  * A virtio split ring over the hosted model of a non-coherent cache
  * (test/host/erx_device_dma_test.rb; docs/design-device-dma.md, Verification).
  *
- * The harness is the split-ring form and the effect layer: it keeps the queue's bookkeeping in
- * erx_device_queue, turns each post, completion, reset and install into a plan over the queue's
- * regions, has erx_device_dma_check and erx_device_dma_order validate and order it, and runs
- * the effects on erx_dma_model, the CPU's stores and loads through its cache and the
- * maintenance on its lines. The stand-in device is virtio's side of the ring and reads and
- * writes the model's memory alone: after any effect it may take what the available ring
- * shows, read each chain's out bytes and compare them with what the driver posted, and write
- * a pattern over a prefix of each in segment while reporting a length up to the segment's
- * end. Between effects the model evicts dirty granules and refetches clean lines as its seeded
- * source draws.
+ * The harness is the effect layer over the split ring's pure core (erx_device_virtio_core.h):
+ * it applies each sequence the core returns in erx_device_sequencer.h's order, as erx_device.c's
+ * apply_sequence and split_ring_complete do, onto erx_dma_model, the CPU's stores and loads
+ * through its cache and the maintenance on its lines. The stand-in device is virtio's side of
+ * the ring and reads and writes the model's memory alone: after any effect it may take what the
+ * available ring shows, read each chain's out bytes and compare them with what the driver
+ * posted, and write a pattern over a prefix of each in segment while reporting a length up to
+ * the segment's end. Between effects the model evicts dirty granules and refetches clean lines
+ * as its seeded source draws.
  *
  * Every schedule starts with a used ring holding a former record's dirty lines, installs the
  * queue, and runs posts, completions and a reset with buffers still posted; with the line equal
  * to the granule and a quarter of it, evicting often in half the schedules and rarely in the
- * rest. Every out byte reaches the device intact, every
- * completion returns the device's pattern up to its prefix and zeros after it, never an earlier
- * request's bytes, and no completion is missed.
+ * rest. Every out byte reaches the device intact, every completion returns the device's pattern
+ * up to its prefix and zeros after it, never an earlier request's bytes, and no completion is
+ * missed.
+ *
+ * The HARNESS_SEED_* macros plant faults in this effect layer that the test shows the harness
+ * catches: a post's cleans skipped, its available index published before its cleans, and the
+ * written range read back without its invalidate.
  */
 
+#include <stdbool.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-#include "otp/erts/emulator/nifs/erxos/erx_device_dma.h"
-#include "otp/erts/emulator/nifs/erxos/erx_device_queue.h"
-#include "otp/erts/emulator/nifs/erxos/erx_dma_model.h"
+#include "erx/abi.h"
+#include "erx_device_virtio_core.h"
+#include "erx_dma_model.h"
 
 #define CHECK(condition)							\
 	do {									\
@@ -40,55 +45,37 @@
 		}								\
 	} while (0)
 
+#ifdef HARNESS_SEED_NO_POST_CLEANS
+#define SEED_NO_POST_CLEANS		true
+#else
+#define SEED_NO_POST_CLEANS		false
+#endif
+#ifdef HARNESS_SEED_PUBLISH_BEFORE_CLEAN
+#define SEED_PUBLISH_BEFORE_CLEAN	true
+#else
+#define SEED_PUBLISH_BEFORE_CLEAN	false
+#endif
+#ifdef HARNESS_SEED_NO_WRITTEN_INVALIDATE
+#define SEED_NO_WRITTEN_INVALIDATE	true
+#else
+#define SEED_NO_WRITTEN_INVALIDATE	false
+#endif
+
 #define GRANULE		64u
 #define SIZE		4u		/* the queue's entries and buffers */
-#define BUFFER		200u		/* the bytes a request may use of a buffer */
+#define BUFFER		200u		/* a buffer's bytes */
 #define ROUNDS		80u
 #define SCHEDULES	48u
 #define DEVICE_BASE	UINT64_C(0x10000)
-#define ROUND_UP(n)	(((n) + GRANULE - 1) / GRANULE * GRANULE)
+#define ADDRESS_BITS	32u
 
-/* The split ring's layout: the descriptor table and the available ring, then the used ring, each on a granule. */
-#define DESC		0u
-#define AVAIL		(DESC + 16u * SIZE)
-#define AVAIL_IDX	(AVAIL + 2u)
-#define RINGS_LENGTH	ROUND_UP(AVAIL + 4u + 2u * SIZE + 2u)
-#define USED		RINGS_LENGTH
-#define USED_LENGTH	ROUND_UP(4u + 8u * SIZE + 2u)
-#define POOL		(USED + USED_LENGTH)
-#ifdef HARNESS_SEED_UNROUNDED_STRIDE
-#define STRIDE		BUFFER
-#else
-#define STRIDE		ROUND_UP(BUFFER)
-#endif
-#define MEMORY		ROUND_UP(POOL + SIZE * STRIDE)
+/* The device's region table: the split ring's chains here name none. */
+static const erx_dma_regions_t no_regions;
 
-/* virtio-mmio's registers the NIF owns (abi/formats/virtio.txt), at their window offsets. */
-enum {
-	REG_SEL = 0x30, REG_NUM = 0x38, REG_READY = 0x44, REG_NOTIFY = 0x50,
-	REG_DESC = 0x80, REG_DESC_HIGH = 0x84, REG_DRIVER = 0x90, REG_DRIVER_HIGH = 0x94,
-	REG_DEVICE = 0xa0, REG_DEVICE_HIGH = 0xa4,
-};
-static const uint32_t owned_registers[] = { REG_SEL, REG_NUM, REG_READY, REG_NOTIFY, REG_DESC, REG_DESC_HIGH, REG_DRIVER,
-	REG_DRIVER_HIGH, REG_DEVICE, REG_DEVICE_HIGH };
-
-#define STEPS_MAX	64u
-#ifndef HARNESS_SEED_UNROUNDED_STRIDE
-#define QUEUE_GRANULE	GRANULE
-#else
-#define QUEUE_GRANULE	1u
-#endif
-static const erx_device_queue_registers_t queue_registers = { .sel = REG_SEL, .num = REG_NUM, .ready = REG_READY,
-	.notify = REG_NOTIFY, .desc = { REG_DESC, REG_DESC_HIGH }, .driver = { REG_DRIVER, REG_DRIVER_HIGH },
-	.device = { REG_DEVICE, REG_DEVICE_HIGH } };
-/* The core's layout of the rings, which the form's builders and its view read. */
-static erx_device_queue_layout_t layout;
-#define EFFECTS_MAX	ERX_DMA_EFFECTS_BOUND(ERX_DMA_REGIONS_MAX, STEPS_MAX)
-
-/* What the driver posted on a head, and what the device is to write and report for it. */
+/* What the driver posted in a buffer, and what the device is to write and report for it. */
 typedef struct request {
 	bool		live;
-	uint32_t	serial;
+	uint32_t	serial;		/* the chain's tag */
 	uint32_t	out_length;
 	uint8_t		out[BUFFER];
 	uint32_t	in_length;
@@ -96,32 +83,27 @@ typedef struct request {
 	uint32_t	reported;	/* the length it reports, prefix..in_length */
 } request_t;
 
-/* The stand-in device: its registers and its own place in the rings. */
+/* The stand-in device: its queue registers, as the install wrote them, and its own place in the rings. */
 typedef struct device {
 	bool		ready;
-	uint64_t	desc, avail, used;	/* device addresses, as published */
+	uint64_t	num;
+	uint64_t	desc, avail, used;	/* device addresses */
 	uint16_t	last_avail;
 	uint16_t	used_idx;
-	uint32_t	actions;
 } device_t;
 
 typedef struct harness {
 	erx_dma_model_t		model;
-	erx_device_queue_t	queue;
-	bool			installed;
+	erx_split_ring_t	ring;
 	device_t		device;
-	request_t		requests[SIZE];
+	request_t		requests[SIZE];		/* by buffer */
 	uint32_t		serial;
 	uint32_t		line;
 	uint64_t		random;
-	uint8_t			copied[SIZE * BUFFER];
-	uint32_t		copied_length;
-	uint64_t		values[2 * SIZE + 1];
-	uint32_t		value_count;
 	uint64_t		completions;
 } harness_t;
 
-static erx_dma_effect_t effect_storage[EFFECTS_MAX];
+static erx_dma_sequence_t sequence;
 
 static uint32_t
 draw(harness_t *h, uint32_t bound)
@@ -139,30 +121,28 @@ pattern(uint32_t serial, uint32_t at)
 	return ((uint8_t)((serial * 13u + at * 7u) % 251u + 1u));
 }
 
-static uint64_t
-load_le(const uint8_t *bytes, uint32_t width)
+static const erx_dma_layout_t *
+layout_of(const harness_t *h)
 {
-	uint64_t value = 0;
-
-	for (uint32_t at = width; at > 0; at--)
-		value = value << 8 | bytes[at - 1];
-	return (value);
+	return (erx_dma_ledger_layout(erx_split_ring_ledger(&h->ring)));
 }
 
-static void
-store_le(uint8_t *bytes, uint32_t width, uint64_t value)
+static const erx_dma_table_t *
+used_table(const harness_t *h)
 {
-	for (uint32_t at = 0; at < width; at++)
-		bytes[at] = (uint8_t)(value >> (8 * at));
+	return (&layout_of(h)->tables[erx_dma_ledger_table(erx_split_ring_ledger(&h->ring), ERX_STRUCTURE_VIRTQ_USED)]);
 }
 
 static uint64_t
 device_load(const harness_t *h, uint64_t addr, uint32_t width)
 {
 	uint8_t bytes[8];
+	uint64_t value = 0;
 
 	CHECK(addr >= DEVICE_BASE && erx_dma_model_device_read(&h->model, addr - DEVICE_BASE, bytes, width));
-	return (load_le(bytes, width));
+	for (uint32_t at = width; at > 0; at--)
+		value = value << 8 | bytes[at - 1];
+	return (value);
 }
 
 static void
@@ -170,41 +150,58 @@ device_store(harness_t *h, uint64_t addr, uint32_t width, uint64_t value)
 {
 	uint8_t bytes[8];
 
-	store_le(bytes, width, value);
+	for (uint32_t at = 0; at < width; at++)
+		bytes[at] = (uint8_t)(value >> (8 * at));
 	CHECK(addr >= DEVICE_BASE && erx_dma_model_device_write(&h->model, addr - DEVICE_BASE, bytes, width));
+}
+
+/* The live request whose buffer starts at device address `addr`, where a chain's head descriptor points. */
+static request_t *
+request_at(harness_t *h, uint64_t addr)
+{
+	const erx_dma_pool_t *const pool = &layout_of(h)->pool;
+	uint64_t from;
+
+	CHECK(addr >= DEVICE_BASE + pool->first);
+	from = addr - DEVICE_BASE - pool->first;
+	CHECK(from % pool->stride == 0 && from / pool->stride < SIZE && h->requests[from / pool->stride].live);
+	return (&h->requests[from / pool->stride]);
 }
 
 /*
  * The device's side of the ring: every chain the available index shows, read from memory.
- * A descriptor outside the memory, a chain the driver did not post or out bytes other than
- * the driver's are a stale view of the rings, and fail.
+ * A descriptor outside the pool, a chain the driver did not post or out bytes other than the
+ * driver's are a stale view of the rings, and fail.
  */
 static void
 device_act(harness_t *h)
 {
 	device_t *const d = &h->device;
+	const uint64_t memory_end = DEVICE_BASE + h->model.size;
 	uint16_t avail_idx;
 
 	if (!d->ready)
 		return;
-	avail_idx = (uint16_t)device_load(h, d->avail + 2, 2);
+	avail_idx = (uint16_t)device_load(h, d->avail + ERX_VIRTQ_RING_HEAD_OFF_IDX, 2);
 	while (d->last_avail != avail_idx) {
-		const uint16_t head = (uint16_t)device_load(h, d->avail + 4 + 2u * (d->last_avail % SIZE), 2);
-		request_t *request;
-		uint32_t index, out_seen = 0, in_seen = 0;
+		const uint16_t head = (uint16_t)device_load(h,
+		    d->avail + ERX_VIRTQ_RING_HEAD_SIZE + 2u * (d->last_avail % d->num), 2);
+		const uint64_t slot = d->used + ERX_VIRTQ_RING_HEAD_SIZE + ERX_VIRTQ_USED_ELEM_SIZE * (d->used_idx % d->num);
+		request_t *request = NULL;
+		uint32_t index = head, out_seen = 0, in_seen = 0;
 
-		CHECK(head < SIZE && h->requests[head].live);
-		request = &h->requests[head];
-		index = head;
-		for (uint32_t step = 0; step < SIZE; step++) {
-			const uint64_t at = d->desc + 16u * index;
-			const uint64_t addr = device_load(h, at, 8);
-			const uint32_t len = (uint32_t)device_load(h, at + 8, 4);
-			const uint16_t flags = (uint16_t)device_load(h, at + 12, 2);
+		CHECK(head < d->num);
+		for (uint32_t step = 0; step < d->num; step++) {
+			const uint64_t at = d->desc + ERX_VIRTQ_DESC_SIZE * index;
+			const uint64_t addr = device_load(h, at + ERX_VIRTQ_DESC_OFF_ADDR, 8);
+			const uint32_t len = (uint32_t)device_load(h, at + ERX_VIRTQ_DESC_OFF_LEN, 4);
+			const uint16_t flags = (uint16_t)device_load(h, at + ERX_VIRTQ_DESC_OFF_FLAGS, 2);
 			uint8_t bytes[BUFFER];
 
-			CHECK(addr >= DEVICE_BASE + POOL && len <= BUFFER && addr + len <= DEVICE_BASE + MEMORY);
-			if ((flags & 2u) == 0) {
+			if (request == NULL)
+				request = request_at(h, addr);
+			CHECK(len <= BUFFER && addr + len <= memory_end);
+			if ((flags & ERX_VIRTQ_DESC_F_WRITE) == 0) {
 				CHECK(out_seen + len <= request->out_length);
 				CHECK(erx_dma_model_device_read(&h->model, addr - DEVICE_BASE, bytes, len));
 				CHECK(memcmp(bytes, request->out + out_seen, len) == 0);
@@ -216,41 +213,43 @@ device_act(harness_t *h)
 				}
 				in_seen += len;
 			}
-			if ((flags & 1u) == 0)
+			if ((flags & ERX_VIRTQ_DESC_F_NEXT) == 0)
 				break;
-			index = (uint32_t)device_load(h, at + 14, 2);
-			CHECK(index < SIZE);
+			index = (uint32_t)device_load(h, at + ERX_VIRTQ_DESC_OFF_NEXT, 2);
+			CHECK(index < d->num);
 		}
 		CHECK(out_seen == request->out_length && in_seen == request->in_length);
-		device_store(h, d->used + 4 + 8u * (d->used_idx % SIZE), 4, head);
-		device_store(h, d->used + 8 + 8u * (d->used_idx % SIZE), 4, request->reported);
+		device_store(h, slot + ERX_VIRTQ_USED_ELEM_OFF_ID, 4, head);
+		device_store(h, slot + ERX_VIRTQ_USED_ELEM_OFF_LEN, 4, request->reported);
 		d->used_idx++;
-		device_store(h, d->used + 2, 2, d->used_idx);
+		device_store(h, d->used + ERX_VIRTQ_RING_HEAD_OFF_IDX, 2, d->used_idx);
 		d->last_avail++;
-		d->actions++;
 	}
 }
 
+/* An install's register written to the device; the ready bit starts its walk of the rings over. */
 static void
-device_register(harness_t *h, const erx_dma_step_t *step)
+device_register(harness_t *h, erx_dma_register_write_t write)
 {
 	device_t *const d = &h->device;
 
-	switch (step->reg) {
-	case REG_DESC:
-		d->desc = step->value;
+	switch (write.reg) {
+	case ERX_DMA_VIRTQ_NUM:
+		CHECK(write.value == SIZE);
+		d->num = write.value;
 		break;
-	case REG_DRIVER:
-		d->avail = step->value;
+	case ERX_DMA_VIRTQ_DESC:
+		d->desc = write.value;
 		break;
-	case REG_DEVICE:
-		d->used = step->value;
+	case ERX_DMA_VIRTQ_DRIVER:
+		d->avail = write.value;
 		break;
-	case REG_READY:
-		d->ready = step->value != 0;
+	case ERX_DMA_VIRTQ_DEVICE:
+		d->used = write.value;
+		break;
+	case ERX_DMA_VIRTQ_READY:
+		d->ready = write.value != 0;
 		d->last_avail = d->used_idx = 0;
-		break;
-	default:
 		break;
 	}
 }
@@ -259,133 +258,115 @@ device_register(harness_t *h, const erx_dma_step_t *step)
  * The effect layer over the model
  */
 
+/* One effect done: the model may evict or refetch, and the device may act on what memory shows. */
 static void
-run_step(harness_t *h, const erx_dma_step_t *step)
+settle(harness_t *h)
 {
-	uint8_t bytes[8];
+	erx_dma_model_tick(&h->model);
+	if (draw(h, 4) == 0)
+		device_act(h);
+}
 
-	switch (step->kind) {
-	case ERX_DMA_WRITE:
-	case ERX_DMA_PUBLISH:
-		if (step->target == ERX_DMA_REGISTER) {
-			device_register(h, step);
-		} else if (step->source == ERX_DMA_BYTES) {
-			CHECK(erx_dma_model_cpu_store(&h->model, step->offset, step->bytes, step->length));
-		} else if (step->source == ERX_DMA_ZEROS) {
-			CHECK(erx_dma_model_cpu_zero(&h->model, step->offset, step->length));
-		} else {
-			store_le(bytes, step->width, step->value);
-			CHECK(erx_dma_model_cpu_store(&h->model, step->offset, bytes, step->width));
-		}
-		break;
-	case ERX_DMA_COPY:
-		CHECK(h->copied_length + step->length <= sizeof(h->copied));
-		CHECK(erx_dma_model_cpu_load(&h->model, step->offset, h->copied + h->copied_length, step->length));
-		h->copied_length += (uint32_t)step->length;
-		break;
-	case ERX_DMA_REPORT:
-		CHECK(step->target == ERX_DMA_MEMORY && h->value_count < sizeof(h->values) / sizeof(h->values[0]));
-		CHECK(erx_dma_model_cpu_load(&h->model, step->offset, bytes, step->width));
-		h->values[h->value_count++] = load_le(bytes, step->width);
-		break;
+/* The clean, or clean and invalidate, of every line `range` touches, as erx_device.c's maintain. */
+static void
+maintain(harness_t *h, erx_dma_range_t range, bool invalidate)
+{
+	const uint64_t mask = ~(uint64_t)(h->line - 1);
+	const uint64_t start = range.offset & mask;
+	const uint64_t end = (range.offset + range.length + h->line - 1) & mask;
+
+	if (range.length == 0)
+		return;
+	if (invalidate)
+		CHECK(erx_dma_model_clean_inval(&h->model, start, end - start, h->line));
+	else
+		CHECK(erx_dma_model_clean(&h->model, start, end - start, h->line));
+	settle(h);
+}
+
+/* A run's activation: its available index, the clean of its line, the publish barrier and the doorbell. */
+static void
+activate_run(harness_t *h, const erx_dma_activation_t *activation)
+{
+	CHECK(erx_dma_model_cpu_store(&h->model, activation->store.offset, activation->store.bytes,
+	    activation->store.length));
+	settle(h);
+	maintain(h, (erx_dma_range_t){ activation->store.offset, activation->store.length }, false);
+	/* The doorbell: the device may act from here on, as it may after any effect. */
+	settle(h);
+}
+
+/*
+ * A sequence applied in erx_device_sequencer.h's order: the zeros, the readable pieces' bytes
+ * (`pieces[i]` fills sequence->fills[i]), the stores, the clean of every range passing to the
+ * device and the publish barrier; then an install's registers and its ready bit, or a run's
+ * activation. The model runs one access at a time, so every barrier holds already; the queue
+ * select is the stand-in's one queue.
+ */
+static void
+apply_sequence(harness_t *h, const erx_dma_sequence_t *s, const erx_dma_piece_t *pieces)
+{
+	const bool run = s->activation.kind == ERX_DMA_ACTIVATE_STORE;
+
+	for (uint32_t at = 0; at < s->zero_count; at++) {
+		CHECK(erx_dma_model_cpu_zero(&h->model, s->zeros[at].offset, s->zeros[at].length));
+		settle(h);
 	}
-}
-
-/* The queue's regions in its current state: the used ring the device's while installed, a posted buffer the device's. */
-static void
-view(const harness_t *h, erx_dma_state_t *state)
-{
-	erx_device_queue_view(&h->queue, &layout, POOL, h->installed, state);
-}
-
-/* A plan checked, ordered and run, with the model and the device free to act between effects. */
-static void
-apply(harness_t *h, const erx_dma_state_t *before, const erx_dma_state_t *after, const erx_dma_plan_t *plan)
-{
-	const erx_dma_context_t context = { .memory_size = MEMORY, .device_base = DEVICE_BASE, .window_size = 0x100, .address_bits = 32,
-	    .granule = GRANULE, .publication = AVAIL_IDX, .publication_width = 2,
-	    .owned_count = sizeof(owned_registers) / sizeof(owned_registers[0]), .owned = owned_registers };
-	erx_dma_context_t form = context;
-	erx_dma_effects_t effects = { .capacity = EFFECTS_MAX, .effects = effect_storage };
-
-	erx_device_queue_form(&layout, SIZE, &form);
-	form.address_bits = 32;
-#ifndef HARNESS_SEED_UNROUNDED_STRIDE
-	CHECK(erx_device_dma_check(&form, before, after, plan));
-#else
-	(void)form;
-#endif
-	CHECK(erx_device_dma_order(before, after, plan, false, GRANULE, h->line, &effects));
-	for (uint32_t index = 0; index < effects.count; index++) {
-		const erx_dma_effect_t *const effect = &effects.effects[index];
-
-		switch (effect->kind) {
-		case ERX_DMA_EFFECT_ZERO:
-			CHECK(erx_dma_model_cpu_zero(&h->model, effect->offset, effect->length));
-			break;
-		case ERX_DMA_EFFECT_STEP:
-			run_step(h, &plan->steps[effect->step]);
-			break;
-		case ERX_DMA_EFFECT_CLEAN:
-			CHECK(erx_dma_model_clean(&h->model, effect->offset, effect->length, effect->line));
-			break;
-		case ERX_DMA_EFFECT_CLEAN_INVAL:
-			CHECK(erx_dma_model_clean_inval(&h->model, effect->offset, effect->length, effect->line));
-			break;
-		case ERX_DMA_EFFECT_BARRIER:
-			/* The model runs one access at a time, so every access is ordered already. */
-			break;
+	for (uint32_t at = 0; at < s->fill_count; at++) {
+		if (s->fills[at].length == 0)
+			continue;
+		CHECK(erx_dma_model_cpu_store(&h->model, s->fills[at].offset, pieces[at].bytes, s->fills[at].length));
+		settle(h);
+	}
+	for (uint32_t at = 0; at < s->store_count; at++) {
+		CHECK(erx_dma_model_cpu_store(&h->model, s->stores[at].offset, s->stores[at].bytes, s->stores[at].length));
+		settle(h);
+	}
+	if (run && SEED_PUBLISH_BEFORE_CLEAN)
+		activate_run(h, &s->activation);
+	for (uint32_t at = 0; at < s->clean_count; at++) {
+		if (!(run && SEED_NO_POST_CLEANS))
+			maintain(h, s->cleans[at], false);
+	}
+	if (!run) {
+		for (uint32_t at = 0; at < s->register_count; at++) {
+			device_register(h, s->registers[at]);
+			settle(h);
 		}
-		erx_dma_model_tick(&h->model);
-		if (draw(h, 4) == 0)
-			device_act(h);
+		device_register(h, s->activation.reg);
+		settle(h);
+	} else if (!SEED_PUBLISH_BEFORE_CLEAN) {
+		activate_run(h, &s->activation);
 	}
 }
 
 /* -------------------------------------------------------------------------------------------
- * The split-ring form
+ * The driver
  */
 
-/* virtio's reset and install: every region taken back, then the rings zeroed and the queue made ready. */
+/* virtio's reset, the device's idle report, which the stand-in gives at once, and the install. */
 static void
 negotiate(harness_t *h)
 {
-	erx_dma_state_t before, after;
-	erx_dma_step_t steps[STEPS_MAX];
-	erx_dma_plan_t plan = { .call = ERX_DMA_CALL_RESET, .count = 0, .steps = steps };
-	uint32_t count = 0;
-
-	/* The reset the NIF writes, and the device's idle report, which the stand-in gives at once. */
 	h->device.ready = false;
-	view(h, &before);
-	erx_device_queue_reset(&h->queue);
-	h->installed = false;
-	for (uint32_t head = 0; head < SIZE; head++)
-		h->requests[head].live = false;
-	view(h, &after);
-	apply(h, &before, &after, &plan);
-
-	count = erx_device_queue_install_steps(&h->queue, &layout, &queue_registers, 0, DEVICE_BASE, steps);
-	before = after;
-	h->installed = true;
-	view(h, &after);
-	plan = (erx_dma_plan_t){ .call = ERX_DMA_CALL_INSTALL, .count = count, .steps = steps };
-	apply(h, &before, &after, &plan);
+	erx_split_ring_reset(&h->ring);
+	for (uint32_t buffer = 0; buffer < SIZE; buffer++)
+		h->requests[buffer].live = false;
+	CHECK(erx_split_ring_install(&h->ring, &sequence) == ERX_OK);
+	apply_sequence(h, &sequence, NULL);
 }
 
-/* A request of an out segment, an in segment or both, whose device prefix and reported length the source draws. */
+/* A request of an out piece, an in piece or both, whose device prefix and reported length the source draws. */
 static void
 post(harness_t *h)
 {
-	erx_dma_state_t before, after;
-	erx_dma_step_t steps[STEPS_MAX];
-	erx_device_segment_t segments[2];
-	const uint8_t *bytes[2];
+	const erx_dma_ledger_t *const ledger = erx_split_ring_ledger(&h->ring);
 	request_t request = { .live = true, .serial = ++h->serial };
-	uint32_t count = 0, segment_count = 0;
+	erx_dma_piece_t pieces[2];
+	bool held[SIZE];
+	uint32_t count = 0, buffer = SIZE;
 	const uint32_t shape = draw(h, 3);
-	/* The core takes a chain's head off its free list, so the head's slot holds the bytes it posts. */
-	request_t *const slot = &h->requests[h->queue.free_head];
+	int status;
 
 	request.out_length = shape == 1 ? 0 : 1 + draw(h, BUFFER / 2);
 	request.in_length = shape == 0 ? 0 : 1 + draw(h, BUFFER - request.out_length);
@@ -396,70 +377,98 @@ post(harness_t *h)
 	for (uint32_t at = 0; at < request.out_length; at++)
 		request.out[at] = pattern(request.serial, at);
 	if (request.out_length != 0)
-		segments[segment_count++] = (erx_device_segment_t){ 0, request.out_length, false };
+		pieces[count++] = (erx_dma_piece_t){ .bytes = request.out, .length = request.out_length };
 	if (request.in_length != 0)
-		segments[segment_count++] = (erx_device_segment_t){ request.out_length, request.in_length, true };
+		pieces[count++] = (erx_dma_piece_t){ .length = request.in_length, .device_writes = true };
 
-	for (uint32_t segment = 0; segment < segment_count; segment++)
-		bytes[segment] = segments[segment].device_writes ? NULL : slot->out;
-	view(h, &before);
-	count = erx_device_queue_post(&h->queue, &layout, DEVICE_BASE, POOL, segments, bytes, segment_count, request.serial,
-	    &queue_registers, 0, steps);
-	if (count == 0)
+	for (uint32_t at = 0; at < SIZE; at++)
+		held[at] = erx_dma_ledger_buffer_held(ledger, at);
+	status = erx_split_ring_post(&h->ring, pieces, count, request.serial, &sequence);
+	if (status == ERX_EWOULDBLOCK)
 		return;
-	view(h, &after);
-	*slot = request;
-	apply(h, &before, &after, &(erx_dma_plan_t){ .call = ERX_DMA_CALL_POST, .count = count, .steps = steps });
+	CHECK(status == ERX_OK);
+	/* The chain's buffer is the one the post made held; the device finds its request there. */
+	for (uint32_t at = 0; at < SIZE; at++) {
+		if (!held[at] && erx_dma_ledger_buffer_held(ledger, at))
+			buffer = at;
+	}
+	CHECK(buffer < SIZE);
+	h->requests[buffer] = request;
+	apply_sequence(h, &sequence, pieces);
 }
 
-/* An observation of `count` reports, run alone; its values land in h->values. */
-static void
-observe(harness_t *h, const erx_dma_step_t *steps, uint32_t count)
+/* The live request posted with tag `tag`, and its buffer. */
+static request_t *
+request_tagged(harness_t *h, uint64_t tag, uint32_t *buffer)
 {
-	erx_dma_state_t state;
-
-	view(h, &state);
-	h->value_count = 0;
-	apply(h, &state, &state, &(erx_dma_plan_t){ .call = ERX_DMA_CALL_OBSERVE, .count = count, .steps = steps });
+	for (uint32_t at = 0; at < SIZE; at++) {
+		if (h->requests[at].live && h->requests[at].serial == tag) {
+			*buffer = at;
+			return (&h->requests[at]);
+		}
+	}
+	CHECK(!"a completion names a request the driver posted");
+	return (NULL);
 }
 
 /*
- * virtio's completion: the used index, then each entry it covers, then the buffers taken back
- * and copied. Each completion returns the device's pattern up to its prefix and zeros to the
- * length it reported.
+ * virtio's completion, as erx_device.c's split_ring_complete: the used index's line invalidated
+ * and the index loaded once, the elements it covers invalidated and read whole, then each
+ * answer's written range invalidated and copied out. Each completion returns the device's
+ * pattern up to its prefix and zeros to the length it reported.
  */
 static uint32_t
 complete(harness_t *h)
 {
-	erx_dma_state_t before, after;
-	erx_dma_step_t steps[STEPS_MAX];
-	erx_device_completion_t completions[SIZE];
-	uint32_t fresh, count;
+	const erx_dma_range_t index_at = { used_table(h)->region + ERX_VIRTQ_RING_HEAD_OFF_IDX, sizeof(uint16_t) };
+	const erx_dma_pool_t *const pool = &layout_of(h)->pool;
+	erx_report_record_t elements[SIZE];
+	erx_split_ring_answer_t answers[SIZE];
+	uint8_t index_bytes[2];
+	uint32_t count, done;
 
-	erx_device_queue_index_report(&layout, &steps[0]);
-	observe(h, steps, 1);
-	CHECK(erx_device_queue_used(&h->queue, (uint16_t)h->values[0], &fresh));
-	count = erx_device_queue_entry_reports(&h->queue, &layout, fresh, steps);
-	if (fresh != 0)
-		observe(h, steps, count);
-	view(h, &before);
-	for (uint32_t entry = 0; entry < fresh; entry++)
-		CHECK(erx_device_queue_complete(&h->queue, (uint32_t)h->values[2 * entry], (uint32_t)h->values[2 * entry + 1],
-		    &completions[entry]));
-	view(h, &after);
-	count = erx_device_queue_copy_steps(&h->queue, POOL, completions, fresh, steps);
-	h->copied_length = 0;
-	apply(h, &before, &after, &(erx_dma_plan_t){ .call = ERX_DMA_CALL_COMPLETE, .count = count, .steps = steps });
-	for (uint32_t entry = 0, at = 0; entry < fresh; entry++) {
-		request_t *const request = &h->requests[completions[entry].buffer];
+	maintain(h, index_at, true);
+	CHECK(erx_dma_model_cpu_load(&h->model, index_at.offset, index_bytes, sizeof(index_bytes)));
+	CHECK(erx_split_ring_acquire(&h->ring, (uint16_t)(index_bytes[0] | index_bytes[1] << 8), SIZE, &count) == ERX_OK);
+	for (uint32_t k = 0; k < count; k++)
+		maintain(h, erx_split_ring_element(&h->ring, k), true);
+	for (uint32_t k = 0; k < count; k++) {
+		const erx_dma_range_t element = erx_split_ring_element(&h->ring, k);
 
-		CHECK(request->live && completions[entry].length == request->reported);
-		for (uint32_t byte = 0; byte < request->reported; byte++, at++)
-			CHECK(h->copied[at] == (byte < request->prefix ? pattern(request->serial, byte) : 0));
+		CHECK(element.length <= sizeof(elements[k].bytes));
+		memset(&elements[k], 0, sizeof(elements[k]));
+		CHECK(erx_dma_model_cpu_load(&h->model, element.offset, elements[k].bytes, element.length));
+		settle(h);
+	}
+	CHECK(erx_split_ring_complete(&h->ring, elements, count, UINT64_MAX, answers, &done) == ERX_OK && done == count);
+	for (uint32_t at = 0; at < done && !SEED_NO_WRITTEN_INVALIDATE; at++)
+		maintain(h, answers[at].written, true);
+	for (uint32_t at = 0; at < done; at++) {
+		const erx_dma_range_t written = answers[at].written;
+		uint32_t buffer;
+		request_t *const request = request_tagged(h, answers[at].tag, &buffer);
+		uint8_t bytes[BUFFER];
+
+		CHECK(written.offset == pool->first + (uint64_t)buffer * pool->stride + request->out_length &&
+		    written.length == request->reported);
+		CHECK(erx_dma_model_cpu_load(&h->model, written.offset, bytes, written.length));
+		settle(h);
+		for (uint32_t byte = 0; byte < request->reported; byte++)
+			CHECK(bytes[byte] == (byte < request->prefix ? pattern(request->serial, byte) : 0));
 		request->live = false;
 		h->completions++;
 	}
-	return (fresh);
+	return (done);
+}
+
+/* The memory the ring's layout needs, through its pool's end. */
+static uint64_t
+memory_size(void)
+{
+	erx_dma_layout_t layout;
+
+	CHECK(erx_dma_layout_split_ring(SIZE, BUFFER, GRANULE, 0, DEVICE_BASE, ADDRESS_BITS, &layout));
+	return (layout.pool.first + (uint64_t)layout.pool.count * layout.pool.stride);
 }
 
 /* One schedule: a former record's dirty used ring, an install, then posts, completions and a reset. */
@@ -467,18 +476,23 @@ static void
 schedule(uint32_t line, uint64_t seed, uint64_t *evictions, uint64_t *refetches, uint64_t *completions)
 {
 	harness_t *const h = calloc(1, sizeof(*h));
-	uint8_t former[USED_LENGTH];
+	const uint64_t memory = memory_size();
+	const erx_dma_table_t *used;
+	uint8_t *former;
 
-	CHECK(h != NULL && erx_dma_model_init(&h->model, MEMORY, GRANULE, line, seed));
-	CHECK(erx_device_queue_layout(SIZE, QUEUE_GRANULE, &layout));
-	CHECK(erx_device_queue_init(&h->queue, SIZE, BUFFER, QUEUE_GRANULE, DEVICE_BASE + POOL));
+	CHECK(h != NULL && erx_dma_model_init(&h->model, memory, GRANULE, line, seed));
+	CHECK(erx_split_ring_make(&h->ring, SIZE, BUFFER, GRANULE, memory, DEVICE_BASE, ADDRESS_BITS, &no_regions));
 	h->line = line;
-	/* Half the schedules evict rarely, so a dirty line can outlive the calls after it, as the install seed needs. */
+	/* Half the schedules evict rarely, so a dirty line can outlive the calls after it, as the install seeds need. */
 	if (seed % 2 != 0)
 		h->model.evict_rate = 4;
 	h->random = seed * 0x9e3779b97f4a7c15u + 1;
-	memset(former, 0xa5, sizeof(former));
-	CHECK(erx_dma_model_cpu_store(&h->model, USED, former, sizeof(former)));
+	used = used_table(h);
+	former = malloc(used->region_length);
+	CHECK(former != NULL);
+	memset(former, 0xa5, used->region_length);
+	CHECK(erx_dma_model_cpu_store(&h->model, used->region, former, used->region_length));
+	free(former);
 	negotiate(h);
 	for (uint32_t round = 0; round < ROUNDS; round++) {
 		const uint32_t action = draw(h, 16);
@@ -492,7 +506,7 @@ schedule(uint32_t line, uint64_t seed, uint64_t *evictions, uint64_t *refetches,
 	}
 	/* Whatever the device has taken by now completes: nothing posted is lost. */
 	device_act(h);
-	while (h->queue.in_flight != 0 && h->device.ready) {
+	while (erx_dma_ledger_live(erx_split_ring_ledger(&h->ring)) != 0 && h->device.ready) {
 		CHECK(complete(h) != 0);
 		device_act(h);
 	}

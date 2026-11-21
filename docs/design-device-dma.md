@@ -296,16 +296,20 @@ A descriptor form's core is a pure state machine over the queue's
 protocol state: its tags, for ADMA2 whether the queue is idle, armed or
 in flight, for the TRB form its slots, queues and command in flight.
 Which buffers are free and which records are live it reads from the
-ledger ([The ledger](#the-ledger)), which it never changes. A queue call
+ledger ([The ledger](#the-ledger)), which it changes only through the
+pure sequencer: the core owns the protocol over the sequencer, which
+judges each decision and returns its effects with the next ledger, and
+the effect layer applies that output. A queue call
 runs in rounds. Each form
-supplies one pure **round function** (`erx_device_queue_round` for the
-split ring, `erx_device_genet_round` for the register ring, and ADMA2's
-beside them), the form's only entry from the effect layer. It takes a
+supplies one pure **round function** (`erx_device_genet_round` for the register
+ring, ADMA2's beside it, and for the split ring the `erx_split_ring_*` calls of
+`erx_device_virtio_core`), the form's only entry from the effect layer. It takes a
 **request**, the call (install, post, complete, and for a form that has
 them the idle report and the engine's start) with the record's facts the
 form reads (the queue's number, its device base and pool offset, whether
 it is ready, a post's pieces, a completion's bounds), the round's number,
-the values the call's observations read, and the ledger, read-only. It
+the values the call's observations read, and the ledger, which only the
+sequencer it calls advances. It
 returns either an **observation**, a bounded list of reads it needs, or a
 **decision**, a plan and the core's next protocol state, or the call's
 end with its status. A
@@ -447,13 +451,16 @@ needs of the ledger's facts it reads from the ledger.
 ### The ledger
 
 The ledger is one value per queue record; the TRB form's record is the
-whole controller.
+whole controller. Its persistent regions are the one exception: the
+device record owns one region table, which every ledger of the device
+reads and none changes.
 
 | Part | What it says | Made or changed by |
 | --- | --- | --- |
 | the layout | the record's regions, each holding one structure, with that structure's writer, or a buffer; each table's region, record count and stride | made once at install from the form's layout and the counts read from the device, and checked then: every region whole granules, ascending, disjoint, inside the memory and below the form's address width |
 | the positions | for each ring the CPU writes, the next position the sequencer publishes at, with a TRB ring's cycle state there; for each structure the device writes in order, the next position the CPU consumes, with the event ring's cycle state there | publications and releases |
 | the holdings | one for each publication the device may still act on: the records it made live, the regions it handed to the device, and the report that ends it | publications begin them, releases end them |
+| the persistent regions | the device's regions a region entry may name, each by its name, with its device address and whole length: the device record's one region table, read through a pointer | added to the device's table one at a time, each once, under the device lock, the same region again adding nothing; kept for the boot, a reset included |
 | the bindings | the TRB form's: the endpoint each transfer ring is bound to | the commands that bind, and releases |
 | the command's reach | the TRB form's: the endpoints the command in flight closes to new transfers, and the transfer holdings its success retires, fixed at its publication; each endpoint's **state**, `running`, `stopped` or `halted` | a command's publication fixes its reach and its completion ends it; an endpoint's state changes only on what the trusted side did or consumed: the consumed success of the command that binds it, or the publication of a transfer on it, sets `running`; a consumed Stop Endpoint or Reset Endpoint success sets `stopped`; a consumed error event that halts it sets `halted` |
 
@@ -463,12 +470,24 @@ the ledger through accessors (which buffers are free, a ring's
 positions, a queue's live transfers, whether an endpoint is closed and
 its state) and states no writer itself.
 
+A region reaches its device's table by the one transition that adds a
+persistent region, at the region's making. It refuses, changing
+nothing, a name the table already holds with other values, more regions
+than a record has, and a length of 0 or one the region entry's length
+field cannot hold. A queue reaches a region only through the ledger's
+one lookup by name, which gives it only a region that fits it: below the
+form's address width and sharing no address with the queue's memory,
+which no region entry may point the device into, whichever of the two
+was made first. A queue's ledger reads its own device's table alone, so
+a region of another device is a name the ledger does not hold, by
+construction.
+
 ### Descriptions
 
 A `record` step describes one record of a table the CPU writes:
 
 * its **meaning**, one of the closed set its table offers, each a layout
-  of `abi/formats`, except ADMA2's one meaning, the transfer, which no
+  of `abi/formats` whose `meaning` line names the table's structure, except ADMA2's one meaning, the transfer, which no
   layout holds and the sequencer splits into entries of
   `erx_sdhci_adma2_entry`;
 * the values of the meaning's **free** fields, those its layout marks
@@ -500,22 +519,53 @@ records that tie
 tables together (the DCBAA, the scratchpad array, the segment table,
 each TRB ring's link), and every activation and doorbell.
 
-A record in memory is written only by its meaning's generated encoder
-([What the formats say](#what-the-formats-say)). A record in registers,
-GENET's descriptor status words (`TX_DESC_STATUS` and `RX_DESC_STATUS`
-in `hw/svd/genet/genet.svd`), is written as one store of a value built
+A record in memory is written only by its layout's generated encoder, a
+meaning's or one of the sequencer's own records'
+([What the formats say](#what-the-formats-say)). The header also gives
+every layout's fields setters, and none of them writes such a record:
+only the sequencer stores into a region that holds a structure, a
+chokepoint checked at build, and it stores only records an encoder
+built. A record in registers,
+GENET's transmit descriptor status word (`TX_DESC_STATUS` in
+`hw/svd/genet/genet.svd`), is written as one store of a value built
 from zero through the SVD's generated accessors, never read, modified
 and written back, so no field the core did not describe keeps a value
 from before; its fixed fields are the form's table's
-([What each form's tables say](#what-each-forms-tables-say)).
+([What each form's tables say](#what-each-forms-tables-say)). The
+receive status word, `RX_DESC_STATUS`, is the controller's report of a
+received frame: it is read, one load each, for the positions the
+receive producer index covers, and never written. A receive hand-back
+writes only the receive consumer index, and every descriptor's address
+is written once, at install.
 
 A **region entry** is a record the sequencer writes from a region's
-name: a buffer a record posts holds, in place of the name, the region's
-device address and length in a layout of the form's, as virtio-gpu's
-resource backing holds `erx_virtio_gpu_mem_entry` entries (Virtio 1.2,
-section 5.7.6). It is a described record like any other: its address
-is placed, from the region the check found named by the post's own
-device, and its encoder refuses a length its field cannot hold.
+name, the `out` segment `{region, R}` of a post
+([design-runtime.md](design-runtime.md#the-device-nif), Regions and
+Posting), as virtio-gpu's resource backing holds
+`erx_virtio_gpu_mem_entry` entries (Virtio 1.2, section 5.7.6):
+
+* **Where it lies.** The entry takes the segment's place among the
+  post's `out` segments, inside the buffer the post fills for the device
+  to read, at the offset the segments before it end at; the post's
+  description reaches it as one length of that buffer. It is a record
+  of the buffer, in no table, and no core describes it: the name is the
+  whole of its input.
+* **What it says.** `R` must be a persistent region the queue's ledger
+  holds ([The ledger](#the-ledger)); one of another device, or none, is
+  not, and fails the post. The entry's address is that region's device address and its
+  length the region's whole length, both derived, its padding fixed at
+  0, so the layout has no free place; its encoder refuses a length its
+  field cannot hold.
+* **Who holds what.** The posted buffer that holds the entry is
+  published and released as any buffer is: the publication's holding
+  holds it, and its release returns it. The region the entry names is
+  no holding's. It is not a region of the queue's layout but one of the
+  record's persistent regions ([Regions and
+  writers](#the-construction-handoffs-of-granules)), made only on a
+  coherent device, kept for the boot and written by the CPU alone; a
+  publication neither hands it over nor cleans it, and a release never
+  returns it. The ledger's derived writer covers the queue's regions,
+  and a persistent region stays the CPU's whatever posts name it.
 
 ### Publication
 
@@ -529,10 +579,10 @@ live. The sequencer:
    table, chained in the plan's order, and its available entry the next
    position; a carried record takes its own table's record;
 2. **encodes** every record whole from its description: a record in
-   memory, region entries included, through its meaning's generated
-   encoder, the derived fields included; a record in registers, GENET's
-   status word, as one store of a value built from zero through the
-   SVD's generated accessors;
+   memory through its meaning's generated encoder, the derived fields
+   included, and a region entry through its layout's; a record in
+   registers, GENET's transmit status word, as one store of a value
+   built from zero through the SVD's generated accessors;
 3. writes the fills, rule 1's zeros and the records, then cleans every
    region passing to the device, in the order
    [the sequencer](#calls-observations-and-plans) gives;
@@ -543,7 +593,8 @@ live. The sequencer:
    the command `command/2` writes; an install's ready bit, run bit or
    engine enable; then the doorbell, where the form has one;
 5. records the holding: the positions and records the run made live,
-   every region its names reach, and the report that ends it; for a TRB
+   every region of the queue's layout its names reach (a region entry's
+   persistent region is none of them), and the report that ends it; for a TRB
    command, also its reach, the endpoints it closes and the holdings its
    success retires, as they stand at this publication
    ([design-usb.md](design-usb.md#what-the-dma-check-judges)).
@@ -584,14 +635,24 @@ layer read in an observation of the same call and keeps unchanged. A
 decision that takes back says how many of the call's reports it
 consumes, in order from the ledger's consumer position of each structure
 the device writes; the sequencer derives the releases from those reports
-alone, by the release each report's meaning carries in its form's table,
-and advances the consumer position. Nothing a core says chooses what
+alone, by the `releases` mark of each report's meaning
+([What the formats say](#what-the-formats-say)), and advances the
+consumer position. Nothing a core says chooses what
 comes back. Its own reading of the same reports decides only its answers
 and its states, and a copy reads only a buffer a release of the same
 decision returns. A report whose meaning releases a holding but which
 names none that is live (a used element naming no live chain's head, an
 index past what is live) is refused, and the queue breaks, as a
-malformed used entry breaks it.
+malformed used entry breaks it. So is a record whose selector names no
+meaning of its structure, such as an xHCI Host Controller Event (TRB
+type 37), which no meaning of the event ring selects: the sequencer
+cannot tell what such a record releases, so it releases nothing and
+every holding stays held until the reset's idle report returns it. The
+queue breaks rather than skipping the record, because a skip would
+consume a report the design gives no meaning, here the controller's own
+error report, an event ring full among them, which
+[design-usb.md](design-usb.md#the-trb-ring-form) already treats as
+breaking the form.
 
 **A report is a snapshot the trusted side acquired.** A device writes a
 record of a ring it fills in more than one store and says only which
@@ -658,16 +719,25 @@ one pass. A plan passes when every rule holds:
 
 | Rule | What it says | The failure it prevents |
 | --- | --- | --- |
-| calls | each step is one its call makes: records and fills in a publication, a control in a reset, copies in a take-back, reports in an observation | a store while the device may hold what it changes; a copy outside a take-back |
+| calls | each step is one its call makes, from a closed set of calls: records and fills in a run's publication; in an install's, no record and no fill, only the zeroed rings, the queue registers the layout gives and the ready bit, on a ledger as the idle report left it; a control in a reset, copies in a take-back, reports in an observation | a store while the device may hold what it changes, such as an install zeroing a ring a live chain is on; a copy outside a take-back |
 | meanings | each record's meaning is one its table offers, and each free field's value fits its bits | a record the form never builds reaching the device (a link, an indirect table, streams, event data); a value spilling into a neighbouring field, such as a length into the interrupter target |
-| names | each name lies in its target: a buffer of the record's binding, the queue's input context, an endpoint with a ring bound to it; no buffer is named by a live holding or twice in one plan | an address outside the memory or between records; a buffer the device holds posted again |
+| names | each name lies in its target: a buffer of the record's binding, the queue's input context, an endpoint with a ring bound to it; no name names a buffer a live holding holds; one publication may name a buffer at several ranges, each inside it, and its holding holds that buffer once | an address outside the memory or between records; a buffer the device holds posted again |
 | bindings | a transfer record names only buffers of its own ring's block; a command that binds names a ring bound to no endpoint | one queue's transfer reaching another's buffer; device A's endpoint run on device B's ring |
 | lengths | each length lies inside its named buffer from the named offset; an ADMA2 extent is at least one block | a transfer past its buffer; an ADMA2 entry of length 0, which moves 65,536 bytes |
 | reach | the TRB form's: no transfer is published on an endpoint the command in flight closes, or on a `halted` one; a Configure Endpoint that drops an endpoint, alone or with an add, is published only when that endpoint is `stopped`, or `running` with no live transfer; a Disable Slot only when no endpoint of its slot is `running` with a live transfer | a Set TR Dequeue Pointer whose success retires a transfer published after its pointer was fixed, which the controller then runs; a command the specification leaves undefined in the endpoint's state, a drop on a halted endpoint or on a running one that is not idle (xHCI 4.6.6, p. 117; 4.6.8, p. 132), a Disable Slot with a transfer in progress (4.6.4, p. 109); a transfer on a halted endpoint, whose doorbell the controller disables (4.6.8, p. 128), leaving the ledger's state wrong |
 | room | the run fits: as many free positions as it takes, a link it reaches among them; free descriptors and a free available entry; a carried record no holding holds | a live record overwritten, such as a TRB the controller has not fetched or the input context of a command in flight |
-| fills | an `out` segment's bytes go only into a buffer a record of the plan names for the device to read, inside it | the CPU storing into a buffer the device holds or writes |
+| fills | an `out` segment's bytes go only inside a range a record of the plan names, and no two fills share a byte; a region entry's fill is one entry long and names a persistent region the ledger holds | the CPU storing into a buffer the device holds; a later fill overwriting part of an earlier, as one region entry's length written over another's address; the device sent through a region entry to an address outside the device's regions, another device's region among them |
 | controls | a control step writes an owned register inside the window, with every field its table fixes for a stop or a reset | a core aiming the device through a register |
 | releases | a report is a register its table names, or a snapshot an `acquire` step took of a record its validity covered; a take-back consumes reports from the consumer positions, each releasing what its meaning says, or nothing; every copy reads a buffer released in the same decision, inside it | a buffer reused while the device holds it; a report read twice to release a later holding; a torn record releasing another transfer's holding; a copy of bytes the device still holds |
+
+The check carries no direction. Which ranges the device reads or writes
+is the request's meaning, owned by the form: virtio's by each segment's
+kind, GENET's by the ring, which the device reads to transmit and writes
+on receive, ADMA2's by its command's posted direction, the TRB form's by the
+endpoint's direction and a control transfer's setup
+([design-usb.md](design-usb.md#the-trb-ring-form)). A fill where the
+device writes replaces a store rule 1 would have made as zeros, so a short
+completion returns the device's bytes, the post's own fill or zeros.
 
 **How the properties follow.** The device follows only addresses the
 sequencer wrote: from the layout at install, or from a name the check
@@ -688,6 +758,24 @@ no new transfer meanwhile: one writer. A transfer record names only buffers of i
 ring is bound to one endpoint, and every record that points an endpoint
 at a ring points it at the ring bound to it: a queue's own buffers.
 
+**What the argument assumes.** The argument covers every address in a
+record: the check never parses the bytes of an `out` segment, which a
+core gives as payload. It therefore holds for a device only while no
+payload format of that device carries an address the device follows,
+or a count that makes the device read further payload bytes as such
+addresses. Block, network and input requests, xHCI's data stages and
+ADMA2's buffers carry none. virtio-gpu's control requests do: a core
+can put any 64-bit value in an `{out, Binary}` segment shaped as a
+`erx_virtio_gpu_mem_entry`, or overstate a resource backing's
+`nr_entries` so the device reads the bytes after the region entries as
+more entries. On a device whose window confines it, what such an address
+reaches is bounded by the window; on an unconfined device it reaches any
+memory, and for virtio-gpu "every address the device follows came from
+a checked name" does not hold. The design makes no guarantee there: on
+an unconfined device a payload format of which carries device
+addresses, the argument claims nothing for the addresses in its
+payloads.
+
 ### What the formats say
 
 The marks are members of a `layout` in `abi/formats`, read by
@@ -697,6 +785,8 @@ resolved every type, and each format file declares its structures:
 ```
 target NAME cpu|device        a structure a region may hold, and its writer
 layout ...
+  meaning TARGET              this layout is a meaning of TARGET's records: every table
+                              of that structure offers it
   field NAME TYPE OFFSET device_address
     bits NAME LOW HIGH [shift N] device_address
                               the place holds an address the device follows into memory
@@ -721,16 +811,81 @@ layout, marked or not; it never names an address the CPU uses, such as
 an ELF segment's or a PCIe BAR's. In a marked layout every place is
 claimed by exactly one mark, so a place is free only by a mark: a place
 a `states` mark claims, a reference's length, and a release's place and
-its `when` place are **free**, and a description states them. A
+its `when` place are **free**. Who gives a free place its value follows
+from the layout's writer: the free places of a layout a description
+states, its `states` places and each reference's length, are the
+description's inputs; those of a report, its `states` places and its
+release's place and `when` place, are the values the device states,
+which the trusted side only reads. A
 reference's place, the activation and each derived place are
 **placed**: the sequencer supplies them. A device address is placed,
 or is a release's place, never free or fixed, and a reference's place
-is a device address. A layout with a `releases` mark is a report, which
-the device writes, so it has no `refers` or `derived` mark. `TARGET` is
-a structure of the mark's own file or `data`. The generator refuses a mark outside a `wire_le` layout, a
+is a device address. `TARGET` is a structure of the mark's own file or,
+for a reference, `data`.
+
+**A meaning's writer is its table's.** A layout's `meaning` line names
+exactly one structure, and that structure's writer is the layout's. A
+layout that is a meaning of a `device` structure is a **report**: the
+device writes it, so it has no `refers` or `derived` mark, its free
+places are what the device states, and only a report has a `releases`
+mark. A `releases` mark names a `cpu` structure, since a holding is
+always of records the CPU wrote: the used element releases descriptors
+of the descriptor table, an event TRBs of a transfer ring or the
+command ring. The port status change event is a report though it
+releases nothing, because the event ring is a `device` structure; no
+mark of its own decides that. A layout that is a meaning of a `cpu`
+structure is one a description states.
+
+**A layout with no `meaning` line is the CPU's.** It is offered by no
+table, so no description names it: it is the sequencer's own record (a
+link, the DCBAA's, the scratchpad array's and the segment table's
+entries, the ADMA2 entry, a region entry), which has no free place, or a
+part of a composed record (the input context's slot and endpoint
+contexts), described only as part of the record that composes it. It is
+never a report: a record the device writes reaches the trusted side only
+through the acquisition, which reads only the structures declared
+`device` and judges each record it takes by its structure's generated
+list of meanings, so no layout outside those lists is ever read as what
+the device states.
+
+**What a table offers.** The meanings a table offers are the layouts
+whose `meaning` line names its structure; no form lists them again, and
+the check's meanings rule reads the generated list. The generator holds
+each structure's meanings to what placement and acquisition need:
+
+* they share one size, the table's stride;
+* a structure with more than one meaning has a `selects` mark in each,
+  on bits at the same offset and range, so, with the rule below, a
+  selector value names at most one meaning in any table and a report's release is read under
+  the one meaning its selector gives; a structure with one meaning may
+  have no selector;
+* every meaning of one structure has its `activates` mark on the same
+  bit of a field at the same offset and width, or none has one. On a
+  `device` structure that bit is the validity the acquisition reads
+  first, in that field's one load, before it knows the record's meaning.
+  A `device` structure whose meanings have no `activates` mark takes its
+  validity from outside the record, as virtio's used ring does from its
+  used index, which its form's acquisition reads instead.
+
+**A selector value names one layout of its file.** Each enum member is
+selected by at most one layout of the whole format file, a meaning or
+not, and so is each value of a place's bits: two layouts that select
+on bits at the same offset and range select different values there,
+whatever enum or shift spells them, since the record holds the bits
+and not the spelling. So the xHCI link TRB, which has no `meaning` line and lies in
+every TRB ring, selects a type no meaning of any ring selects, and a
+record the device writes with that type names no meaning of the event
+ring ([Releases](#releases)).
+
+The generator refuses a mark outside a `wire_le` layout, a
 marked layout with a field that is not one unsigned integer or with a
 `tail`, whose part the encoder would not write, a report with a
-`refers` or `derived` mark, two places of one encoder member name
+`refers` or `derived` mark, a `releases` mark on a layout that is no
+report or naming a structure that is not `cpu`, a `meaning` line naming
+other than one structure or one of another file, a structure whose
+meanings differ in size, in where their selector lies or in where their
+activation lies, a structure of more than one meaning one of which has
+no selector, an enum member or a value of the same bits two layouts of the file select, two places of one encoder member name
 (`a_b` and `a.b`), a place no mark claims,
 a device address a description would state or the format fix, a
 reference to a place that is no device address, `device_address` on a
@@ -740,9 +895,12 @@ or wider than its bits, a `fixed` value wider than its bits or with bits
 below the place's shift, a place the layout does not have, an
 `activates` mark of more than one bit, a place marked twice and a
 second `selects`, `activates` or `releases` mark, each with the line of
-the mark or of the place. It numbers the meanings from 1 in the order
-of their layouts' names, `ERX_MEANING_<LAYOUT>`, so 0 is no meaning, and
-emits beside each marked layout's accessors in `include/erx/abi.h`:
+the mark or of the place. It numbers the meanings, the layouts with a
+`meaning` line and no others, from 1 in the order of their layouts'
+names, `ERX_MEANING_<LAYOUT>`, so 0 is no meaning; the sequencer's own
+records and the parts of composed records get no number. It
+emits each structure's meanings as one list, and emits beside each
+marked layout's accessors in `include/erx/abi.h`, except a report's:
 
 ```
 erx_L_free_t      the free places, which a description states
@@ -760,10 +918,10 @@ untouched, when a value does not fit, so no value is cut to its low
 bits. It writes every byte of the record: the free and placed values,
 the selector's member and each fixed value, and zero in every bit the
 layout does not name. The encoders fill a host struct of a `wire_le`
-layout, so the header asserts that the host is little-endian. A form
-offers a table's meanings by naming layouts, and a static assertion
-holds that the layouts one table offers share their size and their
-selector's bits. Since a layout has one selector, each command the
+layout, so the header asserts that the host is little-endian. A report
+has its accessors and no encoder or input structs: nothing the device
+states is ever an encoder input, and no description can state it. Since
+a layout has one selector, each command the
 command ring offers is a layout of its own. Where a record is composed of several layouts at a size
 the controller reports, as the input context is of contexts of 32 or 64
 bytes (xHCI 6.2.5), the encoder places each at its offset. The xHCI
@@ -773,8 +931,13 @@ normal and data stage TRBs' immediate-data bit and the event TRBs'
 release marks; the slot context's address and slot state and the
 endpoint context's state are fixed at 0, the controller's to write,
 which software sets to 0 in an input context (xHCI 1.2, Table 6-7,
-p. 447; Table 6-8, p. 450). The virtio file holds the descriptor's flag
-bits and the used element's release mark. The SDHCI file holds the ADMA2
+p. 447; Table 6-8, p. 450); it declares the transfer rings and the
+command ring as `cpu` structures and the event ring as a `device` one,
+and the event TRBs as its meanings. The virtio file holds the
+descriptor's flag bits, the used element's release mark, the
+descriptor table as a `cpu` structure and the used ring as a `device`
+one, and the region entry `erx_virtio_gpu_mem_entry`, its address and
+length derived and its padding fixed. The SDHCI file holds the ADMA2
 entry, whose places are all fixed or derived, since the table's one
 meaning is the transfer; the bits 15:6 that only 26-bit length mode
 reads are named by no range, so the encoder writes them 0, and its
@@ -787,7 +950,7 @@ are derived, and the link's other fields fixed.
 
 | Form | What the core describes | What the sequencer writes from the layout | Reports |
 | --- | --- | --- | --- |
-| split ring | a chain of descriptors, each with its address a buffer and an offset reaching `len`, `WRITE` free and `INDIRECT` fixed clear | the queue's registers, `QueueNum` the descriptor table's count, the rings' addresses as the queue's layout places them (`erx_device_queue.c`); each `next` and `NEXT`; the available ring | an acquisition: the used index, then each used element it covers, whose `id` releases its chain |
+| split ring | a chain of descriptors, each with its address a buffer and an offset reaching `len`, `WRITE` free and `INDIRECT` fixed clear | the queue's registers, `QueueNum` the descriptor table's count, the rings' addresses as the queue's layout places them (`erx_device_sequencer.c`); each `next` and `NEXT`; the available ring | an acquisition: the used index, then each used element it covers, whose `id` releases its chain |
 | register ring | a transmit position's status word: the length, of its standing buffer; start, end and append-CRC fixed | each descriptor's address, descriptor *k* to buffer *k*, at install; the ring's registers: the descriptor count the ring's size, start, end and the four pointers its first word, its last word and 0, the buffer length the pool's buffer size, the ring enables the form's own ring | the transmit consumer index; the receive producer index and each status word it covers |
 | ADMA2 table | one transfer: the buffer and the extent, a count of 512-byte blocks from one to the buffer's | the entries the extent splits into, 64 blocks each and the last the rest, each with its address the buffer's plus its offset, valid set, its action a transfer and interrupt clear; the end attribute on the last; `adma_address`, the table's start | `interrupt` |
 | TRB ring | as [design-usb.md](design-usb.md#what-the-dma-check-judges) lists | | |
@@ -1044,7 +1207,7 @@ here lists in full, and the design does not need it to.
 
 ## The descriptor forms
 
-Each form is a pure core beside `erx_device_queue` whose round function
+Each form is a pure core beside `erx_device_sequencer` whose round function
 returns its observations and decisions. `queue_create/4`, `post/4`, `post_frame/5`,
 `complete/2` and `negotiate/2` keep their meaning and their answers for
 every form; the record names the form its peripheral uses.
@@ -1054,7 +1217,12 @@ every form; the record names the form its peripheral uses.
 descriptor table and its available ring are two regions, both written by
 the CPU, and its used ring a third, written by the device, each starting
 on a granule, so that each ring address the install writes names one
-region holding one structure ([The check](#the-check)). A post fills the
+region holding one structure ([The check](#the-check)). Each ring's
+start also keeps virtio's own alignment for it (Virtio 1.2, section
+2.7), which the layout takes from the `virtq_desc_table_align`,
+`virtq_avail_ring_align` and `virtq_used_ring_align` limits of
+`abi/formats/virtio.txt`, and a queue memory whose device base is off
+any of those alignments is refused. A post fills the
 buffers' `out` bytes and describes its chain; the sequencer places the
 chain in free descriptors, writes the available entry, and makes the
 chain live with the available index, then the doorbell; the
@@ -1261,9 +1429,10 @@ The device lock serialises every queue call and every driver register
 write, so a decision's effects run whole, with no other decision's and
 no driver write between them, and every check a call makes under the
 lock still holds when the write it guards is made. The ledger is part of
-the queue record: the core, the check and the sequencer read it within
-one call under the lock, and the effect layer replaces it with the
-sequencer's next ledger only after the decision's effects have run; a
+the queue record: the core, the check and the sequencer read it, and
+the sequencer advances it, within one call under the lock, and the
+effect layer applies the sequencer's output before the lock is released,
+so no other call sees the next ledger before its effects have run; a
 refused decision leaves it as it was and breaks the queue. Maintenance by address
 reaches every cache of the CPUs that share the memory, so one CPU's
 maintenance suffices whichever CPUs fetched the lines.
@@ -1378,9 +1547,9 @@ ran.
   the zeroing removed, and the earlier request's bytes appear.
 * **The check.** Host tests of `erx_device_dma_check` over each form's
   descriptions, ledgers and reports. Every plan each form's core makes in
-  its own harness passes the check; seed: a form's table offers one
-  meaning fewer (the setup stage), and that form's control transfers are
-  refused. Each rule refuses the failure it exists for, and a seed
+  its own harness passes the check; seed: the transfer ring's generated
+  list of meanings planted without the setup stage, and that form's
+  control transfers are refused. Each rule refuses the failure it exists for, and a seed
   planted in the check, as its `SEEDED` faults are, makes it pass:
 
   | Plan the check refuses | Seed under which it passes |
@@ -1389,10 +1558,13 @@ ran.
   | a buffer index past the ring's block; the input context named by a transfer; an endpoint with no bound ring named by Set TR Dequeue | the range test removed |
   | a normal TRB naming another block's buffer; an endpoint context binding a ring bound to another endpoint | the binding test removed |
   | an offset and a length that pass the buffer's end; an ADMA2 extent of zero blocks | the length test removed; the extent's lower bound removed |
-  | a buffer a live holding holds; one buffer named twice in a plan | the holding test removed |
+  | a buffer a live holding holds | the holding test removed |
   | a transfer on an endpoint a Set TR Dequeue Pointer in flight closes; a Disable Slot while an endpoint of its slot runs a live transfer, one that took a transfer after its Stop Endpoint succeeded among them; a Configure Endpoint dropping such an endpoint; a drop-and-add of an endpoint whose halting error event was consumed, before any Reset Endpoint | the reach test removed; the state left `stopped` by a transfer's publication; the drop test accepting `halted` as Disable Slot's does |
   | a run longer than the ring's free positions; a command while the input context is held; a chain while its available entry is held | the room test removed |
-  | `out` bytes into a buffer no record names, or into one the device writes | the fills test removed |
+  | `out` bytes into a buffer no record names, or past the range it names | the fills test removed |
+  | two fills sharing a byte of one buffer | the overlap test removed |
+  | a region entry's fill shorter than an entry; a region entry naming a region the ledger does not hold | the entry's length test removed; the region lookup taking any region |
+  | a region entry naming a region of the device over the queue's own memory | the lookup's test of the queue's memory removed |
   | a control step setting `USBCMD`'s run bit or `QueueReady` | the controls test removed |
   | a completion for transfer A whose copies read B's buffer; a used element consumed a second time; an event consumed past the consumer cycle state | the releases taken from the core's copies; the consumer position test removed |
   | a copy in a publication; a report of a region the CPU writes; a `report` step reading a used or event ring record in place of an acquisition | the calls test removed; the report target test removed; ring memory allowed as a report target |
@@ -1467,8 +1639,23 @@ ran.
 * **The formats' marks.** The generator's tests: a format naming an
   unknown target, a `selects` value outside its enum, a length naming a
   field of another layout and an `activates` mark two bits wide are each
-  refused with a line naming the mark. Seed: the target test removed,
-  and the unknown target builds.
+  refused with a line naming the mark. So are a table's writer and its
+  offers broken one at a time: a `releases` mark on a meaning of a `cpu`
+  structure, a `refers` mark on a meaning of a `device` one, a
+  `releases` mark naming a `device` structure, a `meaning` line naming
+  two structures, two meanings of one structure of different sizes, two
+  that select one member, two with their activation at different
+  offsets, one of two meanings with no selector, and a layout with no
+  `meaning` line selecting a member a meaning of the same file selects. A
+  generated header holds no encoder and no input struct for a report:
+  the regression case is the xHCI port status change event, which
+  carries no `releases` mark, and whose header has its accessors and no
+  `erx_xhci_trb_port_event_encode` or `erx_xhci_trb_port_event_free_t`;
+  a host source that calls `erx_xhci_trb_port_event_encode` is kept as a
+  test that expects the build to fail. Seeds: the
+  target test removed, and the unknown target builds; the writer test
+  removed, and the transfer ring's layout with a `releases` mark builds;
+  the selector test removed, and two meanings selecting one member build.
 * **Ownership and the lock.** Over the stand-in, `write/3` of a GENET
   descriptor address, of `control0` with another DMA select, of `control0`
   setting the stop at block gap request or the continue request, and, while

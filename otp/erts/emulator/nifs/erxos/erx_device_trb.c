@@ -512,6 +512,13 @@ setup_length(const uint8_t setup[8])
 	return ((uint16_t)(setup[6] | setup[7] << 8));
 }
 
+/* Whether a setup's data stage, if any, runs from the device to the host: bmRequestType's bit 7 (usb.h). */
+static bool
+setup_in(const uint8_t setup[8])
+{
+	return ((setup[0] & ERX_USB_REQUEST_DIR_IN) != 0);
+}
+
 /* A standard request to the device, of any direction, whose request is SET_ADDRESS (usb.h's values). */
 static bool
 setup_sets_address(const uint8_t setup[8])
@@ -520,6 +527,12 @@ setup_sets_address(const uint8_t setup[8])
 	    (ERX_USB_REQUEST_TYPE_STANDARD | ERX_USB_RECIPIENT_DEVICE) && setup[1] == ERX_USB_REQUEST_SET_ADDRESS);
 }
 
+/*
+ * A transfer the form may post: a control transfer only on a control queue and a normal one
+ * only on another, so never on EP0; within the buffer; a normal transfer in its endpoint's
+ * direction (4.5.1); a control transfer's data stage in its setup's direction (4.11.2.2) and as
+ * long as the setup says, and no SET_ADDRESS. The DMA check carries no direction: it is the form's.
+ */
 static bool
 request_valid(const erx_device_trb_request_t *request, erx_device_trb_kind_t kind, uint32_t dci, uint32_t buffer_size)
 {
@@ -529,7 +542,8 @@ request_valid(const erx_device_trb_request_t *request, erx_device_trb_kind_t kin
 	if (!request->control)
 		return (request->device_writes == dci_in(dci));
 	return (!setup_sets_address(request->setup) && setup_length(request->setup) == request->length &&
-	    (request->data ? request->length != 0 : request->length == 0));
+	    (request->data ? request->length != 0 && request->device_writes == setup_in(request->setup) :
+	    request->length == 0));
 }
 
 static uint32_t
