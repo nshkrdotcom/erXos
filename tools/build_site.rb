@@ -69,8 +69,8 @@ end
 
 begin
   runner = Erx::Runner.new(owner_root: root, log_dir: File.join(root, 'build/logs'))
-  ref = options[:source] ||
-        File.read(runner.run(%W[git -C #{root} rev-parse HEAD], name: 'site-head', deadline: 30).fetch('log')).strip
+  head = Erx::Site.head(root:, runner:)
+  ref = options[:source] || head
   source = Erx::Site.source(ref)
   v64 = options[:v64] || Erx::SiteV64.build(root:, runner:)
   # The page's installation: a fresh data volume, formatted in a directory of its own.
@@ -82,8 +82,11 @@ begin
   card_record = card && (options[:card_record] || "#{card}.receipt.json")
   image = options.fetch(:image)
   image_record = options[:image_record] || Erx::ImageRecord.path(image)
-  plan = Erx::Site.inventory(root:, v64:, image:, image_record:, card:, card_record:, source:, disk:)
-  manifest = Erx::Site.publish(plan, out: options.fetch(:out), runner:)
+  book = Dir.mktmpdir('book-parse-') do |scratch|
+    Erx::Book.plan(root:, runner:, commit: head, repository: Erx::Site::REPOSITORY, scratch:)
+  end
+  plan = Erx::Site.inventory(root:, v64:, image:, image_record:, card:, card_record:, source:, disk:, shared_names: book.names)
+  manifest = Erx::Site.publish(plan, out: options.fetch(:out), runner:, book:)
   card_summary = manifest[:card] ? "card #{manifest.dig(:card, :compressed_bytes)} bytes compressed" : 'no card'
   puts "Site: #{options.fetch(:out)} (image #{manifest.fetch(:bytes)} bytes, " \
        "#{manifest.fetch(:compressed_bytes)} compressed; disk #{manifest.dig(:disk, :capacity)} bytes, " \

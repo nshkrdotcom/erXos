@@ -205,10 +205,10 @@
       "url": "https://raw.githubusercontent.com/freebsd/freebsd-src/95719d8a895bf8170851e9844d9b4092b1d2b6fe/sys/sys/errno.h",
       "sha256": "4e615f248a900c6c240c0c87844fd60a8bdffc8a34259d876d5dfde74bd9e42c",
       "filename": "errno.h",
-  "license": "BSD-3-Clause",
-  "status": "permanent"
-},
-{
+      "license": "BSD-3-Clause",
+      "status": "permanent"
+    },
+    {
       "id": "freebsd-termios",
       "kind": "file",
       "version": "95719d8a895bf8170851e9844d9b4092b1d2b6fe",
@@ -536,6 +536,96 @@
       "decoded_bytes": 268435456,
       "filename": "f2fs.img.zst.base64",
       "license": "BSD-2-Clause",
+      "status": "permanent"
+    },
+    {
+      "id": "cmark-gfm",
+      "kind": "tar",
+      "version": "0.29.0.gfm.14",
+      "url": "https://github.com/github/cmark-gfm/archive/refs/tags/0.29.0.gfm.14.tar.gz",
+      "sha256": "1c1acf50c5e9939e170b6e017ec06fcf94abeb383670b819d091a285b7ba11fe",
+      "directory": "cmark-gfm-0.29.0.gfm.14",
+      "license": "BSD-2-Clause",
+      "status": "permanent"
+    },
+    {
+      "id": "font-plex-mono-regular",
+      "kind": "file",
+      "version": "v6.4.2",
+      "url": "https://raw.githubusercontent.com/IBM/plex/v6.4.2/IBM-Plex-Mono/fonts/complete/woff2/IBMPlexMono-Regular.woff2",
+      "sha256": "49ce58b41a0e1cb921c0f58d9a5b8b96a2cc21437c7066f3ba4f24873076d131",
+      "filename": "IBMPlexMono-Regular.woff2",
+      "license": "OFL-1.1",
+      "status": "permanent"
+    },
+    {
+      "id": "font-plex-mono-medium",
+      "kind": "file",
+      "version": "v6.4.2",
+      "url": "https://raw.githubusercontent.com/IBM/plex/v6.4.2/IBM-Plex-Mono/fonts/complete/woff2/IBMPlexMono-Medium.woff2",
+      "sha256": "8c2c290cbd998fa1f647e4572aca6ebbd72589551b0f3f9f8bb8628fbb8219d5",
+      "filename": "IBMPlexMono-Medium.woff2",
+      "license": "OFL-1.1",
+      "status": "permanent"
+    },
+    {
+      "id": "font-plex-mono-license",
+      "kind": "file",
+      "version": "v6.4.2",
+      "url": "https://raw.githubusercontent.com/IBM/plex/v6.4.2/IBM-Plex-Mono/fonts/complete/ttf/license.txt",
+      "sha256": "91c25c350d3cac39da2736d74f7ba37ef648f5237a4e330a240615bc8d8c4360",
+      "filename": "license.txt",
+      "license": "OFL-1.1",
+      "status": "permanent"
+    },
+    {
+      "id": "font-source-serif-roman",
+      "kind": "file",
+      "version": "4.005R",
+      "url": "https://raw.githubusercontent.com/adobe-fonts/source-serif/4.005R/WOFF2/VAR/SourceSerif4Variable-Roman.ttf.woff2",
+      "sha256": "940a76eda1388de39d38c8e7a79bf6ea058a387faee0a9f33c8d25c6ba05e1be",
+      "filename": "SourceSerif4Variable-Roman.ttf.woff2",
+      "license": "OFL-1.1",
+      "status": "permanent"
+    },
+    {
+      "id": "font-source-serif-italic",
+      "kind": "file",
+      "version": "4.005R",
+      "url": "https://raw.githubusercontent.com/adobe-fonts/source-serif/4.005R/WOFF2/VAR/SourceSerif4Variable-Italic.ttf.woff2",
+      "sha256": "9d28b5749a1ad096a295cb607c521bd1af4cd9979b6f37332daf70143149fb44",
+      "filename": "SourceSerif4Variable-Italic.ttf.woff2",
+      "license": "OFL-1.1",
+      "status": "permanent"
+    },
+    {
+      "id": "font-source-serif-license",
+      "kind": "file",
+      "version": "4.005R",
+      "url": "https://raw.githubusercontent.com/adobe-fonts/source-serif/4.005R/LICENSE.md",
+      "sha256": "75784a295293a8992f5a8d99210566e0064a012e6dab6731305e3787f15896c7",
+      "filename": "LICENSE.md",
+      "license": "OFL-1.1",
+      "status": "permanent"
+    },
+    {
+      "id": "font-archivo",
+      "kind": "file",
+      "version": "95f4904fc8bcf26d3420fe315560c96417c6dec7",
+      "url": "https://raw.githubusercontent.com/google/fonts/95f4904fc8bcf26d3420fe315560c96417c6dec7/ofl/archivo/Archivo%5Bwdth,wght%5D.ttf",
+      "sha256": "0e094a7d3c7c4c25cf1310c4b30014f1dae9332220b1c2c88f4fa996f0b05053",
+      "filename": "Archivo-wdth-wght.ttf",
+      "license": "OFL-1.1",
+      "status": "permanent"
+    },
+    {
+      "id": "font-archivo-license",
+      "kind": "file",
+      "version": "95f4904fc8bcf26d3420fe315560c96417c6dec7",
+      "url": "https://raw.githubusercontent.com/google/fonts/95f4904fc8bcf26d3420fe315560c96417c6dec7/ofl/archivo/OFL.txt",
+      "sha256": "108b4e57c9c796d3d38d0428ca7ee39de47ad93187302718d9b2d8864b9b716b",
+      "filename": "OFL.txt",
+      "license": "OFL-1.1",
       "status": "permanent"
     }
   ]

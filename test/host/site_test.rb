@@ -55,6 +55,9 @@ class SiteTest < Minitest::Test
   # A stand-in for the data partition's fresh volume (DataVolume.format): whole sectors.
   VOLUME = ('erXos littlefs volume' * 400).byteslice(0, 8192)
 
+  # The shared stylesheets' published names, as Book.shared_files gives them.
+  SHARED = { fonts_css: 'fonts-0123456789abcdef.css', tokens_css: 'tokens-0123456789abcdef.css' }.freeze
+
   # The card's build record in root, as BootPartition writes one: the source it was
   # built from, the card by its SHA-256, and inputs.
   def write_card_record(root, sha256: Digest::SHA256.file(File.join(root, 'sdcard.img')).hexdigest,
@@ -78,14 +81,15 @@ class SiteTest < Minitest::Test
   # Erx::Site.publish with a runner whose logs go to a directory of their own.
   def publish(plan, out:)
     Dir.mktmpdir('erx-site-logs-') do |logs|
-      Erx::Site.publish(plan, out:, runner: Erx::Runner.new(owner_root: logs, log_dir: File.join(logs, 'logs')))
+      Erx::Site.publish(plan, out:, runner: Erx::Runner.new(owner_root: logs, log_dir: File.join(logs, 'logs')),
+                             book: Erx::Book::Plan.new(files: {}, names: SHARED, record: {}))
     end
   end
 
   def inventory(root, image, ref: COMMIT, image_record: Erx::ImageRecord.path(image), card: File.join(root, 'sdcard.img'),
                 card_record: File.join(root, 'sdcard.img.receipt.json'))
     Erx::Site.inventory(root:, v64: File.join(root, 'v64'), image:, image_record:, card:, card_record:,
-                        source: Erx::Site.source(ref), disk: Erx::Site.fresh_medium(volume: VOLUME))
+                        source: Erx::Site.source(ref), disk: Erx::Site.fresh_medium(volume: VOLUME), shared_names: SHARED)
   end
 
   # The image is published only with its build record, which the image build writes
@@ -192,7 +196,7 @@ class SiteTest < Minitest::Test
   end
 
   def test_the_page_without_a_card_leaves_no_placeholder
-    page = Erx::Site.render_index(File.read(File.join(REPO, 'site/index.html')), terminal: 't.js',
+    page = Erx::Site.render_index(File.read(File.join(REPO, 'site/index.html')), terminal: 't.js', shared: SHARED,
                                   source: Erx::Site.source(COMMIT), image: IMAGE, card: nil)
     refute_includes page, '{{'
     refute_includes page, 'Download card'
@@ -205,7 +209,7 @@ class SiteTest < Minitest::Test
   # A card placeholder outside the card block is a bug in the page, not a gap in the output.
   def test_a_card_placeholder_outside_the_card_block_is_refused_without_a_card
     error = assert_raises(Erx::Error) do
-      Erx::Site.render_index('<a href="{{card_file}}">x</a>', terminal: 't.js', source: Erx::Site.source(COMMIT),
+      Erx::Site.render_index('<a href="{{card_file}}">x</a>', terminal: 't.js', shared: SHARED, source: Erx::Site.source(COMMIT),
                                                                image: IMAGE, card: nil)
     end
     assert_match(/card_file/, error.message)
@@ -439,7 +443,7 @@ class SiteTest < Minitest::Test
 
   # The page's own index.html names only placeholders render_index fills.
   def test_the_page_fills_every_placeholder
-    page = Erx::Site.render_index(File.read(File.join(REPO, 'site/index.html')), terminal: 't.js',
+    page = Erx::Site.render_index(File.read(File.join(REPO, 'site/index.html')), terminal: 't.js', shared: SHARED,
                                   source: Erx::Site.source(COMMIT),
                                   image: IMAGE,
                                   card: { file: 'c.img.xz', record: 'r', sha256: 's', compressed_bytes: 15_339_296,
@@ -454,7 +458,7 @@ class SiteTest < Minitest::Test
 
   def test_an_unknown_index_placeholder_is_refused
     error = assert_raises(Erx::Error) do
-      Erx::Site.render_index('{{nope}}', terminal: 't.js', source: Erx::Site.source(COMMIT),
+      Erx::Site.render_index('{{nope}}', terminal: 't.js', shared: SHARED, source: Erx::Site.source(COMMIT),
                                           image: IMAGE, card: { file: 'c', record: 'r', sha256: 's', compressed_bytes: 1, compressed_sha256: 'z' })
     end
     assert_match(/nope/, error.message)
