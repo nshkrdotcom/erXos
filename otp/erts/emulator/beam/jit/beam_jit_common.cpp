@@ -18,7 +18,8 @@
  * limitations under the License.
  *
  * Modified by erXos: return_to tracing skips a process spawned erx_untraced, as it skips a sensitive one;
- * an encoding error or a code space without room fails the translation at codegen instead of being ignored.
+ * an encoding error or a code space without room fails the translation at codegen instead of being ignored;
+ * remove_message's body is erts_msgq_take_msg, and a timeout ends any collection delay (edit 78).
  *
  * %CopyrightEnd%
  */
@@ -1113,85 +1114,7 @@ Sint32 beam_jit_remove_message(Process *c_p,
 
     msgp = erts_msgq_peek_msg(c_p);
 
-    if (ERL_MESSAGE_TOKEN(msgp) == NIL) {
-#ifdef USE_VM_PROBES
-        if (DT_UTAG(c_p) != NIL) {
-            if (DT_UTAG_FLAGS(c_p) & DT_UTAG_PERMANENT) {
-                SEQ_TRACE_TOKEN(c_p) = am_have_dt_utag;
-            } else {
-                DT_UTAG(c_p) = NIL;
-                SEQ_TRACE_TOKEN(c_p) = NIL;
-            }
-        } else {
-#endif
-            SEQ_TRACE_TOKEN(c_p) = NIL;
-#ifdef USE_VM_PROBES
-        }
-        DT_UTAG_FLAGS(c_p) &= ~DT_UTAG_SPREADING;
-#endif
-    } else if (ERL_MESSAGE_TOKEN(msgp) != am_undefined) {
-        Eterm msg;
-        SEQ_TRACE_TOKEN(c_p) = ERL_MESSAGE_TOKEN(msgp);
-#ifdef USE_VM_PROBES
-        if (ERL_MESSAGE_TOKEN(msgp) == am_have_dt_utag) {
-            if (DT_UTAG(c_p) == NIL) {
-                DT_UTAG(c_p) = ERL_MESSAGE_DT_UTAG(msgp);
-            }
-            DT_UTAG_FLAGS(c_p) |= DT_UTAG_SPREADING;
-        } else {
-#endif
-            ASSERT(is_tuple(SEQ_TRACE_TOKEN(c_p)));
-            ASSERT(SEQ_TRACE_TOKEN_ARITY(c_p) == 5);
-            ASSERT(is_small(SEQ_TRACE_TOKEN_SERIAL(c_p)));
-            ASSERT(is_small(SEQ_TRACE_TOKEN_LASTCNT(c_p)));
-            ASSERT(is_small(SEQ_TRACE_TOKEN_FLAGS(c_p)));
-            ASSERT(is_pid(SEQ_TRACE_TOKEN_SENDER(c_p)) ||
-                   is_atom(SEQ_TRACE_TOKEN_SENDER(c_p)));
-            c_p->seq_trace_lastcnt = unsigned_val(SEQ_TRACE_TOKEN_SERIAL(c_p));
-            if (c_p->seq_trace_clock <
-                unsigned_val(SEQ_TRACE_TOKEN_SERIAL(c_p))) {
-                c_p->seq_trace_clock =
-                        unsigned_val(SEQ_TRACE_TOKEN_SERIAL(c_p));
-            }
-            msg = ERL_MESSAGE_TERM(msgp);
-            seq_trace_output(SEQ_TRACE_TOKEN(c_p),
-                             msg,
-                             SEQ_TRACE_RECEIVE,
-                             c_p->common.id,
-                             c_p);
-#ifdef USE_VM_PROBES
-        }
-#endif
-    }
-#ifdef USE_VM_PROBES
-    if (DTRACE_ENABLED(message_receive)) {
-        Eterm token2 = NIL;
-        DTRACE_CHARBUF(receiver_name, DTRACE_TERM_BUF_SIZE);
-        Sint tok_label = 0;
-        Sint tok_lastcnt = 0;
-        Sint tok_serial = 0;
-
-        dtrace_proc_str(c_p, receiver_name);
-        token2 = SEQ_TRACE_TOKEN(c_p);
-        if (have_seqtrace(token2)) {
-            tok_label = SEQ_TRACE_T_DTRACE_LABEL(token2);
-            tok_lastcnt = signed_val(SEQ_TRACE_T_LASTCNT(token2));
-            tok_serial = signed_val(SEQ_TRACE_T_SERIAL(token2));
-        }
-        DTRACE6(message_receive,
-                receiver_name,
-                size_object(ERL_MESSAGE_TERM(msgp)),
-                c_p->sig_qs.mq_len,
-                tok_label,
-                tok_lastcnt,
-                tok_serial);
-    }
-#endif
-    erts_msgq_unlink_msg_set_save_first(c_p, msgp);
-    CANCEL_TIMER(c_p);
-
-    erts_save_message_in_proc(c_p, msgp);
-    c_p->flags &= ~F_DELAY_GC;
+    erts_msgq_take_msg(c_p, msgp);
 
     if (ERTS_IS_GC_DESIRED_INTERNAL(c_p, HTOP, E, 0)) {
         /*
@@ -1269,7 +1192,7 @@ void beam_jit_timeout(Process *c_p) {
     if (ERTS_PROC_GET_SAVED_CALLS_BUF(c_p)) {
         save_calls(c_p, &exp_timeout);
     }
-    c_p->flags &= ~F_TIMO;
+    c_p->flags &= ~(F_TIMO | F_DELAY_GC);
     erts_msgq_set_save_first(c_p);
 }
 

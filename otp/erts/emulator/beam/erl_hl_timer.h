@@ -16,7 +16,10 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- * 
+ *
+ * Modified by erXos: adds erts_suspend_proc_timer and erts_restore_proc_timer
+ * (edit 78 of docs/design-runtime.md).
+ *
  * %CopyrightEnd%
  */
 
@@ -56,6 +59,10 @@ size_t erts_timer_type_size(ErtsAlcType_t type);
 int erts_set_proc_timer_term(Process *, Eterm);
 void erts_set_proc_timer_uword(Process *, UWord);
 void erts_cancel_proc_timer(Process *);
+#define ERTS_PROC_TIMER_NONE ((Sint64) -1)
+#define ERTS_PROC_TIMER_INFINITY ((Sint64) -2)
+Sint64 erts_suspend_proc_timer(Process *);
+void erts_restore_proc_timer(Process *, Sint64);
 void erts_pause_proc_timer(Process *);
 void erts_resume_paused_proc_timer(Process *);
 void erts_pause_bif_timers(Process *, ErtsProcLocks);

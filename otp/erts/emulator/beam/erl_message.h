@@ -17,6 +17,9 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
+ * Modified by erXos: the private queues hold the messages prim_eval's
+ * interpreted receives are matching (edit 78 of docs/design-runtime.md).
+ *
  * %CopyrightEnd%
  */
 
@@ -331,6 +334,10 @@ typedef struct {
     signed char set_save_ix;
 } ErtsRecvMarkerBlock;
 
+/* The messages prim_eval's interpreted receives are matching, one per
+ * nesting level (erl_proc_sig_queue.c, edit 78). */
+typedef struct ErtsHeldMsgs_ ErtsHeldMsgs;
+
 /* Size of default message buffer (erl_message.c) */
 #define ERL_MESSAGE_BUF_SZ 500
 
@@ -391,6 +398,7 @@ typedef struct {
 
     /* Common for inner and middle queue */
     ErtsRecvMarkerBlock *recv_mrk_blk;
+    ErtsHeldMsgs *held; /* NULL until the first interpreted receive */
     Uint32 flags;
 } ErtsSignalPrivQueues;
 

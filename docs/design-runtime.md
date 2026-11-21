@@ -584,15 +584,44 @@ scheduled out and in around it.
 `test/integration/runtime_prepare_loading_test.rb` pins it.
 77\. `prim_eval:'receive'/2`, which runs erl_eval's match of an interpreted
 receive on each queued message, hands the match a copy of the message on the
-heap, made by `erts_internal:heap_copy/1`. Stock hands it the message where it
-lies, often a fragment still attached to the queue, and relies on `loop_rec`'s
-delay of collection; but the match is Erlang code, and its first binary
-pattern loads `eval_bits` through the code server, whose receive ends the
-delay, after which `code:ensure_loaded/1` collects the heap and moves the
-queued message's terms out of its fragment, an upstream bug that corrupts the
-message and faults the emulator. The interpreter's `loop_rec_end` also delays
-collection again before the next message, as the JIT's `loop_rec` does on
-every message, where stock's leaves the delay ended for the rest of the scan.
+heap, made by `erts_internal:msgq_hand_out/1` (edit 78). Stock hands it the
+message where it lies, often a fragment still attached to the queue, and
+relies on `loop_rec`'s delay of collection; but the match is Erlang code, and
+its first binary pattern loads `eval_bits` through the code server, whose
+receive ends the delay, after which `code:ensure_loaded/1` collects the heap
+and moves the queued message's terms out of its fragment, an upstream bug
+that corrupts the message and faults the emulator.
+`test/integration/runtime_eval_receive_test.rb` pins it.
+78\. `prim_eval:'receive'/2` removes exactly the message its match accepted,
+whatever the match runs, or removes nothing. The match is Erlang code that can
+run receives of its own (a module load through the code server, a guard call
+through erl_eval's function handler), so the receive in progress is suspended
+while it runs: `erts_internal:msgq_hand_out/1` holds the message at the save
+pointer in a frame of a per-process stack of at most eight, with the receive's
+timer and the address its timeout resumes at, returns a heap copy, and leaves
+the queue as a receive finds it on entry, the save pointer at the first
+message, collection not delayed and no timer, so a nested receive sees every
+message. `msgq_finish/2` takes the held message when the match accepted it and
+otherwise moves past it, restoring the timer with the time it had left; when a
+removal took the message meanwhile, the receive scans again from the first
+message. `msgq_release/1`, in a `try` around the match, abandons the receive on
+any exception, and `hibernate/3` drops the frames with the stack that held
+them. Every unlink of a message from the queue goes through
+`erts_msgq_count_removed`, which keeps the queue length and clears the frames
+holding that message before it can be freed, so a set frame names a message
+still queued. Only the frame on top answers to its token, a small integer, and
+a ninth nesting raises `system_limit` and takes no message. Stock keeps its
+place in the save pointer across the match, so a nested receive starts there,
+skipping earlier messages, and moves it to the first message, after which the
+match's `remove_message` takes the queue's first message instead of the one
+matched; an exception out of the match leaves the save pointer mid-queue and
+collection delayed; and a timer that fires while the match runs resumes the
+process at the receive's timeout instruction on the match's frame, which
+faults the emulator. `remove_message`'s body is one function,
+`erts_msgq_take_msg`, for the interpreter, the JIT and `msgq_finish/2`, and a
+timeout ends any collection delay. Moving back to a held message walks from
+the first message, so an interpreted scan of a long queue costs time
+quadratic in its length ([todo-performance.md](todo-performance.md)).
 `test/integration/runtime_eval_receive_test.rb` pins it.
 
 **Ports, NIFs and drivers** ([Programs as ports](#programs-as-ports),

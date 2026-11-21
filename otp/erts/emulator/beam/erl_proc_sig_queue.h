@@ -18,7 +18,10 @@
  * limitations under the License.
  *
  * Modified by erXos: a lost connection's link exit carries its peer domain's end reason
- * where it has one (edit 56 of docs/design-runtime.md).
+ * where it has one (edit 56 of docs/design-runtime.md). Every removal of a message
+ * from the message queue goes through erts_msgq_count_removed, which drops it from
+ * the messages prim_eval's interpreted receives hold; erts_msgq_take_msg is the one
+ * body of remove_message (edit 78).
  *
  * %CopyrightEnd%
  */
@@ -1767,6 +1770,32 @@ ERTS_GLB_INLINE ErtsMessage *erts_msgq_peek_msg(Process *c_p);
 
 /**
  *
+ * @brief Account for a message just unlinked from the message
+ *        queue, before it can be freed.
+ *
+ * Every unlink of a message from the message queue calls this, as
+ * the queue length must stay exact: it keeps that count and drops
+ * the message from the messages prim_eval's interpreted receives
+ * hold (edit 78 of docs/design-runtime.md), so a held message is
+ * still queued exactly while its entry is set.
+ *
+ */
+ERTS_GLB_INLINE void erts_msgq_count_removed(Process *c_p,
+                                             ErtsMessage *msgp);
+void erts_msgq_drop_held(Process *c_p, ErtsMessage *msgp);
+void erts_msgq_free_held(Process *c_p);
+
+/**
+ *
+ * @brief Remove the message at the save pointer as a receive
+ *        that matched it: what the remove_message instruction does,
+ *        apart from the reductions it leaves for a collection.
+ *
+ */
+void erts_msgq_take_msg(Process *c_p, ErtsMessage *msgp);
+
+/**
+ *
  * @brief Remove a message from the message queue.
  *
  *
@@ -2314,15 +2343,23 @@ erts_msgq_peek_msg(Process *c_p)
 }
 
 ERTS_GLB_INLINE void
+erts_msgq_count_removed(Process *c_p, ErtsMessage *msgp)
+{
+    c_p->sig_qs.mq_len--;
+    ASSERT(c_p->sig_qs.mq_len >= 0);
+    erts_chk_sys_mon_long_msgq_off(c_p);
+    if (ERTS_UNLIKELY(c_p->sig_qs.held != NULL))
+        erts_msgq_drop_held(c_p, msgp);
+}
+
+ERTS_GLB_INLINE void
 erts_msgq_unlink_msg(Process *c_p, ErtsMessage *msgp)
 {
     ErtsMessage *sigp = msgp->next;
     ASSERT(!(c_p->sig_qs.flags & FS_HANDLING_SIGS));
     ERTS_HDBG_CHECK_SIGNAL_PRIV_QUEUE__(c_p, 0, "before");
     *c_p->sig_qs.save = sigp;
-    c_p->sig_qs.mq_len--;
-    ASSERT(c_p->sig_qs.mq_len >= 0);
-    erts_chk_sys_mon_long_msgq_off(c_p);
+    erts_msgq_count_removed(c_p, msgp);
     if (sigp && ERTS_SIG_IS_RECV_MARKER(sigp)) {
         ErtsMessage **sigpp = c_p->sig_qs.save;
         ((ErtsRecvMarker *) sigp)->prev_next = sigpp;
@@ -2376,9 +2413,7 @@ erts_msgq_unlink_msg_set_save_first(Process *c_p, ErtsMessage *msgp)
     ASSERT(!(c_p->sig_qs.flags & FS_HANDLING_SIGS));
     ERTS_HDBG_CHECK_SIGNAL_PRIV_QUEUE__(c_p, 0, "before");
     *c_p->sig_qs.save = sigp;
-    c_p->sig_qs.mq_len--;
-    ASSERT(c_p->sig_qs.mq_len >= 0);
-    erts_chk_sys_mon_long_msgq_off(c_p);
+    erts_msgq_count_removed(c_p, msgp);
     if (!sigp)
         c_p->sig_qs.last = c_p->sig_qs.save;
     else if (ERTS_SIG_IS_RECV_MARKER(sigp))

@@ -19,7 +19,8 @@
 %%
 %% Modified by erXos: dist_spawn_init/1 takes the argument list out of the envelope
 %% {erx_origin, D, Args} of a message from another domain (edit 16). Adds
-%% heap_copy/1, with which prim_eval:'receive'/2 hands its match fun a copy (edit 77).
+%% msgq_hand_out/1, msgq_finish/2 and msgq_release/1, with which prim_eval:'receive'/2
+%% suspends its receive while its match fun runs (edit 78).
 %%
 %% %CopyrightEnd%
 %%
@@ -49,7 +50,7 @@
 
 -export([request_system_task/3, request_system_task/4]).
 -export([garbage_collect/1]).
--export([heap_copy/1]).
+-export([msgq_hand_out/1, msgq_finish/2, msgq_release/1]).
 
 -export([check_process_code/3]).
 -export([check_dirty_process_code/2]).
@@ -308,10 +309,26 @@ request_system_task(_RequesterPid, _TargetPid, _Prio, _Request) ->
 garbage_collect(_Mode) ->
     erlang:nif_error(undefined).
 
-%% A copy of Term on the caller's own heap, for prim_eval:'receive'/2.
--spec heap_copy(Term) -> Term when Term :: term().
+%% prim_eval:'receive'/2's own: the receive in progress is suspended while its
+%% match fun runs (erl_proc_sig_queue.c). hand_out holds the message at the save
+%% pointer, which Msg must be, and returns a copy of it on the caller's heap;
+%% finish takes that message or leaves the scan to go on; release abandons the
+%% receive.
+-spec msgq_hand_out(Msg) -> {Msg, Token} | false | system_limit when
+      Msg :: term(), Token :: non_neg_integer().
 
-heap_copy(_Term) ->
+msgq_hand_out(_Msg) ->
+    erlang:nif_error(undefined).
+
+-spec msgq_finish(Token, Matched) -> boolean() when
+      Token :: non_neg_integer(), Matched :: boolean().
+
+msgq_finish(_Token, _Matched) ->
+    erlang:nif_error(undefined).
+
+-spec msgq_release(Token) -> ok when Token :: non_neg_integer().
+
+msgq_release(_Token) ->
     erlang:nif_error(undefined).
 
 -spec check_process_code(Module) -> boolean() when

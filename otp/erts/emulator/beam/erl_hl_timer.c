@@ -18,6 +18,8 @@
  * limitations under the License.
  *
  * Modified by erXos: Timer references have four words (edit 17 of docs/design-runtime.md).
+ * A receive's timer can be suspended while prim_eval's match runs and restored with
+ * the time it had left (edit 78).
  *
  * %CopyrightEnd%
  */
@@ -2840,6 +2842,62 @@ erts_cancel_proc_timer(Process *c_p)
     }
     continue_cancel_ptimer(erts_proc_sched_data(c_p),
 			   (ErtsTimer *) tval);
+}
+
+/*
+ * erXos: a receive's timer suspended while prim_eval's match fun runs
+ * (edit 78 of docs/design-runtime.md). The fun may run receives of its
+ * own, which arm and cancel the process's one timer, and a timer that
+ * fired while the fun ran would resume the process at the suspended
+ * receive's timeout instruction, on the fun's frame. Suspending leaves
+ * the process with no timer and returns what restoring needs:
+ * ERTS_PROC_TIMER_NONE when none was set, ERTS_PROC_TIMER_INFINITY for
+ * after infinity, or the milliseconds left, 0 once it fired.
+ */
+Sint64
+erts_suspend_proc_timer(Process *c_p)
+{
+    Sint64 left;
+    erts_aint_t itmr;
+
+    if (c_p->flags & F_INSLPQUEUE) {
+        itmr = erts_atomic_read_nob(&c_p->common.timer);
+        left = 0;
+        if (itmr != ERTS_PTMR_NONE && itmr != ERTS_PTMR_TIMEDOUT)
+            left = time_left_for_timer_in_msec((ErtsTimer *) itmr,
+                                               erts_proc_sched_data(c_p));
+        erts_cancel_proc_timer(c_p);
+        return left < 0 ? 0 : left;
+    }
+    if (c_p->flags & F_TIMO) {
+        c_p->flags &= ~F_TIMO;
+        return ERTS_PROC_TIMER_INFINITY;
+    }
+    return ERTS_PROC_TIMER_NONE;
+}
+
+/*
+ * Restores a timer erts_suspend_proc_timer suspended. One with no time
+ * left is restored as fired, as the timer service leaves it, so the
+ * receive times out when its scan next waits or is scheduled out.
+ */
+void
+erts_restore_proc_timer(Process *c_p, Sint64 timer)
+{
+    ASSERT(!(c_p->flags & (F_INSLPQUEUE | F_TIMO)));
+    if (timer == ERTS_PROC_TIMER_NONE)
+        return;
+    if (timer == ERTS_PROC_TIMER_INFINITY) {
+        c_p->flags |= F_TIMO;
+        return;
+    }
+    if (timer > 0) {
+        ASSERT((timer >> 32) == 0);
+        erts_set_proc_timer_uword(c_p, (UWord) timer);
+        return;
+    }
+    c_p->flags |= F_INSLPQUEUE;
+    erts_atomic_set_relb(&c_p->common.timer, ERTS_PTMR_TIMEDOUT);
 }
 
 void

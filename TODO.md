@@ -8115,14 +8115,18 @@ to the corpus and follow rc
   with `Footprint` as the PCIe row was (its largest pool use at rest and with a keyboard typing, rounded up
   with 2 MiB of headroom), and its CPU while a keyboard types, then set the row and move the totals it
   counts (the system principal's memory, `root_memory`).
-* [Medium] Runtime, an interpreted receive whose match runs a receive of its own (`otp/erts/preloaded/src/prim_eval.S`,
-  `erl_eval:receive_clauses/8`): the match fun runs inside `loop_rec`, and a nested receive (erl_eval loading
-  `eval_bits` through the code server on its first binary pattern) moves the queue's save pointer to the first
-  message, so when the match then succeeds, `remove_message` removes the queue's first message, not the one
-  matched, whenever earlier messages did not match: one message is lost and the matched one is matched again.
-  Upstream OTP 29.1.2 behaves the same. The message the match sees is a heap copy, so memory stays sound; a fix
-  needs `prim_eval` to remove the message it handed out (a marker or a removal by position), not whatever the save
-  pointer names.
+* [Medium] Runtime, an interpreted receive skips priority messages that arrive while its match runs
+  (`otp/erts/emulator/beam/erl_proc_sig_queue.c`, `msgq_finish`, edit 78): `msgq_hand_out` leaves the save pointer at the
+  first message, so a priority message inserted meanwhile gets no continuation marker, and the walk back to the held
+  message passes it without matching it; the receive then waits for its timeout although a matching message is queued.
+  Only a process that made a priority alias receives such messages. Fix: restart from the first message when the
+  priority region gained messages since the hand-out, or hold the position so the stock insertion logic applies.
+* [Medium] Runtime, no build check that only `erts_msgq_count_removed` decrements `sig_qs.mq_len`
+  (`otp/erts/emulator/beam/erl_proc_sig_queue.h`, edit 78): a held frame relies on every unlink of a message going
+  through it; every site does, but a new `mq_len--` would compile. Needs the chokepoint check and its seeded-fault test.
+* [Low] Runtime, upstream: `erts_resume_paused_proc_timer` (`otp/erts/emulator/beam/erl_hl_timer.c`) restores an
+  expired paused timer with `erts_set_proc_timer_uword(c_p, 0)`, which sets `F_TIMO`, the after-infinity state, so a
+  receive whose timer expired while the debugger paused it waits forever. Unverified by a test.
 * [Low] USB, the review's open points on the input tree's hand-out: the USB domain's `connections 2` has no
   room for a display incarnation minted before the old connection is unmapped (design-system A3); the places'
   host fixture finds the grants supervisor through the mint's links (`erx_usb_places_prop:mint_grants/1`)

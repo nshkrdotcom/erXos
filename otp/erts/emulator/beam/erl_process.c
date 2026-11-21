@@ -17,7 +17,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * Modified by erXos: a process's exit closes its export holders (edit 13) and a spawn from another domain gives the spawner its rights on the child (erx_exports.c); schedulers are executors, created by erts_start_schedulers, that sleep in erx_park, wake with erx_executor_wake and dispatch the event table; there are no poll threads; the spawn option {erx_untraced, true} sets F_ERX_UNTRACED before any trace session's flags are copied in.; the wakeup-other checks are erl_wakeup_other.h's, which no charge overflows (edit 70).
+ * Modified by erXos: a process's exit closes its export holders (edit 13) and a spawn from another domain gives the spawner its rights on the child (erx_exports.c); schedulers are executors, created by erts_start_schedulers, that sleep in erx_park, wake with erx_executor_wake and dispatch the event table; there are no poll threads; the spawn option {erx_untraced, true} sets F_ERX_UNTRACED before any trace session's flags are copied in; a new process holds no message for an interpreted receive (edit 78); the wakeup-other checks are erl_wakeup_other.h's, which no charge overflows (edit 70).
  *
  * %CopyrightEnd%
  */
@@ -12613,6 +12613,7 @@ erl_create_process(Process* parent, /* Parent of process (default group leader).
     p->sig_qs.cont_last = &p->sig_qs.cont;
     p->sig_qs.save = &p->sig_qs.first;
     p->sig_qs.recv_mrk_blk = NULL;
+    p->sig_qs.held = NULL;
     p->sig_qs.mq_len = 0;
     p->sig_qs.mlenoffs = 0;
     p->sig_qs.nmsigs.next = NULL;
@@ -13146,6 +13147,7 @@ void erts_init_empty_process(Process *p)
     p->sig_qs.cont_last = &p->sig_qs.cont;
     p->sig_qs.save = &p->sig_qs.first;
     p->sig_qs.recv_mrk_blk = NULL;
+    p->sig_qs.held = NULL;
     p->sig_qs.mq_len = 0;
     p->sig_qs.mlenoffs = 0;
     p->sig_qs.nmsigs.next = NULL;

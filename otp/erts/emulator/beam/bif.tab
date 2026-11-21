@@ -19,7 +19,7 @@
 #
 # %CopyrightEnd%
 #
-# Modified by erXos: adds erx_device's, erx_trace_ring's, erx_dist's and erx_bytes's BIFs. Adds erx_dist:aliases/0 (edit 17), erx_dist:exports_refused/0 and erx_dist:atoms_refused/0 (edit 9). Adds erts_internal:heap_copy/1 (edit 77).
+# Modified by erXos: adds erx_device's, erx_trace_ring's, erx_dist's and erx_bytes's BIFs. Adds erx_dist:aliases/0 (edit 17), erx_dist:exports_refused/0 and erx_dist:atoms_refused/0 (edit 9). Adds erts_internal:msgq_hand_out/1, msgq_finish/2 and msgq_release/1 (edit 78), whose hand-out copy was edit 77.
 #
 
 #
@@ -74,7 +74,9 @@ bif erlang:float_to_list/1
 bif erlang:float_to_list/2
 bif erlang:fun_info/2
 hbif erts_internal:garbage_collect/1
-bif erts_internal:heap_copy/1
+bif erts_internal:msgq_hand_out/1
+bif erts_internal:msgq_finish/2
+bif erts_internal:msgq_release/1
 bif erlang:get/0
 bif erlang:get/1
 bif erlang:get_keys/1

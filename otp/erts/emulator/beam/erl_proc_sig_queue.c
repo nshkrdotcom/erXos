@@ -17,7 +17,10 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * Modified by erXos: every message from another domain is delivered as
+ * Modified by erXos: prim_eval's interpreted receives hold the message they
+ * match while their match fun runs, and remove_message's body is
+ * erts_msgq_take_msg (edit 78 of docs/design-runtime.md). Every message from
+ * another domain is delivered as
  * {erx_origin, D, Msg} (edit 16); the dirty signal handler has no select to clean up,
  * and a copy literal area request that gives an on-heap message its first
  * fragment copies the message's other references (its seq_trace token)
@@ -3809,9 +3812,7 @@ remove_innerq_m_sig(Process *c_p, ErtsMessage *sig, ErtsMessage **next_sig)
 {
     /* Removing message... */
     ASSERT(!ERTS_SIG_IS_NON_MSG(sig));
-    c_p->sig_qs.mq_len--;
-    ASSERT(c_p->sig_qs.mq_len >= 0);
-    erts_chk_sys_mon_long_msgq_off(c_p);
+    erts_msgq_count_removed(c_p, sig);
     remove_innerq_sig(c_p, sig, next_sig);
 }
 
@@ -9649,6 +9650,8 @@ erts_proc_sig_cleanup_queues(Process *c_p)
     };
     int i;
 
+    erts_msgq_free_held(c_p);
+
     for (i = 0; i < sizeof(queues)/sizeof(queues[0]); i++) {
 	ErtsMessage *sig = queues[i];
 	while (sig) {
@@ -10768,4 +10771,317 @@ int erts_proc_sig_queue_force_buffers(Process* p)
     }
     erts_proc_unlock(p, ERTS_PROC_LOCK_MSGQ);
     return buffers != NULL;
+}
+
+/*
+ * The one body of remove_message, for the interpreter, the JIT and
+ * erts_internal:msgq_finish/2: the receive takes msgp, the message at the
+ * save pointer, and the save pointer moves to the first message. The
+ * caller saves the call when calls are saved, and leaves reductions for a
+ * collection as its registers allow.
+ */
+void
+erts_msgq_take_msg(Process *c_p, ErtsMessage *msgp)
+{
+    ASSERT(msgp == erts_msgq_peek_msg(c_p));
+    if (ERL_MESSAGE_TOKEN(msgp) == NIL) {
+#ifdef USE_VM_PROBES
+        if (DT_UTAG(c_p) != NIL) {
+            if (DT_UTAG_FLAGS(c_p) & DT_UTAG_PERMANENT) {
+                SEQ_TRACE_TOKEN(c_p) = am_have_dt_utag;
+            } else {
+                DT_UTAG(c_p) = NIL;
+                SEQ_TRACE_TOKEN(c_p) = NIL;
+            }
+        } else {
+#endif
+            SEQ_TRACE_TOKEN(c_p) = NIL;
+#ifdef USE_VM_PROBES
+        }
+        DT_UTAG_FLAGS(c_p) &= ~DT_UTAG_SPREADING;
+#endif
+    } else if (ERL_MESSAGE_TOKEN(msgp) != am_undefined) {
+        Eterm msg;
+        SEQ_TRACE_TOKEN(c_p) = ERL_MESSAGE_TOKEN(msgp);
+#ifdef USE_VM_PROBES
+        if (ERL_MESSAGE_TOKEN(msgp) == am_have_dt_utag) {
+            if (DT_UTAG(c_p) == NIL) {
+                DT_UTAG(c_p) = ERL_MESSAGE_DT_UTAG(msgp);
+            }
+            DT_UTAG_FLAGS(c_p) |= DT_UTAG_SPREADING;
+        } else {
+#endif
+            ASSERT(is_tuple(SEQ_TRACE_TOKEN(c_p)));
+            ASSERT(SEQ_TRACE_TOKEN_ARITY(c_p) == 5);
+            ASSERT(is_small(SEQ_TRACE_TOKEN_SERIAL(c_p)));
+            ASSERT(is_small(SEQ_TRACE_TOKEN_LASTCNT(c_p)));
+            ASSERT(is_small(SEQ_TRACE_TOKEN_FLAGS(c_p)));
+            ASSERT(is_pid(SEQ_TRACE_TOKEN_SENDER(c_p))
+                   || is_atom(SEQ_TRACE_TOKEN_SENDER(c_p)));
+            c_p->seq_trace_lastcnt = unsigned_val(SEQ_TRACE_TOKEN_SERIAL(c_p));
+            if (c_p->seq_trace_clock < unsigned_val(SEQ_TRACE_TOKEN_SERIAL(c_p))) {
+                c_p->seq_trace_clock = unsigned_val(SEQ_TRACE_TOKEN_SERIAL(c_p));
+            }
+            msg = ERL_MESSAGE_TERM(msgp);
+            seq_trace_output(SEQ_TRACE_TOKEN(c_p), msg, SEQ_TRACE_RECEIVE,
+                             c_p->common.id, c_p);
+#ifdef USE_VM_PROBES
+        }
+#endif
+    }
+#ifdef USE_VM_PROBES
+    if (DTRACE_ENABLED(message_receive)) {
+        Eterm token2 = NIL;
+        DTRACE_CHARBUF(receiver_name, DTRACE_TERM_BUF_SIZE);
+        Sint tok_label = 0;
+        Sint tok_lastcnt = 0;
+        Sint tok_serial = 0;
+
+        dtrace_proc_str(c_p, receiver_name);
+        token2 = SEQ_TRACE_TOKEN(c_p);
+        if (have_seqtrace(token2)) {
+            tok_label = SEQ_TRACE_T_DTRACE_LABEL(token2);
+            tok_lastcnt = signed_val(SEQ_TRACE_T_LASTCNT(token2));
+            tok_serial = signed_val(SEQ_TRACE_T_SERIAL(token2));
+        }
+        DTRACE6(message_receive,
+                receiver_name, size_object(ERL_MESSAGE_TERM(msgp)),
+                c_p->sig_qs.mq_len,
+                tok_label, tok_lastcnt, tok_serial);
+    }
+#endif
+    erts_msgq_unlink_msg_set_save_first(c_p, msgp);
+    CANCEL_TIMER(c_p);
+
+    erts_save_message_in_proc(c_p, msgp);
+    c_p->flags &= ~F_DELAY_GC;
+}
+
+/*
+ * erXos: the messages prim_eval's interpreted receives are matching (edit
+ * 78 of docs/design-runtime.md).
+ *
+ * prim_eval:'receive'/2 matches each queued message by calling a fun, which
+ * is ordinary Erlang code and may run receives of its own. So that those
+ * see the whole queue, and the outer receive still removes exactly the
+ * message its fun accepted, the outer receive is suspended while the fun
+ * runs:
+ *
+ *  - erts_internal:msgq_hand_out/1 holds the message at the save pointer in
+ *    a new frame of the process's held stack, with the receive's timer and
+ *    the address its timeout resumes at, and returns a copy of the message
+ *    the process owns. It leaves the queue as a receive finds it on entry:
+ *    the save pointer at the first message, collection not delayed, no
+ *    timer.
+ *  - erts_internal:msgq_finish/2 resumes the receive. When the held message
+ *    is still queued, it takes it if the fun matched it, and otherwise
+ *    moves the save pointer past it. When a removal took it meanwhile, the
+ *    receive scans again from the first message: each such restart follows
+ *    a removal, so restarts cannot repeat without progress.
+ *  - erts_internal:msgq_release/1 abandons the receive when the fun raises.
+ *
+ * Every removal of a message from the queue goes through
+ * erts_msgq_count_removed, which clears the entries holding it before the
+ * message can be freed, so a set entry names a message still queued:
+ * freeing and reusing an address cannot fool it. A frame reaches Erlang
+ * only as its serial, a small integer, and only the frame on top answers
+ * to it.
+ */
+
+#define ERTS_HELD_MSGS_DEPTH 8
+#define ERTS_HELD_SERIAL_MASK ((((Uint) 1) << 27) - 1)
+/* The walk back to a held message charges a reduction per this many steps. */
+#define ERTS_HELD_WALK_STEPS_PER_REDUCTION 64
+
+typedef struct {
+    ErtsMessage *msg;   /* NULL once a removal took it */
+    Uint serial;        /* the frame's name in Erlang */
+    Sint64 timer;       /* the receive's timer, erts_suspend_proc_timer's */
+    Eterm resume;       /* def_arg_reg[0]: where the receive's timeout resumes */
+} ErtsHeldMsg;
+
+struct ErtsHeldMsgs_ {
+    int depth;
+    Uint next_serial;
+    ErtsHeldMsg frame[ERTS_HELD_MSGS_DEPTH];
+};
+
+void
+erts_msgq_drop_held(Process *c_p, ErtsMessage *msgp)
+{
+    ErtsHeldMsgs *held = c_p->sig_qs.held;
+    int i;
+
+    for (i = 0; i < held->depth; i++) {
+        if (held->frame[i].msg == msgp)
+            held->frame[i].msg = NULL;
+    }
+}
+
+/* Drops every frame: at process exit, and when hibernate/3 discards the
+ * stack that held them. */
+void
+erts_msgq_free_held(Process *c_p)
+{
+    if (c_p->sig_qs.held) {
+        erts_free(ERTS_ALC_T_HELD_MSGS, c_p->sig_qs.held);
+        c_p->sig_qs.held = NULL;
+    }
+}
+
+/* The receive in progress ends without taking a message: the queue and the
+ * timer are left as a receive finds them on entry. */
+static void
+msgq_abandon_receive(Process *c_p)
+{
+    erts_msgq_set_save_first(c_p);
+    c_p->flags &= ~F_DELAY_GC;
+    CANCEL_TIMER(c_p);
+}
+
+/* Pops the frame on top into *frame when token names it. */
+static int
+msgq_pop_held(Process *c_p, Eterm token, ErtsHeldMsg *frame)
+{
+    ErtsHeldMsgs *held = c_p->sig_qs.held;
+
+    if (!held || held->depth == 0
+        || token != make_small(held->frame[held->depth - 1].serial))
+        return 0;
+    *frame = held->frame[--held->depth];
+    return 1;
+}
+
+/* Moves the save pointer from the first message to msgp, by the steps a
+ * scan takes, so receive markers and the priority flags stay as a scan
+ * leaves them. */
+static void
+msgq_seat_save_at(Process *c_p, ErtsMessage *msgp)
+{
+    Uint steps = 0;
+
+    erts_msgq_set_save_first(c_p);
+    while (*c_p->sig_qs.save && *c_p->sig_qs.save != msgp) {
+        erts_msgq_set_save_next(c_p);
+        steps++;
+    }
+    BUMP_REDS(c_p, steps / ERTS_HELD_WALK_STEPS_PER_REDUCTION);
+    ASSERT(*c_p->sig_qs.save == msgp);
+}
+
+/*
+ * erts_internal:msgq_hand_out(Msg) -> {Copy, Token} | false | system_limit.
+ * Called right
+ * after loop_rec, with the message it peeked. False, with the save pointer
+ * at the first message and the timer left running, when Msg is no longer the message at the save pointer (a
+ * schedule in between handled signals): the caller scans again. A ninth
+ * nesting abandons the receive and answers system_limit, which the caller
+ * raises: raised here, the exception would keep Msg, often a term in a
+ * fragment still attached to the queue, as its argument.
+ */
+BIF_RETTYPE
+erts_internal_msgq_hand_out_1(BIF_ALIST_1)
+{
+    Process *c_p = BIF_P;
+    ErtsMessage *msgp = erts_msgq_peek_msg(c_p);
+    ErtsHeldMsgs *held = c_p->sig_qs.held;
+    ErtsHeldMsg *frame;
+    erts_literal_area_t litarea;
+    Eterm copy, *hp;
+    Uint sz;
+
+    if (!msgp || ERL_MESSAGE_TERM(msgp) != BIF_ARG_1) {
+        erts_msgq_set_save_first(c_p);
+        c_p->flags &= ~F_DELAY_GC;
+        BIF_RET(am_false);
+    }
+    if (held && held->depth == ERTS_HELD_MSGS_DEPTH) {
+        msgq_abandon_receive(c_p);
+        BIF_RET(am_system_limit);
+    }
+    if (!held) {
+        held = erts_alloc(ERTS_ALC_T_HELD_MSGS, sizeof(ErtsHeldMsgs));
+        held->depth = 0;
+        held->next_serial = 0;
+        c_p->sig_qs.held = held;
+    }
+
+    /* The copy lives in memory the process owns (literals stay where they
+     * are, as a send leaves them): the fun runs with collection allowed,
+     * and the collector moves whatever a root reaches outside the old heap
+     * and the literals, which would leave forwarding words in a queued
+     * message's fragment. */
+    sz = 0;
+    if (is_not_immed(BIF_ARG_1)) {
+        INITIALIZE_LITERAL_PURGE_AREA(litarea);
+        sz = size_object_litopt(BIF_ARG_1, &litarea);
+    }
+    if (sz > ERTS_MSG_COPY_WORDS_PER_REDUCTION)
+        BUMP_REDS(c_p, MIN(sz / ERTS_MSG_COPY_WORDS_PER_REDUCTION, CONTEXT_REDS));
+    hp = HAlloc(c_p, sz + 3);
+    copy = BIF_ARG_1;
+    if (sz > 0) {
+        copy = copy_struct_litopt(BIF_ARG_1, sz, &hp, &MSO(c_p), &litarea);
+    }
+
+    frame = &held->frame[held->depth++];
+    frame->msg = msgp;
+    frame->serial = held->next_serial;
+    held->next_serial = (held->next_serial + 1) & ERTS_HELD_SERIAL_MASK;
+    frame->timer = erts_suspend_proc_timer(c_p);
+    frame->resume = c_p->def_arg_reg[0];
+    erts_msgq_set_save_first(c_p);
+    c_p->flags &= ~F_DELAY_GC;
+
+    BIF_RET(TUPLE2(hp, copy, make_small(frame->serial)));
+}
+
+/*
+ * erts_internal:msgq_finish(Token, Matched) -> boolean(). Ends the frame
+ * Token names. True when the receive took the held message; false when the
+ * caller scans on from the save pointer, which is then past the held
+ * message, or at the first message when a removal took it.
+ */
+BIF_RETTYPE
+erts_internal_msgq_finish_2(BIF_ALIST_2)
+{
+    Process *c_p = BIF_P;
+    ErtsHeldMsg frame;
+
+    if ((BIF_ARG_2 != am_true && BIF_ARG_2 != am_false)
+        || !msgq_pop_held(c_p, BIF_ARG_1, &frame))
+        BIF_ERROR(c_p, BADARG);
+
+    c_p->flags &= ~F_DELAY_GC;
+    if (frame.msg) {
+        /* Still queued: a set entry always is. */
+        msgq_seat_save_at(c_p, frame.msg);
+        if (BIF_ARG_2 == am_true) {
+            if (ERTS_PROC_GET_SAVED_CALLS_BUF(c_p))
+                save_calls(c_p, &exp_receive);
+            erts_msgq_take_msg(c_p, frame.msg);
+            BIF_RET(am_true);
+        }
+        erts_msgq_set_save_next(c_p);
+    }
+    else {
+        erts_msgq_set_save_first(c_p);
+    }
+    /* The scan goes on, so its timer does; a taken message cancelled it. */
+    erts_restore_proc_timer(c_p, frame.timer);
+    c_p->def_arg_reg[0] = frame.resume;
+    BIF_RET(am_false);
+}
+
+/* erts_internal:msgq_release(Token) -> ok. Ends the frame Token names and
+ * abandons its receive: the fun raised. */
+BIF_RETTYPE
+erts_internal_msgq_release_1(BIF_ALIST_1)
+{
+    ErtsHeldMsg frame;
+
+    if (!msgq_pop_held(BIF_P, BIF_ARG_1, &frame))
+        BIF_ERROR(BIF_P, BADARG);
+    msgq_abandon_receive(BIF_P);
+    BIF_RET(am_ok);
 }
