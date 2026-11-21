@@ -609,7 +609,10 @@ any exception, and `hibernate/3` drops the frames with the stack that held
 them. Every unlink of a message from the queue goes through
 `erts_msgq_count_removed`, which keeps the queue length and clears the frames
 holding that message before it can be freed, so a set frame names a message
-still queued. Only the frame on top answers to its token, a small integer, and
+still queued; the source check's `msgq-length` rule refuses a line of ERTS's C
+or C++ that lowers the length outside that function and the two
+initializations of an empty queue. Only the frame on top answers to its token,
+a small integer, and
 a ninth nesting raises `system_limit` and takes no message. Stock keeps its
 place in the save pointer across the match, so a nested receive starts there,
 skipping earlier messages, and moves it to the first message, after which the

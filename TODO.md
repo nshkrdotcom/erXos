@@ -8121,9 +8121,12 @@ to the corpus and follow rc
   message passes it without matching it; the receive then waits for its timeout although a matching message is queued.
   Only a process that made a priority alias receives such messages. Fix: restart from the first message when the
   priority region gained messages since the hand-out, or hold the position so the stock insertion logic applies.
-* [Medium] Runtime, no build check that only `erts_msgq_count_removed` decrements `sig_qs.mq_len`
-  (`otp/erts/emulator/beam/erl_proc_sig_queue.h`, edit 78): a held frame relies on every unlink of a message going
-  through it; every site does, but a new `mq_len--` would compile. Needs the chokepoint check and its seeded-fault test.
+* [Medium] Runtime, the `msgq-length` source check (`tools/lib/erx/chokepoint_rules/msgq.rb`, edit 78) permits its
+  lines by text, so a copy of `c_p->sig_qs.mq_len--;` elsewhere in `erl_proc_sig_queue.h`, or of
+  `p->sig_qs.mq_len = 0;` elsewhere in `erl_process.c` (where exit code could empty a live queue and free its messages
+  past `erts_msgq_count_removed`), passes; and it reads no `.tab` file, so a decrement in `emu/msg_instrs.tab`, where
+  the interpreter's `remove_message` lives, passes too. Fix: let a site permit a line at most N times per file (or fold
+  the two zero-initializations into one helper), and refuse any `mq_len` in a `.tab` file (none names it).
 * [Low] Runtime, upstream: `erts_resume_paused_proc_timer` (`otp/erts/emulator/beam/erl_hl_timer.c`) restores an
   expired paused timer with `erts_set_proc_timer_uword(c_p, 0)`, which sets `F_TIMO`, the after-infinity state, so a
   receive whose timer expired while the debugger paused it waits forever. Unverified by a test.
