@@ -52,12 +52,15 @@ link_down_ends_the_link_test() ->
     end).
 
 %% Each live handle's completions reach its link: with a share of one, the link hands
-%% its second packet over only once Number Of Completed Packets returns the first.
+%% its second packet over only once Number Of Completed Packets returns the first. Two
+%% LE signaling commands, Information Requests (L2CAP 4.10), each make one packet, the
+%% link's Command Reject (4.1).
 completions_reach_the_link_test() ->
     with_group(#{credits => 1}, fun(Model) ->
-        Link = connect(Model, 16#40),
-        ok = erx_bt_link:send(Link, 0, <<1>>),
-        ok = erx_bt_link:send(Link, 0, <<2>>),
+        _Link = connect(Model, 16#40),
+        Request = <<6:16/little, 5:16/little, 16#0A, 1, 2:16/little, 1:16/little>>,
+        Acl = <<2, 16#40, 16#20, (byte_size(Request)):16/little, Request/binary>>,
+        erx_bt_line_model:inject(Model, <<Acl/binary, Acl/binary>>),
         await(fun() -> acl_writes(Model) =:= 1 end),
         timer:sleep(50),
         ?assertEqual(1, acl_writes(Model)),

@@ -8554,13 +8554,34 @@ model harness drive `erx_device.c` itself. `erx_device_dma_check` and `erx_devic
   termination already in progress, so a remote peer leaving as the host disconnects it may reset every link.
   Check Core 6.3 Vol 4 Part E 7.1.6 and 7.7.5 for the statuses a controller sends in that race, and accept the
   ones that mean the handle is going.
-* [Medium] bluetooth, the link's duty to `erx_smp_core` (docs/design-bluetooth.md "Secure Connections
-  only"; the core's moduledoc): the link process, when it runs the core, must keep the core's state, the
-  verdict's fresh values and the `key` and `bonded` actions out of crash reports and `sys` status
-  (`format_status/1`), since they hold the private key, passkey, DHKey and LTK, with a test that a crash report
-  and `sys:get_status/1` show none of them. A raise in `erx_bt_link_core:step/3` carries the core in its stack
-  trace, so the process catches it and exits with a reason built from `erx_bt_link_core:facts/1` alone. Lands
-  with the link's wiring of the Security Manager.
+* [Medium] bluetooth, the link's messages the design does not name (`erx_bt_link`; docs/design-bluetooth.md
+  "The link's messages"): the table names each message's payload but not (1) how the window, the registry and
+  the store address the link and how the link addresses them (`erx_bt_link` sends `{erx_bt_link, Alias,
+  Message}` to each owner's registered name and steps `{Owner, Input}` sent to its alias, after the controller
+  process's `{erx_bt_link, Name, Request}` and `{erx_bt_hci, Event}`); (2) how the link gets the table and the
+  handlers' values from the registry, and registers its `Conn`, address and pid there for `connected`,
+  `disconnected` and the registry's monitor; (3) how it gets the bonds (or the store's resolution of the
+  phone's address, SMP 2.2.2's `ah` over each bond's IRK) and whether pairing is enabled (the store `read`, the
+  window built). Until those are designed the link takes them from its start's optional `domain` key, which the
+  controller process does not pass, and runs with the GAP and GATT services alone, no values, no pairing and no
+  bond. Name the shapes in the design, then build them with `erx_gatt_srv`, `erx_bt_fs` and the store's bonds.
+  Decide there whether owners get the link's pid, which they can monitor, rather than its alias, which they
+  cannot; and whether the link's own address comes in the controller's `Info` rather than from a call to
+  `erx_bt_store` inside the controller's synchronous `start_child`.
+* [Medium] bluetooth, two copies in the link process (`erx_bt_link`'s `awaiting` and `accepts/2`): the process
+  rebuilds the core's `awaiting` from the actions it performs, to tell the window `{failed, disconnected}` at
+  its end, and keeps a table of which owner sends which input beside the core's `input()` type. Both agree
+  today and must change with the core. Give the core an `ended/1` that returns the window's outcome while it
+  awaits one (adding `disconnected` to its `outcome()`), and either tag the core's inputs by owner or hand each
+  owner its own reference to answer under, so the core's clause heads are the allow-list.
+* [Low] bluetooth, a reserved Peer_Address_Type (`erx_hci`'s LE Connection Complete decoder,
+  `erx_bt_link`'s `address_type/1`): a type other than 0x00 or 0x01 fails the link's start, and the controller
+  process's `{ok, Pid} = erx_bt_link_sup:start_child(...)` then ends the controller group. Decode the type in
+  `erx_hci` and have the controller core refuse a reserved one with a stated reason.
+* [Low] bluetooth, a link killed mid-pairing (`erx_bt_link`'s `terminate/2`): a link that ends while the window
+  awaits its pairing tells the window `{outcome, Tag, {failed, disconnected}}` from `terminate/2`, which a
+  `kill` skips, so that disconnection does not count toward the pairing wait. If the window monitors the link
+  it admitted instead, every end counts; decide with the window's design (`erx_bt_window`).
 * [Low] bluetooth, the link core's deadlines and Encryption_Enabled (`erlang/apps/erx_bt/src/erx_bt_link_core.erl`,
   its `HANDLER_TIMEOUT_MS`, `ATT_TRANSACTION_MS`, `SMP_TIMEOUT_MS` and `ENCRYPTION_ON_LE`): "What a radio peer can
   make the domain spend" makes every bound a constant of `abi/formats/bluetooth.txt`, but these four are module
