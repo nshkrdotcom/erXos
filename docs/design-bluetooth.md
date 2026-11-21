@@ -1127,11 +1127,18 @@ named in no stage.
 
 `erx_gatt_server:request(Pdu, Server, Bearer) -> {Actions, Bearer}`
 answers one PDU over `Server`, the table, the values the handlers last
-set and the link's security, and the bearer's state; `reply(Answer,
-Server, Bearer)` takes a handler's answer to the write the bearer waits
-on, and `notify(Kind, Key, Value, Server, Bearer)` makes a notification
-or an indication the gate allows. The actions are the PDUs to send, the
-write for the handler, and the events for the handlers. It
+set and the link's security, and the bearer's state; `reply(Ref, Answer,
+Server, Bearer)` takes a handler's answer to the write `Ref`, and drops
+it unless the bearer waits on that write, so an answer that comes after
+its write timed out is never taken for the next one; and `notify(Kind,
+Key, Value, Server, Bearer)` makes a notification or an indication the
+gate allows. The actions are the PDUs to send, the write for the
+handler, numbered by the bearer, and the events for the handlers. A
+`Ref` is the link's own, from 1 on every bearer, so it never leaves
+the domain as it is: the facet hands its handler a `Req` it makes
+unique, and maps it back to the link and its `Ref`, accepting an
+answer only for a `Req` it delivered to that handler and not yet
+answered ([The `ble` facet](#the-ble-facet)). It
 answers Exchange MTU with 247, Find Information, Find By Type Value, Read
 By Type, Read, Read Blob, Read By Group Type, Write Request, Prepare
 Write and Execute Write, and takes Write Command and Handle Value
@@ -1180,7 +1187,7 @@ handler receives, through the envelope rule, which the client module
 | `{connected, Conn, #{address := A, bonded := boolean(), level := L}}` | a phone connected, or its link's security changed: `level` is what the link reaches now, `open` until it is encrypted and then its key's, and `bonded` is true once its key is a kept bond's |
 | `{mtu, Conn, Mtu}` | the bearer's MTU changed; a notification carries at most `Mtu - 3` octets |
 | `{subscribed, Conn, Char, none \| notify \| indicate}` | the phone wrote the characteristic's configuration |
-| `{write, Req, Conn, Char, Value}` | a write the gate allowed; the handler answers `erx_gatt:reply(Req, ok \| {error, Code})` |
+| `{write, Req, Conn, Char, Value}` | a write the gate allowed; the handler answers `erx_gatt:reply(Req, ok \| {error, Code})`, where `Req` is a reference the facet made for this write, which names it to no other handler, link or write |
 | `{disconnected, Conn}` | the phone left; `Conn` is dead |
 
 The link takes the next request of its phone only after the handler
@@ -1339,6 +1346,31 @@ the opener's end, closes the window at once, so no window outlives the
 person who opened it, by construction of the file protocol's fid
 lifetime ([design-files.md](design-files.md#fid-owners)). A window takes
 one pairing: whatever its outcome, the window closes.
+
+**Closing a window withdraws its pairing.** The authority to bond is the
+opener's, so it ends with the window: when the fid is clunked, or the
+opener ends, while the pairing the window admitted is in progress, the
+window withdraws it, and the link fails it with Pairing Failed,
+Unspecified Reason (`0x08`) and reports `withdrawn` to the window
+process, which counts it as a failure like any other for the pairing
+wait and writes the log's record; the `pair` file has no reader by
+then, so its line is never written. Closing the window is the
+opener's one way to stop a pairing, for instance one whose `passkey`
+line names an address the opener does not expect. A pairing withdrawn
+after its second phase ends its link with the pairing's key, as every
+failure does once a link has a key
+([One table, one gate](#one-table-one-gate)); the key never reaches
+the store. The window's time bounds admission only: once it has
+admitted a pairing, it waits for that pairing's outcome, so a person
+typing a passkey as the time runs out is not cut off. SMP's 30 s timer
+bounds each step, not the pairing (3.4): a phone that steps just inside
+it through Passkey Entry's some 45 PDUs holds the window, which answers
+`ebusy` to other openers, for about 20 minutes, and the opener ends
+that by closing the window. The link's `admit` carries the
+number of its Pairing Request, and the window's verdict and withdrawal
+carry it back, so a verdict or a withdrawal that arrives late, after
+its request failed and the phone asked again, changes nothing
+(`erx_smp_core`).
 
 **The pairing wait** is SMP 2.3.6's, kept by the window process and not
 by any window, so whoever opens windows, and however fast, does not

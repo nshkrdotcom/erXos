@@ -8546,13 +8546,11 @@ model harness drive `erx_device.c` itself. `erx_device_dma_check` and `erx_devic
   termination already in progress, so a remote peer leaving as the host disconnects it may reset every link.
   Check Core 6.3 Vol 4 Part E 7.1.6 and 7.7.5 for the statuses a controller sends in that race, and accept the
   ones that mean the handle is going.
-* [Medium] bluetooth, the link's duties to `erx_smp_core` (docs/design-bluetooth.md "Secure Connections
-  only"; the core's moduledoc): the link must answer `admit` before stepping any other input, or a late
-  verdict could open a later Pairing Request after the window has closed; a tag carried by `admit` and the
-  verdict would make that hold by construction. The link must also keep the core's state, the verdict's
-  fresh values and the `key` and `bonded` actions out of crash reports and `sys` status (`format_status/1`),
-  since they hold the private key, passkey, DHKey and LTK. Decide too whether closing the window withdraws a
-  pairing in progress, and what the link does with a key given before a failure in the third phase.
+* [Medium] bluetooth, the link's duty to `erx_smp_core` (docs/design-bluetooth.md "Secure Connections
+  only"; the core's moduledoc): the link process, when it runs the core, must keep the core's state, the
+  verdict's fresh values and the `key` and `bonded` actions out of crash reports and `sys` status
+  (`format_status/1`), since they hold the private key, passkey, DHKey and LTK, with a test that a crash report
+  and `sys:get_status/1` show none of them. Lands with the link's wiring of the Security Manager.
 * [Medium] bluetooth, Passkey Entry's bit order (`erx_smp_core`'s `z/2`): the test's honest phone takes the
   passkey's bits least significant first, as the core does, citing Bumble v0.0.237's bumble/smp.py; the
   specification's Figure 2.4 does not settle it. Pin it with the Bumble test peer before the board run.
@@ -8566,11 +8564,6 @@ model harness drive `erx_device.c` itself. `erx_device_dma_check` and `erx_devic
   Disconnection Complete empties and refills the slot, and each refill starts a fresh deadline, so the
   enable never times out and the core never stops; the controller process should end when a command stays
   unsent across refills for longer than `bt_command_timeout_ms`.
-* [Medium] bluetooth, a handler's late answer taken for the next write (`erlang/apps/erx_bt/src/erx_gatt_server.erl`,
-  `reply/3`; docs/design-bluetooth.md "The `ble` facet"): the `{write, Key, Value}` action carries no reference,
-  so after a write times out (`reply(timeout)`) the handler's late answer to it is taken as the answer to the next
-  write. Fix with the link core: number each write in the bearer, emit `{write, Ref, Key, Value}`, and have
-  `reply(Ref, Answer, ...)` drop an answer whose `Ref` is not the one awaited, the facet's `Req`.
 * [Medium] bluetooth, configuration writes and Stage 4 (`erx_gatt_server`'s `subscribe/5`, `erx_gatt_db`'s
   Client Characteristic Configuration; docs/design-bluetooth.md "Bonds and the store", "Reconnection"): a
   configuration write updates the bearer and answers at once, so a bonded link cannot hold the response until the

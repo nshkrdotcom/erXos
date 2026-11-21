@@ -74,7 +74,17 @@ class ErxBtSmpTest < Minitest::Test
              anchor: 'aes_cmac(Key, Message) -> crypto:mac(cmac, aes_128_cbc, Key, Message).',
              replacement: 'aes_cmac(Key, Message) -> crypto:mac(cmac, aes_128_cbc, ' \
                           'list_to_binary(lists:reverse(binary_to_list(Key))), Message).',
-             catching_case: 'aes_cmac_matches_appendix_d1_test')
+             catching_case: 'aes_cmac_matches_appendix_d1_test'),
+    Seed.new(fault: 'a verdict applied whatever request it answers',
+             module_path: CORE,
+             anchor: 'phase({admission, Tag, Verdict}, {admitting, Request}, #{tag := Tag})',
+             replacement: 'phase({admission, _Tag, Verdict}, {admitting, Request}, _)',
+             catching_case: 'stale_verdict_ignored_test'),
+    Seed.new(fault: 'a failure after the key leaves the link up and pairing again',
+             module_path: CORE,
+             anchor: 'true -> {Reported ++ [end_link], State#{phase := ended}};',
+             replacement: 'true -> {Reported, State#{phase := idle}};',
+             catching_case: 'failure_after_key_ends_link_test')
   ].freeze
 
   def test_security_manager_cases_pass_under_eunit

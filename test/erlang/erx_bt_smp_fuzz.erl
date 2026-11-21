@@ -49,9 +49,10 @@ fresh() ->
 
 round(Core, Fresh) ->
     Input = case rand:uniform(10) of
-                1 -> {admission, lists:nth(rand:uniform(5), [closed, waiting, bonded, {open, display, Fresh},
-                                                                 {open, nodisplay, Fresh}])};
-                2 -> lists:nth(rand:uniform(2), [encrypted, timeout]);
+                %% A verdict or a withdrawal for one of the first requests, current or late.
+                1 -> {admission, rand:uniform(4), lists:nth(rand:uniform(5), [closed, waiting, bonded, {open, display, Fresh},
+                                                                              {open, nodisplay, Fresh}])};
+                2 -> lists:nth(rand:uniform(3), [encrypted, timeout, {withdraw, rand:uniform(4)}]);
                 3 -> {pdu, {pairing_public_key, key(Fresh)}};
                 4 -> {pdu, {pairing_request, written_request()}};
                 _ -> {pdu, decoded(input())}

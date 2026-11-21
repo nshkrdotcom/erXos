@@ -119,6 +119,7 @@ codec_lengths_test() ->
 -define(CENTRAL, {random, h("c0ffee123456")}).
 -define(PERIPHERAL, {random, h("d1e2f3a4b5c6")}).
 -define(PASSKEY, 314159).
+-define(REQUESTS, 2).
 
 %% Fixed key pairs and nonces, so the exploration is deterministic: erXos's fresh
 %% values and the honest phone's.
@@ -177,7 +178,8 @@ run(Inputs, State) ->
                         {Actions ++ More, Next}
                 end, {[], State}, Inputs).
 
-open(Mode) -> {admission, {open, Mode, fresh()}}.
+%% The window's verdict on the link's first Pairing Request.
+open(Mode) -> {admission, 1, {open, Mode, fresh()}}.
 
 %% The honest pairing, input by input, to the bond.
 honest_inputs(Request, Mode) ->
@@ -228,7 +230,7 @@ response_test() ->
 
 %% A refusal at the window's verdict or the request.
 refused(Request, Verdict) ->
-    run([{pdu, {pairing_request, Request}}, {admission, Verdict}]).
+    run([{pdu, {pairing_request, Request}}, {admission, 1, Verdict}]).
 
 window_refusals_test() ->
     {Closed, S1} = refused(?KEYBOARD, closed),
@@ -239,7 +241,40 @@ window_refusals_test() ->
     ?assertEqual({[8], [already_bonded]}, {sent_failure(Bonded), failures(Bonded)}),
     %% A refusal that is not a pairing leaves the core idle for the next request.
     {Again, _} = run([{pdu, {pairing_request, ?KEYBOARD}}], S1),
-    ?assertEqual([admit, timer], Again).
+    ?assertEqual([{admit, 2}, timer], Again).
+
+%% A verdict that arrives after its request failed never opens the next request.
+stale_verdict_ignored_test() ->
+    {_, Second} = run([{pdu, {pairing_request, ?KEYBOARD}}, {pdu, {pairing_failed, 16#08}},
+                       {pdu, {pairing_request, ?KEYBOARD}}]),
+    ?assertEqual({[], Second}, erx_smp_core:step({admission, 1, {open, display, fresh()}}, Second)),
+    {Actions, _} = erx_smp_core:step({admission, 2, {open, display, fresh()}}, Second),
+    ?assertMatch([{send, {pairing_response, _}}, timer], Actions).
+
+%% The window's withdrawal fails its own pairing, and only its own.
+withdraw_test() ->
+    {_, Pairing} = run([{pdu, {pairing_request, ?KEYBOARD}}, open(display)]),
+    ?assertEqual({[], Pairing}, erx_smp_core:step({withdraw, 2}, Pairing)),
+    {Actions, Idle} = erx_smp_core:step({withdraw, 1}, Pairing),
+    ?assertEqual({[8], [withdrawn], false}, {sent_failure(Actions), failures(Actions), lists:member(end_link, Actions)}),
+    ?assertMatch({[{admit, 2}, timer], _}, erx_smp_core:step({pdu, {pairing_request, ?KEYBOARD}}, Idle)).
+
+%% A failure after the link has its key, in the third phase, ends the link and the core,
+%% whatever fails it: a wrong PDU, the phone's Pairing Failed or the window's withdrawal.
+failure_after_key_ends_link_test() ->
+    Inputs = honest_inputs(?NO_IO, nodisplay),
+    Keyed = lists:takewhile(fun(I) -> I =/= encrypted end, Inputs),
+    {_, Identity} = run(Keyed ++ [encrypted]),
+    [begin
+         {Actions, Ended} = run(Keyed ++ Rest),
+         ?assertEqual({Sent, [Reason]}, {sent_failure(Actions), failures(Actions)}),
+         ?assertEqual(end_link, lists:last(Actions)),
+         ?assertEqual({[], Ended}, run([{pdu, {pairing_request, ?NO_IO}}], Ended))
+     end || {Rest, Sent, Reason} <- [{[{pdu, {pairing_dhkey_check, <<3:128>>}}], [8], unexpected},
+                                     {[{pdu, {pairing_failed, 16#08}}], [], {peer, 16#08}},
+                                     {[{withdraw, 1}], [8], withdrawn}]],
+    {Actions, _} = run([{pdu, {identity_information, <<7:128>>}}, {pdu, {identity_address_information, 2, <<10:48>>}}], Identity),
+    ?assertEqual({[10], [invalid], end_link}, {sent_failure(Actions), failures(Actions), lists:last(Actions)}).
 
 request_refused(Changes, Mode) ->
     {Actions, _} = refused(maps:merge(?KEYBOARD, Changes), {open, Mode, fresh()}),
@@ -308,8 +343,7 @@ wrong_confirm_fails_test() ->
 
 wrong_dhkey_check_fails_test() ->
     Inputs = honest_inputs(?NO_IO, nodisplay),
-    Prefix = lists:takewhile(fun(Input) -> not is_tuple(Input) orelse element(1, element(2, Input)) =/= pairing_dhkey_check
-                             end, Inputs),
+    Prefix = lists:takewhile(fun({pdu, {pairing_dhkey_check, _}}) -> false; (_) -> true end, Inputs),
     {Actions, _} = run(Prefix ++ [{pdu, {pairing_dhkey_check, <<1:128>>}}]),
     ?assertEqual({[11], [dhkey]}, {sent_failure(Actions), failures(Actions)}),
     ?assertEqual([], [K || {key, _, _} = K <- Actions]).
@@ -340,15 +374,17 @@ requests() ->
 %% wrong ones beside it. Each is tagged with whether it keeps the path honest: a
 %% generic public key, commitment, nonce or check value does not; the rest carry no
 %% value a pairing's security rests on.
-inputs({_State, Context}) ->
+inputs({_State, Context, Tag}) ->
     Generic = [{pdu, P} || P <- [{pairing_confirm, <<1:128>>}, {pairing_random, <<2:128>>},
                                 {pairing_dhkey_check, <<3:128>>}, {pairing_failed, 16#08},
                                 {pairing_response, ?KEYBOARD}, {security_request, 16#0D},
                                 {encryption_information, <<4:128>>}, {central_identification, <<5:16>>, <<6:64>>},
                                 {identity_information, <<7:128>>}, {identity_address_information, 1, <<8:48>>},
                                 {pairing_keypress_notification, 1}, {invalid, 16#03}, {reserved, 16#0F}, empty]]
-        ++ [encrypted, timeout] ++ [{pdu, {pairing_request, R}} || R <- requests()]
-        ++ [{admission, V} || V <- [closed, waiting, bonded, {open, display, fresh()}, {open, nodisplay, fresh()}]],
+        ++ [encrypted, timeout] ++ [{pdu, {pairing_request, R}} || Tag < ?REQUESTS, R <- requests()]
+        ++ [{admission, T, V} || T <- [Tag - 1, Tag],
+                                 V <- [closed, waiting, bonded, {open, display, fresh()}, {open, nodisplay, fresh()}]]
+        ++ [{withdraw, T} || T <- [Tag - 1, Tag]],
     [{I, not carries_value(I)} || I <- Generic] ++ honest_steps(Context).
 
 carries_value({pdu, {Kind, _}}) ->
@@ -376,7 +412,7 @@ honest_steps(_Context) -> [].
 
 %% The exploration's own record of where the honest phone is, advanced from the
 %% actions alone, never from the core's state, which is opaque.
-context(_Context, {pdu, {pairing_request, Request}}, [admit, timer]) -> {admitting, Request};
+context(_Context, {pdu, {pairing_request, Request}}, [{admit, _}, timer]) -> {admitting, Request};
 context(none, _Input, _Actions) -> none;
 context(Context, Input, Actions) ->
     case sent_failure(Actions) =/= [] orelse failures(Actions) =/= [] of
@@ -384,7 +420,7 @@ context(Context, Input, Actions) ->
         false -> advanced(Context, Input, Actions)
     end.
 
-advanced({admitting, Request}, {admission, {open, Mode, _}}, _Actions) -> {Request, Mode, public_key};
+advanced({admitting, Request}, {admission, _, {open, Mode, _}}, _Actions) -> {Request, Mode, public_key};
 advanced({admitting, _} = Context, _Input, _Actions) -> Context;
 advanced({Request, Mode, Phase}, _Input, Actions) -> {Request, Mode, next_phase(Phase, Mode, Actions)}.
 
@@ -408,11 +444,20 @@ sent(Kind, Actions, Advanced, Stay) ->
         [] -> Stay
     end.
 
-%% Breadth first over {core state, context, honest so far}; every transition's actions
-%% are checked by invariants/4.
+%% The exploration's own count of the Pairing Requests the core took, from its `admit`.
+tag(Tag, Actions) ->
+    case [T || {admit, T} <- Actions] of
+        [T] -> T;
+        [] -> Tag
+    end.
+
+%% Breadth first over {core state, context, honest so far, the current request's tag};
+%% every transition's actions are checked by invariants/4. The tag grows with each
+%% request, so the phone sends at most ?REQUESTS of them on a path, enough for a verdict
+%% or a withdrawal of the first to arrive during the second.
 explored_core_keeps_its_invariants_test_() ->
     {timeout, 300, fun() ->
-        Start = {core(), none, true},
+        Start = {core(), none, true, 0},
         Count = explore(queue:from_list([Start]), #{Start => true}, 0),
         ?assert(Count > 1000)
     end}.
@@ -420,7 +465,7 @@ explored_core_keeps_its_invariants_test_() ->
 explore(Queue, Seen, Count) ->
     case queue:out(Queue) of
         {empty, _} -> Count;
-        {{value, {State, Context, Honest}}, Rest} ->
+        {{value, {State, Context, Honest, Tag}}, Rest} ->
             {Next, Seen1, Count1} =
                 lists:foldl(
                   fun({Input, InputHonest}, {Q, S, C}) ->
@@ -429,21 +474,27 @@ explore(Queue, Seen, Count) ->
                           %% and a new pairing starts honest.
                           Honest1 = Honest andalso (InputHonest orelse Actions =:= []),
                           invariants(Input, Actions, Context, Honest1),
+                          ?assert(not stale(Input, Tag) orelse {Actions, State1} =:= {[], State}),
                           Context1 = context(Context, Input, Actions),
                           Fresh = is_tuple(Context1) andalso element(1, Context1) =:= admitting,
-                          Node = {State1, Context1, Honest1 orelse Fresh},
+                          Node = {State1, Context1, Honest1 orelse Fresh, tag(Tag, Actions)},
                           case S of
                               #{Node := _} -> {Q, S, C + 1};
                               #{} -> {queue:in(Node, Q), S#{Node => true}, C + 1}
                           end
-                  end, {Rest, Seen, Count}, inputs({State, Context})),
+                  end, {Rest, Seen, Count}, inputs({State, Context, Tag})),
             explore(Next, Seen1, Count1)
     end.
+
+%% A verdict or a withdrawal for an earlier request, which changes nothing.
+stale({admission, T, _}, Tag) -> T =/= Tag;
+stale({withdraw, T}, Tag) -> T =/= Tag;
+stale(_Input, _Tag) -> false.
 
 %% On every transition: each PDU sent encodes and decodes back to itself; a key and a
 %% bond come only from the honest phone, with the honest LTK and the window's level; a
 %% failure the core reports is a Pairing Failed sent, except the phone's own and a
-%% timeout, which send nothing.
+%% timeout, which send nothing; and a failure once the link has its key ends the link.
 invariants(Input, Actions, Context, Honest) ->
     [?assertEqual(Pdu, erx_smp:decode(erx_smp:encode(Pdu))) || {send, Pdu} <- Actions],
     Keys = [A || {key, _, _} = A <- Actions] ++ [A || {bonded, _} = A <- Actions],
@@ -462,4 +513,9 @@ invariants(Input, Actions, Context, Honest) ->
         [timeout] -> ?assertEqual({[], timeout}, {sent_failure(Actions), Input});
         [{peer, _}] -> ?assertMatch({[], {pdu, {pairing_failed, _}}}, {sent_failure(Actions), Input});
         [_] -> ?assertMatch([_], sent_failure(Actions))
+    end,
+    case {failures(Actions), Context} of
+        {[_], {_, _, Phase}} when Phase =:= encrypting; Phase =:= identity; Phase =:= identity_address ->
+            ?assert(lists:member(end_link, Actions));
+        _ -> ok
     end.

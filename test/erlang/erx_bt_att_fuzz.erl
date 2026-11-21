@@ -105,9 +105,11 @@ round_of(requests, Server, Bearer0) ->
     Sent = [P || {send, P} <- Actions],
     [byte_size(P) =< Mtu orelse error({response_over_mtu, Pdu, P}) || P <- Sent],
     Answered = check_answer(Pdu, Actions, Sent),
-    %% Now and then the handler answers whatever write waits.
+    %% Now and then the handler answers the write this request gave it, or some write,
+    %% the one that waits or a late one.
+    Ref = lists:max([rand:uniform(16) | [R || {write, R, _, _} <- Actions]]),
     {Released, After} = case rand:uniform(3) of
-                            1 -> erx_gatt_server:reply(pick([ok, {error, 16#80}, timeout]), Server, Next);
+                            1 -> erx_gatt_server:reply(Ref, pick([ok, {error, 16#80}, timeout]), Server, Next);
                             _ -> {[], Next}
                         end,
     [byte_size(P) =< erx_gatt_server:mtu(Next) orelse error({response_over_mtu, Pdu, P}) || {send, P} <- Released],

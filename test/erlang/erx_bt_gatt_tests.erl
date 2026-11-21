@@ -14,6 +14,7 @@
 -define(OPEN, #{key => none, encrypted => false}).
 -define(JUST_WORKS, #{key => encrypted, encrypted => true}).
 -define(PASSKEY, #{key => authenticated, encrypted => true}).
+-define(WRITES, 4).
 
 %% Two served services, given out of name order: nus, as the design's example declares it,
 %% and sec, with a long readable value and an indication, both above `open`.
@@ -348,12 +349,12 @@ rest(Handle, Sofar, Server, Bearer) ->
 
 write_waits_for_its_handler_test() ->
     S = server(?OPEN),
-    {[], [{write, {nus, rx}, <<"hi">>}], B} = ask(write(12, <<"hi">>), S, erx_gatt_server:new()),
-    ?assertEqual({[{send, <<16#13>>}], erx_gatt_server:new()}, erx_gatt_server:reply(ok, S, B)),
-    ?assertMatch({[{send, <<16#01, 16#12, 12, 0, 16#80>>}], _}, erx_gatt_server:reply({error, 16#80}, S, B)),
-    ?assertMatch({[{send, <<16#01, 16#12, 12, 0, 16#13>>}], _}, erx_gatt_server:reply({error, value_not_allowed}, S, B)),
-    ?assertMatch({[{send, <<16#01, 16#12, 12, 0, 16#0E>>}], _}, erx_gatt_server:reply(timeout, S, B)),
-    ?assertMatch({[{send, <<16#01, 16#12, 12, 0, 16#0E>>}], _}, erx_gatt_server:reply({error, 16#A0}, S, B)).
+    {[], [{write, _, {nus, rx}, <<"hi">>}], B} = ask(write(12, <<"hi">>), S, erx_gatt_server:new()),
+    ?assertMatch({[{send, <<16#13>>}], _}, erx_gatt_server:reply(1, ok, S, B)),
+    ?assertMatch({[{send, <<16#01, 16#12, 12, 0, 16#80>>}], _}, erx_gatt_server:reply(1, {error, 16#80}, S, B)),
+    ?assertMatch({[{send, <<16#01, 16#12, 12, 0, 16#13>>}], _}, erx_gatt_server:reply(1, {error, value_not_allowed}, S, B)),
+    ?assertMatch({[{send, <<16#01, 16#12, 12, 0, 16#0E>>}], _}, erx_gatt_server:reply(1, timeout, S, B)),
+    ?assertMatch({[{send, <<16#01, 16#12, 12, 0, 16#0E>>}], _}, erx_gatt_server:reply(1, {error, 16#A0}, S, B)).
 
 writes_answer_their_errors_test() ->
     [Sec, #{characteristics := [Rx, Tx]} = Nus] = services(),
@@ -407,15 +408,24 @@ second_request_before_the_response_ends_the_link_test() ->
 
 commands_wait_behind_the_handler_and_overflow_is_discarded_test() ->
     S = server(?OPEN),
-    {[], [{write, {nus, rx}, <<0>>}], B0} = ask(write_cmd(12, <<0>>), S, erx_gatt_server:new()),
+    {[], [{write, _, {nus, rx}, <<0>>}], B0} = ask(write_cmd(12, <<0>>), S, erx_gatt_server:new()),
     B16 = lists:foldl(fun(N, B) -> {[], [], Next} = ask(write_cmd(12, <<N>>), S, B), Next end, B0, lists:seq(1, 16)),
     ?assertMatch({[], [discarded], _}, ask(write_cmd(12, <<17>>), S, B16)),
     %% A request waits behind the commands; the handler's answers release them in order.
     {[], [], B17} = ask(read(1), S, B16),
-    {[{write, {nus, rx}, <<1>>}], B18} = erx_gatt_server:reply(ok, S, B17),
-    Final = lists:foldl(fun(N, B) -> {[{write, {nus, rx}, <<N>>}], Next} = erx_gatt_server:reply(ok, S, B), Next end,
+    {[{write, 2, {nus, rx}, <<1>>}], B18} = erx_gatt_server:reply(1, ok, S, B17),
+    Final = lists:foldl(fun(N, B) -> {[{write, _, {nus, rx}, <<N>>}], Next} = erx_gatt_server:reply(N, ok, S, B), Next end,
                         B18, lists:seq(2, 16)),
-    ?assertMatch({[{send, <<16#0B, 0, 16#18>>}], _}, erx_gatt_server:reply(ok, S, Final)).
+    ?assertMatch({[{send, <<16#0B, 0, 16#18>>}], _}, erx_gatt_server:reply(17, ok, S, Final)).
+
+%% An answer to a write that timed out is dropped, never taken for the next write.
+late_answer_is_not_taken_for_the_next_write_test() ->
+    S = server(?OPEN),
+    {[], [{write, 1, {nus, rx}, <<"a">>}], B1} = ask(write(12, <<"a">>), S, erx_gatt_server:new()),
+    {[{send, <<16#01, 16#12, 12, 0, 16#0E>>}], B2} = erx_gatt_server:reply(1, timeout, S, B1),
+    {[], [{write, 2, {nus, rx}, <<"b">>}], B3} = ask(write(12, <<"b">>), S, B2),
+    ?assertEqual({[], B3}, erx_gatt_server:reply(1, {error, 16#80}, S, B3)),
+    ?assertMatch({[{send, <<16#13>>}], _}, erx_gatt_server:reply(2, ok, S, B3)).
 
 unsupported_and_invalid_requests_test() ->
     S = server(?OPEN),
@@ -436,7 +446,7 @@ prepared_writes_at_every_mtu_test() ->
                                                        {[Echo], [], Next} = ask(prepare(12, Offset, Part), S, B),
                                                        Next
                                                end, with_mtu(Mtu), parts(Long, Mtu - 5)),
-                          ?assertMatch({Mtu, {[], [{write, {nus, rx}, Long}], _}}, {Mtu, ask(execute(1), S, Bearer)})
+                          ?assertMatch({Mtu, {[], [{write, _, {nus, rx}, Long}], _}}, {Mtu, ask(execute(1), S, Bearer)})
                   end, lists:seq(23, 247)).
 
 parts(Value, Size) ->
@@ -467,7 +477,7 @@ gate_guards_commands_prepares_and_value_search_test() ->
     Encrypted = (server(?JUST_WORKS))#{table := Gated},
     B = erx_gatt_server:new(),
     ?assertEqual({[], [], B}, ask(write_cmd(12, <<"c">>), Open, B)),
-    ?assertMatch({[], [{write, {nus, rx}, <<"c">>}], _}, ask(write_cmd(12, <<"c">>), Encrypted, B)),
+    ?assertMatch({[], [{write, _, {nus, rx}, <<"c">>}], _}, ask(write_cmd(12, <<"c">>), Encrypted, B)),
     ?assertEqual(error_rsp(16#16, 18, 16#05), answer(prepare(18, 0, <<1>>), Encrypted, B)),
     ?assertEqual(<<16#17, 18, 0, 0, 0, 1>>, answer(prepare(18, 0, <<1>>), Encrypted#{security := ?PASSKEY}, B)),
     %% Find By Type Value compares no value the gate hides (Part F, 3.4.3.3).
@@ -489,13 +499,15 @@ prepared_empty_parts_hold_nothing_test() ->
 %% answered, which ATT allows to be at most one (Part F, 3.3.2). Each step must answer no
 %% request twice and none it was not asked; a second request before a response must end
 %% the link; nothing sent may pass the MTU; and from every state the handler's answers
-%% must bring the count back to zero.
+%% must bring the count back to zero. The state also holds the ref of the last write given
+%% to the handler, which answers that write, and an answer to the write before it must
+%% change nothing; refs grow, so the exploration stops past ?WRITES writes.
 bearer_explored_test_() ->
     {timeout, 120, fun explore/0}.
 
 explore() ->
     S = server(?JUST_WORKS),
-    Start = {erx_gatt_server:new(), 0},
+    Start = {erx_gatt_server:new(), 0, 0},
     Visited = explore([Start], #{Start => true}, S),
     io:format("~b states~n", [map_size(Visited)]),
     ?assert(map_size(Visited) > 1000).
@@ -504,7 +516,8 @@ explore([], Visited, _S) ->
     Visited;
 explore([State | Rest], Visited, S) ->
     settles(State, S, 40),
-    Next = [N || Event <- alphabet(), N <- [step(Event, State, S)], N =/= closed, not maps:is_key(N, Visited)],
+    Next = [N || Event <- alphabet(), N <- [step(Event, State, S)], N =/= closed, element(3, N) =< ?WRITES,
+                 not maps:is_key(N, Visited)],
     Unique = lists:usort(Next),
     explore(Unique ++ Rest, lists:foldl(fun(N, V) -> V#{N => true} end, Visited, Unique), S).
 
@@ -512,33 +525,38 @@ alphabet() ->
     [{phone, read(1)}, {phone, write(12, <<"w">>)}, {phone, write_cmd(12, <<"c">>)},
      {phone, prepare(12, 0, binary:copy(<<1>>, 100))}, {phone, execute(1)}, {phone, execute(0)},
      {phone, mtu_req(30)}, {phone, write(21, <<2, 0>>)}, {phone, confirm()},
-     {handler, ok}, {handler, {error, 16#81}}, indicate].
+     {handler, ok}, {handler, {error, 16#81}}, late, indicate].
 
-step({phone, Pdu}, {Bearer, Outstanding}, S) ->
+step({phone, Pdu}, {Bearer, Outstanding, Ref}, S) ->
     Request = binary:first(Pdu) band 16#40 =:= 0 andalso binary:first(Pdu) =/= 16#1E,
     {Actions, Next} = erx_gatt_server:request(Pdu, S, Bearer),
     case Request andalso Outstanding =:= 1 of
         true -> ?assertEqual([{close, request_outstanding}], Actions), closed;
-        false -> account(Actions, Outstanding + case Request of true -> 1; false -> 0 end, Bearer, Next)
+        false -> account(Actions, Outstanding + case Request of true -> 1; false -> 0 end, Ref, Bearer, Next)
     end;
-step({handler, Answer}, {Bearer, Outstanding}, S) ->
-    {Actions, Next} = erx_gatt_server:reply(Answer, S, Bearer),
-    account(Actions, Outstanding, Bearer, Next);
-step(indicate, {Bearer, Outstanding}, S) ->
+step({handler, Answer}, {Bearer, Outstanding, Ref}, S) ->
+    {Actions, Next} = erx_gatt_server:reply(Ref, Answer, S, Bearer),
+    account(Actions, Outstanding, Ref, Bearer, Next);
+step(late, {Bearer, _Outstanding, Ref} = State, S) ->
+    ?assertEqual({[], Bearer}, erx_gatt_server:reply(Ref - 1, ok, S, Bearer)),
+    State;
+step(indicate, {Bearer, Outstanding, Ref}, S) ->
     case erx_gatt_server:notify(indicate, {sec, ind}, <<"i">>, S, Bearer) of
-        {ok, Pdu, Next} -> ?assert(byte_size(Pdu) =< erx_gatt_server:mtu(Bearer)), {Next, Outstanding};
-        {error, Reason} -> ?assert(lists:member(Reason, [busy, not_subscribed])), {Bearer, Outstanding}
+        {ok, Pdu, Next} -> ?assert(byte_size(Pdu) =< erx_gatt_server:mtu(Bearer)), {Next, Outstanding, Ref};
+        {error, Reason} -> ?assert(lists:member(Reason, [busy, not_subscribed])), {Bearer, Outstanding, Ref}
     end.
 
 %% The responses among `Actions` answer requests asked; none passes the MTU it was sent at.
-account(Actions, Asked, Before, After) ->
+account(Actions, Asked, Ref, Before, After) ->
     Responses = [P || {send, P} <- Actions],
     [?assert(byte_size(P) =< erx_gatt_server:mtu(Before)) || P <- Responses],
     ?assert(length(Responses) =< Asked),
     ?assertNot(lists:member({close, request_outstanding}, Actions)),
-    {After, Asked - length(Responses)}.
+    Given = [R || {write, R, _, _} <- Actions],
+    [?assertEqual(Ref + 1, R) || R <- Given],
+    {After, Asked - length(Responses), lists:max([Ref | Given])}.
 
-settles({_Bearer, 0}, _S, _Budget) ->
+settles({_Bearer, 0, _Ref}, _S, _Budget) ->
     ok;
 settles(State, S, Budget) when Budget > 0 ->
     settles(step({handler, ok}, State, S), S, Budget - 1).

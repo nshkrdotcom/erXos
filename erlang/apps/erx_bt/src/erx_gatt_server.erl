@@ -7,7 +7,7 @@ The ATT server of one link (docs/design-bluetooth.md, "The ATT server"): a pure 
 machine over the attribute table and the link's ATT bearer, from the Bluetooth Core
 Specification 6.3, Vol 3 Part F (ATT) and Part G (GATT).
 
-`request/3` takes one PDU from the phone and `reply/3` a handler's answer to the write it
+`request/3` takes one PDU from the phone and `reply/4` a handler's answer to the write it
 was given; each returns the actions the link performs and the next bearer. It answers
 Exchange MTU with `erx_l2cap:att_mtu/0`, Find Information, Find By Type Value, Read By Type,
 Read, Read Blob, Read By Group Type, Write Request, Prepare Write and Execute Write, and
@@ -17,8 +17,10 @@ than the bearer's MTU, is Invalid PDU (3.3). The gate decides every read and wri
 characteristic value or descriptor; `notify/5` asks it before a notification or an
 indication too.
 
-A write of a characteristic value goes to its handler as `{write, Key, Value}`, and the
-bearer waits for the answer: so a handler sees one write of a link at a time, as ATT's
+A write of a characteristic value goes to its handler as `{write, Ref, Key, Value}`, `Ref`
+numbering the bearer's writes, and the bearer waits for the answer to that `Ref`, so an
+answer that comes after its write timed out is dropped rather than taken for the next
+write; and a handler sees one write of a link at a time, as ATT's
 sequential protocol has them (3.3.2). What arrives meanwhile waits in the bearer in order:
 at most one request, since a second request before the first's response ends the link,
 and at most `bt_write_queue` write commands, past which a command is discarded and
@@ -32,20 +34,22 @@ is in flight at a time (3.4.7.2).
 
 -include("generated/erx_abi.hrl").
 
--export([new/0, request/3, reply/3, notify/5, mtu/1]).
--export_type([bearer/0, server/0, action/0, subscription/0]).
+-export([new/0, request/3, reply/4, notify/5, mtu/1]).
+-export_type([bearer/0, server/0, action/0, subscription/0, ref/0]).
 
 -type key() :: erx_gatt_db:key().
 -type subscription() :: none | notify | indicate.
+-doc "The number of a write the bearer gave a handler, which its answer names.".
+-type ref() :: pos_integer().
 -doc "What a step reads: the table, the values the handlers last set and the link's security.".
 -type server() :: #{table := erx_gatt_db:table(), values := #{key() => binary()},
                     security := erx_gatt_gate:link_security()}.
 -doc """
 What the link does: sends a PDU on the ATT channel; gives a write to the characteristic's
-handler and passes its answer to `reply/3`; tells the handlers of a subscription, a new MTU
+handler and passes its answer to `reply/4`; tells the handlers of a subscription, a new MTU
 or a confirmed indication; counts a discarded command; or ends the link.
 """.
--type action() :: {send, binary()} | {write, key(), binary()} | {subscribed, key(), subscription()}
+-type action() :: {send, binary()} | {write, ref(), key(), binary()} | {subscribed, key(), subscription()}
                 | {mtu, pos_integer()} | {confirmed, key()} | discarded | {close, request_outstanding}.
 
 -type item() :: {request, erx_att:request()} | {write_command, erx_att:handle(), binary()}
@@ -53,7 +57,8 @@ or a confirmed indication; counts a discarded command; or ends the link.
 -record(bearer, {
     mtu = ?ERX_ATT_MTU_DEFAULT :: pos_integer(),
     exchanged = false :: boolean(),
-    awaiting = none :: none | command | {request, Opcode :: 0..16#FF, erx_att:handle()},
+    writes = 0 :: non_neg_integer(),                         % the writes given so far, the last one's ref
+    awaiting = none :: none | {ref(), command | {request, Opcode :: 0..16#FF, erx_att:handle()}},
     waiting = queue:new() :: queue:queue(item()),            % what arrived while a handler answers
     %% The prepared write: its value so far, joined part by part, and whether every part
     %% landed within what the parts before it wrote; so it never holds more than the maximum.
@@ -87,16 +92,15 @@ request(Pdu, Server, #bearer{mtu = Mtu} = Bearer) ->
     end.
 
 -doc """
-Takes the handler's answer to the write the bearer waits on: `ok`, or `{error, Code}` with
-an Application Error code or `value_not_allowed`. Any other answer, a timeout among them,
-is Unlikely Error. The answer to a write command is dropped.
+Takes the handler's answer to the write `Ref`: `ok`, or `{error, Code}` with an
+Application Error code or `value_not_allowed`. Any other answer, a timeout among them, is
+Unlikely Error. The answer to a write command is dropped, and an answer to a write the
+bearer no longer waits on changes nothing.
 """.
--spec reply(term(), server(), bearer()) -> {[action()], bearer()}.
-reply(_Answer, _Server, #bearer{awaiting = none} = Bearer) ->
-    {[], Bearer};
-reply(_Answer, Server, #bearer{awaiting = command} = Bearer) ->
+-spec reply(ref(), term(), server(), bearer()) -> {[action()], bearer()}.
+reply(Ref, _Answer, Server, #bearer{awaiting = {Ref, command}} = Bearer) ->
     drain([], Server, Bearer#bearer{awaiting = none});
-reply(Answer, Server, #bearer{awaiting = {request, Opcode, Handle}} = Bearer) ->
+reply(Ref, Answer, Server, #bearer{awaiting = {Ref, {request, Opcode, Handle}}} = Bearer) ->
     Response = case Answer of
                    ok when Opcode =:= ?ERX_ATT_OPCODE_EXECUTE_WRITE_REQ -> execute_write;
                    ok -> write;
@@ -105,7 +109,9 @@ reply(Answer, Server, #bearer{awaiting = {request, Opcode, Handle}} = Bearer) ->
                    {error, value_not_allowed} -> {error, Opcode, Handle, value_not_allowed};
                    _ -> {error, Opcode, Handle, unlikely_error}
                end,
-    drain([{send, erx_att:encode(Response)}], Server, Bearer#bearer{awaiting = none}).
+    drain([{send, erx_att:encode(Response)}], Server, Bearer#bearer{awaiting = none});
+reply(_Ref, _Answer, _Server, Bearer) ->
+    {[], Bearer}.
 
 -doc """
 A notification or an indication of `Value` for the characteristic `Key`: `{ok, Pdu,
@@ -137,11 +143,11 @@ confirmed(#bearer{indication = Key} = Bearer) -> {[{confirmed, Key}], Bearer#bea
 %% An item taken at once, or waiting behind the handler's answer.
 arrive(Item, Server, #bearer{awaiting = none} = Bearer) ->
     drain(step(Item, Server, Bearer), Server);
-arrive(Item, _Server, #bearer{awaiting = Awaiting, waiting = Waiting} = Bearer) ->
+arrive(Item, _Server, #bearer{awaiting = {_Ref, Awaited}, waiting = Waiting} = Bearer) ->
     Requests = [I || I <- queue:to_list(Waiting), is_request(I)],
     Commands = queue:len(Waiting) - length(Requests),
     case is_request(Item) of
-        true when Requests =/= []; Awaiting =/= command -> {[{close, request_outstanding}], Bearer};
+        true when Requests =/= []; Awaited =/= command -> {[{close, request_outstanding}], Bearer};
         true -> {[], Bearer#bearer{waiting = queue:in(Item, Waiting)}};
         false when Commands >= ?ERX_BT_WRITE_QUEUE -> {[discarded], Bearer};
         false -> {[], Bearer#bearer{waiting = queue:in(Item, Waiting)}}
@@ -232,7 +238,7 @@ respond({write, Handle, Value}, Server, Bearer) ->
     #{source := Source, max := Max} = writable(Opcode, Handle, Server),
     byte_size(Value) =< Max orelse ?ERROR(Opcode, Handle, invalid_attribute_value_length),
     case Source of
-        {value, Key, _} -> {[{write, Key, Value}], Bearer#bearer{awaiting = {request, Opcode, Handle}}};
+        {value, Key, _} -> give(Key, Value, {request, Opcode, Handle}, Bearer);
         {configuration, Key} -> subscribe(Handle, Key, Value, Server, Bearer)
     end;
 respond({prepare_write, Handle, Offset, Part}, Server, #bearer{prepared = Prepared} = Bearer) ->
@@ -261,7 +267,12 @@ respond({execute_write, write}, _Server, #bearer{prepared = none} = Bearer) ->
 respond({execute_write, write}, _Server, #bearer{prepared = {Handle, _Key, _Value, false}}) ->
     ?ERROR(?ERX_ATT_OPCODE_EXECUTE_WRITE_REQ, Handle, invalid_offset);
 respond({execute_write, write}, _Server, #bearer{prepared = {Handle, Key, Value, true}} = Bearer) ->
-    {[{write, Key, Value}], Bearer#bearer{prepared = none, awaiting = {request, ?ERX_ATT_OPCODE_EXECUTE_WRITE_REQ, Handle}}}.
+    give(Key, Value, {request, ?ERX_ATT_OPCODE_EXECUTE_WRITE_REQ, Handle}, Bearer#bearer{prepared = none}).
+
+%% Gives a write to the characteristic's handler under the next ref, and waits for its answer.
+give(Key, Value, Awaited, #bearer{writes = Writes} = Bearer) ->
+    Ref = Writes + 1,
+    {[{write, Ref, Key, Value}], Bearer#bearer{writes = Ref, awaiting = {Ref, Awaited}}}.
 
 %% A write command: given to the handler when a Write Request would be, otherwise ignored (3.4.5.3).
 command(Handle, Value, #{table := Table, security := Security}, Bearer) ->
@@ -269,7 +280,7 @@ command(Handle, Value, #{table := Table, security := Security}, Bearer) ->
         {ok, #{command := Level, source := {value, Key, _}, max := Max}}
           when Level =/= none, byte_size(Value) =< Max ->
             case erx_gatt_gate:check(Level, Security) of
-                ok -> {[{write, Key, Value}], Bearer#bearer{awaiting = command}};
+                ok -> give(Key, Value, command, Bearer);
                 {error, _} -> {[], Bearer}
             end;
         _ ->

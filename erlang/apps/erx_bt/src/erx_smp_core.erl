@@ -13,8 +13,10 @@ pairing's key, and `timeout` when the Security Manager Timer runs out (3.4).
 
 **A pairing** runs through these phases:
 
-- `idle`: a Pairing Request asks the window (`admit`) and starts the timer;
-- `{admitting, Request}`: the verdict refuses, or opens a pairing with the window's
+- `idle`: a Pairing Request asks the window (`{admit, Tag}`, `Tag` numbering the
+  link's Pairing Requests) and starts the timer;
+- `{admitting, Request}`: the verdict, `{admission, Tag, Verdict}` for the request's
+  own `Tag`, refuses, or opens a pairing with the window's
   mode and the pairing's fresh key pair, nonces and passkey, and the request decides
   the method: Passkey Entry in a `display` window, the phone typing what erXos shows,
   and Just Works in a `nodisplay` one (2.3.5.1, Tables 2.7 and 2.8);
@@ -38,10 +40,16 @@ level, Authentication Requirements; a key shorter than 16 octets, Encryption Key
 a malformed PDU, a reserved value or the debug key, Invalid Parameters; a key off the
 curve, a reflected key or a wrong check value, DHKey Check Failed; a wrong commitment,
 Confirm Value Failed. A PDU out of its turn fails the pairing with Unspecified Reason,
-or Command Not Supported for a command a responder never takes. Every failure of a
-pairing goes through one route, `fail/2`, which sends Pairing Failed, reports the
-reason (`{failed, Reason}`) and stops the timer; the phone's Pairing Failed is
-reported as `{peer, Code}`. Two refusals are not pairings and report nothing: no
+or Command Not Supported for a command a responder never takes. The window's
+`{withdraw, Tag}`, when its opener closes it, fails the pairing of that `Tag` with
+Unspecified Reason, reported as `withdrawn`. Every failure of a pairing but the
+timeout and a request in `done` goes through one route, `failed/4`, which sends
+Pairing Failed, reports the reason (`{failed, Reason}`) and stops the timer; the
+phone's Pairing Failed (`peer_failed/1`) is reported as `{peer, Code}` and sends
+nothing. A failure after the link has its key, in the third phase,
+also ends the link (`end_link`) and the core with it, so a link's key is a kept bond's
+or its own pairing's and a link with a key never pairs again (docs/design-bluetooth.md,
+"One table, one gate"). Two refusals are not pairings and report nothing: no
 window and the pairing wait. A Pairing Request after the bond is refused in `done`
 itself and reported as `already_bonded`, since the link holds a key. A timeout reports `timeout`, sends nothing more and ends
 the link (`end_link`); the state is then `ended`, which ignores everything (3.4).
@@ -51,29 +59,31 @@ never sets the keypress flag, so they never restart the timer.
 `timer` restarts the 30 s timer and `timer_stop` stops it; `{passkey, N}` is the
 passkey for the window to show.
 
-Two obligations fall on the link that runs this core. It answers `admit` before it
-steps any other input, so a verdict always belongs to the request that asked for it.
-And the state, the verdict's fresh values and the `key` and `bonded` actions carry
-secrets (the private key, the passkey, the DHKey, the LTK), which the link keeps out
-of crash reports and status output.
+A verdict or a withdrawal whose `Tag` is not the current request's is ignored, so one
+that arrives late never applies to a later request. One obligation falls on the link
+that runs this core: the state, the verdict's fresh values and the `key` and `bonded`
+actions carry secrets (the private key, the passkey, the DHKey, the LTK), which the
+link keeps out of crash reports and status output.
 """.
 
 -include("generated/erx_abi.hrl").
 
 -export([new/1, step/2]).
--export_type([state/0, input/0, action/0, verdict/0, bond/0, reason/0]).
+-export_type([state/0, input/0, action/0, verdict/0, bond/0, reason/0, tag/0]).
 
 -type mode() :: display | nodisplay.
 -type level() :: authenticated | unauthenticated.
 -type value() :: erx_smp_crypto:value().
 -doc "The window's answer to `admit` (docs/design-bluetooth.md, \"The pairing window\").".
 -type verdict() :: {open, mode(), erx_smp_crypto:fresh()} | closed | waiting | bonded.
--type input() :: {pdu, erx_smp:decoded()} | {admission, verdict()} | encrypted | timeout.
+-doc "The number of a link's Pairing Request, which its `admit`, verdict and withdrawal carry.".
+-type tag() :: pos_integer().
+-type input() :: {pdu, erx_smp:decoded()} | {admission, tag(), verdict()} | {withdraw, tag()} | encrypted | timeout.
 -doc "What a successful pairing leaves: the LTK, its level and the phone's identity.".
 -type bond() :: #{ltk := value(), level := level(), irk := value(), identity := erx_smp_crypto:address()}.
 -type reason() :: already_bonded | secure_connections_required | key_size | method | bonding | invalid
-                | confirm | dhkey | unexpected | timeout | {peer, byte()}.
--type action() :: admit | timer | timer_stop | end_link | {send, erx_smp:pdu()} | {passkey, 0..?ERX_SMP_PASSKEY_MAX}
+                | confirm | dhkey | unexpected | timeout | withdrawn | {peer, byte()}.
+-type action() :: {admit, tag()} | timer | timer_stop | end_link | {send, erx_smp:pdu()} | {passkey, 0..?ERX_SMP_PASSKEY_MAX}
                 | {key, value(), level()} | {bonded, bond()} | {failed, reason()}.
 %% The pairing's context once admitted: the method, both feature exchanges, the fresh
 %% values and, from the public key exchange on, the phone's key and the DHKey.
@@ -83,36 +93,58 @@ of crash reports and status output.
                | {confirm, non_neg_integer(), pairing()} | {random, non_neg_integer(), value() | none, pairing()}
                | {dhkey_check, value(), value(), pairing()} | {encrypting, map()} | {identity, map()}
                | {identity_address, map()} | done | ended.
--opaque state() :: #{phase := phase(), central := erx_smp_crypto:address(), peripheral := erx_smp_crypto:address()}.
+%% `tag` is the number of the last Pairing Request, the current one while it pairs.
+-opaque state() :: #{phase := phase(), tag := non_neg_integer(),
+                     central := erx_smp_crypto:address(), peripheral := erx_smp_crypto:address()}.
 
 -doc "A link's Security Manager, with the addresses its connection setup used (2.2.7).".
 -spec new(#{central := erx_smp_crypto:address(), peripheral := erx_smp_crypto:address()}) -> state().
-new(#{central := Central, peripheral := Peripheral}) -> #{phase => idle, central => Central, peripheral => Peripheral}.
+new(#{central := Central, peripheral := Peripheral}) ->
+    #{phase => idle, tag => 0, central => Central, peripheral => Peripheral}.
 
 -doc "Takes one input; returns the link's actions and the next state.".
 -spec step(input(), state()) -> {[action()], state()}.
+step({pdu, {pairing_request, Request}}, #{phase := idle, tag := Last} = State) ->
+    {[{admit, Last + 1}, timer], State#{phase := {admitting, Request}, tag := Last + 1}};
 step(Input, #{phase := Phase} = State) ->
     try phase(Input, Phase, State) of
         {Actions, Next} -> {Actions, State#{phase := Next}}
     catch
-        throw:{fail, Code, Reason} ->
-            {[{send, {pairing_failed, Code}}, {failed, Reason}, timer_stop], State#{phase := idle}}
+        throw:{fail, ToSend, Reason} -> failed(ToSend, Reason, Phase, State)
     end.
+
+%% A pairing's one failure route: Pairing Failed sent unless the phone sent it, the
+%% reason reported and the timer stopped; once the link has the pairing's key, the
+%% link ends too, its key discarded with it, and the core with the link.
+failed(ToSend, Reason, Phase, State) ->
+    Reported = [{send, {pairing_failed, Code}} || Code <- ToSend] ++ [{failed, Reason}, timer_stop],
+    case keyed(Phase) of
+        true -> {Reported ++ [end_link], State#{phase := ended}};
+        false -> {Reported, State#{phase := idle}}
+    end.
+
+%% The phases after authentication stage 2 gave the link its key.
+keyed({encrypting, _}) -> true;
+keyed({identity, _}) -> true;
+keyed({identity_address, _}) -> true;
+keyed(_Phase) -> false.
 
 %% What every phase ignores, then the phases without a pairing, then a pairing's.
 phase({pdu, {reserved, _}}, Phase, _State) -> {[], Phase};
 phase({pdu, empty}, Phase, _State) -> {[], Phase};
 phase({pdu, {pairing_keypress_notification, _}}, Phase, _State) -> {[], Phase};
 phase(_Input, ended, _State) -> {[], ended};
-phase({pdu, {pairing_request, Request}}, idle, _State) -> {[admit, timer], {admitting, Request}};
+
+%% A Pairing Request in idle never reaches here: step/2 takes it, numbering it.
 phase(_Input, idle, _State) -> {[], idle};
 phase({pdu, {pairing_request, _}}, done, _State) ->
     {[{send, {pairing_failed, ?ERX_SMP_REASON_UNSPECIFIED_REASON}}, {failed, already_bonded}], done};
 phase(_Input, done, _State) -> {[], done};
 phase(timeout, _Phase, _State) -> {[{failed, timeout}, end_link], ended};
-phase({pdu, {pairing_failed, Code}}, _Phase, _State) -> {[{failed, {peer, Code}}, timer_stop], idle};
+phase({pdu, {pairing_failed, Code}}, _Phase, _State) -> peer_failed(Code);
 phase({pdu, {invalid, _}}, _Phase, _State) -> fail(?ERX_SMP_REASON_INVALID_PARAMETERS, invalid);
-phase({admission, Verdict}, {admitting, Request}, _State) -> admitted(Verdict, Request);
+phase({admission, Tag, Verdict}, {admitting, Request}, #{tag := Tag}) -> admitted(Verdict, Request);
+phase({withdraw, Tag}, _Phase, #{tag := Tag}) -> fail(?ERX_SMP_REASON_UNSPECIFIED_REASON, withdrawn);
 phase({pdu, {pairing_public_key, Key}}, {public_key, P}, _State) -> public_key(Key, P);
 phase({pdu, {pairing_confirm, Confirm}}, {confirm, Round, P}, _State) ->
     {[{send, {pairing_confirm, confirm(Round, P)}}, timer], {random, Round, Confirm, P}};
@@ -123,7 +155,8 @@ phase({pdu, {identity_information, Irk}}, {identity, Bond}, _State) -> {[timer],
 phase({pdu, {identity_address_information, Type, Address}}, {identity_address, Bond}, _State) ->
     {[{bonded, Bond#{identity => {identity_type(Type), Address}}}, timer_stop], done};
 phase(encrypted, Phase, _State) -> {[], Phase};
-phase({admission, _}, Phase, _State) -> {[], Phase};
+phase({admission, _, _}, Phase, _State) -> {[], Phase};
+phase({withdraw, _}, Phase, _State) -> {[], Phase};
 phase({pdu, Pdu}, _Phase, _State) ->
     case responder_never_takes(element(1, Pdu)) of
         true -> fail(?ERX_SMP_REASON_COMMAND_NOT_SUPPORTED, unexpected);
@@ -256,4 +289,8 @@ require(true, _Code, _Reason) -> ok;
 require(false, Code, Reason) -> fail(Code, Reason).
 
 -spec fail(byte(), reason()) -> no_return().
-fail(Code, Reason) -> throw({fail, Code, Reason}).
+fail(Code, Reason) -> throw({fail, [Code], Reason}).
+
+%% The phone failed the pairing: nothing to send back (3.5.5).
+-spec peer_failed(byte()) -> no_return().
+peer_failed(Code) -> throw({fail, [], {peer, Code}}).
