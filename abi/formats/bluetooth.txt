@@ -154,6 +154,13 @@ limit bt_notify_queue u8 16
 # packets alike (docs/design-bluetooth.md, "Commands and data credits"); at the bound the
 # link is sent nothing more and disconnected.
 limit bt_link_backlog u8 32
+# The store (docs/design-bluetooth.md, "Bonds and the store"): the most bonds it keeps, the
+# largest stored state it writes or reads, the vault's state slot's 4 KiB, and the
+# deadline of each call of its backend, after which a get is unavailable and a put
+# unconfirmed.
+limit bt_bonds_max u8 8
+limit bt_state_max u16 4096
+limit bt_store_timeout_ms u32 5000
 
 # erXos's deadlines (docs/design-bluetooth.md, "The bring-up"): every command's answer,
 # and the patch's two waits, NetBSD's (usr.sbin/btattach/init_bcm43xx.c, lines 123-125

@@ -1334,7 +1334,10 @@ that never waits on a link:
    the address against the bonds ([Reconnection](#reconnection)) and
    answers the one bond it names, with its LTK, level, identity, table
    hash and subscriptions and without its IRK, so no other bond's key
-   leaves the store. A store that is `unknown` answers `none`. The
+   leaves the store. A store left `unknown` by its start's read
+   holds no bonds and answers `none`; one `unknown` after an unconfirmed
+   `put` answers from the bonds it holds, so bonds already kept work on a
+   trial boot (below). The
    address names a candidate, not a proven bond: what of the bond the
    link may use before its encryption is the key alone (below).
 2. `erx_gatt_srv:join(Conn, #{address := Address}) -> #{table := Table,
@@ -1780,7 +1783,10 @@ A pairing that completes asks the store to keep the new state, the
 bond with the subscriptions its link has made so far, under the tag the
 window admitted it by; the store tells the window its answer, which is
 the pairing's outcome however the link has fared since
-([The link's messages](#the-links-messages)). The link's key
+([The link's messages](#the-links-messages)). The bond is kept with no
+table hash, since `keep` carries none, so the first reconnection
+encrypted with its key indicates Service Changed once if the phone
+subscribed to it ([Reconnection](#reconnection)). The link's key
 is a kept bond's once the store answered `ok`, which `connected` tells
 the handlers with `bonded => true`; the link's level does not wait on
 the store ([One table, one gate](#one-table-one-gate)). A pairing whose

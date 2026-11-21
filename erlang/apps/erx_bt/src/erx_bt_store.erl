@@ -4,35 +4,109 @@
 -module(erx_bt_store).
 -moduledoc """
 The Bluetooth domain's store (docs/design-bluetooth.md, "The identity address" and "Bonds
-and the store"): the one owner of erXos's identity on the air, a static random address. It
-makes the address when it starts, from the kernel's generator, and keeps it in memory; it
-sits before the controller group in `erx_bt_sup`, so the controller process, which asks for
-it at each of its starts, sets the same address across the group's restarts. The bonds, and
-keeping the address with them, come with pairing (stage 4).
+and the store"): the one owner of erXos's identity address on the air and of the bonds.
+It sits first in `erx_bt_sup`, so it outlives every link, the window and the controller
+group.
+
+**One seam, every call under a deadline.** It keeps the whole state, encoded by
+`erx_bt_state`, through a backend of two calls, `get() -> {ok, Blob} | none | {error,
+unavailable}` and `put(Blob) -> ok | {error, too_large | unavailable}`: in development
+builds `erx_bt_state_file` over the directory the application's `state_dir` names. Each
+call runs in a short-lived process the store monitors and kills at
+`bt_store_timeout_ms`; a `get` not answered by then is `unavailable` and a `put`
+unconfirmed. The store waits on nothing else, so it answers every request it takes within
+a read and a put.
+
+**It changes only a state it has read.** The store is `read`, or `unknown` since its start
+or since a `put` it could not confirm. At its start it reads: `none` is an empty state
+under an address made now; a blob that decodes is the state; anything else leaves it
+`unknown` with an address made for this start only, and then every change is refused
+until `forget all` or the next start. After an unconfirmed `put` it keeps what it had and
+reads before the next change, which goes on only if that read gives a state. Every change
+but `forget all`, a pairing's `keep`, a bonded link's `subscriptions` and `served`, and
+`forget ADDRESS`, goes through `change/2`: the state last read, the edit, one `put` of the
+whole result, and the new bonds only at `ok`. After every confirmed change and every
+read, each link it monitors whose bond is gone is sent `forgotten` (`adopt/2`).
+
+**Links.** A link reaches the store by `resolve/1` at its start and by `{erx_bt_link,
+Link, Message}`. The store monitors a link from a `resolve` it answers with a bond or a
+`keep` it answers `ok`, finds the bond of `subscriptions` and `served` by that monitor,
+and drops the link at its `'DOWN'`. It answers a `keep` to the link and tells the window
+(`erx_bt_fs`) the outcome whether or not the link still lives.
+
+**Secrets stay here.** `resolve/1` answers a bond without its IRK; `format_status/1` shows
+`facts/1`, which holds no key, and each message as its kind; and a raise in a callback
+ends the process with `{shutdown, {raised, Class, Facts}}`, a reason built from the facts
+alone, so neither the raise's terms nor a queued `keep` reach a crash report.
 """.
 -behaviour(gen_server).
 
--export([start_link/0, address/0, resolve/1, static_address/1]).
--export([init/1, handle_call/3, handle_cast/2]).
+-include("generated/erx_abi.hrl").
 
--doc "Starts the store, registered as `erx_bt_store`, with a new identity address.".
+-export([start_link/0, start_link/1, address/0, resolve/1, forget/1, facts/0, static_address/1]).
+-export([init/1, handle_call/3, handle_cast/2, handle_info/2, format_status/1]).
+-export_type([backend/0]).
+
+-doc "The two calls of the store's seam, each run under the store's deadline.".
+-type backend() :: #{get := fun(() -> {ok, binary()} | none | {error, unavailable}),
+                     put := fun((binary()) -> ok | {error, too_large | unavailable})}.
+-type bond() :: erx_bt_state:bond().
+-type identity() :: erx_smp_crypto:address().
+
+-record(store, {
+    address :: <<_:48>>,
+    known :: read | {unknown, start | put},
+    reason = none :: none | store_unavailable | store_unreadable,
+    bonds = [] :: [bond()],                                % secret: never shown, see format_status/1
+    links = #{} :: #{reference() => {pid(), identity()}},  % the links it monitors, by monitor
+    backend :: backend(),
+    timeout :: pos_integer()
+}).
+
+-doc """
+Starts the store, registered as `erx_bt_store`, over the development file in the
+application's `state_dir` (default `/data/bt`), and reads it.
+""".
 -spec start_link() -> gen_server:start_ret().
 start_link() ->
-    gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
+    Dir = application:get_env(erx_bt, state_dir, "/data/bt"),
+    start_link(#{backend => #{get => fun() -> erx_bt_state_file:get(Dir) end,
+                              put => fun(Blob) -> erx_bt_state_file:put(Dir, Blob) end}}).
+
+-doc "Starts the store over `backend`; `timeout` is `bt_store_timeout_ms` unless given.".
+-spec start_link(#{backend := backend(), timeout => pos_integer()}) -> gen_server:start_ret().
+start_link(Options) ->
+    gen_server:start_link({local, ?MODULE}, ?MODULE, Options, []).
 
 -doc "The identity address, most significant octet first.".
 -spec address() -> <<_:48>>.
 address() ->
-    gen_server:call(?MODULE, address).
+    gen_server:call(?MODULE, address, infinity).
 
 -doc """
-The bond a link's phone address names (docs/design-bluetooth.md, "The link's start"),
-without its IRK, or `none`. This store keeps no bonds (TODO.md, Bluetooth), so it
-answers `none`, as a store without bonds does.
+The one bond a link's phone address names, without its IRK, or `none`
+(docs/design-bluetooth.md, "The link's start"): an identity address by equality, a
+resolvable private address by `ah` with each bond's IRK. A store `unknown` since its
+start holds no bonds and answers `none`; after an unconfirmed put it answers from the
+bonds it holds, so kept bonds work on a trial boot, whose every put fails. The caller, a link at its start, is monitored when a bond is answered.
 """.
--spec resolve(erx_smp_crypto:address()) -> none | erx_bt_link_core:resolved().
+-spec resolve(identity()) -> none | erx_bt_link_core:resolved().
 resolve(Address) ->
     gen_server:call(?MODULE, {resolve, Address}).
+
+-doc """
+Forgets the bonds with that identity address, or every bond (the control tree's
+`forget`): `enoent` when no bond has it, `eio` when the store stays `unknown` or the
+`put` is unconfirmed. The store bounds the wait itself, by a read and a put.
+""".
+-spec forget(<<_:48>> | all) -> ok | {error, enoent | eio}.
+forget(Target) ->
+    gen_server:call(?MODULE, {forget, Target}, infinity).
+
+-doc "What the store shows (docs/design-bluetooth.md, \"Inspection\"): never a key.".
+-spec facts() -> map().
+facts() ->
+    gen_server:call(?MODULE, facts, infinity).
 
 -doc """
 The static random address of six random octets, most significant first, or `retry` when
@@ -45,8 +119,15 @@ static_address(<<_:2, Random:46>>) when Random =:= 0; Random =:= 1 bsl 46 - 1 ->
 static_address(<<_:2, Random:46>>) ->
     {ok, <<2#11:2, Random:46>>}.
 
-init([]) ->
-    {ok, make_address()}.
+%% The start's read (docs/design-bluetooth.md, "Bonds and the store", its table).
+init(#{backend := Backend} = Options) ->
+    Store = #store{address = make_address(), known = {unknown, start}, backend = Backend,
+                   timeout = maps:get(timeout, Options, ?ERX_BT_STORE_TIMEOUT_MS)},
+    {ok, case read(Store) of
+             {ok, none} -> Store#store{known = read};
+             {ok, #{address := Address, bonds := Bonds}} -> Store#store{known = read, address = Address, bonds = Bonds};
+             {error, Reason} -> Store#store{reason = Reason}
+         end}.
 
 make_address() ->
     case static_address(erx_bytes:entropy(6)) of
@@ -54,10 +135,269 @@ make_address() ->
         retry -> make_address()
     end.
 
-handle_call(address, _From, Address) ->
-    {reply, Address, Address};
-handle_call({resolve, _Peer}, _From, Address) ->
-    {reply, none, Address}.
+handle_call(Request, From, Store) ->
+    guarded(fun() -> call(Request, From, Store) end, Store).
 
-handle_cast(_Message, Address) ->
-    {noreply, Address}.
+handle_cast(_Message, Store) ->
+    {noreply, Store}.
+
+handle_info(Message, Store) ->
+    guarded(fun() -> info(Message, Store) end, Store).
+
+%% A raise ends the store with the facts alone: the raise's terms and the message queue,
+%% which a crash report would show, may hold a bond's keys. `{shutdown, _}` keeps
+%% proc_lib's crash report, which lists the queue, from being written, and the
+%% supervisor still restarts the store and ends what follows it.
+guarded(Fun, Store) ->
+    try
+        Fun()
+    catch
+        Class:_ -> {stop, {shutdown, {raised, Class, facts(Store)}}, Store}
+    end.
+
+call(address, _From, #store{address = Address} = Store) ->
+    {reply, Address, Store};
+call({resolve, Address}, {Link, _}, #store{bonds = Bonds} = Store) ->
+    case find(Address, Bonds) of
+        none -> {reply, none, Store};
+        #{identity := Identity} = Bond -> {reply, resolved(Bond), watch(Link, Identity, Store)}
+    end;
+call({forget, all}, _From, Store) ->
+    {Answer, Next} = forget_all(Store),
+    {reply, Answer, Next};
+call({forget, <<_:48>> = Address}, _From, Store) ->
+    Edit = fun(Bonds) ->
+                   case [Bond || #{identity := {_, Octets}} = Bond <- Bonds, Octets =/= Address] of
+                       Bonds -> {error, enoent};
+                       Kept -> {ok, Kept}
+                   end
+           end,
+    case change(Edit, Store) of
+        {ok, Next} -> {reply, ok, Next};
+        {error, enoent, Next} -> {reply, {error, enoent}, Next};
+        {error, _, Next} -> {reply, {error, eio}, Next}
+    end;
+call(facts, _From, Store) ->
+    {reply, facts(Store), Store}.
+
+%% A pairing's `keep` (docs/design-bluetooth.md, "A pairing's outcome has one ordering
+%% point"): answered to the link, and its outcome told to the window, whatever became of
+%% the link. A bond is kept with no table hash, since `keep` carries none.
+info({erx_bt_link, Link, {keep, Tag, #{identity := Identity, level := Level, irk := Irk, ltk := Ltk},
+                          Subscriptions}}, Store) ->
+    Bond = #{identity => Identity, irk => Irk, ltk => Ltk, level => Level, hash => <<>>,
+             subscriptions => by_name(Subscriptions)},
+    {Answer, Outcome, Next} = case change(fun(Bonds) -> admit(Bond, Bonds) end, Store) of
+                                  {ok, Kept} -> {ok, {bonded, Identity, Level}, watch(Link, Identity, Kept)};
+                                  {error, Reason, Failed} -> {{error, Reason}, {failed, Reason}, Failed}
+                              end,
+    Link ! {store, {kept, Answer}},
+    {erx_bt_fs, node()} ! {outcome, Link, Tag, Outcome},
+    {noreply, Next};
+info({erx_bt_link, Link, {subscriptions, Subscriptions}}, Store) ->
+    {Answer, Next} = case bond_edit(Link, fun(Bond) -> Bond#{subscriptions := by_name(Subscriptions)} end, Store) of
+                         {ok, Kept} -> {ok, Kept};
+                         {error, _, Failed} -> {{error, unavailable}, Failed}
+                     end,
+    Link ! {store, {kept, Answer}},
+    {noreply, Next};
+info({erx_bt_link, Link, {served, <<_:256>> = Hash}}, Store) ->
+    case bond_edit(Link, fun(Bond) -> Bond#{hash := Hash} end, Store) of
+        {ok, Kept} -> {noreply, Kept};
+        {error, _, Failed} -> {noreply, Failed}
+    end;
+info({'DOWN', Monitor, process, _Link, _Reason}, #store{links = Links} = Store) when is_map_key(Monitor, Links) ->
+    {noreply, Store#store{links = maps:remove(Monitor, Links)}}.
+
+%% The pairing's bond joins the bonds unless its identity is already kept or the bonds
+%% are full (docs/design-bluetooth.md, "Pairing never replaces a bond").
+admit(#{identity := Identity} = Bond, Bonds) ->
+    case lists:any(fun(#{identity := Kept}) -> Kept =:= Identity end, Bonds) of
+        true -> {error, already_bonded};
+        false when length(Bonds) >= ?ERX_BT_BONDS_MAX -> {error, bonds_full};
+        false -> {ok, Bonds ++ [Bond]}
+    end.
+
+%% A change to the bond of the link `Link`, which the store found by the monitor a
+%% `resolve` or a `keep` gave it; a link it does not monitor has no bond to change.
+bond_edit(Link, Update, #store{links = Links} = Store) ->
+    case [Identity || {Pid, Identity} <- maps:values(Links), Pid =:= Link] of
+        [Identity | _] ->
+            change(fun(Bonds) ->
+                           case lists:partition(fun(#{identity := Kept}) -> Kept =:= Identity end, Bonds) of
+                               {[Bond], Others} -> {ok, Others ++ [Update(Bond)]};
+                               {[], _} -> {error, forgotten}
+                           end
+                   end, Store);
+        [] ->
+            {error, forgotten, Store}
+    end.
+
+%% The one route of every change but `forget all`: from the state last read or
+%% confirmed, the edit, one put of the whole result, and the new bonds only at `ok`. An
+%% encoding refused writes nothing, so the store stays as it was; any put not `ok` leaves
+%% the store `unknown` with what it had. The answer is `{ok, Store}` or `{error, Reason,
+%% Store}`.
+change(Edit, Store) ->
+    maybe
+        {ok, #store{address = Address, bonds = Bonds} = Current} ?= current(Store),
+        {ok, Edited} ?= edit(Edit(Bonds), Current),
+        {ok, Blob} ?= encoded(erx_bt_state:encode(#{address => Address, bonds => Edited}), Current),
+        case write(Blob, Current) of
+            ok -> {ok, adopt(Edited, Current)};
+            unconfirmed -> {error, unavailable, unconfirmed(Current)}
+        end
+    end.
+
+edit({ok, Edited}, _Store) -> {ok, Edited};
+edit({error, Reason}, Store) -> {error, Reason, Store}.
+
+encoded({ok, Blob}, _Store) -> {ok, Blob};
+encoded({error, too_large}, Store) -> {error, unavailable, Store}.
+
+write(Blob, #store{backend = #{put := Put}} = Store) ->
+    case backend(fun() -> Put(Blob) end, Store) of
+        ok -> ok;
+        _Unconfirmed -> unconfirmed
+    end.
+
+%% After a put it could not confirm the store keeps what it had and reads before its
+%% next change.
+unconfirmed(Store) -> Store#store{known = {unknown, put}, reason = store_unavailable}.
+
+%% The state a change starts from: the one last read or confirmed, or after an
+%% unconfirmed put a fresh read, whose bonds replace the store's.
+current(#store{known = read} = Store) ->
+    {ok, Store};
+current(#store{known = {unknown, start}} = Store) ->
+    {error, unavailable, Store};
+current(#store{known = {unknown, put}} = Store) ->
+    case read(Store) of
+        {ok, none} -> {ok, adopt([], Store#store{known = read, reason = none})};
+        {ok, #{bonds := Bonds}} -> {ok, adopt(Bonds, Store#store{known = read, reason = none})};
+        {error, Reason} -> {error, unavailable, Store#store{reason = Reason}}
+    end.
+
+%% `forget all`, the one write that does not start from a read state: an empty state
+%% under the address in use, whatever the store holds. Unconfirmed after the start's
+%% read, the store stays as the start left it.
+forget_all(#store{address = Address, known = Known} = Store) ->
+    {ok, Blob} = erx_bt_state:encode(#{address => Address, bonds => []}),
+    case write(Blob, Store) of
+        ok -> {ok, adopt([], Store#store{known = read, reason = none})};
+        unconfirmed when Known =:= {unknown, start} -> {{error, eio}, Store};
+        unconfirmed -> {{error, eio}, unconfirmed(Store)}
+    end.
+
+%% The bonds become `Bonds`, and each monitored link whose bond is gone is sent
+%% `forgotten` and no longer monitored.
+adopt(Bonds, #store{links = Links} = Store) ->
+    Identities = [Identity || #{identity := Identity} <- Bonds],
+    {Kept, Gone} = maps:fold(fun(Monitor, {_, Identity} = Link, {Keep, Drop}) ->
+                                     case lists:member(Identity, Identities) of
+                                         true -> {Keep#{Monitor => Link}, Drop};
+                                         false -> {Keep, [{Monitor, Link} | Drop]}
+                                     end
+                             end, {#{}, []}, Links),
+    [begin erlang:demonitor(Monitor, [flush]), Pid ! {store, forgotten} end || {Monitor, {Pid, _}} <- Gone],
+    Store#store{bonds = Bonds, links = Kept}.
+
+watch(Link, Identity, #store{links = Links} = Store) ->
+    Store#store{links = Links#{erlang:monitor(process, Link) => {Link, Identity}}}.
+
+%% The backend's state: `{ok, none}`, `{ok, State}`, or the reason /proc/bt shows.
+read(#store{backend = #{get := Get}} = Store) ->
+    case backend(Get, Store) of
+        none -> {ok, none};
+        {ok, Blob} when is_binary(Blob) ->
+            case erx_bt_state:decode(Blob) of
+                {ok, State} -> {ok, State};
+                {error, _} -> {error, store_unreadable}
+            end;
+        _Unavailable -> {error, store_unavailable}
+    end.
+
+%% One call of the backend, in a process of its own, linked so that it ends with the
+%% store, and killed at the deadline. It sends its answer under a fresh tag and exits
+%% normally; an answer that races the kill is flushed after the 'DOWN', which follows
+%% every message of the process. A raise inside the call is caught there and answers
+%% `unavailable`, so its terms, which may hold the blob, reach no error report.
+backend(Call, #store{timeout = Timeout}) ->
+    Store = self(),
+    Tag = make_ref(),
+    {Pid, Monitor} = spawn_opt(fun() -> Store ! {Tag, try Call() catch _:_ -> {error, unavailable} end} end,
+                               [link, monitor]),
+    receive
+        {Tag, Answer} ->
+            receive {'DOWN', Monitor, process, Pid, _} -> unlink(Pid), Answer end
+    after Timeout ->
+        unlink(Pid),
+        exit(Pid, kill),
+        receive {'DOWN', Monitor, process, Pid, _} -> ok end,
+        receive {Tag, _} -> ok after 0 -> ok end,
+        {error, unavailable}
+    end.
+
+%% A bond as `resolve/1` answers it: no IRK, and its subscriptions by the table's atoms,
+%% a name no atom exists for left out, since no table declares it.
+resolved(#{ltk := Ltk, level := Level, identity := Identity, hash := Hash, subscriptions := Subscriptions}) ->
+    #{ltk => Ltk, level => Level, identity => Identity, hash => Hash,
+      subscriptions => #{Key => Kind || Names := Kind <- Subscriptions, {_, _} = Key <- [atoms(Names)]}}.
+
+atoms({Service, Char}) ->
+    try {binary_to_existing_atom(Service), binary_to_existing_atom(Char)}
+    catch error:badarg -> none
+    end.
+
+by_name(Subscriptions) ->
+    #{{atom_to_binary(Service), atom_to_binary(Char)} => Kind
+      || {Service, Char} := Kind <- Subscriptions, Kind =/= none}.
+
+%% The bond a phone's address names: an identity address by equality, else a resolvable
+%% private address, top two bits 01, by ah with each bond's IRK (Vol 3 Part H 2.2.2; the
+%% address's form, prand in the upper 24 bits and the hash in the lower, is Vol 6 Part B
+%% 1.3.2.2's, unverified until that part is read). An all-zero IRK, which a phone that
+%% makes no resolvable address sends (Vol 3 Part C 10.7), resolves nothing.
+find(Address, Bonds) ->
+    case [Bond || #{identity := Identity} = Bond <- Bonds, Identity =:= Address] of
+        [Bond | _] -> Bond;
+        [] -> find_private(Address, Bonds)
+    end.
+
+find_private({random, <<2#01:2, _:22, Hash:3/binary>> = Octets}, Bonds) ->
+    Prand = binary:part(Octets, 0, 3),
+    Resolves = fun(#{irk := Irk}) ->
+                       Irk =/= <<0:128>> andalso crypto:hash_equals(erx_smp_crypto:ah(Irk, Prand), Hash)
+               end,
+    case lists:filter(Resolves, Bonds) of
+        [Bond | _] -> Bond;
+        [] -> none
+    end;
+find_private(_Address, _Bonds) ->
+    none.
+
+%% What the store shows: the address, its state and reason, each bond's identity and
+%% level, and how many links it monitors; never a key.
+facts(#store{address = Address, known = Known, reason = Reason, bonds = Bonds, links = Links}) ->
+    #{address => Address, store => known(Known), reason => Reason,
+      bonds => [{Identity, Level} || #{identity := Identity, level := Level} <- Bonds],
+      links => map_size(Links)}.
+
+known(read) -> read;
+known({unknown, _}) -> unknown.
+
+format_status(#{state := #store{} = Store} = Status) ->
+    hide_log(hide_message(Status#{state := facts(Store)}));
+format_status(Status) ->
+    Status.
+
+hide_message(#{message := {erx_bt_link, _, Message}} = Status) -> Status#{message := {erx_bt_link, kind(Message)}};
+hide_message(#{message := Message} = Status) -> Status#{message := kind(Message)};
+hide_message(Status) -> Status.
+
+hide_log(#{log := [_ | _]} = Status) -> Status#{log := []};
+hide_log(Status) -> Status.
+
+kind(Message) when is_tuple(Message), tuple_size(Message) > 0, is_atom(element(1, Message)) -> element(1, Message);
+kind(Message) when is_atom(Message) -> Message;
+kind(_Message) -> message.

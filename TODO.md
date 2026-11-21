@@ -8576,8 +8576,38 @@ model harness drive `erx_device.c` itself. `erx_device_dma_check` and `erx_devic
   `erx_bt_store`; docs/design-bluetooth.md "The `ble` facet", "The pairing window", "Bonds and the store"):
   `erx_gatt_srv` has only its `join/2` call and no process, so every link ends at its start
   (`{shutdown, {start, registry}}`) and no phone stays connected; with no window registered, a Pairing Request
-  is never admitted and fails at the Security Manager Timer, 30 s, ending the link; and `erx_bt_store:resolve/1`
-  answers `none` because the store keeps no bonds. Build the three processes.
+  is never admitted and fails at the Security Manager Timer, 30 s, ending the link. Build the two processes; the
+  store keeps bonds and sends the window its `outcome` to the name `erx_bt_fs`.
+* [Medium] bluetooth, the store's development file has no grant (`erx_bt_store:start_link/0`,
+  `erx_bt_state_file`; docs/design-bluetooth.md "Bonds and the store"): the design keeps the state in "the
+  Bluetooth domain's directory on the data partition" but names no files service or manifest row that reaches it,
+  as `ssh_state_service` does for the SSH domain, so the store reads the application's `state_dir`, by default
+  `/data/bt`, and a domain whose namespace lacks it runs `store_unavailable`, without bonds; `get` answers `none`
+  when `/data` exists, so an unmounted volume presented as an empty `/data` would read as no bonds. Name the service in the
+  design and `abi/manifest.txt` (a `bt_state` files service of the storage domain rooted at the data volume's
+  `bt/`, granted read-write to the Bluetooth domain alone).
+* [Medium] bluetooth, security residual: a put that completes after its deadline (`erx_bt_store`'s `backend/2`;
+  docs/design-bluetooth.md "Bonds and the store"): the store kills a backend call at `bt_store_timeout_ms` and its
+  worker is linked, so it ends with the store, but a request already handed to the storage domain or the vault may
+  still complete later. Reading before the next change does not order the next put after that late completion, so
+  a late put can bring back a bond a confirmed `forget` removed. A generation in the blob, with a put refused
+  unless it follows the generation it read, would close it.
+* [Medium] bluetooth, the development store's rename is not synced (`erx_bt_state_file:put/2`): the new file is
+  synced before its rename, but the directory is not synced after it, so on a file system that needs that, an `ok`
+  may come back as the old state after a power cut, against "Bonds and the store"'s promise for configuration
+  writes. Erlang's `file` cannot open a directory to sync it; give `prim_file` a directory sync rather than work
+  around it. The development store also leaves a `state.new.N` file behind when its worker is killed mid-write.
+* [Low] bluetooth, the store's tests' gaps (`test/erlang/erx_bt_store_tests.erl`): the development file is not run
+  under the store with a step failing (write, sync, rename) nor checked for its 0700 and 0600 modes, and a bonded
+  configuration write against a backend that never answers is not run (only `keep` is); both need the link's side
+  of `subscriptions`.
+* [Medium] bluetooth, the largest stored state is not bounded by construction (`erx_bt_state:encode/1`;
+  docs/design-bluetooth.md "Bonds and the store"): the design says the largest encoding of `bt_bonds_max` bonds
+  fits `bt_state_max`, but a bond's subscriptions grow with the table's notify and indicate characteristics and
+  their names (up to 63 octets each), so a large table can make a `put` refused as `too_large`, failing a pairing
+  or configuration write `unavailable`. Eight bonds with three subscriptions of the longest names fit
+  (`state_largest_fits_test`). Derive the bound in `Erx::GattDecl`: fail the build when eight bonds subscribed to
+  every such characteristic of the table would pass 4 KiB.
 * [Low] bluetooth, the link core's deadlines and Encryption_Enabled (`erlang/apps/erx_bt/src/erx_bt_link_core.erl`,
   its `HANDLER_TIMEOUT_MS`, `ATT_TRANSACTION_MS`, `SMP_TIMEOUT_MS` and `ENCRYPTION_ON_LE`): "What a radio peer can
   make the domain spend" makes every bound a constant of `abi/formats/bluetooth.txt`, but these four are module

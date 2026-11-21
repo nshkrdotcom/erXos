@@ -1,0 +1,119 @@
+# Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
+# SPDX-License-Identifier: BSD-2-Clause
+# frozen_string_literal: true
+
+require 'minitest/autorun'
+require 'open3'
+require 'tmpdir'
+require_relative '../fixtures/erlang_build'
+
+# Runs test/erlang/erx_bt_store_tests.erl, the cases of the Bluetooth store: erx_bt_state's
+# layout, erx_bt_state_file and erx_bt_store against a scripted backend, compiled from
+# source on stock's emulator (ERX_ERL and ERX_ERLC) with erx_bytes's host stand-in. Then
+# each seeded fault of docs/design-bluetooth.md, "Host tests of the cores", and of the
+# store's own checks, applied to a copy of its module, must fail the case named for it.
+class ErxBtStoreTest < Minitest::Test
+  APPLICATIONS = %w[erx_bt].freeze
+  TESTS = %w[test/erlang/erx_bt_store_tests.erl].freeze
+  HOST_BYTES = { 'erlang/apps/erx/src/erx_bytes.erl' => 'test/erlang/host_bytes/erx_bytes.erl' }.freeze
+  DEADLINE_SECONDS = '300'
+  STATE = 'erlang/apps/erx_bt/src/erx_bt_state.erl'
+  STORE = 'erlang/apps/erx_bt/src/erx_bt_store.erl'
+
+  Seed = Data.define(:fault, :module_path, :anchor, :replacement, :catching_case)
+
+  SEEDS = [
+    Seed.new(fault: 'the bond count read without its bound',
+             module_path: STATE,
+             anchor: 'Count =< ?ERX_BT_BONDS_MAX orelse refuse({too_many_bonds, Count}),',
+             replacement: '',
+             catching_case: 'state_refuses_oversized_count_test'),
+    Seed.new(fault: 'unavailable read as none, so a pairing overwrites the stored bonds',
+             module_path: STORE,
+             anchor: '_Unavailable -> {error, store_unavailable}',
+             replacement: '_Unavailable -> {ok, none}',
+             catching_case: 'start_unreadable_refuses_changes_until_forget_all_test_'),
+    Seed.new(fault: 'the pre-put state kept after an unconfirmed put, so the failed pairing\'s bond is lost',
+             module_path: STORE,
+             anchor: 'unconfirmed(Store) -> Store#store{known = {unknown, put}, reason = store_unavailable}.',
+             replacement: 'unconfirmed(Store) -> Store.',
+             catching_case: 'unconfirmed_put_reads_before_the_next_change_test'),
+    Seed.new(fault: 'the backend called with no deadline',
+             module_path: STORE,
+             anchor: 'after Timeout ->',
+             replacement: 'after infinity ->',
+             catching_case: 'backend_that_never_answers_test_'),
+    Seed.new(fault: "the store taking a link's pid only at keep",
+             module_path: STORE,
+             anchor: '{reply, resolved(Bond), watch(Link, Identity, Store)}',
+             replacement: '{reply, resolved(Bond), Store}',
+             catching_case: 'forget_ends_the_links_of_that_bond_test'),
+    Seed.new(fault: 'resolve answering the bond with its IRK',
+             module_path: STORE,
+             anchor: '{reply, resolved(Bond), watch(Link, Identity, Store)}',
+             replacement: '{reply, Bond, watch(Link, Identity, Store)}',
+             catching_case: 'resolve_answers_one_bond_without_any_irk_test'),
+    Seed.new(fault: 'an all-zero IRK resolving the addresses made with it',
+             module_path: STORE,
+             anchor: 'Irk =/= <<0:128>> andalso crypto:hash_equals',
+             replacement: 'true andalso crypto:hash_equals',
+             catching_case: 'resolve_answers_one_bond_without_any_irk_test'),
+    Seed.new(fault: 'the raw state shown in the status',
+             module_path: STORE,
+             anchor: 'hide_log(hide_message(Status#{state := facts(Store)}));',
+             replacement: 'Status;',
+             catching_case: 'no_key_in_status_or_crash_test'),
+    Seed.new(fault: 'a keep refused without telling the window',
+             module_path: STORE,
+             anchor: "{erx_bt_fs, node()} ! {outcome, Link, Tag, Outcome},",
+             replacement: "Answer =:= ok andalso ({erx_bt_fs, node()} ! {outcome, Link, Tag, Outcome}),",
+             catching_case: 'explored_store_table_test_'),
+    Seed.new(fault: 'forget all refused while the start left the store unknown',
+             module_path: STORE,
+             anchor: "call({forget, all}, _From, Store) ->\n    {Answer, Next} = forget_all(Store),",
+             replacement: "call({forget, all}, _From, Store) ->\n    {Answer, Next} = case Store#store.known of " \
+                          "read -> forget_all(Store); _ -> {{error, eio}, Store} end,",
+             catching_case: 'explored_store_table_test_'),
+    Seed.new(fault: 'a failed forget all after the start leaving the store to read the old bonds under a new address',
+             module_path: STORE,
+             anchor: 'unconfirmed when Known =:= {unknown, start} -> {{error, eio}, Store};',
+             replacement: '',
+             catching_case: 'failed_forget_all_after_an_unread_start_changes_nothing_test'),
+    Seed.new(fault: 'resolve refused while a put is unconfirmed, so kept bonds stop working on a trial boot',
+             module_path: STORE,
+             anchor: 'call({resolve, Address}, {Link, _}, #store{bonds = Bonds} = Store) ->',
+             replacement: 'call({resolve, Address}, {Link, _}, #store{known = read, bonds = Bonds} = Store) ->',
+             catching_case: 'kept_bonds_resolve_after_an_unconfirmed_put_test')
+  ].freeze
+
+  def test_store_cases_pass_under_eunit
+    output, status = run_cases({})
+    assert status.success?, output
+    assert_match(/All \d+ tests passed/, output)
+  end
+
+  def test_each_seeded_fault_fails_its_case
+    SEEDS.each do |seed|
+      source = File.binread(File.join(ErlangBuild::ROOT, seed.module_path))
+      assert_equal 1, source.scan(seed.anchor).size, "seed anchor for #{seed.fault} is not unique"
+      output, status = run_cases({ seed.module_path => source.sub(seed.anchor) { seed.replacement } })
+      refute status.success?, "#{seed.fault}: the cases passed"
+      assert_match(/#{Regexp.escape(seed.catching_case)}[^\n]*?\.\.\.(?:(?!erx_bt_store_tests: ).)*?\*(?:failed|timed out)\*/m,
+                   output, seed.fault)
+    end
+  end
+
+  private
+
+  # The modules, erx_bytes's stand-in and the replaced ones in place of the application's
+  # own, then the cases.
+  def run_cases(replaced)
+    stand_ins = HOST_BYTES.transform_values { |path| File.binread(File.join(ErlangBuild::ROOT, path)) }
+    Dir.mktmpdir('erx-bt-store-test') do |work|
+      ErlangBuild.compile(work, applications: APPLICATIONS, tests: TESTS, replaced: stand_ins.merge(replaced))
+      Open3.capture2e('gtimeout', '-k', '10', DEADLINE_SECONDS, ENV.fetch('ERX_ERL'), '-noshell', '-pa', work,
+                      '-eval', 'halt(case eunit:test([erx_bt_store_tests], [verbose]) of ok -> 0; _ -> 1 end)',
+                      chdir: work, stdin_data: '')
+    end
+  end
+end
