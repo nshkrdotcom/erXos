@@ -23,13 +23,12 @@ which did nothing wrong, cannot get the page it needs to draw the next
 frame. Something has to decide, before the machine runs dry, which
 domain is refused.
 
-FreeBSD hands out more memory than it has, betting that programs
-never touch all of it
+A UNIX kernel usually hands out more memory than it has, betting that
+programs never touch all of it
 ([section 1.4.7](01-operating-systems.md#147-who-pays-for-memory)).
-The `vm.overcommit` sysctl can make an allocation fail instead, and
-`rctl(8)` can cap a process, user or jail's address space
-(`vmemoryuse`). Neither limits what the kernel spends on a process's
-behalf, and when the bet fails, the kernel must end some process.
+Its limits cap a process's address space, not what the kernel spends
+on the process's behalf, and when the bet fails, the kernel must end
+some process.
 
 erXos answers with budgets. The root service holds every free page of
 RAM in one list, its **pool**, and hands pages out from it. A
@@ -63,15 +62,9 @@ Ending a domain takes one call, however many objects it made.
 
 ### 12.1.1 A budget is an account
 
-> **Background: space banks.** EROS, a capability system of the
-> 1990s, allocated every object a program created from a **space
-> bank**. Banks formed a tree, each drawing on its parent's. Destroying
-> a bank destroyed everything allocated from it and from the banks
-> below it, so no object outlived the account that paid for it
-> (Shapiro, Smith and Farber 1999;
-> [section 4.3.4](04-history.md#434-eros-safe-erlang-and-zircon-authority-and-payment)).
-
-erXos's budgets follow that model. Each budget is a record in the root
+Budgets form a tree, after the space banks of EROS
+([section 4.3.4](04-history.md#434-eros-safe-erlang-and-zircon-authority-and-payment)),
+so no object outlives the account that paid for it. Each budget is a record in the root
 service's object table, holding its parent, its kind, its
 **guarantee** and its **cap**, both in pages
 (`liberx/backend/fiasco/budget.c`). The guarantee is what the budget
@@ -622,8 +615,8 @@ reason.
 
 Each choice in this chapter buys one property at a stated cost.
 
-**Commit at once, or fill on demand.** FreeBSD fills a page at its
-first touch, so a program pays only for what it touches. erXos maps
+**Commit at once, or fill on demand.** A demand-paged kernel fills a
+page at its first touch, so a program pays only for what it touches. erXos maps
 every committed page at once. The cost is memory: a program that
 commits a range and touches a tenth of it holds all of it. The gain is
 that the root never answers a fault, so a fault is always a bug, and
@@ -631,9 +624,9 @@ a commit gets its pages or is refused, so overcommit's failure at the
 worst moment cannot happen. Runtimes reserve freely and commit in
 pieces, as ERTS's allocators do.
 
-**One mapper, or a pager per domain.** L4Re lets each program have its
-own pager, a server that answers its faults and maps its memory.
-erXos gives the root alone that job, so one party holds every page's
+**One mapper, or a pager per domain.** Each program could have its
+own pager, a server that answers its faults and maps its memory, as
+in L4Re. erXos gives the root alone that job, so one party holds every page's
 record and revoking, ending or reporting needs no conversation. The
 cost is that every domain's setup queues on one thread of the root,
 though steady-state traffic makes no request
@@ -677,5 +670,3 @@ design each domain's budget is a wall.
   read whole.
 * Jonathan S. Shapiro, Jonathan M. Smith and David J. Farber, "EROS: a
   fast capability system", SOSP 1999, section 5.1: space banks.
-* FreeBSD 14.3 manual pages `rctl(8)` and `tuning(7)` (on
-  `vm.overcommit`): the familiar baseline.
