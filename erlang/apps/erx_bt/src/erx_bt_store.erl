@@ -190,9 +190,9 @@ call({forget, <<_:48>> = Address}, _From, Store) ->
 call(facts, _From, Store) ->
     {reply, facts(Store), Store}.
 
-%% A pairing's `keep` (docs/design-bluetooth.md, "A pairing's outcome has one ordering
-%% point"): answered to the link, and its outcome told to the window, whatever became of
-%% the link. A bond is kept with no table hash, since `keep` carries none.
+%% A pairing's `keep`, its one ordering point (docs/design-bluetooth.md, "The link's
+%% messages"): answered to the link, and its outcome told to the window, whatever became
+%% of the link. A bond is kept with no table hash, since `keep` carries none.
 info({erx_bt_link, Link, {keep, Tag, #{identity := Identity, level := Level, irk := Irk, ltk := Ltk},
                           Subscriptions}}, Store) ->
     Bond = #{identity => Identity, irk => Irk, ltk => Ltk, level => Level, hash => <<>>,
