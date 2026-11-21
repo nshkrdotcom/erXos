@@ -12,6 +12,11 @@
 
 #include "liberx/backend/core/mem.h"
 
+#ifdef ERX_TRB_FORM_SEED_ADDRESS_UNENABLED
+#define SEED_ADDRESS_UNENABLED	true
+#else
+#define SEED_ADDRESS_UNENABLED	false
+#endif
 #ifdef ERX_TRB_FORM_SEED_ANY_STOP
 #define SEED_ANY_STOP	true
 #else
@@ -334,7 +339,9 @@ slot_addressed(const erx_trb_form_t *form, uint32_t slot)
 /*
  * The stated parameters' one test, at the command's entry, before anything changes: the slot of
  * every command that names one, a slot of the layout's; and those of the three commands that carry
- * the input context, Configure Endpoint's for an addressed slot (6.2.2.2's Addressed or Configured
+ * the input context, Address Device's for a slot an Enable Slot enabled (4.6.5, p. 114, where any
+ * other slot answers Slot Not Enabled and its binding would stay until a Disable Slot that cannot
+ * succeed), Configure Endpoint's for an addressed slot (6.2.2.2's Addressed or Configured
  * precondition, p. 448), whose fields its slot context composes from. A command that carries none
  * states none.
  */
@@ -346,7 +353,7 @@ parameters_valid(const erx_trb_form_t *form, const erx_trb_command_t *command)
 		return (false);
 	switch (command->kind) {
 	case ERX_TRB_COMMAND_ADDRESS_DEVICE:
-		return (command->add_count == 1 &&
+		return ((form->enabled[command->slot] || SEED_ADDRESS_UNENABLED) && command->add_count == 1 &&
 		    erx_device_trb_address_slot_valid(&command->slot_context, form->ports, form->slots) &&
 		    adds_valid(form, command));
 	case ERX_TRB_COMMAND_CONFIGURE_ENDPOINT:
@@ -680,6 +687,7 @@ command_event(erx_trb_form_t *form, const erx_report_record_t *event, erx_trb_an
 {
 	const erx_xhci_trb_command_event_t *const record = &event->xhci_trb_command_event;
 	const uint32_t code = erx_xhci_trb_command_event_status_code_get(record->status);
+	const uint32_t slot = erx_xhci_trb_command_event_control_slot_get(record->control);
 	const erx_dma_found_t found = erx_dma_report_holding(&form->ledger, event_ring(form), event);
 	erx_dma_place_t retired[ERX_DMA_HOLDINGS_MAX];
 	uint32_t retired_count;
@@ -687,14 +695,23 @@ command_event(erx_trb_form_t *form, const erx_report_record_t *event, erx_trb_an
 	if (found.holding == NULL || !erx_dma_ledger_complete_command(&form->ledger, event_ring(form), found,
 	    code == ERX_XHCI_COMPLETION_SUCCESS, retired, &retired_count))
 		return (false);
-	/* The slot's addressed fields: an Address Device's success writes them, Disable Slot's clears them. */
-	if (code == ERX_XHCI_COMPLETION_SUCCESS && form->command.kind == ERX_TRB_COMMAND_ADDRESS_DEVICE)
+	/*
+	 * The slot's state: an Enable Slot's success enables the slot its completion names, one of the
+	 * layout's (4.6.3, p. 108); an Address Device's writes its addressed fields; a Disable Slot's
+	 * clears both.
+	 */
+	if (code == ERX_XHCI_COMPLETION_SUCCESS && form->command.kind == ERX_TRB_COMMAND_ENABLE_SLOT && slot >= 1 &&
+	    slot <= form->slots)
+		form->enabled[slot] = true;
+	else if (code == ERX_XHCI_COMPLETION_SUCCESS && form->command.kind == ERX_TRB_COMMAND_ADDRESS_DEVICE)
 		form->addressed[form->command.slot] = form->command.slot_context;
-	else if (code == ERX_XHCI_COMPLETION_SUCCESS && form->command.kind == ERX_TRB_COMMAND_DISABLE_SLOT)
+	else if (code == ERX_XHCI_COMPLETION_SUCCESS && form->command.kind == ERX_TRB_COMMAND_DISABLE_SLOT) {
+		form->enabled[form->command.slot] = false;
 		bzero(&form->addressed[form->command.slot], sizeof(form->addressed[form->command.slot]));
+	}
 	answers[0] = (erx_trb_answer_t){ .kind = ERX_TRB_ANSWER_COMMAND, .code = code, .tag = form->command_tag,
 	    .parameter = erx_xhci_trb_command_event_status_parameter_get(record->status),
-	    .slot = erx_xhci_trb_command_event_control_slot_get(record->control) };
+	    .slot = slot };
 	*answered = 1;
 	/* A retired holding is a transfer's, its head on a transfer ring, table b of block b. */
 	for (uint32_t k = 0; k < retired_count; k++) {
@@ -784,6 +801,7 @@ void
 erx_trb_form_reset(erx_trb_form_t *form)
 {
 	erx_dma_ledger_reset(&form->ledger);
+	bzero(form->enabled, sizeof(form->enabled));
 	bzero(form->addressed, sizeof(form->addressed));
 	bzero(form->transfers, sizeof(form->transfers));
 	bzero(&form->command, sizeof(form->command));

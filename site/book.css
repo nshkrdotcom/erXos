@@ -417,8 +417,11 @@ figcaption .label {
   margin-right: 0.6em;
 }
 
-.diagram-source {
-  border-style: dashed;
+/* A drawing keeps the size the layout gave it, capped at the column. */
+figure.diagram svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
 }
 
 p.image img {

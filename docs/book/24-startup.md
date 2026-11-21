@@ -690,9 +690,9 @@ pins keeps no record of why it reset.
 `reboot` resets the machine, `-p` powers it off instead, and `halt`
 is the same program under another name
 (`erlang/apps/erx_shell/src/erx_cmd_reboot.erl`). `halt` powers off, since
-erXos has no end that halts without powering off. The familiar flags for a
+every end of the machine powers it off or resets it. The flags for a
 power cycle, a kernel dump, the next boot's kernel, a reroot and a
-sync are usage errors, because erXos has none of those things.
+sync are usage errors.
 
 Here is `reboot` at root's session, end to end:
 
@@ -824,8 +824,8 @@ host packed is provably the image that runs, and a slot is one file
 to write and to sign. The cost: changing any boot file means packing
 a new image.
 
-**One manifest, proved before boot.** rc scripts can start anything,
-in whatever order their `REQUIRE` lines produce, and a mistake shows
+**One manifest, proved before boot.** Start-up scripts can start
+anything, in whatever order their dependency lines produce, and a mistake shows
 only at boot. A manifest is a description, not a program: the build
 derives the boot order, checks every holder and facet, and refuses a
 cycle. The cost is that the configuration changes by building a new

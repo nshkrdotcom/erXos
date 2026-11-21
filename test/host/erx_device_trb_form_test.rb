@@ -37,7 +37,9 @@ class ErxDeviceTrbFormTest < Minitest::Test
   # failed Address Device ending EP0's binding; a post let through on a stopped endpoint; a retired
   # transfer an error answered answered again; an input context's dequeue pointer from another
   # binding's ring; a drop's flag left out; A1 set on Configure Endpoint; a burst past 15 accepted;
-  # an Evaluate Context let through on a busy EP0; a Configure Endpoint on an unaddressed slot.
+  # an Evaluate Context let through on a busy EP0; a Configure Endpoint on an unaddressed slot; a
+  # Stop Endpoint, Reset Endpoint or Set TR Dequeue Pointer let through in any state but disabled;
+  # an Address Device on a slot no Enable Slot enabled.
   SEEDS = %w[DMA_SEED_DEQUEUE_OTHER_RING DMA_SEED_DROP_MISSING DMA_SEED_CONFIGURE_ADDS_EP0
              DEVICE_TRB_SEED_BURST_UNCHECKED TRB_FORM_SEED_HIGHEST_BUFFER TRB_FORM_SEED_NO_OUT_FILL TRB_FORM_SEED_TAG_AT_FIRST
              TRB_FORM_SEED_NO_REQUEST_CHECK TRB_FORM_SEED_OTHER_POOL TRB_FORM_SEED_ANY_ENDPOINT
@@ -46,7 +48,8 @@ class ErxDeviceTrbFormTest < Minitest::Test
              DMA_SEED_NO_REACH_TEST DMA_SEED_NO_CLOSURE DMA_SEED_RETIRE_NOTHING DMA_SEED_DROP_HALTED
              TRB_FORM_SEED_ANY_STOP DMA_SEED_TWO_COMMANDS DMA_SEED_FAILED_ADDRESS_UNBINDS
              DMA_SEED_POST_ON_STOPPED TRB_FORM_SEED_ANSWER_HALTED TRB_FORM_SEED_CONFIGURE_SPEED_ZEROED
-             DMA_SEED_NO_REACH_HOLDS TRB_FORM_SEED_CONFIGURE_UNADDRESSED].freeze
+             DMA_SEED_NO_REACH_HOLDS TRB_FORM_SEED_CONFIGURE_UNADDRESSED DMA_SEED_STOP_ANY_STATE
+             DMA_SEED_RESET_ANY_STATE DMA_SEED_RESTART_ANY_STATE TRB_FORM_SEED_ADDRESS_UNENABLED].freeze
 
   def test_layout_endpoints_posts_and_releases
     output, status = run_harness

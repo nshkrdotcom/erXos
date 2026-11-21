@@ -29,13 +29,9 @@ What may this program touch? A bug in it, or a hostile line in a
 library it links, must not reach the user's files beyond what it was
 handed, the session's Erlang processes or any other domain.
 
-UNIX answers with the process. Each program gets an address space,
-a descriptor table and the user's identity. It can open any file its
-user can open, signal any process its user owns, and start any program
-with `fork` and `exec`, unless a jail or Capsicum narrows it.
-
-erXos answers differently. A native program runs in a sub-space of its
-session, an address space the session made and ends. It holds no
+erXos answers with a sub-space and a handler. A native program runs
+in a sub-space of its session, an address space the session made and
+ends. It holds no
 authority of its own: it reaches everything by asking one Erlang
 process, its handler, which checks each request against a table built
 from what the program's **starter** handed it. The starter is the
@@ -69,9 +65,9 @@ domain; to the session's Erlang code it looks like a port.
 
 ### 13.1.1 What a program consists of
 
-A UNIX process has an address space, threads, a descriptor table, a
-process id and a parent. A program on erXos has the same parts, kept
-in different places, and the program itself holds almost none of them
+A program on erXos has the parts of a UNIX process (an address space,
+threads, a descriptor table, a process id and a parent), and the
+program itself holds almost none of them
 (Table 13.1;
 [design-programs.md, A program is a port](../design-programs.md#a-program-is-a-port)).
 
@@ -297,11 +293,11 @@ session arranges, and `liberx` reads and writes it directly.
 
 ### 13.4.1 Why not in the kernel
 
-A UNIX kernel keeps a pipe as a buffer and a count of the ends open
-on each side: when no write end remains, `read` returns 0, and every
-byte crosses the kernel twice.
+A kernel could keep a pipe as a buffer and a count of the ends open
+on each side: when no write end remained, `read` would return 0, and
+every byte would cross the kernel twice.
 
-erXos's kernel has no pipe, and erXos does not want one. A pipe is lanes
+erXos's kernel has no pipe. A pipe is lanes
 with a little more, so the data path makes no kernel call while the
 other side is awake, and who holds which end stays in Erlang
 ([design-pipes.md](../design-pipes.md)). End of stream, which a kernel
@@ -549,7 +545,7 @@ so a `kill` tells a program nothing about processes beyond its reach.
 which names a process group, fails with `ENOSYS`, and process 1 with
 `ESRCH`.
 
-Aimed at itself, `kill` does less than on UNIX. Only `SIGKILL` acts:
+Aimed at itself, `kill` acts only for `SIGKILL`:
 it stops the program and answers 0. A stop or continue signal belongs
 to the session's job control and fails with `EPERM`. Every other
 signal fails with `ENOSYS`: the protocol has no report that carries a
@@ -558,8 +554,8 @@ signaled. `kill(pid, 0)`, which asks whether a `kill` would reach,
 answers 0 for the program itself. All of this is Built
 (`erx_prog_handler_core.erl`).
 
-On UNIX a process id is enough to signal any process of the same
-user. On erXos a pid grants nothing, as an Erlang pid grants nothing
+A process id alone does not let a program signal another program: on
+erXos a pid grants nothing, as an Erlang pid grants nothing
 ([section 6.2.4](06-construction.md#624-pids-exports-and-the-envelope)):
 the handler holds the table, and the table says no.
 
@@ -601,9 +597,8 @@ Signal delivery through vCPU upcalls is designed and not built.
 
 ### 13.6.5 One numbering, FreeBSD's
 
-UNIX systems disagree on numbers: `SIGSTOP` is 17 on FreeBSD and 19
-on Linux. erXos takes FreeBSD's signal and errno numbers and uses them
-everywhere: in the C library's headers, in `liberx`, in the program
+erXos uses FreeBSD's signal and errno numbers everywhere: in the C
+library's headers, in `liberx`, in the program
 protocol, in the shell's `kill` and in the Erlang reading of a status
 ([design-programs.md, Signal numbers](../design-programs.md#signal-numbers)).
 One table, `abi/signals.txt`, holds the signals:
@@ -681,11 +676,10 @@ personality, with its process helpers rewritten over `posix_spawn`
 applets that read Linux's `/proc`, such as `ps`, are left out. toybox
 is designed and not built.
 
-The file utilities are a choice, not a gap. `cat`, `ls`, `cp`, `mv`,
-`rm`, `mkdir`, `echo` and `pwd` are Erlang commands of the shell, and
-stay so; so are `wc`, `sort` and `grep`. They run in the session,
-follow FreeBSD's output, and read live Erlang state where a UNIX tool
-would read a kernel's.
+The file utilities `cat`, `ls`, `cp`, `mv`, `rm`, `mkdir`, `echo` and
+`pwd` are Erlang commands of the shell, and stay so; so are `wc`,
+`sort` and `grep`. They run in the session, follow FreeBSD's output,
+and read live Erlang state.
 
 ## 13.8 The second tier
 

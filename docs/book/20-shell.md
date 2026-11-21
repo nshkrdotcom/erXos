@@ -74,7 +74,7 @@ The table shows the rule deciding cases from this chapter.
 | --- | --- | --- |
 | `sh` | The shell is `rc`, and says so in its banner | Its language is rc's, not POSIX's; calling it `sh` would invite scripts it cannot run |
 | `ps` columns | The familiar columns and keywords; `-` for a value not measured | A script's `awk '{print $3}'` finds the same field in every row |
-| `rc.conf` | Designed: `/etc/start.conf`, rc.conf's assignment syntax only. Built: `/data/etc/rc.conf` | FreeBSD's file is a shell script that can run anything; erXos's only sets fields of declared rows |
+| `rc.conf` | Designed: `/etc/start.conf`, rc.conf's assignment syntax only. Built: `/data/etc/rc.conf` | The file sets fields of declared rows and runs no code |
 | `exec`, `rfork` (a finer-grained `fork`) | Fail with a diagnostic | The shell has no process image to replace and nothing to fork |
 | `/dev/tty` | A name the program's handler opens, not the file server; reads and writes go to the tty | A terminal's reads, modes and signals are not file-protocol requests |
 
@@ -167,9 +167,9 @@ target.
 
 ### 20.2.3 One evaluator per stage
 
-A UNIX shell forks to give each stage of a pipeline its own copy of
-the shell's state. The command shell gets the same effect without
-`fork`: each stage of a pipeline, each command substitution and each
+Each stage of a pipeline needs its own copy of the shell's state.
+The command shell gives it one without `fork`: each stage of a
+pipeline, each command substitution and each
 background block is an Erlang process that starts with a copy of the
 shell's variables and functions. As in rc, a stage cannot
 change its parent's variables.
@@ -305,8 +305,8 @@ built.
 
 ## 20.3 UNIX tools over live Erlang state
 
-A UNIX `ps` reads the kernel's process table. erXos's `ps` reads the
-session's own table and prints it as text in the familiar form
+erXos's `ps` reads the session's own table and prints it as text in
+the familiar form
 ([design-shell.md, Text commands](../design-shell.md#text-commands)).
 The built `ps` lists the session's Erlang processes; listing its
 native programs in the same table is designed and not built.
@@ -546,18 +546,14 @@ clock_enable="YES"
 clock_display="display"
 ```
 
-FreeBSD's `rc.conf` is a shell script that `rc.subr` sources, so it may
-set any variable and run any command. Its per-service variables, such
-as `NAME_user`, change a daemon's identity and authority. erXos's file
-borrows only the syntax of an assignment; its reader expands nothing,
-and a setting for a row the manifest does not declare is skipped. No
-row carries a grant, a limit or code, so editing the file cannot widen
+The file takes only the syntax of an assignment from `rc.conf`: its
+reader expands nothing and runs nothing, and a setting for a row the
+manifest does not declare is skipped. No row carries a grant, a limit or code, so editing the file cannot widen
 what any app holds.
 
 The design goes further on two points, both designed and not built.
-It names the file `/etc/start.conf`, because calling it `rc.conf`
-promises a shell script, and a user who wrote one there would be
-misled; this is the rule of section 20.1. And it adds a fifth
+It names the file `/etc/start.conf`, by the rule of section 20.1,
+since the file is not a shell script. And it adds a fifth
 field, the start flags: opaque text the app reads from one environment
 variable, `ERX_START_FLAGS`.
 
@@ -703,8 +699,8 @@ fits a pure parser. The cost is real: `2>&1` and `$(...)` do not paste
 in. Third-party `sh` scripts are left to toybox's shell, run as a
 program, which is designed.
 
-**Text pipes, not object pipes.** PowerShell passes objects between
-commands, and an Erlang shell could pass terms. Bytes let commands
+**Text pipes, not object pipes.** Commands could pass objects, and
+an Erlang shell could pass terms. Bytes let commands
 combine with programs, files and the terminal with one meaning, and
 keep a UNIX user's `| sort -k` and `| wc -l` working. Structure
 lives in the Erlang shell and the inspector, one `erl` away.
@@ -714,13 +710,13 @@ lives in the Erlang shell and the inspector, one `erl` away.
 processes, and in the design programs, in one table. No toybox applet is
 built under a name an Erlang command declares.
 
-**The line discipline in the session, not the kernel.** UNIX
-keeps the tty layer in the kernel because every terminal is a kernel
-device. In erXos a terminal is a master process, so the tty belongs to
+**The line discipline in the session, not the kernel.** A tty layer
+belongs in the kernel where every terminal is a kernel device. In
+erXos a terminal is a master process, so the tty belongs to
 the session that reads it: a fault in it is a fault in one session, and
 it is tested on the host.
 
-**Job control by pauses.** A UNIX shell stops a job by sending
+**Job control by pauses.** A shell could stop a job by sending
 `SIGTSTP`, which the processes may catch. Pausing instead means a
 hostile program cannot refuse to stop.
 
@@ -729,7 +725,8 @@ hostile program cannot refuse to stop.
 erXos keeps a UNIX name only where the thing behind it keeps the
 promise, and otherwise uses a name of its own; the design's
 `/etc/start.conf` is one such name, while the built system still keeps
-its start settings in `/data/etc/rc.conf`, which is not a shell script.
+its start settings in `/data/etc/rc.conf`, which sets fields of
+declared rows and runs no code.
 The command shell speaks rc's language in Erlang,
 with a pure parser whose size bound is derived from a measured heap
 cost. Each stage is an Erlang process with a heap limit, so a runaway

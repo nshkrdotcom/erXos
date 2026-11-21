@@ -13,6 +13,8 @@ require_relative 'book/contents'
 require_relative 'book/html'
 require_relative 'book/links'
 require_relative 'book/page'
+require_relative 'book/svg'
+require_relative 'book_diagrams'
 require_relative 'dependencies'
 require_relative 'error'
 
@@ -67,6 +69,7 @@ module Erx
       licenses = FONT_LICENSES.to_h { |id, name| ["fonts/#{name}", File.binread(dependencies.fetched_file(id))] }
       css = fill(File.read(File.join(root, FONTS)), FONTS) { |id| fonts.fetch(id) { raise Error, "#{FONTS}: no font #{id}" }.first }
       tokens = File.binread(File.join(root, TOKENS))
+      Svg.check_tokens(tokens, label: TOKENS)
       names = { fonts_css: digest_name('fonts.css', css), tokens_css: digest_name('tokens.css', tokens) }
       files = { names.fetch(:fonts_css) => css, names.fetch(:tokens_css) => tokens, **fonts.values.to_h, **licenses }
       [files, names, fonts.transform_values { |name, bytes| [name, Digest::SHA256.hexdigest(bytes)] }]
@@ -101,23 +104,44 @@ module Erx
                                      anchors_of: ->(path) { anchors[path].to_set },
                                      digest_of: ->(path) { Digest::SHA256.file(File.join(root, path)).hexdigest })
       trees = paths.keys.to_h { |path| [path, parse.(path, true)] }
+      drawers, drawn = drawings(trees, root:, runner:)
       results = trees.to_h do |path, tree|
-        [path, Page.render(tree, ids: anchors[path], path:, resolver:, drafts:)]
+        [path, Page.render(tree, ids: anchors[path], path:, resolver:, drafts:, diagram: drawers.fetch(path))]
       end
       titles = results.to_h { |path, result| [anchors[path].first, paths.fetch(path)] }
       entries = Contents.derive(trees.fetch("#{SOURCE}/README.md"), titles:, path: "#{SOURCE}/README.md")
       Layout.new(stylesheet: digest_name('book.css', File.binread(File.join(root, STYLESHEET))), names:,
                  entries:, results: results.transform_keys { |path| paths.fetch(path) }, drafts:)
-            .then { |layout| assemble(root:, layout:, shared:, names:, results:, fonts:, commit:, cmark:) }
+            .then { |layout| assemble(root:, layout:, shared:, names:, results:, fonts:, commit:, cmark:, drawn:) }
     end
 
-    def assemble(root:, layout:, shared:, names:, results:, fonts:, commit:, cmark:)
+    # Every diagram of the book drawn in one run of the diagram step, in page
+    # order and then source order: for each page, the callable Page.render
+    # takes, which finds a drawing by its fence's line and writes it through
+    # the SVG writer as the page's K-th in source order; and the versions of
+    # what drew them.
+    def drawings(trees, root:, runner:)
+      diagrams = trees.flat_map { |path, tree| Page.diagrams(tree, path:) }
+      drawn = Diagrams.render(diagrams, root:, runner:)
+      pages = diagrams.zip(drawn.svgs).group_by { |diagram, _| diagram.file }
+      drawers = trees.keys.to_h do |path|
+        lines = pages.fetch(path, []).to_h { |diagram, svg| [diagram.line, svg] }
+        [path, lambda do |line:, caption:|
+          svg = lines.fetch(line) { raise Error, "#{path}:#{line}: the diagram step drew no diagram at this line" }
+          Svg.write(svg, place: lines.keys.index(line) + 1, caption:, origin: "#{path}:#{line}")
+        end]
+      end
+      [drawers, drawn]
+    end
+
+    def assemble(root:, layout:, shared:, names:, results:, fonts:, commit:, cmark:, drawn:)
       pages = layout.pages.transform_keys { |name| "book/#{name}" }
       media = results.values.flat_map(&:media).uniq.to_h { |address, path| ["book/#{address}", File.binread(File.join(root, path))] }
       files = { **shared, **pages, **media, "book/#{layout.stylesheet}" => File.binread(File.join(root, STYLESHEET)),
                 'favicon.svg' => File.binread(File.join(root, 'site/favicon.svg')) }
       Plan.new(files: files.sort.to_h.freeze, names:,
-               record: { commit:, cmark_gfm: cmark.version, fonts: fonts.values.sort.to_h, drafts: layout.drafts })
+               record: { commit:, cmark_gfm: cmark.version, diagrams: drawn.versions.sort.to_h, fonts: fonts.values.sort.to_h,
+                         drafts: layout.drafts })
     end
 
     # Writes the plan's files under out, then the build record listing the
@@ -151,7 +175,7 @@ module Erx
         %w[text code].include?(child.name) ? child.text.to_s : heading_text(child)
       end.join
     end
-    private_class_method :assemble, :tracked_paths, :heading_text
+    private_class_method :drawings, :assemble, :tracked_paths, :heading_text
   end
 end
 

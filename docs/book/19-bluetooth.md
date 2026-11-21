@@ -509,9 +509,9 @@ a controller at another rate, patched or half-patched, a UART holding
 the last controller's bytes.
 
 **The patch named by the manifest, not chosen by the controller.**
-NetBSD chooses the patch file by the name the controller reports.
-That name is text the controller writes, so in erXos it chooses
-nothing.
+The driver could choose the patch file by the name the controller
+reports, but that name is text the controller writes, so in erXos it
+chooses nothing.
 
 **115200 baud rather than 3 Mbaud.** A faster rate needs vendor
 commands that differ between hosts and a switch timed to a response.
