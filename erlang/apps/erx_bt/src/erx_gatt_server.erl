@@ -24,8 +24,10 @@ at most one request, since a second request before the first's response ends the
 and at most `bt_write_queue` write commands, past which a command is discarded and
 counted. A prepared write is one per link, to one characteristic, at most its maximum; a
 Prepare Write past that, or to another characteristic, is Prepare Queue Full. Its parts
-are joined when it is executed, from an empty value, so the handler receives the whole
-value; one indication is in flight at a time (3.4.7.2).
+are joined as they arrive, from an empty value, so the bearer holds at most the maximum
+and the handler receives the whole value at Execute Write, which answers Invalid Offset
+for a part placed past what the parts before it wrote (3.4.6.1, 3.4.6.3). One indication
+is in flight at a time (3.4.7.2).
 """.
 
 -include("generated/erx_abi.hrl").
@@ -53,7 +55,9 @@ or a confirmed indication; counts a discarded command; or ends the link.
     exchanged = false :: boolean(),
     awaiting = none :: none | command | {request, Opcode :: 0..16#FF, erx_att:handle()},
     waiting = queue:new() :: queue:queue(item()),            % what arrived while a handler answers
-    prepared = none :: none | {erx_att:handle(), key(), Parts :: [{0..16#FFFF, binary()}], Bytes :: non_neg_integer()},
+    %% The prepared write: its value so far, joined part by part, and whether every part
+    %% landed within what the parts before it wrote; so it never holds more than the maximum.
+    prepared = none :: none | {erx_att:handle(), key(), Value :: binary(), Placed :: boolean()},
     subscriptions = #{} :: #{key() => subscription()},
     indication = none :: none | key()
 }).
@@ -238,24 +242,26 @@ respond({prepare_write, Handle, Offset, Part}, Server, #bearer{prepared = Prepar
               {value, K, _} -> K;
               _ -> ?ERROR(Opcode, Handle, write_not_permitted)
           end,
-    {Parts, Bytes} = case Prepared of
-                         none -> {[], 0};
-                         {Handle, _, P, B} -> {P, B};
-                         _ -> ?ERROR(Opcode, Handle, prepare_queue_full)
-                     end,
-    Bytes + byte_size(Part) =< Max orelse ?ERROR(Opcode, Handle, prepare_queue_full),
-    ?SEND({prepare_write, Handle, Offset, Part},
-          Bearer#bearer{prepared = {Handle, Key, [{Offset, Part} | Parts], Bytes + byte_size(Part)}});
+    {Sofar, Placed} = case Prepared of
+                          none -> {<<>>, true};
+                          {Handle, _, V, P} -> {V, P};
+                          _ -> ?ERROR(Opcode, Handle, prepare_queue_full)
+                      end,
+    %% A part past what the parts before it wrote spoils the value; Execute Write reports it.
+    {Joined, Ok} = case Placed andalso Offset =< byte_size(Sofar) of
+                       true -> {overwrite(Sofar, Offset, Part), true};
+                       false -> {Sofar, false}
+                   end,
+    byte_size(Joined) =< Max orelse ?ERROR(Opcode, Handle, prepare_queue_full),
+    ?SEND({prepare_write, Handle, Offset, Part}, Bearer#bearer{prepared = {Handle, Key, Joined, Ok}});
 respond({execute_write, cancel}, _Server, Bearer) ->
     ?SEND(execute_write, Bearer#bearer{prepared = none});
 respond({execute_write, write}, _Server, #bearer{prepared = none} = Bearer) ->
     ?SEND(execute_write, Bearer);
-respond({execute_write, write}, _Server, #bearer{prepared = {Handle, Key, Parts, _}} = Bearer) ->
-    Opcode = ?ERX_ATT_OPCODE_EXECUTE_WRITE_REQ,
-    Value = lists:foldl(fun({Offset, _}, Acc) when Offset > byte_size(Acc) -> ?ERROR(Opcode, Handle, invalid_offset);
-                           ({Offset, Part}, Acc) -> overwrite(Acc, Offset, Part)
-                        end, <<>>, lists:reverse(Parts)),
-    {[{write, Key, Value}], Bearer#bearer{prepared = none, awaiting = {request, Opcode, Handle}}}.
+respond({execute_write, write}, _Server, #bearer{prepared = {Handle, _Key, _Value, false}}) ->
+    ?ERROR(?ERX_ATT_OPCODE_EXECUTE_WRITE_REQ, Handle, invalid_offset);
+respond({execute_write, write}, _Server, #bearer{prepared = {Handle, Key, Value, true}} = Bearer) ->
+    {[{write, Key, Value}], Bearer#bearer{prepared = none, awaiting = {request, ?ERX_ATT_OPCODE_EXECUTE_WRITE_REQ, Handle}}}.
 
 %% A write command: given to the handler when a Write Request would be, otherwise ignored (3.4.5.3).
 command(Handle, Value, #{table := Table, security := Security}, Bearer) ->

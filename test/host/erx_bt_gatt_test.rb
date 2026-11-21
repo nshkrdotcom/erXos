@@ -66,7 +66,24 @@ class ErxBtGattTest < Minitest::Test
              module_path: L2CAP,
              anchor: 'Bound when Length > Bound ->',
              replacement: 'Bound when Length > Bound + 1 ->',
-             catching_case: 'frame_past_its_channel_bound_is_refused_test')
+             catching_case: 'frame_past_its_channel_bound_is_refused_test'),
+    Seed.new(fault: 'the gate skipped for Write Command',
+             module_path: SERVER,
+             anchor: "case erx_gatt_gate:check(Level, Security) of\n                " \
+                     'ok -> {[{write, Key, Value}], Bearer#bearer{awaiting = command}};',
+             replacement: "case erx_gatt_gate:check(open, Security) of\n                " \
+                          'ok -> {[{write, Key, Value}], Bearer#bearer{awaiting = command}};',
+             catching_case: 'gate_guards_commands_prepares_and_value_search_test'),
+    Seed.new(fault: 'the gate skipped for Write Request and Prepare Write',
+             module_path: SERVER,
+             anchor: "case erx_gatt_gate:check(Level, Security) of\n                ok -> Attribute;",
+             replacement: "case erx_gatt_gate:check(open, Security) of\n                ok -> Attribute;",
+             catching_case: 'gate_guards_commands_prepares_and_value_search_test'),
+    Seed.new(fault: 'Find By Type Value comparing values the gate hides',
+             module_path: SERVER,
+             anchor: 'same_type(T, Type) andalso readable(A, Server, Bearer) =:= ok',
+             replacement: 'same_type(T, Type)',
+             catching_case: 'gate_guards_commands_prepares_and_value_search_test')
   ].freeze
 
   def test_gatt_cases_pass_under_eunit

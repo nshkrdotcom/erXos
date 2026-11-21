@@ -8530,6 +8530,28 @@ model harness drive `erx_device.c` itself. `erx_device_dma_check` and `erx_devic
   Disconnection Complete empties and refills the slot, and each refill starts a fresh deadline, so the
   enable never times out and the core never stops; the controller process should end when a command stays
   unsent across refills for longer than `bt_command_timeout_ms`.
+* [Medium] bluetooth, a handler's late answer taken for the next write (`erlang/apps/erx_bt/src/erx_gatt_server.erl`,
+  `reply/3`; docs/design-bluetooth.md "The `ble` facet"): the `{write, Key, Value}` action carries no reference,
+  so after a write times out (`reply(timeout)`) the handler's late answer to it is taken as the answer to the next
+  write. Fix with the link core: number each write in the bearer, emit `{write, Ref, Key, Value}`, and have
+  `reply(Ref, Answer, ...)` drop an answer whose `Ref` is not the one awaited, the facet's `Req`.
+* [Medium] bluetooth, configuration writes and Stage 4 (`erx_gatt_server`'s `subscribe/5`, `erx_gatt_db`'s
+  Client Characteristic Configuration; docs/design-bluetooth.md "Bonds and the store", "Reconnection"): a
+  configuration write updates the bearer and answers at once, so a bonded link cannot hold the response until the
+  store keeps it or roll back on its failure; a Write Command to the descriptor is ignored where the design has it
+  change the configuration; a write that changes nothing still emits `subscribed`; and `new/0` cannot take a
+  bond's subscriptions at reconnection. Reshape with Stage 4: the configuration write awaits an answer as a value
+  write does, the bearer changes at the answer, the descriptor takes Write Command at its write level, and
+  `new/1` takes the kept subscriptions.
+* [Low] bluetooth, the ATT server's smaller gaps (`erx_gatt_server`, `erx_gatt_db`, `erx_att`): Execute Write
+  joins parts from an empty value, so a client rewriting the tail of an existing value gets Invalid Offset (ATT
+  3.4.6.3 measures from the current value); a second `indicate` in flight answers `busy`, which the facet's
+  table lists only for notifications, so the link must queue indications or the design list `busy`; the table's
+  hash covers the internal attribute maps rather than the declarations alone, so an OTP upgrade can send an
+  unneeded Service Changed; the Bluetooth Base UUID in `erx_att:uuid128/1` is Bumble's, unverified against Vol 3
+  Part B 2.5.1, and the case that uses it is circular; the bearer exploration checks response counts but not
+  which request a response answers, and the ATT fuzz target runs at security `none` and checks at most one
+  answer rather than exactly one.
 * [Low] Fiasco backend, Fiasco's vCPU state area ([vCPU upcalls on Fiasco](docs/design-fiasco.md#vcpu-upcalls-on-fiasco)):
   the area lives in kernel-user memory its program can write, so a program can set its own pending flag or rewrite
   the saved frame it is resumed with. It harms only that program, since `erx_vcpu_resume` validates the frame and

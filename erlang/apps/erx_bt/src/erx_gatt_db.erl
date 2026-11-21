@@ -96,7 +96,7 @@ gap() ->
       characteristics => [#{name => device_name, uuid => <<?ERX_GATT_UUID_DEVICE_NAME:16/little>>,
                             max => ?ERX_GAP_DEVICE_NAME_MAX, access => #{read => open}},
                           #{name => appearance, uuid => <<?ERX_GATT_UUID_APPEARANCE:16/little>>,
-                            max => 2, access => #{read => open}}]}.
+                            max => 2, access => #{read => open}, value => <<0, 0>>}]}.
 
 gatt() ->
     #{name => gatt, uuid => <<?ERX_GATT_UUID_GATT_SERVICE:16/little>>,

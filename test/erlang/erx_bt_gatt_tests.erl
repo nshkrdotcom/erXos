@@ -50,7 +50,7 @@ expected() ->
      {2, <<16#03, 16#28>>, <<16#02, 3, 0, 16#00, 16#2A>>},
      {3, <<16#00, 16#2A>>, <<"erxos">>},
      {4, <<16#03, 16#28>>, <<16#02, 5, 0, 16#01, 16#2A>>},
-     {5, <<16#01, 16#2A>>, <<>>},
+     {5, <<16#01, 16#2A>>, <<0, 0>>},
      {6, <<16#00, 16#28>>, <<16#01, 16#18>>},
      {7, <<16#03, 16#28>>, <<16#20, 8, 0, 16#05, 16#2A>>},
      {8, <<16#05, 16#2A>>, none},
@@ -433,15 +433,38 @@ prepared_writes_refuse_what_they_cannot_hold_test() ->
     {_, _, B} = ask(prepare(12, 0, <<1, 2>>), S, erx_gatt_server:new()),
     ?assertEqual(error_rsp(16#16, 15, 16#03), answer(prepare(15, 0, <<1, 0>>), S, B)),
     ?assertEqual(error_rsp(16#16, 1, 16#03), answer(prepare(1, 0, <<1>>), S, B)),
-    Full = lists:foldl(fun(_, Acc) -> {_, _, N} = ask(prepare(12, 0, <<0:80>>), S, Acc), N end,
-                       B, lists:seq(1, 24)),
-    ?assertEqual(error_rsp(16#16, 12, 16#09), answer(prepare(12, 0, <<0:24>>), S, Full)),
+    Full = lists:foldl(fun(N, Acc) -> {_, _, Next} = ask(prepare(12, N * 10, <<0:80>>), S, Acc), Next end,
+                       B, lists:seq(0, 23)),
+    ?assertEqual(error_rsp(16#16, 12, 16#09), answer(prepare(12, 240, <<0:40>>), S, Full)),
+    ?assertEqual(<<16#17, 12, 0, 240, 0, 0:32>>, answer(prepare(12, 240, <<0:32>>), S, Full)),
     %% An offset past what the parts before it wrote discards the queue (Part F, 3.4.6.3).
     {_, _, Gap} = ask(prepare(12, 5, <<1>>), S, erx_gatt_server:new()),
     {[Error], [], Cleared} = ask(execute(1), S, Gap),
     ?assertEqual(error_rsp(16#18, 12, 16#07), Error),
     ?assertEqual(<<16#19>>, answer(execute(1), S, Cleared)),
     ?assertEqual(<<16#19>>, answer(execute(0), S, B)).
+
+gate_guards_commands_prepares_and_value_search_test() ->
+    [#{characteristics := [Key, Ind]} = Sec, #{characteristics := [Rx, Tx]} = Nus] = services(),
+    Gated = erx_gatt_db:build([Sec#{characteristics := [Key, Ind#{access := #{indicate => encrypted, read => encrypted}}]},
+                               Nus#{characteristics := [Rx#{access := #{write => open, write_without_response => encrypted}}, Tx]}]),
+    Open = (server(?OPEN))#{table := Gated},
+    Encrypted = (server(?JUST_WORKS))#{table := Gated},
+    B = erx_gatt_server:new(),
+    ?assertEqual({[], [], B}, ask(write_cmd(12, <<"c">>), Open, B)),
+    ?assertMatch({[], [{write, {nus, rx}, <<"c">>}], _}, ask(write_cmd(12, <<"c">>), Encrypted, B)),
+    ?assertEqual(error_rsp(16#16, 18, 16#05), answer(prepare(18, 0, <<1>>), Encrypted, B)),
+    ?assertEqual(<<16#17, 18, 0, 0, 0, 1>>, answer(prepare(18, 0, <<1>>), Encrypted#{security := ?PASSKEY}, B)),
+    %% Find By Type Value compares no value the gate hides (Part F, 3.4.3.3).
+    ?assertEqual(error_rsp(16#06, 1, 16#0A), answer(find_by_type_value(1, 16#FFFF, 16#FFF0, <<>>), Open, B)),
+    ?assertEqual(<<16#07, 20:16/little, 20:16/little>>,
+                 answer(find_by_type_value(1, 16#FFFF, 16#FFF0, <<>>), Encrypted, B)).
+
+prepared_empty_parts_hold_nothing_test() ->
+    S = server(?OPEN),
+    Bearer = lists:foldl(fun(_, B) -> {_, _, N} = ask(prepare(12, 0, <<>>), S, B), N end,
+                         erx_gatt_server:new(), lists:seq(1, 10000)),
+    ?assert(erts_debug:flat_size(Bearer) < 100).
 
 %% ---- the bearer, explored ----
 
