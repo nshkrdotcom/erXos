@@ -2342,6 +2342,38 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   record, but the Pi 4's platform record has no bridge unit or VL805 unit and its manifest no PCIe domain, so the
   enumerator finds no configuration record there and the driver has run only over the host tests' register model.
   Until `pci_bus:firmware/1` is made (the item above), a bring-up that cycles PERST# reports the VL805 `not_ready`.
+* [High] PCIe, the VL805 gets no DMA memory on the Pi 4 (`kernel/core/dt.c` `range_read`,
+  `liberx/backend/fiasco/runtime_entry.c` `tree_facts`, [design-pcie.md](docs/design-pcie.md#dma)): on the board
+  the root prints `erx: device tree: /scb/pcie@7d500000: dma absent ranges` for the VL805's row, so
+  `erx_boot_dma_memory` gives its entry no memory and the USB domain cannot run the controller. `ranges` is
+  `range_read`'s refusal when, after the bridge's `dma-ranges` is walked to the root and each window's device
+  addresses are cut below the row's `dma_limit` (`0x3c000000`), not exactly one window meets RAM, or the walk made
+  more than `ERX_DT_WINDOWS_MAX` windows. With the facts record's tree (section 0: PCI 0 at CPU 0, 3 GiB) exactly
+  one does, so the tree the boot firmware hands over differs; the record says the firmware edits `dma-ranges` at
+  boot on early BCM2711 revisions and leaves what it writes unknown (section 2, "The DMA limit"; unknown 5). Read
+  the handed-over tree's `/scb` and `/scb/pcie@7d500000` `dma-ranges` and the memory node's `reg` (probe B5's
+  tree half). If the firmware moves the window's PCI side to or above `0x3c000000`, the device-address cut drops it
+  whole, and `dma_limit`, taken from FreeBSD's bridge whose window is identity-mapped, has to be restated against
+  that window in design-pcie.md's DMA section. The reason word also does not tell no window from several.
+* [High] PCIe, the bridge's start on the board (`erlang/apps/erx_pcie/src/erx_pcie_bcm2711_core.erl` `decide/1`,
+  `erlang/apps/erx_pcie/src/erx_pcie_bcm2711.erl` `describe/1`,
+  [design-usb.md](docs/design-usb.md#the-bcm2711-bridge)): on a Raspberry Pi 4 the console stopped mid-line as the
+  bridge driver started and the watchdog reset the board at every boot, with a JTAG halt of cpu0 timing out, while
+  the core's first access was a read of `MISC_PCIE_STATUS`. The core reads `RGR1_SW_INIT_1` and `HARD_DEBUG` first
+  and runs bring-up for a bridge in reset or with its SerDes powered down; that the boot firmware leaves the bridge
+  in one of those states is an inference from the facts record's order (unknowns 8 and 9), not confirmed on the
+  board. The start's log line says `reset` alike for a bridge in reset, one with its SerDes off and one whose link
+  was down, and nothing is logged before the first access, so a board run cannot tell which branch ran or whether
+  the `RGR1_SW_INIT_1` read itself hangs: carry the branch in the start's result and log it, with one line before
+  the first register access.
+* [Medium] PCIe, the BCM2711 bridge's keep path (`erlang/apps/erx_pcie/src/erx_pcie_bcm2711_core.erl` `keep/1`,
+  `by_link/1`, [design-usb.md](docs/design-usb.md#the-bcm2711-bridge)): a kept bridge rewrites `MISC_CTRL`
+  (`SCB0_SIZE`, the burst size and the read modes) and `BAR1`/`BAR2`/`BAR3_CONFIG_LO` with the link up, and the
+  firmware register is read at `0x50` before `MISC_CTRL` is rewritten, under the read modes the boot firmware left.
+  The facts record has no source that writes those registers with the link up (every source resets the bridge
+  first, section 6) and does not establish what the firmware programs (unknown 5): equal values change nothing,
+  but a firmware window that differs from the tree's is moved under a VL805 that may be mastering. Probe B3 should
+  also read `MISC_CTRL` and the three BAR words before the keep writes them, and compare them with the tree's.
 * [Medium] PCIe and the drivers' control, one mint for system-domain-only grants (`erlang/apps/erx_pcie/src/erx_pcie_facet.erl`
   `start_link/0`, `mint_init/1`, `mint/1`; `erlang/apps/erx/src/erx_driver_ctl.erl` `start_mint`, `mint_init`, `mint`): the pcie
   mint repeats the driver-control mint line for line but for its callback module and the grant's extra keys, so a fix
