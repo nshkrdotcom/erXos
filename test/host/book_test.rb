@@ -41,8 +41,11 @@ class BookTest < Minitest::Test
   def render(body, path: 'docs/book/16-storage.md', drafts: false)
     document = tree(body)
     ids = Erx::Book::Links.slugs(document.root.get_elements('//heading').map { |node| node.elements.to_a.map(&:text).join })
-    Erx::Book::Page.render(document, ids:, path:, resolver: resolver, drafts:)
+    Erx::Book::Page.render(document, ids:, path:, resolver: resolver, drafts:, diagram: DRAWING)
   end
+
+  # A drawing in place of the diagram step's, naming what the page asked for.
+  DRAWING = ->(line:, caption:) { Erx::Book::Html.tag('svg', { 'data-line' => line.to_s, 'aria-labelledby' => caption }) }
 
   TITLE = "<heading level='1' sourcepos='1:1-1:9'><text>Chapter 16. Storage and Updates</text></heading>"
 
@@ -139,11 +142,23 @@ class BookTest < Minitest::Test
     page = render("#{TITLE}<code_block info='text' sourcepos='5:1-8:3'>a &lt; b</code_block>#{caption}" \
                   "<code_block info='mermaid' sourcepos='10:1-12:3'>flowchart LR</code_block>" \
                   "<paragraph sourcepos='14:1-14:9'><image destination='../../site/kiosk.png'>#{text('kiosk')}</image></paragraph>" \
-                  "<paragraph sourcepos='15:1-15:9'><emph>#{text('Figure 16.3. Kiosk.')}</emph></paragraph>")
+                  "<paragraph sourcepos='15:1-15:9'><emph>#{text('Figure 16.3. Kiosk.')}</emph></paragraph>" \
+                  "<code_block info='mermaid' sourcepos='17:1-19:3'>graph TD</code_block>" \
+                  "<paragraph sourcepos='20:1-20:9'><emph>#{text('Figure 16.4. Flow.')}</emph></paragraph>")
     html = page.body.to_s
     assert_includes html, '<figure id="figure-16-2"><pre class="code"><code>a &lt; b</code></pre><figcaption><span class="label">Figure 16.2.</span>The medium.</figcaption></figure>'
-    assert_includes html, '<pre class="diagram-source"><code>flowchart LR</code></pre><figure id="figure-16-3">'
+    assert_includes html, '<figure class="diagram"><svg data-line="10"></svg></figure><figure id="figure-16-3">'
     assert_includes html, '<figure id="figure-16-3"><p class="image"><img src="media/abababababababab-kiosk.png" alt="kiosk"></p>'
+    assert_includes html, '<figure id="figure-16-4" class="diagram"><svg data-line="17" aria-labelledby="figure-16-4.caption">' \
+                          '</svg><figcaption id="figure-16-4.caption"><span class="label">Figure 16.4.</span>Flow.</figcaption></figure>'
+  end
+
+  # The diagram step draws every mermaid block of a page, nested ones included.
+  def test_a_pages_diagrams_are_listed_in_drawing_order
+    document = tree("#{TITLE}<code_block info='mermaid' sourcepos='3:1-5:3'>graph TD</code_block>" \
+                    "<block_quote sourcepos='6:1-9:1'><code_block info='mermaid x' sourcepos='7:1-8:3'>graph LR</code_block></block_quote>" \
+                    "<code_block info='ruby' sourcepos='10:1-11:3'>x</code_block>")
+    assert_equal [['graph TD', 3], ['graph LR', 7]], Erx::Book::Page.diagrams(document, path: 'x.md').map { [_1.source, _1.line] }
   end
 
   # Seeded faults: drop the escape in attribute values; write non-ASCII characters as they are.

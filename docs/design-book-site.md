@@ -649,24 +649,37 @@ into the page in five steps, each over the parsed tree:
    flowcharts, sequence diagrams and state diagrams, which the
    implementation reads off its output for the whole book (the bake-off
    outputs hold `svg`, `style`, `defs`, `marker`, `g`, `rect`,
-   `circle`, `line`, `polyline`, `polygon` and `text`). Any other
-   element or attribute, `script`, `foreignObject`, `image` and every
-   `on...` attribute among them, is refused with its name, so a new
+   `circle`, `line`, `polyline`, `polygon` and `text`; the book's own
+   diagrams also draw `ellipse` and `tspan`), and the closed set of
+   `class` values the library gives its shapes, which the restyle
+   recognizes them by. Any other
+   element, attribute or class, `script`, `foreignObject`, `image` and
+   every `on...` attribute among them, is refused with its name, and so
+   is an `svg` below the root and a `style` element anywhere but
+   directly under the root, so a new
    version that draws something new stops the build until someone has
    looked at it.
 3. **Keep the drawing self-contained.** The library's `<style>` begins
    with `@import url('https://fonts.googleapis.com/...')` for its font
    (`buildStyleBlock`, `dist/index.js` line 148) and defines its color
-   variables. The writer discards that style text whole and writes its
+   variables, and the root's `style` attribute sets its two base
+   colors, `--bg` and `--fg`. The writer discards that style text whole,
+   the attribute with it (a root `style` that sets anything else is
+   refused), and writes its
    own, two fixed rules: `text` names the face, and `svg` sets each of
    the library's color variables (`--_text`, `--_line`, `--_arrow`,
    `--_node-fill`, `--_group-hdr` and the rest, a closed list read off
    the library's output, as the bake-off's `render/manual.rb` lists
    them) to `var(--ink)` or `var(--paper)`. A `var(--name)` in the
    drawing that the list does not hold is refused, since it would draw
-   in the browser's fallback color. Every `url(...)` in an attribute,
-   and every `href`, must be a fragment, `#name`, naming an id in the
-   same drawing; anything else is refused, not stripped.
+   in the browser's fallback color. Every `url(...)` in an attribute
+   must be a fragment, `#name`, naming an id in the same drawing;
+   anything else is refused, not stripped. No `href` is admitted at
+   all, since the library writes none. A backslash in an attribute is
+   refused too, since a CSS escape could spell `url(` or `var(` past
+   those rules. The `data-` attributes, the library's names for what it
+   drew, are text the browser never reads as CSS, so these rules pass
+   them by and a label may hold a backslash.
 4. **Restyle.** `Erx::Book::Style`, a pure function from the filtered
    tree to the restyled tree, applies "The diagram style": it removes
    each group's header bar and moves its title to the lower left of the
@@ -689,9 +702,10 @@ into the page in five steps, each over the parsed tree:
    version cannot draw half-restyled.
 5. **Rename ids.** The library's ids are fixed marker names
    (`arrowhead`, `arrowhead-start`, `seq-arrow`, `seq-arrow-open`),
-   the restyle's (`dither`, `shadows`) and the Mermaid node ids (`S`,
-   `idle`, `kern`), so two diagrams on one
-   page would collide, and a node id could meet a heading id. Every id
+   and the restyle's (`dither`, `shadows`, which step 3 refuses in the
+   library's output), so two diagrams on one page would collide. (The
+   Mermaid node ids, `S`, `idle`, `kern`, are `data-id` text, not ids.)
+   Every id
    becomes `dK.name`, where K is the diagram's place on the page, and
    every fragment reference is rewritten to match. A heading slug never
    holds a `.`, so a diagram id never meets an anchor.
@@ -699,7 +713,9 @@ into the page in five steps, each over the parsed tree:
 The writer then serializes the tree as it serializes HTML: every text
 node and attribute escaped, every character above 0x7f a numeric
 reference. It adds `role="img"` to the root, with `aria-labelledby`
-naming the figure's caption where there is one, and places the drawing
+naming the figure's caption where there is one (the caption's id is
+the figure's with `.caption`, as `figure-2-1.caption`, which no
+heading slug and no drawing id can be), and places the drawing
 in `<figure class="diagram">`. The `width` and `height` the library
 gives stay, and the stylesheet caps the drawing at the column's width.
 
@@ -1011,7 +1027,7 @@ make it fail, planted once by hand when the test is written.
 | Figures | a diagram, a text block and an image each followed by a `*Figure N.M. ...*` paragraph become `<figure>` with that caption and id `figure-N-M`; a figure without a caption stays a bare block | match the caption against the preceding paragraph |
 | Escaping and ASCII | a fixture with `<4.0.0>`, `a && b` in code, a link whose fragment holds `"` and a curly quote in prose renders them as text and numeric references; every output byte is ASCII | drop the escape in attribute values; write non-ASCII characters as they are |
 | SVG writer | given SVG strings in the shape the library returns: the library's style text, its `@import` with it, is replaced by the writer's; ids become `d1.arrowhead` and `d2.arrowhead` on one page, and each `url(#arrowhead)` and `url(#dither)` names its own diagram's; `<script>`, `onload=`, `<image href="https://x">`, `fill="url(https://x)"` and `stroke="var(--_nonesuch)"` are each refused; a `<` in a label is escaped | rename ids but not the `url()` references; strip an external `url()` instead of refusing it; restyle after renaming, so the dither's id stays bare |
-| Style | a fixture flowchart with an outer group holding an inner group, a dashed edge crossing the outer group's shadow and a labelled edge, and a sequence diagram with a note: the header bars are gone and each title sits at the lower left; corners are square, strokes 1 px, dashes `10 6`; exactly one shadow path, for the outer group; the dashed edge has an underlay clipped to the shadows; the note is a rectangle; the sequence diagram has no shadow and the `viewBox` grows only for the flowchart; the restyle of a group without its title is refused | count a group as inside itself, so no group casts a shadow; drop the clip from the underlay |
+| Style | a fixture flowchart with an outer group holding an inner group, a dashed edge crossing the outer group's shadow and a labelled edge, and a sequence diagram with a note: the header bars are gone and each title sits at the lower left; corners are square, strokes 1 px, dashes `10 6`; exactly one shadow path, for the outer group; the dashed edge has an underlay clipped to the shadows; the note is a rectangle; the sequence diagram has no shadow; the `viewBox` grows when a shadow passes its edge and only then; the restyle of a group without its title is refused | let every group cast a shadow, not only the outer one; drop the clip from the underlay |
 | The library's options | a tool test that runs the driver with the bake-off's dense flowchart and a one-node fixture: with `charWidth: 0.6` and `labelSize: 12` the node labelled with 20 characters is a `rect` 144 px plus margins wide and its label's `font-size` is 12; with `groupTitle: "bottom"` a group's contents sit 24 px below its top and 40 px above its bottom, and a group whose title is wider than its contents is as wide as the title plus 24, in a top-down and a left-to-right flowchart alike; without the three options the six bake-off diagrams give the same SVG as the unmodified 1.1.3 bundle, kept as goldens | measure with the width table when `charWidth` is set; drop the title's minimum width; give it with its axes unswapped in a top-down flowchart; draw the title row at the top |
 | Diagram step | the driver, given three diagrams of which the second is invalid, returns a drawing, an error with its stage and line, and a drawing, in order, and the step's refusal names the second diagram's chapter file and line (tool test) | let the driver stop at the first error, so the third result is missing; report the fence's line without the error's own line |
 | Parse check | a sequence diagram with `;` in a label, which beautiful-mermaid draws, is refused at the parse stage with Mermaid's message (tool test; built only if the probe shows `mermaid.parse` runs under Node) | skip the parse call |
