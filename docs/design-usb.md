@@ -1757,7 +1757,7 @@ nonblocking:
    supported-protocol capabilities, which say which ports are USB 2 and
    which USB 3;
 3. `erx_device:negotiate/2`, the form's reset and install, called again
-   on a timer while it answers `{error, ebusy}`
+   with `continue` on a timer while it answers `{error, ebusy}`
    ([Install](#install));
 4. answer its bus process, which attaches once its supervisor has
    started it ([The process tree](#the-process-tree)), with the root
@@ -2401,14 +2401,28 @@ release returned, or the copy is refused.
 #### Install
 
 `negotiate/2` takes one step a call and answers `{error, ebusy}` while
-the controller has not yet reported what the last step asked, as the
-other forms' installs do
+the controller has not yet reported what the last step asked
 ([design-device-dma.md](design-device-dma.md#the-descriptor-forms)).
-Its steps, each completed by a later call: clear run and stop, then wait
-for halted, which the controller reaches within 16 ms (5.4.1, p. 393);
-write the reset bit, allowed only once halted (p. 394), then wait for
-the reset bit and the controller-not-ready bit to clear before writing
-any other register (p. 394; 4.2, p. 80); then, once the halted and
+Each call begins a negotiation, whatever step the record keeps, as
+virtio's and GENET's calls do, unless it passes `continue`, which only
+the controller core's retry after `{error, ebusy}` does
+(`erx_device:negotiate(Dev, continue)`). The record outlives the
+controller process, but a restarted process starts from the core's
+first state, whose first call cannot be a retry, so it begins afresh
+rather than resuming its predecessor's step; and a retry that forgot
+`continue` resets again on every call and fails at the deadline
+instead of resuming silently. Its steps, each completed by a later
+call: while the reset bit or the controller-not-ready bit reads set,
+write nothing, so a reset under way, a predecessor's included, is
+waited out rather than written over or begun again; while the
+controller runs or its run bit reads set, clear run, on every call, so
+a controller that missed one write is stopped by the next, and halted
+comes within 16 ms (5.4.1, p. 393); once it reads halted with run
+clear (run set could take it out of halted before the reset lands),
+write the reset bit, allowed only once halted (p. 394); then wait for
+the reset bit and the
+controller-not-ready bit to clear before writing any other register
+(p. 394; 4.2, p. 80); then, once the halted and
 reset-done report has released every holding and every block is free,
 the sequencer, in one decision, lays out and zeroes every region,
 writes DCBAA entry 0, the scratchpad array, the segment table and the
@@ -3100,7 +3114,7 @@ command, detach or root-port operation, is a message in its mailbox,
 served in arrival order; one command is in flight at a time, while
 transfers on different pipes are in flight together, up to their blocks'
 buffers. No NIF call waits: `negotiate/2` answers `ebusy` and is called
-again on a timer, as the other forms' installs are. Device calls run on
+again on a timer with `continue`. Device calls run on
 normal schedulers, so Fiasco's condition for non-coherent DMA, that
 no thread moves between its maintenance and its barrier, holds for this
 form as for the others.
@@ -3174,7 +3188,8 @@ sink shows it.
 
 | Call or input | Answer | When |
 | --- | --- | --- |
-| `erx_device:negotiate/2`, TRB form | `{error, ebusy}` | the controller has not yet halted, finished its reset or started; the driver calls again on a timer |
+| `erx_device:negotiate/2`, TRB form | `{error, ebusy}` | the controller has not yet halted, finished its reset or started; the driver calls again on a timer, with `continue` |
+| `erx_device:negotiate/2`, virtio or GENET form | `{error, einval}` | it passes `continue`: these forms' negotiations take no steps, and each call begins one |
 | `erx_device:negotiate/2`, TRB form | `{error, enotsup}` | it asks for more than 64 scratchpad pages, or its page size excludes 4 KiB |
 | `erx_device:negotiate/2`, TRB form | `{error, erange}` | `AC64` is clear and the record's memory lies above 4 GiB |
 | opening an xHCI record | `{error, einval}` | `CAPLENGTH`, `RTSOFF` or `DBOFF` puts a register cluster or a port past the register window, or an extended capability lies outside it |

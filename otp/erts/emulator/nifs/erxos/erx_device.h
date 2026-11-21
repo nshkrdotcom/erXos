@@ -311,8 +311,16 @@ bool	erx_device_framebuffer_memory(uint32_t framebuffer, volatile uint8_t **base
  * both rings installed and both engines started, receive first. It accepts no features (0)
  * whatever `wanted` says; ERX_EBUSY, with nothing installed, until both directions report the
  * stop, so the driver calls again; ERX_EINVAL for a record without both its queues.
+ *
+ * xHCI's negotiation is the controller's reset and start, one step a call, as
+ * erx_trb_form_start_next decides from the call's one reading (docs/design-usb.md, "Install"):
+ * the first call makes the record; ERX_EBUSY until the controller has started, then ERX_OK with
+ * no feature accepted. A call begins the negotiation, whatever step the record keeps, unless it
+ * `continues` it, which only the controller core's retry after ERX_EBUSY does; `wanted` is
+ * unused. Virtio's and GENET's negotiations take no steps, each call beginning one, and refuse
+ * `continues` with ERX_EINVAL before anything is touched.
  */
-int	erx_device_negotiate(const erx_device_t *device, uint64_t wanted, uint64_t *accepted);
+int	erx_device_negotiate(const erx_device_t *device, uint64_t wanted, bool continues, uint64_t *accepted);
 
 /*
  * Posts one chain: its pieces, readable before writable, laid end to end in a free buffer of

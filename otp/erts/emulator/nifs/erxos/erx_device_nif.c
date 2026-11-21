@@ -506,20 +506,21 @@ queue_create_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
 	return (enif_make_tuple2(env, enif_make_atom(env, "ok"), enif_make_uint(env, queue)));
 }
 
-/* negotiate(Dev, Wanted) */
+/* negotiate(Dev, Wanted | continue): `continue` carries on the TRB form's negotiation, a number begins one. */
 static ERL_NIF_TERM
 negotiate_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
 {
 	const erx_device_t *const device = device_of(env, argv[0]);
-	ErlNifUInt64 wanted;
+	const bool continues = enif_is_identical(argv[1], enif_make_atom(env, "continue"));
+	ErlNifUInt64 wanted = 0;
 	uint64_t accepted;
 	int status;
 
 	(void)argc;
-	if (device == NULL || !enif_get_uint64(env, argv[1], &wanted))
+	if (device == NULL || (!continues && !enif_get_uint64(env, argv[1], &wanted)))
 		return (enif_make_badarg(env));
 	enif_mutex_lock(device_lock);
-	status = erx_device_negotiate(device, wanted, &accepted);
+	status = erx_device_negotiate(device, wanted, continues, &accepted);
 	enif_mutex_unlock(device_lock);
 	if (status != ERX_OK)
 		return (status_error(env, status));

@@ -97,6 +97,16 @@
 #else
 #define SEED_STARTED_HALTED	false
 #endif
+#ifdef ERX_TRB_FORM_SEED_BEGIN_RESUMES
+#define SEED_BEGIN_RESUMES	true
+#else
+#define SEED_BEGIN_RESUMES	false
+#endif
+#ifdef ERX_TRB_FORM_SEED_BEGIN_WRITES_RESETTING
+#define SEED_BEGIN_WRITES_RESETTING	true
+#else
+#define SEED_BEGIN_WRITES_RESETTING	false
+#endif
 
 /* The form's device addresses: every address place of its TRBs and contexts is 64 bits wide. */
 #define ADDRESS_BITS	64u
@@ -855,16 +865,17 @@ erx_trb_form_reset(erx_trb_form_t *form)
 }
 
 erx_trb_start_next_t
-erx_trb_form_start_next(erx_trb_start_step_t step, erx_trb_start_seen_t seen)
+erx_trb_form_start_next(erx_trb_start_step_t step, bool continues, erx_trb_start_seen_t seen)
 {
-	const erx_trb_start_next_t wait = { .effect = ERX_TRB_START_NOTHING, .step = step };
+	const erx_trb_start_step_t at = (continues || SEED_BEGIN_RESUMES) ? step : ERX_TRB_START_BEGIN;
+	const erx_trb_start_next_t wait = { .effect = ERX_TRB_START_NOTHING, .step = at };
 
-	switch (step) {
+	switch (at) {
 	case ERX_TRB_START_BEGIN:
-		return ((erx_trb_start_next_t){ .effect = ERX_TRB_START_CLEAR_RUN, .step = ERX_TRB_START_HALTING });
-	case ERX_TRB_START_HALTING:
-		if (!seen.halted && !SEED_RESET_RUNNING)
+		if ((seen.resetting || seen.not_ready) && !SEED_BEGIN_WRITES_RESETTING)
 			return (wait);
+		if ((seen.running || !seen.halted) && !SEED_RESET_RUNNING)
+			return ((erx_trb_start_next_t){ .effect = ERX_TRB_START_CLEAR_RUN, .step = ERX_TRB_START_BEGIN });
 		return ((erx_trb_start_next_t){ .effect = ERX_TRB_START_RESET, .step = ERX_TRB_START_RESETTING });
 	case ERX_TRB_START_RESETTING:
 		if (seen.resetting || (seen.not_ready && !SEED_INSTALL_NOT_READY))
@@ -875,5 +886,5 @@ erx_trb_form_start_next(erx_trb_start_step_t step, erx_trb_start_seen_t seen)
 			return (wait);
 		return ((erx_trb_start_next_t){ .effect = ERX_TRB_START_NOTHING, .step = ERX_TRB_START_BEGIN, .started = true });
 	}
-	return ((erx_trb_start_next_t){ .effect = ERX_TRB_START_CLEAR_RUN, .step = ERX_TRB_START_HALTING });
+	return ((erx_trb_start_next_t){ .effect = ERX_TRB_START_NOTHING, .step = ERX_TRB_START_BEGIN });
 }

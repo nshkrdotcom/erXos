@@ -40,8 +40,9 @@ class ErxDeviceTrbFormTest < Minitest::Test
   # an Evaluate Context let through on a busy EP0; a Configure Endpoint on an unaddressed slot; a
   # Stop Endpoint, Reset Endpoint or Set TR Dequeue Pointer let through in any state but disabled;
   # an Address Device on a slot no Enable Slot enabled; the controller's HCRST written before it
-  # halts; the install written while the controller is not ready; and the start answered while the
-  # controller is still halted.
+  # halts; the install written while the controller is not ready; the start answered while the
+  # controller is still halted; a begun negotiation resuming the step its record keeps; and USBCMD
+  # written while HCRST or CNR reads set.
   SEEDS = %w[DMA_SEED_DEQUEUE_OTHER_RING DMA_SEED_DROP_MISSING DMA_SEED_CONFIGURE_ADDS_EP0
              DEVICE_TRB_SEED_BURST_UNCHECKED TRB_FORM_SEED_HIGHEST_BUFFER TRB_FORM_SEED_NO_OUT_FILL TRB_FORM_SEED_TAG_AT_FIRST
              TRB_FORM_SEED_NO_REQUEST_CHECK TRB_FORM_SEED_OTHER_POOL TRB_FORM_SEED_ANY_ENDPOINT
@@ -52,7 +53,8 @@ class ErxDeviceTrbFormTest < Minitest::Test
              DMA_SEED_POST_ON_STOPPED TRB_FORM_SEED_ANSWER_HALTED TRB_FORM_SEED_CONFIGURE_SPEED_ZEROED
              DMA_SEED_NO_REACH_HOLDS TRB_FORM_SEED_CONFIGURE_UNADDRESSED DMA_SEED_STOP_ANY_STATE
              DMA_SEED_RESET_ANY_STATE DMA_SEED_RESTART_ANY_STATE TRB_FORM_SEED_ADDRESS_UNENABLED
-             TRB_FORM_SEED_RESET_RUNNING TRB_FORM_SEED_INSTALL_NOT_READY TRB_FORM_SEED_STARTED_HALTED].freeze
+             TRB_FORM_SEED_RESET_RUNNING TRB_FORM_SEED_INSTALL_NOT_READY TRB_FORM_SEED_STARTED_HALTED
+             TRB_FORM_SEED_BEGIN_RESUMES TRB_FORM_SEED_BEGIN_WRITES_RESETTING].freeze
 
   def test_layout_endpoints_posts_and_releases
     output, status = run_harness

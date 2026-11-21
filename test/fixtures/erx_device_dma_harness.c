@@ -473,7 +473,7 @@ check_failed(const erx_device_t *device, uint32_t queue, int expected, bool fail
 	uint64_t accepted = 0;
 	uint32_t count;
 
-	CHECK(erx_device_negotiate(device, ~UINT64_C(0), &accepted) == expected && accepted == 0);
+	CHECK(erx_device_negotiate(device, ~UINT64_C(0), false, &accepted) == expected && accepted == 0);
 	CHECK(model.resets == resets + 1);
 	CHECK(((*reg("status") & status_bit("failed")) != 0) == failed);
 	CHECK((*reg("status") & status_bit("driver_ok")) == 0);
@@ -523,18 +523,20 @@ check_negotiate(const erx_device_t *device, uint32_t queue)
 
 	/* Of all 64 bits, the device type's, VERSION_1 and ACCESS_PLATFORM, and no bit of the ring or the transport. */
 	const uint64_t always = bit(ERX_VIRTIO_F_VERSION_1) | bit(ERX_VIRTIO_F_ACCESS_PLATFORM);
-	CHECK(erx_device_negotiate(device, ~UINT64_C(0), &accepted) == ERX_OK);
+	CHECK(erx_device_negotiate(device, ~UINT64_C(0), false, &accepted) == ERX_OK);
 	CHECK(accepted == (ERX_VIRTIO_F_DEVICE_TYPE_MASK | always));
 	for (uint32_t at = 0; at < sizeof(ring_bits) / sizeof(ring_bits[0]); at++)
 		CHECK((accepted & bit(ring_bits[at])) == 0);
 	CHECK(model.driver_features[0] == (uint32_t)accepted && model.driver_features[1] == (uint32_t)(accepted >> 32));
 	CHECK(*reg("status") == running);
+	/* Virtio's negotiation takes no steps: `continue` is refused, and the running device kept. */
+	CHECK(erx_device_negotiate(device, 0, true, &accepted) == ERX_EINVAL && *reg("status") == running);
 	/* VERSION_1 and an offered ACCESS_PLATFORM always, and only what the driver wants of the rest. */
-	CHECK(erx_device_negotiate(device, bit(3), &accepted) == ERX_OK && accepted == (bit(3) | always));
-	CHECK(erx_device_negotiate(device, 0, &accepted) == ERX_OK && accepted == always);
+	CHECK(erx_device_negotiate(device, bit(3), false, &accepted) == ERX_OK && accepted == (bit(3) | always));
+	CHECK(erx_device_negotiate(device, 0, false, &accepted) == ERX_OK && accepted == always);
 	CHECK(model.driver_features[0] == 0 && model.driver_features[1] == 3);
 	model.offered = bit(ERX_VIRTIO_F_VERSION_1) | bit(3);
-	CHECK(erx_device_negotiate(device, ~UINT64_C(0), &accepted) == ERX_OK && accepted == model.offered);
+	CHECK(erx_device_negotiate(device, ~UINT64_C(0), false, &accepted) == ERX_OK && accepted == model.offered);
 
 	CHECK(*reg("queue_sel") == 0 && *reg("queue_num") == QUEUE_SIZE && *reg("queue_ready") == 1);
 	layout = ring_layout(QUEUE_SIZE);
@@ -552,7 +554,7 @@ negotiate(const erx_device_t *device)
 {
 	uint64_t accepted;
 
-	return (erx_device_negotiate(device, 0, &accepted));
+	return (erx_device_negotiate(device, 0, false, &accepted));
 }
 
 /* A virtio-blk read: the header goes out, the device writes 512 bytes and a status. */

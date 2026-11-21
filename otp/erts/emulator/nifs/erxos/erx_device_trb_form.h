@@ -312,25 +312,37 @@ void	erx_trb_form_reset(erx_trb_form_t *form);
 
 /*
  * The controller's reset and start, which erx_device:negotiate/2 takes one step a call
- * (docs/design-usb.md, "Install"; xHCI 1.2, 4.2 and 5.4.1, pp. 80-82 and 393-394): run cleared;
- * once the controller reads halted, HCRST, which it allows only then; once HCRST and the
- * controller-not-ready bit read clear, before which no other register may be written, the
- * reset's idle report (erx_trb_form_reset) and the install (erx_trb_form_install), whose last
- * write is run; once the controller leaves halted, started. Each call reads USBCMD and USBSTS
- * once, at its start, and the decision is a pure function of that reading and of the step the
- * last call left, so no call waits: a wait is one reading a call, answered `{error, ebusy}`
- * until it ends, and the controller core holds the install's one deadline, past which it fails
- * the controller (erx_xhci_core).
+ * (docs/design-usb.md, "Install"; xHCI 1.2, 4.2 and 5.4.1, pp. 80-82 and 393-394): run cleared
+ * until the controller reads halted with run clear; then HCRST, which it allows only then; once HCRST and the
+ * controller-not-ready bit read clear, before which no register is written, the reset's idle
+ * report (erx_trb_form_reset) and the install (erx_trb_form_install), whose last write is run;
+ * once the controller leaves halted, started. Each call reads USBCMD and USBSTS once, at its
+ * start, and the decision is a pure function of that reading, of the step the last call left
+ * and of whether the call continues the negotiation, so no call waits: a wait is one reading a
+ * call, answered `{error, ebusy}` until it ends, and the controller core holds the install's one
+ * deadline, past which it fails the controller (erx_xhci_core).
+ *
+ * A call begins a negotiation, whatever step the record keeps, unless it continues one: only the
+ * controller core's retry after `{error, ebusy}` continues. A restarted controller process
+ * therefore begins afresh rather than resuming the step its predecessor left, and a retry that
+ * forgot to continue resets again on every call, which the deadline ends.
  */
 typedef enum erx_trb_start_step {
-	ERX_TRB_START_BEGIN,		/* the next call begins a negotiation: a new record's, or a started one's */
-	ERX_TRB_START_HALTING,		/* run cleared: waits for USBSTS.HCH */
+	/*
+	 * The first: nothing written while HCRST or CNR reads set, so a reset under way, a
+	 * predecessor's included, is waited out rather than written over or begun again (5.4.1,
+	 * p. 394; 4.2, p. 80); run cleared on every call while the controller runs or its run
+	 * bit reads set, so one that missed a write is stopped by the next; HCRST once it reads halted
+	 * with run clear, since a halted controller with run set may leave halted before HCRST lands.
+	 */
+	ERX_TRB_START_BEGIN,
 	ERX_TRB_START_RESETTING,	/* HCRST written: waits for it and USBSTS.CNR to read clear */
 	ERX_TRB_START_STARTING,		/* installed and run: waits for HCH to read clear */
 } erx_trb_start_step_t;
 
 /* The call's one reading of the controller, taken before it writes anything. */
 typedef struct erx_trb_start_seen {
+	bool	running;	/* USBCMD.RS */
 	bool	halted;		/* USBSTS.HCH */
 	bool	resetting;	/* USBCMD.HCRST */
 	bool	not_ready;	/* USBSTS.CNR */
@@ -346,14 +358,15 @@ typedef enum erx_trb_start_effect {
 
 typedef struct erx_trb_start_next {
 	erx_trb_start_effect_t	effect;
-	erx_trb_start_step_t	step;		/* what the next call takes up */
+	erx_trb_start_step_t	step;		/* what the next call takes up, if it continues */
 	bool			started;	/* the call answers ok; otherwise `{error, ebusy}` */
 } erx_trb_start_next_t;
 
 /*
- * The call that finds the start at `step`, reading `seen`. An install the effect layer cannot
- * apply ends the negotiation with its error, and the next call begins again (ERX_TRB_START_BEGIN).
+ * The call that finds the record at `step`, reading `seen`: from `step` if it `continues` the
+ * negotiation, from ERX_TRB_START_BEGIN otherwise. An install the effect layer cannot apply ends
+ * the negotiation with its error, and the record goes back to ERX_TRB_START_BEGIN.
  */
-erx_trb_start_next_t	erx_trb_form_start_next(erx_trb_start_step_t step, erx_trb_start_seen_t seen);
+erx_trb_start_next_t	erx_trb_form_start_next(erx_trb_start_step_t step, bool continues, erx_trb_start_seen_t seen);
 
 #endif /* ERX_DEVICE_TRB_FORM_H */

@@ -2482,13 +2482,15 @@ start_seen(const erx_device_t *device, const xhci_registers_t *regs, erx_trb_sta
 {
 	const uint64_t command = load(device, regs->usbcmd.reg, regs->usbcmd.offset);
 	const uint64_t status = load(device, regs->usbsts.reg, regs->usbsts.offset);
-	uint64_t halted, resetting, not_ready;
+	uint64_t running, halted, resetting, not_ready;
 
-	if (!xhci_field_of(regs->usbsts, regs->hch, status, &halted) ||
+	if (!xhci_field_of(regs->usbcmd, regs->rs, command, &running) ||
+	    !xhci_field_of(regs->usbsts, regs->hch, status, &halted) ||
 	    !xhci_field_of(regs->usbcmd, regs->hcrst, command, &resetting) ||
 	    !xhci_field_of(regs->usbsts, regs->cnr, status, &not_ready))
 		return (false);
-	*seen = (erx_trb_start_seen_t){ .halted = halted != 0, .resetting = resetting != 0, .not_ready = not_ready != 0 };
+	*seen = (erx_trb_start_seen_t){ .running = running != 0, .halted = halted != 0, .resetting = resetting != 0,
+	    .not_ready = not_ready != 0 };
 	return (true);
 }
 
@@ -2507,12 +2509,13 @@ command_put(const erx_device_t *device, const xhci_registers_t *regs, const erx_
 /*
  * negotiate/2 on an xHCI device (docs/design-usb.md, "Install"): its record made by the first
  * call, then one step of the controller's reset and start a call, as erx_trb_form_start_next
- * decides from the call's one reading. ERX_EBUSY until the controller has started; ERX_OK, with
- * no feature accepted, once it has, and the record is ready. A refused install ends the
- * negotiation with its error and the next call begins again.
+ * decides from the call's one reading and whether the call `continues` the negotiation or
+ * begins one. ERX_EBUSY until the controller has started; ERX_OK, with no feature accepted, once
+ * it has, and the record is ready. A refused install ends the negotiation with its error and the
+ * record goes back to the first step.
  */
 static int
-trb_ring_negotiate(const erx_device_t *device, uint64_t *accepted)
+trb_ring_negotiate(const erx_device_t *device, bool continues, uint64_t *accepted)
 {
 	queue_record_t *record = queue_numbered(device, 0);
 	erx_trb_start_seen_t seen;
@@ -2528,7 +2531,7 @@ trb_ring_negotiate(const erx_device_t *device, uint64_t *accepted)
 	ring = &record->trb;
 	if (!start_seen(device, &ring->regs, &seen))
 		return (ERX_EINVAL);
-	next = erx_trb_form_start_next(ring->step, seen);
+	next = erx_trb_form_start_next(ring->step, continues, seen);
 	switch (next.effect) {
 	case ERX_TRB_START_NOTHING:
 		break;
@@ -2553,11 +2556,15 @@ trb_ring_negotiate(const erx_device_t *device, uint64_t *accepted)
 }
 
 int
-erx_device_negotiate(const erx_device_t *device, uint64_t wanted, uint64_t *accepted)
+erx_device_negotiate(const erx_device_t *device, uint64_t wanted, bool continues, uint64_t *accepted)
 {
+	if (trb_ring_device(device)) {
+		unready_queues(device);
+		return (trb_ring_negotiate(device, continues, accepted));
+	}
+	if (continues)
+		return (ERX_EINVAL);	/* the other forms take no steps; refused before a queue is touched */
 	unready_queues(device);
-	if (trb_ring_device(device))
-		return (trb_ring_negotiate(device, accepted));
 	if (register_ring_device(device))
 		return (register_ring_negotiate(device, accepted));
 	return (split_ring_negotiate(device, wanted, accepted));

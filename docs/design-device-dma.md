@@ -1598,6 +1598,7 @@ adds:
 | `complete/2` | `{ok, []}` | nothing is done yet |
 | `complete/2`, `post/4` | `{error, broken}` | the device reported an index or a length beyond its bound, or an ADMA2 transfer reported an error, until `negotiate/2` |
 | `negotiate/2` | `{error, ebusy}` | the device's idle report does not show yet, or, for ADMA2, the install has writes left |
+| `negotiate/2` | `{error, einval}` | it passes `continue` on a form whose negotiation takes no steps, virtio's or GENET's: only the TRB form's controller core continues one ([design-usb.md](design-usb.md#install)) |
 | `write/3`, `write_field/4` | `badarg` | a write that would change an owned field; any `write_field/4` of an owned field |
 | `post/4`, `complete/2`, `negotiate/2` on the TRB ring form | `{error, halted}`, `{error, full}`, `badarg`, `{error, broken}`, `{error, erange}` | as [design-usb.md](design-usb.md#the-trb-ring-form) lists them: a queue whose state refuses the request, or that the command in flight holds; a transfer on a queue with no free buffer, a command while another is in flight, or one adding a queue when no block of its kind is free; a command or context outside its bounded parameters; an event that fails the form's checks or passes the ring's bound, until `negotiate/2`; memory above the address width `AC64` gives |
 | the root at boot | gives the device no DMA memory, with a line naming it | the tree gives the device no single window that RAM backs, marks coherence on a bus above it or both ways on its node, or its DMA memory would lie outside the range |

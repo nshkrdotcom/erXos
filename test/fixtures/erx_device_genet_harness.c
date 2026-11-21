@@ -394,7 +394,9 @@ negotiate(const erx_device_t *device)
 	int status;
 
 	starts = 0;
-	while ((status = erx_device_negotiate(device, UINT64_MAX, &accepted)) == ERX_EBUSY)
+	/* GENET's negotiation takes no steps: `continue` is refused before anything is written. */
+	CHECK(erx_device_negotiate(device, UINT64_MAX, true, &accepted) == ERX_EINVAL && starts == 0);
+	while ((status = erx_device_negotiate(device, UINT64_MAX, false, &accepted)) == ERX_EBUSY)
 		CHECK(++busy < engines[ERX_DEVICE_GENET_TX].stop_reads);
 	CHECK(status == ERX_OK && accepted == 0 && busy == engines[ERX_DEVICE_GENET_TX].stop_reads - 1);
 	CHECK(engines[0].started && engines[1].started && starts == 2);
@@ -423,7 +425,7 @@ check_register_ring(void)
 	CHECK(erx_device_queue_create(device, 0, SIZE / 2, BUFFER, &rq) == ERX_EINVAL);
 	CHECK(erx_device_queue_create(device, 0, SIZE, 0, &rq) == ERX_EINVAL);
 	CHECK(erx_device_queue_create(device, 0, SIZE, BUFFER, &rq) == ERX_OK);
-	CHECK(erx_device_negotiate(device, 0, &(uint64_t){ 0 }) == ERX_EINVAL);
+	CHECK(erx_device_negotiate(device, 0, false, &(uint64_t){ 0 }) == ERX_EINVAL);
 	CHECK(erx_device_queue_create(device, 1, SIZE, 4096, &tq) == ERX_EINVAL);
 	CHECK(erx_device_queue_create(device, 1, SIZE, BUFFER, &tq) == ERX_OK);
 	CHECK(erx_device_queue_create(device, 1, SIZE, BUFFER, &again) == ERX_OK && again == tq);

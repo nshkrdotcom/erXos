@@ -1808,13 +1808,23 @@ controller_moves(controller_t c, uint32_t choice)
 	return (c);
 }
 
-/* One call of negotiate/2 on `c`, its effect checked against what the specification allows. */
-static erx_trb_start_next_t
-start_call(controller_t *c, erx_trb_start_step_t step)
-{
-	const erx_trb_start_seen_t seen = { .halted = c->halted, .resetting = c->resetting, .not_ready = c->not_ready };
-	const erx_trb_start_next_t next = erx_trb_form_start_next(step, seen);
+/* The steps a negotiation takes, each of which a call may find it at. */
+static const erx_trb_start_step_t start_steps[] = { ERX_TRB_START_BEGIN, ERX_TRB_START_RESETTING, ERX_TRB_START_STARTING };
 
+/*
+ * One call of negotiate/2 on `c`, beginning a negotiation or continuing it, its effect checked
+ * against what the specification allows.
+ */
+static erx_trb_start_next_t
+start_call(controller_t *c, erx_trb_start_step_t step, bool continues)
+{
+	const erx_trb_start_seen_t seen = { .running = c->run, .halted = c->halted, .resetting = c->resetting,
+	    .not_ready = c->not_ready };
+	const erx_trb_start_next_t next = erx_trb_form_start_next(step, continues, seen);
+
+	/* No write while HCRST or CNR reads set: a reset under way is waited out (5.4.1, p. 394; 4.2, p. 80). */
+	EXPECT(next.effect == ERX_TRB_START_NOTHING || (!c->resetting && !c->not_ready),
+	    "a register written while HCRST or CNR reads set");
 	switch (next.effect) {
 	case ERX_TRB_START_NOTHING:
 		break;
@@ -1838,9 +1848,12 @@ start_call(controller_t *c, erx_trb_start_step_t step)
 	return (next);
 }
 
-/* Every interleaving of the controller's changes with calls, up to START_DEPTH calls from `step`. */
+/*
+ * Every interleaving of the controller's changes with calls, up to START_DEPTH calls, the first
+ * finding the negotiation at `step` and beginning or continuing it, the rest continuing.
+ */
 static void
-explore_start(controller_t c, erx_trb_start_step_t step, uint32_t depth)
+explore_start(controller_t c, erx_trb_start_step_t step, bool continues, uint32_t depth)
 {
 	if (depth == START_DEPTH) {
 		start_traces++;
@@ -1860,45 +1873,94 @@ explore_start(controller_t c, erx_trb_start_step_t step, uint32_t depth)
 		if (again)
 			continue;
 		seen[seen_count++] = moved;
-		next = start_call(&moved, step);
+		next = start_call(&moved, step, continues);
 
 		if (next.started) {
 			start_traces++;
 			continue;
 		}
-		explore_start(moved, next.step, depth + 1);
+		explore_start(moved, next.step, true, depth + 1);
 	}
 }
 
 /*
- * The start's core over a controller in every state a negotiation may find it in, every
+ * Each call's answer over every step, reading and kind of call: a begin answers as the first
+ * step does whatever step the record keeps, and the first step clears run on every call while
+ * the controller runs or its run bit reads set, so a controller that missed one write is stopped
+ * by the next, and resets only a controller halted with run, HCRST and CNR clear.
+ */
+static void
+test_start_answers(void)
+{
+	for (uint32_t at = 0; at < sizeof(start_steps) / sizeof(start_steps[0]); at++) {
+		for (uint32_t bits = 0; bits < 16u; bits++) {
+			const erx_trb_start_seen_t seen = { .halted = (bits & 1u) != 0, .resetting = (bits & 2u) != 0,
+			    .not_ready = (bits & 4u) != 0, .running = (bits & 8u) != 0 };
+			const erx_trb_start_next_t begun = erx_trb_form_start_next(start_steps[at], false, seen);
+			const erx_trb_start_next_t first = erx_trb_form_start_next(ERX_TRB_START_BEGIN, true, seen);
+			const erx_trb_start_next_t continued = erx_trb_form_start_next(start_steps[at], true, seen);
+			const bool ready = !seen.resetting && !seen.not_ready;
+
+			EXPECT(begun.effect == first.effect && begun.step == first.step && begun.started == first.started,
+			    "a begin that answers by the step the record keeps");
+			EXPECT((first.effect == ERX_TRB_START_NOTHING) == !ready, "the first step idle other than mid-reset");
+			EXPECT(first.effect != ERX_TRB_START_RESET || (seen.halted && !seen.running),
+			    "the first step resetting a controller not stopped");
+			EXPECT(first.effect != ERX_TRB_START_CLEAR_RUN || seen.running || !seen.halted,
+			    "the first step clearing run on a stopped controller");
+			EXPECT(first.step == (first.effect == ERX_TRB_START_RESET ? ERX_TRB_START_RESETTING : ERX_TRB_START_BEGIN) &&
+			    !first.started, "the first step left other than by its reset");
+			if (start_steps[at] != ERX_TRB_START_BEGIN)
+				EXPECT(continued.effect != ERX_TRB_START_CLEAR_RUN && continued.effect != ERX_TRB_START_RESET,
+				    "a later step writing the first step's registers");
+			EXPECT(!continued.started || (start_steps[at] == ERX_TRB_START_STARTING && !seen.halted),
+			    "started other than by the installed controller leaving halted");
+		}
+	}
+}
+
+/*
+ * The start's core over a controller in every state a negotiation may find it in, begun at
+ * every step a negotiation may have been left at, as a restarted controller process begins, every
  * interleaving explored; and a controller that answers each write before the next call is
  * started in START_CALLS_EAGER calls from any of them, the bound the controller core's deadline
- * counts on.
+ * counts on, one that misses the first write to run in one more. A controller with run and CNR
+ * both set, which no controller is (CNR reads set only from a reset or power-on, which leave run
+ * clear), takes a call more: nothing is written until CNR clears.
  */
 static void
 test_start(void)
 {
-	for (uint32_t bits = 0; bits < 32u; bits++) {
-		const controller_t initial = { .run = (bits & 1u) != 0, .halted = (bits & 2u) != 0,
-		    .resetting = (bits & 4u) != 0, .not_ready = (bits & 8u) != 0, .installed = (bits & 16u) != 0 };
-		controller_t c = initial;
-		erx_trb_start_step_t step = ERX_TRB_START_BEGIN;
-		uint32_t calls = 0;
-		bool started = false;
+	test_start_answers();
+	for (uint32_t at = 0; at < sizeof(start_steps) / sizeof(start_steps[0]); at++) {
+		for (uint32_t bits = 0; bits < 32u; bits++) {
+			const controller_t initial = { .run = (bits & 1u) != 0, .halted = (bits & 2u) != 0,
+			    .resetting = (bits & 4u) != 0, .not_ready = (bits & 8u) != 0, .installed = (bits & 16u) != 0 };
 
-		explore_start(initial, ERX_TRB_START_BEGIN, 0);
-		while (!started && calls < START_CALLS_EAGER + 1) {
-			const erx_trb_start_next_t next = start_call(&c, step);
+			explore_start(initial, start_steps[at], false, 0);
+			for (uint32_t missed = 0; missed < 2u; missed++) {
+				controller_t c = initial;
+				erx_trb_start_step_t step = start_steps[at];
+				uint32_t calls = 0;
+				bool started = false;
 
-			calls++;
-			started = next.started;
-			step = next.step;
-			c = controller_moves(c, 15u);
-			c = controller_moves(c, 15u);
+				while (!started && calls < START_CALLS_EAGER + 2) {
+					const bool kept_run = c.run;
+					const erx_trb_start_next_t next = start_call(&c, step, calls > 0);
+
+					if (missed == 1u && calls == 0 && next.effect == ERX_TRB_START_CLEAR_RUN)
+						c.run = kept_run;	/* the controller missed the write */
+					calls++;
+					started = next.started;
+					step = next.step;
+					c = controller_moves(c, 15u);
+					c = controller_moves(c, 15u);
+				}
+				EXPECT(started && calls <= START_CALLS_EAGER + missed + (initial.run && initial.not_ready),
+				    "an answering controller not started in time");
+				EXPECT(step == ERX_TRB_START_BEGIN, "a started negotiation not begun again by the next call");
+			}
 		}
-		EXPECT(started && calls <= START_CALLS_EAGER, "an answering controller not started in four calls");
-		EXPECT(step == ERX_TRB_START_BEGIN, "a started negotiation not begun again by the next call");
 	}
 }
 

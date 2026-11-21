@@ -299,15 +299,15 @@ open_xhci(uint32_t scratchpads, bool four_kib, bool ac64)
 	return (erx_device_get(device));
 }
 
-/* One negotiate call, its answer and the stores it made. */
+/* One negotiate call, beginning a negotiation or continuing one, its answer and the stores it made. */
 static int
-negotiate(const erx_device_t *device, uint32_t expected_writes)
+negotiate(const erx_device_t *device, bool continues, uint32_t expected_writes)
 {
 	uint64_t accepted = 1;
 	int status;
 
 	writes = 0;
-	status = erx_device_negotiate(device, UINT64_MAX, &accepted);
+	status = erx_device_negotiate(device, UINT64_MAX, continues, &accepted);
 	CHECK(writes == expected_writes);
 	CHECK(status != ERX_OK || accepted == 0);
 	return (status);
@@ -368,34 +368,67 @@ test_start(void)
 	uint32_t queue;
 
 	CHECK(erx_device_queue_create(device, 0, 8, 4096, &queue) == ERX_ENOTSUP);
-	CHECK(negotiate(device, 1) == ERX_EBUSY && write_offsets[0] == offset_of("usbcmd"));
+	CHECK(negotiate(device, false, 1) == ERX_EBUSY && write_offsets[0] == offset_of("usbcmd"));
 	CHECK(erx_xhci_usbcmd_rs_get(*reg("usbcmd")) == 0 && erx_xhci_usbcmd_inte_get(*reg("usbcmd")) == 1);
-	CHECK(negotiate(device, 0) == ERX_EBUSY);	/* not halted yet */
+	/* Not halted yet: run cleared again, in case the controller missed the first write. */
+	CHECK(negotiate(device, true, 1) == ERX_EBUSY && write_offsets[0] == offset_of("usbcmd"));
 	set_field("usbsts", "hch", 1);
-	CHECK(negotiate(device, 1) == ERX_EBUSY && erx_xhci_usbcmd_hcrst_get(*reg("usbcmd")) == 1);
+	CHECK(negotiate(device, true, 1) == ERX_EBUSY && erx_xhci_usbcmd_hcrst_get(*reg("usbcmd")) == 1);
 	set_field("usbsts", "cnr", 1);
-	CHECK(negotiate(device, 0) == ERX_EBUSY);	/* HCRST still set */
+	CHECK(negotiate(device, true, 0) == ERX_EBUSY);	/* HCRST still set */
 	set_field("usbcmd", "hcrst", 0);
 	set_field("usbcmd", "inte", 0);			/* a reset closes INTE (5.4.1, p. 394) */
-	CHECK(negotiate(device, 0) == ERX_EBUSY);	/* CNR still set */
+	CHECK(negotiate(device, true, 0) == ERX_EBUSY);	/* CNR still set */
 	set_field("usbsts", "cnr", 0);
-	CHECK(negotiate(device, 12) == ERX_EBUSY);
+	CHECK(negotiate(device, true, 12) == ERX_EBUSY);
 	check_install();
-	CHECK(negotiate(device, 0) == ERX_EBUSY);	/* still halted */
+	CHECK(negotiate(device, true, 0) == ERX_EBUSY);	/* still halted */
 	set_field("usbsts", "hch", 0);
-	CHECK(negotiate(device, 0) == ERX_OK);
+	CHECK(negotiate(device, true, 0) == ERX_OK);
 	/* A started controller's next negotiation begins again with run cleared. */
-	CHECK(negotiate(device, 1) == ERX_EBUSY && erx_xhci_usbcmd_rs_get(*reg("usbcmd")) == 0);
+	CHECK(negotiate(device, false, 1) == ERX_EBUSY && erx_xhci_usbcmd_rs_get(*reg("usbcmd")) == 0);
+}
+
+/*
+ * A negotiation begun over one left at each of its steps, as a restarted controller process
+ * begins: it starts from the beginning, never from the step the record keeps.
+ */
+static void
+test_restart(void)
+{
+	const erx_device_t *const device = open_xhci(2, true, true);
+
+	CHECK(negotiate(device, false, 1) == ERX_EBUSY);
+	set_field("usbsts", "hch", 1);
+	CHECK(negotiate(device, true, 1) == ERX_EBUSY);	/* left at the reset */
+	set_field("usbsts", "cnr", 1);
+	CHECK(negotiate(device, false, 0) == ERX_EBUSY);	/* begun mid-reset: nothing written while HCRST is set */
+	set_field("usbcmd", "hcrst", 0);
+	CHECK(negotiate(device, false, 0) == ERX_EBUSY);	/* nor while CNR is */
+	set_field("usbsts", "cnr", 0);
+	/* Halted and ready: a begin resets again where the old negotiation would have installed. */
+	CHECK(negotiate(device, false, 1) == ERX_EBUSY && erx_xhci_usbcmd_hcrst_get(*reg("usbcmd")) == 1);
+	set_field("usbcmd", "hcrst", 0);
+	CHECK(negotiate(device, true, 12) == ERX_EBUSY);	/* left installed, waiting for HCH to clear */
+	/* Halted with run set, as the install leaves it: run cleared before any reset. */
+	CHECK(negotiate(device, false, 1) == ERX_EBUSY && erx_xhci_usbcmd_rs_get(*reg("usbcmd")) == 0 &&
+	    erx_xhci_usbcmd_hcrst_get(*reg("usbcmd")) == 0);
+	CHECK(negotiate(device, true, 1) == ERX_EBUSY && erx_xhci_usbcmd_hcrst_get(*reg("usbcmd")) == 1);
+	set_field("usbcmd", "hcrst", 0);
+	CHECK(negotiate(device, true, 12) == ERX_EBUSY);
+	set_field("usbsts", "hch", 0);
+	/* The controller runs, but this negotiation did not install it: run cleared, not answered started. */
+	CHECK(negotiate(device, false, 1) == ERX_EBUSY && erx_xhci_usbcmd_rs_get(*reg("usbcmd")) == 0);
 }
 
 /* What a negotiation refuses before it writes anything. */
 static void
 test_refusals(void)
 {
-	CHECK(negotiate(open_xhci(ERX_DEVICE_TRB_SCRATCHPADS_MAX + 1, true, true), 0) == ERX_ENOTSUP);
-	CHECK(negotiate(open_xhci(2, false, true), 0) == ERX_ENOTSUP);
+	CHECK(negotiate(open_xhci(ERX_DEVICE_TRB_SCRATCHPADS_MAX + 1, true, true), false, 0) == ERX_ENOTSUP);
+	CHECK(negotiate(open_xhci(2, false, true), false, 0) == ERX_ENOTSUP);
 	high_addresses = true;
-	CHECK(negotiate(open_xhci(2, true, false), 0) == ERX_ERANGE);
+	CHECK(negotiate(open_xhci(2, true, false), false, 0) == ERX_ERANGE);
 	high_addresses = false;
 }
 
@@ -419,14 +452,14 @@ started(void)
 	uint64_t base;
 
 	CHECK(erx_device_trb_command(device, &enable, 1, &verdict) == ERX_EINVAL);	/* no record yet */
-	CHECK(negotiate(device, 1) == ERX_EBUSY);
+	CHECK(negotiate(device, false, 1) == ERX_EBUSY);
 	CHECK(erx_device_trb_command(device, &enable, 1, &verdict) == ERX_ECORRUPT);	/* not started */
 	set_field("usbsts", "hch", 1);
-	CHECK(negotiate(device, 1) == ERX_EBUSY);
+	CHECK(negotiate(device, true, 1) == ERX_EBUSY);
 	set_field("usbcmd", "hcrst", 0);
-	CHECK(negotiate(device, 12) == ERX_EBUSY);
+	CHECK(negotiate(device, true, 12) == ERX_EBUSY);
 	set_field("usbsts", "hch", 0);
-	CHECK(negotiate(device, 0) == ERX_OK);
+	CHECK(negotiate(device, true, 0) == ERX_OK);
 	CHECK(erx_mem_dma_addr(memory, 0, &base) == ERX_OK &&
 	    erx_device_trb_layout(&layout, &erx_device_trb_shape, &controller, base, erx_dma_granule(), DEVICE_MEMORY));
 	event_index = 0;
@@ -623,13 +656,14 @@ test_runs(void)
 	const erx_trb_command_t enable = { .kind = ERX_TRB_COMMAND_ENABLE_SLOT };
 	const erx_trb_command_t address = { .kind = ERX_TRB_COMMAND_ADDRESS_DEVICE, .slot = 1, .add_count = 1,
 	    .slot_context = { .route_speed = ERX_XHCI_SPEED_HIGH, .ports_root_port = 1 },
-	    .adds = { { .dci = 1, .block = 0, .context = { .config_endpoint_type = ERX_XHCI_ENDPOINT_TYPE_CONTROL,
+	    .adds = { { .dci = 1, .block = UINT32_MAX, .context = { .config_endpoint_type = ERX_XHCI_ENDPOINT_TYPE_CONTROL,
 	    .config_max_packet = 64 } } } };
 	const erx_trb_command_t stop = { .kind = ERX_TRB_COMMAND_STOP_ENDPOINT, .slot = 1, .dci = 1 };
 	const erx_trb_command_t restart = { .kind = ERX_TRB_COMMAND_SET_TR_DEQUEUE, .slot = 1, .dci = 1 };
 	static const uint8_t descriptor[8] = { 18, 1, 0, 2, 0, 0, 0, 64 };
+	uint8_t *slot_context;
 
-	/* Enable Slot, then Address Device binding EP0 to block 0; one command at a time. */
+	/* Enable Slot, then Address Device binding EP0 to the first control block, block 0, whatever block it names; one command at a time. */
 	CHECK(command(device, enable, 5, 0) == ERX_DEVICE_TRB_ACCEPTED && trb_cycle(layout.command_ring, 0));
 	CHECK(command(device, enable, 6, 1) == ERX_DEVICE_TRB_REFUSE_FULL);
 	CHECK(read_descriptor(device, 7, 0) == ERX_DEVICE_TRB_REFUSE_BADARG);	/* no ring bound */
@@ -638,8 +672,14 @@ test_runs(void)
 	    answers[0].slot == 1);
 	CHECK(complete(device, 0, 0) == ERX_OK);	/* nothing new: ERDP stays */
 	CHECK(command(device, address, 8, 1) == ERX_DEVICE_TRB_ACCEPTED);
+	/* Its success carries the slot's output slot context, where the controller wrote the address it assigned. */
+	slot_context = memory_at(layout.device_base + layout.regions[layout.device_context[1]].offset, ERX_XHCI_SLOT_CONTEXT_SIZE);
+	memset(slot_context, 0, ERX_XHCI_SLOT_CONTEXT_SIZE);
+	slot_context[ERX_XHCI_SLOT_CONTEXT_OFF_STATE] = 5;
 	put_command_event(1, ERX_XHCI_COMPLETION_SUCCESS, 1);
-	CHECK(complete(device, 1, 0) == ERX_OK && answered(0, ERX_TRB_ANSWER_COMMAND, 8, ERX_XHCI_COMPLETION_SUCCESS, 0));
+	CHECK(complete(device, 1, 0) == ERX_OK &&
+	    answered(0, ERX_TRB_ANSWER_COMMAND, 8, ERX_XHCI_COMPLETION_SUCCESS, ERX_XHCI_SLOT_CONTEXT_SIZE) &&
+	    memcmp(answer_bytes[0], slot_context, ERX_XHCI_SLOT_CONTEXT_SIZE) == 0);
 	CHECK(queue_state(device, 1, 1) == ERX_TRB_QUEUE_IDLE && queue_state(device, 1, 2) == ERX_TRB_QUEUE_NONE &&
 	    queue_state(device, 0, 1) == ERX_TRB_QUEUE_NONE);
 
@@ -746,6 +786,7 @@ main(void)
 	test_start();
 	test_runs();
 	test_out_transfer();
+	test_restart();
 	printf("erx_device_xhci done\n");
 	return (0);
 }
