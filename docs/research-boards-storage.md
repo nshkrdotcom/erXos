@@ -84,6 +84,9 @@ reading code.
 
 ## Raspberry Pi 5 (BCM2712 and RP1)
 
+The board tree, SD slot, watchdog and RNG windows are in
+[research-pi5-board-tree.md](research-pi5-board-tree.md).
+
 * **Interrupt controller.** A GIC-400 (Linux v7.3 `bcm2712.dtsi`
   l.337-338; the Raspberry Pi kernel's `bcm2712.dtsi` l.266-277). Neither
   tree has an Arm SMMU.
