@@ -18,7 +18,7 @@ section 2.4's mistakes that cannot be written.
 
 Every operating system must answer one question: which code may hand
 the runtime a message that arrived from another, untrusted part of the
-machine? In a conventional design the answer is a list. The socket
+machine? One design answers with a list. The socket
 layer checks, the protocol handler checks, the code that copies the
 payload out checks. The argument that nothing unchecked gets through
 is only as good as the list. A new protocol, fast path or debugging
@@ -32,12 +32,10 @@ the OTP and musl sources erXos carries, fails `make check`. There is
 no list to keep complete, because there is nowhere else to put a
 check.
 
-A UNIX kernel keeps most of its properties by careful authors and
-review, but some are structural even there. A process cannot address
-another process's memory, because its page tables give it no address
-that reaches it, and a process in FreeBSD's capability mode reaches
-only what its descriptors name. Chapter 2 called such a property one that holds **by
-construction**.
+Some properties hold in any kernel by its structure rather than by
+careful authors. A process cannot address another process's memory,
+because its page tables give it no address that reaches it. Chapter 2
+called such a property one that holds **by construction**.
 
 erXos makes construction the method of the whole design. Where a
 property can hold because the wrong state cannot be written down, it
@@ -58,8 +56,8 @@ caller.
 ### 6.1.1 The smell: open-ended enumeration
 
 Programmers call a sign of a design problem a *smell*. Here is one.
-Write the conventional argument for the opening question out, as a
-conventional design would make it. A message from another domain is
+Write the list design's argument for the opening question out. A
+message from another domain is
 safe to act on because the distribution receiver checks it. The code
 that handles `link` signals checks the pids in it. The `spawn` handler
 checks its options. The debugging path that dumps frames checks the
@@ -797,8 +795,8 @@ cannot make the hardware obey.
 
 ## 6.10 Design choices
 
-**Careful review instead of construction.** Most systems write the
-rules down and review every change against them. erXos reviews every
+**Careful review instead of construction.** The rules could be
+written down and every change reviewed against them. erXos reviews every
 commit too, but review checks the change in front of the reviewer,
 and an open-ended list fails on the change nobody thought to check. A
 build check reviews every change, at no cost per change. Its cost is that each rule is code
