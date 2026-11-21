@@ -399,8 +399,9 @@ oracle a test checks against, which upstream file a piece came from,
 what was ported when. The book is not an implementation chronology.
 Do not explain how erXos differs from FreeBSD, Linux or any other
 system, either: the book's goal is to explain how erXos works, not
-how it compares. Say what erXos has (state is a file under `/proc`),
-not what it lacks next to another system ("there is no `sysctl`").
+how it compares. A short pointer for a reader who knows another system is fine
+("where FreeBSD has `sysctl`, erXos has files under `/proc`"); an
+argument for why erXos differs is not.
 The story of each idea's origin, what erXos kept and what it
 changed, belongs to the lineage appendix
 ([e-lineage.md](e-lineage.md)), and the background chapters may use
