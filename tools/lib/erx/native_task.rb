@@ -29,6 +29,9 @@ module Erx
     # The yield case's 1000 hand-overs on one CPU: a yield that keeps the CPU to the end of
     # its time slice takes about 20 s, one that hands it over takes milliseconds.
     YIELD_SECONDS = 5
+    # The pool case's thread creates, starts, exits and reaps, one more than the root's slot pool
+    # holds pairs, one at a time: under TCG above all.
+    POOL_ROUNDS_SECONDS = 400
     CASE_LINE = /\Aerx: task: (?<name>[a-z_]+) (?<result>ok|FAILED)/n
     STATUS_FAULT = -1
     WRITE_BIT = 2
@@ -50,6 +53,7 @@ module Erx
        case_point('yield', seconds: YIELD_SECONDS), case_point('service', seconds: 30), case_point('write_rx', seconds: 30), case_point('run_rw', seconds: 30),
        case_point('no_jit', seconds: 30), case_point('irq_refused', seconds: 30),
        case_point('device_refused', seconds: 30), case_point('machine_end_refused', seconds: 30),
+       case_point('pool_rounds', seconds: POOL_ROUNDS_SECONDS),
        case_point('log', seconds: 30),
        case_point('write', seconds: 30), case_point('spin_stop', seconds: 60), case_point('root_stops', seconds: 30),
        case_point('request_against_exit', seconds: RACE_SECONDS),

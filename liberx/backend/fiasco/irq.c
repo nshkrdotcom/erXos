@@ -461,8 +461,6 @@ erx_fiasco_test_object_space_probe(uint64_t irq)
 
 	_Static_assert(ERX_FIASCO_IRQ_SLOT_BASE + ERX_FIASCO_CAP_LIMIT_MAX - 2 == ERX_FIASCO_OBJ_SPACE_SLOTS - 1,
 	    "the last window's last slot is the object space's");
-	_Static_assert(ERX_FIASCO_SLOT_FIRST + ERX_FIASCO_THREADS_MAX + ERX_FIASCO_SLOT_END == ERX_FIASCO_OBJ_SPACE_SLOTS,
-	    "the root's last task run ends at the object space's last slot");
 	if (irq_slot_empty(placed) || !irq_slot_empty(before) || !irq_slot_empty(last))
 		return ("erx: irq: the probe's slots are not as the layout says FAILED\n");
 	irq_probe_place(placed, last);

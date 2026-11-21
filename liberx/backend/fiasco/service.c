@@ -723,9 +723,11 @@ service_thread_create(uint32_t caller, const erx_fiasco_thread_create_request_t 
 	/* A task's thread may fault, and its fault takes an entry it has before it runs. */
 	if (task != ERX_FIASCO_TASK_ROOT && erx_fiasco_gate_thread_room(task, index) != ERX_OK)
 		return (ERX_ENOMEM);
-	if (service_failed(l4_factory_create_thread(L4_BASE_FACTORY_CAP, erx_fiasco_task_thread_cap(task, index))))
+	/* The pair before any Fiasco call, so a full pool is ERX_ENOMEM with nothing created. */
+	if (erx_fiasco_task_thread_pair_take(task, index) != ERX_OK)
 		return (ERX_ENOMEM);
-	if (service_failed(l4_factory_create(L4_BASE_FACTORY_CAP, L4_PROTO_SEMAPHORE,
+	if (service_failed(l4_factory_create_thread(L4_BASE_FACTORY_CAP, erx_fiasco_task_thread_cap(task, index))) ||
+	    service_failed(l4_factory_create(L4_BASE_FACTORY_CAP, L4_PROTO_SEMAPHORE,
 	    erx_fiasco_task_semaphore_cap(task, index))) ||
 	    (task != ERX_FIASCO_TASK_ROOT && service_failed(l4_task_map(erx_fiasco_task_cap(task), L4_BASE_TASK_CAP,
 	    l4_obj_fpage(erx_fiasco_task_semaphore_cap(task, index), 0, L4_CAP_FPAGE_RWS),
@@ -859,7 +861,10 @@ service_thread_reap(uint32_t caller, uint64_t thread)
 	return (ERX_OK);
 }
 
-/* A deletion the root cannot perform leaves a thread it cannot account for: the machine ends. */
+/*
+ * A deletion the root cannot perform leaves a thread it cannot account for: the machine
+ * ends. Once Fiasco has deleted the thread and its semaphore, their pair is free again.
+ */
 static void
 service_thread_delete(uint32_t task, uint32_t index)
 {
@@ -876,6 +881,7 @@ service_thread_delete(uint32_t task, uint32_t index)
 		erx_fiasco_console_write(line, sizeof(line) - 1);
 		erx_fiasco_end(ERX_FIASCO_END_REFUSED, NULL);
 	}
+	erx_fiasco_task_thread_pair_free(task, index);
 }
 
 uint64_t

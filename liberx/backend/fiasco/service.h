@@ -58,7 +58,6 @@ uint64_t	erx_fiasco_service_gate(void);
 /* In the root, the capability that names a task's space. */
 uint64_t	erx_fiasco_task_cap(uint32_t task);
 /* In the root, the semaphore a task's end ups, for the launcher's wait. */
-uint64_t	erx_fiasco_task_ended_cap(uint64_t task);
 /* In the root, the service thread, which every gate is bound to. */
 uint64_t	erx_fiasco_service_thread(void);
 
@@ -71,8 +70,8 @@ uint64_t	erx_fiasco_service_thread(void);
  * parent stops; budget charges the space as for every create
  * (erx_budget_create below); cap_limit bounds the task's handle table, counting ERX_CAP_NULL as erXos's
  * kernel does, and outside 2 to ERX_CAPS_MAX, or past ERX_FIASCO_CAP_LIMIT_MAX, whose window of
- * IRQ slots would pass Fiasco's object space, is ERX_EINVAL; past the root's
- * ERX_FIASCO_TASK_RUNS_MAX tasks the create is ERX_ENOMEM; any task makes a task below its own
+ * IRQ slots would pass Fiasco's object space, is ERX_EINVAL; with the task table or the root's
+ * slot pool full the create is ERX_ENOMEM; any task makes a task below its own
  * space or one it created. erx_image_map loads into a space the caller created: image is
  * 0, the whole boot archive, from the root alone, or a slice the caller holds, and entry
  * is an index in it; *start is where the task's first thread will start. A task stops
@@ -217,10 +216,14 @@ void	erx_fiasco_task_crash_write(const erx_crash_fault_t *fault);
 #include <stdatomic.h>
 #include <stdbool.h>
 
-/* See service.c: the start step to fail, and whether a thread's, or every unused task index's, capabilities are gone. */
+/*
+ * See service.c and service_task.c: the start step to fail, whether a thread's capabilities
+ * are gone, whether every free pair of the slot pool reads empty, and how many pairs are free.
+ */
 extern _Atomic uint32_t erx_fiasco_test_start_fails;
 bool erx_fiasco_test_thread_caps_gone(uint32_t);
-bool erx_fiasco_test_task_caps_gone(void);
+bool erx_fiasco_test_pool_slots_gone(void);
+uint32_t erx_fiasco_test_pool_free(void);
 uint64_t erx_fiasco_test_dropped(void);
 /* Every message the service received: a direct ring or ack leaves it unchanged. */
 uint64_t erx_fiasco_test_received(void);

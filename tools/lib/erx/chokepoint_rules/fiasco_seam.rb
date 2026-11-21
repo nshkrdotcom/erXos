@@ -152,6 +152,8 @@ module Erx
         liberx/backend/core/grow_table.h
         liberx/backend/core/handles.c
         liberx/backend/core/handles.h
+        liberx/backend/core/slot_pool.c
+        liberx/backend/core/slot_pool.h
         liberx/backend/core/gate.c
         liberx/backend/core/gate.h
         liberx/backend/fiasco/fault_gate.c

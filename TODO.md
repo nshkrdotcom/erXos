@@ -486,14 +486,18 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   test in `test/host/handles_test.rb`, but the wrappers (`service_task.c`, `erx_fiasco_task_create_body`,
   `erx_fiasco_task_image_map_body`; `object.c`, `erx_fiasco_cap_pass_body`) include Fiasco's headers and build
   only for the target, so it belongs in a guest suite, or the design's note changes.
-* [Medium] 0.2 on Fiasco, `liberx/backend/fiasco/root_layout.h`: the root's layout plan lays out
-  `ERX_FIASCO_TASK_RUNS_MAX` (192) task runs, and `task_fill_space` refuses a task past them, where the design's
-  [Handles](docs/design-fiasco.md#handles) section lays out the runs of the most tasks the task table admits
-  (1,024, [Table sizes](docs/design-fiasco.md#table-sizes)). A run is 259 slots, so 1,024 runs take 265,216 slots
-  of an object space of 65,536: no more than about 250 fit beside the root's own slots, and every run the plan
-  holds takes 259 handles from the root's window (15,281 at 192). The figure, and the design's text, wait on a
-  decision: a smaller run (threads and semaphores for fewer than 128 threads a task), a run count, or a fixed
-  root window.
+* [Medium] 0.2 on Fiasco, `tools/lib/erx/manifest.rb`: property 19's clause 9
+  ([design-packaging.md](docs/design-packaging.md#the-builds-check)) is not built, so nothing shares out the
+  page index's labels, the task table's `ERX_FIASCO_TASK_ROWS` or the threads' share of the root's slot pool
+  (`ERX_FIASCO_POOL_PAIRS` less two pairs a row, `liberx/backend/fiasco/root_layout.h`), and one domain can
+  run the pool or the task table dry for every other, whose creates then answer `ERX_ENOMEM`. It waits on the
+  manifest's limits record, which holds no thread, object or mapping limit (the per-domain thread limits
+  item). When it lands, the threads' share needs one source: `root_layout.h` derives the pool from the ABI's
+  `fiasco_obj_space_slots`, `fiasco_root_handles` and `fiasco_irqs_max` and from Fiasco's base capabilities
+  and `ERX_FIASCO_THREADS_MAX`, which the check cannot read, so either those two become ABI facts too, checked
+  against Fiasco's header, and the generator derives the pool's pairs for the backend and the check alike,
+  or the check repeats the derivation, which the one-source rule forbids. Seeded fault: the clause leaving
+  the pool out, under which a manifest whose thread limits pass the threads' share passes.
 * [Medium] 0.2 on Fiasco, `liberx/backend/fiasco/irq.c`: an ack is the holder's own `l4_irq_unmask`, so the
   root no longer sees it, and an ack of a level line that is not bound, or whose bind waits for the group's
   dispatcher, reaches an object with no receiver: Fiasco unmasks the line (`irq.cpp:1172-1177`), its next
@@ -3993,9 +3997,11 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   every end a session process holds, so a session runs about 30 programs with writers; or a program holding
   64 or more pipe ends and its channel bell. The 65-writer case therefore waits for erXos's kernel. Not worked around
   on Fiasco.
-* [Low] Fiasco backend, `liberx/backend/fiasco/root_layout.h` (`ERX_FIASCO_IRQS_MAX`, 256): the machine holds at most
+* [Medium] Fiasco backend, `liberx/backend/fiasco/irq.c` (`ERX_FIASCO_IRQS_MAX`, 256, `abi/erx_abi.txt`): the machine holds at most
   256 IRQ objects, one per program channel doorbell, one per pipe end and so on; an object past it fails
-  with `ERX_ENOMEM`. Busy sessions with many programs and pipes can reach it. erXos's kernel has no such
+  with `ERX_ENOMEM`. Busy sessions with many programs and pipes can reach it. The table is machine-wide and
+  not shared out: clause 9 of design-packaging.md's property 19 does not count it, so one domain's objects
+  can take every entry and leave a configured domain's restart without one. erXos's kernel has no such
   table.
 * [Low] Fiasco backend, musl's seam (`musl/src/internal/erxos/syscall.c`, `musl/src/thread/erxos/clone.c`): it
   includes the backend's own headers (`thread.h`, `service.h`, `vm.h` and others), which
