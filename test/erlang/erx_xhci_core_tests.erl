@@ -24,6 +24,11 @@
 -define(CONTEXT_STATE_ERROR, 19).
 -define(STOPPED, 26).
 
+%% One Configure Endpoint adds at most 4 endpoints (xhci_configure_adds_max), and a
+%% device has at most 7 pipes besides EP0 (usb_endpoints_max 8).
+-define(ADDS_MAX, 4).
+-define(PIPES_MAX, 7).
+
 -define(HUB, 1).
 -define(DEV, 2).
 -define(HUB_REF, {device, 1}).
@@ -386,6 +391,11 @@ the_failed_address_is_explored_to_a_fixed_point_test_() ->
     [{timeout, 300, ?_assertMatch({ok, _}, explore_address(Device))}
      || Device <- [hd(devices()), lists:last(devices())]].
 
+%% The configuration of a device explored for each count of pipes, past one command's
+%% adds.
+the_configuration_is_explored_to_a_fixed_point_test_() ->
+    {timeout, 300, [?_assertMatch({ok, _}, explore_configure(Count)) || Count <- lists:seq(1, ?PIPES_MAX)]}.
+
 %% Aborting a control request
 
 %% A control request not answered in 5 s is aborted: EP0 resets, so requests meanwhile
@@ -466,7 +476,7 @@ post_event(Who, Pipe, {normal, {in, Length}}) ->
 ref({Slot, _Dci}) -> {device, Slot}.
 
 ep_address({_Slot, 1}) -> 0;
-ep_address({_Slot, 5}) -> ?BULK_ADDRESS.
+ep_address({_Slot, Dci}) -> (Dci div 2) bor ((Dci band 1) bsl 7).
 
 norm({S, Actions}) -> {S, [norm_action(Action) || Action <- Actions]}.
 
@@ -746,6 +756,12 @@ command_done({address_device, Slot, _}, ?SUCCESS, M = #{queues := Queues}) ->
     {M#{queues := Queues#{{Slot, 1} => open}}, []};
 command_done({address_device, _Slot, _}, _Failed, M) ->
     {M#{failed := true}, []};
+command_done({configure_endpoints, Slot, #{add := Add, drop := []}}, ?SUCCESS, M = #{world := configure}) ->
+    #{queues := Queues} = M,
+    Bound = [{Slot, endpoint_dci(EpAddress)} || #{address := EpAddress} <- Add],
+    {M#{queues := maps:merge(Queues, maps:from_keys(Bound, open))}, []};
+command_done({configure_endpoints, _Slot, #{drop := []}}, _Failed, M = #{world := configure}) ->
+    {M#{failed := true}, []};
 command_done(_Command, _Failed, M) ->
     {M, []}.
 
@@ -773,6 +789,8 @@ act({transfer, Pipe, Tag, Transfer}, {M = #{posted := Posted}, Followups}) ->
     end;
 act({reply, From, Answer}, {M = #{world := address}, Followups}) ->
     address_answered(From, Answer, M, Followups);
+act({reply, configuring, Answer}, {M = #{world := configure}, Followups}) ->
+    {configure_answered(Answer, M), Followups};
 act({reply, From, Answer}, {M = #{callers := Callers}, Followups}) ->
     case Callers of
         #{From := _} -> {answered(From, Answer, M#{callers := maps:remove(From, Callers)}), Followups};
@@ -800,6 +818,13 @@ accept_command(Command = {reset_endpoint, Slot, Dci}, M) ->
     accept_in([halted], {Slot, Dci}, Command, M);
 accept_command(Command = {set_tr_dequeue, Slot, Dci}, M) ->
     accept_in([stopped], {Slot, Dci}, Command, M);
+accept_command(Command = {configure_endpoints, Slot, #{add := Add, drop := []}},
+               M = #{world := configure, queues := Queues, failed := Failed, configure_answer := Answer}) ->
+    Pipes = [{Slot, endpoint_dci(EpAddress)} || #{address := EpAddress} <- Add],
+    length(Add) =< ?ADDS_MAX orelse throw({refused_by_nif, Command, too_many_bindings}),
+    lists:any(fun(Pipe) -> is_map_key(Pipe, Queues) end, Pipes) andalso throw({refused_by_nif, Command, bound}),
+    (Failed orelse Answer =/= none) andalso throw({posted_after_its_answer, Command}),
+    M;
 accept_command(Command = {configure_endpoints, _Slot, #{drop := [1]}}, _M) ->
     throw({refused_by_nif, Command, ep0_dropped});
 accept_command(Command = {configure_endpoints, Slot, #{drop := [Dci], add := [_]}}, M = #{posted := Posted}) ->
@@ -977,23 +1002,81 @@ check_address_answer(Answer, M) ->
 
 %% From M, with every later answer a success, the Address Device sent is answered and a
 %% detached or failed device's slot disabled, within 60 events.
-address_drained(M) -> address_drained(M, 60).
+address_drained(M) ->
+    settles(M, 60, fun address_events/1, [slot_answer, address_answer, disabled],
+            fun(#{slot_answer := SlotAnswer, address_sent := Sent, address_answer := AddressAnswer,
+                  detached := Detached, failed := Failed, disabled := Disabled}) ->
+                    SlotAnswer =/= none andalso (not Sent orelse AddressAnswer =/= none)
+                        andalso (Disabled orelse not (Detached orelse Failed))
+            end).
 
-address_drained(M = #{slot_answer := SlotAnswer, address_sent := Sent, address_answer := AddressAnswer,
-                      detached := Detached, failed := Failed, disabled := Disabled}, Budget) ->
-    Rest = SlotAnswer =/= none andalso (not Sent orelse AddressAnswer =/= none)
-        andalso (Disabled orelse not (Detached orelse Failed)),
-    case {Rest, Budget, successes(address_events(M))} of
+%% The failures met following, from M, the first success Events allows at each state
+%% until Settled holds: none when it holds within Budget events, else the one that
+%% stopped the drain, naming Shown of the state where it stopped.
+settles(M, Budget, Events, Shown, Settled) ->
+    case {Settled(M), Budget, successes(Events(M))} of
         {true, _, _} -> [];
-        {false, 0, _} -> [{never_drained, maps:with([slot_answer, address_answer, disabled], M)}];
-        {false, _, []} -> [{never_drained, maps:with([slot_answer, address_answer, disabled], M)}];
+        {false, 0, _} -> [{never_drained, maps:with(Shown, M)}];
+        {false, _, []} -> [{never_drained, maps:with(Shown, M)}];
         {false, _, [Event | _]} ->
             case follow(Event, M) of
-                {ok, Next} -> address_drained(Next, Budget - 1);
+                {ok, Next} -> settles(Next, Budget - 1, Events, Shown, Settled);
                 ended -> [];
                 {error, Why} -> [Why]
             end
     end.
+
+%% A device's configuration explored: from a hub and a high-speed device addressed, the
+%% bus's Configure Endpoint for Count bulk pipes, every answer of each command the core
+%% posts for it (success and a TRB error) and the device's detach at any point. Checked
+%% at each state: each command adds at most ADDS_MAX endpoints, none already bound, and
+%% none is posted once a part has failed or the bus has been answered; the bus is
+%% answered once, ok only when the device has detached or every pipe is bound in the
+%% NIF and takes a post in the core, and an error only after a part failed or the
+%% device detached; and from every state, with
+%% every later answer a success, the bus is answered and a detached device's slot
+%% disabled.
+explore_configure(Count) ->
+    Core = requested([{{enable_slot, ?DEV_REF, bus}, ?DEV},
+                           {{address, ?DEV_REF, bus, lists:last(devices())}, ?DEV_ADDRESS}],
+                          hub_addressed()),
+    Pipes = [(bulk())#{address := 16#80 + Number} || Number <- lists:seq(1, Count)],
+    M0 = #{world => configure, core => Core, features => #{detach => true},
+           queues => #{?HUB_EP0 => open, ?DEV_EP0 => open}, posted => #{}, command => none, callers => #{},
+           done => #{}, aborts => #{}, now => 0, ticked => false, detached => false, disabled => false,
+           wanted => lists:sort([{?DEV, endpoint_dci(EpAddress)} || #{address := EpAddress} <- Pipes]),
+           failed => false, configure_answer => none},
+    fixed_point(run({bus, {configure_endpoints, ?DEV_REF, configuring, #{add => Pipes, hub => none}}}, M0),
+                fun configure_events/1, fun configure_drained/1).
+
+configure_events(M) -> command_answers(M) ++ world_events(M).
+
+configure_answered(Answer, M = #{configure_answer := none, failed := Failed, detached := Detached}) ->
+    #{queues := Queues, wanted := Wanted} = M,
+    Bound = lists:sort([Pipe || Pipe = {?DEV, Dci} <- maps:keys(Queues), Dci =/= 1]),
+    case {Answer, Failed} of
+        {ok, false} when Detached -> ok;
+        {ok, false} when Bound =:= Wanted -> lists:foreach(fun(Pipe) -> takes_a_post(Pipe, M) end, Wanted);
+        {{error, _}, _} when Failed; Detached -> ok;
+        _ -> throw({wrong_configure_answer, Answer, #{bound => Bound, failed => Failed, detached => Detached}})
+    end,
+    M#{configure_answer := Answer};
+configure_answered(Answer, _M) ->
+    throw({answered_twice, configuring, Answer}).
+
+%% A post on Pipe reaches the NIF: the core holds the pipe open. The probe's state is
+%% not kept.
+takes_a_post(Pipe, #{core := Core, now := Now}) ->
+    case at(Now, {post, probe, Pipe, {normal, {in, 64}}}, Core) of
+        {_, [{transfer, Pipe, _Tag, _Transfer}]} -> ok;
+        {_, Actions} -> throw({configured_pipe_refuses_posts, Pipe, Actions})
+    end.
+
+configure_drained(M) ->
+    settles(M, 40, fun configure_events/1, [configure_answer, disabled],
+            fun(#{configure_answer := Answer, detached := Detached, disabled := Disabled}) ->
+                    Answer =/= none andalso (Disabled orelse not Detached)
+            end).
 %% The start, the root ports and the interrupt pass (docs/design-usb.md, "The controller
 %% process"). Register words are written out: PORTSC's bits (xHCI 5.4.8, Table 5-27, pp.
 %% 405-413) are PED 16#2, PR 16#10, PLS 16#1e0, PP 16#200, speed 16#3c00, LWS 16#10000,

@@ -10,7 +10,8 @@ require_relative '../fixtures/erlang_build'
 # Runs test/erlang/erx_xhci_core_tests.erl, the controller core's pipe machine,
 # reset_pipe's table, a device's teardown and a control request's abort explored to a
 # fixed point against a model of the NIF's queue states, the failed Address Device
-# explored the same way, the traces of each, the bus commands and the decoders, against
+# explored the same way, a device's configuration explored for each count of pipes, the
+# traces of each, the bus commands and the decoders, against
 # the module compiled from source on stock's emulator (ERX_ERL and ERX_ERLC, which make
 # check supplies). Then each seeded fault, applied to a copy of the module, must fail the
 # case named for it: Reset Endpoint issued on a stopped queue; a stopped EP0 dropped and
@@ -32,7 +33,9 @@ require_relative '../fixtures/erlang_build'
 # a host controller error ignored; a halt ignored; a running controller's status never read between
 # interrupts; an interrupt pass not bounded; a lost command never failing the
 # controller; a reported change bit left set by its clear; a change bit cleared that
-# no status read reported; and one port's reported changes taken as another's.
+# no status read reported; one port's reported changes taken as another's; and every
+# add of a configuration posted in one Configure Endpoint, past the adds one carries; and
+# the pipes of a configuration's first part lost when the next part is posted.
 class ErxXhciCoreTest < Minitest::Test
   APPLICATIONS = %w[erx_usb].freeze
   CORE = 'erlang/apps/erx_usb/src/erx_xhci_core.erl'
@@ -44,6 +47,7 @@ class ErxXhciCoreTest < Minitest::Test
   STATUS = 'the_status_of_a_running_controller_is_read_each_second_test'
   PORTS_EXPLORED = 'the_root_port_machine_is_explored_to_a_fixed_point_test'
   OWN_PORT = 'a_port_keeps_its_own_reported_changes_test'
+  CONFIGURE_EXPLORED = 'the_configuration_is_explored_to_a_fixed_point_test_'
 
   Seed = Data.define(:fault, :anchor, :replacement, :catching_case)
 
@@ -188,7 +192,15 @@ class ErxXhciCoreTest < Minitest::Test
     Seed.new(fault: "a port's reset change taken as another port's",
              anchor: 'reported := Reported#{Port => StillReported}',
              replacement: 'reported := Reported#{1 => StillReported}',
-             catching_case: OWN_PORT)
+             catching_case: OWN_PORT),
+    Seed.new(fault: 'every add of a configuration posted in one Configure Endpoint',
+             anchor: 'lists:split(min(length(Add), ?ERX_XHCI_CONFIGURE_ADDS_MAX), Add).',
+             replacement: '{Add, []}.',
+             catching_case: CONFIGURE_EXPLORED),
+    Seed.new(fault: "the pipes of a configuration's first part lost when the next is posted",
+             anchor: 'Config#{add := Left}}}, Added)',
+             replacement: 'Config#{add := Left}}}, Acc)',
+             catching_case: CONFIGURE_EXPLORED)
   ].freeze
 
   def test_xhci_core_cases_pass_under_eunit

@@ -173,7 +173,13 @@ one before it completes. One not answered within `xhci_command_deadline_ms`
 fails the controller at the next `expired`. The bus process's commands
 are answered with their decoded completion. Address Device is posted with
 the NIF's parameters, address_parameters/1, its success adds the device
-and its EP0 pipe, and Configure Endpoint's success adds the pipes it names.
+and its EP0 pipe. The bus's Configure Endpoint is posted in parts of at
+most `xhci_configure_adds_max` adds, the bindings one command carries in
+the device NIF, and each part is posted only once the one before it has
+succeeded. Each part's success adds the pipes it names. The bus is
+answered ok after the last part, or with the first part's failure; the
+pipes the parts before that failure added stay bound until the slot's
+teardown, which the bus begins by giving the device up.
 Stop Endpoint answers a success or a context state error; any other code,
 a slot not enabled error, which an enabled slot cannot get (4.6.9, p.
 140), fails the controller.
@@ -816,6 +822,10 @@ protocol_ports(I, Words, Ports, Named) ->
 queue_command(Owner, {S = #{commands := Commands}, A}) ->
     {S#{commands := Commands ++ [Owner]}, A}.
 
+%% Owner's next command, posted before every waiting one.
+continue_command(Owner, {S = #{commands := Commands}, A}) ->
+    {S#{commands := [Owner | Commands]}, A}.
+
 %% Posts the first waiting command when none is in flight. Each entry is
 %% resolved when its turn comes: a bus command through its reference, so one
 %% whose device detached is answered `{error, gone}` and never posted; a
@@ -848,7 +858,8 @@ owned_command({bus, {address, Ref, _Step, Parameters}}, S) ->
 owned_command({bus, {evaluate_context, Ref, _Step, Context}}, S) ->
     on_slot(Ref, S, fun(Slot) -> {evaluate_context, Slot, Context} end);
 owned_command({bus, {configure_endpoints, Ref, _Step, #{add := Add, hub := Hub}}}, S) ->
-    on_slot(Ref, S, fun(Slot) -> {configure_endpoints, Slot, #{add => Add, drop => [], hub => Hub}} end);
+    {Part, _Left} = configure_part(Add),
+    on_slot(Ref, S, fun(Slot) -> {configure_endpoints, Slot, #{add => Part, drop => [], hub => Hub}} end);
 owned_command({reset, Pipe = {Slot, Dci}}, #{pipes := Pipes, slots := Slots}) ->
     case Pipes of
         #{Pipe := #{state := {resetting, #{steps := [drop_add | _]}}, endpoint := Endpoint}} ->
@@ -893,10 +904,13 @@ commanded({teardown, Slot}, Command, Answer, Acc) ->
 %% A bus command's answer, with what its success changes. Enable Slot binds
 %% the reference to its slot, or tears the slot down when the reference
 %% detached meanwhile; Address Device adds the device and its EP0 pipe, and
-%% its failure tears the slot down before it is answered; Configure Endpoint
-%% adds the pipes it names. A device that detached while its command was in
-%% flight gets nothing added, its teardown already waiting. Each command has
-%% its own clauses, so one of a shape the core does not know fails loudly.
+%% its failure tears the slot down before it is answered; a part of the bus's
+%% Configure Endpoint adds the pipes it names and continues the request with
+%% the adds left, which the request carries until its last part answers it
+%% (an answer names only the request's reference and step). A device that
+%% detached while its command was in flight gets nothing added, its teardown
+%% already waiting. Each command has its own clauses, so one of a shape the
+%% core does not know fails loudly.
 bus_done({enable_slot, _Ref, _Step}, enable_slot, {ok, Slot}, Acc = {#{slots := Slots}, _})
   when is_map_key(Slot, Slots) ->
     emit({fail, {malformed_answer, enable_slot}}, Acc);
@@ -928,20 +942,28 @@ bus_done(Request = {address, Ref, _Step, #{tt := Tt}}, {address_device, Slot, _}
     tear_down(Slot, {answer_address, {bus, Request}, Failed, Tt}, Unbound);
 bus_done(Request = {evaluate_context, _Ref, _Step, _Context}, {evaluate_context, _Slot, _}, Answer, Acc) ->
     answer({bus, Request}, Answer, Acc);
-bus_done(Request = {configure_endpoints, Ref, _Step, _}, {configure_endpoints, Slot, #{add := Add, hub := Hub}}, ok,
-         Acc = {S, A}) ->
-    Added = case live(Ref, Slot, S) of
-                true ->
-                    #{slots := Slots = #{Slot := Record}, pipes := Pipes} = S,
-                    New = maps:from_list([{{Slot, dci(EpAddress)}, #{endpoint => Endpoint, state => open, waiting => []}}
-                                          || Endpoint = #{address := EpAddress} <- Add]),
-                    {S#{slots := Slots#{Slot := Record#{hub := Hub}}, pipes := maps:merge(Pipes, New)}, A};
-                false ->
-                    Acc
-            end,
-    answer({bus, Request}, ok, Added);
+bus_done(Request = {configure_endpoints, Ref, Step, Config = #{add := Add}},
+         {configure_endpoints, Slot, #{add := Part, hub := Hub}}, ok, Acc = {S, A}) ->
+    case live(Ref, Slot, S) of
+        true ->
+            #{slots := Slots = #{Slot := Record}, pipes := Pipes} = S,
+            New = maps:from_list([{{Slot, dci(EpAddress)}, #{endpoint => Endpoint, state => open, waiting => []}}
+                                  || Endpoint = #{address := EpAddress} <- Part]),
+            Added = {S#{slots := Slots#{Slot := Record#{hub := Hub}}, pipes := maps:merge(Pipes, New)}, A},
+            case configure_part(Add) of
+                {_Part, []} -> answer({bus, Request}, ok, Added);
+                {_Part, Left} -> continue_command({bus, {configure_endpoints, Ref, Step, Config#{add := Left}}}, Added)
+            end;
+        false ->
+            answer({bus, Request}, ok, Acc)
+    end;
 bus_done(Request = {configure_endpoints, _Ref, _Step, _}, {configure_endpoints, _Slot, _}, Failed = {error, _}, Acc) ->
     answer({bus, Request}, Failed, Acc).
+
+%% The adds of the bus's Configure Endpoint split into the part posted next,
+%% at most the bindings one command carries, and those left for later parts.
+configure_part(Add) ->
+    lists:split(min(length(Add), ?ERX_XHCI_CONFIGURE_ADDS_MAX), Add).
 
 -doc """
 Address Device's parameters as the device NIF takes them, from the bus

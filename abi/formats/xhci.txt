@@ -20,6 +20,12 @@
 # holds the input control context before them.
 limit xhci_device_contexts u32 32
 
+# One Configure Endpoint adds at most this many endpoints, the bindings one command
+# carries in the device NIF's DMA check; a configuration that adds more is added by
+# several commands (design-usb.md, "What the DMA check judges"). An erXos choice: enough for
+# a mass-storage interface's bulk IN and OUT or a composite device's interrupt endpoints.
+limit xhci_configure_adds_max u32 4
+
 # A route string names a hub port in four bits for each tier below the root, the first
 # tier lowest (xhci.c:2636-2644).
 limit xhci_route_tier_bits u32 4

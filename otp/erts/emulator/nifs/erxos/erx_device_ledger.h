@@ -152,12 +152,11 @@ erx_dma_endpoint(uint32_t group, uint32_t index)
 }
 
 /*
- * The bindings one publication carries at most: the endpoints one Configure Endpoint adds, a
- * mass storage interface's bulk IN and OUT and a composite device's interrupt endpoints. A
- * configuration that adds more is added by several commands (docs/design-usb.md, "What the DMA
- * check judges").
+ * The bindings one publication carries at most: the endpoints one Configure Endpoint adds,
+ * xhci_configure_adds_max of abi/formats/xhci.txt, by which the controller core splits a larger
+ * configuration (docs/design-usb.md, "What the DMA check judges").
  */
-#define ERX_DMA_BINDS_MAX	4u
+#define ERX_DMA_BINDS_MAX	ERX_XHCI_CONFIGURE_ADDS_MAX
 
 /*
  * The endpoints a command acts on, as its publication names them (docs/design-usb.md, "What the

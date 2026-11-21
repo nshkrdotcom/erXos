@@ -1406,10 +1406,14 @@ of what is in flight but that one Address Device. The steps:
    from `bNbrPorts`, the think time from `wHubCharacteristics` and the
    multi-TT flag only once the multi-TT interface has been selected
    (xHCI 4.5.2, pp. 96-97).
-8. **Endpoints.** One Configure Endpoint command adding every endpoint
+8. **Endpoints.** One Configure Endpoint request adding every endpoint
    the claimed functions need, with the slot's hub fields for a hub
    (xHCI 4.3.5, p. 90: the request and the command together configure
-   the device).
+   the device). The controller core posts it as Configure Endpoint
+   commands of at most `xhci_configure_adds_max` adds each, one after
+   the other, and answers the request once the last has succeeded, or
+   with the first failure, after which no further part is posted
+   ([What the DMA check judges](#what-the-dma-check-judges)).
 9. **Start.** One function process per claimed interface, each with its
    pipes. A hub enters the bus core with every port `off`, and the bus
    core powers it as it powers the root hub: one port-power request at a
@@ -2239,11 +2243,14 @@ that consumes events.
   and Configure Endpoint are separate reaches: Address Device binds EP0,
   index 1, and drops nothing (4.6.5, p. 112); Configure Endpoint adds
   and drops indexes 2 and up, since it ignores EP0's flags (4.6.6,
-  p. 117). One command carries at most `ERX_DMA_BINDS_MAX` (4)
-  bindings, enough for a mass-storage interface's bulk IN and OUT or a
-  composite device's interrupt endpoints; a configuration that adds
-  more is added by several commands. Each binds the named block's ring,
-  which must be bound to nothing; no two bind one endpoint or one ring;
+  p. 117). One command carries at most `ERX_DMA_BINDS_MAX` bindings,
+  `xhci_configure_adds_max` of `abi/formats/xhci.txt`, 4, enough for a
+  mass-storage interface's bulk IN and OUT or a composite device's
+  interrupt endpoints; a configuration that adds more is added by
+  several commands, and a failed one ends only its own bindings, so the
+  earlier ones stay until the slot's Disable Slot. Each binds the named
+  block's ring, which must be bound to nothing; no two bind one endpoint
+  or one ring;
   and an endpoint already bound is bound again only by a command that
   drops it. A binding begins at the command's publication, and the
   sequencer initialises the ring then. A drop-and-add binds the new ring
