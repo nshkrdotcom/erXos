@@ -386,29 +386,29 @@ reader learns more from the comparison than from the choice.
 > and the runtime in each domain schedules its own processes within
 > its group's grant.
 
-**Credit lineage.** The FreeBSD book tells the history of each facility
-from early UNIX onward. Do the same for erXos's ideas: name the system
-an idea comes from, what erXos kept and what it changed. The main
-sources are L4 and Fiasco, EROS, Plan 9, FreeBSD and Erlang/OTP;
-[research-prior-art.md](../research-prior-art.md) lists the rest.
+**Describe erXos, credit in one line.** The book is about how erXos
+works, not about where its parts came from or what was changed on the
+way. Where an idea comes from another system (L4 and Fiasco, EROS,
+Plan 9, FreeBSD, Erlang/OTP, musl or any other), name the source once,
+in a clause, where the idea is introduced, and then describe erXos's
+mechanism in its own terms. Do not tell what was lifted and what was
+changed, do not keep comparing with the source, and leave out what
+only an implementer needs: the pinned version a behaviour matches, the
+oracle a test checks against, which upstream file a piece came from,
+what was ported when. The book is not an implementation chronology.
+A comparison earns its place only where the difference is what the
+reader must take away, such as a familiar command erXos refuses and
+why. The story of each idea's origin, what erXos kept and what it
+changed, belongs to the lineage appendix
+([e-lineage.md](e-lineage.md)), and the background chapters may use
+other systems to teach a concept.
 
 | Before | After |
 | --- | --- |
-| erXos introduces budgets, a novel memory accounting scheme. | Budgets follow EROS's space banks: every allocation is charged to a budget, and what a domain spends is bounded by its own budget. |
+| erXos introduces budgets, a novel memory accounting scheme. | Every allocation is charged to a budget, after EROS's space banks, and what a domain spends is bounded by its own budget. |
 
 Never call an idea new without checking the prior art. "erXos's take
 on X" is safer than "erXos invents X".
-
-**Credit once, then describe.** Name a subsystem's model once, where
-the subsystem is introduced ("the network stack is modelled on
-FreeBSD's"), and then describe how erXos's subsystem works in its own
-terms. Do not keep comparing it with its model paragraph after
-paragraph, and leave out what only an implementer needs: the pinned
-version a behaviour matches, the oracle or test it was checked
-against, which upstream file a piece came from, what was ported when.
-The book is not an implementation chronology. A comparison earns its
-place only where the difference is the point a reader must take away,
-such as a FreeBSD command that erXos refuses and why.
 
 **State the cost.** Every design trades something. Say what, in
 plain words, next to the choice. A reader trusts a book that names its
