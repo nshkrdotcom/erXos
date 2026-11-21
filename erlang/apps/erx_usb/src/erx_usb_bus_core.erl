@@ -473,7 +473,7 @@ enumerated(addressing, Ref, _Device, Result, Now, State) ->
     set_step(Ref, {address_settle, Now + ?ERX_USB_SET_ADDRESS_SETTLE_MS}, State);
 enumerated(device_head, Ref, _Device, Result, _Now, State) ->
     case ep0_packet(value(erx_usb_desc:device_head(value(Result)))) of
-        ?ERX_USB_DEVICE_DESCRIPTOR_HEAD -> read_device(Ref, State);
+        ?ERX_USB_EP0_PACKET_FULL_FIRST -> read_device(Ref, State);
         Packet -> request(Ref, ep0_packet, {evaluate_context, #{ep0_packet => Packet}}, State)
     end;
 enumerated(ep0_packet, Ref, _Device, Result, _Now, State) ->

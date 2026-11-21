@@ -5,18 +5,80 @@
 -moduledoc """
 The controller process's pure core (docs/design-usb.md, "The controller
 process" and "Transfers and pipes"): the commands it runs, every pipe's
-lifecycle and the transfers in flight with their requesters.
+lifecycle, the transfers in flight with their requesters, and the map from
+each live device's reference to its slot.
 
 step/3 takes one event, the time it is handled at, in milliseconds, and the
 state, and answers the next state and the actions the controller process
 performs, in order: `{command, Tag, Command}` and `{transfer, Pipe, Tag,
-Transfer}` post to the device NIF, `{reply, From, Answer}` answers a caller,
-and `{fail, Reason}` ends the process, whose restart resets the controller;
-a step that fails answers that action alone, so nothing after it is posted
-and a held interrupt is not acknowledged.
+Transfer}` post to the device NIF; `{bus, Answer}` sends the bus process
+Answer with erx_usb_bus_link:answer/2; `{send, To, Message}` sends a
+function process Message; `{queue_state, Pipe}` asks the NIF for a queue's
+state, which the process feeds back as `{queue_state, Pipe, Report}` before
+any other event; and `{fail, Reason}` ends the process, whose restart resets
+the controller. A step that fails answers that action alone, so nothing
+after it is posted and a held interrupt is not acknowledged.
 The process feeds back every completion the NIF returns, `{complete, Tag,
 Code, Extra}`, and every post the NIF refuses, `{refused, Tag, Reason}`.
 Tags are the core's: the lowest number no post in flight holds.
+
+**Requests.** The bus process's requests arrive as `{bus, Request}`, each
+Request as erx_usb_bus_link spells it, and a function's as `{pipe, From,
+Request}`, each Request as erx_usb_pipe spells it. Each answer is built by
+the module that spells its request, erx_usb_bus_link:reply/2 and
+erx_usb_pipe:reply/2, so the process delivers it without deciding anything.
+
+**Device references** (the design's "A name dies at once; hardware is freed
+only on the controller's report"). A request names a device by the
+reference the bus process gave it at attach and an endpoint by its address,
+never by a slot or a context index. The core maps each live reference to
+its slot, bound by Enable Slot's success, and looks every request up
+through that map: a reference detached, never seen or whose slot has been
+torn down answers `{error, gone}` without reaching the NIF, whatever device
+later has its slot. A waiting bus command is looked up when its turn comes,
+so one whose device detached meanwhile is answered `{error, gone}` and
+never posted. Detach unbinds the reference at once; the slot stays held
+until its Disable Slot succeeds, so the controller cannot give its number
+to another device first, and an Enable Slot that names a slot the core
+still holds is malformed. A reference detached while its Enable Slot is in
+flight leaves a slot nobody owns, which is torn down, the Enable Slot
+answered `{error, gone}`.
+
+**Teardown** of a slot is the one path to a disabled slot: for a detach, a
+failed Address Device and a slot nobody owns. Its pipes become `draining`,
+which answers posts `{error, gone}`, and the requests waiting on them and
+any reset of them are answered `{error, gone}`. Then, one command at a
+time, Stop Endpoint for each of its queues that still runs transfers, and
+Disable Slot once none does (4.6.4, pp. 109-110). A queue runs transfers
+while it is open with a transfer posted: a halting completion, a stop's
+success or its context state error (4.6.9, p. 140) leaves it halted or
+stopped, which Disable Slot accepts as well. Commands run one at a time,
+and a waiting command for the slot is either a reset of a draining pipe,
+dropped at its turn, or a bus command looked up through a reference no
+longer bound to it, so when the teardown's turn comes no other command for
+the slot is in flight or will be posted. Disable Slot's success frees the
+slot and its pipes; any other answer of a teardown command fails the
+controller.
+
+**A failed Address Device** unbinds its reference from the slot and tears
+the slot down; then, when its code is a USB Transaction Error and the
+device sits behind a translator, it sends CLEAR_TT_BUFFER for address 0's
+default control endpoint to the translator's hub (4.6.5, pp. 114-115),
+and only then answers `{error, {address, Code}}`, or `{error, {tt_clear,
+Reason}}` when the clear fails or passes its deadline. An Address Device
+whose device detached while it was posted is answered when it completes:
+with its address on success, the teardown following; after the cleanup
+on failure.
+
+**Aborting a control request.** A request on a control pipe gets a
+deadline `xhci_control_deadline_ms` after it is posted. At the deadline,
+on an open pipe, the request is aborted (4.11.2.2, p. 214; 4.6.9, p. 134):
+the pipe is reset as `reset_pipe` resets a busy one, Stop Endpoint, then Set
+TR Dequeue Pointer on a stopped EP0 or the halted row when the stop finds
+it halted, and the aborted request's own completion is dropped. At the
+last step's success the request is answered `{error, timeout}` and EP0 is
+open again; a step that fails fails the controller, a command by its
+deadline and a request by its own abort.
 
 **Registers.** The core reads and writes the controller's registers only
 through actions: `{read, Registers}`, which the process answers with the
@@ -40,10 +102,13 @@ as FreeBSD does (xhci_pci.c:529-557), with `{log, bios_handoff_timeout}`.
 Then `negotiate`, which the process answers with `{negotiated, Result}`;
 `{error, ebusy}` calls it again `xhci_poll_ms` later, and an install still
 busy `xhci_install_deadline_ms` after its first call fails the controller
-without being called again. Its `ok` starts the bus with the root hub's port count,
-`{start_bus, Ports}`, and the controller runs.
+without being called again. Its `ok` runs the controller, and the bus
+process is answered `{root_ports, Ports}`, the root hub's port count, once
+both that and the bus's `attach` have come, whichever comes last; a root
+port's event before then is dropped, since the bus core reads every root
+port when it starts.
 
-**Root ports.** The bus process's root-hub operation `{port, From, Port,
+**Root ports.** The bus process's root-hub operation `{port, root, Port,
 Op}` reads the port's PORTSC and answers from it: `get_status` with the
 USB 2 status and change words and the PORTSC speed ID; `power_on`, `reset`,
 `disable` and `{clear, Change}` by writing PORTSC's port power, port reset,
@@ -67,7 +132,7 @@ operation before then is answered `{error, halted}`.
 not yet opened its interrupt, is held unacknowledged: a line the firmware
 left asserted, as the VL805's INTx may be, stays masked until the
 install has reset the controller, and the one `ack` it is owed goes out
-with `{start_bus, Ports}`. A controller that fails first does not
+when the controller runs. A controller that fails first does not
 acknowledge it: the process's exit unbinds the line, which masks it. Events
 are never polled, but a running controller's status is: USBSTS is read on
 every interrupt and, at `expired`, every `xhci_status_interval_ms` whether
@@ -102,37 +167,42 @@ naming a tag the core never gave.
 
 **Commands** run one at a time: each waits in order and is posted when the
 one before it completes. One not answered within `xhci_command_deadline_ms`
-fails the controller at the next `expired`. The bus process's commands,
-`{command, From, Command}`, are answered with their decoded completion;
-Address Device's success adds the slot and its EP0 pipe, and Configure
-Endpoint's success adds and drops the pipes it names.
+fails the controller at the next `expired`. The bus process's commands
+are answered with their decoded completion. Address Device is posted with
+the NIF's parameters, address_parameters/1, its success adds the device
+and its EP0 pipe, and Configure Endpoint's success adds the pipes it names.
+Stop Endpoint answers a success or a context state error; any other code,
+a slot not enabled error, which an enabled slot cannot get (4.6.9, p.
+140), fails the controller.
 
 **Pipes** are in one of the design's states: `open`, which accepts posts;
 `halted`, which answers them `{error, halted}`; `{resetting, Reset}`,
-which answers them `{error, resetting}`; a pipe the core does not hold
-answers `{error, gone}`. set_pipe/3 is the one writer of a pipe's state,
-so a pipe that leaves `open` answers its waiting requests as it would a
-post, and one that returns to it posts the next. A control pipe, EP0,
-carries one request at a time, so its posts wait in order. A transfer that
-completes with a code that halts the endpoint (every code but success,
-short packet and the stop codes) halts its pipe; EP0 is never left
-halted: the core resets it as `reset_pipe` would before it answers the
-request that halted it.
+which answers them `{error, resetting}`; `{draining, Activity}`, which
+answers them `{error, gone}` until its slot is freed. set_pipe/3 is the one
+writer of a pipe's state, so a pipe that leaves `open` answers its waiting
+requests as it would a post, and one that returns to it posts the next. A
+control pipe, EP0, carries one request at a time, so its posts wait in
+order. A transfer that completes with a code that halts the endpoint
+(every code but success, short packet and the stop codes) halts its pipe;
+EP0 is never left halted: the core resets it as `reset_pipe` would before
+it answers the request that halted it.
 
-**reset_pipe** chooses its steps from the queue's state as the NIF reports
-it, `idle`, `busy`, `stopped` or `halted`, by plan/3, the design's table:
-a halted queue takes Reset Endpoint, then CLEAR_TT_BUFFER for a control or
-bulk endpoint of a low- or full-speed device behind a translator, then
-CLEAR_FEATURE(ENDPOINT_HALT) for any endpoint but a control one, then Set
-TR Dequeue Pointer; a busy queue takes Stop Endpoint and is planned again
-as stopped, or as halted when the stop answers a context state error; a
-stopped EP0 takes Set TR Dequeue Pointer and an idle one nothing; any
-other stopped or idle queue is dropped and added by Configure Endpoint,
-then CLEAR_FEATURE(ENDPOINT_HALT). The steps run one at a time, each on
-the previous one's success. A request step is a transfer whose requester
-is the reset, so answering that transfer continues the reset, and an
-answer for a pipe no longer resetting is stale and changes nothing. A
-transfer that halts while the reset's Stop
+**reset_pipe** first asks the NIF for the queue's state, `idle`, `busy`,
+`stopped` or `halted`, and chooses its steps from the answer by plan/3,
+the design's table: a halted queue takes Reset Endpoint, then
+CLEAR_TT_BUFFER for a control or bulk endpoint of a low- or full-speed
+device behind a translator, then CLEAR_FEATURE(ENDPOINT_HALT) for any
+endpoint but a control one, then Set TR Dequeue Pointer; a busy queue
+takes Stop Endpoint and is planned again as stopped, or as halted when the
+stop answers a context state error; a stopped EP0 takes Set TR Dequeue
+Pointer and an idle one nothing; any other stopped or idle queue is
+dropped and added by Configure Endpoint, then CLEAR_FEATURE(ENDPOINT_HALT).
+The steps run one at a time, each on the previous one's success. A request
+step is a transfer whose requester is the reset, so answering that
+transfer continues the reset; it names the device's reference, so an
+answer for a pipe no longer resetting, or for a device that no longer
+holds the slot, is stale and changes nothing, even when a new device's
+pipe of the same name is resetting. A transfer that halts while the reset's Stop
 Endpoint still waits to be posted plans the reset again as halted, since
 the NIF accepts only Reset Endpoint on a halted queue. The last step's
 success opens the pipe and answers `ok`; a failed step halts it and
@@ -140,7 +210,8 @@ answers the step's error.
 """.
 
 -export([new/0, step/3, next_deadline/1, capabilities/1]).
--export([completion/1, command_answer/3, transfer_result/2, decode_capabilities/2, port_operation/3, modify/4]).
+-export([completion/1, command_answer/3, transfer_result/2, decode_capabilities/2, port_operation/3, modify/4,
+         address_parameters/1]).
 
 -export_type([state/0, event/0, action/0, pipe/0, command/0, completion/0, register/0, capabilities/0]).
 
@@ -154,6 +225,8 @@ answers the step's error.
 -type pipe() :: {slot(), dci()}.
 -type tag() :: non_neg_integer().
 -type address() :: 1..?ERX_USB_ADDRESS_MAX.
+-type ref() :: erx_usb_bus_core:ref().
+-type speed() :: erx_usb_claim:speed().
 
 -doc "A completion code by its name in abi/formats/xhci.txt, or a code that file does not name.".
 -type completion() :: atom() | {unknown, integer()}.
@@ -162,19 +235,24 @@ answers the step's error.
 -type queue_report() :: idle | busy | stopped | halted.
 
 -type tt() :: #{hub_slot := slot(), port := 1..?ERX_USB_HUB_PORTS_MAX, multi := boolean()}.
--doc "The device an Address Device addresses; the core reads its speed and translator.".
--type device() :: #{speed := low | full | high | super, tt := none | tt(), atom() => term()}.
--doc "An endpoint Configure Endpoint adds; the core reads its address and type, and keeps the rest to add it again.".
--type endpoint() :: #{address := byte(), type := bulk | interrupt, atom() => term()}.
--type config() :: #{add := [endpoint()], drop := [dci()], hub := term()}.
+-doc "An addressed device: its address, and the speed and translator its resets are planned by.".
+-type device() :: #{address := address(), speed := speed(), tt := none | tt()}.
+-doc """
+Address Device's parameters as the device NIF takes them (design-usb.md, "What
+Erlang names and what the NIF builds"): the route string, the root port, the
+port speed ID, the translator and EP0's packet size.
+""".
+-type address_parameters() :: #{route := 0..16#fffff, root_port := 1..255, speed := 1..15, tt := none | tt(),
+                                ep0_packet := pos_integer()}.
+-type config() :: #{add := [erx_usb_claim:pipe()], drop := [dci()], hub := term()}.
 
--doc "A command the bus process asks for.".
--type bus_command() :: enable_slot
-                     | {address_device, slot(), device()}
-                     | {evaluate_context, slot(), #{ep0_packet := pos_integer()}}
-                     | {configure_endpoints, slot(), config()}.
 -doc "A command as the core posts it; the controller process gives it to the NIF in the NIF's form.".
--type command() :: bus_command() | {stop_endpoint | reset_endpoint | set_tr_dequeue, slot(), dci()}.
+-type command() :: enable_slot
+                 | {address_device, slot(), address_parameters()}
+                 | {evaluate_context, slot(), #{ep0_packet := pos_integer()}}
+                 | {configure_endpoints, slot(), config()}
+                 | {stop_endpoint | reset_endpoint | set_tr_dequeue, slot(), dci()}
+                 | {disable_slot, slot()}.
 
 -type transfer() :: {control, Setup :: <<_:64>>, none | {in, pos_integer()} | {out, binary()}}
                   | {normal, {in, pos_integer()} | {out, binary()}}.
@@ -212,9 +290,9 @@ names.
 -doc "An entry complete/2 returns: a transfer's or a command's completion, or a port's event.".
 -type nif_event() :: {tag(), Code :: integer(), Extra :: term()} | {port, port_no()}.
 
--type event() :: {command, From :: term(), bus_command()}
-               | {post, From :: term(), pipe(), transfer()}
-               | {reset_pipe, From :: term(), pipe(), queue_report()}
+-type event() :: {bus, erx_usb_bus_link:request()}
+               | {pipe, From :: pid(), erx_usb_pipe:request()}
+               | {queue_state, pipe(), queue_report()}
                | {complete, tag(), Code :: integer(), Extra :: term()}
                | {refused, tag(), Reason :: term()}
                | {start, bound()}
@@ -222,19 +300,18 @@ names.
                | {negotiated, ok | {error, term()}}
                | interrupt
                | {completed, {ok, [nif_event()]} | {error, term()}}
-               | {port, From :: term(), port_no(), port_op()}
                | expired.
 
 -type action() :: {command, tag(), command()}
                | {transfer, pipe(), tag(), transfer()}
-               | {reply, From :: term(), Answer :: term()}
+               | {bus, erx_usb_bus_link:answer()}
+               | {send, To :: pid(), Message :: term()}
+               | {queue_state, pipe()}
                | {read, [register()]}
                | {write, register(), non_neg_integer()}
                | negotiate
-               | {start_bus, Ports :: byte()}
                | complete
                | ack
-               | {port_event, port_no()}
                | {log, bios_handoff_timeout}
                | {fail, Reason :: term()}.
 
@@ -251,57 +328,86 @@ deadline; running, with the time USBSTS is next read.
                | {running, NextRead :: ms()}.
 
 -type result() :: {ok, binary()} | {error, term()}.
--doc "Who a transfer's result goes to: a caller, or the reset of a pipe whose step it is.".
--type requester() :: {reply, From :: term()} | {step, pipe()}.
+-doc """
+Who an answer goes to: the bus process for one of its requests; a function
+process for one of its requests; the reset of a pipe whose step it is; the
+failed Address Device a translator's clear follows, with its answer; or no
+one, for a request its abort answers.
+""".
+-type requester() :: {bus, erx_usb_bus_link:request()}
+                   | {pipe, From :: pid(), erx_usb_pipe:request()}
+                   | {step, pipe(), ref()}
+                   | {tt_clear, requester(), Failed :: {error, term()}}
+                   | aborted.
 
 -type step() :: stop_endpoint | reset_endpoint | set_tr_dequeue | drop_add | clear_tt | clear_halt.
 -doc """
-A reset in progress: who asked, or the request whose halt began it with
-that request's result, and the steps still to run, the first in flight or
-waiting its turn.
+A reset in progress: who asked, the request whose halt began it with that
+request's result, or the request its abort answers `timeout`; and the steps
+still to run, the first in flight or waiting its turn, or `{asking, Was}`
+while the NIF's report of the queue is awaited, Was the pipe's state when
+the reset was asked for.
 """.
--type reset() :: #{requester := requester() | {halt, requester(), result()}, steps := [step()]}.
+-type reset() :: #{requester := requester() | {halt, requester(), result()} | {abort, requester()},
+                   steps := [step()] | {asking, open | halted}}.
 
--type pipe_state() :: open | halted | {resetting, reset()}.
+-doc """
+A pipe's state. A draining pipe's Activity is `running` while its queue may
+still run a transfer posted on it, so its teardown stops it, and `quiet`
+once the queue is halted, stopped or was idle at the detach.
+""".
+-type pipe_state() :: open | halted | {resetting, reset()} | {draining, running | quiet}.
 -type pipe_record() :: #{endpoint := #{address := byte(), type := control | bulk | interrupt, atom() => term()},
                          state := pipe_state(),
                          waiting := [{requester(), transfer()}]}.
--type slot_record() :: #{address := address(), speed := low | full | high | super, tt := none | tt(),
-                         hub := term()}.
 
--doc "Who a command is for: the bus process, or the reset of a pipe whose step it is.".
--type owner() :: {bus, From :: term(), bus_command()} | {reset, pipe()}.
+-doc "What follows a slot's Disable Slot: nothing, or the answer of the failed Address Device that tore it down.".
+-type then() :: nothing | {answer_address, requester(), Failed :: {error, term()}, none | tt()}.
+-doc """
+A held slot: the reference whose Enable Slot it answered, its device once
+Address Device succeeds, the hub fields its last Configure Endpoint named,
+and, once its teardown has begun, what follows the teardown.
+""".
+-type slot_record() :: #{ref := ref(), device := none | device(), hub := term(), teardown := none | then()}.
+
+-doc "Who a command is for: the bus process, the reset of a pipe whose step it is, or a slot's teardown.".
+-type owner() :: {bus, erx_usb_bus_link:request()} | {reset, pipe()} | {teardown, slot()}.
 
 -doc """
-`inflight` holds every transfer posted and not yet completed, by tag;
-`command` the one command in flight, with its deadline; `commands` the
-commands waiting, oldest first; `port_ops` the root-port operations whose
-PORTSC read is awaited, oldest first; `line` the interrupt line: `idle`,
-`held` by an interrupt before the controller runs and owed its `ack`, or
-`{draining, Events}` while a pass reads the event ring; `reported` the
-PORTSC change bits each root port's last `get_status` reported and no
-clear has written since.
+`refs` maps each live reference to its slot, or to `none` before its Enable
+Slot succeeds and after its slot's teardown has begun; `inflight` holds
+every transfer posted and not yet completed, by tag, with its control
+deadline; `command` the one command in flight, with its deadline;
+`commands` the commands waiting, oldest first; `port_ops` the root-port
+operations whose PORTSC read is awaited, oldest first; `line` the interrupt
+line: `idle`, `held` by an interrupt before the controller runs and owed its
+`ack`, or `{draining, Events}` while a pass reads the event ring;
+`reported` the PORTSC change bits each root port's last `get_status`
+reported and no clear has written since; `attached` whether the bus
+process has attached; `now`, only while a step runs, the time of the event
+it handles, which a control transfer's deadline counts from.
 """.
 -opaque state() :: #{phase := phase(),
                      line := idle | held | {draining, Events :: non_neg_integer()},
                      capabilities := none | capabilities(),
-                     port_ops := [{port_no(), port_op(), From :: term()}],
+                     port_ops := [{port_no(), port_op(), requester()}],
                      reported := #{port_no() => non_neg_integer()},
+                     attached := boolean(),
+                     refs := #{ref() => slot() | none},
                      slots := #{slot() => slot_record()},
                      pipes := #{pipe() => pipe_record()},
-                     inflight := #{tag() => {pipe(), requester()}},
+                     inflight := #{tag() => {pipe(), requester(), Deadline :: ms() | none}},
                      command := none | {tag(), owner(), command(), Deadline :: ms()},
-                     commands := [owner()]}.
+                     commands := [owner()],
+                     now => ms()}.
 
 -define(EP0, 1).
--define(IS_BUS_COMMAND(C), (C =:= enable_slot orelse element(1, C) =:= address_device
-                            orelse element(1, C) =:= evaluate_context orelse element(1, C) =:= configure_endpoints)).
 
 -doc "A controller not yet started, with no slots and nothing in flight.".
 -spec new() -> state().
 new() ->
-    #{phase => stopped, line => idle, capabilities => none, port_ops => [], reported => #{},
-      slots => #{}, pipes => #{}, inflight => #{}, command => none, commands => []}.
+    #{phase => stopped, line => idle, capabilities => none, port_ops => [], reported => #{}, attached => false,
+      refs => #{}, slots => #{}, pipes => #{}, inflight => #{}, command => none, commands => []}.
 
 -doc "What the controller's capability registers said, for its inspection record, or `none` before they are read.".
 -spec capabilities(state()) -> capabilities() | none.
@@ -310,21 +416,26 @@ capabilities(#{capabilities := Capabilities}) -> Capabilities.
 -doc "The next state on Event, handled at Now, and the actions the controller process performs.".
 -spec step(event(), ms(), state()) -> {state(), [action()]}.
 step(Event, Now, State) ->
-    {Next, Reversed} = start_command(Now, event(Event, Now, {State, []})),
+    {Stepped, Reversed} = start_command(Now, event(Event, Now, {State#{now => Now}, []})),
+    Next = maps:remove(now, Stepped),
     case [Fail || Fail = {fail, _} <- Reversed] of
         [] -> {Next, lists:reverse(Reversed)};
         Fails -> {Next, [lists:last(Fails)]}
     end.
 
-%% An interrupt held before the controller ran is owed one ack once the bus starts:
+%% An interrupt held before the controller ran is owed one ack once it runs:
 %% given here, and the line left idle; a line not held is left as it is.
 release_line({S = #{line := held}, A}) -> emit(ack, {S#{line := idle}, A});
 release_line(Acc) -> Acc.
 
--doc "The earliest of the command's deadline and the phase's, the start's next poll or the next status read, or `none`.".
+-doc """
+The earliest of the command's deadline, the phase's, the start's next poll or
+the next status read, and the control transfers' deadlines, or `none`.
+""".
 -spec next_deadline(state()) -> ms() | none.
-next_deadline(#{command := Command, phase := Phase}) ->
-    case [At || At <- [command_deadline(Command), phase_deadline(Phase)], At =/= none] of
+next_deadline(#{command := Command, phase := Phase, inflight := Inflight}) ->
+    Control = [At || {_Pipe, _Requester, At} <- maps:values(Inflight)],
+    case [At || At <- [command_deadline(Command), phase_deadline(Phase) | Control], At =/= none] of
         [] -> none;
         Ats -> lists:min(Ats)
     end.
@@ -339,28 +450,46 @@ phase_deadline(_Phase) -> none.
 
 %% Events
 
-event({command, From, Command}, _Now, {S = #{commands := Commands}, A}) when ?IS_BUS_COMMAND(Command) ->
-    {S#{commands := Commands ++ [{bus, From, Command}]}, A};
-event({post, From, Pipe, Transfer}, _Now, Acc) ->
-    post(Pipe, {reply, From}, Transfer, Acc);
-event({reset_pipe, From, Pipe, Queue}, _Now, Acc = {#{pipes := Pipes}, _}) ->
-    case Pipes of
-        #{Pipe := #{state := {resetting, _}}} -> answer({reply, From}, {error, resetting}, Acc);
-        #{Pipe := _} -> begin_reset(Pipe, {reply, From}, Queue, Acc);
-        #{} -> answer({reply, From}, {error, gone}, Acc)
+event({bus, attach}, _Now, {S = #{phase := Phase}, A}) ->
+    Attached = {S#{attached := true}, A},
+    case Phase of
+        {running, _} -> root_ports(Attached);
+        _ -> Attached
     end;
+event({bus, Request = {port, root, Port, Op}}, _Now, Acc) ->
+    root_port_operation(Port, Op, {bus, Request}, Acc);
+event({bus, Request = {control, Ref, _Tag, Setup, Data}}, _Now, Acc) ->
+    post_through(Ref, 0, {bus, Request}, {control, Setup, Data}, Acc);
+event({bus, Request = {enable_slot, Ref, _Step}}, _Now, {S = #{refs := Refs}, A}) ->
+    queue_command({bus, Request}, {S#{refs := Refs#{Ref => none}}, A});
+event({bus, Request = {Kind, _Ref, _Step, _Parameters}}, _Now, Acc)
+  when Kind =:= address; Kind =:= evaluate_context; Kind =:= configure_endpoints ->
+    queue_command({bus, Request}, Acc);
+event({bus, Request = {reset_pipe, Ref, _Interface, Address}}, _Now, Acc) ->
+    ask_reset(Ref, Address, {bus, Request}, Acc);
+event({bus, {detach, Ref}}, _Now, Acc) ->
+    detach(Ref, Acc);
+event({pipe, From, Request = {control, Pipe, Setup, Data, _Monitor}}, _Now, Acc) ->
+    {Ref, Address} = erx_usb_pipe:endpoint(Pipe),
+    post_through(Ref, Address, {pipe, From, Request}, {control, Setup, Data}, Acc);
+event({pipe, From, Request = {interrupt_in, Pipe, _Tag, Length}}, _Now, Acc) ->
+    {Ref, Address} = erx_usb_pipe:endpoint(Pipe),
+    post_through(Ref, Address, {pipe, From, Request}, {normal, {in, Length}}, Acc);
+event({queue_state, Pipe, Queue}, _Now, Acc) when Queue =:= idle; Queue =:= busy; Queue =:= stopped;
+                                                  Queue =:= halted ->
+    queue_reported(Pipe, Queue, Acc);
 event({complete, Tag, Code, Extra}, _Now, {S = #{command := {Tag, Owner, Command, _}}, A}) ->
     commanded(Owner, Command, command_answer(kind(Command), Code, Extra), {S#{command := none}, A});
 event({complete, Tag, Code, Extra}, _Now, {S = #{inflight := Inflight}, A}) ->
     case maps:take(Tag, Inflight) of
-        {{Pipe, Requester}, Rest} -> transferred(Pipe, Requester, transfer_result(Code, Extra), {S#{inflight := Rest}, A});
+        {{Pipe, Requester, _At}, Rest} -> transferred(Pipe, Requester, transfer_result(Code, Extra), {S#{inflight := Rest}, A});
         error -> emit({fail, {unknown_tag, Tag}}, {S, A})
     end;
 event({refused, Tag, Reason}, _Now, Acc = {#{command := {Tag, _, Command, _}}, _}) ->
     emit({fail, {refused, Command, Reason}}, Acc);
 event({refused, Tag, Reason}, _Now, {S = #{inflight := Inflight}, A}) ->
     case maps:take(Tag, Inflight) of
-        {{Pipe, Requester}, Rest} -> answer(Requester, {error, Reason}, post_waiting(Pipe, {S#{inflight := Rest}, A}));
+        {{Pipe, Requester, _At}, Rest} -> answer(Requester, {error, Reason}, post_waiting(Pipe, {S#{inflight := Rest}, A}));
         error -> emit({fail, {unknown_tag, Tag}}, {S, A})
     end;
 event({start, Bound}, _Now, {S = #{phase := stopped}, A}) ->
@@ -382,18 +511,8 @@ event({completed, {error, Reason}}, _Now, Acc) ->
     emit({fail, {complete, Reason}}, Acc);
 event({completed, _Batch}, _Now, Acc) ->
     emit({fail, {unexpected, completed}}, Acc);
-event({port, From, Port, Op}, _Now, Acc = {#{phase := {running, _}}, _}) ->
-    case root_port(Port, Acc) of
-        true ->
-            {S = #{port_ops := Ops}, A} = Acc,
-            emit({read, [{portsc, Port}]}, {S#{port_ops := Ops ++ [{Port, Op, From}]}, A});
-        false ->
-            answer({reply, From}, {error, badarg}, Acc)
-    end;
-event({port, From, _Port, _Op}, _Now, Acc) ->
-    answer({reply, From}, {error, halted}, Acc);
 event(expired, Now, Acc) ->
-    command_expired(Now, phase_expired(Now, Acc));
+    command_expired(Now, phase_expired(Now, control_expired(Now, Acc)));
 event(Event, _Now, Acc) ->
     emit({fail, {unexpected, Event}}, Acc).
 
@@ -401,6 +520,10 @@ command_expired(Now, Acc = {#{command := {_Tag, _Owner, Command, At}}, _}) when 
     emit({fail, {command_timeout, Command}}, Acc);
 command_expired(_Now, Acc) ->
     Acc.
+
+%% The bus process's answer to its attach, the root hub's port count.
+root_ports(Acc = {#{capabilities := #{ports := Ports}}, _}) ->
+    emit({bus, {root_ports, Ports}}, Acc).
 
 %% Start
 
@@ -434,8 +557,12 @@ bios_owned(Byte, Now, Acc = {#{phase := {bios_handoff, GiveUp, reading}}, _}) ->
 install(Now, Acc) ->
     emit(negotiate, set_phase({installing, Now + ?ERX_XHCI_INSTALL_DEADLINE_MS, calling}, Acc)).
 
-negotiated(ok, Now, Acc = {#{capabilities := #{ports := Ports}}, _}) ->
-    release_line(emit({start_bus, Ports}, set_phase({running, Now + ?ERX_XHCI_STATUS_INTERVAL_MS}, Acc)));
+negotiated(ok, Now, Acc = {#{attached := Attached}, _}) ->
+    Running = set_phase({running, Now + ?ERX_XHCI_STATUS_INTERVAL_MS}, Acc),
+    release_line(case Attached of
+                     true -> root_ports(Running);
+                     false -> Running
+                 end);
 negotiated({error, ebusy}, Now, Acc = {#{phase := {installing, Deadline, calling}}, _}) when Now < Deadline ->
     set_phase({installing, Deadline, {retry, min(Now + ?ERX_XHCI_POLL_MS, Deadline)}}, Acc);
 negotiated({error, ebusy}, _Now, Acc) ->
@@ -464,11 +591,11 @@ read([{{legacy, bios_owned}, Byte}], Now, Acc = {#{phase := {bios_handoff, _, re
     bios_owned(Byte, Now, Acc);
 read([{{portsc, Port}, Word}], _Now, {S = #{port_ops := Ops, reported := Reported}, A}) when is_integer(Word) ->
     case lists:keytake(Port, 1, Ops) of
-        {value, {Port, Op, From}, Rest} ->
+        {value, {Port, Op, Requester}, Rest} ->
             {Writes, Answer, StillReported} = port_operation(Op, Word, maps:get(Port, Reported, 0)),
             Next = {S#{port_ops := Rest, reported := Reported#{Port => StillReported}}, A},
             Written = lists:foldl(fun(Write, In) -> emit({write, {portsc, Port}, Write}, In) end, Next, Writes),
-            answer({reply, From}, Answer, Written);
+            answer(Requester, Answer, Written);
         false ->
             emit({fail, {unexpected_read, {portsc, Port}}}, {S, A})
     end;
@@ -524,7 +651,7 @@ drained(Count, Acc = {#{line := {draining, Before}}, _}) ->
 
 nif_event({port, Port}, _Now, Acc) ->
     case root_port(Port, Acc) of
-        true -> emit({port_event, Port}, Acc);
+        true -> port_event(Port, Acc);
         false -> emit({fail, {malformed_event, {port, Port}}}, Acc)
     end;
 nif_event({Tag, Code, Extra}, Now, Acc) ->
@@ -532,11 +659,30 @@ nif_event({Tag, Code, Extra}, Now, Acc) ->
 nif_event(Event, _Now, Acc) ->
     emit({fail, {malformed_event, Event}}, Acc).
 
+%% A root port's event goes to the bus process once it has its root ports;
+%% before then the bus core reads every root port when it starts.
+port_event(Port, Acc = {#{attached := true}, _}) -> emit({bus, {port_event, Port}}, Acc);
+port_event(_Port, Acc) -> Acc.
+
 %% A port of the root hub: 1 to the port count the capability registers read.
 root_port(Port, {#{capabilities := #{ports := Ports}}, _}) ->
     is_integer(Port) andalso Port >= 1 andalso Port =< Ports.
 
 %% Root ports
+
+%% The bus process's operation Op on root port Port: its PORTSC read, the
+%% operation done when the read is answered; refused before the controller
+%% runs and for a port outside the port count.
+root_port_operation(Port, Op, Requester, Acc = {#{phase := {running, _}}, _}) ->
+    case root_port(Port, Acc) of
+        true ->
+            {S = #{port_ops := Ops}, A} = Acc,
+            emit({read, [{portsc, Port}]}, {S#{port_ops := Ops ++ [{Port, Op, Requester}]}, A});
+        false ->
+            answer(Requester, {error, badarg}, Acc)
+    end;
+root_port_operation(_Port, _Op, Requester, Acc) ->
+    answer(Requester, {error, halted}, Acc).
 
 -doc """
 A root-port operation on the port whose PORTSC reads Word and whose last
@@ -660,67 +806,281 @@ protocol_ports(I, Words, Ports, Named) ->
     Major = ?ERX_HW_XHCI_REVISION_MAJOR_GET(Revision),
     maps:merge(Named, maps:from_list([{Port, Major} || Port <- Range])).
 
+
 %% Commands, one at a time
 
-%% Posts the first waiting command when none is in flight. A reset's entry
-%% posts the command of its first step as it stands now, so a reset planned
-%% again while it waited posts its new first step; an entry whose pipe is no
-%% longer resetting is dropped. Tags of commands and transfers are one
-%% namespace.
+queue_command(Owner, {S = #{commands := Commands}, A}) ->
+    {S#{commands := Commands ++ [Owner]}, A}.
+
+%% Posts the first waiting command when none is in flight. Each entry is
+%% resolved when its turn comes: a bus command through its reference, so one
+%% whose device detached is answered `{error, gone}` and never posted; a
+%% reset's as its first step stands now, so a reset planned again while it
+%% waited posts its new first step, and one whose pipe is no longer resetting
+%% is dropped; a teardown's as its slot's next step. Tags of commands and
+%% transfers are one namespace.
 start_command(Now, {S = #{command := none, commands := [Owner | Waiting], inflight := Inflight}, A}) ->
+    Next = {S#{commands := Waiting}, A},
     case owned_command(Owner, S) of
         {ok, Command} ->
             Tag = tag(Inflight, 0, S),
             emit({command, Tag, Command},
                  {S#{command := {Tag, Owner, Command, Now + ?ERX_XHCI_COMMAND_DEADLINE_MS}, commands := Waiting}, A});
         stale ->
-            start_command(Now, {S#{commands := Waiting}, A})
+            start_command(Now, Next);
+        gone ->
+            start_command(Now, answer(Owner, {error, gone}, Next))
     end;
 start_command(_Now, Acc) ->
     Acc.
 
-owned_command({bus, _From, Command}, _S) ->
-    {ok, Command};
+owned_command({bus, {enable_slot, Ref, _Step}}, #{refs := Refs}) ->
+    case is_map_key(Ref, Refs) of
+        true -> {ok, enable_slot};
+        false -> gone
+    end;
+owned_command({bus, {address, Ref, _Step, Parameters}}, S) ->
+    on_slot(Ref, S, fun(Slot) -> {address_device, Slot, address_parameters(Parameters)} end);
+owned_command({bus, {evaluate_context, Ref, _Step, Context}}, S) ->
+    on_slot(Ref, S, fun(Slot) -> {evaluate_context, Slot, Context} end);
+owned_command({bus, {configure_endpoints, Ref, _Step, #{add := Add, hub := Hub}}}, S) ->
+    on_slot(Ref, S, fun(Slot) -> {configure_endpoints, Slot, #{add => Add, drop => [], hub => Hub}} end);
 owned_command({reset, Pipe = {Slot, Dci}}, #{pipes := Pipes, slots := Slots}) ->
     case Pipes of
         #{Pipe := #{state := {resetting, #{steps := [drop_add | _]}}, endpoint := Endpoint}} ->
             #{Slot := #{hub := Hub}} = Slots,
             {ok, {configure_endpoints, Slot, #{add => [Endpoint], drop => [Dci], hub => Hub}}};
-        #{Pipe := #{state := {resetting, #{steps := [Step | _]}}}} ->
+        #{Pipe := #{state := {resetting, #{steps := [Step | _]}}}}
+          when Step =:= stop_endpoint; Step =:= reset_endpoint; Step =:= set_tr_dequeue ->
             {ok, {Step, Slot, Dci}};
         #{} ->
             stale
+    end;
+owned_command({teardown, Slot}, #{pipes := Pipes, inflight := Inflight}) ->
+    Running = [Dci || {{PipeSlot, Dci}, #{state := {draining, running}}} <- lists:sort(maps:to_list(Pipes)),
+                      PipeSlot =:= Slot, posted({Slot, Dci}, Inflight)],
+    case Running of
+        [Dci | _] -> {ok, {stop_endpoint, Slot, Dci}};
+        [] -> {ok, {disable_slot, Slot}}
     end.
 
-%% A command's decoded answer, to the bus process or to the reset whose step it is.
+%% The command Build makes for the slot live reference Ref is bound to, or
+%% `gone`.
+on_slot(Ref, #{refs := Refs}, Build) ->
+    case Refs of
+        #{Ref := Slot} when is_integer(Slot) -> {ok, Build(Slot)};
+        #{} -> gone
+    end.
+
+%% A command's decoded answer, to the bus process, to the reset whose step it
+%% is or to the teardown of its slot. Stop Endpoint answers a success or a
+%% context state error; any other code fails the controller (4.6.9, p. 140).
 commanded(_Owner, Command, malformed, Acc) ->
     emit({fail, {malformed_answer, Command}}, Acc);
-commanded({bus, From, Command}, Command, Answer, Acc) ->
-    answer({reply, From}, Answer, bus_done(Command, Answer, Acc));
+commanded(_Owner, Command = {stop_endpoint, _, _}, {error, Reason}, Acc) when Reason =/= context_state_error ->
+    emit({fail, {command_failed, Command, Reason}}, Acc);
+commanded({bus, Request}, Command, Answer, Acc) ->
+    bus_done(Request, Command, Answer, Acc);
 commanded({reset, Pipe}, _Command, Answer, Acc) ->
-    step_answered(Pipe, Answer, Acc).
+    step_answered(Pipe, Answer, Acc);
+commanded({teardown, Slot}, Command, Answer, Acc) ->
+    torn(Slot, Command, Answer, Acc).
 
-%% What a bus command's success changes: Address Device adds the slot and
-%% its EP0 pipe, Configure Endpoint drops and adds the pipes it names; a
-%% failure and the other commands change nothing. Each command has its own
-%% clause, so one of a shape the core does not know fails loudly.
-bus_done({address_device, Slot, #{speed := Speed, tt := Tt}}, {ok, Address}, {S, A}) ->
-    #{slots := Slots, pipes := Pipes} = S,
-    Ep0 = #{endpoint => #{address => 0, type => control}, state => open, waiting => []},
-    {S#{slots := Slots#{Slot => #{address => Address, speed => Speed, tt => Tt, hub => none}},
-        pipes := Pipes#{{Slot, ?EP0} => Ep0}}, A};
-bus_done({configure_endpoints, Slot, #{add := Add, drop := Drop, hub := Hub}}, ok, {S, A}) ->
-    #{slots := Slots = #{Slot := Record}, pipes := Pipes} = S,
-    Kept = maps:without([{Slot, Dci} || Dci <- Drop], Pipes),
-    Added = maps:from_list([{{Slot, dci(Endpoint)}, #{endpoint => Endpoint, state => open, waiting => []}}
-                            || Endpoint <- Add]),
-    {S#{slots := Slots#{Slot := Record#{hub := Hub}}, pipes := maps:merge(Kept, Added)}, A};
-bus_done(_Command, {error, _}, Acc) ->
+%% A bus command's answer, with what its success changes. Enable Slot binds
+%% the reference to its slot, or tears the slot down when the reference
+%% detached meanwhile; Address Device adds the device and its EP0 pipe, and
+%% its failure tears the slot down before it is answered; Configure Endpoint
+%% adds the pipes it names. A device that detached while its command was in
+%% flight gets nothing added, its teardown already waiting. Each command has
+%% its own clauses, so one of a shape the core does not know fails loudly.
+bus_done({enable_slot, _Ref, _Step}, enable_slot, {ok, Slot}, Acc = {#{slots := Slots}, _})
+  when is_map_key(Slot, Slots) ->
+    emit({fail, {malformed_answer, enable_slot}}, Acc);
+bus_done(Request = {enable_slot, Ref, _Step}, enable_slot, {ok, Slot}, {S = #{refs := Refs, slots := Slots}, A}) ->
+    Enabled = {S#{slots := Slots#{Slot => #{ref => Ref, device => none, hub => none, teardown => none}}}, A},
+    case Refs of
+        #{Ref := none} -> answer({bus, Request}, {ok, Slot}, bind(Ref, Slot, Enabled));
+        #{} -> answer({bus, Request}, {error, gone}, tear_down(Slot, nothing, Enabled))
+    end;
+bus_done(Request = {enable_slot, _Ref, _Step}, enable_slot, Failed = {error, _}, Acc) ->
+    answer({bus, Request}, Failed, Acc);
+bus_done(Request = {address, Ref, _Step, #{speed := Speed, tt := Tt}}, {address_device, Slot, _}, {ok, Address},
+         Acc = {S, A}) ->
+    Added = case live(Ref, Slot, S) of
+                true ->
+                    #{slots := Slots = #{Slot := Record}, pipes := Pipes} = S,
+                    Ep0 = #{endpoint => #{address => 0, type => control}, state => open, waiting => []},
+                    {S#{slots := Slots#{Slot := Record#{device := #{address => Address, speed => Speed, tt => Tt}}},
+                        pipes := Pipes#{{Slot, ?EP0} => Ep0}}, A};
+                false ->
+                    Acc
+            end,
+    answer({bus, Request}, {ok, Address}, Added);
+bus_done(Request = {address, Ref, _Step, #{tt := Tt}}, {address_device, Slot, _}, Failed = {error, _}, Acc = {S, _}) ->
+    Unbound = case live(Ref, Slot, S) of
+                  true -> bind(Ref, none, Acc);
+                  false -> Acc
+              end,
+    tear_down(Slot, {answer_address, {bus, Request}, Failed, Tt}, Unbound);
+bus_done(Request = {evaluate_context, _Ref, _Step, _Context}, {evaluate_context, _Slot, _}, Answer, Acc) ->
+    answer({bus, Request}, Answer, Acc);
+bus_done(Request = {configure_endpoints, Ref, _Step, _}, {configure_endpoints, Slot, #{add := Add, hub := Hub}}, ok,
+         Acc = {S, A}) ->
+    Added = case live(Ref, Slot, S) of
+                true ->
+                    #{slots := Slots = #{Slot := Record}, pipes := Pipes} = S,
+                    New = maps:from_list([{{Slot, dci(EpAddress)}, #{endpoint => Endpoint, state => open, waiting => []}}
+                                          || Endpoint = #{address := EpAddress} <- Add]),
+                    {S#{slots := Slots#{Slot := Record#{hub := Hub}}, pipes := maps:merge(Pipes, New)}, A};
+                false ->
+                    Acc
+            end,
+    answer({bus, Request}, ok, Added);
+bus_done(Request = {configure_endpoints, _Ref, _Step, _}, {configure_endpoints, _Slot, _}, Failed = {error, _}, Acc) ->
+    answer({bus, Request}, Failed, Acc).
+
+-doc """
+Address Device's parameters as the device NIF takes them, from the bus
+core's: the route string, four bits a tier below the root port, the first
+tier lowest (6.2.2, Table 6-4, p. 444; 4.3.3, p. 88); the speed as its port
+speed ID (abi/formats/xhci.txt); and EP0's packet size at that speed, the
+only one allowed at low, high and SuperSpeed and at full speed the one its
+device descriptor's first 8 bytes are read with (4.3, p. 85). The slot is
+the one the device's reference is bound to, not one the bus names.
+""".
+-spec address_parameters(erx_usb_bus_core:address_params()) -> address_parameters().
+address_parameters(#{route := Tiers, root_port := RootPort, speed := Speed, tt := Tt}) ->
+    #{route => lists:foldr(fun(Port, Route) -> (Route bsl ?ERX_XHCI_ROUTE_TIER_BITS) bor Port end, 0, Tiers),
+      root_port => RootPort, speed => speed_id(Speed), tt => Tt, ep0_packet => ep0_packet(Speed)}.
+
+speed_id(low) -> ?ERX_XHCI_SPEED_LOW;
+speed_id(full) -> ?ERX_XHCI_SPEED_FULL;
+speed_id(high) -> ?ERX_XHCI_SPEED_HIGH;
+speed_id(super) -> ?ERX_XHCI_SPEED_SUPER.
+
+ep0_packet(low) -> ?ERX_USB_EP0_PACKET_LOW;
+ep0_packet(full) -> ?ERX_USB_EP0_PACKET_FULL_FIRST;
+ep0_packet(high) -> ?ERX_USB_EP0_PACKET_HIGH;
+ep0_packet(super) -> ?ERX_USB_EP0_PACKET_SUPER.
+
+%% Device references
+
+bind(Ref, SlotOrNone, {S = #{refs := Refs}, A}) -> {S#{refs := Refs#{Ref := SlotOrNone}}, A}.
+
+live(Ref, Slot, #{refs := Refs}) -> maps:get(Ref, Refs, none) =:= Slot.
+
+%% The pipe of endpoint EpAddress of the live device Ref, or `gone`: the one
+%% lookup every request through a reference takes.
+lookup(Ref, EpAddress, #{refs := Refs, pipes := Pipes}) ->
+    case Refs of
+        #{Ref := Slot} when is_integer(Slot) ->
+            Pipe = {Slot, dci(EpAddress)},
+            case is_map_key(Pipe, Pipes) of
+                true -> {ok, Pipe};
+                false -> gone
+            end;
+        #{} ->
+            gone
+    end.
+
+post_through(Ref, EpAddress, Requester, Transfer, Acc = {S, _}) ->
+    case lookup(Ref, EpAddress, S) of
+        {ok, Pipe} -> post(Pipe, Requester, Transfer, Acc);
+        gone -> answer(Requester, {error, gone}, Acc)
+    end.
+
+%% A detached reference names nothing from now on, and its slot, when it has
+%% one, is torn down.
+detach(Ref, {S = #{refs := Refs}, A}) ->
+    Unbound = {S#{refs := maps:remove(Ref, Refs)}, A},
+    case Refs of
+        #{Ref := Slot} when is_integer(Slot) -> tear_down(Slot, nothing, Unbound);
+        #{} -> Unbound
+    end.
+
+%% Teardown
+
+%% Begins Slot's teardown, Then to follow its Disable Slot: its pipes drain,
+%% and its next step waits its turn. A teardown already begun, by a detach
+%% while the slot's Address Device was posted, takes the failed address's
+%% answer to follow it.
+tear_down(Slot, Then, {S = #{slots := Slots, pipes := Pipes}, A}) ->
+    #{Slot := Record = #{teardown := Teardown}} = Slots,
+    Marked = {S#{slots := Slots#{Slot := Record#{teardown := Then}}}, A},
+    case Teardown of
+        none ->
+            Drained = lists:sort([Pipe || Pipe = {PipeSlot, _} <- maps:keys(Pipes), PipeSlot =:= Slot]),
+            queue_command({teardown, Slot}, lists:foldl(fun drain/2, Marked, Drained));
+        _Begun ->
+            Marked
+    end.
+
+%% A pipe of a slot being torn down: its reset's requester and the requests
+%% waiting on it answered `{error, gone}`, and whether its queue may still run
+%% a posted transfer kept.
+drain(Pipe, Acc = {#{pipes := Pipes}, _}) ->
+    case Pipes of
+        #{Pipe := #{state := PipeState = {resetting, #{requester := Requester}}}} ->
+            Activity = activity(Pipe, PipeState, Acc),
+            answer(asked_by(Requester), {error, gone}, set_pipe(Pipe, {draining, Activity}, Acc));
+        #{Pipe := #{state := PipeState}} ->
+            set_pipe(Pipe, {draining, activity(Pipe, PipeState, Acc)}, Acc)
+    end.
+
+asked_by({halt, Requester, _Result}) -> Requester;
+asked_by({abort, Requester}) -> Requester;
+asked_by(Requester) -> Requester.
+
+%% Whether a pipe's queue may still run a posted transfer, from the pipe's
+%% state: an open queue with a transfer posted does, as does a reset's queue
+%% whose Stop Endpoint waits to be posted; a halted pipe's queue is halted or
+%% stopped, a stop in flight leaves its queue stopped or halted, and a
+%% reset's later steps run on a queue that is halted, stopped or idle.
+activity(Pipe, open, Acc) -> running_if_posted(Pipe, Acc);
+activity(Pipe, {resetting, #{steps := {asking, open}}}, Acc) -> running_if_posted(Pipe, Acc);
+activity(Pipe, {resetting, #{steps := [stop_endpoint | _]}}, Acc) ->
+    case reset_command_in_flight(Pipe, Acc) of
+        true -> quiet;
+        false -> running_if_posted(Pipe, Acc)
+    end;
+activity(_Pipe, _HaltedOrResetting, _Acc) -> quiet.
+
+running_if_posted(Pipe, {#{inflight := Inflight}, _}) ->
+    case posted(Pipe, Inflight) of
+        true -> running;
+        false -> quiet
+    end.
+
+posted(Pipe, Inflight) -> lists:keymember(Pipe, 1, maps:values(Inflight)).
+
+%% A teardown command's answer. A stop leaves its queue halted or stopped,
+%% and the next step waits its turn; Disable Slot's success frees the slot and
+%% its pipes, every transfer posted on them already answered, and runs what
+%% follows. Any other answer fails the controller.
+torn(Slot, {stop_endpoint, Slot, Dci}, Answer, Acc) when Answer =:= ok; Answer =:= {error, context_state_error} ->
+    queue_command({teardown, Slot}, set_pipe({Slot, Dci}, {draining, quiet}, Acc));
+torn(Slot, {disable_slot, Slot}, ok, {S = #{slots := Slots, pipes := Pipes}, A}) ->
+    #{Slot := #{teardown := Then}} = Slots,
+    then(Then, {S#{slots := maps:remove(Slot, Slots),
+                   pipes := maps:filter(fun({PipeSlot, _Dci}, _Record) -> PipeSlot =/= Slot end, Pipes)}, A});
+torn(_Slot, Command, {error, Reason}, Acc) ->
+    emit({fail, {command_failed, Command, Reason}}, Acc).
+
+%% What follows a slot's Disable Slot. A failed Address Device is answered
+%% now, or, on a USB Transaction Error behind a translator, once
+%% CLEAR_TT_BUFFER for the default control endpoint at address 0 has cleared
+%% the translator's buffer (4.6.5, p. 115).
+then(nothing, Acc) ->
     Acc;
-bus_done(enable_slot, {ok, _Slot}, Acc) ->
-    Acc;
-bus_done({evaluate_context, _Slot, _Packet}, ok, Acc) ->
-    Acc.
+then({answer_address, Requester, Failed, Tt}, Acc) ->
+    TransactionError = {error, {address, completion(?ERX_XHCI_COMPLETION_TRANSACTION_ERROR)}},
+    case {Failed, Tt} of
+        {TransactionError, #{}} ->
+            {Hub, Request} = tt_clear(#{address => 0, type => control}, 0, Tt),
+            post({Hub, ?EP0}, {tt_clear, Requester, Failed}, Request, Acc);
+        _ ->
+            answer(Requester, Failed, Acc)
+    end.
 
 %% Transfers
 
@@ -742,7 +1102,7 @@ post(Pipe, Requester, Transfer, Acc = {S = #{pipes := Pipes}, A}) ->
 post_waiting(Pipe, Acc = {S = #{pipes := Pipes, inflight := Inflight}, A}) ->
     case Pipes of
         #{Pipe := Record = #{state := open, waiting := [{Requester, Transfer} | Rest]}} ->
-            case lists:keymember(Pipe, 1, maps:values(Inflight)) of
+            case posted(Pipe, Inflight) of
                 true -> Acc;
                 false -> send(Pipe, Requester, Transfer, {S#{pipes := Pipes#{Pipe := Record#{waiting := Rest}}}, A})
             end;
@@ -750,14 +1110,20 @@ post_waiting(Pipe, Acc = {S = #{pipes := Pipes, inflight := Inflight}, A}) ->
             Acc
     end.
 
-send(Pipe, Requester, Transfer, {S = #{inflight := Inflight}, A}) ->
+%% A control transfer is posted with its deadline; others wait as long as
+%% their device takes.
+send(Pipe, Requester, Transfer, {S = #{inflight := Inflight, now := Now}, A}) ->
     Tag = tag(Inflight, 0, S),
-    emit({transfer, Pipe, Tag, Transfer}, {S#{inflight := Inflight#{Tag => {Pipe, Requester}}}, A}).
+    Deadline = case Transfer of
+                   {control, _Setup, _Data} -> Now + ?ERX_XHCI_CONTROL_DEADLINE_MS;
+                   {normal, _Data} -> none
+               end,
+    emit({transfer, Pipe, Tag, Transfer}, {S#{inflight := Inflight#{Tag => {Pipe, Requester, Deadline}}}, A}).
 
 %% A transfer's result. One that halts the endpoint halts an open pipe, or,
 %% on EP0, begins its reset, the request answered when the reset ends; on a
 %% resetting pipe whose Stop Endpoint is not yet posted, it plans the reset
-%% again as halted.
+%% again as halted; on a draining pipe it leaves the queue quiet.
 transferred(_Pipe, _Requester, malformed, Acc) ->
     emit({fail, malformed_transfer}, Acc);
 transferred(Pipe, Requester, Result, Acc = {#{pipes := Pipes}, _}) ->
@@ -772,6 +1138,8 @@ transferred(Pipe, Requester, Result, Acc = {#{pipes := Pipes}, _}) ->
                             false -> replan(Pipe, Reset, halted, Acc)
                         end,
             answer(Requester, Result, Replanned);
+        {true, #{Pipe := #{state := {draining, running}}}} ->
+            answer(Requester, Result, set_pipe(Pipe, {draining, quiet}, Acc));
         _ ->
             answer(Requester, Result, post_waiting(Pipe, Acc))
     end.
@@ -780,6 +1148,24 @@ reset_command_in_flight(Pipe, {#{command := Command}, _}) ->
     case Command of
         {_Tag, {reset, Pipe}, _, _} -> true;
         _ -> false
+    end.
+
+%% Aborting a control request
+
+%% The control transfers whose deadlines have passed: each on an open pipe is
+%% aborted, and one on a pipe that is resetting or draining is left to that
+%% reset or teardown, which answers it; either way its deadline is spent.
+control_expired(Now, Acc = {#{inflight := Inflight}, _}) ->
+    Due = lists:sort([Tag || Tag := {_Pipe, _Requester, At} <- Inflight, At =/= none, At =< Now]),
+    lists:foldl(fun abort/2, Acc, Due).
+
+abort(Tag, {S = #{inflight := Inflight, pipes := Pipes}, A}) ->
+    #{Tag := {Pipe, Requester, _At}} = Inflight,
+    case Pipes of
+        #{Pipe := #{state := open}} ->
+            begin_reset(Pipe, {abort, Requester}, busy, {S#{inflight := Inflight#{Tag := {Pipe, aborted, none}}}, A});
+        #{} ->
+            {S#{inflight := Inflight#{Tag := {Pipe, Requester, none}}}, A}
     end.
 
 %% Pipe states
@@ -797,15 +1183,38 @@ set_pipe(Pipe, PipeState, {S = #{pipes := Pipes}, A}) ->
                 Left, Waiting).
 
 refusal(halted) -> halted;
-refusal({resetting, _}) -> resetting.
+refusal({resetting, _}) -> resetting;
+refusal({draining, _}) -> gone.
 
 %% reset_pipe
 
-begin_reset(Pipe = {Slot, _}, Requester, Queue, Acc = {#{pipes := Pipes, slots := Slots}, _}) ->
-    #{Pipe := #{endpoint := Endpoint}} = Pipes,
-    #{Slot := Device} = Slots,
-    Reset = #{requester => Requester, steps => plan(Queue, Endpoint, Device)},
-    advance(Pipe, set_pipe(Pipe, {resetting, Reset}, Acc)).
+%% The bus process's reset of a pipe whose function ended: the pipe resets at
+%% once, asking the NIF for its queue's state, or answers that it is already
+%% resetting or gone.
+ask_reset(Ref, EpAddress, Requester, Acc = {S = #{pipes := Pipes}, _}) ->
+    case lookup(Ref, EpAddress, S) of
+        {ok, Pipe} ->
+            case Pipes of
+                #{Pipe := #{state := {resetting, _}}} ->
+                    answer(Requester, {error, resetting}, Acc);
+                #{Pipe := #{state := Was}} ->
+                    emit({queue_state, Pipe},
+                         set_pipe(Pipe, {resetting, #{requester => Requester, steps => {asking, Was}}}, Acc))
+            end;
+        gone ->
+            answer(Requester, {error, gone}, Acc)
+    end.
+
+%% The NIF's report of a pipe whose reset asked for it plans the reset; a
+%% report for a pipe that has gone with its device changes nothing.
+queue_reported(Pipe, Queue, Acc = {#{pipes := Pipes}, _}) ->
+    case Pipes of
+        #{Pipe := #{state := {resetting, Reset = #{steps := {asking, _Was}}}}} -> replan(Pipe, Reset, Queue, Acc);
+        #{} -> Acc
+    end.
+
+begin_reset(Pipe, Requester, Queue, Acc) ->
+    replan(Pipe, #{requester => Requester}, Queue, Acc).
 
 %% The design's table of reset_pipe's steps by the queue's state.
 plan(halted, Endpoint, Device) ->
@@ -828,25 +1237,27 @@ buffered_in_tt(#{type := Type}, #{speed := Speed, tt := Tt}) ->
 
 control(#{type := Type}) -> Type =:= control.
 
+%% The reset of Pipe planned from Queue and started.
 replan(Pipe = {Slot, _}, Reset, Queue, Acc = {#{pipes := Pipes, slots := Slots}, _}) ->
     #{Pipe := #{endpoint := Endpoint}} = Pipes,
-    #{Slot := Device} = Slots,
-    advance(Pipe, set_pipe(Pipe, {resetting, Reset#{steps := plan(Queue, Endpoint, Device)}}, Acc)).
+    #{Slot := #{device := Device}} = Slots,
+    advance(Pipe, set_pipe(Pipe, {resetting, Reset#{steps => plan(Queue, Endpoint, Device)}}, Acc)).
 
 %% Starts a reset's first step: a command waits its turn; a request posts on
 %% the EP0 it goes to; no step left ends the reset. A replanned reset whose
 %% command is already waiting keeps its one place.
-advance(Pipe, Acc = {S = #{pipes := Pipes, commands := Commands}, A}) ->
-    #{Pipe := #{state := {resetting, #{steps := Steps}}}} = Pipes,
+advance(Pipe = {Slot, _}, Acc = {S = #{pipes := Pipes, slots := Slots, commands := Commands}, A}) ->
+    #{Pipe := #{state := {resetting, #{steps := Steps}}, endpoint := Endpoint}} = Pipes,
+    #{Slot := #{ref := Ref}} = Slots,
     case Steps of
         [] ->
             finish(Pipe, ok, Acc);
         [clear_tt | _] ->
-            {Hub, Request} = tt_clear(Pipe, S),
-            post({Hub, ?EP0}, {step, Pipe}, Request, Acc);
+            #{Slot := #{device := #{address := Address, tt := Tt}}} = Slots,
+            {Hub, Request} = tt_clear(Endpoint, Address, Tt),
+            post({Hub, ?EP0}, {step, Pipe, Ref}, Request, Acc);
         [clear_halt | _] ->
-            {Slot, _} = Pipe,
-            post({Slot, ?EP0}, {step, Pipe}, endpoint_clear(Pipe, S), Acc);
+            post({Slot, ?EP0}, {step, Pipe, Ref}, endpoint_clear(Endpoint), Acc);
         [_Command | _] ->
             case lists:member({reset, Pipe}, Commands) orelse reset_command_in_flight(Pipe, Acc) of
                 true -> Acc;
@@ -865,7 +1276,7 @@ step_answered(Pipe, Answer, Acc = {#{pipes := Pipes}, _}) ->
             replan(Pipe, Reset, stopped, Acc);
         {#{Pipe := #{state := {resetting, Reset = #{steps := [stop_endpoint | _]}}}}, {error, context_state_error}} ->
             replan(Pipe, Reset, halted, Acc);
-        {#{Pipe := #{state := {resetting, _}}}, {error, Reason}} ->
+        {#{Pipe := #{state := {resetting, #{steps := [_ | _]}}}}, {error, Reason}} ->
             finish(Pipe, {error, Reason}, Acc);
         {#{Pipe := #{state := {resetting, Reset = #{steps := [_Done | Rest]}}}}, _Success} ->
             advance(Pipe, set_pipe(Pipe, {resetting, Reset#{steps := Rest}}, Acc));
@@ -874,22 +1285,28 @@ step_answered(Pipe, Answer, Acc = {#{pipes := Pipes}, _}) ->
     end.
 
 %% Ends a reset: success opens the pipe, failure halts it. A reset begun by
-%% a halt answers the request that halted with that request's own result.
+%% a halt answers the request that halted with that request's own result; an
+%% abort's success answers the aborted request `timeout`, and its failure
+%% fails the controller.
 finish(Pipe, Outcome, Acc = {#{pipes := Pipes}, _}) ->
     #{Pipe := #{state := {resetting, #{requester := Requester}}}} = Pipes,
-    Opened = set_pipe(Pipe, case Outcome of ok -> open; {error, _} -> halted end, Acc),
-    case Requester of
-        {halt, Halted, Result} -> answer(Halted, Result, Opened);
-        _ -> answer(Requester, Outcome, Opened)
+    Settled = case Outcome of
+                  ok -> open;
+                  {error, _} -> halted
+              end,
+    case {Requester, Outcome} of
+        {{abort, _Aborted}, {error, Reason}} -> emit({fail, {abort_failed, Pipe, Reason}}, Acc);
+        {{abort, Aborted}, ok} -> answer(Aborted, {error, timeout}, set_pipe(Pipe, open, Acc));
+        {{halt, Halted, Result}, _} -> answer(Halted, Result, set_pipe(Pipe, Settled, Acc));
+        {_, _} -> answer(Requester, Outcome, set_pipe(Pipe, Settled, Acc))
     end.
 
 %% CLEAR_TT_BUFFER to the translator's hub, for the endpoint by its number,
-%% direction and type and the device's address; wIndex the translator's
+%% direction and type at device address Address; wIndex the translator's
 %% port, or 1 on a hub with one translator (FreeBSD's
-%% usbd_req_clear_tt_buffer, usb_request.c:2246-2270).
-tt_clear(Pipe = {Slot, _}, #{pipes := Pipes, slots := Slots}) ->
-    #{Pipe := #{endpoint := #{address := EpAddress, type := Type}}} = Pipes,
-    #{Slot := #{address := Address, tt := #{hub_slot := Hub, port := Port, multi := Multi}}} = Slots,
+%% usbd_req_clear_tt_buffer, usb_request.c:2246-2270): the hub's slot and the
+%% request.
+tt_clear(#{address := EpAddress, type := Type}, Address, #{hub_slot := Hub, port := Port, multi := Multi}) ->
     Value = (EpAddress band ?ERX_USB_ENDPOINT_NUMBER_MASK)
         bor (Address bsl ?ERX_USB_TT_CLEAR_ADDRESS_SHIFT)
         bor (transfer_type(Type) bsl ?ERX_USB_TT_CLEAR_TYPE_SHIFT)
@@ -903,15 +1320,36 @@ transfer_type(bulk) -> ?ERX_USB_TRANSFER_TYPE_BULK.
 
 %% CLEAR_FEATURE(ENDPOINT_HALT) to the endpoint, which resets the device's
 %% side of its toggle.
-endpoint_clear(Pipe, #{pipes := Pipes}) ->
-    #{Pipe := #{endpoint := #{address := EpAddress}}} = Pipes,
+endpoint_clear(#{address := EpAddress}) ->
     {control, erx_usb_setup:packet(?ERX_USB_REQUEST_TYPE_STANDARD bor ?ERX_USB_RECIPIENT_ENDPOINT,
                                    ?ERX_USB_REQUEST_CLEAR_FEATURE, ?ERX_USB_FEATURE_ENDPOINT_HALT, EpAddress, 0), none}.
 
 %% Answers
 
-answer({reply, From}, Answer, Acc) -> emit({reply, From, Answer}, Acc);
-answer({step, Pipe}, Answer, Acc) -> step_answered(Pipe, Answer, Acc).
+%% Answers Requester with Answer: the bus process's and a function's requests
+%% in the messages their modules spell; a reset's step continues its reset; a
+%% translator's clear answers the failed Address Device it follows, with that
+%% command's answer or the clear's failure; an aborted request's own
+%% completion is dropped, since its abort answers it.
+answer({bus, Request}, Answer, Acc) ->
+    emit({bus, erx_usb_bus_link:reply(Request, Answer)}, Acc);
+answer({pipe, From, Request}, Answer, Acc) ->
+    emit({send, From, erx_usb_pipe:reply(Request, Answer)}, Acc);
+%% A request step's answer reaches its reset only while the device that
+%% posted it still holds the slot: a slot enabled again for another device,
+%% whose pipe of the same name may be resetting, takes no answer of the
+%% device before it.
+answer({step, Pipe = {Slot, _}, Ref}, Answer, Acc = {S, _}) ->
+    case live(Ref, Slot, S) of
+        true -> step_answered(Pipe, Answer, Acc);
+        false -> Acc
+    end;
+answer({tt_clear, Requester, Failed}, {ok, _Bytes}, Acc) ->
+    answer(Requester, Failed, Acc);
+answer({tt_clear, Requester, _Failed}, {error, Reason}, Acc) ->
+    answer(Requester, {error, {tt_clear, Reason}}, Acc);
+answer(aborted, _Answer, Acc) ->
+    Acc.
 
 emit(Action, {S, A}) -> {S, [Action | A]}.
 
@@ -920,10 +1358,10 @@ tag(Inflight, N, S = #{command := {N, _, _, _}}) -> tag(Inflight, N + 1, S);
 tag(Inflight, N, S) when is_map_key(N, Inflight) -> tag(Inflight, N + 1, S);
 tag(_Inflight, N, _S) -> N.
 
-%% An endpoint's device context index: twice its number, plus one for IN
-%% (xHCI 4.5.1).
-dci(#{address := EpAddress}) ->
-    2 * (EpAddress band ?ERX_USB_ENDPOINT_NUMBER_MASK) + direction(EpAddress).
+%% An endpoint's device context index: twice its number, plus one for IN,
+%% and EP0's 1 (xHCI 4.5.1).
+dci(EpAddress) when EpAddress band ?ERX_USB_ENDPOINT_NUMBER_MASK =:= 0 -> ?EP0;
+dci(EpAddress) -> 2 * (EpAddress band ?ERX_USB_ENDPOINT_NUMBER_MASK) + direction(EpAddress).
 
 direction(EpAddress) when EpAddress band ?ERX_USB_ENDPOINT_DIR_IN =/= 0 -> 1;
 direction(_EpAddress) -> 0.

@@ -17,15 +17,20 @@ Reason}`, so a function keeps its transfers posted and waits in its own
 receive. The controller answers a pipe whose device is detached `{error,
 gone}`.
 
-Each request reaches the controller as `{erx_usb_pipe, From, Request}`;
-this module is the one that spells it.
+Each request reaches the controller as `{erx_usb_pipe, From, Request}`,
+and reply/2 builds the message that answers it; this module is the one
+that spells both.
 """.
 
--export([new/3, endpoint/1, control/3, interrupt_in/3]).
+-export([new/3, endpoint/1, control/3, interrupt_in/3, reply/2]).
 
--export_type([pipe/0]).
+-export_type([pipe/0, request/0]).
 
 -opaque pipe() :: {pipe, Controller :: pid(), erx_usb_bus_core:ref(), Address :: byte()}.
+
+-doc "A request as it reaches the controller, from the process that sent it.".
+-type request() :: {control, pipe(), <<_:64>>, none | {in, pos_integer()} | {out, binary()}, reference()}
+                 | {interrupt_in, pipe(), term(), pos_integer()}.
 
 -doc "The pipe of endpoint Address of device Ref, served by Controller.".
 -spec new(pid(), erx_usb_bus_core:ref(), byte()) -> pipe().
@@ -49,6 +54,15 @@ control(Pipe = {pipe, Controller, _Ref, _Address}, Setup, Data) ->
         {Monitor, Answer} -> demonitor(Monitor, [flush]), Answer;
         {'DOWN', Monitor, process, Controller, _Reason} -> {error, gone}
     end.
+
+-doc """
+The message that answers Request with Result, which the controller sends
+to the request's sender: a control request's answer under its monitor, an
+interrupt-IN transfer's completion as `{usb, Pipe, Tag, Result}`.
+""".
+-spec reply(request(), term()) -> term().
+reply({control, _Pipe, _Setup, _Data, Monitor}, Result) -> {Monitor, Result};
+reply({interrupt_in, Pipe, Tag, _Length}, Result) -> {usb, Pipe, Tag, Result}.
 
 -doc "Posts one interrupt-IN transfer of up to Length bytes on Pipe; its completion is `{usb, Pipe, Tag, Result}`.".
 -spec interrupt_in(pipe(), term(), pos_integer()) -> ok.

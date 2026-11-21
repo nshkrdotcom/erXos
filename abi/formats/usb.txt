@@ -106,6 +106,14 @@ limit usb_hub_descriptor_head u32 7
 # (usbd_setup_device_desc, usb_request.c:1984-2026). At low, high and SuperSpeed EP0 has
 # one packet size, so FreeBSD reads the whole device descriptor at once there.
 limit usb_ep0_packet_full_max u16 64
+# EP0's packet size when its device is addressed: the only size allowed at low, high and
+# SuperSpeed, 8, 64 and 512, and at full speed the size its device descriptor's first 8
+# bytes are read with until bMaxPacketSize0 is known (xHCI 1.2, 4.3, p. 85; FreeBSD's
+# USB_MAX_IPACKET, usb.h:70, release/15.1.0, 95719d8a).
+limit usb_ep0_packet_low u16 8
+limit usb_ep0_packet_full_first u16 8
+limit usb_ep0_packet_high u16 64
+limit usb_ep0_packet_super u16 512
 # The wait after a device's address is set before its next request, FreeBSD's
 # usb_set_address_settle (usb.h:120), which usbd_req_set_address waits even when the
 # controller sets the address itself (usb_request.c:1596-1599).

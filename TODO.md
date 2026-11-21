@@ -8118,6 +8118,29 @@ to the corpus and follow rc
   ring always precede the command's completion, an order the design does not fix; answer contents are not checked
   against what the model delivered; no invariant catches EP0 left halted after a stall (only the trace case does);
   and bus commands never share the command queue with resets.
+* [Medium] USB, a queue's state for `reset_pipe` (`erx_xhci_core`, the device NIF;
+  [design-usb.md](docs/design-usb.md#the-controller-process)): the core plans a reset from the queue's state as the
+  NIF reports it, asking with the action `{queue_state, Pipe}` and taking the answer `{queue_state, Pipe, Report}`
+  (`idle`, `busy`, `stopped` or `halted`), but the NIF's interface names no call that reports a queue's state. Add
+  one to the device NIF, or derive the state in the core from what it posted and what completed, and say which in
+  the design.
+* [Medium] USB, a request to a hub's EP0 that is in its own reset (`erx_xhci_core`,
+  [design-usb.md](docs/design-usb.md#the-controller-process)): an internal request is posted as any other and
+  answered `{error, resetting}` or `{error, halted}` at once, so an abort's CLEAR_TT_BUFFER behind a hub whose EP0 is
+  being reset after a stall fails the controller, and a failed address is answered `{error, {tt_clear, resetting}}`,
+  which detaches the hub. Waiting for the hub's EP0 to open, within the request's deadline, would avoid both; decide
+  it with the EP0 rules above.
+* [Medium] USB, the controller core's exploration of slot reuse (`erx_xhci_core`, `test/erlang/erx_xhci_core_tests.erl`):
+  the pipe world explores one device and the address world one failed address, neither enabling a freed slot
+  again nor detaching the hub, so the interleavings where a slot's old answers meet its next device are covered
+  only by single traces (a reset step answered after the slot's reuse, a detached reference left bound). Add a
+  second device enabled at the freed slot with the same endpoint, and the hub's detach, as world events.
+* [Low] USB, the translator's clear names its hub by slot (`erx_xhci_core`, [design-usb.md](docs/design-usb.md#the-controller-process)):
+  a failed address's CLEAR_TT_BUFFER and a reset's are posted on `{HubSlot, EP0}`. That a detached hub's slot is not
+  given to another device first rests on the order of the command queue, and in one order (the hub detached while
+  the address is in flight, an Enable Slot queued before the address fails) only on the new device's EP0 not yet
+  existing when the clear is posted. Naming the hub by its reference, resolved when the clear is posted, would
+  make it hold by construction.
 * [Medium] USB, the bus core and the controller core (`erx_usb_bus_core`, [design-usb.md](docs/design-usb.md#ports-hubs-and-devices-the-bus-core)):
   the code differs from the design in two places. A detach while Address Device is in flight releases the
   address-zero turn, which the code derives from the port's state alone, before the controller answers the command,

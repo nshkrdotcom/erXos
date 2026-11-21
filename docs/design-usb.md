@@ -1834,7 +1834,7 @@ removal have one owner:
 | --- | --- | --- |
 | `open` | accepted | a transfer that halts: `halted`; `reset_pipe`: `resetting`; detach: `draining` |
 | `halted` | `{error, halted}` | `reset_pipe`: `resetting`; detach: `draining` |
-| `resetting` | `{error, resetting}` | the last step's success: `open`; a step's failure: `halted`, the requester answered with it; detach: `draining` once the step in flight answers |
+| `resetting` | `{error, resetting}` | the last step's success: `open`; a step's failure: `halted`, the requester answered with it; detach: `draining`, the requester answered `{error, gone}`, the step in flight's answer then stale: a request step names the device's reference, so its answer, which a CLEAR_TT_BUFFER on the hub's EP0 can bring after the slot is disabled and enabled again, never reaches the next device's reset |
 | `draining` | `{error, gone}` | the slot's disable done: the pipe is gone |
 
 `reset_pipe` chooses its steps by the queue's state as the NIF reports
@@ -1853,7 +1853,11 @@ xHCI 4.6.8 gives (pp. 130-132):
 So a halt is reset once, whoever asked; Reset Endpoint is issued only on
 a halted endpoint, where it is valid (p. 129); and BOT's reset recovery,
 which clears both bulk pipes whether or not they halted, resets each
-host side the one way its state allows.
+host side the one way its state allows. Stop Endpoint answers a success
+or a context state error; the only other code, a slot not enabled error,
+cannot come for a slot the controller holds enabled (4.6.9, p. 140), so
+it fails the controller, as a malformed answer does, and a pipe left
+`halted` by a failed step never has a queue still running.
 
 **Aborting a control request.** A control transfer not answered in 5 s
 is aborted as xHCI asks (4.11.2.2, p. 214; 4.6.9, p. 134): EP0's pipe
@@ -1905,14 +1909,22 @@ controller as any command does.
 
 **Teardown** of a detached device's slot is the core's alone, as is the
 reset of a pipe whose function ended: for each
-queue of the slot with transfers posted, Stop Endpoint, one command at a
-time; once every queue is stopped or idle and every command for the slot
-has completed, Disable Slot; at its success the NIF returns the slot's
+queue of the slot open with transfers posted, Stop Endpoint, one command
+at a time; a queue halted or stopped is left as it is. Once every queue
+is stopped, halted or idle and every command for the slot has completed,
+Disable Slot; at its success the NIF returns the slot's
 buffers and blocks and clears its DCBAA entry. A stop that fails with a
 context state error, because the endpoint halted meanwhile (xHCI 4.6.9,
 p. 137), leaves the queue halted, which Disable Slot accepts as well. A
 teardown is at most 8 stops and one disable, each bounded by the
-command's 5 s.
+command's 5 s; any other failure of either fails the controller. Since
+commands run one at a time, a teardown's step is posted only when no
+other command is in flight, and a command still waiting for the slot is
+either a step of a reset of one of its pipes, which are `draining`, or a
+bus command looked up through a reference no longer bound to the slot,
+so none is ever posted after the teardown begins. A device detached
+while its Enable Slot is posted leaves a slot nobody owns: the Enable
+Slot is answered `{error, gone}`, and the slot is torn down the same way.
 
 ### The TRB ring form
 
@@ -2008,6 +2020,9 @@ a ring succeeds, Set TR Dequeue to the enqueue position, a drop-and-add,
 a drop or Disable Slot, every transfer still posted on that ring is
 answered `stopped` and its buffer returns, since the controller will
 never fetch those TRBs again; a removed queue's block returns with them.
+Those answers are delivered ahead of the command's own completion, so
+no transfer of a disabled slot is still in flight when its slot can be
+enabled again for another device.
 A command that fails changes no state and returns what it reserved.
 
 **What Erlang names and what the NIF builds.** Commands are posted as
@@ -3190,7 +3205,7 @@ targeted traces carry the longer sequences.
 | `erx_usb_bus_core`, explored to a fixed point over a root hub of two ports, one external hub of two ports and devices of one and two functions, with references and slots drawn from small sets; then traces of 1,000 attach and detach cycles on one port, a connection storm, a hub detached during its child's enumeration, a chain of six hubs, four connects on one port within a minute, four ends of one function within a minute and a hub function's restart with a device behind it, a device unplugged and plugged in again between the read of its connection change and that change's clear; over-current changes read on a root port; and, at every quiet node of the exploration, every port agreeing with the world on whether something is connected; at every node, the end and the hub reports of every instance not running, the earlier ones and an ended one whose pipes are still being reset, changing nothing, and a restart starting the claimed function unchanged under a run number no earlier instance had; and every end as unusable, of either function of a two-function device, resetting, starting and detaching nothing, keeping its reason and leaving the device's other function as it was | a connection change with the port still connected not detaching the occupant; the address-zero turn released at the reset's end instead of the address; a port's new state dropping its occupant without detaching it; a port given up after its address keeping the turn; the turn released at a detach before the address answer, so a second device is reset while the first's Address Device is outstanding; an Address Device answer for a detached device dropped as stale, so the turn is never given back; a hub given up handing on the turn a port below it held; a hub six tiers below the root powering its ports; a full-speed device's EP0 left at 8 bytes when its descriptor says otherwise; a hub configured without its hub descriptor; a device's first request sent at its address answer, without the 10 ms settle; the step an answer echoes ignored, so a stale answer is taken at the step awaiting its kind; an unusable end taken as a failure, so the function is restarted and its device given up past the bound; a function restarted before its pipes' resets answer, so the new instance meets a transfer its predecessor posted; an end from a function's earlier instance taken, so a late end resets the running instance's pipes; a report from a hub function's ended instance taken, after its restart or while its pipe is still being reset; the report an ended hub instance was handling kept, so `handled` goes to it; a pipe's failed reset keeping the device; the restart bound removed; a port's failure logged at every move into a failure state; the attempt throttle removed; a port's attempts never leaving the window; an over-current change logged on every change; the over-current log not rearmed by an attempt; a read that saw changes taking its port off the queue, so a change latched before their clear is lost |
 | `erx_usb_hub_core`, its machine explored to a fixed point for hubs of 1, 2, 7, 8 and 15 ports over every report of the port count's length with each port bit and the bits around it, a short report and a failed transfer; its decoders on written cases | a change report sent with the next transfer already posted; `handled` taken without posting the next transfer; the bits above the port count kept; a report shorter than the port count taken as naming nothing |
 | the bus process, its supervision tree and the hub function, run whole under `erx_usb_sup` on the host against a fake controller speaking `erx_usb_bus_link` and `erx_usb_pipe`: a root port's device, a hub with a device plugged in behind it, a hub's removal, a device replaced before its port is read, a function's end and restart within its bounds, a start that fails, a hub function's restart, a report from an ended instance, a controller's failure, and a controller that fails at every reset | a start that fails sending no end; a detach leaving its device's functions running; a report passed on with the running instance's number whoever sent it; a hub port's connection change cleared by the wrong feature; a connection change on a port still connected not detaching its occupant; a bus group that gave up started again |
-| `erx_xhci_core`'s pipe machine, teardown, control abort and failed address, explored to a fixed point over every queue state the NIF reports and every answer of each step, EP0 and other endpoints, behind a translator and not | `reset_pipe` issuing Reset Endpoint on a stopped queue; a stopped EP0 dropped and added; the abort answered after Stop Endpoint alone, so the next request finds EP0 stopped; the translator's clear skipped; Disable Slot issued before the stops answer; an Address Device whose device detached while it was posted left unanswered |
+| `erx_xhci_core`'s pipe machine, teardown, control abort and failed address, explored to a fixed point over every queue state the NIF reports and every answer of each step, EP0 and other endpoints, behind a translator and not | `reset_pipe` issuing Reset Endpoint on a stopped queue; a stopped EP0 dropped and added; the abort answered after Stop Endpoint alone, so the next request finds EP0 stopped; the translator's clear skipped; Disable Slot issued before the stops answer; an Address Device whose device detached while it was posted left unanswered; a detached reference left bound, so a request reaches its slot's next device; a reset step's answer taken by a later reset of a pipe of the same name on a slot enabled again |
 | `erx_xhci_core`'s start, explored to a fixed point with and without a legacy support capability over every answer of the BIOS's semaphore and of the install and an interrupt at any time, the clock moving to each deadline; a run that has not ended always has a next step | the install called while the BIOS still owns the controller; the BIOS's semaphore never polled again; an interrupt before the controller runs acknowledged at once, or with a failure |
 | `erx_xhci_core`'s root ports and interrupt pass: every PORTSC write over many words, every change bit cleared by the name it shows as, a host system error, a pass bounded at two wraps of the event ring, `USBSTS` read once a second while running, each of those, a host controller error, a halt and an all-ones read failing the controller on an interrupt and on that read | a PORTSC write keeping the change and enable bits it read; the configuration error change behind no clear; a host system error ignored; a host controller error ignored; a halt ignored; a running controller's status never read between interrupts; an interrupt pass not bounded |
 | the TRB form, `erx_device_trb_form`, in C on the host, explored to a fixed point over rings of six TRBs and a link, two slots, two queues each, one buffer a queue, events of every code and kind, stops, resets, dequeue moves, drops and disables, so ring wrap and slot reuse are reachable; then traces of 100,000 transfers with random completions and 1,000 slot reuses; then under AddressSanitizer | a short data-stage event treated as completing, so the status event names no transfer and breaks the form; the stop span narrowed to the oldest transfer's first TRB and the enqueue position, so a completion followed by its forced event breaks the form; the enqueue position left on the link after a post that ends before it; the ledger's endpoint state left `stopped` by a transfer's publication, so Disable Slot passes the check with a queue running; the drop test accepting `halted`, so a drop-and-add after a consumed halting error passes the check and the model takes a drop the specification leaves undefined; the TRB pointer's range check removed |

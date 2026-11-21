@@ -18,14 +18,15 @@ with request/2: the bus core's root-hub operations, enumeration requests,
 pipe resets and detaches as the core makes them, and an external hub's
 port operations as `{control, Hub, {port, Target, Op}, Setup, Data}`, a
 control request on the hub's EP0 whose tag takes the place of an
-enumeration step. The controller echoes a request's reference and tag in
-its answer and never reads either from a device's data.
+enumeration step. The controller builds each answer with reply/2, which
+echoes the request's reference and tag, and never reads either from a
+device's data.
 
 Every message carries the module's tag, so the bus process takes from its
 mailbox only what came this way.
 """.
 
--export([attach/1, request/2, answer/2, from_controller/1]).
+-export([attach/1, request/2, answer/2, reply/2, from_controller/1]).
 
 -export_type([request/0, answer/0]).
 
@@ -53,6 +54,20 @@ attach(Controller) ->
 request(Controller, Request) ->
     Controller ! {?MODULE, self(), Request},
     ok.
+
+-doc """
+The answer to Request with Result, the event of erx_usb_bus_core that
+names Request's reference and step, or the root hub's target, so the
+controller builds every answer here.
+""".
+-spec reply(request(), term()) -> erx_usb_bus_core:event().
+reply({port, root, Target, _Op}, Result) -> {port_done, root, Target, Result};
+reply({control, Ref, Tag, _Setup, _Data}, Result) -> {control_done, Ref, Tag, Result};
+reply({enable_slot, Ref, Step}, Result) -> {slot, Ref, Step, Result};
+reply({address, Ref, Step, _Params}, Result) -> {addressed, Ref, Step, Result};
+reply({evaluate_context, Ref, Step, _Context}, Result) -> {evaluated, Ref, Step, Result};
+reply({configure_endpoints, Ref, Step, _Endpoints}, Result) -> {endpoints_configured, Ref, Step, Result};
+reply({reset_pipe, Ref, Interface, Address}, Result) -> {pipe_reset, Ref, Interface, Address, Result}.
 
 -doc "Sends Answer to Bus, from the controller side.".
 -spec answer(pid(), answer()) -> ok.

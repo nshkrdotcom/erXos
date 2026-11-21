@@ -43,6 +43,12 @@ limit xhci_scratchpad_array_align u32 64
 # choice.
 limit xhci_command_deadline_ms u32 5000
 
+# A control transfer the controller has not completed within this many milliseconds is
+# aborted, answered `timeout` once EP0 is stopped and moved past it (design-usb.md,
+# "Aborting a control request"), FreeBSD's request timeout
+# (design-usb.md, "What is matched").
+limit xhci_control_deadline_ms u32 5000
+
 # The controller's start (design-usb.md, "The controller process"): it polls the BIOS's
 # semaphore and calls the install again every 10 ms, FreeBSD's pause in both loops
 # (xhci_pci.c:529-557, xhci.c:430-431); it goes on without the BIOS's release after 5 s,

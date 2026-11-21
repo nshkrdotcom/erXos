@@ -7,15 +7,24 @@ require 'open3'
 require 'tmpdir'
 require_relative '../fixtures/erlang_build'
 
-# Runs test/erlang/erx_xhci_core_tests.erl, the controller core's pipe machine and
-# reset_pipe's table explored to a fixed point against a model of the NIF's queue states,
-# the traces of each row, the bus commands and the decoders, against the module compiled
-# from source on stock's emulator (ERX_ERL and ERX_ERLC, which make check supplies). Then
-# each seeded fault, applied to a copy of the module, must fail the case named for it:
-# Reset Endpoint issued on a stopped queue; a stopped EP0 dropped and added; the
-# translator's buffer left uncleared after a halt; a reset whose Stop Endpoint still
-# waits keeping it when the endpoint halts, so the stop goes to a halted queue; and a
-# pipe that leaves open dropping the requests waiting on it unanswered; a PORTSC write
+# Runs test/erlang/erx_xhci_core_tests.erl, the controller core's pipe machine,
+# reset_pipe's table, a device's teardown and a control request's abort explored to a
+# fixed point against a model of the NIF's queue states, the failed Address Device
+# explored the same way, the traces of each, the bus commands and the decoders, against
+# the module compiled from source on stock's emulator (ERX_ERL and ERX_ERLC, which make
+# check supplies). Then each seeded fault, applied to a copy of the module, must fail the
+# case named for it: Reset Endpoint issued on a stopped queue; a stopped EP0 dropped and
+# added; the translator's buffer left uncleared after a halt; a reset whose Stop Endpoint
+# still waits keeping it when the endpoint halts, so the stop goes to a halted queue; a
+# pipe that leaves open dropping the requests waiting on it unanswered; Disable Slot
+# posted while a queue runs a transfer, or before the stops; a halt on a draining queue
+# left running; a detach that frees the slot without Disable Slot; a reset in progress at
+# the detach left unanswered; a reset step's answer taken by a later reset of a pipe of
+# the same name on a slot enabled again; a detached reference left bound; a slot nobody
+# owns left enabled; an Enable Slot naming a held slot taken; an Address Device whose device
+# detached while it was posted left unanswered; the translator's clear skipped after a
+# failed address; the abort answered after Stop Endpoint alone; an aborted request's own
+# completion answered too; the control deadlines left out of next_deadline/1; a PORTSC write
 # keeping the change and enable bits it read; a change bit no clear reaches; the install
 # called while the BIOS still owns the controller; the BIOS's semaphore never polled
 # again, a start that stalls; an interrupt before the controller runs acknowledged at
@@ -30,6 +39,7 @@ class ErxXhciCoreTest < Minitest::Test
   TESTS = %w[test/erlang/erx_xhci_core_tests.erl].freeze
   DEADLINE_SECONDS = '600'
   EXPLORED = 'the_pipe_machine_is_explored_to_a_fixed_point_test_'
+  ADDRESS_EXPLORED = 'the_failed_address_is_explored_to_a_fixed_point_test_'
   START_EXPLORED = 'the_start_is_explored_to_a_fixed_point_test_'
   STATUS = 'the_status_of_a_running_controller_is_read_each_second_test'
   PORTS_EXPLORED = 'the_root_port_machine_is_explored_to_a_fixed_point_test'
@@ -58,6 +68,67 @@ class ErxXhciCoreTest < Minitest::Test
              anchor: 'Left, Waiting).',
              replacement: 'Left, []).',
              catching_case: 'ep0_is_reset_before_its_halted_request_is_answered_test'),
+    Seed.new(fault: 'Disable Slot posted while a queue of the slot runs a posted transfer',
+             anchor: 'activity(Pipe, open, Acc) -> running_if_posted(Pipe, Acc);',
+             replacement: 'activity(_Pipe, open, _Acc) -> quiet;',
+             catching_case: EXPLORED),
+    Seed.new(fault: 'Disable Slot posted before the stops',
+             anchor: '[Dci | _] -> {ok, {stop_endpoint, Slot, Dci}};',
+             replacement: '[_Dci | _] -> {ok, {disable_slot, Slot}};',
+             catching_case: EXPLORED),
+    Seed.new(fault: 'a halt on a draining queue left running, so the teardown stops a halted queue',
+             anchor: "        {true, \#{Pipe := \#{state := {draining, running}}}} ->\n" \
+                     "            answer(Requester, Result, set_pipe(Pipe, {draining, quiet}, Acc));\n",
+             replacement: '',
+             catching_case: 'a_halt_while_the_teardown_waits_leaves_the_queue_unstopped_test'),
+    Seed.new(fault: 'a detach that frees the slot without Disable Slot',
+             anchor: '#{Ref := Slot} when is_integer(Slot) -> tear_down(Slot, nothing, Unbound);',
+             replacement: "\#{Ref := Slot} when is_integer(Slot) ->\n" \
+                          "            {Us, Ua} = Unbound, {Us\#{slots := maps:remove(Slot, maps:get(slots, Us))}, Ua};",
+             catching_case: EXPLORED),
+    Seed.new(fault: "a reset in progress at the detach left unanswered",
+             anchor: 'answer(asked_by(Requester), {error, gone}, set_pipe(Pipe, {draining, Activity}, Acc));',
+             replacement: 'set_pipe(Pipe, {draining, Activity}, Acc);',
+             catching_case: EXPLORED),
+    Seed.new(fault: 'a detached reference left bound, so it reaches the next device on its slot',
+             anchor: 'Unbound = {S#{refs := maps:remove(Ref, Refs)}, A},',
+             replacement: 'Unbound = {S, A},',
+             catching_case: 'a_detached_device_is_torn_down_and_its_reference_stays_gone_test'),
+    Seed.new(fault: "a reset step's answer taken by a later reset of a pipe of the same name on a slot enabled again",
+             anchor: '        true -> step_answered(Pipe, Answer, Acc);
+        false -> Acc',
+             replacement: '        _ -> step_answered(Pipe, Answer, Acc)',
+             catching_case: 'a_reset_step_answered_after_its_slot_is_reused_is_stale_test'),
+    Seed.new(fault: 'a slot nobody owns left enabled',
+             anchor: '#{} -> answer({bus, Request}, {error, gone}, tear_down(Slot, nothing, Enabled))',
+             replacement: '#{} -> answer({bus, Request}, {error, gone}, Enabled)',
+             catching_case: 'a_slot_nobody_owns_is_disabled_test'),
+    Seed.new(fault: 'an Enable Slot naming a slot still held taken',
+             anchor: 'when is_map_key(Slot, Slots) ->',
+             replacement: 'when is_map_key(Slot, Slots), Slot < 0 ->',
+             catching_case: 'the_controller_fails_on_a_malformed_answer_or_a_lost_command_test'),
+    Seed.new(fault: 'an Address Device whose device detached while it was posted left unanswered',
+             anchor: '    answer({bus, Request}, {ok, Address}, Added);',
+             replacement: "    case live(Ref, Slot, S) of true -> answer({bus, Request}, {ok, Address}, Added); " \
+                          'false -> Added end;',
+             catching_case: ADDRESS_EXPLORED),
+    Seed.new(fault: "the translator's clear skipped after a failed address on a transaction error",
+             anchor: '{TransactionError, #{}} ->',
+             replacement: '{TransactionError, never} ->',
+             catching_case: ADDRESS_EXPLORED),
+    Seed.new(fault: 'the abort answered after Stop Endpoint alone, so the next request finds EP0 stopped',
+             anchor: 'replan(Pipe, Reset, stopped, Acc);',
+             replacement: "case Reset of \#{requester := {abort, _}} -> finish(Pipe, ok, Acc); " \
+                          '_ -> replan(Pipe, Reset, stopped, Acc) end;',
+             catching_case: EXPLORED),
+    Seed.new(fault: "the aborted request's own completion answered as well",
+             anchor: '{S#{inflight := Inflight#{Tag := {Pipe, aborted, none}}}, A}',
+             replacement: '{S#{inflight := Inflight#{Tag := {Pipe, Requester, none}}}, A}',
+             catching_case: EXPLORED),
+    Seed.new(fault: 'the control deadlines left out of next_deadline/1',
+             anchor: 'Control = [At || {_Pipe, _Requester, At} <- maps:values(Inflight)],',
+             replacement: 'Control = [none || maps:size(Inflight) < 0],',
+             catching_case: 'an_unanswered_control_request_is_aborted_test'),
     Seed.new(fault: 'a PORTSC write keeping the change and enable bits it read',
              anchor: '(Read band Preserve band bnot Mask) bor Bits',
              replacement: '(Read band bnot Preserve band bnot Mask) bor Bits',
