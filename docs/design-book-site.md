@@ -347,12 +347,16 @@ either, and escapes a `String`.
 ### Heading ids
 
 One slug function gives every heading its id, following GitHub's rule
-as `github-slugger` implements it (unverified in detail; not read from
-source in this task): lower-case the text of the heading, drop every
+as the tree's document-link check forms it (`DocLinks.anchor`,
+`tools/lib/erx/doc_links.rb`, after html-pipeline's `TableOfContentsFilter`): lower-case the text of the heading, drop every
 character that is not a letter, a digit, a space, `-` or `_`, turn each
 space into `-`, and add `-1`, `-2` and so on to repeated slugs in a
 page. The same function gives the anchors of every Markdown file a link
 names, design documents included, which it reads through cmark-gfm too.
+The ids come from a parse without `--smart`, so a heading's `--` or
+straight quote reaches the slug as GitHub sees it; the page itself is
+rendered from the `--smart` parse, whose headings are the same nodes in
+the same order.
 Any disagreement with the links the writers wrote against GitHub shows
 as a missing anchor, which fails the build.
 
@@ -384,6 +388,12 @@ hash of the tree's `HEAD`; the publishing build runs on a tree without
 changes, so that commit holds exactly what the pages cite. The design
 documents are not published as pages: they are the contracts, large
 and edited daily, and the repository host renders them already.
+
+"Inside the repository" means a path git tracks in the tree being
+built, or a directory above one, so a link to a build product that
+exists only on the writer's host is refused. A fragment into a file that
+is not Markdown must name lines (`#L10`, `#L10-L20`), the only
+fragments the repository host gives such a file.
 
 Images go through the same resolver: an image path must be a file in
 the repository, of type PNG, JPEG or SVG, and is copied to
@@ -715,45 +725,78 @@ then.
 
 ## Typography and look
 
-The book shares the landing page's identity, its warm paper, ink and
-signal-orange palette and its faces, and sets it for long reading.
+The book shares the landing page's identity, its warm paper and
+near-black ink (`--ink` #121211 on `--paper` #efede6, and #ece9e1 on
+#0f0f0e in dark mode, the same tokens the diagrams use), and sets it
+as a technical manual of the 1970s and 1980s was set, kept readable
+for long text: the manual feel comes from the structure and the
+furniture of the page, not from the face of the text. It borrows the
+typographic era only: no logo, name, seal or document-number format
+of any real document or agency.
 
 | Role | Face | Why |
 | --- | --- | --- |
 | text | Source Serif 4, roman and italic | a serif made for long text on screens, with optical sizes; OFL-1.1 |
-| headings, navigation, captions | Archivo, the site's sans | the landing page's face, so the book reads as the same site |
-| code, paths, diagram labels | IBM Plex Mono | the landing page's mono, and the diagram style's one face |
+| headings, numbers, captions, the running header, the contents | IBM Plex Mono | the diagram style's one face, so a page and its drawings read as one document; the landing page's mono |
+| the landing page's headings and navigation | Archivo | the landing page's face; the book does not use it |
 
 * **Fonts are self-hosted**, for the whole site. The fetch step fetches
   the upstream files at the pins above, each checked against its
-  SHA-256 in `deps.lock` (`file` entries): WOFF2 where the release
-  publishes it, otherwise the TTF as published (which of the three
-  releases publish WOFF2 is unverified; the bake-off fetched TTFs).
-  They are served under digest names with `font-display: swap`, each
-  beside its OFL-1.1 text, as the license asks. `site/fonts.css` holds
-  the `@font-face` rules once; `index.html`, `release-notes.html` and
-  every book page link it, and the Google Fonts `preconnect` and
-  stylesheet links leave both hand-written pages. The files are served
-  whole; subsetting needs another tool and is added only if the fonts'
-  size is reported as a problem.
+  SHA-256 in `deps.lock` (`file` entries): WOFF2 for Source Serif 4
+  (the release's `WOFF2/VAR` files) and IBM Plex Mono (`woff2/`, the
+  regular and medium weights), and the TTF for Archivo, which
+  `google/fonts` publishes only as TTF. They are served under digest
+  names with `font-display: swap`, each beside its OFL-1.1 text, as
+  the license asks. `site/fonts.css` holds the `@font-face` rules once,
+  naming each file by its `deps.lock` id in double braces, which the
+  build replaces with the published name; `index.html`,
+  `release-notes.html` and every book page link it, and the Google
+  Fonts `preconnect` and stylesheet links leave both hand-written
+  pages. The files are served whole; subsetting needs another tool and
+  is added only if the fonts' size is reported as a problem.
 * **Measure and rhythm**: text at about 19 px on wide screens and 17 px
   on narrow ones, line height about 1.6, a measure of about 68
   characters; figures and wide tables may extend past the measure up to
   the content column's width. Hyphenation by the browser (`hyphens:
-  auto`, `lang="en"`). Headings in Archivo's wide cut, with the section
-  number hung in the left margin in the signal color on wide screens.
+  auto`, `lang="en"`).
+* **Headings**: IBM Plex Mono at its regular weight, with generous
+  space above; chapter and section heads in capitals under a thin rule
+  across the column, the chapter title under a heavier one with its
+  label ("Chapter 16") set small above it. Every numbered heading's
+  decimal number (`16.2`, `16.2.1`) is set in its own element, hung in
+  the left margin on wide screens. The numbers are the ones the
+  headings carry, because GitHub's anchors, which the book's links
+  name, are made from them; the renderer derives each number from the
+  heading tree (the chapter's number, then one counter per level) and
+  refuses a heading whose written number differs, so the two cannot
+  drift. A heading without a number (a chapter's "Summary") takes none
+  and moves no counter.
+* **Running header**: a line of small capitals in the mono face at the
+  top of every page, the book's title on the left and the chapter's
+  label and title on the right, over a thin rule.
+* **Figures**: the caption beneath the figure, in the mono face, its
+  label ("Figure 16.2.") set in capitals. The label keeps the number as
+  the chapter writes it, since the prose cites figures that way.
+  Tables get no number or caption of their own: the book's tables have
+  no captions and its prose cites none by number, so a derived number
+  would name nothing.
 * **Color**: the site's tokens (`--paper`, `--ink`, `--muted`,
-  `--hair`, `--signal`, `--code-bg`, ...) for text, rules, links,
-  code and diagrams; dark mode from `prefers-color-scheme`, as the
-  landing page does, with no toggle (a toggle would need a script). The
-  tokens move from `site/style.css` into `site/tokens.css`, which every
-  page links, so the palette has one source.
-* **Status and background boxes**: the status box as a panel under the
-  chapter title, with "Built" and "Designed" set as small labels; the
-  background boxes as asides with a hairline rule and a quieter face
-  size, so a reader who knows the topic can skip them.
-* **Code**: preformatted, mono at about 0.85 of the text size, on the
-  code ground, never wrapped, scrolling sideways when wide. See "Code".
+  `--hair`, `--rule`, `--signal`, ...) for text, rules and links; dark
+  mode from `prefers-color-scheme`, as the landing page does, with no
+  toggle (a toggle would need a script). The tokens live in
+  `site/tokens.css`, which every page links, so the palette has one
+  source. The one accent, `--signal`, marks only the reader's place:
+  the current chapter in the contents rail, a hovered link, focus.
+* **Rules, not fills**: tables have a heavier rule above and below,
+  a thin rule under the header row and hairlines between rows, with no
+  fills; code blocks sit in a thin-ruled box on the paper.
+* **Status and background boxes**: the status box as a thin-ruled
+  panel under the chapter title, with "Status", "Built" and "Designed"
+  set as small mono labels; the background boxes between two
+  hairlines in a quieter tone and size, so a reader who knows the
+  topic can skip them.
+* **Code**: preformatted, mono at about 0.85 of the text size, never
+  wrapped, scrolling sideways when wide. See "Code".
 * **Diagrams**: in "The diagram style": IBM Plex Mono at 12 px, ink
   on paper from the site's tokens, 1 px square lines, long dashes,
   titles at the lower left of their groups and a dithered shadow
@@ -780,9 +823,11 @@ lexers.
 
 ### Navigation, glossary and search
 
-* **Contents rail**: on wide screens a left column lists the parts and
-  chapters, the current chapter opened to its sections (its `##`
-  headings). On narrow screens the same list sits in a `<details>`
+* **Contents rail**: on wide screens a left column lists the chapters
+  as a manual's table of contents does, each number in its own column,
+  the current chapter opened to its numbered sections (its `##`
+  headings). The contents page lists the parts, each chapter with a dot
+  leader to its number. On narrow screens the same list sits in a `<details>`
   element at the top of the page. No script.
 * **Previous and next** links at the foot of each page, in contents
   order.

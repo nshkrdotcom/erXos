@@ -9,6 +9,7 @@ require 'json'
 require 'socket'
 require 'tmpdir'
 require 'zlib'
+require_relative 'book'
 require_relative 'boot_partition'
 require_relative 'bounded_file'
 require_relative 'error'
@@ -51,7 +52,8 @@ module Erx
   # from, a release tag or a commit, beside each download (docs/design.md,
   # "Licenses and notices").
   module Site
-    PAGE_FILES = %w[index.html release-notes.html style.css favicon.svg terminal.js kiosk.png doom.png].freeze
+    PAGE_FILES = %w[index.html release-notes.html style.css favicon.svg terminal.js kiosk.png doom.png fonts.css tokens.css
+                    book.css].freeze
     # What marks a statement of a page source that no source in the tree confirms yet. A
     # page that holds one is a draft, and the site publishes no draft (CLAUDE.md, "Never
     # fabricate").
@@ -82,7 +84,10 @@ module Erx
     # which only the written files give; card_record: the
     # card's build record as card_record checked it, which is what is
     # published, so no byte of the file goes out unchecked.
-    Plan = Data.define(:entries, :index, :names, :disk, :manifest, :card_record)
+    # shared_names: the published names of the shared stylesheets
+    # (Book.shared_files), which index.html and release-notes.html link;
+    # release_notes: that page's template.
+    Plan = Data.define(:entries, :index, :release_notes, :names, :shared_names, :disk, :manifest, :card_record)
 
     module_function
 
@@ -179,7 +184,7 @@ module Erx
     # Raspberry Pi 4's card, for a local preview (tools/build_site.rb
     # --no-card), whose page has no card section and whose boot.json has no
     # card entry; the image is checked the same with a card or without.
-    def inventory(root:, v64:, image:, image_record:, card:, card_record:, source:, disk:)
+    def inventory(root:, v64:, image:, image_record:, card:, card_record:, source:, disk:, shared_names:)
       raise Error, 'the card and its build record are given both or neither' unless card.nil? == card_record.nil?
       unless COMMIT.match?(source.ref)
         raise Error, "the image's source must be given as its 40-hex commit, which its build records name, not #{source.ref}"
@@ -194,6 +199,7 @@ module Erx
       draft = page.keys.find { |name| File.read(page.fetch(name)).include?(UNVERIFIED) }
       raise Error, "site/#{draft} holds a statement marked #{UNVERIFIED}; settle it before publishing" if draft
 
+      page.each { |name, path| remote_load(name, File.read(path)) if %w[.html .css].include?(File.extname(name)) }
       digest = ->(path) { Digest::SHA256.file(path).hexdigest }
       image_sha256 = digest.(image)
       ImageRecord.check(BoundedFile.read(image_record, maximum: ImageRecord::MAX_BYTES), sha256: image_sha256, commit: source.ref)
@@ -205,8 +211,7 @@ module Erx
               .merge(card ? { 'card' => "sdcard-#{card_sha256[0, 16]}.img.xz",
                               'card_record' => "sdcard-#{card_sha256[0, 16]}.img.receipt.json" } : {})
               .merge(emulator.to_h { |name, path| [name, "v64/#{digest_name(name, digest.(path))}"] })
-      entries = [Entry.new(path: 'release-notes.html', source: page.fetch('release-notes.html'), compression: nil),
-                 Entry.new(path: 'style.css', source: page.fetch('style.css'), compression: nil),
+      entries = [Entry.new(path: 'style.css', source: page.fetch('style.css'), compression: nil),
                  Entry.new(path: 'favicon.svg', source: page.fetch('favicon.svg'), compression: nil),
                  *%w[kiosk.png doom.png].map { |name| Entry.new(path: name, source: page.fetch(name), compression: nil) },
                  Entry.new(path: names.fetch('terminal.js'), source: page.fetch('terminal.js'), compression: nil),
@@ -224,7 +229,23 @@ module Erx
         manifest[:card] = { file: names.fetch('card'), bytes: File.size(card), sha256: card_sha256,
                             record: names.fetch('card_record') }
       end
-      Plan.new(entries:, index: page.fetch('index.html'), names:, disk:, manifest:, card_record: record)
+      Plan.new(entries:, index: page.fetch('index.html'), release_notes: page.fetch('release-notes.html'), names:,
+               shared_names:, disk:, manifest:, card_record: record)
+    end
+
+    # A load from another host: a link, script or img element whose address
+    # has a scheme or begins with //, or a CSS url() or @import that does.
+    # A link a reader follows (<a href>) is not a load.
+    REMOTE_LOAD = %r{<(?:link|script|img)\b[^>]*\s(?:href|src)\s*=\s*["']?(?:[A-Za-z][A-Za-z0-9+.-]*:|//)[^"'\s>]*|
+                     url\(\s*["']?(?:[A-Za-z][A-Za-z0-9+.-]*:|//)[^)"']*|
+                     @import\s+["'](?:[A-Za-z][A-Za-z0-9+.-]*:|//)[^"']*}xi
+
+    # Refuses a page or stylesheet that loads a resource from another host,
+    # which would tell that host who reads the site
+    # (docs/design-book-site.md, "Where it fits").
+    def remote_load(name, text)
+      found = text[REMOTE_LOAD]
+      raise Error, "site/#{name} loads a resource from another host: #{found}" if found
     end
 
     # What index.html wraps its card section in: kept, without the markers,
@@ -241,8 +262,9 @@ module Erx
     # no card placeholder to fill. Every value is HTML-escaped; an unknown
     # placeholder raises, so a card placeholder outside the card section
     # fails a build without a card instead of reaching the page.
-    def render_index(template, terminal:, source:, image:, card:)
+    def render_index(template, terminal:, source:, image:, card:, shared:)
       values = { 'terminal_js' => terminal, 'source_url' => source.url, 'source_label' => source.label,
+                 'fonts_css' => shared.fetch(:fonts_css), 'tokens_css' => shared.fetch(:tokens_css),
                  'image_file' => image.fetch(:image), 'image_download_size' => size_label(image.fetch(:compressed_bytes)),
                  'image_download_sha256' => image.fetch(:compressed_sha256) }
       values.merge!('card_file' => card.fetch(:file), 'card_record' => card.fetch(:record),
@@ -257,23 +279,56 @@ module Erx
       end
     end
 
-    # The effects: builds the site in a fresh sibling of out and renames it
-    # into place, so an interrupted build leaves out as it was. Only a
-    # directory this step built (it holds the MARKER file) is replaced, so a
-    # mistyped path never deletes anything else. runner runs xz (Runner).
-    def publish(plan, out:, runner:)
+    # A page whose only placeholders are the shared stylesheets' names
+    # (release-notes.html), filled as render_index fills them.
+    def fill_shared(template, shared, label)
+      template.gsub(/\{\{([a-z][a-z0-9_]*)\}\}/) do
+        key = Regexp.last_match(1).to_sym
+        raise Error, "#{label}: unknown placeholder {{#{key}}}" unless shared.key?(key)
+
+        CGI.escapeHTML(shared.fetch(key))
+      end
+    end
+
+    # The effects: builds the site (replace) and returns boot.json's
+    # contents. book is the book's Book::Plan, published in the same tree,
+    # so the book and the landing page go out together or not at all.
+    # runner runs xz (Runner).
+    def publish(plan, out:, runner:, book:)
+      replace(out) do |site|
+        Book.write(book, out: site)
+        assemble(plan, out: site, runner:)
+      end
+    end
+
+    # Builds a site tree in a fresh sibling of out (the block writes it into
+    # the directory it is given) and only then replaces out with it, so a
+    # refusal leaves out as it was. The replacement deletes the old tree and
+    # renames the new one into place; an interruption between the two
+    # leaves no out, which the next build writes. Only a directory a site
+    # build made (it holds the MARKER file) is replaced, so a mistyped path
+    # never deletes anything else. Returns the block's value.
+    def replace(out)
       if File.exist?(out) && !File.file?(File.join(out, MARKER))
-        raise Error, "refusing to replace #{out}: not built by tools/build_site.rb"
+        raise Error, "refusing to replace #{out}: not built by a site build"
       end
 
       FileUtils.mkdir_p(File.dirname(out))
       Dir.mktmpdir('.site-', File.dirname(out)) do |staging|
         site = File.join(staging, 'site')
-        manifest = assemble(plan, out: site, runner:)
+        Dir.mkdir(site)
+        value = yield site
+        File.write(File.join(site, MARKER), "built by a site build\n")
         FileUtils.rm_rf(out)
         File.rename(site, out)
-        manifest
+        value
       end
+    end
+
+    # The tree's HEAD commit, which the site's source links and the book's
+    # links into the repository name.
+    def head(root:, runner:)
+      File.read(runner.run(%W[git -C #{root} rev-parse HEAD], name: 'site-head', deadline: 30).fetch('log')).strip
     end
 
     def assemble(plan, out:, runner:)
@@ -284,10 +339,11 @@ module Erx
       manifest[:card] = card if card
       index = render_index(File.read(plan.index), terminal: plan.names.fetch('terminal.js'),
                                                   source: Source.new(ref: plan.manifest.dig(:source, :ref)),
-                                                  image: manifest.slice(:image, :compressed_bytes, :compressed_sha256), card:)
+                                                  image: manifest.slice(:image, :compressed_bytes, :compressed_sha256), card:,
+                                                  shared: plan.shared_names)
       File.write(File.join(out, 'index.html'), index)
+      File.write(File.join(out, 'release-notes.html'), fill_shared(File.read(plan.release_notes), plan.shared_names, 'release-notes.html'))
       File.write(File.join(out, MANIFEST), "#{JSON.pretty_generate(manifest)}\n")
-      File.write(File.join(out, MARKER), "built by tools/build_site.rb\n")
       manifest
     end
     private_class_method :assemble
@@ -326,16 +382,20 @@ module Erx
       '.html' => 'text/html; charset=utf-8', '.css' => 'text/css', '.svg' => 'image/svg+xml', '.png' => 'image/png',
       '.js' => 'text/javascript',
       '.mjs' => 'text/javascript', '.wasm' => 'application/wasm', '.json' => 'application/json',
-      '.gz' => 'application/gzip', '.xz' => 'application/x-xz', '.bin' => 'application/octet-stream'
+      '.gz' => 'application/gzip', '.xz' => 'application/x-xz', '.bin' => 'application/octet-stream',
+      '.woff2' => 'font/woff2', '.ttf' => 'font/ttf', '.txt' => 'text/plain; charset=utf-8'
     }.freeze
 
     # Maps each URL path to a file of the site directory, listed once at
     # start: a request names an entry of this table or gets 404, so no
-    # request path ever reaches the file system. The MARKER is not served.
+    # request path ever reaches the file system. Every X/index.html also
+    # answers /X/, as the static host does; / is the case where X is empty.
+    # The MARKER is not served.
     def routes(dir)
-      Dir.glob('**/*', base: dir).select { |path| path != MARKER && File.file?(File.join(dir, path)) }
-         .to_h { |path| ["/#{path}", File.join(dir, path)] }
-         .then { |table| table.merge('/' => table.fetch('/index.html')) }
+      files = Dir.glob('**/*', base: dir).sort.select { |path| path != MARKER && File.file?(File.join(dir, path)) }
+      files.to_h { |path| ["/#{path}", File.join(dir, path)] }
+           .merge(files.select { |path| File.basename(path) == 'index.html' }
+                       .to_h { |path| ["/#{File.dirname(path).delete_prefix('.')}/".squeeze('/'), File.join(dir, path)] })
     end
 
     # A minimal static server for viewing the site locally, bound to

@@ -1371,6 +1371,32 @@ that server serves. Once the record has come, it:
    `{program_exit, Status}`, and any other reason, the handler's own
    end, ends it with that reason.
 
+An app's application environment is what its applications' own `.app`
+files say, as on stock OTP with no `sys.config`: a package carries no
+`sys.config` and `erx_app` sets no environment. Mix writes a project's
+`application/0` `env` into its `.app` file, so a Mix project's defaults
+for its own application arrive; what its `config/*.exs` files say about
+any application does not, because Mix delivers that only through a
+release's `sys.config` or `mix run`'s own loading. An app that needs a
+value another application reads at its start sets it in that
+application's `.app` file, which it ships, or changes it from its own
+code once that application has started.
+
+Elixir's `logger` needs nothing configured. Its start removes the
+`default` handler, which in a session is `erx_log_h`, and adds
+`logger_std_h` on `standard_io` with Elixir's formatter
+(`lib/logger/lib/logger/app.ex:133-160` of Elixir 1.20.5), and
+`logger_std_h` writes to `user` (`logger_std_h.erl:680`). A session has
+no terminal, so what is written to `user` there becomes log records
+under the session's name
+([design-apps.md](design-apps.md#starting-a-session),
+[design-live.md](design-live.md#attributed-text)): an Elixir app's log
+lines reach the log as a UNIX daemon's output with no terminal does.
+They arrive as text, with the timestamp and level Elixir's formatter
+wrote into them; an app that wants its events' levels kept as the log
+service's levels replaces the `default` handler from its own start with
+one of module `erx_log_h`.
+
 The app's paths come after the release's, so a module the app ships
 under a name the release already uses is never the one the code server
 finds first: a clash breaks only the app that brought it. A session's
@@ -2515,6 +2541,27 @@ Decisions:
     ([Examples](#examples)).
 14. **No policy per signer**: the `apps` row offers its services to every
     app, and the builder's lever is which signer keys the image trusts.
+15. **A package carries no `sys.config`**
+    ([Starting an app](#starting-an-app)). The one consumer found, an
+    Elixir app whose log reached nothing, is served by a session's
+    `user` writing log records, which needs no configuration; a
+    declaration field and a reader in every session would serve no app
+    that exists. Open: whether to add one when a ported Mix or rebar3
+    project needs another application's environment at its start. Its
+    smallest form, recommended if it is wanted: a file `sys.config` at
+    the package's root, in stock `sys.config` syntax, one list of
+    `{Application, [{Key, Value}]}`, at most 64 KiB, naming only
+    applications under the package's `lib/`, with no file-name entries;
+    the packer checks it on the host, and `erx_app` reads it with
+    `file:consult/1` before step 2 and applies it with
+    `application:set_env/2` and `persistent`, so loading the `.app` file
+    does not override it. It is the app's own input read in the app's
+    own session, whose atom table and code are already the app's, so a
+    bad file ends only that session, with `{bad_config, Reason}` naming
+    the line; its reader has a fuzz target, and its tests are a value
+    that reaches the application and a file naming a release
+    application, which the packer and `erx_app` refuse, seeded by
+    removing that check.
 
 ## References
 
