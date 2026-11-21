@@ -308,11 +308,13 @@ restarted(Read) ->
         [text("storage domain did not end", [])]
     end.
 
+%% The storage domain is asked only for a boolean: the system domain decodes its answers
+%% in safe mode and drops one that names an atom it lacks, as the list of the domain's
+%% applications from which_applications/0 does (docs/design-runtime.md, edit 9).
 wait_storage(0) ->
     timeout;
 wait_storage(Tries) ->
-    Running = try erpc:call(?STORAGE_NODE, application, which_applications, [], ?POLL_MS) of
-                  Applications -> lists:keymember(erx_storage, 1, Applications)
+    Running = try erpc:call(?STORAGE_NODE, application_controller, is_running, [erx_storage], ?POLL_MS)
               catch
                   _:_ -> false
               end,

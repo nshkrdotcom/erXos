@@ -68,18 +68,23 @@ module Erx
                 "|| _ <- lists:seq(1, #{ECHO_BYTES / RECV_PIECE})]), ok = erx_gen_tcp:close(S), E =:= D end.\r"
     # Typed at the system's Erlang shell, whose bindings carry the prefix Nd: the network
     # domain's node once it is up, its lease, the device records of both domains' boot
-    # arguments, and the root's pool pages in use.
+    # arguments, and the root's pool pages in use. The lease and the network domain's
+    # record are judged at its node, which answers a boolean, or a failure printed as a
+    # binary: the system domain decodes the domain's answers in safe mode and drops one
+    # that names an atom it lacks, as its interfaces' and records' maps may
+    # (docs/design-runtime.md, edit 9).
     LEASE_LINE = [
       'NdDomains = fun() -> erx_domain_core:domains(maps:get(core, sys:get_state(erx_domain_srv))) end',
       'NdUsed = fun() -> #{attrs := #{used := {_, {_, NdU}}}} = erx_kernel_records:budget(erx_kernel_records:system_domain()), NdU end',
-      'NdIfs = fun(NdN) -> erpc:call(NdN, erx_net, interfaces, [], 5000) end',
-      'NdLeased = fun(NdN) -> string:find(lists:flatten(io_lib:format("~0p", [NdIfs(NdN)])), "{10,0,2,15}") =/= nomatch end',
+      'NdLeased = fun(NdN) -> erpc:call(NdN, fun() -> string:find(lists:flatten(io_lib:format("~0p", [erx_net:interfaces()])), ' \
+      '"{10,0,2,15}") =/= nomatch end, 5000) end',
       'NdWait = fun NdW(0) -> timeout; NdW(NdK) -> case catch [NdN || #{name := {erx_ident, <<"network">>}, node := NdN} <- NdDomains()] of ' \
       '[NdN] -> case catch NdLeased(NdN) of true -> NdN; _ -> timer:sleep(500), NdW(NdK - 1) end; ' \
       '_ -> timer:sleep(500), NdW(NdK - 1) end end',
       'NdNode = NdWait(360)',
       '{nd_lease, erx_device_record:find(net, virtio_net), ' \
-      'case erpc:call(NdNode, erx_device_record, find, [net, virtio_net]) of {ok, [#{coherent := true} | _]} -> true; NdR -> NdR end, NdUsed()}'
+      'erpc:call(NdNode, fun() -> case erx_device_record:find(net, virtio_net) of {ok, [#{coherent := true} | _]} -> true; ' \
+      'NdR -> iolist_to_binary(io_lib:format("~0p", [NdR])) end end), NdUsed()}'
     ].join(', ') + ".\r"
     ECHOED_LINE = "{nd_echoed, NdUsed()}.\r"
     # Ends the network domain for good: kills its domain pid, which its row restarts 0
