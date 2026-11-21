@@ -323,6 +323,15 @@ int	erx_mem_create(uint64_t budget, uint64_t size, uint32_t flags, uint64_t *mem
 int	erx_group_create(uint64_t budget, uint64_t parent, uint64_t *group) ERX_WARN_UNUSED_RESULT;
 int	erx_space_create(uint64_t budget, uint64_t parent, uint64_t fault, uint64_t label, uint32_t flags,
 	    uint32_t cap_limit, uint64_t *space) ERX_WARN_UNUSED_RESULT;
+/*
+ * The largest cap_limit erx_space_create takes on this backend, for a caller that wants
+ * the largest table it can have: ERX_CAPS_MAX on erXos's kernel, less on Fiasco
+ * (docs/design-fiasco.md, "Handles", FD1), and never below ERX_PROGRAM_CAP_LIMIT, the
+ * least a program's image may hold, which each backend that makes spaces asserts. A
+ * bound on the argument, not a promise that a create succeeds: hosted, which makes no
+ * spaces, answers ERX_CAPS_MAX and refuses every create.
+ */
+uint32_t	erx_space_cap_limit_max(void);
 int	erx_image_map(uint64_t space, uint64_t image, uint64_t entry, uint64_t *start) ERX_WARN_UNUSED_RESULT;
 int	erx_space_stop(uint64_t space, int64_t status);
 int	erx_image_slice(uint64_t budget, uint64_t image, uint64_t first, uint64_t count, uint64_t *slice)

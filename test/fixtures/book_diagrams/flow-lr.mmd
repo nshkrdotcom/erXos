@@ -1,0 +1,18 @@
+flowchart LR
+  subgraph session domain
+    H1[handler of P]
+    H2[handler of Q]
+    PS[pipe server]
+    CS[command server, pid 1]
+  end
+  subgraph sub-spaces
+    P[program P]
+    Q[program Q]
+  end
+  H1 <-->|channel| P
+  H2 <-->|channel| Q
+  P -->|pipe ring| Q
+  PS -.->|makes ends| H1
+  PS -.->|makes ends| H2
+  CS -.->|spawns| H1
+  CS -.->|spawns| H2

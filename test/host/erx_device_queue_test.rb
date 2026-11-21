@@ -7,29 +7,26 @@ require 'minitest/autorun'
 require 'open3'
 require 'tmpdir'
 require_relative '../../tools/lib/erx/sanitizer_environment'
+require_relative '../../tools/lib/erx/device_nif'
 require_relative '../fixtures/generated_tree'
 
-# The pure core of a device's queue (test/fixtures/erx_device_queue_harness.c), and the
-# effects that put it on a virtio-mmio device the harness plays
-# (test/fixtures/erx_device_dma_harness.c), clean under the address and undefined sanitizers.
+# The effects that put a device's queues on a virtio-mmio device the harness plays
+# (test/fixtures/erx_device_dma_harness.c) and on GENET's register ring
+# (test/fixtures/erx_device_genet_harness.c), clean under the address and undefined sanitizers.
 class ErxDeviceQueueTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
   NIFS = File.join(ROOT, 'otp/erts/emulator/nifs/erxos')
-  CORE = File.join(NIFS, 'erx_device_queue.c')
-  # The sequencer and a host DMA architecture layer that counts its maintenance, which erx_device.c's queues run through.
-  DMA = [File.join(NIFS, 'erx_device_dma.c'), File.join(NIFS, 'erx_device_genet.c'), File.join(ROOT, 'test/fixtures/erx_dma_arch_counting.c')].freeze
+  # erx_device.c's cores from their one list (tools/lib/erx/device_nif.rb), over a host DMA
+  # architecture layer that counts its maintenance.
+  DEVICE = File.join(NIFS, 'erx_device.c')
+  CORES = Erx::DeviceNif.core_sources(root: ROOT).map { |path| File.join(ROOT, path) }.freeze
+  COUNTING = File.join(ROOT, 'test/fixtures/erx_dma_arch_counting.c')
   FLAGS = ['-std=c17', '-D_DARWIN_C_SOURCE', '-Wall', '-Wextra', '-Werror', '-O1', '-g',
            '-fsanitize=address,undefined', '-fno-sanitize-recover=undefined'].freeze
   COMPILER = ENV.fetch('ERX_CLANG', 'clang')
 
-  def test_posts_completions_refusals_and_resets
-    output = run_harness(File.join(ROOT, 'test/fixtures/erx_device_queue_harness.c'), CORE)
-    assert_match(/^erx_device_queue done$/, output)
-  end
-
   def test_queues_on_a_device
-    output = run_harness(File.join(ROOT, 'test/fixtures/erx_device_dma_harness.c'), CORE,
-                         File.join(NIFS, 'erx_device.c'), File.join(NIFS, 'erx_device_core.c'), *DMA,
+    output = run_harness(File.join(ROOT, 'test/fixtures/erx_device_dma_harness.c'), *device_sources,
                          includes: [File.join(ROOT, 'test/fixtures/device_model')])
     assert_match(/^erx_device_dma done$/, output)
   end
@@ -57,13 +54,13 @@ class ErxDeviceQueueTest < Minitest::Test
   end
 
   # The seeded faults of docs/design-runtime.md, "Regions": a region that leaves its pages to
-  # the next queue, so the two overlap; a post that takes another device's region; and a region
+  # the next queue, so the two overlap; every device sharing the first device's region table, so a
+  # post takes another device's region; and a region
   # made on a device that is not coherent. Each fails the regions scenario.
   REGION_SEEDS = {
     overlap: ["\tbzero(record->mapping, carve.length);\n\t*taken = carve.end;\n",
               "\tbzero(record->mapping, carve.length);\n"],
-    foreign: ['regions_open, memory_order_relaxed) || regions[region].device != device)',
-              'regions_open, memory_order_relaxed) || (false && regions[region].device != device))'],
+    foreign: ['return (&device_regions[device - devices]);', 'return (&device_regions[device - devices - (device - devices)]);'],
     coherent: ['device->form == ERX_DEVICE_FORM_PHYSICAL || !device->coherent)',
                'device->form == ERX_DEVICE_FORM_PHYSICAL)']
   }.freeze
@@ -77,28 +74,21 @@ class ErxDeviceQueueTest < Minitest::Test
     end
   end
 
-  # The effect layer keeps each queue's last accepted state as the next plan's `before`; seeded
-  # to keep none, a later post or completion is refused by the check and the harness fails.
-  def test_a_queue_that_keeps_no_state_fails_the_harness
-    output = seeded_dma_output(["\tif (after != &record->state)\n\t\trecord->state = *after;\n", "\t(void)after;\n"])
+  # The split ring's effect layer seeded to skip the invalidate of what the device wrote before
+  # copying it out, so on a device that is not coherent the copy could read stale cache lines;
+  # the counting layer's kept ranges show the completion maintained no such range.
+  def test_a_completion_seeded_without_its_invalidate_fails_the_harness
+    output = seeded_dma_output(["\t\tmaintained |= maintain(record, ring_answers[at].written, true);\n",
+                                "\t\tmaintained |= false;\n"])
     assert_match(/FAILED .*erx_device_dma_harness\.c/, output)
+    refute_match(/^non-coherent maintenance ok$/, output)
   end
 
-  # The seeded fault of the core's post: each descriptor's address one byte past its segment.
-  # The harness reads the descriptors back from the post's ring-write steps and refuses it.
-  POST_SEED = ['device_base + buffer + taken->offset, taken->length);',
-               'device_base + buffer + taken->offset + 1, taken->length);'].freeze
-
-  def test_a_post_seeded_with_an_address_off_by_one_fails_the_harness
-    text = File.read(CORE)
-    assert_includes text, POST_SEED.first
-    Dir.mktmpdir('erx-device-queue-seed-') do |directory|
-      core = File.join(directory, 'erx_device_queue.c')
-      File.write(core, text.sub(*POST_SEED))
-      output, status = harness_output(File.join(ROOT, 'test/fixtures/erx_device_queue_harness.c'), core)
-      refute status.success?, output
-      assert_match(/erx_device_queue_harness\.c:\d+: .*\baddr\b/, output)
-    end
+  # The effect layer keeps each register ring's last accepted state as the next plan's `before`;
+  # seeded to keep none, a later post or completion is refused by the check and the harness fails.
+  def test_a_queue_that_keeps_no_state_fails_the_harness
+    output = genet_output(["\tif (after != &record->state)\n\t\trecord->state = *after;\n", "\t(void)after;\n"])
+    assert_match(/FAILED .*erx_device_genet_harness\.c/, output)
   end
 
   private
@@ -115,7 +105,7 @@ class ErxDeviceQueueTest < Minitest::Test
         source = File.join(directory, 'erx_device.c')
         File.write(source, text.sub(*seed))
       end
-      output, status = harness_output(GENET_HARNESS, CORE, source, File.join(NIFS, 'erx_device_core.c'), *DMA,
+      output, status = harness_output(GENET_HARNESS, *device_sources(source),
                                       includes: [File.join(ROOT, 'test/fixtures/device_model')])
       assert_equal seed.nil?, status.success?, output
       output
@@ -129,11 +119,14 @@ class ErxDeviceQueueTest < Minitest::Test
     Dir.mktmpdir('erx-device-region-seed-') do |directory|
       seeded = File.join(directory, 'erx_device.c')
       File.write(seeded, source.sub(*seed))
-      output, = harness_output(File.join(ROOT, 'test/fixtures/erx_device_dma_harness.c'), CORE, seeded,
-                               File.join(NIFS, 'erx_device_core.c'), *DMA, includes: [File.join(ROOT, 'test/fixtures/device_model')])
+      output, = harness_output(File.join(ROOT, 'test/fixtures/erx_device_dma_harness.c'), *device_sources(seeded),
+                               includes: [File.join(ROOT, 'test/fixtures/device_model')])
       output
     end
   end
+
+  # The cores with `device` in erx_device.c's place, and the counting architecture layer.
+  def device_sources(device = DEVICE) = [*CORES.map { |path| path == DEVICE ? device : path }, COUNTING]
 
   def run_harness(*sources, includes: [])
     output, status = harness_output(*sources, includes: includes)

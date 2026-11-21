@@ -129,7 +129,7 @@ erx_space_stop
 # area, its budget, group, spaces, image and first thread, the install of its copies,
 # their release, and the stop of its anchor (tools/lib/erx/chokepoint_rules/program.rb).
 [only_erx_program_drv]
-erx_mem_create erx_budget_create erx_group_create erx_space_create erx_image_map
+erx_mem_create erx_budget_create erx_group_create erx_space_create erx_space_cap_limit_max erx_image_map
 erx_cap_pass erx_thread_create erx_thread_start erx_space_stop erx_object_destroy erx_cap_close
 
 # erx_pipe_nif.c alone, the session's pipe NIF: a pipe's lock page, lanes and doorbells,

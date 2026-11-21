@@ -2039,7 +2039,18 @@ request's direction, length and setup bytes. `N` and `Bin` within the
 buffer and the setup's own length equal to the data stage's are checked,
 and a setup that is a standard SET_ADDRESS to the device is refused,
 since xHCI answers it with a TRB error, which may halt the controller
-(4.11.2.2, p. 214; 4.10.2.2, p. 197); each is `badarg`.
+(4.11.2.2, p. 214; 4.10.2.2, p. 197); each is `badarg`. The direction
+is the form's to check, since the DMA check carries none
+([design-device-dma.md](design-device-dma.md#the-rules)): a normal
+transfer's direction must be its endpoint's, whose device context index
+is its number times two plus the direction, 1 for IN and 0 for OUT
+(4.5.1, p. 96), and a normal transfer on index 1, EP0, a control
+endpoint, is refused; a control transfer's data stage must run in the
+direction bit 7 of the setup's `bmRequestType` gives (4.11.2.2,
+pp. 212-213; `usb_request_dir_in` of `abi/formats/usb.txt`); each is `badarg`. An added endpoint's
+type comes from the same kind and direction that give its device
+context index, so the context the NIF builds and the ring the queue
+names never disagree on the direction.
 
 **Publication.** A running controller takes a TRB as soon as its cycle
 bit matches, doorbell or not (4.9.2, pp. 170-171), so the doorbell
@@ -3061,7 +3072,7 @@ sink shows it.
 | `erx_device:negotiate/2`, TRB form | `{error, enotsup}` | it asks for more than 64 scratchpad pages, or its page size excludes 4 KiB |
 | `erx_device:negotiate/2`, TRB form | `{error, erange}` | `AC64` is clear and the record's memory lies above 4 GiB |
 | opening an xHCI record | `{error, einval}` | `CAPLENGTH`, `RTSOFF` or `DBOFF` puts a register cluster or a port past the register window, or an extended capability lies outside it |
-| `erx_device:post/4`, TRB form | `badarg` | a command or transfer of another shape; a parameter out of its range; an isochronous endpoint; a command the queue's state does not accept; Disable Slot with a queue running; a length past the buffer; a setup whose length differs from its data stage; a SET_ADDRESS setup |
+| `erx_device:post/4`, TRB form | `badarg` | a command or transfer of another shape; a parameter out of its range; an isochronous endpoint; a command the queue's state does not accept; Disable Slot with a queue running; a length past the buffer; a setup whose length differs from its data stage; a data stage against its setup's direction; a normal transfer against its endpoint's direction; a SET_ADDRESS setup |
 | `erx_device:post/4`, TRB form | `{error, full}` | a command already in flight; no free buffer on the queue; no free block of the kind a command adds |
 | `erx_device:post/4`, TRB form | `{error, halted}` | a transfer on a queue that is not `open`, or that the command in flight holds: EP0 under Evaluate Context, a queue Configure Endpoint drops, every queue of the slot under Disable Slot |
 | `erx_device:post/4`, `complete/2`, TRB form | `{error, broken}` | an event failed the form's checks, until `negotiate/2` |

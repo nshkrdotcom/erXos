@@ -1757,8 +1757,9 @@ applied in this order, each step undoing the ones before it on failure:
    once no image of it runs, and after which no take for the program
    succeeds. A start whose take fails after an earlier one succeeded
    fails whole with `einval` and lets go every hand-off it took. The
-   image's capability table may hold `caps_max` capabilities, the
-   kernel's largest table, so it takes the fixed installs, every copy the
+   image's capability table is the largest the backend takes
+   (`erx_space_cap_limit_max()`: `caps_max` on erXos's kernel, less on
+   Fiasco), so it takes the fixed installs, every copy the
    hand-offs hold and those `erx_program:install/2` passes while the
    program runs; the anchor's holds `program_cap_limit`
    (`abi/erx_abi.txt`).
@@ -2737,7 +2738,7 @@ The C under it is `erx_device`, one module that exposes `liberx`'s
 DMA envelope and parses nothing a device wrote. Its register accesses are
 BIFs in ERTS, because a driver makes them one at a time and a BIF costs
 less than a NIF's entry and exit, and so is `erx_device:irq_ack/2`, made once per interrupt; the rest of the module
-is a NIF. Its pure decisions are `erx_device_core` and, for its queues, `erx_device_queue`; its effects are `erx_device.c`, in plain C, under both. A device's record reaches
+is a NIF. Its pure decisions are `erx_device_core` and, for its queues, the DMA ledger, rules and sequencer (`erx_device_ledger`, `erx_device_rules`, `erx_device_sequencer`) under each form's core (`erx_device_virtio_core` for the split ring); its effects are `erx_device.c`, in plain C, under both. A device's record reaches
 the driver from the device service over the system connection: the slots
 of its register windows, IRQ objects and DMA window or contiguous memory,
 for each line whether another device of its unit names it too, which
@@ -2893,8 +2894,8 @@ queue, such as virtio's ready bit.
 
 A pool belongs to one queue and its buffers to the queue's descriptors:
 buffer *i* is the buffer of the chain whose head is descriptor *i*. The
-queue's own bookkeeping, `erx_device_queue`, hands out heads only from
-its free list, so no two chains in flight share a buffer and no buffer is
+queue's own bookkeeping, the ledger (`erx_device_ledger`), hands out heads only from
+its free records, so no two chains in flight share a buffer and no buffer is
 handed out but by a post: the property needs no record of its own.
 
 **Regions.** `erx_device:region(Dev, Index, Bytes)` takes, for the
@@ -2951,7 +2952,7 @@ segments end to end in the buffer of the next free head, copies each
 `out`'s bytes in, the one per-byte copy of a transmit path, zeroes every
 other byte of the buffer, so what a completion copies is the device's
 bytes or zeros, and has
-`erx_device_queue` decide the descriptors, whose layout the ABI file
+`erx_device_sequencer` and the form core decide the descriptors, whose layout the ABI file
 fixes. An `out` of `{region, R}`, where `R` is a region of the same
 record and otherwise `badarg`, is written as the record's region entry:
 the region's device address and length in the layout the record names,
@@ -3016,7 +3017,7 @@ module may call it is the block driver's write-path rule
 ([design-storage.md](design-storage.md#data-model), U4).
 
 **Completing.** `erx_device:complete(Dev, Q)` reads the used ring's index
-once and each entry's two fields once, from the slot `erx_device_queue`
+once and each entry's two fields once, from the slot `erx_device_virtio_core`
 names, which checks the index against what is in flight, the entry's
 descriptor against its own table and its length against what the chain
 let the device write. It copies the bytes the device wrote, in the
@@ -4314,7 +4315,7 @@ across them is the conformance suite.
 | A peer stops taking frames | the lane is full | the frames in the ring, and the rest in the entry's queue | none needed | once the entry's queue passes ERTS's busy limit, the senders to that peer are suspended, as toward a busy distribution connection, and a `nosuspend` send is refused, its sender told when to try again if it asked with `notify`; in the system domain no sender is suspended, a message past the manifest's `system_queue` is dropped and counted, and any other signal ends the connection |
 | A process stops taking its messages from other domains | its queue quota, where it has one | its undecoded frames up to the quota and one more, then the frame for it and those behind it in the lane they share | none needed | the drain takes nothing more from that lane until the process takes its messages, so the lane's sender waits on a full lane; without a quota, the process's `max_heap_size` ends it, as in stock OTP |
 | A program's channel record is malformed, or a frame on it is beyond the program's credit, a request on a busy slot or a notice that is not due | the funnel in channel mode; the driver's count of the program's credit | the record discarded | the driver ends the program as a fault ends it, and the process that opened the port gets `{exit_status, N}` with `ERX_EXIT_SIGNAL` plus `SIGSYS` ([design-programs.md](design-programs.md#the-channel)) | the handler sees the port close; the shell reports the program's end |
-| A device returns a used index, descriptor index or length out of range | `erx_device_queue`'s check in `complete/2` | the queue broken: entries before it returned, every buffer still posted, `post/4` and `complete/2` `{error, broken}` | the driver calls `negotiate/2`, whose reset returns every buffer to its pool; a block driver instead ends, since its windows are each bound to one device process's life ([design-storage.md](design-storage.md#failure-handling-diagnostics-and-debuggability)): a reset by any route breaks the volumes over the device, which remount through their own restart | the driver's log line naming the device; the driver's supervisor may restart it |
+| A device returns a used index, descriptor index or length out of range | `erx_device_virtio_core`'s check in `complete/2` | the queue broken: entries before it returned, every buffer still posted, `post/4` and `complete/2` `{error, broken}` | the driver calls `negotiate/2`, whose reset returns every buffer to its pool; a block driver instead ends, since its windows are each bound to one device process's life ([design-storage.md](design-storage.md#failure-handling-diagnostics-and-debuggability)): a reset by any route breaks the volumes over the device, which remount through their own restart | the driver's log line naming the device; the driver's supervisor may restart it |
 | Capacity changes faster than ERTS adjusts | `acted_seq` behind `cap_seq` | none | none needed | ERTS acts on the latest value; intermediate values are skipped, as level-valued events allow |
 | The JIT's code space is exhausted | the JIT object cannot grow | the module unloaded | the loader | `{error, system_limit}` from the load; a counter in the inspector |
 | An encoding error in the translator | the repaired error path | the translation discarded | the loader | `{error, badfile}`; a log line naming the module |
