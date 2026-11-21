@@ -718,7 +718,17 @@ The session's runtime boots its template's script, so its applications
 start as any release's do. It has no console line and no terminal: what
 its programs write to their standard streams, and what its logger
 prints, are log records under the session's name
-([design-live.md](design-live.md#attributed-text)). The session ends
+([design-live.md](design-live.md#attributed-text)). A session that holds no
+console facet has no console tty: its `user` is `erx_log_user`, an io server
+that makes a record of level notice of each line written to it, its text the
+line without its newline, and sends it where the domain's logger events go,
+so the log service escapes it, tab and newline included, and names the
+session. An empty line makes no record, as the blank lines around each of
+Elixir's formatted log lines would otherwise; a line not yet ended waits for
+its newline, and one longer than a record's text (`log_write_text_max`) goes
+as several records, each ending at a character's end, so the server holds
+no more than one record's text. A read finds no input: it is answered
+`{error, enotsup}` at once. The session ends
 when a permanent application of its release ends, and that end is the
 domain's, with its reason in the death record.
 

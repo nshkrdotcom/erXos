@@ -5911,7 +5911,16 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   not in the tree, so nothing sends `tty_write`, and `tty_drain` comes only from a console that exits with
   its shell (`erx_console`'s `on_shell_end`), nor are edit 35's trap and edit 42
   (`beam/bif.c`), which reach it; and `erx_tty_owner` is missing from `erx_session.app.src`'s
-  `registered` list.
+  `registered` list. In a session with no console facet nothing holds `erx_tty_owner`, against
+  design-runtime.md's table, which names the logger proxy, a process already registered as `erx_log_h`:
+  when `erx_output` lands, that row's owner is built, splitting lines with `erx_log_user:lines/2` rather
+  than a second splitter, and the table's first row says "a session with a console tty".
+* [Medium] session, the masterless console tty (`erlang/apps/erx_session/src/erx_session_sup.erl`,
+  `erx_session_tty.erl`, `erx_session_relay_core.erl`, `erx_tty_link.erl`): `erx_session_sup:line/1` starts
+  the console tty only for a session with a console facet, but `erx_session_tty:start_link/0` reads the
+  facet again, and the relay core's `master => none`, `erx_tty_link`'s path for no master and
+  `test/erlang/erx_session_tty_tests.erl`'s `in_session/1` keep a tty with no master that no session now
+  builds. Pass the facet `line/1` holds to the start and delete the masterless path and its cases.
 * [Medium] session, terminal relay requests (`erlang/apps/erx_session/src/erx_session_relay.erl`): the
   chokepoints keep `erx_tty_owner` and the request for an open made for reading to `erx_session_relay`, and
   an open is opaque, but a module that holds a relay's pid can still build any other request by hand
