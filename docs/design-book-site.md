@@ -549,8 +549,8 @@ node --permission --allow-fs-read=<bundle> <bundle>
 The bundle is the driver with the library, elkjs and entities in one
 module, so Node's permission model (`--permission`) lets the process
 read only that file, and refuses file writes, network access, child
-processes, worker threads and native add-ons (Node 26.13.0's
-`doc/api/permissions.md`, "Permission Model", SHA-256 `32b6ad04...`).
+processes, worker threads and native add-ons (the "Permission Model"
+section of Node 26.13.0's `doc/api/permissions.md`, SHA-256 `32b6ad04...`).
 Network access is refused under the model only from Node 25.0.0, which
 added `--allow-net` (`doc/api/cli.md`, `c32c9c59...`), so
 `tools/book/package.json`'s `engines` names Node 25.0.0. Node gets
