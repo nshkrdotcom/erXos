@@ -1,3 +1,6 @@
+// Modified by erXos: RenderOptions gains charWidth, labelSize and groupTitle
+// (docs/design-book-site.md, "The import").
+//
 // ============================================================================
 // Parsed graph — logical structure extracted from Mermaid text
 // ============================================================================
@@ -161,4 +164,6 @@ export interface RenderOptions {
   transparent?: boolean
   /** Enable hover tooltips on chart data points (xychart only). Default: false */
   interactive?: boolean
+  /** erXos: measure every label as characters x font size x this advance in ems, + 0.15 em. Default: the width table */
+  charWidth?: number
 }

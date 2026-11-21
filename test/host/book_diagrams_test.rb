@@ -90,6 +90,17 @@ class BookDiagramsTest < Minitest::Test
     end
   end
 
+  # Seeded fault: measure with the width table when charWidth is set.
+  def test_char_width_measures_every_character_at_one_advance
+    sources = %w[iiiiiiiiiiiiiiiiiiii WWWWWWWWWWWWWWWWWWWW].map { |label| "graph TD\n  A[#{label}]\n" }
+    fixed = draw(sources, options: UPSTREAM_OPTIONS.merge('charWidth' => 0.6)).last.map { |result| node_width(result) }
+    # 20 characters at 13 px, the library's node label size, plus 0.15 em, plus 20 px of padding each side.
+    assert_in_delta (20 * 13 * 0.6) + (0.15 * 13) + 40, fixed.first, 0.01
+    assert_equal fixed.first, fixed.last
+    table = draw(sources, options: UPSTREAM_OPTIONS).last.map { |result| node_width(result) }
+    assert_operator table.first, :<, table.last
+  end
+
   def test_the_driver_refuses_a_malformed_request
     bundle, = installed { Diagrams.bundle(root: ROOT, runner: runner) }
     Dir.mktmpdir('erx-book-request') do |directory|
@@ -106,6 +117,9 @@ class BookDiagramsTest < Minitest::Test
   private
 
   def runner = @runner ||= Erx::Runner.new(owner_root: ROOT, log_dir: File.join(ROOT, 'build/logs'))
+
+  # The width of the first rect of a drawing, which for a one-node flowchart is the node.
+  def node_width(result) = Float(result.fetch('svg')[/<rect [^>]*? width="([0-9.]+)"/, 1])
 
   def draw(sources, options: Diagrams::OPTIONS)
     installed { Diagrams.draw(sources, root: ROOT, runner: runner, options: options) }

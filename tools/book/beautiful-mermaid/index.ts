@@ -1,5 +1,6 @@
 // Modified by erXos: only the flowchart, state and sequence renderers are
-// imported; the other diagram kinds are refused (docs/design-book-site.md).
+// imported, the other diagram kinds are refused, and a render sets the label
+// metrics of its options (docs/design-book-site.md, "The import").
 //
 // ============================================================================
 // beautiful-mermaid — public API
@@ -32,6 +33,7 @@ import { renderSvg } from './renderer.ts'
 import type { RenderOptions } from './types.ts'
 import type { DiagramColors } from './theme.ts'
 import { DEFAULTS } from './theme.ts'
+import { withLabelMetrics } from './text-metrics.ts'
 
 import { parseSequenceDiagram } from './sequence/parser.ts'
 import { layoutSequenceDiagram } from './sequence/layout.ts'
@@ -113,6 +115,7 @@ export function renderMermaidSVG(
 
   const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0 && !l.startsWith('%%'))
 
+  return withLabelMetrics({ charWidth: options.charWidth }, () => {
   switch (diagramType) {
     case 'sequence': {
       const diagram = parseSequenceDiagram(lines)
@@ -126,6 +129,7 @@ export function renderMermaidSVG(
       return renderSvg(positioned, colors, font, transparent)
     }
   }
+  })
 }
 
 /**

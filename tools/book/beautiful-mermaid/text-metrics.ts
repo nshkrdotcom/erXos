@@ -1,3 +1,6 @@
+// Modified by erXos: the charWidth render option measures every label at a
+// fixed advance (docs/design-book-site.md, "The import").
+//
 // ============================================================================
 // Text Metrics — Variable-width character measurement for SVG layout
 // ============================================================================
@@ -162,6 +165,25 @@ export function getCharWidth(char: string): number {
 }
 
 /**
+ * The label metrics of the render in progress, from its options (erXos):
+ * charWidth, when set, is the advance of every character in ems, as in a
+ * monospace face. Absent, the width table below measures.
+ */
+export type LabelMetrics = { charWidth?: number }
+let labelMetrics: LabelMetrics = {}
+
+/** Run draw with metrics as the label metrics, and restore the earlier ones after it. */
+export function withLabelMetrics<T>(metrics: LabelMetrics, draw: () => T): T {
+  const saved = labelMetrics
+  labelMetrics = metrics
+  try {
+    return draw()
+  } finally {
+    labelMetrics = saved
+  }
+}
+
+/**
  * Measure the pixel width of a text string.
  *
  * Uses character class buckets for more accurate width estimation
@@ -173,6 +195,9 @@ export function getCharWidth(char: string): number {
  * @returns Estimated width in pixels
  */
 export function measureTextWidth(text: string, fontSize: number, fontWeight: number): number {
+  if (labelMetrics.charWidth !== undefined)
+    return [...text].length * fontSize * labelMetrics.charWidth + fontSize * 0.15
+
   // Base ratio calibrated for Inter font family
   // Heavier weights are slightly wider
   // Added +0.02 buffer to prevent edge truncation of characters like 's' at line ends
