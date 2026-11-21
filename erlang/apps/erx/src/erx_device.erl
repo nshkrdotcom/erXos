@@ -57,10 +57,11 @@
 -export([open/1, elements/2, config_read/4, config_write/5]).
 -export([read/2, write/3, read_field/3, write_field/4, field/4, command/2]).
 -export([irq_bind/2, irq_bind_owner/2, irq_holder/2, irq_ack/2]).
--export([queue_create/4, negotiate/2, post/4, complete/2, region/3, framebuffer/0]).
+-export([queue_create/4, negotiate/2, post/4, complete/2, queue_state/2, region/3, framebuffer/0]).
 -export([stand_in_fire/2, stand_in_used/3, stand_in_transmitted/1, stand_in_receive/2]).
 
 -export_type([device/0, register_name/0, spec/0, queue/0, region/0, framebuffer/0, segment/0]).
+-export_type([trb_pipe/0, trb_command/0, trb_transfer/0, trb_answer/0]).
 
 -on_load(init/0).
 
@@ -78,6 +79,32 @@
 -opaque region() :: non_neg_integer().
 -opaque framebuffer() :: non_neg_integer().
 -type segment() :: {out, binary()} | {out, {region, region()}} | {in, pos_integer()}.
+%% An xHCI controller's queue: a slot and an endpoint's device context index.
+-type trb_pipe() :: {Slot :: non_neg_integer(), Dci :: non_neg_integer()}.
+%% A command of the TRB ring form (docs/design-usb.md, "What Erlang names and what the NIF
+%% builds"). Each map is read by these keys; any other key is ignored.
+-type trb_command() :: enable_slot
+                     | {disable_slot, non_neg_integer()}
+                     | {address_device, non_neg_integer(),
+                        #{route := non_neg_integer(), root_port := non_neg_integer(), speed := non_neg_integer(),
+                          tt := none | #{hub_slot := non_neg_integer(), port := non_neg_integer(), multi := boolean()},
+                          ep0_packet := non_neg_integer(), atom() => term()}}
+                     | {evaluate_context, non_neg_integer(), #{ep0_packet := non_neg_integer(), atom() => term()}}
+                     | {configure_endpoints, non_neg_integer(),
+                        #{add := [trb_endpoint()], drop := [non_neg_integer()],
+                          hub := none | #{ports := non_neg_integer(), think_time := non_neg_integer(),
+                                          multi_tt := boolean(), atom() => term()},
+                          atom() => term()}}
+                     | {stop_endpoint | reset_endpoint | set_tr_dequeue, non_neg_integer(), non_neg_integer()}.
+%% An endpoint Configure Endpoint adds, as erx_usb_claim names a pipe.
+-type trb_endpoint() :: #{address := byte(), type := control | bulk | interrupt, packet_size := non_neg_integer(),
+                          burst := non_neg_integer(), interval_exponent := non_neg_integer(),
+                          payload := non_neg_integer(), atom() => term()}.
+-type trb_transfer() :: {control, Setup :: <<_:64>>, none | {in, non_neg_integer()} | {out, binary()}}
+                      | {normal, {in, non_neg_integer()} | {out, binary()}}.
+%% A transfer's completion {Tag, Code, Bytes}; a command's {Tag, Code, Extra}; a root port's change.
+-type trb_answer() :: {Tag :: non_neg_integer(), Code :: non_neg_integer(), binary() | non_neg_integer()}
+                    | {port, pos_integer()}.
 
 init() ->
     erlang:load_nif(atom_to_list(?MODULE), #{}).
@@ -248,9 +275,20 @@ framebuffer() ->
 %% few free descriptors, so the driver waits for completions; `{error, broken}` when the
 %% queue needs negotiate/2; badarg for segments longer than a buffer, empty or out of
 %% order, and for a region that is not the device's.
--spec post(device(), queue(), non_neg_integer(), [segment()]) ->
-          ok | {error, full | broken}.
-post(_Dev, _Queue, _Tag, _Segments) ->
+%%
+%% On an xHCI controller (docs/design-usb.md, "The TRB ring form"), `post(Dev, command, Tag,
+%% Command)` posts a command and `post(Dev, {Slot, Dci}, Tag, Transfer)` a transfer on that
+%% queue; the NIF builds every TRB and context, and chooses the queue block each added endpoint
+%% takes. badarg for another shape, a value out of its range or a command the queue's state
+%% does not accept; `{error, full}` for a command already in flight, no free buffer on the
+%% queue or no free block of the kind a command adds; `{error, halted}` for a transfer on a
+%% queue that is not open; `{error, broken}` once an event failed the form's checks, until
+%% negotiate/2; `{error, einval}` on a device that is not an xHCI controller, or before
+%% negotiate/2 has begun.
+-spec post(device(), queue(), non_neg_integer(), [segment()]) -> ok | {error, full | broken};
+          (device(), command, non_neg_integer(), trb_command()) -> ok | {error, full | broken | einval};
+          (device(), trb_pipe(), non_neg_integer(), trb_transfer()) -> ok | {error, full | halted | broken | einval}.
+post(_Dev, _Queue, _Tag, _Item) ->
     erlang:nif_error(undef).
 
 %% What the device has returned, in order, as `{Tag, Bytes}`: Bytes is a fresh binary of
@@ -258,8 +296,26 @@ post(_Dev, _Queue, _Tag, _Segments) ->
 %% reported. One call copies at most 64 KiB and one buffer, so a driver calls again until it gets
 %% `{ok, []}`. A device's malformed entry breaks the queue: what came before it is
 %% returned, and the next call is `{error, broken}` until negotiate/2.
--spec complete(device(), queue()) -> {ok, [{non_neg_integer(), binary()}]} | {error, broken}.
+%%
+%% `complete(Dev, events)` reads an xHCI controller's event ring, at most 32 events a call,
+%% and answers in the form's order: a transfer's `{Tag, Code, Bytes}`, Bytes a fresh binary of
+%% what it moved; a command's `{Tag, Code, Extra}`, Extra the address the controller assigned
+%% for Address Device's success and the event's slot otherwise; a root port's change
+%% `{port, Port}`. A transfer a restarting or removing command retired is answered with the
+%% code Stopped and no bytes, before that command's own answer. The codes are
+%% abi/formats/xhci.txt's; Extra and Port are what the controller wrote, which the caller
+%% bounds. `{error, broken}` and `{error, einval}` as for post/4.
+-spec complete(device(), queue()) -> {ok, [{non_neg_integer(), binary()}]} | {error, broken};
+              (device(), events) -> {ok, [trb_answer()]} | {error, broken | einval}.
 complete(_Dev, _Queue) ->
+    erlang:nif_error(undef).
+
+%% An xHCI queue's state from the NIF's own record (docs/design-usb.md, "The TRB ring form"):
+%% `halted` and `stopped` as the queue is, an open or stopping queue `busy` while a transfer
+%% is posted on it and `idle` otherwise; badarg for a pair that names no queue.
+%% `{error, broken}` and `{error, einval}` as for post/4.
+-spec queue_state(device(), trb_pipe()) -> idle | busy | stopped | halted | {error, broken | einval}.
+queue_state(_Dev, _Pipe) ->
     erlang:nif_error(undef).
 
 %% Hosted only: fires a stand-in's line, as a device would. Natively this stays undef.

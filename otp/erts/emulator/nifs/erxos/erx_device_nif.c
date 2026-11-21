@@ -26,6 +26,7 @@
 
 #include "erx_device.h"
 #include "erx_device_genet.h"
+#include "erx_device_xhci.h"
 #include "erx_framebuffer.h"
 #include "erx_region.h"
 #include "liberx/backend/api.h"
@@ -635,9 +636,9 @@ decode_piece(ErlNifEnv *env, ERL_NIF_TERM term, erx_device_piece_t *piece)
 	return (true);
 }
 
-/* post(Dev, Q, Tag, Segments) */
+/* post(Dev, Q, Tag, Segments) on a split ring or GENET queue */
 static ERL_NIF_TERM
-post_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
+queue_post(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
 {
 	const erx_device_t *const device = device_of(env, argv[0]);
 	erx_device_piece_t pieces[ERX_DEVICE_CHAIN_MAX];
@@ -687,9 +688,9 @@ completion_sink(void *context, uint64_t tag, uint32_t length)
 	return (bytes);
 }
 
-/* complete(Dev, Q) */
+/* complete(Dev, Q) on a split ring or GENET queue */
 static ERL_NIF_TERM
-complete_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
+queue_complete(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
 {
 	const erx_device_t *const device = device_of(env, argv[0]);
 	completions_t completions = { .env = env };
@@ -708,6 +709,434 @@ complete_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
 	if (status != ERX_OK)
 		return (status_error(env, status));
 	return (enif_make_tuple2(env, enif_make_atom(env, "ok"), enif_make_list_from_array(env, completions.terms, count)));
+}
+
+/*
+ * The TRB ring form's calls on an xHCI controller (docs/design-usb.md, "The TRB ring form"). Each
+ * term is decoded here into the form's types, every integer checked once to fit the field it
+ * fills; ranges and queue states are the form's to judge (erx_device_trb.h's checks), whose
+ * REFUSE_BADARG is badarg too. A map is read by the keys the design names: a missing one is
+ * badarg, any other is ignored. No atom is made from a term.
+ */
+
+_Static_assert(sizeof(unsigned) == sizeof(uint32_t), "enif_get_uint fills a uint32_t");
+
+/* Whether `term` is the atom `name`. */
+static bool
+is(ErlNifEnv *env, ERL_NIF_TERM term, const char *name)
+{
+	return (enif_is_identical(term, enif_make_atom(env, name)));
+}
+
+static bool
+map_term(ErlNifEnv *env, ERL_NIF_TERM map, const char *key, ERL_NIF_TERM *value)
+{
+	return (enif_get_map_value(env, map, enif_make_atom(env, key), value));
+}
+
+static bool
+map_u64(ErlNifEnv *env, ERL_NIF_TERM map, const char *key, uint64_t *out)
+{
+	ERL_NIF_TERM value;
+	ErlNifUInt64 number;
+
+	if (!map_term(env, map, key, &value) || !enif_get_uint64(env, value, &number))
+		return (false);
+	*out = number;
+	return (true);
+}
+
+/* A boolean as the context's one-bit field. */
+static bool
+map_flag(ErlNifEnv *env, ERL_NIF_TERM map, const char *key, uint64_t *out)
+{
+	ERL_NIF_TERM value;
+
+	if (!map_term(env, map, key, &value))
+		return (false);
+	*out = is(env, value, "true") ? 1u : 0u;
+	return (*out == 1u || is(env, value, "false"));
+}
+
+/* Address Device's `tt`: `none`, or #{hub_slot, port, multi} of the hub whose translator serves the device. */
+static bool
+decode_tt(ErlNifEnv *env, ERL_NIF_TERM term, erx_xhci_slot_context_free_t *slot)
+{
+	return (is(env, term, "none") || (enif_is_map(env, term) && map_u64(env, term, "hub_slot", &slot->tt_tt_slot) &&
+	    map_u64(env, term, "port", &slot->tt_tt_port) && map_flag(env, term, "multi", &slot->route_multi_tt)));
+}
+
+/* #{route, root_port, speed, tt, ep0_packet}: the slot context's device fields and EP0, the one add. */
+static bool
+decode_address(ErlNifEnv *env, ERL_NIF_TERM map, erx_trb_command_t *command)
+{
+	erx_xhci_slot_context_free_t *const slot = &command->slot_context;
+	erx_xhci_endpoint_context_free_t *const ep0 = &command->adds[0].context;
+	ERL_NIF_TERM tt;
+
+	command->add_count = 1;
+	command->adds[0].dci = 1;
+	ep0->config_endpoint_type = ERX_XHCI_ENDPOINT_TYPE_CONTROL;
+	return (enif_is_map(env, map) && map_u64(env, map, "route", &slot->route_route_string) &&
+	    map_u64(env, map, "root_port", &slot->ports_root_port) && map_u64(env, map, "speed", &slot->route_speed) &&
+	    map_u64(env, map, "ep0_packet", &ep0->config_max_packet) && map_term(env, map, "tt", &tt) &&
+	    decode_tt(env, tt, slot));
+}
+
+/*
+ * One endpoint Configure Endpoint adds, an erx_usb_claim pipe #{address, type, packet_size, burst,
+ * interval_exponent, payload}. Its USB endpoint address gives its device context index, the
+ * number times two plus 1 for IN (4.5.1, p. 96), a control endpoint taking the IN index as EP0
+ * does; its type and that direction give the context's endpoint type. An address past a byte or
+ * with its reserved bits set, or a type but control, bulk and interrupt, is badarg.
+ */
+static bool
+decode_endpoint(ErlNifEnv *env, ERL_NIF_TERM map, erx_trb_add_t *add)
+{
+	erx_xhci_endpoint_context_free_t *const context = &add->context;
+	ERL_NIF_TERM type;
+	uint64_t address;
+	bool in;
+
+	if (!enif_is_map(env, map) || !map_u64(env, map, "address", &address) || address > UINT8_MAX ||
+	    (address & ~(uint64_t)(ERX_USB_ENDPOINT_DIR_IN | ERX_USB_ENDPOINT_NUMBER_MASK)) != 0 || !map_term(env, map, "type", &type))
+		return (false);
+	in = (address & ERX_USB_ENDPOINT_DIR_IN) != 0;
+	if (is(env, type, "control")) {
+		in = true;
+		context->config_endpoint_type = ERX_XHCI_ENDPOINT_TYPE_CONTROL;
+	} else if (is(env, type, "bulk"))
+		context->config_endpoint_type = in ? ERX_XHCI_ENDPOINT_TYPE_BULK_IN : ERX_XHCI_ENDPOINT_TYPE_BULK_OUT;
+	else if (is(env, type, "interrupt"))
+		context->config_endpoint_type = in ? ERX_XHCI_ENDPOINT_TYPE_INTERRUPT_IN :
+		    ERX_XHCI_ENDPOINT_TYPE_INTERRUPT_OUT;
+	else
+		return (false);
+	add->dci = (uint32_t)(address & ERX_USB_ENDPOINT_NUMBER_MASK) * 2u + (in ? 1u : 0u);
+	return (map_u64(env, map, "packet_size", &context->config_max_packet) &&
+	    map_u64(env, map, "burst", &context->config_max_burst) &&
+	    map_u64(env, map, "interval_exponent", &context->info_interval) &&
+	    map_u64(env, map, "payload", &context->payload_max_esit_payload));
+}
+
+/* Configure Endpoint's `hub`: `none` for a function, or #{ports, think_time, multi_tt}, a hub's fields. */
+static bool
+decode_hub(ErlNifEnv *env, ERL_NIF_TERM term, erx_xhci_slot_context_free_t *slot)
+{
+	if (is(env, term, "none"))
+		return (true);
+	slot->route_hub = 1;
+	return (enif_is_map(env, term) && map_u64(env, term, "ports", &slot->ports_port_count) &&
+	    map_u64(env, term, "think_time", &slot->tt_tt_think_time) &&
+	    map_flag(env, term, "multi_tt", &slot->route_multi_tt));
+}
+
+/* #{add, drop, hub}: at most a command's adds, and the drops as a mask of bit dci. */
+static bool
+decode_configure(ErlNifEnv *env, ERL_NIF_TERM map, erx_trb_command_t *command)
+{
+	ERL_NIF_TERM adds, drops, hub, head;
+	unsigned dci;
+
+	if (!enif_is_map(env, map) || !map_term(env, map, "add", &adds) || !map_term(env, map, "drop", &drops) ||
+	    !map_term(env, map, "hub", &hub) || !decode_hub(env, hub, &command->slot_context))
+		return (false);
+	while (enif_get_list_cell(env, adds, &head, &adds)) {
+		if (command->add_count == ERX_DMA_BINDS_MAX || !decode_endpoint(env, head, &command->adds[command->add_count]))
+			return (false);
+		command->add_count++;
+	}
+	/* The mask has a bit for each index the ring form numbers; which may drop is the form's to judge. */
+	while (enif_get_list_cell(env, drops, &head, &drops)) {
+		if (!enif_get_uint(env, head, &dci) || dci > ERX_DEVICE_TRB_DCI_MAX)
+			return (false);
+		command->drops |= UINT32_C(1) << dci;
+	}
+	return (enif_is_empty_list(env, adds) && enif_is_empty_list(env, drops));
+}
+
+/* The commands that name an endpoint, {Name, Slot, Dci}. */
+static const struct {
+	const char		*name;
+	erx_trb_command_kind_t	kind;
+} endpoint_commands[] = {
+	{ "stop_endpoint", ERX_TRB_COMMAND_STOP_ENDPOINT },
+	{ "reset_endpoint", ERX_TRB_COMMAND_RESET_ENDPOINT },
+	{ "set_tr_dequeue", ERX_TRB_COMMAND_SET_TR_DEQUEUE },
+};
+
+/*
+ * A command (docs/design-usb.md, "What Erlang names and what the NIF builds"): enable_slot,
+ * {disable_slot, Slot}, {address_device, Slot, Map}, {evaluate_context, Slot, #{ep0_packet}},
+ * {configure_endpoints, Slot, Map}, or {stop_endpoint | reset_endpoint | set_tr_dequeue, Slot, Dci}.
+ * The blocks its adds take are the device's to choose (erx_trb_form_choose_blocks).
+ */
+static bool
+decode_command(ErlNifEnv *env, ERL_NIF_TERM term, erx_trb_command_t *command)
+{
+	const ERL_NIF_TERM *parts;
+	int arity;
+
+	*command = (erx_trb_command_t){ .kind = ERX_TRB_COMMAND_ENABLE_SLOT };
+	if (is(env, term, "enable_slot"))
+		return (true);
+	if (!enif_get_tuple(env, term, &arity, &parts) || arity < 2 || arity > 3 ||
+	    !enif_get_uint(env, parts[1], &command->slot))
+		return (false);
+	if (arity == 2) {
+		command->kind = ERX_TRB_COMMAND_DISABLE_SLOT;
+		return (is(env, parts[0], "disable_slot"));
+	}
+	if (is(env, parts[0], "address_device")) {
+		command->kind = ERX_TRB_COMMAND_ADDRESS_DEVICE;
+		return (decode_address(env, parts[2], command));
+	}
+	if (is(env, parts[0], "configure_endpoints")) {
+		command->kind = ERX_TRB_COMMAND_CONFIGURE_ENDPOINT;
+		return (decode_configure(env, parts[2], command));
+	}
+	if (is(env, parts[0], "evaluate_context")) {
+		ERL_NIF_TERM packet;
+
+		command->kind = ERX_TRB_COMMAND_EVALUATE_CONTEXT;
+		return (enif_is_map(env, parts[2]) && map_term(env, parts[2], "ep0_packet", &packet) &&
+		    enif_get_uint(env, packet, &command->ep0_packet));
+	}
+	for (size_t k = 0; k < sizeof(endpoint_commands) / sizeof(endpoint_commands[0]); k++) {
+		if (is(env, parts[0], endpoint_commands[k].name)) {
+			command->kind = endpoint_commands[k].kind;
+			return (enif_get_uint(env, parts[2], &command->dci));
+		}
+	}
+	return (false);
+}
+
+/* A data stage or normal TRB's `{in, N}` or `{out, Bin}`; Bin's bytes stay valid for the call as a term of it. */
+static bool
+decode_data(ErlNifEnv *env, ERL_NIF_TERM term, erx_device_trb_request_t *request)
+{
+	const ERL_NIF_TERM *pair;
+	ErlNifBinary bytes;
+	int arity;
+
+	if (!enif_get_tuple(env, term, &arity, &pair) || arity != 2)
+		return (false);
+	request->data = true;
+	if (is(env, pair[0], "in")) {
+		request->device_writes = true;
+		return (enif_get_uint(env, pair[1], &request->length));
+	}
+	if (!is(env, pair[0], "out") || !enif_inspect_binary(env, pair[1], &bytes) || bytes.size > UINT32_MAX)
+		return (false);
+	request->bytes = bytes.data;
+	request->length = (uint32_t)bytes.size;
+	return (true);
+}
+
+/*
+ * A transfer: {control, Setup, none | {in, N} | {out, Bin}}, Setup exactly 8 bytes, or
+ * {normal, {in, N} | {out, Bin}}. Lengths and directions are the form's to judge
+ * (erx_device_trb_request_valid).
+ */
+static bool
+decode_transfer(ErlNifEnv *env, ERL_NIF_TERM term, erx_device_trb_request_t *request)
+{
+	const ERL_NIF_TERM *parts;
+	ErlNifBinary setup;
+	int arity;
+
+	*request = (erx_device_trb_request_t){ .control = false };
+	if (!enif_get_tuple(env, term, &arity, &parts))
+		return (false);
+	if (arity == 2 && is(env, parts[0], "normal"))
+		return (decode_data(env, parts[1], request));
+	if (arity != 3 || !is(env, parts[0], "control") || !enif_inspect_binary(env, parts[1], &setup) ||
+	    setup.size != sizeof(request->setup))
+		return (false);
+	request->control = true;
+	bcopy(setup.data, request->setup, sizeof(request->setup));
+	return (is(env, parts[2], "none") || decode_data(env, parts[2], request));
+}
+
+/*
+ * A post's answer (docs/design-usb.md, "Refusals and error results"): ok, the form's refusals as
+ * badarg, {error, full} and {error, halted}, and the call's own status, {error, einval} for a
+ * device that is not a started xHCI controller's record and {error, broken} for a broken form.
+ */
+static ERL_NIF_TERM
+trb_posted(ErlNifEnv *env, int status, erx_device_trb_verdict_t verdict)
+{
+	if (status != ERX_OK)
+		return (status_error(env, status));
+	switch (verdict) {
+	case ERX_DEVICE_TRB_ACCEPTED:
+		return (enif_make_atom(env, "ok"));
+	case ERX_DEVICE_TRB_REFUSE_FULL:
+		return (enif_make_tuple2(env, enif_make_atom(env, "error"), enif_make_atom(env, "full")));
+	case ERX_DEVICE_TRB_REFUSE_HALTED:
+		return (enif_make_tuple2(env, enif_make_atom(env, "error"), enif_make_atom(env, "halted")));
+	case ERX_DEVICE_TRB_REFUSE_BADARG:
+	default:
+		return (enif_make_badarg(env));
+	}
+}
+
+/* post(Dev, command, Tag, Command) or post(Dev, {Slot, Dci}, Tag, Transfer) */
+static ERL_NIF_TERM
+trb_post(ErlNifEnv *env, const erx_device_t *device, const ERL_NIF_TERM argv[])
+{
+	const ERL_NIF_TERM *pipe;
+	erx_trb_command_t command;
+	erx_device_trb_request_t request;
+	erx_device_trb_verdict_t verdict = ERX_DEVICE_TRB_REFUSE_BADARG;
+	ErlNifUInt64 tag;
+	uint32_t slot, dci;
+	int arity, status;
+
+	if (!enif_get_uint64(env, argv[2], &tag))
+		return (enif_make_badarg(env));
+	if (is(env, argv[1], "command")) {
+		if (!decode_command(env, argv[3], &command))
+			return (enif_make_badarg(env));
+		enif_mutex_lock(device_lock);
+		status = erx_device_trb_command(device, &command, tag, &verdict);
+		enif_mutex_unlock(device_lock);
+		return (trb_posted(env, status, verdict));
+	}
+	if (!enif_get_tuple(env, argv[1], &arity, &pipe) || arity != 2 || !enif_get_uint(env, pipe[0], &slot) ||
+	    !enif_get_uint(env, pipe[1], &dci) || !decode_transfer(env, argv[3], &request))
+		return (enif_make_badarg(env));
+	enif_mutex_lock(device_lock);
+	status = erx_device_trb_post(device, slot, dci, tag, &request, &verdict);
+	enif_mutex_unlock(device_lock);
+	return (trb_posted(env, status, verdict));
+}
+
+/* post(Dev, Q, Tag, Segments) on a queue, or a TRB form post */
+static ERL_NIF_TERM
+post_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
+{
+	const erx_device_t *const device = device_of(env, argv[0]);
+
+	if (device == NULL)
+		return (enif_make_badarg(env));
+	return (enif_is_number(env, argv[1]) ? queue_post(env, argc, argv) : trb_post(env, device, argv));
+}
+
+/*
+ * What trb_complete collects, in the form's order: each answer, and the bytes it carries in a
+ * fresh binary of their length, so no term ever aliases memory the device can write, read only
+ * once the call has copied them: a transfer's bytes moved, or an Address Device's output slot
+ * context.
+ */
+typedef struct trb_answers {
+	ErlNifEnv		*env;
+	uint32_t		count;
+	erx_trb_answer_t	answers[ERX_TRB_FORM_ANSWERS_MAX(ERX_DEVICE_COMPLETE_ENTRIES)];
+	ERL_NIF_TERM		bytes[ERX_TRB_FORM_ANSWERS_MAX(ERX_DEVICE_COMPLETE_ENTRIES)];
+} trb_answers_t;
+
+static uint8_t *
+trb_answer_sink(void *context, const erx_trb_answer_t *answer)
+{
+	trb_answers_t *const collected = context;
+	const uint32_t at = collected->count++;
+
+	collected->answers[at] = *answer;
+	return (enif_make_new_binary(collected->env, answer->data.length, &collected->bytes[at]));
+}
+
+/*
+ * One answer as erx_xhci takes it: a transfer's {Tag, Code, Bytes}; a command's {Tag, Code, Extra},
+ * Extra the address the controller wrote in the slot's output context for an Address Device's
+ * success, which Erlang bounds, as it is the controller's, and the event's slot otherwise; a
+ * port's event {port, Port}.
+ */
+static ERL_NIF_TERM
+trb_answer_term(ErlNifEnv *env, const trb_answers_t *collected, uint32_t at)
+{
+	const erx_trb_answer_t *const answer = &collected->answers[at];
+	erx_xhci_slot_context_t context;
+	ErlNifBinary carried;
+	ERL_NIF_TERM extra = collected->bytes[at];
+
+	switch (answer->kind) {
+	case ERX_TRB_ANSWER_TRANSFER:
+		break;
+	case ERX_TRB_ANSWER_COMMAND:
+		/* Only an Address Device's success carries bytes, its output slot context. */
+		if (enif_inspect_binary(env, extra, &carried) && carried.size == sizeof(context)) {
+			bcopy(carried.data, &context, sizeof(context));
+			extra = enif_make_uint(env, erx_xhci_slot_context_state_address_get(context.state));
+		} else
+			extra = enif_make_uint(env, answer->slot);
+		break;
+	case ERX_TRB_ANSWER_PORT:
+		return (enif_make_tuple2(env, enif_make_atom(env, "port"), enif_make_uint(env, answer->port)));
+	}
+	return (enif_make_tuple3(env, enif_make_uint64(env, answer->tag), enif_make_uint(env, answer->code), extra));
+}
+
+/* complete(Dev, events): what the controller has reported, in the form's order */
+static ERL_NIF_TERM
+trb_complete(ErlNifEnv *env, const erx_device_t *device)
+{
+	static trb_answers_t collected;
+	ERL_NIF_TERM terms[ERX_TRB_FORM_ANSWERS_MAX(ERX_DEVICE_COMPLETE_ENTRIES)];
+	uint32_t count;
+	int status;
+
+	enif_mutex_lock(device_lock);
+	collected.env = env;
+	collected.count = 0;
+	status = erx_device_trb_complete(device, trb_answer_sink, &collected, &count);
+	for (uint32_t at = 0; status == ERX_OK && at < count; at++)
+		terms[at] = trb_answer_term(env, &collected, at);
+	enif_mutex_unlock(device_lock);
+	if (status != ERX_OK)
+		return (status_error(env, status));
+	return (enif_make_tuple2(env, enif_make_atom(env, "ok"), enif_make_list_from_array(env, terms, count)));
+}
+
+/* complete(Dev, Q) on a queue, or complete(Dev, events) on the TRB form's event ring */
+static ERL_NIF_TERM
+complete_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
+{
+	const erx_device_t *const device = device_of(env, argv[0]);
+
+	if (device == NULL)
+		return (enif_make_badarg(env));
+	if (enif_is_number(env, argv[1]))
+		return (queue_complete(env, argc, argv));
+	return (is(env, argv[1], "events") ? trb_complete(env, device) : enif_make_badarg(env));
+}
+
+/* queue_state(Dev, {Slot, Dci}): idle, busy, stopped or halted; badarg for a pair that names no queue */
+static ERL_NIF_TERM
+queue_state_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
+{
+	static const char *const names[] = {
+		[ERX_TRB_QUEUE_IDLE] = "idle", [ERX_TRB_QUEUE_BUSY] = "busy",
+		[ERX_TRB_QUEUE_STOPPED] = "stopped", [ERX_TRB_QUEUE_HALTED] = "halted",
+	};
+	const erx_device_t *const device = device_of(env, argv[0]);
+	const ERL_NIF_TERM *pipe;
+	erx_trb_queue_state_t state = ERX_TRB_QUEUE_NONE;
+	uint32_t slot, dci;
+	int arity, status;
+
+	(void)argc;
+	if (device == NULL || !enif_get_tuple(env, argv[1], &arity, &pipe) || arity != 2 ||
+	    !enif_get_uint(env, pipe[0], &slot) || !enif_get_uint(env, pipe[1], &dci))
+		return (enif_make_badarg(env));
+	enif_mutex_lock(device_lock);
+	status = erx_device_trb_queue_state(device, slot, dci, &state);
+	enif_mutex_unlock(device_lock);
+	if (status != ERX_OK)
+		return (status_error(env, status));
+	if (state == ERX_TRB_QUEUE_NONE || (size_t)state >= sizeof(names) / sizeof(names[0]))
+		return (enif_make_badarg(env));
+	return (enif_make_atom(env, names[state]));
 }
 
 #ifdef ERX_DEVICE_STAND_IN
@@ -870,6 +1299,7 @@ static ErlNifFunc nif_funcs[] = {
 	{ "negotiate", 2, negotiate_nif, 0 },
 	{ "post", 4, post_nif, 0 },
 	{ "complete", 2, complete_nif, 0 },
+	{ "queue_state", 2, queue_state_nif, 0 },
 #ifdef ERX_DEVICE_STAND_IN
 	{ "stand_in_fire", 2, stand_in_fire_nif, 0 },
 	{ "stand_in_used", 3, stand_in_used_nif, 0 },

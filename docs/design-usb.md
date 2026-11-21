@@ -2050,7 +2050,9 @@ parameters, from which the NIF writes every context and TRB:
 A parameter out of its range, a command on a queue in a state that does
 not allow it, an add of a queue that exists, or an Address Device of a
 slot no Enable Slot's success gave since its Disable Slot (4.6.5, p. 114)
-is `badarg`. No field that
+is `badarg`. Erlang names no queue block: the NIF gives each added
+endpoint the first block of its kind that no ring is bound to, and a
+command with none left is `{error, full}`. No field that
 says where the controller reads or writes, how it interprets an address
 or how many bytes it moves there comes from Erlang: `MaxPStreams` above
 0 would turn the dequeue pointer into the address of a stream context
@@ -2097,8 +2099,10 @@ publishes the same way: it flushes the chain, then toggles the one cycle
 bit that activates it (`xhci.c:3010-3043`). A command is published the
 same way on the command ring, with doorbell 0.
 
-**Completing.** `complete/2` acquires the event ring, at most 32 events a
-call: the sequencer, not the core, reads each event TRB's cycle word
+**Completing.** `complete(Dev, events)` acquires the event ring, at most 32 events a
+call, and answers `{ok, Answers}` in the core's order, a transfer's
+`{Tag, Code, Bytes}`, a command's `{Tag, Code, Extra}` and a root port's
+`{port, Port}`: the sequencer, not the core, reads each event TRB's cycle word
 from the ledger's consumer position, stops at the first not yet written,
 and only then reads the events it covers whole, so the core is handed
 only snapshots of events the controller had finished writing
@@ -3197,6 +3201,7 @@ sink shows it.
 | `erx_device:post/4`, TRB form | `{error, full}` | a command already in flight; no free buffer on the queue; no free block of the kind a command adds |
 | `erx_device:post/4`, TRB form | `{error, halted}` | a transfer on a queue that is not `open`, or that the command in flight holds: EP0 under Evaluate Context, a queue Configure Endpoint drops, every queue of the slot under Disable Slot |
 | `erx_device:post/4`, `complete/2`, `queue_state/2`, TRB form | `{error, broken}` | an event failed the form's checks, until `negotiate/2` |
+| `erx_device:post/4`, `complete/2`, `queue_state/2`, TRB form shapes | `{error, einval}` | the device is not an xHCI controller, or no `negotiate/2` has begun on it |
 | `erx_usb_pipe` calls | `{error, gone}` | the pipe's device has detached |
 | `erx_usb_pipe` calls | `{error, halted}`, `{error, resetting}`, `{error, stopped}` | the pipe halted and has not been reset; a reset is running; the transfer was still posted when a reset restarted the ring |
 | `erx_usb_pipe` calls | `{error, stall}`, `{error, timeout}`, `{error, {controller, Code}}` | the endpoint halted on this transfer; no answer in 5 s; any other completion code |

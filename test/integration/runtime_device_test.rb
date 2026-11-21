@@ -339,6 +339,42 @@ class RuntimeDeviceTest < Minitest::Test
     ERLANG
   end
 
+  # The xHCI TRB ring form's calls (docs/design-usb.md, "The TRB ring form") decode every term
+  # before they reach the device: another shape or an integer that does not fit is badarg,
+  # and a well-formed call on a device that is not an xHCI controller is `{error, einval}`.
+  # The boot page holds a short command line, so the cases go a few at a time.
+  TRB_TERMS = 'A = #{route => 0, root_port => 1, speed => 3, tt => #{hub_slot => 1, port => 2, multi => true}, ' \
+              'ep0_packet => 64}, B = #{address => 16#81, type => bulk, packet_size => 512, burst => 0, ' \
+              'interval_exponent => 0, payload => 512}, Bad = fun(F) -> {\'EXIT\', {badarg, _}} = (catch F()), ok end, '
+  TRB_CASES = [
+    '[{error, einval} = erx_device:post(D, command, 1, C) || C <- [enable_slot, {disable_slot, 1}, ' \
+    '{address_device, 1, A}, {evaluate_context, 1, #{ep0_packet => 64}}, {stop_endpoint, 1, 3}]]',
+    '[{error, einval} = erx_device:post(D, command, 1, C) || C <- [{reset_endpoint, 1, 3}, {set_tr_dequeue, 1, 3}, ' \
+    '{configure_endpoints, 1, #{add => [B], drop => [3], hub => #{ports => 4, think_time => 0, multi_tt => false}}}]]',
+    '[{error, einval} = erx_device:post(D, {1, 1}, 1, T) || T <- [{control, <<0:64>>, none}, ' \
+    '{control, <<0:64>>, {in, 8}}, {control, <<0:64>>, {out, <<1>>}}, {normal, {in, 8}}, {normal, {out, <<1>>}}]]',
+    '[ok = Bad(fun() -> erx_device:post(D, command, 1, C) end) || C <- [enable, {enable_slot}, {disable_slot, -1}, ' \
+    '{disable_slot, 1 bsl 32}, {address_device, 1, #{route => 0}}, {evaluate_context, 1, #{}}, {stop_endpoint, 1, -1}]]',
+    '[ok = Bad(fun() -> erx_device:post(D, command, 1, C) end) || C <- [{no_such_command, 1, 1}, ' \
+    '{address_device, 1, A#{tt => #{hub_slot => 1, port => 2, multi => 1}}}]]',
+    '[ok = Bad(fun() -> erx_device:post(D, command, 1, {configure_endpoints, 1, #{add => Add, drop => Drop, hub => none}}) end) ' \
+    '|| {Add, Drop} <- [{[B#{type => isochronous}], []}, {[B#{address => 16#91}], []}, {[], [32]}, {[B | B], []}, ' \
+    '{lists:duplicate(64, B), []}]]',
+    '[ok = Bad(fun() -> erx_device:post(D, P, 1, T) end) || {P, T} <- [{{1, 1}, {control, <<0:56>>, none}}, ' \
+    '{{1, 1}, {control, <<0:64>>, {in, -1}}}, {{1, 1}, {normal, {out, [<<1>>]}}}, {{1, 1}, {bulk, {in, 8}}}]]',
+    '[ok = Bad(fun() -> erx_device:post(D, P, 1, {normal, {in, 8}}) end) || P <- [{1}, {1, -1}, events]], ' \
+    'ok = Bad(fun() -> erx_device:post(D, command, -1, enable_slot) end)',
+    '{error, einval} = erx_device:complete(D, events), ok = Bad(fun() -> erx_device:complete(D, event) end), ' \
+    '{error, einval} = erx_device:queue_state(D, {1, 1}), ok = Bad(fun() -> erx_device:queue_state(D, {1, 1, 1}) end), ' \
+    'ok = Bad(fun() -> erx_device:queue_state(D + 1000, {1, 1}) end)'
+  ].freeze
+
+  def test_the_trb_form_calls_decode_before_they_reach_the_device
+    TRB_CASES.each do |calls|
+      assert_equal 'ok', evaluate("#{OPEN_VIRTIO}#{TRB_TERMS}#{calls}, io:format(\"~s~n\", [ok]), halt()."), calls
+    end
+  end
+
   OPEN_COHERENT = 'S = #{peripheral => virtio_mmio, window => stand_in, lines => []}, ' \
                   '{ok, D} = erx_device:open(S#{coherent => true}), '
 
