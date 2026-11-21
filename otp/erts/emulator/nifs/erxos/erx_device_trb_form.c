@@ -442,6 +442,55 @@ contexts_of(const erx_trb_form_t *form, const erx_trb_command_t *command, erx_de
 		    .context = command->adds[k].context };
 }
 
+/* The block kind whose rings an endpoint context's type runs on; false for an isochronous or invalid type. */
+static bool
+type_kind(uint64_t type, erx_device_trb_kind_t *kind)
+{
+	switch (type) {
+	case ERX_XHCI_ENDPOINT_TYPE_CONTROL:
+		*kind = ERX_DEVICE_TRB_CONTROL;
+		return (true);
+	case ERX_XHCI_ENDPOINT_TYPE_BULK_IN:
+	case ERX_XHCI_ENDPOINT_TYPE_BULK_OUT:
+		*kind = ERX_DEVICE_TRB_BULK;
+		return (true);
+	case ERX_XHCI_ENDPOINT_TYPE_INTERRUPT_IN:
+	case ERX_XHCI_ENDPOINT_TYPE_INTERRUPT_OUT:
+		*kind = ERX_DEVICE_TRB_INTERRUPT;
+		return (true);
+	default:
+		return (false);
+	}
+}
+
+_Static_assert(ERX_DEVICE_TRB_BLOCKS_MAX <= 64, "a block mask fits a uint64_t");
+
+erx_device_trb_verdict_t
+erx_trb_form_choose_blocks(const erx_trb_form_t *form, erx_trb_command_t *command)
+{
+	const uint32_t blocks = erx_device_trb_block_count(&form->shape);
+	uint64_t taken = 0;
+
+	if (command->add_count > ERX_DMA_BINDS_MAX)
+		return (ERX_DEVICE_TRB_REFUSE_BADARG);
+	for (uint32_t k = 0; k < command->add_count; k++) {
+		erx_trb_add_t *const add = &command->adds[k];
+		erx_device_trb_kind_t kind;
+		uint32_t block = 0;
+
+		if (!type_kind(add->context.config_endpoint_type, &kind))
+			return (ERX_DEVICE_TRB_REFUSE_BADARG);
+		while (block < blocks && (erx_device_trb_block_kind(&form->shape, block) != kind ||
+		    erx_dma_ledger_binding(&form->ledger, block) != 0 || (taken >> block & 1u) != 0))
+			block++;
+		if (block == blocks)
+			return (ERX_DEVICE_TRB_REFUSE_FULL);
+		add->block = block;
+		taken |= UINT64_C(1) << block;
+	}
+	return (ERX_DEVICE_TRB_ACCEPTED);
+}
+
 erx_device_trb_verdict_t
 erx_trb_form_command(erx_trb_form_t *form, const erx_trb_command_t *command, uint64_t tag, erx_dma_sequence_t *sequence)
 {
@@ -772,9 +821,17 @@ command_event(erx_trb_form_t *form, const erx_report_record_t *event, erx_trb_an
 			answers[(*answered)++] = (erx_trb_answer_t){ .kind = ERX_TRB_ANSWER_TRANSFER,
 			    .code = ERX_XHCI_COMPLETION_STOPPED, .tag = transfer->tag };
 	}
-	answers[(*answered)++] = (erx_trb_answer_t){ .kind = ERX_TRB_ANSWER_COMMAND, .code = code,
+	answers[*answered] = (erx_trb_answer_t){ .kind = ERX_TRB_ANSWER_COMMAND, .code = code,
 	    .tag = form->command_tag, .parameter = erx_xhci_trb_command_event_status_parameter_get(record->status),
 	    .slot = slot };
+	/*
+	 * An Address Device's success carries its slot's output slot context, where the controller wrote
+	 * the USB address it assigned (6.2.2, p. 445), as FreeBSD reads it (xhci.c:1530).
+	 */
+	if (code == ERX_XHCI_COMPLETION_SUCCESS && form->command.kind == ERX_TRB_COMMAND_ADDRESS_DEVICE)
+		answers[*answered].data = (erx_dma_range_t){ .length = ERX_XHCI_SLOT_CONTEXT_SIZE,
+		    .offset = form->layout.regions[form->layout.device_context[form->command.slot]].offset };
+	(*answered)++;
 	return (true);
 }
 

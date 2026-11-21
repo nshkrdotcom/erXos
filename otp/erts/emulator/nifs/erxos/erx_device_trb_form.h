@@ -160,7 +160,8 @@ typedef struct erx_trb_answer {
 	erx_trb_answer_kind_t	kind;
 	uint32_t		code;		/* the completion code */
 	uint64_t		tag;		/* a transfer's or a command's */
-	erx_dma_range_t		data;		/* a transfer's bytes moved in its buffer, from its first; empty for none */
+	erx_dma_range_t		data;		/* a transfer's bytes moved in its buffer, from its first, or an Address
+					   Device success's output slot context; empty for none */
 	uint32_t		parameter;	/* a command's completion parameter */
 	uint32_t		slot;		/* a command's slot */
 	uint32_t		port;		/* a port event's port */
@@ -205,6 +206,17 @@ uint32_t	erx_trb_form_endpoint(uint32_t slot, uint32_t dci);
  */
 erx_device_trb_verdict_t	erx_trb_form_post(erx_trb_form_t *form, uint32_t slot, uint32_t dci,
 				    const erx_device_trb_request_t *request, uint64_t tag, erx_dma_sequence_t *sequence);
+
+/*
+ * Chooses the queue block of each endpoint `command` adds, since no block comes from Erlang
+ * (docs/design-usb.md, "What Erlang names and what the NIF builds"): the first block of the kind
+ * its endpoint context's type names, a control, bulk or interrupt type, that no ring is bound to
+ * and no earlier add took. A drop-and-add takes another block, since the dropped ring stays bound
+ * until the command completes. ERX_DEVICE_TRB_REFUSE_FULL when no such block is left;
+ * REFUSE_BADARG for another type, isochronous among them, or more adds than a command carries;
+ * otherwise ACCEPTED, each add's block written, for erx_trb_form_command to judge the rest.
+ */
+erx_device_trb_verdict_t	erx_trb_form_choose_blocks(const erx_trb_form_t *form, erx_trb_command_t *command);
 
 /*
  * Posts `command` under `tag` on the command ring into `sequence`: its meaning's one TRB, naming

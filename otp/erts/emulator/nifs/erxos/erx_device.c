@@ -2652,6 +2652,7 @@ erx_device_trb_command(const erx_device_t *device, const erx_trb_command_t *comm
 {
 	queue_record_t *record;
 	xhci_word_t doorbell;
+	erx_trb_command_t chosen;
 	const int status = trb_record(device, &record);
 
 	if (status != ERX_OK)
@@ -2659,7 +2660,10 @@ erx_device_trb_command(const erx_device_t *device, const erx_trb_command_t *comm
 	/* Doorbell 0, target 0: the command ring's (5.6, Table 5-44, p. 431). */
 	if (!doorbell_word(record, 0, 0, &doorbell))
 		return (ERX_EINVAL);
-	*verdict = erx_trb_form_command(&record->trb.form, command, tag, &ring_sequence);
+	chosen = *command;
+	*verdict = erx_trb_form_choose_blocks(&record->trb.form, &chosen);
+	if (*verdict == ERX_DEVICE_TRB_ACCEPTED)
+		*verdict = erx_trb_form_command(&record->trb.form, &chosen, tag, &ring_sequence);
 	if (*verdict == ERX_DEVICE_TRB_ACCEPTED)
 		trb_ring_run(record, NULL, doorbell);
 	return (ERX_OK);
