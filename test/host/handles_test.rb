@@ -12,7 +12,7 @@ require_relative '../fixtures/generated_tree'
 # The object records and handle tables on the host: the driver test/fixtures/handles_driver.c
 # runs the fixed cases (a value used after its entry is taken again, an entry's retirement,
 # the reuse order, the limit and the pool, every refusal of the lookup, a close after the
-# object's destroy), then replays every sequence of creates, dups, closes, destroys and the
+# object's destroy, a creator's handle to another task's thread in a table of 1000 entries), then replays every sequence of creates, dups, closes, destroys and the
 # aging hook up to a fixed depth against a model. Each mutant below seeds a bug the core could
 # have, and the driver must name it. liberx/backend/core/handles.c is the core under test.
 class HandlesTest < Minitest::Test
@@ -73,6 +73,10 @@ class HandlesTest < Minitest::Test
                                 "\treturn (capacity);\n", 'a table of one entry gave another'],
     'a mapping ignored' => ["\treturn (record->handles == 0 && record->mappings == 0 && record->kept == 0);\n",
                           "\treturn (record->handles == 0 && record->kept == 0);\n", 'a mapped object went with its last handle'],
+    'a thread handle built as the task above the index' => [
+      "\treturn ((uint64_t)task << ERX_CAP_SLOT_BITS | (ERX_BACKEND_THREAD_HANDLE_OTHER + index));\n",
+      "\treturn ((uint64_t)task << 8 | index);\n", 'a thread handle duplicated an entry'
+    ],
     'a keep ignored' => ["\treturn (record->handles == 0 && record->mappings == 0 && record->kept == 0);\n",
                        "\treturn (record->handles == 0 && record->mappings == 0);\n", 'a kept record went unreferenced'],
     'a freed record taken while retired' => ["\twhile (found < capacity && erx_backend_object_at(objects, found)->kind != ERX_BACKEND_OBJECT_FREE)\n",

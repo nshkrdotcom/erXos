@@ -181,4 +181,23 @@ void	erx_backend_handles_close_all(erx_backend_grow_table_t *objects, erx_backen
 /* Gives the table's pages back; its entries must all have been closed. */
 void	erx_backend_handles_clear(erx_backend_handles_t *);
 
+/*
+ * The handle a creator holds to a thread of another task, the root to a domain's first
+ * thread and a session to a program's. docs/design-fiasco.md ("Thread creation") makes it
+ * an ordinary entry of the creator's table; until then (TODO.md, "thread handles") it is
+ * this value, no entry: the task, never 0, rides in the generation bits and the slot bits
+ * are ERX_BACKEND_THREAD_HANDLE_OTHER plus the index, above caps_max, where no entry's
+ * number can be, so the value names no entry of any table and a close, a dup or a pass of
+ * it is the lookup's ERX_ESTALE. A task's handle to its own thread is its bare index, which
+ * the service tells apart by the task bits being 0. index is below
+ * ERX_BACKEND_THREAD_INDEX_LIMIT, the service's ERX_FIASCO_THREADS_MAX at most. The base
+ * leaves the design's own-task base, 0x800000, and the 128 indices above it free.
+ */
+#define ERX_BACKEND_THREAD_INDEX_LIMIT	128u
+#define ERX_BACKEND_THREAD_HANDLE_OTHER	(UINT64_C(0x800000) + ERX_BACKEND_THREAD_INDEX_LIMIT)
+
+uint64_t	erx_backend_thread_handle_other(uint32_t task, uint32_t index);
+/* The task and index of a handle erx_backend_thread_handle_other made; false for any other value. */
+bool	erx_backend_thread_handle_other_name(uint64_t handle, uint32_t *task, uint32_t *index);
+
 #endif /* ERX_BACKEND_HANDLES_H */

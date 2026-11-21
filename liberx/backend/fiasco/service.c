@@ -53,9 +53,6 @@
 #define SERVICE_STACK_BYTES	16384u
 /* The default priority of every thread but the watchdog. */
 #define SERVICE_THREAD_PRIORITY	1u
-/* The task's part of another task's thread handle: a task's own handles are indices. */
-#define SERVICE_HANDLE_TASK_SHIFT	8u
-#define SERVICE_HANDLE_INDEX_MASK	((UINT64_C(1) << SERVICE_HANDLE_TASK_SHIFT) - 1)
 /* A thread the fault cannot name. */
 #define SERVICE_THREAD_UNKNOWN	UINT64_MAX
 /* The fault word's low bits say how the page was touched. */
@@ -647,15 +644,17 @@ service_task_write(uint32_t task, const erx_fiasco_task_write_request_t *request
 
 /*
  * A thread handle, for the calling task: a task's own handle is an index, and the
- * handle the root or a creator holds of another task's thread carries that task above
- * the index. These
- * two are the service's directions; the stubs in thread.c and irq.c read a task's
- * own handle as its index.
+ * handle the root or a creator holds of another task's thread is the core's
+ * (erx_backend_thread_handle_other), whose slot bits no entry's number can have, so
+ * it names no object of the caller's handle table. These two are the service's
+ * directions; the stubs in thread.c and irq.c read a task's own handle as its index.
  */
+_Static_assert(ERX_FIASCO_THREADS_MAX <= ERX_BACKEND_THREAD_INDEX_LIMIT, "every thread index fits a thread handle");
+
 static uint64_t
 service_thread_handle(uint32_t caller, uint32_t task, uint32_t index)
 {
-	return (task == caller ? index : (uint64_t)task << SERVICE_HANDLE_TASK_SHIFT | index);
+	return (task == caller ? index : erx_backend_thread_handle_other(task, index));
 }
 
 static bool
@@ -667,15 +666,17 @@ service_thread_name(uint32_t caller, uint64_t handle, uint32_t *task, uint32_t *
 int
 erx_fiasco_thread_handle_name(uint32_t caller, uint64_t handle, uint32_t *task, uint32_t *index)
 {
-	const uint64_t named = handle >> SERVICE_HANDLE_TASK_SHIFT;
+	const bool other = erx_backend_thread_handle_other_name(handle, task, index);
 
-	if (named > UINT32_MAX || (handle & SERVICE_HANDLE_INDEX_MASK) >= ERX_FIASCO_THREADS_MAX)
+	if (!other) {
+		if (handle >= ERX_FIASCO_THREADS_MAX)
+			return (ERX_EINVAL);
+		*task = caller;
+		*index = (uint32_t)handle;
+	}
+	if (*index >= ERX_FIASCO_THREADS_MAX || !erx_fiasco_task_live(*task))
 		return (ERX_EINVAL);
-	*task = named != 0 ? (uint32_t)named : caller;
-	*index = (uint32_t)(handle & SERVICE_HANDLE_INDEX_MASK);
-	if (!erx_fiasco_task_live(*task))
-		return (ERX_EINVAL);
-	if (named != 0 && caller != ERX_FIASCO_TASK_ROOT && !erx_fiasco_task_created_by(*task, caller))
+	if (other && caller != ERX_FIASCO_TASK_ROOT && !erx_fiasco_task_created_by(*task, caller))
 		return (ERX_EINVAL);
 	return (ERX_OK);
 }

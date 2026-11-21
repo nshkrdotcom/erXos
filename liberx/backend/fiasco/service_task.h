@@ -132,7 +132,7 @@ void		*erx_fiasco_task_record(uint32_t task, uint32_t index);
 
 /*
  * The task and index a thread handle names for the caller: its own handle is the
- * index, and a handle of another task's thread carries the task above it, which names
+ * index, and a handle of another task's thread is erx_backend_thread_handle_other's, which names
  * a thread only for the root or that task's creator. ERX_EINVAL for a handle that
  * names no live task's index, or another task the caller did not create. Defined in
  * service.c.

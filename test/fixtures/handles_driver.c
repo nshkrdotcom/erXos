@@ -662,6 +662,45 @@ case_close_after_destroy(void)
 	close_tables(&objects, &handles);
 }
 
+/*
+ * A creator's handle to another task's thread names no entry, however many entries the
+ * creator holds: a close or a dup of it is ERX_ESTALE and every entry stays as it was, so
+ * the root's teardown of a domain's first thread never ends an object of its own. No
+ * entry's value reads as such a handle either.
+ */
+static void
+case_thread_handle_names_no_entry(void)
+{
+	enum { ENTRIES = 1000, TASKS = 3 };
+	static uint64_t values[ENTRIES];
+	erx_backend_grow_table_t objects;
+	erx_backend_handles_t handles;
+	uint32_t index, found, rights, task, slot;
+	uint64_t thread, copy;
+	bool freed;
+
+	open_tables(&objects, &handles, ENTRIES, "thread_handle_names_no_entry");
+	for (uint32_t at = 0; at < ENTRIES; at++)
+		values[at] = create(&objects, &handles, ERX_BACKEND_OBJECT_MEMORY, &index);
+	for (uint32_t other = 1; other <= TASKS; other++) {
+		thread = erx_backend_thread_handle_other(other, 0);
+		check(erx_backend_handle_dup(&objects, &handles, thread, &copy, &found, &rights) == ERX_ESTALE,
+		    "a thread handle duplicated an entry", thread);
+		check(erx_backend_handle_close(&objects, &handles, thread, &freed, &found) == ERX_ESTALE,
+		    "a thread handle closed an entry", thread);
+		check(erx_backend_thread_handle_other_name(thread, &task, &slot) && task == other && slot == 0,
+		    "a thread handle names another thread", thread);
+	}
+	for (uint32_t at = 0; at < ENTRIES; at++) {
+		check(erx_backend_handle_find(&objects, &handles, values[at], ERX_BACKEND_OBJECT_MEMORY, 0, &found) == ERX_OK,
+		    "an entry went with a thread handle's close", values[at]);
+		check(!erx_backend_thread_handle_other_name(values[at], &task, &slot), "an entry reads as a thread handle",
+		    values[at]);
+		close_last(&objects, &handles, values[at]);
+	}
+	close_tables(&objects, &handles);
+}
+
 int
 main(void)
 {
@@ -671,6 +710,7 @@ main(void)
 	case_limits_and_pool();
 	case_refusals();
 	case_close_after_destroy();
+	case_thread_handle_names_no_entry();
 	current_case = "sequences";
 	explore(0);
 	printf("ok: %lu checks\n", checks);

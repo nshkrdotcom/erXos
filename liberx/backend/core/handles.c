@@ -22,6 +22,9 @@ _Static_assert((uint64_t)ERX_BACKEND_GROW_PAGES_MAX * (ERX_PAGE_SIZE / sizeof(er
     "every entry's number is at most caps_max");
 _Static_assert(ERX_CAPS_MAX < (ERX_CAP_SELF_THREAD & ERX_BACKEND_HANDLE_NUMBER_MASK) && ERX_CAPS_MAX < (ERX_CAP_SELF & ERX_BACKEND_HANDLE_NUMBER_MASK),
     "no entry's number is a reserved value's");
+_Static_assert(ERX_CAPS_MAX < ERX_BACKEND_THREAD_HANDLE_OTHER &&
+    ERX_BACKEND_THREAD_HANDLE_OTHER + ERX_BACKEND_THREAD_INDEX_LIMIT <= (ERX_CAP_SELF_THREAD & ERX_BACKEND_HANDLE_NUMBER_MASK),
+    "a thread handle's slot bits are no entry's number and no reserved value's");
 
 static int	handle_lookup(const erx_backend_grow_table_t *, const erx_backend_handles_t *, uint64_t, uint32_t, uint32_t,
 		    const erx_backend_handle_entry_t **);
@@ -214,6 +217,25 @@ erx_backend_handles_clear(erx_backend_handles_t *handles)
 	erx_backend_grow_table_clear(&handles->entries);
 	handles->free_first = 0;
 	handles->free_last = 0;
+}
+
+uint64_t
+erx_backend_thread_handle_other(uint32_t task, uint32_t index)
+{
+	return ((uint64_t)task << ERX_CAP_SLOT_BITS | (ERX_BACKEND_THREAD_HANDLE_OTHER + index));
+}
+
+bool
+erx_backend_thread_handle_other_name(uint64_t handle, uint32_t *task, uint32_t *index)
+{
+	const uint64_t slot = handle & ERX_BACKEND_HANDLE_NUMBER_MASK;
+
+	if (handle >> ERX_CAP_SLOT_BITS == 0 || handle >> ERX_CAP_SLOT_BITS > UINT32_MAX ||
+	    slot < ERX_BACKEND_THREAD_HANDLE_OTHER || slot - ERX_BACKEND_THREAD_HANDLE_OTHER >= ERX_BACKEND_THREAD_INDEX_LIMIT)
+		return (false);
+	*task = (uint32_t)(handle >> ERX_CAP_SLOT_BITS);
+	*index = (uint32_t)(slot - ERX_BACKEND_THREAD_HANDLE_OTHER);
+	return (true);
 }
 
 /*
