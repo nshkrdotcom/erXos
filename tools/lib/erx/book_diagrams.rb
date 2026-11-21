@@ -126,6 +126,9 @@ module Erx
       # The driver's versions and results for sources, failures included.
       def draw(sources, root:, runner:, options: OPTIONS)
         bundle, versions = bundle(root: root, runner: runner)
+        # --allow-fs-read takes a comma-separated list, so a comma would widen the grant.
+        raise Error, "the diagram bundle's path holds a comma, which Node's --allow-fs-read would split: #{bundle}" if
+          bundle.include?(',')
         FileUtils.mkdir_p(File.join(root, 'build'))
         Dir.mktmpdir('book-diagrams-', File.join(root, 'build')) do |directory|
           input = File.join(directory, 'request.json')
