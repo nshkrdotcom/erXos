@@ -29,11 +29,8 @@ driver waiting for an interrupt that never comes? To answer, a
 developer must see every layer of the machine at once, and trust that
 each number means what it says.
 
-On a UNIX system the answer lies in a dozen tools, each with its own
-view and format: `ps` and `top`, `procstat`, `dtrace` and `ktrace`,
-`dmesg` and `syslogd`, `kldload`, `savecore`. Each does its job, and
-none knows about the others.
-
+Where FreeBSD answers with a dozen tools (`ps` and `top`, `procstat`,
+`dtrace` and `ktrace`, `dmesg` and `syslogd`, `kldload`, `savecore`),
 erXos gives the machine one **inspector**: a service in the system
 domain that answers for any part of the machine, from a CPU to one
 Erlang process, as a record of attributes, each carrying who reported
@@ -725,9 +722,9 @@ terminal stream, a tty's output, as `ssh` passes a remote shell's.
 
 ## 21.7 Design choices
 
-**One tree, not many tools.** On UNIX, `sysctl` names, `procfs` files
-and `procstat` output are three models of overlapping data, with three
-permission rules. erXos keeps one schema, and `erx:i/1`, `/proc` and
+**One tree, not many tools.** Separate tools would each keep a model
+of overlapping data, with a permission rule of its own. erXos keeps
+one schema, and `erx:i/1`, `/proc` and
 the browser are views of it behind one facet: the schema must name
 everything, and a new attribute appears in every view at once.
 

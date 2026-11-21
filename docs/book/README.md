@@ -1328,8 +1328,8 @@ on the export in a program's table, shared mappings of files, a
    applied to services: what the system observes is an inspection path
    shown at `/proc`; what an app says about itself or what someone
    commands is a file tree its owner serves, with a `status` to read and
-   a `ctl` for one-shot control. No `sysctl`: system values are one
-   read-only tree with many views.
+   a `ctl` for one-shot control. Where FreeBSD has `sysctl`, system
+   values are one read-only tree with many views.
    *Draws on:* [design-app-trees.md, The tree](../design-app-trees.md#the-tree),
    [design-app-trees.md, Commanding: `ctl`](../design-app-trees.md#commanding-ctl),
    [design-live.md, The /proc tree](../design-live.md#the-proc-tree).

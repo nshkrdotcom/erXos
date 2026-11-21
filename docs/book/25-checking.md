@@ -738,11 +738,11 @@ against the runtime they built, borrows decades of their judgment. The
 price is the known-differences tables, which must stay exact; the
 stale-row rule keeps them from becoming a place to hide bugs.
 
-**Bounded tools over a full proof.** seL4's proof of 2009 shows that
-a microkernel's C code can be proved correct against its
-specification, at a cost its authors put at about 20 person-years in all, of which
-about 11 went into the seL4-specific proof (Klein et al., 2009). erXos
-runs on Fiasco and checks its own code with tools whose cost grows with what they check. They are models of the
+**Bounded tools over a full proof.** A microkernel's C code can be
+proved correct against its specification, at a cost seL4's authors
+put at about 20 person-years in all, of which about 11 went into the
+kernel-specific proof (Klein et al., 2009). erXos runs on Fiasco and
+checks its own code with tools whose cost grows with what they check. They are models of the
 protocols that are hard to get right, bounded proofs of small C cores,
 and exhaustive exploration of pure cores. Each says exactly what it
 covers.
