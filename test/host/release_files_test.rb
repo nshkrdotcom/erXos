@@ -276,6 +276,15 @@ class ReleaseFilesTest < Minitest::Test
                  release, 'the session script starts the line and only loads erx_session')
   end
 
+  # The ntpd script only loads erx_ntpd, which the ntpd template's -eval starts once
+  # init holds the session's facets (docs/design-time.md, "Who does what"), so ntpd's
+  # first lookup and sample do not run before the session holds its net and clock facets.
+  def test_the_ntpd_script_only_loads_erx_ntpd
+    domain_entries(Erx::ReleaseFiles.domain([Erx::ProductionImage.domain_boot('ntpd')]))
+    assert_match(/\{erx_net_client,"#{VERSION}"\},\{erx_ntpd,"#{VERSION}",load\}\]\}\.\n\z/,
+                 boot_release_file('ntpd'), 'the ntpd script starts the network client and only loads erx_ntpd')
+  end
+
   # The app script, which the app template boots (docs/design-packaging.md, "The apps
   # row"), boots what every session boots, as the session script does, starts the client
   # side of the display and the network client, only loads asn1, crypto and public_key,

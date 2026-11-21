@@ -5,12 +5,14 @@
 %% "Device records"), one per device the domain drives, in one of two forms, each with its
 %% own word so neither is told from the other by counting:
 %%
-%% - `-erx_record given ROLE PERIPHERAL PATH WINDOW_H OFFSET SIZE LINE_H MARK MEM_H MEM_SIZE CLOCK COHERENT MAC`,
+%% - `-erx_record given ROLE PERIPHERAL PATH WINDOW_H OFFSET SIZE LINE_H MARK MEM_H MEM_SIZE CLOCK COHERENT MAC
+%%   INDEX`,
 %%   a given device: the handles of the window, line and memory objects the domain library
 %%   installed when it created the domain, or the root made for itself at boot for a device
 %%   the system domain holds, the transport's offset and size in the window object, the
-%%   memory's bytes, 0 for a device that does no DMA, and the firmware tree's coherence mark
-%%   and hardware address;
+%%   memory's bytes, 0 for a device that does no DMA, the firmware tree's coherence mark
+%%   and hardware address, and INDEX, the device's row in the manifest's device table, by
+%%   which the PCIe domain matches a host bridge's record to its erx_pcie_bridge index;
 %% - `-erx_record device ROLE PERIPHERAL PATH BASE SIZE LINE MARK CLOCK INDEX`, the system domain's physical record
 %%   of its host link's UART or its line's, which do no DMA, built by
 %%   liberx/backend/core/boot_manifest.c from the system manifest; INDEX is the device's
@@ -59,7 +61,8 @@
                   window := {object, non_neg_integer(), non_neg_integer(), non_neg_integer()},
                   lines := [{object, non_neg_integer()} | {shared, {object, non_neg_integer()}}],
                   memory => {object, non_neg_integer(), pos_integer()}, clock := non_neg_integer(),
-                  coherent := boolean(), mac => 1..16#ffffffffffff}
+                  coherent := boolean(), mac => 1..16#ffffffffffff,
+                  index := non_neg_integer()}
               | #{peripheral := atom(), path := binary(), window := {physical, non_neg_integer(), non_neg_integer()},
                   lines := [non_neg_integer() | {shared, non_neg_integer()}], clock := non_neg_integer(),
                   index := non_neg_integer()}.
@@ -221,27 +224,31 @@ format("x8b8g8r8") -> {ok, x8b8g8r8, 32};
 format(_Word) -> error.
 
 %% COHERENT is the firmware tree's coherence mark, 0 or 1, and MAC its hardware address,
-%% 48 bits, 0 for none (docs/design-device-tree.md, "Facts into records").
-spec(Peripheral, {"given", [Path, Window, Offset, Size, Line, Mark, Memory, MemorySize, Clock, Coherent, Mac | _]}) ->
-    case {numbers([Window, Offset, Size, Line, Memory, MemorySize]), number(Clock, 32), mark(Mark),
-          coherent(Coherent), number(Mac, 48), path(Path)} of
-        {{ok, [W, O, S, L, M, MS]}, {ok, C}, {ok, Sharing}, {ok, Co}, {ok, A}, {ok, P}} ->
+%% 48 bits, 0 for none (docs/design-device-tree.md, "Facts into records"); INDEX the
+%% device's row in the manifest's device table, as a device record's.
+spec(Peripheral, {"given", [Path, Window, Offset, Size, Line, Mark, Memory, MemorySize, Clock, Coherent, Mac, Index
+                            | _]}) ->
+    case {numbers([Window, Offset, Size, Line, Memory, MemorySize]), {number(Clock, 32), number(Index, 32)},
+          mark(Mark), coherent(Coherent), number(Mac, 48), path(Path)} of
+        {{ok, [_, _, _, ?ERX_CAP_NULL, _, _]}, {{ok, _}, {ok, _}}, {ok, shared}, {ok, _}, {ok, _}, {ok, _}} ->
+            bad("a given device record marks no line shared");
+        {{ok, [W, O, S, L, M, MS]}, {{ok, C}, {ok, I}}, {ok, Sharing}, {ok, Co}, {ok, A}, {ok, P}} ->
             Spec = #{peripheral => Peripheral, path => P, window => {object, W, O, S},
-                     lines => [marked(Sharing, {object, L})], clock => C, coherent => Co},
+                     lines => given_lines(Sharing, L), clock => C, coherent => Co, index => I},
             {ok, with_mac(with_memory(Spec, M, MS), A)};
-        {{ok, _}, {ok, _}, {ok, _}, {ok, _}, {ok, _}, error} ->
+        {{ok, _}, {{ok, _}, {ok, _}}, {ok, _}, {ok, _}, {ok, _}, error} ->
             bad("a given device record's path is not a node path of at most "
                 ++ integer_to_list(?ERX_DEVICE_PATH_MAX) ++ " bytes");
-        {{ok, _}, {ok, _}, error, _, _, _} ->
+        {{ok, _}, {{ok, _}, {ok, _}}, error, _, _, _} ->
             bad("a given device record's line mark is neither direct nor shared");
-        {{ok, _}, {ok, _}, {ok, _}, error, _, _} ->
+        {{ok, _}, {{ok, _}, {ok, _}}, {ok, _}, error, _, _} ->
             bad("a given device record's coherence is neither 0 nor 1");
         _ ->
-            bad("a given device record's handle, offset, size, clock or address is not a decimal number "
-                "of its field's width")
+            bad("a given device record's handle, offset, size, clock, address or index is not a decimal "
+                "number of its field's width")
     end;
 spec(_Peripheral, {"given", _}) ->
-    bad("a given device record has fewer than a path, nine numbers and a line mark");
+    bad("a given device record has fewer than a path, ten numbers and a line mark");
 spec(Peripheral, {"device", [Path, Base, Size, Line, Mark, Clock, Index | _]}) ->
     case {number(Base, 64), number(Size, 64), number(Line, 32), {number(Clock, 32), number(Index, 32)}, mark(Mark), path(Path)} of
         {{ok, B}, {ok, S}, {ok, L}, {{ok, C}, {ok, I}}, {ok, Sharing}, {ok, P}} ->
@@ -287,6 +294,11 @@ mark(_Word) -> error.
 
 marked(direct, Line) -> Line;
 marked(shared, Line) -> {shared, Line}.
+
+%% A device whose node raises no line, a host bridge's such as QEMU virt's ECAM, has no line
+%% object, and its record names the null handle, marked direct (spec/2 refuses it shared).
+given_lines(_Sharing, ?ERX_CAP_NULL) -> [];
+given_lines(Sharing, Line) -> [marked(Sharing, {object, Line})].
 
 %% A device that does no DMA has no memory object, and its record says 0 bytes.
 with_memory(Spec, _Memory, 0) -> Spec;

@@ -48,6 +48,8 @@ class ErxDomainTest < Minitest::Test
     test/erlang/erx_domain_mints_tests.erl
     test/erlang/erx_domain_mints_srv_tests.erl
     test/erlang/erx_devices_tests.erl
+    test/erlang/erx_devices_pci_core_tests.erl
+    test/erlang/erx_devices_pci_tests.erl
   ].freeze
 
   def test_domain_service_cases_pass_under_eunit
@@ -76,6 +78,14 @@ class ErxDomainTest < Minitest::Test
 
   def test_device_catalogue_presentation_passes_under_eunit
     assert_eunit_passes('erx_devices_tests', deadline: 60)
+  end
+
+  def test_device_service_pci_decisions_pass_under_eunit
+    assert_eunit_passes('erx_devices_pci_core_tests', deadline: 60)
+  end
+
+  def test_device_service_pci_process_passes_under_eunit
+    assert_eunit_passes('erx_devices_pci_tests', deadline: 60)
   end
 
   def test_dev_tree_passes_under_eunit
@@ -207,9 +217,71 @@ class ErxDomainTest < Minitest::Test
               tests: 'erx_domain_mints_srv_tests', caught_by: 'await_installed'),
     Fault.new(name: 'a grant wait without its idle case', file: MINTS,
               from: 'idle_grant(ready) -> {error, unprovided};', to: 'idle_grant(ready) -> wait;',
-              tests: 'erx_domain_mints_srv_tests', caught_by: 'await_unprovided')
+              tests: 'erx_domain_mints_srv_tests', caught_by: 'await_unprovided'),
+    # The answer to `report` (docs/design-pcie.md, "Facets"): a lowering that keeps every
+    # function with a layout, blind to the library's confirmed and latest state, leaves
+    # each function of a report the intake refused whole at its setting.
+    Fault.new(name: 'a lowering blind to the intake', file: File.join(APPLICATION, 'erx_devices_pci_core.erl'),
+              from: '#{record := Record, confirmed := true, state := ready} <- Layouts},',
+              to: '#{record := Record} <- Layouts},',
+              tests: 'erx_devices_pci_core_tests',
+              caught_by: 'a_report_refused_whole_lowers_every_function_of_its_bridge_test'),
+    # A holder's end (docs/design-pcie.md, "The catalogue and gives"): one that sends its
+    # lowering without writing it to the library leaves the library saying the function
+    # still decodes or masters for a holder that is gone.
+    Fault.new(name: "a holder's end blind to the library", file: File.join(APPLICATION, 'erx_devices_pci_core.erl'),
+              from: '[{mode, Index, off} || {Index, _, _} <- Lowered] ++', to: '[] ++',
+              tests: 'erx_devices_pci_core_tests',
+              caught_by: 'a_holders_end_lowers_its_rows_in_the_library_then_sends_test'),
+    # The PCIe process (docs/design-pcie.md, "Concurrency"): one that forgets a row once a
+    # read no longer shows its holder, which the library clears at the end before it
+    # reports it, sends no lowering, so the function goes on mastering for no holder.
+    Fault.new(name: "a holder's rows forgotten before its end", file: File.join(APPLICATION, 'erx_devices_pci.erl'),
+              from: 'end, Held,', to: 'end, maps:with([], Held),',
+              tests: 'erx_devices_pci_tests',
+              caught_by: 'a_holders_end_after_the_library_cleared_its_row_is_still_sent_test'),
+    # One that answers a report before it writes answered leaves a restart blind to an
+    # incarnation it answered.
+    Fault.new(name: 'a report answered before answered is written', file: File.join(APPLICATION, 'erx_devices_pci.erl'),
+              from: '%% Written before it is sent, so a restart never misses an answered incarnation.',
+              to: 'gen_server:reply(From, {ok, erx_devices_pci_core:settings(Devices)}),',
+              tests: 'erx_devices_pci_tests',
+              caught_by: 'the_answered_incarnation_is_written_before_the_answer_test'),
+    # One that restarts blind to answered sends no holder's lowering while the answered
+    # incarnation lives.
+    Fault.new(name: 'a restart blind to answered', file: File.join(APPLICATION, 'erx_devices_pci.erl'),
+              from: 'resume(erx_devices_pci_core:resume(catalogues(Lib), Devices), Armed)',
+              to: 'resume(between, Armed)',
+              tests: 'erx_devices_pci_tests',
+              caught_by: 'a_restart_while_the_answered_incarnation_lives_keeps_lowering_test'),
+    # One that passes the enumerator's answer on unread hands a term of the PCIe domain's
+    # to a holder.
+    Fault.new(name: "an enumerator's answer passed on", file: File.join(APPLICATION, 'erx_devices_pci.erl'),
+              from: 'pcie_answered(Then, interface(Answer), State)', to: 'pcie_answered(Then, Answer, State)',
+              tests: 'erx_devices_pci_tests',
+              caught_by: 'an_enumerator_answer_outside_the_interface_is_not_passed_on_test'),
+    # The hold at boot (docs/design-pcie.md, "The hold at boot"): a held row started with
+    # the boot's free rows starts its pci holder before its function's state is settled;
+    # a report's answer that releases nothing, and a hold kept when the PCIe row did not
+    # start, each leave the held row waiting on a release that never comes.
+    Fault.new(name: 'a held row started at boot', file: SERVICE,
+              from: '#{rows := Held} -> Ordered -- Held', to: '#{rows := _Held} -> Ordered',
+              tests: 'erx_domain_tests', caught_by: 'hold_released_by_the_report_answer_test_'),
+    Fault.new(name: "a report's answer that releases nothing", file: SERVICE,
+              from: "handle_cast(pci_report_answered, State) ->\n    {noreply, pci_release(State)};",
+              to: "handle_cast(pci_report_answered, State) ->\n    {noreply, State};",
+              tests: 'erx_domain_tests', caught_by: 'hold_released_by_the_report_answer_test_'),
+    Fault.new(name: 'a hold kept when the PCIe row did not start', file: SERVICE,
+              from: '        [] -> pci_release(State);', to: '        [] -> State;',
+              tests: 'erx_domain_tests', caught_by: 'hold_released_when_the_pcie_row_does_not_start_test_'),
+    # A held row that does not count as starting settles the display it serves as if
+    # nothing would ever serve it, so the start table starts a row naming it at once.
+    Fault.new(name: 'a held row that is not starting', file: SERVICE,
+              from: "<- erx_domain_core:domains(Core)]\n        ++ pci_held(State),",
+              to: "<- erx_domain_core:domains(Core)],",
+              tests: 'erx_domain_tests', caught_by: 'hold_released_by_the_report_answer_test_')
   ].freeze
-
+  
   def test_the_cases_catch_each_seeded_fault
     FAULTS.each do |fault|
       source = File.read(File.join(ROOT, fault.file))

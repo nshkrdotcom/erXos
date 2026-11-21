@@ -2829,7 +2829,15 @@ the device reports takes an index below that length, and a capability's
 registers are reached only where the walk found its entry, each instance of one
 that may occur more than once as `{Name, Index}` in list order;
 `erx_device:elements(Dev, Name)` says how many elements of a register the record
-has. Every
+has. A PCIe bridge's configuration window is not registers but a configuration
+space of its peripheral, blocks of one function's configuration space each
+([design-generation.md](design-generation.md#register-inputs)):
+`erx_device:config_read(Dev, {Space, Index}, Offset, Width)` and `config_write/5`
+make one access of 1, 2 or 4 bytes at an offset of that width inside one block,
+and are badarg, before any access, for an offset or width outside the block and
+for a block that does not lie wholly inside the record's window, which
+`elements/2` counts; on ECAM the index is a function's routing ID from the
+bridge's first bus, so a bus the window does not cover is never reached. Every
 register of a peripheral the NIF drives carries a mark in the SVD source,
 `ownedByNif`, saying whether the NIF owns it, and the generator refuses a
 register without the mark. The NIF owns every register through which a

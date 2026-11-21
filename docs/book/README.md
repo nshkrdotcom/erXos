@@ -86,13 +86,13 @@ chapters it touches are checked again in the same change.
 
 ## Preface: why this order
 
-The book follows the FreeBSD book's arc: overview, processes, the I/O
-system, communication, system operation. It departs from it in five
-places, each because erXos's structure or its readers ask for it.
+The book runs from overview through processes, the I/O system and
+communication to system operation. Five choices of order follow from
+erXos's structure or from its readers.
 
-1. **Background comes first.** The FreeBSD book can assume that its
-   reader knows what a kernel, a page table and a system call are. This
-   book cannot: its readers include programmers who have never opened an
+1. **Background comes first.** The book does not assume that its
+   reader knows what a kernel, a page table and a system call are: its
+   readers include programmers who have never opened an
    operating system and Erlang programmers who have never met a
    microkernel. Part I (chapters 1 to 3) therefore teaches, from the
    ground up and with no erXos in it, the three subjects every later
@@ -116,8 +116,7 @@ places, each because erXos's structure or its readers ask for it.
    plan validated whole; the kernel calls of chapter 8 are generated),
    so the reader meets them once, with small examples, and then sees
    them recur.
-3. **The domain comes before memory.** In FreeBSD the process is the
-   unit of both execution and protection. In erXos the Erlang process is
+3. **The domain comes before memory.** In erXos the Erlang process is
    the unit of execution and failure, and the domain, a group of
    processes behind an address space, is the unit of protection. So
    Part III goes process and scheduler, then domains, then authority and
@@ -132,13 +131,13 @@ places, each because erXos's structure or its readers ask for it.
    display). They come after the parts they are built from and before
    system operation.
 5. **Checking comes last.** How erXos knows it is right (OTP's own
-   suites against stock OTP, musl's tests, fuzz targets, model checking,
+   suites, musl's tests, fuzz targets, model checking,
    seeded faults, reproducible and deterministic boots) draws on every
    chapter, so it closes Part VII.
 
-Kernel services, which the FreeBSD book gives a chapter of their own,
-are chapter 8 here, the kernel interface, because in erXos the kernel's
-services are exactly its interface: everything else runs in user mode.
+Kernel services are chapter 8, the kernel interface, because in erXos
+the kernel's services are exactly its interface: everything else runs
+in user mode.
 
 ## Conventions
 
@@ -520,7 +519,7 @@ Built, as README.md's "Current status" records it.
    applications unmodified, protection, one system, generic runtimes, a
    live machine, Erlang drivers, users, storage and networking, UNIX
    programs where they pay) and the non-functional ones (performance
-   within 1.2 times stock ERTS inside a domain, security on equal footing
+   within 1.2 times ERTS on a conventional system inside a domain, security on equal footing
    with correctness, reproducible images, portability). The non-goals
    matter as much: POSIX is a personality, never the base; no Linux
    binaries; no confidentiality between processes of one domain.
@@ -1261,7 +1260,7 @@ personality as a whole.
 6. **Signals, job control and FreeBSD's numbers.** What a program can
    do with a signal; `kill` reaches only the program itself; `Ctrl-C`
    and the session's job control; signals through vCPU upcalls,
-   designed and not built; one numbering, FreeBSD's.
+   designed and not built; one signal numbering.
    *Draws on:* [design-programs.md, Signals in liberx](../design-programs.md#signals-in-liberx),
    [design-programs.md, Job control](../design-programs.md#job-control).
 7. **The POSIX-lite personality.** What a recompiled program gets, why
@@ -1511,9 +1510,8 @@ an EROFS read checked against the hash tree.
 
 ### Chapter 17. The Network Stack
 
-*About 50 pages.* FreeBSD's default TCP/IP stack, redesigned as
-idiomatic Erlang: matching FreeBSD's observable behaviour is the
-acceptance test, and the structure is new.
+*About 50 pages.* A TCP/IP stack modelled on FreeBSD's default stack
+and designed afresh as idiomatic Erlang.
 
 **Background needed.** Chapters 1, 3, 6 and 15.
 
@@ -1528,13 +1526,13 @@ domain that holds the `net` facet, bounded queues and per-domain
 limits, merged receives, an exhaustive test of the TCP core, fuzz tests
 of the decoders, and NTP. Designed: two speed-ups that work only in host
 tests (checksums in the copy, many segments as one unit), a leaner
-per-segment step, sockets for native programs, FreeBSD's TCP test
-scripts run against the stack, generated admission code, `ntpd` enabled
+per-segment step, sockets for native programs, packet scripts run
+against the stack, generated admission code, `ntpd` enabled
 from `/etc/start.conf`, and WiFi as an interface.
 
-1. **Why FreeBSD's stack, and why not a translation.** What the stack
-   matches, why FreeBSD's default stack and not another, and what a naive
-   Erlang stack gets wrong (timers per connection, unbounded queues,
+1. **Why FreeBSD's stack, and why not a translation.** Why the stack
+   is modelled on FreeBSD's default stack, and what a naive Erlang
+   stack gets wrong (timers per connection, unbounded queues,
    bytes parsed again at every layer).
    *Draws on:* [design-network-stack.md, Why FreeBSD's default stack](../design-network-stack.md#why-freebsds-default-stack),
    [design-network-stack.md, What a naive Erlang stack gets wrong](../design-network-stack.md#what-a-naive-erlang-stack-gets-wrong).
@@ -1548,7 +1546,7 @@ from `/etc/start.conf`, and WiFi as an interface.
 4. **The TCP core.** A pure state machine with the control block, events
    and the step; output, timers, the send log with SACK and reassembly,
    loss detection and congestion control; checked by exhaustive
-   exploration and by packet scripts run against FreeBSD.
+   exploration and by packet scripts.
    *Draws on:* [design-network-stack.md, The TCP core](../design-network-stack.md#the-tcp-core),
    [design-network-stack.md, Packet scripts against FreeBSD](../design-network-stack.md#packet-scripts-against-freebsd).
 5. **The fast path.** What was measured, why the cost is architectural,
@@ -1692,21 +1690,20 @@ and evi, the screen editor run as `vi`.
    [design-shell.md, Pipelines](../design-shell.md#pipelines),
    [design-shell.md, Job control](../design-shell.md#job-control).
 3. **UNIX tools over live Erlang state.** `ps -o pid,rss,comm | sort -rn
-   -k2 | head` lists Erlang processes and programs together in FreeBSD's
-   text, `-` where a value is not measured; `grep -r error /proc/domains`
+   -k2 | head` lists Erlang processes and programs together in the
+   familiar text, `-` where a value is not measured; `grep -r error /proc/domains`
    reads the inspector's state as files. Pipes carry text; records live
    in `erl` and the inspector.
    *Draws on:* [design-shell.md, Text commands](../design-shell.md#text-commands),
    [design.md, Signature experiences](../design.md#signature-experiences).
 4. **Ttys and the console.** A terminal is a tty; the line discipline
-   after FreeBSD's (cooked editing, signals for the foreground group,
-   `termios`) is a pure core; the console's lines and the secure line
+   (cooked editing, signals for the foreground group, `termios`) is a
+   pure core; the console's lines and the secure line
    that alone opens the system shell.
    *Draws on:* [design-live.md, The tty](../design-live.md#the-tty),
    [design-live.md, The console](../design-live.md#the-console).
-5. **Services as FreeBSD starts them.** The start table says what starts
-   without a person, and `service` enables, starts and stops as
-   FreeBSD's does.
+5. **Starting services.** The start table says what starts
+   without a person, and `service` enables, starts and stops it.
    *Draws on:* [design-apps.md, The start table](../design-apps.md#the-start-table).
 6. **An SSH connection is a line.** SSH logins land on the same kind of
    line as the console: the SSH domain, host keys, login keys, channel
@@ -1988,9 +1985,9 @@ outside its own code.
 Coverage-guided fuzzing and sanitizers. Model checking (TLA+) and
 bounded proofs (CBMC). Reproducible builds.
 
-**Status.** Built: the oracles: `make check-oracle`, which runs OTP
-29.1.2's emulator, kernel, stdlib and compiler suites on erXos and on
-stock OTP and compares them case by case, then runs musl's
+**Status.** Built: the oracles: `make check-oracle`, which runs OTP's
+emulator, kernel, stdlib and compiler suites on erXos and on stock OTP
+and compares them case by case, then runs musl's
 `libc-test`; the funnel's differential test against
 `binary_to_term/1`; and the command shell against plan9port's `rc` and
 the terminal emulator against libvterm. Also built are the fuzz

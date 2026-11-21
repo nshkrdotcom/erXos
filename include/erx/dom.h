@@ -351,12 +351,15 @@ typedef struct erx_dom_device_entry {
  * "Records", "The catalogue and gives"). facts is the bridge's record: its
  * buses and windows the tree's (erx_dt_bridge), its index, flags and
  * places the manifest's. A layout is a function as the bridge's placing
- * report gave it, its record's state 0, with the latest report's state
+ * report gave it, its record's state that report's, with the latest report's state
  * (0 when the latest report did not list it) and whether that report
  * listed it with its layout. A bridge with no layouts takes the next
  * report's as its placing report. A bridge marked firmware_lost gives no
  * function, and shows every one not_ready, for the rest of the boot
- * (docs/design-usb.md, "The VL805's firmware").
+ * (docs/design-usb.md, "The VL805's firmware"). answered is the domain id
+ * of the PCIe incarnation whose report the device service last answered,
+ * 0 for none; ids are never reused in a boot, so an ended incarnation's
+ * names no living holder (docs/design-pcie.md, "Concurrency").
  */
 typedef struct erx_dom_pci_layout {
 	erx_pcie_function_t record;
@@ -367,6 +370,7 @@ typedef struct erx_dom_pci_layout {
 typedef struct erx_dom_pci_bridge {
 	erx_pcie_bridge_t facts;
 	bool		firmware_lost;
+	uint32_t	answered;
 	uint32_t	nlayouts;	/* at most ERX_PCIE_FUNCTIONS_MAX */
 	erx_dom_pci_layout_t layouts[ERX_PCIE_FUNCTIONS_MAX];
 } erx_dom_pci_bridge_t;
@@ -378,27 +382,39 @@ typedef struct erx_dom_pci_refusal {
 } erx_dom_pci_refusal_t;
 
 /*
+ * One record of a report as its sender handed it: the bytes of an
+ * erx_pcie_function (erx_pcie_function_encode), not yet read. A sender's
+ * value that is no byte string at all is handed as no bytes.
+ */
+typedef struct erx_dom_pci_record {
+	const uint8_t	*bytes;
+	size_t		size;
+} erx_dom_pci_record_t;
+
+/*
  * The library's intake of a report on bridge's functions, count records as
- * erx_pcie_function_decode gave them (docs/design-pcie.md, "The catalogue
- * and gives"), against the catalogue's nentries entries, whose register
+ * their sender handed them (docs/design-pcie.md, "The catalogue and
+ * gives"), against the catalogue's nentries entries, whose register
  * ranges no BAR may meet. It decides every layout from the whole report and
  * only then writes them all. A bridge with no layouts takes the report's records
- * as its layouts only if every placed memory BAR is aligned to its span,
+ * as its layouts, each with its state, only if every placed memory BAR is aligned to its span,
  * lies whole inside one of the bridge's memory windows and meets no other
  * span and no entry's register range, and every MSI-X table lies inside
  * its BAR's hardware size. A bridge with layouts confirms a layout whose record,
- * without its state, the report repeats, and unconfirms every other. Every
+ * both without their states, the report repeats, and unconfirms every other. Every
  * layout takes the report's state, or none, and not_ready on a bridge marked
  * firmware_lost. ERX_EINVAL, with *refusal naming the record and field,
  * every layout unconfirmed and nothing else written: a record of another bridge, at a bus outside its range,
  * a device or function past its bound or at a place another record holds, of a state or BAR outside its
  * sets (a size past ERX_PCIE_BAR_SIZE_LOG2_WIDE, or past ERX_PCIE_BAR_SIZE_LOG2_MAX on a placed BAR; a
  * placed BAR not memory; a placed 32-bit BAR past 4 GiB; a ready function's memory BAR not placed), a 64-bit BAR whose upper half is not absent, more than
- * ERX_PCIE_FUNCTIONS_MAX records, or, to a bridge with no layouts, any placement
- * check above.
+ * ERX_PCIE_FUNCTIONS_MAX records (field functions, record count), a record
+ * not ERX_PCIE_FUNCTION_SIZE bytes (field record), or, to a bridge with no
+ * layouts, any placement check above. records is read only when count is
+ * within ERX_PCIE_FUNCTIONS_MAX, so a caller may hand none past it.
  */
 erx_status_t	erx_dom_pci_report(erx_dom_pci_bridge_t *bridge, const erx_dom_device_entry_t *entries,
-		    uint32_t nentries, const erx_pcie_function_t *report, uint32_t count,
+		    uint32_t nentries, const erx_dom_pci_record_t *records, uint32_t count,
 		    erx_dom_pci_refusal_t *refusal) ERX_WARN_UNUSED_RESULT;
 
 /*

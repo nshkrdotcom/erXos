@@ -46,7 +46,7 @@ or stopped.
 
 -export([create/1, start_session/2, start_app/2, info/1, introduce/2, line/3, stop/2, id/1, node/1, pid/1]).
 -export([system_principal/0, system_principal_request/0, system_namespace/0, display_settled/1,
-         await_grant/2]).
+         await_grant/2, pci_report_answered/0]).
 -export([inspect_view/1]).
 -export_type([domain/0, spec/0]).
 
@@ -232,6 +232,17 @@ answers a PCIe domain's report, Id the domain its envelope names, only on it
 -spec await_grant(atom(), pos_integer()) -> gen_server:request_id().
 await_grant(Name, Id) when is_atom(Name), is_integer(Id), Id > 0 ->
     gen_server:send_request(erx_domain_srv, {await_grant, Name, Id}).
+
+-doc """
+Tells the domain service that the device service has answered a PCIe
+domain's report, which releases the hold at boot of the configured rows
+holding a `pci` device (docs/design-pcie.md, "The hold at boot"); after the
+hold is released it changes nothing. It is a cast, so the device service,
+which waits on the domain service through await_grant/2, never blocks on it.
+""".
+-spec pci_report_answered() -> ok.
+pci_report_answered() ->
+    gen_server:cast(erx_domain_srv, pci_report_answered).
 
 -doc "Introduces domains A and B: ok once their connection is up at both ends.".
 -spec introduce(domain(), domain()) -> ok | {error, term()}.

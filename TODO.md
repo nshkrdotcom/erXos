@@ -815,7 +815,6 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   The test that a call keeps the caller's registers left with the trap route
   and returns with the `erx` backend's kernel.
 * [High] Fiasco backend, `liberx/backend/fiasco`, thread handles, blocks 0.2: the handle the root or a creator holds to a created space's first thread is the task above the index (`service_thread_handle` in `service.c:658`), not the entry of the creator's handle table that design-fiasco.md's "Thread creation" names, so it can equal one of the root's entries once the root holds 256 of them, and `erx_cap_close` or `erx_cap_dup` of it duplicates or closes an unrelated object. Make it the design's ordinary entry, made by the one create path and checked by the one lookup, so no other value can collide with an entry. Own-task thread handles are still the bare index, not `ERX_FIASCO_THREAD_HANDLE_BASE` plus the index that "Thread handles" names, so thread 0's handle equals `ERX_CAP_NULL` and `erx_gate_bind` reaches thread 0 only through `ERX_CAP_SELF_THREAD`, and an `erx_cap_pass` item holding an own thread's handle is read as the handle table's entry of that number, so it may pass a memory object instead of being refused; move them onto the base, above `caps_max`, as the design's reserved values. Tests: a creator's close and duplicate of its first-thread handle with the root holding more than 256 entries, and a pass of an own-thread handle refused; seeded fault: the first-thread handle built as the task above the index.
-* [High] Fiasco backend, `liberx/backend/fiasco/vm.c`, blocks exposing the call table's per-command and per-task slicing: the page index's size counts the window, contiguous and device pages but not the archive pages a slice adds, one index entry each per live slice, overlapping slices adding theirs independently, so enough live slices fill the index and `page_find` spins on the service thread. Build the design's admission ([design-fiasco.md](docs/design-fiasco.md#the-range-table)): the index sized at two slots for each window page and each of `ERX_FIASCO_SLICE_ENTRIES_MAX` slice entries, a slice's entries admitted against the live count before any is added and refused past it with `ERX_ENOMEM`, given back at the slice's end, and a probe bounded by the slot count; correct `vm_table.h`'s "committing never finds it full". Test: slices made until the refusal, then a commit and a lookup that both end; seeded fault: a slice admitted without counting its entries.
 * [Low] Fiasco backend, `erx_mem_child`: the child's handle is in its caller's table before the eager copy fills it, so a thread of the same task that closes the parent's handle and makes another object under the same number between the two calls has the child filled from that object. Make the creation and the copy one service request.
 * [Low] Fiasco backend, `liberx/backend/fiasco/service_wire.c`: the decoder copies a call's words into `decoded.request` without checking them against `ERX_FIASCO_WIRE_WORDS_MAX`; `erx_fiasco_mem_copy_request` fills all seven, so a longer layout would overflow it. Refuse past the maximum in the decoder, or assert every layout's size.
 * [Medium] Fiasco backend, native boot's seeded failures: `user_ptr` left 0, the
@@ -939,9 +938,8 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   `erx_boot_device_given`, not by one pure function both gives call: move the record decision (facts, the
   memory's device address, the row) into one function in `liberx/backend/core/boot_manifest.c` with host
   tests for `outside`, MAC and COHERENT, and let the library report its refusal through it.
-* [Low] Fiasco backend, `liberx/backend/fiasco/vm.c`: a physical object's device window pages and a contiguous object's
-  run are never given back, so a driver that makes and closes such objects in a loop uses the window or the
-  contiguous pool up for good; each object, not each task, now holds them.
+* [Low] Fiasco backend, `liberx/backend/fiasco/vm.c`: a contiguous object's run is never given back, so a driver that
+  makes and closes such objects in a loop uses the contiguous pool up for good; each object, not each task, holds its run.
 * [Medium] Fiasco backend, `liberx/backend/fiasco/vm.c`: the page index's label map (`vm_label_take`, `vm_label_put`, and
   their use in `erx_fiasco_vm_task_open`, `_close` and `object_fill`) has no test, as `vm.c` builds only for the target and
   no suite makes more than a few tasks. A leaked or doubled label gives two tables one key. A host test should exhaust the
@@ -967,8 +965,8 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
 * [Low] Fiasco backend, `liberx/backend/fiasco/irq.c`: an IRQ object is unbound by a holder allowed in its group (the group's home, its creator or the root: `irq_group_allowed`) and freed with its last handle. Whether a restarted block driver can rebind its line through that is untested.
 * [Medium] Fiasco backend, `liberx/backend/fiasco/vm.c`, `liberx/backend/core/vm_table.c`: the range table sees an object's mapping as uncommitted, so
   `erx_space_protect` over mapped registers or a mapped run returns `ERX_OK` and puts a fresh pool page there, and a decommit or release leaves the
-  mapping reachable. No caller does either. Nothing tests a task that ends holding a physical or contiguous object, so `vm_give`'s address check and
-  the index's room for run pages stay untested. A restarted driver spends device window pages and contiguous runs each life, since neither comes back.
+  mapping reachable. No caller does either. Nothing tests a task that ends holding a physical or contiguous object. A restarted driver spends a contiguous run each life, since
+  none comes back.
 * [Low] hosted backend, `liberx/backend/hosted/vm.c`: `erx_mem_create` and `erx_vm_map` have no hosted body, which the call table's row asks for, so
   `test/guest/function_api` holds no shared object's case and its device cases stay native alone.
 * [Low] `otp/erts/emulator/beam/erl_process.c`: the safe point of `docs/design-runtime.md`, "Scheduling", handles the ready list only: its
@@ -2277,18 +2275,87 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
 * [Medium] domain library and device service, a host bridge's catalogue's callers (`erlang/apps/erx_domain`,
   `erx_devices`; `otp/erts/emulator/nifs/erxos/erx_domain_lib_nif.c`;
   [design-pcie.md](docs/design-pcie.md#the-catalogue-and-gives)): the view holds a catalogue per bridge row, the
-  root joins the tree's windows and `erx_domain_lib:pci_report/2` takes a report into it, but no device service
-  process calls it (package P12), the catalogue has no `answered`, `devices/0` does not show the layouts, the
-  settings or `firmware lost`, and `erx_domain_lib:pci_firmware/1`, which would hand the notification's status to
-  `erx_dom_pci_firmware`, waits for `erx_firmware_request` (the ABI item below). The PCIe domain's record of an
-  unplaced function must carry its BAR's true `size_log2` (`abi/formats/pcie.txt`), where `erx_pcie_cfg:size/2`
-  answers only `{bar_size, Index}` past `pcie_bar_size_log2_max`. Also refuse in `erx_dt_bridge` a window whose
+  root joins the tree's windows and `erx_domain_lib:pci_report/2` takes a report into it, as the device service's
+  PCIe process (`erx_devices_pci`) does, but `/dev`'s `status` does not show a pci row's layout, state, mode and route or `firmware lost` (`devices/0` gives the place
+  and setting, `pci_bridges/0` the rest), and `erx_domain_lib:pci_firmware/1`, which would hand the notification's status to
+  `erx_dom_pci_firmware`, waits for `erx_firmware_request` (the ABI item below). Also refuse in `erx_dt_bridge` a window whose
   PCI, CPU or size is not page-aligned, and check BAR spans across a machine's bridges, not only within one.
-  `pci_report/2` answers any system-domain caller, since its caller is the device service and not the registered
-  domain service; a process that reports before the PCIe domain lays the bridge's layouts for the boot. Hold it to
+  `pci_report/2`, `pci_bridges/0`, `pci_mode/2` and `pci_answered/1` answer any system-domain caller, since their caller is the device
+  service and not the registered domain service; a process that reports before the PCIe domain lays the bridge's
+  layouts for the boot, and one that writes a mode can lower a held function's setting or raise it for its holder
+  beyond what the PCIe domain was asked. Hold them to
   the device service's process (a registration of its own, or the call routed through the domain service), and
-  hold `erx_dom_lib_pci_report` to the NIF and `erx_dom_view_bridge` to the root with chokepoints. The root's join
+  hold `erx_dom_lib_pci_report` and `erx_dom_lib_pci_mode` to the NIF and `erx_dom_view_bridge` to the root with
+  chokepoints. The root's join
   (`tree_facts`) and the NIF's term handling run only on the target; the `pcie` QEMU suite (P12) covers them.
+* [Medium] Services dispatched by name, checked by interface (`erlang/apps/erx_domain/src/erx_domain_srv.erl`,
+  `tools/lib/erx/manifest.rb`, [design-abi.md](docs/design-abi.md#services-facets-and-their-parameter-schemas)): the
+  domain service picks a system-domain facet's callback and the process behind it by the service's name
+  (`system_facet/4`, `served/2`), while the manifest check matches the `log`, `clock` and `inspect` services by
+  interface, so a service named `log` of another interface, or a service of interface `log` under another name, is
+  admitted and its grantees get a surface the check never judged. `check_pcie_parties` closes this for `pci_bus`,
+  `pci` and `pcie` alone, as `check_code_objects_service` does for `code_objects`; bind every system-domain service's
+  name to its interface in one rule and delete the per-interface copies.
+* [Medium] PCIe domain and device service, the start's other side (`erlang/apps/erx_pcie/src/erx_pcie_enumerator.erl`,
+  `erlang/apps/erx_domain/src/erx_devices_pci.erl`, `abi/services/pci_bus.txt`, `pci.txt`, `pcie.txt`,
+  [design-pcie.md](docs/design-pcie.md#facets)): the enumerator runs its start and serves `set` and `reset` over its
+  edge on the host, and on the target opens an ECAM bridge's driver over its given record and calls `pci_bus`
+  through the facet `erx:cap/1` finds; its mint (`erx_pcie_facet`) grants `pcie` to the system domain. The device service's PCIe process (`erx_devices_pci`) applies
+  `erx_devices_pci_core` behind the `pci_bus` and `pci` facets (`erx_pci_bus_facet`, `erx_pci_facet`, minted in
+  front of the domain service and forwarding to the registered process), takes every domain's end from the domain
+  service's forward, answers `report` after `erx_domain:await_grant(pcie, D)` with the incarnation written to the
+  catalogue's `answered` first, and after a restart begins `synced` from it. The domain service serves `pci_bus`
+  and `pci`, whose service rows the shared development manifest declares, and the manifest check holds the three
+  interfaces' servers and grantees to design-pcie.md's "The manifest". Still to build: `firmware`, which answers
+  `{error, enotsup}` until `erx_domain_lib:pci_firmware/1` exists, and
+  that waits for `erx_firmware_request`, which no ABI file or backend declares yet; the identity check
+  of a reported function against its row's compatible string ("The catalogue and gives"); the `pcie` QEMU suite
+  over `Erx::PcieDomain`'s manifest (`config/manifest/qemu-virt-pcie.txt`), with its test holder and its
+  walk-and-report and hold cases. Until then the process and its facets have host tests only. The BCM2711's bridge has its core (`erx_pcie_bcm2711_core`) and no driver module with `start` over a
+  device, so the enumerator refuses its record (`no_driver_module`).
+* [Medium] PCIe domain, its `memory` row (`config/manifest/qemu-virt-pcie.txt`,
+  [design-pcie.md](docs/design-pcie.md#the-rows-and-the-facets-limits)): the `pcie` suite measures 22.5 MiB at
+  rest against the row's 24 MiB, the web row's figure, which leaves 1.5 MiB where the network row's rounding
+  (a whole MiB and 2 MiB of headroom) gives 25 MiB; settle the figure before the rows join the development
+  manifest, remeasuring after a `set`, a `reset` and a restart's walk.
+* [Medium] PCIe and the drivers' control, one mint for system-domain-only grants (`erlang/apps/erx_pcie/src/erx_pcie_facet.erl`
+  `start_link/0`, `mint_init/1`, `mint/1`; `erlang/apps/erx/src/erx_driver_ctl.erl` `start_mint`, `mint_init`, `mint`): the pcie
+  mint repeats the driver-control mint line for line but for its callback module and the grant's extra keys, so a fix
+  to either (its system messages, the withdrawal of an abandoned grant) must be made twice, and the pcie mint's
+  grant path has no host test. Fold both into one mint that takes the callback and the extra grant keys.
+* [Medium] PCIe, the start's leftovers (`erlang/apps/erx_pcie/src/erx_pcie_enumerator.erl`, `abi/services/pci.txt`,
+  [design-pcie.md](docs/design-pcie.md#facets)): the start holds a changed function off by its own copy of the
+  intake's comparison (`changed` in `erx_pcie_enumerator`, `pci_same` in `dom_core.c`), which the answer to `report`
+  does not rely on, since `erx_devices_pci_core:lowered/3` lowers every row the catalogue does not keep; delete the
+  copy if the enumerator can take its off settings from the answer alone. `lowered/3` restates the library's
+  givability (`erx_dom_pci_givable`, `erx_dom_pci_given`) as confirmed, `ready` and not `firmware_lost`, leaving out
+  identity and pin, which fix no setting above `off` today because only a raise through `erx_dom_pci_given` makes
+  one; have `devices/0` answer each `pci` row's `given` from `erx_dom_pci_given` and lower the rows not given, one
+  source. `erx_domain_lib:pci_mode/2` admits a raise for a
+  function its catalogue gives now, though its holder's give, made while it was not givable (a VL805 `not_ready`
+  before its firmware), drove nothing; record in `erx_dom_device_t` whether the give drove it and require that too.
+  No `dom_core_test` case lays a layout from a `not_ready` placing report and confirms it with a `ready` one, the
+  VL805's path, which a `pci_same` comparing the states would break. A start whose route does not fit
+  leaves the function as it reads, where Failure handling turns it off; a root port's reopening that fails and the
+  walk's `past_bound` are not logged. The `pci` interface's scope, a `device` parameter for each device its grantee
+  holds, is not declared: the service grammar takes a parameter set of `u64` alone (`tools/lib/erx/abi_contracts.rb`),
+  and the manifest check has no checker to hold the scope to the grantee's `pci` rows, so both wait for the device
+  service's `pci` facet. `erx_pcie_report:later/3` reports a BAR its layout
+  calls absent as absent even when it reads nonzero, which hides an implemented BAR from the intake; report such a BAR
+  as unsized memory. The planner checks the route in mode `off` too, so an `off` setting cannot lower a function
+  whose route no longer fits. `erx_pcie_apply_tests` keeps a broken property's rule and target but not the input's
+  switch levels and differing fields, and every walk seed reruns it (about 10 s each).
+* [Medium] PCIe, `erx_pcie_apply`'s verification and the later record (`erlang/apps/erx_pcie/src/erx_pcie_apply.erl`,
+  `erx_pcie_enumerator.erl`, [design-pcie.md](docs/design-pcie.md#host-tests-of-the-pure-cores)): the host test the
+  design names for `erx_pcie_apply` (every plan run with each write ignored alone, and with a register ignoring writes
+  from one write on) and its two seeded faults are not written; the model has no write-ignoring registers. A later
+  start reports a drivable function as its stored layout rather than as it reads, so a change the planner's identity
+  does not cover (class, subsystem, pin, MSI-X table, Express offset or FLR flag) is confirmed; build the later record
+  from the read with the layout's BAR sizes and addresses. `targets` must carry each layout's latest state, which the
+  library's intake zeroes, since the enumerator drives only layouts found ready or not_ready. A `set` the planner
+  refuses for the mastering rule is answered `{error, reset}` without turning the function off, and a start whose route
+  does not fit leaves it as it reads, where Failure handling turns it off; a root port's reopening that fails and the
+  walk's `past_bound` are not logged. The `pci` interface's scope, its `device` parameters, is not declared.
 * [Low] image build, the Pi's single file against the loader's device tree (`ProductionImage::Machine#check_single_file`,
   `Fiasco#first_stage_address`): the bound starts at the entry of users-raspi4b's `bootstrap.elf`, not checked
   against the address QEMU's raspi4b model and the firmware load it at (`QemuPlan::MACHINES` loads, 0x200000). If
@@ -3246,6 +3313,11 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   ([todo-performance.md](docs/todo-performance.md), the `system` mount's boot cost).
   Give the domain service a withdrawal it sends the mint for every request it stops
   waiting on, or have each grant end unless the grantee claims it within the deadline.
+* [Low] storage, docs (`docs/design-stopgap.md`, the paragraph on a restart: "answers its start only once the volume
+  has mounted, so ... the domain reports ready, only over a mounted volume, and a mount that fails fails the domain's
+  boot"): `erx_storage_mint` runs its mount after the ready report, in its own process, and holds a mint request
+  until the mount is done, so the domain reports ready before the volume mounts and a failed mount ends the domain
+  after its boot; design-system.md's "Providers" says so. Restate the paragraph from the mint's order.
 * [Medium] storage, `erx_storage_mint` loop (`mint/3`): no host test drives the loop itself.
   `test/erlang/erx_storage_mint_tests.erl` covers `mint_request/3`, `erx_fs_grants:grant_options/1` and the
   answers `grant/5` gives, refusals included, but not that the loop (`mint/3`,
@@ -5095,7 +5167,8 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   catalogue, so the PCIe path of the give is not fuzzed.
 * [Medium] runtime, `erlang/apps/erx/src/erx_device_record.erl` and the device NIF: the domain library writes a
   given PCIe function's `-erx_record function` record ([design-pcie.md](docs/design-pcie.md#the-catalogue-and-gives)),
-  but no reader takes it, so a holder finds no record of its function; read it with a window per placed BAR,
+  but no reader takes it, so a holder finds no record of its function (the `pcie` QEMU suite's hold line matches its
+  words by position meanwhile, `tools/lib/erx/pcie_domain.rb`); read it with a window per placed BAR,
   and have the NIF write an MSI-X route's table from it. A confined function's DMA window by its requester id
   waits for erXos's kernel, as every DMA window does.
 * [Medium] drivers, `erlang/apps/erx_blk` (and `erx_net`, `erx_fb`): no
@@ -9734,10 +9807,15 @@ document's "residual risks accepted" paragraph.
   `erx_firmware_request` in the machine family, and no firmware request record (name, belonging, tag, argument) in
   the system manifest from the platform record's `firmware_requests`. Add the three.
 * [Medium] domain library, `include/erx/device_kinds.h` ([design-usb.md](docs/design-usb.md#who-holds-a-controller),
-  [design-pcie.md](docs/design-pcie.md#the-bridge-seam)): no rows for the host bridges' kinds, so a bridge row
-  is held but not driven and the enumerator finds no given record to choose its module by. Add `pci_ecam`
-  (`pci-host-ecam-generic`) and `bcm2711_pcie` (`brcm,bcm2711-pcie`) with role `configuration` and their
-  peripherals, with the PCIe domain on QEMU `virt` (package P12).
+  [design-pcie.md](docs/design-pcie.md#the-bridge-seam)): the host bridges' kinds drive a bridge row, but neither
+  platform record (`config/platforms/`) has a `configuration` row and no manifest a PCIe domain, so no bridge is
+  given yet (package P12). No host test checks a bridge's given record (role `configuration`, LINE_H 0 for
+  QEMU's ECAM, INDEX its row) through the domain library's apply, and the manifest check does not refuse a
+  `configuration` row with DMA memory, which the boot view refused while bridges were of no kind.
+* [Low] boot records, `-erx_record given` ([design-fiasco.md](docs/design-fiasco.md#device-records)): the record's
+  field list is kept by hand in its C writer (`erx_boot_given_words`), its room (`ERX_BOOT_GIVEN_WORDS_MAX`), its
+  Erlang reader (`erx_device_record:spec/2`, whose error clauses match a positional tuple), the native guest's
+  reader and `ProductionImage::Run::GIVEN_RECORD_WORDS`; one declared grammar would generate them.
 * [Medium] system manifest, `abi/manifest.txt` ([design-usb.md](docs/design-usb.md#mass-storage-reaches-the-file-servers)):
   the boot-time reader bounds no `windows[].drive` (it has no rule for "`mf_none` or below `usb_drives_max`"); add
   one before `erx_blk_drive` reads the field.
@@ -9756,10 +9834,15 @@ document's "residual risks accepted" paragraph.
   the places start the tree's grants (`input_tree/1`), but nothing yet hands one to the display domain the
   manifest names, and no `erx_usb_sup` starts the places before the bus. Both come with the USB domain's start.
 * [Medium] USB and PCIe, `hw/svd/` ([design-usb.md](docs/design-usb.md#registers-at-offsets-the-controller-reports),
-  [design-generation.md](docs/design-generation.md#register-inputs)): no configuration-space view for ECAM or for the
-  BCM2711 bridge. Write both (8-, 16- and 32-bit accesses at a computed offset, bounded by the window: ECAM's window,
-  and the BCM2711's root port at 0 and endpoint data window at `0x8000`) with the generator's support for them;
+  [design-generation.md](docs/design-generation.md#register-inputs)): no configuration-space view for the BCM2711
+  bridge. Write its `<configurationSpace>` rows (the root port at 0 and the endpoint data window at `0x8000`, each one
+  block, as `pci_ecam.svd` does ECAM's) beside its registers;
   `erx_pcie_bcm2711_core`'s `cfg_read` and `cfg_write` operations reach configuration space through that view.
+  `check_spaces` (`tools/lib/erx/hardware.rb`) refuses a space over a register, and the root port's block at 0 holds
+  the SVD's `RC_CFG_*` registers, so the design must first say whether a space may cover named registers.
+* [Medium] device NIF, `erx_device.c` `erx_device_config_read`/`_write` and `erx_device_nif.c` `decode_config`: no test
+  reaches them (the harness checks the core only): open a `pci_ecam` stand-in and check a round trip at each width,
+  a value wider than its width refused, block 256 refused and `elements/2` 256, with a seed on the value bound.
 * [Medium] PCIe, `erlang/apps/erx_pcie/src/erx_pcie_bcm2711_core.erl` ([design-pcie.md](docs/design-pcie.md#the-bridge-seam)):
   the core runs an agenda of closures, so its state cannot be printed, compared or explored exhaustively, and its
   operation vocabulary (`{wait, Us}`, `{read, Register}`, `{write, Register, Word}`) is a second one beside
@@ -9768,12 +9851,6 @@ document's "residual risks accepted" paragraph.
 * [Low] docs, `docs/research-brcmstb-pcie.md` section 2: the worked `BASE_LIMIT` for the mainline tree's 64 MiB window
   reads `0x00300000`; FreeBSD's encoder (`bcm2838_pci.c:591-596`) gives `0x03f00000`, the limit being MiB `0x603f`.
   Re-check the section's worked values in a new dated record.
-* [Medium] PCIe, `erlang/apps/erx_pcie/src/erx_pcie_ecam.erl` ([design-pcie.md](docs/design-pcie.md#the-bridge-seam)):
-  `start/2` answers `{error, unsupported}`, since the device NIF has no access at a computed offset until the ECAM
-  configuration-space view above exists. The driver's accesses go through a `space()` (a module with `read/3` and
-  `write/4` at a window offset) that `open/2` takes and only the host tests supply. When the view lands, `start/2`
-  makes its state from the device record and the `space()` indirection is deleted; the view's bound by the window
-  then also covers a tree whose `bus-range` reaches past its ECAM `reg`.
 * [Medium] USB, `tools/lib/erx/chokepoint_rules/device.rb` ([design-usb.md](docs/design-usb.md#the-block-transport)):
   `device-posters` names neither `erx_xhci` as a poster of `erx_device:post/4` nor `erx_blk_write` as the one caller
   of `erx_usb_pipe:bulk_out/3`, and nothing holds `erx_device` to `erx_xhci` within `erlang/apps/erx_usb/`. Add the

@@ -45,6 +45,11 @@
 #define RIGHT_X		4u
 #define RIGHTS_ALL	7u
 
+/* Tables over runs: each run's pages, a place below the window for them, and more runs than the index has slots. */
+#define RUN_PAGES	8u
+#define RUN_WINDOW	UINT64_C(0xE00000000)
+#define RUNS_MANY	(4u * SLOTS)
+
 /* What a page should be: the core's states, plus lying in a hole. */
 #define PAGE_HOLE	(ERX_BACKEND_PAGE_RX + 1)
 #define PAGE_KINDS	(PAGE_HOLE + 1)
@@ -1221,6 +1226,95 @@ roomless_write(int signal_number)
 	_exit(1);
 }
 
+/*
+ * The device window's ranges (erx_fiasco_device_window_take, _give) over eight pages:
+ * first fit from the window's start, a gap too small passed over and never overlapped, a
+ * given-back range taken again by the next take that fits it, the window's last page
+ * taken and a take past its end refused, and a window emptied of every range whole again.
+ */
+static void
+check_device_window(void)
+{
+	const uint64_t base = RUN_WINDOW;
+	erx_fiasco_device_window_t window;
+	uint64_t a, b, c, d, e, f;
+
+	current_case = "device window";
+	erx_fiasco_device_window_init(&window, base, base + 8 * PAGE, &records);
+	if (erx_fiasco_device_window_take(&window, PAGE, &a) != ERX_OK || a != base ||
+	    erx_fiasco_device_window_take(&window, 2 * PAGE, &b) != ERX_OK || b != base + PAGE ||
+	    erx_fiasco_device_window_take(&window, PAGE, &c) != ERX_OK || c != base + 3 * PAGE)
+		fail("ranges not placed first fit, apart, from the start", window.ntaken);
+	erx_fiasco_device_window_give(&window, b);
+	/* Two free pages below c: three pages go above it, and two take the freed range. */
+	if (erx_fiasco_device_window_take(&window, 3 * PAGE, &d) != ERX_OK || d != base + 4 * PAGE)
+		fail("a range overlaps a live one or passes a gap that holds it", d);
+	if (erx_fiasco_device_window_take(&window, 2 * PAGE, &e) != ERX_OK || e != b)
+		fail("a given-back range was not taken again", e);
+	if (erx_fiasco_device_window_take(&window, 2 * PAGE, &f) != ERX_ENOMEM)
+		fail("a take past the window's end was admitted", f);
+	if (erx_fiasco_device_window_take(&window, PAGE, &f) != ERX_OK || f != base + 7 * PAGE)
+		fail("the window's last page was not taken", f);
+	erx_fiasco_device_window_give(&window, c);
+	erx_fiasco_device_window_give(&window, a);
+	erx_fiasco_device_window_give(&window, f);
+	erx_fiasco_device_window_give(&window, d);
+	erx_fiasco_device_window_give(&window, e);
+	if (window.ntaken != 0 || erx_fiasco_device_window_take(&window, 8 * PAGE, &a) != ERX_OK || a != base)
+		fail("an emptied window is not whole again", window.ntaken);
+	erx_fiasco_device_window_give(&window, a);
+	erx_backend_grow_table_clear(&window.taken);
+	checks++;
+}
+
+/*
+ * Tables over runs (erx_backend_vm_run_init): each address of a run's area is the run's
+ * page at the same offset, its last page included and none past it or below it; a request
+ * on one is refused; and none keys the page index, so more runs than the index has slots
+ * leave the task table's commit and lookup ending as before. A mapping of a run's pages
+ * puts the run's own pages in the task's space, and an offset past the run is refused.
+ */
+static void
+check_run_tables(void)
+{
+	static erx_backend_vm_table_t runs[RUNS_MANY];
+	const erx_backend_vm_request_t commit = { .op = ERX_BACKEND_VM_COMMIT, .addr = PAGE, .size = PAGE };
+	erx_backend_vm_plan_t plan;
+
+	current_case = "run tables";
+	world_reset(POOL_PAGES);
+	for (uint32_t run = 0; run < RUNS_MANY; run++) {
+		const uint64_t first = RUN_WINDOW + (uint64_t)run * RUN_PAGES * PAGE;
+
+		erx_backend_vm_run_init(&runs[run], (uintptr_t)first, PAGE, RUN_PAGES * PAGE, &records);
+		for (uint64_t page = 0; page < RUN_PAGES; page++)
+			if (erx_backend_vm_window(&runs[run], PAGE + page * PAGE) != first + page * PAGE)
+				fail("a run's page is not the run's at its offset", page);
+		if (erx_backend_vm_window(&runs[run], PAGE + RUN_PAGES * PAGE) != 0)
+			fail("an address past a run's end has a page", run);
+		if (erx_backend_vm_window(&runs[run], 0) != 0)
+			fail("an address below a run's area has a page", run);
+	}
+	for (size_t slot = 0; slot < SLOTS; slot++)
+		if (index_slots[slot].key != 0)
+			fail("a run keyed the page index", slot);
+	if (erx_backend_vm_plan(&runs[0], &commit, &plan) != ERX_EINVAL)
+		fail("a request on a run was not refused", 0);
+	if (call(ERX_BACKEND_VM_RESERVE, AREA_START, 4 * PAGE, ERX_VM_FIXED, 0, NULL) != 0 ||
+	    call(ERX_BACKEND_VM_COMMIT, AREA_START, PAGE, 0, 0, NULL) != 0 || erx_backend_vm_window(&table, AREA_START) == 0)
+		fail("the task table's commit and lookup beside the runs", 0);
+	if (erx_backend_vm_map_object(&table, &runs[1], 1, &effects, AREA_START + PAGE, 2 * PAGE, (RUN_PAGES - 2) * PAGE,
+	    ERX_PROT_RW) != 0 || mmu[1].window != RUN_WINDOW + (2 * RUN_PAGES - 2) * PAGE ||
+	    mmu[2].window != RUN_WINDOW + (2 * RUN_PAGES - 1) * PAGE)
+		fail("a mapping of a run's last pages shows other pages", mmu[1].window);
+	if (erx_backend_vm_map_object(&table, &runs[1], 1, &effects, AREA_START + 3 * PAGE, PAGE, RUN_PAGES * PAGE,
+	    ERX_PROT_RW) != ERX_ERANGE)
+		fail("a mapping past a run's end was not refused", 0);
+	erx_backend_vm_table_clear(&table, &effects);
+	unmapped_count[1] = 0;
+	checks++;
+}
+
 int
 main(int argc, char **argv)
 {
@@ -1234,6 +1328,7 @@ main(int argc, char **argv)
 	check_contig(seed);
 	check_contig_small();
 	check_contig_reach();
+	check_device_window();
 	print_contig_orders();
 	check_layout();
 	check_object_rules();
@@ -1243,6 +1338,7 @@ main(int argc, char **argv)
 	check_random_calls(seed + 1, 20000);
 	check_steps_table();
 	check_labels();
+	check_run_tables();
 	check_mappings_every_range();
 	check_mappings();
 	check_shed();

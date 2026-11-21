@@ -14,6 +14,7 @@
   --rail: 17rem;
   --measure: 40rem;
   --column: 52rem;
+  --hang: 5.5rem;
 }
 
 *,
@@ -262,6 +263,16 @@ h4 {
 }
 
 @media (min-width: 90rem) {
+  /* The numbers hang left of the text, so the column keeps room for them
+     clear of the contents rail. */
+  .frame {
+    max-width: calc(var(--rail) + var(--column) + var(--hang) + 6rem);
+  }
+
+  main {
+    padding-left: var(--hang);
+  }
+
   h2 .num,
   h3 .num,
   h4 .num {

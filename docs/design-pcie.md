@@ -381,7 +381,18 @@ target. The outcomes:
 a function is its target if the function reads as it, and otherwise the
 same target in mode `off`. A running function's plan is then empty, and
 a disturbed one gets its layout and route written with every switch
-quiet. `erx_pcie_plan:start_target/2` is that choice. A function with no
+quiet. `erx_pcie_plan:start_target/2` is that choice. At a later walk a
+function whose record differs from its layout, without their states,
+where the planner's identity does not look (its subsystem, class code,
+revision, pin, FLR flag or MSI-X table), has the target of its layout
+and the setting `off` with route `none` whatever its setting, so no
+route it no longer fits refuses the lowering, and is reported not kept: the
+intake leaves it unconfirmed and gives it to no one, so it must not go
+on decoding or mastering, and the PCIe domain keeps that guarantee
+itself, whatever the device service answers: until its next start the
+enumerator holds no layout for it, so neither the answer to `report` nor
+a `set` or `reset` raises it ([Failure handling and
+restart](#failure-handling-and-restart)). A function with no
 layout, one that appeared beside its bridge's layouts, is only lowered
 to quiet, by `quiet/1`.
 
@@ -447,25 +458,44 @@ reset, which the driver then resets by its registers. The longest
 ### Processes
 
 The PCIe domain, `pcie` (node `pcie@erxos`), runs one permanent
-application, `erx_pcie` in `erlang/apps/erx_pcie/`, whose one process,
-the **enumerator**, owns every bridge the domain holds and serves the
-`pcie` facet. Its decisions are pure modules:
+application, `erx_pcie` in `erlang/apps/erx_pcie/`, with two processes
+below one supervisor (`erx_pcie_sup`): the **enumerator**
+(`erx_pcie_enumerator`), which owns every bridge the domain holds and
+serves `pcie`, and the **mint** of the `pcie` facet
+(`erx_pcie_facet`), which grants it to the system domain alone and
+whose facets forward each well-formed request to the enumerator by its
+registered name. They are two because each must be up at a different
+moment of the boot. The mint must be named before init's ready report
+([Facets](#facets)), so the boot script starts it; the enumerator needs
+the `pci_bus` facet the ready answer brings, so the domain row's
+`-eval ok=erx_pcie_sup:start_enumerator()` starts it, after the answer.
+And the enumerator is blocked in its `report` call while the system
+domain mints its `pcie` grant, which the device service awaits before it
+answers, so a mint request the enumerator had to answer would never be
+answered. Its decisions are pure modules:
 
 | Module | Pure function |
 | --- | --- |
 | `erx_pcie_cfg` | parses a configuration snapshot, 256 bytes, into the read value of a function or root port, or refuses it; decodes BAR sizing answers |
 | `erx_pcie_walk` | the walk as a state machine: each step takes the last access's answer and returns the next access or the walk's result |
-| `erx_pcie_place` | the layouts of a placing walk's functions, given the bridge's windows |
+| `erx_pcie_place` | the layouts of a placing walk's functions, given the bridge's windows; a root port's window over the layouts below it |
+| `erx_pcie_report` | the `erx_pcie_function` record of each function a walk found, from its read value, sizes and placement |
 | `erx_pcie_plan` | the plan's stages, each its writes and the state they lead to, from a read value and a target; the descent to quiet; whether a function reads as a state; the start's target |
 | `erx_pcie_bcm2711_core` | the BCM2711 bridge's bring-up and keep-or-reset decision as a state machine over register reads |
 
 The effects, every configuration access and every bridge register, go
 through the bridge driver's `access` and the device NIF, and
-`erx_pcie_apply` is the one caller of `plan/2`. Any crash of the
-enumerator ends the application and so the domain, which the domain
-service restarts within the row's intensity; the restarted domain asks
-for the targets again. There is no supervisor below it: the domain's
-restart is the recovery.
+`erx_pcie_apply` is the one caller of `plan/2`. The supervisor is
+`one_for_all` with intensity 0, so the end of either process ends the
+other and the application, and so the domain, which the domain service
+restarts within the row's intensity; the restarted domain asks for the
+targets again. No process is restarted in place: the domain's restart
+is the recovery. So no mint outlives its enumerator, and a `pcie`
+facet, which ends with its mint, never stands in front of an
+enumerator of another incarnation. A request that reaches a facet
+before the `-eval` has started the enumerator is refused
+`{error, unavailable}`; the device service sends none then, since it
+calls `pcie` only after answering the enumerator's report.
 
 ### The bridge seam
 
@@ -486,12 +516,18 @@ A **bridge driver** implements the `erx_pcie_bridge` behaviour:
 
 `start` brings the bridge up; `access` is one configuration access at a
 place, and answers `{error, absent}` without touching the hardware for
-a place its bridge must not be asked about; `ready` lets a bridge hold
+a place its bridge must not be asked about, or whose device is past 31
+or function past 7, which would name another function's routing ID, as
+FreeBSD reads all ones there ([What is matched](#what-is-matched),
+ECAM); `ready` lets a bridge hold
 back a function its board must start first. The walk, sizing, placement
 and planner call nothing else, so a third bridge is one more module. The
 enumerator chooses the module by the bridge's given record's
 peripheral, `pci_ecam` or `bcm2711_pcie`, rows of
-`include/erx/device_kinds.h` with role `configuration`.
+`include/erx/device_kinds.h` with role `configuration`, and finds that
+record by its INDEX, the bridge's manifest device row, which is the
+`erx_pcie_bridge`'s `index`
+([design-fiasco.md](design-fiasco.md#device-records)).
 
 **ECAM** (`erx_pcie_ecam`). `start` does nothing. An access at a place
 whose bus lies outside the bridge's bus range, from the tree's
@@ -810,7 +846,8 @@ in a boot, keep from naming a later incarnation
 ([Concurrency](#concurrency)). A `pci` row's device record gains its
 **setting**, which its give writes. The row finds its function's layout by place in its
 bridge's entry, so no layout is stored twice.
-`erx_domain_lib:devices/0` shows them, with `/dev`'s `status` naming
+`erx_domain_lib:devices/0` and `pci_bridges/0` show them ([The
+catalogue and gives](#the-catalogue-and-gives)), with `/dev`'s `status` naming
 the place, the identity, the BARs, the state, the mode and the route,
 and the bridge's `firmware lost` when it is set.
 
@@ -1039,16 +1076,20 @@ section is this document's:
 
 | Interface | Served by | Granted to | Operations |
 | --- | --- | --- | --- |
-| `pci_bus` | the system domain's device service | the PCIe domain alone | `targets() -> {ok, Bridges, Layouts, Settings}`; `report(Functions) -> {ok, Settings}`; `firmware(Bridge) -> ok` |
-| `pci` | the system domain's device service | each configured domain that holds a `pci` device, its scope the devices it holds, as `device` parameters | `open(Place) -> ok`; `master(Place) -> ok`; `reset(Place) -> {ok, flr \| none}` |
+| `pci_bus` | the system domain's device service: its facet (`erx_pci_bus_facet`) stands in front of the domain service and forwards to the registered PCIe process | the PCIe domain alone | `targets() -> {ok, Bridges, Layouts, Settings}`; `report(Functions) -> {ok, Settings}`; `firmware(Bridge) -> ok` |
+| `pci` | the system domain's device service: its facet (`erx_pci_facet`) stands in front of the domain service and forwards to the registered PCIe process | each configured domain that holds a `pci` device, its scope the devices it holds, as `device` parameters | `open(Place) -> ok`; `master(Place) -> ok`; `reset(Place) -> {ok, flr \| none}` |
 | `pcie` | the PCIe domain | the system domain alone | `set(Place, Setting) -> ok`; `reset(Place) -> {ok, flr \| none}` |
 
 Each answer of an error is `{error, Reason}`
 ([Refusals and error results](#refusals-and-error-results)). `Place` is
-`{BridgePath, Bus, Device, Function}`, the function's place as its
-manifest row and its given record name it; the device service matches
-it against the rows the facet's grantee holds and never trusts it
-otherwise. `firmware(Bridge)` names a bridge the PCIe domain holds; the
+`{Bridge, Bus, Device, Function}`: `Bridge` is the manifest device row
+of the function's host bridge, as the records' `bridge` field holds it
+([Records](#records)), and the rest the function's place. So the PCIe
+domain, which knows its bridges only by row, and the device service
+name a function alike; a manifest row names the bridge by its
+device-tree path, which the build resolves to that row. The device
+service matches `Place` against the rows the facet's grantee holds and
+never trusts it otherwise. `firmware(Bridge)` names a bridge the PCIe domain holds; the
 device service makes `erx_firmware_request` through
 `erx_domain_lib:pci_firmware(Bridge)`, with the resource the bridge's
 device record holds for its give, which marks the bridge `firmware_lost`
@@ -1080,8 +1121,20 @@ since `targets`, and then serves `pcie`.
 
 **The answer to `report`.** The device service takes the report through
 the library's intake ([The catalogue and
-gives](#the-catalogue-and-gives)), lowers to `off` the setting of every
-function the start turned off, and answers with every setting, but only
+gives](#the-catalogue-and-gives)), each bridge the library holds taking
+the report's records that name it and a record naming no held bridge
+reaching no intake; and lowers to `off` the setting of every `pci` row
+whose function the catalogue, as the intake left it, does not keep (one
+with no layout, on a bridge marked `firmware_lost`, one the report did
+not list with its layout, `confirmed`, or one it did not find `ready`),
+and of every function the start turned off, which it reports not kept
+(`erx_devices_pci_core`). The first rule reads the library's catalogue
+alone, so a report the intake refused whole and a function the walk left
+unreported past `pcie_functions_max` are lowered whatever the start
+reported; the second lowers a function the start found disturbed, whose
+record is unchanged. A setting above `off` stays only on a function the
+library could give now and the start left at it. It answers with every
+setting, but only
 once the system domain holds the reporting incarnation's `pcie` facet.
 The incarnation is the domain id `D` that the report's `{erx_origin, D,
 Msg}` envelope names, written by the connection. The device service
@@ -1119,7 +1172,271 @@ serves from a stale view, and none misses a holder's end.
 that only the PCIe domain holds `pci_bus`, only the system domain holds
 `pcie`, and a domain holds a `pci` facet exactly when it holds a `pci`
 device, its scope those devices, as property 8 proves the driver-control
-facet's grantee from the interface.
+facet's grantee from the interface. It holds the servers to the table
+above as well: a `pci_bus` or `pci` service is the system domain's and a
+`pcie` service the PCIe domain's, since a `pci_bus` of another server
+would direct which functions the enumerator raises. The system domain
+picks a facet's callback and the process behind it by the service's
+name, so each of the three services is named by its interface, and a
+service of one of those names is of that interface. The facet rows'
+limits, and the PCIe domain's own rows, are [The rows and the facets'
+limits](#the-rows-and-the-facets-limits). The PCIe domain is
+the configured row named `pcie`; the only rows that may name it are its
+bridges' units, its place in the boot order, its `pcie` service and its
+`pci_bus` facet. The shared part of the development manifest declares
+the system domain's two services, so a board whose part places no
+bridge declares them and grants neither:
+
+```
+service pci_bus
+  server system
+  interface pci_bus
+service pci
+  server system
+  interface pci
+```
+
+A board whose part places a bridge adds the domain's rows ([The rows
+and the facets' limits](#the-rows-and-the-facets-limits)), its unit, its
+`pcie` service and the three grants, each facet row stating its limits
+as every source row states them:
+
+```
+unit pcie
+  placement "pcie"
+  holder @domain.pcie
+service pcie
+  server @domain.pcie
+  interface pcie
+facet pci_bus
+  grantee @domain.pcie
+  service @service.pci_bus
+  operations targets,report,firmware
+  max_request 65536
+  in_flight 1
+  reductions 5000000
+  period_ns 10000000000
+  max_heap_size 65536
+facet pcie
+  grantee system
+  service @service.pcie
+  operations none
+  max_request 1024
+  in_flight 1
+  reductions 100000
+  period_ns 1000000000
+  max_heap_size 8192
+facet pci
+  grantee @domain.HOLDER
+  service @service.pci
+  operations open,master,reset
+  max_request 1024
+  in_flight DEVICES
+  reductions 100000
+  period_ns 1000000000
+  max_heap_size 8192
+```
+
+with one `pci` facet for each configured domain holding a `pci` device,
+`DEVICES` the number of `pci` devices that domain holds. The `pci_bus` and
+`pci` rows list every operation of their interface, since the system
+domain's facets (`erx_pci_bus_facet`, `erx_pci_facet`) check a grant's
+operations and admit none their row leaves out; the `pcie` row lists
+none, as every service a configured domain serves does on Fiasco
+([design-time.md](design-time.md#on-fiasco)), and `erx_pcie_facet`, which
+has no `operation/1`, admits by the request's shape alone.
+
+### The rows and the facets' limits
+
+The facets' figures rest on the encoded and decoded sizes of their
+requests and answers at their widest, measured with
+`erlang:external_size/1` and `erts_debug:flat_size/1` on the
+development host's stock OTP 28 (Homebrew's `erl`, an Apple Silicon
+Mac): each record field at the largest value its type allows, each
+enum at its longest name, each flag set full, and a call in its
+envelope, `{'$gen_call', {Pid, [alias | Alias]}, Request}`, whose pid
+and alias each carry a node name of 255 bytes, the envelope
+`code_objects_max_request` holds
+([design-system.md](design-system.md#creating-a-domain), "The
+`code_objects` facet"). The host test below checks the one figure that
+is a floor on the tree's own OTP.
+
+| Term | Encoded bytes | Decoded words |
+| --- | --- | --- |
+| one reported function, `#{record => Record, kept => false}` | 1,000 | |
+| the envelope of an empty request | 585 | |
+| `report` of 64 functions, in its envelope | 64,526 | 12,821 |
+| `pci`'s `open` or `reset`, in its envelope | 598 | |
+| `pcie`'s `set`, in its envelope | 678 | |
+| `targets`' answer: 2 bridges, 64 layouts, 64 settings | 69,957 | 14,580 |
+
+A report carries every function of every bridge the domain holds, so
+its widest is `pcie_bridges_max` times `pcie_functions_max`, 64
+records, not one bridge's 32.
+
+**`pci_bus`.** `max_request` is 65,536: the widest report, 64,526 bytes,
+rounded up to a power of two. A row naming less drops the report
+unanswered (`erx_facet` drops a call past `max_request` and counts it),
+the enumerator never reports ready, and every holder of a `pci` device
+waits out the hold's 30 s and starts without it. So the figure is a
+floor, not a choice: `abi/services/pci_bus.txt` declares it as the limit
+`pci_bus_max_request_min`, and the manifest check refuses a `pci_bus`
+facet whose `max_request` is below it, naming the facet and the floor,
+as it refuses a tree facet below `files_max_frame_min`. The constant is
+written by hand, not generated: the size of an `erx_abi_layout` map in
+the external term format is OTP's to compute, and a Ruby model of it
+would be a second encoder. A host test in `erx_pci_bus_facet`'s suite
+proves it instead: it builds the widest report, passes each record
+through `erx_abi_layout:encode(erx_pcie_function, Record)`, whose clause
+takes a map with every field, so a field added to the layout fails the
+test until the test's record gains it, and checks that the report's
+`external_size` in the envelope above is at most
+`?ERX_PCI_BUS_MAX_REQUEST_MIN`. Its seeded failure is
+`pcie_functions_max` raised to 33, which takes the report past the
+floor. `in_flight` is 1, the enumerator's one process. `reductions`
+5,000,000 per `period_ns` 10,000,000,000 is the share
+[design-board-sensors.md](design-board-sensors.md#concurrency-and-failure)
+derives: one `firmware` request at its 1 s deadline, 4,000,000
+reductions, with the start's `targets` and `report` in the same period.
+`max_heap_size` is 65,536 words (512 KiB): the facet's process holds one
+request, its frame of at most 64 KiB (8,192 words, an off-heap binary
+that counts) and the decoded report of 12,821 words, about 21,000 words
+live, which a copying collection doubles.
+
+**`pcie` and `pci`.** Each request is one operation, a place of four
+integers below 2^32 and, for `set`, an `erx_pcie_setting` of two atoms
+and two integers below 2^64, so `max_request` is 1,024, the widest
+request (678 bytes) rounded up to a power of two, the figure
+`code_objects_max_request` gives the same envelope. A row naming less
+than the widest request drops it unanswered, as for `pci_bus`, but no
+floor is declared for these: the requests are the envelope and a few
+words, and the `pcie` QEMU suite's cases send every operation.
+`max_heap_size` is 8,192 words (64 KiB), a process holding one small
+request, as `root_clock`'s does. The `pcie` grant's `in_flight` is 1:
+the device service's PCIe process is its one caller and makes one call
+at a time ([Concurrency](#concurrency)). A `pci` grant's is the number
+of `pci` devices its holder holds, so each function's driver may have
+its one call in flight; a smaller figure answers a second driver's call
+`{error, busy}`, which it may retry. Both take the 100,000 reductions
+per 1 s that every message facet of the development manifest takes: a
+driver makes three calls at its start and the device service one per
+holder's change, each a few thousand reductions, and a function-level
+reset's waits, up to about 1.1 s in the enumerator, are timers, not
+reductions.
+
+**The domain's rows.** The PCIe domain is an interpreter service domain
+of the system principal, as the web and display domains are:
+
+```
+runtime_limits pcie
+  max_frame 131072
+  max_message_heap 131072
+  funnel_depth 64
+  exports 256
+  tmp 0
+  overlay 0
+  atoms 16384
+  foreign_atoms 1024
+  processes 1024
+share pcie
+  quota_ns 500000
+  period_ns 10000000
+  cpuset 1
+  capacity_mcpu 50
+  capacity_first 0
+  slice_us 1000
+  grace_us 5
+  base 16
+  ceiling 31
+  flags none
+limits pcie
+  memory 25165824
+  outer 1048576
+  grant @share.pcie
+  spaces none
+  lane 4096
+  connections 1
+  crash 0
+  flags none
+  runtime_limits @runtime_limits.pcie
+  peer_held 4096
+  peer_held_total 4096
+domain pcie
+  principal @principal.system
+  limits @limits.pcie
+  kind service
+  flags none
+  runtime @artifact.emu
+  release @artifact.pcie
+  restarts 5
+  restart_period_s 600
+  args "-- -root / -bindir /bin -progname erl -home / -nouser -nocookie -no_epmd -proto_dist erx -eval ok=erx_pcie_sup:start_enumerator()"
+```
+
+* **`max_frame`** 131,072 holds the widest answer the domain takes,
+  `targets`' 69,957 bytes; a smaller one drops that answer, the
+  enumerator waits, and the boot timeout stops and restarts the domain,
+  a stop rather than a wrong answer. **`max_message_heap`** 131,072
+  words holds its 14,580 decoded words several times over. The rest
+  are the storage, network, web and display rows' figures: one process
+  and its application come nowhere near their process count, atom
+  table or export table, and the domain has no RAM file system and no
+  overlay.
+* **`memory`** 24 MiB, the web row's figure (in
+  `config/manifest/qemu-virt-development.txt`), against a measured use
+  of 5,750 pool pages, 22.5 MiB, at rest after its report: the root's
+  pool pages in use with the domain up minus those once it has ended,
+  as the storage row's figure is measured, on the `pcie` suite's
+  walk-and-report cell (an Apple Silicon Mac, M3 Max, macOS 27.0.1;
+  HVF, 1 CPU, a 768 MiB machine; QEMU 11.1.3; the development image
+  built with Homebrew clang 23.1.3; the workload the boot's walk, its
+  report and answer, and the test holder's one `open`; the baseline
+  the root's pool pages once the domain has ended). The figure is the
+  web row's because the `pcie` suite's PCIe rows take the room the web
+  domain's rows give back, so every machine-wide figure stays the
+  development manifest's. It leaves 1.5 MiB of headroom, where the
+  network row's rule, the use rounded up to a whole MiB with 2 MiB of
+  headroom, gives 25 MiB. **`outer`** 1 MiB and the
+  **`peer_held`** figures are every configured domain's.
+* **`connections`** 1: its system connection carries its `pci_bus`
+  calls and the system domain's `pcie` calls, and it reaches no other
+  domain. **`lane`** 4 KiB: what it reads is the system domain's
+  answers, a few each boot, which reassemble across the lane.
+* **The grant**, 50 mcpu on CPU 0, is a share of its own, since no
+  existing share is this small: the domain spends CPU on its start's
+  walk, some hundreds of configuration accesses, and then on one `set`
+  or `reset` per holder's change. Its time is not measured; the walk's
+  time on the Pi 4, the slowest bridge, is the number to read from the
+  board probe.
+* **`restarts`** 5 in 600 s, every configured domain's: a domain that
+  crashes before reporting releases the hold at its end ([The catalogue
+  and gives](#the-catalogue-and-gives), "The hold at boot"), so its
+  restarts hold no other row.
+* **The release** `pcie` is a bare release with `erx_pcie`
+  ([Processes](#processes)), built as the web row's release is.
+
+**Where the rows live.** `config/manifest/qemu-virt-pcie.txt` holds the
+rows above, the unit, the `pcie` service and the `pci_bus` and `pcie`
+facets, spelled as above. It is not a board part: the `pcie` QEMU
+suite's manifest is the development manifest without the web domain
+(`Manifest::Edit.without_domain`), with this file appended and the test
+holder's rows, its unit and its `pci` facet added by the suite, as the
+display suite adds its client's (`tools/lib/erx/display_domain.rb`).
+The PCIe rows take exactly the web domain's memory, outer budget,
+connection and place in the system principal's domains quota, and less
+of `system` than the web share's 150 mcpu, so leaving out the web
+domain keeps every machine-wide figure (the system principal's memory
+and domains, `max_domains`, `max_connections`, `root_memory`, and
+property 13 of [design-system.md](design-system.md#the-manifest)) as
+the development manifest has it, and the suite tests nothing of the
+web domain. Should the PCIe rows outgrow the web domain's, the manifest
+check refuses the suite's manifest at build time. When USB input lands,
+the file's rows move into `config/manifest/qemu-virt-development.txt`,
+the board part, which then grows the system principal's memory by the
+domain's 25 MiB, its domains quota, `max_domains` and `max_connections`
+by one and `root_memory` by 25 MiB, and gives the grant its room in
+`system`, which grows to 3.1 CPUs in QEMU `virt`'s development manifest
+([Open decisions](#open-decisions)); the file is then deleted.
 
 ## The catalogue and gives
 
@@ -1149,8 +1466,9 @@ report. It decides every entry of the bridge from the whole report and
 only then writes them all at once, so no order of processing can leave
 an earlier state in place:
 
-* **A bridge with no layouts** takes the report's layouts, a record
-  without its `state`, only if every record passes: each placed BAR is
+* **A bridge with no layouts** takes the report's records as its
+  layouts, each with its `state`, the placing walk's, only if every
+  record passes: each placed BAR is
   aligned to its span and lies inside its bridge's window; no two spans
   overlap each other or any other entry's register ranges; an MSI-X
   table lies inside its BAR's hardware size. One record that fails
@@ -1162,7 +1480,8 @@ an earlier state in place:
   does not hold.
 * **A bridge with layouts** checks each record against its layout
   alone, which passed those checks when it was taken: a function is
-  confirmed when its record, without its `state`, equals its layout; one
+  confirmed when its record equals its layout, both without their
+  `state`; one
   the report does not list, or lists with another record, is
   unconfirmed; a function at a place with no layout is `unplaced`.
 * **Every function's state** is the latest report's, so a function the
@@ -1172,6 +1491,41 @@ an earlier state in place:
   says, so the VL805 a late firmware answer brought up after its
   notification timed out is never given in that boot, however many
   starts of the PCIe domain keep the bridge and report it ready.
+
+**The device service's reads and writes** of the catalogue are three
+more calls of the library, each answering any caller in the system
+domain as `pci_report/2` does:
+
+* `erx_domain_lib:pci_bridges/0` answers every host bridge's catalogue
+  in device row order, each `#{bridge, firmware_lost, layouts}`: the
+  bridge's `erx_pcie_bridge` record, its mark, and its layouts in their
+  placing report's order, each `#{record, state, confirmed}`, the
+  `erx_pcie_function` with the placing walk's `state`, the latest
+  report's `state` (`none` when it did not list the function) and
+  whether it listed it with its layout. `targets` answers each bridge's
+  record and its layouts' records, so the enumerator drives a layout by
+  its placing walk's state, as the PCIe domain's start requires: a layout
+  the placing walk found `ready` or `not_ready` has its BARs placed and
+  is started again whatever a later start found, and one it found
+  `unplaced`, `unsupported` or `malformed` never is.
+* `erx_domain_lib:devices/0` gives a `pci` row its `place`, `{Bridge,
+  Bus, Device, Function}` as [Facets](#facets) spells it, by which the
+  device service matches a report's function to its row, and its
+  `setting`, the `erx_pcie_setting` its give wrote and the writes below
+  changed; `none` for both on every other row. `targets` answers each
+  row's setting by its place.
+* `erx_domain_lib:pci_mode(Index, Mode)` writes the mode of row
+  `Index`'s setting, its route staying the give's: `off`, a lowering
+  ([Concurrency](#concurrency)), always; `decoding` or `mastering`, a
+  raise, only for a function a living domain holds and its catalogue
+  gives, so the library says a raise only of a function a holder holds
+  and could be given now.
+  Any other row, or a raise refused, is `{error, einval}`. The library's own end of a
+  holder's device records lowers its functions too.
+
+The library hands every record to Erlang as the bytes the generated C
+encoder writes, which `erx_abi_layout` decodes, the records' one form in
+Erlang ([Records](#records)).
 
 **The give** of a `pci` device, `erx_dom_plan_unit_give`: a function
 with no layout, not confirmed, or not `ready` gives nothing, as a device
@@ -1198,16 +1552,32 @@ line only its row names has no object and no holder reads it.
 units hold a `pci` device only once the device service has answered the
 boot's first report, holding its start as it holds a start for a
 principal's ending domain; rows without one start in boot order
-meanwhile. The device service releases the hold at that answer, or when
-the PCIe row ends or fails to report ready within its boot timeout, or
-30 s after its ready answer, whichever is first; a row started after a
-failed hold gets nothing of its `pci` devices. The check's boot order
-puts the PCIe domain before every row holding a `pci` device.
+meanwhile. The PCIe row is the row holding a host bridge some `pci`
+device's place names; it is never held, and a machine with no PCIe row
+holds nothing. The hold is released at the first of four: the device
+service's answer to a report, which it tells the domain service with
+`erx_domain:pci_report_answered/0`; 30 s after a PCIe row's ready
+answer; a PCIe row's end, whatever its restart, so a row that crashes
+before reporting cannot hold the rows for as long as its restarts last;
+and no PCIe row booting, which the domain service derives from its
+domains' states once the boot's other rows have started and again at
+each PCIe row's stop for not reporting ready within its boot timeout. A
+PCIe row whose start was refused, whose domain was ready at its start,
+or which was stopped will never report, so the hold is released then. A held row counts as starting while it waits, so a
+grant it serves is waited for, not settled as failed. A row started
+after a failed hold gets nothing of its `pci` devices.
 
-**A holder's end.** The device service monitors the holder's domain pid
-from its give; at its end it sets the setting's mode `off` in the
-library and then calls `pcie:set`, or, with no PCIe incarnation
-answered, leaves it to the next start's `targets` or `report`.
+**A holder's end.** The device service learns of every domain's end
+from the domain library, whose `{domain_ended, Id, End, Record}` the
+domain service takes and forwards to the PCIe process before it acts on
+the end, so before it starts the holder's next incarnation; the process
+keeps no monitor. The process keeps each `pci` row it last read with a
+living holder until that holder's end arrives, since the library's own
+end of the holder's device records clears the row's holder and sets its
+mode `off` before the end is reported. At the end it sets the setting's
+mode `off` in the library with `pci_mode/2` and then calls `pcie:set`,
+or, with no PCIe incarnation answered, leaves it to the next start's
+`targets` or `report`.
 
 ## Concurrency
 
@@ -1229,7 +1599,8 @@ and those sent are written in one order. Its decisions are a pure core,
 | `down` | 5 s in `between` | `{error, unavailable}` at once | as in `between` |
 
 The answer to a report moves it to `synced`; the end of the answered
-incarnation, which it monitors, to `between`, and a request whose `pcie`
+incarnation, whose end the domain service forwards as a holder's is, to
+`between`, and a request whose `pcie`
 call failed because that incarnation ended waits again; 5 s in
 `between`, past one restart's bring-up and walk, to `down`. A process
 its supervisor restarts cannot learn from a facet's presence whether a
@@ -1237,12 +1608,18 @@ report was answered, since the grant is installed whether or not it
 was, so it reads the bridges' `answered` from the library: when an
 entry names the incarnation that the bridge's device record names as
 its holder, it asks `erx_domain:await_grant(pcie, D)` for that
-incarnation's facet and begins in `synced` with it, monitoring it, and
-otherwise begins in `between`. The answer is written to the library
+incarnation's facet and begins in `synced` with it, sending `off` for
+every `pci` row the library holds at `off`, since a holder's end
+forwarded while the process was restarting reached no process; and
+otherwise begins in `between`, where the next start's `targets` carries
+those settings. The answer is written to the library
 before it is sent, so a crash between the two leaves a report that the
 library calls answered and the enumerator never received; the
 enumerator's call fails with the process, the enumerator exits, and
-the new process sees that incarnation end and goes to `between`.
+the new process sees that incarnation end and goes to `between`; if it
+read the library before the end cleared the bridge's holder, it is
+`synced` on that incarnation until the end arrives, and what it sends
+there meanwhile ends with the facet and waits again.
 
 Two orders keep the library from saying more than the function was
 asked for: a lowering (a holder's end, the first step of its `reset`) is
@@ -1293,10 +1670,10 @@ waits for.
 | transactions still pending at a function-level reset | the enumerator's 1000 ms wait | no reset; the function stays off; `{error, busy}` |
 | the VL805's firmware stays absent after the notification | `ready` | it is reported `not_ready`; a later start resets the bridge and asks again |
 | the notification times out | `erx_domain_lib:pci_firmware/1` | the bridge's entry is marked `firmware_lost` in the same call; every later report of the bridge is taken as `not_ready`, so the VL805 is not given until the next boot, even when a late answer loads its firmware and a later start keeps the bridge; a later bring-up's notification answers `ERX_ETIMEDOUT` at once ([design-usb.md](design-usb.md#the-vl805s-firmware)) |
-| a holder ends while the PCIe domain is down | the device service's monitor | the library's setting says `off`; the next start applies it |
-| the device service's PCIe process crashes | its supervisor | it restarts, reads every setting, holder and `answered` from the library and monitors the holders again; it begins in `synced` only with an answered incarnation that still holds its bridges ([Concurrency](#concurrency)); a function whose holder has ended is set `off` |
+| a holder ends while the PCIe domain is down | the domain library's `domain_ended`, which the domain service forwards | the library's setting says `off`; the next start applies it |
+| the device service's PCIe process crashes | its supervisor | it restarts, reads every setting, holder and `answered` from the library; it begins in `synced` only with an answered incarnation that still holds its bridges ([Concurrency](#concurrency)), and then sends `off` for every function the library holds at `off`, so a function whose holder ended while it restarted is set `off` |
 | a placing walk's record fails intake | the library | the bridge takes no layouts and places again at its next walk; nothing on it is given; a log line names the record and the field |
-| a later report's record differs from its layout | the library | its function is unconfirmed and not given; its holder's requests answer `{error, gone}` |
+| a later report's record differs from its layout | the enumerator's start and the library | the start takes the function to its layout and the setting `off` with route `none`, whatever its setting, and reports it not kept; the intake leaves it unconfirmed and not given, so the device service lowers its setting; its holder's requests answer `{error, gone}` |
 
 A **restart keeps** nothing in the PCIe domain and everything in the
 library: the layouts, the settings and the confirmations. It **re-reads**
@@ -1336,17 +1713,19 @@ been made, which the readback catches. That is a residual of Fiasco
 | | `{error, busy}` | a function-level reset with transactions still pending after 1000 ms |
 | | `{error, route}` | the route does not fit the function: no such capability, or a doorbell beyond its MSI address width |
 | | `{error, unknown}` | a place the enumerator has no layout for |
+| | `{error, badarg}` | the facet's refusal of a request out of the interface's shape, before the enumerator sees it |
+| | `{error, unavailable}` | the facet's refusal of a request that finds no enumerator registered ([Processes](#processes)) |
 | `pci_bus:report` | `{ok, Settings}` | after intake, once the system domain holds the incarnation's `pcie`; refusals are per function, in the log and in `/dev` |
 | | `{error, unavailable}` | `erx_domain:await_grant(pcie, D)` answered an error: the grant failed or missed the mint core's deadline, the incarnation ended, or it provides no `pcie` |
 | `pci_bus:firmware` | `{error, Status}` | the kernel call's status other than `ERX_OK`, such as `ERX_ENOTSUP`, `ERX_ETIMEDOUT` or `ERX_EBUSY` |
-| `erx_pcie_cfg:parse/1`, `size/2` | `{error, Field}` | the parser's refusals ([The walk](#the-walk), [Sizing](#sizing)); the function is reported `malformed` or `unplaced` |
+| `erx_pcie_cfg:parse/1`, `size/2` | `{error, Field}` | the parser's refusals ([The walk](#the-walk), [Sizing](#sizing)); the function is reported `malformed`; `size/2` answers a BAR's true size, and the walk reports a function whose size no window can place `unplaced` |
 | `erx_dom_pci_report` | `ERX_EINVAL`, the placing walk's layouts refused whole | a BAR outside its window, not aligned to its span, or overlapping another device; an MSI-X table past its BAR's hardware size |
 | `erx_irq_create` of `ERX_IRQ_MSI` | `ERX_ELIMIT` | no free line of the frame, or the function past `ERX_MSI_MAX` |
 | | `ERX_ENOMEM` | the Fiasco root's IRQ slots are full |
 | the give | refused, the creation with it | a doorbell the function's DMA range does not map one to one |
 | | nothing given, as a device the machine lacks | a function with no layout, unconfirmed or not `ready`; at a closed bridge's place, a reported pin that is not the place's |
 | the boot view | the bridge's unit and the place's refused | a closed bridge's `interrupt-map` routing a listed place's pin to a line other than its row's, or to one of the bridge's own lines |
-| the manifest check | the build fails, naming the property | a second holder of a bridge's unit; a `pcie` domain holding another unit; a `pci` row with a line at a place no closed bridge lists; a closed bus's line given apart from its row; more line-less `pci` rows than the frame's lines; a `pci_bus`, `pcie` or `pci` facet granted against the rule above |
+| the manifest check | the build fails, naming the property | a second holder of a bridge's unit; a `pcie` domain holding another unit; a `pci` row with a line at a place no closed bridge lists; a closed bus's line given apart from its row; more line-less `pci` rows than the frame's lines; a `pci_bus`, `pcie` or `pci` facet granted against the rule above; a `pci_bus` facet whose `max_request` is below `pci_bus_max_request_min` |
 
 ## On Fiasco
 
@@ -1390,7 +1769,7 @@ that touches it.
 | Test | Passing case | Seeded failure |
 | --- | --- | --- |
 | `erx_pcie_plan` | exhaustive over every switch state of the read value, every mode and route, each data field equal or differing, and each capability present or absent, run against a model of configuration space: the plan has no stage exactly when the function reads as the target; after each stage the model reads as the stage's state, and after the last as the target; every stage moves one way, each of its writes carrying every switch between its values at the stage's start and in its state; every data write happens while the model is quiet; every lowering precedes every raising; bus master is the first lowering and the last raising; a `mastering` target from anything but `decoding` or `mastering` is `{error, reset}`; after every prefix of every plan, the start's target from that state is the setting only if the state reads as it, and `off` otherwise | the floor taken as the lower of read and target even when data differ, the rule of writing only what differs: a decoding function with a wrong BAR gets its BAR written with memory space on, and the quiet check fails; the floor quiet whenever any field differs: a running function's plan to `mastering` turns memory space off first, and the check that no switch drops below both what it read and what the target decides fails; bus master raised before the live step: the order check fails; the mastering rule removed: a blank function's plan to `mastering` is accepted |
-| `erx_pcie_apply`, over a model bridge driver | every plan of the planner's inputs, run once with each of its writes ignored alone, a later write of the same register then repeating it, and once with each register ignoring every write from one write on: no data write is made while the model is not quiet; no switch is raised while a data field of the model differs from the target; the answer is `ok` only when the model reads as the target, `{error, gone}` only when it reads quiet, and `{error, stuck}` otherwise; after a stage that did not take, the only writes are the descent to quiet | one readback after the last stage: with the memory-space disable ignored, a BAR is written while the model decodes and the quiet check fails, and the answer is `ok`; the descent to quiet taken as done without its readback: with the command register ignoring writes, the answer is `{error, gone}` while the model is not quiet |
+| `erx_pcie_apply`, over a model bridge driver | every plan of the planner's root port, and of its endpoint over every switch state, mode and route with its data all equal or all differing, for an MSI form with and one without per-vector masking, each with and without MSI-X, run once with every write taking, once with each of its writes ignored alone, a later write of the same register then repeating it, and once with each register ignoring every write from one write on: no data write is made while the model is not quiet; no switch is raised while a data field of the model differs from the target; the answer is `ok` only when the model reads as the target, `{error, gone}` only when it reads quiet, and `{error, stuck}` otherwise; after a stage that did not take, the only writes are the descent to quiet | one readback after the last stage: with the memory-space disable ignored, a BAR is written while the model decodes and the quiet check fails, and the answer is `ok`; the descent to quiet taken as done without its readback: with the command register ignoring writes, the answer is `{error, gone}` while the model is not quiet |
 | `erx_pcie_cfg` | snapshots of a type-0 and a type-1 header, MSI, MSI-X and Express capabilities, 32- and 64-bit BARs, decode to the expected values; each refusal of [The walk](#the-walk) has a fixture that is refused naming its field; sizing answers for each BAR kind give their hardware sizes, a non-contiguous mask is refused | the step bound removed: the looping fixture does not end within the test's deadline; the table BAR bound removed: the fixture with indicator 6 is accepted |
 | `erx_pcie_place` | for generated sets of BARs, with and without root ports: every placed BAR inside the window, aligned to its span, no two spans overlapping, no two root ports' windows overlapping; the same set in any order gives the same addresses; a fixed set of a 4 KiB, a 64 KiB and a 1 MiB BAR gives the addresses written in the test | the alignment rounding dropped: the 64 KiB BAR lands at 4 KiB and both the alignment property and the fixed addresses fail |
 | `erx_pcie_walk` | against a model configuration space, an open root bus with multifunction devices and a root port, and a BCM2711 model whose root port sets the multifunction bit and whose bus 1 has devices at listed and unlisted places: every function found, root ports numbered in place order, and the model records no hardware access at a place the bridge does not list | the BCM2711 access's place check removed: the model records an access at bus 0, function 1 |
@@ -1398,6 +1777,7 @@ that touches it.
 | `erx_devices_pci_core` | exhaustive over its states and events: requests in `between` are answered only after a report's answer, or at `down`; a holder's end in `between` lowers the setting and sends nothing; a lowering is written before it is sent and a raise after its `ok`; the report's answer is withheld until `await_grant` answers the incarnation's facet, and `answered` is written before the answer is sent; a restarted process begins in `synced` only when `answered` names the incarnation holding its bridges, and in `between` when it names an ended one or none; the sequence `targets` with a mastering setting, the holder's end, `report` leaves the model's function off | the answer's settings dropped: that sequence leaves the function mastering after its holder's end; a raise written before its `ok`: after a failed `set` the library says `mastering`; the restart's state taken from the facet's presence: a restart after the grant was installed and before the report was answered begins in `synced` |
 | `erx_dom_pci_report` (C, host) | a valid placing report is taken whole; a BAR outside the window, unaligned, overlapping another entry, an MSI-X table past its BAR's size, each refuses the placing report whole with `ERX_EINVAL`; at a later report, a changed record, a missing one and a `not_ready` one each leave the function ungiven although an earlier report confirmed it; on a bridge marked `firmware_lost`, a report listing the VL805 `ready` leaves it ungiven; `erx_dom_pci_firmware` over a backend whose call answers `ERX_ETIMEDOUT` marks the entry before it returns, and over one answering `ERX_OK` or `ERX_ENOTSUP` does not | the overlap check removed: the overlapping fixture is admitted; the earlier confirmation kept when a record is missing: the missing function stays given; the mark not read at intake: the VL805 reported ready after the timeout is given |
 | `erx_domain:await_grant/2`, the domain service over its mint core | a wait for incarnation `D` is answered `{ok, Facet}` with `D`'s facet once installed, `{error, failed}` when its grant fails, `{error, ended}` when `D` ends or the grant moves to another server, and `{error, unprovided}` when `D` is ready without `pcie`; the service answers other calls while it waits; `system_namespace/0` still waits for every `files` grant | the wait matched by service alone: a wait for `D` is answered with its predecessor's installed facet; the idle case dropped: the wait for an incarnation that provides no `pcie` is never answered within the test's deadline |
+| `erx_pci_bus_facet`, the report's floor | the widest report, `pcie_bridges_max` times `pcie_functions_max` records each passed through `erx_abi_layout:encode(erx_pcie_function, Record)` at every field's widest value, in a call envelope whose pid and alias carry 255-byte node names, has an `external_size` at most `?ERX_PCI_BUS_MAX_REQUEST_MIN` ([The rows and the facets' limits](#the-rows-and-the-facets-limits)) | `pcie_functions_max` raised to 33: the report passes the floor and the case fails |
 | Fiasco's MSI line allocator (C, host) | lines from the range's first to its last, then `ERX_ELIMIT`; a freed line is taken again | the range's end off by one: the test's last allocation lies outside the range |
 
 ### Fuzz targets
@@ -1432,12 +1812,12 @@ confirmed against the pinned QEMU's documentation.
 
 | Case | Checks | Seeded failure |
 | --- | --- | --- |
-| walk and report | the report's places, identities and BAR addresses equal QMP's `query-pci` answer, which the harness's QMP reader parses (its fields are to be confirmed against the pinned QEMU) | placement's alignment off by a page: QMP's region differs and the case fails |
+| walk and report | the report's places, identities and BAR addresses equal QMP's `query-pci` answer, which the harness's QMP reader parses (its fields are to be confirmed against the pinned QEMU) | placement's candidates put a page off: the function is left unplaced (a misaligned BAR is refused by the library's intake before the bridge writes it), its open answers `{error, gone}` and the case fails |
 | a test holder | a test domain holding `qemu-xhci` sends `open`, reads the capability length register through its window, sends `master`; the PCIe domain's inspection record shows the command register and MSI state | `open` not setting memory space: the register read returns all ones |
 | a device-generated MSI | the test holder has the function raise its interrupt, by a command whose completion posts an event, and its IRQ object is delivered within the deadline | the MSI enable left out of the ascent: no delivery |
 | restart | the PCIe domain killed while the test holder masters: after its restart the enumerator's count of writes to that function is zero and the holder's next register read succeeds | the planner taking every field as differing: the count is nonzero |
 | restart behind a root port | the same with `qemu-xhci` behind a root port the harness attaches: the root port's write count is zero too | the root port sized at every walk: its count is nonzero and the holder's read fails |
-| holder end | the test holder halts: the function's command register reads memory space and bus master clear | the device service's monitor dropped: the command still reads set |
+| holder end | the test holder halts: the function's command register reads memory space and bus master clear | the domain service's forward of the end dropped: the command still reads set |
 | holder end during a PCIe start | the PCIe domain killed, then the test holder halted before the new report: after the start the function reads off | the report's answer carrying no settings: the function still masters |
 | interrupted transitions | the PCIe domain killed repeatedly while the test holder loops `open` and `master`: after each restart the function reads either as the library's setting or off, never mastering with another route | the start's rule replaced by the plan to the setting: a restart raises a function |
 | function-level reset | where `qemu-xhci` offers one, `reset` answers `{ok, flr}` and the function reads `decoding` with its layout; where it does not, `{ok, none}` | the plan to `decoding` after the reset left out: the function reads without its layout |
@@ -1520,6 +1900,25 @@ the line, the DMA limit and the abort's kind.
   describes an identity range from 0, and loses a translating bridge's
   offset and lower bound; the cut range as the function's DMA facts
   goes through the create every device's give already uses.
+
+## Open decisions
+
+* **Where the PCIe domain's grant finds room in `system`.** Property 13
+  of [design-system.md](design-system.md#the-manifest) holds the
+  configured service domains' grants to `system`'s rate less
+  `system_reserve` of it. QEMU `virt`'s development manifest has no room
+  left: `system` is 30 ms per 10 ms, 3.0 CPUs, less the reserve's 250
+  thousandths, 2.25; the storage and network domains take 1.0 each, the
+  web share 0.15 and the display share 0.1, 2.25 in all. The `pcie` suite
+  needs no answer, since it leaves out the web domain ([The rows and the
+  facets' limits](#the-rows-and-the-facets-limits)), but the PCIe rows'
+  move into the board part does. The choices: grow `system` to 31 ms per
+  10 ms (3.1 CPUs, 2.325 after the reserve) in the development
+  manifest's shared part, which every board's four-CPU cpuset holds;
+  take the 50 mcpu from the web or display share, both still to be sized
+  from measurement; or lower `system_reserve`. Recommendation: grow
+  `system`, which keeps the reserve's headroom and takes from no domain
+  whose share is not yet measured; on the Pi 4 it only adds headroom.
 
 ## References
 

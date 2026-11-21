@@ -20,6 +20,12 @@
  * platform record carries it.
  */
 #define ERX_FIASCO_KIP_WINDOW	UINT64_C(0xDFFFFF000)
+/*
+ * The root's native UTCB slots (thread.c), one area of 2^ERX_FIASCO_UTCB_AREA_ORDER bytes
+ * the kernel takes as the root's kernel-user memory; the device window ends below it
+ * (vm.c), so no device range is ever mapped over it.
+ */
+#define ERX_FIASCO_UTCB_AREA	UINT64_C(0xF00000000)
 
 /* The first address of the area the root's range table hands out. */
 #define ERX_FIASCO_AREA_START	UINT64_C(0x4000000000)
@@ -95,18 +101,22 @@ int	erx_fiasco_vm_paged_create(uint32_t object, uint64_t size, bool code) ERX_WA
 int	erx_fiasco_vm_child_create(uint32_t object, uint32_t parent, uint64_t offset, uint64_t size) ERX_WARN_UNUSED_RESULT;
 /* Seals a paged object, sealed already or not; another kind of object is ERX_ETYPE. */
 int	erx_fiasco_vm_object_seal(uint32_t object) ERX_WARN_UNUSED_RESULT;
-/* Gives back a memory object's pages and label; nothing may map it any more. */
+/*
+ * Gives back a memory object's pages and label, and a physical object's device window
+ * range once it is unmapped from every space; nothing may map the object any more.
+ */
 void	erx_fiasco_vm_object_free(uint32_t object);
 /*
- * An object over a device's registers, mapped at a device window address and from
- * there anywhere its task reserves. A full window is ERX_ENOMEM;
+ * An object over a device's registers, mapped at a fresh range of the device window and
+ * from there anywhere its task reserves. No free range of its size is ERX_ENOMEM;
  * sigma0's refusal, which RAM gets, is ERX_ERANGE. Its arguments are checked already.
  */
 int	erx_fiasco_vm_physical_create(uint32_t object, uint64_t base, uint64_t size) ERX_WARN_UNUSED_RESULT;
 /*
  * Maps the device page at physical address page, page-aligned, into the root for
  * the root's own use and gives its address in *window. The mapping lasts the root's
- * life. A full device window is ERX_ENOMEM, and sigma0's refusal ERX_ERANGE.
+ * life. Past the root's own pages of the device window is ERX_ENOMEM, and sigma0's
+ * refusal ERX_ERANGE. It works before erx_fiasco_vm_init.
  */
 int	erx_fiasco_vm_device_page(uint64_t page, uintptr_t *window) ERX_WARN_UNUSED_RESULT;
 /*
@@ -123,7 +133,7 @@ int	erx_fiasco_vm_object_dma_addr(uint32_t object, uint64_t offset, uint64_t *ad
 /*
  * A slice: an object over size bytes of the boot archive's own pages from window, the
  * root's address of entry first's run, holding count entries. Its pages are never
- * written and never join the pool. A run at or above the window is ERX_ENOTSUP.
+ * written and never join the pool.
  */
 int	erx_fiasco_vm_slice_create(uint32_t object, uintptr_t window, uint64_t size, uint32_t first, uint32_t count)
 	    ERX_WARN_UNUSED_RESULT;

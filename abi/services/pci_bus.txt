@@ -1,0 +1,15 @@
+# Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
+# SPDX-License-Identifier: BSD-2-Clause
+# The pci_bus interface (docs/design-pcie.md, "Facets"): what the PCIe domain's
+# enumerator asks of the system domain's device service. targets answers each host bridge
+# the domain holds, the layouts the library keeps for its functions and every function's
+# setting; report hands over every function a start found, each its erx_pcie_function
+# record (abi/formats/pcie.txt) and whether the start kept it at its setting, and is
+# answered with every setting once the system domain holds that incarnation's pcie facet;
+# firmware asks for a bridge's firmware notification. Only the PCIe domain holds it, and
+# its grant takes one request in flight.
+service pci_bus 16
+  served_as message
+  operation targets 1
+  operation report 2
+  operation firmware 3

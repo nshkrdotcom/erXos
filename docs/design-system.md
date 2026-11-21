@@ -1149,10 +1149,12 @@ in place before anyone can connect to it.
   `files` service to it has settled: the mint core has installed it
   ([Facets a configured domain serves](#facets-a-configured-domain-serves)),
   its operation has failed, or it has no operation while its server is
-  not starting. A server is starting from its start until it reports
-  ready, is stopped for its boot timeout, or ends. A server that is ready
-  but does not provide the grant's name, one that has ended, and one whose
-  start was refused are not starting, so their grants have no operation
+  not starting. A server is starting from its start, or from the boot
+  while the hold at boot holds its row ([Devices](#devices)), until it
+  reports ready, is stopped for its boot timeout, or ends. A server that
+  is ready but does not provide the grant's name, one that has ended,
+  and one whose start was refused are not starting, so their grants have
+  no operation
   to wait for and count as settled. Grants of every other
   interface (`net`, `driver_control`, `web`) are not waited for: the mint
   core installs them when their server reports, as it does after a
@@ -2392,8 +2394,14 @@ mint named after the report is refused. A mint lives as long as its domain's inc
 providers are the report's until the domain ends, so a mint's end ends its
 domain, as a permanent application's does, and the restarted domain's
 report provides again. A server reports ready
-only once it can serve: the storage domain's report follows its mount of
-`/data`. The ready-report gate authenticates the reporting domain and its
+once its mints are named, and each of its services serves from the
+moment its protocol says: a storage mint runs its mount after the
+report and holds a mint request that comes first in its queue until
+the mount is done (`erx_storage_mint`), and for the PCIe protocol
+serving starts at the answer to the PCIe domain's report: its mint
+grants `pcie` at once, and its enumerator takes a request only once the
+device service has answered that report
+([design-pcie.md](design-pcie.md#processes)). The ready-report gate authenticates the reporting domain and its
 connection agent ([Creating a domain](#creating-a-domain)), but the
 `provides` map is the server's own words and is untrusted. The domain
 service takes from it only what the manifest and the reporting
@@ -3499,10 +3507,13 @@ its bridges ([design-pcie.md](design-pcie.md#concurrency)).
 units hold a `pci` device only once the device service has answered the
 boot's first report, holding its start as it holds a start for a
 principal's ending domain, and starts the rows without one in boot order
-meanwhile. The device service releases the hold at that answer, when the
-PCIe row ends or fails to report ready within its boot timeout, or 30 s
-after its ready answer, whichever is first; a row started after a failed
-hold gets nothing of its `pci` devices
+meanwhile. The hold is released at the first of: the device service's
+word that it has answered a report, 30 s after a PCIe row's ready
+answer, a PCIe row's end, or no PCIe row booting, which the domain
+service checks once the boot's other rows have started and at each PCIe
+row's stop for its boot timeout; the domain service sees all but the first itself. A held row
+counts as starting, and a row started after a failed hold gets nothing
+of its `pci` devices
 ([design-pcie.md](design-pcie.md#the-catalogue-and-gives)).
 
 **Units.** Devices that cannot be given apart, because they share a

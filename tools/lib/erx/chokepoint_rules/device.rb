@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
 # frozen_string_literal: true
 
+require_relative '../abi'
 require_relative '../hardware'
 
 module Erx
@@ -43,6 +44,17 @@ module Erx
     # determined bypass (a macro include, token pasting, a hand-written volatile access): what
     # keeps a runtime off device registers is that only erx_device maps device memory.
     PERIPHERALS = Hardware.devices(root: REPOSITORY)
+    # The generated encoder of each device record, a layout of a descriptor format
+    # (ABI::Marks::Schema#device_record?), read from the ABI model, so a record or format
+    # is covered as it is declared. An empty list would make the rule's pattern match at
+    # every word boundary, so it is refused.
+    DEVICE_RECORD_ENCODERS = ABI::Model.validate(ABI::Sources.read(root: REPOSITORY)).then do |schema|
+      schema.types.values.select { |type| type.is_a?(ABI::Layout) && schema.marks.device_record?(type) }
+            .map { |layout| "#{ABI::CEmitter.name(layout.name)}_encode" }.sort.freeze
+    end
+    if DEVICE_RECORD_ENCODERS.empty?
+      raise Error, 'no descriptor format holds a marked layout: device-record-encoders has nothing to guard'
+    end
     PERIPHERAL_HEADERS = PERIPHERALS.map { |device| Hardware.device_header_path(device) }.freeze
     PERIPHERAL_SYMBOLS = PERIPHERALS.flat_map { |device| Hardware.generated_symbols(device) }.freeze
     # An include of one of those headers by its path below include/, in any case, so a header
@@ -153,13 +165,14 @@ module Erx
         ),
         Chokepoints::Forbidden.new(
           name: 'device-register-callers',
-          rule: "only erx_device's BIFs, and its tests through the C interface, call its register accesses",
+          rule: "only erx_device's BIFs and NIFs, and its tests through the C interface, call its register and configuration accesses",
           design: DEVICE_DESIGN,
           scope: DEVICE_SCOPE,
-          pattern: /\berx_device_(?:read|write)(?:_field)?\b/,
+          pattern: /\berx_device_(?:config_)?(?:read|write)(?:_field)?\b/,
           sites: [Chokepoints::Site.new(glob: "#{DEVICE_NIFS}/erx_device.c"),
                   Chokepoints::Site.new(glob: "#{DEVICE_NIFS}/erx_device.h"),
                   Chokepoints::Site.new(glob: "#{DEVICE_NIFS}/erx_device_bif.c"),
+                  Chokepoints::Site.new(glob: "#{DEVICE_NIFS}/erx_device_nif.c"),
                   Chokepoints::Site.new(glob: 'test/guest/native_irq/guest.c'),
                   Chokepoints::Site.new(glob: 'test/fixtures/erx_device_harness.c'),
                   Chokepoints::Site.new(glob: 'test/fixtures/erx_device_dma_harness.c')],
@@ -219,9 +232,7 @@ module Erx
           rule: "only the sequencer, erx_device_sequencer.c, calls a DMA record's generated encoder",
           design: 'docs/design-device-dma.md#descriptions',
           scope: DEVICE_SCOPE,
-          # The layouts of the descriptor formats (abi/formats/virtio.txt, xhci.txt, sdhci.txt,
-          # genet.txt) are the only ones with generated record encoders.
-          pattern: /\berx_(?:virtq|virtio|xhci|sdhci|genet)_[a-z0-9_]+_encode\b/,
+          pattern: /\b(?:#{DEVICE_RECORD_ENCODERS.map { |name| Regexp.escape(name) }.join('|')})\b/,
           # The generated ABI header defines them and calls none.
           sites: [Chokepoints::Site.new(glob: "#{DEVICE_NIFS}/erx_device_sequencer.c"),
                   Chokepoints::Site.new(glob: 'include/erx/abi.h')],

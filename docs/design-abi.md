@@ -587,6 +587,18 @@ remain binaries, and readers never create atoms. Ruby readers return
 immutable records or raise a typed error under `Erx::Error`. C readers
 use explicit little-endian loads into typed values, without packed
 structure casts, unaligned dereferences or host-endian assumptions.
+Each fixed `wire_le` layout also has a C encoder, its decoder's inverse,
+which stores every field the same way and zeroes the padding, so a
+record C holds reaches Erlang as the bytes `erx_abi_layout` decodes, as
+the domain library hands the PCIe catalogue to the device service
+([design-pcie.md](design-pcie.md#the-catalogue-and-gives)). The device
+records are the exception: every layout of a descriptor format, a
+format file that holds a layout with DMA marks, is a record of a ring
+or table a device follows or payload a driver posts in a buffer. The
+reader gives none an encoder, so a device record's only C encoder is
+the one its marks give it in `erx/abi.h`, a report has none, and a build
+check keeps every caller but the sequencer off those encoders
+([design-device-dma.md](design-device-dma.md#descriptions)).
 
 A reader whose input is the front of a larger file, such as a package's
 header ([design-packaging.md](design-packaging.md#the-package)), declares

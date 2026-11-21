@@ -37,12 +37,11 @@
 #include "liberx/backend/fiasco/vm.h"
 
 /*
- * The table's constant address: the area's first pages. Its native UTCB slots sit
- * below the window, where nothing else of the root lives, and 128 slots of 1 KiB
- * is the 2^17 the kernel takes in one area.
+ * The table's constant address: the area's first pages. Its native UTCB slots sit at
+ * ERX_FIASCO_UTCB_AREA, between the device window and the contiguous pool (vm.c), and
+ * 128 slots of 1 KiB is the 2^17 the kernel takes in one area.
  */
 #define THREAD_TABLE		ERX_FIASCO_AREA_START
-#define THREAD_UTCB_AREA	UINT64_C(0xf00000000)
 /* A capability slot past the fixed ones: semaphores, then threads. */
 #define THREAD_SLOT(n)		((ERX_FIASCO_SLOT_FIRST + (uint64_t)(n)) << L4_CAP_SHIFT)
 #define REAPER_STACK_BYTES	16384u
@@ -121,7 +120,7 @@ erx_utcb_self(void)
 uint64_t
 erx_fiasco_thread_native_slot(uint32_t index)
 {
-	return (THREAD_UTCB_AREA + (uint64_t)index * L4_UTCB_OFFSET);
+	return (ERX_FIASCO_UTCB_AREA + (uint64_t)index * L4_UTCB_OFFSET);
 }
 
 uint64_t

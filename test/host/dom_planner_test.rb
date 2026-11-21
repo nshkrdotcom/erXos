@@ -11,6 +11,7 @@ require_relative '../../tools/lib/erx/dom_planner'
 require_relative '../../tools/lib/erx/manifest'
 require_relative '../../tools/lib/erx/net_device'
 require_relative '../../tools/lib/erx/network_domain'
+require_relative '../../tools/lib/erx/pcie_domain'
 require_relative '../../tools/lib/erx/production_image'
 require_relative '../../tools/lib/erx/runner'
 require_relative '../../tools/lib/erx/system_domain'
@@ -166,6 +167,19 @@ class DomPlannerTest < Minitest::Test
       admitted = Erx::Manifest.admit(source: suite.manifest(source), codec: @codec, context: context, planner: @planner)
       assert_equal 4, admitted.report.fetch('child_plan_instances'), suite.name
     end
+  end
+
+  # The pcie suite's manifest (PcieDomain.manifest): the development manifest without its
+  # web domain, the PCIe domain and the test holder, whose grants with storage's,
+  # network's and display's fit the system share's reserve, on the medium machine: the
+  # library plans all five.
+  def test_the_library_plans_the_pcie_suites_domains
+    source = Erx::PcieDomain.manifest(Erx::PcieDomain.manifest_source(ROOT, platform: PLATFORM))
+    arguments = ManifestContextFixture.archive_arguments(@codec, boots: [*%w[app display network ntpd pcie session storage],
+                                                                         Erx::MediumBoot::DOMAIN_BOOT.name])
+    context = Erx::Manifest::Context.new(**arguments.merge(platform: Erx::MediumBoot.machine(PLATFORM).record))
+    admitted = Erx::Manifest.admit(source: source, codec: @codec, context: context, planner: @planner)
+    assert_equal 5, admitted.report.fetch('child_plan_instances')
   end
 
   # The network domain cell's manifest (NetworkDomain.manifest), the development manifest
@@ -579,6 +593,13 @@ class DomPlannerTest < Minitest::Test
   # The device of the platform record's unit key, the record's units having one each.
   def device_of(platform, key) = platform.fetch('units').find { |unit| unit.fetch('key') == key }.fetch('devices').first
 
+  # The system domain's pci service and its facet for alpha, the VL805's holder, since the
+  # domain tests' manifest has no system service: a configured domain holds one exactly when it
+  # holds a pci device (docs/design-pcie.md, "The manifest"), with the limits design-pcie.md's
+  # "The rows and the facets' limits" gives a holder of one pci device.
+  VL805_PCI_FACET = "service pci\n  server system\n  interface pci\nfacet alpha_pci\n  grantee @domain.alpha\n  service @service.pci\n  operations open,master,reset\n" \
+                    "  max_request 1024\n  in_flight 1\n  reductions 100000\n  period_ns 1000000000\n  max_heap_size 8192\n"
+
   # The packed manifest of the Pi 4's closed bridge and the VL805 at its one place, line 175,
   # held by alpha, on the qemu-virt platform record (docs/design-usb.md, "The Phase 1 part").
   def vl805_manifest
@@ -591,10 +612,11 @@ class DomPlannerTest < Minitest::Test
     function = row.merge('placement_key' => 'vl805', 'selector' => 'pci', 'role' => 'usb', 'bridge' => bridge.fetch('path'),
                          'bus' => 1, 'compatible' => 'pci1106,3483', 'line' => 175, 'dma' => 'unconfined',
                          'dma_memory' => 1 << 20, 'flags' => ['hostile'])
+    platform.fetch('units').reject! { |unit| unit.fetch('key') == 'pcie' }
     platform.fetch('units').push({ 'key' => 'pcie', 'devices' => [bridge] }, { 'key' => 'vl805', 'devices' => [function] })
     @context = Erx::Manifest::Context.new(**ManifestContextFixture.arguments(@codec).merge(platform: platform))
     source = with_domains('alpha', 'pcie') + "unit pcie\n  placement \"pcie\"\n  holder @domain.pcie\n" \
-                                             "unit vl805\n  placement \"vl805\"\n  holder @domain.alpha\n"
+                                             "unit vl805\n  placement \"vl805\"\n  holder @domain.alpha\n" + VL805_PCI_FACET
     admit(source).bytes
   end
 
@@ -664,10 +686,11 @@ class DomPlannerTest < Minitest::Test
     function = row.merge('placement_key' => 'vl805', 'selector' => 'pci', 'role' => 'usb', 'bridge' => bridge.fetch('path'),
                          'bus' => 1, 'compatible' => 'pci1106,3483', 'line' => device_of(platform, 'block').fetch('line'),
                          'dma' => 'unconfined', 'dma_memory' => 1 << 20, 'flags' => ['hostile'])
+    platform.fetch('units').reject! { |unit| unit.fetch('key') == 'pcie' }
     platform.fetch('units').push({ 'key' => 'pcie', 'devices' => [bridge] }, { 'key' => 'vl805', 'devices' => [function] })
     @context = Erx::Manifest::Context.new(**ManifestContextFixture.arguments(@codec).merge(platform: platform))
     source = with_domains('alpha', 'pcie') + "unit pcie\n  placement \"pcie\"\n  holder @domain.pcie\n" \
-                                             "unit vl805\n  placement \"vl805\"\n  holder @domain.alpha\n"
+                                             "unit vl805\n  placement \"vl805\"\n  holder @domain.alpha\n" + VL805_PCI_FACET
     error = assert_raises(Erx::Manifest::Invalid) { admit(source) }
     assert_equal 'view', error.field, error.message
     assert_match(/share an interrupt line are in two units/, error.message)
@@ -699,7 +722,32 @@ class DomPlannerTest < Minitest::Test
     refute_nil row, lines.inspect
     assert_includes lines, "report #{row} status=0 field=none"
     assert_includes lines, "refused #{row} status=-1 field=bus"
+    # A report the caller could not read is refused whole, and leaves no confirmation.
+    assert_includes lines, "unread #{row} status=-1 record=2 field=record confirmed=0"
+    assert_includes lines, 'unread none status=-1 field=bridge'
     assert_equal ["cpu=0x600000000+0x1000"], lines.grep(/\Agiven /).map { |line| line.split.last }
+    # The layout keeps its placing report's state beside the latest one's.
+    assert_equal ["layout #{row} 1.0.0 placed=1 state=1 confirmed=1"], lines.grep(/\Alayout /)
+    # A pci row's mode: a raise only with a holder and a confirmed layout, a mode in the set,
+    # the lowering always, and no write to a row that is not a pci row.
+    assert_equal ['unheld=-1 held=0 mode=2 past=-1 unconfirmed=-1 off=0 other=-1'],
+                 lines.grep(/\Amode /).map { |line| line.split.drop(2).join(' ') }
+    # The incarnation answered: written only to a bridge its domain holds, 0 never.
+    assert_equal ["answered #{row} before=0 unheld=-1 none=-1 held=0 other=-1 after=9"], lines.grep(/\Aanswered /)
+  end
+
+  # The seeded fault: a raise written without asking whether the catalogue gives the
+  # function, so the library says decoding for a function whose layout is unconfirmed.
+  def test_a_raise_of_a_function_its_catalogue_does_not_give_is_refused
+    source = File.read(File.join(ROOT, 'liberx/system/dom_boot_view.c'))
+    check = "\tif (mode != ERX_PCIE_MODE_OFF && (record->holder == 0 ||\n" \
+            "\t    erx_dom_pci_given(lib->pci_bridges, lib->view.npci_bridges, &lib->view.devices[index], &facts) == NULL))\n"
+    assert_equal 1, source.scan(check).size, 'the seed no longer applies'
+    seeded = File.join(@directory, 'dom_boot_view.c')
+    File.write(seeded, source.sub(check, "\t(void)facts;\n\tif (mode != ERX_PCIE_MODE_OFF && record->holder == 0)\n"))
+    driver = self.class.view_driver_from(seeded, name: 'dom-view-raise-ungiven')
+    lines = view_lines(vl805_manifest, 'pci-raise-ungiven', 'pci', driver: driver)
+    assert_equal ['unconfirmed=0'], lines.grep(/\Amode /).map { |line| line[/unconfirmed=-?\d+/] }
   end
 
   # The seeded fault: the catalogue built without the tree's windows, so the report's BAR
@@ -874,7 +922,8 @@ class DomPlannerTest < Minitest::Test
                 %w[display 0 windows], %w[home 2 files], %w[inspect none inspect],
                 %w[log none log], %w[login_keys 2 files], %w[machine none files], %w[net 1 net],
                 %w[network_ctl 1 driver_control],
-                %w[packages 2 files], %w[start none files], %w[storage_ctl 2 driver_control],
+                %w[packages 2 files], %w[pci none pci], %w[pci_bus none pci_bus], %w[start none files],
+                %w[storage_ctl 2 driver_control],
                 %w[system 2 files], %w[web 3 web]]
     assert_equal services.each_with_index.map { |(name, server, kind), index|
                    "service #{index} name=#{name} server=#{server} interface=#{interface.call(kind)}"

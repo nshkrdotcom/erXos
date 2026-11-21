@@ -23,7 +23,7 @@ that does not fit is `unplaced`, and so is every BAR below a root port
 that does not fit.
 """.
 
--export([layout/2]).
+-export([layout/2, root_port_window/2]).
 -export_type([addresses/0]).
 
 -include("generated/erx_abi.hrl").
@@ -141,3 +141,23 @@ span(#{span := Span}) -> Span.
 sort_key(#{alignment := Alignment, order := Order}) -> {-Alignment, Order}.
 
 round_up(Value, Alignment) -> (Value + Alignment - 1) div Alignment * Alignment.
+
+-doc """
+A root port's memory window (docs/design-pcie.md, "Root ports"): the PCI
+addresses of the first and last byte of the 1 MiB granules that hold the
+placed memory BARs of the functions on its secondary bus, among Layouts,
+or `closed` when none is placed there.
+""".
+-spec root_port_window(0..255, [erx_abi_layout:erx_pcie_function()]) ->
+          closed | {0..16#ffffffff, 0..16#ffffffff}.
+root_port_window(Secondary, Layouts) ->
+    Spans = [{Address, Address + max(1 bsl Log2, ?ERX_PAGE_SIZE)}
+             || #{bus := Bus, bars := Bars} <- Layouts, Bus =:= Secondary,
+                #{kind := memory, flags := Flags, size_log2 := Log2, address := Address} <- Bars,
+                lists:member(placed, Flags)],
+    Granule = ?ERX_PCIE_BRIDGE_MEMORY_GRANULE,
+    case Spans of
+        [] -> closed;
+        _ -> {lists:min([From || {From, _} <- Spans]) div Granule * Granule,
+              round_up(lists:max([To || {_, To} <- Spans]), Granule) - 1}
+    end.

@@ -19,6 +19,7 @@
 #include <stdint.h>
 #include <string.h>
 
+#include "erx/abi_reader.h"
 #include "erx/dom.h"
 #include "erx/lane.h"
 
@@ -1587,6 +1588,18 @@ pci_refuse(erx_dom_pci_refusal_t *refusal, uint32_t record, const char *field)
 }
 
 /*
+ * A report refused whole: the latest report is refused, so no earlier one
+ * gives a function. A bridge with no layouts, the only one a placement
+ * check refuses for, has nothing to unconfirm.
+ */
+static void
+pci_unconfirm(erx_dom_pci_bridge_t *bridge)
+{
+	for (uint32_t at = 0; at < bridge->nlayouts; at++)
+		bridge->layouts[at].confirmed = false;
+}
+
+/*
  * A BAR's span: its hardware size, 2^size_log2, in whole pages. A size_log2 past
  * ERX_PCIE_BAR_SIZE_LOG2_MAX, which a report refuses on a placed BAR, is taken
  * at that bound.
@@ -1758,37 +1771,53 @@ pci_reported(const erx_pcie_function_t *layout, const erx_pcie_function_t *repor
 	return (NULL);
 }
 
-/* Whether record, without its state, is layout; the decoder zeroes every padding byte. */
+/* Whether record and layout are one function, without their states; the decoder zeroes every padding byte. */
 static bool
 pci_same(const erx_pcie_function_t *layout, const erx_pcie_function_t *record)
 {
-	erx_pcie_function_t stateless = *record;
+	erx_pcie_function_t as_layout = *record;
 
-	stateless.state = 0;
-	return (memcmp(layout, &stateless, sizeof(stateless)) == 0);
+	as_layout.state = layout->state;
+	return (memcmp(layout, &as_layout, sizeof(as_layout)) == 0);
+}
+
+/*
+ * The report's records read into report: no more than
+ * ERX_PCIE_FUNCTIONS_MAX, each exactly one record's bytes, since the
+ * decoder reads a prefix of a longer string.
+ */
+static erx_status_t
+pci_report_read(const erx_dom_pci_record_t *records, uint32_t count, erx_pcie_function_t *report,
+    erx_dom_pci_refusal_t *refusal)
+{
+	if (count > ERX_PCIE_FUNCTIONS_MAX)
+		return (pci_refuse(refusal, count, "functions"));
+	for (uint32_t at = 0; at < count; at++) {
+		if (records[at].size != ERX_PCIE_FUNCTION_SIZE ||
+		    !erx_pcie_function_decode(records[at].bytes, records[at].size, &report[at]))
+			return (pci_refuse(refusal, at, "record"));
+	}
+	return (ERX_OK);
 }
 
 erx_status_t
 erx_dom_pci_report(erx_dom_pci_bridge_t *bridge, const erx_dom_device_entry_t *entries, uint32_t nentries,
-    const erx_pcie_function_t *report, uint32_t count, erx_dom_pci_refusal_t *refusal)
+    const erx_dom_pci_record_t *records, uint32_t count, erx_dom_pci_refusal_t *refusal)
 {
+	erx_pcie_function_t report[ERX_PCIE_FUNCTIONS_MAX];
 	erx_status_t status;
 
-	status = count > ERX_PCIE_FUNCTIONS_MAX ? pci_refuse(refusal, count, "functions") :
-	    pci_report_well_formed(&bridge->facts, report, count, refusal);
-	if (status != ERX_OK) {
-		/* The latest report is refused, so no earlier one gives a function. */
-		for (uint32_t at = 0; at < bridge->nlayouts; at++)
-			bridge->layouts[at].confirmed = false;
+	/* A report refused whole leaves no earlier confirmation to give a function. */
+	if ((status = pci_report_read(records, count, report, refusal)) != ERX_OK ||
+	    (status = pci_report_well_formed(&bridge->facts, report, count, refusal)) != ERX_OK) {
+		pci_unconfirm(bridge);
 		return (status);
 	}
 	if (bridge->nlayouts == 0) {
 		if ((status = pci_report_placed(&bridge->facts, entries, nentries, report, count, refusal)) != ERX_OK)
 			return (status);
-		for (uint32_t at = 0; at < count; at++) {
+		for (uint32_t at = 0; at < count; at++)
 			bridge->layouts[at] = (erx_dom_pci_layout_t){ .record = report[at] };
-			bridge->layouts[at].record.state = 0;
-		}
 		bridge->nlayouts = count;
 	}
 	for (uint32_t at = 0; at < bridge->nlayouts; at++) {

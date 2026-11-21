@@ -17,7 +17,8 @@ asks before it touches anything: an open bridge reaches every place on
 its bus range; a closed one reaches only its root port, at device 0,
 function 0 of its first bus, and the places below it that its platform
 record lists, since any other access on the BCM2711's bus locks up the
-memory controller (docs/design-pcie.md, "The closed bus").
+memory controller (docs/design-pcie.md, "The closed bus"). Neither
+reaches a place whose device is past 31 or function past 7.
 """.
 
 -export([reaches/2, read_answer/3]).
@@ -47,11 +48,16 @@ bridge's link was down around the access, whose answer is then not taken.
 -doc """
 Whether a driver of the bridge may make an access at the place: for an
 open bridge, any place whose bus lies in its range; for a closed one,
-only its root port and the places its record lists.
+only its root port and the places its record lists. A place whose
+device is past 31 or function past 7 is none, since its routing ID
+would name another function's.
 """.
 -spec reaches(erx_abi_layout:erx_pcie_bridge(), erx_pcie:place()) -> boolean().
-reaches(Bridge, Place) ->
-    reaches(erx_pcie:closed(Bridge), Bridge, Place).
+reaches(Bridge, {_Bus, Device, Function} = Place)
+  when is_integer(Device), Device >= 0, Device =< 31, is_integer(Function), Function >= 0, Function =< 7 ->
+    reaches(erx_pcie:closed(Bridge), Bridge, Place);
+reaches(_Bridge, _Place) ->
+    false.
 
 reaches(false, #{bus_first := First, bus_last := Last}, {Bus, _Device, _Function}) ->
     First =< Bus andalso Bus =< Last;

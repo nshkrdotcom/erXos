@@ -40,6 +40,13 @@
 /* QEMU virt's PL011: its registers, and its receive line, SPI 1. */
 #define UART_PHYS	UINT64_C(0x9000000)
 #define UART_LINE	33u
+/*
+ * QEMU virt's PL031, another device of one page (config/platforms/qemu-virt.json), and
+ * the offset of the first identification word of either, which reads the same each time
+ * and differs between the two.
+ */
+#define RTC_PHYS	UINT64_C(0x9010000)
+#define ID_OFFSET	0xfe0u
 
 /* QEMU virt's MSI frame, as config/platforms/qemu-virt.json names it, and its doorbell's offset. */
 #define MSI_FRAME_BASE	UINT64_C(0x08020000)
@@ -61,6 +68,8 @@
 /* How long a pending line is watched after its bind for a delivery that must not come. */
 #define PENDING_NS	(UINT64_C(200) * NS_PER_MS)
 #define RING_ROUNDS	1000u
+/* Creates and destroys of one register window: more than the device window ever held pages for at once. */
+#define WINDOW_ROUNDS	5000u
 #define REPEATS		3u
 #define STACK_BYTES	16384u
 #define WALL_NS		(UINT64_C(1800000000) * UINT64_C(1000000000))
@@ -814,6 +823,74 @@ bind_objects(void)
 	uart_set_field("imsc", "rtim");
 }
 
+/* A new physical object over a device's page, mapped read-write at a fresh place of the root's own space. */
+static uint64_t
+window_mapped(uint64_t phys, uint64_t *object)
+{
+	uint64_t addr;
+
+	if (erx_mem_create_physical(0, 0, phys, ERX_PAGE_SIZE, ERX_MEM_ATTR_DEVICE, object) != ERX_OK ||
+	    erx_vm_reserve(ERX_CAP_SELF, 0, ERX_PAGE_SIZE, 0, &addr) != ERX_OK ||
+	    erx_vm_map(ERX_CAP_SELF, addr, ERX_PAGE_SIZE, *object, 0, ERX_PROT_RW) != ERX_OK)
+		fail("erx: irq: a window over a device was not made and mapped FAILED\n");
+	return (addr);
+}
+
+static uint32_t
+window_id(uint64_t addr)
+{
+	return (*(volatile const uint32_t *)(uintptr_t)(addr + ID_OFFSET));
+}
+
+static void
+window_end(uint64_t object, uint64_t addr)
+{
+	if (erx_vm_release(ERX_CAP_SELF, addr, ERX_PAGE_SIZE) != ERX_OK || erx_object_destroy(object) != ERX_OK)
+		fail("erx: irq: a window was not unmapped and destroyed FAILED\n");
+}
+
+/*
+ * The device window (liberx/backend/fiasco/vm.c, erx_fiasco_vm_physical_create): each
+ * physical object maps its registers at a fresh range of the root's device window, which
+ * goes back when the object ends, so a holder that makes its window again each life spends
+ * none of it, where a window that kept every object's pages would run out within the
+ * rounds. Two live objects over the UART each have their own range: ending one, its range
+ * unmapped from every space, leaves the other's mapping reading the UART. A third object,
+ * over the RTC, takes the lowest free range, the ended one's, and must read the RTC there,
+ * not the UART that range showed before.
+ */
+static void
+check_device_window(void)
+{
+	uint64_t first, second, third, first_at, second_at, third_at;
+	uint32_t id;
+	int status;
+
+	for (uint32_t round = 0; round < WINDOW_ROUNDS; round++) {
+		status = erx_mem_create_physical(0, 0, UART_PHYS, ERX_PAGE_SIZE, ERX_MEM_ATTR_DEVICE, &first);
+		if (status != ERX_OK) {
+			report("erx: irq: a create again of the UART's window: round and status", round, (uint64_t)(int64_t)status);
+			fail("erx: irq: a window made again spent the device window FAILED\n");
+		}
+		if (erx_object_destroy(first) != ERX_OK)
+			fail("erx: irq: a window was not destroyed FAILED\n");
+	}
+	first_at = window_mapped(UART_PHYS, &first);
+	second_at = window_mapped(UART_PHYS, &second);
+	id = window_id(second_at);
+	if (window_id(first_at) != id)
+		fail("erx: irq: two windows over one page read differently FAILED\n");
+	window_end(first, first_at);
+	if (window_id(second_at) != id)
+		fail("erx: irq: ending one window changed what another reads FAILED\n");
+	third_at = window_mapped(RTC_PHYS, &third);
+	if (window_id(third_at) == id || window_id(second_at) != id)
+		fail("erx: irq: a window over a freed range reads the device before it FAILED\n");
+	window_end(second, second_at);
+	window_end(third, third_at);
+	say("erx: irq: a window made again spends no device window\n");
+}
+
 /*
  * ERX_IRQ_MSI over QEMU virt's MSI frame, which this root, reading no manifest, sets
  * from config/platforms/qemu-virt.json's msi_frame: each line from the frame's first
@@ -871,6 +948,7 @@ erx_fiasco_root_main(void)
 		fail("erx: irq: the archive holds no holder program FAILED\n");
 	check_time();
 	bind_objects();
+	check_device_window();
 	check_msi();
 	check_object_space();
 	start_executor();

@@ -16,6 +16,9 @@ include services/ssh.txt
 include services/clock.txt
 include services/code_objects.txt
 include services/input.txt
+include services/pci_bus.txt
+include services/pci.txt
+include services/pcie.txt
 include manifest.txt
 include formats/elf64.txt
 include formats/virtio.txt

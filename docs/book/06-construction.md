@@ -32,12 +32,11 @@ the OTP and musl sources erXos carries, fails `make check`. There is
 no list to keep complete, because there is nowhere else to put a
 check.
 
-FreeBSD keeps most of its properties by careful authors and review,
-but some are structural even there. A process cannot address another process's
-memory, because its page tables give it no address that reaches it.
-Capsicum, FreeBSD's capability mode, extends the idea to file
-descriptors: a process in capability mode reaches only what its
-descriptors name. Chapter 2 called such a property one that holds **by
+A UNIX kernel keeps most of its properties by careful authors and
+review, but some are structural even there. A process cannot address
+another process's memory, because its page tables give it no address
+that reaches it, and a process in FreeBSD's capability mode reaches
+only what its descriptors name. Chapter 2 called such a property one that holds **by
 construction**.
 
 erXos makes construction the method of the whole design. Where a

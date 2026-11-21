@@ -704,10 +704,10 @@ process can still crowd out the rest.
 
 **Where erXos uses this.** Each domain has a **budget**, an account for
 the memory it uses ([chapter
-12](12-memory.md#121-budgets-as-space-banks)). Today a budget is only a
-record: nothing is charged to it, so one domain can still crowd out the
-rest, and the inspector reports another domain's budget as unsupported;
-that is built. The design makes each budget a wall: a Fiasco
+12](12-memory.md#121-budgets-as-space-banks)). Today a budget is a
+record: each object the system makes is charged to one, and ending a
+budget ends everything charged to it, but a budget refuses no charge,
+so one domain can still crowd out the rest; that is built. The design makes each budget a wall: a Fiasco
 kernel-memory quota fixed when the domain is made, and a cap on its pages that the root
 service checks, so a domain that runs out fails alone; that is designed,
 not built ([design-fiasco.md](../design-fiasco.md#memory-and-budgets)).
