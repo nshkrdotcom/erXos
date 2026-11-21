@@ -383,8 +383,11 @@ Eshell V17.1.1 (type help(). for help)
 
 * A window server serves windows as files; clients draw into window buffers
   with `erx_win`, and the virtio-gpu, virtio-input (keyboard and tablet)
-  and Pi firmware-framebuffer drivers are Erlang processes. A QEMU suite
-  compares screenshots; the Pi's screen is checked by hand.
+  and Pi firmware-framebuffer drivers are Erlang processes. On QEMU `virt`
+  a USB domain runs an xHCI driver in Erlang behind the PCIe domain; a USB
+  keyboard enumerates and its key presses reach the display domain through
+  the USB domain's input tree (the usb suite checks a key's down and up
+  there). A QEMU suite compares screenshots; the Pi's screen is checked by hand.
 * A window's client speaks Plan 9's draw protocol over a draw connection
   (`erx_draw`) and loads Plan 9 subfonts, and the tree holds the 6x13 fixed ones. The
   window tree serves `/clipboard`, the display's shared clipboard, to a
@@ -453,7 +456,7 @@ Eshell V17.1.1 (type help(). for help)
 **Not built yet**
 
 * The rest of erXos's own kernel, terminal input and sockets for programs,
-  drivers for USB, Bluetooth and WiFi, which have host-tested cores only (a hub
+  drivers for the Pi 4's USB, for Bluetooth and for WiFi, which have host-tested cores only (a hub
   and port state machine, descriptor and HID decoders, a Bluetooth
   HCI codec and a controller process with its line, links and patch
   reader, and WiFi's join machine, SAE exchange and EAPOL-Key codec), the
