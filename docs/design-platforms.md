@@ -187,7 +187,7 @@ says](#what-the-manifest-says)). The entries for these platforms:
 | real-time clock | the PL031 |
 | IOMMU | `arm,smmu-v3` |
 | random generator | `brcm,bcm2711-rng200` |
-| watchdog | `brcm,bcm2835-pm-wdt` |
+| watchdog | `brcm,bcm2835-pm-wdt`, `brcm,bcm2712-pm` |
 | firmware mailbox | `brcm,bcm2835-mbox` |
 
 The early console is not in the table: the platform's kernel build fixes
@@ -424,10 +424,13 @@ twice because its link bit latches low. It reports `{link, down}` at every
 ### Raspberry Pi 5
 
 The BCM2712, with Cortex-A76 cores and a GIC-400, and RP1, the I/O
-controller, behind the BCM2712's PCIe root complex. RP1's devices
+controller, behind the BCM2712's PCIe root complex `pcie2`. RP1's devices
 interrupt by MSI-X through Broadcom's MIP block, which raises SPIs 128 to
-191 and which the kernel drives as it drives the GICv2m frame on QEMU
-([research](research-boards-storage.md#raspberry-pi-5-bcm2712-and-rp1)).
+191 (interrupt ids 160 to 223) and which the kernel drives as it drives
+the GICv2m frame on QEMU
+([research](research-boards-storage.md#raspberry-pi-5-bcm2712-and-rp1),
+[the MIP's facts](research-bcm2712-pcie-mip.md#f2-the-mip-msi-x-interrupt-unit)).
+RP1, its parts and their drivers are [design-rp1.md](design-rp1.md)'s.
 The Pi 5's only PL011 outside RP1 is its debug UART, the console, and its
 manifest names no host link, since RP1's UARTs belong to RP1's unit, which
 holds RP1's DMA devices too: code from the host and the live tools do not
@@ -562,11 +565,18 @@ QEMU `virt`'s GICv2m frame is written with the SPI number at its doorbell,
 `MSI_SETSPI_NS` at offset `0x40`, and serves TCG (`msi=gicv2m`) and HVF,
 whose in-kernel GIC has no ITS
 ([research](research-kernel-bases.md#qemu-virt-under-tcg-and-hvf)). The
-Raspberry Pi 5's MIP block raises SPIs 128 to 191. The Raspberry Pi 4's
+Raspberry Pi 5's MIP block raises SPIs 128 to 191: a function writes the
+vector, 0 to 63, to bus address `0xff_ffff_f000`, which `pcie2`'s
+inbound doorbell window maps onto the MIP's page, and the MIP needs its
+host masks and edge configuration written once before use
+([F2](research-bcm2712-pcie-mip.md#f2-the-mip-msi-x-interrupt-unit)).
+The Raspberry Pi 4's
 devices that erXos drives use wired interrupts, the VL805 its closed
-bus's INTx line, so it needs no frame. On Fiasco, which may not read
-the frame's `MSI_TYPER`, QEMU `virt`'s platform record names the frame's
-base and line range, and the backend binds each line edge-triggered
+bus's INTx line, so it needs no frame. Each platform record with a
+frame names its peripheral, base and line range, which Fiasco, which may
+not read the frame's `MSI_TYPER`, needs; the packer derives from them
+the doorbell's bus address, the first line's data and the frame's start
+writes, and the backend binds each line edge-triggered
 ([design-pcie.md](design-pcie.md#the-msi-frame-on-fiasco)).
 
 The GICv2m frame's registers, from FreeBSD's driver at releng/15.1:
@@ -884,11 +894,17 @@ decoder stays unused
 ([design-usb.md](design-usb.md#the-bcm2711-bridge),
 [design-usb.md](design-usb.md#interrupts)).
 The BCM2712's root
-complex (`brcm,bcm2712-pcie`) reaches configuration space through an index
-and a data register of its own rather than ECAM, and aborts an access
-while its link is down
-([research](research-boards-storage.md#pcie-on-the-raspberry-pi-5)), so
-the enumerator checks the link before each access. An abort that still
+complex (`brcm,bcm2712-pcie`), `pcie2` at `0x10_0012_0000` for RP1,
+reaches configuration space through the BCM2711's index and data
+registers rather than ECAM, and aborts an access while its link is down
+unless its reply errors are disabled
+([research](research-boards-storage.md#pcie-on-the-raspberry-pi-5),
+[F1](research-bcm2712-pcie-mip.md#f1-the-bcm2712-root-complex)). Its
+bridge driver keeps the link the bootloader leaves and disables the
+reply errors, so a read across a dropped link returns all ones
+([design-pcie.md](design-pcie.md#the-bridge-seam)), and the enumerator
+checks the link before and after each access. Whether a write across a
+dropped link still raises an error is a board probe. An abort that still
 comes, because the link dropped between the check and the access, is a
 fault of the thread that ran the NIF's register access, which ends the
 PCIe domain; the domain service restarts the domain from the manifest,
@@ -900,7 +916,11 @@ complex names its source, which this board's contract does not read
 ([design-kernel.md](design-kernel.md#interrupts-time-and-entropy)). Each
 slot's `config.txt` sets `pciex4_reset=0`, so erXos inherits the link and
 RP1's configuration from the bootloader, and the enumerator lists RP1 with
-the BARs the bootloader assigned.
+the BARs the bootloader assigned
+([kept layouts](design-pcie.md#kept-layouts)). Nothing erXos runs
+resets a BCM2712 PCIe controller: `pcie1`'s reset would stop the
+calibration block both controllers depend on (F1.1), and no driver
+has a reset path.
 
 ### What the manifest says
 
@@ -1115,8 +1135,18 @@ watchdog covers everything above the kernel and nothing in it. In
 deterministic mode (`erx.det=1`) the watchdog is off.
 
 **The hardware watchdog.** Both boards have the same power-management
-watchdog (`brcm,bcm2835-pm-wdt`), whose range is about 16 s
-([research](research-boards-storage.md#checks-against-local-copies)). The
+watchdog, whose range is about 16 s
+([research](research-boards-storage.md#checks-against-local-copies)):
+the Pi 4's node is `brcm,bcm2835-pm-wdt`, and the Pi 5's tree names its
+block at `0x10_7d200000` `brcm,bcm2712-pm` alone, which mainline Linux's
+BCM2712 tree follows with `brcm,bcm2835-pm-wdt`
+([research](research-boards-storage.md#raspberry-pi-5-bcm2712-and-rp1)).
+TF-A's Raspberry Pi 5 port drives that block with its BCM2835 watchdog
+code (`plat/rpi/rpi5/platform.mk:27` builds `plat/rpi/common/rpi3_pm.c`,
+and `plat/rpi/rpi5/include/rpi_hw.h:28` puts `RPI3_PM_BASE` at the
+BCM2712's block; TF-A 2.15.0, SHA-256 beginning `8a1fd431` and
+`6dfb6ccf`), so the Pi 4's driver and SVD serve the Pi 5 unchanged, and the
+board probe's hang test confirms it. The
 watchdog is started in one of two ways. The firmware starts it from
 `config.txt`'s `kernel_watchdog_timeout`, which is set, with a 4 s
 timeout, only in the `config.txt` of a board that runs unattended; a
@@ -2043,6 +2073,117 @@ renewal time is under a day, and the quotes' longest backoff waits. The
 release notes claim exactly what ran: "soaked a day on the Pi 4 and four
 hours on QEMU under this workload, no reset", with a link to the research
 record, and no uptime beyond it.
+
+### The Raspberry Pi 5 on Fiasco
+
+The Raspberry Pi 5, a 4 GB board, runs Fiasco as the Pi 4 does, with
+the same kernel build and, unless its boot probe shows otherwise, the
+same `bootstrap` build: Fiasco's generic platform, the PL011 console,
+RAM from 0 and a fixed link at `0x200000`
+([design-fiasco.md](design-fiasco.md#the-raspberry-pi-5)). Its platform
+record is `config/platforms/raspi5.json`, its manifest
+`config/manifest/raspi5-development.txt`. What differs from the Pi 4:
+
+* **No armstub.** The Pi 5's firmware carries its own BL31, which
+  provides PSCI (TF-A's Pi 5 port loads at `0x1000`; the firmware fills
+  its handoff header,
+  [research](research-pi5-board-tree.md#tf-a-2150-the-pi-5-port)), so
+  the boot partition carries no TF-A, and `config.txt` names no
+  `armstub`. Whether that BL31 prints on the console once the kernel
+  runs is a probe item; the Pi 4's own BL31 is built quiet.
+* **`config.txt`.** `kernel=kernel_2712.img`, the Pi 5's default name;
+  `kernel_address=0x200000`, where `bootstrap` is linked, whose honouring
+  on the Pi 5 is unverified until the probe
+  ([research](research-pi5-board-tree.md#raspberry-pi-documentation-boot-files-and-loading));
+  `os_check=0`, without which the firmware refuses a partition that
+  holds no kernel it recognises; `pciex4_reset=0`, so the bootloader
+  leaves `pcie2`'s link to RP1 up for erXos to inherit
+  ([PCIe bridges](#pcie-bridges)); `enable_uart=1` and, on development
+  cards, `uart_2ndstage=1`. Not `enable_rp1_uart`: the console is the
+  BCM2712's own UART. The boot partition writer takes these lines from
+  the platform record, as it takes the Pi 4's.
+* **The console.** `uart10`, the BCM2712's PL011 at `0x10_7d001000` on
+  SPI 121, which the tree's `stdout-path` names
+  ([research](research-pi5-board-tree.md#debug-uart)). Its input clock is
+  9.216 MHz in the tree and 44 MHz in TF-A's Pi 5 port
+  (`plat/rpi/rpi5/include/rpi_hw.h:39`). Neither Fiasco's console nor
+  `erx_pl011` needs it to keep the line going: Fiasco's `bootstrap`
+  reads no UART clock from the tree, so it keeps the divisor the firmware
+  wrote, and `erx_pl011` writes its own divisor only when `IBRD` reads 0.
+  The record still carries a clock, which `erx_pl011` uses for its
+  character time, so the boot probe reads `IBRD` and `FBRD` and derives
+  it: at 115,200 baud 44 MHz gives 23 and 56, 9.216 MHz gives 5 and 0.
+  Until the probe the record carries TF-A's 44 MHz, marked unverified.
+* **The watchdog.** The Pi 4's driver and SVD at the BCM2712's block
+  ([The watchdog](#the-watchdog)), the root arming it at every boot.
+* **Devices.** The RNG200 at `0x10_7d208000`, the Pi 4's driver; the SD
+  controller `sdio1`, whose card power, card detect and 1.8 V switch are
+  lines of the always-on GPIO bank beside the ACT LED
+  ([research](research-pi5-board-tree.md#f6-the-microsd-slot)); `pcie2`
+  and the MIP ([PCIe bridges](#pcie-bridges), [MSI frames](#msi-frames));
+  RP1, one unit in the `rp1` domain ([design-rp1.md](design-rp1.md)). The
+  SD controller's driver on the Pi 5 needs a section of
+  [design-storage.md](design-storage.md#the-sd-host-controller) of its
+  own, which this document does not give.
+
+**Signs of life before a serial cable.** The first boot of a Pi 5 can
+come before its debug UART is wired, and no mechanism is added for it;
+the signs that exist already are read in this order:
+
+1. The firmware's own: its ACT LED codes and its HDMI diagnostic screen
+   say whether the firmware found `config.txt` and loaded the kernel
+   file (the Raspberry Pi documentation, not read for this design).
+2. The display's boot splash
+   ([design-display.md](design-display.md#the-splash)), only if the
+   probe finds that the firmware hands over a framebuffer in the tree
+   (no `simple-framebuffer` node is in the shipped tree files,
+   [research](research-pi5-board-tree.md#simple-framebuffer)) and it lies
+   in the platform record's framebuffer window. Without one, the display
+   waits for its own design.
+3. The watchdog: the root arms it at every boot, so a boot that hangs
+   after the root starts resets the board within 4 s, and the firmware's
+   screen and LED repeat; a boot that reaches the shell stays up.
+
+The serial console settles everything else once the cable is there.
+
+**The board probe**, by hand on the first boot, records: the load
+address and the CPU's state at entry; the console's divisor; the
+firmware's tree as passed (`/chosen`, any framebuffer, the memory
+node, the `ethernet0` alias's address); the watchdog's reset after a
+hang; `pcie2`'s and the MIP's registers as left; RP1's BARs, MSI-X table
+place and clocks
+([design-rp1.md](design-rp1.md#what-is-matched)). The full list is the
+plan's ([1b-J](plan.md#1b-j-the-raspberry-pi-5-on-fiasco)).
+
+#### The Pi 5's device tree and its license
+
+The board boots the tree the firmware loads from its boot partition and
+passes in `x0`. The Raspberry Pi kernel's Pi 5 tree is not permissive
+throughout: its board file and SoC file are `(GPL-2.0 OR MIT)`, but
+`bcm2712-ds.dtsi` and `bcm2712-rpi.dtsi`, which the board file includes,
+are GPL-2.0 only, `rp1.dtsi` carries no license at all, and five binding
+headers it uses are GPL-2.0
+([research](research-pi5-board-tree.md#includes-and-licenses)). Mainline
+Linux v7.3's `bcm2712.dtsi` is `(GPL-2.0 OR MIT)`
+([research](research-boards-storage.md#raspberry-pi-5-bcm2712-and-rp1));
+whether everything it and mainline's Pi 5 board file include is
+permissive has not been checked. Nothing in erXos's design depends on
+the choice, since RP1's parts come from RP1's address map and the
+platform record ([design-rp1.md](design-rp1.md#the-parts)). The choice
+is open:
+
+| Option | What it costs |
+| --- | --- |
+| ship the Raspberry Pi kernel's tree as a GPL file beside its source, as the Pi 4's | a second accepted copyleft file, and `rp1.dtsi` with no license, which may not be redistributable at all |
+| ship mainline Linux's Pi 5 tree | a facts record of its include closure first; a mainline tree may describe less of RP1 than the firmware expects |
+| write erXos's own Pi 5 tree from the facts records | a tree to keep, and no upstream fixes |
+| boot the tree the firmware supplies, if it has one | a probe of whether the Pi 5's firmware carries a tree; nothing shipped, but no control over its content |
+
+Recommendation: a facts record of mainline's include closure first; if
+it is permissive, ship mainline's tree, which keeps the Pi 4's pattern
+of a tree from Linux without a copyleft file. The decision blocks only
+the first card that leaves the project; development boards boot
+whichever tree is on their card.
 
 ## Interfaces
 

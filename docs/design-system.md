@@ -3539,6 +3539,12 @@ is given to no domain; other domains see only the places its
 controller's domain serves, fixed when they are configured, an input
 number's file in its input tree and a drive's grant
 ([design-usb.md](design-usb.md#hotplug-ends-at-the-controllers-domain)).
+A PCIe function whose BAR carries several peripherals at fixed offsets,
+as RP1's does, has **parts**: device rows (selector `part`) that the
+packer writes after the function's row from the platform record, each
+naming its function, a block of the BAR and at most one MSI-X entry, so
+a part is always in its function's unit and its driver opens a record
+like any other ([design-rp1.md](design-rp1.md#the-parts)).
 
 **Partition windows.** The block driver serves each partition of its
 medium as a window ([design-storage.md](design-storage.md#data-model)).

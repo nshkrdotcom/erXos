@@ -58,6 +58,7 @@ evidence, not design contracts.
 | [design-device-dma.md](design-device-dma.md) | DMA by devices that are not cache-coherent, and the descriptor forms the device NIF drives |
 | [design-device-tree.md](design-device-tree.md) | the firmware's device tree in the root task |
 | [design-pcie.md](design-pcie.md) | PCIe: the PCIe domain's enumerator, BAR placement, bus mastering and interrupts |
+| [design-rp1.md](design-rp1.md) | RP1, the Raspberry Pi 5's I/O controller: its parts, interrupts, Ethernet and USB hosts |
 | [design-header-io.md](design-header-io.md) | the Raspberry Pi 4's 40-pin header: GPIO, I2C, SPI and PWM |
 | [design-board-sensors.md](design-board-sensors.md) | the Raspberry Pi 4's firmware readings and `/proc/sensors` |
 | [design-shared-code.md](design-shared-code.md) | one image of shared loaded code mapped into every domain |
@@ -1930,7 +1931,7 @@ built out of tree, its own build scripts not run unless the row says so.
 | Cypress's `BCM4345C0.hcd` | the Pi 4's Bluetooth controller patch ([design-bluetooth.md](design-bluetooth.md#the-bring-up)) | Cypress's driver license: object code, unmodified | permanent, board-specific | `deps.lock`, a data file of `erx_bt` |
 | Raspberry Pi `usbboot` secure-boot images | an installation's secure boot ([design-platforms.md](design-platforms.md#trust-in-the-boot)) | Apache-2.0, firmware license for its binaries | permanent, run by the board's owner | `deps.lock` |
 | TF-A's BL31 for the Pi 4 | the firmware calls that start CPUs and end the machine ([design-platforms.md](design-platforms.md#firmware)) | BSD-3-Clause | permanent, board-specific | `deps.lock` |
-| The boards' device trees, from Linux | describe each board to the kernel | Pi 4 GPL-2.0, an accepted permanent copyleft dependency, shipped as a file of its own with its edited source and Linux's GPL-2.0 text; Pi 5 GPL-2.0 OR MIT | permanent, board-specific | `deps.lock`, compiled with `dtc` |
+| The boards' device trees, from Linux | describe each board to the kernel | Pi 4 GPL-2.0, an accepted permanent copyleft dependency, shipped as a file of its own with its edited source and Linux's GPL-2.0 text; Pi 5 not permissive throughout in the Raspberry Pi kernel's tree (GPL-2.0-only includes and an unlicensed `rp1.dtsi`), which tree ships is open ([design-platforms.md](design-platforms.md#the-pi-5s-device-tree-and-its-license)) | permanent, board-specific | `deps.lock`, compiled with `dtc` |
 | Host tools: LLVM clang, lld and binary tools, GNU make, QEMU, `dtc`, Ruby, Perl, Node.js and pnpm, GNU coreutils, git, host OTP 29.1.2, `b3sum`, herdtools7's `herd7`, Autoconf, Automake, Libtool; `aarch64-elf-gcc` and binutils for Fiasco | building, running and testing; release images are built with exactly LLVM 23.1.3 | various | tools | Homebrew; host OTP and `herd7` from pinned sources, `herd7` built with dune alone |
 | OpenSSH's `ssh` and `ssh-keygen`, the host's own | the development login key and `tools/erx ssh` ([design-ssh.md](design-ssh.md#login-keys)) | OpenSSH's (unverified) | tools | the host's own, not pinned |
 | TLA+ tools | protocol models ([design-verification.md](design-verification.md#model-suite-and-runner)) | MIT | permanent host tool | `deps.lock` |

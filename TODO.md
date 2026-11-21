@@ -7639,10 +7639,10 @@ to the corpus and follow rc
   description ([design-kernel.md](docs/design-kernel.md#dma-and-the-iommu),
   [design-platforms.md](docs/design-platforms.md#msi-frames)).
 * [Low] Fiasco backend, `liberx/backend/fiasco/irq.c` (`IRQ_MSI_DOORBELL`): the MSI frame's doorbell offset, `0x40`,
-  is a hand-copied register offset of one frame type, where memory-mapped registers come from CMSIS-SVD files, and a
-  frame of another type (the Raspberry Pi 5's MIP) would get it too. Describe the frame in an SVD file and have the
-  packer write the doorbell's address into `erx_mf_msi_frame`, so the root holds no frame-type fact
-  ([design-pcie.md](docs/design-pcie.md#the-msi-frame-on-fiasco)); the `native_irq` guest's `MSI_DOORBELL` goes with it.
+  and the message data equal to the line are hand-copied facts of one frame type, which the Raspberry Pi 5's MIP
+  breaks. Implement the frame's `doorbell`, `data` and start writes that the packer derives from the frame's SVD file and
+  the bridge's inbound translation ([design-pcie.md](docs/design-pcie.md#the-msi-frame-on-fiasco)), so the root holds no
+  frame-type fact; the `native_irq` guest's `MSI_DOORBELL` goes with it.
 * [Low] kernel, `ERX_MEM_INHERIT`: the flag is the remembered creator mark
   that the copy table of `erx_space_copy` says it avoids. Reconcile the
   two

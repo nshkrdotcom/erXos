@@ -619,8 +619,9 @@ Its units map the manifest's unit `net` to `{erx_net_interfaces,
 Name}`, the link of the interface whose transport drives the domain's
 network device, which that transport names after the device as FreeBSD
 names a driver's units: `vtnet0` of `erx_virtio_net`, `genet0` of
-`erx_genet`. A link another domain lends through `ether`, `wlan0`, is no
-unit of the network domain, and `network_ctl` never names it
+`erx_genet`. A link another domain lends through `ether`, `wlan0` or the
+Raspberry Pi 5's `cgem0` ([design-rp1.md](design-rp1.md#the-ethernet-controller)),
+is no unit of the network domain, and `network_ctl` never names it
 ([design-wifi.md](design-wifi.md#the-ether-interface-and-wlan0)). The
 runtime reads the name from the interfaces `children/1` is given, so no
 second list of names exists. With no network device or several, `net`

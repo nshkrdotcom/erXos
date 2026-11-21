@@ -106,13 +106,13 @@ Ground rules:
 
 The plan has three phases. Phase 1, M0, M1, track H, M3, M4, M6 and the
 shell of track S, brings the system up on Fiasco. Phase 1b
-carries the user-facing system further on Fiasco, in nine items
-named 1b-A to 1b-I: M5's domains (1b-A), the programs of track S (1b-B),
+carries the user-facing system further on Fiasco, in ten items
+named 1b-A to 1b-J: M5's domains (1b-A), the programs of track S (1b-B),
 track D's browser, window stack and QEMU kiosk (1b-C), track P's first part (1b-D),
 M9's drivers in their domains (1b-E), track D's desktop and Plan 9's
 programs (1b-F),
-networking on QEMU (1b-G), M13 on QEMU (1b-H) and the Raspberry Pi 4
-(1b-I), each with the backend
+networking on QEMU (1b-G), M13 on QEMU (1b-H), the Raspberry Pi 4
+(1b-I) and the Raspberry Pi 5 (1b-J), each with the backend
 rows it needs and its guarantees deferred; track A comes with them: its
 first part, the start table, for track D's window stack, its second,
 apps packaged outside the tree and added to an image, for track D's
@@ -163,6 +163,7 @@ numbers are names; the table's order is the order.
 | M14 erXos's network stack, on QEMU | TLS, SSH and distribution sessions run over erXos's own TCP/IP stack, written in Erlang from FreeBSD's, on QEMU in 1b-G; the boards follow with M12 | estimated in its design document | 1b-G's prototype | G14 |
 | 1b-H M13 erXos's F2FS on QEMU | erXos's F2FS, written in Erlang, keeps a QEMU disk's files through power cuts and its images mount in the Linux guest; on the Pi 4 with M12 | 8,000 lines of Erlang, 2,000 of Ruby, 5,000 of tests ([M13](#m13-erxoss-f2fs)) | M6 | G13 |
 | 1b-I The Raspberry Pi 4 on Fiasco | the Pi 4 boots from its firmware to the shell on its console; a file synced on its SD card survives a power cut; its Ethernet carries UDP echo and a TCP transfer; the kiosk shows on its screen; a clock module on its header keeps the time across a power cut; every guarantee deferred | estimated per part before it starts; the designs give no figure | part (a): Phase 1; (b): 1b-E; (c): 1b-E and 1b-G; (d): 1b-C's part 3; (e): (a) and 1b-E | GR |
+| 1b-J The Raspberry Pi 5 on Fiasco | the Pi 5 boots from its firmware to the shell on its debug UART; its Ethernet carries UDP echo and a TCP transfer through RP1; a USB keyboard and stick work on RP1's hosts; every guarantee deferred | estimated per part before it starts; the designs give no figure | (a), (b): 1b-I's part (a); (c): 1b-I's part (b); (d): 1b-E; (f): 1b-G; (g): 1b-C's part 3; (h): Track U's part (a) | GR5 |
 | 0.1 The preview, erXos's first public preview | a development build's published card boots a Raspberry Pi 4 to the kiosk with live quotes on its screen, root reaches `rc` over SSH with the key on the card's record partition, sets the clock and runs `ps` and `top`, `/data` survives a power cut and a fault or a hang resets the board; the QEMU image of the same build does the same, and Doom, in both images, plays on QEMU with the virtio keyboard and runs its demo loop on the Pi | the clean-room interface header (its images keep the kernel debugger by decision, with its source offered; leaving it out is 0.2's release kernel's), the end path's reset, the hardware watchdog on every boot, the set-time command and the login key's reader, each estimated before it starts; the milestones it takes carry their own figures | [0.1's dependencies](#01-the-preview) | |
 | 0.2 The first release, on Fiasco | a release build on QEMU `virt` and the Raspberry Pi 4 boots without the development banner, asks for a login and runs an installed app whose code is untrusted, which reaches no other domain, stops at its memory wall and spins in its own band without delaying the display or a driver; the release notes carry the downsides against erXos's kernel | the backend on Fiasco's own mechanisms and four Fiasco patches (the clean-room interface header, the release kernel's build without `jdb_object.cpp`, writable or executable, eager FP switching), five if the null-request bench shows that FD32's hardening of its entry costs nothing measurable, estimated before it starts; the milestones it takes carry their own figures | 0.1, Phase 1b and track A, and the Fiasco forms of M9's kernel part's devices, the rest of track P, M10, M12, track D's parts 5 and 9 and M11's closure | the gates of the milestones it takes: GP, G12, GN-board |
 | Fiasco's scheduler stages | status words, deferred preemption, group park and group quotas, in that order, each measured before and after and kept only when its numbers pay; urgency within a band waits for a consumer | 2,000 to 4,050 lines of C++ in the fork, the policy in erXos's C17 cores (unverified estimates, [design-fiasco.md](design-fiasco.md#stages-beyond-bands)) | 0.2 | each stage, after 0.2, by its before-and-after numbers on Fiasco over the workloads G8 names (E-S1, E-S3 to E-S9); G8 itself is M8's, on erXos's kernel |
@@ -2513,6 +2514,151 @@ bootable file and the device tree, the entry state, the memory map,
 whether `stdout-path` names the mini UART, where the framebuffer lies,
 and the time to the system runtime's first pet.
 
+## 1b-J: The Raspberry Pi 5 on Fiasco
+
+**Goal.** The Raspberry Pi 5, a 4 GB board, runs Phase 1 and 1b's system
+on Fiasco, as 1b-I brings up the Pi 4, along
+[design-platforms.md](design-platforms.md#the-raspberry-pi-5-on-fiasco),
+[design-fiasco.md](design-fiasco.md#the-raspberry-pi-5) and
+[design-rp1.md](design-rp1.md). The board is data: a platform record, a
+manifest, its boot files, a PCIe bridge driver, RP1's drivers and the
+Ethernet driver, and no interface changes. M12 stays the boards'
+milestone on erXos's kernel.
+
+**Demo.** The Pi 5 boots from its firmware to the shell on its debug
+UART; its Ethernet carries UDP echo and a TCP bulk transfer to a peer
+through `cgem0`; a USB keyboard on either of RP1's hosts types into the
+shell and a USB stick mounts; the kiosk shows on its screen once the
+display's part can be built (below). Every guarantee is deferred, as on
+the Pi 4.
+
+**Decided.** The port runs on Fiasco, on the Pi 4's kernel build and,
+unless the probe shows otherwise, its `bootstrap` build. The firmware
+boots the single bootable file as `kernel_2712.img` through its own BL31,
+so no TF-A is shipped; `config.txt` adds `os_check=0` and
+`pciex4_reset=0` and names no `armstub`. The console is `uart10`, the
+BCM2712's own PL011; no host link, as
+[design-platforms.md](design-platforms.md#raspberry-pi-5) has it. The
+first boot comes before a serial cable is wired, so it is judged by the
+signs that exist already, with no new mechanism: the firmware's LED
+codes and HDMI diagnostics, the display's splash only where the firmware
+hands over a framebuffer, and the watchdog's reset loop
+([design-platforms.md](design-platforms.md#the-raspberry-pi-5-on-fiasco)).
+The watchdog is the Pi 4's driver. RP1 is one unit in the `rp1` domain,
+which lends Ethernet to the network domain through `ether` and is the
+USB domain of both hosts. Which device tree ships is open
+([design-platforms.md](design-platforms.md#the-pi-5s-device-tree-and-its-license));
+development boards boot the tree on their card. QEMU has no Pi 5 model,
+so every part is proven on the board, its pure cores on the host first.
+
+**Parts.** Each ends in a demo reproduced on the board by hand. (a)
+comes first and (b) as soon as the cable is there; (c), (d) and (g) need
+(b); (e) needs (d); (f) and (h) need (e).
+
+* **(a) The card and a headless first boot.** `config/platforms/raspi5.json`
+  and `config/manifest/raspi5-development.txt`; the boot partition writer's
+  Pi 5 lines; the Pi 4's card layout. The first boot passes when the
+  firmware's screen shows the kernel loaded and the board then neither
+  resets nor shows a firmware error for five minutes, and fails when the
+  watchdog's loop repeats.
+* **(b) The serial console and the boot probe.** The shell on `uart10`,
+  and the boot probe's research record,
+  `research-rpi5-board-pass.md`, with every probe item below.
+* **(c) Storage on the SD controller.** `sdio1` as the block driver's
+  device process, after a Pi 5 section of
+  [design-storage.md](design-storage.md#the-sd-host-controller) gives
+  its card power, card detect and 1.8 V lines on the always-on GPIO bank.
+* **(d) The bridge and the MIP.** `erx_pcie_bcm2712` with its keep-only
+  start, kept layouts, the walk's device-0 rule, the MSI frame's doorbell,
+  data and start writes, and several messages per function
+  ([design-pcie.md](design-pcie.md#the-bridge-seam)); RP1 is enumerated
+  and each part's entry raises its line.
+* **(e) RP1's unit.** Part rows, `erx_rp1` with its clocks read first, the
+  MSI-X configuration and the acknowledge word
+  ([design-rp1.md](design-rp1.md#the-construction-a-function-and-its-parts)).
+* **(f) Ethernet.** `erx_cgem`, the GEM ring form, `cgem0` lent through
+  `ether` ([design-rp1.md](design-rp1.md#the-ethernet-controller)); then
+  SSH's stage 1 over it as on the Pi 4.
+* **(g) The display.** The kiosk on the firmware's framebuffer, as on
+  the Pi 4, if the probe finds one in the tree the firmware passes; if it
+  does not, this part waits for a display design for the Pi 5.
+* **(h) USB.** The DWC3 step and both hosts under the unchanged xHCI
+  stack ([design-rp1.md](design-rp1.md#the-usb-hosts)).
+
+**Dependencies.** (a) and (b) on 1b-I's part (a) and the platform's
+record format; (c) on 1b-I's part (b) and the storage design's Pi 5
+section; (d) on the PCIe design's implementation in 1b-E; (f) on 1b-G
+and WiFi's `ether` interface; (g) on 1b-C's part 3; (h) on Track U's part
+(a). Nothing in 1b-I waits on this stage.
+
+**Testing.** Host tests and fuzz targets of the cores, each with its
+seeded fault, as [design-rp1.md](design-rp1.md#verification) and
+[design-pcie.md](design-pcie.md#verification) list them: the BCM2712
+start's decision, kept layouts, the walk's rule, several messages, the
+packer's MSI frame, `erx_rp1_core`'s clocks and vectors, the acknowledge
+word, `erx_cgem_core`, `erx_cgem_mdio`, the GEM ring form and its fuzz
+target, the DWC3 step. The board passes are by hand, with a checklist
+per part, as the Pi 4's.
+
+**Board probes.** Recorded in (b)'s research record:
+
+* the load address, the CPU's state at entry, the device tree's place,
+  whether `os_check=0` suffices, and whether the firmware's BL31 prints
+  once the kernel runs;
+* the console's divisor and from it the UART's clock;
+* the watchdog: a hang resets the board within the timeout;
+* the tree the firmware passes: `/chosen`, the memory node, any
+  framebuffer node and where it lies, the `ethernet0` alias's address;
+* `pcie2` as the bootloader leaves it with `pciex4_reset=0` and with the
+  default: the status bits, the inbound windows and UBUS remaps, the
+  outbound windows, PERST#; whether a write across a dropped link raises
+  an error;
+* the MIP's twelve registers before the root writes them; that SPI 128
+  plus the data fires for each part's entry; which lines `mip1` raises,
+  for the record;
+* RP1's snapshot: its BARs' addresses and sizes, its MSI-X table's BAR
+  and offset;
+* RP1's clocks: the system PLL's lock, power bits and dividers, and the
+  `SEL` and `CTRL` of `clk_sys`, `clk_eth` and `clk_eth_tsu`, from which
+  the PLL's power-bit polarity and VCO rate are settled;
+* whether the GEM and the USB hosts are running at entry, and GPIO 32's
+  level;
+* the GEM's `DCFG6` (64-bit addressing, priority queues) and
+  `DESIGN_CFG1`; whether its transmit resumes at the stopped descriptor;
+  how long its receive takes to stop;
+* whether RP1's writes through `pcie2` are coherent with the CPUs'
+  caches.
+
+**Exit criteria.**
+
+* (a): the headless boot passes its five minutes, and a card whose
+  kernel file is renamed fails it, the firmware showing its error.
+* (b): the Pi 5 boots to the shell on `uart10` with the development
+  banner, and the boot probe's research record is written.
+* (c): the Pi 4's power-cut checklist passes on the Pi 5's card.
+* (d): the PCIe domain lists RP1 with its kept BARs; a test write of each
+  part's message to the MIP's doorbell raises that part's line; the host
+  tests pass, each failing on its seeded fault.
+* (e): `erx_rp1` starts and logs its readings; a level vector held
+  high through `MSIX_CFG`'s test bit across the acknowledge is delivered
+  again, and is not when the acknowledge word is left out of the record;
+  the host tests pass.
+* (f): UDP echo and a TCP bulk transfer to a peer over `cgem0`; the
+  `rp1` domain killed under load restarts and `cgem0` comes back; a
+  cable pulled and replaced brings the link down and up; the GEM ring
+  form's fuzz budget runs clean; `ssh root@` the board reaches `rc`.
+* (g): the kiosk's frame read back from the framebuffer equals QEMU's,
+  where the part can be built.
+* (h): a keyboard on each host types into the shell; a USB stick on
+  either host mounts and a file written to it reads back after
+  replugging.
+
+**Gate GR5, before the first board boot.** The board is a 4 GB Pi 5, with
+no automated rig. Measures, through the boot probe, where the firmware
+places the bootable file and the tree, the entry state, the memory map
+and the console's clock. Decides the RAM the platform record names and
+whether the Pi 4's `bootstrap` build serves the Pi 5.
+
 ## Track U: USB
 
 **Place.** In Phase 1b, below the first two apps (Track A, "What comes
@@ -2973,7 +3119,8 @@ no row, are built here and tested here.
 * **Boards.** The Raspberry Pi 4 Model B, whose platform record, boot
   files and Erlang drivers come from
   [1b-I](#1b-i-the-raspberry-pi-4-on-fiasco) on Fiasco, then the
-  Raspberry Pi 5, as [design-platforms.md](design-platforms.md) describes
+  Raspberry Pi 5, whose come from
+  [1b-J](#1b-j-the-raspberry-pi-5-on-fiasco), as [design-platforms.md](design-platforms.md) describes
   them: each board's
   interrupt controller, console UART, random generator, hardware watchdog
   and firmware mailbox, and the Pi 5's MSI frame, in the kernel's platform
@@ -3227,6 +3374,7 @@ their numbers.
 | G12 | M12 | throughput and commit latency on the Pi 4's SD card, against G6's on QEMU; boot time to the shell and to the first pet on both boards; the trial path's timings; slot images' sizes | the default trial deadline; the watchdog's boot deadline per board; whether images need compression |
 | GN-QEMU | 1b-G, on Fiasco | the packet-path prototype's UDP echo and TCP bulk transfer on QEMU under HVF, against a Linux peer and line rate, recorded with Fiasco named | nothing; it records the baseline GK3 repeats on erXos's kernel |
 | GR | 1b-I, before the first board boot | the boot probe on the Pi 4 under Fiasco; the board is a 4 GB Pi 4 and the board pass is manual | the RAM the Pi 4's platform record names |
+| GR5 | 1b-J, before the first board boot | the boot probe on the Pi 5 under Fiasco; the board is a 4 GB Pi 5 and the board pass is manual | the RAM the Pi 5's platform record names; whether the Pi 4's `bootstrap` build serves it |
 | GN-board | M12 | the same on the Pi 4, against Linux's stack on the board and line rate | GK3's decision on TCP's fast path confirmed or reopened |
 | G13 | M13: 1b-H on QEMU, the Pi 4 at M12 | erXos's F2FS against littlefs over the file-semantics corpus and against Linux's F2FS and `fsck.f2fs`; the power-cut harness; throughput, commit latency and the cleaner's overhead, on Fiasco a baseline; the Pi 4's SD card at M12 | the replacement of littlefs, on QEMU, from the corpus, the oracle guest and the power cuts; the Pi 4's numbers may reopen it |
 | G14 | M14: 1b-G on QEMU, the boards at M12 | erXos's stack against FreeBSD's over the network test corpus and the packet scripts; throughput, latency and memory on QEMU, a baseline on Fiasco, and on both boards | the acceptance of erXos's stack, on QEMU; the boards confirm it |
@@ -3290,6 +3438,9 @@ Phase 1b, in order of its demos (backend rows, hosted backend too; BeamAsm besid
            1b-I the Pi 4: (a) serial shell on raspi4b after Phase 1, then once on the board (GR)
              --> (b) storage after 1b-E, (c) network after 1b-G, (d) display after 1b-C part 3,
                  (e) the header after 1b-E (its GPIO package also on where the pin controller lives)
+           1b-J the Pi 5: (a) headless boot, (b) serial shell and probe (GR5)
+             --> (d) bridge and MIP after 1b-E --> (e) RP1 --> (f) Ethernet after 1b-G, (h) USB after track U (a);
+                 (c) storage, (g) display after (b)
 
 0.1:       published (see 0.1)
 

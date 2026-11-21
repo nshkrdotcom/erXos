@@ -247,7 +247,10 @@ UART3's line 153 with the other PL011s.
 acknowledges with `erx_irq_line:ack(Handle)`. `attach` reads the line's
 mark from the record. For a direct line attach is
 `erx_device:irq_bind/2` and ack is `erx_device:irq_ack/2`, as for every
-line ([design-runtime.md](design-runtime.md#the-device-nif)). For a
+line ([design-runtime.md](design-runtime.md#the-device-nif)); where the
+record carries an acknowledge word, the device-side acknowledge a level
+vector of RP1 needs, `irq_ack/2` writes it first
+([design-rp1.md](design-rp1.md#interrupts)). For a
 shared line attach is a join: it asks the NIF which process the line is
 bound to, `erx_device:irq_holder/2`, and calls that process, a call that
 monitors it, so an owner that ended after the lookup answers

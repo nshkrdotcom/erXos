@@ -45,13 +45,17 @@ Decisions every reader needs:
   bus**, the Raspberry Pi 4's, is one whose platform record lists every
   place on it with the pin its function raises, and whose bridge driver
   reaches no other place, so each line it routes is a line of its
-  place's unit, as any device-tree line is. One message per function.
+  place's unit, as any device-tree line is. One message per function,
+  or one per part where a function's parts each name an MSI-X entry
+  ([Several messages](#the-choice)).
 * **The layout is small on purpose.** Memory BARs go into the host
   bridge's 32-bit window, each in whole pages of its own, packed largest
-  first, every one placed by erXos; bridges are root ports only; I/O
-  BARs, ROMs, the 64-bit window, firmware's BAR assignments, switches,
-  hotplug and extended capabilities have no consumer and are not used.
-* **Two bridge drivers behind one access.** The walk, the placement and
+  first, every one placed by erXos, except behind a bridge whose link
+  erXos inherits from the bootloader, where each BAR keeps the address
+  the bootloader gave it ([Kept layouts](#kept-layouts)); bridges are
+  root ports only; I/O BARs, ROMs, the 64-bit window, switches, hotplug
+  and extended capabilities have no consumer and are not used.
+* **Three bridge drivers behind one access.** The walk, the placement and
   the planner are the same code for every bridge; a bridge driver
   supplies only its bring-up, one configuration access at a place, and
   the refusal of every place its bridge must not be asked about.
@@ -155,11 +159,14 @@ designs that bring them:
   interrupt (section 4.1.5.1.2). The virtio-pci transport's design adds
   those capabilities, decoded and bounded, to the layout and the given
   record; this design gives it the MSI-X route.
-* **RP1**, on the Pi 5, behind the BCM2712's root port, which keeps the
-  BARs its bootloader assigned
-  ([design-platforms.md](design-platforms.md#pcie-bridges)) and wants
-  several messages. Its bridge driver, the placement of kept BARs and
-  more than one message are the Pi 5 port's.
+* **RP1**, on the Pi 5, behind the BCM2712's `pcie2` root port, whose
+  link and windows the bootloader leaves set up and erXos inherits
+  ([design-platforms.md](design-platforms.md#pcie-bridges)). RP1 is one
+  function whose BAR 1 carries the board's Ethernet and USB hosts as
+  parts, each with its own MSI-X entry
+  ([design-rp1.md](design-rp1.md#the-construction-a-function-and-its-parts)).
+  It needs the BCM2712 bridge driver, kept layouts and several
+  messages.
 
 No consumer needs I/O BARs, an expansion ROM, the 64-bit window, a
 switch or any bridge below a root port, hotplug, ARI, SR-IOV, AER, ASPM
@@ -482,6 +489,7 @@ answered. Its decisions are pure modules:
 | `erx_pcie_report` | the `erx_pcie_function` record of each function a walk found, from its read value, sizes and placement |
 | `erx_pcie_plan` | the plan's stages, each its writes and the state they lead to, from a read value and a target; the descent to quiet; whether a function reads as a state; the start's target |
 | `erx_pcie_bcm2711_core` | the BCM2711 bridge's bring-up and keep-or-reset decision as a state machine over register reads |
+| `erx_pcie_bcm2712_core` | the BCM2712 bridge's keep-only start as a decision over its register reads |
 
 The effects, every configuration access and every bridge register, go
 through the bridge driver's `access` and the device NIF, and
@@ -523,7 +531,7 @@ ECAM); `ready` lets a bridge hold
 back a function its board must start first. The walk, sizing, placement
 and planner call nothing else, so a third bridge is one more module. The
 enumerator chooses the module by the bridge's given record's
-peripheral, `pci_ecam` or `bcm2711_pcie`, rows of
+peripheral, `pci_ecam`, `bcm2711_pcie` or `bcm2712_pcie`, rows of
 `include/erx/device_kinds.h` with role `configuration`, and finds that
 record by its INDEX, the bridge's manifest device row, which is the
 `erx_pcie_bridge`'s `index`
@@ -617,6 +625,50 @@ it ([design-platforms.md](design-platforms.md#dma),
 [design-usb.md](design-usb.md#the-bcm2711-bridge)); this design's keep
 adds nothing to that rule.
 
+**The BCM2712** (`erx_pcie_bcm2712`), for `pcie2`, which carries RP1.
+Its register values are the
+[BCM2712 facts record](research-bcm2712-pcie-mip.md)'s:
+
+* **Access.** The BCM2711's: the root port's configuration at offset 0
+  of the bridge's registers, an endpoint's through the index register at
+  `0x9000` and the data window at `0x8000`, and the link check around
+  every access (F1.5). The two drivers share that access as one module,
+  `erx_pcie_brcm_access`, over register names both chips' SVD files
+  give, so it exists once.
+* **The places it reaches.** On bus 0 only the root port; below it the
+  walk's own rule, device 0 alone ([The walk](#the-walk)). Every other
+  place answers `{error, absent}` before any register is touched, as on
+  the BCM2711, since no source says what such an access does on this
+  chip.
+* **Start: keep only.** The board's `config.txt` sets `pciex4_reset=0`,
+  so the bootloader leaves `pcie2`'s link up for the system to inherit
+  (F1.4). `start` reads `MISC_PCIE_STATUS` (`0x4068`) and goes on only
+  with the link up (bits 4 and 5) and the block in root-complex mode
+  (bit 7); then it writes the inbound windows (the BAR registers at
+  `0x402c` and `0x40d4` up, with their UBUS remaps at `0x40ac` and
+  `0x410c` up, F1.2) and the outbound windows that the tree's
+  `dma-ranges` and `ranges` give, the 4 KiB doorbell window to the MSI
+  receiver included, and sets the reply-error disables of
+  `MISC_UBUS_CTRL` (`0x40a4`, bits 13 and 19) with all ones in
+  `MISC_AXI_READ_ERROR_DATA` (`0x4170`), so an access across a dropped
+  link reads all ones instead of raising an error the kernel cannot
+  attribute (F1.3, item 3). It logs every register it read first. With
+  the link down or the block not a root complex, it answers
+  `{error, link_down}`, and the board runs without RP1. The driver has
+  no reset, PERST#, power or SerDes path at all, so a restart takes
+  nothing off the bus, and `pcie1`, whose reset would stop the
+  calibration block both controllers depend on (F1.1), appears in no
+  platform record: "never put `pcie1` in reset" holds because nothing
+  can.
+* **Inherited.** Its platform record marks the bridge `inherited`, so
+  its placing walk keeps the bootloader's BARs
+  ([Kept layouts](#kept-layouts)).
+* **Its lines and the MSI receiver.** Its functions interrupt by MSI-X
+  through the MSI receiver (`brcm,bcm2712-mip`), which the platform
+  record names as the board's MSI frame
+  ([The MSI frame on Fiasco](#the-msi-frame-on-fiasco)); the bridge's
+  own lines are its unit's and stay masked.
+
 ### The walk
 
 `erx_pcie_walk` reads; it writes only the root ports, through the
@@ -640,7 +692,10 @@ a malformed function's command register (step 2). For each host bridge, from the
    bus number in place order as its secondary and subordinate bus,
    before its parse or its BARs decide anything, so every walk gives it
    the same buses, and its target is applied at once ([Root ports](#root-ports)), so the bus
-   below it can be read. Below it, devices 0 to 31 are read as in step 1.
+   below it can be read. Below it, device 0 alone is read, its functions
+   as in step 1: a PCIe link reaches one device, and FreeBSD probes only
+   slot 0 below a root port or downstream port (`pcib_maxslots`,
+   `pci_pci.c:2373-2392`).
    A type-1 header below a root port is reported `unsupported` and
    nothing below it is read.
 4. **The function's place** is its bus, device and function; its
@@ -648,8 +703,8 @@ a malformed function's command register (step 2). For each host bridge, from the
    stored.
 
 No step recurses and the topology has two levels, so the walk's length
-is bounded by 32 devices times 8 functions on each of the root bus and
-each root port's bus, at most `pcie_functions_max` functions per bridge
+is bounded by 32 devices times 8 functions on the root bus and 8
+functions below each root port, at most `pcie_functions_max` functions per bridge
 reported ([Records](#records)); a function past the bound is logged and
 left as it is.
 
@@ -724,8 +779,32 @@ unplaced:
   `unplaced`; it is never given.
 
 Every BAR is placed afresh, whatever an earlier stage of the boot left
-in it: QEMU's are blank, and the VL805 is placed before any driver uses
-it. Keeping a firmware's assignment is the Pi 5 port's addition, for RP1.
+in it, behind every bridge but an inherited one: QEMU's are blank, and
+the VL805 is placed before any driver uses it.
+
+### Kept layouts
+
+Behind a bridge its platform record marks `inherited`, a placing walk
+takes each function's layout from the addresses its BARs read, not from
+packing: `erx_pcie_place:kept(Windows, Functions)`. Sizing already
+restores each BAR's original value, as FreeBSD's `pci_read_bar` does,
+so the address read before sizing is the address kept. The root port's
+forwarding window stays derived: the extent of the kept BARs below it,
+rounded to 1 MiB, written by the root port's plan if it reads otherwise.
+A kept BAR is accepted only where a placed one would be: inside the
+bridge's 32-bit memory window, aligned to its span, overlapping no other
+BAR's span; a BAR that fails is unplaced and its function `unplaced`,
+never given, and the library's intake checks the report as it checks
+every placing report ([The catalogue and gives](#the-catalogue-and-gives)).
+There is no fallback to packing, so one bridge has one way of placing.
+
+RP1 is the consumer. The bootloader sizes its BAR 1 and places its
+BARs, and the tree's windows for `pcie2` assume that placement: its 4
+MiB inbound window at bus address 0 reaches the outbound window's base,
+where RP1's own BARs sit
+([F1.2](research-bcm2712-pcie-mip.md#f12-inbound-windows-many-bars-plus-a-ubus-remap)).
+Moving the BARs would make the tree's windows wrong, and nothing gains
+from it.
 
 A function a later walk finds at a place its bridge's layouts do not
 hold is reported `unplaced` and waits for the next boot, so a later walk
@@ -806,11 +885,13 @@ placed BAR is held to `pcie_bar_size_log2_max`.
 `erx_msi_message` as `erx_irq_create` returned it
 ([design-kernel.md](design-kernel.md#irq-objects)), its address and
 data the doorbell and value of the function's one message, zero for the other
-routes.
+routes and for a function whose parts carry their own messages
+([Several messages](#the-choice)).
 
 **`erx_pcie_bridge`**, what the device service hands the PCIe domain of
 each bridge it holds: `index` u32, its manifest device row; `bus_first`
-and `bus_last` u8; `flags` u8 (closed); `windows`, at most
+and `bus_last` u8; `flags` u8 (closed; inherited, whose placing walk
+keeps the bootloader's BARs, [Kept layouts](#kept-layouts)); `windows`, at most
 `pcie_windows_max` (4) of `pci` u64, `cpu` u64, `size` u64 and `flags`
 (64-bit, prefetchable, I/O), from the tree's `ranges`; and, for a closed
 bridge, `places`, every place below its root port that its platform
@@ -862,6 +943,7 @@ layout reports and what the manifest row says:
 | --- | --- |
 | the row names a line (a closed bus) | `intx`, the row's line |
 | otherwise, the function has MSI, with no per-vector mask or one at the offset `pcireg.h` gives | `msi`, one message |
+| the function's unit has parts that name MSI-X entries | `msix`, the parts' entries |
 | otherwise, the function has MSI-X | `msix`, table entry 0 |
 | otherwise | `none`: no interrupt, and its driver polls, the rule of [design-system.md](design-system.md#devices) |
 
@@ -887,13 +969,20 @@ write the frame, by its MSI or by DMA to the doorbell, can already raise
 any of its lines
 ([design-kernel.md](design-kernel.md#dma-and-the-iommu)).
 
-**One message per function.** Each consumer this design serves works
-with one: xHCI with one interrupter and the VL805 by INTx; a virtio-pci
+**Several messages.** A function gives one message, entry 0 or its
+MSI, unless its unit has parts that each name an MSI-X table entry, as
+RP1's do ([design-rp1.md](design-rp1.md#interrupts)). Then the give
+makes one `ERX_IRQ_MSI` object per part that names an entry, at most
+`abi/erx_abi.txt`'s limit `msi_max`, 32, the `ERX_MSI_MAX` of
+[design-kernel.md](design-kernel.md#irq-objects), and writes each object's message
+into that part's given record; the route is `msix`, and the setting's
+message is zero. At the function's reset the NIF writes each named entry
+from its part's record and masks every other entry, then reads the last
+entry it wrote back. Each consumer without parts works with one
+message: xHCI with one interrupter and the VL805 by INTx; a virtio-pci
 driver can take every event on vector 0, which its specification allows
-(section 4.1.5.1.2). MSI's multiple message enable is 0 and MSI-X
-entries past 0 are masked. RP1 and multi-queue virtio-pci network want
-several; the design that brings the first of them gives the setting a
-count and the give that many objects, up to `ERX_MSI_MAX`. A function
+(section 4.1.5.1.2). MSI's multiple message enable stays 0: no consumer
+needs several MSI messages. A function
 whose MSI capability takes only 32-bit addresses needs a doorbell below
 4 GiB; the enumerator refuses a `set` whose route it cannot write with
 `{error, route}`.
@@ -933,17 +1022,42 @@ copies that message into the function's setting and, for an MSI-X
 route, its given record, as the call returned it: the enumerator
 programs MSI from the setting, the holder's NIF programs MSI-X from the
 given record, and nothing derives the message from the object or the
-line. A message's data is the frame's **interrupt id** of the line it
-raises, the number the function writes to the doorbell; the other
-documents cite this section for it. On Fiasco the backend implements the same call in the root, over
+line. A message's data is the number the function writes to the
+doorbell to raise its line: on QEMU `virt`'s frame the line's **interrupt
+id**, on the BCM2712's MSI receiver the line's vector, its offset in
+the frame; the other documents cite this section for it. On Fiasco the backend implements the same call in the root, over
 the frame's lines, which Fiasco binds as wired lines:
 
-* **The range.** QEMU `virt`'s platform record names the frame,
-  `msi_frame`: its base, the interrupt id of its first line and the
-  count, which the packer copies into the manifest's platform part. The
-  root may not read the frame's `MSI_TYPER`, since only `erx_device`
-  reads device registers, so the record stands in for it; the QEMU suite
-  checks the record by raising the first and the last line. Which range
+* **The range.** The platform record names the frame, `msi_frame`: its
+  peripheral, its base, the interrupt id of its first line and the count,
+  which the packer copies into the manifest's platform part. The root
+  may not read the frame's `MSI_TYPER`, since only `erx_device` reads
+  device registers, so the record stands in for it; the QEMU suite
+  checks the record by raising the first and the last line.
+* **The doorbell and the data.** The packer derives the two numbers a
+  message needs and writes them into the manifest's `erx_mf_msi_frame`
+  beside the range: `doorbell`, the bus address a function writes, and
+  `data`, the value that raises the first line. The doorbell is the CPU
+  address of the frame's doorbell register, from the frame's SVD file,
+  carried through the host bridge's inbound translation, the tree's
+  `dma-ranges` (identity where it has none); the data is the first
+  line's interrupt id on QEMU `virt`'s frame and 0 on the MIP, whose writes
+  name a vector. So QEMU's frame gets `base + 0x40`, its `MSI_SETSPI_NS`,
+  and the interrupt id; the Pi 5's MIP gets `0xff_ffff_f000`, the bus
+  address `pcie2`'s doorbell window maps onto the MIP's page, and 0
+  ([F2.3, F2.4](research-bcm2712-pcie-mip.md#f24-the-doorbell-and-the-inbound-window)).
+  The packer refuses a frame whose doorbell no inbound window of the
+  bridge maps. The root holds no fact of any frame type.
+* **The MIP's start.** The MIP needs six registers written once before
+  any line is bound: its host configuration all ones (edge), its host
+  masks 0 and the VideoCore's masks all ones, as Linux writes them
+  (F2.2). The packer derives these as the frame's start writes, at most
+  `msi_frame_start_max` (8) offset and value pairs, empty for QEMU `virt`'s frame,
+  and the root makes them through the frame's page, which only the root
+  maps, as it maps the watchdog's block
+  ([design-fiasco.md](design-fiasco.md#the-watchdog)): a platform item
+  the root stands in for, which erXos's kernel's platform layer makes
+  from the same record. Which range
   QEMU's frame serves is in [the QEMU facts record](research-qemu-pcie-usb.md#the-msi-frame)
   (probe 4 of the USB design).
 * **The call.** `erx_irq_create(budget, resource, ERX_IRQ_MSI, 0)`
@@ -952,19 +1066,17 @@ the frame's lines, which Fiasco binds as wired lines:
   `l4_icu_set_mode` with `L4_IRQ_F_POS_EDGE`
   (`fiasco/l4re-core/l4sys/include/icu.h:82`, `:266`), as FreeBSD sets
   every frame line ([design-platforms.md](design-platforms.md#msi-frames)), binds it as `ERX_IRQ_LINE` binds a
-  line, and answers the message, the doorbell, the frame's base plus
-  `0x40`, and the data, the line's interrupt id, in the reply's second
+  line, and answers the message, the record's doorbell and its data plus
+  the line's offset from the first, in the reply's second
   and third words beside the object in its first (`abi/erx_abi.txt`,
   `erx_fiasco_irq_create_request`), so the request does not grow.
   Whether the fork's
   interrupt controller honours the mode for these lines is probe 4's second half
   ([the record's open items](research-qemu-pcie-usb.md#not-settled)).
-* **The address the function writes.** The doorbell answered is the
-  frame's CPU address, which is the address the function writes only
-  where its host bridge maps the frame one to one. The give checks the
-  doorbell against the function's DMA range and refuses a give where the
-  bus and CPU addresses differ, so no route aims a function at the wrong
-  address.
+* **The address the function writes.** The doorbell is a bus address
+  derived from the bridge's own inbound translation, so a route aims a
+  function at the frame whether or not its host bridge maps the frame one
+  to one, and nothing at boot compares a bus address with a CPU address.
 * **Exhaustion.** When every line of the range has an object, the call
   fails with `ERX_ELIMIT`, and the give with it. The manifest check
   proves that a manifest's `pci` rows without a line number at most the
@@ -1722,6 +1834,8 @@ been made, which the readback catches. That is a residual of Fiasco
 | | `{error, reset}` | a `mastering` setting for a function that does not read as it at `decoding` or `mastering` |
 | | `{error, busy}` | a function-level reset with transactions still pending after 1000 ms |
 | | `{error, route}` | the route does not fit the function: no such capability, or a doorbell beyond its MSI address width |
+| `erx_pcie_bcm2712` `start` | `{error, link_down}` | the link is down, or the block is not in root-complex mode, at entry; the bridge reports no function |
+| the give | no give, a diagnostic | a part's entry at or past the function's MSI-X table size, or more parts with entries than `msi_max` |
 | | `{error, unknown}` | a place the enumerator has no layout for |
 | | `{error, badarg}` | the facet's refusal of a request out of the interface's shape, before the enumerator sees it |
 | | `{error, unavailable}` | the facet's refusal of a request that finds no enumerator registered ([Processes](#processes)) |
@@ -1784,6 +1898,11 @@ that touches it.
 | `erx_pcie_place` | for generated sets of BARs, with and without root ports: every placed BAR inside the window, aligned to its span, no two spans overlapping, no two root ports' windows overlapping; the same set in any order gives the same addresses; a fixed set of a 4 KiB, a 64 KiB and a 1 MiB BAR gives the addresses written in the test | the alignment rounding dropped: the 64 KiB BAR lands at 4 KiB and both the alignment property and the fixed addresses fail |
 | `erx_pcie_walk` | against a model configuration space, an open root bus with multifunction devices and a root port, and a BCM2711 model whose root port sets the multifunction bit and whose bus 1 has devices at listed and unlisted places: every function found, root ports numbered in place order, and the model records no hardware access at a place the bridge does not list | the BCM2711 access's place check removed: the model records an access at bus 0, function 1 |
 | `erx_pcie_bcm2711_core` | the keep-or-reset table, exhaustive over link and firmware readings; bring-up's order and each deadline | PERST# asserted on the keep path: the test of a kept link sees a PERST# write |
+| `erx_pcie_bcm2712_core` | the start's decision, exhaustive over the status bits: keep with the link up in root-complex mode, `link_down` otherwise; the writes are the tree's windows and the two reply-error settings, nothing else | a reset write on the keep path: the test of a kept link sees a write outside the allowed set |
+| `erx_pcie_place:kept/2` | kept BARs inside the window, aligned and disjoint are taken as read; the root port's window encloses them; a BAR outside, misaligned or overlapping is unplaced | the overlap check removed: two overlapping kept BARs both pass and the test fails |
+| the walk below a root port | a model bus with functions at devices 0 and 1 below a root port: only device 0's functions are read | the old rule restored: the model sees an access at device 1 |
+| several messages, the give and the NIF | a function with three parts naming entries 6, 31 and 36 gets three objects, each part's record its own message, and the table has exactly those entries unmasked | one object shared by all parts: the test reads one message in three records |
+| the packer's MSI frame | QEMU's record gives `base + 0x40` and the first interrupt id; the Pi 5's gives `0xff_ffff_f000`, data 0 and the MIP's six start writes | the inbound translation skipped: the Pi 5's doorbell comes out as `0x10_0013_0000` and the test fails |
 | `erx_devices_pci_core` | exhaustive over its states and events: requests in `between` are answered only after a report's answer, or at `down`; a holder's end in `between` lowers the setting and sends nothing; a lowering is written before it is sent and a raise after its `ok`; the report's answer is withheld until `await_grant` answers the incarnation's facet, and `answered` is written before the answer is sent; a restarted process begins in `synced` only when `answered` names the incarnation holding its bridges, and in `between` when it names an ended one or none; the sequence `targets` with a mastering setting, the holder's end, `report` leaves the model's function off | the answer's settings dropped: that sequence leaves the function mastering after its holder's end; a raise written before its `ok`: after a failed `set` the library says `mastering`; the restart's state taken from the facet's presence: a restart after the grant was installed and before the report was answered begins in `synced` |
 | `erx_dom_pci_report` (C, host) | a valid placing report is taken whole; a BAR outside the window, unaligned, overlapping another entry, an MSI-X table past its BAR's size, each refuses the placing report whole with `ERX_EINVAL`; at a later report, a changed record, a missing one and a `not_ready` one each leave the function ungiven although an earlier report confirmed it; on a bridge marked `firmware_lost`, a report listing the VL805 `ready` leaves it ungiven; `erx_dom_pci_firmware` over a backend whose call answers `ERX_ETIMEDOUT` marks the entry before it returns, and over one answering `ERX_OK` or `ERX_ENOTSUP` does not | the overlap check removed: the overlapping fixture is admitted; the earlier confirmation kept when a record is missing: the missing function stays given; the mark not read at intake: the VL805 reported ready after the timeout is given |
 | `erx_domain:await_grant/2`, the domain service over its mint core | a wait for incarnation `D` is answered `{ok, Facet}` with `D`'s facet once installed, `{error, failed}` when its grant fails, `{error, ended}` when `D` ends or the grant moves to another server, and `{error, unprovided}` when `D` is ready without `pcie`; the service answers other calls while it waits; `system_namespace/0` still waits for every `files` grant | the wait matched by service alone: a wait for `D` is answered with its predecessor's installed facet; the idle case dropped: the wait for an incarnation that provides no `pcie` is never answered within the test's deadline |
@@ -1840,6 +1959,14 @@ enumerator's host tests.
 
 ### Board probes
 
+On the Pi 5, by hand ([the plan's stage 1b-J](plan.md#1b-j-the-raspberry-pi-5-on-fiasco)):
+`pcie2`'s status, inbound and outbound window and UBUS remap registers
+as the bootloader leaves them with `pciex4_reset=0` and with the
+default; the MIP's twelve registers before the root writes them; RP1's
+snapshot, its BARs' addresses and sizes and its MSI-X table's BAR and
+offset; that the first and the last entry a part names deliver on their
+lines; and which lines `mip1` raises, for the record.
+
 On the Pi 4, by hand: the root's device-tree line for the bridge prints
 its `ranges`, `dma-ranges` and `interrupt-map`; the enumerator's dump of
 the VL805's snapshot gives its header type, BARs and pin, and the root
@@ -1877,10 +2004,13 @@ the line, the DMA limit and the abort's kind.
 * **Re-enumerate from scratch at every start.** Deterministic placement
   would reproduce the addresses, but sizing a running function or root
   port turns its decoding off under its driver.
-* **Keep a valid BAR firmware assigned.** It serves RP1, which this
-  design does not reach, and makes a second placement problem, kept
-  BARs whose root ports' windows must still enclose and avoid each
-  other, for no consumer here.
+* **Place RP1's BARs afresh.** One placement for every bridge, but the
+  tree's windows for `pcie2`, the 4 MiB loopback window among them,
+  assume the bootloader's placement, and the bootloader sizes RP1's BAR
+  1 itself; kept layouts reuse the placing checks and add no fallback.
+* **Device 1 to 31 below a root port behind each bridge driver.** Each
+  driver could refuse them as the BCM2711's does; the walk's rule fixes
+  it once for every bridge, as FreeBSD does.
 * **A 64-bit window and prefetchable placement.** No consumer's BAR needs
   them; a BAR that does not fit is unplaced, not misplaced.
 * **A general walk over switches.** No platform has one; a second bridge
