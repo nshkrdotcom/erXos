@@ -199,3 +199,133 @@ limit smp_key_size_erxos u8 16
 # passkey's bound, 999999.
 limit smp_passkey_rounds u8 20
 limit smp_passkey_max u32 999999
+# The host's side of the LE-U link (docs/design-bluetooth.md, "Links: the fixed channels").
+# An ACL packet's Packet_Boundary_Flag (Vol 4 Part E, 5.4.2): the host starts a frame it
+# sends with first_non_flushable and the controller one it delivers with first_flushable,
+# each continued with continuing; on LE-U neither side uses the other's start, and 0b11 is
+# no longer used.
+enum hci_acl_boundary u8
+  value first_non_flushable 0
+  value continuing 1
+  value first_flushable 2
+# The basic L2CAP header, PDU Length and Channel ID of 2 octets each (Vol 3 Part A, 3.1),
+# and the fixed channels every LE-U link has (2.1, Table 2.3).
+limit l2cap_header u8 4
+enum l2cap_cid u16
+  value att 0x0004
+  value le_signaling 0x0005
+  value smp 0x0006
+# LE signaling (Part A, 4): a command's code, identifier and Data Length; the smallest
+# signaling MTU an LE-U link carries (Table 4.1); Command Reject and the codes of the
+# responses it never answers (4.1 and Table 4.2); and Command Reject's reasons (Table 4.3).
+limit l2cap_le_mtu_sig u8 23
+enum l2cap_signal u8
+  value command_reject 0x01
+  value disconnection_rsp 0x07
+  value connection_parameter_update_rsp 0x13
+  value le_credit_based_connection_rsp 0x15
+  value credit_based_connection_rsp 0x18
+  value credit_based_reconfigure_rsp 0x1a
+enum l2cap_reject_reason u16
+  value not_understood 0x0000
+  value mtu_exceeded 0x0001
+# SMP's channel MTU with LE Secure Connections (Vol 3 Part H, 3.2, Table 3.2).
+limit smp_mtu u8 65
+
+# ATT (Vol 3 Part F). The Command Flag of an opcode (3.3.1), and the opcode of each PDU the
+# server takes or sends (3.4.1 to 3.4.7): the requests and the command it answers or
+# takes, and every PDU a server sends, which on arrival is for the client erXos does not
+# have (3.3) and is dropped. A request not named here is answered Request Not Supported.
+limit att_command_flag u8 0x40
+enum att_opcode u8
+  value error_rsp 0x01
+  value exchange_mtu_req 0x02
+  value exchange_mtu_rsp 0x03
+  value find_information_req 0x04
+  value find_information_rsp 0x05
+  value find_by_type_value_req 0x06
+  value find_by_type_value_rsp 0x07
+  value read_by_type_req 0x08
+  value read_by_type_rsp 0x09
+  value read_req 0x0a
+  value read_rsp 0x0b
+  value read_blob_req 0x0c
+  value read_blob_rsp 0x0d
+  value read_multiple_rsp 0x0f
+  value read_by_group_type_req 0x10
+  value read_by_group_type_rsp 0x11
+  value write_req 0x12
+  value write_rsp 0x13
+  value prepare_write_req 0x16
+  value prepare_write_rsp 0x17
+  value execute_write_req 0x18
+  value execute_write_rsp 0x19
+  value handle_value_ntf 0x1b
+  value handle_value_ind 0x1d
+  value handle_value_cfm 0x1e
+  value read_multiple_variable_rsp 0x21
+  value multiple_handle_value_ntf 0x23
+  value write_cmd 0x52
+# The error codes the server sends (3.4.1.1, Table 3.4), and the range of a handler's
+# Application Errors.
+enum att_error u8
+  value invalid_handle 0x01
+  value read_not_permitted 0x02
+  value write_not_permitted 0x03
+  value invalid_pdu 0x04
+  value insufficient_authentication 0x05
+  value request_not_supported 0x06
+  value invalid_offset 0x07
+  value prepare_queue_full 0x09
+  value attribute_not_found 0x0a
+  value invalid_attribute_value_length 0x0d
+  value unlikely_error 0x0e
+  value insufficient_encryption 0x0f
+  value unsupported_group_type 0x10
+  value value_not_allowed 0x13
+limit att_application_error_min u8 0x80
+limit att_application_error_max u8 0x9f
+# Find Information's two formats (3.4.3.2, Table 3.9) and Execute Write's flags (3.4.6.3).
+enum att_information_format u8
+  value uuid16 0x01
+  value uuid128 0x02
+enum att_execute u8
+  value cancel 0x00
+  value write 0x01
+# The default ATT_MTU on LE (GATT, Vol 3 Part G, 5.2.1, Table 5.1); the longest attribute
+# value (Part F, 3.2.9); and the longest value one entry of Read By Type and of Read By
+# Group Type carries, bounded by their one-octet Length (3.4.4.2, 3.4.4.10).
+limit att_mtu_default u16 23
+limit att_value_max u16 512
+limit att_read_by_type_value_max u8 253
+limit att_read_by_group_type_value_max u8 251
+
+# GATT's attribute types (Part G, 3.1, 3.3.1 and 3.3.3.3), the GAP and GATT services and
+# their characteristics (Part G, 7.1 and Appendix B's example; Part C, 12.1 and 12.2), a
+# characteristic declaration's property bits (Part G, 3.3.1.1, Table 3.5), the bits of
+# a Client Characteristic Configuration (3.3.3.3, Table 3.11), and the longest Device
+# Name (Part C, 12.1).
+enum gatt_uuid u16
+  value primary_service 0x2800
+  value secondary_service 0x2801
+  value characteristic 0x2803
+  value client_configuration 0x2902
+  value gap_service 0x1800
+  value gatt_service 0x1801
+  value device_name 0x2a00
+  value appearance 0x2a01
+  value service_changed 0x2a05
+enum gatt_property u8
+  value read 0x02
+  value write_without_response 0x04
+  value write 0x08
+  value notify 0x10
+  value indicate 0x20
+enum gatt_configuration u16
+  value notify 0x0001
+  value indicate 0x0002
+limit gap_device_name_max u16 248
+# The write commands that wait behind the handler's answer on a link; past it a command is
+# discarded and counted (docs/design-bluetooth.md, "What a radio peer can make the domain
+# spend"; ATT 3.3.2).
+limit bt_write_queue u8 16
