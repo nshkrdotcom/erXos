@@ -635,12 +635,10 @@ module Erx
               .select { |type| type.is_a?(Layout) && type.storage == 'wire_le' }
       end
 
-      # The wire_le layouts the reader encodes: each fixed one but the device
-      # records, the layouts of a descriptor format (Marks::Schema#device_record?).
-      # A marked one has the encoder its marks give it in abi.h (MarksEmitter), a
-      # report none, and only the sequencer calls a C encoder of one.
+      # The wire_le layouts the reader encodes (Names.reader_encodes?), the rule
+      # Names.validate reserves their encoders' names by.
       def wire_encoded_layouts(schema)
-        wire_layouts(schema).reject { |layout| layout.tail || schema.marks.device_record?(layout) }
+        wire_layouts(schema).select { |layout| Names.reader_encodes?(layout, schema.marks) }
       end
 
       def reader_header(schema)
@@ -649,7 +647,7 @@ module Erx
                '#include "erx/abi.h"', '',
                '/* Prefix decoders borrow immutable bytes; references remain untrusted. */']
         layouts.each do |layout|
-          out << "bool #{name(layout.name)}_decode(const uint8_t *bytes, size_t length,"
+          out << "bool #{Names.decoder(layout.name)}(const uint8_t *bytes, size_t length,"
           out << "    #{c_type(layout)} *result);"
         end
         out.concat(['', '/*', ' * Encoders write a layout whole, its padding zero, into the first SIZE',
@@ -658,7 +656,7 @@ module Erx
                     ' * device record, a layout of a descriptor format, whose only C',
                     ' * encoders are the ones its marks give it in erx/abi.h.', ' */'])
         wire_encoded_layouts(schema).each do |layout|
-          out << "bool #{name(layout.name)}_encode(const #{c_type(layout)} *value,"
+          out << "bool #{Names.encoder(layout.name)}(const #{c_type(layout)} *value,"
           out << '    uint8_t *bytes, size_t length);'
         end
         out.concat(['', 'typedef struct erx_abi_error erx_abi_error_t;',
@@ -714,7 +712,7 @@ module Erx
       # The decoder's mirror: every field stored at its offset, every other
       # byte of the layout zero.
       def encoder(layout)
-        out = ['bool', "#{name(layout.name)}_encode(const #{c_type(layout)} *value,",
+        out = ['bool', "#{Names.encoder(layout.name)}(const #{c_type(layout)} *value,",
                '    uint8_t *bytes, size_t length)', '{',
                "\tif (value == NULL || bytes == NULL || length < #{constant(layout.name)}_SIZE)",
                "\t\treturn (false);", "\tfor (size_t index = 0; index < #{constant(layout.name)}_SIZE; index++)",
@@ -735,7 +733,7 @@ module Erx
 
       def encode_field(type, source, offset, indent:)
         if type.is_a?(Layout)
-          ["#{indent}(void)#{name(type.name)}_encode(&#{source}, bytes + #{offset},",
+          ["#{indent}(void)#{Names.encoder(type.name)}(&#{source}, bytes + #{offset},",
            "#{indent}    #{constant(type.name)}_SIZE);"]
         elsif type.is_a?(BytesType)
           ["#{indent}for (size_t byte = 0; byte < #{type.size}; byte++)",
@@ -752,7 +750,7 @@ module Erx
       end
 
       def prefix_decoder(layout)
-        out = ['bool', "#{name(layout.name)}_decode(const uint8_t *bytes, size_t length,",
+        out = ['bool', "#{Names.decoder(layout.name)}(const uint8_t *bytes, size_t length,",
                "    #{c_type(layout)} *result)", '{', "\t#{c_type(layout)} value = {0};", '',
                "\tif (bytes == NULL || result == NULL || length < #{constant(layout.name)}_SIZE)",
                "\t\treturn (false);", '']
@@ -772,7 +770,7 @@ module Erx
 
       def decode_field(type, destination, offset, indent:)
         if type.is_a?(Layout)
-          ["#{indent}if (!#{name(type.name)}_decode(bytes + #{offset},",
+          ["#{indent}if (!#{Names.decoder(type.name)}(bytes + #{offset},",
            "#{indent}    #{constant(type.name)}_SIZE, &#{destination}))",
            "#{indent}\treturn (false);"]
         elsif type.is_a?(BytesType)

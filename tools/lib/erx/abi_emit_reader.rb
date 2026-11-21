@@ -469,7 +469,7 @@ module Erx
                "\t#{root_type} header;", reader.order.empty? ? "\tsize_t cursor;" : "\tsize_t cursor, padding;", '',
                "\tif (bytes == NULL || result == NULL || length > UINT64_C(#{reader.maximum}))",
                "\t\treturn (erx_abi_fail(error, \"length\", \"root\", 0));",
-               "\tif (!#{CEmitter.name(reader.root.name)}_decode(bytes, length, &header))",
+               "\tif (!#{Names.decoder(reader.root.name)}(bytes, length, &header))",
                "\t\treturn (erx_abi_fail(error, \"truncated\", \"root\", 0));", '',
                "\tcursor = #{reader.root.size};"]
         if reader.extent
@@ -508,7 +508,7 @@ module Erx
           out.concat(["\tfor (size_t index = 0; index < #{count}; index++) {",
                       "\t\t#{CEmitter.c_type(type)} record;", "\t\tsize_t offset;", '',
                       "\t\toffset = (size_t)#{offset} + index * #{type.size};",
-                      "\t\tif (!#{CEmitter.name(type.name)}_decode(bytes + offset, #{type.size}, &record))",
+                      "\t\tif (!#{Names.decoder(type.name)}(bytes + offset, #{type.size}, &record))",
                       "\t\t\treturn (erx_abi_fail(error, \"truncated\", #{table_name.dump}, offset));",
                       "\t\tif (!#{prefix}_check_#{table_name}(bytes + offset, &record,",
                       "\t\t    &header, bytes, offset, error))", "\t\t\treturn (false);", "\t}", ''])
@@ -535,7 +535,7 @@ module Erx
            "\t\tfor (size_t index = 0; index < #{owner_count}; index++) {",
            "\t\t\t#{CEmitter.c_type(owner_type)} record;", "\t\t\tsize_t base;", '',
            "\t\t\tbase = (size_t)#{owner_start} + index * #{owner_type.size};",
-           "\t\t\tif (!#{CEmitter.name(owner_type.name)}_decode(bytes + base,",
+           "\t\t\tif (!#{Names.decoder(owner_type.name)}(bytes + base,",
            "\t\t\t    #{owner_type.size}, &record))",
            "\t\t\t\treturn (erx_abi_fail(error, \"truncated\", #{path.name.dump}, base));",
            "\t\t\tif (#{span_offset} != (size_t)#{target_start} + covered * #{target.fetch(:type).size} ||",
@@ -560,7 +560,7 @@ module Erx
          "\tif (view == NULL || view->bytes == NULL || result == NULL)", "\t\treturn (false);",
          "\tif (#{offset} > view->length || index >= #{count})", "\t\treturn (false);",
          "\tif (#{count} > (view->length - #{offset}) / #{type.size})", "\t\treturn (false);",
-         "\treturn (#{CEmitter.name(type.name)}_decode(view->bytes +",
+         "\treturn (#{Names.decoder(type.name)}(view->bytes +",
          "\t    (size_t)#{offset} + index * #{type.size}, #{type.size}, result));", '}', '']
       end
     end

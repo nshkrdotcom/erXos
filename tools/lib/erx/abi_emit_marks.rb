@@ -52,7 +52,7 @@ module Erx
 
       def encoders(schema)
         marks = schema.marks
-        written = marks.layouts.reject(&:report?)
+        written = marks.written
         targets = marks.targets.values.sort_by(&:name)
         described = marks.meanings.reject(&:report?)
         [*(written.empty? ? [] : little_endian),
@@ -211,7 +211,7 @@ module Erx
         cases = described.flat_map { |marked| description_case(marked) }
         ['/* The free places of a description, by its meaning: one member per meaning that has any. */',
          'typedef union erx_meaning_free {',
-         *stated.map { |marked| "\t#{CEmitter.name(marked.layout.name)}_free_t\t#{Names.stem(marked.layout.name)};" },
+         *stated.map { |marked| "\t#{Names.encoder_input(marked.layout.name, 'free')}_t\t#{Names.stem(marked.layout.name)};" },
          '} erx_meaning_free_t;', '',
          '/*',
          ' * One reference of a description: the structure its record is of, or',
@@ -301,7 +301,8 @@ module Erx
 
       def encoder(marked)
         layout = CEmitter.name(marked.layout.name)
-        inputs = { 'free' => marked.free, 'placed' => marked.placed }.reject { |_kind, places| places.empty? }
+        inputs = marked.inputs
+        input = ->(kind) { Names.encoder_input(marked.layout.name, kind) }
         from_inputs = inputs.flat_map do |kind, places|
           places.map { |place| Assignment.new(place: place, expression: "#{PARAMETERS.fetch(kind)}->#{place.name}") }
         end
@@ -310,15 +311,15 @@ module Erx
         end
         order = Marks.layout_places(marked.layout).values.map(&:name)
         parameters = ["#{layout}_t *record",
-                      *inputs.keys.map { |kind| "const #{layout}_#{kind}_t *#{PARAMETERS.fetch(kind)}" }]
-        [*inputs.flat_map { |kind, places| input_struct(layout, kind, places) },
+                      *inputs.keys.map { |kind| "const #{input.call(kind)}_t *#{PARAMETERS.fetch(kind)}" }]
+        [*inputs.flat_map { |kind, places| input_struct(input.call(kind), layout, kind, places) },
          '/*',
          " * Writes all of *record as #{marked.meaning? ? CEmitter.constant(marked.constant) : layout}. Returns false, with",
          ' * *record untouched, when a value is wider than its place or has bits',
          ' * set below its shift.',
          ' */',
          'static inline bool',
-         "#{layout}_encode(#{parameters.join(",\n    ")})",
+         "#{Names.encoder(marked.layout.name)}(#{parameters.join(",\n    ")})",
          '{',
          "\t#{layout}_t out = { 0 };", '',
          *refusals(from_inputs),
@@ -329,11 +330,11 @@ module Erx
          '}', '']
       end
 
-      def input_struct(layout, kind, places)
+      def input_struct(name, layout, kind, places)
         ["/* #{SUMMARIES.fetch(kind)} #{layout}. */",
-         "typedef struct #{layout}_#{kind} {",
+         "typedef struct #{name} {",
          *places.map { |place| "\tuint64_t\t#{place.name};" },
-         "} #{layout}_#{kind}_t;", '']
+         "} #{name}_t;", '']
       end
 
       # One condition over every input, which refuses a value wider than its

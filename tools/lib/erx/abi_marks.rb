@@ -115,6 +115,8 @@ module Erx
         def meaning? = !structure.nil?
         def report? = meaning? && structure.device?
         def constant = "meaning_#{Names.stem(layout.name)}"
+        # The encoder's inputs by kind, each kind with at least one place.
+        def inputs = { 'free' => free, 'placed' => placed }.reject { |_kind, places| places.empty? }
       end
 
       # One mark line of a layout and its parsed value.
@@ -125,6 +127,8 @@ module Erx
       Schema = Struct.new(:targets, :layouts, keyword_init: true) do
         # The layouts with a meaning line, each with its number.
         def meanings = layouts.select(&:meaning?)
+        # The layouts the sequencer writes, each with its encoder: all but the reports.
+        def written = layouts.reject(&:report?)
         # What every table of target offers: the meanings whose line names it.
         def offered(target) = meanings.select { |meaning| meaning.structure.name == target.name }
         # The descriptor formats: each source file that holds a marked layout. Every

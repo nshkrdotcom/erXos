@@ -30,6 +30,22 @@ module Erx
         "ERX_#{stem(value).upcase}"
       end
 
+      # A layout's C decoder and encoder. The reader writes the decoder of every
+      # wire_le layout and the encoder of each layout it encodes (reader_encodes?);
+      # the marks emitter writes the encoder of each marked layout but a report
+      # (Marks::Schema#written), and its input structures, one per kind of its
+      # places (Marks::MarkedLayout#inputs), each a tag and its _t typedef.
+      def decoder(value) = "#{c(value)}_decode"
+      def encoder(value) = "#{c(value)}_encode"
+      def encoder_input(value, kind) = "#{c(value)}_#{kind}"
+
+      # The layouts the C reader encodes: each fixed wire_le one but the device
+      # records (Marks::Schema#device_record?), whose only C encoders are the ones
+      # their marks give them in abi.h, and only the sequencer calls.
+      def reader_encodes?(layout, marks)
+        layout.storage == 'wire_le' && !layout.tail && !marks.device_record?(layout)
+      end
+
       def local(value, line:)
         unless value && value.match?(/\A[a-z][a-z0-9_]{0,62}\z/) && !C_KEYWORDS.include?(value)
           line.fail!("invalid local identifier #{value.inspect}")
@@ -37,7 +53,7 @@ module Erx
         value
       end
 
-      def validate(types:, constants:, calls:, readers:, architecture:, line:)
+      def validate(types:, constants:, calls:, readers:, marks:, architecture:, line:)
         symbols = {}
         reserve = lambda do |symbol, origin|
           if symbols.key?(symbol)
@@ -74,7 +90,8 @@ module Erx
           next unless type.is_a?(Layout)
           reserve.call("#{macro(type.name)}_SIZE", "layout size #{type.name}")
           reserve.call("#{macro(type.name)}_ALIGN", "layout alignment #{type.name}")
-          reserve.call("#{tag}_decode", "layout decoder #{type.name}") if type.storage == 'wire_le'
+          reserve.call(decoder(type.name), "layout decoder #{type.name}") if type.storage == 'wire_le'
+          reserve.call(encoder(type.name), "reader encoder #{type.name}") if reader_encodes?(type, marks)
           members = type.fields.map(&:name)
           members += type.padding.each_index.map { |index| "padding_#{index}" }
           members << type.tail.name if type.tail
@@ -96,6 +113,14 @@ module Erx
             reserve.call("#{macro(type.name)}_#{field.upcase}_TERMINAL", "sequence terminal #{type.name}")
             reserve.call("#{macro(type.name)}_#{field.upcase}_EXHAUSTION", "sequence exhaustion #{type.name}")
             reserve.call("#{tag}_#{field}_status", "sequence status #{type.name}")
+          end
+        end
+        marks.written.each do |marked|
+          layout = marked.layout.name
+          reserve.call(encoder(layout), "marks encoder #{layout}")
+          marked.inputs.each_key do |kind|
+            input = encoder_input(layout, kind)
+            [input, "#{input}_t"].each { |symbol| reserve.call(symbol, "marks encoder input #{layout} #{kind}") }
           end
         end
         reserve.call('ERX_DECLARE_ABI_NOTE', 'ABI note declaration') if types.key?('erx_abi_note')

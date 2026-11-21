@@ -50,7 +50,7 @@ module Erx
     # every word boundary, so it is refused.
     DEVICE_RECORD_ENCODERS = ABI::Model.validate(ABI::Sources.read(root: REPOSITORY)).then do |schema|
       schema.types.values.select { |type| type.is_a?(ABI::Layout) && schema.marks.device_record?(type) }
-            .map { |layout| "#{ABI::CEmitter.name(layout.name)}_encode" }.sort.freeze
+            .map { |layout| ABI::Names.encoder(layout.name) }.sort.freeze
     end
     if DEVICE_RECORD_ENCODERS.empty?
       raise Error, 'no descriptor format holds a marked layout: device-record-encoders has nothing to guard'

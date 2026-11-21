@@ -912,6 +912,23 @@ through the acquisition, which reads only the structures declared
 list of meanings, so no layout outside those lists is ever read as what
 the device states.
 
+**A format file's layouts are its device records.** A source file
+that holds a layout with marks is a descriptor format, and every layout
+it holds, marked or not, is a **device record**: a record of a ring or
+table a device follows, or payload a driver posts in a buffer, such as
+a virtio-gpu command header, an xHCI command TRB or the virtio-blk
+request header. A layout is a device record because of the file it is
+declared in, not by a declaration of its own: the unmarked records of
+a format need no marks, and a per-layout declaration would be one more
+line each new record must remember, while the file rule covers a
+record as it is declared. The C reader gives a device record no
+encoder ([design-abi.md](design-abi.md#structural-readers)), so its
+only C encoder is the one its marks give it in `erx/abi.h`, a report
+has none, and the device-record-encoders build check keeps every caller
+but the sequencer off those encoders. The generator reserves every C
+name it writes for a layout (its decoder, its encoder and its encoder's
+input structures) and refuses by name a collision between two of them.
+
 **What a table offers.** The meanings a table offers are the layouts
 whose `meaning` line names its structure; no form lists them again, and
 the check's meanings rule reads the generated list. The generator holds

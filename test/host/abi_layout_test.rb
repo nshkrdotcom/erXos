@@ -148,12 +148,18 @@ class AbiLayoutTest < Minitest::Test
     end
   end
 
-  # The C reader's encoder is its decoder's inverse: every sample of a layout it encodes
-  # (each fixed wire_le layout but the device records), decoded, encodes to the same bytes and
-  # no byte past them, and an encode into too short a buffer is refused.
+  # The C reader's encoder is its decoder's inverse: every sample of a layout it encodes,
+  # decoded, encodes to the same bytes and no byte past them, and an encode into too short a
+  # buffer is refused. The layouts are found here, not by the reader's own filter, so a filter
+  # that dropped one fails the test instead of shrinking it: each fixed wire_le layout but the
+  # device records, the layouts of each file that holds a marked layout.
   def test_every_wire_layout_of_the_abi_encodes_in_c_what_it_decodes
     model = Erx::ABI::Model.validate(Erx::ABI::Sources.read(root: ROOT, architecture: 'aarch64'))
-    layouts = Erx::ABI::CEmitter.wire_encoded_layouts(model)
+    formats = model.marks.layouts.map { |marked| marked.layout.line.path }.uniq
+    layouts = model.types.values.select do |type|
+      type.is_a?(Erx::ABI::Layout) && type.storage == 'wire_le' && !type.tail && !formats.include?(type.line.path)
+    end
+    assert_equal layouts.map(&:name).sort, Erx::ABI::CEmitter.wire_encoded_layouts(model).map(&:name).sort
     program = "#include <stdio.h>\n#include <string.h>\n#include \"erx/abi_reader.h\"\n\nint\nmain(void)\n{\n" \
               "\tint wrong = 0;\n\n#{layouts.map { |layout| encode_check(layout) }.join}" \
               "\tprintf(\"%d layouts, %d wrong\\n\", #{layouts.size}, wrong);\n\treturn (wrong != 0);\n}\n"

@@ -278,7 +278,7 @@ module Erx
         inspection_bounds(inspection, all_constants, abi.line) if inspection
         exec_window(all_constants, abi.line) if all_constants.key?('exec_window_base')
         Names.validate(types: types, constants: all_constants, calls: calls,
-                       readers: readers, architecture: architecture, line: abi.line)
+                       readers: readers, marks: marks, architecture: architecture, line: abi.line)
         result = Schema.new(version: version, architecture: architecture, types: types.freeze,
                    type_order: type_order.freeze, constants: all_constants.sort.to_h.freeze,
                    rights: rights.freeze, objects: objects.freeze, kinds: kinds.freeze, caps: caps.freeze,

@@ -503,13 +503,15 @@ class AbiMarksTest < Minitest::Test
     assert_equal "trb_normal wide: encoded 1, bytes differ 1\n", output
   end
 
-  # A layout has at most one encoder: abi_reader.h encodes no device record, so a
-  # marked layout has only the one its marks give it in abi.h, and a report none.
-  def test_no_encoder_name_is_declared_in_both_headers
-    marks, reader = encoder_names(tree_schema(Dir.mktmpdir('erx-abi-marks-')))
-    refute_empty marks
-    refute_empty reader
-    assert_empty marks & reader
+  # A name the marks emitter writes is refused at generation when another generated name
+  # takes it: here a layout named as the sample TRB's description inputs, whose tag and
+  # typedef, erx_sample_trb_free and erx_sample_trb_free_t, the encoder's inputs would
+  # declare a second time.
+  def test_refuses_a_name_the_marks_encoder_inputs_take
+    taken = "layout erx_sample_trb_free wire_le 4 4\n  field word u32 0\n"
+    error = assert_raises(Erx::ABI::SchemaError) { sample(SAMPLE + taken) }
+    assert_match(/\A#{Regexp.escape(PATH)}:\d+: generated symbol erx_sample_trb_free(_t)? collides: /, error.message)
+    assert_match(/marks encoder input erx_sample_trb free\z/, error.message)
   end
 
   # The reader encodes no device record, unmarked ones included, so the generated reader
@@ -523,14 +525,15 @@ class AbiMarksTest < Minitest::Test
     assert_empty encoders.select { |name| reader.include?(name) }
   end
 
-  # A seeded fault in the generator: the reader encoding every fixed wire_le layout,
-  # marked ones included, declares the marked layouts' encoder names a second time.
-  def test_a_reader_encoder_for_a_marked_layout_is_caught
-    schema = tree_schema(Dir.mktmpdir('erx-abi-marks-'))
-    every_fixed = ->(model) { Erx::ABI::CEmitter.wire_layouts(model).reject(&:tail) }
-    with_fault(Erx::ABI::CEmitter.singleton_class, :wire_encoded_layouts, every_fixed) do
-      marks, reader = encoder_names(schema)
-      refute_empty marks & reader
+  # A seeded fault in the generator: were the reader to encode every fixed wire_le layout,
+  # marked ones included, a marked layout's encoder name would be the reader's too, which
+  # generation refuses by name before a compiler sees two declarations of it.
+  def test_a_reader_encoder_for_a_marked_layout_is_refused
+    every_fixed = ->(layout, _marks) { layout.storage == 'wire_le' && !layout.tail }
+    with_fault(Erx::ABI::Names.singleton_class, :reader_encodes?, every_fixed) do
+      error = assert_raises(Erx::ABI::SchemaError) { tree_schema(Dir.mktmpdir('erx-abi-marks-')) }
+      assert_match(/generated symbol (erx_\w+_encode) collides: reader encoder (erx_\w+) and marks encoder \2\z/,
+                   error.message)
     end
   end
 
@@ -611,12 +614,6 @@ class AbiMarksTest < Minitest::Test
   end
 
   private
-
-  # The encoder names abi.h and abi_reader.h each declare at the start of a line.
-  def encoder_names(schema)
-    [Erx::ABI::CEmitter.header(schema), Erx::ABI::CEmitter.reader_header(schema)]
-      .map { |text| text.scan(/^(?:bool )?(erx_\w+_encode)\(/).flatten }
-  end
 
   def sample(text = SAMPLE, other: nil)
     body = "abi 1\n#{text}"
