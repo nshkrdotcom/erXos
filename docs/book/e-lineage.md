@@ -43,7 +43,10 @@ behavior kept and an inside replaced.
 | FreeBSD's signal and error numbers | The numbers musl and `liberx` give native programs | [Chapter 13](13-native-programs.md#136-signals-job-control-and-freebsds-numbers) |
 | FreeBSD's `syscalls.master` | The precedent for generating system-call tables from one file | [Chapter 7](07-one-source.md#72-the-abi-file) |
 | FreeBSD's `rc.conf`, `rc.subr` and `service(8)` | How services are configured and started, kept where it fits | [Chapter 20](20-shell.md#205-starting-services), [chapter 23](23-apps.md) |
-| FreeBSD's `pkg` | The baseline that erXos's one file per app departs from | [Chapter 23](23-apps.md#232-one-file-per-app) |
+| FreeBSD's `pkg` | Packages as archives with a manifest, recorded in a database and installed by scripts that run as root; erXos keeps each app one file, runs nothing at install and has no `pkg` commands | [Chapter 23](23-apps.md#232-one-file-per-app) |
+| macOS's `/Applications` | Installing by copying a file into a directory, which `cp NAME.app /apps/` follows | [Chapter 23](23-apps.md) |
+| FreeBSD's `loader`, `init` and `rcorder(8)` | The contrast for the boot: erXos boots one archive under one hash instead of a loader reading a file system, and derives the boot order once at build time instead of from `REQUIRE` lines at every boot | [Chapter 24](24-startup.md) |
+| FreeBSD's `reboot(8)` | The name, `-p` and `halt` as the same program; the flags for things erXos lacks are usage errors | [Chapter 24](24-startup.md#2462-reboot-traced) |
 | Capsicum, FreeBSD's capability mode | The contrast: FreeBSD narrows a process's authority after the fact, and erXos starts a program with none | [Chapter 2](02-microkernels.md#236-capability-systems-in-practice), [chapter 11](11-security.md) |
 | FreeBSD's `namei` and `tmpfs` | The path lookup and RAM file system that erXos's resolver and `/tmp` follow | [Chapter 14](14-files.md) |
 | Baumann and others, "A fork() in the road" (2019) | The case for starting programs with a spawn call, not `fork` | [Chapter 13](13-native-programs.md#133-starting-a-program) |
