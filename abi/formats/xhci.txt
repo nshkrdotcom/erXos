@@ -362,7 +362,8 @@ layout erx_xhci_trb_command wire_le 8 16
 # endpoints the ledger closes and no other (docs/design-usb.md, "What the DMA check judges").
 # Its reach mark says what it needs and what its success or failure does to them: address binds
 # EP0 a ring at the publication; configure binds a ring to each endpoint it adds and drops others;
-# stop leaves its endpoint stopped; restart moves its endpoint's ring past its transfers; disable
+# stop leaves its running endpoint stopped; reset leaves its halted endpoint stopped; restart moves
+# its stopped endpoint's ring past its transfers; disable
 # ends its slot; evaluate holds EP0, which must be running or stopped with nothing on its ring when
 # it is posted and takes no transfer while it runs. A command with no reach closes nothing. The flags a command may set,
 # Address Device's block-set-address (Table 6-62), Configure Endpoint's deconfigure (Table 6-64), Reset Endpoint's
@@ -459,7 +460,7 @@ layout erx_xhci_trb_evaluate_context_command wire_le 8 16
   reach evaluate
 
 # Reset Endpoint (6.4.3.7, Table 6-65): the endpoint's device context index at 20:16 and the
-# slot. Its success leaves the halted endpoint stopped (4.6.8).
+# slot. Its success leaves the halted endpoint stopped (4.6.8), the only state it is posted in.
 layout erx_xhci_trb_reset_endpoint_command wire_le 8 16
   padding 0 12
   field control u32 12
@@ -472,10 +473,10 @@ layout erx_xhci_trb_reset_endpoint_command wire_le 8 16
   derived control.endpoint
   derived control.slot
   activates control.cycle
-  reach stop
+  reach reset
 
-# Stop Endpoint (6.4.3.8, Table 6-66): as Reset Endpoint. Its success leaves the endpoint
-# stopped (4.6.9).
+# Stop Endpoint (6.4.3.8, Table 6-66): as Reset Endpoint. Its success leaves the running endpoint
+# stopped (4.6.9), the only state it is posted in.
 layout erx_xhci_trb_stop_endpoint_command wire_le 8 16
   padding 0 12
   field control u32 12

@@ -33,6 +33,21 @@
 #else
 #define SEED_NO_CLOSURE	false
 #endif
+#ifdef ERX_DMA_SEED_STOP_ANY_STATE
+#define SEED_STOP_ANY_STATE	true
+#else
+#define SEED_STOP_ANY_STATE	false
+#endif
+#ifdef ERX_DMA_SEED_RESET_ANY_STATE
+#define SEED_RESET_ANY_STATE	true
+#else
+#define SEED_RESET_ANY_STATE	false
+#endif
+#ifdef ERX_DMA_SEED_RESTART_ANY_STATE
+#define SEED_RESTART_ANY_STATE	true
+#else
+#define SEED_RESTART_ANY_STATE	false
+#endif
 #ifdef ERX_DMA_SEED_RETIRE_NOTHING
 #define SEED_RETIRE_NOTHING	true
 #else
@@ -448,17 +463,19 @@ typedef enum reach_effect {
 /*
  * A reach's meaning, written once: which endpoints of its group a command acts on (those its
  * publication binds and drops, the one it names, those it holds, or every one), which it closes
- * while live; what its publication may bind and drop, and what it holds must be running or stopped
- * and idle when it is published; what its success does to the rings of those endpoints; and
- * what its failure does to its own bindings. ERX_REACHES names a row for every reach the marks
- * declare, so a new reach fails to build until it has one here.
+ * while live; what its publication may bind and drop, what it holds must be running or stopped
+ * and idle when it is published, and the states the endpoint it names may be in then; what its
+ * success does to the rings of those endpoints; and what its failure does to its own bindings.
+ * ERX_REACHES names a row for every reach the marks declare, so a new reach fails to build until
+ * it has one here.
  */
 typedef struct reach_rule {
 	uint32_t	bindable;	/* the indexes its bindings may bind, a mask of bit index */
 	uint32_t	must_bind;	/* the indexes it always binds */
 	uint32_t	droppable;	/* the indexes it may drop */
 	uint32_t	holds;		/* the indexes it acts on, running or stopped and idle at its publication */
-	bool		names_one;	/* it acts on the endpoint target.index names */
+	uint32_t	named_states;	/* it acts on the endpoint target.index names, in these states, a mask of
+					   STATE(name); 0 for none */
 	bool		whole_group;	/* it acts on every endpoint of its group */
 	reach_effect_t	success;
 	bool		failure_keeps;	/* its failure keeps its bindings, their endpoints disabled */
@@ -475,10 +492,25 @@ static const reach_rule_t reach_address = { .bindable = 1u << 1, .must_bind = 1u
     .failure_keeps = true };
 /* Configure Endpoint adds and drops indexes 2 and up, as it ignores EP0's flags (4.6.6). */
 static const reach_rule_t reach_configure = { .bindable = ~3u, .droppable = ~3u, .success = EFFECT_REMOVE };
-/* Stop Endpoint and Reset Endpoint leave their endpoint stopped (4.6.9; 4.6.8). */
-static const reach_rule_t reach_stop = { .names_one = true, .success = EFFECT_STOP };
-/* Set TR Dequeue Pointer moves its endpoint's ring past every transfer on it (4.6.10). */
-static const reach_rule_t reach_restart = { .names_one = true, .success = EFFECT_RESTART };
+/*
+ * The commands that name one endpoint, each accepted only in the state design-usb.md's queue table
+ * accepts it in. xHCI 1.2 defines each in that state alone but for Set TR Dequeue Pointer, also
+ * defined in the Error state (4.6.10, p. 141), which the ledger never holds: it halts on every error
+ * code, as 4.10.2 (p. 195) says. On any other state the controller answers Context State Error and
+ * changes nothing, but a controller wrongly answering success, to a Set TR Dequeue
+ * Pointer on a running ring above all, would have the ledger retire transfers the device may still
+ * run and their buffers posted again. Stop Endpoint stops a running endpoint (4.6.9, p. 140);
+ * Reset Endpoint leaves a halted one stopped (4.6.8, p. 129); Set TR Dequeue Pointer moves a
+ * stopped one's ring past every transfer on it (4.6.10, p. 141).
+ */
+#define STATE(name)	(1u << ERX_DMA_ENDPOINT_##name)
+#define ANY_STATE	(STATE(RUNNING) | STATE(STOPPED) | STATE(HALTED))	/* a planted fault's: any but disabled */
+static const reach_rule_t reach_stop = { .named_states = SEED_STOP_ANY_STATE ? ANY_STATE : STATE(RUNNING),
+    .success = EFFECT_STOP };
+static const reach_rule_t reach_reset = { .named_states = SEED_RESET_ANY_STATE ? ANY_STATE : STATE(HALTED),
+    .success = EFFECT_STOP };
+static const reach_rule_t reach_restart = { .named_states = SEED_RESTART_ANY_STATE ? ANY_STATE : STATE(STOPPED),
+    .success = EFFECT_RESTART };
 /* Disable Slot disables every endpoint of its slot (4.6.4). */
 static const reach_rule_t reach_disable = { .whole_group = true, .success = EFFECT_REMOVE };
 /*
@@ -513,7 +545,7 @@ acts_on(const erx_dma_holding_t *command, uint32_t endpoint)
 		return (false);
 	if (rule->whole_group || drops(&command->target, endpoint) ||
 	    (rule->holds >> endpoint % ERX_DMA_GROUP_ENDPOINTS & 1u) != 0 ||
-	    (rule->names_one && endpoint == erx_dma_endpoint(command->target.group, command->target.index)))
+	    (rule->named_states != 0 && endpoint == erx_dma_endpoint(command->target.group, command->target.index)))
 		return (true);
 	for (uint32_t k = 0; k < command->bind_count; k++) {
 		if (command->binds[k].endpoint == endpoint)
@@ -667,8 +699,9 @@ erx_dma_ledger_reach_allows(const erx_dma_ledger_t *ledger, const erx_dma_public
 		return (!erx_dma_ledger_closed(ledger, publication->endpoint) &&
 		    (state == ERX_DMA_ENDPOINT_RUNNING || (SEED_POST_ON_STOPPED && state == ERX_DMA_ENDPOINT_STOPPED)));
 	}
-	if (rule->names_one && erx_dma_ledger_endpoint_state(ledger, erx_dma_endpoint(target->group, target->index)) ==
-	    ERX_DMA_ENDPOINT_DISABLED)
+	/* The endpoint a command names, in a state its rule accepts it in. */
+	if (rule->named_states != 0 && (rule->named_states >>
+	    erx_dma_ledger_endpoint_state(ledger, erx_dma_endpoint(target->group, target->index)) & 1u) == 0)
 		return (false);
 	for (uint32_t index = 1; index < ERX_DMA_GROUP_ENDPOINTS; index++) {
 		const uint32_t endpoint = erx_dma_endpoint(target->group, index);

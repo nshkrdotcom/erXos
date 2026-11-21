@@ -137,6 +137,8 @@ typedef struct erx_trb_form {
 	erx_device_trb_shape_t	shape;
 	uint32_t		ports;
 	uint32_t		slots;
+	/* each slot enabled from an Enable Slot's success to its Disable Slot's success or a reset */
+	bool			enabled[ERX_DEVICE_TRB_SLOTS_MAX + 1];
 	/* each slot's Address Device slot context, from its last success since Disable Slot or a reset */
 	erx_xhci_slot_context_free_t	addressed[ERX_DEVICE_TRB_SLOTS_MAX + 1];
 	erx_trb_transfer_t	transfers[ERX_DEVICE_TRB_BLOCKS_MAX][ERX_DEVICE_TRB_RING_TRBS];	/* by head */
