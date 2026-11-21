@@ -487,6 +487,14 @@ a_steady_writer_does_not_hold_an_out_wait_off_test() ->
     T6 = ev({master, {tty_taken, 1}}, ev({write, {pw, written}, binary:copy(<<"x">>, 411)}, T5)),
     {out, _, _} = report(pa, aw, ok(pa, {watch, aw, [out]}, T6)).
 
+%% A drain's answer follows the name's release: the caller answered drained
+%% must find erx_tty_owner given up (the relay carries actions in order).
+a_drain_gives_the_name_up_before_it_is_answered_test() ->
+    Core0 = ?CORE:new(console, #{master => none}),
+    {_, Actions} = ?CORE:event({drain, {ph, drained}}, Core0),
+    [give_up_name | Rest] = [A || A <- Actions, A =:= give_up_name orelse element(1, A) =:= send],
+    ?assert(lists:member({send, ph, drained}, Rest)).
+
 %% With no master, nothing is sent and a drain is answered at once, with
 %% bytes held and a writer's message waiting; a message as from a master is
 %% dropped.

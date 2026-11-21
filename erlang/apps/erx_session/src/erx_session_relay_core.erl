@@ -635,6 +635,7 @@ drained(#core{drains = []} = Core) ->
 drained(#core{drains = Drains, writes = Writes, link = Link} = Core) ->
     Empty = queue:is_empty(Writes) andalso erx_tty_link:held(Link) =:= 0,
     case Empty orelse not erx_tty_link:flowing(Link) of
-        true -> {[done(Done) || Done <- Drains] ++ [give_up_name], Core#core{drains = []}};
+        %% The name goes first, so a caller answered drained finds it given up.
+        true -> {[give_up_name | [done(Done) || Done <- Drains]], Core#core{drains = []}};
         false -> {[], Core}
     end.
