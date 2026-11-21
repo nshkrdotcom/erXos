@@ -2,7 +2,7 @@
 
 > **Status.** Built: the command shell, rc's language in Erlang with
 > a bounded parser and job control of Erlang jobs; Erlang commands
-> that follow FreeBSD's output (`ls`, `cat`, `grep`, `sort`, `ps`,
+> with the familiar output (`ls`, `cat`, `grep`, `sort`, `ps`,
 > `top` and others); text pipes between Erlang commands and native
 > programs; the line discipline `erx_tty`, a pure core with host
 > tests, run by each session tty's terminal relay; the console's lines
@@ -25,27 +25,21 @@ section 6.3: a pure core with effects at the edge.
 handlers, pipes and signals. [Chapter 14](14-files.md), sections
 14.5 and 14.6: `/proc` and the rule "familiar only where true".
 
-A FreeBSD user who logs in to erXos types `ls`, then `ps | grep ssh`,
+A UNIX user who logs in to erXos types `ls`, then `ps | grep ssh`,
 then presses `Ctrl-Z` on something slow. Each habit rests on a promise:
-FreeBSD's columns, bytes in the pipe, a job that stops and waits. A
+familiar columns, bytes in the pipe, a job that stops and waits. A
 system that keeps the names but breaks the promises is worse than
 unfamiliar names, because the habits lead the user wrong without
 warning.
 
-On FreeBSD, `/bin/sh` parses a line, forks a process for each command
-and joins them with kernel pipes; each command is a C program that reads
-and writes bytes. The kernel's tty layer edits typed lines, echoes them
-and turns `Ctrl-C` into `SIGINT` for the foreground process group.
-`rc.conf` and `service(8)` start daemons, and `sshd` puts a remote user
-on a pseudo-terminal.
-
 erXos keeps that surface wherever its own model matches, and shows its
-own model where it does not. The **command shell** is written in
-Erlang and speaks the language of rc, Plan 9's shell. Its commands are
-Erlang modules that print what FreeBSD's commands of the same names
-print, and every pipe carries text. A terminal is a tty whose line
-discipline follows FreeBSD's, run by a process of the session, and an
-SSH connection is one more line feeding a tty.
+own model where it does not. Where UNIX systems differ, the commands,
+the line discipline and the service verbs are modelled on FreeBSD's.
+The **command shell** is written in Erlang and speaks the language of
+rc, Plan 9's shell. Its commands are Erlang modules that print what
+the commands of the same names print on UNIX, and every pipe carries
+text. A terminal is a tty whose line discipline runs in a process of
+the session, and an SSH connection is one more line feeding a tty.
 
 The sections cover the rule for familiar names, the shell and its
 pipelines, commands over live Erlang state, ttys and the console,
@@ -79,14 +73,14 @@ The table shows the rule deciding cases from this chapter.
 | Familiar thing | What erXos does | Why |
 | --- | --- | --- |
 | `sh` | The shell is `rc`, and says so in its banner | Its language is rc's, not POSIX's; calling it `sh` would invite scripts it cannot run |
-| `ps` columns | FreeBSD's columns and keywords; `-` for a value not measured | A script's `awk '{print $3}'` finds the same field in every row |
+| `ps` columns | The familiar columns and keywords; `-` for a value not measured | A script's `awk '{print $3}'` finds the same field in every row |
 | `rc.conf` | Designed: `/etc/start.conf`, rc.conf's assignment syntax only. Built: `/data/etc/rc.conf` | FreeBSD's file is a shell script that can run anything; erXos's only sets fields of declared rows |
-| `exec`, `rfork` (Plan 9's and FreeBSD's finer-grained `fork`) | Fail with a diagnostic | The shell has no process image to replace and nothing to fork |
+| `exec`, `rfork` (a finer-grained `fork`) | Fail with a diagnostic | The shell has no process image to replace and nothing to fork |
 | `/dev/tty` | A name the program's handler opens, not the file server; reads and writes go to the tty | A terminal's reads, modes and signals are not file-protocol requests |
 
 Each row came from asking what the familiar name promises and
-whether erXos keeps the promise. Where it does, as for `ps`, the work
-goes into matching FreeBSD byte for byte. Where it does not, the design
+whether erXos keeps the promise. Where it does, as for `ps`, the output
+matches the familiar one byte for byte. Where it does not, the design
 picks a different name rather than a near miss. The built system falls
 short of the rule in one row: it keeps its start settings in
 `/data/etc/rc.conf`, a file that is not a shell script, and the name
@@ -144,9 +138,8 @@ success, a program's exit status as a number, a signal's name such as
 `sigint`, or an Erlang command's error, such as `enoent`. A
 pipeline's status joins its stages' with `|`.
 
-erXos adds what rc leaves to its terminal: line editing with emacs
-keys, a prompt of `% `, and job control. The prompt is that of csh, the
-C shell, not rc's `; `.
+The shell also gives line editing with emacs keys, a prompt of `% `,
+and job control.
 
 ### 20.2.2 A parser that cannot be made to run away
 
@@ -170,8 +163,7 @@ up to 1,024. Half the heap divided by that cost gives the bound of 4 KiB
 per command. A longer one fails with `line too long, over 4096 bytes`,
 and a parse that outgrew the heap would kill only the child
 (`erlang/apps/erx_shell/src/erx_shell_parse.erl`). The parser has a fuzz
-target, `test/erlang/erx_shell_parse_fuzz.erl`, and its behavior is
-compared with rc's on a corpus of scripts under `test/shell/rc/`.
+target.
 
 ### 20.2.3 One evaluator per stage
 
@@ -235,8 +227,8 @@ expression's value. Records with structure belong there, in
 Every stage of a pipeline reads bytes and writes bytes, whatever is at
 the other end
 ([design-shell.md, Pipelines](../design-shell.md#pipelines)). So
-`cat app.log | grep error | wc -l` means on erXos what it means on
-FreeBSD, and no stage can tell
+`cat app.log | grep error | wc -l` means what it means on any UNIX,
+and no stage can tell
 what kind of stage feeds it. Only the transport differs. Two Erlang
 stages pass bytes through a **shell pipe**, an Erlang process that holds
 at most 64 KiB in order. Where a native program takes part, the stages
@@ -267,16 +259,16 @@ depends on what is at the other end.
 
 Input is bounded at every step. A line a command reads with
 `erx_cmd:read_line/1` is at most 64 KiB, or the stage fails with
-`line too long`; FreeBSD's tools take lines of any length.
-`sort` holds its input within its heap limit and fails alone if the
-input outgrows it, where FreeBSD's `sort` spills to temporary files.
-Both are documented differences, and both mean that a program writing
-a gigabyte without a newline into `grep` ends `grep` and nothing else.
+`line too long`, and `sort` holds its input within its heap limit and
+fails alone if the input outgrows it, rather than spilling to
+temporary files. Both bounds differ from the UNIX tools, which take
+lines of any length, and both mean that a program writing a gigabyte
+without a newline into `grep` ends `grep` and nothing else.
 
 ### 20.2.6 Job control
 
-`&` runs a line in the background, `jobs` lists the jobs in FreeBSD
-sh's form, `[N] + Running  command`, and `fg` and `bg` take a job's
+`&` runs a line in the background, `jobs` lists the jobs in the form
+`[N] + Running  command`, and `fg` and `bg` take a job's
 number. `Ctrl-C` interrupts the foreground job and `Ctrl-Z` stops it.
 These are built for jobs of Erlang processes.
 
@@ -287,8 +279,7 @@ in order, such as `{stop, Tag}`, which pauses every process of the
 job, and `{say, Bytes}`, which writes `[1] + Stopped  sort big.txt`.
 Every Erlang process of a job carries the job's **tag**, so a stop
 finds its processes by tag, not from a list the shell must keep
-current. The table's host tests,
-`test/erlang/erx_shell_jobs_tests.erl`, drive it event by event.
+current. Being pure, the table is tested on the host event by event.
 
 A native program in a job is handled differently. `Ctrl-C` ends a
 program's starter, the handler kills the program's spaces, and the
@@ -296,7 +287,7 @@ line's status reads `sigint` ([chapter
 13](13-native-programs.md#1363-ctrl-c-and-the-sessions-job-control)).
 Stopping a program with `Ctrl-Z` is designed: the session pauses the
 program's spaces and resumes them at `fg`, so the terminal relay never
-waits on a program. Stopping a native program is designed and not built.
+waits on a program. This is designed and not built.
 
 ### 20.2.7 Narrowing a command, and rc for programs
 
@@ -315,7 +306,7 @@ built.
 ## 20.3 UNIX tools over live Erlang state
 
 A UNIX `ps` reads the kernel's process table. erXos's `ps` reads the
-session's own table and prints it in FreeBSD's text
+session's own table and prints it as text in the familiar form
 ([design-shell.md, Text commands](../design-shell.md#text-commands)).
 The built `ps` lists the session's Erlang processes; listing its
 native programs in the same table is designed and not built.
@@ -325,9 +316,9 @@ native programs in the same table is designed and not built.
 ```
 
 lists the session's processes by memory, largest first. `ps` takes
-FreeBSD's keywords `pid`, `tt`, `state`, `time`, `pcpu`, `rss`, `comm`
-and `command`, prints FreeBSD's header line, and reports an unknown
-keyword as FreeBSD does, `ps: KEY: keyword not found`, with status 1.
+the keywords `pid`, `tt`, `state`, `time`, `pcpu`, `rss`, `comm` and
+`command`, prints the usual header line, and reports an unknown
+keyword as `ps: KEY: keyword not found`, with status 1.
 The table shows how each column fills, for an Erlang process and, in
 the design, for a program.
 
@@ -340,10 +331,10 @@ the design, for a program.
 | `COMMAND` | its registered name, else the function it started in | its name and arguments |
 
 The dash is the honest part. ERTS keeps no CPU time per Erlang process,
-so erXos prints `-`, as FreeBSD's `ps` does for a column it has no value
-for. A `0` would claim a measurement, and a word such as `unknown` would
-break the column for `awk` and `sort -k`; `sort -n` sorts a `-` among
-the zeros, as FreeBSD's does. `ps` reads `process_info` in its own
+so erXos prints `-`, the mark UNIX `ps` uses for a column it has no
+value for. A `0` would claim a measurement, and a word such as
+`unknown` would break the column for `awk` and `sort -k`; `sort -n`
+sorts a `-` among the zeros. `ps` reads `process_info` in its own
 runtime, and prints a bare `-` for a value the runtime does not measure
 or a process that ended while being read
 (`erlang/apps/erx_shell/src/erx_cmd_ps.erl`). The design's rule is that
@@ -355,10 +346,9 @@ shell print the status itself, such as `[unknown]` or `[timeout 500]`
 ([chapter 21](21-live-machine.md#2121-six-statuses)).
 
 `/proc` gives the same live state as files
-([chapter 14](14-files.md#1451-proc-the-inspector-as-files)). The QEMU
-session suite types `cat /proc/status` at root's command shell and
-checks the machine's record comes back; the `net_device` suite reads
-`cat /proc/time/status`. Each line of a `status` file is an
+([chapter 14](14-files.md#1451-proc-the-inspector-as-files)):
+`cat /proc/status` prints the machine's record, and
+`cat /proc/time/status` the clock's. Each line of a `status` file is an
 attribute, its value and its reporter separated by tabs, so
 
 ```text
@@ -371,17 +361,17 @@ inspector.
 
 `ls` writes a file name through the line escape of
 [chapter 11](11-security.md#1112-text-from-untrusted-sources) when its
-output is a terminal, where FreeBSD's prints `?`, and writes the
-name's bytes unchanged into a pipe, as FreeBSD's does. A file named
+output is a terminal, and writes the name's bytes unchanged into a
+pipe. A file named
 with an escape sequence cannot repaint the screen, yet `ls | grep`
 sees the real name.
 
-`grep` takes FreeBSD's options `-E`, `-F`, `-c`, `-i`, `-l`, `-n`,
-`-q` and `-v`. A pure translator, `erx_grep_re`, turns a POSIX regular
-expression into one for Erlang's `re` module, or refuses it where
-FreeBSD's `regcomp(3)` would, so `re` never reads POSIX syntax as its
-own. A program can hand `grep` its pattern, so the translator has a fuzz
-target. FreeBSD's `-r` is designed and not built.
+`grep` takes the options `-E`, `-F`, `-c`, `-i`, `-l`, `-n`, `-q` and
+`-v`. A pure translator, `erx_grep_re`, turns a POSIX regular
+expression into one for Erlang's `re` module, or refuses one that is
+not valid POSIX, so `re` never reads POSIX syntax as its own. A
+program can hand `grep` its pattern, so the translator has a fuzz
+target. `-r` is designed and not built.
 
 ## 20.4 Ttys and the console
 
@@ -403,8 +393,8 @@ target. FreeBSD's `-r` is designed and not built.
 > program such as `sshd` or a terminal window rather than a serial
 > line.
 
-FreeBSD's line discipline lives in the kernel, in `tty_ttydisc.c`.
-erXos's lives in the session, as one pure state machine, the Erlang
+erXos's line discipline lives in the session, not the kernel, as one
+pure state machine, the Erlang
 module `erx_tty` in `erlang/apps/erx_session/src` ([design-live.md, The
 tty](../design-live.md#the-tty)). Each function takes an event and the
 tty's state and returns what to do and the next state:
@@ -418,17 +408,16 @@ tty's state and returns what to do and the next state:
 * `set(Termios, Tty)` checks new settings whole, and
   `size(Rows, Columns, Tty)` reports only a size that changed.
 
-The behavior follows FreeBSD's, whose source the design cites line by
-line. When a key makes a signal, `input/3` stops there and leaves the
-bytes typed after it untaken, as FreeBSD's `ttydisc_rint` does, so the
+When a key makes a signal, `input/3` stops there and leaves the
+bytes typed after it untaken, so the
 session acts on `Ctrl-C` before any reader sees what followed it. Both
 the Erlang codec and musl's `bits/termios.h` are
 generated from one flag table, `abi/termios.txt`, so a C program's
 `struct termios` bits are the ones the line discipline reads ([chapter
 7](07-one-source.md)).
 
-Host tests (`test/erlang/erx_tty_tests.erl`) drive the pure core event
-by event, time included as a `timer` event, and it has a fuzz target.
+Host tests drive the pure core event by event, time included as a
+`timer` event, and it has a fuzz target.
 
 ### 20.4.2 The terminal relay
 
@@ -536,9 +525,9 @@ the `Ctrl-G` menu.
 
 ## 20.5 Services as FreeBSD starts them
 
-A FreeBSD administrator types `service ntpd enable` and `service ntpd
+An administrator types `service ntpd enable` and `service ntpd
 start`, and reads `/etc/rc.conf` to see what this machine changed. erXos
-offers the same verbs over its **start table**, the one place that says
+offers FreeBSD's verbs over its **start table**, the one place that says
 which sessions run without a person ([design-apps.md, The start
 table](../design-apps.md#the-start-table)).
 
@@ -546,8 +535,7 @@ A **start row** names a principal, the identity a session runs as, and
 says whether it starts at boot. It may name a display for the app's
 window, and it sets a restart intensity: how many restarts within how
 many seconds end the row. The manifest's `start` rows declare every row
-the machine can have, with defaults, as FreeBSD's `rc.d` scripts and
-`/etc/defaults/rc.conf` do. One file holds this machine's own settings
+the machine can have, with defaults. One file holds this machine's own settings
 of those rows, in rc.conf's assignment syntax. The built file is
 `/data/etc/rc.conf`, with four fields per row, `enable`, `display`,
 `restarts` and `period`:
@@ -568,26 +556,26 @@ what any app holds.
 
 The design goes further on two points, both designed and not built.
 It names the file `/etc/start.conf`, because calling it `rc.conf`
-promises a shell script, and a FreeBSD user who wrote one there would
-be misled; this is the rule of section 20.1. And it adds a fifth
+promises a shell script, and a user who wrote one there would be
+misled; this is the rule of section 20.1. And it adds a fifth
 field, the start flags: opaque text the app reads from one environment
-variable, `ERX_START_FLAGS`, as a FreeBSD daemon reads `NAME_flags`.
+variable, `ERX_START_FLAGS`.
 
 The `service` command is built (`erx_cmd_service`), with the table's
 parser (`erlang/apps/erx_starter/src/erx_start_table.erl`) and a fuzz
 target for the file's reader. `service -e` lists the configured
 domains in boot order, then the enabled rows.
 `start`, `stop`, `restart` and `status` act on an enabled row; on any
-other they answer as `rc.subr` does,
+other they answer
 `Cannot 'start' NAME. Set NAME_enable to YES ...`. `service` holds no
 authority of its own: it reads the table from `/proc/apps` and writes
 one line per act to the start service's `ctl` file, through the
 session's `start` grant, and the start service judges each line.
 The built `enable` writes the setting, prints
-`NAME enabled in /data/etc/rc.conf` as FreeBSD's does, and also starts
-the row, which FreeBSD's `service NAME enable` does not. In the design
-`enable` starts nothing, as on FreeBSD, and the row starts at the next
-boot or at `service NAME start`; that is designed and not built.
+`NAME enabled in /data/etc/rc.conf`, and also starts the row, which a
+UNIX user would not expect. In the design `enable` starts nothing, and
+the row starts at the next boot or at `service NAME start`; that is
+designed and not built.
 
 ## 20.6 An SSH connection is a line
 
@@ -617,9 +605,7 @@ boot imports the `authorized_keys` file of the card's FAT volume into
 root's home. A channel's process, `erx_ssh_dev_channel`, opens a tty of
 the session with the size from `pty-req`, and the command shell runs on
 it. `window-change` becomes `{tty_size, Rows, Columns}`, closing the
-channel hangs the tty up, and `exec` is refused. The QEMU `network_domain` suite
-logs in with the clone's development key, types `ps` at `rc` and checks
-for FreeBSD's header line. The `authorized_keys` decoder,
+channel hangs the tty up, and `exec` is refused. The `authorized_keys` decoder,
 `erx_boot_keys`, has a fuzz target.
 
 The designed form moves the protocol out of the session. OTP's `ssh`
@@ -648,8 +634,8 @@ sequenceDiagram
 network's bytes but decides nothing about who logs in; the channel
 becomes one more tty master. This path is designed and not built.*
 
-Two properties fall out of the construction. FreeBSD's `sshd_config` has
-`PermitRootLogin no`; in erXos the system shell opens only at a secure
+Two properties fall out of the construction. erXos needs no
+`PermitRootLogin` setting: the system shell opens only at a secure
 console line, and an SSH connection is never one, so no SSH login
 reaches the system shell whatever the configuration says. And a
 connection's end is a hangup, which ends its shells and, with them, the
@@ -667,7 +653,7 @@ at a login and has a fuzz target.
 A screen editor tests a terminal stack hard: raw mode, single keys,
 drawing anywhere, window changes, and a sane terminal after a stop or a
 kill. erXos's editor is **evi**, Erlang vi, run as the command `vi` and
-designed to behave like FreeBSD's nvi in the basics a user reaches for
+designed to behave like nvi in the basics a user reaches for
 ([design-vi.md](../design-vi.md)). evi is designed and not built.
 
 Its design is a case for functional cores. The screen is a value: a
@@ -720,7 +706,7 @@ program, which is designed.
 **Text pipes, not object pipes.** PowerShell passes objects between
 commands, and an Erlang shell could pass terms. Bytes let commands
 combine with programs, files and the terminal with one meaning, and
-keep a FreeBSD user's `| sort -k` and `| wc -l` working. Structure
+keep a UNIX user's `| sort -k` and `| wc -l` working. Structure
 lives in the Erlang shell and the inspector, one `erl` away.
 
 **Erlang commands, not toybox's.** toybox's `ps` reads a Linux-style
@@ -728,7 +714,7 @@ lives in the Erlang shell and the inspector, one `erl` away.
 processes, and in the design programs, in one table. No toybox applet is
 built under a name an Erlang command declares.
 
-**The line discipline in the session, not the kernel.** FreeBSD
+**The line discipline in the session, not the kernel.** UNIX
 keeps the tty layer in the kernel because every terminal is a kernel
 device. In erXos a terminal is a master process, so the tty belongs to
 the session that reads it: a fault in it is a fault in one session, and
@@ -748,19 +734,19 @@ The command shell speaks rc's language in Erlang,
 with a pure parser whose size bound is derived from a measured heap
 cost. Each stage is an Erlang process with a heap limit, so a runaway
 stage ends alone. Every pipe carries text; the Erlang commands print
-FreeBSD's output, with `-` in a column for a value they do not have,
+the familiar output, with `-` in a column for a value they do not have,
 and records stay in `erl` and the inspector. A tty's line discipline is a
-pure state machine after FreeBSD's, run by the session's terminal
-relay, and every master speaks the same six messages to it. `service`
-gives FreeBSD's verbs over start rows that carry no authority.
+pure state machine run by the session's terminal relay, and every
+master speaks the same six messages to it. `service` gives the familiar
+verbs over start rows that carry no authority.
 
 ## Where to read next
 
 * [design-shell.md](../design-shell.md): the shell in full, with the
   terminal relay's protocol.
 * [design-live.md, The tty](../design-live.md#the-tty) and
-  [The console](../design-live.md#the-console): the line discipline,
-  with FreeBSD's source cited, and the console's lines and menu.
+  [The console](../design-live.md#the-console): the line discipline
+  and the console's lines and menu.
 * [design-apps.md, The start table](../design-apps.md#the-start-table):
   start rows, `/etc/start.conf` and the `service` verbs.
 * [design-ssh.md](../design-ssh.md): the SSH domain, keys and policy.
