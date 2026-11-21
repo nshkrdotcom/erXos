@@ -23,12 +23,12 @@ which did nothing wrong, cannot get the page it needs to draw the next
 frame. Something has to decide, before the machine runs dry, which
 domain is refused.
 
-A UNIX kernel usually hands out more memory than it has, betting that
+A kernel could hand out more memory than it has, betting that
 programs never touch all of it
 ([section 1.4.7](01-operating-systems.md#147-who-pays-for-memory)).
-Its limits cap a process's address space, not what the kernel spends
-on the process's behalf, and when the bet fails, the kernel must end
-some process.
+Its limits would then cap a process's address space, not what the
+kernel spends on the process's behalf, and when the bet failed, the
+kernel would have to end some process.
 
 erXos answers with budgets. The root service holds every free page of
 RAM in one list, its **pool**, and hands pages out from it. A
@@ -625,8 +625,8 @@ worst moment cannot happen. Runtimes reserve freely and commit in
 pieces, as ERTS's allocators do.
 
 **One mapper, or a pager per domain.** Each program could have its
-own pager, a server that answers its faults and maps its memory, as
-in L4Re. erXos gives the root alone that job, so one party holds every page's
+own pager, a server that answers its faults and maps its memory.
+erXos gives the root alone that job, so one party holds every page's
 record and revoking, ending or reporting needs no conversation. The
 cost is that every domain's setup queues on one thread of the root,
 though steady-state traffic makes no request

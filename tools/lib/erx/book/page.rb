@@ -3,6 +3,7 @@
 # frozen_string_literal: true
 
 require 'rexml/document'
+require_relative '../book_diagrams'
 require_relative '../error'
 require_relative 'code'
 require_relative 'html'
@@ -25,19 +26,25 @@ module Erx
       SECTION_NUMBER = /\A((?:[0-9]+|[A-Z])(?:\.[0-9]+)+) /
       CAPTION = /\AFigure ((?:[0-9]+|[A-Z])\.[0-9]+)\. /
       BOX = { 'Status.' => 'status' }.freeze
-      # What a mermaid block becomes until the diagram step draws it: a
-      # figure body holding the source as preformatted text. The diagram
-      # step's drawing replaces this one callable (Page.new's diagram:).
-      SOURCE_DIAGRAM = ->(source, _line) { Html.tag('pre', { class: 'diagram-source' }, Html.tag('code', {}, source)) }
-
       # tree: the smart parse's REXML document; ids: the heading ids of the
       # plain parse, in order (Links.slugs); path: the file's repository
       # path; resolver: a Links::Resolver; drafts: show draft markers as
-      # notes instead of refusing them; diagram: a callable from a mermaid
-      # block's source and line to the figure's body.
-      def self.render(tree, ids:, path:, resolver:, drafts: false, diagram: SOURCE_DIAGRAM)
+      # notes instead of refusing them; diagram: a callable that draws the
+      # mermaid block whose fence is at line, labelled by the caption with
+      # that id, or by none when caption is nil.
+      def self.render(tree, ids:, path:, resolver:, diagram:, drafts: false)
         new(ids:, path:, resolver:, drafts:, diagram:).call(tree)
       end
+
+      # Each mermaid block of tree, the file at path, in source order.
+      def self.diagrams(tree, path:)
+        tree.root.get_elements('//code_block').select { |node| mermaid?(node) }
+            .map { |node| Diagrams::Diagram.new(file: path, line: line(node), source: node.text.to_s) }
+      end
+
+      def self.mermaid?(node) = node.name == 'code_block' && node.attributes['info'].to_s.split.first == 'mermaid'
+
+      def self.line(node) = node.attributes['sourcepos'].to_s[/\A\d+/]&.to_i || 0
 
       def initialize(ids:, path:, resolver:, drafts:, diagram:)
         @ids = ids.dup
@@ -63,9 +70,7 @@ module Erx
 
       def elements(node) = node.elements.to_a
 
-      def line(node)
-        node.attributes['sourcepos'].to_s[/\A\d+/]&.to_i || 0
-      end
+      def line(node) = Page.line(node)
 
       def refuse(node, why) = raise(Error, "#{@path}:#{line(node)}: #{why}")
 
@@ -104,14 +109,22 @@ module Erx
         CAPTION.match(text_of(elements(node).first))&.[](1)
       end
 
+      # A captioned figure. A drawing's caption labels it, under the
+      # figure's id with ".caption", which no heading slug (no '.') and no
+      # drawing id (dK.name) can be.
       def figure(node, paragraph, number)
         emph = elements(paragraph).first
         label = "Figure #{number}."
-        Html.tag('figure', { id: "figure-#{number.tr('.', '-')}" },
-                 block(node, 1),
-                 Html.tag('figcaption', {}, Html.tag('span', { class: 'label' }, label),
+        id = "figure-#{number.tr('.', '-')}"
+        diagram = Page.mermaid?(node)
+        caption = ("#{id}.caption" if diagram)
+        Html.tag('figure', { id:, class: ('diagram' if diagram) },
+                 diagram ? drawing(node, caption:) : block(node, 1),
+                 Html.tag('figcaption', { id: caption }, Html.tag('span', { class: 'label' }, label),
                           inlines(elements(emph), strip: "#{label} ")))
       end
+
+      def drawing(node, caption:) = @diagram.(line: line(node), caption:)
 
       def block(node, at)
         case node.name
@@ -192,10 +205,10 @@ module Erx
       end
 
       def code_block(node)
+        return Html.tag('figure', { class: 'diagram' }, drawing(node, caption: nil)) if Page.mermaid?(node)
+
         language = node.attributes['info'].to_s.split.first
         source = text_of(node)
-        return @diagram.(source, line(node)) if language == 'mermaid'
-
         code = Code.language?(language) ? Code.highlight(language, source) : source
         Html.tag('pre', { class: ('code' if language) }, Html.tag('code', {}, code))
       end

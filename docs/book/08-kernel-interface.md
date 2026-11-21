@@ -22,10 +22,9 @@ for capabilities, IPC gates, labels, the UTCB and the root task
 required.
 
 ERTS, the Erlang runtime, needs memory for every process heap it
-allocates. On a UNIX system it calls `mmap`, and the kernel finds free
-addresses, creates a VM object to hold the pages, and fills page-table
-entries as the runtime touches them. On erXos the same runtime is an ordinary program in user mode,
-on a kernel that knows nothing of `mmap`, files or Erlang. Somebody has
+allocates, and it asks for it with `mmap`. On erXos the runtime is an
+ordinary program in user mode, on a kernel that knows nothing of
+`mmap`, files or Erlang. Somebody has
 to turn "give me 2 MiB" into pages, page-table entries and a record of
 who pays for them. Memory is this chapter's running example, but
 threads, waits and faults raise the same question.
@@ -34,11 +33,9 @@ The answer cannot be "each runtime talks to Fiasco directly". A
 runtime that calls Fiasco by name is tied to Fiasco's data structures,
 capability numbers and error codes. Worse, if every domain could write
 its own page tables, nothing would keep one domain out of another's
-memory. A UNIX libc's `mmap` keeps programs from naming kernel
-structures, and the kernel then does all the work itself. erXos
-wants the first of those, and it needs a second thing a monolithic
-kernel never has: a trusted party in user mode that decides what each program may
-have.
+memory. Two things are needed: an interface that keeps programs from
+naming kernel structures, and a trusted party in user mode that
+decides what each program may have.
 
 erXos gets both from one library and one thread. Every kernel call
 goes through **`liberx`**, erXos's own kernel interface. Behind

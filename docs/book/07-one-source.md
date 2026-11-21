@@ -25,15 +25,9 @@ on one line of one text file, and a program in the build writes every
 other copy. This chapter is about that habit: state a fact once, and
 let the build write every copy and check every rule that follows.
 
-UNIX systems know the idea in a few places. FreeBSD keeps its system
-calls in one file, `sys/kern/syscalls.master`, whose header says it is
-"Processed to created init_sysent.c, syscalls.c and syscall.h". The
-entry for `read` gives its number, 3, and its C prototype, and the
-kernel's dispatch table follows from it. Much else is still written
-twice by hand, such as a device's register offsets, in a driver and
-again in a debugger.
-
-erXos makes the habit the rule. Where C, Erlang, Ruby and
+The habit has a UNIX precedent: FreeBSD generates its system-call
+tables from one file, `sys/kern/syscalls.master`. erXos makes the
+habit the rule. Where C, Erlang, Ruby and
 TypeScript need the same fact, a Ruby generator writes all four from
 one source during the build. Where a fact can be checked, such as a
 color's contrast or a configuration's sums, the build checks it.
@@ -452,12 +446,9 @@ is designed and not built.
 
 ## 7.7 The system manifest: the machine's configuration, checked
 
-A FreeBSD machine's configuration is spread across `/boot/loader.conf`,
-`/etc/rc.conf`, `/etc/devfs.rules` and more, each read by a different
-program at a different moment, so no program can say whether the
-whole is safe.
-
-erXos has one, the **system manifest** ([chapter 4, section
+Where FreeBSD configures a machine in `/boot/loader.conf`,
+`/etc/rc.conf` and `/etc/devfs.rules`, erXos has one file the build
+checks whole, the **system manifest** ([chapter 4, section
 4.5.4](04-history.md#454-declarative-where-it-simplifies)), assembled
 from a part every board shares (`config/manifest/development.txt`)
 and the board's own part. It names the machine's memory, each domain,

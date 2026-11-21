@@ -16,7 +16,8 @@ module Erx
     # Every character above 0x7f is written as a numeric character
     # reference, so every page is ASCII whatever the prose holds.
     class Html
-      NAME = /\A[a-z][a-z0-9-]*\z/
+      # Element and attribute names; upper case for SVG's camel-case names (viewBox, clipPath).
+      NAME = /\A[a-z][A-Za-z0-9-]*\z/
       VOID = %w[br hr img link meta].freeze
       ADDRESSES = %w[href src].freeze
       ESCAPES = { '&' => '&amp;', '<' => '&lt;', '>' => '&gt;', '"' => '&quot;', "'" => '&#39;' }.freeze

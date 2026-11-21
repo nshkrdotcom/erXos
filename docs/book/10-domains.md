@@ -117,8 +117,8 @@ that number, with the node name and creation of the domain that owns
 the process. So a pid names its owner domain by construction; no table
 maps pids to domains, and no table can disagree. erXos prints a pid as
 `<D.N.S>`: domain id, process number, serial. `<7.300.0>` is process
-300, serial 0, of domain 7, wherever it is printed; stock ERTS would
-print the same pid differently on each node. This is Built.
+300, serial 0, of domain 7, and it prints the same on every node and
+in every log. This is Built.
 
 When a domain ends and a later domain takes the same name, the later
 one gets a new id. A pid of the ended domain keeps the old id as its
@@ -924,7 +924,7 @@ Erlang program expects. Revocation goes instead through aliases, which
 an owner deactivates, and facets, which exit.
 
 **Synchronous calls between domains.** A call primitive could make a
-request and its reply one kernel operation, as L4's IPC does. Erlang's
+request and its reply one kernel operation. Erlang's
 model is asynchronous messages with links and monitors, and the lanes
 carry that model as it is. The system has no synchronous call
 primitive at all: its gates carry only fault and exit records, and
