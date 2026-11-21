@@ -21,7 +21,7 @@ class ManifestCheckTest < Minitest::Test
   def setup
     @codec = Erx::ABI::Codec.new(Erx::ABI::Model.validate(Erx::ABI::Sources.read(root: ROOT)))
     @source = Erx::Platform.load(root: ROOT, name: 'qemu-virt').manifest_source(ROOT)
-    @platform = JSON.parse(File.read(File.join(ROOT, 'config/platforms/qemu-virt.json')))
+    @platform = ManifestContextFixture.board_platform(ROOT)
     @context = context
   end
 
@@ -138,8 +138,8 @@ class ManifestCheckTest < Minitest::Test
     assert_instance_of Erx::Manifest::Admitted, result
     assert result.bytes.frozen?
     view = @codec.open('manifest', result.bytes)
-    assert_equal 5, view.count('domains')
-    assert_equal 14, view.count('devices')
+    assert_equal 6, view.count('domains')
+    assert_equal 15, view.count('devices')
     assert_equal 10, view.count('windows')
     assert_equal 1, view.count('images')
   end
@@ -199,7 +199,7 @@ class ManifestCheckTest < Minitest::Test
 
   def test_the_report_carries_the_checked_numbers
     report = admit.report
-    assert_equal 5, report.fetch('child_plan_instances')
+    assert_equal 6, report.fetch('child_plan_instances')
     assert_equal @platform.fetch('fiasco_reserve'), report.fetch('fiasco_reserve')
     assert_equal @platform.fetch('ram_bytes'), report.fetch('ram_bytes')
     assert_equal 4096, report.fetch('root_image_loadable_bytes')
@@ -305,11 +305,11 @@ class ManifestCheckTest < Minitest::Test
     end
   end
 
-  # The development manifest with the units of holders in place of its bridge's unit, the
+  # The development manifest with the units of holders in place of its bridge's and xhci's units, the
   # pci facet of the function's holder when a configured domain holds it, and the web
   # service served by the PCIe domain when serving.
   def usb_source(holders = USB_HOLDERS, serving: false)
-    bridgeless = changed(@source.sub(/^unit pcie\n(?:  .*\n)*/, ''))
+    bridgeless = changed(@source.sub(/^unit pcie\n(?:  .*\n)*/, '').sub(/^unit xhci\n(?:  .*\n)*/, '').sub(/^facet pci\n(?:  .*\n)*/, ''))
     bridgeless = changed(bridgeless.sub("service web\n  server @domain.web\n", "service web\n  server @domain.pcie\n")) if serving
     holder = holders['xhci']
     bridgeless + units_of(holders) + (holder&.start_with?('@domain.') ? pcie_facet('pci', holder) : '')
@@ -341,7 +341,8 @@ class ManifestCheckTest < Minitest::Test
       usb_refused('unit.holder', /only the domain pcie holds a PCIe bridge's unit/, usb_source(USB_HOLDERS.merge('pcie' => holder)))
     end
     usb_refused('unit.holder', /only the domain pcie holds a PCIe bridge's unit/,
-                changed(@source.sub(/^unit pcie\n(?:  .*\n)*/, '')) + units_of(USB_HOLDERS.merge('pcie' => '@domain.network')))
+                changed(@source.sub(/^unit pcie\n(?:  .*\n)*/, '').sub(/^unit xhci\n(?:  .*\n)*/, '')) +
+                  units_of(USB_HOLDERS.merge('pcie' => '@domain.network')))
   end
 
   # A function, even one the platform marks as of the configuration role, is no bridge.

@@ -48,7 +48,7 @@ class ManifestDomainsTest < Minitest::Test
     @codec = Erx::ABI::Codec.new(Erx::ABI::Model.validate(Erx::ABI::Sources.read(root: root)))
     # The tests write their own session templates, of the manifest's session profile.
     @plain = ManifestContextFixture.sessionless(Erx::Platform.load(root: root, name: 'qemu-virt').manifest_source(root))
-    @platform = JSON.parse(File.read(File.join(root, 'config/platforms/qemu-virt.json')))
+    @platform = ManifestContextFixture.board_platform(root)
     @source = with_domains(self.class.domain('alpha'), self.class.domain('beta', flags: 'rescue'))
     @context = Erx::Manifest::Context.new(**ManifestContextFixture.arguments(@codec).merge(platform: @platform))
     @planner = RecordingPlanner.new

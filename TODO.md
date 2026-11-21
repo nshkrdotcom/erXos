@@ -2383,9 +2383,10 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   archive ends within the root's length past the root's place (64 MiB) moves onto its own tail. Add a `raspi4b`
   cell with an archive sized into that window of about 2 MiB.
 * [Medium] platforms, QEMU `virt`'s record RAM (`config/platforms/qemu-virt.json`,
-  `ProductionImage::BOARD_QEMU_MIB`): the record's 512 MiB leave beside the development
-  manifest's `root_memory` (457.41 MiB) almost no room for an archive, and the production
-  image's is about 67 MiB, so every pack of the board's manifest, the hosted runtime's release
+  `ProductionImage::BOARD_QEMU_MIB`): the record's 512 MiB, 480 MiB less `fiasco_reserve`, no longer
+  hold the development manifest's `root_memory` (499.42 MiB) at all, let alone the production image's
+  archive of about 67 MiB beside it, so the host tests check QEMU virt's manifests against the board
+  machine's record (`ManifestContextFixture.board_platform`), and every pack of the board's manifest, the hosted runtime's release
   (41 MiB) included, `tools/erx boot`, the benches and every QEMU suite that boots it run on the
   board machine (`Machine.board`, 640 MiB). The record's RAM is still what `Platform#memory_mib`
   and `QemuPlan.memory_of` (QEMU's default `-m`) give; docs/design-fiasco.md ("The root startup rule"),
@@ -8107,6 +8108,25 @@ to the corpus and follow rc
   Device, xHCI 4.6.11) or a wider drop mask would let the CPU zero a context the controller holds. Make it a
   ledger fact: a host test over the reach rules with a seed that widens a drop mask, or a ledger predicate the
   sequencer asks.
+* [High] USB, no DCBAA entry names a slot's device context (`erx_device_sequencer.c`, the TRB form;
+  [design-usb.md](docs/design-usb.md#the-trb-ring-form)): the design has the sequencer write DCBAA entry *k* when
+  slot *k*'s holding begins at its first Address Device and clear it when Disable Slot's success ends it, but
+  nothing writes entries 1 and up, so the controller writes the output context through a zero entry and
+  qemu-xhci stops with USBSTS.HCE at the first Address Device. The publication path sees only the generic DMA
+  layout, which has no DCBAA or device-context places. Either plumb them in for the design's per-holding
+  stores, or write every slot's entry at install, since each slot's context is fixed by the layout (a
+  change to the design). The xHCI harness's `test_runs` writes the output context straight into slot 1's
+  region; it should follow DCBAA entry 1 as the controller does.
+* [Medium] USB, the USB domain's figures (`config/manifest/qemu-virt-development.txt`, `limits usb`, `share usb`):
+  its memory, 32 MiB with outer 1 MiB, and its grant, 100 mcpu on CPU 0, are not measured. Measure the domain
+  with `Footprint` as the PCIe row was (its largest pool use at rest and with a keyboard typing, rounded up
+  with 2 MiB of headroom), and its CPU while a keyboard types, then set the row and move the totals it
+  counts (the system principal's memory, `root_memory`).
+* [High] USB, the keyboard's records reach no reader (`erx_usb_places_sup`, [design-usb.md](docs/design-usb.md#the-rows)):
+  the places start the input tree's grants supervisor, but nothing mints a grant of it: the manifest has no
+  `usb_input` service or facet to the display domain, and no mint installs one, so a key typed on a USB
+  keyboard is written to its input file and read by no one. The decision is one tree and one mint per USB
+  domain, the storage domain's mint moved into `erx_files` and reused, as the last child of the places.
 * [Medium] USB, the boot mouse's transfer length (`erx_hid_core:plan/2`, `erx_usb_hid`;
   [design-usb.md](docs/design-usb.md#from-reports-to-records)): in the boot protocol the transfer is the boot
   layout's 3 bytes; a boot mouse that sends longer boot reports (unverified: whether HID 1.11, Appendix B.2,

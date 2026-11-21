@@ -5,8 +5,8 @@
 # takes, config/manifest/development.txt (Platform#manifest_source). The comment below
 # describes the whole manifest and gives the measurements behind both parts' figures.
 #
-# The development manifest of QEMU virt: the system domain, five configured domains,
-# storage, network, web, display and pcie, as docs/design-fiasco.md's "The Phase 1 manifest check"
+# The development manifest of QEMU virt: the system domain, six configured domains,
+# storage, network, web, display, pcie and usb, as docs/design-fiasco.md's "The Phase 1 manifest check"
 # admits them, and the system principal's session template, from which the console starts root's
 # session at boot (docs/design-system.md, "Boot"). The storage domain is an
 # interpreter service domain that holds the block unit and its data, release and
@@ -43,7 +43,11 @@
 # function's configuration space, and holds nothing else (docs/design-pcie.md, "The PCIe
 # domain"); it serves pcie, its bridge facet, to the system domain alone, and takes
 # pci_bus, the system domain's device service, which no other domain holds
-# (docs/design-pcie.md, "Facets"). Its rows and their figures end this part. Fixed
+# (docs/design-pcie.md, "Facets"). Its rows and their figures end this part, followed by
+# the USB domain's: usb is an interpreter service domain that holds the xhci unit,
+# qemu-xhci by place behind the PCIe domain, and nothing else, and runs the USB stack,
+# erx_usb (docs/design-usb.md, "Who holds a controller"); it takes pci, the device
+# service's facet for its function (docs/design-pcie.md, "Facets"). Fixed
 # medium roles carry partition 0, as docs/design-abi.md says. The machine is
 # QEMU virt with more RAM than the platform record's (config/platforms/qemu-virt.json),
 # whose 512 MiB leave beside this root_memory too little room for the production
@@ -60,23 +64,23 @@
 # manifest's system baseline and the block driver and littlefs in the system domain);
 # 1,000 more idle processes
 # add about 4 MiB, and the rest of the baseline over ERTS and /tmp, 5.8 MiB, is the
-# margin. The system principal's 262 MiB and 40 KiB holds root's one session, whose limits'
+# margin. The system principal's 303 MiB and 44 KiB holds root's one session, whose limits'
 # memory is 36 MiB and outer 1 MiB, the storage domain, 30 MiB and outer 1 MiB, the
 # network domain, 36 MiB and outer 1 MiB, the web domain, 24 MiB and outer 1 MiB, the
-# display domain, 24 MiB and outer 81 MiB and 40 KiB (see below), the PCIe domain, 25 MiB and
-# outer 1 MiB, and 1 MiB for the outer budget of a domain
+# display domain, 24 MiB and outer 89 MiB and 44 KiB (see below), the PCIe domain, 25 MiB and
+# outer 1 MiB, the USB domain, 32 MiB and outer 1 MiB, and 1 MiB for the outer budget of a domain
 # that has ended while another still holds a connection to it: that outer budget is the library's until the survivor answers the
 # connection's end (erx_domain_srv ended/3), and a session's next login or a
 # configured domain's restart is admitted before that answer arrives. One such budget
 # is the bound as long as one domain at a time ends and the survivor answers before its
 # peer ends a second time; a second leftover refuses the next start
-# (TODO.md, "a refused restart is not retried"). The web and PCIe domains each hold a
+# (TODO.md, "a refused restart is not retried"). The web, PCIe and USB domains each hold a
 # connection to the system domain alone, so their ends leave no such budget; the display domain, which
 # root's session holds a connection to, leaves its whole outer budget, which this 1 MiB
 # does not hold (TODO.md, "a display domain's end keeps its outer budget"). With it
 # the baseline leaves root_memory the block device's 1 MiB, the network
-# device's 256 KiB, the gpu's 9 MiB, the keyboard's and the tablet's 64 KiB each and the
-# 8 MiB margin no one is promised: the domain
+# device's 256 KiB, the gpu's 9 MiB, the keyboard's and the tablet's 64 KiB each, the
+# xhci function's 1 MiB of DMA memory and the 8 MiB margin no one is promised: the domain
 # library charges a device's memory to the system's budget, not its holder's (dom_life.c,
 # ERX_DOM_STEP_CONTIGUOUS).
 # The web domain's 24 MiB is not measured yet: the bare release, loaded, on the
@@ -88,18 +92,18 @@
 # grant, the display share, is a tenth of one CPU, to be sized from measurement. Its
 # outer budget is 1 MiB and the four pixel areas of windows_pixels_default, 8 MiB, with
 # their 4 KiB lanes that the apps row's four apps hold, since the build grants the app
-# template the display, and six more for the sessions of root's template that the
+# template the display, and seven more for the sessions of root's template that the
 # system principal's domains quota lets live at once, which display_root grants it
-# (development.txt), 48 MiB and 24 KiB in all: a grant
+# (development.txt), 56 MiB and 28 KiB in all: a grant
 # adds its pixel area and lane to it (docs/design-system.md, "The manifest", property
 # 18), a connection to the domain's quota and one to max_connections, as the
-# display_domain suite adds them for its client (DisplayDomain.manifest). The two grants and the PCIe
-# domain's 50 mcpu come out of what the system share's reserve leaves beside the storage
-# and network domains' 900 mcpu each, and leave 225 mcpu (property 13); the web, display and pcie
+# display_domain suite adds them for its client (DisplayDomain.manifest). The two grants and the PCIe and USB
+# domains' 50 and 100 mcpu come out of what the system share's reserve leaves beside the storage
+# and network domains' 900 mcpu each, and leave 125 mcpu (property 13); the web, display, pcie and usb
 # shares' cpuset, CPU 0 alone, gives each domain one scheduler. The gpu's 9 MiB of DMA memory is made at every boot, a gpu attached or not,
-# since the manifest places the device; with it the devices' 10.375 MiB take the
+# since the manifest places the device; with it the devices' 11.375 MiB take the
 # contiguous pool to its 16 MiB bound (docs/design-fiasco.md, "The pool"), which the
-# boot keeps beside root_memory, and leave 5.625 MiB for any other device's memory.
+# boot keeps beside root_memory, and leave 4.625 MiB for any other device's memory.
 # The storage domain's 30 MiB is its
 # use rounded up to a whole MiB: 7,635 pool pages, 29.8 MiB, with BeamAsm (more than the
 # interpreter the row runs: docs/design-shared-code.md, DlJitExtra), erx_blk
@@ -162,11 +166,12 @@
 # use, not up front.
 #
 # The development machine admits the system domain, root's session and the storage, network,
-# web, display and PCIe domains. Admission charges budgets, not use: the system baseline, 46 MiB,
-# the system principal's 262 MiB and 40 KiB (root's session, 36 MiB and outer 1 MiB, the storage
+# web, display, PCIe and USB domains. Admission charges budgets, not use: the system baseline, 46 MiB,
+# the system principal's 303 MiB and 44 KiB (root's session, 36 MiB and outer 1 MiB, the storage
 # domain, 30 MiB and outer 1 MiB, the network domain, 36 MiB and outer 1 MiB, the web
-# domain, 24 MiB and outer 1 MiB, the display domain, 24 MiB and outer 81 MiB and 40 KiB, the PCIe
-# domain, 25 MiB and outer 1 MiB, and an ended domain's outer 1 MiB), the apps row's 131 MiB and the devices' 10.375 MiB
+# domain, 24 MiB and outer 1 MiB, the display domain, 24 MiB and outer 89 MiB and 44 KiB, the PCIe
+# domain, 25 MiB and outer 1 MiB, the USB domain, 32 MiB and outer 1 MiB, and an ended domain's
+# outer 1 MiB), the apps row's 131 MiB and the devices' 11.375 MiB
 # promise all of root_memory but its 8 MiB margin. The network
 # domain's 36 MiB is its use rounded up to a whole MiB, 34 MiB, and 2 MiB of headroom:
 # 8,603 pool pages, 33.6 MiB, with BeamAsm (more than the interpreter the row runs) and
@@ -175,18 +180,18 @@
 # Footprint measures (docs/design-network-stack.md, the network domain's memory; the
 # net_device suite's network-domain cell, a 768 MiB machine, HVF, 1 guest CPU, an Apple
 # M3 Max host, QEMU 11.1.3, Homebrew clang 23.1.3). The storage and network domains each
-# take the users share, 900 mcpu, the web domain 150 mcpu, the display domain 100 and the
-# PCIe domain 50: 2,100 mcpu of the 2,325 that the system share's reserve leaves the
+# take the users share, 900 mcpu, the web domain 150 mcpu, the display domain 100, the
+# PCIe domain 50 and the USB domain 100: 2,200 mcpu of the 2,325 that the system share's reserve leaves the
 # configured domains, 3,100 less a quarter of it (system_reserve 250;
 # dom_system_reserve, liberx/system/dom_core.c), so another configured domain's grant
-# beyond 225 mcpu comes out of these.
+# beyond 125 mcpu comes out of these.
 # In use, the root's pool holds the system domain's 31.5 MiB
 # (36.2 MiB at the interactive shell of the development image), the session's about
 # 19 MiB (the bare release's 18.3 MiB and the shell's modules), the storage domain's
 # 29.8 MiB, the network domain's 33.6 MiB, the web domain's about 19 MiB and the PCIe
-# domain's 22.5 MiB: about 155 to 160 MiB beside the display domain's, which is not
-# measured. With the devices' 10.375 MiB that leaves about 287 to 292 MiB of
-# root_memory, less the display domain's use, unused. RAM less
+# domain's 22.5 MiB: about 155 to 160 MiB beside the display and USB domains', which are not
+# measured. With the devices' 11.375 MiB that leaves about 328 to 333 MiB of
+# root_memory, less the display and USB domains' use, unused. RAM less
 # root_memory is left to Fiasco's kernel memory (fiasco_reserve, about 6% of RAM,
 # its boot log's "Reserved N MiB as kernel memory"), its image and sigma0, the
 # archive, the root's image (4.8 MiB) and the device tree's 1 MiB; each MiB the
@@ -200,7 +205,7 @@
 # hash tree; the packer takes its extent from the image it builds
 # (ReleaseMedium.image), and the storage domain holds a read-only window on it.
 #
-# The storage, network, web, display and PCIe domains restart at most 5 times in 600 s, where a restart
+# The storage, network, web, display, PCIe and USB domains restart at most 5 times in 600 s, where a restart
 # after a boot timeout counts, however long ago, until a boot that reached ready ends, so a boot
 # that hangs, stopped only at each timeout, is left down after 5 restarts in a row whatever the
 # machine's boot timeout (docs/design-system.md, "Boot").
@@ -239,11 +244,11 @@ limits web
   peer_held_total 4096
 # The display domain's limits, whose figures this part's opening comment explains (its
 # display domain paragraph): 24 MiB, outer 1 MiB and the apps row's four
-# pixel areas with their lanes and root's template's six, and one connection for each
+# pixel areas with their lanes and root's template's seven, and one connection for each
 # of the four apps and two for root's session and its replacement.
 limits display
   memory 25165824
-  outer 84975616
+  outer 93368320
   grant @share.display
   spaces none
   lane 4096
@@ -254,9 +259,9 @@ limits display
   peer_held 4096
   peer_held_total 4096
 principal system
-  memory 274767872
+  memory 317763584
   grant @share.users
-  domains 6
+  domains 7
   names 64
   default_limits @limits.native
   ceiling_limits @limits.native
@@ -264,15 +269,15 @@ principal system
 # default 64 MiB with their sessions' outer 1 MiB and the outer budget of one that has
 # ended; max 4, which the archive's room beside root_memory bounds; and the display and
 # net, which the build grants the app template. Each app is a principal with a domains
-# quota of one, so max_domains is the system principal's six and the four apps.
+# quota of one, so max_domains is the system principal's seven and the four apps.
 apps
   memory 137363456
   max 4
   services display net
-# The web and PCIe domains each hold their system connection alone, which a quota of one
-# never meets. max_connections, 31, holds the sixteen of the four apps' sessions (each its system
-# connection, packages, the display and net) and the nine rows at rest (the system connections of root's
-# session and of the five configured domains, and the session's data, net and display), the four
+# The web, PCIe and USB domains each hold their system connection alone, which a quota of one
+# never meets. max_connections, 32, holds the sixteen of the four apps' sessions (each its system
+# connection, packages, the display and net) and the ten rows at rest (the system connections of root's
+# session and of the six configured domains, and the session's data, net and display), the four
 # a replacement session makes beside its predecessor's closing rows, and the two a
 # restarted configured domain makes beside its own.
 machine
@@ -281,13 +286,13 @@ machine
   console "/pl011@9000000"
   hostlink "/pl011@9040000"
   platform "qemu-virt"
-  root_memory 479633408
+  root_memory 523677696
   system_baseline 48234496
   system_share @share.system
   users_share @share.users
   system_principal @principal.system
-  max_domains 10
-  max_connections 31
+  max_domains 11
+  max_connections 32
   system_lane 4096
   system_queue 16384
   peer_held 4096
@@ -498,6 +503,75 @@ facet pcie
   grantee system
   service @service.pcie
   operations none
+  max_request 1024
+  in_flight 1
+  reductions 100000
+  period_ns 1000000000
+  max_heap_size 8192
+# The USB domain's rows (docs/design-usb.md, "Who holds a controller", "The rows"). Its
+# release, usb, loads erx_usb, which its -eval starts once init holds the ready answer's
+# facets, pci among them; its start reads the domain's xhci function record and
+# starts the controller's supervisor (erx_usb); the domain service starts the domain
+# only once it has answered the PCIe domain's report, which raises the function
+# (docs/design-pcie.md, "The hold at boot"). Its memory, 32 MiB, is not measured yet: the
+# bare release takes 18.3 MiB loaded (the Footprint table above), the stack's modules
+# and one controller's queue blocks a few more (docs/todo-performance.md). Its grant,
+# 100 mcpu on CPU 0, is a share of its own, sized for typing. max_frame holds the pci
+# facet's widest answer many times over.
+#
+# The grant (docs/design-pcie.md, "Facets"): pci, the system domain's device service
+# for the domain's one pci device, every operation, max_request 1,024 over the widest
+# request, in_flight 1 for its one function.
+runtime_limits usb
+  max_frame 131072
+  max_message_heap 131072
+  funnel_depth 64
+  exports 256
+  tmp 0
+  overlay 0
+  atoms 16384
+  foreign_atoms 1024
+  processes 1024
+share usb
+  quota_ns 1000000
+  period_ns 10000000
+  cpuset 1
+  capacity_mcpu 100
+  capacity_first 0
+  slice_us 1000
+  grace_us 5
+  base 16
+  ceiling 31
+  flags none
+limits usb
+  memory 33554432
+  outer 1048576
+  grant @share.usb
+  spaces none
+  lane 4096
+  connections 1
+  crash 0
+  flags none
+  runtime_limits @runtime_limits.usb
+  peer_held 4096
+  peer_held_total 4096
+domain usb
+  principal @principal.system
+  limits @limits.usb
+  kind service
+  flags none
+  runtime @artifact.emu
+  release @artifact.usb
+  restarts 5
+  restart_period_s 600
+  args "-- -root / -bindir /bin -progname erl -home / -nouser -nocookie -no_epmd -proto_dist erx -eval ok=application:start(erx_usb,permanent)"
+unit xhci
+  placement "xhci"
+  holder @domain.usb
+facet pci
+  grantee @domain.usb
+  service @service.pci
+  operations open,master,reset
   max_request 1024
   in_flight 1
   reductions 100000

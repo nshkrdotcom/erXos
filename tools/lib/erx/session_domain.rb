@@ -46,7 +46,7 @@ module Erx
   # halt(3) ends the session's domain: the console writes `session root_1 ended:
   # {halt,3}` and logs root in again, and the new session, root_1 again in a new domain,
   # takes the line. The menu lists it, refuses "start a session" past the principal's
-  # domain quota, which the storage, network, web, display and PCIe domains and the session fill, and gives the line to
+  # domain quota, which the storage, network, web, display, PCIe and USB domains and the session fill, and gives the line to
   # the system shell, whose `ps` lists the domain service and whose `cat` reads
   # /data/across through the system domain's own `data` facet. Its Erlang shell answers
   # node() as system@erxos, shows root_1's init process with its runtime attributes, which
@@ -66,12 +66,12 @@ module Erx
     ESC = ProductionImage::Run::ESC
     MENU_LEFT = ProductionImage::Run::MENU_LEFT
     ERL = ProductionImage::Run::ERL_LINE
-    # The domain id root's first session takes: the development manifest configures five
-    # domains, display, network, pcie, storage and web, which take the domain service's
-    # first ids, 5 to 9, in name order at boot, so the login's is 10; each later start of a
+    # The domain id root's first session takes: the development manifest configures six
+    # domains, display, network, pcie, storage, usb and web, which take the domain service's
+    # first ids, 5 to 10, in name order at boot, so the login's is 11; each later start of a
     # session or of a configured domain takes the next, a refused one too, since admission
     # spends the id.
-    FIRST_SESSION = 10
+    FIRST_SESSION = 11
     # A domain id no domain takes in a boot of this cell, which starts far fewer: a path
     # that names it answers `scope` at every scope, root's `all` among them, as a domain
     # outside the scope does (docs/design-live.md, "The /proc tree").
@@ -93,7 +93,7 @@ module Erx
     # ended, an optional notice, the menu, and the line ended again as it is left.
     MENU_BLOCK = /\e\\\e\[0m\r\n(?:[^\r\n]*\r\n)?erx_console: Ctrl-G menu\r\n.*?Esc returns\. \e\\\e\[0m\r\n/mn
     # Typed at the system's Erlang shell: the domain pid of the one session domain the
-    # domain service holds, beside the configured storage, network, web, display and PCIe domains, killed, as a person
+    # domain service holds, beside the configured storage, network, web, display, PCIe and USB domains, killed, as a person
     # would end a session from there.
     KILL_SESSION = '[P] = [Pid || #{origin := {session, _}, pid := Pid} <- ' \
                    'erx_domain_core:domains(maps:get(core, sys:get_state(erx_domain_srv)))], ' \

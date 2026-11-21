@@ -50,8 +50,10 @@ module Erx
     # and not erx_app, which only the app script holds. erx_wifi, the WiFi domain's
     # (docs/design-wifi.md, "The WiFi domain"), is only loaded until the domain's
     # station starts it once it holds its facets. erx_ntpd, the ntpd session's
-    # (docs/design-time.md, "Who does what"), is started by the ntpd template's -eval.
-    DOMAIN_ONLY = %w[erx_session erx_app erx_wifi erx_ntpd].freeze
+    # (docs/design-time.md, "Who does what"), is started by the ntpd template's -eval. erx_usb, the USB domain's
+    # (docs/design-usb.md, "The rows"), is started by its row's -eval, since its controller
+    # opens its function through the domain's pci facet as it starts.
+    DOMAIN_ONLY = %w[erx_session erx_app erx_wifi erx_ntpd erx_usb].freeze
     raise Error, "DOMAIN_ONLY names what the release does not ship: #{DOMAIN_ONLY - APPLICATIONS}" unless
       (DOMAIN_ONLY - APPLICATIONS).empty?
     # OTP's applications that only the domains' runtime images run (DomainImageApps).
@@ -168,9 +170,9 @@ module Erx
     #   file names erx_session, since the design starts a native app's program through
     #   the session's servers.
     # * usb, the USB domain's (docs/design-usb.md, "Domains and authority"): the USB
-    #   stack, erx_usb, so no other domain parses what a USB device writes. No checked-in manifest
-    #   names it: the usb QEMU suite's test holder boots on it (UsbBoot), and
-    #   check_released requires a release for erx_usb.
+    #   stack, erx_usb, so no other domain parses what a USB device writes. QEMU virt's
+    #   development manifest names it for its USB domain, which the usb QEMU suite boots
+    #   (UsbBoot).
     # * bt, the Bluetooth domain's (docs/design-bluetooth.md, "The Bluetooth domain"): the
     #   Bluetooth stack, erx_bt, so no other domain parses what a controller writes. No
     #   manifest names it; it exists because check_released requires a release for

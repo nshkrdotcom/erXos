@@ -6,7 +6,6 @@ require_relative '../lib/erx/display_domain'
 require_relative '../lib/erx/platform'
 require_relative '../../test/fixtures/manifest_context'
 require_relative '../lib/erx/abi'
-require_relative '../lib/erx/json_input'
 require_relative '../lib/erx/manifest'
 
 module Erx
@@ -146,11 +145,9 @@ module Erx
       Manifest.admit(source: source, codec: codec, context: context, planner: ManifestContextFixture.accepting_planner).bytes
     end
 
-    # The platform record config/platforms/NAME.json.
-    def platform_of(repository, name)
-      path = "config/platforms/#{name}.json"
-      JsonInput.parse(File.binread(File.join(repository, path)), max_bytes: 65_536, label: path)
-    end
+    # The platform record of the board NAME's board machine, which its manifest is packed for
+    # (ManifestContextFixture.board_platform).
+    def platform_of(repository, name) = ManifestContextFixture.board_platform(repository, name: name)
 
     # The manifest bytes with the machine's boot_timeout_s, in their header, set to seconds.
     def boot_timeout(codec, bytes, seconds)

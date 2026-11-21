@@ -58,7 +58,7 @@ class BootManifestTest < Minitest::Test
     Erx::Manifest.admit(source: source, codec: @codec, context: context, planner: ManifestContextFixture.accepting_planner).bytes
   end
 
-  def platform_record(platform) = JSON.parse(File.read(File.join(ROOT, "config/platforms/#{platform}.json")))
+  def platform_record(platform) = ManifestContextFixture.board_platform(ROOT, name: platform)
 
   # hostlink: whether the boot carries erx.hostlink=1, which the driver passes on as its third argument.
   def read(bytes, stdout_path: '/pl011@9000000', hostlink: true)
@@ -94,7 +94,7 @@ class BootManifestTest < Minitest::Test
   # The root sizes its contiguous pool by the devices' memory of the whole device table,
   # whichever domain holds each: the total the manifest check reports and counts.
   def test_the_devices_memory_is_the_total_the_packer_reports
-    platform = JSON.parse(File.read(File.join(ROOT, 'config/platforms/qemu-virt.json')))
+    platform = platform_record('qemu-virt')
     context = Erx::Manifest::Context.new(**ManifestContextFixture.arguments(@codec).merge(platform: platform, build_kind: 'development'))
     admission = Erx::Manifest.admit(source: @source, codec: @codec, context: context, planner: ManifestContextFixture.accepting_planner)
     total = admission.report.fetch('dma_memory')

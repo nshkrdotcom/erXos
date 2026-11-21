@@ -740,7 +740,7 @@ class ProductionImageTest < Minitest::Test
     source = Erx::ProductionImage.without_sessions(PLATFORM.manifest_source(ROOT)) + row
     assert_raises(Erx::ProductionImage::UnknownRelease) { image.send(:domain_boots, source) }
     echo = Erx::ReleaseFiles.domain_boot('echo', applications: [*Erx::ReleaseFiles::DOMAIN_BASE, 'erx_echo_test'], test: true)
-    assert_equal [echo, *%w[app display network pcie storage web].map { |name| Erx::ProductionImage.domain_boot(name) }],
+    assert_equal [echo, *%w[app display network pcie storage usb web].map { |name| Erx::ProductionImage.domain_boot(name) }],
                  image.send(:domain_boots, source, given: [echo])
     assert_raises(Erx::Error) { image.send(:domain_boots, source, given: [echo, echo]) }
   end
@@ -763,7 +763,8 @@ class ProductionImageTest < Minitest::Test
       arguments = ManifestContextFixture.archive_arguments(codec, boots: boots.map(&:name))
       paths = arguments.fetch(:catalog).map { |row| row.fetch('path') }
       artifacts = Erx::ProductionImage.artifacts(paths, images: ManifestContextFixture.images, boots: boots)
-      context = Erx::Manifest::Context.new(**arguments, platform: DEVELOPMENT.record, artifacts: artifacts)
+      context = Erx::Manifest::Context.new(**arguments, platform: Erx::ProductionImage::Machine.board(PLATFORM).record,
+                                           artifacts: artifacts)
       Erx::Manifest.admit(source: source, codec: codec, context: context, planner: ManifestContextFixture.accepting_planner)
     end
     refused = lambda do |source, given, field, message|
@@ -798,16 +799,16 @@ class ProductionImageTest < Minitest::Test
   def test_the_production_image_carries_the_releases_its_domain_rows_name
     codec = Erx::ABI::Codec.new(Erx::ABI::Model.validate(Erx::ABI::Sources.read(root: ROOT)))
     source = PLATFORM.manifest_source(ROOT)
-    assert_equal %w[app display network pcie session storage web], Erx::Manifest.release_names(source: source, codec: codec)
+    assert_equal %w[app display network pcie session storage usb web], Erx::Manifest.release_names(source: source, codec: codec)
     source = Erx::ProductionImage.without_sessions(source)
-    assert_equal %w[app display network pcie storage web], Erx::Manifest.release_names(source: source, codec: codec)
+    assert_equal %w[app display network pcie storage usb web], Erx::Manifest.release_names(source: source, codec: codec)
     rows = %w[zeta beta zeta].each_with_index.map do |release, index|
       "domain d#{index}\n  principal @principal.system\n  limits @limits.native\n  kind service\n  flags none\n" \
         "  runtime @artifact.emu\n  release @artifact.#{release}\n  restarts 0\n  restart_period_s 0\n"
     end
     quoted = "domain q\n  principal @principal.system\n  limits @limits.native\n  kind service\n  flags none\n" \
              "  runtime @artifact.emu\n  release \"other\"\n  restarts 0\n  restart_period_s 0\n"
-    assert_equal %w[app beta display network pcie storage web zeta], Erx::Manifest.release_names(source: source + rows.join + quoted, codec: codec)
+    assert_equal %w[app beta display network pcie storage usb web zeta], Erx::Manifest.release_names(source: source + rows.join + quoted, codec: codec)
   end
 
   # The widget toolkit's program ships with the toolkit (docs/design-packaging.md, "Where
@@ -1026,11 +1027,12 @@ class ProductionImageTest < Minitest::Test
 
   # The refusal boot means something only on a machine that cannot give root_memory:
   # one no larger than root_memory, of which Fiasco and the archive take a part first.
-  # The default machine leaves room for both below RAM less fiasco_reserve.
+  # The board machine, which the board's manifest boots on, leaves room for both below RAM
+  # less fiasco_reserve.
   def test_the_refusal_machine_cannot_hold_root_memory_and_the_default_can
     root_memory = manifest_number(PLATFORM.manifest_source(ROOT), 'root_memory')
     assert_operator refusal_machine.memory_mib << 20, :<=, root_memory
-    machine = DEVELOPMENT
+    machine = Erx::ProductionImage::Machine.board(PLATFORM)
     assert_operator root_memory, :<, (machine.memory_mib - machine.fiasco_reserve_mib) << 20
   end
 

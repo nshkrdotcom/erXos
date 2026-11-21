@@ -78,7 +78,7 @@ class DomPlannerTest < Minitest::Test
 
   def setup
     @codec = Erx::ABI::Codec.new(Erx::ABI::Model.validate(Erx::ABI::Sources.read(root: ROOT)))
-    platform = JSON.parse(File.read(File.join(ROOT, 'config/platforms/qemu-virt.json')))
+    platform = ManifestContextFixture.board_platform(ROOT)
     @context = Erx::Manifest::Context.new(**ManifestContextFixture.arguments(@codec).merge(platform: platform))
     @plain = ManifestContextFixture.sessionless(Erx::Platform.load(root: ROOT, name: 'qemu-virt').manifest_source(ROOT))
     @source = with_domains('alpha')
@@ -132,13 +132,13 @@ class DomPlannerTest < Minitest::Test
 
   # The development manifest as it ships, with its session template and its own
   # configured domains, storage, which holds the block unit, network, which holds the net
-  # unit, web, display, which holds the display unit, and pcie, which holds the ECAM
-  # bridge's unit: the library plans all five, and
+  # unit, web, display, which holds the display unit, pcie, which holds the ECAM bridge's
+  # unit, and usb, which holds the xhci unit: the library plans all six, and
   # the system domain's arguments start no stack.
   def test_the_library_plans_the_development_manifests_domains
     source = Erx::Platform.load(root: ROOT, name: 'qemu-virt').manifest_source(ROOT)
     context = Erx::Manifest::Context.new(**ManifestContextFixture.arguments(@codec).merge(platform: @context.platform))
-    assert_equal 5, Erx::Manifest.admit(source: source, codec: @codec, context: context, planner: @planner)
+    assert_equal 6, Erx::Manifest.admit(source: source, codec: @codec, context: context, planner: @planner)
                                  .report.fetch('child_plan_instances')
     refute_includes source[/^  system_args .*$/], '-erx_net'
     assert_includes source, "unit net\n  placement \"net\"\n  holder @domain.network\n"
@@ -146,13 +146,13 @@ class DomPlannerTest < Minitest::Test
   end
 
   # The production image's narrow manifest (ProductionImage::Run.narrow_manifest), which
-  # its 4-CPU cells boot: the system share on two CPUs, and the storage, web, display and
-  # PCIe domains' grants, which must fit the system share, on them too, so the library
+  # its 4-CPU cells boot: the system share on two CPUs, and the storage, web, display, PCIe
+  # and USB domains' grants, which must fit the system share, on them too, so the library
   # plans them.
   def test_the_library_plans_the_narrow_images_domain
     source = Erx::ProductionImage::Run.narrow_manifest(ROOT, platform: PLATFORM)
     context = Erx::Manifest::Context.new(**ManifestContextFixture.arguments(@codec).merge(platform: @context.platform))
-    assert_equal 4, Erx::Manifest.admit(source: source, codec: @codec, context: context, planner: @planner)
+    assert_equal 5, Erx::Manifest.admit(source: source, codec: @codec, context: context, planner: @planner)
                                  .report.fetch('child_plan_instances')
   end
 
@@ -191,7 +191,7 @@ class DomPlannerTest < Minitest::Test
                                                                 .merge(platform: Erx::MediumBoot.machine(PLATFORM).record))
     admitted = Erx::Manifest.admit(source: Erx::NetworkDomain.manifest(source), codec: @codec, context: context,
                                    planner: @planner)
-    assert_equal 5, admitted.report.fetch('child_plan_instances')
+    assert_equal 6, admitted.report.fetch('child_plan_instances')
   end
 
   # The net_device suite's manifest (NetDevice.manifest), the development manifest with
@@ -215,7 +215,7 @@ class DomPlannerTest < Minitest::Test
     context = Erx::Manifest::Context.new(**ManifestContextFixture.arguments(@codec)
                                                                 .merge(platform: Erx::NetDevice.machine(PLATFORM).record))
     admitted = Erx::Manifest.admit(source: edited, codec: @codec, context: context, planner: @planner)
-    assert_equal 5, admitted.report.fetch('child_plan_instances')
+    assert_equal 6, admitted.report.fetch('child_plan_instances')
   end
 
   # ntpd's net grant holds two sockets (docs/design-time.md, "Who does what") on the
@@ -630,7 +630,8 @@ class DomPlannerTest < Minitest::Test
     assert_operator boards.size, :>=, 2
     boards.each do |board|
       platform = Erx::Platform.load(root: ROOT, name: board)
-      context = Erx::Manifest::Context.new(**ManifestContextFixture.arguments(@codec).merge(platform: platform.record))
+      record = ManifestContextFixture.board_platform(ROOT, name: board)
+      context = Erx::Manifest::Context.new(**ManifestContextFixture.arguments(@codec).merge(platform: record))
       admitted = Erx::Manifest.admit(source: platform.manifest_source(ROOT), codec: @codec, context: context, planner: @planner)
       refute_empty admitted.bytes, board
     end
@@ -918,14 +919,14 @@ class DomPlannerTest < Minitest::Test
       end
     interface = ->(name) { @codec.schema.services.find { |service| service.fetch(:name) == name }.fetch(:number) }
     # The services, in name order, each with its server's index in boot order (display 0,
-    # network 1, pcie 2, storage 3, web 4) or none for the system domain, and its interface.
+    # network 1, pcie 2, storage 3, usb 4, web 5) or none for the system domain, and its interface.
     services = [%w[clock none clock], %w[code_objects none code_objects], %w[data 3 files],
                 %w[display 0 windows], %w[home 3 files], %w[inspect none inspect],
                 %w[log none log], %w[login_keys 3 files], %w[machine none files], %w[net 1 net],
                 %w[network_ctl 1 driver_control],
                 %w[packages 3 files], %w[pci none pci], %w[pci_bus none pci_bus], %w[pcie 2 pcie],
                 %w[start none files], %w[storage_ctl 3 driver_control],
-                %w[system 3 files], %w[web 4 web]]
+                %w[system 3 files], %w[web 5 web]]
     assert_equal services.each_with_index.map { |(name, server, kind), index|
                    "service #{index} name=#{name} server=#{server} interface=#{interface.call(kind)}"
                  },

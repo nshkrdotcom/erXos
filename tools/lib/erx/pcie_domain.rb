@@ -17,7 +17,8 @@ require_relative 'runner'
 module Erx
   # The PCIe domain's suite manifest on QEMU virt (docs/design-pcie.md, "Where the rows
   # live"): the development manifest, which holds the PCIe domain's rows, without its web
-  # domain, which gives back the grant the test holder needs (Manifest::Edit.without_domain).
+  # domain, which gives back the grant the test holder needs, and its USB domain, whose
+  # xhci unit the test holder holds instead (Manifest::Edit.without_domain).
   #
   # The `pcie` QEMU suite (docs/design-pcie.md, "The `pcie` QEMU suite") boots that
   # manifest on MediumBoot's machine with a test holder added (manifest): MediumBoot's
@@ -46,7 +47,9 @@ module Erx
   # pages in use with it up and once it has ended give its memory at rest, as MediumBoot's
   # Footprint measures a domain, which the run's notes report (memory_note).
   module PcieDomain
-    LEFT_OUT = 'web'
+    # The domains the suite leaves out: the web domain, whose grant the test holder takes,
+    # and the USB domain, whose xhci unit the test holder holds instead.
+    LEFT_OUT = %w[web usb].freeze
     PCIE = 'pcie'
 
     # The test holder: MediumBoot's configured row, staying up as a node (MediumBoot::UP_ARGS),
@@ -85,8 +88,11 @@ module Erx
     end
 
     # The manifest's text for platform, a Platform of QEMU virt, from root's sources.
-    def self.manifest_source(root, platform:) =
-      Manifest::Edit.without_domain(platform.manifest_source(root), LEFT_OUT, units: platform.record.fetch('units'))
+    def self.manifest_source(root, platform:)
+      LEFT_OUT.reduce(platform.manifest_source(root)) do |source, domain|
+        Manifest::Edit.without_domain(source, domain, units: platform.record.fetch('units'))
+      end
+    end
 
     # The suite's manifest, from manifest_source's text: MediumBoot's medium manifest with
     # room for the holder alone (MediumBoot.manifest), the PCIe row without restarts, so

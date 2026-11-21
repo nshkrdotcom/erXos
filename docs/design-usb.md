@@ -689,6 +689,37 @@ what its refusal read. These constants live in a new ABI file,
 `abi/formats/usb.txt`, with the chapter 9, hub, HID, BOT and SCSI
 constants the stack reads.
 
+### The rows
+
+On QEMU `virt` the USB domain is the configured row `usb` of the board
+part of the development manifest,
+`config/manifest/qemu-virt-development.txt`, after the PCIe domain's
+rows ([design-pcie.md](design-pcie.md#the-rows-and-the-facets-limits)):
+an interpreter service domain on the `usb` release, holding the
+platform's `xhci` unit and nothing else, with the `pci` facet
+[design-pcie.md](design-pcie.md#facets) gives every holder of a `pci`
+device, for its one function. The domain service starts it only once
+the device service has answered the PCIe domain's report
+([design-pcie.md](design-pcie.md#the-hold-at-boot)). `erx_usb`'s start
+reads the domain's function records once, `erx_device_record:find(usb,
+xhci)`, and runs one `erx_usb_sup` for each, under a supervisor of
+intensity 0, so a controller's supervisor that ends past its own bound
+ends the domain and the domain service's restart is the recovery
+([Failure handling](#failure-handling)); a domain started after a failed
+hold, or on a machine with no controller attached, holds no record and
+runs no controller.
+
+Its memory, 32 MiB and outer 1 MiB, is not measured yet; its grant is a
+share of its own, 100 mcpu on CPU 0, out of what the system share's
+reserve leaves the configured domains. The system principal's memory,
+its domains quota, `max_domains`, `max_connections` and `root_memory`
+count the row, its system connection and the function's 1 MiB of DMA
+memory, and one more slot of the domains quota prices one more
+`display_root` grant in the display's outer budget, as for the PCIe
+domain. The website's manifest leaves the USB domain out with the PCIe
+domain it depends on, and the `pcie` QEMU suite leaves it out too, since
+its test holder holds the same unit.
+
 ## The PCIe domain
 
 Both controllers are PCIe functions, so the first USB needs the PCIe
@@ -3203,6 +3234,7 @@ medium had gone after the request.
 | a medium that cannot flush | the readiness SYNCHRONIZE CACHE | nothing: its flushes answer `no_flush` | none; the FAT server mounts it read-only, with `no flush: read-only` in the mount's record |
 | a control transfer not answered in 5 s | the controller process's deadline | the transfer, answered `timeout` after Stop Endpoint and Set TR Dequeue Pointer past it | the caller's; EP0 is open again |
 | a command not answered in 5 s, an event that fails the form's checks, the controller's host system error, host controller error or halt while it runs, read from `USBSTS` on an interrupt or once a second, an all-ones read from a function that left the bus among them, a wait of the install past its deadline | the controller process | the controller process | the bus group restarts; `negotiate/2` resets the controller and returns every buffer; every device is enumerated again; places survive, so each input number carries `release` and each medium's windows end; past `usb_bus_restarts_max` restarts in `usb_bus_restart_window_ms` the controller is given up, its places still served ([The process tree](#the-process-tree)) |
+| a controller's supervisor ends past its own bound: its places fail more than `usb_bus_restarts_max` times in `usb_bus_restart_window_ms` | `erx_usb`'s top supervisor, of intensity 0 | the controller's supervisor, then the top supervisor, the permanent application and the domain | the domain service restarts the domain, which holds its units again and runs every controller afresh. The domain ends rather than restart the controller's supervisor within itself because the places serve its input files, whose grants the domain service mints only for a new incarnation of the domain ([design-system.md](design-system.md#facets-a-configured-domain-serves)): places made again in the same incarnation would serve no reader |
 | a register access that aborts (the controller fell off its bus) | the kernel, on erXos's kernel; on Fiasco an SError ends the task of the next thread to enter user mode on its CPU, which need not be the USB domain's, and the controller's next deadline fails it | the USB domain, by the fault, on erXos's kernel; the controller process on Fiasco | the domain service restarts the domain, which gets its unit again; the display's readers see their files end and start again when the tree is granted again, and each drive's holder is introduced again, as for a block driver's domain |
 | a configuration access below the root port with the link down | the bridge driver's link reads, before and after | the access, answered `link_down`; the function's position is reported gone | none of its own; an abort that does arrive ends the PCIe domain on erXos's kernel, as the next row |
 | the PCIe domain ends | the domain service | the enumerator and the bridge driver | the domain restarts; with the link up and the VL805's firmware present the bridge driver resets nothing and running functions are unchanged; otherwise it turns the link off cleanly, brings the bridge up again and asks for the firmware |

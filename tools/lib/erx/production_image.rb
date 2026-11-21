@@ -1844,8 +1844,8 @@ module Erx
       # together from one taken from the online CPUs alone, which the manifest's own cpuset,
       # every CPU the runs have, cannot. Every share is narrowed (Run.narrow_share), so the
       # configured domains' grants, the storage domain's of users, the web domain's of web,
-      # the display domain's of display and the PCIe domain's of pcie, still fit the system
-      # share, as the domain
+      # the display domain's of display, the PCIe domain's of pcie and the USB domain's of usb,
+      # still fit the system share, as the domain
       # library requires
       # (docs/design-system.md, "The domain library").
       # Two CPUs' system share less its reserve holds one grant of users, not two, so the
