@@ -44,8 +44,8 @@
  *            Endpoint in flight names, the first for that stop: nothing ends, nothing is answered;
  *   Command Completion naming the live command: its holding ends, on every code, and its reach
  *            acts on success, or its own bindings end on failure (erx_dma_ledger_complete_command);
- *            answered with the command's tag, and then each transfer its success retires that no
- *            error answered, `stopped` with no bytes under its own tag;
+ *            each transfer its success retires that no error answered is answered `stopped` with
+ *            no bytes under its own tag, and then the command with its own;
  *   Port Status Change: nothing ends.
  * A transfer event names its ring's oldest live transfer, since the controller runs a ring's TDs in
  * order. Any other event breaks the form, changing no holding, as a malformed used element breaks
@@ -243,6 +243,26 @@ erx_device_trb_verdict_t	erx_trb_form_command(erx_trb_form_t *form, const erx_tr
  * Anything but ERX_OK changes nothing; ERX_OK changes nothing of the form either.
  */
 int	erx_trb_form_install(const erx_trb_form_t *form, bool reaches_64_bits, erx_dma_sequence_t *sequence);
+
+/* Whether an event broke the form, which then refuses every post, command and completion until its reset. */
+bool	erx_trb_form_broken(const erx_trb_form_t *form);
+
+/*
+ * A queue's state as erx_device:queue_state/2 reports it (docs/design-usb.md, "Queues and their
+ * states"), from the ledger's own record of its endpoint: `halted` and `stopped` as the endpoint
+ * is; a running one `busy` while a transfer it took is live on its ring and `idle` otherwise, a
+ * stop in flight on it included, since its state changes only at the stop's completion. NONE for
+ * a pair that names no queue: no ring is bound to its endpoint.
+ */
+typedef enum erx_trb_queue_state {
+	ERX_TRB_QUEUE_NONE,
+	ERX_TRB_QUEUE_IDLE,
+	ERX_TRB_QUEUE_BUSY,
+	ERX_TRB_QUEUE_STOPPED,
+	ERX_TRB_QUEUE_HALTED,
+} erx_trb_queue_state_t;
+
+erx_trb_queue_state_t	erx_trb_form_queue_state(const erx_trb_form_t *form, uint32_t slot, uint32_t dci);
 
 /*
  * The tag of the transfer whose holding `found` is, as a query of the ledger found it, into `*tag`.

@@ -768,8 +768,8 @@ check_command_end(state_t *state, bool success)
 	uint32_t answered, stopped_count = 0;
 
 	EXPECT(deliver(state, &event, 1, 1, answers, &answered) == ERX_OK && answered >= 1 &&
-	    answers[0].kind == ERX_TRB_ANSWER_COMMAND && answers[0].tag == command.tag,
-	    "a command's completion answers its tag first");
+	    answers[answered - 1].kind == ERX_TRB_ANSWER_COMMAND && answers[answered - 1].tag == command.tag,
+	    "a command's completion answers its tag last, after the transfers it retires");
 	model->command = (model_command_t){ 0 };
 	for (uint32_t block = 0; block < BLOCKS && success; block++) {
 		const bool named = command.command.dci == block_dci[block];
@@ -808,7 +808,7 @@ check_command_end(state_t *state, bool success)
 	for (uint32_t k = 0; k < stopped_count; k++) {
 		uint32_t found = 0;
 
-		for (uint32_t answer = 1; answer < answered; answer++) {
+		for (uint32_t answer = 0; answer + 1 < answered; answer++) {
 			found += answers[answer].tag == stopped[k] && answers[answer].kind == ERX_TRB_ANSWER_TRANSFER &&
 			    answers[answer].code == ERX_XHCI_COMPLETION_STOPPED && answers[answer].data.length == 0;
 		}

@@ -2013,6 +2013,14 @@ it holds nothing of the ring:
 | `stopped` | Stop Endpoint or Reset Endpoint succeeds | `{error, halted}` | Set TR Dequeue; drop-and-add; drop |
 | `halted` | a transfer event with an error code (every one halts, 4.10.2, p. 195) | `{error, halted}` | Reset Endpoint |
 
+`erx_device:queue_state(Dev, {Slot, Dci})` reports a queue's state from
+the NIF's own record, as the controller process chooses a reset's steps
+by it ([The controller process](#the-controller-process)): `halted` and
+`stopped` as the table has them, and an `open` or `stopping` queue
+`busy` while a transfer is posted on it and `idle` otherwise, since a
+stop changes the state only when its command completes; `badarg` for a
+pair that names no queue.
+
 Disable Slot is accepted when every queue of the slot is `stopped`,
 `halted` or `open` with nothing posted, and no command for the slot is
 in flight (4.6.4, pp. 109-110). When a command that restarts or removes
@@ -2379,8 +2387,10 @@ consumed in order; the completion codes are Table 6-90's (p. 507).
 Stop Endpoint, Reset Endpoint and Evaluate Context release only their
 own holding: the ring stays the endpoint's, and its transfers can be
 fetched again. Each transfer a command's success retires is answered
-`stopped` with no bytes under its own tag, after the command's own
-answer, unless an error event answered it already, so one completion
+`stopped` with no bytes under its own tag, before the command's own
+answer, unless an error event answered it already, so the requester
+waiting on the command, a pipe's reset among them, finds every transfer
+of the ring answered when the command's answer reaches it; one completion
 can give more answers than it has events: at most every holding but the
 command's, which the ledger caps at `ERX_DMA_HOLDINGS_MAX` live holdings
 across every ring, a Disable Slot's included. The core's reading of the same events gives each answer
@@ -3171,7 +3181,7 @@ sink shows it.
 | `erx_device:post/4`, TRB form | `badarg` | a command or transfer of another shape; a parameter out of its range; an isochronous endpoint; a command the queue's state does not accept; Disable Slot with a queue running; a length past the buffer; a setup whose length differs from its data stage; a data stage against its setup's direction; a normal transfer against its endpoint's direction; a SET_ADDRESS setup |
 | `erx_device:post/4`, TRB form | `{error, full}` | a command already in flight; no free buffer on the queue; no free block of the kind a command adds |
 | `erx_device:post/4`, TRB form | `{error, halted}` | a transfer on a queue that is not `open`, or that the command in flight holds: EP0 under Evaluate Context, a queue Configure Endpoint drops, every queue of the slot under Disable Slot |
-| `erx_device:post/4`, `complete/2`, TRB form | `{error, broken}` | an event failed the form's checks, until `negotiate/2` |
+| `erx_device:post/4`, `complete/2`, `queue_state/2`, TRB form | `{error, broken}` | an event failed the form's checks, until `negotiate/2` |
 | `erx_usb_pipe` calls | `{error, gone}` | the pipe's device has detached |
 | `erx_usb_pipe` calls | `{error, halted}`, `{error, resetting}`, `{error, stopped}` | the pipe halted and has not been reset; a reset is running; the transfer was still posted when a reset restarted the ring |
 | `erx_usb_pipe` calls | `{error, stall}`, `{error, timeout}`, `{error, {controller, Code}}` | the endpoint halted on this transfer; no answer in 5 s; any other completion code |

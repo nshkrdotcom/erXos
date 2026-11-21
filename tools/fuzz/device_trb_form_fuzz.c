@@ -310,7 +310,7 @@ event(script_t *script, uint32_t *word, uint32_t index)
 
 /*
  * One answer, against the record; whether it is a command's success. A transfer answered `stopped`
- * was retired by the command answered before it, and its holding is gone; one an error answered is
+ * was retired by the command answered after it, and its holding is gone; one an error answered is
  * never answered again.
  */
 static bool

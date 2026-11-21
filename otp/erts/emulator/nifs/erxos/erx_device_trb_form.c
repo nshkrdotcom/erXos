@@ -474,6 +474,34 @@ erx_trb_form_command(erx_trb_form_t *form, const erx_trb_command_t *command, uin
 }
 
 bool
+erx_trb_form_broken(const erx_trb_form_t *form)
+{
+	return (form->broken);
+}
+
+erx_trb_queue_state_t
+erx_trb_form_queue_state(const erx_trb_form_t *form, uint32_t slot, uint32_t dci)
+{
+	const uint32_t endpoint = erx_trb_form_endpoint(slot, dci);
+	const int ring = endpoint == 0 ? -1 : erx_dma_ledger_bound_table(&form->ledger, endpoint);
+
+	if (ring < 0)
+		return (ERX_TRB_QUEUE_NONE);
+	switch (erx_dma_ledger_endpoint_state(&form->ledger, endpoint)) {
+	case ERX_DMA_ENDPOINT_HALTED:
+		return (ERX_TRB_QUEUE_HALTED);
+	case ERX_DMA_ENDPOINT_STOPPED:
+		return (ERX_TRB_QUEUE_STOPPED);
+	case ERX_DMA_ENDPOINT_RUNNING:
+		return (erx_dma_ledger_holdings_on(&form->ledger, (uint32_t)ring) != 0 ? ERX_TRB_QUEUE_BUSY :
+		    ERX_TRB_QUEUE_IDLE);
+	case ERX_DMA_ENDPOINT_DISABLED:
+		break;
+	}
+	return (ERX_TRB_QUEUE_NONE);
+}
+
+bool
 erx_trb_form_tag(const erx_trb_form_t *form, erx_dma_found_t found, uint64_t *tag)
 {
 	const erx_dma_layout_t *const layout = erx_dma_ledger_layout(&form->ledger);
@@ -694,8 +722,9 @@ transfer_event(erx_trb_form_t *form, const erx_report_record_t *event, erx_trb_a
 /*
  * A command completion naming the live command: its holding ends on every code, and its reach
  * acts on success, or its own bindings end on failure, as erx_dma_ledger_complete_command says.
- * Its answers: the command's, then each transfer its success retires that no error answered
- * already, `stopped` with no bytes under its own tag; their count goes to *answered.
+ * Its answers: each transfer its success retires that no error answered already, `stopped` with
+ * no bytes under its own tag, then the command's, so a caller waiting on the command sees every
+ * transfer of the ring it restarts or removes answered first; their count goes to *answered.
  */
 static bool
 command_event(erx_trb_form_t *form, const erx_report_record_t *event, erx_trb_answer_t *answers, uint32_t *answered)
@@ -724,10 +753,7 @@ command_event(erx_trb_form_t *form, const erx_report_record_t *event, erx_trb_an
 		form->enabled[form->command.slot] = false;
 		bzero(&form->addressed[form->command.slot], sizeof(form->addressed[form->command.slot]));
 	}
-	answers[0] = (erx_trb_answer_t){ .kind = ERX_TRB_ANSWER_COMMAND, .code = code, .tag = form->command_tag,
-	    .parameter = erx_xhci_trb_command_event_status_parameter_get(record->status),
-	    .slot = slot };
-	*answered = 1;
+	*answered = 0;
 	/* A retired holding is a transfer's, its head on a transfer ring, table b of block b. */
 	for (uint32_t k = 0; k < retired_count; k++) {
 		const erx_trb_transfer_t *const transfer = &form->transfers[retired[k].table][retired[k].index];
@@ -736,6 +762,9 @@ command_event(erx_trb_form_t *form, const erx_report_record_t *event, erx_trb_an
 			answers[(*answered)++] = (erx_trb_answer_t){ .kind = ERX_TRB_ANSWER_TRANSFER,
 			    .code = ERX_XHCI_COMPLETION_STOPPED, .tag = transfer->tag };
 	}
+	answers[(*answered)++] = (erx_trb_answer_t){ .kind = ERX_TRB_ANSWER_COMMAND, .code = code,
+	    .tag = form->command_tag, .parameter = erx_xhci_trb_command_event_status_parameter_get(record->status),
+	    .slot = slot };
 	return (true);
 }
 

@@ -338,7 +338,7 @@ command_retires(const erx_trb_command_t *command, uint32_t slot, uint32_t dci)
 
 /*
  * A transfer's answer: its bytes as the controller moved them, a failure the harness asked for, or
- * `stopped` by the command just completed.
+ * `stopped` by the command completing, whose own answer follows.
  */
 static void
 transfer_answered(harness_t *h, const erx_trb_answer_t *answer)
@@ -364,7 +364,7 @@ transfer_answered(harness_t *h, const erx_trb_answer_t *answer)
 		h->completed++;
 		break;
 	case ERX_XHCI_COMPLETION_STOPPED:
-		CHECK(!h->command_live && command_retires(&h->command, post->slot, post->dci));
+		CHECK(h->command_live && command_retires(&h->command, post->slot, post->dci));
 		CHECK(answer->data.length == 0);
 		h->stopped++;
 		break;
