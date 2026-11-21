@@ -2568,6 +2568,11 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
 
 ## Bugs by subsystem
 
+* [Low] build, the native-jit copy's stamp (`tools/lib/erx/native_jit_runtime.rb`, `otp/erts/emulator/Makefile.in`
+  `$(ASMJIT_PCH_OBJ)`): the stamp has no compiler version or clang resource-header identity, so after an LLVM
+  upgrade moves the resource directory clang may refuse the old asmjit PCH and nothing restarts the copy
+  (inferred, not checked against clang's source). Fix by construction: a PCH-inputs stamp file the PCH rule
+  depends on, so OTP's make rebuilds the PCH itself.
 * [Medium] tests, `test/host/erx_net_effect_test.rb:250` (`test_seeded_fault_fails_credit_counts_segments`)
   is timing-dependent: on a loaded host (a 610 s run) `erx_net_driver_tests` failed
   `dhcp_starts_when_the_link_comes_up_test` (line 383, `dhcp_sent(300)` saw `discover`) and timed out in
