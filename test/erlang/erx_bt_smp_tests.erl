@@ -119,6 +119,14 @@ codec_lengths_test() ->
 -define(CENTRAL, {random, h("c0ffee123456")}).
 -define(PERIPHERAL, {random, h("d1e2f3a4b5c6")}).
 -define(PASSKEY, 314159).
+%% The passkey's bit for each round of Passkey Entry, round 0 first, written out rather
+%% than computed so the honest phone does not share erx_smp_core's rule. Figure 2.4's
+%% "ra = ra1 | ra2 | ... ra20" leaves the order open; two independent stacks take
+%% round i's bit as bit i of the passkey, the least significant first: Bumble v0.0.237,
+%% bumble/smp.py lines 993, 1682 and 1711, and NimBLE 648fc0213fb7, nimble/host/src/ble_sm_sc.c
+%% lines 246 to 248, its tk the passkey least significant octet first (ble_sm.c 3024).
+%% 314159 is 16#4CB2F.
+-define(PASSKEY_BITS, [1, 1, 1, 1, 0, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0]).
 -define(REQUESTS, 2).
 
 %% Fixed key pairs and nonces, so the exploration is deterministic: erXos's fresh
@@ -153,7 +161,7 @@ honest(Request, Mode) ->
     {_, Own} = key(1),
     Na = nonces(2),
     Method = case Mode of display -> passkey; nodisplay -> just_works end,
-    Z = fun(Round) when Method =:= passkey -> 16#80 bor ((?PASSKEY bsr Round) band 1);
+    Z = fun(Round) when Method =:= passkey -> 16#80 bor lists:nth(Round + 1, ?PASSKEY_BITS);
            (_) -> 0
         end,
     Dh = erx_smp_crypto:dhkey(PhonePrivate, Own),
@@ -264,7 +272,6 @@ withdraw_test() ->
 failure_after_key_ends_link_test() ->
     Inputs = honest_inputs(?NO_IO, nodisplay),
     Keyed = lists:takewhile(fun(I) -> I =/= encrypted end, Inputs),
-    {_, Identity} = run(Keyed ++ [encrypted]),
     [begin
          {Actions, Ended} = run(Keyed ++ Rest),
          ?assertEqual({Sent, [Reason]}, {sent_failure(Actions), failures(Actions)}),
@@ -272,9 +279,32 @@ failure_after_key_ends_link_test() ->
          ?assertEqual({[], Ended}, run([{pdu, {pairing_request, ?NO_IO}}], Ended))
      end || {Rest, Sent, Reason} <- [{[{pdu, {pairing_dhkey_check, <<3:128>>}}], [8], unexpected},
                                      {[{pdu, {pairing_failed, 16#08}}], [], {peer, 16#08}},
-                                     {[{withdraw, 1}], [8], withdrawn}]],
-    {Actions, _} = run([{pdu, {identity_information, <<7:128>>}}, {pdu, {identity_address_information, 2, <<10:48>>}}], Identity),
-    ?assertEqual({[10], [invalid], end_link}, {sent_failure(Actions), failures(Actions), lists:last(Actions)}).
+                                     {[{withdraw, 1}], [8], withdrawn}]].
+
+%% The phone's identity address is public or static random (3.6.5). Any 48 bits make a
+%% public address; a static random address has its top two bits set and its other 46
+%% neither all zeros nor all ones (Vol 6 Part B, 1.3.2 and 1.3.2.1), so a private
+%% address claimed as an identity, or a type that is neither, fails with Invalid
+%% Parameters and ends the link.
+identity_address_test() ->
+    Keyed = lists:takewhile(fun(I) -> I =/= encrypted end, honest_inputs(?NO_IO, nodisplay)),
+    {_, Identity} = run(Keyed ++ [encrypted, {pdu, {identity_information, <<7:128>>}}]),
+    Claim = fun(Type, Address) -> run([{pdu, {identity_address_information, Type, Address}}], Identity) end,
+    [?assertMatch({[{bonded, #{identity := Expected}}, timer_stop], _}, Claim(Type, Address))
+     || {Type, Address, Expected} <- [{0, h("01c2c3c4c5c6"), {public, h("01c2c3c4c5c6")}},
+                                      {1, h("c1c2c3c4c5c6"), {random, h("c1c2c3c4c5c6")}},
+                                      {1, <<2#11:2, 1:46>>, {random, <<2#11:2, 1:46>>}},
+                                      {1, <<2#11:2, (1 bsl 46 - 2):46>>, {random, <<2#11:2, (1 bsl 46 - 2):46>>}}]],
+    [begin
+         {Actions, _} = Claim(Type, Address),
+         ?assertEqual({Case, [10], [invalid], end_link},
+                      {Case, sent_failure(Actions), failures(Actions), lists:last(Actions)})
+     end || {Case, Type, Address} <- [{type_2, 2, h("c1c2c3c4c5c6")},
+                                       {non_resolvable_private, 1, h("01c2c3c4c5c6")},
+                                       {resolvable_private, 1, h("41c2c3c4c5c6")},
+                                       {reserved, 1, h("81c2c3c4c5c6")},
+                                       {random_part_zeros, 1, <<2#11:2, 0:46>>},
+                                       {random_part_ones, 1, <<2#11:2, (1 bsl 46 - 1):46>>}]].
 
 request_refused(Changes, Mode) ->
     {Actions, _} = refused(maps:merge(?KEYBOARD, Changes), {open, Mode, fresh()}),
@@ -379,7 +409,7 @@ inputs({_State, Context, Tag}) ->
                                 {pairing_dhkey_check, <<3:128>>}, {pairing_failed, 16#08},
                                 {pairing_response, ?KEYBOARD}, {security_request, 16#0D},
                                 {encryption_information, <<4:128>>}, {central_identification, <<5:16>>, <<6:64>>},
-                                {identity_information, <<7:128>>}, {identity_address_information, 1, <<8:48>>},
+                                {identity_information, <<7:128>>}, {identity_address_information, 1, <<2#11:2, 8:46>>},
                                 {pairing_keypress_notification, 1}, {invalid, 16#03}, {reserved, 16#0F}, empty]]
         ++ [encrypted, timeout] ++ [{pdu, {pairing_request, R}} || Tag < ?REQUESTS, R <- requests()]
         ++ [{admission, T, V} || T <- [Tag - 1, Tag],
@@ -405,6 +435,7 @@ honest_steps({Request, Mode, Phase}) ->
         encrypting -> [{encrypted, true}];
         identity -> [{{pdu, {identity_information, <<9:128>>}}, true}];
         identity_address -> [{{pdu, {identity_address_information, 0, <<10:48>>}}, true},
+                             {{pdu, {identity_address_information, 1, <<10:48>>}}, false},
                              {{pdu, {identity_address_information, 2, <<10:48>>}}, false}];
         _ -> []
     end;
@@ -486,13 +517,18 @@ explore(Queue, Seen, Count) ->
             explore(Next, Seen1, Count1)
     end.
 
+%% Identity Address Information's AddrType octet for a bond's address type (3.6.5).
+address_type(public) -> 0;
+address_type(random) -> 1.
+
 %% A verdict or a withdrawal for an earlier request, which changes nothing.
 stale({admission, T, _}, Tag) -> T =/= Tag;
 stale({withdraw, T}, Tag) -> T =/= Tag;
 stale(_Input, _Tag) -> false.
 
 %% On every transition: each PDU sent encodes and decodes back to itself; a key and a
-%% bond come only from the honest phone, with the honest LTK and the window's level; a
+%% bond come only from the honest phone, with the honest LTK and the window's level, a
+%% bond with the identity address the phone claimed in its type; a
 %% failure the core reports is a Pairing Failed sent, except the phone's own and a
 %% timeout, which send nothing; and a failure once the link has its key ends the link.
 invariants(Input, Actions, Context, Honest) ->
@@ -506,6 +542,8 @@ invariants(Input, Actions, Context, Honest) ->
             #{ltk := Ltk, level := Level} = honest(Request, Mode),
             [?assertMatch({key, Ltk, Level}, K) || {key, _, _} = K <- Keys],
             [?assertMatch({bonded, #{ltk := Ltk, level := Level}}, K) || {bonded, _} = K <- Keys],
+            [?assertEqual({pdu, {identity_address_information, address_type(Type), Address}}, Input)
+             || {bonded, #{identity := {Type, Address}}} <- Keys],
             ?assert(Mode =:= nodisplay orelse Level =:= authenticated)
     end,
     case failures(Actions) of

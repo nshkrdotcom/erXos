@@ -22,7 +22,7 @@ which a responder refuses. `fresh/0` is the one effect: the key pair, nonces and
 passkey of one pairing, from `crypto:strong_rand_bytes/1`.
 """.
 
--export([e/2, aes_cmac/2, ah/2, f4/4, f5/5, f6/7, on_curve/1, dhkey/2, debug_key/0, fresh/0]).
+-export([e/2, aes_cmac/2, ah/2, f4/4, f5/5, f6/7, on_curve/1, dhkey/2, static_random/1, debug_key/0, fresh/0]).
 -export_type([value/0, public_key/0, address/0, fresh/0]).
 
 -include("generated/erx_abi.hrl").
@@ -98,6 +98,15 @@ The Diffie-Hellman key of a private key and a peer's public key, its X coordinat
 """.
 -spec dhkey(<<_:256>>, public_key()) -> <<_:256>>.
 dhkey(Private, {X, Y}) -> crypto:compute_key(ecdh, <<4, X/binary, Y/binary>>, Private, secp256r1).
+
+-doc """
+Whether 48 bits, most significant first, are a static random address (Vol 6 Part B,
+1.3.2 and 1.3.2.1): the top two bits set, and the other 46 neither all zeros nor all
+ones. The other three values of the top bits are private addresses and a reserved one.
+""".
+-spec static_random(<<_:48>>) -> boolean().
+static_random(<<2#11:2, Random:46>>) -> Random =/= 0 andalso Random =/= 1 bsl 46 - 1;
+static_random(<<_:48>>) -> false.
 
 -doc "SMP's debug public key (2.3.5.6.1).".
 -spec debug_key() -> public_key().

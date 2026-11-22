@@ -37,9 +37,9 @@ pairing's key, and `timeout` when the Security Manager Timer runs out (3.4).
 wait, Repeated Attempts; a bonded link, Unspecified Reason; no Secure Connections, an
 OOB claim, no bonding or no identity key offered, or a method below the window's
 level, Authentication Requirements; a key shorter than 16 octets, Encryption Key Size;
-a malformed PDU, a reserved value or the debug key, Invalid Parameters; a key off the
-curve, a reflected key or a wrong check value, DHKey Check Failed; a wrong commitment,
-Confirm Value Failed. A PDU out of its turn fails the pairing with Unspecified Reason,
+a malformed PDU, a reserved value, the debug key or an identity address neither public
+nor static random, Invalid Parameters; a key off the curve, a reflected key or a
+wrong check value, DHKey Check Failed; a wrong commitment, Confirm Value Failed. A PDU out of its turn fails the pairing with Unspecified Reason,
 or Command Not Supported for a command a responder never takes. The window's
 `{withdraw, Tag}`, when its opener closes it, fails the pairing of that `Tag` with
 Unspecified Reason, reported as `withdrawn`. Every failure of a pairing but the
@@ -153,7 +153,7 @@ phase({pdu, {pairing_dhkey_check, Ea}}, {dhkey_check, Na, Nb, P}, State) -> dhke
 phase(encrypted, {encrypting, Bond}, _State) -> {[timer], {identity, Bond}};
 phase({pdu, {identity_information, Irk}}, {identity, Bond}, _State) -> {[timer], {identity_address, Bond#{irk => Irk}}};
 phase({pdu, {identity_address_information, Type, Address}}, {identity_address, Bond}, _State) ->
-    {[{bonded, Bond#{identity => {identity_type(Type), Address}}}, timer_stop], done};
+    {[{bonded, Bond#{identity => identity(Type, Address)}}, timer_stop], done};
 phase(encrypted, Phase, _State) -> {[], Phase};
 phase({admission, _, _}, Phase, _State) -> {[], Phase};
 phase({withdraw, _}, Phase, _State) -> {[], Phase};
@@ -271,19 +271,23 @@ dhkey_check(Ea, Na, Nb, #{method := Method, request := Request, response := Resp
 nonce(Round, #{fresh := #{nonces := Nonces}}) -> lists:nth(Round + 1, Nonces).
 
 %% f4's Z: zero for Just Works; for Passkey Entry 0x80 with the round's bit of the
-%% passkey, the least significant first. 2.2.6 gives the 0x80 and 0x81; which bit a
-%% round takes the specification leaves to Figure 2.4's "ra = ra1 | ... | ra20", and
-%% Bumble v0.0.237's bumble/smp.py, lines 993 and 1682, takes bit Round.
+%% passkey, the least significant first. 2.2.6 gives the 0x80 and 0x81; Figure 2.4's
+%% "ra = ra1 | ra2 | ... ra20" leaves open which bit a round takes, and two independent
+%% stacks take bit Round: Bumble v0.0.237's bumble/smp.py (lines 993, 1682 and 1711)
+%% and NimBLE 648fc0213fb7's nimble/host/src/ble_sm_sc.c (lines 246 to 248).
 z(_Round, #{method := just_works}) -> 0;
 z(Round, #{method := passkey, fresh := #{passkey := Passkey}}) -> 16#80 bor ((Passkey bsr Round) band 1).
 
 %% IOcapA or IOcapB: AuthReq, the OOB data flag and the IO capability, as sent (2.2.8).
 io_cap(#{auth := Auth, oob := Oob, io := Io}) -> <<Auth, Oob, Io>>.
 
-%% The identity address's type (3.6.5): public or static random.
-identity_type(0) -> public;
-identity_type(1) -> random;
-identity_type(_) -> fail(?ERX_SMP_REASON_INVALID_PARAMETERS, invalid).
+%% The phone's identity address (3.6.5): public, any 48 bits, or static random. A
+%% private address claimed as an identity names no lasting device.
+identity(0, Address) -> {public, Address};
+identity(1, Address) ->
+    require(erx_smp_crypto:static_random(Address), ?ERX_SMP_REASON_INVALID_PARAMETERS, invalid),
+    {random, Address};
+identity(_Type, _Address) -> fail(?ERX_SMP_REASON_INVALID_PARAMETERS, invalid).
 
 require(true, _Code, _Reason) -> ok;
 require(false, Code, Reason) -> fail(Code, Reason).

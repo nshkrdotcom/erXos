@@ -8702,14 +8702,6 @@ model harness drive `erx_device.c` itself. `erx_device_dma_check` and `erx_devic
   answers is simply left as it is. Read 3.4 and 3.6.7 and pin the request against the Bumble test peer. The
   request is queued droppable, as SMP's other frames are, and never retried, so a queue full of notifications'
   frames at that moment loses it; the design does not say whether it must be kept.
-* [Medium] bluetooth, Passkey Entry's bit order (`erx_smp_core`'s `z/2`): the test's honest phone takes the
-  passkey's bits least significant first, as the core does, citing Bumble v0.0.237's bumble/smp.py; the
-  specification's Figure 2.4 does not settle it. Pin it with the Bumble test peer before the board run.
-* [Low] bluetooth, a static random identity address (`erx_smp_core`'s `identity_type/1`; docs/design-bluetooth.md
-  "Secure Connections only"): the phone's Identity Address Information is taken with any address of type 0x01,
-  but a static random address has its two most significant bits set (Core 6.3 Vol 6 Part B, 1.3.2.1, not yet
-  fetched). Read that section and refuse another random address with Invalid Parameters, before the bond store
-  keys bonds by identity.
 * [Low] bluetooth, the advertising enable's deadline refilled (`erx_bt_hci_core`'s `command/2`): at the
   connection limit with `Num_HCI_Command_Packets` 0, a controller alternating LE Connection Complete and
   Disconnection Complete empties and refills the slot, and each refill starts a fresh deadline, so the
