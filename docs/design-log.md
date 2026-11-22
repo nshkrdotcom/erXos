@@ -435,7 +435,23 @@ shows `gen`'s text for the crash and nothing of what the callback was
 asked to hide, but `gen_server`'s shows the raw reason and last
 message, as stock OTP does and OTP's own suite requires
 (`gen_server_SUITE:crash_in_format_status`), and an empty sys log, where
-stock OTP shows it raw. What is left open (the
+stock OTP shows it raw. That callback is the same in every domain, not
+only in the system domain's: every `format_status/1` of erXos's Erlang
+is one clause that hands OTP's `Status` to `erx_report:status/2`, which
+shows only the keys the module names, each through the module's view,
+and empties the log, the queue and the postponed events and cuts the
+reason to its leading atom, so one rule holds with no reasoning about
+which domain a module runs in (the chokepoint
+`format-status-through-report`); the views show a reason, a message or
+a request by its kind through `erx_report:reason_name/1` and bytes from
+outside by their size through `erx_report:bytes/1`. The one exception
+is `erx_net`'s three servers (`erx_tcp_conn`, `erx_tcp_listen` and
+`erx_net_driver`), which write their own: `erx_net` runs on stock OTP
+outside erXos without the `erx` application that holds `erx_report`
+([design-network-stack.md](design-network-stack.md), N12), and theirs,
+which passes the reason and every key it does not name through whole,
+is safe on erXos only because the network domain runs the report
+filter. What is left open (the
 supervisor's report of a child's exit, which quotes the raw reason;
 logger's forwarding of an event to its group leader's node before any
 filter runs; the legacy `error_logger` calls that carry no `otp`
