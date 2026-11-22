@@ -40,11 +40,6 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   `configured/1`, `erx_usb_fake_xhci:call/2`): once in a review run `a_function_ends_and_restarts_within_its_bounds_test`
   failed with `badarg` sending to `erx_usb_fake_xhci_under_test`, the fake not registered while the case polled its
   log, and passed on the next run. Cause not established; likely `with_bus` against the fake's registration or restart.
-* [Medium] USB, the mass-storage function is not built (`erlang/apps/erx_usb/src/erx_usb_bot.erl`,
-  [design-usb.md](design-usb.md#the-bot-engine)): the claim table names `erx_usb_bot` for a Bulk-Only
-  interface, and its start fails as unusable with `enotsup`, so a USB stick enumerates and its interface
-  stays unused. Build the function over `erx_usb_bot_core` as the BOT engine section states, replacing the
-  refusing start.
 * [Medium] USB, a BOT function that cannot drive its interface (`erx_usb_bot_core`, the BOT function;
   [design-usb.md](design-usb.md#ports-hubs-and-devices-the-bus-core)): the bus core takes
   `{shutdown, {unusable, Reason}}` as a final end, but the BOT engine stops on a Get Max LUN answer above 15
@@ -150,6 +145,10 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   TD of the form spans the link and the sequencer never sets it. design-device-dma.md's refusals list no answer for a command refused while another is
   in flight or for want of a free block (`ERX_DEVICE_TRB_REFUSE_FULL`), nor for a post on a queue the command in
   flight holds (`ERX_DEVICE_TRB_REFUSE_HALTED`).
+* [Medium] USB, the BOT function's test gaps (`erx_usb_bot`, [design-usb.md](design-usb.md#the-bot-engine)): `unit/2` has no host
+  test of its own, and the model stick covers no removable medium change, UNIT ATTENTION, READ CAPACITY(16), ILLEGAL REQUEST
+  readiness or READ(16).
+* [Low] USB, `erx_usb_bot` and `erx_blk_bot`: `format_status` redacts `reason` and `log`.
 
 ## Planned features
 

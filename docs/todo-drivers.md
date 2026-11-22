@@ -268,9 +268,10 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   showed its stop and the second open never came up. The restart runs `reset/0`'s RBUF flush and
   UniMAC reset before the DMA stop, while the facts record's other driver disables MAC receive,
   waits a frame's time, stops and confirms the DMA, and flushes only after ("Where the drivers
-  disagree"); a stop timeout with DMA status bit 0 set and bit 17 clear points instead at the
-  inferred ring bit of the idle report ("The DMA status register"), and a full ring at the timeout
-  at a stop that waits on a full ring. The receive DMA status word at the timeout settles which.
+  disagree"); `rx_dma_status` `0x1fffe` at the timeout has bit 0 clear, so the receive engine had not stopped, and rings 0 to 15 read 1 while
+  transmit's `0x3ffff` has ring 16's bit 17 set; the inferred ring bit is not what failed. A full ring (the receive producer index 256 ahead of the
+  consumer in the same evidence line) or a reset that landed mid-frame remain; `reset/0` now turns receive off a frame before it, and a confirmed
+  DMA stop before the reset needs a NIF call that stops without installing (open decision).
 * [Medium] GENET, `erlang/apps/erx_net/erxos/erx_genet.erl`, the broken-queue ending: no test runs
   `event/2`'s catch, `log_broken/2` or the `{stop, {broken, _}}` hand-off; only the pure
   `erx_genet_core:rx_fault/1` and `evidence/0` are tested. The hosted GENET run

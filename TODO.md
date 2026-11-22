@@ -50,7 +50,7 @@ goes to the document of the subsystem its component pointer names.
 * [Network](docs/todo-network.md#stopgap-replacements): the network stack (`erx_net`), WiFi and HTTPS clients.
   2 items (2 Medium).
 * [Drivers and platforms](docs/todo-drivers.md#stopgap-replacements): drivers and the device layer: PCIe, DMA, the device tree, GENET, SD, UART, the platforms and boards.
-  45 items (2 High, 25 Medium, 18 Low).
+  49 items (4 High, 26 Medium, 19 Low).
 * [Shell and programs](docs/todo-shell.md#stopgap-replacements): the command shell (rc), programs, the console line and the terminal.
   4 items (1 Medium, 3 Low).
 * [Apps and the start service](docs/todo-apps.md#stopgap-replacements): applications and packages, the demo apps.
@@ -81,11 +81,11 @@ goes to the document of the subsystem its component pointer names.
 * [Network](docs/todo-network.md#bugs-by-subsystem): the network stack (`erx_net`), WiFi and HTTPS clients.
   63 items (2 High, 28 Medium, 33 Low).
 * [USB](docs/todo-usb.md#bugs-by-subsystem): the USB stack and its class drivers.
-  23 items (15 Medium, 8 Low).
+  26 items (16 Medium, 10 Low).
 * [Bluetooth](docs/todo-bluetooth.md#bugs-by-subsystem): the Bluetooth host and controller, GATT and the security manager.
-  1 item (1 Medium).
+  5 items (1 Medium, 4 Low).
 * [Drivers and platforms](docs/todo-drivers.md#bugs-by-subsystem): drivers and the device layer: PCIe, DMA, the device tree, GENET, SD, UART, the platforms and boards.
-  51 items (1 High, 28 Medium, 22 Low).
+  53 items (2 High, 29 Medium, 22 Low).
 * [Shell and programs](docs/todo-shell.md#bugs-by-subsystem): the command shell (rc), programs, the console line and the terminal.
   85 items (42 Medium, 43 Low).
 * [Sessions and SSH](docs/todo-session.md#bugs-by-subsystem): sessions, SSH, the vault and login.
@@ -103,7 +103,7 @@ goes to the document of the subsystem its component pointer names.
 * [Website and book](docs/todo-site.md#bugs-by-subsystem): the website, the book and the user guide.
   20 items (5 Medium, 15 Low).
 * [Build, tooling and tests](docs/todo-build.md#bugs-by-subsystem): the build, the host tools, the test harnesses and the gates.
-  119 items (56 Medium, 63 Low).
+  123 items (58 Medium, 65 Low).
 
 ## Security residuals
 

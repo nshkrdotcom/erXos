@@ -879,6 +879,17 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   (`test/erlang/erx_device_record_fuzz.erl`, `entry/0`) finds an accepted device record in 159 of
   20000 rounds, under the floor of 200 (`MIN_ACCEPTED`). The generator's well-formed device entries
   no longer match the record's shape often enough; make them do so, rather than lower the floor.
+* [Low] release files, the start-order property where releases are written (`tools/lib/erx/release_files.rb` `release_entry`):
+  the check is a host test over `RELEASE_SCRIPTS`, so test images' domain scripts are not covered. Refusing where the release
+  file is written would cover every script.
+* [Medium] qemu, reuse decided by a hand-kept list (`tools/lib/erx/qemu.rb` `reusable?`): every input a host side serves (link,
+  nic, display, firmware, pcie, line, disks, hostlink) must be listed by hand, and one commit missed `line`. Have each plan object
+  say whether a host serves it, so `reusable?` keeps no list.
+* [Low] qemu suites, the shared shell helpers: `PcieDomain::WAIT` and `PROMPT` serve the pcie, usb and Bluetooth suites. They
+  belong in a shared home.
+* [Medium] `tools/lib/erx/medium_boot.rb` `Footprint`: `LoadOnly` is prepended to `ReleaseFiles` as a whole, so the configured
+  storage and network domains of the footprint image boot with erx_blk and erx_net only loaded; check whether the storage domain
+  fails at boot there (erx_storage needs erx_blk started) and whether the cell's figures assume it.
 
 ## Security residuals
 

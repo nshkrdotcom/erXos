@@ -10,6 +10,18 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   flush, its fid's clunk and the drain of a grant whose Bluetooth domain ended wait until the line's next `reset`, which
   an idle domain, or one ended past its restart intensity, never sends. Give the driver's write a deadline that ends the
   driver and answers `eio`, or bound it by the controller's 5 s command deadline.
+* [Low] bluetooth, one line keeper by construction (`erlang/apps/erx_uart/src/erx_uart_sup.erl` `members/0`):
+  `erx_facet:serve/2` replaces an earlier name, so two line keepers would silently leave `line` to the last started. `members/0`
+  refuses two line records of one peripheral but takes a pl011 and a virtio_mmio line record together; only `check_line_grants`'
+  one-grant limit, the root's record for the granted device alone and `check_serial_devices` keep it to one. Refuse more than one
+  line record across both peripherals.
+* [Low] bluetooth suite, the domain's memory (`tools/lib/erx/bt_domain.rb` `MEMORY`): 32 MiB is unmeasured. Measure it at rest as
+  `PcieDomain`'s memory note does (`MediumBoot::Footprint`) and size the row from that.
+* [Low] bluetooth suite, the two unverified QEMU facts (docs/design-bluetooth.md, "Sources"): whether bytes arriving with no
+  receive buffer posted are held or dropped, and whether a device reset drops what the chardev holds. A stand-in controller that
+  writes before the driver's start and across a `reset` settles them.
+* [Low] bluetooth suite, the controllers' log has no size bound (`BtDomain::Controllers`): the DEBUG log records every HCI
+  packet until the deadline.
 
 ## Security residuals
 
@@ -108,35 +120,20 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
 
 ## Planned features
 
-* [Medium] bluetooth, the line's service side (docs/design-bluetooth.md "The controller's line"): the line tree,
-  `erx_line_fs`, and its keeper, `erx_line`, run in their UART's line group under `erx_uart_sup`, which starts the
-  keeper on the root's `line` record with the rate and flow of the grant of the system domain's service named
-  `line` (`erx_uart_sup:line_grants/1`) and `init => fresh`; the keeper starts the tree's grants. The manifest check
-  names the line interface's service `line` (property 8), the one name of that lookup, the serve call, the
-  facet-names check and the grantee's mount (`erx_ns:place/1`); the name is a literal in each of those and in
-  `check_line_grants`, not one generated fact (declare it in `abi/services/line.txt`, as `packages_service` is in
-  `abi/manifest.txt`). Missing: serving them. `erx_facet:serve(line,
-  Grants)` in `erx_line:init/1` waits for a manifest that declares the `line` service and grants it, which adding
-  the Bluetooth domain to a board manifest brings; until then the facet-names chokepoint
-  (`tools/lib/erx/facet_names.rb`) rightly refuses the call, so it and its seeded fault in
-  `test/host/erx_line_test.rb` (the keeper that serves no service) land with that manifest. With no grant, no boot
-  runs the line tree over a UART and the controller group still runs only over a model line. Also missing: the
-  power line's steps 2 and 4 of a reset, which `erx_line` does not run, as on a platform with no power line.
-  Property 8 and design-bluetooth.md give the line service one tree for each grant of `line`, but the manifest
-  check (`check_line_grants` in `tools/lib/erx/manifest.rb`) accepts at most one `line` facet in a manifest, since
-  the design leaves open how the one process `erx_facet:serve/2` names reaches the tree of each grant when several
-  grants name different UARTs; settle that and lift the limit.
-  On QEMU `virt` (docs/plan.md, Track B part (b); design-bluetooth.md, "The line on QEMU `virt`") the line's
-  driver is `erx_virtio_console` (erlang/apps/erx_uart), over a virtio-console transport that the line grant's
-  `device` names, a device of role `serial` with a given record (design-system.md property 8, design-fiasco.md
-  "Device records"); the kind row, the check and `erx_uart_sup` take it, and the platform record's line unit
-  holds the transport, `/virtio_mmio@a000e00`. Missing: the Bluetooth suite's
-  manifest with the Bluetooth domain, the system domain's `line` service and its `line` grant, never the
-  development manifest; `erx_facet:serve(line, Grants)` with its seeded fault (above); and the QEMU harness's
-  socket chardev and the suite. The root's names still say `line_uart` (`boot_manifest.c`) for what is now any
-  line device's row. The driver has host tests of its transmit core only: add cases over the played stand-in device
-  (`test/erlang/stand_in/erx_device.erl`) for input reaching the owner and the buffer posted again, a write
-  answered only after its last buffer is back, and a broken queue stopping the driver.
+* [Medium] bluetooth, the line's service side (docs/design-bluetooth.md "The controller's line"): the keeper, `erx_line`,
+  serves its tree's grants as the system domain's `line` service (`erx_facet:serve/2`, with its seeded fault in
+  `test/host/erx_line_test.rb`), under the development manifest's `service line`, ungranted; the line grant's device is a
+  UART or, on QEMU `virt`, `erx_virtio_console` over the line unit's `/virtio_mmio@a000e00`, and the Bluetooth suite runs the
+  domain over it against Bumble. Still open: the one name `line` as a generated fact (`abi/services/line.txt`, as
+  `packages_service` is in `abi/manifest.txt`; today a literal in the manifest check, the serve call, the facet-names check,
+  `check_line_grants` and the grantee's mount `erx_ns:place/1`); the power line's steps 2 and 4 of a reset, which `erx_line`
+  does not run, as on a platform with no power line; the one-grant limit (`check_line_grants` in `tools/lib/erx/manifest.rb`
+  accepts at most one `line` facet, since the design leaves open how the one process `erx_facet:serve/2` names reaches the
+  tree of each grant when several grants name different UARTs; settle that and lift the limit); the root's names, which still
+  say `line_uart` (`boot_manifest.c`) for what is now any line device's row; the driver's played-device cases (add cases over
+  `test/erlang/stand_in/erx_device.erl` for input reaching the owner and the buffer posted again, a write answered only after
+  its last buffer is back, and a broken queue stopping the driver); and the stage 1 peer (scanner) cases of the design's table.
+  The Bluetooth domain and its grant stay out of the development manifest (docs/plan.md).
 * [Medium] bluetooth, the line device's record (`liberx/backend/core/boot_manifest.c`, `tools/lib/erx/manifest.rb`
   `check_serial_devices`): the `serial` kind row makes the root write a given record for every placed serial device,
   so rule serial-device-granted refuses an ungranted one by exclusion. Choosing the line's record by the grant's index
