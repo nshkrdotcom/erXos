@@ -2337,8 +2337,12 @@ line's descriptor, and one for the peer. Bumble's stream transports carry H4 fra
 (`bumble/transport/common.py:41-46`, `:125-144`), and its controller
 implements every command stage 1 to 4 send (`bumble/controller.py:1996`,
 `:2344`, `:2874`, `:2953`, `:3004-3067`, `:3299-3310`). Python runs only
-the peer's scripts, in `test/bt/peer/`, each started by the harness by
-argument vector:
+on the development host and only erXos's scripts under `test/bt/`: the
+peers' scripts, in `test/bt/peer/`, and `test/bt/bumble_decode.py`, which
+prints Bumble's decoding of the corpus for the codecs' comparison of
+[Fuzz targets](#fuzz-targets), started by `test/host/erx_bt_bumble_test.rb`.
+Each is started by argument vector, the peers by the harness, never on the
+target and never in build tooling. The stages' peers:
 
 | Stage | Peer | Passes | Seeded fault |
 | --- | --- | --- | --- |
