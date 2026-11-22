@@ -29,7 +29,8 @@ typedef struct erx_pack_view erx_pack_view_t;
  *
  * Every entry runs under the caller's one library lock, the fault thread's
  * erx_dom_lib_record included, so the view and the handles change only under
- * it. erx_dom_lib_take alone takes no lock: it waits at the gate.
+ * it. erx_dom_lib_take and erx_dom_lib_firmware_request alone take no lock:
+ * the first waits at the gate, the second up to a firmware request's deadline.
  *
  * Handles: each object a creation makes has one handle in the root's table,
  * kept in the domain's erx_dom_handles_t with the budget it is charged to.
@@ -340,6 +341,7 @@ typedef struct erx_dom_boot_sizes {
 	uint32_t	noperations;	/* its facets' operation rows */
 	uint32_t	nparameters;	/* its facets' parameter rows */
 	uint32_t	npci_bridges;	/* its PCIe host bridge rows */
+	uint32_t	nfirmware;	/* its firmware request records */
 } erx_dom_boot_sizes_t;
 
 typedef struct erx_dom_boot_tables {
@@ -362,6 +364,7 @@ typedef struct erx_dom_boot_tables {
 	const erx_service_operation_t **operations; /* noperations */
 	erx_dom_parameter_t	*parameters;	/* nparameters */
 	erx_dom_pci_bridge_t	*pci_bridges;	/* npci_bridges, in device row order */
+	erx_mf_firmware_request_t *firmware;	/* nfirmware, in the manifest's order */
 } erx_dom_boot_tables_t;
 
 /* The sizes of the view the manifest and a boot image of nfiles entries describe. */
@@ -457,6 +460,26 @@ erx_status_t	erx_dom_lib_pci_mode(erx_dom_lib_t *, uint32_t index, uint32_t mode
  * holds no bridge, 0 included, and nothing is written.
  */
 erx_status_t	erx_dom_lib_pci_answered(erx_dom_lib_t *, uint32_t domain) ERX_WARN_UNUSED_RESULT;
+
+/*
+ * Makes the index-th firmware request row of device row device, through the backend
+ * (docs/design-fiasco.md, "The firmware request"): the row as the view resolves it
+ * (erx_dom_firmware_row), so ERX_ENOTSUP past the device's rows and ERX_EINVAL past the
+ * catalogue reach no mailbox, then erx_firmware_request_row's status, with the answer's
+ * first *length bytes in answer and zeroes to its end. The caller holds no lock: the
+ * request runs in its thread up to its 1 s deadline, and the view's records it reads are
+ * written only as the view is built. The caller then hands the status to
+ * erx_dom_lib_pci_firmware under the lock.
+ */
+erx_status_t	erx_dom_lib_firmware_request(const erx_dom_lib_t *, uint32_t device, uint32_t index,
+		    uint8_t answer[ERX_VC_WINDOW_MAX], uint32_t *length) ERX_WARN_UNUSED_RESULT;
+
+/*
+ * The status a firmware request of host bridge row bridge answered, to its catalogue
+ * (erx_dom_pci_firmware): ERX_ETIMEDOUT marks it firmware_lost for the boot. A row with no
+ * catalogue has nothing to mark. The caller holds the library's lock.
+ */
+void		erx_dom_lib_pci_firmware(erx_dom_lib_t *, uint32_t bridge, erx_status_t status);
 
 /*
  * The root's view: erx_dom_view_build over every entry of the opened boot

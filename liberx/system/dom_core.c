@@ -1851,6 +1851,25 @@ erx_dom_pci_firmware(erx_dom_pci_bridge_t *bridge, erx_status_t status)
 		bridge->firmware_lost = true;
 }
 
+erx_status_t
+erx_dom_firmware_row(const erx_dom_view_t *view, uint32_t device, uint32_t index, erx_mf_firmware_request_t *row)
+{
+	uint32_t seen = 0;
+
+	if (device >= view->ndevices)
+		return (ERX_EINVAL);
+	for (uint32_t at = 0; at < view->nfirmware; at++) {
+		if (view->firmware[at].device != device)
+			continue;
+		if (seen == index) {
+			*row = view->firmware[at];
+			return (ERX_OK);
+		}
+		seen++;
+	}
+	return (ERX_ENOTSUP);
+}
+
 uint8_t
 erx_dom_pci_route(const erx_dom_device_entry_t *entry, const erx_pcie_function_t *function)
 {

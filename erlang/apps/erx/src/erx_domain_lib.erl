@@ -38,17 +38,20 @@ connect/6 and disconnect/1 answer {error, erights} to any other caller, and
 so does crash/1, which reads a domain's crash dump. info/2 answers any
 caller, since a group's or budget's report holds none of the domain's data,
 and so do pci_report/2, the PCIe catalogue's intake, pci_bridges/0, its
-read, pci_mode/2, the write of a PCIe function's mode, and pci_answered/1,
-the write of the incarnation answered, whose caller is the device service.
+read, pci_mode/2, the write of a PCIe function's mode, pci_answered/1,
+the write of the incarnation answered, and pci_firmware/1, a bridge's
+firmware request, whose caller is the device service.
 """.
 
 -export([register/0, create/1, start/1, stop/2, retire/1, crash/1, info/2, connect/6, disconnect/1,
          configured/0, configured/3, templates/0, apps/0, devices/0, session/5, app_session/6, code_object/2,
-         code_drop/2, end_commit/1, pci_report/2, pci_bridges/0, pci_mode/2, pci_answered/1]).
+         code_drop/2, end_commit/1, pci_report/2, pci_bridges/0, pci_mode/2, pci_answered/1,
+         pci_firmware/1]).
 -nifs([register_nif/0, create_nif/1, start_nif/1, stop_nif/2, retire_nif/1, crash_nif/1, info_nif/3, connect_nif/6,
        disconnect_nif/1, configured_nif/0, configured_create_nif/3, templates_nif/0, apps_nif/0, devices_nif/0,
        session_create_nif/5, app_session_create_nif/6, code_object_nif/2, code_drop_nif/2,
-       end_commit_nif/1, pci_report_nif/2, pci_bridges_nif/0, pci_mode_nif/2, pci_answered_nif/1]).
+       end_commit_nif/1, pci_report_nif/2, pci_bridges_nif/0, pci_mode_nif/2, pci_answered_nif/1,
+       pci_firmware_nif/1]).
 -on_load(on_load/0).
 
 -include("generated/erx_abi.hrl").
@@ -398,6 +401,21 @@ pci_answered(D) ->
     pci_answered_nif(D).
 
 -doc """
+Makes the firmware request of host bridge row Bridge, its first row
+(docs/design-fiasco.md, "The firmware request"; docs/design-usb.md, "The
+VL805's firmware"), the device service's firmware worker its caller. The
+request runs in the calling process's dirty I/O scheduler, up to its 1 s
+deadline, outside the library's lock; {error, etimedout} marks the bridge
+firmware_lost for the boot, and every later request answers the same. ok,
+or {error, enotsup} for a row with no request or a root with no mailbox,
+{error, einval} for a row past the catalogue, and {error, ebusy} or
+{error, eproto} as the firmware answered.
+""".
+-spec pci_firmware(non_neg_integer()) -> ok | error().
+pci_firmware(Bridge) ->
+    pci_firmware_nif(Bridge).
+
+-doc """
 Manifest startup and restart: builds configured row Row under id Id and
 domain pid DomainPid, as create/1 builds a request's domain. The domain service calls it from its
 manifest startup and restart with a row configured/0 gave, never a row a
@@ -530,6 +548,9 @@ pci_mode_nif(_Index, _Mode) ->
     erlang:nif_error(undef).
 
 pci_answered_nif(_D) ->
+    erlang:nif_error(undef).
+
+pci_firmware_nif(_Bridge) ->
     erlang:nif_error(undef).
 
 %% The library hands records as the bytes its generated encoders write, which

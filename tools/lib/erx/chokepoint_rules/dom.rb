@@ -12,7 +12,7 @@ module Erx
     # erx_dom_plan_partial.
     DOM_LIFE = 'liberx/system/dom_life.c'
     # The domain library's apply phase, which applies the plans the library's
-    # entries make and calls neither manifest entry.
+    # entries make and calls neither manifest entry, and its firmware entry.
     DOM_APPLY = 'liberx/system/dom_apply.c'
     # The library at boot and manifest startup: the one caller on the target of
     # erx_dom_plan_configured.
@@ -115,6 +115,22 @@ module Erx
           pattern: /\berx_dom_lib_apply\b/,
           sites: [DOM_APPLY, DOM_APPLY_HEADER, DOM_BOOT].map { |path| Chokepoints::Site.new(glob: path) },
           seed: { 'otp/erts/emulator/nifs/erxos/erx_domain_lib_nif.c' => "status = erx_dom_lib_apply(lib, &plan, &created);\n" }
+        ),
+        # A firmware request's tag and argument are the manifest's (docs/design-fiasco.md,
+        # "The firmware request"): the backend's form takes its row as a value, so only the
+        # library's firmware entry, which resolves the row from the view, calls it. The others
+        # name it to declare it, define it on the Fiasco root, and refuse it hosted.
+        Chokepoints::Forbidden.new(
+          name: 'dom-firmware-entry',
+          rule: "only the domain library's firmware entry (#{DOM_APPLY}) makes a firmware request with " \
+                'erx_firmware_request_row',
+          design: 'docs/design-fiasco.md#the-firmware-request',
+          scope: Chokepoints::Scope.new(own: true, extra: [GLUE, ERXOS_NIFS]),
+          pattern: /\berx_firmware_request_row\b/,
+          sites: [DOM_APPLY, 'liberx/backend/api.h', 'liberx/backend/fiasco/vc_mbox.c', 'liberx/backend/hosted/refused.c']
+                 .map { |path| Chokepoints::Site.new(glob: path) },
+          seed: { 'otp/erts/emulator/nifs/erxos/erx_domain_lib_nif.c' => "status = erx_firmware_request_row(row, answer, &length);\n",
+                  'liberx/system/dom_boot_view.c' => "status = erx_firmware_request_row(row, answer, &length);\n" }
         ),
         # The root's partial-boot entry is the only caller the partial entry
         # may have, and it does not exist yet: nothing calls it but its

@@ -33,7 +33,9 @@
  * PCIe host bridge row has a catalogue beside it (boot_bridges), which the
  * root joins to the tree's facts (erx_dom_view_bridge) and the PCIe
  * domain's reports fill under the library's lock (erx_dom_lib_pci_report),
- * the view's one table written after the boot outside a domain's plan. Each
+ * the view's one table written after the boot outside a domain's plan. The
+ * firmware request records are kept as the manifest has them (boot_firmware),
+ * for the firmware entry to resolve a device's row from. Each
  * configured row and session template must leave room in its boot page's
  * strings for what the library adds to its own words (boot_strings_fit).
  * The service and facet rows are carried for the domain service
@@ -85,6 +87,7 @@ static const char *boot_devices(erx_dom_view_t *, const erx_manifest_view_t *,
 static uint32_t	boot_bridges_count(const erx_manifest_view_t *);
 static bool	boot_is_bridge(const erx_mf_device_t *);
 static const char *boot_bridges(erx_dom_view_t *, const erx_manifest_view_t *, erx_dom_pci_bridge_t *);
+static const char *boot_firmware(erx_dom_view_t *, const erx_manifest_view_t *, erx_mf_firmware_request_t *);
 static bool	boot_strings_fit(uint64_t, uint64_t, uint32_t, bool, bool);
 static bool	boot_env_names_display(const char *, uint32_t);
 static bool	boot_env_sets(const char *, uint32_t, const char *);
@@ -122,7 +125,8 @@ erx_dom_view_sizes(const erx_manifest_view_t *manifest, uint32_t nfiles)
 	    .nfacets = manifest->header.facets.count,
 	    .noperations = manifest->header.facet_operations.count,
 	    .nparameters = manifest->header.facet_parameters.count,
-	    .npci_bridges = boot_bridges_count(manifest) });
+	    .npci_bridges = boot_bridges_count(manifest),
+	    .nfirmware = manifest->header.firmware_requests.count });
 }
 
 /* Whether a device row is a PCIe host bridge's: a device-tree row of role configuration. */
@@ -201,7 +205,8 @@ erx_dom_boot_layout(const erx_dom_boot_sizes_t *sizes, uintptr_t base, erx_dom_b
 	    !BOOT_PLACE(facets, sizes->nfacets) ||
 	    !BOOT_PLACE(operations, sizes->noperations) ||
 	    !BOOT_PLACE(parameters, sizes->nparameters) ||
-	    !BOOT_PLACE(pci_bridges, sizes->npci_bridges))
+	    !BOOT_PLACE(pci_bridges, sizes->npci_bridges) ||
+	    !BOOT_PLACE(firmware, sizes->nfirmware))
 		return (false);
 #undef BOOT_PLACE
 	*bytes = used;
@@ -610,6 +615,23 @@ boot_bridges(erx_dom_view_t *view, const erx_manifest_view_t *manifest, erx_dom_
 	return (NULL);
 }
 
+/*
+ * The manifest's firmware request records, record for record: the reader checked each
+ * device index against the device table and each tag against fw_tag.
+ */
+static const char *
+boot_firmware(erx_dom_view_t *view, const erx_manifest_view_t *manifest, erx_mf_firmware_request_t *records)
+{
+	view->firmware = records;
+	view->nfirmware = 0;
+	for (uint32_t index = 0; index < manifest->header.firmware_requests.count; index++) {
+		if (!erx_manifest_firmware_requests_at(manifest, index, &records[index]))
+			return ("manifest: a firmware request the reader cannot read");
+	}
+	view->nfirmware = manifest->header.firmware_requests.count;
+	return (NULL);
+}
+
 void
 erx_dom_view_bridge(erx_dom_pci_bridge_t *bridge, const erx_pcie_bridge_t *tree, erx_dt_bridge_status_t status)
 {
@@ -665,6 +687,15 @@ erx_dom_lib_pci_mode(erx_dom_lib_t *lib, uint32_t index, uint32_t mode)
 		return (ERX_EINVAL);
 	record->setting.mode = (uint8_t)mode;
 	return (ERX_OK);
+}
+
+void
+erx_dom_lib_pci_firmware(erx_dom_lib_t *lib, uint32_t bridge, erx_status_t status)
+{
+	erx_dom_pci_bridge_t *const held = lib_pci_bridge(lib, bridge);
+
+	if (held != NULL)
+		erx_dom_pci_firmware(held, status);
 }
 
 erx_status_t
@@ -1424,6 +1455,7 @@ erx_dom_view_build(erx_dom_lib_t *lib, const erx_manifest_view_t *manifest, uint
 	if ((reason = boot_principals(lib, manifest, tables)) != NULL ||
 	    (reason = boot_devices(&lib->view, manifest, tables->devices, tables->device_records)) != NULL ||
 	    (reason = boot_bridges(&lib->view, manifest, tables->pci_bridges)) != NULL ||
+	    (reason = boot_firmware(&lib->view, manifest, tables->firmware)) != NULL ||
 	    (reason = boot_system_image(lib, manifest)) != NULL ||
 	    (reason = boot_configured(&lib->view, manifest, tables->configured, lib->system_image_holder)) != NULL ||
 	    (reason = boot_templates(&lib->view, manifest, tables->templates)) != NULL ||

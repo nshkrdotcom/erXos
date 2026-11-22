@@ -1671,6 +1671,21 @@ erx_dom_lib_record(erx_dom_lib_t *lib, uint64_t label, const erx_fault_t *record
 	}
 }
 
+erx_status_t
+erx_dom_lib_firmware_request(const erx_dom_lib_t *lib, uint32_t device, uint32_t index,
+    uint8_t answer[ERX_VC_WINDOW_MAX], uint32_t *length)
+{
+	erx_mf_firmware_request_t record;
+	erx_status_t status;
+
+	*length = 0;
+	memset(answer, 0, ERX_VC_WINDOW_MAX);
+	if ((status = erx_dom_firmware_row(&lib->view, device, index, &record)) != ERX_OK)
+		return (status);
+	return (erx_firmware_request_row((erx_firmware_row_t){ .tag = record.tag, .argument = record.argument },
+	    answer, length));
+}
+
 /* Written once, by the root's start, before any thread that reads it runs. */
 static erx_dom_lib_t *dom_lib_system;
 

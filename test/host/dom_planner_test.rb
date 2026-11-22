@@ -602,7 +602,8 @@ class DomPlannerTest < Minitest::Test
                     "  max_request 1024\n  in_flight 1\n  reductions 100000\n  period_ns 1000000000\n  max_heap_size 8192\n"
 
   # The packed manifest of the Pi 4's closed bridge and the VL805 at its one place, line 175,
-  # held by alpha, on the qemu-virt platform record (docs/design-usb.md, "The Phase 1 part").
+  # held by alpha, with the bridge's firmware request for the VL805, on the qemu-virt platform
+  # record (docs/design-usb.md, "The Phase 1 part", "The VL805's firmware").
   def vl805_manifest
     platform = JSON.parse(JSON.generate(@context.platform))
     row = { 'path' => '', 'bridge' => '', 'bus' => 0, 'device' => 0, 'function' => 0, 'clock' => 0, 'base' => 0, 'size' => 0,
@@ -615,6 +616,8 @@ class DomPlannerTest < Minitest::Test
                          'dma_memory' => 1 << 20, 'flags' => ['hostile'])
     platform.fetch('units').reject! { |unit| unit.fetch('key') == 'pcie' }
     platform.fetch('units').push({ 'key' => 'pcie', 'devices' => [bridge] }, { 'key' => 'vl805', 'devices' => [function] })
+    platform['firmware_requests'] = [{ 'name' => 'vl805_notify', 'device' => bridge.fetch('path'), 'tag' => 'notify_xhci_reset',
+                                       'argument' => 0x0010_0000 }]
     @context = Erx::Manifest::Context.new(**ManifestContextFixture.arguments(@codec).merge(platform: platform))
     source = with_domains('alpha', 'pcie') + "unit pcie\n  placement \"pcie\"\n  holder @domain.pcie\n" \
                                              "unit vl805\n  placement \"vl805\"\n  holder @domain.alpha\n" + VL805_PCI_FACET
@@ -708,6 +711,24 @@ class DomPlannerTest < Minitest::Test
     index = bridge_line[/\Adevice (\d+) /, 1]
     entry = /\Adevice \d+ unit=vl805 compatible=pci1106,3483 ranges= bridge=#{index} place=1\.0\.0 role=usb peripheral=xhci lines=175 confined=0\z/
     assert(lines.any? { |line| line.match?(entry) }, lines.inspect)
+  end
+
+  # The bridge's firmware request rows (docs/design-fiasco.md, "The firmware request"): the
+  # view keeps the manifest's records, and row 0 of the bridge's entry is the VL805's
+  # notification, its tag and argument the platform record's; the row past it, a device past
+  # the catalogue and the machine's rows resolve to nothing before any request is made. A
+  # request that timed out marks the bridge firmware_lost; one that met another request in
+  # flight does not.
+  def test_a_bridge_s_firmware_request_resolves_from_the_manifest
+    lines = view_lines(vl805_manifest, 'firmware', 'firmware')
+    rows = lines.grep(/\Afirmware \d+ \d+ /)
+    assert_equal 1, rows.size, lines.inspect
+    device = rows.first[/\Afirmware (\d+) 0 tag=0x30058 argument=0x100000\z/, 1]
+    refute_nil device, lines.inspect
+    assert_includes lines, "firmware #{device} past status=-12"
+    assert_includes lines, 'firmware outside status=-1'
+    assert_includes lines, 'firmware machine status=-1'
+    assert_equal ["lost #{device} busy=0 timedout=1"], lines.grep(/\Alost /)
   end
 
   # A host bridge's catalogue at boot (docs/design-pcie.md, "Records", "The catalogue and

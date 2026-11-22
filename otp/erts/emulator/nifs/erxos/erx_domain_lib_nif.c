@@ -9,7 +9,9 @@
  * Each entry is a dirty CPU NIF, since none waits on anything but a call to
  * the backend or the lock, and every entry but end_commit runs under
  * lib_lock, the library's one lock, which the fault thread takes too while
- * it handles a record.
+ * it handles a record. pci_firmware alone is a dirty I/O NIF, and makes its
+ * firmware request outside the lock, since the request sleeps up to its 1 s
+ * deadline.
  *
  * The fault thread is an ERTS thread (enif_thread_create) this module starts
  * at load, bound to the library's fault gate. It waits at the gate outside
@@ -34,7 +36,8 @@
  * the dump holds that domain's data. info reads a living domain's group
  * or budget report for any caller, since a report holds none of the
  * domain's data. pci_report, the PCIe catalogue's intake, pci_bridges, its
- * read, and pci_mode, the write of a PCIe function's mode, answer any
+ * read, pci_mode, the write of a PCIe function's mode, and pci_firmware, a
+ * bridge's firmware request, answer any
  * caller, since their caller is the device service (pci_report_nif). Which
  * process registers is the domain service's to win:
  * it registers
@@ -1445,6 +1448,38 @@ pci_answered_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
 }
 
 /*
+ * pci_firmware(Bridge): the firmware request of host bridge row Bridge, its first
+ * row, the one request a bridge driver names (docs/design-fiasco.md, "The firmware
+ * request"; docs/design-usb.md, "The VL805's firmware"). The request runs outside
+ * lib_lock, in this dirty I/O thread, up to its 1 s deadline
+ * (erx_dom_lib_firmware_request); its status then goes to the bridge's catalogue under
+ * the lock, so ERX_ETIMEDOUT marks it firmware_lost (erx_dom_lib_pci_firmware). It
+ * answers any caller, as pci_report does, its caller being the device service, which
+ * gives the request only to the driver of the bridge it gave. The answer's bytes are not
+ * returned: the bridge's request answers nothing but its status. ok, or {error, Name}:
+ * enotsup for a row with no request or a root with no mailbox, einval for a row past the
+ * catalogue, ebusy, etimedout or eproto as the request answered.
+ */
+static ERL_NIF_TERM
+pci_firmware_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
+{
+	uint8_t answer[ERX_VC_WINDOW_MAX];
+	unsigned int bridge;
+	uint32_t length;
+	erx_status_t status;
+
+	if (argc != 1 || !enif_get_uint(env, argv[0], &bridge))
+		return (enif_make_badarg(env));
+	if (lib == NULL)
+		return (status_error(env, ERX_ENOTSUP));
+	status = erx_dom_lib_firmware_request(lib, bridge, 0, answer, &length);
+	enif_mutex_lock(lib_lock);
+	erx_dom_lib_pci_firmware(lib, bridge, status);
+	enif_mutex_unlock(lib_lock);
+	return (status_term(env, status));
+}
+
+/*
  * The library, its lock and its fault thread live as long as the system
  * domain, so only the first load sets them up and a later one (after a
  * purge) is refused. A library with no fault thread would never end a
@@ -1495,6 +1530,8 @@ static ErlNifFunc nif_funcs[] = {
 	{ "pci_bridges_nif", 0, pci_bridges_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND },
 	{ "pci_mode_nif", 2, pci_mode_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND },
 	{ "pci_answered_nif", 1, pci_answered_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND },
+	/* A firmware request sleeps up to its 1 s deadline, outside the lock. */
+	{ "pci_firmware_nif", 1, pci_firmware_nif, ERL_NIF_DIRTY_JOB_IO_BOUND },
 };
 
 ERL_NIF_INIT(erx_domain_lib, nif_funcs, load, NULL, NULL, NULL)

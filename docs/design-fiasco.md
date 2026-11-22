@@ -2852,10 +2852,17 @@ the backend takes the row as a value: `erx_firmware_request_row(row, answer, len
 checked against the tag's declaration; the core's declaration of the tag (its request, its window and its
 least answer) comes from the tag, never from the caller, and no member of `fw_tag` reads the board's key.
 The call itself checks nothing of the argument, so that the caller chooses neither holds against other
-domains only (FD29). The domain library's one firmware entry resolves row `index` of a device against the
-manifest's firmware request records ([design-abi.md](design-abi.md#devices-and-partition-windows)), answers
-`ERX_ENOTSUP` for an index past the device's rows before anything reaches the mailbox, makes the call, and on
-`ERX_ETIMEDOUT` marks the bridge `firmware_lost` (`erx_dom_pci_firmware`). A driver names a bridge row and
+domains only (FD29). The domain library's one firmware entry, `erx_dom_lib_firmware_request`, resolves row
+`index` of a device against the manifest's firmware request records, which the view keeps as it is built
+([design-abi.md](design-abi.md#devices-and-partition-windows)), answers `ERX_ENOTSUP` for an index past the
+device's rows before anything reaches the mailbox, and makes the call. It runs outside the library's lock,
+which the call would otherwise hold for up to its deadline, and reads nothing written after the view's build;
+its caller then hands the status to the bridge's catalogue under the lock, where `ERX_ETIMEDOUT` marks the
+bridge `firmware_lost` (`erx_dom_lib_pci_firmware`, `erx_dom_pci_firmware`). Since the request runs outside
+the lock, the device service, which made it, takes no report on that bridge and makes no give of its functions
+while the request is in flight, so no give meets a bridge whose notification timed out before the mark lands
+([design-pcie.md](design-pcie.md#concurrency)). The chokepoint `dom-firmware-entry` holds
+`erx_firmware_request_row` to that entry. A driver names a bridge row and
 nothing else, and the device service refuses a row it did not give the caller
 ([design-pcie.md](design-pcie.md#facets)). On erXos's kernel that one call is
 `erx_firmware_request(resource, index)` inside `liberx` and the kernel resolves the row; nothing above

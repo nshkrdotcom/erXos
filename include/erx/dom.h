@@ -723,6 +723,11 @@ typedef struct erx_dom_view {
 	 * function whose bridge has none here is given nothing. */
 	const erx_dom_pci_bridge_t *pci_bridges;
 	uint32_t		 npci_bridges;
+	/* The manifest's firmware request records (docs/design-fiasco.md, "The
+	 * firmware request"), in its order, so a device's rows are the records
+	 * that name it, in turn; written only as the view is built. */
+	const erx_mf_firmware_request_t *firmware;
+	uint32_t		 nfirmware;
 	const erx_dom_file_t	*files;		/* the boot image's files */
 	uint32_t		 nfiles;
 	const erx_dom_configured_t *configured;
@@ -749,6 +754,17 @@ typedef struct erx_dom_view {
 						 * space, as records name it */
 	bool			 ending;	/* the ending record is installed */
 } erx_dom_view_t;
+
+/*
+ * Resolves the index-th firmware request row of device row device
+ * (docs/design-fiasco.md, "The firmware request"): the index-th of the
+ * view's records that names device, into *row. ERX_ENOTSUP past the
+ * device's rows, and for a device with none; ERX_EINVAL for a device past
+ * the catalogue. It serves device rows only: a machine row, whose device
+ * is ERX_MF_NONE, is past the catalogue. Pure.
+ */
+erx_status_t	erx_dom_firmware_row(const erx_dom_view_t *view, uint32_t device, uint32_t index,
+		    erx_mf_firmware_request_t *row) ERX_WARN_UNUSED_RESULT;
 
 /*
  * The objects a plan names. The first group is what the plan makes; the

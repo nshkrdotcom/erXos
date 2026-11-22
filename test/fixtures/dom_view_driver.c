@@ -9,7 +9,7 @@
  * manifest's bytes, as tools/host/dom_plan.c does with no archive files,
  * and prints what /dev and the domain service read of it.
  *
- *   dom-view MANIFEST [framebuffer|pci]
+ *   dom-view MANIFEST [framebuffer|pci|firmware]
  *
  * One line per catalogue entry, then one per service row, then one per
  * configured row that serves a display, with the display its creation puts
@@ -59,6 +59,22 @@
  *   mode INDEX unheld=S held=S mode=MODE past=S unconfirmed=S off=S other=S
  *
  * numbers in hexadecimal for ranges and decimal elsewhere.
+ *
+ * With firmware, it prints instead each device row's firmware request rows as the view
+ * resolves them (erx_dom_firmware_row), index by index, then, for a device with rows, the
+ * status of the index past them; then the status for a device past the catalogue and for
+ * ERX_MF_NONE, the machine's; then whether each host bridge's catalogue is
+ * firmware_lost after its request answered ERX_EBUSY, then ERX_ETIMEDOUT
+ * (erx_dom_lib_pci_firmware); last it hands ERX_ETIMEDOUT for a row past the catalogue,
+ * which has no catalogue to mark:
+ *
+ *   firmware DEVICE INDEX tag=TAG argument=ARGUMENT
+ *   firmware DEVICE past status=STATUS
+ *   firmware outside status=STATUS
+ *   firmware machine status=STATUS
+ *   lost ROW busy=0|1 timedout=0|1
+ *
+ * tag and argument in hexadecimal, the rest in decimal.
  */
 
 #include <inttypes.h>
@@ -384,6 +400,42 @@ print_bridges(erx_dom_lib_t *lib)
 		print_answered(lib, at);
 }
 
+/* More rows than any device of the test manifests has. */
+#define FIRMWARE_ROWS_SHOWN	8u
+
+static void
+print_firmware(erx_dom_lib_t *lib)
+{
+	erx_mf_firmware_request_t row;
+	erx_status_t status = ERX_OK;
+	bool busy;
+
+	for (uint32_t device = 0; device < lib->view.ndevices; device++) {
+		uint32_t index = 0;
+
+		/* Bounded, so a resolver that repeats a row fails the test rather than hanging it. */
+		while (index < FIRMWARE_ROWS_SHOWN &&
+		    (status = erx_dom_firmware_row(&lib->view, device, index, &row)) == ERX_OK) {
+			printf("firmware %" PRIu32 " %" PRIu32 " tag=0x%" PRIx32 " argument=0x%" PRIx32 "\n", device, index,
+			    row.tag, row.argument);
+			index++;
+		}
+		if (index != 0)
+			printf("firmware %" PRIu32 " past status=%d\n", device, (int)status);
+	}
+	printf("firmware outside status=%d\n", (int)erx_dom_firmware_row(&lib->view, lib->view.ndevices, 0, &row));
+	printf("firmware machine status=%d\n", (int)erx_dom_firmware_row(&lib->view, ERX_MF_NONE, 0, &row));
+	for (uint32_t at = 0; at < lib->view.npci_bridges; at++) {
+		erx_dom_lib_pci_firmware(lib, lib->pci_bridges[at].facts.index, ERX_EBUSY);
+		busy = lib->pci_bridges[at].firmware_lost;
+		erx_dom_lib_pci_firmware(lib, lib->pci_bridges[at].facts.index, ERX_ETIMEDOUT);
+		printf("lost %" PRIu32 " busy=%d timedout=%d\n", lib->pci_bridges[at].facts.index, busy ? 1 : 0,
+		    lib->pci_bridges[at].firmware_lost ? 1 : 0);
+	}
+	/* A row past the catalogue has no catalogue: nothing is written, and nothing fails. */
+	erx_dom_lib_pci_firmware(lib, lib->view.ndevices, ERX_ETIMEDOUT);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -396,7 +448,8 @@ main(int argc, char **argv)
 	uint8_t *bytes, *region;
 	size_t length, region_len;
 
-	if (argc < 2 || argc > 3 || (argc == 3 && strcmp(argv[2], "framebuffer") != 0 && strcmp(argv[2], "pci") != 0) ||
+	if (argc < 2 || argc > 3 || (argc == 3 && strcmp(argv[2], "framebuffer") != 0 && strcmp(argv[2], "pci") != 0 &&
+	    strcmp(argv[2], "firmware") != 0) ||
 	    (bytes = erx_host_input_read(argv[1], &length)) == NULL ||
 	    !erx_manifest_open(bytes, length, &manifest, &error))
 		return (2);
@@ -415,6 +468,10 @@ main(int argc, char **argv)
 	}
 	if (argc == 3 && strcmp(argv[2], "pci") == 0) {
 		print_bridges(&lib);
+		return (fflush(stdout) == 0 ? 0 : 2);
+	}
+	if (argc == 3 && strcmp(argv[2], "firmware") == 0) {
+		print_firmware(&lib);
 		return (fflush(stdout) == 0 ? 0 : 2);
 	}
 	if (argc == 3) {

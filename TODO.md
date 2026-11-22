@@ -2303,10 +2303,10 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   [design-pcie.md](docs/design-pcie.md#the-catalogue-and-gives)): the view holds a catalogue per bridge row, the
   root joins the tree's windows and `erx_domain_lib:pci_report/2` takes a report into it, as the device service's
   PCIe process (`erx_devices_pci`) does, but `/dev`'s `status` does not show a pci row's layout, state, mode and route or `firmware lost` (`devices/0` gives the place
-  and setting, `pci_bridges/0` the rest), and `erx_domain_lib:pci_firmware/1`, which would hand the notification's status to
-  `erx_dom_pci_firmware`, waits for `erx_firmware_request` (the ABI item below). Also refuse in `erx_dt_bridge` a window whose
+  and setting, `pci_bridges/0` the rest), and `erx_domain_lib:pci_firmware/1` makes the bridge's request and marks the bridge `firmware_lost` on
+  `{error, etimedout}` before it answers. Also refuse in `erx_dt_bridge` a window whose
   PCI, CPU or size is not page-aligned, and check BAR spans across a machine's bridges, not only within one.
-  `pci_report/2`, `pci_bridges/0`, `pci_mode/2` and `pci_answered/1` answer any system-domain caller, since their caller is the device
+  `pci_report/2`, `pci_bridges/0`, `pci_mode/2`, `pci_answered/1` and `pci_firmware/1` answer any system-domain caller, since their caller is the device
   service and not the registered domain service; a process that reports before the PCIe domain lays the bridge's
   layouts for the boot, and one that writes a mode can lower a held function's setting or raise it for its holder
   beyond what the PCIe domain was asked. Hold them to
@@ -2333,8 +2333,7 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   catalogue's `answered` first, and after a restart begins `synced` from it. The domain service serves `pci_bus`
   and `pci`, whose service rows the shared development manifest declares, and the manifest check holds the three
   interfaces' servers and grantees to design-pcie.md's "The manifest". Still to build: `firmware`, which answers
-  `{error, enotsup}` until `erx_domain_lib:pci_firmware/1` exists, and
-  that waits for `erx_firmware_request`, which no ABI file or backend declares yet; the identity check
+  `{error, enotsup}` and does not call `erx_domain_lib:pci_firmware/1` yet; the identity check
   of a reported function against its row's compatible string ("The catalogue and gives"); and the `pcie` QEMU
   suite's cases beyond walk-and-report and hold (design-pcie.md, "The `pcie` QEMU suite").
 * [Medium] PCIe, the BCM2711 bridge on the Pi 4 (`config/platforms/raspi4b.json`, `config/manifest/`,
