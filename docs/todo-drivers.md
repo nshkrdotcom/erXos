@@ -239,15 +239,14 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   field marks, or the ADMA2 mode's design, settle how the driver changes these words.
 * [Medium] GENET, `erlang/apps/erx_net/erxos/erx_genet_core.erl` `configure/1`: the
   driver's ring settings (both burst sizes, ring 16's transmit done threshold and flow
-  period, its receive XON/XOFF thresholds) are written before `negotiate/2`, whose
-  install is the first place the engine is stopped, so they land on an engine in
-  whatever state the firmware or a restarted driver's predecessor left, and the two
-  XON/XOFF field writes pass through a word with the new low half and the old high
-  half. FreeBSD writes them only after `gen_dma_disable` (`if_genet.c:286-288,
-  873-875`). No source says what a change to a running engine does. If the board shows
-  it matters, the NIF takes them as owned and writes them in its install after the
-  confirmed stop (docs/design-device-dma.md, "GENET"), which also removes the driver's
-  copy of the ring index.
+  period, its receive XON/XOFF thresholds) are written before `negotiate/2`'s
+  install. They follow the confirmed stop
+  of both engines (`erx_device:stop_dma/1`, which `reset/0` calls), as FreeBSD writes
+  them after `gen_dma_disable` (`if_genet.c:286-288, 873-875`), so they land on stopped
+  engines. The two XON/XOFF field writes pass through a word with the new low half and
+  the old high half. If the board shows that matters, the NIF takes them as owned and
+  writes them in its install after the confirmed stop (docs/design-device-dma.md,
+  "GENET"), which also removes the driver's copy of the ring index.
 * [High] GENET, receive descriptors past the buffer, and the stop after a broken queue: on SD and
   HTTP netboots the Pi 4 filled receive descriptors whose status shows end of packet without start
   of packet and a length past the 2,048-byte buffer: `0x2d764800`, `0x1b954000` and `0x3dde4800`
@@ -265,13 +264,25 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   length near 2048 would mean the controller does split frames, and the length is the frame's total.
   Separately, after a broken queue the restart's `negotiate/2` timed out (`{negotiate,
   stop_timeout}`) with `rx_dma_ctrl` 0 and `tx_dma_status` `0x3ffff`, so the receive engine never
-  showed its stop and the second open never came up. The restart runs `reset/0`'s RBUF flush and
-  UniMAC reset before the DMA stop, while the facts record's other driver disables MAC receive,
+  showed its stop and the second open never came up. That restart ran the RBUF flush and
+  UniMAC reset before any DMA stop, while the facts record's other driver disables MAC receive,
   waits a frame's time, stops and confirms the DMA, and flushes only after ("Where the drivers
   disagree"); `rx_dma_status` `0x1fffe` at the timeout has bit 0 clear, so the receive engine had not stopped, and rings 0 to 15 read 1 while
   transmit's `0x3ffff` has ring 16's bit 17 set; the inferred ring bit is not what failed. A full ring (the receive producer index 256 ahead of the
-  consumer in the same evidence line) or a reset that landed mid-frame remain; `reset/0` now turns receive off a frame before it, and a confirmed
-  DMA stop before the reset needs a NIF call that stops without installing (open decision).
+  consumer in the same evidence line) or a reset that landed mid-frame remain; `reset/0` turns the MAC's receive off, waits a frame's time, and stops and confirms both DMA engines
+  (`erx_device:stop_dma/1`) before the receive buffer and MAC resets. Whether that ends the board's
+  timeout is a board experiment.
+* [Medium] GENET, `otp/erts/emulator/nifs/erxos/erx_device.c` `register_ring_stop`: the NIF writes both DMA
+  stops, transmit first, then reads both idle reports; the other published driver stops and confirms
+  transmit before it writes receive's stop, and at its interface stop waits 10 to 20 ms between (GENET
+  facts record, "Stopping the DMA and confirming it stopped"). If the board still shows `{dma_stop,
+  stop_timeout}` with the receive engine running, try that order and the wait in `register_ring_stop`,
+  which serves both `stop_dma/1` and `negotiate/2`, and update the design table's row.
+* [Low] GENET, `otp/erts/emulator/nifs/erxos/erx_device_genet_model.c`: the hosted controller model resets its
+  stop count at every DMA control store, so with stop reads above 0 a stop rewritten at each call never
+  shows, and the hosted stand-in (`erx_device.c`) runs with 0; the harness's engine counts only from a stop
+  of a running engine. The model counts as the harness does, then a hosted case where `stop_dma/1` answers
+  `ebusy` a few times drives `erx_genet`'s `retry_busy/3` and the `dma_stop` refusal through `init/1`.
 * [Medium] GENET, `erlang/apps/erx_net/erxos/erx_genet.erl`, the broken-queue ending: no test runs
   `event/2`'s catch, `log_broken/2` or the `{stop, {broken, _}}` hand-off; only the pure
   `erx_genet_core:rx_fault/1` and `evidence/0` are tested. The hosted GENET run
