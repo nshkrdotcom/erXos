@@ -1093,7 +1093,7 @@ within about 20 percent of the length, write plain code.
 * **Simplicity review** at each milestone exit, and before any large new
   mechanism (a kernel object kind, a protocol or facet family, a
   scheduler feature, a spec relation family, a new process kind): a
-  Claude Opus 5.5 subagent at `max` effort reads the design and the
+  Claude Fable 5.2 subagent at `high` effort reads the design and the
   planned or landed code, not our conclusions, and asks: does this make
   sense? What can be cut, or made simpler, more elegant or more
   efficient? Act on the cuts; a technical fork it raises goes to the two
