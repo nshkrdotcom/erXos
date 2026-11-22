@@ -1093,14 +1093,16 @@ within about 20 percent of the length, write plain code.
   - Its findings follow the same rules as internal findings.
 * **Simplicity review** at each milestone exit, and before any large new
   mechanism (a kernel object kind, a protocol or facet family, a
-  scheduler feature, a spec relation family, a new process kind): a
-  Claude Fable 5.2 subagent at `high` effort reads the design and the
-  planned or landed code, not our conclusions, and asks: does this make
-  sense? What can be cut, or made simpler, more elegant or more
-  efficient? Act on the cuts; a technical fork it raises goes to the two
-  advisors ("Two advisors before me"). It asks of every costly mechanism
-  the question of "Question every requirement before building for it":
-  "what if we did not need this?"
+  scheduler feature, a spec relation family, a new process kind): two
+  reviewers, a Claude Fable 5.2 subagent at `high` effort and a Codex
+  `gpt-6-astra` pass at `high` reasoning effort in a read-only sandbox,
+  each read the design and the planned or landed code, not our
+  conclusions, and ask: does this make sense? What can be cut, or made
+  simpler, more elegant or more efficient? Act on the cuts; a technical
+  fork either raises goes to the two advisors ("Two advisors before
+  me"). Each asks of every costly mechanism the question of "Question
+  every requirement before building for it": "what if we did not need
+  this?"
 
 ## Documents
 
