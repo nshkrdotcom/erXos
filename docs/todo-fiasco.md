@@ -471,6 +471,15 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
 
 ## Bugs by subsystem
 
+* [Medium] Fiasco backend's service loop (`liberx/backend/fiasco/service.c`, `service_page_fault` and
+  `service_exception`): a task's fault reaches the root as a call that the root never answers, since the task ends
+  instead, so when the next call reaches the service thread Fiasco prints `KERNEL: Warning: ...: Application bug:
+  reply capability overwritten!` (`fiasco/kernel/src/kern/receiver.cpp`, `set_reply_cap`) once for each domain fault,
+  as the raspi4b suite's tcg-4cpu boots show for the network and PCIe domains' faults on the model. The warning reads
+  as an IPC bug where there is none, and Fiasco writes it straight to the UART starting with a newline, so one that
+  lands among a program's output splits its line where the transcript's `interleaved` text cannot rejoin it: the
+  raspi4b suite's `long-output` can time out on it. Drop the fault's reply capability without resuming the faulting
+  thread, or end the thread before the next call, so a fault leaves no warning.
 * [Medium] Fiasco backend, `liberx/backend/fiasco/park.c`: `erx_park` and `erx_group_take_ready` refuse a thread
   that is not an executor (`ERX_ETYPE`), and that is all of the executor rule. Refusing to arm a vCPU
   upcall on an executor, and refusing an executor every other blocking wait with `ERX_EWOULDBLOCK`

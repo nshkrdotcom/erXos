@@ -1743,9 +1743,11 @@ network stack's DHCP client. The steps are in the
 [guide](guide/raspberry-pi-4.md#check-the-sd-card-and-ethernet).
 
 Beside [what the model never checks](#bring-up-under-qemu): QEMU's
-`raspi4b` model has no Ethernet controller, so `erx_genet` never runs
-there. Its SD card is QEMU's SD model on programmed I/O, the card padded to
-2 GiB as the harness pads every card it boots ([The model's SD
+`raspi4b` model has no Ethernet controller, so `erx_genet`'s first read of
+its registers takes a memory fault there, which ends the network domain at
+each start, and the driver runs only on a board. Its SD card is QEMU's SD
+model on programmed I/O, the card padded to 2 GiB as the harness pads
+every card it boots ([The model's SD
 controller](#bring-up-under-qemu)), presented as standard capacity, so the
 order in which the BCM2711's controller raises its events, its clock, a
 high-capacity card of the card's own size and what a real card reports for

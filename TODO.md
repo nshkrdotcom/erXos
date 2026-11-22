@@ -73,7 +73,7 @@ goes to the document of the subsystem its component pointer names.
 * [erXos's kernel](docs/todo-kernel.md#bugs-by-subsystem): erXos's own kernel (Phase 2, Track K): the C17 cores, the chokepoint checks, the scheduler and the kernel ABI generator.
   54 items (1 Critical, 1 High, 42 Medium, 10 Low).
 * [Fiasco](docs/todo-fiasco.md#bugs-by-subsystem): Fiasco, the release kernel, and `liberx`'s Fiasco backend: 0.2's work, the patches, the boot and the build.
-  50 items (25 Medium, 25 Low).
+  51 items (26 Medium, 25 Low).
 * [liberx and the ABI](docs/todo-liberx.md#bugs-by-subsystem): liberx and its program layer, the ABI and its generators, the domain library.
   88 items (39 Medium, 49 Low).
 * [Domains and the system manifest](docs/todo-domains.md#bugs-by-subsystem): the domain service, domains, the code service, facets, the system manifest and its checks, the funnel.
@@ -95,7 +95,7 @@ goes to the document of the subsystem its component pointer names.
 * [Storage](docs/todo-storage.md#bugs-by-subsystem): storage: file systems, the storage domain, file clients, the object store, the image tree.
   39 items (2 High, 19 Medium, 18 Low).
 * [Display and desktop](docs/todo-display.md#bugs-by-subsystem): the display stack, the window system, the desktop and LVGL in apps.
-  23 items (1 High, 10 Medium, 12 Low).
+  22 items (10 Medium, 12 Low).
 * [Inspection and logging](docs/todo-inspection.md#bugs-by-subsystem): the inspector, /proc, logging and the live tree.
   50 items (27 Medium, 23 Low).
 * [Web client and host link](docs/todo-web.md#bugs-by-subsystem): the web client and the host tool's web server.
@@ -103,7 +103,7 @@ goes to the document of the subsystem its component pointer names.
 * [Website and book](docs/todo-site.md#bugs-by-subsystem): the website, the book and the user guide.
   20 items (5 Medium, 15 Low).
 * [Build, tooling and tests](docs/todo-build.md#bugs-by-subsystem): the build, the host tools, the test harnesses and the gates.
-  118 items (56 Medium, 62 Low).
+  119 items (56 Medium, 63 Low).
 
 ## Security residuals
 

@@ -274,7 +274,7 @@ module Erx
        point('sum-answer', /\A2\r*\n\z/n, type: "1+2\x7f3.\r"),
        point('edit-answer', /\A4\r*\n\z/n, type: DATA_LISTING),
        point('data-unserved', /\A\{error,eio\}\r*\n\z/n, type: "io:put_chars(lists:duplicate(#{long},$x)),io:nl().\r"),
-       point('long-output', /x{#{long}}/n),
+       ProductionImage::Run::LONG_OUTPUT.merge(seconds: STEP_SECONDS).freeze,
        point('long-answer', /\Aok\r*\n\z/n, type: ProductionImage::Run::LOG_AFTER_HANDOFF),
        # The record the session logs: the console reads it from the log and writes it.
        point('log-after-handoff', ProductionImage::Run::LOG_AFTER_HANDOFF_RECORD, type: ProductionImage::Run::CTRL_G),

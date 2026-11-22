@@ -238,6 +238,14 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
 
 ## Bugs by subsystem
 
+* [Low] QEMU harness, `Erx::Transcript` (`tools/lib/erx/qemu.rb`): a log line can land in the middle of any program
+  line (docs/design-live.md, "Log lines and program output"), but only `long-output` sets console log lines aside
+  (`ProductionImage::Run::LONG_OUTPUT`); an anchored answer such as `long-answer`'s `\Aok\r*\n\z` fails when a record
+  lands inside it, and `Raspi4bShell.memory_fault_restart` copes by not anchoring its start. Make the split a property
+  of a console transcript: every line that ends in a console log line becomes the log line, offered as a line of its
+  own, and the head rejoined with what follows; then drop the `interleaved` key and the unanchored patterns, and fold
+  the console record patterns (`CONSOLE_LOG_LINE`, `NativeRoot::DOMAIN_RECORD`, `NativeTask::LOG_RECORD`,
+  `debug_log_probe.rb`'s `RECORD`) into one.
 * [Medium] `test/host/book_test.rb`: the design's tool tests "The whole book builds" and "Same bytes" are missing; no test runs cmark-gfm (two builds of the whole book were compared by hand and were identical).
 * [Low] `tools/build_book.rb`: `--out build/site` replaces a built site with a book-only tree (both write the site's marker); two concurrent builds into one directory can fail with a bare `Errno` rather than `Erx::Error`.
 * [Low] build, the native-jit copy's stamp (`tools/lib/erx/native_jit_runtime.rb`, `otp/erts/emulator/Makefile.in`

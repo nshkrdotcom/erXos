@@ -585,6 +585,26 @@ class ProductionImageTest < Minitest::Test
     assert_match erlang.fetch(:pattern), "1> #{eshell}"
   end
 
+  # A log line can land in the middle of the long output (docs/design-live.md, "Log lines
+  # and program output"), such as a kernel record after the output's first 4096 bytes. The
+  # output still counts when each log line among it is whole; a lost byte still fails.
+  def test_the_long_output_counts_with_log_lines_among_it
+    long = Erx::ProductionImage::Run::CONSOLE_LONG_BYTES
+    point = Erx::ProductionImage::Run.console_checkpoints(machine: DEVELOPMENT).find { |row| row.fetch(:name) == 'long-output' }
+    kernel = "#22 15.032306 debug space 7: erx: erts: 1 schedulers and 1 dirty CPU schedulers hold executor slots\r\n"
+    domain = "12.175759 warning domain 4 principal 2 system: erx_starter: rc.conf cannot be read (failure 2): eio\r\n"
+    Dir.mktmpdir('erx-long-output-') do |directory|
+      serial = File.join(directory, 'serial.log')
+      seen = lambda do |bytes|
+        File.binwrite(serial, bytes)
+        Erx::Transcript.new(checkpoints: [point]).consume(serial, elapsed: 0.1)
+      end
+      assert seen.call("#{'x' * 4096}#{kernel}#{'x' * (long - 4096)}\r\n")
+      assert seen.call("#{'x' * 100}#{domain}#{'x' * 100}#{kernel}#{'x' * (long - 200)}\r\n")
+      refute seen.call("#{'x' * 4096}#{kernel}#{'x' * (long - 4097)}\r\n")
+    end
+  end
+
   # The tracer's case reads the workload's pid as the shell and the trace print it, <D.N.S>
   # with the system domain's id, local pids included (docs/design-runtime.md, "Connections
   # in ERTS"). These are lines of a real transcript; the trace line comes after the line

@@ -407,7 +407,6 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
 
 ## Bugs by subsystem
 
-* [High] raspi4b QEMU suite, tcg-4cpu cell (`build/raspi4b-stub`): on each boot the `network` and `pcie` configured domains end once with `{fault,1}` (a memory fault) on a 32-bit device register load through an unmapped device window, then restart and run: network at pc 0x40004cb1a0 in `erx_device_read_field` (`otp/erts/emulator/nifs/erxos/erx_device.c:750`), pcie at pc 0x40004cacb8 in `erx_device_read` (`:692`), with `cause 0x0` and `KERNEL: Warning: Application bug: reply capability overwritten!` nearby. Seen on the firmware branch alone and on the batch with it; on one run the restarts did not recover and the suite timed out at `long-output`. The suite passes only because a restart usually recovers, which hides a window that is not mapped when the driver first reads it. Logs: `~/erxos-history/flakes/2026-11-22-raspi4b-pcie-fault/`. Find which window is unmapped and why the second start differs.
 * [Low] display, a window opened where no connection agent runs answers `noproc`, which is no
   errno (`erx_win:own/4` passes `erx_area:open/1`'s `{error, noproc}` up through `erx_win:open/2`,
   and `erx_session_export:open_window/1` maps only `none` to `ENODEV`): a program's first open

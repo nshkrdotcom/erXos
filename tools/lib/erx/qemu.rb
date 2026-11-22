@@ -561,12 +561,15 @@ module Erx
   # The matcher consumes complete serial lines exactly once. It retains a
   # bounded unfinished line so serial splits cannot lose a checkpoint. A
   # checkpoint may also name a verifier, called with the matching line, which
-  # raises Erx::Error when that line's content must fail the boot, and bytes the
-  # harness types into the guest's serial line once that line has come.
+  # raises Erx::Error when that line's content must fail the boot; bytes the
+  # harness types into the guest's serial line once that line has come; and, as
+  # interleaved, a pattern for text that ends at a newline and is written among
+  # the bytes it waits for, such as a log line in the middle of a program's
+  # output, which is set aside while it waits.
   class Transcript
     MAX_LINE_BYTES = 65_536
     REQUIRED_KEYS = %i[name pattern seconds].freeze
-    OPTIONAL_KEYS = %i[verify type].freeze
+    OPTIONAL_KEYS = %i[verify type interleaved].freeze
     attr_reader :observed
 
     def initialize(checkpoints:)
@@ -579,6 +582,8 @@ module Erx
       raise Error, 'invalid transcript checkpoint' unless checkpoints.all? { |point| valid_checkpoint?(point) }
 
       @checkpoints = checkpoints.map(&:dup).each(&:freeze).freeze
+      # Each checkpoint's interleaved text as the end of a line, or nil.
+      @line_ends = @checkpoints.map { |point| point[:interleaved]&.then { |text| /#{text}\z/n } }.freeze
       @observed = []
       @pending = ''.b
       @offset = 0
@@ -635,7 +640,15 @@ module Erx
         point.fetch(:pattern).is_a?(Regexp) &&
         point.fetch(:seconds).is_a?(Integer) && point.fetch(:seconds).positive? &&
         point.fetch(:verify, -> {}).respond_to?(:call) &&
-        point.fetch(:type, '').is_a?(String)
+        point.fetch(:type, '').is_a?(String) &&
+        point.fetch(:interleaved, //).is_a?(Regexp)
+    end
+
+    # The bytes of line before the interleaved text it ends in, while the checkpoint at index
+    # waits; nil when line ends in none.
+    def interleaved_head(index, line)
+      match = @line_ends.fetch(index)&.match(line)
+      match.pre_match if match && !match[0].empty?
     end
 
     def check_deadline(elapsed:)
@@ -652,6 +665,12 @@ module Erx
         line = @pending.slice!(0, newline + 1)
         next if done?
         point = @checkpoints.fetch(@observed.size)
+        # Interleaved text is set aside, and the bytes before it start the next line again,
+        # so they join the bytes written after it.
+        if (head = interleaved_head(@observed.size, line))
+          @pending.prepend(head)
+          next
+        end
         next unless point.fetch(:pattern).match?(line)
 
         # The next point is due from when the verify returned, however long it read.
