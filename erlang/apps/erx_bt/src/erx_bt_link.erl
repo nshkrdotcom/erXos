@@ -129,12 +129,8 @@ link_facts(_State) -> hidden.
 facts(starting) -> starting;
 facts(Core) -> erx_bt_link_core:facts(Core).
 
-input_kind({Role, Input}) when is_atom(Role) -> {Role, kind(Input)};
+input_kind({Role, Input}) when is_atom(Role) -> {Role, erx_report:reason_name(Input)};
 input_kind(_Message) -> message.
-
-kind(Input) when is_tuple(Input), tuple_size(Input) > 0, is_atom(element(1, Input)) -> element(1, Input);
-kind(Input) when is_atom(Input) -> Input;
-kind(_Input) -> input.
 
 %% Steps one input at the clock and performs its actions in order; a close, always last,
 %% ends the process. A raise ends it with the facts of the core before the input, never

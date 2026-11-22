@@ -405,7 +405,7 @@ the_status_shows_no_byte_of_the_line_test() ->
     [?assertEqual(nomatch, string:find(Shown, Secret))
      || Secret <- ["WRITE-IN-FLIGHT-SECRET", "WRITE-WAITING-SECRET", "RECEIVED-SECRET",
                    "87,82,73,84,69", "82,69,67,69,73"]],
-    ?assertNotEqual(nomatch, string:find(Shown, "rx_bytes")),
+    ?assertNotEqual(nomatch, string:find(Shown, "rx => {bytes,")),
     stop(Fixture).
 
 %% The message, the log and the reason of a report: one never carries the bytes of the
@@ -420,7 +420,7 @@ format_status_hides_the_message_the_log_and_the_reason_test() ->
     ?assertEqual(nomatch, string:find(lists:flatten(io_lib:format("~0tp", [Status])), "MESSAGE-SECRET")),
     ?assertEqual(grants_ended, maps:get(reason, Status)),
     ?assertEqual([], maps:get(log, Status)),
-    ?assertMatch({erx_console_input, 14}, maps:get(message, erx_line:format_status(
+    ?assertMatch({erx_console_input, {bytes, 14}}, maps:get(message, erx_line:format_status(
         #{message => {erx_console_input, Secret}}))).
 
 %% The keeper's exit reason, which every report of its end quotes, names why and holds no

@@ -30,7 +30,7 @@ report through whole, and an `ignore` leaves the event as it was. Each function 
 is total over any term to keep that true.
 """.
 
--export([primary_filters/0, filter/2, reason_name/1, status/2]).
+-export([primary_filters/0, filter/2, reason_name/1, bytes/1, status/2]).
 -export_type([view/0]).
 
 -type summary() :: #{label => atom() | {atom(), atom()}, process => pid(), name => atom(),
@@ -129,12 +129,22 @@ reason(Reason, S) ->
         Atom -> first(reason, Atom, S)
     end.
 
-%% The reason's leading atom, or none: what this filter shows of a reason, and what the
-%% format_status/1 of a system domain process that holds other domains' or the host's
-%% bytes shows of its own, since no filter runs there (docs/design-log.md, "Reports
-%% carry no term").
+-doc """
+The reason's leading atom, or `none`: what this filter shows of a reason, and what the
+`format_status/1` of a system domain process that holds other domains' or the host's
+bytes shows of its own, since no filter runs there (docs/design-log.md, "Reports
+carry no term"). Such a process shows a message or a request as its kind the same way.
+""".
 -spec reason_name(term()) -> atom().
 reason_name(Reason) -> leading(Reason).
+
+-doc """
+A binary as its size, `{bytes, Size}`, and any other term as `hidden`: what a view of
+status/2 shows of bytes from outside.
+""".
+-spec bytes(term()) -> {bytes, non_neg_integer()} | hidden.
+bytes(Bytes) when is_binary(Bytes) -> {bytes, byte_size(Bytes)};
+bytes(_Other) -> hidden.
 
 -type view() :: keep | fun((term()) -> term()).
 -type shown_key() :: state | data | message.

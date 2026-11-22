@@ -39,7 +39,7 @@ format_status_keeps_the_state_and_the_writes_length_test() ->
     Size = byte_size(?MARKER),
     #{state := State, message := Message} = status({erx_console_output, make_ref(), ?MARKER}),
     ?assertMatch({state, 1, irq, 2, 3, _, redacted}, State),
-    ?assertMatch({erx_console_output, _, Size}, Message).
+    ?assertMatch({erx_console_output, _, {bytes, Size}}, Message).
 
 %% The views are total: a write of an iolist and a state of another shape are hidden, not
 %% a raise, which would leave gen_server's report with the raw reason and message.

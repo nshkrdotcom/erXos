@@ -210,7 +210,7 @@ state(#state{} = State) -> State#state{core = redacted};
 state(_State) -> hidden.
 
 message({erx_console_output, From, Bytes}) when is_binary(Bytes) ->
-    {erx_console_output, From, byte_size(Bytes)};
+    {erx_console_output, From, erx_report:bytes(Bytes)};
 message(_Message) ->
     hidden.
 

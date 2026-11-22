@@ -142,7 +142,7 @@ format_status(Status) ->
     erx_report:status(Status, #{state => fun state/1, message => fun message/1}).
 
 state(#line{rx = Rx, broken = Broken, driver = Driver, reset = Reset, waits = Waits}) ->
-    #{rx_bytes => byte_size(Rx), broken => Broken, driver => Driver,
+    #{rx => erx_report:bytes(Rx), broken => Broken, driver => Driver,
       resetting => Reset =/= none,
       requests => [{Wait, shown_request(Request), State}
                    || {Wait, Request, State} <- erx_fs_waits:list(Waits)]};
@@ -152,12 +152,12 @@ state(_State) ->
 message(?ERX_FS_WAIT(Wait, Request)) ->
     ?ERX_FS_WAIT(Wait, shown_request(Request));
 message({erx_console_input, Bytes}) when is_binary(Bytes) ->
-    {erx_console_input, byte_size(Bytes)};
+    {erx_console_input, erx_report:bytes(Bytes)};
 message(_Message) ->
     hidden.
 
 %% A request() with a write's bytes counted; a term of no kind of request() is hidden.
-shown_request({write, Offset, Bytes}) when is_binary(Bytes) -> {write, Offset, byte_size(Bytes)};
+shown_request({write, Offset, Bytes}) when is_binary(Bytes) -> {write, Offset, erx_report:bytes(Bytes)};
 shown_request({read, _Count} = Read) -> Read;
 shown_request({reset, _Offset, _Count} = Reset) -> Reset;
 shown_request(_Request) -> hidden.

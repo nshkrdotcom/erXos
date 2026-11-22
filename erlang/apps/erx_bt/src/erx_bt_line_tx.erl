@@ -68,5 +68,5 @@ handle_cast(_Message, Files) ->
 format_status(Status) ->
     erx_report:status(Status, #{state => keep, message => fun write_size/1}).
 
-write_size({write, From, Bytes}) when is_binary(Bytes) -> {write, From, {bytes, byte_size(Bytes)}};
+write_size({write, From, Bytes}) when is_binary(Bytes) -> {write, From, erx_report:bytes(Bytes)};
 write_size(_Message) -> hidden.

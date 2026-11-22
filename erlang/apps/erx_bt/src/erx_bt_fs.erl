@@ -108,8 +108,8 @@ format_status(Status) ->
 window_facts(#fs{core = Core}) -> erx_bt_window:facts(Core);
 window_facts(_State) -> hidden.
 
-link_kind({erx_bt_link, Link, Message}) when is_tuple(Message), tuple_size(Message) > 0 ->
-    {erx_bt_link, Link, element(1, Message)};
+link_kind({erx_bt_link, Link, Message}) ->
+    {erx_bt_link, Link, erx_report:reason_name(Message)};
 link_kind(_Message) ->
     hidden.
 

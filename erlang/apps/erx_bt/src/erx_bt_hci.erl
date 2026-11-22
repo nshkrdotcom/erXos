@@ -131,17 +131,13 @@ format_status(Status) ->
     erx_report:status(Status, #{state => fun hci_facts/1, message => fun message_kind/1}).
 
 hci_facts(#hci{core = Core, rest = Rest} = State) ->
-    State#hci{core = {facts, erx_bt_hci_core:facts(Core)}, rest = {bytes, byte_size(Rest)}};
+    State#hci{core = {facts, erx_bt_hci_core:facts(Core)}, rest = erx_report:bytes(Rest)};
 hci_facts(_State) ->
     hidden.
 
-message_kind({erx_bt_line_rx, Bytes}) when is_binary(Bytes) -> {erx_bt_line_rx, {bytes, byte_size(Bytes)}};
-message_kind({erx_bt_link, Name, Request}) -> {erx_bt_link, Name, kind(Request)};
+message_kind({erx_bt_line_rx, Bytes}) when is_binary(Bytes) -> {erx_bt_line_rx, erx_report:bytes(Bytes)};
+message_kind({erx_bt_link, Name, Request}) -> {erx_bt_link, Name, erx_report:reason_name(Request)};
 message_kind(_Message) -> hidden.
-
-kind(Request) when is_tuple(Request), tuple_size(Request) > 0 -> element(1, Request);
-kind(Request) when is_atom(Request) -> Request;
-kind(_Request) -> request.
 
 %% A packet from the controller as the core's input.
 input({event, Code, Parameters}) -> {event, erx_hci:event(Code, Parameters)};

@@ -190,3 +190,10 @@ load_one(Module, Bytes) ->
 format_status_hides_the_reason_test() ->
     ?assertEqual(#{reason => badmatch},
                  erx_code:format_status(#{reason => {badmatch, <<"SECRET">>}})).
+
+%% A request shows as its leading atom: a request tuple headed by the host's bytes shows none
+%% of them.
+format_status_hides_a_request_headed_by_bytes_test() ->
+    Shown = erx_code:format_status(#{message => {request, {<<"SECRET">>, 1}}}),
+    ?assertEqual(nomatch, string:find(io_lib:format("~p", [Shown]), "SECRET")),
+    ?assertEqual(#{message => {request, none}}, Shown).

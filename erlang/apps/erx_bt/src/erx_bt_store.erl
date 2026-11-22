@@ -436,9 +436,5 @@ format_status(Status) ->
 store_facts(#store{} = Store) -> facts(Store);
 store_facts(_State) -> hidden.
 
-message_kind({erx_bt_link, _, Message}) -> {erx_bt_link, kind(Message)};
-message_kind(Message) -> kind(Message).
-
-kind(Message) when is_tuple(Message), tuple_size(Message) > 0, is_atom(element(1, Message)) -> element(1, Message);
-kind(Message) when is_atom(Message) -> Message;
-kind(_Message) -> message.
+message_kind({erx_bt_link, _, Message}) -> {erx_bt_link, erx_report:reason_name(Message)};
+message_kind(Message) -> erx_report:reason_name(Message).

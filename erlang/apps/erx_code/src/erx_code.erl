@@ -127,8 +127,8 @@ format_status(Status) ->
 store_summary(Store) when is_map(Store) -> erx_code_store:summary(Store);
 store_summary(_State) -> hidden.
 
-request_kind({request, Request}) when is_tuple(Request), tuple_size(Request) > 0 ->
-    {request, element(1, Request)};
+request_kind({request, Request}) ->
+    {request, erx_report:reason_name(Request)};
 request_kind(_Message) ->
     request.
 
