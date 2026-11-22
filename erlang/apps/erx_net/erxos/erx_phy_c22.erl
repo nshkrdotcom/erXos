@@ -25,12 +25,19 @@ The sequence, after `start/0`:
    auxiliary control register's shadow 7 and clear `GTXCLK_EN` in shadow
    register `0x1C`'s clock alignment control, each a select, a read and a
    write that keeps the other data bits.
-4. **Advertise and autonegotiate.** Advertise full duplex only, 10 and
+4. **No EEE.** Clear the EEE advertisement, MMD 7 register 60, through
+   clause 22 MMD access: the device in the access control register, the
+   register in the address data register, the control register set to data,
+   then the data 0, and the control register back to 0, so a later access of
+   register 14 reaches no MMD. The controller is never set to drive low power idle, so
+   the PHY must not offer EEE to the link partner (whether the PHY
+   advertises it out of reset is unverified).
+5. **Advertise and autonegotiate.** Advertise full duplex only, 10 and
    100 Mb/s in the advertisement register and 1000 Mb/s in the 1000BASE-T
    control register, since the controller's command register has a speed
    field and no duplex field (`if_genetreg.h:75-92`; unverified on the
    board); then enable and restart autonegotiation.
-5. **Poll the link,** every `link_poll_ms/0`. The status register's link bit
+6. **Poll the link,** every `link_poll_ms/0`. The status register's link bit
    latches low: the first read says whether the link dropped since the last
    one, the second whether it is up now. A drop while the link was up is
    reported as `{link, down}` even when the second read finds it up again. A
@@ -51,8 +58,11 @@ registers and bits (`mii.h:50-190`), the ID decoding (`miivar.h:303-305`,
 its 100 polls 1 ms apart (`brgphy.c:947-955`); the clock delays
 (`brgphy.c:871-898`, applied to this PHY at `brgphy.c:416-419`), with the
 shadow encodings of `brgphyreg.h:294-316`; the double read of the status
-register (`brgphy.c:500`); and the auxiliary status resolution, taken only
-with its link bit set (`brgphyreg.h:208-229`, `brgphy.c:524-527`).
+register (`brgphy.c:500`); the auxiliary status resolution, taken only
+with its link bit set (`brgphyreg.h:208-229`, `brgphy.c:524-527`); and the
+MMD access registers (`mii.h:220-228`). The EEE advertisement register and
+its bits are from `sys/dev/e1000/e1000_defines.h:876-879`, and the order of
+the MMD writes from `e1000_phy.c`, `__e1000_access_xmdio_reg`.
 """.
 
 -export([reset_polls/0, link_poll_ms/0]).
@@ -70,6 +80,8 @@ with its link bit set (`brgphyreg.h:208-229`, `brgphy.c:524-527`).
 -define(AUXCTL, 16#18).
 -define(AUXSTS, 16#19).
 -define(SHADOW_1C, 16#1c).
+-define(MMDACR, 16#0d).
+-define(MMDAADR, 16#0e).
 
 -define(BMCR_RESET, 16#8000).
 -define(BMCR_AUTOEN, 16#1000).
@@ -80,6 +92,11 @@ with its link bit set (`brgphyreg.h:208-229`, `brgphy.c:524-527`).
 -define(ANAR_10_FD, 16#0040).
 -define(ANAR_CSMA, 16#0001).
 -define(GTCR_ADV_1000TFDX, 16#0200).
+%% MMD access: the function in bits 15:14 of the control register, data
+%% without post increment 1, and the EEE advertisement, MMD 7 register 60.
+-define(MMDACR_FN_DATANPI, 16#4000).
+-define(MMD_AN, 7).
+-define(MMD_AN_EEE_ADV, 60).
 
 -define(IDR2_MODEL, 16#03f0).
 -define(IDR2_REV, 16#000f).
@@ -136,6 +153,7 @@ a pause, `{error, Reason}` for an MDIO operation that failed.
                | {id2, word()}
                | skew_select | skew_read | skew_write
                | clock_select | clock_read | clock_write
+               | eee_device | eee_register | eee_function | eee_data | eee_release
                | advertise | advertise_1000 | autoneg
                | link_latched
                | {link_now, word()}
@@ -203,6 +221,16 @@ step(#phy{phase = Phase} = Phy, Input) ->
             Write = ?SHADOW_1C_WRITE_EN bor ?SHADOW_1C_CLK_CTRL bor Data,
             next(Phy, clock_write, {write, ?SHADOW_1C, Write});
         {clock_write, ok} ->
+            next(Phy, eee_device, {write, ?MMDACR, ?MMD_AN});
+        {eee_device, ok} ->
+            next(Phy, eee_register, {write, ?MMDAADR, ?MMD_AN_EEE_ADV});
+        {eee_register, ok} ->
+            next(Phy, eee_function, {write, ?MMDACR, ?MMDACR_FN_DATANPI bor ?MMD_AN});
+        {eee_function, ok} ->
+            next(Phy, eee_data, {write, ?MMDAADR, 0});
+        {eee_data, ok} ->
+            next(Phy, eee_release, {write, ?MMDACR, 0});
+        {eee_release, ok} ->
             next(Phy, advertise, {write, ?ANAR, ?ANAR_TX_FD bor ?ANAR_10_FD bor ?ANAR_CSMA});
         {advertise, ok} ->
             next(Phy, advertise_1000, {write, ?GTCR, ?GTCR_ADV_1000TFDX});

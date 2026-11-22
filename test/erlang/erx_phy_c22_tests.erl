@@ -92,6 +92,7 @@ to_first_poll() ->
      ok,                 % shadow 0x1C clock control selected
      {ok, 16#0c00},      % shadow 0x1C read
      ok,                 % shadow 0x1C written
+     ok, ok, ok, ok, ok, % EEE advertisement cleared through MMD access
      ok,                 % advertisement written
      ok,                 % 1000BASE-T control written
      ok].                % autonegotiation started
@@ -132,8 +133,18 @@ the_machine_writes_only_its_setup_and_advertises_full_duplex_test() ->
     {Model, _Phy, _} = run(erx_phy_bcm54213_model:new(#{}), [fun same/1]),
     ?assertEqual([{?BMCR, 16#8000}, {?AUXCTL, 16#7007}, {?AUXCTL, 16#8207},
                   {?SHADOW_1C, 16#0c00}, {?SHADOW_1C, 16#8c00},
+                  {16#0d, 16#0007}, {16#0e, 60}, {16#0d, 16#4007}, {16#0e, 0}, {16#0d, 0},
                   {16#04, 16#0141}, {16#09, 16#0200}, {?BMCR, 16#1200}],
                  erx_phy_bcm54213_model:writes(Model)).
+
+%% The controller drives no low power idle, so the PHY must not offer EEE to the
+%% link partner: whatever the advertisement resets to, it is clear before
+%% autonegotiation starts, and so on every link the partner negotiates.
+the_eee_advertisement_is_clear_before_autonegotiation_test() ->
+    [begin
+         {Model, _Phy, _} = run(erx_phy_bcm54213_model:new(#{eee_adv => Reset}), [fun same/1]),
+         ?assertEqual({Reset, 0}, {Reset, erx_phy_bcm54213_model:eee_adv(Model)})
+     end || Reset <- [16#0000, 16#0002, 16#0004, 16#0006]].
 
 every_reset_length_up_to_the_bound_completes_and_none_past_it_test() ->
     Bound = erx_phy_c22:reset_polls(),

@@ -418,8 +418,9 @@ buffer as controller faults
 A clause 22 MDIO operation polls while busy up to 1,000 times 10 us apart,
 then reports `read_failed` or `timeout`. The PHY's state machine refuses
 any PHY but the BCM54213PE (OUI `0x18c086`, model `0x0a`), sets the
-receive clock delay the board's `rgmii-rxid` wiring asks for, advertises
-full duplex only, since the controller's command register has a speed
+receive clock delay the board's `rgmii-rxid` wiring asks for, clears the
+EEE advertisement, since the controller is never set to drive low power
+idle, advertises full duplex only, since the controller's command register has a speed
 field and no duplex field (FreeBSD's `if_genetreg.h:75-92`; unverified on
 the board), and polls the link every second, reading the status register
 twice because its link bit latches low. It reports `{link, down}` at every

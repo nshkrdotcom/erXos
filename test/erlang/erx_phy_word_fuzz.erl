@@ -7,7 +7,7 @@
 %% with a random 16-bit value, sometimes another result or an MDIO error.
 %% Whatever arrives, nothing crashes; poll/3 agrees with poll_reference/3, which
 %% reads the bits by position; the machine's requests are well formed and touch
-%% only the registers of its sequence and writes only the five of its setup; it
+%% only the registers of its sequence and writes only the seven of its setup; it
 %% reports a link up only at a speed the
 %% auxiliary status word it just read resolves to, as the reference table
 %% brgphyreg.h:223-229 gives; and once failed it asks for nothing more. The seed
@@ -23,13 +23,14 @@
 -define(MAX_POLLS, 1000).
 %% The registers the machine may name: control, status, both IDs, the
 %% advertisement, 1000BASE-T control, auxiliary control and status, shadow 0x1C.
--define(REGS, [16#00, 16#01, 16#02, 16#03, 16#04, 16#09, 16#18, 16#19, 16#1c]).
-%% The registers it may write: control, advertisement, 1000BASE-T control, and the
-%% two shadow registers.
--define(WRITABLE, [16#00, 16#04, 16#09, 16#18, 16#1c]).
+%% MMD access control and address data.
+-define(REGS, [16#00, 16#01, 16#02, 16#03, 16#04, 16#09, 16#0d, 16#0e, 16#18, 16#19, 16#1c]).
+%% The registers it may write: control, advertisement, 1000BASE-T control, the two
+%% MMD access registers, and the two shadow registers.
+-define(WRITABLE, [16#00, 16#04, 16#09, 16#0d, 16#0e, 16#18, 16#1c]).
 %% The fewest link-up reports the rounds must see, so the generator cannot leave
 %% the resolving path untried.
--define(MIN_UP, ?ROUNDS div 20).
+-define(MIN_UP, ?ROUNDS div 40).
 
 run([Seed]) ->
     rand:seed(exsss, {20, 26, list_to_integer(Seed)}),

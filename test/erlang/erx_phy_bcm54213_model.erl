@@ -14,12 +14,16 @@
 %% register's link bit latching low (any drop clears it, a read returns it and
 %% sets it to the link's state now); a link that is up when the cable is
 %% connected, autonegotiation has been started, and the advertisements share a
-%% mode; and shadow 7 of the auxiliary control register and the 32 functions of
-%% shadow register 0x1C, each read only through its select. A read of a shadow
-%% through a select the driver did not make returns a poison value.
+%% mode; shadow 7 of the auxiliary control register and the 32 functions of
+%% shadow register 0x1C, each read only through its select; and the MMD
+%% registers behind clause 22's MMD access control (13) and address data (14)
+%% registers (mii.h:220-228; the order of the writes from FreeBSD's
+%% e1000_phy.c, __e1000_access_xmdio_reg), of which the EEE advertisement, MMD 7
+%% register 60 (e1000_defines.h:876-879), is kept. A read of a shadow through a
+%% select the driver did not make returns a poison value.
 
 -module(erx_phy_bcm54213_model).
--export([new/1, exec/2, cable/2, bounce/1, misc/1, clock/1, writes/1, link_up/1]).
+-export([new/1, exec/2, cable/2, bounce/1, misc/1, clock/1, eee_adv/1, writes/1, link_up/1]).
 
 -define(POISON, 16#dead).
 -define(ID1, 16#600d).
@@ -33,7 +37,9 @@
 %% Options: misc, the data bits (14:3) shadow 7 resets to; clock, the data bits
 %% (9:0) shadow 0x1C's clock alignment control resets to; reset_reads, the reads
 %% that still see the reset bit; partner, the modes the link partner advertises;
-%% cable, up or down; id, the two ID registers.
+%% cable, up or down; id, the two ID registers; eee_adv, what the EEE
+%% advertisement resets to, both speeds unless given (whether the BCM54213PE
+%% advertises EEE out of reset is unverified, so the model takes the worse case).
 new(Options) ->
     Model = #{misc_default => maps:get(misc, Options, 16#0000),
               clock_default => maps:get(clock, Options, 16#0200),
@@ -41,11 +47,13 @@ new(Options) ->
               partner => maps:get(partner, Options, [M || {M, _} <- ?MODES]),
               cable => maps:get(cable, Options, up),
               id => maps:get(id, Options, {?ID1, ?ID2}),
+              eee_default => maps:get(eee_adv, Options, 16#0006),
               writes => []},
     reset(Model).
 
 misc(#{misc := Misc}) -> Misc.
 clock(#{shadow_1c := Shadows}) -> maps:get(3, Shadows).
+eee_adv(#{mmd := Mmd}) -> maps:get({7, 60}, Mmd).
 writes(#{writes := Writes}) -> lists:reverse(Writes).
 
 cable(Model, up) -> Model#{cable := up};
@@ -69,7 +77,8 @@ reset(Model) ->
            reset_left => maps:get(reset_reads, Model), latch => false,
            misc => maps:get(misc_default, Model), aux_select => 0,
            shadow_1c => (maps:from_list([{S, 0} || S <- lists:seq(0, 31)]))#{3 => maps:get(clock_default, Model)},
-           select_1c => 0}.
+           select_1c => 0, mmd_ctrl => 0, mmd_addr => #{},
+           mmd => #{{7, 60} => maps:get(eee_default, Model)}}.
 
 write(Model, 16#00, Value) when Value band 16#8000 =/= 0 -> reset(Model);
 write(Model, 16#00, Value) ->
@@ -89,6 +98,15 @@ write(Model, 16#1c, Value) when Value band 16#8000 =/= 0 ->
     Shadows = maps:get(shadow_1c, Model),
     Model#{shadow_1c := Shadows#{(Value bsr 10) band 16#1f => Value band 16#3ff}};
 write(Model, 16#1c, Value) -> Model#{select_1c := (Value bsr 10) band 16#1f};
+%% MMD access: register 13 holds the function (bits 15:14) and the device (4:0);
+%% register 14 takes the device's register address under function 0 and the
+%% data under function 1, data without post increment.
+write(Model, 16#0d, Value) -> Model#{mmd_ctrl := Value};
+write(#{mmd_ctrl := Ctrl, mmd_addr := Addrs} = Model, 16#0e, Value) when Ctrl bsr 14 =:= 0 ->
+    Model#{mmd_addr := Addrs#{Ctrl band 16#1f => Value}};
+write(#{mmd_ctrl := Ctrl, mmd_addr := Addrs, mmd := Mmd} = Model, 16#0e, Value) when Ctrl bsr 14 =:= 1 ->
+    Dev = Ctrl band 16#1f,
+    Model#{mmd := Mmd#{{Dev, maps:get(Dev, Addrs, ?POISON)} => Value}};
 write(Model, _Reg, _Value) -> Model.
 
 read(#{reset_left := Left} = Model, 16#00) when Left > 0 ->
