@@ -167,6 +167,22 @@ a_stick_serves_its_medium_test() ->
         ?assertEqual(ok, erx_blk:flush(Transport))
     end).
 
+%% A served medium is logged when it comes up and when it ends, as numbers and names: a
+%% transport killed ends its medium with the reason's name.
+a_medium_is_logged_as_ready_and_as_ended_test() ->
+    with_bus(#{[1] => stick}, fun() ->
+        {ok, Lines} = erx_pcie_log_capture:logged(fun() ->
+            configured([1]),
+            exit(transport(), kill),
+            wait(fun() -> {messages, Queued} = process_info(self(), messages),
+                          lists:member({logged, "erx_usb_bot: medium LUN 0 ended: killed"}, Queued)
+                 end),
+            ok
+        end),
+        ?assertEqual(["erx_usb_bot: medium LUN 0 ready: 128 blocks of 512 bytes",
+                      "erx_usb_bot: medium LUN 0 ended: killed"], Lines)
+    end).
+
 %% A data phase that stalls is cleared, its CSW read, and its failure explained by the
 %% REQUEST SENSE the same operation sends; the medium stays and the next read succeeds.
 a_stalled_data_phase_is_cleared_and_explained_test() ->

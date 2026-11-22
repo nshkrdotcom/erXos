@@ -5,6 +5,13 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
 
 ## Bugs by subsystem
 
+* [Low] USB, `erlang/apps/erx_usb/src/erx_usb_bot.erl`: a medium whose function ends (a stick unplugged, a crash)
+  logs `ready` and never `ended`: the function logs only the ends it sees itself (its transport's and the
+  engine's `medium_ended`). Log it where the function ends, probably in the bus.
+* [Medium] USB, `erlang/apps/erx_usb/src/erx_usb_bot.erl`: the two medium lines (`ready`, `ended`) are logged
+  on every cycle of a removable LUN that answers NOT READY or UNIT ATTENTION and then ready again, about one
+  pair per `usb_bot_poll_ms` per LUN, so a device chooses how many lines the domain logs (design-usb.md R6).
+  Log a medium once per unit and count repeats in the inspection record, as the diagnostics row does.
 * [Medium] USB, the USB domain's figures (`config/manifest/qemu-virt-development.txt` and
   `config/manifest/raspi4b-development.txt`, `limits usb`, `share usb`):
   its memory, 32 MiB with outer 1 MiB, and its grant, 100 mcpu on CPU 0, are not measured. Measure the domain

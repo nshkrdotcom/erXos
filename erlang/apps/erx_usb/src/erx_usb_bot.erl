@@ -117,10 +117,13 @@ handle_info({timeout, Timer, {poll, Lun}}, B = #bot{units = Units}) ->
         #{} -> {noreply, B}
     end;
 %% A transport's end is its medium's; a transport already stopped was demonitored then.
-handle_info({'DOWN', Monitor, process, _Transport, _Reason}, B = #bot{units = Units}) ->
+handle_info({'DOWN', Monitor, process, _Transport, Reason}, B = #bot{units = Units}) ->
     %% A generator's pattern shadows Monitor rather than matching it, hence the filter.
     case [{Lun, Ref} || Lun := #{transport := {_Pid, Watch}, ref := Ref} <- Units, Watch =:= Monitor] of
-        [{Lun, Ref}] -> run([{end_medium, Lun, Ref}], B);
+        [{Lun, Ref}] ->
+            %% The transport is gone: its medium's end is logged here, and the unit holds it no more.
+            log_medium_ended(Lun, erx_report:reason_name(Reason)),
+            run([{end_medium, Lun, Ref}], B#bot{units = Units#{Lun := maps:remove(transport, maps:get(Lun, Units))}});
         [] -> {noreply, B}
     end;
 handle_info(_Message, B) ->
@@ -206,7 +209,9 @@ act({units, Count}, B) ->
      B#bot{units = maps:from_keys(Luns, inquiring)}};
 act({medium_ended, Lun, Ref}, B = #bot{units = Units}) ->
     case maps:get(Lun, Units) of
-        Unit = #{ref := Ref} -> advance(Lun, {ended(Unit), wait}, B);
+        Unit = #{ref := Ref} ->
+            is_map_key(transport, Unit) andalso log_medium_ended(Lun, device),
+            advance(Lun, {ended(Unit), wait}, B);
         _Other -> {[], B}
     end.
 
@@ -271,10 +276,17 @@ effect(Lun, serve, B = #bot{units = Units}) ->
     {ok, Transport} = erx_blk_usb:start_monitor(#{function => self(), lun => Lun, ref => Ref, capacity => Capacity,
                                                   flush => Flush, detail => Detail}),
     Serving = B#bot{units = Units#{Lun := Unit#{transport => Transport}}},
+    logger:notice("erx_usb_bot: medium LUN ~b ready: ~b blocks of ~b bytes", [Lun, Capacity, ?ERX_SCSI_BLOCK_LENGTH]),
     case Removable of
         true -> effect(Lun, wait, Serving);
         false -> {[], Serving}
     end.
+
+%% A served medium's end, logged where the function sees it: its transport's end (the
+%% transport's reason) or the engine's (`device'). The function's own end logs none.
+%% Integers and atoms only: the unit's INQUIRY text is the device's and never reaches the log.
+log_medium_ended(Lun, Reason) ->
+    logger:notice("erx_usb_bot: medium LUN ~b ended: ~w", [Lun, Reason]).
 
 %% A unit still without a medium is polled for one; a removable unit's medium is polled
 %% under its reference, so the poll is answered gone, unsent, once the medium has ended.

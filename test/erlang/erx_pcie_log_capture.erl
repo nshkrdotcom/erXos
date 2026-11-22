@@ -24,8 +24,9 @@ logged(Fun) ->
              end,
     {Result, drain()}.
 
-%% The handler: each message logged as a format and its arguments, sent formatted.
-log(#{msg := {Format, Args}}, #{config := #{pid := Pid}}) ->
+%% The handler: each message logged as a format and its arguments, sent formatted; a report
+%% (a map the bus logs) is not a message and is let go.
+log(#{msg := {Format, Args}}, #{config := #{pid := Pid}}) when is_list(Format) ->
     Pid ! {logged, lists:flatten(io_lib:format(Format, Args))};
 log(_Event, _Config) ->
     ok.
