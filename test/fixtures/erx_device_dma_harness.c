@@ -398,7 +398,7 @@ open_virtio(void)
 
 	virtio = erx_device_peripheral_find("virtio_mmio", 11);
 	CHECK(virtio != NULL);
-	CHECK(erx_device_open(&spec, NULL, NULL, &device) == ERX_OK);
+	CHECK(erx_device_open(&spec, NULL, NULL, &device, NULL) == ERX_OK);
 	return (device);
 }
 
@@ -694,7 +694,7 @@ open_given(const erx_device_spec_t *spec)
 
 	expect_map(spec->window);
 	expect_map(spec->memory);
-	CHECK(erx_device_open(spec, NULL, NULL, &device) == ERX_OK);
+	CHECK(erx_device_open(spec, NULL, NULL, &device, NULL) == ERX_OK);
 	CHECK(maps_done == maps_pushed && irqs_created == created);
 	window = memories[spec->window].bytes + GIVEN_OFFSET;
 	CHECK(erx_device_line_irq(erx_device_get(device), 0, &irq) && irq == spec->lines[0]);
@@ -730,22 +730,22 @@ check_given(void)
 	rings_t rings;
 
 	other.memory_size = ERX_PAGE_SIZE + 1;
-	CHECK(erx_device_open(&other, NULL, NULL, &index) == ERX_EINVAL);
+	CHECK(erx_device_open(&other, NULL, NULL, &index, NULL) == ERX_EINVAL);
 	other = spec;
 	other.form = ERX_DEVICE_FORM_PHYSICAL;
-	CHECK(erx_device_open(&other, NULL, NULL, &index) == ERX_EINVAL);
+	CHECK(erx_device_open(&other, NULL, NULL, &index, NULL) == ERX_EINVAL);
 	CHECK(maps_pushed == 0);
 	device = open_given(&spec);
-	CHECK(erx_device_open(&spec, NULL, NULL, &index) == ERX_OK && erx_device_get(index) == device);
+	CHECK(erx_device_open(&spec, NULL, NULL, &index, NULL) == ERX_OK && erx_device_get(index) == device);
 	other = spec;
 	other.memory_size = ERX_PAGE_SIZE;
-	CHECK(erx_device_open(&other, NULL, NULL, &index) == ERX_EBUSY);
+	CHECK(erx_device_open(&other, NULL, NULL, &index, NULL) == ERX_EBUSY);
 	other = spec;
 	other.base = 0;
-	CHECK(erx_device_open(&other, NULL, NULL, &index) == ERX_EBUSY);
+	CHECK(erx_device_open(&other, NULL, NULL, &index, NULL) == ERX_EBUSY);
 	other = spec;
 	other.window = make_memory(ERX_PAGE_SIZE);
-	CHECK(erx_device_open(&other, NULL, NULL, &index) == ERX_EBUSY);
+	CHECK(erx_device_open(&other, NULL, NULL, &index, NULL) == ERX_EBUSY);
 	CHECK(maps_done == maps_pushed);
 
 	device_offers();
@@ -862,7 +862,7 @@ check_driver_restart(void)
 		CHECK(post_one(device, queue, tag) == ERX_OK);
 	CHECK(post_one(device, queue, QUEUE_SIZE) == ERX_EWOULDBLOCK);
 
-	CHECK(erx_device_open(&spec, NULL, NULL, &index) == ERX_OK && erx_device_get(index) == device);
+	CHECK(erx_device_open(&spec, NULL, NULL, &index, NULL) == ERX_OK && erx_device_get(index) == device);
 	CHECK(erx_device_queue_create(device, 0, QUEUE_SIZE, SMALL_BUFFER, &again) == ERX_OK && again == queue);
 	CHECK(negotiate(device) == ERX_OK);
 	for (uint32_t tag = 0; tag < QUEUE_SIZE; tag++)

@@ -81,6 +81,26 @@ typedef struct erx_device_spec {
 	erx_device_msix_t	msix;
 } erx_device_spec_t;
 
+/*
+ * Which step of an open failed, where more than one could give its status
+ * (docs/design-runtime.md, the device NIF): a spec that does not fit its peripheral, a
+ * layout the resolution refused, with the machine at its end (its refusal and what it read;
+ * an MSI-X table the open does not bind is ERX_DEVICE_REFUSAL_MSIX there), or
+ * the kernel's refusal to map the window or the memory; OTHER for any other step.
+ */
+typedef enum erx_device_open_step {
+	ERX_DEVICE_OPEN_OTHER,
+	ERX_DEVICE_OPEN_SPEC,
+	ERX_DEVICE_OPEN_LAYOUT,
+	ERX_DEVICE_OPEN_MAP_WINDOW,
+	ERX_DEVICE_OPEN_MAP_MEMORY
+} erx_device_open_step_t;
+
+typedef struct erx_device_open_failure {
+	erx_device_open_step_t	step;
+	erx_device_resolve_t	layout;		/* ERX_DEVICE_OPEN_LAYOUT's */
+} erx_device_open_failure_t;
+
 /* Which element of a register: a plain register takes none, an array one below its count. */
 typedef struct erx_device_element {
 	bool		indexed;
@@ -105,10 +125,12 @@ typedef struct erx_device_element {
  * always a new device, is plain memory of the peripheral's size with software objects for
  * lines; elsewhere one is ERX_ENOTSUP. A failure may leave a run or a line made, kept for the
  * boot and taken by the next open that names it. The keys are what the caller interned the
- * table's names as, in the table's order, and may be NULL. The caller serialises opens.
+ * table's names as, in the table's order, and may be NULL. The caller serialises opens. A
+ * failure other than NULL is given the step that failed (erx_device_open_failure_t); its
+ * contents are meaningful only when the open does not return ERX_OK.
  */
 int	erx_device_open(const erx_device_spec_t *spec, const uintptr_t *register_keys, const uintptr_t *field_keys,
-	    uint32_t *device);
+	    uint32_t *device, erx_device_open_failure_t *failure);
 /* The open device with this index, or NULL. */
 const erx_device_t *erx_device_get(uint64_t device);
 const erx_device_peripheral_t *erx_device_peripheral(const erx_device_t *device);

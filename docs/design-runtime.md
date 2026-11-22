@@ -2866,9 +2866,19 @@ NIF reads each base and count once, follows the controller's extended-capability
 list once, at most 64 entries, each forward of the last, checks that every
 element of every register lies wholly inside the window at an offset aligned to
 its width and that no cluster lies over another or over the registers at fixed
-offsets, and refuses the record with `{error, einval}` otherwise, so every name
-then resolves to a fixed offset
+offsets, and refuses the record with `{error, {einval, {layout, Why, Read,
+Entries}}}` otherwise, so every name then resolves to a fixed offset
 ([design-usb.md](design-usb.md#registers-at-offsets-the-controller-reports)).
+`Why` names the rule that failed and the numbers it compared, `Read` maps each
+register the walk read its bases and counts from to the word it read, and
+`Entries` lists the extended-capability entries it followed, `{Offset, Id}` in
+list order, so one failed open on a board says which value refused it. An open
+fails with a reason of the same shape, the status first, wherever more than one
+step could give that status: `{error, {einval, spec}}` for a record whose window
+is smaller than its peripheral's, misaligned for it or not a whole run of pages,
+and `{error, {Status, {map, window}}}` or `{error, {Status, {map, memory}}}` when
+the kernel refuses to map the window or the DMA memory; any other step's status
+is bare. A driver that matches the status alone matches `{error, {einval, _}}`.
 The decision is a pure state machine in `erx_device_core`, which asks for one
 read at a time and which the open runs to its end. An array whose live length
 the device reports takes an index below that length, and a capability's

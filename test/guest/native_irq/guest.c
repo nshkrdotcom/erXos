@@ -792,16 +792,16 @@ bind_objects(void)
 		fail("erx: irq: the device table has no pl011 FAILED\n");
 	/* One byte short of the registers' window, as the generated table states it. */
 	too_small.size = pl011->window_size - 1;
-	if (erx_device_open(&too_small, NULL, NULL, &device) != ERX_EINVAL)
+	if (erx_device_open(&too_small, NULL, NULL, &device, NULL) != ERX_EINVAL)
 		fail("erx: irq: a window smaller than its registers was not refused FAILED\n");
-	if (erx_device_open(&spec, NULL, NULL, &device) != ERX_OK)
+	if (erx_device_open(&spec, NULL, NULL, &device, NULL) != ERX_OK)
 		fail("erx: irq: sigma0 refused the UART's registers, or its line is taken FAILED\n");
 	uart = erx_device_get(device);
 	if (!erx_device_line_irq(uart, 0, &irq_uart) || erx_device_line_irq(uart, 1, &unused))
 		fail("erx: irq: the record has the wrong lines FAILED\n");
 	say("erx: irq: sigma0 gave the UART's registers\n");
 	say("erx: irq: the UART's receive line is free\n");
-	if (erx_device_open(&spec, NULL, NULL, &again) != ERX_OK || again != device)
+	if (erx_device_open(&spec, NULL, NULL, &again, NULL) != ERX_OK || again != device)
 		fail("erx: irq: a second open was not the same device FAILED\n");
 	if (erx_irq_create(0, 0, ERX_IRQ_SOFT, 0, &irq_soft, NULL) != ERX_OK ||
 	    erx_irq_create(0, 0, ERX_IRQ_SOFT, 0, &irq_other, NULL) != ERX_OK)

@@ -380,7 +380,7 @@ open_genet(uint64_t memory)
 	maps[1] = memory;
 	maps_pushed = 2;
 	maps_done = 0;
-	CHECK(erx_device_open(&spec, NULL, NULL, &device) == ERX_OK && maps_done == 2);
+	CHECK(erx_device_open(&spec, NULL, NULL, &device, NULL) == ERX_OK && maps_done == 2);
 	window = memories[window_object];
 	return (erx_device_get(device));
 }

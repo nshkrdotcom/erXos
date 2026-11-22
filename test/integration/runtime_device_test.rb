@@ -93,12 +93,15 @@ class RuntimeDeviceTest < Minitest::Test
   end
 
   # A given spec decodes on a hosted runtime, where no handle names an object, so its open fails
-  # at the window's map with estale; one that mixes the forms is badarg before anything is mapped.
+  # at the window's map with estale, named as that step, and a stand-in xHCI controller, all zeros, reports
+  # registers its window cannot hold, with the words it read and no extended capability; one that mixes the forms is badarg before anything is mapped.
   def test_a_given_device_decodes_and_a_mixed_spec_is_badarg
     assert_equal 'ok', evaluate(<<~'ERLANG')
-      {error, estale} = erx_device:open(#{peripheral => pl011, window => {object, 1, 0, 4096}, lines => [{object, 2}]}),
-      {error, estale} = erx_device:open(#{peripheral => pl011, window => {object, 1, 0, 4096}, lines => [],
-                                          memory => {object, 3, 8192}}),
+      {error, {estale, {map, window}}} = erx_device:open(#{peripheral => pl011, window => {object, 1, 0, 4096}, lines => [{object, 2}]}),
+      {error, {estale, {map, window}}} = erx_device:open(#{peripheral => pl011, window => {object, 1, 0, 4096}, lines => [],
+                                                          memory => {object, 3, 8192}}),
+      {error, {einval, {layout, _Why, #{caplength := 0, dboff := 0, rtsoff := 0}, []}}} =
+          erx_device:open(#{peripheral => xhci, window => stand_in, lines => []}),
       io:format("~s~n", [ok]), halt().
     ERLANG
     assert_equal 'ok', evaluate(<<~'ERLANG')

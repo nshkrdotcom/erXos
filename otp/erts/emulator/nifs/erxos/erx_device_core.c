@@ -133,6 +133,8 @@ static void
 take_source(const erx_device_peripheral_t *peripheral, erx_device_layout_t *layout, erx_device_resolve_t *resolve,
     uint32_t index, uint64_t word)
 {
+	/* Each register is read once, so no more than ERX_DEVICE_REGISTERS_MAX are. */
+	resolve->source[resolve->sources++] = (erx_device_source_word_t){ .reg = index, .word = word };
 	for (uint32_t at = 0; at < peripheral->base_count; at++) {
 		const erx_device_base_t *const base = &peripheral->bases[at];
 
@@ -149,9 +151,17 @@ take_source(const erx_device_peripheral_t *peripheral, erx_device_layout_t *layo
 		resolve->entry = erx_device_field_get(&peripheral->fields[peripheral->list_field], word) * LIST_WORD_BYTES;
 }
 
+/* The resolution's end in refusal, by the rule `refusal` names. */
+static void
+refuse(erx_device_resolve_t *resolve, erx_device_refusal_t refusal)
+{
+	resolve->op = ERX_DEVICE_RESOLVE_REFUSED;
+	resolve->refusal = refusal;
+}
+
 /*
  * The entry being read, with ID `id`, as the next instance of the cluster of that capability;
- * false when every instance is taken. An ID no cluster has is passed over.
+ * refused, false, when every instance is taken. An ID no cluster has is passed over.
  */
 static bool
 take_entry(const erx_device_peripheral_t *peripheral, erx_device_layout_t *layout, erx_device_resolve_t *resolve,
@@ -162,8 +172,10 @@ take_entry(const erx_device_peripheral_t *peripheral, erx_device_layout_t *layou
 
 		if (base->capability == 0 || base->capability != id)
 			continue;
-		if (resolve->found[at] == base->instances)
+		if (resolve->found[at] == base->instances) {
+			refuse(resolve, (erx_device_refusal_t){ .rule = ERX_DEVICE_REFUSAL_TOO_MANY, .base = at });
 			return (false);
+		}
 		layout->slot[base->first + resolve->found[at]++] = resolve->entry;
 		return (true);
 	}
@@ -197,21 +209,32 @@ place_of(const erx_device_peripheral_t *peripheral, const erx_device_register_t 
 
 /*
  * Whether every element of the register lies wholly inside the window, at an offset aligned to
- * its width; each widens its place's bytes.
+ * its width, refused at the first that does not; each widens its place's bytes.
  */
 static bool
 elements_inside(const erx_device_peripheral_t *peripheral, const erx_device_layout_t *layout,
-    const erx_device_register_t *reg, uint64_t size, places_t *places)
+    const erx_device_register_t *reg, erx_device_resolve_t *resolve, places_t *places)
 {
-	const uint64_t bytes = reg->width / 8u;
+	const uint64_t bytes = reg->width / 8u, size = resolve->size;
+	const uint32_t at = (uint32_t)(reg - peripheral->registers);
 	uint64_t offset;
 
-	for (uint32_t index = 0; index < layout->elements[reg - peripheral->registers]; index++) {
+	for (uint32_t index = 0; index < layout->elements[at]; index++) {
 		const uint32_t place = place_of(peripheral, reg, index);
+		const bool known = erx_device_layout_offset(peripheral, layout, reg, reg->count > 1, index, &offset);
+		erx_device_refusal_rule_t rule;
 
-		if (!erx_device_layout_offset(peripheral, layout, reg, reg->count > 1, index, &offset) ||
-		    offset % bytes != 0 || offset > size || bytes > size - offset)
+		if (!known || offset > size || bytes > size - offset)
+			rule = ERX_DEVICE_REFUSAL_PAST_WINDOW;
+		else if (offset % bytes != 0)
+			rule = ERX_DEVICE_REFUSAL_UNALIGNED;
+		else
+			rule = ERX_DEVICE_REFUSAL_NONE;
+		if (rule != ERX_DEVICE_REFUSAL_NONE) {
+			refuse(resolve, (erx_device_refusal_t){ .rule = rule, .reg = at, .index = index, .offset_known = known,
+			    .offset = known ? offset : 0, .bytes = bytes });
 			return (false);
+		}
 		if (offset < places->first[place])
 			places->first[place] = offset;
 		if (offset + bytes > places->end[place])
@@ -220,18 +243,45 @@ elements_inside(const erx_device_peripheral_t *peripheral, const erx_device_layo
 	return (true);
 }
 
+/* Place `place` of `places`, by what it is: the fixed registers, a cluster's instance, or the kept span. */
+static erx_device_place_t
+place_named(const erx_device_peripheral_t *peripheral, const places_t *places, uint32_t place)
+{
+	erx_device_place_t named = { .kind = ERX_DEVICE_PLACE_FIXED, .first = places->first[place],
+	    .end = places->end[place] };
+
+	if (place == KEPT_PLACE) {
+		named.kind = ERX_DEVICE_PLACE_KEPT;
+	} else if (place != 0) {
+		for (uint32_t at = 0; at < peripheral->base_count; at++) {
+			const erx_device_base_t *const base = &peripheral->bases[at];
+
+			if (place - 1 >= base->first && place - 1 - base->first < base->instances) {
+				named.kind = ERX_DEVICE_PLACE_CLUSTER;
+				named.base = at;
+				named.instance = place - 1 - base->first;
+			}
+		}
+	}
+	return (named);
+}
+
 /*
- * Whether no two places share a byte. Within a place the generator keeps registers apart; a
- * device that reported bases putting one cluster over another, or over the fixed registers,
- * would give a register a driver may write the address of one the NIF owns.
+ * Whether no two places share a byte, refused at the first two that do. Within a place the
+ * generator keeps registers apart; a device that reported bases putting one cluster over
+ * another, or over the fixed registers, would give a register a driver may write the address
+ * of one the NIF owns.
  */
 static bool
-places_apart(const places_t *places)
+places_apart(const erx_device_peripheral_t *peripheral, const places_t *places, erx_device_resolve_t *resolve)
 {
 	for (uint32_t a = 0; a < PLACES; a++) {
 		for (uint32_t b = a + 1; b < PLACES; b++) {
-			if (places->first[a] < places->end[b] && places->first[b] < places->end[a])
+			if (places->first[a] < places->end[b] && places->first[b] < places->end[a]) {
+				refuse(resolve, (erx_device_refusal_t){ .rule = ERX_DEVICE_REFUSAL_OVERLAP,
+				    .place = { place_named(peripheral, places, a), place_named(peripheral, places, b) } });
 				return (false);
+			}
 		}
 	}
 	return (true);
@@ -267,9 +317,10 @@ finish(const erx_device_peripheral_t *peripheral, erx_device_layout_t *layout, e
 			else if (found == 0)
 				layout->elements[index] = 0;
 		}
-		fits = fits && elements_inside(peripheral, layout, reg, resolve->size, &places);
+		fits = fits && elements_inside(peripheral, layout, reg, resolve, &places);
 	}
-	resolve->op = fits && places_apart(&places) ? ERX_DEVICE_RESOLVE_DONE : ERX_DEVICE_RESOLVE_REFUSED;
+	if (fits && places_apart(peripheral, &places, resolve))
+		resolve->op = ERX_DEVICE_RESOLVE_DONE;
 }
 
 static void
@@ -294,9 +345,13 @@ advance(const erx_device_peripheral_t *peripheral, erx_device_layout_t *layout, 
 		finish(peripheral, layout, resolve);
 		return;
 	}
-	if (resolve->entries == ERX_DEVICE_LIST_ENTRIES_MAX || resolve->size < LIST_WORD_BYTES ||
-	    resolve->entry > resolve->size - LIST_WORD_BYTES) {
-		resolve->op = ERX_DEVICE_RESOLVE_REFUSED;
+	if (resolve->entries == ERX_DEVICE_LIST_ENTRIES_MAX) {
+		refuse(resolve, (erx_device_refusal_t){ .rule = ERX_DEVICE_REFUSAL_LIST_TOO_LONG });
+		return;
+	}
+	if (resolve->size < LIST_WORD_BYTES || resolve->entry > resolve->size - LIST_WORD_BYTES) {
+		refuse(resolve, (erx_device_refusal_t){ .rule = ERX_DEVICE_REFUSAL_ENTRY_PAST_WINDOW,
+		    .offset_known = true, .offset = resolve->entry });
 		return;
 	}
 	ask(resolve, resolve->entry, 32);
@@ -325,11 +380,11 @@ erx_device_resolve_step(const erx_device_peripheral_t *peripheral, erx_device_la
 	} else {
 		const uint64_t next = (word >> LIST_NEXT_SHIFT) & LIST_NEXT_MASK;
 
-		resolve->entries++;
-		if (!take_entry(peripheral, layout, resolve, word & LIST_ID_MASK)) {
-			resolve->op = ERX_DEVICE_RESOLVE_REFUSED;
+		/* advance asked for this entry only below ERX_DEVICE_LIST_ENTRIES_MAX entries. */
+		resolve->entry_read[resolve->entries++] = (erx_device_entry_read_t){ .offset = resolve->entry,
+		    .id = (uint8_t)(word & LIST_ID_MASK) };
+		if (!take_entry(peripheral, layout, resolve, word & LIST_ID_MASK))
 			return;
-		}
 		resolve->entry = next == 0 ? 0 : resolve->entry + next * LIST_WORD_BYTES;
 	}
 	advance(peripheral, layout, resolve);

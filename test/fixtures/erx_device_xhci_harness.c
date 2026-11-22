@@ -301,7 +301,7 @@ open_routed(uint32_t scratchpads, bool four_kib, bool ac64, erx_device_msix_t ms
 	maps_pushed = 2;
 	maps_done = 0;
 	routed_spec = spec;
-	status = erx_device_open(&spec, NULL, NULL, &device);
+	status = erx_device_open(&spec, NULL, NULL, &device, NULL);
 	*opened = status == ERX_OK ? erx_device_get(device) : NULL;
 	return (status);
 }
@@ -314,7 +314,7 @@ open_reused(erx_device_msix_t msix)
 	uint32_t device;
 
 	spec.msix = msix;
-	return (erx_device_open(&spec, NULL, NULL, &device));
+	return (erx_device_open(&spec, NULL, NULL, &device, NULL));
 }
 
 static const erx_device_t *

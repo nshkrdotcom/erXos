@@ -72,6 +72,10 @@
 -type line() :: {object, Irq :: non_neg_integer()} | non_neg_integer().
 %% A line another device of the unit names too, marked by the record's writer.
 -type marked_line() :: line() | {shared, line()}.
+%% The step a failed open/1 names after its status; a layout's Why is design-usb.md's table.
+-type open_step() :: spec | {map, window | memory}
+                   | {layout, Why :: tuple(), Read :: #{atom() => non_neg_integer()},
+                      Entries :: [{Offset :: non_neg_integer(), Id :: byte()}]}.
 -type spec() :: #{peripheral := atom(), path => binary(), window := window(), lines := [marked_line()],
                   memory => {object, Memory :: non_neg_integer(), Bytes :: pos_integer()},
                   clock => Hertz :: non_neg_integer(), coherent => boolean()}.
@@ -127,8 +131,13 @@ init() ->
 %% marks a device whose DMA is cache-coherent, as the device tree says; without it the device is taken as not coherent and has no region/3. Every device that does DMA is given, in the system domain too, whose root gives itself
 %% the devices it holds. A hosted runtime has no devices, so either form is an
 %% error there, and `stand_in` gives plain memory and software lines for tests; natively
-%% `stand_in` is `{error, enotsup}`.
--spec open(spec()) -> {ok, device()} | {error, atom() | {status, integer()}}.
+%% `stand_in` is `{error, enotsup}`. Where more than one step could give a status, the
+%% error names the step after it (docs/design-runtime.md): `{einval, spec}` for a window
+%% that does not fit the peripheral, `{einval, {layout, Why, Read, Entries}}` for registers
+%% the device reports that the window does not hold (docs/design-usb.md, "Registers at
+%% offsets the controller reports"), and `{Status, {map, window | memory}}` for a map the
+%% kernel refuses.
+-spec open(spec()) -> {ok, device()} | {error, atom() | {status, integer()} | {atom() | {status, integer()}, open_step()}}.
 open(_Spec) ->
     erlang:nif_error(undef).
 

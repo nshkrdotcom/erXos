@@ -2655,7 +2655,8 @@ three movable clusters with the capability register and field its base
 comes from, an erXos extension the generator checks. When the NIF opens
 the record it reads the three values once, checks that each cluster lies
 wholly inside the register window, and refuses the record with
-`{error, einval}` otherwise; from then on every name resolves to a fixed
+`{error, {einval, {layout, Why, Read, Entries}}}` otherwise (the table
+below); from then on every name resolves to a fixed
 offset as for any peripheral. The ports, `PORTSC(n)` for `n` from 1 to
 the port count, are an array of the operational cluster, checked the same
 way.
@@ -2668,8 +2669,28 @@ and the supported-protocol capabilities, at most 8, as clusters of the
 same kind; since every step moves forward, the walk ends. A list longer
 than 64 entries, an entry outside the window, a second legacy support
 capability, a ninth supported protocol, or bases that put one cluster
-over another or over the capability registers refuses the record with
-`{error, einval}`, and an entry of any other ID is passed over. The SVD
+over another or over the capability registers refuses the record the
+same way, and an entry of any other ID is passed over.
+
+The refusal names its rule and the numbers it compared, so one boot of a
+controller that is refused shows why. `Read` maps each register the open
+read a base, a count or the list's head from (`caplength`, `hcsparams1`,
+`hccparams1`, `dboff`, `rtsoff`) to the word it read, and `Entries` is
+the list's entries followed, `{Offset, Id}` in list order, each offset in
+bytes from the window's start. `Why` is one of:
+
+| `Why` | The rule that failed |
+| --- | --- |
+| `{past_window, Register, Index, Offset, Bytes, WindowBytes}` | element `Index` of `Register` (0 for one that is not an array), `Bytes` wide at `Offset`, ends past the window's `WindowBytes`; `Offset` is `none` where the base and index give no 64-bit offset |
+| `{unaligned, Register, Index, Offset, Bytes}` | that element's `Offset` is not a multiple of its width |
+| `{overlap, Place, Place}` | two places share a byte, each `{fixed, First, End}` for the registers at fixed offsets, `{Cluster, Instance, First, End}` for an instance of a movable cluster (`operational`, `runtime`, `doorbell`, `legacy`, `protocol`), or `{msix_table, First, End}` for the span the NIF keeps, from a place's first element's first byte to its last element's end, by the SVD's declared registers |
+| `{entry_past_window, Offset, WindowBytes}` | a list entry's word at `Offset` does not lie inside the window |
+| `{list_too_long, 64}` | the list has more entries than the walk follows |
+| `{too_many, Cluster, Instances}` | a list entry of `Cluster`'s capability past the `Instances` its cluster binds, the last of `Entries` |
+| `{msix, Offset, Entries, WindowBytes}` | a PCIe function's MSI-X route the open does not bind: its table of `Entries` entries at `Offset` does not fit the window, `Offset` is not a multiple of 8, or `Entries` is more than the table declares |
+
+Offsets are the device's own register offsets; no kernel handle or
+address reaches the reason. The SVD
 source declares the list's head once on the peripheral, and each kind of
 capability as one cluster at offset 0 carrying its ID:
 `LEGACY`, whose semaphores are two 8-bit registers, `BIOS_OWNED` at +2
@@ -3366,7 +3387,7 @@ sink shows it.
 | `erx_device:negotiate/2`, virtio or GENET form | `{error, einval}` | it passes `continue`: these forms' negotiations take no steps, and each call begins one |
 | `erx_device:negotiate/2`, TRB form | `{error, enotsup}` | it asks for more than 64 scratchpad pages, or its page size excludes 4 KiB |
 | `erx_device:negotiate/2`, TRB form | `{error, erange}` | `AC64` is clear and the record's memory lies above 4 GiB |
-| opening an xHCI record | `{error, einval}` | `CAPLENGTH`, `RTSOFF` or `DBOFF` puts a register cluster or a port past the register window, or an extended capability lies outside it |
+| opening an xHCI record | `{error, {einval, {layout, Why, Read, Entries}}}` | `CAPLENGTH`, `RTSOFF` or `DBOFF` puts a register cluster or a port past the register window, or an extended capability lies outside it ([Registers at offsets the controller reports](#registers-at-offsets-the-controller-reports) names each `Why`) |
 | `erx_device:post/4`, TRB form | `badarg` | a command or transfer of another shape; a parameter out of its range; an isochronous endpoint; a command the queue's state does not accept; Disable Slot with a queue running; a length past the buffer; a setup whose length differs from its data stage; a data stage against its setup's direction; a normal transfer against its endpoint's direction; a SET_ADDRESS setup |
 | `erx_device:post/4`, TRB form | `{error, full}` | a command already in flight; no free buffer on the queue; no free block of the kind a command adds |
 | `erx_device:post/4`, TRB form | `{error, halted}` | a transfer on a queue that is not `open`, or that the command in flight holds: EP0 under Evaluate Context, a queue Configure Endpoint drops, every queue of the slot under Disable Slot |

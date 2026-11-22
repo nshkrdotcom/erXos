@@ -224,6 +224,63 @@ typedef enum erx_device_resolve_op {
 	ERX_DEVICE_RESOLVE_REFUSED	/* the device reports registers the window does not hold */
 } erx_device_resolve_op_t;
 
+/*
+ * Why a resolution was refused, for the open's error (docs/design-usb.md, "Registers at
+ * offsets the controller reports"): the rule that failed and the numbers it compared.
+ */
+typedef enum erx_device_refusal_rule {
+	ERX_DEVICE_REFUSAL_NONE,		/* no refusal: a resolution still running or done */
+	ERX_DEVICE_REFUSAL_PAST_WINDOW,		/* element `index` of `reg`, `bytes` at `offset`, ends past the window;
+						   `offset_known` false where it has no 64-bit offset */
+	ERX_DEVICE_REFUSAL_UNALIGNED,		/* that element's `offset` is not a multiple of `bytes` */
+	ERX_DEVICE_REFUSAL_OVERLAP,		/* `place[0]` and `place[1]` share a byte */
+	ERX_DEVICE_REFUSAL_ENTRY_PAST_WINDOW,	/* the list entry's word at `offset` is not inside the window */
+	ERX_DEVICE_REFUSAL_LIST_TOO_LONG,	/* the list has more than ERX_DEVICE_LIST_ENTRIES_MAX entries */
+	ERX_DEVICE_REFUSAL_TOO_MANY,		/* an entry of base `base`'s capability past its instances */
+	ERX_DEVICE_REFUSAL_MSIX			/* the open's MSI-X table, `msix_entries` at `offset`, is not one it binds */
+} erx_device_refusal_rule_t;
+
+/* Which registers a place is: those at fixed offsets, an instance of a movable cluster, or the kept span. */
+typedef enum erx_device_place_kind {
+	ERX_DEVICE_PLACE_FIXED,
+	ERX_DEVICE_PLACE_CLUSTER,
+	ERX_DEVICE_PLACE_KEPT
+} erx_device_place_kind_t;
+
+/* A place's bytes, from its first element's first byte to its last element's end. */
+typedef struct erx_device_place {
+	erx_device_place_kind_t	kind;
+	uint32_t		base;		/* a cluster's index in the peripheral's bases */
+	uint32_t		instance;	/* and its instance */
+	uint64_t		first;
+	uint64_t		end;
+} erx_device_place_t;
+
+/* A refusal: its rule and the fields that rule's comment names; the others are 0. */
+typedef struct erx_device_refusal {
+	erx_device_refusal_rule_t rule;
+	uint32_t		reg;
+	uint32_t		index;
+	uint32_t		base;
+	uint32_t		msix_entries;
+	bool			offset_known;
+	uint64_t		offset;
+	uint64_t		bytes;
+	erx_device_place_t	place[2];
+} erx_device_refusal_t;
+
+/* A word the resolution read from a source register, by register index. */
+typedef struct erx_device_source_word {
+	uint32_t	reg;
+	uint64_t	word;
+} erx_device_source_word_t;
+
+/* A list entry the resolution followed: its offset in the window and its ID. */
+typedef struct erx_device_entry_read {
+	uint64_t	offset;
+	uint8_t		id;
+} erx_device_entry_read_t;
+
 typedef struct erx_device_resolve {
 	erx_device_resolve_op_t	op;
 	uint64_t		offset;
@@ -237,6 +294,11 @@ typedef struct erx_device_resolve {
 	uint32_t		entries;	/* the entries read */
 	/* Each base's instances found, by base index: a peripheral has no more bases than slots. */
 	uint32_t		found[ERX_DEVICE_SLOTS_MAX];
+	/* What it read, in order, and why it refused, when op is REFUSED; for the open's error only. */
+	uint32_t		sources;
+	erx_device_source_word_t source[ERX_DEVICE_REGISTERS_MAX];
+	erx_device_entry_read_t	entry_read[ERX_DEVICE_LIST_ENTRIES_MAX];	/* `entries` of them */
+	erx_device_refusal_t	refusal;
 } erx_device_resolve_t;
 
 /*

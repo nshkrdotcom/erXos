@@ -130,7 +130,8 @@ stand_in_window(uint64_t size, volatile uint8_t **window)
  * and a given device's the pages of its window object at their offsets in it.
  */
 static int
-map_run(const erx_device_spec_t *spec, const erx_device_pages_t *pages, volatile uint8_t **mapping)
+map_run(const erx_device_spec_t *spec, const erx_device_pages_t *pages, volatile uint8_t **mapping,
+    erx_device_open_step_t *step)
 {
 	uint64_t mem = spec->window, offset = pages->base, addr;
 	int status = ERX_OK;
@@ -139,9 +140,12 @@ map_run(const erx_device_spec_t *spec, const erx_device_pages_t *pages, volatile
 		status = erx_mem_create_physical(0, 0, pages->base, pages->size, ERX_MEM_ATTR_DEVICE, &mem);
 		offset = 0;
 	}
-	if (status == ERX_OK)
-		status = map_object(mem, offset, pages->size, &addr);
-	if (status == ERX_OK)
+	if (status != ERX_OK)
+		return (status);
+	status = map_object(mem, offset, pages->size, &addr);
+	if (status != ERX_OK)
+		*step = ERX_DEVICE_OPEN_MAP_WINDOW;
+	else
 		*mapping = (volatile uint8_t *)(uintptr_t)addr;
 	return (status);
 }
@@ -175,7 +179,8 @@ find_run(const erx_device_spec_t *spec, const erx_device_pages_t *pages, bool *f
  * it. A hosted stand-in's window is plain memory of its own.
  */
 static int
-take_window(const erx_device_spec_t *spec, const erx_device_pages_t *pages, uint64_t size, volatile uint8_t **window)
+take_window(const erx_device_spec_t *spec, const erx_device_pages_t *pages, uint64_t size, volatile uint8_t **window,
+    erx_device_open_step_t *step)
 {
 	page_run_t *run;
 	uint32_t index = runs_mapped;
@@ -191,7 +196,7 @@ take_window(const erx_device_spec_t *spec, const erx_device_pages_t *pages, uint
 		return (ERX_ELIMIT);
 	run = &runs[index];
 	if (!found) {
-		status = map_run(spec, pages, &run->mapping);
+		status = map_run(spec, pages, &run->mapping, step);
 		if (status != ERX_OK)
 			return (status);
 		run->form = spec->form;
@@ -277,7 +282,7 @@ take_lines(const erx_device_spec_t *spec, uint32_t *entries)
 
 /* A given device's memory, mapped here whole, or nothing for a device with none. */
 static int
-map_memory(const erx_device_spec_t *spec, uint8_t **dma)
+map_memory(const erx_device_spec_t *spec, uint8_t **dma, erx_device_open_step_t *step)
 {
 	uint64_t addr;
 	int status;
@@ -286,7 +291,9 @@ map_memory(const erx_device_spec_t *spec, uint8_t **dma)
 	if (spec->memory_size == 0)
 		return (ERX_OK);
 	status = map_object(spec->memory, 0, spec->memory_size, &addr);
-	if (status == ERX_OK)
+	if (status != ERX_OK)
+		*step = ERX_DEVICE_OPEN_MAP_MEMORY;
+	else
 		*dma = (uint8_t *)(uintptr_t)addr;
 	return (status);
 }
@@ -431,28 +438,34 @@ bind_msix(erx_device_t *record, const erx_device_msix_t *msix, uint64_t size, ui
  * The record's layout, erx_device_resolve run over its window of `size` bytes, every register
  * kept apart from its MSI-X table (bind_msix), so no register a driver may write is a table
  * word the NIF writes: each read it asks for is one load, and it asks for no more than its
- * sources and ERX_DEVICE_LIST_ENTRIES_MAX list entries, each inside the window.
+ * sources and ERX_DEVICE_LIST_ENTRIES_MAX list entries, each inside the window. `resolve` is
+ * the machine at its end; a table the window does not hold ends it refused before it starts.
  */
 static bool
-resolve_layout(erx_device_t *record, const erx_device_msix_t *msix, uint64_t size)
+resolve_layout(erx_device_t *record, const erx_device_msix_t *msix, uint64_t size, erx_device_resolve_t *resolve)
 {
-	erx_device_resolve_t resolve;
 	uint64_t table_end;
 
-	if (!bind_msix(record, msix, size, &table_end))
+	if (!bind_msix(record, msix, size, &table_end)) {
+		*resolve = (erx_device_resolve_t){ .op = ERX_DEVICE_RESOLVE_REFUSED, .size = size,
+		    .refusal = { .rule = ERX_DEVICE_REFUSAL_MSIX, .offset_known = true,
+		    .offset = msix->offset, .msix_entries = msix->entries } };
 		return (false);
+	}
 	erx_device_resolve_begin(record->peripheral, size, msix->offset, table_end - msix->offset, &record->layout,
-	    &resolve);
-	while (resolve.op == ERX_DEVICE_RESOLVE_READ)
-		erx_device_resolve_step(record->peripheral, &record->layout, &resolve,
-		    load_word(record->windows[0], resolve.width, resolve.offset));
-	return (resolve.op == ERX_DEVICE_RESOLVE_DONE);
+	    resolve);
+	while (resolve->op == ERX_DEVICE_RESOLVE_READ)
+		erx_device_resolve_step(record->peripheral, &record->layout, resolve,
+		    load_word(record->windows[0], resolve->width, resolve->offset));
+	return (resolve->op == ERX_DEVICE_RESOLVE_DONE);
 }
 
 int
 erx_device_open(const erx_device_spec_t *spec, const uintptr_t *register_keys, const uintptr_t *field_keys,
-    uint32_t *device)
+    uint32_t *device, erx_device_open_failure_t *failure)
 {
+	/* Where the failure goes for a caller that wants none; opens are serialised, so one is enough. */
+	static erx_device_open_failure_t unwanted;
 	const erx_device_peripheral_t *const peripheral = erx_device_peripheral_find(spec->peripheral, spec->peripheral_length);
 	const uint32_t open = atomic_load_explicit(&devices_open, memory_order_relaxed);
 	/* A stand-in's window is the table's size; any other's the spec's, which spec_fits held to at least that. */
@@ -461,8 +474,13 @@ erx_device_open(const erx_device_spec_t *spec, const uintptr_t *register_keys, c
 	erx_device_t *record;
 	int status;
 
-	if (!spec_fits(spec, peripheral, &pages))
+	if (failure == NULL)
+		failure = &unwanted;
+	failure->step = ERX_DEVICE_OPEN_OTHER;
+	if (!spec_fits(spec, peripheral, &pages)) {
+		failure->step = ERX_DEVICE_OPEN_SPEC;
 		return (ERX_EINVAL);
+	}
 	if (find_open(spec, peripheral, open, device, &status))
 		return (status);
 	if (open == ERX_DEVICE_MAX)
@@ -471,13 +489,15 @@ erx_device_open(const erx_device_spec_t *spec, const uintptr_t *register_keys, c
 		return (ERX_EBUSY);
 	record = &devices[open];
 	record->peripheral = peripheral;
-	status = take_window(spec, &pages, peripheral->window_size, &record->windows[0]);
-	if (status == ERX_OK && !resolve_layout(record, &spec->msix, size))
+	status = take_window(spec, &pages, peripheral->window_size, &record->windows[0], &failure->step);
+	if (status == ERX_OK && !resolve_layout(record, &spec->msix, size, &failure->layout)) {
+		failure->step = ERX_DEVICE_OPEN_LAYOUT;
 		status = ERX_EINVAL;
+	}
 	if (status == ERX_OK)
 		status = take_lines(spec, record->entries);
 	if (status == ERX_OK)
-		status = map_memory(spec, &record->dma);
+		status = map_memory(spec, &record->dma, &failure->step);
 	if (status != ERX_OK)
 		return (status);
 	record->form = spec->form;

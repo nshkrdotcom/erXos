@@ -52,8 +52,9 @@ static ErlNifMutex *device_lock;
 static ErlNifResourceType *binding_type;
 static binding_t *bindings[ERX_DEVICE_LINE_ENTRIES_MAX];
 
+/* A status as the reason a call answers with: its name, or {status, N} for one the NIF does not name. */
 static ERL_NIF_TERM
-status_error(ErlNifEnv *env, int status)
+status_term(ErlNifEnv *env, int status)
 {
 	const char *name;
 
@@ -69,10 +70,15 @@ status_error(ErlNifEnv *env, int status)
 	case ERX_EWOULDBLOCK:	name = "full"; break;
 	case ERX_ECORRUPT:	name = "broken"; break;
 	default:
-		return (enif_make_tuple2(env, enif_make_atom(env, "error"),
-		    enif_make_tuple2(env, enif_make_atom(env, "status"), enif_make_int(env, status))));
+		return (enif_make_tuple2(env, enif_make_atom(env, "status"), enif_make_int(env, status)));
 	}
-	return (enif_make_tuple2(env, enif_make_atom(env, "error"), enif_make_atom(env, name)));
+	return (enif_make_atom(env, name));
+}
+
+static ERL_NIF_TERM
+status_error(ErlNifEnv *env, int status)
+{
+	return (enif_make_tuple2(env, enif_make_atom(env, "error"), status_term(env, status)));
 }
 
 /* A tuple of `arity` whose first element is the atom `tag`, and its elements. */
@@ -230,12 +236,117 @@ decode_spec(ErlNifEnv *env, ERL_NIF_TERM term, char *peripheral, erx_device_spec
 	return (decode_memory(env, term, spec) && decode_msix(env, term, spec));
 }
 
+/* A place of an overlap: {fixed, First, End}, {Cluster, Instance, First, End} or {msix_table, First, End}. */
+static ERL_NIF_TERM
+place_term(ErlNifEnv *env, const erx_device_peripheral_t *peripheral, const erx_device_place_t *place)
+{
+	const ERL_NIF_TERM first = enif_make_uint64(env, place->first), end = enif_make_uint64(env, place->end);
+
+	switch (place->kind) {
+	case ERX_DEVICE_PLACE_CLUSTER:
+		return (enif_make_tuple4(env, enif_make_atom(env, peripheral->bases[place->base].name),
+		    enif_make_uint(env, place->instance), first, end));
+	case ERX_DEVICE_PLACE_KEPT:
+		return (enif_make_tuple3(env, enif_make_atom(env, "msix_table"), first, end));
+	case ERX_DEVICE_PLACE_FIXED:
+		break;
+	}
+	return (enif_make_tuple3(env, enif_make_atom(env, "fixed"), first, end));
+}
+
+/*
+ * A refused layout's `{layout, Why, Read, Entries}` (docs/design-usb.md, "Registers at offsets
+ * the controller reports"): the rule and the numbers it compared, the words the resolution read
+ * from its sources by register name, and the list entries it followed, {Offset, Id} in order.
+ * Every number is an offset or a count of the device's own registers.
+ */
+static ERL_NIF_TERM
+layout_term(ErlNifEnv *env, const erx_device_peripheral_t *peripheral, const erx_device_resolve_t *resolve)
+{
+	const erx_device_refusal_t *const why = &resolve->refusal;
+	const ERL_NIF_TERM offset = why->offset_known ? enif_make_uint64(env, why->offset) : enif_make_atom(env, "none");
+	const ERL_NIF_TERM size = enif_make_uint64(env, resolve->size);
+	ERL_NIF_TERM rule = enif_make_atom(env, "none"), read = enif_make_new_map(env), entries = enif_make_list(env, 0);
+
+	switch (why->rule) {
+	case ERX_DEVICE_REFUSAL_NONE:	/* a refused resolution always has a rule */
+		break;
+	case ERX_DEVICE_REFUSAL_PAST_WINDOW: {
+		const ERL_NIF_TERM parts[] = { enif_make_atom(env, "past_window"),
+		    enif_make_atom(env, peripheral->registers[why->reg].name), enif_make_uint(env, why->index), offset,
+		    enif_make_uint64(env, why->bytes), size };
+
+		rule = enif_make_tuple_from_array(env, parts, sizeof(parts) / sizeof(parts[0]));
+		break;
+	}
+	case ERX_DEVICE_REFUSAL_UNALIGNED:
+		rule = enif_make_tuple5(env, enif_make_atom(env, "unaligned"),
+		    enif_make_atom(env, peripheral->registers[why->reg].name), enif_make_uint(env, why->index), offset,
+		    enif_make_uint64(env, why->bytes));
+		break;
+	case ERX_DEVICE_REFUSAL_OVERLAP:
+		rule = enif_make_tuple3(env, enif_make_atom(env, "overlap"), place_term(env, peripheral, &why->place[0]),
+		    place_term(env, peripheral, &why->place[1]));
+		break;
+	case ERX_DEVICE_REFUSAL_ENTRY_PAST_WINDOW:
+		rule = enif_make_tuple3(env, enif_make_atom(env, "entry_past_window"), offset, size);
+		break;
+	case ERX_DEVICE_REFUSAL_LIST_TOO_LONG:
+		rule = enif_make_tuple2(env, enif_make_atom(env, "list_too_long"), enif_make_uint(env, ERX_DEVICE_LIST_ENTRIES_MAX));
+		break;
+	case ERX_DEVICE_REFUSAL_TOO_MANY:
+		rule = enif_make_tuple3(env, enif_make_atom(env, "too_many"), enif_make_atom(env, peripheral->bases[why->base].name),
+		    enif_make_uint(env, peripheral->bases[why->base].instances));
+		break;
+	case ERX_DEVICE_REFUSAL_MSIX:
+		rule = enif_make_tuple4(env, enif_make_atom(env, "msix"), offset,
+		    enif_make_uint(env, why->msix_entries), size);
+		break;
+	}
+	for (uint32_t at = 0; at < resolve->sources; at++)
+		(void)enif_make_map_put(env, read, enif_make_atom(env, peripheral->registers[resolve->source[at].reg].name),
+		    enif_make_uint64(env, resolve->source[at].word), &read);
+	for (uint32_t at = resolve->entries; at > 0; at--)
+		entries = enif_make_list_cell(env, enif_make_tuple2(env, enif_make_uint64(env, resolve->entry_read[at - 1].offset),
+		    enif_make_uint(env, resolve->entry_read[at - 1].id)), entries);
+	return (enif_make_tuple4(env, enif_make_atom(env, "layout"), rule, read, entries));
+}
+
+/*
+ * A failed open's error: {error, {Status, Step}} where more than one step could give the
+ * status (erx_device_open_failure_t), the status alone for any other.
+ */
+static ERL_NIF_TERM
+open_error(ErlNifEnv *env, const erx_device_peripheral_t *peripheral, int status, const erx_device_open_failure_t *failure)
+{
+	ERL_NIF_TERM step;
+
+	switch (failure->step) {
+	case ERX_DEVICE_OPEN_SPEC:
+		step = enif_make_atom(env, "spec");
+		break;
+	case ERX_DEVICE_OPEN_LAYOUT:
+		step = layout_term(env, peripheral, &failure->layout);
+		break;
+	case ERX_DEVICE_OPEN_MAP_WINDOW:
+		step = enif_make_tuple2(env, enif_make_atom(env, "map"), enif_make_atom(env, "window"));
+		break;
+	case ERX_DEVICE_OPEN_MAP_MEMORY:
+		step = enif_make_tuple2(env, enif_make_atom(env, "map"), enif_make_atom(env, "memory"));
+		break;
+	case ERX_DEVICE_OPEN_OTHER:
+		return (status_error(env, status));
+	}
+	return (enif_make_tuple2(env, enif_make_atom(env, "error"), enif_make_tuple2(env, status_term(env, status), step)));
+}
+
 static ERL_NIF_TERM
 open_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
 {
 	uintptr_t register_keys[ERX_DEVICE_REGISTERS_MAX], field_keys[ERX_DEVICE_FIELDS_MAX];
 	char peripheral_name[ATOM_TEXT_MAX];
 	erx_device_spec_t spec = { 0 };
+	erx_device_open_failure_t failure;
 	const erx_device_peripheral_t *peripheral;
 	uint32_t device;
 	int status;
@@ -252,10 +363,10 @@ open_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
 	for (uint32_t index = 0; index < peripheral->field_count; index++)
 		field_keys[index] = (uintptr_t)enif_make_atom(env, peripheral->fields[index].name);
 	enif_mutex_lock(device_lock);
-	status = erx_device_open(&spec, register_keys, field_keys, &device);
+	status = erx_device_open(&spec, register_keys, field_keys, &device, &failure);
 	enif_mutex_unlock(device_lock);
 	if (status != ERX_OK)
-		return (status_error(env, status));
+		return (open_error(env, peripheral, status, &failure));
 	return (enif_make_tuple2(env, enif_make_atom(env, "ok"), enif_make_uint(env, device)));
 }
 

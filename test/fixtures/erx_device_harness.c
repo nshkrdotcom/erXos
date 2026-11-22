@@ -317,33 +317,33 @@ check_slot(void)
 	CHECK(peripheral != NULL && peripheral->window_size == 0x200);
 	bcopy(&version, page + 0xe00 + register_of(peripheral, "version")->offset, sizeof(version));
 	bcopy(&legacy, page + 0xc00 + register_of(peripheral, "version")->offset, sizeof(legacy));
-	CHECK(erx_device_open(&spec, NULL, NULL, &device) == ERX_OK);
+	CHECK(erx_device_open(&spec, NULL, NULL, &device, NULL) == ERX_OK);
 	CHECK(last_physical_base == 0x0a003000 && last_physical_size == ERX_PAGE_SIZE);
 	CHECK(erx_device_read(erx_device_get(device), register_of(peripheral, "version"), plain, &value) && value == 2);
-	CHECK(erx_device_open(&spec, NULL, NULL, &again) == ERX_OK && again == device);
+	CHECK(erx_device_open(&spec, NULL, NULL, &again, NULL) == ERX_OK && again == device);
 
 	const uint32_t made = physical_created, mapped = next_window;
 
 	spec.base = 0x0a003c00;
 	spec.lines[0] = 80;
-	CHECK(erx_device_open(&spec, NULL, NULL, &second) == ERX_OK && second == device + 1);
+	CHECK(erx_device_open(&spec, NULL, NULL, &second, NULL) == ERX_OK && second == device + 1);
 	CHECK(physical_created == made && next_window == mapped);
 	CHECK(erx_device_read(erx_device_get(second), register_of(peripheral, "version"), plain, &value) && value == 1);
 	CHECK(erx_device_read(erx_device_get(device), register_of(peripheral, "version"), plain, &value) && value == 2);
 	spec.base = 0x0a003a00;
 	spec.lines[0] = 79;
-	CHECK(erx_device_open(&spec, NULL, NULL, &again) == ERX_EBUSY);
+	CHECK(erx_device_open(&spec, NULL, NULL, &again, NULL) == ERX_EBUSY);
 	spec.lines[0] = 81;
 	spec.base = 0x0a003d00;
-	CHECK(erx_device_open(&spec, NULL, NULL, &again) == ERX_EBUSY);
+	CHECK(erx_device_open(&spec, NULL, NULL, &again, NULL) == ERX_EBUSY);
 	spec.base = 0x0a002f00;
-	CHECK(erx_device_open(&spec, NULL, NULL, &again) == ERX_EBUSY);
+	CHECK(erx_device_open(&spec, NULL, NULL, &again, NULL) == ERX_EBUSY);
 	spec.base = 0x0a005e02;
-	CHECK(erx_device_open(&spec, NULL, NULL, &again) == ERX_EINVAL);
+	CHECK(erx_device_open(&spec, NULL, NULL, &again, NULL) == ERX_EINVAL);
 	spec.base = 0x0a003e00;
 	spec.size = 0x400;
 	spec.lines[0] = 79;
-	CHECK(erx_device_open(&spec, NULL, NULL, &again) == ERX_EBUSY);
+	CHECK(erx_device_open(&spec, NULL, NULL, &again, NULL) == ERX_EBUSY);
 	CHECK(physical_created == made && next_window == mapped && erx_device_get(second + 1) == NULL);
 	return (second);
 }
@@ -366,22 +366,22 @@ check_shared_line(const char *name)
 
 	const uint32_t made = irq_created;
 
-	CHECK(erx_device_open(&first, NULL, NULL, &a) == ERX_OK);
-	CHECK(erx_device_open(&second, NULL, NULL, &b) == ERX_OK && b == a + 1 && irq_created == made + 1);
+	CHECK(erx_device_open(&first, NULL, NULL, &a, NULL) == ERX_OK);
+	CHECK(erx_device_open(&second, NULL, NULL, &b, NULL) == ERX_OK && b == a + 1 && irq_created == made + 1);
 	CHECK(erx_device_line_irq(erx_device_get(a), 0, &irq_a) && erx_device_line_irq(erx_device_get(b), 0, &irq_b) &&
 	    irq_a == irq_b);
 
 	const uint32_t mapped = physical_created;
 
 	third.lines[0] = 90;
-	CHECK(erx_device_open(&third, NULL, NULL, &c) == ERX_EBUSY);
+	CHECK(erx_device_open(&third, NULL, NULL, &c, NULL) == ERX_EBUSY);
 	third.lines[0] = 33;
 	third.shared[0] = true;
-	CHECK(erx_device_open(&third, NULL, NULL, &c) == ERX_EBUSY);
+	CHECK(erx_device_open(&third, NULL, NULL, &c, NULL) == ERX_EBUSY);
 	third.line_count = 2;
 	third.lines[0] = third.lines[1] = 91;
 	third.shared[1] = true;
-	CHECK(erx_device_open(&third, NULL, NULL, &c) == ERX_EINVAL);
+	CHECK(erx_device_open(&third, NULL, NULL, &c, NULL) == ERX_EINVAL);
 	CHECK(physical_created == mapped && irq_created == made + 1 && erx_device_get(b + 1) == NULL);
 	return (b);
 }
@@ -429,8 +429,8 @@ check_shared_page(void)
 	first.size = second.size = PL011_BLOCK_BYTES;
 	first.lines[0] = 153;
 	second.lines[0] = 154;
-	CHECK(erx_device_open(&first, NULL, NULL, &a) == ERX_OK);
-	CHECK(erx_device_open(&second, NULL, NULL, &b) == ERX_OK && b == a + 1);
+	CHECK(erx_device_open(&first, NULL, NULL, &a, NULL) == ERX_OK);
+	CHECK(erx_device_open(&second, NULL, NULL, &b, NULL) == ERX_OK && b == a + 1);
 	CHECK(physical_created == made + 1 && next_window == mapped + 1 && last_physical_base == 0xfe201000);
 	CHECK(erx_device_write(erx_device_get(a), ibrd, plain, 26) && erx_device_write(erx_device_get(b), ibrd, plain, 3));
 	CHECK(erx_device_read(erx_device_get(a), ibrd, plain, &value) && value == 26);
@@ -460,7 +460,7 @@ check_sd_command(uint32_t uart)
 
 	spec.size = sdhci->window_size;
 	spec.lines[0] = 158;
-	CHECK(erx_device_open(&spec, NULL, NULL, &device) == ERX_OK);
+	CHECK(erx_device_open(&spec, NULL, NULL, &device, NULL) == ERX_OK);
 	const erx_device_t *const record = erx_device_get(device);
 
 	CHECK(cmdtm->owned_by_nif && !erx_device_write(record, cmdtm, plain, read_block));
@@ -493,53 +493,53 @@ check_open(const char *name, uint64_t block_bytes)
 		field_keys[index] = KEY_BASE + index;
 	CHECK(erx_device_get(0) == NULL);
 	spec.peripheral_length = strlen(name) - 1;
-	CHECK(erx_device_open(&spec, NULL, NULL, &device) == ERX_EINVAL);
+	CHECK(erx_device_open(&spec, NULL, NULL, &device, NULL) == ERX_EINVAL);
 	spec = spec_of(name, 0x9000000);
 	spec.size = block_bytes - 1;
-	CHECK(erx_device_open(&spec, NULL, NULL, &device) == ERX_EINVAL);
+	CHECK(erx_device_open(&spec, NULL, NULL, &device, NULL) == ERX_EINVAL);
 	spec = spec_of(name, 0x9000000);
 	spec.line_count = ERX_DEVICE_LINES_MAX + 1;
-	CHECK(erx_device_open(&spec, NULL, NULL, &device) == ERX_EINVAL);
+	CHECK(erx_device_open(&spec, NULL, NULL, &device, NULL) == ERX_EINVAL);
 
 	/* No build but a hosted runtime's has a stand-in. */
 	spec = spec_of(name, 0x9000000);
 	spec.form = ERX_DEVICE_FORM_STAND_IN;
-	CHECK(erx_device_open(&spec, NULL, NULL, &device) == ERX_ENOTSUP);
+	CHECK(erx_device_open(&spec, NULL, NULL, &device, NULL) == ERX_ENOTSUP);
 
 	spec = spec_of(name, 0x9000000);
 	fail_physical = ERX_ENOTSUP;
-	CHECK(erx_device_open(&spec, NULL, NULL, &device) == ERX_ENOTSUP);
+	CHECK(erx_device_open(&spec, NULL, NULL, &device, NULL) == ERX_ENOTSUP);
 	fail_physical = ERX_OK;
 	fail_reserve = ERX_ENOMEM;
-	CHECK(erx_device_open(&spec, NULL, NULL, &device) == ERX_ENOMEM && released == 0);
+	CHECK(erx_device_open(&spec, NULL, NULL, &device, NULL) == ERX_ENOMEM && released == 0);
 	fail_reserve = ERX_OK;
 	/* A refused map gives its reservation back. */
 	fail_map = ERX_ENOMEM;
-	CHECK(erx_device_open(&spec, NULL, NULL, &device) == ERX_ENOMEM && released == 1);
+	CHECK(erx_device_open(&spec, NULL, NULL, &device, NULL) == ERX_ENOMEM && released == 1);
 	fail_map = ERX_OK;
 	fail_irq = ERX_EBUSY;
-	CHECK(erx_device_open(&spec, NULL, NULL, &device) == ERX_EBUSY);
+	CHECK(erx_device_open(&spec, NULL, NULL, &device, NULL) == ERX_EBUSY);
 	fail_irq = ERX_OK;
 	CHECK(erx_device_get(0) == NULL);
 
-	CHECK(erx_device_open(&spec, register_keys, field_keys, &device) == ERX_OK && device == 0);
+	CHECK(erx_device_open(&spec, register_keys, field_keys, &device, NULL) == ERX_OK && device == 0);
 	CHECK(last_physical_size == WINDOW_BYTES);
 	record = erx_device_get(device);
 	CHECK(record != NULL && erx_device_line_irq(record, 0, &irq) && !erx_device_line_irq(record, 1, &irq));
 	const uint32_t made = irq_created;
 
-	CHECK(erx_device_open(&spec, NULL, NULL, &again) == ERX_OK && again == device && irq_created == made);
+	CHECK(erx_device_open(&spec, NULL, NULL, &again, NULL) == ERX_OK && again == device && irq_created == made);
 	CHECK(erx_device_get(1) == NULL && erx_device_get(UINT64_MAX) == NULL);
 
 	/* The same window with anything else is refused, whatever differs. */
 	spec.lines[0] = 34;
-	CHECK(erx_device_open(&spec, NULL, NULL, &again) == ERX_EBUSY);
+	CHECK(erx_device_open(&spec, NULL, NULL, &again, NULL) == ERX_EBUSY);
 	spec = spec_of(name, 0x9000000);
 	spec.line_count = 0;
-	CHECK(erx_device_open(&spec, NULL, NULL, &again) == ERX_EBUSY);
+	CHECK(erx_device_open(&spec, NULL, NULL, &again, NULL) == ERX_EBUSY);
 	spec = spec_of(name, 0x9000000);
 	spec.size = WINDOW_BYTES * 2;
-	CHECK(erx_device_open(&spec, NULL, NULL, &again) == ERX_EBUSY);
+	CHECK(erx_device_open(&spec, NULL, NULL, &again, NULL) == ERX_EBUSY);
 
 	uint32_t next = check_slot() + 1;
 
@@ -555,10 +555,10 @@ check_open(const char *name, uint64_t block_bytes)
 	for (uint32_t base = next; base < ERX_DEVICE_MAX; base++) {
 		spec = spec_of(name, 0x9000000 + UINT64_C(0x1000) * base);
 		spec.lines[0] = 40 + base;
-		CHECK(erx_device_open(&spec, NULL, NULL, &again) == ERX_OK && again == base);
+		CHECK(erx_device_open(&spec, NULL, NULL, &again, NULL) == ERX_OK && again == base);
 	}
 	spec = spec_of(name, 0xa000000);
-	CHECK(erx_device_open(&spec, NULL, NULL, &again) == ERX_ELIMIT);
+	CHECK(erx_device_open(&spec, NULL, NULL, &again, NULL) == ERX_ELIMIT);
 
 	/* A key finds its own entry, and a field only within its own register. */
 	const erx_device_peripheral_t *const peripheral = erx_device_peripheral(record);
@@ -821,23 +821,114 @@ xhci_file(uint8_t *file)
 	put32(file, XHCI_LIST + 0x38, 2u << 8 | 3u);
 }
 
-/* The resolution of a layout over `file`, run as erx_device_open runs it. */
+/* The resolution of a layout over `file`, run as erx_device_open runs it, to its end in `step`. */
+static void
+resolve_run(const erx_device_peripheral_t *xhci, const uint8_t *file, uint64_t size, erx_device_layout_t *layout,
+    erx_device_resolve_t *step)
+{
+	uint32_t reads = 0;
+
+	erx_device_resolve_begin(xhci, size, 0, 0, layout, step);
+	while (step->op == ERX_DEVICE_RESOLVE_READ) {
+		uint64_t word = 0;
+
+		CHECK(step->offset % (step->width / 8u) == 0 && step->offset + step->width / 8u <= size && ++reads <= 80);
+		for (unsigned byte = 0; byte < step->width / 8u; byte++)
+			word |= (uint64_t)file[step->offset + byte] << (8 * byte);
+		erx_device_resolve_step(xhci, layout, step, word);
+	}
+}
+
 static erx_device_resolve_op_t
 resolve(const erx_device_peripheral_t *xhci, const uint8_t *file, uint64_t size, erx_device_layout_t *layout)
 {
-	erx_device_resolve_t step;
-	uint32_t reads = 0;
+	static erx_device_resolve_t step;
 
-	erx_device_resolve_begin(xhci, size, 0, 0, layout, &step);
-	while (step.op == ERX_DEVICE_RESOLVE_READ) {
-		uint64_t word = 0;
-
-		CHECK(step.offset % (step.width / 8u) == 0 && step.offset + step.width / 8u <= size && ++reads <= 80);
-		for (unsigned byte = 0; byte < step.width / 8u; byte++)
-			word |= (uint64_t)file[step.offset + byte] << (8 * byte);
-		erx_device_resolve_step(xhci, layout, &step, word);
-	}
+	resolve_run(xhci, file, size, layout, &step);
 	return (step.op);
+}
+
+/* The word the resolution read from source register `name`, which must have been read. */
+static uint64_t
+source_word(const erx_device_peripheral_t *xhci, const erx_device_resolve_t *step, const char *name)
+{
+	for (uint32_t at = 0; at < step->sources; at++) {
+		if (step->source[at].reg == erx_device_register_named(xhci, name))
+			return (step->source[at].word);
+	}
+	CHECK(false);
+	return (0);
+}
+
+/*
+ * Each refusal says its rule and the numbers it compared, with the words it read: the
+ * doorbells past the window, the operational registers misaligned, the runtime registers over
+ * the operational ones, the list's head past the window, a sixty-fifth entry, a second legacy
+ * entry; and the open's own refusals, its window's map and a short window.
+ */
+static void
+check_xhci_refusal_reasons(const erx_device_peripheral_t *xhci)
+{
+	static uint8_t file[XHCI_BYTES];
+	static erx_device_resolve_t step;
+	erx_device_layout_t layout;
+	const erx_device_refusal_t *const why = &step.refusal;
+
+	xhci_file(file);
+	put32(file, 0x14, XHCI_BYTES - 0x100);
+	resolve_run(xhci, file, XHCI_BYTES, &layout, &step);
+	CHECK(step.op == ERX_DEVICE_RESOLVE_REFUSED && why->rule == ERX_DEVICE_REFUSAL_PAST_WINDOW);
+	CHECK(why->reg == erx_device_register_named(xhci, "db") && why->index == 64 && why->offset_known &&
+	    why->offset == XHCI_BYTES && why->bytes == 4);
+	CHECK(step.sources == 5 && source_word(xhci, &step, "caplength") == 0x40 &&
+	    source_word(xhci, &step, "dboff") == XHCI_BYTES - 0x100 && source_word(xhci, &step, "rtsoff") == 0x600 &&
+	    source_word(xhci, &step, "hcsparams1") == (4u << 24 | 8u) &&
+	    source_word(xhci, &step, "hccparams1") == (XHCI_LIST / 4) << 16);
+	CHECK(step.entries == 4 && step.entry_read[0].offset == XHCI_LIST && step.entry_read[0].id == 1 &&
+	    step.entry_read[1].offset == XHCI_LIST + 0x10 && step.entry_read[1].id == 10 &&
+	    step.entry_read[3].offset == XHCI_LIST + 0x30 && step.entry_read[3].id == 2);
+
+	xhci_file(file);
+	put8(file, 0x00, 0x42);
+	resolve_run(xhci, file, XHCI_BYTES, &layout, &step);
+	CHECK(why->rule == ERX_DEVICE_REFUSAL_UNALIGNED && why->reg == erx_device_register_named(xhci, "usbcmd") &&
+	    why->index == 0 && why->offset == 0x42 && why->bytes == 4);
+
+	xhci_file(file);
+	put32(file, 0x18, 0x40);
+	resolve_run(xhci, file, XHCI_BYTES, &layout, &step);
+	CHECK(why->rule == ERX_DEVICE_REFUSAL_OVERLAP);
+	CHECK(why->place[0].kind == ERX_DEVICE_PLACE_CLUSTER && why->place[0].base == 0 && why->place[0].instance == 0 &&
+	    why->place[0].first == 0x40);
+	CHECK(why->place[1].kind == ERX_DEVICE_PLACE_CLUSTER && why->place[1].base == 1 && why->place[1].instance == 0 &&
+	    why->place[1].first == 0x40 && why->place[1].end > why->place[0].first);
+
+	/* The registers at fixed offsets against a protocol inside them. */
+	xhci_file(file);
+	put32(file, 0x10, (0x1c / 4) << 16);
+	put32(file, 0x1c, entry(2, 0, 3));
+	resolve_run(xhci, file, XHCI_BYTES, &layout, &step);
+	CHECK(why->rule == ERX_DEVICE_REFUSAL_OVERLAP && why->place[0].kind == ERX_DEVICE_PLACE_FIXED &&
+	    why->place[0].first == 0 && why->place[0].end == 0x20 && why->place[1].kind == ERX_DEVICE_PLACE_CLUSTER &&
+	    why->place[1].base == 4 && why->place[1].instance == 0 && why->place[1].first == 0x1c);
+
+	xhci_file(file);
+	put32(file, 0x10, (XHCI_BYTES / 4) << 16);
+	resolve_run(xhci, file, XHCI_BYTES, &layout, &step);
+	CHECK(why->rule == ERX_DEVICE_REFUSAL_ENTRY_PAST_WINDOW && why->offset == XHCI_BYTES && step.entries == 0);
+
+	xhci_file(file);
+	for (uint32_t at = 0; at < ERX_DEVICE_LIST_ENTRIES_MAX + 1; at++)
+		put32(file, XHCI_LIST + 4 * at, entry(10, at < ERX_DEVICE_LIST_ENTRIES_MAX ? 1 : 0, 0));
+	resolve_run(xhci, file, XHCI_BYTES, &layout, &step);
+	CHECK(why->rule == ERX_DEVICE_REFUSAL_LIST_TOO_LONG && step.entries == ERX_DEVICE_LIST_ENTRIES_MAX &&
+	    step.entry_read[ERX_DEVICE_LIST_ENTRIES_MAX - 1].offset == XHCI_LIST + 4 * (ERX_DEVICE_LIST_ENTRIES_MAX - 1));
+
+	xhci_file(file);
+	put32(file, XHCI_LIST + 0x10, entry(1, 4, 0));
+	resolve_run(xhci, file, XHCI_BYTES, &layout, &step);
+	CHECK(why->rule == ERX_DEVICE_REFUSAL_TOO_MANY && why->base == 3 && step.entries == 2 &&
+	    step.entry_read[1].offset == XHCI_LIST + 0x10 && step.entry_read[1].id == 1);
 }
 
 static uint64_t
@@ -983,7 +1074,7 @@ check_xhci_record(const erx_device_peripheral_t *xhci)
 	put32(file, 0x40, 1);			/* USBCMD.RS */
 	put32(file, 0x620, 3);			/* IMAN: IP and IE */
 	put32(file, 0x40 + 0x400 + 3 * 0x10, 1u << 9 | 1u << 17);	/* port 4: PP and CSC */
-	CHECK(erx_device_open(&spec, NULL, NULL, &device) == ERX_OK && (record = erx_device_get(device)) != NULL);
+	CHECK(erx_device_open(&spec, NULL, NULL, &device, NULL) == ERX_OK && (record = erx_device_get(device)) != NULL);
 	CHECK(erx_device_elements(record, portsc) == 4 && erx_device_elements(record, revision) == 2);
 	CHECK(erx_device_elements(record, bios) == 1 && erx_device_elements(record, usbcmd) == 1);
 	CHECK(erx_device_read(record, revision, second, &word) && word == entry(2, 0, 3));
@@ -1009,14 +1100,43 @@ check_xhci_record(const erx_device_peripheral_t *xhci)
 
 	xhci_file(other);
 	put32(other, 0x10, ((XHCI_LIST + 0x20) / 4) << 16);
-	CHECK(erx_device_open(&bare, NULL, NULL, &device) == ERX_OK && (record = erx_device_get(device)) != NULL);
+	CHECK(erx_device_open(&bare, NULL, NULL, &device, NULL) == ERX_OK && (record = erx_device_get(device)) != NULL);
 	CHECK(erx_device_elements(record, bios) == 0 && !erx_device_read(record, bios, plain, &word));
 	CHECK(!erx_device_write(record, os, plain, 1) && other[XHCI_LIST + 3] == 0);
 
 	/* A record whose doorbells lie past its window is refused. */
 	xhci_file(window_memory[next_window]);
 	put32(window_memory[next_window], 0x14, XHCI_BYTES - 0x100);
-	CHECK(erx_device_open(&far, NULL, NULL, &device) == ERX_EINVAL && erx_device_get(2) == NULL);
+	CHECK(erx_device_open(&far, NULL, NULL, &device, NULL) == ERX_EINVAL && erx_device_get(2) == NULL);
+}
+
+/*
+ * An open's failure names its step: the window's map, the layout's refusal with the machine
+ * at its end, and a window shorter than the peripheral's; a caller that passes no failure
+ * gets the status alone.
+ */
+static void
+check_xhci_open_failures(void)
+{
+	erx_device_spec_t spec = spec_of("xhci", 0x9008000), short_spec = spec_of("xhci", 0x9009000);
+	erx_device_open_failure_t failure;
+	uint32_t device;
+
+	spec.lines[0] = 36;
+	fail_map = ERX_ENOMEM;
+	CHECK(erx_device_open(&spec, NULL, NULL, &device, &failure) == ERX_ENOMEM &&
+	    failure.step == ERX_DEVICE_OPEN_MAP_WINDOW);
+	fail_map = ERX_OK;
+	xhci_file(window_memory[next_window]);
+	put32(window_memory[next_window], 0x14, XHCI_BYTES - 0x100);
+	CHECK(erx_device_open(&spec, NULL, NULL, &device, &failure) == ERX_EINVAL && failure.step == ERX_DEVICE_OPEN_LAYOUT &&
+	    failure.layout.refusal.rule == ERX_DEVICE_REFUSAL_PAST_WINDOW && failure.layout.refusal.offset == XHCI_BYTES &&
+	    failure.layout.sources == 5 && failure.layout.entries == 4);
+	CHECK(erx_device_open(&spec, NULL, NULL, &device, NULL) == ERX_EINVAL);
+	short_spec.size = 0x10;
+	short_spec.lines[0] = 37;
+	CHECK(erx_device_open(&short_spec, NULL, NULL, &device, &failure) == ERX_EINVAL &&
+	    failure.step == ERX_DEVICE_OPEN_SPEC);
 }
 
 static void
@@ -1027,7 +1147,9 @@ check_xhci(void)
 	CHECK(xhci != NULL && xhci->listed);
 	check_xhci_layout(xhci);
 	check_xhci_refusals(xhci);
+	check_xhci_refusal_reasons(xhci);
 	check_xhci_record(xhci);
+	check_xhci_open_failures();
 }
 #endif
 
