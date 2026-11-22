@@ -248,11 +248,13 @@ module ManifestContextFixture
 
   # source with the unit records of the LINE_UARTS, each held by the system domain unless
   # holders, by unit name, says otherwise, and of LINE_SERIAL when serial says so, the
-  # system domain's line service and grants.
+  # system domain's line service, which takes the place of source's own if it has one (the
+  # development manifest declares it, sessionless drops it), and grants.
   def with_line(source, *grants, holders: {}, serial: false)
     keys = LINE_UARTS.keys + (serial ? [LINE_SERIAL.first] : [])
     units = keys.map { |key| "unit #{key}\n  placement \"#{key}\"\n  holder #{holders.fetch(key, 'system')}\n" }
-    source + units.join + "service line\n  server system\n  interface line\n" + grants.join
+    service = "service line\n  server system\n  interface line\n"
+    source.sub(service, '') + units.join + service + grants.join
   end
 
   # A facet row granting grantee the line service on the device at device, its

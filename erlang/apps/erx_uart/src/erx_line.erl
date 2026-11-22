@@ -51,8 +51,12 @@ driver that does not start answers the reset `eio` and leaves the line broken
 with no driver.
 
 **The tree's grants** (erx_fs_grants) the line starts and is linked to,
-so the end of either ends the other and its supervisor restarts both. No
-service serves them: docs/todo-bluetooth.md, "the line's service side".
+so the end of either ends the other and its supervisor restarts both. The
+line names them as the system domain's `line` service (erx_facet:serve/2),
+so the domain service starts a grant of the tree in each domain the
+manifest grants `line` when that domain reports ready. A restart of the
+line ends those grants with the old set, and the domain service makes no
+new one until the grantee restarts.
 
 **The buffer** holds at most `line_rx_max` bytes. Input that would pass it
 marks the line broken: the buffer is dropped and every read answers `eio`
@@ -107,6 +111,7 @@ start_link(Start) when is_function(Start, 1) ->
 init(Start) ->
     process_flag(trap_exit, true),
     {ok, Grants} = erx_fs_grants:start_link(erx_line_fs, self()),
+    ok = erx_facet:serve(line, Grants),
     {ok, started(Start(self()), #line{start = Start, grants = Grants, driver = none})}.
 
 -doc false.

@@ -725,9 +725,11 @@ device has a power line.
 On QEMU `virt` the line's driver is `erx_virtio_console`, the driver
 of port 0 of a virtio console (virtio 1.2, section 5.3), over a
 virtio-mmio transport, of a unit the system domain holds, whose device
-row, of role `serial`, the line grant's `device` names. Only the
-manifest of QEMU `virt`'s Bluetooth suite places the unit, never the
-development manifest, so no development boot meets an empty transport.
+row, of role `serial`, the line grant's `device` names. The
+development manifest declares the system domain's `line` service, which
+the line's keeper names, but grants it to no domain; only the manifest
+of QEMU `virt`'s Bluetooth suite places the unit, grants `line` and runs
+the Bluetooth domain, so no development boot meets an empty transport.
 Its record is a `given` one, with the window, the line and the DMA
 memory the root makes for it, and the peripheral of the `serial` kind
 row, the transport alone, since the driver reads no configuration field

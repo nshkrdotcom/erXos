@@ -75,7 +75,12 @@ class ErxLineTest < Minitest::Test
              module_path: LINE,
              anchor: "event({'EXIT', Driver, _}, #line{driver = Driver} = L) when Driver =/= none ->\n    no_driver(L);\n",
              replacement: '',
-             catching_case: 'a_driver_s_end_leaves_the_line_broken_until_a_reset_test')
+             catching_case: 'a_driver_s_end_leaves_the_line_broken_until_a_reset_test'),
+    Seed.new(fault: 'a keeper that serves no service, so no domain is granted its tree',
+             module_path: LINE,
+             anchor: "    ok = erx_facet:serve(line, Grants),\n",
+             replacement: '',
+             catching_case: 'the_line_serves_its_trees_grants_test')
   ].freeze
 
   def test_the_cases_pass

@@ -385,6 +385,15 @@ facet display_root
 service log
   server system
   interface log
+# line: the controller's line (docs/design-bluetooth.md, "The controller's line"), served
+# by the system domain, where the line's keeper names its tree's grants as its server
+# (erx_line, erx_facet:serve/2). The manifest check requires the system domain's service
+# of the line interface to be named line (design-system.md property 8). No facet row
+# here grants it, so no development boot runs a line; a manifest that grants it also
+# places the line's unit and runs the Bluetooth domain.
+service line
+  server system
+  interface line
 # code_objects: a session's code objects (docs/design-system.md, "Creating a domain", "The
 # code_objects facet"), served by the system domain, where the domain service registers
 # as its server (erx_facet:serve/2). No facet row grants it: the domain service grants it

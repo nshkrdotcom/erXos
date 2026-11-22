@@ -57,7 +57,8 @@ starts(Answers) ->
 
 stop(#{line := Line, grant := Grant}) ->
     exit(Grant, kill),
-    exit(Line, kill).
+    exit(Line, kill),
+    persistent_term:erase({erx, serves}).
 
 %% The model driver: what the line sends it goes to the test, and the test makes it
 %% deliver input or answer a write. It tells the test once it has handed input to the
@@ -359,6 +360,16 @@ the_line_starts_its_trees_grants_test() ->
     Driver ! {input, <<"evt">>},
     ?assertEqual({ok, <<"evt">>}, reply_within(Read, 1000)),
     stop(Fixture).
+
+%% The line names its tree's grants, the erx_fs_grants the domain service starts a grant
+%% of for each domain the manifest grants line, as the system domain's line service.
+the_line_serves_its_trees_grants_test() ->
+    Fixture = line(),
+    try
+        ?assertEqual(#{line => grants(Fixture)}, persistent_term:get({erx, serves}))
+    after
+        stop(Fixture)
+    end.
 
 %% The keeper's end ends its grants, and a read it held answers eio; the grants' end
 %% ends the keeper, so its group restarts both together.
