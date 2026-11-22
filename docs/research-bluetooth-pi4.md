@@ -11,11 +11,11 @@ anything between power-on and `HCI_Reset`, what the firmware answers a
 set-GPIO-state request with, and what the controller's ROM firmware is
 and can do before the patch.
 
-**Status:** B-P1 and B-P2 are recorded from board run 1 (2026-11-22).
-B-P3 and B-P4 are pending: in run 1 the controller answered every
-`HCI_Reset` but no other command (below), and run 2's image tries
-how commands must be sent before B-P3 reads. A blank (`____`) is a
-reading still to come.
+**Status:** B-P1 and B-P2 are recorded from board runs 1 and 2
+(2026-11-22), which agree. B-P3 and B-P4 are pending: in runs 1 and 2
+the controller answered every `HCI_Reset` and no Read Local Version
+(below); run 3's image tries which commands it answers at all. A blank
+(`____`) is a reading still to come.
 
 ## The probe image
 
@@ -68,11 +68,12 @@ Run 1:
 * **Date:** 2026-11-22
 * **Board:** Raspberry Pi 4 Model B, ____ GB, revision ____
 * **Firmware:** `start4.elf` ____ (the card's), board tree ____
-* **Image:** commit `b0fbfb889` (branch `bt-probes`), `build/production-image/raspi4b/boot`,
+* **Image:** run 1 commit `b0fbfb889`, run 2 commit `89c9a6b4b` (branch
+  `bt-probes`), `build/production-image/raspi4b/boot`,
   built on the Apple Silicon macOS development host with Homebrew LLVM
 * **Console:** the mini UART on GPIO 14 and 15, 115200 baud; the probe's
   lines are kept in the separate history repository at
-  `pi4/2026-11-22-bt-probes/bt-probe-run1.txt`
+  `pi4/2026-11-22-bt-probes/bt-probe-run1.txt` and `bt-probe-run2.txt`
 
 The run takes about 5 s before the root goes on, plus up to 60 s for
 B-P4's connection window. B-P4 needs a phone or another host scanning for
@@ -208,6 +209,29 @@ command, then with RTS held asserted by software instead of following
 the receive FIFO (lines `B-P3 try N ...`, each with UARTCR as `cr`),
 and reads B-P3 and B-P4 by the first that answers
 (`B-P3 first answering try N`).
+
+**Run 2:** no try answered. Each try's `HCI_Reset` was answered in 1 ms
+(`04 0e 04 01 03 0c 00`); each Read Local Version (`sent 4/4`) got no
+byte in 500 ms, FR `0x91` throughout:
+
+| Try | Before Read Local Version | UARTCR | Answered |
+| --- | --- | --- | --- |
+| 0-5 | `HCI_Reset`, then 0, 50, 200, 500, 1000, 2000 ms | `0xc301` (RTSEn, CTSEn) | no |
+| 6 | no reset | `0xc301` | no |
+| 7 | `HCI_Reset`, UART0 reprogrammed before the command | `0xc301` | no |
+| 8 | `HCI_Reset`, RTS held asserted by software | `0x8b01` (RTS, CTSEn) | no |
+
+So neither the delay after a reset, nor our RTS mode, nor UART0's state
+between commands decides it: the controller answers `HCI_Reset` and not
+Read Local Version. Run 3's image (commit `9a3e427eb`) sends, each after a
+fresh `HCI_Reset`, Read Local Name (`0x0c14`, what NetBSD's
+`init_bcm43xx.c:65` sends first), Read Local Version, Read BD_ADDR,
+Read Buffer Size, and last the vendor download minidriver (`0xfc2e`);
+it logs the bytes written to UARTDR (`tx`), every byte of the 2 s
+after each command, and whether an `HCI_Reset` sent right after is
+still answered (lines `B-P3 listen NAME ...` and
+`B-P3 listen reset-after ...`). A minidriver whose following reset goes
+unanswered gets a power cycle before the end reset.
 
 | Reading | Line | Value |
 | --- | --- | --- |
