@@ -11,10 +11,11 @@ anything between power-on and `HCI_Reset`, what the firmware answers a
 set-GPIO-state request with, and what the controller's ROM firmware is
 and can do before the patch.
 
-**Status:** B-P1 and B-P2 are recorded from board runs 1 and 2
-(2026-11-22), which agree. B-P3 and B-P4 are pending: in runs 1 and 2
-the controller answered every `HCI_Reset` and no Read Local Version
-(below); run 3's image tries which commands it answers at all. A blank
+**Status:** B-P1 and B-P2 are recorded from board runs 1 to 3
+(2026-11-22), which agree. B-P3 and B-P4 are pending: in runs 1 to 3
+the controller answered every `HCI_Reset` and the vendor download
+minidriver, and no standard command (below); run 4's image tests whether
+the level of its CTS at power-up puts it in a download mode. A blank
 (`____`) is a reading still to come.
 
 ## The probe image
@@ -68,12 +69,14 @@ Run 1:
 * **Date:** 2026-11-22
 * **Board:** Raspberry Pi 4 Model B, ____ GB, revision ____
 * **Firmware:** `start4.elf` ____ (the card's), board tree ____
-* **Image:** run 1 commit `b0fbfb889`, run 2 commit `89c9a6b4b` (branch
+* **Image:** run 1 commit `b0fbfb889`, run 2 commit `89c9a6b4b`, run 3
+  commit `9a3e427eb` (branch
   `bt-probes`), `build/production-image/raspi4b/boot`,
   built on the Apple Silicon macOS development host with Homebrew LLVM
 * **Console:** the mini UART on GPIO 14 and 15, 115200 baud; the probe's
   lines are kept in the separate history repository at
-  `pi4/2026-11-22-bt-probes/bt-probe-run1.txt` and `bt-probe-run2.txt`
+  `pi4/2026-11-22-bt-probes/bt-probe-run1.txt`, `bt-probe-run2.txt` and
+  `bt-probe-run3.txt`
 
 The run takes about 5 s before the root goes on, plus up to 60 s for
 B-P4's connection window. B-P4 needs a phone or another host scanning for
@@ -232,6 +235,83 @@ after each command, and whether an `HCI_Reset` sent right after is
 still answered (lines `B-P3 listen NAME ...` and
 `B-P3 listen reset-after ...`). A minidriver whose following reset goes
 unanswered gets a power cycle before the end reset.
+
+**Run 3:** the controller answered every `HCI_Reset`
+(`04 0e 04 01 03 0c 00`, 1 to 2 ms) and the vendor download minidriver,
+and sent no byte in the 2 s after any standard command. Every reset
+after a command was answered, so it was neither wedged nor deaf: it took
+each command off the line and did not answer it. No receive error was
+flagged and FR read `0x91` (CTS asserted, both FIFOs empty) throughout:
+
+| Command | tx | rx in 2 s | Reset after |
+| --- | --- | --- | --- |
+| Read Local Name | `01 14 0c 00` | none | answered, 1 ms |
+| Read Local Version | `01 01 10 00` | none | answered, 2 ms |
+| Read BD_ADDR | `01 09 10 00` | none | answered, 1 ms |
+| Read Buffer Size | `01 05 10 00` | none | answered, 2 ms |
+| Download minidriver (`0xfc2e`) | `01 2e fc 00` | `04 0e 04 01 2e fc 00` | answered, 1 ms |
+
+The power phases and the end matched runs 1 and 2: the reset with the
+pin at 1 was answered, the one with the pin at 0 was not in 500 ms, with
+FR `0x18` (CTS deasserted, the reset's bytes held in the transmit FIFO,
+so CTS flow control works both ways), the end reset was answered in
+1 ms and the pin went back to 1.
+
+What the two answered commands share: Infineon's "AIROC HCI firmware
+download" user guide (002-32056 Rev. *B, 3.1 to 3.3; fetched 2026-11-22
+from `infineon.github.io/btsdk-docs/BT-SDK/AIROC-HCI-Firmware-Download.pdf`,
+SHA-256
+`a9c593bdd184c673eeb0df2b76a70cd86cfed6d7f1e9fbbd001f4f38254b8e60`)
+says its controllers' boot code reads the chip's CTS, the host's RTS,
+when reset is released. LOW there gives the autobaud state, download
+mode, in which the `HCI_Reset` handshake is answered and "read, write,
+and launch commands" are accepted; HIGH gives the stored configuration
+and "a mode ready to accept all HCI commands", or autobaud again when no
+configuration is stored. Zephyr v4.2.0's `AIROC_AUTOBAUD_MODE` help
+(`drivers/bluetooth/hci/Kconfig.infineon:199-212`, SHA-256
+`faaf674fd582dc4925cf873200b1f01bb6e24bac6c18511ac67e16d1e1310f90`)
+adds that the baud rate command is not taken in download mode before the
+minidriver. The guide is written for Infineon's controllers with flash,
+not the BCM43455, so whether the 43455's ROM boots that way is
+unverified. Every power-up of runs 1 to 3 had UART0 open with RTSEn and
+an empty receive FIFO, so RTS0 was LOW, asserted, when the pin went on;
+at the firmware's own power-up GPIO 31 was an input (B-P1), at a level
+not recorded. Nothing read says the ROM needs the patch file before it
+answers standard commands: NetBSD's `init_bcm43xx.c:105-113` (trunk
+`5cebe14c1559`) sends Read Local Name right after `HCI_Reset` and
+before any patch, and names the patch file from its answer.
+
+Run 4's image (commit `827dd2fc5`) logs CTS0's and RTS0's levels from
+GPLEV0 (`cts0-level`, `rts0-level`: 1 HIGH, deasserted; 0 LOW,
+asserted) at the start and on every line, and powers the controller up
+twice, 300 ms off and 500 ms on with RTS0 held as the table says and
+every byte of the 500 ms logged (`during`), nothing sent, then RTS back
+to following the receive FIFO and 100 ms more logged (`released`)
+(`try A power-up ...`, `try B power-up ...`). Each try sends one command,
+logs the bytes written and every byte of the next 2 s
+(`try NAME ...`), and is followed at once by an `HCI_Reset`
+(`try reset-after ...`), so every try after a power-up's first goes
+right after a fresh reset:
+
+| Try | Power-up, RTS0 | Command | What it decides |
+| --- | --- | --- | --- |
+| A1 | LOW (as runs 1 to 3) | Read Local Version, first, no reset before | whether a fresh ROM answers before any reset |
+| A2 | LOW | Write Scan Enable, scans off (`01 1a 0c 01 00`) | whether an answer as short as the reset's, a status alone, gets out: length or mode |
+| A3 | LOW | Read Local Supported Commands (`01 02 10 00`) | another standard command, the list the ROM would claim |
+| A4 | LOW | Update UART Baud Rate to 115200, the rate in use (`01 18 fc 06 00 00 00 c2 01 00`) | a vendor command download mode does not take; answered means a mode that takes vendor configuration |
+| A5 | LOW | Launch RAM to address 0 (`01 4e fc 04 00 00 00 00`), the guide's reboot, then Read Local Version, then after a reset Read Local Version | whether download mode takes the launch, and whether a reboot with CTS still asserted stays in it |
+| A6 | LOW, raised HIGH once the launch has left, held 500 ms | the same launch, then the same two Read Local Versions | whether a software reboot with CTS deasserted reaches the normal mode, with no power cycle |
+| B1 | HIGH through the power-up | Read Local Version, first | whether the ROM boots ready for every command with CTS deasserted |
+| B2 | HIGH | Read Local Version after a reset | the same after the reset handshake, which decides B-P3 and B-P4 |
+| B3 | HIGH | Write Scan Enable | a status-only answer in that mode |
+| B4 | HIGH | Read BD_ADDR | the ROM's address |
+
+The CTS hypothesis holds if A1 to A3 go unanswered and B1 or B2 is
+answered, with `rts0-level 1` in B's `during` fields. If B2 is
+answered, the image goes on to the B-P3 reads and B-P4's advertising in
+that mode. If nothing in B is answered either, the level of CTS is not
+what selects the mode on this controller, and the next question is
+whether its ROM serves standard commands at all before the patch.
 
 | Reading | Line | Value |
 | --- | --- | --- |
