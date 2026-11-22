@@ -11,14 +11,16 @@ anything between power-on and `HCI_Reset`, what the firmware answers a
 set-GPIO-state request with, and what the controller's ROM firmware is
 and can do before the patch.
 
-**Status:** the procedure and the image are ready; the board's readings
-below are not yet recorded. Each blank (`____`) is filled from one board
-run, and the record then states that run's date and setup.
+**Status:** B-P1 and B-P2 are recorded from board run 1 (2026-11-22).
+B-P3 and B-P4 are pending: in run 1 the controller answered every
+`HCI_Reset` but no other command (below), and run 2's image tries
+how commands must be sent before B-P3 reads. A blank (`____`) is a
+reading still to come.
 
 ## The probe image
 
 The image is the development card of `make pack PLATFORM=raspi4b`, built
-from branch `bt-probes` at commit `____` (commits marked `DIAGNOSTIC (do
+from branch `bt-probes` (run 1: commit `b0fbfb889`; commits marked `DIAGNOSTIC (do
 not land)`), whose root task runs `liberx/backend/fiasco/bt_probe.c` once
 at its start: after the firmware's mailbox is mapped, before the board
 watchdog is armed and before any runtime starts, so nothing else drives
@@ -61,12 +63,16 @@ every HCI value from `abi/formats/bluetooth.txt`.
 
 ## The run
 
-* **Date:** ____
+Run 1:
+
+* **Date:** 2026-11-22
 * **Board:** Raspberry Pi 4 Model B, ____ GB, revision ____
 * **Firmware:** `start4.elf` ____ (the card's), board tree ____
-* **Image:** commit ____, `build/production-image/raspi4b/boot`
-* **Console:** the mini UART on GPIO 14 and 15, 115200 baud, logged to
-  ____
+* **Image:** commit `b0fbfb889` (branch `bt-probes`), `build/production-image/raspi4b/boot`,
+  built on the Apple Silicon macOS development host with Homebrew LLVM
+* **Console:** the mini UART on GPIO 14 and 15, 115200 baud; the probe's
+  lines are kept in the separate history repository at
+  `pi4/2026-11-22-bt-probes/bt-probe-run1.txt`
 
 The run takes about 5 s before the root goes on, plus up to 60 s for
 B-P4's connection window. B-P4 needs a phone or another host scanning for
@@ -82,13 +88,17 @@ input, 1 output, 4/5/6 ALT0-2, 3 ALT4, 2 ALT5. A line
 
 | Reading | Value |
 | --- | --- |
-| GPFSEL3 at start | ____ |
-| GPIO 30 / 31 / 32 / 33 function | ____ / ____ / ____ / ____ |
-| Set by the probe (readback) | ____ |
+| GPFSEL3 at start | `0x00000000` |
+| GPIO 30 / 31 / 32 / 33 function | 0 / 0 / 0 / 0 (input) |
+| Set by the probe (readback) | `0x00000fff` (`0x00000fff`) |
 
 **Feeds:** all four 7: the firmware leaves UART0 on its pins and
 `config.txt` needs nothing. Otherwise `config.txt` gains a `gpio=30-33=a3`
 line (with the pulls the board needs), as it has for UART3's pins.
+
+**Run 1:** the firmware leaves GPIO 30 to 33 as inputs, so `config.txt`
+needs `gpio=` lines for them (or the bring-up sets ALT3 itself). Set to
+ALT3, UART0 carried `HCI_Reset` and its answer at once.
 
 ## B-P2: the controller's power
 
@@ -96,9 +106,9 @@ line (with the pulls the board needs), as it has for UART3's pins.
 
 | Reading | Line | Value |
 | --- | --- | --- |
-| CTS as UART0 opens (1: the controller asserts it) | `B-P2 uart0 open ... cts` | ____ |
-| Bytes in the first 100 ms | `B-P2 idle rx` | ____ |
-| `HCI_Reset` answered, status, time | `B-P2 reset-at-start` | ____ |
+| CTS as UART0 opens (1: the controller asserts it) | `B-P2 uart0 open ... cts` | 0 at the open (FR `0x90`), 1 from the next read on (FR `0x91`) |
+| Bytes in the first 100 ms | `B-P2 idle rx` | 0 |
+| `HCI_Reset` answered, status, time | `B-P2 reset-at-start` | yes, 0x00, 5 ms (`04 0e 04 01 03 0c 00`) |
 
 **Feeds:** an answer means the firmware leaves the controller powered,
 and the bring-up's first power cycle turns off a running controller; no
@@ -108,13 +118,13 @@ answer means the power line starts off.
 
 | Reading | Line | Value |
 | --- | --- | --- |
-| Child node and property (hex, decoded) | `B-P2 dt child ... property ...` | ____ |
-| Its cells: phandle, pin, flags | `... cells` | ____ |
-| Points at the firmware expander | `... expander` | ____ |
-| The expander's `gpio-line-names` (decoded) | `B-P2 dt expander gpio-line-names` | ____ |
-| The name at pin P | | ____ |
-| `#gpio-cells` | | ____ |
-| Candidates, pin, flags | `B-P2 dt candidates` | ____ |
+| Child node and property (hex, decoded) | `B-P2 dt child ... property ...` | `bluetooth`, `shutdown-gpios` |
+| Its cells: phandle, pin, flags | `... cells` | `0x0000000a`, 0, `0x00000000` |
+| Points at the firmware expander | `... expander` | yes |
+| The expander's `gpio-line-names` (decoded) | `B-P2 dt expander gpio-line-names` | `BT_ON`, `WL_ON`, `PWR_LED_OFF`, `GLOBAL_RESET`, `VDD_SD_IO_SEL`, `CAM_GPIO`, `SD_PWR_ON`, and an empty eighth |
+| The name at pin P | | `BT_ON` |
+| `#gpio-cells` | | 2 |
+| Candidates, pin, flags | `B-P2 dt candidates` | 1, 0, `0x00000000` |
 
 **Feeds:** the pin `128 + P` of UART0's two notifications in the
 platform record, and the polarity the flags cell states (that bit 0 set means
@@ -135,18 +145,18 @@ state word of a get.
 
 | Reading | Value |
 | --- | --- |
-| First get (before any set): I, V0, V1 | ____ |
-| Set 1: I, V0; get after: V1 | ____ |
-| Bytes in the 500 ms after set 1 | ____ |
-| `HCI_Reset` answered after set 1 | ____ |
-| Set 0: I, V0; get after: V1 | ____ |
-| Bytes in the 500 ms after set 0 | ____ |
-| `HCI_Reset` answered after set 0 | ____ |
-| On-state (`B-P2 on-state`) | ____ |
-| The get reads as the set value (`get-reads-as-set`) | ____ |
-| Cycle, 300 ms off then on: bytes before `HCI_Reset` | ____ |
-| Cycle: `HCI_Reset` answered, time | ____ |
-| Round trip of one mailbox request (ms) | ____ |
+| First get (before any set): I, V0, V1 | `0x80000008`, 0, 1 |
+| Set 1: I, V0; get after: V1 | `0x00000000`, 0 (status -12: the answer check refuses the word); 1 |
+| Bytes in the 500 ms after set 1 | 0 |
+| `HCI_Reset` answered after set 1 | yes, 6 ms |
+| Set 0: I, V0; get after: V1 | `0x00000000`, 0 (status -12); 0 |
+| Bytes in the 500 ms after set 0 | 0 |
+| `HCI_Reset` answered after set 0 | no; FR `0x18`: the command stays in the transmit FIFO with CTS deasserted |
+| On-state (`B-P2 on-state`) | 1 |
+| The get reads as the set value (`get-reads-as-set`) | yes |
+| Cycle, 300 ms off then on: bytes before `HCI_Reset` | 0 |
+| Cycle: `HCI_Reset` answered, time | yes, 1 ms |
+| Round trip of one mailbox request (ms) | 1 to 2 |
 
 **Feeds:**
 
@@ -161,9 +171,42 @@ state word of a get.
   FreeBSD's account that the firmware leaves it unset, bit 31 set means
   the firmware answers it normally;
 * the get after each set shows whether the get's state word reads the
-  level as set or inverted (FreeBSD's `rpi_fw_gpio_pin_get` inverts it).
+level as set or inverted (FreeBSD's `rpi_fw_gpio_pin_get` inverts it).
+
+**Run 1:**
+
+* the firmware leaves the controller powered: the first `HCI_Reset`
+  was answered before any power request;
+* the enable line is expander pin 0, named `BT_ON`, so the request's pin
+  word is 128; it is active high (on is state 1), and the device tree's
+  flags cell is 0;
+* 300 ms off and 500 ms on bring the controller back at 115200: the
+  cycle's `HCI_Reset` was answered in 1 ms;
+* the controller sends nothing between power-on and `HCI_Reset`;
+* the set tag's response word is 0, as FreeBSD records, so the tag's
+  declaration must take 0 as performed, as the design has it; the
+  current answer check refuses it (status -12). The get tag answers
+  normally (`0x80000008`, 8 bytes), its pin word 0;
+* the get's state word reads as the level set, not inverted as
+  FreeBSD's `rpi_fw_gpio_pin_get` reports it.
 
 ## B-P3: the controller before the patch
+
+**Pending.** In run 1 every `HCI_Reset` was answered within 1 to 6 ms,
+each sent right after the probe reprogrammed UART0. Read Local Version,
+Read BD_ADDR and Set Event Mask, each sent about 2 ms after a reset's
+Command Complete without reprogramming, got no byte in 500 ms; FR stayed
+`0x91` (CTS asserted, both FIFOs empty), so the bytes left. The framing
+matches NetBSD's `uart_send_cmd` (`btattach.c:373-375`, trunk
+`5cebe14c1559`, SHA-256
+`58c3d467335cfb0e2791ef185ca232326f9289e570df887c1387c77df3e92b74`):
+indicator `0x01`, opcode little-endian, length. Run 2's image tries
+Read Local Version after `HCI_Reset` at 0, 50, 200, 500, 1000 and
+2000 ms, then with no reset, then with UART0 reprogrammed before each
+command, then with RTS held asserted by software instead of following
+the receive FIFO (lines `B-P3 try N ...`, each with UARTCR as `cr`),
+and reads B-P3 and B-P4 by the first that answers
+(`B-P3 first answering try N`).
 
 | Reading | Line | Value |
 | --- | --- | --- |
@@ -186,6 +229,8 @@ compared against; an address of the ROM's default rather than the board's
 own shows whether the bring-up must set the address itself.
 
 ## B-P4: advertising on the ROM firmware
+
+**Pending:** run 1 stopped at Set Event Mask, unanswered.
 
 The probe sets the event masks (LE meta, disconnection complete, hardware
 error; LE connection complete), connectable undirected advertising every
@@ -219,6 +264,6 @@ on any boot.
 
 | Reading | Value |
 | --- | --- |
-| End reset answered | ____ |
-| Pin restored to | ____ |
+| End reset answered | yes, 1 ms (run 1) |
+| Pin restored to | 1, on (run 1) |
 | Boot reached the shell afterwards | ____ |
