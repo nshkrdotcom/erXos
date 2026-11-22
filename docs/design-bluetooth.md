@@ -406,7 +406,10 @@ no device. Its release script, `bt`, ships `kernel`, `stdlib`, `erx`, `erx_files
   `name`, `appearance`, `connections`, `patch`, a file of `erx_bt`'s
   `priv` directory, `patch_manufacturer` and `console`. The host name is
   the host part of the domain's node name
-  ([design-system.md](design-system.md#identifiers));
+  ([design-system.md](design-system.md#identifiers)). Every release only
+  loads `erx_bt` and the `crypto` it requires, and the row's `-eval`,
+  `{ok,_}=application:ensure_all_started(erx_bt,permanent)`, starts both
+  once init holds the ready answer's facets;
 * at stage 4, the store's grant: in a release build the vault's state
   facet `{state, "bt"}` ([design-system.md](design-system.md#state-slots)),
   and in a development build a files service of its own that the storage

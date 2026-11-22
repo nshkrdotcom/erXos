@@ -155,6 +155,29 @@ class ReleaseFilesTest < Minitest::Test
     end
   end
 
+  # init ignores what a boot script's start of an application answers, so an application
+  # started before one it requires, or with one it requires only loaded, would silently
+  # not run: every application a domain script starts finds each application its
+  # resource file requires started before it.
+  def test_every_started_application_finds_what_it_requires_started
+    Erx::ReleaseFiles::RELEASE_SCRIPTS.each do |name, applications|
+      started = applications.select { |application| Erx::ReleaseFiles.started?(application) }
+      started.each_with_index do |application, index|
+        missing = required_applications(application, held: applications) - started.take(index)
+        assert_empty missing, "the #{name} script starts #{application} without what it requires"
+      end
+    end
+  end
+
+  # The applications application's resource file lists, but for an optional one that held,
+  # the script's applications, lacks: OTP starts an optional application first only when
+  # the release has it. The lists are atoms, which the scan reads whole.
+  def required_applications(application, held:)
+    text = File.read(Erx::ReleaseFiles.app_resource(root: ROOT, application: application))
+    listed = ->(key) { text[/\{#{key},\s*\[([^\]]*)\]/m, 1].to_s.scan(/[a-z][a-z0-9_]*/) }
+    listed.call('applications') - (listed.call('optional_applications') - held)
+  end
+
   def test_the_release_ships_no_appup
     assert_empty(entries.map { |entry| entry.fetch('path') }.grep(/\.appup\z/))
   end

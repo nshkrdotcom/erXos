@@ -5,9 +5,11 @@
 -moduledoc """
 The Bluetooth application (docs/design-bluetooth.md, "The controller's line"). Its start
 mounts each facet the domain holds or the manifest grants it that has a place in the
-namespace (erx_ns:mount_facets/1), as a session's does. The `line` grant, which the
-domain service hands over in the ready answer before any application starts, has the
-place `/line` that erx_ns:place/1 gives it. Then it starts `erx_bt_sup`, whose controller
+namespace (erx_ns:mount_facets/1), as a session's does. The Bluetooth domain's row starts
+it with `-eval`, which init runs once it holds the ready answer's facets, and every
+release only loads it, so no boot script starts it earlier. The `line` grant, which the
+domain service hands over in that answer, has the place `/line` that erx_ns:place/1 gives
+it. Then it starts `erx_bt_sup`, whose controller
 group opens `/line/data` and `/line/ctl`.
 """.
 -behaviour(application).

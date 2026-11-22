@@ -47,11 +47,15 @@ module Erx
     # (docs/design-runtime.md, edit 65), and the app template's start erx_app, once the
     # ready answer has also brought the app's record (docs/design-packaging.md,
     # "Starting an app"). The system release ships erx_session (SYSTEM_APPLICATIONS)
-    # and not erx_app, which only the app script holds. erx_wifi, the WiFi domain's
+    # and not erx_app, which only the app script holds. erx_bt, the Bluetooth domain's
+    # (docs/design-bluetooth.md, "The Bluetooth domain"), is started by its row's -eval,
+    # which also starts crypto, an application erx_bt requires and every release only
+    # loads (DOMAIN_IMAGE_ONLY): a boot script's start of erx_bt would find crypto not
+    # started, and init ignores what that start answers. erx_wifi, the WiFi domain's
     # (docs/design-wifi.md, "The WiFi domain"), is only loaded until the domain's
     # station starts it once it holds its facets. erx_ntpd, the ntpd session's
     # (docs/design-time.md, "Who does what"), is started by the ntpd template's -eval.
-    DOMAIN_ONLY = %w[erx_session erx_app erx_wifi erx_ntpd].freeze
+    DOMAIN_ONLY = %w[erx_session erx_app erx_bt erx_wifi erx_ntpd].freeze
     raise Error, "DOMAIN_ONLY names what the release does not ship: #{DOMAIN_ONLY - APPLICATIONS}" unless
       (DOMAIN_ONLY - APPLICATIONS).empty?
     # OTP's applications that only the domains' runtime images run (DomainImageApps).
@@ -183,10 +187,9 @@ module Erx
     #   development manifest names it for its USB domain, which the usb QEMU suite boots
     #   (UsbBoot).
     # * bt, the Bluetooth domain's (docs/design-bluetooth.md, "The Bluetooth domain"): the
-    #   Bluetooth stack, erx_bt, so no other domain parses what a controller writes. No
-    #   manifest names it; it exists because check_released requires a release for
-    #   erx_bt. erx_bt holds no Security Manager (stage 4), so the script
-    #   leaves out the crypto the design's release ships.
+    #   Bluetooth stack, erx_bt (DOMAIN_ONLY), so no other domain parses what a controller
+    #   writes, and crypto, which its Security Manager calls, both only loaded; the row's
+    #   -eval starts them. QEMU virt's Bluetooth suite's manifest names it (BtDomain).
     # * pcie, the PCIe domain's (docs/design-pcie.md, "The PCIe domain"): the enumerator,
     #   erx_pcie, so no other domain parses what a function writes to its configuration
     #   space. The pcie QEMU suite's manifest names it (Erx::PcieDomain).
@@ -214,7 +217,7 @@ module Erx
                           [*SESSION_BASE, 'compiler', 'asn1', 'crypto', 'public_key', 'ssl', 'inets', *DomainStartup::DISPLAY_CLIENT,
                            'erx_ui', 'erx_app'].freeze,
                         'usb' => [*DOMAIN_BASE, 'erx_usb'].freeze,
-                        'bt' => [*DOMAIN_BASE, 'erx_bt'].freeze,
+                        'bt' => [*DOMAIN_BASE, 'crypto', 'erx_bt'].freeze,
                         'pcie' => [*DOMAIN_BASE, 'erx_pcie'].freeze,
                         'ntpd' => [*DOMAIN_BASE, 'erx_ntpd'].freeze,
                         'wifi' => [*DOMAIN_BASE, 'crypto', 'erx_wifi'].freeze }.freeze
