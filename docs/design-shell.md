@@ -341,8 +341,8 @@ shell and for `erx:` functions that run commands:
    `halt`, which follow FreeBSD's reboot(8), need the `machine` grant and
    write one end to `/machine/ctl`
    ([design-system.md](design-system.md#a-sessions-request)); and erXos's own `i`, `domains`, `source`, `trace`,
-   `attach`, `bind`, `mount` and `unmount`, and `load` and `hostlink`,
-   which load code into a domain through the session's code facets
+   `attach`, `bind`, `mount` and `unmount`, and `load`, which loads code
+   into a domain through the session's install or code facet
    ([design-live.md](design-live.md#one-load-three-routes)), none of
    which has a FreeBSD counterpart;
 3. a **program command**: one of toybox's applets or another program of

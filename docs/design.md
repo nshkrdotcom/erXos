@@ -1118,7 +1118,10 @@ another domain.
   overlays and stores of every principal whose directory it serves, and so
   run code in those principals' supervised domains at their next start.
   No domain of the system configuration, and not the system domain, ever
-  loads code from the data partition
+  loads code from the data partition by itself: their overlays and
+  installs are never persisted, so code reaches them only through a
+  facet's explicit load, whose bytes may have been read from a file
+  anywhere and are checked by hash, or through a system update
   ([design-live.md](design-live.md#the-code-store)).
 * **Key facets and tokens.** A key facet authorizes at the level of its
   purpose's protocol role: it signs its purpose's input for its grantee

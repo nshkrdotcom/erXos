@@ -206,7 +206,7 @@ with it.
 | **V8.** A program appears only under its session | a program has no domain id and no pid space of its own: it is a sub-space the session created and a port of the session's runtime, so the kernel's topology under `INSPECT` on the session's space and the session's agent are the only sources that know of it, and both place it under the session's path | a path for a program outside its session; a program with a domain id | an inspection test that starts a program and finds it under `[domains, Id, programs]` and nowhere under `[domains]` |
 | **V9.** Text labelled with its source is displayed only through the line escape, and written into `/proc` only through the field escape | each display of it builds its line with the escape: `erx_console`'s log lines and menu, `logger_simple_h`'s early log, `erx_render`, which prints inspection records, `ls`, which writes names at a terminal through it, and the host tool's printer; `ps` and `top` write names through the field escape wherever their output goes, so they hold nothing the line escape would change; the kernel's log escapes on entry with its own ASCII class; `erx_procfs` writes every field of a `/proc` file through the field escape, so `cat` of one shows no raw control | a renderer that prints a name or a value raw; a `/proc` file that writes a reporter's text unescaped; a class of characters missing from the table; a print path in the host tool that skips its printer; a log event that reaches a terminal by another handler | tests that send every C0 and C1 control, every `Cf`, `Zl`, `Zp`, unassigned and default-ignorable character, invalid and overlong UTF-8 and every CSI, OSC, DCS, APC, PM and SOS form through each display and each host command, in a log record, a domain's name and an inspected value; a fuzz target per escaper; a test that re-derives the classes from OTP's Unicode data and fails if `abi/terminal.txt` disagrees; the source check on the host tool's output calls, with a seeded violation |
 | **V10.** An inspection answer hands out no name | the inspection schema has no pid, port, reference or fun type: a process is a `proc_id()` of three numbers and an alias its owner's `proc_id()` ([Inspection records](#inspection-records)), and the inspect service passes every answer through `erx_schema:validate_record/1`, which refuses a record holding any of them at any depth, before it leaves the system domain; so encoding an answer never adds a holder to the system domain's export table, whatever the facet's scope | a schema type that admits a live pid, or an attribute filled with one; an answer path that skips the validation | a test that reads `[processes, P]` of a system-domain process with a group leader, links and monitors, and `[domains, 4, exports]`, through a session's facet of scope `all`, and finds `erx:exports/1` of each name the record shows unchanged; seeded: a collector that puts the live group leader into the record, which the validation refuses, and a validation removed, which the exports check catches |
-| **V11.** A load reaches only the domains its facet's scope holds, by whichever route it came | every route ends in one exchange on a facet of the `code` interface, whose scope the domain service fixed when it minted the facet, the system domain alone for the install facet and `erx_domain_core:code_scope/3`'s answer for a code facet, and which no request states; the host link's root opens only the roots its configuration gives, and the `hostlink` command's root only the `code` and `install` facets of its own context; `erx_code` resolves the domain a load names against the facet's scope at each load, and no code facet's scope holds the system domain ([One load, three routes](#one-load-three-routes)) | a root that opens a facet its holder does not hold; a scope taken from a request; a code scope that holds the system domain | `code_scope/3` over every principal and build flag; a load by each route into a domain outside the scope gets `{error, scope}`, as one into a domain that does not exist; seeded: `all` for a principal that is not a system-shell principal, `all` in a release build and the system domain in a code scope, each failing a case of `code_scope/3`, and a `hostlink` root that opens `inspect`, which fails the root's case |
+| **V11.** A load reaches only the domains its facet's scope holds, by whichever route it came | every route ends in one exchange on a facet of the `code` interface held by the host link's session or by a session of the machine, whose scope the domain service fixed when it minted the facet, the system domain alone for the install facet and `erx_domain_core:code_scope/3`'s answer for a code facet, and which no request states; `erx_code` resolves the domain a load names against the facet's scope at each load, and no code facet's scope holds the system domain ([One load, three routes](#one-load-three-routes)) | a scope taken from a request; a code scope that holds the system domain; a route that reaches `erx_code` other than through a facet | `code_scope/3` over every principal and build flag; a load into a domain outside the scope gets `{error, scope}`, as one into a domain that does not exist, and a load with `-d 4` through the code facet gets it too; seeded: `all` for a principal that is not a system-shell principal, `all` in a release build and the system domain in a code scope, each failing a case of `code_scope/3` |
 
 ## Data model
 
@@ -2066,7 +2066,7 @@ carry a control character.
 
 Command modules also publish a generated catalog binding to their loaded
 blob hash, metadata and local entry fun. Their code server makes affected
-entries unavailable during replacement; after a partial or unknown load,
+entries unavailable during replacement; after a load whose outcome is unknown,
 it reconciles them against the code actually loaded before another command
 can start. The published restart overlay is a separate fact. This follows
 the version-binding contract in
@@ -2079,13 +2079,7 @@ and does not add application-state rollback.
   arena with `erx_code:install_beam/2`, and activates them as one batch
   with `code:atomic_load/1`, so either every module of the batch is
   current or none is. A failed check changes nothing; a failed atomic
-  load keeps the old code and reports which module failed. `erx_code`
-  serves one request at a time, for every domain, so a second load waits
-  until the first has returned and runs over the code it left, and a
-  candidate overlay is always written over the overlay its domain last
-  published. A module whose hash is already current in the domain is not
-  loaded again, so a load sent again after its outcome was unknown
-  changes nothing the first did and purges nothing. The overlay
+  load keeps the old code and reports which module failed. The overlay
   lives in the install arena until the machine ends; after a reboot the
   system domain runs its booted release and the host installs again,
   sending only the blobs the store lacks. Only the release slice and the
@@ -2127,10 +2121,15 @@ and does not add application-state rollback.
   the hash of the manifest of the release it was loaded over
   ([The code store](#the-code-store)).
   * A load has three steps, each with one actor: the code service writes
-    a candidate overlay; the domain's code server loads every module of it
-    and answers; the code service publishes the candidate, with a new
-    revision, only if every module loaded, and otherwise discards it, and a
-    domain that loaded part of it keeps that code until it next restarts.
+    a candidate overlay; the domain's code server loads the modules of it
+    that are not already current as one batch, with
+    `code:prepare_loading/1` and `code:finish_loading/1` as `erx_code`
+    does, so either all of them are current or none is, and answers; the
+    code service publishes the candidate, with a new revision, when the
+    batch loaded, and otherwise discards it. Every ERTS runtime refuses a
+    module with an `-on_load` function, as OTP's atomic loading does
+    (`on_load_not_allowed`), so a NIF's module changes only with its
+    image.
   * A domain started from the specification loads the published overlay
     before its release's applications start, and reports the revision it
     loaded, so no restart runs without published code. An overlay whose
@@ -2148,9 +2147,53 @@ and does not add application-state rollback.
   * An overlay's blobs are at most the specification's `overlay` limit
     (16 MiB by default), held in its principal's hot store, so a principal
     pays for its own overlays and they outlive the domains that run them.
-* **`erx watch DIR --domain D`** recompiles each changed source with the
-  host's `erlc` and loads the result; `erx load --domain D FILE.beam ...`
-  loads files as they are ([One load, three routes](#one-load-three-routes)).
+* **One load at a time for each target.** A load's **target** is the
+  system domain, a supervised specification, or a domain no
+  specification restarts. `erx_code` runs at most one load at a time for
+  each target, so a second load into a target waits until the first has
+  ended, runs over the code it left and writes its candidate over the
+  overlay it published; loads into different targets run at once, and an
+  install never waits for another domain. Each facet admits one request
+  at a time, so a target's queue holds at most one load per facet. The
+  service itself never waits on a domain: it serves `missing`, `put` and
+  the pieces a code server asks for while loads are in flight. A domain
+  started from a specification reads the published overlay in the same
+  order as the specification's loads, so it reads either the overlay a
+  load published or the one before that load, never one superseded while
+  it starts: a domain that ends while a load into it is in flight has its
+  next domain wait until that load has ended.
+* **The deadline.** A load into another domain ends at the first of
+  three events: its code server answers, which publishes or discards the
+  candidate; that server ends, which discards it and answers
+  `{error, domain_ended}`; or 30 s pass from when the code service sent
+  the load, after which it discards the candidate, answers
+  `{error, timeout}` and stops the domain through the domain service, as
+  the `domain` facet's stop does. A supervised specification's next
+  domain then starts from its published overlay, so after every ending a
+  domain runs the code its overlay names, and a domain that never answers
+  holds up only its own target, for 30 s. An answer that arrives for a
+  load no longer in flight is dropped. A facet waits for its load's
+  answer with no deadline of its own, since the service ends every load
+  it starts; the host tool has its own
+  ([One load, three routes](#one-load-three-routes)). An install runs in
+  the system domain's own runtime and has no deadline: `erx_code`'s
+  atomic load runs no code of the modules it loads.
+* **What is already current** is the loading runtime's fact, never the
+  code service's: a code server, and `erx_code` for the system domain,
+  loads only the modules whose hash differs from that of the module's
+  current code in its runtime, and a batch whose every module is current
+  changes nothing and purges nothing. A hot-loaded module's current hash
+  is its file name, which the loader sets to its hash in hexadecimal
+  (`code:which/1`), and a release module's is its release manifest's
+  entry, so the fact survives a restart of the code service, whose store
+  and history start empty while the modules it loaded stay loaded. A load
+  sent again therefore changes nothing still current and is otherwise an
+  ordinary load: if another load replaced a module in between, the repeat
+  puts the repeated hash back, since the last load wins.
+* **`erx watch DIR`** recompiles each changed source with the host's
+  `erlc` and loads the result; `erx load FILE.beam ...` loads files as
+  they are; both name their target with `--system` or `--domain D`
+  ([One load, three routes](#one-load-three-routes)).
 
 #### One load, three routes
 
@@ -2158,15 +2201,17 @@ A load is one exchange with a facet of the `code` interface: `missing`
 with the modules' hashes, `put` for each piece of each blob the
 principal's store lacks, and `load` with the domain and the manifest
 ([The code store](#the-code-store)). Whoever holds the facet can load,
-within its scope, and nothing else decides where code may go (V11). The
-routes differ only in how the bytes reach a holder, and each has a
-consumer the others do not serve:
+within its scope, and nothing else decides where code may go (V11). Two
+holders run the exchange: the host link's session, for the host tool,
+and the session command `load`, for SSH and for files. The routes
+differ only in how the bytes reach a holder, and each has a consumer the
+others do not serve:
 
 | Route | Holder of the facet | What carries the bytes | Its consumer |
 | --- | --- | --- | --- |
-| **The host link** | the host link's session, through its root's `install` and `code` | the host link protocol over the second UART: QEMU's UNIX socket, or a board's UART through a serial adapter or a UART bridge on the host | QEMU, and a board whose network is down, not yet up or broken by the code being loaded |
-| **SSH** | the session the SSH login started, through its own facets | the same protocol, over an SSH `exec` of the command `hostlink` in that session | a board on the network: the route at the network's speed |
-| **A file** | the session that runs `load` | the session's own read of a file it can read | a module already on the machine, put there by any means |
+| **The host link** | the host link's session, through its root's `install` and `code` | the host link protocol over the second UART: QEMU's UNIX socket, or a board's UART through a serial adapter or a UART bridge's UNIX socket | QEMU, and a board whose network is down, not yet up or broken by the code being loaded |
+| **SSH** | the session the SSH login started, through its own facets | an SSH `exec` of `load`, with the modules on its standard input | a board on the network: the route at the network's speed |
+| **A file** | the session that runs `load` | the session's own read of a file it can read | a module already on the machine: copied with `scp`, written by a program, or kept from before |
 
 A driver is an Erlang process over a device shim
 ([design-system.md](design-system.md#drivers)), so loading one is
@@ -2175,113 +2220,128 @@ and no new card.
 
 **The host link from a board.** A board's host link is the UART its
 platform record names, separate from the console's (UART3 on the
-Raspberry Pi 4, `config/platforms/raspi4b.json`'s `hostlink`), and a
-development board's command line asks for it with `erx.hostlink=1`, as
-QEMU's plan does ([The host link](#the-host-link)). The host reaches it
-through a serial adapter, a tty of the host, or through a UART bridge
-that serves the line as a TCP socket on the host's loopback, as a
-Glasgow interface does. Nothing on the machine changes with the
+Raspberry Pi 4, `config/platforms/raspi4b.json`'s `hostlink`), and the
+root hands it to the system domain only under `erx.hostlink=1` on the
+command line ([The host link](#the-host-link)). QEMU's plan adds the
+word, and the card writer (`Erx::BootPartition`) puts it on a
+development card's command line, where the board's boot reads it into
+`/chosen/bootargs`, and never on a release card's. The host reaches the UART through
+a serial adapter, a tty of the host (`--tty`), or through a UART bridge
+that serves the line as a UNIX socket on the host, as a Glasgow
+interface can (`--socket`). Nothing on the machine changes with the
 transport: the frames, sessions, credit and roots are the host link's.
 
-**SSH.** `tools/erx load --ssh DEST` runs the host's OpenSSH client as
-`ssh -T DEST hostlink` and speaks the host link protocol over its
-standard input and output. `hostlink` is an Erlang command of the
-session's release, erXos's own, which serves one host link session on
-its standard input and output with the same frames, session state
-machine, call window, credit, payload check and bounds as `erx_hostlink`
-([The host link](#the-host-link)), from the same modules, which live in
-the `erx` application every domain boots; its own effects are reading
-standard input and writing standard output, and everything it holds is
-charged to the session, within the host link's 32 MiB resident limit.
-Its root differs: `{open, code}` and `{open, install}` open the facets of
-those names in the command's context ([design-shell.md](design-shell.md#interfaces)),
-a name the context does not hold is answered `{error, no_facet}`, and any
-other request `{error, unsupported}` or `{error, badarg}` as the host
-link's root answers them. Frames of any stream but control and credit
-are discarded and counted, as a side discards a stream it does not
-receive. The command's facets are the session's, so an SSH login loads
-exactly where its session may, and nothing of the SSH domain's authority
-passes (S1 of [design-ssh.md](design-ssh.md#requirements)). A login
-elsewhere could run the same command; the host tool uses it over SSH
-alone. `hostlink` refuses standard input on a tty, `hostlink: standard
-input is a terminal`, since a line discipline would change the frames,
-and ends with status 0 at the end of its input. Inspection and tracing
-over SSH need nothing of this: they are the shell's `i` and `trace` on
-an SSH tty.
+The host link authenticates nothing, so its peer is whoever on the
+developer's host can open the socket or the tty. The harness makes its
+socket in an owner-only directory; a bridge's socket belongs in a
+directory only its user can enter, which whoever runs the bridge sets up
+and the host's file permissions enforce; a serial adapter is open to
+whatever its device node's mode allows, which on macOS is every local
+user (the development Mac's serial nodes are mode 0666). A development
+build trusts each of them, as it trusts physical access to the board;
+release builds open only the roots their configuration gives, by default
+none. The tool offers no network transport, and does not inspect a
+socket's directory, since that would not stop another user who reaches
+the bridge directly.
 
-**A file.** `load -d DOMAIN FILE.beam ...`, a command of the session,
-loads modules from files: it reads each file through the session's
-namespace with the session's own rights, in pieces of 64 KiB, once to
-hash it and again to send it, names each module by its file's base name
-as `erlc` names it, and runs the exchange on its context's facet,
-`install` for the system domain, id 4, and `code` for any other domain,
-named by id or name. A file that changed between the two reads fails the
-store's hash check and loads nothing. A file is input to the code
-service and never code: it is not mapped, run or loaded in place, and
-the target domain loads only the blob the code service hands it,
-checked against its hash ([The code store](#the-code-store)), so
-writing a file loads nothing and a load from a file is the request a
-load from the host makes. Any file the session can read serves: one
-written to `/data` with `ssh DEST 'cat > /data/x.beam' < x.beam`, one
-written through the host link's files stream, or one a program of the
-session wrote. `scp` is not one of the ways: OpenSSH's `scp` has spoken
-SFTP by default since OpenSSH 9.0 (scp(1) of OpenSSH 10.3p1), and the
-SSH service serves no SFTP ([design-ssh.md](design-ssh.md#channel-policy)).
+**`load`.**
+
+```text
+load (-s | -d DOMAIN) [-v] FILE.beam ...
+load (-s | -d DOMAIN) [-v] -m MODULE[:BYTES] ...
+```
+
+`load` is a command of the session ([design-shell.md](design-shell.md#commands)).
+`-s` loads into the system domain through the context's `install`
+facet, and `-d DOMAIN` into the domain named by its id or name through
+the context's `code` facet. Exactly one is given, and the choice is the
+user's, never a rule about domain ids: `-d 4` goes to the code facet,
+whose scope never holds the system domain, and fails with `scope`.
+Without the facet its flag needs, `load` fails with `load: no install
+facet` or `load: no code facet` before it reads anything. The first form
+reads each file through the session's namespace with the session's own
+rights and names each module by its file's base name without `.beam`,
+as `erlc` names its output. The second reads the modules from standard
+input, one after another: `-m MODULE:BYTES` takes exactly `BYTES` bytes
+and `-m MODULE` the rest of the input, so only the last `-m` may leave
+out its size, and input that ends early or goes on past the last module
+loads nothing. Either way `load` reads every module whole into memory,
+at most 16 MiB in all, the default `overlay` limit, hashes it and then
+runs the exchange once, so each byte is read once and the bytes hashed
+are the bytes sent.
+
+A file is input to the code service and never code: it is not mapped,
+run or loaded in place, and the target domain loads only the blob the
+code service hands it, checked against its hash
+([The code store](#the-code-store)), so writing a file loads nothing,
+and a load from a file is the request a load from the host makes. Any
+file the session can read serves: one copied to `/data` with
+`scp x.beam DEST:/data/`, which the SSH service serves through SFTP
+([design-ssh.md](design-ssh.md#sftp)), one written through the host
+link's files stream, or one a program of the session wrote. Over SSH the
+file is optional: `ssh DEST load -d D -m x < x.beam` loads the module
+from the command's standard input, which a job's pipes carry unchanged
+([design-ssh.md](design-ssh.md#sessions-ttys-and-shells)).
+
 `load` prints nothing on success; `-v` prints each module with its hash
 and whether its blob was sent. It writes each failure to standard error
-as `load: FILE: REASON`, the reason the code service gave, and exits 1,
-and a call without `-d` or without a file is a usage error. FreeBSD has
-no command that loads code into a running process; its `kldload(8)`
-loads a module into the kernel, which a BEAM module never enters, so
-`load` takes no FreeBSD name and is erXos's own, as the host tool's
-`erx load` is.
+as `load: NAME: REASON`, `NAME` the file or the module and `REASON` the
+code service's, and exits 1; a call without `-s` or `-d`, with both, or
+with no module is a usage error. FreeBSD has no command that loads code
+into a running process, so `load` is erXos's own name (Alternatives
+considered, `kldload`).
 
 **The host tool's transports.**
 
 ```text
-tools/erx load  TRANSPORT [--build HEX] --domain D FILE...
-tools/erx watch TRANSPORT [--build HEX] --domain D [--interval SECONDS] DIR
-TRANSPORT: --socket PATH | --tcp HOST:PORT | --tty DEVICE [--speed BAUD] | --ssh DEST
+tools/erx load  TRANSPORT (--system | --domain D) FILE...
+tools/erx watch TRANSPORT (--system | --domain D) [--interval SECONDS] DIR
+TRANSPORT: --socket PATH [--build HEX] | --tty DEVICE [--build HEX] | --ssh DEST
 ```
 
-A command takes exactly one transport. `--domain` is required, since a
-load into the wrong domain is not a default to fall into; `4` names the
-system domain, which the tool reaches through the install facet, and
-every other id or name through the code facet. Every command that opens
-a host link session takes `--socket`, `--tcp` and `--tty`; only `load`
-and `watch` take `--ssh`, since `hostlink`'s root opens only the code
-facets.
+A command takes exactly one transport and exactly one of `--system`,
+through the install facet, and `--domain D`, through the code facet, as
+`load` takes `-s` and `-d`. Every command that opens a host link session
+takes `--socket` and `--tty`; only `load` and `watch` take `--ssh`.
 
-* `--socket PATH` connects to QEMU's UNIX socket, in the run's
-  owner-only directory.
-* `--tcp HOST:PORT` connects to a UART bridge. The tool resolves `HOST`
-  once, refuses an address outside the loopback, `127.0.0.0/8` and
-  `::1`, with `--tcp: HOST is not a loopback address; reach a bridge on
-  another host through an SSH forward`, and connects to the address it
-  checked: the host link authenticates nothing, so a bridge reached
-  across a network would hand the install facet to everyone on it.
+* `--socket PATH` connects to a UNIX socket: QEMU's, in the run's
+  owner-only directory, or a UART bridge's.
 * `--tty DEVICE` opens a serial adapter, such as `/dev/cu.usbserial-X`
   on macOS, refuses a path that is not a character device, and puts the
-  line in raw mode at `BAUD`, by default 115,200, the rate the host
-  link's driver programs, with 8 data bits, no parity and no flow
-  control, by running `stty` with the open device as its standard input,
-  the terminal POSIX's `stty` sets, on FreeBSD, macOS and Linux alike.
-* `--ssh DEST` runs `ssh -T DEST hostlink` with an argument vector.
-  `DEST` is OpenSSH's destination, `[user@]host` or
-  `ssh://[user@]host[:port]`, so the user's ssh configuration, agent and
-  known hosts apply; a `DEST` that begins with `-` is refused, so it
-  never reaches `ssh` as an option. The machine's standard error arrives
-  on `ssh`'s, which the tool reads and prints through the line escape,
-  as everything it prints from the target (V9).
+  line in raw mode at 115,200 baud, 8 data bits, no parity and no flow
+  control, the one rate the host link's driver programs
+  (`abi/services/line.txt`'s `rate`), by running `stty` with the open
+  device as its standard input, the terminal POSIX's `stty` sets, on
+  FreeBSD, macOS and Linux alike.
+* `--build HEX` makes the tool refuse a machine whose host link `hello`
+  reports another build identifier.
+* `--ssh DEST` runs `ssh -T DEST load -d D -m NAME:BYTES ...` (or `-s`)
+  with an argument vector and writes the modules to its standard input
+  one after another; `load`'s exit status is the load's outcome, and its
+  standard error, which arrives on `ssh`'s, the tool prints through the
+  line escape, as everything it prints from the target (V9). `DEST` is
+  OpenSSH's destination, `[user@]host` or `ssh://[user@]host[:port]`, so
+  the user's ssh configuration, agent and known hosts apply. `ssh` joins
+  the words after `DEST` into the one command line that `rc -c` reads, so
+  before it starts `ssh` the tool refuses a `DEST` that begins with `-`,
+  which `ssh` would take as an option, and a domain or a module name that
+  begins with `-` or holds any character but a letter, a digit, `_`,
+  `.`, `-` and `@`.
 
-The tool checks the build identifier in the `hello` reply on every
-transport. A `watch` keeps one connection; when it ends, at a machine
-reset, a lost link or `ssh`'s exit, the tool opens a new one at the next
-change and loads everything the watch has loaded again with that change.
-The store sends only the blobs it lacks and a module already current is
-not loaded again, so after a lost link this costs one exchange, and
-after a reboot, which dropped the domain's overlay, it puts the watch's
-code back; the tool needs no way to tell the two apart.
+The host link route sends only the blobs the store lacks; the SSH route
+sends every module of the batch, which at the network's speed costs less
+than the exchange that would avoid it. The tool gives up on a load after
+120 s, past the code service's own deadline, and then says the load's
+outcome is unknown.
+
+A `watch` opens a connection for each change, which loads, as one
+batch, the last good compile of every module the watch has compiled
+since it started, and closes it. Since the runtime loads only the
+modules not already current, a change loads what changed, and the first
+change after a reboot, which dropped the domain's overlay, puts all of
+the watch's code back; the tool needs no way to tell a reboot from a
+lost connection, and holds the host link's one session only while it
+loads.
 
 **Picking up the code.** A load makes the new code current in the
 domain's runtime, as `code:atomic_load/1` does: a process takes it at its
@@ -2390,23 +2450,24 @@ console's `-serial`, in the run's owner-only directory). On Fiasco the
 root hands the host link's device record only under `erx.hostlink=1`
 ([design-fiasco.md](design-fiasco.md#the-command-line)), which the harness
 adds with the second `-serial`. On a board the host reaches the UART
-through a serial adapter or a UART bridge on its loopback
+through a serial adapter or a UART bridge's UNIX socket
 ([One load, three routes](#one-load-three-routes)).
 
-The transport has one trusted physical or local peer. The harness creates
-its UNIX socket in an owner-only directory with access restricted to that
+The transport has one trusted physical or local peer: whoever can open
+its socket or its tty on the developer's host. The harness creates its
+UNIX socket in an owner-only directory with access restricted to that
 host user; a board installation controls physical access to its UART,
-and a UART bridge that serves the line on the developer's host's
-loopback is part of that local peer, since the host tool connects to no
-other address.
+and the developer's host controls, by its file permissions, who opens
+the serial adapter or the bridge's socket
+([One load, three routes](#one-load-three-routes)).
 CRC detects corruption and session identifiers reject stale traffic;
 neither authenticates an active attacker that can read or inject the link.
-An unauthenticated network bridge is outside this transport contract and
-is refused by release configuration. Remote use is the SSH route: the
-same protocol over an SSH `exec` of `hostlink`, which ends in the login's
-own session and holds that session's facets, never the host link's
-([One load, three routes](#one-load-three-routes)); it does not reuse CRC
-as a MAC or add a custom cipher.
+A bridge that serves the line on a network is outside this transport
+contract, and the host tool has no transport that reaches one. Remote
+use is the SSH route, an SSH `exec` of the session command `load`, which
+runs in the login's own session with that session's facets, never the
+host link's ([One load, three routes](#one-load-three-routes)); it does
+not reuse CRC as a MAC or add a custom cipher.
 
 * **Flow control.** The host link's driver buffers at most 64 KiB of
   received bytes and drops beyond that, counting the loss
@@ -2707,7 +2768,7 @@ the `web` facet ([design-web.md](design-web.md#the-host-tools-front-end));
 `files` relays a UNIX socket to the host link's files stream
 ([Files between the host and the machine](#files-between-the-host-and-the-machine)).
 A command that opens a host link session reaches the machine by one of
-`--socket`, `--tcp` and `--tty`, and `load` and `watch` also by `--ssh`
+`--socket` and `--tty`, and `load` and `watch` also by `--ssh`
 ([One load, three routes](#one-load-three-routes)). Every command
 has long options, exits 0 on success, 1 on failure and 2 on a usage error,
 starts every subprocess with an argument vector, and gives up after a
@@ -2774,11 +2835,13 @@ any 9P2000.L peer does.
 | A `/proc` read meets a slow domain | the inspector's deadline | the snapshot, with `[timeout 500]` for the attributes that missed it | the file shows the status, never a guess |
 | A blob does not match its hash | the code server's check | nothing loaded; the bad copy discarded | `{error, hash_mismatch}` from the load, in every flavour of load |
 | A principal's hot store cannot hold a blob | the code service's charge to the principal's budget | nothing stored | the load fails with `{error, no_memory}` |
-| A load names a domain outside its facet's scope, or one that does not exist | `erx_code`'s scope check at `load` | nothing loaded; blobs already sent stay in the principal's store until it frees what nothing names | `{error, scope}`, alike for both; `load: FILE: scope` from the command |
-| The connection ends before a load answers: a reset, a pulled cable, `ssh` ending, or the network domain stopped by the code being loaded | the tool's read of the connection | whatever the code service had done: the candidate published, or discarded at its domain's refusal | the tool says the load's outcome is unknown and exits 1; `erx_code:history/2` or the inspector's history path shows what is current, and the same load sent again changes nothing it already did |
-| A loaded driver breaks the network, and with it the SSH route | the operator | the host link and the console, which need no network | the operator loads a fix or an earlier hash over the host link, or `load`s a file at the console, or reboots, which returns every driver domain to its release |
-| `--tcp` names an address outside the loopback, or `--ssh` a destination that begins with `-` | the host tool, before it connects | nothing sent | a usage error naming the option |
-| `hostlink` runs on a tty | the command | nothing served | `hostlink: standard input is a terminal`, status 1 |
+| A load names a domain outside its facet's scope, or one that does not exist | `erx_code`'s scope check at `load` | nothing loaded; blobs already sent stay in the principal's store until it frees what nothing names | `{error, scope}`, alike for both; `load: NAME: scope` from the command |
+| A domain's code server does not answer a load within 30 s | `erx_code`'s deadline | the candidate discarded; the domain stopped, and a supervised specification's next domain started from its published overlay | `{error, timeout}`; loads into other targets were never held up |
+| The domain ends while a load into it is in flight | `erx_code`'s monitor of the code server | the candidate discarded; the next domain reads the overlay once the load has ended | `{error, domain_ended}` |
+| The connection ends before a load answers: a reset, a pulled cable, `ssh` ending, or the network domain stopped by the code being loaded; or the tool's 120 s pass | the tool | whatever the code service did, which is one of the endings above or the published candidate | the tool says the load's outcome is unknown and exits 1; the inspector's `[domains, Id, modules, Module]`, which the domain's runtime reports, shows the hash each module runs, `[..., history]` what was loaded, and the overlay's revision what a restart runs; sending the load again is a new load that skips what is still current |
+| A loaded driver breaks the network, and with it the SSH route | the operator | the host link and the console, which need no network | the operator loads a fix over the host link, `load`s at the console a file already on the machine, or reboots, which returns every driver domain to its release |
+| `load` reads more than 16 MiB, or its standard input ends before or goes on after its modules | the command, before the exchange | nothing sent | `load: NAME: too large`, `load: standard input: short` or `load: standard input: trailing bytes`, status 1 |
+| `--ssh` names a destination that begins with `-`, or a domain or module name `rc` would not read as one word | the host tool, before it starts `ssh` | nothing sent | a usage error naming the option |
 | `--tty` names a path that is not a character device, or `stty` fails | the host tool | nothing sent | the tool's error with `stty`'s message, through the line escape |
 
 The inspector, the tracer and the host link are ordinary supervised Erlang
@@ -2821,12 +2884,14 @@ principal's hot store written only by the code service, overlays and
 stores read back from the data partition through a bounded, fuzzed
 decoder); the code facets (one interface whose scope the domain service
 fixes at the mint and `erx_code` checks at each load, whichever route
-carried the request, V11; the `hostlink` command, which holds only its
-session's facets and parses the host link's bytes with the host link's
-own bounded modules; and `load`, whose files are input to the code
-service, never code); the host tool's transports (TCP to the loopback
-alone, a `--ssh` destination never taken as an option, and `ssh`'s
-standard error printed through the line escape); the inspector's scopes (owners from pids and kernel records,
+carried the request, V11; `load`, which holds only its session's
+facets, reads at most 16 MiB, and whose files and standard input are
+input to the code service, never code; and a deadline on every load into
+another domain, so a domain that never answers holds up only its own
+target); the host tool's transports (a UNIX socket or a tty, whose
+reach the host's permissions decide, a `--ssh` destination never taken
+as an option and no word `rc` would split, and `ssh`'s standard error
+printed through the line escape); the inspector's scopes (owners from pids and kernel records,
 never from domain reports); runtime reports (validated by the system
 domain's funnel, then decoded in safe mode, taken only when the asked
 domain, the alias, the path, the kind and the ids agree with the
@@ -3057,55 +3122,85 @@ faults that must make its tests fail where it has any.
   which has a fuzz target.
   * `erx_domain_core:code_scope/3` over every principal and build flag,
     and a load into a domain outside the scope, by name and by id,
-    answered as one into a domain that does not exist. Seeded: `all` for
-    a principal that is not a system-shell principal; `all` in a release
+    answered as one into a domain that does not exist, and `-d 4`
+    through the code facet answered the same. Seeded: `all` for a
+    principal that is not a system-shell principal; `all` in a release
     build; the system domain in a code scope (V11).
   * Two loads into one domain at once publish one after the other, each
     candidate over the other's published overlay. Seeded: a service that
     admits a second load while the first is in its steps, under which
     the second publishes an overlay without the first's modules.
+  * A silent target, in a host test with the deadline shortened: a stub
+    code server that never answers, and another that answers after the
+    deadline. The load answers `{error, timeout}`, the stub's domain is
+    stopped, the late answer publishes nothing, and meanwhile an install
+    and another principal's load into another domain complete. Seeded:
+    one queue for every target, under which the other load waits behind
+    the silent one; the deadline removed, under which the silent load
+    never answers.
+  * A domain that ends between its code server's answer and the
+    publication, with the publication held in the test: its next domain
+    reads the new revision. Seeded: the start's overlay read served
+    outside its specification's order, under which the next domain runs
+    the previous revision.
   * A load sent twice leaves a process that runs the module's previous
-    code running. Seeded: the skip of a module already current removed,
-    under which the second load purges and ends that process.
-  * `hostlink` in a host test, driven by the host tool's client over a
-    pipe pair, with stub facets in its context: the hello, a load through
-    `code`, `{open, code}` without the facet answered `no_facet`,
-    `{open, inspect}` answered `unsupported`, and standard input on a pty
-    refused. Seeded: a root that opens `inspect`; a command that serves a
-    tty.
-  * The host tool's transports in host tests: `--tcp` refuses
-    `192.0.2.1:1` and a name that resolves outside the loopback, and
-    `--ssh` refuses `-oProxyCommand=x`, recorded by a stand-in `ssh` on
-    the test's `PATH`; `--tty` carries all 256 byte values both ways
-    unchanged over a host pty pair; `ssh`'s standard error reaches the
-    tool's output escaped. Seeded: the loopback check removed, under
-    which the tool connects; the refusal of a leading `-` removed, under
-    which the stand-in records an option; `stty`'s raw mode dropped,
-    under which the pty's `ICRNL` and `ONLCR` change CR and LF; a print
-    of `ssh`'s standard error that skips the printer, which the source
-    check on the host tool's output calls catches.
+    code running, and so does a repeat after the code service restarts.
+    Seeded: the skip of a module already current removed, under which
+    the second load purges and ends that process; the skip decided from
+    the code service's history, under which the repeat after the restart
+    purges.
+  * A batch into another domain whose second module carries `-on_load`
+    leaves none of the batch current. Seeded: a code server that loads
+    module by module, under which the first module runs its new code.
+  * `load` in a host test, with stub facets in its context: two files,
+    and two modules on standard input as `-m a:N -m b`, each loading the
+    bytes given; `-d 4` answered `scope`; input that ends early, input
+    with bytes past the last module, and 16 MiB and one byte, each
+    refused with nothing sent; no code facet answered `load: no code
+    facet`. Seeded: a sized `-m` read to the end of the input, under
+    which the second module is missing; the 16 MiB bound removed, under
+    which the stub facet receives the oversized batch.
+  * The host tool's transports in host tests: `--ssh` refuses
+    `-oProxyCommand=x` as `DEST` and a module named `a;b`, and otherwise
+    runs `load -d D -m a:N -m b:M` with the two modules' bytes on its
+    standard input, recorded by a stand-in `ssh` on the test's `PATH`;
+    `--tty` carries all 256 byte values both ways unchanged over a host
+    pty pair; `ssh`'s standard error reaches the tool's output escaped.
+    Seeded: the refusal of a leading `-` removed, under which the
+    stand-in records an option; the word check removed, under which it
+    records `a;b`; `stty`'s raw mode dropped, under which the pty's
+    `ICRNL` and `ONLCR` change CR and LF; a print of `ssh`'s standard
+    error that skips the printer, which the source check on the host
+    tool's output calls catches.
+  * `watch` against a stub transport that forgets every module, as a
+    reboot does: the next change loads the unchanged module too. Seeded:
+    a watch that sends only the changed module, under which the
+    unchanged one is missing after the reset.
 * **Loading, by every route, under QEMU.** A supervised test domain whose
   release carries a probe module that answers its version; each case
-  loads a probe with a new answer, reads the answer through the domain,
-  stops the domain through the `domain` facet and reads the answer again
-  from its next domain (the overlay). The routes: the host link over
-  QEMU's UNIX socket (`--socket`), over `-serial
-  tcp:127.0.0.1:PORT,server=on,wait=off` (`--tcp`) and over `-serial pty`
-  (`--tty`); SSH through the forwarded port with the development key
-  (`--ssh`); and `load` at the console, over a file the SSH route's
-  `cat` wrote to `/data`. Only the new blob gives the new answer, so a
-  passing case shows its route carried the load. Seeded, each failing
-  its case: one byte of the probe flipped after the tool hashed it,
-  answered `hash_mismatch` with the old answer kept, on every route; a
-  domain start that skips the overlay; for `load`, a probe file named
-  after another module, which `code:prepare_loading/1` refuses with
-  nothing loaded; for SSH, a session template without the code facet,
-  answered `no_facet`. The case also checks the one log record of each
-  load.
+  loads a probe with a new answer and reads the answer through the
+  domain; the first case also stops the domain through the `domain` facet
+  and reads the answer again from its next domain (the overlay), since
+  every route ends in the same load. The routes: the host link over
+  QEMU's UNIX socket (`--socket`) and over `-serial pty` (`--tty`); SSH
+  through the forwarded port with the development key (`--ssh`, and
+  `ssh DEST load -d D -m probe < probe.beam` by hand); and `load` at the
+  console, over a file `scp` copied to `/data`. Only the new blob gives
+  the new answer, so a passing case shows its route carried the load.
+  Seeded, each failing its case: one byte of the probe flipped after the
+  tool hashed it, answered `hash_mismatch` with the old answer kept, on
+  every route; for the first case, a domain start that skips the
+  overlay; for `load`, a
+  probe file named after another module, which `code:prepare_loading/1`
+  refuses with nothing loaded; for SSH, a session template without the
+  code facet, answered `load: no code facet`. The case also checks the
+  one log record of each load.
 * **On the Raspberry Pi 4**, which is tested by hand, the board's manual
-  checklist loads a changed driver module over SSH and over the host
-  link through UART3, restarts the driver with `reset` in `/dev`, and
-  reboots to find the release's driver again.
+  checklist, on a card whose command line carries `erx.hostlink=1`,
+  loads a changed driver module with `erx load --ssh` and with
+  `erx load --tty` through UART3, and again with `scp` and `load`,
+  restarts the driver with `reset` in `/dev`, and reboots to find the
+  release's driver again.
 * **The machine reset:** a system-domain fault injected under QEMU, after
   which the guest reboots into the committed slot, `[kernel, crash]`
   answers only the system shell, and the host tool reports its
@@ -3134,11 +3229,19 @@ transport replaces the UART behind the same framing if the measurement
 misses the budgets in [Requirements](#requirements). On a board the host
 link runs at its UART's rate: at 115,200 baud, with ten bits on the line
 for each byte, 11,520 bytes a second, less COBS's byte in 254 and 32
-bytes of header and CRC in each frame of up to 8,192, so a 100 KiB module
-takes about 9 s and the missing-blob exchange sends only the modules
-that changed. SSH carries the same exchange at the network's speed, so
-it is the route to iterate on over a board's network, and the host link
-the route that needs no network. The files stream
+bytes of header and CRC in each frame of up to 8,192, about 11,400
+bytes a second. The hand-written `erx_*` modules of the native runtime
+build, compiled with `debug_info`, are 451 files whose median is 9,340
+bytes, about 0.8 s on the line; `erx_genet`, the Raspberry Pi 4's
+Ethernet driver, is 19,228 bytes, about 1.7 s; the largest,
+`erx_domain_srv`, is 86,828 bytes, about 7.6 s; and the generated
+`erx_abi_layout` is 192,784 bytes, about 17 s. These are the sizes of
+the files in `build/runtime/native/otp/lib/*/ebin` and the line's
+arithmetic, not a measured load. The missing-blob exchange sends only the modules that
+changed, so a driver's edit loads in a second or two. The SSH route
+sends every module of a batch at the network's speed, so it is the
+route to iterate on over a board's network, and the host link the route
+that needs no network. The files stream
 moves at most 8,192 bytes a message over the same UART, so a host mount
 reads at the UART's speed less the 24 bytes a message that `P9_IOHDRSZ`
 reserves for a read's or a write's header; a mount through virtio-9p moves
@@ -3304,20 +3407,50 @@ link has one session at a time, so a load over SSH would end the UART's
 session and its console line. Ending in the login's session gives the
 login exactly its session's authority.
 
-**Copy, then `load`, as the host tool's SSH route.** `erx load --ssh`
-would write each file with `cat` over one `exec` and run `load` in
-another. It loses to the tunnel: two connections per load, files on the
-machine to remove after a failure, file names quoted into `rc -c`, and no
-missing-blob exchange, where the tunnel reuses the client the host link
-route has already. Copying and then running `load` stays what a person
-does by hand.
+**The host link protocol over SSH.** A session command would serve one
+host link session on its standard input and output, so the host tool
+would speak one protocol on every transport and keep the missing-blob
+exchange over SSH. It loses: the command would carry the host link's
+framing, credit, call window, session replacement and kept replies over
+a byte stream SSH already delivers whole and in order; the host link's
+session table owns and closes the facets it opens, where such a command
+would borrow its session's and need rules of its own for them; and what
+the exchange saves over sending the whole batch is bytes, which the
+network makes cheap.
 
-**An SSH subsystem for the host link.** `ssh -s DEST erxos-hostlink`
-would need no `exec`, and SSH's first stage could serve it from a
-channel callback in `root`'s session. It loses because the SSH domain
-would then need a line request of its own for the subsystem, where an
-`exec` of a command needs nothing beyond what the line's `open_job`
-already does, and a command serves any byte stream it is handed.
+**A TCP transport to a UART bridge.** `--tcp 127.0.0.1:PORT` would reach
+a bridge that serves the line over TCP. It loses: every process of every
+user on the host can connect to the loopback, so the bridge would hand
+the install facet to all of them, and the tool cannot tell a bridge that
+listens on the loopback alone from one that listens on every interface.
+A UNIX socket in a directory only its user can enter takes its access
+control from the host's file permissions.
+
+**One load at a time for the whole machine.** `erx_code` would serve one
+request at a time for every domain. It loses: a domain that never
+answers would hold up every load, recovery installs included, and the
+pieces a code server asks for would wait behind the load that needs
+them.
+
+**Refusing a target after its deadline.** A target whose load missed the
+deadline would refuse loads until its domain ended. It loses: it adds a
+state and a refusal and leaves the domain's code unknown until someone
+stops it, where stopping the domain at the deadline is the restart the
+domain service already performs, after which the domain runs its
+published overlay.
+
+**Partial batches in other domains.** A code server would load a batch
+module by module and keep what loaded when one module failed. It loses:
+an ordinary refusal would leave code that is neither the old batch nor
+the new, beside an overlay that names the old; atomic loading costs only
+modules with `-on_load`, which are NIFs' modules and change with their
+image anyway.
+
+**A watch that keeps its connection.** It would load only what changed
+and load everything again on a new connection. It loses: it holds the
+host link's one session between changes and must notice a dead
+connection, where loading the watch's whole set at each change needs
+neither, since the runtime skips what is current.
 
 **A code facet per domain.** The host link's root would open one facet
 for each domain id. It loses: a session cannot hold a facet of a domain
@@ -3335,7 +3468,8 @@ service bytes to load in one domain.
 | Risk | Likelihood | Impact | Mitigation |
 | --- | --- | --- | --- |
 | The emulated UART is too slow for comfortable uploads | medium | slow `erx watch` | `tools/erx bench hostlink`; virtio-console behind the same framing |
-| A board's host link at 115,200 baud is slow for large loads | high | about 9 s for each 100 KiB module sent | the missing-blob exchange sends only changed modules; SSH carries the same load at the network's speed |
+| A board's host link at 115,200 baud is slow for large loads | high | about 0.8 s for a median module, 1.7 s for `erx_genet` and 17 s for the largest generated one ([Performance](#performance)) | the missing-blob exchange sends only changed modules; the SSH route loads at the network's speed |
+| A domain legitimately busy for 30 s meets a load's deadline | low | the domain is stopped and restarts from its published overlay | the deadline is one constant of `erx_code`; a load is a fetch over the domain's lane and an atomic load that runs none of its modules' code, which takes far less |
 | A loaded driver ends its domain at every start, from its published overlay | medium | the domain restarts as its specification says, without serving | a reboot, which drops a driver domain's overlay and returns it to its release; a driver that ends only its own process is reloaded while its domain runs |
 | `prim_tty`'s ssh mode misses a feature the shell uses | low | a rendering gap | the console tests cover every request type; erXos owns `prim_tty` and can extend it |
 | A domain answers inspections slowly | medium | sluggish `erx:i/1` | deadlines and `timeout` statuses; kernel and service attributes need no answer |
@@ -3350,35 +3484,7 @@ belongs to the release process ([plan.md](plan.md#beyond-the-plan)); the
 mechanism is the same in every build, and a release build's session holds
 only the facets its system configuration lists, by default none.
 
-Open decisions:
-
-1. **`exec` in SSH's first stage.** The SSH route needs a byte-clean
-   `exec`, which SSH's second stage serves and its first stage, the
-   daemon in `root`'s session, refuses. This design gives the first
-   stage `exec` ([design-ssh.md](design-ssh.md#stages)), built on the
-   second stage's job relay, which is then built first; the alternative
-   is that the SSH route waits for the second stage and boards load over
-   the host link alone until then. Recommendation: give the first stage
-   `exec`, since the job relay is needed anyway and a board's network is
-   its fast route.
-2. **SFTP, for `scp`.** OpenSSH's `scp` speaks SFTP, which neither stage
-   serves, so `scp x.beam root@board:/data/` fails, and a file reaches
-   `/data` through `ssh DEST 'cat > /data/x.beam' < x.beam` instead. The
-   first stage could serve OTP's `ssh_sftpd` in `root`'s session, on that
-   session's files; the second stage would then have to serve SFTP in the
-   session, as [design-ssh.md](design-ssh.md#channel-policy) plans,
-   before it replaces the first. Recommendation: leave SFTP to the second
-   stage's planned design; `cat` over `exec` covers the copy, and
-   `erx load --ssh` needs no copy at all.
-3. **Driver overlays across a reboot in development builds.** A
-   specification of the system configuration keeps its overlay in memory
-   only, so a reboot returns every driver to its release, and the host
-   tool loads again. Persisting such overlays on the data partition in
-   development builds would let a compromised file system of that
-   partition run code in the driver domains, which the design refuses in
-   every build ([The code store](#the-code-store)). Recommendation:
-   keep them in memory; a change that must outlive a reboot ships as a
-   system update, and a `watch` puts its code back after a reboot.
+Open decisions: none.
 
 ## References
 

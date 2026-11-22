@@ -280,7 +280,8 @@ through the grant, as `gen_tcp` does in every domain
 [Algorithm policy](#algorithm-policy) and [Limits](#limits-and-who-pays),
 `key_cb` set to `erx_ssh_keys`, `ssh_cli` set to `erx_ssh_cli`,
 `pwdfun/4` calling the login facet, `parallel_login` true, `subsystems`
-empty and `tcpip_tunnel_in` and `tcpip_tunnel_out` false. With
+`[{"sftp", {erx_ssh_cli, [sftp]}}]` ([SFTP](#sftp)) and
+`tcpip_tunnel_in` and `tcpip_tunnel_out` false. With
 `parallel_login` true each accepted connection runs its key exchange and
 authentication in a process of its own, so a client that stalls before
 logging in holds only its own slot and never the acceptor. Each
@@ -855,12 +856,13 @@ domain, heard through that domain's envelope, and answers each `ok` or
 `Run` says what runs: `shell` runs `rc`, interactive on a tty and reading
 commands from standard input in a job, as OpenSSH runs the user's shell
 without a tty; `{exec, Command}` runs `rc -c Command`, for an `exec`
-request, with `Command` a binary of 1 to 32 KiB holding no NUL byte. A
-line answers `limited` past ten open channels, `max_channels`, and
-`badarg` to any other shape. The host tool's SSH route is such a job,
-`exec` of the session's command `hostlink`, whose standard input and
-output carry the host link's frames and whose facets are the session's
-([design-live.md](design-live.md#one-load-three-routes)).
+request, with `Command` a binary of 1 to 32 KiB holding no NUL byte; and
+`sftp`, in `open_job` alone, runs the session's SFTP server for the
+`sftp` subsystem ([SFTP](#sftp)). A line answers `limited` past ten open
+channels, `max_channels`, and `badarg` to any other shape. The host
+tool's SSH route is such a job, an `exec` of the session command `load`
+whose standard input carries the modules and whose facets are the
+session's ([design-live.md](design-live.md#one-load-three-routes)).
 
 A job's channel and its line exchange seven closed messages, heard
 through each other's domain envelope and each checked by its receiver:
@@ -923,15 +925,76 @@ started ends, as the web's do.
 | --- | --- | --- |
 | `session` channel; `pty-req`, `shell`, `exec`, `window-change` | served, as above | |
 | `env` | ignored | FreeBSD's `sshd_config` accepts no variable; `TERM` comes with `pty-req` |
-| `subsystem` (`sftp`) | refused | OTP's `ssh_sftpd` would run in the SSH domain, on that domain's files, not the principal's |
+| `subsystem` `sftp` | served, as a job in the session ([SFTP](#sftp)) | |
+| `subsystem`, any other name | refused | the daemon's `subsystems` option names `sftp` alone |
 | `direct-tcpip`, `tcpip-forward`, `direct-streamlocal@openssh.com` | refused, administratively prohibited | a forwarded connection would use the SSH domain's `net` grant, not the principal's |
 | `auth-agent-req@openssh.com`, `x11-req` | refused | |
 | `signal`, `break` | ignored | the tty's `Ctrl-C` is the interrupt |
 
-SFTP and forwarding are planned features, recorded in `TODO.md`; their
-design runs them in the session, as `open_job` runs a command, so they
-use the session's namespace and its own `net` grant, never the SSH
-domain's.
+Forwarding is a planned feature, recorded in `TODO.md`; its design runs
+it in the session, as SFTP runs below, so it uses the session's own
+`net` grant, never the SSH domain's.
+
+### SFTP
+
+**The `sftp` subsystem is a job.** FreeBSD's `sshd_config` runs
+`/usr/libexec/sftp-server` for the `sftp` subsystem ([Context](#context)),
+a program run as the user on the channel's standard input and output.
+erXos does the same with the job of
+[Sessions, ttys and shells](#sessions-ttys-and-shells): the daemon's
+`subsystems` option names one subsystem, `sftp`, whose channel module is
+`erx_ssh_cli`, started with the argument `sftp`, which OTP's connection
+starts on a `subsystem` request as it starts a channel for a shell
+(`start_subsystem/4` in `lib/ssh/src/ssh_connection.erl`); at its
+`ssh_channel_up` the channel asks its line for `{open_job, Channel,
+sftp}`, and from then on the channel and the line exchange the job
+messages unchanged. The SSH domain therefore parses no SFTP and holds no
+file of the principal's; SFTP reaches only what the session reaches
+(S1). A second subsystem on a channel that already runs one, or a shell
+or exec, is refused by OTP's connection (RFC 4254, section 6.5).
+
+**The server.** In the session, `Run = sftp` starts `erx_sftp_server`
+on the job's three pipes instead of `rc`, as OpenSSH's `internal-sftp`
+serves SFTP in the session's own process rather than through the user's
+shell (`do_child` in `session.c`). `erx_sftp_server` reads standard
+input and hands each piece to OTP's `ssh_sftpd`, whose request decoding,
+handle table and replies it uses unchanged, with each reply written to
+standard output ([Edits to OTP's ssh](#edits-to-otps-ssh)). Its options:
+
+* no `root`, since the session's namespace is already the principal's
+  whole reach, and `cwd` the principal's home, so `scp x DEST:` writes
+  `x` there;
+* `file_handler` OTP's `ssh_sftpd_file`, whose calls are `file`'s, so
+  every path resolves through the session's namespace with the session's
+  grants, as for any Erlang code of the session;
+* `max_handles` 64, and `max_files` 100, so a `READDIR` answers at most
+  100 names, as OpenSSH's `sftp-server` sends at most 100 a message
+  (`process_readdir` in `sftp-server.c`), where OTP's default, no limit,
+  would answer a whole directory at once;
+* the version OTP's server offers, which it lowers to the client's at
+  `SSH_FXP_INIT`: 3 for OpenSSH's clients.
+
+A request longer than 256 KiB, OTP's `SSH_MAX_PACKET_SIZE`, ends the
+server, as a request it cannot decode does, and either ends the job with
+status 1 and nothing else; the server writes nothing to its error
+output. At the end of its input the server closes every handle and the
+job exits 0.
+
+**What `scp` needs.** OpenSSH's `scp` has used SFTP by default since
+OpenSSH 9.0 (scp(1)), and asks for the `sftp` subsystem with `ssh -s`
+(`do_sftp_connect` in `scp.c`). An upload sends `SSH_FXP_INIT`, a `STAT`
+of the target to learn whether it is a directory, `OPEN` for writing,
+the `WRITE`s and `CLOSE`, with `FSETSTAT` under `-p` and `MKDIR` under
+`-r` (`source_sftp` in `scp.c`, `sftp_upload` in `sftp-client.c`); a
+download sends `STAT`, `OPEN`, the `READ`s and `CLOSE`, and `-r` adds
+`OPENDIR` and `READDIR`. Each is a request of SFTP version 3 that
+`ssh_sftpd` serves. A target of `~user/...` needs the
+`expand-path@openssh.com` extension, which `ssh_sftpd` does not offer, so
+`scp` refuses it with its own message; `~/x` and `x` it sends relative
+to the home (`prepare_remote_path` in `scp.c`). `scp -O`, the legacy
+protocol, runs `scp -t` through `exec`, which names no command of
+erXos, so it fails with `rc`'s `not found`. `sftp` and `sshfs` speak the
+same protocol and work within the same requests.
 
 ### Algorithm policy
 
@@ -984,6 +1047,7 @@ closes, which the log record of each connection shows.
 | channels per connection (`max_channels`) | 10, FreeBSD's `MaxSessions` | ttys and jobs per connection | the session, for each tty or job |
 | a channel's receive window and packet | 64 KiB and 32 KiB | what the SSH domain holds for one channel | the SSH domain |
 | a job's messages in flight | one each way, 32 KiB each | what the line and the channel hold beyond the window | the session and the SSH domain |
+| an SFTP job | 64 handles, requests of at most 256 KiB, 100 names a `READDIR` | the server's handle table and its buffer | the session |
 | sessions per principal | the principal's domain quota | session domains | the principal's budget |
 
 The SSH domain's worst case is 64 connections of 10 channels each
@@ -1047,11 +1111,15 @@ identifier.
    messages of [Sessions, ttys and shells](#sessions-ttys-and-shells),
    exchanged inside root's session with the session's job relay, the
    part of `erx_ssh_line` that stage 2's `open_job` runs, so a job's
-   bytes cross unchanged and its error output stays apart. This is the
-   byte-clean `exec` over which the host tool's SSH route runs
-   `hostlink` ([design-live.md](design-live.md#one-load-three-routes));
-   whether stage 1 carries it is an open decision of that document. No
-   subsystem is offered. Its version banner
+   bytes cross unchanged and its error output stays apart. The job relay
+   is built before stage 1's `exec`, which is the byte-clean `exec` over
+   which the host tool's SSH route runs `load`
+   ([design-live.md](design-live.md#one-load-three-routes)). The `sftp`
+   subsystem is served on the same relay: `erx_ssh_dev`'s `subsystems`
+   names `sftp` with `erx_ssh_dev_channel`, which runs `erx_sftp_server`
+   as a job, as stage 2's line does ([SFTP](#sftp)), so OpenSSH's `scp`
+   copies files to and from root's session from this stage on. Its
+   version banner
    is `SSH-2.0-erXos_` and the release number of `abi/erx_abi.txt`'s
    `uname_release`, not OTP's `Erlang/<version>`, within RFC 4253's
    section 4.2 limits on the softwareversion (printable US-ASCII, no space,
@@ -1128,6 +1196,8 @@ identifier.
 | `lib/ssh/src/ssh_server_key_api.erl`, `ssh_transport.erl` | `host_key/2` may return `{ok, {ssh2_pubkey, Blob}}` and an optional `sign(Blob, Hash, Options)`, the shape of the client key API's `sign/3`, signs the exchange hash ([design-system.md](design-system.md#the-vault)); such a key is usable only when the module exports `sign/3` and `Blob` is the one encoding of a key of the negotiated algorithm | a callback that returns a private key |
 | `lib/ssh/src/ssh_message.erl` | `ssh2_privkey_encode/1` writes an Ed25519 or Ed448 private key as OpenSSH's private key format holds it, the private key followed by the public key, which is what `ssh2_privkey_decode2/1` reads back; stock writes the private key alone, so stock `ssh_file` cannot read an Ed25519 key it wrote in `openssh_key_v1`, an upstream bug | every other key type's encoding, and the decoder |
 | `lib/ssh/src/ssh_connection.erl` | a new `exit_signal/3`, which a server channel calls to send `exit-signal` with the signal's name, no core dump and empty message and language (RFC 4254, section 6.10), as `exit_status/3` sends `exit-status`; stage 1's channel sends it for a shell Ctrl-C ended | every other function and message unchanged |
+| `lib/ssh/src/ssh_xfer.erl` | an `#ssh_xfer{}` whose `cm` is `{stream, Write}`, `Write` a function of one argument, sends each packet as `Write(Packet)` where it would call `ssh_connection:send/3` | every server and client whose `cm` is a connection |
+| `lib/ssh/src/ssh_sftpd.erl` | three new functions run the server over a byte stream for `erx_sftp_server` ([SFTP](#sftp)): `stream_init(Options, Write)` runs `init/1` with `cm` set to `{stream, Write}`; `stream_data(Bytes, State)` runs `handle_data/4` on standard input's bytes and answers `{ok, State}` or `{stop, State}`; `stream_end(State)` runs `terminate/2`, which closes every handle | the channel callbacks, and every request's decoding and reply |
 
 `kex_input` holds the first exchange's shared secret, from which that
 exchange's traffic keys follow, so it lives only in the connection's
@@ -1193,7 +1263,11 @@ an algorithm mismatch ends the key exchange. The facet's answers are the
 closed sets of its table, and `erx_ssh_wire` refuses a blob of any other
 length or name, and an exchange input over 64 KiB, short of its five
 strings or with a string longer than what remains, with `badarg`, which
-the facet answers `no_match`.
+the facet answers `no_match`. Within an SFTP job a refused request is
+SFTP's own `SSH_FXP_STATUS`, with the code `ssh_sftpd` maps the file
+error to, such as `SSH_FX_PERMISSION_DENIED` for a path no grant of the
+session writes, and a subsystem other than `sftp` is
+`SSH_MSG_CHANNEL_FAILURE`.
 
 ## Security
 
@@ -1316,6 +1390,7 @@ multiple of 51 or past 816 bytes refused).
 | signed data: another user, service or key answers `no_match`; an unknown principal and an unknown key answer alike | the signed data built without the user name: the other-user case logs in |
 | the verifier, called directly: `S + L`, `R` with `y = p`, a key with `x = 0` and the sign bit, a `y` with no square root are refused; `add_login_key` refuses the eight small-order points, a list the test checks with RFC 8032 section 5.1.4's addition | the range check on `S` removed: `S + L` verifies; the small-order check removed: the neutral point's key is admitted and a forged signature verifies |
 | `erx_ssh_wire`'s fuzz target | the length check off by one: the round trip fails; the string taken before its length is checked: the decoder crashes |
+| the fuzz target of `erx_sftp_server`'s stream, over a stub file handler: any input gets replies, a stop or the job's end, never a hang or a crash outside the job | the 256 KiB bound removed: the buffer grows past it within the budget |
 | the facet's independence (QEMU): with the SSH domain's own check made to accept any key, a wrong key is still refused | the facet trusting the domain's word: the wrong key logs in |
 | release builds: the manifest check refuses an SSH domain without the host key facet and any `record_volume` window; `erx_ssh` under a release's build facts answers `not_development` | the check skipping the `record_volume` row, or passing an SSH domain without the host key facet: that manifest passes; `erx_ssh` not reading the build facts: it listens |
 | each product's manifest: the browser demo's holds no SSH domain or `record_volume` window, the card's and the QEMU release medium's hold both, and neither medium as built holds `authorized_keys` | `ssh` dropped from `site_leaves_out`: the demo holds an SSH domain; the published medium build taking out the SSH domain: the card holds none; the medium build passing the development key: the medium holds `authorized_keys` |
@@ -1328,6 +1403,9 @@ multiple of 51 or past 816 bytes refused).
 | parallel logins (QEMU): a second client logs in within 5 s while a first stalls after its version line | `parallel_login` left at its default: the second waits for the first's grace |
 | jobs (QEMU): a job's output, error output and exit status 3 arrive apart; `ssh -t host 'exit 4'` exits 4 | `job_eof` handled as `job_hangup`: the error output and status are lost; no `exited` for a tty: the `-t` client does not exit 4 |
 | stage 1's `exec` (QEMU): `ssh host 'cat > /tmp/b' < BYTES` with all 256 byte values, then `ssh host cat /tmp/b`, gives back the same bytes, and `ssh host 'exit 3'` exits 3 | an `exec` without a pty run on a tty: `ONLCR` turns LF into CR LF and the bytes differ |
+| SFTP (QEMU, stage 1 and stage 2): `scp` of a file of all 256 byte values to `DEST:/data/`, back, and `scp -r` of a directory of three files each way give the same bytes; `scp x DEST:` writes `x` in the home; `scp x DEST:~nobody/` fails with `scp`'s expand-path message | `subsystems` left empty: `scp` reports that the subsystem request failed; the server run on a tty: the bytes differ |
+| SFTP's reach: in a session whose template grants no `/data`, `scp x DEST:/data/` fails, and the SSH domain's `ssh_state` files are not visible | the server started in the SSH domain: the copy reaches that domain's files |
+| `erx_sftp_server` against stock `ssh_sftpd`: the same requests over a pipe pair and over a channel give the same replies, and a request past 256 KiB ends the job with status 1 | `stream_data/2` that drops a request split across two reads: a request cut in two gets no reply |
 | hangup: closing the client ends the shells and the session within 5 s; killing the SSH domain ends every session it started | `logout` not called at the connection's end: the session outlives it |
 | limits: the 65th connection and the 11th channel are refused; the 6th counted failure is a disconnect | `max_auth_tries` not passed: the 6th failure is `SSH_MSG_USERAUTH_FAILURE` |
 | host key: the fingerprint survives a reboot; a corrupt file stops the daemon with the file named | the key made anew at each start: the fingerprints differ |
@@ -1480,7 +1558,8 @@ boots the card and logs in.
   `lib/ssh/src/ssh_options.erl`, `ssh_auth.erl`, `ssh_transport.erl`,
   `ssh_acceptor.erl`, `ssh_system_sup.erl`, `ssh_connection_handler.erl`,
   `ssh_server_key_api.erl`, `ssh_fsm_userauth_server.erl`, `ssh_cli.erl`,
-  `ssh.hrl`, `ssh_connect.hrl`.
+  `ssh.hrl`, `ssh_connect.hrl`, `ssh_connection.erl` (`start_subsystem/4`),
+  `ssh_sftpd.erl`, `ssh_sftpd_file.erl`, `ssh_xfer.erl`, `ssh_xfer.hrl`.
 * FreeBSD `release/15.1.0-p6`, `crypto/openssh/` (OpenSSH 10.0,
   `FreeBSD-20250801`), from `https://raw.githubusercontent.com/freebsd/freebsd-src/release/15.1.0-p6/crypto/openssh/`:
   `myproposal.h` `b9220081ece30ff4ff48698df5c88cb444a6a7aee08f86c2cab4884b1027e523`,
@@ -1490,11 +1569,24 @@ boots the card and logs in.
   `version.h` `3605cf2244753b660a0d06f0946665f77ce2e446b367ecee5fe6e11db28318ff`,
   `auth2.c` `d4364911846a7296bc232660ae3427e45b6fc7726c5c7ff34c86c50ef9f5cdbf`,
   `monitor.c` `f6a0096c9ade1fd45a485099c73c07044fb2f8bdf3d3da993513b38490aeace1`.
-* `session.c` (`session_exit_message`), from FreeBSD's
+* `session.c` (`session_exit_message`, `do_child`), from FreeBSD's
   `release/15.1.0-p6` `crypto/openssh/`, SHA-256
   `3420f3f5bfb4bee8c8d96f08b04605b432f583044725f38e017be3a530c588e6`,
   and from `https://raw.githubusercontent.com/openssh/openssh-portable/V_9_9_P2/`,
   SHA-256 `05113a9413336600d055f19190c1a057bc164f57e215df240016478db1c4944e`.
+* OpenSSH portable `V_10_3_P1`, from
+  `https://raw.githubusercontent.com/openssh/openssh-portable/V_10_3_P1/`:
+  `scp.c` `0f598f86a09b83be2a69be471bb234d275d53f38deab564f6ca51c86be5a32d1`
+  (`do_sftp_connect`, `source_sftp`, `prepare_remote_path`, the default
+  `MODE_SFTP`), `scp.1`
+  `32966f40938f813baedadfe7b88b410ace14b7f75e5a655d70aed9836fe647af`
+  (SFTP by default since OpenSSH 9.0), `sftp-client.c`
+  `a3290478cc6ad772dcdf800b0ee80df28db330ae971df7c6541d43b9be8aa289`
+  (`sftp_init`, `sftp_upload`), `sftp-server.c`
+  `ef4e46d1a313a27f906d53efc33cb25743d51969a4dcc051331034fa07d701a7`
+  (`process_readdir`), `sftp.h`
+  `d3b25006d02278234014753160197d518114c05dc8c242b0af604f8f8a175f46`
+  (`SSH2_FILEXFER_VERSION` 3).
 * OpenBSD's `src/usr.bin/ssh`, from
   `https://cvsweb.openbsd.org/checkout/src/usr.bin/ssh/`, read
   2026-11-16: `sshd.8` revision 1.332 (2026/09/02)

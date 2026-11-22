@@ -7233,9 +7233,10 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   reboots, its installs are gone, but the watch sends only sources that change
   from then on, and a module whose bytes did not change is loaded again, whose
   second load purges and ends processes still in its old code. design-live.md
-  ("One load, three routes", the host tool's transports) has the watch load
-  everything it loaded again on each new connection and `erx_code` skip a
-  module already current; build both.
+  has the watch open a connection for each change and load its whole set
+  ("One load, three routes"), and the loading runtime skip a module whose
+  current hash, its file name, is the one asked for ("What is already
+  current"); build both.
 * [Low] live, `tools/erx load` (`tools/lib/erx/code_load.rb`): the store may
   free a blob that `missing` reported as held, to make room for a later blob
   of the same batch (erx_code_store.erl), and the load then answers
@@ -7244,8 +7245,17 @@ handing call's socket process exit and its connection's, is not yet looked for. 
 * [Low] live, `tools/erx load` and `watch` (`tools/lib/erx/code_commands.rb`):
   they reach only QEMU's UNIX socket (`--socket`) and only the system domain,
   and default to it; design-live.md ("One load, three routes") gives them
-  `--tcp` (loopback only), `--tty` (raw mode through `stty`) and `--ssh`
-  (`hostlink` over an SSH `exec`), and a required `--domain`. Not built.
+  `--tty` (raw mode through `stty`), `--socket` for a UART bridge's socket
+  too, `--ssh` (an `exec` of the session's `load` with the modules on its
+  standard input), and a required `--system` or `--domain`. Not built.
+* [Medium] live, the Raspberry Pi 4's host link (`tools/lib/erx/boot_partition.rb`,
+  `BootPartition.plan`): the root hands the host link's UART only under
+  `erx.hostlink=1` (`liberx/backend/fiasco/boot_args.c`), and the card's boot
+  partition holds no command line, so a development card has no host link on
+  UART3 and the board route of design-live.md ("The host link from a board")
+  does not work. Find where the board's `/chosen/bootargs` comes from
+  (unverified: the firmware's `cmdline.txt`), write `erx.hostlink=1` there
+  for development cards only, and check it in the boot partition's test.
 * [Low] live, host-link client (`tools/lib/erx/hostlink_client.rb`): it has no
   host tests of its own, only the production image's host link boot; drive it
   against `erx_hostlink_session` on stock OTP or a scripted IO (credit, hello
@@ -10581,7 +10591,9 @@ document's "residual risks accepted" paragraph.
   store for the system domain's installs. Per-principal hot stores in memory
   objects from the principal's budget, the scoped code facet
   (`abi/services/code.txt`, `erx_domain_core:code_scope/3`), the session's
-  `load` and `hostlink` commands, and the code server's fetch
+  `load` command with its standard-input form, one load at a time for each
+  target with the 30 s deadline that stops a silent domain, atomic batches
+  in every ERTS runtime, and the code server's fetch
   of pieces into other domains, overlays per supervised specification with
   their revisions and release hash, overlays persisted on the data partition
   and the bounded decoder of what is read back, with its fuzz target, are not
@@ -10590,8 +10602,10 @@ document's "residual risks accepted" paragraph.
   drop or free the other's.
 * [Low] code service, load timeout (`erlang/apps/erx_code/src/erx_code.erl`): a
   caller of `erx_code:call/1` waits 60 s; a load still running then goes on and
-  may finish, while the caller exits with a timeout. The install facet must
-  report such a call's outcome as unknown, not as failed.
+  may finish, while the caller exits with a timeout. design-live.md ("The
+  deadline") has the service end every load it starts and the facet wait
+  for its answer with no deadline of its own; until then the install facet
+  must report such a call's outcome as unknown, not as failed.
 * [Low] code service, scope (`erlang/apps/erx_code/src/erx_code.erl`):
   `erx_code:history/2` checks no inspect facet: any caller in the system domain
   reads the system domain's history, and every other domain id answers
@@ -11009,13 +11023,20 @@ document's "residual risks accepted" paragraph.
   reads (unverified: read OpenSSH's `sshkey.c` private key serialization
   at a pinned release and compare, with a round trip through
   `ssh-keygen -y` as the test).
-* [Medium] SSH, SFTP and forwarding
-  ([design-ssh.md](docs/design-ssh.md#channel-policy)): the daemon refuses
-  the `sftp` subsystem and every forwarding request, since OTP's
-  `ssh_sftpd` and a forwarded connection would run on the SSH domain's
-  files and `net` grant. Design them to run in the principal's session, as
-  `open_job` runs a command, on the session's namespace and its own `net`
-  grant.
+* [Medium] SSH, SFTP ([design-ssh.md](docs/design-ssh.md#sftp)): both stages
+  refuse the `sftp` subsystem, so OpenSSH's default `scp` fails. Not built:
+  the `subsystems` option naming `sftp`, `Run = sftp` on the job relay,
+  `erx_sftp_server`, the `ssh_xfer` and `ssh_sftpd` stream edits, and the
+  fuzz target of the server's stream.
+* [Medium] SSH, stage 1's `exec` (`erlang/apps/erx_session/src/erx_ssh_dev_channel.erl`,
+  the `exec` clause): it answers `exec is not supported in 0.1`;
+  design-ssh.md ("Stages") runs it on a tty or as a job on the session's
+  job relay, which is built first, and the SSH route of design-live.md
+  needs it.
+* [Medium] SSH, forwarding ([design-ssh.md](docs/design-ssh.md#channel-policy)):
+  the daemon refuses every forwarding request, since a forwarded
+  connection would use the SSH domain's `net` grant. Design it to run in
+  the principal's session, as SFTP runs, on the session's own `net` grant.
 * [Low] ssh, `max_auth_tries` against FreeBSD's `MaxAuthTries`
   ([design-ssh.md](docs/design-ssh.md#limits-and-who-pays),
   `otp/lib/ssh/src/ssh_auth.erl`, `handle_userauth_request/3`): FreeBSD's
