@@ -241,6 +241,37 @@ a_transport_crash_ends_only_its_medium_test() ->
         ?assertEqual([Function], functions(erx_usb_bot))
     end).
 
+%% The function's crash report shows none of the unit's INQUIRY text, nor the write data
+%% a message, the reason or the log carries (docs/design-log.md, "Reports carry no term").
+a_function_status_shows_no_medium_bytes_test() ->
+    with_bus(#{[1] => stick}, fun() ->
+        configured([1]),
+        _ = transport(),
+        [Function] = functions(erx_usb_bot),
+        refute_shown(erx_usb_bot, Function, fun(Data) -> {request, make_ref(), {write, 0, 3, Data}} end,
+                     {request, write})
+    end).
+
+%% The transport's crash report shows none of the unit's INQUIRY text, nor the write data
+%% a message, the reason or the log carries.
+a_transport_status_shows_no_medium_bytes_test() ->
+    with_bus(#{[1] => stick}, fun() ->
+        configured([1]),
+        refute_shown(erx_blk_bot, transport(), fun(Data) -> {write, 3, Data} end, write)
+    end).
+
+%% Module's format_status/1 of Pid's live state, with Write of the marker as the last
+%% message, in the reason and in the log, shows the message as Kind and neither the
+%% marker nor the stick's INQUIRY text.
+refute_shown(Module, Pid, Write, Kind) ->
+    Marker = <<"status-marker-0123456789abcdef!">>,
+    Data = binary:copy(<<Marker/binary, $.>>, 16),
+    Status = #{state => sys:get_state(Pid), message => Write(Data), reason => {{badmatch, Data}, []},
+               log => [{in, Write(Data)}]},
+    Formatted = Module:format_status(Status),
+    ?assertMatch(#{message := Kind, reason := badmatch, log := []}, Formatted),
+    ?assertEqual(nomatch, binary:match(term_to_binary(Formatted), [Marker, <<"erXos">>, <<"Model stick">>])).
+
 %% A hub's removal detaches the devices below it first and ends every function of each.
 a_hub_removed_detaches_below_it_first_test() ->
     with_bus(#{[1] => {hub, 2}, [1, 2] => keyboard}, fun() ->

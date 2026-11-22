@@ -76,13 +76,16 @@ handle_info({'DOWN', _Monitor, process, Function, _Reason}, M = #{function := Fu
 handle_info(_Message, M) ->
     {noreply, M}.
 
-%% A crash report leaves out the unit's INQUIRY text and a request's data.
+%% A crash report shows the medium's unit, capacity and flush, and a message's kind; never
+%% the unit's INQUIRY text, a request's sectors or a write's data. erx_report:status/2
+%% hides the log and cuts the reason to its leading atom (docs/design-log.md, "Reports
+%% carry no term").
 -doc false.
 format_status(Status) ->
-    maps:map(fun(state, M) -> M#{detail := redacted};
-                (message, _Message) -> redacted;
-                (_Key, Value) -> Value
-             end, Status).
+    erx_report:status(Status, #{state => fun medium_facts/1, message => fun erx_report:reason_name/1}).
+
+medium_facts(M = #{lun := _, capacity := _, flush := _}) -> maps:with([lun, capacity, flush], M);
+medium_facts(_State) -> hidden.
 
 checked(_Sector, Count, _M, _Send) when not is_integer(Count); Count < 1; Count > ?MAX_SECTORS ->
     {error, bad_count};

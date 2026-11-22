@@ -126,21 +126,26 @@ handle_info({'DOWN', Monitor, process, _Transport, _Reason}, B = #bot{units = Un
 handle_info(_Message, B) ->
     {noreply, B}.
 
-%% A crash report shows the function's interface and its units' states, never the
-%% engine's data, a unit's INQUIRY text or a message's bytes, which are a medium's
-%% sectors or what the device sent.
+%% A crash report shows the function's interface, its units' states and a message's kind;
+%% never the engine's data, a unit's INQUIRY text or a message's bytes, which are a
+%% medium's sectors or what the device sent. erx_report:status/2 hides the log and cuts
+%% the reason to its leading atom (docs/design-log.md, "Reports carry no term").
 -doc false.
 format_status(Status) ->
-    maps:map(fun(state, #bot{interface = Interface, units = Units}) ->
-                     #{interface => Interface, units => maps:map(fun(_Lun, Unit) -> course(Unit) end, Units)};
-                (message, _Message) ->
-                     redacted;
-                (_Key, Value) ->
-                     Value
-             end, Status).
+    erx_report:status(Status, #{state => fun bot_facts/1, message => fun message_kind/1}).
+
+bot_facts(#bot{interface = Interface, units = Units}) ->
+    #{interface => Interface, units => maps:map(fun(_Lun, Unit) -> course(Unit) end, Units)};
+bot_facts(_State) ->
+    hidden.
 
 course(#{state := State}) -> State;
-course(Unit) -> Unit.
+course({unserved, Reason}) -> {unserved, erx_report:reason_name(Reason)};
+course(inquiring) -> inquiring;
+course(_Unit) -> hidden.
+
+message_kind({request, _Ref, Request}) -> {request, erx_report:reason_name(Request)};
+message_kind(Message) -> erx_report:reason_name(Message).
 
 %% ---------------------------------------------------------------------------
 %% The engine's events and actions

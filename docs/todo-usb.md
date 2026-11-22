@@ -148,7 +148,6 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
 * [Medium] USB, the BOT function's test gaps (`erx_usb_bot`, [design-usb.md](design-usb.md#the-bot-engine)): `unit/2` has no host
   test of its own, and the model stick covers no removable medium change, UNIT ATTENTION, READ CAPACITY(16), ILLEGAL REQUEST
   readiness or READ(16).
-* [Low] USB, `erx_usb_bot` and `erx_blk_bot`: `format_status` redacts `reason` and `log`.
 
 ## Planned features
 
