@@ -8,8 +8,8 @@
 %% Everything lives in the calling process's dictionary, so tests do not share state.
 %%
 %% A device the test process plays instead, for host tests of a process that calls the NIF
-%% from its own process (test/erlang/erx_xhci_tests.erl): open(#{stand_in => Player})
-%% answers {stand_in, Player}, and every call on that device, the TRB ring form's post/4,
+%% from its own process (test/erlang/erx_xhci_tests.erl, test/erlang/erx_mini_uart_tests.erl):
+%% open(#{stand_in => Player}) answers {stand_in, Player}, and every call on that device, the TRB ring form's post/4,
 %% complete/2, negotiate/2 and queue_state/2 among them, is sent to Player as
 %% {erx_device, Caller, Call}, the call returning the Answer Player sends back as
 %% {erx_device, Answer}. queue_state/2 is the shape the controller process assumes until
@@ -17,7 +17,7 @@
 
 -module(erx_device).
 
--export([open/1, read/2, write/3, read_field/3, write_field/4, command/2]).
+-export([open/1, read/2, write/3, read_field/3, write_field/4, field/4, command/2]).
 -export([elements/2, negotiate/2, post/4, complete/2, queue_state/2]).
 -export([script/1, calls/0, play/2]).
 
@@ -64,8 +64,14 @@ write({stand_in, Player}, Register, Value) ->
 write(_Dev, Register, Value) ->
     record({write, Register, Value}).
 
+write_field({stand_in, Player}, Register, Field, Value) ->
+    play(Player, {write_field, Register, Field, Value});
 write_field(_Dev, Register, Field, Value) ->
     record({write_field, Register, Field, Value}).
+
+%% Only on a played device: the player decodes the word, from the register's generated header.
+field({stand_in, Player}, Register, Field, Word) ->
+    play(Player, {field, Register, Field, Word}).
 
 command(_Dev, Word) ->
     record({command, Word}).

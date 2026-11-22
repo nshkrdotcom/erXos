@@ -10,10 +10,12 @@ require_relative '../fixtures/erlang_build'
 # Runs test/erlang/erx_mini_uart_tests.erl, the EUnit cases of the mini UART driver's
 # receive decisions, against erx_mini_uart compiled from source with the rest of its
 # application on stock's emulator (ERX_ERL and ERX_ERLC, which make check supplies). The
-# cases call only pure functions, so the module's calls into erx_device are never made.
+# driver's register and interrupt calls reach the stand-ins of erx_device and erx_irq_line,
+# through which the order case plays the device.
 class ErxMiniUartTest < Minitest::Test
   APPLICATIONS = %w[erx_uart].freeze
-  TESTS = %w[test/erlang/erx_mini_uart_tests.erl].freeze
+  TESTS = %w[test/erlang/stand_in/erx_device.erl test/erlang/stand_in/erx_irq_line.erl
+             test/erlang/erx_mini_uart_tests.erl].freeze
 
   def test_receive_cases_pass_under_eunit
     Dir.mktmpdir('erx-mini-uart-test') do |work|

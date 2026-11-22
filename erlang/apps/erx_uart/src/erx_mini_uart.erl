@@ -24,9 +24,12 @@
 %% the line has no flow control, so a delivery later than that loses the bytes the FIFO
 %% had no room for; what was read goes up as read. Every read of LSR, the receive side's
 %% and the send side's alike, goes through read_lsr/1, because the read clears RX_OVERRUN:
-%% the driver counts each overrun a read shows and logs a warning for the first and for
-%% each doubling of the count after it (count_overrun/2), so a flood writes only a few
-%% lines to the line it overflows.
+%% the driver counts each overrun a read shows (count_overrun/2). It logs a warning only
+%% when its mailbox is empty, after a delivery has been drained and acknowledged or a send
+%% has finished, so a pending interrupt is always served before the log call; a byte that
+%% arrives during the call still waits for it. It warns of the first overrun and then of
+%% each count at least double the last one it logged (to_report/2), so a flood writes only
+%% a few lines to the line it overflows.
 %%
 %% Sending: one byte whenever the transmit FIFO can take one. A full FIFO waits a
 %% millisecond at a time with the receive side still served.
@@ -34,10 +37,10 @@
 -module(erx_mini_uart).
 
 -export([start_link/1]).
--export([init/1]).
+-export([init/2]).
 -export([console_records/0, console_uart/1]).
 %% Exported for its tests.
--export([count_overrun/2]).
+-export([count_overrun/2, to_report/2]).
 
 -include("generated/erx_hw_mini_uart.hrl").
 
@@ -45,20 +48,24 @@
 -define(RX_LINE, 0).
 -define(FULL_WAIT_MS, 1).
 
-%% The driver's state: its device, its line, the console it serves, and how many reads of
-%% LSR have shown an overrun since it started.
+%% The driver's state: its device, its line, the console it serves, how many reads of LSR
+%% have shown an overrun since it started, and the overrun count the last warning logged
+%% (0 before any).
 -record(driver, {dev :: erx_device:device(),
                  irq :: erx_irq_line:handle(),
                  console :: pid(),
-                 overruns = 0 :: non_neg_integer()}).
+                 overruns = 0 :: non_neg_integer(),
+                 reported = 0 :: non_neg_integer()}).
 
 -spec start_link(Console :: pid()) -> {ok, pid(), Terminal :: boolean()}.
 start_link(Console) ->
-    proc_lib:start_link(?MODULE, init, [Console]).
+    proc_lib:start_link(?MODULE, init, [Console, spec()]).
 
--spec init(pid()) -> no_return().
-init(Console) ->
-    {ok, Dev} = erx_device:open(spec()),
+%% The driver of the device Spec names, serving Console. Spec is an argument, not read here,
+%% so that a test can hand the driver a device it plays.
+-spec init(pid(), erx_device:spec()) -> no_return().
+init(Console, Spec) ->
+    {ok, Dev} = erx_device:open(Spec),
     ok = erx_device:write(Dev, ier, 0),
     {ok, Irq} = erx_irq_line:attach(Dev, ?RX_LINE),
     ok = erx_device:write_field(Dev, ier, rx_errata, 3),
@@ -130,17 +137,27 @@ number(Word, Bits) ->
             error
     end.
 
-loop(S = #driver{dev = Dev, console = Console}) ->
+%% Serves the messages waiting; with none left, logs the overruns due and waits for one.
+loop(S) ->
     receive
-        {erx_irq, Dev, ?RX_LINE} ->
-            loop(take_input(S));
-        {erx_console_output, From, Bytes} ->
-            Next = send(S, iolist_to_binary(Bytes)),
-            Console ! {erx_console_written, From},
-            loop(Next);
-        _Other ->
-            loop(S)
+        Message -> loop(handle(Message, S))
+    after 0 ->
+            idle(report_overruns(S))
     end.
+
+idle(S) ->
+    receive
+        Message -> loop(handle(Message, S))
+    end.
+
+handle({erx_irq, Dev, ?RX_LINE}, S = #driver{dev = Dev}) ->
+    take_input(S);
+handle({erx_console_output, From, Bytes}, S = #driver{console = Console}) ->
+    Next = send(S, iolist_to_binary(Bytes)),
+    Console ! {erx_console_written, From},
+    Next;
+handle(_Other, S) ->
+    S.
 
 send(S, <<>>) ->
     S;
@@ -181,26 +198,31 @@ drain(S0 = #driver{dev = Dev}, Bytes) ->
             drain(S, <<Bytes/binary, Byte>>)
     end.
 
-%% LSR's word, read once, with the overrun it shows counted and, if it is one to report,
-%% logged: the read clears RX_OVERRUN, so the overrun is counted here or never.
+%% LSR's word, read once, with the overrun it shows counted: the read clears RX_OVERRUN, so
+%% the overrun is counted here or never. Nothing is logged here, in the middle of a drain.
 read_lsr(S = #driver{dev = Dev, overruns = Seen}) ->
     Lsr = erx_device:read(Dev, lsr),
-    {Overruns, Report} = count_overrun(Lsr, Seen),
-    case Report of
-        false -> ok;
-        true -> logger:warning("erx_mini_uart: receive FIFO overrun, input lost (~b overruns)",
-                               [Overruns])
-    end,
-    {Lsr, S#driver{overruns = Overruns}}.
+    {Lsr, S#driver{overruns = count_overrun(Lsr, Seen)}}.
 
-%% The overrun count after a read of LSR that returned Lsr, from Seen before it, and
-%% whether to log it: the first overrun and each doubling of the count are logged.
--spec count_overrun(non_neg_integer(), non_neg_integer()) -> {non_neg_integer(), boolean()}.
-count_overrun(Lsr, Seen) ->
-    case ?ERX_HW_MINI_UART_LSR_RX_OVERRUN_GET(Lsr) of
-        0 ->
-            {Seen, false};
-        1 ->
-            Overruns = Seen + 1,
-            {Overruns, Overruns band (Overruns - 1) =:= 0}
+%% Logs a warning if to_report/2 says the count is due, and returns S with the logged count
+%% recorded.
+report_overruns(S = #driver{overruns = Overruns, reported = Reported}) ->
+    case to_report(Overruns, Reported) of
+        false ->
+            S;
+        true ->
+            logger:warning("erx_mini_uart: receive FIFO overrun, input lost (~b overruns)", [Overruns]),
+            S#driver{reported = Overruns}
     end.
+
+%% The overrun count after a read of LSR that returned Lsr, from Seen before it.
+-spec count_overrun(non_neg_integer(), non_neg_integer()) -> non_neg_integer().
+count_overrun(Lsr, Seen) ->
+    Seen + ?ERX_HW_MINI_UART_LSR_RX_OVERRUN_GET(Lsr).
+
+%% Whether Overruns, the count now, is to be logged when Reported was the count the last
+%% warning gave (0 before any): the first overrun is, and then a count at least double the
+%% last one logged. The first term matters only before any warning, when twice 0 is 0.
+-spec to_report(non_neg_integer(), non_neg_integer()) -> boolean().
+to_report(Overruns, Reported) ->
+    Overruns > Reported andalso Overruns >= 2 * Reported.
