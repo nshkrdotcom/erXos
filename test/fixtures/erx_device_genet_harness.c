@@ -439,9 +439,10 @@ stop(const erx_device_t *device)
 }
 
 /*
- * erx_device_stop_dma (docs/design-device-dma.md, "Stopping without installing") on the device
- * check_register_ring left running, whose receive queue is `rq` and transmit queue `tq` over
- * `memory`: both engines stopped and confirmed with nothing installed, and negotiate
+ * erx_device_stop_dma (docs/design-device-dma.md, "Stopping without installing (the
+ * register ring)") on the device check_register_ring left running, whose receive queue
+ * is `rq` and transmit queue `tq` over `memory`: both engines
+ * stopped and confirmed with nothing installed, and negotiate
  * installing on its first call after; then, with a transmit in flight and a receive buffer
  * marked, both queues refusing posts and completions after the stop and the buffer as it was,
  * so nothing is handed back, until negotiate installs, zeroing the buffer and forgetting the

@@ -248,10 +248,11 @@ queue_create(_Dev, _Index, _Size, _BufferSize) ->
 negotiate(_Dev, _Wanted) ->
     erlang:nif_error(undef).
 
-%% GENET's register ring stopped and confirmed, without the install (docs/design-device-dma.md,
-%% "Stopping without installing"), for a driver that resets its controller between the
-%% queues and negotiate/2: both queues stop being ready, so post/4 and complete/2 answer
-%% `{error, broken}` until negotiate/2; both DMA engines are stopped, transmit first, and
+%% GENET's register ring stopped and confirmed, without the install
+%% (docs/design-device-dma.md, "Stopping without installing (the register ring)"), for a
+%% driver that resets its controller between the queues and negotiate/2: both queues stop
+%% being ready, so post/4 and complete/2 answer `{error, broken}` until negotiate/2;
+%% both DMA engines are stopped, transmit first, and
 %% both idle reports read. `ok` once both show the stop; `{error, ebusy}` until then, the
 %% stop written again at each call, so the driver retries on a timer. Nothing is installed
 %% and no buffer handed back: a posted buffer returns to its pool only through complete/2
