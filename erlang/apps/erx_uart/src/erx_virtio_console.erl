@@ -196,13 +196,23 @@ written(Done, #state{owner = Owner}) ->
     lists:foreach(fun(From) -> Owner ! {erx_console_written, From} end, Done).
 
 %% A crash report shows neither the bytes the core holds nor a message's: they are the
-%% controller's traffic, which carries keys (docs/design-bluetooth.md, "Security").
+%% controller's traffic, which carries keys (docs/design-bluetooth.md, "Security"). The
+%% driver runs in the system domain, where no report filter runs (docs/design-log.md,
+%% "Reports carry no term"): because the module exports format_status/1, proc_lib leaves
+%% the mailbox and the dictionary out, and erx_report:status/2 empties the log and shows
+%% the reason's leading atom; the state keeps its handles and owner, a write its length.
+%% sys:get_state/1 and sys:log/2 still show the state whole, to the system domain's code.
 -doc false.
 format_status(Status) ->
-    maps:map(fun(state, State = #state{}) -> State#state{core = redacted};
-                (message, {erx_console_output, From, _Bytes}) -> {erx_console_output, From, redacted};
-                (_Key, Value) -> Value
-             end, Status).
+    erx_report:status(Status, #{state => fun state/1, message => fun message/1}).
+
+state(#state{} = State) -> State#state{core = redacted};
+state(_State) -> hidden.
+
+message({erx_console_output, From, Bytes}) when is_binary(Bytes) ->
+    {erx_console_output, From, byte_size(Bytes)};
+message(_Message) ->
+    hidden.
 
 %% One line of the kernel log. The path is the record's, a device-tree node path the record
 %% reader holds to the characters a device tree allows; every other value is an atom of
