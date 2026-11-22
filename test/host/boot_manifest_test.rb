@@ -349,6 +349,45 @@ class BootManifestTest < Minitest::Test
     assert_equal [0, 0, 0], admitted(pi, platform: 'raspi4b').byteslice(456, 16).unpack('Q<L<L<')
   end
 
+  # The header's firmware_requests span (offset 480: offset u32, count u32) names the platform
+  # record's rows of placed devices, each name (offset u32, length u32), device row u32, tag
+  # u32 and argument u32 (abi/manifest.txt, erx_mf_firmware_request). The Pi 4's one row is
+  # the VL805's notification, index 0 of its PCIe bridge's row; QEMU virt's record has none.
+  def test_the_firmware_requests_are_the_platform_record_s_rows
+    assert_equal 0, admitted.byteslice(480, 8).unpack1('x4L<')
+    pi = Erx::Platform.load(root: ROOT, name: 'raspi4b').manifest_source(ROOT)
+    bytes = admitted(pi, platform: 'raspi4b')
+    offset, count = bytes.byteslice(480, 8).unpack('L<L<')
+    assert_equal 1, count
+    name_offset, name_length, device, tag, argument = bytes.byteslice(offset, 20).unpack('L<5')
+    assert_equal [0x0003_0058, 0x0010_0000], [tag, argument]
+    devices_offset = bytes.byteslice(256, 4).unpack1('L<') # the header's devices span
+    strings_offset = bytes.byteslice(360, 4).unpack1('L<') # and its strings span
+    path_offset, path_length = bytes.byteslice(devices_offset + (device * 104) + 8, 8).unpack('L<L<')
+    assert_equal '/scb/pcie@7d500000', bytes.byteslice(strings_offset + path_offset, path_length)
+    assert_equal 'vl805_notify', bytes.byteslice(strings_offset + name_offset, name_length)
+  end
+
+  def test_a_firmware_request_of_an_unknown_tag_or_device_is_refused_at_the_packer
+    pi = Erx::Platform.load(root: ROOT, name: 'raspi4b').manifest_source(ROOT)
+    # A path of no device, a PCIe function's empty path, a device that is no bridge, an address
+    # with function bits below bit 12, and a bus the bridge lists no place on.
+    [{ 'tag' => 'get_board_serial' }, { 'device' => '/scb/pcie@7d500001' }, { 'device' => '' },
+     { 'device' => '/soc/serial@7e201000' }, { 'argument' => 0x0010_0001 }, { 'argument' => 0x0020_0000 },
+     { 'argument' => 1 << 32 }, { 'name' => 'Not an identifier' }].each do |bad|
+      record = platform_record('raspi4b')
+      rows = record.fetch('firmware_requests').map { |row| row.merge(bad) }
+      error = assert_raises(Erx::Manifest::Invalid) do
+        admitted(pi, platform: 'raspi4b', record: record.merge('firmware_requests' => rows))
+      end
+      assert_equal 'context.platform.firmware_requests', error.field
+    end
+    record = platform_record('raspi4b')
+    twice = record.fetch('firmware_requests') * 2
+    error = assert_raises(Erx::Manifest::Invalid) { admitted(pi, platform: 'raspi4b', record: record.merge('firmware_requests' => twice)) }
+    assert_equal 'context.platform.firmware_requests', error.field
+  end
+
   def test_an_incomplete_or_empty_msi_frame_is_refused_at_the_packer
     [{ 'base' => 0x0802_0000, 'first' => 80 }, { 'base' => 0x0802_0000, 'first' => 80, 'count' => 0 }].each do |frame|
       error = assert_raises(Erx::Manifest::Invalid) { admitted(record: platform_record('qemu-virt').merge('msi_frame' => frame)) }

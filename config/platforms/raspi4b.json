@@ -153,6 +153,14 @@
   "ram_bytes": 994050048,
   "fiasco_reserve": 60817408,
   "root_withheld": 2097152,
+  "firmware_requests": [
+    {
+      "name": "vl805_notify",
+      "device": "/scb/pcie@7d500000",
+      "tag": "notify_xhci_reset",
+      "argument": 1048576
+    }
+  ],
   "units": [
     {
       "key": "console-uart",

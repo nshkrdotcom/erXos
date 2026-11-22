@@ -71,10 +71,10 @@ answer_notification(erx_vc_mailbox_t *mailbox)
 	uint32_t words[ERX_VC_BUFFER_WORDS] = { 0 };
 	uint8_t out[ERX_VC_WINDOW_MAX];
 
-	(void)erx_vc_request(&erx_vc_notify_xhci_reset, &argument, words);
+	(void)erx_vc_request(erx_vc_tag_of(ERX_FW_TAG_NOTIFY_XHCI_RESET), &argument, words);
 	words[1] = ERX_VC_CODE_SUCCESS;
 	words[ERX_VC_VALUE_WORD - 1] = UINT32_C(0x80000000);
-	return (erx_vc_mailbox_answer(mailbox, &erx_vc_notify_xhci_reset, words, out));
+	return (erx_vc_mailbox_answer(mailbox, erx_vc_tag_of(ERX_FW_TAG_NOTIFY_XHCI_RESET), words, out));
 }
 
 /* One event of the table on mailbox, by name. */

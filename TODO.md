@@ -10039,7 +10039,8 @@ document's "residual risks accepted" paragraph.
   VL805's notification, the Bluetooth power line and the sensor driver lands first; probes S1 and S2 come first.
 * [Medium] board sensors, `abi/formats/vc_property.txt` and `abi/inspection.txt`
   ([design-board-sensors.md](docs/design-board-sensors.md#the-requests)): `vc_property.txt` declares the property
-  buffer's layouts and NOTIFY_XHCI_RESET alone, as four loose limits that `kernel/core/vc_property.c` assembles into
+  buffer's layouts and NOTIFY_XHCI_RESET alone, as the closed set `fw_tag` and three loose limits that
+  `kernel/core/vc_property.c` assembles into
   its `erx_vc_tag_t` and bounds with a `_Static_assert`, and the schema has no `sensors` kind. Make the tags one
   generated table (tag, belonging, request, window, least answer, a response word of 0 taken as performed) whose
   generator checks each row's bounds, derives `vc_request_max` and the buffer's size from the rows and emits the
@@ -10048,8 +10049,8 @@ document's "residual risks accepted" paragraph.
   `@fw_throttle`.
 * [Medium] ABI, `abi/erx_abi.txt` and `abi/manifest.txt` ([design-kernel.md](docs/design-kernel.md#firmware-requests),
   [design-board-sensors.md](docs/design-board-sensors.md#the-requests)): no `erx_firmware_request` in the machine
-  family, and no firmware request record (name, belonging, tag, argument) in the system manifest from the platform
-  record's `firmware_requests`. Add the two.
+  family; the system manifest's firmware request record and the closed set `fw_tag` carry the device rows only, and
+  no machine row or `fw_reading` exists yet. Add the call and the machine rows.
 * [Low] firmware mailbox cores, `kernel/core/vc_property.c` and `kernel/core/vc_mailbox.c`
   ([design-kernel.md](docs/design-kernel.md#firmware-requests)): `CoreArchive` puts them in Fiasco's kernel archive,
   `erx_cores.a`, which never calls them, while the root task, which runs them on Fiasco, links `kernel/core` sources

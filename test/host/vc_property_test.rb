@@ -24,6 +24,7 @@ class VcPropertyTest < Minitest::Test
 
   # name => [original, replacement]; each must change the answers of test_answers.
   MUTANTS = {
+    "a word outside fw_tag given a declaration" => ["\tdefault:\n\t\treturn (NULL);", "\tdefault:\n\t\treturn (&vc_notify_xhci_reset);"],
     'the response code unchecked' => ['code != ERX_VC_CODE_SUCCESS', 'code == ERX_VC_CODE_REQUEST'],
     'the first tag searched past' => ['tag != spec->tag', 'tag == 0'],
     'the response bit unchecked' => ['if (erx_vc_tag_header_indicator_response_get(indicator) == 0)',
@@ -67,7 +68,12 @@ class VcPropertyTest < Minitest::Test
     ["answer model #{MODEL_ANSWER} 80000006 04030201 08070605 11111111", 'answer 0 6 0102030405060000'],
     ["answer model #{MODEL_ANSWER} 80000010 04030201 08070605 11111111", 'answer 0 8 0102030405060708'],
     ["answer model #{MODEL_ANSWER} 80000003 04030201 08070605", 'answer -18 0 0000000000000000'],
-    ["answer model #{MODEL_ANSWER} 00000006 04030201 08070605", 'answer -12 0 0000000000000000']
+    ["answer model #{MODEL_ANSWER} 00000006 04030201 08070605", 'answer -12 0 0000000000000000'],
+    # Only a member of fw_tag has a declaration: NOTIFY_XHCI_RESET's identifier, and not a
+    # tag the firmware knows that erXos does not send, nor the end tag.
+    ['tag 00030058', 'tag 1'],
+    ['tag 00030006', 'tag 0'],
+    ['tag 00000000', 'tag 0']
   ].freeze
 
   def setup

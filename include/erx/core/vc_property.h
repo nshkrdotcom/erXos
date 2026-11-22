@@ -43,8 +43,11 @@ typedef struct erx_vc_tag {
 	uint32_t	least_bytes;
 } erx_vc_tag_t;
 
-/* NOTIFY_XHCI_RESET: the USB controller behind a PCIe bridge loads its firmware. */
-extern const erx_vc_tag_t erx_vc_notify_xhci_reset;
+/*
+ * The declaration of tag, a member of the ABI's closed set fw_tag (abi/formats/vc_property.txt),
+ * which a firmware request row names; NULL for any other word, so no caller builds a declaration.
+ */
+const erx_vc_tag_t	*erx_vc_tag_of(uint32_t tag);
 
 /*
  * Writes the request for spec with the argument's request_bytes / 4 words into words:

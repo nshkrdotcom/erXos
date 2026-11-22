@@ -561,6 +561,7 @@ module Erx
           invalid('principal domain quotas and the apps row\'s max exceed max_domains', 'principals.domains')
         end
         normalize_units(rows)
+        rows['firmware_requests'] = firmware_requests(rows.fetch('devices'))
         device_memory = rows.fetch('devices').sum { |device| device.fetch('dma_memory') }
         # The Fiasco backend's contiguous pool holds every device's memory at once (RootStartup.contiguous_pool_bytes).
         if device_memory > RootStartup::CONTIGUOUS_POOL_MAX_BYTES
@@ -1088,6 +1089,48 @@ module Erx
           limit.is_a?(Integer) && limit.between?(0, (1 << 64) - 1)
         invalid('only a PCIe bridge row states a DMA limit', 'context.platform.devices') unless limit.zero? || pcie_bridge?(device)
         limit
+      end
+
+      # The platform record's firmware requests (docs/design-abi.md, "Devices and partition
+      # windows"): each a unique name, the node path of a PCIe bridge of the record's roster, a
+      # tag of vc_property.txt's closed set fw_tag and its argument. fw_tag's one member,
+      # notify_xhci_reset, is a bridge's notification for a function it lists in places, so
+      # the argument must be one place's address, bus << 20 | device << 15 | function << 12. A row is packed when the
+      # manifest places its device, with that device's row, in the record's order, so its
+      # index among its device's rows is the record's; a row of a device the manifest leaves
+      # out is not packed, since no request can name it.
+      FIRMWARE_REQUEST_FIELDS = %w[argument device name tag].freeze
+
+      def firmware_requests(devices)
+        rows = @context.platform.fetch('firmware_requests', [])
+        field = 'context.platform.firmware_requests'
+        invalid('the platform\'s firmware_requests is not a list', field) unless rows.is_a?(Array)
+        bridges = @context.platform.fetch('units').flat_map { |unit| unit.fetch('devices') }.map { |device| platform_device(device) }
+                           .select { |device| pcie_bridge?(device) }.to_h { |device| [device.fetch('path'), device] }
+        tags = @codec.schema.types.fetch('fw_tag').members
+        rows.filter_map do |row|
+          unless row.is_a?(Hash) && row.keys.sort == FIRMWARE_REQUEST_FIELDS && row.fetch('name').is_a?(String) &&
+                 row.fetch('name').match?(Frontend::IDENTIFIER) && tags.key?(row.fetch('tag')) &&
+                 place_addresses(bridges[row.fetch('device')]).include?(row.fetch('argument'))
+            invalid("a firmware request is not a name, a PCIe bridge of the platform's roster, a tag of fw_tag (#{tags.keys.join(', ')}) " \
+                    "and the address of one of the bridge's places", field)
+          end
+          device = devices.index { |placed| placed.fetch('path') == row.fetch('device') }
+          next unless device
+
+          { 'name' => row.fetch('name'), 'device' => device, 'tag' => tags.fetch(row.fetch('tag')), 'argument' => row.fetch('argument') }
+        end.tap do |packed|
+          names = rows.map { |row| row.fetch('name') }
+          invalid('two firmware requests share a name', field) unless names.uniq.size == names.size
+          packed
+        end
+      end
+
+      # The addresses NOTIFY_XHCI_RESET names for a bridge's listed places; none for no bridge.
+      def place_addresses(bridge)
+        return [] unless bridge
+
+        bridge.fetch('places', []).map { |place| (place.fetch('bus') << 20) | (place.fetch('device') << 15) | (place.fetch('function') << 12) }
       end
 
       # A closed bridge's listed places (docs/design-pcie.md, "The closed bus"), each spelled

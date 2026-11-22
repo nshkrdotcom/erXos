@@ -244,7 +244,7 @@ layout erx_mf_msi_frame wire_le 8 16
   field base u64 0
   field first u32 8
   field count u32 12
-layout erx_manifest wire_le 8 480
+layout erx_manifest wire_le 8 488
   field magic u32 0
   field version u16 4
   field flags manifest_flags 6
@@ -303,6 +303,17 @@ layout erx_manifest wire_le 8 480
   padding 452 4
   field msi_frame erx_mf_msi_frame 456
   field places erx_mf_span 472
+  field firmware_requests erx_mf_span 480
+# A firmware request row (docs/design-abi.md, "Devices and partition windows"): a row of the
+# platform record's firmware_requests whose device the manifest places, in the record's
+# order, so a row's index is its position among its device's rows. device is that device's
+# row, mf_none for the machine; tag and argument are what the request sends
+# (docs/design-fiasco.md, "The firmware request").
+layout erx_mf_firmware_request wire_le 4 20
+  field name erx_mf_str 0
+  field device u32 8
+  field tag fw_tag 12
+  field argument u32 16
 layout erx_mf_principal wire_le 8 80
   field name erx_mf_str 0
   field memory u64 8
@@ -552,7 +563,7 @@ reader manifest erx_manifest @manifest_bytes_max
   extent root.length
   value root.magic @manifest_magic
   value root.version @manifest_version
-  value root.header_size 480
+  value root.header_size 488
   range root.max_domains 0 65536
   range root.max_connections 1 65536
   range root.system_reserve 1 1000
@@ -588,12 +599,13 @@ reader manifest erx_manifest @manifest_bytes_max
   table apps erx_mf_apps root.apps.offset root.apps.count 1 8
   table app_services erx_mf_app_service root.app_services.offset root.app_services.count @manifest_records_max 4
   table places erx_pcie_place root.places.offset root.places.count @manifest_records_max 4
+  table firmware_requests erx_mf_firmware_request root.firmware_requests.offset root.firmware_requests.count @manifest_records_max 4
   table packages erx_mf_package root.packages.offset root.packages.count @apps_max_limit 4
   table signers erx_mf_signer root.signers.offset root.signers.count @manifest_records_max 4
   table development_key erx_mf_development_key root.development_key.offset root.development_key.count 1 1
   table system_image erx_mf_system_image root.system_image.offset root.system_image.count 1 8
   string_table strings root.strings.offset root.strings.count @manifest_strings_max
-  order principals domains sessions limits runtime_limits lane_classes units devices places windows services facets facet_operations facet_parameters introductions images extents boot_order liveness shell_principals partial_boot starts displays apps app_services packages signers development_key system_image strings
+  order principals domains sessions limits runtime_limits lane_classes units devices places firmware_requests windows services facets facet_operations facet_parameters introductions images extents boot_order liveness shell_principals partial_boot starts displays apps app_services packages signers development_key system_image strings
   index root.system_principal principals
   index root.system_runtime_limits runtime_limits
   index root.native_limits limits
@@ -642,6 +654,8 @@ reader manifest erx_manifest @manifest_bytes_max
   range places[].device 0 @pcie_device_max
   range places[].function 0 @pcie_function_max
   range places[].pin 1 @pcie_pin_max
+  string firmware_requests[].name.offset firmware_requests[].name.length strings identifier 63 empty no
+  index firmware_requests[].device devices absent 0xffffffff
   index windows[].holder domains absent 0xffffffff
   index windows[].device devices
   index windows[].image images absent 0xffffffff

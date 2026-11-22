@@ -13,6 +13,8 @@
  *                         the firmware left it, for TAG; STATUS in decimal, BYTES the
  *                         answer the core copies, its window's bytes in memory order
  *
+ *   tag WORD           -> tag 1 when WORD is a member of fw_tag with a declaration, else tag 0
+ *
  * TAG is notify, the ABI's NOTIFY_XHCI_RESET, or model, a tag of this driver's own with
  * a one-word request, an 8-byte window and a least answer of 4, which reaches the parts
  * of the check an empty window leaves out.
@@ -33,7 +35,7 @@ static const erx_vc_tag_t *
 tag_named(const char *name)
 {
 	if (name != NULL && strcmp(name, "notify") == 0)
-		return (&erx_vc_notify_xhci_reset);
+		return (erx_vc_tag_of(ERX_FW_TAG_NOTIFY_XHCI_RESET));
 	if (name != NULL && strcmp(name, "model") == 0)
 		return (&model);
 	return (NULL);
@@ -46,6 +48,15 @@ main(void)
 
 	while (fgets(line, sizeof(line), stdin) != NULL) {
 		const char *const verb = strtok(line, " \n");
+
+		if (verb != NULL && strcmp(verb, "tag") == 0) {
+			const char *const tag_word = strtok(NULL, " \n");
+
+			if (tag_word == NULL)
+				return (2);
+			printf("tag %d\n", erx_vc_tag_of((uint32_t)strtoul(tag_word, NULL, 16)) != NULL);
+			continue;
+		}
 		const erx_vc_tag_t *const tag = tag_named(strtok(NULL, " \n"));
 		uint32_t words[ERX_VC_BUFFER_WORDS] = { 0 };
 		size_t nwords = 0;

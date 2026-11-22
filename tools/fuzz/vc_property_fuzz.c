@@ -45,9 +45,9 @@ declaration(const uint8_t choice[DECLARATION_BYTES])
 	const uint32_t window_words = choice[1] % (ERX_VC_WINDOW_MAX / WORD_BYTES + 1);
 
 	if ((choice[0] & 1u) == 0)
-		return (erx_vc_notify_xhci_reset);
+		return (*erx_vc_tag_of(ERX_FW_TAG_NOTIFY_XHCI_RESET));
 	return ((erx_vc_tag_t){
-		.tag = ERX_VC_TAG_NOTIFY_XHCI_RESET,
+		.tag = ERX_FW_TAG_NOTIFY_XHCI_RESET,
 		.request_bytes = choice[3] % (ERX_VC_REQUEST_MAX / WORD_BYTES + 1) * WORD_BYTES,
 		.window_bytes = window_words * WORD_BYTES,
 		.least_bytes = choice[2] % (window_words + 1) * WORD_BYTES,

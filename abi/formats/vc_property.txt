@@ -49,12 +49,15 @@ limit vc_request_max u32 64
 # mailbox request, in nanoseconds.
 limit vc_deadline_ns u64 1000000000
 
-# The tags erXos sends. NOTIFY_XHCI_RESET has the USB controller behind a PCIe bridge load
-# its firmware: its request is one word, the function's address bus << 20 | device << 15
-# | function << 12, and its answer is empty (docs/research-brcmstb-pcie.md, section 5;
-# docs/design-usb.md, "The VL805's firmware"). The address of a row is the platform
-# record's, never the caller's.
-limit vc_tag_notify_xhci_reset u32 0x00030058
+# The tags erXos sends, a closed set, each member's value its identifier: a firmware request
+# row of the system manifest names one (abi/manifest.txt, erx_mf_firmware_request), and no
+# member reads the board's key. NOTIFY_XHCI_RESET has the USB controller behind a PCIe
+# bridge load its firmware: its request is one word, the function's address bus << 20 |
+# device << 15 | function << 12, and its answer is empty (docs/research-brcmstb-pcie.md,
+# section 5; docs/design-usb.md, "The VL805's firmware"). The address of a row is the
+# platform record's, never the caller's.
+enum fw_tag u32
+  value notify_xhci_reset 0x00030058
 limit vc_notify_xhci_reset_request u32 4
 limit vc_notify_xhci_reset_window u32 0
 limit vc_notify_xhci_reset_least u32 0

@@ -28,12 +28,23 @@ _Static_assert(ERX_VC_NOTIFY_XHCI_RESET_REQUEST % sizeof(uint32_t) == 0 &&
     ERX_VC_NOTIFY_XHCI_RESET_LEAST <= ERX_VC_NOTIFY_XHCI_RESET_WINDOW,
     "NOTIFY_XHCI_RESET's declaration fits the buffer");
 
-const erx_vc_tag_t erx_vc_notify_xhci_reset = {
-	.tag = ERX_VC_TAG_NOTIFY_XHCI_RESET,
+static const erx_vc_tag_t vc_notify_xhci_reset = {
+	.tag = ERX_FW_TAG_NOTIFY_XHCI_RESET,
 	.request_bytes = ERX_VC_NOTIFY_XHCI_RESET_REQUEST,
 	.window_bytes = ERX_VC_NOTIFY_XHCI_RESET_WINDOW,
 	.least_bytes = ERX_VC_NOTIFY_XHCI_RESET_LEAST,
 };
+
+const erx_vc_tag_t *
+erx_vc_tag_of(uint32_t tag)
+{
+	switch (tag) {
+	case ERX_FW_TAG_NOTIFY_XHCI_RESET:
+		return (&vc_notify_xhci_reset);
+	default:
+		return (NULL);
+	}
+}
 
 size_t
 erx_vc_request(const erx_vc_tag_t *spec, const uint32_t *argument, uint32_t words[ERX_VC_BUFFER_WORDS])
