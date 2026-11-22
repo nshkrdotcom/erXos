@@ -19,6 +19,7 @@
 #include "erx/abi_reader.h"
 #include "erx/core/boot_pair.h"
 #include "erx/core/pm_wdt.h"
+#include "erx/core/vc_mailbox.h"
 #include "erx/device_kinds.h"
 #include "erx/release.h"
 #include "liberx/backend/api.h"
@@ -36,6 +37,7 @@
 #include "liberx/backend/fiasco/service.h"
 #include "liberx/backend/fiasco/service_task.h"
 #include "liberx/backend/fiasco/time.h"
+#include "liberx/backend/fiasco/vc_mbox.h"
 #include "liberx/backend/runtime_entry.h"
 
 /*
@@ -392,6 +394,26 @@ erx_fiasco_program_watchdog(const erx_dt_t *tree, const erx_manifest_view_t *man
 	if (!erx_fiasco_pm_wdt_open(row.window, wdt))
 		return (NULL);
 	*found = ERX_FIASCO_BOARD_WDT_READY;
+	return (NULL);
+}
+
+/* Maps the firmware's mailbox of the manifest's row (runtime_entry.h), as the watchdog is opened. */
+const char *
+erx_fiasco_program_mailbox(const erx_dt_t *tree, const erx_manifest_view_t *manifest, erx_fiasco_board_mbox_t *found)
+{
+	erx_boot_row_t row;
+
+	*found = ERX_FIASCO_BOARD_MBOX_ABSENT;
+	if (!erx_boot_held_row(manifest, ERX_VC_MAILBOX_COMPATIBLE, &row))
+		return (NULL);
+	if (!tree_path_set(row.path))
+		return ("the firmware mailbox's record: its device-tree path is not a node path");
+	*found = ERX_FIASCO_BOARD_MBOX_UNCONFIRMED;
+	if (erx_dt_registers(tree, tree_path, ERX_VC_MAILBOX_COMPATIBLE, row.window) != ERX_DT_REGS_OK)
+		return (NULL);
+	if (!erx_fiasco_vc_mbox_open(row.window))
+		return (NULL);
+	*found = ERX_FIASCO_BOARD_MBOX_READY;
 	return (NULL);
 }
 

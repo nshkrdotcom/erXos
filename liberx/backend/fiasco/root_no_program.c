@@ -37,6 +37,15 @@ erx_fiasco_program_watchdog(const erx_dt_t *tree, const erx_manifest_view_t *man
 }
 
 const char *
+erx_fiasco_program_mailbox(const erx_dt_t *tree, const erx_manifest_view_t *manifest, erx_fiasco_board_mbox_t *found)
+{
+	(void)tree;
+	(void)manifest;
+	*found = ERX_FIASCO_BOARD_MBOX_ABSENT;
+	return (NULL);
+}
+
+const char *
 erx_fiasco_program_start(const erx_boot_handoff_view_t *handoff, const erx_manifest_view_t *manifest,
     const erx_pack_view_t *pack, const erx_dt_t *tree, const erx_boot_args_t *boot_args)
 {

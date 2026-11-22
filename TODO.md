@@ -8581,6 +8581,12 @@ model harness drive `erx_device.c` itself. `erx_device_dma_check` and `erx_devic
   A module the `erx_device` chokepoint admits can therefore stop or reprogram the Pi 4's hardware
   watchdog, or write the rest of the power-management block. Marking both registers `ownedByNif true`
   closes the NIF table route; the physical-window route needs the open checked against the manifest.
+  The firmware mailbox's unit, which the system domain holds so the root can map it
+  (`liberx/backend/fiasco/vc_mbox.c`), is open to the same route, and with it the board's key (PL2): mark
+  `vc_mbox.svd`'s registers `ownedByNif true` and refuse its window in the same check. Neither closes a third
+  route: the root keeps the mailbox's page mapped for the boot in the address space the system domain's ERTS
+  shares, so a memory error in ERTS or a NIF there can post a property request, a key read among them, with no
+  `erx_device` call; the watchdog's page is the same. FD29's row of `docs/design-fiasco.md` should name it.
 * [Low] SSH, root's login keys on the medium (development builds, before the vault;
   [design-ssh.md](docs/design-ssh.md#roots-login-keys-on-the-medium)): the keys are as sound as the
   storage domain that reads `authorized_keys` and serves them as `login_keys`, and that domain serves
@@ -10047,7 +10053,9 @@ document's "residual risks accepted" paragraph.
 * [Low] firmware mailbox cores, `kernel/core/vc_property.c` and `kernel/core/vc_mailbox.c`
   ([design-kernel.md](docs/design-kernel.md#firmware-requests)): `CoreArchive` puts them in Fiasco's kernel archive,
   `erx_cores.a`, which never calls them, while the root task, which runs them on Fiasco, links `kernel/core` sources
-  only as `NativeRoot` names them, and names neither. The root backend's `erx_firmware_request` adds both to
+  only as `NativeRoot` names them, and names neither. The root maps the mailbox's window at boot
+  (`liberx/backend/fiasco/vc_mbox.c`, `erx_fiasco_program_mailbox`) but sends nothing through it: the root
+  backend's `erx_firmware_request`, the shim's request routine over a buffer page of the root's own, adds both to
   `NativeRoot`; whether Fiasco's archive and its stack proof should leave them out is decided with it.
 * [Medium] domain library, `include/erx/device_kinds.h` ([design-usb.md](docs/design-usb.md#who-holds-a-controller),
   [design-pcie.md](docs/design-pcie.md#the-bridge-seam)): the host bridges' kinds drive a bridge row, but neither

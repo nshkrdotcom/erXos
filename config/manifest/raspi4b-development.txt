@@ -26,7 +26,7 @@
 # volume, so the storage domain provides no mint for data, the grants stay idle and /data
 # answers eio.
 #
-# The system domain holds four units (docs/design-platforms.md, "Raspberry Pi 4 Model B"),
+# The system domain holds five units (docs/design-platforms.md, "Raspberry Pi 4 Model B"),
 # of one register page of the board each: the console's, the mini UART's page, which it
 # shares with the auxiliary SPI controllers that no driver here drives, and the host
 # link's, the PL011s' page, of which the host link uses UART3, both in the common part; and
@@ -35,8 +35,12 @@
 # firmware's tree names that window (docs/design-fiasco.md, "The Raspberry Pi 4", its
 # entropy item); and watchdog, the power-management block's watchdog, which no runtime drives
 # either and the root's watchdog thread arms and reloads, at the window its row states and only
-# when the firmware's tree names that window (docs/design-platforms.md, "The watchdog"). The
-# console's driver is erx_mini_uart, which keeps the divisor the firmware set.
+# when the firmware's tree names that window (docs/design-platforms.md, "The watchdog"); and
+# mailbox, the firmware's mailbox, which no runtime drives either and only the root maps, at
+# the window its row states and only when the firmware's tree names that window, for the
+# firmware requests it sends (docs/design-fiasco.md, "The call table", erx_firmware_request;
+# docs/design-kernel.md, "Firmware requests"). The console's driver is erx_mini_uart, which
+# keeps the divisor the firmware set.
 #
 # The display domain holds the framebuffer's unit and runs the firmware framebuffer's
 # driver, erx_firmware_fb, and the window system's screen (docs/design-display.md, "The
@@ -131,6 +135,9 @@ unit rng
   holder system
 unit watchdog
   placement "watchdog"
+  holder system
+unit mailbox
+  placement "mailbox"
   holder system
 # pcie: the PCIe domain's unit, whose domain's rows are the common part's: the BCM2711's
 # bridge, closed, with its one listed place, the VL805, and its first line, SPI 147, which

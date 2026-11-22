@@ -654,6 +654,28 @@
       ]
     },
     {
+      "key": "mailbox",
+      "devices": [
+        {
+          "selector": "dt",
+          "role": "ordinary",
+          "path": "/soc/mailbox@7e00b880",
+          "bridge": "",
+          "base": 4261460096,
+          "size": 64,
+          "line": 65,
+          "compatible": "brcm,bcm2835-mbox",
+          "bus": 0,
+          "device": 0,
+          "function": 0,
+          "dma": "none",
+          "flags": 0,
+          "dma_memory": 0,
+          "placement_key": "mailbox"
+        }
+      ]
+    },
+    {
       "key": "pcie",
       "devices": [
         {

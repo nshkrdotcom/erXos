@@ -41,6 +41,27 @@ const char	*erx_fiasco_program_tree(erx_dt_t *tree, const erx_manifest_view_t *m
 const char	*erx_fiasco_program_watchdog(const erx_dt_t *tree, const erx_manifest_view_t *manifest,
 		    erx_fiasco_pm_wdt_t *wdt, erx_fiasco_board_wdt_t *found);
 
+/* What the root found of the firmware's mailbox (erx_fiasco_program_mailbox). */
+typedef enum erx_fiasco_board_mbox {
+	/* The manifest gives the system domain none, as on QEMU virt. */
+	ERX_FIASCO_BOARD_MBOX_ABSENT = 1,
+	/* Its row is confirmed by the tree and its registers are mapped. */
+	ERX_FIASCO_BOARD_MBOX_READY,
+	/* The tree does not confirm its row, or its page cannot be mapped: the board has none. */
+	ERX_FIASCO_BOARD_MBOX_UNCONFIRMED
+} erx_fiasco_board_mbox_t;
+
+/*
+ * The firmware's mailbox (docs/design-fiasco.md, "The call table", erx_firmware_request):
+ * the unit of ERX_VC_MAILBOX_COMPATIBLE that manifest gives the system domain
+ * (erx_boot_held_row), mapped by its shim (erx_fiasco_vc_mbox_open) when tree, the one
+ * erx_fiasco_program_tree accepted, confirms its row; nothing is written. *found says
+ * which. Returns NULL, or why the root cannot boot: the row's path is not a node path. A
+ * root built without a program has no mailbox.
+ */
+const char	*erx_fiasco_program_mailbox(const erx_dt_t *tree, const erx_manifest_view_t *manifest,
+		    erx_fiasco_board_mbox_t *found);
+
 /*
  * What the root task runs once it is up: it joins tree's facts to the manifest's devices,
  * fills the boot information page, builds the domain library from the manifest and the

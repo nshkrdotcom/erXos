@@ -383,6 +383,25 @@ class BootManifestTest < Minitest::Test
     refute_match(/^framebuffer /, output)
   end
 
+  # The firmware mailbox's row reaches the root as the RNG200's does: the shipped Pi manifest
+  # gives the system domain its unit, with the platform record's path and the window the
+  # board's tree states (bus 0x7e00b880 under /soc's ranges, 0x40 bytes), which the root maps
+  # for firmware requests once the tree confirms it; given to another domain, the root holds
+  # none. It is of no kind, so it makes no device record.
+  def test_the_mailbox_row_reaches_the_root_only_from_a_unit_the_system_domain_holds
+    pi = Erx::Platform.load(root: ROOT, name: 'raspi4b').manifest_source(ROOT)
+    row = "unit mailbox\n  placement \"mailbox\"\n  holder system\n"
+    assert_includes pi, row
+    output, status = read(admitted(pi, platform: 'raspi4b'), stdout_path: '/soc/serial@7e215040')
+    assert status.success?, output
+    assert_includes output, "held_mailbox /soc/mailbox@7e00b880 #{0xfe00b880} #{0x40}\n"
+    refute_match(/^device .* #{0xfe00b880} /, output)
+    output, status = read(admitted(pi.sub(row, row.sub('holder system', 'holder @domain.storage')), platform: 'raspi4b'),
+                          stdout_path: '/soc/serial@7e215040')
+    assert status.success?, output
+    assert_includes output, "held_mailbox none\n"
+  end
+
   # The RNG200's row reaches the root from the platform record only through a unit the
   # manifest gives the system domain (erx_boot_held_row): the shipped Pi manifest gives it,
   # with the record's path and window; the unit given to another domain, or a board without

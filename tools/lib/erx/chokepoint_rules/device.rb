@@ -94,6 +94,12 @@ module Erx
     # values alone; the caller that owns the mailbox page reads and writes the registers.
     VC_MAILBOX_CORE = Chokepoints::Site.new(glob: 'kernel/core/vc_mailbox.c',
                                             permits: %r{\A(?:#\s*include\s*"erx/hw/vc_mbox\.h"|erx_vc_mbox_\w+_(?:get|set)|ERX_VC_MBOX_\w+)\z})
+    # On Fiasco the root maps the firmware's mailbox in the kernel's place, for the firmware
+    # requests of the platform record (docs/design-fiasco.md, "The call table",
+    # erx_firmware_request): its one device shim, the only root code that touches the
+    # registers, names the mailbox's header and accessors alone.
+    VC_MBOX_SHIM = Chokepoints::Site.new(glob: 'liberx/backend/fiasco/vc_mbox.c',
+                                         permits: %r{\A(?:#\s*include\s*"erx/hw/vc_mbox\.h"|erx_vc_mbox_\w+)\z})
 # The xHCI harness's stand-in controller answers the device NIF's register accesses and
 # reads the registers it wrote through the generated xHCI header, as GENET's harness does
 # for its engines; it is a host test and reaches no device.
@@ -154,21 +160,21 @@ XHCI_HARNESS = Chokepoints::Site.new(glob: 'test/fixtures/erx_device_xhci_harnes
         # import check, and a header and a call are all a bypass of erx_device needs.
         Chokepoints::Forbidden.new(
           name: 'device-peripheral-headers',
-          rule: "only the kernel platform layer, the header probe and the root's RNG200 and watchdog shims and the watchdog's core on Fiasco include a generated peripheral header",
+          rule: "only the kernel platform layer, the header probe and the root's RNG200, watchdog and mailbox shims, the watchdog's core and the mailbox routine on Fiasco include a generated peripheral header",
           design: DEVICE_DESIGN,
           scope: DEVICE_SCOPE,
           pattern: PERIPHERAL_INCLUDE,
-          sites: [PLATFORM_LAYER, PROBE_HEADERS, RNG200_SHIM, PM_WDT_SHIM, PM_WDT_CORE, VC_MAILBOX_CORE, XHCI_HARNESS],
+          sites: [PLATFORM_LAYER, PROBE_HEADERS, RNG200_SHIM, PM_WDT_SHIM, PM_WDT_CORE, VC_MAILBOX_CORE, VC_MBOX_SHIM, XHCI_HARNESS],
           seed: { 'otp/erts/emulator/beam/seeded.c' => "#include <erx/hw/pl011.h>\n" }
         ),
         Chokepoints::Forbidden.new(
           name: 'device-peripheral-accessors',
-          rule: "only the generated peripheral headers, the kernel platform layer, the header probe, the root's RNG200 and watchdog shims and the watchdog core's field setters name their accessors",
+          rule: "only the generated peripheral headers, the kernel platform layer, the header probe, the root's RNG200, watchdog and mailbox shims and the watchdog and mailbox cores' field functions name their accessors",
           design: DEVICE_DESIGN,
           scope: DEVICE_SCOPE,
           pattern: /\b(?:#{PERIPHERAL_SYMBOLS.map { |symbol| Regexp.escape(symbol) }.join('|')})\b/,
           sites: PERIPHERAL_HEADERS.map { |header| Chokepoints::Site.new(glob: header) } +
-                 [PLATFORM_LAYER, PROBE_ACCESSORS, RNG200_SHIM, PM_WDT_SHIM, PM_WDT_CORE, VC_MAILBOX_CORE, XHCI_HARNESS],
+                 [PLATFORM_LAYER, PROBE_ACCESSORS, RNG200_SHIM, PM_WDT_SHIM, PM_WDT_CORE, VC_MAILBOX_CORE, VC_MBOX_SHIM, XHCI_HARNESS],
           seed: { 'otp/erts/emulator/nifs/erxos/seeded.c' => "void f(erx_mmio_t d) { erx_pl011_dr_write(d, 65); }\n",
                   # The watchdog's core may name its setters, never a register access.
                   'kernel/core/pm_wdt.c' => "void f(erx_mmio_t d) { erx_pm_wdt_rstc_write(d, 0); }\n",

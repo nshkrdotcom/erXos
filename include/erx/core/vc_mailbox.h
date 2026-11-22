@@ -43,6 +43,9 @@
  * caller still uses it.
  */
 
+/* The device tree's compatible string of the mailbox, which the platform row names. */
+#define ERX_VC_MAILBOX_COMPATIBLE	"brcm,bcm2835-mbox"
+
 /* Where the mailbox stands. LOST is the state after a timeout, kept for the boot. */
 typedef enum erx_vc_mailbox_state {
 	ERX_VC_MAILBOX_IDLE = 0,
