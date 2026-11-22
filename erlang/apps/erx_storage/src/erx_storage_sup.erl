@@ -8,13 +8,15 @@ Its children, all permanent under a restart intensity of 0, so the end of
 any ends this supervisor and erx_storage, a permanent application, and so
 the node and the storage domain:
 
+* the block driver's supervisor, erx_blk_sup, first, so the block service
+  holds the boot medium's windows before any child below starts; erx_blk is
+  a library application, and this is where the storage domain starts the
+  block driver;
 * the mint of storage_ctl, the driver-control facet through which the system
-  domain stops, starts or restarts the block driver under erx_blk's supervisor
+  domain stops, starts or restarts the block driver under that supervisor
   (erx_driver_ctl). The domain service holds the mint until the domain ends;
-* `/data`, littlefs on the block driver's data window (erx_lfs_sup), which
-  erx_storage's application starts once erx_blk's has started, so the block
-  service holds the windows by then. The domain service's restart mounts
-  `/data` afresh;
+* `/data`, littlefs on the block driver's data window (erx_lfs_sup). The
+  domain service's restart mounts `/data` afresh;
 * the `system` tree, the booted slot's system partition, served as
   `system_service` by its mint, which mounts it once on the block service's
   `system` window in its own process, so this supervisor's start waits for
@@ -42,6 +44,12 @@ start_link() ->
 init([]) ->
     %% The units this domain holds, by their manifest names, and their driver processes.
     Units = #{block => {erx_blk_sup, erx_blk}},
+    Block = #{id => erx_blk_sup,
+              start => {erx_blk_sup, start_link, []},
+              restart => permanent,
+              shutdown => infinity,
+              type => supervisor,
+              modules => [erx_blk_sup]},
     Control = #{id => storage_ctl,
                 start => {erx_driver_ctl, start_mint, [storage_ctl, Units]},
                 restart => permanent,
@@ -66,4 +74,4 @@ init([]) ->
                   shutdown => brutal_kill,
                   type => worker,
                   modules => [erx_fs_mint, erx_storage_login_keys]},
-    {ok, {#{strategy => one_for_one, intensity => 0, period => 1}, [Control, Data, System, LoginKeys]}}.
+    {ok, {#{strategy => one_for_one, intensity => 0, period => 1}, [Block, Control, Data, System, LoginKeys]}}.

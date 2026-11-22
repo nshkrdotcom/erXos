@@ -4,8 +4,9 @@
 %% The storage domain (docs/design-stopgap.md, "littlefs in the storage domain"): littlefs's
 %% volume on the block driver's data window, its owner erx_lfs over the NIF
 %% erx_littlefs, mounted at the domain's /data. Only the storage domain's boot
-%% script boots it, after erx_blk, whose windows it reads; the system release does
-%% not ship it.
+%% script boots it; its supervisor starts the block driver's, erx_blk_sup, first, whose
+%% windows it reads, erx_blk being a library application. The system release does not
+%% ship it.
 {application, erx_storage,
  [{description, "erXos storage domain"},
   {vsn, "1"},

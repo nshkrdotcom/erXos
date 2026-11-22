@@ -7,18 +7,19 @@
 %% owners of the shared interrupt lines its record names, from erx_irq_line:owners/1 (the
 %% Pi 4's EMMC2 shares its line with the legacy SD controller, docs/design-storage.md, "The
 %% SD controller's line"), rest_for_one; then the partition process, erx_blk_service,
-%% which admits the partition table and holds the windows. erx_storage's supervisor
-%% starts /data on the data window once this application has started. A machine without a disk starts no device process:
-%% erx_blk:start_link/0 returns ignore, and the partition process serves no window.
+%% which admits the partition table and holds the windows. erx_blk is a library
+%% application: the storage domain's supervisor, erx_storage_sup, starts this supervisor
+%% as its first child, and /data on the data window after it. A machine without a disk
+%% starts no device process: erx_blk:start_link/0 returns ignore, and the partition
+%% process serves no window.
 %%
 %% It restarts nothing (docs/design-stopgap.md, "littlefs in the storage domain"): every
-%% child that runs a process is permanent, under a restart intensity of 0, so the end of
-%% the device or the partition process, by a crash or by the shutdown with which erx_blk_virtio
-%% ends on a broken queue, ends this supervisor and the erx_blk
-%% application, which is permanent, and so the storage domain, whose restart gives the
-%% device again. A stop, start or restart through the driver-control facet
-%% (erx_driver_ctl) is no such end: the supervisor's terminate_child/2 and
-%% restart_child/2 count no restart.
+%% child that runs a process is permanent, under a restart intensity of 0. So the end of
+%% the device or the partition process, by a crash or by the shutdown with which
+%% erx_blk_virtio ends on a broken queue, ends this supervisor. erx_storage_sup restarts
+%% nothing either, so the storage domain ends, and its restart gives the device again. A
+%% stop, start or restart through the driver-control facet (erx_driver_ctl) is no such
+%% end: the supervisor's terminate_child/2 and restart_child/2 count no restart.
 
 -module(erx_blk_sup).
 -behaviour(supervisor).

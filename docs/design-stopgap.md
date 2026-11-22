@@ -19,7 +19,7 @@ it. A port that bypasses `liberx` reaches only what the storage domain placed in
 
 **The NIF form.** Phase 1 and 0.2 run littlefs as a NIF behind the `erx_fs` callback module, the seam the design names, in the
 domain that holds the data window: the storage domain, which the development manifest configures as an interpreter service
-domain with the `block` unit and runs `erx_blk` and `erx_storage` (`erx_lfs_sup` under `erx_storage_sup`). The system
+domain with the `block` unit and runs `erx_blk` and `erx_storage` (`erx_blk_sup` and `erx_lfs_sup` under `erx_storage_sup`). The system
 release ships neither application, so a manifest that leaves the `block` unit with the system domain runs no block
 driver and serves no `/data`. The Erlang side is the
 port's, and only the glue below differs. The storage domain serves the tree as the `data` service, of the `files`
@@ -57,7 +57,7 @@ worker's end, the window's, or a mount that fails ends the owner. `erx_lfs_sup` 
 and their restart intensity is 0), so the end escalates to `erx_storage`, a permanent application, and ends the node and the domain. Every queued
 request answers `{error, eio}`, and nothing in the domain replays or remounts. The block driver's failures end the domain the same way, whether or
 not a request is in flight: `erx_blk_sup` restarts nothing either, so the end of its device or partition process, by a crash or by the shutdown
-with which its device process, `erx_blk_virtio`, ends on a broken queue, ends the `erx_blk` application, which is permanent, and the domain; the driver never
+with which its device process, `erx_blk_virtio`, ends on a broken queue, ends `erx_storage_sup`, whose first child it is, and so the domain; the driver never
 restarts on its own under a mounted volume, and a broken queue never resets the device in place, since nothing promises that a reset keeps
 writes the device's volatile cache holds and has already answered `ok`. A stop, start or restart through `storage_ctl` is the system domain's, and the supervisor counts no
 restart for it, so it does not end the domain itself. Each window of the block service is bound to the device process it first reached

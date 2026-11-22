@@ -193,9 +193,13 @@ and the spare's bytes, which a party reads for itself.
 
 ## Data model
 
-**The block driver.** The driver is an Erlang application under a
-supervisor, `erx_blk_sup`, in the domain that holds the block device. It
-has two layers. The **transport** is one **device process**, registered
+**The block driver.** The driver is an Erlang library application,
+`erx_blk`, whose processes run where a domain starts them. The storage
+domain's supervisor starts `erx_blk_sup` as its first child, which runs
+the block service of the domain's boot medium; the USB domain's BOT
+function starts one block service for each ready medium, under the
+function ([design-usb.md](design-usb.md#media-and-drives)). Either way
+the driver has two layers. The **transport** is one **device process**, registered
 as `erx_blk` when a device record starts it, which owns the controller through the device NIF, receives
 its interrupts as messages and acknowledges them
 ([design-runtime.md](design-runtime.md#the-device-nif)), and moves

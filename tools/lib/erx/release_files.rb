@@ -179,7 +179,8 @@ module Erx
     #   file names erx_session, since the design starts a native app's program through
     #   the session's servers.
     # * usb, the USB domain's (docs/design-usb.md, "Domains and authority"): the USB
-    #   stack, erx_usb, so no other domain parses what a USB device writes. The script
+    #   stack, erx_usb, so no other domain parses what a USB device writes, and erx_blk,
+    #   a library application, whose erx_blk_bot is a medium's block transport. The script
     #   starts it, and its supervisor the places and the input tree's mint, which must name
     #   itself before init's ready report; the row's -eval adds the controllers once the
     #   ready answer brings the pci facet (docs/design-usb.md, "The rows"), so no other
@@ -216,7 +217,7 @@ module Erx
                         DomainStartup::APP_TEMPLATE.release =>
                           [*SESSION_BASE, 'compiler', 'asn1', 'crypto', 'public_key', 'ssl', 'inets', *DomainStartup::DISPLAY_CLIENT,
                            'erx_ui', 'erx_app'].freeze,
-                        'usb' => [*DOMAIN_BASE, 'erx_usb'].freeze,
+                        'usb' => [*DOMAIN_BASE, 'erx_blk', 'erx_usb'].freeze,
                         'bt' => [*DOMAIN_BASE, 'crypto', 'erx_bt'].freeze,
                         'pcie' => [*DOMAIN_BASE, 'erx_pcie'].freeze,
                         'ntpd' => [*DOMAIN_BASE, 'erx_ntpd'].freeze,

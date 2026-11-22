@@ -591,8 +591,9 @@ module Erx
     # to the root, ERTS copy included; it is an upper bound, since nothing of ERTS is
     # shared between domains.
     # erx_net and erx_blk are loaded and not started: erx_net's application needs the
-    # system domain's local transport and a device needs a holder, so the figure is the
-    # domain at rest with its modules loaded.
+    # system domain's local transport, and erx_blk, a library application, is load-only
+    # so that no domain of the cell starts a block driver; the figure is the domain at
+    # rest with its modules loaded.
     module Footprint
       RELEASES = {
         'bare' => ReleaseFiles::DOMAIN_BASE,
@@ -600,7 +601,8 @@ module Erx
         'net' => [*ReleaseFiles::DOMAIN_BASE, 'erx_net'].freeze
       }.freeze
       # Applications a release only loads: erx_net's needs the stack's arguments and a device, and
-      # erx_blk's a device. The cell loads the modules of these and of erx_net_client by hand.
+      # erx_blk is kept from any block driver (above). The cell loads the modules of these and of
+      # erx_net_client by hand.
       LOAD_ONLY = %w[erx_net erx_blk].freeze
       LOADED = %w[erx_blk erx_net erx_net_client].freeze
       MEMORY = 64 << 20

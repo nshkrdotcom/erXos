@@ -124,6 +124,7 @@ step(Name, {error, Reason}) -> {error, {Name, Reason}}.
 
 handle_call(info, _From, State = #state{capacity = Capacity, features = Features}) ->
     {reply, {ok, #{transport => virtio_mmio, capacity => Capacity, max_sectors => erx_blk_request:max_sectors(),
+                   flush => true,
                    detail => #{version => ?ERX_VIRTIO_MMIO_VERSION, features => Features}}}, State};
 handle_call(Op = {read, _Sector, _Count}, From, State) ->
     submit(From, Op, State);

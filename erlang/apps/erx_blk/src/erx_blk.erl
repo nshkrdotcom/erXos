@@ -38,7 +38,7 @@
 
 -type reason() :: bad_count | out_of_range | erofs | busy | no_device | no_flush | {device, term()}.
 -type info() :: #{transport := virtio_mmio | sdhci | usb_bot, capacity := non_neg_integer(),
-                  max_sectors := pos_integer(), detail := map()}.
+                  max_sectors := pos_integer(), flush := boolean(), detail := map()}.
 
 %% The transport table: a block record's CMSIS-SVD peripheral and the device process that
 %% drives it, or why none does. A new controller is one row and one module.
@@ -50,8 +50,8 @@ transports() ->
 %% The device process for the domain's block record, or ignore when the domain has none it
 %% can drive. A domain with no block record has no line in the log, since a machine
 %% without a disk is a configuration, not a fault; every other refusal is one line. This
-%% runs in erx_blk_sup's process, where a raise would end the permanent application and
-%% the boot, so an exception is a refusal too.
+%% runs in erx_blk_sup's process, where a raise would end the storage domain's supervisor
+%% and the boot, so an exception is a refusal too.
 -spec start_link() -> {ok, pid()} | ignore | {error, term()}.
 start_link() ->
     case chosen() of

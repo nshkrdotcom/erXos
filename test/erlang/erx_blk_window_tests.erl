@@ -44,7 +44,7 @@ device() ->
 answer({read, _Sector, Count}) -> {ok, <<0:(Count * ?SECTOR)/unit:8>>};
 answer({write, _Sector, _Bytes}) -> ok;
 answer(flush) -> ok;
-answer(info) -> {ok, #{transport => virtio_mmio, capacity => 64, max_sectors => 8, detail => #{}}}.
+answer(info) -> {ok, #{transport => virtio_mmio, capacity => 64, max_sectors => 8, flush => true, detail => #{}}}.
 
 %% Ends Device and waits until it has ended, so erx_blk names no process.
 stop_device(Device) ->

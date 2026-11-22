@@ -24,6 +24,6 @@
              erx_usb_input_stream, erx_usb_input_tree, erx_usb_pipe, erx_usb_places_sup, erx_usb_setup,
              erx_xhci, erx_xhci_core]},
   {registered, [erx_usb]},
-  {applications, [kernel, stdlib, erx, erx_files]},
+  {applications, [kernel, stdlib, erx, erx_files, erx_blk]},
   {mod, {erx_usb, []}},
   {env, []}]}.
