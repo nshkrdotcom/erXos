@@ -1,7 +1,8 @@
 # The Raspberry Pi 4's Ethernet controller (GENET v5): a clean-room facts record
 
 A point-in-time record, written on 2026-11-12 on an Apple Silicon macOS
-27.0.1 host, of what the published drivers for the BCM2711's GENET v5
+27.0.1 host (the section "The receive and transmit buffers' settings"
+was added on 2026-11-22, from the same sources), of what the published drivers for the BCM2711's GENET v5
 Ethernet controller do when they stop its DMA engines, reset the MAC and
 read a received frame's status. It is the "dirty room" half of a
 clean-room process: its author read the GPL-licensed Linux driver and the
@@ -33,8 +34,9 @@ and how a received frame's status word says to drop it.
 6. [MAC reset, RX buffer flush and TX flush](#mac-reset-rx-buffer-flush-and-tx-flush)
 7. [Reinstalling the rings](#reinstalling-the-rings)
 8. [The receive status word](#the-receive-status-word)
-9. [Where the drivers disagree](#where-the-drivers-disagree)
-10. [What only the board can settle](#what-only-the-board-can-settle)
+9. [The receive and transmit buffers' settings](#the-receive-and-transmit-buffers-settings)
+10. [Where the drivers disagree](#where-the-drivers-disagree)
+11. [What only the board can settle](#what-only-the-board-can-settle)
 
 ## How to read this record
 
@@ -126,7 +128,7 @@ Read on 2026-11-12 as data; nothing in them was built or run.
   consumer); 0x0C the index software advances (RX: consumer; TX:
   producer); 0x10 ring size (descriptor count in bits 31:16, buffer length
   in bits 15:0); 0x14 and 0x18 start, low and high; 0x1C and 0x20 end, low
-  and high; 0x24 the TX done threshold; 0x28 TX flow period or RX XON/XOFF
+  and high; 0x24 a done threshold (TX and RX, see [the buffers' settings](#the-receive-and-transmit-buffers-settings)); 0x28 TX flow period or RX XON/XOFF
   thresholds; 0x2C and 0x30 the software's pointer, low and high (RX: read
   pointer; TX: write pointer) (`L.c` 347-389, `F.h` 126-166).
 * **[Both]** Start, end and the four pointers count 32-bit words into the
@@ -355,6 +357,241 @@ What the length counts:
 * **[Both]** The 2-byte pad comes from the RX buffer's 2-byte alignment
   enable, which both set (`L.c` 2630, `F.c` 523).
 
+## The receive and transmit buffers' settings
+
+Added on 2026-11-22. All six source files were checked against the
+SHA-256 values in [Sources](#sources) before reading, and matched. The
+Linux files were re-extracted for this section from the same pinned
+tarball, whose SHA-256 was checked against the pin first. Of Linux's
+GENET files only the four listed were read; the wake-on-LAN file
+(`bcmgenet_wol.c`) was not, so any write it makes to these registers is
+not covered here.
+
+The registers, by controller offset:
+
+* **[Both]** The RX buffer block starts at controller offset 0x300
+  (`L.h` 315, `F.h` 66). In it: RBUF_CTRL at 0x300, RBUF_CHECK_CTRL at
+  0x314, RBUF_TBUF_SIZE_CTRL at 0x3B4 (`L.h` 217, 227, 236; `F.h` 66,
+  70, 73). TBUF_CTRL is at 0x600: Linux places the TX buffer block at
+  0x600 in the parameter set that v5 uses (`L.h` 249, `L.c` 143-158 and
+  3751), FreeBSD defines it there directly (`F.h` 74). (On GENET v1
+  only, Linux finds the TX buffer control inside the RX buffer block
+  instead, `L.h` 256, `L.c` 143-158; this does not apply to v5.)
+* **[Both]** The version that applies: the BCM2711 reports major 6,
+  which Linux maps to v5, and v5 uses Linux's v4 parameter set
+  (`L.c` 3767-3790); FreeBSD names major 6 as v5 (`F.h` 43).
+
+RBUF_CTRL (0x300):
+
+* **[Both]** Bit 0 enables the 64-byte receive status block, bit 1 the
+  2-byte receive alignment, bit 2 is named "bad" plus "dis" (`L.h`
+  217-220, `F.h` 66-69). **[Inferred]** Bit 2 has to do with frames
+  marked bad, but whether the name means "discard bad frames" or
+  "disable" something is not determinable from the name; neither driver
+  writes bit 2.
+* **[Both]** No other bit of RBUF_CTRL is named in either header. Bits 6,
+  14 and 15 (set in the boot firmware's 0xC040) are not named, written
+  or tested by either driver. The sources are silent on their meaning.
+* **[Both]** Both drivers write RBUF_CTRL only by read-modify-write,
+  setting or clearing their own bits, so whatever else the register
+  holds (bits 6, 14 and 15 included) is written back unchanged
+  (`L.c` 2629-2631; `F.c` 522-524 and 572-582). **[Inferred]** From the
+  firmware's 0xC040, Linux's write leaves 0xC043, if the register reads
+  back what it was given.
+* **[Linux]** Linux writes RBUF_CTRL once per bring-up, in the MAC
+  set-up step, for every GENET version, setting bits 0 and 1 and
+  nothing else (`L.c` 2628-2631). No other write to RBUF_CTRL exists in
+  the four Linux files read.
+
+When Linux writes the buffer settings, relative to the reset, flushes
+and rings (open: `L.c` 3323-3366; resume: `L.c` 4178-4258):
+
+* **[Linux]** 1. Pulse the RBUF flush register's bit 1 (controller
+  0x008; see [MAC reset, RX buffer flush and TX flush](#mac-reset-rx-buffer-flush-and-tx-flush))
+  (`L.c` 3254-3266, 3323). 2. Write the flush register 0, wait 10 µs,
+  write the UniMAC command register with only the software-reset bit
+  set, wait 2 µs (`L.c` 2563-2574, 2613). 3. Clear the MIB counters and
+  set the maximum frame length (`L.c` 2615-2621). 4. TBUF_CTRL: read,
+  set bit 0 (64-byte transmit status block), write (`L.c` 2623-2626).
+  5. RBUF_CTRL: read, set bits 0 and 1, write (`L.c` 2628-2631).
+  6. RBUF_CHECK_CTRL: read, set bit 0 (receive checksum enable) and
+  bit 5 (named as disabling L3 parsing), set or clear bit 4 (skip FCS)
+  to match the CRC-forward setting Linux last read, write (`L.h`
+  227-230, `L.c` 2633-2643). 7. On v3 and later (every version but v1
+  and v2, so on v5), write RBUF_TBUF_SIZE_CTRL whole with the value 1
+  (`L.c` 2645-2646). 8. Mask and clear all interrupts (`L.c` 2648,
+  2576-2583). 9. Only after all of that, in the ring bring-up: stop and
+  confirm TX DMA, then RX DMA; pulse the UniMAC TX flush; on open (not
+  on resume) pulse the RBUF flush register's bit 0; install the rings;
+  set DMA enable on RX, then TX (`L.c` 3338, 3040-3135). 10. Then the
+  receive mode and the MAC enables, which are skipped while the MAC is
+  still in software reset (`L.c` 3286-3302, 2539-2548, 3366); the MAC
+  leaves reset and gets transmit and receive enabled only at link-up
+  (`L.mii` 79-91).
+* **[Linux]** So every buffer setting (TBUF_CTRL, RBUF_CTRL,
+  RBUF_CHECK_CTRL, RBUF_TBUF_SIZE_CTRL) is written with the MAC held in
+  software reset, before the DMA is stopped, before both flushes and
+  before any ring register is written. TBUF_CTRL, RBUF_CTRL and
+  RBUF_CHECK_CTRL are written by field (read-modify-write);
+  RBUF_TBUF_SIZE_CTRL is written whole.
+
+RBUF_TBUF_SIZE_CTRL (0x3B4):
+
+* **[Both]** Both drivers write it whole with the value 1 and never read
+  it (`L.c` 2645-2646; `F.c` 526). Neither header names any field in
+  it (`L.h` 236, `F.h` 73). The sources are silent on what 1 selects.
+  **[Inferred]** From the name, it sizes the receive and transmit
+  buffers or the split of buffer memory between them.
+* **[Linux]** Linux writes it on v3, v4 and v5, not on v1 or v2
+  (`L.c` 2645-2646), at the point given in step 7 above: MAC in
+  software reset, before the DMA stop, the flushes and the rings.
+* **[FreeBSD]** FreeBSD writes it on every version, in its enable step
+  (`F.c` 516-526), which runs after the TX and RX rings are installed
+  and each direction's DMA is enabled (`F.c` 932-934, 757-762,
+  803-813), with the MAC out of reset (FreeBSD's reset at attach or at
+  the last stop leaves the command register 0, `F.c` 286, 873, 504-508;
+  its init path does not reset, `F.c` 900-942), and just before the MAC's
+  transmit and receive enables (`F.c` 528-532).
+
+FreeBSD's other buffer writes, for comparison:
+
+* **[FreeBSD]** In the enable step, before the MAC enables: maximum
+  frame length 1536, then RBUF_CTRL read-modify-write setting bit 1
+  only (`F.c` 520-524). After the MAC enables and the interrupt
+  unmask, in a separate offload step: RBUF_CHECK_CTRL bit 0 and
+  RBUF_CTRL bit 0 both set when receive checksum offload is on, both
+  cleared when off, and TBUF_CTRL bit 0 set or cleared by transmit
+  checksum offload, each by read-modify-write (`F.c` 568-590, 934-935).
+  The offload step also runs while the interface is up when the
+  checksum capabilities change (`F.c` 1634). **[Inferred]** Under
+  FreeBSD the 64-byte status-block enable can therefore change with the
+  MAC receiving.
+
+TBUF_CTRL (0x600) and RBUF_CHECK_CTRL (0x314), Linux:
+
+* **[Linux]** Each is written once per bring-up, by field, in steps 4
+  and 6 above: MAC in software reset, before the DMA stop, the flushes
+  and the ring install (`L.c` 2623-2643). The four files read contain
+  no other write to either.
+* **[Linux]** Bits Linux names in RBUF_CHECK_CTRL: bit 0 receive
+  checksum enable, bit 4 skip FCS, bit 5 L3 parse disable (`L.h`
+  227-230). FreeBSD names bits 0 and 4 the same way (`F.h` 70-72). In
+  TBUF_CTRL both name only bit 0, the 64-byte transmit status block
+  (`L.h` 249-250; FreeBSD reuses its RBUF bit-0 name for it,
+  `F.c` 584-590).
+
+The UniMAC command register (0x808) and the firmware's 0x010000D8:
+
+* **[Linux]** The value has bits 3, 4, 6, 7 and 24 set. By Linux's names
+  (`L.umac` 10-37): bits 3:2 are the speed field and hold 2, 1000 Mb/s;
+  bit 4 promiscuous; bit 6 CRC forward; bit 7 pause forward; bit 24 no
+  length check. Bits 0 and 1 (transmit and receive enable), 13
+  (software reset) and 15 (local loopback) are clear.
+* **[Both]** FreeBSD's header names bits 3:2 speed (2 is 1000), bit 4
+  promiscuous and bit 6 CRC forward the same way (`F.h` 75-92); it names
+  neither bit 7 nor bit 24.
+* **[Linux]** Other bits Linux names, for reference: bit 5 pad enable,
+  bit 8 receive pause ignore, bit 9 transmit address insert, bit 10 half
+  duplex, bit 11 an older software-reset position, bit 22 auto config,
+  bit 23 control frame enable, bit 25 remote loopback, bit 26 receive
+  error discard, bit 27 preamble enable, bit 28 transmit pause ignore,
+  bit 29 a combined transmit/receive enable, bit 30 runt filter disable
+  (`L.umac` 10-37).
+* **[Linux]** Linux's reset writes the command register whole with only
+  the software-reset bit (`L.c` 2571), so it does not keep the
+  firmware's bits 4, 6, 7 or 24. Afterwards it changes the register only
+  by field: the link handler rewrites the speed, half-duplex and the two
+  pause-ignore bits and clears the reset (`L.mii` 79-91), the receive
+  mode sets or clears promiscuous (`L.c` 3543-3549), and the MAC enables
+  touch bits 0 and 1 (`L.c` 2539-2552). **[Inferred]** Bits 7 and 24 stay
+  as the reset write left them (clear) under Linux, if the register keeps
+  written values while in software reset; Linux never sets them.
+
+Local loopback and the receive buffer flush:
+
+* **[Linux]** Linux never sets the UniMAC's local loopback bit (bit 15):
+  the name is defined (`L.umac` 28) and used nowhere in `L.c` or
+  `L.mii`, and the reset write sets only bit 13 (`L.c` 2571). FreeBSD
+  sets it together with the software reset for 10 µs (`F.c` 504-508,
+  already described above).
+* **[Linux]** Linux's receive buffer flush (RBUF flush register bit 0,
+  pulsed for 10 µs) happens on open only, with: the MAC held in software
+  reset with transmit and receive disabled (step 2; the reset is cleared
+  only at link-up, which follows the PHY start after the ring bring-up,
+  `L.c` 3338, 3366, 3286-3302, `L.mii` 79-91); TBUF_CTRL, RBUF_CTRL,
+  RBUF_CHECK_CTRL and RBUF_TBUF_SIZE_CTRL already written (steps 4-7);
+  all interrupts masked; both DMA directions stopped and confirmed; the
+  UniMAC TX flush just pulsed (`L.c` 3040-3077). The flush is a
+  read-modify-write of the flush register, which Linux had written 0
+  in step 2 and pulsed bit 1 of in step 1 (`L.c` 3072-3075).
+
+Sizing or partitioning the shared buffer memory:
+
+* **[Both]** No register named for sizing or partitioning buffer memory
+  appears in either source other than RBUF_TBUF_SIZE_CTRL above. The
+  other buffer-block registers Linux names are status (RBUF 0x30C),
+  energy control (RBUF 0x39C and TBUF 0x614, whose EEE and power
+  management bits Linux sets or clears at link-up by EEE state,
+  `L.h` 222-234 and 251-254, `L.c` 1346-1384), the hardware filter
+  control (v1 only for the RBUF copy, `L.h` 238-247), and the TX
+  backpressure mask (TBUF 0x60C, written only for MoCA,
+  `L.h` 251, `L.c` 2650-2660) (`L.h` 217-257).
+
+Receive-path facts not covered above:
+
+* **[Linux]** Interrupt controller 0 names bit 8 a TX buffer underrun and
+  bit 9 an RX buffer overflow (`L.h` 282-283). Linux never unmasks or
+  handles either: it unmasks only the link and MDIO bits on controller 0
+  (`L.c` 2586-2602, 2663-2667) and the per-ring done bits on controller
+  1 (`L.c` 1838-1856, 3497). FreeBSD defines neither bit (`F.h` 62-65).
+* **[Linux]** On v3 and later, the RX buffer block holds an overflow
+  counter at 0x394 and an error counter at 0x398 (RBUF offsets 0x94 and
+  0x98) (`L.h` 194-208). Linux reads them only as statistics and writes
+  either 0 only when it reads all ones (`L.c` 1151-1154, 1218-1245).
+  FreeBSD defines neither.
+* **[Linux]** The discard count in the RX producer-index register's bits
+  31:16 is read on every receive pass and added to the "missed"
+  statistic; Linux writes the whole register 0 once its running total
+  reaches 0xC000 (`L.c` 2319-2334), and at ring install
+  (`L.c` 2781). It is otherwise never cleared. **[Inferred]** That
+  mid-run write also writes 0 to the producer-index field in bits 15:0;
+  neither source says whether the hardware ignores it there. FreeBSD
+  masks the producer index to its low bits and never reads or clears
+  the discard count (`F.c` 1384-1386, 788).
+* **[Both]** RX XON/XOFF threshold register (per-ring 0x28) is written
+  once at ring install with 16 in bits 15:0 and 5 in bits 31:16, the
+  value 0x00050010, for a 256-descriptor ring (16 is the descriptor count
+  divided by 16) (`L.h` 25, 42-43, `L.c` 2786-2789; `F.h` 116, 141-144,
+  `F.c` 89, 798-799). Linux names bits 15:0 the XON threshold and bits
+  31:16 the XOFF threshold (`L.h` 385-388); FreeBSD names bits 15:0 the
+  high threshold and bits 31:16 the low one (`F.h` 142-143). Neither
+  says what the unit is or what the thresholds trigger.
+* **[Linux]** Per-ring 0x24, which the record's layout lists as the TX
+  done threshold, is a buffer-done threshold in both directions: Linux
+  writes it on the RX ring too, with the ring's frame count for
+  interrupt coalescing (`L.c` 347-389, 852-859). The default is 1
+  (`L.c` 4091-4093). FreeBSD writes it on TX only (`F.c` 752).
+* **[Linux]** Per-ring RX timeout registers: in the RX block's common
+  area, ring *n*'s timeout at block offset 0x106C + 4*n* (ring 0 at
+  controller 0x306C) (`L.c` 197-241). Linux read-modify-writes its bits
+  15:0 at ring install with the ring's coalescing time in microseconds
+  times 1000, divided by 8192 and rounded up (`L.h` 424, `L.c` 852-865,
+  2684-2700, 2776). **[Inferred]** The field counts units of 8192 ns.
+  Linux sets no default time at probe (only the frame count,
+  `L.c` 4091-4093; the time is set from ethtool, `L.c` 873, and the
+  adaptive mode is off unless ethtool enables it, `L.c` 878-884), so
+  **[Inferred]** the default field value is 0. FreeBSD never writes it.
+* **[Linux]** RX DMA registers written at ring install beyond the list in
+  [Reinstalling the rings](#reinstalling-the-rings): the buffer-done
+  threshold and the timeout register above, both through the coalescing
+  set-up that runs before the index and ring registers are written
+  (`L.c` 2775-2776, 2781-2799). Nothing else.
+* **[Linux]** Linux writes the RX consumer index in only two places: 0
+  at ring install (`L.c` 2782), and after each processed descriptor
+  inside the receive loop, one write per descriptor, including
+  descriptors dropped for errors or for a failed buffer replacement
+  (`L.c` 2347-2352, 2448-2456).
+
 ## Where the drivers disagree
 
 * **Confirming the stop.** Linux polls the DMA status register for each
@@ -387,6 +624,23 @@ What the length counts:
 * **FreeBSD header.** The CRC-forward bit is defined only in one branch of
   a conditional in `F.h` (79-90), so it is undefined in the other; FreeBSD
   does not use it.
+* **When the buffer settings are written.** Linux writes TBUF_CTRL,
+  RBUF_CTRL, RBUF_CHECK_CTRL and RBUF_TBUF_SIZE_CTRL with the MAC held in
+  software reset, before the DMA stop, both flushes and the ring install.
+  FreeBSD writes RBUF_CTRL's alignment bit and RBUF_TBUF_SIZE_CTRL after
+  the rings are installed and the DMA enabled, with the MAC out of reset,
+  just before the MAC enables; and the status-block enables and
+  RBUF_CHECK_CTRL after the MAC enables, again whenever checksum
+  capabilities change. See
+  [The receive and transmit buffers' settings](#the-receive-and-transmit-buffers-settings).
+* **RX coalescing registers.** Linux writes the RX ring's buffer-done
+  threshold (per-ring 0x24, 1 frame by default) and the ring's RX timeout
+  register at ring install; FreeBSD writes neither on RX.
+* **XON/XOFF field names.** Both write 0x00050010; Linux names bits 15:0
+  the XON threshold and bits 31:16 the XOFF threshold, FreeBSD names them
+  the high and low thresholds.
+* **Discard count.** Linux reads the RX producer index's discard count
+  and clears the register at 0xC000; FreeBSD ignores the count.
 
 ## What only the board can settle
 
@@ -403,3 +657,20 @@ What the length counts:
 * **[Board]** The reset value of the command register's CRC-forward bit,
   which decides whether received lengths include the FCS when a driver
   does not set it. Linux reads it rather than choosing it.
+* **[Board]** What RBUF_CTRL bits 6, 14 and 15 (the firmware's 0xC040)
+  do. Neither driver names, writes or tests them; both keep them by
+  read-modify-write.
+* **[Board]** What RBUF_TBUF_SIZE_CTRL's value 1 selects, and whether it
+  matters if it is written with the MAC in software reset before the
+  DMA stop, flushes and ring install (Linux's order) or after the DMA is
+  enabled with the MAC out of reset (FreeBSD's order). Neither source
+  says.
+* **[Board]** Whether the RBUF overflow interrupt (controller 0 bit 9) or
+  the RBUF overflow and error counters (0x394, 0x398) move when receive
+  stops advancing; neither driver acts on them beyond statistics.
+* **[Board]** Whether writing 0 to the RX producer-index register while
+  receive runs (Linux's discard-count clear) also resets the producer
+  index in bits 15:0.
+* **[Board]** The meaning and unit of the RX XON/XOFF thresholds and the
+  RX timeout field, and whether the timeout's 0 means "no timeout"; no
+  source states them.
