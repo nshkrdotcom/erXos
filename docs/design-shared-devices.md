@@ -370,7 +370,8 @@ the driver's, which ends the runtime. The host link and the line trees
 of the Bluetooth design
 ([design-bluetooth.md](design-bluetooth.md#the-controllers-line)) start
 under `erx_uart_sup`, `one_for_one`, of **line groups**, one for each
-interrupt line their UARTs use, each a `rest_for_one` supervisor as the
+interrupt line their UARTs use and one for each virtio console a line
+tree drives, each a `rest_for_one` supervisor as the
 supervision rule above has it: the line's owner first when the line is
 shared, which `erx_irq_line:owners/1` computes from the records of the
 UARTs on it, then the line's services, a `one_for_one` supervisor of the

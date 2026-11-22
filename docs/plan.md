@@ -2930,8 +2930,8 @@ without pairing.
 * **(b) Stages 1 to 3 on QEMU `virt`.** The line service over
   `erx_virtio_console`, the driver of a virtio-console port, which the
   QEMU harness joins through a socket chardev to a Bumble controller;
-  the Bluetooth domain in QEMU `virt`'s development manifest, with its
-  `line` grant over that port, `abi/services/ble.txt` and
+  the Bluetooth domain in the QEMU `virt` Bluetooth suite's manifest,
+  never the development manifest, with its `line` grant over that port, `abi/services/ble.txt` and
   `abi/services/line.txt`, the `ble` facet, `erx_gatt_serial`, the
   `line` grant's parameters, and the Ruby harness with the peer scripts
   of stages 1 to 3

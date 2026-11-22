@@ -403,18 +403,23 @@ violation fails the build with the property, the record and the field:
    lies on a `usb` device's row, no two windows name one partition of
    one drive, and no controller's rows name more than `usb_drives_max`
    drives ([design-usb.md](design-usb.md#refusals-and-error-results));
-   the units of the UARTs that `console`,
-   `hostlink` and each grant of the `line` interface, by its `uart`
-   parameter, name are the system domain's and their paths all differ,
-   so no two `line` grants name one UART and none names the console's or
-   the host link's
+   the units of the UARTs that `console` and
+   `hostlink` name and of the device each grant of the `line` interface
+   names by its `device` parameter, a device of role `uart` or `serial`
+   and of no other, are the system domain's and their
+   paths all differ, so no two `line` grants name one device and none
+   names the console's or the host link's; a `line` grant states `rate`
+   and `flow` exactly when its device is a `uart`, and every placed
+   `serial` device, a virtio console, is named by a `line` grant, since the
+   root writes a `given` record with unconfined DMA memory for every
+   `serial` device the system domain holds
    ([design-bluetooth.md](design-bluetooth.md#the-controllers-line)); the
    service of the `line` interface is named `line`, the one name by which
    the line service finds and serves its grants, the facet-names check
    reads its serve call and its grantees mount it at `/line`; the
    console's UART shares an interrupt line with none of the others, since
-   the console starts its own line's owner, while the host link's and the
-   `line` grants' UARTs may share lines with each other, one line group
+   the console starts its own line's owner, while the host link's UART and the
+   `line` grants' devices may share lines with each other, one line group
    for each line starting its one owner before the services that drive
    them
    ([design-shared-devices.md](design-shared-devices.md#lines-inside-a-domain));
@@ -2655,7 +2660,7 @@ in `erx/abi.h`), so each declared parameter appears once, except a set,
 whose elements are consecutive rows in ascending order, in number
 order, of its declared kind and within its declared bound, and no
 parameter the interface requires is left out. A device reference, such
-as the `line` grant's `uart`, is the index of its device row, which the
+as the `line` grant's `device`, is the index of its device row, which the
 manifest check resolves from the device-tree path the facet row states
 and the reader checks against the device table; a domain or principal
 reference, which no service declares, is refused, as the manifest check
@@ -3745,7 +3750,7 @@ manifest lists: the vault.
 | inspector, `erx_inspector` | one schema over kernel, service and runtime reports, the previous boot's crash record included; the `inspect` service, whose facets the domain service mints with the scope `erx_domain_core:inspect_scope/4` gives, and the questions to each domain's inspection agent | [design-live.md](design-live.md#inspection), [design-live.md](design-live.md#the-inspect-service) |
 | tracer, `erx_tracer` | trace sessions and the kernel's trace | [design-live.md](design-live.md#tracing) |
 | host link, `erx_hostlink` | sessions with the development host | [design-live.md](design-live.md#the-host-link) |
-| line service, `erx_line` | one line tree, `data` and `ctl`, for each grant of the `line` interface, over the driver of the UART its `uart` parameter names, in that line's group; it moves the bytes and parses none, and its `ctl` takes one word, `reset`, which turns the line's device off through the device service, programs the UART afresh and turns the device on | [design-bluetooth.md](design-bluetooth.md#the-controllers-line) |
+| line service, `erx_line` | one line tree, `data` and `ctl`, for each grant of the `line` interface, over the driver of the device its `device` parameter names, a UART or a virtio console, in that line's group; it moves the bytes and parses none, and its `ctl` takes one word, `reset`, which turns the line's device off through the device service, starts the driver afresh and turns the device on; a driver that does not start leaves the line broken with no driver, so it ends no process | [design-bluetooth.md](design-bluetooth.md#the-controllers-line) |
 | code service, `erx_code` | the code store, code facets, overlays, the install facet | [design-live.md](design-live.md#the-code-store) |
 | update service, `erx_update` | system updates, through the slot writer: writing the spare slot, the trial, the commit and the fallback | [design-storage.md](design-storage.md#system-updates) |
 | start service, `erx_starter` | the start table, the manifest's `start` rows with the machine's `start.conf` over them, and the supervisor and keeper of each row; its tree, `start`; the package process and its `apps` tree ([design-packaging.md](design-packaging.md#apps)) | [design-apps.md](design-apps.md) |

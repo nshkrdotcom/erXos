@@ -2676,11 +2676,12 @@ its interrupt line and the DMA memory the platform reserves for it. So a device 
 has one form in every domain: its queues are carved from its one memory, and the system domain's
 driver opens it exactly as a holder's does. Nothing deletes these objects, since the system
 domain holds the device for the boot and its fault resets the machine; an object the backend
-refuses refuses the boot, naming the record. The host link's UART and the line's
+refuses refuses the boot, naming the record. The host link's UART and a line's UART
 ([design-bluetooth.md](design-bluetooth.md#the-controllers-line)), which do no DMA, are the
 physical records, `-erx_record device ROLE PERIPHERAL PATH BASE SIZE LINE MARK CLOCK INDEX`, PATH as in the given record and INDEX the
-device's row in the manifest's device table, which a line grant's `uart` names; the root writes the
-line's record for that row alone. The record also names, after CLOCK, the base and length
+device's row in the manifest's device table, which a line grant's `device` names; the root writes the
+line's record for that row alone, a physical record for a `uart` row and the given record of its
+kind row for a `serial` row, a virtio console, which does DMA. The record also names, after CLOCK, the base and length
 of the run of pages its unit's registers cover around its own, so the device NIF maps that run once, at the first open of any record in
 it, as it maps a window object once, and two physical records in one page share one mapping; `-erx_record console` names its run the same way. CLOCK is the device entry's
 clock in hertz, which the driver reads and the NIF does not. The record's window and line the device
@@ -2695,6 +2696,7 @@ transport's registers and adds the kind's configuration fields (`hw/svd/virtio_m
 | `network` | `net` | `virtio_net` | the network domain, or the system domain when no network domain is configured |
 | `gpu` | `gpu` | `virtio_mmio`, the transport alone, since its driver reads no configuration field | the display domain |
 | `input` | `input` | `virtio_input` | the display domain |
+| `serial` | `line` | `virtio_mmio`, the transport alone, since its driver reads no configuration field | the system domain, whose line service drives it for the line grant that names it ([design-bluetooth.md](design-bluetooth.md#the-line-on-qemu-virt)) |
 
 A `framebuffer` row, the firmware's framebuffer on the Raspberry Pi 4, is no row of the kinds
 table: its holder's record is the root's framebuffer record
@@ -2712,7 +2714,8 @@ console shows the root's line for it.
 
 The development manifest of QEMU `virt` places the block and network devices, in the storage and
 network domains, and the gpu, in the display domain, which holds the platform record's `display`
-unit. It places no input device, since the record's `display` unit lists the gpu alone. A boot of the
+unit. It places no input device, since the record's `display` unit lists the gpu alone, and no
+`serial` device, which only the Bluetooth suite's manifest places. A boot of the
 development image that attaches no gpu leaves the gpu's transport empty, and the display domain
 runs without a screen.
 
@@ -2724,7 +2727,8 @@ the domain is in the trusted base (FD12).
 
 `gpu` and `input` are values of the manifest's `mf_device_role` beside `network` and `block`, since
 the manifest check reasons about a display domain's devices by role
-([design-system.md](design-system.md#the-manifest), property 9). A further kind of device is one more row.
+([design-system.md](design-system.md#the-manifest), property 9), and so is `serial`, since it
+refuses a placed `serial` device that no line grant names (property 8). A further kind of device is one more row.
 
 **A device the system domain holds**, the console's UART, the host link's, a block device
 with no storage domain and a network device with no network domain, its driver opens

@@ -444,25 +444,38 @@ a file tree its holder serves, with a `ctl` file for one-shot control
 one **line tree** for each grant of the `line` interface, which
 `abi/services/line.txt` declares with its files, `ctl`'s word and three
 parameters, each with its checked consumer as every facet parameter has
-([design-abi.md](design-abi.md#system-manifest-representation)): `uart`,
-the UART's device-tree path; `rate`, 115200 on every board this design
-names; and `flow`, `none` or `rts_cts`. A line is thus configured where
-every grant is, in the facet's row, and the manifest needs no field of
-its own for it. The manifest check gives the unit of each `line` grant's
-UART to the system domain, as property 8 gives the console's and the
-host link's ([design-system.md](design-system.md#the-manifest)), and
-refuses two grants that name one UART, and a grant that names the
-console's or the host link's:
+([design-abi.md](design-abi.md#system-manifest-representation)):
+`device`, the device-tree path of the line's device, a UART (role
+`uart`) on a board and a virtio-console transport (role `serial`) on
+QEMU `virt` ([The line on QEMU `virt`](#the-line-on-qemu-virt)); and,
+for a UART alone, `rate`, 115200 on every board this design names, and
+`flow`, `none` or `rts_cts`. A virtio port has neither: its queues are
+its flow control. The grant names its device, not a transport or a
+driver: the device's row says what the device is, and the row's role
+and compatible string pick the record the root writes and the driver
+that opens it. A line is thus configured where every grant is, in the
+facet's row, and the manifest needs no field of its own for it. The
+manifest check gives the unit of each `line` grant's device to the
+system domain, as property 8 gives the console's and the host link's
+([design-system.md](design-system.md#the-manifest)); requires `rate`
+and `flow` for a `uart` device and refuses them for a `serial` one;
+refuses a device of any other role; refuses
+two grants that name one device, and a grant that names the console's
+or the host link's; and refuses a placed `serial` device that no line
+grant names, since the root gives itself, and writes a `given` record
+for, every device of the `serial` kind row it is handed, so an
+ungranted one would get unconfined DMA memory and a line record no
+grant serves:
 
 | File | Read | Write |
 | --- | --- | --- |
-| `data` | the bytes the controller sent, at least one and at most what is buffered, waiting while none is; `eio` once the line is broken | the bytes to send, in order, returning once the driver has taken all of them |
-| `ctl` | `eacces` | `reset`, with or without its newline, at most 16 bytes: the steps of [A reset](#a-reset) below; answers once done, or `eio` when a power notification failed; any other write is `einval` |
+| `data` | the bytes the controller sent, at least one and at most what is buffered, waiting while none is; `eio` once the line is broken | the bytes to send, in order, returning once the driver has taken all of them; `eio` while the line has no driver |
+| `ctl` | `eacces` | `reset`, with or without its newline, at most 16 bytes: the steps of [A reset](#a-reset) below; answers once done, or `eio` when a power notification failed or the driver did not start; any other write is `einval` |
 
 `line.txt` is shaped as `windows.txt` is, an `erx_fs` grant of one tree
-with typed parameters: `uart` of kind `device`, `rate` a `u64` held to
-115200, and `flow` an `identifier` of `none` or `rts_cts`, each
-`checked_by` the line's grant checker; the tree's name in an attach,
+with typed parameters: `device` of kind `device`, an optional `rate`, a
+`u64` held to 115200, and an optional `flow`, an `identifier` of `none`
+or `rts_cts`, each `checked_by` the line's grant checker; the tree's name in an attach,
 `line_tree`, `line`; its files, `line_file`, `data` and `ctl`; and
 `line_rx_max` and `ctl`'s 16 bytes as limits. Every grantee carries
 frames of at least `files_max_frame_min`, as a `files` grantee does, so
@@ -487,7 +500,17 @@ word, with a fuzz target. Its receive buffer holds at most
 that would pass it marks the line **broken**: buffered bytes are dropped
 and every read answers `eio` until the next `reset`. A loss of bytes is a
 loss of synchronization, which H4 answers with a reset anyway (Part A,
-section 4), so the line's one failure is the controller's restart.
+section 4), so the line's one failure is the controller's restart. A
+driver that does not start, at the line's start or at step 3 of a
+reset, or that ends outside a reset, as a broken queue ends one, marks
+the line broken as well and leaves it with no driver: buffered bytes
+are dropped, every `data` read and write answers `eio`, a reset whose
+step 3 started none answers `eio` before its next step, with the broken
+mark set after step 3 cleared it, and the next `reset` tries the driver
+again. So whatever a device does ends at most its line's driver, never
+the line's process, and nothing it does restarts a supervisor whose end
+would take the host link with it. The driver's start logs why it
+failed, except for an empty transport, which has no device to report.
 
 Every read and write of `data` that cannot finish at once, and every
 `reset`, is a waiting request whose keeper is the line's process, the
@@ -610,7 +633,8 @@ at 115200 baud throughout; a faster rate is a measured optimization
 line, so the drivers of two services of the system domain share it, and
 a line has one binder. The system domain starts the host link and the
 line trees under one supervisor, `erx_uart_sup`, `one_for_one`, of
-**line groups**, one for each interrupt line those UARTs use. A group is
+**line groups**, one for each interrupt line those UARTs use and one for
+each virtio console, which has a line object of its own. A group is
 a `rest_for_one` supervisor: the line's owner first, when the line is
 shared, which `erx_irq_line:owners/1` computes from the drivers'
 records, then the line's services, a `one_for_one` supervisor of the
@@ -622,7 +646,8 @@ its line, one service's failure restarts no other, and a failure on
 another line restarts nothing here. On the
 Pi 4 one group holds line 153's owner, the host link and the Bluetooth
 line's tree; on QEMU `virt` the host link's group holds the host link
-alone. The console is not in a group: it starts its own line's owner,
+alone, and the Bluetooth line's tree, over its virtio-console
+transport, is a group of its own with no owner. The console is not in a group: it starts its own line's owner,
 under `user_sup` and `erx_console_sup`, and takes that owner's end as
 its driver's, which ends the runtime
 ([design-runtime.md](design-runtime.md#configuration)), and the manifest
@@ -699,16 +724,28 @@ device has a power line.
 
 On QEMU `virt` the line's driver is `erx_virtio_console`, the driver
 of port 0 of a virtio console (virtio 1.2, section 5.3), over a
-virtio-mmio transport, of a unit the system domain holds in QEMU `virt`'s
-development manifest, that the line grant names. It speaks the PL011's driver messages
+virtio-mmio transport, of a unit the system domain holds, whose device
+row, of role `serial`, the line grant's `device` names. Only the
+manifest of QEMU `virt`'s Bluetooth suite places the unit, never the
+development manifest, so no development boot meets an empty transport.
+Its record is a `given` one, with the window, the line and the DMA
+memory the root makes for it, and the peripheral of the `serial` kind
+row, the transport alone, since the driver reads no configuration field
+([design-fiasco.md](design-fiasco.md#device-records)): the kind row,
+matched by the role and compatible string the platform record fixes,
+never the grant, picks the peripheral, so no manifest pairs a device
+with another device's driver. The device is unconfined, so it puts
+QEMU's device model in the system domain's trusted base, which only a
+development build may run, since property 9 refuses it in a release. It speaks the PL011's driver messages
 ([design-runtime.md](design-runtime.md#the-console-and-standard-io)), so
 the line service, the tree and everything in the Bluetooth domain are the
 ones the board runs. It negotiates no feature of the device type's: without
 `VIRTIO_CONSOLE_F_MULTIPORT` the device has port 0 alone, on queue 0, its
 receive queue, and queue 1, its transmit queue, and no control queue
 (section 5.3.2). Its start does not wait: a device whose reset has not
-finished answers `negotiate/2` `ebusy`, which fails the start, and the
-line with it, as any failed step does.
+finished answers `negotiate/2` `ebusy`, which fails the start, as any
+failed step does, and an empty transport, with no device behind it,
+fails it too.
 
 It keeps the receive queue full of device-writable
 buffers and passes the bytes of each the device returns, as many as its
@@ -717,8 +754,8 @@ device-readable buffers of the transmit queue, in order, and answers the
 write once the device has returned every one of them. A used element or
 used index the device NIF's ring core refuses, such as a length past its
 buffer or a buffer not in flight, breaks the queue; a broken
-queue ends the driver, which ends the line, as any driver's end outside a
-`reset` does.
+queue ends the driver, which leaves the line broken with no driver, as
+any driver's end outside a `reset` does.
 
 QEMU `virt`'s platform record names no power line, so a
 `reset` is the steps of [A reset](#a-reset) without steps 2 and 4: the
@@ -2270,7 +2307,7 @@ and stops in the reverse order, the controller process first.
 | a handler that does not answer in 5 s | the link's deadline | nothing: Unlikely Error | none |
 | a handler that ends | the registry's monitor | the handler's attachment | the app attaches again |
 | the store answers `unavailable`, returns a blob that does not decode, or leaves a `put` unconfirmed, a backend call past `bt_store_timeout_ms` included | the store | the pairing; at start, the bonds: the domain runs without them and refuses pairing; the configuration write; `forget` | `/proc/bt` and the log say `store_unavailable` or `store_unreadable`; the store is `unknown`; after an unconfirmed `put` a change reads first and fails unless the read succeeds; after the start's read the next start reads again; `forget all` alone replaces a blob that does not decode ([Bonds and the store](#bonds-and-the-store)) |
-| a broken line | the line service | reads of `data` | the controller group's restart writes `reset` |
+| a broken line, its driver's start failed included | the line service | reads of `data`; with no driver, writes too | the controller group's restart writes `reset`, which starts the driver again |
 | a line tree or the host link ends, or line 153's owner | its line group's supervisor | the group after it: on the Pi 4, the tree's fids and, for the owner, the host link's sessions | the group restarts, its owner first; the console, in no group, is untouched. The Bluetooth domain's `line` grant ended with the tree, and a grant of a system domain's service comes only in a ready answer, so `/line` answers `eio` to the controller group's restarts until the domain ends at its intensity; the domain service restarts it, and its ready answer brings a grant of the new tree |
 | a power notification that fails | `reset`'s answer, `eio` | the bring-up | the group's restart retries within its intensity; after an unanswered request every later notification of the boot fails at once, the VL805's included, so the Bluetooth domain ends at its intensity, and its log records and the line service's `/proc` show why |
 | a configuration write the store does not keep | the store, `unknown` or a `put` not `ok` | nothing: Unlikely Error, the configuration unchanged | the phone writes again |
@@ -2280,8 +2317,8 @@ and stops in the reverse order, the controller process first.
 | Interface | Refusal | When |
 | --- | --- | --- |
 | the line's `ctl` | `einval` | any write but `reset` |
-| | `eio` | a power notification answered other than `ERX_OK`, `ERX_ETIMEDOUT` for every one after the boot's first timeout included |
-| the line's `data` | `eio` | the line is broken |
+| | `eio` | a power notification answered other than `ERX_OK`, `ERX_ETIMEDOUT` for every one after the boot's first timeout included; the fresh driver did not start |
+| the line's `data` | `eio` | a read while the line is broken; a read or a write while it has no driver |
 | the control tree's `pair` | `ebusy` | another window is open |
 | | `einval` | a first write other than `display` or `nodisplay` |
 | | `eio` | the store is `unknown` since its start |
@@ -2380,8 +2417,9 @@ erXos's line and one for the peer, each bound to 127.0.0.1
 (`tcp-server:127.0.0.1:PORT`), since a listener on every interface would
 let any host that reaches the development host write HCI traffic into
 the guest's line or the peer. It then boots QEMU `virt` with the
-suite's manifest, the development manifest with a Bluetooth domain whose
-`line` grant names the virtio-console transport, and that transport's
+suite's manifest, the Bluetooth suite's own, which places the
+virtio-console transport and a Bluetooth domain whose `line` grant names
+it, and that transport's
 port 0 on a socket chardev that connects to the first controller's
 port, so the bytes erXos's line writes reach Bumble's controller
 unchanged ([The line on QEMU `virt`](#the-line-on-qemu-virt)). Bumble's stream transports carry H4 framing
