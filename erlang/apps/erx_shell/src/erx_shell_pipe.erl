@@ -10,28 +10,42 @@ has not yet taken, in the order they were written.
 Bounds. At most 64 KiB are in flight, the size of a pipe's first ring
 (docs/design-pipes.md). A writer's bytes enter as room opens, and its
 put/2 returns once the last of them has entered, so a writer never runs
-more than 64 KiB ahead of its reader. A reader takes whatever bytes are in
+more than 64 KiB ahead of its reader; put_async/2 keeps that bound when its
+caller keeps one write unanswered (Requests, below). A reader takes whatever bytes are in
 flight, get_bytes/1, or a line, get/1, of at most 64 KiB with its newline:
 bytes that fill the pipe without a newline answer `line_too_long`, so no
 input makes a reader gather without bound, and a reader waiting for a
 line always finds the newline or a full pipe.
 
 Ends. The runner that makes a pipe attaches each stage to the end it
-holds, and the pipe monitors every holder. When every writer has ended,
-a reader that drained the pipe gets `eof`; when every reader has ended,
-what was in flight is dropped and every writer, waiting or not, gets
-`epipe`, as a write on a pipe with no reader does. An end that nothing
-ever attached stays open: the runner stops every pipe it made once the
-request that made it is done, and a pipe also ends with the process that
-made it, so no pipe outlives its line.
+holds, and the pipe monitors every holder. A holder lets go of its end
+when it ends or when it closes it, close/1, which an SSH job's relay
+does at the channel's end of input while it goes on running. When every
+writer has let go, a reader that drained the pipe gets `eof`; when every
+reader has, what was in flight is dropped and every writer, waiting or
+not, gets `epipe`, as a write on a pipe with no reader does. An end that
+nothing ever attached stays open: the runner stops every pipe it made
+once the request that made it is done, and a pipe also ends with the
+process that made it, so no pipe outlives its line.
+
+Requests. put/2, get/1 and get_bytes/1 wait for their answer. A process
+that must not wait, as a job's relay serving its channel, asks with
+put_async/2 or get_bytes_async/2 instead: the answer comes later as the
+message `{Ref, Reply}`, Reply what the waiting form returns, or, if the
+pipe is gone first, as its `{'DOWN', Ref, process, _, _}`, which means
+`{error, epipe}` to a write and `eof` to a read. Ref is the request's
+monitor, removed by either answer, so neither answer outlives the other.
+A request cannot be withdrawn, and the pipe holds every request sent, so
+the bound on what waits in the pipe is the caller's: it keeps at most one
+write and one read unanswered, as the waiting forms do by waiting.
 
 `from_binary/1` and `from_file/1` make a pipe a pump process fills, for
 a here document and for `<`, so every input an Erlang command reads is a
 pipe and has the same bounds.
 """.
 
--export([new/0, attach/3, put/2, get/1, get_bytes/1, stop/1,
-         from_binary/1, from_file/1]).
+-export([new/0, attach/3, close/1, put/2, get/1, get_bytes/1, stop/1,
+         put_async/2, get_bytes_async/2, from_binary/1, from_file/1]).
 
 -compile({no_auto_import, [put/2, get/1]}).
 
@@ -40,6 +54,8 @@ pipe and has the same bounds.
 -define(CAPACITY, 1 bsl 16).
 
 -type end_() :: read | write.
+%% What a reader asks for: a line, or the bytes in flight up to a maximum.
+-type mode() :: line | {bytes, pos_integer()}.
 
 -doc "A new, empty pipe, which ends when its maker does.".
 -spec new() -> pid().
@@ -60,6 +76,17 @@ attach(Pipe, End, Pid) when End =:= read; End =:= write ->
     ok.
 
 -doc """
+The calling process lets go of the end it holds, without ending; the
+pipe then acts as if it had ended. It must have attached itself, so that
+the pipe has its attach before its close. A writer's writes sent before
+enter first and are read before the end of the stream.
+""".
+-spec close(pid()) -> ok.
+close(Pipe) ->
+    Pipe ! {detach, self()},
+    ok.
+
+-doc """
 Writes bytes, waiting until the last of them has entered the pipe: `ok`,
 or `{error, epipe}` when no reader is left or the pipe is gone.
 """.
@@ -77,7 +104,22 @@ get(Pipe) -> call(Pipe, {get, line}, eof).
 
 -doc "The bytes in flight, at most 64 KiB, or `eof`.".
 -spec get_bytes(pid()) -> {bytes, binary()} | eof.
-get_bytes(Pipe) -> call(Pipe, {get, bytes}, eof).
+get_bytes(Pipe) -> call(Pipe, {get, {bytes, ?CAPACITY}}, eof).
+
+-doc """
+Asks for put/2 without waiting; the answer comes as the module
+documentation's Requests say.
+""".
+-spec put_async(pid(), binary()) -> reference().
+put_async(Pipe, Bytes) when is_binary(Bytes) -> request(Pipe, {put, Bytes}).
+
+-doc """
+Asks without waiting for the bytes in flight, at most Max of them, or
+`eof`; the answer comes as the module documentation's Requests say.
+""".
+-spec get_bytes_async(pid(), pos_integer()) -> reference().
+get_bytes_async(Pipe, Max) when is_integer(Max), Max > 0 ->
+    request(Pipe, {get, {bytes, Max}}).
 
 -doc "Ends the pipe and whatever pumps it.".
 -spec stop(pid()) -> ok.
@@ -146,15 +188,19 @@ pump_file(Pipe, Fd) ->
 %%% Calls
 
 call(Pipe, Request, Gone) ->
-    Ref = monitor(process, Pipe),
-    Pipe ! {Request, self(), Ref},
+    Ref = request(Pipe, Request),
     receive
-        {Ref, Reply} ->
-            demonitor(Ref, [flush]),
-            Reply;
-        {'DOWN', Ref, process, _, _} ->
-            Gone
+        {Ref, Reply} -> Reply;
+        {'DOWN', Ref, process, _, _} -> Gone
     end.
+
+%% Sends Request answered to a monitor alias of the pipe: the pipe replies to
+%% the alias, and the reply removes the monitor, so no answer outlives its
+%% request.
+request(Pipe, Request) ->
+    Ref = monitor(process, Pipe, [{alias, reply_demonitor}]),
+    Pipe ! {Request, Ref, Ref},
+    Ref.
 
 %%% The pipe's process
 
@@ -167,6 +213,8 @@ loop(State) ->
             loop(serve(State#{getters := queue:in({From, Ref, Mode}, Getters)}));
         {attach, End, Pid} ->
             loop(attach_holder(End, Pid, State));
+        {detach, Pid} ->
+            loop(serve(detach_holder(Pid, State)));
         {'DOWN', _, process, Pid, _} ->
             case State of
                 #{maker := Pid} -> exit(normal);
@@ -254,13 +302,17 @@ answer(#{getters := Getters} = State) ->
 %% of the buffer, so a reader that keeps its lines, as `sort` does, holds
 %% only their bytes and never a reference to the whole buffer, which the
 %% stage's heap limit would charge in full.
+-spec take(mode(), map()) -> {term(), map()} | wait.
 take(_Mode, #{buffer := <<>>} = State) ->
     case drained(State) of
         true -> {eof, State};
         false -> wait
     end;
-take(bytes, #{buffer := Buffer} = State) ->
+take({bytes, Max}, #{buffer := Buffer} = State) when byte_size(Buffer) =< Max ->
     {{bytes, Buffer}, State#{buffer := <<>>}};
+take({bytes, Max}, #{buffer := Buffer} = State) ->
+    <<Bytes:Max/binary, After/binary>> = Buffer,
+    {{bytes, Bytes}, State#{buffer := After}};
 take(line, #{buffer := Buffer} = State) ->
     case binary:match(Buffer, <<"\n">>) of
         {At, 1} ->

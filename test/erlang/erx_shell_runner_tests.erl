@@ -91,6 +91,75 @@ pipe_here_document_test() ->
 pipe_from_missing_file_test() ->
     ?assertEqual({error, enoent}, erx_shell_pipe:from_file(<<"/nonexistent/erx/file">>)).
 
+%% A writer that closes its end, without ending, ends the stream once its
+%% bytes are read, as a job's relay does at job_eof.
+pipe_close_ends_writing_test() ->
+    Pipe = erx_shell_pipe:new(),
+    erx_shell_pipe:attach(Pipe, write, self()),
+    ok = erx_shell_pipe:put(Pipe, <<"last">>),
+    ok = erx_shell_pipe:close(Pipe),
+    ?assertEqual({bytes, <<"last">>}, erx_shell_pipe:get_bytes(Pipe)),
+    ?assertEqual(eof, erx_shell_pipe:get_bytes(Pipe)).
+
+%% A reader that closes its end leaves the writers without one.
+pipe_close_ends_reading_test() ->
+    Pipe = erx_shell_pipe:new(),
+    erx_shell_pipe:attach(Pipe, read, self()),
+    ok = erx_shell_pipe:close(Pipe),
+    ?assertEqual({error, epipe}, erx_shell_pipe:put(Pipe, <<"a">>)).
+
+%% An asynchronous read waits for bytes and takes at most its maximum; an
+%% asynchronous write is answered once its bytes have entered.
+pipe_async_requests_test() ->
+    Pipe = erx_shell_pipe:new(),
+    Get = erx_shell_pipe:get_bytes_async(Pipe, 4),
+    ?assertEqual(nothing, receive {Get, _} -> answered after 100 -> nothing end),
+    Put = erx_shell_pipe:put_async(Pipe, <<"abcdef">>),
+    ?assertEqual(ok, answer(Put)),
+    ?assertEqual({bytes, <<"abcd">>}, answer(Get)),
+    ?assertEqual({bytes, <<"ef">>}, answer(erx_shell_pipe:get_bytes_async(Pipe, 4))).
+
+%% An asynchronous write that does not fit waits for room without blocking
+%% its caller.
+pipe_async_put_waits_for_room_test() ->
+    Pipe = erx_shell_pipe:new(),
+    Put = erx_shell_pipe:put_async(Pipe, binary:copy(<<"x">>, 70000)),
+    ?assertEqual(nothing, receive {Put, _} -> answered after 100 -> nothing end),
+    {bytes, First} = erx_shell_pipe:get_bytes(Pipe),
+    ?assertEqual(65536, byte_size(First)),
+    ?assertEqual(ok, answer(Put)).
+
+%% A request to a pipe that is gone is answered by the pipe's 'DOWN'.
+pipe_async_gone_test() ->
+    Pipe = erx_shell_pipe:new(),
+    erx_shell_pipe:stop(Pipe),
+    Get = erx_shell_pipe:get_bytes_async(Pipe, 4),
+    ?assertEqual(gone, receive {'DOWN', Get, process, _, _} -> gone after 1000 -> nothing end).
+
+%% A write still waiting for room when its writer closes is read whole before
+%% the end of the stream, as a relay's last input before job_eof is.
+pipe_close_after_waiting_write_test() ->
+    Pipe = erx_shell_pipe:new(),
+    erx_shell_pipe:attach(Pipe, write, self()),
+    Put = erx_shell_pipe:put_async(Pipe, binary:copy(<<"x">>, 70000)),
+    ok = erx_shell_pipe:close(Pipe),
+    ?assertEqual(70000, drain_bytes(Pipe, 0)),
+    ?assertEqual(ok, answer(Put)).
+
+%% A request answered once leaves no 'DOWN' behind when the pipe ends later,
+%% for the waiting and the asynchronous forms alike.
+pipe_answer_leaves_no_down_test() ->
+    Pipe = erx_shell_pipe:new(),
+    ok = erx_shell_pipe:put(Pipe, <<"ab">>),
+    Get = erx_shell_pipe:get_bytes_async(Pipe, 1),
+    ?assertEqual({bytes, <<"a">>}, answer(Get)),
+    ?assertEqual({bytes, <<"b">>}, erx_shell_pipe:get_bytes(Pipe)),
+    erx_shell_pipe:stop(Pipe),
+    ?assertEqual(none, receive {'DOWN', _, process, Pipe, _} -> down after 200 -> none end).
+
+answer(Ref) ->
+    receive {Ref, Reply} -> Reply after 1000 -> nothing end.
+
 writer(Pipe, Items) -> writer(Pipe, Items, fun() -> ok end).
 
 writer(Pipe, Items, Done) ->
