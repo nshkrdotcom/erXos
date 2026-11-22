@@ -60,12 +60,14 @@ worker, which answers it with the request it was handed.
 the library does not hold refused, and the worker is handed the next only
 after the last one's answer (firmware_answered/3), which must answer the
 first request queued, so one request is in the kernel at a time (docs/design-system.md, "Firmware requests").
+While a request is in flight a `report` waits for its answer
+(report_waits/1).
 """.
 
 -export([targets/2, reports/2, unlisted/2, lowered/3, settings/1]).
 -export([request/3, pcie_answer/4, holder_ended/2, answered/4, incarnation_ended/2, down_timer/3,
          resume/2, resumed/5]).
--export([firmware/3, firmware_answered/3]).
+-export([firmware/3, firmware_answered/3, report_waits/1]).
 -export_type([place/0, phase/0, request/0, action/0, then/0, firmware_request/0]).
 
 -doc "A function by its host bridge's device row and its place, as erx_domain_lib:pci_place() spells it.".
@@ -185,6 +187,18 @@ firmware_answered({From, _Bridge} = Request, Answer, [Request | Rest]) ->
                [Waiting | _] -> [{firmware, Waiting}]
            end,
     {Rest, [{reply, From, Answer} | Next]}.
+
+-doc """
+Whether a `report` waits, over Queue, the firmware requests not yet
+answered (docs/design-fiasco.md, "The firmware request"). The library
+marks a bridge whose notification timed out `firmware_lost` only after
+the request returns, so until its answer the bridge may look usable to
+the intake. A report waits for any request in flight, not only one on a
+bridge it names, since it hands every held bridge an intake (reports/2).
+""".
+-spec report_waits([firmware_request()]) -> boolean().
+report_waits([_InFlight | _]) -> true;
+report_waits([]) -> false.
 
 %% The bridge rows the library holds, every one the PCIe domain's, since only it
 %% holds a bridge's unit (docs/design-pcie.md, "The manifest").

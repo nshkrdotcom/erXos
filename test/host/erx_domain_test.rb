@@ -292,6 +292,20 @@ class ErxDomainTest < Minitest::Test
               from: '{true, _} -> {Queue ++ [Request], []}', to: '{true, _} -> {Queue ++ [Request], [{firmware, Request}]}',
               tests: 'erx_devices_pci_tests',
               caught_by: 'the_worker_is_handed_the_next_request_only_after_the_last_answer_test'),
+    # The in-flight rule (docs/design-fiasco.md, "The firmware request"): a report taken
+    # while a request is in flight meets a bridge whose timed-out notification is not yet
+    # marked firmware_lost; one parked and never taken again at the answer waits for ever.
+    Fault.new(name: 'a report taken while a firmware request is in flight',
+              file: File.join(APPLICATION, 'erx_devices_pci_core.erl'),
+              from: 'report_waits([_InFlight | _]) -> true;', to: 'report_waits([_InFlight | _]) -> false;',
+              tests: 'erx_devices_pci_tests',
+              caught_by: 'a_report_waits_for_the_firmware_request_in_flight_test'),
+    Fault.new(name: 'parked calls not taken again at the firmware answer',
+              file: File.join(APPLICATION, 'erx_devices_pci.erl'),
+              from: '{noreply, lists:foldl(fun report_or_park/2, Answered, Parked)};',
+              to: '{noreply, Answered#{parked := Parked}};',
+              tests: 'erx_devices_pci_tests',
+              caught_by: 'a_report_waits_for_the_firmware_request_in_flight_test'),
     # The hold at boot (docs/design-pcie.md, "The hold at boot"): a held row started with
     # the boot's free rows starts its pci holder before its function's state is settled;
     # a report's answer that releases nothing, and a hold kept when the PCIe row did not

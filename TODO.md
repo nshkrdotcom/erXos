@@ -2332,20 +2332,31 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   service's forward, answers `report` after `erx_domain:await_grant(pcie, D)` with the incarnation written to the
   catalogue's `answered` first, and after a restart begins `synced` from it. The domain service serves `pci_bus`
   and `pci`, whose service rows the shared development manifest declares, and the manifest check holds the three
-  interfaces' servers and grantees to design-pcie.md's "The manifest". Still to build: `firmware`, which answers
-  `{error, enotsup}` and does not call `erx_domain_lib:pci_firmware/1` yet; the identity check
   interfaces' servers and grantees to design-pcie.md's "The manifest". `firmware` queues each request for a bridge
   the library holds and hands it to the linked firmware worker, which calls `erx_domain_lib:pci_firmware/1` one at a
   time (design-system.md, "Firmware requests"). Still to build: the worker's reductions returned with its answer, for
   the reply's cost that admission by measured share charges (the `erx_facet.erl` item); the identity check
   of a reported function against its row's compatible string ("The catalogue and gives"); and the `pcie` QEMU
   suite's cases beyond walk-and-report and hold (design-pcie.md, "The `pcie` QEMU suite").
+* [Medium] domain library, domain service and device service, a bridge's function used during or after its
+  failed firmware request (`otp/erts/emulator/nifs/erxos/erx_domain_lib_nif.c` `pci_firmware_nif`,
+  `erlang/apps/erx_domain/src/erx_domain_srv.erl`, `erx_devices_pci_core.erl` `request/3`,
+  [design-fiasco.md](docs/design-fiasco.md#the-firmware-request)): the NIF marks a bridge whose notification timed
+  out `firmware_lost` only after the request returns, and the device service's PCIe process parks a report while
+  a request is in flight (`erx_devices_pci_core:report_waits/1`), but three paths still use the bridge. Gives are
+  made by the library as each holder is created, which the domain service orders and the PCIe process does not
+  see, so a holder created during the flight is given a function whose notification then times out. The in-flight
+  state lives in the process alone, so a restart of the device service while its old worker is still in the NIF
+  takes reports again before the mark. And a holder's `open`, `master` or `reset` is decided on grantee and place
+  alone (`held_row/2`), never on the catalogue's `firmware_lost`, so a holder of a bridge whose notification timed
+  out raises its function again after the next report lowers it. Close all three by construction in the library:
+  mark the bridge's request in flight under the lock before the request, so the intake, every give and the PCIe
+  process's raises (through a predicate shared with `lowered/3`) refuse until the status lands, and the
+  process's parking can go.
 * [Medium] PCIe, the BCM2711 bridge on the Pi 4 (`config/platforms/raspi4b.json`, `config/manifest/`,
   [design-pcie.md](docs/design-pcie.md#the-bridge-seam)): the driver starts on the target over the bridge's device
   record, but the Pi 4's platform record has no bridge unit or VL805 unit and its manifest no PCIe domain, so the
   enumerator finds no configuration record there and the driver has run only over the host tests' register model.
-  Until `erx_domain_lib:pci_firmware/1` reaches `erx_firmware_request` (the domain library item above), a bring-up
-  that cycles PERST# reports the VL805 `not_ready`.
 * [High] PCIe, the VL805 gets no DMA memory on the Pi 4 (`kernel/core/dt.c` `range_read`,
   `liberx/backend/fiasco/runtime_entry.c` `tree_facts`, [design-pcie.md](docs/design-pcie.md#dma)): on the board
   the root prints `erx: device tree: /scb/pcie@7d500000: dma absent ranges` for the VL805's row, so
@@ -10044,10 +10055,10 @@ document's "residual risks accepted" paragraph.
   request's deadline also rests on a nonzero counter frequency: `erx_fiasco_clock_ns` reads 0 when CNTFRQ_EL0 does,
   so an unanswered request would poll forever; refuse that frequency where the root starts.
 * [Medium] board sensors, [design-board-sensors.md](docs/design-board-sensors.md): not built. The root's firmware request
-  (`erx_firmware_request_row`) reaches the mailbox, but the device service's process and firmware worker, through which every
-  firmware request is made ([design-system.md](docs/design-system.md#devices), "Firmware requests"), do not exist:
-  `erx_devices` hands on the domain library's catalogue and keeps no state. Both come with whichever of the
-  VL805's notification, the Bluetooth power line and the sensor driver lands first; probes S1 and S2 come first.
+  (`erx_firmware_request_row`) reaches the mailbox, and the device service's PCIe process and its firmware worker
+  ([design-system.md](docs/design-system.md#devices), "Firmware requests") make the VL805's notification for
+  `pci_bus:firmware/1`, but nothing makes a sensor's request or the Bluetooth power line's: the device service
+  takes firmware requests only for a held bridge row. They come with the sensor driver and the power line's user; probes S1 and S2 come first.
 * [Medium] board sensors, `abi/formats/vc_property.txt` and `abi/inspection.txt`
   ([design-board-sensors.md](docs/design-board-sensors.md#the-requests)): `vc_property.txt` declares the property
   buffer's layouts and NOTIFY_XHCI_RESET alone, as the closed set `fw_tag` and three loose limits that

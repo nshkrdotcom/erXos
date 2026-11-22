@@ -320,3 +320,22 @@ the_workers_end_ends_the_process_test() ->
     exit(worker_called(?BRIDGE, 1000), kill),
     receive {'DOWN', Ref, process, Pid, Reason} -> ?assertEqual(killed, Reason) after 1000 -> ?assert(false) end,
     stopped(Pid).
+
+%% The in-flight rule (docs/design-fiasco.md, "The firmware request"): the library
+%% marks a bridge whose notification timed out firmware_lost only after the request
+%% returns, so while a request is in flight the process takes no report, which hands
+%% every held bridge's intake: it waits for the answer, then lowers what the intake
+%% does not keep.
+a_report_waits_for_the_firmware_request_in_flight_test() ->
+    {Pid, _Facet} = firmware_started(),
+    firmware_asked(Pid, ?BRIDGE),
+    Worker = worker_called(?BRIDGE, 1000),
+    Test = self(),
+    spawn(fun() -> Test ! {reported, gen_server:call(Pid, {pci_bus, ?PCIE, {report, []}}, 5000)} end),
+    receive {library, {report, _, _} = Early} -> ?assertEqual(none, Early) after 200 -> ok end,
+    Worker ! {firmware_answer, {error, etimedout}},
+    ?assertEqual({error, etimedout}, firmware_answer(?BRIDGE)),
+    ?assertEqual({report, ?BRIDGE, []}, library()),
+    ?assertEqual({mode, ?ROW, off}, library()),
+    receive {reported, Answer} -> ?assertMatch({ok, _}, Answer) after 1000 -> ?assert(false) end,
+    stopped(Pid).

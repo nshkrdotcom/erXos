@@ -62,7 +62,11 @@ library's answer is the reply: `ok`, or `{error, Status}` naming the
 kernel call's status. After `etimedout` the library has marked the
 bridge `firmware_lost` before it answered, so its intake keeps none of
 the bridge's functions for the rest of the boot. The worker's end ends
-this process by their link, and their supervisor restarts both. The
+this process by their link, and their supervisor restarts both. Since
+the library marks the bridge only after the request returns, while a
+request is in flight this process takes no `report`, which hands every
+held bridge an intake: it waits, parked, for the answer
+(docs/design-fiasco.md, "The firmware request"). The
 worker returns no reductions with its answer (TODO.md, the `erx_facet.erl`
 item on admission by measured share).
 """.
@@ -107,6 +111,9 @@ init(Opts) ->
               phase => {between, start}, waiting => [], held => #{},
               %% The firmware worker, and the firmware requests not yet answered, the first in it.
               worker => Worker, firmware => [],
+              %% The reports held by the firmware request in flight, {D, Reported, From}, in
+              %% arrival order.
+              parked => [],
               %% Outstanding pcie calls, and await_grant waits, {report, From, D} for a report's
               %% answer or {resume, D} for a restart's, by request id.
               calls => #{}, reports => #{}},
@@ -131,7 +138,7 @@ handle_call({pci_bus, _D, targets}, _From, #{lib := Lib} = State) ->
     {Devices, Read} = read(State),
     {reply, erx_devices_pci_core:targets(catalogues(Lib), Devices), Read};
 handle_call({pci_bus, D, {report, Reported}}, From, State) ->
-    {noreply, report(D, Reported, From, State)};
+    {noreply, report_or_park({D, Reported, From}, State)};
 handle_call({pci_bus, _D, {firmware, Bridge}}, From, #{lib := Lib, firmware := Queue} = State) ->
     {Queued, Actions} = erx_devices_pci_core:firmware({From, Bridge}, Queue, catalogues(Lib)),
     {noreply, perform(Actions, State#{firmware := Queued})}.
@@ -162,11 +169,22 @@ handle_info({timeout, _Timer, {pcie_deadline, ReqId}}, #{calls := Calls} = State
         #{} ->
             {noreply, State}
     end;
-handle_info({firmware_answered, Worker, Request, Answer}, #{worker := Worker, firmware := Queue} = State) ->
+handle_info({firmware_answered, Worker, Request, Answer},
+            #{worker := Worker, firmware := Queue, parked := Parked} = State) ->
     {Left, Actions} = erx_devices_pci_core:firmware_answered(Request, Answer, Queue),
-    {noreply, perform(Actions, State#{firmware := Left})};
+    Answered = perform(Actions, State#{firmware := Left, parked := []}),
+    %% Taken again in arrival order; one the next request in flight holds parks again.
+    {noreply, lists:foldl(fun report_or_park/2, Answered, Parked)};
 handle_info(Message, State) ->
     {noreply, response(Message, State)}.
+
+%% The in-flight rule (erx_devices_pci_core:report_waits/1): a report taken while a
+%% firmware request is in flight parks until its answer.
+report_or_park({D, Reported, From} = Report, #{firmware := Queue, parked := Parked} = State) ->
+    case erx_devices_pci_core:report_waits(Queue) of
+        true -> State#{parked := Parked ++ [Report]};
+        false -> report(D, Reported, From, State)
+    end.
 
 %% The answer to a report: the intake per held bridge, the rows lowered, then the
 %% wait for the incarnation's pcie facet.

@@ -2859,8 +2859,8 @@ device's rows before anything reaches the mailbox, and makes the call. It runs o
 which the call would otherwise hold for up to its deadline, and reads nothing written after the view's build;
 its caller then hands the status to the bridge's catalogue under the lock, where `ERX_ETIMEDOUT` marks the
 bridge `firmware_lost` (`erx_dom_lib_pci_firmware`, `erx_dom_pci_firmware`). Since the request runs outside
-the lock, the device service, which made it, takes no report on that bridge and makes no give of its functions
-while the request is in flight, so no give meets a bridge whose notification timed out before the mark lands
+the lock, the device service, which made it, takes no report while any request is in flight, since one report
+hands every bridge an intake, and no give of that bridge's functions is made while its request is in flight, so no give meets a bridge whose notification timed out before the mark lands
 ([design-pcie.md](design-pcie.md#concurrency)). The chokepoint `dom-firmware-entry` holds
 `erx_firmware_request_row` to that entry. A driver names a bridge row and
 nothing else, and the device service refuses a row it did not give the caller
