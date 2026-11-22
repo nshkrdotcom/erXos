@@ -80,6 +80,18 @@ class GattDeclTest < Minitest::Test
     assert_equal 9, VOCABULARY.reserved.size
   end
 
+  # A UUID of GATT's attribute types beyond the enum's, an Include declaration or a
+  # descriptor, is refused for a characteristic as for a service. Below the blocks 0x27ff
+  # passes; above them 0x2a00 and 0x2a01 are the enum's Device Name and Appearance, so
+  # 0x2a02 is the first that passes.
+  def test_gatt_attribute_types_are_refused
+    %w[2802 2804 28ff 2900 2901 29ff].each do |uuid|
+      assert_refused(/#{uuid} is a GATT attribute type/, "characteristic c #{uuid} 20 read open")
+    end
+    assert_refused(/2900 is a GATT attribute type/, service: 'service svc 2900')
+    %w[27ff 2a02].each { |uuid| assert parse("characteristic c #{uuid} 20 read open") }
+  end
+
   def test_the_tables_own_service_names_are_refused
     %w[gap gatt].each do |name|
       assert_refused(/#{name} is the name of the table's own service/,

@@ -58,6 +58,12 @@ module Erx
     BASE_UUID = 0x0000_0000_0000_1000_8000_0080_5f9b_34fb
     # The bits of a 128-bit UUID a 16-bit UUID sets in the Base UUID.
     SHORT_BITS = 0xffff << 96
+    # The 16-bit UUIDs GATT gives its attribute types, declarations from 0x2800 and
+    # descriptors from 0x2900, which no service or characteristic may take: a client
+    # would read a characteristic of type Include as an include. The members are Bumble
+    # v0.0.237's, bumble/gatt.py, lines 130-153 (0x2800-0x2803, 0x2900-0x290f); the
+    # blocks' ends at 0x28ff and 0x29ff, Assigned Numbers' allocation, are unverified.
+    ATTRIBUTE_TYPES = (0x2800..0x29ff)
     # The last handle a table may hold: erx_gatt_db writes handles in 16 bits. (ATT's
     # handle range, Vol 3 Part F 3.2.2, was not read; 0xffff is the 16-bit field's.)
     HANDLE_MAX = 0xffff
@@ -205,6 +211,9 @@ module Erx
       end
       member = vocabulary.reserved[uuid]
       raise DeclarationError, "#{where}: #{token} is GATT's or GAP's own UUID #{member}" if member
+      if uuid.bits == 16 && ATTRIBUTE_TYPES.cover?(uuid.value)
+        raise DeclarationError, "#{where}: #{token} is a GATT attribute type"
+      end
 
       uuid
     end

@@ -1162,7 +1162,10 @@ octet by octet (ATT 3.4.3.3) and a phone looks for the 2-octet form. It
 refuses a missing or repeated `service` line, a name that differs
 from its file's, a UUID that is malformed, the 128-bit form of a 16-bit
 one included, or is one of the GATT and GAP
-declarations' own (the enum `gatt_uuid` of `abi/formats/bluetooth.txt`),
+declarations' own (the enum `gatt_uuid` of `abi/formats/bluetooth.txt`)
+or, in 16 bits, one of GATT's attribute types, its declarations from
+0x2800 and descriptors from 0x2900 to 0x29ff, which a client would read
+as what they name,
 a service named `gap` or `gatt`, the names the table
 gives GAP's and GATT's own services, two characteristics of one name or UUID, a maximum
 over 512, an access without a level or repeated, a `notify` and an

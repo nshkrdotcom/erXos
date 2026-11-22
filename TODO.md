@@ -8715,12 +8715,14 @@ model harness drive `erx_device.c` itself. `erx_device_dma_check` and `erx_devic
   Disconnection Complete empties and refills the slot, and each refill starts a fresh deadline, so the
   enable never times out and the core never stops; the controller process should end when a command stays
   unsent across refills for longer than `bt_command_timeout_ms`.
-* [Low] bluetooth, the GATT declarations' smaller gaps (`Erx::GattDecl`, `erx_gatt_db`): only the table's own
-  UUIDs (the enum `gatt_uuid`) are refused, so a characteristic of type Include (0x2802) or a descriptor type
-  (0x2900-0x29ff) is accepted and a client's Find Included Services would read it as an include; the one level
-  of a Client Characteristic Configuration rests on the generator's refusal of `notify` and `indicate` at
-  different levels, not on `erx_gatt_db:service()`, which could carry one `subscribe` level instead; the names
-  `gap` and `gatt` are written both in `erx_gatt_db` and in the generator's `RESERVED_NAMES`; and a
+* [Low] bluetooth, the GATT declarations' smaller gaps (`Erx::GattDecl`, `erx_gatt_db`): the one level of a
+  Client Characteristic Configuration rests on the generator's refusal of `notify` and `indicate` at different
+  levels, not on `erx_gatt_db:service()`, which could carry one `subscribe` level instead (the registry's
+  `limits()` reads the same `access` map); the names `gap` and `gatt` are written both in `erx_gatt_db` and in
+  the generator's `RESERVED_NAMES` (naming the table's own services outside the declarations' lower-case
+  names would delete the list, but the bond store's `erx_bt_state:name/1` admits only lower-case names); the
+  blocks 0x2800-0x28ff and 0x2900-0x29ff the generator refuses as GATT's attribute types are unverified
+  against Assigned Numbers; and a
   characteristic may notify at a weaker level than it is read at (`read authenticated notify open`), which the
   design neither refuses nor states.
 * [Low] bluetooth, the ATT server's smaller gaps (`erx_gatt_server`, `erx_gatt_db`, `erx_att`): Execute Write
