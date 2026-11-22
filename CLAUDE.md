@@ -325,8 +325,9 @@ Third-party components are allowed when they pay for themselves.
     Mermaid's parser, a pinned tool out of the tree, checks them. Both
     run as one subprocess of the Ruby build. Node never runs on the
     target or elsewhere in host tooling.
-  * Python only for the Bumble Bluetooth test peer; never on the target,
-    and in build tooling only as Mesa's own generators.
+  * Python only for the Bumble Bluetooth test peer and its decoder
+    oracle, under `test/bt/`; never on the target, and in build tooling
+    only as Mesa's own generators.
   * POSIX shell wherever it is the simpler tool: build glue, and short
     scripts for a host that may have nothing else, such as the remote
     side of a test run. `make` and linker scripts for build glue.
