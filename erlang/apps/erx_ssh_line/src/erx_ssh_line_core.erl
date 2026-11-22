@@ -31,7 +31,7 @@ until its tty ends (ended/2), and the tty's report of how its shell ended
 goes to that channel alone (report/2).
 """.
 
--export([new/0, request/4, tty/4, term/1, opened/3, ended/2, report/2]).
+-export([new/0, request/4, valid_run/1, tty/4, term/1, opened/3, ended/2, report/2]).
 -export_type([core/0]).
 
 -include("generated/erx_abi.hrl").
@@ -91,6 +91,12 @@ term(Term) ->
 side(0, Default) -> Default;
 side(Side, _Default) -> Side.
 
+-doc """
+Whether Run is what a channel may ask to run: `shell`, or `{exec, Command}` with
+Command a binary of 1 to ssh_line_command_max bytes holding no NUL byte.
+erx_ssh_dev_channel, SSH's first stage in the session, checks its exec requests here.
+""".
+-spec valid_run(term()) -> boolean().
 valid_run(shell) -> true;
 valid_run({exec, Command})
   when is_binary(Command), byte_size(Command) >= 1, byte_size(Command) =< ?ERX_SSH_LINE_COMMAND_MAX ->

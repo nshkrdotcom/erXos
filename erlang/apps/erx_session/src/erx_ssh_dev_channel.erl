@@ -15,10 +15,14 @@ Columns}`.
 
 What a client may ask for is an interactive session: `pty-req` gives the
 tty's size and TERM, `shell` opens the tty, `window-change` resizes it and
-the data it sends is the tty's input. An `exec` request is refused, the
-reason on its standard error and exit status 1, and so is any other
-request the connection does not answer itself. A shell opens one tty;
-a second `shell` on the channel is refused.
+the data it sends is the tty's input. An `exec` request after a `pty-req`
+runs `rc -c Command` on the tty, with Command 1 to ssh_line_command_max
+bytes holding no NUL byte (erx_ssh_line_core:valid_run/1), and a command
+out of those bounds is refused. An `exec` without a `pty-req` is refused,
+the reason on its standard error and exit status 1, since this channel
+runs no job on pipes (docs/design-ssh.md, "Stages"), and so is any other
+request the connection does not answer itself. A shell or exec opens one
+tty; a second on the channel is refused.
 
 When the shell has ended and the channel has taken the tty's last output,
 the tty says how (erx_console:shell_ending/1): `{exited, Status}` becomes the
@@ -33,22 +37,22 @@ ends, and its end is the tty's hangup: the relay watches its master.
 
 -include("generated/erx_abi.hrl").
 
--define(EXEC_REFUSED, <<"exec is not supported in 0.1\r\n">>).
+-define(EXEC_REFUSED, <<"exec without a pseudo-terminal is not supported\r\n">>).
 
 %% open opens a tty for a channel, erx_session_tty:open_channel/3 or a host
-%% test's stand-in. pty is the tty a pty-req asked for, the default one until
-%% then; tty is none until a shell opened the tty, then its relay, which named
+%% test's stand-in. pty is the tty a pty-req asked for, none until one does;
+%% tty is none until a shell or an exec opened the tty, then its relay, which named
 %% itself before the open returned, and console the tty's console, watched.
 -record(state, {open :: fun((pid(), erx_session_tty:channel(), fun((term()) -> term())) -> {ok, pid()} | {error, term()}),
                 connection :: ssh:connection_ref() | undefined,
                 channel :: ssh:channel_id() | undefined,
-                pty :: erx_session_tty:channel(),
+                pty = none :: none | erx_session_tty:channel(),
                 tty = none :: none | pid(),
                 console :: reference() | undefined}).
 
 -doc false.
 init([Open]) ->
-    {ok, #state{open = Open, pty = erx_ssh_line_core:tty(shell, <<>>, 0, 0)}}.
+    {ok, #state{open = Open}}.
 
 -doc false.
 handle_msg({ssh_channel_up, Channel, Connection}, State) ->
@@ -79,17 +83,20 @@ handle_ssh_msg({ssh_cm, Connection, {pty, Channel, WantReply, {Term, Columns, Ro
        is_integer(Columns), Columns >= 0, Columns =< ?ERX_CONSOLE_SIDE_MAX ->
     ssh_connection:reply_request(Connection, WantReply, success, Channel),
     {ok, State#state{pty = erx_ssh_line_core:tty(shell, list_to_binary(Term), Rows, Columns)}};
-handle_ssh_msg({ssh_cm, Connection, {shell, Channel, WantReply}}, #state{tty = none} = State) ->
-    Self = self(),
-    Notify = fun(Ending) -> Self ! {?MODULE, ended, Ending} end,
-    case (State#state.open)(Self, State#state.pty, Notify) of
-        {ok, Console} ->
-            %% The relay names itself as it starts, so its tty_open is here before any
-            %% data or size the client sent after the shell request is handled.
-            receive {tty_open, Tty} when is_pid(Tty) -> ok end,
-            ssh_connection:reply_request(Connection, WantReply, success, Channel),
-            {ok, State#state{tty = Tty, console = monitor(process, Console)}};
-        {error, _} ->
+handle_ssh_msg({ssh_cm, Connection, {shell, Channel, WantReply}}, #state{tty = none, pty = Pty} = State) ->
+    Tty = case Pty of
+              none -> erx_ssh_line_core:tty(shell, <<>>, 0, 0);
+              #{} -> Pty
+          end,
+    open_tty(Tty, Connection, Channel, WantReply, State);
+%% An exec on a channel that asked for a pseudo-terminal runs on its tty, rc -c Command
+%% at the size and TERM the pty-req gave; a command out of bounds is refused.
+handle_ssh_msg({ssh_cm, Connection, {exec, Channel, WantReply, Command}}, #state{tty = none, pty = #{} = Pty} = State) ->
+    Run = {exec, list_to_binary(Command)},
+    case erx_ssh_line_core:valid_run(Run) of
+        true ->
+            open_tty(Pty#{run := Run}, Connection, Channel, WantReply, State);
+        false ->
             ssh_connection:reply_request(Connection, WantReply, failure, Channel),
             {stop, Channel, State}
     end;
@@ -120,6 +127,22 @@ handle_ssh_msg({ssh_cm, Connection, Request}, State) ->
 -doc false.
 terminate(_Reason, _State) ->
     ok.
+
+%% Opens the channel's tty with Tty, what runs on it and its size, and answers the
+%% request: the relay names itself as it starts, so its tty_open is here before any
+%% data or size the client sent after the request is handled.
+open_tty(Tty, Connection, Channel, WantReply, State) ->
+    Self = self(),
+    Notify = fun(Ending) -> Self ! {?MODULE, ended, Ending} end,
+    case (State#state.open)(Self, Tty, Notify) of
+        {ok, Console} ->
+            receive {tty_open, Relay} when is_pid(Relay) -> ok end,
+            ssh_connection:reply_request(Connection, WantReply, success, Channel),
+            {ok, State#state{tty = Relay, console = monitor(process, Console)}};
+        {error, _} ->
+            ssh_connection:reply_request(Connection, WantReply, failure, Channel),
+            {stop, Channel, State}
+    end.
 
 %% How the tty's shell ended, as the channel's exit-status or exit-signal: the
 %% tty reports only these two shapes (erx_console:shell_ending/1).

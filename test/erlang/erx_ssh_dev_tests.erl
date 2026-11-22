@@ -3,8 +3,9 @@
 
 %% erx_ssh_dev's daemon on stock OTP (docs/design-ssh.md, "Stages", stage 1):
 %% root logs in with the development key or a key of root's home copy, gets a
-%% shell on a tty whose size and ending reach the channel, and has exec
-%% refused; another user name with that key and root with another key are
+%% shell on a tty whose size and ending reach the channel, an exec on that tty when
+%% it asked for one and exec refused without one, a command out of bounds refused;
+%% another user name with that key and root with another key are
 %% refused, a key in authorized_keys2 beside the file included, an empty or
 %% missing keys file admits no one, a home file whose key line carries options,
 %% or that is past 16 KiB, admits none of its keys, the host key is made once,
@@ -31,6 +32,8 @@ daemon_test_() ->
               ?_test(a_shell_runs_on_a_tty(Context)),
               ?_test(ctrl_c_ends_with_int(Context)),
               ?_test(exec_is_refused(Context)),
+              ?_test(exec_runs_on_a_tty(Context)),
+              ?_test(an_exec_out_of_bounds_is_refused(Context)),
               ?_test(root_logs_in_with_a_home_key(Context)),
               ?_test(a_home_line_with_options_admits_none(Context)),
               ?_test(a_home_file_past_16_kib_admits_none(Context)),
@@ -87,13 +90,20 @@ options(Login, Host) ->
 home(Work) -> filename:join([Work, "root", ".ssh", "authorized_keys"]).
 
 %% The stand-in tty: it names itself to the channel, reports its size and TERM, and
-%% then answers the channel's messages until the channel ends, its hangup.
+%% then answers the channel's messages until the channel ends, its hangup. An exec
+%% `exit N` on it writes `exec` and its size, and ends with status N.
 tty(Channel, #{run := shell, size := {Rows, Columns}, vars := #{<<"TERM">> := [Term]}}, Notify) ->
     {ok, spawn(fun() ->
                        Ref = monitor(process, Channel),
                        Channel ! {tty_open, self()},
                        Channel ! {tty_output, 0, iolist_to_binary(io_lib:format("size ~b ~b ~s\r\n", [Rows, Columns, Term]))},
                        tty_loop(Channel, Ref, Notify, 1)
+               end)};
+tty(Channel, #{run := {exec, <<"exit ", Status/binary>>}, size := {Rows, Columns}}, Notify) ->
+    {ok, spawn(fun() ->
+                       Channel ! {tty_open, self()},
+                       Channel ! {tty_output, 0, iolist_to_binary(io_lib:format("exec ~b ~b\r\n", [Rows, Columns]))},
+                       Notify({exited, binary_to_integer(Status)})
                end)}.
 
 tty_loop(Channel, Ref, Notify, N) ->
@@ -169,7 +179,29 @@ exec_is_refused(#{client := Client} = Context) ->
     {ok, Connection} = connect(Context, "root", Client),
     {ok, Channel} = ssh_connection:session_channel(Connection, 10000),
     success = ssh_connection:exec(Connection, Channel, "ps", 10000),
-    ?assertEqual({<<"exec is not supported in 0.1\r\n">>, {status, 1}}, ending(Connection, Channel, <<>>, none)),
+    ?assertEqual({<<"exec without a pseudo-terminal is not supported\r\n">>, {status, 1}}, ending(Connection, Channel, <<>>, none)),
+    ok = ssh:close(Connection).
+
+%% An exec after a pty-req runs on the tty at the pty-req's size, and its status is
+%% the channel's.
+exec_runs_on_a_tty(#{client := Client} = Context) ->
+    {ok, Connection} = connect(Context, "root", Client),
+    {ok, Channel} = ssh_connection:session_channel(Connection, 10000),
+    success = ssh_connection:ptty_alloc(Connection, Channel, [{width, 90}, {height, 20}], 10000),
+    success = ssh_connection:exec(Connection, Channel, "exit 4", 10000),
+    ?assertEqual({ok, <<"exec 20 90\r\n">>}, data(Connection, Channel)),
+    ?assertEqual({<<>>, {status, 4}}, ending(Connection, Channel, <<>>, none)),
+    ok = ssh:close(Connection).
+
+%% A command holding a NUL byte, or past ssh_line_command_max bytes, is refused.
+an_exec_out_of_bounds_is_refused(#{client := Client} = Context) ->
+    {ok, Connection} = connect(Context, "root", Client),
+    Refused = fun(Command) ->
+                      {ok, Channel} = ssh_connection:session_channel(Connection, 10000),
+                      success = ssh_connection:ptty_alloc(Connection, Channel, [], 10000),
+                      ssh_connection:exec(Connection, Channel, Command, 10000)
+              end,
+    ?assertEqual([failure, failure], [Refused("exit 1\0"), Refused(lists:duplicate(?ERX_SSH_LINE_COMMAND_MAX + 1, $x))]),
     ok = ssh:close(Connection).
 
 %% A key of root's home copy logs root in, and no other user name.
