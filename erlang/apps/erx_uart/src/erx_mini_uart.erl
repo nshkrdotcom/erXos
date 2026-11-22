@@ -16,9 +16,9 @@
 %% receive interrupt needs them. The BCM2711's manual prints the receive enable at a
 %% different bit than RXIE's, and says nothing of RX_ERRATA, so both are unverified on
 %% silicon. The receive interrupt is level, raised while the receive FIFO holds a byte, so
-%% one delivery drains the FIFO to empty and the line is acknowledged after it; a byte that
-%% arrives during the drain raises the line again. Bytes typed before the driver started
-%% are drained once after the interrupt is enabled.
+%% one delivery drains the FIFO, to empty or ?DRAIN_MAX bytes, and the line is acknowledged
+%% after it; a byte left or arriving during the drain raises the line again. Bytes typed
+%% before the driver started are drained once after the interrupt is enabled.
 %%
 %% Overruns: the receive FIFO holds eight bytes, about 0.7 ms of input at 115200 baud, and
 %% the line has no flow control, so a delivery later than that loses the bytes the FIFO
@@ -31,8 +31,18 @@
 %% each count at least double the last one it logged (to_report/2), so a flood writes only
 %% a few lines to the line it overflows.
 %%
-%% Sending: one byte whenever the transmit FIFO can take one. A full FIFO waits a
-%% millisecond at a time with the receive side still served.
+%% Sending: one read of LSR per byte, which decides both sides (send_step/1). While the
+%% driver writes, a delivered interrupt waits unread in its mailbox, so the send polls the
+%% receive side itself: a read that shows a received byte drains the receive FIFO, and the
+%% same read's TX_EMPTY then decides whether the byte is written, so output progresses
+%% whatever the input does. A drain inside a send takes and acknowledges a delivery already
+%% waiting; without one it acknowledges nothing, since erx_irq_line takes one answer per
+%% notice. A full transmit FIFO waits a millisecond at a time for the receive interrupt,
+%% longer than the receive FIFO lasts, so there input still depends on the delivery.
+%%
+%% A drain stops after ?DRAIN_MAX bytes, four FIFO depths, so neither a device whose
+%% DATA_READY never clears nor input faster than the driver reads holds it: the line, still
+%% raised, delivers again, and a send writes its byte.
 
 -module(erx_mini_uart).
 
@@ -40,13 +50,14 @@
 -export([init/2]).
 -export([console_records/0, console_uart/1]).
 %% Exported for its tests.
--export([count_overrun/2, to_report/2]).
+-export([count_overrun/2, to_report/2, send_step/1]).
 
 -include("generated/erx_hw_mini_uart.hrl").
 
 %% The spec's one line.
 -define(RX_LINE, 0).
 -define(FULL_WAIT_MS, 1).
+-define(DRAIN_MAX, 32).
 
 %% The driver's state: its device, its line, the console it serves, how many reads of LSR
 %% have shown an overrun since it started, and the overrun count the last warning logged
@@ -162,17 +173,45 @@ handle(_Other, S) ->
 send(S, <<>>) ->
     S;
 send(S0 = #driver{dev = Dev}, Bytes = <<Byte, Rest/binary>>) ->
-    {Lsr, S} = read_lsr(S0),
-    case erx_device:field(Dev, lsr, tx_empty, Lsr) of
-        1 ->
+    {Lsr, S1} = read_lsr(S0),
+    {Receive, Transmit} = send_step(Lsr),
+    S = case Receive of
+            drain -> drain_in_send(S1);
+            idle -> S1
+        end,
+    case Transmit of
+        write ->
             ok = erx_device:write(Dev, io, Byte),
             send(S, Rest);
-        0 ->
+        wait ->
             Next = receive
                        {erx_irq, Dev, ?RX_LINE} -> take_input(S)
                    after ?FULL_WAIT_MS -> S
                    end,
             send(Next, Bytes)
+    end.
+
+%% What a send does after a read of LSR that returned Lsr: drain the receive FIFO first if a
+%% byte waits in it, then write the next byte if the transmit FIFO can take one, else wait
+%% for room.
+-spec send_step(non_neg_integer()) -> {drain | idle, write | wait}.
+send_step(Lsr) ->
+    Receive = case ?ERX_HW_MINI_UART_LSR_DATA_READY_GET(Lsr) of
+                  1 -> drain;
+                  0 -> idle
+              end,
+    Transmit = case ?ERX_HW_MINI_UART_LSR_TX_EMPTY_GET(Lsr) of
+                   1 -> write;
+                   0 -> wait
+               end,
+    {Receive, Transmit}.
+
+%% A drain between two bytes of a send, which takes a delivery already waiting with it.
+drain_in_send(S = #driver{dev = Dev}) ->
+    receive
+        {erx_irq, Dev, ?RX_LINE} -> take_input(S)
+    after 0 ->
+            deliver_input(S)
     end.
 
 take_input(S = #driver{irq = Irq}) ->
@@ -188,13 +227,15 @@ deliver_input(S = #driver{console = Console}) ->
     end,
     Next.
 
+drain(S, Bytes) when byte_size(Bytes) >= ?DRAIN_MAX ->
+    {Bytes, S};
 drain(S0 = #driver{dev = Dev}, Bytes) ->
     {Lsr, S} = read_lsr(S0),
-    case erx_device:field(Dev, lsr, data_ready, Lsr) of
+    case ?ERX_HW_MINI_UART_LSR_DATA_READY_GET(Lsr) of
         0 ->
             {Bytes, S};
         1 ->
-            Byte = erx_device:field(Dev, io, data, erx_device:read(Dev, io)),
+            Byte = ?ERX_HW_MINI_UART_IO_DATA_GET(erx_device:read(Dev, io)),
             drain(S, <<Bytes/binary, Byte>>)
     end.
 

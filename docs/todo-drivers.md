@@ -69,10 +69,10 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
 * [Medium] erx_uart, `erx_pl011:console_uart/1` and `erx_mini_uart:console_uart/1`: the parse of
   `-erx_record console` is copied in each driver, as are their fuzz targets. One parse of the four
   numbers, with each driver checking only its clock rule, and one fuzz target.
-* [Low] erx_uart, `erx_mini_uart` and `erx_pl011`: one drain reads while the receive FIFO says it
-  holds a byte, with no bound, so a wedged device grows the binary until the system domain runs out of
-  memory; and `erx_mini_uart` does not check LCR.DLAB, with which its IER writes would change the
-  divisor. Cap a drain at a few FIFO depths and refuse to start with DLAB set.
+* [Low] erx_uart, `erx_pl011`: one drain reads while the receive FIFO says it holds a byte, with no
+  bound, so a wedged device grows the binary until the system domain runs out of memory; cap it at a few
+  FIFO depths, as `erx_mini_uart`'s `?DRAIN_MAX` does. `erx_mini_uart` does not check LCR.DLAB, with which
+  its IER writes would change the divisor; refuse to start with DLAB set.
 * [Medium] 1b-I's stage (a) (docs/research-rpi4-board-pass.md), the board pass, the framebuffer
   (`liberx/backend/fiasco/runtime_entry.c`, `framebuffer_give`): unverified is whether sigma0 grants the
   VideoCore's memory, the `framebuffer` row's window in `config/platforms/raspi4b.json`, as I/O memory, which
@@ -488,23 +488,34 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   alone passes `make check` and breaks only the native_irq suite's link. Keep the list in one checked-in source that
   both builds read.
 * [High] `erlang/apps/erx_uart/src/erx_mini_uart.erl`, the Raspberry Pi 4 console: input written in one burst loses
-  bytes. On the board a host bridge writing `ls /proc/domains\n` at once delivered `ls /proc/omains`, and a longer line
-  lost its tenth byte and its tail, while commands of nine bytes or fewer arrived whole. The mini UART's receive FIFO
-  holds eight bytes (about 0.7 ms at 115200 baud), the line has no flow control, the driver's code delivers every
-  byte it drains in order, and the path from the interrupt to the drain (the group's dispatcher, an ERTS scheduler's
-  safe point, the shared line's owner process, the driver process) has no bound that short, so the reading is a FIFO
-  overrun from delivery latency, with eight bytes in the FIFO and one in the receiver before the first drain.
-  Unverified on silicon: boot, paste a long line, and look for the driver's `receive FIFO overrun` warning (logged
-  for the first overrun and each doubling of the count). A polled write of Fiasco's or the root's to the same UART
-  also reads LSR (`fiasco/kernel/src/lib/uart/uart_16550.cc`, `write`) and so clears the bit before the driver sees
-  it, and holds a CPU while it writes; the count is shown nowhere but the log, which an inspection path would fix.
-  Once the board confirms an overrun, the choices, cheapest first: run the driver and the shared line's owner at
-  `high` priority, a policy docs/design-shared-devices.md would have to name, with the drain bounded first (the Low item
-  on the unbounded drain), since a wedged device then starves the system domain while the `max` watchdog keeps
-  petting; a native drain at the delivery into a ring the driver reads (docs/design-shared-devices.md and
-  docs/design-fiasco.md, "Interrupts and readiness"); or the console on the PL011 UART0, with Bluetooth on the mini
-  UART. QEMU's `raspi4b` model is unlikely to show the loss: its mini UART is believed to take a byte only when its
-  FIFO has room (unverified: read QEMU's `hw/char/bcm2835_aux.c`).
+  bytes. A host bridge writing `ls /proc/domains\n` at once delivered `ls /proc/omains`, and a longer line lost its
+  tenth byte and its tail. The receive FIFO holds eight bytes (about 0.7 ms at 115200 baud) and the line has no flow
+  control, so a drain later than that loses input. The timing probe of diagnostic commit 5bff78929 (branch
+  `uart-latency`, not on master), pasting 41-byte lines on a Pi 4, measured the path from the dispatcher's wake to
+  the drain's first register read as fast (median 29 us, p90 148 us, one 6.3 ms outlier in ERTS delivery), and found
+  30 of 41 drains taken while the driver was inside `send/2`, with all 5 drains that found the FIFO full or overrun
+  among them. The send polls LSR before each byte and drains the receive FIFO whenever a byte waits
+  (`send_step/1`), so between any two bytes written the receive side is looked at. While the transmit FIFO is full
+  the send waits up to a millisecond at a time on the interrupt alone, longer than the receive FIFO lasts; the probe
+  did not record which of the two places in `send/2` took each full drain, and since a register access is a BIF
+  (docs/todo-performance.md, "the cost of a register access from Erlang") a run of eight writes is short, so the full
+  drains may have come from that wait, which polling between bytes does not shorten. Settle it on the board with
+  this driver and the probe tagging the write and wait branches apart. If overruns remain in the wait, the choices,
+  cheapest first: poll LSR with `erlang:yield/0` instead of a timed wait while output is pending, at the cost of a
+  scheduler for the output's duration; run the driver and the shared line's owner at `high` priority, a policy
+  docs/design-shared-devices.md would have to name; a native drain at the delivery into a ring the driver reads
+  (docs/design-shared-devices.md and docs/design-fiasco.md, "Interrupts and readiness"); or the console on the PL011
+  UART0, with Bluetooth on the mini UART. A polled write of Fiasco's or the root's to the same UART also reads LSR
+  (`fiasco/kernel/src/lib/uart/uart_16550.cc`, `write`), clearing the overrun bit before the driver sees it, and
+  holds a CPU while it writes; the overrun count is shown nowhere but the log, which an inspection path would fix.
+  QEMU's `raspi4b` model is unlikely to show the loss: its mini UART is believed to take a byte only when its FIFO
+  has room (unverified: read QEMU's `hw/char/bcm2835_aux.c`).
+* [Low] `erlang/apps/erx_uart/src/erx_pl011.erl`, `send/4`: while `FR.TXFF` is clear the transmit loop writes without
+  looking at `FR.RXFE` or its mailbox, so receive is not served at all during a run of writes, the shape
+  `erx_mini_uart` polls around with `send_step/1`. The PL011's receive FIFO holds 32 bytes (DDI 0183G 2-6), so a run
+  starves it only at that depth, and under `rts_cts` flow the UART holds RTS off when its receive FIFO is full.
+  Mirroring the poll needs its own choice of whether a drain inside a send clears the interrupts (`deliver_input/2`
+  writes ICR from MIS) and a played-device case like `erx_mini_uart_tests`'s.
 * [Medium] `erlang/apps/erx_uart/src/erx_pl011.erl`: QEMU 11.1's PL011 writes each byte straight to its backend, so `FR.TXFF`
   never sets, and it forces the receive interrupt level to one byte, so the receive timeout never has a byte below the
   level to report; a character also arrives whole, never in flight. The `production_image` suite therefore still passes
