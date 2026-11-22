@@ -9,7 +9,7 @@ controller does, over a world the test changes.
 
 The world maps places to things: a place is a route from the root, the
 root port first, and a thing a `keyboard`, a `composite` of two HID
-interfaces or `{hub, Ports}`, each
+interfaces, a mass-storage `stick` or `{hub, Ports}`, each
 high-speed, with the descriptors erx_usb_desc_tests builds. A root port's
 reset ends with a port event showing its reset change; a hub port's when
 its next GET_STATUS shows the change, as the design says of each. A hub
@@ -220,7 +220,7 @@ cleared(?ERX_USB_PORT_FEATURE_C_SUSPEND) -> suspend;
 cleared(?ERX_USB_PORT_FEATURE_C_OVER_CURRENT) -> over_current;
 cleared(?ERX_USB_PORT_FEATURE_C_RESET) -> reset.
 
-descriptor(device, Keyboard) when Keyboard =:= keyboard; Keyboard =:= composite ->
+descriptor(device, Thing) when Thing =:= keyboard; Thing =:= composite; Thing =:= stick ->
     erx_usb_desc_tests:device(0, 0, 0);
 descriptor(device, {hub, _Ports}) -> erx_usb_desc_tests:device(9, 0, 1);
 descriptor(configuration, keyboard) ->
@@ -231,6 +231,8 @@ descriptor(configuration, composite) ->
                                       erx_usb_desc_tests:endpoint(16#81, 3, 8, 10),
                                       erx_usb_desc_tests:interface(1, 0, 3, 0, 0),
                                       erx_usb_desc_tests:endpoint(16#82, 3, 8, 10)]);
+descriptor(configuration, stick) ->
+    erx_usb_desc_tests:storage();
 descriptor(configuration, {hub, _Ports}) ->
     erx_usb_desc_tests:configuration([erx_usb_desc_tests:interface(0, 0, 9, 0, 0),
                                       erx_usb_desc_tests:endpoint(16#81, 3, 1, 12)]);

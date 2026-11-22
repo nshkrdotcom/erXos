@@ -1610,11 +1610,17 @@ transfer, is a failure, which the restarts bound ([Failure
 handling](#failure-handling)). The end that goes past the bound is
 named in the failure that gives the device's port up, which the port
 keeps and the bus logs, by name only
-([design-log.md](design-log.md#reports-carry-no-term)): a shutdown made
-of atoms and integers, such as `{shutdown, {transfer, stall}}`, whole,
-any other shutdown with its reason's leading atom, and a crash by its
-reason's leading atom, so no frame's arguments, report or buffer
-reaches the log. Every end of the hub function is a
+([design-log.md](design-log.md#reports-carry-no-term)), so no frame's
+arguments, report or buffer reaches the log:
+
+| End | Named as | Example |
+| --- | --- | --- |
+| a shutdown made of atoms and integers | the end whole | `{shutdown, {transfer, stall}}` |
+| any other shutdown | `shutdown` with its reason's leading atom | `{shutdown, transfer}` |
+| a start that raised, `{'EXIT', Reason}` as the function supervisor answers it | `'EXIT'` with Reason's leading atom | `{'EXIT', undef}` |
+| a crash | its reason's leading atom | `function_clause` |
+
+Every end of the hub function is a
 failure: it ends only on a failed transfer of its pipe or a crash.
 
 A STALL, a timeout or a malformed answer ends the enumeration as

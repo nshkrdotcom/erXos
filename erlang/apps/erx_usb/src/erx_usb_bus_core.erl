@@ -635,14 +635,18 @@ ended(Ref, Interface, End, Current = #{ends := Ends}, Now, State) ->
 %% A function's end as the port's failure keeps it and the log shows it: names only
 %% (docs/design-log.md, "Reports carry no term"). A shutdown made of atoms and
 %% integers, such as {shutdown, {transfer, stall}}, is kept whole; a shutdown
-%% carrying data the function held keeps its reason's leading atom alone, and any
-%% other end, a crash's reason with its stack frames' arguments among them, is cut
-%% to its leading atom, both by the report filter's own rule (erx_report).
+%% carrying data the function held keeps its reason's leading atom alone; a start
+%% that raised, {'EXIT', Reason} as the function supervisor answers it, keeps
+%% Reason's leading atom, as {'EXIT', undef}; and any other end, a crash's reason
+%% with its stack frames' arguments among them, is cut to its leading atom, each by
+%% the report filter's own rule (erx_report).
 end_name(End = {shutdown, Why}) ->
     case named(Why) of
         true -> End;
         false -> {shutdown, erx_report:reason_name(Why)}
     end;
+end_name({'EXIT', Why}) ->
+    {'EXIT', erx_report:reason_name(Why)};
 end_name(End) ->
     erx_report:reason_name(End).
 

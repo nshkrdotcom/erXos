@@ -33,6 +33,7 @@ class ErxUsbBusTest < Minitest::Test
   BUS = 'erlang/apps/erx_usb/src/erx_usb_bus.erl'
   CORE = 'erlang/apps/erx_usb/src/erx_usb_bus_core.erl'
   SUP = 'erlang/apps/erx_usb/src/erx_usb.erl'
+  BOT = 'erlang/apps/erx_usb/src/erx_usb_bot.erl'
 
   Seed = Data.define(:fault, :module_path, :anchor, :replacement, :catching_case)
 
@@ -84,7 +85,12 @@ class ErxUsbBusTest < Minitest::Test
              module_path: SUP,
              anchor: 'restart => transient',
              replacement: 'restart => permanent',
-             catching_case: 'a_controller_failing_at_every_reset_is_given_up_test')
+             catching_case: 'a_controller_failing_at_every_reset_is_given_up_test'),
+    Seed.new(fault: "a mass-storage function whose start fails as a failure, not unusable",
+             module_path: BOT,
+             anchor: '    {error, erx_usb_bus_core:unusable(enotsup)}.',
+             replacement: '    {error, enotsup}.',
+             catching_case: 'a_stick_behind_a_hub_is_not_given_up_test')
   ].freeze
 
   def test_the_cases_pass

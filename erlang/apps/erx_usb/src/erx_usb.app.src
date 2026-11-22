@@ -14,11 +14,12 @@
 %% erx_usb_bus_sup; the controller process, erx_xhci;
 %% the bus process, erx_usb_bus,
 %% which speaks to its controller through erx_usb_bus_link; and the functions, the hub function,
-%% erx_usb_hub, and the HID function, erx_usb_hid, whose transfers go through erx_usb_pipe.
+%% erx_usb_hub, the HID function, erx_usb_hid, and the mass-storage function, erx_usb_bot, which
+%% is not built and fails its start as unusable; their transfers go through erx_usb_pipe.
 {application, erx_usb,
  [{description, "erXos USB stack"},
   {vsn, "1"},
-  {modules, [erx_hid_core, erx_hid_desc, erx_usb, erx_usb_bot_core, erx_usb_bus, erx_usb_bus_core, erx_usb_bus_link,
+  {modules, [erx_hid_core, erx_hid_desc, erx_usb, erx_usb_bot, erx_usb_bot_core, erx_usb_bus, erx_usb_bus_core, erx_usb_bus_link,
              erx_usb_bus_sup, erx_usb_claim, erx_usb_desc, erx_usb_hid, erx_usb_hub, erx_usb_hub_core,
              erx_usb_input_stream, erx_usb_input_tree, erx_usb_pipe, erx_usb_places_sup, erx_usb_setup,
              erx_xhci, erx_xhci_core]},

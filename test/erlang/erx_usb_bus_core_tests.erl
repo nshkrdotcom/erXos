@@ -1098,7 +1098,8 @@ a_function_restarts_at_most_three_times_a_minute_test() ->
 
 %% The end that gives a port up is logged by name only (docs/design-log.md, "Reports
 %% carry no term"): a crash whose stack frame holds the keys a keyboard reported
-%% shows as its leading atom, and so does a shutdown that carries bytes.
+%% shows as its leading atom, and so does a shutdown that carries bytes; a start
+%% that raised keeps 'EXIT' and its reason's leading atom.
 a_given_up_function_logs_its_end_by_name_only_test() ->
     {#{now := Now}, Core0} = Running = settle(follow({stimulus, [1], dev1}, trace_start())),
     {running, Ref} = port_of(Running, {root, 1}),
@@ -1110,7 +1111,9 @@ a_given_up_function_logs_its_end_by_name_only_test() ->
              end,
     Crash = {function_clause, [{erx_hid_core, step, [<<0, 0, 4, 5>>], []}]},
     ?assertEqual({function, 0, {restarts, function_clause}}, Logged(Crash)),
-    ?assertEqual({function, 0, {restarts, {shutdown, transfer}}}, Logged({shutdown, {transfer, <<"held">>}})).
+    ?assertEqual({function, 0, {restarts, {shutdown, transfer}}}, Logged({shutdown, {transfer, <<"held">>}})),
+    Raised = {'EXIT', {undef, [{erx_usb_bot, start_link, [#{device => Ref}], []}]}},
+    ?assertEqual({function, 0, {restarts, {'EXIT', undef}}}, Logged(Raised)).
 
 %% A late end from the run before, delivered once the function has started again,
 %% changes nothing: the running instance's pipes are not reset under it.

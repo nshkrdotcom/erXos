@@ -128,6 +128,24 @@ a_hub_with_a_child_enumerates_it_test() ->
         {hid_started, _Pid, #{device := Keyboard}} = next_hid()
     end).
 
+%% A mass-storage stick behind a hub, beside a keyboard, as on the Raspberry Pi 4's
+%% VL805: its function cannot drive the interface, which is final, so the stick's port
+%% is not given up past restarts and the keyboard runs on.
+a_stick_behind_a_hub_is_not_given_up_test() ->
+    with_bus(#{[1] => {hub, 4}}, fun() ->
+        configured([1]),
+        settled(),
+        ok = erx_usb_fake_xhci:plug(?FAKE, [1, 1], keyboard),
+        Keyboard = configured([1, 1]),
+        {hid_started, Running, #{device := Keyboard}} = next_hid(),
+        ok = erx_usb_fake_xhci:plug(?FAKE, [1, 3], stick),
+        Stick = configured([1, 3]),
+        settled(),
+        ?assertEqual(0, count({reset_pipe, Stick, 0, 16#81})),
+        ?assertEqual([], [D || D = {detach, _} <- log()]),
+        ?assert(is_process_alive(Running))
+    end).
+
 %% A hub's removal detaches the devices below it first and ends every function of each.
 a_hub_removed_detaches_below_it_first_test() ->
     with_bus(#{[1] => {hub, 2}, [1, 2] => keyboard}, fun() ->
