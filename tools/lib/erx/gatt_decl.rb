@@ -64,15 +64,6 @@ module Erx
     # v0.0.237's, bumble/gatt.py, lines 130-153 (0x2800-0x2803, 0x2900-0x290f); the
     # blocks' ends at 0x28ff and 0x29ff, Assigned Numbers' allocation, are unverified.
     ATTRIBUTE_TYPES = (0x2800..0x29ff)
-    # The last handle a table may hold: erx_gatt_db writes handles in 16 bits. (ATT's
-    # handle range, Vol 3 Part F 3.2.2, was not read; 0xffff is the 16-bit field's.)
-    HANDLE_MAX = 0xffff
-    # The handles erx_gatt_db:build/1 gives GAP's and GATT's own services, its gap/0
-    # and gatt/0: GAP's declaration, Device Name and Appearance, two handles each;
-    # GATT's declaration and Service Changed with its configuration, three. This and
-    # service_handles copy erx_gatt_db's layout: a change to gap/0, gatt/0 or
-    # characteristic_attributes/3 changes them too.
-    OWN_HANDLES = 9
 
     # A UUID as written, 16 or 128 bits wide, and its value.
     Uuid = Data.define(:bits, :value)
@@ -98,7 +89,6 @@ module Erx
 
       texts = paths.to_h { |path| [path, BoundedFile.read(File.join(root, path), maximum: MAX_DECLARATION_BYTES)] }
       services = texts.map { |path, text| parse(path: path, text: text, vocabulary: vocabulary) }
-      refuse_handles(services)
       reads = sources.inputs.merge(texts).transform_values { |bytes| Digest::SHA256.hexdigest(bytes) }
       GenerationPlan.new(files: { OUTPUT => erlang(services).freeze }, reads: reads, globs: { DECLARATIONS => paths })
     end
@@ -277,27 +267,6 @@ module Erx
       raise DeclarationError, "#{where}: #{characteristic.name} has #{other.name}'s UUID"
     end
     private_class_method :refuse_repeat
-
-    # Every set of served services is a subset of the declared ones, so the table of
-    # all of them served at once bounds every table: past HANDLE_MAX, a handle
-    # erx_gatt_db writes in 16 bits would wrap.
-    def refuse_handles(services)
-      total = OWN_HANDLES + services.sum { |service| service_handles(service) }
-      return if total <= HANDLE_MAX
-
-      raise DeclarationError, "the declared services take #{total} handles, past #{HANDLE_MAX}"
-    end
-    private_class_method :refuse_handles
-
-    # The handles erx_gatt_db:build/1 lays a service out in: its declaration, and per
-    # characteristic its declaration and its value, and one Client Characteristic
-    # Configuration when it notifies, indicates or both.
-    def service_handles(service)
-      1 + service.characteristics.sum do |characteristic|
-        characteristic.access.keys.intersect?(%w[notify indicate]) ? 3 : 2
-      end
-    end
-    private_class_method :service_handles
 
     # erx_gatt_decl: names/0, advertised/0 and service/1, one clause per service in
     # the order of its name. Every atom is quoted, so a name that is a reserved word

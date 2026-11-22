@@ -201,7 +201,8 @@ table_ignores_manifest_order_test() ->
 
 %% erx_gatt_decl, generated from abi/gatt/, declares nus as the design's example does, so
 %% its term is the hand-written one, whose UUIDs uuid/1 spells independently of the
-%% generator, and every declared service builds into one table.
+%% generator, and every declared service builds into one table, so every served set, a
+%% subset of them, fits in the 0xFFFF handles build/1 allows.
 declared_services_build_the_table_test() ->
     [Sec, Nus] = services(),
     Declared = [erx_gatt_decl:service(Name) || Name <- erx_gatt_decl:names()],
@@ -213,6 +214,20 @@ declared_services_build_the_table_test() ->
                           [{ok, _} = erx_gatt_db:characteristic({Service, Char}, Table)
                            || #{name := Char} <- Chars]
                   end, Declared).
+
+%% ATT carries a handle in 16 bits, so build/1, which gives every handle, refuses a table
+%% past 0xFFFF: GAP's and GATT's services (9 handles), a service of 32,762 characteristics
+%% that neither notify nor indicate (65,525) and one of none (1) fill it to 0xFFFF exactly,
+%% and one more service of none passes it. UUIDs repeat: the layout does not read them.
+table_past_0xffff_handles_is_refused_test() ->
+    Wide = #{name => wide, uuid => <<16#F0, 16#FF>>,
+             characteristics => [#{name => list_to_atom("c" ++ integer_to_list(Index)), uuid => <<16#F1, 16#FF>>,
+                                   max => 0, access => #{read => open}}
+                                 || Index <- lists:seq(1, 32762)]},
+    Empty = fun(Name) -> #{name => Name, uuid => <<16#F2, 16#FF>>, characteristics => []} end,
+    Full = erx_gatt_db:build([Wide, Empty(empty)]),
+    ?assertMatch({ok, #{handle := 16#FFFF, group_end := 16#FFFF}}, erx_gatt_db:lookup(16#FFFF, Full)),
+    ?assertError({handles_past_0xffff, 16#10000}, erx_gatt_db:build([Wide, Empty(empty), Empty(extra)])).
 
 %% The hash covers what a client keeps of the table: a characteristic's UUID, its accesses,
 %% which its properties name, and the characteristic itself change it; its maximum, its

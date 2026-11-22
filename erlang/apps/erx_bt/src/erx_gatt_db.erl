@@ -23,12 +23,13 @@ attribute, and a characteristic's at its last descriptor (Part G, 2.5.3). The ta
 SHA-256 over every attribute's handle and type and every declaration's value, in table
 order, names it.
 
-Its input is trusted configuration, checked when the declarations are generated and the
-manifest is built (docs/design-bluetooth.md, "Declarations: `abi/gatt`"), so it is not
-checked again here. It is a set of `erx_gatt_decl`'s terms, whose generator refuses
-declarations that, all served at once, would take more than 0xFFFF handles; it counts
-them by this layout (`Erx::GattDecl::OWN_HANDLES` and `service_handles`), so a change to
-the layout changes that count too.
+Its input is trusted configuration, a set of `erx_gatt_decl`'s terms, checked when the
+declarations are generated and the manifest is built (docs/design-bluetooth.md,
+"Declarations: `abi/gatt`"), so it is not checked again here. The one fact only the
+layout knows, how many handles the table takes, is checked here, where the handles are
+given: `build/1` fails with `{handles_past_0xffff, Count}` on a table of more than 0xFFFF
+attributes, since ATT names a handle in 16 bits. (Part F 3.2.2, ATT's handle range, was
+not read; 0xFFFF is the 16-bit field's last value.)
 """.
 
 -include("generated/erx_abi.hrl").
@@ -70,6 +71,7 @@ build(Services) ->
     {Laid, _Next} = lists:mapfoldl(fun service/2, 1, [gap(), gatt() | Sorted]),
     {Attributes, Infos} = lists:unzip(Laid),
     Tuple = list_to_tuple(lists:append(Attributes)),
+    tuple_size(Tuple) =< 16#FFFF orelse error({handles_past_0xffff, tuple_size(Tuple)}),
     #{attributes => Tuple, characteristics => maps:from_list(lists:append(Infos)),
       hash => layout_hash(Tuple)}.
 
