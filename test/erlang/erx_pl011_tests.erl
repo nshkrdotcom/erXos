@@ -169,3 +169,13 @@ refused_test() ->
     ?assertMatch({error, {bad_line_record, _}}, erx_pl011:program(maps:remove(flow, Fresh))),
     ?assertMatch({error, {bad_line_record, _}}, erx_pl011:program(Fresh#{flow => xon})),
     ?assertMatch({error, {bad_line_record, _}}, erx_pl011:program(Fresh#{init => warm})).
+
+%% A crash report of the driver shows only its reason's name: it exports format_status/1,
+%% which is what makes proc_lib hide the mailbox (the bytes the line sent to write), the
+%% dictionary and the frames' arguments.
+format_status_shows_only_the_reasons_name_test() ->
+    {module, erx_pl011} = code:ensure_loaded(erx_pl011),
+    ?assert(erlang:function_exported(erx_pl011, format_status, 1)),
+    Status = erx_pl011:format_status(#{reason => {badmatch, <<"SECRET">>}, state => <<"SECRET">>,
+                                       message => {erx_console_output, make_ref(), <<"SECRET">>}}),
+    ?assertEqual(#{reason => badmatch, state => hidden, message => hidden}, Status).

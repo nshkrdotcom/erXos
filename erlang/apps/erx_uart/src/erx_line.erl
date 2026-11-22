@@ -60,7 +60,7 @@ dropped.
 -include("erx_fs_waits.hrl").
 
 -export([start_link/1]).
--export([init/1, handle_call/3, handle_cast/2, handle_info/2]).
+-export([init/1, handle_call/3, handle_cast/2, handle_info/2, format_status/1]).
 
 -export_type([request/0, start/0]).
 
@@ -112,13 +112,54 @@ handle_call(_Request, _From, L) ->
 handle_cast(_Request, L) ->
     {noreply, L}.
 
+-doc """
+What a crash report or `sys:get_status/1` shows of the line (docs/design-log.md,
+"Reports carry no term"). The buffer, the waiting writes and the bytes of a message are
+the controller's traffic, which carries keys, so each key shows as a size or not at all:
+
+* `state`: the buffer's size, the marks, and the requests waiting with a write's
+  bytes counted;
+* `message`: a request or input of the line's own protocol with its bytes counted,
+  any other message (an exit's reason, say) as `hidden`;
+* `log`: empty;
+* `reason`: its leading atom (erx_report:reason_name/1);
+* any other key: `hidden`.
+
+`sys:get_state/1`, `sys:trace/2` and `sys:log/2` are not reports and show the state whole,
+to the system domain's code only.
+""".
+format_status(Status) ->
+    maps:map(fun status/2, Status).
+
+status(state, #line{rx = Rx, broken = Broken, driver = Driver, reset = Reset, waits = Waits}) ->
+    #{rx_bytes => byte_size(Rx), broken => Broken, driver => Driver,
+      resetting => Reset =/= none,
+      requests => [{Wait, shown_request(Request), State}
+                   || {Wait, Request, State} <- erx_fs_waits:list(Waits)]};
+status(message, ?ERX_FS_WAIT(Wait, Request)) ->
+    ?ERX_FS_WAIT(Wait, shown_request(Request));
+status(message, {erx_console_input, Bytes}) when is_binary(Bytes) ->
+    {erx_console_input, byte_size(Bytes)};
+status(log, _Log) ->
+    [];
+status(reason, Reason) ->
+    erx_report:reason_name(Reason);
+status(_Key, _Value) ->
+    hidden.
+
+%% A request() with a write's bytes counted; a term of no kind of request() is hidden.
+shown_request({write, Offset, Bytes}) when is_binary(Bytes) -> {write, Offset, byte_size(Bytes)};
+shown_request({read, _Count} = Read) -> Read;
+shown_request({reset, _Offset, _Count} = Reset) -> Reset;
+shown_request(_Request) -> hidden.
+
 %% Every message is one event; after it, whatever may begin begins (pump/1), so
 %% no event can leave a write or a reset waiting that the state lets run.
 -doc false.
 handle_info({'EXIT', Driver, Reason}, #line{driver = Driver} = L) when Driver =/= none ->
-    {stop, {driver_ended, Reason}, L};
+    {stop, {driver_ended, erx_report:reason_name(Reason)}, L};
 handle_info({'EXIT', Grants, Reason}, #line{grants = Grants} = L) ->
-    {stop, {grants_ended, Reason}, L};
+    {stop, {grants_ended, erx_report:reason_name(Reason)}, L};
 handle_info(Message, L) ->
     {noreply, pump(event(Message, L))}.
 

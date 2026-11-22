@@ -53,9 +53,19 @@ class ErxLineTest < Minitest::Test
     Seed.new(fault: 'a keeper that outlives its grants, taking their end as any other message',
              module_path: LINE,
              anchor: "handle_info({'EXIT', Grants, Reason}, #line{grants = Grants} = L) ->\n" \
-                     "    {stop, {grants_ended, Reason}, L};\n",
+                     "    {stop, {grants_ended, erx_report:reason_name(Reason)}, L};\n",
              replacement: '',
-             catching_case: 'the_keeper_and_its_grants_end_together_test')
+             catching_case: 'the_keeper_and_its_grants_end_together_test'),
+    Seed.new(fault: "a status that shows the keeper's buffer whole",
+             module_path: LINE,
+             anchor: '#{rx_bytes => byte_size(Rx),',
+             replacement: '#{rx_bytes => Rx,',
+             catching_case: 'the_status_shows_no_byte_of_the_line_test'),
+    Seed.new(fault: 'a status that shows the requests waiting whole',
+             module_path: LINE,
+             anchor: '[{Wait, shown_request(Request), State}',
+             replacement: '[{Wait, Request, State}',
+             catching_case: 'the_status_shows_no_byte_of_the_line_test')
   ].freeze
 
   def test_the_cases_pass

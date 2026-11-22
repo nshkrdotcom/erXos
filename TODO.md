@@ -8652,6 +8652,14 @@ model harness drive `erx_device.c` itself. `erx_device_dma_check` and `erx_devic
   `format_status/1` when the child's module is known, and `receive_messages/1` honour
   `sensitive`.
 
+* [Medium] bluetooth, the line's reports (design-bluetooth.md, "The controller's line"): the line
+  tree's grant processes (`erx_fs`, a plain `proc_lib` process) export no `format_status/1`, so a
+  crash report of one quotes its mailbox, which holds the Bluetooth domain's `Twrite` frames and the
+  keeper's `{erx_fs_answer, ...}` replies, that is HCI commands and received bytes that carry keys.
+  The grants supervisor (`erx_fs_grants`) ends with its parent the line and logs a `terminate` report
+  of the line's exit reason, which `erx_line` now holds to a name; a `function_clause` crash of the
+  line's own request clauses still carries the state in its raw reason. Fix: a total `format_status/1`
+  in `erx_fs` as `erx_pl011` has, and a refusal in `erx_line:take/3` of a request of no known kind.
 * [Medium] session, a window's terminal relay (`erlang/apps/erx_session/src/erx_session_relay.erl`,
   `handle_info/2`): a relay whose master is in the session's own domain takes every plain message it
   does not otherwise know as its master's, and its pid travels in every open, so any process of the

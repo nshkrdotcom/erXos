@@ -305,3 +305,47 @@ the_keeper_and_its_grants_end_together_test() ->
     exit(grants(Second), kill),
     receive {'DOWN', Keeper, process, Again, {grants_ended, killed}} -> ok after 1000 -> erlang:error(keeper_kept) end,
     exit(maps:get(grant, Second), kill).
+
+%% Report ------------------------------------------------------------------
+
+%% A crash report and sys:get_status/1 show the keeper's state, the message it handled and
+%% a crash's reason as sizes and counts, never as the controller's bytes (a Bluetooth line
+%% carries keys). The buffer, the write in flight and a write waiting behind it hold the
+%% secrets.
+the_status_shows_no_byte_of_the_line_test() ->
+    #{grant := Grant, driver := Driver, line := Line} = Fixture = line(),
+    _ = send(Grant, {write, 3, 0, <<"WRITE-IN-FLIGHT-SECRET">>}),
+    {_Ref, _} = output(Driver, 1000),
+    _ = send(Grant, {write, 3, 0, <<"WRITE-WAITING-SECRET">>}),
+    input(Driver, <<"RECEIVED-SECRET">>),
+    {status, Line, _, Items} = sys:get_status(Line),
+    Shown = lists:flatten(io_lib:format("~0tp", [Items])),
+    [?assertEqual(nomatch, string:find(Shown, Secret))
+     || Secret <- ["WRITE-IN-FLIGHT-SECRET", "WRITE-WAITING-SECRET", "RECEIVED-SECRET",
+                   "87,82,73,84,69", "82,69,67,69,73"]],
+    ?assertNotEqual(nomatch, string:find(Shown, "rx_bytes")),
+    stop(Fixture).
+
+%% The message, the log and the reason of a report: one never carries the bytes of the
+%% message that was being handled, a write's or an input's, and a reason is its atom.
+format_status_hides_the_message_the_log_and_the_reason_test() ->
+    Secret = <<"MESSAGE-SECRET">>,
+    Wait = {self(), make_ref()},
+    Status = erx_line:format_status(
+               #{message => {erx_fs_wait, Wait, {write, 0, Secret}},
+                 log => [{in, {erx_console_input, Secret}}],
+                 reason => {driver_ended, {badmatch, Secret}}}),
+    ?assertEqual(nomatch, string:find(lists:flatten(io_lib:format("~0tp", [Status])), "MESSAGE-SECRET")),
+    ?assertEqual(driver_ended, maps:get(reason, Status)),
+    ?assertEqual([], maps:get(log, Status)),
+    ?assertMatch({erx_console_input, 14}, maps:get(message, erx_line:format_status(
+        #{message => {erx_console_input, Secret}}))).
+
+%% The keeper's exit reason, which every report of its end quotes, names why and holds no
+%% term of the driver's.
+the_keepers_exit_reason_holds_no_term_of_the_driver_test() ->
+    #{line := Line, driver := Driver} = line(),
+    Keeper = monitor(process, Line),
+    exit(Driver, {boom, <<"DRIVER-SECRET">>}),
+    receive {'DOWN', Keeper, process, Line, Reason} -> ?assertEqual({driver_ended, boom}, Reason)
+    after 1000 -> erlang:error(keeper_kept) end.

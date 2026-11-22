@@ -26,7 +26,7 @@
 -module(erx_pl011).
 
 -export([start_link/1, start_link/2]).
--export([init/2]).
+-export([init/2, format_status/1]).
 -export([console_records/0, console_uart/1, baud_divisors/1, program/1]).
 -export_type([step/0]).
 
@@ -77,6 +77,19 @@ init(console, Console) ->
     start(spec(), Console, {ok, self(), true});
 init(Spec, Owner) ->
     start(Spec, Owner, {ok, self()}).
+
+-doc """
+Its existence is what makes proc_lib's crash report of this process hide its terms
+(gen:hides_terms/1): the report then shows neither the mailbox, which holds the bytes the
+line sent to write (a Bluetooth line's carry keys, the console's a typed passphrase), nor
+the process dictionary, nor a stack frame's arguments, but only the reason's leading atom
+(erx_report:reason_name/1). The driver holds no state a report could show.
+""".
+-spec format_status(#{atom() => term()}) -> #{atom() => term()}.
+format_status(Status) ->
+    maps:map(fun(reason, Reason) -> erx_report:reason_name(Reason);
+                (_Key, _Value) -> hidden
+             end, Status).
 
 %% A record program/1 refuses stops the driver with its reason before it touches the UART.
 %% IMSC is written whole once the line is attached, whichever the start: the receive and
