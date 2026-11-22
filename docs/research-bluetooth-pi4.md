@@ -200,7 +200,8 @@ Command Complete without reprogramming, got no byte in 500 ms; FR stayed
 matches NetBSD's `uart_send_cmd` (`btattach.c:373-375`, trunk
 `5cebe14c1559`, SHA-256
 `58c3d467335cfb0e2791ef185ca232326f9289e570df887c1387c77df3e92b74`):
-indicator `0x01`, opcode little-endian, length. Run 2's image tries
+indicator `0x01`, opcode little-endian, length. Run 2's image (commit
+  `89c9a6b4b`) tries
 Read Local Version after `HCI_Reset` at 0, 50, 200, 500, 1000 and
 2000 ms, then with no reset, then with UART0 reprogrammed before each
 command, then with RTS held asserted by software instead of following
