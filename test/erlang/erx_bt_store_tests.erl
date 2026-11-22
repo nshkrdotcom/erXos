@@ -9,11 +9,14 @@
 %% unavailable, no answer at all). Processes registered as the window (erx_bt_fs) and
 %% spawned as links forward what the store sends them. The store's table is explored
 %% over every start state, request, put answer and read answer, and run over the
-%% development file with a put the storage completes after the store's deadline.
+%% development file with a put the storage completes after the store's deadline and with
+%% its rename failing; the file's modes and its order of rename, directory sync and
+%% deletions are checked over a directory of its own.
 
 -module(erx_bt_store_tests).
 -include_lib("eunit/include/eunit.hrl").
 -include("generated/erx_abi.hrl").
+-include_lib("kernel/include/file.hrl").
 
 -define(ADDRESS, <<2#11:2, 7:46>>).
 
@@ -68,11 +71,19 @@ state_refuses_malformed_fields_test() ->
     ?assertEqual({error, name}, erx_bt_state:decode(blob([Bad]))),
     ?assertEqual({error, too_large}, erx_bt_state:decode(<<One/binary, 0:(8 * ?ERX_BT_STATE_MAX)>>)).
 
-%% Eight bonds, each with a hash and three subscriptions of the longest names, fit.
+%% The largest state the served table lets the store write fits `bt_state_max`: a bond's
+%% subscriptions are its link's, so they name only characteristics of the table, each
+%% with a configuration attribute, and the table is every service abi/gatt declares, as
+%% erx_bt_sup serves it, with GAP's and GATT's own. So `bt_bonds_max` bonds, each with a
+%% table hash and subscribed to every such characteristic, are the largest state, and a
+%% declaration that would make a put `too_large` fails here.
 state_largest_fits_test() ->
-    Long = fun(C) -> binary:copy(<<C>>, 63) end,
-    Subs = #{{Long($a), Long($b)} => notify, {Long($c), Long($d)} => indicate, {Long($e), Long($f)} => notify},
-    Bonds = [(bond(N))#{hash := <<N:256>>, subscriptions := Subs} || N <- lists:seq(1, 8)],
+    Table = erx_gatt_db:build([erx_gatt_decl:service(Name) || Name <- erx_gatt_decl:names()]),
+    Subs = #{{atom_to_binary(Service), atom_to_binary(Char)} => indicate
+             || #{source := {configuration, {Service, Char}}} <- erx_gatt_db:range(1, 16#ffff, Table)},
+    %% Every table holds GATT's Service Changed, so a pattern that stopped matching fails.
+    ?assert(is_map_key({<<"gatt">>, <<"service_changed">>}, Subs)),
+    Bonds = [(bond(N))#{hash := <<N:256>>, subscriptions := Subs} || N <- lists:seq(1, ?ERX_BT_BONDS_MAX)],
     {ok, Blob} = erx_bt_state:encode(state(Bonds)),
     ?assert(byte_size(Blob) =< ?ERX_BT_STATE_MAX).
 
@@ -420,7 +431,18 @@ backend_that_never_answers_test_() ->
         ?assertEqual({error, unavailable}, kept(Link)),
         ?assertEqual({failed, unavailable}, outcome(Link)),
         ?assertMatch(#{store := unknown, reason := store_unavailable}, erx_bt_store:facts()),
-        stop(Store)
+        stop(Store),
+        %% A bonded link's configuration write: the store answers unavailable at its
+        %% deadline, keeps the bond's subscriptions as they were and reads first next time.
+        {Bonded, _} = start(blob([bond(1)]), [], [hang], 300),
+        Test = self(),
+        Writer = spawn(fun() -> _ = erx_bt_store:resolve(identity(1)), forward(Test, link) end),
+        wait_links(1),
+        erx_bt_store ! {erx_bt_link, Writer, {subscriptions, #{{nus, tx} => notify}}},
+        ?assertEqual({error, unavailable}, kept(Writer)),
+        ?assertMatch(#{store := unknown, reason := store_unavailable}, erx_bt_store:facts()),
+        ?assertMatch(#{subscriptions := Kept} when map_size(Kept) =:= 0, erx_bt_store:resolve(identity(1))),
+        stop(Bonded)
     end}.
 
 %% Neither the status nor a raise's reason shows a key.
@@ -558,6 +580,52 @@ late_put_never_brings_back_a_forgotten_bond_test_() ->
         stop(Again),
         os:cmd("rm -rf " ++ Root)
     end}.
+
+%% The development file under the store with a step of its put failing: a rename onto a
+%% directory that holds a name fails, so the pairing fails `unavailable`, its `.new` file
+%% goes, the medium keeps the state before it and the store reads before its next change,
+%% which succeeds once the rename can.
+state_file_step_failing_under_the_store_test() ->
+    Root = string:trim(os:cmd("mktemp -d")),
+    Dir = filename:join(Root, "bt"),
+    ok = erx_bt_state_file:put(Dir, 1, blob([bond(1)])),
+    Backend = #{get => fun() -> erx_bt_state_file:get(Dir) end,
+                put => fun(Generation, Blob) -> erx_bt_state_file:put(Dir, Generation, Blob) end},
+    Store = start_backend(Backend, ?ERX_BT_STORE_TIMEOUT_MS),
+    Obstacle = filename:join([Dir, "bonds.2", "held"]),
+    ok = filelib:ensure_dir(Obstacle),
+    ok = file:write_file(Obstacle, <<>>),
+    First = fake_link(),
+    keep(First, 2),
+    ?assertEqual({error, unavailable}, kept(First)),
+    ?assertEqual({failed, unavailable}, outcome(First)),
+    ?assertMatch(#{store := unknown}, erx_bt_store:facts()),
+    {ok, Left} = file:list_dir(Dir),
+    ?assertEqual(["bonds.1", "bonds.2"], lists:sort(Left)),
+    ?assertEqual({ok, blob([bond(1)])}, file:read_file(filename:join(Dir, "bonds.1"))),
+    ok = file:delete(Obstacle),
+    ok = file:del_dir(filename:dirname(Obstacle)),
+    Second = fake_link(),
+    keep(Second, 2),
+    ?assertEqual(ok, kept(Second)),
+    {ok, _, Kept} = erx_bt_state_file:get(Dir),
+    ?assertMatch({ok, #{bonds := [_, _]}}, erx_bt_state:decode(Kept)),
+    stop(Store),
+    os:cmd("rm -rf " ++ Root).
+
+%% A put narrows the directory to 0700 and its file to 0600 whatever the directory had
+%% and whatever the umask lets a new file have (the seeded fault that drops the file's
+%% narrowing needs a umask that leaves a new file more than 0600, as 022 does).
+state_file_modes_test() ->
+    Root = string:trim(os:cmd("mktemp -d")),
+    Dir = filename:join(Root, "bt"),
+    ok = file:make_dir(Dir),
+    ok = file:change_mode(Dir, 8#755),
+    ok = erx_bt_state_file:put(Dir, 1, <<"one">>),
+    Mode = fun(Path) -> {ok, #file_info{mode = Bits}} = file:read_file_info(Path), Bits band 8#777 end,
+    ?assertEqual(8#700, Mode(Dir)),
+    ?assertEqual(8#600, Mode(filename:join(Dir, "bonds.1"))),
+    os:cmd("rm -rf " ++ Root).
 
 %% A storage domain that completes each put in a process of its own, whether or not its
 %% caller still waits: a `held` one only once the test sends `release`, which it then

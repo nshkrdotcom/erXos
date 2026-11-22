@@ -8671,13 +8671,13 @@ model harness drive `erx_device.c` itself. `erx_device_dma_check` and `erx_devic
   outcome for a tag it did not open. Also add a link-core case writing `ind`'s open configuration on a
   resolved link before encryption, which only `erx_bt_gatt_tests` and the fuzz invariant cover now.
 * [Medium] bluetooth, the store's development file has no grant (`erx_bt_store:start_link/0`,
-  `erx_bt_state_file`; docs/design-bluetooth.md "Bonds and the store"): the design keeps the state in "the
-  Bluetooth domain's directory on the data partition" but names no files service or manifest row that reaches it,
-  as `ssh_state_service` does for the SSH domain, so the store reads the application's `state_dir`, by default
-  `/data/bt`, and a domain whose namespace lacks it runs `store_unavailable`, without bonds; `get` answers `none`
-  when `/data` exists, so an unmounted volume presented as an empty `/data` would read as no bonds. Name the service in the
-  design and `abi/manifest.txt` (a `bt_state` files service of the storage domain rooted at the data volume's
-  `bt/`, granted read-write to the Bluetooth domain alone).
+  `erx_bt_state_file`; docs/design-bluetooth.md "The Bluetooth domain", the store's grant): the design gives the store a
+  files service of its own that the storage domain roots at the data volume's `bt/` and grants to the Bluetooth
+  domain alone, as it serves SSH's `ssh_state`, but neither service is built: `abi/manifest.txt` names no
+  `bt_state_service` (nor `ssh_state_service`, which design-ssh.md cites), no manifest grants either, and the manifest check does not hold the `bt` row to it. So the store reads the
+  application's `state_dir`, by default `/data/bt`, and a domain whose namespace lacks it runs
+  `store_unavailable`, without bonds; `get` answers `none` when `/data` exists, so an unmounted volume presented as
+  an empty `/data` would read as no bonds. Build both services as one package: the files services, their two `abi/manifest.txt` names, the grants, the check, and the store mounting its grant.
 * [Low] bluetooth, a forgotten bond's keys can stay on the development store's medium (`erx_bt_state_file`):
   until the next successful put, a late put that landed below the newest, or a lower file a deletion missed,
   keeps a forgotten bond's keys on the medium (0600, in a 0700 directory), though never read.
@@ -8687,24 +8687,11 @@ model harness drive `erx_device.c` itself. `erx_device_dma_check` and `erx_devic
   completes after a later one never wins, but the state slot's `put(Blob)` replaces the blob whatever arrives last,
   which brings a forgotten bond back. Give the slot a generation in design-system.md: a put not strictly above the
   kept generation is refused, and a get reflects every put the domain sent before it.
-* [Low] bluetooth, the development store's guarantee rests on file-service properties no design states
-  (`erx_bt_state_file`; docs/design-storage.md): that a late put never wins over a later store start relies on
-  rename replacing a name atomically, on exclusive create, and on a listing showing every name an answered request
-  made, which littlefs gives by running one operation at a time, and, across a store restart, on a dying
-  store's worker sending at most one more request once the store's exit signal is in its queue (the BEAM handles
-  the kill at the worker's next receive, so this holds by the file calls' blocking, not by construction; an old
-  worker's create and rename both after the new store's listing would land above it). State them in the storage domain's file service
-  contract, or say where they fail.
-* [Low] bluetooth, the store's tests' gaps (`test/erlang/erx_bt_store_tests.erl`): the development file is not run
-  under the store with a step failing (write, sync, rename) nor checked for its 0700 and 0600 modes, and a bonded
-  configuration write against a backend that never answers is not run (only `keep` is).
-* [Medium] bluetooth, the largest stored state is not bounded by construction (`erx_bt_state:encode/1`;
-  docs/design-bluetooth.md "Bonds and the store"): the design says the largest encoding of `bt_bonds_max` bonds
-  fits `bt_state_max`, but a bond's subscriptions grow with the table's notify and indicate characteristics and
-  their names (up to 63 octets each), so a large table can make a `put` refused as `too_large`, failing a pairing
-  or configuration write `unavailable`. Eight bonds with three subscriptions of the longest names fit
-  (`state_largest_fits_test`). Derive the bound in `Erx::GattDecl`: fail the build when eight bonds subscribed to
-  every such characteristic of the table would pass 4 KiB.
+* [Low] bluetooth, a late put after a store restart rests on the worker's blocking (`erx_bt_store`'s backend
+  worker; docs/design-bluetooth.md "Bonds and the store"): that a dying store's worker sends at most one more
+  request once the store's exit signal is in its queue holds because the BEAM handles the kill at the worker's next
+  receive and its file calls block one at a time, not by construction; an old worker's create and rename both
+  after the new store's listing would land above it.
 * [Low] bluetooth, the link core's deadlines and Encryption_Enabled (`erlang/apps/erx_bt/src/erx_bt_link_core.erl`,
   its `HANDLER_TIMEOUT_MS`, `ATT_TRANSACTION_MS`, `SMP_TIMEOUT_MS` and `ENCRYPTION_ON_LE`): "What a radio peer can
   make the domain spend" makes every bound a constant of `abi/formats/bluetooth.txt`, but these four are module

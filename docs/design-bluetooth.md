@@ -1784,10 +1784,13 @@ stores behind the seam answer with exactly these results:
   `unavailable` when any step fails. A put renames only once its
   `.new` name has answered, so every put that may still land is
   counted by every listing made after its process ended. That rests on
-  the storage domain's rename replacing a name atomically, on its
-  exclusive create, and on a listing showing every name an answered
-  request made, which littlefs, one operation at a time, gives, and
-  which [design-storage.md](design-storage.md) does not yet state;
+  the files protocol's rename and exclusive `lcreate` each being one
+  step, and on each tree making its requests atomic, so a listing
+  shows every name an answered request made
+  ([design-files.md](design-files.md#serving-the-erx_fs-behaviour));
+  and, across a store restart, on the short-lived process of a dying
+  store's backend call sending at most one more request, since the
+  store's kill takes effect at that process's next receive;
 * **in a release build**, the vault's state slot `{state, "bt"}`
   ([design-system.md](design-system.md#state-slots)), which must take
   the seam's generation: its `put` refuses a generation not strictly
@@ -1868,8 +1871,16 @@ an unconfirmed put replaces the bonds with the blob's, and a connected
 link whose bond the blob lacks ends, as forgetting a bond ends it. The
 identity address a stored blob names is the one in use, since the domain
 made it or read it before any `put`. `too_large` takes the same path: the
-encoder bounds a state to `bt_bonds_max` bonds, whose largest encoding
-fits the vault's 4 KiB, so meeting it is a bug.
+encoder bounds a state to `bt_bonds_max` bonds, and a bond's
+subscriptions name only characteristics of the table served when its
+link made them, so the largest encoding is `bt_bonds_max` bonds each subscribed to every
+characteristic the table lets a phone configure. A host test of
+`erx_bt_state` encodes that state for the table every `abi/gatt`
+declaration makes and fails when it passes the vault's 4 KiB, so a
+declaration too large for it fails the build's tests and meeting
+`too_large` for a state this domain wrote is a bug; a medium written
+by other means can still hold a near-full state, and the change then
+fails `unavailable`.
 
 A pairing that completes asks the store to keep the new state, the
 bond with the subscriptions its link has made so far, under the tag the
@@ -2252,7 +2263,7 @@ Each core's test is paired with the seeded faults it must catch.
 | `erx_bt_window` | the wait doubles from 2 to 64 s after failures, a disconnection mid-pairing counting as one, and a failure imposes twice the last one's wait halved for each whole 600 s since it, within 2 and 64 s; a Pairing Request during it answers Repeated Attempts and leaves the window open; back-to-back windows do not shorten it | the wait reset when a window opens; a disconnection not counted; the wait never decayed; the maximum applied before the decay |
 | `erx_pl011:program/1` | `fresh` writes `CR` 0 first, clears `FEN` before the divisors, drains the receive side within 33 reads, writes the divisors before `LCR_H` and `CR` whole last with the flow enables; `keep` clears no FIFO and programs the divisors only of an unprogrammed UART | `LCR_H` before the divisors, so the rate never latches; `fresh` keeping the boot's divisors |
 | `erx_smp_crypto` | SMP Appendix D's sample data for `f4`, `f5`, `f6` and `ah` | the AES-CMAC key byte order reversed |
-| `erx_bt_state` | a state round-trips; another version, a truncation and an oversized count are refused; the largest state encodes in at most 4 KiB | the bond count read without its bound |
+| `erx_bt_state` | a state round-trips; another version, a truncation and an oversized count are refused; the largest state the declared table allows encodes in at most 4 KiB | the bond count read without its bound |
 | the store's table, against a scripted fake store and a development file over a fake data tree that fails a chosen step | a start reading `unavailable` or an undecodable blob runs with no bonds and refuses pairing, configuration writes and `forget ADDRESS`, and `forget all` replaces the bad blob; a start reading `none` makes the identity address; a `put` that reached the medium but answered `unavailable` fails the pairing, and the next pairing reads first and keeps its bond; after every confirmed change and read the domain's bonds are the store's; over the development file, a pairing's `put` that the storage completes after its deadline and after a confirmed `forget` of a bond it holds does not bring the bond back at the next start; a lower generation landing late, a `.new` name and names not the store's leave `get`'s blob the highest generation's | `unavailable` read as `none` (a pairing overwrites the stored bonds); the pre-put state kept after an unconfirmed `put` (the failed pairing's bond lost); the development file read at its lowest generation, and an unconfirmed `put` not counted in the next generation (each brings the forgotten bond back); a `.new` name not counted; `forget all` put without reading the generation |
 | the line's `ctl` grammar | `reset`, with or without newline; everything else `einval` | a prefix match accepting `resetx` |
 | the line service's reset, over a model driver and device service | the four steps in order; the driver's input during the on time discarded; a power `{error, _}` answers `eio` before the next step | the driver started before the off notification, so the old FIFO drains into the new controller |
