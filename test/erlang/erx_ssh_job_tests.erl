@@ -88,27 +88,32 @@ written({_, Alias} = Job, Taken) ->
             error(not_written)
     end.
 
-%% The relay is the job's group: io output goes to standard error, and input
-%% is refused.
+%% The job's group: io output goes to standard error, a put_chars naming a
+%% function is taken as stock OTP's group takes it, and input is refused.
 group_leader_test() ->
-    {Relay, _} = Job = start(<<"cat">>),
-    ?assertEqual(ok, io:format(Relay, "said ~p~n", [x])),
-    ?assertEqual({error, enotsup}, io:get_line(Relay, '')),
-    ?assertEqual({error, enotsup}, io:columns(Relay)),
-    ?assertEqual({error, enotsup}, io:request(Relay, {put_chars, unicode, erlang, halt, []})),
-    ?assertEqual({error, request}, io:request(Relay, {requests, [{put_chars, unicode, <<"x">>},
+    Job = start(<<"cat">>),
+    Group = group(Job),
+    ?assertEqual(ok, io:format(Group, "said ~p~n", [x])),
+    ?assertEqual(ok, io:request(Group, {put_chars, unicode, lists, flatten, [["a", "b"]]})),
+    ?assertEqual({error, enotsup}, io:get_line(Group, '')),
+    ?assertEqual({error, enotsup}, io:columns(Group)),
+    ?assertEqual({error, request}, io:request(Group, {requests, [{put_chars, unicode, <<"x">>},
                                                                  {get_line, unicode, ''}]})),
+    GroupRef = monitor(process, Group),
     send(Job, job_eof),
-    ?assertEqual(#{stdout => <<>>, stderr => <<"said x\n">>, status => 0}, collect(Job)).
+    ?assertEqual(#{stdout => <<>>, stderr => <<"said x\nab">>, status => 0}, collect(Job)),
+    %% The relay's normal end ends the group too.
+    ?assertEqual(killed, ended(GroupRef)).
 
 %% Output requests that arrive while one is being written wait their turn: two
 %% processes printing at once are both answered, and each line reaches standard
 %% error whole.
 concurrent_printers_test() ->
-    {Relay, _} = Job = start(<<"cat">>),
+    Job = start(<<"cat">>),
+    Group = group(Job),
     Test = self(),
     _ = [spawn(fun() ->
-                   Results = [io:format(Relay, "~s ~b~n", [Name, N]) || N <- lists:seq(1, 20)],
+                   Results = [io:format(Group, "~s ~b~n", [Name, N]) || N <- lists:seq(1, 20)],
                    Test ! {printed, Name, Results}
            end) || Name <- ["a", "b"]],
     Printed = [receive {printed, Name, Results} -> {Name, Results} after ?WAIT -> {Name, hung} end
@@ -156,12 +161,64 @@ bad_input_ends_the_job_test() ->
     send(Job, {job_input, binary:copy(<<"x">>, 32769)}),
     ?assertEqual({shutdown, hangup}, ended(Ref)).
 
-%% Monitors of the relay and of its rc, the one process linked to the relay
-%% once the relay has started it, and rc.
+%% While the channel takes none of the job's output, printers wait in their
+%% requests and the relay holds none of them: sixteen processes each printing
+%% 100000 characters leave the relay under 1 MiB, and once the channel takes
+%% the output every one is answered and all of it arrives.
+a_stalled_channel_holds_no_output_in_the_relay_test() ->
+    {Relay, Alias} = Job = start(<<"cat">>),
+    Group = group(Job),
+    Test = self(),
+    Line = lists:duplicate(100000, $a),
+    _ = [spawn(fun() -> Test ! {printed, io:format(Group, "~s", [Line])} end) || _ <- lists:seq(1, 16)],
+    First = receive {Alias, {job_output, stderr, Bytes}} -> Bytes after ?WAIT -> error(no_output) end,
+    receive after 200 -> ok end,
+    %% The relay's heap and mailbox, and the binaries it holds off its heap.
+    [{memory, Memory}, {binary, Binaries}] = process_info(Relay, [memory, binary]),
+    Held = Memory + lists:sum([Size || {_, Size, _} <- Binaries]),
+    ?assert(Held < 1 bsl 20, {relay_holds, Held}),
+    send(Job, job_sent),
+    send(Job, job_eof),
+    #{stderr := Rest, status := 0} = collect(Job),
+    ?assertEqual(16 * 100000, byte_size(First) + byte_size(Rest)),
+    ?assertEqual(lists:duplicate(16, ok),
+                 [receive {printed, Result} -> Result after ?WAIT -> hung end || _ <- lists:seq(1, 16)]).
+
+%% A printer's format runs its own code, here a map-order comparator that never
+%% returns and traps exits; that holds only the printer's request, and the
+%% channel's hangup still ends the relay, rc and the group.
+a_format_that_never_returns_ends_with_the_channel_test() ->
+    {Relay, _} = Job = start(<<"cat">>),
+    Group = group(Job),
+    GroupRef = monitor(process, Group),
+    {RelayRef, RcRef, _} = watch(Relay),
+    Test = self(),
+    Compare = fun(_, _) ->
+                      process_flag(trap_exit, true),
+                      Test ! comparing,
+                      receive after infinity -> true end
+              end,
+    _ = spawn(fun() -> io:format(Group, "~Kp~n", [Compare, #{a => 1, b => 2}]) end),
+    receive comparing -> ok after ?WAIT -> error(not_comparing) end,
+    send(Job, job_hangup),
+    ?assertEqual({shutdown, hangup}, ended(RelayRef)),
+    ?assertNotEqual(running, ended(RcRef)),
+    ?assertEqual(killed, ended(GroupRef)).
+
+%% The job's group: rc's group leader.
+group({Relay, _}) ->
+    {_, _, Rc} = watch(Relay),
+    {group_leader, Group} = process_info(Rc, group_leader),
+    Group.
+
+%% Monitors of the relay and of its rc, and rc: of the processes linked to the
+%% relay, the one whose group leader is the relay or another of them.
 watch(Relay) -> watch(Relay, 100).
 
 watch(Relay, Tries) ->
-    case process_info(Relay, links) of
-        {links, [Rc]} -> {monitor(process, Relay), monitor(process, Rc), Rc};
-        {links, []} when Tries > 0 -> receive after 10 -> watch(Relay, Tries - 1) end
+    {links, Links} = process_info(Relay, links),
+    Leader = fun(Pid) -> element(2, process_info(Pid, group_leader)) end,
+    case [Pid || Pid <- Links, lists:member(Leader(Pid), [Relay | Links])] of
+        [Rc] -> {monitor(process, Relay), monitor(process, Rc), Rc};
+        [] when Tries > 0 -> receive after 10 -> watch(Relay, Tries - 1) end
     end.

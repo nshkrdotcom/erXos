@@ -38,14 +38,31 @@ order:
 After `stop` or `hangup` the relay is over and every event changes
 nothing, so nothing a channel sends later reaches the job.
 
-The channel's side, heard/2: the checks a channel makes of the line's
-messages for its job, each heard from the session, given which of its own
-messages are unanswered. A message that fails its check closes the
-channel.
+The channel's side, channel_step/2. Its events are the client's data and
+end of input, the job's start, and each job message heard from the line,
+untrusted; channel_step/2 answers the channel's next state and the actions
+to carry out, in order:
+
+* input: the client's data goes to the job as `{job_input, Piece}`
+  pieces of at most ssh_line_data_max bytes, in order, one unanswered at
+  a time; each waits in a queue until the one before it is answered by
+  `job_written`, and the client's window then opens by its size
+  (`{adjust, Size}`), so what the channel holds of the client's input is
+  bounded by the window it gave. Data before the job starts or after the
+  client's end of input goes nowhere, and the window opens by it at once.
+* the end of input: the client's end of input, whenever it comes, goes as
+  `job_eof` once the job has started and every piece is answered.
+* output and the ending: a `{job_output, Stream, Bytes}` is checked as the
+  design's table has it and becomes `{output, Stream, Bytes}`, data the
+  channel sends, then `{send, job_sent}`; an `{exited, Status}` becomes
+  `{ended, Status}`; and a message that fails its check, a `job_written`
+  with no piece unanswered among them, `close`. A job_output is sent before
+  the next message is heard, so none is ever unanswered when one arrives.
 """.
 
--export([new/0, step/2, heard/2]).
--export_type([job/0, event/0, action/0, stream/0, unanswered/0]).
+-export([new/0, step/2, new_channel/0, channel_step/2]).
+-export_type([job/0, event/0, action/0, stream/0,
+              channel/0, channel_event/0, channel_action/0]).
 
 -include("generated/erx_abi.hrl").
 
@@ -78,8 +95,22 @@ channel.
                 | hangup
                 | stop.
 
-%% A channel's own messages that the line has not answered yet.
--type unanswered() :: #{input := boolean(), output := boolean()}.
+%% job: whether the channel's job has started; pieces: the client's data not yet
+%% sent, in order; unanswered: the size of the one job_input not yet answered;
+%% eof: the client's end of input, none until it comes, pending until it goes as
+%% job_eof, then sent.
+-opaque channel() :: #{job := waiting | started,
+                       pieces := queue:queue(binary()),
+                       unanswered := none | 1..?ERX_SSH_LINE_DATA_MAX,
+                       eof := none | pending | sent}.
+
+-type channel_event() :: {data, binary()} | eof | started | {heard, term()}.
+
+-type channel_action() :: {send, {job_input, binary()} | job_eof | job_sent}
+                        | {adjust, pos_integer()}
+                        | {output, stream(), binary()}
+                        | {ended, 0..255}
+                        | close.
 
 -doc "A job just started: no input, both readers reading, still running.".
 -spec new() -> job().
@@ -121,26 +152,60 @@ step({read, Stream, Bytes}, #{waiting := none} = Job) when is_binary(Bytes) ->
 step({ended, Status}, #{status := running} = Job) ->
     finish(Job#{status := Status}, []).
 
+-doc "A channel whose job has not started: nothing queued, no end of input.".
+-spec new_channel() -> channel().
+new_channel() ->
+    #{job => waiting, pieces => queue:new(), unanswered => none, eof => none}.
+
 -doc """
-How a channel takes Message heard from the session for its job, given
-which of its own messages are unanswered: `written` answers its
-`job_input`, `{output, Stream, Bytes}` is data to send on Stream, which
-the channel answers with `job_sent` once sent, `{ended, Status}` its
-exit-status, and `close` a message that fails its check.
+The channel's next state and actions, in order, for Event (see the module
+documentation).
 """.
--spec heard(term(), unanswered()) ->
-          written | {output, stream(), binary()} | {ended, 0..255} | close.
-heard(job_written, #{input := true}) ->
-    written;
-heard({job_output, Stream, Bytes}, #{output := false})
+-spec channel_step(channel_event(), channel()) -> {channel(), [channel_action()]}.
+channel_step({data, Bytes}, #{job := started, eof := none, pieces := Pieces} = Channel) ->
+    feed(Channel#{pieces := lists:foldl(fun queue:in/2, Pieces, pieces(Bytes))}, []);
+channel_step({data, Bytes}, Channel) ->
+    {Channel, adjust(byte_size(Bytes))};
+channel_step(eof, #{eof := none} = Channel) ->
+    feed(Channel#{eof := pending}, []);
+channel_step(eof, Channel) ->
+    {Channel, []};
+channel_step(started, Channel) ->
+    feed(Channel#{job := started}, []);
+channel_step({heard, job_written}, #{unanswered := Size} = Channel) when Size =/= none ->
+    feed(Channel#{unanswered := none}, adjust(Size));
+channel_step({heard, {job_output, Stream, Bytes}}, Channel)
   when (Stream =:= stdout orelse Stream =:= stderr), is_binary(Bytes),
        byte_size(Bytes) =< ?ERX_SSH_LINE_DATA_MAX ->
-    {output, Stream, Bytes};
-heard({exited, Status}, _Unanswered)
+    {Channel, [{output, Stream, Bytes}, {send, job_sent}]};
+channel_step({heard, {exited, Status}}, Channel)
   when is_integer(Status), Status >= 0, Status =< 255 ->
-    {ended, Status};
-heard(_Message, _Unanswered) ->
-    close.
+    {Channel, [{ended, Status}]};
+channel_step({heard, _Message}, Channel) ->
+    {Channel, [close]}.
+
+%% With the job started and no piece unanswered, the next piece goes, or, with
+%% none left, the client's end of input.
+feed(#{job := started, unanswered := none, pieces := Pieces, eof := Eof} = Channel, Actions) ->
+    case {queue:out(Pieces), Eof} of
+        {{{value, Piece}, Rest}, _} ->
+            {Channel#{pieces := Rest, unanswered := byte_size(Piece)},
+             Actions ++ [{send, {job_input, Piece}}]};
+        {{empty, _}, pending} ->
+            {Channel#{eof := sent}, Actions ++ [{send, job_eof}]};
+        {{empty, _}, _NoneOrSent} ->
+            {Channel, Actions}
+    end;
+feed(Channel, Actions) ->
+    {Channel, Actions}.
+
+%% Data in pieces of at most ssh_line_data_max bytes, none empty.
+pieces(Data) when byte_size(Data) =< ?ERX_SSH_LINE_DATA_MAX -> [Data || Data =/= <<>>];
+pieces(<<Piece:?ERX_SSH_LINE_DATA_MAX/binary, Rest/binary>>) -> [Piece | pieces(Rest)].
+
+%% The window opens by data that goes nowhere, if there is any.
+adjust(0) -> [];
+adjust(Size) -> [{adjust, Size}].
 
 %% With no job_output unanswered, the waiting piece goes.
 next(#{sent := none, waiting := {Stream, Bytes}} = Job, Actions) ->

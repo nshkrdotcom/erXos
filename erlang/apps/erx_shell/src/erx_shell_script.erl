@@ -17,7 +17,7 @@ command that declares a facet the session lacks fails with `no_facet` before
 it starts, and one installed while the script runs serves the next command.
 """.
 
--export([run/1, run/2, script/1, command/3, job/4, first_vars/1, main/1]).
+-export([run/1, run/2, script/1, command/3, job/5, first_vars/1, main/1]).
 
 -export_type([options/0, vars/0, ending/0]).
 
@@ -105,21 +105,20 @@ command(Command, Vars, Cwd) when is_binary(Command), is_binary(Cwd) ->
 -doc """
 Starts rc on Command as command/3 does, for an SSH job, a channel with no
 pseudo-terminal (docs/design-ssh.md, "Sessions, ttys and shells"): with
-standard input, output and error on Fds rather than the terminal, and the
-calling process, the job's relay, as its group, linked to it. The command
-ends as command/3's does, and when the relay ends, for the same reason.
-Before it ends it makes one empty output request of the relay and waits for
-its answer, which comes once every output request the job made before it
-has been written, so the job's last output enters standard error before
-the stream ends with this process.
+standard input, output and error on Fds rather than the terminal, Group,
+the job's group, as its group leader, and linked to the calling process,
+the job's relay. The command ends as command/3's does, and when the relay
+ends, for the same reason. Before it ends it makes one empty output
+request of Group and waits for its answer, which comes once every output
+request the job made before it has been written, so the job's last output
+enters standard error before the stream ends with this process.
 """.
--spec job(binary(), vars(), binary(), #{erx_shell_lex:fd() => erx_cmd:stream()}) -> pid().
-job(Command, Vars, Cwd, Fds) when is_binary(Command), is_binary(Cwd), is_map(Fds) ->
-    Relay = self(),
+-spec job(binary(), vars(), binary(), #{erx_shell_lex:fd() => erx_cmd:stream()}, pid()) -> pid().
+job(Command, Vars, Cwd, Fds, Group) when is_binary(Command), is_binary(Cwd), is_map(Fds), is_pid(Group) ->
     proc_lib:spawn_link(fun() ->
-                                group_leader(Relay, self()),
+                                group_leader(Group, self()),
                                 try exec(Command, #{vars => Vars, cwd => Cwd, fds => Fds})
-                                after _ = io:request(Relay, {put_chars, unicode, <<>>})
+                                after _ = io:request(Group, {put_chars, unicode, <<>>})
                                 end
                         end).
 

@@ -984,7 +984,7 @@ the runtime image running this shell's release in program mode
 * **In a job.** `rc -c` on a channel with no tty (an SSH exec without
   `-t`) runs its command as one job in the same way, with standard
   input, output and error on the job's message pipes, which the job's
-  relay fills and drains, and the relay as its group leader; it ends
+  relay fills and drains, and the relay's group as its group leader; it ends
   when the command ends or at the channel's hangup
   ([design-ssh.md](design-ssh.md#sessions-ttys-and-shells)).
 

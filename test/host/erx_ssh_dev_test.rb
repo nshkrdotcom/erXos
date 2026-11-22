@@ -24,7 +24,8 @@ require_relative '../fixtures/erlang_build'
 # taken as blobs, keys files read by OTP's ssh_file, the default version banner (OTP's
 # id_string, Erlang/<version>, in place of erXos_<release>), exec run by OTP, a job's
 # input sent in pieces past ssh_line_data_max, a second piece or job_eof sent before
-# the last piece is answered, a job's relay not watched, OTP's channel opening the
+# the last piece is answered, an end of input before the exec dropped, an SSH event of
+# another connection or channel taken, a job's relay not watched, OTP's channel opening the
 # window after each data message, a job's ending heard without its alias, any build kind taken for
 # a development one, and OTP's encoding of an Ed25519 private key without its public
 # half, which ssh_file cannot read back as a host key.
@@ -34,6 +35,7 @@ class ErxSshDevTest < Minitest::Test
   TESTS = %w[test/erlang/erx_ssh_dev_tests.erl].freeze
   DEV = 'erlang/apps/erx_session/src/erx_ssh_dev.erl'
   CHANNEL = 'erlang/apps/erx_session/src/erx_ssh_dev_channel.erl'
+  CORE = 'erlang/apps/erx_ssh_line/src/erx_ssh_job_core.erl'
   CLIENT_CHANNEL = 'otp/lib/ssh/src/ssh_client_channel.erl'
   Fault = Data.define(:name, :source, :from, :to)
   FAULTS = [
@@ -55,22 +57,28 @@ class ErxSshDevTest < Minitest::Test
               from: '{id_string, ?ID_STRING},', to: ''),
     Fault.new(name: 'exec run by OTP', source: DEV,
               from: '{ssh_cli, {erx_ssh_dev_channel, [Open, Job]}},', to: '{exec, erlang_eval},'),
-    Fault.new(name: "a job's input in pieces past ssh_line_data_max", source: CHANNEL,
-              from: 'Input ++ pieces(Data, ?ERX_SSH_LINE_DATA_MAX)', to: 'Input ++ [Data]'),
-    Fault.new(name: 'a second piece before job_written', source: CHANNEL,
-              from: 'feed(#state{relay = Relay, alias = Alias, unanswered_size = none, input = [Piece | Input]} = State) ->',
-              to: 'feed(#state{relay = Relay, alias = Alias, input = [Piece | Input]} = State) ->'),
-    Fault.new(name: 'job_eof before job_written', source: CHANNEL,
-              from: 'feed(#state{relay = Relay, alias = Alias, unanswered_size = none, input = [], eof = pending} = State) ->',
-              to: 'feed(#state{relay = Relay, alias = Alias, eof = pending} = State) ->'),
+    Fault.new(name: "a job's input in pieces past ssh_line_data_max", source: CORE,
+              from: 'lists:foldl(fun queue:in/2, Pieces, pieces(Bytes))', to: 'queue:in(Bytes, Pieces)'),
+    Fault.new(name: 'a second piece before job_written', source: CORE,
+              from: 'feed(#{job := started, unanswered := none, pieces := Pieces, eof := Eof} = Channel, Actions) ->',
+              to: 'feed(#{job := started, pieces := Pieces, eof := Eof} = Channel, Actions) ->'),
+    Fault.new(name: 'job_eof before job_written', source: CORE,
+              from: 'feed(Channel#{eof := pending}, []);', to: '{Channel#{eof := sent}, [{send, job_eof}]};'),
+    Fault.new(name: 'an end of input before the exec dropped', source: CORE,
+              from: 'channel_step(eof, #{eof := none} = Channel) ->',
+              to: 'channel_step(eof, #{eof := none, job := started} = Channel) ->'),
+    Fault.new(name: 'an SSH event of another connection or channel taken', source: CHANNEL,
+              from: "{ssh_cm, Connection, Event}, #state{connection = Connection, channel = Channel} = State)\n  " \
+                    'when is_tuple(Event), tuple_size(Event) >= 2, element(2, Event) =:= Channel ->',
+              to: "{ssh_cm, _Connection, Event}, State)\n  when is_tuple(Event), tuple_size(Event) >= 2 ->"),
     Fault.new(name: "a job's relay not watched", source: CHANNEL,
               from: 'watched = monitor(process, Relay)', to: 'watched = make_ref()'),
     Fault.new(name: 'the window opened after each data message', source: CLIENT_CHANNEL,
               from: "AutoAdjust andalso adjust_window(Msg),\n\t    {noreply, State#state{channel_state = ChannelState}};",
               to: "adjust_window(Msg),\n\t    {noreply, State#state{channel_state = ChannelState}};"),
     Fault.new(name: "a job's ending heard without its alias", source: CHANNEL,
-              from: "    heard(Message, State);\n",
-              to: "    heard(Message, State);\nhandle_msg({exited, _} = Message, State) ->\n    heard(Message, State);\n"),
+              from: "    job({heard, Message}, State);\n",
+              to: "    job({heard, Message}, State);\nhandle_msg({exited, _} = Message, State) ->\n    job({heard, Message}, State);\n"),
     Fault.new(name: 'any build kind taken for a development one', source: 'erlang/apps/erx/src/erx_build.erl',
               from: '[_Platform, Kind] -> kind(Kind) =:= {ok, development};', to: '[_Platform, _Kind] -> true;'),
     Fault.new(name: 'an Ed25519 private key without its public half', source: 'otp/lib/ssh/src/ssh_message.erl',

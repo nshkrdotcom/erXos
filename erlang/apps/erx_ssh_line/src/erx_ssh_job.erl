@@ -23,23 +23,29 @@ read is an asynchronous request whose answer is a message, so the relay
 always hears its channel. At the core's `close_input` it lets go of
 standard input's writing end, and rc reads end of file.
 
-rc runs linked to the relay (erx_shell_script:job/4), so rc ends whenever
+rc runs linked to the relay (erx_shell_script:job/5), so rc ends whenever
 the relay does. The relay watches rc and the channel with monitors: rc's
 end gives the job's status (erx_console:shell_ending/1), and the channel's
 end is `job_hangup`.
 
-The relay is also the job's group leader. Output requests are written to
-standard error without holding it, so the stream still ends with rc, one
-at a time, in the order they arrive, each answered once written, so a job
-that prints faster than its channel takes waits in its own requests; a
-process that waits for its answer, as io's functions do, has at most one
-waiting. Every other request is answered `{error,
-enotsup}`, and a `requests` list with any other request in it `{error,
-request}`. A `put_chars` that names a function to call is taken only for
-io_lib's format/2 and fwrite/2, io:format's, so no job process makes the
-relay run its code. rc ends only once an empty output request of its own
-is answered (erx_shell_script:job/4), so every output request the job made
-before it has entered standard error before the stream ends.
+The job's group leader is the relay's group, a process the relay starts
+linked to it. The group makes each output request's bytes, running the
+function a `put_chars` names as stock OTP's group runs it, and, unlike that
+group, which hands each request to its driver and goes on, serves one
+request at a time: it writes the bytes to standard error, waiting for
+room, and answers once they have entered. So a job that prints faster than
+its channel takes waits in its own requests, each printing process with at
+most one waiting since io's functions wait for their answer, and the relay
+holds none of the job's output and runs none of its code: whatever a
+printer's function does, the relay still hears its channel, and its end
+kills the group (over/2); a crash of the relay ends the group by the link,
+unless a printer's function in the group traps exits. The group writes to
+standard error without holding it, so the stream still ends with rc. Every
+other request is answered `{error, enotsup}`, and a `requests` list with
+any other request in it `{error, request}`. rc ends only once an empty
+output request of its own is answered (erx_shell_script:job/5), so every
+output request the job made before it has entered standard error before
+the stream ends.
 
 Every other message, rc's exit signal among them, is dropped.
 """.
@@ -52,25 +58,21 @@ Every other message, rc's exit signal among them, is dropped.
 -doc "The alias of the channel's that tags the job messages between it and the relay.".
 -type tag() :: reference().
 
-%% An output request of the job's group: who asked, its reply tag and the request.
--type io_request() :: {pid(), term(), term()}.
-
 %% The answer each outstanding pipe request is waiting for, by its reference.
--type pending() :: write | {read, erx_ssh_job_core:stream()} | {io, pid(), term()}.
+-type pending() :: write | {read, erx_ssh_job_core:stream()}.
 
 %% job: the core's state; alias: the channel's tag; channel_ref and rc_ref: the
-%% monitors of the channel and of rc; stdin, stdout and stderr: the pipes; pending:
-%% the outstanding pipe requests; io: idle, or writing one output request of the
-%% group with the ones that arrived since waiting in order.
+%% monitors of the channel and of rc; group: the job's group; stdin, stdout and
+%% stderr: the pipes; pending: the outstanding pipe requests.
 -record(relay, {job :: erx_ssh_job_core:job(),
                 alias :: tag(),
                 channel_ref :: reference(),
                 rc_ref :: reference(),
+                group :: pid(),
                 stdin :: pid(),
                 stdout :: pid(),
                 stderr :: pid(),
-                pending = #{} :: #{reference() => pending()},
-                io = idle :: idle | {writing, queue:queue(io_request())}}).
+                pending = #{} :: #{reference() => pending()}}).
 
 -doc """
 Starts the relay of a job for the calling process, its channel: `rc -c
@@ -89,9 +91,11 @@ start(Command, #{vars := Vars, cwd := Cwd}) when is_binary(Command) ->
 init(Channel, Alias, Command, Vars, Cwd) ->
     process_flag(trap_exit, true),
     [Stdin, Stdout, Stderr] = [erx_shell_pipe:new() || _ <- [stdin, stdout, stderr]],
+    Group = spawn_link(fun() -> group(Stderr) end),
     Rc = erx_shell_script:job(Command, Vars, Cwd,
-                              #{0 => {pipe, Stdin}, 1 => {pipe, Stdout}, 2 => {pipe, Stderr}}),
-    %% rc ends only after the loop answers its last output request, unless an
+                              #{0 => {pipe, Stdin}, 1 => {pipe, Stdout}, 2 => {pipe, Stderr}},
+                              Group),
+    %% rc ends only after the group answers its last output request, unless an
     %% exit signal ends it sooner; then the monitor reports noproc, which
     %% erx_console:shell_ending/1 takes as status 1.
     RcRef = monitor(process, Rc),
@@ -105,7 +109,7 @@ init(Channel, Alias, Command, Vars, Cwd) ->
     ok = erx_shell_pipe:attach(Stderr, read, self()),
     ok = erx_shell_pipe:attach(Stderr, write, Rc),
     Relay = #relay{job = erx_ssh_job_core:new(), alias = Alias,
-                   channel_ref = monitor(process, Channel), rc_ref = RcRef,
+                   channel_ref = monitor(process, Channel), rc_ref = RcRef, group = Group,
                    stdin = Stdin, stdout = Stdout, stderr = Stderr},
     %% A new job has both readers reading (erx_ssh_job_core:new/0).
     loop(act([{read, stdout}, {read, stderr}], Relay)).
@@ -122,8 +126,6 @@ loop(#relay{pending = Pending, alias = Alias, channel_ref = ChannelRef, rc_ref =
             loop(step({ended, status(erx_console:shell_ending(Reason))}, Relay));
         {Alias, Message} ->
             loop(step({channel, Message}, Relay));
-        {io_request, From, ReplyAs, Request} when is_pid(From) ->
-            loop(io_request({From, ReplyAs, Request}, Relay));
         _Other ->
             loop(Relay)
     end.
@@ -137,9 +139,7 @@ answered(Ref, Reply, #relay{pending = Pending} = Relay) ->
     case {Waiting, Reply} of
         {write, _OkOrEpipe} -> step(written, Relay1);
         {{read, Stream}, {bytes, Bytes}} -> step({read, Stream, Bytes}, Relay1);
-        {{read, Stream}, _EofOrGone} -> step({read, Stream, eof}, Relay1);
-        {{io, From, ReplyAs}, ok} -> io_written(From, ReplyAs, ok, Relay1);
-        {{io, From, ReplyAs}, _EpipeOrGone} -> io_written(From, ReplyAs, {error, epipe}, Relay1)
+        {{read, Stream}, _EofOrGone} -> step({read, Stream, eof}, Relay1)
     end.
 
 %% A job's status. The relay sends rc no interrupt, so rc ends by a signal
@@ -165,12 +165,18 @@ action({read, Stream}, Relay) ->
 action({send, Message}, #relay{alias = Alias} = Relay) ->
     Alias ! {Alias, Message},
     Relay;
-%% The relay's end ends rc, which ends every process of the job
-%% (erx_shell_script:job/4), and the pipes, which the relay made.
-action(hangup, _Relay) ->
-    exit({shutdown, hangup});
-action(stop, _Relay) ->
-    exit(normal).
+action(hangup, Relay) ->
+    over(Relay, {shutdown, hangup});
+action(stop, Relay) ->
+    over(Relay, normal).
+
+%% The relay's end, by its one route. It ends rc, which ends every process of
+%% the job (erx_shell_script:job/5), and the pipes, which the relay made. The
+%% group is killed by name: a normal end ends no linked process, and a
+%% printer's function running in the group may trap exits.
+over(#relay{group = Group}, Reason) ->
+    exit(Group, kill),
+    exit(Reason).
 
 pipe(stdout, #relay{stdout = Stdout}) -> Stdout;
 pipe(stderr, #relay{stderr = Stderr}) -> Stderr.
@@ -180,52 +186,38 @@ request(Ref, Waiting, #relay{pending = Pending} = Relay) ->
 
 %%% The job's group
 
-%% An output request is written at once when none is being written, and waits
-%% its turn otherwise.
-io_request(Request, #relay{io = idle} = Relay) ->
-    io_start(Request, queue:new(), Relay);
-io_request(Request, #relay{io = {writing, Waiting}} = Relay) ->
-    Relay#relay{io = {writing, queue:in(Request, Waiting)}}.
-
-%% The request being written is answered, and the next waiting one starts.
-io_written(From, ReplyAs, Reply, #relay{io = {writing, Waiting}} = Relay) ->
-    io_reply(From, ReplyAs, Reply),
-    io_next(Waiting, Relay).
-
-io_next(Waiting, Relay) ->
-    case queue:out(Waiting) of
-        {{value, Request}, Rest} -> io_start(Request, Rest, Relay);
-        {empty, _} -> Relay#relay{io = idle}
+%% The group serves one request at a time, so a request waits in its mailbox
+%% until those before it are written.
+group(Stderr) ->
+    receive
+        {io_request, From, ReplyAs, Request} when is_pid(From) ->
+            From ! {io_reply, ReplyAs, write(Stderr, output(Request))},
+            group(Stderr);
+        _Other ->
+            group(Stderr)
     end.
 
-%% Starts writing Request, or answers its refusal at once and goes on to the
-%% next waiting one.
-io_start({From, ReplyAs, Request}, Waiting, #relay{stderr = Stderr} = Relay) ->
-    case output(Request) of
-        {ok, Bytes} ->
-            Ref = erx_shell_pipe:put_async(Stderr, Bytes),
-            request(Ref, {io, From, ReplyAs}, Relay#relay{io = {writing, Waiting}});
-        {error, _} = Refused ->
-            io_reply(From, ReplyAs, Refused),
-            io_next(Waiting, Relay)
-    end.
+%% Writes an output request's bytes to standard error, waiting until they have
+%% entered: `ok`, or `{error, epipe}` once standard error's reader is gone.
+write(Stderr, {ok, Bytes}) -> erx_shell_pipe:put(Stderr, Bytes);
+write(_Stderr, {error, _} = Refused) -> Refused.
 
-io_reply(From, ReplyAs, Reply) ->
-    From ! {io_reply, ReplyAs, Reply},
-    ok.
-
-%% The bytes an output request writes, as UTF-8, or why it is refused.
+%% The bytes an output request writes, as UTF-8, or why it is refused. A
+%% put_chars that names a function is taken as stock OTP's group takes it
+%% (putc_request/3 of group.erl): the function runs here, in the group.
 output({put_chars, Encoding, Chars}) ->
     encode(Chars, Encoding);
-output({put_chars, Encoding, io_lib, Function, [_Format, _Data] = Args})
-  when Function =:= format; Function =:= fwrite ->
-    try apply(io_lib, Function, Args) of
+output({put_chars, Encoding, Module, Function, Args})
+  when is_atom(Module), is_atom(Function), is_list(Args) ->
+    try apply(Module, Function, Args) of
         Chars -> encode(Chars, Encoding)
     catch
         _:_ -> {error, put_chars}
     end;
 output({put_chars, Chars}) ->
     encode(Chars, latin1);
+output({put_chars, Module, Function, Args}) ->
+    output({put_chars, latin1, Module, Function, Args});
 output({requests, Requests}) when is_list(Requests) ->
     Outputs = [output(Request) || Request <- Requests],
     case [Bytes || {ok, Bytes} <- Outputs] of

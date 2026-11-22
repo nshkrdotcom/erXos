@@ -162,19 +162,132 @@ nothing_after_the_end_test() ->
                   || Event <- [{channel, {job_input, <<"x">>}}, {read, stdout, eof},
                                {ended, 0}]]).
 
+%%% The channel's side, channel_step/2, explored the same way: from a new channel,
+%%% every order of the client's data (up to three messages, one past a piece's
+%%% size) and end of input, of the job's start, and of what the line sends,
+%%% well-formed or not. After every step the test checks that the job gets
+%%% exactly the client's data sent after the start and before its end of input,
+%%% in order, in pieces of 1 to ssh_line_data_max bytes, one unanswered at a time,
+%%% each sent as soon as none is unanswered; that job_eof goes once, after the
+%%% last piece is answered, and as soon as it is; that the window opens by a
+%%% piece's size only once it is answered and by data that goes nowhere at once,
+%%% so what the channel holds is never more than the client sent; that output is
+%%% sent before job_sent answers it; and that an exited ends the channel and a
+%%% message that fails its check closes it.
+
+-define(DATA, 3).
+
+channel_model() ->
+    #{started => false, eof => false, eof_sent => false, data => 0,
+      accepted => <<>>, sent => <<>>, unanswered => none, owed => 0,
+      output_due => none, end_due => false, done => false}.
+
+channel_exhaustive_test() ->
+    Seen = channel_explore([{erx_ssh_job_core:new_channel(), channel_model()}], #{}),
+    ?assert(map_size(Seen) > 200).
+
+channel_explore([], Seen) ->
+    Seen;
+channel_explore([State | Rest], Seen) when is_map_key(State, Seen) ->
+    channel_explore(Rest, Seen);
+channel_explore([{Channel, M} = State | Rest], Seen) ->
+    Next = [begin
+                {Channel1, Actions} = erx_ssh_job_core:channel_step(Event, Channel),
+                {Channel1, channel_check(Event, Actions, M)}
+            end || Event <- channel_events(M)],
+    channel_explore([S || {_, #{done := false}} = S <- Next] ++ Rest, Seen#{State => true}).
+
+channel_events(#{started := Started, data := Data}) ->
+    Big = binary:copy(<<7>>, ?ERX_SSH_LINE_DATA_MAX + 1),
+    [{data, Bytes} || Data < ?DATA, Bytes <- [<<Data, 1>>, Big]]
+        ++ [eof]
+        ++ [started || not Started]
+        ++ [{heard, Message}
+            || Message <- [job_written, {job_output, stdout, <<"o">>},
+                           {job_output, stdin, <<"o">>}, {exited, 3}, {exited, 256},
+                           {signaled, sigint}]].
+
+channel_check(Event, Actions, M0) ->
+    M = lists:foldl(fun channel_act/2, channel_before(Event, M0), Actions),
+    Context = {Event, Actions, M0},
+    ?assertMatch(#{owed := 0, output_due := none}, M, Context),
+    ?assert(maps:get(done, M) orelse not maps:get(end_due, M), {no_ending, Context}),
+    case M of
+        #{done := true} ->
+            ok;
+        #{started := true, unanswered := none, sent := Sent, accepted := Accepted}
+          when Sent =/= Accepted ->
+            ?assert(false, {piece_not_sent, Context});
+        #{started := true, unanswered := none, eof := true, eof_sent := false} ->
+            ?assert(false, {job_eof_not_sent, Context});
+        #{} ->
+            ok
+    end,
+    M.
+
+%% The model once Event has happened, with what it obliges the channel to do:
+%% owed is the window the channel must open in this step, output_due the output
+%% it must send and then answer.
+channel_before({data, Bytes}, #{started := true, eof := false, accepted := A, data := N} = M) ->
+    M#{data := N + 1, accepted := <<A/binary, Bytes/binary>>};
+channel_before({data, Bytes}, #{data := N, owed := Owed} = M) ->
+    M#{data := N + 1, owed := Owed + byte_size(Bytes)};
+channel_before(eof, M) ->
+    M#{eof := true};
+channel_before(started, M) ->
+    M#{started := true};
+channel_before({heard, job_written}, #{unanswered := Size, owed := Owed} = M) when Size =/= none ->
+    M#{unanswered := none, owed := Owed + Size};
+channel_before({heard, {job_output, stdout, Bytes}}, M) ->
+    M#{output_due := Bytes};
+channel_before({heard, _}, M) ->
+    M#{end_due := true}.
+
+channel_act(_Action, #{done := true} = M) ->
+    ?assert(false, {action_after_the_end, M});
+channel_act({send, {job_input, Piece}}, #{started := true, unanswered := none, sent := Sent,
+                                          accepted := Accepted} = M)
+  when byte_size(Piece) >= 1, byte_size(Piece) =< ?ERX_SSH_LINE_DATA_MAX ->
+    Next = <<Sent/binary, Piece/binary>>,
+    ?assertEqual(Next, binary:part(Accepted, 0, byte_size(Next))),
+    M#{sent := Next, unanswered := byte_size(Piece)};
+channel_act({send, job_eof}, #{started := true, eof := true, eof_sent := false,
+                               unanswered := none, sent := Same, accepted := Same} = M) ->
+    M#{eof_sent := true};
+channel_act({adjust, N}, #{owed := Owed} = M) when N >= 1, N =< Owed ->
+    M#{owed := Owed - N};
+channel_act({output, stdout, Bytes}, #{output_due := Bytes} = M) ->
+    M#{output_due := {answer, Bytes}};
+channel_act({send, job_sent}, #{output_due := {answer, _}} = M) ->
+    M#{output_due := none};
+channel_act({ended, 3}, #{end_due := true} = M) ->
+    M#{done := true};
+channel_act(close, #{end_due := true} = M) ->
+    M#{done := true};
+channel_act(Action, M) ->
+    ?assert(false, {unexpected, Action, M}).
+
 %% The channel's checks of what the line sends for its job.
-heard_test() ->
+channel_heard_test() ->
     Big = binary:copy(<<1>>, ?ERX_SSH_LINE_DATA_MAX + 1),
-    Idle = #{input => false, output => false},
-    Input = Idle#{input := true},
-    Output = Idle#{output := true},
-    Heard = [{job_written, Input}, {job_written, Idle},
-             {{job_output, stderr, <<0>>}, Idle},
-             {{job_output, stderr, <<0>>}, Output},
-             {{job_output, stdin, <<0>>}, Idle}, {{job_output, stdout, Big}, Idle},
-             {{exited, 255}, Idle}, {{exited, 256}, Idle},
-             {{signaled, sigint}, Idle}, {other, Input}],
-    ?assertEqual([written, close, {output, stderr, <<0>>}, close, close, close,
-                  {ended, 255}, close, close, close],
-                 [erx_ssh_job_core:heard(Message, Unanswered)
-                  || {Message, Unanswered} <- Heard]).
+    New = erx_ssh_job_core:new_channel(),
+    {Started, []} = erx_ssh_job_core:channel_step(started, New),
+    {Writing, [{send, {job_input, <<"x">>}}]} =
+        erx_ssh_job_core:channel_step({data, <<"x">>}, Started),
+    Heard = [{job_written, Writing}, {job_written, Started},
+             {{job_output, stderr, <<0>>}, Started},
+             {{job_output, stdin, <<0>>}, Started}, {{job_output, stdout, Big}, Started},
+             {{exited, 255}, Started}, {{exited, 256}, Started},
+             {{signaled, sigint}, Started}, {other, Writing}],
+    ?assertEqual([[{adjust, 1}], [close], [{output, stderr, <<0>>}, {send, job_sent}],
+                  [close], [close], [{ended, 255}], [close], [close], [close]],
+                 [element(2, erx_ssh_job_core:channel_step({heard, Message}, Channel))
+                  || {Message, Channel} <- Heard]).
+
+%% The client's end of input before the job starts is kept, and goes as job_eof
+%% once it has; its data before the start goes nowhere, the window opening by it.
+channel_eof_before_the_start_test() ->
+    {C1, [{adjust, 2}]} = erx_ssh_job_core:channel_step({data, <<"ab">>},
+                                                        erx_ssh_job_core:new_channel()),
+    {C2, []} = erx_ssh_job_core:channel_step(eof, C1),
+    ?assertMatch({_, [{send, job_eof}]}, erx_ssh_job_core:channel_step(started, C2)).

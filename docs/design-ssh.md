@@ -889,20 +889,28 @@ and takes the answer as a message, and at `job_eof` it closes standard
 input's writing end while it goes on running, so `rc` reads end of file
 while the job's output still flows.
 
-The relay is the job's group leader. What the job's processes print
-through `io` it writes to the job's standard error, whatever a
-command's own redirection, and never to standard output, which stays
-byte-clean; every other request it answers `{error, enotsup}`, and a
-`requests` list holding one `{error, request}`, as every group does.
-Input is refused as the command shell's group refuses it to every
-process but its shell
+The job's group leader is the relay's group, a process the relay starts
+linked to it. What the job's processes print through `io` the group
+writes to the job's standard error, whatever a command's own
+redirection, and never to standard output, which stays byte-clean;
+every other request it answers `{error, enotsup}`, and a `requests`
+list holding one `{error, request}`, as every group does. Input is
+refused as the command shell's group refuses it to every process but
+its shell
 ([design-shell.md](design-shell.md#the-terminal-relays-protocol)), and
 `setopts`, `getopts` and `get_geometry` because a job has no terminal,
-as `io:columns/0` reports for any device that is not one. The relay
-writes to standard error without holding it, so the stream still ends
-when `rc` does. On a tty, the command shell's group writes `io` output
-to the terminal, which is standard error there, so output follows one
-rule in both.
+as `io:columns/0` reports for any device that is not one. The group
+makes each request's bytes, running the function a `put_chars` names
+as stock OTP's group runs it, and, unlike that group, which hands each
+request to its driver and goes on, serves one request at a time: it
+writes the bytes to standard error, waiting for room, and answers once
+they have entered. So a channel that takes no output stops the job's
+printers in their own requests, each printing process with at most one
+waiting, and the relay holds none of the job's output and runs none of
+its code: it always hears its channel, and its end kills the group. The group writes to standard error without holding it,
+so the stream still ends when `rc` does. On a tty, the command shell's
+group writes `io` output to the terminal, which is standard error
+there, so output follows one rule in both.
 
 A job's channel and its line exchange seven closed messages, heard
 through each other's domain envelope and each checked by its receiver:
@@ -1159,7 +1167,13 @@ identifier.
    other process of root's session sends either a job message; a tty's
    ending reaches the channel tagged the same way. That covers the
    channel and the relay, not the job's pipes or its group, which any
-   process naming them can write to, as on any group leader. The
+   process naming them can write to, as on any group leader. OTP's
+   channel passes on any SSH event a process sends it, so the channel
+   takes only those naming its own connection and channel; a process of
+   the session that names both could still speak for the client, which
+   stage 1 accepts, running only trusted code. The client's end of
+   input reaches the job even when it comes before the exec; data before
+   the exec goes nowhere, the window opening by it at once. The
    channel opens the client's window itself, by `window/0` ([Edits to
    OTP's ssh](#edits-to-otps-ssh)): a job's by a piece's size once the
    relay answers `job_written`, a tty's by what it hands the tty. Its
@@ -1607,6 +1621,16 @@ boots the card and logs in.
   SSH domain needs an edit to OTP's ssh, a daemon option for the
   window and packet a channel offers, before its worst case is the
   40 MiB that table counts; the item is in `TODO.md`.
+* **A job's printers are bounded per process, not per channel.** While
+  the client takes no output, the job's group holds one output request
+  and each printing process at most one more in the group's mailbox,
+  fewer than stock OTP's group, which forwards every request to its
+  driver at once. How large a request is, how far a format expands it and whether
+  a function it names returns are the printing process's own code, the
+  session's, which the client cannot change; a client that stops reading
+  only stops the printers, and its hangup ends the group whatever it is
+  running. A bound per channel would need the printers to wait before
+  they send, which the io protocol does not offer.
 * **Session creation per login** costs a domain's start; the latency of
   an SSH login is on the watch list
   ([todo-performance.md](todo-performance.md)),

@@ -42,6 +42,8 @@ daemon_test_() ->
               ?_test(a_malformed_job_message_closes_the_channel(Context)),
               ?_test(the_window_waits_for_the_job(Context)),
               ?_test(an_untagged_job_message_changes_nothing(Context)),
+              ?_test(ssh_messages_of_another_channel_change_nothing(Context)),
+              ?_test(an_end_of_input_before_exec_reaches_the_job(Context)),
               ?_test(exec_runs_on_a_tty(Context)),
               ?_test(an_exec_out_of_bounds_is_refused(Context)),
               ?_test(root_logs_in_with_a_home_key(Context)),
@@ -140,7 +142,9 @@ tty_loop(Channel, Ref, Notify, N) ->
 %% it only once the test says `release`; `crash` ends the relay before any ending;
 %% `forge` sends a job_output one byte past ssh_line_data_max and tells the test
 %% how the channel ended; `forger` has another process send the channel job
-%% messages without the alias, and then ends with status 7. It crashes, so the
+%% messages without the alias, and then ends with status 7; `inject` sends the
+%% channel SSH data and end of input in messages naming another connection and
+%% channel, tells the test, and then runs as `exit 0`. It crashes, so the
 %% channel ends with status 1, on a piece past ssh_line_data_max or empty, on a
 %% job_input or job_eof the channel sent before the last piece was answered, and
 %% when a job_output is not answered.
@@ -165,6 +169,12 @@ job_run(<<"crash">>, _Job) ->
 job_run(<<"forge">>, #{alias := Alias, ref := Ref}) ->
     Alias ! {Alias, {job_output, stdout, binary:copy(<<0>>, ?ERX_SSH_LINE_DATA_MAX + 1)}},
     receive {'DOWN', Ref, process, _, Reason} -> ?MODULE ! {channel_ended, Reason} end;
+job_run(<<"inject">>, #{channel := Channel} = Job) ->
+    _ = [Channel ! Forged || Forged <- [{ssh_cm, self(), {data, 99, 0, <<"injected">>}},
+                                        {ssh_cm, self(), {eof, 99}}]],
+    _ = sys:get_state(Channel),
+    ?MODULE ! injected,
+    job_loop(Job, 0);
 job_run(<<"forger">>, #{channel := Channel, alias := Alias}) ->
     %% The channel has taken every forged message before it answers the forger's
     %% call, which the forger makes before it ends.
@@ -347,6 +357,34 @@ an_untagged_job_message_changes_nothing(#{client := Client} = Context) ->
     {ok, Channel} = ssh_connection:session_channel(Connection, 10000),
     success = ssh_connection:exec(Connection, Channel, "forger", 10000),
     ?assertEqual({<<>>, <<>>, {status, 7}}, job_ending(Connection, Channel, <<>>, <<>>, none)),
+    ok = ssh:close(Connection).
+
+%% SSH messages sent to the channel by another process of the session, naming a
+%% connection and channel not its own, change nothing: the job reads only what the
+%% client sent, and the client's own end of input.
+ssh_messages_of_another_channel_change_nothing(#{client := Client} = Context) ->
+    named(fun() ->
+                  {ok, Connection} = connect(Context, "root", Client),
+                  {ok, Channel} = ssh_connection:session_channel(Connection, 10000),
+                  success = ssh_connection:exec(Connection, Channel, "inject", 10000),
+                  receive injected -> ok after 10000 -> error(not_injected) end,
+                  ok = ssh_connection:send(Connection, Channel, <<"real">>),
+                  ok = ssh_connection:send_eof(Connection, Channel),
+                  ?assertEqual({<<"real">>, <<"end of input\n">>, {status, 0}},
+                               job_ending(Connection, Channel, <<>>, <<>>, none)),
+                  ok = ssh:close(Connection)
+          end).
+
+%% The client's end of input before its exec, after a request that starts the
+%% channel's process, reaches the job once it starts.
+an_end_of_input_before_exec_reaches_the_job(#{client := Client} = Context) ->
+    {ok, Connection} = connect(Context, "root", Client),
+    {ok, Channel} = ssh_connection:session_channel(Connection, 10000),
+    failure = ssh_connection:setenv(Connection, Channel, "A", "b", 10000),
+    ok = ssh_connection:send_eof(Connection, Channel),
+    success = ssh_connection:exec(Connection, Channel, "exit 0", 10000),
+    ?assertEqual({<<>>, <<"end of input\n">>, {status, 0}},
+                 job_ending(Connection, Channel, <<>>, <<>>, none)),
     ok = ssh:close(Connection).
 
 %% An exec after a pty-req runs on the tty at the pty-req's size, and its status is
