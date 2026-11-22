@@ -102,7 +102,8 @@ module Erx
       Manifest::Edit.set(held, { ["domain #{PCIE}", 'restarts'] => 0 }) + HOLDER_UNIT + HOLDER_FACET
     end
 
-    # The wait for a domain at the Erlang shell, two expressions, the usb suite's too (UsbBoot).
+    # The wait for a domain at the Erlang shell, two expressions, the usb and Bluetooth
+    # suites' too (UsbBoot, BtDomain).
     WAIT = [
       # PcFind(Node): the ready domains of Node in the domain service's state, or none while
       # the service is too busy to answer, so the waits poll on.

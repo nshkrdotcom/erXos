@@ -197,15 +197,18 @@ uses from it come from Bumble's `core.py:1594-1622` and are marked
 unverified until the supplement is read.
 
 QEMU's virtio console is QEMU's, whose source is under the GPL and was
-not read, so three facts the line on QEMU `virt` relies on are
-unverified until the QEMU suite's first boot settles them: that QEMU
-joins port 0 to its socket when the driver negotiates no
-`VIRTIO_CONSOLE_F_MULTIPORT`, and so sends no port-open message; whether
-it holds or drops bytes that arrive while no receive buffer is posted;
-and whether a device reset drops what QEMU's character device holds. If
-the first does not hold, the driver negotiates
-`VIRTIO_CONSOLE_F_MULTIPORT` and opens port 0 with the control queues'
-messages (section 5.3.6.2).
+not read, so the line on QEMU `virt` relies on three facts that only
+boots settle. The first is settled: QEMU joins port 0 to its socket when
+the driver negotiates no `VIRTIO_CONSOLE_F_MULTIPORT` and sends no
+port-open message. The Bluetooth suite's boot (QEMU 11.1.3, HVF, one
+guest CPU, an Apple M3 Max host) ran the bring-up from `HCI_Reset`
+through advertising against Bumble's controller over that port. Two are
+unverified: whether QEMU holds or drops bytes that arrive while no
+receive buffer is posted, and whether a device reset drops what QEMU's
+character device holds. The bring-up does not tell them apart, since
+Bumble's controller writes only answers, and the line drops what it
+buffered at every `reset`; a stand-in controller that writes before the
+driver's start and across a `reset` settles them.
 
 ## Requirements
 

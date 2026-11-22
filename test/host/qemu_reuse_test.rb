@@ -152,6 +152,14 @@ class QemuReuseTest < Minitest::Test
     assert_equal 2, starts
   end
 
+  # A line's controller answers from the host, so its boot is never one QEMU's inputs determine.
+  def test_a_boot_with_a_line_always_runs
+    line = Erx::QemuPlan::Line.new(port: 9)
+    boot(session, line: line)
+    boot(session, line: line)
+    assert_equal 2, starts
+  end
+
   def test_a_malformed_or_changed_record_is_a_miss_with_a_diagnostic
     boot(session)
     damages = {

@@ -780,6 +780,11 @@ module Erx
     # directory passed as directory. A boot with a display is never reused: what the screen
     # showed is not in its serial log.
     #
+    # line, a QemuPlan::Line, joins the Bluetooth controller's line to a controller the
+    # caller serves on a loopback TCP port, which must listen before the run starts. A boot
+    # with a line is never reused, since that controller's answers are not QEMU's inputs,
+    # and never remote, since the remote host cannot reach the port.
+    #
     # Inside the QEMU gate (QemuReuse.active), a boot that passed before on
     # the same inputs does not start QEMU: its stored serial log is written to
     # the run's serial log and replayed, and the report names it under
@@ -793,11 +798,11 @@ module Erx
     # during the boot raises QemuRemote::Unreachable.
     def run(platform:, accel:, image:, cpus: 1, memory_mib: QemuPlan.memory_of(platform), checkpoints: nil, initrd: nil, machine_end: false, directory: nil, command_line: nil,
             dtb: nil, disks: [], link: nil, link_seconds: 0, hostlink: nil, nic: nil, remote: nil, stub: nil, firmware: nil, display: nil,
-            pcie: nil)
+            pcie: nil, line: nil)
       raise Error, 'a run with a host link session ends when the session does, not with machine_end' if link && machine_end
       raise Error, 'a run with a host link session takes no other host link plan' if link && hostlink
-      if remote && !reusable?(link: link, nic: nic, disks: disks, hostlink: hostlink, display: display, firmware: firmware, pcie: pcie)
-        raise Error, 'a remote boot takes no disk, network device, display, PCIe function or host link'
+      if remote && !reusable?(link: link, nic: nic, disks: disks, hostlink: hostlink, display: display, firmware: firmware, pcie: pcie, line: line)
+        raise Error, 'a remote boot takes no disk, network device, display, PCIe function, line or host link'
       end
       raise Error, 'a remote boot takes no boot stub' if remote && stub
 
@@ -825,14 +830,14 @@ module Erx
              else
                QemuPlan.argv(**plan, image: image, serial: serial, serial_input: keyboard, initrd: initrd, dtb: dtb,
                                      disks: disks, hostlink: socket || hostlink, nic: nic, stub: stub, firmware: firmware, display: display,
-                                     pcie: pcie)
+                                     pcie: pcie, line: line)
              end
       report = { 'state' => 'running', 'image_sha256' => Digest::SHA256.file(image).hexdigest,
                  'argv' => argv, 'checkpoints' => matcher.observed, 'serial_log' => serial }
       report['remote'] = remote.destination if remote
       reuse = QemuReuse.active
       key = nil
-      if reuse && reusable?(link: link, nic: nic, disks: disks, hostlink: hostlink, display: display, firmware: firmware, pcie: pcie)
+      if reuse && reusable?(link: link, nic: nic, disks: disks, hostlink: hostlink, display: display, firmware: firmware, pcie: pcie, line: line)
         key = boot_key(reuse, plan: plan, remote_run: remote_run, image_sha256: report.fetch('image_sha256'), typed: matcher.types?, initrd: initrd,
                               dtb: dtb, stub: stub, hostlink: hostlink, checkpoints: checkpoints, machine_end: machine_end)
         stored = stored_boot(reuse, key, report: report, checkpoints: checkpoints, directory: directory) if key
@@ -899,10 +904,10 @@ module Erx
     private
 
     # Whether QEMU's inputs alone determine this boot (QemuReuse): no disk the
-    # guest may write, no network device, no display a checkpoint reads, and no host link
-    # a host side serves.
-    def reusable?(link:, nic:, disks:, hostlink:, display:, firmware:, pcie:)
-      link.nil? && nic.nil? && display.nil? && firmware.nil? && pcie.nil? && disks.empty? && (hostlink.nil? || hostlink == QemuPlan::NO_HOSTLINK)
+    # guest may write, no network device, no display a checkpoint reads, no line whose
+    # controller answers from the host, and no host link a host side serves.
+    def reusable?(link:, nic:, disks:, hostlink:, display:, firmware:, pcie:, line:)
+      link.nil? && nic.nil? && display.nil? && firmware.nil? && pcie.nil? && line.nil? && disks.empty? && (hostlink.nil? || hostlink == QemuPlan::NO_HOSTLINK)
     end
 
     # The boot's key. The keyed plan is the boot's own (plan, as run passes it

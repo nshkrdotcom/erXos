@@ -6,6 +6,7 @@ require 'json'
 require 'minitest/autorun'
 require 'tmpdir'
 require_relative '../../tools/lib/erx/platform'
+require_relative '../../tools/lib/erx/bt_domain'
 require_relative '../../tools/lib/erx/display_domain'
 require_relative '../../tools/lib/erx/dom_planner'
 require_relative '../../tools/lib/erx/manifest'
@@ -181,6 +182,17 @@ class DomPlannerTest < Minitest::Test
     context = Erx::Manifest::Context.new(**arguments.merge(platform: Erx::MediumBoot.machine(PLATFORM).record))
     admitted = Erx::Manifest.admit(source: source, codec: @codec, context: context, planner: @planner)
     assert_equal 5, admitted.report.fetch('child_plan_instances')
+  end
+
+  # The Bluetooth suite's manifest (BtDomain.manifest): the development manifest with
+  # the line unit on the system domain, the Bluetooth domain and its line grant, on the
+  # medium machine: the check admits it and the library plans all seven domains.
+  def test_the_library_plans_the_bluetooth_suites_domains
+    source = Erx::BtDomain.manifest(PLATFORM.manifest_source(ROOT), platform: PLATFORM)
+    arguments = ManifestContextFixture.archive_arguments(@codec, boots: %w[app bt display network ntpd pcie session storage usb web])
+    context = Erx::Manifest::Context.new(**arguments.merge(platform: Erx::MediumBoot.machine(PLATFORM).record))
+    admitted = Erx::Manifest.admit(source: source, codec: @codec, context: context, planner: @planner)
+    assert_equal 7, admitted.report.fetch('child_plan_instances')
   end
 
   # The network domain cell's manifest (NetworkDomain.manifest), the development manifest
