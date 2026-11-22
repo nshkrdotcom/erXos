@@ -305,7 +305,9 @@ post(_Dev, _Queue, _Tag, _Item) ->
 
 %% What the device has returned, in order, as `{Tag, Bytes}`: Bytes is a fresh binary of
 %% what the device wrote into the request's in segments, end to end, cut at the length it
-%% reported. One call copies at most 64 KiB and one buffer, so a driver calls again until it gets
+%% reported; GENET's receive Tag is the descriptor's status word, whose length past the
+%% buffer comes with no bytes (docs/design-device-dma.md, "The register ring (GENET)").
+%% One call copies at most 64 KiB and one buffer, so a driver calls again until it gets
 %% `{ok, []}`. A device's malformed entry breaks the queue: what came before it is
 %% returned, and the next call is `{error, broken}` until negotiate/2.
 %%

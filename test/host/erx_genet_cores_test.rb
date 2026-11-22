@@ -26,11 +26,11 @@ class ErxGenetCoresTest < Minitest::Test
     'the padding not subtracted from the length' =>
       ['erx_genet_rx', 'binary:part(Bytes, ?PAD, byte_size(Bytes) - ?PAD)', 'binary:part(Bytes, ?PAD, byte_size(Bytes))'],
     'only the receive-error bit dropping a frame' =>
-      ['erx_genet_rx', 'Flags band ?STATUS_ERROR_MASK =/= 0', 'Flags band 16#0004 =/= 0'],
-    'a completion past the buffer taken as a frame' =>
-      ['erx_genet_rx', 'byte_size(Bytes) > ?BUFFER_BYTES -> {drop, too_long};', ''],
-    'flags past the bits below the length taken' =>
-      ['erx_genet_rx', 'Flags >= 0, Flags =< ?FLAGS_MAX, is_binary(Bytes)', 'Flags >= 0, is_binary(Bytes)'],
+      ['erx_genet_rx', 'Status band ?STATUS_ERROR_MASK =/= 0', 'Status band 16#0004 =/= 0'],
+    'a length past the buffer not dropped as too_long' =>
+      ['erx_genet_rx', '?ERX_HW_GENET_RX_DESC_STATUS_BUFLEN_GET(Status) > byte_size(Bytes) -> {drop, too_long};', ''],
+    'a status past 32 bits taken' =>
+      ['erx_genet_rx', 'Status >= 0, Status =< 16#ffffffff, is_binary(Bytes)', 'Status >= 0, is_binary(Bytes)'],
     'a frame past the MTU passed up' =>
       ['erx_genet_core', '{frame, _Long} -> {[{dropped, too_long} | Drops], Frames};', '{frame, Long} -> {Drops, [Long | Frames]};'],
     'a ring setting left out' =>
@@ -40,8 +40,6 @@ class ErxGenetCoresTest < Minitest::Test
     'a full receive ring blamed on its index' =>
       ['erx_genet_core', 'Ahead when Ahead > ?ERX_GENET_RING_SIZE ->',
        'Ahead when Ahead >= ?ERX_GENET_RING_SIZE ->'],
-    'a descriptor past the producer index blamed for a length' =>
-      ['erx_genet_core', 'K <- lists:seq(0, Ahead - 1)', 'K <- lists:seq(0, Ahead + 1)'],
     'the latched link bit read once' =>
       ['erx_phy_c22', 'Up = Now band ?BMSR_LINK =/= 0', 'Up = Latched band ?BMSR_LINK =/= 0']
   }.freeze

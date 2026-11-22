@@ -46,7 +46,7 @@ The sequences follow FreeBSD 975e3605ebb1, `sys/arm64/broadcom/genet/if_genet.c`
 
 -export([identify/1, lladdr/1, reset/0, configure/1, start/0, link_up/1]).
 -export([negotiate_retry/1, frames/2, pieces/1]).
--export([evidence/0, rx_fault/3]).
+-export([evidence/0, rx_fault/1]).
 -export_type([step/0, address_step/0, rx_fault/0]).
 
 -include("generated/erx_abi.hrl").
@@ -234,63 +234,44 @@ evidence() ->
      {tx_ring_cons_index, ?RING}, {tx_ring_prod_index, ?RING}].
 
 -doc """
-Which of the device NIF's two receive bounds a broken receive queue met, read again from
+Whether a broken receive queue met the device NIF's one receive bound, read again from
 the controller (docs/design-device-dma.md, "The register ring (GENET)"): `{index, Ahead}`,
 the producer index more than the ring's size ahead of the consumer index; else
-`{length, Position, Status}`, the first descriptor the controller has filled, from the
-consumer index up to the producer index, whose status word's BUFLEN field is over
-`BufferBytes`; else `unexplained`, when the controller no longer shows either.
+`unexplained`, when the controller no longer shows it. A descriptor's status breaks no
+queue: one whose length passes the buffer is a frame of no bytes.
 
-`Evidence` is the words of `evidence/0`'s registers, read first, so the indexes come from
-the same reads the driver logs; `Status(Position)` reads a descriptor's status word and is
-called only for filled positions, in ring order, after the indexes, as the NIF reads them,
-and no further than the first fault. Every word is untrusted.
+`Evidence` is the words of `evidence/0`'s registers, read once, so the indexes come from
+the same reads the driver logs. Every word is untrusted.
 """.
--type rx_fault() :: {index, (?ERX_GENET_RING_SIZE + 1)..16#ffff}
-                  | {length, 0..(?ERX_GENET_RING_SIZE - 1), 0..16#ffffffff}
-                  | unexplained.
--spec rx_fault([{erx_device:register_name(), non_neg_integer()}],
-               fun((0..(?ERX_GENET_RING_SIZE - 1)) -> non_neg_integer()), pos_integer()) ->
-          rx_fault().
-rx_fault(Evidence, Status, BufferBytes) ->
+-type rx_fault() :: {index, (?ERX_GENET_RING_SIZE + 1)..16#ffff} | unexplained.
+-spec rx_fault([{erx_device:register_name(), non_neg_integer()}]) -> rx_fault().
+rx_fault(Evidence) ->
     {_, ProdWord} = lists:keyfind({rx_ring_prod_index, ?RING}, 1, Evidence),
     {_, ConsWord} = lists:keyfind({rx_ring_cons_index, ?RING}, 1, Evidence),
     Prod = ?ERX_HW_GENET_RX_RING_PROD_INDEX_INDEX_GET(ProdWord),
     Cons = ?ERX_HW_GENET_RX_RING_CONS_INDEX_INDEX_GET(ConsWord),
     case (Prod - Cons) band 16#ffff of
-        Ahead when Ahead > ?ERX_GENET_RING_SIZE ->
-            {index, Ahead};
-        Ahead ->
-            Filled = [(Cons + K) rem ?ERX_GENET_RING_SIZE || K <- lists:seq(0, Ahead - 1)],
-            first_too_long(Filled, Status, BufferBytes)
-    end.
-
-first_too_long([], _Status, _BufferBytes) ->
-    unexplained;
-first_too_long([Position | Rest], Status, BufferBytes) ->
-    Word = Status(Position),
-    case ?ERX_HW_GENET_RX_DESC_STATUS_BUFLEN_GET(Word) > BufferBytes of
-        true -> {length, Position, Word};
-        false -> first_too_long(Rest, Status, BufferBytes)
+        Ahead when Ahead > ?ERX_GENET_RING_SIZE -> {index, Ahead};
+        _Ahead -> unexplained
     end.
 
 %% --- Frames ---------------------------------------------------------------------------
 
 -doc """
 The cut of a batch of receive completions into its drops and its frames, in order. Each
-completion is the device NIF's `{Flags, Bytes}`, which erx_genet_rx:frame/2 judges: the
-descriptor status's bits below its length field and the bytes the controller wrote, as
-many as its length field said, the 2-byte alignment pad first. Both are untrusted. Its
+completion is the device NIF's `{Status, Bytes}`, which erx_genet_rx:frame/2 judges: the
+descriptor's whole status word and the bytes the controller wrote, as many as its length
+field said or none past the buffer, the 2-byte alignment pad first. Both are untrusted. Its
 drops pass through, and a frame longer than the MTU and its Ethernet header is dropped
 as `too_long` as well.
 """.
--spec frames([{erx_genet_rx:flags(), binary()}], pos_integer()) ->
+-spec frames([{erx_genet_rx:status(), binary()}], pos_integer()) ->
           {[{dropped, erx_genet_rx:drop()}], [binary()]}.
 frames(Completions, Mtu) ->
     lists:foldr(fun(Completion, Acc) -> frame(Completion, Mtu, Acc) end, {[], []}, Completions).
 
-frame({Flags, Bytes}, Mtu, {Drops, Frames}) ->
-    case erx_genet_rx:frame(Flags, Bytes) of
+frame({Status, Bytes}, Mtu, {Drops, Frames}) ->
+    case erx_genet_rx:frame(Status, Bytes) of
         {frame, Frame} when byte_size(Frame) =< Mtu + ?ETHER_HDR_LEN -> {Drops, [Frame | Frames]};
         {frame, _Long} -> {[{dropped, too_long} | Drops], Frames};
         {drop, Reason} -> {[{dropped, Reason} | Drops], Frames}

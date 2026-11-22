@@ -1361,10 +1361,11 @@ receive queue is standing: install hands every buffer to the device, and
 of its register, whose upper 16 count frames the controller discarded
 ([GENET facts record](research-genet-bcm2711.md#layout-of-a-dma-block)),
 which may advance by at most the queue's size, then each new
-descriptor's status once, whose length, bits 31:16, may be at most the
-buffer size; it copies that many bytes, then hands the buffer back, the
-sequencer writing the consumer index, in the same call, whether or not the driver
-will drop the frame, so an errored frame never holds the ring (FreeBSD's
+descriptor's status once; it copies as many bytes as the length, bits
+31:16, says when that is at most the buffer size, and none when it is
+more, then hands the buffer back, the sequencer writing the consumer
+index, in the same call, whether or not the driver will drop the frame,
+so neither an errored frame nor a status of any value holds the ring (FreeBSD's
 error path does not advance its index, which the record notes as a
 stall, [Where the drivers disagree](research-genet-bcm2711.md#where-the-drivers-disagree)).
 The length counts everything the controller wrote into the buffer: the
@@ -1374,19 +1375,22 @@ command register forwards it (CRC forward, bit 6); the driver strips
 each it enabled, and writes the command register with CRC forward clear
 at its reset, as FreeBSD does, so no FCS is counted
 ([The receive status word](research-genet-bcm2711.md#the-receive-status-word)).
-Each completion carries as its tag the low 16 bits of the descriptor's
-status, its flags: start of packet (bit 13), end of packet (bit 14),
+Each completion carries as its tag the descriptor's whole status word:
+its length, which alone says why a completion past the buffer brought no
+bytes, and its flags, start of packet (bit 13), end of packet (bit 14),
 and the error bits, overflow (bit 0), CRC error (bit 1), receive error
 (bit 2), a frame not a whole number of octets (bit 3) and a length error
 (bit 4) (`if_genetreg.h:168-176`; the record, for bits 0, 1, 3 and 4,
 whose meanings come from register-field names alone). The driver drops a
-frame that lacks start or end of packet or has any of bits 0 to 4 set,
+frame whose length passes the buffer, as the other published driver does,
+and one that lacks start or end of packet or has any of bits 0 to 4 set,
 the wider of the two published drivers' rules, since FreeBSD tests only
-bit 2 (`if_genet.c:1404-1415`). The status word is the descriptor's
+bit 2 (`if_genet.c:1404-1415`); neither driver resets the queue for a
+status ([What drops a frame](research-genet-bcm2711.md#the-receive-status-word)). The status word is the descriptor's
 status register when the status block is off (`if_genet.c:1396-1400`),
 so the driver needs no status block to see the flags. A receive post is
-`badarg`. An index or a length beyond its bound breaks
-the queue, as a malformed used entry does.
+`badarg`. An index beyond its bound breaks the queue, as a malformed
+used entry does: the indexes, not the statuses, are the ring's state.
 
 **The ADMA2 table (SDHCI).** A queue of one buffer and one table, since a
 controller moves one command's data at a time; the table's device
@@ -1833,6 +1837,12 @@ ran.
   driver drops the frame. Seeds: the tag forced to 0, and the driver's
   frame test passes the bad frame; the drop test narrowed to bit 2, as
   FreeBSD's, and the CRC-error frame is delivered.
+* **GENET's lengths past the buffer.** Over the stand-in, statuses whose
+  length passes the buffer, the Pi 4's among them: each completion
+  carries its whole status and no bytes, the consumer index advances
+  past them, the queue stays whole and the driver drops each as
+  `too_long`. Seed: the driver's length test removed, and they are
+  counted as fragments.
 * **GENET's stop.** Over the stand-in, whose DMA status sets its bits
   some reads after the stop: `negotiate/2` answers `{error, ebusy}` until
   both directions show bit 0 and the ring's bit, and installs nothing

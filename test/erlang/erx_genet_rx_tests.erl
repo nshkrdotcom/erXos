@@ -3,12 +3,13 @@
 
 %% EUnit cases of the Raspberry Pi 4 Ethernet controller's receive decision,
 %% erx_genet_rx:frame/2, over completions as the device NIF hands them up: the
-%% status bits below the length field and the bytes the controller wrote. Known
-%% answers at every boundary come first, each worked out by hand from FreeBSD's
-%% if_genet.c:1406-1409 (start, end and error bits) and :1440-1443 (the padding
-%% counted in the length). Then every size up to past the buffer with every
-%% combination of the start, end and error bits is judged with judge/2, a
-%% restatement of the rules that agrees with the known answers, as the oracle.
+%% descriptor's whole status word and the bytes the controller wrote, none when
+%% the status's length passes the buffer. Known answers at every boundary come
+%% first, each worked out by hand from FreeBSD's if_genet.c:1406-1409 (start,
+%% end and error bits) and :1440-1443 (the padding counted in the length). Then
+%% every size up to past the buffer with every combination of the start, end
+%% and error bits is judged with judge/2, a restatement of the rules that agrees
+%% with the known answers, as the oracle.
 
 -module(erx_genet_rx_tests).
 -include_lib("eunit/include/eunit.hrl").
@@ -26,28 +27,32 @@
 %% The bytes a buffer holds: byte I is I mod 251, so a frame's offset shows.
 buffer(Size) -> list_to_binary([I rem 251 || I <- lists:seq(0, Size - 1)]).
 
-%% The oracle: the lowest error bit first, then start and end, then the bytes
-%% against an Ethernet header after the padding and the buffer; a frame is the
-%% bytes after the padding.
-judge(Flags, Bytes) ->
+%% A completion as the NIF hands it up: the status, flags and a length of Size,
+%% and the bytes, none when Size passes the buffer.
+completion(Flags, Size, Whole) when Size > ?BUFFER -> {(Size bsl 16) bor Flags, binary:part(Whole, 0, 0)};
+completion(Flags, Size, Whole) -> {(Size bsl 16) bor Flags, binary:part(Whole, 0, Size)}.
+
+%% The oracle: a length past the buffer first, then the lowest error bit, then
+%% start and end, then the bytes against an Ethernet header after the padding;
+%% a frame is the bytes after the padding.
+judge(Status, Bytes) ->
     Size = byte_size(Bytes),
     if
-        Flags band 16#1f =/= 0 ->
-            {drop, hd([Reason || {Bit, Reason} <- ?ERRORS, Flags band Bit =/= 0])};
-        Flags band (?SOP bor ?EOP) =/= (?SOP bor ?EOP) -> {drop, fragment};
+        Status bsr 16 > ?BUFFER -> {drop, too_long};
+        Status band 16#1f =/= 0 ->
+            {drop, hd([Reason || {Bit, Reason} <- ?ERRORS, Status band Bit =/= 0])};
+        Status band (?SOP bor ?EOP) =/= (?SOP bor ?EOP) -> {drop, fragment};
         Size < 2 + 14 -> {drop, runt};
-        Size > ?BUFFER -> {drop, too_long};
         true -> {frame, list_to_binary(binary:bin_to_list(Bytes, {2, Size - 2}))}
     end.
 
 every_size_and_flag_combination_matches_the_oracle_test_() ->
     {timeout, 120,
      fun() ->
-             Whole = buffer(?BUFFER + 64),
+             Whole = buffer(?BUFFER),
              [begin
-                  Bytes = binary:part(Whole, 0, Size),
-                  ?assertEqual({Flags, Size, judge(Flags, Bytes)},
-                               {Flags, Size, erx_genet_rx:frame(Flags, Bytes)})
+                  {Status, Bytes} = completion(Flags, Size, Whole),
+                  ?assertEqual({Status, judge(Status, Bytes)}, {Status, erx_genet_rx:frame(Status, Bytes)})
               end || Size <- lists:seq(0, ?BUFFER + 64),
                      Base <- [S bor E bor R || S <- [0, ?SOP], E <- [0, ?EOP], R <- [0 | [Bit || {Bit, _} <- ?ERRORS]]],
                      Flags <- [Base, Base bor ?NOISE]]
@@ -61,18 +66,31 @@ boundaries_have_their_known_answers_test() ->
              {Whole, 600, {frame, binary:part(buffer(600), 2, 598)}},
              {Whole, ?BUFFER, {frame, binary:part(buffer(?BUFFER), 2, 2046)}},
              {Whole, ?BUFFER + 1, {drop, too_long}},
-             {Whole, 16#10000 + 64, {drop, too_long}},
+             {Whole, 16#ffff, {drop, too_long}},
+             {Whole bor ?ERR, ?BUFFER + 1, {drop, too_long}},
              {?SOP, 64, {drop, fragment}},
              {?EOP, 64, {drop, fragment}},
              {Whole bor ?ERR, 64, {drop, rx_error}},
              {?ERR, 15, {drop, rx_error}}
              | [{Whole bor Bit, 64, {drop, Reason}} || {Bit, Reason} <- ?ERRORS]],
-    [?assertEqual({F, S, Want}, {F, S, erx_genet_rx:frame(F, buffer(S))}) || {F, S, Want} <- Cases].
+    [begin
+         {Status, Bytes} = completion(F, S, buffer(?BUFFER)),
+         ?assertEqual({F, S, Want}, {F, S, erx_genet_rx:frame(Status, Bytes)})
+     end || {F, S, Want} <- Cases].
 
 the_padding_is_counted_in_the_length_and_skipped_test() ->
     Frame = <<1:48, 2:48, 16#0800:16, "payload">>,
-    ?assertEqual({frame, Frame}, erx_genet_rx:frame(?SOP bor ?EOP, <<16#aa, 16#bb, Frame/binary>>)).
+    Bytes = <<16#aa, 16#bb, Frame/binary>>,
+    ?assertEqual({frame, Frame}, erx_genet_rx:frame((byte_size(Bytes) bsl 16) bor ?SOP bor ?EOP, Bytes)).
 
-flags_past_the_bits_below_the_length_are_refused_test() ->
-    [?assertError(function_clause, erx_genet_rx:frame(F, buffer(64)))
-     || F <- [-1, 16#10000 bor ?SOP bor ?EOP, (64 bsl 16) bor ?SOP bor ?EOP]].
+statuses_past_32_bits_are_refused_test() ->
+    [?assertError(function_clause, erx_genet_rx:frame(S, buffer(64)))
+     || S <- [-1, 1 bsl 32, (1 bsl 32) bor (64 bsl 16) bor ?SOP bor ?EOP]].
+
+%% The three descriptor statuses the Pi 4 showed, end of packet without start of
+%% packet and a length past the buffer whichever width the field has (bits 27:16
+%% hold 3446, 2965 and 3550; bits 31:16 11638, 7061 and 15838): the device NIF
+%% copies no bytes for them, and each is a drop, not a broken queue.
+board_statuses_past_the_buffer_are_dropped_as_too_long_test() ->
+    [?assertEqual({S, {drop, too_long}}, {S, erx_genet_rx:frame(S, <<>>)})
+     || S <- [16#2d764800, 16#1b954000, 16#3dde4800]].

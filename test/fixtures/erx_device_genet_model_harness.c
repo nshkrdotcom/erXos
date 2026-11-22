@@ -17,12 +17,14 @@
  * some reads after DMA control cleared it. After any effect it may act: its transmit engine
  * sends each descriptor up to the producer index, each frame compared here with what the
  * driver posted; its receive engine writes a frame of random length, prefix and flags into
- * the next free buffer. The hostile acts that break an index or a length are the harness's.
+ * the next free buffer. The hostile acts that break an index, and the lengths past the
+ * buffer, are the harness's.
  *
  * Every schedule installs both queues, then runs posts, completions and resets, with the line
  * equal to the granule and a quarter of it. Every posted byte reaches the controller intact,
  * every received frame comes back with the controller's bytes and flags, no completion is
- * missed, and a controller that advances an index or a length past its bound breaks the queue.
+ * missed, a controller that advances an index past its bound breaks the queue, and a status
+ * whose length passes the buffer comes back whole with no bytes.
  */
 
 #include <stdio.h>
@@ -52,6 +54,9 @@
 #define EFFECTS_MAX	ERX_DMA_EFFECTS_BOUND(ERX_DMA_REGIONS_MAX, STEPS_MAX)
 #define SIZE		ERX_GENET_RING_SIZE
 #define CRC_ERROR	0x2u		/* receive status bit 1 (docs/design-device-dma.md, The register ring) */
+
+/* Receive statuses the Pi 4 showed: end of packet alone, a length past the buffer in bits 27:16 and 31:16. */
+static const uint32_t board_statuses[] = { 0x2d764800u, 0x1b954000u, 0x3dde4800u };
 
 typedef struct direction {
 	erx_device_genet_registers_t	regs;
@@ -83,6 +88,7 @@ typedef struct harness {
 	uint32_t		frame_flags[SIZE];
 	uint32_t		serial;
 	uint32_t		hostile;	/* 0, or which bound the next controller act breaks */
+	bool			quiet;		/* the controller acts only when the harness says */
 	uint8_t			copied[32 * BUFFER];
 	uint32_t		copied_length;
 	uint64_t		values[40];
@@ -234,7 +240,7 @@ receive(harness_t *h)
 	h->frame_flags[desc] = frame.flags;
 }
 
-/* A hostile act: an index or a length past its bound, which the next completion must refuse. */
+/* A hostile act: an index past its bound, which the next completion must refuse. */
 static void
 misbehave(harness_t *h)
 {
@@ -248,18 +254,28 @@ misbehave(harness_t *h)
 		set_reg(h, tx->regs.hardware_index,
 		    place(tx->regs.index, (uint16_t)(tx->queue.hardware + tx->queue.in_flight + 1)));
 		break;
-	case 3:		/* a received length past the buffer */
-	case 4: {	/* a length whose high bit a 12-bit field would drop, leaving a length that fits */
+	}
+}
+
+/*
+ * Statuses whose length passes the buffer: one just past it, one whose high bit a 12-bit field
+ * would drop, leaving a length that fits, and the board's. Each is a frame of no bytes.
+ */
+static void
+past_the_buffer(harness_t *h)
+{
+	direction_t *const rx = &h->rx;
+	const uint32_t statuses[] = { place(rx->regs.buflen, BUFFER + 1) | rx->regs.sop | rx->regs.eop,
+	    place(rx->regs.buflen, 0x1000u + 10u) | rx->regs.sop | rx->regs.eop, board_statuses[0], board_statuses[1],
+	    board_statuses[2] };
+
+	for (uint32_t at = 0; at < sizeof(statuses) / sizeof(statuses[0]); at++) {
 		const uint16_t prod = (uint16_t)field(rx->regs.index, reg(h, rx->regs.hardware_index));
-		const uint32_t length = h->hostile == 3 ? BUFFER + 1 : 0x1000u + 10u;
 
 		h->frame_length[prod % SIZE] = 0;
-		h->frame_flags[prod % SIZE] = rx->regs.sop | rx->regs.eop;
-		set_reg(h, rx->regs.desc_status + (prod % SIZE) * rx->regs.desc_stride,
-		    place(rx->regs.buflen, length) | rx->regs.sop | rx->regs.eop);
+		h->frame_flags[prod % SIZE] = statuses[at] & ~rx->regs.buflen;
+		set_reg(h, rx->regs.desc_status + (prod % SIZE) * rx->regs.desc_stride, statuses[at]);
 		set_reg(h, rx->regs.hardware_index, place(rx->regs.index, (uint16_t)(prod + 1)));
-		break;
-	}
 	}
 }
 
@@ -357,7 +373,7 @@ apply(harness_t *h, direction_t *d, erx_dma_call_t call, const erx_dma_step_t *s
 			break;
 		}
 		erx_dma_model_tick(&h->model);
-		if (h->hostile == 0 && call != ERX_DMA_CALL_OBSERVE && draw(h, 4) == 0)
+		if (!h->quiet && call != ERX_DMA_CALL_OBSERVE && draw(h, 4) == 0)
 			device_act(h);
 	}
 	d->state = after;
@@ -470,7 +486,10 @@ rx_complete(harness_t *h)
 		const uint32_t buffer = completions[frame].buffer;
 		const uint32_t good = d->regs.sop | d->regs.eop;
 
-		CHECK(completions[frame].tag == h->frame_flags[buffer]);
+		/* The tag is the whole status; a length past the buffer brings no bytes. */
+		CHECK((completions[frame].tag & ~(uint64_t)d->regs.buflen) == h->frame_flags[buffer]);
+		CHECK(completions[frame].length ==
+		    (field(d->regs.buflen, completions[frame].tag) <= BUFFER ? field(d->regs.buflen, completions[frame].tag) : 0));
 		for (uint32_t byte = 0; byte < completions[frame].length; byte++, at++)
 			CHECK(h->copied[at] == (byte < h->frame_length[buffer] ? pattern(h->frame_serial[buffer], byte) : 0));
 		if ((completions[frame].tag & good) != good || (completions[frame].tag & CRC_ERROR) != 0)
@@ -625,6 +644,7 @@ hostile(uint32_t act)
 
 	/* The controller acts only when the schedule says, so the hostile act is what the next completion reads. */
 	h->hostile = act;
+	h->quiet = true;
 	negotiate(h, &h->rx);
 	negotiate(h, &h->tx);
 	for (uint32_t round = 0; round < 8; round++)
@@ -645,6 +665,21 @@ hostile(uint32_t act)
 	harness_free(h);
 }
 
+/* Lengths past the buffer copy nothing and break nothing: their buffers go back and the queue goes on. */
+static void
+lengths_past_the_buffer(void)
+{
+	harness_t *const h = harness_new(GRANULE, 5);
+
+	h->quiet = true;
+	negotiate(h, &h->rx);
+	past_the_buffer(h);
+	CHECK(rx_complete(h) && h->received == 5 && h->rx.queue.software == 5);
+	receive(h);
+	CHECK(rx_complete(h) && !h->rx.queue.broken);
+	harness_free(h);
+}
+
 int
 main(void)
 {
@@ -660,8 +695,9 @@ main(void)
 		printf("line %u: %llu sent, %llu received, %llu flagged\n", lines[line], (unsigned long long)sent,
 		    (unsigned long long)received, (unsigned long long)flagged);
 	}
-	for (uint32_t act = 1; act <= 4; act++)
+	for (uint32_t act = 1; act <= 2; act++)
 		hostile(act);
+	lengths_past_the_buffer();
 	printf("erx_device_genet_model done\n");
 	return (0);
 }

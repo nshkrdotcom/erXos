@@ -252,7 +252,7 @@
             <field><name>SOP</name><description>Start of packet (if_genetreg.h:175)</description><bitOffset>13</bitOffset><bitWidth>1</bitWidth></field>
             <field><name>EOP</name><description>End of packet (if_genetreg.h:174)</description><bitOffset>14</bitOffset><bitWidth>1</bitWidth></field>
             <field><name>CKSUM_OK</name><description>if_genetreg.h:172-173 name bit 15 both OWN, marked unsure, and CKSUM_OK; unverified</description><bitOffset>15</bitOffset><bitWidth>1</bitWidth></field>
-            <field><name>BUFLEN</name><description>Bytes written, the two bytes of padding before the frame and, with RBUF_CTRL.STATUS_64B, the 64-byte status block included (if_genetreg.h:169-171; if_genet.c:1435-1441). FreeBSD masks 12 bits, 27:16; the field takes all 16, as the other published driver does (docs/research-genet-bcm2711.md, "The receive status word") and docs/design-device-dma.md reads it, so a set high bit breaks the queue rather than shortening a length</description><bitOffset>16</bitOffset><bitWidth>16</bitWidth></field>
+            <field><name>BUFLEN</name><description>Bytes written, the two bytes of padding before the frame and, with RBUF_CTRL.STATUS_64B, the 64-byte status block included (if_genetreg.h:169-171; if_genet.c:1435-1441). FreeBSD masks 12 bits, 27:16; the field takes all 16, as the other published driver does (docs/research-genet-bcm2711.md, "The receive status word") and docs/design-device-dma.md reads it, so a set high bit drops the frame as too long rather than shortening its length; which width is right is unsettled (TODO.md)</description><bitOffset>16</bitOffset><bitWidth>16</bitWidth></field>
           </fields>
         </register>
         <register>

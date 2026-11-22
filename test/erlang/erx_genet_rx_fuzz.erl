@@ -3,15 +3,15 @@
 
 %% Random batches of receive completions through erx_genet_core:frames/2, the Pi 4
 %% Ethernet driver's reading of what the controller wrote, as the device NIF hands
-%% it up: the descriptor status's bits below its length field and the bytes the
-%% length said. Whatever arrives, frames/2 returns no frame longer than the MTU and
+%% it up: the descriptor's whole status word and the bytes its length said, none
+%% when that passes the buffer. Whatever arrives, frames/2 returns no frame longer than the MTU and
 %% its Ethernet header, keeps frames and drops in order, and agrees with
 %% reference/1, which judges each completion bit by bit and takes the frame as the
 %% bytes after the padding; erx_genet_rx:frame/2 agrees with it on each completion
 %% alone, with the buffer in place of the MTU as the longest. Sizes cluster at the
 %% boundaries (the shortest frame and one short, the longest frame and one past,
-%% the buffer and one past), and flags are either a clean start and end of packet
-%% or any 16 bits, so every path is common. The seed comes from make check-fuzz.
+%% the buffer and one past, now and then any 16-bit length), and flags are either a
+%% clean start and end of packet or any 16 bits, so every path is common. The seed comes from make check-fuzz.
 
 -module(erx_genet_rx_fuzz).
 -export([run/1]).
@@ -39,10 +39,10 @@ run([Seed]) ->
 %% One batch of up to four completions; the frames it accepted.
 round_of() ->
     Completions = [completion() || _ <- lists:seq(1, rand:uniform(5) - 1)],
-    [case {erx_genet_rx:frame(Flags, Bytes), judge(Flags, Bytes, ?BUFFER)} of
+    [case {erx_genet_rx:frame(Status, Bytes), judge(Status, Bytes, ?BUFFER)} of
          {Same, Same} -> ok;
-         {Judged, _} -> error({disagrees_with_reference, rx, Flags, Bytes, Judged})
-     end || {Flags, Bytes} <- Completions],
+         {Judged, _} -> error({disagrees_with_reference, rx, Status, Bytes, Judged})
+     end || {Status, Bytes} <- Completions],
     Said = erx_genet_core:frames(Completions, ?MTU),
     case Said =:= reference(Completions) of
         true -> shape(Said), length(element(2, Said));
@@ -57,13 +57,15 @@ completion() ->
                4 -> ?LONGEST + 1;
                5 -> ?BUFFER + rand:uniform(2) - 1;
                6 -> rand:uniform(?BUFFER + 128) - 1;
+               7 -> rand:uniform(16#10000) - 1;
                _ -> ?SHORTEST + rand:uniform(?MTU)
            end,
     Flags = case rand:uniform(4) of
                 1 -> rand:uniform(16#10000) - 1;
                 _ -> ?SOP bor ?EOP
             end,
-    {Flags, rand:bytes(Size)}.
+    %% The NIF copies no bytes for a length past the buffer.
+    {(Size bsl 16) bor Flags, rand:bytes(case Size > ?BUFFER of true -> 0; false -> Size end)}.
 
 shape({Drops, Frames}) ->
     [true = is_binary(F) andalso byte_size(F) =< ?LONGEST - ?PAD || F <- Frames],
@@ -72,14 +74,15 @@ shape({Drops, Frames}) ->
     ok.
 
 reference(Completions) ->
-    Judged = [judge(Flags, Bytes, ?LONGEST) || {Flags, Bytes} <- Completions],
+    Judged = [judge(Status, Bytes, ?LONGEST) || {Status, Bytes} <- Completions],
     {[{dropped, D} || {drop, D} <- Judged], [F || {frame, F} <- Judged]}.
 
 %% The judgement of one completion whose frame and padding are at most Longest bytes.
-judge(Flags, Bytes, Longest) ->
-    <<_:1, Eop:1, Sop:1, _:8, Len:1, NonOctet:1, Err:1, Crc:1, Ov:1>> = <<Flags:16>>,
+judge(Status, Bytes, Longest) ->
+    <<Length:16, _:1, Eop:1, Sop:1, _:8, Len:1, NonOctet:1, Err:1, Crc:1, Ov:1>> = <<Status:32>>,
     Size = byte_size(Bytes),
     if
+        Length > ?BUFFER -> {drop, too_long};
         Ov =:= 1 -> {drop, overflow};
         Crc =:= 1 -> {drop, crc_error};
         Err =:= 1 -> {drop, rx_error};

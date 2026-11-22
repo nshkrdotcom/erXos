@@ -40,10 +40,10 @@ reset included, comes through `event/2`.
   dropped as `too_long`, one shorter than an Ethernet header, a loopback frame, a delayed
   frame and a run as `malformed`. A full ring is `full`; the interrupt that returns
   transmit buffers is the `writable` event.
-* **A broken queue**, an index or a length the device NIF refuses, or a completion that
+* **A broken queue**, an index the device NIF refuses, or a completion that
   does not match what is in flight, ends the driver with `{stop, {broken, Direction}}`, never
   a crash: one line names the bound a receive queue met as the controller's registers show
-  it (erx_genet_core:rx_fault/3) and one line gives each register of
+  it (erx_genet_core:rx_fault/1) and one line gives each register of
   erx_genet_core:evidence/0, then the driver's restart resets the controller. A `negotiate/2`
   that never sees the stop logs the same registers before the device is given up.
 
@@ -302,12 +302,11 @@ transport_event(_Msg, T) ->
     {[], T}.
 
 %% The reason a broken queue ends the driver with, after its lines in the kernel log: the
-%% evidence's registers read once, the receive fault judged from those words and the
-%% descriptors read after them, then the words logged.
+%% evidence's registers read once, the receive fault judged from those words, then the
+%% words logged.
 log_broken(rx, #t{dev = Dev}) ->
     Evidence = read_evidence(Dev),
-    Status = fun(Position) -> erx_device:read(Dev, {rx_desc_status, Position}) end,
-    log("the receive queue is broken: ~0p", [erx_genet_core:rx_fault(Evidence, Status, ?BUFFER)]),
+    log("the receive queue is broken: ~0p", [erx_genet_core:rx_fault(Evidence)]),
     ok = log_evidence(Evidence),
     {broken, rx};
 log_broken(tx, #t{dev = Dev}) ->
@@ -349,7 +348,7 @@ take(#t{dev = Dev, rx = Rx} = T, Got, Bytes, Count) when Bytes < ?BATCH_BYTES, C
         {ok, []} ->
             {lists:append(lists:reverse(Got)), false};
         {ok, Done} ->
-            take(T, [Done | Got], Bytes + lists:sum([byte_size(B) || {_Flags, B} <- Done]),
+            take(T, [Done | Got], Bytes + lists:sum([byte_size(B) || {_Status, B} <- Done]),
                  Count + length(Done));
         {error, broken} ->
             throw({broken, rx})

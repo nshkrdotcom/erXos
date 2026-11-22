@@ -4,7 +4,8 @@
 
 # GENET's register ring core against a hostile controller, every plan through the
 # check. Scripts in tools/fuzz/device_genet_fuzz.c's format: posts and their
-# completion; received frames honest, flagged, too long and with a high length bit; a producer index past
+# completion; received frames honest, flagged, too long, with a high length bit and as the Pi 4
+# showed them; a producer index past
 # the queue's size; a consumer index past what is in flight; and a reset after a
 # broken queue.
 setup = [2047].pack('v')
@@ -19,6 +20,7 @@ Erx::PackFuzz.declare_target(
     'receive' => setup + [2, 2].pack('CV') + frame.(64, 0x6000) + frame.(1500, 0x6002),
     'long' => setup + [2, 1].pack('CV') + frame.(2049, 0x6000),
     'high-bit' => setup + [2, 1].pack('CV') + frame.(0x100a, 0x6000),
+    'board' => setup + [2, 3].pack('CV') + [0x2d764800, 0x1b954000, 0x3dde4800].pack('V3'),
     'liar-producer' => setup + [2, 257].pack('CV'),
     'liar-consumer' => setup + posts + [1, 4].pack('CV'),
     'reset' => setup + [2, 257].pack('CV') + [3].pack('C') + [2, 1].pack('CV') + frame.(10, 0x6000)

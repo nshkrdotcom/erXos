@@ -48,6 +48,9 @@
 #define HIGH_BASE	(UINT64_C(1) << 40)
 #define CRC_ERROR	0x2u		/* receive status bit 1 (docs/design-device-dma.md, The register ring) */
 
+/* Receive statuses the Pi 4 showed: end of packet alone, a length past the buffer in bits 27:16 and 31:16. */
+static const uint32_t board_statuses[] = { 0x2d764800u, 0x1b954000u, 0x3dde4800u };
+
 static uint8_t *memories[MEMORIES_MAX];
 static uint64_t memory_sizes[MEMORIES_MAX];
 static uint32_t memory_count;
@@ -466,15 +469,34 @@ check_register_ring(void)
 	receive(frame, 0, rx->regs.sop);
 	CHECK(complete(device, rq, &done) == ERX_OK && done == 3);
 	CHECK(sunk_lengths[0] == sizeof(frame) && memcmp(sunk_bytes[0], frame, sizeof(frame)) == 0);
-	CHECK(sunk_tags[0] == (rx->regs.sop | rx->regs.eop));
+	CHECK(sunk_tags[0] == (place(rx->regs.buflen, sizeof(frame)) | rx->regs.sop | rx->regs.eop));
 	CHECK(sunk_lengths[1] == 60 && memcmp(sunk_bytes[1], frame, 60) == 0);
-	CHECK(sunk_tags[1] == (rx->regs.sop | rx->regs.eop | CRC_ERROR));
+	CHECK(sunk_tags[1] == (place(rx->regs.buflen, 60) | rx->regs.sop | rx->regs.eop | CRC_ERROR));
 	CHECK(sunk_lengths[2] == 0 && sunk_tags[2] == rx->regs.sop);
 	CHECK(field(rx->regs.index, *reg(rx->regs.software_index)) == 3);
 	CHECK(complete(device, rq, &done) == ERX_OK && done == 0);
 
+	/*
+	 * The three statuses the Pi 4 showed, end of packet alone with a length past the buffer:
+	 * each is taken with no bytes and its whole status, its buffer handed back, and the queue
+	 * goes on.
+	 */
+	for (uint32_t at = 0; at < 3; at++) {
+		const uint32_t prod = field(rx->regs.index, *reg(rx->regs.hardware_index));
+
+		*reg(rx->regs.desc_status + (prod % SIZE) * rx->regs.desc_stride) = board_statuses[at];
+		*reg(rx->regs.hardware_index) = place(rx->regs.index, prod + 1);
+	}
+	CHECK(complete(device, rq, &done) == ERX_OK && done == 3);
+	for (uint32_t at = 0; at < 3; at++)
+		CHECK(sunk_lengths[at] == 0 && sunk_tags[at] == board_statuses[at]);
+	CHECK(field(rx->regs.index, *reg(rx->regs.software_index)) == 6);
+	receive(frame, 60, rx->regs.sop | rx->regs.eop);
+	CHECK(complete(device, rq, &done) == ERX_OK && done == 1 && sunk_lengths[0] == 60);
+	CHECK(field(rx->regs.index, *reg(rx->regs.software_index)) == 7);
+
 	/* A producer index more than the ring ahead breaks the queue until the next negotiation. */
-	*reg(rx->regs.hardware_index) = place(rx->regs.index, 3 + SIZE + 1);
+	*reg(rx->regs.hardware_index) = place(rx->regs.index, 7 + SIZE + 1);
 	CHECK(complete(device, rq, &done) == ERX_ECORRUPT);
 	CHECK(complete(device, rq, &done) == ERX_ECORRUPT);
 	negotiate(device);

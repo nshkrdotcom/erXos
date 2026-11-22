@@ -476,27 +476,21 @@ bool
 erx_device_genet_rx_complete(erx_device_genet_queue_t *queue, const erx_device_genet_registers_t *regs,
     const uint64_t *statuses, uint32_t count, erx_device_genet_completion_t *completions, uint32_t *done)
 {
-	/* The flags are the status bits below the length (docs/design-device-dma.md, The register ring). */
-	const uint32_t flags = (UINT32_C(1) << shift_of(regs->buflen)) - 1u;
-	uint32_t taken = 0;
-
 	*done = 0;
 	if (queue->direction != ERX_DEVICE_GENET_RX || queue->broken || !queue->installed || queue->taken != 0 ||
 	    count != queue->reported)
 		return (false);
 	queue->reported = 0;
-	for (; taken < count; taken++) {
+	for (uint32_t taken = 0; taken < count; taken++) {
 		const uint32_t length = field_get(regs->buflen, statuses[taken]);
+		/* A length past the buffer names no bytes the buffer holds: none copied, the tag says why. */
+		const bool held = length <= queue->buffer_size || SEED_NO_LENGTH_BOUND;
 
-		if (length > queue->buffer_size && !SEED_NO_LENGTH_BOUND) {
-			queue->broken = true;
-			break;
-		}
 		completions[taken] = (erx_device_genet_completion_t){ .buffer = (queue->software + taken) & MASK,
-		    .length = length, .tag = statuses[taken] & flags };
+		    .length = held ? length : 0, .tag = statuses[taken] };
 	}
-	queue->taken = taken;
-	*done = taken;
+	queue->taken = count;
+	*done = count;
 	return (true);
 }
 
@@ -660,10 +654,10 @@ genet_tx_complete(erx_device_genet_queue_t *queue, const erx_device_genet_regist
 
 /*
  * The producer index observed, then each new descriptor's status, at most as many as keep the
- * copies within bytes_max; the frames before any length past the buffer taken back, each
- * copied out under its flags, which breaks the queue after them; then the buffers handed back
- * and the consumer index published past them, so no frame holds the ring. A frame of no bytes
- * has no copy.
+ * copies within bytes_max; each frame taken back and copied out under its whole status, none
+ * of its bytes when its length passes the buffer; then the buffers handed back and the
+ * consumer index published past them, so no frame holds the ring. A frame of no bytes has no
+ * copy.
  */
 static void
 genet_rx_complete(erx_device_genet_queue_t *queue, const erx_device_genet_registers_t *regs,
@@ -696,10 +690,6 @@ genet_rx_complete(erx_device_genet_queue_t *queue, const erx_device_genet_regist
 	case RX_TAKE_BACK:
 		if (!erx_device_genet_rx_complete(queue, regs, round->values, round->value_count, completions, &done)) {
 			erx_dma_round_end(round, ERX_EINVAL);
-			return;
-		}
-		if (done == 0) {
-			erx_dma_round_end(round, ERX_ECORRUPT);
 			return;
 		}
 		for (uint32_t taken = 0; taken < done; taken++) {

@@ -18,16 +18,17 @@
  *
  *   receive   standing: the install hands every buffer to the device. A completion observes
  *             the producer index, which may run ahead of the consumer index by at most the
- *             queue's size, then the status of each new descriptor, whose length may be at most
- *             the buffer size; it takes those buffers back and copies each frame, then hands
- *             them back and publishes the consumer index past them, whether or not the frame
- *             is good, so an errored frame never holds the ring;
+ *             queue's size, then the status of each new descriptor; it takes those buffers
+ *             back and copies each frame, none of its bytes when its length passes the buffer
+ *             size, then hands them back and publishes the consumer index past them, whether
+ *             or not the frame is good, so neither an errored frame nor a status of any value
+ *             holds the ring;
  *   transmit  a post takes the descriptor the producer index names, writes the frame into its
  *             buffer and publishes the descriptor's status, then the producer index. A
  *             completion observes the consumer index, which may advance by at most the number
  *             in flight, and returns each tag with no bytes.
  *
- * An index or a length beyond its bound breaks the queue, which then refuses every call until
+ * An index beyond its bound breaks the queue, which then refuses every call until
  * the reset. Every register offset and field mask comes from the device's generated table,
  * resolved by erx_device_genet_registers; no bit is written here by hand.
  */
@@ -118,7 +119,7 @@ typedef struct erx_device_genet_queue {
 typedef struct erx_device_genet_completion {
 	uint32_t	buffer;
 	uint32_t	length;
-	uint64_t	tag;			/* TX: the post's; RX: the status bits below the length, its flags */
+	uint64_t	tag;			/* TX: the post's; RX: the descriptor's whole status word */
 } erx_device_genet_completion_t;
 
 /*
@@ -206,8 +207,8 @@ bool	erx_device_genet_rx_reports(erx_device_genet_queue_t *queue, const erx_devi
 	    uint64_t index_register, uint32_t max, erx_dma_step_t *steps, uint32_t *count);
 /*
  * The decision from the `count` statuses those reports read, in order: each frame's buffer,
- * length and flags, until a length past the buffer size, which breaks the queue after the
- * frames before it. Their buffers are taken back, and the copies follow from
+ * its length, 0 when the status's length passes the buffer size, and its whole status as the
+ * tag, so the driver sees why no bytes came. Every buffer is taken back, and the copies follow from
  * erx_device_genet_copy_steps; erx_device_genet_rx_give then hands them back. False, changing
  * nothing, unless `count` is what the reports just asked for on a receive queue whole.
  */

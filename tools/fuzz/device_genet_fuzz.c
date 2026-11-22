@@ -150,12 +150,17 @@ rx_complete(script_t *script, uint64_t index_register)
 	for (uint32_t at = 0; at < count; at++)
 		statuses[at] = take(script, 4);
 	check(erx_device_genet_rx_complete(&rx.queue, &rx.regs, statuses, count, completions, &done));
-	check(done <= count && (done == count) != rx.queue.broken);
-	for (uint32_t at = 0; at < done; at++)
-		check(completions[at].length <= rx.queue.buffer_size && completions[at].tag <= UINT16_MAX);
+	check(done == count && !rx.queue.broken);
+	/* Each status comes back whole, with its length's bytes, or none when the length passes the buffer. */
+	for (uint32_t at = 0; at < done; at++) {
+		const uint32_t length = (uint32_t)((statuses[at] & rx.regs.buflen) >> __builtin_ctz(rx.regs.buflen));
+
+		check(completions[at].tag == statuses[at] &&
+		    completions[at].length == (length <= rx.queue.buffer_size ? length : 0));
+	}
 	plan(&rx, ERX_DMA_CALL_COMPLETE, erx_device_genet_copy_steps(&rx.queue, rx.pool_offset, completions, done, steps));
 	count = erx_device_genet_rx_give(&rx.queue, &rx.regs, steps);
-	check((count != 0) == (done != 0 && !rx.queue.broken));
+	check((count != 0) == (done != 0));
 	if (count != 0)
 		plan(&rx, ERX_DMA_CALL_POST, count);
 }

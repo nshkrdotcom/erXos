@@ -186,22 +186,10 @@ the_evidence_names_readable_registers_of_the_svd_test() ->
     %% Both directions' DMA control and status, and both rings' two indexes.
     ?assertEqual(8, length(lists:usort(erx_genet_core:evidence()))).
 
-%% A receive status word of Length bytes, a whole frame.
-status(Length) -> (Length bsl 16) bor ?WHOLE.
-
-%% The evidence's words with the receive ring's producer and consumer index words, and a
-%% descriptor reader over the ring's statuses, each a good 64-byte frame but those Bad
-%% names, {Position, Word}; the reader fails on a position the controller has not filled.
-rx_fault(ProdWord, Cons, Bad) ->
-    Evidence = [{rx_dma_status, 1}, {{rx_ring_prod_index, ?ERX_GENET_RING}, ProdWord},
-                {{rx_ring_cons_index, ?ERX_GENET_RING}, Cons}],
-    Filled = [(Cons + K) rem ?ERX_GENET_RING_SIZE
-              || K <- lists:seq(0, min((ProdWord - Cons) band 16#ffff, ?ERX_GENET_RING_SIZE) - 1)],
-    Status = fun(P) ->
-                     true = lists:member(P, Filled),
-                     proplists:get_value(P, Bad, status(64))
-             end,
-    erx_genet_core:rx_fault(Evidence, Status, 2048).
+%% The evidence's words with the receive ring's producer and consumer index words.
+rx_fault(ProdWord, Cons) ->
+    erx_genet_core:rx_fault([{rx_dma_status, 1}, {{rx_ring_prod_index, ?ERX_GENET_RING}, ProdWord},
+                             {{rx_ring_cons_index, ?ERX_GENET_RING}, Cons}]).
 
 a_producer_index_past_the_ring_is_the_index_fault_test() ->
     Ring = ?ERX_GENET_RING_SIZE,
@@ -215,45 +203,40 @@ a_producer_index_past_the_ring_is_the_index_fault_test() ->
              {7, 6, {index, 16#ffff}},
              %% The producer word's upper half counts discarded frames, not the index.
              {5, (16#0007 bsl 16) bor (5 + Ring), unexplained}],
-    [?assertEqual({Cons, Prod, Want}, {Cons, Prod, rx_fault(Prod, Cons, [])})
+    [?assertEqual({Cons, Prod, Want}, {Cons, Prod, rx_fault(Prod, Cons)})
      || {Cons, Prod, Want} <- Cases].
-
-a_length_past_the_buffer_is_the_length_fault_test() ->
-    %% The first such descriptor from the consumer index, across the ring's wrap; one at or
-    %% past the producer index is not yet the controller's, and is neither read nor blamed.
-    High = (1 bsl 31) bor status(64),
-    Cases = [{254, 254 + 4, [{1, status(2049)}], {length, 1, status(2049)}},
-             {254, 254 + 4, [{255, High}, {1, status(2049)}], {length, 255, High}},
-             {254, 254 + 4, [{0, status(2048)}], unexplained},
-             {254, 254 + 4, [{2, status(4000)}], unexplained},
-             {0, 0, [{0, status(4000)}], unexplained}],
-    [?assertEqual({Cons, Bad, Want}, {Cons, Bad, rx_fault((Prod band 16#ffff), Cons, Bad)})
-     || {Cons, Prod, Bad, Want} <- Cases].
 
 %% --- Receiving -----------------------------------------------------------------------------
 
 frame_bytes(Size) -> list_to_binary([I rem 251 || I <- lists:seq(0, Size - 1)]).
 
+%% A completion as the device NIF hands it up: a status of Flags and Size bytes, and
+%% those bytes, none when Size passes the 2 KiB buffer.
+completion(Flags, Size) when Size > 2048 -> {(Size bsl 16) bor Flags, <<>>};
+completion(Flags, Size) -> {(Size bsl 16) bor Flags, frame_bytes(Size)}.
+
 receive_completions_are_cut_at_their_boundaries_test() ->
     Max = 2 + 1514,
-    Cases = [{{?WHOLE, frame_bytes(Max)}, {[], [binary:part(frame_bytes(Max), 2, 1514)]}},
-             {{?WHOLE, frame_bytes(Max + 1)}, {[{dropped, too_long}], []}},
-             {{?WHOLE, frame_bytes(16)}, {[], [binary:part(frame_bytes(16), 2, 14)]}},
-             {{?WHOLE, frame_bytes(15)}, {[{dropped, runt}], []}},
-             {{?WHOLE bor 2, frame_bytes(64)}, {[{dropped, crc_error}], []}},
-             {{?SOP, frame_bytes(64)}, {[{dropped, fragment}], []}},
-             %% Past the buffer, and more than a 16-bit length can say.
-             {{?WHOLE, frame_bytes(2049)}, {[{dropped, too_long}], []}},
-             {{?WHOLE, frame_bytes(65536 + 64)}, {[{dropped, too_long}], []}}],
+    Cases = [{completion(?WHOLE, Max), {[], [binary:part(frame_bytes(Max), 2, 1514)]}},
+             {completion(?WHOLE, Max + 1), {[{dropped, too_long}], []}},
+             {completion(?WHOLE, 16), {[], [binary:part(frame_bytes(16), 2, 14)]}},
+             {completion(?WHOLE, 15), {[{dropped, runt}], []}},
+             {completion(?WHOLE bor 2, 64), {[{dropped, crc_error}], []}},
+             {completion(?SOP, 64), {[{dropped, fragment}], []}},
+             %% Past the buffer, as far as a 16-bit length can say, and a status the board showed.
+             {completion(?WHOLE, 2049), {[{dropped, too_long}], []}},
+             {completion(?WHOLE, 16#ffff), {[{dropped, too_long}], []}},
+             {{16#2d764800, <<>>}, {[{dropped, too_long}], []}}],
     [?assertEqual({C, Want}, {C, erx_genet_core:frames([C], 1500)}) || {C, Want} <- Cases],
-    %% Flags reach past the status bits below the length only if the NIF broke its contract: refused.
-    ?assertError(function_clause, erx_genet_core:frames([{?WHOLE bor (1 bsl 16), frame_bytes(64)}], 1500)).
+    %% A status past 32 bits only if the NIF broke its contract: refused.
+    ?assertError(function_clause, erx_genet_core:frames([{1 bsl 32, frame_bytes(64)}], 1500)).
 
 a_batch_keeps_frames_and_drops_in_order_test() ->
     A = frame_bytes(80), B = frame_bytes(90),
     ?assertEqual({[{dropped, overflow}, {dropped, fragment}],
                   [binary:part(A, 2, 78), binary:part(B, 2, 88)]},
-                 erx_genet_core:frames([{?WHOLE, A}, {?WHOLE bor 1, A}, {?EOP, B}, {?WHOLE, B}], 1500)).
+                 erx_genet_core:frames([completion(?WHOLE, 80), completion(?WHOLE bor 1, 80),
+                                        completion(?EOP, 90), completion(?WHOLE, 90)], 1500)).
 
 %% --- Transmitting ----------------------------------------------------------------------------
 
