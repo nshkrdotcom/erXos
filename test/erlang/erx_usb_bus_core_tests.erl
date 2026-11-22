@@ -1078,14 +1078,15 @@ a_hub_past_the_depth_limit_keeps_its_ports_off_test() ->
 
 %% A function's ends, each answered by its pipe's reset and then its start again: three
 %% within a minute restart it; a fourth within that minute detaches its device and gives
-%% its port up, logged once, the disable's answer logging nothing more; once the first
-%% end has left the window another restarts it, and one more is refused again.
+%% its port up, logged once with that last end's reason, the disable's answer
+%% logging nothing more; once the first end has left the window another restarts
+%% it, and one more is refused again.
 a_function_restarts_at_most_three_times_a_minute_test() ->
     {#{now := Now}, Core0} = Running = settle(follow({stimulus, [1], dev1}, trace_start())),
     {running, Ref} = port_of(Running, {root, 1}),
     Three = lists:foldl(fun(At, Core) -> restarted(Ref, At, Core) end, Core0, [Now, Now + 1, Now + 2]),
     {Refused, Actions} = erx_usb_bus_core:step({function_ended, Ref, 0, 4, ?FAILED}, Now + 3, Three),
-    Failure = {function, 0, restarts},
+    Failure = {function, 0, {restarts, ?FAILED}},
     ?assertEqual([{detach, Ref}, {log, root, 1, {failed, Failure}}, {port, root, 1, disable}],
                  [A || A <- Actions, element(1, A) =/= deadline]),
     {Disabled, More} = erx_usb_bus_core:step({port_done, root, 1, ok}, Now + 3, Refused),
@@ -1094,6 +1095,22 @@ a_function_restarts_at_most_three_times_a_minute_test() ->
     Later = restarted(Ref, Now + ?RESTART_WINDOW, Three),
     ?assertMatch({_, [{detach, Ref} | _]},
                  erx_usb_bus_core:step({function_ended, Ref, 0, 5, ?FAILED}, Now + ?RESTART_WINDOW, Later)).
+
+%% The end that gives a port up is logged by name only (docs/design-log.md, "Reports
+%% carry no term"): a crash whose stack frame holds the keys a keyboard reported
+%% shows as its leading atom, and so does a shutdown that carries bytes.
+a_given_up_function_logs_its_end_by_name_only_test() ->
+    {#{now := Now}, Core0} = Running = settle(follow({stimulus, [1], dev1}, trace_start())),
+    {running, Ref} = port_of(Running, {root, 1}),
+    Three = lists:foldl(fun(At, Core) -> restarted(Ref, At, Core) end, Core0, [Now, Now + 1, Now + 2]),
+    Logged = fun(End) ->
+                     {_, Actions} = erx_usb_bus_core:step({function_ended, Ref, 0, 4, End}, Now + 3, Three),
+                     [Failure] = [F || {log, root, 1, {failed, F}} <- Actions],
+                     Failure
+             end,
+    Crash = {function_clause, [{erx_hid_core, step, [<<0, 0, 4, 5>>], []}]},
+    ?assertEqual({function, 0, {restarts, function_clause}}, Logged(Crash)),
+    ?assertEqual({function, 0, {restarts, {shutdown, transfer}}}, Logged({shutdown, {transfer, <<"held">>}})).
 
 %% A late end from the run before, delivered once the function has started again,
 %% changes nothing: the running instance's pipes are not reset under it.

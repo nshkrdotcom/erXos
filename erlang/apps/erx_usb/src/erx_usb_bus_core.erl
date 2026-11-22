@@ -617,18 +617,38 @@ function_ended(Ref, Interface, Run, Reason, Now, State) ->
 %% bound, as a FreeBSD probe that answers ENXIO leaves its interface unattached.
 %% Any other end, a crash or a failed transfer, resets the function's pipes and
 %% starts it again, when fewer than usb_function_restarts_max of its ends fell in
-%% the last usb_function_restart_window_ms; past them its device's port is given up.
+%% the last usb_function_restart_window_ms; past them its device's port is given up,
+%% the failure naming the end that went past them by end_name/1, since a function
+%% that ends on a failed transfer leaves no crash report of its own.
 ended(Ref, Interface, {shutdown, {unusable, Why}}, Current, _Now, State) ->
     {[], put_run(Ref, Interface, Current#{state := {unusable, Why}}, State)};
-ended(Ref, Interface, _Failed, Current = #{ends := Ends}, Now, State) ->
+ended(Ref, Interface, End, Current = #{ends := Ends}, Now, State) ->
     case admit(Ends, Now, ?ERX_USB_FUNCTION_RESTARTS_MAX, ?ERX_USB_FUNCTION_RESTART_WINDOW_MS) of
         {admitted, Admitted} ->
             #{pipes := Pipes} = claimed(Ref, Interface, State),
             reset_next_or_start(Ref, Interface, [Address || #{address := Address} <- Pipes],
                                 Current#{ends := Admitted}, State);
         {refused, _Until} ->
-            fail_device(Ref, {function, Interface, restarts}, State)
+            fail_device(Ref, {function, Interface, {restarts, end_name(End)}}, State)
     end.
+
+%% A function's end as the port's failure keeps it and the log shows it: names only
+%% (docs/design-log.md, "Reports carry no term"). A shutdown made of atoms and
+%% integers, such as {shutdown, {transfer, stall}}, is kept whole; a shutdown
+%% carrying data the function held keeps its reason's leading atom alone, and any
+%% other end, a crash's reason with its stack frames' arguments among them, is cut
+%% to its leading atom, both by the report filter's own rule (erx_report).
+end_name(End = {shutdown, Why}) ->
+    case named(Why) of
+        true -> End;
+        false -> {shutdown, erx_report:reason_name(Why)}
+    end;
+end_name(End) ->
+    erx_report:reason_name(End).
+
+named(Term) when is_atom(Term); is_integer(Term) -> true;
+named(Term) when is_tuple(Term) -> lists:all(fun named/1, tuple_to_list(Term));
+named(_Term) -> false.
 
 %% The answer to the reset of pipe Address of ended function Interface, taken only
 %% while that reset is in flight: on `ok` the next pipe's reset or the function's
