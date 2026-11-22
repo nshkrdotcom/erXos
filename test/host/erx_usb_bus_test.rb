@@ -37,6 +37,7 @@ class ErxUsbBusTest < Minitest::Test
   SUP = 'erlang/apps/erx_usb/src/erx_usb.erl'
   BOT = 'erlang/apps/erx_usb/src/erx_usb_bot.erl'
   PIPE = 'erlang/apps/erx_usb/src/erx_usb_pipe.erl'
+  BLK_BOT = 'erlang/apps/erx_blk/src/erx_blk_bot.erl'
 
   Seed = Data.define(:fault, :module_path, :anchor, :replacement, :catching_case)
 
@@ -98,7 +99,12 @@ class ErxUsbBusTest < Minitest::Test
              module_path: PIPE,
              anchor: '{usb, Pipe, Tag, {ok, byte_size(Data)}}',
              replacement: '{usb, Pipe, Tag, {ok, 0}}',
-             catching_case: 'a_stick_serves_its_medium_test')
+             catching_case: 'a_stick_serves_its_medium_test'),
+    Seed.new(fault: "a medium's transport linked to its function, so the transport's crash ends the function",
+             module_path: BLK_BOT,
+             anchor: '    gen_server:start_monitor(?MODULE, Medium, []).',
+             replacement: "    {ok, Pid} = gen_server:start_link(?MODULE, Medium, []),\n    {ok, {Pid, monitor(process, Pid)}}.",
+             catching_case: 'a_transport_crash_ends_only_its_medium_test')
   ].freeze
 
   def test_the_cases_pass

@@ -6,10 +6,13 @@
 %% transport contract's answers and closed error set, by handing each request to the
 %% medium's BOT function, erx_usb_bot, which runs it through the BOT engine.
 %%
-%% The function starts one, linked, for each medium that becomes ready, and stops it when
-%% the medium ends; it is reached by pid and never registered. It holds the medium's
-%% reference, which every request it hands the function carries, so the engine answers a
-%% request of a medium that has ended `{error, {device, gone}}` and sends nothing. It checks
+%% The function starts one for each medium that becomes ready, and stops it when the medium
+%% ends; it is reached by pid and never registered. The function and its transport monitor
+%% each other, never link: the function's end ends the transport, and the transport's end
+%% ends only its medium, which the function's unit finds again by its readiness sequence.
+%% It holds the medium's reference, which every request it hands the function carries, so
+%% the engine answers a request of a medium that has ended `{error, {device, gone}}` and
+%% sends nothing. It checks
 %% each request against the contract's bounds before the function sees it: a count of no
 %% sectors, or above max_sectors, or bytes that are not whole sectors is bad_count; sectors
 %% past the capacity are out_of_range. Every other answer is the engine's: `{device, Detail}`
@@ -18,12 +21,13 @@
 %%
 %% One request is with the function at a time. The function's call is not timed out here:
 %% the engine answers every request within its queue and issue deadlines, 28 s together,
-%% inside erx_blk's own call timeout, and the function's end ends this process by the link.
+%% inside erx_blk's own call timeout, and the function's end ends this process with
+%% `shutdown`, whether its monitor or a call in progress observes it.
 
 -module(erx_blk_bot).
 -behaviour(gen_server).
 
--export([start_link/1]).
+-export([start_monitor/1]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, format_status/1]).
 
 -export_type([medium/0]).
@@ -37,13 +41,14 @@
 -type medium() :: #{function := pid(), lun := erx_usb_bot_core:lun(), ref := erx_usb_bot_core:medium_ref(),
                     capacity := pos_integer(), flush := boolean(), detail := map()}.
 
--doc "Starts the transport of Medium, linked to the caller, its BOT function.".
--spec start_link(medium()) -> {ok, pid()}.
-start_link(Medium) ->
-    gen_server:start_link(?MODULE, Medium, []).
+-doc "Starts the transport of Medium, monitored by the caller, its BOT function, and monitoring it.".
+-spec start_monitor(medium()) -> {ok, {pid(), reference()}}.
+start_monitor(Medium) ->
+    gen_server:start_monitor(?MODULE, Medium, []).
 
 -doc false.
-init(Medium) ->
+init(Medium = #{function := Function}) ->
+    _ = monitor(process, Function),
     {ok, Medium}.
 
 -doc false.
@@ -66,6 +71,8 @@ handle_cast(_Request, M) ->
     {noreply, M}.
 
 -doc false.
+handle_info({'DOWN', _Monitor, process, Function, _Reason}, M = #{function := Function}) ->
+    {stop, shutdown, M};
 handle_info(_Message, M) ->
     {noreply, M}.
 
@@ -85,5 +92,12 @@ checked(Sector, Count, #{capacity := Capacity}, _Send) when not is_integer(Secto
 checked(_Sector, _Count, _M, Send) ->
     Send().
 
+%% The function's call has no timeout, so it exits only when the function has ended. That
+%% end ends this process with `shutdown`, as its monitor would, so no crash report carries
+%% the call's arguments, a write's sectors among them.
 request(Request, #{function := Function, ref := Ref}) ->
-    erx_usb_bot:request(Function, Ref, Request).
+    try
+        erx_usb_bot:request(Function, Ref, Request)
+    catch
+        exit:{_FunctionEnd, {gen_server, call, _Arguments}} -> exit(shutdown)
+    end.

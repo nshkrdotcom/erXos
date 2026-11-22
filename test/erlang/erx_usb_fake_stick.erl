@@ -3,10 +3,12 @@
 
 -module(erx_usb_fake_stick).
 -moduledoc """
-A model USB flash drive for erx_usb_fake_xhci: one logical unit, a fixed,
-not removable, 128-sector medium of 512-byte blocks held in memory,
-speaking Bulk-Only Transport (BOT 1.0, 5 and 6) and the SCSI commands the
-mass-storage function sends.
+A model USB flash drive for erx_usb_fake_xhci: one logical unit, or as
+many as a card reader's, each a fixed, not removable, 128-sector medium of
+512-byte blocks held in memory, speaking Bulk-Only Transport (BOT 1.0, 5
+and 6) and the SCSI commands the mass-storage function sends. The units
+share the one command state and the one pending sense, as they share the
+interface.
 
 Its command state is BOT's: waiting for a CBW, in a command's data phase
 (bulk-in data to send, or bulk-out data to take), or holding the CSW. A
@@ -23,28 +25,32 @@ unanswered, so the device can be unplugged mid-transfer; and
 
 -include("generated/erx_abi.hrl").
 
--export([new/0, fault/2, reset/1, bulk_out/2, bulk_in/2]).
+-export([new/1, units/1, fault/2, reset/1, bulk_out/2, bulk_in/2]).
 
 -define(BLOCKS, 128).
 -define(BLOCK, 512).
 %% MEDIUM ERROR, UNRECOVERED READ ERROR (SPC's sense key 3, ASC 11h).
 -define(MEDIUM_ERROR, {3, 16#11, 0}).
 
-new() ->
-    #{medium => binary:copy(<<0>>, ?BLOCKS * ?BLOCK), phase => cbw, sense => {0, 0, 0}, faults => []}.
+new(Units) ->
+    #{media => maps:from_keys(lists:seq(0, Units - 1), binary:copy(<<0>>, ?BLOCKS * ?BLOCK)), phase => cbw,
+      sense => {0, 0, 0}, faults => []}.
+
+units(#{media := Media}) -> map_size(Media).
 
 fault(Stick = #{faults := Faults}, Fault) -> Stick#{faults := Faults ++ [Fault]}.
 
 reset(Stick) -> Stick#{phase := cbw}.
 
-%% A bulk-OUT transfer: a CBW, or a write's data; its answer as the controller's.
-bulk_out(<<?ERX_USB_BOT_CBW_SIGNATURE:32/little, Tag:32/little, Length:32/little, _Flags, 0, Size, Block:16/binary>>,
-         Stick = #{phase := cbw}) when Size >= 1, Size =< 16 ->
-    {{ok, <<>>}, command(Tag, Length, binary_part(Block, 0, Size), Stick)};
-bulk_out(Data, Stick = #{phase := {data_out, Tag, Length, Sector}, medium := Medium}) when byte_size(Data) =:= Length ->
+%% A bulk-OUT transfer: a CBW for one of the units, or a write's data; its answer as the
+%% controller's.
+bulk_out(<<?ERX_USB_BOT_CBW_SIGNATURE:32/little, Tag:32/little, Length:32/little, _Flags, Lun, Size, Block:16/binary>>,
+         Stick = #{phase := cbw, media := Media}) when Size >= 1, Size =< 16, is_map_key(Lun, Media) ->
+    {{ok, <<>>}, command(Tag, Length, binary_part(Block, 0, Size), Lun, Stick)};
+bulk_out(Data, Stick = #{phase := {data_out, Tag, Length, Lun, Sector}, media := Media}) when byte_size(Data) =:= Length ->
     Offset = Sector * ?BLOCK,
-    <<Before:Offset/binary, _Old:Length/binary, After/binary>> = Medium,
-    {{ok, <<>>}, Stick#{medium := <<Before/binary, Data/binary, After/binary>>, phase := {csw, Tag, 0, 0}}};
+    <<Before:Offset/binary, _Old:Length/binary, After/binary>> = maps:get(Lun, Media),
+    {{ok, <<>>}, Stick#{media := Media#{Lun := <<Before/binary, Data/binary, After/binary>>}, phase := {csw, Tag, 0, 0}}};
 bulk_out(_OutOfTurn, Stick) ->
     {{error, stall}, Stick}.
 
@@ -69,21 +75,21 @@ bulk_in(_Length, Stick = #{phase := {csw, Tag, Residue, Status}, faults := Fault
 bulk_in(_Length, Stick) ->
     {{error, stall}, Stick}.
 
-%% A command block, by its operation code (sys/cam/scsi/scsi_all.h's layouts).
-command(Tag, _Length, <<?ERX_SCSI_OP_TEST_UNIT_READY, _/binary>>, Stick) ->
+%% A command block for unit Lun, by its operation code (sys/cam/scsi/scsi_all.h's layouts).
+command(Tag, _Length, <<?ERX_SCSI_OP_TEST_UNIT_READY, _/binary>>, _Lun, Stick) ->
     Stick#{phase := {csw, Tag, 0, 0}};
-command(Tag, Length, <<?ERX_SCSI_OP_SYNCHRONIZE_CACHE_10, _/binary>>, Stick) ->
+command(Tag, Length, <<?ERX_SCSI_OP_SYNCHRONIZE_CACHE_10, _/binary>>, _Lun, Stick) ->
     Stick#{phase := {csw, Tag, Length, 0}};
-command(Tag, Length, <<?ERX_SCSI_OP_REQUEST_SENSE, _/binary>>, Stick = #{sense := {Key, Asc, Ascq}}) ->
+command(Tag, Length, <<?ERX_SCSI_OP_REQUEST_SENSE, _/binary>>, _Lun, Stick = #{sense := {Key, Asc, Ascq}}) ->
     data_in(Tag, Length, <<16#70, 0, Key, 0:32, 10, 0:32, Asc, Ascq, 0:32>>, Stick#{sense := {0, 0, 0}});
-command(Tag, Length, <<?ERX_SCSI_OP_INQUIRY, _/binary>>, Stick) ->
+command(Tag, Length, <<?ERX_SCSI_OP_INQUIRY, _/binary>>, _Lun, Stick) ->
     data_in(Tag, Length, <<0, 0, 2, 2, 31, 0, 0, 0, "erXos   ", "Model stick     ", "1.0 ">>, Stick);
-command(Tag, Length, <<?ERX_SCSI_OP_READ_CAPACITY_10, _/binary>>, Stick) ->
+command(Tag, Length, <<?ERX_SCSI_OP_READ_CAPACITY_10, _/binary>>, _Lun, Stick) ->
     data_in(Tag, Length, <<(?BLOCKS - 1):32, ?BLOCK:32>>, Stick);
-command(Tag, Length, <<?ERX_SCSI_OP_READ_10, 0, Sector:32, 0, Count:16, 0>>, Stick = #{medium := Medium}) ->
-    data_in(Tag, Length, binary_part(Medium, Sector * ?BLOCK, Count * ?BLOCK), Stick);
-command(Tag, Length, <<?ERX_SCSI_OP_WRITE_10, 0, Sector:32, 0, Count:16, 0>>, Stick) when Length =:= Count * ?BLOCK ->
-    Stick#{phase := {data_out, Tag, Length, Sector}}.
+command(Tag, Length, <<?ERX_SCSI_OP_READ_10, 0, Sector:32, 0, Count:16, 0>>, Lun, Stick = #{media := Media}) ->
+    data_in(Tag, Length, binary_part(maps:get(Lun, Media), Sector * ?BLOCK, Count * ?BLOCK), Stick);
+command(Tag, Length, <<?ERX_SCSI_OP_WRITE_10, 0, Sector:32, 0, Count:16, 0>>, Lun, Stick) when Length =:= Count * ?BLOCK ->
+    Stick#{phase := {data_out, Tag, Length, Lun, Sector}}.
 
 data_in(Tag, Length, Bytes, Stick) ->
     Sent = binary_part(Bytes, 0, min(Length, byte_size(Bytes))),

@@ -3187,9 +3187,9 @@ reference, its capacity and whether it flushes.
   window for each partition the drive's rows name that the table has.
 * **Gone**: a sense of NOT READY, for TEST UNIT READY's MEDIUM NOT
   PRESENT among others, any UNIT ATTENTION (the device's own word that
-  its medium may have changed or it was reset), a sense that fails, a
-  request past the transport contract's bounds, the transport's end,
-  the function's end or the device's detach.
+  its medium may have changed or it was reset), a sense that fails, an
+  issued request past its 18 s bound, the transport's end, the
+  function's end or the device's detach.
 
 **The medium's lifetime reaches the engine.** Every request a medium's
 transport hands the function carries the medium's reference, and the
@@ -3388,7 +3388,8 @@ medium had gone after the request.
 | an Address Device that fails | the command's completion | the enumeration; the slot is disabled, and behind a transaction translator after a USB Transaction Error, the translator's buffer cleared before the answer | the port is disabled as for any failed enumeration; a CLEAR_TT_BUFFER that fails detaches the translator's hub and every device behind it |
 | a failed command whose REQUEST SENSE fails | `erx_usb_bot_core` | the operation, answered `{device, no_sense}`; the unit's medium | reset recovery when the sense's CSW calls for it; the medium is found again by TEST UNIT READY |
 | an invalid CSW or a phase error | `erx_usb_bot_core` | the command, answered `{device, reset}` | reset recovery |
-| a block request past its bounds | the BOT core | the medium; its windows end; queued requests of the medium answered `gone` | the engine's next command starts with reset recovery; the medium is found again by TEST UNIT READY |
+| an issued request past its 18 s bound | the BOT core | the request, answered `{device, deadline}`; the medium; its windows end; queued requests of the medium answered `gone` | the engine's next command starts with reset recovery; the medium is found again by TEST UNIT READY |
+| a medium's transport ends | the function's monitor of it | the medium; its windows end; queued requests of the medium answered `gone`; an operation already issued runs on as any operation, and its answer reaches a caller that is gone, or the unit's course | the unit's readiness sequence finds the medium again under a fresh reference, at most once a poll period however often its transport ends; the function and its other units run on |
 | a medium removed or changed | TEST UNIT READY, UNIT ATTENTION, the detach | the medium; its windows end | the FAT server unmounts and remounts on the next walk |
 | a medium that cannot flush | the readiness SYNCHRONIZE CACHE | nothing: its flushes answer `no_flush` | none; the FAT server mounts it read-only, with `no flush: read-only` in the mount's record |
 | a control transfer not answered in 5 s | the controller process's deadline | the transfer, answered `timeout` after Stop Endpoint and Set TR Dequeue Pointer past it | the caller's; EP0 is open again |

@@ -27,7 +27,11 @@ and (16) when (10) answers all ones, gives the capacity, served only in
 transport starts. A removable unit's medium is polled on, so a medium
 taken out ends there. Any failure on the way leaves the unit to be polled
 again. When the engine ends a medium, its transport is stopped and the
-unit polls again for the next.
+unit polls again for the next. A transport that ends on its own ends only
+its medium: the function monitors each transport and hands its end to the
+engine as the medium's end, so the unit's readiness sequence finds the
+medium again under a fresh reference, and the function and its other
+units run on.
 
 **Requests.** A transport hands each block request to request/3, which
 the engine queues under the caller's reply address; the answer is the
@@ -37,8 +41,8 @@ engine's.
 `{shutdown, {reset, Reason}}`, which the bus counts toward its restart
 bound; a Get Max LUN answer above usb_bot_lun_max ends it unusable. The
 device's detach makes every transfer answer `gone`, which reaches reset
-recovery and ends the function so. Each transport is linked, so it ends
-with the function.
+recovery and ends the function so. Each transport monitors the function,
+so it ends with the function.
 
 The block service above the transport (the partition and window
 processes) and the drives the manifest names are not started yet: the
@@ -63,7 +67,7 @@ transport's `detail`, escaped wherever it is shown.
               | {unserved, term()}
               | #{state := waiting | polling | capacity_10 | capacity_16 | readying | serving,
                   removable := boolean(), detail := map(), poll => reference(), capacity => pos_integer(),
-                  ref => reference(), flush => boolean(), transport => pid()}.
+                  ref => reference(), flush => boolean(), transport => {pid(), reference()}}.
 
 -record(bot, {interface :: byte(),
               control :: erx_usb_pipe:pipe(),
@@ -111,6 +115,13 @@ handle_info({timeout, Timer, {poll, Lun}}, B = #bot{units = Units}) ->
     case Units of
         #{Lun := #{poll := Timer}} -> poll(Lun, B);
         #{} -> {noreply, B}
+    end;
+%% A transport's end is its medium's; a transport already stopped was demonitored then.
+handle_info({'DOWN', Monitor, process, _Transport, _Reason}, B = #bot{units = Units}) ->
+    %% A generator's pattern shadows Monitor rather than matching it, hence the filter.
+    case [{Lun, Ref} || Lun := #{transport := {_Pid, Watch}, ref := Ref} <- Units, Watch =:= Monitor] of
+        [{Lun, Ref}] -> run([{end_medium, Lun, Ref}], B);
+        [] -> {noreply, B}
     end;
 handle_info(_Message, B) ->
     {noreply, B}.
@@ -230,8 +241,8 @@ advance(Lun, {Unit, Next}, B = #bot{units = Units}) ->
     effect(Lun, Next, B#bot{units = Units#{Lun := stop_transport(maps:get(Lun, Units), Unit)}}).
 
 %% A transport that served a medium the unit no longer holds is stopped.
-stop_transport(#{transport := Transport}, Unit) when not is_map_key(transport, Unit) ->
-    unlink(Transport),
+stop_transport(#{transport := {Transport, Monitor}}, Unit) when not is_map_key(transport, Unit) ->
+    demonitor(Monitor, [flush]),
     exit(Transport, shutdown),
     Unit;
 stop_transport(_Old, Unit) ->
@@ -252,8 +263,8 @@ effect(Lun, {ask, Command}, B) ->
 effect(Lun, serve, B = #bot{units = Units}) ->
     Unit = #{ref := Ref, capacity := Capacity, flush := Flush, detail := Detail, removable := Removable} =
         maps:get(Lun, Units),
-    {ok, Transport} = erx_blk_bot:start_link(#{function => self(), lun => Lun, ref => Ref, capacity => Capacity,
-                                               flush => Flush, detail => Detail}),
+    {ok, Transport} = erx_blk_bot:start_monitor(#{function => self(), lun => Lun, ref => Ref, capacity => Capacity,
+                                                  flush => Flush, detail => Detail}),
     Serving = B#bot{units = Units#{Lun := Unit#{transport => Transport}}},
     case Removable of
         true -> effect(Lun, wait, Serving);

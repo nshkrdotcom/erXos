@@ -9,7 +9,8 @@ controller does, over a world the test changes.
 
 The world maps places to things: a place is a route from the root, the
 root port first, and a thing a `keyboard`, a `composite` of two HID
-interfaces, a mass-storage `stick` or `{hub, Ports}`, each
+interfaces, a mass-storage `stick`, a card reader of Units such units,
+`{stick, Units}`, or `{hub, Ports}`, each
 high-speed, with the descriptors erx_usb_desc_tests builds. A root port's
 reset ends with a port event showing its reset change; a hub port's when
 its next GET_STATUS shows the change, as the design says of each. A hub
@@ -198,7 +199,7 @@ device_request(Place, Thing, Setup = <<_:6/binary, Length:16/little>>, S) ->
         {hub_port, Port, Op} -> hub_port(Place ++ [Port], Op, S);
         hub_status -> {{ok, <<0:16, 0:16>>}, S};
         bot_reset -> {{ok, <<>>}, put_stick(Place, erx_usb_fake_stick:reset(stick(Place, S)), S)};
-        get_max_lun -> {{ok, <<0>>}, S};
+        get_max_lun -> {{ok, <<(erx_usb_fake_stick:units(stick(Place, S)) - 1)>>}, S};
         {hub_clear, _Change} -> {{ok, <<>>}, S};
         set_configuration -> {{ok, <<>>}, S};
         Name -> {{ok, cut(descriptor(Name, Thing), Length)}, S}
@@ -234,6 +235,7 @@ cleared(?ERX_USB_PORT_FEATURE_C_SUSPEND) -> suspend;
 cleared(?ERX_USB_PORT_FEATURE_C_OVER_CURRENT) -> over_current;
 cleared(?ERX_USB_PORT_FEATURE_C_RESET) -> reset.
 
+descriptor(device, {stick, _Units}) -> descriptor(device, stick);
 descriptor(device, Thing) when Thing =:= keyboard; Thing =:= composite; Thing =:= stick ->
     erx_usb_desc_tests:device(0, 0, 0);
 descriptor(device, {hub, _Ports}) -> erx_usb_desc_tests:device(9, 0, 1);
@@ -245,6 +247,7 @@ descriptor(configuration, composite) ->
                                       erx_usb_desc_tests:endpoint(16#81, 3, 8, 10),
                                       erx_usb_desc_tests:interface(1, 0, 3, 0, 0),
                                       erx_usb_desc_tests:endpoint(16#82, 3, 8, 10)]);
+descriptor(configuration, {stick, _Units}) -> descriptor(configuration, stick);
 descriptor(configuration, stick) ->
     erx_usb_desc_tests:storage();
 descriptor(configuration, {hub, _Ports}) ->
@@ -308,8 +311,16 @@ hub_at(Place, #{refs := Refs}) ->
     [Hub] = [Ref || Ref := P <- Refs, P =:= Place],
     Hub.
 
-%% A stick's model, made fresh the first time its place is used.
-stick(Place, #{sticks := Sticks}) -> maps:get(Place, Sticks, erx_usb_fake_stick:new()).
+%% A stick's model, made fresh the first time its place is used, with the units of the
+%% thing there.
+stick(Place, #{sticks := Sticks, world := World}) ->
+    case Sticks of
+        #{Place := Stick} -> Stick;
+        #{} -> erx_usb_fake_stick:new(units(maps:get(Place, World)))
+    end.
+
+units(stick) -> 1;
+units({stick, Units}) -> Units.
 
 put_stick(Place, Stick, S = #{sticks := Sticks}) -> S#{sticks := Sticks#{Place => Stick}}.
 

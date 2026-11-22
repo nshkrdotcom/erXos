@@ -451,6 +451,23 @@ a_request_of_an_ended_medium_is_answered_gone_unsent_test() ->
     %% A request for no medium is refused once the unit has one.
     ?assertMatch({_, [{answer, t, {error, {device, gone}}}]}, step({request, t, none, {test_unit_ready, 0}}, Ready)).
 
+%% A medium ended while its read is on the wire: the read runs on, its NOT READY sense ends
+%% no medium, and the next medium's readiness, queued behind it, is sent only once the read
+%% is answered and becomes current.
+a_medium_ended_mid_operation_ends_only_its_own_test() ->
+    {Ready, Ref} = ready(started(), 0, true),
+    {Reading, Sent, []} = run(Ready, [{request, r, Ref, {read, 0, 0, 1}}], [ok]),
+    DataIn = lists:keyfind(data_in, 1, Sent),
+    {Ended, [{medium_ended, 0, Ref}]} = step({end_medium, 0, Ref}, Reading),
+    Next = make_ref(),
+    {Queued, []} = step({request, ready, none, {ready, 0, Next}}, Ended),
+    {Done, Actions, []} = answer(Queued, [DataIn], [], [stall, ok, {csw, 512, 1}, ok,
+                                                       {data, sense_bytes(16#70, ?NOT_READY, 16#3a, 0)},
+                                                       {csw, 0, 0}, ok, {csw, 0, 0}]),
+    ?assertEqual([{error, {device, {sense, ?NOT_READY, 16#3a, 0}}}, {ok, #{flush => true}}], replies(Actions)),
+    ?assertNot(lists:keymember(medium_ended, 1, Actions)),
+    ?assertMatch({_, [{medium_ended, 0, Next}]}, step({end_medium, 0, Next}, Done)).
+
 a_read_succeeds_only_whole_test() ->
     Read = {read, 1, 9, 2},
     Data = binary:copy(<<7>>, 1024),

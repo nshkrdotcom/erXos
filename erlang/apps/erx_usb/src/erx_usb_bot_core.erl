@@ -69,6 +69,14 @@ queue; a read, write or flush needs a medium, and a readiness a unit with
 none. A medium ends in the step that observes its end: the unit's medium
 becomes none, every queued request for it is answered `gone`, and the
 action `{medium_ended, Lun, Ref}` has the function stop its block service.
+Every end names the medium it ends, and ends it only while it is the
+unit's current one: an operation ends only the medium it was admitted for,
+and a stale reference ends nothing. The function's own word,
+`{end_medium, Lun, Ref}` for a transport that ended, ends the medium the
+same way and leaves an operation already issued to run as any operation
+does, to its CSW, through reset recovery or to its deadline, the device
+being inside a command that completes in turn; its answer reaches a caller
+that is gone, or the unit's course.
 A flush of a medium that cannot flush is answered `{error, no_flush}`,
 never `ok`.
 
@@ -192,10 +200,7 @@ step({reset_pipe, Result}, Now, State = #{phase := Phase}) ->
 step({control, Result}, Now, State = #{phase := Phase}) ->
     controlled(Phase, Result, Now, State);
 step({end_medium, Lun, Ref}, _Now, State) ->
-    case current(Lun, State) of
-        #{ref := Ref} -> end_medium(Lun, State);
-        _Other -> {State, []}
-    end;
+    end_medium(Lun, Ref, State);
 step(tick, Now, State = #{phase := Phase, op := #{issued := Issued}})
   when ?ON_BULK(Phase), Now - Issued >= ?ERX_USB_BOT_ISSUE_DEADLINE_MS ->
     abandon(Now, State);
@@ -477,19 +482,19 @@ become_ready(Lun, Ref, Flush, Now, State = #{units := Units}) ->
 %% the next request, so no queued request runs against a medium the operation has ended.
 finish(_Reply, _Medium, Now, State = #{op := #{issued := Issued}}) when Now - Issued >= ?ERX_USB_BOT_ISSUE_DEADLINE_MS ->
     abandon(Now, State);
-finish(Reply, Medium, Now, State = #{op := #{entry := #{id := Id, request := Request}}}) ->
+finish(Reply, Medium, Now, State = #{op := #{entry := #{id := Id, medium := Ref, request := Request}}}) ->
     Idle = State#{phase := idle, op := none},
     {Ended, EndActions} = case Medium of
-                              end_medium -> end_medium(lun(Request), Idle);
+                              end_medium -> end_medium(lun(Request), Ref, Idle);
                               keep -> {Idle, []}
                           end,
     {Next, NextActions} = next(Now, Ended),
     {Next, [{answer, Id, Reply} | EndActions] ++ NextActions}.
 
-%% The operation's deadline passed: it is answered so, its unit's medium ends, and reset
-%% recovery readies the device before the next command.
-abandon(Now, State = #{op := #{entry := #{id := Id, request := Request}}}) ->
-    {Ended, EndActions} = end_medium(lun(Request), State#{op := none}),
+%% The operation's deadline passed: it is answered so, its medium ends, and reset recovery
+%% readies the device before the next command.
+abandon(Now, State = #{op := #{entry := #{id := Id, medium := Ref, request := Request}}}) ->
+    {Ended, EndActions} = end_medium(lun(Request), Ref, State#{op := none}),
     {Recovering, ResetActions} = recover(Ended),
     {Swept, Expired} = expire_queued(Now, Recovering),
     {Swept, [{answer, Id, {error, {device, deadline}}} | EndActions] ++ ResetActions ++ Expired}.
@@ -500,15 +505,16 @@ expire_queued(Now, State = #{queue := Queue}) ->
                                       end, queue:to_list(Queue)),
     {State#{queue := queue:from_list(Kept)}, [{answer, Id, {error, {device, deadline}}} || #{id := Id} <- Expired]}.
 
-%% Ends Lun's current medium, if it has one: every queued request for it is answered gone.
-end_medium(Lun, State = #{units := Units, queue := Queue}) ->
+%% Ends the medium Ref if it is still Lun's current one: every queued request for it is
+%% answered gone. Any other reference, none included, ends nothing.
+end_medium(Lun, Ref, State = #{units := Units, queue := Queue}) ->
     case maps:get(Lun, Units) of
-        none ->
-            {State, []};
         #{ref := Ref} ->
             {Gone, Kept} = lists:partition(fun(#{medium := Medium}) -> Medium =:= Ref end, queue:to_list(Queue)),
             {State#{units := Units#{Lun := none}, queue := queue:from_list(Kept)},
-             [{answer, Id, {error, {device, gone}}} || #{id := Id} <- Gone] ++ [{medium_ended, Lun, Ref}]}
+             [{answer, Id, {error, {device, gone}}} || #{id := Id} <- Gone] ++ [{medium_ended, Lun, Ref}]};
+        _NoneOrAnother ->
+            {State, []}
     end.
 
 current(Lun, #{units := Units}) -> maps:get(Lun, Units).

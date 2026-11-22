@@ -217,6 +217,30 @@ a_stick_unplugged_mid_transfer_ends_its_function_test() ->
         ?assert(is_process_alive(erx_usb_fake_xhci:bus(?FAKE)))
     end).
 
+%% A card reader's transport that crashes ends only its unit's medium: the function and
+%% the other unit's transport run on, and the unit's readiness sequence finds its medium
+%% again, at the next poll, under a new transport that reads what the old one wrote.
+a_transport_crash_ends_only_its_medium_test() ->
+    with_bus(#{[1] => {stick, 2}}, fun() ->
+        configured([1]),
+        [Function] = functions(erx_usb_bot),
+        wait(fun() -> length(transports()) =:= 2 end),
+        [Crashing, Serving] = transports(),
+        Written = binary:copy(<<16#a5>>, 512),
+        Other = binary:copy(<<16#5a>>, 512),
+        ok = erx_blk:write(Crashing, 3, Written),
+        ok = erx_blk:write(Serving, 3, Other),
+        exit(Crashing, kill),
+        ?assertEqual({ok, Other}, erx_blk:read(Serving, 3, 1)),
+        ?assert(is_process_alive(Function)),
+        wait(fun() -> length(transports()) =:= 2 end,
+             erlang:monotonic_time(millisecond) + ?ERX_USB_BOT_POLL_MS + ?WAIT_MS),
+        [Found] = transports() -- [Serving],
+        ?assertEqual({ok, Written}, erx_blk:read(Found, 3, 1)),
+        ?assertEqual({ok, Other}, erx_blk:read(Serving, 3, 1)),
+        ?assertEqual([Function], functions(erx_usb_bot))
+    end).
+
 %% A hub's removal detaches the devices below it first and ends every function of each.
 a_hub_removed_detaches_below_it_first_test() ->
     with_bus(#{[1] => {hub, 2}, [1, 2] => keyboard}, fun() ->
@@ -458,10 +482,19 @@ started_by(Module, Pid) ->
         _ -> false
     end.
 
-%% The block transports of the running mass-storage functions, each linked to its own.
+%% The block transports of the running mass-storage functions, each started by its own.
 transports() ->
-    [T || F <- functions(erx_usb_bot), {links, Links} <- [process_info(F, links)], T <- Links, is_pid(T),
-          started_by(erx_blk_bot, T)].
+    Functions = functions(erx_usb_bot),
+    [T || T <- processes(), started_by(erx_blk_bot, T), lists:member(parent(T), Functions)].
+
+parent(Pid) ->
+    case process_info(Pid, dictionary) of
+        {dictionary, Dictionary} ->
+            {_, [Parent | _]} = lists:keyfind('$ancestors', 1, Dictionary),
+            Parent;
+        undefined ->
+            none
+    end.
 
 %% The one transport, once its medium is ready.
 transport() ->
