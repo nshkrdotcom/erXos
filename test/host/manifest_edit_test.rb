@@ -164,6 +164,16 @@ class ManifestEditTest < Minitest::Test
     assert_equal records(SOURCE).slice(*kept.keys), kept
   end
 
+  # with_unit places a unit and grows root_memory by its devices' DMA memory, giving back
+  # what without_domain took for it; a key the platform has no unit of is refused.
+  def test_with_unit_places_a_unit_with_its_room
+    gone = Edit.without_domain(SOURCE, 'display', units: UNITS)
+    placed = Edit.with_unit(gone, 'display', holder: '@domain.storage', units: UNITS)
+    assert_equal value(gone, 'machine', 'root_memory') + 7, value(placed, 'machine', 'root_memory')
+    assert placed.end_with?("unit display\n  placement \"display\"\n  holder @domain.storage\n")
+    assert_raises(Erx::Error) { Edit.with_unit(gone, 'absent', holder: 'system', units: UNITS) }
+  end
+
   # The apps row taken out gives back its memory in root_memory, its max apps in
   # max_domains and, in max_connections, each app's system connection, its packages
   # connection and one for each service of the row, and nothing else changes; a

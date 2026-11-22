@@ -14,8 +14,9 @@ require_relative 'system_domain'
 module Erx
   # A configured domain's device, given at each creation of its row (docs/design-system.md,
   # "Devices"). It boots the production image on MediumBoot's machine with a manifest whose
-  # one configured ERTS domain holds the platform's spare unit, a virtio-mmio transport
-  # QEMU virt leaves without a backend, and may restart once. From the system's Erlang
+  # one configured ERTS domain holds the platform's display unit, whose page of virtio-mmio
+  # transports the site manifest leaves free and whose graphics transport has no backend
+  # in this boot, and may restart once. From the system's Erlang
   # shell, as a person would type it, the cell asks the domain to find its device record,
   # open the device and read its magic; halts the domain; waits for the domain service to
   # restart the row under a new id; and asks the new domain the same. Each answer is the
@@ -27,9 +28,11 @@ module Erx
   # no record (erx_device_record:find answers {ok, []}). A restart refused because the
   # first creation's give was never undone fails it too: no second domain becomes ready.
   module DeviceGive
-    # The platform's spare unit (config/platforms/qemu-virt.json), whose one device's role
-    # makes its record `net virtio_net` (include/erx/device_kinds.h).
-    UNIT = "unit spare\n  placement \"spare\"\n  holder @domain.erts\n"
+    # The platform's display unit (config/platforms/qemu-virt.json), whose gpu device's role
+    # makes its record `gpu virtio_mmio` (include/erx/device_kinds.h). The site manifest
+    # leaves the display domain out, and the unit with it (Platform#site_manifest_source).
+    UNIT_KEY = 'display'
+    HOLDER = '@domain.erts'
     ARGS_LINE = /^  args ".*"\n\z/
     RESTARTS_LINE = "  restarts 0\n"
     # MediumBoot's configured row, staying up as a node (MediumBoot::UP_ARGS), with one restart.
@@ -39,7 +42,7 @@ module Erx
     # The restart's id: the next after the storage domain's, which boot gave last, after
     # erts's and the network domain's.
     RESTART_ID = MediumBoot::STORAGE_ID + 1
-    # QEMU virt's virtio-mmio magic, "virt" read little-endian, and where the spare
+    # QEMU virt's virtio-mmio magic, "virt" read little-endian, and where the graphics
     # transport sits in its page and how long its window is.
     MAGIC = 0x74726976
     OFFSET = 0xe00
@@ -57,12 +60,12 @@ module Erx
     # is not Old, and answers that id, or timeout.
     WAIT = 'DgWait=fun DgW(_,0)->timeout;DgW(DgOld,DgK)->case DgReady()--[DgOld] of [DgNew]->DgNew;' \
            '_->timer:sleep(100),DgW(DgOld,DgK-1) end end'
-    # DgRead(): at the domain's node, its one net virtio_net record opened and the magic
+    # DgRead(): at the domain's node, its one gpu virtio_mmio record opened and the magic
     # read, with the window's offset and size and the node's creation, which is the
     # domain's id, so the answer names the domain that read; or the class and reason of
     # the failure.
     READ_DEVICE = 'DgRead=fun()->try erpc:call(erts@erxos,fun()->' \
-                  '{ok,[DgSpec]}=erx_device_record:find(net,virtio_net),{ok,DgDev}=erx_device:open(DgSpec),' \
+                  '{ok,[DgSpec]}=erx_device_record:find(gpu,virtio_mmio),{ok,DgDev}=erx_device:open(DgSpec),' \
                   '{object,_,DgOffset,DgSize}=maps:get(window,DgSpec),' \
                   '{erx_device:read(DgDev,magic),DgOffset,DgSize,erlang:system_info(creation)} end,10000) ' \
                   'catch DgC:DgR->{DgC,DgR} end end'
@@ -81,8 +84,12 @@ module Erx
     
     module_function
 
-    # The manifest: MediumBoot's, with DOMAIN_ROW for its row and the spare unit placed on it.
-    def manifest(source) = MediumBoot.manifest(source, row: DOMAIN_ROW) + UNIT
+    # The manifest: MediumBoot's, with DOMAIN_ROW for its row and the display unit placed on
+    # it with the root_memory it costs (Manifest::Edit.with_unit). units is the platform
+    # record's.
+    def manifest(source, units:)
+      MediumBoot.manifest(Manifest::Edit.with_unit(source, UNIT_KEY, holder: HOLDER, units: units), row: DOMAIN_ROW)
+    end
 
     # The production checkpoints to the command shell, then the Erlang shell, the line,
     # its answer and the runtime's end. points must end at the command shell.
@@ -112,7 +119,7 @@ module Erx
         @linker = linker
         @qemu = qemu
         @machine = MediumBoot.machine(platform)
-        @manifest = DeviceGive.manifest(platform.site_manifest_source(@root))
+        @manifest = DeviceGive.manifest(platform.site_manifest_source(@root), units: platform.record.fetch('units'))
       end
 
       # Packs the image once, then boots it at each CPU count.

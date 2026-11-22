@@ -129,10 +129,8 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   On QEMU `virt` (docs/plan.md, Track B part (b); design-bluetooth.md, "The line on QEMU `virt`") the line's
   driver is `erx_virtio_console` (erlang/apps/erx_uart), over a virtio-console transport that the line grant's
   `device` names, a device of role `serial` with a given record (design-system.md property 8, design-fiasco.md
-  "Device records"); the kind row, the check and `erx_uart_sup` take it. Missing: the transport's row in
-  `config/platforms/qemu-virt.json`, which needs a slot whose register page no other unit shares (each of QEMU
-  `virt`'s four transport pages already holds one: the spare, display, network and disk units), so the row joins
-  an existing page's unit or the unit rule's page closure is settled for it first; the Bluetooth suite's
+  "Device records"); the kind row, the check and `erx_uart_sup` take it, and the platform record's line unit
+  holds the transport, `/virtio_mmio@a000e00`. Missing: the Bluetooth suite's
   manifest with the Bluetooth domain, the system domain's `line` service and its `line` grant, never the
   development manifest; `erx_facet:serve(line, Grants)` with its seeded fault (above); and the QEMU harness's
   socket chardev and the suite. The root's names still say `line_uart` (`boot_manifest.c`) for what is now any

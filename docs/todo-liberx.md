@@ -661,10 +661,10 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   device's whole register page, and the library checks a page's sharing only among the platform record's device
   rows, so a device the machine has on that page but the record does not list is reachable through the holder's
   window. On QEMU virt the display unit lists every transport on its page (`ordinary` rows for the empty ones), as
-  [design-fiasco.md](design-fiasco.md) states for all four units, but the block, net and spare units still
+  [design-fiasco.md](design-fiasco.md) states for all four units, but the block, net and line units still
   list their driven transport alone: a device QEMU attached on another transport of those pages would reach their
   holders unlisted. Listing them needs the tests and probes that take a unit's first device as its driven one
-  (`test/site/terminal_test.mjs`, `test/host/device_give_test.rb`, `test/host/dom_planner_test.rb`'s `device_of`
+  (`test/site/terminal_test.mjs`, `test/host/dom_planner_test.rb`'s `device_of`
   and net-unit fixtures, `MediumBoot`'s expected catalogue and `/dev` listing) to pick it by role, and the
   `ERX_DOM_DEVICES_MAX` item below. Better still, generate the virtio rows, and `QemuPlan`'s transports, from one
   table, or have the production image suite check that every tree node on a unit's pages is a row of that unit.

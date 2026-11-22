@@ -2782,11 +2782,16 @@ below that, whose graphics device is `/virtio_mmio@a001e00`, the keyboard
 pins them to (`QemuPlan::DISPLAY_TRANSPORTS`). The gpu has 9 MiB of DMA memory: the screen
 image of the largest mode the display design sizes, 1920 by 1080 in `x8r8g8b8`, 8,294,400
 bytes, and 1,142,784 bytes for the control queue's ring and buffers; each input device has
-64 KiB, room for its event queue's ring and 64 buffers of one event. A spare unit takes the
-page below that, `/virtio_mmio@a000e00`, which QEMU leaves without a device: the development manifest
-leaves it unplaced, and the `device_give` QEMU suite places it on a configured row, whose
-domain reads the transport's magic, is halted, and reads it again from what the row's
-restart gave it. The website's machine, v64,
+64 KiB, room for its event queue's ring and 64 buffers of one event. The line unit takes the
+page below that, the Bluetooth controller's line: a virtio console of role `serial` on
+`/virtio_mmio@a000e00`, unconfined, with 256 KiB of DMA memory, room for its receive and
+transmit queues' rings and 16 buffers of 4 KiB in each
+([design-bluetooth.md](design-bluetooth.md#the-line-on-qemu-virt)). The development
+manifest leaves it unplaced and only the Bluetooth suite's manifest places it, since the
+harness backs that transport only there. The `device_give` QEMU suite places the display
+unit, which the site manifest leaves free with the display domain, on a configured row,
+whose domain reads the graphics transport's magic, is halted, and reads it again from what
+the row's restart gave it. The website's machine, v64,
 which boots the website's image, has no setting for a device's transport, so `site/terminal.js`
 fills the rest of the disks' page with blank read-only disks and the network device falls
 on its transport ([site/README.md](../site/README.md#the-network)). The production image suite checks each

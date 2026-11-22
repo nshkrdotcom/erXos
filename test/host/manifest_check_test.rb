@@ -61,10 +61,11 @@ class ManifestCheckTest < Minitest::Test
   end
 
   # The real platform with the unit with_extra_device places, its device a copy of the
-  # spare unit's with fields changed.
+  # line unit's, as a network device with no DMA, with fields changed.
   def with_extra_device_platform(**fields)
-    device = @platform.fetch('units').find { |unit| unit.fetch('key') == 'spare' }.fetch('devices').first
-                      .merge('path' => '/extra@0', 'placement_key' => 'extra', 'dma' => 'none', 'dma_memory' => 0)
+    device = @platform.fetch('units').find { |unit| unit.fetch('key') == 'line' }.fetch('devices').first
+                      .merge('path' => '/extra@0', 'placement_key' => 'extra', 'role' => 'network', 'dma' => 'none',
+                             'flags' => 0, 'dma_memory' => 0)
                       .merge(fields.transform_keys(&:to_s))
     platform_with { |value| value.fetch('units') << { 'key' => 'extra', 'devices' => [device] } }
   end

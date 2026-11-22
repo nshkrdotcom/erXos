@@ -792,11 +792,12 @@ class DomPlannerTest < Minitest::Test
   def test_units_whose_devices_have_no_line_share_none
     platform = JSON.parse(JSON.generate(@context.platform))
     base = device_of(platform, 'block').fetch('base')
-    { 'net' => 0x1000, 'spare' => 0x2000 }.each do |key, offset|
-      device_of(platform, key).merge!('base' => base + offset, 'line' => 0, 'role' => 'ordinary', 'dma' => 'none', 'dma_memory' => 0)
+    { 'net' => 0x1000, 'line' => 0x2000 }.each do |key, offset|
+      device_of(platform, key).merge!('base' => base + offset, 'line' => 0, 'role' => 'ordinary', 'dma' => 'none', 'flags' => 0,
+                                      'dma_memory' => 0)
     end
     @context = Erx::Manifest::Context.new(**ManifestContextFixture.arguments(@codec).merge(platform: platform))
-    admit("#{@source}unit spare\n  placement \"spare\"\n  holder @domain.alpha\n")
+    admit("#{@source}unit line\n  placement \"line\"\n  holder @domain.alpha\n")
   end
 
   # A unit of two devices on pages of their own that share a line, as the Raspberry Pi

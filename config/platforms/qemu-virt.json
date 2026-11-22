@@ -93,12 +93,12 @@
       ]
     },
     {
-      "key": "spare",
+      "key": "line",
       "devices": [
-        { "selector": "dt", "role": "network", "path": "/virtio_mmio@a000e00", "bridge": "",
+        { "selector": "dt", "role": "serial", "path": "/virtio_mmio@a000e00", "bridge": "",
           "base": 167775744, "size": 512, "line": 55,
           "compatible": "virtio,mmio", "bus": 0, "device": 0, "function": 0,
-          "dma": "none", "flags": 0, "dma_memory": 0, "placement_key": "spare" }
+          "dma": "unconfined", "flags": 1, "dma_memory": 262144, "placement_key": "line" }
       ]
     },
     {

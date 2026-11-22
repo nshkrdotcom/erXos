@@ -150,6 +150,15 @@ module Erx
         Frontend.render(grown(remaining, changes))
       end
 
+      # text with the platform unit key of units placed on holder and root_memory grown by
+      # the unit's DMA memory, as the manifest check counts it: the inverse of what
+      # without_domain does for each unit it takes out. Refused: a key units has no unit of.
+      def with_unit(text, key, holder:, units:)
+        record = "unit #{key}\n  placement \"#{key}\"\n  holder #{holder}\n"
+        unit = Frontend.records(record, path: 'with_unit').first
+        grow(text, { %w[machine root_memory] => unit_dma(unit, units) }) + record
+      end
+
       # text without its apps row, as if it had never been written in, or text itself when
       # it has none (docs/design-packaging.md, "The apps row"). Given back: the row's
       # memory from root_memory, its max apps from max_domains, each app a principal with

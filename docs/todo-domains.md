@@ -481,6 +481,12 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
 
 ## Security residuals
 
+* [Low] manifest check, who may hold a raw input, gpu or network device (`tools/lib/erx/manifest.rb`,
+  [design-system.md](design-system.md) property 8): `check_input_grants` holds the input facet to a display
+  domain, since its holder reads every key pressed, but no rule limits which domain holds a device of role
+  `input`, `gpu` or `network`, which is more than that facet. The `device_give` QEMU suite places QEMU virt's display
+  unit on a configured ERTS domain and relies on that. Only trusted code runs in a development build; a holder rule
+  for these roles would need device_give to place another unit.
 * [Low] funnel, a 'DOWN' is matched by reference alone (`liberx/erx_funnel.c`, the target rule for
   `ERX_FUNNEL_PAYLOAD_MONITOR_P_EXIT`; ERTS's `erl_proc_sig_queue.c`): the funnel checks that a monitor
   exit's `from` is the sending domain's and that its reference is the receiver's node's, but not that the
