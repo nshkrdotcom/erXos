@@ -24,8 +24,8 @@ class ErxBtLinkProcTest < Minitest::Test
 
   SEEDS = [
     Seed.new(fault: 'format_status/1 showing the state, the core with its keys',
-             anchor: '    Shown = Status#{state := #{name => Name, conn => Conn, core => facts(Core)}},',
-             replacement: '    Shown = Status#{state := {Name, Conn, Core}},',
+             anchor: 'link_facts(#link{name = Name, conn = Conn, core = Core}) -> #{name => Name, conn => Conn, core => facts(Core)};',
+             replacement: 'link_facts(#link{name = Name, conn = Conn, core = Core}) -> {Name, Conn, Core};',
              catching_case: 'crash_mid_pairing_leaks_nothing_test'),
     Seed.new(fault: "a raise in the core left uncaught, so its stack trace carries the core",
              anchor: "        Class:_Raised ->\n            {stop, {step_raised, Class, erx_bt_link_core:facts(Core)}, Link}",
@@ -45,13 +45,9 @@ class ErxBtLinkProcTest < Minitest::Test
              replacement: '    catch exit:Reason -> exit(Reason)',
              catching_case: 'failed_join_ends_the_link_test'),
     Seed.new(fault: "a message shown whole, the window's verdict with its fresh private key and passkey",
-             anchor: '    hide_log(hide_message(Shown));',
-             replacement: '    hide_log(Shown);',
-             catching_case: 'format_status_hides_the_verdict_test'),
-    Seed.new(fault: "the sys log shown as a term gen_server's crash report cannot format",
-             anchor: 'hide_log(#{log := [_ | _]} = Status) -> Status#{log := []};',
-             replacement: 'hide_log(#{log := Log} = Status) -> Status#{log := {events, length(Log)}};',
-             catching_case: 'crash_mid_pairing_leaks_nothing_test')
+             anchor: 'message => fun input_kind/1}',
+             replacement: 'message => keep}',
+             catching_case: 'format_status_hides_the_verdict_test')
   ].freeze
 
   def test_link_process_cases_pass_under_eunit

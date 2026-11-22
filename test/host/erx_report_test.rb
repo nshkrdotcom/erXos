@@ -35,7 +35,11 @@ class ErxReportTest < Minitest::Test
     Seed.new(fault: "each frame's arguments kept",
              anchor: '        Arity -> [{M, F, Arity} | frames(Frames)]',
              replacement: '        _Arity -> [{M, F, Arguments} | frames(Frames)]',
-             catching_case: 'statem_report_keeps_names_test')
+             catching_case: 'statem_report_keeps_names_test'),
+    Seed.new(fault: 'the sys log shown as a count rather than empty',
+             anchor: 'default(log, _Value) -> [];',
+             replacement: 'default(log, Log) -> {events, length(Log)};',
+             catching_case: 'status_shows_only_what_the_views_name_test')
   ].freeze
 
   def test_report_cases_pass_under_eunit
