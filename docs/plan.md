@@ -144,7 +144,7 @@ numbers are names; the table's order is the order.
 | **Phase 1** | | | | |
 | M0 The tree, the toolchain and the oracle | focused stock OTP 29.1.2 cases verify the offline Linux test runner; native Mac OTP supplies bootstrap tools; the frozen Fiasco set builds from the tree; `make check` generates every generated file into the build tree from checked-in inputs, and fails on a generated file found in the tree | 4,000 lines of Ruby | | G0 |
 | M1 The system boots on Fiasco | the near-stock Fiasco prints erXos's banner and starts `liberx`'s root entry as the root task under HVF; the production image boots to the point where ERTS starts | 3,000 to 4,500 lines of C17 | M0, G0 | |
-| Track H Hosted mode | the runtime runs as a Mac process under the sanitizers; once the Fiasco backend's rows between tasks have settled, domains and their connections run as Mac processes too, over the same backend rows as Fiasco's | 3,000 lines of C17 | M0 | |
+| Track H Hosted mode | the runtime runs as a Mac process under the sanitizers; once a consumer needs the sanitizers or `lldb` across domains, domains and their connections run as Mac processes too, over the same backend rows as Fiasco's | 3,000 lines of C17 | M0 | |
 | M3 The shell is the operating system | `1>` on the serial console, from ERTS in the system domain in user mode, started by the root task | 8,000 lines of C, 1,000 of Erlang | M1, track H | G3 |
 | M4 The machine is an object | save in the editor on the Mac, run in the machine; follow a process to its source; ERTS and backend events on one timeline, the kernel's row unsupported | 10,000 lines of Erlang, 3,000 of Ruby, 2,000 of C | M3 | |
 | M6 Immutable code, lasting data | the shell reads a file of the slot's system partition through the `system` tree on a QEMU disk; a file under `/data` survives a power cut | estimated in the subsystems' design documents | M4 | |
@@ -467,9 +467,12 @@ runs hosted first, under ASan, UBSan and TSan, and `lldb`. 1b-A targets QEMU: th
 process, and gains the rows 1b-A needs only where they are cheap there.
 Its multi-process form, in which several domains run as Mac processes with
 their lanes in shared regions and the domain library drives the hosted
-interface, comes once the Fiasco backend's rows between tasks have settled;
-it carries those rows and no device row, since a hosted runtime has no
-devices, and gets its design, reviewed as a design, before its code
+interface, is deferred until a consumer needs the sanitizers or `lldb`
+across domains; no part of the plan waits for it, and the Bluetooth
+suites, its first candidate, run on QEMU `virt` instead
+([Track B](#track-b-bluetooth)). When it comes it carries the Fiasco
+backend's rows between tasks and no device row, since a hosted runtime has
+no devices, and gets its design, reviewed as a design, before its code
 ([design-fiasco.md](design-fiasco.md#the-hosted-backend)). It is a
 planned feature in [TODO.md](../TODO.md). QEMU remains authoritative.
 
@@ -2892,8 +2895,9 @@ points of the shared mappings meet the named application corpus.
 ## Track B: Bluetooth
 
 **Place.** In Phase 1b, below the first two apps (Track A, "What comes
-first"): parts (a) to (c) run beside every other item, since 1b-A and
-track H are in place, and part (d) runs beside 1b-I's board work. No
+first"): parts (a) to (c) run beside every other item, since 1b-A is in
+place and QEMU `virt` runs the Bluetooth domain, and part (d) runs beside
+1b-I's board work. No
 milestone depends on the track.
 
 **Goal.** A phone app finds an erXos machine, connects to it and talks
@@ -2923,14 +2927,18 @@ without pairing.
   targets, explored tests and seeded faults, and the codecs compared with
   Bumble's decoders on one corpus
   ([design-bluetooth.md](design-bluetooth.md#verification)).
-* **(b) Stages 1 to 3 in hosted mode.** The line service over
-  `erx_stdio` on a descriptor to a Bumble controller, the Bluetooth
-  domain, `abi/services/ble.txt` and `abi/services/line.txt`, the `ble`
-  facet, `erx_gatt_serial`, the `line` grant's parameters, and the
-  Ruby harness with the peer scripts of stages 1 to 3. It needs the
-  domains and facets of [1b-A](#m5-a-wall-around-some-processes) and the
-  multi-process form of [track H](#track-h-hosted-mode).
-* **(c) Stage 4 in hosted mode.** The Security Manager as responder,
+* **(b) Stages 1 to 3 on QEMU `virt`.** The line service over
+  `erx_virtio_console`, the driver of a virtio-console port, which the
+  QEMU harness joins through a socket chardev to a Bumble controller;
+  the Bluetooth domain in QEMU `virt`'s development manifest, with its
+  `line` grant over that port, `abi/services/ble.txt` and
+  `abi/services/line.txt`, the `ble` facet, `erx_gatt_serial`, the
+  `line` grant's parameters, and the Ruby harness with the peer scripts
+  of stages 1 to 3
+  ([design-bluetooth.md](design-bluetooth.md#on-qemu-against-bumble)).
+  It needs the domains and facets of
+  [1b-A](#m5-a-wall-around-some-processes).
+* **(c) Stage 4 on QEMU `virt`.** The Security Manager as responder,
   the pairing window with its pairing wait and the control tree, the store with its
   development backend, reconnection with bonds and Service Changed, and
   the stage 4 peers. The phone console joins it once the one login
@@ -2959,15 +2967,15 @@ without pairing.
 Wi-Fi provisioning, HID over GATT and classic Bluetooth are not parts
 of the track ([Beyond the plan](#beyond-the-plan)).
 
-**Testing.** `make check` runs (a)'s host tests. The hosted suite
+**Testing.** `make check` runs (a)'s host tests. The QEMU suite
 against Bumble runs at the landing gate when a change touches the
-Bluetooth stack, the line service or `erx_stdio`, and at the milestone
+Bluetooth stack, the line service or `erx_virtio_console`, and at the milestone
 gate; (a)'s fuzz targets run at the milestone gate's budgets. The Pi 4
 runs by hand, under its checklist, once per batch.
 
 **Exit criteria, each part.** Its cores' explored tests and fuzz
 targets pass their budgets, each with its seeded fault failing them; its
-hosted suite against Bumble passes, each case with its seeded fault
+QEMU suite against Bumble passes, each case with its seeded fault
 failing it, or, for (d), the board's checklist passes; a malformed
 packet or PDU ends at most its link, and a framing error restarts the
 controller from `reset` to advertising; every refusal of

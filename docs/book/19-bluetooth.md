@@ -476,9 +476,10 @@ programming have host tests too. All of these tests are **Built**.
 For the protocol above HCI, the design uses Bumble, a Bluetooth stack
 written in Python, whose virtual controllers
 speak H4 over a TCP socket
-([design-bluetooth.md, Hosted mode against Bumble](../design-bluetooth.md#hosted-mode-against-bumble)).
-erXos runs in [hosted mode](09-processes.md#962-hosted-mode) on one
-virtual controller, while a Bumble peer on another scans, connects,
+([design-bluetooth.md, On QEMU against Bumble](../design-bluetooth.md#on-qemu-against-bumble)).
+erXos runs on QEMU `virt`, whose controller's line is a virtio-console
+port joined through a socket to one virtual controller, while a Bumble
+peer on another scans, connects,
 reads and pairs. Each test has a seeded fault, such as advertising
 data built wrong, which must make the UUIDs vanish from the peer's
 scan. This harness is Designed.

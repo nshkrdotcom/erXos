@@ -126,9 +126,10 @@ sees it (4.8.1); the Report Map is at most 512 octets (HIDS 2.6.1).
 * **QEMU has no Bluetooth.** QEMU removed its Bluetooth emulation in 5.0
   "without replacement" (QEMU's 5.0 change log), and QEMU `virt`'s two
   PL011s are the console and the host link (`virt.rst:36`, `:55-62`). The
-  integration tests run in [hosted mode](design-runtime.md#hosted-mode)
-  against Google's Bumble, whose virtual controllers speak H4 over a TCP
-  socket ([Verification](#verification)).
+  integration tests run on QEMU `virt`, where the Bluetooth controller's
+  line is a virtio-console port that QEMU joins through a socket to a
+  virtual controller of Google's Bumble, which speaks H4 over a TCP socket
+  ([Verification](#verification)).
 
 ### Sources
 
@@ -188,11 +189,23 @@ Specification at
 | | | `bumble/hci.py` | `6eacd9bd72df40da6a5b79e9e7130e8c20434d01e6d379b150808b3de8c0e865` |
 | | | `bumble/transport/common.py` | `c62ac850542cf9ef8668ebbe801e3a5dc369a50464c1faba875fb404935b409d` |
 | | | `bumble/smp.py` | `d785a52fba8af900bb8da8a13129c92ef294286ec51bfcf084e9d50801d9440e` |
+| Virtio 1.2, csd01 | 1.2 csd01 | `https://docs.oasis-open.org/virtio/virtio/v1.2/csd01/virtio-v1.2-csd01.html`, section 5.3 | `e18d68ee81b03bb9d8fb493356704fa77e3a9eac1c10f79111940cbd482f7bc1` |
 
 The Core Specification Supplement, which defines the advertising data
 types and the Flags structure, was not fetched. The values this document
 uses from it come from Bumble's `core.py:1594-1622` and are marked
 unverified until the supplement is read.
+
+QEMU's virtio console is QEMU's, whose source is under the GPL and was
+not read, so three facts the line on QEMU `virt` relies on are
+unverified until the QEMU suite's first boot settles them: that QEMU
+joins port 0 to its socket when the driver negotiates no
+`VIRTIO_CONSOLE_F_MULTIPORT`, and so sends no port-open message; whether
+it holds or drops bytes that arrive while no receive buffer is posted;
+and whether a device reset drops what QEMU's character device holds. If
+the first does not hold, the driver negotiates
+`VIRTIO_CONSOLE_F_MULTIPORT` and opens port 0 with the control queues'
+messages (section 5.3.6.2).
 
 ## Requirements
 
@@ -354,7 +367,7 @@ The work is ordered by the first consumer, a phone app talking to an
 erXos device, in four stages whose sections follow: the controller and
 advertising, the GATT server, the serial service, and pairing and
 bonding. Each ends in a demo against a phone and a test against Bumble
-([Hosted mode against Bumble](#hosted-mode-against-bumble)); Wi-Fi
+([On QEMU against Bumble](#on-qemu-against-bumble)); Wi-Fi
 provisioning, HID over GATT and classic Bluetooth come after them
 ([Later stages](#later-stages)). [plan.md](plan.md#track-b-bluetooth)
 schedules the work.
@@ -682,15 +695,41 @@ device has a power line.
   line service's timers, so a power cycle holds the worker for two
   calls, at most 1 s each.
 
-**In hosted mode** the line's driver is `erx_stdio` over a descriptor the
-harness opens to a Bumble controller's TCP transport and passes to the
-hosted runtime, speaking the same six messages
+#### The line on QEMU `virt`
+
+On QEMU `virt` the line's driver is `erx_virtio_console`, the driver
+of port 0 of a virtio console (virtio 1.2, section 5.3), over a
+virtio-mmio transport, of a unit the system domain holds in QEMU `virt`'s
+development manifest, that the line grant names. It speaks the PL011's driver messages
 ([design-runtime.md](design-runtime.md#the-console-and-standard-io)), so
 the line service, the tree and everything in the Bluetooth domain are the
-ones the board runs; the hosted record names no power line, and a fresh
-start of `erx_stdio` drops what it has read. A future transport, a
-virtio-console port on QEMU `virt` or HCI over USB, is another driver
-behind the same tree.
+ones the board runs. It negotiates no feature of the device type's: without
+`VIRTIO_CONSOLE_F_MULTIPORT` the device has port 0 alone, on queue 0, its
+receive queue, and queue 1, its transmit queue, and no control queue
+(section 5.3.2). Its start does not wait: a device whose reset has not
+finished answers `negotiate/2` `ebusy`, which fails the start, and the
+line with it, as any failed step does.
+
+It keeps the receive queue full of device-writable
+buffers and passes the bytes of each the device returns, as many as its
+used length says, unchanged to the line; it lays a write's bytes in
+device-readable buffers of the transmit queue, in order, and answers the
+write once the device has returned every one of them. A used element or
+used index the device NIF's ring core refuses, such as a length past its
+buffer or a buffer not in flight, breaks the queue; a broken
+queue ends the driver, which ends the line, as any driver's end outside a
+`reset` does.
+
+QEMU `virt`'s platform record names no power line, so a
+`reset` is the steps of [A reset](#a-reset) without steps 2 and 4: the
+driver's fresh start resets the device, which returns every buffer and
+drops what the device held, and the line drops what it buffered. Bytes
+QEMU or the socket still holds may reach the fresh driver, so the line
+is resynchronized, as on the board, by the bring-up's `HCI_Reset` and
+its answer ([The bring-up](#the-bring-up)). The QEMU
+harness joins the port through a socket to a Bumble controller's TCP
+transport ([On QEMU against Bumble](#on-qemu-against-bumble)). HCI over
+USB is another driver behind the same tree.
 
 ### What a radio peer can make the domain spend
 
@@ -2276,8 +2315,13 @@ Attempts, Invalid Parameters and DHKey Check Failed.
 
 ## Verification
 
-Agents iterate on the host tests and hosted mode; the board runs by hand,
-once per batch, under the manual checklist.
+Agents iterate on the host tests and the QEMU suite against Bumble, on its
+1-CPU cell; the board runs by hand, once per batch, under the manual
+checklist. Hosted mode runs none of the Bluetooth stack: the Bluetooth
+domain is a domain of its own beside the system domain, which only hosted
+mode's multi-process form could run
+([plan.md](plan.md#track-h-hosted-mode)), and QEMU runs the line
+service, the domain and its facets as the board does.
 
 ### Host tests of the cores
 
@@ -2328,12 +2372,19 @@ own). Each runs at the milestone gate's budget, and the codecs are also
 compared with Bumble's decoders on the same corpus, a differential test
 on the host.
 
-### Hosted mode against Bumble
+### On QEMU against Bumble
 
 The harness, in Ruby, runs Bumble unmodified: `apps/controllers.py` with
-two TCP transports joined by its local link, one controller for erXos's
-line, whose socket the harness passes to the hosted runtime as the
-line's descriptor, and one for the peer. Bumble's stream transports carry H4 framing
+two TCP server transports joined by its local link, one controller for
+erXos's line and one for the peer, each bound to 127.0.0.1
+(`tcp-server:127.0.0.1:PORT`), since a listener on every interface would
+let any host that reaches the development host write HCI traffic into
+the guest's line or the peer. It then boots QEMU `virt` with the
+suite's manifest, the development manifest with a Bluetooth domain whose
+`line` grant names the virtio-console transport, and that transport's
+port 0 on a socket chardev that connects to the first controller's
+port, so the bytes erXos's line writes reach Bumble's controller
+unchanged ([The line on QEMU `virt`](#the-line-on-qemu-virt)). Bumble's stream transports carry H4 framing
 (`bumble/transport/common.py:41-46`, `:125-144`), and its controller
 implements every command stage 1 to 4 send (`bumble/controller.py:1996`,
 `:2344`, `:2874`, `:2953`, `:3004-3067`, `:3299-3310`). Python runs only
@@ -2391,7 +2442,7 @@ list ([todo-performance.md](todo-performance.md)):
   word of `ctl` would cut it, if a measurement says the wait matters;
 * a phone's write reaching a handler and its answer coming back across
   two domains, measured by a peer script that times write requests
-  through an echo handler, in hosted mode and on the board;
+  through an echo handler, on QEMU and on the board;
 * `erx_pl011`'s wait of 1 ms at a time while its transmit FIFO is full
   (`erx_pl011.erl:45`, `:236-243`), which the patch download and bursts
   of notifications meet.

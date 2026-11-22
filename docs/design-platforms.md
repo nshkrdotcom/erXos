@@ -150,7 +150,7 @@ belong to the driver table of
 | Crash record | the early console, whose log the harness keeps | the early console, and the crash region in RAM | the early console, and the crash region in RAM |
 | Unconfined DMA devices, each in a domain of its own in a release build | the virtio-mmio devices | the SD controller, Ethernet, the VL805 | the SD controllers, RP1, a function on the external connector |
 | USB | `qemu-xhci`, a PCIe function on the root bus ([design-usb.md](design-usb.md)) | the VL805, behind the BCM2711 bridge, through the PCIe domain ([design-usb.md](design-usb.md)) | RP1's two USB hosts |
-| Bluetooth | none: QEMU has no Bluetooth; hosted mode runs against Bumble's controllers | a CYW43455 on UART0, whose line tree the system domain serves to the Bluetooth domain ([design-bluetooth.md](design-bluetooth.md)) | none designed |
+| Bluetooth | none: QEMU has no Bluetooth; a virtio-console port carries the line to Bumble's controllers ([design-bluetooth.md](design-bluetooth.md#the-line-on-qemu-virt)) | a CYW43455 on UART0, whose line tree the system domain serves to the Bluetooth domain ([design-bluetooth.md](design-bluetooth.md)) | none designed |
 | PSCI from | QEMU | TF-A's BL31, from the boot partition | TF-A's BL31, in the firmware |
 | Trial request | the harness | the firmware's mailbox | the firmware's mailbox |
 | Device secret | none | the OTP key, when provisioned | the OTP key, when provisioned |
