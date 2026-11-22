@@ -36,7 +36,9 @@ module Erx
   # development daemon (erx_ssh_dev; docs/design-ssh.md, "Stages", stage 1), which root's
   # session started at boot on DevKey::PORT, which a host forward reaches, in an image
   # that carries the clone's development login key (DevKey), and the host's ssh logs in
-  # through it and types ps at rc on the login's tty (check_ssh).
+  # through it and types ps at rc on the login's tty, then runs commands with no tty,
+  # whose output and error output, every byte value of them, cross apart and unchanged
+  # and whose status is ssh's, and one on a tty (check_ssh).
   # Last, the system's shell kills the network domain's pid and, once the domain is
   # gone, reads the root's pool pages again: each figure (after the lease, after the
   # echo and the logins) minus that last one is the domain's
@@ -122,11 +124,38 @@ module Erx
     # The host ssh's line when the daemon turns down every key it offered.
     SSH_REFUSED = 'Permission denied (publickey)'
     SSH_DEADLINE = 60
-    # The cell's ssh asks nothing, on top of what every ssh of DevKey's runs with, and asks
-    # for a tty though its input is a file (-tt): the daemon gives only a shell on a tty
-    # and refuses exec (docs/design-ssh.md, "Stages"). -e none keeps every typed byte
-    # the guest's, never an escape of the host's ssh.
-    SSH_OPTIONS = ['-tt', '-e', 'none', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=30'].freeze
+    # The cell's ssh asks nothing, on top of what every ssh of DevKey's runs with. -e none
+    # keeps every typed byte the guest's, never an escape of the host's ssh.
+    SSH_OPTIONS = ['-e', 'none', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=30'].freeze
+    # An exec's ssh logs only its errors, no notice of its own such as a new host key's
+    # or a key exchange's, so its standard error is the job's unless ssh failed.
+    SSH_EXEC_OPTIONS = ['-o', 'LogLevel=ERROR'].freeze
+    # One exec over ssh (docs/design-ssh.md, "Stages"): the command, ssh's tty option
+    # (-tt asks for a tty though ssh's input is a file, -T for none, nil leaves ssh's
+    # default, none with a command), the bytes ssh reads, and what it must print on its
+    # standard output and its standard error and exit with; output or error_output nil
+    # is not checked. Without a tty ssh's standard error holds the job's and ssh's own
+    # errors only (SSH_EXEC_OPTIONS).
+    SshExec = Data.define(:name, :command, :tty, :input, :output, :error_output, :status)
+    # Every byte value, 512 times: 128 KiB, past a job's input and output pieces of
+    # ssh_line_data_max bytes (abi/services/ssh.txt) and a message pipe's capacity
+    # (erx_shell_pipe).
+    SSH_BYTES = ((0..255).to_a.pack('C*') * 512).freeze
+    # Without a tty a job's output and error output cross apart and unchanged and its
+    # status is ssh's; on a tty an exec's status is ssh's too.
+    SSH_EXECS = [
+      SshExec.new(name: 'ssh-exec-echo', command: 'echo hi', tty: '-T', input: nil, output: "hi\n", error_output: '',
+                  status: 0),
+      SshExec.new(name: 'ssh-exec-stderr', command: 'echo out; echo err >[1=2]', tty: '-T', input: nil, output: "out\n",
+                  error_output: "err\n", status: 0),
+      SshExec.new(name: 'ssh-exec-cat', command: 'cat', tty: '-T', input: SSH_BYTES, output: SSH_BYTES, error_output: '',
+                  status: 0),
+      SshExec.new(name: 'ssh-exec-exit', command: 'exit 3', tty: nil, input: nil, output: nil, error_output: nil, status: 3),
+      SshExec.new(name: 'ssh-exec-tty-exit', command: 'exit 4', tty: '-tt', input: nil, output: nil, error_output: nil,
+                  status: 4)
+    ].freeze
+    # check_ssh's logins: root's on a tty, the two refused, and the execs.
+    SSH_LOGINS = 3 + SSH_EXECS.size
 
     PROMPT = SessionDomain::PROMPT
 
@@ -151,9 +180,9 @@ module Erx
        run::ERLANG_SHELL.merge(name: 'session-erlang-shell', type: ECHO_LINE).freeze,
        { name: 'tcp-echo', pattern: answer('true'), seconds: 120, type: SSH_LINE }.freeze,
        ssh_daemon(check_ssh).merge(type: run::CTRL_G).freeze,
-       # Its seconds also pay for check_ssh's three logins within the run's deadline, the
-       # sum of the checkpoints' seconds; its own clock starts once they returned.
-       { name: 'system-menu', pattern: run::CTRL_G_MENU, seconds: (3 * SSH_DEADLINE) + 30, type: 's' }.freeze,
+       # Its seconds also pay for check_ssh's logins within the run's deadline, the sum of
+       # the checkpoints' seconds; its own clock starts once they returned.
+       { name: 'system-menu', pattern: run::CTRL_G_MENU, seconds: (SSH_LOGINS * SSH_DEADLINE) + 30, type: 's' }.freeze,
        { name: 'system-again', pattern: menu_left, seconds: 30, type: ECHOED_LINE }.freeze,
        { name: 'echoed', pattern: answer('\{nd_echoed,[0-9]+\}'), seconds: 60, verify: figure.call(:echoed),
          type: END_LINE }.freeze,
@@ -205,8 +234,8 @@ module Erx
     # asking nothing, with the boot's known-hosts file in a directory of the cell's own,
     # since the cell's guest is a boot of its own: root with pair's key types SSH_INPUT on
     # the login's tty and gets ps's header back, while the user daemon with that key and
-    # root with another key are refused. What the guest printed reaches an error only
-    # escaped.
+    # root with another key are refused; then root runs each of SSH_EXECS. What the guest
+    # printed reaches an error only escaped.
     def check_ssh(pair:, port:, runner:)
       Dir.mktmpdir('erx-ssh-cell') do |work|
         input = input_file(work, SSH_INPUT)
@@ -220,7 +249,50 @@ module Erx
         refused(ssh_argv(pair, port: port, work: work, user: 'daemon'), name: 'ssh-other-user', input: input, work: work,
                                                                         runner: runner)
         refused(ssh_argv(other, port: port, work: work), name: 'ssh-other-key', input: input, work: work, runner: runner)
+        SSH_EXECS.each { |exec| check_exec(exec, pair: pair, port: port, work: work, runner: runner) }
       end
+    end
+
+    # Root runs the expected exec's command with its input as ssh's, which must exit with
+    # its status and print exactly its output and error output, each where not nil. ssh's
+    # standard error is the run's log.
+    def check_exec(expected, pair:, port:, work:, runner:)
+      stdin = expected.input && input_file(work, expected.input, name: "#{expected.name}-input")
+      stdout = File.join(work, expected.name)
+      argv = ssh_argv(pair, port: port, work: work, tty: expected.tty, command: expected.command)
+      result = begin
+        runner.run(argv, name: expected.name, deadline: SSH_DEADLINE, stdin: stdin, stdout: stdout)
+      rescue CommandError => error
+        raise unless error.result.fetch('state') == 'failed'
+
+        error.result
+      end
+      status = result.fetch('exit_status')
+      printed = File.binread(stdout)
+      error_output = File.binread(result.fetch('log'))
+      wrong = []
+      wrong << "exited #{status.inspect}, not #{expected.status}" unless status == expected.status
+      wrong << "printed #{shown_bytes(printed, expected.output)}" unless as_expected?(printed, expected.output)
+      unless as_expected?(error_output, expected.error_output)
+        wrong << "wrote #{shown_bytes(error_output, expected.error_output)} to standard error"
+      end
+      return if wrong.empty?
+
+      raise Error, "#{expected.name}: ssh #{[*expected.tty, expected.command.dump].join(' ')} #{wrong.join(', ')}; " \
+                   "log: #{result.fetch('log')}"
+    end
+
+    # Whether bytes are the expected ones, which nil leaves unchecked.
+    def as_expected?(bytes, expected) = expected.nil? || bytes == expected
+
+    # Bytes an exec gave that differ from the expected ones, for an error: a few escaped
+    # beside the expected ones, more by their size and the offset of the first byte that
+    # differs, the shorter one's size when one is a prefix of the other.
+    def shown_bytes(bytes, expected)
+      return "#{bytes.dump}, not #{expected.dump}" if bytes.bytesize <= 64 && expected.bytesize <= 64
+
+      differs = (0..bytes.bytesize).find { |at| bytes.getbyte(at) != expected.getbyte(at) }
+      "#{bytes.bytesize} bytes of #{expected.bytesize} expected, the first differing at offset #{differs}"
     end
 
     # Root with pair's key logs in through the host forward at port and types SSH_REBOOT
@@ -236,15 +308,18 @@ module Erx
       raise Error, "the guest refused root's login; log: #{error.result.fetch('log')}" if ssh_refused?(error)
     end
 
-    # The host's ssh as user with pair's key through the host forward at port, on a tty,
-    # with a known-hosts file in work, a directory of the check's own.
-    def ssh_argv(pair, port:, work:, user: 'root')
+    # The host's ssh as user with pair's key through the host forward at port, with a
+    # known-hosts file in work, a directory of the check's own: with ssh's tty option tty,
+    # by default a tty though ssh's input is a file, and running command, by default a
+    # shell; a command's ssh adds SSH_EXEC_OPTIONS.
+    def ssh_argv(pair, port:, work:, user: 'root', tty: '-tt', command: nil)
       DevKey.ssh_argv(pair: pair, port: port, user: user, known_hosts: File.join(work, DevKey::KNOWN_HOSTS),
-                      options: SSH_OPTIONS)
+                      options: [*tty, *SSH_OPTIONS, *(command ? SSH_EXEC_OPTIONS : [])], command: command)
     end
 
-    # Writes text, what a check's ssh types, to a file in work and returns its path.
-    def input_file(work, text) = File.join(work, 'input').tap { |path| File.binwrite(path, text) }
+    # Writes text, what a check's ssh types or reads, to the file name in work and returns
+    # its path.
+    def input_file(work, text, name: 'input') = File.join(work, name).tap { |path| File.binwrite(path, text) }
 
     # Runs argv typing input's bytes, which the guest's daemon must refuse with SSH_REFUSED.
     # A login it admits runs rc, which exits at input's exit, and the tty's output goes
@@ -347,7 +422,7 @@ module Erx
       def record(accel, figures)
         ended = figures.fetch(:ended)
         @measurements << "network_domain: #{accel}, 1 CPU, #{@machine.memory_mib} MiB: the network domain's root pool pages " \
-                         "after the lease at least #{figures.fetch(:lease) - ended}, after ping, a #{ECHO_BYTES}-byte TCP echo and three ssh logins " \
+                         "after the lease at least #{figures.fetch(:lease) - ended}, after ping, a #{ECHO_BYTES}-byte TCP echo and #{SSH_LOGINS} ssh logins " \
                          "#{figures.fetch(:echoed) - ended} (pages in use with the domain up minus #{ended} once it ended)"
       end
     end

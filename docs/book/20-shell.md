@@ -601,7 +601,9 @@ boot imports the `authorized_keys` file of the card's FAT volume into
 root's home. A channel's process, `erx_ssh_dev_channel`, opens a tty of
 the session with the size from `pty-req`, and the command shell runs on
 it. `window-change` becomes `{tty_size, Rows, Columns}`, closing the
-channel hangs the tty up, and `exec` is refused. The `authorized_keys` decoder,
+channel hangs the tty up, and an `exec` runs `rc -c` on its command: on
+that tty when the client asked for one, and otherwise as a job whose output
+and error output reach the client apart and unchanged. The `authorized_keys` decoder,
 `erx_boot_keys`, has a fuzz target.
 
 The designed form moves the protocol out of the session. OTP's `ssh`
