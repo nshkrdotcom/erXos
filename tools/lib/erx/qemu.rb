@@ -100,10 +100,40 @@ module Erx
     # tablet .13, so the three are one unit that goes whole to the display domain and share
     # no register page with the disks or the network device (Display, the unit rule).
     DISPLAY_TRANSPORTS = { gpu: 15, keyboard: 14, tablet: 13 }.freeze
+    # The Bluetooth controller's line: bus .7 at 0x0a000e00, the transport the platform
+    # record's line unit names (config/platforms/qemu-virt.json), alone on the lowest page,
+    # buses .7 to .0, so it shares no register page with another unit (Line, the unit rule).
+    LINE_TRANSPORT = 7
+    # QEMU's ids of the line's virtio-serial device and of its chardev (Line).
+    LINE_SERIAL_ID = 'line_serial'
+    LINE_CHARDEV_ID = 'line'
     # One virtio device of a plan on its transport: unit names the domain the device goes
-    # to (:disks, :nic or :display), bus its virtio-mmio-bus number, and device the -device
-    # value before its bus.
+    # to (:disks, :nic, :display or :line), bus its virtio-mmio-bus number, and device the
+    # -device value before its bus.
     Placement = Data.define(:unit, :bus, :device)
+    # The Bluetooth controller's line, not a serial line or the kernel command line
+    # (docs/design-bluetooth.md, "The line on QEMU `virt`"):
+    # a virtio console on LINE_TRANSPORT whose port 0 is a socket chardev that connects to
+    # a controller listening on the development host's loopback at port, the harness's
+    # Bumble controller. QEMU connects when it starts, so the controller listens first.
+    # The chardev never listens itself (server=off) and names only 127.0.0.1, so no other
+    # host reaches the guest's line through it.
+    Line = Data.define(:port) do
+      def initialize(port:)
+        raise Error, 'a line port is a TCP port, 1 to 65535' unless port.is_a?(Integer) && port.between?(1, 65_535)
+
+        super
+      end
+
+      # The virtio-serial device on LINE_TRANSPORT; #arguments adds port 0 on that device's
+      # own bus, LINE_SERIAL_ID.0.
+      def placement = Placement.new(unit: :line, bus: LINE_TRANSPORT, device: "virtio-serial-device,id=#{LINE_SERIAL_ID}")
+
+      # The chardev, and port 0 of the console on it, which follow the device's -device
+      # (argv), since QEMU creates the port on a bus the device has already made.
+      def arguments = ['-chardev', "socket,id=#{LINE_CHARDEV_ID},host=127.0.0.1,port=#{port},server=off",
+                       '-device', "virtconsole,chardev=#{LINE_CHARDEV_ID},bus=#{LINE_SERIAL_ID}.0,nr=0"]
+    end
     # The domain slirp's DHCP server hands the guest in its lease (option 15), which the
     # guest's resolver takes as its search list.
     NIC_DOMAIN = 'erxos.test'
@@ -316,7 +346,7 @@ module Erx
 
     def argv(platform:, accel:, image:, serial:, cpus: 1, memory_mib: memory_of(platform),
              program: 'qemu-system-aarch64', initrd: nil, serial_input: nil, command_line: nil, dtb: nil,
-             disks: [], hostlink: nil, nic: nil, stub: nil, firmware: nil, display: nil, pcie: nil)
+             disks: [], hostlink: nil, nic: nil, stub: nil, firmware: nil, display: nil, pcie: nil, line: nil)
       raise Error, 'accelerator must be tcg or hvf' unless %w[tcg hvf].include?(accel)
       board = machine_of(platform)
       raise Error, 'PCIe functions are a QemuPlan::Pcie' unless pcie.nil? || pcie.is_a?(Pcie)
@@ -325,7 +355,7 @@ module Erx
         raise Error, "#{board.base} takes no PCIe functions" if pcie
 
         return loaded_argv(board, accel: accel, image: image, serial: serial, serial_input: serial_input, cpus: cpus, program: program,
-                                  stub: stub, firmware: firmware, dtb: dtb, disks: disks, display: display, refused: { initrd: initrd, command_line: command_line, nic: nic,
+                                  stub: stub, firmware: firmware, dtb: dtb, disks: disks, display: display, refused: { initrd: initrd, command_line: command_line, nic: nic, line: line,
                                                                                  hostlink: hostlink == NO_HOSTLINK ? nil : :hostlink })
       end
       raise Error, "platform #{platform.name} boots from no stub" if stub || firmware
@@ -340,7 +370,8 @@ module Erx
       end
       raise Error, 'a network device is a QemuPlan::Nic, Relay or UserNet' unless [NilClass, Nic, Relay, UserNet].include?(nic.class)
       raise Error, 'a display is a QemuPlan::Display' unless display.nil? || display.is_a?(Display)
-      devices = placements(disks: disks, nic: nic, display: display)
+      raise Error, 'a line is a QemuPlan::Line' unless line.nil? || line.is_a?(Line)
+      devices = placements(disks: disks, nic: nic, display: display, line: line)
       check_pages(devices)
       # QEMU listens on the socket as soon as it starts, so its directory is checked before.
       Qmp.check_directory(display.qmp_socket) if display && !display.window?
@@ -349,7 +380,7 @@ module Erx
       raise Error, "the plan adds #{HOSTLINK_WORD} with the host link's serial line" if words.include?(HOSTLINK_WORD)
 
       deterministic = words.include?(DETERMINISTIC_WORD)
-      line = hostlink == NO_HOSTLINK ? command_line : [HOSTLINK_WORD, command_line].reject { |part| part.to_s.empty? }.join(' ')
+      kernel_line = hostlink == NO_HOSTLINK ? command_line : [HOSTLINK_WORD, command_line].reject { |part| part.to_s.empty? }.join(' ')
       if deterministic && (accel != 'tcg' || cpus != 1)
         raise Error, 'deterministic mode runs one CPU under TCG'
       end
@@ -365,11 +396,11 @@ module Erx
        '-smp', cpus.to_s, *(deterministic ? DETERMINISTIC_ARGUMENTS : []), '-m', memory_mib.to_s,
        '-display', display&.window? ? 'default' : 'none', '-monitor', 'none', '-nic', 'none',
        *(devices.empty? ? [] : DISK_TRANSPORT_ARGUMENTS), *disk_arguments(disks), *nic_arguments(nic),
-       *device_arguments(devices), *qmp_arguments(qmp_socket(display) || pcie&.qmp_socket),
+       *device_arguments(devices), *line&.arguments, *qmp_arguments(qmp_socket(display) || pcie&.qmp_socket),
        *pcie&.arguments,
        '-no-reboot', *serial_arguments(serial, serial_input), *hostlink_arguments(hostlink),
        '-kernel', image,
-       *(initrd ? ['-initrd', initrd] : []), *(line ? ['-append', line] : []),
+       *(initrd ? ['-initrd', initrd] : []), *(kernel_line ? ['-append', kernel_line] : []),
        *(dtb ? ['-dtb', dtb] : [])].freeze
     end
 
@@ -485,14 +516,14 @@ module Erx
     end
 
     # Every virtio device of a plan on its transport: the disks from bus .31 down, the
-    # network device, the display's three. The -device arguments and the page check both
+    # network device, the display's three and the line's console. The -device arguments and the page check both
     # read this one list, so no device reaches QEMU on a bus the check did not see.
-    def placements(disks:, nic:, display:)
+    def placements(disks:, nic:, display:, line:)
       [*disks.each_index.map do |index|
          Placement.new(unit: :disks, bus: LAST_TRANSPORT - index, device: "virtio-blk-device,drive=disk#{index}")
        end,
        *(nic ? [Placement.new(unit: :nic, bus: NIC_TRANSPORT, device: "virtio-net-device,netdev=#{nic_guest_netdev(nic)}")] : []),
-       *(display ? display.placements : [])]
+       *(display ? display.placements : []), *line&.placement]
     end
 
     # One -device for each placement, pinned to its bus.

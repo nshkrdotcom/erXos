@@ -273,6 +273,40 @@ class QemuTest < Minitest::Test
     end
   end
 
+  # The Bluetooth controller's line is a virtio console on the transport of the platform
+  # record's line unit, its port 0 a chardev that connects to the controller on loopback and
+  # never listens. A port that is no TCP port is refused, and so is a line on a board that
+  # boots through its loader, which has no virtio transports.
+  def test_the_line_is_a_virtio_console_on_its_units_transport_joined_to_loopback
+    line = PLATFORM.record.fetch('units').find { |unit| unit.fetch('key') == 'line' }.fetch('devices').first
+    bus = (line.fetch('base') - 0x0a000000) / 0x200
+    argv = Erx::QemuPlan.argv(platform: PLATFORM, accel: 'hvf', image: 'image', serial: 'serial',
+                              line: Erx::QemuPlan::Line.new(port: 5010))
+    assert_includes argv, "virtio-serial-device,id=line_serial,bus=virtio-mmio-bus.#{bus}"
+    chardevs = argv.each_cons(2).select { |flag, _| flag == '-chardev' }.map(&:last)
+    assert_equal ['socket,id=line,host=127.0.0.1,port=5010,server=off'], chardevs
+    assert_includes argv, 'virtconsole,chardev=line,bus=line_serial.0,nr=0'
+    assert_includes argv, 'virtio-mmio.force-legacy=false'
+    [0, 65_536, '5010', nil].each { |port| assert_raises(Erx::Error, port.inspect) { Erx::QemuPlan::Line.new(port: port) } }
+    pi = Erx::Platform.load(root: File.expand_path('../..', __dir__), name: 'raspi4b')
+    error = assert_raises(Erx::Error) do
+      Erx::QemuPlan.argv(platform: pi, accel: 'tcg', image: '/b/image.boot', stub: '/b/bl31.bin', dtb: '/b/model.dtb',
+                         serial: 'serial', hostlink: Erx::QemuPlan::NO_HOSTLINK, line: Erx::QemuPlan::Line.new(port: 5010))
+    end
+  assert_match(/takes no line/, error.message)
+end
+
+# The line's transport is a unit of its own page: a display device moved onto that page
+# is refused by the unit rule.
+def test_a_device_on_the_lines_page_is_refused
+  display = Erx::QemuPlan::Display.new(qmp_socket: '/tmp/erx-qmp', tablet: Erx::QemuPlan::LINE_TRANSPORT - 1)
+  error = assert_raises(Erx::Error) do
+    Erx::QemuPlan.argv(platform: PLATFORM, accel: 'hvf', image: 'image', serial: 'serial', display: display,
+                       line: Erx::QemuPlan::Line.new(port: 5010))
+  end
+  assert_match(/share a register page: 0x0a000000 \(display, line\)/, error.message)
+end
+
   def test_a_disk_path_that_could_change_what_qemu_opens_is_refused
     ['relative.img', 'nbd:host:1', '/a,b', "/a\0b", '', nil, 5].each do |path|
       assert_raises(Erx::Error, path.inspect) { DISK.new(path: path) }
