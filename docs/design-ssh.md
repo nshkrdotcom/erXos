@@ -869,7 +869,7 @@ through each other's domain envelope and each checked by its receiver:
 
 | Message | Direction | The receiver's check | If it fails |
 | --- | --- | --- | --- |
-| `{job_input, Bytes}` | channel to line | a binary of at most 32 KiB, the channel's packet size, with no other `job_input` unanswered; the line writes it to standard input's pipe, waiting for room | the line ends the job, as at `job_hangup` |
+| `{job_input, Bytes}` | channel to line | a binary of at most 32 KiB, the channel's packet size, with no other `job_input` unanswered and no `job_eof` before it; the line writes it to standard input's pipe, waiting for room | the line ends the job, as at `job_hangup` |
 | `job_written` | line to channel | a `job_input` is unanswered; the channel then opens the client's window by its size | the channel closes |
 | `job_eof` | channel to line | none; the line closes standard input's writing end once what came before it is written, and the job's output and status still flow | not applicable |
 | `{job_output, Stream, Bytes}` | line to channel | `Stream` is `stdout` or `stderr`, `Bytes` a binary of at most 32 KiB, with no other `job_output` unanswered; the channel sends it as channel data or extended data within the client's window | the channel closes |
