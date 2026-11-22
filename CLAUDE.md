@@ -1090,6 +1090,16 @@ within about 20 percent of the length, write plain code.
     branch ready to merge. Batch related changes into one pass. Do not run it
     per review round or for small or doc-only changes; it is slow.
   - Its findings follow the same rules as internal findings.
+* **Simplicity review** at each milestone exit, and before any large new
+  mechanism (a kernel object kind, a protocol or facet family, a
+  scheduler feature, a spec relation family, a new process kind): a
+  Claude Opus 5.5 subagent at `max` effort reads the design and the
+  planned or landed code, not our conclusions, and asks: does this make
+  sense? What can be cut, or made simpler, more elegant or more
+  efficient? Act on the cuts; a technical fork it raises goes to the two
+  advisors ("Two advisors before me"). It asks of every costly mechanism
+  the question of "Question every requirement before building for it":
+  "what if we did not need this?"
 
 ## Documents
 
