@@ -68,9 +68,9 @@ main(void)
 			words[nwords++] = (uint32_t)strtoul(word, NULL, 16);
 		if (strcmp(verb, "request") == 0 && nwords == 1) {
 			/* The argument's one word, with a poison word behind it that a read past it shows. */
-			const struct { uint32_t word[1]; uint32_t poison; } argument = { { words[0] }, 0xdeadbeefu };
+			const struct { uint32_t value[1]; uint32_t poison; } argument = { { words[0] }, 0xdeadbeefu };
 			uint32_t buffer[ERX_VC_BUFFER_WORDS];
-			const size_t written = erx_vc_request(tag, argument.word, buffer);
+			const size_t written = erx_vc_request(tag, argument.value, buffer);
 
 			printf("request");
 			for (size_t at = 0; at < written; at++)
