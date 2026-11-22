@@ -528,12 +528,12 @@ class ManifestCheckTest < Minitest::Test
   # A window names a PCIe function by its place (docs/design-abi.md, "Devices and partition
   # windows"): its bridge's path and its bus, device and function.
   def test_a_window_names_a_function_by_its_place
-    view = @codec.open('manifest', usb_admit(usb_source + drive_window('da0', device: "#{BRIDGE}:0:2:0")).bytes)
+    view = @codec.open('manifest', usb_admit(usb_source + drive_window('disk0', device: "#{BRIDGE}:0:2:0")).bytes)
     window = packed_rows(view, 'windows').find { |row| row.fetch('drive').zero? }
     function = view.fetch('devices', window.fetch('device'))
     assert_equal [@codec.member('mf_selector', 'pci'), 0, 2, 0], function.values_at('selector', 'bus', 'device', 'function')
     ["#{BRIDGE}:0:3:0", "#{BRIDGE}:1:2:0", "#{STICK}:0:2:0", "#{BRIDGE}:0:2", "#{BRIDGE}:0:2:0:0"].each do |name|
-      usb_refused('window.device', /window names no block or USB device the manifest places/, usb_source + drive_window('da0', device: name))
+      usb_refused('window.device', /window names no block or USB device the manifest places/, usb_source + drive_window('disk0', device: name))
     end
   end
 
@@ -548,7 +548,7 @@ class ManifestCheckTest < Minitest::Test
   end
 
   def test_drive_windows_encode_their_drive_and_others_none
-    stick, others = windows_on(@codec.open('manifest', usb_admit(usb_source + drive_window('da0') + drive_window('da3', name: 'other')).bytes), STICK)
+    stick, others = windows_on(@codec.open('manifest', usb_admit(usb_source + drive_window('disk0') + drive_window('disk3', name: 'other')).bytes), STICK)
     assert_equal [0, 3], stick.map { |row| row.fetch('drive') }.sort
     assert_equal [@codec.constant('mf_none')], others.map { |row| row.fetch('drive') }.uniq
   end
@@ -559,24 +559,24 @@ class ManifestCheckTest < Minitest::Test
 
   def test_a_drive_on_another_device_is_refused
     usb_refused('window.drive', /a window names a drive exactly when it lies on a USB controller/,
-                usb_source + drive_window('da0', device: BLOCK))
+                usb_source + drive_window('disk0', device: BLOCK))
   end
 
   def test_a_drive_named_twice_for_one_partition_is_refused
     usb_refused('window.partition', /two windows name one role, partition and drive of a device/,
-                usb_source + drive_window('da1') + drive_window('da1', name: 'again'))
+                usb_source + drive_window('disk1') + drive_window('disk1', name: 'again'))
   end
 
-  # Drives are da0 to da(usb_drives_max - 1), so no controller's rows can name more.
+  # Drives are disk0 to disk(usb_drives_max - 1), so no controller's rows can name more.
   def test_a_drive_past_usb_drives_max_is_refused
     drives = @codec.constant('usb_drives_max')
-    ["da#{drives}", 'da', 'da01', 'sda0', '0', '"da0"'].each do |drive|
-      usb_refused('window.drive', /a drive is da0 to da#{drives - 1}/, usb_source + drive_window(drive))
+    ["disk#{drives}", 'disk', 'disk01', 'da0', 'xdisk0', '0', '"disk0"'].each do |drive|
+      usb_refused('window.drive', /a drive is disk0 to disk#{drives - 1}/, usb_source + drive_window(drive))
     end
   end
 
   def test_a_usb_controller_s_window_is_fat
-    usb_refused('window.role', /a window on a USB controller is a fat window/, usb_source + drive_window('da0', role: 'data', partition: 0))
+    usb_refused('window.role', /a window on a USB controller is a fat window/, usb_source + drive_window('disk0', role: 'data', partition: 0))
   end
 
   # Property 4: budgets, grants and the root startup rule.

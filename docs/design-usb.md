@@ -85,7 +85,9 @@ Decisions every reader needs:
 erXos follows FreeBSD where UNIX systems differ, and its USB host stack
 behaves like FreeBSD 15.1's for the devices in scope: a keyboard, a mouse
 or a tablet types and points as it does under FreeBSD's `usbhid` and
-`hkbd`, and a USB stick reads and writes as under `umass` and `da`. The
+`hkbd`, and a USB stick reads and writes as under `umass` and `da`.
+Only the behavior is FreeBSD's: erXos names a drive `disk0` to `disk3`
+for what it is, not `da` after FreeBSD's SCSI disk driver. The
 evidence each part rests on:
 
 * **Enumeration and hubs.** FreeBSD's `uhub_reattach_port`
@@ -382,7 +384,7 @@ are configured and lasting as long as the controller's domain:
   binary form of `abi/formats/input.txt`, served in the controller's
   domain's input tree, which the manifest grants a display domain read
   only ([design-display.md](design-display.md#the-display-device));
-* a **drive**, `da0` to `da3`, named by the manifest's window rows on the
+* a **drive**, `disk0` to `disk3`, named by the manifest's window rows on the
   controller's device, through whose **drive grants** a FAT server's
   domain asks for the window of one partition of whatever medium the
   drive holds.
@@ -645,7 +647,7 @@ read-only, and a mount whose flush fails otherwise it refuses, to try
 again at the next walk ([A medium that cannot flush](#the-scsi-subset)).
 
 Drives are numbered for the controller, not for the machine: two
-controllers' `da0` are two drives, each named by its own controller's
+controllers' `disk0` are two drives, each named by its own controller's
 device row. A logical unit whose medium becomes ready when every drive
 its controller's rows name is occupied is not served, and the bus
 process shows it as `no drive`.
@@ -3671,7 +3673,7 @@ then settles three rules this design records:
   window ending with its medium removes; the identity is kept below the
   windows instead, between the transport and the engine, where one
   process checks it.
-* **Media as files**, `da0s1` in the USB domain's tree, as FreeBSD's
+* **Media as files**, `disk0s1` in the USB domain's tree, as FreeBSD's
   `/dev/da0s1`: UNIX-like, but a second form of the block service, with
   its own partition reading, bounds and write path.
 * **USB devices in the catalogue**, given to other domains at run time:

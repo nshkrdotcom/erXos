@@ -484,7 +484,7 @@ layout erx_mf_device wire_le 8 104
   field places erx_mf_span 96
   zero reserved all
 # A window on a USB controller's row names in drive the controller's drive whose medium
-# it serves, da0 to da(usb_drives_max - 1) as 0 up, and every other window mf_none
+# it serves, disk0 to disk(usb_drives_max - 1) as 0 up, and every other window mf_none
 # (docs/design-usb.md, "Mass storage reaches the file servers").
 layout erx_mf_window wire_le 8 32
   field holder u32 0

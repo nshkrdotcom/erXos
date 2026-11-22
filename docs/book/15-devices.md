@@ -567,7 +567,7 @@ it belongs to the controller's domain. Other domains see **places**,
 fixed when the domains are configured.
 Input numbers `hid0` to `hid7` are files of input records in the
 controller domain's input tree, which the display domain reads. Drives
-`da0` to `da3` let a file server ask for a partition of whatever
+`disk0` to `disk3` let a file server ask for a partition of whatever
 medium a drive holds. A keyboard takes the lowest free input number
 when it appears and frees it when it goes. No
 [file grant](11-security.md#1171-a-namespace-of-grants), facet or

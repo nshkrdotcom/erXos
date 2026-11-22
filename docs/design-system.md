@@ -268,7 +268,7 @@ manifest holds:
   USB host controller's role being `usb`; its
   partition windows, by role in the medium layout, and on a `usb`
   device's row a `fat` window whose `drive` field names one of that
-  controller's drives, `da0` to `da3`, and whose partition is the
+  controller's drives, `disk0` to `disk3`, and whose partition is the
   primary entry to serve on whatever medium the drive holds
   ([design-usb.md](design-usb.md#mass-storage-reaches-the-file-servers));
   its **facets**, each

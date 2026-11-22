@@ -2991,7 +2991,7 @@ module Erx
 
       # Property 8's drive clause (docs/design-usb.md, "Mass storage reaches the file
       # servers"): a window on a USB controller is a fat window naming one of the
-      # controller's drives, da0 to da(usb_drives_max - 1), packed as its number, so no
+      # controller's drives, disk0 to disk(usb_drives_max - 1), packed as its number, so no
       # controller's rows can name more than usb_drives_max drives; every other window
       # names none, packed as mf_none.
       def window_drive(record, role, device)
@@ -3004,10 +3004,10 @@ module Erx
         invalid('a window on a USB controller is a fat window', 'window.role') unless role == @codec.member('mf_window_role', 'fat')
         token = one(record, 'drive')
         drives = @codec.constant('usb_drives_max')
-        number = token.value[/\Ada(0|[1-9][0-9]*)\z/, 1]&.to_i unless token.quoted
+        number = token.value[/\Adisk(0|[1-9][0-9]*)\z/, 1]&.to_i unless token.quoted
         return number if number && number < drives
 
-        invalid("a drive is da0 to da#{drives - 1}", 'window.drive')
+        invalid("a drive is disk0 to disk#{drives - 1}", 'window.drive')
       end
 
       # design-abi.md: fixed-medium roles have partition 0, because the medium

@@ -1774,7 +1774,7 @@ and a `system` window's are those of the system partition of the slot
 that the boot value names, so an `unknown` boot gives none. A FAT window
 names a primary partition 1 through 4 on the selected removable device.
 A window on a USB controller's row is a FAT window whose `drive` names
-one of that controller's drives, `da0` to `da3`, the partition being the
+one of that controller's drives, `disk0` to `disk3`, the partition being the
 primary entry to serve on whatever medium the drive holds; every other
 window names none, `mf_none`
 ([design-usb.md](design-usb.md#mass-storage-reaches-the-file-servers)).
