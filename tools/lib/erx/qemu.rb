@@ -109,12 +109,6 @@ module Erx
     # The chardev never listens itself (server=off) and names only 127.0.0.1, so no other
     # host reaches the guest's line through it.
     Line = Data.define(:port) do
-      def initialize(port:)
-        raise Error, 'a line port is a TCP port, 1 to 65535' unless port.is_a?(Integer) && port.between?(1, 65_535)
-
-        super
-      end
-
       # The chardev, and port 0 of the console on it, on the virtio-serial device's own bus,
       # LINE_SERIAL_ID.0. They follow the device's -device (QemuPlan.placements), since QEMU
       # creates the port on a bus the device has already made.

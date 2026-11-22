@@ -276,8 +276,8 @@ class QemuTest < Minitest::Test
 
   # The Bluetooth controller's line is a virtio console on the transport of the platform
   # record's line unit, its port 0 a chardev that connects to the controller on loopback and
-  # never listens. A port that is no TCP port is refused, and so is a line on a board that
-  # boots through its loader, which has no virtio transports.
+  # never listens. A line on a board that boots through its loader, which has no virtio
+  # transports, is refused.
   def test_the_line_is_a_virtio_console_on_its_units_transport_joined_to_loopback
     argv = Erx::QemuPlan.argv(platform: PLATFORM, accel: 'hvf', image: 'image', serial: 'serial',
                               line: Erx::QemuPlan::Line.new(port: 5010))
@@ -286,7 +286,6 @@ class QemuTest < Minitest::Test
     assert_equal ['socket,id=line,host=127.0.0.1,port=5010,server=off'], chardevs
     assert_includes argv, 'virtconsole,chardev=line,bus=line_serial.0,nr=0'
     assert_includes argv, 'virtio-mmio.force-legacy=false'
-    [0, 65_536, '5010', nil].each { |port| assert_raises(Erx::Error, port.inspect) { Erx::QemuPlan::Line.new(port: port) } }
     pi = Erx::Platform.load(root: File.expand_path('../..', __dir__), name: 'raspi4b')
     error = assert_raises(Erx::Error) do
       Erx::QemuPlan.argv(platform: pi, accel: 'tcg', image: '/b/image.boot', stub: '/b/bl31.bin', dtb: '/b/model.dtb',
