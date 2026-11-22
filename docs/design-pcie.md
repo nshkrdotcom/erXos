@@ -622,9 +622,15 @@ register values are the facts record's:
 * **The endpoint's firmware.** The VL805 loses its firmware at every
   PERST# (facts record, section 6), so the last step of bring-up, after
   the root port's bus numbers are written and the endpoint's place reads
-  present, asks the device service for the firmware notification with
-  `pci_bus:firmware/1` ([Facets](#facets)), then waits 1 ms and reads
-  `0x50`. The driver sends the notification from `ready`, through its
+  present, reads `0x50`, asks the device service for the firmware
+  notification with `pci_bus:firmware/1` ([Facets](#facets)), then waits
+  1 ms and reads `0x50` again. The read before the notification decides
+  nothing, since the notification follows whatever it reads; it serves
+  probe B1's lines, which the driver logs at the start, just before the
+  notification is sent, and 1 ms after it, the last with the
+  notification's status and its round trip in microseconds
+  ([design-usb.md](design-usb.md#the-vl805s-firmware)). The driver sends
+  the notification from `ready`, through its
   `firmware` effect, when the enumerator starts the VL805, before that
   function is reported, so the enumerator keeps one `pci_bus` call in
   flight. The device service makes the narrow kernel call through the

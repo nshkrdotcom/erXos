@@ -76,23 +76,23 @@ last_write(Model, Register) ->
 %% The keep-or-reset table (docs/design-usb.md,
 %% "Keep or reset, decided from what the bridge reads"), every row.
 the_keep_or_reset_table_test_() ->
-    Rows = [{up, 16#000138c1, kept, not_run, present, false},
-            {up, 0, reset, l23, present, true},
-            {up, 16#ffffffff, reset, l23, present, true},
-            {down, 0, reset, not_run, present, true},
-            {down, 16#000138c1, reset, not_run, present, true},
-            {reset, 16#000138c1, reset, not_run, present, true},
-            {serdes_off, 16#000138c1, reset, not_run, present, true}],
+    Rows = [{up, 16#000138c1, kept, not_run, {ok, 16#000138c1}, present, false},
+            {up, 0, reset, l23, {ok, 0}, present, true},
+            {up, 16#ffffffff, reset, l23, {ok, 16#ffffffff}, present, true},
+            {down, 0, reset, not_run, not_read, present, true},
+            {down, 16#000138c1, reset, not_run, not_read, present, true},
+            {reset, 16#000138c1, reset, not_run, not_read, present, true},
+            {serdes_off, 16#000138c1, reset, not_run, not_read, present, true}],
     [{lists:flatten(io_lib:format("boot ~p, firmware ~.16#", [Boot, Firmware])),
       fun() ->
               {{up, Up}, FirmwareResult, Model} = start_and_firmware(#{boot => Boot, firmware => Firmware}),
-              ?assertEqual(#{path => Path, turn_off => TurnOff}, Up),
-              ?assertEqual({firmware, Present}, FirmwareResult),
+              ?assertEqual(#{path => Path, turn_off => TurnOff, firmware => AtStart}, Up),
+              ?assertMatch({firmware, Present, _}, FirmwareResult),
               ?assertEqual(Notified, notified(Model)),
               ?assertEqual(Notified, perst_asserted(Model) =/= []),
               ?assertEqual([], ?MODEL:violations(Model))
       end}
-     || {Boot, Firmware, Path, TurnOff, Present, Notified} <- Rows].
+     || {Boot, Firmware, Path, TurnOff, AtStart, Present, Notified} <- Rows].
 
 %% A bridge the boot firmware left turned off (facts record, section 6: PERST#
 %% asserted, the SerDes powered down, the bridge in reset) is reached only at its reset
@@ -114,7 +114,7 @@ a_kept_link_sees_no_perst_write_test() ->
     {{up, #{path := kept}}, Core, Model} = start(#{boot => up, firmware => 16#000138c1}),
     ?assertEqual([], perst_asserted(Model)),
     ?assertEqual([], [Op || {write, rgr1_sw_init_1, _} = Op <- ops(Model)]),
-    {{firmware, present}, _, After} = ?MODEL:run(Model, ?CORE:firmware(Core)),
+    {{firmware, present, none}, _, After} = ?MODEL:run(Model, ?CORE:firmware(Core)),
     ?assertNot(notified(After)),
     %% MISC_CTRL and the windows are written again with the tree's values.
     ?assertEqual([ext_cfg_index, misc_ctrl, bar2_config_lo, bar2_config_hi, bar1_config_lo, bar3_config_lo,
@@ -188,7 +188,7 @@ a_read_modify_write_keeps_the_unnamed_bits_test() ->
     ?assertEqual(16#10000000, last_write(Model, hard_debug) band 16#10000000).
 
 the_first_endpoint_access_is_100_ms_after_perst_release_test() ->
-    {{up, #{path := reset}}, {firmware, present}, Model} = start_and_firmware(#{boot => down, train_us => 1000}),
+    {{up, #{path := reset}}, {firmware, present, _}, Model} = start_and_firmware(#{boot => down, train_us => 1000}),
     ?assertEqual([], ?MODEL:violations(Model)),
     Log = ?MODEL:log(Model),
     [Release] = [Time || {Time, {write, rgr1_sw_init_1, Word}} <- Log,
@@ -312,23 +312,31 @@ all_ones_at_offset_0_is_absent_test() ->
     ?assertEqual({error, absent}, erx_pcie_bridge:read_answer(0, 2, 16#ffff)),
     ?assertEqual({ok, 16#ffff}, erx_pcie_bridge:read_answer(2, 2, 16#ffff)).
 
-%% PERST# cleared the VL805's firmware, so the reset path ends with the notification,
-%% 1 ms, and the firmware register read again (docs/design-pcie.md, the endpoint's
-%% firmware).
+%% PERST# cleared the VL805's firmware, so the reset path reads the firmware register,
+%% notifies, waits 1 ms and reads it again (docs/design-pcie.md, the endpoint's
+%% firmware; docs/design-usb.md, probe B1), the notification's status and round trip
+%% and the last reading in the result.
 bring_up_ends_with_the_notification_test() ->
     {{up, #{path := reset}}, Core, Model} = start(#{boot => down}),
     ?assertEqual(0, ?MODEL:firmware_register(Model)),
     {Result, _, After} = ?MODEL:run(Model, ?CORE:firmware(Core)),
-    ?assertEqual({firmware, present}, Result),
+    ?assertEqual({firmware, present, #{status => ok, round_trip_us => 0, after_notify => {ok, 16#000138c1}}},
+                 Result),
     Firmware = lists:nthtail(length(ops(Model)), ops(After)),
-    ?assertMatch([notify_firmware, {wait, 1000}, {read, misc_pcie_status}, {write, ext_cfg_index, _},
+    ?assertMatch([{read, misc_pcie_status}, {write, ext_cfg_index, _}, {cfg_read, ext_cfg_data, 16#50, 4},
+                  {read, misc_pcie_status},
+                  notify_firmware, {wait, 1000}, {read, misc_pcie_status}, {write, ext_cfg_index, _},
                   {cfg_read, ext_cfg_data, 16#50, 4}, {read, misc_pcie_status}], Firmware).
 
 a_refused_notification_is_not_loaded_and_reads_nothing_more_test() ->
     {{up, #{path := reset}}, Core, Model} = start(#{boot => down}),
-    {Core1, notify_firmware} = ?CORE:firmware(Core),
-    ?assertEqual({done, {firmware, not_loaded}}, element(2, ?CORE:step({error, timed_out}, Core1))),
-    ?assertEqual(0, ?MODEL:firmware_register(Model)).
+    {Result, _, After} = ?MODEL:run(Model#{notify := {answer, {error, timed_out}}}, ?CORE:firmware(Core)),
+    ?assertEqual({firmware, not_loaded, #{status => {error, timed_out}, round_trip_us => 0, after_notify => not_read}},
+                 Result),
+    ?assertMatch([{read, misc_pcie_status}, {write, ext_cfg_index, _}, {cfg_read, ext_cfg_data, 16#50, 4},
+                  {read, misc_pcie_status}, notify_firmware],
+                 lists:nthtail(length(ops(Model)), ops(After))),
+    ?assertEqual(0, ?MODEL:firmware_register(After)).
 
 %% The link falls before each operation in turn of the three paths: kept, reset from
 %% a link up, and bring-up from a link down. Whatever the step, no access locks up the
@@ -357,7 +365,7 @@ fall_holds(Options, Step) ->
             ?assert(notified(After)),
             Later = lists:nthtail(length(?MODEL:violations(Started)), ?MODEL:violations(After)),
             ?assertEqual({Context, []}, {Context, not_aborts(Later)}),
-            Later =:= [] orelse ?assertEqual({Context, {error, link_down}}, {Context, Firmware});
+            Later =:= [] orelse ?assertMatch({Context, {error, link_down, _}}, {Context, Firmware});
         {error, link_down} -> ok
     end.
 

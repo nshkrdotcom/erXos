@@ -114,8 +114,18 @@ through(Table, Op) ->
 run(Model, {Core, {done, Result}}) ->
     {Result, Core, Model};
 run(Model, {Core, Op}) ->
-    {Answer, Next} = op(Op, Model),
-    run(Next, erx_pcie_bcm2711_core:step(Answer, Core)).
+    {Answer, Next} = op(made(Op), Model),
+    run(Next, erx_pcie_bcm2711_core:step(answer(Op, Answer), Core)).
+
+%% The core's operation as the driver makes it: the notification without the reading
+%% the driver logs.
+made({notify_firmware, _AfterPerst}) -> notify_firmware;
+made(Op) -> Op.
+
+%% An operation's answer as the driver hands it to the core: the notification's with
+%% its round trip, which takes none of the model's time.
+answer({notify_firmware, _AfterPerst}, Status) -> {notified, Status, 0};
+answer(_Op, Answer) -> Answer.
 
 %% One operation executed, counted and logged: its answer and the model after it.
 op(Op, Model) ->

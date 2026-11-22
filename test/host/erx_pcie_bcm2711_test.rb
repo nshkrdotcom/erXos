@@ -21,7 +21,9 @@ require_relative '../fixtures/erlang_build'
 # are one for each of its failure paths: a failed start not matched, so a link that
 # never comes up crashes the start; the port's state after an operation dropped; the
 # VL805 given while its firmware reads absent; the notification asked for again at a
-# later `ready`; a link that falls under the firmware read not matched.
+# later `ready`; a link that falls under the firmware read not matched. Two more guard
+# probe B1's lines (docs/design-usb.md, "The VL805's firmware"): the start's reading
+# dropped on the keep, and the round trip timed after the notification.
 class ErxPcieBcm2711Test < Minitest::Test
   APPLICATIONS = %w[erx_pcie].freeze
   TESTS = %w[test/erlang/erx_pcie_log_capture.erl test/erlang/erx_pcie_bcm2711_model.erl
@@ -39,11 +41,11 @@ class ErxPcieBcm2711Test < Minitest::Test
 
   SEEDS = [
     Seed.new(source: CORE, fault: 'the bridge reset bit not checked',
-             anchor: "                      1 -> bring_up(Plan, not_run);\n                      0 -> powered(Plan)",
+             anchor: "                      1 -> bring_up(Plan, not_run, not_read);\n                      0 -> powered(Plan)",
              replacement: '                      _ -> powered(Plan)',
              catching_case: 'a_bridge_left_in_reset_is_reached_only_at_its_reset_register_test'),
     Seed.new(source: CORE, fault: 'the SerDes power not checked',
-             anchor: "                      1 -> bring_up(Plan, not_run);\n                      0 -> by_link(Plan)",
+             anchor: "                      1 -> bring_up(Plan, not_run, not_read);\n                      0 -> by_link(Plan)",
              replacement: '                      _ -> by_link(Plan)',
              catching_case: 'a_bridge_whose_serdes_is_off_is_brought_up_before_its_status_is_read_test'),
     Seed.new(source: CORE, fault: 'the bus-0 rule removed',
@@ -55,12 +57,12 @@ class ErxPcieBcm2711Test < Minitest::Test
              replacement: '                                                     _ -> Then(Answer);',
              catching_case: 'a_value_read_across_a_fall_is_not_taken_test'),
     Seed.new(source: CORE, fault: 'the reset run on a link up with firmware present',
-             anchor: '        true -> keep(Plan);',
-             replacement: '        true -> turn_off(Plan);',
+             anchor: '        true -> keep(Plan, Reading);',
+             replacement: '        true -> turn_off(Plan, Reading);',
              catching_case: 'a_kept_link_sees_no_perst_write_test'),
     Seed.new(source: CORE, fault: 'the notification skipped after a reset',
-             anchor: '    run(Core#core{agenda = [{notify_firmware, fun(Answer) -> notified(Plan, Answer) end}]}).',
-             replacement: '    run(Core#core{agenda = notified(Plan, ok)}).',
+             anchor: 'fun(AfterPerst) -> [notify(Plan, AfterPerst)] end',
+             replacement: 'fun(_AfterPerst) -> notified(Plan, ok, #{status => ok, round_trip_us => 0}) end',
              catching_case: 'bring_up_ends_with_the_notification_test'),
     Seed.new(source: CORE, fault: 'the 100 ms wait dropped',
              anchor: "                    wait(?PERST_SETTLE_US),\n",
@@ -75,8 +77,8 @@ class ErxPcieBcm2711Test < Minitest::Test
              replacement: '    ok = Sleep(Microseconds);',
              catching_case: 'the_reset_path_brings_the_link_up_and_notifies_test'),
     Seed.new(source: DRIVER, fault: 'the notification not made through the firmware effect',
-             anchor: "make(notify_firmware, _Device, \#{firmware := Firmware}) ->\n    Firmware().",
-             replacement: "make(notify_firmware, _Device, \#{firmware := _Firmware}) ->\n    ok.",
+             anchor: '    Status = Firmware(),',
+             replacement: '    Status = ok,',
              catching_case: 'the_reset_path_brings_the_link_up_and_notifies_test'),
     Seed.new(source: DRIVER, fault: 'the VL805 given while its firmware reads absent',
              anchor: '        {ok, Asked} -> {not_ready, Asked};',
@@ -87,9 +89,19 @@ class ErxPcieBcm2711Test < Minitest::Test
              replacement: 'ask_firmware(#bridge{firmware = _, ',
              catching_case: 'a_vl805_whose_notification_fails_is_not_ready_test'),
     Seed.new(source: DRIVER, fault: 'a link that falls under the firmware read not matched',
-             anchor: "        {{error, link_down} = Error, _Core} ->\n            logger:warning(\"pcie: bridge ~b: link down under",
-             replacement: "        {{error, never} = Error, _Core} ->\n            logger:warning(\"pcie: bridge ~b: link down under",
-             catching_case: 'a_link_that_falls_under_the_firmware_read_answers_link_down_test')
+             anchor: "        {{error, link_down, Probe}, _Core} ->",
+             replacement: "        {{error, never, Probe}, _Core} ->",
+             catching_case: 'a_link_that_falls_under_the_firmware_read_answers_link_down_test'),
+    # Probe B1's lines (docs/design-usb.md, "The VL805's firmware"): a keep that drops
+    # the start's reading, and a round trip timed around nothing.
+    Seed.new(source: CORE, fault: "the start's firmware reading dropped on the keep",
+             anchor: '[{done, {up, #{path => kept, turn_off => not_run, firmware => AtStart}}}]',
+             replacement: '[{done, {up, #{path => kept, turn_off => not_run, firmware => not_read}}}]',
+             catching_case: 'the_start_logs_the_firmware_register_test'),
+    Seed.new(source: DRIVER, fault: 'the round trip timed after the notification',
+             anchor: "    Sent = erlang:monotonic_time(microsecond),\n    Status = Firmware(),\n",
+             replacement: "    Status = Firmware(),\n    Sent = erlang:monotonic_time(microsecond),\n",
+             catching_case: 'the_round_trip_is_the_notifications_test')
   ].freeze
 
   def test_bridge_cases_pass_under_eunit

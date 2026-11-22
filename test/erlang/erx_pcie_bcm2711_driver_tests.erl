@@ -48,6 +48,14 @@ perst_asserted(Table) ->
 
 notified(Table) -> lists:member(notify_firmware, ops(Table)).
 
+%% The firmware register's reads after the notification.
+read_after_notification(Table) ->
+    [Op || {cfg_read, ext_cfg_data, 16#50, 4} = Op <- tl(lists:dropwhile(fun(Op) -> Op =/= notify_firmware end,
+                                                                         ops(Table)))].
+
+%% Lines logged with the notification's round trip, whatever it took, as _.
+any_round_trip(Lines) -> [re:replace(Line, " in [0-9]+ us$", " in _ us", [{return, list}]) || Line <- Lines].
+
 %% A link the boot left up with the VL805's firmware loaded is kept: no PERST#, no
 %% bridge reset, and `ready` gives the VL805 without a notification.
 the_keep_path_resets_nothing_test() ->
@@ -63,7 +71,7 @@ the_keep_path_resets_nothing_test() ->
 %% milliseconds, and the VL805's firmware is asked for before `ready` gives it.
 the_reset_path_brings_the_link_up_and_notifies_test() ->
     {{ok, State}, Table} = open(#{boot => down}),
-    ?assertEqual(#{path => reset, turn_off => not_run}, ?DRIVER:up(State)),
+    ?assertEqual(#{path => reset, turn_off => not_run, firmware => not_read}, ?DRIVER:up(State)),
     ?assertNot(notified(Table)),
     %% The 100 us settles are slept as 1 ms, the 100 ms after PERST#'s release as 100.
     ?assertEqual([{wait, 1000}, {wait, 1000}, {wait, 100000}],
@@ -102,8 +110,11 @@ a_refused_tree_fails_the_start_test() ->
 a_vl805_whose_notification_fails_is_not_ready_test() ->
     {{ok, State}, Table} = open(#{boot => down, notify => {answer, {error, enotsup}}}),
     {{not_ready, Held}, Logged} = erx_pcie_log_capture:logged(fun() -> ?DRIVER:ready(vl805(), State) end),
-    ?assertEqual(["pcie: bridge 3: vl805 firmware not loaded"], Logged),
-    ?assertEqual([], [Op || {cfg_read, ext_cfg_data, 16#50, 4} = Op <- ops(Table)]),
+    ?assertEqual(["pcie: bridge 3: vl805 firmware 0x00000000 after PERST#",
+                  "pcie: bridge 3: vl805 firmware not read 1 ms after the notification, which answered "
+                  "{error,enotsup} in _ us",
+                  "pcie: bridge 3: vl805 firmware not loaded"], any_round_trip(Logged)),
+    ?assertEqual([], read_after_notification(Table)),
     %% Asked again, it stays held without another notification.
     Before = ops(Table),
     {not_ready, _Again} = ?DRIVER:ready(vl805(), Held),
@@ -142,10 +153,11 @@ a_link_that_falls_answers_link_down_test() ->
 a_vl805_whose_firmware_stays_absent_is_not_ready_test() ->
     {{ok, State}, Table} = open(#{boot => down, notify => {answer, ok}}),
     {{not_ready, _Held}, Logged} = erx_pcie_log_capture:logged(fun() -> ?DRIVER:ready(vl805(), State) end),
-    ?assertEqual(["pcie: bridge 3: vl805 firmware not loaded"], Logged),
+    ?assertEqual(["pcie: bridge 3: vl805 firmware 0x00000000 after PERST#",
+                  "pcie: bridge 3: vl805 firmware 0x00000000 1 ms after the notification, which answered ok in _ us",
+                  "pcie: bridge 3: vl805 firmware not loaded"], any_round_trip(Logged)),
     ?assert(notified(Table)),
-    ?assertEqual([{cfg_read, ext_cfg_data, 16#50, 4}],
-                 [Op || {cfg_read, ext_cfg_data, 16#50, 4} = Op <- ops(Table)]).
+    ?assertEqual([{cfg_read, ext_cfg_data, 16#50, 4}], read_after_notification(Table)).
 
 %% A link that falls under the firmware read is answered link_down, logged, which the
 %% enumerator turns into its exit, as for an access that answers link_down.
@@ -155,4 +167,36 @@ a_link_that_falls_under_the_firmware_read_answers_link_down_test() ->
     {{ok, Fell}, _Table} = open(#{boot => down, fall_at => Count + 1}),
     {Result, Logged} = erx_pcie_log_capture:logged(fun() -> ?DRIVER:ready(vl805(), Fell) end),
     ?assertEqual({error, link_down}, Result),
-    ?assertEqual(["pcie: bridge 3: link down under the vl805 firmware read"], Logged).
+    ?assertEqual(["pcie: bridge 3: vl805 firmware link_down after PERST#",
+                  "pcie: bridge 3: vl805 firmware link_down 1 ms after the notification, which answered ok in _ us",
+                  "pcie: bridge 3: link down under the vl805 firmware read"], any_round_trip(Logged)).
+
+%% Probe B1 (docs/design-usb.md, "The VL805's firmware"): the start's line names what
+%% the firmware register read at the start, or that it was not read.
+the_start_logs_the_firmware_register_test() ->
+    {{{ok, _}, _}, Kept} = erx_pcie_log_capture:logged(fun() -> open(#{boot => up, firmware => ?VERSION}) end),
+    ?assertEqual(["pcie: bridge 3: kept, turn-off not_run, vl805 firmware 0x000138c1 at the start"], Kept),
+    {{{ok, _}, _}, Off} = erx_pcie_log_capture:logged(fun() -> open(#{boot => up, firmware => 0}) end),
+    ?assertEqual(["pcie: bridge 3: reset, turn-off l23, vl805 firmware 0x00000000 at the start"], Off),
+    {{{ok, _}, _}, Down} = erx_pcie_log_capture:logged(fun() -> open(#{boot => down}) end),
+    ?assertEqual(["pcie: bridge 3: reset, turn-off not_run, vl805 firmware not read at the start"], Down).
+
+%% After a PERST# cycle `ready` logs the register before the notification and 1 ms
+%% after it, with the notification's status and its round trip.
+ready_logs_the_firmware_register_around_the_notification_test() ->
+    {{ok, State}, _Table} = open(#{boot => down}),
+    {{ok, _}, Logged} = erx_pcie_log_capture:logged(fun() -> ?DRIVER:ready(vl805(), State) end),
+    ?assertEqual(["pcie: bridge 3: vl805 firmware 0x00000000 after PERST#",
+                  "pcie: bridge 3: vl805 firmware 0x000138c1 1 ms after the notification, which answered ok in _ us"],
+                 any_round_trip(Logged)).
+
+%% The round trip is the notification's own: a firmware effect that takes 20 ms is
+%% logged at 20 ms or more.
+the_round_trip_is_the_notifications_test() ->
+    Table = ?MODEL:table(#{boot => down}),
+    #{firmware := Firmware} = Effects = ?MODEL:effects(Table),
+    Slow = Effects#{firmware := fun() -> timer:sleep(20), Firmware() end},
+    {ok, State} = ?DRIVER:open(bridge(), {?MODEL, Table}, Slow),
+    {{ok, _}, [_, After]} = erx_pcie_log_capture:logged(fun() -> ?DRIVER:ready(vl805(), State) end),
+    {match, [Us]} = re:run(After, " in ([0-9]+) us$", [{capture, all_but_first, list}]),
+    ?assert(list_to_integer(Us) >= 20000).

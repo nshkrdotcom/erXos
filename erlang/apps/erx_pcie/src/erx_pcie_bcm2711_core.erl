@@ -22,14 +22,21 @@ Three machines share step/2:
   `{up, Up}` or `{error, Reason}`.
 * firmware/1, after the enumerator has numbered the root port and the
   endpoint reads present: on a bridge whose bring-up cycled PERST#, the
-  firmware notification, 1 ms, and the firmware register read again; on
-  a kept bridge nothing, since its firmware was read present. It ends
-  `{firmware, State}` or `{error, link_down}`.
+  firmware register read, the notification, 1 ms, and the register read
+  again; on a kept bridge nothing, since its firmware was read present.
+  It ends `{firmware, State, Probe}` or `{error, link_down, Probe}`.
 * access/2, one configuration access: absent, with no operation, at a
   place erx_pcie_bridge:reaches/2 refuses; the root port in its own
   configuration space, `root_port`; any other place through the
   endpoint's data window, `ext_cfg_data`, between two reads of the link,
   the value kept only when the link was up before and after.
+
+Probe B1's log lines (docs/design-usb.md, "The VL805's firmware") come
+from three readings of the firmware register: the start's, in `Up`; the
+one before the notification, carried on the notification's operation so
+the driver logs it before the notification is sent; and the one 1 ms
+after, in firmware/1's probe() with the notification's status and round
+trip. The reading before the notification decides nothing.
 
 Every tree value the windows take is checked before the first operation,
 so a refused tree touches no register. PERST# is asserted only on the
@@ -64,32 +71,52 @@ word; a wait of at least that many microseconds, a deadline the driver
 keeps; a configuration access at an offset of one of the bridge's
 configuration spaces, in erx_device:config_read/4's and config_write/5's
 shape; or the VL805's firmware notification (docs/design-pcie.md, "The
-bridge seam").
+bridge seam"), with the firmware register's reading just before it for
+the driver's log.
 """.
 -type op() :: {read, register()}
             | {write, register(), 0..16#ffffffff}
             | {wait, Microseconds :: pos_integer()}
             | {cfg_read, space(), Offset :: 0..255, Width :: 1 | 2 | 4}
             | {cfg_write, space(), Offset :: 0..255, Width :: 1 | 2 | 4, Value :: 0..16#ffffffff}
-            | notify_firmware.
+            | {notify_firmware, AfterPerst :: reading()}.
 
 -doc """
 The driver's answer to the last operation: a read's value; `ok` for a
-write or a wait; the notification's answer.
+write or a wait; for the notification, its status and its round trip,
+the microseconds the driver's call took.
 """.
--type answer() :: non_neg_integer() | ok | {error, atom()}.
+-type answer() :: non_neg_integer() | ok
+                | {notified, Status :: ok | {error, atom()}, RoundTrip :: non_neg_integer()}.
+
+-doc """
+A reading of the VL805's firmware register through the link check, or
+`not_read` where the machine did not read it.
+""".
+-type reading() :: {ok, 0..16#ffffffff} | {error, absent | link_down} | not_read.
+
+-doc """
+What firmware/1 was answered and read after a PERST# cycle, for probe B1:
+the notification's status and round trip, and the register 1 ms after it
+(`not_read` after a status other than `ok`).
+""".
+-type probe() :: #{status := ok | {error, atom()}, round_trip_us := non_neg_integer(),
+                   after_notify := reading()}.
 
 -doc "What the driver does next: an operation, or the machine's result.".
 -type action() :: op() | {done, result()}.
 
 -doc """
-A bridge that is up: whether it was kept or reset and how the turn-off's L23
-request went (`not_run` on a kept bridge or a link found down). The link's
+A bridge that is up: whether it was kept or reset, how the turn-off's L23
+request went (`not_run` on a kept bridge or a link found down), and what
+the firmware register read at the start (`not_read` when the bridge was
+in reset, its SerDes powered down or its link down). The link's
 speed and width are the walk's to read, from the root port's PCI Express
 capability, as any root port's are.
 """.
 -type up() :: #{path := kept | reset,
-                turn_off := not_run | l23 | l23_timed_out}.
+                turn_off := not_run | l23 | l23_timed_out,
+                firmware := reading()}.
 
 -doc """
 Why start/1 failed: the tree's `dma-ranges` or `ranges` break the
@@ -100,7 +127,8 @@ up within 100 ms after the PCIe rule's 100 ms.
 
 -doc "A machine's result.".
 -type result() :: {up, up()} | {error, reason()}
-                | {firmware, present | absent | not_loaded}
+                | {firmware, present | absent | not_loaded, probe() | none}
+                | {error, link_down, probe()}
                 | erx_pcie_bridge:result().
 
 %% One item of the agenda: an operation and what follows from its answer,
@@ -167,14 +195,16 @@ start(#{bus_first := 0} = Bridge) ->
     end.
 
 -doc """
-The endpoint's firmware after start/1 ended `{up, _}`: notified and read
-again when PERST# was cycled, present without an operation when kept.
+The endpoint's firmware after start/1 ended `{up, _}`: when PERST# was
+cycled, read, notified and read again, with its probe(); present without
+an operation, and no probe, when kept. The read before the notification
+is only reported: the notification follows whatever it reads.
 """.
 -spec firmware(core()) -> {core(), action()}.
 firmware(#core{path = kept} = Core) ->
-    run(Core#core{agenda = [{done, {firmware, present}}]});
+    run(Core#core{agenda = [{done, {firmware, present, none}}]});
 firmware(#core{path = reset, plan = Plan} = Core) ->
-    run(Core#core{agenda = [{notify_firmware, fun(Answer) -> notified(Plan, Answer) end}]}).
+    run(Core#core{agenda = firmware_read(Plan, fun(AfterPerst) -> [notify(Plan, AfterPerst)] end)}).
 
 -doc "One configuration access through the bridge.".
 -spec access(erx_pcie_bridge:access(), erx_abi_layout:erx_pcie_bridge()) -> {core(), action()}.
@@ -251,7 +281,7 @@ decide(Plan) ->
     [read(rgr1_sw_init_1,
           fun(Reset) ->
                   case ?ERX_HW_BCM2711_PCIE_RGR1_SW_INIT_1_INIT_GET(Reset) of
-                      1 -> bring_up(Plan, not_run);
+                      1 -> bring_up(Plan, not_run, not_read);
                       0 -> powered(Plan)
                   end
           end)].
@@ -260,40 +290,40 @@ powered(Plan) ->
     [read(hard_debug,
           fun(Debug) ->
                   case ?ERX_HW_BCM2711_PCIE_HARD_DEBUG_SERDES_IDDQ_GET(Debug) of
-                      1 -> bring_up(Plan, not_run);
+                      1 -> bring_up(Plan, not_run, not_read);
                       0 -> by_link(Plan)
                   end
           end)].
 
-by_link(#plan{bridge = Bridge, endpoint = Endpoint} = Plan) ->
+by_link(Plan) ->
     [read(misc_pcie_status,
           fun(Status) ->
                   case link_up(Status) of
-                      false -> bring_up(Plan, not_run);
-                      true -> config(Bridge, {read, Endpoint, ?FIRMWARE_REGISTER, 4},
-                                     fun(Firmware) -> kept_or_reset(Plan, Firmware) end)
+                      false -> bring_up(Plan, not_run, not_read);
+                      true -> firmware_read(Plan, fun(Reading) -> kept_or_reset(Plan, Reading) end)
                   end
           end)].
 
-kept_or_reset(Plan, {ok, Version}) ->
+%% Reading is the firmware register's at the start, which the result reports.
+kept_or_reset(Plan, {ok, Version} = Reading) ->
     case firmware_present(Version) of
-        true -> keep(Plan);
-        false -> turn_off(Plan)
+        true -> keep(Plan, Reading);
+        false -> turn_off(Plan, Reading)
     end;
-kept_or_reset(Plan, {error, _}) ->
-    bring_up(Plan, not_run).
+kept_or_reset(Plan, {error, _} = Reading) ->
+    bring_up(Plan, not_run, Reading).
 
 %% The keep: nothing reset; MISC_CTRL and the windows written again with the
 %% values the tree gives, which a running VL805 already uses.
-keep(#plan{inbound = Inbound, outbound = Outbound} = Plan) ->
+keep(#plan{inbound = Inbound, outbound = Outbound} = Plan, AtStart) ->
     [update(misc_ctrl, fun(Word) -> scb0(Plan, misc_ctrl(Word)) end)
      | writes(Inbound ++ Outbound)]
-        ++ [{done, {up, #{path => kept, turn_off => not_run}}}].
+        ++ [{done, {up, #{path => kept, turn_off => not_run, firmware => AtStart}}}].
 
 %% The clean shutdown before a reset of a bridge whose link is up (record,
 %% section 6): L23 requested and polled, PERST# asserted, the request cleared,
 %% the SerDes powered down, the bridge put in reset; then bring-up.
-turn_off(Plan) ->
+turn_off(Plan, AtStart) ->
     [update(misc_pcie_ctrl, fun(Word) -> l23_request(Word, 1) end),
      poll(misc_pcie_status,
           fun(Status) -> ?ERX_HW_BCM2711_PCIE_MISC_PCIE_STATUS_LINK_IN_L23_GET(Status) =:= 1 end,
@@ -304,13 +334,14 @@ turn_off(Plan) ->
                    update(misc_pcie_ctrl, fun(Word) -> l23_request(Word, 0) end),
                    update(hard_debug, fun(Word) -> serdes_iddq(Word, 1) end),
                    update(rgr1_sw_init_1, fun(Word) -> bridge_reset(Word, 1) end)
-                   | bring_up(Plan, TurnOff)]
+                   | bring_up(Plan, TurnOff, AtStart)]
           end)].
 
 %% Bring-up in the vendor's order (record, section 1, steps 3 and 6;
 %% docs/design-usb.md, "Bring-up"), each wait a deadline; TurnOff is how the
-%% turn-off before it went, for the result.
-bring_up(#plan{inbound = Inbound} = Plan, TurnOff) ->
+%% turn-off before it went and AtStart the firmware register's reading at the
+%% start, for the result.
+bring_up(#plan{inbound = Inbound} = Plan, TurnOff, AtStart) ->
     [update(rgr1_sw_init_1, fun(Word) -> bridge_reset(Word, 1) end),
      update(rgr1_sw_init_1, fun(Word) -> perst(Word, 1) end),
      wait(?RESET_SETTLE_US),
@@ -319,11 +350,11 @@ bring_up(#plan{inbound = Inbound} = Plan, TurnOff) ->
      wait(?RESET_SETTLE_US),
      update(misc_ctrl, fun misc_ctrl/1)
      | writes(Inbound)]
-        ++ [read(misc_pcie_status, fun(Status) -> root_complex(Plan, TurnOff, Status) end)].
+        ++ [read(misc_pcie_status, fun(Status) -> root_complex(Plan, TurnOff, AtStart, Status) end)].
 
 %% Bring-up from the root-complex check on (record, section 1, steps 3h to 3n
 %% and 6; docs/design-usb.md, "Bring-up", steps 4 to 8).
-root_complex(#plan{outbound = Outbound} = Plan, TurnOff, Status) ->
+root_complex(#plan{outbound = Outbound} = Plan, TurnOff, AtStart, Status) ->
     case ?ERX_HW_BCM2711_PCIE_MISC_PCIE_STATUS_PORT_GET(Status) of
         ?ERX_HW_BCM2711_PCIE_MISC_PCIE_STATUS_PORT_ENDPOINT -> [{done, {error, endpoint_mode}}];
         ?ERX_HW_BCM2711_PCIE_MISC_PCIE_STATUS_PORT_ROOT_COMPLEX ->
@@ -335,27 +366,39 @@ root_complex(#plan{outbound = Outbound} = Plan, TurnOff, Status) ->
                     update(rgr1_sw_init_1, fun(Word) -> perst(Word, 0) end),
                     wait(?PERST_SETTLE_US),
                     poll(misc_pcie_status, fun link_up/1, ?LINK_POLLS, ?LINK_POLL_US,
-                         fun(met) -> [{done, {up, #{path => reset, turn_off => TurnOff}}}];
+                         fun(met) -> [{done, {up, #{path => reset, turn_off => TurnOff, firmware => AtStart}}}];
                             (timed_out) -> [{done, {error, link_down}}]
                          end)]
     end.
 
 writes(Words) -> [write(Register, Word) || {Register, Word} <- Words].
 
+%% The VL805's firmware register read through the link check, its reading()
+%% handed to Then.
+firmware_read(#plan{bridge = Bridge, endpoint = Endpoint}, Then) ->
+    config(Bridge, {read, Endpoint, ?FIRMWARE_REGISTER, 4}, Then).
+
+%% The notification, after the register read AfterPerst.
+notify(Plan, AfterPerst) ->
+    op({notify_firmware, AfterPerst},
+       fun({notified, Status, RoundTrip}) ->
+               notified(Plan, Status, #{status => Status, round_trip_us => RoundTrip})
+       end).
+
 %% The notification's answer: on `ok`, 1 ms, then the firmware register read
 %% again, a VL805 that does not answer it absent and a link that fell link_down;
 %% an error is `not_loaded`, and the register is not read
 %% (docs/design-pcie.md, "The bridge seam", the endpoint's firmware).
-notified(#plan{bridge = Bridge, endpoint = Endpoint}, ok) ->
+notified(Plan, ok, Probe) ->
     [wait(?FIRMWARE_SETTLE_US)
-     | config(Bridge, {read, Endpoint, ?FIRMWARE_REGISTER, 4},
-              fun({ok, Version}) ->
-                      [{done, {firmware, case firmware_present(Version) of true -> present; false -> absent end}}];
-                 ({error, absent}) -> [{done, {firmware, absent}}];
-                 ({error, link_down}) -> [{done, {error, link_down}}]
-              end)];
-notified(_Core, {error, _}) ->
-    [{done, {firmware, not_loaded}}].
+     | firmware_read(Plan, fun(Reading) -> [{done, loaded(Reading, Probe#{after_notify => Reading})}] end)];
+notified(_Plan, {error, _}, Probe) ->
+    [{done, {firmware, not_loaded, Probe#{after_notify => not_read}}}].
+
+loaded({ok, Version}, Probe) ->
+    {firmware, case firmware_present(Version) of true -> present; false -> absent end, Probe};
+loaded({error, absent}, Probe) -> {firmware, absent, Probe};
+loaded({error, link_down}, Probe) -> {error, link_down, Probe}.
 
 %% One configuration access (docs/design-pcie.md, "The bridge seam"): a place
 %% the bridge does not reach answers absent before any operation; the root

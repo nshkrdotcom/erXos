@@ -25,7 +25,8 @@ for, and keeps what the start decided for `ready`.
   reads present. The first time it is asked, after the enumerator has
   numbered the root port and read the VL805's place present, it runs the
   core's firmware machine: on a bridge whose start cycled PERST#, the
-  notification, 1 ms, and the firmware register read again; on a kept
+  firmware register read, the notification, 1 ms, and the register read
+  again; on a kept
   bridge nothing. The answer is kept for the rest of the start, so the
   notification is asked for at most once per PERST# cycle. Firmware that
   still reads absent after the notification, or a notification that
@@ -35,6 +36,13 @@ for, and keeps what the start decided for `ready`.
   ends the enumerator as an access's `link_down` does, so the domain's
   restart, whose start decides the keep or the reset again, is the
   recovery. Every other function is ready.
+* **Probe B1's lines** (docs/design-usb.md, "The VL805's firmware"): the
+  start's line names what the VL805's firmware register read at the
+  start, and on a bridge whose start cycled PERST# `ready` logs it again
+  just before the notification is sent, so a notification that never
+  answers still leaves that line, and 1 ms after it, with the
+  notification's status and its round trip in microseconds, timed around
+  the seam's `firmware` effect.
 
 The core's operations are made through three effects. Register and
 configuration accesses go to the bridge's device in erx_device's shape,
@@ -92,7 +100,7 @@ core's reason when it did not.
 -spec open(erx_abi_layout:erx_pcie_bridge(), device(), erx_pcie_bridge:effects()) ->
           {ok, state()} | {error, erx_pcie_bcm2711_core:reason()}.
 open(#{index := Index} = Bridge, Device, Effects) ->
-    case run(erx_pcie_bcm2711_core:start(Bridge), Device, Effects) of
+    case run(erx_pcie_bcm2711_core:start(Bridge), Index, Device, Effects) of
         {{up, Up}, Started} ->
             logger:notice("pcie: bridge ~b: ~ts", [Index, describe(Up)]),
             {ok, #bridge{record = Bridge, started = Started, up = Up, device = Device, effects = Effects}};
@@ -102,8 +110,8 @@ open(#{index := Index} = Bridge, Device, Effects) ->
 
 -doc "One configuration access through the bridge.".
 -spec access(erx_pcie_bridge:access(), state()) -> {erx_pcie_bridge:result(), state()}.
-access(Access, #bridge{record = Bridge, device = Device, effects = Effects} = State) ->
-    {Result, _Core} = run(erx_pcie_bcm2711_core:access(Access, Bridge), Device, Effects),
+access(Access, #bridge{record = #{index := Index} = Bridge, device = Device, effects = Effects} = State) ->
+    {Result, _Core} = run(erx_pcie_bcm2711_core:access(Access, Bridge), Index, Device, Effects),
     {Result, State}.
 
 -doc """
@@ -121,7 +129,7 @@ ready(#{vendor := ?VL805_VENDOR, device_id := ?VL805_DEVICE}, State) ->
 ready(_Function, State) ->
     {ok, State}.
 
--doc "How the start came up: kept or reset, and the turn-off's L23 request.".
+-doc "How the start came up: kept or reset, the turn-off's L23 request, and the firmware register's reading.".
 -spec up(state()) -> erx_pcie_bcm2711_core:up().
 up(#bridge{up = Up}) -> Up.
 
@@ -130,39 +138,58 @@ up(#bridge{up = Up}) -> Up.
 %% logged and answered.
 ask_firmware(#bridge{firmware = unknown, record = #{index := Index}, started = Started,
                      device = Device, effects = Effects} = State) ->
-    case run(erx_pcie_bcm2711_core:firmware(Started), Device, Effects) of
-        {{firmware, present}, _Core} ->
+    case run(erx_pcie_bcm2711_core:firmware(Started), Index, Device, Effects) of
+        {{firmware, present, Probe}, _Core} ->
+            probed(Index, Probe),
             {ok, State#bridge{firmware = present}};
-        {{firmware, Missing}, _Core} ->
+        {{firmware, Missing, Probe}, _Core} ->
+            probed(Index, Probe),
             logger:warning("pcie: bridge ~b: vl805 firmware not loaded", [Index]),
             {ok, State#bridge{firmware = Missing}};
-        {{error, link_down} = Error, _Core} ->
+        {{error, link_down, Probe}, _Core} ->
+            probed(Index, Probe),
             logger:warning("pcie: bridge ~b: link down under the vl805 firmware read", [Index]),
-            Error
+            {error, link_down}
     end;
 ask_firmware(State) ->
     {ok, State}.
 
-%% A core machine run to its result, each operation made as it asks: the result and
-%% the core after it.
-run({Core, {done, Result}}, _Device, _Effects) ->
+%% A core machine of bridge Index run to its result, each operation made as it asks:
+%% the result and the core after it.
+run({Core, {done, Result}}, _Index, _Device, _Effects) ->
     {Result, Core};
-run({Core, Op}, Device, Effects) ->
-    run(erx_pcie_bcm2711_core:step(make(Op, Device, Effects), Core), Device, Effects).
+run({Core, Op}, Index, Device, Effects) ->
+    run(erx_pcie_bcm2711_core:step(make(Op, Index, Device, Effects), Core), Index, Device, Effects).
 
-%% One operation of the core, and its answer.
-make({read, Register}, {Module, Handle}, _Effects) ->
+%% One operation of the core, and its answer; the notification is logged with the
+%% reading before it, probe B1's line after the PERST# cycle, before it is sent.
+make({read, Register}, _Index, {Module, Handle}, _Effects) ->
     Module:read(Handle, Register);
-make({write, Register, Word}, {Module, Handle}, _Effects) ->
+make({write, Register, Word}, _Index, {Module, Handle}, _Effects) ->
     Module:write(Handle, Register, Word);
-make({cfg_read, Space, Offset, Width}, {Module, Handle}, _Effects) ->
+make({cfg_read, Space, Offset, Width}, _Index, {Module, Handle}, _Effects) ->
     Module:config_read(Handle, Space, Offset, Width);
-make({cfg_write, Space, Offset, Width, Value}, {Module, Handle}, _Effects) ->
+make({cfg_write, Space, Offset, Width, Value}, _Index, {Module, Handle}, _Effects) ->
     Module:config_write(Handle, Space, Offset, Width, Value);
-make({wait, Microseconds}, _Device, #{sleep := Sleep}) ->
+make({wait, Microseconds}, _Index, _Device, #{sleep := Sleep}) ->
     ok = Sleep((Microseconds + 999) div 1000);
-make(notify_firmware, _Device, #{firmware := Firmware}) ->
-    Firmware().
+make({notify_firmware, AfterPerst}, Index, _Device, #{firmware := Firmware}) ->
+    logger:notice("pcie: bridge ~b: vl805 firmware ~ts after PERST#", [Index, reading(AfterPerst)]),
+    Sent = erlang:monotonic_time(microsecond),
+    Status = Firmware(),
+    {notified, Status, erlang:monotonic_time(microsecond) - Sent}.
 
-describe(#{path := Path, turn_off := TurnOff}) ->
-    io_lib:format("~p, turn-off ~p", [Path, TurnOff]).
+%% Probe B1's line after the notification; a kept bridge has none.
+probed(_Index, none) ->
+    ok;
+probed(Index, #{status := Status, round_trip_us := RoundTrip, after_notify := AfterNotify}) ->
+    logger:notice("pcie: bridge ~b: vl805 firmware ~ts 1 ms after the notification, which answered ~0p in ~b us",
+                  [Index, reading(AfterNotify), Status, RoundTrip]).
+
+describe(#{path := Path, turn_off := TurnOff, firmware := AtStart}) ->
+    io_lib:format("~p, turn-off ~p, vl805 firmware ~ts at the start", [Path, TurnOff, reading(AtStart)]).
+
+%% A reading of the firmware register as a line shows it.
+reading({ok, Word}) -> io_lib:format("0x~8.16.0b", [Word]);
+reading({error, Reason}) -> atom_to_list(Reason);
+reading(not_read) -> "not read".
