@@ -368,7 +368,9 @@ Eshell V17.1.1 (type help(). for help)
   connections out and in work in root's session.
 * In a development build, root logs in over SSH with the clone's
   development key to `rc` in root's session, served by OTP's
-  `ssh` daemon, whose version banner names erXos and the release. The
+  `ssh` daemon, whose version banner names erXos and the release, and
+  `ssh DEST cmd` runs the command with `rc -c`, its output and error
+  output byte-clean, and exits with the command's status. The
   first boot imports the `authorized_keys` of the card's FAT volume into
   root's home. The network suite logs in through a host port forward,
   and root's login there reboots the machine; `tools/erx boot` gives its
