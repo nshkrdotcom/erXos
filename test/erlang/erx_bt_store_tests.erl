@@ -112,6 +112,43 @@ state_file_test() ->
     ?assertEqual({error, unavailable}, erx_bt_state_file:put(filename:join([Root, "absent", "bt"]), 1, <<"x">>)),
     os:cmd("rm -rf " ++ Root).
 
+%% A put syncs the directory once its rename is in place and before it deletes a lower
+%% name, so the rename reaches the medium before the put answers ok and before any
+%% deletion does. The put's calls of `file` are traced: after the rename the directory
+%% is opened with `directory` and synced, and only then is `bonds.1` deleted.
+state_file_syncs_directory_after_rename_test() ->
+    Root = string:trim(os:cmd("mktemp -d")),
+    Dir = filename:join(Root, "bt"),
+    ok = erx_bt_state_file:put(Dir, 1, <<"one">>),
+    Tracer = spawn_link(fun() -> traced_calls([]) end),
+    erlang:trace_pattern({file, '_', '_'}, true, [local]),
+    erlang:trace(self(), true, [call, {tracer, Tracer}]),
+    Put = try erx_bt_state_file:put(Dir, 2, <<"two">>)
+          after
+              erlang:trace(self(), false, [call]),
+              erlang:trace_pattern({file, '_', '_'}, false, [local])
+          end,
+    Delivered = erlang:trace_delivered(self()),
+    receive {trace_delivered, _, Delivered} -> ok end,
+    Tracer ! {calls, self()},
+    Calls = receive {calls, Traced} -> Traced end,
+    os:cmd("rm -rf " ++ Root),
+    ?assertEqual(ok, Put),
+    Lower = filename:join(Dir, "bonds.1"),
+    {BeforeOpen, Opened} = lists:splitwith(fun(Call) -> Call =/= {open, [Dir, [read, directory]]} end, Calls),
+    {BeforeSync, Synced} = lists:splitwith(fun({Function, _}) -> Function =/= sync end, Opened),
+    ?assertNotEqual([], Synced),
+    ?assert(lists:keymember(rename, 1, BeforeOpen)),
+    ?assertNot(lists:member({delete, [Lower]}, BeforeOpen ++ BeforeSync)),
+    ?assert(lists:member({delete, [Lower]}, Synced)).
+
+%% The traced process is not its own tracer, so a process of its own collects the calls.
+traced_calls(Calls) ->
+    receive
+        {trace, _, call, {file, Function, Args}} -> traced_calls([{Function, Args} | Calls]);
+        {calls, Asker} -> Asker ! {calls, lists:reverse(Calls)}
+    end.
+
 state_file_names_test() ->
     ?assertEqual({state, 12}, erx_bt_state_file:generation("bonds.12")),
     ?assertEqual({new, 1}, erx_bt_state_file:generation("bonds.1.new")),

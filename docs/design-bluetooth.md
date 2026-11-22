@@ -1769,8 +1769,12 @@ stores behind the seam answer with exactly these results:
   directory on the data partition, one per generation, as the SSH
   domain keeps its host key before the vault
   ([design-ssh.md](design-ssh.md#host-keys)): a put of generation `N`
-  writes `bonds.N.new`, created exclusively, syncs it and renames it to
-  `bonds.N`, then deletes every name of a lower generation; `get`
+  writes `bonds.N.new`, created exclusively, syncs it, renames it to
+  `bonds.N` and syncs the directory, whose fsync answers once the
+  medium holds its entries
+  ([design-files.md](design-files.md#the-file-protocol)), so the rename is
+  on the medium before the put answers and before any deletion, then deletes every
+  name of a lower generation; `get`
   answers `bonds.N` of the highest `N` and the highest `N` any name
   carries, `.new` included, `none` when no `bonds.N` exists and the
   directory or the volume it lies in does, an empty blob, which does not

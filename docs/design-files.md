@@ -397,7 +397,7 @@ and back ([Errors](#errors)).
 | xattrwalk | `{xattrwalk, Fid, NewFid, Name}` | `{ok, Size}` | `NewFid` then reads the value, or the list of names for an empty `Name` |
 | xattrcreate | `{xattrcreate, Fid, Name, Size, Flags}` | `ok` | `Fid` then takes writes of `Size` bytes, at most 65,536, committed at its clunk; `enotsup` where the format keeps none |
 | readdir | `{readdir, Fid, Offset, Count}` | `{ok, Entries}` | `Fid` an open directory; each entry `{Qid, Offset, Type, Name}`, `Type` Linux's `d_type`, not the qid's type, the entries fitting in `Count` bytes as 9P2000.L packs them; an empty list at the end of the directory |
-| fsync | `{fsync, Fid, Datasync}` | `ok` | once the server's medium holds the file's data |
+| fsync | `{fsync, Fid, Datasync}` | `ok` | once the server's medium holds the file's data, and on a directory its entries |
 | lock | `{lock, Fid, Type, Flags, Start, Length, ProcId, ClientId}` | `{ok, Status}` | POSIX record locks ([Locks](#locks)) |
 | getlock | `{getlock, Fid, Type, Start, Length, ProcId, ClientId}` | `{ok, Type, Start, Length, ProcId, ClientId}` | the same table |
 | link | `{link, Dfid, Fid, Name}` | `ok` | where the format keeps hard links, `eperm` elsewhere |

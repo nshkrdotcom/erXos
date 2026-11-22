@@ -8678,16 +8678,9 @@ model harness drive `erx_device.c` itself. `erx_device_dma_check` and `erx_devic
   when `/data` exists, so an unmounted volume presented as an empty `/data` would read as no bonds. Name the service in the
   design and `abi/manifest.txt` (a `bt_state` files service of the storage domain rooted at the data volume's
   `bt/`, granted read-write to the Bluetooth domain alone).
-* [Medium] bluetooth, the development store's rename is not synced (`erx_bt_state_file:put/3`): `bonds.N.new` is
-  synced before its rename, but the directory is not synced after it, so on a file system that needs that, an `ok`
-  may come back as the old state after a power cut, against "Bonds and the store"'s promise for configuration
-  writes; and the deletion of the lower generations that follows the rename could reach the medium before the
-  rename does, leaving no `bonds.N` and so `none`, every bond lost (littlefs commits its operations in order; F2FS
-  promises nothing without the sync). Erlang's `file` cannot open a directory to sync it; give `prim_file` a
-  directory sync, called between the rename and the deletions, rather than work around it. This blocks running the
-  store on any data file system but littlefs, F2FS included. Until the next successful put, a late put that landed
-  below the newest, or a lower file a deletion missed, also keeps a forgotten bond's keys on the medium (0600, in a
-  0700 directory).
+* [Low] bluetooth, a forgotten bond's keys can stay on the development store's medium (`erx_bt_state_file`):
+  until the next successful put, a late put that landed below the newest, or a lower file a deletion missed,
+  keeps a forgotten bond's keys on the medium (0600, in a 0700 directory), though never read.
 * [High] bluetooth, security residual that blocks the release store: the vault's state slot takes no generation
   (docs/design-system.md "State slots"; docs/design-bluetooth.md "Bonds and the store"): the store's seam is
   `put(Generation, Blob)` and `get() -> {ok, Generation, Blob | none}`, so a put cut off by its deadline that

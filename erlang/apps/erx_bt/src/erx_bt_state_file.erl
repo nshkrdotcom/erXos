@@ -10,7 +10,7 @@ per generation, so a put that completes late never replaces a newer state.
 **A file per generation.** `put/3` writes `bonds.N.new` for the generation `N` the store
 names, created exclusively, synced, and renamed to `bonds.N`, as the SSH domain keeps its
 host key before the vault (docs/design-ssh.md, "Host keys"); once `bonds.N` is in place
-it deletes every name of a lower generation. `get/1` answers the newest file, `bonds.N`
+it syncs the directory, and only then deletes every name of a lower generation. `get/1` answers the newest file, `bonds.N`
 of the highest `N`, and the highest generation any name carries, `.new` included. So a
 put of an older generation that lands after a newer one, from a request the storage
 domain completed after the store's deadline, lands below it and is never read; and since
@@ -25,8 +25,8 @@ The answers are the seam's:
   Generation, <<>>}`, which does not decode, when the newest file cannot be read;
   `{error, unavailable}` otherwise, so a volume not mounted is never read as a store
   without bonds;
-- `put/3`: `ok` once `bonds.N` is in place; `{error, unavailable}` when any step fails,
-  the `.new` file then deleted.
+- `put/3`: `ok` once `bonds.N` is in place and the directory synced; `{error,
+  unavailable}` when any step fails, any `.new` file of its generation then deleted.
 
 A name that is not `bonds.N` or `bonds.N.new`, with `N` a positive decimal of at most 18
 digits without a leading zero, is not the store's and is left alone (`generation/1`). The directory is
@@ -86,6 +86,7 @@ put(Dir, Generation, Blob) ->
         ok ?= owner_only_dir(Dir),
         ok ?= write_owner_only(New, Blob),
         ok ?= file:rename(New, filename:join(Dir, name(state, Generation))),
+        ok ?= sync_dir(Dir),
         delete_below(Dir, Generation)
     else
         {error, eexist} ->
@@ -95,7 +96,19 @@ put(Dir, Generation, Blob) ->
             {error, unavailable}
     end.
 
-%% Only once a higher `bonds.N` is in place; a name that will not go stays, harmless, as
+%% The directory synced, as fsync(2) of a directory keeps its entries: the rename is on the
+%% medium before the put answers ok, and before any deletion that follows, so no file
+%% system that reorders them can leave no `bonds.N`.
+sync_dir(Dir) ->
+    maybe
+        {ok, Device} ?= file:open(Dir, [read, directory]),
+        Synced = file:sync(Device),
+        Closed = file:close(Device),
+        ok ?= Synced,
+        Closed
+    end.
+
+%% Only once a higher `bonds.N` is in place and synced; a name that will not go stays, harmless, as
 %% it is below the newest.
 delete_below(Dir, Generation) ->
     Names = case file:list_dir(Dir) of
