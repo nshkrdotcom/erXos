@@ -1,0 +1,79 @@
+# Frames on which erXos's ATT and SMP decoders and Bumble's differ
+# (test/host/erx_bt_bumble_test.rb). Each entry: `kind documented` (erXos follows the
+# specification and Bumble does not) or `kind upstream` (a Bumble bug), one or more
+# `reason` lines, then `frame CODEC HEX ERXOS-LINE` for each frame, erXos's canonical
+# line, which it must keep giving. A blank line ends an entry.
+
+kind documented
+reason Bumble decodes an ATT or SMP PDU of fixed layout with octets after its last field,
+reason which it ignores (bumble/hci.py, HCI_Object.dict_from_bytes, does not check that the
+reason PDU ends with its fields). erXos refuses it: an ATT request whose length is wrong is
+reason Invalid PDU (the rule of docs/design-bluetooth.md, "The ATT server"; the Part F section
+reason that states it was not re-read here), and an SMP command whose data is not its layout's
+reason length (Core 6.3 Vol 3 Part H, sections 3.5 and 3.6) is invalid (erx_smp:decode/1).
+frame att 0217025a rejected
+frame att 04010005125a rejected
+frame att 0a23015a rejected
+frame att 0c230145005a rejected
+frame att 18005a rejected
+frame att 18015a rejected
+frame smp 0103000d10070b5a rejected
+frame smp 0201002d0f05065a rejected
+frame smp 03101112131415161718191a1b1c1d1e1f5a rejected
+frame smp 04202122232425262728292a2b2c2d2e2f5a rejected
+frame smp 05055a rejected
+frame smp 06303132333435363738393a3b3c3d3e3f5a rejected
+frame smp 07a1b201020304050607085a rejected
+frame smp 08404142434445464748494a4b4c4d4e4f5a rejected
+frame smp 0901c1c2c3c4c5c65a rejected
+frame smp 0b0d5a rejected
+frame smp 0c00070e151c232a31383f464d545b626970777e858c939aa1a8afb6bdc4cbd2d9e0e7eef5fc030a11181f262d343b424950575e656c737a81888f969da4abb2b95a rejected
+frame smp 0d505152535455565758595a5b5c5d5e5f5a rejected
+frame smp 0e045a rejected
+
+kind upstream
+reason Bumble decodes an SMP PDU cut short: a fixed-size octet field takes the octets present
+reason (bumble/hci.py:1963-1965 slices without a length check) and a missing one-octet field
+reason of an enum or flag type reads as 0 (bumble/hci.py:118-128 and 145-155 take
+reason int.from_bytes of an empty slice), so a truncated command arrives as a whole one with a
+reason fabricated value. erXos refuses it as invalid (erx_smp:decode/1).
+frame smp 0103000d1007 rejected
+frame smp 0201002d0f05 rejected
+frame smp 03101112131415161718191a1b1c1d1e rejected
+frame smp 04202122232425262728292a2b2c2d2e rejected
+frame smp 05 rejected
+frame smp 06303132333435363738393a3b3c3d3e rejected
+frame smp 07a1b201020304050607 rejected
+frame smp 08404142434445464748494a4b4c4d4e rejected
+frame smp 0b rejected
+frame smp 0c00070e151c232a31383f464d545b626970777e858c939aa1a8afb6bdc4cbd2d9e0e7eef5fc030a11181f262d343b424950575e656c737a81888f969da4abb2 rejected
+frame smp 0d505152535455565758595a5b5c5d5e rejected
+frame smp 0e rejected
+
+kind documented
+reason Bumble decodes Execute Write Request with the reserved flags value 0x02 (bumble/att.py
+reason declares flags as any octet). erXos takes only 0x00, cancel, and 0x01, write (Core 6.3
+reason Vol 3 Part F, section 3.4.6.3), and answers any other as a request whose layout is
+reason wrong, Invalid PDU.
+frame att 1802 rejected
+
+kind documented
+reason Bumble decodes Read By Type Request with a 4-octet attribute type (bumble/core.py,
+reason UUID.parse_uuid, takes 2, 4 or 16 octets). The request's attribute type is a 2- or
+reason 16-octet UUID (Core 6.3 Vol 3 Part F, section 3.4.4.1), and erXos answers any other
+reason length Invalid PDU.
+frame att 080100fe1200112233 rejected
+
+kind documented
+reason Bumble decodes SMP code 0x0A as Signing Information (bumble/smp.py,
+reason SMP_Signing_Information_Command). Core 6.3 lists the code as previously used, and
+reason erXos, which distributes no signing key, takes it as reserved (erx_smp:decode/1), as
+reason every code past the last, and ignores it (erx_smp_core:phase/3).
+frame smp 0a606162636465666768696a6b6c6d6e6f reserved 0a
+
+kind documented
+reason Bumble decodes Handle Value Confirmation with an octet after its opcode. erXos ignores
+reason it as no PDU it takes (erx_att:decode/1): a confirmation has no parameters (Core 6.3
+reason Vol 3 Part F, section 3.4.7.3), and the server answers nothing to a PDU it does not
+reason take as a request.
+frame att 1e5a ignored
