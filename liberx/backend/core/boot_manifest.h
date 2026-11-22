@@ -301,17 +301,22 @@ bool	erx_boot_coherent(const erx_dt_device_t *facts, uint64_t dma_memory);
 
 /*
  * The longest line erx_boot_tree_line writes: its fixed words, a node path of fewer than
- * ERX_PATH_MAX bytes, three addresses of 0x and 16 digits, and the newline.
+ * ERX_PATH_MAX bytes, three addresses of 0x and 16 digits, and the newline; for "dma absent
+ * ranges" also the limit, the count and ERX_BOOT_TREE_WINDOWS_SHOWN windows.
  */
+#define ERX_BOOT_TREE_WINDOWS_SHOWN	4u
 #define ERX_BOOT_TREE_LINE_MAX	(sizeof("erx: device tree: ") + ERX_PATH_MAX + \
-	sizeof(": coherent 1 range ") + 3u * sizeof("0x0123456789abcdef") + sizeof(" mac present\n"))
+	sizeof(": coherent 1 range ") + 3u * sizeof("0x0123456789abcdef") + sizeof(" mac present\n") + \
+	sizeof(" limit 0x0123456789abcdef windows 4294967295 more 4294967295") + \
+	ERX_BOOT_TREE_WINDOWS_SHOWN * (sizeof(" window ") + 3u * sizeof("0x0123456789abcdef ") + sizeof(" above_limit")))
 
 /*
  * Writes the root's console line for a device row that asked the tree (erx_boot_row_asks;
  * docs/design-device-tree.md, "The lines"), at path, with dma_memory the row's and network
  * whether it is of the network role, without a NUL, into line, and returns its
  * length: "erx: device tree: PATH:", then for a row with DMA memory " coherent C range CPU
- * BUS LAST" or " dma absent REASON", REASON being absent, the reason erx_boot_dma_absent gave
+ * BUS LAST" or " dma absent REASON" (for "ranges" followed by the DMA walk's windows,
+ * docs/design-device-tree.md, "The lines"), REASON being absent, the reason erx_boot_dma_absent gave
  * once the memory was made, or when absent is NULL the facts' own (erx_boot_dma_absent with
  * size 0), then
  * for a network row " mac present" or " mac absent", and a newline. PATH is the manifest's;

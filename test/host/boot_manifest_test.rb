@@ -463,8 +463,8 @@ class BootManifestTest < Minitest::Test
     assert_includes output, "held_row none\n"
   end
 
-  def dma(role, memory, status, coherent, cpu, bus, last, mac, first, size)
-    arguments = [role, memory, status, coherent, cpu, bus, last, mac, first, size].map(&:to_s)
+  def dma(role, memory, status, coherent, cpu, bus, last, mac, first, size, *walk)
+    arguments = [role, memory, status, coherent, cpu, bus, last, mac, first, size, *walk].map(&:to_s)
     output, status_ = Open3.capture2e(@driver, 'dma', *arguments)
     assert status_.success?, output
     output
@@ -509,10 +509,29 @@ class BootManifestTest < Minitest::Test
                  dma('block', 0x10000, 0, 1, 0, 0, all, 0, 0xffff_ffff_ffff_f000, 0x10000))
     # Without a range the facts' coherence says nothing: the record is not coherent.
     %w[no_node coherence cells malformed ranges].each.with_index(1) do |reason, status|
-      assert_match(/\Aasks 1 before #{reason} after none .* 12 direct 0 0 0 0 0 0 exact.*\nline .*: dma absent #{reason}\n\z/,
+      walked = reason == 'ranges' ? ' limit none windows 0' : ''
+      assert_match(/\Aasks 1 before #{reason} after none .* 12 direct 0 0 0 0 0 0 exact.*\nline .*: dma absent #{reason}#{walked}\n\z/,
                    dma('block', 0x10000, status, 1, 0, 0, all, 0, 0, 0x10000))
     end
   end
+
+# A row whose tree gives no one DMA range shows what the walk ended with (docs/design-device-tree.md,
+# "The lines"): the limit, the count, the first four windows with each one's verdict, and how many more;
+# or that the walk would carry more than it holds. Statuses and verdicts are the header's order.
+def test_a_row_without_a_range_shows_the_windows_the_walk_ended_with
+  all = 0xffff_ffff_ffff_ffff
+  two = [0x3c00_0000, 0, 0, 0xbfff_ffff, 0, 0x4_0000_0000, 0, 0x4_3fff_ffff, 2]
+  assert_match(/\nline erx: device tree: \/virtio_mmio@a003e00: dma absent ranges limit 0x3c000000 windows 2 window 0x0 0x0 0xbfffffff kept window 0x400000000 0x0 0x43fffffff no_ram\n\z/,
+               dma('block', 0x10000, 5, 0, 0, 0, all, 0, 0, 0x10000, *two))
+  six = (0...6).flat_map { |at| [at << 32, 0x4000_0000 + at, (at << 32) + 0xfff, at % 3] }
+  assert_match(/ windows 6 window 0x0 0x40000000 0xfff kept window 0x100000000 0x40000001 0x100000fff above_limit window 0x200000000 0x40000002 0x200000fff no_ram window 0x300000000 0x40000003 0x300000fff kept more 2\n\z/,
+               dma('block', 0x10000, 5, 0, 0, 0, all, 0, 0, 0x10000, 0, *six))
+  assert_match(/: dma absent ranges limit none windows 6 /, dma('block', 0x10000, 5, 0, 0, 0, all, 0, 0, 0x10000, 0, *six))
+  assert_match(/: dma absent ranges limit 0x40000000 windows over\n\z/,
+               dma('block', 0x10000, 5, 0, 0, 0, all, 0, 0, 0x10000, 0x4000_0000, 'over'))
+  # Another reason prints no windows, whatever the facts hold.
+  assert_match(/: dma absent cells\n\z/, dma('block', 0x10000, 3, 0, 0, 0, all, 0, 0, 0x10000, *two))
+end
 
   # Both gives make a device's memory inside the range erx_boot_dma_range builds from its
   # facts, so EMMC2's window keeps its bus offset rather than becoming the identity range a

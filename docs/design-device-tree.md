@@ -623,6 +623,14 @@ LAST` or `dma absent REASON`, `mac present` or `mac absent`, and
 `framebuffer WIDTHxHEIGHT STRIDE FORMAT`, `framebuffer absent outside
 BASE SIZE` or `framebuffer absent REASON`, with addresses in hexadecimal
 and the rest in decimal.
+For `dma absent ranges` the line goes on with what the DMA walk ended
+with: `limit L` (the row's `dma_limit`, or `none`), then `windows N` and
+up to four `window CPU BUS LAST VERDICT`, each window as the tree's
+`dma-ranges` gave it before the limit's cut, `VERDICT` being `kept`,
+`above_limit` or `no_ram`, and `more M` for the windows not shown; or
+`windows over` for a walk that would carry more than it holds. A board
+whose firmware writes windows no reader keeps then shows them in one
+boot.
 `PATH` is the manifest's, the numbers are the root's, and the reasons and
 the format's name come from fixed tables, so no byte of the tree reaches
 the console and the lines need no escaping. A board pass reads the

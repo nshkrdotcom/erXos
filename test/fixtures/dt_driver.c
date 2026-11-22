@@ -55,6 +55,26 @@ device_print(const erx_dt_t *tree, const char *path, const char *row, const char
 		printf("none\n");
 }
 
+/* What the DMA walk ended with for a device: "windows N", or "windows over", then each window's CPU BUS LAST VERDICT. */
+static void
+windows_print(const erx_dt_t *tree, const char *path, const char *row, const char *dma_limit)
+{
+	static const char *const verdicts[] = { "kept", "above_limit", "no_ram" };
+	erx_dt_device_t facts;
+
+	erx_dt_device(tree, path, strcmp(row, "pcie") == 0 ? ERX_DT_ROW_PCIE : ERX_DT_ROW_NODE,
+	    dma_limit == NULL ? 0 : strtoull(dma_limit, NULL, 0), &facts);
+	if (facts.windows_over) {
+		printf("windows over\n");
+		return;
+	}
+	printf("windows %" PRIu32, facts.windows);
+	for (uint32_t at = 0; at < facts.windows; at++)
+		printf(" 0x%" PRIx64 " 0x%" PRIx64 " 0x%" PRIx64 " %s", facts.window[at].cpu, facts.window[at].bus,
+		    facts.window[at].last, verdicts[facts.window[at].verdict]);
+	printf("\n");
+}
+
 static void
 fb_print(const erx_dt_t *tree, const char *path, const char *compatible, const char *base, const char *size)
 {
@@ -156,6 +176,8 @@ main(int argc, char **argv)
 			words[++count] = strtok_r(NULL, " \n", &save);
 		if ((count == 3 || count == 4) && strcmp(words[0], "device") == 0)
 			device_print(&tree, words[1], words[2], count == 4 ? words[3] : NULL);
+		else if ((count == 3 || count == 4) && strcmp(words[0], "windows") == 0)
+			windows_print(&tree, words[1], words[2], count == 4 ? words[3] : NULL);
 		else if (count == 5 && strcmp(words[0], "fb") == 0)
 			fb_print(&tree, words[1], words[2], words[3], words[4]);
 		else if (count == 1 && strcmp(words[0], "seeds") == 0)

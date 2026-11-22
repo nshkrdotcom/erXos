@@ -436,7 +436,9 @@ dma_walk(const erx_dt_t *tree, const int path[ERX_DT_DEPTH_MAX + 1], int level, 
  * root, then the RAM filter. When the bus is a PCIe function's host bridge,
  * its own level may take the PCI bus binding's three address cells. A
  * dma_limit other than 0 cuts each window's bus addresses below it, before
- * the RAM filter, so a window the device cannot reach drops out.
+ * the RAM filter, so a window the device cannot reach drops out. Each
+ * window the walk ended with is recorded in facts, as the walk gave it,
+ * with what the limit and the filter made of it, for the root's line.
  */
 static erx_dt_dma_status_t
 range_read(const erx_dt_t *tree, const int path[ERX_DT_DEPTH_MAX + 1], int bus_level, erx_dt_row_t row,
@@ -449,18 +451,26 @@ range_read(const erx_dt_t *tree, const int path[ERX_DT_DEPTH_MAX + 1], int bus_l
 
 	windows[0] = (dt_window_t){ .bus = 0, .last = UINT64_MAX, .at = 0 };
 	count = 1;
+	facts->dma_limit = dma_limit;
 	status = dma_walk(tree, path, bus_level, row == ERX_DT_ROW_PCIE, windows, &count);
+	/* windows_translate's one ERX_DT_DMA_RANGES is a walk past ERX_DT_WINDOWS_MAX windows. */
+	facts->windows_over = status == ERX_DT_DMA_RANGES;
 	if (status != ERX_DT_DMA_OK)
 		return (status);
 
 	found = NULL;
 	kept = 0;
+	facts->windows = count;
 	for (i = 0; i < count; i++) {
+		facts->window[i] = (erx_dt_dma_window_t){ .cpu = windows[i].at, .bus = windows[i].bus,
+		    .last = window_at_last(&windows[i]), .verdict = ERX_DT_WINDOW_ABOVE_LIMIT };
 		if (dma_limit != 0 && windows[i].bus >= dma_limit)
 			continue;
 		if (dma_limit != 0 && windows[i].last >= dma_limit)
 			windows[i].last = dma_limit - 1;
+		facts->window[i].verdict = ERX_DT_WINDOW_NO_RAM;
 		if (memory_meets(tree, windows[i].at, window_at_last(&windows[i]))) {
+			facts->window[i].verdict = ERX_DT_WINDOW_KEPT;
 			found = &windows[i];
 			kept++;
 		}

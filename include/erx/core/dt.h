@@ -77,12 +77,35 @@ typedef enum erx_dt_mac_status {
 	ERX_DT_MAC_NONE
 } erx_dt_mac_status_t;
 
+/* What the DMA reader made of a window its walk ended with. */
+typedef enum erx_dt_window_verdict {
+	ERX_DT_WINDOW_KEPT,		/* inside the limit, after its cut, with RAM behind it */
+	ERX_DT_WINDOW_ABOVE_LIMIT,	/* its first bus address at or above the row's dma_limit */
+	ERX_DT_WINDOW_NO_RAM		/* no RAM behind it, after the limit's cut */
+} erx_dt_window_verdict_t;
+
+/*
+ * A window the DMA walk ended with, before the limit's cut: CPU addresses cpu through last
+ * seen at bus addresses from bus.
+ */
+typedef struct erx_dt_dma_window {
+	uint64_t		 cpu;
+	uint64_t		 bus;
+	uint64_t		 last;
+	erx_dt_window_verdict_t	 verdict;
+} erx_dt_dma_window_t;
+
 /*
  * A device's facts. coherent, cpu, bus and last mean something only when
  * dma is ERX_DT_DMA_OK, so a device never has a range without its
  * coherence; mac only when mac_status is ERX_DT_MAC_OK. The range is the
  * device's translation: the device sees CPU address cpu + x at bus address
  * bus + x, for every CPU address from cpu through last, inclusive.
+ * dma_limit, windows and window say what the DMA walk ended with and how
+ * each window was judged, for the root's line, when the walk itself ended
+ * (dma ERX_DT_DMA_OK, or ERX_DT_DMA_RANGES with windows_over false);
+ * windows_over marks a walk that would carry more than ERX_DT_WINDOWS_MAX
+ * windows and stopped, ERX_DT_DMA_RANGES with no window recorded.
  */
 struct erx_dt_device {
 	erx_dt_dma_status_t	 dma;
@@ -90,6 +113,10 @@ struct erx_dt_device {
 	uint64_t		 cpu;
 	uint64_t		 bus;
 	uint64_t		 last;
+	uint64_t		 dma_limit;
+	uint32_t		 windows;
+	bool			 windows_over;
+	erx_dt_dma_window_t	 window[ERX_DT_WINDOWS_MAX];
 	erx_dt_mac_status_t	 mac_status;
 	uint8_t			 mac[ERX_DT_MAC_BYTES];
 };

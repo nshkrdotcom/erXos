@@ -599,6 +599,48 @@ hex_put(char *line, size_t capacity, size_t *used, uint64_t value)
 	return (text_put(line, capacity, used, text + at, sizeof(text) - at));
 }
 
+/* value in decimal, without leading zeros, into a line. */
+static bool
+decimal_put(char *line, size_t capacity, size_t *used, uint64_t value)
+{
+	char digits[DECIMAL_MAX];
+
+	return (string_put(line, capacity, used, decimal_digits(digits, value)));
+}
+
+/*
+ * For "dma absent ranges", what the DMA walk ended with (docs/design-device-tree.md, "The
+ * lines"): " limit L windows N", each of the first ERX_BOOT_TREE_WINDOWS_SHOWN windows as
+ * " window CPU BUS LAST VERDICT" and " more M" for the rest, or " windows over".
+ */
+static bool
+windows_put(const erx_dt_device_t *facts, char *line, size_t capacity, size_t *used)
+{
+	static const char *const verdicts[] = {
+		[ERX_DT_WINDOW_KEPT] = " kept",
+		[ERX_DT_WINDOW_ABOVE_LIMIT] = " above_limit",
+		[ERX_DT_WINDOW_NO_RAM] = " no_ram",
+	};
+	const uint32_t shown = facts->windows < ERX_BOOT_TREE_WINDOWS_SHOWN ? facts->windows : ERX_BOOT_TREE_WINDOWS_SHOWN;
+	bool fits = string_put(line, capacity, used, " limit ") &&
+	    (facts->dma_limit == 0 ? string_put(line, capacity, used, "none") : hex_put(line, capacity, used, facts->dma_limit));
+
+	if (facts->windows_over)
+		return (fits && string_put(line, capacity, used, " windows over"));
+	fits = fits && string_put(line, capacity, used, " windows ") && decimal_put(line, capacity, used, facts->windows);
+	for (uint32_t at = 0; fits && at < shown; at++) {
+		const erx_dt_dma_window_t *const window = &facts->window[at];
+
+		fits = string_put(line, capacity, used, " window ") && hex_put(line, capacity, used, window->cpu) &&
+		    string_put(line, capacity, used, " ") && hex_put(line, capacity, used, window->bus) &&
+		    string_put(line, capacity, used, " ") && hex_put(line, capacity, used, window->last) &&
+		    string_put(line, capacity, used, verdicts[window->verdict]);
+	}
+	if (fits && facts->windows > shown)
+		fits = string_put(line, capacity, used, " more ") && decimal_put(line, capacity, used, facts->windows - shown);
+	return (fits);
+}
+
 size_t
 erx_boot_tree_line(erx_boot_words_t path, uint64_t dma_memory, bool network, const erx_dt_device_t *facts,
     const char *absent, char *line, size_t capacity)
@@ -611,7 +653,8 @@ erx_boot_tree_line(erx_boot_words_t path, uint64_t dma_memory, bool network, con
 	    string_put(line, capacity, &used, ":");
 
 	if (fits && dma_memory != 0 && reason != NULL)
-		fits = string_put(line, capacity, &used, " dma absent ") && string_put(line, capacity, &used, reason);
+		fits = string_put(line, capacity, &used, " dma absent ") && string_put(line, capacity, &used, reason) &&
+		    (facts->dma != ERX_DT_DMA_RANGES || windows_put(facts, line, capacity, &used));
 	else if (fits && dma_memory != 0)
 		fits = string_put(line, capacity, &used, facts->coherent ? " coherent 1 range " : " coherent 0 range ") &&
 		    hex_put(line, capacity, &used, facts->cpu) && string_put(line, capacity, &used, " ") &&
@@ -729,15 +772,6 @@ erx_boot_framebuffer_words(const erx_dt_framebuffer_t *fb, const char *format, u
 	    number_put(words, capacity, &used, fb->stride) && word_put(words, capacity, &used, format))
 		return (used);
 	return (0);
-}
-
-/* value in decimal, without leading zeros, into a line. */
-static bool
-decimal_put(char *line, size_t capacity, size_t *used, uint64_t value)
-{
-	char digits[DECIMAL_MAX];
-
-	return (string_put(line, capacity, used, decimal_digits(digits, value)));
 }
 
 /*

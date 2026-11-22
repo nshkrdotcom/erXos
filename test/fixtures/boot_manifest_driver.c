@@ -100,9 +100,12 @@ main(int argc, char **argv)
 	 * bytes of DMA memory and those facts: whether it asks the tree, the reason
 	 * erx_boot_dma_absent gives before the memory is made and, when that is none, again
 	 * for memory at FIRST of SIZE bytes, then its record, with memory only when both are
-	 * none, then its console line.
+	 * none, then its console line. After SIZE, LIMIT and then "over", or the walk's windows as
+	 * CPU BUS LAST VERDICT, VERDICT in erx_dt_window_verdict_t's order.
 	 */
-	if (argc == 12 && strcmp(argv[1], "dma") == 0) {
+	if (argc >= 12 && strcmp(argv[1], "dma") == 0 &&
+	    (argc == 12 || (argc == 14 && strcmp(argv[13], "over") == 0) ||
+	    (argc >= 13 && (argc - 13) % 4 == 0 && (argc - 13) / 4 <= ERX_DT_WINDOWS_MAX))) {
 		const erx_boot_device_t device = { .role = argv[2], .peripheral = "virtio_mmio", .given = true,
 		    .base = 0x0a003e00, .size = 0x200, .dma_memory = strtoull(argv[3], NULL, 0),
 		    .network = strcmp(argv[2], "net") == 0, .path = { "/virtio_mmio@a003e00", 20 } };
@@ -119,6 +122,14 @@ main(int argc, char **argv)
 		char line[ERX_BOOT_TREE_LINE_MAX];
 		size_t line_length;
 
+		if (argc > 12) {
+			facts.dma_limit = strtoull(argv[12], NULL, 0);
+			facts.windows_over = argc == 14 && strcmp(argv[13], "over") == 0;
+			for (int at = 13; !facts.windows_over && at < argc; at += 4)
+				facts.window[facts.windows++] = (erx_dt_dma_window_t){ .cpu = strtoull(argv[at], NULL, 0),
+				    .bus = strtoull(argv[at + 1], NULL, 0), .last = strtoull(argv[at + 2], NULL, 0),
+				    .verdict = (erx_dt_window_verdict_t)strtoul(argv[at + 3], NULL, 0) };
+		}
 		facts.mac_status = mac != 0 ? ERX_DT_MAC_OK : ERX_DT_MAC_NONE;
 		for (size_t at = 0; at < ERX_DT_MAC_BYTES; at++)
 			facts.mac[at] = (uint8_t)(mac >> (8 * (ERX_DT_MAC_BYTES - 1 - at)));

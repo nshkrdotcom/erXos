@@ -129,6 +129,9 @@ class DtTest < Minitest::Test
                      'inner { #address-cells = <1>; #size-cells = <1>; dma-ranges = <0x80000000 0x10000000 0x1000000>; ' \
                      'dev { }; }; };'),
     'over-no-ram' => tree('bus { #address-cells = <1>; #size-cells = <1>; dma-ranges = <0x0 0x2 0x0 0x1000000>; dev { }; };'),
+    # Three windows a limit of 1 GiB judges: one kept, one above the limit, one with no RAM behind it.
+    'three-windows' => tree('bus { #address-cells = <1>; #size-cells = <1>; dma-ranges = <0x0 0x0 0x0 0x10000000 ' \
+                            '0x80000000 0x0 0x20000000 0x10000000 0x30000000 0x2 0x0 0x1000000>; dev { }; };'),
     # 1,024 entries onto one parent range, under a level that splits it 1,024 ways.
     'splitting' => tree("outer { #address-cells = <1>; #size-cells = <1>; dma-ranges = <#{split_ranges(1024, child_step: 0x40, parent_step: 0x40, size: 0x40)}>; " \
                         'inner { #address-cells = <1>; #size-cells = <1>; ' \
@@ -464,6 +467,21 @@ class DtTest < Minitest::Test
     assert_equal expected, answers(built.board, intx)[1..]
     assert_equal expected, answers(built.model, intx)[1..]
   end
+
+# The root's line for a row without a DMA range shows what the walk ended with
+# (docs/design-device-tree.md, "The lines"): each window's CPU, bus and last CPU address as
+# the tree gave them, and whether it was kept, lay above the row's limit or had no RAM
+# behind it; a walk that would carry more windows than it holds says so, not none.
+def test_the_windows_the_dma_walk_ended_with
+  assert_equal ['accept ok memory 1',
+                'windows 3 0x0 0x0 0xfffffff kept 0x20000000 0x80000000 0x2fffffff above_limit ' \
+                '0x200000000 0x30000000 0x200ffffff no_ram',
+                'device ok coherent 0 range 0x0 0x0 0xfffffff mac none'],
+               fixture_answers('three-windows', ['windows /bus/dev node 0x40000000', 'device /bus/dev node 0x40000000'])
+  assert_equal 'windows 1 0x200000000 0x0 0x200ffffff no_ram',
+               fixture_answers('over-no-ram', ['windows /bus/dev node'])[1]
+  assert_equal 'windows over', fixture_answers('splitting', ['windows /outer/inner/dev node'])[1]
+end
 
   def test_coherence_marks
     assert_equal 'device coherence coherent 0 range 0x0 0x0 0x0 mac none', fixture_answers('parent-coherent', ['device /bus/dev node'])[1]
