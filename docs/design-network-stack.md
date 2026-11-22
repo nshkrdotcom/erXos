@@ -2595,8 +2595,13 @@ transmit credit with its clients' data and have no reserved share of it
 supervisor starts the whole link again, rather than a driver living on
 over nothing: a transport's `{stop, Reason}` ends it with `{shutdown,
 Reason}`, an exit signal from a port or socket of its medium (it traps
-exits) with `{shutdown, {linked, Reason}}`, and a crash, a virtio
-device's broken queue included, as a crash. Once the driver runs, no end
+exits) with `{shutdown, {linked, Reason}}`, and a crash with the
+crash's reason. A device's broken queue is the end of the medium: the
+transport answers `{stop, {broken, Direction}}` after a line in the
+kernel log that says what the device did, which for `erx_genet` is the
+receive bound the controller's registers show was met and the words of
+its DMA control, DMA status and ring index registers, the same words it
+logs when `negotiate/2` never sees the stop. Once the driver runs, no end
 but its supervisor's own stop comes before it has lived a second: a stop
 sooner waits out the second still answering, its link told `down`, so
 that the interface starting beside it attaches and the link's start

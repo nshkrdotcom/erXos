@@ -46,9 +46,11 @@ The sequences follow FreeBSD 975e3605ebb1, `sys/arm64/broadcom/genet/if_genet.c`
 
 -export([identify/1, lladdr/1, reset/0, configure/1, start/0, link_up/1]).
 -export([negotiate_retry/1, frames/2, pieces/1]).
--export_type([step/0, address_step/0]).
+-export([evidence/0, rx_fault/3]).
+-export_type([step/0, address_step/0, rx_fault/0]).
 
 -include("generated/erx_abi.hrl").
+-include("generated/erx_hw_genet.hrl").
 
 -define(REV_MAJOR_V5, 6).
 -define(PORT_MODE_EXT_GPHY, 3).
@@ -212,6 +214,65 @@ negotiate_retry(Tries) when is_integer(Tries), Tries >= 1, Tries < ?NEGOTIATE_TR
     {retry, ?NEGOTIATE_RETRY_MS};
 negotiate_retry(Tries) when is_integer(Tries), Tries >= ?NEGOTIATE_TRIES ->
     {error, stop_timeout}.
+
+%% --- What a failure shows -------------------------------------------------------------
+
+-doc """
+The registers whose words the driver logs when the device NIF breaks a queue or
+`negotiate/2` never sees the stop: each direction's DMA control and DMA status, then the
+receive ring's producer and consumer index and the transmit ring's consumer and producer
+index, for the ring the NIF drives. The NIF owns all but the two status registers, and the
+driver only reads them, which has no side effect. The words settle on the board what the
+sources leave open (docs/research-genet-bcm2711.md, "What only the board can settle"):
+which bit of the idle report a stop that never shows lacks, and how far the indexes stand
+apart when a queue breaks.
+""".
+-spec evidence() -> [erx_device:register_name()].
+evidence() ->
+    [rx_dma_ctrl, rx_dma_status, tx_dma_ctrl, tx_dma_status,
+     {rx_ring_prod_index, ?RING}, {rx_ring_cons_index, ?RING},
+     {tx_ring_cons_index, ?RING}, {tx_ring_prod_index, ?RING}].
+
+-doc """
+Which of the device NIF's two receive bounds a broken receive queue met, read again from
+the controller (docs/design-device-dma.md, "The register ring (GENET)"): `{index, Ahead}`,
+the producer index more than the ring's size ahead of the consumer index; else
+`{length, Position, Status}`, the first descriptor the controller has filled, from the
+consumer index up to the producer index, whose status word's BUFLEN field is over
+`BufferBytes`; else `unexplained`, when the controller no longer shows either.
+
+`Evidence` is the words of `evidence/0`'s registers, read first, so the indexes come from
+the same reads the driver logs; `Status(Position)` reads a descriptor's status word and is
+called only for filled positions, in ring order, after the indexes, as the NIF reads them,
+and no further than the first fault. Every word is untrusted.
+""".
+-type rx_fault() :: {index, (?ERX_GENET_RING_SIZE + 1)..16#ffff}
+                  | {length, 0..(?ERX_GENET_RING_SIZE - 1), 0..16#ffffffff}
+                  | unexplained.
+-spec rx_fault([{erx_device:register_name(), non_neg_integer()}],
+               fun((0..(?ERX_GENET_RING_SIZE - 1)) -> non_neg_integer()), pos_integer()) ->
+          rx_fault().
+rx_fault(Evidence, Status, BufferBytes) ->
+    {_, ProdWord} = lists:keyfind({rx_ring_prod_index, ?RING}, 1, Evidence),
+    {_, ConsWord} = lists:keyfind({rx_ring_cons_index, ?RING}, 1, Evidence),
+    Prod = ?ERX_HW_GENET_RX_RING_PROD_INDEX_INDEX_GET(ProdWord),
+    Cons = ?ERX_HW_GENET_RX_RING_CONS_INDEX_INDEX_GET(ConsWord),
+    case (Prod - Cons) band 16#ffff of
+        Ahead when Ahead > ?ERX_GENET_RING_SIZE ->
+            {index, Ahead};
+        Ahead ->
+            Filled = [(Cons + K) rem ?ERX_GENET_RING_SIZE || K <- lists:seq(0, Ahead - 1)],
+            first_too_long(Filled, Status, BufferBytes)
+    end.
+
+first_too_long([], _Status, _BufferBytes) ->
+    unexplained;
+first_too_long([Position | Rest], Status, BufferBytes) ->
+    Word = Status(Position),
+    case ?ERX_HW_GENET_RX_DESC_STATUS_BUFLEN_GET(Word) > BufferBytes of
+        true -> {length, Position, Word};
+        false -> first_too_long(Rest, Status, BufferBytes)
+    end.
 
 %% --- Frames ---------------------------------------------------------------------------
 

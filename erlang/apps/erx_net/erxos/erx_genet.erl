@@ -40,8 +40,12 @@ reset included, comes through `event/2`.
   dropped as `too_long`, one shorter than an Ethernet header, a loopback frame, a delayed
   frame and a run as `malformed`. A full ring is `full`; the interrupt that returns
   transmit buffers is the `writable` event.
-* **A broken queue**, a completion that does not match what is in flight, ends the
-  driver: its restart resets the controller.
+* **A broken queue**, an index or a length the device NIF refuses, or a completion that
+  does not match what is in flight, ends the driver with `{stop, {broken, Direction}}`, never
+  a crash: one line names the bound a receive queue met as the controller's registers show
+  it (erx_genet_core:rx_fault/3) and one line gives each register of
+  erx_genet_core:evidence/0, then the driver's restart resets the controller. A `negotiate/2`
+  that never sees the stop logs the same registers before the device is given up.
 
 Every register goes by its name in hw/svd/genet/genet.svd. The design places the device
 in the network domain; on Fiasco, whichever domain the manifest gives the record
@@ -175,7 +179,9 @@ negotiate(Dev, Tries) ->
         {error, ebusy} ->
             case erx_genet_core:negotiate_retry(Tries) of
                 {retry, Ms} -> timer:sleep(Ms), negotiate(Dev, Tries + 1);
-                {error, Reason} -> {error, {negotiate, Reason}}
+                {error, Reason} ->
+                    ok = log_evidence(read_evidence(Dev)),
+                    {error, {negotiate, Reason}}
             end;
         {error, Reason} ->
             {error, {negotiate, Reason}}
@@ -258,8 +264,15 @@ mdio_poll(Dev, Op, Polls) ->
 
 %% --- Events ---------------------------------------------------------------------------
 
+%% A broken queue, thrown from wherever a call answers it, ends the driver here with its
+%% evidence logged.
 -doc false.
-event({erx_irq, Dev, ?IRQ_LINE}, #t{dev = Dev} = T0) ->
+event(Msg, T) ->
+    try transport_event(Msg, T)
+    catch throw:{broken, Direction} -> {stop, log_broken(Direction, T)}
+    end.
+
+transport_event({erx_irq, Dev, ?IRQ_LINE}, #t{dev = Dev} = T0) ->
     %% Clear the controller's pending interrupts, then answer the line, before draining,
     %% so a completion that lands after the drain fires the line again.
     ok = erx_device:write(Dev, intrl2_cpu_clear, erx_device:read(Dev, intrl2_cpu_stat)),
@@ -267,14 +280,14 @@ event({erx_irq, Dev, ?IRQ_LINE}, #t{dev = Dev} = T0) ->
     {Writable, T1} = reclaim(T0),
     {Received, T} = receive_batch(T1),
     {Writable ++ Received, T};
-event({?MODULE, more}, T) ->
+transport_event({?MODULE, more}, T) ->
     receive_batch(T);
-event({?MODULE, phy_begin}, T0) ->
+transport_event({?MODULE, phy_begin}, T0) ->
     case phy(T0#t.phy_first, T0) of
         {ok, Events, T} -> {Events, T};
         {error, Reason} -> {stop, Reason}
     end;
-event({?MODULE, phy}, #t{phy = Phy0} = T0) ->
+transport_event({?MODULE, phy}, #t{phy = Phy0} = T0) ->
     {Phy, Next, Reports} = erx_phy_c22:step(Phy0, ok),
     maybe
         {ok, Events, T1} ?= reports(Reports, T0#t{phy = Phy}, []),
@@ -283,8 +296,31 @@ event({?MODULE, phy}, #t{phy = Phy0} = T0) ->
     else
         {error, Reason} -> {stop, Reason}
     end;
-event(_Msg, T) ->
+transport_event({?MODULE, broken, Direction}, _T) ->
+    throw({broken, Direction});
+transport_event(_Msg, T) ->
     {[], T}.
+
+%% The reason a broken queue ends the driver with, after its lines in the kernel log: the
+%% evidence's registers read once, the receive fault judged from those words and the
+%% descriptors read after them, then the words logged.
+log_broken(rx, #t{dev = Dev}) ->
+    Evidence = read_evidence(Dev),
+    Status = fun(Position) -> erx_device:read(Dev, {rx_desc_status, Position}) end,
+    log("the receive queue is broken: ~0p", [erx_genet_core:rx_fault(Evidence, Status, ?BUFFER)]),
+    ok = log_evidence(Evidence),
+    {broken, rx};
+log_broken(tx, #t{dev = Dev}) ->
+    log("the transmit queue is broken", []),
+    ok = log_evidence(read_evidence(Dev)),
+    {broken, tx}.
+
+read_evidence(Dev) ->
+    [{Reg, erx_device:read(Dev, Reg)} || Reg <- erx_genet_core:evidence()].
+
+%% One line for each register of the evidence, its whole word.
+log_evidence(Evidence) ->
+    lists:foreach(fun({Reg, Word}) -> log("~0p = 16#~.16b", [Reg, Word]) end, Evidence).
 
 %% Takes the transmit queue's completions, which carry no bytes; room after a `full`
 %% answer is the `writable` event.
@@ -297,7 +333,7 @@ reclaim(#t{dev = Dev, tx = Tx} = T) ->
 
 reclaimed({ok, []}, _Dev, _Tx, N) -> N;
 reclaimed({ok, Done}, Dev, Tx, N) -> reclaimed(erx_device:complete(Dev, Tx), Dev, Tx, N + length(Done));
-reclaimed({error, broken}, _Dev, _Tx, _N) -> error({genet, broken, tx}).
+reclaimed({error, broken}, _Dev, _Tx, _N) -> throw({broken, tx}).
 
 %% One batch: the receive queue's completions until 64 KiB or a ring's worth, whichever
 %% comes first, each made a frame or a drop. The count bounds a batch of empty
@@ -316,20 +352,27 @@ take(#t{dev = Dev, rx = Rx} = T, Got, Bytes, Count) when Bytes < ?BATCH_BYTES, C
             take(T, [Done | Got], Bytes + lists:sum([byte_size(B) || {_Flags, B} <- Done]),
                  Count + length(Done));
         {error, broken} ->
-            error({genet, broken, rx})
+            throw({broken, rx})
     end;
 take(_T, Got, _Bytes, _Count) ->
     {lists:append(lists:reverse(Got)), true}.
 
+%% A post the device NIF answers broken asks the driver, by a message to itself, to end
+%% through event/2, and holds the frame meanwhile as `full`.
 -doc false.
-transmit({_Zone, _Packet}, T) ->
+transmit(Frame, T) ->
+    try transmit_frame(Frame, T)
+    catch throw:{broken, tx} -> self() ! {?MODULE, broken, tx}, {full, T}
+    end.
+
+transmit_frame({_Zone, _Packet}, T) ->
     {{drop, malformed}, T};
 %% Its finish is none: a delayed frame or a run is a shape it does not take.
-transmit({csum, _Start, _Field, _Frame}, T) ->
+transmit_frame({csum, _Start, _Field, _Frame}, T) ->
     {{drop, malformed}, T};
-transmit(#run{}, T) ->
+transmit_frame(#run{}, T) ->
     {{drop, malformed}, T};
-transmit(Frame, T) ->
+transmit_frame(Frame, T) ->
     case iolist_size(Frame) of
         Size when Size > ?MTU + ?ETHER_HDR_LEN -> {{drop, too_long}, T};
         Size when Size < ?ETHER_HDR_LEN -> {{drop, malformed}, T};
@@ -340,7 +383,7 @@ post(Pieces, #t{dev = Dev, tx = Tx, tag = Tag} = T) ->
     case erx_device:post(Dev, Tx, Tag, Pieces) of
         ok -> {ok, T#t{tag = (Tag + 1) band 16#ffffffffffffffff}};
         {error, full} -> {full, T#t{tx_full = true}};
-        {error, broken} -> error({genet, broken, tx})
+        {error, broken} -> throw({broken, tx})
     end.
 
 %% One line of the kernel log. Every value in it is an integer or a fixed atom of this

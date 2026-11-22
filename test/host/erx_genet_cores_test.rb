@@ -37,6 +37,11 @@ class ErxGenetCoresTest < Minitest::Test
       ['erx_genet_core', "{write, {tx_ring_mbuf_done_thres, ?RING}, ?TX_MBUF_DONE_THRES},\n", ''],
     'a field the SVD does not name' =>
       ['erx_genet_core', '{field, ext_rgmii_oob_ctrl, rgmii_link, 1}', '{field, ext_rgmii_oob_ctrl, link, 1}'],
+    'a full receive ring blamed on its index' =>
+      ['erx_genet_core', 'Ahead when Ahead > ?ERX_GENET_RING_SIZE ->',
+       'Ahead when Ahead >= ?ERX_GENET_RING_SIZE ->'],
+    'a descriptor past the producer index blamed for a length' =>
+      ['erx_genet_core', 'K <- lists:seq(0, Ahead - 1)', 'K <- lists:seq(0, Ahead + 1)'],
     'the latched link bit read once' =>
       ['erx_phy_c22', 'Up = Now band ?BMSR_LINK =/= 0', 'Up = Latched band ?BMSR_LINK =/= 0']
   }.freeze

@@ -248,6 +248,37 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   it matters, the NIF takes them as owned and writes them in its install after the
   confirmed stop (docs/design-device-dma.md, "GENET"), which also removes the driver's
   copy of the ring index.
+* [High] GENET, the receive queue breaks on the board: on an SD boot and on an HTTP netboot
+  (build 76462641d) the device NIF broke the receive queue (`erx_genet` then ended as a crash in
+  `take/4`) between 20 ms and 1 s after the link came up; after the SD boot the restart's
+  `negotiate/2` saw the stop in 3 ms and the link came back, after the netboot it never saw the
+  stop (`{negotiate, stop_timeout}`) and the device was given up. The NIF breaks a receive queue
+  on a producer index more than 256 ahead or on a status length over 2,048, and the log did not
+  say which. `erx_genet` logs `the receive queue is broken: {index, Ahead}`, `{length,
+  Position, Status}` or `unexplained`, then each DMA control, DMA status and ring index word, and
+  the same words at a stop timeout, which a netboot's console settles: a length fault with a bit of
+  31:28 set points at `RX_DESC_STATUS`'s `BUFLEN` width (FreeBSD reads 27:16 of that register,
+  `if_genetreg.h:169-171`; the 16 bits come from the other driver's status block, not the
+  register); a stop timeout with DMA status bit 0 set and bit 17 clear points at the inferred ring
+  bit of the idle report (docs/research-genet-bcm2711.md, "The DMA status register"); a full ring
+  (indexes 256 apart) at the timeout points at a stop that waits on a full ring, which the
+  facts record's stop order (receive disabled at the MAC and a frame's time waited before the
+  DMA stop, the flushes after it) addresses inside `negotiate/2`'s reset.
+* [Medium] GENET, `erlang/apps/erx_net/erxos/erx_genet.erl`, the broken-queue ending: no test runs
+  `event/2`'s catch, `log_broken/2` or the `{stop, {broken, _}}` hand-off; only the pure
+  `erx_genet_core:rx_fault/3` and `evidence/0` are tested. The hosted GENET run
+  (`test/integration/runtime_genet_test.rb`) is the place for a case that breaks a queue on the stand-in
+  and expects the link to end with `{shutdown, {broken, rx}}` and the lines logged. `rx_fault/3` also
+  re-reads the NIF's two receive bounds from the registers, later than the NIF did; the one-source
+  form is the NIF recording why it broke a queue (the index advance, or the position and status
+  word) and reporting it, which needs a design home such as an inspection path.
+* [Low] network, `erlang/apps/erx_net/src/erx_net_driver.erl`: after a transport's `{stop, _}`
+  within the one-second hold the driver still passes events to the transport, so `erx_genet` logs a
+  broken queue's diagnosis again at each later interrupt of the hold; and the `transmit` callback
+  cannot answer `{stop, Reason}`, so `erx_genet` turns a broken post into a message to itself.
+  Stopping transport events once ending, and a `{stop, Reason}` answer from `transmit`, would remove
+  both; `erx_virtio_net` then takes the same ending for a broken queue in place of its crash
+  (`error({virtio_net, broken, _})`), as design-network-stack.md's "Ending" states.
 * [Medium] GENET, `hw/svd/genet/genet.svd`, `TX_DESC_STATUS`'s `BUFLEN`: 12 bits (`__BITS(27,16)`,
   `if_genetreg.h:181`) or 11 (the mask `0x7ff0000` at `:189`) is unverified. Keep every transmit length below
   2048 bytes, which both widths hold, until the board pass settles it.

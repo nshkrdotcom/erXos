@@ -173,6 +173,63 @@ negotiate_is_retried_within_its_bound_test() ->
     ?assertEqual(19, length(Retries)),
     ?assertEqual(lists:duplicate(6, {error, stop_timeout}), Failures).
 
+%% --- What a broken queue and a failed stop show -----------------------------------------------
+
+%% Each register the evidence names is one the driver may read: in the SVD source, not
+%% write-only, an array's element within its dimension.
+the_evidence_names_readable_registers_of_the_svd_test() ->
+    Svd = svd(),
+    [begin
+         {_Owned, Access, _Fields} = lookup(Reg, Svd),
+         ?assertNotEqual({Reg, "write-only"}, {Reg, Access})
+     end || Reg <- erx_genet_core:evidence()],
+    %% Both directions' DMA control and status, and both rings' two indexes.
+    ?assertEqual(8, length(lists:usort(erx_genet_core:evidence()))).
+
+%% A receive status word of Length bytes, a whole frame.
+status(Length) -> (Length bsl 16) bor ?WHOLE.
+
+%% The evidence's words with the receive ring's producer and consumer index words, and a
+%% descriptor reader over the ring's statuses, each a good 64-byte frame but those Bad
+%% names, {Position, Word}; the reader fails on a position the controller has not filled.
+rx_fault(ProdWord, Cons, Bad) ->
+    Evidence = [{rx_dma_status, 1}, {{rx_ring_prod_index, ?ERX_GENET_RING}, ProdWord},
+                {{rx_ring_cons_index, ?ERX_GENET_RING}, Cons}],
+    Filled = [(Cons + K) rem ?ERX_GENET_RING_SIZE
+              || K <- lists:seq(0, min((ProdWord - Cons) band 16#ffff, ?ERX_GENET_RING_SIZE) - 1)],
+    Status = fun(P) ->
+                     true = lists:member(P, Filled),
+                     proplists:get_value(P, Bad, status(64))
+             end,
+    erx_genet_core:rx_fault(Evidence, Status, 2048).
+
+a_producer_index_past_the_ring_is_the_index_fault_test() ->
+    Ring = ?ERX_GENET_RING_SIZE,
+    Cases = [%% A full ring is no fault of the index.
+             {5, 5 + Ring, unexplained},
+             {5, 5 + Ring + 1, {index, Ring + 1}},
+             %% The 16-bit indexes wrap.
+             {16#fff0, (16#fff0 + Ring + 1) band 16#ffff, {index, Ring + 1}},
+             {16#fff0, (16#fff0 + 3) band 16#ffff, unexplained},
+             %% A producer behind the consumer is far ahead modulo 2^16.
+             {7, 6, {index, 16#ffff}},
+             %% The producer word's upper half counts discarded frames, not the index.
+             {5, (16#0007 bsl 16) bor (5 + Ring), unexplained}],
+    [?assertEqual({Cons, Prod, Want}, {Cons, Prod, rx_fault(Prod, Cons, [])})
+     || {Cons, Prod, Want} <- Cases].
+
+a_length_past_the_buffer_is_the_length_fault_test() ->
+    %% The first such descriptor from the consumer index, across the ring's wrap; one at or
+    %% past the producer index is not yet the controller's, and is neither read nor blamed.
+    High = (1 bsl 31) bor status(64),
+    Cases = [{254, 254 + 4, [{1, status(2049)}], {length, 1, status(2049)}},
+             {254, 254 + 4, [{255, High}, {1, status(2049)}], {length, 255, High}},
+             {254, 254 + 4, [{0, status(2048)}], unexplained},
+             {254, 254 + 4, [{2, status(4000)}], unexplained},
+             {0, 0, [{0, status(4000)}], unexplained}],
+    [?assertEqual({Cons, Bad, Want}, {Cons, Bad, rx_fault((Prod band 16#ffff), Cons, Bad)})
+     || {Cons, Prod, Bad, Want} <- Cases].
+
 %% --- Receiving -----------------------------------------------------------------------------
 
 frame_bytes(Size) -> list_to_binary([I rem 251 || I <- lists:seq(0, Size - 1)]).
