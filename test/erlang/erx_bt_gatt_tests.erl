@@ -214,11 +214,18 @@ declared_services_build_the_table_test() ->
                            || #{name := Char} <- Chars]
                   end, Declared).
 
-hash_changes_with_a_characteristic_test() ->
+%% The hash covers what a client keeps of the table: a characteristic's UUID, its accesses,
+%% which its properties name, and the characteristic itself change it; its maximum, its
+%% levels and its initial value, which a client does not keep, do not.
+hash_covers_the_layout_alone_test() ->
     [#{characteristics := [Key, Ind]} = Sec, Nus] = services(),
-    Wider = Sec#{characteristics := [Key#{max := 511}, Ind]},
-    ?assertNotEqual(erx_gatt_db:hash(table()), erx_gatt_db:hash(erx_gatt_db:build([Wider, Nus]))),
-    ?assertEqual(32, byte_size(erx_gatt_db:hash(table()))).
+    Hash = fun(Chars) -> erx_gatt_db:hash(erx_gatt_db:build([Sec#{characteristics := Chars}, Nus])) end,
+    Base = erx_gatt_db:hash(table()),
+    ?assertEqual(32, byte_size(Base)),
+    ?assertNotEqual(Base, Hash([Key#{uuid := <<16#F1, 16#FF>>}, Ind])),
+    ?assertNotEqual(Base, Hash([Key#{access := #{read => encrypted}}, Ind])),
+    ?assertNotEqual(Base, Hash([Key])),
+    ?assertEqual(Base, Hash([Key#{max := 511, access := #{read => open, write => open}, value := <<>>}, Ind])).
 
 configuration_write_is_gated_at_notify_level_test() ->
     %% ind is read open and indicate encrypted: its configuration is written only encrypted.

@@ -147,6 +147,32 @@ class GattDeclTest < Minitest::Test
     end
   end
 
+  # Every declared service served at once, beside GAP's and GATT's own (9 handles), takes
+  # at most 0xFFFF handles. With abi/gatt's own files replaced, a service of two
+  # characteristics, one subscribable (6 handles), and eighteen services of 1,213
+  # characteristics that notify, indicate or do both, each with one configuration (3,640
+  # handles a service), fill the table to 0xFFFF exactly; one more service of no
+  # characteristic (1 handle) passes it.
+  def test_declarations_past_0xffff_handles_are_refused
+    with_abi_copy do |root|
+      gatt = File.join(root, 'abi/gatt')
+      FileUtils.rm(Dir.glob(File.join(gatt, '*.txt')))
+      File.write(File.join(gatt, 'pad.txt'),
+                 "service pad 4fff\ncharacteristic a 3fff 0 read open notify open\ncharacteristic b 3ffe 0 write open\n")
+      subscriptions = ['notify open', 'indicate open', 'notify open indicate open']
+      lines = (0...1213).map do |index|
+        format('characteristic c%d %04x 0 %s', index, 0x3000 + index, subscriptions[index % 3])
+      end
+      (0...18).each do |index|
+        File.write(File.join(gatt, "s#{index}.txt"), [format('service s%d %04x', index, 0x4000 + index), *lines, ''].join("\n"))
+      end
+      assert Erx::GattDecl.generation(root: root)
+      File.write(File.join(gatt, 'extra.txt'), "service extra 4ffe\n")
+      error = assert_raises(Erx::GattDecl::DeclarationError) { Erx::GattDecl.generation(root: root) }
+      assert_match(/the declared services take 65536 handles, past 65535/, error.message)
+    end
+  end
+
   # A reserved word names a service like any other, a 16-bit UUID and an initial value
   # reach the term least significant octet first and as given, a service of no
   # characteristics has an empty list, and names/0 and advertised/0 follow the files.

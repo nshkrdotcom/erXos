@@ -20,11 +20,15 @@ Each attribute's value is a constant, for the declarations; the characteristic's
 the ATT server reads from the values the handlers last set, or its declared initial value;
 or the link's configuration of a characteristic. A service's group ends at its last
 attribute, and a characteristic's at its last descriptor (Part G, 2.5.3). The table's hash,
-SHA-256 over its attributes in table order, names it.
+SHA-256 over every attribute's handle and type and every declaration's value, in table
+order, names it.
 
 Its input is trusted configuration, checked when the declarations are generated and the
 manifest is built (docs/design-bluetooth.md, "Declarations: `abi/gatt`"), so it is not
-checked again here.
+checked again here. It is a set of `erx_gatt_decl`'s terms, whose generator refuses
+declarations that, all served at once, would take more than 0xFFFF handles; it counts
+them by this layout (`Erx::GattDecl::OWN_HANDLES` and `service_handles`), so a change to
+the layout changes that count too.
 """.
 
 -include("generated/erx_abi.hrl").
@@ -67,7 +71,7 @@ build(Services) ->
     {Attributes, Infos} = lists:unzip(Laid),
     Tuple = list_to_tuple(lists:append(Attributes)),
     #{attributes => Tuple, characteristics => maps:from_list(lists:append(Infos)),
-      hash => erx_bytes:sha256(term_to_binary(Tuple, [deterministic]))}.
+      hash => layout_hash(Tuple)}.
 
 -doc "The attribute at `Handle`.".
 -spec lookup(erx_att:handle(), table()) -> {ok, attribute()} | error.
@@ -139,6 +143,19 @@ characteristic_attributes(Service, #{name := Name, uuid := Uuid, max := Max, acc
     Info = #{value => ValueHandle, configuration => case Configurations of [_] -> ValueHandle + 1; [] -> none end,
              notify => level(notify, Access), indicate => level(indicate, Access)},
     {{[Declaration, Value | Configurations], {Key, Info}}, Last + 1}.
+
+%% SHA-256 over what a client keeps of the table, in table order: every attribute's handle
+%% and type, and a declaration's value, the type and the value led by their lengths so
+%% that no two tables give one input. A maximum, a level and a characteristic's value are
+%% not kept, so changing one keeps the hash.
+layout_hash(Attributes) ->
+    erx_bytes:sha256(<< <<Handle:16/little, (byte_size(Type)), Type/binary,
+                          (byte_size(Value)):16/little, Value/binary>>
+                        || #{handle := Handle, type := Type, source := Source} <- tuple_to_list(Attributes),
+                           Value <- [declared_value(Source)] >>).
+
+declared_value({constant, Value}) -> Value;
+declared_value(_Source) -> <<>>.
 
 %% A declaration: read openly, never written.
 constant(Handle, Type, Value) ->

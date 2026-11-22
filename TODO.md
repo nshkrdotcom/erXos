@@ -8715,11 +8715,6 @@ model harness drive `erx_device.c` itself. `erx_device_dma_check` and `erx_devic
   Disconnection Complete empties and refills the slot, and each refill starts a fresh deadline, so the
   enable never times out and the core never stops; the controller process should end when a command stays
   unsent across refills for longer than `bt_command_timeout_ms`.
-* [Medium] bluetooth, the table's handle count (`erx_gatt_db`, design-bluetooth.md, "Declarations: `abi/gatt`"):
-  nothing bounds the attributes of the served services, and `erx_gatt_db:build/1` writes handles as 16 bits, so
-  past 0xFFFF a characteristic declaration names a wrapped handle. One 64 KiB declaration holds some 5,700
-  handles, so only a manifest serving many large services reaches it. The manifest check, which already refuses
-  more than `gatt_services_max` services, should refuse a served set past 0xFFFF handles.
 * [Low] bluetooth, the GATT declarations' smaller gaps (`Erx::GattDecl`, `erx_gatt_db`): only the table's own
   UUIDs (the enum `gatt_uuid`) are refused, so a characteristic of type Include (0x2802) or a descriptor type
   (0x2900-0x29ff) is accepted and a client's Find Included Services would read it as an include; the one level
@@ -8732,11 +8727,9 @@ model harness drive `erx_device.c` itself. `erx_device_dma_check` and `erx_devic
   joins parts from an empty value, so a client rewriting the tail of an existing value gets Invalid Offset (ATT
   3.4.6.3 measures from the current value); a second `indicate` in flight answers `busy`, which the facet's
   table lists only for notifications, so the link must queue indications or the design list `busy` (a
-  reconnection's Service Changed in flight makes a handler's first indication `busy` too); the table's
-  hash covers the internal attribute maps rather than the declarations alone, so an OTP upgrade can send an
-  unneeded Service Changed; the Bluetooth Base UUID in `erx_att:uuid128/1` and in the GATT declarations'
-  generator (`Erx::GattDecl::BASE_UUID`) is Bumble's, unverified against Vol 3
-  Part B 2.5.1, and the case that uses it is circular; the bearer exploration checks response counts but not
+  reconnection's Service Changed in flight makes a handler's first indication `busy` too); the Bluetooth
+  Base UUID in `erx_att:uuid128/1` and in the GATT declarations' generator (`Erx::GattDecl::BASE_UUID`) is
+  Bumble's, unverified against Vol 3 Part B 2.5.1, and the case that uses it is circular; the bearer exploration checks response counts but not
   which request a response answers, and the ATT fuzz target runs at security `none` and checks at most one
   answer rather than exactly one.
 * [Low] Fiasco backend, Fiasco's vCPU state area ([vCPU upcalls on Fiasco](docs/design-fiasco.md#vcpu-upcalls-on-fiasco)):
