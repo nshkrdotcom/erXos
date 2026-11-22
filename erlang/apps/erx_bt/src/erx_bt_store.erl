@@ -133,15 +133,17 @@ facts() ->
     gen_server:call(?MODULE, facts, infinity).
 
 -doc """
-The static random address of six random octets, most significant first, or `retry` when
-they make none (Vol 6 Part B, 1.3.2.1, unverified until that part is read): the top two
-bits are set, and the other 46 are neither all zeros nor all ones.
+The static random address of six random octets, most significant first: the top two bits
+set over their lower 46, or `retry` when that is not a static random address
+(`erx_smp_crypto:static_random/1`).
 """.
 -spec static_address(<<_:48>>) -> {ok, <<_:48>>} | retry.
-static_address(<<_:2, Random:46>>) when Random =:= 0; Random =:= 1 bsl 46 - 1 ->
-    retry;
 static_address(<<_:2, Random:46>>) ->
-    {ok, <<2#11:2, Random:46>>}.
+    Address = <<2#11:2, Random:46>>,
+    case erx_smp_crypto:static_random(Address) of
+        true -> {ok, Address};
+        false -> retry
+    end.
 
 %% The start's read (docs/design-bluetooth.md, "Bonds and the store", its table).
 init(#{backend := Backend} = Options) ->
@@ -398,8 +400,8 @@ by_name(Subscriptions) ->
 %% The bond a phone's address names: an identity address by equality, else a resolvable
 %% private address, top two bits 01, by ah with each bond's IRK (Vol 3 Part H 2.2.2; the
 %% address's form, prand in the upper 24 bits and the hash in the lower, is Vol 6 Part B
-%% 1.3.2.2's, unverified until that part is read). An all-zero IRK, which a phone that
-%% makes no resolvable address sends (Vol 3 Part C 10.7), resolves nothing.
+%% 1.3.2.2's, and its resolution 1.3.2.3's). An all-zero IRK, which a phone that makes no
+%% resolvable address sends (Vol 3 Part C 10.7), resolves nothing.
 find(Address, Bonds) ->
     case [Bond || #{identity := Identity} = Bond <- Bonds, Identity =:= Address] of
         [Bond | _] -> Bond;

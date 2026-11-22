@@ -119,7 +119,17 @@ class ErxBtStoreTest < Minitest::Test
              module_path: STORE,
              anchor: "    case read(Store) of\n        {{error, store_unavailable}, _} ->",
              replacement: "    case {ok, Store} of\n        {{error, store_unavailable}, _} ->",
-             catching_case: 'start_unreadable_refuses_changes_until_forget_all_test_')
+             catching_case: 'start_unreadable_refuses_changes_until_forget_all_test_'),
+    Seed.new(fault: "a stored bond's random identity read without the static form",
+             module_path: STATE,
+             anchor: 'error -> refuse(identity)',
+             replacement: 'error -> {random, Octets}',
+             catching_case: 'state_refuses_malformed_fields_test'),
+    Seed.new(fault: "erXos's stored address read without the static form",
+             module_path: STATE,
+             anchor: 'erx_smp_crypto:static_random(Address) orelse refuse(address),',
+             replacement: '',
+             catching_case: 'state_refuses_malformed_fields_test')
   ].freeze
 
   def test_store_cases_pass_under_eunit

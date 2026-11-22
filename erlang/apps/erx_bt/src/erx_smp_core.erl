@@ -281,13 +281,13 @@ z(Round, #{method := passkey, fresh := #{passkey := Passkey}}) -> 16#80 bor ((Pa
 %% IOcapA or IOcapB: AuthReq, the OOB data flag and the IO capability, as sent (2.2.8).
 io_cap(#{auth := Auth, oob := Oob, io := Io}) -> <<Auth, Oob, Io>>.
 
-%% The phone's identity address (3.6.5): public, any 48 bits, or static random. A
-%% private address claimed as an identity names no lasting device.
-identity(0, Address) -> {public, Address};
-identity(1, Address) ->
-    require(erx_smp_crypto:static_random(Address), ?ERX_SMP_REASON_INVALID_PARAMETERS, invalid),
-    {random, Address};
-identity(_Type, _Address) -> fail(?ERX_SMP_REASON_INVALID_PARAMETERS, invalid).
+%% The phone's identity address, or Invalid Parameters for one neither public nor static
+%% random (3.6.5).
+identity(Type, Address) ->
+    case erx_smp_crypto:identity_address(Type, Address) of
+        {ok, Identity} -> Identity;
+        error -> fail(?ERX_SMP_REASON_INVALID_PARAMETERS, invalid)
+    end.
 
 require(true, _Code, _Reason) -> ok;
 require(false, Code, Reason) -> fail(Code, Reason).

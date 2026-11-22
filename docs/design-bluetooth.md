@@ -149,6 +149,8 @@ Specification at
 | | | Vol 3 Part G, GATT | `25539e2ca6f127cf98bb34baae0c2cb774549ccb94d54f331c3c3ef4efa02add` |
 | | | Vol 3 Part H, SMP | `16d561aab6cb6a219a55963fdb7acd68bfcac69eacf7387ae0b7366f180a4974` |
 | | | Vol 3 Part C, GAP | `e095f6af2a746e898c36ed63ec9655fdf803d747daa4b6b68d21624acde835bf` |
+| | | Vol 3 Part H Figure 2.4, Passkey Entry, its image `img-424860bacdb6b4a15c3d3f1a37a820d6.png` | `d6540d5fbbf99dbe76bcac968f2a375c9bd19ca06baeb1047b90aa36a709fad8` |
+| | | Vol 6 Part B, Link Layer | `a983ac32050c6753dcfe7c2ecc1a13685931dbd45788e302c0b30ea5025350ed` |
 | HID over GATT Profile | 1.1 | index | `b763f6511244e97f2fc1d9387f0e999c6bbbc82c8d58e92b66f1eb025972d725` |
 | HID Service | 1.0 | index | `b114fb6930bb11a99bc8b6be72593e185abbbe4827a6ec18851ef2664d5f79a3` |
 | NetBSD | trunk `5cebe14c1559` | `usr.sbin/btattach/init_bcm43xx.c` | `2c25439d61fbfd410f9cd8216152a7f8bc4dd9f7dbb974b58dc351d4d9f46f53` |
@@ -170,6 +172,8 @@ Specification at
 | | | `nimble/controller/src/ble_ll_conn.c` | `60b6a4d69539c1ebaeae9f8e863b2e626a59786f020cb7cd655338803ce8f222` |
 | | | `nimble/controller/src/ble_ll_ctrl.c` | `dafdde45dd4f497c6496edd736bcb5b7bccbd518b0cb67f26c16d89fb9e654a4` |
 | | | `nimble/controller/include/controller/ble_ll_ctrl.h` | `05670d740e370b6e9e2b8dd4d2c4b83cd99d3c124d8479f636ae9f4dd5d69320` |
+| | | `nimble/host/src/ble_sm_sc.c` | `50b53e8e91be40ec84f75b37c9b8fd4924e55beb64c86e5a25f34bf006ceb8a7` |
+| | | `nimble/host/src/ble_sm.c` | `b83bd3014e5afa23f24cd51cd082e2e2dcfba9a605ea3505cf92f4735ac41a47` |
 | Bumble | `v0.0.237`, `34def7f112f9` | `apps/controllers.py` | `2d57845479e214137210db48bf12f3ac0309f01abb5cb4c6088b1d35ae462a05` |
 | | | `bumble/controller.py` | `8869ca13997bcc39b1fd2932438b720ac66db866d17a10b3ec4ba6504dc778db` |
 | | | `bumble/keys.py` | `5a06ecf86854108ca9714409a81ef0cc62cdc37010136c8e8f013c012a024b38` |
@@ -183,12 +187,12 @@ Specification at
 | | | `bumble/core.py` | `99604dffc77ee642b256d86d1f6e27fdc7e770bd70f62ecd225f485810f87aa0` |
 | | | `bumble/hci.py` | `6eacd9bd72df40da6a5b79e9e7130e8c20434d01e6d379b150808b3de8c0e865` |
 | | | `bumble/transport/common.py` | `c62ac850542cf9ef8668ebbe801e3a5dc369a50464c1faba875fb404935b409d` |
+| | | `bumble/smp.py` | `d785a52fba8af900bb8da8a13129c92ef294286ec51bfcf084e9d50801d9440e` |
 
 The Core Specification Supplement, which defines the advertising data
-types and the Flags structure, and Vol 6 Part B, which defines the formats
-of static and resolvable private addresses, were not fetched. The values
-this document uses from them come from Bumble's `core.py:1594-1622` and are
-marked unverified until the supplement is read.
+types and the Flags structure, was not fetched. The values this document
+uses from it come from Bumble's `core.py:1594-1622` and are marked
+unverified until the supplement is read.
 
 ## Requirements
 
@@ -1102,8 +1106,8 @@ group in `erx_bt_sup` ([Concurrency](#concurrency)), so a restart of the
 group keeps the address, and the controller process asks for it,
 `erx_bt_store:address/0`, at each of its starts. Its form, two top
 bits set and the rest neither all zeros nor all ones, is Vol 6 Part B
-1.3.2.1's, unverified until that part is read; the test of its maker
-checks it against Bumble's address parser.
+1.3.2.1's, stated once by `erx_smp_crypto:static_random/1`; the test of
+its maker checks it against Bumble's address parser.
 
 ### Advertising
 
@@ -1634,7 +1638,9 @@ sample data of SMP Appendix D as its tests. The responder:
 * gives the link its key when the second phase computes the LTK, so the
   phone's encryption at the end of that phase uses it
   ([One table, one gate](#one-table-one-gate)), and takes the phone's
-  identity in the third phase over the encrypted link;
+  identity in the third phase over the encrypted link; an identity
+  address neither public nor static random fails with Invalid
+  Parameters (3.6.5; Vol 6 Part B 1.3.2, 1.3.2.1);
 * ends a pairing at 30 s without a step (SMP 3.4), and the link with it.
 
 Before stage 4, the link answers every SMP command with Pairing Failed,
@@ -1965,7 +1971,7 @@ one request at a time and a bonded peer bound the store's writes.
 At its start the link asks the store to resolve the phone's address
 against the bonds ([The link's messages](#the-links-messages)): an identity address by equality, a resolvable private address
 by `ah` with each bond's IRK (SMP 2.2.2), whose form, top two bits `01`,
-is Vol 6 Part B 1.3.2.2's, unverified until read. A resolved link holds
+is Vol 6 Part B 1.3.2.2's, resolved as 1.3.2.3 describes. A resolved link holds
 the bond's key from then on, and the transition of [One table, one
 gate](#one-table-one-gate) encrypts it; in Secure Connections the Long
 Term Key Request carries zero EDIV and Rand, and one that does not is

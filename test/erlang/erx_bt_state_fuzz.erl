@@ -93,11 +93,17 @@ mutate(Blob) ->
     end.
 
 state() ->
-    #{address => <<2#11:2, (rand:uniform(1 bsl 46) - 1):46>>,
+    #{address => <<2#11:2, (rand:uniform(1 bsl 46 - 2)):46>>,
       bonds => [bond(N) || N <- lists:seq(1, rand:uniform(9) - 1)]}.
 
+%% Bond N's identity starts with N, 1 to 9, so no two bonds share one, and a random one is
+%% static: its top two bits set and the rest, holding N, neither all zeros nor all ones.
 bond(N) ->
-    #{identity => {pick([public, random]), <<N, (rand:bytes(5))/binary>>}, irk => rand:bytes(16), ltk => rand:bytes(16),
+    Identity = case pick([public, random]) of
+                   public -> {public, <<N, (rand:bytes(5))/binary>>};
+                   random -> {random, <<2#11:2, N:6, (rand:bytes(5))/binary>>}
+               end,
+    #{identity => Identity, irk => rand:bytes(16), ltk => rand:bytes(16),
       level => pick([authenticated, unauthenticated]), hash => pick([<<>>, rand:bytes(32)]),
       subscriptions => maps:from_list([{{name(), name()}, pick([notify, indicate])} || _ <- lists:seq(1, rand:uniform(3) - 1)])}.
 

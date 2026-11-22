@@ -22,7 +22,7 @@ which a responder refuses. `fresh/0` is the one effect: the key pair, nonces and
 passkey of one pairing, from `crypto:strong_rand_bytes/1`.
 """.
 
--export([e/2, aes_cmac/2, ah/2, f4/4, f5/5, f6/7, on_curve/1, dhkey/2, static_random/1, debug_key/0, fresh/0]).
+-export([e/2, aes_cmac/2, ah/2, f4/4, f5/5, f6/7, on_curve/1, dhkey/2, static_random/1, identity_address/2, debug_key/0, fresh/0]).
 -export_type([value/0, public_key/0, address/0, fresh/0]).
 
 -include("generated/erx_abi.hrl").
@@ -107,6 +107,21 @@ ones. The other three values of the top bits are private addresses and a reserve
 -spec static_random(<<_:48>>) -> boolean().
 static_random(<<2#11:2, Random:46>>) -> Random =/= 0 andalso Random =/= 1 bsl 46 - 1;
 static_random(<<_:48>>) -> false.
+
+-doc """
+The identity address of an identity's type octet and 48 bits, as Identity Address
+Information sends them and the stored state keeps them (3.6.5): type 0 is a public
+address, any 48 bits, and type 1 a static random one (`static_random/1`). Any other is
+`error`, a private address among them, since it names no lasting device.
+""".
+-spec identity_address(byte(), <<_:48>>) -> {ok, address()} | error.
+identity_address(0, Octets) -> {ok, {public, Octets}};
+identity_address(1, Octets) ->
+    case static_random(Octets) of
+        true -> {ok, {random, Octets}};
+        false -> error
+    end;
+identity_address(_Type, _Octets) -> error.
 
 -doc "SMP's debug public key (2.3.5.6.1).".
 -spec debug_key() -> public_key().

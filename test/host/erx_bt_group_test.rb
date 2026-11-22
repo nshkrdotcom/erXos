@@ -50,10 +50,10 @@ class ErxBtGroupTest < Minitest::Test
              anchor: '#{Handle := #live{backlog = ?ERX_BT_LINK_BACKLOG} = Live} ->',
              replacement: '#{Handle := #live{backlog = unbounded} = Live} ->',
              catching_case: 'a_link_held_at_its_start_is_cut_at_its_backlog_test'),
-    Seed.new(fault: "the identity address's top bits cleared",
+    Seed.new(fault: 'the identity address made without the static predicate, so all zeros or all ones pass',
              module_path: 'erlang/apps/erx_bt/src/erx_bt_store.erl',
-             anchor: '{ok, <<2#11:2, Random:46>>}.',
-             replacement: '{ok, <<0:2, Random:46>>}.',
+             anchor: 'case erx_smp_crypto:static_random(Address) of',
+             replacement: 'case erx_smp_crypto:static_random(<<2#11:2, 1:46>>) of',
              catching_case: 'static_addresses_test')
   ].freeze
 

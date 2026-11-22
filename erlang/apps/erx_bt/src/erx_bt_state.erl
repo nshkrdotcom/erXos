@@ -24,7 +24,8 @@ subscription = kind:8 (1 notify, 2 indicate) service_length:8 service
                characteristic_length:8 characteristic
 ```
 
-The address is a static random address (its top two bits set); a name is an
+The address, and a bond's identity of type 1, is a static random address
+(`erx_smp_crypto:static_random/1`); a name is an
 `abi/gatt` name, a lower-case letter and then at most 62 lower-case letters, digits and
 underscores. No two bonds share an identity, and a bond's subscriptions are in ascending order of their names, so no characteristic is named twice and a state has one blob. A
 hash of no octets is a bond never served a table's hash. `encode/1` writes the same
@@ -53,7 +54,7 @@ it was last served (`<<>>` before any), and its subscriptions.
 
 -doc "The state's blob, or `too_large` past `bt_state_max` or `bt_bonds_max` bonds.".
 -spec encode(state()) -> {ok, binary()} | {error, too_large}.
-encode(#{address := <<2#11:2, _:46>> = Address, bonds := Bonds}) when length(Bonds) =< ?ERX_BT_BONDS_MAX ->
+encode(#{address := Address, bonds := Bonds}) when length(Bonds) =< ?ERX_BT_BONDS_MAX ->
     Blob = iolist_to_binary([?VERSION, Address, length(Bonds) | [bond_octets(Bond) || Bond <- Bonds]]),
     case byte_size(Blob) =< ?ERX_BT_STATE_MAX of
         true -> {ok, Blob};
@@ -89,12 +90,13 @@ decode(Blob) ->
         throw:{state, Reason} -> {error, Reason}
     end.
 
-state(<<?VERSION, 2#11:2, Random:46, Count, Rest/binary>>) ->
+state(<<?VERSION, Address:6/binary, Count, Rest/binary>>) ->
+    erx_smp_crypto:static_random(Address) orelse refuse(address),
     Count =< ?ERX_BT_BONDS_MAX orelse refuse({too_many_bonds, Count}),
     {Bonds, _} = repeat(Count, fun bond/1, Rest, trailing),
     Identities = [Identity || #{identity := Identity} <- Bonds],
     length(lists:usort(Identities)) =:= Count orelse refuse(duplicate_identity),
-    #{address => <<2#11:2, Random:46>>, bonds => Bonds};
+    #{address => Address, bonds => Bonds};
 state(<<?VERSION, _/binary>>) ->
     refuse(header);
 state(<<Version, _/binary>>) ->
@@ -110,7 +112,7 @@ bond(<<Type, Identity:6/binary, Irk:16/binary, Ltk:16/binary, Level, HashLength,
             Keys = [Key || {Key, _} <- Pairs],
             lists:usort(Keys) =:= Keys orelse refuse(subscription_order),
             Map = maps:from_list(Pairs),
-            {#{identity => {type(Type), Identity}, irk => Irk, ltk => Ltk, level => level(Level), hash => Hash,
+            {#{identity => identity(Type, Identity), irk => Irk, ltk => Ltk, level => level(Level), hash => Hash,
                subscriptions => Map}, After};
         _ ->
             refuse(truncated)
@@ -134,9 +136,11 @@ repeat(Count, Read, Bytes, Left) ->
     Left =:= trailing andalso Rest =/= <<>> andalso refuse(trailing),
     {lists:reverse(Items), Rest}.
 
-type(0) -> public;
-type(1) -> random;
-type(Octet) -> refuse({identity_type, Octet}).
+identity(Type, Octets) ->
+    case erx_smp_crypto:identity_address(Type, Octets) of
+        {ok, Identity} -> Identity;
+        error -> refuse(identity)
+    end.
 
 level(0) -> unauthenticated;
 level(1) -> authenticated;
