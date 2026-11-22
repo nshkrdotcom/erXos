@@ -1290,7 +1290,9 @@ domain, which knows its bridges only by row, and the device service
 name a function alike; a manifest row names the bridge by its
 device-tree path, which the build resolves to that row. The device
 service matches `Place` against the rows the facet's grantee holds and
-never trusts it otherwise. `firmware(Bridge)` names a bridge the PCIe domain holds; the
+never trusts it otherwise. `firmware(Bridge)` names a bridge the PCIe domain holds,
+a bridge row of the library's catalogue, and any other row is refused with
+`{error, not_held}` before a request is queued; for a held one the
 device service makes `erx_firmware_request` through
 `erx_domain_lib:pci_firmware(Bridge)`, with the resource the bridge's
 device record holds for its give, which marks the bridge `firmware_lost`
@@ -1934,7 +1936,8 @@ been made, which the readback catches. That is a residual of Fiasco
 | the give | no give, a diagnostic | a part's entry at or past the function's MSI-X table size |
 | `pci_bus:report` | `{ok, Settings}` | after intake, once the system domain holds the incarnation's `pcie`; refusals are per function, in the log and in `/dev` |
 | | `{error, unavailable}` | `erx_domain:await_grant(pcie, D)` answered an error: the grant failed or missed the mint core's deadline, the incarnation ended, or it provides no `pcie` |
-| `pci_bus:firmware` | `{error, Status}` | the kernel call's status other than `ERX_OK`, such as `ERX_ENOTSUP`, `ERX_ETIMEDOUT` or `ERX_EBUSY` |
+| `pci_bus:firmware` | `{error, not_held}` | a bridge row the library's catalogue does not hold for the PCIe domain; the request reaches no kernel call |
+| | `{error, Status}` | the kernel call's status other than `ERX_OK`, such as `ERX_ENOTSUP`, `ERX_ETIMEDOUT` or `ERX_EBUSY` |
 | `erx_pcie_cfg:parse/1`, `size/2` | `{error, Field}` | the parser's refusals ([The walk](#the-walk), [Sizing](#sizing)); the function is reported `malformed`; `size/2` answers a BAR's true size, and the walk reports a function whose size no window can place `unplaced` |
 | `erx_dom_pci_report` | `ERX_EINVAL`, the placing walk's layouts refused whole | a BAR outside its window, not aligned to its span, or overlapping another device; an MSI-X table past its BAR's hardware size |
 | `erx_irq_create` of `ERX_IRQ_MSI` | `ERX_ELIMIT` | no free line of the frame, or the function past `ERX_MSI_MAX` |

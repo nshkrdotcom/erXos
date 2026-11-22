@@ -12,7 +12,7 @@
 
 -include_lib("eunit/include/eunit.hrl").
 
--export([devices/0, pci_bridges/0, pci_report/2, pci_mode/2, pci_answered/1]).
+-export([devices/0, pci_bridges/0, pci_report/2, pci_mode/2, pci_answered/1, pci_firmware/1]).
 
 -define(PLACE, {3, 1, 0, 0}).
 -define(ROW, 5).
@@ -28,6 +28,10 @@ pci_report(Bridge, Records) -> written({report, Bridge, Records}).
 pci_mode(Index, Mode) -> written({mode, Index, Mode}).
 %% The write lags, so a reply sent before it reaches the test well before the write.
 pci_answered(D) -> timer:sleep(100), written({answered, D}).
+%% Runs in the firmware worker: names the process it runs in, then waits for the test's answer.
+pci_firmware(Bridge) ->
+    written({firmware, Bridge, self()}),
+    receive {firmware_answer, Answer} -> Answer end.
 
 written(Write) ->
     persistent_term:get({?MODULE, test}) ! {library, Write},
@@ -241,3 +245,78 @@ restarted(Answered, Holder, Rows) ->
     over([#{index => ?BRIDGE, holder => Holder, place => none, setting => none} | Rows],
          [#{bridge => #{index => ?BRIDGE}, firmware_lost => false, answered => Answered, layouts => []}],
          fun(_) -> ok end, [Holder]).
+
+%% Firmware requests (docs/design-system.md, "Firmware requests"): the process over
+%% one held bridge ?BRIDGE, whose stand-in pci_firmware/1 runs in the firmware worker
+%% and waits there for the test's answer.
+firmware_started() ->
+    over([row(off)], [#{bridge => #{index => ?BRIDGE}, firmware_lost => false, answered => none, layouts => []}],
+         fun(_) -> ok end, [?PCIE]).
+
+%% A pci_bus:firmware/1 call sent from a process of its own, its answer sent to the test.
+firmware_asked(Pid, Bridge) ->
+    Test = self(),
+    spawn(fun() -> Test ! {firmware, Bridge, gen_server:call(Pid, {pci_bus, ?PCIE, {firmware, Bridge}}, 5000)} end).
+
+%% The worker the stand-in was called in for Bridge, or none within Timeout.
+worker_called(Bridge, Timeout) ->
+    receive {library, {firmware, Bridge, Worker}} -> Worker after Timeout -> none end.
+
+firmware_answer(Bridge) ->
+    receive {firmware, Bridge, Answer} -> Answer after 1000 -> none end.
+
+%% The notification is made in the worker, not the process, so the process answers
+%% other calls while it waits, and the library's answer is the reply.
+a_firmware_request_waits_in_the_worker_and_the_process_answers_meanwhile_test() ->
+    {Pid, _Facet} = firmware_started(),
+    firmware_asked(Pid, ?BRIDGE),
+    Worker = worker_called(?BRIDGE, 1000),
+    ?assert(is_pid(Worker) andalso Worker =/= Pid),
+    ?assertMatch({ok, [#{index := ?BRIDGE}], [], _}, gen_server:call(Pid, {pci_bus, ?PCIE, targets}, 1000)),
+    Worker ! {firmware_answer, ok},
+    ?assertEqual(ok, firmware_answer(?BRIDGE)),
+    stopped(Pid).
+
+%% The library's status other than ok is the answer, a timeout among them.
+a_timed_out_notification_answers_its_status_test() ->
+    {Pid, _Facet} = firmware_started(),
+    firmware_asked(Pid, ?BRIDGE),
+    worker_called(?BRIDGE, 1000) ! {firmware_answer, {error, etimedout}},
+    ?assertEqual({error, etimedout}, firmware_answer(?BRIDGE)),
+    stopped(Pid).
+
+%% A bridge row the library does not hold for the PCIe domain is refused before the
+%% worker sees it.
+a_firmware_request_for_a_bridge_not_held_is_refused_test() ->
+    {Pid, _Facet} = firmware_started(),
+    firmware_asked(Pid, ?BRIDGE + 1),
+    ?assertEqual(none, worker_called(?BRIDGE + 1, 200)),
+    ?assertEqual({error, not_held}, firmware_answer(?BRIDGE + 1)),
+    stopped(Pid).
+
+%% One request in flight: a second waits in the queue until the first's answer, then
+%% goes to the same worker, and each caller gets its own answer.
+the_worker_is_handed_the_next_request_only_after_the_last_answer_test() ->
+    {Pid, _Facet} = firmware_started(),
+    firmware_asked(Pid, ?BRIDGE),
+    First = worker_called(?BRIDGE, 1000),
+    Test = self(),
+    spawn(fun() -> Test ! {second, gen_server:call(Pid, {pci_bus, ?PCIE, {firmware, ?BRIDGE}}, 5000)} end),
+    ?assertEqual(none, worker_called(?BRIDGE, 200)),
+    %% The second waits in the process, not in the worker's mailbox.
+    ?assertEqual({message_queue_len, 0}, process_info(First, message_queue_len)),
+    First ! {firmware_answer, {error, ebusy}},
+    ?assertEqual({error, ebusy}, firmware_answer(?BRIDGE)),
+    ?assertEqual(First, worker_called(?BRIDGE, 1000)),
+    First ! {firmware_answer, ok},
+    receive {second, Answer} -> ?assertEqual(ok, Answer) after 1000 -> ?assert(false) end,
+    stopped(Pid).
+
+%% The worker's end ends the process by their link, so their supervisor restarts both.
+the_workers_end_ends_the_process_test() ->
+    {Pid, _Facet} = firmware_started(),
+    Ref = monitor(process, Pid),
+    firmware_asked(Pid, ?BRIDGE),
+    exit(worker_called(?BRIDGE, 1000), kill),
+    receive {'DOWN', Ref, process, Pid, Reason} -> ?assertEqual(killed, Reason) after 1000 -> ?assert(false) end,
+    stopped(Pid).

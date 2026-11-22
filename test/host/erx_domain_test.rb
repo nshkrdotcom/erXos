@@ -267,6 +267,31 @@ class ErxDomainTest < Minitest::Test
               from: 'pcie_answered(Then, interface(Answer), State)', to: 'pcie_answered(Then, Answer, State)',
               tests: 'erx_devices_pci_tests',
               caught_by: 'an_enumerator_answer_outside_the_interface_is_not_passed_on_test'),
+    # Firmware requests (docs/design-system.md, "Firmware requests"): one for a bridge the
+    # library does not hold reaches the kernel call; one the process makes itself stops it
+    # answering every other call for up to the request's 1 s; and a worker that is not
+    # linked dies alone, leaving every later request queued for no one.
+    Fault.new(name: 'a firmware request for a bridge not held', file: File.join(APPLICATION, 'erx_devices_pci_core.erl'),
+              from: '{false, _} -> {Queue, [{reply, From, {error, not_held}}]};',
+              to: '{false, []} -> {[Request], [{firmware, Request}]};',
+              tests: 'erx_devices_pci_tests',
+              caught_by: 'a_firmware_request_for_a_bridge_not_held_is_refused_test'),
+    Fault.new(name: 'a firmware request made in the process', file: File.join(APPLICATION, 'erx_devices_pci.erl'),
+              from: "act({firmware, Request}, \#{worker := Worker} = State) ->\n    Worker ! {firmware, Request},",
+              to: "act({firmware, {_, Bridge} = Request}, \#{worker := Worker, lib := Lib} = State) ->\n" \
+                  '    self() ! {firmware_answered, Worker, Request, Lib:pci_firmware(Bridge)},',
+              tests: 'erx_devices_pci_tests',
+              caught_by: 'a_firmware_request_waits_in_the_worker_and_the_process_answers_meanwhile_test'),
+    Fault.new(name: 'a firmware worker not linked', file: File.join(APPLICATION, 'erx_devices_pci.erl'),
+              from: 'Worker = spawn_link(fun() -> firmware_worker(Service, Lib) end),',
+              to: 'Worker = spawn(fun() -> firmware_worker(Service, Lib) end),',
+              tests: 'erx_devices_pci_tests',
+              caught_by: 'the_workers_end_ends_the_process_test'),
+    # One that hands the worker a request while another is in it puts two in the kernel.
+    Fault.new(name: 'a firmware request handed to a busy worker', file: File.join(APPLICATION, 'erx_devices_pci_core.erl'),
+              from: '{true, _} -> {Queue ++ [Request], []}', to: '{true, _} -> {Queue ++ [Request], [{firmware, Request}]}',
+              tests: 'erx_devices_pci_tests',
+              caught_by: 'the_worker_is_handed_the_next_request_only_after_the_last_answer_test'),
     # The hold at boot (docs/design-pcie.md, "The hold at boot"): a held row started with
     # the boot's free rows starts its pci holder before its function's state is settled;
     # a report's answer that releases nothing, and a hold kept when the PCIe row did not

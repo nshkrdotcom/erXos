@@ -51,14 +51,22 @@ one. With none, the process begins `between`.
 The functions return actions for the process to perform in order:
 `{mode, Index, Mode}`, erx_domain_lib:pci_mode/2; `{pcie, Facet, Call,
 Then}`, a `pcie` call whose answer goes to pcie_answer(Then, Answer);
-`{reply, From, Answer}`; and `{arm_down, Since}`, the 5 s timer of the
-`between` that Since's end began, which a later `between` does not take.
+`{reply, From, Answer}`; `{arm_down, Since}`, the 5 s timer of the
+`between` that Since's end began, which a later `between` does not take;
+and `{firmware, Request}`, a `firmware` request handed to the firmware
+worker, which answers it with the request it was handed.
+
+**`firmware`** requests queue in arrival order (firmware/3), a bridge row
+the library does not hold refused, and the worker is handed the next only
+after the last one's answer (firmware_answered/3), which must answer the
+first request queued, so one request is in the kernel at a time (docs/design-system.md, "Firmware requests").
 """.
 
 -export([targets/2, reports/2, unlisted/2, lowered/3, settings/1]).
 -export([request/3, pcie_answer/4, holder_ended/2, answered/4, incarnation_ended/2, down_timer/3,
          resume/2, resumed/5]).
--export_type([place/0, phase/0, request/0, action/0, then/0]).
+-export([firmware/3, firmware_answered/3]).
+-export_type([place/0, phase/0, request/0, action/0, then/0, firmware_request/0]).
 
 -doc "A function by its host bridge's device row and its place, as erx_domain_lib:pci_place() spells it.".
 -type place() :: erx_domain_lib:pci_place().
@@ -89,7 +97,11 @@ driver's `master` after it; or a lowering.
 -type action() :: {mode, Index :: non_neg_integer(), erx_abi_enums:pcie_mode()}
                 | {pcie, Facet :: term(), pcie_call(), then()}
                 | {reply, From :: term(), term()}
-                | {arm_down, pos_integer() | start}.
+                | {arm_down, pos_integer() | start}
+                | {firmware, firmware_request()}.
+
+-doc "A `pci_bus:firmware/1` request: its caller and the bridge row it names.".
+-type firmware_request() :: {From :: term(), Bridge :: non_neg_integer()}.
 
 %% A function as the PCIe domain's start reports it, its record and whether
 %% the start kept it at its setting; the enumerator owns the type.
@@ -117,7 +129,7 @@ which no intake takes.
 -spec reports([reported()], [erx_domain_lib:pci_catalogue()]) ->
           {[{non_neg_integer(), [erx_abi_layout:erx_pcie_function()]}], Unheld :: [erx_abi_layout:erx_pcie_function()]}.
 reports(Reported, Catalogues) ->
-    Held = [Index || #{bridge := #{index := Index}} <- Catalogues],
+    Held = held_bridges(Catalogues),
     Records = [Record || #{record := Record} <- Reported],
     {[{Index, [R || #{bridge := B} = R <- Records, B =:= Index]} || Index <- Held],
      [R || #{bridge := B} = R <- Records, not lists:member(B, Held)]}.
@@ -143,6 +155,41 @@ lowered(Catalogues, Devices, Reported) ->
     Off = #{place(Record) => off || #{record := Record, kept := false} <- Reported},
     [Index || #{index := Index, place := Place} <- Devices, Place =/= none,
               not is_map_key(Place, Kept) orelse is_map_key(Place, Off)].
+
+-doc """
+A `firmware` request over Queue, the requests not yet answered, the first
+of them in the firmware worker (docs/design-system.md, "Firmware
+requests"): `{error, not_held}` for a bridge row the library does not hold
+for the PCIe domain; otherwise queued, and handed to the worker at once
+when nothing was queued.
+""".
+-spec firmware(firmware_request(), [firmware_request()], [erx_domain_lib:pci_catalogue()]) ->
+          {[firmware_request()], [action()]}.
+firmware({From, Bridge} = Request, Queue, Catalogues) ->
+    case {lists:member(Bridge, held_bridges(Catalogues)), Queue} of
+        {false, _} -> {Queue, [{reply, From, {error, not_held}}]};
+        {true, []} -> {[Request], [{firmware, Request}]};
+        {true, _} -> {Queue ++ [Request], []}
+    end.
+
+-doc """
+The worker's Answer to Request, the first request of Queue, which no other
+answer matches: replied to its caller, and the next request, if any,
+handed to the worker.
+""".
+-spec firmware_answered(firmware_request(), term(), [firmware_request(), ...]) ->
+          {[firmware_request()], [action()]}.
+firmware_answered({From, _Bridge} = Request, Answer, [Request | Rest]) ->
+    Next = case Rest of
+               [] -> [];
+               [Waiting | _] -> [{firmware, Waiting}]
+           end,
+    {Rest, [{reply, From, Answer} | Next]}.
+
+%% The bridge rows the library holds, every one the PCIe domain's, since only it
+%% holds a bridge's unit (docs/design-pcie.md, "The manifest").
+held_bridges(Catalogues) ->
+    [Index || #{bridge := #{index := Index}} <- Catalogues].
 
 -doc "Every `pci` row's setting by its place.".
 -spec settings([erx_domain_lib:device()]) -> #{place() => erx_abi_layout:erx_pcie_setting()}.

@@ -2334,13 +2334,18 @@ handles and its `code_objects_max` copies fit its handle table (`BOOT_CAP_LIMIT`
   and `pci`, whose service rows the shared development manifest declares, and the manifest check holds the three
   interfaces' servers and grantees to design-pcie.md's "The manifest". Still to build: `firmware`, which answers
   `{error, enotsup}` and does not call `erx_domain_lib:pci_firmware/1` yet; the identity check
+  interfaces' servers and grantees to design-pcie.md's "The manifest". `firmware` queues each request for a bridge
+  the library holds and hands it to the linked firmware worker, which calls `erx_domain_lib:pci_firmware/1` one at a
+  time (design-system.md, "Firmware requests"). Still to build: the worker's reductions returned with its answer, for
+  the reply's cost that admission by measured share charges (the `erx_facet.erl` item); the identity check
   of a reported function against its row's compatible string ("The catalogue and gives"); and the `pcie` QEMU
   suite's cases beyond walk-and-report and hold (design-pcie.md, "The `pcie` QEMU suite").
 * [Medium] PCIe, the BCM2711 bridge on the Pi 4 (`config/platforms/raspi4b.json`, `config/manifest/`,
   [design-pcie.md](docs/design-pcie.md#the-bridge-seam)): the driver starts on the target over the bridge's device
   record, but the Pi 4's platform record has no bridge unit or VL805 unit and its manifest no PCIe domain, so the
   enumerator finds no configuration record there and the driver has run only over the host tests' register model.
-  Until `pci_bus:firmware/1` is made (the item above), a bring-up that cycles PERST# reports the VL805 `not_ready`.
+  Until `erx_domain_lib:pci_firmware/1` reaches `erx_firmware_request` (the domain library item above), a bring-up
+  that cycles PERST# reports the VL805 `not_ready`.
 * [High] PCIe, the VL805 gets no DMA memory on the Pi 4 (`kernel/core/dt.c` `range_read`,
   `liberx/backend/fiasco/runtime_entry.c` `tree_facts`, [design-pcie.md](docs/design-pcie.md#dma)): on the board
   the root prints `erx: device tree: /scb/pcie@7d500000: dma absent ranges` for the VL805's row, so

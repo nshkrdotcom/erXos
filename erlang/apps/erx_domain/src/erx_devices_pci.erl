@@ -51,6 +51,20 @@ none}`, or `{error, Reason}` with Reason one of the results "Refusals and
 error results" names for `pcie`) is taken as `{error, failed}`, the
 facet's own answer for a service that failed a request (erx_facet), so no
 term of the PCIe domain's reaches a holder.
+
+**`firmware`** (docs/design-system.md, "Firmware requests"; docs/design-
+pcie.md, "Facets") names a bridge row; one the library does not hold for
+the PCIe domain is answered `{error, not_held}`. Every other request is
+queued, and the **firmware worker**, a process linked to this one, makes
+each in turn through erx_domain_lib:pci_firmware/1, which waits in the
+kernel, while this process goes on answering every other call. The
+library's answer is the reply: `ok`, or `{error, Status}` naming the
+kernel call's status. After `etimedout` the library has marked the
+bridge `firmware_lost` before it answered, so its intake keeps none of
+the bridge's functions for the rest of the boot. The worker's end ends
+this process by their link, and their supervisor restarts both. The
+worker returns no reductions with its answer (TODO.md, the `erx_facet.erl`
+item on admission by measured share).
 """.
 -behaviour(gen_server).
 
@@ -85,9 +99,14 @@ domain_ended(Server, Id) ->
 
 init(Opts) ->
     Lib = maps:get(lib, Opts, erx_domain_lib),
+    Service = self(),
+    %% Linked, so the end of either ends the other, and their supervisor restarts both.
+    Worker = spawn_link(fun() -> firmware_worker(Service, Lib) end),
     State = #{lib => Lib,
               await => maps:get(await, Opts, fun erx_domain:await_grant/2),
               phase => {between, start}, waiting => [], held => #{},
+              %% The firmware worker, and the firmware requests not yet answered, the first in it.
+              worker => Worker, firmware => [],
               %% Outstanding pcie calls, and await_grant waits, {report, From, D} for a report's
               %% answer or {resume, D} for a restart's, by request id.
               calls => #{}, reports => #{}},
@@ -113,9 +132,9 @@ handle_call({pci_bus, _D, targets}, _From, #{lib := Lib} = State) ->
     {reply, erx_devices_pci_core:targets(catalogues(Lib), Devices), Read};
 handle_call({pci_bus, D, {report, Reported}}, From, State) ->
     {noreply, report(D, Reported, From, State)};
-handle_call({pci_bus, _D, {firmware, _Bridge}}, _From, State) ->
-    %% erx_domain_lib:pci_firmware/1 is not built (TODO.md).
-    {reply, {error, enotsup}, State}.
+handle_call({pci_bus, _D, {firmware, Bridge}}, From, #{lib := Lib, firmware := Queue} = State) ->
+    {Queued, Actions} = erx_devices_pci_core:firmware({From, Bridge}, Queue, catalogues(Lib)),
+    {noreply, perform(Actions, State#{firmware := Queued})}.
 
 handle_cast({domain_ended, Id}, #{phase := Phase, held := Held} = State) ->
     {Rows, Kept} = case maps:take(Id, Held) of
@@ -143,6 +162,9 @@ handle_info({timeout, _Timer, {pcie_deadline, ReqId}}, #{calls := Calls} = State
         #{} ->
             {noreply, State}
     end;
+handle_info({firmware_answered, Worker, Request, Answer}, #{worker := Worker, firmware := Queue} = State) ->
+    {Left, Actions} = erx_devices_pci_core:firmware_answered(Request, Answer, Queue),
+    {noreply, perform(Actions, State#{firmware := Left})};
 handle_info(Message, State) ->
     {noreply, response(Message, State)}.
 
@@ -252,7 +274,21 @@ act({reply, From, Answer}, State) ->
     State;
 act({arm_down, Since}, State) ->
     _ = erlang:start_timer(?DOWN_AFTER, self(), {down, Since}),
+    State;
+act({firmware, Request}, #{worker := Worker} = State) ->
+    Worker ! {firmware, Request},
     State.
+
+%% The firmware worker (docs/design-system.md, "Firmware requests"): the one caller
+%% of the library's firmware entries, dirty I/O NIFs that wait in the kernel up to
+%% the request's 1 s deadline, so the process never waits there. It takes one
+%% request, sends its answer with the request, and takes the next.
+firmware_worker(Service, Lib) ->
+    receive
+        {firmware, {_From, Bridge} = Request} ->
+            Service ! {firmware_answered, self(), Request, Lib:pci_firmware(Bridge)},
+            firmware_worker(Service, Lib)
+    end.
 
 %% The core sends pcie calls only synced, on the answered incarnation's facet.
 incarnation({synced, Id, _Facet}) -> Id.
