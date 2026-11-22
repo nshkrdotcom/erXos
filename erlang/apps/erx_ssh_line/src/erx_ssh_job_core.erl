@@ -4,7 +4,7 @@
 -module(erx_ssh_job_core).
 -moduledoc """
 The job relay's decisions, pure (docs/design-ssh.md, "Sessions, ttys and
-shells"): how a session relays a job, a program run on three pipes for an
+shells"): how a session relays a job, rc run on three message pipes for an
 SSH channel with no pseudo-terminal, to that channel with the job
 messages, and what a channel accepts of them.
 

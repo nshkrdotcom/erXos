@@ -17,7 +17,7 @@ command that declares a facet the session lacks fails with `no_facet` before
 it starts, and one installed while the script runs serves the next command.
 """.
 
--export([run/1, run/2, script/1, command/3, first_vars/1, main/1]).
+-export([run/1, run/2, script/1, command/3, job/4, first_vars/1, main/1]).
 
 -export_type([options/0, vars/0, ending/0]).
 
@@ -100,12 +100,35 @@ comes sooner ends this process with nothing started.
 """.
 -spec command(binary(), vars(), binary()) -> pid().
 command(Command, Vars, Cwd) when is_binary(Command), is_binary(Cwd) ->
-    proc_lib:spawn_link(fun() -> exec(Command, Vars, Cwd) end).
+    proc_lib:spawn_link(fun() -> exec(Command, #{vars => Vars, cwd => Cwd}) end).
 
-exec(Command, Vars, Cwd) ->
+-doc """
+Starts rc on Command as command/3 does, for an SSH job, a channel with no
+pseudo-terminal (docs/design-ssh.md, "Sessions, ttys and shells"): with
+standard input, output and error on Fds rather than the terminal, and the
+calling process, the job's relay, as its group, linked to it. The command
+ends as command/3's does, and when the relay ends, for the same reason.
+Before it ends it makes one empty output request of the relay and waits for
+its answer, which comes once every output request the job made before it
+has been written, so the job's last output enters standard error before
+the stream ends with this process.
+""".
+-spec job(binary(), vars(), binary(), #{erx_shell_lex:fd() => erx_cmd:stream()}) -> pid().
+job(Command, Vars, Cwd, Fds) when is_binary(Command), is_binary(Cwd), is_map(Fds) ->
+    Relay = self(),
+    proc_lib:spawn_link(fun() ->
+                                group_leader(Relay, self()),
+                                try exec(Command, #{vars => Vars, cwd => Cwd, fds => Fds})
+                                after _ = io:request(Relay, {put_chars, unicode, <<>>})
+                                end
+                        end).
+
+%% rc on Command with Options, its first variables checked, under the
+%% process's group, which is the terminal's or a job's relay.
+exec(Command, #{vars := Vars} = Options) ->
     process_flag(trap_exit, true),
     Group = group_leader(),
-    Shell = shell(#{vars => first_vars(Vars), cwd => Cwd}),
+    Shell = shell(Options#{vars := first_vars(Vars)}),
     Leader = erx_shell_leader:start(Group),
     {_Pid, Ref, Go} = erx_shell_leader:spawn_member(Leader, evaluation(Command, Shell), ?MAX_HEAP_WORDS),
     ok = Go(),
