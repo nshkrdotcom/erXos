@@ -123,6 +123,13 @@ start_enables_both_directions_and_only_the_dma_interrupts_test() ->
     {Before, _} = lists:splitwith(fun(S) -> S =/= {field, intrl2_cpu_clear_mask, rxdma_done, 1} end, Start),
     ?assert(lists:member({write, intrl2_cpu_set_mask, 16#ffffffff}, Before)).
 
+%% With the status block off, no receive checksum check a boot stage left on stays on,
+%% as FreeBSD writes it on every start without receive checksum offload
+%% (if_genet.c:568-591); it is off before the receiver is enabled.
+start_turns_the_receive_checksum_check_off_before_receive_test() ->
+    {Before, _} = lists:splitwith(fun(S) -> S =/= {field, umac_cmd, rxen, 1} end, erx_genet_core:start()),
+    ?assert(lists:member({field, rbuf_check_ctrl, en, 0}, Before)).
+
 configure_writes_the_address_in_freebsds_order_test() ->
     Steps = erx_genet_core:configure(<<16#dc, 16#a6, 16#32, 16#01, 16#02, 16#03>>),
     ?assert(lists:member({field, umac_mac0, addr, 16#dca63201}, Steps)),

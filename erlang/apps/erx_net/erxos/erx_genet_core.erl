@@ -49,9 +49,13 @@ The sequences follow FreeBSD 975e3605ebb1, `sys/arm64/broadcom/genet/if_genet.c`
 5. `start/0`: every interrupt masked and cleared first, as FreeBSD's `gen_disable_intr`
    does (`if_genet.c:538-544`), so no completion's interrupt is cleared after it lands;
    then `gen_enable` (`if_genet.c:516-536`, `gen_enable_intr` `:710-715`): the largest
-   frame 1,536 bytes, the receive buffer's 2-byte alignment on and both status blocks
-   off, the transmit buffer size, transmit and receive enabled, and the receive and
-   transmit done interrupts unmasked.
+   frame 1,536 bytes, the receive buffer's 2-byte alignment on, the transmit buffer
+   size, transmit and receive enabled, and the receive and transmit done interrupts
+   unmasked. Before the receiver is enabled, both status blocks and the receive
+   checksum check are turned off, whatever a boot stage left, as `gen_enable_offload`
+   leaves them without checksum offload (`if_genet.c:568-591`); FreeBSD runs that
+   after `gen_enable` (`:934-935`), with the receiver already on, so here no frame
+   arrives under a stale setting.
 6. `link_up/1` at each `{link, up, Speed}` of erx_phy_c22, `gen_update_link_locked`
    (`if_genet.c:1729-1781`): the RGMII out-of-band control on, its link bit set and
    ID mode left enabled, since the board's PHY is wired `rgmii-rxid` (the PHY delays
@@ -214,6 +218,7 @@ start() ->
     [{write, intrl2_cpu_set_mask, ?ALL_IRQS}, {write, intrl2_cpu_clear, ?ALL_IRQS},
      {field, umac_max_frame_len, length, ?MAX_FRAME_LEN},
      {field, rbuf_ctrl, status_64b, 0}, {field, rbuf_ctrl, align_2b, 1},
+     {field, rbuf_check_ctrl, en, 0},
      {field, tbuf_ctrl, status_64b, 0},
      {field, rbuf_tbuf_size_ctrl, size, ?TBUF_SIZE},
      {field, umac_cmd, txen, 1}, {field, umac_cmd, rxen, 1},
