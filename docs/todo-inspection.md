@@ -380,7 +380,7 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   the protection rests on `'$initial_call'` and `'$erx_status_module'` in the process dictionary,
   which the process itself can erase; and a process whose initial module is not the module
   `gen_statem:enter_loop` or `gen_server:enter_loop` enters is decided by its initial module in
-  its crash report (no erXos or OTP caller does so: each enters `?MODULE`). The filter is an entry of the primary filter list, so a
+  its crash report (no erXos or OTP caller does so: each enters `?MODULE`). Only a process whose module exports `format_status/1` hides its terms, and nothing checks that every system-domain process that holds another domain's bytes exports one: the chokepoint `format-status-through-report` checks only that each `format_status` goes through `erx_report:status/2`; hiding by default in the system domain would close it. The filter is an entry of the primary filter list, so a
   filter an application adds later (`ssh_app.erl:114`) runs before it and sees the report
   whole, `logger:reconfigure/0` and `set_primary_config(filters, _)` empty the list for a
   moment or for good, and with `filter_default => stop` an OTP report no other filter logs is
