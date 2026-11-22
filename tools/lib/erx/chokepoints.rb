@@ -321,8 +321,10 @@ module Erx
     # needs them. Backslash-newlines are spliced, so no rule can be split
     # across lines, then comments become a space. String and character
     # literals stay, since header names and inline assembly live in them;
-    # inside them the escapes \n \t \r \v \f read as a space, so "nop\n\tsvc"
-    # shows its instruction, and literals adjacent on a line are joined as
+    # inside them every escape but \" \' \\ and \? reads as a space (the
+    # controls \n \t and the rest, and every octal and hex escape, which
+    # can spell a separator), so "nop\n\tsvc" and "nop\x0a.word" show
+    # their instructions, and literals adjacent on a line are joined as
     # the compiler joins them. Identifiers are read whole, so a literal
     # prefix (u8'a', L"x") or a digit inside a name opens nothing, and a
     # number may hold C++ digit separators (0xffff'0000).
@@ -343,7 +345,9 @@ module Erx
         | (?<text>[^/"'A-Za-z0-9_]+|.)
       }mx
       TRIGRAPH = %r{\?\?[=/'()!<>-]}n
-      ESCAPE = /\\[ntrvf]/n
+      # Every escape, read whole, and the ones that stay as written.
+      ESCAPE = /\\(?:x\h+|[0-7]{1,3}|.)/n
+      KEPT_ESCAPE = /\A\\["'\\?]\z/n
       ADJACENT_LITERALS = /"[ \t]*"/n
 
       attr_reader :lines, :errors
@@ -400,7 +404,7 @@ module Erx
           if scanner[:comment]
             output << ' ' << ("\n" * scanner[:comment].count("\n"))
           elsif scanner[:literal]
-            output << scanner[:literal].gsub(ESCAPE, ' ')
+            output << scanner[:literal].gsub(ESCAPE) { |escape| KEPT_ESCAPE.match?(escape) ? escape : ' ' }
           elsif scanner[:raw]
             refuse(text, scanner, 'C++ raw string literal', starts: starts)
             output << scanner[:raw]

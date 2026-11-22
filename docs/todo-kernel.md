@@ -583,6 +583,18 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
 
 ## Security residuals
 
+* [Medium] `tools/lib/erx/chokepoint_rules/fiasco_seam.rb`, `one-erx-trap`: the raw-word half names a list of
+  directives, and gas has more that place words: `.xword`, `.dword`, `.int`, `.short`, `.octa`, `.fill`,
+  `.ascii`/`.asciz`/`.string`, `.dc.*`, `.inst.n`/`.inst.w`. `__attribute__((section(".text")))` data needs no
+  directive at all. Neither does a directive that only a compiler joins: adjacent literals on separate lines,
+  a prefixed literal after another, a hex escape (`"\x2eword"`, which the C view reads as a space, not
+  decoded) or a `%c` operand. The trap half misses the same joins. In a `.S` file, an empty macro or a
+  label macro before the dot (`E.word`, `L(foo).word`) reads as a C member access and is exempt. What makes this hold by construction is checking the object, not the source: disassemble each
+  erXos object's code sections and refuse any trap or data word outside liberx's backends.
+* [Low] `tools/lib/erx/chokepoints.rb`, `CView`: `ADJACENT_LITERALS` joins literals with a regex over the
+  view's text, so a literal ending in an escaped quote (`".section \".text\""`) loses that quote and its
+  closing quote. The line then reads as one unterminated literal, not as the compiler's literals. Join
+  adjacent literal tokens inside `strip_comments` instead.
 * [Medium] kernel design, `docs/design-platforms.md` "Data model": erXos's kernel binds the devices of
   `hw/kernel_devices.txt` (the RNG200, the watchdog, the mailbox) by compatible string from the device tree
   alone, so a tree that names another device's page under one of those strings would have the kernel drive

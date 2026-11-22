@@ -51,6 +51,31 @@ class ChokepointsTest < Minitest::Test
     refute_empty evaluate(Rules::ACTIVE, { 'kernel/core/x.c' => "void f(void) { __asm__(\"#{trap}\"); }\n" })
   end
 
+  # A raw-word directive counts wherever an assembler may read it, in a
+  # literal, a stringified macro argument, a header an assembly file
+  # includes or an assembly file, but a C member access or designator of
+  # the same name is no directive.
+  def test_raw_word_directives_count_except_as_c_members_and_designators
+    trap = [rule('one-erx-trap')]
+    assert_empty evaluate(trap, { 'kernel/core/a.c' => "void f(struct s *s) { s->x.word = 1; t.quad = 2; }\n" })
+    assert_empty evaluate(trap, { 'kernel/core/b.c' => "static const struct s s = { .word = 1, .long = 2 };\n" })
+    assert_empty evaluate(trap, { 'kernel/core/c.c' => "char c = '\"'; int x = y.word;\n" })
+    refute_empty evaluate(trap, { 'kernel/core/d.c' => "void f(void) { __asm__(\"nop; .word 0xd4000001\"); }\n" })
+    refute_empty evaluate(trap, { 'kernel/core/e.c' => "void f(void) { __asm__(\".wo\" \"rd 0xd4000001\"); }\n" })
+    refute_empty evaluate(trap, { 'kernel/core/f.S' => "#define W .word\n\tW 0xd4000001\n" })
+    refute_empty evaluate(trap, { 'kernel/core/g.c' => "__asm__(\".word 0xd4000001; .section \\\".text\\\"\");\n" })
+    refute_empty evaluate(trap, { 'kernel/core/h.c' => "#define S(x) #x\n__asm__(S(.word 0xd4000001));\n" })
+    refute_empty evaluate(trap, { 'kernel/core/i.h' => "#ifdef __ASSEMBLER__\n#define K .inst 0xd4000001\n#endif\n" })
+    refute_empty evaluate(trap, { 'kernel/core/j.inc' => "\t.word 0xd4000001\n" })
+    # Operands that open with the location counter, a label or a bracket,
+    # and escapes that spell a separator before the directive.
+    assert_empty evaluate(trap, { 'kernel/core/k.c' => "struct s s = { .word.x = 1, .word[0] = 2, .w = a.word == 3 };\n" })
+    refute_empty evaluate(trap, { 'kernel/core/l.S' => "\t.word . - . + 0xd4000001\n\t.quad .Lfoo\n" })
+    refute_empty evaluate(trap, { 'kernel/core/m.S' => "\t.word [0xd4000001]\n" })
+    refute_empty evaluate(trap, { 'kernel/core/n.c' => "__asm__(\"nop\\x0a.word 0xd4000001\");\n" })
+    refute_empty evaluate(trap, { 'kernel/core/o.c' => "__asm__(\"nop\\012.inst 0xd4000002\");\n" })
+  end
+
   def test_comments_are_not_code_but_splices_and_trigraphs_are
     assert_empty evaluate(Rules::ACTIVE, { 'kernel/core/a.c' => "/* l4_ipc_call svc #0 */\n// #include <l4/sys/x.h>\n" })
     refute_empty evaluate(Rules::ACTIVE, { 'kernel/core/b.c' => "int x = l4\\\n_thing;\n" })

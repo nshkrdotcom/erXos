@@ -7,9 +7,20 @@ module Erx
     # Outside the Fiasco backend, which alone speaks Fiasco's interface.
     ERXOS_C_OUTSIDE_FIASCO_BACKEND = Chokepoints::Scope.new(own: true, extra: [GLUE], except: [FIASCO_BACKEND])
     TRAP_OPCODE, TRAP_IMMEDIATE = ABI::Generated::SCHEMA.architecture.fetch(:trap).map(&:to_s)
+    # The rest of a C designator chain after its first member, up to its =.
+    DESIGNATOR_REST = /[ \t]*(?:\.[A-Za-z_]\w*|\[[^\]\n]*\])*[ \t]*=(?!=)/
     # A trap instruction, or a directive that places raw instruction words
-    # or pulls in assembler text the check does not read.
-    TRAP = /\b(?:svc|hvc|smc)\b(?:[ \t]+#?[0-9A-Fa-fx]+)?|\.(?:inst|word|long|[248]?byte|hword|quad|include|incbin)\b/i
+    # or pulls in assembler text the check does not read. A directive is
+    # matched wherever the view shows it, since assembler text also comes
+    # from stringified macro arguments and from headers an assembly file
+    # includes, except in the two C shapes that cannot be one: a member
+    # access (s.word, f().word, a[0].word) and a designator (.word = 1,
+    # .word.x = 1, .word[0] = 1). Any other misreading reports too much,
+    # never too little.
+    TRAP = Regexp.union(
+      /\b(?:svc|hvc|smc)\b(?:[ \t]+#?[0-9A-Fa-fx]+)?/i,
+      /(?<![A-Za-z0-9_)\]])\.(?:inst|word|long|[248]?byte|hword|quad|include|incbin)\b(?!#{DESIGNATOR_REST})/i
+    )
     ERX_TRAP = /\A#{Regexp.escape(TRAP_OPCODE)}[ \t]+##{Regexp.escape(TRAP_IMMEDIATE)}\z/
 
     # What keeps Fiasco's interface behind its backend and the glue, with the
@@ -365,6 +376,7 @@ module Erx
                   'kernel/core/escaped.c' => "void f(void) { __asm__ volatile(\"mov x0, #1\\n\\tsvc #0\"); }\n",
                   'kernel/core/joined.c' => "void f(void) { __asm__ volatile(\"s\" \"vc #0\"); }\n",
                   'kernel/core/word.c' => "void f(void) { __asm__ volatile(\".word 0xd4000001\"); }\n",
+                  'kernel/core/word.S' => "\t.word 0xd4000001\n",
                   'liberx/backend/erx/arch/aarch64/seeded.c' => "void g(void) { __asm__ volatile(\"svc #0\"); }\n" }
         ),
         Chokepoints::Forbidden.new(
