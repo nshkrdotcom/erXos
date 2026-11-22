@@ -212,8 +212,8 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   beside the medium, or a loader on the medium; without it the boot value is `unknown` and no `system` tree, so no
   kiosk and no `/bin/doom`, is served. A published tree is QEMU's own dump for one machine (its RAM, CPU count and,
   unverified, the accelerator and QEMU version it was dumped under), so the command must pin those, and the pack
-  would run QEMU, which it does not yet. The published medium carries Doom and is packed for 640 MiB
-  (`ProductionImage::Machine.development`), so its command takes `-m 640`, a display and the virtio keyboard,
+  would run QEMU, which it does not yet. The published medium carries Doom and is packed for 704 MiB
+  (`ProductionImage::Machine.development`), so its command takes `-m 704`, a display and the virtio keyboard,
   as `tools/erx boot --medium --print` gives them.
 * [Medium] docs/design-storage.md, failure handling: a device reset in the target design breaks the volumes over
   the device, since each window is bound to one device process's life, but nothing names how a file system that

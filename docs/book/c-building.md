@@ -283,7 +283,7 @@ Because it carries Doom, `make pack` needs `tools/erx fetch --example
 doom` first. `tools/erx pack --medium` packs a development medium
 without Doom, which needs neither.
 
-The second command boots it as a person uses it, on a 640 MiB
+The second command boots it as a person uses it, on a 704 MiB
 machine. The display is in QEMU's window, with the virtio keyboard and
 tablet. User networking reaches your network, your host's port 2222
 is forwarded to the guest's SSH port, and the serial console is on
