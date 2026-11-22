@@ -390,7 +390,8 @@ root_port(Levels, Differing) ->
           {16#50, 1, 16#05}, {16#51, 1, 0}, {16#52, 2, flag(maps:get(msi, Levels), 16#1)}]).
 
 root_target(Window) ->
-    #{buses => #{primary_bus => 0, secondary_bus => 1, subordinate_bus => 1}, window => Window}.
+    #{buses => #{primary_bus => 0, secondary_bus => 1, subordinate_bus => 1}, optional => [io, prefetch],
+      window => Window}.
 
 root_port_test_() ->
     {timeout, ?DEADLINE,

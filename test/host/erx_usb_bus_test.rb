@@ -27,6 +27,7 @@ class ErxUsbBusTest < Minitest::Test
     test/erlang/erx_usb_desc_tests.erl
     test/erlang/erx_usb_fake_xhci.erl
     test/erlang/erx_usb_bus_tests.erl
+    test/erlang/erx_pcie_log_capture.erl
   ].freeze
   DEADLINE_SECONDS = '300'
   BUS = 'erlang/apps/erx_usb/src/erx_usb_bus.erl'

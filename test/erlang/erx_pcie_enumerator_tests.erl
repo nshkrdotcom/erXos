@@ -244,3 +244,40 @@ a_root_ports_link_is_logged_from_its_express_capability_test() ->
 %% A root port without a capability list has no link status to log.
 a_root_port_without_express_logs_no_link_test() ->
     ?assertEqual([], link_logged(put(erx_pcie_cfg_tests:root_port(), 16#06, 2, 0))).
+
+%% A root port with masks beyond its BARs', and an endpoint below it on bus 1, which
+%% the model opens from the start, so only the walk decides whether it is read.
+root_port_over(Snapshot, Masks) ->
+    Table = erx_pcie_model:new([{{0, 0, 0}, Snapshot, maps:merge(#{16#10 => 0, 16#14 => 0}, Masks)},
+                                endpoint_at({1, 0, 0}, endpoint())]),
+    erx_pcie_model:open_bus(Table, 1),
+    {{Pid, Reported}, Logged} = erx_pcie_log_capture:logged(fun() -> started(Table, [], #{}, #{}) end),
+    stop(Pid),
+    {[{Bus, Device, Function} || #{record := #{bus := Bus, device := Device, function := Function}} <- Reported],
+     Logged}.
+
+%% A root port that implements no I/O window, its I/O base and limit read-only zero as
+%% the BCM2711's read (pci_pci.c:500-513 probes for that), is numbered and its bus
+%% walked: the target leaves the window it does not have alone.
+a_root_port_without_an_io_window_has_its_bus_walked_test() ->
+    NoIo = lists:foldl(fun({Offset, Width}, S) -> put(S, Offset, Width, 0) end,
+                       erx_pcie_cfg_tests:root_port(), [{16#1c, 1}, {16#1d, 1}, {16#30, 2}, {16#32, 2}]),
+    {Places, Logged} = root_port_over(NoIo, #{16#1c => 0, 16#1d => 0, 16#30 => 0, 16#32 => 0}),
+    ?assertEqual([{1, 0, 0}], Places),
+    ?assertEqual([], [Line || Line <- Logged, string:find(Line, "did not take") =/= nomatch]).
+
+%% So is one that implements no prefetchable window.
+a_root_port_without_a_prefetchable_window_has_its_bus_walked_test() ->
+    NoPrefetch = lists:foldl(fun({Offset, Width}, S) -> put(S, Offset, Width, 0) end,
+                             erx_pcie_cfg_tests:root_port(),
+                             [{16#24, 2}, {16#26, 2}, {16#28, 4}, {16#2c, 4}]),
+    {Places, _Logged} = root_port_over(NoPrefetch, #{16#24 => 0, 16#26 => 0, 16#28 => 0, 16#2c => 0}),
+    ?assertEqual([{1, 0, 0}], Places).
+
+%% A root port whose target does not take is logged with the answer and the bus
+%% left unwalked, so a function missing below it is never silent.
+a_root_port_whose_target_did_not_take_is_logged_with_its_bus_not_walked_test() ->
+    {Places, Logged} = root_port_over(erx_pcie_cfg_tests:root_port(), #{16#20 => 0}),
+    ?assertEqual([], Places),
+    ?assertEqual(["pcie: bridge 3: root port {0,0,0}: target not applied: gone; bus 1 not walked"],
+                 [Line || Line <- Logged, string:find(Line, "not applied") =/= nomatch]).

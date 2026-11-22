@@ -68,6 +68,11 @@ Starts a bus group below the supervisor for each of Controllers, each a
 given the places.
 """.
 -spec start_controllers([{module(), atom(), [term()]}]) -> ok.
+start_controllers([]) ->
+    %% A domain given no xHCI function, such as a VL805 its PCIe report held back or
+    %% never found, drives nothing; the line says so, since nothing else would.
+    logger:notice("usb: no xhci function record; no controller started", []),
+    ok;
 start_controllers(Controllers) ->
     {places, Places, _, _} = lists:keyfind(places, 1, supervisor:which_children(?MODULE)),
     lists:foreach(fun({N, Controller}) ->

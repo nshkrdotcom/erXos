@@ -860,7 +860,13 @@ functions below it:
   them; its memory base and limit, 1 MiB granular, to the span of its
   functions' placed BARs, or disabled, base above limit, when it has no
   placed BAR below it; its prefetchable and I/O windows disabled
-  (`pci_pci.c:1617-1629`).
+  (`pci_pci.c:1617-1629`) where it implements them. Both are optional,
+  and the target holds the registers of only those it implements: before
+  numbering a root port the walk
+  writes every bit of each window base that reads zero, and a base that
+  still reads zero is a window it does not implement, as FreeBSD's
+  `pcib_probe_windows` decides (`pci_pci.c:500-513`, `:549-562`); the
+  target then overwrites what the probe wrote to a window that took it.
 * **Switches:** memory space and bus master on when its window is
   enabled, which let it forward its functions' accesses and DMA and make
   it master nothing itself, and off otherwise; INTx, MSI and MSI-X
@@ -871,11 +877,17 @@ numbers the root port: at a placing walk, from no layouts, which gives
 it its bus numbers and a closed window; once the placement is done, from
 the new layouts, which opens its window. At every other walk the
 layouts are the library's, so a running root port reads as its target
-and gets no write; after a bridge reset it is written whole. A root
+and gets no write but the probe of a window base that reads zero, which
+writes only a register it does not implement; after a bridge reset it is written whole. A root
 port whose own BAR reads back nonzero at the placing walk's sizing
 implements a BAR, which no consumer's root port is known to; it is
 reported `unsupported` with nothing below it read, and the BCM2711's
 root port is read by probe B4.
+A root port whose target does not apply, at the walk or when its
+window is opened, is logged with `erx_pcie_apply`'s answer and what it
+leaves undone, `bus N not walked` or `window not opened`: no function
+below it is read or reached, so none is reported, and the log line is
+the only sign of why.
 
 ## Records
 

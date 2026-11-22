@@ -44,10 +44,12 @@ BAR's read-only type bits as the read value gives them.
 
 -doc """
 A root port's target (docs/design-pcie.md, "Root ports"): the bus numbers
-the walk gave it and its memory window, closed or the PCI addresses of its
-first and last byte, 1 MiB granular.
+the walk gave it, the optional windows it implements (I/O, prefetchable),
+which the target closes, and its memory window, closed or the PCI addresses
+of its first and last byte, 1 MiB granular.
 """.
 -type root_port() :: #{buses := erx_pcie_walk:buses(),
+                       optional := [erx_pcie_walk:window()],
                        window := closed | {0..16#ffffffff, 0..16#ffffffff}}.
 
 -doc """
@@ -258,17 +260,23 @@ root_port_switches(Identity, #{window := Window}) ->
     Open = level(Window =/= closed),
     present(Identity, #{io => 0, memory => Open, master => Open, intx => 0, msi => 0, msix => 0}).
 
-%% Its bus numbers and memory window, its prefetchable and I/O windows
-%% closed: a closed window's base holds every address bit and its limit none.
+%% Its bus numbers and memory window, and each optional window it implements,
+%% prefetchable and I/O, closed: a closed window's base holds every address bit
+%% and its limit none. A window it does not implement has read-only registers,
+%% so its target holds none of them.
 root_port_data(#{buses := #{primary_bus := Primary, secondary_bus := Secondary,
                             subordinate_bus := Subordinate},
-                 window := Window}) ->
+                 optional := Windows, window := Window}) ->
     {MemoryBase, MemoryLimit} = memory_window(Window),
     [{primary_bus, Primary}, {secondary_bus, Secondary}, {subordinate_bus, Subordinate},
-     {memory_base, MemoryBase}, {memory_limit, MemoryLimit},
-     {prefetch_base, ?ERX_PCIE_BRIDGE_MEMORY_WINDOW_MASK}, {prefetch_limit, 0},
-     {prefetch_base_upper, 0}, {prefetch_limit_upper, 0},
-     {io_base, ?ERX_PCIE_BRIDGE_IO_WINDOW_MASK}, {io_limit, 0},
+     {memory_base, MemoryBase}, {memory_limit, MemoryLimit}]
+        ++ lists:append([closed_window(W) || W <- Windows]).
+
+closed_window(prefetch) ->
+    [{prefetch_base, ?ERX_PCIE_BRIDGE_MEMORY_WINDOW_MASK}, {prefetch_limit, 0},
+     {prefetch_base_upper, 0}, {prefetch_limit_upper, 0}];
+closed_window(io) ->
+    [{io_base, ?ERX_PCIE_BRIDGE_IO_WINDOW_MASK}, {io_limit, 0},
      {io_base_upper, 0}, {io_limit_upper, 0}].
 
 memory_window(closed) ->

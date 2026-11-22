@@ -17,10 +17,14 @@ parse/1; a snapshot parse/1 refuses is reported `malformed`, with the
 field, and gets one write, its command register with memory, I/O and bus
 master off and INTx disabled. A type-1 header on the root bus is a root
 port: it takes the next bus number in place order as its secondary and
-subordinate bus, the action `{root_port, ...}` asks the enumerator to
-apply its target, and once that answers `ok` the devices of the bus
-below it are probed. A type-1 header below a root port is `unsupported`,
-and nothing below it is read.
+subordinate bus, and its optional windows, I/O and prefetchable, are
+probed as FreeBSD's pcib_probe_windows does (pci_pci.c:500-513,
+549-562): a window whose base reads zero has every bit of its base
+written, and one whose base still reads zero is not implemented. The
+action `{root_port, ...}` then asks the enumerator to apply its target,
+which closes only the windows the root port implements, and once that
+answers `ok` the devices of the bus below it are probed. A type-1
+header below a root port is `unsupported`, and nothing below it is read.
 
 A placing walk, the one that finds no layouts for its bridge, also sizes
 every function's memory BARs and every root port's BARs as FreeBSD's
@@ -42,7 +46,7 @@ the walk at once, since its domain's restart is the bridge's recovery.
 
 -export([start/2, step/2]).
 -export_type([walk/0, kind/0, action/0, answer/0, buses/0, found/0, outcome/0,
-              root_port/0, result/0]).
+              root_port/0, result/0, window/0]).
 
 -include("generated/erx_abi.hrl").
 
@@ -78,14 +82,19 @@ take, with the reason.
                    identity := erx_pcie_cfg:identity(),
                    outcome := outcome()}.
 
+-doc "A root port's optional window: its I/O window, or its prefetchable memory window.".
+-type window() :: io | prefetch.
+
 -doc """
-A root port the walk numbered, with its read value and its buses, and
+A root port the walk numbered, with its read value, its buses, the
+optional windows it implements, and
 the enumerator's answer to applying its target; only below one applied
 `ok` was anything read.
 """.
 -type root_port() :: #{place := erx_pcie:place(),
                        read := erx_pcie_cfg:read(),
                        buses := buses(),
+                       optional := [window()],
                        applied := ok | {error, atom()}}.
 
 -doc """
@@ -100,11 +109,11 @@ the root port.
 -doc """
 What the enumerator does next: one configuration access through its
 bridge driver; apply a root port's target through `erx_pcie_apply`, from
-its place, read value and buses and the bridge's layouts; or stop, with
+its place, read value, buses and windows and the bridge's layouts; or stop, with
 the walk's result or because the link went down.
 """.
 -type action() :: {access, erx_pcie_bridge:access()}
-                | {root_port, erx_pcie:place(), erx_pcie_cfg:read(), buses()}
+                | {root_port, erx_pcie:place(), erx_pcie_cfg:read(), buses(), [window()]}
                 | {stop, {done, result()} | link_down}.
 
 -doc "The answer to the last action: the bridge driver's, or `erx_pcie_apply`'s.".
@@ -124,7 +133,8 @@ the walk's result or because the link went down.
                  erx_pcie_cfg:read(), [sized_bar()]}
               | {size_root_port, erx_pcie:place(), erx_pcie_cfg:identity(),
                  erx_pcie_cfg:read(), buses(), [sized_bar()]}
-              | {number, erx_pcie:place(), erx_pcie_cfg:read(), buses()}.
+              | {probe_windows, erx_pcie:place(), erx_pcie_cfg:read(), buses(), [window()]}
+              | {number, erx_pcie:place(), erx_pcie_cfg:read(), buses(), [window()]}.
 
 -record(walk, {bridge :: erx_abi_layout:erx_pcie_bridge(),
                kind :: kind(),
@@ -199,8 +209,11 @@ actions({size_function, Place, _Parent, _Identity, Read, Bars}) ->
     sizing(Place, Read, Bars);
 actions({size_root_port, Place, _Identity, Read, _Buses, Bars}) ->
     sizing(Place, Read, Bars);
-actions({number, Place, Read, Buses}) ->
-    [{root_port, Place, Read, Buses}].
+actions({probe_windows, Place, _Read, _Buses, Probed}) ->
+    lists:append([[write(Place, Offset, Width, Ones), read(Place, Offset, Width)]
+                  || {Offset, Width, Ones} <- [window_base(W) || W <- Probed]]);
+actions({number, Place, Read, Buses, Windows}) ->
+    [{root_port, Place, Read, Buses, Windows}].
 
 %% What a task's answers decide: the tasks it adds, the next first, and
 %% what it reports.
@@ -218,15 +231,18 @@ finished({size_function, Place, Parent, Identity, Read, Bars}, {ok, Answers}, Wa
     report(Place, Parent, Identity, endpoint_outcome(Read, sizes(Bars, Answers)), Walk);
 finished({size_root_port, Place, Identity, Read, Buses, Bars}, {ok, Answers}, Walk) ->
     case [Bar || {Bar, Size} <- sizes(Bars, Answers), Size =/= absent] of
-        [] -> push([{number, Place, Read, Buses}], Walk);
+        [] -> push([windows(Place, Read, Buses)], Walk);
         _Implemented -> report(Place, root, Identity, {unsupported, root_port_bar}, Walk)
     end;
-finished({number, Place, Read, #{secondary_bus := Bus} = Buses}, Answer, Walk) ->
+finished({probe_windows, Place, Read, Buses, Probed}, {ok, Bases}, Walk) ->
+    Missing = [W || {W, 0} <- lists:zip(Probed, Bases)],
+    push([{number, Place, Read, Buses, [W || W <- [io, prefetch], not lists:member(W, Missing)]}], Walk);
+finished({number, Place, Read, #{secondary_bus := Bus} = Buses, Windows}, Answer, Walk) ->
     Applied = case Answer of
                   {ok, []} -> ok;
                   {error, _Reason} = Error -> Error
               end,
-    RootPort = #{place => Place, read => Read, buses => Buses, applied => Applied},
+    RootPort = #{place => Place, read => Read, buses => Buses, optional => Windows, applied => Applied},
     Numbered = Walk#walk{root_ports = [RootPort | Walk#walk.root_ports]},
     case Applied of
         ok -> push(probes(Bus, Place), Numbered);
@@ -284,7 +300,7 @@ parsed(Place, root, Identity, Snapshot, Buses, {ok, #{header := bridge} = Read},
         {placing, [_ | _] = Bars} ->
             push([{size_root_port, Place, Identity, Read, Buses, Bars}], Walk);
         _NothingToSize ->
-            push([{number, Place, Read, Buses}], Walk)
+            push([windows(Place, Read, Buses)], Walk)
     end;
 parsed(Place, Parent, Identity, _Snapshot, none, {ok, #{header := bridge}}, Walk) ->
     report(Place, Parent, Identity, {unsupported, below_root_port}, Walk).
@@ -358,6 +374,21 @@ quiet_command(Snapshot) ->
     <<_:Offset/binary, Command:16/little, _/binary>> = Snapshot,
     Off = ?ERX_PCIE_COMMAND_MEMORY bor ?ERX_PCIE_COMMAND_IO bor ?ERX_PCIE_COMMAND_MASTER,
     (Command band bnot Off) bor ?ERX_PCIE_COMMAND_INTX_DISABLE.
+
+%% A root port's next task: the probe of each optional window whose base reads
+%% zero, or, when none does, its numbering with both windows.
+windows(Place, Read, Buses) ->
+    case [W || W <- [io, prefetch], window_base_reads_zero(W, Read)] of
+        [] -> {number, Place, Read, Buses, [io, prefetch]};
+        Probed -> {probe_windows, Place, Read, Buses, Probed}
+    end.
+
+window_base_reads_zero(io, #{bridge := #{io_base := Base}}) -> Base =:= 0;
+window_base_reads_zero(prefetch, #{bridge := #{prefetch_base := Base}}) -> Base =:= 0.
+
+%% A window's base register, its width, and every bit of it set.
+window_base(io) -> {?ERX_PCIE_CFG_IO_BASE, 1, 16#ff};
+window_base(prefetch) -> {?ERX_PCIE_CFG_PREFETCH_BASE, 2, 16#ffff}.
 
 %% The devices of a bus, to be probed in order.
 probes(Bus, Parent) ->

@@ -70,7 +70,7 @@ drive({_Walk, [{stop, Stop}]}, _Edge, _Table, Applied) ->
 drive({Walk, [{access, Access}]}, {Driver, State, ApplyAnswer}, Table, Applied) ->
     {Answer, Next} = Driver:access(Access, State),
     drive(erx_pcie_walk:step(Answer, Walk), {Driver, Next, ApplyAnswer}, Table, Applied);
-drive({Walk, [{root_port, Place, _Read, #{secondary_bus := Bus} = Buses}]}, {_, _, ApplyAnswer} = Edge,
+drive({Walk, [{root_port, Place, _Read, #{secondary_bus := Bus} = Buses, _Windows}]}, {_, _, ApplyAnswer} = Edge,
       Table, Applied) ->
     ApplyAnswer =:= ok andalso erx_pcie_model:open_bus(Table, Bus),
     drive(erx_pcie_walk:step(ApplyAnswer, Walk), Edge, Table, [{Place, Buses} | Applied]).
@@ -258,3 +258,19 @@ ecam_answers_absent_past_its_window_test() ->
     ?assertMatch({{error, absent}, _}, erx_pcie_ecam:access({write, {2, 0, 0}, 4, 2, 0}, State)),
     ?assertMatch({{ok, 16#1af4}, _}, erx_pcie_ecam:access({read, {1, 0, 0}, 0, 2}, State)),
     ?assertEqual([{read, {1, 0, 0}, 0}], erx_pcie_model:hardware(Table)).
+
+%% The windows a root port is numbered with, when its I/O base reads Base and takes
+%% the bits Mask lets through.
+io_window(Base, Mask) ->
+    RootPort = put(root_port(), 16#1c, 1, Base),
+    Table = erx_pcie_model:new([{{0, 0, 0}, RootPort, maps:merge(root_port_masks(), #{16#1c => Mask})}]),
+    {{done, #{root_ports := [#{optional := Windows}]}}, _Applied} = ecam_walk(later, open_bridge(255), Table),
+    {Windows, [Entry || {write, {0, 0, 0}, 16#1c} = Entry <- erx_pcie_model:hardware(Table)]}.
+
+%% An optional window whose base reads zero is probed by writing its every bit, as
+%% pci_pci.c:500-513 does: one whose base stays zero is not implemented, one that
+%% takes the bits is; a base that reads nonzero is implemented without a write.
+a_root_ports_optional_windows_are_probed_only_when_their_base_reads_zero_test() ->
+    ?assertEqual({[prefetch], [{write, {0, 0, 0}, 16#1c}]}, io_window(0, 0)),
+    ?assertEqual({[io, prefetch], [{write, {0, 0, 0}, 16#1c}]}, io_window(0, 16#f0)),
+    ?assertEqual({[io, prefetch], []}, io_window(16#f0, 16#f0)).

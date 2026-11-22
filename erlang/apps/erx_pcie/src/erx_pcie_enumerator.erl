@@ -154,8 +154,9 @@ starts(#{index := Index} = Bridge, [], Driver) ->
     Addresses = erx_pcie_place:layout(Bridge, Found),
     Starts = [placing_start(Index, F, Addresses) || F <- Found],
     Records = [R || #{record := R} <- Starts],
-    Opened = lists:foldl(fun(#{place := Place, buses := Buses}, D) ->
-                                 {_, Next} = root_port(Place, Buses, Records, D),
+    Opened = lists:foldl(fun(#{place := Place, buses := Buses, optional := Windows}, D) ->
+                                 {Opening, Next} = root_port(Place, Buses, Windows, Records, D),
+                                 not_applied(Index, Place, Opening, "window not opened"),
                                  Next
                          end, Walked, [R || #{applied := ok} = R <- RootPorts]),
     {Starts, [R || R <- Records, drivable(R)], Opened};
@@ -168,7 +169,8 @@ starts(#{index := Index} = Bridge, Own, Driver) ->
 
 %% The walk run to its end; each root port it numbers gets its target from
 %% the layouts the walk starts with, closed at a placing walk, and its link's
-%% speed and width are logged.
+%% speed and width are logged; a target that is not applied is logged, since
+%% the walk then leaves the bus below it, and every function there, unread.
 walk(#{index := Index} = Bridge, Kind, Layouts, Driver) ->
     drive(erx_pcie_walk:start(Bridge, Kind), {Index, Layouts}, Driver).
 
@@ -179,9 +181,11 @@ drive({_Walk, [{stop, link_down}]}, _Context, _Driver) ->
 drive({Walk, [{access, Access}]}, Context, {Module, State}) ->
     {Answer, Next} = Module:access(Access, State),
     drive(erx_pcie_walk:step(Answer, Walk), Context, {Module, Next});
-drive({Walk, [{root_port, Place, Read, Buses}]}, {Index, Layouts} = Context, Driver) ->
+drive({Walk, [{root_port, Place, Read, #{secondary_bus := Bus} = Buses, Windows}]},
+      {Index, Layouts} = Context, Driver) ->
     link(Index, Place, Read),
-    {Answer, Next} = root_port(Place, Buses, Layouts, Driver),
+    {Answer, Next} = root_port(Place, Buses, Windows, Layouts, Driver),
+    not_applied(Index, Place, Answer, io_lib:format("bus ~b not walked", [Bus])),
     drive(erx_pcie_walk:step(Answer, Walk), Context, Next).
 
 %% A root port's link as its PCI Express capability's link status reads it.
@@ -190,9 +194,15 @@ link(Index, Place, #{express := #{link_speed := Speed, link_width := Width}}) ->
 link(_Index, _Place, #{express := none}) ->
     ok.
 
-root_port(Place, #{secondary_bus := Secondary} = Buses, Layouts, Driver) ->
+root_port(Place, #{secondary_bus := Secondary} = Buses, Windows, Layouts, Driver) ->
     Window = erx_pcie_place:root_port_window(Secondary, Layouts),
-    erx_pcie_apply:apply(Place, {root_port, #{buses => Buses, window => Window}}, Driver).
+    erx_pcie_apply:apply(Place, {root_port, #{buses => Buses, optional => Windows, window => Window}}, Driver).
+
+%% A root port's target that did not apply, with what that leaves undone.
+not_applied(_Index, _Place, ok, _Consequence) ->
+    ok;
+not_applied(Index, Place, {error, Reason}, Consequence) ->
+    logger:warning("pcie: bridge ~b: root port ~p: target not applied: ~p; ~ts", [Index, Place, Reason, Consequence]).
 
 placing_start(Index, #{outcome := Outcome} = Found, Addresses) ->
     Record = case Outcome of

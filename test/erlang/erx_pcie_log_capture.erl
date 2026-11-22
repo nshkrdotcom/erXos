@@ -1,10 +1,10 @@
 %% Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
 %% SPDX-License-Identifier: BSD-2-Clause
 
-%% The messages logged while a case's fun runs, for the PCIe cases that check a log
-%% line: the BCM2711 driver's and the enumerator's. This module is the logger handler
-%% that sends each message to the case's process; every level is let through and the
-%% default handler silenced meanwhile, as the runners silence it.
+%% The messages logged while a case's fun runs, for the cases that check a log
+%% line: the BCM2711 driver's, the enumerator's and the USB domain's. This module is
+%% the logger handler that sends each message to the case's process; every level is
+%% let through and the default handler silenced meanwhile, as the runners silence it.
 -module(erx_pcie_log_capture).
 
 -export([logged/1, log/2]).

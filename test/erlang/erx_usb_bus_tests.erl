@@ -377,3 +377,9 @@ wait(Condition, Deadline) ->
                 false -> error({timeout, log()})
             end
     end.
+
+%% A domain given no xHCI function record starts no controller, and says so: a VL805
+%% its PCIe report held back or never found is otherwise silent.
+a_domain_given_no_xhci_function_says_it_starts_no_controller_test() ->
+    ?assertEqual({ok, ["usb: no xhci function record; no controller started"]},
+                 erx_pcie_log_capture:logged(fun() -> erx_usb:start_controllers([]) end)).
