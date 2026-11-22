@@ -24,7 +24,7 @@
 %% inside erx_blk's own call timeout, and the function's end ends this process with
 %% `shutdown`, whether its monitor or a call in progress observes it.
 
--module(erx_blk_bot).
+-module(erx_blk_usb).
 -behaviour(gen_server).
 
 -export([start_monitor/1]).

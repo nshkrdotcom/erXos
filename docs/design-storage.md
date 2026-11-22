@@ -207,7 +207,7 @@ sectors: `erx_blk_virtio` drives a virtio-mmio block device through its
 ring, posting descriptors from a pool of DMA buffers the domain holds,
 and `erx_blk_sd` drives an SD card through an SD host controller
 ([The SD host controller](#the-sd-host-controller)). A USB mass-storage
-medium's transport, `erx_blk_bot`, is started by the USB domain's BOT
+medium's transport, `erx_blk_usb`, is started by the USB domain's BOT
 function, one for each ready medium, and is not registered
 ([design-usb.md](design-usb.md#the-block-transport)): the service reaches
 every transport by its pid, so one block service serves a device

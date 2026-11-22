@@ -155,7 +155,7 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
 * [Low] docs, design-scheduler.md "Service work" (under the review freeze): a call a service's process makes on a dirty
   I/O scheduler counts at its elapsed time, and a request one of its processes hands to another is charged that
   process's reductions too, returned with its answer, as design-domains.md's admission by measured reductions says.
-* [Medium] docs, design-storage.md: the transport is reached by its pid (`erx_blk_bot` per medium is not registered),
+* [Medium] docs, design-storage.md: the transport is reached by its pid (`erx_blk_usb` per medium is not registered),
   but "The transport" still calls it the device process registered as `erx_blk`, and the transport contract's calls
   (`erx_blk:read(Sector, Count)`, `{error, no_device}` when no device process runs) take no pid. Restate the contract
   over a transport pid and say what `no_device` means for a dead pid.

@@ -15,7 +15,7 @@
 %% the bus process, erx_usb_bus,
 %% which speaks to its controller through erx_usb_bus_link; and the functions, the hub function,
 %% erx_usb_hub, the HID function, erx_usb_hid, and the mass-storage function, erx_usb_bot, which
-%% serves a Bulk-Only interface's media through erx_blk_bot; their transfers go through erx_usb_pipe.
+%% serves a Bulk-Only interface's media through erx_blk_usb; their transfers go through erx_usb_pipe.
 {application, erx_usb,
  [{description, "erXos USB stack"},
   {vsn, "1"},

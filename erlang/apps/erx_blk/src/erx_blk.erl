@@ -19,7 +19,7 @@
 %% both before the controller is touched; erofs, the write path's refusal on a trial boot
 %% (U4), which erx_blk_write does not apply yet (TODO.md); busy when the device process's
 %% backlog is full; no_device when no device process runs; no_flush for a flush of a
-%% medium that cannot flush, which only erx_blk_bot answers; and {device, Detail} for a
+%% medium that cannot flush, which only erx_blk_usb answers; and {device, Detail} for a
 %% request the controller or the medium failed. Detail is built from fixed atoms and
 %% integers, never from a controller's bytes, and stays in the storage domain: a window
 %% answers its client einval for bad_count, erofs for erofs and eio for every other error.

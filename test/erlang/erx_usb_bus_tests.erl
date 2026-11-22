@@ -257,7 +257,7 @@ a_function_status_shows_no_medium_bytes_test() ->
 a_transport_status_shows_no_medium_bytes_test() ->
     with_bus(#{[1] => stick}, fun() ->
         configured([1]),
-        refute_shown(erx_blk_bot, transport(), fun(Data) -> {write, 3, Data} end, write)
+        refute_shown(erx_blk_usb, transport(), fun(Data) -> {write, 3, Data} end, write)
     end).
 
 %% Module's format_status/1 of Pid's live state, with Write of the marker as the last
@@ -516,7 +516,7 @@ started_by(Module, Pid) ->
 %% The block transports of the running mass-storage functions, each started by its own.
 transports() ->
     Functions = functions(erx_usb_bot),
-    [T || T <- processes(), started_by(erx_blk_bot, T), lists:member(parent(T), Functions)].
+    [T || T <- processes(), started_by(erx_blk_usb, T), lists:member(parent(T), Functions)].
 
 parent(Pid) ->
     case process_info(Pid, dictionary) of

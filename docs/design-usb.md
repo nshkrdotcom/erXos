@@ -3211,7 +3211,7 @@ another medium's blocks.
 
 ### The block transport
 
-The transport, `erx_blk_bot`, is a block transport like the virtio and
+The transport, `erx_blk_usb`, is a block transport like the virtio and
 SD ones, answering `read/2`, `write/2`, `flush/0` and `info/0` with the
 transport contract's answers and closed error set
 ([design-storage.md](design-storage.md#data-model)), with four

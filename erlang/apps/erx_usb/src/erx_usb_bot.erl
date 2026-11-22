@@ -10,7 +10,7 @@ the pure `erx_usb_bot_core`, the engine, and unit/2 below, each unit's
 course from INQUIRY to a ready medium; this module is their effects:
 transfers and pipe resets through `erx_usb_pipe`, the CBW and the data
 phase of a write through `erx_blk_write`, the class requests on EP0, the
-timers, and one block transport, `erx_blk_bot`, for each ready medium.
+timers, and one block transport, `erx_blk_usb`, for each ready medium.
 
 **Start.** The bus process starts one per claimed interface, with its
 bulk-IN and bulk-OUT pipes in the claim's order. Once told to go, it
@@ -268,7 +268,7 @@ effect(Lun, {ask, Command}, B) ->
 effect(Lun, serve, B = #bot{units = Units}) ->
     Unit = #{ref := Ref, capacity := Capacity, flush := Flush, detail := Detail, removable := Removable} =
         maps:get(Lun, Units),
-    {ok, Transport} = erx_blk_bot:start_monitor(#{function => self(), lun => Lun, ref => Ref, capacity => Capacity,
+    {ok, Transport} = erx_blk_usb:start_monitor(#{function => self(), lun => Lun, ref => Ref, capacity => Capacity,
                                                   flush => Flush, detail => Detail}),
     Serving = B#bot{units = Units#{Lun := Unit#{transport => Transport}}},
     case Removable of

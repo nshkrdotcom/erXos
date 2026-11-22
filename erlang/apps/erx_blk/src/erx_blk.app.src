@@ -5,18 +5,18 @@
 %% driver"): a library application, whose modules run where a domain starts them. The
 %% storage domain's supervisor starts erx_blk_sup as its first child, for the block record
 %% the root hands the domain's ERTS (erx_device_record); the USB domain's BOT function
-%% starts an erx_blk_bot for each ready medium. erx_blk is the transport contract, which
+%% starts an erx_blk_usb for each ready medium. erx_blk is the transport contract, which
 %% picks the device process; erx_blk_virtio is virtio-mmio's device process, erx_blk_request
 %% its pure core and erx_blk_write the one write path; erx_blk_service is the partition
 %% process, erx_blk_table and erx_blk_image its pure cores, and erx_blk_window a window of
 %% the block service; erx_blk_sd_card and erx_blk_sd_host are the SD host controller's pure
 %% cores and erx_blk_sd_regs its spaced register writes, and erx_blk_sd the SD card's device
-%% process (docs/design-storage.md, "The SD host controller"); erx_blk_bot is a USB
+%% process (docs/design-storage.md, "The SD host controller"); erx_blk_usb is a USB
 %% mass-storage medium's transport (docs/design-usb.md, "The block transport").
 {application, erx_blk,
  [{description, "erXos block driver"},
   {vsn, "1"},
-  {modules, [erx_blk, erx_blk_bot, erx_blk_image, erx_blk_request, erx_blk_sd, erx_blk_sd_card,
+  {modules, [erx_blk, erx_blk_usb, erx_blk_image, erx_blk_request, erx_blk_sd, erx_blk_sd_card,
              erx_blk_sd_host, erx_blk_sd_regs, erx_blk_service, erx_blk_sup, erx_blk_table,
              erx_blk_virtio, erx_blk_window, erx_blk_write]},
   {registered, [erx_blk, erx_blk_service, erx_blk_sup]},
