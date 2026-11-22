@@ -9643,6 +9643,13 @@ document's "residual risks accepted" paragraph.
   check (`check_line_grants` in `tools/lib/erx/manifest.rb`) accepts at most one `line` facet in a manifest, since
   the design leaves open how the one process `erx_facet:serve/2` names reaches the tree of each grant when several
   grants name different UARTs; settle that and lift the limit.
+  In hosted mode (docs/plan.md, Track B part (b)) two more pieces are missing. The line's driver is `erx_stdio`
+  over a descriptor to a Bumble controller (design-bluetooth.md, "The power line", last paragraph), but
+  `erx_stdio_nif.c` is one static instance over standard input and output, and how the descriptor reaches the
+  runtime is unnamed: design-bluetooth.md speaks of a hosted line record, while design-fiasco.md ("Device
+  records") has the hosted entry add none, and `erx_uart_sup` starts lines only from `pl011` records. And the
+  Bluetooth domain is a domain of its own, which a hosted runtime cannot run before track H's multi-process
+  form, which has no design yet.
 * [Low] domain service, `served_kind/2` (`erlang/apps/erx_domain/src/erx_domain_srv.erl`, `init`): `Trees` lists the
   tree services of every server but is asked only about the system domain's, by name, so a configured domain's tree
   service named `log` or `inspect` makes the system's message service of that name minted as a tree grant, which
@@ -9842,20 +9849,6 @@ document's "residual risks accepted" paragraph.
     `secret_failed` holds, SSIDs marked by the names), so a generator change that stops
     reaching one goes unnoticed.
 
-* [Medium] bluetooth, the line's service side (docs/design-bluetooth.md "The controller's line"):
-  `abi/services/line.txt` declares the interface, but the line service, `erx_line`, is not written, so the
-  controller group runs only over a model line in host tests. It is blocked on the file layer: `erx_fs` runs
-  each open file's requests one at a time in one file process (`erlang/apps/erx_files/src/erx_fs.erl`, the
-  moduledoc's "file process"), so a `data` read that waits for the controller would hold the writer's `data`
-  writes through the same grant, and the bring-up would deadlock; design-files.md's helper reads, which let
-  other operations run while a read waits, are not built (nothing reads `read_mode/0`) and retry a read whose
-  file state changed, which a stream cannot. The design needs a decision on how a tree serves a read that
-  waits beside writes. Behind it: the `line_grant` checker and `device` parameter values in
-  `tools/lib/erx/manifest.rb` (`GRANT_CHECKERS`, `parameter_value`), `erx_ns:place(line)` (the facet-name
-  check refuses it until a manifest publishes `line`), `erx_pl011:program/2` with `init => fresh`,
-  `erx_uart_sup` and its line groups, and the power line's steps of a reset. The writer opens `data` and
-  `ctl` with `[write, binary]`, which the client sends as an `lcreate` with `O_WRONLY|O_TRUNC`, so
-  `erx_line` takes that open through `make/4` and ignores `O_TRUNC`, as `erx_machine_fs`'s `ctl` does.
 * [Medium] bluetooth, `erx_bt_sup`'s restart intensity (`erlang/apps/erx_bt/src/erx_bt_sup.erl`;
   docs/design-bluetooth.md "Concurrency" and "Failure handling"): the design gives none, so OTP's default of
   one restart in 5 s applies; a controller group that exhausts its own 5 restarts in 60 s about every 30 s is
