@@ -16,7 +16,7 @@ queue, negotiate/2, which resets the device and returns every buffer it
 held, erx_irq_line:attach/2, and every buffer of the receive queue posted.
 It negotiates none of the type's features, so the device has port 0 alone
 and no control queue (section 5.3.2). A step that fails fails the start,
-and the line's start or reset with it.
+which leaves the line broken with no driver.
 
 **Receiving.** Each buffer the device returns on the receive queue holds
 the bytes it wrote, as many as its used length says, which the device NIF's
@@ -34,7 +34,7 @@ takes every buffer the device returned on the transmit queue and one batch
 of the receive queue's, and asks itself for the next batch, so a device
 that keeps the receive queue full never holds up the owner's writes. A
 queue that breaks, or a buffer that cannot be posted, ends the driver,
-which ends the line. Nothing the device writes to memory reaches the log:
+which leaves the line broken with no driver until its next reset. Nothing the device writes to memory reaches the log:
 a failed start logs the record's path and the step's reason, and a crash
 report shows no byte of the controller's traffic (format_status/1).
 """.

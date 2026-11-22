@@ -36,9 +36,9 @@ class ErxUartSupTest < Minitest::Test
   # The grants of a service named line whatever its server, a configured domain's too.
   def test_line_grants_of_any_server_fail_the_server_case
     source = File.binread(File.join(ErlangBuild::ROOT, SUP))
-    anchor = '{_Grantee, line, system, #{uart := Uart} = Grant} <- Grants}.'
+    anchor = '{_Grantee, line, system, #{device := Device} = Grant} <- Grants}.'
     assert_equal 1, source.scan(anchor).size
-    output, status = run_cases({ SUP => source.sub(anchor) { '{_Grantee, line, _Server, #{uart := Uart} = Grant} <- Grants}.' } })
+    output, status = run_cases({ SUP => source.sub(anchor) { '{_Grantee, line, _Server, #{device := Device} = Grant} <- Grants}.' } })
     refute status.success?, 'the cases passed'
     assert_match(/line_grants_are_the_system_s_line_service_s_test[^\n]*\*failed\*/, output)
   end

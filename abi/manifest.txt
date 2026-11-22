@@ -99,6 +99,7 @@ enum mf_device_role u32
   value spi 11
   value rtc 12
   value usb 13
+  value serial 14
 enum mf_grantee u32
   value system 0
   value domain 1

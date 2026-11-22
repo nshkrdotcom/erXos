@@ -127,24 +127,28 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   the design leaves open how the one process `erx_facet:serve/2` names reaches the tree of each grant when several
   grants name different UARTs; settle that and lift the limit.
   On QEMU `virt` (docs/plan.md, Track B part (b); design-bluetooth.md, "The line on QEMU `virt`") the line's
-  driver is `erx_virtio_console` (erlang/apps/erx_uart), over a virtio-console transport. Missing first, in the
-  design: how a line grant names that transport (the `uart` parameter of kind `device`, `rate` and `flow` are a
-  UART's; design-system.md property 8 and design-fiasco.md "Device records" say the line's record is a physical,
-  DMA-free one, while a virtio console needs a given record with queues). Missing then: a
-  device kind for the transport (`include/erx/device_kinds.h`, a role in `abi/manifest.txt`) and its row in
-  `config/platforms/qemu-virt.json`; the line grant's selection of a transport, which the manifest check
-  (`check_line_grants`), the root (`line_uart_read`, `line_kind`, which writes a physical record and so only a
-  PL011's) and `erx_uart_sup` (which starts lines only from `pl011` records) each restrict to a PL011; the
-  development manifest's Bluetooth domain with its `line` grant; and the QEMU harness's socket chardev and the
-  suite. The driver has host tests of its transmit core only: add cases over the played stand-in device
+  driver is `erx_virtio_console` (erlang/apps/erx_uart), over a virtio-console transport that the line grant's
+  `device` names, a device of role `serial` with a given record (design-system.md property 8, design-fiasco.md
+  "Device records"); the kind row, the check and `erx_uart_sup` take it. Missing: the transport's row in
+  `config/platforms/qemu-virt.json`, which needs a slot whose register page no other unit shares (each of QEMU
+  `virt`'s four transport pages already holds one: the spare, display, network and disk units), so the row joins
+  an existing page's unit or the unit rule's page closure is settled for it first; the Bluetooth suite's
+  manifest with the Bluetooth domain, the system domain's `line` service and its `line` grant, never the
+  development manifest; `erx_facet:serve(line, Grants)` with its seeded fault (above); and the QEMU harness's
+  socket chardev and the suite. The root's names still say `line_uart` (`boot_manifest.c`) for what is now any
+  line device's row. The driver has host tests of its transmit core only: add cases over the played stand-in device
   (`test/erlang/stand_in/erx_device.erl`) for input reaching the owner and the buffer posted again, a write
   answered only after its last buffer is back, and a broken queue stopping the driver.
-* [High] bluetooth, the line service's crash reports (`erlang/apps/erx_uart/src/erx_line.erl`): erx_line has no
-  `format_status/1`, so a driver's end outside a reset (a virtio device that breaks its queue can force one) stops the
-  line with an error report whose state holds up to 64 KiB of the controller's bytes and the writes waiting, which
-  carry keys (a DHKey event, an LTK command), and erx_log_h prints its first 4 KiB. Redact `rx`, the bytes of `waits`
-  and `writing` and the message, as `erx_virtio_console:format_status/1` does, with a test that a stopped line's
-  report holds none of them.
+* [Medium] bluetooth, the line device's record (`liberx/backend/core/boot_manifest.c`, `tools/lib/erx/manifest.rb`
+  `check_serial_devices`): the `serial` kind row makes the root write a given record for every placed serial device,
+  so rule serial-device-granted refuses an ungranted one by exclusion. Choosing the line's record by the grant's index
+  from a line-kinds table (the PL011's and the virtio console's rows), as `line_kind` is chosen, would give an
+  ungranted serial device no record and delete the rule, and would put the line's device-to-driver facts in one
+  table instead of four (`line_kind`, `erx_uart_sup` `members/0` and `driver/2`, `check_line_device`,
+  `physical_paths`). Also: `check_line_device` checks the role only, so a serial or UART row of a compatible no
+  kind row has passes and gets no line (refuse a pair that is not a kind row); a serial device on a shared
+  interrupt line never binds (no owner is started for it) and is not refused; no `boot_manifest_test.rb` case
+  asserts the given `line virtio_mmio` record for a serial grant; the root's names still say `line_uart`.
 * [Medium] bluetooth, line groups couple the host link to the line tree at the limits
   (`erlang/apps/erx_uart/src/erx_uart_sup.erl`): each level (top, group, services) allows 3 restarts in 60 s, so a
   line tree's crash loop exhausts its `services` supervisor, whose restart restarts the host link and ends its

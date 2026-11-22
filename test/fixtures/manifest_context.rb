@@ -226,29 +226,42 @@ module ManifestContextFixture
   # (docs/design-bluetooth.md, "The controller's line").
   LINE_UARTS = { 'line_a' => ['/pl011@9050000', 0x9050000, 41], 'line_b' => ['/pl011@9060000', 0x9060000, 42] }.freeze
 
+  # A virtio console beyond them, a unit of its own, line_serial, by path, register base
+  # and interrupt line: a line's device of role serial (docs/design-bluetooth.md, "The
+  # line on QEMU `virt`").
+  LINE_SERIAL = ['line_serial', '/virtio_mmio@a008000', 0xa008000, 43].freeze
+
   # The platform record with the LINE_UARTS units added, each a copy of the console's
-  # UART row at its own path, base and interrupt line, or the line lines gives by unit.
+  # UART row at its own path, base and interrupt line, or the line lines gives by unit,
+  # and the LINE_SERIAL unit, a copy of the gpu's transport with 256 KiB of DMA memory.
   def line_platform(platform, lines: {})
-    console = platform.fetch('units').flat_map { |unit| unit.fetch('devices') }.find { |device| device['path'] == platform.fetch('console') }
+    devices = platform.fetch('units').flat_map { |unit| unit.fetch('devices') }
+    console = devices.find { |device| device['path'] == platform.fetch('console') }
     units = LINE_UARTS.map do |key, (path, base, line)|
       { 'key' => key, 'devices' => [console.merge('path' => path, 'base' => base, 'line' => lines.fetch(key, line), 'placement_key' => key)] }
     end
-    platform.merge('units' => platform.fetch('units') + units)
+    key, path, base, line = LINE_SERIAL
+    serial = devices.find { |device| device['role'] == 'gpu' }
+                    .merge('role' => 'serial', 'path' => path, 'base' => base, 'line' => line, 'dma_memory' => 262_144, 'placement_key' => key)
+    platform.merge('units' => platform.fetch('units') + units + [{ 'key' => key, 'devices' => [serial] }])
   end
 
   # source with the unit records of the LINE_UARTS, each held by the system domain unless
-  # holders, by unit name, says otherwise, the system domain's line service and grants.
-  def with_line(source, *grants, holders: {})
-    units = LINE_UARTS.keys.map { |key| "unit #{key}\n  placement \"#{key}\"\n  holder #{holders.fetch(key, 'system')}\n" }
+  # holders, by unit name, says otherwise, and of LINE_SERIAL when serial says so, the
+  # system domain's line service and grants.
+  def with_line(source, *grants, holders: {}, serial: false)
+    keys = LINE_UARTS.keys + (serial ? [LINE_SERIAL.first] : [])
+    units = keys.map { |key| "unit #{key}\n  placement \"#{key}\"\n  holder #{holders.fetch(key, 'system')}\n" }
     source + units.join + "service line\n  server system\n  interface line\n" + grants.join
   end
 
-  # A facet row granting grantee the line service on the UART at uart, its max_request
-  # floor, the files_max_frame_min of a tree served as an erx_fs grant.
-  def line_grant(name, grantee, uart, floor:, flow: 'none')
+  # A facet row granting grantee the line service on the device at device, its
+  # max_request floor, the files_max_frame_min of a tree served as an erx_fs grant, with
+  # a UART's rate and flow, each left out when nil.
+  def line_grant(name, grantee, device, floor:, rate: 115_200, flow: 'none')
     "facet #{name}\n  grantee #{grantee}\n  service @service.line\n  operations none\n  max_request #{floor}\n" \
-      "  in_flight 1\n  reductions 1\n  period_ns 1\n  max_heap_size 1\n" \
-      "  parameter uart \"#{uart}\"\n  parameter rate 115200\n  parameter flow \"#{flow}\"\n"
+      "  in_flight 1\n  reductions 1\n  period_ns 1\n  max_heap_size 1\n  parameter device \"#{device}\"\n" +
+      (rate ? "  parameter rate #{rate}\n" : '') + (flow ? "  parameter flow \"#{flow}\"\n" : '')
   end
 
   # A planner that plans every configured domain, introduction and session, for

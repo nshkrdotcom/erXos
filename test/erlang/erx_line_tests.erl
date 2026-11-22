@@ -25,6 +25,10 @@ line() ->
     {ok, Line} = erx_line:start_link(fun(L) -> {ok, spawn_link(fun() -> driver(L, Test) end)} end),
     unlink(Line),
     Driver = driver_started(),
+    #{line => Line, grant => tree(Line), driver => Driver}.
+
+%% A grant of Line's tree, with the fids line/0 describes.
+tree(Line) ->
     {ok, Grant} = erx_fs:start_link(erx_line_fs, Line, rw),
     unlink(Grant),
     {ok, _} = call(Grant, {attach, 1, ?NOFID, <<"user">>, ?ERX_LINE_TREE_BYTES, 0}),
@@ -36,7 +40,20 @@ line() ->
     {ok, _, _} = call(Grant, {lopen, 3, ?O_WRONLY}),
     {ok, _, _} = call(Grant, {lopen, 4, ?O_WRONLY}),
     {ok, _, _} = call(Grant, {lopen, 5, ?O_RDONLY}),
-    #{line => Line, grant => Grant, driver => Driver}.
+    Grant.
+
+%% A start function whose starts answer Answers in turn, each a refusal or ok, which
+%% starts the model driver.
+starts(Answers) ->
+    Test = self(),
+    Starts = spawn_link(fun() -> lists:foreach(fun(Answer) -> receive {next, From} -> From ! {start, Answer} end end, Answers) end),
+    fun(L) ->
+        Starts ! {next, self()},
+        receive
+            {start, ok} -> {ok, spawn_link(fun() -> driver(L, Test) end)};
+            {start, Refused} -> Refused
+        end
+    end.
 
 stop(#{line := Line, grant := Grant}) ->
     exit(Grant, kill),
@@ -234,6 +251,60 @@ a_reset_drops_what_the_old_driver_read_test() ->
     ?assertEqual({ok, <<"new">>}, call(Grant, {read, 2, 0, 16})),
     stop(Line).
 
+%% A driver that does not start, as on an empty transport, leaves the line broken with
+%% no driver rather than ending it, so its supervisor restarts nothing: reads and writes
+%% of data answer eio, a reset whose fresh driver does not start answers eio, and the
+%% next reset whose driver starts mends the line.
+a_driver_that_does_not_start_leaves_the_line_broken_test() ->
+    %% A line whose start crashed would take the test with it; trapping makes it a failure.
+    Trap = process_flag(trap_exit, true),
+    Started = erx_line:start_link(starts([{error, no_device}, {error, ebusy}, ok])),
+    process_flag(trap_exit, Trap),
+    {ok, Keeper} = Started,
+    unlink(Keeper),
+    Grant = tree(Keeper),
+    ?assertEqual({error, eio}, call(Grant, {read, 2, 0, 16})),
+    ?assertEqual({error, eio}, call(Grant, {write, 3, 0, <<"cmd">>})),
+    ?assertEqual({error, eio}, call(Grant, {write, 4, 0, <<"reset">>})),
+    ?assert(is_process_alive(Keeper)),
+    ?assertEqual({ok, 5, 0}, call(Grant, {write, 4, 0, <<"reset">>})),
+    Driver = driver_started(),
+    ok = input(Driver, <<"up">>),
+    ?assertEqual({ok, <<"up">>}, call(Grant, {read, 2, 0, 16})),
+    stop(#{line => Keeper, grant => Grant}).
+
+%% A driver that ends outside a reset, as a broken queue ends one, leaves the line broken
+%% with no driver as well, and the line lives on: data answers eio until a reset starts
+%% a fresh driver.
+a_driver_s_end_leaves_the_line_broken_until_a_reset_test() ->
+    #{grant := Grant, line := Keeper, driver := Driver} = Line = line(),
+    Monitor = monitor(process, Driver),
+    exit(Driver, broken_queue),
+    receive {'DOWN', Monitor, process, Driver, _} -> ok end,
+    _ = sys:get_state(Keeper),
+    ?assertEqual({error, eio}, call(Grant, {read, 2, 0, 16})),
+    ?assertEqual({error, eio}, call(Grant, {write, 3, 0, <<"cmd">>})),
+    ?assertEqual({ok, 5, 0}, call(Grant, {write, 4, 0, <<"reset">>})),
+    Fresh = driver_started(),
+    ok = input(Fresh, <<"up">>),
+    ?assertEqual({ok, <<"up">>}, call(Grant, {read, 2, 0, 16})),
+    stop(Line).
+
+%% Resets queued behind one whose fresh driver does not start each begin in turn, the
+%% ones with no driver to end at once, so none is left waiting.
+resets_queued_behind_a_failed_start_each_run_test() ->
+    Trap = process_flag(trap_exit, true),
+    Started = erx_line:start_link(starts([ok, {error, no_device}, {error, no_device}, ok])),
+    process_flag(trap_exit, Trap),
+    {ok, Keeper} = Started,
+    unlink(Keeper),
+    _ = driver_started(),
+    Grant = tree(Keeper),
+    Resets = [send(Grant, {write, 4, 0, <<"reset">>}) || _ <- [1, 2, 3]],
+    ?assertEqual([{error, eio}, {error, eio}, {ok, 5, 0}], [reply_within(Reset, 1000) || Reset <- Resets]),
+    _ = driver_started(),
+    stop(#{line => Keeper, grant => Grant}).
+
 %% ctl takes reset alone; anything else is einval, and ctl does not open for reading.
 ctl_takes_reset_alone_test() ->
     #{grant := Grant} = Line = line(),
@@ -334,18 +405,19 @@ format_status_hides_the_message_the_log_and_the_reason_test() ->
     Status = erx_line:format_status(
                #{message => {erx_fs_wait, Wait, {write, 0, Secret}},
                  log => [{in, {erx_console_input, Secret}}],
-                 reason => {driver_ended, {badmatch, Secret}}}),
+                 reason => {grants_ended, {badmatch, Secret}}}),
     ?assertEqual(nomatch, string:find(lists:flatten(io_lib:format("~0tp", [Status])), "MESSAGE-SECRET")),
-    ?assertEqual(driver_ended, maps:get(reason, Status)),
+    ?assertEqual(grants_ended, maps:get(reason, Status)),
     ?assertEqual([], maps:get(log, Status)),
     ?assertMatch({erx_console_input, 14}, maps:get(message, erx_line:format_status(
         #{message => {erx_console_input, Secret}}))).
 
 %% The keeper's exit reason, which every report of its end quotes, names why and holds no
-%% term of the driver's.
-the_keepers_exit_reason_holds_no_term_of_the_driver_test() ->
-    #{line := Line, driver := Driver} = line(),
+%% term of the grants' reason. A driver's end does not end the keeper (above).
+the_keepers_exit_reason_holds_no_term_of_the_grants_test() ->
+    #{line := Line, grant := Grant} = Fixture = line(),
     Keeper = monitor(process, Line),
-    exit(Driver, {boom, <<"DRIVER-SECRET">>}),
-    receive {'DOWN', Keeper, process, Line, Reason} -> ?assertEqual({driver_ended, boom}, Reason)
-    after 1000 -> erlang:error(keeper_kept) end.
+    ok = sys:terminate(grants(Fixture), {boom, <<"GRANTS-SECRET">>}),
+    receive {'DOWN', Keeper, process, Line, Reason} -> ?assertEqual({grants_ended, boom}, Reason)
+    after 1000 -> erlang:error(keeper_kept) end,
+    exit(Grant, kill).

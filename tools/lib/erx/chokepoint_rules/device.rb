@@ -25,7 +25,7 @@ module Erx
     # device, whose registers it reaches through the device NIF (docs/design-pcie.md,
     # "Processes" and "The bridge seam").
     DRIVER_APPLICATIONS = %w[erx_blk erx_fb erx_pcie erx_rtc].freeze
-    UART_DRIVERS = %w[erx_pl011 erx_mini_uart].freeze
+    UART_DRIVERS = %w[erx_pl011 erx_mini_uart erx_virtio_console].freeze
     XHCI = 'erlang/apps/erx_usb/src/erx_xhci.erl'
 
     # A call of erx_device's issuing function name: erx_device followed by
@@ -311,16 +311,19 @@ XHCI_HARNESS = Chokepoints::Site.new(glob: 'test/fixtures/erx_device_xhci_harnes
         # the virtio-gpu driver requests its pure core built and the virtio-input
         # driver its empty event buffers, to devices handed no medium (docs/design-display.md, "The display device"),
         # and the xHCI controller process the commands and transfers its pure core built
-        # (docs/design-usb.md, "The controller process"). Refused
+        # (docs/design-usb.md, "The controller process"), and the virtio-console driver
+        # the line's bytes and its empty receive buffers, to a device handed no medium
+        # (docs/design-bluetooth.md, "The line on QEMU `virt`"). Refused
         # outside them: erx_device:post as a remote call or fun, erx_device with
         # post as an apply's next argument, and any import from erx_device.
         Chokepoints::ErlangForbidden.new(
-          name: 'device-posters', rule: "only the block driver's one write path, erx_blk_write, the network transports and the " \
-                                        'virtio-gpu and virtio-input drivers and the xHCI controller process call erx_device:post/4, ' \
-                                        'and each builds every request it posts',
+          name: 'device-posters', rule: "only the block driver's one write path, erx_blk_write, the network transports, the " \
+                                        'virtio-gpu, virtio-input and virtio-console drivers and the xHCI controller process call ' \
+                                        'erx_device:post/4, and each builds every request it posts',
           design: 'docs/design-storage.md#data-model', pattern: DEVICE_ISSUE.call('post'),
           sites: [BLK_WRITE, 'erlang/apps/erx_net/erxos/erx_virtio_net.erl', 'erlang/apps/erx_net/erxos/erx_genet.erl',
-                  'erlang/apps/erx_fb/src/erx_virtio_gpu.erl', 'erlang/apps/erx_fb/src/erx_virtio_input.erl', XHCI],
+                  'erlang/apps/erx_fb/src/erx_virtio_gpu.erl', 'erlang/apps/erx_fb/src/erx_virtio_input.erl',
+                  'erlang/apps/erx_uart/src/erx_virtio_console.erl', XHCI],
           seed: { 'erlang/apps/erx_blk/src/seeded.erl' => "f(D) -> erx_device:post(D, 0, <<>>, 0).\n",
                   'erlang/apps/erx_blk/src/seeded_import.erl' => "-import(erx_device, [post/4]).\n" }
         ),

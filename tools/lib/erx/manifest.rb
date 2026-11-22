@@ -2169,7 +2169,7 @@ module Erx
       # "Services, facets and their parameter schemas"): windows_grant is property 18,
       # check_display_grants, which reads pixels, session and front, and range-checks windows and
       # clipboard as their declarations bound them. line_grant is property 8's line clause,
-      # check_line_grants, which reads uart and flow and range-checks rate. net_grant is
+      # check_line_grants, which reads device, rate and flow and range-checks rate. net_grant is
       # property 15's parameter clause, check_net_ports, which reads a net facet's ports and
       # listen; its sockets and buffers their declarations alone bound, and the grant
       # enforces all four at run time (abi/services/net.txt). files_grant takes a files
@@ -2180,7 +2180,7 @@ module Erx
       # takes the facets of the services that name it (grant_checker), whatever their
       # interface.
       GRANT_CHECKERS = { 'windows_grant' => %w[windows pixels clipboard session front].freeze,
-                         'line_grant' => %w[uart rate flow].freeze,
+                         'line_grant' => %w[device rate flow].freeze,
                          'net_grant' => %w[sockets buffers ports listen].freeze,
                          'files_grant' => %w[rights tree].freeze }.freeze
 
@@ -2299,10 +2299,14 @@ module Erx
       # interface, so the name the Erlang side keys on (erx_uart_sup:line_grants/1, the
       # serve call, the facet-names check, erx_ns:place/1) and the interface the root keys
       # on (boot_manifest.c) pick the same service. Each grant of a line service, of facets
-      # with values, their resolved parameters in the same order, names by its uart a UART
-      # whose unit the system domain holds, which is neither the console's nor the host
-      # link's, is not on the console's interrupt line (check_uart_lines) and which no
-      # other grant names, and holds flow to none or rts_cts. The grantee is a configured
+      # with values, their resolved parameters in the same order, names by its device a
+      # line's device, a UART or a virtio console (role serial), whose unit the system
+      # domain holds, which is neither the console's nor the host link's, is not on the
+      # console's interrupt line (check_uart_lines) and which no other grant names. A UART's
+      # grant states rate and flow, flow none or rts_cts, and any other device's states
+      # neither: a virtio port's queues are its flow control. Every placed serial device is
+      # some grant's (check_serial_devices), so the root, which writes a serial device's
+      # record by its kind row, writes it only for the granted one. The grantee is a configured
       # domain, which mounts the tree its application start reads. The manifest grants the
       # interface at most once, since one line service serves one line (TODO.md, the line's
       # service side); the duplicate check runs first, so it holds once that limit is lifted.
@@ -2323,22 +2327,50 @@ module Erx
         grants = facets.zip(values).select { |row, _| line.call(tables.fetch('services').fetch(row.fetch('service'))) }
         console = @context.platform['console']
         reserved = [console, @context.platform.fetch('hostlink', '')]
-        uarts = grants.map do |row, given|
+        named_devices = grants.map do |row, given|
           named = "line grant #{row.fetch('name')}"
           invalid("#{named} is granted to no configured domain", 'facet.grantee') unless row.fetch('grantee_kind') == grantee_kind('domain')
-          device = tables.fetch('devices').fetch(given.fetch('uart'))
+          device = tables.fetch('devices').fetch(given.fetch('device'))
           path = device.fetch('path')
-          invalid("#{named}'s uart #{path} names no UART", 'facet.parameter') unless device.fetch('role') == device_role('uart')
-          invalid("#{named}'s uart #{path} is the console's or the host link's", 'facet.parameter') if reserved.include?(path)
+          check_line_device(named, device, given)
+          invalid("#{named}'s device #{path} is the console's or the host link's", 'facet.parameter') if reserved.include?(path)
           unless unit_holder(tables, path) == @codec.constant('mf_none')
-            invalid("#{named}'s uart #{path} is not the system domain's", 'facet.parameter')
+            invalid("#{named}'s device #{path} is not the system domain's", 'facet.parameter')
           end
-          invalid("#{named}'s flow is none or rts_cts", 'facet.parameter') unless %w[none rts_cts].include?(given.fetch('flow'))
-          given.fetch('uart')
+          given.fetch('device')
         end
-        check_uart_lines(tables, console, uarts.to_h { |uart| [tables.fetch('devices').fetch(uart).fetch('path'), 'facet.parameter'] })
-        invalid('two line grants name one UART', 'facet.parameter') unless uarts.uniq.size == uarts.size
+        check_uart_lines(tables, console, named_devices.to_h { |index| [tables.fetch('devices').fetch(index).fetch('path'), 'facet.parameter'] })
+        invalid('two line grants name one device', 'facet.parameter') unless named_devices.uniq.size == named_devices.size
         invalid('a manifest holds at most one line grant', 'facet.service') if grants.size > 1
+        check_serial_devices(tables.fetch('devices'), named_devices)
+      end
+
+      # A line grant's device by its role: a UART's grant states rate, which its
+      # declaration holds to 115200, and flow, none or rts_cts; a virtio console's states
+      # neither; a device of any other role is no line's.
+      def check_line_device(named, device, given)
+        path = device.fetch('path')
+        case device.fetch('role')
+        when device_role('uart')
+          invalid("#{named}'s UART #{path} states no rate", 'facet.parameter') unless given.key?('rate')
+          invalid("#{named}'s flow is none or rts_cts", 'facet.parameter') unless %w[none rts_cts].include?(given['flow'])
+        when device_role('serial')
+          invalid("#{named}'s device #{path} is no UART, so it states no rate or flow", 'facet.parameter') if given.key?('rate') || given.key?('flow')
+        else
+          invalid("#{named}'s device #{path} names no UART or serial device", 'facet.parameter')
+        end
+      end
+
+      # Rule serial-device-granted (property 8): every placed serial device is the device of
+      # a line grant. The root writes a record for a device of the serial kind row wherever
+      # it is placed, so a serial device no grant names would be a line nothing serves, its
+      # DMA memory reserved for nothing.
+      def check_serial_devices(devices, named)
+        devices.each_with_index do |device, index|
+          next unless device.fetch('role') == device_role('serial') && !named.include?(index)
+
+          invalid("serial device #{device.fetch('path')} is named by no line grant", 'devices.role')
+        end
       end
 
       # Property 8's clause for the input interface (docs/design-system.md, "The manifest";

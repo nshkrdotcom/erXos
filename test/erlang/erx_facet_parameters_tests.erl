@@ -12,9 +12,9 @@
 %% the grant's limits carry each by name, and erx_domain_mints charges the
 %% display the pixel area the row asks for. Each refused-NAME.bin beside it
 %% forges the grant's parameter rows, and the view refuses it. line.bin is the
-%% configured domains' manifest with alpha granted the line, its uart the
-%% device row whose index line-uart holds, and the reader refuses
-%% unreadable-device-past-the-table.bin, its uart one past the device table.
+%% configured domains' manifest with alpha granted the line, its device the
+%% device row whose index line-device holds, and the reader refuses
+%% unreadable-device-past-the-table.bin, its device one past the device table.
 %% operations.bin is the development manifest with root's template granted two
 %% of inspect's operations, which reach the grant's limits by name in number
 %% order; each forged-operations-NAME.bin forges its operation rows, or names
@@ -60,14 +60,14 @@ the_pixel_charge_follows_the_row_test() ->
     ?assertEqual({4194304, 5}, erx_domain_mints:pair_area({5, {configured, Server}},
                                                          {6, {rows, [{Name, Server, Limits}]}}, Mints)).
 
-the_line_grant_s_uart_is_its_device_row_test() ->
+the_line_grant_s_device_is_its_device_row_test() ->
     {ok, Bytes} = file:read_file("line.bin"),
-    {ok, Text} = file:read_file("line-uart"),
+    {ok, Text} = file:read_file("line-device"),
     {ok, {Services, Grants}} = served(Bytes),
     [Name] = [N || {system, N, ?ERX_SERVICE_LINE} <- Services],
     [Limits] = [L || {0, N, system, L} <- Grants, N =:= Name],
-    ?assertMatch(#{uart := _, rate := 115200, flow := <<"none">>}, Limits),
-    ?assertEqual(binary_to_integer(Text), maps:get(uart, Limits)),
+    ?assertMatch(#{device := _, rate := 115200, flow := <<"none">>}, Limits),
+    ?assertEqual(binary_to_integer(Text), maps:get(device, Limits)),
     {ok, Past} = file:read_file("unreadable-device-past-the-table.bin"),
     ?assertEqual(unreadable, served(Past)).
 

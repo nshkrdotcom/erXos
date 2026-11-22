@@ -1085,14 +1085,14 @@ module Erx
 
       # The paths of the UARTs whose records the root writes physical, one for each of its
       # physical kinds (boot_manifest.c, hostlink_kind and line_kind): machine.hostlink's
-      # when the boot asks for the host link, and the uart of each facet of a service whose
+      # when the boot asks for the host link, and the device of each facet of a service whose
       # interface is line, which the manifest check keeps to one grant on a UART that is
       # neither the console's nor the host link's.
       def self.physical_paths(manifest, hostlink:)
         lines = manifest.records.fetch('service', []).select { |service| service.reference('interface') == 'line' }
                         .map { |service| "@service.#{service.name}" }
         uarts = manifest.records.fetch('facet', []).select { |facet| lines.include?(facet.reference('service')) }
-                        .flat_map { |facet| facet.parameters.filter_map { |key, value| value.value if key.value == 'uart' } }
+                        .flat_map { |facet| facet.parameters.filter_map { |key, value| value.value if key.value == 'device' } }
         (hostlink ? [manifest.machine.string('hostlink')] : []) + uarts
       end
       # What a plain erx.arg word used to break: it joins the last flag's arguments.

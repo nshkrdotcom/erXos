@@ -16,7 +16,7 @@
 %% - `-erx_record device ROLE PERIPHERAL PATH BASE SIZE LINE MARK CLOCK INDEX`, the system domain's physical record
 %%   of its host link's UART or its line's, which do no DMA, built by
 %%   liberx/backend/core/boot_manifest.c from the system manifest; INDEX is the device's
-%%   row in the manifest's device table, which a line grant's uart names;
+%%   row in the manifest's device table, which a line grant's device names;
 %% - `-erx_record function ROLE PERIPHERAL BRIDGE BUS DEVICE FUNCTION LINE_H MARK MEM_H MEM_SIZE COHERENT
 %%   ROUTE ADDRESS DATA TABLE_BAR TABLE_OFFSET TABLE_ENTRIES`, then six `WINDOW_H OFFSET SIZE_LOG2`
 %%   triples, a given PCIe function (docs/design-pcie.md, "The catalogue and gives"), written

@@ -27,7 +27,7 @@
  * describes, which the host link's driver alone asks for (docs/design-live.md, "The host
  * link"), when the boot asks for the host link: a machine may have no UART at that path,
  * and a driver's first read of an absent device faults the system domain
- * (docs/design-fiasco.md, "Device records"). A line grant's uart names a third, by its
+ * (docs/design-fiasco.md, "Device records"). A line grant's device names a third, by its
  * device row's index, which becomes the record line_kind describes, which the line
  * service alone asks for (docs/design-bluetooth.md, "The controller's line"). Every
  * physical record ends with its row's index, by which a service matches a grant to it.
@@ -37,7 +37,7 @@ typedef erx_device_kind_t device_kind_t;
 /* Selected by machine.hostlink's path, among the PL011s, the one UART its driver drives. */
 static const device_kind_t hostlink_kind = { ERX_MF_DEVICE_ROLE_UART, "arm,pl011", "hostlink", "pl011", true };
 
-/* Selected by its row's index, which the line grant's uart carries, among the PL011s. */
+/* Selected by its row's index, which the line grant's device carries, among the PL011s; a serial device is a kind row's. */
 static const device_kind_t line_kind = { ERX_MF_DEVICE_ROLE_UART, "arm,pl011", "line", "pl011", true };
 
 /* erx_manifest_open checked every string against the table, so these reads stay inside it. */
@@ -217,7 +217,7 @@ devices_read(const erx_manifest_view_t *view, bool hostlink, uint32_t line_uart,
 }
 
 /*
- * The device row the line grant's uart names, or UINT32_MAX for a manifest with none
+ * The device row the line grant's device names, or UINT32_MAX for a manifest with none
  * (docs/design-bluetooth.md, "The controller's line"): the uart is the line interface's
  * one device parameter, and the manifest check admits at most one line grant.
  * erx_manifest_open checked that the parameter spans partition their table, so a span's

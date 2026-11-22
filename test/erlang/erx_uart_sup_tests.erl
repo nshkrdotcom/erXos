@@ -37,7 +37,21 @@ uarts_on_two_lines_are_two_groups_test() ->
 %% manifest check gives the line interface's service, and none of a configured domain's
 %% service of that name or of another of the system domain's services.
 line_grants_are_the_system_s_line_service_s_test() ->
-    Grant = #{uart => 3, rate => 115200, flow => <<"rts_cts">>},
-    Configured = #{grants => [{1, line, system, Grant}, {1, line, 0, Grant#{uart => 4}},
-                              {1, uart, system, Grant#{uart => 5}}]},
+    Grant = #{device => 3, rate => 115200, flow => <<"rts_cts">>},
+    Configured = #{grants => [{1, line, system, Grant}, {1, line, 0, Grant#{device => 4}},
+                              {1, uart, system, Grant#{device => 5}}]},
     ?assertEqual(#{3 => Grant}, erx_uart_sup:line_grants(Configured)).
+
+%% QEMU virt's Bluetooth suite: a virtio console's line record, a given record whose
+%% line is an object, is a group of its own with no owner, beside the host link's.
+a_virtio_console_line_is_a_group_of_its_own_test() ->
+    Hostlink = {hostlink, uart(<<"/pl011@9040000">>, 40)},
+    Console = {line, #{peripheral => virtio_mmio, path => <<"/virtio_mmio@a000c00">>, index => 7,
+                       window => {object, 1, 3072, 512}, lines => [{object, 2}], memory => {object, 3, 262144},
+                       clock => 0}},
+    ?assertEqual([{40, [Hostlink]}, {{device, <<"/virtio_mmio@a000c00">>}, [Console]}],
+                 erx_uart_sup:groups([Hostlink, Console])),
+    {ok, {_, Children}} = erx_uart_sup:init({group, [Console]}),
+    ?assertEqual([services], [Id || #{id := Id} <- Children]),
+    {ok, {_, Served}} = erx_uart_sup:init({services, [Console]}),
+    ?assertEqual([{line_tree, <<"/virtio_mmio@a000c00">>}], [Id || #{id := Id} <- Served]).

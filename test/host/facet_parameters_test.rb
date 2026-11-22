@@ -22,9 +22,9 @@ require_relative '../../tools/lib/erx/host_os'
 # ERX_ERLC, which make check supplies), under test/erlang/erx_facet_parameters_tests.erl:
 # the grant's limits carry each parameter by name, erx_domain_mints charges the display
 # the row's pixel area, and the view refuses each forged parameter row of parameter_forgeries. The
-# line-grant seed (Erx::ManifestSeeds.line_grant) takes the same road: its grant's uart
+# line-grant seed (Erx::ManifestSeeds.line_grant) takes the same road: its grant's device
 # reaches the terms as the index of its UART's device row, and the manifest's reader, which
-# the view reads through, refuses a uart one past the device table. The net-grant seed
+# the view reads through, refuses a device one past the device table. The net-grant seed
 # (Erx::ManifestSeeds.net_grant) carries sets: its grant's ports, a full set of 16, and
 # listen reach the terms as lists in ascending order, and the view refuses each forgery of
 # NET_FORGED. The operations seed (Erx::ManifestSeeds.operations_grant), root's template granted two
@@ -49,7 +49,7 @@ class FacetParametersTest < Minitest::Test
   FORGED_CASE = 'forged_parameter_rows_are_refused_test'
   OPERATIONS_CASE = 'the_grant_s_limits_carry_its_operations_by_name_test'
   FORGED_OPERATIONS_CASE = 'forged_operation_rows_are_refused_test'
-  LINE_CASE = 'the_line_grant_s_uart_is_its_device_row_test'
+  LINE_CASE = 'the_line_grant_s_device_is_its_device_row_test'
   NET_CASE = 'the_net_grant_s_sets_are_lists_test'
 
   # The grant's packed parameter rows are windows (key 1), pixels (2) and clipboard (3), the
@@ -159,12 +159,12 @@ class FacetParametersTest < Minitest::Test
   end
 
   # The line manifest's device rows, by path, the index of the one its grant names.
-  def line_uart
+  def line_device
     view = codec.open('manifest', line_manifest)
     view.count('devices').times.find { |index| view.string(view.fetch('devices', index).fetch('path')) == Erx::ManifestSeeds::LINE_UART }
   end
 
-  # The line manifest with its grant's uart row naming one past the device table.
+  # The line manifest with its grant's device row naming one past the device table.
   def line_past_the_table
     header = codec.open('manifest', line_manifest).header
     table = header.fetch('facet_parameters')
@@ -236,7 +236,7 @@ class FacetParametersTest < Minitest::Test
       File.binwrite(File.join(work, 'line.bin'), line_manifest)
       File.binwrite(File.join(work, 'operations.bin'), operations_manifest)
       operation_forgeries.each { |name, forge| File.binwrite(File.join(work, "forged-operations-#{name}.bin"), forged_operations_manifest(forge)) }
-      File.write(File.join(work, 'line-uart'), line_uart.to_s)
+      File.write(File.join(work, 'line-device'), line_device.to_s)
       File.binwrite(File.join(work, 'unreadable-device-past-the-table.bin'), line_past_the_table)
       ErlangBuild.compile(work, applications: %w[erx_domain], tests: TESTS)
       build_nif(work, sources.to_h { |path, text| [path, File.join(work, File.basename(path)).tap { |copy| File.write(copy, text) }] })

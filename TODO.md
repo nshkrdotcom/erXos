@@ -164,7 +164,7 @@ document's "residual risks accepted" paragraph.
   8 items (4 Medium, 4 Low).
 * [Bluetooth](docs/todo-bluetooth.md#planned-features): the Bluetooth host and controller, GATT and the security manager.
   9 items (1 High, 8 Medium).
-  10 items (2 High, 8 Medium).
+  10 items (1 High, 9 Medium).
   28 items (18 Medium, 10 Low).
 * [Shell and programs](docs/todo-shell.md#planned-features): the command shell (rc), programs, the console line and the terminal.
   15 items (4 Medium, 11 Low).

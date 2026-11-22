@@ -65,7 +65,17 @@ class ErxLineTest < Minitest::Test
              module_path: LINE,
              anchor: '[{Wait, shown_request(Request), State}',
              replacement: '[{Wait, Request, State}',
-             catching_case: 'the_status_shows_no_byte_of_the_line_test')
+             catching_case: 'the_status_shows_no_byte_of_the_line_test'),
+    Seed.new(fault: 'a line that crashes when its driver does not start',
+             module_path: LINE,
+             anchor: '{ok, started(Start(self()), #line{start = Start, grants = Grants, driver = none})}',
+             replacement: "{ok, Driver} = Start(self()),\n    {ok, #line{start = Start, grants = Grants, driver = Driver}}",
+             catching_case: 'a_driver_that_does_not_start_leaves_the_line_broken_test'),
+    Seed.new(fault: "a driver's end taken as any other message, so the line waits on no driver",
+             module_path: LINE,
+             anchor: "event({'EXIT', Driver, _}, #line{driver = Driver} = L) when Driver =/= none ->\n    no_driver(L);\n",
+             replacement: '',
+             catching_case: 'a_driver_s_end_leaves_the_line_broken_until_a_reset_test')
   ].freeze
 
   def test_the_cases_pass

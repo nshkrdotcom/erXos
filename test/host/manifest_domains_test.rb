@@ -1445,7 +1445,7 @@ class ManifestDomainsTest < Minitest::Test
                                                        .merge(platform: ManifestContextFixture.line_platform(@platform, lines: lines)))
   end
 
-  def with_line(*grants, base: @source, holders: {}) = ManifestContextFixture.with_line(base, *grants, holders: holders)
+  def with_line(*grants, base: @source, holders: {}, serial: false) = ManifestContextFixture.with_line(base, *grants, holders: holders, serial: serial)
   def line_grant(*given, **options)
     ManifestContextFixture.line_grant(*given, floor: @codec.constant('files_max_frame_min'), **options)
   end
@@ -1456,8 +1456,8 @@ class ManifestDomainsTest < Minitest::Test
     assert_match message, error.message
   end
 
-  # A line grant's uart, a device reference, is packed as its device row's index.
-  def test_a_line_grant_packs_its_uart_as_its_device_row
+  # A line grant's device, a device reference, is packed as its device row's index.
+  def test_a_line_grant_packs_its_device_as_its_device_row
     view = @codec.open('manifest', admit(with_line(line_grant('la', '@domain.alpha', '/pl011@9050000')), context: line_context).bytes)
     uart = rows(view, 'devices').index { |device| view.string(device.fetch('path')) == '/pl011@9050000' }
     kinds = %w[device u64 identifier].map { |kind| @codec.member('mf_parameter_kind', kind) }
@@ -1465,18 +1465,46 @@ class ManifestDomainsTest < Minitest::Test
                  rows(view, 'facet_parameters').map { |row| [*row.values_at('key', 'kind', 'scalar'), view.string(row.fetch('bytes')), row.fetch('index')] }
   end
 
-  # Seeds: a uart naming no placed device, a device that is no UART, the console's and
-  # the host link's UARTs, a UART another domain holds, and a flow of neither word.
+  # Seeds: a device naming no placed device, a device that is neither a UART nor a serial
+  # device, the console's and the host link's UARTs, a UART another domain holds, a flow
+  # of neither word, and a UART's grant without its rate or its flow.
   def test_a_line_grant_names_a_uart_of_the_system_domain_s_that_no_other_use_takes
-    { '/pl011@9070000' => /names no placed device/, '/virtio_mmio@a003e00' => /names no UART/,
+    { '/pl011@9070000' => /names no placed device/, '/virtio_mmio@a003e00' => /names no UART or serial device/,
       @platform.fetch('console') => /console's or the host link's/,
-      @platform.fetch('hostlink') => /console's or the host link's/ }.each do |uart, message|
-      refused_line('facet.parameter', with_line(line_grant('la', '@domain.alpha', uart)), message)
+      @platform.fetch('hostlink') => /console's or the host link's/ }.each do |device, message|
+      refused_line('facet.parameter', with_line(line_grant('la', '@domain.alpha', device)), message)
     end
     refused_line('facet.parameter', with_line(line_grant('la', '@domain.alpha', '/pl011@9050000'), holders: { 'line_a' => '@domain.beta' }),
                  /not the system domain's/)
     refused_line('facet.parameter', with_line(line_grant('la', '@domain.alpha', '/pl011@9050000', flow: 'xon')), /none or rts_cts/)
+    refused_line('facet.parameter', with_line(line_grant('la', '@domain.alpha', '/pl011@9050000', rate: nil)), /states no rate/)
+    refused_line('facet.parameter', with_line(line_grant('la', '@domain.alpha', '/pl011@9050000', flow: nil)), /none or rts_cts/)
     admit(with_line(line_grant('la', '@domain.alpha', '/pl011@9050000', flow: 'rts_cts')), context: line_context)
+  end
+
+  # A virtio console's line grant names its serial device and states no rate or flow,
+  # and the device is the system domain's. Seeds: a serial grant with a rate, one with a
+  # flow, and a serial device another domain holds.
+  def test_a_line_grant_names_a_serial_device_without_a_rate_or_a_flow
+    serial = ManifestContextFixture::LINE_SERIAL.fetch(1)
+    view = @codec.open('manifest', admit(with_line(line_grant('la', '@domain.alpha', serial, rate: nil, flow: nil), serial: true),
+                                         context: line_context).bytes)
+    index = rows(view, 'devices').index { |device| view.string(device.fetch('path')) == serial }
+    assert_equal [[1, index]], rows(view, 'facet_parameters').map { |row| row.values_at('key', 'index') }
+    refused_line('facet.parameter', with_line(line_grant('la', '@domain.alpha', serial, flow: nil), serial: true), /states no rate or flow/)
+    refused_line('facet.parameter', with_line(line_grant('la', '@domain.alpha', serial, rate: nil), serial: true), /states no rate or flow/)
+    refused_line('facet.parameter', with_line(line_grant('la', '@domain.alpha', serial, rate: nil, flow: nil), serial: true,
+                                              holders: { 'line_serial' => '@domain.beta' }), /not the system domain's/)
+  end
+
+  # Rule serial-device-granted. Seeds: a serial device the system domain holds that no
+  # line grant names, beside a UART's grant and with no line grant at all; and one a
+  # configured domain holds.
+  def test_every_placed_serial_device_is_named_by_a_line_grant
+    message = %r{serial device /virtio_mmio@a008000 is named by no line grant}
+    refused_line('devices.role', with_line(line_grant('la', '@domain.alpha', '/pl011@9050000'), serial: true), message)
+    refused_line('devices.role', with_line(serial: true), message)
+    refused_line('devices.role', with_line(serial: true, holders: { 'line_serial' => '@domain.beta' }), message)
   end
 
   # Seeds: a line UART on the console's interrupt line, and a line service a configured
@@ -1507,7 +1535,7 @@ class ManifestDomainsTest < Minitest::Test
   # service serves one line (TODO.md); and a grant to a session template.
   def test_a_manifest_grants_one_line_to_a_configured_domain
     refused_line('facet.parameter', with_line(line_grant('la', '@domain.alpha', '/pl011@9050000'),
-                                              line_grant('lb', '@domain.beta', '/pl011@9050000')), /two line grants/)
+                                              line_grant('lb', '@domain.beta', '/pl011@9050000')), /two line grants name one device/)
     refused_line('facet.service', with_line(line_grant('la', '@domain.alpha', '/pl011@9050000'),
                                             line_grant('lb', '@domain.beta', '/pl011@9060000')), /at most one line grant/)
     refused_line('facet.grantee', with_line(line_grant('ls', '@session.system', '/pl011@9050000'),
@@ -1526,9 +1554,9 @@ class ManifestDomainsTest < Minitest::Test
   # the line checker's, which refuses its uart, the console's; a checker choosing its
   # facets by interface would accept it unchecked.
   def test_a_facet_goes_to_the_checker_its_service_names_whatever_its_interface
-    codec = codec_with("service spare 98\n  served_as tree\n  parameter uart 1 device one target devices checked_by line_grant\n" \
-                       "  parameter rate 2 u64 one range 115200 115200 checked_by line_grant\n" \
-                       "  parameter flow 3 identifier one bytes 7 checked_by line_grant\n")
+    codec = codec_with("service spare 98\n  served_as tree\n  parameter device 1 device one target devices checked_by line_grant\n" \
+                       "  parameter rate 2 u64 optional range 115200 115200 checked_by line_grant\n" \
+                       "  parameter flow 3 identifier optional bytes 7 checked_by line_grant\n")
     context = Erx::Manifest::Context.new(**ManifestContextFixture.arguments(codec)
                                                                 .merge(platform: ManifestContextFixture.line_platform(@platform)))
     grant = line_grant('sp', '@domain.alpha', @platform.fetch('console')).sub('@service.line', '@service.sp')

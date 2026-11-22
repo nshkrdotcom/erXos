@@ -3,9 +3,10 @@
 
 -module(erx_uart_sup).
 -moduledoc """
-The system domain's UARTs that the console does not drive: the host link's
-and the line trees' (docs/design-shared-devices.md, "Lines inside a
-domain"; docs/design-bluetooth.md, "The shared line 153").
+The system domain's UARTs that the console does not drive, the host link's
+and the line trees', and a line tree's virtio console
+(docs/design-shared-devices.md, "Lines inside a domain";
+docs/design-bluetooth.md, "The shared line 153", "The line on QEMU `virt`").
 
 `erx_uart_sup` is `one_for_one` over **line groups**, one for each
 interrupt line those UARTs use, so a line has one binder whichever services
@@ -19,13 +20,17 @@ a `rest_for_one` supervisor of, in order:
    line UART on it (erx_line), which starts its own driver, erx_pl011
    started fresh from the record.
 
+A line tree's virtio console (record role `line`, peripheral
+`virtio_mmio`, a given record whose line is an object, not a number) is a
+group of its own with no owner, whose line tree starts erx_virtio_console.
+
 So an owner's end restarts exactly the services on its line, a new owner
 binds the line before any driver joins it, and one service's failure
 restarts no other. The UARTs are the root's device records of role
 `hostlink` and `line` (erx_device_record): the root writes the host link's
-when the boot asks for the host link and the line's for the UART the line
-grant's `uart` names, at most one of each. A machine with neither starts no
-group.
+when the boot asks for the host link and the line's for the device the line
+grant's `device` names, a UART's physical record or a virtio console's given
+one, at most one of each. A machine with neither starts no group.
 """.
 -behaviour(supervisor).
 
@@ -34,7 +39,8 @@ group.
 
 -export_type([member/0]).
 
-%% A UART a group starts a service on: the host link's, or a line tree's.
+%% A device a group starts a service on: the host link's UART, or a line tree's
+%% UART or virtio console.
 -type member() :: {hostlink | line, erx_device_record:spec()}.
 
 -doc "Starts the line groups of the root's host link and line records.".
@@ -45,10 +51,11 @@ start_link() ->
 -doc """
 The line groups of Members, in the order their lines first appear, each its
 line's number and its members, the host link's before the line trees'. A
-record's line is its one interrupt line, whether it is marked shared or
-direct, so two members on one line are always one group. Pure.
+physical record's line is its one interrupt line, whether it is marked shared
+or direct, so two members on one line are always one group; a given record,
+a virtio console's, is a group of its own, keyed by its path. Pure.
 """.
--spec groups([member()]) -> [{non_neg_integer(), [member()]}].
+-spec groups([member()]) -> [{non_neg_integer() | {device, binary()}, [member()]}].
 groups(Members) ->
     [{Line, on(Line, hostlink, Members) ++ on(Line, line, Members)}
      || Line <- lists:uniq([line(Spec) || {_Role, Spec} <- Members])].
@@ -66,22 +73,26 @@ init(top) ->
             {stop, Reason}
     end;
 init({group, Members}) ->
-    Owners = erx_irq_line:owners([{erx_pl011, [Spec || {_Role, Spec} <- Members]}]),
+    Owners = erx_irq_line:owners([{erx_pl011, [Spec || {_Role, #{peripheral := pl011} = Spec} <- Members]}]),
     {ok, {#{strategy => rest_for_one, intensity => 3, period => 60},
           [owner(Spec, Index) || {Spec, Index} <- Owners] ++ [services(Members)]}};
 init({services, Members}) ->
     {ok, {#{strategy => one_for_one, intensity => 3, period => 60}, [service(Member) || Member <- Members]}}.
 
-%% The host link's record and the line's, each at most one.
+%% The host link's record and the line's, a UART's or a virtio console's, each at most
+%% one.
 members() ->
     maybe
-        {ok, Hostlink} ?= one(hostlink),
-        {ok, Line} ?= one(line),
+        {ok, Hostlink} ?= one(hostlink, pl011),
+        {ok, Line} ?= one(line, pl011),
+        {ok, Console} ?= one(line, virtio_mmio),
         {ok, Grants} ?= configured_grants(Line),
-        {ok, [{hostlink, Spec} || Spec <- Hostlink] ++ [{line, fresh(Spec, Grants)} || Spec <- Line]}
+        {ok, [{hostlink, Spec} || Spec <- Hostlink] ++ [{line, fresh(Spec, Grants)} || Spec <- Line] ++
+             [{line, Spec} || Spec <- Console]}
     end.
 
-%% The system manifest's line grants (line_grants/1), when the root wrote a line record.
+%% The system manifest's line grants (line_grants/1), when the root wrote a UART's line
+%% record; a virtio console's grant states nothing its driver takes.
 configured_grants([]) ->
     {ok, #{}};
 configured_grants(_Line) ->
@@ -91,7 +102,7 @@ configured_grants(_Line) ->
     end.
 
 %% A line record as erx_pl011 starts it fresh, with the rate and the flow of the grant
-%% whose uart is the record's device row, the one row the root wrote the record for.
+%% whose device is the record's device row, the one row the root wrote the record for.
 fresh(#{index := Index} = Spec, Grants) ->
     #{Index := #{rate := Rate, flow := Flow}} = Grants,
     Spec#{init => fresh, rate => Rate, flow => flow(Flow)}.
@@ -102,24 +113,26 @@ flow(<<"rts_cts">>) -> rts_cts.
 -doc """
 The grants of Configured, what erx_domain_lib:configured/0 reads of the
 system manifest, of the system domain's service named line, by the device
-row their uart names: the manifest check names the line interface's service
+row their device names: the manifest check names the line interface's service
 line, the one name of its lookup, its serve call and its grantees' mount
 (docs/design-system.md, property 8). Pure.
 """.
 -spec line_grants(#{grants := [{term(), atom(), non_neg_integer() | system, map()}], atom() => term()}) ->
           #{non_neg_integer() => map()}.
 line_grants(#{grants := Grants}) ->
-    #{Uart => Grant || {_Grantee, line, system, #{uart := Uart} = Grant} <- Grants}.
+    #{Device => Grant || {_Grantee, line, system, #{device := Device} = Grant} <- Grants}.
 
-one(Role) ->
-    case erx_device_record:find(Role, pl011) of
+one(Role, Peripheral) ->
+    case erx_device_record:find(Role, Peripheral) of
         {ok, [_, _ | _]} -> {error, {Role, "more than one device record of role " ++ atom_to_list(Role)}};
         Found -> Found
     end.
 
-%% A record's one interrupt line, the receive line erx_pl011 attaches.
-line(#{lines := [{shared, Line}]}) -> Line;
-line(#{lines := [Line]}) when is_integer(Line) -> Line.
+%% A physical record's one interrupt line, the receive line erx_pl011 attaches; a given
+%% record's line is an object of its own, so its group is its device's.
+line(#{lines := [{shared, Line}]}) when is_integer(Line) -> Line;
+line(#{lines := [Line]}) when is_integer(Line) -> Line;
+line(#{peripheral := virtio_mmio, path := Path}) -> {device, Path}.
 
 group(Line, Members) ->
     #{id => {line, Line},
@@ -150,8 +163,12 @@ service({hostlink, Spec}) ->
       modules => [erx_hostlink]};
 service({line, Spec}) ->
     #{id => {line_tree, maps:get(path, Spec)},
-      start => {erx_line, start_link, [fun(Line) -> erx_pl011:start_link(Spec, Line) end]},
+      start => {erx_line, start_link, [fun(Line) -> driver(Spec, Line) end]},
       restart => permanent,
       shutdown => 2000,
       type => worker,
       modules => [erx_line]}.
+
+%% The line's driver, by its record's peripheral.
+driver(#{peripheral := pl011} = Spec, Line) -> erx_pl011:start_link(Spec, Line);
+driver(#{peripheral := virtio_mmio} = Spec, Line) -> erx_virtio_console:start_link(Spec, Line).
