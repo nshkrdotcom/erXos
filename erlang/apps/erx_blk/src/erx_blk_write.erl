@@ -33,6 +33,18 @@
 %% (test/erlang/erx_blk_write_sd_tests.erl and erx_blk_sd_fuzz.erl); sd_issue/2 and sd_feed/3
 %% are tested against a recording stand-in for the device NIF
 %% (test/erlang/stand_in/erx_device.erl).
+%%
+%% A USB medium's act is a Bulk-Only command wrapper (CBW) whose command writes the
+%% medium, then that command's data phase on bulk-out (docs/design-usb.md, "The block
+%% transport"). The BOT engine names a command of erx_usb_bot_core, never its bytes, and
+%% its function performs the engine's `command` and `data_out` actions by calling
+%% bot_command/3 and bot_data_out/3, the only callers of erx_usb_pipe:bulk_out/3.
+%% bot_cbw/2 builds every CBW from the SCSI table of abi/formats/usb.txt (BOT 1.0, 5.1;
+%% the command blocks of sys/cam/scsi/scsi_all.h, struct scsi_test_unit_ready,
+%% scsi_request_sense, scsi_inquiry, scsi_read_capacity, scsi_read_capacity_16,
+%% scsi_sync_cache, scsi_rw_10 and scsi_rw_16): READ(10) and WRITE(10), or READ(16) and
+%% WRITE(16) for a request reaching past sector 2^32 - 1, and SYNCHRONIZE CACHE(10) of the
+%% whole medium. Like write/6, bot_command/3 does not yet apply U4's trial rule.
 
 -module(erx_blk_write).
 
@@ -40,6 +52,7 @@
 -export([sd_command/1, sd_read_command/3, sd_write_command/3, sd_status_command/1]).
 -export([sd_plan/1, sd_read_plan/3, sd_write_plan/3, sd_status_plan/1, sd_shape/1]).
 -export([sd_issue/2, sd_feed/3]).
+-export([bot_cbw/2, bot_command/3, bot_data_out/3]).
 
 -export_type([sd_command/0, sd_plan/0]).
 
@@ -132,6 +145,47 @@ write(Dev, Queue, Tag, Sector, Data, Capacity) ->
 -spec flush(erx_device:device(), erx_device:queue(), non_neg_integer()) -> ok | {error, full | broken}.
 flush(Dev, Queue, Tag) ->
     post(Dev, Queue, Tag, flush_segments()).
+
+-doc "Posts the CBW of Command under Tag on bulk-out Pipe; its completion reaches the caller.".
+-spec bot_command(erx_usb_pipe:pipe(), non_neg_integer(), erx_usb_bot_core:command()) -> ok.
+bot_command(Pipe, Tag, Command) ->
+    erx_usb_pipe:bulk_out(Pipe, Tag, bot_cbw(Tag, Command)).
+
+-doc "Posts the data phase of the write Command, whose CBW bot_command/3 posted under Tag.".
+-spec bot_data_out(erx_usb_pipe:pipe(), non_neg_integer(), erx_usb_bot_core:command()) -> ok.
+bot_data_out(Pipe, Tag, {write, _Lun, _Sector, Data}) ->
+    erx_usb_pipe:bulk_out(Pipe, Tag, Data).
+
+-doc "The 31-byte CBW of Command under Tag: its data phase's length and direction, its unit and its command block.".
+-spec bot_cbw(non_neg_integer(), erx_usb_bot_core:command()) -> <<_:248>>.
+bot_cbw(Tag, Command) ->
+    {Direction, Length} = erx_usb_bot_core:data_phase(Command),
+    Flags = case Direction of
+                in -> ?ERX_USB_BOT_CBW_FLAG_IN;
+                _OutOrNone -> 0
+            end,
+    Block = command_block(Command),
+    Pad = (?ERX_USB_BOT_CB_MAX - byte_size(Block)) * 8,
+    <<?ERX_USB_BOT_CBW_SIGNATURE:32/little, Tag:32/little, Length:32/little, Flags, (element(2, Command)),
+      (byte_size(Block)), Block/binary, 0:Pad>>.
+
+%% Each command's block, its multi-byte fields big-endian as SCSI's are.
+command_block({test_unit_ready, _Lun}) -> <<?ERX_SCSI_OP_TEST_UNIT_READY, 0:40>>;
+command_block({request_sense, _Lun}) -> <<?ERX_SCSI_OP_REQUEST_SENSE, 0:24, ?ERX_SCSI_SENSE_LENGTH, 0>>;
+command_block({inquiry, _Lun}) -> <<?ERX_SCSI_OP_INQUIRY, 0, 0, ?ERX_SCSI_INQUIRY_LENGTH:16, 0>>;
+command_block({read_capacity_10, _Lun}) -> <<?ERX_SCSI_OP_READ_CAPACITY_10, 0:72>>;
+command_block({read_capacity_16, _Lun}) ->
+    <<?ERX_SCSI_OP_SERVICE_ACTION_IN, ?ERX_SCSI_READ_CAPACITY_16_ACTION, 0:64,
+      ?ERX_SCSI_READ_CAPACITY_16_LENGTH:32, 0, 0>>;
+command_block({synchronize_cache, _Lun}) -> <<?ERX_SCSI_OP_SYNCHRONIZE_CACHE_10, 0:72>>;
+command_block({read, _Lun, Sector, Count}) -> rw_block(?ERX_SCSI_OP_READ_10, ?ERX_SCSI_OP_READ_16, Sector, Count);
+command_block({write, _Lun, Sector, Data}) ->
+    rw_block(?ERX_SCSI_OP_WRITE_10, ?ERX_SCSI_OP_WRITE_16, Sector, byte_size(Data) div ?ERX_SCSI_BLOCK_LENGTH).
+
+rw_block(Op10, _Op16, Sector, Count) when Sector + Count =< 16#100000000, Count =< 16#ffff ->
+    <<Op10, 0, Sector:32, 0, Count:16, 0>>;
+rw_block(_Op10, Op16, Sector, Count) ->
+    <<Op16, 0, Sector:64, Count:32, 0, 0>>.
 
 post(Dev, Queue, Tag, {ok, Segments}) -> erx_device:post(Dev, Queue, Tag, Segments);
 post(_Dev, _Queue, _Tag, Refused) -> Refused.

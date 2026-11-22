@@ -300,6 +300,10 @@ enum usb_bot_status u8
 # medium.
 limit usb_bot_queue_deadline_ms u32 10000
 limit usb_bot_issue_deadline_ms u32 18000
+# How often a unit is polled with TEST UNIT READY until its medium is ready, and a
+# removable unit's medium after (design-usb.md, "The SCSI subset"), as FreeBSD's disk
+# driver polls (scsi_da.c:3060-3065, as the design cites it).
+limit usb_bot_poll_ms u32 3000
 
 # The SCSI commands the transport sends and no others (design-usb.md, "The SCSI
 # subset"), by operation code (scsi_all.h:2080-2130); READ CAPACITY(16) is SERVICE

@@ -14,15 +14,20 @@ control/3 sends one request on a device's EP0 and waits for its answer,
 end first. interrupt_in/3 posts one interrupt-IN transfer; its completion arrives as
 the message `{usb, Pipe, Tag, Result}`, Result `{ok, Bytes}` or `{error,
 Reason}`, so a function keeps its transfers posted and waits in its own
-receive. The controller answers a pipe whose device is detached `{error,
-gone}`.
+receive. bulk_in/3 and bulk_out/3 post one bulk transfer the same way,
+each completion carrying what the controller reports moved: the bytes
+read, or the count written. reset_pipe/1 brings both sides of a pipe back
+to the start of its data toggle, as one operation of the controller, and
+waits for its answer, `ok` or the error that ended it. The controller
+answers a pipe whose device is detached `{error, gone}`.
 
 Each request reaches the controller as `{erx_usb_pipe, From, Request}`,
 and reply/2 builds the message that answers it; this module is the one
 that spells both.
 """.
 
--export([new/3, endpoint/1, control/3, interrupt_in/3, reply/2, from_function/1]).
+-export([new/3, endpoint/1, control/3, interrupt_in/3, bulk_in/3, bulk_out/3, reset_pipe/1, reply/2,
+         from_function/1]).
 
 -export_type([pipe/0, request/0]).
 
@@ -30,7 +35,9 @@ that spells both.
 
 -doc "A request as it reaches the controller, from the process that sent it.".
 -type request() :: {control, pipe(), <<_:64>>, none | {in, pos_integer()} | {out, binary()}, reference()}
-                 | {interrupt_in, pipe(), term(), pos_integer()}.
+                 | {interrupt_in | bulk_in, pipe(), term(), pos_integer()}
+                 | {bulk_out, pipe(), term(), binary()}
+                 | {reset_pipe, pipe(), reference()}.
 
 -doc "The pipe of endpoint Address of device Ref, served by Controller.".
 -spec new(pid(), erx_usb_bus_core:ref(), byte()) -> pipe().
@@ -47,9 +54,18 @@ Sends the control request Setup, with the data stage Data, on Pipe, a
 device's EP0, and answers the controller's answer.
 """.
 -spec control(pipe(), <<_:64>>, none | {in, pos_integer()} | {out, binary()}) -> {ok, binary()} | {error, term()}.
-control(Pipe = {pipe, Controller, _Ref, _Address}, Setup, Data) ->
+control(Pipe, Setup, Data) ->
+    await(Pipe, fun(Monitor) -> {control, Pipe, Setup, Data, Monitor} end).
+
+-doc "Resets Pipe, a bulk or interrupt pipe, and answers `ok` or the error that ended the reset.".
+-spec reset_pipe(pipe()) -> ok | {error, term()}.
+reset_pipe(Pipe) ->
+    await(Pipe, fun(Monitor) -> {reset_pipe, Pipe, Monitor} end).
+
+%% Sends the request Build makes under a monitor of the controller and waits for its answer.
+await({pipe, Controller, _Ref, _Address}, Build) ->
     Monitor = monitor(process, Controller),
-    Controller ! {?MODULE, self(), {control, Pipe, Setup, Data, Monitor}},
+    Controller ! {?MODULE, self(), Build(Monitor)},
     receive
         {Monitor, Answer} -> demonitor(Monitor, [flush]), Answer;
         {'DOWN', Monitor, process, Controller, _Reason} -> {error, gone}
@@ -58,11 +74,17 @@ control(Pipe = {pipe, Controller, _Ref, _Address}, Setup, Data) ->
 -doc """
 The message that answers Request with Result, which the controller sends
 to the request's sender: a control request's answer under its monitor, an
-interrupt-IN transfer's completion as `{usb, Pipe, Tag, Result}`.
+interrupt-IN or bulk transfer's completion as `{usb, Pipe, Tag, Result}`.
 """.
 -spec reply(request(), term()) -> term().
 reply({control, _Pipe, _Setup, _Data, Monitor}, Result) -> {Monitor, Result};
-reply({interrupt_in, Pipe, Tag, _Length}, Result) -> {usb, Pipe, Tag, Result}.
+reply({reset_pipe, _Pipe, Monitor}, Result) -> {Monitor, Result};
+reply({Kind, Pipe, Tag, _Length}, Result) when Kind =:= interrupt_in; Kind =:= bulk_in -> {usb, Pipe, Tag, Result};
+%% An OUT transfer that completes without an error moved every byte posted: the
+%% controller reports a short packet only on IN (xHCI 4.10.1.1; unverified here), so the
+%% count is the data's.
+reply({bulk_out, Pipe, Tag, Data}, {ok, _Bytes}) -> {usb, Pipe, Tag, {ok, byte_size(Data)}};
+reply({bulk_out, Pipe, Tag, _Data}, Failure) -> {usb, Pipe, Tag, Failure}.
 
 -doc """
 The sender and the request a message to the controller carries, or `none` for a message
@@ -76,4 +98,20 @@ from_function(_Other) -> none.
 -spec interrupt_in(pipe(), term(), pos_integer()) -> ok.
 interrupt_in(Pipe = {pipe, Controller, _Ref, _Address}, Tag, Length) when is_integer(Length), Length > 0 ->
     Controller ! {?MODULE, self(), {interrupt_in, Pipe, Tag, Length}},
+    ok.
+
+-doc "Posts one bulk-IN transfer of Length bytes on Pipe; its completion is `{usb, Pipe, Tag, Result}`.".
+-spec bulk_in(pipe(), term(), pos_integer()) -> ok.
+bulk_in(Pipe = {pipe, Controller, _Ref, _Address}, Tag, Length) when is_integer(Length), Length > 0 ->
+    Controller ! {?MODULE, self(), {bulk_in, Pipe, Tag, Length}},
+    ok.
+
+-doc """
+Posts Data as one bulk-OUT transfer on Pipe; its completion is `{usb, Pipe, Tag, {ok, Count}}`
+or the failure. Only erx_blk_write calls it, the one write path of a medium
+(docs/design-usb.md, "The block transport").
+""".
+-spec bulk_out(pipe(), term(), binary()) -> ok.
+bulk_out(Pipe = {pipe, Controller, _Ref, _Address}, Tag, Data) when is_binary(Data), byte_size(Data) > 0 ->
+    Controller ! {?MODULE, self(), {bulk_out, Pipe, Tag, Data}},
     ok.

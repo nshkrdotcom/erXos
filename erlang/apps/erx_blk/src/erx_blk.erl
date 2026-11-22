@@ -18,7 +18,8 @@
 %% sectors or a count above max_sectors, and out_of_range for sectors past the capacity,
 %% both before the controller is touched; erofs, the write path's refusal on a trial boot
 %% (U4), which erx_blk_write does not apply yet (TODO.md); busy when the device process's
-%% backlog is full; no_device when no device process runs; and {device, Detail} for a
+%% backlog is full; no_device when no device process runs; no_flush for a flush of a
+%% medium that cannot flush, which only erx_blk_bot answers; and {device, Detail} for a
 %% request the controller or the medium failed. Detail is built from fixed atoms and
 %% integers, never from a controller's bytes, and stays in the storage domain: a window
 %% answers its client einval for bad_count, erofs for erofs and eio for every other error.
@@ -35,8 +36,8 @@
 
 -define(CALL_TIMEOUT, 30000).
 
--type reason() :: bad_count | out_of_range | erofs | busy | no_device | {device, term()}.
--type info() :: #{transport := virtio_mmio | sdhci, capacity := non_neg_integer(),
+-type reason() :: bad_count | out_of_range | erofs | busy | no_device | no_flush | {device, term()}.
+-type info() :: #{transport := virtio_mmio | sdhci | usb_bot, capacity := non_neg_integer(),
                   max_sectors := pos_integer(), detail := map()}.
 
 %% The transport table: a block record's CMSIS-SVD peripheral and the device process that

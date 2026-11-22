@@ -129,9 +129,9 @@ a_hub_with_a_child_enumerates_it_test() ->
     end).
 
 %% A mass-storage stick behind a hub, beside a keyboard, as on the Raspberry Pi 4's
-%% VL805: its function cannot drive the interface, which is final, so the stick's port
-%% is not given up past restarts and the keyboard runs on.
-a_stick_behind_a_hub_is_not_given_up_test() ->
+%% VL805: its function serves its medium without ending, so the bus resets none of its
+%% pipes, and the keyboard runs on.
+a_stick_behind_a_hub_is_served_beside_a_keyboard_test() ->
     with_bus(#{[1] => {hub, 4}}, fun() ->
         configured([1]),
         settled(),
@@ -143,7 +143,78 @@ a_stick_behind_a_hub_is_not_given_up_test() ->
         settled(),
         ?assertEqual(0, count({reset_pipe, Stick, 0, 16#81})),
         ?assertEqual([], [D || D = {detach, _} <- log()]),
-        ?assert(is_process_alive(Running))
+        ?assert(is_process_alive(Running)),
+        ?assertMatch({ok, #{transport := usb_bot}}, erx_blk:info(transport()))
+    end).
+
+%% A stick on a root port serves its medium: reset recovery, Get Max LUN, INQUIRY, TEST
+%% UNIT READY, READ CAPACITY and the readiness SYNCHRONIZE CACHE make a block transport
+%% whose reads and writes reach the medium, within the transport contract's bounds.
+a_stick_serves_its_medium_test() ->
+    with_bus(#{[1] => stick}, fun() ->
+        configured([1]),
+        Transport = transport(),
+        ?assertMatch({ok, #{transport := usb_bot, capacity := 128, max_sectors := 64, flush := true,
+                            detail := #{vendor := <<"erXos   ">>, product := <<"Model stick     ">>}}},
+                     erx_blk:info(Transport)),
+        ?assertEqual({ok, binary:copy(<<0>>, 512)}, erx_blk:read(Transport, 0, 1)),
+        Data = << <<(I rem 251)>> || I <- lists:seq(1, 1024) >>,
+        ?assertEqual(ok, erx_blk:write(Transport, 126, Data)),
+        ?assertEqual({ok, Data}, erx_blk:read(Transport, 126, 2)),
+        ?assertEqual({error, out_of_range}, erx_blk:read(Transport, 127, 2)),
+        ?assertEqual({error, bad_count}, erx_blk:read(Transport, 0, 65)),
+        ?assertEqual({error, bad_count}, erx_blk:write(Transport, 0, <<1, 2, 3>>)),
+        ?assertEqual(ok, erx_blk:flush(Transport))
+    end).
+
+%% A data phase that stalls is cleared, its CSW read, and its failure explained by the
+%% REQUEST SENSE the same operation sends; the medium stays and the next read succeeds.
+a_stalled_data_phase_is_cleared_and_explained_test() ->
+    with_bus(#{[1] => stick}, fun() ->
+        Ref = configured([1]),
+        Transport = transport(),
+        Cleared = pipe_resets(Ref, 16#81),
+        ok = erx_usb_fake_xhci:stick_fault(?FAKE, [1], stall_data),
+        ?assertEqual({error, {device, {sense, 3, 16#11, 0}}}, erx_blk:read(Transport, 4, 1)),
+        ?assertEqual(Cleared + 1, pipe_resets(Ref, 16#81)),
+        ?assertEqual({ok, binary:copy(<<0>>, 512)}, erx_blk:read(Transport, 4, 1))
+    end).
+
+%% A CSW that is short, or signed wrongly, is refused: the command is answered reset,
+%% reset recovery readies the device, and the function and its medium run on.
+a_short_or_malformed_csw_is_refused_with_a_reset_test() ->
+    with_bus(#{[1] => stick}, fun() ->
+        configured([1]),
+        [Function] = functions(erx_usb_bot),
+        Transport = transport(),
+        Resets = class_resets(),
+        ok = erx_usb_fake_xhci:stick_fault(?FAKE, [1], short_csw),
+        ?assertEqual({error, {device, reset}}, erx_blk:read(Transport, 0, 1)),
+        ok = erx_usb_fake_xhci:stick_fault(?FAKE, [1], bad_csw),
+        ?assertEqual({error, {device, reset}}, erx_blk:read(Transport, 0, 1)),
+        ?assertEqual(Resets + 2, class_resets()),
+        ?assertEqual({ok, binary:copy(<<0>>, 512)}, erx_blk:read(Transport, 0, 1)),
+        ?assertEqual([Function], functions(erx_usb_bot)),
+        ?assertEqual([Transport], transports())
+    end).
+
+%% A stick unplugged while a read's data phase is posted: the read fails, never answering
+%% data, and the function and its medium's transport end; the bus runs on.
+a_stick_unplugged_mid_transfer_ends_its_function_test() ->
+    with_bus(#{[1] => stick}, fun() ->
+        configured([1]),
+        [Function] = functions(erx_usb_bot),
+        Transport = transport(),
+        ok = erx_usb_fake_xhci:stick_fault(?FAKE, [1], hold_data),
+        Self = self(),
+        spawn(fun() -> Self ! {read, try erx_blk:read(Transport, 0, 1) catch exit:Reason -> {exit, Reason} end} end),
+        wait(fun() -> lists:any(fun({bulk_in, _, _, 512}) -> true; (_) -> false end, log()) end),
+        ok = erx_usb_fake_xhci:unplug(?FAKE, [1]),
+        receive {read, Result} -> ?assertNotMatch({ok, _}, Result)
+        after ?WAIT_MS -> error(no_read_answer)
+        end,
+        wait(fun() -> not is_process_alive(Function) andalso not is_process_alive(Transport) end),
+        ?assert(is_process_alive(erx_usb_fake_xhci:bus(?FAKE)))
     end).
 
 %% A hub's removal detaches the devices below it first and ends every function of each.
@@ -369,20 +440,41 @@ configured(Place) ->
          end),
     lists:last(references(Place, log())).
 
-hub_functions() ->
+hub_functions() -> functions(erx_usb_hub).
+
+%% The running function instances of driver Module.
+functions(Module) ->
     Bus = erx_usb_fake_xhci:bus(?FAKE),
     {dictionary, Dictionary} = process_info(Bus, dictionary),
     {_, Parent} = lists:keyfind('$ancestors', 1, Dictionary),
     [Group | _] = Parent,
     {functions, Functions, _, _} = lists:keyfind(functions, 1, supervisor:which_children(Group)),
     [Pid || {_, Pid, _, [erx_usb_bus_sup]} <- supervisor:which_children(Functions), is_pid(Pid),
-            is_hub(Pid)].
+            started_by(Module, Pid)].
 
-is_hub(Pid) ->
+started_by(Module, Pid) ->
     case proc_lib:initial_call(Pid) of
-        {erx_usb_hub, init, _} -> true;
+        {Module, init, _} -> true;
         _ -> false
     end.
+
+%% The block transports of the running mass-storage functions, each linked to its own.
+transports() ->
+    [T || F <- functions(erx_usb_bot), {links, Links} <- [process_info(F, links)], T <- Links, is_pid(T),
+          started_by(erx_blk_bot, T)].
+
+%% The one transport, once its medium is ready.
+transport() ->
+    wait(fun() -> transports() =/= [] end),
+    [Transport] = transports(),
+    Transport.
+
+%% How often the function reset its device's pipe at Address, or sent the class reset.
+pipe_resets(Ref, Address) ->
+    length([P || {reset_pipe, P, _} <- log(), erx_usb_pipe:endpoint(P) =:= {Ref, Address}]).
+
+class_resets() ->
+    length([S || {control, _, S = <<16#21, ?ERX_USB_BOT_REQUEST_RESET, _/binary>>, _, _} <- log()]).
 
 wait(Condition) -> wait(Condition, erlang:monotonic_time(millisecond) + ?WAIT_MS).
 

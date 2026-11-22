@@ -15,7 +15,8 @@ require_relative '../fixtures/erlang_build'
 # against the sources as they are and against each seeded fault, where the named case
 # must fail.
 class ErxUsbBusTest < Minitest::Test
-  APPLICATIONS = %w[erx_usb].freeze
+  # erx_blk holds the mass-storage function's write path and block transport.
+  APPLICATIONS = %w[erx_usb erx_blk].freeze
   # The places' grants need the 9P grammar, generated into OTP's preloaded sources, and
   # the stand-ins of the erx modules a grant calls; the HID function is a stand-in the
   # cases end at will.
@@ -25,6 +26,7 @@ class ErxUsbBusTest < Minitest::Test
     test/erlang/stand_in/erx_connections.erl
     test/erlang/stand_in/erx_usb_hid.erl
     test/erlang/erx_usb_desc_tests.erl
+    test/erlang/erx_usb_fake_stick.erl
     test/erlang/erx_usb_fake_xhci.erl
     test/erlang/erx_usb_bus_tests.erl
     test/erlang/erx_pcie_log_capture.erl
@@ -34,6 +36,7 @@ class ErxUsbBusTest < Minitest::Test
   CORE = 'erlang/apps/erx_usb/src/erx_usb_bus_core.erl'
   SUP = 'erlang/apps/erx_usb/src/erx_usb.erl'
   BOT = 'erlang/apps/erx_usb/src/erx_usb_bot.erl'
+  PIPE = 'erlang/apps/erx_usb/src/erx_usb_pipe.erl'
 
   Seed = Data.define(:fault, :module_path, :anchor, :replacement, :catching_case)
 
@@ -86,11 +89,16 @@ class ErxUsbBusTest < Minitest::Test
              anchor: 'restart => transient',
              replacement: 'restart => permanent',
              catching_case: 'a_controller_failing_at_every_reset_is_given_up_test'),
-    Seed.new(fault: "a mass-storage function whose start fails as a failure, not unusable",
+    Seed.new(fault: "a BOT function's pipe reset answered without resetting the pipe",
              module_path: BOT,
-             anchor: '    {error, erx_usb_bus_core:unusable(enotsup)}.',
-             replacement: '    {error, enotsup}.',
-             catching_case: 'a_stick_behind_a_hub_is_not_given_up_test')
+             anchor: '    {[{reset_pipe, erx_usb_pipe:reset_pipe(In)}], B};',
+             replacement: '    {[{reset_pipe, ok}], B};',
+             catching_case: 'a_stalled_data_phase_is_cleared_and_explained_test'),
+    Seed.new(fault: 'a bulk-out completion counting none of the bytes written',
+             module_path: PIPE,
+             anchor: '{usb, Pipe, Tag, {ok, byte_size(Data)}}',
+             replacement: '{usb, Pipe, Tag, {ok, 0}}',
+             catching_case: 'a_stick_serves_its_medium_test')
   ].freeze
 
   def test_the_cases_pass

@@ -482,9 +482,15 @@ event({bus, {detach, Ref}}, _Now, Acc) ->
 event({pipe, From, Request = {control, Pipe, Setup, Data, _Monitor}}, _Now, Acc) ->
     {Ref, Address} = erx_usb_pipe:endpoint(Pipe),
     post_through(Ref, Address, {pipe, From, Request}, {control, Setup, Data}, Acc);
-event({pipe, From, Request = {interrupt_in, Pipe, _Tag, Length}}, _Now, Acc) ->
+event({pipe, From, Request = {Kind, Pipe, _Tag, Length}}, _Now, Acc) when Kind =:= interrupt_in; Kind =:= bulk_in ->
     {Ref, Address} = erx_usb_pipe:endpoint(Pipe),
     post_through(Ref, Address, {pipe, From, Request}, {normal, {in, Length}}, Acc);
+event({pipe, From, Request = {bulk_out, Pipe, _Tag, Data}}, _Now, Acc) ->
+    {Ref, Address} = erx_usb_pipe:endpoint(Pipe),
+    post_through(Ref, Address, {pipe, From, Request}, {normal, {out, Data}}, Acc);
+event({pipe, From, Request = {reset_pipe, Pipe, _Monitor}}, _Now, Acc) ->
+    {Ref, Address} = erx_usb_pipe:endpoint(Pipe),
+    ask_reset(Ref, Address, {pipe, From, Request}, Acc);
 event({queue_state, Pipe, Queue}, _Now, Acc) when Queue =:= idle; Queue =:= busy; Queue =:= stopped;
                                                   Queue =:= halted ->
     queue_reported(Pipe, Queue, Acc);
@@ -1214,7 +1220,8 @@ refusal({draining, _}) -> gone.
 
 %% reset_pipe
 
-%% The bus process's reset of a pipe whose function ended: the pipe resets at
+%% A reset of a pipe, the bus process's for a function that ended or a
+%% function's own (erx_usb_pipe:reset_pipe/1): the pipe resets at
 %% once, asking the NIF for its queue's state, or answers that it is already
 %% resetting or gone.
 ask_reset(Ref, EpAddress, Requester, Acc = {S = #{pipes := Pipes}, _}) ->

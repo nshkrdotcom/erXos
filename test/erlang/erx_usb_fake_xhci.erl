@@ -17,13 +17,19 @@ answers its class requests on EP0 and reports its ports' changes on its
 status pipe whenever a transfer is posted there. Every request the
 controller takes is logged, oldest first, for the test to read.
 
-The test plugs and unplugs things, fails a hub's next status transfer, or
-makes a request kind fail, with the calls below.
+A `stick` is erx_usb_fake_stick's model drive, kept for its place across
+its device's references, so what a function wrote survives the function.
+Its bulk transfers and class requests go to the model; a transfer the
+model holds is answered `{error, gone}` when the stick is unplugged.
+
+The test plugs and unplugs things, fails a hub's next status transfer,
+plants a fault in a stick, or makes a request kind fail, with the calls
+below.
 """.
 
 -include("generated/erx_abi.hrl").
 
--export([start_link/1, plug/3, unplug/2, replace/3, fail_status_transfer/2, log/1, bus/1]).
+-export([start_link/1, plug/3, unplug/2, replace/3, fail_status_transfer/2, stick_fault/3, log/1, bus/1]).
 
 %% The controller start erx_usb_bus_sup takes. The fake registers as Name, so the
 %% test reaches each restart by it, and tells each start to the process registered as
@@ -38,6 +44,7 @@ plug(Name, Place, Thing) -> call(Name, {plug, Place, Thing}).
 unplug(Name, Place) -> call(Name, {unplug, Place}).
 replace(Name, Place, Thing) -> call(Name, {replace, Place, Thing}).
 fail_status_transfer(Name, Hub) -> call(Name, {fail_status_transfer, Hub}).
+stick_fault(Name, Place, Fault) -> call(Name, {stick_fault, Place, Fault}).
 log(Name) -> call(Name, log).
 bus(Name) -> call(Name, bus).
 
@@ -56,7 +63,7 @@ init(Name, RootPorts, World) ->
         Tests -> Tests ! {fake_started, self()}
     end,
     loop(#{bus => none, root_ports => RootPorts, world => World, ports => #{}, refs => #{}, posted => #{},
-           failing => [], log => []}).
+           failing => [], sticks => #{}, held => [], log => []}).
 
 loop(S) ->
     receive
@@ -75,14 +82,17 @@ logged(Request, S = #{log := Log}) -> S#{log := [Request | Log]}.
 %% The test's calls.
 test({plug, Place, Thing}, S = #{world := World}) ->
     {ok, changed(Place, S#{world := World#{Place => Thing}})};
-test({unplug, Place}, S = #{world := World, ports := Ports}) ->
+test({unplug, Place}, S0 = #{world := World, ports := Ports}) ->
     Port = maps:get(Place, Ports, #{}),
+    S = gone_held(Place, S0),
     {ok, changed(Place, S#{world := maps:remove(Place, World), ports := Ports#{Place => Port#{enabled => false}}})};
 test({replace, Place, Thing}, S = #{world := World, ports := Ports}) ->
     Port = maps:get(Place, Ports, #{}),
     {ok, changed(Place, S#{world := World#{Place => Thing}, ports := Ports#{Place => Port#{enabled => false}}})};
 test({fail_status_transfer, Hub}, S = #{failing := Failing}) ->
     {ok, deliver(Hub, S#{failing := [Hub | Failing]})};
+test({stick_fault, Place, Fault}, S) ->
+    {ok, put_stick(Place, erx_usb_fake_stick:fault(stick(Place, S), Fault), S)};
 test(log, S = #{log := Log}) ->
     {lists:reverse(Log), S};
 test(bus, S = #{bus := Bus}) ->
@@ -187,6 +197,8 @@ device_request(Place, Thing, Setup = <<_:6/binary, Length:16/little>>, S) ->
     case request_name(Setup) of
         {hub_port, Port, Op} -> hub_port(Place ++ [Port], Op, S);
         hub_status -> {{ok, <<0:16, 0:16>>}, S};
+        bot_reset -> {{ok, <<>>}, put_stick(Place, erx_usb_fake_stick:reset(stick(Place, S)), S)};
+        get_max_lun -> {{ok, <<0>>}, S};
         {hub_clear, _Change} -> {{ok, <<>>}, S};
         set_configuration -> {{ok, <<>>}, S};
         Name -> {{ok, cut(descriptor(Name, Thing), Length)}, S}
@@ -206,6 +218,8 @@ request_name(<<16#80, 6, 0, 1, 0:16, _:16>>) -> device;
 request_name(<<16#80, 6, 0, 2, 0:16, _:16>>) -> configuration;
 request_name(<<0, 9, 1, 0, 0:16, 0:16>>) -> set_configuration;
 request_name(<<16#a0, 6, 0, 16#29, 0:16, _:16>>) -> hub_descriptor;
+request_name(<<16#21, ?ERX_USB_BOT_REQUEST_RESET, 0:16, 0:16, 0:16>>) -> bot_reset;
+request_name(<<16#a1, ?ERX_USB_BOT_REQUEST_GET_MAX_LUN, 0:16, 0:16, 1:16/little>>) -> get_max_lun;
 request_name(<<16#a0, 0, 0:16, 0:16, 4:16/little>>) -> hub_status;
 request_name(<<16#20, 1, Feature:16/little, 0:16, 0:16>>) -> {hub_clear, Feature};
 request_name(<<16#a3, 0, 0:16, Port:16/little, 4:16/little>>) -> {hub_port, Port, get_status};
@@ -246,6 +260,24 @@ transfer(From, {control, Pipe, Setup, _Data, Tag}, S) ->
     {Result, S1} = control(Ref, Setup, S),
     From ! {Tag, Result},
     S1;
+transfer(From, Request = {reset_pipe, _Pipe, _Monitor}, S) ->
+    From ! erx_usb_pipe:reply(Request, ok),
+    S;
+transfer(From, Request = {Bulk, Pipe, _Tag, Payload}, S = #{refs := Refs, world := World})
+  when Bulk =:= bulk_in; Bulk =:= bulk_out ->
+    {Ref, _Address} = erx_usb_pipe:endpoint(Pipe),
+    case Refs of
+        #{Ref := Place} when is_map_key(Place, World) ->
+            {Answer, Stick} = erx_usb_fake_stick:Bulk(Payload, stick(Place, S)),
+            Held = put_stick(Place, Stick, S),
+            case Answer of
+                hold -> Held#{held := [{Place, From, Request} | maps:get(held, Held)]};
+                _ -> From ! erx_usb_pipe:reply(Request, Answer), Held
+            end;
+        #{} ->
+            From ! erx_usb_pipe:reply(Request, {error, gone}),
+            S
+    end;
 transfer(From, {interrupt_in, Pipe, Tag, _Length}, S = #{posted := Posted}) ->
     {Ref, _Address} = erx_usb_pipe:endpoint(Pipe),
     deliver(Ref, S#{posted := Posted#{Ref => {From, Pipe, Tag}}}).
@@ -275,3 +307,14 @@ answered(Hub, From, Pipe, Tag, Answer, S = #{posted := Posted}) ->
 hub_at(Place, #{refs := Refs}) ->
     [Hub] = [Ref || Ref := P <- Refs, P =:= Place],
     Hub.
+
+%% A stick's model, made fresh the first time its place is used.
+stick(Place, #{sticks := Sticks}) -> maps:get(Place, Sticks, erx_usb_fake_stick:new()).
+
+put_stick(Place, Stick, S = #{sticks := Sticks}) -> S#{sticks := Sticks#{Place => Stick}}.
+
+%% The transfers held at Place, answered gone as its device leaves.
+gone_held(Place, S = #{held := Held}) ->
+    {Gone, Kept} = lists:partition(fun({P, _From, _Request}) -> P =:= Place end, Held),
+    [From ! erx_usb_pipe:reply(Request, {error, gone}) || {_P, From, Request} <- Gone],
+    S#{held := Kept}.
