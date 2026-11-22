@@ -367,6 +367,33 @@ a_disconnect_is_asked_once_and_a_failure_other_than_gone_or_ending_stops_test() 
     ?assertMatch({_, [{stop, {disconnect_failed, 16#40, {failed, 16#12}}}]},
                  answer(Written, {command_status, 16#12, 1, 16#0406})).
 
+%% A disconnect is not asked again, which would hold off the Long Term Key replies: a
+%% connection not ended by a successful Disconnection Complete 45 s after its disconnect
+%% was handed to the writer, past the longest supervision timeout, stops, whether the
+%% disconnect was answered Command Disallowed for a connection that is not ending (as
+%% Zephyr's is with no procedure context free) or its Disconnection Complete failed.
+%% Nothing is written before then, and a successful Disconnection Complete drops the
+%% deadline. The deadline counts from the moment the writer takes the disconnect, 1000.
+a_disconnect_not_completed_by_its_deadline_stops_test() ->
+    {Link, Core} = linked(1, 16#40),
+    At = fun(Time, Input, Before) -> erx_bt_hci_core:step(Input, Time, Before) end,
+    {Asked, [{write, <<1, 6, 4, 3, 16#40, 0, 16#13>>}]} = At(1000, {request, Link, {disconnect, 16#13}}, Core),
+    ?assertEqual(6000, erx_bt_hci_core:next_deadline(Asked)),
+    {Written, []} = At(1100, written, Asked),
+    {Disallowed, []} = At(1200, {event, {command_status, 16#0C, 1, 16#0406}}, Written),
+    {Succeeded, []} = At(1200, {event, {command_status, 0, 1, 16#0406}}, Written),
+    {Failed, []} = At(1300, {event, {disconnection_complete, 16#0C, 16#40, 16#13}}, Succeeded),
+    [begin
+         ?assertEqual(46000, erx_bt_hci_core:next_deadline(Refused)),
+         ?assertEqual({Refused, []}, At(45999, expired, Refused)),
+         ?assertMatch({_, [{stop, {disconnect_not_completed, 16#40}}]}, At(46000, expired, Refused))
+     end || Refused <- [Disallowed, Failed]],
+    {Gone, [{link_down, Link}, {write, <<1, 16#0A, 16#20, 1, 1>>}]} =
+        At(2000, {event, {disconnection_complete, 0, 16#40, 16#16}}, Failed),
+    {Advertising, []} = At(2100, written, Gone),
+    {Quiet, []} = At(2200, {event, complete(16#200A, <<0>>)}, Advertising),
+    ?assertEqual(infinity, erx_bt_hci_core:next_deadline(Quiet)).
+
 %% A connection that completes while the advertising enable is written and unanswered
 %% came from that enable: its answer leaves advertising off, and the disconnection
 %% enables it again.
@@ -533,7 +560,7 @@ a_malformed_reply_stops_without_its_key_test() ->
 %% left; running out of the budget first fails. The world is the core and what the
 %% process and the controller hold: whether the line is being reset, the writer's item,
 %% the command written and not yet answered, the clock, the live handles whose
-%% disconnect was asked for since they connected, each live link's identity from its
+%% disconnect was asked for since they connected and whether it was written, each live link's identity from its
 %% link_up, the identities of the links gone, and the connections made. The clock starts
 %% at 0 and moves only to the core's deadline, when it passes; only a bring-up wait's
 %% passing leaves the core running, so the clock takes one value more than the waits (at
@@ -549,14 +576,15 @@ a_malformed_reply_stops_without_its_key_test() ->
 %% report a hardware error or a malformed event; identify a controller of another
 %% company; once, an event or ACL packet the core drops; connect, in any state, on a
 %% handle not live or past the limit; and for each live handle, disconnect it from
-%% either side, take or deliver a packet, ask a Long Term Key reply (on handle 1 with a
+%% either side, fail its Disconnection Complete, take or deliver a packet, ask a Long Term Key reply (on handle 1 with a
 %% key, on handle 2 without one; in the configuration without a patch, and while no
 %% other reply waits or is in flight, so queued replies are the cases'), report a Long Term Key Request, and complete packets truly or falsely. The
 %% invariants hold on every transition; a request naming a gone link, its handle given a
 %% new peer or not, is refused and changes nothing, and some state has a gone link's
 %% handle live again; every state before ready has a deadline, so every path ends in
 %% ready or a stop; a path patches at most once; a written disconnect names a handle
-%% whose disconnect was asked for since it last connected; a written Long Term Key reply
+%% whose disconnect was asked for since it last connected, and is written at most once
+%% before the handle connects again; a written Long Term Key reply
 %% is the one its handle's link asked since it was last taken, for that handle, with that
 %% link's key or none; its answer reaches only that link; advertising is never on at
 %% the limit in force, and at quiescence it is on exactly while connections are below
@@ -577,7 +605,7 @@ explored_core_keeps_its_invariants_test_() ->
         Stops = lists:usort(lists:append([explore(Config) || Config <- [?READY_CONFIG(2), Patched]])),
         ?assertEqual([answer_to_other_command, command_timeout, completion_beyond_in_flight, completion_for_dead_handle,
                       connection_beyond_limit, connection_during_bringup, connection_while_disconnecting,
-                      connection_while_replying, disconnect_failed, duplicate_handle, hardware_error,
+                      connection_while_replying, disconnect_failed, disconnect_not_completed, duplicate_handle, hardware_error,
                       line_reset_timeout, ltk_reply_answer, malformed_event,
                       patch_for_other_controller, step_failed],
                      Stops)
@@ -667,7 +695,7 @@ count_reused(#world{names = Ids, gone = Gone}, #{reused := N} = Stats) ->
 
 %% What the line, the controller and the clock may do next. Left out: a dropped input
 %% after the first, since the count is all it changes; an answer to a command due and
-%% not yet written, which a case gives; events with a failed status, the link events
+%% not yet written, which a case gives; events with a failed status except Disconnection Complete, the link events
 %% other than Encryption Change, and completions of several handles or of no packet,
 %% none of which the core reads beyond passing it on or ignoring it.
 inputs(#world{core = Core, line = Line, writer = Writer, command = Command, ready = Ready, names = Ids,
@@ -687,6 +715,7 @@ inputs(#world{core = Core, line = Line, writer = Writer, command = Command, read
         [{event, {le_connection_complete, 4, ?PEER}} || Ready, map_size(Links) >= Limit] ++
         lists:append([[{event, {le_connection_complete, Handle, ?PEER}},
                        {event, {disconnection_complete, 0, Handle, 16#13}},
+                       {event, {disconnection_complete, 16#0C, Handle, 16#13}},
                        {request, map_get(Handle, Ids), {disconnect, 16#13}},
                        {request, map_get(Handle, Ids), {send, 0, <<Handle>>}},
                        {event, {le_long_term_key_request, Handle, <<0:64>>, 0}},
@@ -750,7 +779,7 @@ is_buffers(Opcode) -> buffers(Opcode) =/= [].
 consume(line_ready, World) -> World#world{line = none};
 consume(written, World) -> World#world{writer = idle};
 consume({request, {Handle, _}, {disconnect, _}}, #world{asked = Asked} = World) ->
-    World#world{asked = Asked#{Handle => true}};
+    World#world{asked = maps:merge(#{Handle => asked}, Asked)};
 consume({request, {Handle, _}, {ltk_reply, Key}}, #world{replied = Replied} = World) ->
     World#world{replied = maps:merge(#{Handle => Key}, Replied)};
 consume({event, {disconnection_complete, 0, Handle, _}}, #world{asked = Asked, replied = Replied} = World) ->
@@ -768,9 +797,10 @@ observe(Actions, World) ->
 
 observe_action({write, _}, #world{writer = busy}) ->
     erlang:error(second_item_before_written);
-observe_action({write, <<1, 16#0406:16/little, 3, Handle:16/little, _>>}, #world{command = none, asked = Asked})
-  when not is_map_key(Handle, Asked) ->
-    erlang:error({disconnect_not_asked_since_connected, Handle});
+observe_action({write, <<1, 16#0406:16/little, 3, Handle:16/little, _>> = Bytes},
+               #world{command = none, asked = Asked} = World) ->
+    ?assertEqual({Handle, asked}, {Handle, maps:get(Handle, Asked, not_asked)}),
+    World#world{writer = busy, command = {16#0406, Bytes}, asked = Asked#{Handle := written}};
 observe_action({write, <<1, Opcode:16/little, _, Handle:16/little, Key/binary>> = Bytes},
                #world{command = none, replied = Replied} = World) when ?IS_LTK(Opcode) ->
     ?assertEqual({ok, asked_key(Opcode, Key)}, maps:find(Handle, Replied)),
@@ -866,12 +896,16 @@ check_progress(_) ->
     ok.
 
 %% With nothing written, in flight or due, a ready core advertises exactly while
-%% connections are below the limit in force.
-check_quiescent(#world{ready = true, writer = idle, command = none, core = Core}) ->
+%% connections are below the limit in force. No command is due when a controller
+%% allowing one would be written none: the idle writer takes a due command at once. Then
+%% every deadline left is a live handle's disconnect, so with no live handle there is none.
+check_quiescent(#world{ready = true, writer = idle, command = none, core = Core, now = Now}) ->
     #{links := Links, advertising := Advertising, limit := Limit} = erx_bt_hci_core:facts(Core),
-    case erx_bt_hci_core:next_deadline(Core) of
-        infinity -> ?assertEqual(map_size(Links) < Limit, Advertising);
-        _Due -> ok
+    case erx_bt_hci_core:step({event, {command_complete, 1, 0, <<>>}}, Now, Core) of
+        {_, []} ->
+            ?assertEqual(map_size(Links) < Limit, Advertising),
+            ?assert(map_size(Links) > 0 orelse erx_bt_hci_core:next_deadline(Core) =:= infinity);
+        {_, _Due} -> ok
     end;
 check_quiescent(_) ->
     ok.

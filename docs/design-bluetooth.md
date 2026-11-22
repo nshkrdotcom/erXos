@@ -167,6 +167,9 @@ Specification at
 | QEMU | `v11.1.3` | `docs/system/arm/virt.rst` | `9fbcc9fc3040ef695e3058cd4bab05e10f6282ab7ba0846a93ee9f524933e3e1` |
 | Apache NimBLE | master `648fc0213fb7` | `nimble/host/services/bleuart/src/bleuart.c` | `2a51bad8f39685887b10f2301e023baa2af9200685d91528ae330bef78a21ed1` |
 | | | `nimble/controller/src/ble_ll_conn_hci.c` | `ae5f3a5e3cfb29d019ddb64c4b799e84bc833c9c6a87df0f75de848c7c465fd4` |
+| | | `nimble/controller/src/ble_ll_conn.c` | `60b6a4d69539c1ebaeae9f8e863b2e626a59786f020cb7cd655338803ce8f222` |
+| | | `nimble/controller/src/ble_ll_ctrl.c` | `dafdde45dd4f497c6496edd736bcb5b7bccbd518b0cb67f26c16d89fb9e654a4` |
+| | | `nimble/controller/include/controller/ble_ll_ctrl.h` | `05670d740e370b6e9e2b8dd4d2c4b83cd99d3c124d8479f636ae9f4dd5d69320` |
 | Bumble | `v0.0.237`, `34def7f112f9` | `apps/controllers.py` | `2d57845479e214137210db48bf12f3ac0309f01abb5cb4c6088b1d35ae462a05` |
 | | | `bumble/controller.py` | `8869ca13997bcc39b1fd2932438b720ac66db866d17a10b3ec4ba6504dc778db` |
 | | | `bumble/keys.py` | `5a06ecf86854108ca9714409a81ef0cc62cdc37010136c8e8f013c012a024b38` |
@@ -853,11 +856,27 @@ the peer's termination included (`ull_conn.c:407-413`). So a disconnect
 answered with either keeps its mark until the handle's Disconnection
 Complete, as one answered with success does, and a peer leaving as the
 host disconnects it costs nothing; any other failure ends the controller
-process. A controller that answers Command Disallowed for a connection
-that is not ending, as Zephyr's does when it has no procedure context
-free (`ull_llcp.c:772-775`), leaves the connection up, with no
-`link_down` for its link, until the peer leaves or the controller
-process restarts (TODO.md). The controller reuses handles, so a
+process. But Zephyr's also answers Command Disallowed for a connection
+that is not ending, when it has no procedure context free
+(`ull_llcp.c:772-775`), and a Disconnection Complete may fail; either
+would leave the connection up, holding a connection slot with no
+`link_down` for its link. Asking again at once would hold off the Long
+Term Key replies, which fall due after disconnects, so a disconnect is
+asked of the controller once: the mark it takes when the writer takes it
+holds a deadline, `bt_disconnect_timeout_ms`, 45 s, and a handle whose
+successful Disconnection Complete has not come by then ends the
+controller process, whose restart ends every connection: a refused
+disconnect costs every peer its link, as any stop does. The deadline
+counts from the writer's take, and a termination already under way ends
+within the longest LE supervision timeout, 32 s (HCI 7.7.65.1; NimBLE's
+ends one at its supervision timeout, `ble_ll_ctrl.c:2787-2789`), which
+the controller checks at a connection event (`ble_ll_conn.c:2861-2862`),
+at most one connection interval, 4 s, later (HCI 7.7.65.1); the command
+reaches the controller within `bt_command_timeout_ms`, 5 s, or the core
+stops. So the deadline must stay above `bt_command_timeout_ms` plus 36 s,
+41 s, for a connection the controllers read are still ending to have
+ended by then; 45 s also passes NimBLE's 40 s control procedure timeout
+(`ble_ll_ctrl.h:54`). The controller reuses handles, so a
 link is named by its handle and the connection that gave it the handle: the
 controller process gives a link its name when it starts it, names the link in
 everything it sends it, and every request of a link, a packet, a disconnect or a
@@ -877,8 +896,10 @@ flight once the writer has it, and the writer takes the command before
 any queued packet: an answer to a command still waiting for the writer
 is a controller fault and ends the controller process. The line's reset,
 a bring-up wait and a command are the states of one slot, each holding
-its own deadline, so the core has at most one deadline at a time and
-leaving a state drops it.
+its own deadline, so the slot has at most one deadline at a time and
+leaving a state drops it; a taken disconnect holds its own, which its
+Disconnection Complete drops with the mark, and the core's next deadline
+is the earliest of them.
 
 ACL packets to the controller use packet-based flow control (HCI 4.1.1).
 The controller process keeps, for each live handle, how many of its
@@ -921,8 +942,9 @@ a link whose backlog is `bt_link_backlog`, 32, is not sent: the core
 drops it, sends that link nothing more, and asks the handle's
 disconnect with Remote Device Terminated Connection due to Low
 Resources (`0x14`, one of the reasons HCI 7.1.6 allows), and the link
-ends at its `link_down` as every link does (but for a disconnect
-refused with Command Disallowed, above). So a link's mailbox holds
+ends at its `link_down` as every link does (or, for a disconnect the
+controller refuses and never completes, at the controller process's stop
+when the disconnect's deadline passes, above). So a link's mailbox holds
 at most 32 of the controller's messages, about 8 KiB, whatever the peer
 sends and however long the link is held up, and a peer that outruns
 its link loses the link, as a peer that passes any other bound does.
@@ -2207,7 +2229,7 @@ Each core's test is paired with the seeded faults it must catch.
 | Core | Holds | Seeded fault that must fail it |
 | --- | --- | --- |
 | `erx_h4` | a stream cut at every byte offset splits into the same packets; an unknown indicator, an over-long ACL length and an ACL packet past `bt_acl_rx_max` (251 octets) are errors, before and after the bring-up | the indicator check removed; the ACL length read as one byte; the bound one octet too long. A bound taken from LE Read Buffer Size cannot be written: `split/1` takes only the constant |
-| `erx_bt_hci_core`, explored over every reachable state until none is left (the clock moves only to a deadline that passes, so it takes at most three values; the count of dropped events, a statistic, is explored to one; a path makes at most three connections, enough for one handle to be given a new peer while the other is live), and case by case | the writer never holds two items; a wake-up before the deadline changes nothing, and the deadline's passing stops the core or changes it; a command the controller never allows ends at its deadline; every state before `ready`, the line's reset included, has a deadline, so every bring-up reaches `ready` or a stated reason, patching at most once; an opcode-0 event never moves the deadline; credits never go below zero and connections never pass the limit; a disconnect is written only for a handle whose disconnect was asked since it last connected; a request naming a gone link changes nothing, even on a reused handle; Number Of Completed Packets reaches each live handle's link as `{completed, Count}`; advertising is never on at the limit, and with nothing written, sent or due it is on exactly while connections are below the limit; the controller process ends for exactly these reasons: an answer naming another command, a deadline passed, a completion beyond a handle's outstanding packets or for a dead handle, a connection past the limit, during the bring-up, on a live handle or on one whose disconnect is unanswered, a disconnect failed with neither Unknown Connection Identifier nor Command Disallowed, a patch for another controller, a hardware error, an unanswered line reset, a malformed event and a failed step; fewer buffers than the connection limit lower the limit; Read Buffer Size takes any length from 1 | the command slot not cleared by Command Status; a handle kept live after Disconnection Complete; a completion count taken without the outstanding bound (a forged report grows the credits), or counting packets still waiting for the writer; advertising not re-enabled after a disconnection; the deadline armed only once the controller allows the command; the connection limit kept above the buffer count; LE's 27-octet minimum applied to Read Buffer Size; any failed disconnect taken as the handle gone; the line's reset under no deadline; and, each caught by the exploration, a disconnect kept after Disconnection Complete, a connection on a handle being disconnected accepted, a connection before the enable's answer leaving advertising on, completions not passed to their links, a deadline passed a millisecond early or only after its instant, and a request's link name ignored. A second deadline, or cancelling one never armed, cannot be written: each deadline is a field of the slot state it guards. Credits not returned at disconnection cannot be written: the free credits are derived from the live handles' outstanding packets |
+| `erx_bt_hci_core`, explored over every reachable state until none is left (the clock moves only to a deadline that passes, so it takes at most three values; the count of dropped events, a statistic, is explored to one; a path makes at most three connections, enough for one handle to be given a new peer while the other is live), and case by case | the writer never holds two items; a wake-up before the deadline changes nothing, and the deadline's passing stops the core or changes it; a command the controller never allows ends at its deadline; every state before `ready`, the line's reset included, has a deadline, so every bring-up reaches `ready` or a stated reason, patching at most once; an opcode-0 event never moves the deadline; credits never go below zero and connections never pass the limit; a disconnect is written only for a handle whose disconnect was asked since it last connected, and at most once before the handle connects again; a request naming a gone link changes nothing, even on a reused handle; Number Of Completed Packets reaches each live handle's link as `{completed, Count}`; advertising is never on at the limit, and with nothing written, sent or due it is on exactly while connections are below the limit; the controller process ends for exactly these reasons: an answer naming another command, a deadline passed, a completion beyond a handle's outstanding packets or for a dead handle, a connection past the limit, during the bring-up, on a live handle or on one whose disconnect is unanswered, a disconnect failed with neither Unknown Connection Identifier nor Command Disallowed, a disconnect not completed by its deadline, a patch for another controller, a hardware error, an unanswered line reset, a malformed event and a failed step; fewer buffers than the connection limit lower the limit; Read Buffer Size takes any length from 1 | the command slot not cleared by Command Status; a handle kept live after Disconnection Complete; a completion count taken without the outstanding bound (a forged report grows the credits), or counting packets still waiting for the writer; advertising not re-enabled after a disconnection; the deadline armed only once the controller allows the command; the connection limit kept above the buffer count; LE's 27-octet minimum applied to Read Buffer Size; any failed disconnect taken as the handle gone; a taken disconnect's deadline never armed; the line's reset under no deadline; and, each caught by the exploration, a disconnect kept after Disconnection Complete, a connection on a handle being disconnected accepted, a connection before the enable's answer leaving advertising on, completions not passed to their links, a deadline passed a millisecond early or only after its instant, a request's link name ignored, and a disconnect answered Command Disallowed asked again at once. A second deadline, or cancelling one never armed, cannot be written: each deadline is a field of the state it guards, the slot or a taken disconnect. Credits not returned at disconnection cannot be written: the free credits are derived from the live handles' outstanding packets |
 | `erx_bt_patch` | a synthetic patch replays in order; a truncated last record or a foreign opcode refuses the file whole, before any record is sent | the record length not checked against the bytes left |
 | `erx_gatt_db` | a built table matches a hand-written one; the hash changes with a characteristic and not with the manifest's row order | services laid out in manifest order |
 | `erx_gatt_gate` | GAP Table 10.2's rows for levels 1, 2 and 4 | Insufficient Encryption answered on a link with no key |

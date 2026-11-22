@@ -187,6 +187,12 @@ limit bt_line_reset_timeout_ms u32 5000
 limit bt_patch_minidriver_ms u32 1000
 limit bt_patch_launch_ms u32 4000
 limit bt_patch_download_minidriver u16 0xfc2e
+# A disconnect handed to the controller and not ended by a successful Disconnection
+# Complete within this deadline ends the controller process (docs/design-bluetooth.md,
+# "Commands and data credits"): it must stay above bt_command_timeout_ms plus the longest LE
+# supervision timeout, 32 s, plus one longest connection interval, 4 s (Vol 4 Part E,
+# 7.7.65.1), so a termination already under way has ended by then.
+limit bt_disconnect_timeout_ms u32 45000
 
 # The host's side of the LE-U link (docs/design-bluetooth.md, "Links: the fixed channels").
 # An ACL packet's Packet_Boundary_Flag (Vol 4 Part E, 5.4.2): the host starts a frame it

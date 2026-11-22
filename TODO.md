@@ -8654,19 +8654,6 @@ model harness drive `erx_device.c` itself. `erx_device_dma_check` and `erx_devic
   peer before it reports the connection. Question for the design: rely on Part E 5.3 and check the board's
   controller's handle reuse with a probe, or add such a fence. A cheap narrowing for host-initiated disconnects
   alone: refuse a link's packets once its handle's disconnect is asked.
-* [Medium] bluetooth, a disconnect refused for a connection that is not ending (`erx_bt_hci_core`'s `answered/4`
-  and the failed Disconnection Complete clause of `event/2`; docs/design-bluetooth.md "Commands and data credits"):
-  Command Disallowed to a disconnect, and a Disconnection Complete with a failed status, keep the handle's
-  disconnect mark until a successful Disconnection Complete, and nothing asks again. NimBLE and Zephyr answer
-  Command Disallowed for a connection already ending, but Zephyr also answers it when its global pool of
-  procedure contexts is empty (`ull_llcp.c:772-775`); then the connection stays up, its link never gets
-  `link_down` (a link cut at its backlog stays alive and cut), and it holds one of the connection slots, with
-  advertising off at the limit, until the peer leaves or the controller process restarts: a supervision timeout
-  ends it only if the peer goes silent. No authority widens and nothing is sent to another peer. Fix needs a
-  design decision, since the core keeps at most one deadline: a deadline on the refused mark (past the longest
-  supervision timeout) after which the core stops, or asks once more. Re-asking at once would starve the Long
-  Term Key replies, which `due/1` puts after disconnects. The exploration should then also check that a
-  disconnect is written at most once per connection.
 * [Medium] bluetooth, Reconnection's link side (`erx_bt_link_core`; docs/design-bluetooth.md "Reconnection",
   "The link's messages"): a resolved link sends no Security Request (`wait` to the window, `{wait, Ms}` back,
   SMP 3.6.7 after the pairing wait and never during encryption), indicates no Service Changed when the bond's

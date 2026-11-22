@@ -20,8 +20,9 @@ require_relative '../fixtures/erlang_build'
 # disconnection (the free credits are the buffer count less the live handles' packets in
 # flight, so removing a handle returns its packets). In the second's place the handle is
 # kept live after its Disconnection Complete. Nor can a second deadline armed or a
-# deadline cancelled that was never armed: each deadline is a field of the slot's state
-# it guards, so leaving the state drops it and there is no second one to arm.
+# deadline cancelled that was never armed: each deadline is a field of the state it
+# guards, the slot or a taken disconnect, so leaving the state drops it and there is no
+# second one to arm.
 class ErxBtHciTest < Minitest::Test
   APPLICATIONS = %w[erx_bt].freeze
   TESTS = %w[test/erlang/erx_bt_hci_tests.erl test/erlang/erx_bt_patch_tests.erl].freeze
@@ -118,16 +119,34 @@ class ErxBtHciTest < Minitest::Test
              anchor: '        Failed -> stop({disconnect_failed, Handle, Failed})',
              replacement: '        _Failed -> {[], Core}',
              catching_case: 'a_disconnect_is_asked_once_and_a_failure_other_than_gone_or_ending_stops_test'),
+    Seed.new(fault: "a taken disconnect's deadline never armed, so no wake-up comes for it",
+             module_path: CORE,
+             anchor: '        [{{disconnect, Handle}, Deadline} || {Handle, {taken, Deadline}} <- Disconnects].',
+             replacement: '        lists:sublist(Disconnects, 0).',
+             catching_case: 'a_disconnect_not_completed_by_its_deadline_stops_test'),
+    Seed.new(fault: 'a disconnect answered Command Disallowed asked again at once',
+             module_path: CORE,
+             anchor: '        {failed, ?ERX_HCI_STATUS_COMMAND_DISALLOWED} -> {[], Core};',
+             replacement: '        {failed, ?ERX_HCI_STATUS_COMMAND_DISALLOWED} -> ' \
+                          '{[], disconnect(Handle, 16#13, Core#core{disconnects = ' \
+                          'lists:keydelete(Handle, 1, Core#core.disconnects)})};',
+             catching_case: 'explored_core_keeps_its_invariants_test_'),
+    Seed.new(fault: "a taken disconnect kept past its handle's Disconnection Complete, so its deadline stops a later run",
+             module_path: CORE,
+             anchor: '                       disconnects = lists:keydelete(Handle, 1, Core#core.disconnects),',
+             replacement: '                       disconnects = [Mark || {Owner, Value} = Mark <- Core#core.disconnects, ' \
+                          'Owner =/= Handle orelse element(1, Value) =:= taken],',
+             catching_case: 'a_disconnect_not_completed_by_its_deadline_stops_test'),
     Seed.new(fault: "the line's reset under no deadline",
              module_path: CORE,
-             anchor: '{line_reset, Deadline} -> Deadline;',
-             replacement: '{line_reset, _Deadline} -> infinity;',
+             anchor: 'slot_deadline({line_reset, Deadline}) -> [Deadline];',
+             replacement: 'slot_deadline({line_reset, _Deadline}) -> [];',
              catching_case: 'a_line_reset_that_never_ends_stops_test'),
     Seed.new(fault: 'the due deadline restarted on every input, so repeated traffic holds a command off',
              module_path: CORE,
-             anchor: "command(_Now, #core{slot = {due, _}} = Core) ->\n    case due(Core) of\n" \
+             anchor: "command(Now, #core{slot = {due, _}} = Core) ->\n    case due(Now, Core) of\n" \
                      "        none -> {[], Core#core{slot = idle}};\n        _ -> {[], Core}\n",
-             replacement: "command(Now, #core{slot = {due, _}} = Core) ->\n    case due(Core) of\n" \
+             replacement: "command(Now, #core{slot = {due, _}} = Core) ->\n    case due(Now, Core) of\n" \
                           "        none -> {[], Core#core{slot = idle}};\n" \
                           "        _ -> {[], Core#core{slot = {due, Now + ?ERX_BT_COMMAND_TIMEOUT_MS}}}\n",
              catching_case: 'explored_core_keeps_its_invariants_test_'),
@@ -138,13 +157,13 @@ class ErxBtHciTest < Minitest::Test
              catching_case: 'explored_core_keeps_its_invariants_test_'),
     Seed.new(fault: 'a deadline passed only after its instant',
              module_path: CORE,
-             anchor: 'case next_deadline(Core) =< Now of',
-             replacement: 'case next_deadline(Core) < Now of',
+             anchor: '<- deadlines(Core), Deadline =< Now] of',
+             replacement: '<- deadlines(Core), Deadline < Now] of',
              catching_case: 'explored_core_keeps_its_invariants_test_'),
     Seed.new(fault: 'a deadline passed a millisecond early',
              module_path: CORE,
-             anchor: 'case next_deadline(Core) =< Now of',
-             replacement: 'case next_deadline(Core) =< Now + 1 of',
+             anchor: '<- deadlines(Core), Deadline =< Now] of',
+             replacement: '<- deadlines(Core), Deadline =< Now + 1] of',
              catching_case: 'explored_core_keeps_its_invariants_test_'),
     Seed.new(fault: "a request's link identity ignored, so a gone link's packet reaches its handle's next peer",
              module_path: CORE,

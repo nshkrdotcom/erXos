@@ -44,8 +44,11 @@ since the controller may carry that disconnect out on the new peer. A disconnect
 answered with Unknown Connection Identifier (the handle has gone) or Command Disallowed
 (which NimBLE's and Zephyr's controllers answer when the connection is already ending)
 keeps its mark until the handle's Disconnection Complete, as one answered with success
-does; any other status stops. A controller that answers Command Disallowed for a
-connection that is not ending leaves it up until the peer leaves (TODO.md, security residuals).
+does; any other status stops. A disconnect is never asked again: the mark taken holds a
+deadline, `bt_disconnect_timeout_ms` from the moment the writer takes it, and a handle
+whose successful Disconnection Complete has not come by then stops, so a controller that
+refuses the disconnect of a connection that is not ending, by Command Disallowed or a
+failed Disconnection Complete, cannot keep the connection up.
 
 **Long Term Key replies**: a link answers the LE Long Term Key Request the core passed
 it with `{ltk_reply, Key}`, its key, or `{ltk_reply, none}` when it has none, which the
@@ -102,8 +105,9 @@ free and connections are below the limit. A connection that completes while the 
 is sent came from that enable, so the enable's answer leaves advertising off.
 
 **Time** is an input (docs/design.md, "Deadlines in state"): every step takes the
-current time in milliseconds, a deadline is that time plus its timeout, and
-`next_deadline/1` answers the slot's deadline. The process reads the clock, keeps one
+current time in milliseconds, a deadline is that time plus its timeout, each deadline is
+a field of the state it guards, the slot or a taken disconnect, and `next_deadline/1`
+answers the earliest of them. The process reads the clock, keeps one
 wake-up timer at that deadline and steps `expired` when it fires; `expired` runs a
 deadline at or before the time given and changes nothing otherwise, so a late, early or
 repeated wake-up costs one look. Inputs and actions are terms. The patch arrives as records already read whole by `erx_bt_patch` (a later
@@ -157,7 +161,7 @@ slice): this core sends what it is given.
     serial = 0 :: non_neg_integer(),           % the connections so far, the last link's serial
     links = #{} :: #{handle() => #live{}},
     advertising = false :: boolean(),
-    disconnects = [] :: [{handle(), {asked, Reason :: byte()} | taken}],  % live handles only
+    disconnects = [] :: [{handle(), {asked, Reason :: byte()} | {taken, Deadline :: time()}}],  % live handles only
     replies = [] :: [{handle(), erx_hci:key() | none}],  % asked and not taken, live handles only
     facts = #{} :: map(),
     dropped = 0 :: non_neg_integer()
@@ -226,40 +230,53 @@ step(Input, Now, Core) ->
 
 stop(Reason) -> throw({stop, Reason}).
 
--doc "The deadline the slot holds, `infinity` when it holds none.".
+-doc "The earliest deadline the state holds, the slot's or a taken disconnect's; `infinity` when it holds none.".
 -spec next_deadline(core()) -> time() | infinity.
-next_deadline(#core{slot = Slot}) ->
-    case Slot of
-        idle -> infinity;
-        {line_reset, Deadline} -> Deadline;
-        {wait, Deadline} -> Deadline;
-        {due, Deadline} -> Deadline;
-        {sent, _Label, _Command, _Opcode, Deadline} -> Deadline
-    end.
+next_deadline(Core) ->
+    %% Every integer sorts before the atom infinity.
+    lists:min([infinity | [Deadline || {_Guarded, Deadline} <- deadlines(Core)]]).
+
+%% Every deadline the state holds, each with what it guards: the slot's, if it holds one,
+%% and each taken disconnect's.
+deadlines(#core{slot = Slot, disconnects = Disconnects}) ->
+    [{slot, Deadline} || Deadline <- slot_deadline(Slot)] ++
+        [{{disconnect, Handle}, Deadline} || {Handle, {taken, Deadline}} <- Disconnects].
+
+slot_deadline(idle) -> [];
+slot_deadline({line_reset, Deadline}) -> [Deadline];
+slot_deadline({wait, Deadline}) -> [Deadline];
+slot_deadline({due, Deadline}) -> [Deadline];
+slot_deadline({sent, _Label, _Command, _Opcode, Deadline}) -> [Deadline].
 
 input(start, Now, #core{plan = [line_reset | Plan], slot = idle} = Core) ->
     {[line_reset], Core#core{plan = Plan, slot = {line_reset, Now + ?ERX_BT_LINE_RESET_TIMEOUT_MS}}};
 input(line_ready, _Now, #core{slot = {line_reset, _}} = Core) ->
     {[], Core#core{slot = idle}};
+%% The first deadline at or before Now runs; with none, nothing changes. Only a bring-up
+%% wait runs without stopping, and it never meets a disconnect: there are no links before
+%% ready.
 input(expired, Now, Core) ->
-    case next_deadline(Core) =< Now of
-        true -> expired(Core);
-        false -> {[], Core}
+    case [Guarded || {Guarded, Deadline} <- deadlines(Core), Deadline =< Now] of
+        [Guarded | _] -> expired(Guarded, Now, Core);
+        [] -> {[], Core}
     end;
 input(Input, _Now, Core) ->
     untimed(Input, Core).
 
-%% The slot's deadline has passed.
-expired(#core{slot = {line_reset, _}}) ->
+%% A deadline has passed. A taken disconnect's: its handle's connection outlived the
+%% longest time the controller may take to end it.
+expired({disconnect, Handle}, _Now, _Core) ->
+    stop({disconnect_not_completed, Handle});
+expired(slot, _Now, #core{slot = {line_reset, _}}) ->
     stop(line_reset_timeout);
-expired(#core{slot = {wait, _}} = Core) ->
+expired(slot, _Now, #core{slot = {wait, _}} = Core) ->
     {[], Core#core{slot = idle}};
-expired(#core{slot = {due, _}} = Core) ->
+expired(slot, Now, #core{slot = {due, _}} = Core) ->
     %% A due slot always has a command due: every state step/3 returns has been pumped,
-    %% and command/2 empties the slot whenever due/1 names none.
-    {Label, _, _} = due(Core),
+    %% and command/2 empties the slot whenever due/2 names none.
+    {Label, _, _} = due(Now, Core),
     stop({command_timeout, Label});
-expired(#core{slot = {sent, Label, _, _, _}}) ->
+expired(slot, _Now, #core{slot = {sent, Label, _, _, _}}) ->
     stop({command_timeout, Label}).
 
 %% The inputs that do not read the time, and start or line_ready out of their state.
@@ -451,8 +468,8 @@ answer(Opcode, _Answer, _Core) ->
 %% Identifier means the handle has gone; Command Disallowed is what NimBLE's and
 %% Zephyr's controllers answer when the connection is already ending (7.7.5 lists a
 %% disconnect not presently allowed among the failed ones). After either, as after
-%% success, the handle keeps its taken mark until its Disconnection Complete. Any other
-%% failure stops.
+%% success, the handle keeps its taken mark until its Disconnection Complete, or until
+%% the mark's deadline stops the core. Any other failure stops.
 answered({disconnect, Handle}, Command, Answer, Core) ->
     case outcome(Command, Answer) of
         {ok, _} -> {[], Core};
@@ -525,7 +542,7 @@ buffers(Length, Packets, #core{limit = Limit} = Core) ->
 pump(Now, Core) ->
     {Steps, Stepped} = next_step(Now, Core),
     {Commands, Commanded} = command(Now, Stepped),
-    {Writes, Written} = feed(Commanded),
+    {Writes, Written} = feed(Now, Commanded),
     {Steps ++ Commands ++ Writes, Written}.
 
 next_step(Now, #core{stage = bringup, slot = idle, plan = [{wait, Milliseconds} | Plan]} = Core) ->
@@ -536,24 +553,26 @@ next_step(_Now, Core) ->
     {[], Core}.
 
 %% The command due now, if any: its label, the command, and the state once it is taken
-%% (the plan's step popped, the disconnect marked taken, or the reply removed). Only feed/1 keeps that
-%% state; the other callers ask only whether a command is due. In the bring-up, its
-%% next step; once ready, the first disconnect asked for and not yet taken, else the first
-%% Long Term Key reply, else advertising while connections are below the limit.
-due(#core{stage = bringup, plan = [{command, Label, Command} | Plan]} = Core) ->
+%% at Now (the plan's step popped, the disconnect marked taken under its deadline, or the
+%% reply removed). Only feed/2 keeps that state; the other callers ask only whether a
+%% command is due. In the bring-up, its next step; once ready, the first disconnect asked
+%% for and not yet taken, else the first Long Term Key reply, else advertising while
+%% connections are below the limit.
+due(_Now, #core{stage = bringup, plan = [{command, Label, Command} | Plan]} = Core) ->
     {Label, Command, Core#core{plan = Plan}};
-due(#core{stage = ready, disconnects = Disconnects} = Core) ->
+due(Now, #core{stage = ready, disconnects = Disconnects} = Core) ->
     case [Asked || {_Handle, {asked, _Reason}} = Asked <- Disconnects] of
         [{Handle, {asked, Reason}} | _] ->
+            Taken = {Handle, {taken, Now + ?ERX_BT_DISCONNECT_TIMEOUT_MS}},
             {{disconnect, Handle}, {disconnect, Handle, Reason},
-             Core#core{disconnects = lists:keyreplace(Handle, 1, Disconnects, {Handle, taken})}};
+             Core#core{disconnects = lists:keyreplace(Handle, 1, Disconnects, Taken)}};
         [] ->
             case reply(Core) of
                 none -> advertise(Core);
                 Reply -> Reply
             end
     end;
-due(_Core) ->
+due(_Now, _Core) ->
     none.
 
 reply(#core{replies = [{Handle, Key} | Replies]} = Core) ->
@@ -572,12 +591,12 @@ advertise(_Core) ->
 %% The slot, when free or due: a command falling due starts its deadline, and a due
 %% command no longer due empties the slot, its deadline with it.
 command(Now, #core{slot = idle} = Core) ->
-    case due(Core) of
+    case due(Now, Core) of
         none -> {[], Core};
         _ -> {[], Core#core{slot = {due, Now + ?ERX_BT_COMMAND_TIMEOUT_MS}}}
     end;
-command(_Now, #core{slot = {due, _}} = Core) ->
-    case due(Core) of
+command(Now, #core{slot = {due, _}} = Core) ->
+    case due(Now, Core) of
         none -> {[], Core#core{slot = idle}};
         _ -> {[], Core}
     end;
@@ -587,12 +606,12 @@ command(_Now, Core) ->
 %% The writer, when idle, takes the due command once the controller allows one, which
 %% is decided and sent at that moment and keeps the deadline it fell due with, else the
 %% next packet.
-feed(#core{writer = idle, slot = {due, Deadline}, allowed = Allowed} = Core) when Allowed > 0 ->
-    {Label, Command, Taken} = due(Core),
+feed(Now, #core{writer = idle, slot = {due, Deadline}, allowed = Allowed} = Core) when Allowed > 0 ->
+    {Label, Command, Taken} = due(Now, Core),
     {Opcode, Parameters} = erx_hci:command(Command),
     {[{write, erx_h4:command(Opcode, Parameters)}],
      Taken#core{writer = busy, slot = {sent, Label, Command, Opcode, Deadline}, allowed = Allowed - 1}};
-feed(#core{writer = idle, out = [{_Handle, Packet} | Out]} = Core) ->
+feed(_Now, #core{writer = idle, out = [{_Handle, Packet} | Out]} = Core) ->
     {[{write, Packet}], Core#core{writer = busy, out = Out}};
-feed(Core) ->
+feed(_Now, Core) ->
     {[], Core}.
