@@ -288,8 +288,10 @@ generator refuses two clusters with one ID, an ID together with a
 `baseFrom`, a `dimIncrement` on such an array, a cluster array of any
 other kind, a capability cluster on a peripheral without a list, and a
 register past the movable span. A register array whose live length the device reports, as xHCI's `PORTSC`
-is, names that field the same way in `<dimFrom>`, and its `dim` must cover
-every count the field can hold. An access
+is, names that field the same way in `<dimFrom>`, as `REGISTER.FIELD`, or
+as `REGISTER.FIELD + N` where the length is the field's value and `N` more,
+as xHCI's doorbells are `MaxSlots` + 1; its `dim` must cover the field's
+largest value plus `N`. An access
 sequence a device's specification prescribes and SVD cannot express is
 declared in the device's `vendorExtensions` in erXos's own namespace and
 emitted as one function per sequence, with its barriers

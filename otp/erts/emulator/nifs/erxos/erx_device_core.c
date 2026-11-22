@@ -145,7 +145,8 @@ take_source(const erx_device_peripheral_t *peripheral, erx_device_layout_t *layo
 		const erx_device_register_t *const reg = &peripheral->registers[at];
 
 		if (reg->counted && reg->count_register == index)
-			layout->elements[at] = (uint32_t)erx_device_field_get(&peripheral->fields[reg->count_field], word);
+			layout->elements[at] = (uint32_t)erx_device_field_get(&peripheral->fields[reg->count_field], word) +
+			    reg->count_plus;
 	}
 	if (peripheral->listed && peripheral->list_reg == index)
 		resolve->entry = erx_device_field_get(&peripheral->fields[peripheral->list_field], word) * LIST_WORD_BYTES;
@@ -183,18 +184,28 @@ take_entry(const erx_device_peripheral_t *peripheral, erx_device_layout_t *layou
 }
 
 /*
- * The bytes each place of a layout's registers covers, from its first element's first byte to
- * its last element's last: place 0 is the registers at fixed offsets, and place 1 + n slot n's
- * cluster instance, and the last, KEPT_PLACE, the span the open keeps apart. A place with no
- * element has first UINT64_MAX.
+ * The places a layout's registers lie in: place 0 the registers at fixed offsets, place 1 + n
+ * slot n's cluster instance, and the last, KEPT_PLACE, the span the open keeps apart.
  */
 #define PLACES		(2 + ERX_DEVICE_SLOTS_MAX)
 #define KEPT_PLACE	(PLACES - 1)
 
-typedef struct places {
-	uint64_t	first[PLACES];
-	uint64_t	end[PLACES];
-} places_t;
+/*
+ * The bytes one register covers in one place, from its first element's first byte there to its
+ * last element's end: for most registers their whole array, for a register of an array cluster
+ * its one element in each instance. The kept span is a span of KEPT_PLACE.
+ */
+typedef struct span {
+	uint32_t	place;
+	uint64_t	first;
+	uint64_t	end;
+} span_t;
+
+/* Every register's span, in each instance of an array cluster, then the kept span. */
+typedef struct spans {
+	uint32_t	count;
+	span_t		span[ERX_DEVICE_SPANS_MAX + 1];
+} spans_t;
 
 static uint32_t
 place_of(const erx_device_peripheral_t *peripheral, const erx_device_register_t *reg, uint32_t index)
@@ -209,14 +220,18 @@ place_of(const erx_device_peripheral_t *peripheral, const erx_device_register_t 
 
 /*
  * Whether every element of the register lies wholly inside the window, at an offset aligned to
- * its width, refused at the first that does not; each widens its place's bytes.
+ * its width, refused at the first that does not; each element opens the register's span in its
+ * place or widens it. A register's elements in one place lie at rising offsets, its stride at
+ * least its width, so the last one's end is the span's.
  */
 static bool
 elements_inside(const erx_device_peripheral_t *peripheral, const erx_device_layout_t *layout,
-    const erx_device_register_t *reg, erx_device_resolve_t *resolve, places_t *places)
+    const erx_device_register_t *reg, erx_device_resolve_t *resolve, spans_t *spans)
 {
 	const uint64_t bytes = reg->width / 8u, size = resolve->size;
 	const uint32_t at = (uint32_t)(reg - peripheral->registers);
+	/* A register of an array cluster has its element in each instance, each a span of its own. */
+	const bool instanced = reg->base != 0 && peripheral->bases[reg->base - 1].instances > 1;
 	uint64_t offset;
 
 	for (uint32_t index = 0; index < layout->elements[at]; index++) {
@@ -235,31 +250,34 @@ elements_inside(const erx_device_peripheral_t *peripheral, const erx_device_layo
 			    .offset = known ? offset : 0, .bytes = bytes });
 			return (false);
 		}
-		if (offset < places->first[place])
-			places->first[place] = offset;
-		if (offset + bytes > places->end[place])
-			places->end[place] = offset + bytes;
+		/*
+		 * One span for each register, or for each instance of an instanced one, whose index
+		 * erx_device_layout_offset keeps below its count: at most ERX_DEVICE_SPANS_MAX.
+		 */
+		if (index == 0 || instanced)
+			spans->span[spans->count++] = (span_t){ .place = place, .first = offset, .end = offset + bytes };
+		else
+			spans->span[spans->count - 1].end = offset + bytes;
 	}
 	return (true);
 }
 
-/* Place `place` of `places`, by what it is: the fixed registers, a cluster's instance, or the kept span. */
+/* A span, by the place it is in: the fixed registers, a cluster's instance, or the kept span. */
 static erx_device_place_t
-place_named(const erx_device_peripheral_t *peripheral, const places_t *places, uint32_t place)
+place_named(const erx_device_peripheral_t *peripheral, const span_t *span)
 {
-	erx_device_place_t named = { .kind = ERX_DEVICE_PLACE_FIXED, .first = places->first[place],
-	    .end = places->end[place] };
+	erx_device_place_t named = { .kind = ERX_DEVICE_PLACE_FIXED, .first = span->first, .end = span->end };
 
-	if (place == KEPT_PLACE) {
+	if (span->place == KEPT_PLACE) {
 		named.kind = ERX_DEVICE_PLACE_KEPT;
-	} else if (place != 0) {
+	} else if (span->place != 0) {
 		for (uint32_t at = 0; at < peripheral->base_count; at++) {
 			const erx_device_base_t *const base = &peripheral->bases[at];
 
-			if (place - 1 >= base->first && place - 1 - base->first < base->instances) {
+			if (span->place - 1 >= base->first && span->place - 1 - base->first < base->instances) {
 				named.kind = ERX_DEVICE_PLACE_CLUSTER;
 				named.base = at;
-				named.instance = place - 1 - base->first;
+				named.instance = span->place - 1 - base->first;
 			}
 		}
 	}
@@ -267,19 +285,23 @@ place_named(const erx_device_peripheral_t *peripheral, const places_t *places, u
 }
 
 /*
- * Whether no two places share a byte, refused at the first two that do. Within a place the
- * generator keeps registers apart; a device that reported bases putting one cluster over
- * another, or over the fixed registers, would give a register a driver may write the address
- * of one the NIF owns.
+ * Whether no two spans in different places share a byte, refused at the first two that do.
+ * Within a place the generator keeps registers apart, and the gaps between them are free: a
+ * controller may put one cluster in another's gap, as the VL805 puts its doorbells and runtime
+ * registers between the operational registers and the ports. A device that reported bases
+ * putting a register of one cluster over one of another, or over the fixed registers, would
+ * give a register a driver may write the address of one the NIF owns.
  */
 static bool
-places_apart(const erx_device_peripheral_t *peripheral, const places_t *places, erx_device_resolve_t *resolve)
+spans_apart(const erx_device_peripheral_t *peripheral, const spans_t *spans, erx_device_resolve_t *resolve)
 {
-	for (uint32_t a = 0; a < PLACES; a++) {
-		for (uint32_t b = a + 1; b < PLACES; b++) {
-			if (places->first[a] < places->end[b] && places->first[b] < places->end[a]) {
+	for (uint32_t a = 0; a < spans->count; a++) {
+		for (uint32_t b = a + 1; b < spans->count; b++) {
+			const span_t *const one = &spans->span[a], *const other = &spans->span[b];
+
+			if (one->place != other->place && one->first < other->end && other->first < one->end) {
 				refuse(resolve, (erx_device_refusal_t){ .rule = ERX_DEVICE_REFUSAL_OVERLAP,
-				    .place = { place_named(peripheral, places, a), place_named(peripheral, places, b) } });
+				    .place = { place_named(peripheral, one), place_named(peripheral, other) } });
 				return (false);
 			}
 		}
@@ -289,21 +311,14 @@ places_apart(const erx_device_peripheral_t *peripheral, const places_t *places, 
 
 /*
  * The walk's end: each capability cluster's registers have the instances found, every element
- * must fit the window, and no cluster instance may overlap another, the fixed registers or the
- * kept span.
+ * must fit the window, and no register may overlap one in another place or the kept span.
  */
 static void
 finish(const erx_device_peripheral_t *peripheral, erx_device_layout_t *layout, erx_device_resolve_t *resolve)
 {
-	places_t places;
+	spans_t spans = { .count = 0 };
 	bool fits = true;
 
-	for (uint32_t place = 0; place < PLACES; place++) {
-		places.first[place] = UINT64_MAX;
-		places.end[place] = 0;
-	}
-	places.first[KEPT_PLACE] = resolve->kept_first;
-	places.end[KEPT_PLACE] = resolve->kept_end;
 	for (uint32_t index = 0; index < peripheral->register_count; index++) {
 		const erx_device_register_t *const reg = &peripheral->registers[index];
 		const erx_device_base_t *const base = reg->base != 0 ? &peripheral->bases[reg->base - 1] : NULL;
@@ -317,9 +332,11 @@ finish(const erx_device_peripheral_t *peripheral, erx_device_layout_t *layout, e
 			else if (found == 0)
 				layout->elements[index] = 0;
 		}
-		fits = fits && elements_inside(peripheral, layout, reg, resolve, &places);
+		fits = fits && elements_inside(peripheral, layout, reg, resolve, &spans);
 	}
-	if (fits && places_apart(peripheral, &places, resolve))
+	if (resolve->kept_first < resolve->kept_end)
+		spans.span[spans.count++] = (span_t){ .place = KEPT_PLACE, .first = resolve->kept_first, .end = resolve->kept_end };
+	if (fits && spans_apart(peripheral, &spans, resolve))
 		resolve->op = ERX_DEVICE_RESOLVE_DONE;
 }
 

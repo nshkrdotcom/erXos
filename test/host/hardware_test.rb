@@ -543,7 +543,11 @@ class HardwareTest < Minitest::Test
     assert_match(/\{ \.name = "protocol", \.reg = 0, \.field = 0, \.capability = 2, \.instances = 8, \.first = 4 \}/, table)
     assert_match(/\.base_count = 5, \.listed = true, \.list_reg = 5, \.list_field = 25, \.spaces = NULL, \.space_count = 0 \}/, table)
     assert_includes Erx::Hardware.device_types_header([device]), '#define ERX_DEVICE_SLOTS_MAX 12u'
-    assert_match(/\.name = "portsc", .*\.base = 1, \.counted = true, \.count_register = 2, \.count_field = 4 \}/, table)
+    # A span for each register, and for REVISION and PORTS one in each of the eight protocol instances.
+    assert_includes Erx::Hardware.device_types_header([device]), "#define ERX_DEVICE_SPANS_MAX #{device.registers.size - 2 + 16}u"
+    assert_match(/\.name = "portsc", .*\.base = 1, \.counted = true, \.count_register = 2, \.count_field = 4, \.count_plus = 0 \}/, table)
+    # The doorbells: MaxSlots + 1, one for each slot and the command ring's.
+    assert_match(/\.name = "db", .*\.base = 3, \.counted = true, \.count_register = 2, \.count_field = 2, \.count_plus = 1 \}/, table)
     assert_match(/\{ \.name = "runtime", \.reg = 7, \.field = 27, \.capability = 0, \.instances = 1, \.first = 1 \}/, table)
     assert_match(/\.name = "xhci", .*\.bases = erx_device_xhci_bases, \.base_count = 5, /, table)
     assert_includes Erx::Hardware.device_owned_header([device]), "#define ERX_DEVICE_OWNED_XHCI_IMAN\t19u"
@@ -563,6 +567,9 @@ class HardwareTest < Minitest::Test
       source.sub('<dim>255</dim>', '<dim>254</dim>') => /past its dim/,
       source.sub('<dimFrom>HCSPARAMS1.MAXPORTS<', '<dimFrom>HCSPARAMS1.NONE<') => /count names no readable field/,
       source.sub('<dimFrom>HCSPARAMS1.MAXPORTS<', '<dimFrom>PORTSC.CCS<') => /count names no readable field/,
+      source.sub('<dimFrom>HCSPARAMS1.MAXPORTS<', '<dimFrom>HCSPARAMS1.MAXPORTS + 1<') => /past its dim/,
+      source.sub('<dimFrom>HCSPARAMS1.MAXSLOTS + 1<', '<dimFrom>HCSPARAMS1.MAXSLOTS - 1<') => /REGISTER\.FIELD/,
+      source.sub('<dimFrom>HCSPARAMS1.MAXSLOTS + 1<', '<dimFrom>HCSPARAMS1.MAXSLOTS + one<') => /unsigned integer/,
       source.sub('<name>PORTSC[%s]</name>', '<name>PORTSC</name>').sub(%r{<dim>255</dim><dimIncrement>0x10</dimIncrement>}, '') => /dimFrom without dim/,
       source.sub('<name>IMAN</name><addressOffset>', '<name>IMAN</name><ownedByNif>false</ownedByNif><addressOffset>') => /no ownedByNif mark of its own/,
       source.sub('<bitWidth>1</bitWidth><ownedByNif>true</ownedByNif></field>', '<bitWidth>1</bitWidth><ownedByNif>false</ownedByNif></field>') => /true or not at all/,

@@ -192,9 +192,9 @@ erx_device_element_offset(const erx_device_register_t *reg, bool indexed, uint64
  * Where a record's registers are, decided once at open (docs/design-usb.md, "Registers at
  * offsets the controller reports"): `slot` holds the base of each instance of each movable
  * cluster, from its base's `first`, and `elements` how many elements of each register, by its
- * index in the table, the device has. A counted array has as many as its count field reports;
- * a register of a capability's cluster has one in each instance the walk found, none when it
- * found no entry with that ID; every other register has its table count.
+ * index in the table, the device has. A counted array has as many as its count field reports
+ * and count_plus more; a register of a capability's cluster has one in each instance the walk
+ * found, none when it found no entry with that ID; every other register has its table count.
  */
 typedef struct erx_device_layout {
 	uint64_t	slot[ERX_DEVICE_SLOTS_MAX];
@@ -247,7 +247,11 @@ typedef enum erx_device_place_kind {
 	ERX_DEVICE_PLACE_KEPT
 } erx_device_place_kind_t;
 
-/* A place's bytes, from its first element's first byte to its last element's end. */
+/*
+ * One register's bytes in a place, from its first element's first byte there to its last
+ * element's end, or the kept span's, and the place: the registers at fixed offsets, an
+ * instance of a movable cluster, or the kept span.
+ */
 typedef struct erx_device_place {
 	erx_device_place_kind_t	kind;
 	uint32_t		base;		/* a cluster's index in the peripheral's bases */

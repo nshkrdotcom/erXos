@@ -18,9 +18,10 @@ module Erx
       def mask = ((1 << width) - 1) << offset
     end
     # cluster is the Movable cluster the register belongs to, or nil for a register at a fixed offset;
-    # count_from is the FieldRef whose value is how many elements of an array the device has.
+    # count_from is the FieldRef whose value, count_plus more, is how many elements of an array
+    # the device has.
     Register = Struct.new(:name, :offset, :width, :access, :read_action, :fields, :owned_by_nif, :count, :stride,
-                          :count_from, :cluster, keyword_init: true) do
+                          :count_from, :count_plus, :cluster, keyword_init: true) do
       # Whether the register's elements are the instances of an array cluster, each at its own
       # base, rather than elements laid out at its stride from one.
       def instanced? = !cluster.nil? && cluster.instances > 1
@@ -64,6 +65,8 @@ module Erx
     SPACES_MAX = 4
     IDENTIFIER = /\A[A-Za-z][A-Za-z0-9_]*\z/
     ARRAY_NAME = /\A(.*)\[%s\]\z/
+    # dimFrom's text: REGISTER.FIELD, or REGISTER.FIELD + N.
+    COUNT_FROM = /\A(?<field>[^+\s]+)(?:\s*\+\s*(?<plus>\S+))?\z/
     # The most elements of one register array or cluster: an MSI-X table's 2048 entries.
     ELEMENTS_MAX = 2048
     # An extended capability's ID is the byte its entry's first word begins with; 0 is reserved
@@ -442,7 +445,9 @@ module Erx
       resolve.call(capabilities, 'capabilitiesFrom') if capabilities
       list.select(&:count_from).each do |register|
         field = resolve.call(register.count_from, "array #{register.name}'s count")
-        raise Error, "SVD array #{register.name}'s count can name an element past its dim" if (1 << field.width) - 1 > register.count
+        if (1 << field.width) - 1 + register.count_plus > register.count
+          raise Error, "SVD array #{register.name}'s count can name an element past its dim"
+        end
       end
     end
 
@@ -525,7 +530,9 @@ module Erx
     # An array is `NAME[%s]` with dim and dimIncrement, one element per index from zero. Where
     # the device reports how many elements it has, as xHCI's MaxPorts gives its PORTSC
     # registers (xHCI 1.2, 5.3.3, p. 382), dimFrom, an erXos extension, names that field as
-    # REGISTER.FIELD and dim is the most it can report; check_references resolves the name.
+    # REGISTER.FIELD, or REGISTER.FIELD + N where the device has N elements more than the field
+    # says, as xHCI has a doorbell for each of MaxSlots slots and one for the command ring (5.6,
+    # p. 429); dim is the most it can report, and check_references resolves the name.
     def register_shape(node, width:)
       name = text(node, 'name')
       if child(node, 'dim', required: false).nil?
@@ -545,7 +552,15 @@ module Erx
       [base, count, stride]
     end
 
-    def count_reference(node) = child(node, 'dimFrom', required: false) && field_reference(text(node, 'dimFrom'))
+    # dimFrom's field and the number it adds: nil and 0 for an array of a fixed length.
+    def count_reference(node)
+      return [nil, 0] unless child(node, 'dimFrom', required: false)
+
+      match = COUNT_FROM.match(text(node, 'dimFrom'))
+      raise Error, 'SVD dimFrom is REGISTER.FIELD or REGISTER.FIELD + N' unless match
+
+      [field_reference(match[:field]), match[:plus] ? number(match[:plus], maximum: ELEMENTS_MAX) : 0]
+    end
 
     def parse_register(node, default_width:, block_size:, enumerations:, base: 0, movable: nil)
       known_elements(node, allowed: %w[name description addressOffset size access readAction fields
@@ -592,9 +607,10 @@ module Erx
       end
       # A write to a register with owned fields is checked against the word read just before it.
       raise Error, 'an SVD register with owned fields needs a read without side effects' if fields.any?(&:owned) && !action.empty?
+      count_from, count_plus = count_reference(node)
       Register.new(name: identifier(name), offset: offset, width: width, access: mode, read_action: action.freeze,
                    fields: fields.freeze, owned_by_nif: owned_mark(node, fields: fields), count: count, stride: stride,
-                   count_from: count_reference(node), cluster: movable).freeze
+                   count_from: count_from, count_plus: count_plus, cluster: movable).freeze
     end
 
     # The fields one field element describes: itself, or each element of a list. A list is
@@ -971,11 +987,14 @@ module Erx
       registers_max = devices.map { |device| device.registers.size }.max
       fields_max = devices.map { |device| device.registers.sum { |register| register.fields.size } }.max
       slots_max = [1, *devices.map { |device| device.bases.sum(&:instances) }].max
+      spans_max = devices.map { |device| device.registers.sum { |register| register.instanced? ? register.count : 1 } }.max
       generated_header('ERX_HW_DEVICE_TYPES_H', <<~C.lines(chomp: true), includes: %w[<stdbool.h> <stddef.h> <stdint.h>])
         #define ERX_DEVICE_REGISTERS_MAX #{registers_max}u
         #define ERX_DEVICE_FIELDS_MAX #{fields_max}u
         /* The most cluster instances one peripheral's registers are placed at, at least one. */
         #define ERX_DEVICE_SLOTS_MAX #{slots_max}u
+        /* The most register spans one peripheral's layout has: a register's, in each instance of an array cluster. */
+        #define ERX_DEVICE_SPANS_MAX #{spans_max}u
 
         typedef enum erx_device_access {
         \tERX_DEVICE_READ_ONLY,
@@ -1011,6 +1030,7 @@ module Erx
         \t\t\t\t   fields, not from first_field) of register count_register */
         \tuint32_t\tcount_register;
         \tuint32_t\tcount_field;
+        \tuint32_t\tcount_plus;	/* the elements a counted array has beyond that field's value */
         } erx_device_register_t;
 
         /*
@@ -1080,7 +1100,7 @@ module Erx
         ".preserve = #{c_integer(preserve_mask(register), width: register.width)}, " \
         ".owned = #{c_integer(owned_mask(register), width: register.width)}, " \
         ".base = #{register.cluster ? device.bases.index(register.cluster) + 1 : 0}, .counted = #{!register.count_from.nil?}, " \
-        ".count_register = #{count_register}, .count_field = #{count_field} },"
+        ".count_register = #{count_register}, .count_field = #{count_field}, .count_plus = #{register.count_plus} },"
     end
 
     # The table indexes of the register and the field a reference names: the register's in its

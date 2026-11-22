@@ -875,13 +875,13 @@ check_xhci_refusal_reasons(const erx_device_peripheral_t *xhci)
 	const erx_device_refusal_t *const why = &step.refusal;
 
 	xhci_file(file);
-	put32(file, 0x14, XHCI_BYTES - 0x100);
+	put32(file, 0x14, XHCI_BYTES - 0x10);
 	resolve_run(xhci, file, XHCI_BYTES, &layout, &step);
 	CHECK(step.op == ERX_DEVICE_RESOLVE_REFUSED && why->rule == ERX_DEVICE_REFUSAL_PAST_WINDOW);
-	CHECK(why->reg == erx_device_register_named(xhci, "db") && why->index == 64 && why->offset_known &&
+	CHECK(why->reg == erx_device_register_named(xhci, "db") && why->index == 4 && why->offset_known &&
 	    why->offset == XHCI_BYTES && why->bytes == 4);
 	CHECK(step.sources == 5 && source_word(xhci, &step, "caplength") == 0x40 &&
-	    source_word(xhci, &step, "dboff") == XHCI_BYTES - 0x100 && source_word(xhci, &step, "rtsoff") == 0x600 &&
+	    source_word(xhci, &step, "dboff") == XHCI_BYTES - 0x10 && source_word(xhci, &step, "rtsoff") == 0x600 &&
 	    source_word(xhci, &step, "hcsparams1") == (4u << 24 | 8u) &&
 	    source_word(xhci, &step, "hccparams1") == (XHCI_LIST / 4) << 16);
 	CHECK(step.entries == 4 && step.entry_read[0].offset == XHCI_LIST && step.entry_read[0].id == 1 &&
@@ -909,7 +909,7 @@ check_xhci_refusal_reasons(const erx_device_peripheral_t *xhci)
 	put32(file, 0x1c, entry(2, 0, 3));
 	resolve_run(xhci, file, XHCI_BYTES, &layout, &step);
 	CHECK(why->rule == ERX_DEVICE_REFUSAL_OVERLAP && why->place[0].kind == ERX_DEVICE_PLACE_FIXED &&
-	    why->place[0].first == 0 && why->place[0].end == 0x20 && why->place[1].kind == ERX_DEVICE_PLACE_CLUSTER &&
+	    why->place[0].first == 0x1c && why->place[0].end == 0x20 && why->place[1].kind == ERX_DEVICE_PLACE_CLUSTER &&
 	    why->place[1].base == 4 && why->place[1].instance == 0 && why->place[1].first == 0x1c);
 
 	xhci_file(file);
@@ -941,6 +941,71 @@ offset_of(const erx_device_peripheral_t *xhci, const erx_device_layout_t *layout
 	return (offset);
 }
 
+/*
+ * The VL805's layout, as the Raspberry Pi 4's controller reported it at open: CAPLENGTH 0x20,
+ * HCSPARAMS1 0x05000420 (5 ports, 4 interrupters, 32 slots), HCCPARAMS1 0x002841eb (the list at
+ * 0xa0), DBOFF 0x100, RTSOFF 0x200, and the list's entries at 0xa0 (legacy support), 0xb0 and
+ * 0xd0 (supported protocols) and 0x300 (ID 10). The doorbells, the runtime registers and the
+ * list lie between the operational registers, which end with CONFIG at op + 0x38, and the port
+ * registers at op + 0x400 (xhcireg.h:113-117), and meet no register there. The protocols' words past
+ * their first are the test's own.
+ */
+static void
+vl805_file(uint8_t *file)
+{
+	memset(file, 0, XHCI_BYTES);
+	put8(file, 0x00, 0x20);			/* CAPLENGTH */
+	put32(file, 0x04, 0x05000420);		/* HCSPARAMS1 */
+	put32(file, 0x10, 0x002841eb);		/* HCCPARAMS1 */
+	put32(file, 0x14, 0x100);		/* DBOFF */
+	put32(file, 0x18, 0x200);		/* RTSOFF */
+	put32(file, 0xa0, entry(1, 4, 0));	/* legacy support */
+	put32(file, 0xb0, entry(2, 8, 2));	/* USB 2: port 1 */
+	put32(file, 0xb8, 1u << 8 | 1u);
+	put32(file, 0xd0, entry(2, (0x300 - 0xd0) / 4, 3));	/* USB 3: ports 2 to 5 */
+	put32(file, 0xd8, 4u << 8 | 2u);
+	put32(file, 0x300, entry(10, 0, 0));	/* the list's end */
+}
+
+/*
+ * The VL805's layout opens, with MaxSlots + 1 doorbells; and a port register set the runtime
+ * registers do meet, the same controller with RTSOFF 0x440, is still an overlap, named by the
+ * two registers' own spans.
+ */
+static void
+check_xhci_vl805(const erx_device_peripheral_t *xhci)
+{
+	static uint8_t file[XHCI_BYTES];
+	static erx_device_resolve_t step;
+	erx_device_layout_t layout;
+	const erx_device_refusal_t *const why = &step.refusal;
+	uint64_t offset;
+
+	vl805_file(file);
+	resolve_run(xhci, file, XHCI_BYTES, &layout, &step);
+	CHECK(step.op == ERX_DEVICE_RESOLVE_DONE);
+	CHECK(step.entries == 4 && step.entry_read[3].offset == 0x300 && step.entry_read[3].id == 10);
+	CHECK(layout.elements[erx_device_register_named(xhci, "db")] == 33);
+	CHECK(layout.elements[erx_device_register_named(xhci, "portsc")] == 5);
+	CHECK(layout.elements[erx_device_register_named(xhci, "revision")] == 2);
+	CHECK(offset_of(xhci, &layout, "usbcmd", false, 0) == 0x20 && offset_of(xhci, &layout, "config", false, 0) == 0x58);
+	CHECK(offset_of(xhci, &layout, "portsc", true, 4) == 0x20 + 0x400 + 4 * 0x10);
+	CHECK(offset_of(xhci, &layout, "db", true, 32) == 0x100 + 32 * 4);
+	CHECK(!erx_device_layout_offset(xhci, &layout, register_of(xhci, "db"), true, 33, &offset));
+	CHECK(offset_of(xhci, &layout, "mfindex", false, 0) == 0x200 && offset_of(xhci, &layout, "iman", false, 0) == 0x220);
+	CHECK(offset_of(xhci, &layout, "bios_owned", false, 0) == 0xa2);
+	CHECK(offset_of(xhci, &layout, "revision", true, 1) == 0xd0 && offset_of(xhci, &layout, "ports", true, 1) == 0xd8);
+
+	vl805_file(file);
+	put32(file, 0x18, 0x440);
+	resolve_run(xhci, file, XHCI_BYTES, &layout, &step);
+	CHECK(step.op == ERX_DEVICE_RESOLVE_REFUSED && why->rule == ERX_DEVICE_REFUSAL_OVERLAP);
+	CHECK(why->place[0].kind == ERX_DEVICE_PLACE_CLUSTER && why->place[0].base == 0 && why->place[0].instance == 0 &&
+	    why->place[0].first == 0x420 && why->place[0].end == 0x464);
+	CHECK(why->place[1].kind == ERX_DEVICE_PLACE_CLUSTER && why->place[1].base == 1 && why->place[1].instance == 0 &&
+	    why->place[1].first == 0x440 && why->place[1].end == 0x444);
+}
+
 /* Every name resolves where the register file puts it, and no element past what the controller has. */
 static void
 check_xhci_layout(const erx_device_peripheral_t *xhci)
@@ -954,15 +1019,16 @@ check_xhci_layout(const erx_device_peripheral_t *xhci)
 	CHECK(offset_of(xhci, &layout, "hccparams1", false, 0) == 0x10);
 	CHECK(offset_of(xhci, &layout, "usbcmd", false, 0) == 0x40 && offset_of(xhci, &layout, "config", false, 0) == 0x78);
 	CHECK(offset_of(xhci, &layout, "portsc", true, 3) == 0x40 + 0x400 + 3 * 0x10);
-	CHECK(offset_of(xhci, &layout, "iman", false, 0) == 0x620 && offset_of(xhci, &layout, "db", true, 255) == 0x800 + 255 * 4);
+	CHECK(offset_of(xhci, &layout, "iman", false, 0) == 0x620 && offset_of(xhci, &layout, "db", true, 8) == 0x800 + 8 * 4);
 	CHECK(offset_of(xhci, &layout, "bios_owned", false, 0) == XHCI_LIST + 2);
 	CHECK(offset_of(xhci, &layout, "os_owned", false, 0) == XHCI_LIST + 3);
 	CHECK(offset_of(xhci, &layout, "revision", true, 0) == XHCI_LIST + 0x20);
 	CHECK(offset_of(xhci, &layout, "ports", true, 1) == XHCI_LIST + 0x38);
 	CHECK(layout.elements[erx_device_register_named(xhci, "portsc")] == 4);
 	CHECK(layout.elements[erx_device_register_named(xhci, "revision")] == 2);
-	/* A port past the count, a protocol past those found, and an array named as a register, each refused. */
+	/* A port past the count, a doorbell past MaxSlots, a protocol past those found, and an array named as a register, each refused. */
 	CHECK(!erx_device_layout_offset(xhci, &layout, register_of(xhci, "portsc"), true, 4, &offset));
+	CHECK(!erx_device_layout_offset(xhci, &layout, register_of(xhci, "db"), true, 9, &offset));
 	CHECK(!erx_device_layout_offset(xhci, &layout, register_of(xhci, "revision"), true, 2, &offset));
 	CHECK(!erx_device_layout_offset(xhci, &layout, register_of(xhci, "revision"), false, 0, &offset));
 
@@ -987,7 +1053,7 @@ check_xhci_refusals(const erx_device_peripheral_t *xhci)
 
 	/* Clusters past the window: the doorbells, the runtime registers, the operational ones misaligned. */
 	xhci_file(file);
-	put32(file, 0x14, XHCI_BYTES - 0x100);
+	put32(file, 0x14, XHCI_BYTES - 0x10);
 	CHECK(resolve(xhci, file, XHCI_BYTES, &layout) == ERX_DEVICE_RESOLVE_REFUSED);
 	xhci_file(file);
 	put32(file, 0x18, XHCI_BYTES - 0x20);
@@ -1106,7 +1172,7 @@ check_xhci_record(const erx_device_peripheral_t *xhci)
 
 	/* A record whose doorbells lie past its window is refused. */
 	xhci_file(window_memory[next_window]);
-	put32(window_memory[next_window], 0x14, XHCI_BYTES - 0x100);
+	put32(window_memory[next_window], 0x14, XHCI_BYTES - 0x10);
 	CHECK(erx_device_open(&far, NULL, NULL, &device, NULL) == ERX_EINVAL && erx_device_get(2) == NULL);
 }
 
@@ -1128,7 +1194,7 @@ check_xhci_open_failures(void)
 	    failure.step == ERX_DEVICE_OPEN_MAP_WINDOW);
 	fail_map = ERX_OK;
 	xhci_file(window_memory[next_window]);
-	put32(window_memory[next_window], 0x14, XHCI_BYTES - 0x100);
+	put32(window_memory[next_window], 0x14, XHCI_BYTES - 0x10);
 	CHECK(erx_device_open(&spec, NULL, NULL, &device, &failure) == ERX_EINVAL && failure.step == ERX_DEVICE_OPEN_LAYOUT &&
 	    failure.layout.refusal.rule == ERX_DEVICE_REFUSAL_PAST_WINDOW && failure.layout.refusal.offset == XHCI_BYTES &&
 	    failure.layout.sources == 5 && failure.layout.entries == 4);
@@ -1148,6 +1214,7 @@ check_xhci(void)
 	check_xhci_layout(xhci);
 	check_xhci_refusals(xhci);
 	check_xhci_refusal_reasons(xhci);
+	check_xhci_vl805(xhci);
 	check_xhci_record(xhci);
 	check_xhci_open_failures();
 }

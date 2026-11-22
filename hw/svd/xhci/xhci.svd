@@ -346,15 +346,16 @@
             </fields>
           </register>
         </cluster>
-        <!-- 5.6, pp. 429-431: at DBOFF, up to 256 doorbells, as many as HCSPARAMS1's MaxSlots
-             says; doorbell 0 is the command ring's. Both fields read 0 (Table 5-43, pp. 430-431). -->
+        <!-- 5.6, pp. 429-431: at DBOFF, doorbell 0 for the command ring and one for each slot, 1 to
+             HCSPARAMS1's MaxSlots (4.7, p. 158), so MaxSlots + 1 of them, at most 256. Both fields
+             read 0 (Table 5-43, pp. 430-431). -->
         <cluster>
           <name>DOORBELL</name>
           <addressOffset>0</addressOffset>
           <baseFrom>DBOFF.OFFSET</baseFrom>
           <register>
             <name>DB[%s]</name><ownedByNif>true</ownedByNif><addressOffset>0x00</addressOffset><access>write-only</access>
-            <dim>256</dim><dimIncrement>4</dimIncrement>
+            <dim>256</dim><dimIncrement>4</dimIncrement><dimFrom>HCSPARAMS1.MAXSLOTS + 1</dimFrom>
             <fields>
               <field><name>TARGET</name><bitOffset>0</bitOffset><bitWidth>8</bitWidth></field>
               <field><name>STREAM_ID</name><bitOffset>16</bitOffset><bitWidth>16</bitWidth></field>

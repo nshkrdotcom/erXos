@@ -69,6 +69,15 @@ class ErxDeviceTest < Minitest::Test
     assert_match(/FAILED .*RESOLVE_REFUSED/, seeded_failure(NO_WINDOW_CHECK, file: 'erx_device_core.c', flags: ['-DERX_DEVICE_XHCI']))
   end
 
+  # The seeded fault of the overlap rule: a register array's span kept to its first element, so runtime
+  # registers among the VL805's ports past the first, at RTSOFF 0x440, are not refused.
+  FIRST_ELEMENT_SPAN = ["\t\t\tspans->span[spans->count - 1].end = offset + bytes;\n", "\t\t\t(void)spans;\n"].freeze
+
+  def test_an_overlap_rule_that_spans_only_an_array_s_first_element_fails_the_harness
+    assert_match(/FAILED .*erx_device_harness\.c:\d+: step\.op == ERX_DEVICE_RESOLVE_REFUSED && why->rule == ERX_DEVICE_REFUSAL_OVERLAP/,
+                 seeded_failure(FIRST_ELEMENT_SPAN, file: 'erx_device_core.c', flags: ['-DERX_DEVICE_XHCI']))
+  end
+
 def test_the_ecam_configuration_space_and_its_bounds
   assert_match(/^erx_device ecam done$/, run_harness('-DERX_DEVICE_ECAM'))
 end

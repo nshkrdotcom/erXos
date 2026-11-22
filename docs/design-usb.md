@@ -2658,8 +2658,22 @@ wholly inside the register window, and refuses the record with
 `{error, {einval, {layout, Why, Read, Entries}}}` otherwise (the table
 below); from then on every name resolves to a fixed
 offset as for any peripheral. The ports, `PORTSC(n)` for `n` from 1 to
-the port count, are an array of the operational cluster, checked the same
-way.
+the port count, are an array of the operational cluster, and the
+doorbells, `DB(n)` for `n` from 0 to `HCSPARAMS1`'s `MaxSlots`, one for
+the command ring and one for each slot (4.7, 5.6, pp. 158 and 429), an
+array of the doorbell cluster whose count is `MaxSlots` + 1; each is
+checked the same way.
+
+No two registers in different places share a byte. A place is the
+registers at fixed offsets, or one instance of a movable cluster, and a
+register's span in its place runs from its first element's first byte to
+its last element's end; the generator keeps a place's own registers
+apart. The gaps between a cluster's registers are free, so another
+cluster may lie in them: the operational registers end at `CONFIG`, at
+op + 0x38, and the ports start at op + 0x400 (`xhcireg.h:113-117`), and
+the VL805 puts its doorbells, its runtime registers and its capability
+list between the two. A register over another register, as runtime
+registers at op + 0x400 over the first port, is refused.
 
 The extended capabilities are a list whose head `HCCPARAMS1` names and
 whose every entry names the next by a non-zero offset in words forward
@@ -2668,9 +2682,9 @@ entries, each inside the window, and binds the legacy support capability
 and the supported-protocol capabilities, at most 8, as clusters of the
 same kind; since every step moves forward, the walk ends. A list longer
 than 64 entries, an entry outside the window, a second legacy support
-capability, a ninth supported protocol, or bases that put one cluster
-over another or over the capability registers refuses the record the
-same way, and an entry of any other ID is passed over.
+capability, a ninth supported protocol, or bases that put a register of
+one cluster over one of another or over the capability registers
+refuses the record the same way, and an entry of any other ID is passed over.
 
 The refusal names its rule and the numbers it compared, so one boot of a
 controller that is refused shows why. `Read` maps each register the open
@@ -2683,7 +2697,7 @@ bytes from the window's start. `Why` is one of:
 | --- | --- |
 | `{past_window, Register, Index, Offset, Bytes, WindowBytes}` | element `Index` of `Register` (0 for one that is not an array), `Bytes` wide at `Offset`, ends past the window's `WindowBytes`; `Offset` is `none` where the base and index give no 64-bit offset |
 | `{unaligned, Register, Index, Offset, Bytes}` | that element's `Offset` is not a multiple of its width |
-| `{overlap, Place, Place}` | two places share a byte, each `{fixed, First, End}` for the registers at fixed offsets, `{Cluster, Instance, First, End}` for an instance of a movable cluster (`operational`, `runtime`, `doorbell`, `legacy`, `protocol`), or `{msix_table, First, End}` for the span the NIF keeps, from a place's first element's first byte to its last element's end, by the SVD's declared registers |
+| `{overlap, Place, Place}` | two registers in different places, or a register and the span the NIF keeps, share a byte; each is named by its place and its span, `First` to `End`, from its first element's first byte to its last element's end there: `{fixed, First, End}` for one of the registers at fixed offsets, `{Cluster, Instance, First, End}` for one of an instance of a movable cluster (`operational`, `runtime`, `doorbell`, `legacy`, `protocol`), or `{msix_table, First, End}` for the span the NIF keeps |
 | `{entry_past_window, Offset, WindowBytes}` | a list entry's word at `Offset` does not lie inside the window |
 | `{list_too_long, 64}` | the list has more entries than the walk follows |
 | `{too_many, Cluster, Instances}` | a list entry of `Cluster`'s capability past the `Instances` its cluster binds, the last of `Entries` |
