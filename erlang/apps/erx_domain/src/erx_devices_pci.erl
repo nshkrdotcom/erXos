@@ -52,8 +52,8 @@ error results" names for `pcie`) is taken as `{error, failed}`, the
 facet's own answer for a service that failed a request (erx_facet), so no
 term of the PCIe domain's reaches a holder.
 
-**`firmware`** (docs/design-system.md, "Firmware requests"; docs/design-
-pcie.md, "Facets") names a bridge row; one the library does not hold for
+**`firmware`** (docs/design-system.md, "Firmware requests";
+docs/design-pcie.md, "Facets") names a bridge row; one the library does not hold for
 the PCIe domain is answered `{error, not_held}`. Every other request is
 queued, and the **firmware worker**, a process linked to this one, makes
 each in turn through erx_domain_lib:pci_firmware/1, which waits in the
