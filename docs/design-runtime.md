@@ -3159,7 +3159,13 @@ device's record, so a driver's start and its restart are one sequence:
 `open/1`; `queue_create/4` for each queue, which finds a queue its
 predecessor made; `negotiate/2`; then the line's attach through
 `erx_irq_line` and the reads of the
-device's configuration. A queue created after `negotiate/2` is not on the
+device's configuration. GENET's driver, which resets its controller
+itself, puts `stop_dma/1` and its resets between the queues and
+`negotiate/2`: `stop_dma/1` is the register ring's reset and idle report
+without the install: it marks the queues not ready and hands no
+buffer back
+([design-device-dma.md](design-device-dma.md#the-descriptor-forms)).
+A queue created after `negotiate/2` is not on the
 device until the next one. The queue's size is the driver's bound on what
 the device may hold at once.
 

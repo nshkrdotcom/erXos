@@ -363,6 +363,18 @@ bool	erx_device_framebuffer_memory(uint32_t framebuffer, volatile uint8_t **base
 int	erx_device_negotiate(const erx_device_t *device, uint64_t wanted, bool continues, uint64_t *accepted);
 
 /*
+ * GENET's confirmed stop without the install (docs/design-device-dma.md, "Stopping without
+ * installing"): both queues stop being ready, so nothing is posted on them or completed from
+ * them until a negotiation, then the register ring's reset and idle report of
+ * erx_device_negotiate, both DMA engines stopped, transmit first, and both idle reports read.
+ * ERX_OK once both show the stop; ERX_EBUSY until then, the stop written again at each call.
+ * It installs nothing and hands no buffer back: a posted buffer returns to its pool only
+ * through a completion or inside erx_device_negotiate. ERX_EINVAL for a record without both
+ * its queues; ERX_ENOTSUP for a device of any other form.
+ */
+int	erx_device_stop_dma(const erx_device_t *device);
+
+/*
  * Posts one chain: its pieces, readable before writable, laid end to end in a free buffer of
  * the queue, the readable ones copied in, then the descriptors, the available entry and the
  * doorbell, all or nothing. A piece naming a region is written as the region's entry and read

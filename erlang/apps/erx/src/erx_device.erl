@@ -57,7 +57,7 @@
 -export([open/1, elements/2, config_read/4, config_write/5]).
 -export([read/2, write/3, read_field/3, write_field/4, field/4, command/2]).
 -export([irq_bind/2, irq_bind_owner/2, irq_holder/2, irq_ack/2]).
--export([queue_create/4, negotiate/2, post/4, complete/2, queue_state/2, region/3, framebuffer/0]).
+-export([queue_create/4, negotiate/2, stop_dma/1, post/4, complete/2, queue_state/2, region/3, framebuffer/0]).
 -export([stand_in_fire/2, stand_in_used/3, stand_in_transmitted/1, stand_in_receive/2]).
 
 -export_type([device/0, register_name/0, spec/0, queue/0, region/0, framebuffer/0, segment/0]).
@@ -246,6 +246,19 @@ queue_create(_Dev, _Index, _Size, _BufferSize) ->
 -spec negotiate(device(), non_neg_integer() | continue) ->
           {ok, non_neg_integer()} | reset | {error, atom() | {status, integer()}}.
 negotiate(_Dev, _Wanted) ->
+    erlang:nif_error(undef).
+
+%% GENET's register ring stopped and confirmed, without the install (docs/design-device-dma.md,
+%% "Stopping without installing"), for a driver that resets its controller between the
+%% queues and negotiate/2: both queues stop being ready, so post/4 and complete/2 answer
+%% `{error, broken}` until negotiate/2; both DMA engines are stopped, transmit first, and
+%% both idle reports read. `ok` once both show the stop; `{error, ebusy}` until then, the
+%% stop written again at each call, so the driver retries on a timer. Nothing is installed
+%% and no buffer handed back: a posted buffer returns to its pool only through complete/2
+%% or inside negotiate/2. `{error, einval}` for a record without both its queues;
+%% `{error, enotsup}` for a device that is not GENET.
+-spec stop_dma(device()) -> ok | {error, atom() | {status, integer()}}.
+stop_dma(_Dev) ->
     erlang:nif_error(undef).
 
 %% The device's region Index (docs/design-runtime.md, "Regions"): Bytes rounded up to whole

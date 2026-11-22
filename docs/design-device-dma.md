@@ -1490,8 +1490,9 @@ buffer goes back to its pool only through a completion or through it, as
 | ADMA2 table | the software reset for the data lines (FreeBSD's `sdhci.h:200-203`) | the reset bit reads clear | host control 2's owned fields checked clear, the DMA select written to ADMA2 with 32-bit descriptors; `adma_address` is written by each post |
 
 Where the idle report does not yet show, `negotiate/2` returns
-`{error, ebusy}` with nothing installed, having written the reset once,
-and a later call reads the report again; the driver retries on a timer.
+`{error, ebusy}` with nothing installed, having written the reset,
+and a later call reads the report again, for the split ring and the
+register ring after writing the reset again; the driver retries on a timer.
 The GENET facts record gives the one published bound on confirming a
 stop, 5,000 reads 1 us apart, about 5 ms
 ([Stopping the DMA](research-genet-bcm2711.md#stopping-the-dma-and-confirming-it-stopped));
@@ -1503,6 +1504,40 @@ and answers `{error, ebusy}` until its last, so it takes two calls at
 least, each spaced. A driver that resets the controller itself calls
 `negotiate/2` before its next DMA transfer; until then `command/2`
 refuses, since it reads back the fields the reset cleared.
+
+**Stopping without installing (the register ring).** GENET's driver
+resets the controller's receive buffer and MAC itself, at its start and
+at every restart, and a restart finds the controller as its predecessor
+left it, possibly receiving. So the driver first stops it as the other
+published driver's interface stop does: the MAC's receive off, a
+frame's time, then both DMA engines stopped and the stops confirmed
+([GENET facts record](research-genet-bcm2711.md#stopping-the-dma-and-confirming-it-stopped)),
+and only then its resets, so that no reset lands while an engine runs.
+The stops are the table's, both written, transmit first, before either
+idle report is read; that driver confirms transmit's stop before it
+writes receive's, and at its interface stop waits 10 to 20 ms between
+them. The record infers that the same driver resets the MAC at probe
+and at open without stopping the DMA first, and places only its buffer
+flushes after a confirmed stop
+([MAC reset, RX buffer flush and TX flush](research-genet-bcm2711.md#mac-reset-rx-buffer-flush-and-tx-flush));
+an open after its own close finds the engines stopped by that close,
+and a restart here has no such close before it.
+`erx_device:stop_dma/1` is that confirmed stop: the register ring's row of
+the table above, its reset and its idle report, without the install. It
+marks both queues not ready, so from then on nothing is posted on them
+or completed from them; writes each direction's stop, transmit first;
+and reads both idle reports, answering `ok` once both show and
+`{error, ebusy}` until then, each call writing the stop again, with the
+driver's retries bounded as `negotiate/2`'s are. It installs nothing and
+hands no buffer back: a posted buffer still returns to its pool only
+through a completion or inside `negotiate/2`, after that call's own stop
+and idle report under the device lock, so nothing that happens between
+the two calls can make a stale report free a buffer the device holds.
+The driver's sequence is the queues, `stop_dma/1`, its own resets and
+configuration, then `negotiate/2`, whose stop finds both engines
+stopped already. A record without both its queues answers
+`{error, einval}`; every other form answers `{error, enotsup}`, since no
+other driver resets its controller between a stop and the install.
 
 **The TRB ring form (xHCI).** A fourth form, which the USB host
 controllers use, is defined with its driver in
@@ -1624,6 +1659,8 @@ adds:
 | `complete/2`, `post/4` | `{error, broken}` | the device reported an index or a length beyond its bound, or an ADMA2 transfer reported an error, until `negotiate/2` |
 | `negotiate/2` | `{error, ebusy}` | the device's idle report does not show yet, or, for ADMA2, the install has writes left |
 | `negotiate/2` | `{error, einval}` | it passes `continue` on a form whose negotiation takes no steps, virtio's or GENET's: only the TRB form's controller core continues one ([design-usb.md](design-usb.md#install)) |
+| `stop_dma/1` | `{error, ebusy}` | a GENET direction's idle report does not show yet; nothing is installed and no buffer handed back |
+| `stop_dma/1` | `{error, einval}`, `{error, enotsup}` | a GENET record without both its queues; a device of any other form |
 | `write/3`, `write_field/4` | `badarg` | a write that would change an owned field; any `write_field/4` of an owned field |
 | `post/4`, `complete/2`, `negotiate/2` on the TRB ring form | `{error, halted}`, `{error, full}`, `badarg`, `{error, broken}`, `{error, erange}` | as [design-usb.md](design-usb.md#the-trb-ring-form) lists them: a queue whose state refuses the request, or that the command in flight holds; a transfer on a queue with no free buffer, a command while another is in flight, or one adding a queue when no block of its kind is free; a command or context outside its bounded parameters; an event that fails the form's checks or passes the ring's bound, until `negotiate/2`; memory above the address width `AC64` gives |
 | the root at boot | gives the device no DMA memory, with a line naming it | the tree gives the device no single window that RAM backs, marks coherence on a bus above it or both ways on its node, or its DMA memory would lie outside the range |
@@ -1850,6 +1887,13 @@ ran.
   before. Seed: the idle test reads only the receive direction, and the
   stand-in's transmit engine is still running when the install writes
   its ring.
+* **GENET's stop without the install.** Over the same stand-in, `stop_dma/1`
+  answers `{error, ebusy}` until both directions show the stop, then `ok`,
+  and leaves both engines stopped and neither ring installed, every
+  receive buffer as it was and both queues refusing posts and
+  completions; the `negotiate/2` after it installs on its first call.
+  Seed: `stop_dma/1` runs the install too, and the stand-in sees a ring
+  installed and its engines started.
 * **GENET's start and post.** Over the controller model,
   `erx_device_genet_model`, which the hosted stand-in runs too and which
   runs a direction only while its DMA control holds the engine's enable

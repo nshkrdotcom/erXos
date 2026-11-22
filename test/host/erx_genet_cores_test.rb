@@ -33,6 +33,8 @@ class ErxGenetCoresTest < Minitest::Test
       ['erx_genet_rx', 'Status >= 0, Status =< 16#ffffffff, is_binary(Bytes)', 'Status >= 0, is_binary(Bytes)'],
     'a frame past the MTU passed up' =>
       ['erx_genet_core', '{frame, _Long} -> {[{dropped, too_long} | Drops], Frames};', '{frame, Long} -> {Drops, [Long | Frames]};'],
+    'the DMA stop left out of the reset' =>
+      ['erx_genet_core', '{wait_us, ?FRAME_US}, dma_stop,', '{wait_us, ?FRAME_US},'],
     'a ring setting left out' =>
       ['erx_genet_core', "{write, {tx_ring_mbuf_done_thres, ?RING}, ?TX_MBUF_DONE_THRES},\n", ''],
     'a field the SVD does not name' =>

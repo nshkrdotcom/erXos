@@ -1890,7 +1890,10 @@ run_call(queue_record_t *record, const erx_dma_request_t *request, erx_device_si
 	return (ERX_EINVAL);
 }
 
-/* Every queue of the device stops being ready, at the start of a negotiation and when one fails. */
+/*
+ * Every queue of the device stops being ready: at the start of a negotiation or of a DMA stop,
+ * and when a negotiation fails.
+ */
 static void
 unready_queues(const erx_device_t *device)
 {
@@ -2165,27 +2168,30 @@ queue_numbered(const erx_device_t *device, uint32_t index)
 	return (NULL);
 }
 
+/* A GENET record's receive and transmit queues, into `rings`; false unless it has both. */
+static bool
+register_ring_queues(const erx_device_t *device, queue_record_t *rings[2])
+{
+	rings[0] = queue_numbered(device, GENET_QUEUE_RX);
+	rings[1] = queue_numbered(device, GENET_QUEUE_TX);
+	return (rings[0] != NULL && rings[1] != NULL);
+}
+
 /*
- * GENET's reset and install (docs/design-device-dma.md, "Install and reset"), across the two
- * directions in the order the design gives, which is why it lives here and not in the
- * per-direction form: DMA control stopped, transmit then receive; each direction's DMA status
- * read once by its IDLE call; ERX_EBUSY, with nothing installed and both engines left stopped,
- * until both show the stop, so a later call writes the stop again and reads again; then each
- * queue's INSTALL call, which takes every buffer back and installs its ring, receive then
- * transmit; and only once both rings are installed, each START call, receive first. The
- * features mean nothing to GENET: none are accepted. A record without both its queues is
- * ERX_EINVAL; a refused plan, a bug, leaves both queues not ready.
+ * GENET's reset and idle report (docs/design-device-dma.md, "Install and reset") over the
+ * record's two queues `rings`, across the two directions in the order the design gives, which is
+ * why it lives here and not in the per-direction form: DMA control stopped, transmit then
+ * receive; then each direction's DMA status read once by its IDLE call, into `status`. ERX_OK
+ * once both show the stop; ERX_EBUSY, with both engines left stopped, until then, so a later call
+ * writes the stop again and reads again. It installs nothing and hands no buffer back. Any other
+ * answer is a bug: ERX_ENOTSUP for a table without DMA control, ERX_EINVAL for a refused IDLE call.
  */
 static int
-register_ring_negotiate(const erx_device_t *device, uint64_t *accepted)
+register_ring_stop(const erx_device_t *device, queue_record_t *const rings[2], uint64_t status[2])
 {
-	queue_record_t *const rings[2] = { queue_numbered(device, GENET_QUEUE_RX), queue_numbered(device, GENET_QUEUE_TX) };
 	const erx_device_peripheral_t *const peripheral = device->peripheral;
-	uint64_t status[2];
 	bool idle = true;
 
-	if (rings[0] == NULL || rings[1] == NULL)
-		return (ERX_EINVAL);
 	for (uint32_t side = 2; side-- > 0;) {
 		const erx_device_genet_registers_t *const regs = &rings[side]->genet.regs;
 		const erx_device_register_t *const ctrl = register_at(peripheral, regs->dma_ctrl);
@@ -2202,8 +2208,29 @@ register_ring_negotiate(const erx_device_t *device, uint64_t *accepted)
 			return (ERX_EINVAL);
 		idle = idle && shown == ERX_OK;
 	}
-	if (!idle)
-		return (ERX_EBUSY);
+	return (idle ? ERX_OK : ERX_EBUSY);
+}
+
+/*
+ * GENET's reset and install (docs/design-device-dma.md, "Install and reset"): ERX_EINVAL for a
+ * record without both its queues; the reset and idle report of register_ring_stop, whose
+ * ERX_EBUSY it answers with nothing installed; then each queue's INSTALL call, which takes every
+ * buffer back and installs its ring, receive then transmit; and only once both rings are
+ * installed, each START call, receive first. The features mean nothing to GENET: none are
+ * accepted. A refused plan, a bug, leaves both queues not ready.
+ */
+static int
+register_ring_negotiate(const erx_device_t *device, uint64_t *accepted)
+{
+	queue_record_t *rings[2];
+	uint64_t status[2];
+	int stopped;
+
+	if (!register_ring_queues(device, rings))
+		return (ERX_EINVAL);
+	stopped = register_ring_stop(device, rings, status);
+	if (stopped != ERX_OK)
+		return (stopped);
 	for (uint32_t side = 0; side < 2; side++) {
 		erx_dma_request_t request = queue_request(rings[side], ERX_DMA_REQUEST_INSTALL);
 
@@ -2704,6 +2731,21 @@ erx_device_negotiate(const erx_device_t *device, uint64_t wanted, bool continues
 	if (register_ring_device(device))
 		return (register_ring_negotiate(device, accepted));
 	return (split_ring_negotiate(device, wanted, accepted));
+}
+
+/* The queues stop being ready first, as at a negotiation's start, even when the record lacks one. */
+int
+erx_device_stop_dma(const erx_device_t *device)
+{
+	queue_record_t *rings[2];
+	uint64_t status[2];
+
+	if (!register_ring_device(device))
+		return (ERX_ENOTSUP);
+	unready_queues(device);
+	if (!register_ring_queues(device, rings))
+		return (ERX_EINVAL);
+	return (register_ring_stop(device, rings, status));
 }
 
 /*

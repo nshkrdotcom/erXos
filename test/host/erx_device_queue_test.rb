@@ -85,14 +85,19 @@ class ErxDeviceQueueTest < Minitest::Test
 
   # The seeds of the register ring's effect layer, each of which fails the GENET harness: the
   # idle test reading only the receive direction (docs/design-device-dma.md, Verification,
-  # "GENET's stop"), so the receive ring is installed while the transmit engine runs; and the
+  # "GENET's stop"), so the receive ring is installed while the transmit engine runs; the
   # register lookup narrowed to owned registers, so the idle report of DMA status, which the
-  # NIF does not own, reaches no register and the negotiation is refused.
+  # NIF does not own, reaches no register and the negotiation is refused; and the stop without
+  # the install (erx_device_stop_dma) seeded to install and start the rings once both engines show
+  # the stop, which the harness sees as a ring installed and an engine started after it.
   GENET_SEEDS = {
     idle_rx_only: ["\t\tidle = idle && shown == ERX_OK;\n",
                    "\t\tidle = side == 1 ? idle : shown == ERX_OK;\n"],
     owned_lookup: ["\t\tif (offset < reg->offset)\n\t\t\tcontinue;\n",
-                   "\t\tif (offset < reg->offset || !reg->owned_by_nif)\n\t\t\tcontinue;\n"]
+                   "\t\tif (offset < reg->offset || !reg->owned_by_nif)\n\t\t\tcontinue;\n"],
+    stop_installs: ["\treturn (register_ring_stop(device, rings, status));\n",
+                    "\treturn (register_ring_stop(device, rings, status) == ERX_OK ? " \
+                    "register_ring_negotiate(device, &(uint64_t){ 0 }) : ERX_EBUSY);\n"]
   }.freeze
 
   GENET_SEEDS.each do |name, seed|

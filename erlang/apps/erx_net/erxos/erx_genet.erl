@@ -13,11 +13,14 @@ erx_mdio; this module carries them out.
 
 `init/1` runs one sequence at a start and at every restart, so a restarted driver finds
 the controller as its predecessor left it and resets it: open the record, check the
-revision, read the address the firmware left before the reset, reset the MAC, set the
-port, the address and the promiscuous filter, create the two queues, `negotiate/2`,
-which stops both DMA directions, installs both rings and starts them (retried every
-millisecond while it answers `ebusy`, within erx_genet_core's bound, after which the
-device is not driven), enable the MAC and the interrupts, and bind the line. The PHY
+revision, read the address the firmware left before the reset, create the two queues,
+then erx_genet_core:reset/0: the MAC's receive off, both DMA directions stopped and
+confirmed by erx_device:stop_dma/1, which needs both queues' records, and the MAC reset;
+set the port, the address, the promiscuous filter and the ring settings,
+`negotiate/2`, which installs both rings and starts them, enable the MAC and the
+interrupts, and bind the line. erx_device:stop_dma/1 and `negotiate/2` are each retried
+every millisecond while they answer `ebusy`, within erx_genet_core:stop_retry/1's
+bound, after which the device is not driven. The PHY
 starts at the driver's first message to itself, so every PHY result, a failure at the
 reset included, comes through `event/2`.
 
@@ -44,8 +47,9 @@ reset included, comes through `event/2`.
   does not match what is in flight, ends the driver with `{stop, {broken, Direction}}`, never
   a crash: one line names the bound a receive queue met as the controller's registers show
   it (erx_genet_core:rx_fault/1) and one line gives each register of
-  erx_genet_core:evidence/0, then the driver's restart resets the controller. A `negotiate/2`
-  that never sees the stop logs the same registers before the device is given up.
+  erx_genet_core:evidence/0, then the driver's restart resets the controller. A stop
+  that never shows, in erx_device:stop_dma/1 or `negotiate/2`, logs the same registers before
+  the device is given up.
 
 Every register goes by its name in hw/svd/genet/genet.svd. The design places the device
 in the network domain; on Fiasco, whichever domain the manifest gives the record
@@ -122,7 +126,7 @@ init(#{record := Spec}) ->
             ignore
     end.
 
-%% The record, open, identify, the address, reset and configure, the two queues,
+%% The record, open, identify, the address, the two queues, reset and configure,
 %% negotiate, start, attach and the PHY, in that order; each step's refusal stops the
 %% sequence. A line in the kernel log names each phase before it runs, and the log is
 %% written synchronously, so when a register access ends the domain by a synchronous fault
@@ -138,16 +142,16 @@ start(Spec) ->
         ok ?= erx_genet_core:identify(read_logged(Dev, sys_rev_ctrl, major)),
         ok = log_phase(address),
         Lladdr = address(Dev, erx_genet_core:lladdr(maps:get(mac, Spec, none))),
-        ok = log_phase(reset),
-        ok = apply_steps(Dev, erx_genet_core:reset()),
-        ok = log_phase(configure),
-        ok = apply_steps(Dev, erx_genet_core:configure(Lladdr)),
         ok = log_phase(queue_rx),
         {ok, Rx} ?= step(queue_create, erx_device:queue_create(Dev, ?RXQ, ?QUEUE_SIZE, ?BUFFER)),
         ok = log_phase(queue_tx),
         {ok, Tx} ?= step(queue_create, erx_device:queue_create(Dev, ?TXQ, ?QUEUE_SIZE, ?BUFFER)),
+        ok = log_phase(reset),
+        ok ?= apply_steps(Dev, erx_genet_core:reset()),
+        ok = log_phase(configure),
+        ok = apply_steps(Dev, erx_genet_core:configure(Lladdr)),
         ok = log_phase(negotiate),
-        ok ?= negotiate(Dev, 1),
+        {ok, _Features} ?= retry_busy(negotiate, fun() -> erx_device:negotiate(Dev, 0) end, Dev),
         ok = log_phase(enable),
         ok = apply_steps(Dev, erx_genet_core:start()),
         ok = log_phase(attach),
@@ -172,19 +176,29 @@ read_logged(Dev, Register, Field) ->
     ok = log("~w ~s = 16#~.16b", [Register, Field, Value]),
     Value.
 
-negotiate(Dev, Tries) ->
-    case erx_device:negotiate(Dev, 0) of
-        {ok, _Features} ->
+%% Calls `Call`, erx_device:stop_dma/1 or negotiate/2, both of which answer ebusy until
+%% both DMA engines show the stop, again while it answers ebusy, within
+%% erx_genet_core:stop_retry/1's bound, and returns its success, `ok` or `{ok, Features}`.
+%% A stop that never shows logs the evidence and is `{error, {Name, stop_timeout}}`; any
+%% other refusal is `{error, {Name, Reason}}`.
+retry_busy(Name, Call, Dev) ->
+    retry_busy(Name, Call, Dev, 1).
+
+retry_busy(Name, Call, Dev, Tries) ->
+    case Call() of
+        ok ->
             ok;
+        {ok, Features} ->
+            {ok, Features};
         {error, ebusy} ->
-            case erx_genet_core:negotiate_retry(Tries) of
-                {retry, Ms} -> timer:sleep(Ms), negotiate(Dev, Tries + 1);
+            case erx_genet_core:stop_retry(Tries) of
+                {retry, Ms} -> timer:sleep(Ms), retry_busy(Name, Call, Dev, Tries + 1);
                 {error, Reason} ->
                     ok = log_evidence(read_evidence(Dev)),
-                    {error, {negotiate, Reason}}
+                    {error, {Name, Reason}}
             end;
         {error, Reason} ->
-            {error, {negotiate, Reason}}
+            {error, {Name, Reason}}
     end.
 
 log_phase(Name) -> log("phase ~s", [Name]).
@@ -193,13 +207,20 @@ step(_Name, ok) -> ok;
 step(_Name, {ok, Value}) -> {ok, Value};
 step(Name, {error, Reason}) -> {error, {Name, Reason}}.
 
-%% Carries out erx_genet_core's steps in order.
-apply_steps(Dev, Steps) ->
-    lists:foreach(fun(Step) -> apply_step(Dev, Step) end, Steps).
+%% Carries out erx_genet_core's steps in order, to the end or to the first refusal, which
+%% only a `dma_stop` makes.
+apply_steps(_Dev, []) ->
+    ok;
+apply_steps(Dev, [Step | Rest]) ->
+    case apply_step(Dev, Step) of
+        ok -> apply_steps(Dev, Rest);
+        {error, _} = Refused -> Refused
+    end.
 
 apply_step(Dev, {write, Register, Value}) -> ok = erx_device:write(Dev, Register, Value);
 apply_step(Dev, {field, Register, Field, Value}) -> ok = erx_device:write_field(Dev, Register, Field, Value);
-apply_step(_Dev, {wait_us, Us}) -> spin_us(Us).
+apply_step(_Dev, {wait_us, Us}) -> spin_us(Us);
+apply_step(Dev, dma_stop) -> retry_busy(dma_stop, fun() -> erx_device:stop_dma(Dev) end, Dev).
 
 %% A pause spun, as FreeBSD's DELAY, not slept on a timer: the scheduler is held for at
 %% most erx_mdio's bound on one operation, about 10 ms, 2 ms for the frame the reset lets

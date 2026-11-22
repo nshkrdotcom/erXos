@@ -52,6 +52,8 @@ every_step_names_a_writable_register_and_field_of_the_svd_test() ->
     Svd = svd(),
     [check_step(Step, Svd) || Step <- sequences()].
 
+check_step(dma_stop, _Svd) ->
+    ok;
 check_step({wait_us, Us}, _Svd) ->
     ?assert(is_integer(Us) andalso Us > 0);
 check_step({write, Reg, Value} = Step, Svd) ->
@@ -99,13 +101,16 @@ reset_releases_the_mac_and_never_forwards_the_crc_test() ->
     ?assert(lists:member({field, umac_cmd, sw_reset, 1}, Cmd)).
 
 %% A restart finds the controller as a predecessor that ended left it, receiving: the MAC's
-%% receive is turned off and a full frame's time passes before the receive buffer's reset
-%% or the MAC's, so neither lands while the MAC hands a frame to the receive engine (the
-%% GENET facts record, "Stopping the DMA and confirming it stopped").
-reset_stops_mac_receive_a_frame_before_any_reset_test() ->
-    {Quiesce, Rest} = lists:split(2, erx_genet_core:reset()),
-    ?assertMatch([{field, umac_cmd, rxen, 0}, {wait_us, Us}] when Us >= 2000, Quiesce),
-    ?assertEqual({field, sys_rbuf_flush_ctrl, reset, 1}, hd(Rest)).
+%% receive is turned off, a full frame's time passes, and both DMA engines are stopped and
+%% the stop confirmed, all before the receive buffer's reset or the MAC's, so neither lands
+%% while the MAC hands a frame to the receive engine or an engine runs (the GENET facts
+%% record, "Stopping the DMA and confirming it stopped"). The stop is made once, there, so
+%% configure/1's ring settings, which follow the reset, are written to stopped engines.
+reset_stops_receive_and_both_dma_engines_before_any_reset_test() ->
+    {Quiesce, Rest} = lists:split(3, erx_genet_core:reset()),
+    ?assertMatch([{field, umac_cmd, rxen, 0}, {wait_us, Us}, dma_stop] when Us >= 2000, Quiesce),
+    ?assertEqual({field, sys_rbuf_flush_ctrl, reset, 1}, hd(Rest)),
+    ?assertEqual([dma_stop], [S || dma_stop = S <- sequences()]).
 
 start_enables_both_directions_and_only_the_dma_interrupts_test() ->
     Start = erx_genet_core:start(),
@@ -174,10 +179,10 @@ the_address_comes_from_the_record_then_the_controller_then_entropy_test() ->
     [?assertEqual({Record, Controller, Want}, {Record, Controller, address(Record, Controller)})
      || {Record, Controller, Want} <- Cases].
 
-%% --- negotiate's bound -----------------------------------------------------------------------
+%% --- the stop's bound ------------------------------------------------------------------------
 
-negotiate_is_retried_within_its_bound_test() ->
-    Answers = [erx_genet_core:negotiate_retry(N) || N <- lists:seq(1, 25)],
+the_stop_is_retried_within_its_bound_test() ->
+    Answers = [erx_genet_core:stop_retry(N) || N <- lists:seq(1, 25)],
     {Retries, Failures} = lists:splitwith(fun(A) -> A =:= {retry, 1} end, Answers),
     ?assertEqual(19, length(Retries)),
     ?assertEqual(lists:duplicate(6, {error, stop_timeout}), Failures).

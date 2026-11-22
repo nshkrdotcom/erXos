@@ -16,7 +16,7 @@
  * form takes, ebusy until both directions are idle, a transmit post's bytes as the controller
  * reads them, received frames with their flags as tags and the consumer index advanced past
  * each, a frame of no bytes, a full ring, a hostile index that breaks the queue until the next
- * negotiation, and a pool past 40 bits refused.
+ * negotiation, erx_device_stop_dma's stop without the install, and a pool past 40 bits refused.
  */
 
 #include <sys/mman.h>
@@ -389,9 +389,12 @@ open_genet(uint64_t memory)
 	return (erx_device_get(device));
 }
 
-/* Negotiates until both engines show the stop: ebusy while the transmit engine has not, then ok. */
+/*
+ * Negotiates until both engines show the stop: `busy_expected` ebusy answers while the transmit
+ * engine has not, then ok with both engines started. It counts the starts afresh in `starts`.
+ */
 static void
-negotiate(const erx_device_t *device)
+negotiate_after(const erx_device_t *device, uint32_t busy_expected)
 {
 	uint64_t accepted = 1;
 	uint32_t busy = 0;
@@ -402,8 +405,70 @@ negotiate(const erx_device_t *device)
 	CHECK(erx_device_negotiate(device, UINT64_MAX, true, &accepted) == ERX_EINVAL && starts == 0);
 	while ((status = erx_device_negotiate(device, UINT64_MAX, false, &accepted)) == ERX_EBUSY)
 		CHECK(++busy < engines[ERX_DEVICE_GENET_TX].stop_reads);
-	CHECK(status == ERX_OK && accepted == 0 && busy == engines[ERX_DEVICE_GENET_TX].stop_reads - 1);
+	CHECK(status == ERX_OK && accepted == 0 && busy == busy_expected);
 	CHECK(engines[0].started && engines[1].started && starts == 2);
+}
+
+/* Negotiates a running controller: the transmit engine shows the stop on its last read. */
+static void
+negotiate(const erx_device_t *device)
+{
+	negotiate_after(device, engines[ERX_DEVICE_GENET_TX].stop_reads - 1);
+}
+
+/*
+ * Stops both engines without the install: ebusy, with nothing installed or started, until the
+ * transmit engine shows the stop, then ok with both engines still stopped and neither ring
+ * installed. It counts the starts afresh in `starts`, which must stay 0.
+ */
+static void
+stop(const erx_device_t *device)
+{
+	uint32_t busy = 0;
+	int status;
+
+	starts = 0;
+	while ((status = erx_device_stop_dma(device)) == ERX_EBUSY) {
+		CHECK(++busy < engines[ERX_DEVICE_GENET_TX].stop_reads);
+		CHECK(!engines[0].installed && !engines[1].installed && starts == 0);
+	}
+	CHECK(status == ERX_OK && busy == engines[ERX_DEVICE_GENET_TX].stop_reads - 1);
+	for (uint32_t side = 0; side < 2; side++)
+		CHECK(engines[side].stopped && !engines[side].started && !engines[side].installed);
+	CHECK(starts == 0);
+}
+
+/*
+ * erx_device_stop_dma (docs/design-device-dma.md, "Stopping without installing") on the device
+ * check_register_ring left running, whose receive queue is `rq` and transmit queue `tq` over
+ * `memory`: both engines stopped and confirmed with nothing installed, and negotiate
+ * installing on its first call after; then, with a transmit in flight and a receive buffer
+ * marked, both queues refusing posts and completions after the stop and the buffer as it was,
+ * so nothing is handed back, until negotiate installs, zeroing the buffer and forgetting the
+ * transmit.
+ */
+static void
+check_stop(const erx_device_t *device, uint64_t memory, uint32_t rq, uint32_t tq)
+{
+	uint8_t *const marked = memories[memory] + 5 * BUFFER + 17;
+	uint8_t frame[60] = { 1 };
+	const erx_device_piece_t pieces[] = { { .data = frame, .length = sizeof(frame) } };
+	uint32_t done;
+
+	stop(device);
+	negotiate_after(device, 0);
+
+	CHECK(erx_device_post(device, tq, 9, pieces, 1) == ERX_OK);
+	*marked = 0xa5;
+	stop(device);
+	CHECK(*marked == 0xa5);
+	CHECK(erx_device_post(device, tq, 10, pieces, 1) == ERX_ECORRUPT);
+	CHECK(complete(device, tq, &done) == ERX_ECORRUPT);
+	CHECK(complete(device, rq, &done) == ERX_ECORRUPT);
+	negotiate_after(device, 0);
+	CHECK(*marked == 0);
+	CHECK(complete(device, tq, &done) == ERX_OK && done == 0);
+	CHECK(transmit(frame, sizeof(frame)) == 0);
 }
 
 static void
@@ -505,6 +570,7 @@ check_register_ring(void)
 	CHECK(complete(device, rq, &done) == ERX_OK && done == 0);
 	receive(frame, 60, rx->regs.sop | rx->regs.eop);
 	CHECK(complete(device, rq, &done) == ERX_OK && done == 1 && memcmp(sunk_bytes[0], frame, 60) == 0);
+	check_stop(device, memory, rq, tq);
 }
 
 /* A pool whose device addresses pass the form's 40 bits is refused, taking nothing. */
@@ -518,6 +584,12 @@ check_width(void)
 	CHECK(erx_device_queue_create(device, 0, SIZE, BUFFER, &queue) == ERX_ERANGE);
 	high_addresses = false;
 	CHECK(erx_device_queue_create(device, 0, SIZE, BUFFER, &queue) == ERX_OK);
+	/* The stop without the install needs both directions' records, and without them leaves both engines enabled. */
+	for (uint32_t side = 0; side < 2; side++)
+		*reg(engines[side].regs.dma_ctrl) = engines[side].regs.dma_enable;
+	CHECK(erx_device_stop_dma(device) == ERX_EINVAL);
+	for (uint32_t side = 0; side < 2; side++)
+		CHECK(*reg(engines[side].regs.dma_ctrl) == engines[side].regs.dma_enable);
 }
 
 int

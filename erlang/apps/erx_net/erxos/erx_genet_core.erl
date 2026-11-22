@@ -13,38 +13,46 @@ source (hw/svd/genet/genet.svd), so no step packs a bit by hand.
 
 The sequences follow FreeBSD 975e3605ebb1, `sys/arm64/broadcom/genet/if_genet.c`:
 
-1. `reset/0` first turns the MAC's receive off and waits a full frame's time, since a
-   restart may find the controller receiving as its predecessor left it and the MAC
-   stops only at a frame's end. This is step 2 of the interface stop in the GENET facts
-   record (docs/research-genet-bcm2711.md, "Stopping the DMA and confirming it
-   stopped"), the one step here that is not FreeBSD's: FreeBSD first turns receive off
-   inside `gen_reset`, by writing the command register 0 after the receive buffer's
-   reset (`if_genet.c:504, 873`), and again in `gen_disable` (`:554-556, 874`), never
-   before that reset. Then FreeBSD's `gen_reset` (`if_genet.c:488-514`): pulse the
-   receive buffer's reset, write it 0, write the MAC's command register 0, hold the MAC in software
-   reset with local loopback for 10 us, write it 0 again, which leaves CRC forward
-   clear, so no frame check sequence is counted in a receive length, and clear the
-   MIB counters. FreeBSD sets loopback and reset in one write; here they are two field
-   writes, loopback first (unverified on the board).
-2. `configure/1`, the part of `gen_init_locked` before the rings
+1. `reset/0` first stops the controller, since a restart may find it receiving as its
+   predecessor left it: the MAC's receive off and a full frame's time, as the MAC stops
+   only at a frame's end, then both DMA engines stopped and the stop confirmed by the
+   device NIF without the install (`dma_stop`, erx_device:stop_dma/1), so that no reset
+   of item 2 lands while an engine runs. This follows the other published driver's
+   interface stop (the GENET facts record, docs/research-genet-bcm2711.md, "Stopping the
+   DMA and confirming it stopped", steps 2, 3 and 5) with two differences: the hardware
+   filter block, which that driver disables in step 2, is not written; and the NIF writes
+   both directions' stops, transmit first, before it reads either idle report, its order
+   for every GENET reset (docs/design-device-dma.md, "Install and reset"), where that
+   driver confirms transmit's stop before it writes receive's and waits 10 to 20 ms
+   between them. Neither step is FreeBSD's: FreeBSD turns receive off inside
+   `gen_reset`, by writing the command register 0 after the receive buffer's reset
+   (`if_genet.c:504, 873`), and again in `gen_disable` (`:554-556, 874`), never before
+   that reset, and stops the DMA after it, unconfirmed (`:285-288, 873-875`).
+2. Then the rest of `reset/0`, FreeBSD's `gen_reset` (`if_genet.c:488-514`): pulse the
+   receive buffer's reset, write it 0, write the MAC's command register 0, hold the MAC
+   in software reset with local loopback for 10 us, write it 0 again, which leaves CRC
+   forward clear, so no frame check sequence is counted in a receive length, and clear
+   the MIB counters. FreeBSD sets loopback and reset in one write; here they are two
+   field writes, loopback first (unverified on the board).
+3. `configure/1`, the part of `gen_init_locked` before the rings
    (`if_genet.c:915-927`, `gen_set_enaddr` `:1016-1035`, `gen_setup_rxfilter`
    `:977-1013`): the port in external gigabit PHY mode, the unicast address, and the
    filter promiscuous with the MDF table off, as plan 1b-I (c) begins. Then the part of
    `gen_init_txring` and `gen_init_rxring` that is the driver's, not the NIF's
    (hw/svd/genet/genet.svd; docs/design-device-dma.md, "GENET"): both directions'
    burst size, and ring 16's transmit done threshold, transmit flow period and receive
-   XON/XOFF thresholds, written before `negotiate/2` enables the ring and the engine.
-   FreeBSD writes them after it has stopped the engine (`if_genet.c:286-288, 873-875`);
-   here the engine is first stopped inside `negotiate/2`, so they are written with it
-   in whatever state the firmware or a previous driver left (TODO.md).
-3. `negotiate/2` installs and starts both rings (the device NIF's sequence).
-4. `start/0`: every interrupt masked and cleared first, as FreeBSD's `gen_disable_intr`
+   XON/XOFF thresholds, written before `negotiate/2` enables the ring and the engine,
+   and after `reset/0`'s confirmed stop, as FreeBSD writes them after it has stopped
+   the engine (`if_genet.c:286-288, 873-875`).
+4. `negotiate/2` installs and starts both rings (the device NIF's sequence); its own
+   stop finds both engines stopped already.
+5. `start/0`: every interrupt masked and cleared first, as FreeBSD's `gen_disable_intr`
    does (`if_genet.c:538-544`), so no completion's interrupt is cleared after it lands;
    then `gen_enable` (`if_genet.c:516-536`, `gen_enable_intr` `:710-715`): the largest
    frame 1,536 bytes, the receive buffer's 2-byte alignment on and both status blocks
    off, the transmit buffer size, transmit and receive enabled, and the receive and
    transmit done interrupts unmasked.
-5. `link_up/1` at each `{link, up, Speed}` of erx_phy_c22, `gen_update_link_locked`
+6. `link_up/1` at each `{link, up, Speed}` of erx_phy_c22, `gen_update_link_locked`
    (`if_genet.c:1729-1781`): the RGMII out-of-band control on, its link bit set and
    ID mode left enabled, since the board's PHY is wired `rgmii-rxid` (the PHY delays
    the receive clock, erx_phy_c22), then the command register's speed. A link down
@@ -52,7 +60,7 @@ The sequences follow FreeBSD 975e3605ebb1, `sys/arm64/broadcom/genet/if_genet.c`
 """.
 
 -export([identify/1, lladdr/1, reset/0, configure/1, start/0, link_up/1]).
--export([negotiate_retry/1, frames/2, pieces/1]).
+-export([stop_retry/1, frames/2, pieces/1]).
 -export([evidence/0, rx_fault/1]).
 -export_type([step/0, address_step/0, rx_fault/0]).
 
@@ -88,22 +96,25 @@ The sequences follow FreeBSD 975e3605ebb1, `sys/arm64/broadcom/genet/if_genet.c`
 -define(OWN_PIECES, (?MAX_PIECES - 1)).
 %% The shortest frame on the wire without its FCS (IEEE 802.3's 64 bytes less 4).
 -define(MIN_FRAME, 60).
-%% negotiate/2 answers ebusy until both directions' DMA shows the stop. The one published
-%% bound on a stop is 5,000 reads 1 us apart, about 5 ms (docs/design-device-dma.md,
-%% "The descriptor forms"); erx_genet retries every millisecond for four times that, then
-%% fails.
--define(NEGOTIATE_RETRY_MS, 1).
--define(NEGOTIATE_TRIES, 20).
+%% erx_device:stop_dma/1 and negotiate/2 answer ebusy until both directions' DMA shows the
+%% stop. The one published bound on a stop is 5,000 reads 1 us apart, about 5 ms
+%% (docs/design-device-dma.md, "The descriptor forms"); erx_genet retries every
+%% millisecond for four times that, then fails.
+-define(STOP_RETRY_MS, 1).
+-define(STOP_TRIES, 20).
 
 -doc """
 One effect on the controller: a whole register written, one named field written (a
 read, the field replaced, a write, except on a one-to-clear field, which is one write),
-or a pause of that many microseconds. A register is named as erx_device names it: an
+a pause of that many microseconds, or `dma_stop`, both DMA engines stopped and the stop
+confirmed without the install (erx_device:stop_dma/1, retried as `stop_retry/1` says; a
+stop never confirmed ends the sequence). A register is named as erx_device names it: an
 atom, or `{Name, Element}` for one element of an array such as a ring's registers.
 """.
 -type step() :: {write, erx_device:register_name(), 0..16#ffffffff}
               | {field, erx_device:register_name(), atom(), non_neg_integer()}
-              | {wait_us, pos_integer()}.
+              | {wait_us, pos_integer()}
+              | dma_stop.
 
 -doc """
 What finding the address does next: `{done, Address}`; `{read, Register, Field, Next}`,
@@ -161,10 +172,13 @@ local_unicast(<<High:6, _:2, Rest:40>>) -> <<High:6, 1:1, 0:1, Rest:40>>.
 
 %% --- The sequences ------------------------------------------------------------------
 
--doc "The MAC's receive stopped at a frame's end, then the reset, FreeBSD's `gen_reset`.".
+-doc """
+The MAC's receive stopped at a frame's end and both DMA engines stopped and confirmed,
+then the reset, FreeBSD's `gen_reset`.
+""".
 -spec reset() -> [step()].
 reset() ->
-    [{field, umac_cmd, rxen, 0}, {wait_us, ?FRAME_US},
+    [{field, umac_cmd, rxen, 0}, {wait_us, ?FRAME_US}, dma_stop,
      {field, sys_rbuf_flush_ctrl, reset, 1}, {wait_us, ?RESET_US},
      {field, sys_rbuf_flush_ctrl, reset, 0}, {wait_us, ?RESET_US},
      {write, sys_rbuf_flush_ctrl, 0}, {wait_us, ?RESET_US},
@@ -218,20 +232,21 @@ speed_code(100) -> 1;
 speed_code(1000) -> 2.
 
 -doc """
-What to do after the `Tries`-th `negotiate/2` answered `{error, ebusy}`: wait that many
+What to do after the `Tries`-th call that waits on both DMA engines' stop,
+erx_device:stop_dma/1 or `negotiate/2`, answered `{error, ebusy}`: wait that many
 milliseconds and try again, or give up.
 """.
--spec negotiate_retry(pos_integer()) -> {retry, pos_integer()} | {error, stop_timeout}.
-negotiate_retry(Tries) when is_integer(Tries), Tries >= 1, Tries < ?NEGOTIATE_TRIES ->
-    {retry, ?NEGOTIATE_RETRY_MS};
-negotiate_retry(Tries) when is_integer(Tries), Tries >= ?NEGOTIATE_TRIES ->
+-spec stop_retry(pos_integer()) -> {retry, pos_integer()} | {error, stop_timeout}.
+stop_retry(Tries) when is_integer(Tries), Tries >= 1, Tries < ?STOP_TRIES ->
+    {retry, ?STOP_RETRY_MS};
+stop_retry(Tries) when is_integer(Tries), Tries >= ?STOP_TRIES ->
     {error, stop_timeout}.
 
 %% --- What a failure shows -------------------------------------------------------------
 
 -doc """
 The registers whose words the driver logs when the device NIF breaks a queue or
-`negotiate/2` never sees the stop: each direction's DMA control and DMA status, then the
+erx_device:stop_dma/1 or `negotiate/2` never sees the stop: each direction's DMA control and DMA status, then the
 receive ring's producer and consumer index and the transmit ring's consumer and producer
 index, for the ring the NIF drives. The NIF owns all but the two status registers, and the
 driver only reads them, which has no side effect. The words settle on the board what the

@@ -531,6 +531,8 @@ check_negotiate(const erx_device_t *device, uint32_t queue)
 	CHECK(*reg("status") == running);
 	/* Virtio's negotiation takes no steps: `continue` is refused, and the running device kept. */
 	CHECK(erx_device_negotiate(device, 0, true, &accepted) == ERX_EINVAL && *reg("status") == running);
+	/* The stop without the install is the register ring's alone: refused, the running device kept. */
+	CHECK(erx_device_stop_dma(device) == ERX_ENOTSUP && *reg("status") == running);
 	/* VERSION_1 and an offered ACCESS_PLATFORM always, and only what the driver wants of the rest. */
 	CHECK(erx_device_negotiate(device, bit(3), false, &accepted) == ERX_OK && accepted == (bit(3) | always));
 	CHECK(erx_device_negotiate(device, 0, false, &accepted) == ERX_OK && accepted == always);

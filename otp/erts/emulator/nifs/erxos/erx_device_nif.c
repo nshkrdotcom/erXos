@@ -684,6 +684,24 @@ negotiate_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
 	return (enif_make_tuple2(env, enif_make_atom(env, "ok"), enif_make_uint64(env, accepted)));
 }
 
+/* stop_dma(Dev): GENET's confirmed stop without the install; ok once both engines show it. */
+static ERL_NIF_TERM
+stop_dma_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
+{
+	const erx_device_t *const device = device_of(env, argv[0]);
+	int status;
+
+	(void)argc;
+	if (device == NULL)
+		return (enif_make_badarg(env));
+	enif_mutex_lock(device_lock);
+	status = erx_device_stop_dma(device);
+	enif_mutex_unlock(device_lock);
+	if (status != ERX_OK)
+		return (status_error(env, status));
+	return (enif_make_atom(env, "ok"));
+}
+
 /* region(Dev, Index, Bytes) */
 static ERL_NIF_TERM
 region_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
@@ -1453,6 +1471,7 @@ static ErlNifFunc nif_funcs[] = {
 	{ "region", 3, region_nif, 0 },
 	{ "framebuffer", 0, framebuffer_nif, 0 },
 	{ "negotiate", 2, negotiate_nif, 0 },
+	{ "stop_dma", 1, stop_dma_nif, 0 },
 	{ "post", 4, post_nif, 0 },
 	{ "complete", 2, complete_nif, 0 },
 	{ "queue_state", 2, queue_state_nif, 0 },
