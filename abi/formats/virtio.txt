@@ -3,12 +3,13 @@
 # virtio's split virtqueue and the virtio-mmio block, network and GPU devices, from the
 # OASIS Virtual I/O Device (VIRTIO) Version 1.2 specification: sections 2.7 (split
 # virtqueues), 4.2.2 (the MMIO transport's values), 5.1 (the network device), 5.2 (the
-# block device), 5.7 (the GPU device) and 5.8 (the input device).
+# block device), 5.3 (the console device), 5.7 (the GPU device) and 5.8 (the input device).
 # Every field is little-endian, as a version 1 device requires.
 limit virtio_mmio_magic u32 0x74726976
 limit virtio_mmio_version u32 2
 limit virtio_id_net u32 1
 limit virtio_id_block u32 2
+limit virtio_id_console u32 3
 # Feature bits, by number below 64. erx_device accepts what the device type defines (bits
 # 0 to 23 and 50 to 63) and, of the bits that extend the queues and the negotiation (24 to
 # 41) or are reserved (42 to 49), VERSION_1 and, whenever offered, ACCESS_PLATFORM, since
@@ -223,3 +224,10 @@ layout erx_virtio_input_event wire_le 4 8
   field code u16 2
   field value i32 4
 
+# The console device (section 5.3), driven as the line of docs/design-bluetooth.md ("The
+# line on QEMU `virt`"). The driver negotiates none of the type's features, so without
+# VIRTIO_CONSOLE_F_MULTIPORT the device has port 0 alone: queue 0 its receive queue, whose
+# buffers the device writes, and queue 1 its transmit queue, whose buffers it reads
+# (section 5.3.2). The driver reads nothing of its configuration space.
+limit virtio_console_queue_receive u32 0
+limit virtio_console_queue_transmit u32 1

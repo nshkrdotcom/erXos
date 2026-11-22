@@ -311,6 +311,13 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
 
 ## Bugs by subsystem
 
+* [Medium] virtio drivers, one interrupt acknowledgement (`erx_virtio_gpu`, `erx_virtio_input`, `erx_blk_virtio`,
+  `erx_virtio_net`, `erx_virtio_console`): each reads `interrupt_status`, writes `interrupt_ack` with its low two bits
+  and acknowledges the line, and each copies `step/2` and the start sequence; the acknowledgement is a fact of the
+  virtio-mmio transport and belongs in `erx_virtio`. `erx_virtio_input`'s drain also takes buffers until the device
+  has none, so a device that refills at once holds the driver; take one batch and ask for more, as
+  `erx_virtio_console` and `erx_virtio_net` do.
+ * [Low] domain service, `served_kind/2` (`erlang/apps/erx_domain/src/erx_domain_srv.erl`, `init`): `Trees` lists the
 * [Medium] device-tree reader, split DMA translations (`kernel/core/dt.c`, `range_read`): a translation written as
   several adjacent `dma-ranges` entries, as a full 32-bit identity map under a one-cell `#size-cells` must be,
   leaves several windows with RAM behind them, and the device gets `ranges` (no DMA range). It fails safe. Merge

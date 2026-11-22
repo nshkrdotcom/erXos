@@ -126,13 +126,25 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   check (`check_line_grants` in `tools/lib/erx/manifest.rb`) accepts at most one `line` facet in a manifest, since
   the design leaves open how the one process `erx_facet:serve/2` names reaches the tree of each grant when several
   grants name different UARTs; settle that and lift the limit.
-  In hosted mode (docs/plan.md, Track B part (b)) two more pieces are missing. The line's driver is `erx_stdio`
-  over a descriptor to a Bumble controller (design-bluetooth.md, "The power line", last paragraph), but
-  `erx_stdio_nif.c` is one static instance over standard input and output, and how the descriptor reaches the
-  runtime is unnamed: design-bluetooth.md speaks of a hosted line record, while design-fiasco.md ("Device
-  records") has the hosted entry add none, and `erx_uart_sup` starts lines only from `pl011` records. And the
-  Bluetooth domain is a domain of its own, which a hosted runtime cannot run before track H's multi-process
-  form, which has no design yet.
+  On QEMU `virt` (docs/plan.md, Track B part (b); design-bluetooth.md, "The line on QEMU `virt`") the line's
+  driver is `erx_virtio_console` (erlang/apps/erx_uart), over a virtio-console transport. Missing first, in the
+  design: how a line grant names that transport (the `uart` parameter of kind `device`, `rate` and `flow` are a
+  UART's; design-system.md property 8 and design-fiasco.md "Device records" say the line's record is a physical,
+  DMA-free one, while a virtio console needs a given record with queues). Missing then: a
+  device kind for the transport (`include/erx/device_kinds.h`, a role in `abi/manifest.txt`) and its row in
+  `config/platforms/qemu-virt.json`; the line grant's selection of a transport, which the manifest check
+  (`check_line_grants`), the root (`line_uart_read`, `line_kind`, which writes a physical record and so only a
+  PL011's) and `erx_uart_sup` (which starts lines only from `pl011` records) each restrict to a PL011; the
+  development manifest's Bluetooth domain with its `line` grant; and the QEMU harness's socket chardev and the
+  suite. The driver has host tests of its transmit core only: add cases over the played stand-in device
+  (`test/erlang/stand_in/erx_device.erl`) for input reaching the owner and the buffer posted again, a write
+  answered only after its last buffer is back, and a broken queue stopping the driver.
+* [High] bluetooth, the line service's crash reports (`erlang/apps/erx_uart/src/erx_line.erl`): erx_line has no
+  `format_status/1`, so a driver's end outside a reset (a virtio device that breaks its queue can force one) stops the
+  line with an error report whose state holds up to 64 KiB of the controller's bytes and the writes waiting, which
+  carry keys (a DHKey event, an LTK command), and erx_log_h prints its first 4 KiB. Redact `rx`, the bytes of `waits`
+  and `writing` and the message, as `erx_virtio_console:format_status/1` does, with a test that a stopped line's
+  report holds none of them.
 * [Medium] bluetooth, line groups couple the host link to the line tree at the limits
   (`erlang/apps/erx_uart/src/erx_uart_sup.erl`): each level (top, group, services) allows 3 restarts in 60 s, so a
   line tree's crash loop exhausts its `services` supervisor, whose restart restarts the host link and ends its

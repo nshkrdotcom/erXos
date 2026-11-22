@@ -85,7 +85,7 @@ goes to the document of the subsystem its component pointer names.
 * [Bluetooth](docs/todo-bluetooth.md#bugs-by-subsystem): the Bluetooth host and controller, GATT and the security manager.
   1 item (1 Medium).
 * [Drivers and platforms](docs/todo-drivers.md#bugs-by-subsystem): drivers and the device layer: PCIe, DMA, the device tree, GENET, SD, UART, the platforms and boards.
-  50 items (1 High, 27 Medium, 22 Low).
+  51 items (1 High, 28 Medium, 22 Low).
 * [Shell and programs](docs/todo-shell.md#bugs-by-subsystem): the command shell (rc), programs, the console line and the terminal.
   85 items (42 Medium, 43 Low).
 * [Sessions and SSH](docs/todo-session.md#bugs-by-subsystem): sessions, SSH, the vault and login.
@@ -164,7 +164,7 @@ document's "residual risks accepted" paragraph.
   8 items (4 Medium, 4 Low).
 * [Bluetooth](docs/todo-bluetooth.md#planned-features): the Bluetooth host and controller, GATT and the security manager.
   9 items (1 High, 8 Medium).
-* [Drivers and platforms](docs/todo-drivers.md#planned-features): drivers and the device layer: PCIe, DMA, the device tree, GENET, SD, UART, the platforms and boards.
+  10 items (2 High, 8 Medium).
   28 items (18 Medium, 10 Low).
 * [Shell and programs](docs/todo-shell.md#planned-features): the command shell (rc), programs, the console line and the terminal.
   15 items (4 Medium, 11 Low).

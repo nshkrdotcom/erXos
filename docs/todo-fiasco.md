@@ -998,9 +998,12 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
 * [Medium] hosted backend, `liberx/backend/hosted/` ([design-fiasco.md](design-fiasco.md#the-hosted-backend),
   [plan.md](plan.md#track-h-hosted-mode)): the multi-process form, in which each space other than the
   first is a macOS process, so domains, connections and sessions run under the sanitizers and E-D1 can be
-  measured between hosted domains. It waits until the Fiasco backend's rows between tasks have settled;
-  until then the hosted backend is one process with the rows 1b-A needs where they are cheap. Its design
-  is written and reviewed before its code.
+  measured between hosted domains. It is deferred until a consumer needs the sanitizers or `lldb` across
+  domains (the Bluetooth suites, its first candidate, run on QEMU `virt` over a virtio-console line); until
+  then the hosted backend is one process with the rows 1b-A needs where they are cheap. Its design is
+  written and reviewed before its code. Check which hosted suites the other designs name need it (the display
+  suite under ThreadSanitizer, design-display.md G2; the WiFi domain in hosted mode, design-wifi.md and plan.md
+  Track W): each either moves to QEMU or waits for this form.
 
 * [Low] upstream OTP, `erlc` (stock OTP 29.1.2, the oracle's): run from a directory whose
   path is a string prefix of a source's absolute path without being its parent, it strips
