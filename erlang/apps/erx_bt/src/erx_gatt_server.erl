@@ -30,6 +30,15 @@ are joined as they arrive, from an empty value, so the bearer holds at most the 
 and the handler receives the whole value at Execute Write, which answers Invalid Offset
 for a part placed past what the parts before it wrote (3.4.6.1, 3.4.6.3). One indication
 is in flight at a time (3.4.7.2).
+
+A write of a Client Characteristic Configuration that changes it awaits an answer the same
+way, as `{configure, Ref, Key, Subscription}`: the link answers it at once, or once the
+store has kept a bonded link's new configuration (docs/design-bluetooth.md, "Bonds and the
+store"), and the configuration changes, and the handlers hear `subscribed`, only at the
+answer `ok`; any other answer is Unlikely Error and leaves it as it was. A write that
+changes nothing is answered at once. A Write Command to the descriptor changes the
+configuration where the gate allows a write of it, through the same answer, and is
+ignored otherwise.
 """.
 
 -include("generated/erx_abi.hrl").
@@ -46,11 +55,13 @@ is in flight at a time (3.4.7.2).
                     security := erx_gatt_gate:link_security()}.
 -doc """
 What the link does: sends a PDU on the ATT channel; gives a write to the characteristic's
-handler and passes its answer to `reply/4`; tells the handlers of a subscription, a new MTU
-or a confirmed indication; counts a discarded command; or ends the link.
+handler, or a change of a configuration to whatever decides it, and passes the answer to
+`reply/4`; tells the handlers of a subscription, a new MTU or a confirmed indication;
+counts a discarded command; or ends the link.
 """.
--type action() :: {send, binary()} | {write, ref(), key(), binary()} | {subscribed, key(), subscription()}
-                | {mtu, pos_integer()} | {confirmed, key()} | discarded | {close, request_outstanding}.
+-type action() :: {send, binary()} | {write, ref(), key(), binary()} | {configure, ref(), key(), subscription()}
+                | {subscribed, key(), subscription()} | {mtu, pos_integer()} | {confirmed, key()} | discarded
+                | {close, request_outstanding}.
 
 -type item() :: {request, erx_att:request()} | {write_command, erx_att:handle(), binary()}
               | {unsupported, 0..16#FF} | {invalid, 0..16#FF}.
@@ -58,7 +69,10 @@ or a confirmed indication; counts a discarded command; or ends the link.
     mtu = ?ERX_ATT_MTU_DEFAULT :: pos_integer(),
     exchanged = false :: boolean(),
     writes = 0 :: non_neg_integer(),                         % the writes given so far, the last one's ref
-    awaiting = none :: none | {ref(), command | {request, Opcode :: 0..16#FF, erx_att:handle()}},
+    %% The write whose answer the bearer waits for: what answers it, and the change of a
+    %% configuration it makes at `ok`.
+    awaiting = none :: none | {ref(), command | {request, Opcode :: 0..16#FF, erx_att:handle()},
+                               none | {key(), subscription()}},
     waiting = queue:new() :: queue:queue(item()),            % what arrived while a handler answers
     %% The prepared write: its value so far, joined part by part, and whether every part
     %% landed within what the parts before it wrote; so it never holds more than the maximum.
@@ -116,15 +130,22 @@ request(Pdu, Server, #bearer{mtu = Mtu} = Bearer) ->
     end.
 
 -doc """
-Takes the handler's answer to the write `Ref`: `ok`, or `{error, Code}` with an
-Application Error code or `value_not_allowed`. Any other answer, a timeout among them, is
-Unlikely Error. The answer to a write command is dropped, and an answer to a write the
-bearer no longer waits on changes nothing.
+Takes the answer to the write `Ref`: `ok`, or `{error, Code}` with an Application Error
+code or `value_not_allowed`. Any other answer, a timeout among them, is Unlikely Error. A
+change of a configuration is made at `ok` alone. The answer to a write command sends
+nothing, and an answer to a write the bearer no longer waits on changes nothing.
 """.
 -spec reply(ref(), term(), server(), bearer()) -> {[action()], bearer()}.
-reply(Ref, _Answer, Server, #bearer{awaiting = {Ref, command}} = Bearer) ->
-    drain([], Server, Bearer#bearer{awaiting = none});
-reply(Ref, Answer, Server, #bearer{awaiting = {Ref, {request, Opcode, Handle}}} = Bearer) ->
+reply(Ref, Answer, Server, #bearer{awaiting = {Ref, Answered, Change}} = Bearer) ->
+    {Changed, Next} = change(Answer, Change, Bearer#bearer{awaiting = none}),
+    drain(response(Answered, Answer) ++ Changed, Server, Next);
+reply(_Ref, _Answer, _Server, Bearer) ->
+    {[], Bearer}.
+
+%% The response to a write request at its answer; a write command has none.
+response(command, _Answer) ->
+    [];
+response({request, Opcode, Handle}, Answer) ->
     Response = case Answer of
                    ok when Opcode =:= ?ERX_ATT_OPCODE_EXECUTE_WRITE_REQ -> execute_write;
                    ok -> write;
@@ -133,8 +154,12 @@ reply(Ref, Answer, Server, #bearer{awaiting = {Ref, {request, Opcode, Handle}}} 
                    {error, value_not_allowed} -> {error, Opcode, Handle, value_not_allowed};
                    _ -> {error, Opcode, Handle, unlikely_error}
                end,
-    drain([{send, erx_att:encode(Response)}], Server, Bearer#bearer{awaiting = none});
-reply(_Ref, _Answer, _Server, Bearer) ->
+    [{send, erx_att:encode(Response)}].
+
+%% A configuration's change, made only at the answer `ok`.
+change(ok, {Key, Kind}, #bearer{subscriptions = Subscriptions} = Bearer) ->
+    {[{subscribed, Key, Kind}], Bearer#bearer{subscriptions = Subscriptions#{Key => Kind}}};
+change(_Answer, _Change, Bearer) ->
     {[], Bearer}.
 
 -doc """
@@ -167,7 +192,7 @@ confirmed(#bearer{indication = Key} = Bearer) -> {[{confirmed, Key}], Bearer#bea
 %% An item taken at once, or waiting behind the handler's answer.
 arrive(Item, Server, #bearer{awaiting = none} = Bearer) ->
     drain(step(Item, Server, Bearer), Server);
-arrive(Item, _Server, #bearer{awaiting = {_Ref, Awaited}, waiting = Waiting} = Bearer) ->
+arrive(Item, _Server, #bearer{awaiting = {_Ref, Awaited, _Change}, waiting = Waiting} = Bearer) ->
     Requests = [I || I <- queue:to_list(Waiting), is_request(I)],
     Commands = queue:len(Waiting) - length(Requests),
     case is_request(Item) of
@@ -294,11 +319,23 @@ respond({execute_write, write}, _Server, #bearer{prepared = {Handle, Key, Value,
     give(Key, Value, {request, ?ERX_ATT_OPCODE_EXECUTE_WRITE_REQ, Handle}, Bearer#bearer{prepared = none}).
 
 %% Gives a write to the characteristic's handler under the next ref, and waits for its answer.
-give(Key, Value, Awaited, #bearer{writes = Writes} = Bearer) ->
+give(Key, Value, Answered, #bearer{writes = Writes} = Bearer) ->
     Ref = Writes + 1,
-    {[{write, Ref, Key, Value}], Bearer#bearer{writes = Ref, awaiting = {Ref, Awaited}}}.
+    {[{write, Ref, Key, Value}], Bearer#bearer{writes = Ref, awaiting = {Ref, Answered, none}}}.
 
-%% A write command: given to the handler when a Write Request would be, otherwise ignored (3.4.5.3).
+%% A write of a configuration (Part G, 3.3.3.3): answered at once when it changes nothing,
+%% otherwise given under the next ref, the change made at its answer.
+configure(Key, Kind, Answered, #bearer{subscriptions = Subscriptions, writes = Writes} = Bearer) ->
+    case maps:get(Key, Subscriptions, none) of
+        Kind ->
+            {response(Answered, ok), Bearer};
+        _ ->
+            Ref = Writes + 1,
+            {[{configure, Ref, Key, Kind}], Bearer#bearer{writes = Ref, awaiting = {Ref, Answered, {Key, Kind}}}}
+    end.
+
+%% A write command: given to the handler, or a configuration changed, when a Write Request
+%% would be, and otherwise ignored (3.4.5.3).
 command(Handle, Value, #{table := Table, security := Security}, Bearer) ->
     case erx_gatt_db:lookup(Handle, Table) of
         {ok, #{command := Level, source := {value, Key, _}, max := Max}}
@@ -307,26 +344,35 @@ command(Handle, Value, #{table := Table, security := Security}, Bearer) ->
                 ok -> give(Key, Value, command, Bearer);
                 {error, _} -> {[], Bearer}
             end;
+        {ok, #{write := Level, source := {configuration, Key} = Source}} when Level =/= none ->
+            case {erx_gatt_gate:check(write_level(Source, Level, Security), Security),
+                  subscription(Key, Value, Table)} of
+                {ok, {ok, Kind}} -> configure(Key, Kind, command, Bearer);
+                _ -> {[], Bearer}
+            end;
         _ ->
             {[], Bearer}
     end.
 
-%% A write of a characteristic's configuration (Part G, 3.3.3.3): two octets, whose
+%% A Write Request of a configuration, with its errors.
+subscribe(Handle, Key, Value, #{table := Table}, Bearer) ->
+    case subscription(Key, Value, Table) of
+        {ok, Kind} -> configure(Key, Kind, {request, ?ERX_ATT_OPCODE_WRITE_REQ, Handle}, Bearer);
+        {error, Error} -> ?ERROR(?ERX_ATT_OPCODE_WRITE_REQ, Handle, Error)
+    end.
+
+%% The subscription a configuration's value asks for (Part G, 3.3.3.3): two octets, whose
 %% notification or indication bit only a characteristic that allows it may set, and not both.
-subscribe(Handle, Key, Value, #{table := Table}, #bearer{subscriptions = Subscriptions} = Bearer) ->
-    Opcode = ?ERX_ATT_OPCODE_WRITE_REQ,
-    byte_size(Value) =:= 2 orelse ?ERROR(Opcode, Handle, invalid_attribute_value_length),
+subscription(_Key, Value, _Table) when byte_size(Value) =/= 2 ->
+    {error, invalid_attribute_value_length};
+subscription(Key, <<Bits:16/little>>, Table) ->
     {ok, Info} = erx_gatt_db:characteristic(Key, Table),
-    <<Bits:16/little>> = Value,
-    Kind = case Bits band (?ERX_GATT_CONFIGURATION_NOTIFY bor ?ERX_GATT_CONFIGURATION_INDICATE) of
-               0 -> none;
-               ?ERX_GATT_CONFIGURATION_NOTIFY -> notify;
-               ?ERX_GATT_CONFIGURATION_INDICATE -> indicate;
-               _ -> ?ERROR(Opcode, Handle, value_not_allowed)
-           end,
-    Kind =:= none orelse maps:get(Kind, Info) =/= none orelse ?ERROR(Opcode, Handle, value_not_allowed),
-    {[{send, erx_att:encode(write)}, {subscribed, Key, Kind}],
-     Bearer#bearer{subscriptions = Subscriptions#{Key => Kind}}}.
+    case Bits band (?ERX_GATT_CONFIGURATION_NOTIFY bor ?ERX_GATT_CONFIGURATION_INDICATE) of
+        0 -> {ok, none};
+        ?ERX_GATT_CONFIGURATION_NOTIFY when map_get(notify, Info) =/= none -> {ok, notify};
+        ?ERX_GATT_CONFIGURATION_INDICATE when map_get(indicate, Info) =/= none -> {ok, indicate};
+        _ -> {error, value_not_allowed}
+    end.
 
 %% A range request's handles (3.4.3.1 and the like): Invalid Handle unless 0 < Start =< End.
 valid_range(Opcode, Start, End) when Start =:= 0; Start > End -> ?ERROR(Opcode, Start, invalid_handle);

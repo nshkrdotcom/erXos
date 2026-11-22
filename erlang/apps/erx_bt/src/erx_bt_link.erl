@@ -14,9 +14,11 @@ of the controller's buffers) and the controller process's pid; it ends at `link_
   `start_child` cannot fail in it. Before its first step the link makes its only two
   calls: `erx_bt_store:resolve/1` for the bond the phone's address names, and
   `erx_gatt_srv:join/2` for the table and the values the handlers last set; then
-  `erx_bt_link_core:new/1` builds the core. What arrives meanwhile waits in the mailbox
-  and is stepped in order after. A call that fails or is not answered within OTP's 5 s
-  default ends the link, and the phone reconnects.
+  `erx_bt_link_core:new/1` builds the core with the clock's reading as its `now`, so a
+  resolved link's first wake-up asks the window for the pairing wait at once. What
+  arrives meanwhile waits in the mailbox and is stepped in order after. A call that
+  fails or is not answered within OTP's 5 s default ends the link, and the phone
+  reconnects.
 - **Inputs.** Each message is `{Role, Input}`, stepped as it arrives at the monotonic clock;
   the core's clauses alone say what each role may send, and a message none takes raises
   in the core and ends the link. The registry's notifications are requests of
@@ -79,7 +81,7 @@ handle_continue({start, Info}, #link{conn = Conn} = Link) ->
         Bond = called(store, fun() -> erx_bt_store:resolve(Address) end),
         #{table := Table, values := Values} = called(registry, fun() -> erx_gatt_srv:join(Conn, #{address => Address}) end),
         Core = erx_bt_link_core:new(#{table => Table, values => Values, bond => Bond, share => Share,
-                                      acl_tx_max => AclTxMax,
+                                      acl_tx_max => AclTxMax, now => erlang:monotonic_time(millisecond),
                                       addresses => #{central => Address, peripheral => {random, Identity}}}),
         {noreply, wake_up(Link#link{core = Core})}
     catch

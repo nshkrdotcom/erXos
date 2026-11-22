@@ -41,10 +41,24 @@ level.
 address is whatever the peer sends, and only the key proves the bond. So the core holds
 the bond's key from its start, and its kept subscriptions and table hash aside, taking
 them on at the first encryption with the key: the subscriptions restored into the bearer
-and told to the registry, the hash as the one the bond was last served. Before that the
-link has the default configuration, and the ATT server answers a configuration write on
-a keyed link Insufficient Encryption. `bonded` is true only on an encrypted link whose key
-is a kept bond's.
+and told to the registry, and, when the bond's hash is not the table's and the phone
+subscribed to Service Changed, an indication of Service Changed for every handle (Part G,
+2.5.2, 7.1), whose confirmation sends the store the table's hash as `served`. Before that
+the link has the default configuration, and the ATT server answers a configuration write
+on a keyed link Insufficient Encryption. Until then the candidate also asks the window for
+the pairing wait (`wait`, answered `{wait, Ms}`), at its start and each `Ms` later, and
+once the wait has passed sends one Security Request with the bond's authentication
+requirements (Part H, 3.6.7), unless the phone has begun pairing or encryption, which it
+may not interrupt (2.4.6).
+
+**The bond's lifecycle** is one field: `none`, a link with no kept bond's key; `{candidate,
+Rest, Ask}`, a resolved bond before its encryption; `{keeping, Held}`, a pairing's bond the
+store is asked to keep; `{kept, Write}`, a link encrypted with a kept bond's key. `bonded`
+is true exactly at `kept`. A configuration write that changes the configuration on a
+`kept` link goes to the store as `{subscriptions, S}` and is answered at the store's
+`kept`, its error Unlikely Error; one that comes while `keeping` is held until the store
+answers the `keep` and then goes to the store the same way; on any other link it is
+answered at once ("Bonds and the store").
 
 **A pairing's outcome has one ordering point**: the step in which the Security Manager
 ends its third phase sends `{keep, Tag, Bond, Subscriptions}` to the store and `{keeping,
@@ -69,8 +83,10 @@ first; what is still queued is dropped with the link.
 **Deadlines** (docs/design.md, "Deadlines in state"): a handler's answer to a write within
 5 s ("The `ble` facet"), else Unlikely Error; an indication's confirmation within ATT's
 30 s transaction timeout (Part F, 3.3.3), else the caller hears `{error, timeout}` and the
-link ends; and the Security Manager Timer's 30 s (Part H, 3.4). `next_deadline/1` answers
-the earliest, and `expired` runs each that has passed.
+link ends; the Security Manager Timer's 30 s (Part H, 3.4); and a candidate's next look at
+the pairing wait. `next_deadline/1` answers the earliest, and `expired` runs each that has
+passed. The first look is at the link's start, `now` in `new/1`'s configuration, so the
+first wake-up asks the window at once.
 
 **Secrets**: the `key` and `smp` fields of the core hold the LTK and the pairing's private
 key, passkey and DHKey, and the bond `new/1` takes and the one the store is asked to keep
@@ -107,24 +123,29 @@ table hash it takes on at its encryption with that key.
                       hash := binary(), subscriptions := #{key() => subscription()}}.
 -type config() :: #{table := erx_gatt_db:table(), values := #{key() => binary()},
                     addresses := #{central := erx_smp_crypto:address(), peripheral := erx_smp_crypto:address()},
-                    bond := none | resolved(), share := pos_integer(), acl_tx_max := pos_integer()}.
+                    bond := none | resolved(), share := pos_integer(), acl_tx_max := pos_integer(),
+                    now := time()}.
 -doc """
 What a link tells the window (docs/design-bluetooth.md, "The link's messages"): a Pairing
-Request to admit, the passkey, a failure of the pairing it admitted, or `keeping` when
-the bond goes to the store. `erx_bt_window` takes these as they are.
+Request to admit, the passkey, a failure of the pairing it admitted, `keeping` when the
+bond goes to the store, or `wait`, a candidate's question of the pairing wait before its
+Security Request. `erx_bt_window` takes these as they are.
 """.
 -type to_window() :: {admit, tag(), erx_smp_crypto:address()} | {passkey, tag(), 0..?ERX_SMP_PASSKEY_MAX}
-                   | {outcome, tag(), {failed, erx_smp_core:reason()}} | {keeping, tag()}.
--doc "What the window tells a link: its verdict on a Pairing Request, or its withdrawal.".
--type from_window() :: {admission, tag(), erx_smp_core:verdict()} | {withdraw, tag()}.
+                   | {outcome, tag(), {failed, erx_smp_core:reason()}} | {keeping, tag()} | wait.
+-doc """
+What the window tells a link: its verdict on a Pairing Request, its withdrawal, or the
+milliseconds the pairing wait has left, `0` once it has passed.
+""".
+-type from_window() :: {admission, tag(), erx_smp_core:verdict()} | {withdraw, tag()} | {wait, non_neg_integer()}.
 -doc """
 What reaches the link, keyed by the owner that sends it: from the controller process, an
 ACL packet, completed packets, its `busy`, the controller's reports about encryption as
 `erx_hci` decodes them, and its answer to the link's `ltk_reply`; from the window, its
-verdict on a Pairing Request and its withdrawal; from the registry, a handler's answer to
-a write, a value a handler set and a notification or indication with the caller's `From`;
-from the store, its answer to `keep` and the bond's forgetting; and `expired`, when the
-earliest deadline is due.
+verdict on a Pairing Request, its withdrawal and the pairing wait left; from the registry,
+a handler's answer to a write, a value a handler set and a notification or indication
+with the caller's `From`; from the store, its answer to `keep` or `subscriptions` and the
+bond's forgetting; and `expired`, when the earliest deadline is due.
 """.
 -type input() :: {hci, {acl, 0..3, binary()} | {completed, pos_integer()} | busy
                        | {le_long_term_key_request, erx_hci:handle(), <<_:64>>, 0..16#FFFF}
@@ -141,17 +162,30 @@ What the link does, in order, each but a notification's answer and the end sent 
 owner: to the controller process, an ACL packet, the answer to its Long Term Key Request
 and `taken`; to the registry, a write for its handler, a subscription, a new MTU or the
 link's security; to the window, a Pairing Request to admit, the passkey, a failure of the
-pairing it admitted, or `keeping` when the bond goes to the store; to the store, the bond
-to keep with the link's subscriptions; a notification's answer to its caller; or the
-link's end, which disconnects it.
+pairing it admitted, `keeping` when the bond goes to the store, or `wait`; to the store,
+the bond to keep with the link's subscriptions, a kept bond's new subscriptions, or the
+table's hash once Service Changed is confirmed; a notification's answer to its caller; or
+the link's end, which disconnects it.
 """.
 -type action() :: {hci, {send, 0..3, binary()} | {ltk_reply, erx_smp_crypto:value() | none} | taken}
                 | {registry, {write, ref(), key(), binary()} | {subscribed, key(), subscription()}
                              | {mtu, pos_integer()} | {security, #{level := erx_gatt_gate:level(), bonded := boolean()}}}
                 | {window, to_window()}
-                | {store, {keep, tag(), erx_smp_core:bond(), #{key() => subscription()}}}
+                | {store, {keep, tag(), erx_smp_core:bond(), #{key() => subscription()}}
+                          | {subscriptions, #{key() => subscription()}} | {served, <<_:256>>}}
                 | {reply, From :: term(), ok | {error, atom()}}
                 | {close, term()}.
+
+%% A configuration write the store has yet to keep: its ref in the bearer, and the change.
+-type configure() :: {ref(), key(), subscription()}.
+%% The bond's lifecycle (see the module's doc). A candidate's `Ask` is the Security
+%% Request's progress: the next look at the pairing wait, a `wait` the window has yet to
+%% answer, or done (sent, or skipped since the phone began pairing or encryption).
+-type bond() :: none
+              | {candidate, #{hash := binary(), subscriptions := #{key() => subscription()}},
+                 {look, time()} | asking | done}
+              | {keeping, none | configure()}
+              | {kept, none | {writing, ref()}}.
 
 -record(core, {
     table :: erx_gatt_db:table(),
@@ -160,19 +194,16 @@ link's end, which disconnects it.
     partial = none :: erx_l2cap:partial(),
     bearer :: erx_gatt_server:bearer(),
     key :: none | {erx_smp_crypto:value(), key_level()},  % secret: the LTK
-    kept :: boolean(),                                    % the key is a kept bond's
-    %% A resolved bond's subscriptions and table hash, held aside until the link is
-    %% encrypted with its key; then the hash the bond was last served.
-    candidate = none :: none | #{hash := binary(), subscriptions := #{key() => subscription()}},
-    served = none :: none | binary(),
+    bond :: bond(),
     encrypted = false :: boolean(),
     ltk_answer = none :: none | replied | refused,        % the answer to the last request, until a report
     smp :: erx_smp_core:state(),                          % secret: the pairing's private key, passkey, DHKey
     awaiting = none :: none | tag(),                      % the pairing sent to the window, until its failure or `keeping`
-    keeping = false :: boolean(),                         % the store is asked to keep the pairing's bond
     smp_deadline = none :: none | time(),
     write = none :: none | {ref(), time()},              % the write a handler answers
-    indication = none :: none | {From :: term(), time()},
+    %% The indication in flight: a handler's, whose caller hears the confirmation, or the
+    %% link's own Service Changed.
+    indication = none :: none | {{caller, From :: term()} | service_changed, time()},
     share :: pos_integer(),
     acl_tx_max :: pos_integer(),
     outstanding = 0 :: non_neg_integer(),                 % packets handed over and not completed
@@ -184,18 +215,20 @@ link's end, which disconnects it.
 }).
 -opaque core() :: #core{}.
 
--doc "A link at its start, holding the key of the bond its address resolved to, if any.".
+-doc """
+A link at its start, at time `now`, holding the key of the bond its address resolved to,
+if any; such a link looks at the pairing wait first at `now`.
+""".
 -spec new(config()) -> core().
-new(#{table := Table, values := Values, addresses := #{central := Central} = Addresses, bond := Bond,
-      share := Share, acl_tx_max := AclTxMax}) ->
-    {Key, Candidate} = case Bond of
-                           none -> {none, none};
-                           #{ltk := Ltk, level := Level, hash := Hash, subscriptions := Subscriptions} ->
-                               {{Ltk, Level}, #{hash => Hash, subscriptions => Subscriptions}}
-                       end,
+new(#{table := Table, values := Values, addresses := #{central := Central} = Addresses, bond := Resolved,
+      share := Share, acl_tx_max := AclTxMax, now := Now}) ->
+    {Key, Bond} = case Resolved of
+                      none -> {none, none};
+                      #{ltk := Ltk, level := Level, hash := Hash, subscriptions := Subscriptions} ->
+                          {{Ltk, Level}, {candidate, #{hash => Hash, subscriptions => Subscriptions}, {look, Now}}}
+                  end,
     #core{table = Table, values = Values, central = Central, bearer = erx_gatt_server:new(),
-          key = Key, kept = Bond =/= none, candidate = Candidate, smp = erx_smp_core:new(Addresses),
-          share = Share, acl_tx_max = AclTxMax}.
+          key = Key, bond = Bond, smp = erx_smp_core:new(Addresses), share = Share, acl_tx_max = AclTxMax}.
 
 -doc "Takes one input at time `Now`; returns the link's actions and the next core.".
 -spec step(input(), time(), core()) -> {[action()], core()}.
@@ -212,8 +245,11 @@ is_close(_Action) -> false.
 
 -doc "The earliest deadline the core holds, `infinity` when it holds none.".
 -spec next_deadline(core()) -> time() | infinity.
-next_deadline(#core{smp_deadline = Smp, write = Write, indication = Indication}) ->
-    lists:min([infinity | [D || D <- [Smp, deadline(Write), deadline(Indication)], D =/= none]]).
+next_deadline(#core{smp_deadline = Smp, write = Write, indication = Indication, bond = Bond}) ->
+    lists:min([infinity | [D || D <- [Smp, deadline(Write), deadline(Indication), look(Bond)], D =/= none]]).
+
+look({candidate, _Rest, {look, Deadline}}) -> Deadline;
+look(_Bond) -> none.
 
 -doc """
 What the link may show about itself: its security, its bearer's MTU, its queue and its
@@ -238,6 +274,11 @@ input({window, {admission, _Tag, _Verdict} = Admission}, Now, Core) ->
     smp(Admission, Now, Core);
 input({window, {withdraw, _Tag} = Withdraw}, Now, Core) ->
     smp(Withdraw, Now, Core);
+input({window, {wait, Ms}}, Now, #core{bond = {candidate, Rest, asking}} = Core) ->
+    pairing_wait_answered(Ms, Now, Rest, Core);
+%% The link was encrypted while the window answered: it asks nothing more.
+input({window, {wait, _Ms}}, _Now, #core{bond = {kept, _}} = Core) ->
+    {[], Core};
 input({registry, {answer, Ref, Answer}}, Now, #core{write = {Ref, _}} = Core) ->
     att(erx_gatt_server:reply(Ref, Answer, server(Core), Core#core.bearer), Now, Core#core{write = none});
 input({registry, {answer, _Ref, _Answer}}, _Now, Core) ->
@@ -246,11 +287,21 @@ input({registry, {set, Key, Value}}, _Now, #core{values = Values} = Core) ->
     {[], Core#core{values = Values#{Key => Value}}};
 input({registry, {notify, From, Kind, Key, Value}}, Now, Core) ->
     notify(From, Kind, erx_gatt_server:notify(Kind, Key, Value, server(Core), Core#core.bearer), Now, Core);
-input({store, {kept, ok}}, _Now, #core{keeping = true} = Core) ->
-    Kept = Core#core{kept = true, keeping = false},
-    {security(Kept), Kept};
-input({store, {kept, {error, Reason}}}, _Now, #core{keeping = true} = Core) ->
-    {[{close, {store, Reason}}], Core#core{keeping = false}};
+%% The store kept the pairing's bond: the key is a kept bond's, and a configuration write
+%% held meanwhile is kept as a bonded link's.
+input({store, {kept, ok}}, _Now, #core{bond = {keeping, Held}} = Core) ->
+    Kept = Core#core{bond = {kept, none}},
+    {Written, Next} = case Held of
+                          none -> {[], Kept};
+                          {Ref, Key, Kind} -> keep_configuration(Ref, Key, Kind, Kept)
+                      end,
+    {security(Kept) ++ Written, Next};
+input({store, {kept, {error, Reason}}}, _Now, #core{bond = {keeping, _Held}} = Core) ->
+    {[{close, {store, Reason}}], Core};
+%% The store's answer to a bonded configuration write: its response, or Unlikely Error.
+input({store, {kept, Answer}}, Now, #core{bond = {kept, {writing, Ref}}} = Core) ->
+    Kept = Core#core{bond = {kept, none}},
+    att(erx_gatt_server:reply(Ref, Answer, server(Kept), Kept#core.bearer), Now, Kept);
 input({store, forgotten}, _Now, Core) ->
     {[{close, forgotten}], Core};
 input(expired, Now, Core) ->
@@ -292,7 +343,7 @@ hci({encryption_key_refresh_complete, _Status, _Handle}, _Now, Core) ->
 %% link's, the registry tells the handlers the level, and the Security Manager runs its
 %% third phase.
 encrypted(Now, #core{encrypted = Was} = Core) ->
-    {Restored, Proven} = proven(Core#core{encrypted = true, ltk_answer = none}),
+    {Restored, Proven} = proven(Now, Core#core{encrypted = true, ltk_answer = none}),
     {Smp, Next} = smp(encrypted, Now, Proven),
     Told = case Was of
                true -> [];
@@ -301,33 +352,73 @@ encrypted(Now, #core{encrypted = Was} = Core) ->
     {Told ++ Restored ++ Smp, Next}.
 
 %% A resolved bond's subscriptions and table hash, taken on at the first encryption with
-%% its key: the subscriptions the table still declares go into the bearer, and the
-%% registry hears each.
-proven(#core{candidate = none} = Core) ->
-    {[], Core};
-proven(#core{candidate = #{hash := Hash, subscriptions := Kept}, table = Table, bearer = Bearer} = Core) ->
-    {Restored, Next} = erx_gatt_server:restore(Kept, Table, Bearer),
-    {[{registry, {subscribed, Key, Kind}} || Key := Kind <- maps:iterator(Restored, ordered)],
-     Core#core{candidate = none, served = Hash, bearer = Next}}.
+%% its key: the subscriptions the table still declares go into the bearer, the registry
+%% hears each, and Service Changed is indicated when the table is not the one the bond
+%% was last served.
+proven(Now, #core{bond = {candidate, #{hash := Hash, subscriptions := Kept}, _Ask}, table = Table} = Core) ->
+    {Restored, Bearer} = erx_gatt_server:restore(Kept, Table, Core#core.bearer),
+    Proven = Core#core{bond = {kept, none}, bearer = Bearer},
+    {Changed, Next} = case Hash =:= erx_gatt_db:hash(Table) of
+                          true -> {[], Proven};
+                          false -> service_changed(Now, Proven)
+                      end,
+    {[{registry, {subscribed, Key, Kind}} || Key := Kind <- maps:iterator(Restored, ordered)] ++ Changed, Next};
+proven(_Now, Core) ->
+    {[], Core}.
+
+%% Service Changed for every handle (Part G, 2.5.2, 7.1), when the phone subscribed to it.
+%% The link has just been proven, so nothing else is in flight and the gate allows it.
+service_changed(Now, Core) ->
+    Range = <<16#0001:16/little, 16#FFFF:16/little>>,
+    case erx_gatt_server:notify(indicate, erx_gatt_db:service_changed(), Range, server(Core), Core#core.bearer) of
+        {ok, Pdu, Bearer} ->
+            queue(?ERX_L2CAP_CID_ATT, Pdu, always,
+                  Core#core{bearer = Bearer, indication = {service_changed, Now + ?ATT_TRANSACTION_MS}});
+        {error, not_subscribed} ->
+            {[], Core}
+    end.
+
+%% The window's answer to a candidate's `wait`: once the pairing wait has passed, the one
+%% Security Request, with the bond's authentication requirements (Part H, 3.5.1, 3.6.7),
+%% unless the phone has begun pairing or encryption, which it may not interrupt (2.4.6);
+%% before that, another look `Ms` later. The request is droppable as SMP's other frames
+%% are, so a full queue loses it.
+pairing_wait_answered(0, _Now, Rest, #core{ltk_answer = none, smp_deadline = none, key = {_Ltk, Level}} = Core) ->
+    Auth = erx_smp:auth_octet(#{bonding => ?ERX_SMP_BONDING, mitm => Level =:= authenticated, sc => true,
+                                keypress => false, ct2 => false}),
+    queue(?ERX_L2CAP_CID_SMP, erx_smp:encode({security_request, Auth}), droppable,
+          Core#core{bond = {candidate, Rest, done}});
+pairing_wait_answered(0, _Now, Rest, Core) ->
+    {[], Core#core{bond = {candidate, Rest, done}}};
+pairing_wait_answered(Ms, Now, Rest, Core) ->
+    {[], Core#core{bond = {candidate, Rest, {look, Now + Ms}}}}.
 
 %% The deadlines that have passed at `Now`, the Security Manager's first.
 expire(Now, Core0) ->
-    {Smp, Core1} = case due(Core0#core.smp_deadline, Now) of
-                       true -> smp(timeout, Now, Core0#core{smp_deadline = none});
-                       false -> {[], Core0}
+    {Look, Core1} = case Core0#core.bond of
+                        {candidate, Rest, {look, At}} when At =< Now ->
+                            {[{window, wait}], Core0#core{bond = {candidate, Rest, asking}}};
+                        _ -> {[], Core0}
+                    end,
+    {Smp, Core2} = case due(Core1#core.smp_deadline, Now) of
+                       true -> smp(timeout, Now, Core1#core{smp_deadline = none});
+                       false -> {[], Core1}
                    end,
-    {Indication, Core2} = case Core1#core.indication of
-                              {From, Deadline} when Deadline =< Now ->
-                                  {[{reply, From, {error, timeout}}, {close, att_timeout}], Core1#core{indication = none}};
-                              _ -> {[], Core1}
+    {Indication, Core3} = case Core2#core.indication of
+                              {{caller, From}, Deadline} when Deadline =< Now ->
+                                  {[{reply, From, {error, timeout}}, {close, att_timeout}],
+                                   Core2#core{indication = none}};
+                              {service_changed, Deadline} when Deadline =< Now ->
+                                  {[{close, att_timeout}], Core2#core{indication = none}};
+                              _ -> {[], Core2}
                           end,
-    {Write, Core3} = case Core2#core.write of
+    {Write, Core4} = case Core3#core.write of
                          {Ref, Deadline2} when Deadline2 =< Now ->
-                             att(erx_gatt_server:reply(Ref, timeout, server(Core2), Core2#core.bearer), Now,
-                                 Core2#core{write = none});
-                         _ -> {[], Core2}
+                             att(erx_gatt_server:reply(Ref, timeout, server(Core3), Core3#core.bearer), Now,
+                                 Core3#core{write = none});
+                         _ -> {[], Core3}
                      end,
-    {Smp ++ Indication ++ Write, Core3}.
+    {Look ++ Smp ++ Indication ++ Write, Core4}.
 
 due(none, _Now) -> false;
 due(Deadline, Now) -> Deadline =< Now.
@@ -366,14 +457,37 @@ att_action({subscribed, Key, Subscription}, _Now, Core) ->
     {[{registry, {subscribed, Key, Subscription}}], Core};
 att_action({mtu, Mtu}, _Now, Core) ->
     {[{registry, {mtu, Mtu}}], Core};
-att_action({confirmed, _Key}, _Now, #core{indication = {From, _}} = Core) ->
+att_action({configure, Ref, Key, Kind}, Now, Core) ->
+    configuration(Ref, Key, Kind, Now, Core);
+att_action({confirmed, _Key}, _Now, #core{indication = {{caller, From}, _}} = Core) ->
     {[{reply, From, ok}], Core#core{indication = none}};
+%% The bond's table hash is the table's once the phone has confirmed Service Changed.
+att_action({confirmed, _Key}, _Now, #core{indication = {service_changed, _}, table = Table} = Core) ->
+    {[{store, {served, erx_gatt_db:hash(Table)}}], Core#core{indication = none}};
 att_action({confirmed, _Key}, _Now, Core) ->
     {[], Core};
 att_action(discarded, _Now, #core{discarded = Discarded} = Core) ->
     {[], Core#core{discarded = Discarded + 1}};
 att_action({close, Reason}, _Now, Core) ->
     {[{close, {att, Reason}}], Core}.
+
+%% A configuration write that changes the configuration ("Bonds and the store"): on a kept
+%% bond's link it is answered once the store has kept the new configuration; while the
+%% store keeps the pairing's bond it is held for that answer and then kept the same way;
+%% on a link with no kept bond's key it is answered at once. A keyed link not yet
+%% encrypted never gets here: the gate refuses the write.
+configuration(Ref, Key, Kind, _Now, #core{bond = {kept, none}} = Core) ->
+    keep_configuration(Ref, Key, Kind, Core);
+configuration(Ref, Key, Kind, _Now, #core{bond = {keeping, none}} = Core) ->
+    {[], Core#core{bond = {keeping, {Ref, Key, Kind}}}};
+configuration(Ref, _Key, _Kind, Now, #core{bond = none} = Core) ->
+    att(erx_gatt_server:reply(Ref, ok, server(Core), Core#core.bearer), Now, Core).
+
+%% Asks the store to keep the link's configuration with the change; the store's `kept`
+%% answers the write.
+keep_configuration(Ref, Key, Kind, #core{bond = {kept, none}, bearer = Bearer} = Core) ->
+    {[{store, {subscriptions, (erx_gatt_server:subscriptions(Bearer))#{Key => Kind}}}],
+     Core#core{bond = {kept, {writing, Ref}}}}.
 
 %% A notification is answered once queued, or `busy` at a full queue; an indication once
 %% the phone confirms it, within ATT's transaction timeout.
@@ -387,7 +501,8 @@ notify(From, notify, {ok, Pdu, Bearer}, _Now, #core{queue = Queue} = Core) ->
             {[{reply, From, ok} | Queued], Next}
     end;
 notify(From, indicate, {ok, Pdu, Bearer}, Now, Core) ->
-    queue(?ERX_L2CAP_CID_ATT, Pdu, always, Core#core{bearer = Bearer, indication = {From, Now + ?ATT_TRANSACTION_MS}}).
+    queue(?ERX_L2CAP_CID_ATT, Pdu, always,
+          Core#core{bearer = Bearer, indication = {{caller, From}, Now + ?ATT_TRANSACTION_MS}}).
 
 %% ---- the Security Manager ----
 
@@ -409,9 +524,9 @@ smp_action({key, Ltk, Level}, _Now, Core) ->
     {[], set_key(Ltk, Level, Core)};
 %% The ordering point: from this step the pairing is the store's, so the window hears
 %% `keeping` and no failure of the link's after it.
-smp_action({bonded, Bond}, _Now, #core{awaiting = Tag, bearer = Bearer} = Core) when Tag =/= none ->
+smp_action({bonded, Bond}, _Now, #core{awaiting = Tag, bearer = Bearer, bond = none} = Core) when Tag =/= none ->
     {[{store, {keep, Tag, Bond, erx_gatt_server:subscriptions(Bearer)}}, {window, {keeping, Tag}}],
-     Core#core{awaiting = none, keeping = true}};
+     Core#core{awaiting = none, bond = {keeping, none}}};
 %% A failure reaches the window only for the pairing it admitted, before `keeping`; the
 %% refusal of a Pairing Request after the bond, in the Security Manager's `done`, is not
 %% that pairing's outcome.
@@ -436,7 +551,8 @@ key_level(none) -> none;
 key_level({_Ltk, Level}) -> Level.
 
 %% A link is its bond's once it is encrypted with a kept bond's key.
-bonded(#core{kept = Kept, encrypted = Encrypted}) -> Kept andalso Encrypted.
+bonded(#core{bond = {kept, _}}) -> true;
+bonded(#core{}) -> false.
 
 %% The level the link reaches, `open` until it is encrypted and then its key's.
 security(#core{encrypted = false} = Core) ->

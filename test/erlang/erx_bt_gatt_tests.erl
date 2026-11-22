@@ -91,6 +91,14 @@ ask(Pdu, Server, Bearer) ->
     {Actions, Next} = erx_gatt_server:request(Pdu, Server, Bearer),
     {[P || {send, P} <- Actions], [A || A <- Actions, not is_tuple(A) orelse element(1, A) =/= send], Next}.
 
+%% A configuration write that changes the configuration, given as `configure` and answered
+%% `ok`, as the link answers one on a link with no kept bond: the response and events of
+%% the answer, and the bearer after it.
+configured(Pdu, Server, Bearer) ->
+    {[], [{configure, Ref, _Key, _Kind}], Asked} = ask(Pdu, Server, Bearer),
+    {Actions, Next} = erx_gatt_server:reply(Ref, ok, Server, Asked),
+    {[P || {send, P} <- Actions], [A || A <- Actions, element(1, A) =/= send], Next}.
+
 %% The one response a request gets at once.
 answer(Pdu, Server, Bearer) ->
     {[Response], [], _} = ask(Pdu, Server, Bearer),
@@ -216,7 +224,7 @@ configuration_write_is_gated_at_notify_level_test() ->
     %% ind is read open and indicate encrypted: its configuration is written only encrypted.
     ?assertEqual(error_rsp(16#12, 21, 16#05), answer(write(21, <<2, 0>>), server(?OPEN), erx_gatt_server:new())),
     ?assertMatch({[<<16#13>>], [{subscribed, {sec, ind}, indicate}], _},
-                 ask(write(21, <<2, 0>>), server(?JUST_WORKS), erx_gatt_server:new())),
+                 configured(write(21, <<2, 0>>), server(?JUST_WORKS), erx_gatt_server:new())),
     ?assertEqual(<<16#0B, 0, 0>>, answer(read(21), server(?OPEN), erx_gatt_server:new())).
 
 %% On a link that holds a key and is not yet encrypted, a configuration write is
@@ -234,7 +242,7 @@ keyed_configuration_write_waits_for_encryption_test() ->
      end || {Char, Bits} <- [{{nus, tx}, 1}, {{sec, ind}, 2}]],
     {ok, #{configuration := Tx}} = erx_gatt_db:characteristic({nus, tx}, table()),
     ?assertMatch({[<<16#13>>], [{subscribed, {nus, tx}, notify}], _},
-                 ask(write(Tx, <<1, 0>>), server(?OPEN), erx_gatt_server:new())).
+                 configured(write(Tx, <<1, 0>>), server(?OPEN), erx_gatt_server:new())).
 
 %% ---- erx_gatt_server ----
 
@@ -390,18 +398,36 @@ writes_answer_their_errors_test() ->
 subscriptions_take_only_what_the_characteristic_allows_test() ->
     S = server(?OPEN),
     B = erx_gatt_server:new(),
-    {[<<16#13>>], [{subscribed, {nus, tx}, notify}], B1} = ask(write(15, <<1, 0>>), S, B),
+    {[<<16#13>>], [{subscribed, {nus, tx}, notify}], B1} = configured(write(15, <<1, 0>>), S, B),
     ?assertEqual(<<16#0B, 1, 0>>, answer(read(15), S, B1)),
     ?assertEqual(error_rsp(16#12, 15, 16#13), answer(write(15, <<2, 0>>), S, B)),
     ?assertEqual(error_rsp(16#12, 15, 16#13), answer(write(15, <<3, 0>>), S, B)),
     ?assertEqual(error_rsp(16#12, 15, 16#0D), answer(write(15, <<1>>), S, B)),
-    ?assertMatch({[<<16#13>>], [{subscribed, {nus, tx}, none}], _}, ask(write(15, <<0, 0>>), S, B1)).
+    ?assertMatch({[<<16#13>>], [{subscribed, {nus, tx}, none}], _}, configured(write(15, <<0, 0>>), S, B1)).
+
+%% A configuration changes only at its answer `ok` (docs/design-bluetooth.md, "Bonds and the
+%% store"): any other answer is Unlikely Error (0x0E) and leaves it as it was, a write that
+%% changes nothing is answered at once with no event, and a Write Command to the descriptor
+%% changes it through the same answer where the gate allows a write, and is otherwise ignored.
+configuration_changes_only_at_its_answer_test() ->
+    S = server(?OPEN),
+    B = erx_gatt_server:new(),
+    {[], [{configure, Ref, {nus, tx}, notify}], Asked} = ask(write(15, <<1, 0>>), S, B),
+    {Refused, Unchanged} = erx_gatt_server:reply(Ref, {error, unavailable}, S, Asked),
+    ?assertEqual([{send, error_rsp(16#12, 15, 16#0E)}], Refused),
+    ?assertEqual(<<16#0B, 0, 0>>, answer(read(15), S, Unchanged)),
+    ?assertEqual({[<<16#13>>], [], B}, ask(write(15, <<0, 0>>), S, B)),
+    {[], [{configure, Ref2, {nus, tx}, notify}], Commanded} = ask(write_cmd(15, <<1, 0>>), S, B),
+    {[{subscribed, {nus, tx}, notify}], Subscribed} = erx_gatt_server:reply(Ref2, ok, S, Commanded),
+    ?assertEqual(<<16#0B, 1, 0>>, answer(read(15), S, Subscribed)),
+    ?assertEqual({[], [], B}, ask(write_cmd(15, <<3, 0>>), S, B)),
+    ?assertEqual({[], [], B}, ask(write_cmd(21, <<2, 0>>), S, B)).
 
 notifications_follow_subscription_gate_and_mtu_test() ->
     S = server(?OPEN),
     B = erx_gatt_server:new(),
     ?assertEqual({error, not_subscribed}, erx_gatt_server:notify(notify, {nus, tx}, <<"x">>, S, B)),
-    {_, _, B1} = ask(write(15, <<1, 0>>), S, B),
+    {_, _, B1} = configured(write(15, <<1, 0>>), S, B),
     ?assertEqual({ok, <<16#1B, 14, 0, "x">>, B1}, erx_gatt_server:notify(notify, {nus, tx}, <<"x">>, S, B1)),
     ?assertEqual({error, too_long}, erx_gatt_server:notify(notify, {nus, tx}, binary:copy(<<0>>, 21), S, B1)),
     ?assertMatch({ok, _, _}, erx_gatt_server:notify(notify, {nus, tx}, binary:copy(<<0>>, 20), S, B1)),
@@ -411,7 +437,7 @@ notifications_follow_subscription_gate_and_mtu_test() ->
 
 one_indication_in_flight_test() ->
     S = server(?JUST_WORKS),
-    {_, _, B} = ask(write(21, <<2, 0>>), S, erx_gatt_server:new()),
+    {_, _, B} = configured(write(21, <<2, 0>>), S, erx_gatt_server:new()),
     {ok, <<16#1D, 20, 0, "a">>, B1} = erx_gatt_server:notify(indicate, {sec, ind}, <<"a">>, S, B),
     ?assertEqual({error, busy}, erx_gatt_server:notify(indicate, {sec, ind}, <<"b">>, S, B1)),
     {[], [{confirmed, {sec, ind}}], B2} = ask(confirm(), S, B1),
@@ -569,7 +595,7 @@ account(Actions, Asked, Ref, Before, After) ->
     [?assert(byte_size(P) =< erx_gatt_server:mtu(Before)) || P <- Responses],
     ?assert(length(Responses) =< Asked),
     ?assertNot(lists:member({close, request_outstanding}, Actions)),
-    Given = [R || {write, R, _, _} <- Actions],
+    Given = [R || {Kind, R, _, _} <- Actions, Kind =:= write orelse Kind =:= configure],
     [?assertEqual(Ref + 1, R) || R <- Given],
     {After, Asked - length(Responses), lists:max([Ref | Given])}.
 

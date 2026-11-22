@@ -29,7 +29,7 @@ checked again here.
 
 -include("generated/erx_abi.hrl").
 
--export([build/1, lookup/2, range/3, characteristic/2, hash/1]).
+-export([build/1, lookup/2, range/3, characteristic/2, hash/1, service_changed/0]).
 -export_type([table/0, attribute/0, service/0, characteristic/0, key/0, access/0, source/0, char_info/0]).
 
 -type level() :: erx_gatt_gate:level().
@@ -90,7 +90,15 @@ characteristic(Key, #{characteristics := Characteristics}) ->
 -spec hash(table()) -> <<_:256>>.
 hash(#{hash := Hash}) -> Hash.
 
-%% GAP's service (Part C, 12.1 and 12.2) and GATT's (Part G, 7.1), declared as any other.
+-doc """
+The key of GATT's Service Changed characteristic (Part G, 7.1), which every table holds;
+its value is the first and last handle of the range that changed.
+""".
+-spec service_changed() -> key().
+service_changed() -> {gatt, service_changed}.
+
+%% GAP's service (Part C, 12.1 and 12.2) and GATT's (Part G, 7.1), declared as any other;
+%% GATT's names are service_changed/0's.
 gap() ->
     #{name => gap, uuid => <<?ERX_GATT_UUID_GAP_SERVICE:16/little>>,
       characteristics => [#{name => device_name, uuid => <<?ERX_GATT_UUID_DEVICE_NAME:16/little>>,
@@ -99,8 +107,9 @@ gap() ->
                             max => 2, access => #{read => open}, value => <<0, 0>>}]}.
 
 gatt() ->
-    #{name => gatt, uuid => <<?ERX_GATT_UUID_GATT_SERVICE:16/little>>,
-      characteristics => [#{name => service_changed, uuid => <<?ERX_GATT_UUID_SERVICE_CHANGED:16/little>>,
+    {Service, ServiceChanged} = service_changed(),
+    #{name => Service, uuid => <<?ERX_GATT_UUID_GATT_SERVICE:16/little>>,
+      characteristics => [#{name => ServiceChanged, uuid => <<?ERX_GATT_UUID_SERVICE_CHANGED:16/little>>,
                             max => 4, access => #{indicate => open}}]}.
 
 %% A service's attributes from handle `First` with what notifications need of its

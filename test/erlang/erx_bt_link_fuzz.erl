@@ -15,7 +15,8 @@
 %% * the link is encrypted only with a key;
 %% * every step of a controller message answers `{hci, taken}` first;
 %% * a link that holds a key tells the registry of no subscription before it is encrypted,
-%%   so a resolved bond's subscriptions and a configuration write wait for the key.
+%%   so a resolved bond's subscriptions and a configuration write wait for the key;
+%% * no `subscriptions` or `served` goes to the store from a link that is not its bond's.
 %%
 %% A step that ends the link starts a new one. The seed comes from make check-fuzz.
 
@@ -47,8 +48,8 @@ services() ->
                            #{name => enc_n, uuid => <<16#03, 16#FF>>, max => 20, access => #{notify => encrypted}},
                            #{name => ind, uuid => <<16#04, 16#FF>>, max => 20, access => #{indicate => open}}]}].
 
-%% A new link, the controller's length it was given, and whether the store owes it an
-%% answer to `keep`.
+%% A new link, the controller's length it was given, and the answers owed to it: the
+%% store's to `keep` or `subscriptions`, the window's to `wait`.
 core(Table) ->
     AclTxMax = 26 + rand:uniform(226),
     Bond = case rand:uniform(2) of
@@ -58,9 +59,9 @@ core(Table) ->
            end,
     {erx_bt_link_core:new(#{table => Table, values => #{}, bond => Bond,
                            addresses => #{central => {random, <<1:48>>}, peripheral => {public, <<2:48>>}},
-                           share => ?SHARE, acl_tx_max => AclTxMax}), AclTxMax, false}.
+                           share => ?SHARE, acl_tx_max => AclTxMax, now => 0}), AclTxMax, #{}}.
 
-round({Core, _, Keeping} = Link, Now, Table) ->
+round({Core, _, Owed} = Link, Now, Table) ->
     At = Now + rand:uniform(3000) - 1,
     Input = case rand:uniform(16) of
                 N when N =< 10 -> {hci, {acl, boundary(), packet()}};
@@ -73,7 +74,9 @@ round({Core, _, Keeping} = Link, Now, Table) ->
                 13 -> {registry, {answer, rand:uniform(4), lists:nth(rand:uniform(3), [ok, {error, 16#80}, junk])}};
                 14 -> {registry, {notify, caller, lists:nth(rand:uniform(2), [notify, indicate]),
                                   lists:nth(rand:uniform(length(?KEYS)), ?KEYS), rand:bytes(rand:uniform(30) - 1)}};
-                15 when Keeping -> {store, lists:nth(rand:uniform(2), [{kept, ok}, {kept, {error, unavailable}}])};
+                15 when is_map_key(store, Owed) ->
+                    {store, lists:nth(rand:uniform(2), [{kept, ok}, {kept, {error, unavailable}}])};
+                15 when is_map_key(wait, Owed) -> {window, {wait, lists:nth(rand:uniform(2), [0, 1000])}};
                 15 -> lists:nth(rand:uniform(2), [{hci, busy}, completed]);
                 16 -> expired
             end,
@@ -88,7 +91,7 @@ completed(completed, Core) ->
 completed(Input, _Core) ->
     Input.
 
-step(Input, Now, {Core, AclTxMax, Keeping}, Table) ->
+step(Input, Now, {Core, AclTxMax, Owed}, Table) ->
     {Actions, Next} = try erx_bt_link_core:step(Input, Now, Core)
                       catch Class:Reason -> verdict({core_raised, Input, Class, Reason})
                       end,
@@ -99,12 +102,18 @@ step(Input, Now, {Core, AclTxMax, Keeping}, Table) ->
     [verdict({packet_too_long, Input, byte_size(Data)}) || {hci, {send, _, Data}} <- Actions, byte_size(Data) > AclTxMax],
     [verdict({not_taken, Input}) || is_tuple(Input), element(1, Input) =:= hci, not lists:prefix([{hci, taken}], Actions)],
     [verdict({subscribed_before_encryption, Input}) || {registry, {subscribed, _, _}} <- Actions, Key =/= none, not Encrypted],
-    Owed = case Input of
-               {store, {kept, _}} -> false;
-               _ -> Keeping orelse lists:any(fun(A) -> element(1, A) =:= store end, Actions)
-           end,
+    [verdict({store_write_not_bonded, Input}) || {store, {Kind, _}} <- Actions, Kind =/= keep,
+                                                 not maps:get(bonded, erx_bt_link_core:facts(Next))
+                                                     orelse not Encrypted],
+    Answered = case Input of
+                   {store, {kept, _}} -> maps:remove(store, Owed);
+                   {window, {wait, _}} -> maps:remove(wait, Owed);
+                   _ -> Owed
+               end,
+    Asked = [store || {store, Message} <- Actions, element(1, Message) =/= served]
+            ++ [wait || {window, wait} <- Actions],
     case [R || {close, R} <- Actions] of
-        [] -> {{Next, AclTxMax, Owed}, Now};
+        [] -> {{Next, AclTxMax, maps:merge(Answered, maps:from_keys(Asked, true))}, Now};
         _ -> {core(Table), Now}
     end.
 

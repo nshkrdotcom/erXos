@@ -38,7 +38,13 @@ module ErxBtLinkFuzz
     Fault.new(fault: "a controller message's step without its `taken`",
               anchor: '    {[{hci, taken} | Actions], Next};',
               replacement: '    {Actions, Next};',
-              verdict: '{not_taken,')
+              verdict: '{not_taken,'),
+    Fault.new(fault: "a configuration write kept by the store for a link that is not its bond's",
+              anchor: "configuration(Ref, _Key, _Kind, Now, #core{bond = none} = Core) ->\n" \
+                      '    att(erx_gatt_server:reply(Ref, ok, server(Core), Core#core.bearer), Now, Core).',
+              replacement: "configuration(_Ref, Key, Kind, _Now, #core{bond = none} = Core) ->\n" \
+                           '    {[{store, {subscriptions, #{Key => Kind}}}], Core}.',
+              verdict: '{store_write_not_bonded,')
   ].freeze
 
   module_function

@@ -8667,6 +8667,17 @@ model harness drive `erx_device.c` itself. `erx_device_dma_check` and `erx_devic
   combinations are representable and `bonded/1` must be checked against every clause that writes them. Fold
   them into one sum-typed field when Reconnection's rest lands, and drop `served` if Service Changed does not
   need it.
+  Disconnection Complete drops the handle's packets still waiting for the writer and its disconnect, but the
+  packet the writer holds, and packets written that the controller has not yet read, are already on the line; if
+  the controller has given the handle to a new peer by the time it reads them, they reach the new link. (A
+  disconnect handed to the writer and unanswered cannot: a connection on its handle ends the controller process.) Narrow it in
+  the link slice, where the link protocol can tie each packet to its connection.
+* [Medium] bluetooth, a disconnect racing the peer's (`erx_bt_hci_core`'s `answered/4`; docs/design-bluetooth.md
+  "Commands and data credits"): a disconnect answered with any failure other than Unknown Connection Identifier
+  ends the controller process, and a controller may answer Command Disallowed (0x0C) to a disconnect that meets a
+  termination already in progress, so a remote peer leaving as the host disconnects it may reset every link.
+  Check Core 6.3 Vol 4 Part E 7.1.6 and 7.7.5 for the statuses a controller sends in that race, and accept the
+  ones that mean the handle is going.
 * [Low] bluetooth, an outcome for a pairing the window did not open (`erx_bt_link_core`'s `smp_action/3`):
   `awaiting` is set at `admit`, so a peer's Pairing Failed or the Security Manager Timer between `admit` and
   a `closed` or `waiting` verdict sends `{outcome, Tag, {failed, _}}` for a pairing the window refused. Clear
@@ -8712,8 +8723,7 @@ model harness drive `erx_device.c` itself. `erx_device_dma_check` and `erx_devic
   contract, or say where they fail.
 * [Low] bluetooth, the store's tests' gaps (`test/erlang/erx_bt_store_tests.erl`): the development file is not run
   under the store with a step failing (write, sync, rename) nor checked for its 0700 and 0600 modes, and a bonded
-  configuration write against a backend that never answers is not run (only `keep` is); both need the link's side
-  of `subscriptions`.
+  configuration write against a backend that never answers is not run (only `keep` is).
 * [Medium] bluetooth, the largest stored state is not bounded by construction (`erx_bt_state:encode/1`;
   docs/design-bluetooth.md "Bonds and the store"): the design says the largest encoding of `bt_bonds_max` bonds
   fits `bt_state_max`, but a bond's subscriptions grow with the table's notify and indicate characteristics and
@@ -8725,12 +8735,15 @@ model harness drive `erx_device.c` itself. `erx_device_dma_check` and `erx_devic
   its `HANDLER_TIMEOUT_MS`, `ATT_TRANSACTION_MS`, `SMP_TIMEOUT_MS` and `ENCRYPTION_ON_LE`): "What a radio peer can
   make the domain spend" makes every bound a constant of `abi/formats/bluetooth.txt`, but these four are module
   macros. Move them there as limits (5000, 30000, 30000 and HCI 7.7.8's 0x01) and use the generated names.
-* [Medium] bluetooth, subscriptions made while the store keeps a bond (`erx_bt_link_core`'s `smp_action/3` for
-  `bonded` and `input/3` for `{kept, ok}`; docs/design-bluetooth.md "Bonds and the store"): `keep` carries the
-  subscriptions the link had when the pairing completed, and a configuration write between that and the store's
-  `ok` is answered at once and never kept, so a power cut loses a subscription the phone saw acknowledged (GATT
-  3.3.3.3). The design holds such a write until the store answers and then keeps it as a bonded link's
-  ("Bonds and the store", "The link's messages"); build it with the bonded configuration write.
+* [Low] bluetooth, the window's copies of `wait` (`erx_bt_window`'s `input()` and `action()`): the link core's
+  `to_window()` and `from_window()` name `wait` and `{wait, Ms}`, so the window's `| wait` and
+  `| {wait, non_neg_integer()}` beside them repeat them; drop them.
+* [Low] bluetooth, the reconnection's Security Request against the specification (`erx_bt_link_core`'s
+  `security_request/3`; docs/design-bluetooth.md "Reconnection"): whether sending a Security Request starts the
+  Security Manager Timer (Core 6.3 Vol 3 Part H, 3.4) is unread, so the link starts none and a phone that never
+  answers is simply left as it is. Read 3.4 and 3.6.7 and pin the request against the Bumble test peer. The
+  request is queued droppable, as SMP's other frames are, and never retried, so a queue full of notifications'
+  frames at that moment loses it; the design does not say whether it must be kept.
 * [Medium] bluetooth, Passkey Entry's bit order (`erx_smp_core`'s `z/2`): the test's honest phone takes the
   passkey's bits least significant first, as the core does, citing Bumble v0.0.237's bumble/smp.py; the
   specification's Figure 2.4 does not settle it. Pin it with the Bumble test peer before the board run.
@@ -8744,15 +8757,6 @@ model harness drive `erx_device.c` itself. `erx_device_dma_check` and `erx_devic
   Disconnection Complete empties and refills the slot, and each refill starts a fresh deadline, so the
   enable never times out and the core never stops; the controller process should end when a command stays
   unsent across refills for longer than `bt_command_timeout_ms`.
-* [Medium] bluetooth, configuration writes and Stage 4 (`erx_gatt_server`'s `subscribe/5`, `erx_gatt_db`'s
-  Client Characteristic Configuration; docs/design-bluetooth.md "Bonds and the store", "Reconnection"): a
-  configuration write updates the bearer and answers at once, so a bonded link cannot hold the response until the
-  store keeps it or roll back on its failure; a Write Command to the descriptor is ignored where the design has it
-  change the configuration; a write that changes nothing still emits `subscribed`; and `new/0` cannot take a
-  bond's subscriptions at reconnection. Reshape with Stage 4: the configuration write awaits an answer as a value
-  write does, the bearer changes at the answer, the descriptor takes Write Command at its write level, which is
-  at least `encrypted` on a link that holds a key, and the bearer takes the kept subscriptions at the link's
-  encryption with the bond's key.
 * [Medium] bluetooth, the table's handle count (`erx_gatt_db`, design-bluetooth.md, "Declarations: `abi/gatt`"):
   nothing bounds the attributes of the served services, and `erx_gatt_db:build/1` writes handles as 16 bits, so
   past 0xFFFF a characteristic declaration names a wrapped handle. One 64 KiB declaration holds some 5,700
@@ -8769,7 +8773,8 @@ model harness drive `erx_device.c` itself. `erx_device_dma_check` and `erx_devic
 * [Low] bluetooth, the ATT server's smaller gaps (`erx_gatt_server`, `erx_gatt_db`, `erx_att`): Execute Write
   joins parts from an empty value, so a client rewriting the tail of an existing value gets Invalid Offset (ATT
   3.4.6.3 measures from the current value); a second `indicate` in flight answers `busy`, which the facet's
-  table lists only for notifications, so the link must queue indications or the design list `busy`; the table's
+  table lists only for notifications, so the link must queue indications or the design list `busy` (a
+  reconnection's Service Changed in flight makes a handler's first indication `busy` too); the table's
   hash covers the internal attribute maps rather than the declarations alone, so an OTP upgrade can send an
   unneeded Service Changed; the Bluetooth Base UUID in `erx_att:uuid128/1` and in the GATT declarations'
   generator (`Erx::GattDecl::BASE_UUID`) is Bumble's, unverified against Vol 3

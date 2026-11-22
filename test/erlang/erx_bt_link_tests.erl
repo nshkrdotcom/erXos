@@ -39,7 +39,7 @@ core() -> core(#{}).
 core(Options) ->
     erx_bt_link_core:new(maps:merge(#{table => table(), values => #{{gap, device_name} => <<"erxos">>},
                                       addresses => #{central => ?CENTRAL, peripheral => ?PERIPHERAL},
-                                      bond => none, share => ?SHARE, acl_tx_max => ?ACL_TX_MAX},
+                                      bond => none, share => ?SHARE, acl_tx_max => ?ACL_TX_MAX, now => 0},
                                     Options)).
 
 bonded(Level) -> core(#{bond => resolved(Level, #{})}).
@@ -98,7 +98,7 @@ tagged({Role, _} = Input) when Role =:= hci; Role =:= window; Role =:= registry;
 tagged(Input) when is_atom(Input) -> {role(Input), Input};
 tagged(Input) -> {role(element(1, Input)), Input}.
 
-role(Kind) when Kind =:= admission; Kind =:= withdraw -> window;
+role(Kind) when Kind =:= admission; Kind =:= withdraw; Kind =:= wait -> window;
 role(Kind) when Kind =:= answer; Kind =:= set; Kind =:= notify -> registry;
 role(Kind) when Kind =:= kept; Kind =:= forgotten -> store;
 role(_Kind) -> hci.
@@ -228,14 +228,14 @@ notification_through_gate_test() ->
     Notify = {notify, caller, notify, {svc, enc_n}, <<"n">>},
     {Refused, _} = run([Notify]),
     ?assertEqual([{reply, caller, {error, insufficient_security}}], [A || {reply, _, _} = A <- Refused]),
-    {Sent, _} = run([ltk_request(), encryption_on(), Subscribe, Notify], bonded(unauthenticated)),
+    {Sent, _} = run([ltk_request(), encryption_on(), Subscribe, {kept, ok}, Notify], bonded(unauthenticated)),
     ?assertEqual([{reply, caller, ok}], [A || {reply, _, _} = A <- Sent]),
     ?assertEqual([write_rsp(), <<16#1B, (handle(enc_n)):16/little, "n">>], on(4, Sent)).
 
 %% With the share used and never completed, the queue fills to bt_notify_queue and the
 %% next notification is `busy`; completions hand the queue over.
 notification_queue_bound_test() ->
-    Inputs = [ltk_request(), encryption_on(), att(write(configuration(enc_n), <<1, 0>>))]
+    Inputs = [ltk_request(), encryption_on(), att(write(configuration(enc_n), <<1, 0>>)), {kept, ok}]
              ++ [{notify, I, notify, {svc, enc_n}, <<"n">>} || I <- lists:seq(1, ?SHARE + ?QUEUE + 1)],
     {Actions, Core} = run(Inputs, bonded(unauthenticated)),
     Replies = [Reply || {reply, _, Reply} <- Actions],
@@ -430,6 +430,103 @@ pairing_deadline_test() ->
     ?assertEqual([{outcome, 1, {failed, timeout}}], window(Actions)),
     ?assertEqual([pairing], closed(Actions)).
 
+%% ---- reconnection ----
+
+%% A resolved link asks the window for the pairing wait at its start, at `now`, and each
+%% `Ms` the window answers after; at `0` it sends one Security Request with the bond's
+%% AuthReq, bonding, SC and, for an authenticated bond, MITM (Part H, 3.5.1, 3.6.7), and
+%% asks nothing more. A phone that has begun pairing or encryption gets none (2.4.6), an answer that
+%% comes after the encryption changes nothing, and a link with no bond never asks.
+security_request_once_never_during_encryption_test() ->
+    Core = bonded(authenticated),
+    ?assertEqual(0, erx_bt_link_core:next_deadline(Core)),
+    {Asked, Asking} = core_step(expired, 0, Core),
+    ?assertEqual([{window, wait}], Asked),
+    ?assertEqual(infinity, erx_bt_link_core:next_deadline(Asking)),
+    {Later, Waiting} = core_step({wait, 5000}, 0, Asking),
+    ?assertEqual([], Later),
+    ?assertEqual(5000, erx_bt_link_core:next_deadline(Waiting)),
+    {Again, Asking2} = core_step(expired, 5000, Waiting),
+    ?assertEqual([{window, wait}], Again),
+    {Request, Done} = core_step({wait, 0}, 5000, Asking2),
+    ?assertEqual([<<16#0B, 16#0D>>], on(6, Request)),
+    ?assertEqual(infinity, erx_bt_link_core:next_deadline(Done)),
+    {Unauthenticated, _} = run([expired, {wait, 0}], bonded(unauthenticated)),
+    ?assertEqual([<<16#0B, 16#09>>], on(6, Unauthenticated)),
+    {DuringEncryption, Begun} = run([expired, ltk_request(), {wait, 0}], Core),
+    ?assertEqual([], on(6, DuringEncryption)),
+    ?assertEqual(infinity, erx_bt_link_core:next_deadline(Begun)),
+    {DuringPairing, _} = run([expired, smp(pairing_request()), {wait, 0}], Core),
+    ?assertEqual([], [R || <<16#0B, _>> = R <- on(6, DuringPairing)]),
+    {AfterEncryption, _} = run([expired, ltk_request(), encryption_on(), {wait, 0}], Core),
+    ?assertEqual([], on(6, AfterEncryption)),
+    ?assertEqual(infinity, erx_bt_link_core:next_deadline(core())),
+    ?assertError(function_clause, core_step({wait, 0}, 0, core())).
+
+%% A configuration write on a link encrypted with a kept bond's key is answered only once
+%% the store has kept the new configuration (docs/design-bluetooth.md, "Bonds and the
+%% store"): the store is sent the link's whole configuration with the change, and the Write
+%% Response and `subscribed` follow its `ok`; its error is Unlikely Error (0x0E) and leaves
+%% the configuration as it was. A write that changes nothing is answered at once.
+bonded_configuration_write_waits_for_the_store_test() ->
+    Config = configuration(enc_n),
+    Bonded = core(#{bond => resolved(unauthenticated, #{}), share => 16}),
+    {_, Encrypted} = run([ltk_request(), encryption_on()], Bonded),
+    {Asked, Writing} = run([att(write(Config, <<1, 0>>))], Encrypted),
+    ?assertEqual([{store, {subscriptions, #{{svc, enc_n} => notify}}}], [A || {store, _} = A <- Asked]),
+    ?assertEqual([], on(4, Asked)),
+    ?assertEqual([], registry(Asked)),
+    {Kept, _} = run([{kept, ok}], Writing),
+    ?assertEqual([write_rsp()], on(4, Kept)),
+    ?assertEqual([{subscribed, {svc, enc_n}, notify}], registry(Kept)),
+    {Failed, Unchanged} = run([{kept, {error, unavailable}}, att(read(Config))], Writing),
+    ?assertEqual([error_rsp(16#12, Config, 16#0E), <<16#0B, 0, 0>>], on(4, Failed)),
+    ?assertEqual([], registry(Failed)),
+    ?assertEqual([], closed(Failed)),
+    {Same, _} = run([att(write(Config, <<0, 0>>))], Unchanged),
+    ?assertEqual([write_rsp()], on(4, Same)),
+    ?assertEqual([], [A || {store, _} = A <- Same]).
+
+%% A configuration write while the store keeps the pairing's bond waits for its answer to
+%% `keep`, and is then kept as a bonded link's, so `keep` never leaves out a subscription the
+%% phone saw answered.
+configuration_write_while_keeping_waits_for_the_keep_test() ->
+    {[PublicKey, Random, Check], _Ltk} = just_works(),
+    Identity = [smp(<<16#08, 7:128>>), smp(<<16#09, 1, 16#C6, 16#C5, 16#C4, 16#C3, 16#C2, 16#C1>>)],
+    {_, Keeping} = run([smp(pairing_request()), {admission, 1, {open, nodisplay, fresh()}}, smp(PublicKey),
+                        smp(Random), smp(Check), ltk_request(), encryption_on()] ++ Identity,
+                       core(#{share => 16})),
+    {Held, Holding} = run([att(write(configuration(ind), <<2, 0>>))], Keeping),
+    ?assertEqual([], on(4, Held) ++ [A || {store, _} = A <- Held]),
+    {Bonded, Writing} = run([{kept, ok}], Holding),
+    ?assertEqual([{registry, {security, #{level => encrypted, bonded => true}}},
+                  {store, {subscriptions, #{{svc, ind} => indicate}}}], Bonded),
+    {Kept, _} = run([{kept, ok}], Writing),
+    ?assertEqual([write_rsp()], on(4, Kept)),
+    ?assertEqual([{subscribed, {svc, ind}, indicate}], registry(Kept)).
+
+%% At the encryption with a resolved bond's key, a table whose hash is not the bond's is
+%% indicated as Service Changed for every handle (Part G, 2.5.2, 7.1) when the bond kept a
+%% subscription to it, and the confirmation sends the store the table's hash; a bond served
+%% this table, or not subscribed, gets none. Unconfirmed in 30 s, it ends the link.
+service_changed_at_reconnection_test() ->
+    {ok, #{value := Handle}} = erx_gatt_db:characteristic(erx_gatt_db:service_changed(), table()),
+    Subscribed = #{erx_gatt_db:service_changed() => indicate},
+    Encrypt = [ltk_request(), encryption_on()],
+    {Indicated, Waiting} = run(Encrypt, core(#{bond => resolved(unauthenticated, Subscribed)})),
+    ?assertEqual([<<16#1D, Handle:16/little, 16#01, 16#00, 16#FF, 16#FF>>], on(4, Indicated)),
+    ?assertEqual([], [A || {store, _} = A <- Indicated]),
+    {Confirmed, _} = run([att(confirm())], Waiting),
+    ?assertEqual([{store, {served, erx_gatt_db:hash(table())}}], Confirmed),
+    ?assertEqual(30000, erx_bt_link_core:next_deadline(Waiting)),
+    {Unconfirmed, _} = core_step(expired, 30000, Waiting),
+    ?assertEqual([att_timeout], closed(Unconfirmed)),
+    Served = (resolved(unauthenticated, Subscribed))#{hash := erx_gatt_db:hash(table())},
+    {Same, _} = run(Encrypt, core(#{bond => Served})),
+    ?assertEqual([], on(4, Same)),
+    {Unsubscribed, _} = run(Encrypt, bonded(unauthenticated)),
+    ?assertEqual([], on(4, Unsubscribed)).
+
 %% ---- the core, explored ----
 
 %% Every state a small alphabet reaches within ?DEPTH steps, from a link with no key and
@@ -440,13 +537,18 @@ pairing_deadline_test() ->
 %% characteristic reaching the registry on a link not encrypted, a Reply only with a key,
 %% every whole frame on an unknown channel counted, no subscription to enc_n heard before
 %% the link is encrypted, and every controller message's step answering `taken` first
-%% (core_step/3). A step that ends the link ends its path.
+%% (core_step/3); at most one `wait` unanswered and one Security Request on a path, never
+%% once the phone has begun encryption; no `subscriptions` or `served` sent and no Service
+%% Changed indicated on a link that is not its bond's; and on a bonded link the
+%% configuration changed only at the store's `ok`.
+%% The window's and the store's answers are offered only when asked for. A step that ends
+%% the link ends its path.
 explored_core_keeps_its_invariants_test_() ->
     {timeout, 300, fun explore/0}.
 
 explore() ->
-    Starts = [{C, 0, 0} || Bond <- [none, resolved(unauthenticated, #{{svc, enc_n} => notify})],
-                           C <- [core(#{bond => Bond})]],
+    Kept = #{{svc, enc_n} => notify, erx_gatt_db:service_changed() => indicate},
+    Starts = [{C, 0, 0, #{}} || Bond <- [none, resolved(unauthenticated, Kept)], C <- [core(#{bond => Bond})]],
     Visited = explore(Starts, maps:from_keys(Starts, true), ?DEPTH),
     io:format("~b states~n", [map_size(Visited)]),
     ?assert(map_size(Visited) > 1000).
@@ -458,18 +560,21 @@ explore(Frontier, Visited, Depth) ->
                              N =/= closed, not maps:is_key(N, Visited)]),
     explore(Next, lists:foldl(fun(N, V) -> V#{N => true} end, Visited, Next), Depth - 1).
 
-alphabet({Core, Now, Ref}) ->
+alphabet({Core, Now, Ref, Asked}) ->
     [att(write(handle(open_w), <<"w">>)), att(write(handle(enc_w), <<"e">>)), att(write_cmd(handle(open_w), <<"c">>)),
-     att(write(configuration(enc_n), <<1, 0>>)), acl(16#0040, <<1>>), acl(5, <<16#12, 1, 0:16>>),
+     att(write(configuration(enc_n), <<1, 0>>)), att(write(configuration(enc_n), <<0, 0>>)),
+     att(write_cmd(configuration(enc_n), <<0, 0>>)), att(confirm()), acl(16#0040, <<1>>), acl(5, <<16#12, 1, 0:16>>),
      smp(pairing_request()), {admission, 1, closed}, {acl, 2, <<3:16/little>>}, {acl, 1, <<4, 0, 16#0A, 3, 0>>},
      ltk_request(), {le_long_term_key_request, 1, <<1:64>>, 1}, encryption_on(), {encryption_change, 5, 1, 1},
      {encryption_key_refresh_complete, 0, 1}, {answer, Ref, ok},
      {ltk_reply_complete, ok}, {ltk_reply_complete, {failed, 16#0C}}, {notify, n, notify, {svc, enc_n}, <<"n">>}]
     ++ [{completed, 1} || maps:get(outstanding, facts(Core)) > 0]
+    ++ [Wait || is_map_key(wait, Asked), Wait <- [{wait, 0}, {wait, 1000}]]
+    ++ [Kept || is_map_key(store, Asked), Kept <- [{kept, ok}, {kept, {error, unavailable}}]]
     ++ [{at, D, expired} || D <- [erx_bt_link_core:next_deadline(Core)], D =/= infinity, D >= Now].
 
-explore_step({at, Now, Input}, {Core, _, Ref}) -> explore_step(Input, {Core, Now, Ref});
-explore_step(Input, {Core, Now, Ref}) ->
+explore_step({at, Now, Input}, {Core, _, Ref, Asked}) -> explore_step(Input, {Core, Now, Ref, Asked});
+explore_step(Input, {Core, Now, Ref, Asked}) ->
     Before = facts(Core),
     {Actions, Next} = core_step(Input, Now, Core),
     After = facts(Next),
@@ -486,12 +591,48 @@ explore_step(Input, {Core, Now, Ref}) ->
     [?assert(maps:get(encrypted, After)) || {registry, {write, _, {svc, enc_w}, _}} <- Actions],
     [?assert(maps:get(encrypted, After)) || {registry, {subscribed, {svc, enc_n}, notify}} <- Actions],
     [?assertNotEqual(none, maps:get(key, Before)) || {ltk_reply, Ltk} <- Actions, Ltk =/= none],
+    Waits = [wait || {window, wait} <- Actions],
+    Requests = [R || <<16#0B, _>> = R <- on(6, Actions)],
+    [?assertNot(is_map_key(wait, Asked)) || Waits =/= []],
+    [?assertNot(is_map_key(requested, Asked)) || Requests =/= []],
+    %% A Security Request is decided only at `{wait, 0}`, which queues nothing else; once
+    %% pairing or encryption has begun that step neither sends nor queues nor refuses a frame.
+    case Input of
+        {wait, 0} when map_get(ltk_answer, Before) =/= none; map_get(encrypted, Before); map_get(pairing, Before) ->
+            ?assertEqual([], Requests),
+            ?assert(maps:get(queued, After) =< maps:get(queued, Before)),
+            ?assertEqual(maps:get(refused, Before), maps:get(refused, After));
+        _ -> ok
+    end,
+    ToStore = [Message || {store, Message} <- Actions, element(1, Message) =/= keep],
+    [?assert(maps:get(bonded, After) andalso maps:get(encrypted, After) andalso maps:get(key, After) =/= none)
+     || _ <- ToStore],
+    [?assert(maps:get(encrypted, After))
+     || <<16#1D, H:16/little, _/binary>> <- on(4, Actions), H =:= service_changed()],
+    case maps:get(bonded, Before) andalso Input =/= {kept, ok} of
+        true -> ?assertEqual([], [S || {registry, {subscribed, _, _}} = S <- Actions]);
+        false -> ok
+    end,
+
     case closed(Actions) of
         [] ->
             [?assertEqual(maps:get(dropped, Before) + 1, maps:get(dropped, After)) || Input =:= acl(16#0040, <<1>>)],
-            {Next, Now, lists:max([Ref | [R || {registry, {write, R, _, _}} <- Actions]])};
+            Answered = case Input of
+                           {wait, _} -> maps:remove(wait, Asked);
+                           {kept, _} -> maps:remove(store, Asked);
+                           _ -> Asked
+                       end,
+            %% The answers now owed, and whether this path has sent its Security Request.
+            Pending = [store || {store, M} <- Actions, element(1, M) =/= served]
+                      ++ [wait || _ <- Waits] ++ [requested || _ <- Requests],
+            {Next, Now, lists:max([Ref | [R || {registry, {write, R, _, _}} <- Actions]]),
+             maps:merge(Answered, maps:from_keys(Pending, true))};
         _ -> closed
     end.
+
+service_changed() ->
+    {ok, #{value := Handle}} = erx_gatt_db:characteristic(erx_gatt_db:service_changed(), table()),
+    Handle.
 
 success_report({encryption_change, 0, _, 1}) -> true;
 success_report({encryption_key_refresh_complete, 0, _}) -> true;

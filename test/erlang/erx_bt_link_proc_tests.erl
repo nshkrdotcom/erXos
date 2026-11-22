@@ -115,10 +115,15 @@ killed_link_is_seen_through_down_test() ->
 %% bond's key. Before its encryption the bond's subscription is not the link's, so a
 %% notification is refused; at the controller's report the registry hears it bonded and the
 %% subscription restored, and the notification, a request the registry sends, goes out.
-%% sys:get_status/1 shows no key.
+%% sys:get_status/1 shows no key. At its start the link asks the window for the pairing
+%% wait, and at `{wait, 0}` sends the Security Request, AuthReq bonding, MITM and SC for the
+%% authenticated bond (Part H, 3.5.1, 3.6.7).
 reconnection_with_a_kept_bond_test() ->
     with_owners(#{bond => ?BOND}, fun() ->
         Link = start(self()),
+        ?assertEqual({Link, wait}, addressed(erx_bt_fs)),
+        Link ! {window, {wait, 0}},
+        ?assertEqual([frame(6, <<16#0B, 16#0D>>)], sent()),
         Notify = fun() -> gen_server:receive_response(gen_server:send_request(Link, {notify, notify, {svc, n}, <<"x">>}),
                                                       ?WAIT_MS) end,
         ?assertEqual({reply, {error, not_subscribed}}, Notify()),
@@ -205,7 +210,14 @@ with_owners(Options, Case) ->
     after
         {links, Linked} = process_info(self(), links),
         Links = [Pid || Pid <- Linked, is_pid(Pid), proc_lib:initial_call(Pid) =:= {erx_bt_link, init, ['Argument__1']}],
-        lists:foreach(fun end_process/1, Owners ++ Links)
+        lists:foreach(fun end_process/1, Owners ++ Links),
+        flush_owners()
+    end.
+
+%% What the owners forwarded and the case did not read, so the next case starts with none.
+flush_owners() ->
+    receive {owner, _Name, _Link, _Message} -> flush_owners()
+    after 0 -> ok
     end.
 
 end_process(Pid) ->
