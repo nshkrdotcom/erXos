@@ -14,9 +14,10 @@ gives each open. While one is open, or while the pairing a closed window admitte
 outcome, `open` answers `ebusy`, so at most one pairing is awaited; while the store is
 `unknown` since its start, which refuses every change, `eio`. The core takes the store's
 state at its start (`erx_bt_store:known/0`): it leaves `unknown` since its start only by
-`forget all`, whose answer reaches the process that serves `ctl`, and enters it only at
-the store's start, which restarts this process. After an unconfirmed put the store reads
-before the next change, so a window opens, and the store's outcome tells what came of its
+`forget all`, which a grant of the control tree asks of the store through `ctl`, then
+telling the process the confirmed answer as `{store, read}`; it enters that state only at the store's
+start, which restarts this process. After an unconfirmed put the store reads before the
+next change, so a window opens, and the store's outcome tells what came of its
 pairing. The opener's first write, `display` or
 `nodisplay`, starts the window's `bt_pair_window_s`; later writes are `einval`. A window
 then moves through these phases:
@@ -66,13 +67,15 @@ The state holds a passkey while its line is unread; `facts/1` shows the core wit
 -type mode() :: display | nodisplay.
 -doc """
 What the core takes: from the file side, an open, the opener's mode and a clunk; from a
-link, its messages to the window; from the store, its answer to a pairing's `keep`; a
-monitored link's end; and `expired`, when the deadline is due.
+link, its messages to the window; from the store, its answer to a pairing's `keep`, and
+`read` when it has confirmed a `forget`; a monitored link's end; and `expired`, when the
+deadline is due.
 """.
 -type input() :: {open, id()} | {write, id(), mode()} | {clunk, id()}
-               | {link, link(), erx_bt_link_core:to_window() | wait}
+               | {link, link(), erx_bt_link_core:to_window()}
                | {store, {outcome, link(), tag(), {bonded, erx_smp_crypto:address(), authenticated | unauthenticated}
                                                 | {failed, atom()}}}
+               | {store, read}
                | {down, link()}
                | expired.
 -doc """
@@ -83,7 +86,7 @@ pairing's outcome.
 """.
 -type action() :: {answer, ok | {error, ebusy | eio | einval}}
                 | {open, link(), tag(), mode()}
-                | {send, link(), erx_bt_link_core:from_window() | {wait, non_neg_integer()}}
+                | {send, link(), erx_bt_link_core:from_window()}
                 | {monitor, link()} | {demonitor, link()}
                 | {log, #{address := erx_smp_crypto:address(), outcome := term()}}.
 
@@ -239,6 +242,10 @@ input({store, {outcome, Link, Tag, Outcome}}, Now, #core{pairing = {Link, Tag, A
     end;
 input({store, {outcome, _Link, _Tag, _Outcome}}, _Now, Core) ->
     {[], Core};
+%% A confirmed `forget` takes the store out of `unknown` since its start, which it enters
+%% again only by a restart that restarts this process too, so a late one is never wrong.
+input({store, read}, _Now, Core) ->
+    {[], Core#core{refusing = false}};
 input(expired, _Now, Core) ->
     {[], Core}.
 

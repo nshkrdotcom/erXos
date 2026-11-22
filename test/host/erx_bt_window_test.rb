@@ -53,7 +53,11 @@ class ErxBtWindowTest < Minitest::Test
     Seed.new(fault: 'the maximum applied before the decay, so 600 s of quiet after a 64 s wait shortens the next',
              anchor: '    max(?ERX_BT_PAIR_WAIT_MIN_S * 1000, min(?ERX_BT_PAIR_WAIT_MAX_S * 1000, (2 * Wait) bsr Halvings)).',
              replacement: '    max(?ERX_BT_PAIR_WAIT_MIN_S * 1000, min(?ERX_BT_PAIR_WAIT_MAX_S * 1000, 2 * Wait) bsr Halvings).',
-             catching_case: 'wait_halves_for_each_decay_without_a_failure_test')
+             catching_case: 'wait_halves_for_each_decay_without_a_failure_test'),
+    Seed.new(fault: "a confirmed forget leaving the store's refusal since its start",
+             anchor: '    {[], Core#core{refusing = false}};',
+             replacement: '    {[], Core};',
+             catching_case: 'a_confirmed_forget_ends_the_refusal_test')
   ].freeze
 
   def test_window_cases_pass_under_eunit

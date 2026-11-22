@@ -16,7 +16,9 @@ What reaches it:
   answered at once, and its reads, which wait for a line as waiting requests the
   process keeps in an `erx_fs_waits` set (docs/design-files.md, "Waiting requests").
   After every step the waiting reads are offered the lines, in the order they came.
-  A grant that ends closes every open it made, as its clunks would;
+  A grant that ends closes every open it made, as its clunks would. After the store has
+  confirmed a `forget` that `ctl` asked of it, the grant tells the core so, as
+  `{store, read}`, which ends a refusal since the store's start;
 * from a link, `{erx_bt_link, Link, Message}` (docs/design-bluetooth.md, "The link's
   messages"), answered by `{window, Answer}` to the link's pid; an `open` verdict
   carries the pairing's fresh values (`erx_smp_crypto:fresh/0`), drawn here, so the
@@ -78,6 +80,8 @@ handle_call({open, Grant}, _From, Fs) when is_pid(Grant) ->
 handle_call({write, Id, Mode}, _From, Fs) ->
     {Answer, Next} = step({write, Id, Mode}, Fs),
     {reply, Answer, Next};
+handle_call({store, read}, _From, Fs) ->
+    {reply, ok, stepped({store, read}, Fs)};
 handle_call({clunk, Id}, _From, #fs{opens = Opens} = Fs) ->
     [demonitor(Monitor, [flush]) || {Monitor, Open} <- maps:to_list(Opens), Open =:= Id],
     {_, Next} = step({clunk, Id}, Fs#fs{opens = maps:filter(fun(_, Open) -> Open =/= Id end, Opens)}),

@@ -318,6 +318,14 @@ open_refusals_test() ->
     ?assertMatch({[{answer, {error, einval}}], _}, erx_bt_window:step({write, a, display}, 0, W)),
     ?assertMatch({[{answer, {error, einval}}], _}, erx_bt_window:step({write, b, display}, 0, W)).
 
+%% A store unknown since its start leaves that state only by a confirmed `forget`, whose
+%% answer the process steps as `{store, read}`: the window opens from then on.
+a_confirmed_forget_ends_the_refusal_test() ->
+    {[], Read} = erx_bt_window:step({store, read}, 0, erx_bt_window:new({unknown, start})),
+    ?assertMatch({[{answer, ok}], _}, erx_bt_window:step({open, a}, 0, Read)),
+    {[], Same} = erx_bt_window:step({store, read}, 0, new()),
+    ?assertMatch({[{answer, ok}], _}, erx_bt_window:step({open, a}, 0, Same)).
+
 the_wait_answers_a_bonded_link_test() ->
     ?assertMatch({[{send, _, {wait, 0}}], _}, erx_bt_window:step({link, ?L1, wait}, 0, new())),
     {C, 2000} = failed_once(100, new()),

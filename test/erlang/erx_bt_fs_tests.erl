@@ -1,13 +1,13 @@
 %% Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
 %% SPDX-License-Identifier: BSD-2-Clause
 
-%% The control tree's `pair` file through a real erx_fs grant of erx_bt_fs_tree over the
-%% file service erx_bt_fs (docs/design-bluetooth.md, "The pairing window"; docs/
-%% design-files.md, "Waiting requests"). The test stands in for the links, sending
-%% `{erx_bt_link, Link, Message}` from processes it spawns, and for the store, sending
-%% `{outcome, Link, Tag, Outcome}`, but for one case, which runs the real store and the service
-%% under erx_bt_sup's own child specifications. Each wait the cases assert on has a deadline
-%% of 1 s.
+%% The control tree's `pair` and `ctl` files through a real erx_fs grant of erx_bt_fs_tree
+%% over the file service erx_bt_fs (docs/design-bluetooth.md, "The pairing window", "Bonds
+%% and the store"; docs/design-files.md, "Waiting requests"). The `pair` cases stand in for
+%% the links, sending `{erx_bt_link, Link, Message}` from processes they spawn, and for the
+%% store, sending `{outcome, Link, Tag, Outcome}`; the cases with the store run the real
+%% store over a development file and the service under erx_bt_sup's own child
+%% specifications. Each wait the cases assert on has a deadline of 1 s.
 -module(erx_bt_fs_tests).
 -behaviour(supervisor).
 
@@ -124,37 +124,31 @@ pair_answers_eio_while_the_store_is_unknown_test() ->
     ?assertEqual({error, eio}, open(Grant, 2)),
     stop(S).
 
-%% The window under erx_bt_sup's own child specifications and strategy, the store's and
-%% its own: it starts with the store's state, so a store whose start found no volume for
-%% its directory makes pair answer eio, and the store's restart restarts the window with the
-%% new store's state.
-the_window_starts_with_the_store_and_restarts_with_it_test() ->
+%% The store and the window under erx_bt_sup's own child specifications and strategy,
+%% the store's development file at Volume/bt: Prepare(Volume) runs before the store's
+%% start reads, then Case(Sup, Volume). The supervisor, the setting and the directory go
+%% whatever the case's outcome, so a failure leaves no store or service registered for the
+%% cases after it; a case kills the grants it made.
+under_sup(Prepare, Case) ->
     Volume = filename:absname("bt-volume"),
     _ = file:del_dir_r(Volume),
     ok = application:set_env(erx_bt, state_dir, filename:join(Volume, "bt")),
-    {ok, {Flags, Children}} = erx_bt_sup:init([]),
-    Window = [Spec || #{id := Id} = Spec <- Children, Id =:= erx_bt_store orelse Id =:= erx_bt_fs],
-    ?assertMatch([#{id := erx_bt_store}, #{id := erx_bt_fs}], Window),
-    ?assertMatch(#{strategy := rest_for_one}, Flags),
-    {ok, Sup} = supervisor:start_link(?MODULE, {Flags, Window}),
-    unlink(Sup),
-    %% The supervisor, the setting and the directory go whatever the case's outcome, so a
-    %% failure leaves no store or service registered for the cases after it.
     try
-        Unread = grant(whereis(erx_bt_fs)),
-        ?assertEqual({error, eio}, open(maps:get(grant, Unread), 2)),
-        ok = file:make_dir(Volume),
-        Monitor = monitor(process, maps:get(fs, Unread)),
-        exit(whereis(erx_bt_store), kill),
-        receive {'DOWN', Monitor, _, _, _} -> ok after 1000 -> erlang:error(window_not_ended) end,
-        [Fs] = [Pid || {erx_bt_fs, Pid, _, _} <- supervisor:which_children(Sup)],
-        Read = grant(Fs),
-        ?assertMatch({ok, _, _}, open(maps:get(grant, Read), 2)),
-        [exit(Grant, kill) || #{grant := Grant} <- [Unread, Read]]
+        Prepare(Volume),
+        {ok, {Flags, Children}} = erx_bt_sup:init([]),
+        Window = [Spec || #{id := Id} = Spec <- Children, Id =:= erx_bt_store orelse Id =:= erx_bt_fs],
+        ?assertMatch([#{id := erx_bt_store}, #{id := erx_bt_fs}], Window),
+        ?assertMatch(#{strategy := rest_for_one}, Flags),
+        {ok, Sup} = supervisor:start_link(?MODULE, {Flags, Window}),
+        unlink(Sup),
+        try
+            Case(Sup, Volume)
+        after
+            Down = monitor(process, Sup),
+            exit(Sup, shutdown),
+            receive {'DOWN', Down, _, _, _} -> ok end
+        end
     after
-        Down = monitor(process, Sup),
-        exit(Sup, shutdown),
-        receive {'DOWN', Down, _, _, _} -> ok end,
         application:unset_env(erx_bt, state_dir),
         _ = file:del_dir_r(Volume)
     end.
@@ -162,6 +156,89 @@ the_window_starts_with_the_store_and_restarts_with_it_test() ->
 -doc false.
 init(Spec) ->
     {ok, Spec}.
+
+no_volume(_Volume) -> ok.
+
+%% A volume whose state holds one bond, of ?IDENTITY.
+a_bond(Volume) ->
+    ok = file:make_dir(Volume),
+    Bond = #{identity => ?IDENTITY, irk => <<1:128>>, ltk => <<2:128>>, level => authenticated,
+             hash => <<>>, subscriptions => #{}},
+    {ok, Blob} = erx_bt_state:encode(#{address => <<2#11:2, 7:46>>, bonds => [Bond]}),
+    ok = erx_bt_state_file:put(filename:join(Volume, "bt"), 1, Blob).
+
+%% Writes Bytes to ctl through Fid, opened for writing and clunked after: `ok` or the
+%% write's refusal.
+ctl(Grant, Fid, Bytes) ->
+    {ok, _} = call(Grant, {walk, 1, Fid, [<<"ctl">>]}),
+    {ok, _, _} = call(Grant, {lopen, Fid, ?ERX_P9_O_WRONLY}),
+    Answer = call(Grant, {write, Fid, 0, Bytes}),
+    ok = call(Grant, {clunk, Fid}),
+    case Answer of
+        {ok, _, _} -> ok;
+        {error, _} = Refused -> Refused
+    end.
+
+%% The window starts with the store's state, so a store whose start found no volume for
+%% its directory makes pair answer eio, and the store's restart restarts the window with the
+%% new store's state.
+the_window_starts_with_the_store_and_restarts_with_it_test() ->
+    under_sup(fun no_volume/1,
+              fun(Sup, Volume) ->
+                      Unread = grant(whereis(erx_bt_fs)),
+                      ?assertEqual({error, eio}, open(maps:get(grant, Unread), 2)),
+                      ok = file:make_dir(Volume),
+                      Monitor = monitor(process, maps:get(fs, Unread)),
+                      exit(whereis(erx_bt_store), kill),
+                      receive {'DOWN', Monitor, _, _, _} -> ok after 1000 -> erlang:error(window_not_ended) end,
+                      [Fs] = [Pid || {erx_bt_fs, Pid, _, _} <- supervisor:which_children(Sup)],
+                      Read = grant(Fs),
+                      ?assertMatch({ok, _, _}, open(maps:get(grant, Read), 2)),
+                      [exit(Grant, kill) || #{grant := Grant} <- [Unread, Read]]
+              end).
+
+%% A store unknown since its start refuses ctl's `forget ADDRESS`, and `forget all` while
+%% it cannot read; once its volume has come, `forget all` puts an empty state, and pair
+%% opens from then on without a restart, the window told by the confirmed answer.
+forget_all_ends_the_refusal_of_a_store_unknown_since_its_start_test() ->
+    under_sup(fun no_volume/1,
+              fun(_Sup, Volume) ->
+                      #{grant := Grant} = grant(whereis(erx_bt_fs)),
+                      ?assertEqual({error, eio}, open(Grant, 2)),
+                      ?assertEqual({error, eio}, ctl(Grant, 3, <<"forget 00:1B:DC:0A:0B:0C\n">>)),
+                      ?assertEqual({error, eio}, ctl(Grant, 3, <<"forget all\n">>)),
+                      ?assertEqual({error, eio}, open(Grant, 4)),
+                      ok = file:make_dir(Volume),
+                      ?assertEqual(ok, ctl(Grant, 3, <<"forget all\n">>)),
+                      ?assertMatch({ok, _, _}, open(Grant, 5)),
+                      exit(Grant, kill)
+              end).
+
+%% ctl forgets a kept bond by its identity, in either case, and then answers enoent for
+%% it; any write but `forget ADDRESS` or `forget all` is einval, an open for reading
+%% eacces, and a create, which a shell's redirection sends, opens ctl.
+ctl_forgets_a_bond_and_refuses_the_rest_test() ->
+    under_sup(fun a_bond/1,
+              fun(_Sup, _Volume) ->
+                      #{grant := Grant} = grant(whereis(erx_bt_fs)),
+                      ?assertEqual({error, enoent}, ctl(Grant, 2, <<"forget 00:1B:DC:0A:0B:0D">>)),
+                      ?assertEqual(ok, ctl(Grant, 2, <<"forget 00:1b:dc:0a:0B:0C\n">>)),
+                      ?assertEqual({error, enoent}, ctl(Grant, 2, <<"forget 00:1B:DC:0A:0B:0C">>)),
+                      [?assertEqual({error, einval}, ctl(Grant, 2, Bytes))
+                       || Bytes <- [<<>>, <<"\n">>, <<"forget">>, <<"forget ">>, <<"forget all\n\n">>,
+                                    <<"forget ALL">>, <<"forget  all">>, <<"forget all ">>, <<"reset">>,
+                                    <<"forget 00:1B:DC:0A:0B">>, <<"forget 00:1B:DC:0A:0B:0C:0D">>,
+                                    <<"forget 00-1B-DC-0A-0B-0C">>, <<"forget +0:1B:DC:0A:0B:0C">>,
+                                    <<"forget 0G:1B:DC:0A:0B:0C">>, <<"forget 00:1B:DC:0A:0B:0C\r\n">>]],
+                      {ok, _} = call(Grant, {walk, 1, 3, [<<"ctl">>]}),
+                      ?assertEqual({error, eacces}, call(Grant, {lopen, 3, 0})),
+                      ?assertEqual({error, eacces}, call(Grant, {lopen, 3, ?ERX_P9_O_RDWR})),
+                      {ok, _} = call(Grant, {walk, 1, 4, []}),
+                      ?assertMatch({ok, _, _}, call(Grant, {lcreate, 4, <<"ctl">>,
+                                                            ?ERX_P9_O_WRONLY bor ?ERX_P9_O_TRUNC, 8#200, 0})),
+                      ?assertMatch({ok, _, _}, call(Grant, {write, 4, 0, <<"forget all">>})),
+                      exit(Grant, kill)
+              end).
 
 %% Clunking the window withdraws the pairing it took; the window answers ebusy until the
 %% link reports the withdrawal, and the wait it then starts holds the next window.

@@ -1629,9 +1629,10 @@ awaits at most one pairing. The window process takes the store's state
 at its start (`erx_bt_store:known/0`) and answers `eio` to every open
 while the store is `unknown` since its start, which refuses every
 change ([Bonds and the store](#bonds-and-the-store)). The store leaves
-that state only by `forget all`, which the control tree's `ctl`, served
-by the window process, asks of it, so the answer tells the window
-process; it enters that state only at its own start, which restarts the
+that state only by `forget all`, which a grant of the control tree asks
+of it on a write to `ctl`, and that grant tells the window process the
+confirmed answer; it enters that state only at its own start, which
+restarts the
 window process after it ([Concurrency](#concurrency)). A store
 `unknown` since a put it could not confirm reads before its next
 change, so a window still opens, and the store's outcome of that
@@ -2123,7 +2124,15 @@ its line at the system domain's `/proc`: bytes each way, breaks, resets.
   failure, and one that ends while the store writes its bond does not.
   The window process needs no monitor of the store: the store sits
   before it under `rest_for_one`, so the store's end ends the window
-  process too. The window process
+  process too. A write to `ctl` waits in its grant, as a write of its
+  medium may ([design-files.md](design-files.md#serving-the-erx_fs-behaviour),
+  "Waiting requests"): on the store, behind the
+  requests queued there and then a read and a put, each bounded by
+  `bt_store_timeout_ms`, then on the window process to tell it a
+  confirmed answer. The window process waits on neither, since it answers
+  links' admissions and other grants' calls, and the store waits on
+  neither, so no two processes wait on each other; meanwhile that grant's
+  other answers, a `pair` line among them, wait with it. The window process
   sits before the controller group, so a controller restart, the only
   restart a radio peer's traffic can cause beyond its own link, keeps the
   wait.

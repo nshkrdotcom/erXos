@@ -8654,17 +8654,22 @@ model harness drive `erx_device.c` itself. `erx_device_dma_check` and `erx_devic
   peer before it reports the connection. Question for the design: rely on Part E 5.3 and check the board's
   controller's handle reuse with a probe, or add such a fence. A cheap narrowing for host-initiated disconnects
   alone: refuse a link's packets once its handle's disconnect is asked.
+* [Low] bluetooth, `forget ADDRESS` and the address type (`erx_bt_store`'s `{forget, Address}`, `erx_bt_fs_tree:parse/1`;
+  docs/design-bluetooth.md "Bonds and the store"): `ctl` names a bond by its six octets alone, as the `pair` lines
+  print it, and the store forgets every bond with them, so a phone that distributed `{random, X}` beside a bond of
+  `{public, X}` is forgotten with it, and the operator cannot tell the two apart. Either state that `forget ADDRESS`
+  forgets every bond with those octets, or add the type to the `pair` lines and to `ctl`'s grammar.
+* [Low] bluetooth, the window's copy of the store's refusal (`erx_bt_window`'s `refusing`, `erx_bt_fs:start_link/0`): when
+  `erx_bt_fs` alone restarts, a grant of the old instance that the grants' supervisor has not yet killed can confirm a
+  `forget all` after the new instance read `known()`, so `pair` answers `eio` until another `forget` or a store restart
+  (safe: a refusal). Closing it by construction: the store sends the window the confirmed `forget`, as it sends
+  `{outcome, ...}`, and the window reads `known()` in `init/1` after registering.
 * [Low] bluetooth, an outcome for a pairing the window did not open (`erx_bt_link_core`'s `smp_action/3`):
   `awaiting` is set at `admit`, so a peer's Pairing Failed or the Security Manager Timer between `admit` and
   a `closed` or `waiting` verdict sends `{outcome, Tag, {failed, _}}` for a pairing the window refused. Clear
   `awaiting` at a verdict other than `open`, or state in "The pairing window" that the window ignores an
   outcome for a tag it did not open. Also add a link-core case writing `ind`'s open configuration on a
   resolved link before encryption, which only `erx_bt_gatt_tests` and the fuzz invariant cover now.
-* [High] bluetooth, the control tree's `ctl` (`erx_bt_fs`; docs/design-bluetooth.md "The pairing window",
-  "Bonds and the store"): `erx_bt_fs` serves `pair` alone:
-  `ctl`'s `forget ADDRESS` and `forget all` are unbuilt, so a store `unknown` since its start stays
-  so until the next start. When `ctl` calls `erx_bt_store:forget(all)`, its `ok` must step the window's core off
-  `unknown` since its start, which `erx_bt_window` takes only at `new/1` and has no input for yet.
 * [Medium] bluetooth, the store's development file has no grant (`erx_bt_store:start_link/0`,
   `erx_bt_state_file`; docs/design-bluetooth.md "Bonds and the store"): the design keeps the state in "the
   Bluetooth domain's directory on the data partition" but names no files service or manifest row that reaches it,
@@ -8711,9 +8716,6 @@ model harness drive `erx_device.c` itself. `erx_device_dma_check` and `erx_devic
   its `HANDLER_TIMEOUT_MS`, `ATT_TRANSACTION_MS`, `SMP_TIMEOUT_MS` and `ENCRYPTION_ON_LE`): "What a radio peer can
   make the domain spend" makes every bound a constant of `abi/formats/bluetooth.txt`, but these four are module
   macros. Move them there as limits (5000, 30000, 30000 and HCI 7.7.8's 0x01) and use the generated names.
-* [Low] bluetooth, the window's copies of `wait` (`erx_bt_window`'s `input()` and `action()`): the link core's
-  `to_window()` and `from_window()` name `wait` and `{wait, Ms}`, so the window's `| wait` and
-  `| {wait, non_neg_integer()}` beside them repeat them; drop them.
 * [Low] bluetooth, the reconnection's Security Request against the specification (`erx_bt_link_core`'s
   `security_request/3`; docs/design-bluetooth.md "Reconnection"): whether sending a Security Request starts the
   Security Manager Timer (Core 6.3 Vol 3 Part H, 3.4) is unread, so the link starts none and a phone that never
