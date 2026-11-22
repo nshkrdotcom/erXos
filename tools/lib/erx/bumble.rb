@@ -53,7 +53,8 @@ module Erx
     DEADLINE = 300
 
     # The interpreter of the environment, the tree of Bumble's sources, whose
-    # apps/ and examples/ scripts a caller runs by path, and the byte-code cache.
+    # application and sample scripts a caller runs by path, and the byte-code
+    # cache.
     Environment = Data.define(:python, :tree, :pycache) do
       # The argument vector that runs script, a path, with arguments, isolated.
       def argv(script, *arguments) = [python, '-I', '-X', "pycache_prefix=#{pycache}", script, *arguments]
