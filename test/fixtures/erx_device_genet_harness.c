@@ -324,6 +324,7 @@ transmit(const uint8_t *expected, uint32_t length)
 		const uint32_t status = *reg(e->regs.desc_status + (cons % SIZE) * e->regs.desc_stride);
 
 		CHECK((status & e->regs.sop) && (status & e->regs.eop) && (status & e->regs.crc));
+		CHECK((status & e->regs.qtag) == e->regs.qtag);
 		CHECK(field(e->regs.buflen, status) == length);
 		CHECK(memcmp(descriptor_bytes(e, cons % SIZE), expected, length) == 0);
 	}

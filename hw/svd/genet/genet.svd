@@ -410,7 +410,7 @@
           <fields>
             <field><name>CKSUM</name><description>Insert the checksum the status block describes (if_genetreg.h:187)</description><bitOffset>4</bitOffset><bitWidth>1</bitWidth></field>
             <field><name>CRC</name><description>Append the Ethernet CRC (if_genetreg.h:186)</description><bitOffset>6</bitOffset><bitWidth>1</bitWidth></field>
-            <field><name>QTAG</name><description>Queue tag, mask 0x1f80 (if_genetreg.h:185, 190)</description><bitOffset>7</bitOffset><bitWidth>6</bitWidth></field>
+            <field><name>QTAG</name><description>Queue tag, mask 0x1f80 (if_genetreg.h:185, 190); FreeBSD writes it all ones on every descriptor (if_genet.c:1200)</description><bitOffset>7</bitOffset><bitWidth>6</bitWidth></field>
             <field><name>SOP</name><description>Start of packet (if_genetreg.h:184)</description><bitOffset>13</bitOffset><bitWidth>1</bitWidth></field>
             <field><name>EOP</name><description>End of packet (if_genetreg.h:183)</description><bitOffset>14</bitOffset><bitWidth>1</bitWidth></field>
             <field><name>OWN</name><description>Owned by the controller (if_genetreg.h:182)</description><bitOffset>15</bitOffset><bitWidth>1</bitWidth></field>

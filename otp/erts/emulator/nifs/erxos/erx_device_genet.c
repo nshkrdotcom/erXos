@@ -132,6 +132,7 @@ erx_device_genet_registers(const erx_device_peripheral_t *genet, erx_device_gene
 	regs->sop = mask_of(genet, found[0], "sop");
 	regs->eop = mask_of(genet, found[0], "eop");
 	regs->crc = direction == ERX_DEVICE_GENET_TX ? mask_of(genet, found[0], "crc") : 0;
+	regs->qtag = direction == ERX_DEVICE_GENET_TX ? mask_of(genet, found[0], "qtag") : 0;
 	regs->buf_length = mask_of(genet, found[5], "buf_length");
 	regs->desc_count = mask_of(genet, found[5], "desc_count");
 	regs->ring_enable = mask_of(genet, found[14], "enable");
@@ -140,7 +141,7 @@ erx_device_genet_registers(const erx_device_peripheral_t *genet, erx_device_gene
 	regs->dma_disabled = mask_of(genet, status, "disabled");
 	regs->dma_ring_disabled = mask_of(genet, status, "ring_disabled");
 	return (regs->index != 0 && regs->buflen != 0 && regs->sop != 0 && regs->eop != 0 &&
-	    (direction == ERX_DEVICE_GENET_RX || regs->crc != 0) && regs->buf_length != 0 && regs->desc_count != 0 &&
+	    (direction == ERX_DEVICE_GENET_RX || (regs->crc != 0 && regs->qtag != 0)) && regs->buf_length != 0 && regs->desc_count != 0 &&
 	    regs->ring_enable != 0 && regs->dma_enable != 0 && regs->dma_ring_enable != 0 && regs->dma_disabled != 0 &&
 	    regs->dma_ring_disabled != 0);
 }
@@ -273,7 +274,7 @@ uint32_t
 erx_device_genet_stop(const erx_device_genet_registers_t *regs)
 {
 	(void)regs;
-	/* The engine's and every ring's enable cleared in one write (FreeBSD's gen_dma_disable, if_genet.c:563-577). */
+	/* The engine's and every ring's enable cleared in one write (FreeBSD's gen_dma_disable, if_genet.c:593-607). */
 	return (0);
 }
 
@@ -395,7 +396,7 @@ erx_device_genet_post(erx_device_genet_queue_t *queue, const erx_device_genet_re
 		    .reg_high = ERX_DMA_NO_REGISTER };
 	}
 	steps[made++] = register_value(regs->desc_status + buffer * regs->desc_stride,
-	    field_put(regs->buflen, length) | regs->sop | regs->eop | (SEED_NO_TX_CRC ? 0 : regs->crc));
+	    field_put(regs->buflen, length) | regs->sop | regs->eop | regs->qtag | (SEED_NO_TX_CRC ? 0 : regs->crc));
 	queue->tags[buffer] = tag;
 	queue->software++;
 	queue->in_flight++;

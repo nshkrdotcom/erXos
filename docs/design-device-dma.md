@@ -1062,7 +1062,7 @@ are derived, and the link's other fields fixed.
 | Form | What the core describes | What the sequencer writes from the layout | Reports |
 | --- | --- | --- | --- |
 | split ring | a chain of descriptors, each with its address a buffer and an offset reaching `len`, `WRITE` free and `INDIRECT` fixed clear | the queue's registers, `QueueNum` the descriptor table's count, the rings' addresses as the queue's layout places them (`erx_device_sequencer.c`); each `next` and `NEXT`; the available ring | an acquisition: the used index, then each used element it covers, whose `id` releases its chain |
-| register ring | a transmit position's status word: the length, of its standing buffer; start, end and append-CRC fixed | each descriptor's address, descriptor *k* to buffer *k*, at install; the ring's registers: the descriptor count the ring's size, start, end and the four pointers its first word, its last word and 0, the buffer length the pool's buffer size, the ring enables the form's own ring | the transmit consumer index; the receive producer index and each status word it covers |
+| register ring | a transmit position's status word: the length, of its standing buffer; start, end, append-CRC and the queue tag, all ones, fixed | each descriptor's address, descriptor *k* to buffer *k*, at install; the ring's registers: the descriptor count the ring's size, start, end and the four pointers its first word, its last word and 0, the buffer length the pool's buffer size, the ring enables the form's own ring | the transmit consumer index; the receive producer index and each status word it covers |
 | ADMA2 table | one transfer: the buffer and the extent, a count of 512-byte blocks from one to the buffer's | the entries the extent splits into, 64 blocks each and the last the rest, each with its address the buffer's plus its offset, valid set, its action a transfer and interrupt clear; the end attribute on the last; `adma_address`, the table's start | `interrupt` |
 | TRB ring | as [design-usb.md](design-usb.md#what-the-dma-check-judges) lists | | |
 
@@ -1352,7 +1352,8 @@ The
 transmit queue is posted like any queue: `post_frame/5` copies the
 prefix and the frame into the buffer of the ledger's next transmit
 position and describes that descriptor's status, the length with start,
-end and append-CRC fixed by the form; the sequencer writes it, then the
+end, append-CRC and QTAG fixed by the form, QTAG all ones as
+FreeBSD writes it (`if_genet.c:1198-1217`); the sequencer writes it, then the
 producer index. Its
 completion observes the transmit consumer index once, which may advance
 by at most the number in flight, and returns each tag with no bytes. The
@@ -1853,7 +1854,7 @@ ran.
   `erx_device_genet_model`, which the hosted stand-in runs too and which
   runs a direction only while its DMA control holds the engine's enable
   and the ring's bit and its ring configuration the ring's enable, and sends a descriptor only when it is a
-  whole frame with its append-CRC bit: the start leaves both rings
+  whole frame with its append-CRC bit and its queue tag all ones: the start leaves both rings
   running, and every post goes out with its bytes. Seeds: the start
   written without the engine's enable, and the rings never run; a
   descriptor posted without its append-CRC bit, and the controller

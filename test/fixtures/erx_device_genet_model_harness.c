@@ -187,6 +187,7 @@ refused(const harness_t *h)
 	const uint32_t status = reg(h, d->regs.desc_status + desc * d->regs.desc_stride);
 
 	CHECK((status & d->regs.sop) && (status & d->regs.eop) && (status & d->regs.crc));
+	CHECK((status & d->regs.qtag) == d->regs.qtag);
 	CHECK(field(d->regs.buflen, status) <= erx_device_genet_model_buffer_bytes(&h->device, ERX_DEVICE_GENET_TX));
 	CHECK(!"the transmit descriptor's address does not reach its bytes");
 }

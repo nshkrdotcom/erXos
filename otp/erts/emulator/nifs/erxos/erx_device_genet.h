@@ -91,6 +91,7 @@ typedef struct erx_device_genet_registers {
 	uint32_t	sop;			/* SOP and EOP of a descriptor's status */
 	uint32_t	eop;
 	uint32_t	crc;			/* CRC of a transmit status: append the Ethernet CRC; 0 for receive */
+	uint32_t	qtag;			/* QTAG of a transmit status, written all ones; 0 for receive */
 	uint32_t	buf_length;		/* BUF_LENGTH and DESC_COUNT of the ring's size register */
 	uint32_t	desc_count;
 	uint32_t	ring_enable;		/* ENABLE of the ring configuration */
@@ -179,8 +180,9 @@ void	erx_device_genet_start(const erx_device_genet_registers_t *regs, erx_dma_st
 /*
  * A transmit post of `count` pieces, 1..ERX_GENET_PIECES_MAX, laid end to end in the
  * buffer of the descriptor the producer index names, at most the buffer size in all: the
- * pieces' bytes, the descriptor's status (the length, start and end of packet and the appended
- * CRC), then the producer index. False, changing nothing, for a receive or broken queue, no
+ * pieces' bytes, the descriptor's status (the length, start and end of packet, the appended
+ * CRC and the queue tag all ones, the word FreeBSD writes, if_genet.c:1198-1217), then the
+ * producer index. False, changing nothing, for a receive or broken queue, no
  * free descriptor, or pieces empty, too many or too long; *full says which of the last two.
  */
 bool	erx_device_genet_post(erx_device_genet_queue_t *queue, const erx_device_genet_registers_t *regs,

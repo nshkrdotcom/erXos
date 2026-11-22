@@ -183,8 +183,8 @@ erx_device_genet_model_transmit(erx_device_genet_model_t *model, const erx_devic
     erx_device_genet_model_sink_t *sink, void *context, uint32_t *sent)
 {
 	const erx_device_genet_registers_t *const regs = &model->regs[ERX_DEVICE_GENET_TX];
-	/* Each frame in one descriptor, which the controller ends with the Ethernet CRC. */
-	const uint32_t whole = regs->sop | regs->eop | regs->crc;
+	/* Each frame in one descriptor, its queue tag all ones, which the controller ends with the Ethernet CRC. */
+	const uint32_t whole = regs->sop | regs->eop | regs->crc | regs->qtag;
 	const uint32_t reach = erx_device_genet_model_buffer_bytes(model, ERX_DEVICE_GENET_TX);
 	uint32_t consumer, producer;
 	bool refused = false;
