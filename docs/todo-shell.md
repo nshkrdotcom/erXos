@@ -667,8 +667,8 @@ to the corpus and follow rc
   crash report: a program's handler (`erx_command_srv:perform/2`, `spawn(erx_prog_handler, ...)`,
   with the program's environment), the pumps of a program's pipe ends (`erx_shell_program:pump/2`),
   the pipe's server and its pumps (`erx_shell_pipe:new/0`, `from_binary/1` and `from_file/1`, with the bytes they carry),
-  and the exec's own process (`erx_shell_script:command/3`, a `proc_lib` spawn holding the first
-  variables). None of them evaluates the shell's source; each runs fixed code over what it holds. Fix by giving each
+  and the exec's own process (`erx_shell_script:start/2`, behind `command/3` and `job/5`, a `proc_lib`
+  spawn holding the first variables). None of them evaluates the shell's source; each runs fixed code over what it holds. Fix by giving each
   a fixed-reason end as the funnel has, or by `format_status/1` and `sensitive` where a report is
   the risk.
 * [Low] Console line and terminal reports (erx_console.erl, erx_console_keys.erl): a terminal that reports text a session chose, such as xterm's title report where it is allowed, lets the session type anything at the line, `Ctrl-G` included, which no rule over the bytes can tell from typing. The menu drops the rest of the read that opened it and takes only one-byte reads, which stops a reply that arrives in one read; one the line driver splits into single bytes could still choose an entry, the system shell included. Settle it when logins come (M10): the system shell entry asks for the line's login again, or the host tool's console refuses terminal reports the session did not ask for. A terminal that sends 8-bit controls as raw bytes (0x9D, not U+009D written as UTF-8) is not recognized either, since such a byte is a UTF-8 continuation byte; recognizing it needs the rule to track UTF-8 lead bytes.

@@ -100,7 +100,7 @@ comes sooner ends this process with nothing started.
 """.
 -spec command(binary(), vars(), binary()) -> pid().
 command(Command, Vars, Cwd) when is_binary(Command), is_binary(Cwd) ->
-    proc_lib:spawn_link(fun() -> exec(Command, #{vars => Vars, cwd => Cwd}) end).
+    start(Command, #{vars => Vars, cwd => Cwd}).
 
 -doc """
 Starts rc on Command as command/3 does, for an SSH job, a channel with no
@@ -115,15 +115,22 @@ enters standard error before the stream ends with this process.
 """.
 -spec job(binary(), vars(), binary(), #{erx_shell_lex:fd() => erx_cmd:stream()}, pid()) -> pid().
 job(Command, Vars, Cwd, Fds, Group) when is_binary(Command), is_binary(Cwd), is_map(Fds), is_pid(Group) ->
-    proc_lib:spawn_link(fun() ->
-                                group_leader(Group, self()),
-                                try exec(Command, #{vars => Vars, cwd => Cwd, fds => Fds})
-                                after _ = io:request(Group, {put_chars, unicode, <<>>})
-                                end
-                        end).
+    start(Command, #{vars => Vars, cwd => Cwd, fds => Fds, group => Group}).
+
+%% The exec's one process, linked to the caller: command/3's and job/5's.
+start(Command, Options) ->
+    proc_lib:spawn_link(fun() -> exec(Command, Options) end).
 
 %% rc on Command with Options, its first variables checked, under the
-%% process's group, which is the terminal's or a job's relay.
+%% process's group, the terminal's. With a group option (job/5), that group
+%% becomes the group leader and, however rc ends, gets one empty output
+%% request whose answer is awaited, so the job's earlier output is written
+%% first; the option is taken off before rc runs.
+exec(Command, #{group := Group} = Options) ->
+    group_leader(Group, self()),
+    try exec(Command, maps:remove(group, Options))
+    after _ = io:request(Group, {put_chars, unicode, <<>>})
+    end;
 exec(Command, #{vars := Vars} = Options) ->
     process_flag(trap_exit, true),
     Group = group_leader(),
