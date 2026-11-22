@@ -276,7 +276,7 @@ typedef struct erx_device_refusal {
 /* A word the resolution read from a source register, by register index. */
 typedef struct erx_device_source_word {
 	uint32_t	reg;
-	uint64_t	word;
+	uint64_t	value;
 } erx_device_source_word_t;
 
 /* A list entry the resolution followed: its offset in the window and its ID. */

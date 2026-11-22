@@ -305,7 +305,7 @@ layout_term(ErlNifEnv *env, const erx_device_peripheral_t *peripheral, const erx
 	}
 	for (uint32_t at = 0; at < resolve->sources; at++)
 		(void)enif_make_map_put(env, read, enif_make_atom(env, peripheral->registers[resolve->source[at].reg].name),
-		    enif_make_uint64(env, resolve->source[at].word), &read);
+		    enif_make_uint64(env, resolve->source[at].value), &read);
 	for (uint32_t at = resolve->entries; at > 0; at--)
 		entries = enif_make_list_cell(env, enif_make_tuple2(env, enif_make_uint64(env, resolve->entry_read[at - 1].offset),
 		    enif_make_uint(env, resolve->entry_read[at - 1].id)), entries);

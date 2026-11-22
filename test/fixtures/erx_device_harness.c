@@ -854,7 +854,7 @@ source_word(const erx_device_peripheral_t *xhci, const erx_device_resolve_t *ste
 {
 	for (uint32_t at = 0; at < step->sources; at++) {
 		if (step->source[at].reg == erx_device_register_named(xhci, name))
-			return (step->source[at].word);
+			return (step->source[at].value);
 	}
 	CHECK(false);
 	return (0);

@@ -134,7 +134,7 @@ take_source(const erx_device_peripheral_t *peripheral, erx_device_layout_t *layo
     uint32_t index, uint64_t word)
 {
 	/* Each register is read once, so no more than ERX_DEVICE_REGISTERS_MAX are. */
-	resolve->source[resolve->sources++] = (erx_device_source_word_t){ .reg = index, .word = word };
+	resolve->source[resolve->sources++] = (erx_device_source_word_t){ .reg = index, .value = word };
 	for (uint32_t at = 0; at < peripheral->base_count; at++) {
 		const erx_device_base_t *const base = &peripheral->bases[at];
 
