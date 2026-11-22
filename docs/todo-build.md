@@ -882,9 +882,10 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
 * [Low] release files, the start-order property where releases are written (`tools/lib/erx/release_files.rb` `release_entry`):
   the check is a host test over `RELEASE_SCRIPTS`, so test images' domain scripts are not covered. Refusing where the release
   file is written would cover every script.
-* [Medium] qemu, reuse decided by a hand-kept list (`tools/lib/erx/qemu.rb` `reusable?`): every input a host side serves (link,
-  nic, display, firmware, pcie, line, disks, hostlink) must be listed by hand, and one commit missed `line`. Have each plan object
-  say whether a host serves it, so `reusable?` keeps no list.
+* [Low] qemu, reuse keys a run's inputs in two calls (`tools/lib/erx/qemu.rb` `Qemu#run`, `boot_key`): an input
+  `DETERMINED_INPUTS` lists as `:any` must reach both the local `QemuPlan.argv` call and `boot_key`'s keyed one; one passed to
+  the first and forgotten in the second replays a stale pass. Build the keyed plan from the hash `run` passes to `argv`, with
+  paths by digest, so there is one call to keep.
 * [Low] qemu suites, the shared shell helpers: `PcieDomain::WAIT` and `PROMPT` serve the pcie, usb and Bluetooth suites. They
   belong in a shared home.
 * [Medium] `tools/lib/erx/medium_boot.rb` `Footprint`: `LoadOnly` is prepended to `ReleaseFiles` as a whole, so the configured

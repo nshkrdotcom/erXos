@@ -806,11 +806,13 @@ module Erx
     def run(platform:, accel:, image:, cpus: 1, memory_mib: QemuPlan.memory_of(platform), checkpoints: nil, initrd: nil, machine_end: false, directory: nil, command_line: nil,
             dtb: nil, disks: [], link: nil, link_seconds: 0, hostlink: nil, nic: nil, remote: nil, stub: nil, firmware: nil, display: nil,
             pcie: nil, line: nil)
+      # Every input of this run by its parameter's name, from this class's own signature,
+      # read before the body reassigns any.
+      inputs = Qemu.instance_method(:run).parameters.to_h { |_, name| [name, binding.local_variable_get(name)] }
+      host = self.class.host_inputs(inputs)
       raise Error, 'a run with a host link session ends when the session does, not with machine_end' if link && machine_end
       raise Error, 'a run with a host link session takes no other host link plan' if link && hostlink
-      if remote && !reusable?(link: link, nic: nic, disks: disks, hostlink: hostlink, display: display, firmware: firmware, pcie: pcie, line: line)
-        raise Error, 'a remote boot takes no disk, network device, display, PCIe function, line or host link'
-      end
+      raise Error, "a remote boot takes no #{host.join(', ')}" if remote && !host.empty?
       raise Error, 'a remote boot takes no boot stub' if remote && stub
 
       checkpoints ||= self.class.boot_transcript(memory_mib: memory_mib)
@@ -844,7 +846,7 @@ module Erx
       report['remote'] = remote.destination if remote
       reuse = QemuReuse.active
       key = nil
-      if reuse && reusable?(link: link, nic: nic, disks: disks, hostlink: hostlink, display: display, firmware: firmware, pcie: pcie, line: line)
+      if reuse && host.empty?
         key = boot_key(reuse, plan: plan, remote_run: remote_run, image_sha256: report.fetch('image_sha256'), typed: matcher.types?, initrd: initrd,
                               dtb: dtb, stub: stub, hostlink: hostlink, checkpoints: checkpoints, machine_end: machine_end)
         stored = stored_boot(reuse, key, report: report, checkpoints: checkpoints, directory: directory) if key
@@ -908,14 +910,34 @@ module Erx
       report
     end
 
-    private
+    # The inputs of #run that QEMU's inputs alone determine, by parameter name, each with
+    # the values it may take in a boot QemuReuse may reuse or run remotely: each is in the
+    # boot's key (boot_key) or touches no guest input (directory, the run's own output, and
+    # link_seconds, its deadline). The host link is QEMU's null device or none, never a
+    # socket a host side serves. Every other input is the host's: a disk the guest may
+    # write, a network device, a display a checkpoint reads, a line whose controller
+    # answers from the host, a host link session, PCIe functions, test firmware, and any
+    # input added to #run until it is listed here.
+    DETERMINED_INPUTS = {
+      platform: :any, accel: :any, image: :any, cpus: :any, memory_mib: :any, checkpoints: :any, initrd: :any,
+      machine_end: :any, directory: :any, command_line: :any, dtb: :any, link_seconds: :any, remote: :any, stub: :any,
+      hostlink: [QemuPlan::NO_HOSTLINK]
+    }.freeze
 
-    # Whether QEMU's inputs alone determine this boot (QemuReuse): no disk the
-    # guest may write, no network device, no display a checkpoint reads, no line whose
-    # controller answers from the host, and no host link a host side serves.
-    def reusable?(link:, nic:, disks:, hostlink:, display:, firmware:, pcie:, line:)
-      link.nil? && nic.nil? && display.nil? && firmware.nil? && pcie.nil? && line.nil? && disks.empty? && (hostlink.nil? || hostlink == QemuPlan::NO_HOSTLINK)
+    # The names of the inputs, a run's parameters by name, that the host gives this boot:
+    # each one given (not nil, nor an empty list of disks) that DETERMINED_INPUTS does not list with
+    # its value. A boot with none is QemuReuse's to reuse and may run remotely.
+    def self.host_inputs(inputs) = inputs.reject { |name, value| absent?(value) || determined?(name, value) }.keys
+
+    def self.absent?(value) = value.nil? || value == []
+
+    def self.determined?(name, value)
+      allowed = DETERMINED_INPUTS.fetch(name, [])
+      allowed == :any || allowed.include?(value)
     end
+    private_class_method :absent?, :determined?
+
+    private
 
     # The boot's key. The keyed plan is the boot's own (plan, as run passes it
     # to QemuPlan.argv) with each input file by its SHA-256 and the run's own

@@ -27,9 +27,11 @@ module Erx
   # built in another worktree on the same host has the same key. The host's
   # CPU model is not in it: a store belongs to one host.
   #
-  # Only a boot that those inputs determine is reusable. A boot with a disk,
-  # a network device, a host link socket or a host link session talks to the
-  # host or leaves state its caller reads afterwards, so it always runs.
+  # Only a boot that those inputs determine is reusable: one given no input of
+  # Qemu#run beyond those Qemu::DETERMINED_INPUTS lists. A boot with a disk,
+  # a network device, a host link socket, a host link session, or an input
+  # that list does not name talks to the host or may leave state its caller
+  # reads afterwards, so it always runs.
   #
   # The gate opens one Session per run, and Session#suite makes a SuiteBoots
   # the active one while a suite runs. Inside it Qemu#run looks each reusable

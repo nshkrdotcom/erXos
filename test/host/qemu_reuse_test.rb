@@ -160,6 +160,19 @@ class QemuReuseTest < Minitest::Test
     assert_equal 2, starts
   end
 
+  # Reuse lists the inputs of Qemu#run that QEMU's inputs alone determine; any other input
+  # given, one added to run later included, makes the boot the host's, and an absent one
+  # does not. The host link is reusable as QEMU's null device or none, never as a socket.
+  def test_an_input_reuse_does_not_know_refuses_reuse
+    known = { platform: PLATFORM, accel: 'tcg', image: @image, cpus: 1, link_seconds: 0, machine_end: false, initrd: nil,
+              disks: [], line: nil, hostlink: Erx::QemuPlan::NO_HOSTLINK }
+    assert_empty Erx::Qemu.host_inputs(known)
+    assert_equal [:sensor], Erx::Qemu.host_inputs(known.merge(sensor: '/dev/sensor'))
+    assert_empty Erx::Qemu.host_inputs(known.merge(sensor: nil))
+    assert_equal [:hostlink], Erx::Qemu.host_inputs(known.merge(hostlink: '/run/hostlink.sock'))
+    assert_equal %i[disks line], Erx::Qemu.host_inputs(known.merge(disks: [:disk], line: :line))
+  end
+
   def test_a_malformed_or_changed_record_is_a_miss_with_a_diagnostic
     boot(session)
     damages = {

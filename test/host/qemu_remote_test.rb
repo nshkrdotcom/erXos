@@ -441,6 +441,6 @@ class QemuRemoteTest < Minitest::Test
                .run(platform: PLATFORM, accel: 'tcg', cpus: 4, image: __FILE__, nic: Erx::QemuPlan::Nic.new(frames_port: 1, peer_port: 2, echo_port: 3),
                     remote: HOST)
     end
-    assert_match(/remote boot takes no disk/, error.message)
+    assert_equal 'a remote boot takes no nic', error.message
   end
 end
