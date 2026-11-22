@@ -652,6 +652,11 @@ to the corpus and follow rc
   tree ends with it", and only "no `SIGHUP`" is in the compatibility
   table. List them there as documented differences with tests
   ([design-programs.md](design-programs.md#a-programs-end)).
+* [Low] shell, `erx_shell_pipe` (`erlang/apps/erx_shell/src/erx_shell_pipe.erl`):
+  the pipe holds every request sent to it, so the bound on what waits in
+  it rests on its callers keeping one write and one read unanswered;
+  refusing a second waiting request per sender would make it hold by
+  construction.
 
 ## Security residuals
 
@@ -742,6 +747,10 @@ to the corpus and follow rc
 
 ## Planned features
 
+* [Medium] shell, an Erlang command's streams over pipe-server ends
+  ([design-pipes.md](design-pipes.md#the-sessions-pipe-nif)): that is the
+  long-term shape of `erx_cmd`; a job's message pipes (`erx_shell_pipe`,
+  as the SSH job relay uses them) are the step before it.
 * [Medium] programs and shell, terminal reads by programs and by command domains
   ([design-programs.md](design-programs.md#the-terminal), "No terminal input without the signal handshake";
   [design-shell.md](design-shell.md#the-terminal-relays-protocol), "A reader the signal ends"): a program's

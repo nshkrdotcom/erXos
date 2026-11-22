@@ -373,6 +373,14 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   root's keys completes an exchange with it, under any host key that
   client accepts. Stage 4 closes both, with the vault's host key and the
   facet's comparison of it.
+* [Medium] ssh, a channel's window and packet
+  ([design-ssh.md](design-ssh.md#risks-and-open-questions),
+  `otp/lib/ssh/src/ssh_connection.erl`): OTP sets a channel's window from
+  the socket's receive buffer and its packet at most 64 KiB, with no
+  option, so the SSH domain's 64 KiB and 32 KiB
+  ([Limits and who pays](design-ssh.md#limits-and-who-pays)) need a
+  daemon option in OTP's ssh for the window and packet a channel offers
+  before its worst case is the one that table counts.
 * [Low] SSH, unauthenticated floods
   ([design-ssh.md](design-ssh.md#limits-and-who-pays)): OTP has no
   counterpart of FreeBSD's `MaxStartups`, so a flood of unauthenticated
@@ -498,10 +506,41 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   (`abi/signals.txt`, `signal_set ssh_line`) holds only `int`, so a
   signal added to it would crash the channel; the name should come from
   that table.
-* [Low] SSH stage 1, the release string
-  (`erlang/apps/erx_session/src/erx_ssh_dev_channel.erl`, `EXEC_REFUSED`):
-  the exec refusal names release 0.1 in a literal that must change by
-  hand with the release.
+* [Low] SSH stage 1, the tty relay's messages
+  (`erlang/apps/erx_session/src/erx_ssh_dev_channel.erl`): `tty_output`
+  and `tty_open` from the tty's relay arrive untagged; tag them as the
+  job's messages are.
+* [Low] SSH stage 1, `erlang/apps/erx_session/src/erx_session.app.src`
+  does not list `erx_ssh_line`, whose modules `erx_session` calls.
+* [Low] SSH stage 1, the channel's names
+  (`erlang/apps/erx_session/src/erx_ssh_dev_channel.erl`): rename
+  `#state.input`, `job/2` and `erx_ssh_job_core`'s `job` key, and give
+  `channel_step/2`'s ending its own place in its result rather than
+  relying on it coming last.
+* [Low] SSH stage 1, the funnel's tests
+  (`test/erlang/erx_ssh_dev_tests.erl`): the forged events should also
+  name the real connection with another channel, and another connection
+  with the real channel, so that dropping either check fails a case.
+* [Low] SSH, the job relay's sends
+  (`erlang/apps/erx_ssh_line/src/erx_ssh_job.erl`): a relay sending to a
+  channel of the SSH domain can be suspended by a busy queue to that
+  domain ([design-domains.md](design-domains.md#the-peer)); send with
+  `nosuspend` or state the wait in design-ssh.md.
+* [Low] SSH, output requests as bytes
+  (`erlang/apps/erx_ssh_line/src/erx_ssh_job.erl`,
+  `erlang/apps/erx/src/erx_log_user.erl`): both turn an io output
+  request into bytes; one module should do it for both.
+* [Low] ssh edits, the manual window (`otp/lib/ssh/src/ssh_client_channel.erl`,
+  `manual_window/1`): no test pins that a callback without `window/0`
+  has its window reopened past the first window; seed
+  `auto_adjust = false` to check that such a test fails.
+* [Low] `tools/erx ssh` cannot ask for a tty with a command (no `-t`);
+  add one only if someone needs it.
+* [Low] design-ssh.md, `tools/erx ssh`
+  ([Login keys](design-ssh.md#login-keys)):
+  the passage speaks only of the session with a pseudo-terminal; a
+  clause on an exec without a tty, whose output and error output reach
+  the operator's terminal unchanged as `ssh`'s do, would complete it.
 * [Low] SSH stage 1, the chokepoint on login keys
   (`tools/lib/erx/checks.rb`, `LOGIN_KEY_ENTRY`): the check matches the
   keyword `login_key:` only, so `:login_key => key` or a splatted hash
@@ -514,11 +553,13 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   the `subsystems` option naming `sftp`, `Run = sftp` on the job relay,
   `erx_sftp_server`, the `ssh_xfer` and `ssh_sftpd` stream edits, and the
   fuzz target of the server's stream.
-* [Medium] SSH, stage 1's `exec` (`erlang/apps/erx_session/src/erx_ssh_dev_channel.erl`,
-  the `exec` clause): it answers `exec is not supported in 0.1`;
-  design-ssh.md ("Stages") runs it on a tty or as a job on the session's
-  job relay, which is built first, and the SSH route of design-live.md
-  needs it.
+* [Medium] SSH, stage 1's `shell` without a `pty-req`
+  (`erlang/apps/erx_session/src/erx_ssh_dev_channel.erl`): it opens a tty
+  of 24 by 80, `vt100`, where design-ssh.md
+  ([Sessions, ttys and shells](design-ssh.md#sessions-ttys-and-shells),
+  `Run`'s `shell`) runs `rc` on standard input as a job, as OpenSSH runs
+  the user's shell without a tty; that needs `erx_ssh_job` to run `rc`
+  without `-c`.
 * [Medium] SSH, forwarding ([design-ssh.md](design-ssh.md#channel-policy)):
   the daemon refuses every forwarding request, since a forwarded
   connection would use the SSH domain's `net` grant. Design it to run in
