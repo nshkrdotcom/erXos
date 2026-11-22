@@ -19,6 +19,7 @@
 %% * max_auth_tries disconnects at its count, as FreeBSD counts MaxAuthTries,
 %%   and its default does not;
 %% * a host key callback may answer {ssh2_pubkey, Blob} and sign in sign/3;
+%% * data past a channel's window ends the connection;
 %% * a callback module written for stock OTP sees no change.
 -module(erx_ssh_edits_tests).
 
@@ -315,6 +316,33 @@ cookie_not_16_bytes() ->
     after
         ssh:stop_daemon(Daemon)
     end.
+
+%%% A channel's window
+
+%% Data or extended data that fills the window the receiver gave its peer is the
+%% channel's, and one byte more ends the connection (RFC 4254, section 5.2).
+channel_window_test_() ->
+    [?_test(channel_window(Message)) || Message <- [data, extended_data]].
+
+channel_window(Message) ->
+    Fits = channel_data(Message, binary:copy(<<"x">>, 4)),
+    ?assertMatch({[{channel_data, _, {data, 0, _, <<"xxxx">>}}], #connection{}}, Fits),
+    ?assertMatch({disconnect, {?SSH_DISCONNECT_PROTOCOL_ERROR, "channel window exceeded"}, _},
+                 channel_data(Message, binary:copy(<<"x">>, 5))).
+
+%% What the server's connection does with Message carrying Data on a channel
+%% whose window has 4 bytes left.
+channel_data(Message, Data) ->
+    Cache = ssh_client_channel:cache_create(),
+    ok = ssh_client_channel:cache_insert(Cache, #channel{type = "session", local_id = 0, remote_id = 0,
+                                                         recv_window_size = 4, recv_packet_size = 4,
+                                                         user = self()}, infinity),
+    Msg = case Message of
+              data -> #ssh_msg_channel_data{recipient_channel = 0, data = Data};
+              extended_data -> #ssh_msg_channel_extended_data{recipient_channel = 0, data_type_code = 1, data = Data}
+          end,
+    %% The table goes with the test process; a disconnect deletes it first.
+    ssh_connection:handle_msg(Msg, #connection{channel_cache = Cache}, server, #ssh{authenticated = true}).
 
 %%% Helpers
 

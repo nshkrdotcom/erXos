@@ -69,7 +69,19 @@ What the sources say, read at the pins of [Sources](#sources):
   accepts the next (`ssh_acceptor.erl:108-111`, `ssh_system_sup.erl:127`,
   `ssh_connection_handler.erl:124-140`, `:495-513`). It has no option
   bounding the authentication attempts of one connection. A channel's
-  window is ten packets of 64 KiB (`lib/ssh/src/ssh_connect.hrl:27-28`).
+  receive window is the connection socket's receive buffer as the
+  system reports it, after the handler asks for at least 640 KiB and
+  takes whatever it gets, and its packet is that
+  buffer's user-level size, at most 64 KiB
+  (`init_inet_buffers_window/1` and `update_inet_buffers/1` in
+  `ssh_connection_handler.erl`); `ssh_connect.hrl:27-28`'s ten packets
+  of 64 KiB is only the default when the socket names none. No option
+  sets either. A channel process of `ssh_server_channel` opens the
+  peer's window again by the size of every data message once its
+  callback has taken it (`handle_info/2` and `adjust_window/1` in
+  `ssh_client_channel.erl`), whatever the callback did with the data,
+  and data past the window is taken (`channel_data_reply_msg/4` in
+  `ssh_connection.erl`).
 * **OTP checks a public key in the daemon's own process**:
   `ssh_auth:verify_sig/7` asks the key callback's `is_auth_key/3`, builds
   the signed data and verifies it there, with the algorithm required to
@@ -1140,7 +1152,19 @@ identifier.
    messages of [Sessions, ttys and shells](#sessions-ttys-and-shells),
    exchanged inside root's session with the session's job relay, the
    part of `erx_ssh_line` that stage 2's `open_job` runs, so a job's
-   bytes cross unchanged and its error output stays apart. The job relay
+   bytes cross unchanged and its error output stays apart. With no
+   domain envelope between them, the channel and the relay tag every job
+   message both ways with an alias the channel makes for the job and
+   gives only the relay, and each drops a message without it, so no
+   other process of root's session sends either a job message; a tty's
+   ending reaches the channel tagged the same way. That covers the
+   channel and the relay, not the job's pipes or its group, which any
+   process naming them can write to, as on any group leader. The
+   channel opens the client's window itself, by `window/0` ([Edits to
+   OTP's ssh](#edits-to-otps-ssh)): a job's by a piece's size once the
+   relay answers `job_written`, a tty's by what it hands the tty. Its
+   window and packet are OTP's ([Context](#context)), not stage 2's
+   64 KiB and 32 KiB. The job relay
    is built before stage 1's `exec`, which is the byte-clean `exec` over
    which the host tool's SSH route runs `load`
    ([design-live.md](design-live.md#one-load-three-routes)). The `sftp`
@@ -1225,6 +1249,8 @@ identifier.
 | `lib/ssh/src/ssh_server_key_api.erl`, `ssh_transport.erl` | `host_key/2` may return `{ok, {ssh2_pubkey, Blob}}` and an optional `sign(Blob, Hash, Options)`, the shape of the client key API's `sign/3`, signs the exchange hash ([design-system.md](design-system.md#the-vault)); such a key is usable only when the module exports `sign/3` and `Blob` is the one encoding of a key of the negotiated algorithm | a callback that returns a private key |
 | `lib/ssh/src/ssh_message.erl` | `ssh2_privkey_encode/1` writes an Ed25519 or Ed448 private key as OpenSSH's private key format holds it, the private key followed by the public key, which is what `ssh2_privkey_decode2/1` reads back; stock writes the private key alone, so stock `ssh_file` cannot read an Ed25519 key it wrote in `openssh_key_v1`, an upstream bug | every other key type's encoding, and the decoder |
 | `lib/ssh/src/ssh_connection.erl` | a new `exit_signal/3`, which a server channel calls to send `exit-signal` with the signal's name, no core dump and empty message and language (RFC 4254, section 6.10), as `exit_status/3` sends `exit-status`; stage 1's channel sends it for a shell Ctrl-C ended | every other function and message unchanged |
+| `lib/ssh/src/ssh_connection.erl` | data or extended data longer than what is left of the channel's receive window ends the connection, by the route an unauthenticated connection's channel message takes (`{disconnect, {SSH_DISCONNECT_PROTOCOL_ERROR, "channel window exceeded"}, ...}`), since RFC 4254 section 5.2 lets a peer send no more than the window, with no grace | every peer that keeps within the window, client or server |
+| `lib/ssh/src/ssh_server_channel.erl`, `ssh_client_channel.erl` | an optional callback `window() -> manual`: `init/1` of the channel process records whether the callback module exports it answering `manual`, and for one that does the process no longer opens the peer's window after each data message, so the module's own `ssh_connection:adjust_window/3` calls are the only ones; stage 1's channel exports it ([Stages](#stages)) | every callback module that does not export it, `ssh_cli` and `ssh_sftpd` among them |
 | `lib/ssh/src/ssh_xfer.erl` | an `#ssh_xfer{}` whose `cm` is `{stream, Write}`, `Write` a function of one argument, sends each packet as `Write(Packet)` where it would call `ssh_connection:send/3` | every server and client whose `cm` is a connection |
 | `lib/ssh/src/ssh_sftpd.erl` | three new functions run the server over a byte stream for `erx_sftp_server` ([SFTP](#sftp)): `stream_init(Options, Write)` runs `init/1` with `cm` set to `{stream, Write}`; `stream_data(Bytes, State)` runs `handle_data/4` on standard input's bytes and answers `{ok, State}` or `{stop, State}`; `stream_end(State)` runs `terminate/2`, which closes every handle | the channel callbacks, and every request's decoding and reply |
 
@@ -1574,6 +1600,13 @@ boots the card and logs in.
   a paste larger than the bound into a program that is not reading loses
   bytes. An acknowledgement of input in the console interface would carry
   the SSH window to the tty; recorded in `TODO.md`.
+* **OTP sets a channel's window and packet from the socket**, whatever
+  receive buffer the system reports and at most 64 KiB
+  ([Context](#context)), with no option for
+  [Limits and who pays](#limits-and-who-pays)' 64 KiB and 32 KiB, so the
+  SSH domain needs an edit to OTP's ssh, a daemon option for the
+  window and packet a channel offers, before its worst case is the
+  40 MiB that table counts; the item is in `TODO.md`.
 * **Session creation per login** costs a domain's start; the latency of
   an SSH login is on the watch list
   ([todo-performance.md](todo-performance.md)),

@@ -53,7 +53,10 @@ class ErxSshEditsTest < Minitest::Test
     Fault.new(name: 'every none request free', module_name: 'ssh_auth',
               from: 'case Requests =:= 0 andalso Method =:= "none" of', to: 'case Method =:= "none" of'),
     Fault.new(name: 'verify_user/6 called for every module', module_name: 'ssh_auth',
-              from: 'ssh_transport:key_cb_exports(verify_user, 6, Opts)', to: 'true')
+              from: 'ssh_transport:key_cb_exports(verify_user, 6, Opts)', to: 'true'),
+    Fault.new(name: 'data one byte past the window taken', module_name: 'ssh_connection',
+              from: '#channel{recv_window_size = Size} when byte_size(Data) > Size ->',
+              to: '#channel{recv_window_size = Size} when byte_size(Data) > Size + 1 ->')
   ].freeze
 
   def test_edits_under_eunit

@@ -6,7 +6,8 @@
 SSH's first stage (docs/design-ssh.md, "Stages"): in a development build,
 start(Port) run in root's session starts OTP's ssh daemon in that session,
 through root's own `net` grant, whose session channels each run the command
-shell on a tty of the session (erx_ssh_dev_channel). It is a principal
+shell or a command on a tty of the session, or a command as a job of the
+session when the client asked for no tty (erx_ssh_dev_channel). It is a principal
 running a daemon in its own session with its own authority, and needs no
 facet of its own. start/1 starts nothing unless the build facts of this
 runtime's release name a development configuration
@@ -93,11 +94,12 @@ narrowed by that: any code it runs may start OTP's daemon with keys of its choos
 
 %% What the daemon is given: keys, the file of the development login key, and home,
 %% root's home copy, each of `authorized_keys` lines; host, the directory of the host
-%% key, made there when missing; and open, the opener of a channel's tty
-%% (erx_ssh_dev_channel).
+%% key, made there when missing; open, the opener of a channel's tty; and job, the
+%% starter of a channel's job relay (erx_ssh_dev_channel).
 -type options() :: #{keys := file:filename(), home := file:filename(), host := file:filename(),
                      open := fun((pid(), erx_session_tty:channel(), fun((term()) -> term())) ->
-                                        {ok, pid()} | {error, term()})}.
+                                        {ok, pid()} | {error, term()}),
+                     job := fun((binary()) -> {pid(), erx_ssh_job:tag()})}.
 %% The reader of the `login_keys` tree's `root`, the medium's key blobs.
 -type medium() :: fun(() -> {ok, binary()} | {error, term()}).
 %% What one import did: wrote N keys, found a home copy and kept it, found no key on
@@ -175,7 +177,8 @@ start(Port) ->
         true ->
             Keys = filename:join(code:root_dir(), binary_to_list(?ERX_SSH_AUTHORIZED_KEYS_PATH_BYTES)),
             daemon(Port, #{keys => Keys, home => ?HOME_KEYS, host => ?HOST_DIR,
-                           open => fun erx_session_tty:open_channel/3});
+                           open => fun erx_session_tty:open_channel/3,
+                           job => fun erx_session_tty:open_job/1});
         false ->
             {error, {not_development, "the release's build facts name no development build"}}
     end.
@@ -184,7 +187,7 @@ start(Port) ->
 %% tests (TEST), which name every option. Session channels are
 %% erx_ssh_dev_channel's, and no subsystem is offered.
 -spec daemon(inet:port_number(), options()) -> {ok, ssh:daemon_ref()} | {error, term()}.
-daemon(Port, #{keys := Keys, home := Home, host := Host, open := Open}) ->
+daemon(Port, #{keys := Keys, home := Home, host := Host, open := Open, job := Job}) ->
     maybe
         ok ?= host_key_file(Host),
         {ok, _} ?= application:ensure_all_started(ssh),
@@ -193,7 +196,7 @@ daemon(Port, #{keys := Keys, home := Home, host := Host, open := Open}) ->
                           {auth_methods, "publickey"},
                           {max_auth_tries, ?MAX_AUTH_TRIES},
                           {id_string, ?ID_STRING},
-                          {ssh_cli, {erx_ssh_dev_channel, [Open]}},
+                          {ssh_cli, {erx_ssh_dev_channel, [Open, Job]}},
                           {subsystems, []}])
     end.
 

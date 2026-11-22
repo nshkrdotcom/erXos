@@ -20,7 +20,8 @@
 %% %CopyrightEnd%
 %%
 %% Modified by erXos: exit_signal/3 sends a channel's exit-signal request
-%% (RFC 4254, section 6.10).
+%% (RFC 4254, section 6.10), and data or extended data past a channel's
+%% window ends the connection (section 5.2).
 
 %%
 
@@ -1942,6 +1943,11 @@ handle_cli_msg(C0, ChId, Reply0) ->
 
 channel_data_reply_msg(ChannelId, Connection, DataType, Data) ->
     case ssh_client_channel:cache_lookup(Connection#connection.channel_cache, ChannelId) of
+        %% A peer may send no more than the window it was given (RFC 4254,
+        %% section 5.2); one that does is disconnected.
+        #channel{recv_window_size = Size} when byte_size(Data) > Size ->
+            {disconnect, {?SSH_DISCONNECT_PROTOCOL_ERROR, "channel window exceeded"},
+             handle_stop(Connection)};
 	#channel{recv_window_size = Size} = Channel ->
 	    WantedSize = Size - byte_size(Data),
 	    ssh_client_channel:cache_update(Connection#connection.channel_cache, 

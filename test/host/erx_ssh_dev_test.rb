@@ -22,7 +22,10 @@ require_relative '../fixtures/erlang_build'
 # user name, a home copy imported again or written empty, the medium's blobs written
 # without being decoded, a medium file of any length
 # taken as blobs, keys files read by OTP's ssh_file, the default version banner (OTP's
-# id_string, Erlang/<version>, in place of erXos_<release>), exec run, any build kind taken for
+# id_string, Erlang/<version>, in place of erXos_<release>), exec run by OTP, a job's
+# input sent in pieces past ssh_line_data_max, a second piece or job_eof sent before
+# the last piece is answered, a job's relay not watched, OTP's channel opening the
+# window after each data message, a job's ending heard without its alias, any build kind taken for
 # a development one, and OTP's encoding of an Ed25519 private key without its public
 # half, which ssh_file cannot read back as a host key.
 class ErxSshDevTest < Minitest::Test
@@ -30,6 +33,8 @@ class ErxSshDevTest < Minitest::Test
   APPLICATIONS = %w[erx erx_shell erx_ssh_line erx_session].freeze
   TESTS = %w[test/erlang/erx_ssh_dev_tests.erl].freeze
   DEV = 'erlang/apps/erx_session/src/erx_ssh_dev.erl'
+  CHANNEL = 'erlang/apps/erx_session/src/erx_ssh_dev_channel.erl'
+  CLIENT_CHANNEL = 'otp/lib/ssh/src/ssh_client_channel.erl'
   Fault = Data.define(:name, :source, :from, :to)
   FAULTS = [
     Fault.new(name: 'a callback for every user name', source: DEV,
@@ -48,8 +53,24 @@ class ErxSshDevTest < Minitest::Test
               to: 'Blobs = [ssh_file:encode(K, ssh2_pubkey) || {K, _} <- ssh_file:decode(Bytes, auth_keys)],'),
     Fault.new(name: 'the default version banner', source: DEV,
               from: '{id_string, ?ID_STRING},', to: ''),
-    Fault.new(name: 'exec run', source: DEV,
-              from: '{ssh_cli, {erx_ssh_dev_channel, [Open]}},', to: '{exec, erlang_eval},'),
+    Fault.new(name: 'exec run by OTP', source: DEV,
+              from: '{ssh_cli, {erx_ssh_dev_channel, [Open, Job]}},', to: '{exec, erlang_eval},'),
+    Fault.new(name: "a job's input in pieces past ssh_line_data_max", source: CHANNEL,
+              from: 'Input ++ pieces(Data, ?ERX_SSH_LINE_DATA_MAX)', to: 'Input ++ [Data]'),
+    Fault.new(name: 'a second piece before job_written', source: CHANNEL,
+              from: 'feed(#state{relay = Relay, alias = Alias, unanswered_size = none, input = [Piece | Input]} = State) ->',
+              to: 'feed(#state{relay = Relay, alias = Alias, input = [Piece | Input]} = State) ->'),
+    Fault.new(name: 'job_eof before job_written', source: CHANNEL,
+              from: 'feed(#state{relay = Relay, alias = Alias, unanswered_size = none, input = [], eof = pending} = State) ->',
+              to: 'feed(#state{relay = Relay, alias = Alias, eof = pending} = State) ->'),
+    Fault.new(name: "a job's relay not watched", source: CHANNEL,
+              from: 'watched = monitor(process, Relay)', to: 'watched = make_ref()'),
+    Fault.new(name: 'the window opened after each data message', source: CLIENT_CHANNEL,
+              from: "AutoAdjust andalso adjust_window(Msg),\n\t    {noreply, State#state{channel_state = ChannelState}};",
+              to: "adjust_window(Msg),\n\t    {noreply, State#state{channel_state = ChannelState}};"),
+    Fault.new(name: "a job's ending heard without its alias", source: CHANNEL,
+              from: "    heard(Message, State);\n",
+              to: "    heard(Message, State);\nhandle_msg({exited, _} = Message, State) ->\n    heard(Message, State);\n"),
     Fault.new(name: 'any build kind taken for a development one', source: 'erlang/apps/erx/src/erx_build.erl',
               from: '[_Platform, Kind] -> kind(Kind) =:= {ok, development};', to: '[_Platform, _Kind] -> true;'),
     Fault.new(name: 'an Ed25519 private key without its public half', source: 'otp/lib/ssh/src/ssh_message.erl',
@@ -80,7 +101,7 @@ class ErxSshDevTest < Minitest::Test
       text = File.read(File.join(ErlangBuild::ROOT, fault.source))
       assert_equal 1, text.scan(fault.from).size, "#{fault.name}: its text must occur once in #{fault.source}"
       faulty = text.sub(fault.from, fault.to)
-      in_build(fault.source.start_with?('otp/') ? { ssh: faulty } : { session: { fault.source => faulty } }) do |work|
+      in_build(fault.source.start_with?('otp/') ? { ssh: { fault.source => faulty } } : { session: { fault.source => faulty } }) do |work|
         output, status = eunit(work)
         refute status.success?, "#{fault.name} passed erx_ssh_dev_tests:\n#{output}"
       end
@@ -90,7 +111,8 @@ class ErxSshDevTest < Minitest::Test
   private
 
   # A work directory with the session's modules and the tests, and erXos's ssh in its
-  # own ssh directory; replaced.fetch(:ssh) is ssh_message's text in place of the tree's.
+  # own ssh directory; replaced.fetch(:ssh) maps an ssh module's path to the text
+  # compiled in place of the tree's.
   # erx_ssh_dev is compiled again over the build's, with TEST defined, which exports
   # daemon/2 to the cases; replaced.fetch(:session) is its text in place of the tree's.
   def in_build(replaced = {})
@@ -98,9 +120,10 @@ class ErxSshDevTest < Minitest::Test
       ebin = File.join(work, 'ssh')
       Dir.mkdir(ebin)
       sources = Dir[File.join(SSH, '*.erl')].sort
-      if replaced.key?(:ssh)
-        File.write(File.join(work, 'ssh_message.erl'), replaced.fetch(:ssh))
-        sources = sources.map { |source| File.basename(source) == 'ssh_message.erl' ? File.join(work, 'ssh_message.erl') : source }
+      replaced.fetch(:ssh, {}).each do |path, text|
+        name = File.basename(path)
+        File.write(File.join(work, name), text)
+        sources = sources.map { |source| File.basename(source) == name ? File.join(work, name) : source }
       end
       output, status = Open3.capture2e(ENV.fetch('ERX_ERLC'), '-o', ebin, '-I', SSH, *sources, stdin_data: '')
       assert status.success?, output

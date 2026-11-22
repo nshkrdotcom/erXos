@@ -27,7 +27,9 @@ its master in the six messages, and is read by its console on demand
   the command shell, or `rc -c Command` for an exec request, and it is not
   started again: once the shell has ended and the channel has taken its last
   output, the console reports how the shell ended and ends, its relay with
-  it.
+  it. A channel with no pseudo-terminal gets no tty: open_job/1 runs its
+  command as a job on message pipes (erx_ssh_job), from the same home as a
+  tty's shell.
 
 A tty is two processes. The groups that run its shells are driven by a console
 of the session role (erx_console:start_link/1), unregistered, exactly as the
@@ -44,7 +46,7 @@ its end is the tty's hangup, as a pseudo-terminal master's close is
 then itself, its relay with it, and the session's other ttys run on.
 """.
 
--export([start_link/0, start_link/1, open/1, open_channel/3, start_channel/3, shell_of/3, master/0]).
+-export([start_link/0, start_link/1, open/1, open_channel/3, start_channel/3, open_job/1, shell_of/3, master/0]).
 
 -export_type([run/0, channel/0]).
 
@@ -123,6 +125,17 @@ start_channel(Channel, #{run := Run, size := Size, vars := Vars}, Notify) ->
                              size => Size,
                              driver => relay(Channel, #{size => Size}),
                              first_shell => fun(Terminal) -> shell_of(Run, Terminal#{vars => Vars}, erx_session_sup:home()) end}).
+
+-doc """
+Starts the job relay that runs `rc -c Command` for the calling process, a
+channel with no pseudo-terminal (erx_ssh_job:start/2), with no first variables
+and, as on a tty, from the session's home when it has one (shell_of/3).
+Returns the relay, which ends with the job or at the channel's end, and the
+alias that tags the job messages between them.
+""".
+-spec open_job(binary()) -> {pid(), erx_ssh_job:tag()}.
+open_job(Command) ->
+    erx_ssh_job:start(Command, at_home(erx_session_sup:home(), #{vars => #{}, cwd => <<"/">>})).
 
 -doc """
 What runs on a tty's terminal: the command shell, or rc on one command, each

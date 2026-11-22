@@ -19,6 +19,8 @@
 %%
 %% %CopyrightEnd%
 %%
+%% Modified by erXos: an optional callback window/0, whose module opens its
+%% peer's window itself.
 
 %%
 %% Description: a gen_server implementing a simple
@@ -114,6 +116,16 @@ The following message is taken care of by the `ssh_server_channel` behavior.
 			 State::term()) -> {ok, State::term()} |
 					   {stop, ChannelId::ssh:channel_id(),
 					    State::term()}.
+-doc """
+Exported by a channel that opens its peer's window itself, with
+`ssh_connection:adjust_window/3`, as it consumes what the peer sent. The
+behavior then leaves the window alone; for a module that does not export
+it, the behavior opens the window by the size of each data message once
+`handle_ssh_msg/2` has returned.
+""".
+-callback window() -> manual.
+
+-optional_callbacks([window/0]).
 
 %%% Internal API
 -export([start_link/5,

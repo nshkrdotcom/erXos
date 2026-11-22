@@ -19,6 +19,9 @@
 %%
 %% %CopyrightEnd%
 %%
+%% Modified by erXos: a channel whose callback module exports window/0 opens
+%% its peer's window itself; for every other channel the window opens after
+%% each data message, as stock.
 
 %%
 
@@ -198,7 +201,10 @@ The following message is taken care of by the `ssh_client_channel` behavior.
 	  channel_cb,
 	  channel_state,
 	  channel_id,
-	  close_sent = false
+	  close_sent = false,
+	  %% Whether the peer's window opens after each data message: false when
+	  %% the callback module opens it itself (manual_window/1).
+	  auto_adjust = true
 	 }).
 
 %%====================================================================
@@ -399,14 +405,16 @@ init([Options]) ->
 	    State = #state{cm = ConnectionManager, 
 			   channel_cb = Cb,
 			   channel_id = ChannelId,
-			   channel_state = ChannelState},
+			   channel_state = ChannelState,
+			   auto_adjust = not manual_window(Cb)},
 	    self() ! {ssh_channel_up, ChannelId, ConnectionManager}, 
 	    {ok, State};
 	{ok, ChannelState, Timeout} ->
 	    State = #state{cm = ConnectionManager, 
 			   channel_cb = Cb,
 			   channel_id = ChannelId,
-			   channel_state = ChannelState},
+			   channel_state = ChannelState,
+			   auto_adjust = not manual_window(Cb)},
 	    self() ! {ssh_channel_up, ChannelId, ConnectionManager}, 
 	    {ok, State, Timeout};
 	{stop, Why} ->
@@ -511,13 +519,14 @@ handle_info({ssh_cm, ConnectionManager, {closed, ChannelId}},
     {stop, normal, State#state{close_sent = true}};
 
 handle_info({ssh_cm, _, _} = Msg, #state{channel_cb = Module, 
-                                         channel_state = ChannelState0} = State) ->
+                                         channel_state = ChannelState0,
+                                         auto_adjust = AutoAdjust} = State) ->
     try Module:handle_ssh_msg(Msg, ChannelState0) of
 	{ok, ChannelState} ->
-	    adjust_window(Msg),
+	    AutoAdjust andalso adjust_window(Msg),
 	    {noreply, State#state{channel_state = ChannelState}};
 	{ok, ChannelState, Timeout} ->
-	    adjust_window(Msg),
+	    AutoAdjust andalso adjust_window(Msg),
 	    {noreply, State#state{channel_state = ChannelState}, Timeout};
 	{stop, ChannelId, ChannelState} ->
             do_the_close(Msg, ChannelId, State#state{channel_state = ChannelState})
@@ -660,6 +669,11 @@ handle_cb_result({stop, Reason, Reply, ChannelState}, State) ->
     {stop, Reason, Reply,  State#state{channel_state = ChannelState}};
 handle_cb_result({stop, Reason, ChannelState}, State) ->
     {stop, Reason, State#state{channel_state = ChannelState}}.
+
+%% Whether the callback module opens its peer's window itself: it exports
+%% window/0, answering manual. Cb:init/1 has run, so the module is loaded.
+manual_window(Cb) ->
+    erlang:function_exported(Cb, window, 0) andalso Cb:window() =:= manual.
 
 adjust_window({ssh_cm, ConnectionManager,
 	       {data, ChannelId, _, Data}}) ->

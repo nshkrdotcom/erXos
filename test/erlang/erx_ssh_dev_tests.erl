@@ -4,7 +4,7 @@
 %% erx_ssh_dev's daemon on stock OTP (docs/design-ssh.md, "Stages", stage 1):
 %% root logs in with the development key or a key of root's home copy, gets a
 %% shell on a tty whose size and ending reach the channel, an exec on that tty when
-%% it asked for one and exec refused without one, a command out of bounds refused;
+%% it asked for one and as a job without one, a command out of bounds refused;
 %% another user name with that key and root with another key are
 %% refused, a key in authorized_keys2 beside the file included, an empty or
 %% missing keys file admits no one, a home file whose key line carries options,
@@ -16,8 +16,14 @@
 %% The tty is a stand-in
 %% (tty/3) that speaks the six messages: it reports its size and TERM as
 %% output, echoes input, ends with the status `exit N` names and with sigint
-%% on Ctrl-C, as the session's line discipline would. The work directory is
-%% ERX_SSH_DEV_WORK, which the host test makes and removes.
+%% on Ctrl-C, as the session's line discipline would. The job relay is a stand-in
+%% too (job/1) that speaks the job messages, tagged with the channel's alias as
+%% erx_ssh_job tags them, and checks the channel keeps to them: pieces of at most
+%% ssh_line_data_max bytes, one unanswered at a time, each output answered before
+%% the next. A job whose input is not answered holds the client to the window it
+%% was given, and a job message without the alias, from another process, changes
+%% nothing. The work directory is ERX_SSH_DEV_WORK, which the host test makes and
+%% removes.
 -module(erx_ssh_dev_tests).
 
 -include_lib("eunit/include/eunit.hrl").
@@ -31,7 +37,11 @@ daemon_test_() ->
              [?_test(the_banner_names_erxos(Context)),
               ?_test(a_shell_runs_on_a_tty(Context)),
               ?_test(ctrl_c_ends_with_int(Context)),
-              ?_test(exec_is_refused(Context)),
+              ?_test(exec_runs_as_a_job(Context)),
+              ?_test(a_job_that_crashes_ends_with_1(Context)),
+              ?_test(a_malformed_job_message_closes_the_channel(Context)),
+              ?_test(the_window_waits_for_the_job(Context)),
+              ?_test(an_untagged_job_message_changes_nothing(Context)),
               ?_test(exec_runs_on_a_tty(Context)),
               ?_test(an_exec_out_of_bounds_is_refused(Context)),
               ?_test(root_logs_in_with_a_home_key(Context)),
@@ -83,9 +93,11 @@ start() ->
     #{work => Work, daemon => Daemon, port => proplists:get_value(port, Info),
       login => Login, host => Host, client => Client, wrong => Wrong, card => Card}.
 
-%% The daemon's options with the stand-in tty and root's home copy in the work directory.
+%% The daemon's options with the stand-in tty and job relay and root's home copy in
+%% the work directory.
 options(Login, Host) ->
-    #{keys => Login, home => home(os:getenv("ERX_SSH_DEV_WORK")), host => Host, open => fun tty/3}.
+    #{keys => Login, home => home(os:getenv("ERX_SSH_DEV_WORK")), host => Host, open => fun tty/3,
+      job => fun job/1}.
 
 home(Work) -> filename:join([Work, "root", ".ssh", "authorized_keys"]).
 
@@ -118,6 +130,86 @@ tty_loop(Channel, Ref, Notify, N) ->
         {tty_input, Bytes} ->
             Channel ! {tty_output, N, Bytes},
             tty_loop(Channel, Ref, Notify, N + 1)
+    end.
+
+%% The stand-in job relay, started for the calling channel with an alias of the
+%% channel's, as erx_ssh_job:start/2 starts the relay. For `exit N` it writes each
+%% piece of input back as standard output, `end of input` on standard error at
+%% job_eof, and ends with status N; `hold` does the same with status 0, but tells
+%% the test (registered as this module) that it holds the first piece and answers
+%% it only once the test says `release`; `crash` ends the relay before any ending;
+%% `forge` sends a job_output one byte past ssh_line_data_max and tells the test
+%% how the channel ended; `forger` has another process send the channel job
+%% messages without the alias, and then ends with status 7. It crashes, so the
+%% channel ends with status 1, on a piece past ssh_line_data_max or empty, on a
+%% job_input or job_eof the channel sent before the last piece was answered, and
+%% when a job_output is not answered.
+job(Command) ->
+    Channel = self(),
+    Alias = alias(),
+    {spawn(fun() -> job_run(Command, #{channel => Channel, alias => Alias, ref => monitor(process, Channel)}) end),
+     Alias}.
+
+job_run(<<"exit ", Status/binary>>, Job) ->
+    job_loop(Job, binary_to_integer(Status));
+job_run(<<"hold">>, #{alias := Alias} = Job) ->
+    receive
+        {Alias, {job_input, Bytes}} ->
+            ?MODULE ! {held, self()},
+            receive release -> ok end,
+            job_piece(Job, Bytes),
+            job_loop(Job, 0)
+    end;
+job_run(<<"crash">>, _Job) ->
+    exit(crash);
+job_run(<<"forge">>, #{alias := Alias, ref := Ref}) ->
+    Alias ! {Alias, {job_output, stdout, binary:copy(<<0>>, ?ERX_SSH_LINE_DATA_MAX + 1)}},
+    receive {'DOWN', Ref, process, _, Reason} -> ?MODULE ! {channel_ended, Reason} end;
+job_run(<<"forger">>, #{channel := Channel, alias := Alias}) ->
+    %% The channel has taken every forged message before it answers the forger's
+    %% call, which the forger makes before it ends.
+    {_, Forger} = spawn_monitor(fun() ->
+                                        _ = [Channel ! Forged || Forged <- [{exited, 0}, {make_ref(), {exited, 0}},
+                                                                            {make_ref(), {ended, {exited, 0}}},
+                                                                            {erx_ssh_dev_channel, ended, {exited, 0}},
+                                                                            {job_output, stdout, <<"forged">>}]],
+                                        sys:get_state(Channel)
+                                end),
+    receive {'DOWN', Forger, process, _, _} -> ok end,
+    Alias ! {Alias, {exited, 7}}.
+
+job_loop(#{alias := Alias, ref := Ref} = Job, Status) ->
+    receive
+        {'DOWN', Ref, process, _, _} ->
+            ok;
+        {Alias, {job_input, Bytes}} ->
+            job_piece(Job, Bytes),
+            job_loop(Job, Status);
+        {Alias, job_eof} ->
+            job_output(Job, stderr, <<"end of input\n">>),
+            Alias ! {Alias, {exited, Status}}
+    end.
+
+%% A piece of input, written back and answered. The channel's job_sent follows
+%% every message the channel sent before it, so a job_input or job_eof waiting
+%% once it is heard was sent while the piece was unanswered.
+job_piece(#{alias := Alias} = Job, Bytes) when byte_size(Bytes) >= 1, byte_size(Bytes) =< ?ERX_SSH_LINE_DATA_MAX ->
+    job_output(Job, stdout, Bytes),
+    receive
+        {Alias, {job_input, _}} -> exit(two_inputs_unanswered);
+        {Alias, job_eof} -> exit(job_eof_under_a_write)
+    after 0 -> ok
+    end,
+    Alias ! {Alias, job_written};
+job_piece(_Job, Bytes) ->
+    exit({piece, byte_size(Bytes)}).
+
+job_output(#{alias := Alias, ref := Ref}, Stream, Bytes) ->
+    Alias ! {Alias, {job_output, Stream, Bytes}},
+    receive
+        {Alias, job_sent} -> ok;
+        {'DOWN', Ref, process, _, _} -> exit(normal)
+    after 10000 -> exit(job_output_unanswered)
     end.
 
 stop(#{daemon := Daemon}) ->
@@ -175,11 +267,86 @@ ctrl_c_ends_with_int(#{client := Client} = Context) ->
     ?assertEqual({<<>>, {signal, "INT"}}, ending(Connection, Channel, <<>>, none)),
     ok = ssh:close(Connection).
 
-exec_is_refused(#{client := Client} = Context) ->
+%% An exec without a pty-req runs as a job: a MiB of every byte value, past the
+%% channel's first window and in packets past ssh_line_data_max, reaches the job and
+%% comes back as its standard output, unchanged, its standard error stays apart,
+%% and its status is the channel's.
+exec_runs_as_a_job(#{client := Client} = Context) ->
     {ok, Connection} = connect(Context, "root", Client),
     {ok, Channel} = ssh_connection:session_channel(Connection, 10000),
-    success = ssh_connection:exec(Connection, Channel, "ps", 10000),
-    ?assertEqual({<<"exec without a pseudo-terminal is not supported\r\n">>, {status, 1}}, ending(Connection, Channel, <<>>, none)),
+    success = ssh_connection:exec(Connection, Channel, "exit 5", 10000),
+    Bytes = binary:copy(list_to_binary(lists:seq(0, 255)), 4096),
+    %% A channel that closes early fails the sends, and the ending below says how.
+    _ = spawn(fun() ->
+                      _ = ssh_connection:send(Connection, Channel, Bytes),
+                      ssh_connection:send_eof(Connection, Channel)
+              end),
+    {Output, Error, Ending} = job_ending(Connection, Channel, <<>>, <<>>, none),
+    ?assertEqual({byte_size(Bytes), true, <<"end of input\n">>, {status, 5}},
+                 {byte_size(Output), Output =:= Bytes, Error, Ending}),
+    ok = ssh:close(Connection).
+
+%% A job's relay that ends before the job's ending ends the channel with status 1.
+a_job_that_crashes_ends_with_1(#{client := Client} = Context) ->
+    {ok, Connection} = connect(Context, "root", Client),
+    {ok, Channel} = ssh_connection:session_channel(Connection, 10000),
+    success = ssh_connection:exec(Connection, Channel, "crash", 10000),
+    ?assertEqual({<<>>, <<>>, {status, 1}}, job_ending(Connection, Channel, <<>>, <<>>, none)),
+    ok = ssh:close(Connection).
+
+%% A job message that fails its check closes the channel, with no status, and the
+%% channel ends normally rather than crashing.
+a_malformed_job_message_closes_the_channel(#{client := Client} = Context) ->
+    named(fun() ->
+                  {ok, Connection} = connect(Context, "root", Client),
+                  {ok, Channel} = ssh_connection:session_channel(Connection, 10000),
+                  success = ssh_connection:exec(Connection, Channel, "forge", 10000),
+                  ?assertEqual({<<>>, <<>>, none}, job_ending(Connection, Channel, <<>>, <<>>, none)),
+                  ?assertEqual(normal, receive {channel_ended, Reason} -> Reason after 10000 -> timeout end),
+                  ok = ssh:close(Connection)
+          end).
+
+%% Runs Fun with the test process registered as this module, which the stand-in
+%% jobs tell what they saw, and unregistered after, however Fun ends.
+named(Fun) ->
+    true = register(?MODULE, self()),
+    try Fun() after unregister(?MODULE) end.
+
+%% While the job leaves a piece of input unanswered, the channel opens no window:
+%% the client sends what its window allows and waits. Once the job answers, the
+%% rest of 4 MiB, past any window OTP takes from a socket's receive buffer, flows,
+%% and comes back whole. The client cannot finish while the piece is held,
+%% whatever the timing; the two seconds only bound how long a channel that opened
+%% the window would take to take it all.
+the_window_waits_for_the_job(#{client := Client} = Context) ->
+    named(fun() ->
+                  {ok, Connection} = connect(Context, "root", Client),
+                  {ok, Channel} = ssh_connection:session_channel(Connection, 10000),
+                  success = ssh_connection:exec(Connection, Channel, "hold", 10000),
+                  Bytes = binary:copy(list_to_binary(lists:seq(0, 255)), 4 * 4096),
+                  Test = self(),
+                  _ = spawn(fun() ->
+                                    _ = ssh_connection:send(Connection, Channel, Bytes),
+                                    Test ! sent,
+                                    ssh_connection:send_eof(Connection, Channel)
+                            end),
+                  Relay = receive {held, Pid} -> Pid after 10000 -> error(not_held) end,
+                  ?assertEqual(waiting, receive sent -> sent after 2000 -> waiting end),
+                  Relay ! release,
+                  {Output, Error, Ending} = job_ending(Connection, Channel, <<>>, <<>>, none),
+                  ?assertEqual({byte_size(Bytes), true, <<"end of input\n">>, {status, 0}},
+                               {byte_size(Output), Output =:= Bytes, Error, Ending}),
+                  ok = ssh:close(Connection)
+          end).
+
+%% Job messages and endings without the job's alias, sent to the channel by
+%% another process of the session, change nothing: the channel's ending is the
+%% relay's.
+an_untagged_job_message_changes_nothing(#{client := Client} = Context) ->
+    {ok, Connection} = connect(Context, "root", Client),
+    {ok, Channel} = ssh_connection:session_channel(Connection, 10000),
+    success = ssh_connection:exec(Connection, Channel, "forger", 10000),
+    ?assertEqual({<<>>, <<>>, {status, 7}}, job_ending(Connection, Channel, <<>>, <<>>, none)),
     ok = ssh:close(Connection).
 
 %% An exec after a pty-req runs on the tty at the pty-req's size, and its status is
@@ -193,15 +360,18 @@ exec_runs_on_a_tty(#{client := Client} = Context) ->
     ?assertEqual({<<>>, {status, 4}}, ending(Connection, Channel, <<>>, none)),
     ok = ssh:close(Connection).
 
-%% A command holding a NUL byte, or past ssh_line_command_max bytes, is refused.
+%% A command holding a NUL byte, or past ssh_line_command_max bytes, is refused, on
+%% a tty and as a job.
 an_exec_out_of_bounds_is_refused(#{client := Client} = Context) ->
     {ok, Connection} = connect(Context, "root", Client),
-    Refused = fun(Command) ->
+    Refused = fun(Pty, Command) ->
                       {ok, Channel} = ssh_connection:session_channel(Connection, 10000),
-                      success = ssh_connection:ptty_alloc(Connection, Channel, [], 10000),
+                      _ = [success = ssh_connection:ptty_alloc(Connection, Channel, [], 10000) || Pty],
                       ssh_connection:exec(Connection, Channel, Command, 10000)
               end,
-    ?assertEqual([failure, failure], [Refused("exit 1\0"), Refused(lists:duplicate(?ERX_SSH_LINE_COMMAND_MAX + 1, $x))]),
+    ?assertEqual([failure, failure, failure, failure],
+                 [Refused(Pty, Command) || Pty <- [true, false],
+                                           Command <- ["exit 1\0", lists:duplicate(?ERX_SSH_LINE_COMMAND_MAX + 1, $x)]]),
     ok = ssh:close(Connection).
 
 %% A key of root's home copy logs root in, and no other user name.
@@ -305,6 +475,23 @@ ending(Connection, Channel, Error, Ending) ->
         {ssh_cm, Connection, {closed, Channel}} -> {Error, Ending};
         {ssh_cm, Connection, Other} -> {Other, Ending}
     after 10000 -> {timeout, Ending}
+    end.
+
+%% What a job wrote on its standard output and error, and how it ended, once the
+%% channel closed. The client's window opens by what it takes, as OpenSSH's does.
+job_ending(Connection, Channel, Output, Error, Ending) ->
+    receive
+        {ssh_cm, Connection, {data, Channel, 0, Data}} ->
+            ssh_connection:adjust_window(Connection, Channel, byte_size(Data)),
+            job_ending(Connection, Channel, <<Output/binary, Data/binary>>, Error, Ending);
+        {ssh_cm, Connection, {data, Channel, 1, Data}} ->
+            ssh_connection:adjust_window(Connection, Channel, byte_size(Data)),
+            job_ending(Connection, Channel, Output, <<Error/binary, Data/binary>>, Ending);
+        {ssh_cm, Connection, {exit_status, Channel, Status}} -> job_ending(Connection, Channel, Output, Error, {status, Status});
+        {ssh_cm, Connection, {eof, Channel}} -> job_ending(Connection, Channel, Output, Error, Ending);
+        {ssh_cm, Connection, {closed, Channel}} -> {Output, Error, Ending};
+        {ssh_cm, Connection, Other} -> {Other, Error, Ending}
+    after 10000 -> {timeout, Error, Ending}
     end.
 
 another_user_is_refused(#{client := Client} = Context) ->
