@@ -232,7 +232,8 @@ class ErxBtHciTest < Minitest::Test
     SEEDS.each do |seed|
       source = File.binread(File.join(ErlangBuild::ROOT, seed.module_path))
       assert_equal 1, source.scan(seed.anchor).size, "seed anchor for #{seed.fault} is not unique"
-      output, status = run_cases({ seed.module_path => source.sub(seed.anchor) { seed.replacement } })
+      output, status = run_cases({ seed.module_path => source.sub(seed.anchor) { seed.replacement } },
+                                 only: seed.catching_case)
       refute status.success?, "#{seed.fault}: the cases passed"
       assert_match(/#{Regexp.escape(seed.catching_case)}[^\n]*\*failed\*/, output, seed.fault)
     end
@@ -240,13 +241,28 @@ class ErxBtHciTest < Minitest::Test
 
   private
 
-  # The modules, with replaced ones in place of the application's own, then the cases.
-  def run_cases(replaced)
+  # The modules, with replaced ones in place of the application's own, then the cases:
+  # all of them, or with only: the one case named, which a seeded fault must fail (the
+  # explored case alone takes minutes, so the other seeds' runs skip it).
+  def run_cases(replaced, only: nil)
     Dir.mktmpdir('erx-bt-hci-test') do |work|
       ErlangBuild.compile(work, applications: APPLICATIONS, tests: TESTS, replaced: replaced)
       Open3.capture2e('gtimeout', '-k', '10', DEADLINE_SECONDS, ENV.fetch('ERX_ERL'), '-noshell', '-pa', work,
-                      '-eval', 'halt(case eunit:test([erx_bt_hci_tests, erx_bt_patch_tests], [verbose]) of ok -> 0; _ -> 1 end)',
+                      '-eval', "halt(case eunit:test(#{eunit_spec(only)}, [verbose]) of ok -> 0; _ -> 1 end)",
                       chdir: work, stdin_data: '')
     end
+  end
+
+  # What eunit runs: both test modules, or the one case, from the module that defines it.
+  def eunit_spec(only)
+    return '[erx_bt_hci_tests, erx_bt_patch_tests]' if only.nil?
+
+    source = TESTS.find { |path| File.read(File.join(ErlangBuild::ROOT, path)).match?(/^#{Regexp.escape(only)}\(/) }
+    raise ArgumentError, "no test module defines #{only}" if source.nil?
+
+    owner = File.basename(source, '.erl')
+    # eunit runs {Module, Name} as a plain test, which would take a generator's
+    # returned tests for the result, so a generator (a name ending in _) is named as one.
+    only.end_with?('_') ? "{generator, fun #{owner}:#{only}/0}" : "{#{owner}, #{only}}"
   end
 end
