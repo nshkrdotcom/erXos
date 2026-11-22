@@ -36,6 +36,15 @@ erx_boot_tree(const void **bytes, size_t *size)
 	return (ERX_ENOTSUP);
 }
 
+/* A hosted runtime has no firmware to ask (docs/design-fiasco.md, "The firmware request"). */
+int
+erx_firmware_request_row(erx_firmware_row_t row, uint8_t answer[ERX_VC_WINDOW_MAX], uint32_t *length)
+{
+	(void)row, (void)answer;
+	*length = 0;
+	return (ERX_ENOTSUP);
+}
+
 int
 erx_cap_close(erx_cap_t cap)
 {

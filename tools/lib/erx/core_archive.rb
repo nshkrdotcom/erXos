@@ -42,8 +42,9 @@ module Erx
     # the device-tree reader, which reaches the tree through libfdt built with every
     # check on (docs/design-device-tree.md, "The reader"). Fiasco reads
     # no tree of erXos's and links its own libfdt, so the reader waits for erXos's
-    # kernel to be linked into one.
-    ROOT_TASK_SOURCES = %w[kernel/core/dt.c].freeze
+    # kernel to be linked into one. And the firmware mailbox's cores, which on Fiasco the
+    # root runs in the caller's thread (docs/design-fiasco.md, "The firmware request").
+    ROOT_TASK_SOURCES = %w[kernel/core/dt.c kernel/core/vc_mailbox.c kernel/core/vc_property.c].freeze
     # What bootstrap links: those cores with what they call, and the image planner
     # the root's service reads an image entry with (NativeRoot links this archive). Translation is off
     # when they run, so every load and store must be aligned.

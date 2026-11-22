@@ -18,8 +18,8 @@
  * which can read the board's key, goes to no driver (docs/design-platforms.md, PL2).
  *
  * The shim keeps the one mapping for the boot, for the request routine of the firmware
- * request, the kernel/core/vc_mailbox.c state machine over a buffer page of the root's own
- * (TODO.md, the firmware mailbox cores item).
+ * request, erx_firmware_request_row (liberx/backend/api.h), which drives the
+ * kernel/core/vc_mailbox.c state machine over a buffer page of the root's own.
  */
 
 /*

@@ -41,7 +41,7 @@ module Erx
             # The system-register reads tools/lib/erx/sysreg_headers.rb writes, one function per
             # register; the sysreg-read rule below holds their callers to a list.
             Chokepoints::Site.new(glob: SysregHeaders::READS),
-            # erx_fiasco_cache_make_coherent.
+            # erx_fiasco_cache_make_coherent, erx_fiasco_cache_clean and erx_fiasco_cache_clean_invalidate.
             Chokepoints::Site.new(glob: 'liberx/backend/fiasco/arch/aarch64/cache.c'),
             # erx_fiasco_counter_hz and erx_fiasco_counter.
             Chokepoints::Site.new(glob: 'liberx/backend/fiasco/arch/aarch64/clock.c'),

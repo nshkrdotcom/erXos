@@ -10032,8 +10032,15 @@ document's "residual risks accepted" paragraph.
   hub at SuperSpeed at its device descriptor (`superspeed_hub`), and no device behind it runs at SuperSpeed. Driving one is a
   design of its own, with the VL805's bulk-out burst quirk for mass storage behind such a hub that the design lists
   beside it.
-* [Medium] board sensors, [design-board-sensors.md](docs/design-board-sensors.md): not built. No erXos code reaches
-  the firmware mailbox at run time, and the device service's process and firmware worker, through which every
+* [Medium] firmware request, `liberx/backend/fiasco/vc_mbox.c` ([design-fiasco.md](docs/design-fiasco.md#the-firmware-request)):
+  no test drives `erx_firmware_request_row` itself; `test/host/vc_mailbox_test.rb` checks only the core through its
+  driver's own loop, so the shim's steps, its sleep and its cache maintenance first run on a board (probe B1). Add a
+  `raspi4b` suite case that makes one request through the root, if QEMU's property channel takes the raw physical
+  address, and otherwise one shared runner of the protocol that a host test drives over a model mailbox. The
+  request's deadline also rests on a nonzero counter frequency: `erx_fiasco_clock_ns` reads 0 when CNTFRQ_EL0 does,
+  so an unanswered request would poll forever; refuse that frequency where the root starts.
+* [Medium] board sensors, [design-board-sensors.md](docs/design-board-sensors.md): not built. The root's firmware request
+  (`erx_firmware_request_row`) reaches the mailbox, but the device service's process and firmware worker, through which every
   firmware request is made ([design-system.md](docs/design-system.md#devices), "Firmware requests"), do not exist:
   `erx_devices` hands on the domain library's catalogue and keeps no state. Both come with whichever of the
   VL805's notification, the Bluetooth power line and the sensor driver lands first; probes S1 and S2 come first.
@@ -10051,13 +10058,6 @@ document's "residual risks accepted" paragraph.
   [design-board-sensors.md](docs/design-board-sensors.md#the-requests)): no `erx_firmware_request` in the machine
   family; the system manifest's firmware request record and the closed set `fw_tag` carry the device rows only, and
   no machine row or `fw_reading` exists yet. Add the call and the machine rows.
-* [Low] firmware mailbox cores, `kernel/core/vc_property.c` and `kernel/core/vc_mailbox.c`
-  ([design-kernel.md](docs/design-kernel.md#firmware-requests)): `CoreArchive` puts them in Fiasco's kernel archive,
-  `erx_cores.a`, which never calls them, while the root task, which runs them on Fiasco, links `kernel/core` sources
-  only as `NativeRoot` names them, and names neither. The root maps the mailbox's window at boot
-  (`liberx/backend/fiasco/vc_mbox.c`, `erx_fiasco_program_mailbox`) but sends nothing through it: the root
-  backend's `erx_firmware_request`, the shim's request routine over a buffer page of the root's own, adds both to
-  `NativeRoot`; whether Fiasco's archive and its stack proof should leave them out is decided with it.
 * [Medium] domain library, `include/erx/device_kinds.h` ([design-usb.md](docs/design-usb.md#who-holds-a-controller),
   [design-pcie.md](docs/design-pcie.md#the-bridge-seam)): the host bridges' kinds drive a bridge row, but neither
   platform record (`config/platforms/`) has a `configuration` row and no manifest a PCIe domain, so no bridge is

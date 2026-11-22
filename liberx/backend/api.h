@@ -192,6 +192,28 @@ int	erx_mem_create_contiguous(uint64_t budget, uint64_t resource, uint64_t size,
 int	erx_mem_create_contiguous_in(uint64_t budget, uint64_t size, const erx_mem_dma_range_t *range,
 	    uint64_t *mem) ERX_WARN_UNUSED_RESULT;
 int	erx_mem_dma_addr(uint64_t mem, uint64_t offset, uint64_t *addr) ERX_WARN_UNUSED_RESULT;
+
+/*
+ * A firmware request, the Fiasco backend's form of erx_firmware_request, which only the root
+ * calls and erXos's kernel does not have (docs/design-fiasco.md, "The firmware request"): the
+ * kernel resolves a device's row from its resource, and the backend, which has no resource
+ * objects, takes the row as a value, which the domain library resolved from the manifest's
+ * firmware request records. It runs in the caller's thread and may sleep there up to the
+ * request's deadline, 1 s from the call. answer gets the answer's first *length bytes, at most
+ * the tag's window, and zeroes to its end; *length is 0 for every status but ERX_OK, which
+ * erx_vc_answer and the mailbox core give (ERX_EPROTO, ERX_ENOTSUP for a tag the firmware
+ * ignored, ERX_EBUSY beside a request in flight, ERX_ETIMEDOUT at the deadline and for every
+ * call after it, ERX_EINVAL for a buffer page the mailbox cannot carry). A tag outside fw_tag,
+ * and a root that keeps no mailbox, are ERX_ENOTSUP before anything is posted; hosted, which
+ * has no firmware, ERX_ENOTSUP.
+ */
+typedef struct erx_firmware_row {
+	erx_fw_tag_t	tag;
+	uint32_t	argument;	/* the request's one word */
+} erx_firmware_row_t;
+
+int	erx_firmware_request_row(erx_firmware_row_t row, uint8_t answer[ERX_VC_WINDOW_MAX], uint32_t *length)
+	    ERX_WARN_UNUSED_RESULT;
 /*
  * Maps part of a memory object at reserved addresses of space, which hold neither a
  * committed page nor a mapping (else ERX_EINVAL), in ERX_CAP_SELF or a space the

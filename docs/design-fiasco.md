@@ -2881,7 +2881,8 @@ buffer is no device's memory. The mailbox carries 32 bits, so the core refuses a
 
 **The page stays cached.** The request is written, cleaned to the point of coherence (`DC CVAC`, then
 `DSB SY`) and posted; after the answer that names the buffer, the page is cleaned and invalidated
-(`DC CIVAC`, then `DSB SY`) and read once into a copy, which the core checks. Nothing writes the page while
+(`DSB SY`, so that the read of the answer ends before any line goes, `DC CIVAC`, then `DSB SY`) and read once
+into a copy, which the core checks. Nothing writes the page while
 the firmware owns it, so the invalidate discards nothing. These are the user-mode instructions the device
 NIF already runs for a device that is not coherent ([design-device-dma.md](design-device-dma.md)).
 
