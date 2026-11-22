@@ -1317,10 +1317,18 @@ firmware may hand over a VL805 it never gave firmware. It is the mailbox's
 third referrer in the kernel, beside the trial request and the
 boot-time key read, and the chokepoint check that lists them names it.
 
-Probe B1 comes first, before the operation is built: it records on the
-board whether the VL805's EEPROM is fitted, what `0x50` reads at
-erXos's start, and what a missing notification looks like, and the
-operation's board test checks against those readings.
+Probe B1 is the operation's first boot on the board: the bridge driver
+logs `0x50` at the bridge's start, again after the PERST# cycle, and
+1 ms after the notification, with the notification's status and its
+round trip in microseconds, one line each. Those lines record whether
+the VL805's EEPROM is fitted, what `0x50` reads at erXos's start, the
+firmware version the notification leaves, whether the boot firmware
+reloads firmware already present, and a bound on how long the mailbox
+took, since the round trip holds the facet's call and the device
+service's queue; a boot of the test build that skips the
+notification records what a missing notification looks like. The
+operation's board test checks against those readings, so only its
+expectations wait for the probe.
 
 ## The USB core
 
