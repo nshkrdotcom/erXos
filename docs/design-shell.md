@@ -426,13 +426,14 @@ another Erlang command, so `ps -m | head`, `cat f | grep error | wc -l`
 and `ls | xargs rm` mean on erXos what they mean on FreeBSD. The shell
 does not interpret what flows. Only the transport differs:
 
-* between two Erlang commands, both processes of the session's domain,
-  each write is one message holding its bytes, with at most 64 KiB in
-  flight to the reader, the size of a pipe's first ring
+* between two processes of the session's domain, two Erlang commands or
+  an SSH job's relay and its `rc`, each write is one message holding its
+  bytes, with at most 64 KiB in flight to the reader, the size of a
+  pipe's first ring
   ([design-pipes.md](design-pipes.md#the-objects-of-a-pipe)); the reader
-  sees the end of the stream once the writer's stage has ended and every
-  write has been read, and a writer whose reader has ended stops with the
-  status `sigpipe`, as a program would;
+  sees the end of the stream once every writer has closed its end or
+  ended and every write has been read, and a writer whose reader has
+  ended stops with the status `sigpipe`, as a program would;
 * wherever a program takes part, the stages are joined by pipes
   ([design-pipes.md](design-pipes.md)); the session's pipe server makes
   each end for the stage that uses it, so every end has one holder and
@@ -443,7 +444,9 @@ does not interpret what flows. Only the transport differs:
   the session's tty, which the terminal relay serves for an Erlang
   command as it serves a program's ([Job control](#job-control)), so a
   command reads the terminal, sets its modes and asks its size
-  through it ([Interfaces](#interfaces)). The system shell's terminal
+  through it ([Interfaces](#interfaces)). In an SSH job, which has no
+  terminal, such a stream is the job's own ([rc as a
+  program](#rc-as-a-program)). The system shell's terminal
   is the console's, which runs no line discipline
   ([design-live.md](design-live.md#the-tty)): there a command's output
   streams are the console's writes and its standard input is empty.
@@ -930,7 +933,12 @@ redirection, files the shell opened and passes, sharing their offsets; or
 opens on the session's `/dev/tty`, which the terminal relay serves, so a
 program's output and error streams reach the terminal in the order it
 wrote them and no program can use up another's pipe ends
-([design-programs.md](design-programs.md#the-terminal)).
+([design-programs.md](design-programs.md#the-terminal)). A stream that
+is a message pipe, as between Erlang stages or in an SSH job, reaches a
+program as a pipe of the pipe server whose other end the starter holds,
+with a pump that feeds it from the message pipe or drains it into one,
+so the program reads end of file when the message pipe ends and meets
+`EPIPE` when its reader is gone.
 
 ### rc as a program
 
@@ -973,6 +981,12 @@ the runtime image running this shell's release in program mode
   ([design-ssh.md](design-ssh.md#sessions-ttys-and-shells)), at the
   tty's hangup, and when the command ends, as a UNIX session's processes
   end with its terminal.
+* **In a job.** `rc -c` on a channel with no tty (an SSH exec without
+  `-t`) runs its command as one job in the same way, with standard
+  input, output and error on the job's message pipes, which the job's
+  relay fills and drains, and the relay as its group leader; it ends
+  when the command ends or at the channel's hangup
+  ([design-ssh.md](design-ssh.md#sessions-ttys-and-shells)).
 
 A command for `system` is rc, not sh. The common translations:
 

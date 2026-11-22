@@ -845,13 +845,12 @@ domain, heard through that domain's envelope, and answers each `ok` or
   `pty-req` allows, is taken as 24 rows or 80 columns.
 * **`{open_job, Channel, Run}`** for a channel with no pseudo-terminal.
   The session starts the shell with standard input, output and error on
-  three pipes of its pipe server ([design-pipes.md](design-pipes.md)),
-  whose other ends the line holds, since a pipe end never leaves the
-  session, as a command domain's stream relay holds its command's
-  ([design-programs.md](design-programs.md#what-a-program-can-start)).
-  The line relays them to the channel with the job messages below, so a
-  program's error output stays apart from its output, as `git` and
-  `rsync` over SSH need.
+  three of the command shell's message pipes
+  ([design-shell.md](design-shell.md#pipelines)), whose other ends the
+  job's relay holds, a process of the line, and the relay carries them
+  to the channel with the job messages below, so a program's error
+  output stays apart from its output, as `git` and `rsync` over SSH
+  need.
 
 `Run` says what runs: `shell` runs `rc`, interactive on a tty and reading
 commands from standard input in a job, as OpenSSH runs the user's shell
@@ -863,6 +862,35 @@ channels, `max_channels`, and `badarg` to any other shape. The host
 tool's SSH route is such a job, an `exec` of the session command `load`
 whose standard input carries the modules and whose facets are the
 session's ([design-live.md](design-live.md#one-load-three-routes)).
+
+A job's streams are message pipes, not pipes of the pipe server: the
+relay and `rc` are both processes of the session, and the session joins
+its own processes with message pipes, keeping its pipe server's pipes
+for where a program takes part
+([design-shell.md](design-shell.md#pipelines)). A program the job
+starts gets pipe ends of the pipe server from its starter, whose pumps
+join them to the job's streams, so it reads end of file and writes into
+`EPIPE` as on any pipe
+([design-shell.md](design-shell.md#starting-programs)). The relay never
+waits on a pipe: it asks for each write and each read without blocking
+and takes the answer as a message, and at `job_eof` it closes standard
+input's writing end while it goes on running, so `rc` reads end of file
+while the job's output still flows.
+
+The relay is the job's group leader. What the job's processes print
+through `io` it writes to the job's standard error, whatever a
+command's own redirection, and never to standard output, which stays
+byte-clean; every other request it answers `{error, enotsup}`, and a
+`requests` list holding one `{error, request}`, as every group does.
+Input is refused as the command shell's group refuses it to every
+process but its shell
+([design-shell.md](design-shell.md#the-terminal-relays-protocol)), and
+`setopts`, `getopts` and `get_geometry` because a job has no terminal,
+as `io:columns/0` reports for any device that is not one. The relay
+writes to standard error without holding it, so the stream still ends
+when `rc` does. On a tty, the command shell's group writes `io` output
+to the terminal, which is standard error there, so output follows one
+rule in both.
 
 A job's channel and its line exchange seven closed messages, heard
 through each other's domain envelope and each checked by its receiver:
@@ -954,7 +982,7 @@ file of the principal's; SFTP reaches only what the session reaches
 or exec, is refused by OTP's connection (RFC 4254, section 6.5).
 
 **The server.** In the session, `Run = sftp` starts `erx_sftp_server`
-on the job's three pipes instead of `rc`, as OpenSSH's `internal-sftp`
+on the job's three streams instead of `rc`, as OpenSSH's `internal-sftp`
 serves SFTP in the session's own process rather than through the user's
 shell (`do_child` in `session.c`). `erx_sftp_server` reads standard
 input and hands each piece to OTP's `ssh_sftpd`, whose request decoding,
@@ -1106,8 +1134,9 @@ identifier.
    ([Sessions, ttys and shells](#sessions-ttys-and-shells)). An `exec`
    runs `rc -c Command` in root's session as stage 2's does, with
    `Command` 1 to 32 KiB holding no NUL byte: on the channel's tty when
-   the client asked for one, and otherwise as a job on three pipes of
-   the session's pipe server, which the channel relays with the job
+   the client asked for one, and otherwise as a job whose standard
+   input, output and error are the session shell's message pipes, which
+   the line fills and drains and the channel relays with the job
    messages of [Sessions, ttys and shells](#sessions-ttys-and-shells),
    exchanged inside root's session with the session's job relay, the
    part of `erx_ssh_line` that stage 2's `open_job` runs, so a job's
