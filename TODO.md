@@ -8654,30 +8654,6 @@ model harness drive `erx_device.c` itself. `erx_device_dma_check` and `erx_devic
   peer before it reports the connection. Question for the design: rely on Part E 5.3 and check the board's
   controller's handle reuse with a probe, or add such a fence. A cheap narrowing for host-initiated disconnects
   alone: refuse a link's packets once its handle's disconnect is asked.
-* [Medium] bluetooth, Reconnection's link side (`erx_bt_link_core`; docs/design-bluetooth.md "Reconnection",
-  "The link's messages"): a resolved link sends no Security Request (`wait` to the window, `{wait, Ms}` back,
-  SMP 3.6.7 after the pairing wait and never during encryption), indicates no Service Changed when the bond's
-  table hash differs and so sends no `served`, and a configuration write on a bonded link is answered at once
-  instead of after the store's `kept` for its `subscriptions`. The core holds the bond's hash as `served` for
-  them. Name `wait` and `{wait, Ms}` in the link core's exported `to_window()` and `from_window()`, which
-  `erx_bt_window` adds them to meanwhile. Build them with the host tests the Verification table lists ("one Security Request, never during
-  encryption", "a bonded configuration write answered only after the store's `ok`").
-* [Medium] bluetooth, the link core's bond state (`erx_bt_link_core`'s `kept`, `keeping`, `candidate` and
-  `served`): four fields hold one lifecycle (none, a resolved candidate, proven, keeping, kept), so meaningless
-  combinations are representable and `bonded/1` must be checked against every clause that writes them. Fold
-  them into one sum-typed field when Reconnection's rest lands, and drop `served` if Service Changed does not
-  need it.
-  Disconnection Complete drops the handle's packets still waiting for the writer and its disconnect, but the
-  packet the writer holds, and packets written that the controller has not yet read, are already on the line; if
-  the controller has given the handle to a new peer by the time it reads them, they reach the new link. (A
-  disconnect handed to the writer and unanswered cannot: a connection on its handle ends the controller process.) Narrow it in
-  the link slice, where the link protocol can tie each packet to its connection.
-* [Medium] bluetooth, a disconnect racing the peer's (`erx_bt_hci_core`'s `answered/4`; docs/design-bluetooth.md
-  "Commands and data credits"): a disconnect answered with any failure other than Unknown Connection Identifier
-  ends the controller process, and a controller may answer Command Disallowed (0x0C) to a disconnect that meets a
-  termination already in progress, so a remote peer leaving as the host disconnects it may reset every link.
-  Check Core 6.3 Vol 4 Part E 7.1.6 and 7.7.5 for the statuses a controller sends in that race, and accept the
-  ones that mean the handle is going.
 * [Low] bluetooth, an outcome for a pairing the window did not open (`erx_bt_link_core`'s `smp_action/3`):
   `awaiting` is set at `admit`, so a peer's Pairing Failed or the Security Manager Timer between `admit` and
   a `closed` or `waiting` verdict sends `{outcome, Tag, {failed, _}}` for a pairing the window refused. Clear
