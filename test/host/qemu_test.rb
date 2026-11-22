@@ -3,6 +3,7 @@
 # frozen_string_literal: true
 
 require 'minitest/autorun'
+require 'json'
 require 'tmpdir'
 require_relative '../../tools/lib/erx/qemu'
 
@@ -263,7 +264,7 @@ class QemuTest < Minitest::Test
     netdevs = argv.each_cons(2).select { |flag, _| flag == '-netdev' }.map(&:last)
     assert_equal ['user,id=nic_user,restrict=on,net=104.16.0.0/16,guestfwd=tcp:104.16.14.28:443-cmd:nc 127.0.0.1 5005',
                   'hubport,id=nic_hub_user,hubid=0,netdev=nic_user', 'hubport,id=nic_hub_guest,hubid=0'], netdevs
-    assert_includes argv, "virtio-net-device,netdev=nic_hub_guest,bus=virtio-mmio-bus.#{Erx::QemuPlan::NIC_TRANSPORT}"
+    assert_includes argv, "virtio-net-device,netdev=nic_hub_guest,bus=virtio-mmio-bus.23"
     [['104.16.0.0/16', '10.0.2.4', 443, 5005], ['104.16.0.0/16', '104.16.14.28/32', 443, 5005],
      ['104.16.0.0', '104.16.14.28', 443, 5005], ['104.16.0.0/16', '104.16.14.28', 443, 0],
      ['104.16.0.0/16,x', '104.16.14.28', 443, 5005]].each do |network, address, port, relay_port|
@@ -278,11 +279,9 @@ class QemuTest < Minitest::Test
   # never listens. A port that is no TCP port is refused, and so is a line on a board that
   # boots through its loader, which has no virtio transports.
   def test_the_line_is_a_virtio_console_on_its_units_transport_joined_to_loopback
-    line = PLATFORM.record.fetch('units').find { |unit| unit.fetch('key') == 'line' }.fetch('devices').first
-    bus = (line.fetch('base') - 0x0a000000) / 0x200
     argv = Erx::QemuPlan.argv(platform: PLATFORM, accel: 'hvf', image: 'image', serial: 'serial',
                               line: Erx::QemuPlan::Line.new(port: 5010))
-    assert_includes argv, "virtio-serial-device,id=line_serial,bus=virtio-mmio-bus.#{bus}"
+    assert_includes argv, 'virtio-serial-device,id=line_serial,bus=virtio-mmio-bus.7'
     chardevs = argv.each_cons(2).select { |flag, _| flag == '-chardev' }.map(&:last)
     assert_equal ['socket,id=line,host=127.0.0.1,port=5010,server=off'], chardevs
     assert_includes argv, 'virtconsole,chardev=line,bus=line_serial.0,nr=0'
@@ -293,19 +292,22 @@ class QemuTest < Minitest::Test
       Erx::QemuPlan.argv(platform: pi, accel: 'tcg', image: '/b/image.boot', stub: '/b/bl31.bin', dtb: '/b/model.dtb',
                          serial: 'serial', hostlink: Erx::QemuPlan::NO_HOSTLINK, line: Erx::QemuPlan::Line.new(port: 5010))
     end
-  assert_match(/takes no line/, error.message)
-end
-
-# The line's transport is a unit of its own page: a display device moved onto that page
-# is refused by the unit rule.
-def test_a_device_on_the_lines_page_is_refused
-  display = Erx::QemuPlan::Display.new(qmp_socket: '/tmp/erx-qmp', tablet: Erx::QemuPlan::LINE_TRANSPORT - 1)
-  error = assert_raises(Erx::Error) do
-    Erx::QemuPlan.argv(platform: PLATFORM, accel: 'hvf', image: 'image', serial: 'serial', display: display,
-                       line: Erx::QemuPlan::Line.new(port: 5010))
+    assert_match(/takes no line/, error.message)
   end
-  assert_match(/share a register page: 0x0a000000 \(display, line\)/, error.message)
-end
+
+  # The line's transport is a unit of its own page: a record whose display unit names a
+  # transport on that page is refused by the unit rule.
+  def test_a_device_on_the_lines_page_is_refused
+    record = JSON.parse(JSON.generate(PLATFORM.record))
+    display = record.fetch('units').find { |unit| unit.fetch('key') == 'display' }
+    display.fetch('devices').find { |device| device.fetch('role') == 'input' }['base'] = 0x0a000c00
+    error = assert_raises(Erx::Error) do
+      Erx::QemuPlan.argv(platform: Erx::Platform.new(name: PLATFORM.name, record: record), accel: 'hvf', image: 'image',
+                         serial: 'serial', display: Erx::QemuPlan::Display.new(qmp_socket: '/tmp/erx-qmp'),
+                         line: Erx::QemuPlan::Line.new(port: 5010))
+    end
+    assert_match(/share a register page: 0x0a000000 \(display, line\)/, error.message)
+  end
 
   def test_a_disk_path_that_could_change_what_qemu_opens_is_refused
     ['relative.img', 'nbd:host:1', '/a,b', "/a\0b", '', nil, 5].each do |path|

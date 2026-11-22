@@ -246,24 +246,27 @@ module Erx
       { 'type' => 'key', 'data' => { 'down' => down, 'key' => { 'type' => 'qcode', 'data' => 'a' } } }
     end.freeze
     CORNER = %w[x y].map { |axis| { 'type' => 'abs', 'data' => { 'axis' => axis, 'value' => 0 } } }.freeze
-    # The input drivers' bring-ups, the tablet's then the keyboard's, on the display unit's
-    # transports (QemuPlan::DISPLAY_TRANSPORTS, at 0x0a000000 and 0x200 apart, the paths
-    # config/platforms/qemu-virt.json gives them), and what the client reads of the key and
-    # the corner from its window's kbd and mouse files (erx_pattern_test:show/0): the
-    # router's records for the key and the pointer, routed to the window.
+    # What the client reads of the key and the corner from its window's kbd and mouse files
+    # (erx_pattern_test:show/0): the router's records for the key and the pointer, routed
+    # to the window.
     INPUT_DRIVER_LINE = /erx_virtio_input: [^\r\n]*/n
-    INPUT_DRIVEN = %i[tablet keyboard].map do |role|
-      format('erx_virtio_input: /virtio_mmio@%x driven', 0x0a000000 + (0x200 * QemuPlan::DISPLAY_TRANSPORTS.fetch(role)))
-    end.freeze
     INPUT_READ = ['erx_pattern_test: kbd {typed,97}', 'erx_pattern_test: mouse {0,0,0}'].freeze
     INPUT_READ_LINE = /erx_pattern_test: (?:kbd|mouse) [^\r\n]*/n
 
+    # The input drivers' bring-ups, one on each input device of platform's display unit, in
+    # the guest's order, lowest address first, each named by the path the record gives it.
+    def input_driven(platform)
+      QemuPlan.unit_devices(platform, 'display', role: 'input', count: 2).reverse
+              .map { |device| "erx_virtio_input: #{device.fetch('path')} driven" }
+    end
+
     # The input drivers' lines of a boot's serial log, one bring-up of each in transport
-    # order and no other, and the client's reads of the input, the key's then the corner's
-    # and no other, or Error naming them.
-    def check_input_lines(log)
+    # order and no other (input_driven), and the client's reads of the input, the key's
+    # then the corner's and no other, or Error naming them.
+    def check_input_lines(log, platform:)
       drivers = log.scan(INPUT_DRIVER_LINE)
-      raise Error, "the input drivers logged #{drivers.first(4).inspect}, not #{INPUT_DRIVEN.inspect}" unless drivers == INPUT_DRIVEN
+      driven = input_driven(platform)
+      raise Error, "the input drivers logged #{drivers.first(4).inspect}, not #{driven.inspect}" unless drivers == driven
 
       read = log.scan(INPUT_READ_LINE)
       raise Error, "the client read #{read.first(4).inspect}, not #{INPUT_READ.inspect}" unless read == INPUT_READ
@@ -397,7 +400,7 @@ module Erx
     # confine cells each on its run's line, waiting PROBE_WAIT_SECONDS for it. Then the command
     # shell starts the Erlang shell, which types KILL_LINE, and its answer is the
     # lvgl-restart cell's (check_restart). points must end at the command shell.
-    def checkpoints(points, socket:, references:, serial:, side:)
+    def checkpoints(points, platform:, socket:, references:, serial:, side:)
       raise Error, 'the production checkpoints do not end at the shell' unless points.last.fetch(:name) == 'release-shell'
 
       shell = points.last
@@ -408,7 +411,7 @@ module Erx
         check_client_lines(log)
         type_input(socket)
         typed = await_log(serial, wait_seconds: CLIENT_WAIT_SECONDS) { |text| text.scan(INPUT_READ_LINE).size >= INPUT_READ.size }
-        check_input_lines(typed)
+        check_input_lines(typed, platform: platform)
         side.call(LVGL_CELL) { check_lvgl(socket: socket, references: references, serial: serial) }
         { LEASE_CELL => ['lease', LEASE_WAIT_SECONDS], DAMAGE_CELL => ['damage', PROBE_WAIT_SECONDS],
           CONFINE_CELL => ['confine', PROBE_WAIT_SECONDS] }.each do |cell, (run, wait)|
@@ -504,7 +507,8 @@ module Erx
         Qemu.new(root: @root, runner: @runner, program: @qemu)
             .run(platform: @machine.platform, accel: accel, cpus: count, remote: remote, image: built.single,
                  memory_mib: @machine.memory_mib, directory: boot, display: display,
-                 checkpoints: DisplayDomain.checkpoints(points, socket: socket, references: File.join(@root, REFERENCES),
+                 checkpoints: DisplayDomain.checkpoints(points, platform: @machine.platform, socket: socket,
+                                                        references: File.join(@root, REFERENCES),
                                                         serial: File.join(boot, 'serial.log'), side: side))
         sides
       end

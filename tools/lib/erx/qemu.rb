@@ -75,45 +75,35 @@ module Erx
     DETERMINISTIC_WORD = 'erx.det=1'
     DETERMINISTIC_ARGUMENTS = %w[-icount shift=0,sleep=off -rtc base=2026-01-01,clock=vm].freeze
     # The most disks a plan attaches; QEMU virt has 32 virtio-mmio slots and the
-    # tests need a handful. They fit on the disks' page (NIC_TRANSPORT).
+    # tests need a handful. They fit on the block unit's register page.
     MAX_DISKS = 4
     # QEMU's virtio-mmio transport offers the legacy interface (version 1) unless
     # told otherwise; the guest's driver supports version 2 only.
     DISK_TRANSPORT_ARGUMENTS = %w[-global virtio-mmio.force-legacy=false].freeze
-    # QEMU virt makes 32 virtio-mmio transports, 0x200 bytes apart from 0x0a000000, as
-    # buses virtio-mmio-bus.0 to .31 in address order, and hands a device with no bus
-    # named the free transport of highest address. The first disk is pinned to bus .31,
-    # at 0x0a003e00, which the development manifest names as the block device
-    # (config/manifest/qemu-virt-development.txt), and each next disk to the bus below.
-    LAST_TRANSPORT = 31
-    # The transport the network device sits on: bus .23 at 0x0a002e00, which the development
-    # manifest names as the network device (config/platforms/qemu-virt.json). Eight
-    # transports share a 4 KiB page, and the transports of a page are one unit, which goes
-    # whole to one domain (docs/design-shared-devices.md, "The unit rule"); the disks and
-    # the network device go to different domains, so the disks keep the top page, buses
-    # .31 to .24, and the network device takes the page below it.
-    NIC_TRANSPORT = 23
-    # How many virtio-mmio transports share one 4 KiB register page: 0x1000 / 0x200.
-    TRANSPORTS_PER_PAGE = 8
-    # The display devices' transports: the page below the network device's, buses .15 to
-    # .8, at 0x0a001e00 and below. The graphics device is bus .15, the keyboard .14 and the
-    # tablet .13, so the three are one unit that goes whole to the display domain and share
-    # no register page with the disks or the network device (Display, the unit rule).
-    DISPLAY_TRANSPORTS = { gpu: 15, keyboard: 14, tablet: 13 }.freeze
-    # The Bluetooth controller's line: bus .7 at 0x0a000e00, the transport the platform
-    # record's line unit names (config/platforms/qemu-virt.json), alone on the lowest page,
-    # buses .7 to .0, so it shares no register page with another unit (Line, the unit rule).
-    LINE_TRANSPORT = 7
+    # QEMU virt's virtio-mmio transports (QEMU's hw/arm/virt.c): register windows
+    # VIRTIO_MMIO_STRIDE bytes apart from VIRTIO_MMIO_BASE, as buses virtio-mmio-bus.0, .1
+    # and on in address order. QEMU hands a device with no bus named the free transport of
+    # highest address, so the plan pins each device to the bus of the transport the platform
+    # record names for it (config/platforms/qemu-virt.json): the block unit's for the first
+    # disk and the transport below for each next, the net unit's for the network device,
+    # the display unit's for the display's three and the line unit's for the line. Each
+    # unit holds its transports' 4 KiB register pages whole (docs/design-shared-devices.md,
+    # "The unit rule"), which check_pages confirms of a plan.
+    VIRTIO_MMIO_BASE = 0x0a000000
+    VIRTIO_MMIO_STRIDE = 0x200
+    # The register page the unit rule divides transports by, and how many share one.
+    REGISTER_PAGE = 0x1000
+    TRANSPORTS_PER_PAGE = REGISTER_PAGE / VIRTIO_MMIO_STRIDE
     # QEMU's ids of the line's virtio-serial device and of its chardev (Line).
     LINE_SERIAL_ID = 'line_serial'
     LINE_CHARDEV_ID = 'line'
     # One virtio device of a plan on its transport: unit names the domain the device goes
-    # to (:disks, :nic, :display or :line), bus its virtio-mmio-bus number, and device the
+    # to, by the platform record's unit key ('block', 'net', 'display' or 'line'), bus its virtio-mmio-bus number, and device the
     # -device value before its bus.
     Placement = Data.define(:unit, :bus, :device)
     # The Bluetooth controller's line, not a serial line or the kernel command line
     # (docs/design-bluetooth.md, "The line on QEMU `virt`"):
-    # a virtio console on LINE_TRANSPORT whose port 0 is a socket chardev that connects to
+    # a virtio console on the line unit's transport whose port 0 is a socket chardev that connects to
     # a controller listening on the development host's loopback at port, the harness's
     # Bumble controller. QEMU connects when it starts, so the controller listens first.
     # The chardev never listens itself (server=off) and names only 127.0.0.1, so no other
@@ -125,12 +115,9 @@ module Erx
         super
       end
 
-      # The virtio-serial device on LINE_TRANSPORT; #arguments adds port 0 on that device's
-      # own bus, LINE_SERIAL_ID.0.
-      def placement = Placement.new(unit: :line, bus: LINE_TRANSPORT, device: "virtio-serial-device,id=#{LINE_SERIAL_ID}")
-
-      # The chardev, and port 0 of the console on it, which follow the device's -device
-      # (argv), since QEMU creates the port on a bus the device has already made.
+      # The chardev, and port 0 of the console on it, on the virtio-serial device's own bus,
+      # LINE_SERIAL_ID.0. They follow the device's -device (QemuPlan.placements), since QEMU
+      # creates the port on a bus the device has already made.
       def arguments = ['-chardev', "socket,id=#{LINE_CHARDEV_ID},host=127.0.0.1,port=#{port},server=off",
                        '-device', "virtconsole,chardev=#{LINE_CHARDEV_ID},bus=#{LINE_SERIAL_ID}.0,nr=0"]
     end
@@ -219,33 +206,22 @@ module Erx
     # (-display default), for a person at the screen. The socket's directory must be the caller's own and owner-only (mode 0700,
     # as OutputDirectory makes it), which the plan checks before QEMU starts, because QMP
     # gives whoever connects the developer's own power over the machine and the host files
-    # it writes; QEMU makes the socket itself. The transports are buses
-    # of virtio-mmio-bus, three distinct numbers within 0 to 31, by default DISPLAY_TRANSPORTS.
-    Display = Data.define(:qmp_socket, :gpu, :keyboard, :tablet) do
-      def initialize(qmp_socket:, gpu: DISPLAY_TRANSPORTS.fetch(:gpu), keyboard: DISPLAY_TRANSPORTS.fetch(:keyboard),
-                     tablet: DISPLAY_TRANSPORTS.fetch(:tablet))
-        buses = [gpu, keyboard, tablet]
-        unless buses.all? { |bus| bus.is_a?(Integer) && bus.between?(0, LAST_TRANSPORT) } && buses.uniq.size == buses.size
-          raise Error, "display transports are three distinct buses of virtio-mmio-bus.0 to .#{LAST_TRANSPORT}"
-        end
+    # it writes; QEMU makes the socket itself. The devices' transports are the platform
+    # record's display unit's (QemuPlan.display_devices).
+    Display = Data.define(:qmp_socket) do
+      def initialize(qmp_socket:)
         unless qmp_socket == WINDOW || (qmp_socket.is_a?(String) && qmp_socket.start_with?('/') &&
                                         qmp_socket.bytesize <= SOCKET_PATH_MAX && !qmp_socket.match?(/[\0,]/))
           raise Error, 'invalid QMP socket path'
         end
 
-        super(qmp_socket: qmp_socket == WINDOW ? WINDOW : qmp_socket.dup.freeze, gpu: gpu, keyboard: keyboard, tablet: tablet)
+        super(qmp_socket: qmp_socket == WINDOW ? WINDOW : qmp_socket.dup.freeze)
       end
 
       # The display in QEMU's own window, with no QMP socket.
       def self.window = new(qmp_socket: WINDOW)
 
       def window? = qmp_socket == WINDOW
-
-      # The display's three devices on their transports, all of the unit :display.
-      def placements
-        [['virtio-gpu-device', gpu], ['virtio-keyboard-device', keyboard], ['virtio-tablet-device', tablet]]
-          .map { |device, bus| Placement.new(unit: :display, bus: bus, device: device) }
-      end
     end
     # PCIe functions on QEMU virt's host bridge, for the pcie suite (docs/design-pcie.md, "The
     # `pcie` QEMU suite"): functions maps a slot of bus 0, 1 to 31 (slot 0 is the host
@@ -371,7 +347,7 @@ module Erx
       raise Error, 'a network device is a QemuPlan::Nic, Relay or UserNet' unless [NilClass, Nic, Relay, UserNet].include?(nic.class)
       raise Error, 'a display is a QemuPlan::Display' unless display.nil? || display.is_a?(Display)
       raise Error, 'a line is a QemuPlan::Line' unless line.nil? || line.is_a?(Line)
-      devices = placements(disks: disks, nic: nic, display: display, line: line)
+      devices = placements(platform, disks: disks, nic: nic, display: display, line: line)
       check_pages(devices)
       # QEMU listens on the socket as soon as it starts, so its directory is checked before.
       Qmp.check_directory(display.qmp_socket) if display && !display.window?
@@ -422,7 +398,7 @@ module Erx
     # QEMU's second serial port, the first going to the null device; and no host link UART,
     # which the Raspberry Pi 4's model does not have (UART3). A disk is the card on the
     # board's SD bus, which takes one. A display is QMP on its socket alone: the board's own
-    # framebuffer is the screen, and the display's virtio transports are unused. firmware, a
+    # framebuffer is the screen, and the record's display unit is not used. firmware, a
     # test harness's ELF such as the raspi4b suite's firmware framebuffer stand-in
     # (Raspi4bFirmwareFb), is where CPU 0 starts instead of the stub, which it enters when done.
     # refused holds what such a plan cannot take, each nil when the plan does not ask for it.
@@ -436,9 +412,6 @@ module Erx
       raise Error, "CPU count must be between #{CPUS.min} and #{CPUS.max}" unless cpus.is_a?(Integer) && CPUS.cover?(cpus)
 
       raise Error, 'a display is a QemuPlan::Display' unless display.nil? || display.is_a?(Display)
-      if display && display != Display.new(qmp_socket: display.qmp_socket)
-        raise Error, "#{board.base} takes a display as QMP alone, with no virtio transports of its own"
-      end
 
       [image, stub, dtb, program, *firmware].each do |value|
         raise Error, 'invalid QEMU path' unless value.is_a?(String) && !value.empty? && !value.match?(/[\0,]/)
@@ -515,16 +488,50 @@ module Erx
       socket ? ['-qmp', "unix:#{socket},server=on,wait=off"] : []
     end
 
-    # Every virtio device of a plan on its transport: the disks from bus .31 down, the
-    # network device, the display's three and the line's console. The -device arguments and the page check both
-    # read this one list, so no device reaches QEMU on a bus the check did not see.
-    def placements(disks:, nic:, display:, line:)
+    # Every virtio device of a plan on the transport platform's record names for it: the
+    # disks from the block unit's down, the network device, the display's three and the
+    # line's console. The -device arguments and the page check both read this one list, so
+    # no device reaches QEMU on a bus the check did not see.
+    def placements(platform, disks:, nic:, display:, line:)
+      first_disk = disks.empty? ? nil : transport_of(platform, key: 'block', role: 'block')
       [*disks.each_index.map do |index|
-         Placement.new(unit: :disks, bus: LAST_TRANSPORT - index, device: "virtio-blk-device,drive=disk#{index}")
+         Placement.new(unit: 'block', bus: first_disk - index, device: "virtio-blk-device,drive=disk#{index}")
        end,
-       *(nic ? [Placement.new(unit: :nic, bus: NIC_TRANSPORT, device: "virtio-net-device,netdev=#{nic_guest_netdev(nic)}")] : []),
-       *(display ? display.placements : []), *line&.placement]
+       *(nic ? [Placement.new(unit: 'net', bus: transport_of(platform, key: 'net', role: 'network'),
+                              device: "virtio-net-device,netdev=#{nic_guest_netdev(nic)}")] : []),
+       *(display ? display_placements(platform) : []),
+       *(line ? [Placement.new(unit: 'line', bus: transport_of(platform, key: 'line', role: 'serial'),
+                               device: "virtio-serial-device,id=#{LINE_SERIAL_ID}")] : [])]
     end
+
+    # The bus of the one device of role in platform's unit key.
+    def transport_of(platform, key:, role:) = transport_bus(unit_devices(platform, key, role: role, count: 1).first)
+
+    # The display's three devices, all in the display unit, by the role the harness gives
+    # each: the unit's gpu device, and of its two input devices the keyboard at the higher
+    # address and the tablet below it.
+    def display_placements(platform)
+      keyboard, tablet = unit_devices(platform, 'display', role: 'input', count: 2)
+      gpu = unit_devices(platform, 'display', role: 'gpu', count: 1).first
+      [['virtio-gpu-device', gpu], ['virtio-keyboard-device', keyboard], ['virtio-tablet-device', tablet]].map do |device, held|
+        Placement.new(unit: 'display', bus: transport_bus(held), device: device)
+      end
+    end
+
+    # The count devices of role in platform's unit key, highest address first, or Error.
+    def unit_devices(platform, key, role:, count:)
+      unit = platform.record.fetch('units').find { |candidate| candidate.fetch('key') == key }
+      devices = unit ? unit.fetch('devices').select { |device| device.fetch('role') == role } : []
+      unless devices.size == count
+        raise Error, "platform #{platform.name}'s #{key} unit has #{devices.size} #{role} devices, not #{count}"
+      end
+
+      devices.sort_by { |device| -device.fetch('base') }
+    end
+
+    # The virtio-mmio-bus number of the transport whose register window is device's.
+    def transport_bus(device) = (device.fetch('base') - VIRTIO_MMIO_BASE) / VIRTIO_MMIO_STRIDE
+    private_class_method :transport_of, :display_placements, :transport_bus
 
     # One -device for each placement, pinned to its bus.
     def device_arguments(devices)
@@ -539,7 +546,7 @@ module Erx
       return if shared.empty?
 
       pages = shared.map do |page, held|
-        format('0x%08x (%s)', 0x0a000000 + (page * 0x1000), held.map(&:unit).uniq.join(', '))
+        format('0x%08x (%s)', VIRTIO_MMIO_BASE + (page * REGISTER_PAGE), held.map(&:unit).uniq.join(', '))
       end
       raise Error, "transports of different units share a register page: #{pages.join('; ')}"
     end

@@ -2778,8 +2778,8 @@ driver opens, so what a holder's window reaches is what its unit lists. The disk
 top page, `/virtio_mmio@a003e00` for the first and each next disk the transport below it,
 and the network device the page below, `/virtio_mmio@a002e00`; the display unit the page
 below that, whose graphics device is `/virtio_mmio@a001e00`, the keyboard
-`/virtio_mmio@a001c00` and the tablet `/virtio_mmio@a001a00`, the transports the harness
-pins them to (`QemuPlan::DISPLAY_TRANSPORTS`). The gpu has 9 MiB of DMA memory: the screen
+`/virtio_mmio@a001c00` and the tablet `/virtio_mmio@a001a00`, the record's transports, to
+which the harness pins them (`QemuPlan.placements`). The gpu has 9 MiB of DMA memory: the screen
 image of the largest mode the display design sizes, 1920 by 1080 in `x8r8g8b8`, 8,294,400
 bytes, and 1,142,784 bytes for the control queue's ring and buffers; each input device has
 64 KiB, room for its event queue's ring and 64 buffers of one event. The line unit takes the

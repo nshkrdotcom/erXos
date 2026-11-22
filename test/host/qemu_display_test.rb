@@ -3,6 +3,7 @@
 # frozen_string_literal: true
 
 require 'minitest/autorun'
+require 'json'
 require 'tmpdir'
 require 'socket'
 require_relative '../../tools/lib/erx/qemu'
@@ -30,8 +31,16 @@ class QemuDisplayTest < Minitest::Test
     FileUtils.remove_entry(@directory)
   end
 
-  def plan(**options)
-    Erx::QemuPlan.argv(platform: PLATFORM, accel: 'hvf', image: 'image', serial: 'serial', **options)
+  def plan(platform: PLATFORM, **options)
+    Erx::QemuPlan.argv(platform: platform, accel: 'hvf', image: 'image', serial: 'serial', **options)
+  end
+
+  # PLATFORM with the first device of role in its display unit moved to the transport at base.
+  def moved(role, base)
+    record = JSON.parse(JSON.generate(PLATFORM.record))
+    display = record.fetch('units').find { |unit| unit.fetch('key') == 'display' }
+    display.fetch('devices').find { |device| device.fetch('role') == role }['base'] = base
+    Erx::Platform.new(name: PLATFORM.name, record: record)
   end
 
   def pairs(argv) = argv.each_cons(2).to_a
@@ -60,31 +69,25 @@ class QemuDisplayTest < Minitest::Test
     assert_equal [[3, 3], [2], [1, 1, 1]], buses.map { |bus| bus / 8 }.chunk_while { |a, b| a == b }.to_a
   end
 
+  # A record whose display unit names a transport on a page the disks or the network
+  # device hold is refused by the unit rule.
   def test_a_transport_on_a_page_the_disks_or_the_network_device_hold_is_refused
     disk = Erx::QemuPlan::Disk.new(path: '/a')
     nic = Erx::QemuPlan::Nic.new(frames_port: 5001, peer_port: 5002, echo_port: 5003)
-    error = assert_raises(Erx::Error) { plan(display: DISPLAY.new(qmp_socket: @socket, gpu: 24), disks: [disk]) }
-    assert_includes error.message, '0x0a003000 (disks, display)'
-    assert_raises(Erx::Error) { plan(display: DISPLAY.new(qmp_socket: @socket, tablet: 22), nic: nic) }
-    assert_raises(Erx::Error) { plan(display: DISPLAY.new(qmp_socket: @socket, keyboard: 28), disks: [disk]) }
+    display = DISPLAY.new(qmp_socket: @socket)
+    error = assert_raises(Erx::Error) { plan(platform: moved('gpu', 0x0a003000), display: display, disks: [disk]) }
+    assert_includes error.message, '0x0a003000 (block, display)'
+    assert_raises(Erx::Error) { plan(platform: moved('input', 0x0a002c00), display: display, nic: nic) }
+    assert_raises(Erx::Error) { plan(platform: moved('input', 0x0a003800), display: display, disks: [disk]) }
     # The same transports are fine when the disks and the network device are not there.
-    plan(display: DISPLAY.new(qmp_socket: @socket, gpu: 24))
+    plan(platform: moved('gpu', 0x0a003000), display: display)
   end
 
   def test_a_display_that_could_change_what_qemu_opens_is_refused
     [nil, 'relative.sock', "/a\0b", '/a,b', "/#{'x' * 110}", 5].each do |path|
       assert_raises(Erx::Error, path.inspect) { DISPLAY.new(qmp_socket: path) }
     end
-    [{ gpu: 15, keyboard: 15 }, { gpu: -1 }, { tablet: 32 }, { gpu: '15' }].each do |buses|
-      assert_raises(Erx::Error, buses.inspect) { DISPLAY.new(qmp_socket: @socket, **buses) }
-    end
     assert_raises(Erx::Error) { plan(display: '/a.sock') }
-    pi = Erx::Platform.load(root: ROOT, name: 'raspi4b')
-    # A loaded board takes a display as QMP alone; one with a virtio transport is refused.
-    assert_raises(Erx::Error) do
-      Erx::QemuPlan.argv(platform: pi, accel: 'tcg', image: '/b/i', stub: '/b/s', dtb: '/b/d', serial: 'serial',
-                         hostlink: Erx::QemuPlan::NO_HOSTLINK, display: DISPLAY.new(qmp_socket: @socket, gpu: 24))
-    end
   end
 
   # The scripted peers below listen on a UNIX socket in the test's own directory (mode 0700).

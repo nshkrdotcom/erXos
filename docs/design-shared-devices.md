@@ -67,7 +67,8 @@ where the manifest has it
 QEMU `virt` the disks and the network device are given to different
 domains, so they sit on transports of different pages: the harness puts
 the disks on the top page and the network device on the page below
-(`tools/lib/erx/qemu.rb`, `NIC_TRANSPORT`).
+(`tools/lib/erx/qemu.rb`, `QemuPlan.placements`), on the transports the platform
+record names for each (`config/platforms/qemu-virt.json`).
 
 Systems that run drivers outside the kernel meet the same hardware.
 FreeBSD drives a multi-port serial card through one parent driver that
