@@ -19,7 +19,7 @@
  * CTR_EL0's two fields read here, each the log2 of a size in 4-byte words: DminLine, bits
  * [19:16], and CWG, bits [27:24] (Arm's machine-readable register data, release 2026-09,
  * Registers.json). They are written out here because hw/sysreg/aarch64.json cannot hold
- * CTR_EL0 yet and no generator makes C accessors from it (TODO.md, "CTR_EL0").
+ * CTR_EL0 yet and no generator makes C accessors from it (docs/todo-drivers.md, "CTR_EL0").
  */
 #define CTR_DMINLINE_SHIFT	16u
 #define CTR_CWG_SHIFT		24u

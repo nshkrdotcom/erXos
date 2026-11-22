@@ -139,7 +139,7 @@ The displays whose `windows` grant the domain holds, by the name its registry
 gives each (docs/design-display.md, "Choosing a display"). The registry names a
 facet after its service and does not record its interface, so this answers
 `display`, the name every manifest gives its one display's `windows` service, when
-the domain holds a facet of that name (TODO.md, "the displays a session holds").
+the domain holds a facet of that name (docs/todo-session.md, "the displays a session holds").
 """.
 -spec displays() -> [atom()].
 displays() ->

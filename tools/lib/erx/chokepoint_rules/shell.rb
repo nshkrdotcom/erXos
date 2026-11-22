@@ -11,7 +11,7 @@ module Erx
     SPAWN_ATOMS = ErlangText::ATOM.call('(?:spawn(?:_link|_monitor|_opt|_request)?|proc_lib)')
     # The spawns these modules may write besides the funnel's own: the job
     # leader, which holds no variable, and the exec's process, which holds the
-    # first variables (TODO.md, "plain spawns that hold the shell's variables").
+    # first variables (docs/todo-shell.md, "plain spawns that hold the shell's variables").
     # erx_shell_parse:next_bounded/3 starts its parse with a fixed-reason end
     # of its own and stays out of this scope, since the parser builds alone
     # for its fuzz target.

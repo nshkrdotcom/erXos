@@ -394,7 +394,7 @@ answer_until(Master, Tty, Deadline, Opens, Resends) ->
 
 %% Takes every output until what it took, carriage returns aside, contains Pattern,
 %% and returns it. A command's newline reaches the master as CR CR LF while its job
-%% holds the terminal (TODO.md, "a command's output through the console"), so no
+%% holds the terminal (docs/todo-session.md, "a command's output through the console"), so no
 %% pattern names a CR.
 await(Master, Tty, Pattern) ->
     await(Master, Tty, Pattern, <<>>).

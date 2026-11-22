@@ -47,7 +47,7 @@ empties the buffer, clears the broken mark and starts the driver again.
 
 **The tree's grants** (erx_fs_grants) the line starts and is linked to,
 so the end of either ends the other and its supervisor restarts both. No
-service serves them: TODO.md, "the line's service side".
+service serves them: docs/todo-bluetooth.md, "the line's service side".
 
 **The buffer** holds at most `line_rx_max` bytes. Input that would pass it
 marks the line broken: the buffer is dropped and every read answers `eio`

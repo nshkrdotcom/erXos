@@ -495,7 +495,7 @@ module Erx
     # kind does not take is refused before Fiasco builds (check_medium), and so is a
     # published medium in a tree whose Doom example is not fetched (DoomProgram.check_fetched,
     # which the one build runs again). Nothing on disk tells a published medium from a
-    # builder's yet (TODO.md, "site, the QEMU virt download"). Returns build's or
+    # builder's yet (docs/todo-site.md, "site, the QEMU virt download"). Returns build's or
     # build_medium's result. The raspi4b suite boots the development card this leaves.
     def self.pack_platform(root:, runner:, compiler:, linker:, platform:, medium:, jobs: 4, apps: ImageApps.none)
       machine = Machine.development(platform)

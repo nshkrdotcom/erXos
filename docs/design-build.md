@@ -849,7 +849,6 @@ failure names the file and its log, and a hang costs one file's deadline.
 The pool refuses to pass a file that printed no Minitest summary, so a test
 that forgets `require 'minitest/autorun'` cannot silently run nothing.
 
-`TODO.md` and `docs/todo-performance.md` merge by line union
-(`.gitattributes`), so concurrent additions to these lists never
-conflict; an entry edited on both sides can stay in both forms, which the
-next reader tidies.
+`TODO.md` and the `docs/todo-*.md` files merge normally; a conflict is
+resolved by hunk, keeping what each side changed. No list merges by line
+union: a union merge silently brings back an entry one side closed.

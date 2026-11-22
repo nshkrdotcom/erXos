@@ -75,7 +75,7 @@ module Erx
     Exemption = Data.define(:todo, :sites)
     APPS = 'erlang/apps'
     UNDECLARED = {
-      'console' => Exemption.new(todo: 'TODO.md, Bugs, "a facet of no manifest service": ' \
+      'console' => Exemption.new(todo: 'docs/todo-domains.md, Bugs, "a facet of no manifest service": ' \
                                        'no system manifest service instantiates console',
                                  sites: ["#{APPS}/erx/src/erx_console.erl",
                                          "#{APPS}/erx_session/src/erx_session_tty.erl"]),

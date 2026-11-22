@@ -184,7 +184,7 @@ void	erx_backend_handles_clear(erx_backend_handles_t *);
 /*
  * The handle a creator holds to a thread of another task, the root to a domain's first
  * thread and a session to a program's. docs/design-fiasco.md ("Thread creation") makes it
- * an ordinary entry of the creator's table; until then (TODO.md, "thread handles") it is
+ * an ordinary entry of the creator's table; until then (docs/todo-fiasco.md, "thread handles") it is
  * this value, no entry: the task, never 0, rides in the generation bits and the slot bits
  * are ERX_BACKEND_THREAD_HANDLE_OTHER plus the index, above caps_max, where no entry's
  * number can be, so the value names no entry of any table and a close, a dup or a pass of

@@ -71,10 +71,10 @@
 # configured domain's restart is admitted before that answer arrives. One such budget
 # is the bound as long as one domain at a time ends and the survivor answers before its
 # peer ends a second time; a second leftover refuses the next start
-# (TODO.md, "a refused restart is not retried"). The web, PCIe and USB domains each hold a
+# (docs/todo-domains.md, "a refused restart is not retried"). The web, PCIe and USB domains each hold a
 # connection to the system domain alone, so their ends leave no such budget; the display domain, which
 # root's session holds a connection to, leaves its whole outer budget, which this 1 MiB
-# does not hold (TODO.md, "a display domain's end keeps its outer budget"). With it
+# does not hold (docs/todo-domains.md, "a display domain's end keeps its outer budget"). With it
 # the baseline leaves root_memory the block device's 1 MiB, the network
 # device's 256 KiB, the gpu's 9 MiB, the keyboard's and the tablet's 64 KiB each, the
 # xhci function's 1 MiB of DMA memory and the 8 MiB margin no one is promised: the domain

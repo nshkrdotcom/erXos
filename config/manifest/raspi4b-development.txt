@@ -142,10 +142,10 @@ unit mailbox
 # pcie: the PCIe domain's unit, whose domain's rows are the common part's: the BCM2711's
 # bridge, closed, with its one listed place, the VL805, and its first line, SPI 147, which
 # the PCIe domain holds masked (docs/design-pcie.md, "The closed bus"; docs/design-platforms.md,
-# "PCIe bridges"); its second, SPI 148, is in no unit (TODO.md, "the bridge's second line").
+# "PCIe bridges"); its second, SPI 148, is in no unit (docs/todo-domains.md, "the bridge's second line").
 # The bridge has no driver module yet, so the enumerator refuses it at every boot, logs that
 # the bridge is not started, and reports no functions: the VL805 is never given and the USB
-# domain runs no controller (TODO.md, "USB on the Raspberry Pi 4").
+# domain runs no controller (docs/todo-usb.md, "USB on the Raspberry Pi 4").
 unit pcie
   placement "pcie"
   holder @domain.pcie
@@ -224,7 +224,7 @@ domain network
 # and max_connections each grow by that session (its net connection). The template's
 # release is ntpd's (ReleaseFiles::RELEASE_SCRIPTS), its -eval starts erx_ntpd, and its
 # environment sets ERX_START_FLAGS, standing in for the start row's flags until the start
-# table carries them (TODO.md, "time, ntpd"). ntpd_net grants the network stack with small
+# table carries them (docs/todo-runtime.md, "time, ntpd"). ntpd_net grants the network stack with small
 # limits: two sockets (docs/design-time.md, "Who does what"), a lookup's UDP socket and
 # the TCP connection inet_res opens beside it for a truncated answer, while an exchange
 # holds one socket alone; 128 KiB of buffers, the least a row may state and that
@@ -276,7 +276,7 @@ start ntpd
 # SPI 143, as one unit (docs/design-usb.md, "The VL805 on the Raspberry Pi 4"); its DMA is
 # unconfined, so the USB domain is in the trusted base, and its 1 MiB of contiguous memory
 # lies below the bridge's dma_limit. Neither this domain's memory nor the PCIe domain's is
-# measured on the Pi 4 (TODO.md, "USB on the Raspberry Pi 4").
+# measured on the Pi 4 (docs/todo-usb.md, "USB on the Raspberry Pi 4").
 runtime_limits usb
   max_frame 131072
   max_message_heap 131072

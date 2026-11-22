@@ -23,7 +23,7 @@ limit pkg_scan_max u32 1024
 # expression. The reader checks the program's path as a relative_path, plain names, so
 # its text below the image's mount stays below it; that it lies under bin/ is the
 # packer's rule, and a link of the image is the program's resolve step's to refuse
-# (TODO.md, "an executable file as a program's image").
+# (docs/todo-shell.md, "an executable file as a program's image").
 limit pkg_needs_max u32 16
 limit pkg_applications_max u32 16
 limit pkg_program_max u32 255

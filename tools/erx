@@ -1202,7 +1202,7 @@ module Erx
     # in its directory. It takes no command: the guest's daemon gives root rc on a tty
     # and refuses exec (docs/design-ssh.md, "Stages"). ssh replaces this process, so
     # the terminal is the guest's. `tools/erx boot` forwards no port to the guest
-    # (TODO.md, "SSH from tools/erx boot").
+    # (docs/todo-session.md, "SSH from tools/erx boot").
     def self.ssh(input_arguments)
       arguments = input_arguments.dup
       port = DevKey::PORT

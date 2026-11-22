@@ -431,7 +431,7 @@ collect([apps | _] = Path, _Scope) ->
 collect([time], _Scope) ->
     erx_time_records:collect();
 %% `[ntp]` is ntpd's session's own; the system domain has none, and nothing routes
-%% the question to that session yet (TODO.md, "time, ntpd"), so there it is
+%% the question to that session yet (docs/todo-runtime.md, "time, ntpd"), so there it is
 %% unsupported rather than a claim that no ntpd runs.
 collect([ntp], _Scope) ->
     case is_system_runtime() of

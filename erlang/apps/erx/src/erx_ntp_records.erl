@@ -7,7 +7,7 @@ The collector of `[ntp]`, ntpd's state (docs/design-time.md, "What /proc
 shows"), which `/proc/ntp/status` shows to the whole-machine scope. It is
 meant to run in the runtime of ntpd's session, whose own state it reports,
 so every attribute is `runtime`'s; until the query worker routes `[ntp]`
-there (TODO.md, "time, ntpd"), the system domain's runtime answers
+there (docs/todo-runtime.md, "time, ntpd"), the system domain's runtime answers
 record(unsupported) instead (erx_inspector).
 
 * The values are erx_ntp_core:status/1's, as erx_ntpd:status/1 answers
