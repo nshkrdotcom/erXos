@@ -120,21 +120,17 @@ handle_cast(Message, Link) ->
 %% message as its role and kind alone: the window's verdict carries the fresh private key
 %% and passkey, a peer's packet its data. The log of sys events holds messages too, so it
 %% shows empty: gen_server's report formats a list there.
-format_status(#{state := #link{name = Name, conn = Conn, core = Core}} = Status) ->
-    Shown = Status#{state := #{name => Name, conn => Conn, core => facts(Core)}},
-    hide_log(hide_message(Shown));
 format_status(Status) ->
-    Status.
+    erx_report:status(Status, #{state => fun link_facts/1, message => fun input_kind/1}).
+
+link_facts(#link{name = Name, conn = Conn, core = Core}) -> #{name => Name, conn => Conn, core => facts(Core)};
+link_facts(_State) -> hidden.
 
 facts(starting) -> starting;
 facts(Core) -> erx_bt_link_core:facts(Core).
 
-hide_message(#{message := {Role, Input}} = Status) when is_atom(Role) -> Status#{message := {Role, kind(Input)}};
-hide_message(#{message := _} = Status) -> Status#{message := message};
-hide_message(Status) -> Status.
-
-hide_log(#{log := [_ | _]} = Status) -> Status#{log := []};
-hide_log(Status) -> Status.
+input_kind({Role, Input}) when is_atom(Role) -> {Role, kind(Input)};
+input_kind(_Message) -> message.
 
 kind(Input) when is_tuple(Input), tuple_size(Input) > 0, is_atom(element(1, Input)) -> element(1, Input);
 kind(Input) when is_atom(Input) -> Input;

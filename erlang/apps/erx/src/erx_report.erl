@@ -30,7 +30,8 @@ report through whole, and an `ignore` leaves the event as it was. Each function 
 is total over any term to keep that true.
 """.
 
--export([primary_filters/0, filter/2, reason_name/1]).
+-export([primary_filters/0, filter/2, reason_name/1, status/2]).
+-export_type([view/0]).
 
 -type summary() :: #{label => atom() | {atom(), atom()}, process => pid(), name => atom(),
                      class => error | exit | throw, reason => atom(),
@@ -134,6 +135,39 @@ reason(Reason, S) ->
 %% carry no term").
 -spec reason_name(term()) -> atom().
 reason_name(Reason) -> leading(Reason).
+
+-type view() :: keep | fun((term()) -> term()).
+-type shown_key() :: state | data | message.
+
+-doc """
+The status of a process that keeps its terms out of its reports: what a module's
+`format_status/1` returns for the `Status` OTP hands it. `Views` names which of `state`,
+`data` and `message` the module shows, and how: `keep` shows a value as it is, a function shows
+what it returns, and it must be total over every term the key can hold. A key not named is
+hidden. The log, the queue and the postponed events are always empty and the reason is
+always its leading atom (reason_name/1), whatever the module says. A key that shows a term of the process
+is a decision of the module, and its view says in one place what it keeps.
+""".
+-spec status(#{atom() => term()}, #{shown_key() => view()}) -> #{atom() => term()}.
+status(Status, Views) ->
+    maps:map(fun(Key, Value) -> shown(Key, Value, Views) end, Status).
+
+shown(Key, Value, Views) when Key =:= state; Key =:= data; Key =:= message ->
+    case maps:find(Key, Views) of
+        {ok, View} -> view(View, Value);
+        error -> hidden
+    end;
+shown(Key, Value, _Views) ->
+    default(Key, Value).
+
+default(log, _Value) -> [];
+default(queue, _Value) -> [];
+default(postponed, _Value) -> [];
+default(reason, Reason) -> reason_name(Reason);
+default(_Key, _Value) -> hidden.
+
+view(keep, Value) -> Value;
+view(View, Value) -> View(Value).
 
 leading(Atom) when is_atom(Atom) -> Atom;
 leading(Tuple) when tuple_size(Tuple) > 0 -> leading(element(1, Tuple));

@@ -13,14 +13,10 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
 
 ## Security residuals
 
-* [Medium] bluetooth, the line's reports (design-bluetooth.md, "The controller's line"): the line
-  tree's grant processes (`erx_fs`, a plain `proc_lib` process) export no `format_status/1`, so a
-  crash report of one quotes its mailbox, which holds the Bluetooth domain's `Twrite` frames and the
-  keeper's `{erx_fs_answer, ...}` replies, that is HCI commands and received bytes that carry keys.
-  The grants supervisor (`erx_fs_grants`) ends with its parent the line and logs a `terminate` report
-  of the line's exit reason, which `erx_line` now holds to a name; a `function_clause` crash of the
-  line's own request clauses still carries the state in its raw reason. Fix: a total `format_status/1`
-  in `erx_fs` as `erx_pl011` has, and a refusal in `erx_line:take/3` of a request of no known kind.
+* [Medium] bluetooth, the line's request clauses (`erlang/apps/erx_uart/src/erx_line.erl`, `take/3`;
+  design-bluetooth.md, "The controller's line"): a request of no known kind is a `function_clause`
+  crash of the line, whose reason carries the state raw. Fix: a refusal in `take/3` of a request of
+  no known kind.
 * [Medium] bluetooth, ACL packets on the line at a disconnection (`erlang/apps/erx_bt/src/erx_bt_hci_core.erl`,
   the Disconnection Complete clause of `event/2`; docs/design-bluetooth.md "Commands and data credits"): a
   Disconnection Complete drops the handle's packets still waiting for the writer and its disconnect, but the packet

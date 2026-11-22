@@ -430,17 +430,14 @@ facts(#store{address = Address, known = Known, reason = Reason, bonds = Bonds, l
 shown(read) -> read;
 shown({unknown, _}) -> unknown.
 
-format_status(#{state := #store{} = Store} = Status) ->
-    hide_log(hide_message(Status#{state := facts(Store)}));
 format_status(Status) ->
-    Status.
+    erx_report:status(Status, #{state => fun store_facts/1, message => fun message_kind/1}).
 
-hide_message(#{message := {erx_bt_link, _, Message}} = Status) -> Status#{message := {erx_bt_link, kind(Message)}};
-hide_message(#{message := Message} = Status) -> Status#{message := kind(Message)};
-hide_message(Status) -> Status.
+store_facts(#store{} = Store) -> facts(Store);
+store_facts(_State) -> hidden.
 
-hide_log(#{log := [_ | _]} = Status) -> Status#{log := []};
-hide_log(Status) -> Status.
+message_kind({erx_bt_link, _, Message}) -> {erx_bt_link, kind(Message)};
+message_kind(Message) -> kind(Message).
 
 kind(Message) when is_tuple(Message), tuple_size(Message) > 0, is_atom(element(1, Message)) -> element(1, Message);
 kind(Message) when is_atom(Message) -> Message;

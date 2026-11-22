@@ -127,15 +127,17 @@ handle_cast(_Message, State) ->
 %% request shows as its kind alone: a packet carries a peer's data, and a Long Term Key
 %% reply the key. The core shows as its facts, since its plan holds the patch's records,
 %% the vendor's firmware, and its replies and command slot a key.
-format_status(#{state := #hci{core = Core, rest = Rest} = State} = Status) ->
-    Shown = Status#{state := State#hci{core = {facts, erx_bt_hci_core:facts(Core)}, rest = {bytes, byte_size(Rest)}}},
-    case Shown of
-        #{message := {erx_bt_line_rx, Bytes}} -> Shown#{message := {erx_bt_line_rx, {bytes, byte_size(Bytes)}}};
-        #{message := {erx_bt_link, Name, Request}} -> Shown#{message := {erx_bt_link, Name, kind(Request)}};
-        #{} -> Shown
-    end;
 format_status(Status) ->
-    Status.
+    erx_report:status(Status, #{state => fun hci_facts/1, message => fun message_kind/1}).
+
+hci_facts(#hci{core = Core, rest = Rest} = State) ->
+    State#hci{core = {facts, erx_bt_hci_core:facts(Core)}, rest = {bytes, byte_size(Rest)}};
+hci_facts(_State) ->
+    hidden.
+
+message_kind({erx_bt_line_rx, Bytes}) when is_binary(Bytes) -> {erx_bt_line_rx, {bytes, byte_size(Bytes)}};
+message_kind({erx_bt_link, Name, Request}) -> {erx_bt_link, Name, kind(Request)};
+message_kind(_Message) -> hidden.
 
 kind(Request) when is_tuple(Request), tuple_size(Request) > 0 -> element(1, Request);
 kind(Request) when is_atom(Request) -> Request;

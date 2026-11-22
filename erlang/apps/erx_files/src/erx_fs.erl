@@ -45,7 +45,7 @@ client as `eio`.
 """.
 
 -export([start_link/3, start_link/4, start_mounted/5]).
--export([init/2, loop/2, drain/1]).
+-export([init/2, loop/2, drain/1, format_status/1]).
 
 -include("erx_fs_waits.hrl").
 
@@ -213,6 +213,17 @@ init(Parent, {Module, Args, Rights, Options}) ->
         {error, _} = Refused ->
             proc_lib:init_ack(Parent, Refused)
     end.
+
+-doc """
+What proc_lib's crash report shows of a grant that crashes: its reason's name alone. The
+grant holds its client's frames, a Bluetooth line's writes among them, in its state, its
+mailbox and its frames' arguments, and exporting this is what makes the report hide all
+three (erx_report:status/2). The grant takes no `sys` message, so no status is asked of it
+otherwise.
+""".
+-spec format_status(#{atom() => term()}) -> #{atom() => term()}.
+format_status(Status) ->
+    erx_report:status(Status, #{}).
 
 %% A grant ends with what Options' ends_with names: a port (a connection's) or a
 %% process (a client domain's pid, or the holder of a grant for this domain), or

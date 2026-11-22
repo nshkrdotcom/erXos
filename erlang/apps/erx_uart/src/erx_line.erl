@@ -129,22 +129,21 @@ the controller's traffic, which carries keys, so each key shows as a size or not
 to the system domain's code only.
 """.
 format_status(Status) ->
-    maps:map(fun status/2, Status).
+    erx_report:status(Status, #{state => fun state/1, message => fun message/1}).
 
-status(state, #line{rx = Rx, broken = Broken, driver = Driver, reset = Reset, waits = Waits}) ->
+state(#line{rx = Rx, broken = Broken, driver = Driver, reset = Reset, waits = Waits}) ->
     #{rx_bytes => byte_size(Rx), broken => Broken, driver => Driver,
       resetting => Reset =/= none,
       requests => [{Wait, shown_request(Request), State}
                    || {Wait, Request, State} <- erx_fs_waits:list(Waits)]};
-status(message, ?ERX_FS_WAIT(Wait, Request)) ->
+state(_State) ->
+    hidden.
+
+message(?ERX_FS_WAIT(Wait, Request)) ->
     ?ERX_FS_WAIT(Wait, shown_request(Request));
-status(message, {erx_console_input, Bytes}) when is_binary(Bytes) ->
+message({erx_console_input, Bytes}) when is_binary(Bytes) ->
     {erx_console_input, byte_size(Bytes)};
-status(log, _Log) ->
-    [];
-status(reason, Reason) ->
-    erx_report:reason_name(Reason);
-status(_Key, _Value) ->
+message(_Message) ->
     hidden.
 
 %% A request() with a write's bytes counted; a term of no kind of request() is hidden.

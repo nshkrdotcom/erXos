@@ -87,9 +87,7 @@ the process dictionary, nor a stack frame's arguments, but only the reason's lea
 """.
 -spec format_status(#{atom() => term()}) -> #{atom() => term()}.
 format_status(Status) ->
-    maps:map(fun(reason, Reason) -> erx_report:reason_name(Reason);
-                (_Key, _Value) -> hidden
-             end, Status).
+    erx_report:status(Status, #{}).
 
 %% A record program/1 refuses stops the driver with its reason before it touches the UART.
 %% IMSC is written whole once the line is attached, whichever the start: the receive and

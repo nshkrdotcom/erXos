@@ -147,3 +147,22 @@ events(Labels, Events) ->
 carries_mark(Event) ->
     Line = unicode:characters_to_binary(logger_formatter:format(Event, #{single_line => true})),
     binary:match(term_to_binary(Event), ?MARK) =/= nomatch orelse binary:match(Line, ?MARK) =/= nomatch.
+
+%% Status -------------------------------------------------------------------------
+
+%% A module's format_status/1 names the keys it shows: the others are hidden, the log, the
+%% queue and the postponed events are empty, and a reason is its leading atom.
+status_shows_only_what_the_views_name_test() ->
+    Secret = <<"STATUS-SECRET">>,
+    Status = erx_report:status(
+               #{state => {Secret, 1}, message => {Secret, 2}, queue => [Secret], postponed => [Secret],
+                 log => [Secret], reason => {badarg, Secret}, other => Secret},
+               #{state => fun({_, N}) -> N end}),
+    ?assertEqual(#{state => 1, message => hidden, queue => [], postponed => [], log => [],
+                   reason => badarg, other => hidden}, Status).
+
+%% The reason and the log are not the module's to show: a view named for them is ignored.
+the_reason_and_the_log_are_not_the_modules_to_show_test() ->
+    Status = erx_report:status(#{log => [a, b], reason => {badarg, x}},
+                               #{log => fun length/1, reason => keep}),
+    ?assertEqual(#{log => [], reason => badarg}, Status).

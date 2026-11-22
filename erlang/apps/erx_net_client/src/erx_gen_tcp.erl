@@ -387,14 +387,12 @@ kind(listening) -> tcp_listen.
 %% message in hand, since both may hold the peer's data.
 -doc false.
 format_status(Status) ->
-    maps:map(fun(data, #data{owner = Owner, sock = Sock, counters = Counters}) ->
-                     #{owner => Owner, sock => Sock, counters => Counters};
-                (message, _) -> redacted;
-                (queue, _) -> [];
-                (postponed, _) -> [];
-                (log, _) -> [];
-                (_, Value) -> Value
-             end, Status).
+    erx_report:status(Status, #{state => keep, data => fun socket_facts/1}).
+
+socket_facts(#data{owner = Owner, sock = Sock, counters = Counters}) ->
+    #{owner => Owner, sock => Sock, counters => Counters};
+socket_facts(_Data) ->
+    hidden.
 
 %% What an open's request makes of its socket process: a connection, or a listener whose
 %% accepted connections start with its `nodelay`.

@@ -166,18 +166,12 @@ hold the host's bytes or a reply; no sys log; and of a crash's reason only
 its leading atom (erx_report:reason_name/1).
 """.
 format_status(Status) ->
-    maps:map(fun(state, #state{core = Core, output_bytes = Out, held = Held}) ->
-                     #{session => erx_hostlink_session:info(Core), output_bytes => Out,
-                       held_bytes => byte_size(Held)};
-                (message, _Message) ->
-                     hidden;
-                (log, _Log) ->
-                     [];
-                (reason, Reason) ->
-                     erx_report:reason_name(Reason);
-                (_Key, Value) ->
-                     Value
-             end, Status).
+    erx_report:status(Status, #{state => fun state_facts/1}).
+
+state_facts(#state{core = Core, output_bytes = Out, held = Held}) ->
+    #{session => erx_hostlink_session:info(Core), output_bytes => Out, held_bytes => byte_size(Held)};
+state_facts(_State) ->
+    hidden.
 
 %% Feeds held input to the session unless the output queue is over its backlog,
 %% and arms the idle timer for it.

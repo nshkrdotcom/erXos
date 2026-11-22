@@ -122,14 +122,15 @@ bytes from outside.
 """.
 -spec format_status(gen_server:format_status()) -> gen_server:format_status().
 format_status(Status) ->
-    maps:map(fun(state, Store) -> erx_code_store:summary(Store);
-                (message, {request, Request}) when is_tuple(Request), tuple_size(Request) > 0 ->
-                     {request, element(1, Request)};
-                (message, _Message) -> request;
-                (log, _Log) -> [];
-                (reason, Reason) -> erx_report:reason_name(Reason);
-                (_Key, Value) -> Value
-             end, Status).
+    erx_report:status(Status, #{state => fun store_summary/1, message => fun request_kind/1}).
+
+store_summary(Store) when is_map(Store) -> erx_code_store:summary(Store);
+store_summary(_State) -> hidden.
+
+request_kind({request, Request}) when is_tuple(Request), tuple_size(Request) > 0 ->
+    {request, element(1, Request)};
+request_kind(_Message) ->
+    request.
 
 -doc false.
 -spec handle_cast(term(), erx_code_store:store()) -> {noreply, erx_code_store:store()}.

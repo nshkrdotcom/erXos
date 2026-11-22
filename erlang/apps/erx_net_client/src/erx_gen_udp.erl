@@ -216,14 +216,12 @@ handle_event(info, _Msg, opening, D) ->
 %% or a message in hand, since both may hold a peer's data.
 -doc false.
 format_status(Status) ->
-    maps:map(fun(data, #data{owner = Owner, sock = Sock, counters = Counters}) ->
-                     #{owner => Owner, sock => Sock, counters => Counters};
-                (message, _) -> redacted;
-                (queue, _) -> [];
-                (postponed, _) -> [];
-                (log, _) -> [];
-                (_, Value) -> Value
-             end, Status).
+    erx_report:status(Status, #{state => keep, data => fun socket_facts/1}).
+
+socket_facts(#data{owner = Owner, sock = Sock, counters = Counters}) ->
+    #{owner => Owner, sock => Sock, counters => Counters};
+socket_facts(_Data) ->
+    hidden.
 
 %% The grant's answer to the open, already checked by erx_inet: the socket, which the
 %% socket process monitors from now on, and its domain's origin.

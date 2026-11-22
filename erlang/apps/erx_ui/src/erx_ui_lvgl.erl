@@ -193,15 +193,12 @@ callback_mode() -> handle_event_function.
 
 %% A crash report keeps only the state, `reading` or `holding`: the queue
 %% holds an apply's operations, the postponed events the window's keys, the
-%% data the tree and the program's unread output, and the reason or the log
-%% can name a record. A crash's stack trace does not pass through here, so a
+%% data the tree and the program's unread output, and the log can name a
+%% record; the reason shows as its name (erx_report:status/2). A crash's stack trace does not pass through here, so a
 %% clause that fails with application terms as arguments still logs them (a
 %% residual, TODO.md).
 format_status(Status) ->
-    maps:map(fun(state, State) -> State;
-                (Key, _Value) when Key =:= queue; Key =:= postponed; Key =:= log -> [];
-                (_Key, _Value) -> hidden
-             end, Status).
+    erx_report:status(Status, #{state => keep}).
 
 init(#{width := W, height := H, chan := Chan, program := Program} = Opts) ->
     %% The death of the port or the reader (a write that found the program

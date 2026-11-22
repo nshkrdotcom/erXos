@@ -98,6 +98,10 @@ class ErxFsTest < Minitest::Test
               to: "walked(Owner, _, NewFid, {stopped, Qids, _, Grant}) ->\n" \
                   "    {{ok, lists:reverse(Qids)}, add_fid(NewFid, Owner, [{1, {16#80, 0, 1}, root}], Grant)};",
               caught_by: 'fid_table_model_test_'),
+    Fault.new(name: "a grant's report that shows the message that was being handled", file: SERVER,
+              from: '    erx_report:status(Status, #{}).',
+              to: '    erx_report:status(Status, #{message => keep}).',
+              caught_by: 'a_grants_report_shows_no_term_test'),
     Fault.new(name: 'a grant is never exported', file: SERVER,
               from: '    case export(Client, maps:get(exports, Options, erx_dist)) of',
               to: '    case export(own, maps:get(exports, Options, erx_dist)) of',

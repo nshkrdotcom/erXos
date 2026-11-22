@@ -161,12 +161,10 @@ info(_Message, State) ->
 %% report.
 -spec format_status(gen_server:format_status()) -> gen_server:format_status().
 format_status(Status) ->
-    maps:map(fun(state, #state{} = State) -> State#state{consumers = held_back};
-                (message, _Message) -> held_back;
-                (log, Log) -> [held_back || _ <- Log];
-                (reason, Reason) -> erx_report:reason_name(Reason);
-                (_Key, Value) -> Value
-             end, Status).
+    erx_report:status(Status, #{state => fun held_back_consumers/1}).
+
+held_back_consumers(#state{} = State) -> State#state{consumers = held_back};
+held_back_consumers(_State) -> hidden.
 
 %% Records of Source, rendered and charged by the core, join the backlogs.
 written(Source, Records, State = #state{clock = Clock, rate = Rate}) ->

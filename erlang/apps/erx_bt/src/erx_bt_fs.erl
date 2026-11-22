@@ -103,11 +103,15 @@ handle_info(Message, Fs) ->
 %% kind alone; and the log of sys events, which holds messages, as empty.
 -doc false.
 format_status(Status) ->
-    maps:map(fun(state, #fs{core = Core}) -> erx_bt_window:facts(Core);
-                (message, {erx_bt_link, Link, Message}) when is_tuple(Message) -> {erx_bt_link, Link, element(1, Message)};
-                (log, _) -> [];
-                (_, Value) -> Value
-             end, Status).
+    erx_report:status(Status, #{state => fun window_facts/1, message => fun link_kind/1}).
+
+window_facts(#fs{core = Core}) -> erx_bt_window:facts(Core);
+window_facts(_State) -> hidden.
+
+link_kind({erx_bt_link, Link, Message}) when is_tuple(Message), tuple_size(Message) > 0 ->
+    {erx_bt_link, Link, element(1, Message)};
+link_kind(_Message) ->
+    hidden.
 
 %% ---------------------------------------------------------------------------
 %% Events

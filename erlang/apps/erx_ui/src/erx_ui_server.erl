@@ -147,13 +147,13 @@ terminate(Reason, #server{renderer = Renderer, renderer_state = State, window = 
         Why -> S#server.opener ! {ui_down, Window, Why}
     end.
 
-%% A crash report names the server's reason and nothing of its tree, its
+%% A crash report names the reason's leading atom and nothing of its tree, its
 %% renderer's state or the message it was handling.
 format_status(Status) ->
-    maps:map(fun(state, #server{} = S) -> S#server{realised = hidden, renderer_state = hidden};
-                (Key, _Value) when Key =:= message; Key =:= queue; Key =:= log -> hidden;
-                (_Key, Value) -> Value
-             end, Status).
+    erx_report:status(Status, #{state => fun server_facts/1}).
+
+server_facts(#server{} = S) -> S#server{realised = hidden, renderer_state = hidden};
+server_facts(_State) -> hidden.
 
 %% Every renderer callback runs through here: whatever it raises, an exit
 %% from a renderer process already gone among it, is the renderer's

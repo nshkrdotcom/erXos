@@ -210,6 +210,20 @@ pipelined_requests_test() ->
     ?assertEqual({error, ebadf}, receive {erx_9p, Getattr, R4} -> R4 end),
     stop(Grant).
 
+%% Report ------------------------------------------------------------------
+
+%% A grant of another domain holds that domain's frames in its state, its mailbox and the
+%% arguments of its frames (a Bluetooth line's write carries keys). It is a plain proc_lib
+%% process, and exporting format_status/1 is what makes proc_lib's crash report hide them;
+%% what the callback leaves is the reason's name alone.
+a_grants_report_shows_no_term_test() ->
+    {module, erx_fs} = code:ensure_loaded(erx_fs),
+    ?assert(erlang:function_exported(erx_fs, format_status, 1)),
+    Secret = <<"GRANT-SECRET">>,
+    Status = erx_fs:format_status(#{reason => {tree_ended, Secret}, state => {grant, Secret},
+                                    message => {erx_9p, make_ref(), self(), {write, 1, 0, Secret}}}),
+    ?assertEqual(#{reason => tree_ended, state => hidden, message => hidden}, Status).
+
 %% Owners ------------------------------------------------------------------
 
 owner_outside_the_domain_is_refused_test() ->

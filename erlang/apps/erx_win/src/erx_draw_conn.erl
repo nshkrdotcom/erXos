@@ -239,10 +239,10 @@ handle_info(Message, #conn{waits = Waits} = Conn) ->
 
 -doc false.
 format_status(Status) ->
-    maps:map(fun(state, #conn{} = Conn) -> Conn#conn{core = hidden, images = hidden, unread = hidden};
-                (Key, _Value) when Key =:= message; Key =:= queue; Key =:= log -> hidden;
-                (_Key, Value) -> Value
-             end, Status).
+    erx_report:status(Status, #{state => fun conn_facts/1}).
+
+conn_facts(#conn{} = Conn) -> Conn#conn{core = hidden, images = hidden, unread = hidden};
+conn_facts(_State) -> hidden.
 
 %% The program's input ---------------------------------------------------------
 

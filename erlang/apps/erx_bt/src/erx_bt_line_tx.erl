@@ -65,7 +65,8 @@ handle_cast(_Message, Files) ->
 
 %% A crash report shows a write's size, never its bytes: a command may carry a Long Term
 %% Key, and a packet a peer's data or, from pairing on, a key.
-format_status(#{message := {write, From, Bytes}} = Status) when is_binary(Bytes) ->
-    Status#{message := {write, From, {bytes, byte_size(Bytes)}}};
 format_status(Status) ->
-    Status.
+    erx_report:status(Status, #{state => keep, message => fun write_size/1}).
+
+write_size({write, From, Bytes}) when is_binary(Bytes) -> {write, From, {bytes, byte_size(Bytes)}};
+write_size(_Message) -> hidden.
