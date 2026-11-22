@@ -143,9 +143,7 @@ unit mailbox
 # bridge, closed, with its one listed place, the VL805, and its first line, SPI 147, which
 # the PCIe domain holds masked (docs/design-pcie.md, "The closed bus"; docs/design-platforms.md,
 # "PCIe bridges"); its second, SPI 148, is in no unit (docs/todo-domains.md, "the bridge's second line").
-# The bridge has no driver module yet, so the enumerator refuses it at every boot, logs that
-# the bridge is not started, and reports no functions: the VL805 is never given and the USB
-# domain runs no controller (docs/todo-usb.md, "USB on the Raspberry Pi 4").
+# The BCM2711 bridge's driver starts it, and the enumerator gives the VL805 to the USB domain.
 unit pcie
   placement "pcie"
   holder @domain.pcie

@@ -164,17 +164,16 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   Pi 4's DWC2 is the USB-C power connector's, so it comes after Track U's parts
   ([plan.md](plan.md#track-u-usb)); its design keeps the three rules the USB design records.
 * [Medium] USB on the Raspberry Pi 4 (`config/manifest/raspi4b-development.txt`,
-  [design-usb.md](design-usb.md#who-holds-a-controller); [plan.md](plan.md#track-u-usb), part (c)): the
-  Pi 4's development manifest places the bridge's and the VL805's units and runs the PCIe and USB domains, but the
-  bridge has no driver module (`erx_pcie_enumerator`, `bcm2711_pcie => none`), so every boot logs that the bridge is
-  not started, reports no functions, never gives the VL805 and leaves the USB domain idle. Both domains' memory is
-  unmeasured on the board (the PCIe domain's 25 MiB is QEMU virt's measurement, the USB domain's 32 MiB is measured
-  nowhere). Nothing at boot checks the VL805's line against the bridge's `interrupt-map` yet ("a closed place's
-  line against the tree" under the domain library). Once the driver lands, the board checklist of design-usb.md's
-  [QEMU suites](design-usb.md#qemu-suites) section, its non-coherent DMA steps among them, becomes steps of the
-  guide's Pi 4 checks ([raspberry-pi-4.md](guide/raspberry-pi-4.md)). The controller's level-line handling is
-  host-tested (`a_level_line_neither_storms_nor_loses_an_event_test`); on the board it waits on the bridge driver,
-  the VL805's firmware notification and the TRB form's first run on the VL805.
+  [design-usb.md](design-usb.md#who-holds-a-controller); [plan.md](plan.md#track-u-usb), part (c)): a USB keyboard
+  works on the board through the BCM2711 bridge driver, the VL805 and `erx_xhci`. Still open: the PCIe domain's
+  25 MiB is QEMU virt's measurement and the USB domain's 32 MiB is measured nowhere, so measure both on the board;
+  the VL805's line against the bridge's `interrupt-map` is not checked at boot (see "a closed place's line against
+  the tree" in [todo-liberx.md](todo-liberx.md)); the controller's level-line handling is host-tested
+  (`a_level_line_neither_storms_nor_loses_an_event_test`) and not yet seen under load on the board; the
+  mass-storage function ran on the board with a stick plugged in and no fault, but no board run has shown a medium
+  served (the `medium LUN L ready` line), so the stick, and the board checklist of design-usb.md's
+  [QEMU suites](design-usb.md#qemu-suites) section, its non-coherent DMA steps among them, are still to be
+  added to the guide's Pi 4 checks ([raspberry-pi-4.md](guide/raspberry-pi-4.md)).
 * [Low] USB, SuperSpeed hubs ([design-usb.md](design-usb.md#outside-this-design)): the bus core gives up a
   hub at SuperSpeed at its device descriptor (`superspeed_hub`), and no device behind it runs at SuperSpeed. Driving one is a
   design of its own, with the VL805's bulk-out burst quirk for mass storage behind such a hub that the design lists

@@ -358,6 +358,14 @@ Eshell V17.1.1 (type help(). for help)
   When an app fails to start, the kernel log names the reason.
 * In a session with no terminal, such as an app's, what the program
   writes to standard output becomes log records under the session's name.
+* The USB domain's mass-storage function serves a Bulk-Only USB stick as a
+  medium: it reads the capacity and hands reads, writes and flushes to the
+  medium's block transport, and it logs one line when a medium is served
+  and one when it ends. A USB controller's drives are named `disk0` to
+  `disk3`. Host tests check it against a model stick on a fake controller;
+  on the Pi 4 it ran with a stick plugged in and no fault, but no board
+  check has shown a medium served yet, no QEMU suite runs it, and no file
+  system mounts a drive.
 
 **Networking**
 
@@ -380,6 +388,11 @@ Eshell V17.1.1 (type help(). for help)
   as `priv/cacerts.pem` for `public_key:cacerts_get/0`. Host tests fetch over HTTPS from
   loopback `ssl` servers with no internet; the kiosk suite's quotes cell
   fetches over HTTPS from an offline fixture, never from the internet.
+* On QEMU `virt` the Bluetooth domain brings up a controller over a serial
+  line, a virtio console, whose device the line's grant names. A QEMU
+  suite boots it against an emulated controller (Bumble) and checks the
+  reset, the identify commands and the start of advertising. It does not
+  run on the Pi 4 yet.
 
 **Display and input**
 
@@ -389,7 +402,8 @@ Eshell V17.1.1 (type help(). for help)
   a USB domain runs an xHCI driver in Erlang behind the PCIe domain; a USB
   keyboard enumerates and its key presses reach the display domain through
   the USB domain's input tree (the usb suite checks a key's down and up
-  there). A QEMU suite compares screenshots; the Pi's screen is checked by hand.
+  there). On the Pi 4 a USB keyboard works the same way, through the PCIe
+  bridge's driver, the VL805 and the same xHCI driver. A QEMU suite compares screenshots; the Pi's screen is checked by hand.
 * A window's client speaks Plan 9's draw protocol over a draw connection
   (`erx_draw`) and loads Plan 9 subfonts, and the tree holds the 6x13 fixed ones. The
   window tree serves `/clipboard`, the display's shared clipboard, to a
@@ -458,10 +472,8 @@ Eshell V17.1.1 (type help(). for help)
 **Not built yet**
 
 * The rest of erXos's own kernel, terminal input and sockets for programs,
-  drivers for the Pi 4's USB, for Bluetooth and for WiFi, which have host-tested cores only (a hub
-  and port state machine, descriptor and HID decoders, a Bluetooth
-  HCI codec and a controller process with its line, links and patch
-  reader, and WiFi's join machine, SAE exchange and EAPOL-Key codec), the
+  drivers for the Pi 4's Bluetooth and for WiFi, which have host-tested cores only (a Bluetooth
+  patch reader, and WiFi's join machine, SAE exchange and EAPOL-Key codec), the
   rest of the browser client, and the POSIX-lite layer. Each has a design document in [docs/](docs/). The
   Pi 4's header (GPIO, SPI, I2C) has register descriptions, a pin table
   and the pure core of a pin's ownership, and no driver yet.
