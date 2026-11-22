@@ -2105,7 +2105,12 @@ and does not add application-state rollback.
   facet's scope, so V5 holds whatever a code facet asks (V11).
   Development builds give a code facet to the host link and to `root`'s
   session; release builds give one to the session templates whose facet
-  rows name it, by default none. A module travels in
+  rows name it, by default none. The deadline's stop (**The deadline**,
+  below) is part of a code facet's contract: a load that a supervised
+  domain in the facet's scope does not answer within 30 s stops that
+  domain, which loses its running state and restarts from its published
+  overlay, so a manifest that names the facet in a template's rows lets
+  that template's sessions cause that stop. A module travels in
   pieces of at most 64 KiB that the code server asks for one at a time,
   so a module of any size fits every frame, every heap limit and the
   domain's lane from the system domain, and the code service queues at
@@ -2166,18 +2171,61 @@ and does not add application-state rollback.
   three events: its code server answers, which publishes or discards the
   candidate; that server ends, which discards it and answers
   `{error, domain_ended}`; or 30 s pass from when the code service sent
-  the load, after which it discards the candidate, answers
-  `{error, timeout}` and stops the domain through the domain service, as
-  the `domain` facet's stop does. A supervised specification's next
-  domain then starts from its published overlay, so after every ending a
-  domain runs the code its overlay names, and a domain that never answers
-  holds up only its own target, for 30 s. An answer that arrives for a
-  load no longer in flight is dropped. A facet waits for its load's
-  answer with no deadline of its own, since the service ends every load
-  it starts; the host tool has its own
+  the load, after which it discards the candidate and answers
+  `{error, timeout}`, which means the outcome is unknown: the code server
+  may still load the batch, or may not. A code server's end is its
+  domain's end, since OTP's code server is a child of `kernel_sup`, whose
+  intensity is 0 (`otp/lib/kernel/src/kernel.erl:101-103`, `:119`), so
+  `{error, domain_ended}` always means the domain ended. The 30 s never
+  include a boot: a load queued behind a starting domain is sent only
+  once that domain reports the overlay revision it loaded (Overlays,
+  above), a boot that hangs is the boot timeout's
+  ([design-system.md](design-system.md#boot)), and a domain that ends
+  before it reports gets the load `{error, domain_ended}` with nothing
+  sent. A domain that never answers holds up only its own target, for
+  30 s. An answer that arrives for a load no longer in flight is dropped.
+  A facet waits for its load's answer with no deadline of its own, since
+  the service ends every load it starts; the host tool has its own
   ([One load, three routes](#one-load-three-routes)). An install runs in
   the system domain's own runtime and has no deadline: `erx_code`'s
   atomic load runs no code of the modules it loads.
+  * **A supervised target is stopped at its deadline.** With
+    `{error, timeout}` the code service stops the domain the load was
+    sent to, through the domain service as the `domain` facet's stop
+    does, with a reason other than `normal`, so a `transient`
+    specification restarts as a `permanent` one does. It stops that
+    domain by its id, never by name or specification: an id is never
+    reused within a boot
+    ([design-system.md](design-system.md#the-domain-services-record)),
+    while a name passes to a later domain once its holder ends
+    ([The host link](#the-host-link)), so a stop that comes late stops
+    nothing. Without the stop, a batch the code server loaded after the
+    candidate was discarded would run code no overlay names until the
+    next restart reverted it. The specification's next domain starts
+    from its published overlay, and the domain runs the code its overlay
+    names once that domain reports the revision it loaded, not when
+    `{error, timeout}` is returned. A slow but healthy domain loses its
+    running state at the deadline: a trade-off accepted for one rule that
+    leaves no unknown state, with the time a 16 MiB batch takes on the
+    slowest machines on the
+    [performance watch list](todo-performance.md#erts-and-the-runtime).
+  * **Any other target is left running.** A domain no specification
+    restarts has no overlay to fall out of step with, and a stop would
+    end it for good, so a timeout leaves it running. Whether the batch
+    loaded is its runtime's fact (**What is already current**, below):
+    sending the load again changes nothing already current and loads the
+    rest.
+  * **Deadline stops count as restarts.** Each is one end of the
+    specification within its restart intensity
+    ([design-system.md](design-system.md#boot)), which the development
+    manifest's rows set to 5 within 600 s (`restarts` and
+    `restart_period_s` in `config/manifest/development.txt`). A developer
+    whose domain wedges after every start sees each load into it
+    answer `{error, timeout}` after 30 s and one log line for each end;
+    past the intensity the domain is left down and shown so in the
+    inspector, and a load that names it names no domain and gets
+    `{error, scope}`. A domain the manifest marks `required`, as no
+    development row is, ends the machine instead.
 * **What is already current** is the loading runtime's fact, never the
   code service's: a code server, and `erx_code` for the system domain,
   loads only the modules whose hash differs from that of the module's
@@ -2836,7 +2884,7 @@ any 9P2000.L peer does.
 | A blob does not match its hash | the code server's check | nothing loaded; the bad copy discarded | `{error, hash_mismatch}` from the load, in every flavour of load |
 | A principal's hot store cannot hold a blob | the code service's charge to the principal's budget | nothing stored | the load fails with `{error, no_memory}` |
 | A load names a domain outside its facet's scope, or one that does not exist | `erx_code`'s scope check at `load` | nothing loaded; blobs already sent stay in the principal's store until it frees what nothing names | `{error, scope}`, alike for both; `load: NAME: scope` from the command |
-| A domain's code server does not answer a load within 30 s | `erx_code`'s deadline | the candidate discarded; the domain stopped, and a supervised specification's next domain started from its published overlay | `{error, timeout}`; loads into other targets were never held up |
+| A domain's code server does not answer a load within 30 s | `erx_code`'s deadline | the candidate discarded; a supervised domain stopped by its id, counted against its specification's restart intensity, and the next domain started from its published overlay; a domain no specification restarts left running | `{error, timeout}`, outcome unknown; loads into other targets were never held up |
 | The domain ends while a load into it is in flight | `erx_code`'s monitor of the code server | the candidate discarded; the next domain reads the overlay once the load has ended | `{error, domain_ended}` |
 | The connection ends before a load answers: a reset, a pulled cable, `ssh` ending, or the network domain stopped by the code being loaded; or the tool's 120 s pass | the tool | whatever the code service did, which is one of the endings above or the published candidate | the tool says the load's outcome is unknown and exits 1; the inspector's `[domains, Id, modules, Module]`, which the domain's runtime reports, shows the hash each module runs, `[..., history]` what was loaded, and the overlay's revision what a restart runs; sending the load again is a new load that skips what is still current |
 | A loaded driver breaks the network, and with it the SSH route | the operator | the host link and the console, which need no network | the operator loads a fix over the host link, `load`s at the console a file already on the machine, or reboots, which returns every driver domain to its release |
@@ -2888,7 +2936,8 @@ carried the request, V11; `load`, which holds only its session's
 facets, reads at most 16 MiB, and whose files and standard input are
 input to the code service, never code; and a deadline on every load into
 another domain, so a domain that never answers holds up only its own
-target); the host tool's transports (a UNIX socket or a tty, whose
+target, at which a supervised domain is stopped by its id); the host
+tool's transports (a UNIX socket or a tty, whose
 reach the host's permissions decide, a `--ssh` destination never taken
 as an option and no word `rc` would split, and `ssh`'s standard error
 printed through the line escape); the inspector's scopes (owners from pids and kernel records,
@@ -3131,13 +3180,25 @@ faults that must make its tests fail where it has any.
     admits a second load while the first is in its steps, under which
     the second publishes an overlay without the first's modules.
   * A silent target, in a host test with the deadline shortened: a stub
-    code server that never answers, and another that answers after the
-    deadline. The load answers `{error, timeout}`, the stub's domain is
-    stopped, the late answer publishes nothing, and meanwhile an install
-    and another principal's load into another domain complete. Seeded:
-    one queue for every target, under which the other load waits behind
-    the silent one; the deadline removed, under which the silent load
-    never answers.
+    code server of a supervised specification that never answers, and
+    another that answers after the deadline. The load answers
+    `{error, timeout}`, the stub's domain is stopped by its id, the late
+    answer publishes nothing, and meanwhile an install and another
+    principal's load into another domain complete. Seeded: one queue for
+    every target, under which the other load waits behind the silent
+    one; the deadline removed, under which the silent load never
+    answers.
+  * The same silent stub in a domain no specification restarts: the
+    load answers `{error, timeout}` and the domain still runs. Seeded: a
+    stop at every deadline, under which the domain ends.
+  * A stub domain whose name, at the deadline, is held by a later domain
+    that the test started after ending the stub's: the later domain runs
+    on. Seeded: a stop by name, under which it is stopped.
+  * A load queued while its supervised target starts, with the start held
+    in the test longer than the shortened deadline: the load is sent once
+    the domain reports its overlay revision and completes. Seeded: the
+    deadline counted from the queueing, under which the load times out
+    and the starting domain is stopped.
   * A domain that ends between its code server's answer and the
     publication, with the publication held in the test: its next domain
     reads the new revision. Seeded: the start's overlay read served
@@ -3439,6 +3500,11 @@ stops it, where stopping the domain at the deadline is the restart the
 domain service already performs, after which the domain runs its
 published overlay.
 
+**Stopping every target at its deadline.** A domain no specification
+restarts would also be stopped. It loses: such a domain has no overlay
+its code could fall out of step with, so the stop would only end it for
+good, with whatever state it held.
+
 **Partial batches in other domains.** A code server would load a batch
 module by module and keep what loaded when one module failed. It loses:
 an ordinary refusal would leave code that is neither the old batch nor
@@ -3469,7 +3535,7 @@ service bytes to load in one domain.
 | --- | --- | --- | --- |
 | The emulated UART is too slow for comfortable uploads | medium | slow `erx watch` | `tools/erx bench hostlink`; virtio-console behind the same framing |
 | A board's host link at 115,200 baud is slow for large loads | high | about 0.8 s for a median module, 1.7 s for `erx_genet` and 17 s for the largest generated one ([Performance](#performance)) | the missing-blob exchange sends only changed modules; the SSH route loads at the network's speed |
-| A domain legitimately busy for 30 s meets a load's deadline | low | the domain is stopped and restarts from its published overlay | the deadline is one constant of `erx_code`; a load is a fetch over the domain's lane and an atomic load that runs none of its modules' code, which takes far less |
+| A domain legitimately busy for 30 s meets a load's deadline | low | a supervised domain is stopped, loses its running state and restarts from its published overlay, an accepted trade-off | the deadline is one constant of `erx_code`; a load is a fetch over the domain's lane and an atomic load that runs none of its modules' code, which takes far less; the time of a 16 MiB batch on the Raspberry Pi 4 and under TCG is on the [performance watch list](todo-performance.md#erts-and-the-runtime) |
 | A loaded driver ends its domain at every start, from its published overlay | medium | the domain restarts as its specification says, without serving | a reboot, which drops a driver domain's overlay and returns it to its release; a driver that ends only its own process is reloaded while its domain runs |
 | `prim_tty`'s ssh mode misses a feature the shell uses | low | a rendering gap | the console tests cover every request type; erXos owns `prim_tty` and can extend it |
 | A domain answers inspections slowly | medium | sluggish `erx:i/1` | deadlines and `timeout` statuses; kernel and service attributes need no answer |

@@ -5323,6 +5323,13 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   module into a `src`/`ebin` tree on a writable file system and show a waiting process's line; it also needs
   OTP's `otp_SUITE:undefined_functions` under `check-oracle` to accept `shell_default`'s call of
   `erx:source/1`.
+* [Medium] live, `erx_code`'s deadline ([design-live.md](docs/design-live.md#code-from-the-host), "The
+  deadline"): a published overlay that wedges its domain after every start makes every load that would fix it
+  time out, so the code service discards each fix and stops the domain, whose next domain starts from the
+  same overlay, until the restart intensity leaves the specification down. A reboot clears an overlay kept in
+  memory but keeps a principal's persisted one, so that principal's specification wedges again after it.
+  Recovery needs a way to discard a principal's overlay, or to start its specification without it, that does
+  not go through the wedged domain.
 
 * [Low] files, `erx_9p` codec (`tools/lib/erx/abi_emit_wire.rb`, `abi/protocols/9p.txt`): a packed list's
   per-element size (`packed @p9_dirent_fixed`, 24) is declared rather than derived from the dirent tuple's wire
