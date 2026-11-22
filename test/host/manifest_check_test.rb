@@ -567,12 +567,29 @@ class ManifestCheckTest < Minitest::Test
                 usb_source + drive_window('disk1') + drive_window('disk1', name: 'again'))
   end
 
-  # Drives are disk0 to disk(usb_drives_max - 1), so no controller's rows can name more.
-  def test_a_drive_past_usb_drives_max_is_refused
-    drives = @codec.constant('usb_drives_max')
-    ["disk#{drives}", 'disk', 'disk01', 'da0', 'xdisk0', '0', '"disk0"'].each do |drive|
-      usb_refused('window.drive', /a drive is disk0 to disk#{drives - 1}/, usb_source + drive_window(drive))
+  # A drive's name is disk and its decimal number, any number below mf_none: the cap is on
+  # how many drives a controller names, not in the names.
+  def test_a_drive_is_disk_and_a_number
+    highest = @codec.constant('mf_none') - 1
+    view = @codec.open('manifest', usb_admit(usb_source + drive_window('disk7') + drive_window("disk#{highest}", name: 'high')).bytes)
+    assert_equal [7, highest], windows_on(view, STICK).first.map { |row| row.fetch('drive') }.sort
+    ["disk#{@codec.constant('mf_none')}", 'disk', 'disk01', 'da0', 'xdisk0', '0', '"disk0"'].each do |drive|
+      usb_refused('window.drive', /a drive is disk and a decimal number below #{@codec.constant('mf_none')}/,
+                  usb_source + drive_window(drive))
     end
+  end
+
+  def test_a_controller_naming_more_than_usb_drives_max_drives_is_refused
+    drives = @codec.constant('usb_drives_max')
+    rows = (0..drives).map { |number| drive_window("disk#{number * 2}", name: "stick#{number}") }
+    usb_admit(usb_source + rows.take(drives).join)
+    usb_refused('window.drive', /a USB controller's windows name more than #{drives} drives/, usb_source + rows.join)
+  end
+
+  # Drive numbers are one namespace across the machine, so two controllers never name one drive.
+  def test_one_drive_on_two_controllers_is_refused
+    usb_refused('window.drive', /two USB controllers name drive 1/,
+                usb_source + drive_window('disk1') + drive_window('disk1', name: 'other', device: "#{BRIDGE}:0:2:0"))
   end
 
   def test_a_usb_controller_s_window_is_fat

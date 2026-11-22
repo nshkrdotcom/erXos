@@ -2984,16 +2984,16 @@ module Erx
         end
         check_system_window(rows, tables)
         check_record_volume_window(rows)
+        check_drives(rows)
         placed = rows.map { |row| row.values_at('device', 'role', 'partition', 'image', 'drive') }
         invalid('two windows name one role, partition and drive of a device', 'window.partition') unless placed.uniq.size == placed.size
         rows.sort_by { |row| row.values_at('holder', 'device', 'role', 'partition', 'image', 'drive') }
       end
 
       # Property 8's drive clause (docs/design-usb.md, "Mass storage reaches the file
-      # servers"): a window on a USB controller is a fat window naming one of the
-      # controller's drives, disk0 to disk(usb_drives_max - 1), packed as its number, so no
-      # controller's rows can name more than usb_drives_max drives; every other window
-      # names none, packed as mf_none.
+      # servers"): a window on a USB controller is a fat window naming a drive, disk and
+      # its decimal number below mf_none, packed as the number; every other window names
+      # none, packed as mf_none. How many drives a controller names is check_drives'.
       def window_drive(record, role, device)
         controller = device.fetch('role') == device_role('usb')
         unless record.properties.key?('drive') == controller
@@ -3003,11 +3003,25 @@ module Erx
 
         invalid('a window on a USB controller is a fat window', 'window.role') unless role == @codec.member('mf_window_role', 'fat')
         token = one(record, 'drive')
-        drives = @codec.constant('usb_drives_max')
+        none = @codec.constant('mf_none')
         number = token.value[/\Adisk(0|[1-9][0-9]*)\z/, 1]&.to_i unless token.quoted
-        return number if number && number < drives
+        return number if number && number < none
 
-        invalid("a drive is disk0 to disk#{drives - 1}", 'window.drive')
+        invalid("a drive is disk and a decimal number below #{none}", 'window.drive')
+      end
+
+      # Property 8's drive clauses (docs/design-system.md; docs/design-usb.md, "Mass storage
+      # reaches the file servers"): drive numbers name drives across the machine, so no drive
+      # lies on two controllers, and no controller's windows name more than usb_drives_max
+      # drives, the media its domain serves at once.
+      def check_drives(rows)
+        none = @codec.constant('mf_none')
+        placed = rows.map { |row| row.values_at('device', 'drive') }.uniq.reject { |_device, drive| drive == none }
+        shared, = placed.group_by { |_device, drive| drive }.find { |_drive, places| places.size > 1 }
+        invalid("two USB controllers name drive #{shared}", 'window.drive') if shared
+        most = @codec.constant('usb_drives_max')
+        invalid("a USB controller's windows name more than #{most} drives", 'window.drive') if
+          placed.group_by { |device, _drive| device }.any? { |_device, places| places.size > most }
       end
 
       # design-abi.md: fixed-medium roles have partition 0, because the medium

@@ -385,6 +385,12 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
 
 ## Planned features
 
+* [Medium] storage, stable names for media
+  ([design-usb.md](design-usb.md#mass-storage-reaches-the-file-servers)): a drive's number names a
+  place, so the same stick may come back as another `diskN`. Scripts and mounts need a name taken
+  from the medium, a partition label or identifier, as FreeBSD's `/dev/gpt/LABEL` and
+  `/dev/diskid/`; design it with the file-system mount work. design-usb.md states only that
+  such names come from the medium.
 * [Medium] storage, a card image that holds only what is written
   ([design-storage.md](design-storage.md), `abi/medium.txt`, the image packer): order the
   partitions with the populated ones first (record, system A, boot A), end the image after boot

@@ -86,7 +86,7 @@ erXos follows FreeBSD where UNIX systems differ, and its USB host stack
 behaves like FreeBSD 15.1's for the devices in scope: a keyboard, a mouse
 or a tablet types and points as it does under FreeBSD's `usbhid` and
 `hkbd`, and a USB stick reads and writes as under `umass` and `da`.
-Only the behavior is FreeBSD's: erXos names a drive `disk0` to `disk3`
+Only the behavior is FreeBSD's: erXos names a drive `disk0`, `disk1`, ...
 for what it is, not `da` after FreeBSD's SCSI disk driver. The
 evidence each part rests on:
 
@@ -384,8 +384,11 @@ are configured and lasting as long as the controller's domain:
   binary form of `abi/formats/input.txt`, served in the controller's
   domain's input tree, which the manifest grants a display domain read
   only ([design-display.md](design-display.md#the-display-device));
-* a **drive**, `disk0` to `disk3`, named by the manifest's window rows on the
-  controller's device, through whose **drive grants** a FAT server's
+* a **drive**, `diskN`, one of at most `usb_drives_max` (four) that the
+  manifest's window rows name on the controller's device, numbered
+  across the machine
+  ([Mass storage reaches the file servers](#mass-storage-reaches-the-file-servers)),
+  through whose **drive grants** a FAT server's
   domain asks for the window of one partition of whatever medium the
   drive holds.
 
@@ -646,11 +649,19 @@ mounts again on the next walk. A medium that cannot flush it mounts
 read-only, and a mount whose flush fails otherwise it refuses, to try
 again at the next walk ([A medium that cannot flush](#the-scsi-subset)).
 
-Drives are numbered for the controller, not for the machine: two
-controllers' `disk0` are two drives, each named by its own controller's
-device row. A logical unit whose medium becomes ready when every drive
-its controller's rows name is occupied is not served, and the bus
+Drive numbers name drives across the machine, as macOS's `diskN` does:
+one number is one drive wherever its medium sits, and the manifest
+check refuses a number that two controllers' rows name. What is bounded
+is how many drives there are, not their names: a controller's rows name
+at most `usb_drives_max` drives, the media its domain serves at once,
+under any numbers. A logical unit whose medium becomes ready when every
+drive its controller's rows name is occupied is not served, and the bus
 process shows it as `no drive`.
+
+A drive's number names a place, not a medium: the same stick may come
+back as another number. Scripts and mounts that must find one medium
+again use a stable name taken from the medium, its partition label or
+identifier, as FreeBSD's `/dev/gpt/LABEL` and `/dev/diskid/` do.
 
 ### What the USB domain claims
 
@@ -3449,7 +3460,7 @@ sink shows it.
 | `erx_firmware_request` | `ERX_ENOTSUP`; `ERX_EPROTO`; `ERX_ERIGHTS`; `ERX_ETIMEDOUT`; `ERX_EBUSY`; `ERX_EWOULDBLOCK` | a resource of a device without notifications or a platform without one, an index past the device's list, or a tag the firmware ignored; an answer outside the interface; a resource without `CARVE`; no answer within 1 s, and every call after one in the boot; another mailbox request in flight; a call from an executor |
 | the Pi 4's PCIe unit at boot | given to no domain, with the device service's diagnostic | the tree the firmware hands over routes the VL805's position to one of the bridge's lines, so one unit spans the PCIe domain and the USB domain |
 | a function | not started, with `no input number`, `no drive`, `not direct access`, `block length`, `max lun`; or ended unusable, with `no usable report` | its place, its layout, its unit |
-| the manifest check | the build fails | a window on a `usb` device with no drive, or a drive on another device; a drive named twice for one partition; more drives than `usb_drives_max`; a release manifest whose USB domain holds another unit or a file server; a second holder of a bridge's unit, or a `pcie` domain holding another unit; the Pi 4's INTx line given apart from its function |
+| the manifest check | the build fails | a window on a `usb` device with no drive, or a drive on another device; a drive named twice for one partition; one drive named on two controllers; more drives on one controller than `usb_drives_max`; a release manifest whose USB domain holds another unit or a file server; a second holder of a bridge's unit, or a `pcie` domain holding another unit; the Pi 4's INTx line given apart from its function |
 
 ## Verification
 

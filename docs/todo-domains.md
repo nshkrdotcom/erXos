@@ -609,8 +609,9 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   mechanism and needs a design, and `erx_net` must keep depending only on `kernel` and `stdlib`, since it
   is usable outside erXos.
 * [Medium] system manifest, `abi/manifest.txt` ([design-usb.md](design-usb.md#mass-storage-reaches-the-file-servers)):
-  the boot-time reader bounds no `windows[].drive` (it has no rule for "`mf_none` or below `usb_drives_max`"); add
-  one before `erx_blk_drive` reads the field.
+  the boot-time reader checks no `windows[].drive`; add the rule that it is not `mf_none` exactly when the window's
+  device row has role `usb` before `erx_blk_drive` reads the field. The number itself is any value below `mf_none`,
+  so nothing may index a table by it.
 * [Low] system manifest, `tools/lib/erx/manifest.rb` ([design-system.md](design-system.md#the-manifest)):
   property 9's USB-domain clause, a release build's USB domain holding its controller's unit alone and running no
   file system, is not checked, since the check refuses every release build; it lands with the release build's
