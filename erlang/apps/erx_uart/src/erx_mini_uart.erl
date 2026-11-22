@@ -18,8 +18,15 @@
 %% silicon. The receive interrupt is level, raised while the receive FIFO holds a byte, so
 %% one delivery drains the FIFO to empty and the line is acknowledged after it; a byte that
 %% arrives during the drain raises the line again. Bytes typed before the driver started
-%% are drained once after the interrupt is enabled. An overrun loses bytes the FIFO had no
-%% room for; what was read goes up as read.
+%% are drained once after the interrupt is enabled.
+%%
+%% Overruns: the receive FIFO holds eight bytes, about 0.7 ms of input at 115200 baud, and
+%% the line has no flow control, so a delivery later than that loses the bytes the FIFO
+%% had no room for; what was read goes up as read. Every read of LSR, the receive side's
+%% and the send side's alike, goes through read_lsr/1, because the read clears RX_OVERRUN:
+%% the driver counts each overrun a read shows and logs a warning for the first and for
+%% each doubling of the count after it (count_overrun/2), so a flood writes only a few
+%% lines to the line it overflows.
 %%
 %% Sending: one byte whenever the transmit FIFO can take one. A full FIFO waits a
 %% millisecond at a time with the receive side still served.
@@ -29,10 +36,21 @@
 -export([start_link/1]).
 -export([init/1]).
 -export([console_records/0, console_uart/1]).
+%% Exported for its tests.
+-export([count_overrun/2]).
+
+-include("generated/erx_hw_mini_uart.hrl").
 
 %% The spec's one line.
 -define(RX_LINE, 0).
 -define(FULL_WAIT_MS, 1).
+
+%% The driver's state: its device, its line, the console it serves, and how many reads of
+%% LSR have shown an overrun since it started.
+-record(driver, {dev :: erx_device:device(),
+                 irq :: erx_irq_line:handle(),
+                 console :: pid(),
+                 overruns = 0 :: non_neg_integer()}).
 
 -spec start_link(Console :: pid()) -> {ok, pid(), Terminal :: boolean()}.
 start_link(Console) ->
@@ -46,8 +64,7 @@ init(Console) ->
     ok = erx_device:write_field(Dev, ier, rx_errata, 3),
     ok = erx_device:write_field(Dev, ier, rxie, 1),
     proc_lib:init_ack({ok, self(), true}),
-    deliver_input(Dev, Console),
-    loop(Dev, Irq, Console).
+    loop(deliver_input(#driver{dev = Dev, irq = Irq, console = Console})).
 
 %% The console's record, for the console to start its line's owner before the driver.
 -spec console_records() -> [erx_device:spec()].
@@ -113,49 +130,77 @@ number(Word, Bits) ->
             error
     end.
 
-loop(Dev, Irq, Console) ->
+loop(S = #driver{dev = Dev, console = Console}) ->
     receive
         {erx_irq, Dev, ?RX_LINE} ->
-            take_input(Dev, Irq, Console),
-            loop(Dev, Irq, Console);
+            loop(take_input(S));
         {erx_console_output, From, Bytes} ->
-            send(Dev, Irq, Console, iolist_to_binary(Bytes)),
+            Next = send(S, iolist_to_binary(Bytes)),
             Console ! {erx_console_written, From},
-            loop(Dev, Irq, Console);
+            loop(Next);
         _Other ->
-            loop(Dev, Irq, Console)
+            loop(S)
     end.
 
-send(_Dev, _Irq, _Console, <<>>) ->
-    ok;
-send(Dev, Irq, Console, Bytes = <<Byte, Rest/binary>>) ->
-    case erx_device:read_field(Dev, lsr, tx_empty) of
+send(S, <<>>) ->
+    S;
+send(S0 = #driver{dev = Dev}, Bytes = <<Byte, Rest/binary>>) ->
+    {Lsr, S} = read_lsr(S0),
+    case erx_device:field(Dev, lsr, tx_empty, Lsr) of
         1 ->
             ok = erx_device:write(Dev, io, Byte),
-            send(Dev, Irq, Console, Rest);
+            send(S, Rest);
         0 ->
-            receive
-                {erx_irq, Dev, ?RX_LINE} -> take_input(Dev, Irq, Console)
-            after ?FULL_WAIT_MS -> ok
-            end,
-            send(Dev, Irq, Console, Bytes)
+            Next = receive
+                       {erx_irq, Dev, ?RX_LINE} -> take_input(S)
+                   after ?FULL_WAIT_MS -> S
+                   end,
+            send(Next, Bytes)
     end.
 
-take_input(Dev, Irq, Console) ->
-    deliver_input(Dev, Console),
-    ok = erx_irq_line:ack(Irq).
+take_input(S = #driver{irq = Irq}) ->
+    Next = deliver_input(S),
+    ok = erx_irq_line:ack(Irq),
+    Next.
 
-deliver_input(Dev, Console) ->
-    case drain(Dev, <<>>) of
+deliver_input(S = #driver{console = Console}) ->
+    {Bytes, Next} = drain(S, <<>>),
+    case Bytes of
         <<>> -> ok;
-        Bytes -> Console ! {erx_console_input, Bytes}
-    end.
+        _ -> Console ! {erx_console_input, Bytes}
+    end,
+    Next.
 
-drain(Dev, Bytes) ->
-    case erx_device:read_field(Dev, lsr, data_ready) of
+drain(S0 = #driver{dev = Dev}, Bytes) ->
+    {Lsr, S} = read_lsr(S0),
+    case erx_device:field(Dev, lsr, data_ready, Lsr) of
         0 ->
-            Bytes;
+            {Bytes, S};
         1 ->
             Byte = erx_device:field(Dev, io, data, erx_device:read(Dev, io)),
-            drain(Dev, <<Bytes/binary, Byte>>)
+            drain(S, <<Bytes/binary, Byte>>)
+    end.
+
+%% LSR's word, read once, with the overrun it shows counted and, if it is one to report,
+%% logged: the read clears RX_OVERRUN, so the overrun is counted here or never.
+read_lsr(S = #driver{dev = Dev, overruns = Seen}) ->
+    Lsr = erx_device:read(Dev, lsr),
+    {Overruns, Report} = count_overrun(Lsr, Seen),
+    case Report of
+        false -> ok;
+        true -> logger:warning("erx_mini_uart: receive FIFO overrun, input lost (~b overruns)",
+                               [Overruns])
+    end,
+    {Lsr, S#driver{overruns = Overruns}}.
+
+%% The overrun count after a read of LSR that returned Lsr, from Seen before it, and
+%% whether to log it: the first overrun and each doubling of the count are logged.
+-spec count_overrun(non_neg_integer(), non_neg_integer()) -> {non_neg_integer(), boolean()}.
+count_overrun(Lsr, Seen) ->
+    case ?ERX_HW_MINI_UART_LSR_RX_OVERRUN_GET(Lsr) of
+        0 ->
+            {Seen, false};
+        1 ->
+            Overruns = Seen + 1,
+            {Overruns, Overruns band (Overruns - 1) =:= 0}
     end.

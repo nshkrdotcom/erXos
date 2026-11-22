@@ -475,6 +475,24 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   `otp/erts/emulator/Makefile.in`'s objects, and nothing keeps the two in step; a new NIF source added to the Makefile
   alone passes `make check` and breaks only the native_irq suite's link. Keep the list in one checked-in source that
   both builds read.
+* [High] `erlang/apps/erx_uart/src/erx_mini_uart.erl`, the Raspberry Pi 4 console: input written in one burst loses
+  bytes. On the board a host bridge writing `ls /proc/domains\n` at once delivered `ls /proc/omains`, and a longer line
+  lost its tenth byte and its tail, while commands of nine bytes or fewer arrived whole. The mini UART's receive FIFO
+  holds eight bytes (about 0.7 ms at 115200 baud), the line has no flow control, the driver's code delivers every
+  byte it drains in order, and the path from the interrupt to the drain (the group's dispatcher, an ERTS scheduler's
+  safe point, the shared line's owner process, the driver process) has no bound that short, so the reading is a FIFO
+  overrun from delivery latency, with eight bytes in the FIFO and one in the receiver before the first drain.
+  Unverified on silicon: boot, paste a long line, and look for the driver's `receive FIFO overrun` warning (logged
+  for the first overrun and each doubling of the count). A polled write of Fiasco's or the root's to the same UART
+  also reads LSR (`fiasco/kernel/src/lib/uart/uart_16550.cc`, `write`) and so clears the bit before the driver sees
+  it, and holds a CPU while it writes; the count is shown nowhere but the log, which an inspection path would fix.
+  Once the board confirms an overrun, the choices, cheapest first: run the driver and the shared line's owner at
+  `high` priority, a policy docs/design-shared-devices.md would have to name, with the drain bounded first (the Low item
+  on the unbounded drain), since a wedged device then starves the system domain while the `max` watchdog keeps
+  petting; a native drain at the delivery into a ring the driver reads (docs/design-shared-devices.md and
+  docs/design-fiasco.md, "Interrupts and readiness"); or the console on the PL011 UART0, with Bluetooth on the mini
+  UART. QEMU's `raspi4b` model is unlikely to show the loss: its mini UART is believed to take a byte only when its
+  FIFO has room (unverified: read QEMU's `hw/char/bcm2835_aux.c`).
 * [Medium] `erlang/apps/erx_uart/src/erx_pl011.erl`: QEMU 11.1's PL011 writes each byte straight to its backend, so `FR.TXFF`
   never sets, and it forces the receive interrupt level to one byte, so the receive timeout never has a byte below the
   level to report; a character also arrives whole, never in flight. The `production_image` suite therefore still passes
