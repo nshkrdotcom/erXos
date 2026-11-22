@@ -142,8 +142,8 @@ answered(Ref, Reply, #relay{pending = Pending} = Relay) ->
         {{read, Stream}, _EofOrGone} -> step({read, Stream, eof}, Relay1)
     end.
 
-%% A job's status. The relay sends rc no interrupt, so rc ends by a signal
-%% only if some other process of the session sent it one; that is a failure.
+%% A job's status. rc ends by a signal only on its parent's exit signal
+%% `interrupt`, which the relay never sends; it is read as a failure.
 status({exited, Status}) -> Status;
 status({signaled, _Signal}) -> 1.
 

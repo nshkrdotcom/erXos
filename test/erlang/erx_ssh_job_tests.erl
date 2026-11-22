@@ -145,6 +145,25 @@ hangup_ends_the_job_test() ->
     ?assertEqual({shutdown, hangup}, ended(RelayRef)),
     ?assertNotEqual(running, ended(RcRef)).
 
+%% A hangup ends rc, for the relay's reason, even while its command touches
+%% neither stream, as a loop does: rc ends because the relay does, not
+%% because its pipes die.
+hangup_ends_a_job_that_never_reads_test() ->
+    {Relay, _} = Job = start(<<"while(~ a a) x=y">>),
+    {RelayRef, RcRef, Rc} = watch(Relay),
+    ok = trapping(Rc, 100),
+    send(Job, job_hangup),
+    ?assertEqual({shutdown, hangup}, ended(RelayRef)),
+    ?assertEqual({shutdown, hangup}, ended(RcRef)).
+
+%% Waits until Rc traps exits, so a hangup reaches it as a message rather
+%% than ending it before it reads exit signals.
+trapping(Rc, Tries) ->
+    case process_info(Rc, trap_exit) of
+        {trap_exit, true} -> ok;
+        {trap_exit, false} when Tries > 0 -> receive after 10 -> trapping(Rc, Tries - 1) end
+    end.
+
 channel_end_ends_the_job_test() ->
     Test = self(),
     Channel = spawn(fun() -> Test ! {relay, start(<<"cat">>)}, receive stop -> ok end end),

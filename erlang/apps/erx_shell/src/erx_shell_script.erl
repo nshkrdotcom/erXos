@@ -76,7 +76,8 @@ Starts rc on Command at the terminal, as `rc -c Command` runs as a program
 (docs/design-shell.md, "rc as a program"): a group's shell for a tty that runs
 one command (erx_session_tty:open_channel/3), with the first variables Vars
 (first_vars/1), which ends with the command's exit status as the command
-shell does at its end (erx_shell:exit_with/1).
+shell does at its end (erx_shell:exit_with/1). The group calls it, so this
+process is linked to the group, its parent.
 
 The command runs as one job under a job leader of its own (erx_shell_leader),
 so every process it starts, pipeline stages, subshells, backquotes and `&`
@@ -107,8 +108,8 @@ Starts rc on Command as command/3 does, for an SSH job, a channel with no
 pseudo-terminal (docs/design-ssh.md, "Sessions, ttys and shells"): with
 standard input, output and error on Fds rather than the terminal, Group,
 the job's group, as its group leader, and linked to the calling process,
-the job's relay. The command ends as command/3's does, and when the relay
-ends, for the same reason. Before it ends it makes one empty output
+the job's relay. The command ends as command/3's does, with the relay, its
+parent, in the group's place: when the relay ends, for the same reason. Before it ends it makes one empty output
 request of Group and waits for its answer, which comes once every output
 request the job made before it has been written, so the job's last output
 enters standard error before the stream ends with this process.
@@ -117,21 +118,23 @@ enters standard error before the stream ends with this process.
 job(Command, Vars, Cwd, Fds, Group) when is_binary(Command), is_binary(Cwd), is_map(Fds), is_pid(Group) ->
     start(Command, #{vars => Vars, cwd => Cwd, fds => Fds, group => Group}).
 
-%% The exec's one process, linked to the caller: command/3's and job/5's.
+%% The exec's one process, linked to the caller, its parent: the terminal's
+%% group for command/3, the job's relay for job/5.
 start(Command, Options) ->
-    proc_lib:spawn_link(fun() -> exec(Command, Options) end).
+    Parent = self(),
+    proc_lib:spawn_link(fun() -> exec(Command, Parent, Options) end).
 
 %% rc on Command with Options, its first variables checked, under the
-%% process's group, the terminal's. With a group option (job/5), that group
-%% becomes the group leader and, however rc ends, gets one empty output
-%% request whose answer is awaited, so the job's earlier output is written
-%% first; the option is taken off before rc runs.
-exec(Command, #{group := Group} = Options) ->
+%% process's group, and ending when Parent's exit signal comes. With a group option (job/5), that group becomes the group leader
+%% and, however rc ends, gets one empty output request whose answer is
+%% awaited, so the job's earlier output is written first; the option is
+%% taken off before rc runs.
+exec(Command, Parent, #{group := Group} = Options) ->
     group_leader(Group, self()),
-    try exec(Command, maps:remove(group, Options))
+    try exec(Command, Parent, maps:remove(group, Options))
     after _ = io:request(Group, {put_chars, unicode, <<>>})
     end;
-exec(Command, #{vars := Vars} = Options) ->
+exec(Command, Parent, #{vars := Vars} = Options) ->
     process_flag(trap_exit, true),
     Group = group_leader(),
     Shell = shell(Options#{vars := first_vars(Vars)}),
@@ -140,16 +143,16 @@ exec(Command, #{vars := Vars} = Options) ->
     ok = Go(),
     Ended = receive
                 {'DOWN', Ref, process, _, Reason} -> {evaluated, Reason};
-                {'EXIT', Group, Signal} -> {group, Signal}
+                {'EXIT', Parent, Signal} -> {parent, Signal}
             end,
     ok = erx_shell_leader:close(Leader),
     case Ended of
         {evaluated, Evaluated} ->
             {_Ending, Status} = ending_of(Evaluated),
             erx_shell:exit_with(Status);
-        {group, interrupt} ->
+        {parent, interrupt} ->
             exit({shutdown, {signaled, sigint}});
-        {group, Other} ->
+        {parent, Other} ->
             exit(Other)
     end.
 
