@@ -144,12 +144,16 @@ class ErxBtHciTest < Minitest::Test
              catching_case: 'a_line_reset_that_never_ends_stops_test'),
     Seed.new(fault: 'the due deadline restarted on every input, so repeated traffic holds a command off',
              module_path: CORE,
-             anchor: "command(Now, #core{slot = {due, _}} = Core) ->\n    case due(Now, Core) of\n" \
-                     "        none -> {[], Core#core{slot = idle}};\n        _ -> {[], Core}\n",
-             replacement: "command(Now, #core{slot = {due, _}} = Core) ->\n    case due(Now, Core) of\n" \
-                          "        none -> {[], Core#core{slot = idle}};\n" \
-                          "        _ -> {[], Core#core{slot = {due, Now + ?ERX_BT_COMMAND_TIMEOUT_MS}}}\n",
+             anchor: "        true -> {[], Core#core{slot = idle}};\n        false -> {[], Core}\n",
+             replacement: "        true -> {[], Core#core{slot = idle}};\n" \
+                          "        false -> {[], Core#core{slot = {due, Now + ?ERX_BT_COMMAND_TIMEOUT_MS}}}\n",
              catching_case: 'explored_core_keeps_its_invariants_test_'),
+    Seed.new(fault: 'a due slot emptied while the line takes no command, so connections that come and go ' \
+                    'hold a command off',
+             module_path: CORE,
+             anchor: '    case due(Now, Core) =:= none andalso line_takes_command(Core) of',
+             replacement: '    case due(Now, Core) =:= none of',
+             catching_case: 'a_command_due_again_keeps_its_deadline_test'),
     Seed.new(fault: 'completions not passed to their links, so a link never counts its share back',
              module_path: CORE,
              anchor: 'completed(Handle, Count, Core) -> to_link(Handle, {completed, Count}, Core).',

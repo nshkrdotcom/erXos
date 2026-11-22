@@ -397,6 +397,15 @@ resolved_bond_is_taken_on_at_encryption_test() ->
     ?assertEqual([{reply, caller, ok}], [A || {reply, _, _} = A <- At]),
     ?assertMatch([<<16#0B, 1, 0>>, <<16#1B, _:16, "n">>], on(4, At)).
 
+%% Before its encryption a resolved link refuses a configuration write Insufficient
+%% Encryption even for `ind`, open to every link: the configuration is the bond's to take
+%% on at its encryption, so the phone neither hears it accepted nor reaches the registry
+%% or the store with it.
+resolved_link_refuses_an_open_configuration_before_encryption_test() ->
+    {Actions, _} = run([att(write(configuration(ind), <<2, 0>>))], bonded(unauthenticated)),
+    ?assertEqual([error_rsp(16#12, configuration(ind), 16#0F)], on(4, Actions)),
+    ?assertEqual([], registry(Actions) ++ [A || {store, _} = A <- Actions]).
+
 %% A failure that ends a keyed link sends its Pairing Failed before the close: a pairing
 %% withdrawn after its second phase gave the link its key (docs/design-bluetooth.md, "The
 %% pairing window").
@@ -420,6 +429,17 @@ done_refusal_not_an_outcome_test() ->
     {Actions, _} = run([smp(pairing_request())], Bonded),
     ?assertEqual([pairing_failed(16#08)], on(6, Actions)),
     ?assertEqual([], window(Actions)).
+
+%% A failure of the pairing the link sent to admit reaches the window while the verdict is
+%% still on its way, since the link cannot know it; the window takes a failure only of a
+%% pairing it opened, so one it refused changes nothing there (docs/design-bluetooth.md,
+%% "The pairing window"). The verdict that comes after changes nothing at the link.
+failure_before_the_verdict_reaches_the_window_test() ->
+    {_, Admitting} = run([smp(pairing_request())]),
+    {Failed, Idle} = run([smp(pairing_failed(16#08))], Admitting),
+    ?assertMatch([{outcome, 1, {failed, _}}], window(Failed)),
+    [?assertEqual({[], Idle}, core_step({admission, 1, Verdict}, 0, Idle))
+     || Verdict <- [closed, waiting, {open, nodisplay, fresh()}]].
 
 %% The Security Manager Timer is a deadline: 30 s without a step fails the pairing and
 %% ends the link (Part H, 3.4).

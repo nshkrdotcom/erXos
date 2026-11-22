@@ -81,9 +81,10 @@ step hands over, so a Pairing Failed sent with a failure that ends the link goes
 first; what is still queued is dropped with the link.
 
 **Deadlines** (docs/design.md, "Deadlines in state"): a handler's answer to a write within
-5 s ("The `ble` facet"), else Unlikely Error; an indication's confirmation within ATT's
-30 s transaction timeout (Part F, 3.3.3), else the caller hears `{error, timeout}` and the
-link ends; the Security Manager Timer's 30 s (Part H, 3.4); and a candidate's next look at
+`bt_handler_timeout_ms`, 5 s ("The `ble` facet"), else Unlikely Error; an indication's
+confirmation within ATT's transaction timeout, `att_transaction_timeout_ms`, 30 s (Part F,
+3.3.3), else the caller hears `{error, timeout}` and the link ends; the Security Manager
+Timer, `smp_timeout_ms`, 30 s (Part H, 3.4); and a candidate's next look at
 the pairing wait. `next_deadline/1` answers the earliest, and `expired` runs each that has
 passed. The first look is at the link's start, `now` in `new/1`'s configuration, so the
 first wake-up asks the window at once.
@@ -99,14 +100,6 @@ status output, and since a crash's stack trace carries `step/3`'s arguments, it 
 
 -export([new/1, step/3, next_deadline/1, facts/1]).
 -export_type([core/0, config/0, resolved/0, input/0, action/0, time/0, to_window/0, from_window/0]).
-
-%% The handler's answer to a write (docs/design-bluetooth.md, "The `ble` facet"), ATT's
-%% transaction timeout (Part F, 3.3.3) and the Security Manager Timer (Part H, 3.4).
--define(HANDLER_TIMEOUT_MS, 5000).
--define(ATT_TRANSACTION_MS, 30000).
--define(SMP_TIMEOUT_MS, 30000).
-%% Encryption_Enabled's value for encryption on with AES-CCM on LE (HCI 7.7.8).
--define(ENCRYPTION_ON_LE, 16#01).
 
 -type time() :: integer().                    % milliseconds, the link process's monotonic clock
 -type key() :: erx_gatt_db:key().
@@ -329,7 +322,7 @@ hci({ltk_reply_complete, {failed, _Status}}, _Now, #core{ltk_answer = replied} =
     {[], Core#core{ltk_answer = refused}};
 hci({ltk_reply_complete, _Answer}, _Now, Core) ->
     {[], Core};
-hci({encryption_change, ?ERX_HCI_STATUS_SUCCESS, _Handle, ?ENCRYPTION_ON_LE}, Now,
+hci({encryption_change, ?ERX_HCI_STATUS_SUCCESS, _Handle, ?ERX_HCI_ENCRYPTION_ON_LE}, Now,
     #core{ltk_answer = replied} = Core) ->
     encrypted(Now, Core);
 hci({encryption_key_refresh_complete, ?ERX_HCI_STATUS_SUCCESS, _Handle}, Now, #core{ltk_answer = replied} = Core) ->
@@ -373,7 +366,7 @@ service_changed(Now, Core) ->
     case erx_gatt_server:notify(indicate, erx_gatt_db:service_changed(), Range, server(Core), Core#core.bearer) of
         {ok, Pdu, Bearer} ->
             queue(?ERX_L2CAP_CID_ATT, Pdu, always,
-                  Core#core{bearer = Bearer, indication = {service_changed, Now + ?ATT_TRANSACTION_MS}});
+                  Core#core{bearer = Bearer, indication = {service_changed, Now + ?ERX_ATT_TRANSACTION_TIMEOUT_MS}});
         {error, not_subscribed} ->
             {[], Core}
     end.
@@ -452,7 +445,7 @@ att({Actions, Bearer}, Now, Core) ->
 att_action({send, Pdu}, _Now, Core) ->
     queue(?ERX_L2CAP_CID_ATT, Pdu, always, Core);
 att_action({write, Ref, Key, Value}, Now, Core) ->
-    {[{registry, {write, Ref, Key, Value}}], Core#core{write = {Ref, Now + ?HANDLER_TIMEOUT_MS}}};
+    {[{registry, {write, Ref, Key, Value}}], Core#core{write = {Ref, Now + ?ERX_BT_HANDLER_TIMEOUT_MS}}};
 att_action({subscribed, Key, Subscription}, _Now, Core) ->
     {[{registry, {subscribed, Key, Subscription}}], Core};
 att_action({mtu, Mtu}, _Now, Core) ->
@@ -502,7 +495,7 @@ notify(From, notify, {ok, Pdu, Bearer}, _Now, #core{queue = Queue} = Core) ->
     end;
 notify(From, indicate, {ok, Pdu, Bearer}, Now, Core) ->
     queue(?ERX_L2CAP_CID_ATT, Pdu, always,
-          Core#core{bearer = Bearer, indication = {{caller, From}, Now + ?ATT_TRANSACTION_MS}}).
+          Core#core{bearer = Bearer, indication = {{caller, From}, Now + ?ERX_ATT_TRANSACTION_TIMEOUT_MS}}).
 
 %% ---- the Security Manager ----
 
@@ -513,7 +506,7 @@ smp(Input, Now, #core{smp = Smp} = Core) ->
 smp_action({admit, Tag}, _Now, #core{central = Central} = Core) ->
     {[{window, {admit, Tag, Central}}], Core#core{awaiting = Tag}};
 smp_action(timer, Now, Core) ->
-    {[], Core#core{smp_deadline = Now + ?SMP_TIMEOUT_MS}};
+    {[], Core#core{smp_deadline = Now + ?ERX_SMP_TIMEOUT_MS}};
 smp_action(timer_stop, _Now, Core) ->
     {[], Core#core{smp_deadline = none}};
 smp_action({send, Pdu}, _Now, Core) ->
@@ -527,9 +520,12 @@ smp_action({key, Ltk, Level}, _Now, Core) ->
 smp_action({bonded, Bond}, _Now, #core{awaiting = Tag, bearer = Bearer, bond = none} = Core) when Tag =/= none ->
     {[{store, {keep, Tag, Bond, erx_gatt_server:subscriptions(Bearer)}}, {window, {keeping, Tag}}],
      Core#core{awaiting = none, bond = {keeping, none}}};
-%% A failure reaches the window only for the pairing it admitted, before `keeping`; the
-%% refusal of a Pairing Request after the bond, in the Security Manager's `done`, is not
-%% that pairing's outcome.
+%% A failure reaches the window for the pairing the link last sent it to admit, before
+%% `keeping`, even while the verdict is on its way: the link cannot know the verdict, and
+%% the window takes a failure only of a pairing it opened, so one of a pairing it refused
+%% changes nothing (docs/design-bluetooth.md, "The pairing window"). The refusal of a
+%% Pairing Request after the bond, in the Security Manager's `done`, is not that
+%% pairing's outcome.
 smp_action({failed, Reason}, _Now, #core{awaiting = Tag} = Core) when Tag =/= none ->
     {[{window, {outcome, Tag, {failed, Reason}}}], Core#core{awaiting = none}};
 smp_action({failed, _Reason}, _Now, Core) ->

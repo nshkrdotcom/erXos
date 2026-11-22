@@ -99,6 +99,9 @@ limit hci_status_unknown_connection u8 0x02
 # which NimBLE's and Zephyr's controllers answer to a disconnect for a connection already
 # ending (docs/design-bluetooth.md, "Commands and data credits").
 limit hci_status_command_disallowed u8 0x0C
+# Encryption Change's Encryption_Enabled for encryption on with AES-CCM on LE (7.7.8),
+# the one value with which a link counts as encrypted.
+limit hci_encryption_on_le u8 0x01
 # The reasons the host gives Disconnect, among those 7.1.6 allows (Vol 1 Part F, 2.19,
 # 2.20): Remote User Terminated Connection for a link that ended, and Remote Device
 # Terminated Connection due to Low Resources for a link whose backlog reached
@@ -324,6 +327,11 @@ limit gap_device_name_max u16 248
 # discarded and counted (docs/design-bluetooth.md, "What a radio peer can make the domain
 # spend"; ATT 3.3.2).
 limit bt_write_queue u8 16
+# The time a handler has to answer a write before the phone is answered Unlikely Error,
+# a bound erXos sets (docs/design-bluetooth.md, "The `ble` facet"), and ATT's transaction timeout
+# (3.3.3), after which an unconfirmed indication ends the link.
+limit bt_handler_timeout_ms u32 5000
+limit att_transaction_timeout_ms u32 30000
 # The Security Manager Protocol over its fixed channel (Core 6.3 Vol 3 Part H), as
 # erx_smp and erx_smp_core use it: a responder that pairs by LE Secure Connections
 # only (docs/design-bluetooth.md, "Secure Connections only"). The command codes (3.3,
@@ -375,3 +383,6 @@ limit smp_key_size_erxos u8 16
 # passkey's bound, 999999.
 limit smp_passkey_rounds u8 20
 limit smp_passkey_max u32 999999
+# The Security Manager Timer (3.4): a pairing whose next step does not come within it
+# fails, and its link ends.
+limit smp_timeout_ms u32 30000

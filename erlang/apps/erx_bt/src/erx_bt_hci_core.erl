@@ -24,7 +24,8 @@ wait and a command are never both active and leaving a state drops its deadline:
   does not wait on the reset, so its deadline can pass while the line service holds it;
 - `{wait, Deadline}`: a bring-up wait, which ends when its deadline passes;
 - `{due, Deadline}`: a command is due and waits for the writer and for the controller's
-  `Num_HCI_Command_Packets` to be at least one (Part E, 4.4);
+  `Num_HCI_Command_Packets` to be at least one (Part E, 4.4), or was due and the line
+  has been unable to take a command since;
 - `{sent, Label, Command, Opcode, Deadline}`: the writer has the command, until its
   answer; the deadline is the one it had when it fell due.
 
@@ -32,7 +33,11 @@ Which command is due is decided again on every step and taken only when it is ha
 the writer, so a disconnect for a handle that has gone, even one the controller has given
 a new peer since, or advertising at the limit, is never sent. The command's deadline
 starts when it falls due and runs until its answer, so a controller that allows no
-command and never says otherwise stops on it. Command Complete or Command Status for the
+command and never says otherwise stops on it. A due slot whose command stops being due
+empties only when the line would take a command, so a command that falls due again
+while the controller allows none, as the advertising enable does at the limit for a
+controller that reports connections coming and going, keeps the deadline it first fell due with; at that deadline
+the core stops whether or not a command is due. Command Complete or Command Status for the
 command sent empties the slot; one with opcode 0 only updates the count, and one naming
 any other opcode, the command due but not yet written included, stops.
 
@@ -271,11 +276,13 @@ expired(slot, _Now, #core{slot = {line_reset, _}}) ->
     stop(line_reset_timeout);
 expired(slot, _Now, #core{slot = {wait, _}} = Core) ->
     {[], Core#core{slot = idle}};
+%% A due slot outlives its command only while the line could take none (command/2), so
+%% with none due then, no command was written through the whole deadline.
 expired(slot, Now, #core{slot = {due, _}} = Core) ->
-    %% A due slot always has a command due: every state step/3 returns has been pumped,
-    %% and command/2 empties the slot whenever due/2 names none.
-    {Label, _, _} = due(Now, Core),
-    stop({command_timeout, Label});
+    case due(Now, Core) of
+        {Label, _, _} -> stop({command_timeout, Label});
+        none -> stop(command_not_written)
+    end;
 expired(slot, _Now, #core{slot = {sent, Label, _, _, _}}) ->
     stop({command_timeout, Label}).
 
@@ -588,24 +595,30 @@ advertise(#core{advertising = false, links = Links, limit = Limit} = Core) when 
 advertise(_Core) ->
     none.
 
-%% The slot, when free or due: a command falling due starts its deadline, and a due
-%% command no longer due empties the slot, its deadline with it.
+%% The slot, when free or due: a command falling due starts its deadline, which runs
+%% until the command is sent, or until the line would take a command and none is due,
+%% when the slot empties and the deadline goes with it. While the line takes none, a
+%% command that stops being due and falls due again keeps the deadline it first fell due
+%% with, so connections that come and go cannot hold off a controller that allows none.
 command(Now, #core{slot = idle} = Core) ->
     case due(Now, Core) of
         none -> {[], Core};
         _ -> {[], Core#core{slot = {due, Now + ?ERX_BT_COMMAND_TIMEOUT_MS}}}
     end;
 command(Now, #core{slot = {due, _}} = Core) ->
-    case due(Now, Core) of
-        none -> {[], Core#core{slot = idle}};
-        _ -> {[], Core}
+    case due(Now, Core) =:= none andalso line_takes_command(Core) of
+        true -> {[], Core#core{slot = idle}};
+        false -> {[], Core}
     end;
 command(_Now, Core) ->
     {[], Core}.
 
-%% The writer, when idle, takes the due command once the controller allows one, which
-%% is decided and sent at that moment and keeps the deadline it fell due with, else the
-%% next packet.
+%% Whether the line takes a command now: the writer is idle and the controller allows one.
+line_takes_command(#core{writer = Writer, allowed = Allowed}) -> Writer =:= idle andalso Allowed > 0.
+
+%% The writer, when the line takes a command, takes the due one, which is decided and
+%% sent at that moment and keeps the deadline it fell due with, else the next packet. The
+%% slot is due here only with a command due: command/2 has just emptied it otherwise.
 feed(Now, #core{writer = idle, slot = {due, Deadline}, allowed = Allowed} = Core) when Allowed > 0 ->
     {Label, Command, Taken} = due(Now, Core),
     {Opcode, Parameters} = erx_hci:command(Command),

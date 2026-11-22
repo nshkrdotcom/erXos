@@ -8664,12 +8664,6 @@ model harness drive `erx_device.c` itself. `erx_device_dma_check` and `erx_devic
   `forget all` after the new instance read `known()`, so `pair` answers `eio` until another `forget` or a store restart
   (safe: a refusal). Closing it by construction: the store sends the window the confirmed `forget`, as it sends
   `{outcome, ...}`, and the window reads `known()` in `init/1` after registering.
-* [Low] bluetooth, an outcome for a pairing the window did not open (`erx_bt_link_core`'s `smp_action/3`):
-  `awaiting` is set at `admit`, so a peer's Pairing Failed or the Security Manager Timer between `admit` and
-  a `closed` or `waiting` verdict sends `{outcome, Tag, {failed, _}}` for a pairing the window refused. Clear
-  `awaiting` at a verdict other than `open`, or state in "The pairing window" that the window ignores an
-  outcome for a tag it did not open. Also add a link-core case writing `ind`'s open configuration on a
-  resolved link before encryption, which only `erx_bt_gatt_tests` and the fuzz invariant cover now.
 * [Medium] bluetooth, the store's development file has no grant (`erx_bt_store:start_link/0`,
   `erx_bt_state_file`; docs/design-bluetooth.md "The Bluetooth domain", the store's grant): the design gives the store a
   files service of its own that the storage domain roots at the data volume's `bt/` and grants to the Bluetooth
@@ -8692,21 +8686,12 @@ model harness drive `erx_device.c` itself. `erx_device_dma_check` and `erx_devic
   request once the store's exit signal is in its queue holds because the BEAM handles the kill at the worker's next
   receive and its file calls block one at a time, not by construction; an old worker's create and rename both
   after the new store's listing would land above it.
-* [Low] bluetooth, the link core's deadlines and Encryption_Enabled (`erlang/apps/erx_bt/src/erx_bt_link_core.erl`,
-  its `HANDLER_TIMEOUT_MS`, `ATT_TRANSACTION_MS`, `SMP_TIMEOUT_MS` and `ENCRYPTION_ON_LE`): "What a radio peer can
-  make the domain spend" makes every bound a constant of `abi/formats/bluetooth.txt`, but these four are module
-  macros. Move them there as limits (5000, 30000, 30000 and HCI 7.7.8's 0x01) and use the generated names.
 * [Low] bluetooth, the reconnection's Security Request against the specification (`erx_bt_link_core`'s
   `security_request/3`; docs/design-bluetooth.md "Reconnection"): whether sending a Security Request starts the
   Security Manager Timer (Core 6.3 Vol 3 Part H, 3.4) is unread, so the link starts none and a phone that never
   answers is simply left as it is. Read 3.4 and 3.6.7 and pin the request against the Bumble test peer. The
   request is queued droppable, as SMP's other frames are, and never retried, so a queue full of notifications'
   frames at that moment loses it; the design does not say whether it must be kept.
-* [Low] bluetooth, the advertising enable's deadline refilled (`erx_bt_hci_core`'s `command/2`): at the
-  connection limit with `Num_HCI_Command_Packets` 0, a controller alternating LE Connection Complete and
-  Disconnection Complete empties and refills the slot, and each refill starts a fresh deadline, so the
-  enable never times out and the core never stops; the controller process should end when a command stays
-  unsent across refills for longer than `bt_command_timeout_ms`.
 * [Low] bluetooth, the GATT declarations' smaller gaps (`Erx::GattDecl`, `erx_gatt_db`): the one level of a
   Client Characteristic Configuration rests on the generator's refusal of `notify` and `indicate` at different
   levels, not on `erx_gatt_db:service()`, which could carry one `subscribe` level instead (the registry's

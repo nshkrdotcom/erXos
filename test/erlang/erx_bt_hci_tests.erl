@@ -442,6 +442,26 @@ a_command_the_controller_never_allows_stops_on_its_deadline_test() ->
     {_, Allowed} = answer(Due, {command_complete, 1, 0, <<>>}),
     ?assertEqual([{write, <<1, 1, 16#10, 0>>}], Allowed).
 
+%% At the limit, with the controller allowing no command, connections that complete and
+%% end in turn make the advertising enable due, not due and due again: its deadline runs
+%% from the moment it first fell due through every refill, so the controller process stops
+%% on it, by its label when it is due then and as no command taken when it is not. Only
+%% a controller allowing a command while none is due empties the slot.
+a_command_due_again_keeps_its_deadline_test() ->
+    {_, Core} = connected(1, 16#40),
+    At = fun(Now, Event, Before) -> going(erx_bt_hci_core:step({event, Event}, Now, Before)) end,
+    {Refusing, []} = At(0, {command_complete, 0, 0, <<>>}, Core),
+    {Due, _} = At(1000, {disconnection_complete, 0, 16#40, 16#13}, Refusing),
+    ?assertEqual(6000, erx_bt_hci_core:next_deadline(Due)),
+    {Full, _} = At(2000, {le_connection_complete, 16#41, ?PEER}, Due),
+    ?assertEqual(6000, erx_bt_hci_core:next_deadline(Full)),
+    ?assertMatch({_, [{stop, command_not_written}]}, erx_bt_hci_core:step(expired, 6000, Full)),
+    {Again, _} = At(3000, {disconnection_complete, 0, 16#41, 16#13}, Full),
+    ?assertEqual(6000, erx_bt_hci_core:next_deadline(Again)),
+    ?assertMatch({_, [{stop, {command_timeout, advertise}}]}, erx_bt_hci_core:step(expired, 6000, Again)),
+    {Allowed, []} = At(4000, {command_complete, 1, 0, <<>>}, Full),
+    ?assertEqual(infinity, erx_bt_hci_core:next_deadline(Allowed)).
+
 %% Number Of Completed Packets passes each live handle's count to its link, named in
 %% full, so the link counts its own share back.
 completions_reach_each_handles_link_test() ->
@@ -603,8 +623,9 @@ explored_core_keeps_its_invariants_test_() ->
     {timeout, 120, fun() ->
         Patched = (?READY_CONFIG(2))#{patch => #{manufacturer => 15, records => [{16#FC4C, <<1, 2>>}, {16#FC4E, <<>>}]}},
         Stops = lists:usort(lists:append([explore(Config) || Config <- [?READY_CONFIG(2), Patched]])),
-        ?assertEqual([answer_to_other_command, command_timeout, completion_beyond_in_flight, completion_for_dead_handle,
-                      connection_beyond_limit, connection_during_bringup, connection_while_disconnecting,
+        ?assertEqual([answer_to_other_command, command_not_written, command_timeout, completion_beyond_in_flight,
+                      completion_for_dead_handle, connection_beyond_limit, connection_during_bringup,
+                      connection_while_disconnecting,
                       connection_while_replying, disconnect_failed, disconnect_not_completed, duplicate_handle, hardware_error,
                       line_reset_timeout, ltk_reply_answer, malformed_event,
                       patch_for_other_controller, step_failed],
@@ -845,16 +866,21 @@ check(#world{core = Core, patches = Patches}) ->
     ?assert(map_size(Links) =< Limit),
     ?assert(lists:all(fun(InFlight) -> InFlight >= 0 end, maps:values(Links))).
 
-%% An input that neither answers a command nor fills or empties the slot keeps its
-%% deadline, the writer taking the due command included, so an opcode-0 event or any
-%% traffic repeated cannot hold a command off for ever. The clock moves only at a
-%% deadline, so a deadline started at the clock would equal the one kept: the input is
-%% stepped again a millisecond later, where only a kept deadline is the same.
+%% An input that neither answers a command nor fills the slot starts no deadline, the
+%% writer taking the due command included, so an opcode-0 event or any traffic repeated
+%% cannot hold a command off for ever: it keeps the slot's deadline, or empties the slot
+%% when the line would take a command and none is due, so the deadline never comes
+%% earlier. The clock moves only at a deadline, so a deadline started at the clock would
+%% equal the one kept: the input is stepped again a millisecond later, where only a
+%% deadline started at the input differs.
 check_deadline_kept(Input, #world{core = Before, now = Now}) ->
-    case keeps_deadline(Input) andalso erx_bt_hci_core:step(Input, Now + 1, Before) of
-        {_, [{stop, _}]} -> ok;
-        {Later, _} -> ?assertEqual(erx_bt_hci_core:next_deadline(Before), erx_bt_hci_core:next_deadline(Later));
-        _ -> ok
+    case keeps_deadline(Input) andalso {erx_bt_hci_core:step(Input, Now, Before),
+                                         erx_bt_hci_core:step(Input, Now + 1, Before)} of
+        {{_, [{stop, _}]}, _} -> ok;
+        {{AtNow, _}, {Later, _}} ->
+            ?assertEqual(erx_bt_hci_core:next_deadline(AtNow), erx_bt_hci_core:next_deadline(Later)),
+            ?assert(erx_bt_hci_core:next_deadline(Later) >= erx_bt_hci_core:next_deadline(Before));
+        false -> ok
     end.
 
 keeps_deadline(written) -> true;
@@ -897,14 +923,16 @@ check_progress(_) ->
 
 %% With nothing written, in flight or due, a ready core advertises exactly while
 %% connections are below the limit in force. No command is due when a controller
-%% allowing one would be written none: the idle writer takes a due command at once. Then
-%% every deadline left is a live handle's disconnect, so with no live handle there is none.
+%% allowing one would be written none: the idle writer takes a due command at once. Then,
+%% the controller allowing one, every deadline left is a live handle's disconnect, so with
+%% no live handle there is none; until then a slot whose command stopped being due keeps
+%% its deadline.
 check_quiescent(#world{ready = true, writer = idle, command = none, core = Core, now = Now}) ->
     #{links := Links, advertising := Advertising, limit := Limit} = erx_bt_hci_core:facts(Core),
     case erx_bt_hci_core:step({event, {command_complete, 1, 0, <<>>}}, Now, Core) of
-        {_, []} ->
+        {Allowed, []} ->
             ?assertEqual(map_size(Links) < Limit, Advertising),
-            ?assert(map_size(Links) > 0 orelse erx_bt_hci_core:next_deadline(Core) =:= infinity);
+            ?assert(map_size(Links) > 0 orelse erx_bt_hci_core:next_deadline(Allowed) =:= infinity);
         {_, _Due} -> ok
     end;
 check_quiescent(_) ->
