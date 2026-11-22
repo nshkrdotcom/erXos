@@ -298,8 +298,8 @@ typedef struct erx_dom_device_entry {
 	 * gives"): bridge is its host bridge's entry, a device-tree row of
 	 * role configuration, and bus, device and function its place there,
 	 * by which its bridge's catalogue finds its layout; dma_limit is its
-	 * row's DMA limit, a device address, exclusive, that cuts its
-	 * bridge's DMA range (docs/design-pcie.md, "DMA"), 0 for none. Its
+	 * row's DMA limit, a CPU address, exclusive, that cuts its bridge's
+	 * DMA range (docs/design-pcie.md, "DMA"), 0 for none. Its
 	 * DMA facts are its bridge's node's, read as the function's
 	 * (ERX_DT_ROW_PCIE). */
 	uint32_t	selector;	/* its manifest row's, ERX_MF_SELECTOR_* */

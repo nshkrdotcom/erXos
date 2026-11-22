@@ -1726,7 +1726,7 @@ written as a list of its bits' names or as their number. A listed place
 lies below the root port, on bus 1 or above, with a pin INTA (1) to
 INTD (4), and no place is listed twice; that the places lie within the
 bridge's bus range is the tree's fact, which the boot reads. A
-device's `dma_limit` is a device address, exclusive, 0 for none, which
+device's `dma_limit` is a CPU address, exclusive, 0 for none, which
 the packer copies from a bridge's unit into each `pci` row behind it, and
 the function's DMA facts are cut at it
 ([design-pcie.md](design-pcie.md#dma)). On a platform with an MSI frame,

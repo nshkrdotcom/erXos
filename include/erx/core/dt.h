@@ -80,7 +80,7 @@ typedef enum erx_dt_mac_status {
 /* What the DMA reader made of a window its walk ended with. */
 typedef enum erx_dt_window_verdict {
 	ERX_DT_WINDOW_KEPT,		/* inside the limit, after its cut, with RAM behind it */
-	ERX_DT_WINDOW_ABOVE_LIMIT,	/* its first bus address at or above the row's dma_limit */
+	ERX_DT_WINDOW_ABOVE_LIMIT,	/* its first CPU address at or above the row's dma_limit */
 	ERX_DT_WINDOW_NO_RAM		/* no RAM behind it, after the limit's cut */
 } erx_dt_window_verdict_t;
 
@@ -215,8 +215,9 @@ const char	*erx_dt_accept(const void *bytes, size_t size, erx_dt_t *tree);
 /*
  * Fills *facts with the coherence, DMA range and hardware address of the
  * device at path, an absolute node path. dma_limit is a PCIe function's
- * row's DMA limit (docs/design-pcie.md, "DMA"), a device address,
- * exclusive, that cuts the range; 0 for none and for a device-tree row.
+ * row's DMA limit (docs/design-pcie.md, "DMA"), a CPU address, exclusive,
+ * where each window's CPU addresses are cut, keeping its bus offset; 0 for
+ * none and for a device-tree row.
  */
 void		 erx_dt_device(const erx_dt_t *tree, const char *path, erx_dt_row_t row, uint64_t dma_limit,
 		    erx_dt_device_t *facts);

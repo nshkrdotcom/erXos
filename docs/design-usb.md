@@ -249,8 +249,8 @@ configuration register `0x50` reads 0 or all ones until it has
 (`bcm2838_xhci.c:22-27`, `:69`, `:113-175`;
 `bcm2835_mbox_prop.h:110-126`). PERST# resets the VL805 and with it its
 firmware, so the notification follows every PERST# cycle (facts record,
-section 6). Its DMA is 32-bit, "a limitation of the PCI-e controller,
-not the VL805" (`bcm2838_xhci.c:191-192`). The board's tree limits
+section 6). FreeBSD drives its DMA as 32-bit, "a limitation of the PCI-e
+controller, not the VL805" (`bcm2838_xhci.c:191-192`). The board's tree limits
 inbound DMA to the low 3 GiB, because the wrapper around the PCIe block
 reaches no further, while FreeBSD keeps PCIe DMA below 960 MiB because
 it saw corruption above and calls the true limit unclear
@@ -1063,13 +1063,17 @@ two interrupts are lines of its own unit, held by the PCIe domain and
 left masked. Whoever drives the decoder first settles `0x4060` and the
 layout on the board.
 
-**DMA.** The inbound window maps PCI address 0 to physical address 0.
-The tree allows inbound DMA below 3 GiB and FreeBSD below 960 MiB, a
-limit it found by corruption and calls unclear (facts record, section
+**DMA.** The inbound window maps physical address 0 to the PCI address
+the handed-over tree's `dma-ranges` gives: PCI 0 in the facts record's
+tree, PCI `0x4_0000_0000` in the tree the board's boot firmware hands
+over, as one boot's line showed. The facts record's tree allows inbound DMA below 3 GiB and FreeBSD below 960 MiB,
+a limit it found by corruption and calls unclear (facts record, section
 2); the Pi 4's platform record sets the bridge's `dma_limit` to 960 MiB,
-FreeBSD's `DMA_HIGH_LIMIT` (`:92-106`, `:627-633`), so every PCIe
-function's memory is made below it ([design-pcie.md](design-pcie.md#dma)),
-until probe B5 shows where the limit really is. Linux's 36-bit and 40-bit DMA masks for the VL805 lie above
+FreeBSD's `DMA_HIGH_LIMIT` (`:92-106`, `:627-633`), a ceiling on
+physical addresses, so every PCIe function's memory is made below it
+whatever PCI addresses the window puts in front of it
+([design-pcie.md](design-pcie.md#dma)), until probe B5 shows where the
+limit really is and on which side of the bridge it lies. Linux's 36-bit and 40-bit DMA masks for the VL805 lie above
 the bridge's limit and change nothing here (section 5).
 
 **What remains unknown**, the facts record's ten board unknowns merged
@@ -1083,7 +1087,8 @@ with this design's probes, each with what settles it:
 | the VL805's state at erXos's start: an EEPROM or none, `0x50` before and after the notification, what a missing notification looks like, and whether this board's boot firmware reloads firmware already present (unknown 7) | B1 |
 | whether the boot firmware's handover leaves the VL805 running: bus mastering on, `USBCMD.R/S` set or `USBSTS.HCH` clear ([The boot firmware's handover](#the-bcm2711-bridge)); whether it leaves the link up and PERST# released (unknown 8); the bridge's `MISC_REVISION` (unknown 1) | B3, whose answer the residual of [the handover at entry](design-platforms.md#dma) records and nothing else depends on |
 | the reference clock's source and whether anything must enable it (unknown 9) | B3: if bring-up finds no link, the clock is the first question, and no source answers it yet |
-| the real DMA limit, against FreeBSD's 960 MiB and the tree's 3 GiB (unknown 5) | B5 |
+| the real DMA limit, against FreeBSD's 960 MiB and the facts record's tree's 3 GiB, and whether it depends on the CPU or the PCI address (unknown 5) | B5 |
+| whether the VL805 reports `AC64`, which a window at PCI `0x4_0000_0000` needs ([Address width](#install)) | B7: its capability registers |
 | whether a narrowed inbound window blocks the VL805 outside it | B6 |
 | the VL805's xHCI capability registers and its firmware version | B7, with B1 |
 | whether a configuration access with the link down raises a synchronous abort or an SError | B8: one access with PERST# held, on a board by hand |
@@ -1183,7 +1188,7 @@ parts propose ([plan.md](plan.md#track-u-usb)):
   VL805's contiguous memory is made with `erx_mem_create_contiguous_in`
   inside the function's DMA facts, its bridge's DMA range cut at the
   row's `dma_limit` ([design-pcie.md](design-pcie.md#dma)), as the give
-  makes every unconfined device's (`liberx/system/dom_apply.c:420-425`).
+  makes every unconfined device's (`liberx/system/dom_apply.c:461`).
 * **Interrupts.** QEMU `virt`'s MSI and the Pi 4's INTx line as
   [Interrupts](#interrupts) says.
 * **DMA.** Unconfined on both targets: Fiasco's harness starts QEMU
@@ -2642,8 +2647,11 @@ driver's.
 **Address width.** TRBs and contexts carry 64-bit addresses; a
 controller whose `AC64` is clear reaches 32 bits only, and the install
 refuses, with `{error, erange}`, a record whose memory lies above that,
-before it writes anything. The VL805's narrower limit is its bridge's
-([The BCM2711 bridge](#the-bcm2711-bridge)).
+before it writes anything. The memory's addresses here are the ones the
+device uses, its bus addresses, so a bridge that puts RAM above 4 GiB
+on the bus, as the Pi 4's handed-over tree does at PCI `0x4_0000_0000`,
+needs a controller with `AC64`. The VL805's narrower limit on physical
+addresses is its bridge's ([The BCM2711 bridge](#the-bcm2711-bridge)).
 
 ### Registers at offsets the controller reports
 
@@ -2745,12 +2753,15 @@ one. What is particular to it otherwise is on the PCIe side:
   (`bcm2838_xhci.c:94-101`).
 * **Its firmware**, checked and if need be loaded by the PCIe domain
   ([The VL805's firmware](#the-vl805s-firmware)).
-* **Its reach.** Its DMA is 32-bit and FreeBSD keeps it below 960 MiB;
+* **Its reach.** FreeBSD drives its DMA as 32-bit and keeps it below
+  960 MiB, and Linux gives it a 36-bit or 40-bit mask; with the
+  handed-over tree's window at PCI `0x4_0000_0000` it can run only if it
+  reports `AC64` ([Address width](#install));
   its record's DMA range comes from the bridge's `dma-ranges`, whose PCI
   addresses take three cells, which the DMA-range walk reads
   ([design-device-tree.md](design-device-tree.md#the-reader));
-  its contiguous memory lies below `0x3c000000`, the bridge's
-  `dma_limit` ([design-pcie.md](design-pcie.md#dma)), until probe B5
+  its contiguous memory lies below physical address `0x3c000000`, the
+  bridge's `dma_limit` ([design-pcie.md](design-pcie.md#dma)), until probe B5
   shows where the limit really is. The bridge driver programs the inbound
   window from the same range.
 * **Its interrupt**: the INTx line of its position

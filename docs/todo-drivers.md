@@ -111,19 +111,19 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   [design-pcie.md](design-pcie.md#the-bridge-seam)): the driver starts on the target over the bridge's device
   record, but the Pi 4's platform record has no bridge unit or VL805 unit and its manifest no PCIe domain, so the
   enumerator finds no configuration record there and the driver has run only over the host tests' register model.
-* [High] PCIe, the VL805 gets no DMA memory on the Pi 4 (`kernel/core/dt.c` `range_read`,
-  `liberx/backend/fiasco/runtime_entry.c` `tree_facts`, [design-pcie.md](design-pcie.md#dma)): on the board
-  the root prints `erx: device tree: /scb/pcie@7d500000: dma absent ranges` for the VL805's row, so
-  `erx_boot_dma_memory` gives its entry no memory and the USB domain cannot run the controller. `ranges` is
-  `range_read`'s refusal when, after the bridge's `dma-ranges` is walked to the root and each window's device
-  addresses are cut below the row's `dma_limit` (`0x3c000000`), not exactly one window meets RAM, or the walk made
-  more than `ERX_DT_WINDOWS_MAX` windows. With the facts record's tree (section 0: PCI 0 at CPU 0, 3 GiB) exactly
-  one does, so the tree the boot firmware hands over differs; the record says the firmware edits `dma-ranges` at
-  boot on early BCM2711 revisions and leaves what it writes unknown (section 2, "The DMA limit"; unknown 5). Read
-  the handed-over tree's `/scb` and `/scb/pcie@7d500000` `dma-ranges` and the memory node's `reg` (probe B5's
-  tree half). If the firmware moves the window's PCI side to or above `0x3c000000`, the device-address cut drops it
-  whole, and `dma_limit`, taken from FreeBSD's bridge whose window is identity-mapped, has to be restated against
-  that window in design-pcie.md's DMA section. The reason word also does not tell no window from several.
+* [High] PCIe, the VL805's DMA memory on the Pi 4, unconfirmed on the board (`kernel/core/dt.c` `range_read`,
+  [design-pcie.md](design-pcie.md#dma)): one boot's root line showed the handed-over tree mapping CPU `0`
+  through `0x3fffffff` to PCI `0x4_0000_0000` (`window 0x0 0x400000000 0x3fffffff`), for which the reader gives the
+  VL805's row `range 0x0 0x400000000 0x3bffffff` in the host tests (`pci-high-window`); a boot on the board
+  confirms it, or its line shows what differs.
+* [High] Pi 4 USB, the VL805 must reach 64-bit bus addresses (`otp/erts/emulator/nifs/erxos/erx_device.c`
+  `trb_ring_create`, [design-usb.md](design-usb.md#install), "Address width"): with the handed-over tree's window at
+  PCI `0x4_0000_0000` every bus address of the VL805's memory lies above 4 GiB, so unless its `HCCPARAMS1.AC64`
+  is set the TRB ring's install refuses with `ERX_ERANGE` (`erx_device.c:2499-2501`, the test at `erx_device_trb_form.c:926`;
+  [design-usb.md](design-usb.md#refusals-and-error-results), `{error, erange}`) and the USB domain cannot run the controller. FreeBSD's VL805 driver uses 32-bit DMA
+  and Linux 36-bit and 40-bit masks (design-usb.md, "The BCM2711 bridge"); what the VL805 reports is unverified on
+  the board. If `AC64` is clear, the bridge's window has to move below 4 GiB on the bus, which the bridge driver
+  programs from the tree (`erx_pcie_bcm2711_core:inbound/1`), and the tree's window is the firmware's.
 * [High] PCIe, the bridge's start on the board (`erlang/apps/erx_pcie/src/erx_pcie_bcm2711_core.erl` `decide/1`,
   `erlang/apps/erx_pcie/src/erx_pcie_bcm2711.erl` `describe/1`,
   [design-usb.md](design-usb.md#the-bcm2711-bridge)): on a Raspberry Pi 4 the console stopped mid-line as the
@@ -331,15 +331,18 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
 * [Low] device-tree reader, duplicate sibling names (`kernel/core/dt.c`, `node_find`): `fdt_check_full` does not
   refuse two siblings of one name, and `fdt_path_offset_namelen` takes the first, so a tree the reader could see
   is wrong gives the first node's facts. Refuse a path that matches two nodes. The firmware is trusted.
-* [Medium] device-tree reader, a PCI host bridge's other facts (`kernel/core/dt.c`;
+* [Medium] device-tree reader, a PCI host bridge's `ranges` in the give (`kernel/core/dt.c`;
   [design-device-tree.md](design-device-tree.md#the-reader), "A PCI host bridge";
-  [design-pcie.md](design-pcie.md#dma)): the reader takes a host bridge's three-cell `dma-ranges` and the line
-  its `interrupt-map` routes for a closed place's pin, but not its `ranges` (three cells, an I/O entry skipped) or
-  its `bus-range`, and `erx_dt_device` does not cut a PCIe function's range at its row's `dma_limit`. The bridge
-  record the device service hands the PCIe domain needs all three, and the give's window containment check needs the
-  bridge's `ranges`. The
+  [design-pcie.md](design-pcie.md#dma)): the reader takes a host bridge's three-cell `dma-ranges`, cut at a
+  function's `dma_limit`, its `ranges` and `bus-range` (`erx_dt_bridge`) and the line its `interrupt-map` routes for
+  a closed place's pin; the give's window containment check needs the bridge's `ranges`. The
   reader takes a closed place (`erx_dt_intx`) as valid, device below 32, function below 8 and pin 1 to 4; the
   platform record's reader of a bridge's places (`Manifest#bridge_places`) refuses any other.
+* [Medium] PCIe, the row's `dma_limit` on erXos's kernel ([design-kernel.md](design-kernel.md#dma-and-the-iommu),
+  [design-pcie.md](design-pcie.md#dma)): design-pcie.md cuts a function's windows on erXos's kernel at its
+  row's `dma_limit`, a ceiling on CPU addresses, but design-kernel.md's `erx_dma_ranges` takes only the device's
+  own address width and nothing there carries the row's ceiling to the function's resource; design the carrier
+  before the kernel gives PCIe functions memory.
 * [Low] device-tree reader, a closed place's bounds (`kernel/core/dt.c`, `erx_dt_intx`, `intx_key`): the reader
   takes the place it is handed as valid, device below 32, function below 8 and pin 1 to 4, and shifts the fields
   into the unit address unmasked, so a place with device 32 matches another place's entry. The platform record's

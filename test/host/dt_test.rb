@@ -118,20 +118,29 @@ class DtTest < Minitest::Test
     'pci-three-cells-above' => tree('outer { #address-cells = <3>; #size-cells = <2>; ' \
                                     'dma-ranges = <0x2000000 0x0 0x0 0x0 0x0 0x0 0x40000000>; ' \
                                     'pcie { #address-cells = <2>; #size-cells = <1>; dma-ranges; }; };'),
-    # Two windows over RAM, bus 0 and bus 0x80000000; a function that reaches below
-    # 0x80000000 sees only the first.
+    # Two windows over RAM, CPU 0 at bus 0 and CPU 0x20000000 at bus 0x80000000; a function
+    # limited below CPU address 0x20000000 sees only the first.
     'pci-two-windows' => tree('pcie { device_type = "pci"; #address-cells = <3>; #size-cells = <2>; ' \
                               'dma-ranges = <0x2000000 0x0 0x0 0x0 0x0 0x0 0x20000000 ' \
                               '0x2000000 0x0 0x80000000 0x0 0x20000000 0x0 0x20000000>; };'),
     'pcie-two-cells' => tree('pcie { #address-cells = <2>; #size-cells = <1>; dma-ranges = <0x0 0x80000000 0x0 0x0 0x40000000>; };'),
+    # The Raspberry Pi 4 card's window, as its boot showed it: CPU 0 through 0x3fffffff at
+    # PCI address 0x4_0000_0000.
+    'pci-high-window' => tree('pcie { device_type = "pci"; #address-cells = <3>; #size-cells = <2>; ' \
+                              'dma-ranges = <0x2000000 0x4 0x0 0x0 0x0 0x0 0x40000000>; };'),
+    # A window whose CPU addresses start above 0: CPU 0x10000000 through 0x4fffffff at PCI 0.
+    'pci-cpu-base' => tree('pcie { device_type = "pci"; #address-cells = <3>; #size-cells = <2>; ' \
+                           'dma-ranges = <0x2000000 0x0 0x0 0x0 0x10000000 0x0 0x40000000>; };'),
     # A one-cell bus over the two-cell root, under a one-cell bus that offsets it.
     'nested' => tree('outer { #address-cells = <1>; #size-cells = <1>; dma-ranges = <0x10000000 0x0 0x0 0x40000000>; ' \
                      'inner { #address-cells = <1>; #size-cells = <1>; dma-ranges = <0x80000000 0x10000000 0x1000000>; ' \
                      'dev { }; }; };'),
     'over-no-ram' => tree('bus { #address-cells = <1>; #size-cells = <1>; dma-ranges = <0x0 0x2 0x0 0x1000000>; dev { }; };'),
-    # Three windows a limit of 1 GiB judges: one kept, one above the limit, one with no RAM behind it.
+    # Three windows a limit of CPU address 0x280000000 judges: one kept, one whose CPU
+    # addresses lie above the limit though its bus addresses lie below it, and one with no
+    # RAM behind it.
     'three-windows' => tree('bus { #address-cells = <1>; #size-cells = <1>; dma-ranges = <0x0 0x0 0x0 0x10000000 ' \
-                            '0x80000000 0x0 0x20000000 0x10000000 0x30000000 0x2 0x0 0x1000000>; dev { }; };'),
+                            '0x80000000 0x3 0x0 0x10000000 0x30000000 0x2 0x0 0x1000000>; dev { }; };'),
     # 1,024 entries onto one parent range, under a level that splits it 1,024 ways.
     'splitting' => tree("outer { #address-cells = <1>; #size-cells = <1>; dma-ranges = <#{split_ranges(1024, child_step: 0x40, parent_step: 0x40, size: 0x40)}>; " \
                         'inner { #address-cells = <1>; #size-cells = <1>; ' \
@@ -350,8 +359,17 @@ class DtTest < Minitest::Test
       ['if (first > last || last > UINT8_MAX)', 'if (first > last)', 'bridge-bus-past', 'bridge /pcie',
        'bridge malformed buses 0 0'],
     "the DMA limit's cut removed" =>
-      ['if (dma_limit != 0 && windows[i].last >= dma_limit)', 'if (false)', 'pci-three-cells',
-       'device /pcie pcie 0x3c000000', 'device ok coherent 0 range 0x0 0x0 0x3bffffff mac none']
+      ['if (dma_limit != 0 && window_at_last(&windows[i]) >= dma_limit)', 'if (false)', 'pci-three-cells',
+       'device /pcie pcie 0x3c000000', 'device ok coherent 0 range 0x0 0x0 0x3bffffff mac none'],
+    "the DMA limit's cut one address high" =>
+      ['(dma_limit - 1 - windows[i].at)', '(dma_limit - windows[i].at)', 'pci-high-window',
+       'device /pcie pcie 0x3c000000', 'device ok coherent 0 range 0x0 0x400000000 0x3bffffff mac none'],
+    'a window starting at the DMA limit kept' =>
+      ['if (dma_limit != 0 && windows[i].at >= dma_limit)', 'if (dma_limit != 0 && windows[i].at > dma_limit)',
+       'pci-cpu-base', 'device /pcie pcie 0x10000000', 'device ranges coherent 0 range 0x0 0x0 0x0 mac none'],
+    'the DMA limit compared with bus addresses' =>
+      ['if (dma_limit != 0 && windows[i].at >= dma_limit)', 'if (dma_limit != 0 && windows[i].bus >= dma_limit)',
+       'pci-high-window', 'device /pcie pcie 0x3c000000', 'device ok coherent 0 range 0x0 0x400000000 0x3bffffff mac none']
   }.freeze
 
   def setup
@@ -474,10 +492,14 @@ class DtTest < Minitest::Test
 # behind it; a walk that would carry more windows than it holds says so, not none.
 def test_the_windows_the_dma_walk_ended_with
   assert_equal ['accept ok memory 1',
-                'windows 3 0x0 0x0 0xfffffff kept 0x20000000 0x80000000 0x2fffffff above_limit ' \
+                'windows 3 0x0 0x0 0xfffffff kept 0x300000000 0x80000000 0x30fffffff above_limit ' \
                 '0x200000000 0x30000000 0x200ffffff no_ram',
                 'device ok coherent 0 range 0x0 0x0 0xfffffff mac none'],
-               fixture_answers('three-windows', ['windows /bus/dev node 0x40000000', 'device /bus/dev node 0x40000000'])
+               fixture_answers('three-windows', ['windows /bus/dev node 0x280000000', 'device /bus/dev node 0x280000000'])
+  # The Pi 4 card's window, judged against its row's limit by CPU address, is kept and shown
+  # whole, as the walk gave it.
+  assert_equal 'windows 1 0x0 0x400000000 0x3fffffff kept',
+               fixture_answers('pci-high-window', ['windows /pcie pcie 0x3c000000'])[1]
   assert_equal 'windows 1 0x200000000 0x0 0x200ffffff no_ram',
                fixture_answers('over-no-ram', ['windows /bus/dev node'])[1]
   assert_equal 'windows over', fixture_answers('splitting', ['windows /outer/inner/dev node'])[1]
@@ -500,15 +522,22 @@ end
       ['pci-memory-and-io', 'device /pcie pcie'] => 'device ok coherent 0 range 0x0 0x0 0x3fffffff mac none',
       ['pci-three-cells-above', 'device /outer/pcie pcie'] => 'device cells coherent 0 range 0x0 0x0 0x0 mac none',
       ['pcie-two-cells', 'device /pcie pcie'] => 'device ok coherent 0 range 0x0 0x80000000 0x3fffffff mac none',
-      # A function's DMA limit, a device address, cuts its range, keeping the bridge's offset;
-      # a limit at or below every device address leaves no range; one above it, the range whole.
+      # A function's DMA limit, a CPU address, cuts its range where the CPU addresses reach
+      # it, keeping the bridge's offset: on an identity window, on a translated one (the Pi 4
+      # card's, at PCI 0x4_0000_0000), and on one whose CPU addresses start above 0. A limit
+      # at or below a window's first CPU address leaves no range; one above its last, the
+      # range whole, whatever its bus addresses.
       ['pci-three-cells', 'device /pcie pcie 0x3c000000'] => 'device ok coherent 0 range 0x0 0x0 0x3bffffff mac none',
       ['pci-three-cells', 'device /pcie pcie 0x100000000'] => 'device ok coherent 0 range 0x0 0x0 0x3fffffff mac none',
-      ['pcie-two-cells', 'device /pcie pcie 0x90000000'] => 'device ok coherent 0 range 0x0 0x80000000 0xfffffff mac none',
-      ['pcie-two-cells', 'device /pcie pcie 0x80000000'] => 'device ranges coherent 0 range 0x0 0x0 0x0 mac none',
+      ['pci-high-window', 'device /pcie pcie 0x3c000000'] => 'device ok coherent 0 range 0x0 0x400000000 0x3bffffff mac none',
+      ['pcie-two-cells', 'device /pcie pcie 0x10000000'] => 'device ok coherent 0 range 0x0 0x80000000 0xfffffff mac none',
+      ['pcie-two-cells', 'device /pcie pcie 0x80000000'] => 'device ok coherent 0 range 0x0 0x80000000 0x3fffffff mac none',
+      ['pci-cpu-base', 'device /pcie pcie 0x3c000000'] => 'device ok coherent 0 range 0x10000000 0x0 0x3bffffff mac none',
+      ['pci-cpu-base', 'device /pcie pcie 0x10000000'] => 'device ranges coherent 0 range 0x0 0x0 0x0 mac none',
+      ['pci-cpu-base', 'device /pcie pcie 0x100000000'] => 'device ok coherent 0 range 0x10000000 0x0 0x4fffffff mac none',
       # A window the function cannot reach makes no range ambiguous.
       ['pci-two-windows', 'device /pcie pcie'] => 'device ranges coherent 0 range 0x0 0x0 0x0 mac none',
-      ['pci-two-windows', 'device /pcie pcie 0x80000000'] => 'device ok coherent 0 range 0x0 0x0 0x1fffffff mac none',
+      ['pci-two-windows', 'device /pcie pcie 0x20000000'] => 'device ok coherent 0 range 0x0 0x0 0x1fffffff mac none',
       ['nested', 'device /outer/inner/dev node'] => 'device ok coherent 0 range 0x0 0x80000000 0xffffff mac none',
       ['over-no-ram', 'device /bus/dev node'] => 'device ranges coherent 0 range 0x0 0x0 0x0 mac none',
       ['splitting', 'device /outer/inner/dev node'] => 'device ranges coherent 0 range 0x0 0x0 0x0 mac none',

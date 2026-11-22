@@ -35,6 +35,25 @@ static const char *const paths[] = {
 	"/emmc2bus/mmc@7e340000", "/scb/ethernet@7d580000", "/scb/pcie@7d500000", "/n1/n2/n3/n4/n5/n6/n7/n8"
 };
 
+/*
+ * Whether the range is the start of a kept window, cut from its top only: the
+ * same CPU and bus start, so the cut kept the window's offset, and no wider.
+ */
+static bool
+range_in_kept_window(const erx_dt_device_t *facts)
+{
+	const erx_dt_dma_window_t *window;
+	uint32_t i;
+
+	for (i = 0; i < facts->windows; i++) {
+		window = &facts->window[i];
+		if (window->verdict == ERX_DT_WINDOW_KEPT && window->cpu == facts->cpu && window->bus == facts->bus &&
+		    facts->last <= window->last)
+			return (true);
+	}
+	return (false);
+}
+
 static void
 device_check(const erx_dt_t *tree, const char *path, erx_dt_row_t row, uint64_t dma_limit)
 {
@@ -47,8 +66,9 @@ device_check(const erx_dt_t *tree, const char *path, erx_dt_row_t row, uint64_t 
 		abort();
 	if (facts.dma == ERX_DT_DMA_OK && facts.last < facts.cpu)
 		abort();
-	if (facts.dma == ERX_DT_DMA_OK && dma_limit != 0 &&
-	    (facts.bus >= dma_limit || facts.last - facts.cpu >= dma_limit - facts.bus))
+	if (facts.dma == ERX_DT_DMA_OK && dma_limit != 0 && facts.last >= dma_limit)
+		abort();
+	if (facts.dma == ERX_DT_DMA_OK && !range_in_kept_window(&facts))
 		abort();
 	if (facts.mac_status == ERX_DT_MAC_OK && (facts.mac[0] & 1) != 0)
 		abort();

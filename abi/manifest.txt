@@ -458,7 +458,7 @@ layout erx_mf_unit wire_le 8 24
   field reserved u32 20
   zero reserved all
 # A device row (docs/design-abi.md, "Devices and partition windows"). dma_limit is a
-# device address, exclusive, 0 for none: a PCIe bridge row carries its bridge's, and the
+# CPU address, exclusive, 0 for none: a PCIe bridge row carries its bridge's, and the
 # packer copies it into each pci row behind it (docs/design-pcie.md, "DMA"). places spans
 # a closed bridge's listed places in the places table (flag closed), and is empty on every
 # other row (docs/design-pcie.md, "The closed bus").

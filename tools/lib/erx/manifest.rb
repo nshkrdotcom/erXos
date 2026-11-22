@@ -1080,12 +1080,12 @@ module Erx
 
       def closed?(device) = (device.fetch('flags') & @codec.member('mf_device_flags', 'closed')) != 0
 
-      # A PCIe bridge's DMA limit (docs/design-pcie.md, "DMA"): a device address, exclusive,
+      # A PCIe bridge's DMA limit (docs/design-pcie.md, "DMA"): a CPU address, exclusive,
       # 0 for none, which only a bridge's row states; the packer copies it into each function
       # behind the bridge (behind_bridge).
       def bridge_dma_limit(device)
         limit = device.fetch('dma_limit', 0)
-        invalid('a DMA limit is an unsigned 64-bit device address', 'context.platform.devices') unless
+        invalid('a DMA limit is an unsigned 64-bit CPU address', 'context.platform.devices') unless
           limit.is_a?(Integer) && limit.between?(0, (1 << 64) - 1)
         invalid('only a PCIe bridge row states a DMA limit', 'context.platform.devices') unless limit.zero? || pcie_bridge?(device)
         limit

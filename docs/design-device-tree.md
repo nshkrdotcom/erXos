@@ -372,13 +372,13 @@ host bridge's own `dma-ranges`, as
   passes them only when no level above it has a non-empty one and is
   `malformed` otherwise. The root has no parent to map into, so a
   non-empty `dma-ranges` on the root is `malformed`. For a PCIe function
-  each window is then cut at its row's `dma_limit`, a device address,
+  each window is then cut at its row's `dma_limit`, a CPU address,
   exclusive, which the caller passes, 0 for none and for a device-tree
-  row: a window whose device addresses all lie at or above it drops out,
-  and one that crosses it ends at the highest CPU address whose device
-  address lies below it, so a bridge that translates keeps its offset
-  ([design-pcie.md](design-pcie.md#dma)), and a window the function
-  cannot reach never makes its range ambiguous. Then each window over
+  row: a window whose CPU addresses all lie at or above it drops out,
+  and one that crosses it ends at the CPU address below it, its device
+  addresses following at the window's offset, so a bridge that
+  translates keeps its offset ([design-pcie.md](design-pcie.md#dma)),
+  and a window above the limit never makes the range ambiguous. Then each window over
   which no memory range of the view lies drops out, and the windows left
   are kept whole, not cut to RAM. A walk with no non-empty level leaves
   the one window, `0`, `0` and `2^64 - 1`. The range is present only
@@ -670,7 +670,9 @@ ran.
   three-cell `dma-ranges`, a level split 1,024 ways, a host bridge's
   three-cell `ranges` with a memory and an I/O entry, an `interrupt-map`
   with and without an entry for a place's pin, a PCIe function's range
-  cut at its `dma_limit`, a host bridge's windows, inbound windows and
+  cut at its `dma_limit` on an identity window, a translated one (the Pi
+  4 card's, PCI `0x4_0000_0000` at CPU 0) and one whose CPU addresses
+  start above 0, a host bridge's windows, inbound windows and
   buses in every state `erx_dt_bridge` names, and a bridge with the Pi
   5's `pcie2` windows of [F1.2](research-bcm2712-pcie-mip.md#f12-inbound-windows-many-bars-plus-a-ubus-remap),
   whose three inbound windows, the MSI receiver's page among them, all
@@ -688,7 +690,8 @@ ran.
   a non-relocatable I/O entry is taken; the I/O entry not skipped; three
   cells taken above the host bridge; the windows' bound removed, which
   overruns the walk's array under ASan;
-  the cut at the DMA limit removed; the wrap check on a bridge window's
+  the cut at the DMA limit removed, made one address high, compared
+  with bus addresses, or keeping a window that starts at the limit; the wrap check on a bridge window's
   parent range removed, so a window past `2^64 - 1` is taken; the
   `bus-range` bound removed, so a last bus of 256 reads as 0; the RAM
   filter applied to inbound windows, so `pcie2`'s record loses the MSI

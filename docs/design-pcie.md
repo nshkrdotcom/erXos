@@ -586,8 +586,9 @@ register values are the facts record's:
   handling and restart](#failure-handling-and-restart).
 * **Bring-up**, in the vendor's order (facts record, section 1): bridge
   reset and PERST# asserted, the SerDes powered, `MISC_CTRL`, the
-  inbound window from the tree's `dma-ranges` (a power of two at PCI 0,
-  4 GiB on the Pi 4's 3 GiB range), `BAR1` and `BAR3` disabled, the
+  inbound window from the tree's `dma-ranges` (CPU 0 at the PCI address
+  the tree gives, its size rounded up to a power of two, 4 GiB for a
+  3 GiB range), `BAR1` and `BAR3` disabled, the
   root port's class set to a PCI-to-PCI bridge, the outbound windows from
   `ranges`, no clock power management and no ASPM, then PERST# released,
   100 ms, and link-up polled every 5 ms for at most 100 ms more. The MSI
@@ -1246,28 +1247,47 @@ An unconfined function's **DMA range** is its host bridge's: the reader
 walks from the bridge's own `dma-ranges`, whose child addresses take the
 three PCI cells that `ranges` takes, the first carrying the space code
 (`pci_host_generic_fdt.c:66-68`, `:179-230`), an I/O entry skipped. The
-range is then cut at the row's **`dma_limit`**, a new field of the
-manifest's device row, 0 for none: a device address, exclusive, so the
-function reaches device addresses below it. The cut range is the
-function's DMA facts in its catalogue entry, CPU addresses `cpu`
-through `last`, seen by the function from `bus`, with `last` the
-highest CPU address whose device address lies below `dma_limit`, so a
-bridge that translates keeps its offset and its lower bound. The
-packer copies `dma_limit` from the bridge's unit in the platform record
-into each `pci` row behind it. The fact is the bridge's: FreeBSD keeps
-the bridge's DMA below `0x3c000000` in the bridge's own driver
-(`bcm2838_pci.c:92-106`), where the tree allows 3 GiB (facts record,
-section 2), and its VL805 driver calls even the 32-bit DMA "a limitation
-of the PCI-e controller, not the VL805" (`bcm2838_xhci.c:191`). The Pi
-4's platform record sets `0x3c000000` until the USB design's probe B5
-shows the bridge's true limit.
+range is then cut at the row's **`dma_limit`**, a field of the
+manifest's device row, 0 for none: a CPU (physical) address, exclusive,
+so the function's memory lies below it. Each window is cut where its
+CPU addresses reach the limit and keeps its bus offset: a window that
+starts at or above it drops out, and one that crosses it ends at the
+CPU address below it. The cut range is the function's DMA facts in its
+catalogue entry, CPU addresses `cpu` through `last`, seen by the
+function from `bus`; the bus addresses follow from the window the tree
+gives, so the limit says nothing of how the bridge translates. On the
+Pi 4 card the handed-over tree maps CPU `0` through `0x3fffffff` to PCI
+`0x4_0000_0000`, as one boot's line showed, and the cut keeps CPU `0` through `0x3bffffff` at PCI
+`0x4_0000_0000`. The packer copies `dma_limit` from the bridge's unit in
+the platform record into each `pci` row behind it.
+
+The fact is the bridge's: FreeBSD keeps the bridge's DMA below
+`0x3c000000` in the bridge's own driver (`bcm2838_pci.c:92-106`), where
+the tree allows 3 GiB (facts record, section 2), and its VL805 driver
+calls even the 32-bit DMA "a limitation of the PCI-e controller, not the
+VL805" (`bcm2838_xhci.c:191`). FreeBSD found the limit by corruption
+above 960 MiB and calls it unclear. It programs its own inbound window
+with PCI addresses equal to CPU addresses (`bcm2838_pci.c:107-112`,
+`:659-665`), so its experiment cannot tell whether the corruption
+depends on the CPU address or the PCI address, and the hardware cause
+stays unverified until the USB design's probe B5. A ceiling on CPU
+addresses keeps every function's memory at the physical addresses
+FreeBSD's was at, which is the conservative bound if the cause is on
+the CPU side. If it is on the PCI side, no form of the limit reproduces
+what FreeBSD tested: the handed-over tree's PCI addresses all lie above
+it, and a cut of bus addresses would drop the window whole. The Pi 4's
+platform record sets `0x3c000000` until probe B5 shows the bridge's true
+limit and on which side of the bridge it lies.
 
 The give makes the memory as it makes every unconfined device's, from
 those facts: on Fiasco with `erx_mem_create_contiguous_in`
-(`liberx/system/dom_apply.c:420-425`), on erXos's kernel with
+(`liberx/system/dom_apply.c:461`), on erXos's kernel with
 `erx_mem_create_contiguous` inside the windows `erx_dma_ranges` gives
-the function's resource, cut at the same limit
-([design-kernel.md](design-kernel.md#dma-and-the-iommu)). So the
+the function's resource
+([design-kernel.md](design-kernel.md#dma-and-the-iommu)), their CPU
+addresses cut at the same limit; the `limit` argument of
+`erx_dma_ranges` is a different bound, the device's own address width,
+on the device side. So the
 function's memory lies inside its reach by construction and no driver
 has to remember it.
 

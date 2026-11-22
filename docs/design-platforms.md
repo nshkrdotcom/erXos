@@ -878,7 +878,7 @@ access at a root-bus position other than the root port's, and aborts an
 access while its link is down; its platform record marks it closed and
 lists its one place, the VL805 at bus 1, device 0, function 0, with the
 pin INTA, which the USB design's probe B4 confirms, and limits its
-functions' DMA to device addresses below
+functions' DMA memory to physical addresses below
 960 MiB
 ([research-brcmstb-pcie.md](research-brcmstb-pcie.md), sections 2 and
 3; [design-pcie.md](design-pcie.md#the-bridge-seam)).
