@@ -117,7 +117,7 @@ class ErxBtHciTest < Minitest::Test
              module_path: CORE,
              anchor: '        Failed -> stop({disconnect_failed, Handle, Failed})',
              replacement: '        _Failed -> {[], Core}',
-             catching_case: 'a_disconnect_is_asked_once_and_its_failure_stops_test'),
+             catching_case: 'a_disconnect_is_asked_once_and_a_failure_other_than_gone_or_ending_stops_test'),
     Seed.new(fault: "the line's reset under no deadline",
              module_path: CORE,
              anchor: '{line_reset, Deadline} -> Deadline;',

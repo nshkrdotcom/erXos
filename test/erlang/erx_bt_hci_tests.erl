@@ -349,17 +349,23 @@ a_gone_links_requests_never_reach_the_handles_next_peer_test() ->
                  step({request, New, {disconnect, 16#13}}, Settled)).
 
 %% A disconnect keeps its mark until Disconnection Complete: a second request is
-%% ignored after the first was answered, Unknown Connection Identifier is the handle
-%% already gone, and any other failure stops.
-a_disconnect_is_asked_once_and_its_failure_stops_test() ->
+%% ignored after the first was answered. Unknown Connection Identifier is the handle
+%% already gone, and Command Disallowed what NimBLE's and Zephyr's controllers answer
+%% for a connection already ending, so either keeps the mark until the handle's
+%% Disconnection Complete, sending nothing more; any other failure stops.
+a_disconnect_is_asked_once_and_a_failure_other_than_gone_or_ending_stops_test() ->
     {Link, Core} = linked(1, 16#40),
     {Asked, _} = going(step({request, Link, {disconnect, 16#13}}, Core)),
     {Written, []} = step(written, Asked),
     {Answered, []} = answer(Written, {command_status, 0, 1, 16#0406}),
     ?assertMatch({_, []}, step({request, Link, {disconnect, 16#13}}, Answered)),
     ?assertMatch({_, []}, answer(Written, {command_status, 2, 1, 16#0406})),
-    ?assertMatch({_, [{stop, {disconnect_failed, 16#40, {failed, 16#0C}}}]},
-                 answer(Written, {command_status, 16#0C, 1, 16#0406})).
+    {Disallowed, []} = answer(Written, {command_status, 16#0C, 1, 16#0406}),
+    ?assertEqual({Disallowed, []}, step({request, Link, {disconnect, 16#13}}, Disallowed)),
+    ?assertMatch({_, [{link_down, Link} | _]},
+                 answer(Disallowed, {disconnection_complete, 0, 16#40, 16#13})),
+    ?assertMatch({_, [{stop, {disconnect_failed, 16#40, {failed, 16#12}}}]},
+                 answer(Written, {command_status, 16#12, 1, 16#0406})).
 
 %% A connection that completes while the advertising enable is written and unanswered
 %% came from that enable: its answer leaves advertising off, and the disconnection
@@ -700,7 +706,7 @@ is_ltk(none) -> false.
 answers(none) -> [];
 answers({Opcode, _}) when Opcode =:= 16#0406 ->
     [{event, {command_status, 0, 1, Opcode}}, {event, {command_status, 2, 1, Opcode}},
-     {event, {command_status, 16#0C, 1, Opcode}},
+     {event, {command_status, 16#0C, 1, Opcode}}, {event, {command_status, 16#12, 1, Opcode}},
      {event, complete(Opcode, <<0>>)}, {event, complete(Opcode, <<2>>)}];
 answers({Opcode, _} = Command) ->
     [{event, {command_complete, Allowed, Opcode, good(Command)}} || Allowed <- [0, 1], not is_buffers(Opcode)] ++

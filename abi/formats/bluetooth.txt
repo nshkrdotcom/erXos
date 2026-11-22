@@ -95,6 +95,10 @@ limit hci_status_success u8 0x00
 # Unknown Connection Identifier (Vol 1 Part F, 2.2): a disconnect naming a handle the
 # controller has already let go.
 limit hci_status_unknown_connection u8 0x02
+# Command Disallowed (Vol 1 Part F, 2.12): the controller cannot take the command now,
+# which NimBLE's and Zephyr's controllers answer to a disconnect for a connection already
+# ending (docs/design-bluetooth.md, "Commands and data credits").
+limit hci_status_command_disallowed u8 0x0C
 # The reasons the host gives Disconnect, among those 7.1.6 allows (Vol 1 Part F, 2.19,
 # 2.20): Remote User Terminated Connection for a link that ended, and Remote Device
 # Terminated Connection due to Low Resources for a link whose backlog reached

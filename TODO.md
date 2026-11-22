@@ -8639,17 +8639,34 @@ model harness drive `erx_device.c` itself. `erx_device_dma_check` and `erx_devic
   and the master tags each message with it, which the relay requires.
 * [Medium] bluetooth, ACL packets on the line at a disconnection (`erlang/apps/erx_bt/src/erx_bt_hci_core.erl`,
   the Disconnection Complete clause of `event/2`; docs/design-bluetooth.md "Commands and data credits"): a
-  Disconnection Complete drops the handle's packets still waiting for the writer and its disconnect, but the
-  packet the writer holds, and packets written that the controller has not yet read, are already on the line; if
-  the controller has given the handle to a new peer by the time it reads them, they reach the new link. (A
-  disconnect handed to the writer and unanswered cannot: a connection on its handle ends the controller process.) Narrow it in
-  the link slice, where the link protocol can tie each packet to its connection.
-* [Medium] bluetooth, a disconnect racing the peer's (`erx_bt_hci_core`'s `answered/4`; docs/design-bluetooth.md
-  "Commands and data credits"): a disconnect answered with any failure other than Unknown Connection Identifier
-  ends the controller process, and a controller may answer Command Disallowed (0x0C) to a disconnect that meets a
-  termination already in progress, so a remote peer leaving as the host disconnects it may reset every link.
-  Check Core 6.3 Vol 4 Part E 7.1.6 and 7.7.5 for the statuses a controller sends in that race, and accept the
-  ones that mean the handle is going.
+  Disconnection Complete drops the handle's packets still waiting for the writer and its disconnect, but the packet
+  the writer holds, and packets written that the controller has not yet read, are already on the line; if the
+  controller has given the handle to a new peer by the time it reads them, they reach the new link. (A disconnect
+  handed to the writer and unanswered cannot: a connection on its handle ends the controller process.) The link
+  slice cannot narrow it: the link's envelope already ties every request to its connection inside the host, and
+  below the core an ACL packet carries only its Connection_Handle and flags (Core 6.3 Vol 4 Part E, 5.4.2). The
+  window rests on the controller: Part E 5.3 asks it to give a new connection an unused handle, or the least
+  recently used, and not to reuse one while anything tied to it may still exist. Narrowing it on the host needs a
+  mechanism the design does not name, such as a fence: on H4, where commands and ACL packets share one byte stream,
+  the answer to the first command written after a handle's last packet would show the controller has read the packet
+  (unverified: HCI orders neither path against the other; a probe settles it), and a connection on the handle before
+  that answer ends the controller process. Even that cannot close it, since the controller may give the handle a new
+  peer before it reports the connection. Question for the design: rely on Part E 5.3 and check the board's
+  controller's handle reuse with a probe, or add such a fence. A cheap narrowing for host-initiated disconnects
+  alone: refuse a link's packets once its handle's disconnect is asked.
+* [Medium] bluetooth, a disconnect refused for a connection that is not ending (`erx_bt_hci_core`'s `answered/4`
+  and the failed Disconnection Complete clause of `event/2`; docs/design-bluetooth.md "Commands and data credits"):
+  Command Disallowed to a disconnect, and a Disconnection Complete with a failed status, keep the handle's
+  disconnect mark until a successful Disconnection Complete, and nothing asks again. NimBLE and Zephyr answer
+  Command Disallowed for a connection already ending, but Zephyr also answers it when its global pool of
+  procedure contexts is empty (`ull_llcp.c:772-775`); then the connection stays up, its link never gets
+  `link_down` (a link cut at its backlog stays alive and cut), and it holds one of the connection slots, with
+  advertising off at the limit, until the peer leaves or the controller process restarts: a supervision timeout
+  ends it only if the peer goes silent. No authority widens and nothing is sent to another peer. Fix needs a
+  design decision, since the core keeps at most one deadline: a deadline on the refused mark (past the longest
+  supervision timeout) after which the core stops, or asks once more. Re-asking at once would starve the Long
+  Term Key replies, which `due/1` puts after disconnects. The exploration should then also check that a
+  disconnect is written at most once per connection.
 * [Medium] bluetooth, Reconnection's link side (`erx_bt_link_core`; docs/design-bluetooth.md "Reconnection",
   "The link's messages"): a resolved link sends no Security Request (`wait` to the window, `{wait, Ms}` back,
   SMP 3.6.7 after the pairing wait and never during encryption), indicates no Service Changed when the bond's

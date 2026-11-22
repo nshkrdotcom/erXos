@@ -41,8 +41,11 @@ the handle's Disconnection Complete, so a second request for the handle is ignor
 the core never decides a disconnect for a handle after its Disconnection Complete. A
 connection on a handle whose disconnect is handed to the writer and unanswered stops,
 since the controller may carry that disconnect out on the new peer. A disconnect
-answered with a status other than success or Unknown Connection Identifier (the handle
-has gone, which Disconnection Complete reports or has reported) stops.
+answered with Unknown Connection Identifier (the handle has gone) or Command Disallowed
+(which NimBLE's and Zephyr's controllers answer when the connection is already ending)
+keeps its mark until the handle's Disconnection Complete, as one answered with success
+does; any other status stops. A controller that answers Command Disallowed for a
+connection that is not ending leaves it up until the peer leaves (TODO.md, security residuals).
 
 **Long Term Key replies**: a link answers the LE Long Term Key Request the core passed
 it with `{ltk_reply, Key}`, its key, or `{ltk_reply, none}` when it has none, which the
@@ -445,12 +448,16 @@ answer(Opcode, _Answer, _Core) ->
     stop({answer_to_other_command, Opcode}).
 
 %% A disconnect is answered by Command Status (Part E, 7.1.6). Unknown Connection
-%% Identifier means the handle has gone, which Disconnection Complete reports or has
-%% reported, and the handle keeps its taken mark until then; any other failure stops.
+%% Identifier means the handle has gone; Command Disallowed is what NimBLE's and
+%% Zephyr's controllers answer when the connection is already ending (7.7.5 lists a
+%% disconnect not presently allowed among the failed ones). After either, as after
+%% success, the handle keeps its taken mark until its Disconnection Complete. Any other
+%% failure stops.
 answered({disconnect, Handle}, Command, Answer, Core) ->
     case outcome(Command, Answer) of
         {ok, _} -> {[], Core};
         {failed, ?ERX_HCI_STATUS_UNKNOWN_CONNECTION} -> {[], Core};
+        {failed, ?ERX_HCI_STATUS_COMMAND_DISALLOWED} -> {[], Core};
         Failed -> stop({disconnect_failed, Handle, Failed})
     end;
 %% A Long Term Key reply is answered by Command Complete naming its handle (7.8.25,
