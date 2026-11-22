@@ -1,6 +1,7 @@
-# Frames on which erXos's ATT and SMP decoders and Bumble's differ
-# (test/host/erx_bt_bumble_test.rb). Each entry: `kind documented` (erXos follows the
-# specification and Bumble does not) or `kind upstream` (a Bumble bug), one or more
+# Frames on which erXos's Bluetooth decoders and Bumble's differ
+# (test/host/erx_bt_bumble_test.rb). Each entry: `kind documented` (erXos's answer is
+# the specification's or a choice of erXos's design, which the reason cites, and
+# Bumble's differs) or `kind upstream` (a Bumble bug or gap), one or more
 # `reason` lines, then `frame CODEC HEX ERXOS-LINE` for each frame, erXos's canonical
 # line, which it must keep giving. A blank line ends an entry.
 
@@ -32,11 +33,12 @@ frame smp 0d505152535455565758595a5b5c5d5e5f5a rejected
 frame smp 0e045a rejected
 
 kind upstream
-reason Bumble decodes an SMP PDU cut short: a fixed-size octet field takes the octets present
-reason (bumble/hci.py:1963-1965 slices without a length check) and a missing one-octet field
-reason of an enum or flag type reads as 0 (bumble/hci.py:118-128 and 145-155 take
-reason int.from_bytes of an empty slice), so a truncated command arrives as a whole one with a
-reason fabricated value. erXos refuses it as invalid (erx_smp:decode/1).
+reason Bumble decodes an SMP PDU or an HCI event cut short: a fixed-size octet field takes the
+reason octets present (bumble/hci.py:1963-1965 slices without a length check) and a missing
+reason one-octet field of an enum or flag type reads as 0 (bumble/hci.py:118-128 and 145-155
+reason take int.from_bytes of an empty slice), so a truncated command or event arrives as a
+reason whole one with a fabricated value. erXos refuses it as invalid (erx_smp:decode/1) or
+reason malformed (erx_hci:event/2, erx_hci:return/2).
 frame smp 0103000d1007 rejected
 frame smp 0201002d0f05 rejected
 frame smp 03101112131415161718191a1b1c1d1e rejected
@@ -49,6 +51,9 @@ frame smp 0b rejected
 frame smp 0c00070e151c232a31383f464d545b626970777e858c939aa1a8afb6bdc4cbd2d9e0e7eef5fc030a11181f262d343b424950575e656c737a81888f969da4abb2 rejected
 frame smp 0d505152535455565758595a5b5c5d5e rejected
 frame smp 0e rejected
+frame hci 0e01021000808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbe rejected
+frame hci 0e0103200031323334353637 rejected
+frame hci 08004200 rejected
 
 kind documented
 reason Bumble decodes Execute Write Request with the reserved flags value 0x02 (bumble/att.py
@@ -77,3 +82,112 @@ reason it as no PDU it takes (erx_att:decode/1): a confirmation has no parameter
 reason Vol 3 Part F, section 3.4.7.3), and the server answers nothing to a PDU it does not
 reason take as a request.
 frame att 1e5a ignored
+
+kind documented
+reason Bumble decodes an HCI event, or a Command Complete's return parameters, with octets
+reason after its layout, which it ignores (bumble/hci.py, HCI_Object.dict_from_bytes, as for
+reason ATT and SMP above). erx_hci matches each event it reads and each return the bring-up
+reason reads against its layout whole and answers any other length malformed (erx_hci:event/2,
+reason erx_hci:return/2), a choice of its design: a malformed event stops the HCI core and a
+reason malformed return stops the bring-up (erx_bt_hci_core). Core 6.3 Vol 4 Part E, 5.4.4,
+reason gives each event a specific number of parameters and was not found to say whether a
+reason host refuses or ignores octets past them (TODO.md).
+frame hci 0e050110000d34120c5d0078565a rejected
+frame hci 0e01021000808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf5a rejected
+frame hci 0e0103200031323334353637385a rejected
+frame hci 0e01091000a1a2a3a4a5a65a rejected
+frame hci 0e01022000fb000f5a rejected
+frame hci 0e01051000fd03400a0002005a rejected
+frame hci 0e011a200040025a rejected
+frame hci 0e011b200041025a rejected
+frame hci 0e01030c005a rejected
+frame hci 0e010a20005a rejected
+frame hci 0f0c0206045a rejected
+frame hci 05004100135a rejected
+frame hci 08004200015a rejected
+frame hci 300043005a rejected
+frame hci 130241000300420005005a rejected
+frame hci 3e010044000001a1a2a3a4a5a628000000c800055a rejected
+frame hci 3e0300450018000200c0005a rejected
+frame hci 3e054600b1b2b3b4b5b6b7b86b5a5a rejected
+
+kind documented
+reason A failed LE Connection Complete carries no valid parameter but its Status (Core 6.3
+reason Vol 4 Part E, 4.5.1, Table 4.1, as erx_hci cites it), so erXos reads the Status and
+reason nothing after it, whatever its length; Bumble decodes every parameter and refuses the
+reason event when they are not all there.
+frame hci 3e013e00000000000000000000000000000000 3e01 failed 62
+
+kind documented
+reason A Connection_Handle is the low 12 bits of its field (Core 6.3 Vol 4 Part E, 5.4.2, as
+reason erx_hci cites it); erXos takes those bits and refuses a handle above hci_handle_max.
+reason Bumble keeps the whole 16-bit field as the handle.
+frame hci 0500412013 05 0 65 19
+
+kind upstream
+reason Bumble has no class for the Hardware Error event (event code 0x10, Core 6.3 Vol 4
+reason Part E, 7.7.16; bumble/hci.py registers none), so it decodes it as an unknown event.
+reason erXos reads its Hardware_Code (erx_hci:event/2).
+frame hci 102a 10 42
+
+kind documented
+reason Bumble decodes an LE signaling command whose Data Length disagrees with the octets
+reason after the header, logging a warning (bumble/l2cap.py, L2CAP_Control_Frame.from_bytes),
+reason so the command would be answered. Such a frame is not correctly formed and carries no
+reason identifier to answer (Core 6.3 Vol 3 Part A, 4, as erx_l2cap cites it); erXos drops it
+reason (erx_l2cap:signal/1).
+frame l2cap 06080400400041005a drop
+frame l2cap 120a080006000c000000c8005a drop
+frame l2cap 140c0a0080004000f70017000a005a drop
+frame l2cap 160e0400400005005a drop
+frame l2cap 170f0a008000f70017000a0040 drop
+frame l2cap 170f0a008000f70017000a0040005a drop
+frame l2cap 19110600f700170040 drop
+frame l2cap 19110600f700170040005a drop
+
+kind documented
+reason Bumble takes code 0x0B, Information Response, as a response. It is a BR/EDR signaling
+reason code that LE signaling does not carry (Core 6.3 Vol 3 Part A, Table 4.2, as erx_l2cap
+reason lists the responses it carries), so erXos answers it Command Reject, Command not
+reason understood, as every code it does not take as an LE response (erx_l2cap:signal/1).
+frame l2cap 0b15040002000000 reject 21
+
+kind documented
+reason Bumble has classes for Read Multiple Request (0x0E) and Read Multiple Variable Request
+reason (0x20). erXos's server does not support them and answers Request Not Supported
+reason (docs/design-bluetooth.md, "The ATT server": they stay unsupported).
+frame att-op 0e refuses
+frame att-op 20 refuses
+
+kind upstream
+reason Bumble has no class for Multiple Handle Value Notification (0x23; bumble/att.py's
+reason opcode list stops at Read Multiple Variable Response, 0x21). erXos ignores it as a PDU a
+reason server sends (erx_att:decode/1; abi/formats/bluetooth.txt, multiple_handle_value_ntf).
+frame att-op 23 ignores
+
+kind documented
+reason The sweep's frame is the opcode alone, so Write Command arrives without its handle, an
+reason artifact of the sweep rather than a difference of behavior: erXos answers no command,
+reason so it ignores one whose layout does not fit (erx_att:decode/1), and Bumble's class
+reason lookup does not read the frame.
+frame att-op 52 ignores
+
+kind documented
+reason Bumble has a class for Signed Write Command (0xD2). erXos takes Write Command alone and
+reason ignores every other command (docs/design-bluetooth.md, "The ATT server", ATT 3.3).
+frame att-op d2 ignores
+
+kind documented
+reason Bumble's parser refuses an LE signaling frame cut short, raising on a field after the
+reason header or on the header itself (bumble/l2cap.py, L2CAP_Control_Frame.from_bytes). erXos
+reason reads no field after the header: it drops a frame whose Data Length disagrees with the
+reason octets after the header, or that is too short to hold one, as not correctly formed
+reason (Core 6.3 Vol 3 Part A, 4, as erx_l2cap cites it; erx_l2cap:signal/1). The two agree that
+reason the frame is not answered, for different reasons.
+frame l2cap 06080400400041 drop
+frame l2cap 07090400400041 drop
+frame l2cap 120a080006000c000000c8 drop
+frame l2cap 130b020001 drop
+frame l2cap 140c0a0080004000f70017000a drop
+frame l2cap 160e0400400005 drop
+frame l2cap 0602 drop

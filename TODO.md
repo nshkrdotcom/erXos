@@ -8713,14 +8713,17 @@ model harness drive `erx_device.c` itself. `erx_device_dma_check` and `erx_devic
   answers is simply left as it is. Read 3.4 and 3.6.7 and pin the request against the Bumble test peer. The
   request is queued droppable, as SMP's other frames are, and never retried, so a queue full of notifications'
   frames at that moment loses it; the design does not say whether it must be kept.
-* [Medium] bluetooth, the codecs compared with Bumble (`test/host/erx_bt_bumble_test.rb`; docs/design-bluetooth.md
-  "Fuzz targets"): the comparison covers `erx_att:decode/1` and `erx_smp:decode/1`. The HCI event decoder and
-  its Command Complete returns (`erx_hci:event/2`, `return/2`, against Bumble's `HCI_Event.from_bytes`) and the
-  LE signaling decoder (`erx_l2cap:signal/1`, against `L2CAP_Control_Frame.from_bytes`) are still to join it,
-  each with a canonical form on both sides and a seeded field misread; so is a coarse sweep of all 256 ATT
-  opcodes comparing which PDUs erXos answers (decoded, unsupported, ignored) with Bumble's classes. The corpus
-  is one hand-written frame per PDU with its one-octet cut and extension, not the fuzz targets' corpus the
-  design names; their generators could feed it.
+* [Low] bluetooth, the codecs compared with Bumble (`test/host/erx_bt_bumble_test.rb`; docs/design-bluetooth.md
+  "Fuzz targets"): the corpus is one hand-written frame per PDU, event and signaling code with its one-octet cut
+  and extension, and the 256 ATT opcodes, not the fuzz targets' corpus the design names. The fuzz targets
+  (`test/erlang/erx_bt_att_fuzz.erl`, `_smp_`, `_hci_`, `_link_`) make their frames at random inside
+  unexported generators and keep no seed files; feeding the comparison from them needs those generators
+  exported and seeded the same on both sides.
+* [Low] bluetooth, octets past an HCI event's parameters (`erx_hci:event/2`, `return/2`; `test/bt/differences.txt`):
+  erx_hci matches each event and bring-up return against its layout whole, so a controller that appends a
+  parameter stops the HCI core (`erx_bt_hci_core`) where Bumble ignores it. Core 6.3 Vol 4 Part E, 5.4.4 gives
+  each event a specific number of parameters; whether a host must refuse or ignore octets past them was not
+  found. Settle it from the specification before the board run, and change erx_hci or the entry's reason.
 * [Low] bluetooth, the Bumble environment's packages (`tools/lib/erx/bumble.rb`): only pyee and
   typing_extensions are pinned. `apps/pair.py`, `apps/gatt_dump.py` and `apps/scan.py`, which stages 2 and 4 of
   the hosted suite run, import click; pin its wheel in `deps.lock` and `Bumble::WHEEL_IDS` with the first of them.

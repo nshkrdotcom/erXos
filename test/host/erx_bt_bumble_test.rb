@@ -10,12 +10,14 @@ require_relative '../../tools/lib/erx/runner'
 require_relative '../../tools/lib/erx/bumble'
 require_relative '../fixtures/erlang_build'
 
-# erXos's ATT and SMP decoders against Bumble's (docs/design-bluetooth.md, "Fuzz
-# targets"): one corpus through erx_att:decode/1 and erx_smp:decode/1
-# (test/erlang/erx_bt_bumble_decode.erl, on stock's emulator, ERX_ERL and ERX_ERLC) and
-# through Bumble's ATT_PDU.from_bytes and SMP_Command.from_bytes (test/bt/bumble_decode.py,
-# in Erx::Bumble's environment, made from the fetched pins), each printing one canonical
-# line per frame. A frame on which they differ must be listed in test/bt/differences.txt,
+# erXos's Bluetooth decoders against Bumble's (docs/design-bluetooth.md, "Fuzz targets"):
+# one corpus through erx_att:decode/1, erx_smp:decode/1, erx_hci:event/2 with
+# erx_hci:return/2, and erx_l2cap:signal/1 (test/erlang/erx_bt_bumble_decode.erl, on
+# stock's emulator, ERX_ERL and ERX_ERLC) and through Bumble's ATT_PDU, SMP_Command,
+# HCI_Event and L2CAP_Control_Frame from_bytes (test/bt/bumble_decode.py, in Erx::Bumble's
+# environment, made from the fetched pins), each printing one canonical line per frame,
+# as the driver's documentation defines it. A frame on which they differ must be listed
+# in test/bt/differences.txt,
 # as documented (erXos's answer is the specification's and Bumble's is not) or upstream
 # (a Bumble bug), with erXos's line, which erXos must then give exactly; a listed frame on
 # which they agree is stale and fails too.
@@ -30,15 +32,22 @@ class ErxBtBumbleTest < Minitest::Test
   DEADLINE = '300'
   ATT = 'erlang/apps/erx_bt/src/erx_att.erl'
   SMP = 'erlang/apps/erx_bt/src/erx_smp.erl'
+  HCI = 'erlang/apps/erx_bt/src/erx_hci.erl'
+  L2CAP = 'erlang/apps/erx_bt/src/erx_l2cap.erl'
 
   # count octets from first, step apart, wrapping at 0xff, in hex.
   def self.octets(first, count, step: 1) = Array.new(count) { |index| format('%02x', (first + index * step) & 0xff) }.join
 
-  # One frame of each PDU the decoders read, written from Core 6.3 Vol 3 Part F,
-  # section 3.4 (the requests and commands a server receives) and Part H, sections
-  # 3.5 and 3.6. Within a frame no two fields are equal and no 16-bit field reads the
-  # same in either byte order, so a field read from the wrong place or in the wrong
-  # order shows.
+  # One frame of each PDU the decoders read: for ATT and SMP written from Core 6.3 Vol 3
+  # Part F, section 3.4 (the requests and commands a server receives) and Part H, sections
+  # 3.5 and 3.6; for HCI each event erx_hci decodes (Vol 4 Part E, 7.7), its code and
+  # parameters, and a Command Complete of each command whose return erx_hci reads, and a
+  # failed one; for LE signaling each code of Bumble's CommandCode that LE signaling
+  # carries, as erx_l2cap lists its responses (Part A, Table 4.2), with Bumble's layout,
+  # and a longer frame than MTUsig, though the line does not show the reject's reason that
+  # tells it apart. Within a frame no two fields the line shows are equal and no 16-bit
+  # field reads the same in either byte order, so a field read from the wrong place or in
+  # the wrong order shows.
   SAMPLES = {
     'att' => %w[
       021702
@@ -61,22 +70,44 @@ class ErxBtBumbleTest < Minitest::Test
       '0103000d10070b', '0201002d0f0506', "03#{octets(0x10, 16)}", "04#{octets(0x20, 16)}", '0505',
       "06#{octets(0x30, 16)}", '07a1b20102030405060708', "08#{octets(0x40, 16)}", '0901c1c2c3c4c5c6', '0b0d',
       "0c#{octets(0, 64, step: 7)}", "0d#{octets(0x50, 16)}", '0e04'
+    ],
+    'hci' => [
+      '0e050110000d34120c5d007856', "0e01021000#{octets(0x80, 64)}", "0e01032000#{octets(0x31, 8)}",
+      '0e01091000a1a2a3a4a5a6', '0e01022000fb000f', '0e01051000fd03400a000200', '0e011a20004002',
+      '0e011b20004102', '0e01030c00', '0e010a2000', '0e0101100c', '0f0c020604', '0500410013', '0800420001',
+      '30004300', '13024100030042000500', '3e010044000001a1a2a3a4a5a628000000c80005', "3e013e#{'00' * 17}",
+      '3e0300450018000200c000', '3e054600b1b2b3b4b5b6b7b86b5a'
+    ],
+    'l2cap' => [
+      '010702000000', '0608040040004100', '0709040040004100', '120a080006000c000000c800', '130b02000100',
+      '140c0a0080004000f70017000a00', '150d0a004000f70017000a000000', '160e040040000500',
+      '170f0a008000f70017000a004000', '18100a00f70017000a0000004000', '19110600f70017004000', '1a1202000000',
+      "08141800#{octets(0x70, 24)}"
     ]
   }.freeze
   # Frames beside the samples' mutations: a reserved Execute Write flag, a UUID of
   # neither 2 nor 16 octets, a Find By Type Value with an empty value, and SMP's code
-  # 0x0A, which Core 6.3 lists as previously used, with Signing Information's layout.
-  EXTRA = { 'att' => %w[1802 080100fe1200112233 060100fe120028], 'smp' => ["0a#{octets(0x60, 16)}"] }.freeze
+  # 0x0A, which Core 6.3 lists as previously used, with Signing Information's layout;
+  # a Hardware Error event, and a Disconnection Complete whose handle has bits above
+  # its 12 set; an Information Response, a BR/EDR code, on LE signaling, a code
+  # Bumble has no class for, and a command's header cut short.
+  EXTRA = {
+    'att' => %w[1802 080100fe1200112233 060100fe120028], 'smp' => ["0a#{octets(0x60, 16)}"],
+    'hci' => %w[102a 0500412013], 'l2cap' => %w[0b15040002000000 1b130000 0602]
+  }.freeze
+  # Every ATT opcode alone: which PDUs the server takes, refuses or ignores.
+  SWEEP = { 'att-op' => Array.new(256) { |op| format('%02x', op) } }.freeze
   # An octet past each sample's end.
   PAST = '5a'
 
   # Each sample as written, cut by its last octet and with PAST appended, then EXTRA,
-  # as `CODEC HEX` lines.
+  # then SWEEP, as `CODEC HEX` lines.
   def self.corpus
-    SAMPLES.flat_map do |codec, frames|
+    mutated = SAMPLES.flat_map do |codec, frames|
       variants = frames.flat_map { |frame| [frame, frame[0...-2], frame + PAST] }.reject(&:empty?)
       (variants + EXTRA.fetch(codec)).uniq.map { |frame| "#{codec} #{frame}" }
     end
+    mutated + SWEEP.flat_map { |codec, frames| frames.map { |frame| "#{codec} #{frame}" } }
   end
 
   Row = Data.define(:frame, :bumble, :erxos) do
@@ -85,6 +116,15 @@ class ErxBtBumbleTest < Minitest::Test
 
   def self.compared = @compared ||= compare(replaced: {})
 
+  # Bumble's lines for the corpus, which no seed changes, so they are read once.
+  def self.bumble_lines
+    @bumble_lines ||= Dir.mktmpdir('erx-bt-bumble') do |work|
+      path = File.join(work, 'corpus.txt')
+      File.write(path, corpus.join("\n") + "\n")
+      bumble(path)
+    end
+  end
+
   # The corpus's rows, erXos's lines from its modules with replaced applied
   # (ErlangBuild.compile's replaced).
   def self.compare(replaced:)
@@ -92,7 +132,7 @@ class ErxBtBumbleTest < Minitest::Test
       frames = corpus
       path = File.join(work, 'corpus.txt')
       File.write(path, frames.join("\n") + "\n")
-      bumble = bumble(path)
+      bumble = bumble_lines
       erxos = erxos(path, work, replaced)
       unless [bumble.size, erxos.size] == [frames.size, frames.size]
         raise "#{frames.size} frames, but Bumble answered #{bumble.size} and erXos #{erxos.size}"
@@ -171,13 +211,15 @@ class ErxBtBumbleTest < Minitest::Test
     assert_empty failures, "test/bt/differences.txt does not account for:\n#{failures.join("\n")}"
   end
 
+  REFUSALS = %w[rejected unparsed].freeze
+
   # The samples decode alike, so the comparison is not of two refusals.
   def test_every_sample_decodes_alike
     rows = self.class.compared.to_h { |row| [row.frame, row] }
     SAMPLES.each do |codec, frames|
       frames.each do |frame|
         row = rows.fetch("#{codec} #{frame}")
-        assert row.agree? && row.erxos != 'rejected', "#{row.frame}: bumble #{row.bumble.inspect}, erxos #{row.erxos.inspect}"
+        assert row.agree? && !REFUSALS.include?(row.erxos), "#{row.frame}: bumble #{row.bumble.inspect}, erxos #{row.erxos.inspect}"
       end
     end
   end
@@ -199,7 +241,19 @@ class ErxBtBumbleTest < Minitest::Test
     Seed.new(fault: 'Read Request taken with octets after its handle',
              module_path: ATT,
              anchor: 'decode(<<?ERX_ATT_OPCODE_READ_REQ, Handle:16/little>>) ->',
-             replacement: 'decode(<<?ERX_ATT_OPCODE_READ_REQ, Handle:16/little, _/binary>>) ->')
+             replacement: 'decode(<<?ERX_ATT_OPCODE_READ_REQ, Handle:16/little, _/binary>>) ->'),
+    Seed.new(fault: "LE Long Term Key Request's EDIV read most significant octet first",
+             module_path: HCI,
+             anchor: '<<Handle:16/little, Random:8/binary, Ediv:16/little>>) ->',
+             replacement: '<<Handle:16/little, Random:8/binary, Ediv:16/big>>) ->'),
+    Seed.new(fault: "Read Local Version's company identifier read from LMP_Subversion's place",
+             module_path: HCI,
+             anchor: "Company:16/little,\n#{' ' * 29}LmpSubversion:16/little>>",
+             replacement: "LmpSubversion:16/little,\n#{' ' * 29}Company:16/little>>"),
+    Seed.new(fault: "a signaling command's identifier read from its code's place",
+             module_path: L2CAP,
+             anchor: 'signal(<<_Code, Identifier, Length:16/little, Data/binary>>)',
+             replacement: 'signal(<<Identifier, _Code, Length:16/little, Data/binary>>)')
   ].freeze
 
   SEEDS.each do |seed|
