@@ -98,6 +98,15 @@ reset_releases_the_mac_and_never_forwards_the_crc_test() ->
     ?assertEqual([], [S || {field, _, crc_fwd, _} = S <- sequences()]),
     ?assert(lists:member({field, umac_cmd, sw_reset, 1}, Cmd)).
 
+%% A restart finds the controller as a predecessor that ended left it, receiving: the MAC's
+%% receive is turned off and a full frame's time passes before the receive buffer's reset
+%% or the MAC's, so neither lands while the MAC hands a frame to the receive engine (the
+%% GENET facts record, "Stopping the DMA and confirming it stopped").
+reset_stops_mac_receive_a_frame_before_any_reset_test() ->
+    {Quiesce, Rest} = lists:split(2, erx_genet_core:reset()),
+    ?assertMatch([{field, umac_cmd, rxen, 0}, {wait_us, Us}] when Us >= 2000, Quiesce),
+    ?assertEqual({field, sys_rbuf_flush_ctrl, reset, 1}, hd(Rest)).
+
 start_enables_both_directions_and_only_the_dma_interrupts_test() ->
     Start = erx_genet_core:start(),
     [?assert(lists:member(S, Start))

@@ -201,8 +201,9 @@ apply_step(Dev, {write, Register, Value}) -> ok = erx_device:write(Dev, Register
 apply_step(Dev, {field, Register, Field, Value}) -> ok = erx_device:write_field(Dev, Register, Field, Value);
 apply_step(_Dev, {wait_us, Us}) -> spin_us(Us).
 
-%% A pause shorter than a timer's millisecond, as FreeBSD's DELAY: the scheduler is held
-%% for at most erx_mdio's bound on one operation, about 10 ms, and 10 us at a reset step.
+%% A pause spun, as FreeBSD's DELAY, not slept on a timer: the scheduler is held for at
+%% most erx_mdio's bound on one operation, about 10 ms, 2 ms for the frame the reset lets
+%% pass, and 10 us at the other reset steps.
 spin_us(Us) ->
     spin_until(erlang:monotonic_time(microsecond) + Us).
 

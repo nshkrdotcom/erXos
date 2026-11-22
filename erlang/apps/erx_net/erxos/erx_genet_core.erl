@@ -13,8 +13,15 @@ source (hw/svd/genet/genet.svd), so no step packs a bit by hand.
 
 The sequences follow FreeBSD 975e3605ebb1, `sys/arm64/broadcom/genet/if_genet.c`:
 
-1. `reset/0`, FreeBSD's `gen_reset` (`if_genet.c:488-514`): pulse the receive buffer's
-   reset, write it 0, write the MAC's command register 0, hold the MAC in software
+1. `reset/0` first turns the MAC's receive off and waits a full frame's time, since a
+   restart may find the controller receiving as its predecessor left it and the MAC
+   stops only at a frame's end. This is step 2 of the interface stop in the GENET facts
+   record (docs/research-genet-bcm2711.md, "Stopping the DMA and confirming it
+   stopped"), the one step here that is not FreeBSD's: FreeBSD first turns receive off
+   inside `gen_reset`, by writing the command register 0 after the receive buffer's
+   reset (`if_genet.c:504, 873`), and again in `gen_disable` (`:554-556, 874`), never
+   before that reset. Then FreeBSD's `gen_reset` (`if_genet.c:488-514`): pulse the
+   receive buffer's reset, write it 0, write the MAC's command register 0, hold the MAC in software
    reset with local loopback for 10 us, write it 0 again, which leaves CRC forward
    clear, so no frame check sequence is counted in a receive length, and clear the
    MIB counters. FreeBSD sets loopback and reset in one write; here they are two field
@@ -70,6 +77,10 @@ The sequences follow FreeBSD 975e3605ebb1, `sys/arm64/broadcom/genet/if_genet.c`
 %% here (if_genet.c:89, if_genetreg.h:116), over 16.
 -define(RX_XON_XOFF_HI, (?ERX_GENET_RING_SIZE bsr 4)).
 -define(RESET_US, 10).
+%% A frame of the largest length at the slowest speed, 1,536 bytes at 10 Mb/s, is 1.23 ms
+%% on the wire; the other published driver sleeps 1 to 2 ms after turning receive off
+%% (the GENET facts record, "Stopping the DMA and confirming it stopped").
+-define(FRAME_US, 2000).
 %% An Ethernet header: destination, source and type.
 -define(ETHER_HDR_LEN, 14).
 %% The device NIF's limit on a transmit post's pieces.
@@ -150,10 +161,11 @@ local_unicast(<<High:6, _:2, Rest:40>>) -> <<High:6, 1:1, 0:1, Rest:40>>.
 
 %% --- The sequences ------------------------------------------------------------------
 
--doc "The reset, FreeBSD's `gen_reset`.".
+-doc "The MAC's receive stopped at a frame's end, then the reset, FreeBSD's `gen_reset`.".
 -spec reset() -> [step()].
 reset() ->
-    [{field, sys_rbuf_flush_ctrl, reset, 1}, {wait_us, ?RESET_US},
+    [{field, umac_cmd, rxen, 0}, {wait_us, ?FRAME_US},
+     {field, sys_rbuf_flush_ctrl, reset, 1}, {wait_us, ?RESET_US},
      {field, sys_rbuf_flush_ctrl, reset, 0}, {wait_us, ?RESET_US},
      {write, sys_rbuf_flush_ctrl, 0}, {wait_us, ?RESET_US},
      {write, umac_cmd, 0},
