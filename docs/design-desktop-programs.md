@@ -304,8 +304,8 @@ What follows from this shape:
   "click Back, expect the parent folder's listing" and never indexes a
   tree by position.
 * **A core reloads in place.** In development, `tools/erx load` puts a
-  new `erx_desk_<name>_core` into the session's runtime through the
-  session's code facet
+  new `erx_desk_<name>_core` into the session's runtime through a code
+  facet whose scope holds the session
   ([design-live.md](design-live.md#code-from-the-host)), and
   `erx_desk:reload(Name)`, called at the session's Erlang shell, has
   every open window of that program call the new core's `view/1` on the

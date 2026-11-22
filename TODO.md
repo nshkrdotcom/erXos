@@ -7229,21 +7229,23 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   manifest (its `development` flag or a facet list) once the system domain
   can read it.
 * [Medium] live, `tools/erx watch` (`tools/lib/erx/code_watch.rb`,
-  `tools/lib/erx/code_commands.rb`): after the guest reboots, its installs are
-  gone (design-live.md, "The code store": "the host installs again"), but the
-  watch sends only sources that change from then on. Remember what the watch
-  loaded and send it all again when a hello finds a new boot (the build's
-  session history or a boot counter in the hello would tell). Also: a module
-  whose bytes did not change is loaded again, and a second such load purges,
-  ending processes still in its old code; skip a module whose hash equals the
-  last one loaded.
+  `tools/lib/erx/code_commands.rb`) and the code service: after the guest
+  reboots, its installs are gone, but the watch sends only sources that change
+  from then on, and a module whose bytes did not change is loaded again, whose
+  second load purges and ends processes still in its old code. design-live.md
+  ("One load, three routes", the host tool's transports) has the watch load
+  everything it loaded again on each new connection and `erx_code` skip a
+  module already current; build both.
 * [Low] live, `tools/erx load` (`tools/lib/erx/code_load.rb`): the store may
   free a blob that `missing` reported as held, to make room for a later blob
   of the same batch (erx_code_store.erl), and the load then answers
   `{error, {missing, Hashes}}`; send the named blobs, when all are of the
   batch, and load again once.
-* [Low] live, `tools/erx load` and `watch`: they reach only QEMU's UNIX
-  socket (`--socket`); a board's serial line needs a raw-mode tty opener.
+* [Low] live, `tools/erx load` and `watch` (`tools/lib/erx/code_commands.rb`):
+  they reach only QEMU's UNIX socket (`--socket`) and only the system domain,
+  and default to it; design-live.md ("One load, three routes") gives them
+  `--tcp` (loopback only), `--tty` (raw mode through `stty`) and `--ssh`
+  (`hostlink` over an SSH `exec`), and a required `--domain`. Not built.
 * [Low] live, host-link client (`tools/lib/erx/hostlink_client.rb`): it has no
   host tests of its own, only the production image's host link boot; drive it
   against `erx_hostlink_session` on stock OTP or a scripted IO (credit, hello
@@ -10155,10 +10157,6 @@ document's "residual risks accepted" paragraph.
 * [Low] docs, design-system.md "Devices": `erx_domain_lib:devices/0` gives each entry's `role` as `block`, `net` or
   `none`, while the manifest's `mf_device_role` (`abi/manifest.txt`) has thirteen values, `network` rather than `net`,
   and `usb` among them. Say which roles `devices/0` reports, from the one table.
-* [Medium] docs, design-live.md "Overlays": two loads into one domain other than the system domain at once
-  have no stated outcome: whether the code service holds a second candidate overlay until the first is
-  published or discarded, or refuses it, so that no published overlay is written from a stale base. State it
-  in the load's three steps and test it when the code facet is built.
 * [Low] docs, design-live.md "The /proc tree": `/proc/sensors/status` is not among its paths
   ([design-board-sensors.md](docs/design-board-sensors.md#procsensors-and-the-inspector)).
 * [Low] docs, design-scheduler.md "Service work" (under the review freeze): a call a service's process makes on a dirty
@@ -10581,7 +10579,9 @@ document's "residual risks accepted" paragraph.
 * [Medium] code service, other domains and principals
   (`erlang/apps/erx_code/src/erx_code_store.erl`): the store is one in-memory
   store for the system domain's installs. Per-principal hot stores in memory
-  objects from the principal's budget, code facets and the code server's fetch
+  objects from the principal's budget, the scoped code facet
+  (`abi/services/code.txt`, `erx_domain_core:code_scope/3`), the session's
+  `load` and `hostlink` commands, and the code server's fetch
   of pieces into other domains, overlays per supervised specification with
   their revisions and release hash, overlays persisted on the data partition
   and the bounded decoder of what is read back, with its fuzz target, are not

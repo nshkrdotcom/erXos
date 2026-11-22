@@ -76,7 +76,7 @@ evidence, not design contracts.
 | [design-crypto.md](design-crypto.md) | cryptography: OpenSSL in the runtime images, OTP's crypto applications, HTTPS clients |
 | [design-ssh.md](design-ssh.md) | SSH: the SSH domain, logins, keys and channels |
 | [design-bluetooth.md](design-bluetooth.md) | Bluetooth Low Energy, peripheral first |
-| [design-live.md](design-live.md) | the live machine: console, ttys, attributed text, the inspector and `/proc`, tracing, the code store, the host link |
+| [design-live.md](design-live.md) | the live machine: console, ttys, attributed text, the inspector and `/proc`, tracing, the code store and loading code by the host link, SSH or a file, the host link |
 | [design-shell.md](design-shell.md) | the command shell: rc's language, the command namespace, text pipelines, job control |
 | [design-vi.md](design-vi.md) | evi, the screen editor run as `vi` |
 | [design-display.md](design-display.md) | the display: composition, input routing, window buffers, the draw protocol, the terminal, widget trees, kiosks, graphics hardware |

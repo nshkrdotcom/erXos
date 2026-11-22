@@ -857,7 +857,10 @@ commands from standard input in a job, as OpenSSH runs the user's shell
 without a tty; `{exec, Command}` runs `rc -c Command`, for an `exec`
 request, with `Command` a binary of 1 to 32 KiB holding no NUL byte. A
 line answers `limited` past ten open channels, `max_channels`, and
-`badarg` to any other shape.
+`badarg` to any other shape. The host tool's SSH route is such a job,
+`exec` of the session's command `hostlink`, whose standard input and
+output carry the host link's frames and whose facets are the session's
+([design-live.md](design-live.md#one-load-three-routes)).
 
 A job's channel and its line exchange seven closed messages, heard
 through each other's domain envelope and each checked by its receiver:
@@ -1027,18 +1030,28 @@ identifier.
    ok=erx_ssh_dev:boot(2222)`, which starts the daemon in a process of
    its own once the session holds its `net` and `data` facets, which
    their domains install after the session is ready, registers the
-   daemon as `erx_ssh_dev` and logs whether it listens. Its sessions are
-   interactive ttys only: a session channel's callback,
-   `erx_ssh_dev_channel`, is the master of a tty of root's session,
-   speaking the tty's six messages
+   daemon as `erx_ssh_dev` and logs whether it listens. A session
+   channel's callback, `erx_ssh_dev_channel`, is the master of a tty of
+   root's session for a channel that asked for one, speaking the tty's
+   six messages
    to its relay as stage 2's channel does, so the command shell runs on
    it with the tty's line discipline. `pty-req` gives the tty's size and
    TERM, `window-change` resizes it, Ctrl-C
    reaches the shell as the line discipline's SIGINT, and how the shell
    ended is the channel's `exit-status`, or `exit-signal` `INT`
    ([Sessions, ttys and shells](#sessions-ttys-and-shells)). An `exec`
-   request is answered `exec is not supported in 0.1` on standard error
-   with exit status 1, and no subsystem is offered. Its version banner
+   runs `rc -c Command` in root's session as stage 2's does, with
+   `Command` 1 to 32 KiB holding no NUL byte: on the channel's tty when
+   the client asked for one, and otherwise as a job on three pipes of
+   the session's pipe server, which the channel relays with the job
+   messages of [Sessions, ttys and shells](#sessions-ttys-and-shells),
+   exchanged inside root's session with the session's job relay, the
+   part of `erx_ssh_line` that stage 2's `open_job` runs, so a job's
+   bytes cross unchanged and its error output stays apart. This is the
+   byte-clean `exec` over which the host tool's SSH route runs
+   `hostlink` ([design-live.md](design-live.md#one-load-three-routes));
+   whether stage 1 carries it is an open decision of that document. No
+   subsystem is offered. Its version banner
    is `SSH-2.0-erXos_` and the release number of `abi/erx_abi.txt`'s
    `uname_release`, not OTP's `Erlang/<version>`, within RFC 4253's
    section 4.2 limits on the softwareversion (printable US-ASCII, no space,
@@ -1314,6 +1327,7 @@ multiple of 51 or past 816 bytes refused).
 | the session's grants: a session started over SSH lists exactly its template's facets, as at the console | the SSH domain's facets passed into the start map: the lists differ |
 | parallel logins (QEMU): a second client logs in within 5 s while a first stalls after its version line | `parallel_login` left at its default: the second waits for the first's grace |
 | jobs (QEMU): a job's output, error output and exit status 3 arrive apart; `ssh -t host 'exit 4'` exits 4 | `job_eof` handled as `job_hangup`: the error output and status are lost; no `exited` for a tty: the `-t` client does not exit 4 |
+| stage 1's `exec` (QEMU): `ssh host 'cat > /tmp/b' < BYTES` with all 256 byte values, then `ssh host cat /tmp/b`, gives back the same bytes, and `ssh host 'exit 3'` exits 3 | an `exec` without a pty run on a tty: `ONLCR` turns LF into CR LF and the bytes differ |
 | hangup: closing the client ends the shells and the session within 5 s; killing the SSH domain ends every session it started | `logout` not called at the connection's end: the session outlives it |
 | limits: the 65th connection and the 11th channel are refused; the 6th counted failure is a disconnect | `max_auth_tries` not passed: the 6th failure is `SSH_MSG_USERAUTH_FAILURE` |
 | host key: the fingerprint survives a reboot; a corrupt file stops the daemon with the file named | the key made anew at each start: the fingerprints differ |
