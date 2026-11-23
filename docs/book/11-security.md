@@ -5,7 +5,7 @@
 > refusal of a mapping that is writable and executable; the three
 > runtime images; and the escaping of untrusted text. Designed: rights
 > on handles, budgets that refuse, CPU bands, devices behind an IOMMU,
-> a safe decode of other domains' messages in the system domain, login
+> the branch-predictor workaround at kernel entry, a safe decode of other domains' messages in the system domain, login
 > with a passphrase, and the key vault. Table 11.4 in section 11.13
 > lists both in full.
 
@@ -110,7 +110,11 @@ neighbors are from how fast its own calls return; and, on some
 processors, speculation across domains. On a processor open to
 branch-predictor attacks, explained in the box below, a domain may
 read memory it cannot map. That is a limit of the system on such
-processors.
+processors. The design adds a call to the firmware's workaround at every
+entry from user mode, on the processors the firmware reports as needing
+it, and carries it only if the Raspberry Pi 4's null-request benchmark
+shows it costs nothing measurable; it is designed and not built
+([design-fiasco.md, The release's Fiasco build](../design-fiasco.md#the-releases-fiasco-build)).
 
 > **Background: branch-predictor attacks.** A processor guesses which
 > way a branch goes and runs ahead on the guess. A wrong guess's
@@ -876,7 +880,7 @@ gathers what holds today and what is designed.
 
 | Area | Built | Designed |
 | --- | --- | --- |
-| walls between domains | Fiasco and the root service keep memory and kernel objects apart | devices behind an IOMMU; the PCIe domain; a fuzz campaign over Fiasco's calls |
+| walls between domains | Fiasco and the root service keep memory and kernel objects apart | devices behind an IOMMU; the branch-predictor workaround at kernel entry; the PCIe domain; a fuzz campaign over Fiasco's calls |
 | handles | a per-task table; only the creator destroys; a destroyed object's handles answer `ERX_ESTALE`; no rights | rights in each entry; a generation in the value |
 | processes | exports, the funnel and the envelope | a safe decode of other domains' messages in the system domain; `max_request` checked in the funnel |
 | services | facets and their five checks; 64 domain names per principal | admission by CPU share; a generated admission path |
