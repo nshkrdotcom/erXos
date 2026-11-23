@@ -7,6 +7,40 @@
 
 #include "bench_clock.h"
 
+void
+erx_bench_rounds_a(erx_bench_token_t *token, uint64_t (*read)(void),
+    erx_bench_round_t *rounds, size_t n)
+{
+	uint64_t number = atomic_load_explicit(&token->sent, memory_order_relaxed);
+
+	for (size_t i = 0; i < n; i++) {
+		const uint64_t a = read();
+
+		number++;
+		atomic_store_explicit(&token->sent, number, memory_order_release);
+		while (atomic_load_explicit(&token->answered, memory_order_acquire) != number)
+			;
+		const uint64_t c = read();
+		const uint64_t b = atomic_load_explicit(&token->b, memory_order_relaxed);
+
+		rounds[i] = (erx_bench_round_t){ .a = a, .b = b, .c = c };
+	}
+}
+
+void
+erx_bench_rounds_b(erx_bench_token_t *token, uint64_t (*read)(void), size_t n)
+{
+	for (size_t i = 0; i < n; i++) {
+		uint64_t number;
+
+		do
+			number = atomic_load_explicit(&token->sent, memory_order_acquire);
+		while (number == atomic_load_explicit(&token->answered, memory_order_relaxed));
+		atomic_store_explicit(&token->b, read(), memory_order_relaxed);
+		atomic_store_explicit(&token->answered, number, memory_order_release);
+	}
+}
+
 /* What one round's causality allows the offset to be. */
 static void
 round_bounds(const erx_bench_round_t *round, int64_t *low, int64_t *high)

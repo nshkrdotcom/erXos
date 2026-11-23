@@ -15,6 +15,7 @@
 #ifndef ERX_BENCH_CLOCK_H
 #define ERX_BENCH_CLOCK_H
 
+#include <stdatomic.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -55,6 +56,28 @@ typedef struct {
 	int64_t high;
 	bool empty;
 } erx_bench_offset_t;
+
+/*
+ * The token two threads pass through shared memory for the rounds, with no kernel call.
+ * A raises sent to the next round's number; B, spinning on its own CPU, stamps b on
+ * seeing sent differ from answered, publishes b and echoes sent into answered; A stamps
+ * c on seeing its number come back. A counts on from sent and B echoes what it sees, so
+ * one statically zeroed token serves every calibration of its pair, both sides given
+ * the same n. The two threads must run on different CPUs: on one, a spin may never let
+ * the other run. Neither side has a deadline; a stuck pair stops the boot, which the
+ * host's deadline ends.
+ */
+typedef struct {
+	_Atomic uint64_t sent;
+	_Atomic uint64_t answered;
+	_Atomic uint64_t b;
+} erx_bench_token_t;
+
+/* Thread A's side: n rounds over token, each stamped with read, into rounds. */
+void erx_bench_rounds_a(erx_bench_token_t *token, uint64_t (*read)(void),
+    erx_bench_round_t *rounds, size_t n);
+/* Thread B's side of the same n rounds, stamped with its own CPU's read. */
+void erx_bench_rounds_b(erx_bench_token_t *token, uint64_t (*read)(void), size_t n);
 
 /* The interval of n rounds, widened by increment ticks at each end; empty for none. */
 erx_bench_offset_t erx_bench_offset(const erx_bench_round_t *rounds, size_t n,

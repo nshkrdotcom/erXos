@@ -33,8 +33,8 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   each with its seed. Open review point of the first slice: `slower` and `faster` are not yet held to a paired run.
 * [High] benchmarks, `wake` ([design-bench.md](design-bench.md#1-wake-how-late-a-waiting-thread-runs)): the
   histogram and the periodic schedule of `test/guest/bench/` and the `bench` QEMU suite, whose cells are pending,
-  and the guest library's `BENCH` and `CLOCK` line emitter exist; still to build are the library's calibration
-  loop (read cost, smallest increment, the offset rounds), the native bench guest
+  and the guest library's `BENCH` and `CLOCK` line emitter and its calibration (read cost, smallest increment,
+  the offset rounds between two threads) exist; still to build are the native bench guest
   `test/guest/native_bench/` reusing `native_irq`'s handshake and holder and `native_task`'s program,
   `park-deadline`, the two wake handshakes, `trigger-take`, and `bench/erx_wake_bench.erl` with
   `bench/erx_bench_hist.erl` for `erlang-timer` in the `xdomain` bench image, each boot given to the suite as its

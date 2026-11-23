@@ -23,7 +23,7 @@ class BenchPeriodicTest < Minitest::Test
                test/guest/bench/bench_line.c
                test/fixtures/bench_cores_driver.c].freeze
   EXPECTED = ['hist ok', 'stall ok', 'early ok', 'sweep ok', 'tick ok', 'offset ok', 'cell ok', 'drift ok', 'reads ok',
-              'median ok'].freeze
+              'median ok', 'rounds ok'].freeze
 
   # name => [file, original, replacement]; each must turn a line of EXPECTED into a failure.
   MUTANTS = {
@@ -40,7 +40,18 @@ class BenchPeriodicTest < Minitest::Test
     'the stamps ordering test instead of the causal interval' =>
       ['test/guest/bench/bench_clock.c',
        "\t*low = (int64_t)round->b - (int64_t)round->c;\n\t*high = (int64_t)round->b - (int64_t)round->a;\n",
-       "\t*low = 0;\n\t*high = 0;\n"]
+       "\t*low = 0;\n\t*high = 0;\n"],
+    # Round one reads the token's zero before B can stamp: its interval cannot hold the offset.
+    'thread A taking b before its round reaches B' =>
+      ['test/guest/bench/bench_clock.c',
+       "\t\tnumber++;\n\t\tatomic_store_explicit(&token->sent, number, memory_order_release);\n" \
+       "\t\twhile (atomic_load_explicit(&token->answered, memory_order_acquire) != number)\n\t\t\t;\n" \
+       "\t\tconst uint64_t c = read();\n" \
+       "\t\tconst uint64_t b = atomic_load_explicit(&token->b, memory_order_relaxed);\n",
+       "\t\tconst uint64_t b = atomic_load_explicit(&token->b, memory_order_relaxed);\n" \
+       "\t\tnumber++;\n\t\tatomic_store_explicit(&token->sent, number, memory_order_release);\n" \
+       "\t\twhile (atomic_load_explicit(&token->answered, memory_order_acquire) != number)\n\t\t\t;\n" \
+       "\t\tconst uint64_t c = read();\n"]
   }.freeze
 
   def setup
@@ -54,7 +65,7 @@ class BenchPeriodicTest < Minitest::Test
   # A mutant may leave a parameter unused, which is not the fault it seeds.
   def build(sources, name:, mutant: false)
     output = File.join(@directory, name.tr(" '<=,", '-----'))
-    log, status = Open3.capture2e(ENV.fetch('ERX_CLANG', 'clang'), '-std=c17', '-Wall', '-Wextra', '-Werror', '-pedantic', '-O1',
+    log, status = Open3.capture2e(ENV.fetch('ERX_CLANG', 'clang'), '-std=c17', '-Wall', '-Wextra', '-Werror', '-pedantic', '-O1', '-pthread',
                                   '-g', *@flags, *(mutant ? ['-Wno-unused-parameter'] : []),
                                   '-I', File.join(ROOT, 'test/guest/bench'), *sources, '-o', output, stdin_data: '')
     assert status.success?, log

@@ -8,9 +8,13 @@
  * periodic cores, printing "NAME ok" or "NAME bad" for each, in a fixed order.
  */
 
+#define _POSIX_C_SOURCE 200809L
+
+#include <pthread.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
 
 #include "bench_clock.h"
 #include "bench_hist.h"
@@ -275,6 +279,61 @@ median_case(void)
 	return (erx_bench_hist_median(&hist) == 5 && low <= 1000 && last >= 1000);
 }
 
+/* B's counter is this far ahead of A's in the rounds case, in nanoseconds. */
+#define ROUNDS_OFFSET	INT64_C(1000000)
+#define ROUNDS	1000
+
+static uint64_t
+host_now(void)
+{
+	struct timespec now;
+
+	clock_gettime(CLOCK_MONOTONIC, &now);
+	return ((uint64_t)now.tv_sec * UINT64_C(1000000000) + (uint64_t)now.tv_nsec);
+}
+
+static uint64_t
+host_ahead(void)
+{
+	return (host_now() + (uint64_t)ROUNDS_OFFSET);
+}
+
+static erx_bench_token_t rounds_token;
+
+static void *
+rounds_b(void *unused)
+{
+	(void)unused;
+	erx_bench_rounds_b(&rounds_token, host_ahead, ROUNDS);
+	return (NULL);
+}
+
+/*
+ * Two host threads pass the token, B's clock ROUNDS_OFFSET ahead of A's: two
+ * calibrations over the one token each give an interval that holds the offset.
+ */
+static bool
+rounds_case(void)
+{
+	static erx_bench_round_t rounds[ROUNDS];
+	bool held = true;
+
+	for (int pass = 0; pass < 2; pass++) {
+		pthread_t b;
+
+		if (pthread_create(&b, NULL, rounds_b, NULL) != 0)
+			return (false);
+		erx_bench_rounds_a(&rounds_token, host_now, rounds, ROUNDS);
+		pthread_join(b, NULL);
+
+		erx_bench_offset_t offset = erx_bench_offset(rounds, ROUNDS, 1);
+
+		held = held && !offset.empty && offset.low <= ROUNDS_OFFSET &&
+		    ROUNDS_OFFSET <= offset.high;
+	}
+	return (held);
+}
+
 /*
  * Prints a fast cell, a periodic cell and a two-CPU calibration as the guests print them,
  * for the host's validator to read (test/host/bench_guest_lines_test.rb).
@@ -357,7 +416,7 @@ main(int argc, char **argv)
 		{ "hist", hist_case }, { "stall", stall_case }, { "early", early_case },
 		{ "sweep", sweep_case }, { "tick", tick_case }, { "offset", offset_case },
 		{ "cell", cell_case }, { "drift", drift_case }, { "reads", reads_case },
-		{ "median", median_case },
+		{ "median", median_case }, { "rounds", rounds_case },
 	};
 
 	for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++)
