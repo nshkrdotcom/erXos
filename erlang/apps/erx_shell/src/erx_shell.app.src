@@ -32,6 +32,7 @@
              erx_cmd_ifconfig,
              erx_cmd_erl,
              erx_cmd_false,
+             erx_cmd_load,
              erx_cmd_ls,
              erx_cmd_mkdir,
              erx_cmd_mount,

@@ -3,7 +3,9 @@
 
 %% The code service's supervisor: erx_code, restarted after a crash. A restarted service
 %% starts with an empty store and no history, as after a reboot; the modules it loaded stay
-%% loaded, and the host sends their blobs again with its next load.
+%% loaded, and the host sends their blobs again with its next load. The supervisor is the
+%% server of the install service (erx_facet:serve/2), so each install facet the domain
+%% service mints in front of it (erx_code_facet) outlives erx_code's restarts.
 
 -module(erx_code_sup).
 -behaviour(supervisor).
@@ -15,6 +17,7 @@ start_link() ->
     supervisor:start_link({local, ?MODULE}, ?MODULE, []).
 
 init([]) ->
+    ok = erx_facet:serve(install, self()),
     Service = #{id => erx_code,
                 start => {erx_code, start_link, []},
                 restart => permanent,

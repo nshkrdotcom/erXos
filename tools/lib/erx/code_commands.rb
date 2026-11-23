@@ -6,6 +6,7 @@ require 'optparse'
 require 'socket'
 require 'tmpdir'
 require_relative 'code_load'
+require_relative 'code_ssh'
 require_relative 'code_watch'
 require_relative 'error'
 require_relative 'hostlink_client'
@@ -13,19 +14,25 @@ require_relative 'hostlink_client'
 module Erx
   # The host tool's code commands (docs/design-live.md, "Code from the host"):
   #
-  #   tools/erx load --socket PATH [--build HEX] [--domain ID] FILE...
-  #   tools/erx watch --socket PATH [--build HEX] [--domain ID] [--interval S] DIR
+  #   tools/erx load  TRANSPORT (--system | --domain D) FILE...
+  #   tools/erx watch TRANSPORT (--system | --domain D) [--interval S] DIR
+  #   TRANSPORT: --socket PATH [--build HEX] | --ssh DEST
   #
   # load sends FILEs, each a compiled MODULE.beam or an Erlang source it compiles first, as
-  # one batch; watch compiles and loads each source of DIR that changes. PATH is the UNIX
-  # socket QEMU serves the guest's host link UART on (QemuPlan); HEX, when given, is the
-  # build identifier the guest's hello must report. The code service loads only into the
-  # system domain, so --domain takes only its id, 4.
+  # one batch; watch compiles and loads each source of DIR that changes. A command takes
+  # exactly one transport and exactly one target: --system, through the install facet, or
+  # --domain D, through the code facet. --socket PATH is the UNIX socket QEMU serves the
+  # guest's host link UART on (QemuPlan), and HEX, when given, the build identifier the
+  # guest's hello must report; --ssh DEST runs the session's load over an SSH exec
+  # (CodeSsh). The host link session opens the install facet alone, so --socket takes
+  # --system only.
   module CodeCommands
-    SYSTEM_DOMAIN = 4
-
-    # How a command reaches the guest: socket and build, as the options gave them.
-    Target = Data.define(:socket, :build)
+    # How a command reaches the guest, as the options gave it: a host link socket and the
+    # build its hello must report, or an ssh destination; and where it loads, :system or
+    # [:domain, D].
+    Target = Data.define(:socket, :build, :ssh, :load_into) do
+      def initialize(socket:, build:, ssh: nil, load_into: :system) = super
+    end
 
     module_function
 
@@ -59,11 +66,15 @@ module Erx
     # Loads the module files beams as one batch in a session of their own, so a guest that
     # restarted between two loads of a watch is met with a new hello, though what earlier
     # loads installed is not sent again (TODO.md). Returns the line that reports it.
-    def install(target, beams, connect:)
+    def install(target, beams, connect:, ssh: CodeSsh.method(:install))
       blobs = beams.map { |path| CodeLoad::Blob.from_file(path) }
-      result = connect.call(target) do |client|
-        CodeLoad.install(client, facet: CodeLoad.open_install(client), blobs: blobs)
-      end
+      result = if target.ssh
+                 ssh.call(dest: target.ssh, target: target.load_into, blobs: blobs)
+               else
+                 connect.call(target) do |client|
+                   CodeLoad.install(client, facet: CodeLoad.open_install(client), blobs: blobs)
+                 end
+               end
       "loaded #{result.loaded.join(' ')} (sent #{result.sent.size} of #{blobs.size} modules)"
     end
 
@@ -79,20 +90,35 @@ module Erx
     end
 
     def options(arguments, command)
-      socket = nil
+      given = { transports: [], targets: [] }
       build = nil
-      domain = SYSTEM_DOMAIN
       OptionParser.new do |flags|
-        flags.on('--socket PATH') { |value| socket = value }
+        flags.on('--socket PATH') { |value| given[:transports] << [:socket, value] }
+        flags.on('--ssh DEST') { |value| given[:transports] << [:ssh, value] }
         flags.on('--build HEX', /\A\h+\z/) { |value| build = value.downcase }
-        flags.on('--domain ID', Integer) { |value| domain = value }
+        flags.on('--system') { given[:targets] << :system }
+        flags.on('--domain D') { |value| given[:targets] << [:domain, value] }
         yield flags if block_given?
       end.parse!(arguments)
-      raise OptionParser::InvalidArgument, "#{command} needs --socket PATH, the guest's host link socket" unless socket
-      raise OptionParser::InvalidArgument, "#{command}: the code service loads only into the system domain, #{SYSTEM_DOMAIN}" unless
-        domain == SYSTEM_DOMAIN
+      [target(command, **given, build: build), arguments]
+    end
 
-      [Target.new(socket: socket, build: build), arguments]
+    # The Target of exactly one transport and exactly one target; --build goes with --socket.
+    def target(command, transports:, targets:, build:)
+      raise OptionParser::InvalidArgument, "#{command} takes exactly one of --socket PATH and --ssh DEST" unless
+        transports.size == 1
+      raise OptionParser::InvalidArgument, "#{command} takes exactly one of --system and --domain D" unless targets.size == 1
+
+      case [transports.first, targets.first, build]
+      in [[:socket, socket], :system, _]
+        Target.new(socket: socket, build: build)
+      in [[:socket, _], [:domain, _], _]
+        raise OptionParser::InvalidArgument, "#{command}: the host link session opens the install facet alone; --socket takes --system"
+      in [[:ssh, _], _, String]
+        raise OptionParser::InvalidArgument, "#{command}: --build goes with --socket"
+      in [[:ssh, dest], load_into, nil]
+        Target.new(socket: nil, build: nil, ssh: dest, load_into: load_into)
+      end
     end
   end
 end

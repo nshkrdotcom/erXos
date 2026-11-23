@@ -1121,6 +1121,11 @@ system_facet(clock, {message, Behind, Limits}, _Principal, _State) ->
     %% callback finds erx_clock at each request and checks the grant's operations, sample
     %% or set, against what it decodes.
     {facet, erx_clock_facet, Behind, Limits};
+system_facet(install, {message, Behind, Limits}, _Principal, _State) ->
+    %% docs/design-live.md, "Code from the host": Behind is erx_code_sup, and the callback
+    %% finds erx_code at each request and checks the grant's operations against what the
+    %% code service's reader admits; the facet loads into the system domain alone.
+    {facet, erx_code_facet, Behind, Limits};
 system_facet(code_objects, {message, Behind, Limits}, _Principal, _State) ->
     {facet, erx_code_objects_facet, Behind, Limits#{behind => Behind}};
 system_facet(pci_bus, {message, Behind, Limits}, _Principal, _State) ->

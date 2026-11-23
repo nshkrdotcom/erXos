@@ -291,11 +291,10 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   `{error, {missing, Hashes}}`; send the named blobs, when all are of the
   batch, and load again once.
 * [Low] live, `tools/erx load` and `watch` (`tools/lib/erx/code_commands.rb`):
-  they reach only QEMU's UNIX socket (`--socket`) and only the system domain,
-  and default to it; design-live.md ("One load, three routes") gives them
-  `--tty` (raw mode through `stty`), `--socket` for a UART bridge's socket
-  too, `--ssh` (an `exec` of the session's `load` with the modules on its
-  standard input), and a required `--system` or `--domain`. Not built.
+  `--tty` (raw mode through `stty`), which design-live.md ("One load, three
+  routes") gives them, is not built, and `--socket` takes only `--system`
+  until the host link's session opens a code facet; `--ssh --domain` runs and
+  is refused on the machine with `no code facet` until the code facet exists.
 * [Medium] live, the Raspberry Pi 4's host link (`tools/lib/erx/boot_partition.rb`,
   `command_line_entry`): QEMU's `raspi4b` model has no UART3, so no automated boot has run the
   host link's record on the board, and the firmware's hand-over of `cmdline.txt` as

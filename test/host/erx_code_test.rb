@@ -15,13 +15,13 @@ require_relative '../fixtures/erlang_build'
 class ErxCodeTest < Minitest::Test
   APPLICATIONS = %w[erx_code].freeze
   TESTS = %w[test/erlang/host_bytes/erx_bytes.erl test/erlang/erx_code_store_tests.erl
-             test/erlang/erx_code_tests.erl].freeze
+             test/erlang/erx_code_tests.erl test/erlang/erx_code_facet_tests.erl].freeze
 
   def test_the_store_and_the_service_pass_under_eunit
     Dir.mktmpdir('erx-code-test') do |work|
       ErlangBuild.compile(work, applications: APPLICATIONS, tests: TESTS)
       output, status = Open3.capture2e('gtimeout', '-k', '10', '120', ENV.fetch('ERX_ERL'), '-noshell', '-pa', work,
-                                       '-eval', 'halt(case eunit:test([erx_code_store_tests, erx_code_tests], ' \
+                                       '-eval', 'halt(case eunit:test([erx_code_store_tests, erx_code_tests, erx_code_facet_tests], ' \
                                                 '[verbose]) of ok -> 0; _ -> 1 end)',
                                        chdir: work, stdin_data: '')
       assert status.success?, output

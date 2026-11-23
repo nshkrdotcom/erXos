@@ -34,8 +34,10 @@ load; a load the loader refuses still leaves its names' atoms behind (TODO.md).
 
 %% The system domain's id (docs/design-domains.md: no node has a creation below 4).
 -define(SYSTEM_DOMAIN, 4).
+-include("generated/erx_abi.hrl").
+
 %% The store's limit: the overlay limit's default (docs/design-live.md, "Overlays").
--define(STORE_LIMIT, 16 * 1024 * 1024).
+-define(STORE_LIMIT, ?ERX_CODE_LOAD_BYTES_MAX).
 %% A load prepares, purges and loads up to 1,024 modules.
 -define(CALL_TIMEOUT, 60000).
 

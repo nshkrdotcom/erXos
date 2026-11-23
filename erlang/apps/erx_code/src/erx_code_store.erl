@@ -47,12 +47,14 @@ has done.
 -export_type([store/0, hash/0, name/0, manifest/0, request/0, plan/0, history/0, put_reply/0,
               put_error/0, manifest_error/0, time/0]).
 
-%% The most bytes in one piece (docs/design-live.md, "Code from the host").
--define(PIECE_MAX, 65536).
+-include("generated/erx_abi.hrl").
+
+%% The most bytes in one piece, and the most modules one manifest names and the most
+%% hashes one missing request asks after (abi/services/code.txt).
+-define(PIECE_MAX, ?ERX_CODE_PIECE_MAX).
+-define(MANIFEST_MAX, ?ERX_CODE_MODULES_MAX).
 %% The longest module name: an atom holds at most 255 characters.
 -define(NAME_MAX, 255).
-%% The most modules one manifest names, and the most hashes one missing request asks after.
--define(MANIFEST_MAX, 1024).
 %% The hashes kept per module (docs/design-live.md, "History and rollback").
 -define(HISTORY_MAX, 16).
 %% The uploads in progress at once.

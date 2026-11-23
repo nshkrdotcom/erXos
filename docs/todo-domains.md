@@ -645,12 +645,14 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   chokepoint check that only `erx_code` calls `install_beam/2` lands with it.
 * [Medium] code service, other domains and principals
   (`erlang/apps/erx_code/src/erx_code_store.erl`): the store is one in-memory
-  store for the system domain's installs. Per-principal hot stores in memory
-  objects from the principal's budget, the scoped code facet
-  (`abi/services/code.txt`, `erx_domain_core:code_scope/3`), the session's
-  `load` command with its standard-input form, one load at a time for each
-  target with the 30 s deadline that stops a silent domain, atomic batches
-  in every ERTS runtime, and the code server's fetch
+  store for the system domain's installs, which the host link and `root`'s
+  session (`load -s`, through its install facet) reach. Per-principal hot
+  stores in memory objects from the principal's budget, the scoped code facet
+  (a `code` service of `abi/services/code.txt`, `erx_domain_core:code_scope/3`)
+  and with it `load -d`, which answers `no code facet`, one load at a time for
+  each target with the 30 s deadline that stops a silent domain, atomic
+  batches in every ERTS runtime, the log record of each load, and the code
+  server's fetch
   of pieces into other domains, overlays per supervised specification with
   their revisions and release hash, overlays persisted on the data partition
   and the bounded decoder of what is read back, with its fuzz target, are not

@@ -1,0 +1,23 @@
+# Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
+# SPDX-License-Identifier: BSD-2-Clause
+# The code interface (docs/design-live.md, "Code from the host", "One load, three
+# routes"): a load from another domain, served by the system domain's code service,
+# erx_code, whose one reader of a request is erx_code_store:read_request/1. missing takes
+# the modules' hashes and answers those the store lacks; put sends one piece of a blob,
+# code_piece_max bytes but a blob's last; load takes the manifest, 1 to code_modules_max
+# modules, and loads it as one batch. The install service of this interface loads into
+# the system domain alone, and erx_code_facet refuses an operation its row does not
+# grant. A load reads its modules whole, at most code_load_bytes_max bytes in all, the
+# default overlay limit, before it sends anything. code_request_max bounds a request's
+# encoding with its call envelope, as a facet measures it against its row's max_request:
+# code_modules_max entries of a 255-byte name and a 32-byte hash, about 300 KiB, fit, and
+# load refuses a manifest past it before sending it, so no request is dropped unanswered.
+service code 19
+  served_as message
+  operation missing 1
+  operation put 2
+  operation load 3
+limit code_piece_max u32 65536
+limit code_modules_max u32 1024
+limit code_load_bytes_max u32 16777216
+limit code_request_max u32 327680

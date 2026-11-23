@@ -575,4 +575,26 @@ facet root_clock
   reductions 100000
   period_ns 1000000000
   max_heap_size 8192
+# install: the code service of the system domain, for each session made from root's
+# template (docs/design-live.md, "Code from the host", "One load, three routes"), served
+# by the system domain, where erx_code_sup registers as its server (erx_facet:serve/2),
+# so it travels on the session's system connection and takes none of max_connections.
+# Through it the session's load -s loads modules into the system domain. Its max_request
+# is code_request_max (abi/services/code.txt), the bound load holds every request to, a
+# manifest of code_modules_max modules or a put of one 64 KiB piece, both within the
+# system domain's and the session's max_frame; one request is in flight, the
+# design's one load at a time for each facet; max_heap_size, in words (1 MiB), bounds the
+# facet's process, which holds that request.
+service install
+  server system
+  interface code
+facet install
+  grantee @session.system
+  service @service.install
+  operations missing,put,load
+  max_request 327680
+  in_flight 1
+  reductions 100000
+  period_ns 1000000000
+  max_heap_size 131072
 shell_principal @principal.system

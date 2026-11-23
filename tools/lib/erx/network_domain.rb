@@ -152,7 +152,12 @@ module Erx
                   status: 0),
       SshExec.new(name: 'ssh-exec-exit', command: 'exit 3', tty: nil, input: nil, output: nil, error_output: nil, status: 3),
       SshExec.new(name: 'ssh-exec-tty-exit', command: 'exit 4', tty: '-tt', input: nil, output: nil, error_output: nil,
-                  status: 4)
+                  status: 4),
+      # The SSH route of a load (docs/design-live.md, "One load, three routes"): the
+      # session's load reads the module from its standard input and hands it to the code
+      # service through root's install facet, whose loader refuses bytes that are no module.
+      SshExec.new(name: 'ssh-exec-load', command: 'load -s -m erx_ssh_load_probe:12', tty: '-T', input: 'not a module',
+                  output: '', error_output: "load: erx_ssh_load_probe: badfile\n", status: 1)
     ].freeze
     # check_ssh's logins: root's on a tty, the two refused, and the execs.
     SSH_LOGINS = 3 + SSH_EXECS.size

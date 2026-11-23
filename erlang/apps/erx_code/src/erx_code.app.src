@@ -7,7 +7,7 @@
 {application, erx_code,
  [{description, "erXos code service"},
   {vsn, "1"},
-  {modules, [erx_code, erx_code_app, erx_code_store, erx_code_sup]},
+  {modules, [erx_code, erx_code_app, erx_code_facet, erx_code_store, erx_code_sup]},
   {registered, [erx_code, erx_code_sup]},
   {applications, [kernel, stdlib, erx]},
   {mod, {erx_code_app, []}},

@@ -253,9 +253,19 @@ class CodeCommandsTest < Minitest::Test
 
   def test_options_are_checked_before_anything_connects
     assert_raises(OptionParser::InvalidArgument) { run_load(['m.beam']) }
-    assert_raises(OptionParser::InvalidArgument) { run_load(%w[--socket /s]) }
+    assert_raises(OptionParser::InvalidArgument) { run_load(%w[--socket /s --system]) }
+    assert_raises(OptionParser::InvalidArgument) { run_load(%w[--socket /s m.beam]) }
+    assert_raises(OptionParser::InvalidArgument) { run_load(%w[--socket /s --system --domain 5 m.beam]) }
     assert_raises(OptionParser::InvalidArgument) { run_load(%w[--socket /s --domain 5 m.beam]) }
-    assert_raises(OptionParser::InvalidArgument) { run_load(%w[--socket /s --build xyz m.beam]) }
+    assert_raises(OptionParser::InvalidArgument) { run_load(%w[--socket /s --system --build xyz m.beam]) }
+    assert_raises(OptionParser::InvalidArgument) { run_load(%w[--socket /s --ssh h --system m.beam]) }
+    assert_raises(OptionParser::InvalidArgument) { run_load(%w[--ssh h --build ab --system m.beam]) }
+  end
+
+  def test_ssh_takes_either_target
+    assert_equal Commands::Target.new(socket: nil, build: nil, ssh: 'root@pi', load_into: [:domain, 'net']),
+                 Commands.target('load', transports: [[:ssh, 'root@pi']], targets: [[:domain, 'net']], build: nil)
+    assert_equal :system, Commands.target('load', transports: [[:ssh, 'pi']], targets: [:system], build: nil).load_into
   end
 
   def test_load_sends_the_files_as_one_batch
@@ -271,7 +281,7 @@ class CodeCommandsTest < Minitest::Test
         block.call(facet)
       end
       lines = []
-      status = Commands.load(['--socket', '/s', '--build', 'AB12', *paths], connect: connect, compile: nil, out: ->(line) { lines << line })
+      status = Commands.load(['--socket', '/s', '--build', 'AB12', '--system', *paths], connect: connect, compile: nil, out: ->(line) { lines << line })
       assert_equal 0, status
       assert_equal [Commands::Target.new(socket: '/s', build: 'ab12')], targets
       assert_equal ['loaded a b (sent 0 of 2 modules)'], lines
@@ -315,5 +325,63 @@ class ReloadGuestTest < Minitest::Test
 
   def test_subject_versions_return_their_tag
     assert_includes Guest.subject_source(7), 'tag() -> 7.'
+  end
+end
+
+class CodeSshTest < Minitest::Test
+  Ssh = Erx::CodeSsh
+
+  def blobs = [Erx::CodeLoad::Blob.of(name: 'a', bytes: 'xyz'), Erx::CodeLoad::Blob.of(name: 'b_2', bytes: 'tail')]
+
+  def test_the_exec_names_each_module_with_its_size
+    assert_equal %w[ssh -T -- root@pi load -s -m a:3 -m b_2:4], Ssh.argv(dest: 'root@pi', target: :system, blobs: blobs)
+    assert_equal %w[ssh -T -- ssh://pi:2222 load -d net-1.x@y -m a:3 -m b_2:4],
+                 Ssh.argv(dest: 'ssh://pi:2222', target: [:domain, 'net-1.x@y'], blobs: blobs)
+  end
+
+  # Every word after DEST reaches the machine's shell as one command line.
+  def test_words_the_shell_could_split_are_refused
+    ['-oProxyCommand=x', ''].each do |dest|
+      assert_raises(Erx::Error) { Ssh.argv(dest: dest, target: :system, blobs: blobs) }
+    end
+    ['net;reboot', '-v', 'a b', "n\n", 'x$(y)', ''].each do |domain|
+      assert_raises(Erx::Error, domain) { Ssh.argv(dest: 'pi', target: [:domain, domain], blobs: blobs) }
+    end
+  end
+
+  # A stand-in for Open3.popen3: runs a shell command whose standard input is the tool's.
+  def spawn_shell(script, seen)
+    lambda do |*argv, &block|
+      seen << argv
+      Open3.popen3('/bin/sh', '-c', script) { |*streams| block.call(*streams) }
+    end
+  end
+
+  def test_the_modules_go_to_standard_input_one_after_another
+    Dir.mktmpdir do |directory|
+      out = File.join(directory, 'in')
+      seen = []
+      result = Ssh.install(dest: 'pi', target: :system, blobs: blobs, spawn: spawn_shell("cat > #{out}", seen))
+      assert_equal 'xyztail', File.binread(out)
+      assert_equal [Ssh.argv(dest: 'pi', target: :system, blobs: blobs)], seen
+      assert_equal %w[a b_2], result.sent
+    end
+  end
+
+  def test_a_refusal_shows_load_standard_error_through_the_line_escape
+    error = assert_raises(Ssh::Refused) do
+      Ssh.install(dest: 'pi', target: :system, blobs: blobs,
+                  spawn: spawn_shell("cat >/dev/null; printf 'load: a: bad\\033]0;x\\n' >&2; exit 1", []))
+    end
+    assert_includes error.message, 'exit status 1'
+    assert_includes error.message, 'load: a: bad'
+    refute_includes error.message, "\e"
+  end
+
+  def test_a_load_past_the_deadline_has_an_unknown_outcome
+    error = assert_raises(Erx::Error) do
+      Ssh.install(dest: 'pi', target: :system, blobs: blobs, spawn: spawn_shell('exec sleep 30', []), deadline: 0.5)
+    end
+    assert_match(/outcome is unknown/, error.message)
   end
 end

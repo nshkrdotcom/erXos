@@ -166,13 +166,13 @@ module ManifestContextFixture
                  /^runtime_limits usb\n(?:  .*\n)*/, /^limits usb\n(?:  .*\n)*/,
                  /^domain usb\n(?:  .*\n)*/, /^unit xhci\n(?:  .*\n)*/, /^facet pci\n(?:  .*\n)*/,
                  /^service usb_input\n(?:  .*\n)*/, /^facet usb_input\n(?:  .*\n)*/].freeze
-  # Root's session template's facets, of data, net, inspect, start, machine, the clock and
-  # login_keys, which a sessionless source (ProductionImage.without_sessions) does not hold.
+  # Root's session template's facets, of data, net, inspect, start, machine, the clock,
+  # login_keys and install, which a sessionless source (ProductionImage.without_sessions) does not hold.
   SESSION_FACETS = [/^facet data_session\n(?:  .*\n)*/, /^facet net\n(?:  .*\n)*/, /^facet inspect\n(?:  .*\n)*/,
                     /^facet start\n(?:  .*\n)*/, /^facet machine\n(?:  .*\n)*/,
                     /^facet root_clock\n(?:  .*\n)*/, /^facet login_keys_session\n(?:  .*\n)*/,
-                    /^facet display_root\n(?:  .*\n)*/].freeze
-  # A service the system domain serves (inspect, start, machine and clock, to session templates
+                    /^facet display_root\n(?:  .*\n)*/, /^facet install\n(?:  .*\n)*/].freeze
+  # A service the system domain serves (inspect, start, machine, clock and install, to session templates
   # alone; log and code_objects, which no facet row grants), by its server line, so a new
   # one goes with the rest.
   SYSTEM_SERVICE = /^service \S+\n  server system\n(?:  .*\n)*/

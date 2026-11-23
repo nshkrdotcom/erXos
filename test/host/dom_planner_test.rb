@@ -954,7 +954,8 @@ class DomPlannerTest < Minitest::Test
     # The services, in name order, each with its server's index in boot order (display 0,
     # network 1, pcie 2, storage 3, usb 4, web 5) or none for the system domain, and its interface.
     services = [%w[clock none clock], %w[code_objects none code_objects], %w[data 3 files],
-                %w[display 0 windows], %w[home 3 files], %w[inspect none inspect], %w[line none line],
+                %w[display 0 windows], %w[home 3 files], %w[inspect none inspect], %w[install none code],
+                %w[line none line],
                 %w[log none log], %w[login_keys 3 files], %w[machine none files], %w[net 1 net],
                 %w[network_ctl 1 driver_control],
                 %w[packages 3 files], %w[pci none pci], %w[pci_bus none pci_bus], %w[pcie 2 pcie],

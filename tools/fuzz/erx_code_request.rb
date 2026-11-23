@@ -5,6 +5,7 @@
 require 'open3'
 require 'optparse'
 require 'tmpdir'
+require_relative '../lib/erx/generated'
 
 # The fuzz target of the code service's reader of requests and manifests,
 # erx_code_store:read_request/1 (test/erlang/erx_code_request_fuzz.erl), compiled from source
@@ -13,6 +14,9 @@ require 'tmpdir'
 # name's length, which must fail: that shows the reference holds names to 255 bytes.
 module ErxCodeRequestFuzz
   ROOT = File.expand_path('../..', __dir__)
+  # The store reads its bounds from the generated ABI header, in build/gen.
+  Erx::Generated.ensure(root: ROOT)
+  INCLUDE = Erx::Generated.path('erlang/apps/erx/include', root: ROOT)
   MODULE_SOURCE = File.join(ROOT, 'erlang/apps/erx_code/src/erx_code_store.erl')
   SOURCES = [File.join(ROOT, 'test/erlang/erx_code_request_fuzz.erl'),
              File.join(ROOT, 'test/erlang/host_bytes/erx_bytes.erl')].freeze
@@ -39,7 +43,7 @@ module ErxCodeRequestFuzz
     Dir.mktmpdir('erx-code-request-fuzz') do |work|
       module_path = File.join(work, 'erx_code_store.erl')
       File.binwrite(module_path, module_text)
-      output, status = Open3.capture2e(ENV.fetch('ERX_ERLC'), '-o', work, module_path, *SOURCES, stdin_data: '')
+      output, status = Open3.capture2e(ENV.fetch('ERX_ERLC'), '-I', INCLUDE, '-o', work, module_path, *SOURCES, stdin_data: '')
       raise output unless status.success?
 
       Open3.capture2e('gtimeout', '-k', '10', DEADLINE_SECONDS, ENV.fetch('ERX_ERL'), '-noshell', '-pa', work,
