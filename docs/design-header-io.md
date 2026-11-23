@@ -542,8 +542,8 @@ One directory per pin of the grant's scope, named by its GPIO number
   waiting read is answered `einval` when the edge is turned off. A flush
   cancels a waiting read.
 
-A pin's **idle state** is input with no pull and no edge detection: the
-state that drives nothing. The pin driver puts every `gpio` pin in it at
+A pin's **idle state** is input with no pull and no edge or level detection:
+the state that drives nothing. The pin driver puts every `gpio` pin in it at
 its start, a pin returns to it when its hold ends, and a grant takes an
 unheld pin only when it reads idle
 ([design-pinctrl.md](design-pinctrl.md#plain-gpio)), so no holder

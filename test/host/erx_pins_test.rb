@@ -81,10 +81,10 @@ class ErxPinsTest < Minitest::Test
              replacement: '     || {Pin, Setting} <- Settings, Pull <- [maps:get(pull, Setting, none)]].',
              catching_case: 'no_pull_written_without_one_test'),
     Seed.new(fault: 'the function written before the level', module_path: KIND,
-             anchor: "                           level_steps(Read, Settings),\n" \
-                     "                           field_steps(Read, function_fields(Settings)),\n",
-             replacement: "                           field_steps(Read, function_fields(Settings)),\n" \
-                          "                           level_steps(Read, Settings),\n",
+             anchor: "                                        level_steps(Read, Settings),\n" \
+                     "                                        field_steps(Read, function_fields(Settings)),\n",
+             replacement: "                                        field_steps(Read, function_fields(Settings)),\n" \
+                          "                                        level_steps(Read, Settings),\n",
              catching_case: 'write_order_test'),
     Seed.new(fault: 'a field taken without its mask', module_path: KIND,
              anchor: '    (Word band field_mask(Field)) bsr Field#field.shift =:= Code.',
@@ -95,6 +95,10 @@ class ErxPinsTest < Minitest::Test
              replacement: '                     lists:sum([Field#field.code bsl Field#field.shift || Field <- Differing]) ' \
                           'bor word(Read, Register, none)}}',
              catching_case: 'total_over_any_reading_test_'),
+    Seed.new(fault: 'GPHEN left as read, which keeps an idle pin detecting a high level', module_path: KIND,
+             anchor: '{gphen, 0}, ',
+             replacement: '',
+             catching_case: 'every_detect_enable_test'),
     Seed.new(fault: 'default planned for a device with other states', module_path: CORE,
              anchor: 'states(Table, Device) =:= [default]],',
              replacement: 'lists:member(default, states(Table, Device))],',

@@ -5,18 +5,22 @@
 %% from the registers as read and the settings wanted, the register writes, or a refusal
 %% that writes nothing. The GPIO block holds, for each of GPIO 0 to 57, a function select
 %% field of 3 bits in GPFSEL0 to GPFSEL5 (register pin div 10), a pull field of 2 bits in
-%% GPIO_PUP_PDN_CNTRL_REG0 to REG3 (register pin div 16), a bit in the rising and falling
-%% edge enables GPREN and GPFEN, and a bit in the level register GPLEV (register pin div
-%% 32); GPSET and GPCLR load an output's latch, a written one acting on its pin (BCM2711
-%% ARM Peripherals, section 5.2). Field codes come from the header generated from
-%% hw/svd/bcm2711_gpio, whose FSEL0 and PULL0 encodings every pin's field shares.
+%% GPIO_PUP_PDN_CNTRL_REG0 to REG3 (register pin div 16), and a bit (register pin div 32)
+%% in the level register GPLEV and in each of the six detect enables: GPREN and GPFEN for
+%% a rising and a falling edge, GPHEN and GPLEN for a high and a low level, and GPAREN and
+%% GPAFEN for an asynchronous rising and falling edge. GPSET and GPCLR load an output's
+%% latch, a written one acting on its pin (BCM2711 ARM Peripherals, section 5.2). Field
+%% codes come from the header generated from hw/svd/bcm2711_gpio, whose FSEL0 and PULL0
+%% encodings every pin's field shares.
 %%
 %% A plan's steps come in the order that drives nothing unasked: pulls, then level
 %% commands, so an output's latch is loaded while the pin is still an input, then
 %% functions, then edge enables. A step names the pins it is for. A field write changes
 %% only the fields of the wanted pins that differ; a level command is planned unless the
 %% pin reads as an output at that level already, since GPLEV shows the wire and not the
-%% latch. No step reads a command register, and no reading makes a plan raise.
+%% latch. No step reads a command register. No reading makes an entry raise, and each
+%% refuses a pin past 57 or a setting it cannot plan as {error, {Pin, Reason}}; a list
+%% of pins or settings is a proper list.
 -module(erx_pins_bcm2711).
 
 -export([plan/2, registers/1, setting/2, events/2]).
@@ -33,7 +37,8 @@
 -type pin() :: 0..57.
 -type register() :: gpfsel0 | gpfsel1 | gpfsel2 | gpfsel3 | gpfsel4 | gpfsel5
                   | pup_pdn0 | pup_pdn1 | pup_pdn2 | pup_pdn3
-                  | gpren0 | gpren1 | gpfen0 | gpfen1 | gplev0 | gplev1
+                  | gpren0 | gpren1 | gpfen0 | gpfen1 | gphen0 | gphen1 | gplen0 | gplen1
+                  | gparen0 | gparen1 | gpafen0 | gpafen1 | gplev0 | gplev1
                   | gpset0 | gpset1 | gpclr0 | gpclr1 | gpeds0 | gpeds1.
 %% A word for each register read; anything else in it is refused, never raised on.
 -type reading() :: #{register() => term()}.
@@ -43,33 +48,40 @@
 -type step() :: {field, [pin()], register(), non_neg_integer(), non_neg_integer()}
               | {command, [pin()], register(), non_neg_integer()}.
 -type refusal() :: no_such_pin | twice | bad_setting | bad_function | out_without_level
-                 | level_without_out | bad_pull | bad_edge | {unread, register()}.
+                 | level_without_out | bad_pull | bad_edge | {unknown_key, term()}
+                 | {unread, register()}.
 
 %% One wanted field: the register that holds it, its shift and width, and its code.
 -record(field, {pin, register, shift, width, code}).
 
 -spec plan(reading(), [{pin(), setting()}]) -> {ok, [step()]} | {error, {term(), refusal()}}.
 plan(Read, Wanted) ->
-    try
-        Settings = settings(Wanted),
-        {ok, lists:append([field_steps(Read, pull_fields(Settings)),
-                           level_steps(Read, Settings),
-                           field_steps(Read, function_fields(Settings)),
-                           field_steps(Read, edge_fields(Settings))])}
-    catch
-        throw:{refused, Pin, Reason} -> {error, {Pin, Reason}}
-    end.
+    refusing(fun() ->
+                     Settings = settings(Wanted),
+                     {ok, lists:append([field_steps(Read, pull_fields(Settings)),
+                                        level_steps(Read, Settings),
+                                        field_steps(Read, function_fields(Settings)),
+                                        field_steps(Read, edge_fields(Settings))])}
+             end).
 
 %% The registers a plan for these pins reads, each once, in order.
--spec registers([pin()]) -> [register()].
+-spec registers([pin()]) -> {ok, [register()]} | {error, {term(), refusal()}}.
 registers(Pins) ->
-    lists:usort(lists:append([[function_register(Pin), pull_register(Pin), bank(gpren, Pin),
-                               bank(gpfen, Pin), bank(gplev, Pin)] || Pin <- Pins])).
+    refusing(fun() -> {ok, lists:usort(lists:append([pin_registers(Pin) || Pin <- pins(Pins)]))} end).
+
+%% edge_codes/1 lists each of the six detect enables once, whatever the edge.
+pin_registers(Pin) ->
+    [function_register(Pin), pull_register(Pin), bank(gplev, Pin) |
+     [bank(Family, Pin) || {Family, _} <- edge_codes(none)]].
 
 %% A pin's function, pull and level as a reading holds them, each unknown where the
 %% reading lacks its register. A function or pull code with no name stays a number.
--spec setting(reading(), pin()) -> #{function := term(), pull := term(), level := term()}.
+-spec setting(reading(), pin()) ->
+          {ok, #{function := term(), pull := term(), level := term()}} | {error, {term(), refusal()}}.
 setting(Read, Pin) ->
+    refusing(fun() -> {ok, read_setting(Read, pin(Pin))} end).
+
+read_setting(Read, Pin) ->
     #{function => read_code(Read, function_register(Pin), function_shift(Pin), ?FUNCTION_WIDTH,
                             fun function_name/1),
       pull => read_code(Read, pull_register(Pin), pull_shift(Pin), ?PULL_WIDTH, fun pull_name/1),
@@ -79,10 +91,17 @@ setting(Read, Pin) ->
 %% exactly those bits; an event of a pin not among them is neither reported nor cleared.
 -spec events(reading(), [pin()]) -> {ok, [pin()], [step()]} | {error, {term(), refusal()}}.
 events(Read, Own) ->
+    refusing(fun() ->
+                     Fired = [Pin || Pin <- lists:usort(pins(Own)),
+                                     word(Read, bank(gpeds, Pin), Pin) band bit(Pin) =/= 0],
+                     {ok, Fired, commands(gpeds, Fired)}
+             end).
+
+%% The module's one failure route: a check throws {refused, Pin, Reason} at the first
+%% fault, and every entry returns it as {error, {Pin, Reason}} in place of an answer.
+refusing(Decide) ->
     try
-        Fired = [Pin || Pin <- lists:usort(Own), valid_pin(Pin),
-                        word(Read, bank(gpeds, Pin), Pin) band bit(Pin) =/= 0],
-        {ok, Fired, commands(gpeds, Fired)}
+        Decide()
     catch
         throw:{refused, Pin, Reason} -> {error, {Pin, Reason}}
     end.
@@ -99,8 +118,12 @@ settings(_) ->
     throw({refused, none, bad_setting}).
 
 checked({Pin, Setting}) ->
-    valid_pin(Pin) orelse throw({refused, Pin, no_such_pin}),
+    pin(Pin),
     is_map(Setting) orelse throw({refused, Pin, bad_setting}),
+    case maps:keys(Setting) -- [function, level, pull, edge] of
+        [] -> ok;
+        [Unknown | _] -> throw({refused, Pin, {unknown_key, Unknown}})
+    end,
     Function = maps:get(function, Setting, none),
     Level = maps:get(level, Setting, none),
     case {Function, Level} of
@@ -119,6 +142,13 @@ checked({Pin, Setting}) ->
 checked(Other) ->
     throw({refused, Other, bad_setting}).
 
+pins(Pins) when is_list(Pins) -> [pin(Pin) || Pin <- Pins];
+pins(Other) -> throw({refused, Other, no_such_pin}).
+
+pin(Pin) ->
+    valid_pin(Pin) orelse throw({refused, Pin, no_such_pin}),
+    Pin.
+
 valid_pin(Pin) -> is_integer(Pin) andalso Pin >= 0 andalso Pin < ?PIN_COUNT.
 
 function_fields(Settings) ->
@@ -132,18 +162,24 @@ pull_fields(Settings) ->
             width = ?PULL_WIDTH, code = pull_code(Pull)}
      || {Pin, #{pull := Pull}} <- Settings].
 
+%% A pin whose setting names no edge keeps the detect enables it has.
 edge_fields(Settings) ->
     lists:append([edge_bits(Pin, Edge) || {Pin, #{edge := Edge}} <- Settings]).
 
 edge_bits(Pin, Edge) ->
+    [#field{pin = Pin, register = bank(Family, Pin), shift = Pin rem 32, width = 1, code = Code}
+     || {Family, Code} <- edge_codes(Edge)].
+
+%% A pin's bit in each of the six detect enables for an edge setting: the setting gives all
+%% six, so a pin detects the edges it names and no other edge or level.
+edge_codes(Edge) ->
     {Rising, Falling} = case Edge of
                             none -> {0, 0};
                             rising -> {1, 0};
                             falling -> {0, 1};
                             both -> {1, 1}
                         end,
-    [#field{pin = Pin, register = bank(gpren, Pin), shift = Pin rem 32, width = 1, code = Rising},
-     #field{pin = Pin, register = bank(gpfen, Pin), shift = Pin rem 32, width = 1, code = Falling}].
+    [{gpren, Rising}, {gpfen, Falling}, {gphen, 0}, {gplen, 0}, {gparen, 0}, {gpafen, 0}].
 
 %% One field write for each register in which a wanted field differs from the reading.
 field_steps(Read, Fields) ->
@@ -205,6 +241,10 @@ pull_shift(Pin) -> ?PULL_WIDTH * (Pin rem 16).
 
 bank(gpren, Pin) -> element(Pin div 32 + 1, {gpren0, gpren1});
 bank(gpfen, Pin) -> element(Pin div 32 + 1, {gpfen0, gpfen1});
+bank(gphen, Pin) -> element(Pin div 32 + 1, {gphen0, gphen1});
+bank(gplen, Pin) -> element(Pin div 32 + 1, {gplen0, gplen1});
+bank(gparen, Pin) -> element(Pin div 32 + 1, {gparen0, gparen1});
+bank(gpafen, Pin) -> element(Pin div 32 + 1, {gpafen0, gpafen1});
 bank(gplev, Pin) -> element(Pin div 32 + 1, {gplev0, gplev1});
 bank(gpset, Pin) -> element(Pin div 32 + 1, {gpset0, gpset1});
 bank(gpclr, Pin) -> element(Pin div 32 + 1, {gpclr0, gpclr1});

@@ -32,7 +32,8 @@ table() ->
       uses => #{?UART0 => normal, ?HOST_LINK => rescue, ?I2C => none}}.
 
 base() ->
-    maps:from_list([{Register, 0} || Register <- ?K:registers(lists:seq(0, 57))]).
+    {ok, Registers} = ?K:registers(lists:seq(0, 57)),
+    maps:from_list([{Register, 0} || Register <- Registers]).
 
 %% A start over the model: its plan applied, with one pin's field write dropped when
 %% Drop names one, and the reading its check takes.

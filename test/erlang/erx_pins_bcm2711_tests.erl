@@ -12,7 +12,8 @@
 -define(ROUNDS, 3000).
 
 base() ->
-    maps:from_list([{Register, 0} || Register <- ?K:registers(lists:seq(0, 57))] ++
+    {ok, Registers} = ?K:registers(lists:seq(0, 57)),
+    maps:from_list([{Register, 0} || Register <- Registers] ++
                    [{gpeds0, 0}, {gpeds1, 0}]).
 
 alt(N) -> #{function => N}.
@@ -114,10 +115,33 @@ edges_test() ->
     ?assertEqual({ok, [{field, [20], gpren0, 1 bsl 20, 0}]},
                  ?K:plan(Read#{gpren0 => 1 bsl 20}, [{20, Idle}])).
 
+%% A pin's edge setting gives its bit in all six detect enables, in both banks: idle clears
+%% every one, and rising leaves GPREN's bit alone set.
+every_detect_enable_test() ->
+    Enables = [{Register, 20} || Register <- [gpren0, gpfen0, gphen0, gplen0, gparen0, gpafen0]] ++
+              [{Register, 40} || Register <- [gpren1, gpfen1, gphen1, gplen1, gparen1, gpafen1]],
+    Read = maps:merge((base())#{gpfsel2 => 0, gpfsel4 => 0},
+                      maps:from_list([{Register, 1 bsl (Pin rem 32)} || {Register, Pin} <- Enables])),
+    Idle = erx_pins_core:idle(),
+    ?assertEqual({ok, [{field, [Pin], Register, 1 bsl (Pin rem 32), 0} || {Register, Pin} <- lists:sort(Enables)]},
+                 ?K:plan(Read, [{20, Idle}, {40, Idle}])),
+    ?assertEqual({ok, [{field, [20], Register, 1 bsl 20, 0} || {Register, 20} <- lists:sort(Enables),
+                                                                Register =/= gpren0]},
+                 ?K:plan(Read, [{20, #{function => in, edge => rising}}])).
+
 setting_test() ->
     Read = (base())#{gpfsel1 => 16#12000, pup_pdn0 => 3 bsl 28, gplev0 => 1 bsl 14},
-    ?assertEqual(#{function => 5, pull => 3, level => 1}, ?K:setting(Read, 14)),
-    ?assertEqual(#{function => in, pull => none, level => unknown}, ?K:setting(maps:remove(gplev0, Read), 12)).
+    ?assertEqual({ok, #{function => 5, pull => 3, level => 1}}, ?K:setting(Read, 14)),
+    ?assertEqual({ok, #{function => in, pull => none, level => unknown}}, ?K:setting(maps:remove(gplev0, Read), 12)).
+
+%% A pin past 57, or a setting key the kind does not know, is refused by every entry the
+%% way a plan refuses, never raised on or ignored.
+refused_pins_and_keys_test() ->
+    ?assertEqual({error, {58, no_such_pin}}, ?K:registers([20, 58])),
+    ?assertEqual({error, {58, no_such_pin}}, ?K:setting(base(), 58)),
+    ?assertEqual({error, {58, no_such_pin}}, ?K:events(base(), [20, 58])),
+    ?assertEqual({error, {gpio, no_such_pin}}, ?K:events(base(), [gpio])),
+    ?assertEqual({error, {20, {unknown_key, pul}}}, ?K:plan(base(), [{20, #{function => in, pul => up}}])).
 
 %% Total over any reading: for random words, missing registers and words that are not
 %% words, the plan returns; its writes touch only the wanted pins' fields and bits; and
@@ -161,8 +185,9 @@ allowed(Wanted) ->
                                   {element(Pin div 16 + 1, {pup_pdn0, pup_pdn1, pup_pdn2, pup_pdn3}),
                                    3 bsl (2 * (Pin rem 16))}] ++
                                  [{element(Pin div 32 + 1, Bank), 1 bsl (Pin rem 32)}
-                                  || Bank <- [{gpren0, gpren1}, {gpfen0, gpfen1}, {gpset0, gpset1},
-                                              {gpclr0, gpclr1}]],
+                                  || Bank <- [{gpren0, gpren1}, {gpfen0, gpfen1}, {gphen0, gphen1},
+                                              {gplen0, gplen1}, {gparen0, gparen1}, {gpafen0, gpafen1},
+                                              {gpset0, gpset1}, {gpclr0, gpclr1}]],
                         lists:foldl(fun({R, M}, A) -> A#{R => maps:get(R, A, 0) bor M} end, Acc, Fields)
                 end, #{}, Wanted).
 

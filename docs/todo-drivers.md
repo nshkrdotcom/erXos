@@ -814,6 +814,14 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   sets pulls.
 * [Low] pin control, the host link's overlay (`hw/dts/raspi4b-uart3.dtso`): remove `pinctrl-names` and `pinctrl-0`,
   which nothing reads and which state rows 4 and 5 of the header map a second time.
+* [Low] pin control, `erx_pins_bcm2711` (`erlang/apps/erx_pins/src/erx_pins_bcm2711.erl`): a pin's field is read
+  in three places, `field_agrees/2`, `drives/3` and `read_code/5`; fold them into one reader of a `#field{}`.
+* [Medium] pin control, `erx_pins_bcm2711:setting/2` (`erlang/apps/erx_pins/src/erx_pins_bcm2711.erl`): the setting
+  read gives function, pull and level but no edge, so a start's report of a pin that differs only in a detect
+  enable shows the wanted and read settings agreeing; read the six enables into it.
+* [Low] pin control, `erx_pins_core:start_verdict/3` (`erlang/apps/erx_pins/src/erx_pins_core.erl`): the verdict
+  does not name its controller, so the release's log of a failed start cannot say which one; add the name with the
+  driver process, which knows it.
 * [Low] pin control, `config.txt`'s `gpio=` lines (`tools/lib/erx/boot_partition.rb`): delete them with `erx_pins`'
   landing ([design-pinctrl.md](design-pinctrl.md#decisions), 3), once it is settled whether the probe card or a native
   partial boot, which run no pin driver, needs the host link.

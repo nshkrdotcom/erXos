@@ -7,7 +7,7 @@
 %% configuration and the system release's choice of configuration from its starts.
 %%
 %% A table is the controller's pins record as the pin driver reads it:
-%%   #{kind := Module, rows := [Row], uses := #{Device => [normal | rescue]}}
+%%   #{kind := Module, rows := [Row], uses := #{Device => none | normal | rescue}}
 %% Module is the kind's planner (erx_pins_bcm2711). A row is
 %%   #{pin := Pin, owner := Device | gpio, state := State, setting := Setting}
 %% with one row for each pin and state of a device, each state spelled out whole, and one
@@ -130,8 +130,9 @@ report(Kind, #{rows := Rows, uses := Uses}, Read, Wanted, Pin) ->
               gpio -> none;
               Device -> maps:get(Device, Uses)
           end,
+    {ok, Setting} = Kind:setting(Read, Pin),
     #{pin => Pin, owner => Owner, uses => Use,
-      wanted => proplists:get_value(Pin, Wanted), read => Kind:setting(Read, Pin)}.
+      wanted => proplists:get_value(Pin, Wanted), read => Setting}.
 
 devices(#{rows := Rows}) -> lists:usort([Owner || #{owner := Owner} <- Rows, is_integer(Owner)]).
 

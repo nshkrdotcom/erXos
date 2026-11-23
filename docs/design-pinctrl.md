@@ -450,7 +450,7 @@ has two kinds of register:
 
 * A **field write**, `{field, Pins, Register, Mask, Bits}`, goes to a
   configuration register, which holds a field for each pin and reads
-  back what was written: the BCM2711's function, pull and edge-enable
+  back what was written: the BCM2711's function, pull and detect-enable
   registers, a pin's `CTRL` and pad registers on RP1. The register
   module writes the reading with the masked bits replaced by `Bits`.
 * A **level command**, `{command, Pins, Register, Bits}`, goes to a
@@ -462,8 +462,8 @@ has two kinds of register:
 The function is total and writes nothing itself:
 
 * **Refused whole.** A pin the kind does not have, a function number
-  outside the kind's range or `out` without a level refuses the plan,
-  and nothing is written.
+  outside the kind's range, `out` without a level or a setting key the
+  kind does not know refuses the plan, and nothing is written.
 * **Only what differs.** A field write that would change no bit is left
   out. A level command is left out only when the pin already reads as
   an output at that level. Otherwise it is planned: the level register
@@ -512,8 +512,15 @@ as an edge lost.
 
 Kinds differ only here. The `bcm2711` kind plans the function field of
 GPFSEL (3 bits a pin, register `pin div 10`), the pull field of
-GPIO_PUP_PDN_CNTRL (2 bits a pin, register `pin div 16`) and the
-edge-enable bits as field writes, and GPSET or GPCLR as level commands.
+GPIO_PUP_PDN_CNTRL (2 bits a pin, register `pin div 16`) and the pin's
+bit in each of the six detect enables (register `pin div 32`) as field
+writes, and GPSET or GPCLR as level commands. The six are GPREN and
+GPFEN for a rising and a falling edge, GPHEN and GPLEN for a high and
+a low level, and GPAREN and GPAFEN for an asynchronous rising and
+falling edge. A pin's edge setting gives all six bits, and a setting
+without one leaves them as read: `rising` sets
+GPREN's, `falling` GPFEN's, `both` the two, and every other bit is
+clear, so a pin detects the edges its setting names and nothing else.
 The `rp1` kind plans each pin's `CTRL` and its pad together, all field
 writes ([design-rp1.md](design-rp1.md#pins)). The `bcm2712` kind waits
 for a facts record of its registers.
@@ -526,8 +533,9 @@ plan, applies it, checks it and reports. The plan holds:
 * the `default` state for every device that has `default` alone on this
   controller;
 * nothing for a device with other states here;
-* for each `gpio` pin its **idle state**: input, no pull, no edge
-  detection, the setting that drives nothing
+* for each `gpio` pin its **idle state**: input, no pull, and every
+  detect enable clear, so it detects no edge and no level; the setting
+  that drives nothing
   ([design-header-io.md](design-header-io.md#devgpio)).
 
 The plan is the same at the first start of a boot and at a restart
