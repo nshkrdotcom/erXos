@@ -20,7 +20,10 @@ notice would count for the next round.
 line through it with erx_device:irq_bind_owner/2, which acknowledges it once, and then
 performs, in order, the actions erx_irq_line_core returns for each event: a delivery of the
 line, a driver's join, a member's answer, a member's down. A member is the reference of the
-monitor the owner sets on a joining driver, so every member's exit reaches the core.
+monitor the owner sets on a joining driver, so every member's exit reaches the core. The
+owner runs at priority `high`, so the line it acknowledges after a round is not held back
+behind normal-priority processes waiting for its scheduler (docs/design-shared-devices.md,
+"The owner").
 
 **Its starter** starts the owners of the shared lines its drivers name before the drivers,
 and treats an owner's end as it treats a driver's: owners/1 says which owners from the
@@ -103,11 +106,12 @@ start_owners(Drivers) ->
 -doc """
 Starts the owner of line Line of record Spec, linked to the caller: it opens the record and
 binds the line with erx_device:irq_bind_owner/2, and fails to start with that bind's error,
-`{error, ebusy}` when another owner holds the line through another record.
+`{error, ebusy}` when another owner holds the line through another record. The owner runs at
+priority `high` from its first step.
 """.
 -spec start_owner(erx_device:spec(), non_neg_integer()) -> {ok, pid()} | {error, term()}.
 start_owner(Spec, Line) ->
-    proc_lib:start_link(?MODULE, init, [Spec, Line]).
+    proc_lib:start_link(?MODULE, init, [Spec, Line], infinity, [{priority, high}]).
 
 -doc false.
 -spec init(erx_device:spec(), non_neg_integer()) -> no_return().

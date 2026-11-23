@@ -1,10 +1,11 @@
 %% Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
 %% SPDX-License-Identifier: BSD-2-Clause
 
-%% EUnit cases of erx_irq_line:owners/1 (docs/design-shared-devices.md, "Verification"):
+%% EUnit cases of erx_irq_line (docs/design-shared-devices.md, "Verification" and "The owner"):
 %% over a sample of sets of one to four drivers of one or two records each, drawn from shared and
-%% direct lines, each shared line gets one owner, named by the first record that names it,
-%% and no direct line gets one. test/host/erx_irq_line_test.rb runs them, and a seeded fault.
+%% direct lines, owners/1 gives each shared line one owner, named by the first record that names
+%% it, and no direct line one; and start_owner/2 starts the owner at priority high.
+%% test/host/erx_irq_line_test.rb runs them, and a seeded fault.
 
 -module(erx_irq_line_tests).
 
@@ -27,6 +28,31 @@ a_drivers_two_records_on_one_line_give_one_owner_test() ->
 
 a_direct_line_gets_no_owner_test() ->
     ?assertEqual([], erx_irq_line:owners([{a, [#{peripheral => pl011, window => stand_in, lines => [4, 5]}]}])).
+
+%% The owner runs at priority high from its first step (docs/design-shared-devices.md, "The
+%% owner"). A stand-in erx_device, loaded here because the stock emulator has none, refuses the
+%% open with the priority it ran at, and start_owner/2 returns that refusal.
+the_owner_runs_at_high_priority_test() ->
+    false = code:is_loaded(erx_device),
+    load_stand_in_device(),
+    try
+        ?assertEqual({error, {priority, high}}, erx_irq_line:start_owner(#{}, 0))
+    after
+        code:delete(erx_device), code:purge(erx_device)
+    end.
+
+load_stand_in_device() ->
+    Open = "open(_) ->"
+           "    {priority, P} = process_info(self(), priority),"
+           "    {error, {priority, P}}.",
+    Forms = [form(Text) || Text <- ["-module(erx_device).", "-export([open/1]).", Open]],
+    {ok, erx_device, Beam} = compile:forms(Forms),
+    {module, erx_device} = code:load_binary(erx_device, "erx_device.erl", Beam).
+
+form(Text) ->
+    {ok, Tokens, _} = erl_scan:string(Text),
+    {ok, Form} = erl_parse:parse_form(Tokens),
+    Form.
 
 check(Drivers) ->
     Named = [{Line, {Spec, Index}} || {_, Specs} <- Drivers, Spec <- Specs,

@@ -281,7 +281,27 @@ binding a former owner left on that record and acknowledges the line
 once, and then runs one pure state machine, `erx_irq_line_core`, whose
 next action it performs: a notice to a driver or the line's
 acknowledgement. Its state is the set of members and the round in
-progress.
+progress. It runs at Erlang priority `high`, and the drivers at
+`normal`. The line stays masked from a firing until the owner
+acknowledges it, which the owner does only once it runs after the last
+member's answer, so every moment the owner waits for its scheduler the
+line is deaf. A process of priority `high` does not interrupt a process
+already running, which keeps its scheduler to the end of its time
+slice, but it is taken before every queued process of priority
+`normal`. So a device whose buffer fills in less than a few time
+slices of other processes, as the Raspberry Pi 4 mini UART's
+eight-byte receive FIFO does in 0.7 ms, is not held deaf behind its
+domain's busy processes; how soon the line can fire again after the
+acknowledgement is the kernel's (docs/todo-drivers.md, the mini UART
+item). The priority starves no process of priority `normal` while the
+owner's work stays bounded: it runs only when a message arrives and
+does a bounded amount of work for each (a notice to each member, or one
+acknowledgement); a firing comes at most once per round, and the rest
+of its messages come from processes of its own domain, its members
+among them, each of which joins once and answers once per notice. That
+bound rests on those processes behaving so: a process of the domain
+that sent the owner more would take that time from the domain's other
+processes, as it could by running itself.
 
 **A member is a monitor.** The owner answers a join by monitoring the
 joining driver first, and the monitor's reference is the member: the

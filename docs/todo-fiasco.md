@@ -484,6 +484,19 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   reply-capability warning below does at each domain fault; `thread-ipc.cpp:260` (a fault whose pager capability is invalid) is
   another, whether it fires in erXos's configuration unverified. Either set `WARN_NONE` in the release kernel's configuration
   or publish the interleaving with the release.
+* [Medium] 0.2 on Fiasco, the late interrupt after an unmask (residual of FD16 in docs/design-fiasco.md's
+  downsides): an interrupt raised after its holder unmasks the line reaches the holder's dispatcher thread 0.9 to
+  1.2 ms later, about one timer tick, even with the dispatcher alone on an idle CPU (Raspberry Pi 4, the mini
+  UART's level line; measured with a timing probe, history repository `pi4/2026-11-22-uart-gap/`,
+  `uartgap-cpu3.txt`). The mini UART's receive FIFO lasts 0.7 ms, so pastes into the Pi 4's serial console can
+  lose bytes; typing at human speed does not (docs/todo-drivers.md, the mini UART item). The delay is taken to be
+  FD16's wake through the dispatcher, which erXos's kernel removes, so nothing is patched or built for it on
+  Fiasco; but why the wake waits for a tick is unverified, and FD16's extra thread switch alone costs
+  microseconds, not a tick. The work is a probe that stamps `Irq_sender::_hit_level_irq`
+  (`fiasco/kernel/src/kern/irq.cpp`) and the dispatcher's wake: if the tick comes from how erXos sets the
+  dispatcher up (its band, or the line routed to another CPU than the dispatcher's), it is an erXos bug to fix,
+  not a residual.
+
 * [Medium] Fiasco backend's service loop (`liberx/backend/fiasco/service.c`, `service_page_fault` and
   `service_exception`): a task's fault reaches the root as a call that the root never answers, since the task ends
   instead, so when the next call reaches the service thread Fiasco prints `KERNEL: Warning: ...: Application bug:

@@ -6,7 +6,8 @@ require 'minitest/autorun'
 require 'open3'
 require 'tmpdir'
 
-# erx_irq_line:owners/1 under EUnit on the stock emulator (test/erlang/erx_irq_line_tests.erl),
+# erx_irq_line:owners/1 and the owner's priority under EUnit on the stock emulator
+# (test/erlang/erx_irq_line_tests.erl),
 # and the design's seeded fault: one owner per record, so a driver's two records on one line
 # give two owners. The owner process runs on the hosted runtime
 # (test/integration/runtime_device_test.rb).
@@ -16,7 +17,7 @@ class ErxIrqLineTest < Minitest::Test
   TESTS_SOURCE = File.join(ROOT, 'test/erlang/erx_irq_line_tests.erl')
   PER_RECORD = ['    first_of_each(Named, #{}, []).', '    [Owner || {_, Owner} <- Named].'].freeze
 
-  def test_owners_cases_pass_under_eunit
+  def test_eunit_cases_pass
     output, status = eunit(File.binread(MODULE_SOURCE), warnings_as_errors: true)
     assert status.success?, output
     assert_match(/All \d+ tests passed/, output)
