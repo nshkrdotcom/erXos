@@ -787,11 +787,13 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   once erXos's kernel runs there.
 * [Medium] platform (Raspberry Pi 4), RNG200, `liberx/backend/fiasco/rng200.c`: the root's read is written from
   the clean-room facts record alone and has run on no RNG200: QEMU's `raspi4b` model has none, and its tree
-  disables the node. A probe on a
-  real Pi 4, read from the entropy line, settles what the record leaves open: whether the firmware writes
-  `/chosen/rng-seed` or `kaslr-seed` at all, which skips the read; whether the generator, started only by setting
-  CTRL bit 0, with no warm-up and no soft reset, gives FIFO_COUNT eight words within the 100 ms bound; whether
-  the firmware leaves CTRL bits above bit 0 set with bit 0 clear, which the root does not write back, so the line
+  disables the node. The Pi 4 boots recorded in the history repository, `pi4/2026-11-23-fiasco-llvm/boot.uart.log`
+  at commit 466fd21 and `pi4/2026-11-23-onboard-pins/boot.uart.log` at commit f2e3cc9, print `erx: entropy: from
+  /chosen/rng-seed (64 bytes), /chosen/kaslr-seed (8 bytes) and the counter`: that board's firmware writes both
+  seeds, so the root skips the RNG200 read there. What no boot has settled matters only on firmware that writes no
+  seed, and a probe on such a Pi 4, read from the entropy line, settles it: whether the generator, started only by
+  setting CTRL bit 0, with no warm-up and no soft reset, gives FIFO_COUNT eight words within the 100 ms bound;
+  whether the firmware leaves CTRL bits above bit 0 set with bit 0 clear, which the root does not write back, so the line
   says the RNG200 could not be read (if it does, the SVD names those bits or marks them kept on write); and whether the registers that rest on one source
   each (the soft resets at 0x04 and 0x08, the total bit count and its threshold at 0x0c and 0x10, the status at
   0x18) matter to a read after a cold boot. erXos's kernel's platform layer reads it through the same
@@ -799,16 +801,18 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
 * [Medium] board sensors, [design-board-sensors.md](design-board-sensors.md): not built. The root's firmware request
   (`erx_firmware_request_row`) reaches the mailbox, and the device service's PCIe process and its firmware worker
   ([design-system.md](design-system.md#devices), "Firmware requests") make the VL805's notification for
-  `pci_bus:firmware/1`, but nothing makes a sensor's request or the Bluetooth power line's: the device service
-  takes firmware requests only for a held bridge row. They come with the sensor driver and the power line's user; probes S1 and S2 come first.
+  `pci_bus:firmware/1` and the Bluetooth power line's off and on requests (`erx_devices:power/2`, which the
+  UART line service calls), but nothing makes a sensor's request: no reading, throttle or other sensor tag is
+  declared and no sensor driver exists. They come with the sensor driver; probes S1 and S2 come first.
 * [Medium] board sensors, `abi/formats/vc_property.txt` and `abi/inspection.txt`
   ([design-board-sensors.md](design-board-sensors.md#the-requests)): `vc_property.txt` declares the property
-  buffer's layouts and NOTIFY_XHCI_RESET alone, as the closed set `fw_tag` and three loose limits that
-  `kernel/core/vc_property.c` assembles into
-  its `erx_vc_tag_t` and bounds with a `_Static_assert`, and the schema has no `sensors` kind. Make the tags one
+  buffer's layouts, the closed set `fw_tag` with NOTIFY_XHCI_RESET and SET_GPIO_STATE, the power line
+  `fw_power_line` (`bt_power`) with its phases, and four loose limits per tag (request, window, least answer and
+  result word) that `kernel/core/vc_property.c` assembles by hand into one `erx_vc_tag_t` per tag and bounds with a
+  `_Static_assert` each, and the schema has no `sensors` kind. Make the tags one
   generated table (tag, belonging, request, window, least answer, whether the tag answers in its first value word) whose
   generator checks each row's bounds, derives `vc_request_max` and the buffer's size from the rows and emits the
-  core's table, so no caller builds a declaration and the hand-kept assert goes; add `fw_reading`, `fw_power_line`, `fw_throttle` with
+  core's table, so no caller builds a declaration and the hand-kept asserts go; add `fw_reading` and `fw_throttle` with
   its span and `board_sensor_period`; add the kind `sensors` at `[sensors]`, the units `mdegC`, `uV` and `Hz`, and
   `@fw_throttle`. The device-kind table that Ruby parses from `include/erx/device_kinds.h` folds with the same ABI
   form, as typed columns on ABI enum members, when these requests land.
