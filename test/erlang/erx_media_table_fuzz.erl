@@ -63,8 +63,8 @@ mutate(Image, Capacity) ->
     Last = Capacity - 1,
     case rand:uniform(4) of
         1 -> flip(Image);
-        2 -> field(Image, 0, 446 + 16 * (rand:uniform(4) - 1) + element(rand:uniform(4), {0, 4, 8, 12}),
-                   element(rand:uniform(4), {8, 8, 32, 32}), Last);
+        2 -> {Offset, Bits} = lists:nth(rand:uniform(4), [{0, 8}, {4, 8}, {8, 32}, {12, 32}]),
+             field(Image, 0, 446 + 16 * (rand:uniform(4) - 1) + Offset, Bits, Last);
         3 -> header_field(Image, Last);
         4 -> entry_field(Image, Last)
     end.

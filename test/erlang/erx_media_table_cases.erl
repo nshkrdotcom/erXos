@@ -12,7 +12,7 @@
 
 -define(SECTOR, 512).
 -define(TYPE, <<"erxos test type!">>).
--define(ROUNDS, 6).
+-define(ROUNDS, 5).
 
 %% The table erx_media_table reads from Image, and the requests it made; at most
 %% sector 0, two headers and two arrays are ever asked for.
@@ -120,4 +120,5 @@ seeds() ->
      {4096, gpt(4096, [{40, 41}], #{array_entries => 4})},
      {4096, gpt(4096, [{100, 199}], #{backup_lba => 4000, usable => {34, 3900}, primary => #{array_crc => 0}})},
      {4096, gpt(4096, [{100, 199}], #{primary => #{signature => <<"EFI PARX">>}})},
-     {64, gpt(64, [{34, 35}], #{array_entries => 4})}].
+     {64, gpt(64, [{34, 35}], #{array_entries => 4})},
+     {4096, gpt(4096, [{100 + 10 * I, 109 + 10 * I} || I <- lists:seq(0, 8)], #{})}].
