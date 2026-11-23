@@ -97,11 +97,10 @@ the effects to apply before it does. A stopped server has no next core.
 
 -doc """
 The limits the funnel applies to a frame into this runtime, as `erx:limits/0` reports
-them, or `unknown` where this runtime cannot read them.
+them.
 """.
 -type limits() :: #{max_frame := non_neg_integer(), max_message_heap := non_neg_integer(),
-                    funnel_depth := non_neg_integer(), atom() => term()}
-                | unknown.
+                    funnel_depth := non_neg_integer(), atom() => term()}.
 
 -doc """
 A server of a domain whose boot information carries `supervised`, or not, and the effects
@@ -125,13 +124,11 @@ monitoring(#core{lifeline = none} = Core, Monitor) -> Core#core{lifeline = Monit
 
 -doc """
 Compares the runtime's limits with the code protocol's floors into a domain: `ok`, the
-first limit below its floor with its value, or `unknown` when the runtime cannot report
-its limits. Floors names each limit the protocol sets a floor on.
+first limit below its floor with its value. Floors names each limit the protocol sets a
+floor on.
 """.
 -spec floor_check(limits(), #{atom() => non_neg_integer()}) ->
-          ok | unknown | {below, atom(), non_neg_integer(), non_neg_integer()}.
-floor_check(unknown, _Floors) ->
-    unknown;
+          ok | {below, atom(), non_neg_integer(), non_neg_integer()}.
 floor_check(Limits, Floors) ->
     Below = [{below, Limit, maps:get(Limit, Limits), Floor}
              || Limit := Floor <- maps:iterator(Floors, ordered), maps:get(Limit, Limits) < Floor],

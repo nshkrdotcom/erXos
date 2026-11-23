@@ -11,6 +11,7 @@
 -module(erx_code_agent_tests).
 
 -include_lib("eunit/include/eunit.hrl").
+-include("generated/erx_abi.hrl").
 
 -export([lookup/1, hash/1]).
 
@@ -239,7 +240,7 @@ replacing_its_own_module_twice_leaves_it_running() ->
     ?assert(is_process_alive(Server)).
 
 %% A runtime whose limits are below the code protocol's floors fails its start before it
-%% reports; one at the floors, and one whose limits are unknown, start.
+%% reports; one at the floors starts.
 a_runtime_below_a_floor_fails_its_start() ->
     Floors = #{max_frame => 4096, max_message_heap => 512, funnel_depth => 4},
     At = #{max_frame => 4096, max_message_heap => 512, funnel_depth => 4},
@@ -248,14 +249,54 @@ a_runtime_below_a_floor_fails_its_start() ->
     ?assertEqual({error, {below_floor, max_message_heap}}, started()),
     ?assertEqual(none, receive {erx_code_agent, _} -> reported after 0 -> none end),
     _ = start_free((env(false))#{limits => At, floors => Floors}),
-    ?assertEqual(ok, erx_code_agent_core:floor_check(At, Floors)),
-    ?assertEqual(unknown, erx_code_agent_core:floor_check(unknown, Floors)).
+    ?assertEqual(ok, erx_code_agent_core:floor_check(At, Floors)).
+
+%% What a code server sends the system domain fits the code protocol's answer floors
+%% (docs/design-live.md, "Floors"), which tools/lib/erx/abi_code_bounds.rb computes from
+%% the same shapes with a 255-byte node name: the server's report, a request for a piece
+%% at the farthest offset the model counts, and the answer to a load of
+%% code_modules_max modules with 255-byte names that names every module with the longest
+%% code_load_reason. A local alias and pid are shorter, so a field one of these messages
+%% gains past the model's is what makes it fail.
+%% erts_debug:flat_size/1 counts the local heap, near the funnel's count but not it; the
+%% funnel's own check of these terms is docs/todo-domains.md's "code bounds" item.
+the_largest_answers_fit_the_answer_floors_test() ->
+    spawn_starter(env(false)),
+    Report = receive {erx_code_agent, _} = Reported -> Reported
+             after 1000 -> error(no_report)
+             end,
+    {ok, Server} = started(),
+    unlink(Server),
+    exit(Server, kill),
+    Names = [<<I:32, (binary:copy(<<$m>>, 251))/binary>>
+             || I <- lists:seq(1, ?ERX_CODE_MODULES_MAX)],
+    Alias = alias(),
+    {Idle, [started]} = erx_code_agent_core:new(false),
+    Fetch = [{Name, <<I:256>>, 1 bsl 63, fetch} || {I, Name} <- lists:enumerate(Names)],
+    {_, [{send, Alias, {erx_code_get, Alias, _, 0} = Get}]} =
+        erx_code_agent_core:step(Idle, {take, Alias, Fetch, 0}),
+    Current = [{Name, Hash, Size, current} || {Name, Hash, Size, _} <- Fetch],
+    {Loading, [{load_batch, []}]} =
+        erx_code_agent_core:step(Idle, {take, Alias, Current, 0}),
+    {_, Longest} = lists:max([{byte_size(atom_to_binary(Reason)), Reason}
+                              || {Reason, _} <- ?ERX_CODE_LOAD_REASON_MEMBERS]),
+    Refusal = {error, {not_loaded, [{Name, Longest} || Name <- Names]}},
+    {_, [{send, Alias, Answer}]} = erx_code_agent_core:step(Loading, {loaded, Refusal}),
+    ?assertEqual({erx_code_loaded, Alias, Refusal}, Answer),
+    lists:foreach(fun(Message) ->
+                          ?assert(erlang:external_size(Message)
+                                  =< ?ERX_CODE_ANSWER_MAX_FRAME_MIN),
+                          ?assert(erts_debug:flat_size(Message)
+                                  =< ?ERX_CODE_ANSWER_MESSAGE_HEAP_MIN)
+                  end,
+                  [Report, setelement(4, Get, (1 bsl 64) - 1), Answer]).
 
 %% Helpers.
 
 env(Supervised) ->
     #{system => ?SYSTEM, domain_pid => self(), supervised => Supervised,
-      limits => unknown, floors => #{}, release => ?MODULE, wait => ?WAIT}.
+      limits => #{max_frame => 4096, max_message_heap => 512, funnel_depth => 4}, floors => #{},
+      release => ?MODULE, wait => ?WAIT}.
 
 %% A server started from a process that reports how its start ended and then how the
 %% server ended; the server's report reaches this process, the domain pid.

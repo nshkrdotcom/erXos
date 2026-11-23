@@ -86,13 +86,16 @@ start_link() ->
 start_link(Env) ->
     proc_lib:start_link(?MODULE, enter, [Env], infinity).
 
-%% The runtime does not yet report its limits (erx:limits/0), the code protocol's floors
-%% are not yet generated into abi/services/code.txt, and the boot information carries no
-%% supervised flag, so no domain on erXos is supervised and its floor check is unknown
-%% (TODO.md).
+%% The domain on erXos: its boot information's supervised flag, its runtime's limits, and
+%% the floors of the code protocol's loads, which every domain but the system domain
+%% will receive once erx_code sends loads (docs/todo-domains.md). The environment names no release, so every blob is fetched
+%% (docs/todo-domains.md).
 erxos_env(SystemId, DomainPid) ->
-    #{system => SystemId, domain_pid => DomainPid, supervised => false,
-      limits => unknown, floors => #{}}.
+    #{system => SystemId, domain_pid => DomainPid, supervised => erx_dist:supervised(),
+      limits => erx:limits(),
+      floors => #{max_frame => ?ERX_CODE_LOAD_MAX_FRAME_MIN,
+                  max_message_heap => ?ERX_CODE_LOAD_MESSAGE_HEAP_MIN,
+                  funnel_depth => ?ERX_CODE_LOAD_FUNNEL_DEPTH_MIN}}.
 
 -doc false.
 enter(Env) ->
@@ -100,9 +103,6 @@ enter(Env) ->
         {below, Limit, Value, Floor} ->
             logger:error("erx_code_agent: ~s is ~b, below the code protocol's floor of ~b", [Limit, Value, Floor]),
             proc_lib:init_fail({error, {below_floor, Limit}}, {exit, normal});
-        unknown ->
-            logger:notice("erx_code_agent: the runtime's limits are unknown; the code protocol's floors are not checked"),
-            serve(Env);
         ok ->
             serve(Env)
     end.
