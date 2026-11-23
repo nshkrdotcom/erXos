@@ -87,8 +87,9 @@ module Erx
     # A boot's clock group and cells from the guest lines it printed, each a BENCH or a
     # CLOCK line (docs/design-bench.md, "A benchmark"). Without exactly one valid CLOCK
     # line the boot has no calibration and its cells are rejected, and so is a cell whose
-    # frequency is not the CLOCK line's; a failed cell stays failed, since a wrong result
-    # does not depend on the clock. Each refused line's reason is returned in refused,
+    # frequency is not the CLOCK line's. A failed cell stays failed in both only when its
+    # failure does not depend on the clock (a lost wake, a wrong status), and keeps only
+    # its status, reason and counts. Each refused line's reason is returned in refused,
     # never its text, for the runner to give the cells it expected.
     def boot(lines, benchmark:, profiles:)
       clocks, benches = lines.partition { |text| text.is_a?(String) && text.b.start_with?('CLOCK ') }
@@ -107,15 +108,25 @@ module Erx
     end
 
     def verdict(cell, group)
-      return cell if cell.status == 'failed'
-      return rejected(cell, 'no valid CLOCK line in the boot') if group.nil?
-      return rejected(cell, 'frequency differs from the CLOCK line') if
-        cell.detail['frequency_hz'] != group.fetch('frequency_hz')
+      unjudged = if group.nil? then 'no valid CLOCK line in the boot'
+                 elsif cell.detail['frequency_hz'] != group.fetch('frequency_hz')
+                   'frequency differs from the CLOCK line'
+                 end
+      return cell if unjudged.nil?
+      return stripped(cell, status: 'failed', reason: cell.reason) if clock_free_failure?(cell)
 
-      cell
+      stripped(cell, status: 'rejected', reason: unjudged)
     end
 
-    def rejected(cell, reason) = BenchRecord::Cell.new(**cell.to_h, status: 'rejected', reason: reason, detail: {})
+    # A failure the clock did not judge: a lost wake, or a wrong result the counts do not
+    # show. An early return is judged by the clock, so a cell failed only by early returns
+    # fails nothing without one.
+    def clock_free_failure?(cell)
+      cell.status == 'failed' && (cell.counts.fetch('lost').positive? || cell.counts.fetch('early').zero?)
+    end
+
+    # The cell with no tick statistics, which a boot without a calibration cannot vouch for.
+    def stripped(cell, status:, reason:) = BenchRecord::Cell.new(**cell.to_h, status: status, reason: reason, detail: {})
 
     # A line's refusals, from its own checks and from the record part it builds, each
     # say once which kind of line was refused.
@@ -278,7 +289,8 @@ module Erx
 
     def need(valid, reason) = valid || raise(BenchRecord::Invalid, reason)
 
-    private_class_method :measured, :judged, :verdict, :rejected, :refusing, :bench_cell, :clock_group, :decode,
+    private_class_method :measured, :judged, :verdict, :clock_free_failure?, :stripped, :refusing, :bench_cell,
+                         :clock_group, :decode,
                          :parsed, :conditions, :tick?, :count?, :frequency?, :pairs, :cpu_pair?, :interval?, :ends?,
                          :parameter?, :counts, :detail, :histogram, :largest, :raw, :phases, :need
   end

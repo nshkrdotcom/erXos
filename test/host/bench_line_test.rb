@@ -111,24 +111,32 @@ class BenchLineTest < Minitest::Test
                  other.fetch(:cells).map { |cell| [cell.status, cell.reason] }
   end
 
-  # A wrong result does not depend on the clock: without a calibration the measured and
-  # unsupported cells are rejected, but a failed cell stays failed with its samples.
-  def test_a_failed_cell_stays_failed_without_a_calibration
+  # A wrong result does not depend on the clock, and an early return is judged by it:
+  # without a calibration the measured and unsupported cells, and a cell failed only by
+  # early returns, are rejected, but a lost wake or a wrong status stays failed with only
+  # its status, reason and counts, no tick statistics.
+  def test_a_failed_cell_stays_failed_without_a_calibration_only_when_the_clock_did_not_judge_it
     lost = { 'lost' => 1, 'early' => 0, 'missed' => 0 }
+    early = { 'lost' => 0, 'early' => 2, 'missed' => 0 }
     unsupported = Fuzz.line('trigger-take', status: 'unsupported', reason: 'one CPU', samples: 0, histogram: [],
                                              largest: [], raw: [])
     lines = [Fuzz.line('wake-same-cpu'), without(without(unsupported, 'min'), 'max'),
-             Fuzz.line('wake-same-cpu', status: 'failed', reason: 'lost wake', counts: lost)]
+             Fuzz.line('wake-same-cpu', status: 'failed', reason: 'lost wake', counts: lost),
+             Fuzz.line('trigger-take', status: 'failed', reason: 'wrong status'),
+             Fuzz.line('wake-same-cpu', status: 'failed', reason: 'early return', counts: early)]
     [lines, lines + [Fuzz.clock_line(frequency_hz: 62_500_000)]].each do |boot|
       answer = Erx::BenchMeasurement.boot(boot, benchmark: 'wake', profiles: Fuzz::PROFILES)
       assert_equal [], answer.fetch(:refused).grep(/BENCH/)
       cells = answer.fetch(:cells)
-      assert_equal %w[rejected rejected failed], cells.map(&:status)
-      assert_equal 'lost wake', cells.last.reason
-      refute_empty cells.last.detail
+      assert_equal %w[rejected rejected failed failed rejected], cells.map(&:status)
+      assert_equal ['lost wake', 'wrong status'], cells[2, 2].map(&:reason)
+      assert_equal [lost, { 'lost' => 0, 'early' => 0, 'missed' => 0 }], cells[2, 2].map(&:counts)
+      assert(cells.all? { |kept| kept.detail.empty? })
     end
+    calibrated = Erx::BenchMeasurement.boot(lines + [Fuzz.clock_line], benchmark: 'wake', profiles: Fuzz::PROFILES)
+    assert_equal %w[measured unsupported failed failed failed], calibrated.fetch(:cells).map(&:status)
+    refute_empty calibrated.fetch(:cells)[2].detail
   end
-
   def test_a_wrong_answer_is_failed_and_a_partial_cell_says_so
     assert_raises(Erx::Error) { cell(Fuzz.line('wake-same-cpu', counts: { 'lost' => 1, 'early' => 0, 'missed' => 0 })) }
     failed = cell(Fuzz.line('wake-same-cpu', status: 'failed', reason: 'lost wake',
