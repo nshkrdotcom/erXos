@@ -8,14 +8,14 @@
 # that advertises under --name, through blew, a macOS Bluetooth LE command-line
 # tool on the PATH. One scan finds the device that advertises exactly that name;
 # every later step is one blew run on a connection of its own to that device's
-# identifier, so each also checks a reconnection. CoreBluetooth keeps GAP's and
-# GATT's services to itself, so the steps work on Nordic's UART service
-# (abi/gatt/nus.txt). Each step prints passed, failed, or unknown: unknown when
+# identifier (the scan makes no connection), so each also checks a
+# reconnection. CoreBluetooth keeps GAP's and GATT's services to itself, so the
+# steps work on Nordic's UART service (abi/gatt/nus.txt). Each step prints passed, failed, or unknown: unknown when
 # blew timed out, could not use Bluetooth, was missing or was given bad arguments,
 # or when what the step needs (the echo package of decision 7, a blew command) is
 # missing, never a guess; Erx::BleBoardCheck holds the verdicts. Logs of every blew
 # run go in --logs. Exits 0 when a step passed and none failed, 1 when a step
-# failed, 3 when none passed, 2 on bad usage.
+# failed, 3 when none passed, 2 on bad usage or when it cannot run blew or keep its logs.
 #
 #   ruby tools/ble_board_check.rb --name erxos --logs DIR
 
@@ -23,7 +23,7 @@ require 'optparse'
 require_relative 'lib/erx/ble_board_check'
 require_relative 'lib/erx/runner'
 
-# Runs blew once. A run killed on its deadline or by a signal has no exit status.
+# Runs blew once. A run killed on its deadline or by a signal has no exit code.
 def blew(runner, step_name, argv, timeout)
   record = begin
     runner.run(['blew', '--timeout', timeout.to_s, '--out', 'kv', *argv],
@@ -32,11 +32,11 @@ def blew(runner, step_name, argv, timeout)
     error.result
   end
   output = File.binread(record.fetch('log')).force_encoding(Encoding::UTF_8).scrub
-  Erx::BleBoardCheck::Run.new(output: output, status: record['state'] == 'timed_out' ? nil : record['exit_status'])
+  Erx::BleBoardCheck::Run.new(output: output, exit_code: record['state'] == 'timed_out' ? nil : record['exit_status'])
 end
 
 def report(step_name, outcome)
-  puts "#{outcome.status}: #{step_name} (#{outcome.detail})"
+  puts "#{outcome.verdict}: #{step_name} (#{outcome.detail})"
   outcome
 end
 
@@ -56,26 +56,27 @@ rescue OptionParser::ParseError => error
   warn("#{error.message}\n#{USAGE}")
   exit 2
 end
-unless options[:name] && !options[:name].empty? && options[:logs] && ARGV.empty?
+options[:name] = options[:name]&.dup&.force_encoding(Encoding::UTF_8)
+unless options[:name]&.valid_encoding? && !options[:name].empty? && options[:logs] && ARGV.empty?
   warn(USAGE)
   exit 2
 end
 
 begin
   runner = Erx::Runner.new(owner_root: File.dirname(options[:logs]), log_dir: options[:logs])
-  scan = blew(runner, 'scan', ['scan'], options[:timeout])
-  ids = Erx::BleBoardCheck.board_ids(scan.output, options[:name])
-  outcomes = [report('scan', Erx::BleBoardCheck.judge(scan) { |_output, _code| Erx::BleBoardCheck.scan_outcome(ids) })]
-  steps = ids.one? ? Erx::BleBoardCheck.steps(ids.first) : []
-  outcomes += steps.map do |step|
-    run = step.argv && blew(runner, step.name, step.argv, options[:timeout])
-    report(step.name, run ? Erx::BleBoardCheck.judge(run, &step.check) : step.check.call('', nil))
+  # blew's own --name filter keeps the room's other devices out of the logs; the
+  # exact match of the name is the library's.
+  scan = Erx::BleBoardCheck.scan_result(blew(runner, 'scan', ['scan', '-n', options[:name]], options[:timeout]), options[:name])
+  outcomes = [report('scan', scan.outcome)]
+  if scan.id
+    outcomes += Erx::BleBoardCheck.steps(scan.id).map do |step|
+      run = step.argv && blew(runner, step.name, step.argv, options[:timeout])
+      report(step.name, Erx::BleBoardCheck.step_outcome(step, run))
+    end
+  else
+    outcomes << report('the steps after the scan', Erx::BleBoardCheck::NO_DEVICE)
   end
-  if steps.empty?
-    outcomes << report('the steps after the scan',
-                       Erx::BleBoardCheck::Outcome.new(status: :unknown, detail: 'no single device to connect to'))
-  end
-  exit Erx::BleBoardCheck.exit_status(outcomes)
+  exit Erx::BleBoardCheck.script_exit(outcomes)
 rescue Erx::Error => error
   warn(Erx::Terminal.escape(error.message))
   exit 2

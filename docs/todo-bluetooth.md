@@ -187,7 +187,7 @@ each item has a `[Severity]` tag and a component pointer, and a closed item is d
   The Bluetooth domain and its grant stay out of QEMU virt's development manifest (docs/plan.md); the Raspberry Pi 4's
   board part runs the domain on UART0, where it has brought the controller up and advertised to a phone's scan.
   On the board a Mac connects and reconnects, and its log shows an MTU of 185 and GAP and GATT; blew
-  (`tools/ble_board_check.rb`) discovers NUS and has a read of NUS RX refused (history commit 6de9bf7). Still open on the board: the echo
+  (`tools/ble_board_check.rb`) discovers NUS and has a read of NUS RX refused (erxos-history, pi4/2026-11-23-ble-gatt, commit 6de9bf7). Still open on the board: the echo
   through an app, which waits for an installed app's `ble` grant (below) and decision 7's second package; a NUS write
   and its notification answered by that app; and pairing, which needs a characteristic that asks for encryption or a
   peer that starts pairing itself (whether macOS starts pairing only at an Insufficient Authentication answer is unverified, and blew has no
